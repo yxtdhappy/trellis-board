@@ -81,6 +81,56 @@ test("扫描嵌套归档目录并使用文件证据推导阶段", () => {
   }
 });
 
+test("稳定执行身份在任务归档后保持不变", () => {
+  const root = makeRepo();
+  const project = { id: "identity-demo", name: "Identity Demo", path: root };
+  try {
+    clearScanCaches();
+    const active = scanRepository(project);
+    const live = active.tasks.find((task) => !task.archived);
+    assert.equal(live.executionTaskKey, "identity-demo::live");
+    assert.equal(live.executionIdentityValid, true);
+
+    const source = path.join(root, ".trellis", "tasks", "10-20-live");
+    const target = path.join(root, ".trellis", "tasks", "archive", "2026-10", "10-20-live");
+    fs.renameSync(source, target);
+    clearScanCaches();
+    const archived = scanRepository(project);
+    const moved = archived.tasks.find((task) => task.taskKey.endsWith("10-20-live"));
+    assert.equal(moved.archived, true);
+    assert.equal(moved.executionTaskKey, live.executionTaskKey);
+    assert.equal(moved.executionIdentityValid, true);
+  } finally {
+    clearScanCaches();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("重复 task.json id 的任务仍可见但执行身份标记为冲突", () => {
+  const root = makeRepo();
+  const project = { id: "conflict-demo", name: "Conflict Demo", path: root };
+  try {
+    const duplicateDir = path.join(root, ".trellis", "tasks", "10-21-live-copy");
+    fs.mkdirSync(duplicateDir);
+    fs.writeFileSync(
+      path.join(duplicateDir, "task.json"),
+      JSON.stringify({ id: "live", title: "Duplicate", status: "planning" })
+    );
+    clearScanCaches();
+    const result = scanRepository(project);
+    const tasks = linkTaskGroups([result]).map(toTaskListItem);
+    const duplicates = tasks.filter((task) => task.executionTaskKey === "conflict-demo::live");
+    assert.equal(duplicates.length, 2);
+    duplicates.forEach((task) => {
+      assert.equal(task.executionIdentityValid, false);
+      assert.equal(task.executionIdentityConflict, true);
+    });
+  } finally {
+    clearScanCaches();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("未变化任务复用解析结果，只重算发生变化的单个任务", () => {
   const root = makeRepo();
   const project = { id: "cache-demo", name: "Cache Demo", path: root };

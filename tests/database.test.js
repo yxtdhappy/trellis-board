@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { openDatabase } from "../server/database.js";
 import { createPersistenceStore } from "../server/persistence.js";
 
@@ -49,7 +50,64 @@ function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-test("初始化数据库会创建 schema v1 和迁移标记", () => {
+function createV1Database(workspace) {
+  fs.mkdirSync(path.dirname(workspace.databaseFile), { recursive: true });
+  const db = new DatabaseSync(workspace.databaseFile);
+  db.exec(`
+    CREATE TABLE app_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE repositories (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      path TEXT NOT NULL,
+      path_key TEXT NOT NULL UNIQUE,
+      position INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE task_stage (
+      task_key TEXT PRIMARY KEY,
+      stage TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE scan_cache (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      schema_version INTEGER NOT NULL,
+      saved_at TEXT NOT NULL,
+      board_json TEXT NOT NULL
+    );
+    CREATE TABLE board_state (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  db.prepare(`
+    INSERT INTO app_meta(key, value, updated_at)
+    VALUES ('schema_version', '1', ?)
+  `).run(new Date().toISOString());
+  db.close();
+}
+
+function v2TableSql(databaseFile) {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db.prepare(`
+      SELECT name, sql
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN ('task_execution', 'task_tag', 'saved_view', 'task_event')
+      ORDER BY name
+    `).all().map((row) => ({ name: row.name, sql: row.sql }));
+  } finally {
+    db.close();
+  }
+}
+
+test("新库直接创建 schema v2、扩展表和事件起点", () => {
   const workspace = makeWorkspace();
   let db;
   try {
@@ -64,15 +122,21 @@ test("初始化数据库会创建 schema v1 和迁移标记", () => {
       "app_meta",
       "board_state",
       "repositories",
+      "saved_view",
       "scan_cache",
-      "task_stage"
+      "sqlite_sequence",
+      "task_event",
+      "task_execution",
+      "task_stage",
+      "task_tag"
     ]);
     const meta = Object.fromEntries(
       db.prepare("SELECT key, value FROM app_meta").all()
         .map((row) => [row.key, row.value])
     );
-    assert.equal(meta.schema_version, "1");
+    assert.equal(meta.schema_version, "2");
     assert.equal(meta.legacy_json_imported_v1, "1");
+    assert.equal(Number.isNaN(Date.parse(meta.execution_events_started_at)), false);
     assert.equal(db.prepare("PRAGMA journal_mode").get().journal_mode, "wal");
     assert.equal(db.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
     assert.equal(db.prepare("PRAGMA busy_timeout").get().timeout, 5000);
@@ -80,6 +144,134 @@ test("初始化数据库会创建 schema v1 和迁移标记", () => {
     assert.equal(fs.existsSync(workspace.databaseFile), true);
   } finally {
     closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
+test("v1 数据库在同一事务升级到 v2，并创建一次性备份", () => {
+  const workspace = makeWorkspace();
+  createV1Database(workspace);
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    assert.equal(
+      db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+      "2"
+    );
+    const tables = db.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+      ORDER BY name
+    `).all().map((row) => row.name);
+    assert.deepEqual(tables, [
+      "app_meta",
+      "board_state",
+      "repositories",
+      "saved_view",
+      "scan_cache",
+      "task_event",
+      "task_execution",
+      "task_stage",
+      "task_tag"
+    ]);
+    assert.equal(fs.existsSync(`${workspace.databaseFile}.v1-backup`), true);
+    const backup = new DatabaseSync(`${workspace.databaseFile}.v1-backup`, { readOnly: true });
+    try {
+      assert.equal(
+        backup.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+        "1"
+      );
+      assert.equal(
+        backup.prepare(`
+          SELECT COUNT(*) AS count
+          FROM sqlite_master
+          WHERE type = 'table' AND name = 'task_execution'
+        `).get().count,
+        0
+      );
+    } finally {
+      backup.close();
+    }
+    const startedAt = db.prepare(`
+      SELECT value FROM app_meta WHERE key = 'execution_events_started_at'
+    `).get().value;
+    db.close();
+    db = null;
+
+    db = openTestDatabase(workspace);
+    assert.equal(
+      db.prepare("SELECT value FROM app_meta WHERE key = 'execution_events_started_at'").get().value,
+      startedAt
+    );
+    assert.equal(fs.existsSync(`${workspace.databaseFile}.v1-backup.1`), false);
+  } finally {
+    closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
+test("v2 新库与 v1 升级库的扩展表结构一致", () => {
+  const fresh = makeWorkspace();
+  const upgraded = makeWorkspace();
+  let freshDb;
+  let upgradedDb;
+  try {
+    freshDb = openTestDatabase(fresh);
+    freshDb.close();
+    freshDb = null;
+    createV1Database(upgraded);
+    upgradedDb = openTestDatabase(upgraded);
+    assert.deepEqual(v2TableSql(fresh.databaseFile), v2TableSql(upgraded.databaseFile));
+  } finally {
+    closeQuietly(freshDb);
+    closeQuietly(upgradedDb);
+    fs.rmSync(fresh.root, { recursive: true, force: true });
+    fs.rmSync(upgraded.root, { recursive: true, force: true });
+  }
+});
+
+test("v1 到 v2 迁移失败会回滚新增表并保留版本 1", () => {
+  const workspace = makeWorkspace();
+  fs.mkdirSync(path.dirname(workspace.databaseFile), { recursive: true });
+  const fixture = new DatabaseSync(workspace.databaseFile);
+  fixture.exec(`
+    CREATE TABLE app_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO app_meta(key, value, updated_at)
+    VALUES ('schema_version', '1', '2026-10-30T00:00:00.000Z');
+    CREATE TABLE task_tag (
+      execution_task_key TEXT PRIMARY KEY
+    );
+  `);
+  fixture.close();
+
+  try {
+    assert.throws(
+      () => openTestDatabase(workspace),
+      /no such column: tag/
+    );
+    const db = new DatabaseSync(workspace.databaseFile, { readOnly: true });
+    try {
+      assert.equal(
+        db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+        "1"
+      );
+      assert.equal(
+        db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM sqlite_master
+          WHERE type = 'table' AND name = 'task_execution'
+        `).get().count,
+        0
+      );
+    } finally {
+      db.close();
+    }
+    assert.equal(fs.existsSync(`${workspace.databaseFile}.v1-backup`), true);
+  } finally {
     fs.rmSync(workspace.root, { recursive: true, force: true });
   }
 });

@@ -1,4 +1,9 @@
-import { getDefaultDatabase } from "./database.js";
+import crypto from "node:crypto";
+import {
+  getDefaultDatabase,
+  withTransaction
+} from "./database.js";
+import { appendTaskEvent } from "./execution-store.js";
 
 const STAGES = [
   { id: "prd", label: "需求" },
@@ -45,20 +50,51 @@ export function getManualRecords(db = getDefaultDatabase()) {
   return records;
 }
 
-export function setManualStage(projectId, taskId, stage, db = getDefaultDatabase()) {
+export function setManualStage(
+  projectId,
+  taskId,
+  stage,
+  db = getDefaultDatabase(),
+  options = {}
+) {
   if (!STAGE_IDS.includes(stage)) {
     throw new Error(`未知阶段: ${stage}`);
   }
   const key = `${projectId}/${taskId}`;
   const updatedAt = new Date().toISOString();
-  db.prepare(`
-    INSERT INTO task_stage(task_key, stage, updated_at)
-    VALUES (?, ?, ?)
-    ON CONFLICT(task_key) DO UPDATE SET
-      stage = excluded.stage,
-      updated_at = excluded.updated_at
-  `).run(key, stage, updatedAt);
-  return { stage, updatedAt };
+  return withTransaction(db, () => {
+    const previous = db.prepare(`
+      SELECT stage, updated_at
+      FROM task_stage
+      WHERE task_key = ?
+    `).get(key);
+    db.prepare(`
+      INSERT INTO task_stage(task_key, stage, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(task_key) DO UPDATE SET
+        stage = excluded.stage,
+        updated_at = excluded.updated_at
+    `).run(key, stage, updatedAt);
+    const correlationId = options.executionTaskKey ? crypto.randomUUID() : null;
+    if (options.executionTaskKey) {
+      appendTaskEvent(db, {
+        executionTaskKey: options.executionTaskKey,
+        eventType: "stage_manual_confirmed",
+        source: "user",
+        actor: options.actor,
+        correlationId,
+        occurredAt: updatedAt,
+        payload: {
+          before: previous
+            ? { stage: previous.stage, updatedAt: previous.updated_at }
+            : null,
+          after: { stage, updatedAt }
+        },
+        reversible: true
+      });
+    }
+    return { stage, updatedAt, correlationId };
+  });
 }
 
 export { STAGES };

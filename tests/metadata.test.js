@@ -9,6 +9,7 @@ import {
   getManualRecords,
   setManualStage
 } from "../server/metadata.js";
+import { readExecutionDetail } from "../server/execution-store.js";
 
 function makeWorkspace() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-metadata-"));
@@ -91,6 +92,48 @@ test("未知人工阶段不会写入数据库", () => {
       /未知阶段/
     );
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM task_stage").get().count, 0);
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // 忽略已关闭连接。
+    }
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
+test("人工阶段和确认事件在同一事务写入", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    const saved = setManualStage("demo", "10-30-demo", "check", db, {
+      executionTaskKey: "demo::10-30-demo",
+      actor: "dev"
+    });
+    assert.equal(saved.stage, "check");
+    const detail = readExecutionDetail(db, "demo::10-30-demo");
+    assert.equal(detail.events.length, 1);
+    assert.equal(detail.events[0].type, "stage_manual_confirmed");
+    assert.equal(detail.events[0].source, "user");
+    assert.equal(detail.events[0].actor, "dev");
+
+    db.exec(`
+      CREATE TRIGGER reject_manual_event
+      BEFORE INSERT ON task_event
+      WHEN NEW.execution_task_key = 'demo::rollback'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced manual event failure');
+      END;
+    `);
+    assert.throws(
+      () => setManualStage("demo", "10-30-rollback", "design", db, {
+        executionTaskKey: "demo::rollback",
+        actor: "dev"
+      }),
+      /forced manual event failure/
+    );
+    assert.equal(getManualRecord("demo", "10-30-rollback", db), null);
   } finally {
     try {
       db?.close();

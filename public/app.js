@@ -5,13 +5,22 @@ import {
   slugifyTaskTitle,
   TASK_SLUG_PATTERN
 } from "./slug.js";
+import {
+  ATTENTION_REASON_LABELS,
+  BUILTIN_VIEWS,
+  FILTER_STAGES,
+  dueDateDistance,
+  findView,
+  normalizeTagsInput,
+  taskMatchesView,
+  taskTagNames
+} from "./execution-filter.js";
 
 const STAGE_LANES = [
-  { id: "planning", label: "规划", hint: "需求、调研、设计与上下文准备", indexes: [0, 1, 2, 3, 4] },
-  { id: "review", label: "待放行", hint: "规划产物已备，尚未开始实现", indexes: [5] },
-  { id: "implementation", label: "实现", hint: "正在写代码或补充检查", indexes: [6, 7] },
-  { id: "verification", label: "验证", hint: "可选真实验证、规范回写", indexes: [8, 9] },
-  { id: "closeout", label: "收尾", hint: "归档前：工作提交与归档", indexes: [10, 11] }
+  { id: "planning", label: "规划", hint: "需求、调研、设计与上下文准备" },
+  { id: "review", label: "待放行", hint: "规划产物已备，尚未开始实现" },
+  { id: "implementation", label: "实现", hint: "正在写代码或补充检查" },
+  { id: "verification", label: "检查 / 收尾", hint: "验证、规范回写与工作提交" }
 ];
 
 const ARTIFACT_DEFINITIONS = [
@@ -29,6 +38,7 @@ const state = {
   projectId: "all",
   scope: "all",
   search: "",
+  executionView: "all",
   selectedTask: null,
   archiveProject: "all",
   archiveSearch: "",
@@ -38,7 +48,10 @@ const state = {
   selectedFolders: [],
   pickingFolders: false,
   addingProjects: false,
-  createSlugManuallyEdited: false
+  createSlugManuallyEdited: false,
+  editingExecutionTaskKey: null,
+  savingExecution: false,
+  savingView: false
 };
 
 const els = {
@@ -60,6 +73,21 @@ const els = {
   artifactDialog: document.querySelector("#artifact-dialog"),
   createDialog: document.querySelector("#create-dialog"),
   projectDialog: document.querySelector("#project-dialog"),
+  executionDialog: document.querySelector("#execution-dialog"),
+  viewDialog: document.querySelector("#view-dialog"),
+  executionForm: document.querySelector("#execution-form"),
+  viewForm: document.querySelector("#view-form"),
+  executionMessage: document.querySelector("#execution-message"),
+  viewMessage: document.querySelector("#view-message"),
+  executionSubmit: document.querySelector("#execution-submit"),
+  viewSubmit: document.querySelector("#view-submit"),
+  executionViewList: document.querySelector("#execution-view-list"),
+  executionViewSummary: document.querySelector("#execution-view-summary"),
+  executionDateLabel: document.querySelector("#execution-date-label"),
+  focusCard: document.querySelector("#focus-card"),
+  attentionQueue: document.querySelector("#attention-queue"),
+  attentionCount: document.querySelector("#attention-count"),
+  kanbanSummary: document.querySelector("#kanban-summary"),
   projectForm: document.querySelector("#project-form"),
   projectManagerList: document.querySelector("#project-manager-list"),
   projectFormMessage: document.querySelector("#project-form-message"),
@@ -91,15 +119,29 @@ const activeTasks = () => state.board?.tasks.filter((task) => !task.archived) ||
 const archivedTasks = () => state.board?.tasks.filter((task) => task.archived) || [];
 const currentProject = () => state.board?.projects.find((project) => project.id === state.projectId);
 
-function filteredActiveTasks() {
+function currentExecutionView() {
+  return findView(state.board?.savedViews || [], state.executionView);
+}
+
+function baseFilteredActiveTasks({ executionView = null } = {}) {
   const search = state.search.toLowerCase();
   const me = state.scope === "mine" ? myDeveloper() : null;
+  const now = new Date();
   const matches = (task) => {
-    const searchHit = !search || [task.title, task.description, task.assignee, task.projectName, task.projectId]
+    const searchHit = !search || [
+      task.title,
+      task.description,
+      task.assignee,
+      task.projectName,
+      task.projectId,
+      task.execution?.milestone,
+      ...taskTagNames(task)
+    ]
       .some((value) => String(value || "").toLowerCase().includes(search));
     const projectHit = state.projectId === "all" || task.projectId === state.projectId;
     const ownerHit = state.scope !== "mine" || (me && task.assignee === me);
-    return searchHit && projectHit && ownerHit;
+    const viewHit = !executionView || taskMatchesView(task, executionView, now);
+    return searchHit && projectHit && ownerHit && viewHit;
   };
   const groups = groupActiveTasks(activeTasks());
   return groups.flatMap((group) => {
@@ -110,6 +152,10 @@ function filteredActiveTasks() {
     );
     return includeParent ? group.members : hitMembers;
   });
+}
+
+function filteredActiveTasks() {
+  return baseFilteredActiveTasks({ executionView: currentExecutionView() });
 }
 
 function groupActiveTasks(tasks) {
@@ -175,7 +221,6 @@ function stageSourceLabel(stage) {
 function laneForStageIndex(task, current) {
   if (task.archived) return null;
   if (current === -1) return null;
-  if (current >= 10) return "closeout";
   if (current >= 8) return "verification";
   if (current >= 6) return "implementation";
   if (current === 5) return "review";
@@ -188,8 +233,8 @@ function laneForTask(task) {
 
 function isAttention(task) {
   if (task.archived) return false;
-  if (task.groupRelationsValid === false) return true;
-  return ["review", "check"].includes(task.derivedStage);
+  return (task.execution?.attentionReasons || []).length > 0 ||
+    task.groupRelationsValid === false;
 }
 
 function stageAdvice(task, stage) {
@@ -207,19 +252,290 @@ function stageName(task, stage) {
   return task.stages.find((item) => item.id === stage)?.label || stage;
 }
 
+function taskByKey(taskKey) {
+  return state.board?.tasks.find((task) => task.taskKey === taskKey) || null;
+}
+
+function taskGroupMembers(task, tasks = activeTasks()) {
+  const groupKey = task?.groupKey || task?.taskKey;
+  if (!task || !groupKey) return [];
+  return tasks.filter((candidate) =>
+    (candidate.groupKey || candidate.taskKey) === groupKey
+  );
+}
+
+function taskGroupParent(task) {
+  if (task?.groupRole === "parent") return task;
+  if (!task?.groupKey) return null;
+  return taskGroupMembers(task, state.board?.tasks || [])
+    .find((member) => member.groupRole === "parent") || null;
+}
+
+function taskGroupChildCount(task) {
+  return taskGroupMembers(task)
+    .filter((member) => member.groupRole === "child")
+    .length;
+}
+
+function isGroupedChild(task) {
+  return task?.groupRole === "child";
+}
+
+function dueLabel(dueDate, now = new Date()) {
+  if (!dueDate) return "未设截止";
+  const distance = dueDateDistance(dueDate, now);
+  if (distance == null) return dueDate;
+  if (distance < 0) return `逾期 ${Math.abs(distance)} 天`;
+  if (distance === 0) return "今天截止";
+  if (distance === 1) return "明天截止";
+  if (distance <= 7) return `${distance} 天后截止`;
+  return dueDate;
+}
+
+function formatShortDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit"
+  });
+}
+
+function formatEventTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function attentionReasons(task) {
+  return (task.execution?.attentionReasons || [])
+    .map((reason) => ({ id: reason, label: ATTENTION_REASON_LABELS[reason] || reason }));
+}
+
+function attentionChips(task, limit = 3) {
+  return attentionReasons(task)
+    .slice(0, limit)
+    .map((reason) => `<span class="attention-chip reason-${safe(reason.id)}">${safe(reason.label)}</span>`)
+    .join("");
+}
+
+function tagChips(task, limit = 3) {
+  const tags = taskTagNames(task);
+  return [
+    ...tags.slice(0, limit).map((tag) => `<span class="plan-tag">${safe(tag)}</span>`),
+    tags.length > limit ? `<span class="plan-tag">+${tags.length - limit}</span>` : ""
+  ].join("");
+}
+
+function planMetaMarkup(task) {
+  const execution = task.execution || {};
+  return `
+    <div class="plan-meta">
+      <span class="plan-due">${safe(dueLabel(execution.dueDate))}</span>
+      ${execution.milestone ? `<span class="plan-milestone">${safe(execution.milestone)}</span>` : ""}
+      ${tagChips(task)}
+    </div>`;
+}
+
+function processTape(task) {
+  return `<ol class="process-tape" aria-label="任务 13 阶段证据">
+    ${task.stages.map((stage) => {
+      const current = stage.id === task.derivedStage;
+      const stateClass = current
+        ? "is-current"
+        : stage.complete
+          ? stage.source === "manual" ? "is-manual" : "is-done"
+          : stage.optional ? "is-optional" : "";
+      return `<li class="${stateClass}" ${current ? 'aria-current="step"' : ""}>
+        <span>${String(stage.index).padStart(2, "0")}</span>
+        <b>${safe(stage.label)}</b>
+        <small>${current ? "NOW" : stage.complete ? (stage.source === "manual" ? "◇" : "●") : stage.optional ? "○" : "—"}</small>
+      </li>`;
+    }).join("")}
+  </ol>`;
+}
+
+function executionReasonText(task) {
+  const labels = attentionReasons(task).map((reason) => reason.label);
+  if (labels.length) return `现在推进的理由：${labels.join("、")}。`;
+  if (task.derivedStage === "review") return "规划产物已备，适合完成评审后进入实现。";
+  if (task.derivedStage === "implement") return "任务已经进入实现，继续推进可以尽快进入检查。";
+  if (task.derivedStage === "check") return "检查阶段待收口，完成验证后即可进入后续收尾。";
+  return "当前没有额外注意力信号，可按流程继续推进。";
+}
+
+function recommendedTask(tasks) {
+  const weights = {
+    identity_conflict: 100,
+    overdue: 90,
+    due_soon: 75,
+    priority: 60,
+    checking: 50,
+    implementing: 40,
+    stale: 25
+  };
+  const priorityWeight = { P0: 18, P1: 10, P2: 4, P3: 0 };
+  return [...tasks].sort((left, right) => {
+    const score = (task) => (task.execution?.attentionReasons || [])
+      .reduce((total, reason) => total + (weights[reason] || 0), 0) +
+      (priorityWeight[task.priority] || 0);
+    return score(right) - score(left) ||
+      String(left.execution?.dueDate || "9999-99-99")
+        .localeCompare(String(right.execution?.dueDate || "9999-99-99")) ||
+      String(left.title).localeCompare(String(right.title), "zh-CN");
+  })[0] || null;
+}
+
+function renderExecutionViews() {
+  const savedViews = state.board?.savedViews || [];
+  const available = [...BUILTIN_VIEWS, ...savedViews];
+  if (!available.some((view) => view.id === state.executionView)) {
+    state.executionView = "all";
+  }
+  const view = currentExecutionView();
+  const visibleTasksByView = new Map(available.map((item) => [
+    item.id,
+    baseFilteredActiveTasks({ executionView: item })
+  ]));
+  els.executionViewList.innerHTML = available.map((item) => {
+    const custom = !BUILTIN_VIEWS.some((builtin) => builtin.id === item.id);
+    const count = visibleTasksByView.get(item.id).length;
+    return `<span class="execution-view-item">
+      <button class="execution-view-button ${state.executionView === item.id ? "is-active" : ""}" data-execution-view="${safe(item.id)}" type="button">
+        ${safe(item.name)} <b>${count}</b>
+      </button>
+      ${custom ? `<button class="execution-view-delete" data-delete-view="${safe(item.id)}" type="button" aria-label="删除视图 ${safe(item.name)}">×</button>` : ""}
+    </span>`;
+  }).join("") + `
+    <button id="new-view-button" class="execution-view-new" type="button">＋ 组合视图</button>`;
+  const visibleTasks = visibleTasksByView.get(view.id);
+  els.executionViewSummary.textContent = `${view.name} · ${visibleTasks.length} 项`;
+  els.executionDateLabel.textContent = new Date().toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short"
+  });
+  els.executionViewList.querySelectorAll("[data-execution-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.executionView = button.dataset.executionView;
+      renderAll();
+      document.querySelector(`[data-execution-view="${CSS.escape(state.executionView)}"]`)?.focus();
+    });
+  });
+  els.executionViewList.querySelectorAll("[data-delete-view]").forEach((button) => {
+    button.addEventListener("click", () => deleteSavedView(button.dataset.deleteView));
+  });
+  document.querySelector("#new-view-button").addEventListener("click", openViewDialog);
+}
+
+function renderFocus() {
+  const task = recommendedTask(filteredActiveTasks());
+  if (!task) {
+    els.focusCard.innerHTML = `<div class="focus-empty">
+      <p class="panel-kicker">NEXT MOVE / 下一次动作</p>
+      <h2>当前视图没有可推荐任务</h2>
+      <p>调整项目、负责人、搜索或注意力视图，也可以创建一条新任务。</p>
+    </div>`;
+    return;
+  }
+  const execution = task.execution || {};
+  els.focusCard.innerHTML = `
+    <div class="focus-top">
+      <p class="panel-kicker">NEXT MOVE / 下一次动作</p>
+      <span class="priority-stamp ${safe(String(task.priority || "P2").toLowerCase())}">${safe(task.priority || "P2")}</span>
+    </div>
+    <h2>${safe(task.title)}</h2>
+    <p class="focus-description">${safe(task.description || "没有任务描述")}</p>
+    <div class="focus-meta">
+      <span>${safe(task.projectName)}</span>
+      <span>${safe(dueLabel(execution.dueDate))}</span>
+      ${execution.milestone ? `<span>${safe(execution.milestone)}</span>` : ""}
+      ${tagChips(task, 5)}
+    </div>
+    <div class="focus-reasons">
+      ${attentionChips(task, 5) || `<span class="attention-chip">${safe(nextStage(task).label)}</span>`}
+      <p>${safe(executionReasonText(task))}</p>
+    </div>
+    ${processTape(task)}
+    <div class="focus-actions">
+      <button class="primary-button" data-task="${safe(task.taskKey)}" type="button">打开任务详情</button>
+      <button class="secondary-button" data-edit-execution="${safe(task.taskKey)}" type="button">编辑计划字段</button>
+      <span class="history-state">${execution.historyStatus === "tracking"
+        ? `事件自 ${safe(formatShortDate(execution.trackingStartedAt))} 起追踪；旧历史缺失`
+        : "历史缺失：尚未建立追踪基线"}</span>
+    </div>`;
+  bindTaskButtons(els.focusCard);
+  bindExecutionActions(els.focusCard);
+}
+
+function attentionSortScore(task) {
+  const weights = {
+    identity_conflict: 100,
+    overdue: 90,
+    due_soon: 75,
+    priority: 60,
+    checking: 50,
+    implementing: 40,
+    stale: 25
+  };
+  return (task.execution?.attentionReasons || [])
+    .reduce((total, reason) => total + (weights[reason] || 0), 0);
+}
+
+function renderAttentionQueue() {
+  const tasks = baseFilteredActiveTasks()
+    .filter(isAttention)
+    .sort((left, right) => attentionSortScore(right) - attentionSortScore(left) ||
+      String(left.execution?.dueDate || "9999-99-99")
+        .localeCompare(String(right.execution?.dueDate || "9999-99-99")));
+  els.attentionCount.textContent = tasks.length;
+  els.attentionQueue.innerHTML = tasks.length
+    ? tasks.slice(0, 6).map((task) => {
+      const reasons = attentionReasons(task);
+      const parent = isGroupedChild(task) ? taskGroupParent(task) : null;
+      return `<button class="attention-item reason-${safe(reasons[0]?.id || "default")}" data-task="${safe(task.taskKey)}" type="button">
+        <span class="attention-type">${safe(reasons[0]?.label || "需要关注")}</span>
+        ${isGroupedChild(task) ? `<span class="attention-parent-path">
+          <span class="attention-parent-branch" aria-hidden="true"></span>
+          ${parent
+            ? `<span class="attention-parent-label">父任务</span><span class="attention-parent-title" title="${safe(parent.title)}">${safe(parent.title)}</span>`
+            : '<span class="attention-parent-title">组内子任务</span>'}
+        </span>` : ""}
+        <strong>${safe(task.title)}</strong>
+        <small>${safe(task.projectName)} · ${safe(nextStage(task).label)} · ${safe(dueLabel(task.execution?.dueDate))}</small>
+        <span class="attention-item-tags">${tagChips(task, 2)}</span>
+      </button>`;
+    }).join("")
+    : `<div class="attention-empty">当前范围没有需要额外关注的任务。</div>`;
+  bindTaskButtons(els.attentionQueue);
+}
+
 function renderMetrics() {
   const active = filteredActiveTasks();
-  const allActive = activeTasks();
+  const scopedActive = baseFilteredActiveTasks();
   const archives = archivedTasks();
-  const owners = new Set(active.map((task) => task.assignee).filter(Boolean));
-  const attention = active.filter(isAttention);
+  const owners = new Set(scopedActive.map((task) => task.assignee).filter(Boolean));
+  const attention = scopedActive.filter(isAttention);
+  const view = currentExecutionView();
   els.metricActive.textContent = active.length;
-  els.metricActiveCaption.textContent = state.projectId === "all" ? "全部仓库中的进行中任务" : `${currentProject()?.name || state.projectId} 的进行中任务`;
+  els.metricActiveCaption.textContent = state.executionView === "all"
+    ? state.projectId === "all"
+      ? "全部仓库中的进行中任务"
+      : `${currentProject()?.name || state.projectId} 的进行中任务`
+    : `${view.name} · 当前组合视图`;
   const scopedArchived = state.projectId === "all"
     ? archives.length
     : archives.filter((task) => task.projectId === state.projectId).length;
   els.metricArchive.textContent = scopedArchived;
-  els.metricArchiveCaption.textContent = `${active.length} 个进行中 / 当前范围共 ${active.length + scopedArchived} 个`;
+  els.metricArchiveCaption.textContent = `${scopedActive.length} 个进行中 / 当前范围共 ${scopedActive.length + scopedArchived} 个`;
   els.metricAttention.textContent = attention.length;
   els.metricTeam.textContent = owners.size;
   els.metricTeamCaption.textContent = owners.size ? [...owners].join(" · ") : "暂无负责人";
@@ -463,13 +779,31 @@ function renderPipeline() {
       </section>`;
   }).join("");
   els.pipeline.innerHTML = tasks.length ? lanes : emptyMarkup();
+  const counts = STAGE_LANES.map((lane) =>
+    groups.filter((group) => laneForTask(group.parent) === lane.id).length
+  );
+  els.kanbanSummary.innerHTML = STAGE_LANES
+    .map((lane, index) => `<span>${safe(lane.label)} <b>${counts[index]}</b></span>`)
+    .join("");
   bindTaskButtons(els.pipeline);
+  bindExecutionActions(els.pipeline);
 }
 
-function renderTaskCard(task) {
-  return `<button class="task-card ${isAttention(task) ? "is-risk" : ""}" data-task="${safe(task.taskKey)}" type="button">
-    ${taskCardContent(task)}
-  </button>`;
+function executionEditButton(task, className = "task-edit-button") {
+  const conflict = task.executionIdentityValid === false || task.executionIdentityConflict === true;
+  const disabled = task.archived || conflict;
+  const message = conflict
+    ? "任务执行身份冲突，请修正 task.json id"
+    : task.archived ? "归档任务只读" : "编辑计划字段";
+  return `<button class="${className}" data-edit-execution="${safe(task.taskKey)}" type="button" aria-label="${safe(message)}" title="${safe(message)}" ${disabled ? "disabled" : ""}>计划</button>`;
+}
+
+function renderTaskCard(task, extraClass = "") {
+  return `<article class="task-card ${isAttention(task) ? "is-risk" : ""} ${extraClass}">
+    <button class="task-card-open" data-task="${safe(task.taskKey)}" type="button" aria-label="打开任务 ${safe(task.title)}"></button>
+    ${executionEditButton(task)}
+    <div class="task-card-content">${taskCardContent(task)}</div>
+  </article>`;
 }
 
 function taskCardContent(task) {
@@ -484,9 +818,11 @@ function taskCardContent(task) {
       <span class="task-badges">${relationRisk}<span class="priority ${safe(task.priority || "P2").toLowerCase()}">${safe(task.priority || "P2")}</span></span>
     </div>
     <h4>${safe(task.title)}</h4>
+    ${planMetaMarkup(task)}
     <div class="mini-track" aria-label="已完成 ${progress.done}/${progress.total} 个必需阶段，E2E 为可选证据">
       ${task.stages.map((stage) => `<i class="${stage.complete ? (stage.source === "manual" ? "manual" : "done") : stage.optional ? "optional" : ""}" title="${safe(stage.label)}${stage.optional ? "（可选证据）" : ""} · ${safe(stage.evidence)}"></i>`).join("")}
     </div>
+    <div class="task-attention-row">${attentionChips(task)}</div>
     <div class="task-card-foot">
       <span class="owner"><span class="avatar">${safe(initials(task.assignee))}</span>${safe(task.assignee || "未派发")}</span>
       <span>${safe(next.label)} · ${progress.percent}%</span>
@@ -495,37 +831,97 @@ function taskCardContent(task) {
 
 function renderTaskFamily(group) {
   if (group.members.length === 1) return renderTaskCard(group.parent);
-  const children = group.members.filter((task) => task.taskKey !== group.parent.taskKey);
-  const childProjects = [...new Set(children.map((task) => task.projectName))];
+  const parent = group.members.find((task) => task.groupRole === "parent");
+  if (!parent) return group.members.map((task) => renderTaskCard(task)).join("");
+  const children = group.members.filter((task) => task.taskKey !== parent.taskKey);
   return `
     <article class="task-family">
-      <div class="family-kicker">
-        <span>任务组 · ${safe(childProjects.join(" / "))}</span>
-        <b title="${group.members.length} 个任务">${group.members.length}</b>
+      <div class="family-kicker" title="父任务 · ${safe(parent.projectName)}">
+        <span class="family-kicker-label">父任务 · ${safe(parent.projectName)}</span>
+        <span class="family-child-count">${children.length} 个子任务</span>
       </div>
-      <button class="task-card is-family-parent ${isAttention(group.parent) ? "is-risk" : ""}" data-task="${safe(group.parent.taskKey)}" type="button">
-        ${taskCardContent(group.parent)}
-      </button>
-      <div class="family-children" aria-label="子任务">
-        <p>子任务 · ${children.length}</p>
-        ${children.map((task) => {
-          const next = nextStage(task);
-          const progress = taskProgress(task);
-          return `<button class="family-child" data-task="${safe(task.taskKey)}" type="button">
-            <span class="family-branch" aria-hidden="true">└</span>
-            <span class="family-child-copy">
-              <b>${safe(task.title)}</b>
-              <small>${safe(task.projectName)} · ${safe(task.status)}</small>
-            </span>
-            <span class="family-stage">${safe(next.label)} · ${progress.percent}%</span>
-          </button>`;
-        }).join("")}
+      ${renderTaskCard(parent, "is-family-parent")}
+      <div class="family-children" aria-label="${safe(parent.title)} 的子任务">
+        <p class="family-children-label">子任务</p>
+        <div class="family-child-tree">
+          ${children.map((task) => {
+            const next = nextStage(task);
+            const progress = taskProgress(task);
+            return `<div class="family-child-row">
+              <button class="family-child" data-task="${safe(task.taskKey)}" type="button">
+                <span class="family-branch" aria-hidden="true"></span>
+                <span class="family-child-copy">
+                  <b>${safe(task.title)}</b>
+                  <small>${safe(task.projectName)} · ${safe(task.status)}</small>
+                </span>
+                <span class="family-stage">${safe(next.label)} · ${progress.percent}%</span>
+              </button>
+              ${executionEditButton(task, "family-edit-button")}
+            </div>`;
+          }).join("")}
+        </div>
       </div>
     </article>`;
 }
 
+function renderTeamTask(task, { child = false } = {}) {
+  const next = nextStage(task);
+  return `<div class="team-task ${child ? "team-subtask" : ""}">
+    <button class="team-task-link" data-task="${safe(task.taskKey)}" type="button" title="${safe(task.title)}">
+      <span class="team-task-title">${safe(task.title)}</span>
+    </button>
+    <span class="stage-chip">${safe(next.label)}</span>
+    ${executionEditButton(task, "team-edit-button")}
+    <small>${safe(task.projectName)} · ${safe(task.status)}</small>
+  </div>`;
+}
+
+function renderTeamGroup(group) {
+  const members = group.members;
+  const localParent = members.find((task) => task.groupRole === "parent") || null;
+  const parent = localParent || taskGroupParent(members[0]);
+  const childCount = taskGroupChildCount(parent || members[0]);
+  // loader 会给独立任务默认 groupRole=parent；只有真实多成员或活动子任务才进入组布局。
+  const grouped = members.length > 1 || childCount > 0;
+  if (!grouped) return renderTeamTask(members[0]);
+
+  const children = parent
+    ? members.filter((task) => task.taskKey !== parent.taskKey)
+    : members;
+  let header;
+  if (localParent) {
+    header = `
+      <div class="team-group-kicker" title="父任务 · ${safe(localParent.projectName)}">
+        <span class="team-group-kicker-label">父任务 · ${safe(localParent.projectName)}</span>
+        <span class="team-child-count">${childCount} 个子任务</span>
+      </div>
+      ${renderTeamTask(localParent)}`;
+  } else if (parent) {
+    // 负责人筛选可能把父任务放在另一张卡；只展示父上下文，不伪造本地父行。
+    header = `<div class="team-parent-context" title="父任务：${safe(parent.title)} · ${safe(parent.assignee || "未派发")}">
+      <span class="team-parent-branch" aria-hidden="true"></span>
+      <span class="team-parent-label">父任务：</span>
+      <span class="team-parent-title">${safe(parent.title)}</span>
+      <small>· ${safe(parent.assignee || "未派发")}</small>
+    </div>`;
+  } else {
+    const projects = [...new Set(members.map((task) => task.projectName).filter(Boolean))];
+    header = `<div class="team-group-kicker">
+      <span class="team-group-kicker-label">组内子任务 · ${safe(projects.join(" / ") || "未归属项目")}</span>
+      <span class="team-child-count">${children.length} 个子任务</span>
+    </div>`;
+  }
+
+  return `<section class="team-group" aria-label="${safe(parent?.title ? `${parent.title} 的任务组` : "组内子任务")}">
+    ${header}
+    ${children.length ? `<div class="team-subtree" aria-label="${safe(parent?.title ? `${parent.title} 的子任务` : "组内子任务")}">
+      ${children.map((task) => renderTeamTask(task, { child: true })).join("")}
+    </div>` : ""}
+  </section>`;
+}
+
 function renderTeam() {
-  const tasks = filteredActiveTasks();
+  const tasks = baseFilteredActiveTasks();
   const grouped = new Map();
   tasks.forEach((task) => {
     const owner = task.assignee || "未派发";
@@ -547,18 +943,10 @@ function renderTeam() {
           </div>
           <div class="team-stat"><b>${ownerTasks.filter(isAttention).length}</b>需关注</div>
         </div>
-        ${ownerTasks.map((task) => {
-          const next = nextStage(task);
-          return `<div class="team-task">
-            <button data-task="${safe(task.taskKey)}" type="button" title="${safe(task.title)}">
-              ${task.groupSize > 1 ? `<span class="group-role">${task.groupRole === "parent" ? "父" : "子"}</span>` : ""}${safe(task.title)}
-            </button>
-            <span class="stage-chip">${safe(next.label)}</span>
-            <small>${safe(task.projectName)} · ${safe(task.status)}${task.groupSize > 1 ? ` · ${task.groupSize} 个任务一组` : ""}</small>
-          </div>`;
-        }).join("")}
+        ${groupActiveTasks(ownerTasks).map(renderTeamGroup).join("")}
       </article>`).join("");
   bindTaskButtons(els.team);
+  bindExecutionActions(els.team);
 }
 
 function renderArchive() {
@@ -598,11 +986,208 @@ function renderArchiveOptions() {
 
 function bindTaskButtons(root) {
   root.querySelectorAll("[data-task]").forEach((button) => {
-    button.addEventListener("click", () => {
+    const open = (event) => {
+      if (event.target.closest("[data-edit-execution]")) return;
       const task = state.board.tasks.find((candidate) => candidate.taskKey === button.dataset.task);
       if (task) openTask(task);
+    };
+    button.addEventListener("click", open);
+    if (button.getAttribute("role") === "button") {
+      button.addEventListener("keydown", (event) => {
+        if (event.target !== button || !["Enter", " "].includes(event.key)) return;
+        event.preventDefault();
+        open(event);
+      });
+    }
+  });
+}
+
+function bindExecutionActions(root) {
+  root.querySelectorAll("[data-edit-execution]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const task = taskByKey(button.dataset.editExecution);
+      if (task) openExecutionDialog(task);
     });
   });
+}
+
+function setExecutionMessage(text, isError = false) {
+  els.executionMessage.hidden = false;
+  els.executionMessage.textContent = text;
+  els.executionMessage.classList.toggle("is-error", isError);
+}
+
+function openExecutionDialog(task) {
+  if (!task) return;
+  if (task.archived) {
+    showError("归档任务只读，不能修改计划字段");
+    return;
+  }
+  if (task.executionIdentityValid === false || task.executionIdentityConflict === true) {
+    showError("任务执行身份冲突，请修正 task.json id");
+    return;
+  }
+  state.editingExecutionTaskKey = task.taskKey;
+  document.querySelector("#execution-dialog-title").textContent = task.title;
+  document.querySelector("#execution-due-date").value = task.execution?.dueDate || "";
+  document.querySelector("#execution-milestone").value = task.execution?.milestone || "";
+  document.querySelector("#execution-tags").value = taskTagNames(task).join(", ");
+  els.executionMessage.hidden = true;
+  els.executionMessage.classList.remove("is-error");
+  els.executionSubmit.disabled = false;
+  els.executionDialog.showModal();
+  requestAnimationFrame(() => document.querySelector("#execution-due-date").focus());
+}
+
+async function submitExecution(event) {
+  event.preventDefault();
+  if (state.savingExecution) return;
+  const task = taskByKey(state.editingExecutionTaskKey);
+  if (!task) {
+    setExecutionMessage("任务已不在当前看板中，请重新扫描。", true);
+    return;
+  }
+  let tags;
+  try {
+    tags = normalizeTagsInput(document.querySelector("#execution-tags").value, {
+      rejectEmpty: true
+    });
+  } catch (error) {
+    setExecutionMessage(error.message, true);
+    document.querySelector("#execution-tags").focus();
+    return;
+  }
+  const wasDetailOpen = els.taskDialog.open;
+  state.savingExecution = true;
+  els.executionSubmit.disabled = true;
+  els.executionSubmit.textContent = "正在保存…";
+  setExecutionMessage("正在写入看板 SQLite；目标仓库 task.json 不会变化。");
+  try {
+    await api("/api/tasks/execution", "PUT", {
+      projectId: task.projectId,
+      taskPath: task.relativeDir,
+      dueDate: document.querySelector("#execution-due-date").value || null,
+      milestone: document.querySelector("#execution-milestone").value,
+      tags
+    });
+    const loaded = await loadBoard();
+    if (!loaded) throw new Error("计划字段已保存，但看板刷新失败");
+    els.executionDialog.close();
+    if (wasDetailOpen) {
+      const fresh = taskByKey(task.taskKey);
+      if (fresh) openTask(fresh);
+    }
+  } catch (error) {
+    setExecutionMessage(error.message, true);
+  } finally {
+    state.savingExecution = false;
+    els.executionSubmit.disabled = false;
+    els.executionSubmit.textContent = "保存计划字段";
+  }
+}
+
+function renderViewStageOptions() {
+  document.querySelector("#view-stage-options").innerHTML = FILTER_STAGES.map((stage) => `
+    <label><input type="checkbox" name="view-stage" value="${safe(stage.id)}" /> ${safe(stage.label)}</label>
+  `).join("");
+}
+
+function setViewMessage(text, isError = false) {
+  els.viewMessage.hidden = false;
+  els.viewMessage.textContent = text;
+  els.viewMessage.classList.toggle("is-error", isError);
+}
+
+function openViewDialog() {
+  els.viewForm.reset();
+  els.viewMessage.hidden = true;
+  els.viewMessage.classList.remove("is-error");
+  els.viewSubmit.disabled = false;
+  els.viewDialog.showModal();
+  requestAnimationFrame(() => document.querySelector("#view-name").focus());
+}
+
+function checkedValues(name) {
+  return [...document.querySelectorAll(`input[name="${name}"]:checked`)]
+    .map((input) => input.value);
+}
+
+function optionalInteger(input) {
+  const value = input.value.trim();
+  if (!value) return undefined;
+  const number = Number(value);
+  if (!Number.isInteger(number)) throw new Error(input.labels?.[0]?.textContent?.trim() || "请输入整数");
+  return number;
+}
+
+async function submitView(event) {
+  event.preventDefault();
+  if (state.savingView) return;
+  const name = document.querySelector("#view-name").value.trim();
+  let tags;
+  try {
+    tags = normalizeTagsInput(document.querySelector("#view-tags").value);
+  } catch (error) {
+    setViewMessage(error.message, true);
+    return;
+  }
+  const filter = {
+    priorities: checkedValues("view-priority"),
+    stages: checkedValues("view-stage"),
+    tags
+  };
+  try {
+    const dueWithinDays = optionalInteger(document.querySelector("#view-due-days"));
+    const staleDays = optionalInteger(document.querySelector("#view-stale-days"));
+    if (dueWithinDays !== undefined) filter.dueWithinDays = dueWithinDays;
+    if (staleDays !== undefined) filter.staleDays = staleDays;
+  } catch (error) {
+    setViewMessage(error.message, true);
+    return;
+  }
+  if (!name) {
+    setViewMessage("视图名称不能为空", true);
+    document.querySelector("#view-name").focus();
+    return;
+  }
+  if (!filter.priorities.length) delete filter.priorities;
+  if (!filter.stages.length) delete filter.stages;
+  if (!filter.tags.length) delete filter.tags;
+  if (!Object.keys(filter).length) {
+    setViewMessage("至少勾选或填写一个筛选条件", true);
+    return;
+  }
+
+  state.savingView = true;
+  els.viewSubmit.disabled = true;
+  els.viewSubmit.textContent = "正在保存…";
+  setViewMessage("正在保存组合筛选条件…");
+  try {
+    const result = await api("/api/saved-views", "POST", { name, filter });
+    els.viewDialog.close();
+    state.executionView = result.view.id;
+    await loadBoard();
+  } catch (error) {
+    setViewMessage(error.message, true);
+  } finally {
+    state.savingView = false;
+    els.viewSubmit.disabled = false;
+    els.viewSubmit.textContent = "保存组合视图";
+  }
+}
+
+async function deleteSavedView(id) {
+  const view = state.board?.savedViews?.find((candidate) => candidate.id === id);
+  if (!view) return;
+  if (!window.confirm(`删除组合视图“${view.name}”？内置视图不会被修改。`)) return;
+  try {
+    await api("/api/saved-views", "DELETE", { id });
+    if (state.executionView === id) state.executionView = "all";
+    await loadBoard();
+  } catch (error) {
+    showError(error.message);
+  }
 }
 
 function emptyMarkup(message = "没有符合当前筛选的任务") {
@@ -631,7 +1216,6 @@ function openTask(task) {
   });
   renderTaskDetail(task);
   if (!els.taskDialog.open) els.taskDialog.showModal();
-  bindStageActions(task);
 }
 
 async function loadTaskDetail(task) {
@@ -640,6 +1224,70 @@ async function loadTaskDetail(task) {
     projectId: task.projectId,
     taskPath: task.relativeDir
   });
+}
+
+const EVENT_TYPE_LABELS = {
+  tracking_started: "开始追踪",
+  stage_observed: "扫描观察",
+  stage_manual_confirmed: "人工确认阶段",
+  task_plan_updated: "计划字段更新"
+};
+
+function eventDescription(event) {
+  const payload = event.payload || {};
+  if (event.type === "tracking_started") {
+    return `建立追踪基线；此前历史不补造。当前阶段 ${safe(payload.after?.derivedStage || "unknown")}`;
+  }
+  if (event.type === "stage_observed") {
+    return `扫描观察：${safe(payload.before?.derivedStage || "unknown")} → ${safe(payload.after?.derivedStage || "unknown")}`;
+  }
+  if (event.type === "stage_manual_confirmed") {
+    return `人工记录：${safe(payload.before?.stage || "无")} → ${safe(payload.after?.stage || "unknown")}`;
+  }
+  if (event.type === "task_plan_updated") {
+    const beforeTags = payload.before?.tags || [];
+    const afterTags = payload.after?.tags || [];
+    return `截止 ${safe(payload.after?.dueDate || "空")}；里程碑 ${safe(payload.after?.milestone || "空")}；标签 ${beforeTags.length} → ${afterTags.length}`;
+  }
+  return safe(event.type);
+}
+
+function executionDetailMarkup(task) {
+  const execution = task.execution || {};
+  const events = execution.events || [];
+  const conflict = task.executionIdentityValid === false || task.executionIdentityConflict;
+  const canEdit = !task.archived && !conflict;
+  const history = execution.historyStatus === "tracking"
+    ? `追踪自 ${formatEventTime(execution.trackingStartedAt) || "未知时间"}；启用前的阶段历史缺失，不以文件修改时间补造。`
+    : "历史缺失：尚未建立追踪基线。";
+  return `<section class="execution-detail">
+    <div class="execution-detail-head">
+      <h3>计划与注意力</h3>
+      <button class="secondary-button small-button" data-edit-execution="${safe(task.taskKey)}" type="button" ${canEdit ? "" : "disabled"}>
+        编辑计划
+      </button>
+    </div>
+    <div class="plan-value-grid">
+      <div><small>截止</small><strong>${safe(dueLabel(execution.dueDate))}</strong></div>
+      <div><small>里程碑</small><strong>${safe(execution.milestone || "未设置")}</strong></div>
+      <div><small>标签</small><strong>${tagChips(task, 10) || "未设置"}</strong></div>
+    </div>
+    <div class="detail-attention-row">${attentionChips(task, 10) || '<span class="attention-chip">当前无注意力信号</span>'}</div>
+    <p class="history-note">${safe(history)}</p>
+    ${conflict ? '<p class="identity-conflict-note">执行身份冲突：同一 projectId 下存在重复 task.json id，扩展数据写入已禁用。</p>' : ""}
+    <h3 class="timeline-title">事件时间线</h3>
+    <div class="event-timeline">
+      ${events.length ? events.slice(0, 20).map((event) => `<article>
+        <time>${safe(formatEventTime(event.occurredAt))}</time>
+        <div>
+          <strong>${safe(EVENT_TYPE_LABELS[event.type] || event.type)}</strong>
+          <p>${eventDescription(event)}</p>
+          <small>${safe(event.actor || "system")} · ${safe(event.source)} · 操作 ${safe(String(event.correlationId || "").slice(0, 8))}</small>
+        </div>
+      </article>`).join("") : `<p class="event-empty">尚无事件；下一次扫描会建立追踪基线。</p>`}
+    </div>
+    ${execution.eventTotal > events.length ? `<p class="event-limit">仅显示最近 ${events.length} 条，共 ${execution.eventTotal} 条。</p>` : ""}
+  </section>`;
 }
 
 function renderTaskDetail(task) {
@@ -721,6 +1369,7 @@ function renderTaskDetail(task) {
   document.querySelector("#detail-summary").innerHTML = `
     <section><h3>目标</h3><p>${safe(task.description || "没有任务描述")}</p></section>
     <section><h3>当前卡点</h3><p>${safe(currentStage.label)}：${safe(currentStage.evidence || "等待人工确认")}</p></section>
+    ${executionDetailMarkup(task)}
     ${evidenceSummary}
     ${relationBlock}
     <section><h3>规划证据</h3><p>${safe(prdInfo)}</p></section>
@@ -728,17 +1377,25 @@ function renderTaskDetail(task) {
     <section><h3>任务产物</h3>${artifactMarkup}</section>
     <section><h3>写入边界</h3><p>任务状态来自 task.json，开发进度也会读取实施/检查报告；E2E 是可选的补充证据，不阻塞规范回写与收尾。归档后任务会同时变为 completed 并离开当前队列。</p></section>`;
   document.querySelector("#stage-detail").innerHTML = task.stages.map((stage) => `
-    <div class="stage-row ${stage.complete ? (stage.source === "manual" ? "manual" : "done") : stage.optional ? "optional" : ""}">
+    <button class="stage-row ${stage.complete ? (stage.source === "manual" ? "manual" : "done") : stage.optional ? "optional" : ""}" type="button" ${task.archived ? "disabled" : ""}>
       <span class="stage-number">${stage.index}</span>
       <div><strong>${safe(stage.label)}</strong><p>${safe(stage.evidence || "等待执行")}</p></div>
       <span class="stage-source ${stage.source === "manual" ? "manual-source" : ""}">${safe(stageSourceLabel(stage))}<br><small>${safe(stageAdvice(task, stage))}</small></span>
-    </div>`).join("");
+    </button>`).join("");
   bindTaskButtons(document.querySelector("#detail-summary"));
   bindArtifactButtons(document.querySelector("#detail-summary"));
+  bindExecutionActions(document.querySelector("#detail-summary"));
+  bindStageActions(task);
   renderAssigneeOptions(task);
   document.querySelector("#assign-button").style.display = task.archived ? "none" : "";
   document.querySelector(".assign-inline label").style.display = task.archived ? "none" : "";
   document.querySelector("#assignee-input").style.display = task.archived ? "none" : "";
+  const detailEdit = document.querySelector("#detail-edit-execution");
+  detailEdit.hidden = task.archived;
+  detailEdit.disabled = task.executionIdentityValid === false || task.executionIdentityConflict === true;
+  detailEdit.title = detailEdit.disabled
+    ? "任务执行身份冲突，请修正 task.json id"
+    : "编辑截止、里程碑和标签";
 }
 
 function renderAssigneeOptions(task) {
@@ -823,11 +1480,16 @@ function hideError() {
 }
 
 async function api(url, method = "GET", body) {
-  const response = await fetch(url, {
-    method,
-    headers: body ? { "content-type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers: body ? { "content-type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined
+    });
+  } catch {
+    throw new Error("无法连接看板服务，请确认服务已启动");
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `请求失败: ${response.status}`);
   return payload;
@@ -945,6 +1607,9 @@ function renderAll() {
   if (!state.board) return;
   renderProjects();
   renderMetrics();
+  renderExecutionViews();
+  renderFocus();
+  renderAttentionQueue();
   renderPipeline();
   renderTeam();
   renderArchiveOptions();
@@ -1080,12 +1745,18 @@ document.querySelectorAll(".segment").forEach((button) => {
     });
     renderMetrics();
     renderPipeline();
+    renderExecutionViews();
+    renderFocus();
+    renderAttentionQueue();
   });
 });
 
 els.search.addEventListener("input", () => {
   state.search = els.search.value.trim();
   renderMetrics();
+  renderExecutionViews();
+  renderFocus();
+  renderAttentionQueue();
   renderPipeline();
   renderTeam();
 });
@@ -1117,9 +1788,20 @@ document.querySelectorAll("[data-close-create]").forEach((button) => {
 document.querySelectorAll("[data-close-projects]").forEach((button) => {
   button.addEventListener("click", () => els.projectDialog.close());
 });
+document.querySelectorAll("[data-close-execution]").forEach((button) => {
+  button.addEventListener("click", () => els.executionDialog.close());
+});
+document.querySelectorAll("[data-close-view]").forEach((button) => {
+  button.addEventListener("click", () => els.viewDialog.close());
+});
 document.querySelector("#assign-button").addEventListener("click", assignSelected);
+document.querySelector("#detail-edit-execution").addEventListener("click", () => {
+  if (state.selectedTask) openExecutionDialog(state.selectedTask);
+});
 document.querySelector("#assignee-input").addEventListener("change", updateAssignButtonState);
 document.querySelector("#create-form").addEventListener("submit", submitCreate);
+els.executionForm.addEventListener("submit", submitExecution);
+els.viewForm.addEventListener("submit", submitView);
 document.querySelector("#create-project").addEventListener("change", updateCreateOptions);
 document.querySelector("#create-title").addEventListener("input", syncCreateSlugFromTitle);
 document.querySelector("#create-slug").addEventListener("input", (event) => {
@@ -1130,4 +1812,5 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") scheduleStatusPoll(0);
 });
 
+renderViewStageOptions();
 loadBoard();

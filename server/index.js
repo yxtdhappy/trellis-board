@@ -4,12 +4,21 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { mergeTaskDetail, readProjectMembers, scanTask } from "./loader.js";
-import { getManualRecord, setManualStage } from "./metadata.js";
+import { getDefaultDatabase } from "./database.js";
+import {
+  STAGE_IDS,
+  setManualStage
+} from "./metadata.js";
 import { assignTask, createTask } from "./actions.js";
 import { createRepositoryStore, getRepositories } from "./repositories.js";
 import { createPersistenceStore } from "./persistence.js";
 import { createWatchRuntime } from "./watcher.js";
+import { createExecutionStore } from "./execution-store.js";
+import {
+  projectBoardExecution,
+  projectTaskDetailExecution
+} from "./execution-projection.js";
+import { resolveTaskLocation } from "./task-location.js";
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const appDir = path.resolve(serverDir, "..");
@@ -17,9 +26,11 @@ const publicDir = path.join(appDir, "public");
 const workerFile = path.join(serverDir, "scan-worker.js");
 const folderPickerFile = path.join(serverDir, "pick-folders.ps1");
 const port = Number(process.env.PORT || 4317);
-const SCAN_SCHEMA_VERSION = 8;
+const SCAN_SCHEMA_VERSION = 9;
+const database = getDefaultDatabase();
 const persistence = createPersistenceStore();
 const repositoryStore = createRepositoryStore();
+const executionStore = createExecutionStore({ db: database, stageIds: STAGE_IDS });
 let boardCache = null;
 let inflightScan = null;
 let queuedRefresh = null;
@@ -180,10 +191,21 @@ function refreshBoardFromFiles(reason = "manual", event = null, options = {}) {
         refreshQueuedReason: null,
         lastRefreshError: null
       });
+      const previousBoard = boardCache || readScanCache();
       const result = await runScanWorker(activeOptions);
       board = result.board;
+      const scannedAt = new Date().toISOString();
+      persistence.writeScanCache(board, SCAN_SCHEMA_VERSION, {
+        beforeCommit: () => executionStore.recordScanObservationsInTransaction({
+          tasks: board.tasks || [],
+          previousTasks: activeOptions.suppressStageObservation
+            ? []
+            : previousBoard?.tasks || [],
+          occurredAt: scannedAt,
+          actor: "system"
+        })
+      });
       boardCache = board;
-      writeScanCache(board);
       writeBoardState({
         lastRefreshAt: board.generatedAt,
         refreshFinishedAt: new Date().toISOString(),
@@ -379,6 +401,13 @@ function readScanCache() {
   return persistence.readScanCache(SCAN_SCHEMA_VERSION);
 }
 
+function projectBoardWithExecution(board, source) {
+  return withRefreshState(
+    projectBoardExecution(board, executionStore.listSavedViews(), database),
+    source
+  );
+}
+
 function withRefreshState(board, source) {
   const boardState = readBoardState();
   return {
@@ -400,7 +429,7 @@ function withRefreshState(board, source) {
 
 async function getBoardWithBackgroundRefresh(forceRefresh = false) {
   if (forceRefresh) {
-    return withRefreshState(
+    return projectBoardWithExecution(
       await refreshBoardFromFiles("manual", null, {
         refreshRepositoryMetadata: true,
         forceFull: true
@@ -409,11 +438,13 @@ async function getBoardWithBackgroundRefresh(forceRefresh = false) {
     );
   }
   const cached = readScanCache();
-  if (!cached) return withRefreshState(await refreshBoardFromFiles(), "fresh");
+  if (!cached) {
+    return projectBoardWithExecution(await refreshBoardFromFiles(), "fresh");
+  }
   if (!boardCache && cached.tasks?.length) {
     boardCache = cached;
   }
-  return withRefreshState(cached, "cache");
+  return projectBoardWithExecution(cached, "cache");
 }
 
 function readBoardState() {
@@ -424,50 +455,26 @@ function writeBoardState(patch) {
   persistence.writeBoardState(patch);
 }
 
-function writeScanCache(board) {
-  persistence.writeScanCache(board, SCAN_SCHEMA_VERSION);
+function requireWritableExecution(resolved) {
+  if (resolved.task.archived) {
+    throw new Error("归档任务只读，不能修改执行数据");
+  }
+  if (resolved.identityConflict || !resolved.task.executionIdentityValid) {
+    throw new Error("任务执行身份冲突，请修正 task.json id");
+  }
 }
 
 function findTask(payload) {
-  const projectId = String(payload.projectId || "");
-  const taskPath = String(payload.taskPath || "");
-  const project = getRepositories().find((repo) => repo.id === projectId);
-  if (!project) throw new Error("仓库不在白名单中");
-  const fullPath = path.resolve(project.path, taskPath);
-  const tasksRoot = path.resolve(project.path, ".trellis", "tasks");
-  const relativeTaskPath = path.relative(tasksRoot, fullPath);
-  if (!relativeTaskPath || relativeTaskPath.startsWith("..") || path.isAbsolute(relativeTaskPath)) {
-    throw new Error("任务必须位于目标仓库的 .trellis/tasks 下");
-  }
-  const relativeDir = path.relative(project.path, fullPath).replaceAll("\\", "/");
-  const archiveRoot = path.resolve(tasksRoot, "archive");
-  const relativeArchivePath = path.relative(archiveRoot, fullPath);
-  const archived = Boolean(relativeArchivePath) &&
-    !relativeArchivePath.startsWith("..") &&
-    !path.isAbsolute(relativeArchivePath);
-  const task = scanTask(project, fullPath, {
-    archived,
-    includeContent: true
+  const resolved = resolveCurrentTask(payload);
+  return projectTaskDetailExecution(resolved.task, database);
+}
+
+function resolveCurrentTask(payload) {
+  return resolveTaskLocation(payload, {
+    repositories: getRepositories(),
+    currentBoard: boardCache || readScanCache(),
+    db: database
   });
-  if (!task) throw new Error("未找到任务");
-  const listTask = (boardCache?.tasks || readScanCache()?.tasks || [])
-    .find((candidate) => candidate.taskKey === task.taskKey);
-  const detailedTask = mergeTaskDetail(
-    task,
-    listTask,
-    getManualRecord(project.id, task.relativeDir)
-  );
-  const projectMembers = [...new Set([
-    ...readProjectMembers(project.path),
-    task.assignee,
-    task.creator
-  ].filter(Boolean))].sort((left, right) => left.localeCompare(right, "zh-CN"));
-  return {
-    ...detailedTask,
-    projectMembers,
-    artifacts: task.artifacts,
-    summary: task.summary
-  };
 }
 
 async function handleApi(request, response, url) {
@@ -556,6 +563,39 @@ async function handleApi(request, response, url) {
     sendJson(response, 200, findTask(payload));
     return;
   }
+  if (request.method === "PUT" && url.pathname === "/api/tasks/execution") {
+    const payload = await readJsonBody(request);
+    const resolved = resolveCurrentTask(payload);
+    requireWritableExecution(resolved);
+    const result = executionStore.updatePlan(
+      resolved.task.executionTaskKey,
+      payload,
+      resolved.actor
+    );
+    sendJson(response, 200, {
+      message: result.changed ? "计划字段已保存" : "计划字段没有变化",
+      ...result
+    });
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/saved-views") {
+    const payload = await readJsonBody(request);
+    const view = executionStore.createSavedView(payload);
+    sendJson(response, 201, { message: "组合视图已保存", view });
+    return;
+  }
+  if (request.method === "PUT" && url.pathname === "/api/saved-views") {
+    const payload = await readJsonBody(request);
+    const view = executionStore.updateSavedView(payload);
+    sendJson(response, 200, { message: "组合视图已更新", view });
+    return;
+  }
+  if (request.method === "DELETE" && url.pathname === "/api/saved-views") {
+    const payload = await readJsonBody(request);
+    const view = executionStore.deleteSavedView(payload.id);
+    sendJson(response, 200, { message: "组合视图已删除", view });
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/tasks") {
     const payload = await readJsonBody(request);
     const result = await createTask(payload);
@@ -577,8 +617,21 @@ async function handleApi(request, response, url) {
   }
   if (request.method === "PUT" && url.pathname === "/api/tasks/stage") {
     const payload = await readJsonBody(request);
-    const stage = setManualStage(payload.projectId, payload.taskPath, payload.stage);
-    boardCache = null;
+    const resolved = resolveCurrentTask(payload);
+    requireWritableExecution(resolved);
+    const stage = setManualStage(
+      resolved.project.id,
+      resolved.task.relativeDir,
+      payload.stage,
+      database,
+      {
+        executionTaskKey: resolved.task.executionTaskKey,
+        actor: resolved.actor
+      }
+    );
+    await refreshBoardFromFiles("manual-stage", null, {
+      suppressStageObservation: true
+    });
     sendJson(response, 200, { message: "流程检查点已记录", stage });
     return;
   }

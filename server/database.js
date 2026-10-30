@@ -12,9 +12,10 @@ import {
   stateFile
 } from "./config.js";
 
-export const DATABASE_SCHEMA_VERSION = 1;
+export const DATABASE_SCHEMA_VERSION = 2;
 
 const LEGACY_IMPORT_KEY = "legacy_json_imported_v1";
+const EXECUTION_EVENTS_STARTED_KEY = "execution_events_started_at";
 let defaultDatabase = null;
 
 function errorMessage(error) {
@@ -49,52 +50,141 @@ function writeMeta(db, key, value) {
   `).run(key, String(value), new Date().toISOString());
 }
 
+const BASE_SCHEMA_V1_SQL = `
+  CREATE TABLE IF NOT EXISTS app_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS repositories (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    path_key TEXT NOT NULL UNIQUE,
+    position INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS task_stage (
+    task_key TEXT PRIMARY KEY,
+    stage TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS scan_cache (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    schema_version INTEGER NOT NULL,
+    saved_at TEXT NOT NULL,
+    board_json TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS board_state (
+    key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+`;
+
+const SCHEMA_V2_SQL = `
+  CREATE TABLE IF NOT EXISTS task_execution (
+    execution_task_key TEXT PRIMARY KEY,
+    due_date TEXT,
+    milestone TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS task_tag (
+    execution_task_key TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (execution_task_key, tag)
+  );
+
+  CREATE TABLE IF NOT EXISTS saved_view (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    filter_json TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS task_event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_task_key TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    actor TEXT,
+    correlation_id TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    reversible INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE INDEX IF NOT EXISTS task_tag_lookup
+    ON task_tag(tag, execution_task_key);
+  CREATE INDEX IF NOT EXISTS saved_view_order
+    ON saved_view(position, id);
+  CREATE INDEX IF NOT EXISTS task_event_timeline
+    ON task_event(execution_task_key, occurred_at, id);
+  CREATE INDEX IF NOT EXISTS task_event_correlation
+    ON task_event(correlation_id);
+`;
+
 function ensureSchema(db) {
   withTransaction(db, () => {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS app_meta (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS repositories (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        path TEXT NOT NULL,
-        path_key TEXT NOT NULL UNIQUE,
-        position INTEGER NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS task_stage (
-        task_key TEXT PRIMARY KEY,
-        stage TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS scan_cache (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        schema_version INTEGER NOT NULL,
-        saved_at TEXT NOT NULL,
-        board_json TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS board_state (
-        key TEXT PRIMARY KEY,
-        value_json TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-    `);
-
+    db.exec(BASE_SCHEMA_V1_SQL);
     const schemaVersion = readMeta(db, "schema_version");
+    const now = new Date().toISOString();
     if (schemaVersion == null) {
+      db.exec(SCHEMA_V2_SQL);
+      writeMeta(db, EXECUTION_EVENTS_STARTED_KEY, now);
       writeMeta(db, "schema_version", DATABASE_SCHEMA_VERSION);
-    } else if (Number(schemaVersion) !== DATABASE_SCHEMA_VERSION) {
-      throw new Error(`不支持的数据库 schema 版本: ${schemaVersion}`);
+      return;
     }
+
+    const numericVersion = Number(schemaVersion);
+    if (numericVersion === 1) {
+      db.exec(SCHEMA_V2_SQL);
+      if (readMeta(db, EXECUTION_EVENTS_STARTED_KEY) == null) {
+        writeMeta(db, EXECUTION_EVENTS_STARTED_KEY, now);
+      }
+      writeMeta(db, "schema_version", DATABASE_SCHEMA_VERSION);
+      return;
+    }
+    if (numericVersion === DATABASE_SCHEMA_VERSION) {
+      db.exec(SCHEMA_V2_SQL);
+      if (readMeta(db, EXECUTION_EVENTS_STARTED_KEY) == null) {
+        writeMeta(db, EXECUTION_EVENTS_STARTED_KEY, now);
+      }
+      return;
+    }
+    throw new Error(`不支持的数据库 schema 版本: ${schemaVersion}`);
   });
+}
+
+function backupPathFor(filePath) {
+  const base = `${filePath}.v1-backup`;
+  if (!fs.existsSync(base)) return base;
+  let suffix = 1;
+  while (fs.existsSync(`${base}.${suffix}`)) suffix += 1;
+  return `${base}.${suffix}`;
+}
+
+function backupV1Database(db, databaseFile) {
+  const hasMeta = db.prepare(`
+    SELECT 1
+    FROM sqlite_master
+    WHERE type = 'table' AND name = 'app_meta'
+  `).get();
+  if (!hasMeta || Number(readMeta(db, "schema_version")) !== 1) return null;
+  const backupFile = backupPathFor(databaseFile);
+  const escapedBackupFile = backupFile.replaceAll("'", "''");
+  db.exec(`VACUUM INTO '${escapedBackupFile}'`);
+  return backupFile;
 }
 
 function importRepositories(db, legacyFile, fallbackRepositories, logger) {
@@ -233,6 +323,7 @@ export function openDatabase({
     db.exec("PRAGMA busy_timeout = 5000");
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA synchronous = NORMAL");
+    if (databaseFile !== ":memory:") backupV1Database(db, databaseFile);
     ensureSchema(db);
     importLegacyData(db, {
       repositoriesFile,

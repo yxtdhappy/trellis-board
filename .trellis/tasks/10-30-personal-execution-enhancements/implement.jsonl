@@ -1,0 +1,3 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Personal execution features cross SQLite persistence, HTTP contracts, scanner projections and frontend state."}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"Board-owned metadata and event history must remain separate from Trellis task files and scan state."}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"Saved views, task metadata and blocker indicators must follow the existing native frontend rendering and polling model."}
