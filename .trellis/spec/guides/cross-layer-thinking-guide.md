@@ -17,8 +17,8 @@
 ```text
 public/app.js api()
   -> server/index.js 路由
-  -> server/actions.js 或 server/metadata.js
-  -> 目标仓库 task.json / 本应用 SQLite task_stage
+  -> server/actions.js / metadata.js / execution-store.js
+  -> 目标仓库 task.json / 本应用 SQLite task_stage、task_execution、task_tag、saved_view、task_event
   -> watcher 防抖、排队、重新扫描
   -> 前端状态轮询并加载新看板
 ```
@@ -42,8 +42,10 @@ public/app.js api()
 
 - 仓库身份来自 SQLite `repositories.id`，扫描结果中的 `projectId` 使用该值。
 - `relativeDir` 是相对白名单仓库根的路径，正常任务以 `.trellis/tasks/` 开头，归档任务还包含 `archive/`。
-- 任务列表身份 `taskKey` 为 `${projectId}::${relativeDir}`。
-- API 字段名并不统一：创建和负责人更新使用 `repositoryId`，详情与人工阶段使用 `projectId`；任务定位字段 `taskDir` / `taskPath` 都承载上述 `relativeDir`，不是相对 `.trellis/tasks` 的短路径。后端消费定位字段时必须解析到白名单仓库并确认仍在任务根内；当前人工阶段接口尚未执行这层校验，详见后端 HTTP 规范。
+- 任务列表身份 `taskKey` 为 `${projectId}::${relativeDir}`，用于当前路径定位；`executionTaskKey` 为 `${projectId}::${task.id || dirName}`，用于归档后仍关联计划字段、标签和事件。两者不能混用。
+- 同一项目内重复 `executionTaskKey` 时任务仍可见，但必须标记 `executionIdentityValid=false`、隐藏扩展数据并拒绝计划或人工阶段写入。
+- 有 board 快照时，若同一 `taskKey` 在磁盘最新扫描出的 `executionTaskKey` 与快照不同，或快照外的新路径认领了另一个任务已有的身份，均视为身份漂移并拒绝写扩展数据，直到刷新快照；新身份可能已属于另一任务，不能直接复用其计划字段或事件。
+- API 字段名并不统一：创建和负责人更新使用 `repositoryId`，详情、计划字段与人工阶段使用 `projectId`；任务定位字段 `taskDir` / `taskPath` 都承载上述 `relativeDir`，不是相对 `.trellis/tasks` 的短路径。后端消费定位字段时必须解析到白名单仓库并确认仍在任务根内，新增任务写接口复用 `resolveTaskLocation()`。
 - 仓库配置和监听事件把路径分隔符统一为 `/`；Node 文件操作前再用 `path.resolve()` 得到本机路径。
 - 详情请求合并列表任务和最新磁盘扫描结果时，仍以 `taskKey` 匹配。
 
@@ -51,7 +53,7 @@ public/app.js api()
 
 ### 列表与详情
 
-`GET /api/board` 返回列表投影，`toTaskListItem()` 明确挑选字段并移除产物正文，避免把大段 Markdown 放入首屏响应。[public/app.js](../../../public/app.js) 点击任务后再调用 `/api/task` 获取详情。
+`GET /api/board` 返回列表投影，`toTaskListItem()` 明确挑选字段并移除产物正文；`projectBoardExecution()` 再批量叠加轻量计划摘要和注意力原因，不查询事件正文。列表响应不得包含 `artifacts` 或 `execution.events`。[public/app.js](../../../public/app.js) 点击任务后再调用 `/api/task` 获取完整产物和最近事件。
 
 修改任务字段时先判断它属于：
 
@@ -68,7 +70,7 @@ public/app.js api()
 
 ### 扫描缓存版本
 
-[server/index.js](../../../server/index.js) 的 `SCAN_SCHEMA_VERSION` 当前为 `8`。只要 board 输出形状发生不兼容变化，就递增该值，让 SQLite `scan_cache` 行失效。只改内部实现、不改变持久化输出形状时无需递增。
+[server/index.js](../../../server/index.js) 的 `SCAN_SCHEMA_VERSION` 当前为 `9`。只要 board 输出形状发生不兼容变化，就递增该值，让 SQLite `scan_cache` 行失效。只改内部实现、不改变持久化输出形状时无需递增。
 
 ## 反向链路检查
 

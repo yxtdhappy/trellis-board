@@ -29,7 +29,10 @@ import assert from "node:assert/strict";
 | [server/persistence.js](../../../server/persistence.js) | 缓存 schema 失效、看板状态保留 `null` 和多字段更新 |
 | [server/actions.js](../../../server/actions.js) | 无效输入在调用 `task.py` 前失败 |
 | [server/watcher.js](../../../server/watcher.js) | 路径过滤、真实文件事件、超时和关闭 |
-| 前端纯模块 | Markdown 安全、slug、归档排序 |
+| [server/execution-store.js](../../../server/execution-store.js) | 计划字段校验、标签原子替换、保存视图、扫描事件和事务回滚 |
+| [server/execution-projection.js](../../../server/execution-projection.js) | 截止/停滞注意力、身份冲突隐藏和 Board 批量投影 |
+| [server/task-location.js](../../../server/task-location.js) | 白名单、任务根、真实路径和身份冲突定位 |
+| 前端纯模块 | Markdown 安全、slug、归档排序、组合筛选 |
 
 `server/index.js` 的 HTTP 路由没有独立自动测试套件。修改 API、静态资源、刷新队列或 Worker 协议时，除 `npm test` 外还要启动真实服务并用实际 HTTP 请求和页面操作验证。
 
@@ -59,4 +62,6 @@ import assert from "node:assert/strict";
 - [ ] 新扫描证据已进入缓存签名，相关缓存能失效。
 - [ ] 阶段或父子关系变化同步了所有消费者。
 - [ ] 不兼容 board 输出已更新 `SCAN_SCHEMA_VERSION`。
+- [ ] 计划字段、标签或人工阶段失败时没有部分写入，事件与投影处于同一事务。
+- [ ] 首次追踪和身份冲突变化不会补造扫描阶段事件。
 - [ ] 新增分支有 Node 测试；HTTP/UI 改动有真实请求和浏览器验收。

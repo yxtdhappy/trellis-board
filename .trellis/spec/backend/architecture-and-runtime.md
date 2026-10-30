@@ -5,10 +5,13 @@
 | 模块 | 职责 |
 | --- | --- |
 | [server/config.js](../../../server/config.js) | 应用目录、SQLite 与旧 JSON 路径、默认仓库、仓库路径规范化 |
-| [server/database.js](../../../server/database.js) | `node:sqlite` 连接、PRAGMA、schema v1、事务辅助和旧 JSON 一次性迁移 |
+| [server/database.js](../../../server/database.js) | `node:sqlite` 连接、PRAGMA、schema v1 -> v2 迁移、事务辅助和旧 JSON 一次性迁移 |
 | [server/repositories.js](../../../server/repositories.js) | SQLite 白名单增删、ID 生成、路径规范化和显示顺序 |
 | [server/metadata.js](../../../server/metadata.js) | 13 个阶段的合法 ID、SQLite 人工阶段存储 |
 | [server/persistence.js](../../../server/persistence.js) | SQLite 扫描缓存和看板状态 facade |
+| [server/task-location.js](../../../server/task-location.js) | 白名单任务定位、真实路径校验、身份冲突检查 |
+| [server/execution-store.js](../../../server/execution-store.js) | 计划字段、标签、保存视图和不可变事件事务 |
+| [server/execution-projection.js](../../../server/execution-projection.js) | Board 批量执行摘要、注意力原因和详情事件投影 |
 | [server/loader.js](../../../server/loader.js) | 扫描任务、读取证据、推导阶段、父子关系、列表投影 |
 | [server/scan-worker.js](../../../server/scan-worker.js) | Worker Thread 内执行仓库扫描、增量任务刷新和结果汇总 |
 | [server/watcher.js](../../../server/watcher.js) | 监听 `.trellis` 的 tasks、workspace、`.developer`，过滤相关事件 |
@@ -20,12 +23,16 @@
 ```text
 server/index.js
   -> database / loader / metadata / persistence / actions / repositories / watcher
+  -> task-location / execution-store / execution-projection
 
 server/scan-worker.js
   -> database / loader / metadata / repositories
 
 server/actions.js
   -> repositories / public/slug.js
+
+server/task-location.js
+  -> database / loader / metadata
 
 server/loader.js
   -> config / public/slug.js
