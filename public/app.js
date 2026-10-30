@@ -51,7 +51,9 @@ const state = {
   createSlugManuallyEdited: false,
   editingExecutionTaskKey: null,
   savingExecution: false,
-  savingView: false
+  savingView: false,
+  savingDependency: false,
+  savingWip: false
 };
 
 const els = {
@@ -84,6 +86,16 @@ const els = {
   executionViewList: document.querySelector("#execution-view-list"),
   executionViewSummary: document.querySelector("#execution-view-summary"),
   executionDateLabel: document.querySelector("#execution-date-label"),
+  flowWipForm: document.querySelector("#flow-wip-form"),
+  flowWipLimit: document.querySelector("#flow-wip-limit"),
+  flowWipSubmit: document.querySelector("#flow-wip-submit"),
+  flowWipMessage: document.querySelector("#flow-wip-message"),
+  flowWipValue: document.querySelector("#flow-wip-value"),
+  flowWipState: document.querySelector("#flow-wip-state"),
+  flowBlockedValue: document.querySelector("#flow-blocked-value"),
+  flowBlockedDuration: document.querySelector("#flow-blocked-duration"),
+  flowReadyValue: document.querySelector("#flow-ready-value"),
+  flowGapValue: document.querySelector("#flow-gap-value"),
   focusCard: document.querySelector("#focus-card"),
   attentionQueue: document.querySelector("#attention-queue"),
   attentionCount: document.querySelector("#attention-count"),
@@ -314,6 +326,15 @@ function formatEventTime(value) {
   });
 }
 
+function formatDuration(milliseconds) {
+  const value = Math.max(0, Number(milliseconds) || 0);
+  const days = Math.floor(value / 86_400_000);
+  if (days > 0) return `${days} 天`;
+  const hours = Math.floor(value / 3_600_000);
+  if (hours > 0) return `${hours} 小时`;
+  return `${Math.max(1, Math.floor(value / 60_000))} 分钟`;
+}
+
 function attentionReasons(task) {
   return (task.execution?.attentionReasons || [])
     .map((reason) => ({ id: reason, label: ATTENTION_REASON_LABELS[reason] || reason }));
@@ -334,6 +355,22 @@ function tagChips(task, limit = 3) {
   ].join("");
 }
 
+function riskBadges(task) {
+  const execution = task.execution || {};
+  const dorCount = Number(execution.risk?.dorMissingCount || 0);
+  const dodCount = Number(execution.risk?.dodMissingCount || 0);
+  return [
+    execution.isBlocked
+      ? `<span class="risk-pill is-blocked">被 ${execution.blockedByCount || 0} 项阻断</span>`
+      : "",
+    execution.blocksCount
+      ? `<span class="risk-pill">阻断 ${execution.blocksCount} 项</span>`
+      : "",
+    dorCount ? `<span class="risk-pill">DoR 缺 ${dorCount}</span>` : "",
+    dodCount ? `<span class="risk-pill">DoD 缺 ${dodCount}</span>` : ""
+  ].filter(Boolean).join("");
+}
+
 function planMetaMarkup(task) {
   const execution = task.execution || {};
   return `
@@ -341,6 +378,7 @@ function planMetaMarkup(task) {
       <span class="plan-due">${safe(dueLabel(execution.dueDate))}</span>
       ${execution.milestone ? `<span class="plan-milestone">${safe(execution.milestone)}</span>` : ""}
       ${tagChips(task)}
+      ${riskBadges(task)}
     </div>`;
 }
 
@@ -375,7 +413,9 @@ function recommendedTask(tasks) {
   const weights = {
     identity_conflict: 100,
     overdue: 90,
+    blocked: 85,
     due_soon: 75,
+    unblocked_ready: 65,
     priority: 60,
     checking: 50,
     implementing: 40,
@@ -436,6 +476,53 @@ function renderExecutionViews() {
   document.querySelector("#new-view-button").addEventListener("click", openViewDialog);
 }
 
+function renderFlowSignals() {
+  const tasks = baseFilteredActiveTasks();
+  const implementationWip = Number.isInteger(state.board?.flow?.implementationWip)
+    ? state.board.flow.implementationWip
+    : tasks.filter((task) => task.derivedStage === "implement").length;
+  const implementationLimit = Number(state.board?.flow?.implementationLimit || 2);
+  const blocked = tasks.filter((task) => task.execution?.isBlocked);
+  const unblockedReady = tasks.filter((task) => task.execution?.isUnblockedReady);
+  const dorGapCount = tasks.filter((task) =>
+    Number(task.execution?.risk?.dorMissingCount || 0) > 0
+  ).length;
+  const dodGapCount = tasks.filter((task) =>
+    Number(task.execution?.risk?.dodMissingCount || 0) > 0
+  ).length;
+  const boardWideScope = state.projectId === "all" &&
+    state.scope === "all" &&
+    !state.search;
+  const blockedDurationMs = boardWideScope
+    ? Number(state.board?.flow?.blockedDurationMs || 0)
+    : blocked.reduce(
+      (total, task) => total + Number(task.execution?.blockedDurationMs || 0),
+      0
+    );
+  const wipState = ["normal", "at_limit", "over_limit"].includes(
+    state.board?.flow?.wipState
+  )
+    ? state.board.flow.wipState
+    : implementationWip > implementationLimit
+      ? "over_limit"
+      : implementationWip === implementationLimit ? "at_limit" : "normal";
+  els.flowWipValue.textContent = `${implementationWip} / ${implementationLimit}`;
+  els.flowWipState.textContent = wipState === "over_limit"
+    ? `超出软上限 ${implementationWip - implementationLimit} 项，仅提醒`
+    : wipState === "at_limit"
+      ? "已达到软上限，仅提醒，不阻止阶段确认"
+      : "软限制，不影响阶段确认";
+  els.flowBlockedValue.textContent = blocked.length;
+  els.flowBlockedDuration.textContent = blocked.length
+    ? `活动阻断累计 ${formatDuration(blockedDurationMs)}，查看队列`
+    : "没有活动阻断";
+  els.flowReadyValue.textContent = unblockedReady.length;
+  els.flowGapValue.textContent = `${dorGapCount} / ${dodGapCount}`;
+  if (document.activeElement !== els.flowWipLimit) {
+    els.flowWipLimit.value = implementationLimit;
+  }
+}
+
 function renderFocus() {
   const task = recommendedTask(filteredActiveTasks());
   if (!task) {
@@ -480,7 +567,9 @@ function attentionSortScore(task) {
   const weights = {
     identity_conflict: 100,
     overdue: 90,
+    blocked: 85,
     due_soon: 75,
+    unblocked_ready: 65,
     priority: 60,
     checking: 50,
     implementing: 40,
@@ -1012,6 +1101,124 @@ function bindExecutionActions(root) {
   });
 }
 
+function setDependencyMessage(root, message, isError = false) {
+  const target = root.querySelector(".dependency-form-message") ||
+    root.querySelector(".risk-dependency .dependency-empty");
+  if (!target) {
+    showError(message);
+    return;
+  }
+  target.textContent = message;
+  target.classList.toggle("is-error", isError);
+}
+
+async function reloadTaskAfterDependency(task) {
+  const loaded = await loadBoard();
+  if (!loaded) throw new Error("依赖已保存，但看板刷新失败");
+  const fresh = taskByKey(task.taskKey);
+  if (!fresh) {
+    els.taskDialog.close();
+    return;
+  }
+  openTask(fresh);
+}
+
+function bindDependencyActions(task) {
+  const root = document.querySelector("#detail-summary");
+  const form = root.querySelector("[data-dependency-form]");
+  if (form) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (state.savingDependency) return;
+      const blockerKey = form.elements.blockerTaskKey.value;
+      const blocker = taskByKey(blockerKey);
+      const reason = form.elements.reason.value.trim();
+      if (!blocker) {
+        setDependencyMessage(root, "请选择当前看板中的阻断方任务", true);
+        form.elements.blockerTaskKey.focus();
+        return;
+      }
+      if (!reason) {
+        setDependencyMessage(root, "阻断原因不能为空", true);
+        form.elements.reason.focus();
+        return;
+      }
+      if (Array.from(reason).length > 500) {
+        setDependencyMessage(root, "阻断原因不能超过 500 个字符", true);
+        form.elements.reason.focus();
+        return;
+      }
+      state.savingDependency = true;
+      const submit = form.querySelector(".dependency-submit");
+      submit.disabled = true;
+      submit.textContent = "正在创建…";
+      setDependencyMessage(root, "正在写入依赖与事件；失败时不会留下部分数据。");
+      try {
+        await api("/api/tasks/dependencies", "POST", {
+          blocked: {
+            projectId: task.projectId,
+            taskPath: task.relativeDir
+          },
+          blocker: {
+            projectId: blocker.projectId,
+            taskPath: blocker.relativeDir
+          },
+          reason
+        });
+        await reloadTaskAfterDependency(task);
+      } catch (error) {
+        setDependencyMessage(root, error.message, true);
+        if (
+          error.message.includes("循环") ||
+          error.message.includes("已经存在") ||
+          error.message.includes("身份冲突")
+        ) {
+          form.elements.blockerTaskKey.focus();
+        } else {
+          form.elements.reason.focus();
+        }
+      } finally {
+        state.savingDependency = false;
+        submit.disabled = false;
+        submit.textContent = "创建依赖";
+      }
+    });
+  }
+  root.querySelectorAll("[data-resolve-dependency]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (state.savingDependency) return;
+      state.savingDependency = true;
+      const controls = [
+        ...root.querySelectorAll("[data-resolve-dependency], [data-dependency-form] button")
+      ];
+      const disabledStates = controls.map((control) => ({
+        control,
+        disabled: control.disabled
+      }));
+      controls.forEach((control) => {
+          control.disabled = true;
+      });
+      button.textContent = "正在解除…";
+      setDependencyMessage(root, "正在解除依赖并保留历史记录…");
+      try {
+        await api("/api/tasks/dependencies", "DELETE", {
+          id: button.dataset.resolveDependency
+        });
+        await reloadTaskAfterDependency(task);
+      } catch (error) {
+        setDependencyMessage(root, error.message, true);
+        disabledStates.forEach(({ control, disabled }) => {
+          control.disabled = disabled;
+        });
+        button.textContent = "解除依赖";
+        button.focus();
+      } finally {
+        state.savingDependency = false;
+      }
+    });
+  });
+}
+
 function setExecutionMessage(text, isError = false) {
   els.executionMessage.hidden = false;
   els.executionMessage.textContent = text;
@@ -1087,6 +1294,38 @@ async function submitExecution(event) {
   }
 }
 
+function setFlowWipMessage(message, isError = false) {
+  els.flowWipMessage.textContent = message;
+  els.flowWipMessage.classList.toggle("is-error", isError);
+}
+
+async function submitFlowWip(event) {
+  event.preventDefault();
+  if (state.savingWip) return;
+  const value = Number(els.flowWipLimit.value);
+  if (!Number.isInteger(value) || value < 1 || value > 9) {
+    setFlowWipMessage("WIP 软上限必须是 1 到 9 的整数", true);
+    els.flowWipLimit.focus();
+    return;
+  }
+  state.savingWip = true;
+  els.flowWipSubmit.disabled = true;
+  els.flowWipSubmit.textContent = "正在保存…";
+  setFlowWipMessage("正在保存软上限；它不会阻止任何阶段操作。");
+  try {
+    await api("/api/board/settings", "PUT", { executionWipLimit: value });
+    const loaded = await loadBoard();
+    if (!loaded) throw new Error("软上限已保存，但看板刷新失败");
+    setFlowWipMessage("已保存。达到或超出上限只会提醒。");
+  } catch (error) {
+    setFlowWipMessage(error.message, true);
+  } finally {
+    state.savingWip = false;
+    els.flowWipSubmit.disabled = false;
+    els.flowWipSubmit.textContent = "保存";
+  }
+}
+
 function renderViewStageOptions() {
   document.querySelector("#view-stage-options").innerHTML = FILTER_STAGES.map((stage) => `
     <label><input type="checkbox" name="view-stage" value="${safe(stage.id)}" /> ${safe(stage.label)}</label>
@@ -1154,6 +1393,8 @@ async function submitView(event) {
   if (!filter.priorities.length) delete filter.priorities;
   if (!filter.stages.length) delete filter.stages;
   if (!filter.tags.length) delete filter.tags;
+  const blocked = document.querySelector("#view-blocked").value;
+  if (blocked !== "any") filter.blocked = blocked;
   if (!Object.keys(filter).length) {
     setViewMessage("至少勾选或填写一个筛选条件", true);
     return;
@@ -1230,7 +1471,9 @@ const EVENT_TYPE_LABELS = {
   tracking_started: "开始追踪",
   stage_observed: "扫描观察",
   stage_manual_confirmed: "人工确认阶段",
-  task_plan_updated: "计划字段更新"
+  task_plan_updated: "计划字段更新",
+  dependency_created: "新增阻断依赖",
+  dependency_resolved: "解除阻断依赖"
 };
 
 function eventDescription(event) {
@@ -1249,7 +1492,155 @@ function eventDescription(event) {
     const afterTags = payload.after?.tags || [];
     return `截止 ${safe(payload.after?.dueDate || "空")}；里程碑 ${safe(payload.after?.milestone || "空")}；标签 ${beforeTags.length} → ${afterTags.length}`;
   }
+  if (event.type === "dependency_created") {
+    return `阻断方 ${safe(payload.blockerTaskKey)} → 被阻断 ${safe(payload.blockedTaskKey)}；原因：${safe(payload.reason)}`;
+  }
+  if (event.type === "dependency_resolved") {
+    return `已解除 ${safe(payload.blockerTaskKey)} → ${safe(payload.blockedTaskKey)} 的阻断；原因：${safe(payload.reason)}`;
+  }
   return safe(event.type);
+}
+
+function blockerOptions(task) {
+  return (state.board?.tasks || [])
+    .filter((candidate) =>
+      !candidate.archived &&
+      candidate.taskKey !== task.taskKey &&
+      candidate.executionIdentityValid !== false &&
+      candidate.executionIdentityConflict !== true
+    )
+    .sort((left, right) =>
+      String(left.projectName).localeCompare(String(right.projectName), "zh-CN") ||
+      String(left.title).localeCompare(String(right.title), "zh-CN")
+    );
+}
+
+function dependencyItemsMarkup(items, relation, canEdit) {
+  if (!items.length) {
+    return `<p class="dependency-empty">${relation === "blocked"
+      ? "当前没有活动阻断。"
+      : "这个任务目前没有阻断其他任务。"}</p>`;
+  }
+  return `<div class="dependency-list">
+    ${items.map((item) => `<article class="dependency-item">
+      <div>
+        <span class="dependency-direction">${safe(relation === "blocked" ? "阻断我" : "我阻断")}</span>
+        <strong>${safe(item.title)}</strong>
+        <small>${safe(item.projectName)} · ${safe(item.createdBy || "本机用户")} · 已持续 ${safe(formatDuration(item.durationMs))}</small>
+      </div>
+      <p>${safe(item.reason)}</p>
+      <div class="dependency-item-foot">
+        <time datetime="${safe(item.createdAt)}">${safe(formatEventTime(item.createdAt))}</time>
+        <button class="text-button dependency-resolve-button" data-resolve-dependency="${safe(item.id)}" type="button" ${canEdit ? "" : "disabled"}>
+          解除依赖
+        </button>
+      </div>
+    </article>`).join("")}
+  </div>`;
+}
+
+function resolvedDependencyItemsMarkup(items, relation) {
+  return items.map((item) => `<article class="dependency-item is-resolved">
+    <div>
+      <span class="dependency-direction is-resolved">${safe(relation === "blocked" ? "已解除 · 曾阻断我" : "已解除 · 我曾阻断")}</span>
+      <strong>${safe(item.title)}</strong>
+      <small>${safe(item.projectName)} · 持续 ${safe(formatDuration(item.durationMs))} · ${safe(formatEventTime(item.resolvedAt))} 解除</small>
+    </div>
+    <p>${safe(item.reason)}</p>
+    <div class="dependency-item-foot">
+      <time datetime="${safe(item.createdAt)}">创建于 ${safe(formatEventTime(item.createdAt))}</time>
+    </div>
+  </article>`).join("");
+}
+
+function missingRiskMarkup(title, items) {
+  return `<details class="risk-gap" ${items.length ? "" : "open"}>
+    <summary>${safe(title)}：${items.length ? `缺 ${items.length} 项` : "已齐备"}</summary>
+    ${items.length
+      ? `<ul>${items.map((item) => `<li>${safe(item)}</li>`).join("")}</ul>`
+      : '<p>当前没有派生缺口。</p>'}
+  </details>`;
+}
+
+function riskDependencyMarkup(task) {
+  const execution = task.execution || {};
+  const risk = execution.risk || {};
+  const conflict = task.executionIdentityValid === false || task.executionIdentityConflict;
+  const canEdit = !task.archived && !conflict;
+  if (!Array.isArray(execution.blockedBy) || !Array.isArray(execution.blocks)) {
+    return `<section class="risk-dependency">
+      <h3>风险与依赖</h3>
+      <p class="dependency-empty">依赖与 DoR/DoD 明细正在读取…</p>
+    </section>`;
+  }
+  const candidates = blockerOptions(task);
+  const blockedBy = execution.blockedBy;
+  const blocks = execution.blocks;
+  const resolvedBlockedBy = Array.isArray(execution.resolvedBlockedBy)
+    ? execution.resolvedBlockedBy
+    : [];
+  const resolvedBlocks = Array.isArray(execution.resolvedBlocks)
+    ? execution.resolvedBlocks
+    : [];
+  const stateText = execution.isBlocked
+    ? `当前被 ${blockedBy.length} 项依赖阻断`
+    : execution.isUnblockedReady
+      ? "已有阻断解除，当前无活动阻断，可继续推进"
+      : "当前没有活动阻断";
+  const wipText = task.archived || task.derivedStage !== "implement"
+    ? "当前阶段不计入实现中 WIP"
+    : risk.wipState === "over_limit"
+      ? "实现中 WIP 超出软上限"
+      : risk.wipState === "at_limit"
+        ? "实现中 WIP 达到软上限"
+        : "实现中 WIP 在软上限内";
+  return `<section class="risk-dependency">
+    <div class="execution-detail-head">
+      <h3>风险与依赖</h3>
+      <span class="risk-state-text">${safe(stateText)} · ${safe(wipText)}</span>
+    </div>
+    <div class="dependency-columns">
+      <div>
+        <h4>Blocked by / 被谁阻断</h4>
+        ${dependencyItemsMarkup(blockedBy, "blocked", canEdit)}
+      </div>
+      <div>
+        <h4>Blocks / 阻断了谁</h4>
+        ${dependencyItemsMarkup(blocks, "blocks", canEdit)}
+      </div>
+    </div>
+    ${resolvedBlockedBy.length || resolvedBlocks.length ? `<details class="dependency-history">
+      <summary>已解除依赖：曾被阻断 ${resolvedBlockedBy.length} 项 · 曾阻断其他任务 ${resolvedBlocks.length} 项</summary>
+      <div class="dependency-history-grid">
+        <div class="dependency-list">
+          ${resolvedDependencyItemsMarkup(resolvedBlockedBy, "blocked")}
+        </div>
+        <div class="dependency-list">
+          ${resolvedDependencyItemsMarkup(resolvedBlocks, "blocks")}
+        </div>
+      </div>
+    </details>` : ""}
+    ${canEdit ? `<form class="dependency-form" data-dependency-form>
+      <label>
+        <span>添加阻断方</span>
+        <select name="blockerTaskKey" required ${candidates.length ? "" : "disabled"}>
+          <option value="">${candidates.length ? "选择阻断本任务的任务" : "当前没有可选任务"}</option>
+          ${candidates.map((candidate) => `<option value="${safe(candidate.taskKey)}">${safe(candidate.title)} · ${safe(candidate.projectName)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="dependency-reason-field">
+        <span>阻断原因</span>
+        <textarea name="reason" maxlength="500" required placeholder="说明为什么当前任务还不能继续，例如：等待计划字段模型确定"></textarea>
+      </label>
+      <button class="secondary-button dependency-submit" type="submit" ${candidates.length ? "" : "disabled"}>创建依赖</button>
+      <span class="dependency-form-message" aria-live="polite"></span>
+    </form>` : `<p class="dependency-empty">${task.archived ? "归档任务只读，不能新增或解除依赖。" : "执行身份冲突时不能修改依赖。"}</p>`}
+    <div class="risk-gap-grid">
+      ${missingRiskMarkup("DoR 缺口", Array.isArray(risk.dorMissing) ? risk.dorMissing : [])}
+      ${missingRiskMarkup("DoD 缺口", Array.isArray(risk.dodMissing) ? risk.dodMissing : [])}
+    </div>
+    <p class="risk-disclaimer">DoR/DoD 只解释证据缺口，不阻止启动、检查、人工阶段确认或归档。</p>
+  </section>`;
 }
 
 function executionDetailMarkup(task) {
@@ -1370,6 +1761,7 @@ function renderTaskDetail(task) {
     <section><h3>目标</h3><p>${safe(task.description || "没有任务描述")}</p></section>
     <section><h3>当前卡点</h3><p>${safe(currentStage.label)}：${safe(currentStage.evidence || "等待人工确认")}</p></section>
     ${executionDetailMarkup(task)}
+    ${riskDependencyMarkup(task)}
     ${evidenceSummary}
     ${relationBlock}
     <section><h3>规划证据</h3><p>${safe(prdInfo)}</p></section>
@@ -1385,6 +1777,7 @@ function renderTaskDetail(task) {
   bindTaskButtons(document.querySelector("#detail-summary"));
   bindArtifactButtons(document.querySelector("#detail-summary"));
   bindExecutionActions(document.querySelector("#detail-summary"));
+  bindDependencyActions(task);
   bindStageActions(task);
   renderAssigneeOptions(task);
   document.querySelector("#assign-button").style.display = task.archived ? "none" : "";
@@ -1608,6 +2001,7 @@ function renderAll() {
   renderProjects();
   renderMetrics();
   renderExecutionViews();
+  renderFlowSignals();
   renderFocus();
   renderAttentionQueue();
   renderPipeline();
@@ -1746,6 +2140,7 @@ document.querySelectorAll(".segment").forEach((button) => {
     renderMetrics();
     renderPipeline();
     renderExecutionViews();
+    renderFlowSignals();
     renderFocus();
     renderAttentionQueue();
   });
@@ -1755,6 +2150,7 @@ els.search.addEventListener("input", () => {
   state.search = els.search.value.trim();
   renderMetrics();
   renderExecutionViews();
+  renderFlowSignals();
   renderFocus();
   renderAttentionQueue();
   renderPipeline();
@@ -1775,7 +2171,15 @@ els.refresh.addEventListener("click", () => loadBoard(true));
 els.createButton.addEventListener("click", openCreateDialog);
 els.manageProjectsButton.addEventListener("click", openProjectDialog);
 els.projectForm.addEventListener("submit", submitProject);
+els.flowWipForm.addEventListener("submit", submitFlowWip);
 els.pickFoldersButton.addEventListener("click", pickProjectFolders);
+document.querySelectorAll("[data-flow-view]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.executionView = button.dataset.flowView;
+    renderAll();
+    document.querySelector(`[data-execution-view="${CSS.escape(state.executionView)}"]`)?.focus();
+  });
+});
 document.querySelectorAll("[data-close-dialog]").forEach((button) => {
   button.addEventListener("click", () => els.taskDialog.close());
 });

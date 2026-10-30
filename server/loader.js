@@ -94,6 +94,16 @@ function hasMeaningfulPrd(content) {
   };
 }
 
+function hasMeaningfulDocument(content) {
+  if (typeof content !== "string" || !content.trim()) return false;
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^#{1,6}\s/.test(line))
+    .filter((line) => !/^[-*]?\s*(?:TBD|TODO|待补|待填写)[.。]?$/i.test(line))
+    .some((line) => line.replace(/[`*_#[\]()>-]/g, "").trim().length >= 4);
+}
+
 const E2E_CONTEXT_PATTERN = /E2E|真机|真实页面|真实联调|浏览器验证|Playwright|Chrome DevTools/i;
 const E2E_COMPLETED_PATTERN = /已完成|已执行|已验证|已复测|验证通过|测试通过|端到端通过|(?:^|[|:：\s-])(?:通过|成功|PASS(?:ED)?|SUCCESS|OK|✅)(?:$|[|。；;\s（(])/i;
 const E2E_NEGATIVE_PATTERN = /未完成|未执行|未验证|未运行|尚未|待确认|待执行|等待|未通过|失败|blocked|不能标记/i;
@@ -279,6 +289,7 @@ function latestCommit(repoPath) {
 
 function buildArtifactSummary(files, includeContent = false) {
   const maxChars = 40_000;
+  const prdInfo = hasMeaningfulPrd(files.prd?.content || "");
   const normalize = (file) => file && includeContent ? {
     path: file.path,
     content: file.content.slice(0, maxChars),
@@ -294,7 +305,11 @@ function buildArtifactSummary(files, includeContent = false) {
       hasE2eReport: Boolean(files.e2eReport),
       researchFiles: files.researchFiles,
       implementEntries: files.implementEntries,
-      checkEntries: files.checkEntries
+      checkEntries: files.checkEntries,
+      prdMeaningful: prdInfo.initialized,
+      prdAcceptanceCount: prdInfo.acceptanceCount,
+      prdCheckedCount: prdInfo.checkedCount,
+      designMeaningful: hasMeaningfulDocument(files.design?.content || "")
     },
     artifacts: {
       prd: normalize(files.prd),
@@ -1142,7 +1157,7 @@ export function toTaskListItem(task) {
       source: stage.source,
       optional: Boolean(stage.optional)
     })),
-    summary: task.summary?.summary
+    summary: task.summary
   };
 }
 

@@ -64,6 +64,35 @@ test("临近截止包含逾期，停滞筛选要求存在追踪事件", () => {
   }), { staleDays: 1 }, NOW), false);
 });
 
+test("阻断筛选区分 blocked 与 unblocked，旧视图缺失字段按 any 处理", () => {
+  const blocked = task({
+    execution: {
+      isBlocked: true,
+      isUnblockedReady: false
+    }
+  });
+  const unblocked = task({
+    execution: {
+      isBlocked: false,
+      isUnblockedReady: true
+    }
+  });
+  assert.equal(taskMatchesFilter(blocked, { blocked: "blocked" }, NOW), true);
+  assert.equal(taskMatchesFilter(unblocked, { blocked: "blocked" }, NOW), false);
+  assert.equal(taskMatchesFilter(unblocked, { blocked: "unblocked" }, NOW), true);
+  assert.equal(
+    taskMatchesFilter({ ...blocked, execution: { tags: ["后端"] } }, {
+      blocked: "any",
+      tags: ["后端"]
+    }, NOW),
+    true
+  );
+  assert.equal(
+    taskMatchesView(unblocked, { id: "saved", filter: { tags: ["后端"] } }, NOW),
+    true
+  );
+});
+
 test("内置视图稳定返回今日焦点、P0/P1、截止、停滞和阶段匹配", () => {
   const tasks = [
     task(),
@@ -88,6 +117,8 @@ test("内置视图稳定返回今日焦点、P0/P1、截止、停滞和阶段匹
   assert.equal(matchesBuiltin("due-soon"), 1);
   assert.equal(matchesBuiltin("stale"), 1);
   assert.equal(matchesBuiltin("checking"), 1);
+  assert.equal(matchesBuiltin("blocked"), 0);
+  assert.equal(matchesBuiltin("unblocked-ready"), 0);
   assert.equal(
     taskMatchesView(tasks[0], { id: "saved", filter: { tags: ["后端"] } }, NOW),
     true

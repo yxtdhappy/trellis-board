@@ -5,13 +5,16 @@ const MAX_TAGS = 10;
 const MAX_TAG_LENGTH = 32;
 const MAX_MILESTONE_LENGTH = 100;
 const MAX_VIEW_NAME_LENGTH = 60;
+const MAX_DEPENDENCY_REASON_LENGTH = 500;
 const ALLOWED_PRIORITIES = new Set(["P0", "P1", "P2", "P3"]);
+const ALLOWED_BLOCKED_FILTERS = new Set(["any", "blocked", "unblocked"]);
 const FILTER_KEYS = new Set([
   "priorities",
   "stages",
   "tags",
   "dueWithinDays",
-  "staleDays"
+  "staleDays",
+  "blocked"
 ]);
 
 function textLength(value) {
@@ -153,8 +156,93 @@ export function normalizeSavedViewFilter(input, stageIds) {
     }
     filter.staleDays = days;
   }
+  if (payload.blocked != null && payload.blocked !== "") {
+    if (
+      typeof payload.blocked !== "string" ||
+      !ALLOWED_BLOCKED_FILTERS.has(payload.blocked)
+    ) {
+      throw new Error("阻断筛选只支持 any、blocked 或 unblocked");
+    }
+    if (payload.blocked !== "any") filter.blocked = payload.blocked;
+  }
   if (!Object.keys(filter).length) throw new Error("保存视图至少需要一个筛选条件");
   return filter;
+}
+
+function normalizeDependencyReason(value) {
+  if (typeof value !== "string") throw new Error("阻断原因必须是文本");
+  const reason = value.trim();
+  if (!reason) throw new Error("阻断原因不能为空");
+  if (textLength(reason) > MAX_DEPENDENCY_REASON_LENGTH) {
+    throw new Error(`阻断原因不能超过 ${MAX_DEPENDENCY_REASON_LENGTH} 个字符`);
+  }
+  return reason;
+}
+
+function normalizeDependencyTaskKey(value, label) {
+  const key = String(value || "").trim();
+  if (!key) throw new Error(`缺少${label}任务执行身份`);
+  return key;
+}
+
+function rowToDependency(row) {
+  return {
+    id: row.id,
+    blockerTaskKey: row.blocker_task_key,
+    blockedTaskKey: row.blocked_task_key,
+    reason: row.reason,
+    createdBy: row.created_by || null,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at || null
+  };
+}
+
+export function readTaskDependencies(db) {
+  return db.prepare(`
+    SELECT
+      id, blocker_task_key, blocked_task_key, reason, created_by,
+      created_at, resolved_at
+    FROM task_dependency
+    ORDER BY created_at, rowid
+  `).all().map(rowToDependency);
+}
+
+function createBlockedByGraph(dependencies) {
+  const graph = new Map();
+  dependencies
+    .filter((dependency) => !dependency.resolvedAt)
+    .forEach((dependency) => {
+      if (!graph.has(dependency.blockedTaskKey)) {
+        graph.set(dependency.blockedTaskKey, []);
+      }
+      graph.get(dependency.blockedTaskKey).push(dependency.blockerTaskKey);
+    });
+  return graph;
+}
+
+function findBlockedByPath(dependencies, start, target) {
+  if (start === target) return [start];
+  const graph = createBlockedByGraph(dependencies);
+  const queue = [start];
+  const previous = new Map([[start, null]]);
+  while (queue.length) {
+    const current = queue.shift();
+    for (const next of graph.get(current) || []) {
+      if (previous.has(next)) continue;
+      previous.set(next, current);
+      if (next === target) {
+        const path = [target];
+        let cursor = current;
+        while (cursor != null) {
+          path.push(cursor);
+          cursor = previous.get(cursor);
+        }
+        return path.reverse();
+      }
+      queue.push(next);
+    }
+  }
+  return null;
 }
 
 function normalizeViewName(value) {
@@ -367,6 +455,11 @@ export function purgeProjectExecutionData(db, projectId) {
       WHERE substr(execution_task_key, 1, ?) = ?
     `).run(prefix.length, prefix);
   }
+  db.prepare(`
+    DELETE FROM task_dependency
+    WHERE substr(blocker_task_key, 1, ?) = ?
+       OR substr(blocked_task_key, 1, ?) = ?
+  `).run(prefix.length, prefix, prefix.length, prefix);
 }
 
 export function createExecutionStore({
@@ -451,6 +544,131 @@ export function createExecutionStore({
           milestone: after.milestone,
           tags: after.tags
         }
+      };
+    });
+  }
+
+  function createDependency(input = {}, actor = null) {
+    if (!isPlainObject(input)) throw new Error("依赖参数必须是对象");
+    const blockerTaskKey = normalizeDependencyTaskKey(input.blockerTaskKey, "阻断方");
+    const blockedTaskKey = normalizeDependencyTaskKey(input.blockedTaskKey, "被阻断");
+    const reason = normalizeDependencyReason(input.reason);
+    if (blockerTaskKey === blockedTaskKey) throw new Error("任务不能阻断自身");
+    const id = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    const labels = input.taskLabels instanceof Map
+      ? new Map(input.taskLabels)
+      : new Map(Object.entries(input.taskLabels || {}));
+    labels.set(
+      blockerTaskKey,
+      String(input.blockerLabel || labels.get(blockerTaskKey) || blockerTaskKey)
+    );
+    labels.set(
+      blockedTaskKey,
+      String(input.blockedLabel || labels.get(blockedTaskKey) || blockedTaskKey)
+    );
+
+    return withTransaction(db, () => {
+      const dependencies = readTaskDependencies(db);
+      const duplicate = dependencies.find((dependency) =>
+        !dependency.resolvedAt &&
+        dependency.blockerTaskKey === blockerTaskKey &&
+        dependency.blockedTaskKey === blockedTaskKey
+      );
+      if (duplicate) throw new Error("这条活动依赖已经存在");
+
+      // A blocked by B 表示 A -> B；新增前从 B 搜索是否已经能回到 A。
+      const path = findBlockedByPath(dependencies, blockerTaskKey, blockedTaskKey);
+      if (path) {
+        const cycle = [blockedTaskKey, ...path]
+          .map((key) => labels.get(key) || key)
+          .join(" → ");
+        throw new Error(`依赖会形成循环：${cycle}`);
+      }
+
+      db.prepare(`
+        INSERT INTO task_dependency(
+          id, blocker_task_key, blocked_task_key, reason, created_by,
+          created_at, resolved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, NULL)
+      `).run(
+        id,
+        blockerTaskKey,
+        blockedTaskKey,
+        reason,
+        normalizeActor(actor),
+        createdAt
+      );
+      const correlationId = crypto.randomUUID();
+      appendTaskEvent(db, {
+        executionTaskKey: blockedTaskKey,
+        eventType: "dependency_created",
+        source: "user",
+        actor,
+        correlationId,
+        occurredAt: createdAt,
+        payload: {
+          dependencyId: id,
+          blockerTaskKey,
+          blockedTaskKey,
+          reason,
+          before: null,
+          after: { status: "active" }
+        }
+      });
+      return {
+        id,
+        blockerTaskKey,
+        blockedTaskKey,
+        reason,
+        createdBy: normalizeActor(actor),
+        createdAt,
+        resolvedAt: null,
+        correlationId
+      };
+    });
+  }
+
+  function resolveDependency(id, actor = null) {
+    const dependencyId = String(id || "").trim();
+    if (!dependencyId) throw new Error("缺少依赖 ID");
+    const resolvedAt = new Date().toISOString();
+    return withTransaction(db, () => {
+      const row = db.prepare(`
+        SELECT
+          id, blocker_task_key, blocked_task_key, reason, created_by,
+          created_at, resolved_at
+        FROM task_dependency
+        WHERE id = ?
+      `).get(dependencyId);
+      if (!row) throw new Error("依赖不存在");
+      if (row.resolved_at) throw new Error("这条依赖已经解除");
+      const result = db.prepare(`
+        UPDATE task_dependency
+        SET resolved_at = ?
+        WHERE id = ? AND resolved_at IS NULL
+      `).run(resolvedAt, dependencyId);
+      if (!result.changes) throw new Error("这条依赖已经解除");
+      const correlationId = crypto.randomUUID();
+      appendTaskEvent(db, {
+        executionTaskKey: row.blocked_task_key,
+        eventType: "dependency_resolved",
+        source: "user",
+        actor,
+        correlationId,
+        occurredAt: resolvedAt,
+        payload: {
+          dependencyId,
+          blockerTaskKey: row.blocker_task_key,
+          blockedTaskKey: row.blocked_task_key,
+          reason: row.reason,
+          before: { status: "active" },
+          after: { status: "resolved", resolvedAt }
+        }
+      });
+      return {
+        ...rowToDependency({ ...row, resolved_at: resolvedAt }),
+        correlationId
       };
     });
   }
@@ -613,6 +831,8 @@ export function createExecutionStore({
 
   return {
     updatePlan,
+    createDependency,
+    resolveDependency,
     recordScanObservations,
     recordScanObservationsInTransaction,
     getExecutionDetail,

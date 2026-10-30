@@ -26,7 +26,7 @@ const publicDir = path.join(appDir, "public");
 const workerFile = path.join(serverDir, "scan-worker.js");
 const folderPickerFile = path.join(serverDir, "pick-folders.ps1");
 const port = Number(process.env.PORT || 4317);
-const SCAN_SCHEMA_VERSION = 9;
+const SCAN_SCHEMA_VERSION = 10;
 const database = getDefaultDatabase();
 const persistence = createPersistenceStore();
 const repositoryStore = createRepositoryStore();
@@ -403,7 +403,13 @@ function readScanCache() {
 
 function projectBoardWithExecution(board, source) {
   return withRefreshState(
-    projectBoardExecution(board, executionStore.listSavedViews(), database),
+    projectBoardExecution(
+      board,
+      executionStore.listSavedViews(),
+      database,
+      new Date(),
+      { executionWipLimit: persistence.readExecutionWipLimit() }
+    ),
     source
   );
 }
@@ -464,9 +470,25 @@ function requireWritableExecution(resolved) {
   }
 }
 
+function requireDependencyIdentity(resolved, label) {
+  if (resolved.identityConflict || !resolved.task.executionIdentityValid) {
+    throw new Error(`${label}任务执行身份冲突，请先修正 task.json id`);
+  }
+}
+
 function findTask(payload) {
   const resolved = resolveCurrentTask(payload);
-  return projectTaskDetailExecution(resolved.task, database);
+  const board = boardCache || readScanCache();
+  return projectTaskDetailExecution(
+    resolved.task,
+    database,
+    new Date(),
+    200,
+    {
+      boardTasks: board?.tasks || [resolved.task],
+      executionWipLimit: persistence.readExecutionWipLimit()
+    }
+  );
 }
 
 function resolveCurrentTask(payload) {
@@ -578,6 +600,70 @@ async function handleApi(request, response, url) {
     });
     return;
   }
+  if (request.method === "POST" && url.pathname === "/api/tasks/dependencies") {
+    const payload = await readJsonBody(request);
+    const blocked = resolveCurrentTask(payload.blocked);
+    const blocker = resolveCurrentTask(payload.blocker);
+    requireDependencyIdentity(blocked, "被阻断");
+    requireDependencyIdentity(blocker, "阻断方");
+    const currentBoard = boardCache || readScanCache();
+    const taskLabels = Object.fromEntries(
+      (currentBoard?.tasks || [])
+        .filter((task) => task.executionTaskKey)
+        .map((task) => [task.executionTaskKey, task.title])
+    );
+    const dependency = executionStore.createDependency({
+      blockerTaskKey: blocker.task.executionTaskKey,
+      blockedTaskKey: blocked.task.executionTaskKey,
+      reason: payload.reason,
+      blockerLabel: blocker.task.title,
+      blockedLabel: blocked.task.title,
+      taskLabels
+    }, blocked.actor);
+    sendJson(response, 201, {
+      message: "阻断依赖已创建",
+      dependency: {
+        ...dependency,
+        blocker: {
+          taskKey: blocker.task.taskKey,
+          executionTaskKey: blocker.task.executionTaskKey,
+          title: blocker.task.title,
+          projectName: blocker.task.projectName
+        },
+        blocked: {
+          taskKey: blocked.task.taskKey,
+          executionTaskKey: blocked.task.executionTaskKey,
+          title: blocked.task.title,
+          projectName: blocked.task.projectName
+        }
+      }
+    });
+    return;
+  }
+  if (request.method === "DELETE" && url.pathname === "/api/tasks/dependencies") {
+    const payload = await readJsonBody(request);
+    const dependency = executionStore.resolveDependency(payload.id);
+    sendJson(response, 200, {
+      message: "阻断依赖已解除",
+      dependency
+    });
+    return;
+  }
+  if (request.method === "PUT" && url.pathname === "/api/board/settings") {
+    const payload = await readJsonBody(request);
+    const unknownKeys = Object.keys(payload).filter((key) => key !== "executionWipLimit");
+    if (unknownKeys.length) {
+      throw new Error(`看板设置包含未知字段: ${unknownKeys.join(", ")}`);
+    }
+    const executionWipLimit = persistence.writeExecutionWipLimit(
+      payload.executionWipLimit
+    );
+    sendJson(response, 200, {
+      message: "实现中 WIP 软上限已保存",
+      executionWipLimit
+    });
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/saved-views") {
     const payload = await readJsonBody(request);
     const view = executionStore.createSavedView(payload);
@@ -682,7 +768,8 @@ server.listen(port, "127.0.0.1", () => {
     serverStartedAt: new Date().toISOString(),
     refreshStartedAt: null,
     refreshQueued: false,
-    refreshQueuedReason: null
+    refreshQueuedReason: null,
+    executionWipLimit: persistence.readExecutionWipLimit()
   });
   startFileWatcher();
   refreshBoardFromFiles("startup").catch((error) => {

@@ -104,6 +104,34 @@ test("扫描缓存保留 schema 版本并拒绝不匹配或损坏内容", () => 
   }
 });
 
+test("实现中 WIP 软上限默认 2、限制 1 到 9 并写入 board_state", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    const persistence = createPersistenceStore({ db });
+    assert.equal(persistence.readExecutionWipLimit(), 2);
+    assert.throws(() => persistence.writeExecutionWipLimit(0), /1 到 9/);
+    assert.throws(() => persistence.writeExecutionWipLimit(10), /1 到 9/);
+    assert.throws(() => persistence.writeExecutionWipLimit(2.5), /1 到 9/);
+    assert.equal(persistence.writeExecutionWipLimit(4), 4);
+    assert.equal(persistence.readExecutionWipLimit(), 4);
+    db.close();
+    db = null;
+
+    db = openTestDatabase(workspace);
+    const reopened = createPersistenceStore({ db });
+    assert.equal(reopened.readExecutionWipLimit(), 4);
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // 忽略已关闭连接。
+    }
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
 test("看板状态多字段写入失败时整体回滚", () => {
   const workspace = makeWorkspace();
   let db;

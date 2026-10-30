@@ -92,14 +92,17 @@ function createV1Database(workspace) {
   db.close();
 }
 
-function v2TableSql(databaseFile) {
+function schemaTableSql(databaseFile) {
   const db = new DatabaseSync(databaseFile, { readOnly: true });
   try {
     return db.prepare(`
       SELECT name, sql
       FROM sqlite_master
       WHERE type = 'table'
-        AND name IN ('task_execution', 'task_tag', 'saved_view', 'task_event')
+        AND name IN (
+          'task_execution', 'task_tag', 'saved_view', 'task_event',
+          'task_dependency'
+        )
       ORDER BY name
     `).all().map((row) => ({ name: row.name, sql: row.sql }));
   } finally {
@@ -107,7 +110,7 @@ function v2TableSql(databaseFile) {
   }
 }
 
-test("新库直接创建 schema v2、扩展表和事件起点", () => {
+test("新库直接创建 schema v3、依赖表和事件起点", () => {
   const workspace = makeWorkspace();
   let db;
   try {
@@ -125,6 +128,7 @@ test("新库直接创建 schema v2、扩展表和事件起点", () => {
       "saved_view",
       "scan_cache",
       "sqlite_sequence",
+      "task_dependency",
       "task_event",
       "task_execution",
       "task_stage",
@@ -134,9 +138,24 @@ test("新库直接创建 schema v2、扩展表和事件起点", () => {
       db.prepare("SELECT key, value FROM app_meta").all()
         .map((row) => [row.key, row.value])
     );
-    assert.equal(meta.schema_version, "2");
+    assert.equal(meta.schema_version, "3");
     assert.equal(meta.legacy_json_imported_v1, "1");
     assert.equal(Number.isNaN(Date.parse(meta.execution_events_started_at)), false);
+    assert.deepEqual(
+      db.prepare(`
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'index'
+          AND tbl_name = 'task_dependency'
+          AND name NOT LIKE 'sqlite_autoindex_%'
+        ORDER BY name
+      `).all().map((row) => row.name),
+      [
+        "task_dependency_active_unique",
+        "task_dependency_blocked",
+        "task_dependency_blocker"
+      ]
+    );
     assert.equal(db.prepare("PRAGMA journal_mode").get().journal_mode, "wal");
     assert.equal(db.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
     assert.equal(db.prepare("PRAGMA busy_timeout").get().timeout, 5000);
@@ -148,7 +167,7 @@ test("新库直接创建 schema v2、扩展表和事件起点", () => {
   }
 });
 
-test("v1 数据库在同一事务升级到 v2，并创建一次性备份", () => {
+test("v1 数据库顺序升级到 v3，并创建一次性 v1 备份", () => {
   const workspace = makeWorkspace();
   createV1Database(workspace);
   let db;
@@ -156,7 +175,7 @@ test("v1 数据库在同一事务升级到 v2，并创建一次性备份", () =>
     db = openTestDatabase(workspace);
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      "2"
+      "3"
     );
     const tables = db.prepare(`
       SELECT name FROM sqlite_master
@@ -169,6 +188,7 @@ test("v1 数据库在同一事务升级到 v2，并创建一次性备份", () =>
       "repositories",
       "saved_view",
       "scan_cache",
+      "task_dependency",
       "task_event",
       "task_execution",
       "task_stage",
@@ -210,7 +230,7 @@ test("v1 数据库在同一事务升级到 v2，并创建一次性备份", () =>
   }
 });
 
-test("v2 新库与 v1 升级库的扩展表结构一致", () => {
+test("v3 新库与 v1 升级库的扩展表结构一致", () => {
   const fresh = makeWorkspace();
   const upgraded = makeWorkspace();
   let freshDb;
@@ -221,7 +241,7 @@ test("v2 新库与 v1 升级库的扩展表结构一致", () => {
     freshDb = null;
     createV1Database(upgraded);
     upgradedDb = openTestDatabase(upgraded);
-    assert.deepEqual(v2TableSql(fresh.databaseFile), v2TableSql(upgraded.databaseFile));
+    assert.deepEqual(schemaTableSql(fresh.databaseFile), schemaTableSql(upgraded.databaseFile));
   } finally {
     closeQuietly(freshDb);
     closeQuietly(upgradedDb);
@@ -230,7 +250,7 @@ test("v2 新库与 v1 升级库的扩展表结构一致", () => {
   }
 });
 
-test("v1 到 v2 迁移失败会回滚新增表并保留版本 1", () => {
+test("v1 迁移失败会回滚新增表并保留版本 1", () => {
   const workspace = makeWorkspace();
   fs.mkdirSync(path.dirname(workspace.databaseFile), { recursive: true });
   const fixture = new DatabaseSync(workspace.databaseFile);
@@ -272,6 +292,62 @@ test("v1 到 v2 迁移失败会回滚新增表并保留版本 1", () => {
     }
     assert.equal(fs.existsSync(`${workspace.databaseFile}.v1-backup`), true);
   } finally {
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
+test("v2 到 v3 迁移失败会回滚依赖表并保留可恢复的 v2 备份", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    db.close();
+    db = null;
+
+    const fixture = new DatabaseSync(workspace.databaseFile);
+    fixture.exec(`
+      DROP TABLE task_dependency;
+      UPDATE app_meta SET value = '2' WHERE key = 'schema_version';
+      CREATE TABLE task_dependency_active_unique (
+        conflicting_name TEXT PRIMARY KEY
+      );
+    `);
+    fixture.close();
+
+    assert.throws(
+      () => openTestDatabase(workspace),
+      /task_dependency_active_unique/
+    );
+    const migrated = new DatabaseSync(workspace.databaseFile, { readOnly: true });
+    try {
+      assert.equal(
+        migrated.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+        "2"
+      );
+      assert.equal(
+        migrated.prepare(`
+          SELECT COUNT(*) AS count
+          FROM sqlite_master
+          WHERE type = 'table' AND name = 'task_dependency'
+        `).get().count,
+        0
+      );
+    } finally {
+      migrated.close();
+    }
+    const backup = new DatabaseSync(`${workspace.databaseFile}.v2-backup`, {
+      readOnly: true
+    });
+    try {
+      assert.equal(
+        backup.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+        "2"
+      );
+    } finally {
+      backup.close();
+    }
+  } finally {
+    closeQuietly(db);
     fs.rmSync(workspace.root, { recursive: true, force: true });
   }
 });
