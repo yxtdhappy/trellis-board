@@ -1,0 +1,2 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check repository, metadata, cache and state ownership at every layer boundary."}
+{"file":".trellis/tasks/10-30-board-sqlite-persistence/research/sqlite-runtime.md","reason":"Verify implementation retains the planned Node 24 and built-in SQLite constraints."}

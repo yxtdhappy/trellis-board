@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta name="description" content="跨仓库查看 Trellis 任务、负责人、流程阶段和归档证据。" />
+    <title>Trellis Board · 任务流水线</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="rail" aria-label="主导航">
+        <div class="brand" aria-label="Trellis Board">
+          <span class="brand-mark" aria-hidden="true">
+            <i></i><i></i><i></i><i></i>
+          </span>
+          <span class="brand-copy">
+            <strong>Trellis</strong>
+            <small>BOARD / 0.1</small>
+          </span>
+        </div>
+
+        <nav class="rail-nav">
+          <button class="nav-item is-active" data-view="pipeline" type="button">
+            <span class="nav-glyph" aria-hidden="true">▤</span>
+            任务流水线
+          </button>
+          <button class="nav-item" data-view="team" type="button">
+            <span class="nav-glyph" aria-hidden="true">◫</span>
+            团队视角
+          </button>
+          <button class="nav-item" data-view="archive" type="button">
+            <span class="nav-glyph" aria-hidden="true">⌑</span>
+            归档索引
+          </button>
+        </nav>
+
+        <div class="rail-projects">
+          <div class="rail-heading">
+            <span>PROJECTS</span>
+            <span class="rail-heading-actions">
+              <span id="project-count">0</span>
+              <button id="manage-projects-button" class="rail-manage-button" type="button" title="新增或移除看板项目">
+                管理
+              </button>
+            </span>
+          </div>
+          <div id="project-list" class="project-list"></div>
+        </div>
+
+        <div class="rail-foot">
+          <div class="sync-line">
+            <span class="sync-dot" id="sync-dot"></span>
+            <span id="sync-label">等待扫描</span>
+          </div>
+          <button id="refresh-button" class="text-button" type="button">重新扫描仓库</button>
+          <p>监听 .trellis/tasks 与 workspace，变更后自动刷新</p>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="view-eyebrow">PERSONAL / CURRENT REPOSITORY</p>
+            <h1 id="view-title">把每个任务放回流程里</h1>
+          </div>
+          <div class="top-actions">
+            <label class="search-box">
+              <span aria-hidden="true">⌕</span>
+              <input id="search-input" type="search" placeholder="搜索任务、负责人或仓库" />
+            </label>
+            <button id="create-button" class="primary-button" type="button">
+              <span aria-hidden="true">＋</span>
+              创建任务
+            </button>
+          </div>
+        </header>
+
+        <section id="error-banner" class="error-banner" hidden></section>
+
+        <section class="pulse-row" aria-label="概览">
+          <article class="pulse-card pulse-strong">
+            <p>进行中</p>
+            <strong id="metric-active">—</strong>
+            <span id="metric-active-caption">扫描后显示</span>
+          </article>
+          <article class="pulse-card">
+            <p>归档任务</p>
+            <strong id="metric-archive">—</strong>
+            <span id="metric-archive-caption">全部仓库</span>
+          </article>
+          <article class="pulse-card">
+            <p>需要关注</p>
+            <strong id="metric-attention">—</strong>
+            <span>停在规划评审或检查</span>
+          </article>
+          <article class="pulse-card pulse-accent">
+            <p>团队节奏</p>
+            <strong id="metric-team">—</strong>
+            <span id="metric-team-caption">按负责人统计</span>
+          </article>
+        </section>
+
+        <section id="pipeline-view" class="content-view is-visible" aria-labelledby="pipeline-heading">
+          <h2 id="pipeline-heading" class="sr-only">任务流程视图</h2>
+          <div class="view-toolbar">
+            <div class="segmented" role="group" aria-label="任务范围">
+              <button class="segment is-active" data-scope="all" type="button">全部进行中</button>
+              <button class="segment" data-scope="mine" type="button">只看我的</button>
+            </div>
+            <div class="toolbar-note">
+              <span class="legend-dot phase"></span>
+              自动推导
+              <span class="legend-dot manual"></span>
+              人工记录
+              <span class="legend-dot optional"></span>
+              可选证据
+            </div>
+          </div>
+          <div id="pipeline-board" class="pipeline-board" aria-live="polite"></div>
+        </section>
+
+        <section id="team-view" class="content-view" aria-labelledby="team-heading">
+          <div class="team-head">
+            <div>
+              <p class="eyebrow">TEAM CAPACITY</p>
+              <h2 id="team-heading">谁在推进，谁需要帮助</h2>
+            </div>
+            <p>任务按负责人归集；阶段与风险来自任务产物和人工检查点。</p>
+          </div>
+          <div id="team-board" class="team-board"></div>
+        </section>
+
+        <section id="archive-view" class="content-view" aria-labelledby="archive-heading">
+          <div class="archive-head">
+            <div>
+              <h2 id="archive-heading">归档后离开当前队列，只保留历史证据</h2>
+              <p class="archive-note">working commit → 原子归档 → journal；历史任务只读回看。</p>
+            </div>
+            <div class="archive-filters">
+              <select id="archive-project" aria-label="按项目筛选归档">
+                <option value="all">全部项目</option>
+              </select>
+              <input id="archive-search" type="search" placeholder="筛选标题或负责人" />
+            </div>
+          </div>
+          <div id="archive-board" class="archive-board"></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="task-dialog" class="dialog task-dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow" id="dialog-project"></p>
+          <h2 id="dialog-title"></h2>
+        </div>
+        <button class="icon-button" data-close-dialog type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="dialog-meta" id="dialog-meta"></div>
+      <div class="dialog-body">
+        <div class="detail-summary" id="detail-summary"></div>
+        <div class="stage-detail" id="stage-detail"></div>
+      </div>
+      <div class="dialog-foot">
+        <div class="assign-inline">
+          <label for="assignee-input">负责人</label>
+          <select id="assignee-input"></select>
+          <button id="assign-button" class="secondary-button" type="button">更新派发</button>
+        </div>
+        <button class="secondary-button" data-close-dialog type="button">关闭</button>
+      </div>
+    </dialog>
+
+    <dialog id="artifact-dialog" class="dialog artifact-dialog" aria-labelledby="artifact-title">
+      <div class="dialog-head artifact-dialog-head">
+        <div class="artifact-heading">
+          <p class="eyebrow" id="artifact-project"></p>
+          <h2 id="artifact-title"></h2>
+          <p class="artifact-path" id="artifact-path"></p>
+        </div>
+        <button class="icon-button" data-close-artifact type="button" aria-label="关闭产物">×</button>
+      </div>
+      <div class="dialog-meta" id="artifact-meta"></div>
+      <div class="artifact-dialog-body" id="artifact-scroll">
+        <article id="artifact-content" class="markdown-body"></article>
+      </div>
+      <div class="dialog-foot artifact-dialog-foot">
+        <span>Markdown 已渲染 · 原始文件保留在任务目录中</span>
+        <button class="secondary-button" data-close-artifact type="button">关闭</button>
+      </div>
+    </dialog>
+
+    <dialog id="create-dialog" class="dialog create-dialog">
+      <form id="create-form">
+        <div class="dialog-head">
+          <div>
+            <p class="eyebrow">NEW TRELLIS TASK</p>
+            <h2>创建任务并派发</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-create aria-label="关闭">×</button>
+        </div>
+        <p class="form-hint">会调用目标仓库的 task.py create --no-start。任务创建后仍处于 planning，需完成评审后单独启动。</p>
+        <div class="form-grid">
+          <label>
+            <span>项目 / 仓库</span>
+            <select id="create-project" required></select>
+          </label>
+          <label>
+            <span>任务标题</span>
+            <input id="create-title" maxlength="200" required placeholder="例如：补齐看板导出能力" />
+          </label>
+          <label class="full-field">
+            <span>需求描述</span>
+            <textarea id="create-description" maxlength="3000" required placeholder="写清目标、边界和预期交付物。"></textarea>
+          </label>
+          <label>
+            <span>负责人</span>
+            <select id="create-assignee" required>
+              <option value="">请选择负责人</option>
+            </select>
+          </label>
+          <label>
+            <span>优先级</span>
+            <select id="create-priority">
+              <option value="P0">P0</option>
+              <option value="P1">P1</option>
+              <option value="P2" selected>P2</option>
+              <option value="P3">P3</option>
+            </select>
+          </label>
+          <label>
+            <span>任务标识</span>
+            <input
+              id="create-slug"
+              maxlength="100"
+              pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+              autocapitalize="none"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="例如：dashboard-export"
+            />
+            <small class="field-help">中文标题请手工填写语义化英文标识；标题含英文时会自动建议，仍可修改。</small>
+          </label>
+          <label>
+            <span>目标分支（可选）</span>
+            <select id="create-branch">
+              <option value="">使用 Trellis 默认分支</option>
+            </select>
+          </label>
+        </div>
+        <div id="create-message" class="form-message" hidden></div>
+        <div class="dialog-foot">
+          <button type="button" class="secondary-button" data-close-create>取消</button>
+          <button id="create-submit" class="primary-button" type="submit">创建并派发</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="project-dialog" class="dialog project-dialog" aria-labelledby="project-dialog-title">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">BOARD / PROJECT WHITELIST</p>
+          <h2 id="project-dialog-title">管理看板项目</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-projects aria-label="关闭">×</button>
+      </div>
+      <p class="form-hint">
+        加入本地已初始化 Trellis 的仓库。新增后会自动建立文件监听并重新扫描；移除只更新白名单，不删除任何项目文件。
+      </p>
+      <form id="project-form">
+        <div class="folder-picker-block">
+          <div class="folder-picker-head">
+            <div>
+              <span class="folder-picker-label">项目文件夹</span>
+              <small>支持在系统选择框中一次选择多个已初始化 Trellis 的目录。</small>
+            </div>
+            <button id="pick-folders" class="secondary-button" type="button">选择文件夹</button>
+          </div>
+          <div id="selected-folders" class="selected-folders" aria-live="polite"></div>
+          <div class="folder-picker-foot">
+            <span id="selected-folder-count">尚未选择</span>
+            <span>项目名称自动使用文件夹名称</span>
+          </div>
+        </div>
+        <div id="project-form-message" class="form-message" hidden></div>
+        <div class="project-form-actions">
+          <button id="project-submit" class="primary-button" type="submit" disabled>加入看板</button>
+        </div>
+      </form>
+      <section class="managed-projects" aria-labelledby="managed-projects-title">
+        <header class="managed-projects-head">
+          <div>
+            <p class="eyebrow">ACTIVE REPOSITORIES</p>
+            <h3 id="managed-projects-title">已纳入看板</h3>
+          </div>
+          <p>路径来自 data/board.sqlite</p>
+        </header>
+        <div id="project-manager-list" class="managed-project-list"></div>
+      </section>
+      <div class="dialog-foot">
+        <span class="project-dialog-note">移除项目不会删除目录、任务或归档文件。</span>
+        <button class="secondary-button" type="button" data-close-projects>关闭</button>
+      </div>
+    </dialog>
+
+    <template id="empty-template">
+      <div class="empty-state">
+        <div class="empty-mark" aria-hidden="true">⌁</div>
+        <strong>没有符合当前筛选的任务</strong>
+        <span>换一个项目、负责人或搜索词；也可以创建一条新任务。</span>
+      </div>
+    </template>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,8 @@
+.audit/
+data/board.sqlite
+data/board.sqlite-wal
+data/board.sqlite-shm
+data/task-metadata.json
+data/*.tmp
+node_modules/
+*.log

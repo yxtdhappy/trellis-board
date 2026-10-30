@@ -1,0 +1,29 @@
+{
+  "repositories": [
+    {
+      "id": "mdp-management-web",
+      "name": "管理前端",
+      "path": "D:/wit/mdp-management-web"
+    },
+    {
+      "id": "mdp-report-service",
+      "name": "报表服务",
+      "path": "D:/wit/mdp-report-service"
+    },
+    {
+      "id": "mdp-report-config-agent-service",
+      "name": "报表配置 Agent",
+      "path": "D:/wit/mdp-report-config-agent-service"
+    },
+    {
+      "id": "mdp-backend-service",
+      "name": "后端服务",
+      "path": "D:/wit/mdp-backend-service"
+    },
+    {
+      "id": "mdp-backend-web",
+      "name": "管理后台",
+      "path": "D:/wit/mdp-backend-web"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+scan-cache.json
+task-metadata.json
+board-state.json
+*.tmp
