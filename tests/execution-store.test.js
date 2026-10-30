@@ -6,7 +6,8 @@ import path from "node:path";
 import { openDatabase } from "../server/database.js";
 import {
   createExecutionStore,
-  readExecutionDetail
+  readExecutionDetail,
+  readTaskDependencies
 } from "../server/execution-store.js";
 
 function makeWorkspace() {
@@ -142,6 +143,232 @@ test("事件写入失败会回滚计划字段和标签", () => {
   }
 });
 
+test("依赖原因、自引用和重复活动边在写入前被拒绝", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    const store = createStore(db);
+    assert.throws(
+      () => store.createDependency({
+        blockedTaskKey: "demo::a",
+        reason: "缺少阻断方"
+      }),
+      /缺少阻断方/
+    );
+    assert.throws(
+      () => store.createDependency({
+        blockerTaskKey: "demo::b",
+        reason: "缺少被阻断方"
+      }),
+      /缺少被阻断/
+    );
+    assert.throws(
+      () => store.createDependency({
+        blockerTaskKey: "demo::a",
+        blockedTaskKey: "demo::a",
+        reason: "自引用"
+      }),
+      /不能阻断自身/
+    );
+    assert.throws(
+      () => store.createDependency({
+        blockerTaskKey: "demo::b",
+        blockedTaskKey: "demo::a",
+        reason: "   "
+      }),
+      /不能为空/
+    );
+    assert.throws(
+      () => store.createDependency({
+        blockerTaskKey: "demo::b",
+        blockedTaskKey: "demo::a",
+        reason: "x".repeat(501)
+      }),
+      /500/
+    );
+
+    store.createDependency({
+      blockerTaskKey: "demo::b",
+      blockedTaskKey: "demo::a",
+      reason: "等待接口"
+    }, "dev");
+    assert.throws(
+      () => store.createDependency({
+        blockerTaskKey: "demo::b",
+        blockedTaskKey: "demo::a",
+        reason: "重复"
+      }),
+      /已经存在/
+    );
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM task_dependency").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM task_event").get().count, 1);
+  } finally {
+    closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
+test("二节点和三节点循环都基于活动依赖在事务内拒绝", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    const store = createStore(db);
+    store.createDependency({
+      blockerTaskKey: "demo::b",
+      blockedTaskKey: "demo::a",
+      reason: "A 等待 B"
+    });
+    assert.throws(
+      () => store.createDependency({
+        blockerTaskKey: "demo::a",
+        blockedTaskKey: "demo::b",
+        reason: "B 等待 A"
+      }),
+      /依赖会形成循环/
+    );
+
+    store.createDependency({
+      blockerTaskKey: "demo::c",
+      blockedTaskKey: "demo::b",
+      reason: "B 等待 C"
+    });
+    assert.throws(
+      () => store.createDependency({
+        blockerTaskKey: "demo::a",
+        blockedTaskKey: "demo::c",
+        reason: "C 等待 A",
+        taskLabels: {
+          "demo::a": "任务 A",
+          "demo::b": "任务 B",
+          "demo::c": "任务 C"
+        }
+      }),
+      /任务 C → 任务 A → 任务 B → 任务 C/
+    );
+    assert.deepEqual(
+      readTaskDependencies(db).map((dependency) => [
+        dependency.blockerTaskKey,
+        dependency.blockedTaskKey
+      ]),
+      [
+        ["demo::b", "demo::a"],
+        ["demo::c", "demo::b"]
+      ]
+    );
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM task_event").get().count, 2);
+  } finally {
+    closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
+test("依赖事件失败会回滚依赖行", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    db.exec(`
+      CREATE TRIGGER reject_dependency_event
+      BEFORE INSERT ON task_event
+      WHEN NEW.event_type = 'dependency_created'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced dependency event failure');
+      END;
+    `);
+    const store = createStore(db);
+    assert.throws(
+      () => store.createDependency({
+        blockerTaskKey: "demo::b",
+        blockedTaskKey: "demo::a",
+        reason: "等待接口"
+      }),
+      /forced dependency event failure/
+    );
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM task_dependency").get().count, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM task_event").get().count, 0);
+  } finally {
+    closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
+test("解除依赖保留历史并允许之后重新创建同一活动边", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    let store = createStore(db);
+    const first = store.createDependency({
+      blockerTaskKey: "demo::b",
+      blockedTaskKey: "demo::a",
+      reason: "等待接口"
+    }, "dev");
+    const resolved = store.resolveDependency(first.id, "dev");
+    assert.equal(resolved.id, first.id);
+    assert.equal(typeof resolved.resolvedAt, "string");
+    db.close();
+    db = openTestDatabase(workspace);
+    store = createStore(db);
+    const history = readTaskDependencies(db);
+    assert.equal(history.length, 1);
+    assert.equal(history[0].resolvedAt, resolved.resolvedAt);
+    const detail = readExecutionDetail(db, "demo::a");
+    assert.deepEqual(
+      detail.events.map((event) => event.type),
+      ["dependency_resolved", "dependency_created"]
+    );
+    assert.equal(detail.events[0].payload.before.status, "active");
+    assert.equal(detail.events[0].payload.after.status, "resolved");
+
+    const second = store.createDependency({
+      blockerTaskKey: "demo::b",
+      blockedTaskKey: "demo::a",
+      reason: "重新阻断"
+    }, "dev");
+    assert.notEqual(second.id, first.id);
+    assert.equal(readTaskDependencies(db).length, 2);
+    assert.throws(() => store.resolveDependency(first.id, "dev"), /已经解除/);
+  } finally {
+    closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
+test("解除事件失败时依赖仍保持活动且不产生解除时间", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    const store = createStore(db);
+    const dependency = store.createDependency({
+      blockerTaskKey: "demo::b",
+      blockedTaskKey: "demo::a",
+      reason: "等待接口"
+    }, "dev");
+    db.exec(`
+      CREATE TRIGGER reject_resolve_event
+      BEFORE INSERT ON task_event
+      WHEN NEW.event_type = 'dependency_resolved'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced resolve event failure');
+      END;
+    `);
+    assert.throws(
+      () => store.resolveDependency(dependency.id, "dev"),
+      /forced resolve event failure/
+    );
+    const history = readTaskDependencies(db);
+    assert.equal(history.length, 1);
+    assert.equal(history[0].resolvedAt, null);
+    assert.equal(readExecutionDetail(db, "demo::a").eventTotal, 1);
+  } finally {
+    closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
 test("保存视图可创建、更新、排序删除并拒绝未知筛选字段", () => {
   const workspace = makeWorkspace();
   let db;
@@ -155,7 +382,8 @@ test("保存视图可创建、更新、排序删除并拒绝未知筛选字段",
         stages: ["implement", "check"],
         tags: ["后端"],
         dueWithinDays: 3,
-        staleDays: 5
+        staleDays: 5,
+        blocked: "blocked"
       }
     });
     const second = store.createSavedView({
@@ -163,6 +391,7 @@ test("保存视图可创建、更新、排序删除并拒绝未知筛选字段",
       filter: { stages: ["check"] }
     });
     assert.deepEqual(first.filter.priorities, ["P1"]);
+    assert.equal(first.filter.blocked, "blocked");
     assert.deepEqual(store.listSavedViews().map((view) => view.name), ["本周后端", "检查中"]);
     const updated = store.updateSavedView({
       id: first.id,
@@ -193,6 +422,20 @@ test("保存视图可创建、更新、排序删除并拒绝未知筛选字段",
         filter: []
       }),
       /筛选条件必须是对象/
+    );
+    assert.throws(
+      () => store.createSavedView({
+        name: "非法阻断",
+        filter: { blocked: "maybe" }
+      }),
+      /阻断筛选/
+    );
+    assert.deepEqual(
+      store.createSavedView({
+        name: "旧视图兼容",
+        filter: { blocked: "any", tags: ["旧"] }
+      }).filter,
+      { tags: ["旧"] }
     );
     assert.throws(() => store.createSavedView(null), /保存视图必须是对象/);
   } finally {

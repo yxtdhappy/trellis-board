@@ -6,8 +6,10 @@ import path from "node:path";
 import { openDatabase } from "../server/database.js";
 import {
   computeAttentionReasons,
+  deriveTaskRisk,
   dueDateDistance,
   projectBoardExecution,
+  projectTaskDetailExecution,
   projectTaskExecution
 } from "../server/execution-projection.js";
 
@@ -108,4 +110,257 @@ test("board 投影一次组合任务与保存视图", () => {
     db.close();
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("依赖投影在列表保持轻量，并在详情区分 blockedBy、blocks 和解除历史", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-dependency-projection-"));
+  const dataDir = path.join(root, "data");
+  const db = openDatabase({
+    databaseFile: path.join(dataDir, "board.sqlite"),
+    legacyFiles: {
+      repositoriesFile: path.join(dataDir, "repos.json"),
+      metadataFile: path.join(dataDir, "task-metadata.json"),
+      scanCacheFile: path.join(dataDir, "scan-cache.json"),
+      stateFile: path.join(dataDir, "board-state.json")
+    },
+    fallbackRepositories: [],
+    logger: { warn() {} }
+  });
+  try {
+    const createdAt = "2026-10-30T08:00:00.000Z";
+    const resolvedAt = "2026-10-30T08:30:00.000Z";
+    db.prepare(`
+      INSERT INTO task_dependency(
+        id, blocker_task_key, blocked_task_key, reason, created_by,
+        created_at, resolved_at
+      ) VALUES (?, ?, ?, ?, 'dev', ?, ?)
+    `).run("dep-resolved", "demo::b", "demo::a", "已解除", createdAt, resolvedAt);
+    db.prepare(`
+      INSERT INTO task_dependency(
+        id, blocker_task_key, blocked_task_key, reason, created_by,
+        created_at, resolved_at
+      ) VALUES (?, ?, ?, ?, 'dev', ?, NULL)
+    `).run("dep-active", "demo::c", "demo::b", "等待 C 完成", createdAt);
+    const tasks = ["a", "b", "c"].map((id) => ({
+      taskKey: `demo::.trellis/tasks/${id}`,
+      executionTaskKey: `demo::${id}`,
+      executionIdentityValid: true,
+      projectId: "demo",
+      projectName: "Demo",
+      title: id.toUpperCase(),
+      priority: "P2",
+      derivedStage: "design",
+      archived: false,
+      stages: []
+    }));
+    const projected = projectBoardExecution(
+      { generatedAt: NOW.toISOString(), tasks },
+      [],
+      db,
+      NOW
+    );
+    const byKey = new Map(projected.tasks.map((task) => [task.executionTaskKey, task]));
+    assert.equal(byKey.get("demo::a").execution.isUnblockedReady, true);
+    assert.equal(byKey.get("demo::b").execution.isBlocked, true);
+    assert.equal(byKey.get("demo::b").execution.blockedByCount, 1);
+    assert.equal(byKey.get("demo::c").execution.blocksCount, 1);
+    assert.equal("blockedBy" in byKey.get("demo::b").execution, false);
+    assert.equal(projected.flow.blockedCount, 1);
+    assert.equal(projected.flow.unblockedReadyCount, 1);
+    assert.equal(projected.flow.blockedDurationMs, 3_600_000);
+
+    const detail = projectTaskDetailExecution(
+      byKey.get("demo::b"),
+      db,
+      NOW,
+      200,
+      { boardTasks: tasks }
+    );
+    assert.equal(detail.execution.blockedBy.length, 1);
+    assert.equal(detail.execution.blockedBy[0].title, "C");
+    assert.equal(detail.execution.blockedBy[0].reason, "等待 C 完成");
+    assert.equal(detail.execution.blockedBy[0].createdBy, "dev");
+    assert.equal(detail.execution.blockedBy[0].durationMs, 3_600_000);
+    assert.deepEqual(detail.execution.blocks, []);
+    assert.deepEqual(detail.execution.resolvedBlocks.map((item) => item.title), ["A"]);
+    assert.equal(detail.execution.resolvedBlocks[0].durationMs, 1_800_000);
+    assert.equal(detail.execution.attentionReasons.includes("blocked"), true);
+
+    const resolvedDetail = projectTaskDetailExecution(
+      byKey.get("demo::a"),
+      db,
+      NOW,
+      200,
+      { boardTasks: tasks }
+    );
+    assert.deepEqual(resolvedDetail.execution.blockedBy, []);
+    assert.deepEqual(
+      resolvedDetail.execution.resolvedBlockedBy.map((item) => item.title),
+      ["B"]
+    );
+    assert.equal(resolvedDetail.execution.resolvedBlockedBy[0].resolvedAt, resolvedAt);
+    assert.equal(resolvedDetail.execution.resolvedBlockedBy[0].durationMs, 1_800_000);
+    assert.deepEqual(resolvedDetail.execution.resolvedBlocks, []);
+  } finally {
+    db.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("WIP 达到和超出软上限只改变风险状态与流动提示", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-wip-projection-"));
+  const dataDir = path.join(root, "data");
+  const db = openDatabase({
+    databaseFile: path.join(dataDir, "board.sqlite"),
+    legacyFiles: {
+      repositoriesFile: path.join(dataDir, "repos.json"),
+      metadataFile: path.join(dataDir, "task-metadata.json"),
+      scanCacheFile: path.join(dataDir, "scan-cache.json"),
+      stateFile: path.join(dataDir, "board-state.json")
+    },
+    fallbackRepositories: [],
+    logger: { warn() {} }
+  });
+  try {
+    const task = (index) => ({
+      taskKey: `demo::.trellis/tasks/${index}`,
+      executionTaskKey: `demo::${index}`,
+      executionIdentityValid: true,
+      archived: false,
+      derivedStage: "implement",
+      stages: []
+    });
+    const atLimit = projectBoardExecution(
+      { generatedAt: NOW.toISOString(), tasks: [task(1), task(2)] },
+      [],
+      db,
+      NOW,
+      { executionWipLimit: 2 }
+    );
+    assert.equal(atLimit.flow.implementationWip, 2);
+    assert.equal(atLimit.flow.wipState, "at_limit");
+    assert.equal(atLimit.tasks[0].execution.risk.wipState, "at_limit");
+
+    const overLimit = projectBoardExecution(
+      { generatedAt: NOW.toISOString(), tasks: [task(1), task(2), task(3)] },
+      [],
+      db,
+      NOW,
+      { executionWipLimit: 2 }
+    );
+    assert.equal(overLimit.flow.wipState, "over_limit");
+    assert.equal(overLimit.tasks[2].execution.risk.wipState, "over_limit");
+  } finally {
+    db.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("DoR 和 DoD 缺口从现有阶段证据派生且不修改阶段完成状态", () => {
+  const planning = {
+    archived: false,
+    derivedStage: "design",
+    summary: {
+      hasDesign: true,
+      designMeaningful: false,
+      hasImplement: false
+    },
+    stages: [
+      { id: "prd", complete: false },
+      { id: "design", complete: true },
+      { id: "implementPlan", complete: false },
+      { id: "review", complete: false }
+    ]
+  };
+  const planningRisk = deriveTaskRisk(planning);
+  assert.deepEqual(planningRisk.dorMissing, [
+    "PRD 的 Requirements 与 Acceptance Criteria",
+    "非骨架的 Design 文档",
+    "Implement 执行计划",
+    "规划评审证据或人工检查点"
+  ]);
+  assert.equal(planning.stages[0].complete, false);
+
+  const manualPrd = {
+    ...planning,
+    summary: {
+      prdMeaningful: false,
+      hasDesign: true,
+      designMeaningful: true,
+      hasImplement: true
+    },
+    stages: [
+      { id: "prd", complete: true, source: "manual" },
+      { id: "design", complete: true },
+      { id: "implementPlan", complete: true },
+      { id: "review", complete: true }
+    ]
+  };
+  assert.deepEqual(deriveTaskRisk(manualPrd).dorMissing, [
+    "PRD 的 Requirements 与 Acceptance Criteria"
+  ]);
+
+  const missingAcceptance = {
+    ...manualPrd,
+    summary: {
+      ...manualPrd.summary,
+      prdMeaningful: true,
+      prdAcceptanceCount: 0
+    }
+  };
+  assert.deepEqual(deriveTaskRisk(missingAcceptance).dorMissing, [
+    "PRD 的 Requirements 与 Acceptance Criteria"
+  ]);
+
+  const closeout = {
+    archived: false,
+    derivedStage: "check",
+    commit: null,
+    summary: {
+      prdAcceptanceCount: 3,
+      prdCheckedCount: 2
+    },
+    stages: [
+      { id: "implement", complete: true },
+      { id: "check", complete: true }
+    ]
+  };
+  assert.deepEqual(deriveTaskRisk(closeout).dodMissing, [
+    "PRD 验收项（2/3 已勾选）",
+    "工作提交 commit",
+    "归档记录"
+  ]);
+  assert.equal(closeout.stages[1].complete, true);
+
+  const archivedGaps = {
+    archived: true,
+    commit: null,
+    summary: {
+      hasImplementationReport: false,
+      hasCheckReport: false,
+      prdAcceptanceCount: 0
+    },
+    stages: [
+      { id: "implement", complete: true, source: "archive-gap" },
+      { id: "check", complete: true, source: "archive-gap" }
+    ]
+  };
+  assert.deepEqual(deriveTaskRisk(archivedGaps).dodMissing, [
+    "实施报告或等效实现证据",
+    "检查报告或明确通过的检查证据",
+    "PRD 验收项",
+    "工作提交 commit"
+  ]);
+
+  const archivedWithEvidence = {
+    ...archivedGaps,
+    commit: "feature-sha",
+    summary: {
+      hasImplementationReport: true,
+      hasCheckReport: true,
+      prdAcceptanceCount: 1,
+      prdCheckedCount: 1
+    }
+  };
+  assert.deepEqual(deriveTaskRisk(archivedWithEvidence).dodMissing, []);
 });

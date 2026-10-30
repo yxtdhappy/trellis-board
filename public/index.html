@@ -90,6 +90,42 @@
               <span id="execution-date-label"></span>
             </div>
           </div>
+          <section class="flow-signals" aria-labelledby="flow-signals-title">
+            <header class="flow-signals-head">
+              <div>
+                <p class="panel-kicker">FLOW / 个人承载</p>
+                <h2 id="flow-signals-title">流动信号</h2>
+              </div>
+              <form id="flow-wip-form" class="flow-wip-form">
+                <label for="flow-wip-limit">WIP 软上限</label>
+                <input id="flow-wip-limit" type="number" min="1" max="9" step="1" value="2" />
+                <button id="flow-wip-submit" class="secondary-button small-button" type="submit">保存</button>
+                <span id="flow-wip-message" class="flow-wip-message" aria-live="polite"></span>
+              </form>
+            </header>
+            <div class="flow-signal-grid">
+              <article class="flow-signal">
+                <span>实现中 WIP</span>
+                <strong id="flow-wip-value">0 / 2</strong>
+                <small id="flow-wip-state">软限制，不影响阶段确认</small>
+              </article>
+              <button id="flow-blocked-card" class="flow-signal is-action" data-flow-view="blocked" type="button">
+                <span>当前被阻断</span>
+                <strong id="flow-blocked-value">0</strong>
+                <small id="flow-blocked-duration">没有活动阻断</small>
+              </button>
+              <button id="flow-ready-card" class="flow-signal is-action" data-flow-view="unblocked-ready" type="button">
+                <span>阻断已解除</span>
+                <strong id="flow-ready-value">0</strong>
+                <small>查看当前可继续推进的任务</small>
+              </button>
+              <article class="flow-signal">
+                <span>DoR / DoD 缺口</span>
+                <strong id="flow-gap-value">0 / 0</strong>
+                <small>仅建议，不阻止启动、检查或归档</small>
+              </article>
+            </div>
+          </section>
           <div class="view-toolbar">
             <div class="segmented" role="group" aria-label="任务范围">
               <button class="segment is-active" data-scope="all" type="button">全部进行中</button>
@@ -412,6 +448,14 @@
               <input id="view-stale-days" type="number" min="1" max="365" step="1" placeholder="不限" />
             </label>
           </div>
+          <label>
+            <span>阻断状态</span>
+            <select id="view-blocked">
+              <option value="any">不限</option>
+              <option value="blocked">仅被阻断</option>
+              <option value="unblocked">仅未被阻断</option>
+            </select>
+          </label>
         </div>
         <div id="view-message" class="form-message" hidden></div>
         <div class="dialog-foot">

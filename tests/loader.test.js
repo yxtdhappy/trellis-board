@@ -131,6 +131,26 @@ test("重复 task.json id 的任务仍可见但执行身份标记为冲突", () 
   }
 });
 
+test("列表投影保留轻量证据摘要并移除产物正文", () => {
+  const root = makeRepo();
+  const project = { id: "summary-demo", name: "Summary Demo", path: root };
+  try {
+    clearScanCaches();
+    const result = scanRepository(project, { includeContent: true });
+    const live = linkTaskGroups([result])
+      .map(toTaskListItem)
+      .find((task) => !task.archived);
+    assert.equal(live.summary.hasPrd, true);
+    assert.equal(live.summary.prdAcceptanceCount, 1);
+    assert.equal(live.summary.prdCheckedCount, 1);
+    assert.equal(live.summary.designMeaningful, false);
+    assert.equal("artifacts" in live, false);
+  } finally {
+    clearScanCaches();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("未变化任务复用解析结果，只重算发生变化的单个任务", () => {
   const root = makeRepo();
   const project = { id: "cache-demo", name: "Cache Demo", path: root };

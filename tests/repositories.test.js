@@ -124,6 +124,15 @@ test("移除项目只修改数据库，不删除项目目录", () => {
     insertEvent.run("demo::one", "corr-1", now);
     insertEvent.run("demo-2::two", "corr-2", now);
     insertEvent.run("other::three", "corr-3", now);
+    const insertDependency = db.prepare(`
+      INSERT INTO task_dependency(
+        id, blocker_task_key, blocked_task_key, reason, created_by,
+        created_at, resolved_at
+      ) VALUES (?, ?, ?, '清理测试', 'dev', ?, NULL)
+    `);
+    insertDependency.run("dep-blocker", "demo::one", "other::three", now);
+    insertDependency.run("dep-blocked", "other::three", "demo::one", now);
+    insertDependency.run("dep-keep", "demo-2::two", "other::three", now);
     db.prepare(`
       INSERT INTO saved_view(id, name, filter_json, position, created_at, updated_at)
       VALUES ('view-1', '保留视图', '{"priorities":["P1"]}', 0, ?, ?)
@@ -151,6 +160,11 @@ test("移除项目只修改数据库，不删除项目目录", () => {
       db.prepare("SELECT execution_task_key FROM task_event ORDER BY execution_task_key").all()
         .map((row) => row.execution_task_key),
       ["demo-2::two", "other::three"]
+    );
+    assert.deepEqual(
+      db.prepare("SELECT id FROM task_dependency ORDER BY id").all()
+        .map((row) => row.id),
+      ["dep-keep"]
     );
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM saved_view").get().count, 1);
     assert.equal(fs.existsSync(workspace.repo), true);
@@ -302,6 +316,62 @@ test("移除项目会在同一事务中重排位置", () => {
         .map((row) => [row.id, row.position]),
       [["demo", 0], ["third", 1]]
     );
+  } finally {
+    closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
+test("依赖清理失败会回滚项目移除及全部执行扩展数据", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    ({ db } = openWorkspace(workspace));
+    const store = createRepositoryStore({ db });
+    const added = store.add({ path: workspace.repo });
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO task_stage(task_key, stage, updated_at) VALUES (?, ?, ?)"
+    ).run("demo/.trellis/tasks/one", "check", now);
+    db.prepare(`
+      INSERT INTO task_execution(
+        execution_task_key, due_date, milestone, created_at, updated_at
+      ) VALUES ('demo::one', NULL, '', ?, ?)
+    `).run(now, now);
+    db.prepare(`
+      INSERT INTO task_tag(execution_task_key, tag, created_at)
+      VALUES ('demo::one', 'demo', ?)
+    `).run(now);
+    db.prepare(`
+      INSERT INTO task_event(
+        execution_task_key, event_type, source, actor, correlation_id,
+        occurred_at, payload_json, reversible
+      ) VALUES ('demo::one', 'tracking_started', 'system', 'system', 'corr', ?, '{}', 0)
+    `).run(now);
+    db.prepare(`
+      INSERT INTO task_dependency(
+        id, blocker_task_key, blocked_task_key, reason, created_by,
+        created_at, resolved_at
+      ) VALUES ('dep', 'demo::one', 'other::two', '事务测试', 'dev', ?, NULL)
+    `).run(now);
+    db.exec(`
+      CREATE TRIGGER reject_dependency_cleanup
+      BEFORE DELETE ON task_dependency
+      BEGIN
+        SELECT RAISE(ABORT, 'forced dependency cleanup failure');
+      END;
+    `);
+
+    assert.throws(
+      () => store.remove({ id: added.id }),
+      /forced dependency cleanup failure/
+    );
+    assert.equal(store.list().length, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM task_stage").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM task_execution").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM task_tag").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM task_event").get().count, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM task_dependency").get().count, 1);
   } finally {
     closeQuietly(db);
     fs.rmSync(workspace.root, { recursive: true, force: true });

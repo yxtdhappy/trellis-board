@@ -12,7 +12,7 @@ import {
   stateFile
 } from "./config.js";
 
-export const DATABASE_SCHEMA_VERSION = 2;
+export const DATABASE_SCHEMA_VERSION = 3;
 
 const LEGACY_IMPORT_KEY = "legacy_json_imported_v1";
 const EXECUTION_EVENTS_STARTED_KEY = "execution_events_started_at";
@@ -134,54 +134,90 @@ const SCHEMA_V2_SQL = `
     ON task_event(correlation_id);
 `;
 
+const SCHEMA_V3_SQL = `
+  CREATE TABLE IF NOT EXISTS task_dependency (
+    id TEXT PRIMARY KEY,
+    blocker_task_key TEXT NOT NULL,
+    blocked_task_key TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS task_dependency_active_unique
+    ON task_dependency(blocker_task_key, blocked_task_key)
+    WHERE resolved_at IS NULL;
+
+  CREATE INDEX IF NOT EXISTS task_dependency_blocked
+    ON task_dependency(blocked_task_key, resolved_at);
+
+  CREATE INDEX IF NOT EXISTS task_dependency_blocker
+    ON task_dependency(blocker_task_key, resolved_at);
+`;
+
+function ensureV2Schema(db, now) {
+  db.exec(SCHEMA_V2_SQL);
+  if (readMeta(db, EXECUTION_EVENTS_STARTED_KEY) == null) {
+    writeMeta(db, EXECUTION_EVENTS_STARTED_KEY, now);
+  }
+}
+
+function ensureV3Schema(db) {
+  db.exec(SCHEMA_V3_SQL);
+}
+
 function ensureSchema(db) {
   withTransaction(db, () => {
     db.exec(BASE_SCHEMA_V1_SQL);
     const schemaVersion = readMeta(db, "schema_version");
     const now = new Date().toISOString();
     if (schemaVersion == null) {
-      db.exec(SCHEMA_V2_SQL);
-      writeMeta(db, EXECUTION_EVENTS_STARTED_KEY, now);
+      ensureV2Schema(db, now);
+      ensureV3Schema(db);
       writeMeta(db, "schema_version", DATABASE_SCHEMA_VERSION);
       return;
     }
 
     const numericVersion = Number(schemaVersion);
     if (numericVersion === 1) {
-      db.exec(SCHEMA_V2_SQL);
-      if (readMeta(db, EXECUTION_EVENTS_STARTED_KEY) == null) {
-        writeMeta(db, EXECUTION_EVENTS_STARTED_KEY, now);
-      }
-      writeMeta(db, "schema_version", DATABASE_SCHEMA_VERSION);
+      ensureV2Schema(db, now);
+      writeMeta(db, "schema_version", 2);
+      ensureV3Schema(db);
+      writeMeta(db, "schema_version", 3);
+      return;
+    }
+    if (numericVersion === 2) {
+      ensureV3Schema(db);
+      writeMeta(db, "schema_version", 3);
       return;
     }
     if (numericVersion === DATABASE_SCHEMA_VERSION) {
-      db.exec(SCHEMA_V2_SQL);
-      if (readMeta(db, EXECUTION_EVENTS_STARTED_KEY) == null) {
-        writeMeta(db, EXECUTION_EVENTS_STARTED_KEY, now);
-      }
+      ensureV2Schema(db, now);
+      ensureV3Schema(db);
       return;
     }
     throw new Error(`不支持的数据库 schema 版本: ${schemaVersion}`);
   });
 }
 
-function backupPathFor(filePath) {
-  const base = `${filePath}.v1-backup`;
+function backupPathFor(filePath, schemaVersion) {
+  const base = `${filePath}.v${schemaVersion}-backup`;
   if (!fs.existsSync(base)) return base;
   let suffix = 1;
   while (fs.existsSync(`${base}.${suffix}`)) suffix += 1;
   return `${base}.${suffix}`;
 }
 
-function backupV1Database(db, databaseFile) {
+function backupPreMigrationDatabase(db, databaseFile) {
   const hasMeta = db.prepare(`
     SELECT 1
     FROM sqlite_master
     WHERE type = 'table' AND name = 'app_meta'
   `).get();
-  if (!hasMeta || Number(readMeta(db, "schema_version")) !== 1) return null;
-  const backupFile = backupPathFor(databaseFile);
+  const schemaVersion = hasMeta ? Number(readMeta(db, "schema_version")) : null;
+  if (![1, 2].includes(schemaVersion)) return null;
+  const backupFile = backupPathFor(databaseFile, schemaVersion);
   const escapedBackupFile = backupFile.replaceAll("'", "''");
   db.exec(`VACUUM INTO '${escapedBackupFile}'`);
   return backupFile;
@@ -323,7 +359,7 @@ export function openDatabase({
     db.exec("PRAGMA busy_timeout = 5000");
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA synchronous = NORMAL");
-    if (databaseFile !== ":memory:") backupV1Database(db, databaseFile);
+    if (databaseFile !== ":memory:") backupPreMigrationDatabase(db, databaseFile);
     ensureSchema(db);
     importLegacyData(db, {
       repositoriesFile,

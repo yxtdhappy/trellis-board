@@ -29,7 +29,15 @@ export const BUILTIN_VIEWS = [
   { id: "due-soon", name: "临近截止", filter: { dueWithinDays: 3 } },
   { id: "stale", name: "长时间未动", filter: { staleDays: 5 } },
   { id: "implementing", name: "实现中", filter: { stages: ["implement"] } },
-  { id: "checking", name: "检查中", filter: { stages: ["check"] } }
+  { id: "checking", name: "检查中", filter: { stages: ["check"] } },
+  { id: "blocked", name: "被阻断", filter: { blocked: "blocked" } },
+  {
+    id: "unblocked-ready",
+    name: "阻断已解除",
+    matches(task) {
+      return Boolean(task.execution?.isUnblockedReady);
+    }
+  }
 ];
 
 export const ATTENTION_REASON_LABELS = {
@@ -39,7 +47,9 @@ export const ATTENTION_REASON_LABELS = {
   priority: "P0/P1",
   stale: "长时间未动",
   implementing: "实现中",
-  checking: "检查中"
+  checking: "检查中",
+  blocked: "被阻断",
+  unblocked_ready: "阻断已解除"
 };
 
 export function normalizeTagsInput(value, { rejectEmpty = false } = {}) {
@@ -126,6 +136,13 @@ export function taskMatchesFilter(task, filter = {}, now = new Date()) {
       currentStaleDays >= Number(filter.staleDays)
     );
   }
+  if (filter.blocked === "blocked") {
+    conditions.push(Boolean(task.execution?.isBlocked));
+  }
+  if (filter.blocked === "unblocked") {
+    conditions.push(!task.execution?.isBlocked);
+  }
+  if (!conditions.length) return filter.blocked === "any";
   return conditions.length > 0 && conditions.every(Boolean);
 }
 
