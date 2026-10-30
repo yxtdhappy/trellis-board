@@ -28,13 +28,13 @@ prd -> research -> design -> implementPlan -> context -> review
 
 E2E 只接受明确的执行完成证据。`implement.md` 中的计划、条件句或“下一步做 E2E”不能计为完成；否定语句也不能计为完成。[tests/loader.test.js](../../../tests/loader.test.js) 对这些分支有回归。
 
-人工阶段由 `setManualStage()` 写入 SQLite `task_stage` 表，键为 `${projectId}/${relativeDir}`。`withManualStages()` 只覆盖被勾选的阶段，不自动补齐前序阶段。移除项目时必须在同一事务中清理该 `${projectId}/` 前缀下的人工阶段，避免项目重新加入或任务路径复用时继承旧值。
+人工阶段由 `setManualStage()` 写入 SQLite `task_stage` 表，键为 `${projectId}/${relativeDir}`。`withManualStages()` 只覆盖被勾选的阶段，不自动补齐前序阶段。写入人工阶段时还必须把 `executionTaskKey` 传入同一事务，追加 `stage_manual_confirmed` 事件。移除项目时必须在同一事务中清理该 `${projectId}/` 前缀下的人工阶段和 `${projectId}::` 前缀下的执行扩展数据，避免项目重新加入或任务路径复用时继承旧值。
 
 ## 列表与详情
 
 `scanRepository()` 生成完整扫描结果。列表 API 使用 `toTaskListItem()` 白名单字段，避免把 `artifacts` 正文和额外详情带出；`scanTask()` 为详情返回最新单任务扫描结果。
 
-`taskKey` 是 `${project.id}::${relativeDir}`。缓存、前端选中态、详情合并和人工阶段相关请求都以稳定身份匹配。
+`taskKey` 是 `${project.id}::${relativeDir}`，用于当前路径定位、缓存和前端选中态，归档后会变化。计划字段、标签和事件使用 `${project.id}::${task.id || dirName}` 形式的 `executionTaskKey`，归档不改变该身份。扫描汇总必须检查同一项目内执行身份是否重复；冲突任务仍返回列表，但 `executionIdentityValid=false`，不得投影共享扩展数据或接受扩展写入。
 
 详情合并使用 `mergeTaskDetail()`：先合并磁盘详情与缓存列表/分组字段，再应用 SQLite 当前人工阶段。SQLite 人工阶段必须是最终值，缓存中的 `stages`、`manualStage` 和 `derivedStage` 不得反向覆盖。
 
@@ -47,7 +47,9 @@ E2E 只接受明确的执行完成证据。`implement.md` 中的计划、条件�
 - 消失的任务会从缓存中清理。
 - 单个任务变化可以走 `refreshCachedTask()`；workspace 或关系变化可能要求更宽范围重算。
 
-HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_SCHEMA_VERSION` 校验。读取旧版本缓存时视为无效。SQLite `board_state` 保存刷新运行状态；两者都不是业务事实来源，仓库任务文件和 SQLite `task_stage` 才是。
+HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_SCHEMA_VERSION` 校验。读取旧版本缓存时视为无效。SQLite `board_state` 保存刷新运行状态；两者都不是业务事实来源。任务扫描事实来自仓库文件，人工阶段和执行扩展事实来自 `task_stage`、`task_execution`、`task_tag`、`saved_view`、`task_event`。
+
+刷新完成后比较上一个有效 board 与新 board 的 `derivedStage`。首次 v2 扫描、扫描缓存升级失效或缺失时只写 `tracking_started` 基线；后续真实变化写 `stage_observed`。身份冲突或归档任务不作为阶段观察基线。人工阶段接口触发的刷新应抑制扫描观察，避免把人工写入重复记成扫描变化。
 
 ## SQLite 持久化
 
@@ -55,8 +57,9 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 `database.js` 是 schema 和迁移的唯一所有者：
 
-- schema v1 包含 `app_meta`、`repositories`、`task_stage`、`scan_cache`、`board_state`。
+- schema v2 包含 v1 的 `app_meta`、`repositories`、`task_stage`、`scan_cache`、`board_state`，以及 `task_execution`、`task_tag`、`saved_view`、`task_event`。
 - 启用 WAL、外键、`busy_timeout=5000` 和 `synchronous=NORMAL`。
+- v1 -> v2 迁移在单一 `BEGIN IMMEDIATE` 事务中完成；迁移前用 `VACUUM INTO` 写入可独立打开的 v1 快照备份，失败时保留 v1 版本和原表。
 - 首次初始化在 `BEGIN IMMEDIATE` 中一次性导入四个旧 JSON，并写入 `legacy_json_imported_v1`。
 - 迁移后不再读写旧 JSON；它们只作为迁移来源和回滚备份。
 - 损坏的旧 JSON 记录警告并跳过，不阻止服务启动。
@@ -102,5 +105,7 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 - [ ] 缓存失效范围覆盖 workspace、关系和 Git 元数据影响。
 - [ ] E2E 计划/否定/完成三种语义均有测试。
 - [ ] 输出结构不兼容时更新 `SCAN_SCHEMA_VERSION`。
+- [ ] 首次 v2 扫描只建立追踪基线，不补造迁移前阶段事件。
+- [ ] 身份冲突清除后不会从冲突快照补写虚假阶段变化。
 - [ ] 删除或重命名任务后缓存能清理旧项。
-- [ ] 移除项目时同一事务清理对应 `task_stage`，且不会误删相似项目 ID 的人工阶段。
+- [ ] 移除项目时同一事务清理对应 `task_stage` 和执行扩展数据，且不会误删相似项目 ID 的记录。

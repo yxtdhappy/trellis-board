@@ -19,6 +19,10 @@
 | `POST /api/tasks` | 通过目标仓库 `task.py` 创建任务 | 201 |
 | `POST /api/tasks/assign` | 更新 `task.json.assignee` | 200 |
 | `PUT /api/tasks/stage` | 记录人工阶段 | 200 |
+| `PUT /api/tasks/execution` | 保存任务截止、里程碑和标签 | 200 |
+| `POST /api/saved-views` | 创建组合视图 | 201 |
+| `PUT /api/saved-views` | 更新组合视图 | 200 |
+| `DELETE /api/saved-views` | 删除组合视图 | 200 |
 
 未知 `/api/*` 返回 404 `{ "error": "接口不存在" }`。
 
@@ -62,18 +66,24 @@
 
 ### 记录人工阶段
 
-`PUT /api/tasks/stage` 会校验阶段 ID 并写入 SQLite `task_stage` 表，不会修改 Trellis 的正式任务状态。当前路由直接用请求中的 `projectId` 与 `taskPath` 拼 `task_stage.task_key`，没有像详情和负责人更新那样重新验证项目白名单、任务根和路径存在性；这是已知边界缺口。新增或调整该接口前，应先补同样的运行时路径校验和回归测试。
+`PUT /api/tasks/stage` 先通过 `resolveTaskLocation()` 校验白名单仓库、`.trellis/tasks` 根和任务存在性，再校验阶段 ID。它写入 SQLite `task_stage` 和 `stage_manual_confirmed` 事件时必须处于同一事务，不修改 Trellis 的正式任务状态。归档任务和身份冲突任务必须在写数据库前拒绝。
+
+### 计划字段与保存视图
+
+`PUT /api/tasks/execution` 只接受 `projectId + taskPath` 定位当前任务，客户端不能直接指定执行身份。服务端在写入前完成日期、里程碑、标签、身份有效性和归档状态校验；计划字段、标签集合与 `task_plan_updated` 事件在同一事务提交。
+
+保存视图只接受结构化筛选 JSON，拒绝未知字段、非对象筛选和类型错误的整数窗口。视图 ID 由服务端生成，内置视图不写入 `saved_view` 表。
 
 ## 路径安全
 
 - 仓库路径先 `path.resolve()`，再做白名单匹配。
-- 消费任务路径的接口必须以目标 `.trellis/tasks` 为父根，不能靠字符串前缀误判兄弟目录；当前人工阶段路由是待补校验的例外。
+- 消费任务路径的接口必须以目标 `.trellis/tasks` 为父根，不能靠字符串前缀误判兄弟目录；详情、负责人、计划字段和人工阶段接口都必须复用同一运行时校验。
 - 静态资源把 URL 映射到 `public/` 后检查最终绝对路径仍在 `public/` 内。
 - 浏览器传入的名称、slug、负责人和阶段都要做运行时字符串/枚举校验；不能因前端当前只发送相对路径就省略后端路径校验。
 
 ## 持久化写入
 
-Board 的仓库、人工阶段、扫描缓存和刷新状态只通过 SQLite facade 写入。单个逻辑操作涉及多行时必须由 `withTransaction()` 包住，不能逐条自动提交。
+Board 的仓库、人工阶段、执行扩展数据、扫描缓存和刷新状态只通过 SQLite facade 写入。单个逻辑操作涉及多行时必须由 `withTransaction()` 包住，不能逐条自动提交。
 
 任务 `task.json` 等目标仓库 JSON 仍使用临时文件加 rename：
 

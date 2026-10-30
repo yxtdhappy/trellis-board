@@ -26,12 +26,16 @@ rg -n "TASK_SLUG_PATTERN|normalizeTaskSlug|slugifyTaskTitle" server public tests
 | 扫描缓存与看板状态 | [server/persistence.js](../../../server/persistence.js) | HTTP 层通过 facade 读写，不在路由里重复拼 SQL |
 | 任务扫描与阶段推导 | [server/loader.js](../../../server/loader.js) | Worker、详情接口和测试都调用同一扫描实现 |
 | 人工阶段持久化 | [server/metadata.js](../../../server/metadata.js) | 只通过 `getManualRecord()`、`setManualStage()` 读写 |
+| 任务定位与路径校验 | [server/task-location.js](../../../server/task-location.js) | 详情和所有任务写接口复用 `resolveTaskLocation()` |
+| 计划字段、标签、保存视图和事件 | [server/execution-store.js](../../../server/execution-store.js) | 通过 execution store 事务写入，不在路由中拼 SQL |
+| 执行摘要与注意力投影 | [server/execution-projection.js](../../../server/execution-projection.js) | Board 一次批量读取，详情复用同一投影语义 |
+| 组合筛选与标签输入 | [public/execution-filter.js](../../../public/execution-filter.js) | 页面与 Node 测试共用，不在渲染函数中复制匹配规则 |
 
 ## 哪些内容目前重复
 
 阶段定义同时存在于后端模块、Worker 和前端 lane 映射中。它属于已知技术债，不是鼓励继续复制的模式。当前修改阶段时必须把这些消费者作为一个变更单元。
 
-Board 的人工阶段、仓库和缓存状态已统一交给 SQLite。目标仓库 `task.json` 的原子文件写仍由 [server/actions.js](../../../server/actions.js) 负责；不要把数据库事务误用于跨文件系统提交。
+Board 的人工阶段、仓库、执行扩展数据和缓存状态已统一交给 SQLite。目标仓库 `task.json` 的原子文件写仍由 [server/actions.js](../../../server/actions.js) 负责；不要把数据库事务误用于跨文件系统提交。
 
 ## 复用判断
 
