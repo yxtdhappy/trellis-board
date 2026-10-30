@@ -153,6 +153,7 @@ if (dependency.resolvedAt) {
 - 指标由最近事件窗口、当前归档状态和依赖区间实时计算，不持久化聚合值。完整度为 `missing | partial | tracked`；`tracking_started` 只提供追踪起点，不产生阶段停留。
 - 归档时间来自归档目录内 `task.json` 的 mtime，移动目录时可能早于最后阶段事件。出现该情况时必须保守返回 `partial` 和明确原因，以最后阶段事件作为保守结束点，不能把不完整时长标成 `tracked`。
 - 详情读取事件失败时保留任务基础字段、产物、阶段和依赖，只把事件时间线降为空并用 `historyError`、`metricsError` 暴露局部错误；不能因此拒绝整个任务详情。
+- `POST /api/tasks/undo` 在补偿事务成功后必须先刷新 Board 组合快照，并抑制扫描阶段观察，再返回刷新后的任务详情；否则撤销人工阶段后，旧 `boardCache` 仍可能把已删除的 `manualStage` 合并回响应。
 - 列表只返回 `summarizeExecutionMetrics()` 的轻量字段；完整 `history`、`metrics` 和事件正文只在 `/api/task` 详情返回。
 
 #### Scenario: 可逆事件、撤销与指标重建
