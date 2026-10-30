@@ -3,7 +3,7 @@
   "name": "personal-history-insights",
   "title": "个人执行：追溯与复盘",
   "description": "交付操作历史、最近可逆操作撤销，以及仅从事件启用后累计的执行指标。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "yhj",
   "assignee": "yhj",
   "createdAt": "2026-10-30",
-  "completedAt": null,
+  "completedAt": "2026-10-31",
   "branch": "codex/personal-history-insights",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "8c8ccdca5f62967846fd86eecb12c71f309b3986",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -39,6 +39,6 @@
     ".trellis/spec/frontend/rendering-and-state.md",
     ".trellis/spec/guides/cross-layer-thinking-guide.md"
   ],
-  "notes": "前置 10-30-personal-plan-attention 已归档；10-30-personal-risk-flow 已归档。风险切片功能提交 98c66b9d5cb75c2dd9e728dcac839187b79d39d2，规范提交 c1518e8d3a4c28bea48041f938ad03247ee8d6aa，归档提交 2ad8fdd。本切片 npm test 113/113，隔离 API、重启、局部故障和浏览器 E2E 通过。",
+  "notes": "前置 10-30-personal-plan-attention 已归档；10-30-personal-risk-flow 已归档。风险切片功能提交 98c66b9d5cb75c2dd9e728dcac839187b79d39d2，规范提交 c1518e8d3a4c28bea48041f938ad03247ee8d6aa，归档提交 2ad8fdd。本切片功能提交 8c8ccdca5f62967846fd86eecb12c71f309b3986，规范提交 62c0a60c19c9d405212e9c4aa3e58b934bf4f0fe；npm test 113/113，隔离 API、重启、局部故障和浏览器 E2E 通过。",
   "meta": {}
 }
