@@ -653,6 +653,9 @@ async function handleApi(request, response, url) {
       task: resolved.task,
       actor: resolved.actor
     });
+    await refreshBoardFromFiles("undo", null, {
+      suppressStageObservation: true
+    });
     sendJson(response, 200, {
       message: "最近操作已撤销",
       ...undone,
