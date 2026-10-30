@@ -48,6 +48,17 @@
 - 创建或解除失败时保留 blocker 选择、原因输入和当前详情节点；成功后才重新读取 Board 与详情。提交期间禁用对应按钮，防止重复写入。
 - DoR/DoD 折叠项只解释派生缺口，不得据此禁用阶段按钮。
 
+## 历史、指标与撤销
+
+- `/api/task` 的 `execution.history` 是事件时间线事实来源，按服务端倒序渲染；每条事件必须显示时间、中文来源、操作者、摘要和默认折叠的技术详情。
+- 历史最多显示 1000 条，超过窗口时明确说明截断原因。动态标题、操作者、错误和 payload 文本进入模板前都要经过 `safe()`。
+- `execution.metrics` 完整度是 `missing | partial | tracked`。`missing` 只显示缺口原因，不展示可能误导的 0 或占位时长；`partial` 必须与 `tracked` 在文字和样式上可区分。
+- `missing` 与 `partial` 都不得展示 Lead/Cycle、阶段停留或阻断占比的精确数值。`partial` 应展示“检查尚未完成”“覆盖不完整”等定性状态，只有 `tracked` 才能渲染精确时长、占比和阶段横条。
+- 阶段停留使用有序横条，阻断占比使用带文字的水平条，不引入图表库。Lead/Cycle 的开放状态必须用文字说明。
+- 撤销按钮使用 `execution.history.undo.available` 和 `canEdit` 共同决定可用性；禁用时必须展示 `disabledReason`。确认后提交期间设置 `state.savingUndo`，成功后重新读取 Board 与详情。
+- `historyError` / `metricsError` 只在对应区域显示局部错误，不能遮蔽标题、阶段、产物、依赖或现有操作。
+- 860px 以下历史、指标头部和 KPI 改为单列；事件时间线自身滚动，不能让页面产生横向溢出。
+
 ## 任务组层级呈现
 
 - 团队视图先按负责人分卡，再在卡内按 `groupKey` 组织任务；`groupKey` 相同时不得继续平铺成员。

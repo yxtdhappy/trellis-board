@@ -22,6 +22,7 @@
 | `PUT /api/tasks/execution` | 保存任务截止、里程碑和标签 | 200 |
 | `POST /api/tasks/dependencies` | 创建任务阻断依赖 | 201 |
 | `DELETE /api/tasks/dependencies` | 解除活动阻断依赖并保留历史 | 200 |
+| `POST /api/tasks/undo` | 撤销当前任务最近一次未撤销的可逆操作 | 200 |
 | `PUT /api/board/settings` | 保存个人 WIP 软上限 | 200 |
 | `POST /api/saved-views` | 创建组合视图 | 201 |
 | `PUT /api/saved-views` | 更新组合视图 | 200 |
@@ -82,6 +83,12 @@
 `POST /api/tasks/dependencies` 使用两个 `{ projectId, taskPath }` 分别定位被阻断方和阻断方；两侧都必须通过白名单、任务根、真实路径和稳定执行身份校验。后端拒绝缺失任务、身份冲突、自引用、空原因、超过 500 字符的原因、重复活动边和任意长度循环。
 
 `DELETE /api/tasks/dependencies` 只接受依赖 ID，在同一事务中设置 `resolved_at` 并追加 `dependency_resolved` 事件。解除不删除原行；已解除的同一活动边以后可以重新创建新行。详情同时返回活动 `blockedBy` / `blocks` 和已结束 `resolvedBlockedBy` / `resolvedBlocks`，历史项的 `durationMs` 固定按 `resolvedAt - createdAt` 计算，不再随当前时间增长。
+
+### 撤销最近操作
+
+`POST /api/tasks/undo` 只接受 `{ projectId, taskPath }`，服务端重新解析白名单任务并完成归档与身份校验。它查找当前任务最新、尚未被 `operation_undone` 标记的可逆 correlation group，核对当前投影仍匹配原事件 `after`，再在同一事务中恢复投影并追加补偿事件。
+
+没有可撤销组、原操作已撤销或当前值已被后续操作改变时返回中文错误且不写数据库。事件窗口截断时，如果最近窗口仍能确认最新未撤销候选组则允许撤销；只有截断导致无法确认候选时才返回中文错误。成功响应包含补偿 correlation、目标 correlation、目标事件 ID、恢复摘要和刷新后的任务详情；原事件不得删除或改写。
 
 ### 看板设置
 

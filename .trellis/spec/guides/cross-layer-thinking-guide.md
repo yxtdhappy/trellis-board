@@ -53,7 +53,7 @@ public/app.js api()
 
 ### 列表与详情
 
-`GET /api/board` 返回列表投影，`toTaskListItem()` 明确挑选字段并移除产物正文；`projectBoardExecution()` 再批量叠加轻量计划摘要和注意力原因，不查询事件正文。列表响应不得包含 `artifacts` 或 `execution.events`。[public/app.js](../../../public/app.js) 点击任务后再调用 `/api/task` 获取完整产物和最近事件。
+`GET /api/board` 返回列表投影，`toTaskListItem()` 明确挑选字段并移除产物正文；`projectBoardExecution()` 再批量叠加轻量计划摘要、注意力原因和执行指标摘要，不向列表返回事件正文。列表响应不得包含 `artifacts`、`execution.events` 或 `execution.history`。[public/app.js](../../../public/app.js) 点击任务后再调用 `/api/task` 获取完整产物、最近 1000 条事件、撤销状态和完整指标。
 
 修改任务字段时先判断它属于：
 
@@ -84,7 +84,7 @@ public/app.js api()
 
 ### 扫描缓存版本
 
-[server/index.js](../../../server/index.js) 的 `SCAN_SCHEMA_VERSION` 当前为 `10`。只要 board 输出形状（包括执行风险摘要和 flow）发生不兼容变化，就递增该值，让 SQLite `scan_cache` 行失效。只改内部实现、不改变持久化输出形状时无需递增。
+[server/index.js](../../../server/index.js) 的 `SCAN_SCHEMA_VERSION` 当前为 `11`。只要 board 输出形状（包括执行风险摘要、指标摘要和 flow）发生不兼容变化，就递增该值，让 SQLite `scan_cache` 行失效。只改内部实现、不改变持久化输出形状时无需递增。
 
 ## 反向链路检查
 
