@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
     <meta name="description" content="跨仓库查看 Trellis 任务、负责人、流程阶段和归档证据。" />
+    <link rel="icon" href="data:," />
     <title>Trellis Board · 任务流水线</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
@@ -79,31 +80,16 @@
 
         <section id="error-banner" class="error-banner" hidden></section>
 
-        <section class="pulse-row" aria-label="概览">
-          <article class="pulse-card pulse-strong">
-            <p>进行中</p>
-            <strong id="metric-active">—</strong>
-            <span id="metric-active-caption">扫描后显示</span>
-          </article>
-          <article class="pulse-card">
-            <p>归档任务</p>
-            <strong id="metric-archive">—</strong>
-            <span id="metric-archive-caption">全部仓库</span>
-          </article>
-          <article class="pulse-card">
-            <p>需要关注</p>
-            <strong id="metric-attention">—</strong>
-            <span>停在规划评审或检查</span>
-          </article>
-          <article class="pulse-card pulse-accent">
-            <p>团队节奏</p>
-            <strong id="metric-team">—</strong>
-            <span id="metric-team-caption">按负责人统计</span>
-          </article>
-        </section>
-
         <section id="pipeline-view" class="content-view is-visible" aria-labelledby="pipeline-heading">
           <h2 id="pipeline-heading" class="sr-only">任务流程视图</h2>
+          <div class="execution-viewbar">
+            <div id="execution-view-list" class="execution-view-list" role="toolbar" aria-label="个人执行视图"></div>
+            <div class="execution-view-meta">
+              <span id="execution-view-summary">全部进行中</span>
+              <i aria-hidden="true"></i>
+              <span id="execution-date-label"></span>
+            </div>
+          </div>
           <div class="view-toolbar">
             <div class="segmented" role="group" aria-label="任务范围">
               <button class="segment is-active" data-scope="all" type="button">全部进行中</button>
@@ -118,7 +104,52 @@
               可选证据
             </div>
           </div>
-          <div id="pipeline-board" class="pipeline-board" aria-live="polite"></div>
+          <div class="focus-grid">
+            <article id="focus-card" class="focus-panel" aria-live="polite"></article>
+            <aside class="attention-panel" aria-labelledby="attention-title">
+              <header class="attention-head">
+                <div>
+                  <p class="panel-kicker">ATTENTION QUEUE</p>
+                  <h2 id="attention-title">注意力队列</h2>
+                </div>
+                <strong id="attention-count" class="attention-count">0</strong>
+              </header>
+              <div id="attention-queue" class="attention-queue"></div>
+              <p class="attention-foot">按逾期、截止、优先级、检查、实现和停滞排序。</p>
+            </aside>
+          </div>
+          <section class="pulse-row pipeline-pulse" aria-label="概览">
+            <article class="pulse-card pulse-strong">
+              <p>进行中</p>
+              <strong id="metric-active">—</strong>
+              <span id="metric-active-caption">扫描后显示</span>
+            </article>
+            <article class="pulse-card">
+              <p>归档任务</p>
+              <strong id="metric-archive">—</strong>
+              <span id="metric-archive-caption">全部仓库</span>
+            </article>
+            <article class="pulse-card">
+              <p>需要关注</p>
+              <strong id="metric-attention">—</strong>
+              <span>逾期、截止、停滞与阶段信号</span>
+            </article>
+            <article class="pulse-card pulse-accent">
+              <p>团队节奏</p>
+              <strong id="metric-team">—</strong>
+              <span id="metric-team-caption">按负责人统计</span>
+            </article>
+          </section>
+          <section class="kanban-panel" aria-labelledby="kanban-heading">
+            <header class="kanban-head">
+              <div>
+                <p class="panel-kicker">FLOW / 四个决策槽位</p>
+                <h2 id="kanban-heading">轻量 Kanban</h2>
+              </div>
+              <div id="kanban-summary" class="kanban-summary"></div>
+            </header>
+            <div id="pipeline-board" class="pipeline-board" aria-live="polite"></div>
+          </section>
         </section>
 
         <section id="team-view" class="content-view" aria-labelledby="team-heading">
@@ -168,6 +199,7 @@
           <label for="assignee-input">负责人</label>
           <select id="assignee-input"></select>
           <button id="assign-button" class="secondary-button" type="button">更新派发</button>
+          <button id="detail-edit-execution" class="secondary-button" type="button">编辑计划</button>
         </div>
         <button class="secondary-button" data-close-dialog type="button">关闭</button>
       </div>
@@ -303,6 +335,90 @@
         <span class="project-dialog-note">移除项目不会删除目录、任务或归档文件。</span>
         <button class="secondary-button" type="button" data-close-projects>关闭</button>
       </div>
+    </dialog>
+
+    <dialog id="execution-dialog" class="dialog execution-dialog" aria-labelledby="execution-dialog-title">
+      <form id="execution-form">
+        <div class="dialog-head">
+          <div>
+            <p class="eyebrow">BOARD / LOCAL EXECUTION DATA</p>
+            <h2 id="execution-dialog-title">计划字段</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-execution aria-label="关闭">×</button>
+        </div>
+        <p class="form-hint">截止、里程碑和标签只写入看板 SQLite，不修改目标仓库的 task.json。</p>
+        <div class="form-grid execution-form-grid">
+          <label>
+            <span>截止日期</span>
+            <input id="execution-due-date" type="date" />
+          </label>
+          <label>
+            <span>里程碑</span>
+            <input id="execution-milestone" maxlength="100" placeholder="例如：MVP / Slice 1" />
+          </label>
+          <label class="full-field">
+            <span>标签</span>
+            <input id="execution-tags" placeholder="逗号分隔，例如：后端, SQLite, 注意力" />
+            <small class="field-help">最多 10 个；每个 1–32 字符；忽略大小写去重。</small>
+          </label>
+        </div>
+        <div id="execution-message" class="form-message" hidden></div>
+        <div class="dialog-foot">
+          <button type="button" class="secondary-button" data-close-execution>取消</button>
+          <button id="execution-submit" class="primary-button" type="submit">保存计划字段</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="view-dialog" class="dialog view-dialog" aria-labelledby="view-dialog-title">
+      <form id="view-form">
+        <div class="dialog-head">
+          <div>
+            <p class="eyebrow">SAVED VIEW / AND FILTER</p>
+            <h2 id="view-dialog-title">新建组合视图</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-view aria-label="关闭">×</button>
+        </div>
+        <p class="form-hint">同一筛选组内按任一选项匹配，不同条件之间使用 AND。至少设置一个条件。</p>
+        <div class="view-form-body">
+          <label class="view-name-field">
+            <span>视图名称</span>
+            <input id="view-name" maxlength="60" required placeholder="例如：本周 P1 后端" />
+          </label>
+          <fieldset>
+            <legend>优先级</legend>
+            <div class="choice-grid compact">
+              <label><input type="checkbox" name="view-priority" value="P0" /> P0</label>
+              <label><input type="checkbox" name="view-priority" value="P1" /> P1</label>
+              <label><input type="checkbox" name="view-priority" value="P2" /> P2</label>
+              <label><input type="checkbox" name="view-priority" value="P3" /> P3</label>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>阶段</legend>
+            <div id="view-stage-options" class="choice-grid stage-choices"></div>
+          </fieldset>
+          <label>
+            <span>标签</span>
+            <input id="view-tags" placeholder="逗号分隔；任务命中任一标签即可" />
+          </label>
+          <div class="form-grid">
+            <label>
+              <span>截止窗口（天）</span>
+              <input id="view-due-days" type="number" min="0" max="365" step="1" placeholder="不限" />
+            </label>
+            <label>
+              <span>停滞天数</span>
+              <input id="view-stale-days" type="number" min="1" max="365" step="1" placeholder="不限" />
+            </label>
+          </div>
+        </div>
+        <div id="view-message" class="form-message" hidden></div>
+        <div class="dialog-foot">
+          <button type="button" class="secondary-button" data-close-view>取消</button>
+          <button id="view-submit" class="primary-button" type="submit">保存组合视图</button>
+        </div>
+      </form>
     </dialog>
 
     <template id="empty-template">

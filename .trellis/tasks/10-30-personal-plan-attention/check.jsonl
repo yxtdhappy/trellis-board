@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查迁移事务、输入校验、缓存兼容和 Node 测试覆盖。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查保存视图、动态 DOM 安全、键盘路径和真实浏览器验收。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对稳定身份、列表/详情投影、SQLite 和前端消费的一致性。"}

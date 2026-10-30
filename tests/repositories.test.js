@@ -100,6 +100,34 @@ test("移除项目只修改数据库，不删除项目目录", () => {
     insertStage.run("demo/.trellis/tasks/one", "check", now);
     insertStage.run("demo-2/.trellis/tasks/two", "spec", now);
     insertStage.run("other/.trellis/tasks/three", "check", now);
+    const insertExecution = db.prepare(`
+      INSERT INTO task_execution(
+        execution_task_key, due_date, milestone, created_at, updated_at
+      ) VALUES (?, NULL, '', ?, ?)
+    `);
+    insertExecution.run("demo::one", now, now);
+    insertExecution.run("demo-2::two", now, now);
+    insertExecution.run("other::three", now, now);
+    const insertTag = db.prepare(`
+      INSERT INTO task_tag(execution_task_key, tag, created_at)
+      VALUES (?, ?, ?)
+    `);
+    insertTag.run("demo::one", "demo", now);
+    insertTag.run("demo-2::two", "demo-2", now);
+    insertTag.run("other::three", "other", now);
+    const insertEvent = db.prepare(`
+      INSERT INTO task_event(
+        execution_task_key, event_type, source, actor, correlation_id,
+        occurred_at, payload_json, reversible
+      ) VALUES (?, 'tracking_started', 'system', 'system', ?, ?, '{}', 0)
+    `);
+    insertEvent.run("demo::one", "corr-1", now);
+    insertEvent.run("demo-2::two", "corr-2", now);
+    insertEvent.run("other::three", "corr-3", now);
+    db.prepare(`
+      INSERT INTO saved_view(id, name, filter_json, position, created_at, updated_at)
+      VALUES ('view-1', '保留视图', '{"priorities":["P1"]}', 0, ?, ?)
+    `).run(now, now);
     const removed = store.remove({ id: added.id });
     assert.equal(removed.id, "demo");
     assert.equal(store.list().length, 0);
@@ -109,6 +137,22 @@ test("移除项目只修改数据库，不删除项目目录", () => {
         .map((row) => row.task_key),
       ["demo-2/.trellis/tasks/two", "other/.trellis/tasks/three"]
     );
+    assert.deepEqual(
+      db.prepare("SELECT execution_task_key FROM task_execution ORDER BY execution_task_key").all()
+        .map((row) => row.execution_task_key),
+      ["demo-2::two", "other::three"]
+    );
+    assert.deepEqual(
+      db.prepare("SELECT execution_task_key FROM task_tag ORDER BY execution_task_key").all()
+        .map((row) => row.execution_task_key),
+      ["demo-2::two", "other::three"]
+    );
+    assert.deepEqual(
+      db.prepare("SELECT execution_task_key FROM task_event ORDER BY execution_task_key").all()
+        .map((row) => row.execution_task_key),
+      ["demo-2::two", "other::three"]
+    );
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM saved_view").get().count, 1);
     assert.equal(fs.existsSync(workspace.repo), true);
     assert.equal(fs.existsSync(path.join(workspace.repo, ".trellis")), true);
   } finally {

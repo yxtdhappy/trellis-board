@@ -1,0 +1,30 @@
+{
+  "id": "personal-execution-enhancements",
+  "name": "personal-execution-enhancements",
+  "title": "个人版执行增强",
+  "description": "以轻量 Kanban 为方向增强个人任务的计划字段、注意力视图、风险暴露、流程控制和可信事件历史。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-10-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-30-personal-plan-attention",
+    "10-30-personal-risk-flow",
+    "10-30-personal-history-insights"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "父任务负责跨切片需求、架构、依赖顺序与最终集成验收；三个子任务分别交付计划注意力、风险流动、追溯复盘。",
+  "meta": {}
+}

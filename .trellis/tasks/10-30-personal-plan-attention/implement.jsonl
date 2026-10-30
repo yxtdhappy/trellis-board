@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"执行身份、扫描投影、SQLite 扩展字段和前端状态需要保持跨层契约。"}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"实现 SQLite v2 迁移、扫描缓存、人工阶段事件和稳定任务身份。"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"新增写接口必须验证白名单、任务路径并在持久化前完成输入校验。"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"保存视图、计划字段编辑器、注意力队列必须遵循现有 state/renderX/bindX 模式。"}

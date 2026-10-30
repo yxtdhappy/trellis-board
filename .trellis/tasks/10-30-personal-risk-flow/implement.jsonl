@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"阻断依赖、事件和风险投影跨越 SQLite、HTTP 与前端状态。"}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"依赖身份必须与扫描任务身份一致，归档和项目删除需要保持数据边界。"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"依赖创建与解除的双方任务都要经过白名单和任务根校验。"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"风险队列、依赖编辑和 WIP 提醒必须沿用现有重绘与事件绑定模型。"}

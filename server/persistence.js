@@ -9,6 +9,19 @@ function parseJson(value) {
 }
 
 export function createPersistenceStore({ db = getDefaultDatabase() } = {}) {
+  function writeScanCacheRow(board, schemaVersion) {
+    const savedAt = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO scan_cache(id, schema_version, saved_at, board_json)
+      VALUES (1, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        schema_version = excluded.schema_version,
+        saved_at = excluded.saved_at,
+        board_json = excluded.board_json
+    `).run(schemaVersion, savedAt, JSON.stringify(board));
+    return { schemaVersion, savedAt };
+  }
+
   return {
     readScanCache(schemaVersion) {
       const row = db.prepare(`
@@ -21,20 +34,26 @@ export function createPersistenceStore({ db = getDefaultDatabase() } = {}) {
       return board && typeof board === "object" && !Array.isArray(board) ? board : null;
     },
 
-    writeScanCache(board, schemaVersion) {
+    writeScanCache(board, schemaVersion, { beforeCommit } = {}) {
       if (!Number.isInteger(schemaVersion)) {
         throw new Error("扫描缓存 schemaVersion 必须是整数");
       }
-      const savedAt = new Date().toISOString();
-      db.prepare(`
-        INSERT INTO scan_cache(id, schema_version, saved_at, board_json)
-        VALUES (1, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          schema_version = excluded.schema_version,
-          saved_at = excluded.saved_at,
-          board_json = excluded.board_json
-      `).run(schemaVersion, savedAt, JSON.stringify(board));
-      return { schemaVersion, savedAt };
+      if (beforeCommit !== undefined && typeof beforeCommit !== "function") {
+        throw new Error("扫描前写入钩子必须是函数");
+      }
+      if (!beforeCommit) return writeScanCacheRow(board, schemaVersion);
+      const result = withTransaction(db, () => {
+        // 先写事件，再以扫描缓存作为同一事务的最后提交标记。
+        const beforeCommitResult = beforeCommit();
+        return {
+          beforeCommitResult,
+          saved: writeScanCacheRow(board, schemaVersion)
+        };
+      });
+      return {
+        ...result.saved,
+        beforeCommitResult: result.beforeCommitResult
+      };
     },
 
     readBoardState() {

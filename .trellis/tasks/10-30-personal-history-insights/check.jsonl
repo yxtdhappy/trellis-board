@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查撤销事务、after-state 校验、指标纯函数和确定性测试。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查历史/指标 DOM 安全、错误局部化、键盘操作和响应式。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对事件来源、稳定身份、指标完整度和归档后的详情消费。"}

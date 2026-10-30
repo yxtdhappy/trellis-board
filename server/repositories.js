@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { repositoryPathKey } from "./config.js";
 import { getDefaultDatabase, withTransaction } from "./database.js";
+import { purgeProjectExecutionData } from "./execution-store.js";
 
 function idBase(repoPath) {
   return path.basename(repoPath)
@@ -129,6 +130,7 @@ export function createRepositoryStore({ db = getDefaultDatabase() } = {}) {
           DELETE FROM task_stage
           WHERE substr(task_key, 1, ?) = ?
         `).run(stagePrefix.length, stagePrefix);
+        purgeProjectExecutionData(db, id);
         db.prepare("DELETE FROM repositories WHERE id = ?").run(id);
         db.prepare(`
           UPDATE repositories

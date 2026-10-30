@@ -1,7 +1,5 @@
 .audit/
-data/board.sqlite
-data/board.sqlite-wal
-data/board.sqlite-shm
+data/board.sqlite*
 data/task-metadata.json
 data/*.tmp
 node_modules/

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"撤销和指标必须从 append-only 事件贯穿服务端投影与详情渲染。"}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"阶段观察、人工阶段、归档身份和事件重建依赖既有扫描持久化契约。"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"撤销写操作必须先解析白名单任务并在事务前完成校验。"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"历史时间线、撤销和局部指标失败需要符合现有详情与重绘模式。"}

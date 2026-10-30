@@ -534,10 +534,14 @@ function buildTask(
   }
   const stageMap = createStageMap(evidence);
   const relativeDir = path.relative(project.path, taskDir).replaceAll("\\", "/");
+  const explicitExecutionId = String(taskJson.id || "").trim();
+  const executionId = explicitExecutionId || path.basename(taskDir);
   const artifactSummary = buildArtifactSummary(files, includeContent);
   return {
     ...task,
     taskKey: `${project.id}::${relativeDir}`,
+    executionTaskKey: `${project.id}::${executionId}`,
+    executionIdentityValid: Boolean(executionId),
     projectId: project.id,
     projectName: project.name,
     archivedAt,
@@ -1078,12 +1082,29 @@ export function linkTaskGroups(results) {
       });
     });
   });
-  return linked;
+  const executionKeyCounts = new Map();
+  linked.forEach((task) => {
+    const key = String(task.executionTaskKey || "").trim();
+    if (!key) return;
+    executionKeyCounts.set(key, (executionKeyCounts.get(key) || 0) + 1);
+  });
+  return linked.map((task) => {
+    const key = String(task.executionTaskKey || "").trim();
+    const identityConflict = !key || (executionKeyCounts.get(key) || 0) > 1;
+    return {
+      ...task,
+      executionIdentityValid: Boolean(key) && !identityConflict,
+      executionIdentityConflict: identityConflict
+    };
+  });
 }
 
 export function toTaskListItem(task) {
   return {
     taskKey: task.taskKey,
+    executionTaskKey: task.executionTaskKey,
+    executionIdentityValid: task.executionIdentityValid !== false,
+    executionIdentityConflict: Boolean(task.executionIdentityConflict),
     projectId: task.projectId,
     projectName: task.projectName,
     repoPath: task.repoPath,
