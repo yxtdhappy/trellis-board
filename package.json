@@ -1,0 +1,14 @@
+{
+  "name": "trellis-board",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "board": "node server/index.js",
+    "start": "node server/index.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

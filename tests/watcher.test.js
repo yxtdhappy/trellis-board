@@ -1,0 +1,65 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  createWatchRuntime,
+  isRelevantTrellisChange,
+  normalizeWatchPath
+} from "../server/watcher.js";
+
+test("只把 Trellis 任务、工作区与开发者变更视为看板相关事件", () => {
+  assert.equal(isRelevantTrellisChange("tasks/10-27-demo/task.json"), true);
+  assert.equal(isRelevantTrellisChange("tasks\\10-27-demo\\task.json"), true);
+  assert.equal(isRelevantTrellisChange("workspace/dev/journal-1.md"), true);
+  assert.equal(isRelevantTrellisChange(".developer"), true);
+  assert.equal(isRelevantTrellisChange("scripts/task.py"), false);
+  assert.equal(isRelevantTrellisChange("config.yaml"), false);
+  assert.equal(isRelevantTrellisChange(""), false);
+  assert.equal(normalizeWatchPath("./tasks/demo/"), "tasks/demo");
+});
+
+test("任务文件变更会触发监听回调", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-watch-"));
+  const tasksDir = path.join(root, ".trellis", "tasks");
+  fs.mkdirSync(tasksDir, { recursive: true });
+  fs.writeFileSync(path.join(root, ".trellis", ".developer"), "name=dev\n");
+
+  let finish;
+  let settled = false;
+  let timer;
+  const runtime = createWatchRuntime({
+    repositories: [{ id: "demo", name: "Demo", path: root }],
+    onChange: (event) => {
+      if (event.relativePath === "tasks/10-27-live/task.json") finish(event);
+    },
+    onError: (error) => finish(null, new Error(error.message))
+  });
+
+  const changed = new Promise((resolve, reject) => {
+    finish = (event, error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(event);
+    };
+  });
+  timer = setTimeout(() => finish(null, new Error("等待文件变更超时")), 5000);
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    fs.mkdirSync(path.join(tasksDir, "10-27-live"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tasksDir, "10-27-live", "task.json"),
+      JSON.stringify({ id: "live", title: "Live", status: "planning" })
+    );
+    const event = await changed;
+    assert.equal(event.repositoryId, "demo");
+    assert.match(event.relativePath, /tasks\/10-27-live\/task\.json/);
+  } finally {
+    runtime.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

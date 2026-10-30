@@ -1,0 +1,2 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"SQLite migration crosses file persistence, worker threads, HTTP contracts and frontend-visible state."}
+{"file":".trellis/tasks/10-30-board-sqlite-persistence/research/sqlite-runtime.md","reason":"Documents the verified Node SQLite runtime and migration source sizes."}
