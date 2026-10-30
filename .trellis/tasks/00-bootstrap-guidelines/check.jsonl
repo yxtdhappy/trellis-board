@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查阶段、路径、taskKey 和 API 边界是否仍有跨层遗漏。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对后端测试、真实服务和变更验证要求。"}
+{"file": ".trellis/tasks/00-bootstrap-guidelines/research/codebase-facts.md", "reason": "复核规范中的 Node、SQLite、前端和测试事实。"}

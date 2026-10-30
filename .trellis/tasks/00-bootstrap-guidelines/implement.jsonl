@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/00-bootstrap-guidelines/design.md", "reason": "约束规范分层、来源可追溯和文档任务边界。"}
+{"file": ".trellis/tasks/00-bootstrap-guidelines/research/codebase-facts.md", "reason": "记录 Node 24、SQLite、原生前端和测试基线，避免规范使用过期事实。"}
+{"file": ".trellis/spec/backend/index.md", "reason": "作为后端规范的入口和边界索引。"}
