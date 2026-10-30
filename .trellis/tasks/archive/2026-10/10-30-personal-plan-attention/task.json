@@ -3,7 +3,7 @@
   "name": "personal-plan-attention",
   "title": "个人执行：计划与注意力",
   "description": "交付截止日期、里程碑、标签、组合注意力视图、快速编辑和可信事件基线。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "yhj",
   "assignee": "yhj",
   "createdAt": "2026-10-30",
-  "completedAt": null,
+  "completedAt": "2026-10-30",
   "branch": "codex/personal-plan-attention",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "dd9d2cc3a33be43dd610d9dd0d4feb51b488c390",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -53,6 +53,6 @@
     ".trellis/spec/guides/code-reuse-thinking-guide.md",
     ".trellis/spec/guides/cross-layer-thinking-guide.md"
   ],
-  "notes": "实现、检查、规范回写、真实 SQLite v1→v2 迁移和 4317 浏览器 E2E 已完成；当前服务 PID 42200，待提交与归档。",
+  "notes": "实现、检查、规范回写、真实 SQLite v1→v2 迁移和 4317 浏览器 E2E 已完成；工作提交 dd9d2cc3a33be43dd610d9dd0d4feb51b488c390，规范提交 943a0534d9d47cf99fe63517a43ff265cb09e560。",
   "meta": {}
 }
