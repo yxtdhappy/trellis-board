@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
+- **Total Sessions**: 5
 - **Last Active**: 2026-10-31
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~112 | Active |
+| `journal-1.md` | ~135 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-10-31 | 个人执行：追溯与复盘 | `8c8ccdca5f62967846fd86eecb12c71f309b3986`, `62c0a60c19c9d405212e9c4aa3e58b934bf4f0fe` | `codex/personal-history-insights` |
 | 4 | 2026-10-31 | 个人执行：风险与流动 | `98c66b9d5cb75c2dd9e728dcac839187b79d39d2`, `c1518e8d3a4c28bea48041f938ad03247ee8d6aa` | `codex/personal-risk-flow` |
 | 3 | 2026-10-30 | 完成个人计划与注意力执行视图 | `dd9d2cc3a33be43dd610d9dd0d4feb51b488c390`, `943a0534d9d47cf99fe63517a43ff265cb09e560` | `codex/personal-plan-attention` |
 | 2 | 2026-10-30 | SQLite 持久化迁移 | `ddc2287761372f76f5acbc712489e71d065e1609` | `main` |

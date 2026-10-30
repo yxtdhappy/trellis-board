@@ -110,3 +110,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: 个人执行：追溯与复盘
+<!-- trellis-session: v=2 fp=b9ea621d1c110ea6 -->
+
+**Date**: 2026-10-31
+**Task**: 个人执行：追溯与复盘
+**Branch**: `codex/personal-history-insights`
+
+### Summary
+
+交付 append-only 事件时间线、四类操作撤销、after-state 校验、执行指标、局部故障隔离与归档稳定身份，并通过 113/113 测试和隔离真实 E2E。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8c8ccdca5f62967846fd86eecb12c71f309b3986` | feat(board): 增加执行历史撤销与复盘指标 |
+| `62c0a60c19c9d405212e9c4aa3e58b934bf4f0fe` | docs(spec): 固化撤销与执行指标重建契约 |
+
+### Status
+
+[OK] **Completed**
