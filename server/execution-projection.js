@@ -1,8 +1,15 @@
 import {
   readExecutionDetail,
+  readExecutionEventsBatch,
   readExecutionMap,
   readTaskDependencies
 } from "./execution-store.js";
+import { buildTaskHistory } from "./execution-history.js";
+import {
+  computeExecutionMetrics,
+  missingExecutionMetrics,
+  summarizeExecutionMetrics
+} from "./execution-metrics.js";
 
 const DEFAULT_DUE_SOON_DAYS = 3;
 const DEFAULT_STALE_DAYS = 5;
@@ -321,6 +328,56 @@ function buildDependencyContext(tasks, dependencies, now) {
   };
 }
 
+function dependenciesByBlockedTask(dependencies) {
+  const result = new Map();
+  dependencies.forEach((dependency) => {
+    if (!result.has(dependency.blockedTaskKey)) {
+      result.set(dependency.blockedTaskKey, []);
+    }
+    result.get(dependency.blockedTaskKey).push(dependency);
+  });
+  return result;
+}
+
+function timelineMetricsOptions(timeline) {
+  return {
+    eventTotal: Number(timeline?.eventTotal || 0),
+    eventLimit: Number(timeline?.eventLimit || 1000),
+    eventTruncated: Boolean(timeline?.eventTruncated),
+    eventWindowStartAt: timeline?.eventWindowStartAt || null
+  };
+}
+
+function emptyExecutionDetail(limit) {
+  return {
+    dueDate: null,
+    milestone: "",
+    tags: [],
+    planCreatedAt: null,
+    planUpdatedAt: null,
+    lastActivityAt: null,
+    trackingStartedAt: null,
+    eventCount: 0,
+    historyStatus: "missing",
+    events: [],
+    eventTotal: 0,
+    eventLimit: Math.min(1000, Math.max(1, Number(limit) || 200)),
+    eventTruncated: false,
+    eventWindowStartAt: null
+  };
+}
+
+function metricsForTask(task, timeline, dependencies, now) {
+  return computeExecutionMetrics({
+    events: timeline?.events || [],
+    dependencies,
+    archived: Boolean(task.archived),
+    archivedAt: task.archivedAt || null,
+    now,
+    ...timelineMetricsOptions(timeline)
+  });
+}
+
 function riskSummary(risk) {
   return {
     wipState: risk.wipState,
@@ -378,10 +435,16 @@ export function projectTaskExecution(
   const risk = conflict
     ? emptyRisk()
     : (projection.risk || emptyRisk());
+  const metrics = projection.metricsSummary || summarizeExecutionMetrics(
+    missingExecutionMetrics({
+      reasons: [conflict ? "执行身份冲突，无法读取可信历史" : "尚未计算执行指标"]
+    })
+  );
   const execution = {
     ...base,
     ...dependency,
-    risk: riskSummary(risk)
+    risk: riskSummary(risk),
+    metrics
   };
   return {
     ...execution,
@@ -408,7 +471,10 @@ export function projectBoardExecution(
     .filter((task) => task.executionIdentityValid !== false && task.executionTaskKey)
     .map((task) => task.executionTaskKey);
   const snapshots = readExecutionMap(db, validKeys);
-  const dependencies = buildDependencyContext(tasks, readTaskDependencies(db), now);
+  const eventSets = readExecutionEventsBatch(db, validKeys, 1000);
+  const allDependencies = readTaskDependencies(db);
+  const dependencies = buildDependencyContext(tasks, allDependencies, now);
+  const taskDependencies = dependenciesByBlockedTask(allDependencies);
   let activeBlockedDurationMs = 0;
   const projectedTasks = tasks.map((task) => {
     const dependency = dependencies.forTask(task);
@@ -416,13 +482,32 @@ export function projectBoardExecution(
       activeBlockedDurationMs += dependency.blockedDurationTotalMs;
     }
     const risk = deriveTaskRisk(task, { implementationWip, implementationLimit: limit });
+    const timeline = eventSets.get(task.executionTaskKey) || {
+      events: [],
+      eventTotal: 0,
+      eventLimit: 1000,
+      eventTruncated: false,
+      eventWindowStartAt: null
+    };
+    const metrics = task.executionIdentityValid === false || task.executionIdentityConflict
+      ? missingExecutionMetrics({ reasons: ["执行身份冲突，无法读取可信历史"] })
+      : metricsForTask(
+          task,
+          timeline,
+          taskDependencies.get(task.executionTaskKey) || [],
+          now
+        );
     return {
       ...task,
       execution: projectTaskExecution(
         task,
         snapshots.get(task.executionTaskKey) || null,
         now,
-        { dependencySummary: dependency.summary, risk }
+        {
+          dependencySummary: dependency.summary,
+          risk,
+          metricsSummary: summarizeExecutionMetrics(metrics)
+        }
       )
     };
   });
@@ -475,13 +560,13 @@ export function projectTaskDetailExecution(
     candidate.executionIdentityConflict !== true &&
     candidate.derivedStage === "implement"
   ).length;
-  const dependencyContext = buildDependencyContext(
-    allTasks,
-    readTaskDependencies(db),
-    now
-  );
+  const allDependencies = readTaskDependencies(db);
+  const dependencyContext = buildDependencyContext(allTasks, allDependencies, now);
   const dependency = dependencyContext.forTask(task);
   if (task.executionIdentityValid === false || task.executionIdentityConflict) {
+    const conflictMetrics = missingExecutionMetrics({
+      reasons: ["执行身份冲突，无法读取可信历史"]
+    });
     return {
       ...task,
       execution: {
@@ -495,12 +580,101 @@ export function projectTaskDetailExecution(
           dorMissing: [],
           dodMissing: []
         },
+        history: {
+          events: [],
+          eventTotal: 0,
+          eventLimit: limit,
+          truncated: false,
+          windowStartAt: null,
+          undo: {
+            available: false,
+            targetCorrelationId: null,
+            targetEventIds: [],
+            eventType: null,
+            occurredAt: null,
+            label: null,
+            disabledReason: "任务执行身份冲突，无法安全撤销"
+          },
+          error: null
+        },
+        metrics: conflictMetrics,
+        historyError: null,
+        metricsError: null,
         events: [],
-        eventTotal: 0
+        eventTotal: 0,
+        eventLimit: limit,
+        eventTruncated: false,
+        eventWindowStartAt: null
       }
     };
   }
-  const detail = readExecutionDetail(db, task.executionTaskKey, limit);
+  let detail;
+  let historyError = null;
+  try {
+    detail = readExecutionDetail(db, task.executionTaskKey, limit);
+  } catch (error) {
+    historyError = error instanceof Error ? error.message : String(error);
+    detail = emptyExecutionDetail(limit);
+  }
+  let history = null;
+  if (!historyError) {
+    try {
+      history = buildTaskHistory({
+        db,
+        executionTaskKey: task.executionTaskKey,
+        events: detail.events,
+        eventTotal: detail.eventTotal,
+        eventLimit: detail.eventLimit,
+        eventTruncated: detail.eventTruncated,
+        eventWindowStartAt: detail.eventWindowStartAt,
+        archived: Boolean(task.archived),
+        identityValid: true,
+        limit
+      });
+    } catch (error) {
+      historyError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  if (!history) {
+    history = {
+      events: detail.events,
+      eventTotal: detail.eventTotal,
+      eventLimit: detail.eventLimit,
+      truncated: Boolean(detail.eventTruncated),
+      windowStartAt: detail.eventWindowStartAt,
+      undo: {
+        available: false,
+        targetCorrelationId: null,
+        targetEventIds: [],
+        eventType: null,
+        occurredAt: null,
+        label: null,
+        disabledReason: "历史撤销状态读取失败"
+      },
+      error: historyError
+    };
+  }
+  const taskDependencies = allDependencies.filter((dependency) =>
+    dependency.blockedTaskKey === task.executionTaskKey
+  );
+  let metrics = null;
+  let metricsError = historyError && detail.events.length === 0
+    ? historyError
+    : null;
+  if (!metricsError) {
+    try {
+      metrics = metricsForTask(task, detail, taskDependencies, now);
+    } catch (error) {
+      metricsError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  if (!metrics) {
+    metrics = missingExecutionMetrics({
+      reasons: [metricsError || "指标计算失败"],
+      observedSince: detail.trackingStartedAt,
+      ...timelineMetricsOptions(detail)
+    });
+  }
   const risk = deriveTaskRisk(task, {
     implementationWip,
     implementationLimit
@@ -521,8 +695,15 @@ export function projectTaskDetailExecution(
         dorMissing: risk.dorMissing,
         dodMissing: risk.dodMissing
       },
-      events: detail.events,
-      eventTotal: detail.eventTotal
+      history,
+      metrics,
+      historyError,
+      metricsError,
+      events: history.events,
+      eventTotal: history.eventTotal,
+      eventLimit: history.eventLimit,
+      eventTruncated: history.truncated,
+      eventWindowStartAt: history.windowStartAt
     }
   };
 }

@@ -5,8 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { openDatabase } from "../server/database.js";
 import {
+  appendTaskEvent,
   createExecutionStore,
   readExecutionDetail,
+  readExecutionEventsBatch,
   readTaskDependencies
 } from "../server/execution-store.js";
 
@@ -582,6 +584,57 @@ test("计划和保存视图在数据库重开后仍可读回", () => {
     assert.equal(detail.milestone, "Release");
     assert.deepEqual(detail.tags, ["持久化"]);
     assert.deepEqual(reopened.listSavedViews().map((view) => view.name), ["持久化视图"]);
+  } finally {
+    closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
+test("批量事件读取按任务独立截断，并保持最近事件倒序", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    const append = (key, index, type = "stage_observed") => appendTaskEvent(db, {
+      executionTaskKey: key,
+      eventType: type,
+      source: type === "tracking_started" ? "system" : "scan",
+      actor: "dev",
+      correlationId: `${key}-${index}`,
+      occurredAt: `2026-10-30T00:0${index}:00.000Z`,
+      payload: type === "stage_observed"
+        ? { after: { derivedStage: index % 2 ? "check" : "implement" } }
+        : { after: { derivedStage: "implement" } }
+    });
+    append("demo::a", 0, "tracking_started");
+    append("demo::a", 1);
+    append("demo::a", 2);
+    append("demo::a", 3);
+    append("demo::b", 1);
+    append("demo::b", 2);
+
+    const batch = readExecutionEventsBatch(
+      db,
+      ["demo::a", "demo::b", "demo::a"],
+      2
+    );
+    assert.equal(batch.size, 2);
+    assert.equal(batch.get("demo::a").eventTotal, 4);
+    assert.equal(batch.get("demo::a").eventLimit, 2);
+    assert.equal(batch.get("demo::a").eventTruncated, true);
+    assert.deepEqual(
+      batch.get("demo::a").events.map((event) => event.occurredAt),
+      ["2026-10-30T00:03:00.000Z", "2026-10-30T00:02:00.000Z"]
+    );
+    assert.equal(
+      batch.get("demo::a").eventWindowStartAt,
+      "2026-10-30T00:02:00.000Z"
+    );
+    assert.equal(batch.get("demo::b").eventTotal, 2);
+    assert.equal(batch.get("demo::b").eventTruncated, false);
+
+    const capped = readExecutionEventsBatch(db, ["demo::a"], 5000);
+    assert.equal(capped.get("demo::a").eventLimit, 1000);
   } finally {
     closeQuietly(db);
     fs.rmSync(workspace.root, { recursive: true, force: true });

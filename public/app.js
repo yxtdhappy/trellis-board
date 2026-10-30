@@ -53,7 +53,8 @@ const state = {
   savingExecution: false,
   savingView: false,
   savingDependency: false,
-  savingWip: false
+  savingWip: false,
+  savingUndo: false
 };
 
 const els = {
@@ -333,6 +334,18 @@ function formatDuration(milliseconds) {
   const hours = Math.floor(value / 3_600_000);
   if (hours > 0) return `${hours} 小时`;
   return `${Math.max(1, Math.floor(value / 60_000))} 分钟`;
+}
+
+function formatMetricDuration(milliseconds) {
+  if (milliseconds == null || !Number.isFinite(Number(milliseconds))) return "—";
+  const value = Math.max(0, Number(milliseconds));
+  if (value < 60_000) return "<1 分钟";
+  const days = Math.floor(value / 86_400_000);
+  const hours = Math.floor((value % 86_400_000) / 3_600_000);
+  const minutes = Math.floor((value % 3_600_000) / 60_000);
+  if (days) return `${days} 天${hours ? ` ${hours} 小时` : ""}`;
+  if (hours) return `${hours} 小时${minutes ? ` ${minutes} 分钟` : ""}`;
+  return `${minutes} 分钟`;
 }
 
 function attentionReasons(task) {
@@ -1101,6 +1114,56 @@ function bindExecutionActions(root) {
   });
 }
 
+function setUndoMessage(root, message, isError = false) {
+  const target = root.querySelector(".undo-message");
+  if (!target) return;
+  target.textContent = message;
+  target.classList.toggle("is-error", isError);
+}
+
+function bindUndoAction(task) {
+  const root = document.querySelector("#detail-summary");
+  const button = root.querySelector("[data-undo-operation]");
+  if (!button) return;
+  button.addEventListener("click", async () => {
+    if (state.savingUndo || button.disabled) return;
+    const label = button.dataset.undoLabel || "最近一次可逆操作";
+    if (!window.confirm(
+      `确认撤销“${label}”？\n\n原始事件会保留，系统将恢复修改前状态并追加补偿事件。`
+    )) return;
+
+    state.savingUndo = true;
+    button.disabled = true;
+    button.textContent = "正在撤销…";
+    setUndoMessage(root, "正在校验当前状态并写入同一事务…");
+    let operationWritten = false;
+    try {
+      await api("/api/tasks/undo", "POST", {
+        projectId: task.projectId,
+        taskPath: task.relativeDir
+      });
+      operationWritten = true;
+      state.board = await api("/api/board");
+      updateSyncLabel();
+      renderAll();
+      const fresh = taskByKey(task.taskKey);
+      if (!fresh) {
+        els.taskDialog.close();
+        return;
+      }
+      openTask(fresh);
+    } catch (error) {
+      setUndoMessage(root, error.message, true);
+    } finally {
+      state.savingUndo = false;
+      if (button.isConnected) {
+        button.disabled = operationWritten;
+        button.textContent = operationWritten ? "已撤销 · 待刷新" : "撤销最近操作";
+      }
+    }
+  });
+}
+
 function setDependencyMessage(root, message, isError = false) {
   const target = root.querySelector(".dependency-form-message") ||
     root.querySelector(".risk-dependency .dependency-empty");
@@ -1473,7 +1536,20 @@ const EVENT_TYPE_LABELS = {
   stage_manual_confirmed: "人工确认阶段",
   task_plan_updated: "计划字段更新",
   dependency_created: "新增阻断依赖",
-  dependency_resolved: "解除阻断依赖"
+  dependency_resolved: "解除阻断依赖",
+  operation_undone: "撤销操作"
+};
+
+const EVENT_SOURCE_LABELS = {
+  user: "人工",
+  scan: "扫描",
+  system: "系统"
+};
+
+const METRIC_COMPLETENESS_LABELS = {
+  missing: "历史缺失",
+  partial: "部分覆盖",
+  tracked: "证据完整"
 };
 
 function eventDescription(event) {
@@ -1498,7 +1574,196 @@ function eventDescription(event) {
   if (event.type === "dependency_resolved") {
     return `已解除 ${safe(payload.blockerTaskKey)} → ${safe(payload.blockedTaskKey)} 的阻断；原因：${safe(payload.reason)}`;
   }
+  if (event.type === "operation_undone") {
+    return `撤销了 ${safe(payload.targetLabel || payload.targetEventType || "最近操作")}；原事件与补偿事件均保留。`;
+  }
   return safe(event.type);
+}
+
+function eventTechnicalMarkup(event) {
+  let payload = "{}";
+  try {
+    payload = JSON.stringify(event.payload || {}, null, 2);
+  } catch {
+    payload = "事件附加信息无法序列化";
+  }
+  return `<details class="event-technical">
+    <summary>技术详情</summary>
+    <dl>
+      <div><dt>事件</dt><dd>#${safe(event.id || "unknown")}</dd></div>
+      <div><dt>操作组</dt><dd>${safe(event.correlationId || "未记录")}</dd></div>
+      <div><dt>原始来源</dt><dd>${safe(event.source || "unknown")}</dd></div>
+    </dl>
+    <pre>${safe(payload)}</pre>
+  </details>`;
+}
+
+function historyUndoMarkup(history, canEdit) {
+  const undo = history.undo || {};
+  const available = Boolean(undo.available) && canEdit;
+  const status = available
+    ? `可撤销：${undo.label || "最近一次可逆操作"}`
+    : undo.disabledReason || "当前没有可撤销操作";
+  return `<div class="history-undo">
+    <p id="undo-operation-status">${safe(status)}</p>
+    <button
+      class="secondary-button small-button undo-button"
+      type="button"
+      data-undo-operation
+      data-undo-label="${safe(undo.label || "最近一次可逆操作")}"
+      ${available ? "" : "disabled"}
+      ${undo.disabledReason ? `title="${safe(undo.disabledReason)}"` : ""}
+      aria-describedby="undo-operation-status"
+    >${available ? "撤销最近操作" : "暂不可撤销"}</button>
+  </div>
+  <p class="undo-message" aria-live="polite"></p>`;
+}
+
+function executionHistoryMarkup(task) {
+  const execution = task.execution || {};
+  const conflict = task.executionIdentityValid === false || task.executionIdentityConflict;
+  const canEdit = !task.archived && !conflict;
+  const history = execution.history || {
+    events: Array.isArray(execution.events) ? execution.events : [],
+    eventTotal: Number(execution.eventTotal || 0),
+    eventLimit: Number(execution.eventLimit || 1000),
+    truncated: Boolean(execution.eventTruncated),
+    windowStartAt: execution.eventWindowStartAt || null,
+    undo: {}
+  };
+  const events = Array.isArray(history.events) ? history.events : [];
+  const historyError = execution.historyError || history.error || null;
+  const total = Number(history.eventTotal || events.length);
+  const limit = Number(history.eventLimit || 1000);
+  return `<section class="execution-history" aria-labelledby="execution-history-title">
+    <div class="insight-section-head">
+      <div>
+        <h3 id="execution-history-title">操作历史</h3>
+        <p>按时间倒序；人工操作、扫描观察与系统基线分开标记。</p>
+      </div>
+      <span class="insight-count">${safe(events.length)} / ${safe(total)} 条</span>
+    </div>
+    ${historyError ? `<p class="insight-local-error" role="alert">历史增强信息读取失败：${safe(historyError)}。下方仍显示已读取的原始事件。</p>` : ""}
+    ${historyUndoMarkup(history, canEdit)}
+    <div class="event-timeline" role="region" tabindex="0" aria-label="任务事件时间线">
+      ${events.length ? events.map((event) => `<article class="event-item event-source-${safe(["user", "scan", "system"].includes(event.source) ? event.source : "unknown")}">
+        <time datetime="${safe(event.occurredAt)}">${safe(formatEventTime(event.occurredAt) || "时间未知")}</time>
+        <div class="event-item-body">
+          <div class="event-item-title">
+            <strong>${safe(EVENT_TYPE_LABELS[event.type] || event.type)}</strong>
+            <span class="event-source-label">${safe(EVENT_SOURCE_LABELS[event.source] || event.source || "未知来源")}</span>
+          </div>
+          <p>${eventDescription(event)}</p>
+          <small>操作者 ${safe(event.actor || "system")} · 操作组 ${safe(String(event.correlationId || "").slice(0, 8) || "未记录")}</small>
+          ${eventTechnicalMarkup(event)}
+        </div>
+      </article>`).join("") : `<p class="event-empty">尚无事件；下一次扫描会建立追踪基线。</p>`}
+    </div>
+    ${history.truncated || total > events.length
+      ? `<p class="event-limit">仅显示最近 ${safe(events.length)} 条，共 ${safe(total)} 条；只有窗口内无法确认候选组时才禁用撤销。</p>`
+      : `<p class="event-limit">事件窗口上限 ${safe(limit)} 条；本轮窗口未截断。</p>`}
+  </section>`;
+}
+
+function executionMetricsMarkup(task) {
+  const execution = task.execution || {};
+  const metrics = execution.metrics || {};
+  const completeness = ["missing", "partial", "tracked"].includes(metrics.completeness)
+    ? metrics.completeness
+    : "missing";
+  const reasons = Array.isArray(metrics.missingReasons) ? metrics.missingReasons : [];
+  const stageDurations = Array.isArray(metrics.stageDurations) ? metrics.stageDurations : [];
+  const window = metrics.eventWindow || {};
+  const observedSince = formatEventTime(metrics.observedSince);
+  const maxStageDuration = Math.max(
+    1,
+    ...stageDurations.map((item) => Number(item.durationMs) || 0)
+  );
+  const blockedRatio = Number.isFinite(Number(metrics.blockedRatio))
+    ? Math.round(Number(metrics.blockedRatio) * 1000) / 10
+    : null;
+  return `<section class="execution-metrics" aria-labelledby="execution-metrics-title">
+    <div class="insight-section-head">
+      <div>
+        <h3 id="execution-metrics-title">执行指标</h3>
+        <p>${observedSince ? `从 ${safe(observedSince)} 开始追踪，不补造启用前历史。` : "尚未建立可信追踪起点。"}</p>
+      </div>
+      <span class="metric-completeness is-${safe(completeness)}">${safe(METRIC_COMPLETENESS_LABELS[completeness])}</span>
+    </div>
+    ${execution.metricsError ? `<p class="insight-local-error" role="alert">指标计算失败：${safe(execution.metricsError)}</p>` : ""}
+    ${reasons.length
+      ? `<ul class="metric-reasons">${reasons.map((reason) => `<li>${safe(reason)}</li>`).join("")}</ul>`
+      : ""}
+    ${completeness === "missing"
+      ? `<p class="metric-missing-note">证据不足，不展示可能误导的精确时长。${window.truncated ? "当前事件窗口也已截断。" : ""}</p>`
+      : completeness === "partial"
+        ? `<div class="metric-kpi-grid is-qualitative">
+            <div>
+              <small>Lead Time · 追踪后</small>
+              <strong>${metrics.leadTimeOpen ? "追踪仍在进行" : "覆盖不完整"}</strong>
+              <span>不显示精确时长</span>
+            </div>
+            <div>
+              <small>Cycle Time · 实现到检查</small>
+              <strong>${metrics.cycleTimeOpen ? "检查尚未完成" : "覆盖不完整"}</strong>
+              <span>不以窗口补造完整耗时</span>
+            </div>
+            <div>
+              <small>阶段停留</small>
+              <strong>${stageDurations.length ? "仅部分节点" : "阶段节点不足"}</strong>
+              <span>缺少可精确拆分区间</span>
+            </div>
+            <div>
+              <small>阻断时间占比</small>
+              <strong>${blockedRatio == null ? "无法计算" : "覆盖不完整"}</strong>
+              <span>不显示估算占比</span>
+            </div>
+          </div>
+          <p class="metric-partial-note">当前为部分覆盖，只展示状态，不把最近事件窗口换算成看似精确的历史。</p>`
+        : `<div class="metric-kpi-grid">
+          <div>
+            <small>Lead Time · 追踪后</small>
+            <strong>${safe(formatMetricDuration(metrics.leadTimeMs))}</strong>
+            <span>${metrics.leadTimeOpen ? "仍在进行" : "已到归档终点"}</span>
+          </div>
+          <div>
+            <small>Cycle Time · 实现到检查</small>
+            <strong>${safe(formatMetricDuration(metrics.cycleTimeMs))}</strong>
+            <span>${metrics.cycleTimeOpen ? "等待检查完成" : "检查节点已出现"}</span>
+          </div>
+          <div>
+            <small>阶段回流</small>
+            <strong>${safe(metrics.reworkCount || 0)} 次</strong>
+            <span>按阶段索引逆序计数</span>
+          </div>
+          <div>
+            <small>阻断时间占比</small>
+            <strong>${blockedRatio == null ? "无法计算" : `${safe(blockedRatio)}%`}</strong>
+            <span>${metrics.blockedTimeMs == null ? "缺少追踪窗口" : `累计 ${safe(formatMetricDuration(metrics.blockedTimeMs))}`}</span>
+          </div>
+        </div>
+        ${blockedRatio == null ? "" : `<div class="metric-share" aria-label="阻断时间占比 ${safe(blockedRatio)}%">
+          <div><span style="width:${Math.max(0, Math.min(100, blockedRatio))}%"></span></div>
+          <small>阻断 ${safe(formatMetricDuration(metrics.blockedTimeMs))} / 观察 ${safe(formatMetricDuration(metrics.observedWindowMs))}</small>
+        </div>`}
+        ${stageDurations.length ? `<div class="metric-stage-list">
+          <h4>阶段停留</h4>
+          ${stageDurations.map((item) => {
+            const duration = Number(item.durationMs);
+            const width = Number.isFinite(duration)
+              ? Math.max(3, Math.round((duration / maxStageDuration) * 100))
+              : 0;
+            return `<div class="metric-stage-row">
+              <span>${safe(item.label || item.stageId)}</span>
+              <div role="img" aria-label="${safe(item.label || item.stageId)}停留${item.open ? "进行中" : formatMetricDuration(item.durationMs)}">
+                <i style="width:${width}%"></i>
+              </div>
+              <small>${item.open ? "进行中" : safe(formatMetricDuration(item.durationMs))}</small>
+            </div>`;
+          }).join("")}
+        </div>` : ""}`}
+    <p class="metric-window">事件窗口 ${safe(Number(window.total || 0))} 条${window.truncated ? `，仅取最近 ${safe(Number(window.limit || 1000))} 条` : ""}。指标可由事件集重建，不使用文件修改时间补值。</p>
+  </section>`;
 }
 
 function blockerOptions(task) {
@@ -1645,7 +1910,6 @@ function riskDependencyMarkup(task) {
 
 function executionDetailMarkup(task) {
   const execution = task.execution || {};
-  const events = execution.events || [];
   const conflict = task.executionIdentityValid === false || task.executionIdentityConflict;
   const canEdit = !task.archived && !conflict;
   const history = execution.historyStatus === "tracking"
@@ -1666,19 +1930,9 @@ function executionDetailMarkup(task) {
     <div class="detail-attention-row">${attentionChips(task, 10) || '<span class="attention-chip">当前无注意力信号</span>'}</div>
     <p class="history-note">${safe(history)}</p>
     ${conflict ? '<p class="identity-conflict-note">执行身份冲突：同一 projectId 下存在重复 task.json id，扩展数据写入已禁用。</p>' : ""}
-    <h3 class="timeline-title">事件时间线</h3>
-    <div class="event-timeline">
-      ${events.length ? events.slice(0, 20).map((event) => `<article>
-        <time>${safe(formatEventTime(event.occurredAt))}</time>
-        <div>
-          <strong>${safe(EVENT_TYPE_LABELS[event.type] || event.type)}</strong>
-          <p>${eventDescription(event)}</p>
-          <small>${safe(event.actor || "system")} · ${safe(event.source)} · 操作 ${safe(String(event.correlationId || "").slice(0, 8))}</small>
-        </div>
-      </article>`).join("") : `<p class="event-empty">尚无事件；下一次扫描会建立追踪基线。</p>`}
-    </div>
-    ${execution.eventTotal > events.length ? `<p class="event-limit">仅显示最近 ${events.length} 条，共 ${execution.eventTotal} 条。</p>` : ""}
-  </section>`;
+  </section>
+  ${executionMetricsMarkup(task)}
+  ${executionHistoryMarkup(task)}`;
 }
 
 function renderTaskDetail(task) {
@@ -1777,6 +2031,7 @@ function renderTaskDetail(task) {
   bindTaskButtons(document.querySelector("#detail-summary"));
   bindArtifactButtons(document.querySelector("#detail-summary"));
   bindExecutionActions(document.querySelector("#detail-summary"));
+  bindUndoAction(task);
   bindDependencyActions(task);
   bindStageActions(task);
   renderAssigneeOptions(task);

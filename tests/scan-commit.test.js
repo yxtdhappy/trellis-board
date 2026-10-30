@@ -7,7 +7,7 @@ import { openDatabase } from "../server/database.js";
 import { createExecutionStore } from "../server/execution-store.js";
 import { createPersistenceStore } from "../server/persistence.js";
 
-const SCAN_SCHEMA_VERSION = 10;
+const SCAN_SCHEMA_VERSION = 11;
 
 function makeWorkspace() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-scan-commit-"));

@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { openDatabase } from "../server/database.js";
+import { openDatabase, withTransaction } from "../server/database.js";
+import { appendTaskEvent } from "../server/execution-store.js";
 import {
   computeAttentionReasons,
   deriveTaskRisk,
@@ -363,4 +364,209 @@ test("DoR 和 DoD 缺口从现有阶段证据派生且不修改阶段完成状�
     }
   };
   assert.deepEqual(deriveTaskRisk(archivedWithEvidence).dodMissing, []);
+});
+
+test("归档任务详情返回历史与完整指标，列表只带轻量指标摘要", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-history-projection-"));
+  const dataDir = path.join(root, "data");
+  const db = openDatabase({
+    databaseFile: path.join(dataDir, "board.sqlite"),
+    legacyFiles: {
+      repositoriesFile: path.join(dataDir, "repos.json"),
+      metadataFile: path.join(dataDir, "task-metadata.json"),
+      scanCacheFile: path.join(dataDir, "scan-cache.json"),
+      stateFile: path.join(dataDir, "board-state.json")
+    },
+    fallbackRepositories: [],
+    logger: { warn() {} }
+  });
+  try {
+    const executionTaskKey = "demo::archived";
+    const append = (id, type, occurredAt, payload, source = "scan") =>
+      appendTaskEvent(db, {
+        executionTaskKey,
+        eventType: type,
+        source,
+        actor: source === "system" ? "system" : "dev",
+        correlationId: `event-${id}`,
+        occurredAt,
+        payload
+      });
+    append(1, "tracking_started", "2026-10-30T00:00:00.000Z", {
+      after: { derivedStage: "implement" }
+    }, "system");
+    append(2, "stage_observed", "2026-10-30T00:10:00.000Z", {
+      after: { derivedStage: "implement" }
+    });
+    append(3, "stage_observed", "2026-10-30T00:20:00.000Z", {
+      after: { derivedStage: "check" }
+    });
+
+    const task = {
+      taskKey: "demo::.trellis/tasks/archive/archived",
+      executionTaskKey,
+      executionIdentityValid: true,
+      executionIdentityConflict: false,
+      projectId: "demo",
+      projectName: "Demo",
+      title: "Archived task",
+      priority: "P2",
+      derivedStage: "archive",
+      archived: true,
+      archivedAt: "2026-10-30T00:40:00.000Z",
+      artifacts: { prd: { path: "prd.md", content: "保留产物" } },
+      stages: []
+    };
+    const board = projectBoardExecution(
+      { generatedAt: NOW.toISOString(), tasks: [task] },
+      [],
+      db,
+      NOW
+    );
+    const listed = board.tasks[0];
+    assert.equal(listed.execution.metrics.completeness, "tracked");
+    assert.equal(listed.execution.metrics.cycleTimeMs, 10 * 60_000);
+    assert.equal("events" in listed.execution, false);
+    assert.equal("history" in listed.execution, false);
+
+    const detail = projectTaskDetailExecution(listed, db, NOW, 1000, {
+      boardTasks: [task]
+    });
+    assert.equal(detail.artifacts.prd.content, "保留产物");
+    assert.equal(detail.execution.historyError, null);
+    assert.equal(detail.execution.metricsError, null);
+    assert.equal(detail.execution.history.events.length, 3);
+    assert.deepEqual(
+      detail.execution.history.events.map((item) => item.type),
+      ["stage_observed", "stage_observed", "tracking_started"]
+    );
+    assert.equal(detail.execution.history.undo.available, false);
+    assert.match(detail.execution.history.undo.disabledReason, /归档任务只读/);
+    assert.equal(detail.execution.metrics.completeness, "tracked");
+    assert.equal(detail.execution.metrics.leadTimeMs, 30 * 60_000);
+    assert.equal(detail.execution.metrics.cycleTimeMs, 10 * 60_000);
+  } finally {
+    db.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("事件读取失败只影响历史与指标，任务产物和阶段仍返回", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-history-isolation-"));
+  const dataDir = path.join(root, "data");
+  const db = openDatabase({
+    databaseFile: path.join(dataDir, "board.sqlite"),
+    legacyFiles: {
+      repositoriesFile: path.join(dataDir, "repos.json"),
+      metadataFile: path.join(dataDir, "task-metadata.json"),
+      scanCacheFile: path.join(dataDir, "scan-cache.json"),
+      stateFile: path.join(dataDir, "board-state.json")
+    },
+    fallbackRepositories: [],
+    logger: { warn() {} }
+  });
+  try {
+    const task = {
+      taskKey: "demo::.trellis/tasks/isolation",
+      executionTaskKey: "demo::isolation",
+      executionIdentityValid: true,
+      executionIdentityConflict: false,
+      projectId: "demo",
+      projectName: "Demo",
+      title: "Local error isolation",
+      priority: "P2",
+      derivedStage: "implement",
+      archived: false,
+      artifacts: { prd: { path: "prd.md", content: "保留产物" } },
+      stages: [{ id: "prd", complete: true }]
+    };
+    db.exec("DROP TABLE task_event");
+    const detail = projectTaskDetailExecution(task, db, NOW, 1000, {
+      boardTasks: [task]
+    });
+
+    assert.equal(detail.title, task.title);
+    assert.equal(detail.artifacts.prd.content, "保留产物");
+    assert.deepEqual(detail.stages, task.stages);
+    assert.match(detail.execution.historyError, /task_event/);
+    assert.equal(detail.execution.metricsError, detail.execution.historyError);
+    assert.deepEqual(detail.execution.history.events, []);
+    assert.equal(detail.execution.metrics.completeness, "missing");
+    assert.equal(detail.execution.history.undo.available, false);
+  } finally {
+    db.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("board 事件截断时只返回指标摘要，不泄漏历史正文", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-history-board-limit-"));
+  const dataDir = path.join(root, "data");
+  const db = openDatabase({
+    databaseFile: path.join(dataDir, "board.sqlite"),
+    legacyFiles: {
+      repositoriesFile: path.join(dataDir, "repos.json"),
+      metadataFile: path.join(dataDir, "task-metadata.json"),
+      scanCacheFile: path.join(dataDir, "scan-cache.json"),
+      stateFile: path.join(dataDir, "board-state.json")
+    },
+    fallbackRepositories: [],
+    logger: { warn() {} }
+  });
+  try {
+    const executionTaskKey = "demo::limited";
+    withTransaction(db, () => {
+      appendTaskEvent(db, {
+        executionTaskKey,
+        eventType: "tracking_started",
+        source: "system",
+        actor: "system",
+        correlationId: "tracking",
+        occurredAt: "2026-10-30T00:00:00.000Z",
+        payload: { after: { derivedStage: "implement" } }
+      });
+      for (let index = 0; index < 1000; index += 1) {
+        appendTaskEvent(db, {
+          executionTaskKey,
+          eventType: "stage_observed",
+          source: "scan",
+          actor: "system",
+          correlationId: `scan-${index}`,
+          occurredAt: new Date(
+            Date.parse("2026-10-30T00:00:01.000Z") + index * 1000
+          ).toISOString(),
+          payload: {
+            after: { derivedStage: index % 2 ? "check" : "implement" }
+          }
+        });
+      }
+    });
+    const task = {
+      taskKey: "demo::.trellis/tasks/limited",
+      executionTaskKey,
+      executionIdentityValid: true,
+      executionIdentityConflict: false,
+      projectId: "demo",
+      projectName: "Demo",
+      title: "Limited history",
+      priority: "P2",
+      derivedStage: "implement",
+      archived: false,
+      stages: []
+    };
+    const board = projectBoardExecution(
+      { generatedAt: NOW.toISOString(), tasks: [task] },
+      [],
+      db,
+      NOW
+    );
+    const execution = board.tasks[0].execution;
+    assert.equal(execution.metrics.completeness, "partial");
+    assert.equal(execution.metrics.missingReasonCount > 0, true);
+    assert.equal("events" in execution, false);
+    assert.equal("history" in execution, false);
+  } finally {
+    db.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
