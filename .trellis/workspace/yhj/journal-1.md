@@ -87,3 +87,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: 个人执行：风险与流动
+<!-- trellis-session: v=2 fp=f82c5580ee0c3f5d -->
+
+**Date**: 2026-10-31
+**Task**: 个人执行：风险与流动
+**Branch**: `codex/personal-risk-flow`
+
+### Summary
+
+交付 SQLite v3 依赖阻断、解除历史、固定阻断时长、软 WIP、DoR/DoD，并通过 95/95 测试、隔离迁移、真实 API 和浏览器 E2E。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `98c66b9d5cb75c2dd9e728dcac839187b79d39d2` | feat(board): 增加依赖阻断与执行流动风险 |
+| `c1518e8d3a4c28bea48041f938ad03247ee8d6aa` | docs(spec): 固化依赖阻断与风险投影契约 |
+
+### Status
+
+[OK] **Completed**
