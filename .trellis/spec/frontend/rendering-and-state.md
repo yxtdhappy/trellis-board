@@ -15,6 +15,8 @@
 
 新增状态先判断是否可由 `state.board` 推导。能直接推导的显示值不要复制一份长期状态。
 
+`flow`、任务 `execution` 摘要和详情完整依赖数组都来自 `/api/board` 与 `/api/task`；不要在前端自行重建依赖图。WIP 上限写入 `board_state` 后必须重新读取 Board。
+
 ## 渲染模式
 
 页面没有虚拟 DOM，模式是：
@@ -36,6 +38,15 @@
 - `baseFilteredActiveTasks({ executionView })` 是执行视图计数的统一入口，必须先组合项目、负责人、搜索和执行视图条件，再做任务组展开。
 - 任务组中任一成员命中时，计数和 `renderTaskFamily()` 都使用展开后的全部组成员；流水线槽位显示组数量，因此“1 个组 / 4 个任务”不是计数冲突。
 - 所有视图按钮、`execution-view-summary`、顶部“进行中”和流水线实际任务必须来自同一过滤结果。按钮计数可以一次计算多个视图，但不得为每个计数单独重绘 DOM 或修改筛选状态。
+- 流动信号中的 WIP 是个人全局承载量，必须使用 Board `flow.implementationWip` / `flow.wipState`，不能随当前项目、负责人或搜索过滤子集重算；阻断、已解除和 DoR/DoD 队列可保持当前筛选范围。“被阻断”使用 `blocked` 过滤，“阻断已解除”使用 `isUnblockedReady`，两者不是同一条件。
+
+## 风险与依赖详情
+
+- 详情请求返回活动 `execution.blockedBy` / `execution.blocks`、已结束 `resolvedBlockedBy` / `resolvedBlocks` 和 `risk.dorMissing` / `risk.dodMissing`；列表没有这些完整数组时显示读取中，不应把缺失字段当成“无依赖”。
+- 被阻断、反向阻断和解除按钮必须使用文本说明方向与原因。动态标题、项目名、创建人、原因、时间和依赖 ID 进入模板前都要经过 `safe()`。
+- 已结束依赖放在默认折叠的历史区，显示原方向、原因、创建时间、解除时间和固定区间时长；不能把 `durationMs` 继续按当前时间重算。
+- 创建或解除失败时保留 blocker 选择、原因输入和当前详情节点；成功后才重新读取 Board 与详情。提交期间禁用对应按钮，防止重复写入。
+- DoR/DoD 折叠项只解释派生缺口，不得据此禁用阶段按钮。
 
 ## 任务组层级呈现
 

@@ -20,6 +20,9 @@
 | `POST /api/tasks/assign` | 更新 `task.json.assignee` | 200 |
 | `PUT /api/tasks/stage` | 记录人工阶段 | 200 |
 | `PUT /api/tasks/execution` | 保存任务截止、里程碑和标签 | 200 |
+| `POST /api/tasks/dependencies` | 创建任务阻断依赖 | 201 |
+| `DELETE /api/tasks/dependencies` | 解除活动阻断依赖并保留历史 | 200 |
+| `PUT /api/board/settings` | 保存个人 WIP 软上限 | 200 |
 | `POST /api/saved-views` | 创建组合视图 | 201 |
 | `PUT /api/saved-views` | 更新组合视图 | 200 |
 | `DELETE /api/saved-views` | 删除组合视图 | 200 |
@@ -74,6 +77,16 @@
 
 保存视图只接受结构化筛选 JSON，拒绝未知字段、非对象筛选和类型错误的整数窗口。视图 ID 由服务端生成，内置视图不写入 `saved_view` 表。
 
+### 阻断依赖
+
+`POST /api/tasks/dependencies` 使用两个 `{ projectId, taskPath }` 分别定位被阻断方和阻断方；两侧都必须通过白名单、任务根、真实路径和稳定执行身份校验。后端拒绝缺失任务、身份冲突、自引用、空原因、超过 500 字符的原因、重复活动边和任意长度循环。
+
+`DELETE /api/tasks/dependencies` 只接受依赖 ID，在同一事务中设置 `resolved_at` 并追加 `dependency_resolved` 事件。解除不删除原行；已解除的同一活动边以后可以重新创建新行。详情同时返回活动 `blockedBy` / `blocks` 和已结束 `resolvedBlockedBy` / `resolvedBlocks`，历史项的 `durationMs` 固定按 `resolvedAt - createdAt` 计算，不再随当前时间增长。
+
+### 看板设置
+
+`PUT /api/board/settings` 只接受 `executionWipLimit`，必须是 `1`–`9` 的整数。该值写入 `board_state`，服务端只把达到或超过上限投影成提醒，不拦截阶段确认。
+
 ## 路径安全
 
 - 仓库路径先 `path.resolve()`，再做白名单匹配。
@@ -105,5 +118,6 @@ fs.renameSync(tempFile, targetFile);
 - 用 `exec()` 拼接标题、slug 或路径。
 - 在路由里直接把 `task.json` 部分写坏。
 - 删除项目时删除源仓库。
+- 删除项目时只删白名单记录，却遗漏该项目的执行数据或任一侧依赖行。
 - 把用户输入原样放进响应头或 HTML。
 - `/api/board` 返回详情正文导致首屏响应膨胀。

@@ -8,7 +8,7 @@
 白名单仓库 .trellis/**
   -> server/loader.js 扫描与阶段推导
   -> server/scan-worker.js Worker Thread 汇总
-  -> data/board.sqlite scan_cache 与内存 boardCache
+  -> data/board.sqlite scan_cache、task_dependency、board_state 与内存 boardCache
   -> server/index.js /api/board、/api/task
   -> public/app.js state 与 renderX/bindX
   -> public/index.html 原生 DOM
@@ -18,7 +18,7 @@
 public/app.js api()
   -> server/index.js 路由
   -> server/actions.js / metadata.js / execution-store.js
-  -> 目标仓库 task.json / 本应用 SQLite task_stage、task_execution、task_tag、saved_view、task_event
+  -> 目标仓库 task.json / 本应用 SQLite task_stage、task_execution、task_tag、saved_view、task_event、task_dependency、board_state
   -> watcher 防抖、排队、重新扫描
   -> 前端状态轮询并加载新看板
 ```
@@ -62,6 +62,20 @@ public/app.js api()
 
 增加大字段前必须确认不会被列表接口意外带出。
 
+风险与依赖字段的投影边界：
+
+- 列表只返回 `blockedByCount`、`blocksCount`、活动阻断时长、WIP 状态和 DoR/DoD 缺口数量。
+- 详情才返回活动 `blockedBy` / `blocks`、已结束 `resolvedBlockedBy` / `resolvedBlocks`、原因、创建人、固定区间时长和 DoR/DoD 缺口数组。
+- 列表证据摘要必须保留 PRD 验收计数、Design 有效性和 Implement 存在性，供风险派生使用；产物正文仍然清空。
+
+### 依赖与流动
+
+- A blocked by B 表示 `blocked_task_key = A`、`blocker_task_key = B`；A 的 `blockedBy` 与 B 的 `blocks` 由同一行双向投影。
+- 创建和解除依赖必须与 `task_event` 同事务。环检测只读取活动边；解除后保留行、创建时间和解除时间，后续可以创建新的活动边。
+- `flow` 和任务风险摘要由执行投影实时叠加，不属于原始扫描缓存。依赖或 WIP 写入后，前端必须重新请求 `/api/board` 和 `/api/task`，不能只改本地状态。
+- `executionWipLimit` 存在 `board_state`，范围 `1`–`9`，默认 `2`；它和 DoR/DoD 一样只提醒，不参与阶段写入门禁。
+- 保存视图 `blocked` 只接受 `any`、`blocked`、`unblocked`；缺失字段按 `any` 兼容旧视图。
+
 ### HTTP 错误
 
 后端接口失败时抛出 `Error`，统一路由捕获后返回 `{ "error": "中文错误信息" }`，HTTP 状态为 400。前端 [public/app.js](../../../public/app.js) 的 `api()` 读取 `payload.error` 并抛出，页面只通过 `showError()` 或表单消息展示。
@@ -70,7 +84,7 @@ public/app.js api()
 
 ### 扫描缓存版本
 
-[server/index.js](../../../server/index.js) 的 `SCAN_SCHEMA_VERSION` 当前为 `9`。只要 board 输出形状发生不兼容变化，就递增该值，让 SQLite `scan_cache` 行失效。只改内部实现、不改变持久化输出形状时无需递增。
+[server/index.js](../../../server/index.js) 的 `SCAN_SCHEMA_VERSION` 当前为 `10`。只要 board 输出形状（包括执行风险摘要和 flow）发生不兼容变化，就递增该值，让 SQLite `scan_cache` 行失效。只改内部实现、不改变持久化输出形状时无需递增。
 
 ## 反向链路检查
 
@@ -88,5 +102,7 @@ public/app.js api()
 - [ ] 明确字段、错误、路径和阶段索引的格式。
 - [ ] 在边界做一次运行时校验，不信任浏览器输入。
 - [ ] 同步列表投影、详情、前端渲染和测试。
+- [ ] 依赖事务、活动边环检测、双向投影、历史保留和 WIP 软限制都有自动化覆盖。
+- [ ] 保存视图缺 `blocked` 字段按 `any`，完整依赖只在详情返回。
 - [ ] 输出形状不兼容时更新 `SCAN_SCHEMA_VERSION`。
 - [ ] 运行相关 Node 测试，并对页面操作做真实浏览器验证。
