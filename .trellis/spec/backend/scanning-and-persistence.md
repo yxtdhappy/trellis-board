@@ -48,7 +48,7 @@ E2E 只接受明确的执行完成证据。`implement.md` 中的计划、条件�
 - 单个任务变化可以走 `refreshCachedTask()`；workspace 或关系变化可能要求更宽范围重算。
 - PRD 验收计数、Design 是否非骨架等轻量摘要必须随新证据进入任务缓存签名，并通过 `toTaskListItem()` 保留摘要对象、移除产物正文；不要在列表投影中再套一层不存在的 `summary.summary`。
 
-HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_SCHEMA_VERSION` 校验，当前协议为 `10`。读取旧版本缓存时视为无效。SQLite `board_state` 保存刷新运行状态和 `executionWipLimit`；两者都不是业务事实来源。任务扫描事实来自仓库文件，人工阶段和执行扩展事实来自 `task_stage`、`task_execution`、`task_tag`、`saved_view`、`task_event`、`task_dependency`。
+HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_SCHEMA_VERSION` 校验，当前协议为 `11`。读取旧版本缓存时视为无效。SQLite `board_state` 保存刷新运行状态和 `executionWipLimit`；两者都不是业务事实来源。任务扫描事实来自仓库文件，人工阶段和执行扩展事实来自 `task_stage`、`task_execution`、`task_tag`、`saved_view`、`task_event`、`task_dependency`。
 
 刷新完成后比较上一个有效 board 与新 board 的 `derivedStage`。首次追踪、扫描缓存升级失效或缺失时只写 `tracking_started` 基线；后续真实变化写 `stage_observed`。身份冲突或归档任务不作为阶段观察基线。人工阶段接口触发的刷新应抑制扫描观察，避免把人工写入重复记成扫描变化。
 
@@ -142,6 +142,88 @@ if (dependency.resolvedAt) {
 只记录“曾经解除过”不足以解释阻断成本；历史投影必须保留双方、原因和固定结束时长。
 
 扫描缓存中的 JSON 损坏或 schema 版本不匹配都视为 cache miss。SQLite 打开、schema、迁移和运行期查询失败是致命错误，不回退到旧 JSON。
+
+### 事件、撤销与指标
+
+- `task_event` 保持 append-only。计划字段、人工阶段、依赖创建和依赖解除事件的 `reversible=1`，同一用户操作共享 `correlation_id`；扫描观察和追踪起点不可撤销。
+- 详情一次读取最多 1000 条事件并按 `occurred_at DESC, id DESC` 返回；超过窗口时 `eventTruncated=true`。只有窗口内无法确认最新未撤销候选组时才禁用撤销；窗口内已存在可确认候选时可以继续撤销。
+- `operation_undone` 只追加补偿事件，payload 保存 `targetCorrelationId`、`targetEventIds` 和恢复摘要，不删除或改写原事件。
+- 撤销前必须核对当前投影仍等于目标事件的 `after`；计划、人工阶段或依赖已被后续操作改变时拒绝执行。
+- 计划、人工阶段、依赖活动性恢复与补偿事件必须在同一 `BEGIN IMMEDIATE` 事务完成；补偿失败整体回滚。
+- 指标由最近事件窗口、当前归档状态和依赖区间实时计算，不持久化聚合值。完整度为 `missing | partial | tracked`；`tracking_started` 只提供追踪起点，不产生阶段停留。
+- 归档时间来自归档目录内 `task.json` 的 mtime，移动目录时可能早于最后阶段事件。出现该情况时必须保守返回 `partial` 和明确原因，以最后阶段事件作为保守结束点，不能把不完整时长标成 `tracked`。
+- 详情读取事件失败时保留任务基础字段、产物、阶段和依赖，只把事件时间线降为空并用 `historyError`、`metricsError` 暴露局部错误；不能因此拒绝整个任务详情。
+- 列表只返回 `summarizeExecutionMetrics()` 的轻量字段；完整 `history`、`metrics` 和事件正文只在 `/api/task` 详情返回。
+
+#### Scenario: 可逆事件、撤销与指标重建
+
+##### 1. Scope / Trigger
+
+- Trigger：新增跨层撤销 API、append-only 补偿事件、详情历史投影和事件驱动指标。改动涉及 HTTP、SQLite 事务、归档稳定身份与前端渲染。
+
+##### 2. Signatures
+
+- `POST /api/tasks/undo`：请求 `{ projectId: string, taskPath: string }`；成功返回补偿 `correlationId`、`eventId`、`targetCorrelationId`、`targetEventIds`、`restored` 和刷新后的 `task`。
+- `readExecutionEvents(db, executionTaskKey, limit)`：返回 `{ events, eventTotal, eventLimit, eventTruncated, eventWindowStartAt }`，`limit` 上限 `1000`。
+- `buildTaskHistory(options)`：返回倒序事件、截断窗口和 `undo` 元数据。
+- `computeExecutionMetrics(options)`：显式接收 `events`、`dependencies`、`archived`、`archivedAt`、`now` 和事件窗口，返回 `missing | partial | tracked` 及证据事件 ID。
+
+##### 3. Contracts
+
+- 可逆事件为 `task_plan_updated`、`stage_manual_confirmed`、`dependency_created`、`dependency_resolved`，共享操作内 `correlation_id` 且 `reversible=1`。
+- `operation_undone` 是不可逆补偿事件，payload 至少包含 `targetCorrelationId`、`targetEventIds`、`targetEventType`、`targetLabel` 和 `restored`。
+- 撤销前当前计划、人工阶段或依赖状态必须等于目标事件的 `after`；恢复使用 `before`，原事件不得删除或改写。
+- 同一事务内完成投影恢复和 `operation_undone` 追加。归档任务、身份冲突任务、没有候选组、候选已撤销或 after-state 已变化时拒绝且不写数据。
+- `/api/board` 的 `execution.metrics` 只能是 `summarizeExecutionMetrics()` 摘要；`execution.history`、完整 `metrics` 和事件正文只出现在 `/api/task`。
+- `tracking_started` 只提供追踪起点。没有阶段节点为 `missing`；缺少实现/检查节点、跨阶段扫描、事件截断或不可信归档终点为 `partial`；节点完整且归档终点可信才为 `tracked`。
+
+##### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 计划/阶段/依赖当前值不等于目标事件 after | 400“后续操作已改变当前值”，不追加补偿事件 |
+| 同一 correlation 已撤销 | 400“没有尚未撤销的可逆操作”，事件数不变 |
+| 补偿事件写入失败 | 计划、阶段或依赖恢复与补偿事件整体回滚 |
+| 归档任务或身份冲突 | 写事务前拒绝 |
+| 1,000 条截断但窗口内能确认最新候选 | 允许撤销 |
+| 截断导致无法确认最新候选 | 禁用撤销并说明窗口原因 |
+| 事件表读取失败 | 保留标题、阶段、产物和依赖；`historyError` / `metricsError` 局部显示 |
+| `archivedAt` 早于最后阶段事件 | `partial`，使用最后阶段事件作保守结束点，不展示精确数值 |
+
+##### 5. Good/Base/Bad Cases
+
+- Good：计划 A→B 后撤销，投影恢复 A，原更新事件和 `operation_undone` 均可读。
+- Base：旧任务只有 `tracking_started`、没有阶段事件，返回 `missing` 和“tracking_started 不计作阶段停留”。
+- Bad：撤销通过删除旧事件或把原事件标记为不可见；这会破坏 append-only 历史与跨窗口可重建性。
+
+##### 6. Tests Required
+
+- `execution-history.test.js`：四类撤销分支、after-state 冲突、重复撤销、补偿失败回滚、截断候选、归档和身份冲突。
+- `execution-metrics.test.js`：固定 `now` 的确定性、missing/partial/tracked、追踪起点过晚、开放检查、回流、重叠阻断、归档结束边界。
+- `execution-projection.test.js`：列表无事件正文、归档稳定身份、详情局部错误隔离、1,001 条事件摘要。
+- 真实 HTTP 与浏览器：撤销后 API/Board/详情读回一致；重复失败计数不变；`partial` 不显示精确数值；820px 无页面级横向溢出。
+
+##### 7. Wrong vs Correct
+
+Wrong：
+
+```js
+db.prepare("DELETE FROM task_event WHERE id = ?").run(targetEventId);
+```
+
+Correct：
+
+```js
+withTransaction(db, () => {
+  restoreProjectionFromBefore(target);
+  appendTaskEvent(db, {
+    eventType: "operation_undone",
+    payload: { targetCorrelationId, targetEventIds, restored }
+  });
+});
+```
+
+撤销是追加补偿并恢复投影，不是删除或改写历史。
 
 ## 刷新与监听
 
