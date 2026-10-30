@@ -133,3 +133,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: 个人版执行增强集成
+<!-- trellis-session: v=2 fp=b2bb30d6f32b377f -->
+
+**Date**: 2026-10-31
+**Task**: 个人版执行增强集成
+**Branch**: `codex/personal-execution-enhancements`
+
+### Summary
+
+完成三个切片的最终集成验收；修复撤销人工阶段后读取旧 boardCache 的缺陷。npm test 113/113，全量 JS 语法检查、隔离 API/重启/浏览器 E2E 通过；真实 4317 与 data/board.sqlite 未修改。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a00f9155eeb0ddc8b41ada056fd992004322128f` | fix(board): 刷新撤销后的任务快照 |
+| `292281e` | docs(board): 完成个人执行增强集成验收 |
+
+### Status
+
+[OK] **Completed**
