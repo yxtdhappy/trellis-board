@@ -396,42 +396,114 @@ export function readExecutionMap(db, executionTaskKeys, limit = 200) {
   }));
 }
 
-function readEvents(db, executionTaskKey, limit = 200) {
-  const safeLimit = Math.min(1000, Math.max(1, Number(limit) || 200));
+function eventRowToObject(row) {
+  return {
+    id: row.id,
+    executionTaskKey: row.execution_task_key,
+    type: row.event_type,
+    source: row.source,
+    actor: row.actor,
+    correlationId: row.correlation_id,
+    occurredAt: row.occurred_at,
+    payload: parseJson(row.payload_json, {}),
+    reversible: Boolean(row.reversible)
+  };
+}
+
+function normalizedEventLimit(limit) {
+  return Math.min(1000, Math.max(1, Number(limit) || 200));
+}
+
+export function readExecutionEvents(db, executionTaskKey, limit = 200) {
+  const key = String(executionTaskKey || "").trim();
+  if (!key) throw new Error("缺少任务执行身份");
+  const safeLimit = normalizedEventLimit(limit);
   const total = Number(db.prepare(`
     SELECT COUNT(*) AS count
     FROM task_event
     WHERE execution_task_key = ?
-  `).get(executionTaskKey)?.count || 0);
+  `).get(key)?.count || 0);
   const rows = db.prepare(`
     SELECT
-      id, event_type, source, actor, correlation_id, occurred_at,
+      execution_task_key, id, event_type, source, actor, correlation_id, occurred_at,
       payload_json, reversible
     FROM task_event
     WHERE execution_task_key = ?
     ORDER BY occurred_at DESC, id DESC
     LIMIT ?
-  `).all(executionTaskKey, safeLimit);
+  `).all(key, safeLimit);
   return {
-    events: rows.map((row) => ({
-      id: row.id,
-      type: row.event_type,
-      source: row.source,
-      actor: row.actor,
-      correlationId: row.correlation_id,
-      occurredAt: row.occurred_at,
-      payload: parseJson(row.payload_json, {}),
-      reversible: Boolean(row.reversible)
-    })),
-    eventTotal: total
+    events: rows.map(eventRowToObject),
+    eventTotal: total,
+    eventLimit: safeLimit,
+    eventTruncated: total > rows.length,
+    eventWindowStartAt: rows.at(-1)?.occurred_at || null
   };
+}
+
+export function readExecutionEventsBatch(db, executionTaskKeys, limit = 1000) {
+  const keys = [...new Set(
+    executionTaskKeys.map((key) => String(key || "").trim()).filter(Boolean)
+  )];
+  const safeLimit = normalizedEventLimit(limit);
+  const result = new Map();
+  if (!keys.length) return result;
+
+  const counts = new Map();
+  for (const group of chunk(keys)) {
+    const rows = db.prepare(`
+      SELECT execution_task_key, COUNT(*) AS count
+      FROM task_event
+      WHERE execution_task_key IN (${placeholders(group.length)})
+      GROUP BY execution_task_key
+    `).all(...group);
+    rows.forEach((row) => counts.set(row.execution_task_key, Number(row.count)));
+  }
+
+  const eventsByKey = new Map(keys.map((key) => [key, []]));
+  for (const group of chunk(keys)) {
+    const rows = db.prepare(`
+      SELECT
+        execution_task_key, id, event_type, source, actor, correlation_id,
+        occurred_at, payload_json, reversible
+      FROM (
+        SELECT
+          execution_task_key, id, event_type, source, actor, correlation_id,
+          occurred_at, payload_json, reversible,
+          ROW_NUMBER() OVER (
+            PARTITION BY execution_task_key
+            ORDER BY occurred_at DESC, id DESC
+          ) AS event_rank
+        FROM task_event
+        WHERE execution_task_key IN (${placeholders(group.length)})
+      )
+      WHERE event_rank <= ?
+      ORDER BY execution_task_key, occurred_at DESC, id DESC
+    `).all(...group, safeLimit);
+    rows.forEach((row) => {
+      eventsByKey.get(row.execution_task_key)?.push(eventRowToObject(row));
+    });
+  }
+
+  keys.forEach((key) => {
+    const events = eventsByKey.get(key);
+    const total = counts.get(key) || 0;
+    result.set(key, {
+      events,
+      eventTotal: total,
+      eventLimit: safeLimit,
+      eventTruncated: total > events.length,
+      eventWindowStartAt: events.at(-1)?.occurredAt || null
+    });
+  });
+  return result;
 }
 
 export function readExecutionDetail(db, executionTaskKey, limit = 200) {
   const key = String(executionTaskKey || "").trim();
   if (!key) throw new Error("缺少任务执行身份");
   const summary = readExecutionMap(db, [key], limit).get(key);
-  const timeline = readEvents(db, key, limit);
+  const timeline = readExecutionEvents(db, key, limit);
   return { ...summary, ...timeline };
 }
 
@@ -614,7 +686,8 @@ export function createExecutionStore({
           reason,
           before: null,
           after: { status: "active" }
-        }
+        },
+        reversible: true
       });
       return {
         id,
@@ -664,7 +737,8 @@ export function createExecutionStore({
           reason: row.reason,
           before: { status: "active" },
           after: { status: "resolved", resolvedAt }
-        }
+        },
+        reversible: true
       });
       return {
         ...rowToDependency({ ...row, resolved_at: resolvedAt }),

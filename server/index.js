@@ -14,6 +14,7 @@ import { createRepositoryStore, getRepositories } from "./repositories.js";
 import { createPersistenceStore } from "./persistence.js";
 import { createWatchRuntime } from "./watcher.js";
 import { createExecutionStore } from "./execution-store.js";
+import { undoLastOperation } from "./execution-history.js";
 import {
   projectBoardExecution,
   projectTaskDetailExecution
@@ -26,7 +27,7 @@ const publicDir = path.join(appDir, "public");
 const workerFile = path.join(serverDir, "scan-worker.js");
 const folderPickerFile = path.join(serverDir, "pick-folders.ps1");
 const port = Number(process.env.PORT || 4317);
-const SCAN_SCHEMA_VERSION = 10;
+const SCAN_SCHEMA_VERSION = 11;
 const database = getDefaultDatabase();
 const persistence = createPersistenceStore();
 const repositoryStore = createRepositoryStore();
@@ -483,7 +484,7 @@ function findTask(payload) {
     resolved.task,
     database,
     new Date(),
-    200,
+    1000,
     {
       boardTasks: board?.tasks || [resolved.task],
       executionWipLimit: persistence.readExecutionWipLimit()
@@ -637,6 +638,25 @@ async function handleApi(request, response, url) {
           projectName: blocked.task.projectName
         }
       }
+    });
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/tasks/undo") {
+    const payload = await readJsonBody(request);
+    const resolved = resolveCurrentTask(payload);
+    requireWritableExecution(resolved);
+    const undone = undoLastOperation({
+      db: database,
+      executionTaskKey: resolved.task.executionTaskKey,
+      projectId: resolved.project.id,
+      taskPath: resolved.task.relativeDir,
+      task: resolved.task,
+      actor: resolved.actor
+    });
+    sendJson(response, 200, {
+      message: "最近操作已撤销",
+      ...undone,
+      task: findTask(payload)
     });
     return;
   }
