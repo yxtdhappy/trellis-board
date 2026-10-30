@@ -64,3 +64,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 完成个人计划与注意力执行视图
+<!-- trellis-session: v=2 fp=bf5e152395c32ac0 -->
+
+**Date**: 2026-10-30
+**Task**: 完成个人计划与注意力执行视图
+**Branch**: `codex/personal-plan-attention`
+
+### Summary
+
+交付 SQLite v2 计划字段、标签、保存视图、稳定执行身份和可信事件基线；完成推荐任务、注意力队列、父子层级、短高度弹窗布局及真实 4317 E2E。PRD 14/14、实施清单 44/44 已核对，任务已归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dd9d2cc3a33be43dd610d9dd0d4feb51b488c390` | feat(board): 增加个人计划与注意力执行视图 |
+| `943a0534d9d47cf99fe63517a43ff265cb09e560` | docs(spec): 固化执行身份、事件与视图计数契约 |
+
+### Status
+
+[OK] **Completed**
