@@ -3,7 +3,7 @@
   "name": "personal-risk-flow",
   "title": "个人执行：风险与流动",
   "description": "交付依赖阻断、原因与时长、解除阻断队列、软 WIP 上限和 DoR/DoD 缺口提醒。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "yhj",
   "assignee": "yhj",
   "createdAt": "2026-10-30",
-  "completedAt": null,
+  "completedAt": "2026-10-31",
   "branch": "codex/personal-risk-flow",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "98c66b9d5cb75c2dd9e728dcac839187b79d39d2",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -48,6 +48,6 @@
     ".trellis/spec/frontend/rendering-and-state.md",
     ".trellis/spec/guides/cross-layer-thinking-guide.md"
   ],
-  "notes": "前置 10-30-personal-plan-attention 已归档；其功能提交 dd9d2cc3a33be43dd610d9dd0d4feb51b488c390，规范提交 943a0534d9d47cf99fe63517a43ff265cb09e560。本切片 npm test 95/95，隔离迁移、真实 API、浏览器和 860px 验收通过。",
+  "notes": "前置 10-30-personal-plan-attention 已归档；其功能提交 dd9d2cc3a33be43dd610d9dd0d4feb51b488c390，规范提交 943a0534d9d47cf99fe63517a43ff265cb09e560。本切片功能提交 98c66b9d5cb75c2dd9e728dcac839187b79d39d2，规范提交 c1518e8d3a4c28bea48041f938ad03247ee8d6aa；npm test 95/95，隔离迁移、真实 API、浏览器和 860px 验收通过。",
   "meta": {}
 }
