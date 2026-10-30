@@ -29,8 +29,8 @@ import assert from "node:assert/strict";
 | [server/persistence.js](../../../server/persistence.js) | 缓存 schema 失效、看板状态保留 `null` 和多字段更新 |
 | [server/actions.js](../../../server/actions.js) | 无效输入在调用 `task.py` 前失败 |
 | [server/watcher.js](../../../server/watcher.js) | 路径过滤、真实文件事件、超时和关闭 |
-| [server/execution-store.js](../../../server/execution-store.js) | 计划字段校验、标签原子替换、保存视图、扫描事件和事务回滚 |
-| [server/execution-projection.js](../../../server/execution-projection.js) | 截止/停滞注意力、身份冲突隐藏和 Board 批量投影 |
+| [server/execution-store.js](../../../server/execution-store.js) | 计划字段校验、标签原子替换、保存视图、依赖创建/解除、循环和事务回滚、扫描事件 |
+| [server/execution-projection.js](../../../server/execution-projection.js) | 截止/停滞/阻断注意力、身份冲突隐藏、DoR/DoD、WIP 和 Board 批量投影 |
 | [server/task-location.js](../../../server/task-location.js) | 白名单、任务根、真实路径和身份冲突定位 |
 | 前端纯模块 | Markdown 安全、slug、归档排序、组合筛选 |
 
@@ -44,6 +44,8 @@ import assert from "node:assert/strict";
 - 文件监听测试使用 Promise 和有限超时，结束时调用 `runtime.close()`。
 - 缓存测试同时验证首次解析、命中复用和只刷新变化任务，不能只断言数组长度。
 - E2E 文本判断至少覆盖计划、否定、完成和表格结论。
+- 依赖测试至少覆盖缺失、自引用、重复、空/超长原因、二/三节点循环、事件失败回滚、解除历史、重开和重新创建。
+- 迁移测试至少覆盖新库 v3、v1 -> v3、v2 -> v3、源版本备份、失败回滚和大于 v3 拒绝。
 
 ## 代码风格
 
@@ -62,6 +64,9 @@ import assert from "node:assert/strict";
 - [ ] 新扫描证据已进入缓存签名，相关缓存能失效。
 - [ ] 阶段或父子关系变化同步了所有消费者。
 - [ ] 不兼容 board 输出已更新 `SCAN_SCHEMA_VERSION`。
+- [ ] 列表摘要保留证据计数和 Design 有效性，但不泄漏完整依赖数组、事件或产物正文。
+- [ ] 依赖图只用活动边做环检测；已解除行保留，项目移除清理任一侧依赖。
+- [ ] WIP、DoR、DoD 只影响显示和筛选，不改变阶段写入校验。
 - [ ] 计划字段、标签或人工阶段失败时没有部分写入，事件与投影处于同一事务。
 - [ ] 首次追踪和身份冲突变化不会补造扫描阶段事件。
 - [ ] 新增分支有 Node 测试；HTTP/UI 改动有真实请求和浏览器验收。

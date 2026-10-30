@@ -46,10 +46,11 @@ E2E 只接受明确的执行完成证据。`implement.md` 中的计划、条件�
 - Git 元数据缓存 TTL 为 `60_000ms`。
 - 消失的任务会从缓存中清理。
 - 单个任务变化可以走 `refreshCachedTask()`；workspace 或关系变化可能要求更宽范围重算。
+- PRD 验收计数、Design 是否非骨架等轻量摘要必须随新证据进入任务缓存签名，并通过 `toTaskListItem()` 保留摘要对象、移除产物正文；不要在列表投影中再套一层不存在的 `summary.summary`。
 
-HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_SCHEMA_VERSION` 校验。读取旧版本缓存时视为无效。SQLite `board_state` 保存刷新运行状态；两者都不是业务事实来源。任务扫描事实来自仓库文件，人工阶段和执行扩展事实来自 `task_stage`、`task_execution`、`task_tag`、`saved_view`、`task_event`。
+HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_SCHEMA_VERSION` 校验，当前协议为 `10`。读取旧版本缓存时视为无效。SQLite `board_state` 保存刷新运行状态和 `executionWipLimit`；两者都不是业务事实来源。任务扫描事实来自仓库文件，人工阶段和执行扩展事实来自 `task_stage`、`task_execution`、`task_tag`、`saved_view`、`task_event`、`task_dependency`。
 
-刷新完成后比较上一个有效 board 与新 board 的 `derivedStage`。首次 v2 扫描、扫描缓存升级失效或缺失时只写 `tracking_started` 基线；后续真实变化写 `stage_observed`。身份冲突或归档任务不作为阶段观察基线。人工阶段接口触发的刷新应抑制扫描观察，避免把人工写入重复记成扫描变化。
+刷新完成后比较上一个有效 board 与新 board 的 `derivedStage`。首次追踪、扫描缓存升级失效或缺失时只写 `tracking_started` 基线；后续真实变化写 `stage_observed`。身份冲突或归档任务不作为阶段观察基线。人工阶段接口触发的刷新应抑制扫描观察，避免把人工写入重复记成扫描变化。
 
 ## SQLite 持久化
 
@@ -57,13 +58,88 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 `database.js` 是 schema 和迁移的唯一所有者：
 
-- schema v2 包含 v1 的 `app_meta`、`repositories`、`task_stage`、`scan_cache`、`board_state`，以及 `task_execution`、`task_tag`、`saved_view`、`task_event`。
+- schema v3 包含 v2 的 `app_meta`、`repositories`、`task_stage`、`scan_cache`、`board_state`、`task_execution`、`task_tag`、`saved_view`、`task_event`，并新增 `task_dependency`。
+- `task_dependency` 保存稳定 `executionTaskKey` 双方、原因、创建人、创建时间和可空解除时间；活动边 `(blocker_task_key, blocked_task_key)` 唯一，双向查询有索引。解除只写 `resolved_at`，历史行不删除。
 - 启用 WAL、外键、`busy_timeout=5000` 和 `synchronous=NORMAL`。
-- v1 -> v2 迁移在单一 `BEGIN IMMEDIATE` 事务中完成；迁移前用 `VACUUM INTO` 写入可独立打开的 v1 快照备份，失败时保留 v1 版本和原表。
+- v1 -> v2 -> v3 顺序迁移在单一 `BEGIN IMMEDIATE` 事务中完成；迁移前用 `VACUUM INTO` 写入可独立打开的源版本快照，命名为 `board.sqlite.v1-backup` 或 `board.sqlite.v2-backup`。失败时主库保留源版本和原表，备份仍可独立打开。
 - 首次初始化在 `BEGIN IMMEDIATE` 中一次性导入四个旧 JSON，并写入 `legacy_json_imported_v1`。
 - 迁移后不再读写旧 JSON；它们只作为迁移来源和回滚备份。
 - 损坏的旧 JSON 记录警告并跳过，不阻止服务启动。
-- 项目批量新增、删除及重排、看板状态多字段更新必须在事务中完成。
+- 项目批量新增、删除及重排、看板状态多字段更新、依赖创建/解除必须在事务中完成。移除项目时，同一事务按 `projectId::` 前缀清理其执行数据，并删除任一侧属于该项目的依赖行。
+
+### 依赖图与风险投影
+
+#### 1. Scope / Trigger
+
+- Trigger：新增 SQLite 表、写接口、详情投影、保存视图条件和首屏风险字段，属于数据库、HTTP 与前端跨层契约变更。
+
+#### 2. Signatures
+
+- SQL：`task_dependency(id, blocker_task_key, blocked_task_key, reason, created_by, created_at, resolved_at)`。
+- `POST /api/tasks/dependencies`：请求 `{ blocked: { projectId, taskPath }, blocker: { projectId, taskPath }, reason }`，成功 `201`。
+- `DELETE /api/tasks/dependencies`：请求 `{ id }`，成功 `200`。
+- `PUT /api/board/settings`：请求 `{ executionWipLimit }`，成功 `200`。
+
+#### 3. Contracts
+
+- A blocked by B 固定写为 `blocked_task_key = A`、`blocker_task_key = B`；B 的 `blocks` 由同一行反向生成。
+- 活动边 `(blocker_task_key, blocked_task_key)` 唯一；解除只写 `resolved_at`，不删除行。创建/解除时间与对应 `task_event` 同事务。
+- 列表只返回 `blockedByCount`、`blocksCount`、活动阻断时长、WIP 状态和 DoR/DoD 缺口数量。
+- 详情返回活动 `blockedBy` / `blocks`，以及已结束 `resolvedBlockedBy` / `resolvedBlocks`；历史项必须带 `createdAt`、`resolvedAt` 和区间 `durationMs`。
+- 当前 WIP 指未归档、身份有效且 `derivedStage === "implement"` 的任务数。上限存 `board_state.executionWipLimit`，默认 `2`、允许 `1`–`9`，只提醒。
+- DoD 不把归档扫描补出的 `archive-gap` 阶段当作实施或检查报告；归档任务仍要求真实报告、验收状态和 commit 证据。
+- 保存视图 `blocked` 只接受 `any | blocked | unblocked`；缺失字段按 `any`。
+
+#### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 缺失任务、身份冲突、路径越界 | 写入前拒绝，依赖和事件计数不变 |
+| 自引用、同向重复活动边 | 拒绝，保留已有边 |
+| 新增边使活动图形成二/三/任意长度闭环 | 拒绝，错误包含闭环标题 |
+| 原因为空或超过 500 个 Unicode 字符 | 拒绝 |
+| 依赖行写入成功但事件失败，或解除更新成功但事件失败 | 整笔事务回滚 |
+| WIP 不在 1–9 | 拒绝保存 |
+| WIP 达到或超出上限 | 只返回 `at_limit` / `over_limit`，阶段写入继续成功 |
+
+#### 5. Good/Base/Bad Cases
+
+- Good：A 同时被 B、C 阻断时仍显示两条原因；解除 B 后 A 不进入待推进队列，解除最后一条活动边后才进入。
+- Base：旧保存视图没有 `blocked` 字段，保持原优先级、标签等筛选结果。
+- Bad：解除时物理删除依赖行，导致原因、创建人、创建时间和结束时长永久丢失。
+
+#### 6. Tests Required
+
+- `database.test.js`：新库 v3、v1/v2 升级、源版本备份、失败回滚和大于 v3 拒绝。
+- `execution-store.test.js`：缺失、自引用、重复、原因边界、二/三节点环、创建/解除事件回滚、重开和重新创建。
+- `execution-projection.test.js`：列表不带完整数组；详情同时返回活动与已结束双向历史；解除区间时长使用 `resolvedAt - createdAt`；DoR/DoD 不改变阶段完成状态。
+- 真实 HTTP：失败前后依赖与事件计数一致；循环错误含标题闭环。
+- 浏览器：创建/解除后刷新一致，解除历史可见，860px 无页面级横向溢出。
+
+#### 7. Wrong vs Correct
+
+Wrong：
+
+```js
+if (dependency.resolvedAt) {
+  resolvedBlockedKeys.add(dependency.blockedTaskKey);
+  return;
+}
+```
+
+Correct：
+
+```js
+if (dependency.resolvedAt) {
+  resolvedBlockedKeys.add(dependency.blockedTaskKey);
+  resolvedBlockedBy.get(dependency.blockedTaskKey).push(
+    dependencySummary(dependency, dependency.blockerTaskKey, relatedTask, dependency.resolvedAt)
+  );
+  return;
+}
+```
+
+只记录“曾经解除过”不足以解释阻断成本；历史投影必须保留双方、原因和固定结束时长。
 
 扫描缓存中的 JSON 损坏或 schema 版本不匹配都视为 cache miss。SQLite 打开、schema、迁移和运行期查询失败是致命错误，不回退到旧 JSON。
 
@@ -100,12 +176,17 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 ## 修改检查
 
+- [ ] schema v3 包含活动边唯一索引、双向查询索引，且大于 v3 的版本仍被拒绝。
+- [ ] v1 -> v3、v2 -> v3 顺序迁移成功；源版本备份可独立打开，迁移失败能回滚。
 - [ ] 扫描只把包含 `task.json` 的目录认作任务。
 - [ ] 新证据文件已加入读取和缓存签名范围。
 - [ ] 缓存失效范围覆盖 workspace、关系和 Git 元数据影响。
 - [ ] E2E 计划/否定/完成三种语义均有测试。
 - [ ] 输出结构不兼容时更新 `SCAN_SCHEMA_VERSION`。
-- [ ] 首次 v2 扫描只建立追踪基线，不补造迁移前阶段事件。
+- [ ] 列表摘要保留证据计数和 Design 有效性，但不泄漏完整依赖数组、事件或产物正文。
+- [ ] 依赖创建/解除与事件同事务，所有失败场景不产生部分写入。
+- [ ] 列表只返回风险摘要，详情才返回完整 `blockedBy`、`blocks`、原因、时长和 DoR/DoD 明细。
+- [ ] 首次追踪只建立基线，不补造迁移前阶段事件。
 - [ ] 身份冲突清除后不会从冲突快照补写虚假阶段变化。
 - [ ] 删除或重命名任务后缓存能清理旧项。
 - [ ] 移除项目时同一事务清理对应 `task_stage` 和执行扩展数据，且不会误删相似项目 ID 的记录。

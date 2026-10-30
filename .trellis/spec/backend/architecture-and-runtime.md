@@ -5,13 +5,13 @@
 | 模块 | 职责 |
 | --- | --- |
 | [server/config.js](../../../server/config.js) | 应用目录、SQLite 与旧 JSON 路径、默认仓库、仓库路径规范化 |
-| [server/database.js](../../../server/database.js) | `node:sqlite` 连接、PRAGMA、schema v1 -> v2 迁移、事务辅助和旧 JSON 一次性迁移 |
+| [server/database.js](../../../server/database.js) | `node:sqlite` 连接、PRAGMA、schema v1 -> v3 顺序迁移、事务辅助和旧 JSON 一次性迁移 |
 | [server/repositories.js](../../../server/repositories.js) | SQLite 白名单增删、ID 生成、路径规范化和显示顺序 |
 | [server/metadata.js](../../../server/metadata.js) | 13 个阶段的合法 ID、SQLite 人工阶段存储 |
 | [server/persistence.js](../../../server/persistence.js) | SQLite 扫描缓存和看板状态 facade |
 | [server/task-location.js](../../../server/task-location.js) | 白名单任务定位、真实路径校验、身份冲突检查 |
-| [server/execution-store.js](../../../server/execution-store.js) | 计划字段、标签、保存视图和不可变事件事务 |
-| [server/execution-projection.js](../../../server/execution-projection.js) | Board 批量执行摘要、注意力原因和详情事件投影 |
+| [server/execution-store.js](../../../server/execution-store.js) | 计划字段、标签、保存视图、阻断依赖和不可变事件事务 |
+| [server/execution-projection.js](../../../server/execution-projection.js) | Board 批量执行摘要、依赖图、WIP/DoR/DoD 风险、注意力原因和详情事件投影 |
 | [server/loader.js](../../../server/loader.js) | 扫描任务、读取证据、推导阶段、父子关系、列表投影 |
 | [server/scan-worker.js](../../../server/scan-worker.js) | Worker Thread 内执行仓库扫描、增量任务刷新和结果汇总 |
 | [server/watcher.js](../../../server/watcher.js) | 监听 `.trellis` 的 tasks、workspace、`.developer`，过滤相关事件 |
@@ -57,7 +57,7 @@ Worker 内会缓存各仓库最近结果，并根据事件判断是仓库级重�
 
 [server/index.js](../../../server/index.js) 启动时：
 
-1. 打开并迁移 `data/board.sqlite`，创建仓库存储和 HTTP 服务。
+1. 打开 `data/board.sqlite`，按顺序迁移到 schema v3，创建仓库存储和 HTTP 服务。
 2. 监听 `127.0.0.1:4317`。
 3. 启动对白名单仓库的文件监听。
 4. 异步触发启动扫描。
@@ -69,6 +69,7 @@ Worker 内会缓存各仓库最近结果，并根据事件判断是仓库级重�
 - HTTP 请求体和网络处理使用 async API。
 - 扫描内部大量使用同步 `fs`，但通过 Worker 隔离长扫描。
 - SQLite 使用同步 `DatabaseSync`；多行状态写入必须在 `BEGIN IMMEDIATE` 事务中完成。
+- 依赖行与其创建/解除事件必须处于同一事务；活动依赖边在写入前完成重复和环检测。
 - 目标仓库的任务 `task.json` 仍使用同步临时文件加 rename，保证文件原子替换。
 - 外部 `task.py` 使用 `spawn()` 和参数数组，不启用 shell；环境设置 `PYTHONUTF8=1`。
 
@@ -78,7 +79,7 @@ Worker 内会缓存各仓库最近结果，并根据事件判断是仓库级重�
 
 路径常量和旧 JSON 迁移来源由 [server/config.js](../../../server/config.js) 定义。业务模块按名称导入，不在本地重新拼接 `data/` 路径。运行时可变 Board 状态只通过 SQLite 读取和写入。
 
-扫描输出结构由 `SCAN_SCHEMA_VERSION` 控制。该常量属于缓存兼容协议，不属于普通版本号。
+扫描输出结构由 `SCAN_SCHEMA_VERSION` 控制，当前为 `10`。该常量属于缓存兼容协议，不属于普通版本号；执行风险摘要或 flow 输出形状变化时必须同步递增。
 
 ## 反模式
 
