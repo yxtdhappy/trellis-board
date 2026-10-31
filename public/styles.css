@@ -45,6 +45,16 @@
   border: 0;
 }
 
+.clipboard-fallback {
+  position: fixed;
+  top: 0;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 html {
   min-width: 320px;
   background: var(--paper);
@@ -432,6 +442,52 @@ summary:focus-visible,
 
 .secondary-button:hover {
   border-color: var(--accent);
+}
+
+.task-take-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 3px 0 rgba(49, 95, 74, 0.14);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.task-take-button:hover {
+  border-color: #264b3a;
+  background: #264b3a;
+}
+
+.task-take-button.is-copied {
+  border-color: #264b3a;
+  background: #264b3a;
+  box-shadow: inset 0 0 0 2px var(--accent-bright);
+}
+
+.task-take-button.is-error {
+  border-color: var(--danger);
+  background: var(--danger);
+  box-shadow: none;
+}
+
+.task-take-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.task-take-icon {
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1;
 }
 
 .error-banner {
@@ -1372,6 +1428,24 @@ summary:focus-visible,
   gap: 18px;
   padding: 22px 24px 16px;
   border-bottom: 1px solid var(--line);
+}
+
+.task-dialog-head {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.task-dialog-heading {
+  flex: 1 1 540px;
+  min-width: 0;
+}
+
+.dialog-head-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .dialog-head h2 {
@@ -3210,6 +3284,14 @@ summary:focus-visible,
   position: relative;
   z-index: 2;
   pointer-events: none;
+}
+
+.task-card-take-button {
+  position: relative;
+  z-index: 4;
+  width: 100%;
+  margin-top: 9px;
+  pointer-events: auto;
 }
 
 .task-edit-button,
