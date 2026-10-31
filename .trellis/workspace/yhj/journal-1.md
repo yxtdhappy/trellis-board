@@ -156,3 +156,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: 完成看板复制任务名入口
+<!-- trellis-session: v=2 fp=02ded2cafbb423b4 -->
+
+**Date**: 2026-10-31
+**Task**: 完成看板复制任务名入口
+**Branch**: `codex/personal-execution-enhancements`
+
+### Summary
+
+任务卡片和详情增加“复制任务名”，复制 task.dirName；补齐 Clipboard 降级、aria-live 反馈、键盘与窄屏验收。npm test 113/113 通过，真实浏览器验证卡片、详情、归档、fallback、失败提示和 800px 布局。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2860ef2` | feat(board): 增加复制任务名入口 |
+| `9d9dc95` | docs(board): 记录复制任务名验收 |
+
+### Status
+
+[OK] **Completed**
