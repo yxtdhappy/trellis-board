@@ -3,7 +3,7 @@
   "name": "task-copy-shortcut",
   "title": "列表与详情增加接取任务复制入口",
   "description": "在任务列表卡片和详情标题旁提供显眼的接取任务按钮，复制精确任务目录名并反馈结果。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "yhj",
   "assignee": "yhj",
   "createdAt": "2026-10-31",
-  "completedAt": null,
+  "completedAt": "2026-10-31",
   "branch": "codex/personal-execution-enhancements",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "2860ef229d4f36877056661b4c76721ee576dcfe",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -27,6 +27,6 @@
     ".trellis/spec/frontend/rendering-and-state.md",
     ".trellis/spec/frontend/quality-guidelines.md"
   ],
-  "notes": "",
+  "notes": "已在主看板卡片和任务详情提供“复制任务名”，复制 task.dirName；实现 Clipboard 降级、aria-live 反馈、键盘操作与窄屏布局。npm test 113/113 通过，真实浏览器验证卡片/详情/归档复制、fallback、失败提示和 800px 布局；Chrome DevTools MCP 连接超时后按规则使用 ego-browser。",
   "meta": {}
 }
