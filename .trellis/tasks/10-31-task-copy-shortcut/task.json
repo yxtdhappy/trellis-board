@@ -1,0 +1,32 @@
+{
+  "id": "task-copy-shortcut",
+  "name": "task-copy-shortcut",
+  "title": "列表与详情增加接取任务复制入口",
+  "description": "在任务列表卡片和详情标题旁提供显眼的接取任务按钮，复制精确任务目录名并反馈结果。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-10-31",
+  "completedAt": null,
+  "branch": "codex/personal-execution-enhancements",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "public/app.js",
+    "public/index.html",
+    "public/styles.css",
+    ".trellis/spec/frontend/rendering-and-state.md",
+    ".trellis/spec/frontend/quality-guidelines.md"
+  ],
+  "notes": "",
+  "meta": {}
+}

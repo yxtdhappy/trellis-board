@@ -1,0 +1,5 @@
+{"file":".trellis/spec/guides/index.md","reason":"确认跨层契约、共享指南和验证基线，避免前端小改动偏离项目边界。"}
+{"file":".trellis/spec/frontend/index.md","reason":"约束原生 HTML/CSS/ES Module 的页面入口、动态绑定和 DOM 安全要求。"}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"确定复制交互代码应留在 app.js 集成层还是拆为可复用浏览器模块。"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"实现动态按钮、重新绑定监听器、任务详情渲染和 DOM 安全时必须遵循现有模式。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"约束可访问性、响应式布局、浏览器验收和项目唯一自动测试入口。"}
