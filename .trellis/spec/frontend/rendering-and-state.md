@@ -40,6 +40,14 @@
 - 所有视图按钮、`execution-view-summary`、顶部“进行中”和流水线实际任务必须来自同一过滤结果。按钮计数可以一次计算多个视图，但不得为每个计数单独重绘 DOM 或修改筛选状态。
 - 流动信号中的 WIP 是个人全局承载量，必须使用 Board `flow.implementationWip` / `flow.wipState`，不能随当前项目、负责人或搜索过滤子集重算；阻断、已解除和 DoR/DoD 队列可保持当前筛选范围。“被阻断”使用 `blocked` 过滤，“阻断已解除”使用 `isUnblockedReady`，两者不是同一条件。
 
+## 任务名复制
+
+- “复制任务名”复制的是 `task.dirName`，即截图和 Agent 任务定位使用的目录 basename；不得复制中文 `title`、复合 `taskKey`、项目名或 `.trellis/tasks/` 前缀。
+- 任务卡片已有 `.task-card-open` 透明整卡按钮时，复制入口必须是并列原生按钮，并通过更高 `z-index`、`pointer-events: auto` 和点击隔离避免触发详情打开；不要把复制按钮嵌进 `data-task` 控件。
+- Clipboard API 被拒绝时需要降级到临时 textarea。若页面存在 `dialog[open]`，fallback 节点必须挂到该 dialog 内；挂到 `body` 会落在 `showModal()` 的 inert 区域，导致无法聚焦、选择和复制。
+- 复制反馈由 `aria-live` 状态区播报完整 `dirName`。任务详情异步刷新时，同一 `taskKey` 的二次渲染必须保留当前复制反馈；只有切换到不同任务才重置按钮、计时器和播报。
+- 复制彻底失败时必须同时给出中文错误与可见按钮状态；卡片使用页面错误条，详情使用 dialog 内状态区，不能静默失败。
+
 ## 风险与依赖详情
 
 - 详情请求返回活动 `execution.blockedBy` / `execution.blocks`、已结束 `resolvedBlockedBy` / `resolvedBlocks` 和 `risk.dorMissing` / `risk.dodMissing`；列表没有这些完整数组时显示读取中，不应把缺失字段当成“无依赖”。
