@@ -79,6 +79,7 @@
         </header>
 
         <section id="error-banner" class="error-banner" hidden></section>
+        <p id="copy-feedback" class="sr-only" role="status" aria-live="polite"></p>
 
         <section id="pipeline-view" class="content-view is-visible" aria-labelledby="pipeline-heading">
           <h2 id="pipeline-heading" class="sr-only">任务流程视图</h2>
@@ -218,13 +219,20 @@
     </div>
 
     <dialog id="task-dialog" class="dialog task-dialog">
-      <div class="dialog-head">
-        <div>
+      <div class="dialog-head task-dialog-head">
+        <div class="task-dialog-heading">
           <p class="eyebrow" id="dialog-project"></p>
           <h2 id="dialog-title"></h2>
         </div>
-        <button class="icon-button" data-close-dialog type="button" aria-label="关闭">×</button>
+        <div class="dialog-head-actions">
+          <button id="dialog-copy-task" class="task-take-button" type="button" disabled>
+            <span class="task-take-icon" aria-hidden="true">⧉</span>
+            <span class="task-take-label">复制任务名</span>
+          </button>
+          <button class="icon-button" data-close-dialog type="button" aria-label="关闭">×</button>
+        </div>
       </div>
+      <p id="dialog-copy-feedback" class="sr-only" role="status" aria-live="polite"></p>
       <div class="dialog-meta" id="dialog-meta"></div>
       <div class="dialog-body">
         <div class="detail-summary" id="detail-summary"></div>

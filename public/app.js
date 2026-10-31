@@ -32,6 +32,9 @@ const ARTIFACT_DEFINITIONS = [
   { key: "e2eReport", label: "E2E 报告", hint: "真实环境端到端验证" }
 ];
 
+const TASK_COPY_LABEL = "复制任务名";
+const TASK_COPIED_LABEL = "已复制";
+
 const state = {
   board: null,
   view: "pipeline",
@@ -64,6 +67,7 @@ const els = {
   syncLabel: document.querySelector("#sync-label"),
   refresh: document.querySelector("#refresh-button"),
   error: document.querySelector("#error-banner"),
+  copyFeedback: document.querySelector("#copy-feedback"),
   pipeline: document.querySelector("#pipeline-board"),
   team: document.querySelector("#team-board"),
   archive: document.querySelector("#archive-board"),
@@ -73,6 +77,8 @@ const els = {
   createButton: document.querySelector("#create-button"),
   manageProjectsButton: document.querySelector("#manage-projects-button"),
   taskDialog: document.querySelector("#task-dialog"),
+  dialogCopyTask: document.querySelector("#dialog-copy-task"),
+  dialogCopyFeedback: document.querySelector("#dialog-copy-feedback"),
   artifactDialog: document.querySelector("#artifact-dialog"),
   createDialog: document.querySelector("#create-dialog"),
   projectDialog: document.querySelector("#project-dialog"),
@@ -118,6 +124,8 @@ const els = {
   metricTeam: document.querySelector("#metric-team"),
   metricTeamCaption: document.querySelector("#metric-team-caption")
 };
+
+const taskCopyFeedbackTimers = new WeakMap();
 
 const safe = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
   "&": "&amp;",
@@ -901,10 +909,18 @@ function executionEditButton(task, className = "task-edit-button") {
 }
 
 function renderTaskCard(task, extraClass = "") {
+  const copyTaskKey = safe(task.taskKey);
+  const copyTaskName = safe(task.dirName);
   return `<article class="task-card ${isAttention(task) ? "is-risk" : ""} ${extraClass}">
     <button class="task-card-open" data-task="${safe(task.taskKey)}" type="button" aria-label="打开任务 ${safe(task.title)}"></button>
     ${executionEditButton(task)}
-    <div class="task-card-content">${taskCardContent(task)}</div>
+    <div class="task-card-content">
+      ${taskCardContent(task)}
+      <button class="task-take-button task-card-take-button" data-copy-task="${copyTaskKey}" type="button" aria-label="${TASK_COPY_LABEL}：${copyTaskName}" title="复制任务名：${copyTaskName}">
+        <span class="task-take-icon" aria-hidden="true">⧉</span>
+        <span class="task-take-label">${TASK_COPY_LABEL}</span>
+      </button>
+    </div>
   </article>`;
 }
 
@@ -1102,6 +1118,100 @@ function bindTaskButtons(root) {
       });
     }
   });
+  bindTaskCopyButtons(root);
+}
+
+function bindTaskCopyButtons(root) {
+  root.querySelectorAll("[data-copy-task]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const task = taskByKey(button.dataset.copyTask);
+      if (task) void copyTaskDirName(task, button);
+    });
+  });
+}
+
+function setTaskCopyButtonState(button, copied, dirName) {
+  const label = button.querySelector(".task-take-label");
+  if (label) label.textContent = copied ? TASK_COPIED_LABEL : TASK_COPY_LABEL;
+  button.classList.toggle("is-copied", copied);
+  button.classList.remove("is-error");
+  button.setAttribute(
+    "aria-label",
+    copied
+      ? `已复制任务名 ${dirName}`
+      : `${TASK_COPY_LABEL}：${dirName}`
+  );
+}
+
+function announceTaskCopy(button, message) {
+  const feedback = button.closest("#task-dialog") ? els.dialogCopyFeedback : els.copyFeedback;
+  if (!feedback) return;
+  feedback.textContent = "";
+  window.requestAnimationFrame(() => {
+    feedback.textContent = message;
+  });
+}
+
+function scheduleTaskCopyButtonReset(button, dirName, delay = 1600) {
+  const previousTimer = taskCopyFeedbackTimers.get(button);
+  if (previousTimer) window.clearTimeout(previousTimer);
+  taskCopyFeedbackTimers.set(button, window.setTimeout(() => {
+    if (button.isConnected) setTaskCopyButtonState(button, false, dirName);
+  }, delay));
+}
+
+async function writeClipboardText(text, container = document.body) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Clipboard API 被策略拒绝时继续使用页面内降级复制。
+    }
+  }
+  const previousFocus = document.activeElement;
+  const textarea = document.createElement("textarea");
+  textarea.className = "clipboard-fallback";
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  container.append(textarea);
+  try {
+    textarea.focus({ preventScroll: true });
+    textarea.select();
+    if (!document.execCommand?.("copy")) {
+      throw new Error("浏览器拒绝访问剪贴板");
+    }
+  } finally {
+    textarea.remove();
+    if (previousFocus instanceof HTMLElement) {
+      previousFocus.focus({ preventScroll: true });
+    }
+  }
+}
+
+async function copyTaskDirName(task, button) {
+  if (!task?.dirName) {
+    showError("当前任务缺少任务名，无法复制");
+    return;
+  }
+  try {
+    await writeClipboardText(task.dirName, button.closest("dialog[open]") || document.body);
+    setTaskCopyButtonState(button, true, task.dirName);
+    announceTaskCopy(button, `已复制任务名：${task.dirName}`);
+    scheduleTaskCopyButtonReset(button, task.dirName);
+  } catch {
+    const message = "复制任务名失败，请允许浏览器访问剪贴板后重试";
+    const label = button.querySelector(".task-take-label");
+    if (label) label.textContent = "复制失败";
+    button.classList.remove("is-copied");
+    button.classList.add("is-error");
+    button.setAttribute("aria-label", message);
+    announceTaskCopy(button, message);
+    if (!button.closest("#task-dialog")) showError(message);
+    button.focus({ preventScroll: true });
+    scheduleTaskCopyButtonReset(button, task.dirName, 2200);
+  }
 }
 
 function bindExecutionActions(root) {
@@ -1938,6 +2048,24 @@ function executionDetailMarkup(task) {
 function renderTaskDetail(task) {
   document.querySelector("#dialog-project").textContent = `${task.projectName} / ${task.dirName}`;
   document.querySelector("#dialog-title").textContent = task.title;
+  const copyTaskButton = els.dialogCopyTask;
+  const taskChanged = copyTaskButton.dataset.copyTask !== task.taskKey;
+  copyTaskButton.dataset.copyTask = task.taskKey;
+  copyTaskButton.disabled = !task.dirName;
+  copyTaskButton.title = task.dirName ? `复制任务名：${task.dirName}` : "任务名缺失";
+  if (taskChanged) {
+    const previousTimer = taskCopyFeedbackTimers.get(copyTaskButton);
+    if (previousTimer) window.clearTimeout(previousTimer);
+    els.dialogCopyFeedback.textContent = "";
+  }
+  if (task.dirName) {
+    if (taskChanged) setTaskCopyButtonState(copyTaskButton, false, task.dirName);
+  } else {
+    const label = copyTaskButton.querySelector(".task-take-label");
+    if (label) label.textContent = "任务名缺失";
+    copyTaskButton.classList.remove("is-copied", "is-error");
+    copyTaskButton.setAttribute("aria-label", "任务名缺失，无法复制");
+  }
   document.querySelector("#dialog-meta").innerHTML = `
     <span>状态 <b>${safe(task.status)}</b></span>
     <span>负责人 <b>${safe(task.assignee || "未派发")}</b></span>
@@ -2456,6 +2584,9 @@ document.querySelectorAll("[data-close-view]").forEach((button) => {
 document.querySelector("#assign-button").addEventListener("click", assignSelected);
 document.querySelector("#detail-edit-execution").addEventListener("click", () => {
   if (state.selectedTask) openExecutionDialog(state.selectedTask);
+});
+els.dialogCopyTask.addEventListener("click", () => {
+  if (state.selectedTask) void copyTaskDirName(state.selectedTask, els.dialogCopyTask);
 });
 document.querySelector("#assignee-input").addEventListener("change", updateAssignButtonState);
 document.querySelector("#create-form").addEventListener("submit", submitCreate);
