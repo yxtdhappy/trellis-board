@@ -1,6 +1,12 @@
 # Trellis Board
 
-本地 Trellis 任务看板 MVP，默认只改动本应用目录，写操作只针对白名单仓库。
+Trellis Board 提供两种运行模式：
+
+- `standalone`：只监听 `127.0.0.1`，扫描本机白名单仓库，适合单机使用。
+- `team`：提供账号、项目权限、服务端权威 Git 工作副本、审计、团队看板和 Windows 同步 Agent。
+
+两种模式共用同一套任务推导、看板和 SQLite 代码。团队版的部署、升级、备份和故障处置见
+[团队版运维手册](./docs/team-operations.md)。
 
 ## 启动
 
@@ -15,7 +21,8 @@ node server/index.js
 
 也可以运行 `npm start` 或 `npm run board`。
 
-仓库白名单存放在 `data/board.sqlite`。这个版本固定在本机回环地址 `127.0.0.1`，不能直接暴露给团队；团队共享版需要增加认证、审计和多实例数据库方案。
+standalone 模式固定监听本机回环地址 `127.0.0.1`。需要多人访问时使用 team 模式，并在
+可信反向代理后提供 HTTPS；不要把 standalone 服务直接暴露到局域网或公网。
 
 页面先显示本地扫描缓存。服务启动后会监听白名单仓库的 `.trellis/tasks`、`.trellis/workspace` 和 `.trellis/.developer`；相关文件变更会经过 400ms 防抖合并，再由独立 Worker Thread 重建缓存，前端持续轮询状态并自动加载新数据。当前 5 个仓库的完整扫描约 8–15 秒，缓存接口约 0.1–0.2 秒；浏览器完整渲染仍受 641 条归档任务的数据量影响。
 
@@ -49,11 +56,16 @@ Board 自身可变状态统一保存在 `data/board.sqlite`：
 
 首次打开数据库时，会在一个事务中读取 `data/repos.json`、`data/task-metadata.json`、`data/scan-cache.json` 和 `data/board-state.json` 并导入 SQLite，然后写入一次性的 `legacy_json_imported_v1` 标记。非法或损坏的旧 JSON 只记录警告并跳过，不会阻止服务启动。迁移完成后，运行时只读写 SQLite，不再修改这四个 JSON 文件；它们保留为迁移来源和回滚备份。
 
-数据库按 v1 -> v2 -> v3 顺序迁移。迁移前会先创建源版本快照：v1 使用 `data/board.sqlite.v1-backup`，v2 使用 `data/board.sqlite.v2-backup`；随后在同一事务中创建计划字段、标签、保存视图、事件表和依赖表。备份可独立打开并保持迁移前版本；任一步失败时主库仍保留源版本和原表。
+数据库按 v1 -> v2 -> v3 -> v4 顺序迁移。迁移前会先创建源版本快照：v1 使用
+`data/board.sqlite.v1-backup`，v2 使用 `data/board.sqlite.v2-backup`，v3 使用带时间戳的
+`data/board.sqlite.v3-backup-<timestamp>`；随后在事务中补齐团队账号、项目、Agent、审计和
+任务索引表。备份可独立打开并保持迁移前版本；任一步失败时主库仍保留源版本和原表。
 
 SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目增删、批量新增和看板状态的多字段更新均使用事务；失败时回滚整个操作。你可以单独备份 `data/board.sqlite`，但热备份前应先停止服务，并同时处理可能存在的 `board.sqlite-wal` 与 `board.sqlite-shm`。
 
-回滚到旧版 Board 时，先停止服务并归档当前 `data/board.sqlite*`，再切换到旧代码。v1/v2 数据库可使用迁移生成的对应版本快照；四个旧 JSON 文件仍保持迁移前内容，可继续作为旧版的存储来源。迁移后在 SQLite 中新增或删除的项目、人工阶段、计划字段、依赖和事件不会自动写回这些备份。
+回滚到旧版 Board 时，先停止服务并归档当前 `data/board.sqlite*`，再切换到旧代码和迁移生成的
+对应版本快照。团队版成功推送的 Git 任务不会被回滚，数据库中的接受状态、团队账号和审计会
+随快照回退。详细步骤见[团队版运维手册](./docs/team-operations.md)。
 
 ## 重要限制
 
@@ -85,6 +97,19 @@ SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目
 
 主要源码入口：[server/index.js](./server/index.js)、[server/database.js](./server/database.js)、[server/repositories.js](./server/repositories.js)、[server/persistence.js](./server/persistence.js)、[server/watcher.js](./server/watcher.js)、[server/loader.js](./server/loader.js)、[server/scan-worker.js](./server/scan-worker.js)、[server/actions.js](./server/actions.js)、[public/app.js](./public/app.js)。
 
+## 团队模式
+
+最小启动步骤：
+
+1. 准备 Node.js 24、Git、Python，并让服务账号能够通过 SSH 访问项目远端。
+2. 设置 `TRELLIS_BOARD_MODE=team`、`TRELLIS_TEAM_PUBLIC_URL` 等环境变量。
+3. 运行 `node server/team/cli.js init-admin --username admin` 创建首个管理员。
+4. 启动服务，在 `/admin.html` 接入项目、确认脚本摘要并添加项目成员。
+5. 在项目中生成一次性配对码，安装 Windows Agent、绑定本地仓库并等待项目负责人批准。
+
+团队任务由服务端工作副本创建或修改，只有 Git push 成功后才进入待接受状态。Agent 只执行
+本地分支的 `fetch` 和 `ff-only` 同步，不会自动 stash、reset、checkout、rebase 或 push。
+
 ## 当前实现范围
 
 已完成：
@@ -102,13 +127,9 @@ SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目
 - SQLite 本地持久化、自动文件监听刷新和人工强制刷新
 - 从功能启用后开始的计划、人工阶段和扫描阶段可信事件
 - 双向阻断依赖、解除后可推进队列、DoR/DoD 缺口和个人软 WIP 提醒
+- 自建账号、四类项目权限、可撤销会话和设备凭证
+- 服务端权威 Git 工作副本、任务创建/委派推送、版本冲突保护和审计
+- 跨项目团队查询、单项目分组看板和个人保存视图
+- Windows 用户级同步 Agent、配对、项目绑定、`ff-only` 同步和登录自启
 
-团队共享前仍需完成：
-
-- 用户认证与项目级读写权限
-- 创建、派发、阶段修改的审计日志
-- SQLite 单机文件之外的共享数据库、并发调度和备份方案
-- 多主机仓库访问或服务端 Agent，不应从浏览器直连各台开发机路径
-- 真实用户身份不可继续依赖每台机器上的 `.trellis/.developer`
-
-因此当前版本适合单机试用和交互验收，不适合作为公司级多人系统的最终部署形态。
+评论、通知、审批流、SSO、多实例高可用和 macOS/Linux Agent 不在当前范围内。

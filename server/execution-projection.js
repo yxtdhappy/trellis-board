@@ -546,7 +546,8 @@ export function projectTaskDetailExecution(
   limit = 200,
   {
     boardTasks = [task],
-    executionWipLimit = DEFAULT_EXECUTION_WIP_LIMIT
+    executionWipLimit = DEFAULT_EXECUTION_WIP_LIMIT,
+    actorUserId = null
   } = {}
 ) {
   const allTasks = Array.isArray(boardTasks) ? [...boardTasks] : [];
@@ -629,6 +630,7 @@ export function projectTaskDetailExecution(
         eventWindowStartAt: detail.eventWindowStartAt,
         archived: Boolean(task.archived),
         identityValid: true,
+        actorUserId,
         limit
       });
     } catch (error) {

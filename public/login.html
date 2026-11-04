@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta name="description" content="登录 Trellis Board 团队协作控制台。" />
+    <link rel="icon" href="data:," />
+    <title>登录 · Trellis Board</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/team.css" />
+  </head>
+  <body class="auth-page">
+    <main class="auth-shell">
+      <section class="auth-intro" aria-labelledby="auth-intro-title">
+        <a class="auth-brand" href="/" aria-label="Trellis Board 首页">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span><strong>Trellis</strong><small>TEAM / BOARD</small></span>
+        </a>
+        <div>
+          <p class="eyebrow">AUTHORIZED WORKSPACE</p>
+          <h1 id="auth-intro-title">让每个任务都有清楚的负责人和发布结果。</h1>
+          <p>登录后可查看授权项目的跨项目任务、待接受队列、Git 同步状态和管理入口。浏览器只持有 HttpOnly 会话 Cookie。</p>
+        </div>
+        <dl class="auth-facts">
+          <div><dt>会话</dt><dd>服务端校验，12 小时过期</dd></div>
+          <div><dt>权限</dt><dd>项目负责人、成员与只读角色分离</dd></div>
+          <div><dt>数据</dt><dd>任务内容来自共享分支工作副本</dd></div>
+        </dl>
+      </section>
+
+      <section class="auth-card" aria-labelledby="login-title">
+        <div class="auth-card-head">
+          <p class="panel-kicker">TEAM ACCESS</p>
+          <h2 id="login-title">登录团队看板</h2>
+          <p>首次登录或密码被重置后，会先进入强制修改密码界面。</p>
+        </div>
+        <form id="login-form" class="auth-form">
+          <label>
+            <span>登录名</span>
+            <input id="login-username" name="username" autocomplete="username" maxlength="64" required autofocus />
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" maxlength="1024" required />
+          </label>
+          <p id="login-message" class="form-message auth-message" role="alert" aria-live="assertive" hidden></p>
+          <button id="login-submit" class="primary-button auth-submit" type="submit" disabled>
+            正在检查会话…
+          </button>
+        </form>
+        <p class="auth-footnote">账号由系统管理员创建。忘记密码请联系管理员重置，重置会使其他会话立即失效。</p>
+      </section>
+    </main>
+    <noscript><p class="auth-noscript">登录需要启用 JavaScript。</p></noscript>
+    <script type="module" src="/login.js"></script>
+  </body>
+</html>

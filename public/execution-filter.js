@@ -52,6 +52,15 @@ export const ATTENTION_REASON_LABELS = {
   unblocked_ready: "阻断已解除"
 };
 
+export function laneForStageIndex(task, current) {
+  if (task.archived) return null;
+  if (current === -1) return null;
+  if (current >= 7) return "verification";
+  if (current >= 6) return "implementation";
+  if (current === 5) return "review";
+  return "planning";
+}
+
 export function normalizeTagsInput(value, { rejectEmpty = false } = {}) {
   const raw = typeof value === "string" ? value.split(/[,，]/) : value;
   if (!Array.isArray(raw)) throw new Error("标签必须是逗号分隔文本或数组");

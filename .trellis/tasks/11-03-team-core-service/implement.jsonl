@@ -1,0 +1,9 @@
+{"file":".trellis/tasks/11-03-team-board/research/current-code-map.md","reason":"定位现有数据库、路由、任务写入、扫描和任务身份接入点。"}
+{"file":".trellis/tasks/11-03-team-board/research/contract-decisions.md","reason":"实现核心服务必须遵循已冻结的团队契约。"}
+{"file":".trellis/tasks/11-03-team-board/research/security-boundaries.md","reason":"认证、脚本执行、Git 写入和 Agent API 必须按已定义信任边界实现。"}
+{"file":".trellis/tasks/11-03-team-board/research/capacity-and-board-scaling.md","reason":"核心 API 必须实现跨项目索引查询、稳定游标、项目分组分页和 400/200/100 容量契约。"}
+{"file":".trellis/tasks/11-03-team-board/design.md","reason":"核心服务拥有父设计中的 schema、Git 写入、权限和 API。"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"保持 Node 原生运行时、模块边界和 Worker 约束。"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"新增 HTTP 路由、Git 子进程和文件写入必须遵循现有安全规则。"}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"团队看板继续复用扫描缓存和 SQLite 持久化。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"任务身份、版本和 Git 发布状态跨数据库、扫描和 API。"}

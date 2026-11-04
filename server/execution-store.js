@@ -295,6 +295,7 @@ export function appendTaskEvent(db, {
   eventType,
   source,
   actor = null,
+  actorUserId = null,
   correlationId,
   occurredAt = new Date().toISOString(),
   payload = {},
@@ -311,8 +312,8 @@ export function appendTaskEvent(db, {
   const result = db.prepare(`
     INSERT INTO task_event(
       execution_task_key, event_type, source, actor, correlation_id,
-      occurred_at, payload_json, reversible
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      occurred_at, payload_json, reversible, actor_user_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     key,
     type,
@@ -321,7 +322,8 @@ export function appendTaskEvent(db, {
     operationId,
     occurred,
     JSON.stringify(payload),
-    reversible ? 1 : 0
+    reversible ? 1 : 0,
+    normalizeActor(actorUserId)
   );
   return Number(result.lastInsertRowid);
 }
@@ -403,6 +405,7 @@ function eventRowToObject(row) {
     type: row.event_type,
     source: row.source,
     actor: row.actor,
+    actorUserId: row.actor_user_id || null,
     correlationId: row.correlation_id,
     occurredAt: row.occurred_at,
     payload: parseJson(row.payload_json, {}),
@@ -426,7 +429,7 @@ export function readExecutionEvents(db, executionTaskKey, limit = 200) {
   const rows = db.prepare(`
     SELECT
       execution_task_key, id, event_type, source, actor, correlation_id, occurred_at,
-      payload_json, reversible
+      payload_json, reversible, actor_user_id
     FROM task_event
     WHERE execution_task_key = ?
     ORDER BY occurred_at DESC, id DESC
@@ -465,11 +468,11 @@ export function readExecutionEventsBatch(db, executionTaskKeys, limit = 1000) {
     const rows = db.prepare(`
       SELECT
         execution_task_key, id, event_type, source, actor, correlation_id,
-        occurred_at, payload_json, reversible
+        occurred_at, payload_json, reversible, actor_user_id
       FROM (
         SELECT
           execution_task_key, id, event_type, source, actor, correlation_id,
-          occurred_at, payload_json, reversible,
+          occurred_at, payload_json, reversible, actor_user_id,
           ROW_NUMBER() OVER (
             PARTITION BY execution_task_key
             ORDER BY occurred_at DESC, id DESC
@@ -540,7 +543,12 @@ export function createExecutionStore({
 } = {}) {
   const allowedStages = [...new Set(stageIds)];
 
-  function updatePlan(executionTaskKey, input = {}, actor = null) {
+  function updatePlan(
+    executionTaskKey,
+    input = {},
+    actor = null,
+    actorUserId = null
+  ) {
     const key = String(executionTaskKey || "").trim();
     if (!key) throw new Error("缺少任务执行身份");
     if (!isPlainObject(input)) throw new Error("计划字段必须是对象");
@@ -592,6 +600,7 @@ export function createExecutionStore({
         eventType: "task_plan_updated",
         source: "user",
         actor,
+        actorUserId,
         correlationId,
         occurredAt: updatedAt,
         payload: {
@@ -620,7 +629,7 @@ export function createExecutionStore({
     });
   }
 
-  function createDependency(input = {}, actor = null) {
+  function createDependency(input = {}, actor = null, actorUserId = null) {
     if (!isPlainObject(input)) throw new Error("依赖参数必须是对象");
     const blockerTaskKey = normalizeDependencyTaskKey(input.blockerTaskKey, "阻断方");
     const blockedTaskKey = normalizeDependencyTaskKey(input.blockedTaskKey, "被阻断");
@@ -677,6 +686,7 @@ export function createExecutionStore({
         eventType: "dependency_created",
         source: "user",
         actor,
+        actorUserId,
         correlationId,
         occurredAt: createdAt,
         payload: {
@@ -702,7 +712,7 @@ export function createExecutionStore({
     });
   }
 
-  function resolveDependency(id, actor = null) {
+  function resolveDependency(id, actor = null, actorUserId = null) {
     const dependencyId = String(id || "").trim();
     if (!dependencyId) throw new Error("缺少依赖 ID");
     const resolvedAt = new Date().toISOString();
@@ -728,6 +738,7 @@ export function createExecutionStore({
         eventType: "dependency_resolved",
         source: "user",
         actor,
+        actorUserId,
         correlationId,
         occurredAt: resolvedAt,
         payload: {
@@ -833,26 +844,42 @@ export function createExecutionStore({
     return readExecutionDetail(db, executionTaskKey, limit);
   }
 
-  function listSavedViews() {
+  function listSavedViews(ownerUserId = null) {
+    const owner = normalizeActor(ownerUserId);
     return db.prepare(`
       SELECT id, name, filter_json, position, created_at, updated_at
       FROM saved_view
+      WHERE owner_user_id IS ?
       ORDER BY position, id
-    `).all().map(rowToSavedView);
+    `).all(owner).map(rowToSavedView);
   }
 
-  function createSavedView(input = {}) {
+  function createSavedView(input = {}, ownerUserId = null) {
     if (!isPlainObject(input)) throw new Error("保存视图必须是对象");
     const name = normalizeViewName(input.name);
     const filter = normalizeSavedViewFilter(input.filter, allowedStages);
+    const owner = normalizeActor(ownerUserId);
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
     return withTransaction(db, () => {
-      const next = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS position FROM saved_view").get();
+      const next = db.prepare(`
+        SELECT COALESCE(MAX(position), -1) + 1 AS position
+        FROM saved_view
+        WHERE owner_user_id IS ?
+      `).get(owner);
       db.prepare(`
-        INSERT INTO saved_view(id, name, filter_json, position, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(id, name, JSON.stringify(filter), Number(next.position), now, now);
+        INSERT INTO saved_view(
+          id, name, filter_json, position, created_at, updated_at, owner_user_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        name,
+        JSON.stringify(filter),
+        Number(next.position),
+        now,
+        now,
+        owner
+      );
       return {
         id,
         name,
@@ -864,41 +891,47 @@ export function createExecutionStore({
     });
   }
 
-  function updateSavedView(input = {}) {
+  function updateSavedView(input = {}, ownerUserId = null) {
     if (!isPlainObject(input)) throw new Error("保存视图必须是对象");
     const id = String(input.id || "").trim();
     if (!id) throw new Error("缺少保存视图 ID");
     const name = normalizeViewName(input.name);
     const filter = normalizeSavedViewFilter(input.filter, allowedStages);
+    const owner = normalizeActor(ownerUserId);
     const updatedAt = new Date().toISOString();
     const result = db.prepare(`
       UPDATE saved_view
       SET name = ?, filter_json = ?, updated_at = ?
-      WHERE id = ?
-    `).run(name, JSON.stringify(filter), updatedAt, id);
+      WHERE id = ? AND owner_user_id IS ?
+    `).run(name, JSON.stringify(filter), updatedAt, id, owner);
     if (!result.changes) throw new Error("保存视图不存在");
     return {
       ...rowToSavedView(db.prepare(`
         SELECT id, name, filter_json, position, created_at, updated_at
         FROM saved_view
-        WHERE id = ?
-      `).get(id))
+        WHERE id = ? AND owner_user_id IS ?
+      `).get(id, owner))
     };
   }
 
-  function deleteSavedView(id) {
+  function deleteSavedView(id, ownerUserId = null) {
     const viewId = String(id || "").trim();
     if (!viewId) throw new Error("缺少保存视图 ID");
+    const owner = normalizeActor(ownerUserId);
     return withTransaction(db, () => {
       const row = db.prepare(`
         SELECT id, name, filter_json, position, created_at, updated_at
         FROM saved_view
-        WHERE id = ?
-      `).get(viewId);
+        WHERE id = ? AND owner_user_id IS ?
+      `).get(viewId, owner);
       if (!row) throw new Error("保存视图不存在");
-      db.prepare("DELETE FROM saved_view WHERE id = ?").run(viewId);
-      db.prepare("UPDATE saved_view SET position = position - 1 WHERE position > ?")
-        .run(row.position);
+      db.prepare("DELETE FROM saved_view WHERE id = ? AND owner_user_id IS ?")
+        .run(viewId, owner);
+      db.prepare(`
+        UPDATE saved_view
+        SET position = position - 1
+        WHERE position > ? AND owner_user_id IS ?
+      `).run(row.position, owner);
       return rowToSavedView(row);
     });
   }

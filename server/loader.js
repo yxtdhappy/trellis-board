@@ -341,15 +341,48 @@ function inferDerivedStage(task, taskDir, files, workspaceSummary = null) {
   const checkReport = files.checkReport?.content || "";
   const e2eReport = files.e2eReport?.content || "";
   const implementPlan = files.implement?.content || "";
-  const hasImplementationEvidence = ["in_progress", "completed"].includes(task.status) ||
+  const hasStarted = ["in_progress", "completed"].includes(task.status);
+  const hasCheckedAcceptance = hasCheckedAcceptanceEvidence(prd);
+  const passedCheckReport = hasCompletedCheckEvidence(checkReport);
+  const passedImplementationReport = hasCompletedCheckEvidence(implementationReport);
+  const checkedPlan = hasCheckedPlanEvidence(implementPlan);
+  const hasImplementationEvidence = task.status === "completed" ||
+    Boolean(task.commit) ||
+    hasCheckedAcceptance ||
     Boolean(implementationReport.trim()) ||
     Boolean(checkReport.trim());
-  const hasPlanningCutoff = hasImplementationEvidence && prdInfo.initialized;
-  const checkEvidence = hasCompletedCheckEvidence(checkReport) ||
-    hasCompletedCheckEvidence(implementationReport) ||
-    hasCheckedAcceptanceEvidence(prd) ||
-    hasCheckedPlanEvidence(implementPlan) ||
-    task.status === "completed";
+  const hasPlanningCutoff = prdInfo.initialized && (hasStarted || hasImplementationEvidence);
+  const checkEvidence = hasImplementationEvidence && (
+    passedCheckReport ||
+    passedImplementationReport ||
+    hasCheckedAcceptance ||
+    checkedPlan ||
+    task.status === "completed"
+  );
+  const implementationSource = implementationReport.trim()
+    ? "implementation-report"
+    : checkReport.trim()
+      ? "check-report"
+      : hasCheckedAcceptance
+        ? "prd-acceptance"
+        : task.commit
+          ? "task-json"
+          : task.status === "completed"
+            ? "status"
+            : "missing";
+  const implementationEvidence = implementationReport.trim()
+    ? `implementation-report.md 记录交付 ${implementationReport.length.toLocaleString("zh-CN")} 字符`
+    : checkReport.trim()
+      ? `check-report.md 记录实现检查 ${checkReport.length.toLocaleString("zh-CN")} 字符`
+      : hasCheckedAcceptance
+        ? "PRD 验收项已勾选"
+        : task.commit
+          ? `task.json commit=${task.commit}`
+          : task.status === "completed"
+            ? "task.json status=completed"
+            : hasStarted
+              ? "任务已开始，但尚无实施报告、检查报告、验收勾选、提交或完成状态"
+              : "任务尚未开始，也没有实施报告、检查报告、验收勾选、提交或完成状态";
 
   evidence.prd = {
     complete: Boolean(files.prd && prdInfo.initialized),
@@ -381,55 +414,49 @@ function inferDerivedStage(task, taskDir, files, workspaceSummary = null) {
   evidence.review = {
     complete: hasPlanningCutoff,
     source: hasPlanningCutoff
-      ? (["in_progress", "completed"].includes(task.status) ? "status" : "report")
+      ? (hasStarted ? "status" : implementationSource)
       : "status",
     evidence: hasPlanningCutoff
-      ? (["in_progress", "completed"].includes(task.status)
+      ? (hasStarted
         ? `task.json status=${task.status}，规划已放行`
-        : "已有实施/检查报告，说明任务已进入开发")
+        : "已有实施/检查完成证据，说明任务已进入开发")
       : hasImplementationEvidence
-        ? "已有开发产物，但 PRD 仍是默认骨架"
-        : "任务仍在 planning，且没有开发产物"
+        ? "已有实施/检查完成证据，但 PRD 仍是默认骨架"
+        : hasStarted
+          ? "任务已开始，但 PRD 仍未有效填写"
+          : "任务仍在 planning，且没有开发完成证据"
   };
   evidence.implement = {
     complete: hasImplementationEvidence,
-    source: implementationReport.trim()
-      ? "implementation-report"
-      : checkReport.trim()
-        ? "check-report"
-        : "status",
-    evidence: implementationReport.trim()
-      ? `implementation-report.md 记录交付 ${implementationReport.length.toLocaleString("zh-CN")} 字符`
-      : checkReport.trim()
-        ? `check-report.md 记录实现检查 ${checkReport.length.toLocaleString("zh-CN")} 字符`
-        : ["in_progress", "completed"].includes(task.status)
-          ? `task.json status=${task.status}`
-          : "尚未 start，也没有实施报告"
+    source: implementationSource,
+    evidence: implementationEvidence
   };
   evidence.check = {
     complete: checkEvidence,
-    source: hasCompletedCheckEvidence(checkReport)
-      ? "check-report"
-      : hasCompletedCheckEvidence(implementationReport)
-        ? "implementation-report"
-        : hasCheckedAcceptanceEvidence(prd)
-          ? "prd-acceptance"
-        : hasCheckedPlanEvidence(implementPlan)
-          ? "implement-plan"
-          : task.status === "completed"
-            ? "status"
-            : "missing",
-    evidence: hasCompletedCheckEvidence(checkReport)
-      ? "check-report.md 记录了通过的测试、类型检查、编译或 lint"
-      : hasCompletedCheckEvidence(implementationReport)
-        ? "implementation-report.md 记录了通过的检查"
-        : hasCheckedAcceptanceEvidence(prd)
-          ? "PRD 验收项已勾选"
-        : hasCheckedPlanEvidence(implementPlan)
-          ? "implement.md 已勾选检查项"
-          : task.status === "completed"
-            ? "任务已完成，按 Trellis 状态视为检查阶段已收口"
-            : "没有找到通过的持久检查证据，需人工确认"
+    source: checkEvidence
+      ? passedCheckReport
+        ? "check-report"
+        : passedImplementationReport
+          ? "implementation-report"
+          : hasCheckedAcceptance
+            ? "prd-acceptance"
+            : checkedPlan
+              ? "implement-plan"
+              : "status"
+      : "missing",
+    evidence: checkEvidence
+      ? passedCheckReport
+        ? "check-report.md 记录了通过的测试、类型检查、编译或 lint"
+        : passedImplementationReport
+          ? "implementation-report.md 记录了通过的检查"
+          : hasCheckedAcceptance
+            ? "PRD 验收项已勾选"
+            : checkedPlan
+              ? "implement.md 已勾选检查项"
+              : "任务已完成，按 Trellis 状态视为检查阶段已收口"
+      : checkedPlan
+        ? "implement.md 已勾选检查项，但缺少实施报告、检查报告、验收勾选、提交或完成状态"
+        : "没有找到通过的持久检查证据，需人工确认"
   };
   const verificationSources = [
     { source: "e2e-report", content: e2eReport },

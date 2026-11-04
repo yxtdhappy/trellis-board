@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/11-03-team-board/design.md","reason":"Agent API、凭证、设备绑定和同步流程由父设计定义。"}
+{"file":".trellis/tasks/11-03-team-board/research/contract-decisions.md","reason":"Agent 不得写入团队任务，只同步共享分支。"}
+{"file":".trellis/tasks/11-03-team-board/research/security-boundaries.md","reason":"明确本地 Git、凭证和命令白名单的信任边界。"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"Agent 与 Git/文件交互需要参数数组、路径和错误安全。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"同步结果连接服务端命令、Git 远端和本地仓库。"}

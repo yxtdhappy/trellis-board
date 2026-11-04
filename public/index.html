@@ -8,6 +8,7 @@
     <link rel="icon" href="data:," />
     <title>Trellis Board · 任务流水线</title>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/team.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -35,6 +36,11 @@
             <span class="nav-glyph" aria-hidden="true">⌑</span>
             归档索引
           </button>
+          <button id="assignment-nav" class="nav-item team-only" data-team-view="assignments" type="button" hidden>
+            <span class="nav-glyph" aria-hidden="true">✓</span>
+            待我接受
+            <span id="assignment-count" class="nav-count">0</span>
+          </button>
         </nav>
 
         <div class="rail-projects">
@@ -51,6 +57,13 @@
         </div>
 
         <div class="rail-foot">
+          <div id="team-account" class="team-account" hidden>
+            <span class="team-account-avatar" id="team-account-avatar" aria-hidden="true">?</span>
+            <span>
+              <strong id="team-account-name"></strong>
+              <small id="team-account-role"></small>
+            </span>
+          </div>
           <div class="sync-line">
             <span class="sync-dot" id="sync-dot"></span>
             <span id="sync-label">等待扫描</span>
@@ -60,13 +73,22 @@
         </div>
       </aside>
 
-      <main class="workspace">
+      <main id="workspace" class="workspace">
         <header class="topbar">
           <div>
             <p class="eyebrow" id="view-eyebrow">PERSONAL / CURRENT REPOSITORY</p>
             <h1 id="view-title">把每个任务放回流程里</h1>
           </div>
           <div class="top-actions">
+            <div id="team-session" class="team-session" hidden>
+              <span>
+                <strong id="team-session-name"></strong>
+                <small id="team-session-mode"></small>
+              </span>
+              <a id="team-admin-link" class="secondary-button small-button" href="/admin.html" hidden>管理</a>
+              <button id="team-password-button" class="text-button" type="button">修改密码</button>
+              <button id="team-logout-button" class="secondary-button small-button" type="button">退出</button>
+            </div>
             <label class="search-box">
               <span aria-hidden="true">⌕</span>
               <input id="search-input" type="search" placeholder="搜索任务、负责人或仓库" />
@@ -78,12 +100,13 @@
           </div>
         </header>
 
-        <section id="error-banner" class="error-banner" hidden></section>
+        <section id="error-banner" class="error-banner" role="alert" hidden></section>
         <p id="copy-feedback" class="sr-only" role="status" aria-live="polite"></p>
+        <p id="team-feedback" class="sr-only" role="status" aria-live="polite"></p>
 
         <section id="pipeline-view" class="content-view is-visible" aria-labelledby="pipeline-heading">
           <h2 id="pipeline-heading" class="sr-only">任务流程视图</h2>
-          <div class="execution-viewbar">
+          <div class="execution-viewbar" data-single-project-only>
             <div id="execution-view-list" class="execution-view-list" role="toolbar" aria-label="个人执行视图"></div>
             <div class="execution-view-meta">
               <span id="execution-view-summary">全部进行中</span>
@@ -91,7 +114,80 @@
               <span id="execution-date-label"></span>
             </div>
           </div>
-          <section class="flow-signals" aria-labelledby="flow-signals-title">
+          <section id="team-status-banner" class="team-status-banner" aria-live="polite" hidden></section>
+          <section id="team-query-panel" class="team-query-panel" hidden aria-labelledby="team-query-title">
+            <header class="team-query-head">
+              <div>
+                <p class="panel-kicker">TEAM / 跨项目分页</p>
+                <h2 id="team-query-title">全部授权项目</h2>
+                <p id="team-query-summary">正在读取团队任务索引…</p>
+              </div>
+              <span id="team-query-total" class="team-result-count">—</span>
+            </header>
+            <form id="team-filter-form" class="team-filter-form">
+              <label>
+                <span>项目</span>
+                <select id="team-filter-project">
+                  <option value="all">全部授权项目</option>
+                </select>
+              </label>
+              <label>
+                <span>负责人</span>
+                <select id="team-filter-assignee">
+                  <option value="">全部负责人</option>
+                </select>
+              </label>
+              <label>
+                <span>优先级</span>
+                <select id="team-filter-priority">
+                  <option value="">全部优先级</option>
+                  <option value="P0,P1">P0 + P1</option>
+                  <option value="P0">仅 P0</option>
+                  <option value="P1">仅 P1</option>
+                  <option value="P2">仅 P2</option>
+                  <option value="P3">仅 P3</option>
+                </select>
+              </label>
+              <label>
+                <span>阶段</span>
+                <select id="team-filter-stage">
+                  <option value="">全部阶段</option>
+                </select>
+              </label>
+              <label>
+                <span>标签</span>
+                <input id="team-filter-tags" maxlength="200" placeholder="逗号分隔，匹配任一" />
+              </label>
+              <label>
+                <span>截止窗口</span>
+                <input id="team-filter-due" type="number" min="0" max="365" placeholder="不限" />
+              </label>
+              <label>
+                <span>停滞天数</span>
+                <input id="team-filter-stale" type="number" min="1" max="365" placeholder="不限" />
+              </label>
+              <label>
+                <span>阻断</span>
+                <select id="team-filter-blocked">
+                  <option value="any">不限</option>
+                  <option value="blocked">仅被阻断</option>
+                  <option value="unblocked">阻断已解除</option>
+                </select>
+              </label>
+              <label class="team-filter-check">
+                <input id="team-filter-archived" type="checkbox" />
+                查看归档
+              </label>
+              <button class="secondary-button" type="submit">应用筛选</button>
+            </form>
+            <div id="team-query-list" class="team-query-list" aria-live="polite"></div>
+            <footer class="team-pagination">
+              <button id="team-page-prev" class="secondary-button small-button" type="button" disabled>上一页</button>
+              <span id="team-page-label">第 1 页</span>
+              <button id="team-page-next" class="secondary-button small-button" type="button" disabled>下一页</button>
+            </footer>
+          </section>
+          <section class="flow-signals" data-single-project-only aria-labelledby="flow-signals-title">
             <header class="flow-signals-head">
               <div>
                 <p class="panel-kicker">FLOW / 个人承载</p>
@@ -141,7 +237,7 @@
               可选证据
             </div>
           </div>
-          <div class="focus-grid">
+          <div class="focus-grid" data-single-project-only>
             <article id="focus-card" class="focus-panel" aria-live="polite"></article>
             <aside class="attention-panel" aria-labelledby="attention-title">
               <header class="attention-head">
@@ -155,7 +251,7 @@
               <p class="attention-foot">按逾期、截止、优先级、检查、实现和停滞排序。</p>
             </aside>
           </div>
-          <section class="pulse-row pipeline-pulse" aria-label="概览">
+          <section class="pulse-row pipeline-pulse" data-single-project-only aria-label="概览">
             <article class="pulse-card pulse-strong">
               <p>进行中</p>
               <strong id="metric-active">—</strong>
@@ -177,7 +273,7 @@
               <span id="metric-team-caption">按负责人统计</span>
             </article>
           </section>
-          <section class="kanban-panel" aria-labelledby="kanban-heading">
+          <section class="kanban-panel" data-single-project-only aria-labelledby="kanban-heading">
             <header class="kanban-head">
               <div>
                 <p class="panel-kicker">FLOW / 四个决策槽位</p>
@@ -244,6 +340,10 @@
           <select id="assignee-input"></select>
           <button id="assign-button" class="secondary-button" type="button">更新派发</button>
           <button id="detail-edit-execution" class="secondary-button" type="button">编辑计划</button>
+        </div>
+        <div id="team-task-actions" class="team-task-actions" hidden>
+          <span id="team-task-version"></span>
+          <button id="team-task-accept" class="primary-button small-button" type="button" hidden>接受任务</button>
         </div>
         <button class="secondary-button" data-close-dialog type="button">关闭</button>
       </div>
@@ -324,12 +424,83 @@
             <select id="create-branch">
               <option value="">使用 Trellis 默认分支</option>
             </select>
+            <small id="create-branch-note" class="field-help" hidden></small>
           </label>
         </div>
         <div id="create-message" class="form-message" hidden></div>
         <div class="dialog-foot">
           <button type="button" class="secondary-button" data-close-create>取消</button>
           <button id="create-submit" class="primary-button" type="submit">创建并派发</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="assignments-dialog" class="dialog assignments-dialog" aria-labelledby="assignments-title">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">TEAM / PENDING ASSIGNMENTS</p>
+          <h2 id="assignments-title">待我接受</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-assignments aria-label="关闭">×</button>
+      </div>
+      <div class="dialog-body assignments-body">
+        <div id="assignments-list" class="assignments-list" aria-live="polite"></div>
+      </div>
+      <p id="assignments-message" class="form-message" role="alert" hidden></p>
+      <div class="dialog-foot">
+        <span>接受后 Board 会为该项目的已批准 Agent 排队同步共享分支。</span>
+        <button class="secondary-button" data-close-assignments type="button">关闭</button>
+      </div>
+    </dialog>
+
+    <dialog id="team-operation-dialog" class="dialog team-operation-dialog" aria-labelledby="team-operation-title">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">GIT OPERATION</p>
+          <h2 id="team-operation-title">发布状态</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-team-operation aria-label="关闭">×</button>
+      </div>
+      <div class="dialog-body team-operation-body">
+        <div id="team-operation-status" class="team-operation-status" role="status" aria-live="polite"></div>
+      </div>
+      <div class="dialog-foot">
+        <span id="team-operation-id"></span>
+        <div class="team-operation-actions">
+          <button id="team-operation-retry" class="secondary-button small-button" type="button" hidden>重试发布</button>
+          <button class="secondary-button small-button" type="button" data-close-team-operation>关闭</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="password-dialog" class="dialog password-dialog" aria-labelledby="password-dialog-title">
+      <form id="password-form">
+        <div class="dialog-head">
+          <div>
+            <p class="eyebrow">ACCOUNT / PASSWORD</p>
+            <h2 id="password-dialog-title">修改密码</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-password aria-label="关闭">×</button>
+        </div>
+        <p class="form-hint">密码不会写入本地存储或日志。修改成功后服务端会撤销该账号的其他会话。</p>
+        <div class="form-grid">
+          <label class="full-field">
+            <span>当前密码</span>
+            <input id="password-current" type="password" autocomplete="current-password" required />
+          </label>
+          <label>
+            <span>新密码</span>
+            <input id="password-new" type="password" autocomplete="new-password" minlength="12" required />
+          </label>
+          <label>
+            <span>确认新密码</span>
+            <input id="password-confirm" type="password" autocomplete="new-password" minlength="12" required />
+          </label>
+        </div>
+        <p id="password-message" class="form-message" role="alert" hidden></p>
+        <div class="dialog-foot">
+          <button type="button" class="secondary-button" data-close-password>取消</button>
+          <button id="password-submit" class="primary-button" type="submit">更新密码</button>
         </div>
       </form>
     </dialog>

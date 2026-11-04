@@ -46,6 +46,35 @@ function closeQuietly(db) {
   }
 }
 
+function downgradeV4ToV3(db) {
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+    DROP INDEX IF EXISTS saved_view_owner_order;
+    DROP INDEX IF EXISTS task_event_actor_timeline;
+    DROP INDEX IF EXISTS agent_command_sync_pending;
+    DROP TABLE agent_command;
+    DROP TABLE agent_project_binding;
+    DROP TABLE agent_device;
+    DROP TABLE agent_pairing_code;
+    DROP TABLE git_operation;
+    DROP TABLE audit_event;
+    DROP TABLE task_assignment;
+    DROP TABLE project_scan_cache;
+    DROP TABLE project_member;
+    DROP TABLE team_task_index_tag;
+    DROP TABLE team_task_index;
+    DROP TABLE team_project;
+    DROP TABLE user_board_state;
+    DROP TABLE login_attempt;
+    DROP TABLE user_session;
+    DROP TABLE user_account;
+    ALTER TABLE saved_view DROP COLUMN owner_user_id;
+    ALTER TABLE task_event DROP COLUMN actor_user_id;
+    UPDATE app_meta SET value = '3' WHERE key = 'schema_version';
+    PRAGMA foreign_keys = ON;
+  `);
+}
+
 function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
@@ -101,7 +130,8 @@ function schemaTableSql(databaseFile) {
       WHERE type = 'table'
         AND name IN (
           'task_execution', 'task_tag', 'saved_view', 'task_event',
-          'task_dependency'
+          'task_dependency', 'user_account', 'team_project',
+          'task_assignment', 'agent_device', 'team_task_index'
         )
       ORDER BY name
     `).all().map((row) => ({ name: row.name, sql: row.sql }));
@@ -110,7 +140,7 @@ function schemaTableSql(databaseFile) {
   }
 }
 
-test("新库直接创建 schema v3、依赖表和事件起点", () => {
+test("新库直接创建 schema v4、团队表和事件起点", () => {
   const workspace = makeWorkspace();
   let db;
   try {
@@ -122,23 +152,39 @@ test("新库直接创建 schema v3、依赖表和事件起点", () => {
       ORDER BY name
     `).all().map((row) => row.name);
     assert.deepEqual(tables, [
+      "agent_command",
+      "agent_device",
+      "agent_pairing_code",
+      "agent_project_binding",
       "app_meta",
+      "audit_event",
       "board_state",
+      "git_operation",
+      "login_attempt",
+      "project_member",
+      "project_scan_cache",
       "repositories",
       "saved_view",
       "scan_cache",
       "sqlite_sequence",
+      "task_assignment",
       "task_dependency",
       "task_event",
       "task_execution",
       "task_stage",
-      "task_tag"
+      "task_tag",
+      "team_project",
+      "team_task_index",
+      "team_task_index_tag",
+      "user_account",
+      "user_board_state",
+      "user_session"
     ]);
     const meta = Object.fromEntries(
       db.prepare("SELECT key, value FROM app_meta").all()
         .map((row) => [row.key, row.value])
     );
-    assert.equal(meta.schema_version, "3");
+    assert.equal(meta.schema_version, "4");
     assert.equal(meta.legacy_json_imported_v1, "1");
     assert.equal(Number.isNaN(Date.parse(meta.execution_events_started_at)), false);
     assert.deepEqual(
@@ -167,7 +213,7 @@ test("新库直接创建 schema v3、依赖表和事件起点", () => {
   }
 });
 
-test("v1 数据库顺序升级到 v3，并创建一次性 v1 备份", () => {
+test("v1 数据库顺序升级到 v4，并创建一次性 v1 备份", () => {
   const workspace = makeWorkspace();
   createV1Database(workspace);
   let db;
@@ -175,7 +221,7 @@ test("v1 数据库顺序升级到 v3，并创建一次性 v1 备份", () => {
     db = openTestDatabase(workspace);
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      "3"
+      "4"
     );
     const tables = db.prepare(`
       SELECT name FROM sqlite_master
@@ -183,16 +229,32 @@ test("v1 数据库顺序升级到 v3，并创建一次性 v1 备份", () => {
       ORDER BY name
     `).all().map((row) => row.name);
     assert.deepEqual(tables, [
+      "agent_command",
+      "agent_device",
+      "agent_pairing_code",
+      "agent_project_binding",
       "app_meta",
+      "audit_event",
       "board_state",
+      "git_operation",
+      "login_attempt",
+      "project_member",
+      "project_scan_cache",
       "repositories",
       "saved_view",
       "scan_cache",
+      "task_assignment",
       "task_dependency",
       "task_event",
       "task_execution",
       "task_stage",
-      "task_tag"
+      "task_tag",
+      "team_project",
+      "team_task_index",
+      "team_task_index_tag",
+      "user_account",
+      "user_board_state",
+      "user_session"
     ]);
     assert.equal(fs.existsSync(`${workspace.databaseFile}.v1-backup`), true);
     const backup = new DatabaseSync(`${workspace.databaseFile}.v1-backup`, { readOnly: true });
@@ -230,7 +292,7 @@ test("v1 数据库顺序升级到 v3，并创建一次性 v1 备份", () => {
   }
 });
 
-test("v3 新库与 v1 升级库的扩展表结构一致", () => {
+test("v4 新库与 v1 升级库的扩展表结构一致", () => {
   const fresh = makeWorkspace();
   const upgraded = makeWorkspace();
   let freshDb;
@@ -247,6 +309,183 @@ test("v3 新库与 v1 升级库的扩展表结构一致", () => {
     closeQuietly(upgradedDb);
     fs.rmSync(fresh.root, { recursive: true, force: true });
     fs.rmSync(upgraded.root, { recursive: true, force: true });
+  }
+});
+
+test("两份 v3 数据库升级到 v4 均保留项目 ID 并可从时间戳备份恢复", () => {
+  for (let copy = 0; copy < 2; copy += 1) {
+    const workspace = makeWorkspace();
+    let db;
+    try {
+      db = openTestDatabase(workspace);
+      const repositoryId = `legacy-project-${copy}`;
+      const repositoryPath = path.join(workspace.root, "repos", repositoryId);
+      fs.mkdirSync(path.join(repositoryPath, ".trellis"), { recursive: true });
+      db.prepare(`
+        INSERT INTO repositories(
+          id, name, path, path_key, position, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        repositoryId,
+        `旧项目 ${copy}`,
+        repositoryPath,
+        repositoryPath.toLowerCase(),
+        copy,
+        "2026-10-30T00:00:00.000Z",
+        "2026-10-30T00:00:00.000Z"
+      );
+      const taskKey = `${repositoryId}::.trellis/tasks/task-1`;
+      const executionTaskKey = `${repositoryId}::task-1`;
+      db.prepare(`
+        INSERT INTO task_stage(task_key, stage, updated_at)
+        VALUES (?, 'in_progress', ?)
+      `).run(taskKey, "2026-10-30T00:00:00.000Z");
+      db.prepare(`
+        INSERT INTO task_tag(execution_task_key, tag, created_at)
+        VALUES (?, '迁移保留', ?)
+      `).run(executionTaskKey, "2026-10-30T00:00:00.000Z");
+      db.prepare(`
+        INSERT INTO task_dependency(
+          id, blocker_task_key, blocked_task_key, reason, created_by,
+          created_at, resolved_at
+        ) VALUES (?, ?, ?, '迁移依赖', 'migration-test', ?, NULL)
+      `).run(
+        `dependency-${copy}`,
+        `${repositoryId}::task-0`,
+        executionTaskKey,
+        "2026-10-30T00:00:00.000Z"
+      );
+      downgradeV4ToV3(db);
+      db.close();
+      db = null;
+
+      db = openTestDatabase(workspace);
+      assert.equal(
+        db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+        "4"
+      );
+      assert.equal(
+        db.prepare("SELECT name FROM repositories WHERE id = ?").get(repositoryId).name,
+        `旧项目 ${copy}`
+      );
+      assert.equal(
+        db.prepare("SELECT stage FROM task_stage WHERE task_key = ?").get(taskKey).stage,
+        "in_progress"
+      );
+      assert.equal(
+        db.prepare("SELECT tag FROM task_tag WHERE execution_task_key = ?")
+          .get(executionTaskKey).tag,
+        "迁移保留"
+      );
+      assert.equal(
+        db.prepare("SELECT reason FROM task_dependency WHERE id = ?")
+          .get(`dependency-${copy}`).reason,
+        "迁移依赖"
+      );
+      assert.equal(
+        db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM sqlite_master
+          WHERE type = 'table' AND name = 'team_task_index'
+        `).get().count,
+        1
+      );
+      assert.equal(
+        db.prepare("PRAGMA table_info(saved_view)").all()
+          .some((column) => column.name === "owner_user_id"),
+        true
+      );
+
+      const backups = fs.readdirSync(path.dirname(workspace.databaseFile))
+        .filter((name) => name.includes(".v3-backup-"));
+      assert.equal(backups.length, 1);
+      db.close();
+      db = null;
+
+      const backup = new DatabaseSync(
+        path.join(path.dirname(workspace.databaseFile), backups[0]),
+        { readOnly: true }
+      );
+      try {
+        assert.equal(
+          backup.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+          "3"
+        );
+      } finally {
+        backup.close();
+      }
+
+      const restoredFile = path.join(workspace.root, "restored.sqlite");
+      fs.copyFileSync(path.join(path.dirname(workspace.databaseFile), backups[0]), restoredFile);
+      const restored = new DatabaseSync(restoredFile, { readOnly: true });
+      try {
+        assert.equal(
+          restored.prepare("PRAGMA integrity_check").get().integrity_check,
+          "ok"
+        );
+        assert.equal(
+          restored.prepare("SELECT name FROM repositories WHERE id = ?").get(repositoryId).name,
+          `旧项目 ${copy}`
+        );
+      } finally {
+        restored.close();
+      }
+    } finally {
+      closeQuietly(db);
+      fs.rmSync(workspace.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("v3 到 v4 迁移失败会回滚并保留可恢复的 v3 备份", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    downgradeV4ToV3(db);
+    db.close();
+    db = null;
+
+    const fixture = new DatabaseSync(workspace.databaseFile);
+    fixture.exec("CREATE TABLE project_member (bad TEXT);");
+    fixture.close();
+
+    assert.throws(
+      () => openTestDatabase(workspace),
+      /no such column: project_id/
+    );
+    const migrated = new DatabaseSync(workspace.databaseFile, { readOnly: true });
+    try {
+      assert.equal(
+        migrated.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+        "3"
+      );
+    } finally {
+      migrated.close();
+    }
+
+    const backups = fs.readdirSync(path.dirname(workspace.databaseFile))
+      .filter((name) => name.includes(".v3-backup-"));
+    assert.equal(backups.length, 1);
+    const backupFile = path.join(path.dirname(workspace.databaseFile), backups[0]);
+    const restoredFile = path.join(workspace.root, "failure-restored.sqlite");
+    fs.copyFileSync(backupFile, restoredFile);
+    const restored = new DatabaseSync(restoredFile, { readOnly: true });
+    try {
+      assert.equal(
+        restored.prepare("PRAGMA integrity_check").get().integrity_check,
+        "ok"
+      );
+      assert.equal(
+        restored.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+        "3"
+      );
+    } finally {
+      restored.close();
+    }
+  } finally {
+    closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
   }
 });
 
@@ -296,7 +535,7 @@ test("v1 迁移失败会回滚新增表并保留版本 1", () => {
   }
 });
 
-test("v2 到 v3 迁移失败会回滚依赖表并保留可恢复的 v2 备份", () => {
+test("v2 到 v4 迁移失败会回滚依赖表并保留可恢复的 v2 备份", () => {
   const workspace = makeWorkspace();
   let db;
   try {

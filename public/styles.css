@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap");
-
 :root {
   --ink: #171a1e;
   --ink-soft: #4b5057;
@@ -22,9 +20,9 @@
   --blue: #486c89;
   --blue-ink: #31536b;
   --blue-soft: #dbe5ec;
-  --display: "Manrope", "Noto Sans SC", sans-serif;
-  --body: "Noto Sans SC", "Manrope", sans-serif;
-  --mono: "DM Mono", monospace;
+  --display: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --body: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "Consolas", "Microsoft YaHei", monospace;
   --radius: 14px;
   --rail-width: 252px;
 }

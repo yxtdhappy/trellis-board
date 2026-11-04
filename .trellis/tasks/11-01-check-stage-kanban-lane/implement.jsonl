@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "确认原生前端模块边界与阶段分栏契约"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "保持 derivedStage 与 renderPipeline 的单一数据流"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "决定纯阶段分栏函数是否需要拆为可测试模块"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "遵循 JavaScript 风格和页面验收要求"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对阶段索引与 STAGE_LANES 的下标映射"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "避免为单次边界修复引入不必要的共享抽象"}
+{"file": ".trellis/spec/backend/index.md", "reason": "确认扫描与阶段推导位于 server/loader.js 的后端职责边界"}
+{"file": ".trellis/spec/backend/scanning-and-persistence.md", "reason": "修正任务状态到实施完成证据的阶段推导契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "为阶段证据分支补充 Node 内置测试"}

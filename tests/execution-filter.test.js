@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   BUILTIN_VIEWS,
   dueDateDistance,
+  laneForStageIndex,
   normalizeTagsInput,
   taskMatchesFilter,
   taskMatchesView
@@ -37,6 +38,17 @@ test("标签输入去空白、忽略大小写去重并限制数量和长度", ()
     () => normalizeTagsInput(Array.from({ length: 11 }, (_, index) => `tag-${index}`)),
     /最多 10 个/
   );
+});
+
+test("检查阶段及后续阶段进入检查/收尾分栏", () => {
+  const task = { archived: false };
+  assert.equal(laneForStageIndex(task, 0), "planning");
+  assert.equal(laneForStageIndex(task, 5), "review");
+  assert.equal(laneForStageIndex(task, 6), "implementation");
+  assert.equal(laneForStageIndex(task, 7), "verification");
+  assert.equal(laneForStageIndex(task, 12), "verification");
+  assert.equal(laneForStageIndex({ archived: true }, 7), null);
+  assert.equal(laneForStageIndex(task, -1), null);
 });
 
 test("组合筛选按 AND 匹配，标签组内命中任意标签即可", () => {

@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/11-03-team-board/prd.md","reason":"最终逐项核对产品验收标准。"}
+{"file":".trellis/tasks/11-03-team-board/research/security-boundaries.md","reason":"执行凭证、路径、命令和数据泄漏检查。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对真实成功和失败流程的端到端证据。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核对迁移、真实 HTTP、恢复和容量结论。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核对最终浏览器、可访问性和 standalone 回归。"}
+{"file":".trellis/tasks/11-03-team-board/research/capacity-and-board-scaling.md","reason":"核对跨项目/单项目查询、容量、轮询和单实例失败后的阻断结论。"}

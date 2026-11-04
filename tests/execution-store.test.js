@@ -446,6 +446,57 @@ test("保存视图可创建、更新、排序删除并拒绝未知筛选字段",
   }
 });
 
+test("团队保存视图按 owner_user_id 隔离", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    const now = new Date().toISOString();
+    const insertUser = db.prepare(`
+      INSERT INTO user_account(
+        id, username_key, username, display_name, password_hash,
+        password_params_json, system_admin, status, must_change_password,
+        password_changed_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'test', '{}', 0, 'active', 0, ?, ?, ?)
+    `);
+    insertUser.run("user-a", "user-a", "user-a", "用户 A", now, now, now);
+    insertUser.run("user-b", "user-b", "user-b", "用户 B", now, now, now);
+    const store = createStore(db);
+    const first = store.createSavedView({
+      name: "A 的视图",
+      filter: { tags: ["A"] }
+    }, "user-a");
+    store.createSavedView({
+      name: "B 的视图",
+      filter: { tags: ["B"] }
+    }, "user-b");
+    assert.deepEqual(
+      store.listSavedViews("user-a").map((view) => view.name),
+      ["A 的视图"]
+    );
+    assert.deepEqual(
+      store.listSavedViews("user-b").map((view) => view.name),
+      ["B 的视图"]
+    );
+    assert.throws(
+      () => store.updateSavedView({
+        id: first.id,
+        name: "越权更新",
+        filter: { tags: ["B"] }
+      }, "user-b"),
+      /保存视图不存在/
+    );
+    assert.throws(
+      () => store.deleteSavedView(first.id, "user-b"),
+      /保存视图不存在/
+    );
+    assert.deepEqual(store.listSavedViews().map((view) => view.name), []);
+  } finally {
+    closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
 test("首次扫描只建立活动任务基线，后续真实阶段变化恰好记录一次", () => {
   const workspace = makeWorkspace();
   let db;

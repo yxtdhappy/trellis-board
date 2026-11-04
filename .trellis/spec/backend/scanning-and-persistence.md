@@ -26,6 +26,8 @@ prd -> research -> design -> implementPlan -> context -> review
 
 推导依据包括 PRD 的 Requirements/Acceptance Criteria 语义、报告内容、`task.status`、JSONL 记录、workspace journal、相关文件、提交和归档位置。进度只统计必需阶段；`e2e` 标记为可选，缺少它不阻塞后续收尾。
 
+`task.status=in_progress` 只表示任务已开始，不能单独完成 `implement`。实施完成还必须存在实施报告、检查报告、已勾选验收项、提交或 `status=completed`；`implement.md` 中已勾选的检查项只有在已有上述实施完成证据时，才能进一步完成 `check`。归档任务仍按归档目录补齐历史阶段，不因这项证据门禁回退已完成阶段。
+
 E2E 只接受明确的执行完成证据。`implement.md` 中的计划、条件句或“下一步做 E2E”不能计为完成；否定语句也不能计为完成。[tests/loader.test.js](../../../tests/loader.test.js) 对这些分支有回归。
 
 人工阶段由 `setManualStage()` 写入 SQLite `task_stage` 表，键为 `${projectId}/${relativeDir}`。`withManualStages()` 只覆盖被勾选的阶段，不自动补齐前序阶段。写入人工阶段时还必须把 `executionTaskKey` 传入同一事务，追加 `stage_manual_confirmed` 事件。移除项目时必须在同一事务中清理该 `${projectId}/` 前缀下的人工阶段和 `${projectId}::` 前缀下的执行扩展数据，避免项目重新加入或任务路径复用时继承旧值。

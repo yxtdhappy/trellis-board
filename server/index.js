@@ -4,7 +4,9 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { parseTeamConfig } from "./config.js";
 import { getDefaultDatabase } from "./database.js";
+import { createTeamRuntime } from "./team/http.js";
 import {
   STAGE_IDS,
   setManualStage
@@ -26,12 +28,12 @@ const appDir = path.resolve(serverDir, "..");
 const publicDir = path.join(appDir, "public");
 const workerFile = path.join(serverDir, "scan-worker.js");
 const folderPickerFile = path.join(serverDir, "pick-folders.ps1");
-const port = Number(process.env.PORT || 4317);
 const SCAN_SCHEMA_VERSION = 11;
-const database = getDefaultDatabase();
-const persistence = createPersistenceStore();
-const repositoryStore = createRepositoryStore();
-const executionStore = createExecutionStore({ db: database, stageIds: STAGE_IDS });
+let port = 4317;
+let database = null;
+let persistence = null;
+let repositoryStore = null;
+let executionStore = null;
 let boardCache = null;
 let inflightScan = null;
 let queuedRefresh = null;
@@ -46,6 +48,15 @@ const WATCH_DEBOUNCE_MS = Math.max(
   100,
   Number(process.env.TRELLIS_WATCH_DEBOUNCE_MS || 400)
 );
+
+function initializeStandaloneState(standalonePort = Number(process.env.PORT || 4317)) {
+  if (database) return;
+  port = standalonePort;
+  database = getDefaultDatabase();
+  persistence = createPersistenceStore();
+  repositoryStore = createRepositoryStore();
+  executionStore = createExecutionStore({ db: database, stageIds: STAGE_IDS });
+}
 
 function sendJson(response, status, payload) {
   const body = JSON.stringify(payload);
@@ -786,17 +797,107 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-server.listen(port, "127.0.0.1", () => {
-  writeBoardState({
-    serverStartedAt: new Date().toISOString(),
-    refreshStartedAt: null,
-    refreshQueued: false,
-    refreshQueuedReason: null,
-    executionWipLimit: persistence.readExecutionWipLimit()
+function listenStandalone() {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, "127.0.0.1");
   });
-  startFileWatcher();
-  refreshBoardFromFiles("startup").catch((error) => {
-    console.error("启动后的后台扫描失败", error);
-  });
-  console.log(`Trellis Board: http://127.0.0.1:${port}`);
-});
+}
+
+export async function startStandaloneServer({
+  standalonePort = Number(process.env.PORT || 4317)
+} = {}) {
+  initializeStandaloneState(standalonePort);
+  try {
+    await listenStandalone();
+    writeBoardState({
+      serverStartedAt: new Date().toISOString(),
+      refreshStartedAt: null,
+      refreshQueued: false,
+      refreshQueuedReason: null,
+      executionWipLimit: persistence.readExecutionWipLimit()
+    });
+    startFileWatcher();
+    refreshBoardFromFiles("startup").catch((error) => {
+      console.error("启动后的后台扫描失败", error);
+    });
+    console.log(`Trellis Board: http://127.0.0.1:${port}`);
+    return {
+      mode: "standalone",
+      server,
+      address: () => server.address(),
+      stop: stopStandaloneServer
+    };
+  } catch (error) {
+    await stopStandaloneServer();
+    throw error;
+  }
+}
+
+export async function stopStandaloneServer() {
+  watchRuntime?.close();
+  watchRuntime = null;
+  if (watchDebounceTimer) clearTimeout(watchDebounceTimer);
+  watchDebounceTimer = null;
+  if (scanWorkerRuntime) {
+    const worker = scanWorkerRuntime;
+    scanWorkerRuntime = null;
+    rejectPendingScans(new Error("服务正在关闭"));
+    await worker.terminate();
+  }
+  if (server.listening) {
+    await new Promise((resolve) => {
+      server.close(() => resolve());
+      const timer = setTimeout(() => server.closeAllConnections?.(), 5_000);
+      timer.unref?.();
+    });
+  }
+  database?.close();
+  database = null;
+}
+
+export async function startApplication(config = parseTeamConfig()) {
+  if (config.mode === "team") {
+    const runtime = await createTeamRuntime({ config });
+    return runtime.start();
+  }
+  return startStandaloneServer({ standalonePort: config.port });
+}
+
+let activeRuntime = null;
+let stopping = false;
+
+async function stopActiveRuntime() {
+  if (stopping || !activeRuntime) return;
+  stopping = true;
+  try {
+    await activeRuntime.stop();
+  } catch (error) {
+    console.error("关闭服务失败", error);
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  startApplication()
+    .then((runtime) => {
+      activeRuntime = runtime;
+    })
+    .catch((error) => {
+      console.error("Trellis Board 启动失败", error);
+      process.exitCode = 1;
+    });
+  const shutdown = () => {
+    stopActiveRuntime().finally(() => process.exit());
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+}

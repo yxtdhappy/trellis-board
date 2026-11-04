@@ -38,6 +38,10 @@ public/app.js api()
 
 阶段 ID 表示流程语义，阶段 `index` 从 1 开始，前端数组下标从 0 开始。E2E 是唯一标记为 `optional: true` 的阶段；缺失 E2E 不阻塞规范回写和工作提交。
 
+轻量 Kanban 中 `check` 的数组下标是 `7`，应与 `e2e` 及后续阶段一起进入 `verification` 泳道；`implement` 的数组下标是 `6`。修改分栏边界时同时运行 `laneForStageIndex` 单测并在真实看板确认“检查中”卡片位于“检查 / 收尾”。
+
+`task.json.status=in_progress` 只证明任务已启动，不能单独完成 `implement` 或进入 `check`。阶段推导必须等待实施报告、检查报告、验收勾选、commit 或 `completed` 等完成证据；已勾选实施计划项也不能绕过实施完成门禁。
+
 ### 任务身份与路径
 
 - 仓库身份来自 SQLite `repositories.id`，扫描结果中的 `projectId` 使用该值。
