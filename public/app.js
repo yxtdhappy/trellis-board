@@ -1,5 +1,30 @@
 import { renderMarkdown } from "./markdown.js";
 import { formatArchiveTimestamp, sortArchivedTasks } from "./archive-sort.js";
+import { escapeHtml, setMessage } from "./dom.js";
+import { requestJson, redirectToLogin } from "./team-request.js";
+import {
+  assignableProjectMembers,
+  assignmentVersion,
+  buildTaskQuery,
+  canManageProject,
+  canWriteProject,
+  isCompleteOperation,
+  isRetryableOperation,
+  normalizeAssignments,
+  normalizeBoardPage,
+  normalizeOperation,
+  normalizeProjectMembers,
+  normalizeRuntime,
+  normalizeTaskPage,
+  normalizeTeamProject,
+  normalizeTeamProjects,
+  normalizeTeamStatus,
+  normalizeTeamTaskRow,
+  normalizeUser,
+  operationPollDelay,
+  shouldReloadTasks,
+  taskVersion
+} from "./team-client.js";
 import {
   normalizeTaskSlug,
   slugifyTaskTitle,
@@ -11,6 +36,7 @@ import {
   FILTER_STAGES,
   dueDateDistance,
   findView,
+  laneForStageIndex,
   normalizeTagsInput,
   taskMatchesView,
   taskTagNames
@@ -19,7 +45,7 @@ import {
 const STAGE_LANES = [
   { id: "planning", label: "规划", hint: "需求、调研、设计与上下文准备" },
   { id: "review", label: "待放行", hint: "规划产物已备，尚未开始实现" },
-  { id: "implementation", label: "实现", hint: "正在写代码或补充检查" },
+  { id: "implementation", label: "实现", hint: "正在写代码" },
   { id: "verification", label: "检查 / 收尾", hint: "验证、规范回写与工作提交" }
 ];
 
@@ -34,6 +60,39 @@ const ARTIFACT_DEFINITIONS = [
 
 const TASK_COPY_LABEL = "复制任务名";
 const TASK_COPIED_LABEL = "已复制";
+const TEAM_POLL_MS = 3_000;
+const TEAM_PAGE_SIZE = 100;
+const TEAM_SYNC_LABELS = {
+  provisioning: "待批准",
+  current: "已同步",
+  stale: "已过期",
+  pending_push: "待发布",
+  needs_repair: "需修复",
+  disabled: "已停用",
+  unknown: "状态未知"
+};
+const TEAM_OPERATION_LABELS = {
+  prepared: "已准备",
+  committed: "本地已提交",
+  pending_push: "等待推送",
+  pushed: "远端已接收",
+  applied: "已应用",
+  failed: "失败"
+};
+
+function initialTeamFilters() {
+  return {
+    projectIds: [],
+    priorities: [],
+    stages: [],
+    tags: [],
+    assignee: "",
+    dueWithinDays: "",
+    staleDays: "",
+    blocked: "any",
+    archived: false
+  };
+}
 
 const state = {
   board: null,
@@ -57,7 +116,31 @@ const state = {
   savingView: false,
   savingDependency: false,
   savingWip: false,
-  savingUndo: false
+  savingUndo: false,
+  teamMode: false,
+  runtime: null,
+  user: null,
+  teamProjects: [],
+  teamStatus: null,
+  teamPage: null,
+  teamAssignments: [],
+  teamLoading: false,
+  teamFilterTimer: null,
+  teamOperation: null,
+  teamOperationTimer: null,
+  teamOperationAttempt: 0,
+  teamFilters: initialTeamFilters(),
+  teamCursors: [null],
+  teamPageIndex: 0,
+  teamHasNext: false,
+  teamEtag: null,
+  teamStatusEtag: null,
+  teamStatusLoading: false,
+  teamInitialized: false,
+  teamPollTimer: null,
+  createIdempotencyKey: null,
+  createSignature: null,
+  assignIdempotencyKey: null
 };
 
 const els = {
@@ -122,23 +205,91 @@ const els = {
   metricArchiveCaption: document.querySelector("#metric-archive-caption"),
   metricAttention: document.querySelector("#metric-attention"),
   metricTeam: document.querySelector("#metric-team"),
-  metricTeamCaption: document.querySelector("#metric-team-caption")
+  metricTeamCaption: document.querySelector("#metric-team-caption"),
+  workspace: document.querySelector("#workspace"),
+  teamSession: document.querySelector("#team-session"),
+  teamSessionName: document.querySelector("#team-session-name"),
+  teamSessionMode: document.querySelector("#team-session-mode"),
+  teamAdminLink: document.querySelector("#team-admin-link"),
+  teamLogout: document.querySelector("#team-logout-button"),
+  teamPassword: document.querySelector("#team-password-button"),
+  teamAccount: document.querySelector("#team-account"),
+  teamAccountAvatar: document.querySelector("#team-account-avatar"),
+  teamAccountName: document.querySelector("#team-account-name"),
+  teamAccountRole: document.querySelector("#team-account-role"),
+  teamFeedback: document.querySelector("#team-feedback"),
+  teamStatusBanner: document.querySelector("#team-status-banner"),
+  teamQueryPanel: document.querySelector("#team-query-panel"),
+  teamQueryList: document.querySelector("#team-query-list"),
+  teamQuerySummary: document.querySelector("#team-query-summary"),
+  teamQueryTotal: document.querySelector("#team-query-total"),
+  teamFilterForm: document.querySelector("#team-filter-form"),
+  teamFilterProject: document.querySelector("#team-filter-project"),
+  teamFilterAssignee: document.querySelector("#team-filter-assignee"),
+  teamFilterPriority: document.querySelector("#team-filter-priority"),
+  teamFilterStage: document.querySelector("#team-filter-stage"),
+  teamFilterTags: document.querySelector("#team-filter-tags"),
+  teamFilterDue: document.querySelector("#team-filter-due"),
+  teamFilterStale: document.querySelector("#team-filter-stale"),
+  teamFilterBlocked: document.querySelector("#team-filter-blocked"),
+  teamFilterArchived: document.querySelector("#team-filter-archived"),
+  teamPagePrev: document.querySelector("#team-page-prev"),
+  teamPageNext: document.querySelector("#team-page-next"),
+  teamPageLabel: document.querySelector("#team-page-label"),
+  assignmentNav: document.querySelector("#assignment-nav"),
+  assignmentCount: document.querySelector("#assignment-count"),
+  assignmentsDialog: document.querySelector("#assignments-dialog"),
+  assignmentsList: document.querySelector("#assignments-list"),
+  assignmentsMessage: document.querySelector("#assignments-message"),
+  teamTaskActions: document.querySelector("#team-task-actions"),
+  teamTaskVersion: document.querySelector("#team-task-version"),
+  teamTaskAccept: document.querySelector("#team-task-accept"),
+  teamOperationDialog: document.querySelector("#team-operation-dialog"),
+  teamOperationTitle: document.querySelector("#team-operation-title"),
+  teamOperationStatus: document.querySelector("#team-operation-status"),
+  teamOperationId: document.querySelector("#team-operation-id"),
+  teamOperationRetry: document.querySelector("#team-operation-retry"),
+  passwordDialog: document.querySelector("#password-dialog"),
+  passwordForm: document.querySelector("#password-form"),
+  passwordMessage: document.querySelector("#password-message"),
+  passwordSubmit: document.querySelector("#password-submit")
 };
 
 const taskCopyFeedbackTimers = new WeakMap();
+const teamMemberLoads = new Map();
 
-const safe = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;"
-})[char]);
+const safe = escapeHtml;
 
 const initials = (name) => (name || "?").slice(0, 2).toUpperCase();
-const activeTasks = () => state.board?.tasks.filter((task) => !task.archived) || [];
+const activeTasks = () => state.board?.tasks.filter((task) =>
+  !task.archived && (!state.teamMode || taskMatchesTeamFilters(task))
+) || [];
 const archivedTasks = () => state.board?.tasks.filter((task) => task.archived) || [];
 const currentProject = () => state.board?.projects.find((project) => project.id === state.projectId);
+
+function taskMatchesTeamFilters(task) {
+  if (!state.teamMode) return true;
+  const filters = state.teamFilters;
+  if (filters.priorities.length && !filters.priorities.includes(task.priority)) return false;
+  if (filters.stages.length && !filters.stages.includes(task.derivedStage)) return false;
+  if (filters.assignee && task.assignee !== filters.assignee) return false;
+  if (filters.blocked === "blocked" && !task.isBlocked) return false;
+  if (filters.tags.length) {
+    const tags = taskTagNames(task);
+    if (!filters.tags.some((tag) => tags.includes(tag))) return false;
+  }
+  if (filters.dueWithinDays !== "") {
+    const distance = dueDateDistance(task.execution?.dueDate || task.dueDate);
+    if (distance == null || distance > Number(filters.dueWithinDays)) return false;
+  }
+  if (filters.staleDays !== "") {
+    const stamp = task.execution?.lastActivityAt || task.lastActivityAt;
+    const age = stamp ? (Date.now() - new Date(stamp).getTime()) / 86_400_000 : Infinity;
+    if (age < Number(filters.staleDays)) return false;
+  }
+  if (filters.blocked === "unblocked" && task.isBlocked) return false;
+  return true;
+}
 
 function currentExecutionView() {
   return findView(state.board?.savedViews || [], state.executionView);
@@ -239,15 +390,6 @@ function stageSourceLabel(stage) {
   return STAGE_SOURCE_LABELS[stage.source] || stage.source || "有证据";
 }
 
-function laneForStageIndex(task, current) {
-  if (task.archived) return null;
-  if (current === -1) return null;
-  if (current >= 8) return "verification";
-  if (current >= 6) return "implementation";
-  if (current === 5) return "review";
-  return "planning";
-}
-
 function laneForTask(task) {
   return laneForStageIndex(task, task.stages.findIndex((stage) => stage.id === task.derivedStage));
 }
@@ -274,7 +416,9 @@ function stageName(task, stage) {
 }
 
 function taskByKey(taskKey) {
-  return state.board?.tasks.find((task) => task.taskKey === taskKey) || null;
+  return state.board?.tasks.find((task) => task.taskKey === taskKey) ||
+    state.teamPage?.tasks.find((task) => task.taskKey === taskKey) ||
+    null;
 }
 
 function taskGroupMembers(task, tasks = activeTasks()) {
@@ -575,7 +719,7 @@ function renderFocus() {
     ${processTape(task)}
     <div class="focus-actions">
       <button class="primary-button" data-task="${safe(task.taskKey)}" type="button">打开任务详情</button>
-      <button class="secondary-button" data-edit-execution="${safe(task.taskKey)}" type="button">编辑计划字段</button>
+      <button class="secondary-button" data-edit-execution="${safe(task.taskKey)}" type="button" ${canWriteTask(task) ? "" : "disabled"}>编辑计划字段</button>
       <span class="history-state">${execution.historyStatus === "tracking"
         ? `事件自 ${safe(formatShortDate(execution.trackingStartedAt))} 起追踪；旧历史缺失`
         : "历史缺失：尚未建立追踪基线"}</span>
@@ -652,30 +796,42 @@ function renderMetrics() {
 }
 
 function renderProjects() {
-  const projects = state.board?.projects || [];
+  const projects = state.teamMode
+    ? state.teamProjects
+    : state.board?.projects || [];
   els.projectCount.textContent = projects.length;
+  const allCount = state.teamMode
+    ? (state.teamPage?.total ?? projects.reduce((sum, project) => sum + project.activeCount, 0))
+    : state.board?.tasks.length || 0;
   const all = `
     <button class="project-pill ${state.projectId === "all" ? "is-active" : ""}" data-project="all" type="button">
       <span class="marker"></span>
-      <span class="name">全部仓库</span>
-      <span class="count">${state.board?.tasks.length || 0}</span>
+      <span class="name">${state.teamMode ? "全部授权项目" : "全部仓库"}</span>
+      <span class="count">${allCount}</span>
     </button>`;
-  const rows = projects.map((project) => `
-    <button class="project-pill ${state.projectId === project.id ? "is-active" : ""}" data-project="${safe(project.id)}" type="button">
+  const rows = projects.map((project, index) => `
+    <button class="project-pill ${state.projectId === project.id ? "is-active" : ""}" ${state.teamMode ? `data-team-project-index="${index}"` : `data-project="${safe(project.id)}"`} type="button">
       <span class="marker"></span>
-      <span class="name" title="${safe(project.name)} · ${safe(project.path)}">${safe(project.name)}</span>
-      <span class="count">${project.activeCount}</span>
+      <span class="name" title="${safe(project.name)} · ${safe(state.teamMode ? teamSyncLabel(project.syncStatus) : project.path)}">${safe(project.name)}</span>
+      <span class="count">${escapeHtml(project.activeCount)}</span>
     </button>`).join("");
   els.projectList.innerHTML = all + rows;
-  els.projectList.querySelectorAll("[data-project]").forEach((button) => {
+  els.projectList.querySelectorAll("[data-project], [data-team-project-index]").forEach((button) => {
     button.addEventListener("click", () => {
-      state.projectId = button.dataset.project;
+      state.projectId = button.dataset.teamProjectIndex == null
+        ? button.dataset.project
+        : projects[Number(button.dataset.teamProjectIndex)]?.id;
       state.scope = "all";
       state.view = "pipeline";
       syncScopeButtons();
-      renderAll();
+      if (state.teamMode) {
+        void selectTeamProject(state.projectId);
+      } else {
+        renderAll();
+      }
     });
   });
+  if (state.teamMode) syncTeamVisibility();
 }
 
 function setProjectFormMessage(message, isError = false) {
@@ -901,10 +1057,15 @@ function renderPipeline() {
 
 function executionEditButton(task, className = "task-edit-button") {
   const conflict = task.executionIdentityValid === false || task.executionIdentityConflict === true;
-  const disabled = task.archived || conflict;
-  const message = conflict
-    ? "任务执行身份冲突，请修正 task.json id"
-    : task.archived ? "归档任务只读" : "编辑计划字段";
+  const writable = canWriteTask(task);
+  const disabled = task.archived || conflict || !writable;
+  const message = task.archived
+    ? "归档任务只读"
+    : !writable
+      ? "只读成员不能修改计划字段"
+      : conflict
+        ? "任务执行身份冲突，请修正 task.json id"
+        : "编辑计划字段";
   return `<button class="${className}" data-edit-execution="${safe(task.taskKey)}" type="button" aria-label="${safe(message)}" title="${safe(message)}" ${disabled ? "disabled" : ""}>计划</button>`;
 }
 
@@ -1218,8 +1379,11 @@ function bindExecutionActions(root) {
   root.querySelectorAll("[data-edit-execution]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      const task = taskByKey(button.dataset.editExecution);
-      if (task) openExecutionDialog(task);
+      const key = button.dataset.editExecution;
+      const task = state.selectedTask?.taskKey === key
+        ? state.selectedTask
+        : taskByKey(key);
+      if (task && canWriteTask(task)) openExecutionDialog(task);
     });
   });
 }
@@ -1232,6 +1396,7 @@ function setUndoMessage(root, message, isError = false) {
 }
 
 function bindUndoAction(task) {
+  if (!canWriteTask(task)) return;
   const root = document.querySelector("#detail-summary");
   const button = root.querySelector("[data-undo-operation]");
   if (!button) return;
@@ -1253,6 +1418,12 @@ function bindUndoAction(task) {
         taskPath: task.relativeDir
       });
       operationWritten = true;
+      if (state.teamMode) {
+        const loaded = await refreshTeamData({ quiet: true });
+        if (!loaded) throw new Error("撤销已保存，但团队看板刷新失败");
+        openTask({ ...task, artifacts: undefined });
+        return;
+      }
       state.board = await api("/api/board");
       updateSyncLabel();
       renderAll();
@@ -1288,6 +1459,10 @@ function setDependencyMessage(root, message, isError = false) {
 async function reloadTaskAfterDependency(task) {
   const loaded = await loadBoard();
   if (!loaded) throw new Error("依赖已保存，但看板刷新失败");
+  if (state.teamMode) {
+    openTask({ ...task, artifacts: undefined });
+    return;
+  }
   const fresh = taskByKey(task.taskKey);
   if (!fresh) {
     els.taskDialog.close();
@@ -1297,6 +1472,7 @@ async function reloadTaskAfterDependency(task) {
 }
 
 function bindDependencyActions(task) {
+  if (!canWriteTask(task)) return;
   const root = document.querySelector("#detail-summary");
   const form = root.querySelector("[data-dependency-form]");
   if (form) {
@@ -1423,7 +1599,9 @@ function openExecutionDialog(task) {
 async function submitExecution(event) {
   event.preventDefault();
   if (state.savingExecution) return;
-  const task = taskByKey(state.editingExecutionTaskKey);
+  const task = state.selectedTask?.taskKey === state.editingExecutionTaskKey
+    ? state.selectedTask
+    : taskByKey(state.editingExecutionTaskKey);
   if (!task) {
     setExecutionMessage("任务已不在当前看板中，请重新扫描。", true);
     return;
@@ -1455,6 +1633,10 @@ async function submitExecution(event) {
     if (!loaded) throw new Error("计划字段已保存，但看板刷新失败");
     els.executionDialog.close();
     if (wasDetailOpen) {
+      if (state.teamMode) {
+        openTask({ ...task, artifacts: undefined });
+        return;
+      }
       const fresh = taskByKey(task.taskKey);
       if (fresh) openTask(fresh);
     }
@@ -1612,6 +1794,26 @@ function emptyMarkup(message = "没有符合当前筛选的任务") {
   </div>`;
 }
 
+function renderTaskLoading(task) {
+  document.querySelector("#dialog-project").textContent = `${task.projectName || "团队项目"} / ${task.dirName || "任务"}`;
+  document.querySelector("#dialog-title").textContent = task.title || "正在读取任务";
+  document.querySelector("#dialog-meta").innerHTML = `
+    <span>状态 <b>${safe(task.archived ? "已归档" : "进行中")}</b></span>
+    <span>负责人 <b>${safe(task.assignee || "未派发")}</b></span>
+    <span>项目 <b>${safe(task.projectName || "未知")}</b></span>
+    <span>任务版本 <b>${safe(taskVersion(task) ?? "待读取")}</b></span>`;
+  document.querySelector("#detail-summary").innerHTML = `<div class="task-loading">
+    <strong>正在读取任务详情和产物…</strong>
+    <span>团队接口会重新校验当前账号对项目的访问权限。</span>
+  </div>`;
+  document.querySelector("#stage-detail").innerHTML = "";
+  document.querySelector("#assign-button").style.display = "none";
+  document.querySelector(".assign-inline label").style.display = "none";
+  document.querySelector("#assignee-input").style.display = "none";
+  document.querySelector("#detail-edit-execution").hidden = true;
+  renderSelectedTeamTaskActions(task);
+}
+
 function openTask(task) {
   state.selectedTask = task;
   document.querySelector("#task-dialog .dialog-body").scrollTop = 0;
@@ -1619,8 +1821,12 @@ function openTask(task) {
     showError(error.message);
     return null;
   });
-  content.then((detail) => {
+  content.then(async (detail) => {
     if (!detail || !els.taskDialog.open || state.selectedTask?.taskKey !== task.taskKey) return;
+    if (state.teamMode && detail.projectId) {
+      await loadTeamProjectMembers(detail.projectId);
+      if (!els.taskDialog.open || state.selectedTask?.taskKey !== task.taskKey) return;
+    }
     state.selectedTask = detail;
     const project = state.board?.projects.find((candidate) => candidate.id === detail.projectId);
     if (project && Array.isArray(detail.projectMembers)) {
@@ -1628,12 +1834,22 @@ function openTask(task) {
     }
     renderTaskDetail(detail);
   });
-  renderTaskDetail(task);
+  if (state.teamMode && !task.artifacts) {
+    renderTaskLoading(task);
+  } else {
+    renderTaskDetail(task);
+  }
   if (!els.taskDialog.open) els.taskDialog.showModal();
 }
 
 async function loadTaskDetail(task) {
   if (task.artifacts) return task;
+  if (state.teamMode) {
+    const key = task.executionTaskKey || task.taskKey;
+    if (!key) throw new Error("任务缺少 executionTaskKey");
+    const payload = await api(`/api/tasks/${encodeURIComponent(key)}`);
+    return payload.task || payload;
+  }
   return api("/api/task", "POST", {
     projectId: task.projectId,
     taskPath: task.relativeDir
@@ -1877,7 +2093,10 @@ function executionMetricsMarkup(task) {
 }
 
 function blockerOptions(task) {
-  return (state.board?.tasks || [])
+  const tasks = state.board?.tasks?.length
+    ? state.board.tasks
+    : state.teamPage?.tasks || [];
+  return tasks
     .filter((candidate) =>
       !candidate.archived &&
       candidate.taskKey !== task.taskKey &&
@@ -1941,7 +2160,7 @@ function riskDependencyMarkup(task) {
   const execution = task.execution || {};
   const risk = execution.risk || {};
   const conflict = task.executionIdentityValid === false || task.executionIdentityConflict;
-  const canEdit = !task.archived && !conflict;
+  const canEdit = !task.archived && !conflict && canWriteTask(task);
   if (!Array.isArray(execution.blockedBy) || !Array.isArray(execution.blocks)) {
     return `<section class="risk-dependency">
       <h3>风险与依赖</h3>
@@ -2009,7 +2228,11 @@ function riskDependencyMarkup(task) {
       </label>
       <button class="secondary-button dependency-submit" type="submit" ${candidates.length ? "" : "disabled"}>创建依赖</button>
       <span class="dependency-form-message" aria-live="polite"></span>
-    </form>` : `<p class="dependency-empty">${task.archived ? "归档任务只读，不能新增或解除依赖。" : "执行身份冲突时不能修改依赖。"}</p>`}
+    </form>` : `<p class="dependency-empty">${task.archived
+      ? "归档任务只读，不能新增或解除依赖。"
+      : !canWriteTask(task)
+        ? "只读成员不能新增或解除依赖。"
+        : "执行身份冲突时不能修改依赖。"}</p>`}
     <div class="risk-gap-grid">
       ${missingRiskMarkup("DoR 缺口", Array.isArray(risk.dorMissing) ? risk.dorMissing : [])}
       ${missingRiskMarkup("DoD 缺口", Array.isArray(risk.dodMissing) ? risk.dodMissing : [])}
@@ -2021,7 +2244,7 @@ function riskDependencyMarkup(task) {
 function executionDetailMarkup(task) {
   const execution = task.execution || {};
   const conflict = task.executionIdentityValid === false || task.executionIdentityConflict;
-  const canEdit = !task.archived && !conflict;
+  const canEdit = !task.archived && !conflict && canWriteTask(task);
   const history = execution.historyStatus === "tracking"
     ? `追踪自 ${formatEventTime(execution.trackingStartedAt) || "未知时间"}；启用前的阶段历史缺失，不以文件修改时间补造。`
     : "历史缺失：尚未建立追踪基线。";
@@ -2072,6 +2295,7 @@ function renderTaskDetail(task) {
     <span>创建 <b>${safe(task.createdAt || "未知")}</b></span>
     <span>分支 <b>${safe(task.branch || "未记录")}</b></span>
     <span>进度 <b>${taskProgress(task).percent}%</b></span>
+    ${taskVersion(task) == null ? "" : `<span>任务版本 <b>v${safe(taskVersion(task))}</b></span>`}
     ${task.groupSize > 1 ? `<span>任务组 <b>${task.groupSize} 个${task.groupRole === "parent" ? " · 父任务" : " · 子任务"}</b></span>` : ""}`;
   const prdInfo = task.stages[0]?.evidence || "无 PRD 证据";
   const artifacts = task.artifacts || {};
@@ -2126,6 +2350,7 @@ function renderTaskDetail(task) {
       </section>`
     : "";
   const currentStage = nextStage(task);
+  const canWrite = canWriteTask(task);
   const keyStages = ["implement", "check", "e2e", "spec", "commit", "archive"]
     .map((id) => task.stages.find((stage) => stage.id === id))
     .filter(Boolean);
@@ -2151,7 +2376,7 @@ function renderTaskDetail(task) {
     <section><h3>任务产物</h3>${artifactMarkup}</section>
     <section><h3>写入边界</h3><p>任务状态来自 task.json，开发进度也会读取实施/检查报告；E2E 是可选的补充证据，不阻塞规范回写与收尾。归档后任务会同时变为 completed 并离开当前队列。</p></section>`;
   document.querySelector("#stage-detail").innerHTML = task.stages.map((stage) => `
-    <button class="stage-row ${stage.complete ? (stage.source === "manual" ? "manual" : "done") : stage.optional ? "optional" : ""}" type="button" ${task.archived ? "disabled" : ""}>
+    <button class="stage-row ${stage.complete ? (stage.source === "manual" ? "manual" : "done") : stage.optional ? "optional" : ""}" type="button" ${task.archived || !canWrite ? "disabled" : ""}>
       <span class="stage-number">${stage.index}</span>
       <div><strong>${safe(stage.label)}</strong><p>${safe(stage.evidence || "等待执行")}</p></div>
       <span class="stage-source ${stage.source === "manual" ? "manual-source" : ""}">${safe(stageSourceLabel(stage))}<br><small>${safe(stageAdvice(task, stage))}</small></span>
@@ -2163,32 +2388,49 @@ function renderTaskDetail(task) {
   bindDependencyActions(task);
   bindStageActions(task);
   renderAssigneeOptions(task);
-  document.querySelector("#assign-button").style.display = task.archived ? "none" : "";
-  document.querySelector(".assign-inline label").style.display = task.archived ? "none" : "";
-  document.querySelector("#assignee-input").style.display = task.archived ? "none" : "";
+  const hideAssign = task.archived || !canWrite;
+  document.querySelector("#assign-button").style.display = hideAssign ? "none" : "";
+  document.querySelector(".assign-inline label").style.display = hideAssign ? "none" : "";
+  document.querySelector("#assignee-input").style.display = hideAssign ? "none" : "";
   const detailEdit = document.querySelector("#detail-edit-execution");
-  detailEdit.hidden = task.archived;
-  detailEdit.disabled = task.executionIdentityValid === false || task.executionIdentityConflict === true;
+  detailEdit.hidden = task.archived || !canWrite;
+  detailEdit.disabled = !canWrite ||
+    task.executionIdentityValid === false ||
+    task.executionIdentityConflict === true;
   detailEdit.title = detailEdit.disabled
     ? "任务执行身份冲突，请修正 task.json id"
     : "编辑截止、里程碑和标签";
+  renderSelectedTeamTaskActions(task);
 }
 
 function renderAssigneeOptions(task) {
   const project = state.board?.projects.find((candidate) => candidate.id === task.projectId);
-  const members = [...new Set(
-    task.projectMembers || project?.members || []
-  )].sort((a, b) => a.localeCompare(b, "zh-CN"));
+  const rawMembers = state.teamMode
+    ? assignableProjectMembers(teamProject(task.projectId) || project || {})
+    : [...new Set(task.projectMembers || project?.members || [])].map((member) => ({
+      displayName: member,
+      trellisDevId: member
+    }));
+  const members = rawMembers.sort((a, b) =>
+    String(a.displayName || a.trellisDevId).localeCompare(String(b.displayName || b.trellisDevId), "zh-CN")
+  );
   const current = task.assignee || "";
   const select = document.querySelector("#assignee-input");
   select.innerHTML = [
     '<option value="">请选择负责人</option>',
-    ...members.map((member) => `<option value="${safe(member)}">${safe(member)}</option>`),
-    current && !members.includes(current)
+    ...members.map((member) => {
+      const value = member.trellisDevId || member.username || member.displayName;
+      return `<option value="${safe(value)}">${safe(member.displayName || member.username || value)}</option>`;
+    }),
+    current && !members.some((member) =>
+      [member.trellisDevId, member.username, member.displayName].includes(current)
+    )
       ? `<option value="${safe(current)}" disabled>${safe(current)}（当前负责人，不在成员列表）</option>`
       : ""
   ].join("");
-  select.value = members.includes(current) ? current : "";
+  select.value = members.some((member) =>
+    [member.trellisDevId, member.username, member.displayName].includes(current)
+  ) ? current : "";
   select.disabled = members.length === 0;
   updateAssignButtonState();
 }
@@ -2225,6 +2467,7 @@ function openArtifact(key) {
 }
 
 function bindStageActions(task) {
+  if (!canWriteTask(task)) return;
   document.querySelectorAll("#stage-detail .stage-row").forEach((row) => {
     row.addEventListener("click", async () => {
       if (task.archived) return;
@@ -2236,7 +2479,12 @@ function bindStageActions(task) {
           taskPath: task.relativeDir,
           stage: stage.id
         });
-        await loadBoard();
+        const loaded = await loadBoard();
+        if (!loaded) throw new Error("阶段已保存，但看板刷新失败");
+        if (state.teamMode) {
+          openTask({ ...task, artifacts: undefined });
+          return;
+        }
         const fresh = state.board.tasks.find((candidate) => candidate.taskKey === task.taskKey);
         if (fresh) openTask(fresh);
       } catch (error) {
@@ -2255,23 +2503,28 @@ function hideError() {
   els.error.hidden = true;
 }
 
-async function api(url, method = "GET", body) {
-  let response;
+async function apiRequest(url, method = "GET", body, options = {}) {
   try {
-    response = await fetch(url, {
+    return await requestJson(url, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined
+      body,
+      headers: options.headers
     });
-  } catch {
-    throw new Error("无法连接看板服务，请确认服务已启动");
+  } catch (error) {
+    if (state.teamMode && error.status === 401 && error.code !== "AUTH_FAILED") {
+      redirectToLogin();
+    }
+    throw error;
   }
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `请求失败: ${response.status}`);
-  return payload;
+}
+
+async function api(url, method = "GET", body, options = {}) {
+  const result = await apiRequest(url, method, body, options);
+  return result.status === 304 ? null : result.data;
 }
 
 async function loadBoard(forceRefresh = false, quiet = false) {
+  if (state.teamMode) return refreshTeamData({ quiet });
   if (state.loading && !quiet) return;
   state.loading = true;
   if (!quiet) {
@@ -2301,6 +2554,18 @@ async function loadBoard(forceRefresh = false, quiet = false) {
 
 function updateSyncLabel() {
   if (!state.board) return;
+  if (state.teamMode) {
+    const projects = state.teamProjects;
+    const stale = projects.filter((project) =>
+      ["stale", "pending_push", "needs_repair"].includes(project.syncStatus)
+    );
+    els.syncLabel.textContent = stale.length
+      ? `${projects.length} 个授权项目 · ${stale.length} 个需关注`
+      : `${projects.length} 个授权项目 · 每 3 秒检查同步状态`;
+    els.syncDot.classList.toggle("is-live", stale.length === 0);
+    els.syncDot.title = "团队模式由服务端项目工作副本统一同步";
+    return;
+  }
   const status = state.status;
   const watcher = status?.watcher || state.board.watcher;
   const isRefreshing = Boolean(status?.refreshRunning || state.board.refreshRunning);
@@ -2363,6 +2628,868 @@ function scheduleStatusPoll(delay = 750) {
   }, delay);
 }
 
+function teamProjectForBoard(project = {}) {
+  return {
+    ...project,
+    id: String(project.id ?? project.repositoryId ?? ""),
+    name: project.name || project.id || "未命名项目",
+    path: project.syncBranch ? `共享分支 ${project.syncBranch}` : "团队项目",
+    developer: project.trellisDevId || "",
+    activeCount: Number(project.activeCount ?? project.taskCount ?? 0),
+    archivedCount: Number(project.archivedCount ?? 0),
+    branches: Array.isArray(project.branches) ? project.branches : [],
+    members: state.teamMode
+      ? normalizeProjectMembers(project)
+      : Array.isArray(project.members)
+        ? project.members.filter((member) => typeof member === "string")
+        : []
+  };
+}
+
+function teamProject(projectId = state.projectId) {
+  return state.teamProjects.find((project) => String(project.id) === String(projectId)) || null;
+}
+
+function canWriteTask(task) {
+  if (!state.teamMode) return true;
+  const project = teamProject(task?.projectId);
+  return Boolean(project && canWriteProject(project));
+}
+
+async function loadTeamProjectMembers(projectId, { quiet = true } = {}) {
+  if (!state.teamMode || !projectId) return [];
+  const project = teamProject(projectId);
+  if (!project) return [];
+  if (project.membersAuthoritative) return assignableProjectMembers(project);
+  if (!canManageProject(project)) return assignableProjectMembers(project);
+  if (teamMemberLoads.has(projectId)) return teamMemberLoads.get(projectId);
+
+  const request = apiRequest(`/api/projects/${encodeURIComponent(projectId)}/members`)
+    .then((result) => {
+      const members = normalizeProjectMembers(result.data);
+      const current = teamProject(projectId);
+      if (current) {
+        current.members = members;
+        current.membersAuthoritative = true;
+      }
+      const boardProject = state.board?.projects.find((item) =>
+        String(item.id) === String(projectId)
+      );
+      if (boardProject) {
+        boardProject.members = members;
+        boardProject.membersAuthoritative = true;
+      }
+      renderTeamFilterOptions();
+      return assignableProjectMembers({ members });
+    })
+    .catch((error) => {
+      if (!quiet && error.status !== 403) showError(error.message);
+      return [];
+    })
+    .finally(() => {
+      teamMemberLoads.delete(projectId);
+    });
+  teamMemberLoads.set(projectId, request);
+  return request;
+}
+
+function setTeamFeedback(message) {
+  setMessage(els.teamFeedback, message, false);
+}
+
+function syncTeamVisibility() {
+  const crossProject = !state.teamMode || state.projectId === "all";
+  document.body.classList.toggle("mode-team", state.teamMode);
+  document.querySelectorAll("[data-single-project-only]").forEach((section) => {
+    section.hidden = state.teamMode && crossProject;
+  });
+  els.teamQueryPanel.hidden = !state.teamMode;
+  els.teamQueryList.hidden = state.teamMode && !crossProject;
+  const pagination = els.teamQueryPanel.querySelector(".team-pagination");
+  if (pagination) pagination.hidden = state.teamMode && !crossProject;
+  document.querySelector('[data-view="team"]').hidden = state.teamMode;
+  document.querySelector('[data-view="archive"]').hidden = state.teamMode;
+}
+
+function applyTeamIdentity() {
+  const user = state.user || state.runtime?.user;
+  els.teamSession.hidden = !state.teamMode;
+  els.teamAccount.hidden = !state.teamMode;
+  els.teamSessionName.textContent = user?.displayName || user?.username || "团队账号";
+  els.teamSessionMode.textContent = state.teamMode ? "团队模式 · Cookie 会话" : "";
+  els.teamAccountName.textContent = user?.displayName || user?.username || "团队账号";
+  els.teamAccountRole.textContent = user?.systemAdmin ? "系统管理员" : "团队成员";
+  els.teamAccountAvatar.textContent = initials(user?.displayName || user?.username);
+  els.teamAdminLink.hidden = !state.teamMode || !(
+    user?.systemAdmin || state.teamProjects.some(canManageProject)
+  );
+  els.manageProjectsButton.hidden = state.teamMode;
+  els.refresh.hidden = state.teamMode;
+  els.createButton.hidden = state.teamMode && !state.teamProjects.some(canWriteProject);
+  els.search.placeholder = state.teamMode
+    ? "搜索团队任务、负责人或项目"
+    : "搜索任务、负责人或仓库";
+  const branchLabel = document.querySelector("#create-branch")?.closest("label");
+  if (branchLabel) branchLabel.hidden = state.teamMode;
+  syncTeamVisibility();
+}
+
+function teamSyncLabel(status) {
+  return TEAM_SYNC_LABELS[status] || TEAM_SYNC_LABELS.unknown;
+}
+
+function renderTeamStatusBanner() {
+  if (!state.teamMode) {
+    els.teamStatusBanner.hidden = true;
+    return;
+  }
+  const status = state.teamStatus;
+  if (!status) {
+    els.teamStatusBanner.hidden = false;
+    els.teamStatusBanner.innerHTML = "<strong>正在读取团队同步状态…</strong>";
+    return;
+  }
+  const projects = status.projects.length ? status.projects : state.teamProjects;
+  const stale = projects.filter((project) => ["stale", "pending_push", "needs_repair"].includes(project.syncStatus));
+  const errors = projects.filter((project) => project.lastError);
+  const parts = [];
+  if (stale.length) {
+    parts.push(`${stale.length} 个项目需要同步关注：${stale.map((project) =>
+      `${project.name}（${teamSyncLabel(project.syncStatus)}）`
+    ).join("、")}`);
+  }
+  if (status.pendingAssignments) parts.push(`${status.pendingAssignments} 个任务待你接受`);
+  if (errors.length && !stale.length) parts.push(`${errors.length} 个项目存在同步错误`);
+  if (!parts.length) parts.push("所有授权项目同步正常");
+  const stamp = status.updatedAt
+    ? ` · ${new Date(status.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`
+    : "";
+  els.teamStatusBanner.hidden = false;
+  els.teamStatusBanner.classList.toggle("has-warning", Boolean(stale.length || errors.length));
+  els.teamStatusBanner.innerHTML = `
+    <strong>团队状态</strong>
+    <span>${escapeHtml(parts.join("；"))}${escapeHtml(stamp)}</span>`;
+}
+
+function renderTeamFilterOptions(tasks = state.teamPage?.tasks || []) {
+  if (!els.teamFilterProject) return;
+  const currentProject = state.projectId;
+  els.teamFilterProject.innerHTML = [
+    '<option value="all">全部授权项目</option>',
+    ...state.teamProjects.map((project) =>
+      `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)} · ${escapeHtml(teamSyncLabel(project.syncStatus))}</option>`
+    )
+  ].join("");
+  els.teamFilterProject.value = state.teamProjects.some((project) => project.id === currentProject)
+    ? currentProject
+    : "all";
+
+  const assignees = new Map();
+  for (const project of state.teamProjects) {
+    for (const member of assignableProjectMembers(project)) {
+      const id = member.trellisDevId || member.username || member.displayName;
+      if (id) assignees.set(id, member.displayName || member.username || id);
+    }
+  }
+  for (const task of tasks) {
+    if (task.assigneeDevId) assignees.set(task.assigneeDevId, task.assignee || task.assigneeDevId);
+  }
+  const selectedAssignee = els.teamFilterAssignee.value || state.teamFilters.assignee;
+  els.teamFilterAssignee.innerHTML = [
+    '<option value="">全部负责人</option>',
+    ...[...assignees.entries()].sort((a, b) => a[1].localeCompare(b[1], "zh-CN")).map(([id, name]) =>
+      `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`
+    )
+  ].join("");
+  els.teamFilterAssignee.value = assignees.has(selectedAssignee) ? selectedAssignee : "";
+
+  const selectedStage = els.teamFilterStage.value || state.teamFilters.stages[0] || "";
+  els.teamFilterStage.innerHTML = [
+    '<option value="">全部阶段</option>',
+    ...FILTER_STAGES.map((stage) =>
+      `<option value="${escapeHtml(stage.id)}">${escapeHtml(stage.label)}</option>`
+    )
+  ].join("");
+  els.teamFilterStage.value = selectedStage;
+
+  els.teamFilterTags.value = state.teamFilters.tags.join(",");
+  els.teamFilterDue.value = state.teamFilters.dueWithinDays || "";
+  els.teamFilterStale.value = state.teamFilters.staleDays || "";
+  els.teamFilterBlocked.value = state.teamFilters.blocked || "any";
+  els.teamFilterArchived.checked = Boolean(state.teamFilters.archived);
+}
+
+function readTeamFilters() {
+  state.projectId = els.teamFilterProject.value || "all";
+  state.teamFilters = {
+    projectIds: state.projectId === "all" ? [] : [state.projectId],
+    priorities: els.teamFilterPriority.value
+      ? els.teamFilterPriority.value.split(",").map((value) => value.trim()).filter(Boolean)
+      : [],
+    stages: els.teamFilterStage.value ? [els.teamFilterStage.value] : [],
+    tags: els.teamFilterTags.value.split(",").map((value) => value.trim()).filter(Boolean),
+    assignee: els.teamFilterAssignee.value.trim(),
+    dueWithinDays: els.teamFilterDue.value,
+    staleDays: els.teamFilterStale.value,
+    blocked: els.teamFilterBlocked.value,
+    archived: els.teamFilterArchived.checked
+  };
+}
+
+function teamQueryTaskMarkup(task) {
+  const reasons = Array.isArray(task.attentionReasons) ? task.attentionReasons : [];
+  const reasonMarkup = reasons.slice(0, 4).map((reason) =>
+    `<span class="team-query-reason">${escapeHtml(ATTENTION_REASON_LABELS[reason] || reason)}</span>`
+  ).join("");
+  const assignment = task.assignmentVersion == null
+    ? ""
+    : `<span class="team-query-badge is-assignment">待接受 · v${escapeHtml(task.assignmentVersion)}</span>`;
+  return `<article class="team-query-card">
+    <button class="team-query-card-button" data-team-query-task-index="${escapeHtml(task._index)}" type="button">
+      <span class="team-query-project">
+        ${escapeHtml(task.projectName || "未命名项目")}
+        <small>${escapeHtml(teamSyncLabel(task.projectSyncStatus))}</small>
+      </span>
+      <strong>${escapeHtml(task.title || task.executionTaskKey || "未命名任务")}</strong>
+      <span class="team-query-meta">
+        <span class="team-query-priority">${escapeHtml(task.priority || "未设优先级")}</span>
+        <span>${escapeHtml(task.assignee || "未派发")}</span>
+        <span>${escapeHtml(task.derivedStage || "阶段未知")}</span>
+        ${task.dueDate ? `<span>截止 ${escapeHtml(task.dueDate)}</span>` : ""}
+        ${task.lastActivityAt ? `<span>最近活动 ${escapeHtml(formatEventTime(task.lastActivityAt) || "未知")}</span>` : ""}
+      </span>
+      <span class="team-query-badges">
+        ${task.isBlocked ? '<span class="team-query-badge is-blocked">被阻断</span>' : ""}
+        ${task.isUnblockedReady ? '<span class="team-query-badge is-ready">阻断已解除</span>' : ""}
+        ${task.stale ? '<span class="team-query-badge is-stale">数据可能过期</span>' : ""}
+        ${assignment}
+        ${reasonMarkup}
+      </span>
+    </button>
+  </article>`;
+}
+
+function renderTeamQueryPage(page) {
+  if (!page.tasks.length) {
+    els.teamQueryList.innerHTML = `<div class="team-empty">
+      <strong>没有符合筛选条件的分页结果</strong>
+      <span>调整负责人、阶段或项目后再试；服务端按完整结果集计算筛选与总数。</span>
+    </div>`;
+    return;
+  }
+  const indexed = page.tasks.map((task, index) => ({ ...task, _index: index }));
+  els.teamQueryList.innerHTML = indexed.map(teamQueryTaskMarkup).join("");
+  els.teamQueryList.querySelectorAll("[data-team-query-task-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const task = page.tasks[Number(button.dataset.teamQueryTaskIndex)];
+      if (task) openTask(task);
+    });
+  });
+}
+
+function updateTeamPagination() {
+  const page = state.teamPage;
+  els.teamPagePrev.disabled = state.teamPageIndex <= 0 || state.teamLoading;
+  els.teamPageNext.disabled = !state.teamHasNext || state.teamLoading;
+  els.teamPageLabel.textContent = `第 ${state.teamPageIndex + 1} 页${page ? ` · 共 ${page.total} 条` : ""}`;
+  els.teamQueryTotal.textContent = page ? `${page.total} 条` : "—";
+}
+
+async function loadTeamPage({ quiet = false, retryForbidden = true } = {}) {
+  if (state.teamLoading) return false;
+  state.teamLoading = true;
+  hideError();
+  if (!quiet) els.teamQuerySummary.textContent = "正在按筛选条件读取团队任务索引…";
+  updateTeamPagination();
+  try {
+    const cursor = state.teamCursors[state.teamPageIndex] || null;
+    const query = buildTaskQuery(
+      { ...state.teamFilters, q: state.search },
+      { limit: TEAM_PAGE_SIZE, cursor }
+    );
+    const headers = state.teamEtag ? { "if-none-match": state.teamEtag } : {};
+    const result = await apiRequest(`/api/tasks/query?${query}`, "GET", undefined, { headers });
+    if (result.status === 304) return true;
+    const page = normalizeTaskPage(result.data);
+    state.teamPage = page;
+    state.teamEtag = result.etag || null;
+    state.teamHasNext = Boolean(page.nextCursor);
+    if (page.nextCursor) state.teamCursors[state.teamPageIndex + 1] = page.nextCursor;
+    if (state.teamStatus) {
+      state.teamStatus.queryRevision = page.queryRevision ?? state.teamStatus.queryRevision;
+      state.teamStatus.queryDay = page.queryDay ?? state.teamStatus.queryDay;
+    }
+    renderTeamFilterOptions(page.tasks);
+    renderTeamQueryPage(page);
+    state.teamPageIndex = Math.max(0, state.teamPageIndex);
+    updateTeamPagination();
+    els.teamQuerySummary.textContent = page.total
+      ? `跨项目混合排序 · 当前页 ${page.tasks.length} 条 · 服务端筛选后共 ${page.total} 条`
+      : "当前筛选没有匹配任务";
+    els.teamQueryTotal.textContent = `${page.total} 条`;
+    els.teamQueryPanel.classList.remove("is-project-mode");
+    state.projectId = "all";
+    renderProjects();
+    syncTeamVisibility();
+    if (!quiet) setTeamFeedback(`已加载第 ${state.teamPageIndex + 1} 页团队任务`);
+    return true;
+  } catch (error) {
+    if (error.status === 409 && error.code === "CURSOR_INVALID" && state.teamPageIndex > 0) {
+      state.teamPageIndex = 0;
+      state.teamCursors = [null];
+      state.teamEtag = null;
+      state.teamLoading = false;
+      return loadTeamPage({ quiet });
+    }
+    if (error.status === 403 && retryForbidden && state.teamFilters.projectIds.length) {
+      state.projectId = "all";
+      state.teamFilters.projectIds = [];
+      state.teamPageIndex = 0;
+      state.teamCursors = [null];
+      state.teamEtag = null;
+      renderTeamFilterOptions();
+      state.teamLoading = false;
+      return loadTeamPage({ quiet, retryForbidden: false });
+    }
+    showError(error.message);
+    els.teamQuerySummary.textContent = "团队任务读取失败";
+    return false;
+  } finally {
+    state.teamLoading = false;
+    updateTeamPagination();
+  }
+}
+
+async function loadTeamProject(projectId = state.projectId) {
+  if (!projectId || projectId === "all") return loadTeamPage();
+  const selected = teamProject(projectId);
+  if (!selected || state.teamLoading) return false;
+  state.teamLoading = true;
+  hideError();
+  els.teamQuerySummary.textContent = `正在读取 ${selected.name} 的项目看板…`;
+  try {
+    let cursor = null;
+    const seenCursors = new Set();
+    let firstPage = null;
+    let tasks = [];
+    do {
+      const query = new URLSearchParams({ projectId, limit: "200" });
+      if (cursor) query.set("cursor", cursor);
+      const result = await apiRequest(`/api/board?${query}`);
+      const pageChunk = normalizeBoardPage(result.data);
+      firstPage ||= pageChunk;
+      tasks.push(...pageChunk.tasks);
+      cursor = pageChunk.nextCursor;
+      if (cursor) {
+        if (seenCursors.has(cursor)) throw new Error("项目看板分页游标重复，已停止继续加载");
+        seenCursors.add(cursor);
+      }
+    } while (cursor);
+    const page = {
+      ...firstPage,
+      tasks: [...new Map(tasks.map((task) => [task.taskKey, task])).values()],
+      nextCursor: null
+    };
+    const projectRows = (page.projects.length ? page.projects : [selected]).map((project) => {
+      const merged = normalizeTeamProject({
+        ...selected,
+        ...project,
+        members: project.members?.length ? project.members : selected.members
+      });
+      return {
+        ...teamProjectForBoard(merged),
+        ...project,
+        members: project.members?.length
+          ? project.members
+          : teamProjectForBoard(merged).members
+      };
+    });
+    if (!projectRows.some((project) => String(project.id) === String(projectId))) {
+      projectRows.push(teamProjectForBoard(selected));
+    }
+    state.projectId = String(projectId);
+    state.scope = "all";
+    state.executionView = "all";
+    state.board = {
+      ...page,
+      tasks: page.tasks,
+      projects: projectRows,
+      savedViews: page.savedViews || [],
+      generatedAt: page.generatedAt || page.scannedAt || new Date().toISOString(),
+      source: "team"
+    };
+    renderTeamFilterOptions(page.tasks);
+    renderAll();
+    els.teamQueryPanel.classList.add("is-project-mode");
+    els.teamQuerySummary.textContent = `${selected.name} · 按任务组和流程阶段显示 · 当前 ${page.tasks.length} 条`;
+    els.teamQueryTotal.textContent = `${page.tasks.length} 条`;
+    syncTeamVisibility();
+    setTeamFeedback(`已打开 ${selected.name}`);
+    return true;
+  } catch (error) {
+    showError(error.message);
+    els.teamQuerySummary.textContent = `${selected.name} 读取失败`;
+    if (error.status === 403) {
+      state.projectId = "all";
+      state.teamFilters.projectIds = [];
+      renderProjects();
+      syncTeamVisibility();
+    }
+    return false;
+  } finally {
+    state.teamLoading = false;
+  }
+}
+
+async function selectTeamProject(projectId) {
+  state.projectId = String(projectId || "all");
+  state.teamFilters.projectIds = state.projectId === "all" ? [] : [state.projectId];
+  state.teamPageIndex = 0;
+  state.teamCursors = [null];
+  state.teamEtag = null;
+  if (state.projectId === "all") {
+    renderTeamFilterOptions();
+    renderProjects();
+    syncTeamVisibility();
+    await loadTeamPage();
+  } else {
+    renderTeamFilterOptions();
+    renderProjects();
+    syncTeamVisibility();
+    await loadTeamProject(state.projectId);
+  }
+}
+
+async function refreshTeamData({ quiet = false } = {}) {
+  if (state.projectId === "all") return loadTeamPage({ quiet });
+  return loadTeamProject(state.projectId);
+}
+
+function updateAssignmentNav() {
+  const count = state.teamAssignments.length || Number(state.teamStatus?.pendingAssignments || 0);
+  els.assignmentNav.hidden = !state.teamMode;
+  els.assignmentCount.textContent = String(count);
+  els.assignmentNav.setAttribute("aria-label", `待我接受，${count} 个任务`);
+}
+
+async function loadTeamStatus() {
+  if (!state.teamMode || state.teamStatusLoading) return false;
+  state.teamStatusLoading = true;
+  try {
+    const headers = state.teamStatusEtag
+      ? { "if-none-match": state.teamStatusEtag }
+      : undefined;
+    const result = await apiRequest("/api/team/status", "GET", undefined, { headers });
+    if (result.status === 304) return true;
+    state.teamStatusEtag = result.etag || null;
+    const previous = state.teamStatus;
+    const next = normalizeTeamStatus(result.data);
+    state.teamStatus = next;
+    if (next.projects.length) {
+      state.teamProjects = next.projects.map((project) => {
+        const current = teamProject(project.id);
+        return current
+          ? { ...current, ...project, members: project.members.length ? project.members : current.members }
+          : project;
+      });
+      renderProjects();
+      applyTeamIdentity();
+    }
+    renderTeamStatusBanner();
+    updateAssignmentNav();
+    if (previous && shouldReloadTasks(previous, next, state.projectId) && !state.teamLoading) {
+      await refreshTeamData({ quiet: true });
+    }
+    if (previous && previous.pendingAssignments !== next.pendingAssignments) {
+      await loadTeamAssignments({ quiet: true });
+    }
+    return true;
+  } catch (error) {
+    renderTeamStatusBanner();
+    setTeamFeedback(`团队状态刷新失败：${error.message}`);
+    return false;
+  } finally {
+    state.teamStatusLoading = false;
+  }
+}
+
+function scheduleTeamStatusPoll(delay = TEAM_POLL_MS) {
+  if (!state.teamMode) return;
+  if (state.teamPollTimer) clearTimeout(state.teamPollTimer);
+  state.teamPollTimer = setTimeout(async () => {
+    if (document.visibilityState === "visible") await loadTeamStatus();
+    scheduleTeamStatusPoll();
+  }, delay);
+}
+
+function assignmentTask(row) {
+  return normalizeTeamTaskRow(row?.task || row || {});
+}
+
+function renderTeamAssignments() {
+  if (!state.teamAssignments.length) {
+    els.assignmentsList.innerHTML = `<div class="assignments-empty">
+      <strong>没有待接受任务</strong>
+      <span>新委派到达后，这里会显示任务版本和接受条件。</span>
+    </div>`;
+    return;
+  }
+  els.assignmentsList.innerHTML = state.teamAssignments.map((row, index) => {
+    const task = assignmentTask(row);
+    return `<article class="assignment-row">
+      <div>
+        <span class="assignment-project">${escapeHtml(task.projectName || "未命名项目")}</span>
+        <strong>${escapeHtml(task.title || task.executionTaskKey || "未命名任务")}</strong>
+        <small>${escapeHtml(task.priority || "未设优先级")} · ${escapeHtml(task.derivedStage || "阶段未知")} · assignment v${escapeHtml(row.assignmentVersion ?? "未知")}</small>
+      </div>
+      <button class="primary-button small-button" data-accept-assignment-index="${index}" type="button" ${row.assignmentVersion == null ? "disabled" : ""}>
+        接受任务
+      </button>
+    </article>`;
+  }).join("");
+  els.assignmentsList.querySelectorAll("[data-accept-assignment-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const row = state.teamAssignments[Number(button.dataset.acceptAssignmentIndex)];
+      if (row) void acceptTeamAssignment(row, button);
+    });
+  });
+}
+
+async function loadTeamAssignments({ quiet = false } = {}) {
+  if (!state.teamMode) return false;
+  try {
+    const result = await apiRequest("/api/assignments?state=pending");
+    state.teamAssignments = normalizeAssignments(result.data);
+    renderTeamAssignments();
+    updateAssignmentNav();
+    if (!quiet) setMessage(els.assignmentsMessage, "");
+    return true;
+  } catch (error) {
+    if (!quiet) setMessage(els.assignmentsMessage, error.message, true);
+    return false;
+  }
+}
+
+async function acceptTeamAssignment(row, button) {
+  const version = row.assignmentVersion;
+  if (version == null) {
+    setMessage(els.assignmentsMessage, "服务端未返回 assignment 版本，请刷新后重试", true);
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "正在接受…";
+  setMessage(els.assignmentsMessage, "正在校验任务版本…");
+  try {
+    const result = await apiRequest("/api/tasks/accept", "POST", {
+      executionTaskKey: row.executionTaskKey,
+      assignmentVersion: version
+    });
+    const queued = result.data?.queuedBindings;
+    const queuedCount = Array.isArray(queued) ? queued.length : Number(queued || 0);
+    setMessage(
+      els.assignmentsMessage,
+      queuedCount
+        ? `任务已接受，已为 ${queuedCount} 个 Agent 排队同步共享分支`
+        : "任务已接受"
+    );
+    setTeamFeedback("任务已接受");
+    await Promise.all([
+      loadTeamAssignments({ quiet: true }),
+      loadTeamStatus(),
+      refreshTeamData({ quiet: true })
+    ]);
+  } catch (error) {
+    setMessage(els.assignmentsMessage, error.message, true);
+    if (button.isConnected) {
+      button.disabled = false;
+      button.textContent = "接受任务";
+    }
+  }
+}
+
+function assignmentForTask(task) {
+  if (!task) return null;
+  const assigned = state.teamAssignments.find((row) =>
+    row.executionTaskKey === task.executionTaskKey ||
+    row.executionTaskKey === task.taskKey
+  );
+  if (assigned) return assigned;
+  const version = assignmentVersion(task);
+  return version == null ? null : {
+    executionTaskKey: task.executionTaskKey || task.taskKey,
+    assignmentVersion: version,
+    assignmentState: task.assignmentState || task.assignment?.state || "pending"
+  };
+}
+
+function renderSelectedTeamTaskActions(task) {
+  if (!state.teamMode || !task) {
+    els.teamTaskActions.hidden = true;
+    return;
+  }
+  const assignment = assignmentForTask(task);
+  const version = taskVersion(task);
+  els.teamTaskActions.hidden = !assignment && version == null;
+  els.teamTaskVersion.textContent = [
+    version == null ? "" : `任务 v${version}`,
+    assignment?.assignmentVersion == null ? "" : `assignment v${assignment.assignmentVersion}`
+  ].filter(Boolean).join(" · ");
+  const pending = assignment && !["accepted", "completed"].includes(assignment.assignmentState);
+  els.teamTaskAccept.hidden = !pending;
+  els.teamTaskAccept.disabled = false;
+  els.teamTaskAccept.textContent = "接受任务";
+}
+
+async function acceptSelectedAssignment() {
+  const task = state.selectedTask;
+  const assignment = assignmentForTask(task);
+  if (!task || !assignment || assignment.assignmentVersion == null) {
+    showError("当前任务没有可接受的 assignment 版本");
+    return;
+  }
+  els.teamTaskAccept.disabled = true;
+  els.teamTaskAccept.textContent = "正在接受…";
+  try {
+    const result = await apiRequest("/api/tasks/accept", "POST", {
+      executionTaskKey: assignment.executionTaskKey,
+      assignmentVersion: assignment.assignmentVersion
+    });
+    const queued = result.data?.queuedBindings;
+    const queuedCount = Array.isArray(queued) ? queued.length : Number(queued || 0);
+    setTeamFeedback(queuedCount ? `任务已接受，已排队 ${queuedCount} 个 Agent 同步` : "任务已接受");
+    await Promise.all([
+      loadTeamAssignments({ quiet: true }),
+      loadTeamStatus(),
+      refreshTeamData({ quiet: true })
+    ]);
+  } catch (error) {
+    showError(error.message);
+    renderSelectedTeamTaskActions(task);
+  }
+}
+
+function operationStatusMarkup(operation) {
+  const status = operation.status || "unknown";
+  const label = TEAM_OPERATION_LABELS[status] || status;
+  const result = operation.result || {};
+  const taskLabel = result.taskKey || operation.taskKey || "当前任务";
+  const explanations = {
+    prepared: "服务端已准备写入，正在等待本地提交。",
+    committed: "本地 Git 提交已完成，等待推送到共享分支。",
+    pending_push: "本地提交已完成，但尚未发布到远端共享分支；此时不能视为成功。",
+    pushed: "远端已接收提交，正在等待任务索引刷新。",
+    applied: "任务写入已应用，项目看板可以刷新。",
+    failed: "操作失败，服务端返回了可读错误。"
+  };
+  return `
+    <div class="operation-summary is-${escapeHtml(status)}">
+      <span class="operation-state">${escapeHtml(label)}</span>
+      <strong>${escapeHtml(taskLabel)}</strong>
+      <p>${escapeHtml(explanations[status] || "正在读取操作状态。")}</p>
+    </div>
+    <dl class="operation-details">
+      <div><dt>操作</dt><dd>${escapeHtml(operation.operationType || "任务写入")}</dd></div>
+      <div><dt>本地提交</dt><dd>${escapeHtml(operation.localSha || "尚未生成")}</dd></div>
+      <div><dt>远端提交</dt><dd>${escapeHtml(operation.remoteSha || "尚未推送")}</dd></div>
+      <div><dt>操作 ID</dt><dd>${escapeHtml(operation.id || "未知")}</dd></div>
+    </dl>
+    ${operation.error ? `<p class="operation-error" role="alert">${escapeHtml(operation.error)}</p>` : ""}`;
+}
+
+function renderTeamOperation() {
+  const operation = state.teamOperation;
+  if (!operation) return;
+  els.teamOperationTitle.textContent = operation.operationType === "retry" ? "重试发布状态" : "发布状态";
+  els.teamOperationStatus.innerHTML = operationStatusMarkup(operation);
+  els.teamOperationId.textContent = operation.id ? `操作 ${operation.id}` : "操作状态待服务端返回";
+  els.teamOperationRetry.hidden = !isRetryableOperation(operation);
+  els.teamOperationRetry.disabled = false;
+  els.teamOperationRetry.textContent = "重试发布";
+}
+
+async function pollTeamOperation() {
+  if (!state.teamOperation?.id || !isRetryableOperation(state.teamOperation)) return;
+  const operationId = state.teamOperation.id;
+  const attempt = state.teamOperationAttempt;
+  state.teamOperationAttempt += 1;
+  state.teamOperationTimer = setTimeout(async () => {
+    try {
+      const result = await apiRequest(`/api/git-operations/${encodeURIComponent(operationId)}`);
+      state.teamOperation = normalizeOperation(result.data);
+      renderTeamOperation();
+      if (isCompleteOperation(state.teamOperation)) {
+        setTeamFeedback("发布已完成，任务索引正在刷新");
+        await refreshTeamData({ quiet: true });
+        await loadTeamStatus();
+        return;
+      }
+      if (isRetryableOperation(state.teamOperation)) {
+        pollTeamOperation();
+      }
+    } catch (error) {
+      els.teamOperationStatus.insertAdjacentHTML(
+        "beforeend",
+        `<p class="operation-error" role="alert">${escapeHtml(error.message)}</p>`
+      );
+      state.teamOperationTimer = setTimeout(pollTeamOperation, operationPollDelay(attempt + 1, state.teamOperation?.status));
+    }
+  }, operationPollDelay(attempt, state.teamOperation.status));
+}
+
+function showTeamOperation(payload) {
+  const operation = normalizeOperation(payload);
+  if (!operation.id && !operation.status) return false;
+  if (state.teamOperationTimer) clearTimeout(state.teamOperationTimer);
+  state.teamOperation = operation;
+  state.teamOperationAttempt = 0;
+  renderTeamOperation();
+  if (!els.teamOperationDialog.open) els.teamOperationDialog.showModal();
+  pollTeamOperation();
+  return true;
+}
+
+async function showOperationFromError(error) {
+  const operationId = error?.details?.operationId;
+  if (!operationId) return false;
+  try {
+    const result = await apiRequest(`/api/git-operations/${encodeURIComponent(operationId)}`);
+    return showTeamOperation(result.data);
+  } catch {
+    return false;
+  }
+}
+
+async function retryTeamOperation() {
+  if (!state.teamOperation?.id) return;
+  els.teamOperationRetry.disabled = true;
+  els.teamOperationRetry.textContent = "正在重试…";
+  try {
+    const result = await apiRequest(
+      `/api/git-operations/${encodeURIComponent(state.teamOperation.id)}/retry`,
+      "POST",
+      {}
+    );
+    state.teamOperation = normalizeOperation(result.data);
+    state.teamOperationAttempt = 0;
+    renderTeamOperation();
+    pollTeamOperation();
+  } catch (error) {
+    els.teamOperationStatus.insertAdjacentHTML(
+      "beforeend",
+      `<p class="operation-error" role="alert">${escapeHtml(error.message)}</p>`
+    );
+    els.teamOperationRetry.disabled = false;
+    els.teamOperationRetry.textContent = "重试发布";
+  }
+}
+
+function openPasswordDialog(force = false) {
+  els.passwordDialog.dataset.force = force ? "true" : "false";
+  els.passwordForm.reset();
+  setMessage(els.passwordMessage, "");
+  document.querySelectorAll("[data-close-password]").forEach((button) => {
+    button.hidden = force;
+  });
+  els.passwordDialog.showModal();
+  document.querySelector("#password-current").focus();
+}
+
+async function submitPasswordChange(event) {
+  event.preventDefault();
+  const currentPassword = document.querySelector("#password-current").value;
+  const newPassword = document.querySelector("#password-new").value;
+  const confirmation = document.querySelector("#password-confirm").value;
+  if (Array.from(newPassword).length < 12) {
+    setMessage(els.passwordMessage, "新密码至少需要 12 个字符", true);
+    document.querySelector("#password-new").focus();
+    return;
+  }
+  if (newPassword !== confirmation) {
+    setMessage(els.passwordMessage, "两次输入的新密码不一致", true);
+    document.querySelector("#password-confirm").focus();
+    return;
+  }
+  els.passwordSubmit.disabled = true;
+  els.passwordSubmit.textContent = "正在修改…";
+  setMessage(els.passwordMessage, "正在更新密码并撤销其他设备会话…");
+  try {
+    await apiRequest("/api/auth/password", "POST", { currentPassword, newPassword });
+    const me = await apiRequest("/api/auth/me");
+    state.user = normalizeUser(me.data);
+    state.runtime.user = state.user;
+    els.passwordForm.reset();
+    els.passwordDialog.close();
+    applyTeamIdentity();
+    setTeamFeedback("密码已修改，当前会话保持登录");
+    if (!state.teamInitialized) await initializeTeam(state.runtime);
+  } catch (error) {
+    setMessage(els.passwordMessage, error.message, true);
+  } finally {
+    els.passwordSubmit.disabled = false;
+    els.passwordSubmit.textContent = "保存新密码";
+  }
+}
+
+async function logoutTeam() {
+  els.teamLogout.disabled = true;
+  try {
+    await apiRequest("/api/auth/logout", "POST", {});
+  } catch {
+    // 会话已失效时同样回登录页，避免把用户困在过期页面。
+  } finally {
+    window.location.assign("/login.html");
+  }
+}
+
+async function initializeTeam(runtime) {
+  state.teamMode = true;
+  state.runtime = runtime;
+  state.user = runtime.user || normalizeUser(runtime.raw?.user);
+  state.projectId = "all";
+  state.executionView = "all";
+  state.teamProjects = runtime.projects;
+  state.board = {
+    tasks: [],
+    projects: state.teamProjects.map(teamProjectForBoard),
+    savedViews: [],
+    generatedAt: new Date().toISOString(),
+    source: "team"
+  };
+  applyTeamIdentity();
+  renderProjects();
+  renderTeamFilterOptions();
+  renderTeamStatusBanner();
+  updateAssignmentNav();
+  if (state.user?.mustChangePassword) {
+    openPasswordDialog(true);
+    return;
+  }
+  try {
+    const result = await apiRequest("/api/team/projects");
+    state.teamProjects = normalizeTeamProjects(result.data);
+  } catch (error) {
+    if (!runtime.projects.length) {
+      showError(error.message);
+      state.teamProjects = [];
+    } else {
+      state.teamProjects = runtime.projects;
+    }
+  }
+  state.board.projects = state.teamProjects.map(teamProjectForBoard);
+  state.teamInitialized = true;
+  applyTeamIdentity();
+  renderProjects();
+  renderTeamFilterOptions();
+  renderTeamStatusBanner();
+  updateAssignmentNav();
+  await loadTeamStatus();
+  await loadTeamAssignments();
+  await loadTeamPage();
+  updateSyncLabel();
+  scheduleTeamStatusPoll();
+  if (state.user?.mustChangePassword) openPasswordDialog(true);
+}
+
 function renderView() {
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.view === state.view);
@@ -2392,32 +3519,72 @@ function renderAll() {
   renderArchiveOptions();
   renderArchive();
   renderView();
+  syncTeamVisibility();
 }
 
-function openCreateDialog() {
+async function openCreateDialog() {
   const select = document.querySelector("#create-project");
-  select.innerHTML = (state.board?.projects || []).map((project) => `
-    <option value="${safe(project.id)}">${safe(project.name)} · ${project.activeCount} 进行中</option>`).join("");
-  if (state.projectId !== "all") select.value = state.projectId;
-  updateCreateOptions();
+  const projects = state.teamMode
+    ? state.teamProjects.filter(canWriteProject)
+    : state.board?.projects || [];
+  if (!projects.length) {
+    showError(state.teamMode
+      ? "当前账号没有可创建任务的项目角色，或项目当前不可写"
+      : "当前没有可用仓库");
+    return;
+  }
+  select.innerHTML = projects.map((project) => `
+    <option value="${safe(project.id)}">${safe(project.name)} · ${state.teamMode ? safe(teamSyncLabel(project.syncStatus)) : `${escapeHtml(project.activeCount)} 进行中`}</option>`).join("");
+  if (state.projectId !== "all" && projects.some((project) => project.id === state.projectId)) {
+    select.value = state.projectId;
+  }
   document.querySelector("#create-assignee").value = "";
   const title = document.querySelector("#create-title").value.trim();
   const slug = normalizeTaskSlug(document.querySelector("#create-slug").value);
   state.createSlugManuallyEdited = Boolean(slug && slug !== slugifyTaskTitle(title));
   document.querySelector("#create-message").hidden = true;
+  state.createSignature = null;
+  state.createIdempotencyKey = null;
   els.createDialog.showModal();
+  await updateCreateOptions();
 }
 
-function updateCreateOptions() {
+async function updateCreateOptions() {
   const projectId = document.querySelector("#create-project").value;
-  const project = state.board?.projects.find((item) => item.id === projectId);
-  const members = project?.members || [];
-  document.querySelector("#create-assignee").innerHTML = [
+  const project = state.teamMode
+    ? teamProject(projectId)
+    : state.board?.projects.find((item) => item.id === projectId);
+  const assigneeSelect = document.querySelector("#create-assignee");
+  const submit = document.querySelector("#create-submit");
+  assigneeSelect.innerHTML = '<option value="">正在读取项目成员…</option>';
+  assigneeSelect.disabled = true;
+  submit.disabled = true;
+  if (state.teamMode && project) await loadTeamProjectMembers(projectId);
+  if (document.querySelector("#create-project").value !== projectId) return;
+  const members = state.teamMode
+    ? assignableProjectMembers(project || {})
+    : (project?.members || []).map((member) => ({ displayName: member, trellisDevId: member }));
+  assigneeSelect.innerHTML = [
     '<option value="">请选择负责人</option>',
-    ...members.map((member) => `<option value="${safe(member)}">${safe(member)}</option>`)
+    ...members.map((member) => {
+      const value = member.trellisDevId || member.username || member.displayName;
+      return `<option value="${safe(value)}">${safe(member.displayName || member.username || value)}</option>`;
+    })
   ].join("");
+  assigneeSelect.disabled = members.length === 0;
+  submit.disabled = members.length === 0;
+  if (state.teamMode && members.length === 0) {
+    setCreateMessage(
+      canManageProject(project)
+        ? "当前项目没有可指派的 active 负责人；请先在管理页为 lead/member 配置 Trellis developer ID。"
+        : "当前项目接口未返回可指派成员清单。需由服务端提供 active lead/member，前端不会猜测只读成员。",
+      true
+    );
+  } else {
+    document.querySelector("#create-message").hidden = true;
+  }
   const branchSelect = document.querySelector("#create-branch");
-  const branches = project?.branches || [];
+  const branches = state.teamMode ? [] : project?.branches || [];
   branchSelect.innerHTML = [
     '<option value="">使用 Trellis 默认分支</option>',
     ...branches.map((branch) => `<option value="${safe(branch)}">${safe(branch)}</option>`)
@@ -2443,7 +3610,17 @@ async function submitCreate(event) {
   const message = document.querySelector("#create-message");
   message.hidden = true;
   const projectId = document.querySelector("#create-project").value;
-  const project = state.board.projects.find((item) => item.id === projectId);
+  const project = state.teamMode
+    ? teamProject(projectId)
+    : state.board.projects.find((item) => item.id === projectId);
+  if (!project) {
+    setCreateMessage("请选择当前账号可写的项目", true);
+    return;
+  }
+  if (state.teamMode && !canWriteProject(project)) {
+    setCreateMessage("当前项目角色或同步状态不允许创建任务", true);
+    return;
+  }
   const title = document.querySelector("#create-title").value.trim();
   const slugInput = document.querySelector("#create-slug");
   const manualSlug = normalizeTaskSlug(slugInput.value);
@@ -2465,18 +3642,52 @@ async function submitCreate(event) {
     description: document.querySelector("#create-description").value,
     assignee: document.querySelector("#create-assignee").value,
     priority: document.querySelector("#create-priority").value,
-    slug,
-    baseBranch: document.querySelector("#create-branch").value || undefined
+    slug
   };
+  if (!payload.assignee) {
+    setCreateMessage("请选择项目成员作为负责人", true);
+    return;
+  }
+  if (state.teamMode) {
+    const signature = JSON.stringify(payload);
+    if (state.createSignature !== signature || !state.createIdempotencyKey) {
+      state.createSignature = signature;
+      state.createIdempotencyKey = crypto.randomUUID();
+    }
+    payload.idempotencyKey = state.createIdempotencyKey;
+  } else {
+    payload.baseBranch = document.querySelector("#create-branch").value || undefined;
+  }
   try {
-    await api("/api/tasks", "POST", payload);
-    setCreateMessage("任务已创建，状态保持 planning；请继续补齐 PRD 并完成规划评审。");
+    const result = await api("/api/tasks", "POST", payload);
+    if (state.teamMode) {
+      const operation = normalizeOperation(result?.operation || result);
+      if (showTeamOperation(operation)) {
+        els.createDialog.close();
+        setTeamFeedback("任务写入已提交，正在跟踪 Git 发布状态");
+      } else {
+        setCreateMessage("任务已创建，状态保持 planning；请继续补齐 PRD 并完成规划评审。");
+      }
+    } else {
+      setCreateMessage("任务已创建，状态保持 planning；请继续补齐 PRD 并完成规划评审。");
+    }
     document.querySelector("#create-title").value = "";
     document.querySelector("#create-description").value = "";
     slugInput.value = "";
     state.createSlugManuallyEdited = false;
-    await loadBoard();
+    state.createSignature = null;
+    state.createIdempotencyKey = null;
+    if (state.teamMode) {
+      await refreshTeamData({ quiet: true });
+    } else {
+      await loadBoard();
+    }
   } catch (error) {
+    if (state.teamMode && await showOperationFromError(error)) {
+      els.createDialog.close();
+      setTeamFeedback("任务写入尚未发布；请查看操作状态或重试推送");
+      return;
+    }
     setCreateMessage(error.message, true);
   }
 }
@@ -2489,26 +3700,99 @@ async function assignSelected() {
     return;
   }
   const project = state.board?.projects.find((item) => item.id === state.selectedTask.projectId);
-  const members = state.selectedTask.projectMembers || project?.members || [];
-  if (!members.includes(assignee)) {
+  const members = state.teamMode
+    ? assignableProjectMembers(teamProject(state.selectedTask.projectId) || project || {})
+    : (state.selectedTask.projectMembers || project?.members || []).map((member) => ({
+      trellisDevId: member,
+      displayName: member
+    }));
+  if (!members.some((member) =>
+    (member.trellisDevId || member.username || member.displayName) === assignee
+  )) {
     showError("负责人必须是当前项目的成员");
     return;
   }
   try {
-    await api("/api/tasks/assign", "POST", {
-      repositoryId: state.selectedTask.projectId,
-      taskDir: state.selectedTask.relativeDir,
-      assignee
-    });
-    els.taskDialog.close();
-    await loadBoard();
+    if (state.teamMode) {
+      const expectedTaskVersion = taskVersion(state.selectedTask);
+      if (expectedTaskVersion == null) {
+        showError("服务端未返回 taskVersion，请刷新项目后重试");
+        return;
+      }
+      const signature = `${state.selectedTask.executionTaskKey}:${assignee}:${expectedTaskVersion}`;
+      if (state.assignIdempotencyKey?.signature !== signature) {
+        state.assignIdempotencyKey = { signature, key: crypto.randomUUID() };
+      }
+      const result = await api("/api/tasks/assign", "POST", {
+        executionTaskKey: state.selectedTask.executionTaskKey,
+        assignee,
+        expectedTaskVersion,
+        idempotencyKey: state.assignIdempotencyKey.key
+      });
+      state.assignIdempotencyKey = null;
+      if (showTeamOperation(result?.operation || result)) {
+        els.taskDialog.close();
+      } else {
+        setTeamFeedback("负责人已更新");
+        await refreshTeamData({ quiet: true });
+        els.taskDialog.close();
+      }
+    } else {
+      await api("/api/tasks/assign", "POST", {
+        repositoryId: state.selectedTask.projectId,
+        taskDir: state.selectedTask.relativeDir,
+        assignee
+      });
+      els.taskDialog.close();
+      await loadBoard();
+    }
   } catch (error) {
+    if (state.teamMode && await showOperationFromError(error)) {
+      els.taskDialog.close();
+      setTeamFeedback("委派尚未发布；请查看操作状态或重试推送");
+      return;
+    }
     showError(error.message);
   }
 }
 
+async function initializeApp() {
+  renderViewStageOptions();
+  try {
+    const result = await requestJson("/api/runtime");
+    const runtime = normalizeRuntime(result.data);
+    state.runtime = runtime;
+    if (runtime.team) {
+      if (!runtime.authenticated || !runtime.user) {
+        redirectToLogin();
+        return;
+      }
+      await initializeTeam(runtime);
+      return;
+    }
+  } catch (error) {
+    if (error.status === 401) {
+      redirectToLogin();
+      return;
+    }
+    if (error.status !== 404) {
+      showError(error.message);
+      return;
+    }
+  }
+  state.teamMode = false;
+  applyTeamIdentity();
+  await loadBoard();
+}
+
 document.querySelectorAll(".nav-item").forEach((button) => {
   button.addEventListener("click", () => {
+    if (button.dataset.teamView === "assignments") {
+      renderTeamAssignments();
+      if (!els.assignmentsDialog.open) els.assignmentsDialog.showModal();
+      return;
+    }
+    if (state.teamMode && button.dataset.view !== "pipeline") return;
     state.view = button.dataset.view;
     renderView();
   });
@@ -2531,6 +3815,20 @@ document.querySelectorAll(".segment").forEach((button) => {
 
 els.search.addEventListener("input", () => {
   state.search = els.search.value.trim();
+  if (state.teamMode) {
+    if (state.teamFilterTimer) clearTimeout(state.teamFilterTimer);
+    state.teamFilterTimer = setTimeout(() => {
+      if (state.projectId === "all") {
+        state.teamPageIndex = 0;
+        state.teamCursors = [null];
+        state.teamEtag = null;
+        void loadTeamPage();
+      } else {
+        renderAll();
+      }
+    }, 250);
+    return;
+  }
   renderMetrics();
   renderExecutionViews();
   renderFlowSignals();
@@ -2551,7 +3849,7 @@ els.archiveProject.addEventListener("change", () => {
 });
 
 els.refresh.addEventListener("click", () => loadBoard(true));
-els.createButton.addEventListener("click", openCreateDialog);
+els.createButton.addEventListener("click", () => void openCreateDialog());
 els.manageProjectsButton.addEventListener("click", openProjectDialog);
 els.projectForm.addEventListener("submit", submitProject);
 els.flowWipForm.addEventListener("submit", submitFlowWip);
@@ -2592,15 +3890,67 @@ document.querySelector("#assignee-input").addEventListener("change", updateAssig
 document.querySelector("#create-form").addEventListener("submit", submitCreate);
 els.executionForm.addEventListener("submit", submitExecution);
 els.viewForm.addEventListener("submit", submitView);
-document.querySelector("#create-project").addEventListener("change", updateCreateOptions);
+document.querySelector("#create-project").addEventListener("change", () => void updateCreateOptions());
 document.querySelector("#create-title").addEventListener("input", syncCreateSlugFromTitle);
 document.querySelector("#create-slug").addEventListener("input", (event) => {
   state.createSlugManuallyEdited = Boolean(event.target.value.trim());
 });
-
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") scheduleStatusPoll(0);
+els.teamLogout.addEventListener("click", logoutTeam);
+els.teamPassword.addEventListener("click", () => openPasswordDialog(false));
+els.teamFilterForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  readTeamFilters();
+  state.teamPageIndex = 0;
+  state.teamCursors = [null];
+  state.teamEtag = null;
+  if (state.projectId === "all") {
+    void loadTeamPage();
+  } else {
+    void loadTeamProject(state.projectId);
+  }
+});
+els.teamFilterProject.addEventListener("change", () => {
+  void selectTeamProject(els.teamFilterProject.value);
+});
+els.teamPagePrev.addEventListener("click", () => {
+  if (state.teamPageIndex <= 0) return;
+  state.teamPageIndex -= 1;
+  state.teamEtag = null;
+  void loadTeamPage();
+});
+els.teamPageNext.addEventListener("click", () => {
+  if (!state.teamHasNext) return;
+  state.teamPageIndex += 1;
+  state.teamEtag = null;
+  void loadTeamPage();
+});
+els.teamTaskAccept.addEventListener("click", acceptSelectedAssignment);
+els.teamOperationRetry.addEventListener("click", retryTeamOperation);
+els.passwordForm.addEventListener("submit", submitPasswordChange);
+document.querySelectorAll("[data-close-assignments]").forEach((button) => {
+  button.addEventListener("click", () => els.assignmentsDialog.close());
+});
+document.querySelectorAll("[data-close-team-operation]").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (state.teamOperationTimer) clearTimeout(state.teamOperationTimer);
+    els.teamOperationDialog.close();
+  });
+});
+document.querySelectorAll("[data-close-password]").forEach((button) => {
+  button.addEventListener("click", () => els.passwordDialog.close());
+});
+els.passwordDialog.addEventListener("cancel", (event) => {
+  if (els.passwordDialog.dataset.force === "true") event.preventDefault();
 });
 
-renderViewStageOptions();
-loadBoard();
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (state.teamMode) {
+    void loadTeamStatus();
+    scheduleTeamStatusPoll();
+  } else {
+    scheduleStatusPoll(0);
+  }
+});
+
+void initializeApp();

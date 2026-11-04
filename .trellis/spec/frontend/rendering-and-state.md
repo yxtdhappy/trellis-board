@@ -33,6 +33,21 @@
 
 动态区域使用 `innerHTML` 后，旧节点上的监听器会消失。新增动态按钮时必须在对应 `bindTaskButtons()`、`bindArtifactButtons()`、`bindStageActions()` 或局部绑定函数中重新注册事件。
 
+## 轻量 Kanban 分栏
+
+[public/execution-filter.js](../../../public/execution-filter.js) 的 `laneForStageIndex(task, current)` 是阶段数组下标到泳道的唯一映射：
+
+| 任务阶段数组下标 | 阶段 | 泳道 |
+| --- | --- | --- |
+| `0`–`4` | `prd`–`context` | `planning` |
+| `5` | `review` | `review` |
+| `6` | `implement` | `implementation` |
+| `7`–`12` | `check`–`journal` | `verification` |
+
+`check` 的下标是 `7`，必须从检查阶段开始进入“检查 / 收尾”。不要把收尾边界写成 `>= 8`，否则“检查中”的卡片会错误留在“实现”泳道。归档任务和找不到当前阶段时返回 `null`，不进入任何泳道。
+
+回归测试至少断言：下标 `6` 属于实现，`7` 和最后一个阶段下标属于检查 / 收尾，归档任务不进入泳道。
+
 ## 个人执行视图计数
 
 - `baseFilteredActiveTasks({ executionView })` 是执行视图计数的统一入口，必须先组合项目、负责人、搜索和执行视图条件，再做任务组展开。

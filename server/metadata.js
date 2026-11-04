@@ -82,6 +82,7 @@ export function setManualStage(
         eventType: "stage_manual_confirmed",
         source: "user",
         actor: options.actor,
+        actorUserId: options.actorUserId,
         correlationId,
         occurredAt: updatedAt,
         payload: {

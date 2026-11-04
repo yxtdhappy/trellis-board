@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查迁移、API、事务、错误处理和自动测试。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查登录、权限化看板和真实浏览器回归。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查跨模块身份、权限和发布状态是否一致。"}
+{"file":".trellis/tasks/11-03-team-board/research/security-boundaries.md","reason":"检查认证、Agent、Git 和脚本执行的信任边界。"}
+{"file":".trellis/tasks/11-03-team-board/research/capacity-and-board-scaling.md","reason":"检查跨项目查询、单项目分页、轮询、有界 Git 调度和目标容量验收。"}

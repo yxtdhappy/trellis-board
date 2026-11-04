@@ -1,6 +1,7 @@
 .audit/
 data/board.sqlite*
 data/task-metadata.json
+data/repos.json
 data/*.tmp
 node_modules/
 *.log

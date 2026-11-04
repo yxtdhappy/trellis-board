@@ -1,0 +1,1361 @@
+import crypto from "node:crypto";
+import fs from "node:fs";
+import http from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { gzip } from "node:zlib";
+import {
+  databaseFile as defaultDatabaseFile,
+  dataDir as defaultDataDir
+} from "../config.js";
+import { openDatabase } from "../database.js";
+import { STAGE_IDS } from "../metadata.js";
+import { createAgentService } from "./agents.js";
+import { appendAuditEvent, listAuditEvents } from "./audit.js";
+import {
+  changePassword,
+  clearSessionCookie,
+  createUser,
+  hasActiveAdmin,
+  listUsers,
+  login,
+  parseCookieHeader,
+  readSession,
+  resetUserPassword,
+  revokeSession,
+  SESSION_COOKIE,
+  sessionCookie,
+  updateUserAdmin
+} from "./auth.js";
+import { createBoardService } from "./board.js";
+import { ERROR_CODES, errorPayload, teamError } from "./errors.js";
+import { createGitManager } from "./git-manager.js";
+import {
+  CAPABILITIES,
+  readableProjectIds,
+  roleCanWrite
+} from "./permissions.js";
+import { createProjectService } from "./projects.js";
+import { createTaskIndex } from "./task-index.js";
+import { createTaskWriteService } from "./task-writes.js";
+
+const serverDir = path.dirname(fileURLToPath(import.meta.url));
+const applicationDir = path.resolve(serverDir, "../..");
+const defaultPublicDir = path.join(applicationDir, "public");
+const MAX_JSON_BYTES = 64 * 1024;
+const DEFAULT_WAIT_MS = 25_000;
+const EXECUTION_WIP_LIMIT = 2;
+const DEFAULT_REFRESH_CONCURRENCY = 4;
+const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const STATIC_TYPES = new Map([
+  [".html", "text/html; charset=utf-8"],
+  [".css", "text/css; charset=utf-8"],
+  [".js", "text/javascript; charset=utf-8"],
+  [".svg", "image/svg+xml"],
+  [".png", "image/png"]
+]);
+
+function securityHeaders() {
+  return {
+    "content-security-policy":
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+      "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "no-referrer",
+    "cache-control": "no-store"
+  };
+}
+
+function sendJson(response, status, payload, headers = {}) {
+  if (response.headersSent) {
+    response.destroy();
+    return;
+  }
+  const source = payload == null ? "" : JSON.stringify(payload);
+  const compressed = source.length >= 1024 &&
+    /\bgzip\b/.test(String(response.req?.headers?.["accept-encoding"] || ""));
+  const write = (body) => {
+    response.writeHead(status, {
+      ...securityHeaders(),
+      "content-type": "application/json; charset=utf-8",
+      "content-length": body.length,
+      ...(compressed ? {
+        "content-encoding": "gzip",
+        vary: "accept-encoding"
+      } : {}),
+      ...headers
+    });
+    response.end(body);
+  };
+  if (!compressed) {
+    write(Buffer.from(source));
+    return;
+  }
+  gzip(source, (error, body) => {
+    if (error || response.destroyed) {
+      response.destroy();
+      return;
+    }
+    try {
+      write(body);
+    } catch {
+      response.destroy();
+    }
+  });
+}
+
+function sendNotModified(response, etag) {
+  if (response.headersSent) {
+    response.destroy();
+    return;
+  }
+  response.writeHead(304, {
+    ...securityHeaders(),
+    etag
+  });
+  response.end();
+}
+
+function clientIp(request, trustProxy) {
+  if (trustProxy) {
+    const forwarded = String(request.headers["x-forwarded-for"] || "")
+      .split(",")[0]
+      .trim();
+    if (forwarded && forwarded.length <= 128) return forwarded;
+  }
+  return String(request.socket.remoteAddress || "").slice(0, 128);
+}
+
+function requestOrigin(request) {
+  return String(request.headers.origin || "");
+}
+
+function assertHost(request, config) {
+  const actual = String(request.headers.host || "").trim().toLowerCase();
+  const expected = String(config.publicUrl.host || "").trim().toLowerCase();
+  if (!actual || actual !== expected) {
+    throw teamError(
+      400,
+      ERROR_CODES.INVALID_HOST,
+      "请求 Host 与团队公开地址不一致"
+    );
+  }
+}
+
+function assertJsonWrite(request, config) {
+  const contentType = String(request.headers["content-type"] || "").toLowerCase();
+  if (!/^application\/json\s*(?:;|$)/.test(contentType)) {
+    throw teamError(
+      415,
+      ERROR_CODES.JSON_REQUIRED,
+      "写请求必须使用 application/json"
+    );
+  }
+  const origin = requestOrigin(request);
+  let actualOrigin = "";
+  try {
+    actualOrigin = origin ? new URL(origin).origin : "";
+  } catch {
+    actualOrigin = "";
+  }
+  if (!actualOrigin || actualOrigin !== config.publicOrigin) {
+    throw teamError(403, ERROR_CODES.CSRF_REJECTED, "请求 Origin 校验失败");
+  }
+}
+
+async function readJsonBody(request, maxBytes = MAX_JSON_BYTES) {
+  const declared = Number(request.headers["content-length"]);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw teamError(
+      413,
+      ERROR_CODES.BODY_TOO_LARGE,
+      "请求体超过 64 KiB 限制"
+    );
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      throw teamError(
+        413,
+        ERROR_CODES.BODY_TOO_LARGE,
+        "请求体超过 64 KiB 限制"
+      );
+    }
+    chunks.push(chunk);
+  }
+  if (!size) return {};
+  let value;
+  try {
+    value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, "请求体不是合法 JSON");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, "请求体必须是 JSON 对象");
+  }
+  return value;
+}
+
+function parseInteger(value, label, fallback = null) {
+  if (value == null || value === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label} 必须是整数`);
+  }
+  return parsed;
+}
+
+function queryList(searchParams, name) {
+  return searchParams.getAll(name)
+    .flatMap((item) => String(item).split(","))
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function queryScalar(searchParams, name) {
+  const value = searchParams.get(name);
+  return value == null ? undefined : value;
+}
+
+function taskQueryInput(url) {
+  const params = url.searchParams;
+  const input = {
+    scope: queryScalar(params, "scope"),
+    q: queryScalar(params, "q"),
+    priorities: queryList(params, "priorities"),
+    stages: queryList(params, "stages"),
+    tags: queryList(params, "tags"),
+    assignee: queryScalar(params, "assignee"),
+    dueWithinDays: queryScalar(params, "dueWithinDays"),
+    staleDays: queryScalar(params, "staleDays"),
+    blocked: queryScalar(params, "blocked"),
+    archived: queryScalar(params, "archived"),
+    preset: queryScalar(params, "preset"),
+    limit: queryScalar(params, "limit"),
+    cursor: queryScalar(params, "cursor"),
+    projectIds: queryList(params, "projectIds")
+  };
+  for (const key of Object.keys(input)) {
+    if (input[key] === undefined) delete input[key];
+  }
+  if (Array.isArray(input.projectIds) && input.projectIds.length === 0) {
+    delete input.projectIds;
+  }
+  return input;
+}
+
+function pagePayload(page) {
+  return {
+    ...page,
+    total_count: page.total,
+    next_cursor: page.nextCursor,
+    query_revision: page.queryRevision,
+    query_day: page.queryDay
+  };
+}
+
+function statusEtag(status) {
+  const version = JSON.stringify({
+    queryRevision: status.queryRevision,
+    queryDay: status.queryDay,
+    assignments: status.assignments,
+    projects: status.projects.map(({ agents, ...project }) => project)
+  });
+  return `"status-${crypto.createHash("sha256").update(version).digest("base64url").slice(0, 24)}"`;
+}
+
+function projectCapabilities(role) {
+  const writable = roleCanWrite(role);
+  return {
+    [CAPABILITIES.VIEW]: Boolean(role),
+    [CAPABILITIES.WRITE_TASK]: writable,
+    [CAPABILITIES.ACCEPT_TASK]: writable,
+    [CAPABILITIES.MANAGE_MEMBERS]: role === "lead",
+    [CAPABILITIES.MANAGE_AGENTS]: role === "lead",
+    [CAPABILITIES.VIEW_AUDIT]: role === "lead",
+    [CAPABILITIES.MANAGE_PROJECT]: false,
+    [CAPABILITIES.REFRESH_PROJECT]: role === "lead"
+  };
+}
+
+function requireAdmin(actor) {
+  if (!actor?.systemAdmin) {
+    throw teamError(403, ERROR_CODES.FORBIDDEN, "只有系统管理员可以执行该操作");
+  }
+}
+
+function randomPassword() {
+  return crypto.randomBytes(18).toString("base64url");
+}
+
+function safeStaticPath(publicDir, pathname) {
+  let requested;
+  try {
+    requested = decodeURIComponent(pathname === "/" ? "/index.html" : pathname);
+  } catch {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, "静态资源路径无效");
+  }
+  const root = path.resolve(publicDir);
+  const filePath = path.resolve(root, `.${requested}`);
+  if (filePath !== root && !filePath.startsWith(`${root}${path.sep}`)) {
+    throw teamError(403, ERROR_CODES.FORBIDDEN, "静态资源路径越界");
+  }
+  if (!STATIC_TYPES.has(path.extname(filePath).toLowerCase())) {
+    throw teamError(404, ERROR_CODES.NOT_FOUND, "静态资源不存在");
+  }
+  return { filePath, root };
+}
+
+function serveStatic(request, response, url, publicDir) {
+  if (!new Set(["GET", "HEAD"]).has(request.method)) {
+    sendJson(response, 405, {
+      error: "静态资源只支持 GET 或 HEAD",
+      code: ERROR_CODES.INVALID_INPUT
+    }, { allow: "GET, HEAD" });
+    return;
+  }
+  const { filePath, root } = safeStaticPath(publicDir, url.pathname);
+  let stat;
+  let realPath;
+  let realRoot;
+  try {
+    realRoot = fs.realpathSync(root);
+    realPath = fs.realpathSync(filePath);
+    stat = fs.statSync(realPath);
+  } catch {
+    stat = null;
+  }
+  if (
+    realPath &&
+    realPath !== realRoot &&
+    !realPath.startsWith(`${realRoot}${path.sep}`)
+  ) {
+    throw teamError(403, ERROR_CODES.FORBIDDEN, "静态资源路径越界");
+  }
+  if (!stat?.isFile()) {
+    sendJson(response, 404, {
+      error: "静态资源不存在",
+      code: ERROR_CODES.NOT_FOUND
+    });
+    return;
+  }
+  const contentType = STATIC_TYPES.get(path.extname(realPath).toLowerCase());
+  response.writeHead(200, {
+    ...securityHeaders(),
+    "content-type": contentType,
+    "content-length": stat.size
+  });
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
+  fs.createReadStream(realPath).on("error", () => response.destroy()).pipe(response);
+}
+
+function runtimeProject(project) {
+  return {
+    id: project.id,
+    name: project.name,
+    syncStatus: project.syncStatus,
+    syncBranch: project.syncBranch,
+    role: project.role,
+    boardVersion: project.boardVersion || null,
+    stale: Boolean(project.stale),
+    lastError: project.lastError || null,
+    capabilities: projectCapabilities(project.role)
+  };
+}
+
+function routeMatch(pathname, pattern) {
+  const match = pattern.exec(pathname);
+  if (!match) return null;
+  try {
+    return match.slice(1).map((item) => decodeURIComponent(item));
+  } catch {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, "请求路径编码无效");
+  }
+}
+
+function createRequestHandler({
+  config,
+  db,
+  boardService,
+  projectService,
+  taskIndex,
+  taskWrites,
+  agentService,
+  publicDir,
+  logger,
+  signal,
+  isClosing
+}) {
+  function readActor(request) {
+    const cookies = parseCookieHeader(request.headers.cookie);
+    const token = cookies.get(SESSION_COOKIE);
+    const session = readSession(db, token);
+    if (!session) return null;
+    return {
+      userId: session.user.id,
+      sessionId: session.sessionId,
+      systemAdmin: session.user.systemAdmin,
+      user: session.user,
+      expiresAt: session.expiresAt
+    };
+  }
+
+  function runtimePayload(actor) {
+    if (!actor) {
+      return {
+        mode: "team",
+        authenticated: false,
+        user: null,
+        projects: [],
+        capabilities: {}
+      };
+    }
+    const projects = boardService.listProjects(actor);
+    return {
+      mode: "team",
+      authenticated: true,
+      user: actor.user,
+      sessionExpiresAt: actor.expiresAt,
+      projects: projects.map(runtimeProject),
+      capabilities: {
+        manageUsers: actor.systemAdmin,
+        manageProjects: actor.systemAdmin,
+        manageAgents: actor.systemAdmin,
+        viewSystemAudit: actor.systemAdmin
+      }
+    };
+  }
+
+  function requireActor(request) {
+    const actor = readActor(request);
+    if (!actor) {
+      throw teamError(401, ERROR_CODES.AUTH_REQUIRED, "需要登录");
+    }
+    return actor;
+  }
+
+  async function handleAgent(request, response, url) {
+    const { pathname } = url;
+    if (pathname === "/api/agent/enroll" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      sendJson(response, 201, agentService.enroll(body, {
+        ip: clientIp(request, config.trustProxy)
+      }));
+      return true;
+    }
+    if (!pathname.startsWith("/api/agent/")) return false;
+
+    const agent = agentService.authenticate(request);
+    if (pathname === "/api/agent/heartbeat" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      sendJson(response, 200, agentService.heartbeat(agent, body));
+      return true;
+    }
+    if (pathname === "/api/agent/commands" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      const waitMs = Math.min(
+        DEFAULT_WAIT_MS,
+        Math.max(0, Number(body.waitMs) || 0)
+      );
+      const commandPage = await agentService.pollCommands(agent, { ...body, waitMs });
+      sendJson(response, 200, commandPage);
+      return true;
+    }
+    const resultMatch = routeMatch(pathname, /^\/api\/agent\/commands\/([^/]+)\/result$/);
+    if (resultMatch && request.method === "POST") {
+      const body = await readJsonBody(request);
+      sendJson(
+        response,
+        200,
+        agentService.submitCommandResult(agent, resultMatch[0], body)
+      );
+      return true;
+    }
+    return false;
+  }
+
+  async function handleAuth(request, response, url) {
+    const { pathname } = url;
+    if (pathname === "/api/runtime" && request.method === "GET") {
+      sendJson(response, 200, runtimePayload(readActor(request)));
+      return true;
+    }
+    if (pathname === "/api/auth/me" && request.method === "GET") {
+      sendJson(response, 200, runtimePayload(requireActor(request)));
+      return true;
+    }
+    if (pathname === "/api/auth/login" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      const result = await login(db, {
+        username: body.username,
+        password: body.password,
+        request,
+        trustProxy: config.trustProxy,
+        sessionTtlMs: config.sessionTtlMs
+      });
+      sendJson(response, 200, {
+        user: result.user,
+        expiresAt: result.expiresAt,
+        mode: "team"
+      }, {
+        "set-cookie": sessionCookie(result.token, config)
+      });
+      return true;
+    }
+    if (pathname === "/api/auth/logout" && request.method === "POST") {
+      const actor = readActor(request);
+      if (actor) revokeSession(db, actor.sessionId);
+      sendJson(response, 200, { ok: true }, {
+        "set-cookie": clearSessionCookie(config)
+      });
+      return true;
+    }
+    if (pathname === "/api/auth/password" && request.method === "POST") {
+      const actor = requireActor(request);
+      const body = await readJsonBody(request);
+      await changePassword(db, {
+        userId: actor.userId,
+        currentPassword: body.currentPassword,
+        newPassword: body.newPassword,
+        currentSessionId: actor.sessionId
+      });
+      sendJson(response, 200, {
+        ok: true,
+        user: { ...actor.user, mustChangePassword: false }
+      });
+      return true;
+    }
+    return false;
+  }
+
+  async function handleAdmin(request, response, url) {
+    const { pathname } = url;
+    const actor = requireActor(request);
+
+    if (pathname === "/api/admin/users" && request.method === "GET") {
+      requireAdmin(actor);
+      sendJson(response, 200, { users: listUsers(db) });
+      return true;
+    }
+    if (pathname === "/api/admin/users" && request.method === "POST") {
+      requireAdmin(actor);
+      const body = await readJsonBody(request);
+      const suppliedPassword = body.password || body.temporaryPassword;
+      const temporaryPassword = suppliedPassword || randomPassword();
+      const user = await createUser(db, {
+        username: body.username,
+        displayName: body.displayName,
+        password: temporaryPassword,
+        systemAdmin: Boolean(body.systemAdmin),
+        mustChangePassword: body.mustChangePassword ?? !suppliedPassword,
+        createdBy: actor.userId
+      });
+      appendAuditEvent(db, {
+        actorUserId: actor.userId,
+        action: "user_created",
+        targetType: "user",
+        targetId: user.id,
+        detail: { systemAdmin: user.systemAdmin }
+      });
+      sendJson(response, 201, {
+        user,
+        ...(suppliedPassword ? {} : { temporaryPassword })
+      });
+      return true;
+    }
+    const userMatch = routeMatch(pathname, /^\/api\/admin\/users\/([^/]+)$/);
+    if (userMatch && request.method === "PATCH") {
+      requireAdmin(actor);
+      const body = await readJsonBody(request);
+      const user = await updateUserAdmin(db, {
+        userId: userMatch[0],
+        updates: body,
+        actorUserId: actor.userId
+      });
+      sendJson(response, 200, { user });
+      return true;
+    }
+    const passwordMatch = routeMatch(
+      pathname,
+      /^\/api\/admin\/users\/([^/]+)\/reset-password$/
+    );
+    if (passwordMatch && request.method === "POST") {
+      requireAdmin(actor);
+      const result = await resetUserPassword(db, {
+        userId: passwordMatch[0],
+        actorUserId: actor.userId
+      });
+      sendJson(response, 200, result);
+      return true;
+    }
+    if (pathname === "/api/admin/projects" && request.method === "GET") {
+      requireAdmin(actor);
+      sendJson(response, 200, { projects: projectService.listAll() });
+      return true;
+    }
+    if (pathname === "/api/admin/projects" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      sendJson(response, 201, await projectService.connect(actor, body));
+      return true;
+    }
+    const projectAction = routeMatch(
+      pathname,
+      /^\/api\/admin\/projects\/([^/]+)\/(approve|repair|disable)$/
+    );
+    if (projectAction && request.method === "POST") {
+      requireAdmin(actor);
+      const [projectId, action] = projectAction;
+      const body = await readJsonBody(request);
+      let result;
+      if (action === "approve") {
+        result = await projectService.approve(actor, { ...body, projectId });
+      } else if (action === "repair") {
+        result = await projectService.repair(actor, projectId);
+      } else {
+        result = await projectService.disable(actor, { ...body, projectId });
+      }
+      sendJson(response, 200, result);
+      return true;
+    }
+    if (pathname === "/api/admin/agents" && request.method === "GET") {
+      requireAdmin(actor);
+      sendJson(response, 200, { agents: agentService.listDevices(actor) });
+      return true;
+    }
+    if (pathname === "/api/admin/audit" && request.method === "GET") {
+      requireAdmin(actor);
+      const events = listAuditEvents(db, {
+        limit: parseInteger(url.searchParams.get("limit"), "limit", 100),
+        beforeId: parseInteger(url.searchParams.get("beforeId"), "beforeId", null)
+      });
+      sendJson(response, 200, { events });
+      return true;
+    }
+    const agentMatch = routeMatch(
+      pathname,
+      /^\/api\/admin\/agents\/([^/]+)\/revoke$/
+    );
+    if (agentMatch && request.method === "POST") {
+      requireAdmin(actor);
+      await readJsonBody(request);
+      sendJson(response, 200, agentService.revokeDevice(actor, agentMatch[0]));
+      return true;
+    }
+    return false;
+  }
+
+  async function handleProjects(request, response, url) {
+    const { pathname } = url;
+    const actor = requireActor(request);
+    const refreshMatch = routeMatch(
+      pathname,
+      /^\/api\/projects\/([^/]+)\/refresh$/
+    );
+    if (refreshMatch && request.method === "POST") {
+      const body = await readJsonBody(request);
+      sendJson(
+        response,
+        200,
+        await projectService.refresh(actor, refreshMatch[0], {
+          force: body.force === true
+        })
+      );
+      return true;
+    }
+    const membersMatch = routeMatch(
+      pathname,
+      /^\/api\/projects\/([^/]+)\/members$/
+    );
+    if (membersMatch && request.method === "GET") {
+      sendJson(response, 200, {
+        members: projectService.listVisibleMembers(actor, membersMatch[0])
+      });
+      return true;
+    }
+    if (membersMatch && request.method === "PUT") {
+      const body = await readJsonBody(request);
+      sendJson(response, 200, {
+        members: await projectService.upsertMember(actor, {
+          ...body,
+          projectId: membersMatch[0]
+        })
+      });
+      return true;
+    }
+    if (membersMatch && request.method === "DELETE") {
+      const userId = String(url.searchParams.get("userId") || "").trim();
+      sendJson(response, 200, {
+        members: await projectService.removeMember(actor, {
+          projectId: membersMatch[0],
+          userId
+        })
+      });
+      return true;
+    }
+    const auditMatch = routeMatch(
+      pathname,
+      /^\/api\/projects\/([^/]+)\/audit$/
+    );
+    if (auditMatch && request.method === "GET") {
+      const projectId = auditMatch[0];
+      if (actor.systemAdmin) {
+        const project = projectService.read(projectId);
+        if (!project) throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");
+      } else {
+        const access = db.prepare(`
+          SELECT role
+          FROM project_member
+          WHERE project_id = ? AND user_id = ?
+        `).get(projectId, actor.userId);
+        if (access?.role !== "lead") {
+          throw teamError(403, ERROR_CODES.FORBIDDEN, "无权查看项目审计");
+        }
+      }
+      const events = listAuditEvents(db, {
+        projectId,
+        limit: parseInteger(url.searchParams.get("limit"), "limit", 100),
+        beforeId: parseInteger(url.searchParams.get("beforeId"), "beforeId", null)
+      });
+      sendJson(response, 200, { events });
+      return true;
+    }
+    const agentsMatch = routeMatch(
+      pathname,
+      /^\/api\/projects\/([^/]+)\/agents$/
+    );
+    if (agentsMatch && request.method === "GET") {
+      sendJson(response, 200, {
+        agents: agentService.listProjectBindings(actor, agentsMatch[0])
+      });
+      return true;
+    }
+    const bindingMatch = routeMatch(
+      pathname,
+      /^\/api\/projects\/([^/]+)\/agents\/([^/]+)\/(approve|reject|revoke)$/
+    );
+    if (bindingMatch && request.method === "POST") {
+      await readJsonBody(request);
+      const [projectId, bindingId, action] = bindingMatch;
+      const method = {
+        approve: "approveBinding",
+        reject: "rejectBinding",
+        revoke: "revokeBinding"
+      }[action];
+      sendJson(
+        response,
+        200,
+        agentService[method](actor, projectId, bindingId)
+      );
+      return true;
+    }
+    return false;
+  }
+
+  async function handleTasks(request, response, url) {
+    const { pathname } = url;
+    const actor = requireActor(request);
+
+    if (pathname === "/api/tasks/query" && request.method === "GET") {
+      const queryInput = taskQueryInput(url);
+      queryInput.ifNoneMatch = String(request.headers["if-none-match"] || "");
+      const page = taskIndex.queryTasks(
+        actor,
+        readableProjectIds(actor, { db }),
+        queryInput
+      );
+      if (page.notModified) {
+        sendNotModified(response, page.etag);
+        return true;
+      }
+      sendJson(response, 200, pagePayload(page), { etag: page.etag });
+      return true;
+    }
+    if (pathname === "/api/board" && request.method === "GET") {
+      const projectId = String(url.searchParams.get("projectId") || "").trim();
+      const page = boardService.getBoard(actor, projectId, taskQueryInput(url));
+      if (String(request.headers["if-none-match"] || "") === page.etag) {
+        sendNotModified(response, page.etag);
+        return true;
+      }
+      sendJson(response, 200, pagePayload(page), { etag: page.etag });
+      return true;
+    }
+    if (pathname === "/api/board/settings" && request.method === "PUT") {
+      sendJson(
+        response,
+        200,
+        boardService.updateWipLimit(actor, await readJsonBody(request))
+      );
+      return true;
+    }
+    if (pathname === "/api/saved-views" && request.method === "GET") {
+      sendJson(response, 200, { views: boardService.listSavedViews(actor) });
+      return true;
+    }
+    if (pathname === "/api/saved-views" && request.method === "POST") {
+      sendJson(
+        response,
+        201,
+        boardService.createSavedView(actor, await readJsonBody(request))
+      );
+      return true;
+    }
+    if (pathname === "/api/saved-views" && request.method === "PUT") {
+      sendJson(
+        response,
+        200,
+        boardService.updateSavedView(actor, await readJsonBody(request))
+      );
+      return true;
+    }
+    if (pathname === "/api/saved-views" && request.method === "DELETE") {
+      sendJson(
+        response,
+        200,
+        boardService.deleteSavedView(actor, await readJsonBody(request))
+      );
+      return true;
+    }
+    if (pathname === "/api/tasks/execution" && request.method === "PUT") {
+      sendJson(
+        response,
+        200,
+        boardService.updatePlan(actor, await readJsonBody(request))
+      );
+      return true;
+    }
+    if (pathname === "/api/tasks/stage" && request.method === "PUT") {
+      sendJson(
+        response,
+        200,
+        boardService.setStage(actor, await readJsonBody(request))
+      );
+      return true;
+    }
+    if (pathname === "/api/tasks/dependencies" && request.method === "POST") {
+      sendJson(
+        response,
+        201,
+        boardService.createDependency(actor, await readJsonBody(request))
+      );
+      return true;
+    }
+    if (pathname === "/api/tasks/dependencies" && request.method === "DELETE") {
+      sendJson(
+        response,
+        200,
+        boardService.resolveDependency(actor, await readJsonBody(request))
+      );
+      return true;
+    }
+    if (pathname === "/api/tasks/undo" && request.method === "POST") {
+      sendJson(
+        response,
+        200,
+        boardService.undo(actor, await readJsonBody(request))
+      );
+      return true;
+    }
+    if (pathname === "/api/assignments" && request.method === "GET") {
+      const result = boardService.listAssignments(actor, {
+        state: url.searchParams.get("state")
+      });
+      sendJson(response, 200, {
+        ...result,
+        tasks: result.assignments,
+        items: result.assignments
+      });
+      return true;
+    }
+    if (pathname === "/api/tasks/accept" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      sendJson(response, 200, boardService.accept(actor, body));
+      return true;
+    }
+    if (pathname === "/api/tasks/assign" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      const result = await taskWrites.assignTask(actor, body);
+      sendJson(response, result.statusCode || 200, {
+        ...result,
+        operation: result.operation || null
+      });
+      return true;
+    }
+    if (pathname === "/api/tasks" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      const result = await taskWrites.createTask(actor, body);
+      sendJson(response, result.statusCode || 201, {
+        ...result,
+        operation: result.operation || null
+      });
+      return true;
+    }
+    if (pathname === "/api/tasks" && request.method === "GET") {
+      sendJson(response, 200, boardService.getTask(actor, {
+        executionTaskKey: url.searchParams.get("executionTaskKey"),
+        projectId: url.searchParams.get("projectId"),
+        taskPath: url.searchParams.get("taskPath")
+      }));
+      return true;
+    }
+    if (pathname === "/api/task" && request.method === "POST") {
+      sendJson(
+        response,
+        200,
+        boardService.getTask(actor, await readJsonBody(request))
+      );
+      return true;
+    }
+    const taskMatch = routeMatch(pathname, /^\/api\/tasks\/([^/]+)$/);
+    if (taskMatch && request.method === "GET") {
+      sendJson(response, 200, boardService.getTask(actor, {
+        executionTaskKey: taskMatch[0]
+      }));
+      return true;
+    }
+    const retryMatch = routeMatch(
+      pathname,
+      /^\/api\/git-operations\/([^/]+)\/retry$/
+    );
+    if (retryMatch && request.method === "POST") {
+      await readJsonBody(request);
+      sendJson(response, 200, {
+        operation: await taskWrites.retry(actor, retryMatch[0])
+      });
+      return true;
+    }
+    const operationMatch = routeMatch(
+      pathname,
+      /^\/api\/git-operations\/([^/]+)$/
+    );
+    if (operationMatch && request.method === "GET") {
+      sendJson(response, 200, {
+        operation: taskWrites.get(actor, operationMatch[0])
+      });
+      return true;
+    }
+    return false;
+  }
+
+  async function handleTeam(request, response, url) {
+    const { pathname } = url;
+    const actor = requireActor(request);
+    if (pathname === "/api/team/projects" && request.method === "GET") {
+      sendJson(response, 200, {
+        projects: boardService.listProjects(actor)
+      });
+      return true;
+    }
+    if (
+      (pathname === "/api/team/status" || pathname === "/api/status") &&
+      request.method === "GET"
+    ) {
+      const status = boardService.status(actor, { staleMs: config.agentStaleMs });
+      const etag = statusEtag(status);
+      if (String(request.headers["if-none-match"] || "") === etag) {
+        sendNotModified(response, etag);
+        return true;
+      }
+      sendJson(response, 200, status, { etag });
+      return true;
+    }
+    if (pathname === "/api/team/pairing-codes" && request.method === "POST") {
+      await readJsonBody(request);
+      sendJson(response, 201, agentService.createPairingCode(actor));
+      return true;
+    }
+    return false;
+  }
+
+  async function dispatch(request, response) {
+    response.setHeader("x-request-id", crypto.randomUUID());
+    assertHost(request, config);
+    if (isClosing()) {
+      throw teamError(503, ERROR_CODES.SERVICE_SHUTTING_DOWN, "服务正在关闭");
+    }
+    const url = new URL(request.url || "/", config.publicOrigin);
+    const isAgent = url.pathname === "/api/agent/enroll" ||
+      url.pathname.startsWith("/api/agent/");
+    if (isAgent) {
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        const contentType = String(request.headers["content-type"] || "").toLowerCase();
+        if (!/^application\/json\s*(?:;|$)/.test(contentType)) {
+          throw teamError(
+            415,
+            ERROR_CODES.JSON_REQUIRED,
+            "Agent 写请求必须使用 application/json"
+          );
+        }
+      }
+      if (await handleAgent(request, response, url)) return;
+      throw teamError(404, ERROR_CODES.NOT_FOUND, "Agent 接口不存在");
+    }
+
+    if (url.pathname === "/api/health") {
+      sendJson(response, 200, {
+        status: "ok",
+        mode: "team",
+        processId: process.pid,
+        serverStartedAt: serverStartedAt
+      });
+      return;
+    }
+    if (!url.pathname.startsWith("/api/")) {
+      serveStatic(request, response, url, publicDir);
+      return;
+    }
+    if (WRITE_METHODS.has(request.method)) assertJsonWrite(request, config);
+    if (await handleAuth(request, response, url)) return;
+
+    const actor = requireActor(request);
+    if (
+      actor.user.mustChangePassword &&
+      !new Set(["/api/auth/password", "/api/auth/logout"]).has(url.pathname)
+    ) {
+      throw teamError(
+        403,
+        ERROR_CODES.PASSWORD_CHANGE_REQUIRED,
+        "首次登录或密码重置后必须先修改密码"
+      );
+    }
+    if (await handleAdmin(request, response, url)) return;
+    if (await handleProjects(request, response, url)) return;
+    if (await handleTeam(request, response, url)) return;
+    if (await handleTasks(request, response, url)) return;
+    throw teamError(404, ERROR_CODES.NOT_FOUND, "接口不存在");
+  }
+
+  let serverStartedAt = null;
+  return {
+    async handle(request, response) {
+      try {
+        await dispatch(request, response);
+      } catch (error) {
+        const mapped = errorPayload(error);
+        if (mapped.status >= 500) {
+          logger.error("团队 HTTP 请求失败", {
+            requestId: response.getHeader("x-request-id"),
+            method: request.method,
+            url: request.url,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+        sendJson(response, mapped.status, mapped.body);
+      }
+    },
+    setStartedAt(value) {
+      serverStartedAt = value;
+    }
+  };
+}
+
+function listen(server, port, host) {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen({ port, host, backlog: 1024 });
+  });
+}
+
+function closeServer(server) {
+  return new Promise((resolve) => {
+    if (!server.listening) {
+      resolve();
+      return;
+    }
+    server.close(() => resolve());
+    const timer = setTimeout(() => server.closeAllConnections?.(), 5_000);
+    timer.unref?.();
+  });
+}
+
+export function createRefreshScheduler({
+  concurrency = DEFAULT_REFRESH_CONCURRENCY,
+  refresh,
+  logger = console
+}) {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new TypeError("refresh concurrency 必须是正整数");
+  }
+  if (typeof refresh !== "function") {
+    throw new TypeError("refresh 必须是函数");
+  }
+  const pending = new Map();
+  const inFlight = new Map();
+  let stopped = false;
+
+  function drain() {
+    while (!stopped && inFlight.size < concurrency && pending.size) {
+      const [projectId] = pending.keys();
+      pending.delete(projectId);
+      const operation = Promise.resolve()
+        .then(() => refresh(projectId))
+        .catch((error) => {
+          logger.warn("团队项目定时拉取失败", {
+            projectId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        })
+        .finally(() => {
+          inFlight.delete(projectId);
+          drain();
+        });
+      inFlight.set(projectId, operation);
+    }
+  }
+
+  return {
+    enqueue(projectId) {
+      if (
+        stopped ||
+        pending.has(projectId) ||
+        inFlight.has(projectId)
+      ) {
+        return false;
+      }
+      pending.set(projectId, true);
+      drain();
+      return true;
+    },
+    snapshot() {
+      return {
+        active: inFlight.size,
+        queued: pending.size,
+        projectIds: [...inFlight.keys()]
+      };
+    },
+    async stop() {
+      if (stopped) return;
+      stopped = true;
+      pending.clear();
+      await Promise.allSettled([...inFlight.values()]);
+    }
+  };
+}
+
+export async function createTeamRuntime({
+  config,
+  databaseFile = defaultDatabaseFile,
+  dataDir = defaultDataDir,
+  publicDir = defaultPublicDir,
+  logger = console,
+  requireAdmin = true,
+  enablePolling = true,
+  refreshConcurrency = DEFAULT_REFRESH_CONCURRENCY,
+  scheduledRefresh = null
+}) {
+  if (config?.mode !== "team") {
+    throw new Error("createTeamRuntime 只接受 team 配置");
+  }
+  const db = openDatabase({
+    databaseFile,
+    fallbackRepositories: [],
+    importLegacyRepositories: false,
+    legacyJsonImport: false,
+    logger
+  });
+  let closing = false;
+  const shutdown = new AbortController();
+
+  try {
+    if (requireAdmin && !hasActiveAdmin(db)) {
+      throw teamError(
+        503,
+        ERROR_CODES.AUTH_REQUIRED,
+        "团队模式尚无系统管理员，请先在本机运行 server/team/cli.js init-admin"
+      );
+    }
+    const gitManager = createGitManager({ db, config, dataDir });
+    const taskIndex = createTaskIndex({
+      db,
+      stageIds: STAGE_IDS,
+      executionWipLimit: EXECUTION_WIP_LIMIT
+    });
+    const projectService = createProjectService({
+      db,
+      config,
+      dataDir,
+      gitManager,
+      taskIndex
+    });
+    const taskWrites = createTaskWriteService({
+      db,
+      gitManager,
+      projectService,
+      taskIndex
+    });
+    const agentService = createAgentService({
+      db,
+      config,
+      logger,
+      signal: shutdown.signal
+    });
+    const boardService = createBoardService({
+      db,
+      taskIndex,
+      projectService,
+      executionWipLimit: EXECUTION_WIP_LIMIT
+    });
+    const requestHandler = createRequestHandler({
+      config,
+      db,
+      boardService,
+      projectService,
+      taskIndex,
+      taskWrites,
+      agentService,
+      publicDir,
+      logger,
+      signal: shutdown.signal,
+      isClosing: () => closing
+    });
+    const server = http.createServer((request, response) => {
+      requestHandler.handle(request, response);
+    });
+    // 长轮询和 3 秒轮询之间允许连接复用，避免 Windows 客户端复用已过期套接字。
+    server.keepAliveTimeout = 65_000;
+    server.headersTimeout = 66_000;
+    server.on("connection", (socket) => socket.setNoDelay(true));
+    server.on("clientError", (error, socket) => {
+      if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+      logger.warn("团队 HTTP 客户端连接错误", { error: error.message });
+    });
+    let pollTimer = null;
+    let started = false;
+
+    async function recoverProjects() {
+      for (const project of projectService.listAll()) {
+        if (project.syncStatus !== "pending_push") continue;
+        try {
+          await taskWrites.recoverProject(project.id);
+        } catch (error) {
+          db.prepare(`
+            UPDATE team_project
+            SET sync_status = 'needs_repair', last_error = ?, updated_at = ?
+            WHERE repository_id = ?
+          `).run(
+            String(error.message || "启动恢复失败").slice(0, 1000),
+            new Date().toISOString(),
+            project.id
+          );
+          taskIndex.incrementQueryRevision();
+          logger.error("项目 Git 操作启动恢复失败", {
+            projectId: project.id,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    }
+
+    const refreshScheduler = createRefreshScheduler({
+      concurrency: refreshConcurrency,
+      refresh: scheduledRefresh || ((projectId) => (
+        projectService.refreshScheduled(projectId)
+      )),
+      logger
+    });
+    const pollableStatuses = new Set(["current", "stale", "pending_push"]);
+
+    function refreshDueProjects() {
+      if (closing) return refreshScheduler.snapshot();
+      for (const project of projectService.listAll()) {
+        if (pollableStatuses.has(project.syncStatus)) {
+          refreshScheduler.enqueue(project.id);
+        }
+      }
+      return refreshScheduler.snapshot();
+    }
+
+    function startPolling() {
+      if (!enablePolling || pollTimer) return;
+      pollTimer = setInterval(refreshDueProjects, config.gitPollMs);
+      pollTimer.unref?.();
+    }
+
+    async function start() {
+      if (started) return runtime;
+      try {
+        await recoverProjects();
+        await listen(server, config.port, config.bindHost);
+        started = true;
+        requestHandler.setStartedAt(new Date().toISOString());
+        startPolling();
+        logger.info("Trellis Team Board 已启动", {
+          url: config.publicOrigin,
+          bindHost: config.bindHost,
+          port: config.port
+        });
+        return runtime;
+      } catch (error) {
+        closing = true;
+        shutdown.abort();
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = null;
+        await agentService.close().catch(() => {});
+        await closeServer(server);
+        await refreshScheduler.stop();
+        await taskIndex.close().catch(() => {});
+        db.close();
+        throw error;
+      }
+    }
+
+    async function stop() {
+      if (closing) return;
+      closing = true;
+      shutdown.abort();
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+      await agentService.close();
+      await closeServer(server);
+      await refreshScheduler.stop();
+      await taskIndex.close();
+      db.close();
+    }
+
+    const runtime = {
+      mode: "team",
+      config,
+      db,
+      server,
+      services: {
+        gitManager,
+        taskIndex,
+        projectService,
+        taskWrites,
+        agentService,
+        boardService,
+        refreshScheduler
+      },
+      polling: {
+        tick: refreshDueProjects,
+        snapshot: refreshScheduler.snapshot
+      },
+      start,
+      stop,
+      address() {
+        return server.address();
+      }
+    };
+    return runtime;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+}
+
+export { MAX_JSON_BYTES };

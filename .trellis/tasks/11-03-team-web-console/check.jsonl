@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查浏览器、安全渲染、响应式和回归。"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"验证轮询、对话框、任务更新和错误状态。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"验证 UI 能力与服务端权限和发布结果一致。"}
+{"file":".trellis/tasks/11-03-team-board/research/security-boundaries.md","reason":"检查前端不暴露或持久化敏感凭证。"}
+{"file":".trellis/tasks/11-03-team-board/research/capacity-and-board-scaling.md","reason":"验证跨项目混合列表、项目切换、服务端筛选、换版游标、ETag 和 3 秒轻量轮询。"}

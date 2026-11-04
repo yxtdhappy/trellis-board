@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核对 Node 测试、真实页面验收与前端质量门禁"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 check、implement、review 等阶段边界没有错位"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查修复保持最小所有权且没有重复规则"}
+{"file": ".trellis/spec/backend/scanning-and-persistence.md", "reason": "核对状态、报告、验收、提交与归档证据的阶段矩阵"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 loader 阶段分支的回归测试和真实看板验收"}

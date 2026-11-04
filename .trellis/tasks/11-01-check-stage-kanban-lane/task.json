@@ -1,0 +1,30 @@
+{
+  "id": "check-stage-kanban-lane",
+  "name": "check-stage-kanban-lane",
+  "title": "修复检查阶段卡片看板分栏",
+  "description": "让 derivedStage 为 check 的任务进入“检查 / 收尾”泳道，并保持后续阶段分栏规则一致",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-01",
+  "completedAt": null,
+  "branch": "codex/personal-execution-enhancements",
+  "base_branch": "codex/personal-execution-enhancements",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/spec/backend/scanning-and-persistence.md",
+    ".trellis/spec/frontend/rendering-and-state.md",
+    ".trellis/spec/guides/cross-layer-thinking-guide.md"
+  ],
+  "notes": "",
+  "meta": {}
+}

@@ -128,6 +128,72 @@ test("计划撤销恢复 before、保留原始事件，并拒绝重复撤销同�
   }
 });
 
+test("团队撤销只选择当前账号自己的历史组", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    const now = new Date().toISOString();
+    const insertUser = db.prepare(`
+      INSERT INTO user_account(
+        id, username_key, username, display_name, password_hash,
+        password_params_json, system_admin, status, must_change_password,
+        password_changed_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'test', '{}', 0, 'active', 0, ?, ?, ?)
+    `);
+    insertUser.run("user-a", "user-a", "user-a", "用户 A", now, now, now);
+    insertUser.run("user-b", "user-b", "user-b", "用户 B", now, now, now);
+    const store = createStore(db);
+    const userBPlan = store.updatePlan("demo::task", {
+      dueDate: "2026-12-01",
+      milestone: "B",
+      tags: ["B"]
+    }, "user-b", "user-b");
+    const userAPlan = store.updatePlan("demo::task", {
+      dueDate: "2026-11-20",
+      milestone: "A",
+      tags: ["A"]
+    }, "user-a", "user-a");
+
+    const historyA = buildTaskHistory({
+      db,
+      executionTaskKey: "demo::task",
+      archived: false,
+      identityValid: true,
+      actorUserId: "user-a"
+    });
+    assert.equal(historyA.undo.available, true);
+    assert.equal(historyA.undo.targetCorrelationId, userAPlan.correlationId);
+    assert.notEqual(historyA.undo.targetCorrelationId, userBPlan.correlationId);
+    assert.deepEqual(
+      [...new Set(historyA.events.map((event) => event.actorUserId))].sort(),
+      ["user-a", "user-b"]
+    );
+
+    undoLastOperation({
+      db,
+      executionTaskKey: "demo::task",
+      projectId: "demo",
+      taskPath: ".trellis/tasks/task",
+      task: taskFor("demo::task"),
+      actor: "user-a",
+      actorUserId: "user-a",
+      now: "2099-01-01T09:00:00.000Z"
+    });
+    const detail = readExecutionDetail(db, "demo::task");
+    assert.equal(detail.dueDate, "2026-12-01");
+    assert.equal(detail.milestone, "B");
+    assert.deepEqual(detail.tags, ["B"]);
+    assert.equal(
+      detail.events.find((event) => event.type === "operation_undone").actorUserId,
+      "user-a"
+    );
+  } finally {
+    closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
 test("人工阶段撤销恢复前值，首次确认撤销会删除投影", () => {
   const workspace = makeWorkspace();
   let db;

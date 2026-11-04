@@ -60,7 +60,7 @@ function samePlan(left, right) {
     left.tags.every((tag, index) => tag === right.tags[index]);
 }
 
-function groupEvents(events) {
+function groupEvents(events, actorUserId = null) {
   const undone = new Set();
   events.forEach((event) => {
     if (event.type !== "operation_undone") return;
@@ -98,6 +98,8 @@ function groupEvents(events) {
         undone: undone.has(group.correlationId)
       };
     })
+    .filter((group) => !actorUserId ||
+      group.events.every((event) => event.actorUserId === actorUserId))
     .sort((left, right) =>
       timestamp(right.occurredAt) - timestamp(left.occurredAt) ||
       right.latestEventId - left.latestEventId
@@ -122,9 +124,11 @@ function undoMetadata({
   eventTotal = events.length,
   eventTruncated = false,
   archived = false,
-  identityValid = true
+  identityValid = true,
+  actorUserId = null
 }) {
-  const availableGroups = groupEvents(events).filter((group) => !group.undone);
+  const availableGroups = groupEvents(events, actorUserId)
+    .filter((group) => !group.undone);
   const latest = availableGroups[0] || null;
   let disabledReason = null;
   if (!identityValid) {
@@ -166,6 +170,7 @@ export function buildTaskHistory({
   eventWindowStartAt = null,
   archived = false,
   identityValid = true,
+  actorUserId = null,
   limit = 1000
 }) {
   const timeline = events
@@ -188,7 +193,8 @@ export function buildTaskHistory({
       eventTotal: timeline.eventTotal,
       eventTruncated: timeline.eventTruncated || Boolean(timeline.truncated),
       archived,
-      identityValid
+      identityValid,
+      actorUserId
     })
   };
 }
@@ -331,6 +337,7 @@ export function undoLastOperation({
   taskPath,
   task = {},
   actor = null,
+  actorUserId = null,
   now = new Date().toISOString()
 }) {
   if (task.archived) throw new Error("归档任务只读，不能撤销");
@@ -345,10 +352,11 @@ export function undoLastOperation({
       eventTotal: timeline.eventTotal,
       eventTruncated: timeline.eventTruncated,
       archived: false,
-      identityValid: true
+      identityValid: true,
+      actorUserId
     });
     if (!metadata.available) throw new Error(metadata.disabledReason || "没有可撤销操作");
-    const group = groupEvents(timeline.events)
+    const group = groupEvents(timeline.events, actorUserId)
       .find((candidate) => candidate.correlationId === metadata.targetCorrelationId);
     if (!group) throw new Error("没有可撤销操作");
 
@@ -363,6 +371,7 @@ export function undoLastOperation({
       eventType: "operation_undone",
       source: "user",
       actor,
+      actorUserId,
       correlationId,
       occurredAt,
       payload: {

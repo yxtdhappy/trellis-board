@@ -58,6 +58,45 @@ function makeRepo() {
   return root;
 }
 
+function resetLiveTaskForEvidence(root, prd, options = {}) {
+  const liveDir = path.join(root, ".trellis", "tasks", "10-20-live");
+  const removableFiles = [
+    "design.md",
+    "implement.md",
+    "implementation-report.md",
+    "check-report.md",
+    "e2e-report.md",
+    "implement.jsonl",
+    "check.jsonl"
+  ];
+  removableFiles.forEach((fileName) => {
+    fs.rmSync(path.join(liveDir, fileName), { force: true });
+  });
+  fs.rmSync(path.join(liveDir, "research"), { recursive: true, force: true });
+
+  const taskPath = path.join(liveDir, "task.json");
+  const task = JSON.parse(fs.readFileSync(taskPath, "utf8"));
+  task.status = options.status || "in_progress";
+  task.commit = null;
+  task.relatedFiles = options.relatedFiles || [];
+  fs.writeFileSync(taskPath, JSON.stringify(task));
+  fs.writeFileSync(path.join(liveDir, "prd.md"), prd);
+  return liveDir;
+}
+
+const VALID_UNCHECKED_PRD = [
+  "# Stage evidence",
+  "",
+  "## Requirements",
+  "",
+  "- 修复实施阶段证据",
+  "",
+  "## Acceptance Criteria",
+  "",
+  "- [ ] 回归测试通过",
+  ""
+].join("\n");
+
 test("扫描嵌套归档目录并使用文件证据推导阶段", () => {
   const root = makeRepo();
   try {
@@ -398,6 +437,159 @@ test("planning 任务有实施报告时推导为实现与检查已完成", () =>
     assert.equal(live.stages.find((stage) => stage.id === "e2e").complete, false);
     assert.equal(live.derivedStage, "spec");
   } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("in_progress 只证明任务开始，不会单独完成实施与检查", () => {
+  const root = makeRepo();
+  try {
+    resetLiveTaskForEvidence(root, VALID_UNCHECKED_PRD);
+    const result = scanRepository({ id: "demo", name: "Demo", path: root }, { includeContent: true });
+    const live = result.tasks.find((task) => !task.archived);
+    assert.equal(live.derivedStage, "implement");
+    assert.equal(live.stages.find((stage) => stage.id === "review").complete, true);
+    assert.equal(live.stages.find((stage) => stage.id === "implement").complete, false);
+    assert.equal(live.stages.find((stage) => stage.id === "check").complete, false);
+  } finally {
+    clearScanCaches();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("实施计划中的检查项只辅助检查完成，不能替代实施完成证据", () => {
+  const root = makeRepo();
+  try {
+    const liveDir = resetLiveTaskForEvidence(root, VALID_UNCHECKED_PRD);
+    fs.writeFileSync(
+      path.join(liveDir, "implement.md"),
+      "# 实施计划\n\n- [x] 执行回归测试\n"
+    );
+
+    let result = scanRepository({ id: "demo", name: "Demo", path: root }, { includeContent: true });
+    let live = result.tasks.find((task) => !task.archived);
+    assert.equal(live.stages.find((stage) => stage.id === "implement").complete, false);
+    assert.equal(live.stages.find((stage) => stage.id === "check").complete, false);
+    assert.match(live.stages.find((stage) => stage.id === "check").evidence, /缺少实施报告/);
+    assert.equal(live.derivedStage, "implement");
+
+    const taskPath = path.join(liveDir, "task.json");
+    const task = JSON.parse(fs.readFileSync(taskPath, "utf8"));
+    task.commit = "abc1234";
+    fs.writeFileSync(taskPath, JSON.stringify(task));
+    clearScanCaches();
+
+    result = scanRepository({ id: "demo", name: "Demo", path: root }, { includeContent: true });
+    live = result.tasks.find((candidate) => !candidate.archived);
+    assert.equal(live.stages.find((stage) => stage.id === "implement").complete, true);
+    assert.equal(live.stages.find((stage) => stage.id === "check").complete, true);
+    assert.equal(live.stages.find((stage) => stage.id === "check").source, "implement-plan");
+    assert.equal(live.derivedStage, "spec");
+  } finally {
+    clearScanCaches();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("验收勾选、提交和完成状态仍作为实施完成证据", () => {
+  const root = makeRepo();
+  try {
+    const liveDir = resetLiveTaskForEvidence(root, VALID_UNCHECKED_PRD);
+    const taskPath = path.join(liveDir, "task.json");
+    let task = JSON.parse(fs.readFileSync(taskPath, "utf8"));
+    task.commit = "abc1234";
+    fs.writeFileSync(taskPath, JSON.stringify(task));
+
+    let result = scanRepository({ id: "demo", name: "Demo", path: root }, { includeContent: true });
+    let live = result.tasks.find((candidate) => !candidate.archived);
+    assert.equal(live.stages.find((stage) => stage.id === "implement").complete, true);
+    assert.equal(live.stages.find((stage) => stage.id === "check").complete, false);
+    assert.equal(live.derivedStage, "check");
+
+    resetLiveTaskForEvidence(root, VALID_UNCHECKED_PRD.replace("- [ ]", "- [x]"));
+    clearScanCaches();
+    result = scanRepository({ id: "demo", name: "Demo", path: root }, { includeContent: true });
+    live = result.tasks.find((candidate) => !candidate.archived);
+    assert.equal(live.stages.find((stage) => stage.id === "implement").complete, true);
+    assert.equal(live.stages.find((stage) => stage.id === "check").complete, true);
+    assert.equal(live.stages.find((stage) => stage.id === "check").source, "prd-acceptance");
+    assert.equal(live.derivedStage, "spec");
+
+    resetLiveTaskForEvidence(root, VALID_UNCHECKED_PRD, { status: "completed" });
+    clearScanCaches();
+    result = scanRepository({ id: "demo", name: "Demo", path: root }, { includeContent: true });
+    live = result.tasks.find((candidate) => !candidate.archived);
+    assert.equal(live.stages.find((stage) => stage.id === "implement").complete, true);
+    assert.equal(live.stages.find((stage) => stage.id === "check").complete, true);
+    assert.equal(live.stages.find((stage) => stage.id === "check").source, "status");
+    assert.equal(live.derivedStage, "spec");
+  } finally {
+    clearScanCaches();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("默认 PRD 骨架不会因 in_progress 进入检查收尾泳道", () => {
+  const root = makeRepo();
+  try {
+    resetLiveTaskForEvidence(
+      root,
+      "# Bootstrap Task\n\n## Status\n\n- [ ] Fill backend guidelines\n",
+      { relatedFiles: [".trellis/spec/backend/"] }
+    );
+    const result = scanRepository({ id: "demo", name: "Demo", path: root }, { includeContent: true });
+    const live = result.tasks.find((task) => !task.archived);
+    assert.equal(["prd", "research", "design", "implementPlan", "context"].includes(live.derivedStage), true);
+    assert.equal(live.stages.find((stage) => stage.id === "implement").complete, false);
+    assert.equal(live.stages.find((stage) => stage.id === "check").complete, false);
+  } finally {
+    clearScanCaches();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("实施和检查报告仍会推进任务进入检查与收尾", () => {
+  const root = makeRepo();
+  try {
+    const liveDir = resetLiveTaskForEvidence(root, VALID_UNCHECKED_PRD);
+    fs.writeFileSync(
+      path.join(liveDir, "implementation-report.md"),
+      "# 实施报告\n\n代码修改已完成。\n"
+    );
+    let result = scanRepository({ id: "demo", name: "Demo", path: root }, { includeContent: true });
+    let live = result.tasks.find((task) => !task.archived);
+    assert.equal(live.stages.find((stage) => stage.id === "implement").complete, true);
+    assert.equal(live.stages.find((stage) => stage.id === "check").complete, false);
+    assert.equal(live.derivedStage, "check");
+
+    fs.writeFileSync(
+      path.join(liveDir, "check-report.md"),
+      "# 检查报告\n\nnode --test tests/loader.test.js 通过。\n"
+    );
+    result = scanRepository({ id: "demo", name: "Demo", path: root }, { includeContent: true });
+    live = result.tasks.find((task) => !task.archived);
+    assert.equal(live.stages.find((stage) => stage.id === "implement").complete, true);
+    assert.equal(live.stages.find((stage) => stage.id === "check").complete, true);
+    assert.equal(live.stages.find((stage) => stage.id === "check").source, "check-report");
+    assert.equal(live.derivedStage, "spec");
+  } finally {
+    clearScanCaches();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("completed 归档历史任务不会回退到检查之前", () => {
+  const root = makeRepo();
+  try {
+    const result = scanRepository({ id: "demo", name: "Demo", path: root }, { includeContent: true });
+    const archived = result.tasks.find((task) => task.archived && task.dirName === "10-01-old");
+    const derivedIndex = archived.stages.findIndex((stage) => stage.id === archived.derivedStage);
+    const archiveIndex = archived.stages.findIndex((stage) => stage.id === "archive");
+    assert.equal(archived.stages.find((stage) => stage.id === "implement").complete, true);
+    assert.equal(archived.stages.find((stage) => stage.id === "check").complete, true);
+    assert.equal(derivedIndex >= archiveIndex, true);
+  } finally {
+    clearScanCaches();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
