@@ -9,6 +9,7 @@ import { ExecutionHeader } from '@/features/board/ExecutionHeader'
 import { FlowSignals } from '@/features/board/FlowSignals'
 import { Kanban } from '@/features/board/Kanban'
 import { Overview } from '@/features/board/Overview'
+import { PluginsView } from '@/features/plugins/PluginsView'
 import { TeamView } from '@/features/board/TeamView'
 import { filterGroups, type BoardView } from '@/features/board/selectors'
 import { AssignmentsDialog } from '@/features/board/dialogs/AssignmentsDialog'
@@ -36,6 +37,7 @@ const NAV: BoardNavItem[] = [
   { id: 'pipeline', label: '任务流水线' },
   { id: 'team', label: '团队视角' },
   { id: 'archive', label: '归档索引' },
+  { id: 'plugins', label: '插件' },
 ]
 
 export function BoardPage() {
@@ -168,6 +170,8 @@ export function BoardPage() {
               }
             />
           ) : null}
+
+          {view === 'plugins' ? <PluginsView /> : null}
 
           {view === 'archive' ? (
             <ArchiveView

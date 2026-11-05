@@ -2,7 +2,7 @@ import { groupActiveTasks, type BoardTask } from './task-view'
 import { findView, taskMatchesView, taskTagNames } from '@/lib/execution-filter.js'
 import type { BoardFilters } from '@/hooks/useBoard'
 
-export type BoardView = 'pipeline' | 'team' | 'archive'
+export type BoardView = 'pipeline' | 'team' | 'archive' | 'plugins'
 
 export function activeTasks(tasks: BoardTask[]) {
   return tasks.filter((task) => !task.archived)

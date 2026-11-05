@@ -1,0 +1,44 @@
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import type { PluginLogEntry } from '@/api/plugins'
+
+type PluginLogsDialogProps = {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  title: string
+  loading: boolean
+  error: string
+  entries: PluginLogEntry[]
+}
+
+function formatEntry(entry: PluginLogEntry) {
+  const time = entry.at ? new Date(entry.at).toLocaleTimeString() : ''
+  const level = String(entry.level || 'info').toUpperCase().padEnd(5)
+  const fields =
+    entry.fields && Object.keys(entry.fields).length ? ` ${JSON.stringify(entry.fields)}` : ''
+  return `${time} ${level} ${entry.message || ''}${fields}`.trim()
+}
+
+export function PluginLogsDialog({ open, onOpenChange, title, loading, error, entries }: PluginLogsDialogProps) {
+  const body = loading
+    ? '加载中…'
+    : error
+      ? `读取日志失败：${error}`
+      : entries.length
+        ? entries.map(formatEntry).join('\n')
+        : '暂无日志'
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[760px]">
+        <DialogHeader>
+          <p className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground">PLUGIN LOGS</p>
+          <DialogTitle>插件日志</DialogTitle>
+          <DialogDescription>{title}</DialogDescription>
+        </DialogHeader>
+        <pre className="max-h-[52vh] overflow-auto rounded-lg bg-muted px-3 py-2.5 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">
+          {body}
+        </pre>
+      </DialogContent>
+    </Dialog>
+  )
+}
