@@ -110,6 +110,29 @@ SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目
 团队任务由服务端工作副本创建或修改，只有 Git push 成功后才进入待接受状态。Agent 只执行
 本地分支的 `fetch` 和 `ff-only` 同步，不会自动 stash、reset、checkout、rebase 或 push。
 
+## 插件
+
+插件运行在独立子进程里，通过 NDJSON / JSON-RPC 与宿主通信；宿主不把插件代码加载进主进程。
+仓库内置 `a2a-intake` 与 `acp-dispatch` 两个参考插件；业务插件建议放在本地，不随仓库分发。
+
+1. 复制 `data/plugins.example.json` 为 `data/plugins.json`（该文件已在 `.gitignore`）。
+2. 插件目录固定为 `plugins/<id>/`，必须有 `plugin.json`（`id`、`version`、`apiVersion`、`engines.board`）。
+3. 敏感值推荐放在 `data/plugins.secrets.json`（复制 `data/plugins.secrets.example.json`，并执行
+   `chmod 600`），配置里用 `secret:scope/key` 引用；也支持 `env:NAME`。
+4. 明文敏感值仍会加载，但启动时告警；`/api/plugins` 只回显 `***`。secrets 文件不提供写入 API，
+   手动编辑后重启生效；备份 `data/` 时注意其中包含密钥。
+
+| 插件 | 作用 |
+| --- | --- |
+| `a2a-intake` | 提供 Agent Card 与 JSON-RPC `message/send`，把外部 A2A 消息变成 Trellis 任务 |
+| `acp-dispatch` | 监听 `scan.completed`，把 `meta.agent` 匹配且 `in_progress` 的任务派给 ACP agent |
+
+管理接口：`GET /api/plugins`、`POST /api/plugins/<id>/start|stop`、`GET /api/plugins/<id>/logs|runs|audit`；
+前端入口在左侧导航「插件」。设置 `TRELLIS_PLUGINS_DISABLED=1` 可整体关闭。
+内置插件的功能测试与 fixture 放在 `plugins/<id>/test/`，宿主级协议测试仍在 `tests/`。
+
+插件默认没有沙箱：`acp-dispatch` 默认放行编辑与执行，只应在受信仓库、专用账号下启用。
+
 ## 当前实现范围
 
 已完成：
@@ -128,6 +151,7 @@ SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目
 - 从功能启用后开始的计划、人工阶段和扫描阶段可信事件
 - 双向阻断依赖、解除后可推进队列、DoR/DoD 缺口和个人软 WIP 提醒
 - 自建账号、四类项目权限、可撤销会话和设备凭证
+- 插件机制（子进程 JSON-RPC）、DB v5、`/api/plugins` 与前端插件页
 - 服务端权威 Git 工作副本、任务创建/委派推送、版本冲突保护和审计
 - 跨项目团队查询、单项目分组看板和个人保存视图
 - Windows 用户级同步 Agent、配对、项目绑定、`ff-only` 同步和登录自启

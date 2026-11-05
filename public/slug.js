@@ -1,4 +1,4 @@
-export const TASK_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const TASK_SLUG_PATTERN = /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/;
 
 export function normalizeTaskSlug(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";

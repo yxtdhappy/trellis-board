@@ -1,0 +1,37 @@
+{
+  "plugins": [
+    {
+      "id": "a2a-intake",
+      "module": "./plugins/a2a-intake/index.js",
+      "enabled": false,
+      "config": {
+        "token": "secret:a2a-intake/token",
+        "repositoryId": "<repository-id>",
+        "defaultAssignee": "<developer-id>",
+        "publicBaseUrl": "",
+        "protocolVersion": "0.3.0"
+      }
+    },
+    {
+      "id": "acp-dispatch",
+      "module": "./plugins/acp-dispatch/index.js",
+      "enabled": false,
+      "config": {
+        "agent": "opencode",
+        "command": "opencode",
+        "args": [
+          "acp"
+        ],
+        "repositoryId": "<repository-id>",
+        "permission": {
+          "default": "allow",
+          "byKind": {
+            "delete": "deny",
+            "fetch": "deny",
+            "switch_mode": "deny"
+          }
+        }
+      }
+    }
+  ]
+}

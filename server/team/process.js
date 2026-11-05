@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { pythonCommandCandidates } from "../python.js";
 
 const OUTPUT_LIMIT = 64 * 1024;
 const ALLOWED_ENV_KEYS = [
@@ -30,7 +31,7 @@ export function sanitizeProcessOutput(value) {
     .slice(0, OUTPUT_LIMIT);
 }
 
-function terminateTree(child) {
+export function terminateTree(child) {
   if (!child?.pid) return;
   if (process.platform === "win32") {
     const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
@@ -90,6 +91,12 @@ export function runProcess(command, args, {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      const candidates = command === "python" ? pythonCommandCandidates(env) : [];
+      const next = candidates[candidates.indexOf("python") + 1];
+      if (error.code === "ENOENT" && next) {
+        runProcess(next, args, { cwd, env, timeoutMs, allowFailure }).then(resolve, reject);
+        return;
+      }
       reject(error);
     });
     child.once("close", (code, signal) => {

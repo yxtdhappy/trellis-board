@@ -1,0 +1,9 @@
+{
+  "id": "echo",
+  "name": "echo fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "engines": { "board": ">=0.1.0" },
+  "permissions": ["tasks:read", "store", "events", "events:emit", "http:route", "http:root", "schedule"],
+  "http": { "rootPaths": ["/fixtures/echo"] }
+}

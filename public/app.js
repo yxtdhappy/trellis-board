@@ -1,6 +1,7 @@
 import { renderMarkdown } from "./markdown.js";
 import { formatArchiveTimestamp, sortArchivedTasks } from "./archive-sort.js";
 import { escapeHtml, setMessage } from "./dom.js";
+import { renderPlugins, stopPluginsPolling } from "./plugins.js";
 import { requestJson, redirectToLogin } from "./team-request.js";
 import {
   assignableProjectMembers,
@@ -3500,10 +3501,17 @@ function renderView() {
   const copy = {
     pipeline: ["PERSONAL / CURRENT WORK", "把每个任务放回流程里"],
     team: ["TEAM / CAPACITY", "每个人都在推进什么"],
-    archive: ["ARCHIVE / HISTORY", "归档后才离开当前队列"]
+    archive: ["ARCHIVE / HISTORY", "归档后才离开当前队列"],
+    plugins: ["PLUGINS / RUNTIME", "插件在做什么，一眼看清"]
   };
-  els.viewEyebrow.textContent = copy[state.view][0];
-  els.viewTitle.textContent = copy[state.view][1];
+  const current = copy[state.view] ?? copy.pipeline;
+  els.viewEyebrow.textContent = current[0];
+  els.viewTitle.textContent = current[1];
+  if (state.view === "plugins") {
+    void renderPlugins();
+  } else {
+    stopPluginsPolling();
+  }
 }
 
 function renderAll() {
