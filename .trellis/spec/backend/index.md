@@ -9,6 +9,8 @@
 | [架构与运行时](./architecture-and-runtime.md) | 模块职责、依赖方向、主线程与 Worker Thread |
 | [扫描与持久化](./scanning-and-persistence.md) | 任务证据、阶段推导、缓存、文件监听和刷新队列 |
 | [HTTP 与文件边界](./http-and-filesystem.md) | API、输入校验、白名单、原子写和静态文件 |
+| [插件运行时](./plugin-runtime.md) | 子进程协议、清单与版本、生命周期、存储与命名空间、任务写入 |
+| [插件测试](./plugin-testing.md) | 协议契约、插件功能、真实组合的分层测试与覆盖矩阵 |
 | [质量与验证](./quality-guidelines.md) | Node 内置测试、夹具、真实服务验收 |
 
 ## 基本约束
