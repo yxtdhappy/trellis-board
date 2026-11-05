@@ -1,0 +1,32 @@
+{
+  "id": "client-collaboration",
+  "name": "client-collaboration",
+  "title": "客户端桌面化与团队协作增强",
+  "description": "将 Windows Agent 升级为 Tauri 桌面客户端，建立携带完整任务内容的 SSE 通道，补齐服务端团队模板 workspace 初始化、团队隔离与管理员建号。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "kyf",
+  "assignee": "kyf",
+  "createdAt": "2026-11-05",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "11-05-desktop-client-package",
+    "11-05-client-server-push",
+    "11-05-workspace-bootstrap",
+    "11-05-team-isolation",
+    "11-05-user-registration"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

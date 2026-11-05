@@ -28,7 +28,9 @@ logs/
 # Local tooling and caches
 .playwright-mcp/
 .pi/
+.claude/
 .cache/
+.worktree/
 tmp/
 
 # Environment and secrets
