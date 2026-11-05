@@ -1,0 +1,11 @@
+id	title	old_surface	new_surface	depends_on	parity	acceptance	status
+S0	foundation-shell	无；新增构建与路由	frontend/、/next	-	none	Vite/Vue/TS 脚手架、router、Pinia、api/client、/next 托管；build+typecheck；旧 / 不受影响	planned
+S1	auth-login	public/login.html、public/login.js、app.js auth 部分	/login、/next	S0	AUTH-01..07	登录/登出/runtime 检测/401 跳转/改密；密码 6 位按 NEW-BEHAVIOR	planned
+S2	admin-users	public/admin.html、public/admin.js 用户页签	/admin 用户页签	S1	ADMIN-01..05	用户列表/创建/编辑/启停/重置/团队分配；依赖 11-05-user-registration	planned
+S3	admin-rest	public/admin.html 其余页签	/admin 其余页签	S2	ADMIN-06..09	项目/Agent/审计/secret/approval dialog	planned
+S4	board-read	public/index.html、app.js pipeline/archive/plugins 渲染	/、/archive、/plugins	S1	BOARD-01..10	侧栏/项目/搜索/筛选/任务卡/归档/插件只读	planned
+S5	task-detail	app.js task-dialog/artifact-dialog	同页面 dialog	S4	TASK-01..06	详情/产物/长文档截断/复制/焦点	planned
+S6	board-write	app.js 写操作与 dialog	同页面	S5	WRITE-01..09	创建/派发/阶段/依赖/执行计划/保存视图/WIP/Git operation	planned
+S7	team-view	app.js team 视图	/team	S6	TEAM-01..07	团队看板/待接受/分页/权限/操作轮询	planned
+S8	team-switch-sse	无；新功能	全局团队切换 + SSE	S7	NEW-01..08	多团队隔离、SSE 重连/去重/降级、新用户管理、密码 6 位	planned
+S9	cutover	/ 指向 public	/ 指向 frontend/dist；/legacy 保留	S8	ALL	全量 parity、standalone/team smoke、Tauri 验证、旧前端删除	planned

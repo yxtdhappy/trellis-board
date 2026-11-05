@@ -1,0 +1,13 @@
+id	area	file_line	source_construct	target_pattern	risk	decision	evidence	status
+INV-001	state	public/app.js:98	全局可变 state，442 处 state. 引用	Pinia session/team/board/ui store	跨页面隐式耦合，团队切换脏数据	按域拆 store；组件不直接改全局	`grep -o 'state\\.' public/app.js | wc -l` = 442	open
+INV-002	render	public/app.js:3517	手动 renderAll() 串联 9 个渲染函数	Vue 响应式 + 查询键失效	漏渲染或过度渲染	页面级 query/computed；不做全局 renderAll	renderAll 调用点见 app.js	open
+INV-003	dom	public/app.js	39 处 innerHTML、247 处 querySelector	组件模板 + props/emits	HTML 注入、DOM 耦合、焦点丢失	禁止业务 innerHTML；Markdown 走 markdown.js 安全路径	`grep -c innerHTML public/app.js` = 39；querySelector = 247	open
+INV-004	api	public/team-request.js:33	requestJson + ApiError + 401 redirect	typed api/client.ts	认证/错误/ETag 语义漂移	保留原语义；类型化响应；401 统一跳转	team-request.js 全文	open
+INV-005	team	app.js:3445	initializeTeam 一次性设置全局	team store + switchTeam 协议	切换团队后旧数据残留	7 步切换协议；缓存键含 teamId	PLAN.md §4.2	open
+INV-006	dialog	public/index.html	12 个原生 dialog + 手动 open/close	AppDialog 包装 + 组件状态	焦点/Esc/滚动锁定回归	统一 dialog 组件；保留原生语义	`grep -c '<dialog' public/index.html` = 12	open
+INV-007	tests	tests/team-web.test.js:40	读 public/app.js 源码并 assert.match	迁移到 Vitest/Playwright	假绿/重构误伤	源码字符串断言随旧前端删除；纯函数测试保留	tests/team-web.test.js 中 publicFile() 用法	open
+INV-008	css	public/styles.css、public/team.css	约 6000 行全局 CSS	沿用 + 新组件 scoped	样式冲突/迁移期双体系	先复用；不并行换 Tailwind/UnoCSS	`wc -l public/*.css`	open
+INV-009	behavior	public/app.js:3403	改密校验 12 字符	最少 6 字符	旧 UI 与新 PRD 冲突	按 NEW-BEHAVIOR 验收；不复制旧提示	app.js:3403-3404；11-05-user-registration PRD	open
+INV-010	sse	无	现为长轮询 25s	SSE + Last-Event-ID + 降级	重连/重复/游标过期	独立 events 层；团队切换重连	agent/index.js:25、server/team/agents.js	open
+INV-011	pagination	app.js teamCursors	数组游标 + 页码	store 管理 cursor 栈	前进/后退丢页或重复	保持游标语义；查询键含 cursor	state.teamCursors 相关代码	open
+INV-012	build	package.json	无构建、无前端依赖	Vite/Vue/TS 构建	部署流程变化、构建产物遗漏	构建时依赖；运行时仍 Node；dist 纳入部署	package.json	open
