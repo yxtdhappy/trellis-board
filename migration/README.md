@@ -57,6 +57,20 @@
 
 Claude Code 打开本 worktree 后，先读 `CLAUDE.md`，再按当前 gate 执行 `migration/prompts/` 中对应文件。
 
+## 关联 PRD（不在本 worktree 内）
+
+以下任务 PRD 仍在主工作区，当前是未提交状态，未复制进本分支；Claude 执行对应切片时按绝对路径读取：
+
+```text
+/opt/app/work/github/trellis-board/.trellis/tasks/11-05-user-registration/prd.md
+/opt/app/work/github/trellis-board/.trellis/tasks/11-05-team-isolation/prd.md
+/opt/app/work/github/trellis-board/.trellis/tasks/11-05-client-server-push/prd.md
+/opt/app/work/github/trellis-board/.trellis/tasks/11-05-workspace-bootstrap/prd.md
+/opt/app/work/github/trellis-board/.trellis/tasks/11-05-desktop-client-package/prd.md
+```
+
+不要把这些文件复制成第二份源；需要时直接读主工作区版本。
+
 ## 执行顺序（每一步都是人工 gate）
 
 1. **00 可行性**：只读调查，产出报告和 verdict；不改代码。
