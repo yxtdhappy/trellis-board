@@ -140,7 +140,7 @@ function schemaTableSql(databaseFile) {
   }
 }
 
-test("新库直接创建 schema v4、团队表和事件起点", () => {
+test("新库直接创建 schema v5、团队表、插件表和事件起点", () => {
   const workspace = makeWorkspace();
   let db;
   try {
@@ -161,6 +161,9 @@ test("新库直接创建 schema v4、团队表和事件起点", () => {
       "board_state",
       "git_operation",
       "login_attempt",
+      "plugin_audit",
+      "plugin_run",
+      "plugin_state",
       "project_member",
       "project_scan_cache",
       "repositories",
@@ -184,7 +187,7 @@ test("新库直接创建 schema v4、团队表和事件起点", () => {
       db.prepare("SELECT key, value FROM app_meta").all()
         .map((row) => [row.key, row.value])
     );
-    assert.equal(meta.schema_version, "4");
+    assert.equal(meta.schema_version, "5");
     assert.equal(meta.legacy_json_imported_v1, "1");
     assert.equal(Number.isNaN(Date.parse(meta.execution_events_started_at)), false);
     assert.deepEqual(
@@ -213,7 +216,7 @@ test("新库直接创建 schema v4、团队表和事件起点", () => {
   }
 });
 
-test("v1 数据库顺序升级到 v4，并创建一次性 v1 备份", () => {
+test("v1 数据库顺序升级到 v5，并创建一次性 v1 备份", () => {
   const workspace = makeWorkspace();
   createV1Database(workspace);
   let db;
@@ -221,7 +224,7 @@ test("v1 数据库顺序升级到 v4，并创建一次性 v1 备份", () => {
     db = openTestDatabase(workspace);
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      "4"
+      "5"
     );
     const tables = db.prepare(`
       SELECT name FROM sqlite_master
@@ -238,6 +241,9 @@ test("v1 数据库顺序升级到 v4，并创建一次性 v1 备份", () => {
       "board_state",
       "git_operation",
       "login_attempt",
+      "plugin_audit",
+      "plugin_run",
+      "plugin_state",
       "project_member",
       "project_scan_cache",
       "repositories",
@@ -312,7 +318,7 @@ test("v4 新库与 v1 升级库的扩展表结构一致", () => {
   }
 });
 
-test("两份 v3 数据库升级到 v4 均保留项目 ID 并可从时间戳备份恢复", () => {
+test("两份 v3 数据库升级到 v5 均保留项目 ID 并可从时间戳备份恢复", () => {
   for (let copy = 0; copy < 2; copy += 1) {
     const workspace = makeWorkspace();
     let db;
@@ -362,7 +368,7 @@ test("两份 v3 数据库升级到 v4 均保留项目 ID 并可从时间戳备�
       db = openTestDatabase(workspace);
       assert.equal(
         db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-        "4"
+        "5"
       );
       assert.equal(
         db.prepare("SELECT name FROM repositories WHERE id = ?").get(repositoryId).name,

@@ -1024,6 +1024,14 @@ function createRequestHandler({
         "首次登录或密码重置后必须先修改密码"
       );
     }
+    // v1 只支持 standalone：team 模式不加载插件，管理端点保持可探测但为空。
+    if (url.pathname === "/api/plugins" || url.pathname.startsWith("/api/plugins/")) {
+      if (request.method === "GET" && url.pathname === "/api/plugins") {
+        sendJson(response, 200, { disabled: true, plugins: [], mode: "team" });
+        return;
+      }
+      throw teamError(404, ERROR_CODES.NOT_FOUND, "team 模式不加载插件");
+    }
     if (await handleAdmin(request, response, url)) return;
     if (await handleProjects(request, response, url)) return;
     if (await handleTeam(request, response, url)) return;
@@ -1294,6 +1302,10 @@ export async function createTeamRuntime({
         started = true;
         requestHandler.setStartedAt(new Date().toISOString());
         startPolling();
+        logger.warn("team 模式不加载插件", {
+          reason: "v1 只支持 standalone；插件路由返回空列表",
+          url: config.publicOrigin
+        });
         logger.info("Trellis Team Board 已启动", {
           url: config.publicOrigin,
           bindHost: config.bindHost,

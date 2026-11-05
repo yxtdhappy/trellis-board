@@ -22,6 +22,13 @@ test("纯中文和纯数字标题不会生成伪语义标识", () => {
   assert.equal(slugifyTaskTitle("2026"), "");
 });
 
+test("大写任务编号也满足格式约束", () => {
+  assert.equal(TASK_SLUG_PATTERN.test("T100001"), true);
+  assert.equal(TASK_SLUG_PATTERN.test("R30001"), true);
+  assert.equal(TASK_SLUG_PATTERN.test("T100001-extra"), true);
+  assert.equal(TASK_SLUG_PATTERN.test("T100001 extra"), false);
+});
+
 test("自动标识满足格式约束并会安全截断", () => {
   const slug = slugifyTaskTitle(`Fix ${"VeryLongWord".repeat(20)} issue`, 40);
   assert.match(slug, TASK_SLUG_PATTERN);

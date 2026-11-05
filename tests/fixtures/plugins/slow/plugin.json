@@ -1,0 +1,8 @@
+{
+  "id": "slow",
+  "name": "slow fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "engines": { "board": ">=0.1.0" },
+  "permissions": ["http:route"]
+}

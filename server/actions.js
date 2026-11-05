@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { pythonCommandCandidates } from "./python.js";
 import { getRepositories } from "./repositories.js";
 import {
-  normalizeTaskSlug,
   slugifyTaskTitle,
   TASK_SLUG_PATTERN
 } from "../shared/slug.js";
@@ -27,25 +27,41 @@ function runTaskPython(repoPath, args) {
   const script = path.join(repoPath, ".trellis", "scripts", "task.py");
   if (!fs.existsSync(script)) throw new Error("仓库没有 .trellis/scripts/task.py");
   return new Promise((resolve, reject) => {
-    const child = spawn("python", [script, ...args], {
-      cwd: repoPath,
-      windowsHide: true,
-      shell: false,
-      env: { ...process.env, PYTHONUTF8: "1" }
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(stderr.trim() || stdout.trim() || `task.py 退出码 ${code}`));
-    });
+    const candidates = pythonCommandCandidates(process.env);
+    let index = 0;
+    const attempt = () => {
+      const command = candidates[index];
+      const child = spawn(command, [script, ...args], {
+        cwd: repoPath,
+        windowsHide: true,
+        shell: false,
+        env: { ...process.env, PYTHONUTF8: "1" }
+      });
+      let stdout = "";
+      let stderr = "";
+      let failed = false;
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", (error) => {
+        failed = true;
+        if (error.code === "ENOENT" && index + 1 < candidates.length) {
+          index += 1;
+          attempt();
+          return;
+        }
+        reject(error);
+      });
+      child.on("close", (code) => {
+        if (failed) return;
+        if (code === 0) resolve({ stdout, stderr });
+        else reject(new Error(stderr.trim() || stdout.trim() || `task.py 退出码 ${code}`));
+      });
+    };
+    attempt();
   });
 }
 
@@ -59,12 +75,12 @@ export async function createTask(input, { listRepositories = getRepositories } =
   const requestedSlug = input.slug == null || input.slug === ""
     ? ""
     : cleanText(input.slug, "任务标识", 100);
-  const slug = normalizeTaskSlug(requestedSlug) || slugifyTaskTitle(title);
+  const slug = requestedSlug || slugifyTaskTitle(title);
   if (!slug) {
     throw new Error("当前标题没有可用的英文标识，请填写任务标识，例如 board-task-export");
   }
   if (!TASK_SLUG_PATTERN.test(slug)) {
-    throw new Error("任务标识只能包含小写英文字母、数字和单个中划线，例如 board-task-export");
+    throw new Error("任务标识只能包含英文字母、数字和单个中划线，例如 T100001 或 board-task-export");
   }
   const repo = listRepositories().find((candidate) => candidate.id === repositoryId);
   if (!repo) throw new Error(`仓库不在白名单中: ${repositoryId}`);
@@ -112,7 +128,12 @@ export async function assignTask(input, { listRepositories = getRepositories } =
   }
 
   const taskJsonPath = path.join(fullTaskPath, "task.json");
-  const task = JSON.parse(fs.readFileSync(taskJsonPath, "utf8"));
+  let task;
+  try {
+    task = JSON.parse(fs.readFileSync(taskJsonPath, "utf8"));
+  } catch (error) {
+    throw new Error(`无法读取 task.json: ${error.message}`);
+  }
   task.assignee = assignee;
   const temporaryPath = `${taskJsonPath}.${process.pid}.tmp`;
   fs.writeFileSync(temporaryPath, `${JSON.stringify(task, null, 2)}\n`, "utf8");

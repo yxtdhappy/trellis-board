@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { parseTeamConfig } from "./config.js";
+import { parseTeamConfig, dataDir } from "./config.js";
 import { getDefaultDatabase } from "./database.js";
 import { createTeamRuntime } from "./team/http.js";
 import {
@@ -22,6 +22,8 @@ import {
   projectTaskDetailExecution
 } from "./execution-projection.js";
 import { resolveTaskLocation } from "./task-location.js";
+import { createPluginRuntime } from "./plugins/runtime.js";
+import { publishRepositoryChange } from "./plugins/repository-events.js";
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const appDir = path.resolve(serverDir, "..");
@@ -42,6 +44,7 @@ let watchRuntime = null;
 let watchDebounceTimer = null;
 let folderPickerActive = false;
 let scanWorkerRuntime = null;
+let pluginRuntime = null;
 let nextScanRequestId = 0;
 const pendingScanRequests = new Map();
 const WATCH_DEBOUNCE_MS = Math.max(
@@ -202,8 +205,7 @@ function refreshBoardFromFiles(reason = "manual", event = null, options = {}) {
         refreshQueued: false,
         refreshQueuedReason: null,
         lastRefreshError: null
-      });
-      const previousBoard = boardCache || readScanCache();
+      });      const previousBoard = boardCache || readScanCache();
       const result = await runScanWorker(activeOptions);
       board = result.board;
       const scannedAt = new Date().toISOString();
@@ -228,6 +230,7 @@ function refreshBoardFromFiles(reason = "manual", event = null, options = {}) {
         lastWatchEvent: latestWatchEvent(activeEvent) || readBoardState().lastWatchEvent || null,
         lastScanStats: result.stats
       });
+      pluginRuntime?.publishScan(previousBoard, board, result.stats, activeReason);
 
       if (queuedRefresh) {
         activeReason = queuedRefresh.reason;
@@ -400,6 +403,7 @@ async function refreshAfterRepositoryChange(action, repositories) {
     repositoriesUpdatedIds: changed.map((repository) => repository.id)
   });
   restartFileWatcher();
+  pluginRuntime?.setRepositories?.(getRepositories());
 
   // 如果扫描在项目白名单变更前启动，先等旧快照结束，再按新白名单完整扫描一次。
   if (inflightScan) await inflightScan.catch(() => {});
@@ -511,7 +515,56 @@ function resolveCurrentTask(payload) {
   });
 }
 
+async function startPluginRuntime() {
+  if (!database) return;
+  let hostVersion = "0.0.0";
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(appDir, "package.json"), "utf8"));
+    hostVersion = String(manifest.version || hostVersion);
+  } catch {
+    // package.json 不可读时以 0.0.0 启动；版本校验会因此拒绝 engines 有下界的插件。
+  }
+  pluginRuntime = createPluginRuntime({
+    db: database,
+    appDir,
+    dataDir,
+    hostVersion,
+    repositories: getRepositories(),
+    boardProvider: () => boardCache || readScanCache(),
+    logger: console
+  });
+  try {
+    await pluginRuntime.load();
+    const started = await pluginRuntime.start();
+    if (!started.disabled) {
+      console.log(`Trellis 插件: ${started.plugins.length} 个已加载`);
+    }
+  } catch (error) {
+    console.error("加载插件失败，核心功能继续运行", error);
+  }
+}
+
+function serverContext(request, response, url) {
+  return { request, response, url, sendJson };
+}
+
+async function handlePluginRequest(request, response, url) {
+  if (!pluginRuntime) return false;
+  try {
+    return await pluginRuntime.handleHttp(serverContext(request, response, url));
+  } catch (error) {
+    console.error("插件路由处理失败", error);
+    sendJson(response, 500, {
+      error: error instanceof Error ? error.message : "插件请求失败"
+    });
+    return true;
+  }
+}
+
 async function handleApi(request, response, url) {
+  if (url.pathname.startsWith("/api/plugins") && await handlePluginRequest(request, response, url)) {
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/api/board") {
     const board = await getBoardWithBackgroundRefresh(false);
     sendJson(response, 200, {
@@ -570,6 +623,7 @@ async function handleApi(request, response, url) {
     const payload = await readJsonBody(request);
     const repositories = repositoryStore.addMany(repositoryInputs(payload));
     const board = await refreshAfterRepositoryChange("add", repositories);
+    publishRepositoryChange(pluginRuntime, "add", repositories);
     const projects = repositories.map((repository) =>
       board.projects.find((candidate) => candidate.id === repository.id) || repository
     );
@@ -586,6 +640,7 @@ async function handleApi(request, response, url) {
     const payload = await readJsonBody(request);
     const repository = repositoryStore.remove(payload);
     await refreshAfterRepositoryChange("remove", [repository]);
+    publishRepositoryChange(pluginRuntime, "remove", [repository]);
     sendJson(response, 200, {
       message: "项目已从看板移除，源文件未删除",
       repository
@@ -732,6 +787,12 @@ async function handleApi(request, response, url) {
     const payload = await readJsonBody(request);
     const assigned = await assignTask(payload);
     boardCache = null;
+    pluginRuntime?.publish("task.assigned", {
+      taskKey: `${payload.repositoryId}::${payload.taskDir}`,
+      projectId: payload.repositoryId,
+      assignee: assigned.assignee,
+      occurredAt: new Date().toISOString()
+    });
     sendJson(response, 200, { message: "任务负责人已更新", ...assigned });
     return;
   }
@@ -752,13 +813,18 @@ async function handleApi(request, response, url) {
     await refreshBoardFromFiles("manual-stage", null, {
       suppressStageObservation: true
     });
+    pluginRuntime?.publish("task.stage.changed", {
+      taskKey: resolved.task.taskKey,
+      stage: stage.stage,
+      occurredAt: stage.updatedAt
+    });
     sendJson(response, 200, { message: "流程检查点已记录", stage });
     return;
   }
   sendJson(response, 404, { error: "接口不存在" });
 }
 
-function serveStatic(request, response, url) {
+function serveStatic(response, url) {
   const requested = url.pathname === "/" ? "/index.html" : url.pathname;
   const filePath = path.resolve(publicDir, `.${requested}`);
   if (!filePath.startsWith(publicDir)) {
@@ -790,14 +856,16 @@ const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
     if (url.pathname.startsWith("/api/")) await handleApi(request, response, url);
-    else serveStatic(request, response, url);
+    else if (!(await handlePluginRequest(request, response, url))) {
+      serveStatic(response, url);
+    }
   } catch (error) {
     console.error(error);
     sendJson(response, 400, { error: error instanceof Error ? error.message : "执行失败" });
   }
 });
 
-function listenStandalone() {
+function listenStandalone(bindHost = "127.0.0.1") {
   return new Promise((resolve, reject) => {
     const onError = (error) => {
       server.off("listening", onListening);
@@ -809,16 +877,17 @@ function listenStandalone() {
     };
     server.once("error", onError);
     server.once("listening", onListening);
-    server.listen(port, "127.0.0.1");
+    server.listen(port, bindHost);
   });
 }
 
 export async function startStandaloneServer({
-  standalonePort = Number(process.env.PORT || 4317)
+  standalonePort = Number(process.env.PORT || 4317),
+  bindHost = String(process.env.TRELLIS_BOARD_BIND_HOST || "127.0.0.1").trim() || "127.0.0.1"
 } = {}) {
   initializeStandaloneState(standalonePort);
   try {
-    await listenStandalone();
+    await listenStandalone(bindHost);
     writeBoardState({
       serverStartedAt: new Date().toISOString(),
       refreshStartedAt: null,
@@ -827,10 +896,17 @@ export async function startStandaloneServer({
       executionWipLimit: persistence.readExecutionWipLimit()
     });
     startFileWatcher();
+    await startPluginRuntime();
     refreshBoardFromFiles("startup").catch((error) => {
       console.error("启动后的后台扫描失败", error);
     });
-    console.log(`Trellis Board: http://127.0.0.1:${port}`);
+    const loopbackHost = bindHost === "127.0.0.1" || bindHost === "localhost" || bindHost === "::1";
+    if (!loopbackHost) {
+      console.warn(
+        `Trellis Board 监听 ${bindHost}，standalone 模式没有账号鉴权，请只在可信网络内使用`
+      );
+    }
+    console.log(`Trellis Board: http://${loopbackHost ? "127.0.0.1" : bindHost}:${port}`);
     return {
       mode: "standalone",
       server,
@@ -844,6 +920,8 @@ export async function startStandaloneServer({
 }
 
 export async function stopStandaloneServer() {
+  await pluginRuntime?.stop();
+  pluginRuntime = null;
   watchRuntime?.close();
   watchRuntime = null;
   if (watchDebounceTimer) clearTimeout(watchDebounceTimer);
@@ -870,7 +948,7 @@ export async function startApplication(config = parseTeamConfig()) {
     const runtime = await createTeamRuntime({ config });
     return runtime.start();
   }
-  return startStandaloneServer({ standalonePort: config.port });
+  return startStandaloneServer({ standalonePort: config.port, bindHost: config.bindHost });
 }
 
 let activeRuntime = null;

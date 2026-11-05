@@ -70,7 +70,7 @@ export function parseTeamConfig(env = process.env) {
     return {
       mode,
       port: integerSetting(env, "PORT", 4317, 1, 65535),
-      bindHost: "127.0.0.1"
+      bindHost: String(env.TRELLIS_BOARD_BIND_HOST || "127.0.0.1").trim() || "127.0.0.1"
     };
   }
 
