@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/11-04-plugin-architecture/prd.md", "reason": "唯一契约：协议、权限、生命周期、DB v5、配置、两个内置参考插件、测试策略"}
+{"file": ".trellis/tasks/11-04-plugin-architecture/implement.md", "reason": "执行顺序、验证命令与回滚点"}
+{"file": ".trellis/tasks/11-04-plugin-architecture/research/acp-a2a-protocols.md", "reason": "ACP client 方法链、ToolKind、permission option 与取消语义"}
+{"file": ".trellis/tasks/11-04-plugin-architecture/research/dsh-plugin-mechanism.md", "reason": "上游插件模型参考：apply/ctx/effect/版本与配置分层"}
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "模块职责、依赖方向、启动顺序与反模式"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "路由、JSON 协议、写操作边界与路径安全"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "零依赖、Node 测试风格、迁移与审查清单"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "插件页渲染与状态约定"}
