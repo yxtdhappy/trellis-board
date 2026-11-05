@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { withTransaction } from "../database.js";
-import { slugifyTaskTitle, TASK_SLUG_PATTERN } from "../../public/slug.js";
+import { slugifyTaskTitle, TASK_SLUG_PATTERN } from "../../shared/slug.js";
 import { resolveTaskLocation } from "../task-location.js";
 import { setPendingAssignmentInTransaction, readAssignment } from "./assignments.js";
 import { appendAuditEvent } from "./audit.js";

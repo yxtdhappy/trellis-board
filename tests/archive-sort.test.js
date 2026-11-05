@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   formatArchiveTimestamp,
   sortArchivedTasks
-} from "../public/archive-sort.js";
+} from "../web/src/lib/archive-sort.js";
 
 test("归档任务按真实归档时间倒序，完成日期不覆盖精确时间", () => {
   const tasks = [

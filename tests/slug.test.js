@@ -4,7 +4,7 @@ import {
   normalizeTaskSlug,
   slugifyTaskTitle,
   TASK_SLUG_PATTERN
-} from "../public/slug.js";
+} from "../shared/slug.js";
 
 test("英文和产品名可以生成稳定的语义标识建议", () => {
   assert.equal(

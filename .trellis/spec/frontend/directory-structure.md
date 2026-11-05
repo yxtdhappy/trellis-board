@@ -1,43 +1,36 @@
 # 目录与模块
 
-## 文件职责
+## 源码结构
 
 | 路径 | 职责 |
 | --- | --- |
-| [public/index.html](../../../public/index.html) | 静态页面结构、原生 `<dialog>`、表单、`aria-*`、模块入口 |
-| [public/app.js](../../../public/app.js) | 页面集成层：全局状态、API、渲染、事件、筛选、轮询 |
-| [public/markdown.js](../../../public/markdown.js) | 精简 Markdown 渲染、HTML 转义、安全链接过滤 |
-| [public/slug.js](../../../public/slug.js) | 任务标识生成、规范化与格式正则 |
-| [public/archive-sort.js](../../../public/archive-sort.js) | 归档时间格式和稳定排序 |
-| [public/styles.css](../../../public/styles.css) | 设计 token、布局、组件外观、响应式和减少动态效果 |
-| [tests](../../../tests) | Node 内置测试；浏览器纯模块也在这里做单元验证 |
+| `web/index.html` · `admin.html` · `login.html` | Vite 多页入口，含首屏主题探测脚本 |
+| `web/src/main-*.tsx` | 每个入口的 `createRoot` 挂载与 Provider |
+| `web/src/app/` | `AppProviders`（主题 + Tooltip + Toaster）、`theme.tsx` |
+| `web/src/pages/` | 页面级组件：`board/`、`admin/`、`login/` |
+| `web/src/features/` | 按领域拆分的业务组件与弹层（`board/`、`admin/`） |
+| `web/src/api/` | `request.ts`（fetch 封装、`ApiError`）、`board.ts`、`admin.ts` |
+| `web/src/hooks/` | `useBoard`、`useAdminConsole`、`useAdminProjects` |
+| `web/src/components/ui/` | shadcn 生成的原语，不手工改结构 |
+| `web/src/components/layout/` | `TopBar`、`ProjectRail` |
+| `web/src/lib/` | 浏览器/Node 共用的纯逻辑模块（`.js`）与其 `.d.ts` |
+| `shared/` | 前后端共用纯模块（当前仅 `slug.js`） |
+| `public/` | **构建产物**，由 `npm run build` 生成，不手改 |
 
 ## 模块边界
 
-[public/app.js](../../../public/app.js) 是集成根，可以依赖其他 `public/*.js`。纯函数模块不能反向依赖 `app.js`，也不应直接查询页面 DOM。
-
-`public/slug.js` 同时被浏览器和 [server/actions.js](../../../server/actions.js) 导入。它必须保持无 Node 专属依赖、无 DOM 依赖，只做纯字符串处理。新增跨端共享模块前先确认它能在 Node 和浏览器两种运行时直接加载。
-
-Markdown 和归档排序已经有独立模块与测试。不要在 `app.js` 再复制正则、比较器或 HTML 转义表。
+- `features/*` 依赖 `hooks/*`、`api/*`、`lib/*`、`components/ui/*`；页面只做组合，不写数据请求。
+- `hooks/*` 是唯一的数据源；组件不直接 `fetch`。
+- `web/src/lib/*.js` 与 `shared/slug.js` 必须保持无 DOM 依赖、无 Node 内置依赖，Node 测试可直接 import。
+- 跨端增加的纯模块放 `shared/`，并在 `web/vite.config.ts` 的 `@shared` 别名与 `tsconfig.app.json` 的 `paths` 同步登记。
+- `server/` 通过 `../shared/slug.js` 复用 slug 逻辑；不要让它再依赖 `public/`（构建会清空该目录）。
 
 ## 命名
 
-- 文件和目录使用小写 kebab-case，例如 `archive-sort.js`。
-- 纯函数使用动词或领域名，例如 `normalizeTaskSlug()`、`sortArchivedTasks()`。
-- 页面渲染函数使用 `renderX()`，事件绑定使用 `bindX()`，取数或加载使用 `loadX()`。
-- DOM 引用集中放在 `els`；只有动态生成的局部节点在绑定函数里查询。
-- CSS class 使用现有语义名和 `is-*` 状态名，例如 `is-active`、`is-live`、`is-risk`。
+- 组件文件 `PascalCase.tsx`；hook `useXxx.ts`；纯函数模块 kebab-case。
+- 数据结构类型与组件同文件导出，跨文件复用放 `features/<domain>/task-view.ts` 这类领域模块。
+- 样式一律使用 Tailwind token 类（`bg-card`、`text-muted-foreground`、`border-border`），不写任意色值。
 
-## 新增模块的落点
+## 构建产物
 
-- 浏览器和 Node 都需要、且完全无环境依赖：放 `public/`，并从明确命名的小模块导出。
-- 只在浏览器使用且涉及 DOM：优先留在 `app.js` 的渲染/绑定边界；逻辑超过单页职责时再拆独立模块。
-- 只计算任务阶段、文件证据或缓存：放 `server/`，不要塞进前端。
-- 只用于测试夹具：放对应 `tests/*.test.js`，不要为测试把临时逻辑加入生产模块。
-
-## 反模式
-
-- 引入 `node:fs`、`node:path` 到 `public/`。
-- 为一个工具函数新建 `shared/`、`utils/` 多层目录，却没有真实第二消费者。
-- 在 `index.html` 写大段业务数据或模板，绕过现有渲染函数。
-- 在多个模块各写一份 slug 正则或 Markdown 链接白名单。
+`web/vite.config.ts` 设 `build.outDir = ../public`、`emptyOutDir = true`，入口为三个 HTML。产物包含 `public/{index,admin,login}.html` 与 `public/assets/*`。服务端 `serveStatic()` 不需要任何改动。

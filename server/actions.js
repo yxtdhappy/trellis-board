@@ -6,7 +6,7 @@ import {
   normalizeTaskSlug,
   slugifyTaskTitle,
   TASK_SLUG_PATTERN
-} from "../public/slug.js";
+} from "../shared/slug.js";
 
 const ALLOWED_PRIORITIES = new Set(["P0", "P1", "P2", "P3"]);
 

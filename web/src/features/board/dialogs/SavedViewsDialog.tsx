@@ -1,0 +1,188 @@
+import { useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { FILTER_STAGES } from '@/lib/execution-filter.js'
+import { toast } from 'sonner'
+
+const PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const
+const BLOCKED_OPTIONS = [
+  { id: 'any', label: '不限阻断状态' },
+  { id: 'blocked', label: '只看被阻断' },
+  { id: 'unblocked', label: '只看未阻断' },
+] as const
+
+type SavedViewsDialogProps = {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSave: (name: string, filter: Record<string, unknown>) => Promise<string>
+}
+
+export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialogProps) {
+  const [name, setName] = useState('')
+  const [priorities, setPriorities] = useState<string[]>([])
+  const [stages, setStages] = useState<string[]>([])
+  const [tags, setTags] = useState('')
+  const [dueWithinDays, setDueWithinDays] = useState('')
+  const [staleDays, setStaleDays] = useState('')
+  const [blocked, setBlocked] = useState<(typeof BLOCKED_OPTIONS)[number]['id']>('any')
+  const [saving, setSaving] = useState(false)
+
+  function reset() {
+    setName('')
+    setPriorities([])
+    setStages([])
+    setTags('')
+    setDueWithinDays('')
+    setStaleDays('')
+    setBlocked('any')
+  }
+
+  function toggle(list: string[], value: string) {
+    return list.includes(value) ? list.filter((item) => item !== value) : [...list, value]
+  }
+
+  async function submit() {
+    const filter: Record<string, unknown> = {}
+    if (priorities.length) filter.priorities = priorities
+    if (stages.length) filter.stages = stages
+    const tagList = tags
+      .split(/[,，\s]+/)
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+    if (tagList.length) filter.tags = tagList
+    if (dueWithinDays) filter.dueWithinDays = Number(dueWithinDays)
+    if (staleDays) filter.staleDays = Number(staleDays)
+    if (blocked !== 'any') filter.blocked = blocked
+
+    if (!name.trim()) {
+      toast.error('视图名称不能为空')
+      return
+    }
+    if (!Object.keys(filter).length) {
+      toast.error('至少勾选或填写一个筛选条件')
+      return
+    }
+    setSaving(true)
+    try {
+      await onSave(name.trim(), filter)
+      toast.success('组合视图已保存')
+      reset()
+      onOpenChange(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[88dvh] overflow-y-auto sm:max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle className="text-base">保存组合视图</DialogTitle>
+          <DialogDescription>把当前勾选的筛选条件保存成一条可复用的执行视图。</DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <Label className="text-[10px]">视图名称</Label>
+            <Input className="h-8 text-xs" value={name} onChange={(event) => setName(event.target.value)} />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <Label className="text-[10px]">优先级</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {PRIORITIES.map((priority) => (
+                <button
+                  key={priority}
+                  type="button"
+                  onClick={() => setPriorities((current) => toggle(current, priority))}
+                  className={
+                    priorities.includes(priority)
+                      ? 'rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground'
+                      : 'rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground'
+                  }
+                >
+                  {priority}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <Label className="text-[10px]">阶段</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {FILTER_STAGES.map((stage) => (
+                <button
+                  key={stage.id}
+                  type="button"
+                  onClick={() => setStages((current) => toggle(current, stage.id))}
+                  className={
+                    stages.includes(stage.id)
+                      ? 'rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground'
+                      : 'rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground'
+                  }
+                >
+                  {stage.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="flex flex-col gap-1">
+              <Label className="text-[10px]">标签（逗号分隔）</Label>
+              <Input className="h-8 text-xs" value={tags} onChange={(event) => setTags(event.target.value)} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-[10px]">阻断状态</Label>
+              <select
+                aria-label="阻断状态"
+                className="h-8 rounded-md border border-input bg-transparent px-2 text-xs"
+                value={blocked}
+                onChange={(event) => setBlocked(event.target.value as (typeof BLOCKED_OPTIONS)[number]['id'])}
+              >
+                {BLOCKED_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-[10px]">截止在 N 天内</Label>
+              <Input
+                className="h-8 text-xs"
+                type="number"
+                min={0}
+                value={dueWithinDays}
+                onChange={(event) => setDueWithinDays(event.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-[10px]">超过 N 天未动</Label>
+              <Input
+                className="h-8 text-xs"
+                type="number"
+                min={0}
+                value={staleDays}
+                onChange={(event) => setStaleDays(event.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" size="sm" className="h-8 text-[11px]" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button size="sm" className="h-8 text-[11px]" disabled={saving} onClick={() => void submit()}>
+            {saving ? '正在保存…' : '保存组合视图'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}

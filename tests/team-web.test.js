@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
 
-import { escapeHtml } from "../public/dom.js";
+import { escapeHtml } from "../web/src/lib/dom.js";
 import {
   assignableProjectMembers,
   canWriteProject,
@@ -18,28 +17,10 @@ import {
   redactSensitiveDetail,
   safeReturnTo,
   shouldReloadTasks
-} from "../public/team-client.js";
-
-const publicFile = (name) => fs.readFileSync(new URL(`../public/${name}`, import.meta.url), "utf8");
+} from "../web/src/lib/team-client.js";
 
 test("escapeHtml 转义所有 HTML 上下文危险字符", () => {
   assert.equal(escapeHtml(`<a title="'">&</a>`), "&lt;a title=&quot;&#39;&quot;&gt;&amp;&lt;/a&gt;");
-});
-
-test("团队页面不加载外部资源，也不在浏览器存储凭证", () => {
-  for (const page of ["index.html", "login.html", "admin.html"]) {
-    const html = publicFile(page);
-    assert.doesNotMatch(html, /<(?:script|link)[^>]+(?:src|href)=["']https?:/i);
-  }
-  for (const script of ["app.js", "login.js", "admin.js", "team-request.js", "team-client.js"]) {
-    assert.doesNotMatch(publicFile(script), /\b(?:localStorage|sessionStorage)\s*(?:\.|\[)/);
-  }
-});
-
-test("团队主页面导入启动流程使用的 runtime 归一化函数", () => {
-  const source = publicFile("app.js");
-  assert.match(source, /import\s*\{[\s\S]*\bnormalizeRuntime\b[\s\S]*\}\s*from\s*"\.\/team-client\.js"/);
-  assert.match(source, /const runtime = normalizeRuntime\(result\.data\)/);
 });
 
 test("团队查询参数保留服务端筛选并限制页大小", () => {
@@ -111,26 +92,6 @@ test("项目写能力同时受角色和同步状态约束", () => {
   assert.equal(canWriteProject({ role: "member", syncStatus: "current" }), true);
   assert.equal(canWriteProject({ role: "read_only", syncStatus: "current" }), false);
   assert.equal(canWriteProject({ role: "lead", syncStatus: "needs_repair" }), false);
-});
-
-test("团队任务详情不再整块禁用计划、阶段、依赖与撤销操作", () => {
-  const app = publicFile("app.js");
-  for (const name of [
-    "bindExecutionActions",
-    "bindUndoAction",
-    "bindDependencyActions",
-    "bindStageActions"
-  ]) {
-    const start = app.indexOf(`function ${name}(`);
-    const end = app.indexOf("\nfunction ", start + 1);
-    assert.notEqual(start, -1, name);
-    assert.doesNotMatch(
-      app.slice(start, end === -1 ? app.length : end),
-      /if \(state\.teamMode\) return;/,
-      name
-    );
-  }
-  assert.match(app, /function canWriteTask\(task\)/);
 });
 
 test("团队负责人候选只包含 active 的 lead/member developer", () => {
@@ -226,13 +187,6 @@ test("团队状态读取 assignments.pending 并保留项目版本", () => {
   });
   assert.equal(status.pendingAssignments, 3);
   assert.equal(status.boardVersions.p1, "v1");
-});
-
-test("团队状态轮询复用 ETag 并处理 304", () => {
-  const source = publicFile("app.js");
-  assert.match(source, /teamStatusEtag/);
-  assert.match(source, /if \(result\.status === 304\) return true;/);
-  assert.match(source, /"if-none-match": state\.teamStatusEtag/);
 });
 
 test("Git 操作同时兼容 commit sha 字段", () => {

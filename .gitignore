@@ -4,4 +4,5 @@ data/task-metadata.json
 data/repos.json
 data/*.tmp
 node_modules/
+.omp/
 *.log

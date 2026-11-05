@@ -7,7 +7,7 @@ import {
   normalizeTagsInput,
   taskMatchesFilter,
   taskMatchesView
-} from "../public/execution-filter.js";
+} from "../web/src/lib/execution-filter.js";
 
 const NOW = new Date("2026-10-30T09:00:00.000Z");
 

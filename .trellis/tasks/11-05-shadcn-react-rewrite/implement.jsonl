@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端入口、契约与本次要改写的规范条款"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "原目录职责与浏览器/Node 共用模块约定"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "渲染、全局 state、轮询与 DOM 安全契约需逐条保持"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "测试、可访问性、响应式验收标准"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "静态托管与 /api 边界，避免改动服务端契约"}

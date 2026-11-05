@@ -1,67 +1,43 @@
 # 前端质量规范
 
-## 运行与测试
+## 运行与检查
 
-- 运行时要求 Node `>=24`；当前开发机验证版本为 Node `24.21.0`。
-- 启动：`node server/index.js`、`npm start` 或 `npm run board`。
-- 自动测试：`npm test`，执行 `node --test tests/*.test.js`。
-- 项目没有 lint、TypeScript 类型检查或前端构建。不要声称这些检查已通过。
+- 运行时要求 Node `>=24`。
+- 类型检查与构建：`npm --prefix web run build`（`tsc -b && vite build`，产物写入 `public/`）。
+- 单元测试：`npm test`（`node --test tests/*.test.js`）。
+- 本地联调：`npm run web:dev`（Vite 代理由 `/api` → `127.0.0.1:4317`，先 `npm start` 起服务端）。
+- 交付前必须实际打开 `/`、`/admin.html`、`/login.html` 验收；构建成功不等于功能正确。
 
-现有自动测试覆盖 Markdown、slug、归档排序、组合筛选、标签输入和阻断条件等纯模块；没有 DOM 自动化测试套件。改变布局、事件、对话框、轮询或真实 API 交互时，除单元测试外还必须用浏览器做真实页面验收。
+## TypeScript
 
-## JavaScript
+- 禁止 `any` 与 `as any`；外部数据先按 `unknown` 接收，再用类型守卫或窄接口收敛。
+- 只在无法运行时校验的位置使用 `as`，并在同一行标注原因。
+- 组件 props 与 hook 返回值都要有名字的类型；不要用 `ReturnType<typeof fn>` 发布契约。
+- `verbatimModuleSyntax` 打开：类型导入使用 `import type`。
 
-- 使用现有双引号、分号、两空格缩进和 ESM `import/export`。
-- 优先小函数和明确数据流，保持与 `renderX/bindX` 一致的页面结构。
-- 对服务端输入做必要的形状/空值兜底，但不要为不可能发生的状态堆叠多层错误处理。
-- 只在本次改动造成时清理未使用变量或导入。
+## React
 
-## DOM 与可访问性
+- 状态放在最靠近使用的组件；跨组件共享才提升到 hook。
+- 副作用只在 `useEffect` 中发生，并在清理函数里释放定时器、监听器和 AbortController。
+- 列表 `key` 使用业务键（`taskKey`、`userId`），不用数组下标。
+- 不为了复用而抽抽象；出现第三处相同逻辑再提取。
 
-- 可点击控件使用 `<button type="button">`，表单提交按钮使用明确 `type="submit"`。
-- 页面已有语义结构：`aside`、`nav`、`main`、`section`、`dialog`；新增区域沿用并建立标题关联。
-- 纯装饰图标加 `aria-hidden="true"`；无可见文字的图标按钮必须有 `aria-label`。
-- 动态扫描/选择区域按现有模式使用 `aria-live="polite"`。
-- 所有交互控件必须保留键盘可达性，并继承统一 `:focus-visible` 样式。
-- 错误不能只靠颜色表达；保留文字说明。
+## 可访问性
+
+- 交互元素用 `<button type="button">` 或 shadcn `Button`；表单提交按钮 `type="submit"`。
+- 图标按钮必须有 `aria-label` 或 `title`；装饰图标 `aria-hidden="true"`。
+- 弹层依赖 `role="dialog"`、Esc 关闭与焦点回收（由 `components/ui/dialog` 保证）。
+- 错误提示用文本表达，不只靠颜色。
 
 ## 样式
 
-- 设计值优先使用 [public/styles.css](../../../public/styles.css) 中 `:root` 的 CSS 变量。
-- 主布局是 `.app-shell` 两列 grid；`1180px` 和 `860px` 是两个现有断点。
-- 新增动画必须兼容 `prefers-reduced-motion: reduce`。
-- 不使用 CSS-in-JS、Tailwind、组件库或第二份全局重置。
-- 当前字体通过 CSS 顶部 Google Fonts `@import` 加载；新增离线/企业网络约束时要单独评估，不要默默改变字体依赖。
+- 只用 token 类：`bg-background`、`text-foreground`、`border-border`、`text-muted-foreground`、`bg-primary` 等。
+- 间距与圆角沿用现有尺度（卡片 `rounded-xl p-4`、按钮 `h-8 text-xs`、徽章 `rounded-full px-2 py-0.5`）。
+- 深色模式必须验证：任何写死颜色的类都会在 `.dark` 下失效。
+- 窄屏：管理台两列在 `<1024px` 折叠为单列；看板侧栏在 `<1024px` 隐藏。
 
-## 安全检查
+## 测试边界
 
-- 动态 HTML 只用 `safe()` 或 `renderMarkdown()` 处理。
-- 禁止 `eval()`、动态 `<script>`、事件属性字符串和未校验的 `javascript:` URL。
-- 新增内联事件处理器前先使用现有 `addEventListener` 模式。
-- 任何写操作都通过 `api()`，失败时展示后端中文错误，不吞异常。
-
-## 页面验收
-
-涉及 UI 的改动至少验证：
-
-1. 首屏加载、空白状态、服务端错误状态。
-2. 键盘 Tab、Enter/Space 和 `:focus-visible`。
-3. `860px` 以下布局不横向溢出，对话框可关闭。
-4. 流水线、团队、归档三个视图切换正常。
-5. 写操作成功后数据从 API 重新读回；失败时输入不丢失。
-6. 浏览器控制台和网络请求没有新增未处理错误。
-7. 依赖表单在 860px 以下不重叠、可 Tab 操作、可用 Escape 关闭对话框。
-8. 阻断原因、方向和解除状态都有文本，不只依赖颜色。
-9. Clipboard 功能验证真实粘贴值、API 拒绝后的 fallback、彻底失败提示、键盘激活和 modal 打开时的 fallback 焦点。
-
-## Review 清单
-
-- [ ] 没有引入不存在的框架、构建链或类型系统。
-- [ ] 动态内容已转义，Markdown 未绕过既有渲染器。
-- [ ] 重新渲染的区域已重新绑定监听器。
-- [ ] 依赖创建、解除和 WIP 保存按钮都有处理中状态和防重复提交。
-- [ ] 阻断筛选缺失 `blocked` 字段时按 `any` 处理，旧保存视图继续工作。
-- [ ] DoR/DoD 折叠内容是服务端派生缺口，不是前端第二套流程状态。
-- [ ] 轮询只有一个活动计时器。
-- [ ] 新 UI 有语义标签、键盘路径和可见焦点。
-- [ ] 纯函数测试与实际浏览器验收都覆盖到改动风险。
+- 纯逻辑模块（`web/src/lib/*.js`、`shared/slug.js`）的现有断言必须保留；迁移只能改 import 路径。
+- 不要新增“读取源码文本”的断言（例如匹配函数名或字符串字面量）；行为用单元测试或浏览器验收证明。
+- 改变 API 请求形状时必须同步 `server/` 侧测试与 `.trellis/spec/backend/`。

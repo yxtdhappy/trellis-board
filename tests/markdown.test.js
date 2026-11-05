@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { escapeHtml, renderMarkdown } from "../public/markdown.js";
+import { escapeHtml, renderMarkdown } from "../web/src/lib/markdown.js";
 
 test("Markdown 标题、段落和行内格式会被渲染", () => {
   const html = renderMarkdown([
