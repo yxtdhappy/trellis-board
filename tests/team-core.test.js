@@ -136,7 +136,7 @@ test("首管理员 CLI 只初始化一次且不会导入本机默认仓库", asy
     db.close();
   }
   const status = diagnose({ config: testConfig(), databaseFile });
-  assert.equal(status.schemaVersion, "4");
+  assert.equal(status.schemaVersion, "5");
   assert.equal(status.activeAdmin, true);
   assert.equal(status.integrity, "ok");
   await assert.rejects(
@@ -956,4 +956,49 @@ test("团队定时刷新对多个到期项目保持全局并发上限和项目�
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(runtime.polling.snapshot().active, 0);
   assert.equal(calls.length, 6);
+});
+
+test("team 模式不加载插件：启动告警，/api/plugins 为空，插件管理端点 404", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-team-plugins-"));
+  const warnings = [];
+  const runtime = await createTeamRuntime({
+    config: testConfig(),
+    databaseFile: path.join(root, "data", "board.sqlite"),
+    dataDir: path.join(root, "data"),
+    logger: {
+      info() {},
+      warn(message) {
+        warnings.push(message);
+      },
+      error() {}
+    },
+    requireAdmin: false,
+    enablePolling: false
+  });
+  await runtime.start();
+  t.after(async () => {
+    await runtime.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  await createUser(runtime.db, {
+    username: "admin",
+    displayName: "管理员",
+    password: "Admin-Password-123",
+    systemAdmin: true,
+    mustChangePassword: false
+  });
+  const signedIn = await login(runtime, "Admin-Password-123");
+  assert.equal(signedIn.status, 200);
+  const cookie = sessionCookie(signedIn);
+
+  const list = await request(runtime, "/api/plugins", { cookie });
+  assert.equal(list.status, 200);
+  assert.equal(list.body.disabled, true);
+  assert.deepEqual(list.body.plugins, []);
+
+  const admin = await request(runtime, "/api/plugins/acp-dispatch/runs", { cookie });
+  assert.equal(admin.status, 404);
+  assert.match(String(admin.body.error), /team 模式不加载插件/);
+  assert.ok(warnings.some((message) => message.includes("team 模式不加载插件")));
 });

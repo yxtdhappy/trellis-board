@@ -12,7 +12,7 @@ import {
   stateFile
 } from "./config.js";
 
-export const DATABASE_SCHEMA_VERSION = 4;
+export const DATABASE_SCHEMA_VERSION = 5;
 
 const LEGACY_IMPORT_KEY = "legacy_json_imported_v1";
 const EXECUTION_EVENTS_STARTED_KEY = "execution_events_started_at";
@@ -426,6 +426,48 @@ const SCHEMA_V4_SQL = `
     ON team_task_index_tag(tag_key, project_id, task_key);
 `;
 
+const SCHEMA_V5_SQL = `
+  CREATE TABLE IF NOT EXISTS plugin_state (
+    plugin_id  TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (plugin_id, key)
+  );
+
+  CREATE TABLE IF NOT EXISTS plugin_run (
+    run_id         TEXT PRIMARY KEY,
+    plugin_id      TEXT NOT NULL,
+    plugin_version TEXT,
+    task_key       TEXT,
+    status         TEXT NOT NULL,
+    request        TEXT,
+    result         TEXT,
+    started_at     TEXT NOT NULL,
+    finished_at    TEXT
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS plugin_run_active_task
+    ON plugin_run(plugin_id, task_key)
+    WHERE status IN ('queued', 'starting', 'running');
+  CREATE INDEX IF NOT EXISTS plugin_run_task
+    ON plugin_run(plugin_id, task_key, started_at);
+  CREATE INDEX IF NOT EXISTS plugin_run_status
+    ON plugin_run(status, started_at);
+
+  CREATE TABLE IF NOT EXISTS plugin_audit (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    plugin_id      TEXT NOT NULL,
+    plugin_version TEXT,
+    kind           TEXT NOT NULL,
+    detail         TEXT,
+    created_at     TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS plugin_audit_timeline
+    ON plugin_audit(plugin_id, created_at, id);
+`;
+
 function ensureV2Schema(db, now) {
   db.exec(SCHEMA_V2_SQL);
   if (readMeta(db, EXECUTION_EVENTS_STARTED_KEY) == null) {
@@ -458,6 +500,10 @@ function ensureV4Schema(db) {
   `);
 }
 
+function ensureV5Schema(db) {
+  db.exec(SCHEMA_V5_SQL);
+}
+
 function ensureSchema(db) {
   withTransaction(db, () => {
     db.exec(BASE_SCHEMA_V1_SQL);
@@ -467,6 +513,7 @@ function ensureSchema(db) {
       ensureV2Schema(db, now);
       ensureV3Schema(db);
       ensureV4Schema(db);
+      ensureV5Schema(db);
       writeMeta(db, "schema_version", DATABASE_SCHEMA_VERSION);
       return;
     }
@@ -479,6 +526,8 @@ function ensureSchema(db) {
       writeMeta(db, "schema_version", 3);
       ensureV4Schema(db);
       writeMeta(db, "schema_version", 4);
+      ensureV5Schema(db);
+      writeMeta(db, "schema_version", 5);
       return;
     }
     if (numericVersion === 2) {
@@ -486,17 +535,27 @@ function ensureSchema(db) {
       writeMeta(db, "schema_version", 3);
       ensureV4Schema(db);
       writeMeta(db, "schema_version", 4);
+      ensureV5Schema(db);
+      writeMeta(db, "schema_version", 5);
       return;
     }
     if (numericVersion === 3) {
       ensureV4Schema(db);
       writeMeta(db, "schema_version", 4);
+      ensureV5Schema(db);
+      writeMeta(db, "schema_version", 5);
+      return;
+    }
+    if (numericVersion === 4) {
+      ensureV5Schema(db);
+      writeMeta(db, "schema_version", 5);
       return;
     }
     if (numericVersion === DATABASE_SCHEMA_VERSION) {
       ensureV2Schema(db, now);
       ensureV3Schema(db);
       ensureV4Schema(db);
+      ensureV5Schema(db);
       return;
     }
     throw new Error(`不支持的数据库 schema 版本: ${schemaVersion}`);
@@ -527,9 +586,9 @@ function backupPreMigrationDatabase(db, databaseFile) {
     WHERE type = 'table' AND name = 'app_meta'
   `).get();
   const schemaVersion = hasMeta ? Number(readMeta(db, "schema_version")) : null;
-  if (![1, 2, 3].includes(schemaVersion)) return null;
-  const backupFile = schemaVersion === 3
-    ? timestampedBackupPathFor(databaseFile, 3)
+  if (![1, 2, 3, 4].includes(schemaVersion)) return null;
+  const backupFile = schemaVersion >= 3
+    ? timestampedBackupPathFor(databaseFile, schemaVersion)
     : backupPathFor(databaseFile, schemaVersion);
   const escapedBackupFile = backupFile.replaceAll("'", "''");
   db.exec(`VACUUM INTO '${escapedBackupFile}'`);

@@ -1,13 +1,13 @@
 {
   "name": "trellis-board",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "board": "node server/index.js",
     "start": "node server/index.js",
     "capacity": "node scripts/team-capacity-check.js",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js plugins/*/test/*.test.js"
   },
   "engines": {
     "node": ">=24"

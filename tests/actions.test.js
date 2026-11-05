@@ -36,6 +36,20 @@ test("无效任务标识会在调用 Trellis 前被拒绝", async () => {
   );
 });
 
+test("大写任务编号标识会保留并继续后续校验", async () => {
+  const { createTask } = await import("../server/actions.js");
+  await assert.rejects(
+    () => createTask({
+      repositoryId: "missing",
+      title: "大写编号任务",
+      description: "x",
+      assignee: "dev",
+      slug: "T100001"
+    }, { listRepositories: () => [] }),
+    /仓库不在白名单中/
+  );
+});
+
 test("英文标题可以自动生成任务标识并继续后续校验", async () => {
   const { createTask } = await import("../server/actions.js");
   await assert.rejects(
