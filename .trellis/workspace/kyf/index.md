@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 0
-- **Last Active**: -
+- **Total Sessions**: 1
+- **Last Active**: 2026-11-05
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~0 | Active |
+| `journal-1.md` | ~47 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 1 | 2026-11-05 | 插件机制（子进程 JSON-RPC） | `22b5c57`, `a5d63f7`, `c6469ae`, `7aeb4b1` | `codex/team-board` |
 <!-- @@@/auto:session-history -->
 
 ---
