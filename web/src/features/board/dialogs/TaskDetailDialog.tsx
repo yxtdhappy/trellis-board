@@ -18,6 +18,8 @@ import { dueLabel, isAttention, attentionReasons, nextStage, stageSourceLabel, t
 import type { BoardTask, DependencyRecord } from '../task-view'
 import { StageTape } from '../StageTape'
 import { toast } from 'sonner'
+import { SelectField } from '../SelectField'
+import { priorityTone, stageTone, statusLabel, statusTone } from '../tone'
 
 const ARTIFACTS = [
   { key: 'prd', label: 'PRD', hint: '需求、范围与验收标准' },
@@ -251,7 +253,7 @@ export function TaskDetailDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[88dvh] overflow-y-auto sm:max-w-[860px]">
+        <DialogContent className="max-h-[88dvh] overflow-y-auto sm:max-w-[1000px]">
           <DialogHeader>
             <DialogTitle className="pr-8 text-base">{current?.title || '任务详情'}</DialogTitle>
             <DialogDescription>
@@ -270,11 +272,21 @@ export function TaskDetailDialog({
                   ['负责人', current.assignee || '未派发'],
                   ['优先级', current.priority || 'P2'],
                   ['截止', dueLabel(current.execution?.dueDate)],
-                  ['状态', current.status || '规划'],
+                  ['状态', statusLabel(current.status) || '规划'],
                 ].map(([label, value]) => (
                   <div key={label} className="flex flex-col gap-1 rounded-lg bg-muted px-2.5 py-2">
                     <span className="text-[10px] text-muted-foreground">{label}</span>
-                    <span className="text-xs font-semibold">{value}</span>
+                    <span
+                      className={`w-fit rounded-full px-1.5 py-px text-[11px] font-semibold ${
+                        label === '优先级'
+                          ? priorityTone(value)
+                          : label === '状态'
+                            ? statusTone(value)
+                            : 'bg-transparent p-0 text-xs text-foreground'
+                      }`}
+                    >
+                      {value}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -285,7 +297,7 @@ export function TaskDetailDialog({
                   attentionReasons(current).map((reason) => (
                     <span
                       key={reason.id}
-                      className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive"
+                      className="rounded-full bg-destructive-soft px-2 py-0.5 text-[10px] font-semibold text-destructive"
                     >
                       {reason.label}
                     </span>
@@ -374,7 +386,11 @@ export function TaskDetailDialog({
                         className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-70"
                       >
                         <span className="w-4 text-[10px] text-muted-foreground">{item.index}</span>
-                        <span className={item.complete ? 'font-medium' : 'text-muted-foreground'}>{item.label}</span>
+                        <span
+                          className={`rounded-full px-1.5 py-px text-[10px] font-medium ${stageTone(item.label)}`}
+                        >
+                          {item.label}
+                        </span>
                         <span className="ml-auto text-[10px] text-muted-foreground">{stageSourceLabel(item)}</span>
                         <span className="max-w-[45%] truncate text-[10px] text-muted-foreground" title={item.evidence}>
                           {item.evidence || '等待执行'}
@@ -441,19 +457,17 @@ export function TaskDetailDialog({
                   ) : null}
                   {!current.archived ? (
                     <div className="grid gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_auto]">
-                      <select
-                        aria-label="阻断方任务"
-                        className="h-8 min-w-0 rounded-md border border-input bg-transparent px-2 text-xs"
+                      <SelectField
+                        ariaLabel="阻断方任务"
+                        className="h-8 min-w-0 text-xs"
+                        placeholder="请选择阻断方任务"
                         value={blockerKey}
-                        onChange={(event) => setBlockerKey(event.target.value)}
-                      >
-                        <option value="">请选择阻断方任务</option>
-                        {dependencyCandidates.map((candidate) => (
-                          <option key={candidate.taskKey} value={candidate.taskKey}>
-                            {candidate.projectName} · {candidate.title}
-                          </option>
-                        ))}
-                      </select>
+                        options={dependencyCandidates.map((candidate) => ({
+                          value: candidate.taskKey,
+                          label: `${candidate.projectName} · ${candidate.title}`,
+                        }))}
+                        onChange={setBlockerKey}
+                      />
                       <Input
                         className="h-8 text-xs"
                         placeholder="阻断原因（最多 500 字）"
@@ -509,19 +523,14 @@ export function TaskDetailDialog({
 
           <DialogFooter className="gap-2 sm:justify-between">
             <div className="flex items-center gap-1.5">
-              <select
-                className="h-8 rounded-md border border-input bg-transparent px-2 text-xs"
+              <SelectField
+                className="h-8 w-40 text-xs"
+                placeholder="请选择负责人"
                 value={assignee}
-                onChange={(event) => setAssignee(event.target.value)}
-                aria-label="负责人"
-              >
-                <option value="">请选择负责人</option>
-                {assignees.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
+                options={assignees.map((name) => ({ value: name, label: name }))}
+                onChange={setAssignee}
+                ariaLabel="负责人"
+              />
               <Button
                 size="sm"
                 className="h-8 text-[11px]"
@@ -546,7 +555,7 @@ export function TaskDetailDialog({
       </Dialog>
 
       <Dialog open={Boolean(artifact)} onOpenChange={(value) => !value && setArtifact(null)}>
-        <DialogContent className="max-h-[86dvh] overflow-y-auto sm:max-w-[760px]">
+        <DialogContent className="max-h-[86dvh] overflow-y-auto sm:max-w-[820px]">
           <DialogHeader>
             <DialogTitle className="text-base">工件查看 · {artifact?.label}</DialogTitle>
             <DialogDescription>{artifact?.entry?.path}</DialogDescription>

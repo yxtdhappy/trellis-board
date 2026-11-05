@@ -34,7 +34,7 @@ export function PublishOperationDialog({ operation, onClose, onRetry }: PublishO
 
   return (
     <Dialog open={Boolean(operation)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[460px]">
+      <DialogContent className="sm:max-w-[620px]">
         <DialogHeader>
           <DialogTitle className="text-base">
             {operation?.operationType === 'retry' ? '重试发布状态' : '发布状态'}

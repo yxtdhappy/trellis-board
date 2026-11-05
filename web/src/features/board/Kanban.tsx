@@ -1,3 +1,5 @@
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { laneTone } from './tone'
 import type { BoardTask } from './task-view'
 import { laneForTask, nextStage, STAGE_LANES, taskProgress } from './task-view'
 import { TaskCard } from './TaskCard'
@@ -10,25 +12,36 @@ type KanbanProps = {
 
 export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-1 gap-2.5 overflow-auto md:grid-cols-2 xl:grid-cols-4">
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <p className="text-[10px] font-semibold tracking-[0.08em] text-muted-foreground">
+          FLOW / 四个决策槽位
+        </p>
+        <h2 className="text-[14.5px] leading-5 font-semibold font-heading">轻量 Kanban</h2>
+        <span className="ml-auto text-[10.5px] text-muted-foreground">
+          列只表达决策状态，不表达进度百分比 · 共 {groups.length} 组任务
+        </span>
+      </div>
+      <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-4">
       {STAGE_LANES.map((lane, laneIndex) => {
         const laneGroups = groups.filter((group) => laneForTask(group.parent) === lane.id)
         return (
-          <section key={lane.id} className="flex min-h-0 flex-col gap-2 rounded-xl bg-muted/60 p-2.5">
+          <section key={lane.id} className="flex min-h-[100vh] flex-col gap-2 rounded-xl bg-muted/60 p-2.5">
             <header className="flex items-center gap-1.5">
-              <span className="size-1.5 rounded-full bg-primary/70" aria-hidden="true" />
+              <span className={`size-1.5 rounded-full ${laneTone(lane.id).split(' ')[0]}`} aria-hidden="true" />
               <h3 className="text-[12.5px] font-semibold">
                 <span className="mr-1 text-[10px] text-muted-foreground">
                   {String(laneIndex + 1).padStart(2, '0')}
                 </span>
                 {lane.label}
               </h3>
-              <span className="rounded-full bg-secondary px-1.5 py-px text-[10px] font-semibold text-secondary-foreground">
+              <span className={`rounded-full px-1.5 py-px text-[10px] font-semibold ${laneTone(lane.id)}`}>
                 {laneGroups.length}
               </span>
             </header>
 
-            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
+            <ScrollArea className="min-h-0 flex-1">
+            <div className="flex flex-col gap-2 pr-1">
               {laneGroups.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-border/70 px-2 py-3 text-[10.5px] text-muted-foreground">
                   {lane.hint} · 当前无任务
@@ -80,9 +93,11 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
                 })
               )}
             </div>
+            </ScrollArea>
           </section>
         )
       })}
+      </div>
     </div>
   )
 }

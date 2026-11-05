@@ -12,6 +12,7 @@ import type { AdminConsole } from '@/hooks/useAdminConsole'
 import type { AuditEvent } from '@/api/admin'
 import { formatTime } from '@/lib/admin-shared'
 import { EmptyRow, Panel, StatusPill, controlClass } from './shared'
+import { SelectField } from '@/features/board/SelectField'
 
 const RANGE_OPTIONS = [
   { value: '7', label: '最近 7 天' },
@@ -58,47 +59,36 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex min-w-40 flex-1 flex-col gap-1">
             <span className="text-[11px] font-medium text-muted-foreground">动作</span>
-            <select
+            <SelectField
               className={controlClass}
               value={action}
-              onChange={(event) => setAction(event.target.value)}
-            >
-              <option value="all">全部动作</option>
-              {actions.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: 'all', label: '全部动作' },
+                ...actions.map((item) => ({ value: item, label: item })),
+              ]}
+              onChange={setAction}
+            />
           </label>
           <label className="flex min-w-40 flex-1 flex-col gap-1">
             <span className="text-[11px] font-medium text-muted-foreground">操作人</span>
-            <select
+            <SelectField
               className={controlClass}
               value={actor}
-              onChange={(event) => setActor(event.target.value)}
-            >
-              <option value="all">全部操作人</option>
-              {actors.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: 'all', label: '全部操作人' },
+                ...actors.map((item) => ({ value: item, label: item })),
+              ]}
+              onChange={setActor}
+            />
           </label>
           <label className="flex min-w-32 flex-col gap-1">
             <span className="text-[11px] font-medium text-muted-foreground">时间范围</span>
-            <select
+            <SelectField
               className={controlClass}
               value={range}
-              onChange={(event) => setRange(event.target.value)}
-            >
-              {RANGE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              options={RANGE_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+              onChange={setRange}
+            />
           </label>
           <Button
             variant="outline"

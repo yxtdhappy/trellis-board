@@ -31,6 +31,7 @@ export type BoardFilters = {
   scope: 'all' | 'mine'
   search: string
   assignee: string
+  priority: string
   stage: string
   blocked: 'any' | 'blocked' | 'unblocked'
   executionView: string
@@ -62,6 +63,7 @@ export function useBoard(): BoardController {
     scope: 'all',
     search: '',
     assignee: '',
+    priority: '',
     stage: '',
     blocked: 'any',
     executionView: 'all',

@@ -8,6 +8,7 @@ import { ArchiveView } from '@/features/board/ArchiveView'
 import { ExecutionHeader } from '@/features/board/ExecutionHeader'
 import { FlowSignals } from '@/features/board/FlowSignals'
 import { Kanban } from '@/features/board/Kanban'
+import { Overview } from '@/features/board/Overview'
 import { TeamView } from '@/features/board/TeamView'
 import { filterGroups, type BoardView } from '@/features/board/selectors'
 import { AssignmentsDialog } from '@/features/board/dialogs/AssignmentsDialog'
@@ -17,7 +18,7 @@ import { ProjectManagerDialog } from '@/features/board/dialogs/ProjectManagerDia
 import { PublishOperationDialog } from '@/features/board/dialogs/PublishOperationDialog'
 import { SavedViewsDialog } from '@/features/board/dialogs/SavedViewsDialog'
 import { TaskDetailDialog } from '@/features/board/dialogs/TaskDetailDialog'
-import type { BoardTask } from '@/features/board/task-view'
+import { isAttention, type BoardTask } from '@/features/board/task-view'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { taskVersion } from '@/lib/team-client.js'
 
@@ -105,7 +106,7 @@ export function BoardPage() {
           onRefresh={() => void actions.refresh()}
         />
 
-        <main className="flex min-w-0 flex-1 flex-col gap-3 overflow-hidden px-5 py-4">
+        <main className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
           {error ? (
             <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
               {error}
@@ -121,8 +122,6 @@ export function BoardPage() {
                 stages={FILTER_STAGES}
                 assignees={assignees}
                 total={activeCount}
-                onApply={() => void actions.refresh()}
-                loading={loading}
                 savedViews={savedViews}
                 onSaveView={() => setViewsOpen(true)}
                 onDeleteView={(id) => {
@@ -141,6 +140,13 @@ export function BoardPage() {
                 tasks={tasks.filter((task) => !task.archived)}
                 onOpen={(task) => setSelected(task)}
               />
+              <Overview
+                active={activeCount}
+                archived={archived.length}
+                attention={tasks.filter((task) => !task.archived && isAttention(task)).length}
+                owners={assignees.length}
+                repositories={projects.length}
+              />
               <Kanban groups={groups} onOpen={(task) => setSelected(task)} onEditPlan={(task) => setSelected(task)} />
             </>
           ) : null}
@@ -148,6 +154,11 @@ export function BoardPage() {
           {view === 'team' ? (
             <TeamView
               tasks={tasks.filter((task) => !task.archived)}
+              projects={projects}
+              stages={FILTER_STAGES}
+              filters={filters}
+              onChange={setFilters}
+              onApply={() => void actions.refresh()}
               onOpen={(task) => setSelected(task)}
               loading={loading}
               summary={
@@ -159,7 +170,12 @@ export function BoardPage() {
           ) : null}
 
           {view === 'archive' ? (
-            <ArchiveView tasks={archived} projects={projects} onOpen={(task) => setSelected(task)} />
+            <ArchiveView
+              tasks={archived}
+              projects={projects}
+              onOpen={(task) => setSelected(task)}
+              onRefresh={() => void actions.refresh()}
+            />
           ) : null}
         </main>
       </div>

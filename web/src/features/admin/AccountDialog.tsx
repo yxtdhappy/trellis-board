@@ -12,6 +12,7 @@ import {
 import { Input } from '@/components/ui/input'
 import type { AdminUser } from '@/api/admin'
 import { Field, controlClass } from './shared'
+import { SelectField } from '@/features/board/SelectField'
 
 export type AccountFormValues = {
   displayName: string
@@ -51,15 +52,16 @@ export function AccountForm({ user, submitLabel, onSubmit, onCancel }: AccountFo
         />
       </Field>
       <Field label="状态">
-        <select
+        <SelectField
           className={controlClass}
           value={status}
-          onChange={(event) => setStatus(event.target.value)}
+          options={[
+            { value: 'active', label: '启用' },
+            { value: 'disabled', label: '停用' },
+          ]}
+          onChange={setStatus}
           disabled={busy}
-        >
-          <option value="active">启用</option>
-          <option value="disabled">停用</option>
-        </select>
+        />
       </Field>
       <label className="flex items-center gap-2 text-xs text-foreground">
         <Checkbox

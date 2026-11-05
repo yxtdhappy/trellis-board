@@ -42,12 +42,13 @@ export function filterTasks(
     const projectHit = filters.projectId === 'all' || task.projectId === filters.projectId
     const ownerHit = filters.scope !== 'mine' || Boolean(me && task.assignee === me)
     const assigneeHit = !filters.assignee || task.assignee === filters.assignee
+    const priorityHit = !filters.priority || task.priority === filters.priority
     const stageHit = !filters.stage || task.derivedStage === filters.stage
     const blockedHit =
       filters.blocked === 'any' ||
       (filters.blocked === 'blocked' ? Boolean(task.execution?.isBlocked) : !task.execution?.isBlocked)
     const viewHit = !view || taskMatchesView(task, view, now)
-    return hit && projectHit && ownerHit && assigneeHit && stageHit && blockedHit && viewHit
+    return hit && projectHit && ownerHit && assigneeHit && priorityHit && stageHit && blockedHit && viewHit
   }
   return groupActiveTasks(activeTasks(tasks)).flatMap((group) => {
     const hitMembers = group.members.filter(matches)

@@ -41,7 +41,7 @@ export function OneTimeCredentialDialog({
         if (!open) close()
       }}
     >
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-[560px]">
         <DialogHeader className="gap-1">
           <p className="text-[10px] font-semibold tracking-[0.2em] text-muted-foreground">SHOWN ONCE</p>
           <DialogTitle>{credential?.title || '一次性凭证'}</DialogTitle>

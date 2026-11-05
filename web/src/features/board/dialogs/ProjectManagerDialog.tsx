@@ -94,7 +94,7 @@ export function ProjectManagerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[560px]">
+      <DialogContent className="sm:max-w-[640px]">
         <DialogHeader>
           <DialogTitle>管理看板项目</DialogTitle>
           <DialogDescription>选择文件夹纳入看板，项目名称自动使用文件夹名称。</DialogDescription>

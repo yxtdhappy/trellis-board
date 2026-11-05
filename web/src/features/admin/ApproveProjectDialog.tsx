@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import type { AdminUser } from '@/api/admin'
 import type { PendingApproval } from '@/hooks/useAdminProjects'
 import { Field, controlClass } from './shared'
+import { SelectField } from '@/features/board/SelectField'
 
 export type ApprovalFormValues = {
   leadUserId: string
@@ -77,20 +78,17 @@ export function ApprovalForm({
   return (
     <form className="flex flex-col gap-2.5" onSubmit={handleSubmit}>
       <Field label="首个负责人">
-        <select
+        <SelectField
           className={controlClass}
           value={leadUserId}
-          onChange={(event) => setLeadUserId(event.target.value)}
-          required
+          placeholder="没有 active 用户"
+          options={activeUsers.map((user) => ({
+            value: user.id,
+            label: `${user.displayName || user.username}（${user.username}）`,
+          }))}
+          onChange={setLeadUserId}
           disabled={busy || activeUsers.length === 0}
-        >
-          {activeUsers.length === 0 ? <option value="">没有 active 用户</option> : null}
-          {activeUsers.map((user) => (
-            <option key={user.id} value={user.id}>
-              {user.displayName || user.username}（{user.username}）
-            </option>
-          ))}
-        </select>
+        />
       </Field>
       <Field label="负责人 Trellis developer ID">
         <Input

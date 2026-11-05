@@ -54,16 +54,11 @@ export function AdminPage() {
     <div className="min-h-dvh bg-background text-foreground">
       <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-border bg-card px-4">
         <div className="flex items-center gap-3">
-          <a className="flex items-center gap-2.5" href="/" aria-label="返回 Trellis Board">
+          <a className="flex items-center gap-2" href="/" aria-label="返回 Trellis Board">
             <span className="flex size-6 items-center justify-center rounded-md bg-primary text-[11px] font-bold text-primary-foreground">
               T
             </span>
-            <span className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold font-heading">Trellis Board</span>
-              <span className="text-[10px] tracking-[0.18em] text-muted-foreground">
-                ADMIN / CONSOLE
-              </span>
-            </span>
+            <span className="text-sm font-semibold font-heading">Trellis Board</span>
           </a>
           <a
             className="rounded-lg bg-muted px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"

@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { toast } from 'sonner'
+import { SelectField } from '../SelectField'
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const
 const BLOCKED_OPTIONS = [
@@ -79,7 +80,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88dvh] overflow-y-auto sm:max-w-[520px]">
+      <DialogContent className="max-h-[88dvh] overflow-y-auto sm:max-w-[960px]">
         <DialogHeader>
           <DialogTitle className="text-base">保存组合视图</DialogTitle>
           <DialogDescription>把当前勾选的筛选条件保存成一条可复用的执行视图。</DialogDescription>
@@ -138,18 +139,13 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
             </div>
             <div className="flex flex-col gap-1">
               <Label className="text-[10px]">阻断状态</Label>
-              <select
-                aria-label="阻断状态"
-                className="h-8 rounded-md border border-input bg-transparent px-2 text-xs"
+              <SelectField
+                ariaLabel="阻断状态"
+                className="h-8 text-xs"
                 value={blocked}
-                onChange={(event) => setBlocked(event.target.value as (typeof BLOCKED_OPTIONS)[number]['id'])}
-              >
-                {BLOCKED_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                options={BLOCKED_OPTIONS.map((option) => ({ value: option.id, label: option.label }))}
+                onChange={(next) => setBlocked(next as (typeof BLOCKED_OPTIONS)[number]['id'])}
+              />
             </div>
             <div className="flex flex-col gap-1">
               <Label className="text-[10px]">截止在 N 天内</Label>

@@ -61,7 +61,7 @@ export function AssignmentsDialog({ open, onOpenChange, assignments, onAccept }:
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[560px]">
+      <DialogContent className="sm:max-w-[640px]">
         <DialogHeader>
           <DialogTitle>待我接受</DialogTitle>
           <DialogDescription>有 {rows.length} 个任务等待你确认派发。</DialogDescription>

@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { normalizeTaskSlug, slugifyTaskTitle, TASK_SLUG_PATTERN } from '@shared/slug.js'
+import { SelectField } from '../SelectField'
 
 type CreateTaskDialogProps = {
   open: boolean
@@ -44,9 +45,16 @@ export function CreateTaskDialog({
 
   useEffect(() => {
     if (!open) return
-    setProjectId(defaultProjectId === 'all' ? projects[0]?.id || '' : defaultProjectId)
     setMessage('')
-  }, [open, defaultProjectId, projects])
+  }, [open])
+
+  useEffect(() => {
+    if (!open || projects.length === 0) return
+    const pick = defaultProjectId !== 'all' && projects.some((project) => project.id === defaultProjectId)
+      ? defaultProjectId
+      : projects[0].id
+    setProjectId((current) => (projects.some((project) => project.id === current) ? current : pick))
+  }, [open, projects, defaultProjectId])
 
   const suggestedSlug = useMemo(() => normalizeTaskSlug(slug) || slugifyTaskTitle(title), [slug, title])
 
@@ -95,7 +103,7 @@ export function CreateTaskDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[560px]">
+      <DialogContent className="sm:max-w-[600px]">
         <DialogHeader>
           <DialogTitle>创建任务并派发</DialogTitle>
           <DialogDescription>任务会进入规划阶段，并派发给所选负责人。</DialogDescription>
@@ -103,18 +111,12 @@ export function CreateTaskDialog({
         <form className="flex flex-col gap-3" onSubmit={submit}>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="create-project">项目 / 仓库</Label>
-            <select
+            <SelectField
               id="create-project"
-              className="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
               value={projectId}
-              onChange={(event) => setProjectId(event.target.value)}
-            >
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
+              options={projects.map((project) => ({ value: project.id, label: project.name }))}
+              onChange={setProjectId}
+            />
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="create-title">任务标题</Label>
@@ -138,18 +140,12 @@ export function CreateTaskDialog({
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="create-priority">优先级</Label>
-              <select
+              <SelectField
                 id="create-priority"
-                className="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
                 value={priority}
-                onChange={(event) => setPriority(event.target.value)}
-              >
-                {['P0', 'P1', 'P2', 'P3'].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
+                options={['P0', 'P1', 'P2', 'P3'].map((value) => ({ value, label: value }))}
+                onChange={setPriority}
+              />
             </div>
           </div>
           <div className="flex flex-col gap-1.5">

@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import type { BoardTask } from './task-view'
-import { isAttention, recommendedTask } from './task-view'
+import { recommendedTask } from './task-view'
 
 type FlowSignalsProps = {
   tasks: BoardTask[]
@@ -19,19 +19,26 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
     setValue(String(wipLimit ?? 6))
   }, [wipLimit])
 
+  const limit = wipLimit ?? 6
   const implementing = tasks.filter((task) => task.derivedStage === 'implement').length
-  const attention = tasks.filter(isAttention).length
+  const blocked = tasks.filter((task) => task.execution?.isBlocked).length
+  const unblocked = tasks.filter((task) => task.execution?.isUnblockedReady).length
+  const gaps = tasks.filter(
+    (task) =>
+      (task.execution?.risk?.dorMissingCount || 0) > 0 || (task.execution?.risk?.dodMissingCount || 0) > 0,
+  ).length
   const nextUp = recommendedTask(tasks)
+  const overLimit = implementing > limit
 
   async function save() {
-    const limit = Number(value)
-    if (!Number.isInteger(limit) || limit < 1 || limit > 99) {
+    const next = Number(value)
+    if (!Number.isInteger(next) || next < 1 || next > 99) {
       toast.error('WIP 软上限必须是 1 到 99 的整数')
       return
     }
     setSaving(true)
     try {
-      await onSaveWip(limit)
+      await onSaveWip(next)
       toast.success('WIP 软上限已保存')
     } catch (error) {
       toast.error((error as Error).message)
@@ -41,32 +48,79 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
   }
 
   return (
-    <section className="flex flex-wrap items-center gap-3 rounded-xl border border-border/70 bg-card px-3 py-2.5">
-      <div className="flex items-center gap-1.5">
-        <span className="text-[11px] font-semibold">流动信号</span>
-        <span className="rounded-full bg-muted px-1.5 py-px text-[10px] text-muted-foreground">
-          WIP {implementing}/{wipLimit ?? 6}
-        </span>
+    <section className="flex flex-col gap-2.5 rounded-xl border border-border bg-card p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold tracking-[0.08em] text-muted-foreground">FLOW / 个人承载</p>
+          <h2 className="text-[14.5px] leading-5 font-semibold font-heading">流动信号</h2>
+        </div>
+        <div className="ml-auto flex items-center gap-1.5">
+          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            WIP 软上限
+            <Input
+              className="h-7 w-14 text-xs"
+              inputMode="numeric"
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              aria-label="WIP 软上限"
+            />
+          </label>
+          <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={save} disabled={saving}>
+            {saving ? '保存中…' : '保存'}
+          </Button>
+        </div>
       </div>
-      <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-        WIP 软上限
-        <Input
-          className="h-7 w-16 text-xs"
-          inputMode="numeric"
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          aria-label="WIP 软上限"
+
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <Signal
+          label="实现中 WIP"
+          value={implementing}
+          suffix={`/${limit}`}
+          caption={overLimit ? '已超出软上限' : '仍在承载范围内'}
+          tone={overLimit ? 'warning' : 'primary'}
         />
-      </label>
-      <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={save} disabled={saving}>
-        {saving ? '保存中…' : '保存'}
-      </Button>
-      <span className="text-[11px] text-muted-foreground">{attention} 个任务需要关注</span>
-      {nextUp ? (
-        <span className="ml-auto truncate text-[11px] text-muted-foreground">
-          建议优先：<b className="font-medium text-foreground">{nextUp.title}</b>
-        </span>
-      ) : null}
+        <Signal label="当前被阻断" value={blocked} caption="等待外部条件" tone={blocked ? 'destructive' : 'muted'} />
+        <Signal label="阻断已解除" value={unblocked} caption="可以立即推进" tone={unblocked ? 'success' : 'muted'} />
+        <Signal label="DoR·DoD 缺口" value={gaps} caption="进入实现前先补齐" tone={gaps ? 'warning' : 'muted'} />
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        焦点建议 ·{' '}
+        {nextUp ? (
+          <b className="font-medium text-foreground">{nextUp.title}</b>
+        ) : (
+          '当前没有需要优先处理的信号'
+        )}
+      </p>
     </section>
+  )
+}
+
+const TONES = {
+  primary: 'text-primary',
+  success: 'text-success',
+  warning: 'text-warning',
+  destructive: 'text-destructive',
+  muted: 'text-foreground',
+} as const
+
+type SignalProps = {
+  label: string
+  value: number
+  suffix?: string
+  caption: string
+  tone: keyof typeof TONES
+}
+
+function Signal({ label, value, suffix, caption, tone }: SignalProps) {
+  return (
+    <div className="rounded-lg border border-border/70 bg-muted/40 px-2.5 py-2">
+      <p className="text-[10.5px] text-muted-foreground">{label}</p>
+      <p className={`text-[19px] leading-6 font-semibold font-heading ${TONES[tone]}`}>
+        {value}
+        {suffix ? <span className="text-[11px] font-normal text-muted-foreground">{suffix}</span> : null}
+      </p>
+      <p className="text-[10px] text-muted-foreground">{caption}</p>
+    </div>
   )
 }

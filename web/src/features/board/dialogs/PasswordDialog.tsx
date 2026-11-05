@@ -55,7 +55,7 @@ export function PasswordDialog({ open, onOpenChange }: PasswordDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[440px]">
+      <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
           <DialogTitle>修改密码</DialogTitle>
           <DialogDescription>首次登录或密码被重置后需要先更新密码。</DialogDescription>

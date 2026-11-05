@@ -12,19 +12,13 @@ import {
   type BoardTask,
 } from './task-view'
 import { StageTape } from './StageTape'
+import { priorityTone } from './tone'
 
 type TaskCardProps = {
   task: BoardTask
   onOpen: (task: BoardTask) => void
   onEditPlan?: (task: BoardTask) => void
   showCopy?: boolean
-}
-
-const priorityTone: Record<string, string> = {
-  P0: 'bg-destructive text-primary-foreground',
-  P1: 'bg-secondary text-secondary-foreground',
-  P2: 'bg-muted text-muted-foreground',
-  P3: 'bg-muted text-muted-foreground',
 }
 
 export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCardProps) {
@@ -66,9 +60,7 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
             </Badge>
           ) : null}
           <span
-            className={`rounded-full px-1.5 py-px text-[9px] font-semibold ${
-              priorityTone[task.priority || 'P2'] || priorityTone.P2
-            }`}
+            className={`rounded-full px-1.5 py-px text-[9px] font-semibold ${priorityTone(task.priority)}`}
           >
             {task.priority || 'P2'}
           </span>

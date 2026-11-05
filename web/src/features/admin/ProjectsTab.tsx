@@ -7,6 +7,7 @@ import type { AdminConsole } from '@/hooks/useAdminConsole'
 import type { ProjectMember } from '@/api/admin'
 import { formatTime } from '@/lib/admin-shared'
 import { AuditItem, EmptyRow, Field, Panel, Row, StatusPill, controlClass } from './shared'
+import { SelectField } from '@/features/board/SelectField'
 
 export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) {
   const {
@@ -58,19 +59,17 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           description="选择有管理权限的项目，维护成员 developer ID、确认 Agent 绑定并查看项目审计。"
         >
           <div className="flex items-center gap-2">
-            <select
-              aria-label="项目"
+            <SelectField
+              ariaLabel="项目"
               className={controlClass}
               value={accessProjectId}
-              onChange={(event) => void selectProject(event.target.value)}
-            >
-              <option value="">请选择项目</option>
-              {projectOptions.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name} · {project.syncStatus}
-                </option>
-              ))}
-            </select>
+              placeholder="请选择项目"
+              options={projectOptions.map((project) => ({
+                value: project.id,
+                label: `${project.name} · ${project.syncStatus}`,
+              }))}
+              onChange={(next) => void selectProject(next)}
+            />
             <Button
               variant="outline"
               size="sm"
@@ -102,15 +101,16 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
             </Field>
             <div className="grid grid-cols-2 gap-2">
               <Field label="角色">
-                <select
+                <SelectField
                   className={controlClass}
                   value={role}
-                  onChange={(event) => setRole(event.target.value)}
-                >
-                  <option value="member">成员</option>
-                  <option value="lead">负责人</option>
-                  <option value="read_only">只读</option>
-                </select>
+                  options={[
+                    { value: 'member', label: '成员' },
+                    { value: 'lead', label: '负责人' },
+                    { value: 'read_only', label: '只读' },
+                  ]}
+                  onChange={setRole}
+                />
               </Field>
               <Field label="Trellis developer ID">
                 <Input

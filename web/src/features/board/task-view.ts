@@ -102,7 +102,7 @@ export function nextStage(task: BoardTask) {
 }
 
 export function laneForTask(task: BoardTask) {
-  return laneForStageIndex(task.stages.findIndex((stage) => stage.id === task.derivedStage))
+  return laneForStageIndex(task, task.stages.findIndex((stage) => stage.id === task.derivedStage))
 }
 
 export function isAttention(task: BoardTask) {

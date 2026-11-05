@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端入口与契约"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "状态与弹层约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验证与测试边界"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "目录与模块落点"}
+{"file": ".trellis/tasks/11-05-design-fidelity/research/feature-inventory.md", "reason": "重构前功能与文案基线"}
