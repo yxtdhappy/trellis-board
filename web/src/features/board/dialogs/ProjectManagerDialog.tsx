@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FolderPlus, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Dialog,
   DialogContent,
@@ -34,6 +35,7 @@ export function ProjectManagerDialog({
 }: ProjectManagerProps) {
   const [rows, setRows] = useState<{ id?: string; name?: string; path?: string }[]>(projects)
   const [busy, setBusy] = useState(false)
+  const [manualPath, setManualPath] = useState('')
 
   useEffect(() => {
     if (open) setRows(projects)
@@ -71,6 +73,22 @@ export function ProjectManagerDialog({
       await onAdd(paths)
       await reload()
       toast.success(`已纳入 ${paths.length} 个项目`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '添加项目失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function addManualPath() {
+    const target = manualPath.trim()
+    if (!target) return
+    setBusy(true)
+    try {
+      await onAdd([target])
+      setManualPath('')
+      await reload()
+      toast.success('已纳入 1 个项目')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '添加项目失败')
     } finally {
@@ -130,8 +148,30 @@ export function ProjectManagerDialog({
             <FolderPlus className="size-3.5" />
             选择文件夹
           </Button>
+          <div className="flex items-center gap-2">
+            <Input
+              className="h-9 text-xs"
+              value={manualPath}
+              onChange={(event) => setManualPath(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void addManualPath()
+              }}
+              placeholder="或直接粘贴绝对路径，例如 /home/me/repo"
+              aria-label="手动输入项目路径"
+              disabled={busy}
+            />
+            <Button
+              variant="outline"
+              className="h-9 shrink-0 text-xs"
+              onClick={() => void addManualPath()}
+              disabled={busy || !manualPath.trim()}
+            >
+              添加路径
+            </Button>
+          </div>
           <p className="text-[10.5px] leading-5 text-muted-foreground">
-            只读取仓库元数据与 Trellis 配置，不会修改项目文件。
+            只读取仓库元数据与 Trellis 配置，不会修改项目文件。文件夹选择器依赖 Windows 桌面，
+            其他环境可直接填写绝对路径。
           </p>
         </div>
         <DialogFooter className="gap-2">

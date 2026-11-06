@@ -381,6 +381,7 @@ export function createProjectService({
         });
       });
       const approvedProject = readGitProject(db, projectId);
+      let scanWarning = null;
       try {
         await taskIndex.scanAndIndexProject(approvedProject, { force: true });
       } catch (error) {
@@ -394,14 +395,19 @@ export function createProjectService({
           projectId
         );
         taskIndex.incrementQueryRevision();
-        throw teamError(
-          503,
-          ERROR_CODES.PROJECT_REPAIR_REQUIRED,
-          "项目已批准但首次扫描失败，需要管理员修复",
-          { recoverable: true, details: { projectId } }
-        );
+        // 项目已经克隆、批准并启用，只是首轮索引没建起来；
+        // 返回 200 + warning，避免前端把「已启用但需修复」显示成批准失败。
+        scanWarning = {
+          code: ERROR_CODES.PROJECT_REPAIR_REQUIRED,
+          message: "项目已启用，但首次索引扫描失败，请执行受控修复",
+          details: { projectId }
+        };
       }
-      return { project: publicProject(projectRow(db, projectId)), result };
+      return {
+        project: publicProject(projectRow(db, projectId)),
+        result,
+        ...(scanWarning ? { warning: scanWarning } : {})
+      };
     });
   }
 

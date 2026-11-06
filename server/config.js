@@ -10,13 +10,17 @@ export const scanCacheFile = path.join(dataDir, "scan-cache.json");
 export const stateFile = path.join(dataDir, "board-state.json");
 export const repositoriesFile = path.join(dataDir, "repos.json");
 
-export const defaultRepositories = [
-  "D:/wit/mdp-management-web",
-  "D:/wit/mdp-report-service",
-  "D:/wit/mdp-report-config-agent-service",
-  "D:/wit/mdp-backend-service",
-  "D:/wit/mdp-backend-web"
-];
+// 只在 Windows 上回填示例仓库；其他平台若照搬这些盘符路径，会被 path.resolve
+// 解析成当前工作目录下的相对目录，凭空创建一堆不存在的项目。
+export const defaultRepositories = process.platform === "win32"
+  ? [
+    "D:/wit/mdp-management-web",
+    "D:/wit/mdp-report-service",
+    "D:/wit/mdp-report-config-agent-service",
+    "D:/wit/mdp-backend-service",
+    "D:/wit/mdp-backend-web"
+  ]
+  : [];
 
 export function normalizeRepositoryEntry(repo) {
   const rawPath = String(repo?.path || "").trim();

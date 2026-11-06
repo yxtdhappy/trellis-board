@@ -547,11 +547,22 @@ export type ApprovalInput = {
   leadTrellisDevId: string
 }
 
-export async function approveProject(projectId: string, input: ApprovalInput): Promise<void> {
-  await requestJson(`/api/admin/projects/${encodeURIComponent(projectId)}/approve`, {
+export type ApprovalResult = {
+  project?: TeamProject
+  result?: unknown
+  warning?: { code?: string; message?: string; details?: Record<string, unknown> }
+}
+
+export async function approveProject(projectId: string, input: ApprovalInput): Promise<ApprovalResult> {
+  const { data } = await requestJson<unknown>(`/api/admin/projects/${encodeURIComponent(projectId)}/approve`, {
     method: 'POST',
     body: input
   })
+  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {}
+  const warning = record.warning && typeof record.warning === 'object'
+    ? (record.warning as ApprovalResult['warning'])
+    : undefined
+  return { project: record.project as TeamProject | undefined, result: record.result, warning }
 }
 
 export type ProjectAction = 'refresh' | 'repair' | 'disable'

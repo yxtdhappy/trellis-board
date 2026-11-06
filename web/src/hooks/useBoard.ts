@@ -77,7 +77,8 @@ export function useBoard(): BoardController {
   const teamPageIndex = useRef(0)
   const loadBoardRef = useRef<(force?: boolean, quiet?: boolean) => Promise<void>>(async () => {})
 
-  const teamMode = Boolean(runtime?.team)
+  // 服务端历史版本只给 mode，较新版本额外返回 team: true，两者都认。
+  const teamMode = runtime?.team === true || runtime?.mode === 'team'
 
   const loadBoard = useCallback(async (force = false, quiet = false) => {
     if (!quiet) setLoading(true)
@@ -155,7 +156,7 @@ export function useBoard(): BoardController {
 
   useEffect(() => {
     if (!runtime) return
-    if (runtime.team) {
+    if (teamMode) {
       void loadTeamPage(true)
       void loadTeamStatus()
       void loadAssignments()

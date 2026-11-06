@@ -477,6 +477,7 @@ function createRequestHandler({
     if (!actor) {
       return {
         mode: "team",
+        team: true,
         authenticated: false,
         user: null,
         projects: [],
@@ -487,6 +488,7 @@ function createRequestHandler({
     const teams = listTeamsForActor(db, actor);
     return {
       mode: "team",
+      team: true,
       authenticated: true,
       user: actor.user,
       sessionExpiresAt: actor.expiresAt,

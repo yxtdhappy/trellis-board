@@ -221,6 +221,43 @@ function rowFromIndex(row) {
   };
 }
 
+// team_task_index 的 priority / derived_stage 是 NOT NULL，而 task.json 不保证提供；
+// SQLite 绑定拒绝 undefined（会报 “Provided value cannot be bound to SQLite parameter 8”），
+// 所以统一在写库前把非空列兜成空串、可空列兜成 null。
+export function taskIndexInsertArgs(task, {
+  projectId,
+  searchText,
+  assigneeDevId,
+  assigneeUserId,
+  boardVersion,
+  now
+}) {
+  const text = (value) => (value === null || value === undefined ? "" : String(value));
+  return [
+    projectId,
+    text(task.taskKey),
+    text(task.executionTaskKey ?? task.taskKey),
+    text(task.relativeDir),
+    text(task.title),
+    text(searchText),
+    task.archived ? 1 : 0,
+    text(task.priority).trim(),
+    text(task.derivedStage).trim(),
+    assigneeDevId ?? null,
+    assigneeUserId ?? null,
+    task.execution?.dueDate || null,
+    task.execution?.lastActivityAt || null,
+    task.execution?.isBlocked ? 1 : 0,
+    task.execution?.isUnblockedReady ? 1 : 0,
+    JSON.stringify(task.execution?.attentionReasons || []),
+    text(task.groupKey || task.taskKey),
+    text(task.groupRole || "parent"),
+    text(task.taskVersion),
+    boardVersion,
+    now
+  ];
+}
+
 export function createTaskIndex({
   db,
   stageIds,
@@ -431,29 +468,15 @@ export function createTaskIndex({
         task.derivedStage,
         ...(task.execution?.tags || [])
       ].filter(Boolean).join("\n").toLowerCase();
-      insert.run(
+      // 单条 task.json 缺字段时不能让整库索引失败：非空列给空串，可空列给 null。
+      insert.run(...taskIndexInsertArgs(task, {
         projectId,
-        task.taskKey,
-        task.executionTaskKey,
-        task.relativeDir,
-        task.title,
         searchText,
-        task.archived ? 1 : 0,
-        task.priority,
-        task.derivedStage,
         assigneeDevId,
         assigneeUserId,
-        task.execution?.dueDate || null,
-        task.execution?.lastActivityAt || null,
-        task.execution?.isBlocked ? 1 : 0,
-        task.execution?.isUnblockedReady ? 1 : 0,
-        JSON.stringify(task.execution?.attentionReasons || []),
-        task.groupKey || task.taskKey,
-        task.groupRole || "parent",
-        task.taskVersion,
         boardVersion,
         now
-      );
+      }));
       tags.forEach((tag) => insertTag.run(projectId, task.taskKey, tag));
     }
     if (persistCache) {
@@ -500,7 +523,7 @@ export function createTaskIndex({
       if (!task.taskVersion) continue;
       current.set(task.executionTaskKey || task.taskKey, task);
     }
-    const publish = (eventType, task, taskIndexRow) => {
+    const publish = (eventType, taskIndexRow) => {
       const executionTaskKey = taskIndexRow.execution_task_key || taskIndexRow.task_key;
       try {
         agentEvents.publishTaskEvent({
@@ -521,17 +544,17 @@ export function createTaskIndex({
       const row = previous.get(key);
       const indexRow = indexTaskRow(task);
       if (!row) {
-        publish("task.created", task, indexRow);
+        publish("task.created", indexRow);
       } else if (Boolean(row.archived) !== Boolean(task.archived)) {
-        if (task.archived) publish("task.cancelled", task, indexRow);
-        else publish("task.updated", task, indexRow);
+        if (task.archived) publish("task.cancelled", indexRow);
+        else publish("task.updated", indexRow);
       } else if (String(row.task_version) !== String(task.taskVersion)) {
-        publish("task.updated", task, indexRow);
+        publish("task.updated", indexRow);
       }
     }
     for (const [key, row] of previous) {
       if (current.has(key) || row.archived) continue;
-      publish("task.cancelled", null, row);
+      publish("task.cancelled", row);
     }
   }
 
