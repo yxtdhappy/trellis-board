@@ -211,7 +211,7 @@ test("Agent Bearer 可下载其所属团队模板", async () => {
       method: "POST",
       origin: null,
       body: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         agentVersion: "1.0.0",
         platform: "win32",
         pairingCode: pairing.json.pairingCode,
