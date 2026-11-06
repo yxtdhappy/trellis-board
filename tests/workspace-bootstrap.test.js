@@ -11,8 +11,10 @@ import {
   downloadWorkspaceTemplate,
   initializeWorkspace,
   loadCachedWorkspaceTemplate,
-  loadTemplateArchive
+  loadTemplateArchive,
+  workspaceTemplateCacheDir
 } from "../agent/workspace.js";
+import { readZipEntries } from "../agent/zip.js";
 import { buildTemplateZip, buildZip } from "./helpers/zip-builder.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -103,7 +105,7 @@ test("空目录初始化生成 .trellis/.opencode/.agents、developer 和模板�
       logger: SILENT_LOGGER
     });
     assert.equal(result.developer, USERNAME);
-    assert.equal(result.templateVersion, "0.6.16-template-1");
+    assert.equal(result.templateVersion, "0.6.16-template-2");
     assert.equal(result.templateSha256, REAL_BUNDLE.sha256);
     assert.equal(result.changed, true);
     assert.deepEqual(result.tools, [".opencode", ".agents"]);
@@ -439,7 +441,7 @@ test("离线时回落到最近成功缓存并可初始化", async () => {
     });
     assert.equal(downloaded.source, "network");
     assert.equal(downloaded.sha256, REAL_BUNDLE.sha256);
-    const cached = loadCachedWorkspaceTemplate({ dataRoot });
+    const cached = loadCachedWorkspaceTemplate({ dataRoot, teamId: "t1" });
     assert.equal(cached.source, "cache");
     assert.equal(cached.sha256, REAL_BUNDLE.sha256);
 
@@ -527,5 +529,336 @@ test("登录用户名不符合账号规则时拒绝初始化", async () => {
     assert.deepEqual(fs.readdirSync(workspace), []);
   } finally {
     cleanup(workspace);
+  }
+});
+
+test("不执行模板内 init_developer.py，developer 文件与 journal/index 由本地生成", async () => {
+  const workspace = tempDir("trellis-workspace-no-python-");
+  const outside = tempDir("trellis-workspace-no-python-outside-");
+  const marker = path.join(outside, "executed.txt");
+  try {
+    const archive = buildTemplateZip({
+      files: {
+        ".trellis/scripts/init_developer.py":
+          `open(${JSON.stringify(marker)}, "w").write("executed")\n`
+      }
+    });
+    const result = await initializeWorkspace({
+      workspacePath: workspace,
+      username: USERNAME,
+      archive,
+      now: FIXED_NOW,
+      logger: SILENT_LOGGER
+    });
+    assert.equal(fs.existsSync(marker), false);
+    assert.equal(result.developerInitialized, true);
+    assert.equal(
+      readDeveloper(workspace),
+      "name=alice\ninitialized_at=2026-11-06T12:00:00.000Z\n"
+    );
+    const journal = fs.readFileSync(
+      path.join(workspace, ".trellis", "workspace", USERNAME, "journal-1.md"),
+      "utf8"
+    );
+    assert.match(journal, /^# Journal - alice \(Part 1\)/);
+    assert.match(journal, /> Started: \d{4}-\d{2}-\d{2}/);
+    assert.match(journal, /\n---\n/);
+    const index = fs.readFileSync(
+      path.join(workspace, ".trellis", "workspace", USERNAME, "index.md"),
+      "utf8"
+    );
+    assert.match(index, /^# Workspace Index - alice/);
+    assert.match(index, /<!-- @@@auto:current-status -->/);
+  } finally {
+    cleanup(workspace);
+    cleanup(outside);
+  }
+});
+
+test("拒绝 .opencode 指向工作区外的符号链接且外部目录无写入", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("Windows 创建符号链接需要额外权限，Linux 覆盖该分支");
+    return;
+  }
+  const workspace = tempDir("trellis-workspace-link-tool-");
+  const outside = tempDir("trellis-workspace-link-tool-outside-");
+  try {
+    fs.symlinkSync(outside, path.join(workspace, ".opencode"), "dir");
+    await assertErrorCode(initializeWorkspace({
+      workspacePath: workspace,
+      username: USERNAME,
+      bundle: REAL_BUNDLE,
+      now: FIXED_NOW,
+      logger: SILENT_LOGGER
+    }), WORKSPACE_ERROR_CODE.PATH_INVALID);
+    assert.deepEqual(fs.readdirSync(outside), []);
+    assert.deepEqual(
+      fs.readdirSync(workspace).filter((name) => name !== ".opencode"),
+      []
+    );
+  } finally {
+    cleanup(workspace);
+    cleanup(outside);
+  }
+});
+
+test("拒绝 .trellis/scripts 符号链接且回滚不删除外部文件", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("Windows 创建符号链接需要额外权限，Linux 覆盖该分支");
+    return;
+  }
+  const workspace = tempDir("trellis-workspace-link-scripts-");
+  const outside = tempDir("trellis-workspace-link-scripts-outside-");
+  try {
+    fs.mkdirSync(path.join(workspace, ".trellis"), { recursive: true });
+    fs.writeFileSync(path.join(outside, "keep.txt"), "keep\n");
+    fs.symlinkSync(outside, path.join(workspace, ".trellis", "scripts"), "dir");
+    await assertErrorCode(initializeWorkspace({
+      workspacePath: workspace,
+      username: USERNAME,
+      bundle: REAL_BUNDLE,
+      now: FIXED_NOW,
+      logger: SILENT_LOGGER
+    }), WORKSPACE_ERROR_CODE.PATH_INVALID);
+    assert.equal(fs.readFileSync(path.join(outside, "keep.txt"), "utf8"), "keep\n");
+    assert.deepEqual(fs.readdirSync(outside), ["keep.txt"]);
+    assert.equal(fs.existsSync(path.join(workspace, ".agents")), false);
+    assert.equal(fs.existsSync(path.join(workspace, ".codex")), false);
+  } finally {
+    cleanup(workspace);
+    cleanup(outside);
+  }
+});
+
+test("repair 模式先备份再覆盖被修改的已展开文件", async () => {
+  const workspace = tempDir("trellis-workspace-repair-");
+  try {
+    await initializeWorkspace({
+      workspacePath: workspace,
+      username: USERNAME,
+      bundle: REAL_BUNDLE,
+      now: FIXED_NOW,
+      logger: SILENT_LOGGER
+    });
+    const target = path.join(workspace, ".opencode", "agents", "trellis-check.md");
+    const original = fs.readFileSync(target, "utf8");
+    fs.writeFileSync(target, "local drift\n");
+    const result = await initializeWorkspace({
+      workspacePath: workspace,
+      username: USERNAME,
+      bundle: REAL_BUNDLE,
+      mode: "repair",
+      now: FIXED_NOW,
+      logger: SILENT_LOGGER
+    });
+    assert.ok(result.updatedFiles.includes(".opencode/agents/trellis-check.md"));
+    assert.equal(fs.readFileSync(target, "utf8"), original);
+    assert.ok(result.backupDir?.startsWith(".trellis-backup-"));
+    assert.equal(
+      fs.readFileSync(
+        path.join(workspace, result.backupDir, ".opencode", "agents", "trellis-check.md"),
+        "utf8"
+      ),
+      "local drift\n"
+    );
+  } finally {
+    cleanup(workspace);
+  }
+});
+
+test("template-hashes 记录磁盘实际内容，手改文件后重跑会更新", async () => {
+  const workspace = tempDir("trellis-workspace-drift-");
+  try {
+    await initializeWorkspace({
+      workspacePath: workspace,
+      username: USERNAME,
+      bundle: REAL_BUNDLE,
+      now: FIXED_NOW,
+      logger: SILENT_LOGGER
+    });
+    const target = path.join(workspace, ".opencode", "agents", "trellis-check.md");
+    fs.writeFileSync(target, "drifted content\n");
+    const expected = sha256(fs.readFileSync(target));
+    const result = await initializeWorkspace({
+      workspacePath: workspace,
+      username: USERNAME,
+      bundle: REAL_BUNDLE,
+      now: FIXED_NOW,
+      logger: SILENT_LOGGER
+    });
+    assert.ok(result.updatedFiles.includes(".trellis/.template-hashes.json"));
+    const hashes = JSON.parse(
+      fs.readFileSync(path.join(workspace, ".trellis", ".template-hashes.json"), "utf8")
+    );
+    assert.equal(hashes.files[".opencode/agents/trellis-check.md"], expected);
+    assert.equal(fs.readFileSync(target, "utf8"), "drifted content\n");
+  } finally {
+    cleanup(workspace);
+  }
+});
+
+test("ZIP 结构拒绝重复大小写条目、CRC 错误、设备/FIFO、保留名和尾随点空格", async () => {
+  const workspace = tempDir("trellis-workspace-zip-invalid-");
+  try {
+    const duplicate = buildZip([
+      { name: "template-manifest.json", data: "{}" },
+      { name: ".trellis/a.txt", data: "a" },
+      { name: ".trellis/A.txt", data: "b" }
+    ]);
+    await assertErrorCode(initializeWorkspace({
+      workspacePath: workspace,
+      username: USERNAME,
+      archive: duplicate,
+      now: FIXED_NOW,
+      logger: SILENT_LOGGER
+    }), WORKSPACE_ERROR_CODE.TEMPLATE_INVALID);
+
+    const corrupted = buildTemplateZip();
+    const marker = corrupted.indexOf(Buffer.from("print('test')"));
+    assert.ok(marker > 0);
+    corrupted[marker] ^= 0xff;
+    await assertErrorCode(initializeWorkspace({
+      workspacePath: workspace,
+      username: USERNAME,
+      archive: corrupted,
+      now: FIXED_NOW,
+      logger: SILENT_LOGGER
+    }), WORKSPACE_ERROR_CODE.TEMPLATE_INVALID);
+
+    for (const mode of [0o010644, 0o020644]) {
+      assert.throws(
+        () => readZipEntries(buildZip([{ name: ".trellis/special", data: "x", mode }])),
+        /不是普通文件或目录/
+      );
+    }
+    assert.throws(
+      () => readZipEntries(buildZip([{ name: ".trellis/CON", data: "x" }])),
+      /保留名称/
+    );
+    assert.throws(
+      () => readZipEntries(buildZip([{ name: ".trellis/name.", data: "x" }])),
+      /以点或空格结尾/
+    );
+    assert.throws(
+      () => readZipEntries(buildZip([{ name: ".trellis/name ", data: "x" }])),
+      /以点或空格结尾/
+    );
+    assert.deepEqual(fs.readdirSync(workspace), []);
+  } finally {
+    cleanup(workspace);
+  }
+});
+
+test("ZIP 条目数量与解压总量上限被拒绝", () => {
+  const archive = buildZip([
+    { name: "a.txt", data: "aaaa" },
+    { name: "b.txt", data: "bbbb" }
+  ]);
+  assert.throws(() => readZipEntries(archive, { maxEntries: 1 }), /条目数量超过限制/);
+  assert.throws(() => readZipEntries(archive, { maxEntryBytes: 2 }), /解压后超过大小限制/);
+  assert.throws(() => readZipEntries(archive, { maxTotalBytes: 6 }), /解压总量超过限制/);
+});
+
+test("模板缓存按团队分区，非法团队 ID 不进入路径", async () => {
+  const dataRoot = tempDir("trellis-agent-data-teams-");
+  try {
+    await downloadWorkspaceTemplate({
+      serverUrl: "http://127.0.0.1:4317",
+      teamId: "t1",
+      agentCredential: CREDENTIAL,
+      dataRoot,
+      fetchImpl: async () => templateResponse(REAL_BUNDLE.archive)
+    });
+    assert.equal(loadCachedWorkspaceTemplate({ dataRoot, teamId: "t2" }), null);
+    assert.equal(
+      loadCachedWorkspaceTemplate({ dataRoot, teamId: "t1" }).sha256,
+      REAL_BUNDLE.sha256
+    );
+    assert.equal(
+      fs.existsSync(path.join(dataRoot, "templates", "workspace", "t1", "latest.json")),
+      true
+    );
+    assert.equal(
+      (fs.statSync(path.join(dataRoot, "templates", "workspace", "t1")).mode & 0o077),
+      0
+    );
+    assert.throws(
+      () => workspaceTemplateCacheDir("..", dataRoot),
+      (error) => error.code === WORKSPACE_ERROR_CODE.TEMPLATE_INVALID
+    );
+    await assertErrorCode(downloadWorkspaceTemplate({
+      serverUrl: "http://127.0.0.1:4317",
+      teamId: "../escape",
+      agentCredential: CREDENTIAL,
+      dataRoot,
+      fetchImpl: async () => {
+        throw new Error("must not be called");
+      }
+    }), WORKSPACE_ERROR_CODE.TEMPLATE_INVALID);
+  } finally {
+    cleanup(dataRoot);
+  }
+});
+
+test("缓存索引损坏时不掩盖网络错误", async () => {
+  const workspace = tempDir("trellis-workspace-corrupt-cache-");
+  const dataRoot = tempDir("trellis-agent-data-corrupt-");
+  try {
+    const cacheDir = path.join(dataRoot, "templates", "workspace", "t1");
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.writeFileSync(path.join(cacheDir, "latest.json"), "{not json");
+    await assertErrorCode(initializeWorkspace({
+      workspacePath: workspace,
+      username: USERNAME,
+      serverUrl: "http://127.0.0.1:4317",
+      teamId: "t1",
+      agentCredential: CREDENTIAL,
+      dataRoot,
+      fetchImpl: async () => {
+        throw new Error("offline");
+      },
+      now: FIXED_NOW,
+      logger: SILENT_LOGGER
+    }), WORKSPACE_ERROR_CODE.TEMPLATE_UNAVAILABLE);
+    assert.deepEqual(fs.readdirSync(workspace), []);
+  } finally {
+    cleanup(workspace);
+    cleanup(dataRoot);
+  }
+});
+
+test("401/403/404 不回落缓存，5xx 回落缓存", async () => {
+  const workspace = tempDir("trellis-workspace-fallback-");
+  const dataRoot = tempDir("trellis-agent-data-fallback-");
+  const common = {
+    serverUrl: "http://127.0.0.1:4317",
+    teamId: "t1",
+    agentCredential: CREDENTIAL,
+    dataRoot
+  };
+  try {
+    await downloadWorkspaceTemplate({
+      ...common,
+      fetchImpl: async () => templateResponse(REAL_BUNDLE.archive)
+    });
+    for (const [status, code] of [
+      [401, WORKSPACE_ERROR_CODE.TEMPLATE_AUTH_FAILED],
+      [403, WORKSPACE_ERROR_CODE.TEMPLATE_AUTH_FAILED],
+      [404, WORKSPACE_ERROR_CODE.TEMPLATE_NOT_FOUND]
+    ]) {
+      await assertErrorCode(downloadWorkspaceTemplate({
+        ...common,
+        fetchImpl: async () => templateResponse(REAL_BUNDLE.archive, { status })
+      }), code);
+    }
+    const fallback = await downloadWorkspaceTemplate({
+      ...common,
+      fetchImpl: async () => templateResponse(REAL_BUNDLE.archive, { status: 503 })
+    });
+    assert.equal(fallback.source, "cache");
+    assert.equal(fallback.sha256, REAL_BUNDLE.sha256);
+  } finally {
+    cleanup(workspace);
+    cleanup(dataRoot);
   }
 });

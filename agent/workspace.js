@@ -2,19 +2,16 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { defaultAgentRoot } from "./config-store.js";
-import { buildEnvironment, runProcess } from "./process.js";
 import { normalizeServerUrl } from "./protocol.js";
 import { extractZipEntries, readZipEntries, ZipError } from "./zip.js";
 
 const TEMPLATE_MANIFEST = "template-manifest.json";
-const INIT_DEVELOPER_SCRIPT = ".trellis/scripts/init_developer.py";
 const DEVELOPER_FILE = ".trellis/.developer";
 const TEMPLATE_HASHES_FILE = ".trellis/.template-hashes.json";
 const MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024;
-const MAX_DEVELOPER_OUTPUT = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
-const DEVELOPER_TIMEOUT_MS = 15_000;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const TOOL_PATTERN = /^\.[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const TOP_LEVEL_PATTERN = /^[A-Za-z0-9._-]+$/;
 const USERNAME_PATTERN = /^[A-Za-z0-9._-]{3,64}$/;
@@ -31,7 +28,6 @@ export const WORKSPACE_ERROR_CODE = Object.freeze({
   TEMPLATE_HASH_MISMATCH: "TEMPLATE_HASH_MISMATCH",
   TEMPLATE_INVALID: "TEMPLATE_INVALID",
   DEVELOPER_CONFLICT: "DEVELOPER_CONFLICT",
-  PYTHON_MISSING: "PYTHON_MISSING",
   DEVELOPER_INIT_FAILED: "DEVELOPER_INIT_FAILED"
 });
 
@@ -178,9 +174,6 @@ export function loadTemplateBundle(archive, {
   if (version && normalizeVersion(version, "响应模板版本") !== manifest.version) {
     throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_INVALID, "模板版本与归档内清单不一致");
   }
-  if (!entries.some((entry) => !entry.isDirectory && entry.name === INIT_DEVELOPER_SCRIPT)) {
-    throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_INVALID, "模板缺少 developer 初始化脚本");
-  }
   return {
     archive,
     sha256: actual,
@@ -203,14 +196,26 @@ export function loadTemplateArchive(file, options = {}) {
   return loadTemplateBundle(archive, options);
 }
 
-export function workspaceTemplateCacheDir(dataRoot = defaultAgentRoot()) {
-  return path.join(path.resolve(dataRoot), "templates", "workspace");
+export function workspaceTemplateCacheDir(teamId, dataRoot = defaultAgentRoot()) {
+  return path.join(path.resolve(dataRoot), "templates", "workspace", normalizeCacheTeamId(teamId));
+}
+
+function normalizeCacheTeamId(teamId) {
+  const id = String(teamId || "").trim();
+  if (!id) {
+    throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_NOT_FOUND, "缺少团队 ID");
+  }
+  if (!SAFE_ID_PATTERN.test(id) || id === "." || id === "..") {
+    throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_INVALID, "团队 ID 格式无效");
+  }
+  return id;
 }
 
 export function loadCachedWorkspaceTemplate({
+  teamId,
   dataRoot = defaultAgentRoot()
 } = {}) {
-  const cacheDir = workspaceTemplateCacheDir(dataRoot);
+  const cacheDir = workspaceTemplateCacheDir(teamId, dataRoot);
   const latestFile = path.join(cacheDir, "latest.json");
   let latest;
   try {
@@ -245,10 +250,21 @@ export function loadCachedWorkspaceTemplate({
   return bundle;
 }
 
-function cacheTemplate(bundle, dataRoot) {
-  const cacheDir = workspaceTemplateCacheDir(dataRoot);
+function loadCachedForFallback({ teamId, dataRoot, logger }) {
+  try {
+    return loadCachedWorkspaceTemplate({ teamId, dataRoot });
+  } catch (error) {
+    logger?.warn?.("本地模板缓存不可用", {
+      code: error?.code || WORKSPACE_ERROR_CODE.TEMPLATE_INVALID
+    });
+    return null;
+  }
+}
+
+function cacheTemplate(bundle, teamId, dataRoot) {
+  const cacheDir = workspaceTemplateCacheDir(teamId, dataRoot);
   const versionDir = path.join(cacheDir, bundle.sha256);
-  fs.mkdirSync(versionDir, { recursive: true });
+  fs.mkdirSync(versionDir, { recursive: true, mode: 0o700 });
   const archiveFile = path.join(versionDir, "template.zip");
   if (!fs.existsSync(archiveFile)) {
     writeFileAtomic(archiveFile, bundle.archive);
@@ -345,10 +361,7 @@ export async function downloadWorkspaceTemplate({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   logger = null
 } = {}) {
-  const id = String(teamId || "").trim();
-  if (!id) {
-    throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_NOT_FOUND, "缺少团队 ID");
-  }
+  const id = normalizeCacheTeamId(teamId);
   const headers = downloadHeaders({ sessionToken, agentCredential });
   const base = serverBaseUrl(serverUrl);
   const url = `${base}/api/teams/${encodeURIComponent(id)}/workspace-template`;
@@ -367,7 +380,7 @@ export async function downloadWorkspaceTemplate({
       signal: controller.signal
     });
   } catch (error) {
-    const cached = loadCachedWorkspaceTemplate({ dataRoot });
+    const cached = loadCachedForFallback({ teamId: id, dataRoot, logger });
     if (cached) {
       logger?.warn?.("服务端不可达，使用缓存模板", {
         version: cached.manifest.version,
@@ -386,7 +399,8 @@ export async function downloadWorkspaceTemplate({
 
   if (!response.ok) {
     if (response.status >= 500) {
-      const cached = loadCachedWorkspaceTemplate({ dataRoot });
+      await response.arrayBuffer().catch(() => {});
+      const cached = loadCachedForFallback({ teamId: id, dataRoot, logger });
       if (cached) {
         logger?.warn?.("模板服务不可用，使用缓存模板", {
           version: cached.manifest.version,
@@ -423,7 +437,7 @@ export async function downloadWorkspaceTemplate({
     source: "network",
     version: headerVersion || null
   });
-  cacheTemplate(bundle, dataRoot);
+  cacheTemplate(bundle, id, dataRoot);
   logger?.info?.("workspace 模板下载并校验完成", {
     version: bundle.manifest.version,
     sha256: bundle.sha256.slice(0, 12),
@@ -612,108 +626,70 @@ function indexContent(username) {
 `;
 }
 
-function ensureDeveloperWorkspaceFiles(workspacePath, username, now) {
+function ensureDeveloperWorkspaceFiles(workspacePath, realRoot, username, now, createdDirs) {
   const workspaceDir = path.join(workspacePath, ".trellis", "workspace", username);
   const journalFile = path.join(workspaceDir, "journal-1.md");
   const indexPath = path.join(workspaceDir, "index.md");
   const created = [];
-  fs.mkdirSync(workspaceDir, { recursive: true });
-  if (!fs.existsSync(journalFile)) {
+  ensureDirectoryTracked(workspacePath, realRoot, workspaceDir, createdDirs);
+  if (!lstatOrNull(journalFile)) {
+    assertSafeWorkspacePath(workspacePath, realRoot, journalFile);
     fs.writeFileSync(journalFile, journalContent(username, now), { flag: "wx" });
     created.push(path.relative(workspacePath, journalFile));
   }
-  if (!fs.existsSync(indexPath)) {
+  if (!lstatOrNull(indexPath)) {
+    assertSafeWorkspacePath(workspacePath, realRoot, indexPath);
     fs.writeFileSync(indexPath, indexContent(username), { flag: "wx" });
     created.push(path.relative(workspacePath, indexPath));
   }
   return created;
 }
 
-function defaultPythonCommand() {
-  return process.env.TRELLIS_PYTHON ||
-    (process.platform === "win32" ? "python" : "python3");
-}
-
-async function assertPythonAvailable(command) {
-  try {
-    const result = await runProcess(command, ["--version"], {
-      timeoutMs: 5_000,
-      maxOutputBytes: 64 * 1024,
-      env: buildEnvironment({ PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" })
-    });
-    if (result.exitCode !== 0) throw new Error("Python 版本检查失败");
-    const output = `${result.stdout || ""}${result.stderr || ""}`;
-    if (!/Python\s+3\./i.test(output)) throw new Error("需要 Python 3");
-  } catch (error) {
-    throw fail(
-      WORKSPACE_ERROR_CODE.PYTHON_MISSING,
-      "需要 Python 3 才能初始化 developer，请先安装或在配置中指定 TRELLIS_PYTHON",
-      { cause: error }
-    );
-  }
-}
-
-async function runDeveloperInit(workspacePath, username, command) {
-  const script = path.join(workspacePath, ...INIT_DEVELOPER_SCRIPT.split("/"));
-  let stat;
-  try {
-    stat = fs.lstatSync(script);
-  } catch {
-    throw fail(WORKSPACE_ERROR_CODE.DEVELOPER_INIT_FAILED, "缺少 developer 初始化脚本");
-  }
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw fail(WORKSPACE_ERROR_CODE.DEVELOPER_INIT_FAILED, "developer 初始化脚本不是普通文件");
-  }
-  let result;
-  try {
-    result = await runProcess(command, ["-X", "utf8", INIT_DEVELOPER_SCRIPT, username], {
-      cwd: workspacePath,
-      timeoutMs: DEVELOPER_TIMEOUT_MS,
-      maxOutputBytes: MAX_DEVELOPER_OUTPUT,
-      env: buildEnvironment({ PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" })
-    });
-  } catch (error) {
-    throw fail(
-      WORKSPACE_ERROR_CODE.DEVELOPER_INIT_FAILED,
-      "developer 初始化脚本执行失败",
-      { cause: error }
-    );
-  }
-  if (result.exitCode !== 0) {
-    throw fail(
-      WORKSPACE_ERROR_CODE.DEVELOPER_INIT_FAILED,
-      "developer 初始化脚本返回失败"
-    );
-  }
+function initializeDeveloper(workspacePath, realRoot, username, now, createdDirs) {
+  const file = path.join(workspacePath, ...DEVELOPER_FILE.split("/"));
+  ensureDirectoryTracked(workspacePath, realRoot, path.dirname(file), createdDirs);
+  assertSafeWorkspacePath(workspacePath, realRoot, file);
+  fs.writeFileSync(
+    file,
+    `name=${username}\ninitialized_at=${now.toISOString()}\n`,
+    { flag: "wx", mode: 0o600 }
+  );
 }
 
 function backupStamp(now) {
   return now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
 
-function createBackupManager(workspacePath, now) {
+function createBackupManager(workspacePath, realRoot, now) {
   let directory = null;
   const files = [];
   function ensureDirectory() {
     if (directory) return directory;
     const base = `.trellis-backup-${backupStamp(now)}`;
-    let candidate = base;
-    let suffix = 1;
-    while (fs.existsSync(path.join(workspacePath, candidate))) {
-      candidate = `${base}-${suffix}`;
-      suffix += 1;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const candidate = `${base}-${crypto.randomBytes(3).toString("hex")}`;
+      try {
+        fs.mkdirSync(path.join(workspacePath, candidate), { mode: 0o700 });
+        directory = candidate;
+        return directory;
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+      }
     }
-    fs.mkdirSync(path.join(workspacePath, candidate), { recursive: true });
-    directory = candidate;
-    return directory;
+    throw fail(WORKSPACE_ERROR_CODE.DEVELOPER_INIT_FAILED, "无法创建备份目录");
   }
   return {
     backup(relativePath) {
       const target = path.join(workspacePath, relativePath);
-      if (!fs.existsSync(target)) return null;
+      assertSafeWorkspacePath(workspacePath, realRoot, target);
+      const stat = lstatOrNull(target);
+      if (!stat) return null;
+      if (stat.isSymbolicLink() || !stat.isFile()) {
+        throw fail(WORKSPACE_ERROR_CODE.PATH_INVALID, "备份目标不是普通文件");
+      }
       const dir = ensureDirectory();
       const destination = path.join(workspacePath, dir, relativePath);
-      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
       fs.copyFileSync(target, destination);
       files.push(relativePath);
       return path.join(dir, relativePath);
@@ -727,36 +703,112 @@ function createBackupManager(workspacePath, now) {
   };
 }
 
-function isInside(root, candidate) {
-  const relative = path.relative(root, candidate);
-  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+function isWithin(root, candidate) {
+  const relative = path.relative(comparablePath(root), comparablePath(candidate));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function realpathNative(target) {
+  return fs.realpathSync.native
+    ? fs.realpathSync.native(target)
+    : fs.realpathSync(target);
+}
+
+function lstatOrNull(target) {
+  try {
+    return fs.lstatSync(target);
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return null;
+    throw error;
+  }
+}
+
+function nearestExistingAncestor(target) {
+  let current = target;
+  for (;;) {
+    if (lstatOrNull(current)) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return current;
+    current = parent;
+  }
+}
+
+function assertSafeWorkspacePath(root, realRoot, target) {
+  if (!isWithin(root, target)) {
+    throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_INVALID, "模板条目路径逃逸 workspace");
+  }
+  const existing = nearestExistingAncestor(target);
+  const stat = lstatOrNull(existing);
+  if (!stat) return;
+  if (stat.isSymbolicLink()) {
+    throw fail(WORKSPACE_ERROR_CODE.PATH_INVALID, "目标路径经过符号链接或重解析点");
+  }
+  let real;
+  try {
+    real = realpathNative(existing);
+  } catch (error) {
+    throw fail(WORKSPACE_ERROR_CODE.PATH_INVALID, "无法解析目标路径真实位置", { cause: error });
+  }
+  if (!isWithin(realRoot, real)) {
+    throw fail(WORKSPACE_ERROR_CODE.PATH_INVALID, "目标路径经符号链接逃逸 workspace");
+  }
+}
+
+function safeRemove(root, realRoot, relative) {
+  const target = path.join(root, relative);
+  try {
+    assertSafeWorkspacePath(root, realRoot, target);
+  } catch {
+    return;
+  }
+  const stat = lstatOrNull(target);
+  if (!stat || stat.isSymbolicLink()) return;
+  fs.rmSync(target, { force: true });
+}
+
+function safeRestore(root, realRoot, source, target) {
+  try {
+    assertSafeWorkspacePath(root, realRoot, source);
+    assertSafeWorkspacePath(root, realRoot, target);
+  } catch {
+    return;
+  }
+  const sourceStat = lstatOrNull(source);
+  if (!sourceStat || !sourceStat.isFile()) return;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(source, target);
 }
 
 function relativeTemplatePath(workspacePath, entryName) {
   const target = path.join(workspacePath, ...String(entryName).split("/"));
-  if (!isInside(workspacePath, target)) {
+  if (!isWithin(workspacePath, target)) {
     throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_INVALID, "模板条目路径逃逸 workspace");
   }
   return { target, relative: path.relative(workspacePath, target) };
 }
 
-function ensureDirectoryTracked(workspacePath, directory, createdDirs) {
-  if (!isInside(workspacePath, directory) && directory !== workspacePath) {
+function ensureDirectoryTracked(workspacePath, realRoot, directory, createdDirs) {
+  if (!isWithin(workspacePath, directory)) {
     throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_INVALID, "模板条目路径逃逸 workspace");
   }
-  if (fs.existsSync(directory)) {
-    if (!fs.statSync(directory).isDirectory()) {
+  assertSafeWorkspacePath(workspacePath, realRoot, directory);
+  const stat = lstatOrNull(directory);
+  if (stat) {
+    if (!stat.isDirectory()) {
       throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_INVALID, "目标路径已被文件占用");
     }
     return;
   }
   const missing = [];
   let current = directory;
-  while (current !== workspacePath && !fs.existsSync(current)) {
+  while (!lstatOrNull(current)) {
     missing.push(current);
-    current = path.dirname(current);
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
   fs.mkdirSync(directory, { recursive: true });
+  assertSafeWorkspacePath(workspacePath, realRoot, directory);
   for (const item of missing.reverse()) createdDirs.push(item);
 }
 
@@ -784,14 +836,20 @@ function resolveTools(manifest, tools) {
   return selected;
 }
 
-function templateHashesPayload(bundle, tools) {
+function templateHashesPayload(bundle, tools, workspacePath, realRoot) {
   const selectedTop = new Set([...bundle.manifest.baseFiles, ...tools]);
   const files = {};
   for (const entry of bundle.entries) {
     if (entry.isDirectory) continue;
     if (!selectedTop.has(entry.name.split("/")[0])) continue;
     if (entry.name === TEMPLATE_HASHES_FILE) continue;
-    files[entry.name] = sha256(entry.data);
+    const target = path.join(workspacePath, ...entry.name.split("/"));
+    assertSafeWorkspacePath(workspacePath, realRoot, target);
+    const hash = fileHash(target);
+    if (!hash) {
+      throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_INVALID, "模板文件写入后无法读取");
+    }
+    files[entry.name] = hash;
   }
   return `${JSON.stringify({
     schemaVersion: 1,
@@ -809,11 +867,11 @@ export async function applyWorkspaceTemplate({
   tools = null,
   mode = "initialize",
   confirmDeveloperSwitch = false,
-  pythonCommand = defaultPythonCommand(),
   logger = null,
   now = new Date()
 } = {}) {
   const root = await assertWorkspaceDirectory(workspacePath);
+  const realRoot = realpathNative(root);
   const developerName = validateWorkspaceUsername(username);
   if (!bundle || !Array.isArray(bundle.entries) || !bundle.manifest) {
     throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_INVALID, "模板 bundle 无效");
@@ -836,9 +894,12 @@ export async function applyWorkspaceTemplate({
 
   const developerFile = path.join(root, ...DEVELOPER_FILE.split("/"));
   const developerWorkspace = path.join(root, ".trellis", "workspace", developerName);
+  assertSafeWorkspacePath(root, realRoot, developerFile);
+  assertSafeWorkspacePath(root, realRoot, developerWorkspace);
+  const developerStat = lstatOrNull(developerFile);
   const existingDeveloper = readDeveloperName(developerFile);
-  const developerExisted = fs.existsSync(developerFile);
-  const developerWorkspaceExisted = fs.existsSync(developerWorkspace);
+  const developerExisted = Boolean(developerStat);
+  const developerWorkspaceExisted = Boolean(lstatOrNull(developerWorkspace));
   let developerState = "missing";
   if (developerExisted) {
     if (existingDeveloper === developerName) {
@@ -854,9 +915,6 @@ export async function applyWorkspaceTemplate({
     );
   }
   const developerNeedsInit = developerState !== "same";
-  if (developerNeedsInit) {
-    await assertPythonAvailable(pythonCommand);
-  }
 
   const selectedTop = new Set([...bundle.manifest.baseFiles, ...selectedTools]);
   const selectedEntries = bundle.entries.filter(
@@ -867,35 +925,47 @@ export async function applyWorkspaceTemplate({
   const createdFiles = [];
   const updatedFiles = [];
   const skippedFiles = [];
-  const backups = createBackupManager(root, now);
+  const backups = createBackupManager(root, realRoot, now);
   let developerInitialized = false;
   let developerSwitched = false;
 
   function rollback() {
     for (const relative of [...createdFiles].reverse()) {
-      fs.rmSync(path.join(root, relative), { force: true });
+      safeRemove(root, realRoot, relative);
     }
     for (const relative of backups.files) {
       const backup = path.join(root, backups.directory, relative);
-      if (fs.existsSync(backup)) {
-        fs.copyFileSync(backup, path.join(root, relative));
-      }
+      safeRestore(root, realRoot, backup, path.join(root, relative));
     }
     for (const directory of [...createdDirs].reverse()) {
       try {
+        assertSafeWorkspacePath(root, realRoot, directory);
         fs.rmdirSync(directory);
       } catch {
-        // 目录非空或被并发使用时保留。
+        // 目录非空、被并发使用或经符号链接逃逸时保留。
       }
     }
-    if (!developerExisted && fs.existsSync(developerFile)) {
-      fs.rmSync(developerFile, { force: true });
+    if (!developerExisted) {
+      safeRemove(root, realRoot, DEVELOPER_FILE);
     }
-    if (!developerWorkspaceExisted && fs.existsSync(developerWorkspace)) {
-      fs.rmSync(developerWorkspace, { recursive: true, force: true });
+    if (!developerWorkspaceExisted) {
+      try {
+        assertSafeWorkspacePath(root, realRoot, developerWorkspace);
+        if (lstatOrNull(developerWorkspace)) {
+          fs.rmSync(developerWorkspace, { recursive: true, force: true });
+        }
+      } catch {
+        // 逃逸路径不删除。
+      }
     }
     if (backups.directory) {
-      fs.rmSync(path.join(root, backups.directory), { recursive: true, force: true });
+      try {
+        const directory = path.join(root, backups.directory);
+        assertSafeWorkspacePath(root, realRoot, directory);
+        fs.rmSync(directory, { recursive: true, force: true });
+      } catch {
+        // 逃逸路径不删除。
+      }
     }
   }
 
@@ -906,7 +976,7 @@ export async function applyWorkspaceTemplate({
       .sort((left, right) => left.name.length - right.name.length);
     for (const entry of directories) {
       const { target } = relativeTemplatePath(root, entry.name);
-      ensureDirectoryTracked(root, target, createdDirs);
+      ensureDirectoryTracked(root, realRoot, target, createdDirs);
     }
 
     const files = selectedEntries
@@ -914,16 +984,12 @@ export async function applyWorkspaceTemplate({
       .sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of files) {
       const { target, relative } = relativeTemplatePath(root, entry.name);
+      assertSafeWorkspacePath(root, realRoot, target);
       const source = path.join(tempDir, ...entry.name.split("/"));
       const sourceHash = sha256(entry.data);
-      if (fs.existsSync(target)) {
-        let stat;
-        try {
-          stat = fs.lstatSync(target);
-        } catch {
-          stat = null;
-        }
-        if (!stat || !stat.isFile() || stat.isSymbolicLink()) {
+      const targetStat = lstatOrNull(target);
+      if (targetStat) {
+        if (!targetStat.isFile() || targetStat.isSymbolicLink()) {
           throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_INVALID, "目标路径已被非普通文件占用");
         }
         if (fileHash(target) === sourceHash) {
@@ -933,6 +999,7 @@ export async function applyWorkspaceTemplate({
         const top = entry.name.split("/")[0];
         if (mode === "repair" && selectedTools.includes(top)) {
           backups.backup(relative);
+          assertSafeWorkspacePath(root, realRoot, target);
           fs.copyFileSync(source, target);
           updatedFiles.push(relative);
           continue;
@@ -940,7 +1007,7 @@ export async function applyWorkspaceTemplate({
         skippedFiles.push(relative);
         continue;
       }
-      ensureDirectoryTracked(root, path.dirname(target), createdDirs);
+      ensureDirectoryTracked(root, realRoot, path.dirname(target), createdDirs);
       try {
         fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL);
       } catch (error) {
@@ -955,15 +1022,18 @@ export async function applyWorkspaceTemplate({
 
     const hashesRelative = TEMPLATE_HASHES_FILE;
     const hashesTarget = path.join(root, ...TEMPLATE_HASHES_FILE.split("/"));
+    assertSafeWorkspacePath(root, realRoot, hashesTarget);
     const hashesPayload = templateHashesPayload(
       bundle,
-      selectedTools
+      selectedTools,
+      root,
+      realRoot
     );
-    const existingHashes = fs.existsSync(hashesTarget)
+    const existingHashes = lstatOrNull(hashesTarget)
       ? fs.readFileSync(hashesTarget, "utf8")
       : null;
     if (existingHashes !== hashesPayload) {
-      ensureDirectoryTracked(root, path.dirname(hashesTarget), createdDirs);
+      ensureDirectoryTracked(root, realRoot, path.dirname(hashesTarget), createdDirs);
       if (existingHashes != null) {
         backups.backup(hashesRelative);
         fs.writeFileSync(hashesTarget, hashesPayload);
@@ -978,13 +1048,13 @@ export async function applyWorkspaceTemplate({
 
     if (developerState === "conflict") {
       backups.backup(DEVELOPER_FILE);
-      fs.rmSync(developerFile, { force: true });
+      safeRemove(root, realRoot, DEVELOPER_FILE);
       developerSwitched = true;
     }
     if (developerNeedsInit) {
-      await runDeveloperInit(root, developerName, pythonCommand);
+      initializeDeveloper(root, realRoot, developerName, now, createdDirs);
       developerInitialized = true;
-      if (!developerExisted && fs.existsSync(developerFile)) {
+      if (!developerExisted) {
         createdFiles.push(DEVELOPER_FILE);
       }
     }
@@ -992,10 +1062,16 @@ export async function applyWorkspaceTemplate({
     if (actualDeveloper !== developerName) {
       throw fail(WORKSPACE_ERROR_CODE.DEVELOPER_INIT_FAILED, "developer 名称校验失败");
     }
-    const developerWorkspaceFiles = ensureDeveloperWorkspaceFiles(root, developerName, now);
+    const developerWorkspaceFiles = ensureDeveloperWorkspaceFiles(
+      root,
+      realRoot,
+      developerName,
+      now,
+      createdDirs
+    );
     createdFiles.push(...developerWorkspaceFiles);
     for (const fileName of ["journal-1.md", "index.md"]) {
-      if (!fs.existsSync(path.join(developerWorkspace, fileName))) {
+      if (!lstatOrNull(path.join(developerWorkspace, fileName))) {
         throw fail(WORKSPACE_ERROR_CODE.DEVELOPER_INIT_FAILED, "developer workspace 文件缺失");
       }
     }

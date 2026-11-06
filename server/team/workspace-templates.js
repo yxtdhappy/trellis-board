@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readZipEntries } from "../../agent/zip.js";
 import { ERROR_CODES, teamError } from "./errors.js";
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
@@ -13,6 +14,8 @@ export const defaultWorkspaceTemplateDir = path.resolve(
 
 const MANIFEST_FILE = "manifest.json";
 const ARCHIVE_FILE = "workspace-template.zip";
+const ARCHIVE_MANIFEST_FILE = "template-manifest.json";
+const SUPPORTED_SCHEMA_VERSIONS = new Set([1]);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const TOOL_PATTERN = /^\.[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -116,6 +119,10 @@ function normalizeManifest(raw) {
   }
   const files = requireFiles(raw.files);
   const baseFiles = requireBaseFiles(raw.baseFiles);
+  const schemaVersion = raw.schemaVersion == null ? 1 : Number(raw.schemaVersion);
+  if (!SUPPORTED_SCHEMA_VERSIONS.has(schemaVersion)) {
+    throw new Error(`workspace 模板清单 schemaVersion 不受支持: ${raw.schemaVersion}`);
+  }
   for (const item of [...baseFiles, ...tools]) {
     const present = Object.keys(files).some((name) => {
       const top = name.split("/")[0];
@@ -126,7 +133,7 @@ function normalizeManifest(raw) {
     }
   }
   return {
-    schemaVersion: Number(raw.schemaVersion) || 1,
+    schemaVersion,
     version: requireVersion(raw.version, "version"),
     templateVersion: requireVersion(raw.templateVersion || raw.version, "templateVersion"),
     cliVersion: raw.cliVersion == null ? null : requireVersion(raw.cliVersion, "cliVersion"),
@@ -149,6 +156,47 @@ function sha256(buffer) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
+function readArchiveFiles(archive) {
+  let entries;
+  try {
+    entries = readZipEntries(archive);
+  } catch (error) {
+    throw new Error(`workspace 模板归档无法解析: ${error.message}`);
+  }
+  const files = new Map();
+  for (const entry of entries) {
+    if (entry.isDirectory || entry.name === ARCHIVE_MANIFEST_FILE) continue;
+    files.set(entry.name, sha256(entry.data));
+  }
+  return { files, entryCount: entries.length };
+}
+
+function validateArchiveFiles(archive, manifest) {
+  const { files, entryCount } = readArchiveFiles(archive);
+  if (manifest.entryCount && manifest.entryCount !== entryCount) {
+    throw new Error(
+      `workspace 模板归档条目数与清单不一致: 清单 ${manifest.entryCount}，归档 ${entryCount}`
+    );
+  }
+  const expected = manifest.files;
+  const missing = Object.keys(expected).filter((name) => !files.has(name));
+  const extra = [...files.keys()].filter((name) => !Object.hasOwn(expected, name));
+  const mismatched = Object.keys(expected).filter(
+    (name) => files.has(name) && files.get(name) !== expected[name]
+  );
+  const describe = (names) => names.slice(0, 3).join(", ") +
+    (names.length > 3 ? ` 等 ${names.length} 个` : "");
+  if (missing.length) {
+    throw new Error(`workspace 模板归档缺少清单文件: ${describe(missing)}`);
+  }
+  if (extra.length) {
+    throw new Error(`workspace 模板归档包含清单外文件: ${describe(extra)}`);
+  }
+  if (mismatched.length) {
+    throw new Error(`workspace 模板文件哈希与清单不一致: ${describe(mismatched)}`);
+  }
+}
+
 function loadTemplate(rootDir) {
   const manifestPath = path.join(rootDir, MANIFEST_FILE);
   const archivePath = path.join(rootDir, ARCHIVE_FILE);
@@ -166,12 +214,14 @@ function loadTemplate(rootDir) {
   if (manifest.bytes && manifest.bytes !== archive.length) {
     throw new Error("workspace 模板归档大小与清单不一致");
   }
+  validateArchiveFiles(archive, manifest);
   return Object.freeze({
     manifest,
     archive,
     sha256: actual,
     size: archive.length,
-    etag: `"${actual}"`
+    etag: `"${actual}"`,
+    manifestEtag: `"${actual}-manifest"`
   });
 }
 
@@ -220,24 +270,27 @@ export function authorizeWorkspaceTemplate(db, {
   if (!id) {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, "缺少团队 ID");
   }
+  if (!userId && !systemAdmin) {
+    throw teamError(401, ERROR_CODES.AUTH_REQUIRED, "需要登录");
+  }
   const team = db.prepare("SELECT id, status FROM team WHERE id = ?").get(id);
   if (!team) {
     throw teamError(404, ERROR_CODES.NOT_FOUND, "团队不存在");
   }
-  if (team.status !== "active") {
-    throw forbidden("团队已停用");
-  }
   if (systemAdmin) {
+    if (team.status !== "active") {
+      throw forbidden("团队已停用");
+    }
     return { teamId: id, role: "admin", via: "system_admin" };
-  }
-  if (!userId) {
-    throw teamError(401, ERROR_CODES.AUTH_REQUIRED, "需要登录");
   }
   const membership = db.prepare(
     "SELECT role FROM team_member WHERE team_id = ? AND user_id = ?"
   ).get(id, userId);
   if (!membership) {
     throw forbidden("无权下载该团队模板");
+  }
+  if (team.status !== "active") {
+    throw forbidden("团队已停用");
   }
   return { teamId: id, role: membership.role, via: "member" };
 }
