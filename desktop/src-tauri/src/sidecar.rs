@@ -144,7 +144,7 @@ pub fn stop(app: &AppHandle) {
         if let Some(child) = guard.take() {
             let _ = child.kill();
         }
-    }
+    };
 }
 
 pub fn toggle_pause(app: &AppHandle) {
@@ -200,7 +200,7 @@ pub async fn enroll(
         .map_err(|error| format!("sidecar 未随安装包提供：{error}"))?
         .args(args)
         .env("TRELLIS_AGENT_ROOT", agent_root.to_string_lossy().to_string());
-    let (mut receiver, child) = command
+    let (mut receiver, mut child) = command
         .spawn()
         .map_err(|error| format!("无法启动设备注册进程：{error}"))?;
     child
