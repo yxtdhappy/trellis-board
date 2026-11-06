@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { withTransaction } from "../database.js";
 import { ERROR_CODES, teamError } from "./errors.js";
-import { firstActiveTeamForUser, resolveActiveTeam } from "./teams.js";
+import { firstActiveTeamForUser, resolveActiveTeam, setUserTeams, validateTeamAssignments } from "./teams.js";
 
 export const SESSION_COOKIE = "trellis_team_session";
 export const PASSWORD_PARAMS = Object.freeze({
@@ -99,8 +99,8 @@ export function validatePassword(password) {
   if (typeof password !== "string") {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, "密码必须是字符串");
   }
-  if (Array.from(password).length < 12) {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, "密码至少需要 12 个字符");
+  if (Array.from(password).length < 6) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, "密码至少需要 6 个字符");
   }
   if (textBytes(password) > 1024) {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, "密码不能超过 1024 字节");
@@ -204,6 +204,7 @@ export async function createUser(db, {
   username,
   displayName,
   password,
+  teams = null,
   systemAdmin = false,
   mustChangePassword = false,
   createdBy = null
@@ -213,6 +214,7 @@ export async function createUser(db, {
   if (!display || Array.from(display).length > 80) {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, "显示名必须是 1 到 80 个字符");
   }
+  if (teams != null) validateTeamAssignments(db, teams);
   const passwordRecord = await hashPassword(password);
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
@@ -241,6 +243,13 @@ export async function createUser(db, {
       throw teamError(409, ERROR_CODES.CONFLICT, "登录名已存在");
     }
     throw error;
+  }
+  if (Array.isArray(teams) && teams.length) {
+    setUserTeams(db, {
+      userId: id,
+      teams,
+      actorUserId: createdBy
+    });
   }
   return readUser(db, id);
 }
@@ -281,6 +290,9 @@ export async function updateUserAdmin(db, {
   const nextAdmin = updates.systemAdmin == null
     ? current.systemAdmin
     : Boolean(updates.systemAdmin);
+  const accountChanged = nextDisplay !== current.displayName
+    || nextStatus !== current.status
+    || nextAdmin !== current.systemAdmin;
   withTransaction(db, () => {
     if (current.status === "active" && (nextStatus === "disabled" || !nextAdmin)) {
       assertNotLastAdmin(db, userId);
@@ -300,6 +312,7 @@ export async function updateUserAdmin(db, {
         WHERE user_id = ? AND revoked_at IS NULL
       `).run(new Date().toISOString(), userId);
     }
+    if (!accountChanged) return;
     db.prepare(`
       INSERT INTO audit_event(
         actor_user_id, project_id, action, target_type, target_id,
@@ -538,16 +551,16 @@ export async function changePassword(db, {
 
 export async function resetUserPassword(db, {
   userId,
-  actorUserId
+  actorUserId,
+  password
 }) {
-  const temporaryPassword = randomToken(18);
-  const passwordRecord = await hashPassword(temporaryPassword);
+  const passwordRecord = await hashPassword(password);
   const now = new Date().toISOString();
   withTransaction(db, () => {
     const result = db.prepare(`
       UPDATE user_account
       SET password_hash = ?, password_params_json = ?,
-          must_change_password = 1, password_changed_at = ?, updated_at = ?
+          must_change_password = 0, password_changed_at = ?, updated_at = ?
       WHERE id = ? AND status = 'active'
     `).run(passwordRecord.hash, passwordRecord.paramsJson, now, now, userId);
     if (!result.changes) throw teamError(404, ERROR_CODES.NOT_FOUND, "有效账号不存在");
@@ -559,7 +572,7 @@ export async function resetUserPassword(db, {
       ) VALUES (?, NULL, 'user_password_reset', 'user', ?, 'success', ?, '{}', ?)
     `).run(actorUserId, userId, crypto.randomUUID(), now);
   });
-  return { temporaryPassword };
+  return readUser(db, userId);
 }
 
 export function parseCookieHeader(value) {

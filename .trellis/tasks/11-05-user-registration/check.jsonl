@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查测试覆盖与后端质量项"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查 TypeScript、可访问性与构建"}

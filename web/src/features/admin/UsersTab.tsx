@@ -5,27 +5,53 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { fetchAdminTeams, formatError } from '@/api/admin'
+import type { AdminUser, Team } from '@/api/admin'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
-import type { AdminUser } from '@/api/admin'
 import { formatTime } from '@/lib/admin-shared'
 import { AccountDialog, AccountForm } from './AccountDialog'
 import type { AccountFormValues } from './AccountDialog'
+import { ResetPasswordDialog } from './ResetPasswordDialog'
 import { EmptyRow, Field, Panel, Row, StatusPill } from './shared'
 
 export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
   const { users, reloadUsers, createUser, updateUser, toggleUser, resetPassword } = consoleApi
+  const [teams, setTeams] = useState<Team[]>([])
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [password, setPassword] = useState('')
+  const [teamIds, setTeamIds] = useState<string[]>([])
   const [systemAdmin, setSystemAdmin] = useState(false)
   const [busy, setBusy] = useState(false)
   const [selectedId, setSelectedId] = useState('')
   const [dialogUser, setDialogUser] = useState<AdminUser | null>(null)
+  const [resetUser, setResetUser] = useState<AdminUser | null>(null)
 
   useEffect(() => {
     void reloadUsers()
   }, [reloadUsers])
 
+  useEffect(() => {
+    let cancelled = false
+    void fetchAdminTeams()
+      .then((list) => {
+        if (!cancelled) setTeams(list)
+      })
+      .catch((error) => {
+        if (!cancelled) toast.error(formatError(error))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const selectedUser = users.find((user) => user.id === selectedId) ?? null
+
+  function toggleCreateTeam(teamId: string, checked: boolean) {
+    setTeamIds((current) => checked
+      ? [...current, teamId]
+      : current.filter((id) => id !== teamId))
+  }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -33,12 +59,16 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
     const created = await createUser({
       username: username.trim(),
       displayName: displayName.trim(),
+      password,
+      teamIds,
       systemAdmin
     })
     setBusy(false)
     if (created) {
       setUsername('')
       setDisplayName('')
+      setPassword('')
+      setTeamIds([])
       setSystemAdmin(false)
     }
   }
@@ -56,7 +86,7 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
           <Panel
             kicker="IDENTITY / ACCOUNTS"
             title="创建账号"
-            description="创建账号时由服务端生成一次性临时密码；重置密码会撤销该用户全部会话。"
+            description="仅系统管理员可建号；填写初始密码并分配团队，团队可留空。"
           >
             <form className="flex flex-col gap-2" onSubmit={handleCreate}>
               <Field label="登录名">
@@ -78,6 +108,40 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                   onChange={(event) => setDisplayName(event.target.value)}
                 />
               </Field>
+              <Field label="初始密码" hint="至少 6 个字符，不做复杂度校验。">
+                <Input
+                  type="password"
+                  minLength={6}
+                  required
+                  autoComplete="new-password"
+                  disabled={busy}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </Field>
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[11px] font-medium text-muted-foreground">所属团队</span>
+                {teams.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">暂无团队，可先建号后补配。</p>
+                ) : (
+                  <div className="flex flex-col gap-1.5 rounded-lg border border-border p-2">
+                    {teams.map((team) => (
+                      <label
+                        key={team.id}
+                        className="flex items-center gap-2 text-xs text-foreground"
+                      >
+                        <Checkbox
+                          checked={teamIds.includes(team.id)}
+                          onCheckedChange={(checked) => toggleCreateTeam(team.id, checked === true)}
+                          disabled={busy}
+                        />
+                        <span className="min-w-0 truncate">{team.name}</span>
+                        <StatusPill value={team.status} />
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
               <label className="flex items-center gap-2 text-xs text-foreground">
                 <Checkbox
                   checked={systemAdmin}
@@ -87,7 +151,7 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                 系统管理员
               </label>
               <Button size="sm" type="submit" className="self-start" disabled={busy}>
-                创建并生成临时密码
+                创建账号
               </Button>
             </form>
           </Panel>
@@ -95,12 +159,13 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
           <Panel
             kicker="ACCOUNT / UPDATE"
             title="编辑账号"
-            description="从账号列表选择成员后调整显示名、状态和系统管理员权限。"
+            description="调整显示名、状态、所属团队和系统管理员权限。"
           >
             {selectedUser ? (
               <AccountForm
                 key={selectedUser.id}
                 user={selectedUser}
+                teams={teams}
                 submitLabel="保存账号"
                 onSubmit={(values) => saveAccount(selectedUser, values)}
               />
@@ -141,7 +206,7 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                         variant="ghost"
                         size="sm"
                         type="button"
-                        onClick={() => void resetPassword(user)}
+                        onClick={() => setResetUser(user)}
                       >
                         重置密码
                       </Button>
@@ -174,14 +239,14 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                             系统管理员
                           </span>
                         ) : null}
-                        {user.mustChangePassword ? (
-                          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                            待改密
-                          </span>
-                        ) : null}
                       </div>
                       <p className="truncate text-[10px] text-muted-foreground">
                         <code>{user.username}</code> · ID <code>{user.id}</code>
+                      </p>
+                      <p className="truncate text-[10px] text-muted-foreground">
+                        团队 {user.teams.length
+                          ? user.teams.map((team) => team.name).join('、')
+                          : '未分配'}
                       </p>
                       <p className="truncate text-[10px] text-muted-foreground">
                         最近改密 {formatTime(user.passwordChangedAt)} · 创建{' '}
@@ -196,7 +261,17 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
         </Panel>
       </div>
 
-      <AccountDialog user={dialogUser} onClose={() => setDialogUser(null)} onSave={saveAccount} />
+      <AccountDialog
+        user={dialogUser}
+        teams={teams}
+        onClose={() => setDialogUser(null)}
+        onSave={saveAccount}
+      />
+      <ResetPasswordDialog
+        user={resetUser}
+        onConfirm={resetPassword}
+        onClose={() => setResetUser(null)}
+      />
     </>
   )
 }

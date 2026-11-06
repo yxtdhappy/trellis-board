@@ -31,7 +31,7 @@
 
 - React 默认转义所有插值，禁止 `dangerouslySetInnerHTML` 拼接未转义文本。
 - Markdown 预览必须使用 `renderMarkdown()`（内部已 `escapeHtml`）。
-- 一次性凭证（临时密码、配对码）只在响应中显示一次，不写入 localStorage、不进入日志。
+- 一次性凭证（当前仅 Agent 配对码）只在响应中显示一次，不写入 localStorage、不进入日志。
 - 主题偏好是唯一允许持久化的前端状态（`localStorage['trellis-theme']`）。
 
 ## 主题

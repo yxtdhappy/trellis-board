@@ -466,32 +466,31 @@ export async function fetchDevices(): Promise<AgentDevice[]> {
 export type NewUserInput = {
   username: string
   displayName: string
+  password: string
+  teamIds: string[]
   systemAdmin: boolean
 }
 
-export async function createUser(
-  input: NewUserInput
-): Promise<{ user: AdminUser | null; temporaryPassword: string | null }> {
+export async function createUser(input: NewUserInput): Promise<AdminUser | null> {
   const { data } = await requestJson<unknown>('/api/admin/users', {
     method: 'POST',
     body: {
       username: input.username,
       displayName: input.displayName,
-      systemAdmin: input.systemAdmin,
-      mustChangePassword: true
+      password: input.password,
+      teamIds: input.teamIds,
+      systemAdmin: input.systemAdmin
     }
   })
   const row = record(data)
-  return {
-    user: row.user ? readAdminUser(row.user) : null,
-    temporaryPassword: optionalText(row.temporaryPassword)
-  }
+  return row.user ? readAdminUser(row.user) : null
 }
 
 export type UserUpdate = {
   displayName?: string
   status?: string
   systemAdmin?: boolean
+  teamIds?: string[]
 }
 
 export async function updateUser(userId: string, updates: UserUpdate): Promise<AdminUser> {
@@ -503,12 +502,11 @@ export async function updateUser(userId: string, updates: UserUpdate): Promise<A
   return readAdminUser(row.user ?? data)
 }
 
-export async function resetUserPassword(userId: string): Promise<string | null> {
-  const { data } = await requestJson<unknown>(
+export async function resetUserPassword(userId: string, password: string): Promise<void> {
+  await requestJson<unknown>(
     `/api/admin/users/${encodeURIComponent(userId)}/reset-password`,
-    { method: 'POST', body: {} }
+    { method: 'POST', body: { password } }
   )
-  return optionalText(record(data).temporaryPassword)
 }
 
 export type ConnectProjectInput = {

@@ -36,7 +36,7 @@ export type AdminConsole = AdminProjects & {
   createUser: (input: NewUserInput) => Promise<boolean>
   updateUser: (target: AdminUser, updates: UserUpdate) => Promise<AdminUser | null>
   toggleUser: (target: AdminUser) => Promise<void>
-  resetPassword: (target: AdminUser) => Promise<void>
+  resetPassword: (target: AdminUser, password: string) => Promise<boolean>
   revokeDevice: (device: AgentDevice) => Promise<void>
   createPairingCode: () => Promise<void>
   pairingCode: { code: string; expiresAt: string | null } | null
@@ -182,12 +182,12 @@ export function useAdminConsole(): AdminConsole {
   const createUser = useCallback(
     async (input: NewUserInput) => {
       try {
-        const result = await admin.createUser(input)
-        showCredential(
-          '用户临时密码',
-          `${result.user?.username || '新用户'} 首次登录后必须修改密码；关闭后无法再次查看。`,
-          result.temporaryPassword
-        )
+        const created = await admin.createUser(input)
+        if (!created) {
+          toast.error('服务端没有返回新账号，请刷新后重试。')
+          return false
+        }
+        toast.success(`账号 ${created.username} 已创建。`)
         await reloadUsers(true)
         return true
       } catch (error) {
@@ -195,7 +195,7 @@ export function useAdminConsole(): AdminConsole {
         return false
       }
     },
-    [reloadUsers, report, showCredential]
+    [reloadUsers, report]
   )
 
   const updateUser = useCallback(
@@ -225,21 +225,18 @@ export function useAdminConsole(): AdminConsole {
   )
 
   const resetPassword = useCallback(
-    async (target: AdminUser) => {
-      if (!window.confirm(`重置 ${target.username} 的密码？该账号全部会话会立即失效。`)) return
+    async (target: AdminUser, password: string) => {
       try {
-        const temporaryPassword = await admin.resetUserPassword(target.id)
-        showCredential(
-          '临时密码',
-          `${target.username} 必须使用此密码登录并立即修改；关闭后无法再次查看。`,
-          temporaryPassword
-        )
+        await admin.resetUserPassword(target.id, password)
+        toast.success(`账号 ${target.username} 的密码已重置，原会话已失效。`)
         await reloadUsers(true)
+        return true
       } catch (error) {
         report(error)
+        return false
       }
     },
-    [reloadUsers, report, showCredential]
+    [reloadUsers, report]
   )
 
   const revokeDevice = useCallback(

@@ -309,8 +309,26 @@ function requireTeamAdmin(actor) {
   assertActiveTeam(actor);
 }
 
-function randomPassword() {
-  return crypto.randomBytes(18).toString("base64url");
+function teamAssignmentsFromBody(db, userId, body) {
+  const usesTeamIds = body.teamIds != null;
+  const raw = usesTeamIds ? body.teamIds : body.teams;
+  if (raw == null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, "团队列表必须是数组");
+  }
+  const existing = new Map(
+    (userId ? listUserTeams(db, userId) : []).map((team) => [team.id, team.role])
+  );
+  return raw.map((item) => {
+    if (typeof item === "string") {
+      const teamId = item.trim();
+      return { teamId, role: existing.get(teamId) || TEAM_ROLES.MEMBER };
+    }
+    if (usesTeamIds) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, "团队 ID 必须是字符串");
+    }
+    return item;
+  });
 }
 
 function safeStaticPath(publicDir, pathname) {
@@ -529,6 +547,9 @@ function createRequestHandler({
 
   async function handleAuth(request, response, url) {
     const { pathname } = url;
+    if (pathname === "/api/auth/register") {
+      throw teamError(404, ERROR_CODES.NOT_FOUND, "接口不存在");
+    }
     if (pathname === "/api/runtime" && request.method === "GET") {
       sendJson(response, 200, runtimePayload(readActor(request)));
       return true;
@@ -614,26 +635,17 @@ function createRequestHandler({
     if (pathname === "/api/admin/users" && request.method === "POST") {
       requireAdmin(actor);
       const body = await readJsonBody(request);
-      if (body.teams != null) {
-        validateTeamAssignments(db, body.teams);
-      }
-      const suppliedPassword = body.password || body.temporaryPassword;
-      const temporaryPassword = suppliedPassword || randomPassword();
+      const teams = teamAssignmentsFromBody(db, null, body);
+      if (teams != null) validateTeamAssignments(db, teams);
       const user = await createUser(db, {
         username: body.username,
         displayName: body.displayName,
-        password: temporaryPassword,
+        password: body.password,
+        teams,
         systemAdmin: Boolean(body.systemAdmin),
-        mustChangePassword: body.mustChangePassword ?? !suppliedPassword,
+        mustChangePassword: false,
         createdBy: actor.userId
       });
-      if (Array.isArray(body.teams) && body.teams.length) {
-        setUserTeams(db, {
-          userId: user.id,
-          teams: body.teams,
-          actorUserId: actor.userId
-        });
-      }
       appendAuditEvent(db, {
         actorUserId: actor.userId,
         action: "user_created",
@@ -642,8 +654,7 @@ function createRequestHandler({
         detail: { systemAdmin: user.systemAdmin }
       });
       sendJson(response, 201, {
-        user: { ...user, teams: listUserTeams(db, user.id) },
-        ...(suppliedPassword ? {} : { temporaryPassword })
+        user: { ...user, teams: listUserTeams(db, user.id) }
       });
       return true;
     }
@@ -705,12 +716,23 @@ function createRequestHandler({
     if (userMatch && request.method === "PATCH") {
       requireAdmin(actor);
       const body = await readJsonBody(request);
+      const teams = teamAssignmentsFromBody(db, userMatch[0], body);
+      if (teams != null) validateTeamAssignments(db, teams);
       const user = await updateUserAdmin(db, {
         userId: userMatch[0],
         updates: body,
         actorUserId: actor.userId
       });
-      sendJson(response, 200, { user });
+      if (teams != null) {
+        setUserTeams(db, {
+          userId: user.id,
+          teams,
+          actorUserId: actor.userId
+        });
+      }
+      sendJson(response, 200, {
+        user: { ...user, teams: listUserTeams(db, user.id) }
+      });
       return true;
     }
     const passwordMatch = routeMatch(
@@ -719,11 +741,13 @@ function createRequestHandler({
     );
     if (passwordMatch && request.method === "POST") {
       requireAdmin(actor);
-      const result = await resetUserPassword(db, {
+      const body = await readJsonBody(request);
+      const user = await resetUserPassword(db, {
         userId: passwordMatch[0],
-        actorUserId: actor.userId
+        actorUserId: actor.userId,
+        password: body.password
       });
-      sendJson(response, 200, result);
+      sendJson(response, 200, { user });
       return true;
     }
     if (pathname === "/api/admin/projects" && request.method === "GET") {
