@@ -21,6 +21,8 @@ node server/index.js
 
 也可以运行 `npm start` 或 `npm run board`。
 
+前端开发用 `npm run dev`：并行启动 `node --watch server/index.js`（服务端改动自动重启）和 Vite 开发服务器（页面 HMR），`/api` 由 Vite 代理到 `http://127.0.0.1:4317`；5173 被占用时 Vite 会自动递增端口，以控制台打印的地址为准。
+
 standalone 模式固定监听本机回环地址 `127.0.0.1`。需要多人访问时使用 team 模式，并在
 可信反向代理后提供 HTTPS；不要把 standalone 服务直接暴露到局域网或公网。
 
