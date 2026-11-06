@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   卸载按用户安装的 Trellis Board 桌面客户端，无需管理员权限。
