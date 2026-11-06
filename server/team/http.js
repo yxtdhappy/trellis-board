@@ -52,6 +52,11 @@ import {
 } from "./teams.js";
 import { createTaskIndex } from "./task-index.js";
 import { createTaskWriteService } from "./task-writes.js";
+import {
+  authorizeWorkspaceTemplate,
+  publicWorkspaceTemplateManifest,
+  readWorkspaceTemplate
+} from "./workspace-templates.js";
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const applicationDir = path.resolve(serverDir, "../..");
@@ -276,7 +281,7 @@ function statusEtag(status) {
     queryRevision: status.queryRevision,
     queryDay: status.queryDay,
     assignments: status.assignments,
-    projects: status.projects.map(({ agents, ...project }) => project)
+    projects: status.projects.map(({ agents: _agents, ...project }) => project)
   });
   return `"status-${crypto.createHash("sha256").update(version).digest("base64url").slice(0, 24)}"`;
 }
@@ -438,7 +443,6 @@ function createRequestHandler({
   agentService,
   publicDir,
   logger,
-  signal,
   isClosing
 }) {
   function readActor(request) {
@@ -497,6 +501,84 @@ function createRequestHandler({
       throw teamError(401, ERROR_CODES.AUTH_REQUIRED, "需要登录");
     }
     return actor;
+  }
+
+  function templateIdentity(request) {
+    const actor = readActor(request);
+    if (actor) {
+      return {
+        userId: actor.userId,
+        systemAdmin: actor.systemAdmin,
+        mustChangePassword: Boolean(actor.user?.mustChangePassword)
+      };
+    }
+    if (!/^Bearer\s+/i.test(String(request.headers.authorization || ""))) {
+      throw teamError(401, ERROR_CODES.AUTH_REQUIRED, "需要登录");
+    }
+    const agent = agentService.authenticate(request);
+    const user = db.prepare(`
+      SELECT system_admin, status, must_change_password
+      FROM user_account
+      WHERE id = ?
+    `).get(agent.userId);
+    if (!user || user.status !== "active") {
+      throw teamError(401, ERROR_CODES.AGENT_AUTH_REQUIRED, "Agent 凭证无效或已撤销");
+    }
+    return {
+      userId: agent.userId,
+      systemAdmin: Boolean(user.system_admin),
+      mustChangePassword: Boolean(user.must_change_password)
+    };
+  }
+
+  async function handleWorkspaceTemplate(request, response, url) {
+    const match = routeMatch(
+      url.pathname,
+      /^\/api\/teams\/([^/]+)\/workspace-template(?:\/(manifest))?$/
+    );
+    if (!match) return false;
+    if (request.method !== "GET" && request.method !== "HEAD") return false;
+    const [teamId, manifestRoute] = match;
+    const identity = templateIdentity(request);
+    if (identity.mustChangePassword) {
+      throw teamError(
+        403,
+        ERROR_CODES.PASSWORD_CHANGE_REQUIRED,
+        "首次登录或密码重置后必须先修改密码"
+      );
+    }
+    authorizeWorkspaceTemplate(db, { teamId, ...identity });
+    const template = readWorkspaceTemplate();
+    const version = template.manifest.version;
+    if (String(request.headers["if-none-match"] || "") === template.etag) {
+      sendNotModified(response, template.etag);
+      return true;
+    }
+    if (manifestRoute === "manifest") {
+      sendJson(response, 200, publicWorkspaceTemplateManifest(template), {
+        etag: template.etag,
+        "x-template-sha256": template.sha256,
+        "x-template-version": version
+      });
+      return true;
+    }
+    response.writeHead(200, {
+      ...securityHeaders(),
+      "content-type": "application/zip",
+      "content-length": template.size,
+      "content-disposition":
+        `attachment; filename="workspace-template-${version}.zip"`,
+      "cache-control": "private, max-age=0, must-revalidate",
+      "x-template-sha256": template.sha256,
+      "x-template-version": version,
+      etag: template.etag
+    });
+    if (request.method === "HEAD") {
+      response.end();
+      return true;
+    }
+    response.end(template.archive);
+    return true;
   }
 
   async function handleAgent(request, response, url) {
@@ -1174,6 +1256,7 @@ function createRequestHandler({
     }
     if (WRITE_METHODS.has(request.method)) assertJsonWrite(request, config);
     if (await handleAuth(request, response, url)) return;
+    if (await handleWorkspaceTemplate(request, response, url)) return;
 
     const actor = requireActor(request);
     if (
@@ -1390,7 +1473,6 @@ export async function createTeamRuntime({
       agentService,
       publicDir,
       logger,
-      signal: shutdown.signal,
       isClosing: () => closing
     });
     const server = http.createServer((request, response) => {

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端总规范：模块边界、静态资产与 Node 原生依赖约束"}
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "新增服务模块的依赖方向、同步/异步边界与不启动副作用"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "新增下载/清单 API、鉴权、路径安全、错误语义与静态资源边界"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Node 内置测试、夹具、失败回滚与验证基线"}
+{"file": ".trellis/tasks/11-05-workspace-bootstrap/prd.md", "reason": "验收范围、已确认决策与明确不做项"}
+{"file": ".trellis/tasks/11-05-workspace-bootstrap/design.md", "reason": "模板资产、服务端 API、客户端缓存/解包/developer 初始化设计"}
