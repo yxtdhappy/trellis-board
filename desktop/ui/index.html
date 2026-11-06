@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trellis Board</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <h1>Trellis Board</h1>
+        <p id="status" class="status" role="status" aria-live="polite">正在读取本地配置…</p>
+      </header>
+
+      <section id="setup-panel" class="panel" hidden>
+        <p class="lede">
+          首次使用需要把本机注册为桌面设备。请在 Board 的“团队管理 → 设备”页生成一次性配对码，
+          再填写下面的信息。
+        </p>
+        <form id="setup-form" novalidate>
+          <label>
+            <span>服务端地址</span>
+            <input
+              id="server-url"
+              name="serverUrl"
+              type="url"
+              inputmode="url"
+              placeholder="https://board.example.com"
+              autocomplete="off"
+              spellcheck="false"
+              required
+            />
+          </label>
+          <label>
+            <span>设备名称</span>
+            <input id="device-name" name="deviceName" type="text" maxlength="80" required />
+          </label>
+          <label>
+            <span>配对码</span>
+            <input
+              id="pairing-code"
+              name="pairingCode"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              minlength="16"
+              required
+            />
+          </label>
+          <button id="submit" type="submit">注册并打开看板</button>
+        </form>
+        <p id="error" class="error" role="alert" hidden></p>
+        <p class="hint">
+          配对码只用于本次注册，不会写入本地存储或日志；设备凭证由 Windows DPAPI 保护。
+        </p>
+      </section>
+
+      <section id="loading-panel" class="panel">
+        <p>正在连接 Board 服务端…</p>
+      </section>
+
+      <footer>
+        <span id="version"></span>
+        <span id="config-path" class="path"></span>
+      </footer>
+    </main>
+    <script src="setup.js"></script>
+  </body>
+</html>

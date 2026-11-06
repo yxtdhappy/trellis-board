@@ -55,3 +55,10 @@ plugins/*
 !plugins/a2a-intake/**
 !plugins/acp-dispatch/
 !plugins/acp-dispatch/**
+
+# Desktop client build output
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/binaries/*
+!desktop/src-tauri/binaries/README.md

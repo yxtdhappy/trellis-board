@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对测试命令、真实 HTTP 验收与不得虚报的检查项"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "核对配对码/enroll/撤销端点契约与输入校验"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核对桌面本地页的无内联脚本、CSP 与可访问性要求"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查桌面、sidecar、服务端三层的契约一致性"}
