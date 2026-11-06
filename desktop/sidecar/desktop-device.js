@@ -229,7 +229,12 @@ export async function revokeDesktopDevice(options = {}) {
   const serverUrl = normalizeServerUrl(options.serverUrl);
   const agentId = validateAgentId(options.agentId);
   const sessionToken = validateSessionToken(options.sessionCookie);
-  const url = new URL(`${serverUrl}/api/admin/agents/${encodeURIComponent(agentId)}/revoke`);
+  let url;
+  try {
+    url = new URL(`${serverUrl}/api/admin/agents/${encodeURIComponent(agentId)}/revoke`);
+  } catch (error) {
+    throw new AgentError(AGENT_ERROR_CODE.INVALID_RESPONSE, "服务端地址无法解析", { cause: error });
+  }
   const response = await requestJson(url, {
     method: "POST",
     headers: {
