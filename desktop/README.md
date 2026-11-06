@@ -220,7 +220,7 @@ exe/快捷方式/自启，保留 `data`。
 | 6 | `Test-Path "$env:LOCALAPPDATA\TrellisBoard\trellis-board-client.exe"; Test-Path "$env:LOCALAPPDATA\TrellisBoard\trellis-agent.exe"` | 两行均为 `True` |
 | 7 | 启动客户端 → 生成设备令牌 → “打开桌面客户端”或粘贴 → 注册 | 跳转 Board；`%LOCALAPPDATA%\TrellisBoard\data\agent\credential.dpapi` 存在且不是明文 |
 | 7b | 同一令牌再次兑换 | 服务端 401 `DESKTOP_TOKEN_INVALID`，客户端提示“已使用” |
-| 7c | 注册成功后在 workspace 面板点“选择目录” → “初始化/修复” | 目标目录出现 `.trellis`、`.opencode`、`.agents`；`.trellis\.developer` 的 `name` 等于该账号用户名；输出里有模板版本与来源 `network`/`cache` |
+| 7c | 注册成功后在 workspace 面板点“选择目录” → “初始化/修复” | 目标目录出现 `.trellis`、`.opencode`、`.agents`；`.trellis/.developer` 的 `name` 等于该账号用户名；输出里有模板版本与来源 `network`/`cache` |
 | 7d | 断网后重复 7c（保留上次缓存） | 仍能初始化，来源为 `cache`；哈希不匹配或路径为符号链接时中止并提示 |
 | 7e | 已注册设备上再次运行 deep link `trellisboard://enroll?token=...` | 客户端提示“当前安装已经注册设备”，不会静默覆盖 |
 | 8 | `Get-Content "$env:LOCALAPPDATA\TrellisBoard\data\agent\credential.dpapi" -TotalCount 1` | 二进制/DPAPI 内容，不含 64 字符 base64url 凭证 |
