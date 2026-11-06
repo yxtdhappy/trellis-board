@@ -56,6 +56,13 @@ function mapServerError(status, body, auth, retryAfterMs) {
   const message = typeof body?.error === "string"
     ? body.error.slice(0, 500)
     : `Agent 服务返回 HTTP ${status}`;
+  if (serverCode === "DESKTOP_TOKEN_INVALID") {
+    return new AgentApiError(
+      AGENT_ERROR_CODE.DESKTOP_TOKEN_INVALID,
+      message || "设备令牌无效，请在 Board 重新生成",
+      { status, serverCode, terminal: true, retryAfterMs },
+    );
+  }
   if (auth && (status === 401 || status === 403)) {
     return new AgentApiError(
       AGENT_ERROR_CODE.AUTH_REVOKED,
@@ -111,6 +118,20 @@ export class AgentApiClient {
 
   async enroll(input) {
     const payload = await this._requestJson("/api/agent/enroll", {
+      method: "POST",
+      auth: false,
+      body: {
+        protocolVersion: AGENT_PROTOCOL_VERSION,
+        agentVersion: AGENT_VERSION,
+        platform: "win32",
+        ...input,
+      },
+    });
+    return parseEnrollResponse(payload);
+  }
+
+  async enrollWithToken(input) {
+    const payload = await this._requestJson("/api/agent/enroll-desktop", {
       method: "POST",
       auth: false,
       body: {

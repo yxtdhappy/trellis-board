@@ -17,6 +17,7 @@ const SESSION_COOKIE = "trellis_team_session";
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const AGENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SESSION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,512}$/;
+const ENROLL_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,512}$/;
 
 export function validateDeviceName(value) {
   const name = String(value || "").trim();
@@ -42,24 +43,36 @@ export function validateAgentId(value) {
   return agentId;
 }
 
-export async function enrollDesktopDevice(options = {}) {
-  const serverUrl = normalizeServerUrl(options.serverUrl);
-  const pairingCode = validatePairingCode(options.pairingCode);
-  const deviceName = validateDeviceName(options.deviceName);
-  const store = options.store || new ConfigStore(options.root);
-  await store.ensureDirectories();
-  if (!options.replace) {
-    const existing = await store.readConfig();
-    if (existing) {
-      throw new AgentError(
-        AGENT_ERROR_CODE.CONFIG_INVALID,
-        "当前安装已经注册设备；如需更换账号，请显式选择重新注册",
-      );
-    }
+export function validateEnrollToken(value) {
+  const token = String(value || "").trim();
+  if (!ENROLL_TOKEN_PATTERN.test(token)) {
+    throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, "设备令牌格式无效");
   }
-  const credentialStore = options.credentialStore || new DpapiCredentialStore(store);
-  const api = options.apiClient || new AgentApiClient({ serverUrl });
-  const enrolled = await api.enroll({ pairingCode, deviceName });
+  return token;
+}
+
+function mapEnrollError(error) {
+  if (!(error instanceof AgentError)) return error;
+  if (error.code === AGENT_ERROR_CODE.DESKTOP_TOKEN_INVALID) {
+    return new AgentError(error.code, error.message, { cause: error, terminal: true });
+  }
+  if (error.code === AGENT_ERROR_CODE.NETWORK_ERROR) {
+    return new AgentError(
+      AGENT_ERROR_CODE.NETWORK_ERROR,
+      "无法连接 Board 服务端，请检查网络后重试",
+      { cause: error, retryable: true },
+    );
+  }
+  return error;
+}
+
+async function completeDesktopEnrollment({
+  enrolled,
+  serverUrl,
+  deviceName,
+  store,
+  credentialStore,
+}) {
   if (enrolled.protocolVersion !== AGENT_PROTOCOL_VERSION) {
     throw new AgentError(
       AGENT_ERROR_CODE.PROTOCOL_INCOMPATIBLE,
@@ -88,6 +101,68 @@ export async function enrollDesktopDevice(options = {}) {
     serverUrl,
     protocolVersion: enrolled.protocolVersion,
   };
+}
+
+/**
+ * 桌面端默认注册路径：登录会话签发的一次性令牌换取设备凭证。
+ */
+export async function enrollWithToken(token, deviceInfo = {}) {
+  const enrollToken = validateEnrollToken(token);
+  const serverUrl = normalizeServerUrl(deviceInfo.serverUrl);
+  const deviceName = validateDeviceName(deviceInfo.deviceName);
+  const store = deviceInfo.store || new ConfigStore(deviceInfo.root);
+  await store.ensureDirectories();
+  if (!deviceInfo.replace) {
+    const existing = await store.readConfig();
+    if (existing) {
+      throw new AgentError(
+        AGENT_ERROR_CODE.CONFIG_INVALID,
+        "当前安装已经注册设备；如需更换账号，请显式选择重新注册",
+      );
+    }
+  }
+  const credentialStore = deviceInfo.credentialStore || new DpapiCredentialStore(store);
+  const api = deviceInfo.apiClient || new AgentApiClient({ serverUrl });
+  let enrolled;
+  try {
+    enrolled = await api.enrollWithToken({ token: enrollToken, deviceName });
+  } catch (error) {
+    throw mapEnrollError(error);
+  }
+  return completeDesktopEnrollment({
+    enrolled,
+    serverUrl,
+    deviceName,
+    store,
+    credentialStore,
+  });
+}
+
+export async function enrollDesktopDevice(options = {}) {
+  const serverUrl = normalizeServerUrl(options.serverUrl);
+  const pairingCode = validatePairingCode(options.pairingCode);
+  const deviceName = validateDeviceName(options.deviceName);
+  const store = options.store || new ConfigStore(options.root);
+  await store.ensureDirectories();
+  if (!options.replace) {
+    const existing = await store.readConfig();
+    if (existing) {
+      throw new AgentError(
+        AGENT_ERROR_CODE.CONFIG_INVALID,
+        "当前安装已经注册设备；如需更换账号，请显式选择重新注册",
+      );
+    }
+  }
+  const credentialStore = options.credentialStore || new DpapiCredentialStore(store);
+  const api = options.apiClient || new AgentApiClient({ serverUrl });
+  const enrolled = await api.enroll({ pairingCode, deviceName });
+  return completeDesktopEnrollment({
+    enrolled,
+    serverUrl,
+    deviceName,
+    store,
+    credentialStore,
+  });
 }
 
 function requestJson(url, { method, headers, body, timeoutMs = 30_000 }) {

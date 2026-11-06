@@ -14,6 +14,7 @@ import {
 } from "../../agent/protocol.js";
 import {
   enrollDesktopDevice,
+  enrollWithToken,
   readAgentIdentity,
   revokeDesktopDevice,
   validateAgentId,
@@ -48,7 +49,9 @@ function exitCodeFor(error) {
   if (error.code === "CONFIG_INVALID" || error.code === "CONFIG_MISSING") {
     return SIDECAR_EXIT_CODE.CONFIG;
   }
-  if (error.code === "AUTH_REVOKED") return SIDECAR_EXIT_CODE.AUTH;
+  if (error.code === "AUTH_REVOKED" || error.code === "DESKTOP_TOKEN_INVALID") {
+    return SIDECAR_EXIT_CODE.AUTH;
+  }
   if (error.code === "NETWORK_ERROR" || error.code === "HTTP_ERROR") {
     return SIDECAR_EXIT_CODE.NETWORK;
   }
@@ -63,6 +66,13 @@ function parseOptions(args, spec) {
     const key = (equal >= 0 ? token.slice(2, equal) : token.slice(2));
     if (!token.startsWith("--") || !spec[key]) {
       throw new AgentError("CONFIG_INVALID", `未知参数 ${token}`);
+    }
+    if (spec[key].flag) {
+      if (equal >= 0) {
+        throw new AgentError("CONFIG_INVALID", `参数 --${key} 不接受值`);
+      }
+      values[key] = true;
+      continue;
     }
     const value = equal >= 0 ? token.slice(equal + 1) : args[++index];
     if (!value) {
@@ -80,9 +90,9 @@ function requireOption(values, key) {
   return values[key];
 }
 
-async function readPairingCode() {
+async function readSecret() {
   if (process.stdin.isTTY) {
-    throw new AgentError("CONFIG_INVALID", "桌面注册的配对码必须由客户端通过标准输入提供");
+    throw new AgentError("CONFIG_INVALID", "桌面注册凭证必须由客户端通过标准输入提供");
   }
   const reader = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   try {
@@ -93,7 +103,7 @@ async function readPairingCode() {
   } finally {
     reader.close();
   }
-  throw new AgentError("CONFIG_INVALID", "没有收到配对码");
+  throw new AgentError("CONFIG_INVALID", "没有收到注册凭证");
 }
 
 async function extractSeaAsset(key, directory) {
@@ -145,18 +155,20 @@ async function commandRun() {
 }
 
 async function commandEnroll(args) {
-  const values = parseOptions(args, { server: {}, name: {} });
-  const pairingCode = await readPairingCode();
+  const values = parseOptions(args, { server: {}, name: {}, "pairing-code": { flag: true } });
+  const secret = await readSecret();
   const store = new ConfigStore();
   const agent = await prepareAgent(store);
-  const result = await enrollDesktopDevice({
+  const common = {
     serverUrl: requireOption(values, "server"),
-    pairingCode,
     deviceName: validateDeviceName(values.name),
     store: agent.store,
     credentialStore: agent.credentialStore,
     replace: false,
-  });
+  };
+  const result = values["pairing-code"]
+    ? await enrollDesktopDevice({ ...common, pairingCode: secret })
+    : await enrollWithToken(secret, common);
   writeJson({ ok: true, ...result });
   return SIDECAR_EXIT_CODE.OK;
 }
@@ -184,7 +196,8 @@ function usage() {
   return [
     "trellis-agent-sidecar <command>",
     "  run",
-    "  enroll --server <URL> --name <设备名>   (配对码从标准输入读取)",
+    "  enroll --server <URL> --name <设备名>   (一次性设备令牌从标准输入读取)",
+    "  enroll --server <URL> --name <设备名> --pairing-code  (管理员兜底：配对码从标准输入读取)",
     "  revoke --server <URL> --agent <设备 ID> (会话 Cookie 从 TRELLIS_BOARD_SESSION 读取)",
     "  status [--root <Agent 数据目录>]",
     "  version",

@@ -1,13 +1,28 @@
 # Trellis Board 桌面客户端（Windows）
 
 Tauri v2 外壳 + 现有 Agent sidecar。桌面端只负责：加载 Board 网页、托盘/单实例/开机自启、
-用一次性配对码把设备注册到现有 `/api/agent/enroll`。SSE、心跳、任务执行仍由
-`agent/` 实现，桌面端不重复实现业务。
+把设备注册为桌面客户端。SSE、心跳、任务执行仍由 `agent/` 实现，桌面端不重复实现业务。
 
 - 协议版本：`AGENT_PROTOCOL_VERSION = 2`（`agent/protocol.js`）
 - 客户端版本：`desktop/package.json` / `src-tauri/Cargo.toml` 的 `0.2.0`
-- 设备注册复用：`POST /api/team/pairing-codes`（用户会话）→ `POST /api/agent/enroll`
+- 设备注册主路径：`POST /api/desktop/enroll-tokens`（登录会话签发一次性令牌）
+  → `POST /api/agent/enroll-desktop`（令牌换设备凭证）
+- 管理员兜底路径：`POST /api/team/pairing-codes` → `POST /api/agent/enroll`
 - 设备撤销复用：`POST /api/admin/agents/{id}/revoke`
+
+## 注册流程（主路径）
+
+1. 在 Board 登录，进入“团队管理 → 设备”，点“生成桌面设备令牌”。
+2. 令牌 5 分钟内有效、只能使用一次；同一用户最多 5 个未使用令牌。
+3. 两种交付方式：点“打开桌面客户端”走 `trellisboard://enroll?token=...&server=...` 深链，
+   或复制令牌后在桌面客户端粘贴。
+4. 桌面端把令牌经 stdin 交给 sidecar；sidecar 调用 `POST /api/agent/enroll-desktop` 换取
+   `agentId` + 设备凭证，凭证只写入 Windows DPAPI（`agent\credential.dpapi`），
+   `client.json` 仍只保存 `serverUrl`。
+5. 服务端保存令牌哈希，不保存明文；令牌在进程内存中记录，服务重启后未使用令牌全部失效。
+
+配对码只作为管理员排障入口：桌面本地页折叠区可手工输入配对码，sidecar 需显式传入
+`--pairing-code`；桌面端默认不会请求或使用配对码。
 
 ## 目录
 
@@ -37,15 +52,19 @@ desktop/
 - 导航：只允许配置的 Board origin（`https` 任意主机；`http` 仅 `localhost`/`127.0.0.1`/`::1`），
   且必须是根路径、无账号密码/查询/片段。同源跳转留在 webview；`mailto:`/`http(s)` 外链用
   `shell.open` 交给系统浏览器；`window.open` 一律拒绝。
-- 远程页面没有 Tauri IPC：capability `main` 只包含 `core:default` 和两个自定义命令
-  `app_status`、`enroll_device`，没有 `shell:allow-open`、文件系统、进程或 updater 权限。
+- 远程页面没有 Tauri IPC：capability `main` 只包含 `core:default` 和本地命令
+  `app_status`、`enroll_with_token`、`enroll_device`（配对码兜底）、`open_board_login`，
+  没有 `shell:allow-open`、文件系统、进程或 updater 权限。
   Rust 命令还会校验调用页面 URL 必须是本地页（`ensure_local_caller`），作为 capability 之外的
   第二道防线。设备凭证只存在 sidecar 的 DPAPI 文件中，不注入 webview，也不写 cookie。
 - 生产构建禁用 devtools（未启用 `devtools` feature，且只在 debug 构建可打开）。
 - CSP：`default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;
   connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`。
-- 日志：`desktop.log` 对 `Bearer ...`、`"credential"`、`"pairingCode"`、`"password"` 做脱敏；
-  配对码只经 stdin 传给 sidecar，不进命令行、不落盘。
+- 日志：`desktop.log` 对 `Bearer ...`、`"credential"`、`"pairingCode"`、`"token"`、`"password"`
+  做脱敏；设备令牌/配对码只经 stdin 传给 sidecar，不进命令行、不落盘。
+- 深链：`install.ps1` 在 `HKCU\Software\Classes\trellisboard` 注册 `trellisboard://` 协议；
+  Rust 解析启动参数与单实例 argv，令牌经 stdin 交给 sidecar。深链里的 `server` 参数走同一套
+  Board URL 白名单；未带 `server` 时使用已保存地址。
 - 关闭窗口 = 最小化到托盘；托盘菜单：打开主窗口、暂停同步、打开日志目录、开机自启、退出。
 - 单实例：重复启动只聚焦已有窗口。
 
@@ -173,7 +192,8 @@ exe/快捷方式/自启，保留 `data`。
 | 4 | `cargo tauri build` | `bundle\nsis\Trellis Board_0.2.0_x64-setup.exe` 存在 |
 | 5 | `.\TrellisBoard_0.2.0_x64-setup.exe /S` | 静默安装到 `%LOCALAPPDATA%\TrellisBoard`，开始菜单出现快捷方式 |
 | 6 | `Test-Path "$env:LOCALAPPDATA\TrellisBoard\trellis-board-client.exe"; Test-Path "$env:LOCALAPPDATA\TrellisBoard\trellis-agent.exe"` | 两行均为 `True` |
-| 7 | 启动客户端 → 输入配对码 → 提交 | 跳转 Board；`%LOCALAPPDATA%\TrellisBoard\data\agent\credential.dpapi` 存在且不是明文 |
+| 7 | 启动客户端 → 生成设备令牌 → “打开桌面客户端”或粘贴 → 注册 | 跳转 Board；`%LOCALAPPDATA%\TrellisBoard\data\agent\credential.dpapi` 存在且不是明文 |
+| 7b | 同一令牌再次兑换 | 服务端 401 `DESKTOP_TOKEN_INVALID`，客户端提示“已使用” |
 | 8 | `Get-Content "$env:LOCALAPPDATA\TrellisBoard\data\agent\credential.dpapi" -TotalCount 1` | 二进制/DPAPI 内容，不含 64 字符 base64url 凭证 |
 | 9 | 关闭窗口 | 进程仍在，托盘图标存在；托盘“退出”后进程消失 |
 | 10 | 再次双击 exe | 不产生第二个进程，只聚焦已有窗口 |
@@ -188,8 +208,10 @@ exe/快捷方式/自启，保留 `data`。
 
 1. `cargo test` / `cargo build` / `tauri build`（Rust 编译、`generate_context!`、Cargo.lock 解析）。
 2. `build-sidecar.ps1` 的 `node --experimental-sea-config` 与 postject 注入实际产物。
-3. `install.ps1` / `uninstall.ps1` 的真实执行（仅做静态断言）。
-4. NSIS 产物、`/S` 静默安装、WebView2 bootstrapper、快捷方式/自启注册表。
+3. `install.ps1` / `uninstall.ps1` 的真实执行（仅做静态断言），包括 `trellisboard://` 协议注册与
+   深链单实例转发。
+4. NSIS 产物、`/S` 静默安装、WebView2 bootstrapper、快捷方式/自启注册表；NSIS 安装路径目前
+   不注册 `trellisboard://`，企业批量分发需改用 `install.ps1` 或在安装后补注册。
 5. DPAPI 加解密（`agent/windows/dpapi.ps1`）与 sidecar 的 SEA asset 解包。
 6. 托盘/单实例/导航拦截的运行时行为。
 7. 代码签名与 SmartScreen 表现。

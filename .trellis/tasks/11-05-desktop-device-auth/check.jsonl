@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "核对两个新端点的鉴权、CSRF/Origin、状态码与错误码"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对测试命令、真实 HTTP 验收与不得虚报的检查项"}
+{"file": ".trellis/spec/backend/scanning-and-persistence.md", "reason": "核对 agent_device 写入、审计字段与令牌哈希存储"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查服务端、sidecar、Rust、UI 四层契约一致"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查是否复用现有设备创建与 DPAPI 路径"}

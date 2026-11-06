@@ -1,4 +1,4 @@
-# 桌面客户端自定义命令权限。capability 只引用这两个标识符；
+# 桌面客户端自定义命令权限。capability 只引用这些标识符；
 # 远程 Board 页面不属于该 capability，因此即使能拿到 window.__TAURI__，
 # invoke 也会被 Tauri 拒绝。
 
@@ -8,6 +8,16 @@ description = "读取本地桌面客户端版本、服务端地址和 sidecar �
 commands.allow = ["app_status"]
 
 [[permission]]
+identifier = "allow-enroll-with-token"
+description = "用登录会话签发的一次性设备令牌注册桌面设备；令牌不落盘、不进日志。"
+commands.allow = ["enroll_with_token"]
+
+[[permission]]
 identifier = "allow-enroll-device"
-description = "用一次性配对码注册桌面设备；配对码不落盘、不进日志。"
+description = "管理员兜底：用一次性配对码注册桌面设备；配对码不落盘、不进日志。"
 commands.allow = ["enroll_device"]
+
+[[permission]]
+identifier = "allow-open-board-login"
+description = "在系统浏览器打开配置的 Board 地址完成登录并生成设备令牌。"
+commands.allow = ["open_board_login"]

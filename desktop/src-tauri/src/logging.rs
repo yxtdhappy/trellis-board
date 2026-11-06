@@ -39,7 +39,7 @@ pub fn warn(message: &str) {
     write("warn", message);
 }
 
-/// 删除日志中可能出现的 Bearer 凭证、设备凭证字段和配对码字段值。
+/// 删除日志中可能出现的 Bearer 凭证、设备凭证、令牌和配对码字段值。
 pub fn redact(input: &str) -> String {
     let mut value = input.to_string();
     for marker in ["Bearer ", "bearer "] {
@@ -54,7 +54,7 @@ pub fn redact(input: &str) -> String {
             value.replace_range(start..end, "***");
         }
     }
-    for marker in ["\"credential\"", "\"pairingCode\"", "\"password\""] {
+    for marker in ["\"credential\"", "\"pairingCode\"", "\"token\"", "\"password\""] {
         if let Some(index) = value.find(marker) {
             let tail = &value[index + marker.len()..];
             let colon = tail.find(':');

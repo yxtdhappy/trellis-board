@@ -32,6 +32,8 @@ $ExeName = 'trellis-board-client.exe'
 $ProcessName = 'trellis-board-client'
 $RunValueName = 'TrellisBoardClient'
 $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$ProtocolScheme = 'trellisboard'
+$ProtocolKey = "HKCU:\Software\Classes\$ProtocolScheme"
 $script:FailureCode = 0
 
 function Write-Info {
@@ -134,6 +136,9 @@ foreach ($shortcut in @(
 
 Remove-ItemProperty -Path $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
 Write-Info "已移除开机自启"
+
+Remove-Item -LiteralPath $ProtocolKey -Recurse -Force -ErrorAction SilentlyContinue
+Write-Info "已移除 deep link 协议：$ProtocolScheme`:"
 
 try {
   if (Test-Path -LiteralPath $targetExe -PathType Leaf) {

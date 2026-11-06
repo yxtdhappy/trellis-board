@@ -186,6 +186,8 @@ test("capability 不授予 shell、文件系统或远程页面权限", () => {
   assert.deepEqual(permissions.slice().sort(), [
     "allow-app-status",
     "allow-enroll-device",
+    "allow-enroll-with-token",
+    "allow-open-board-login",
     "core:default"
   ]);
   for (const permission of permissions) {
@@ -199,7 +201,11 @@ test("capability 不授予 shell、文件系统或远程页面权限", () => {
   assert.match(custom, /commands\.allow = \["app_status"\]/);
   assert.match(custom, /identifier = "allow-enroll-device"/);
   assert.match(custom, /commands\.allow = \["enroll_device"\]/);
-  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 2);
+  assert.match(custom, /identifier = "allow-enroll-with-token"/);
+  assert.match(custom, /commands\.allow = \["enroll_with_token"\]/);
+  assert.match(custom, /identifier = "allow-open-board-login"/);
+  assert.match(custom, /commands\.allow = \["open_board_login"\]/);
+  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 4);
 });
 
 test("导航、新窗口、托盘与日志边界在 Rust 源中显式实现", () => {
@@ -219,7 +225,7 @@ test("导航、新窗口、托盘与日志边界在 Rust 源中显式实现", ()
   assert.match(main, /window\.hide\(\)/);
   assert.match(main, /"quit" =>/);
   assert.match(main, /"autostart" =>/);
-  assert.match(main, /generate_handler!\[app_status, enroll_device\]/);
+  assert.match(main, /generate_handler!\[\s*app_status,[\s\S]*?enroll_with_token,[\s\S]*?enroll_device,[\s\S]*?open_board_login\s*\]/);
   assert.match(main, /fn ensure_local_caller\(window: &tauri::WebviewWindow\)/);
   assert.match(main, /该命令仅允许本地页面调用/);
   assert.doesNotMatch(main, /open_devtools|devtools:\s*true/);

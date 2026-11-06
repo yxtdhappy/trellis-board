@@ -11,7 +11,7 @@ use serde::Serialize;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{
-    AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_shell::ShellExt;
@@ -58,26 +58,40 @@ async fn app_status(app: AppHandle, window: tauri::WebviewWindow) -> Result<AppS
     })
 }
 
-#[tauri::command]
-async fn enroll_device(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    server_url: String,
-    pairing_code: String,
-    device_name: String,
-) -> Result<EnrollResult, String> {
-    ensure_local_caller(&window)?;
-    let board = navigation::validate_board_url(&server_url)?;
-    let code = pairing_code.trim();
-    if code.len() < 16 || code.len() > 512 {
-        return Err("配对码格式无效".to_string());
-    }
-    let name = device_name.trim();
+fn validate_device_name(value: &str) -> Result<String, String> {
+    let name = value.trim();
     if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
         return Err("设备名格式无效".to_string());
     }
+    Ok(name.to_string())
+}
+
+fn validate_enroll_token(value: &str) -> Result<String, String> {
+    let token = value.trim();
+    if !navigation::is_enroll_token(token) {
+        return Err("设备令牌格式无效".to_string());
+    }
+    Ok(token.to_string())
+}
+
+/// 注册成功后写入 Board 地址并重启 sidecar；令牌/配对码不进 argv 或日志。
+async fn perform_enroll(
+    app: &AppHandle,
+    board: Url,
+    secret: &str,
+    device_name: &str,
+    pairing_code: bool,
+) -> Result<EnrollResult, String> {
     let agent_root = config::agent_root();
-    let output = sidecar::enroll(&app, board.as_str(), code, name, &agent_root).await?;
+    let output = sidecar::enroll(
+        app,
+        board.as_str(),
+        secret,
+        device_name,
+        &agent_root,
+        pairing_code,
+    )
+    .await?;
     let summary: sidecar::EnrollSummary = output
         .lines()
         .rev()
@@ -96,12 +110,58 @@ async fn enroll_device(
         schema_version: config::SCHEMA_VERSION,
         server_url: board.as_str().to_string(),
     })?;
-    sidecar::restart(&app);
+    sidecar::restart(app);
     Ok(EnrollResult {
         agent_id,
         server_url: board.as_str().to_string(),
-        device_name: name.to_string(),
+        device_name: device_name.to_string(),
     })
+}
+
+#[tauri::command]
+async fn enroll_with_token(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    server_url: String,
+    token: String,
+    device_name: String,
+) -> Result<EnrollResult, String> {
+    ensure_local_caller(&window)?;
+    let board = navigation::validate_board_url(&server_url)?;
+    let token = validate_enroll_token(&token)?;
+    let name = validate_device_name(&device_name)?;
+    perform_enroll(&app, board, &token, &name, false).await
+}
+
+#[tauri::command]
+async fn enroll_device(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    server_url: String,
+    pairing_code: String,
+    device_name: String,
+) -> Result<EnrollResult, String> {
+    ensure_local_caller(&window)?;
+    let board = navigation::validate_board_url(&server_url)?;
+    let code = pairing_code.trim();
+    if code.len() < 16 || code.len() > 512 {
+        return Err("配对码格式无效".to_string());
+    }
+    let name = validate_device_name(&device_name)?;
+    perform_enroll(&app, board, code, &name, true).await
+}
+
+#[tauri::command]
+async fn open_board_login(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    server_url: String,
+) -> Result<(), String> {
+    ensure_local_caller(&window)?;
+    let board = navigation::validate_board_url(&server_url)?;
+    app.shell()
+        .open(board.as_str(), None)
+        .map_err(|error| format!("无法打开系统浏览器：{error}"))
 }
 
 fn focus_main_window(app: &AppHandle) {
@@ -176,6 +236,52 @@ fn initial_board_url() -> Option<Url> {
     configured.and_then(|value| navigation::validate_board_url(&value).ok())
 }
 
+fn default_device_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value.chars().count() <= 80)
+        .unwrap_or_else(|| "Windows 桌面".to_string())
+}
+
+/// 处理启动参数与单实例转发：`trellisboard://enroll?token=...&server=...`。
+fn handle_enroll_links(app: &AppHandle, args: &[String]) {
+    for argument in args {
+        let Some(link) = navigation::parse_enroll_link(argument) else {
+            continue;
+        };
+        // 本地注册页据此预填令牌；远程页面没有该事件的监听权限。
+        let _ = app.emit("enroll-token", &link.token);
+        focus_main_window(app);
+        let board = link
+            .server_url
+            .as_deref()
+            .and_then(|value| navigation::validate_board_url(value).ok())
+            .or_else(initial_board_url);
+        let Some(board) = board else {
+            logging::warn("已收到设备令牌，但尚未配置 Board 地址；请在本地页面粘贴令牌");
+            return;
+        };
+        let handle = app.clone();
+        let token = link.token;
+        tauri::async_runtime::spawn(async move {
+            let name = default_device_name();
+            match perform_enroll(&handle, board, &token, &name, false).await {
+                Ok(result) => {
+                    logging::line(&format!("桌面设备已注册：{}", result.device_name));
+                    let _ = handle.emit("enroll-complete", ());
+                    focus_main_window(&handle);
+                }
+                Err(error) => {
+                    logging::warn(&format!("深链注册失败：{error}"));
+                    let _ = handle.emit("enroll-failed", error);
+                }
+            }
+        });
+        return;
+    }
+}
+
 fn build_main_window(app: &AppHandle, minimized: bool) -> tauri::Result<()> {
     let board = initial_board_url();
     let url = match &board {
@@ -199,10 +305,12 @@ fn build_main_window(app: &AppHandle, minimized: bool) -> tauri::Result<()> {
 
 fn main() {
     let minimized = config::minimized_from_args();
+    let launch_args: Vec<String> = std::env::args().skip(1).collect();
     tauri::Builder::default()
         // 单实例必须最先注册，重复启动只聚焦已有窗口。
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            focus_main_window(app)
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            focus_main_window(app);
+            handle_enroll_links(app, &argv);
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(
@@ -210,7 +318,12 @@ fn main() {
             None,
         ))
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![app_status, enroll_device])
+        .invoke_handler(tauri::generate_handler![
+            app_status,
+            enroll_with_token,
+            enroll_device,
+            open_board_login
+        ])
         .setup(move |app| {
             let handle = app.handle().clone();
             let _ = config::ensure_directories();
@@ -221,6 +334,7 @@ fn main() {
             if config::load()?.is_some() {
                 sidecar::start(&handle);
             }
+            handle_enroll_links(&handle, &launch_args);
             Ok(())
         })
         .on_window_event(|window, event| {

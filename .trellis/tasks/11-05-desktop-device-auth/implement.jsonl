@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "新增 /api/desktop/enroll-tokens 与 /api/agent/enroll-desktop，需要复用既有鉴权、JSON/Origin 与错误契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Node 内置测试、真实 runtime 验收、无 lint/类型检查的项目约定"}
+{"file": ".trellis/spec/backend/scanning-and-persistence.md", "reason": "内存令牌与 agent_device 写入；不新增 schema、审计不含敏感明文"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "必须复用 agents.enroll 的设备创建路径，不复制凭证生成逻辑"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "服务端端点、sidecar、Rust 深链与本地 UI 的跨层契约核对"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "管理页登录接力面板与桌面本地页的 CSP、无内联脚本、可访问性要求"}

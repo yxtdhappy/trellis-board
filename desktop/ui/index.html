@@ -15,8 +15,8 @@
 
       <section id="setup-panel" class="panel" hidden>
         <p class="lede">
-          首次使用需要把本机注册为桌面设备。请在 Board 的“团队管理 → 设备”页生成一次性配对码，
-          再填写下面的信息。
+          在浏览器登录 Board，于“团队管理 → 设备”生成一次性设备令牌，然后粘贴到下面；
+          已注册协议处理程序时，页面上的“连接桌面客户端”会直接唤起本程序。
         </p>
         <form id="setup-form" novalidate>
           <label>
@@ -37,23 +37,49 @@
             <input id="device-name" name="deviceName" type="text" maxlength="80" required />
           </label>
           <label>
-            <span>配对码</span>
+            <span>设备令牌</span>
             <input
-              id="pairing-code"
-              name="pairingCode"
+              id="enroll-token"
+              name="token"
               type="password"
               autocomplete="off"
               spellcheck="false"
-              minlength="16"
+              minlength="32"
               required
             />
           </label>
-          <button id="submit" type="submit">注册并打开看板</button>
+          <div class="actions">
+            <button id="submit" type="submit">用设备令牌注册并打开看板</button>
+            <button id="open-login" type="button" class="secondary">从浏览器完成登录</button>
+          </div>
         </form>
         <p id="error" class="error" role="alert" hidden></p>
         <p class="hint">
-          配对码只用于本次注册，不会写入本地存储或日志；设备凭证由 Windows DPAPI 保护。
+          设备令牌只用于本次注册，5 分钟内有效且只能使用一次；设备凭证由 Windows DPAPI 保护，
+          不会写入本地存储或日志。
         </p>
+
+        <details class="fallback">
+          <summary>管理员兜底：使用配对码</summary>
+          <p class="hint">
+            配对码仅用于管理员排障，不作为桌面端默认注册方式；可在 Board 设备页生成。
+          </p>
+          <form id="pairing-form" novalidate>
+            <label>
+              <span>配对码</span>
+              <input
+                id="pairing-code"
+                name="pairingCode"
+                type="password"
+                autocomplete="off"
+                spellcheck="false"
+                minlength="16"
+                required
+              />
+            </label>
+            <button id="pairing-submit" type="submit">使用配对码注册</button>
+          </form>
+        </details>
       </section>
 
       <section id="loading-panel" class="panel">

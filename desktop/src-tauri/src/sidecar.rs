@@ -175,26 +175,37 @@ pub fn shutdown(app: &AppHandle) {
     stop(app);
 }
 
-/// 运行 sidecar 的 `enroll` 子命令：配对码只经 stdin 传递，不进入命令行或日志。
+/// 运行 sidecar 的 `enroll` 子命令：令牌或配对码只经 stdin 传递，不进入命令行或日志。
 pub async fn enroll(
     app: &AppHandle,
     server_url: &str,
-    pairing_code: &str,
+    secret: &str,
     device_name: &str,
     agent_root: &Path,
+    pairing_code: bool,
 ) -> Result<String, String> {
+    let mut args = vec![
+        "enroll".to_string(),
+        "--server".to_string(),
+        server_url.to_string(),
+        "--name".to_string(),
+        device_name.to_string(),
+    ];
+    if pairing_code {
+        args.push("--pairing-code".to_string());
+    }
     let command = app
         .shell()
         .sidecar(SIDECAR_NAME)
         .map_err(|error| format!("sidecar 未随安装包提供：{error}"))?
-        .args(["enroll", "--server", server_url, "--name", device_name])
+        .args(args)
         .env("TRELLIS_AGENT_ROOT", agent_root.to_string_lossy().to_string());
     let (mut receiver, child) = command
         .spawn()
         .map_err(|error| format!("无法启动设备注册进程：{error}"))?;
     child
-        .write(format!("{pairing_code}\n").as_bytes())
-        .map_err(|error| format!("无法写入配对码：{error}"))?;
+        .write(format!("{secret}\n").as_bytes())
+        .map_err(|error| format!("无法写入注册凭据：{error}"))?;
     let mut stdout = String::new();
     let mut stderr = String::new();
     while let Some(event) = receiver.recv().await {
