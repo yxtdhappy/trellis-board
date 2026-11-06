@@ -112,6 +112,13 @@ function New-Shortcut {
   $shortcut.Save()
 }
 
+if (-not $InstallDir) {
+  $InstallDir = Join-Path $env:LOCALAPPDATA 'TrellisBoard'
+}
+if ([IO.Path]::IsPathRooted($InstallDir) -eq $false) {
+  Fail 1 "安装目录必须是绝对路径: $InstallDir"
+}
+
 if ($Uninstall) {
   $uninstallScript = Join-Path $PSScriptRoot 'uninstall.ps1'
   if (-not (Test-Path -LiteralPath $uninstallScript -PathType Leaf)) {
@@ -122,13 +129,6 @@ if ($Uninstall) {
   if ($Quiet) { $uninstallArgs += '-Quiet' }
   & powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass @uninstallArgs
   exit $LASTEXITCODE
-}
-
-if (-not $InstallDir) {
-  $InstallDir = Join-Path $env:LOCALAPPDATA 'TrellisBoard'
-}
-if ([IO.Path]::IsPathRooted($InstallDir) -eq $false) {
-  Fail 1 "安装目录必须是绝对路径: $InstallDir"
 }
 
 if (-not $Source) {
