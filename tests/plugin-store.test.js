@@ -118,44 +118,34 @@ test("plugin_audit 追加并按时间倒序查询", () => {
   }
 });
 
-test("v4 库升级到 v5 会创建插件表并保留原有数据", () => {
+test("新库 schema v6 包含插件表并保留项目数据", () => {
   const workspace = makeWorkspace();
-  const first = openPluginDatabase(workspace);
-  first.prepare(`
-    INSERT INTO repositories(id, name, path, path_key, position, created_at, updated_at)
-    VALUES ('repo', 'Repo', ?, ?, 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
-  `).run(workspace.repositoryPath, workspace.repositoryPath);
-  first.exec(`
-    DROP TABLE plugin_audit;
-    DROP TABLE plugin_run;
-    DROP TABLE plugin_state;
-    UPDATE app_meta SET value = '4' WHERE key = 'schema_version';
-  `);
-  first.close();
-
-  const reopened = openPluginDatabase(workspace);
+  const db = openPluginDatabase(workspace);
   try {
-    const version = reopened
+    const version = db
       .prepare("SELECT value FROM app_meta WHERE key = 'schema_version'")
       .get().value;
     assert.equal(Number(version), DATABASE_SCHEMA_VERSION);
-    assert.equal(DATABASE_SCHEMA_VERSION, 5);
-    const tables = reopened
+    assert.equal(DATABASE_SCHEMA_VERSION, 6);
+    const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
       .all()
       .map((row) => row.name);
     assert.ok(tables.includes("plugin_state"));
     assert.ok(tables.includes("plugin_run"));
     assert.ok(tables.includes("plugin_audit"));
-    const repository = reopened.prepare("SELECT id FROM repositories").get();
-    assert.equal(repository.id, "repo");
+    db.prepare(`
+      INSERT INTO repositories(id, name, path, path_key, position, created_at, updated_at)
+      VALUES ('repo', 'Repo', ?, ?, 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+    `).run(workspace.repositoryPath, workspace.repositoryPath);
+    assert.equal(db.prepare("SELECT id FROM repositories").get().id, "repo");
   } finally {
-    reopened.close();
+    db.close();
     fs.rmSync(workspace.root, { recursive: true, force: true });
   }
 });
 
-test("v5 迁移幂等：重复打开不报错且版本保持 5", () => {
+test("schema v6 重复打开幂等且版本保持 6", () => {
   const workspace = makeWorkspace();
   const db = openPluginDatabase(workspace);
   db.close();
@@ -169,6 +159,7 @@ test("v5 迁移幂等：重复打开不报错且版本保持 5", () => {
   try {
     const value = again.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value;
     assert.equal(value, String(DATABASE_SCHEMA_VERSION));
+    assert.equal(value, "6");
     assert.equal(path.basename(workspace.databaseFile), "board.sqlite");
   } finally {
     again.close();

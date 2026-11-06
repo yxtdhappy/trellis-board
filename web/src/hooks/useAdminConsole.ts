@@ -21,6 +21,7 @@ export type AdminConsole = AdminProjects & {
   view: AdminView
   setView: (view: AdminView) => void
   isAdmin: boolean
+  systemAdmin: boolean
   displayName: string
   roleLabel: string
   avatarText: string
@@ -57,6 +58,7 @@ export function useAdminConsole(): AdminConsole {
   const [bootError, setBootError] = useState('')
   const [user, setUser] = useState<SessionUser | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [systemAdmin, setSystemAdmin] = useState(false)
   const [runtimeProjects, setRuntimeProjects] = useState<admin.RuntimeProject[]>([])
   const [view, setView] = useState<AdminView>('project-access')
 
@@ -82,9 +84,9 @@ export function useAdminConsole(): AdminConsole {
         const runtime = await admin.fetchRuntime()
         if (cancelled) return
         setUser(runtime.user)
-        setIsAdmin(runtime.systemAdmin)
+        setSystemAdmin(runtime.systemAdmin)
         setRuntimeProjects(runtime.projects)
-        if (!runtime.team) {
+        if (!runtime.team && !runtime.systemAdmin) {
           window.location.replace('/')
           return
         }
@@ -96,8 +98,11 @@ export function useAdminConsole(): AdminConsole {
           window.location.replace('/')
           return
         }
+        const canAdmin = runtime.systemAdmin || runtime.teamRole === 'admin'
         const canManage =
-          runtime.systemAdmin || runtime.projects.some((project) => admin.canManageProject(project))
+          canAdmin ||
+          runtime.projects.some((project) => admin.canManageProject(project))
+        setIsAdmin(canAdmin)
         setPhase(canManage ? 'ready' : 'denied')
       } catch (error) {
         if (cancelled) return
@@ -288,8 +293,9 @@ export function useAdminConsole(): AdminConsole {
     view,
     setView,
     isAdmin,
+    systemAdmin,
     displayName,
-    roleLabel: isAdmin ? '系统管理员' : '项目负责人',
+    roleLabel: systemAdmin ? '系统管理员' : isAdmin ? '团队管理员' : '项目负责人',
     avatarText: displayName.slice(0, 1),
     users,
     reloadUsers,

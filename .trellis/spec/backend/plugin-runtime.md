@@ -43,7 +43,7 @@
 ## 4. 存储与命名空间
 
 - **插件一律不碰 SQLite**，只能通过 SDK 的 `ctx.store`；宿主按 `<pluginId>:<key>` 隔离。
-- 宿主表：`plugin_state`、`plugin_run`、`plugin_audit`（schema v5）。
+- 宿主表：`plugin_state`、`plugin_run`、`plugin_audit`。
 - 运行记录只能通过 `ctx.runs.start/progress/finish/list` 写；`runId` 固定为 `<pluginId>:<taskKey>:<attempt>`，
   同一插件同一任务最多一条活动 run（部分唯一索引 `plugin_run_active_task`）。
 - 插件 HTTP 命名空间是 `/api/plugins/<id>/*`；`/api/plugins/<id>/{start,stop,logs,runs,audit}` 属于宿主，

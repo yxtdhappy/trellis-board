@@ -12,7 +12,7 @@ import {
   stateFile
 } from "./config.js";
 
-export const DATABASE_SCHEMA_VERSION = 5;
+export const DATABASE_SCHEMA_VERSION = 6;
 
 const LEGACY_IMPORT_KEY = "legacy_json_imported_v1";
 const EXECUTION_EVENTS_STARTED_KEY = "execution_events_started_at";
@@ -108,6 +108,7 @@ const SCHEMA_V2_SQL = `
     name TEXT NOT NULL,
     filter_json TEXT NOT NULL,
     position INTEGER NOT NULL,
+    team_id TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
@@ -157,6 +158,27 @@ const SCHEMA_V3_SQL = `
 `;
 
 const SCHEMA_V4_SQL = `
+  CREATE TABLE IF NOT EXISTS team (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS team_member (
+    team_id TEXT NOT NULL REFERENCES team(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES user_account(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (team_id, user_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS team_member_user
+    ON team_member(user_id, team_id);
+
   CREATE TABLE IF NOT EXISTS user_account (
     id TEXT PRIMARY KEY,
     username_key TEXT NOT NULL UNIQUE,
@@ -176,6 +198,7 @@ const SCHEMA_V4_SQL = `
     id TEXT PRIMARY KEY,
     token_hash TEXT NOT NULL UNIQUE,
     user_id TEXT NOT NULL REFERENCES user_account(id),
+    active_team_id TEXT REFERENCES team(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
@@ -194,7 +217,8 @@ const SCHEMA_V4_SQL = `
 
   CREATE TABLE IF NOT EXISTS team_project (
     repository_id TEXT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
-    workspace_key TEXT NOT NULL UNIQUE,
+    team_id TEXT NOT NULL REFERENCES team(id),
+    workspace_key TEXT NOT NULL,
     remote_url TEXT NOT NULL,
     remote_identity_hash TEXT NOT NULL,
     sync_branch TEXT NOT NULL,
@@ -208,8 +232,12 @@ const SCHEMA_V4_SQL = `
     last_push_at TEXT,
     last_error TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    UNIQUE (team_id, workspace_key)
   );
+
+  CREATE INDEX IF NOT EXISTS team_project_team
+    ON team_project(team_id, sync_status);
 
   CREATE TABLE IF NOT EXISTS project_member (
     project_id TEXT NOT NULL REFERENCES team_project(repository_id) ON DELETE CASCADE,
@@ -243,10 +271,11 @@ const SCHEMA_V4_SQL = `
 
   CREATE TABLE IF NOT EXISTS user_board_state (
     user_id TEXT NOT NULL REFERENCES user_account(id) ON DELETE CASCADE,
+    team_id TEXT NOT NULL DEFAULT '',
     key TEXT NOT NULL,
     value_json TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    PRIMARY KEY (user_id, key)
+    PRIMARY KEY (user_id, team_id, key)
   );
 
   CREATE TABLE IF NOT EXISTS task_assignment (
@@ -270,6 +299,7 @@ const SCHEMA_V4_SQL = `
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     actor_user_id TEXT REFERENCES user_account(id),
     actor_agent_id TEXT,
+    team_id TEXT REFERENCES team(id),
     project_id TEXT,
     action TEXT NOT NULL,
     target_type TEXT NOT NULL,
@@ -282,6 +312,8 @@ const SCHEMA_V4_SQL = `
 
   CREATE INDEX IF NOT EXISTS audit_event_project_time
     ON audit_event(project_id, occurred_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS audit_event_team_time
+    ON audit_event(team_id, occurred_at DESC, id DESC);
   CREATE INDEX IF NOT EXISTS audit_event_actor_time
     ON audit_event(actor_user_id, occurred_at DESC, id DESC);
 
@@ -312,6 +344,7 @@ const SCHEMA_V4_SQL = `
   CREATE TABLE IF NOT EXISTS agent_pairing_code (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES user_account(id) ON DELETE CASCADE,
+    team_id TEXT NOT NULL REFERENCES team(id),
     code_hash TEXT NOT NULL UNIQUE,
     expires_at TEXT NOT NULL,
     used_at TEXT,
@@ -339,6 +372,7 @@ const SCHEMA_V4_SQL = `
   CREATE TABLE IF NOT EXISTS agent_project_binding (
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL REFERENCES agent_device(id) ON DELETE CASCADE,
+    team_id TEXT NOT NULL REFERENCES team(id),
     project_id TEXT NOT NULL REFERENCES team_project(repository_id) ON DELETE CASCADE,
     local_repo_key TEXT NOT NULL,
     local_display_name TEXT,
@@ -353,6 +387,8 @@ const SCHEMA_V4_SQL = `
 
   CREATE INDEX IF NOT EXISTS agent_binding_project
     ON agent_project_binding(project_id, sync_status);
+  CREATE INDEX IF NOT EXISTS agent_binding_team
+    ON agent_project_binding(team_id, sync_status);
 
   CREATE TABLE IF NOT EXISTS agent_command (
     id TEXT PRIMARY KEY,
@@ -504,105 +540,51 @@ function ensureV5Schema(db) {
   db.exec(SCHEMA_V5_SQL);
 }
 
+const SCHEMA_V6_SQL = `
+  CREATE TABLE IF NOT EXISTS agent_event_cursor (
+    agent_id TEXT NOT NULL REFERENCES agent_device(id) ON DELETE CASCADE,
+    team_id TEXT NOT NULL REFERENCES team(id) ON DELETE CASCADE,
+    last_event_id INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, team_id)
+  );
+`;
+
+function ensureV6Schema(db) {
+  db.exec(SCHEMA_V6_SQL);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS saved_view_team_owner_order
+      ON saved_view(team_id, owner_user_id, position, id);
+  `);
+}
+
 function ensureSchema(db) {
   withTransaction(db, () => {
     db.exec(BASE_SCHEMA_V1_SQL);
     const schemaVersion = readMeta(db, "schema_version");
-    const now = new Date().toISOString();
     if (schemaVersion == null) {
-      ensureV2Schema(db, now);
+      ensureV2Schema(db, new Date().toISOString());
       ensureV3Schema(db);
       ensureV4Schema(db);
       ensureV5Schema(db);
+      ensureV6Schema(db);
       writeMeta(db, "schema_version", DATABASE_SCHEMA_VERSION);
       return;
     }
-
-    const numericVersion = Number(schemaVersion);
-    if (numericVersion === 1) {
-      ensureV2Schema(db, now);
-      writeMeta(db, "schema_version", 2);
-      ensureV3Schema(db);
-      writeMeta(db, "schema_version", 3);
-      ensureV4Schema(db);
-      writeMeta(db, "schema_version", 4);
-      ensureV5Schema(db);
-      writeMeta(db, "schema_version", 5);
-      return;
-    }
-    if (numericVersion === 2) {
-      ensureV3Schema(db);
-      writeMeta(db, "schema_version", 3);
-      ensureV4Schema(db);
-      writeMeta(db, "schema_version", 4);
-      ensureV5Schema(db);
-      writeMeta(db, "schema_version", 5);
-      return;
-    }
-    if (numericVersion === 3) {
-      ensureV4Schema(db);
-      writeMeta(db, "schema_version", 4);
-      ensureV5Schema(db);
-      writeMeta(db, "schema_version", 5);
-      return;
-    }
-    if (numericVersion === 4) {
-      ensureV5Schema(db);
-      writeMeta(db, "schema_version", 5);
-      return;
-    }
-    if (numericVersion === DATABASE_SCHEMA_VERSION) {
-      ensureV2Schema(db, now);
+    if (Number(schemaVersion) === DATABASE_SCHEMA_VERSION) {
+      ensureV2Schema(db, new Date().toISOString());
       ensureV3Schema(db);
       ensureV4Schema(db);
       ensureV5Schema(db);
+      ensureV6Schema(db);
       return;
     }
-    throw new Error(`不支持的数据库 schema 版本: ${schemaVersion}`);
+    throw new Error(
+      `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除 data/board.sqlite 后重建`
+    );
   });
 }
 
-function backupPathFor(filePath, schemaVersion) {
-  const base = `${filePath}.v${schemaVersion}-backup`;
-  if (!fs.existsSync(base)) return base;
-  let suffix = 1;
-  while (fs.existsSync(`${base}.${suffix}`)) suffix += 1;
-  return `${base}.${suffix}`;
-}
-
-function timestampedBackupPathFor(filePath, schemaVersion) {
-  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "");
-  const base = `${filePath}.v${schemaVersion}-backup-${stamp}`;
-  if (!fs.existsSync(base)) return base;
-  let suffix = 1;
-  while (fs.existsSync(`${base}.${suffix}`)) suffix += 1;
-  return `${base}.${suffix}`;
-}
-
-function backupPreMigrationDatabase(db, databaseFile) {
-  const hasMeta = db.prepare(`
-    SELECT 1
-    FROM sqlite_master
-    WHERE type = 'table' AND name = 'app_meta'
-  `).get();
-  const schemaVersion = hasMeta ? Number(readMeta(db, "schema_version")) : null;
-  if (![1, 2, 3, 4].includes(schemaVersion)) return null;
-  const backupFile = schemaVersion >= 3
-    ? timestampedBackupPathFor(databaseFile, schemaVersion)
-    : backupPathFor(databaseFile, schemaVersion);
-  const escapedBackupFile = backupFile.replaceAll("'", "''");
-  db.exec(`VACUUM INTO '${escapedBackupFile}'`);
-  const backup = new DatabaseSync(backupFile, { readOnly: true });
-  try {
-    const integrity = backup.prepare("PRAGMA integrity_check").get();
-    if (Object.values(integrity || {})[0] !== "ok") {
-      throw new Error("迁移前数据库备份完整性检查失败");
-    }
-  } finally {
-    backup.close();
-  }
-  return backupFile;
-}
 
 function importRepositories(db, legacyFile, fallbackRepositories, logger) {
   const legacy = readLegacyJson(legacyFile, "data/repos.json", logger);
@@ -750,7 +732,6 @@ export function openDatabase({
     db.exec("PRAGMA busy_timeout = 5000");
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA synchronous = NORMAL");
-    if (databaseFile !== ":memory:") backupPreMigrationDatabase(db, databaseFile);
     ensureSchema(db);
     if (legacyJsonImport) {
       importLegacyData(db, {

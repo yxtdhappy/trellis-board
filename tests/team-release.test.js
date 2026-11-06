@@ -96,6 +96,11 @@ test("真实 Git 仓库完成团队任务创建、推送、接受和 Agent 快�
     mustChangePassword: false
   });
   const adminCookie = await login(runtime, "admin", "Admin-Password-123");
+  const team = (await request(runtime, "/api/admin/teams", {
+    method: "POST",
+    cookie: adminCookie,
+    body: { name: "Release Team", slug: "release-team" }
+  })).body.team;
 
   const alice = await createUserThroughHttp(runtime, adminCookie, {
     username: "alice",
@@ -107,6 +112,14 @@ test("真实 Git 仓库完成团队任务创建、推送、接受和 Agent 快�
     displayName: "Bob",
     password: "Bob-Password-123"
   });
+  for (const user of [alice, bob]) {
+    const assigned = await request(runtime, `/api/admin/users/${user.id}/teams`, {
+      method: "PUT",
+      cookie: adminCookie,
+      body: { teams: [{ teamId: team.id, role: "member" }] }
+    });
+    assert.equal(assigned.status, 200);
+  }
   const aliceCookie = await login(runtime, "alice", "Alice-Password-123");
   const bobCookie = await login(runtime, "bob", "Bob-Password-123");
 
@@ -114,6 +127,7 @@ test("真实 Git 仓库完成团队任务创建、推送、接受和 Agent 快�
     method: "POST",
     cookie: adminCookie,
     body: {
+      teamId: team.id,
       name: "Release integration",
       remoteUrl,
       syncBranch: "dev"

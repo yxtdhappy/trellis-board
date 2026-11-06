@@ -28,19 +28,66 @@ export function roleCanWrite(role) {
   return WRITABLE_ROLES.has(role);
 }
 
-export function readProjectAccess(db, projectId, userId) {
+export function isTeamManager(actor, teamId) {
+  if (actor?.systemAdmin) return true;
+  return Boolean(
+    actor?.userId &&
+    actor.teamRole === "admin" &&
+    actor.activeTeamId &&
+    actor.activeTeamId === teamId
+  );
+}
+
+function projectRow(db, projectId) {
   return db.prepare(`
     SELECT
       p.repository_id AS project_id,
+      p.team_id,
       p.sync_status,
       p.sync_branch,
-      m.role,
-      m.trellis_dev_id
+      t.status AS team_status,
+      t.name AS team_name
     FROM team_project p
-    LEFT JOIN project_member m
-      ON m.project_id = p.repository_id AND m.user_id = ?
+    JOIN team t ON t.id = p.team_id
     WHERE p.repository_id = ?
-  `).get(userId, projectId) || null;
+  `).get(projectId) || null;
+}
+
+function memberRole(db, projectId, userId) {
+  return db.prepare(`
+    SELECT role, trellis_dev_id
+    FROM project_member
+    WHERE project_id = ? AND user_id = ?
+  `).get(projectId, userId) || null;
+}
+
+export function readProjectAccess(db, projectId, actor) {
+  const row = projectRow(db, projectId);
+  if (!row) return null;
+  const member = actor?.userId ? memberRole(db, projectId, actor.userId) : null;
+  return {
+    ...row,
+    role: member?.role || null,
+    trellis_dev_id: member?.trellis_dev_id || null,
+    team_manager: isTeamManager(actor, row.team_id)
+  };
+}
+
+function findProjectAccess(db, projectId, actor) {
+  const access = readProjectAccess(db, projectId, actor);
+  if (!access) throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");
+  if (!actor.systemAdmin) {
+    if (
+      access.team_status !== "active" ||
+      !actor.activeTeamId ||
+      access.team_id !== actor.activeTeamId ||
+      !actor.teamRole
+    ) {
+      // 不泄露其他团队的项目是否存在。
+      throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");
+    }
+  }
+  return access;
 }
 
 function denied(message = "无权访问该项目") {
@@ -52,24 +99,28 @@ export function authorizeProject(actor, projectId, capability, { db } = {}) {
     throw teamError(401, ERROR_CODES.AUTH_REQUIRED, "需要登录");
   }
   if (!db) throw new Error("授权需要数据库连接");
-  const access = readProjectAccess(db, projectId, actor.userId);
-  if (!access) throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");
-  const role = access.role || null;
+  const access = findProjectAccess(db, projectId, actor);
+  const role = access.role;
+  const teamManager = access.team_manager;
 
   if (capability === CAPABILITIES.MANAGE_PROJECT) {
-    if (!canManageSystem(actor)) throw denied("只有系统管理员可以管理项目接入");
-    return { ...access, role, via: "system_admin" };
+    if (!teamManager) throw denied("只有系统管理员或团队管理员可以管理项目接入");
+    return { ...access, via: actor.systemAdmin ? "system_admin" : "team_admin" };
   }
 
   if (capability === CAPABILITIES.MANAGE_MEMBERS || capability === CAPABILITIES.MANAGE_AGENTS) {
-    if (canManageSystem(actor)) return { ...access, role, via: "system_admin" };
-    if (role === PROJECT_ROLES.LEAD) return { ...access, role, via: "lead" };
-    throw denied("只有项目负责人可以执行该操作");
+    if (teamManager) {
+      return { ...access, via: actor.systemAdmin ? "system_admin" : "team_admin" };
+    }
+    if (role === PROJECT_ROLES.LEAD) return { ...access, via: "lead" };
+    throw denied("只有项目负责人或团队管理员可以执行该操作");
   }
 
   if (capability === CAPABILITIES.VIEW_AUDIT) {
-    if (canManageSystem(actor)) return { ...access, role, via: "system_admin" };
-    if (role === PROJECT_ROLES.LEAD) return { ...access, role, via: "lead" };
+    if (teamManager) {
+      return { ...access, via: actor.systemAdmin ? "system_admin" : "team_admin" };
+    }
+    if (role === PROJECT_ROLES.LEAD) return { ...access, via: "lead" };
     throw denied("无权查看项目审计");
   }
 
@@ -80,17 +131,28 @@ export function authorizeProject(actor, projectId, capability, { db } = {}) {
       "项目尚未启用或已停用"
     );
   }
-  if (!role) throw denied();
+  if (actor.systemAdmin && !role) {
+    return { ...access, role: "system_admin", via: "system_admin" };
+  }
+  if (!role && !teamManager) throw denied();
 
   if (capability === CAPABILITIES.VIEW) {
-    return { ...access, role, via: role };
+    return {
+      ...access,
+      role: role || "team_admin",
+      via: teamManager ? (actor.systemAdmin ? "system_admin" : "team_admin") : role
+    };
   }
 
   if (capability === CAPABILITIES.REFRESH_PROJECT) {
-    if (canManageSystem(actor) || role === PROJECT_ROLES.LEAD) {
-      return { ...access, role, via: canManageSystem(actor) ? "system_admin" : "lead" };
+    if (teamManager || role === PROJECT_ROLES.LEAD) {
+      return {
+        ...access,
+        role: role || "team_admin",
+        via: actor.systemAdmin ? "system_admin" : teamManager ? "team_admin" : "lead"
+      };
     }
-    throw denied("只有项目负责人或系统管理员可以刷新项目");
+    throw denied("只有项目负责人、团队管理员或系统管理员可以刷新项目");
   }
 
   if (capability === CAPABILITIES.WRITE_TASK || capability === CAPABILITIES.ACCEPT_TASK) {
@@ -108,23 +170,82 @@ export function authorizeProject(actor, projectId, capability, { db } = {}) {
   throw new Error(`未知项目能力: ${capability}`);
 }
 
+function publicAccessRow(row) {
+  return {
+    id: row.repository_id,
+    teamId: row.team_id,
+    sync_status: row.sync_status,
+    syncStatus: row.sync_status,
+    sync_branch: row.sync_branch,
+    syncBranch: row.sync_branch,
+    role: row.role,
+    trellis_dev_id: row.trellis_dev_id,
+    trellisDevId: row.trellis_dev_id,
+    via: row.via
+  };
+}
+
 export function listAuthorizedProjects(actor, { db } = {}) {
   if (!actor?.userId) {
     throw teamError(401, ERROR_CODES.AUTH_REQUIRED, "需要登录");
   }
-  return db.prepare(`
+  const visible = "p.sync_status IN ('current', 'stale', 'pending_push', 'needs_repair')";
+  let rows;
+  if (actor.systemAdmin) {
+    if (actor.activeTeamId) {
+      rows = db.prepare(`
+        SELECT
+          p.repository_id, p.team_id, p.sync_status, p.sync_branch,
+          m.role, m.trellis_dev_id
+        FROM team_project p
+        JOIN team t ON t.id = p.team_id
+        LEFT JOIN project_member m
+          ON m.project_id = p.repository_id AND m.user_id = ?
+        WHERE ${visible} AND p.team_id = ? AND t.status = 'active'
+        ORDER BY p.repository_id
+      `).all(actor.userId, actor.activeTeamId);
+    } else {
+      rows = db.prepare(`
+        SELECT
+          p.repository_id, p.team_id, p.sync_status, p.sync_branch,
+          m.role, m.trellis_dev_id
+        FROM team_project p
+        JOIN team t ON t.id = p.team_id
+        LEFT JOIN project_member m
+          ON m.project_id = p.repository_id AND m.user_id = ?
+        WHERE ${visible} AND t.status = 'active'
+        ORDER BY p.repository_id
+      `).all(actor.userId);
+    }
+    return rows.map((row) => publicAccessRow({ ...row, via: "system_admin" }));
+  }
+  if (!actor.activeTeamId || !actor.teamRole) return [];
+  if (actor.teamRole === "admin") {
+    rows = db.prepare(`
+      SELECT
+        p.repository_id, p.team_id, p.sync_status, p.sync_branch,
+        m.role, m.trellis_dev_id
+      FROM team_project p
+      JOIN team t ON t.id = p.team_id
+      LEFT JOIN project_member m
+        ON m.project_id = p.repository_id AND m.user_id = ?
+      WHERE ${visible} AND p.team_id = ? AND t.status = 'active'
+      ORDER BY p.repository_id
+    `).all(actor.userId, actor.activeTeamId);
+    return rows.map((row) => publicAccessRow({ ...row, via: "team_admin" }));
+  }
+  rows = db.prepare(`
     SELECT
-      p.repository_id AS id,
-      p.sync_status,
-      p.sync_branch,
-      m.role,
-      m.trellis_dev_id
+      p.repository_id, p.team_id, p.sync_status, p.sync_branch,
+      m.role, m.trellis_dev_id
     FROM team_project p
+    JOIN team t ON t.id = p.team_id
     JOIN project_member m
       ON m.project_id = p.repository_id AND m.user_id = ?
-    WHERE p.sync_status IN ('current', 'stale', 'pending_push', 'needs_repair')
+    WHERE ${visible} AND p.team_id = ? AND t.status = 'active'
     ORDER BY p.repository_id
-  `).all(actor.userId);
+  `).all(actor.userId, actor.activeTeamId);
+  return rows.map((row) => publicAccessRow({ ...row, via: row.role }));
 }
 
 export function readableProjectIds(actor, { db } = {}) {

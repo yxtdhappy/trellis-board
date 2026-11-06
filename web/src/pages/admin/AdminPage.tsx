@@ -9,6 +9,8 @@ import { OnboardingTab } from '@/features/admin/OnboardingTab'
 import { DevicesTab } from '@/features/admin/DevicesTab'
 import { AuditTab } from '@/features/admin/AuditTab'
 import { OneTimeCredentialDialog } from '@/features/admin/OneTimeCredentialDialog'
+import { TeamsTab } from '@/features/admin/TeamsTab'
+import { TeamSwitcher } from '@/features/admin/TeamSwitcher'
 import { ApproveProjectDialog } from '@/features/admin/ApproveProjectDialog'
 
 const VIEWS: { id: AdminView; label: string; subtitle: string; adminOnly: boolean }[] = [
@@ -22,6 +24,12 @@ const VIEWS: { id: AdminView; label: string; subtitle: string; adminOnly: boolea
     id: 'users',
     label: '用户账号',
     subtitle: '创建账号、调整系统角色并重置一次性临时密码。',
+    adminOnly: true
+  },
+  {
+    id: 'teams',
+    label: '团队',
+    subtitle: '创建团队、启停团队并分配团队成员。',
     adminOnly: true
   },
   {
@@ -46,9 +54,23 @@ const VIEWS: { id: AdminView; label: string; subtitle: string; adminOnly: boolea
 
 export function AdminPage() {
   const consoleApi = useAdminConsole()
-  const { phase, bootError, view, setView, isAdmin, roleLabel, displayName, avatarText } = consoleApi
+  const {
+    phase,
+    bootError,
+    view,
+    setView,
+    isAdmin,
+    systemAdmin,
+    roleLabel,
+    displayName,
+    avatarText
+  } = consoleApi
   const activeView = VIEWS.find((item) => item.id === view) ?? VIEWS[0]
-  const visibleViews = VIEWS.filter((item) => isAdmin || !item.adminOnly)
+  const visibleViews = VIEWS.filter((item) => {
+    if (item.id === 'users' || item.id === 'teams') return systemAdmin
+    if (item.adminOnly) return isAdmin
+    return true
+  })
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
@@ -68,6 +90,7 @@ export function AdminPage() {
           </a>
         </div>
         <div className="flex items-center gap-2.5">
+          <TeamSwitcher />
           <span className="hidden text-[11px] text-muted-foreground sm:inline">
             {roleLabel} · {displayName}
           </span>
@@ -134,6 +157,7 @@ export function AdminPage() {
             <div>
               {view === 'project-access' ? <ProjectsTab console={consoleApi} /> : null}
               {view === 'users' ? <UsersTab console={consoleApi} /> : null}
+              {view === 'teams' ? <TeamsTab /> : null}
               {view === 'projects' ? <OnboardingTab console={consoleApi} /> : null}
               {view === 'agents' ? <DevicesTab console={consoleApi} /> : null}
               {view === 'audit' ? <AuditTab console={consoleApi} /> : null}

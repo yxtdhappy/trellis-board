@@ -32,10 +32,24 @@ import { ERROR_CODES, errorPayload, teamError } from "./errors.js";
 import { createGitManager } from "./git-manager.js";
 import {
   CAPABILITIES,
+  authorizeProject,
   readableProjectIds,
   roleCanWrite
 } from "./permissions.js";
 import { createProjectService } from "./projects.js";
+import {
+  TEAM_ROLES,
+  assertActiveTeam,
+  createTeam,
+  listTeamMembers,
+  listTeamsForActor,
+  listUserTeams,
+  readTeam,
+  setActiveTeam,
+  setUserTeams,
+  updateTeam,
+  validateTeamAssignments
+} from "./teams.js";
 import { createTaskIndex } from "./task-index.js";
 import { createTaskWriteService } from "./task-writes.js";
 
@@ -267,17 +281,18 @@ function statusEtag(status) {
   return `"status-${crypto.createHash("sha256").update(version).digest("base64url").slice(0, 24)}"`;
 }
 
-function projectCapabilities(role) {
+function projectCapabilities(role, { systemAdmin = false, teamAdmin = false } = {}) {
   const writable = roleCanWrite(role);
+  const manager = systemAdmin || teamAdmin;
   return {
-    [CAPABILITIES.VIEW]: Boolean(role),
+    [CAPABILITIES.VIEW]: Boolean(role) || manager,
     [CAPABILITIES.WRITE_TASK]: writable,
     [CAPABILITIES.ACCEPT_TASK]: writable,
-    [CAPABILITIES.MANAGE_MEMBERS]: role === "lead",
-    [CAPABILITIES.MANAGE_AGENTS]: role === "lead",
-    [CAPABILITIES.VIEW_AUDIT]: role === "lead",
-    [CAPABILITIES.MANAGE_PROJECT]: false,
-    [CAPABILITIES.REFRESH_PROJECT]: role === "lead"
+    [CAPABILITIES.MANAGE_MEMBERS]: manager || role === "lead",
+    [CAPABILITIES.MANAGE_AGENTS]: manager || role === "lead",
+    [CAPABILITIES.VIEW_AUDIT]: manager || role === "lead",
+    [CAPABILITIES.MANAGE_PROJECT]: manager,
+    [CAPABILITIES.REFRESH_PROJECT]: manager || role === "lead"
   };
 }
 
@@ -285,6 +300,13 @@ function requireAdmin(actor) {
   if (!actor?.systemAdmin) {
     throw teamError(403, ERROR_CODES.FORBIDDEN, "只有系统管理员可以执行该操作");
   }
+}
+
+function requireTeamAdmin(actor) {
+  if (!actor?.systemAdmin && actor?.teamRole !== TEAM_ROLES.ADMIN) {
+    throw teamError(403, ERROR_CODES.FORBIDDEN, "只有团队管理员可以执行该操作");
+  }
+  assertActiveTeam(actor);
 }
 
 function randomPassword() {
@@ -355,9 +377,10 @@ function serveStatic(request, response, url, publicDir) {
   fs.createReadStream(realPath).on("error", () => response.destroy()).pipe(response);
 }
 
-function runtimeProject(project) {
+function runtimeProject(project, actor) {
   return {
     id: project.id,
+    teamId: project.teamId || null,
     name: project.name,
     syncStatus: project.syncStatus,
     syncBranch: project.syncBranch,
@@ -365,7 +388,10 @@ function runtimeProject(project) {
     boardVersion: project.boardVersion || null,
     stale: Boolean(project.stale),
     lastError: project.lastError || null,
-    capabilities: projectCapabilities(project.role)
+    capabilities: projectCapabilities(project.role, {
+      systemAdmin: Boolean(actor?.systemAdmin),
+      teamAdmin: actor?.teamRole === TEAM_ROLES.ADMIN
+    })
   };
 }
 
@@ -401,6 +427,9 @@ function createRequestHandler({
       userId: session.user.id,
       sessionId: session.sessionId,
       systemAdmin: session.user.systemAdmin,
+      activeTeamId: session.activeTeamId,
+      teamRole: session.teamRole,
+      team: session.team,
       user: session.user,
       expiresAt: session.expiresAt
     };
@@ -417,17 +446,24 @@ function createRequestHandler({
       };
     }
     const projects = boardService.listProjects(actor);
+    const teams = listTeamsForActor(db, actor);
     return {
       mode: "team",
       authenticated: true,
       user: actor.user,
       sessionExpiresAt: actor.expiresAt,
-      projects: projects.map(runtimeProject),
+      systemAdmin: actor.systemAdmin,
+      activeTeamId: actor.activeTeamId,
+      activeTeam: teams.find((team) => team.id === actor.activeTeamId) || null,
+      teamRole: actor.systemAdmin ? null : actor.teamRole,
+      teams,
+      projects: projects.map((project) => runtimeProject(project, actor)),
       capabilities: {
         manageUsers: actor.systemAdmin,
-        manageProjects: actor.systemAdmin,
-        manageAgents: actor.systemAdmin,
-        viewSystemAudit: actor.systemAdmin
+        manageTeams: actor.systemAdmin,
+        manageProjects: actor.systemAdmin || actor.teamRole === TEAM_ROLES.ADMIN,
+        manageAgents: actor.systemAdmin || actor.teamRole === TEAM_ROLES.ADMIN,
+        viewSystemAudit: actor.systemAdmin || actor.teamRole === TEAM_ROLES.ADMIN
       }
     };
   }
@@ -477,6 +513,17 @@ function createRequestHandler({
       );
       return true;
     }
+    if (pathname === "/api/agent/event-cursor" && request.method === "GET") {
+      sendJson(response, 200, agentService.readEventCursor(agent, {
+        teamId: url.searchParams.get("teamId")
+      }));
+      return true;
+    }
+    if (pathname === "/api/agent/event-cursor" && request.method === "PUT") {
+      const body = await readJsonBody(request);
+      sendJson(response, 200, agentService.writeEventCursor(agent, body));
+      return true;
+    }
     return false;
   }
 
@@ -516,6 +563,12 @@ function createRequestHandler({
       });
       return true;
     }
+    if (pathname === "/api/auth/team" && request.method === "POST") {
+      const actor = requireActor(request);
+      const body = await readJsonBody(request);
+      sendJson(response, 200, setActiveTeam(db, actor, body.teamId));
+      return true;
+    }
     if (pathname === "/api/auth/password" && request.method === "POST") {
       const actor = requireActor(request);
       const body = await readJsonBody(request);
@@ -539,13 +592,31 @@ function createRequestHandler({
     const actor = requireActor(request);
 
     if (pathname === "/api/admin/users" && request.method === "GET") {
-      requireAdmin(actor);
-      sendJson(response, 200, { users: listUsers(db) });
+      if (!actor.systemAdmin) requireTeamAdmin(actor);
+      const memberIds = actor.systemAdmin
+        ? null
+        : new Set(listTeamMembers(db, actor.activeTeamId).map((member) => member.userId));
+      sendJson(response, 200, {
+        users: listUsers(db)
+          .filter((user) => !memberIds || memberIds.has(user.id))
+          .map((user) => {
+            const teams = listUserTeams(db, user.id);
+            return {
+              ...user,
+              teams: actor.systemAdmin
+                ? teams
+                : teams.filter((team) => team.id === actor.activeTeamId)
+            };
+          })
+      });
       return true;
     }
     if (pathname === "/api/admin/users" && request.method === "POST") {
       requireAdmin(actor);
       const body = await readJsonBody(request);
+      if (body.teams != null) {
+        validateTeamAssignments(db, body.teams);
+      }
       const suppliedPassword = body.password || body.temporaryPassword;
       const temporaryPassword = suppliedPassword || randomPassword();
       const user = await createUser(db, {
@@ -556,6 +627,13 @@ function createRequestHandler({
         mustChangePassword: body.mustChangePassword ?? !suppliedPassword,
         createdBy: actor.userId
       });
+      if (Array.isArray(body.teams) && body.teams.length) {
+        setUserTeams(db, {
+          userId: user.id,
+          teams: body.teams,
+          actorUserId: actor.userId
+        });
+      }
       appendAuditEvent(db, {
         actorUserId: actor.userId,
         action: "user_created",
@@ -564,8 +642,62 @@ function createRequestHandler({
         detail: { systemAdmin: user.systemAdmin }
       });
       sendJson(response, 201, {
-        user,
+        user: { ...user, teams: listUserTeams(db, user.id) },
         ...(suppliedPassword ? {} : { temporaryPassword })
+      });
+      return true;
+    }
+    const userTeamsMatch = routeMatch(
+      pathname,
+      /^\/api\/admin\/users\/([^/]+)\/teams$/
+    );
+    if (userTeamsMatch && request.method === "PUT") {
+      requireAdmin(actor);
+      const body = await readJsonBody(request);
+      const teams = setUserTeams(db, {
+        userId: userTeamsMatch[0],
+        teams: body.teams,
+        actorUserId: actor.userId
+      });
+      sendJson(response, 200, { teams });
+      return true;
+    }
+    const teamMatch = routeMatch(pathname, /^\/api\/admin\/teams\/([^/]+)$/);
+    if (teamMatch && request.method === "GET") {
+      requireAdmin(actor);
+      const team = readTeam(db, teamMatch[0]);
+      if (!team) throw teamError(404, ERROR_CODES.NOT_FOUND, "团队不存在");
+      sendJson(response, 200, {
+        team: { ...team, members: listTeamMembers(db, team.id) }
+      });
+      return true;
+    }
+    if (teamMatch && request.method === "PATCH") {
+      requireAdmin(actor);
+      const body = await readJsonBody(request);
+      sendJson(response, 200, {
+        team: updateTeam(db, {
+          teamId: teamMatch[0],
+          updates: body,
+          actorUserId: actor.userId
+        })
+      });
+      return true;
+    }
+    if (pathname === "/api/admin/teams" && request.method === "GET") {
+      requireAdmin(actor);
+      sendJson(response, 200, { teams: listTeamsForActor(db, actor) });
+      return true;
+    }
+    if (pathname === "/api/admin/teams" && request.method === "POST") {
+      requireAdmin(actor);
+      const body = await readJsonBody(request);
+      sendJson(response, 201, {
+        team: createTeam(db, {
+          name: body.name,
+          slug: body.slug,
+          actorUserId: actor.userId
+        })
       });
       return true;
     }
@@ -595,11 +727,12 @@ function createRequestHandler({
       return true;
     }
     if (pathname === "/api/admin/projects" && request.method === "GET") {
-      requireAdmin(actor);
-      sendJson(response, 200, { projects: projectService.listAll() });
+      requireTeamAdmin(actor);
+      sendJson(response, 200, { projects: projectService.listAll(actor) });
       return true;
     }
     if (pathname === "/api/admin/projects" && request.method === "POST") {
+      requireTeamAdmin(actor);
       const body = await readJsonBody(request);
       sendJson(response, 201, await projectService.connect(actor, body));
       return true;
@@ -609,7 +742,6 @@ function createRequestHandler({
       /^\/api\/admin\/projects\/([^/]+)\/(approve|repair|disable)$/
     );
     if (projectAction && request.method === "POST") {
-      requireAdmin(actor);
       const [projectId, action] = projectAction;
       const body = await readJsonBody(request);
       let result;
@@ -624,13 +756,17 @@ function createRequestHandler({
       return true;
     }
     if (pathname === "/api/admin/agents" && request.method === "GET") {
-      requireAdmin(actor);
+      requireTeamAdmin(actor);
       sendJson(response, 200, { agents: agentService.listDevices(actor) });
       return true;
     }
     if (pathname === "/api/admin/audit" && request.method === "GET") {
-      requireAdmin(actor);
+      requireTeamAdmin(actor);
+      const teamId = actor.systemAdmin
+        ? (String(url.searchParams.get("teamId") || "").trim() || actor.activeTeamId || null)
+        : actor.activeTeamId;
       const events = listAuditEvents(db, {
+        teamId,
         limit: parseInteger(url.searchParams.get("limit"), "limit", 100),
         beforeId: parseInteger(url.searchParams.get("beforeId"), "beforeId", null)
       });
@@ -642,7 +778,6 @@ function createRequestHandler({
       /^\/api\/admin\/agents\/([^/]+)\/revoke$/
     );
     if (agentMatch && request.method === "POST") {
-      requireAdmin(actor);
       await readJsonBody(request);
       sendJson(response, 200, agentService.revokeDevice(actor, agentMatch[0]));
       return true;
@@ -704,19 +839,7 @@ function createRequestHandler({
     );
     if (auditMatch && request.method === "GET") {
       const projectId = auditMatch[0];
-      if (actor.systemAdmin) {
-        const project = projectService.read(projectId);
-        if (!project) throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");
-      } else {
-        const access = db.prepare(`
-          SELECT role
-          FROM project_member
-          WHERE project_id = ? AND user_id = ?
-        `).get(projectId, actor.userId);
-        if (access?.role !== "lead") {
-          throw teamError(403, ERROR_CODES.FORBIDDEN, "无权查看项目审计");
-        }
-      }
+      authorizeProject(actor, projectId, CAPABILITIES.VIEW_AUDIT, { db });
       const events = listAuditEvents(db, {
         projectId,
         limit: parseInteger(url.searchParams.get("limit"), "limit", 100),
@@ -965,9 +1088,16 @@ function createRequestHandler({
       sendJson(response, 200, status, { etag });
       return true;
     }
+    if (pathname === "/api/teams" && request.method === "GET") {
+      sendJson(response, 200, {
+        teams: listTeamsForActor(db, actor),
+        activeTeamId: actor.activeTeamId
+      });
+      return true;
+    }
     if (pathname === "/api/team/pairing-codes" && request.method === "POST") {
-      await readJsonBody(request);
-      sendJson(response, 201, agentService.createPairingCode(actor));
+      const body = await readJsonBody(request);
+      sendJson(response, 201, agentService.createPairingCode(actor, body));
       return true;
     }
     return false;

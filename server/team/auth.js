@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { withTransaction } from "../database.js";
 import { ERROR_CODES, teamError } from "./errors.js";
+import { firstActiveTeamForUser, resolveActiveTeam } from "./teams.js";
 
 export const SESSION_COOKIE = "trellis_team_session";
 export const PASSWORD_PARAMS = Object.freeze({
@@ -419,29 +420,32 @@ export function createSession(db, {
   const token = randomToken();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + ttlMs).toISOString();
+  const account = db.prepare("SELECT system_admin FROM user_account WHERE id = ?").get(userId);
+  const activeTeamId = account?.system_admin ? null : firstActiveTeamForUser(db, userId);
   db.prepare(`
     INSERT INTO user_session(
-      id, token_hash, user_id, created_at, last_seen_at,
+      id, token_hash, user_id, active_team_id, created_at, last_seen_at,
       expires_at, ip, user_agent
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     crypto.randomUUID(),
     tokenHash(token),
     userId,
+    activeTeamId,
     now.toISOString(),
     now.toISOString(),
     expiresAt,
     String(ip || "").slice(0, 128),
     String(request?.headers?.["user-agent"] || "").slice(0, 512)
   );
-  return { token, expiresAt };
+  return { token, expiresAt, activeTeamId };
 }
 
 export function readSession(db, token) {
   if (typeof token !== "string" || token.length < 32 || token.length > 512) return null;
   const row = db.prepare(`
     SELECT
-      s.id AS session_id, s.last_seen_at, s.expires_at,
+      s.id AS session_id, s.last_seen_at, s.expires_at, s.active_team_id,
       u.*
     FROM user_session s
     JOIN user_account u ON u.id = s.user_id
@@ -456,10 +460,20 @@ export function readSession(db, token) {
     db.prepare("UPDATE user_session SET last_seen_at = ? WHERE id = ?")
       .run(new Date().toISOString(), row.session_id);
   }
+  const user = publicUser(row);
+  const team = resolveActiveTeam(db, {
+    userId: user.id,
+    systemAdmin: user.systemAdmin,
+    activeTeamId: row.active_team_id,
+    sessionId: row.session_id
+  });
   return {
     sessionId: row.session_id,
     expiresAt: row.expires_at,
-    user: publicUser(row)
+    activeTeamId: team.teamId,
+    teamRole: team.role,
+    team: team.team,
+    user
   };
 }
 

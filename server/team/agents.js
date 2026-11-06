@@ -215,10 +215,29 @@ export function createAgentService({
     pairAttempts.set(key, recent);
   }
 
-  function createPairingCode(actor) {
+  function pairingTeamId(actor, requestedTeamId) {
     if (!actor?.userId) {
       throw teamError(401, ERROR_CODES.AUTH_REQUIRED, "需要登录");
     }
+    const requested = String(requestedTeamId || "").trim();
+    if (actor.activeTeamId) {
+      if (requested && requested !== actor.activeTeamId) {
+        throw teamError(403, ERROR_CODES.FORBIDDEN, "不能为其他团队创建配对码");
+      }
+      return actor.activeTeamId;
+    }
+    if (actor.systemAdmin) {
+      const team = requested
+        ? db.prepare("SELECT id FROM team WHERE id = ? AND status = 'active'").get(requested)
+        : db.prepare("SELECT id FROM team WHERE status = 'active' ORDER BY name LIMIT 1").get();
+      if (!team) throw teamError(409, ERROR_CODES.CONFLICT, "系统还没有可用团队");
+      return team.id;
+    }
+    throw teamError(403, ERROR_CODES.FORBIDDEN, "请先切换到目标团队");
+  }
+
+  function createPairingCode(actor, input = {}) {
+    const teamId = pairingTeamId(actor, input.teamId);
     const code = randomToken(32);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + PAIRING_TTL_MS).toISOString();
@@ -226,20 +245,22 @@ export function createAgentService({
       db.prepare(`
         UPDATE agent_pairing_code
         SET used_at = ?
-        WHERE user_id = ? AND used_at IS NULL
-      `).run(now.toISOString(), actor.userId);
+        WHERE user_id = ? AND team_id = ? AND used_at IS NULL
+      `).run(now.toISOString(), actor.userId, teamId);
       db.prepare(`
-        INSERT INTO agent_pairing_code(id, user_id, code_hash, expires_at, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO agent_pairing_code(id, user_id, team_id, code_hash, expires_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
       `).run(
         crypto.randomUUID(),
         actor.userId,
+        teamId,
         sha256(code),
         expiresAt,
         now.toISOString()
       );
       appendAuditEvent(db, {
         actorUserId: actor.userId,
+        teamId,
         action: "agent_pairing_code_created",
         targetType: "agent_pairing_code",
         detail: { expiresAt }
@@ -248,6 +269,7 @@ export function createAgentService({
     return {
       pairingCode: code,
       expiresAt,
+      teamId,
       protocolVersion: AGENT_PROTOCOL_VERSION
     };
   }
@@ -269,6 +291,15 @@ export function createAgentService({
       WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?
     `).get(sha256(pairingCode), now);
     if (!pairing) {
+      throw teamError(401, ERROR_CODES.AUTH_FAILED, "配对码无效、已使用或已过期");
+    }
+    const membership = db.prepare(`
+      SELECT 1
+      FROM team_member m
+      JOIN team t ON t.id = m.team_id
+      WHERE m.team_id = ? AND m.user_id = ? AND t.status = 'active'
+    `).get(pairing.team_id, pairing.user_id);
+    if (!membership) {
       throw teamError(401, ERROR_CODES.AUTH_FAILED, "配对码无效、已使用或已过期");
     }
     const credential = randomToken(32);
@@ -301,6 +332,7 @@ export function createAgentService({
       appendAuditEvent(db, {
         actorUserId: pairing.user_id,
         actorAgentId: agentId,
+        teamId: pairing.team_id,
         action: "agent_enrolled",
         targetType: "agent",
         targetId: agentId,
@@ -360,26 +392,30 @@ export function createAgentService({
     const project = db.prepare(`
       SELECT
         p.*, r.name AS project_name,
-        m.role
+        m.role, tm.role AS team_role
       FROM team_project p
       JOIN repositories r ON r.id = p.repository_id
+      JOIN team t ON t.id = p.team_id
+      JOIN team_member tm
+        ON tm.team_id = p.team_id AND tm.user_id = ?
       LEFT JOIN project_member m
         ON m.project_id = p.repository_id AND m.user_id = ?
-      WHERE p.repository_id = ?
-    `).get(agent.userId, projectId);
+      WHERE p.repository_id = ? AND t.status = 'active'
+    `).get(agent.userId, agent.userId, projectId);
     let existing = db.prepare(`
       SELECT *
       FROM agent_project_binding
       WHERE agent_id = ? AND project_id = ?
     `).get(agent.id, projectId);
     if (!existing && value.serverBindingId) {
-      existing = db.prepare(`
+      const candidate = db.prepare(`
         SELECT *
         FROM agent_project_binding
         WHERE id = ? AND agent_id = ?
-      `).get(String(value.serverBindingId), agent.id) || null;
+      `).get(String(value.serverBindingId), agent.id);
+      if (candidate?.project_id === projectId) existing = candidate;
     }
-    if (!project || !project.role) {
+    if (!project || !project.role || !project.team_role) {
       const error = bindingError("当前账号无权绑定该项目", "PROJECT_FORBIDDEN");
       return existing
         ? { ...publicBinding({ ...existing, ...error }), ...error }
@@ -469,12 +505,13 @@ export function createAgentService({
       const id = crypto.randomUUID();
       db.prepare(`
         INSERT INTO agent_project_binding(
-          id, agent_id, project_id, local_repo_key, local_display_name,
+          id, agent_id, team_id, project_id, local_repo_key, local_display_name,
           branch_name, sync_status, last_error, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
       `).run(
         id,
         agent.id,
+        project.team_id,
         projectId,
         localRepoKey,
         displayName,
@@ -685,15 +722,27 @@ export function createAgentService({
   }
 
   function listDevices(actor) {
-    if (!actor?.systemAdmin) {
-      throw teamError(403, ERROR_CODES.FORBIDDEN, "只有系统管理员可以查看全部 Agent");
+    const scoped = actor?.systemAdmin && !actor.activeTeamId
+      ? db.prepare(`
+          SELECT a.*, u.username, u.display_name
+          FROM agent_device a
+          JOIN user_account u ON u.id = a.user_id
+          ORDER BY a.created_at DESC
+        `).all()
+      : actor?.activeTeamId
+        ? db.prepare(`
+            SELECT DISTINCT a.*, u.username, u.display_name
+            FROM agent_device a
+            JOIN user_account u ON u.id = a.user_id
+            JOIN agent_project_binding b ON b.agent_id = a.id
+            WHERE b.team_id = ? AND b.sync_status <> 'revoked'
+            ORDER BY a.created_at DESC
+          `).all(actor.activeTeamId)
+        : [];
+    if (!actor?.systemAdmin && actor?.teamRole !== "admin") {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, "只有团队管理员可以查看 Agent");
     }
-    return db.prepare(`
-      SELECT a.*, u.username, u.display_name
-      FROM agent_device a
-      JOIN user_account u ON u.id = a.user_id
-      ORDER BY a.created_at DESC
-    `).all().map((row) => ({
+    return scoped.map((row) => ({
       ...publicAgent(row),
       username: row.username,
       displayName: row.display_name
@@ -701,34 +750,75 @@ export function createAgentService({
   }
 
   function revokeDevice(actor, agentId) {
-    if (!actor?.systemAdmin) {
-      throw teamError(403, ERROR_CODES.FORBIDDEN, "只有系统管理员可以撤销 Agent");
+    if (!actor?.systemAdmin && actor?.teamRole !== "admin") {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, "只有团队管理员可以撤销 Agent");
     }
     const device = db.prepare("SELECT * FROM agent_device WHERE id = ?").get(agentId);
     if (!device) throw teamError(404, ERROR_CODES.NOT_FOUND, "Agent 不存在");
+    if (!actor.systemAdmin && !actor.activeTeamId) {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, "当前账号没有可用的活动团队");
+    }
+    const teamId = actor.activeTeamId || null;
+    let bindingIds = null;
+    if (teamId) {
+      bindingIds = db.prepare(`
+        SELECT id FROM agent_project_binding
+        WHERE agent_id = ? AND team_id = ? AND sync_status <> 'revoked'
+      `).all(agentId, teamId).map((row) => row.id);
+      if (!bindingIds.length) {
+        throw teamError(404, ERROR_CODES.NOT_FOUND, "Agent 不存在");
+      }
+    }
     const now = new Date().toISOString();
     withTransaction(db, () => {
-      db.prepare(`
-        UPDATE agent_device
-        SET status = 'revoked', revoked_at = ?
-        WHERE id = ?
-      `).run(now, agentId);
-      db.prepare(`
-        UPDATE agent_project_binding
-        SET sync_status = 'revoked', updated_at = ?
-        WHERE agent_id = ?
-      `).run(now, agentId);
-      db.prepare(`
-        UPDATE agent_command
-        SET status = 'cancelled', completed_at = ?
-        WHERE agent_id = ? AND status IN ('pending', 'delivered')
-      `).run(now, agentId);
+      if (bindingIds) {
+        const placeholders = bindingIds.map(() => "?").join(", ");
+        db.prepare(`
+          UPDATE agent_project_binding
+          SET sync_status = 'revoked', updated_at = ?
+          WHERE id IN (${placeholders})
+        `).run(now, ...bindingIds);
+        db.prepare(`
+          UPDATE agent_command
+          SET status = 'cancelled', completed_at = ?
+          WHERE binding_id IN (${placeholders}) AND status IN ('pending', 'delivered')
+        `).run(now, ...bindingIds);
+        const remaining = db.prepare(`
+          SELECT COUNT(*) AS count FROM agent_project_binding
+          WHERE agent_id = ? AND sync_status <> 'revoked'
+        `).get(agentId).count;
+        if (remaining === 0) {
+          db.prepare(`
+            UPDATE agent_device
+            SET status = 'revoked', revoked_at = ?
+            WHERE id = ?
+          `).run(now, agentId);
+        }
+      } else {
+        db.prepare(`
+          UPDATE agent_device
+          SET status = 'revoked', revoked_at = ?
+          WHERE id = ?
+        `).run(now, agentId);
+        db.prepare(`
+          UPDATE agent_project_binding
+          SET sync_status = 'revoked', updated_at = ?
+          WHERE agent_id = ?
+        `).run(now, agentId);
+        db.prepare(`
+          UPDATE agent_command
+          SET status = 'cancelled', completed_at = ?
+          WHERE agent_id = ? AND status IN ('pending', 'delivered')
+        `).run(now, agentId);
+      }
       appendAuditEvent(db, {
         actorUserId: actor.userId,
         actorAgentId: agentId,
+        teamId,
         action: "agent_revoked",
         targetType: "agent",
-        targetId: agentId
+        targetId: agentId,
+        detail: { scope: teamId ? "team" : "global" }
       });
     });
     notify(agentId);
@@ -834,9 +924,10 @@ export function createAgentService({
       throw teamError(400, ERROR_CODES.INVALID_INPUT, "命令结果状态无效");
     }
     const command = db.prepare(`
-      SELECT *
-      FROM agent_command
-      WHERE id = ? AND agent_id = ?
+      SELECT c.*, b.team_id AS binding_team_id, b.project_id AS binding_project_id
+      FROM agent_command c
+      LEFT JOIN agent_project_binding b ON b.id = c.binding_id
+      WHERE c.id = ? AND c.agent_id = ?
     `).get(commandId, agent.id);
     if (!command) throw teamError(404, ERROR_CODES.NOT_FOUND, "命令不存在");
     if (["completed", "failed", "cancelled"].includes(command.status)) {
@@ -890,6 +981,8 @@ export function createAgentService({
       }
       appendAuditEvent(db, {
         actorAgentId: agent.id,
+        teamId: command.binding_team_id || null,
+        projectId: command.binding_project_id || null,
         action: `agent_command_${status}`,
         targetType: "agent_command",
         targetId: commandId,
@@ -903,6 +996,65 @@ export function createAgentService({
       status: nextStatus,
       idempotent: false
     };
+  }
+
+  function eventCursorTeam(agent, requestedTeamId, { required = true } = {}) {
+    const requested = String(requestedTeamId || "").trim();
+    if (requested) {
+      const membership = db.prepare(`
+        SELECT t.id
+        FROM team_member m
+        JOIN team t ON t.id = m.team_id
+        WHERE m.team_id = ? AND m.user_id = ? AND t.status = 'active'
+      `).get(requested, agent.userId);
+      if (!membership) {
+        throw teamError(403, ERROR_CODES.FORBIDDEN, "Agent 账号不属于该团队");
+      }
+      return requested;
+    }
+    const first = db.prepare(`
+      SELECT t.id
+      FROM team_member m
+      JOIN team t ON t.id = m.team_id
+      WHERE m.user_id = ? AND t.status = 'active'
+      ORDER BY t.name COLLATE NOCASE, t.id
+      LIMIT 1
+    `).get(agent.userId);
+    if (!first && required) {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, "Agent 账号没有可用团队");
+    }
+    return first?.id || null;
+  }
+
+  function readEventCursor(agent, input = {}) {
+    const teamId = eventCursorTeam(agent, input.teamId);
+    const row = db.prepare(`
+      SELECT last_event_id, updated_at
+      FROM agent_event_cursor
+      WHERE agent_id = ? AND team_id = ?
+    `).get(agent.id, teamId);
+    return {
+      teamId,
+      lastEventId: Number(row?.last_event_id || 0),
+      updatedAt: row?.updated_at || null
+    };
+  }
+
+  function writeEventCursor(agent, input = {}) {
+    const teamId = eventCursorTeam(agent, input.teamId);
+    const lastEventId = Number(input.lastEventId);
+    if (!Number.isInteger(lastEventId) || lastEventId < 0) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, "lastEventId 必须是非负整数");
+    }
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO agent_event_cursor(agent_id, team_id, last_event_id, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(agent_id, team_id) DO UPDATE SET
+        last_event_id = MAX(agent_event_cursor.last_event_id, excluded.last_event_id),
+        updated_at = excluded.updated_at
+    `).run(agent.id, teamId, lastEventId, now);
+    return { teamId, lastEventId, updatedAt: now };
   }
 
   async function close() {
@@ -923,6 +1075,8 @@ export function createAgentService({
     revokeBinding,
     listDevices,
     revokeDevice,
+    readEventCursor,
+    writeEventCursor,
     pollCommands,
     submitCommandResult,
     close

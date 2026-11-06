@@ -51,21 +51,20 @@ Board 自身可变状态统一保存在 `data/board.sqlite`：
 - `task_event`：从功能启用后开始记录的计划、阶段和系统观察事件
 - `task_dependency`：任务间的阻断关系、原因、创建时间和解除时间
 - `scan_cache`：带 `SCAN_SCHEMA_VERSION` 的完整看板扫描缓存
-- `board_state`：刷新、监听、最近扫描状态和个人 WIP 软上限
+- `board_state`：刷新、监听、最近扫描状态
+- `team`、`team_member`：团队与团队成员（团队边界）
+- `team_project`、`project_member`：团队项目、项目角色和 Agent 绑定
+- `user_session`、`saved_view`、`user_board_state`：活动团队、保存视图和个人 WIP
+- `audit_event`、`agent_event_cursor`：团队审计与按团队隔离的 Agent 事件游标
 - `app_meta`：数据库 schema 版本和旧 JSON 迁移标记
 
-首次打开数据库时，会在一个事务中读取 `data/repos.json`、`data/task-metadata.json`、`data/scan-cache.json` 和 `data/board-state.json` 并导入 SQLite，然后写入一次性的 `legacy_json_imported_v1` 标记。非法或损坏的旧 JSON 只记录警告并跳过，不会阻止服务启动。迁移完成后，运行时只读写 SQLite，不再修改这四个 JSON 文件；它们保留为迁移来源和回滚备份。
+全新数据库会直接创建当前 schema（v6），包含团队、团队成员、团队项目、活动团队、团队审计和 Agent 团队事件游标。首次打开空库时仍会在一个事务中读取 `data/repos.json`、`data/task-metadata.json`、`data/scan-cache.json` 和 `data/board-state.json` 并导入 standalone 数据，然后写入一次性的 `legacy_json_imported_v1` 标记。非法或损坏的旧 JSON 只记录警告并跳过，不会阻止服务启动。运行时不修改这四个 JSON 文件。
 
-数据库按 v1 -> v2 -> v3 -> v4 顺序迁移。迁移前会先创建源版本快照：v1 使用
-`data/board.sqlite.v1-backup`，v2 使用 `data/board.sqlite.v2-backup`，v3 使用带时间戳的
-`data/board.sqlite.v3-backup-<timestamp>`；随后在事务中补齐团队账号、项目、Agent、审计和
-任务索引表。备份可独立打开并保持迁移前版本；任一步失败时主库仍保留源版本和原表。
+本版本**不做旧数据库迁移**。如果 `data/board.sqlite` 的 `schema_version` 不是 6，服务会拒绝启动并提示删除数据库重建。重建前先停止服务并归档 `data/board.sqlite`、`data/board.sqlite-wal`、`data/board.sqlite-shm`；删除后重新启动会创建 v6 新库。旧库中的账号、项目、审计和任务索引不会自动回填，团队需要由系统管理员重新创建和分配。
 
 SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目增删、批量新增和看板状态的多字段更新均使用事务；失败时回滚整个操作。你可以单独备份 `data/board.sqlite`，但热备份前应先停止服务，并同时处理可能存在的 `board.sqlite-wal` 与 `board.sqlite-shm`。
 
-回滚到旧版 Board 时，先停止服务并归档当前 `data/board.sqlite*`，再切换到旧代码和迁移生成的
-对应版本快照。团队版成功推送的 Git 任务不会被回滚，数据库中的接受状态、团队账号和审计会
-随快照回退。详细步骤见[团队版运维手册](./docs/team-operations.md)。
+回滚到旧版 Board 时，先停止服务并归档当前 `data/board.sqlite*`，再切换到旧代码和旧库备份。团队版成功推送的 Git 任务不会被回滚，数据库中的接受状态、团队成员和审计会随备份回退。详细步骤见[团队版运维手册](./docs/team-operations.md)。
 
 ## 重要限制
 
