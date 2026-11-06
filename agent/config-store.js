@@ -158,6 +158,21 @@ async function pathExists(target) {
   }
 }
 
+const RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100, 200];
+
+async function renameWithRetry(source, target) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await fs.rename(source, target);
+      return;
+    } catch (error) {
+      const retryable = error.code === "EPERM" || error.code === "EBUSY" || error.code === "EACCES";
+      if (!retryable || attempt >= RENAME_RETRY_DELAYS_MS.length) throw error;
+      await new Promise((resolve) => setTimeout(resolve, RENAME_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
 export class ConfigStore {
   constructor(root = defaultAgentRoot(), options = {}) {
     this.paths = createAgentPaths(root);
@@ -235,7 +250,7 @@ export class ConfigStore {
       await handle.sync();
       await handle.close();
       handle = null;
-      await fs.rename(tempFile, target);
+      await renameWithRetry(tempFile, target);
     } catch (error) {
       await handle?.close().catch(() => {});
       await fs.unlink(tempFile).catch(() => {});
