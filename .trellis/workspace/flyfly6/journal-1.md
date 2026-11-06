@@ -29,3 +29,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: 设计稿缺陷修复与界面还原对齐
+<!-- trellis-session: v=2 fp=33775c04358e8d70 -->
+
+**Date**: 2026-11-06
+**Task**: 设计稿缺陷修复与界面还原对齐
+**Branch**: `codex/team-board`
+
+### Summary
+
+修复 Pencil 设计稿缺陷（顶栏宽度与间距、深色弹层关闭图标、Frame 19 状态规范），重构 TrellisLogo 品牌矢量图标，标准化控件高度为 32px，重构负责人选择组件为 SelectField 消除原生 datalist，修复团队视角项目切换与表格联动过滤，解决 useBoard 750ms 轮询死循环及 Base UI onSelect 事件响应兼容，并通过 Tabbit 浏览器完成全量页面与弹层的深浅色还原度核验。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bfc4b59` | feat(web): 修复设计稿缺陷并对齐界面还原 |
+
+### Status
+
+[OK] **Completed**
