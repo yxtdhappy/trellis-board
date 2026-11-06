@@ -8,7 +8,9 @@
   "permissions": [
     "core:default",
     "allow-app-status",
+    "allow-enroll-with-token",
     "allow-enroll-device",
+    "allow-open-board-login",
     "allow-pick-workspace",
     "allow-init-workspace",
     "dialog:allow-open"

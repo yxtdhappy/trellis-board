@@ -641,6 +641,21 @@ export async function createPairingCode(): Promise<{
   }
 }
 
+export async function createDesktopEnrollToken(): Promise<{
+  token: string | null
+  expiresAt: string | null
+}> {
+  const { data } = await requestJson<unknown>('/api/desktop/enroll-tokens', {
+    method: 'POST',
+    body: {}
+  })
+  const row = record(data)
+  return {
+    token: optionalText(row.token),
+    expiresAt: optionalText(row.expiresAt)
+  }
+}
+
 export async function revokeDevice(deviceId: string): Promise<void> {
   await requestJson(`/api/admin/agents/${encodeURIComponent(deviceId)}/revoke`, {
     method: 'POST',

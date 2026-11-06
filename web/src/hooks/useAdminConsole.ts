@@ -40,6 +40,8 @@ export type AdminConsole = AdminProjects & {
   revokeDevice: (device: AgentDevice) => Promise<void>
   createPairingCode: () => Promise<void>
   pairingCode: { code: string; expiresAt: string | null } | null
+  createDesktopEnrollToken: () => Promise<void>
+  desktopToken: { token: string; expiresAt: string | null } | null
   credential: Credential | null
   showCredential: (title: string, description: string, value: string | null) => void
   closeCredential: () => void
@@ -69,6 +71,9 @@ export function useAdminConsole(): AdminConsole {
   const [systemAuditUnavailable, setSystemAuditUnavailable] = useState(false)
   const [credential, setCredential] = useState<Credential | null>(null)
   const [pairingCode, setPairingCode] = useState<{ code: string; expiresAt: string | null } | null>(null)
+  const [desktopToken, setDesktopToken] = useState<{ token: string; expiresAt: string | null } | null>(
+    null
+  )
 
   const systemAuditBeforeRef = useRef<number | null>(null)
 
@@ -271,6 +276,18 @@ export function useAdminConsole(): AdminConsole {
     }
   }, [report, showCredential])
 
+  const createDesktopEnrollToken = useCallback(async () => {
+    try {
+      const result = await admin.createDesktopEnrollToken()
+      if (result.token) {
+        setDesktopToken({ token: result.token, expiresAt: result.expiresAt })
+        toast.success('已生成一次性桌面设备令牌，5 分钟内有效。')
+      }
+    } catch (error) {
+      report(error)
+    }
+  }, [report])
+
   const logout = useCallback(async () => {
     try {
       await admin.logout()
@@ -309,6 +326,8 @@ export function useAdminConsole(): AdminConsole {
     revokeDevice,
     createPairingCode,
     pairingCode,
+    createDesktopEnrollToken,
+    desktopToken,
     credential,
     showCredential,
     closeCredential: () => setCredential(null),

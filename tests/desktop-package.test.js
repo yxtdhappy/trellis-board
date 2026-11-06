@@ -186,7 +186,9 @@ test("capability 只授予本地命令与最小 dialog 权限，不授予 shell�
   assert.deepEqual(permissions.slice().sort(), [
     "allow-app-status",
     "allow-enroll-device",
+    "allow-enroll-with-token",
     "allow-init-workspace",
+    "allow-open-board-login",
     "allow-pick-workspace",
     "core:default",
     "dialog:allow-open"
@@ -203,11 +205,15 @@ test("capability 只授予本地命令与最小 dialog 权限，不授予 shell�
   assert.match(custom, /commands\.allow = \["app_status"\]/);
   assert.match(custom, /identifier = "allow-enroll-device"/);
   assert.match(custom, /commands\.allow = \["enroll_device"\]/);
+  assert.match(custom, /identifier = "allow-enroll-with-token"/);
+  assert.match(custom, /commands\.allow = \["enroll_with_token"\]/);
+  assert.match(custom, /identifier = "allow-open-board-login"/);
+  assert.match(custom, /commands\.allow = \["open_board_login"\]/);
   assert.match(custom, /identifier = "allow-pick-workspace"/);
   assert.match(custom, /commands\.allow = \["pick_workspace"\]/);
   assert.match(custom, /identifier = "allow-init-workspace"/);
   assert.match(custom, /commands\.allow = \["init_workspace"\]/);
-  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 4);
+  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 6);
 });
 
 test("导航、新窗口、托盘与日志边界在 Rust 源中显式实现", () => {
@@ -227,11 +233,7 @@ test("导航、新窗口、托盘与日志边界在 Rust 源中显式实现", ()
   assert.match(main, /window\.hide\(\)/);
   assert.match(main, /"quit" =>/);
   assert.match(main, /"autostart" =>/);
-  assert.match(main, /generate_handler!\[/);
-  assert.match(main, /app_status/);
-  assert.match(main, /enroll_device/);
-  assert.match(main, /pick_workspace/);
-  assert.match(main, /init_workspace/);
+  assert.match(main, /generate_handler!\[\s*app_status,[\s\S]*?enroll_with_token,[\s\S]*?enroll_device,[\s\S]*?open_board_login,[\s\S]*?pick_workspace,[\s\S]*?init_workspace\s*\]/);
   assert.match(main, /fn ensure_local_caller\(window: &tauri::WebviewWindow\)/);
   assert.match(main, /该命令仅允许本地页面调用/);
   assert.doesNotMatch(main, /open_devtools|devtools:\s*true/);

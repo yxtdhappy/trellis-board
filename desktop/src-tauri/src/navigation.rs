@@ -41,6 +41,46 @@ pub fn is_local_page(candidate: &Url) -> bool {
         || candidate.host_str() == Some(LOCAL_HOST)
 }
 
+pub struct EnrollLink {
+    pub token: String,
+    pub server_url: Option<String>,
+}
+
+pub fn is_enroll_token(value: &str) -> bool {
+    (32..=512).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+/// 解析 `trellisboard://enroll?token=...&server=...`；server 可选并复用 Board URL 白名单。
+pub fn parse_enroll_link(input: &str) -> Option<EnrollLink> {
+    let url = Url::parse(input.trim()).ok()?;
+    if url.scheme() != "trellisboard" || url.host_str() != Some("enroll") {
+        return None;
+    }
+    if url.path() != "" && url.path() != "/" {
+        return None;
+    }
+    let mut token = None;
+    let mut server = None;
+    for (key, value) in url.query_pairs() {
+        match key.as_ref() {
+            "token" => token = Some(value.into_owned()),
+            "server" => server = Some(value.into_owned()),
+            _ => {}
+        }
+    }
+    let token = token?;
+    if !is_enroll_token(&token) {
+        return None;
+    }
+    let server_url = server
+        .and_then(|value| validate_board_url(&value).ok())
+        .map(|value| value.to_string());
+    Some(EnrollLink { token, server_url })
+}
+
 /// 允许同源导航；外链交给系统浏览器，绝不把远程 URL 交给 webview。
 pub fn handle_navigation(app: &AppHandle, candidate: &Url, board: Option<&Url>) -> bool {
     if is_local_page(candidate) {

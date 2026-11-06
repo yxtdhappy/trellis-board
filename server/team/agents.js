@@ -234,8 +234,7 @@ export function createAgentService({
     };
   }
 
-  function enroll(input = {}, { ip = "" } = {}) {
-    consumePairAttempt(ip);
+  function validateEnrollment(input = {}) {
     protocolVersion(input.protocolVersion);
     const version = agentVersion(input.agentVersion);
     const platform = text(input.platform, "平台", { max: 32 });
@@ -243,6 +242,60 @@ export function createAgentService({
       throw teamError(400, ERROR_CODES.INVALID_INPUT, "平台格式无效");
     }
     const name = deviceName(input.deviceName);
+    return { name, platform, version };
+  }
+
+  /**
+   * 创建 agent_device 与凭证；配对码与桌面令牌两条注册路径共用，避免复制设备创建逻辑。
+   * 调用方负责把它放进事务。
+   */
+  function insertDevice({ userId, teamId = null, name, platform, version, action, detail }) {
+    const credential = randomToken(32);
+    const agentId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO agent_device(
+        id, user_id, device_name, platform, agent_version, protocol_version,
+        credential_hash, status, last_seen_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+    `).run(
+      agentId,
+      userId,
+      name,
+      platform,
+      version,
+      AGENT_PROTOCOL_VERSION,
+      sha256(credential),
+      now,
+      now
+    );
+    appendAuditEvent(db, {
+      actorUserId: userId,
+      actorAgentId: agentId,
+      teamId,
+      action,
+      targetType: "agent",
+      targetId: agentId,
+      detail: { ...detail, deviceId: agentId, userId }
+    });
+    // 桌面端 workspace init 需要兑换结果里的用户名与团队，由这里统一补齐。
+    const owner = db.prepare(`
+      SELECT username
+      FROM user_account
+      WHERE id = ?
+    `).get(userId);
+    return {
+      agentId,
+      credential,
+      protocolVersion: AGENT_PROTOCOL_VERSION,
+      username: owner?.username || null,
+      teamId
+    };
+  }
+
+  function enroll(input = {}, { ip = "" } = {}) {
+    consumePairAttempt(ip);
+    const { name, platform, version } = validateEnrollment(input);
     const pairingCode = text(input.pairingCode, "配对码", { min: 16, max: 512 });
     const now = new Date().toISOString();
     const pairing = db.prepare(`
@@ -262,9 +315,7 @@ export function createAgentService({
     if (!membership) {
       throw teamError(401, ERROR_CODES.AUTH_FAILED, "配对码无效、已使用或已过期");
     }
-    const credential = randomToken(32);
-    const agentId = crypto.randomUUID();
-    withTransaction(db, () => {
+    return withTransaction(db, () => {
       const consumed = db.prepare(`
         UPDATE agent_pairing_code
         SET used_at = ?
@@ -273,44 +324,47 @@ export function createAgentService({
       if (consumed.changes !== 1) {
         throw teamError(401, ERROR_CODES.AUTH_FAILED, "配对码无效、已使用或已过期");
       }
-      db.prepare(`
-        INSERT INTO agent_device(
-          id, user_id, device_name, platform, agent_version, protocol_version,
-          credential_hash, status, last_seen_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
-      `).run(
-        agentId,
-        pairing.user_id,
+      return insertDevice({
+        userId: pairing.user_id,
+        teamId: pairing.team_id,
         name,
         platform,
         version,
-        AGENT_PROTOCOL_VERSION,
-        sha256(credential),
-        now,
-        now
-      );
-      appendAuditEvent(db, {
-        actorUserId: pairing.user_id,
-        actorAgentId: agentId,
-        teamId: pairing.team_id,
         action: "agent_enrolled",
-        targetType: "agent",
-        targetId: agentId,
         detail: { deviceName: name, platform, agentVersion: version }
       });
     });
-    const owner = db.prepare(`
-      SELECT username
-      FROM user_account
-      WHERE id = ?
-    `).get(pairing.user_id);
-    return {
-      agentId,
-      credential,
-      protocolVersion: AGENT_PROTOCOL_VERSION,
-      username: owner?.username || null,
-      teamId: pairing.team_id
-    };
+  }
+
+  /**
+   * 登录会话签发的桌面令牌兑换设备凭证。调用方已完成令牌校验与一次性消费。
+   */
+  function enrollDesktop(input = {}, { userId, teamId = null, deviceName: tokenDeviceName = null } = {}) {
+    if (!userId) {
+      throw teamError(401, ERROR_CODES.DESKTOP_TOKEN_INVALID, "设备令牌无效，请在 Board 重新生成");
+    }
+    const account = db.prepare("SELECT status FROM user_account WHERE id = ?").get(userId);
+    if (!account || account.status !== "active") {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, "账号已禁用，无法注册桌面设备");
+    }
+    const { name, platform, version } = validateEnrollment({
+      ...input,
+      deviceName: tokenDeviceName || input.deviceName
+    });
+    return withTransaction(db, () => insertDevice({
+      userId,
+      teamId,
+      name,
+      platform,
+      version,
+      action: "desktop_device_enrolled",
+      detail: {
+        deviceName: name,
+        platform,
+        agentVersion: version,
+        source: "desktop_enroll_token"
+      }
+    }));
   }
 
   function authenticate(request) {
@@ -1039,6 +1093,7 @@ export function createAgentService({
   return {
     createPairingCode,
     enroll,
+    enrollDesktop,
     authenticate,
     heartbeat,
     listProjectBindings,

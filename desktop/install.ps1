@@ -35,6 +35,8 @@ $ExeName = 'trellis-board-client.exe'
 $ProcessName = 'trellis-board-client'
 $RunValueName = 'TrellisBoardClient'
 $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$ProtocolScheme = 'trellisboard'
+$ProtocolKey = "HKCU:\Software\Classes\$ProtocolScheme"
 $script:FailureCode = 1
 
 function Write-Info {
@@ -175,6 +177,7 @@ $backupSidecar = Join-Path $stagingDir 'trellis-agent.exe.previous'
 $targetSidecar = Join-Path $InstallDir 'trellis-agent.exe'
 $createdShortcuts = New-Object System.Collections.Generic.List[string]
 $wroteRunValue = $false
+$wroteProtocol = $false
 $installedNewExe = $false
 $installedNewSidecar = $false
 $stage = 'files'
@@ -230,6 +233,15 @@ try {
     Write-Info "已跳过开机自启"
   }
 
+  # 注册 trellisboard:// 深链，供浏览器登录后把一次性设备令牌交给客户端。
+  $protocolCommandKey = Join-Path $ProtocolKey 'shell\open\command'
+  New-Item -Path $protocolCommandKey -Force | Out-Null
+  Set-ItemProperty -Path $ProtocolKey -Name '(default)' -Value "URL:$AppName device enrollment"
+  Set-ItemProperty -Path $ProtocolKey -Name 'URL Protocol' -Value ''
+  Set-ItemProperty -Path $protocolCommandKey -Name '(default)' -Value ('"' + $targetExe + '" "%1"')
+  $wroteProtocol = $true
+  Write-Info "已注册 deep link 协议：$ProtocolScheme`:"
+
   $configPath = Join-Path $dataDir 'client.json'
   if ($boardUrl) {
     $config = [ordered]@{
@@ -261,6 +273,9 @@ try {
   }
   if ($wroteRunValue) {
     Remove-ItemProperty -Path $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
+  }
+  if ($wroteProtocol) {
+    Remove-Item -LiteralPath $ProtocolKey -Recurse -Force -ErrorAction SilentlyContinue
   }
   if ($installedNewSidecar) {
     if (Test-Path -LiteralPath $backupSidecar -PathType Leaf) {

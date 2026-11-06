@@ -5,8 +5,12 @@ const loadingPanel = document.getElementById("loading-panel");
 const errorElement = document.getElementById("error");
 const form = document.getElementById("setup-form");
 const submitButton = document.getElementById("submit");
+const openLoginButton = document.getElementById("open-login");
 const serverUrlInput = document.getElementById("server-url");
 const deviceNameInput = document.getElementById("device-name");
+const enrollTokenInput = document.getElementById("enroll-token");
+const pairingForm = document.getElementById("pairing-form");
+const pairingSubmitButton = document.getElementById("pairing-submit");
 const pairingCodeInput = document.getElementById("pairing-code");
 const workspacePathInput = document.getElementById("workspace-path");
 const pickWorkspaceButton = document.getElementById("pick-workspace");
@@ -18,6 +22,7 @@ const versionElement = document.getElementById("version");
 const configPathElement = document.getElementById("config-path");
 
 const invoke = window.__TAURI__?.core?.invoke;
+const listen = window.__TAURI__?.event?.listen;
 const WORKSPACE_TOOLS = [".opencode", ".agents"];
 let boardServerUrl = null;
 
@@ -63,6 +68,13 @@ function showWorkspacePanel(serverUrl) {
   setStatus("请选择 workspace 并完成初始化。");
 }
 
+function resetButtons() {
+  submitButton.disabled = false;
+  submitButton.textContent = "用设备令牌注册并打开看板";
+  pairingSubmitButton.disabled = false;
+  pairingSubmitButton.textContent = "使用配对码注册";
+}
+
 async function readStatus() {
   if (!invoke) {
     loadingPanel.hidden = true;
@@ -82,7 +94,7 @@ async function readStatus() {
     }
     loadingPanel.hidden = true;
     setupPanel.hidden = false;
-    deviceNameInput.value = defaultDeviceName();
+    deviceNameInput.value = deviceNameInput.value || defaultDeviceName();
     setStatus("尚未注册为桌面设备。");
   } catch (error) {
     loadingPanel.hidden = true;
@@ -91,19 +103,72 @@ async function readStatus() {
   }
 }
 
+function readServerUrl() {
+  const serverUrl = serverUrlInput.value.trim();
+  if (!serverUrl) {
+    showError("请先填写服务端地址。");
+    return null;
+  }
+  return serverUrl;
+}
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!invoke) return;
   clearError();
-  const serverUrl = serverUrlInput.value.trim();
+  const serverUrl = readServerUrl();
   const deviceName = deviceNameInput.value.trim();
-  const pairingCode = pairingCodeInput.value.trim();
-  if (!serverUrl || !deviceName || pairingCode.length < 16) {
-    showError("请完整填写服务端地址、设备名称和配对码。");
+  const token = enrollTokenInput.value.trim();
+  if (!serverUrl) return;
+  if (!deviceName || token.length < 32) {
+    showError("请完整填写设备名称和一次性设备令牌。");
     return;
   }
   submitButton.disabled = true;
   submitButton.textContent = "正在注册…";
+  try {
+    const result = await invoke("enroll_with_token", {
+      serverUrl,
+      deviceName,
+      token,
+    });
+    enrollTokenInput.value = "";
+    showWorkspacePanel(result.serverUrl);
+    setStatus("注册成功，请选择 workspace 并完成初始化。");
+  } catch (error) {
+    showError(String(error));
+    setStatus("设备注册失败。");
+    resetButtons();
+  }
+});
+
+openLoginButton.addEventListener("click", async () => {
+  if (!invoke) return;
+  clearError();
+  const serverUrl = readServerUrl();
+  if (!serverUrl) return;
+  try {
+    await invoke("open_board_login", { serverUrl });
+    setStatus("已在浏览器打开 Board；登录并生成设备令牌后回到这里粘贴。");
+  } catch (error) {
+    showError(String(error));
+  }
+});
+
+pairingForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!invoke) return;
+  clearError();
+  const serverUrl = readServerUrl();
+  const deviceName = deviceNameInput.value.trim();
+  const pairingCode = pairingCodeInput.value.trim();
+  if (!serverUrl) return;
+  if (!deviceName || pairingCode.length < 16) {
+    showError("请完整填写设备名称和配对码。");
+    return;
+  }
+  pairingSubmitButton.disabled = true;
+  pairingSubmitButton.textContent = "正在注册…";
   try {
     const result = await invoke("enroll_device", {
       serverUrl,
@@ -115,10 +180,30 @@ form.addEventListener("submit", async (event) => {
   } catch (error) {
     showError(String(error));
     setStatus("设备注册失败。");
-    submitButton.disabled = false;
-    submitButton.textContent = "注册并打开看板";
+    resetButtons();
   }
 });
+
+if (listen) {
+  listen("enroll-token", (event) => {
+    const token = typeof event.payload === "string" ? event.payload : "";
+    if (token) {
+      setupPanel.hidden = false;
+      loadingPanel.hidden = true;
+      enrollTokenInput.value = token;
+      setStatus("已从浏览器收到设备令牌，确认设备名称后注册。");
+    }
+  }).catch(() => {});
+  listen("enroll-complete", () => {
+    setStatus("注册成功，正在打开 Board…");
+    void readStatus();
+  }).catch(() => {});
+  listen("enroll-failed", (event) => {
+    showError(String(event.payload || "设备注册失败。"));
+    setStatus("设备注册失败。");
+    resetButtons();
+  }).catch(() => {});
+}
 
 pickWorkspaceButton.addEventListener("click", async () => {
   if (!invoke) return;

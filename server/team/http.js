@@ -13,6 +13,7 @@ import { STAGE_IDS } from "../metadata.js";
 import { createAgentEventService } from "./agent-events.js";
 import { createAgentService } from "./agents.js";
 import { appendAuditEvent, listAuditEvents } from "./audit.js";
+import { createDesktopAuthService } from "./desktop-auth.js";
 import {
   changePassword,
   clearSessionCookie,
@@ -450,6 +451,7 @@ function createRequestHandler({
   taskWrites,
   agentService,
   agentEvents,
+  desktopAuth,
   publicDir,
   logger,
   isClosing
@@ -600,6 +602,15 @@ function createRequestHandler({
       sendJson(response, 201, agentService.enroll(body, {
         ip: clientIp(request, config.trustProxy)
       }));
+      return true;
+    }
+    if (pathname === "/api/agent/enroll-desktop" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      // verify 与 consume 之间不 await，保证令牌在本进程中只可能被兑换一次。
+      const record = desktopAuth.verify(body.token);
+      const result = agentService.enrollDesktop(body, record);
+      desktopAuth.consume(body.token);
+      sendJson(response, 201, result);
       return true;
     }
     if (!pathname.startsWith("/api/agent/")) return false;
@@ -1232,6 +1243,14 @@ function createRequestHandler({
     return false;
   }
 
+  async function handleDesktop(request, response, url, actor) {
+    if (url.pathname !== "/api/desktop/enroll-tokens") return false;
+    if (request.method !== "POST") return false;
+    const body = await readJsonBody(request);
+    sendJson(response, 201, desktopAuth.issue(actor, body));
+    return true;
+  }
+
   async function dispatch(request, response) {
     response.setHeader("x-request-id", crypto.randomUUID());
     assertHost(request, config);
@@ -1296,6 +1315,7 @@ function createRequestHandler({
       throw teamError(404, ERROR_CODES.NOT_FOUND, "team 模式不加载插件");
     }
     if (await handleAdmin(request, response, url)) return;
+    if (await handleDesktop(request, response, url, actor)) return;
     if (await handleProjects(request, response, url)) return;
     if (await handleTeam(request, response, url)) return;
     if (await handleTasks(request, response, url)) return;
@@ -1427,7 +1447,8 @@ export async function createTeamRuntime({
   requireAdmin = true,
   enablePolling = true,
   refreshConcurrency = DEFAULT_REFRESH_CONCURRENCY,
-  scheduledRefresh = null
+  scheduledRefresh = null,
+  desktopAuth = {}
 }) {
   if (config?.mode !== "team") {
     throw new Error("createTeamRuntime 只接受 team 配置");
@@ -1477,6 +1498,7 @@ export async function createTeamRuntime({
       config,
       events: agentEvents
     });
+    const desktopAuthService = createDesktopAuthService({ db, ...desktopAuth });
     agentEvents.setCommandDelivery(
       (agentId, commandId) => agentService.beginCommandDelivery(agentId, commandId)
     );
@@ -1498,6 +1520,7 @@ export async function createTeamRuntime({
       taskWrites,
       agentService,
       agentEvents,
+      desktopAuth: desktopAuthService,
       publicDir,
       logger,
       isClosing: () => closing
