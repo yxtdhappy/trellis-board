@@ -23,7 +23,7 @@ const VIEWS: { id: AdminView; label: string; subtitle: string; adminOnly: boolea
   {
     id: 'users',
     label: '用户账号',
-    subtitle: '创建账号、调整系统角色并重置一次性临时密码。',
+    subtitle: '创建账号、配置所属团队并重置密码。',
     adminOnly: true
   },
   {

@@ -806,7 +806,7 @@ expiresAt}`；`token` / `password` 一律回 `***`，前端不回显任何片段
 
 ## 20. 安全边界
 
-- **v1 只支持 standalone**。team 模式路由栈在 `server/team/http.js:408` `createRequestHandler`，
+- **v1 只支持 standalone**。team 模式路由栈在 `server/team/http.js:426` `createRequestHandler`，
   自带账号、项目权限、设备凭证与审计；插件绕过它们等于绕过鉴权。team 模式下不加载插件，
   配置里出现插件时启动日志告警。
 - **插件不是沙箱**：子进程以 board 运行用户身份执行，能读写文件、发网络。`network:outbound`
@@ -884,7 +884,7 @@ P1 是唯一有架构风险的阶段；P2~P5 只是插件代码或前端，不�
 | `setManualStage` | `server/metadata.js:53` | `task/setStage` 实现 |
 | `createWatchRuntime` | `server/watcher.js:28` | 400ms 防抖刷新 |
 | `DATABASE_SCHEMA_VERSION` | `server/database.js:15` | v5 迁移入口 |
-| `createRequestHandler` | `server/team/http.js:408` | team 模式路由栈（v1 不挂插件） |
+| `createRequestHandler` | `server/team/http.js:426` | team 模式路由栈（v1 不挂插件） |
 | 进程树终止 | `server/team/process.js:34` | 宿主封装的 `terminateTree` |
 | 最小环境构造 | `server/team/process.js:17` | `minimalEnvironment`，插件环境透传白名单 |
 | 路径比较键 | `server/config.js:33` | `repositoryPathKey`，大小写敏感性由宿主统一 |
