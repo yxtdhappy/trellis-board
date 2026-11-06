@@ -65,7 +65,8 @@ HTTP 不提供首次注册接口。首个管理员只能通过服务器本机 CL
 ## 4. 反向代理
 
 代理必须保留原始 Host，限制请求体不超过 64 KiB，不记录 Cookie、Authorization、配对码和
-请求正文。Agent 长轮询最长 25 秒，代理读超时应不小于 35 秒。
+请求正文。Agent 通过 `GET /api/agent/events` 维持 SSE 长连接：该路径必须关闭响应缓冲
+（`proxy_buffering off`），读超时设为不小于 30 分钟；其它接口读超时 60 秒即可。
 
 Nginx 示例：
 
@@ -83,6 +84,16 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_http_version 1.1;
+    }
+
+    location /api/agent/events {
+        proxy_pass http://127.0.0.1:4317;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1800s;
     }
 }
 ```
@@ -192,7 +203,7 @@ node server/team/cli.js status
 项目阻塞，不得强推。
 
 Agent 离线：检查当前用户计划任务、`%LOCALAPPDATA%\TrellisBoardAgent\logs\agent.log`、
-证书链、DNS 和反向代理长轮询超时。
+证书链、DNS 和反向代理 SSE 缓冲或超时（`/api/agent/events` 必须关闭 buffering）。
 
 `REMOTE_MISMATCH`：确认本地 `origin` 与项目远端是同一语义地址；不要在 HTTPS URL 中加入
 账号或令牌。
