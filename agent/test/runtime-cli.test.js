@@ -167,9 +167,10 @@ test("CLI 配对和绑定不把凭证或绝对路径写入配置输出", async (
       const bound = await store.readConfig();
       assert.equal(bound.bindings.length, 1);
       assert.equal(bound.bindings[0].projectId, "project-1");
-      assert.equal(bound.bindings[0].repoPath, repo.local);
+      const canonicalRepoPath = fs.realpathSync.native(repo.local);
+      assert.equal(bound.bindings[0].repoPath, canonicalRepoPath);
       assert.equal(bound.bindings[0].localRepoKey.length, 64);
-      assert.equal(output.stdoutText().includes(repo.local), false);
+      assert.equal(output.stdoutText().includes(canonicalRepoPath), false);
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
