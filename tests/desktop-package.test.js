@@ -362,7 +362,8 @@ test("桌面设备注册复用 pairing-codes + agent/enroll，凭证不落明文
     pairingCode: pairing.body.pairingCode,
     deviceName: "Windows 桌面",
     root,
-    credentialStore
+    credentialStore,
+    secureDirectory: false
   });
   assert.equal(result.protocolVersion, 2);
   assert.match(result.agentId, /^[A-Za-z0-9-]{8,64}$/);
@@ -390,7 +391,8 @@ test("桌面设备注册复用 pairing-codes + agent/enroll，凭证不落明文
       pairingCode: pairing.body.pairingCode,
       deviceName: "重放设备",
       root,
-      credentialStore
+      credentialStore,
+      secureDirectory: false
     }),
     (error) => /已经注册|一次性|无效|过期|失败/.test(error.message)
   );

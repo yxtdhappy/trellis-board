@@ -112,7 +112,9 @@ export async function enrollWithToken(token, deviceInfo = {}) {
   const enrollToken = validateEnrollToken(token);
   const serverUrl = normalizeServerUrl(deviceInfo.serverUrl);
   const deviceName = validateDeviceName(deviceInfo.deviceName);
-  const store = deviceInfo.store || new ConfigStore(deviceInfo.root);
+  const store = deviceInfo.store || new ConfigStore(deviceInfo.root, {
+    secureDirectory: deviceInfo.secureDirectory !== false,
+  });
   await store.ensureDirectories();
   if (!deviceInfo.replace) {
     const existing = await store.readConfig();
@@ -144,7 +146,9 @@ export async function enrollDesktopDevice(options = {}) {
   const serverUrl = normalizeServerUrl(options.serverUrl);
   const pairingCode = validatePairingCode(options.pairingCode);
   const deviceName = validateDeviceName(options.deviceName);
-  const store = options.store || new ConfigStore(options.root);
+  const store = options.store || new ConfigStore(options.root, {
+    secureDirectory: options.secureDirectory !== false,
+  });
   await store.ensureDirectories();
   if (!options.replace) {
     const existing = await store.readConfig();

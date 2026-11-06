@@ -168,11 +168,11 @@ export class ConfigStore {
   async ensureDirectories() {
     if (!this._directoriesReady) {
       this._directoriesReady = (async () => {
-        await fs.mkdir(this.paths.root, { recursive: true, mode: 0o700 });
+        const created = await fs.mkdir(this.paths.root, { recursive: true, mode: 0o700 });
         await fs.mkdir(this.paths.logsDir, { recursive: true, mode: 0o700 });
         await fs.mkdir(this.paths.hooksBaseDir, { recursive: true, mode: 0o700 });
         await fs.mkdir(this.paths.eventsDir, { recursive: true, mode: 0o700 });
-        if (process.platform === "win32" && this.secureDirectory) {
+        if (process.platform === "win32" && this.secureDirectory && created) {
           await this._restrictWindowsAcl(this.paths.root);
         }
       })();
@@ -207,7 +207,7 @@ export class ConfigStore {
     try {
       aclResult = await runProcess(
         icacls,
-        [target, "/inheritance:r", "/grant:r", `${principal}:(OI)(CI)F`, "/T", "/C", "/Q"],
+        [target, "/inheritance:r", "/grant:r", `${principal}:(OI)(CI)F`, "/C", "/Q"],
         { env, timeoutMs: 20_000, maxOutputBytes: 262_144 },
       );
     } catch (error) {

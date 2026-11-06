@@ -778,10 +778,12 @@ test("模板缓存按团队分区，非法团队 ID 不进入路径", async () =
       fs.existsSync(path.join(dataRoot, "templates", "workspace", "t1", "latest.json")),
       true
     );
-    assert.equal(
-      (fs.statSync(path.join(dataRoot, "templates", "workspace", "t1")).mode & 0o077),
-      0
-    );
+    if (process.platform !== "win32") {
+      assert.equal(
+        (fs.statSync(path.join(dataRoot, "templates", "workspace", "t1")).mode & 0o077),
+        0
+      );
+    }
     assert.throws(
       () => workspaceTemplateCacheDir("..", dataRoot),
       (error) => error.code === WORKSPACE_ERROR_CODE.TEMPLATE_INVALID

@@ -535,7 +535,11 @@ function classifyMergeFailure(result) {
 export async function syncRepository(options) {
   const before = await inspectRepository(options);
   if (!before.clean) {
-    throw new AgentError(AGENT_ERROR_CODE.LOCAL_DIRTY, "本地工作区存在未提交或未跟踪文件");
+    const summary = before.dirtySummary || "未知变更";
+    throw new AgentError(
+      AGENT_ERROR_CODE.LOCAL_DIRTY,
+      `本地工作区存在未提交或未跟踪文件：${summary}`,
+    );
   }
 
   const fetchResult = await runGit("fetch", before.root, {

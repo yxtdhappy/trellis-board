@@ -2,13 +2,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
+import { fileURLToPath } from "node:url";
 import { openDatabase } from "../../server/database.js";
 import { createPluginStore } from "../../server/plugins/store.js";
 import { createTaskService } from "../../server/plugins/task-service.js";
 import { createPluginRuntime } from "../../server/plugins/runtime.js";
 
 export const appDir = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
+  path.dirname(fileURLToPath(import.meta.url)),
   "../.."
 );
 

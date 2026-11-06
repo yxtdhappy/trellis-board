@@ -532,7 +532,9 @@ export async function assertWorkspaceDirectory(target) {
   } catch {
     throw fail(WORKSPACE_ERROR_CODE.PATH_INVALID, "无法解析 workspace 真实路径");
   }
-  if (comparablePath(real) !== comparablePath(resolved)) {
+  const canonicalParent = await fs.promises.realpath(path.dirname(resolved)).catch(() => null);
+  const canonical = canonicalParent ? path.join(canonicalParent, path.basename(resolved)) : resolved;
+  if (comparablePath(real) !== comparablePath(canonical)) {
     throw fail(WORKSPACE_ERROR_CODE.PATH_INVALID, "workspace 路径包含符号链接或重解析点");
   }
   const probe = path.join(
