@@ -63,6 +63,22 @@ h1 {
   color: var(--muted);
 }
 
+h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+#open-board {
+  margin-top: 18px;
+}
+
 form {
   display: grid;
   gap: 16px;

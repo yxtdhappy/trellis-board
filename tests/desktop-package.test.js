@@ -176,7 +176,7 @@ test("tauri.conf.json 固定 NSIS currentUser 且 CSP 无 unsafe 指令", () => 
   assert.doesNotMatch(cargo, /tauri.*features.*devtools/);
 });
 
-test("capability 不授予 shell、文件系统或远程页面权限", () => {
+test("capability 只授予本地命令与最小 dialog 权限，不授予 shell、文件系统或远程页面权限", () => {
   const capability = readJson("desktop/src-tauri/capabilities/main.json");
   assert.equal(capability.identifier, "main");
   assert.deepEqual(capability.windows, ["main"]);
@@ -186,12 +186,16 @@ test("capability 不授予 shell、文件系统或远程页面权限", () => {
   assert.deepEqual(permissions.slice().sort(), [
     "allow-app-status",
     "allow-enroll-device",
-    "core:default"
+    "allow-init-workspace",
+    "allow-pick-workspace",
+    "core:default",
+    "dialog:allow-open"
   ]);
   for (const permission of permissions) {
+    if (permission === "dialog:allow-open") continue;
     assert.doesNotMatch(
       permission,
-      /shell|fs:|http:|process:|updater:|dialog:|clipboard|global-shortcut|os:|path:|webview|window-state|autostart/i
+      /shell|fs:|http:|process:|updater:|dialog::|clipboard|global-shortcut|os:|path:|webview|window-state|autostart/i
     );
   }
   const custom = readText("desktop/src-tauri/permissions/desktop.toml");
@@ -199,7 +203,11 @@ test("capability 不授予 shell、文件系统或远程页面权限", () => {
   assert.match(custom, /commands\.allow = \["app_status"\]/);
   assert.match(custom, /identifier = "allow-enroll-device"/);
   assert.match(custom, /commands\.allow = \["enroll_device"\]/);
-  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 2);
+  assert.match(custom, /identifier = "allow-pick-workspace"/);
+  assert.match(custom, /commands\.allow = \["pick_workspace"\]/);
+  assert.match(custom, /identifier = "allow-init-workspace"/);
+  assert.match(custom, /commands\.allow = \["init_workspace"\]/);
+  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 4);
 });
 
 test("导航、新窗口、托盘与日志边界在 Rust 源中显式实现", () => {
@@ -219,7 +227,11 @@ test("导航、新窗口、托盘与日志边界在 Rust 源中显式实现", ()
   assert.match(main, /window\.hide\(\)/);
   assert.match(main, /"quit" =>/);
   assert.match(main, /"autostart" =>/);
-  assert.match(main, /generate_handler!\[app_status, enroll_device\]/);
+  assert.match(main, /generate_handler!\[/);
+  assert.match(main, /app_status/);
+  assert.match(main, /enroll_device/);
+  assert.match(main, /pick_workspace/);
+  assert.match(main, /init_workspace/);
   assert.match(main, /fn ensure_local_caller\(window: &tauri::WebviewWindow\)/);
   assert.match(main, /该命令仅允许本地页面调用/);
   assert.doesNotMatch(main, /open_devtools|devtools:\s*true/);
@@ -325,7 +337,7 @@ test("sidecar CLI 报告协议 v2，未注册时以配置错误退出", () => {
 });
 
 test("桌面设备注册复用 pairing-codes + agent/enroll，凭证不落明文", async (t) => {
-  const { runtime, adminCookie, serverUrl } = await startRuntime(t);
+  const { runtime, adminCookie, serverUrl, teamId } = await startRuntime(t);
   const pairing = await request(runtime, "/api/team/pairing-codes", {
     method: "POST",
     cookie: adminCookie,
@@ -359,6 +371,8 @@ test("桌面设备注册复用 pairing-codes + agent/enroll，凭证不落明文
   const config = JSON.parse(configText);
   assert.equal(config.serverUrl, serverUrl);
   assert.equal(config.agentId, result.agentId);
+  assert.equal(config.username, "sysadmin");
+  assert.equal(config.teamId, teamId);
   assert.equal(config.protocolVersion, 2);
   assert.equal(config.credential, undefined);
   assert.ok(!configText.includes(saved[0]), "设备凭证不得写入 config.json");

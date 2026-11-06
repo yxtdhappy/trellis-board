@@ -56,6 +56,32 @@
         </p>
       </section>
 
+      <section id="workspace-panel" class="panel" hidden>
+        <h2>初始化 workspace</h2>
+        <p class="lede">
+          选择一个本地项目目录。客户端会写入 <code>.trellis</code>、<code>.opencode</code>、
+          <code>.agents</code>，并用当前设备注册账号的用户名初始化 developer；不会创建 Git 仓库。
+        </p>
+        <label>
+          <span>workspace 路径</span>
+          <input
+            id="workspace-path"
+            name="workspacePath"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="D:\projects\my-workspace"
+          />
+        </label>
+        <div class="workspace-actions">
+          <button id="pick-workspace" type="button">选择目录</button>
+          <button id="init-workspace" type="button">初始化/修复</button>
+        </div>
+        <p id="workspace-result" class="hint" role="status" aria-live="polite" hidden></p>
+        <p id="workspace-error" class="error" role="alert" hidden></p>
+        <button id="open-board" type="button">打开看板</button>
+      </section>
+
       <section id="loading-panel" class="panel">
         <p>正在连接 Board 服务端…</p>
       </section>

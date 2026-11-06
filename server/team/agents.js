@@ -299,10 +299,17 @@ export function createAgentService({
         detail: { deviceName: name, platform, agentVersion: version }
       });
     });
+    const owner = db.prepare(`
+      SELECT username
+      FROM user_account
+      WHERE id = ?
+    `).get(pairing.user_id);
     return {
       agentId,
       credential,
-      protocolVersion: AGENT_PROTOCOL_VERSION
+      protocolVersion: AGENT_PROTOCOL_VERSION,
+      username: owner?.username || null,
+      teamId: pairing.team_id
     };
   }
 

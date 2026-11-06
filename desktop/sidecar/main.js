@@ -13,6 +13,11 @@ import {
   safeErrorMessage,
 } from "../../agent/protocol.js";
 import {
+  WORKSPACE_ERROR_CODE,
+  WorkspaceBootstrapError,
+} from "../../agent/workspace.js";
+import { runWorkspaceInit } from "./workspace-init.js";
+import {
   enrollDesktopDevice,
   readAgentIdentity,
   revokeDesktopDevice,
@@ -27,6 +32,10 @@ export const SIDECAR_EXIT_CODE = Object.freeze({
   AUTH: 4,
   NETWORK: 5,
   IO: 6,
+  WORKSPACE_CONFLICT: 9,
+  WORKSPACE_PERMISSION: 10,
+  WORKSPACE_OFFLINE: 11,
+  WORKSPACE_TEMPLATE: 12,
 });
 
 const DPAPI_ASSET = "dpapi.ps1";
@@ -44,6 +53,22 @@ function writeJson(value) {
 }
 
 function exitCodeFor(error) {
+  if (error instanceof WorkspaceBootstrapError) {
+    if (error.code === WORKSPACE_ERROR_CODE.DEVELOPER_CONFLICT) {
+      return SIDECAR_EXIT_CODE.WORKSPACE_CONFLICT;
+    }
+    if (
+      error.code === WORKSPACE_ERROR_CODE.PATH_INVALID ||
+      error.code === WORKSPACE_ERROR_CODE.PATH_UNWRITABLE ||
+      error.code === WORKSPACE_ERROR_CODE.USERNAME_INVALID
+    ) {
+      return SIDECAR_EXIT_CODE.WORKSPACE_PERMISSION;
+    }
+    if (error.code === WORKSPACE_ERROR_CODE.TEMPLATE_UNAVAILABLE) {
+      return SIDECAR_EXIT_CODE.WORKSPACE_OFFLINE;
+    }
+    return SIDECAR_EXIT_CODE.WORKSPACE_TEMPLATE;
+  }
   if (!(error instanceof AgentError)) return SIDECAR_EXIT_CODE.IO;
   if (error.code === "CONFIG_INVALID" || error.code === "CONFIG_MISSING") {
     return SIDECAR_EXIT_CODE.CONFIG;
@@ -180,6 +205,45 @@ async function commandStatus(args) {
   return SIDECAR_EXIT_CODE.OK;
 }
 
+async function commandWorkspaceInit(args) {
+  const values = parseOptions(args, {
+    path: {},
+    tools: {},
+    username: {},
+    team: {},
+    server: {},
+  });
+  const store = new ConfigStore();
+  const agent = await prepareAgent(store);
+  const config = await store.readConfig({ allowMissing: false });
+  const username = values.username || config.username;
+  if (!username) {
+    throw new AgentError(
+      "CONFIG_INVALID",
+      "本地配置缺少登录用户名；请重新注册设备",
+    );
+  }
+  const teamId = values.team || config.teamId;
+  if (!teamId) {
+    throw new AgentError(
+      "CONFIG_INVALID",
+      "本地配置缺少团队信息；请重新注册设备",
+    );
+  }
+  const agentCredential = await agent.credentialStore.loadCredential();
+  const result = await runWorkspaceInit({
+    workspacePath: requireOption(values, "path"),
+    tools: values.tools || null,
+    username,
+    teamId,
+    serverUrl: values.server || config.serverUrl,
+    dataRoot: store.paths.root,
+    agentCredential,
+  });
+  writeJson({ ok: true, ...result });
+  return SIDECAR_EXIT_CODE.OK;
+}
+
 function usage() {
   return [
     "trellis-agent-sidecar <command>",
@@ -187,6 +251,7 @@ function usage() {
     "  enroll --server <URL> --name <设备名>   (配对码从标准输入读取)",
     "  revoke --server <URL> --agent <设备 ID> (会话 Cookie 从 TRELLIS_BOARD_SESSION 读取)",
     "  status [--root <Agent 数据目录>]",
+    "  workspace-init --path <绝对路径> [--tools .opencode,.agents] [--username <name>] [--team <ID>]",
     "  version",
   ].join("\n");
 }
@@ -203,6 +268,8 @@ export async function runSidecarMain(argv = process.argv.slice(2)) {
         return await commandRevoke(args);
       case "status":
         return await commandStatus(args);
+      case "workspace-init":
+        return await commandWorkspaceInit(args);
       case "version":
         writeJson({
           ok: true,
@@ -223,7 +290,11 @@ export async function runSidecarMain(argv = process.argv.slice(2)) {
     const message = safeErrorMessage(error);
     process.stderr.write(`${message}\n`);
     if (command !== "run") {
-      writeJson({ ok: false, error: message });
+      writeJson({
+        ok: false,
+        error: message,
+        ...(typeof error?.code === "string" ? { code: error.code } : {}),
+      });
     }
     return exitCodeFor(error);
   }

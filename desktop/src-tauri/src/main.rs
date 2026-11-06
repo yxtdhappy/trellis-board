@@ -14,6 +14,7 @@ use tauri::{
     AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_shell::ShellExt;
 
 #[derive(Serialize)]
@@ -102,6 +103,52 @@ async fn enroll_device(
         server_url: board.as_str().to_string(),
         device_name: name.to_string(),
     })
+}
+
+#[tauri::command]
+async fn pick_workspace(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<Option<String>, String> {
+    ensure_local_caller(&window)?;
+    let folder = app.dialog().file().blocking_pick_folder();
+    match folder {
+        Some(path) => path
+            .into_path()
+            .map(|value| Some(value.to_string_lossy().to_string()))
+            .map_err(|error| format!("无法读取所选目录：{error}")),
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
+async fn init_workspace(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    path: String,
+    tools: Option<Vec<String>>,
+) -> Result<serde_json::Value, String> {
+    ensure_local_caller(&window)?;
+    let target = path.trim();
+    if target.is_empty() {
+        return Err("workspace 路径不能为空".to_string());
+    }
+    let agent_root = config::agent_root();
+    let output = sidecar::workspace_init(&app, target, tools, &agent_root).await?;
+    let summary: serde_json::Value = output
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str(line.trim()).ok())
+        .ok_or_else(|| "sidecar 返回了无效的 workspace 结果".to_string())?;
+    if summary.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+        let message = summary
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("workspace 初始化失败");
+        return Err(message.to_string());
+    }
+    Ok(summary)
 }
 
 fn focus_main_window(app: &AppHandle) {
@@ -210,7 +257,13 @@ fn main() {
             None,
         ))
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![app_status, enroll_device])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            app_status,
+            enroll_device,
+            pick_workspace,
+            init_workspace
+        ])
         .setup(move |app| {
             let handle = app.handle().clone();
             let _ = config::ensure_directories();

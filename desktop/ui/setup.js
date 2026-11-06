@@ -1,5 +1,6 @@
 const statusElement = document.getElementById("status");
 const setupPanel = document.getElementById("setup-panel");
+const workspacePanel = document.getElementById("workspace-panel");
 const loadingPanel = document.getElementById("loading-panel");
 const errorElement = document.getElementById("error");
 const form = document.getElementById("setup-form");
@@ -7,10 +8,18 @@ const submitButton = document.getElementById("submit");
 const serverUrlInput = document.getElementById("server-url");
 const deviceNameInput = document.getElementById("device-name");
 const pairingCodeInput = document.getElementById("pairing-code");
+const workspacePathInput = document.getElementById("workspace-path");
+const pickWorkspaceButton = document.getElementById("pick-workspace");
+const initWorkspaceButton = document.getElementById("init-workspace");
+const openBoardButton = document.getElementById("open-board");
+const workspaceResult = document.getElementById("workspace-result");
+const workspaceError = document.getElementById("workspace-error");
 const versionElement = document.getElementById("version");
 const configPathElement = document.getElementById("config-path");
 
 const invoke = window.__TAURI__?.core?.invoke;
+const WORKSPACE_TOOLS = [".opencode", ".agents"];
+let boardServerUrl = null;
 
 function setStatus(text) {
   statusElement.textContent = text;
@@ -26,8 +35,32 @@ function clearError() {
   errorElement.hidden = true;
 }
 
+function showWorkspaceError(message) {
+  workspaceError.textContent = message;
+  workspaceError.hidden = false;
+}
+
+function clearWorkspaceError() {
+  workspaceError.textContent = "";
+  workspaceError.hidden = true;
+}
+
+function showWorkspaceResult(message) {
+  workspaceResult.textContent = message;
+  workspaceResult.hidden = false;
+}
+
 function defaultDeviceName() {
   return "Windows 桌面";
+}
+
+function showWorkspacePanel(serverUrl) {
+  boardServerUrl = serverUrl || boardServerUrl;
+  loadingPanel.hidden = true;
+  setupPanel.hidden = true;
+  workspacePanel.hidden = false;
+  openBoardButton.hidden = !boardServerUrl;
+  setStatus("请选择 workspace 并完成初始化。");
 }
 
 async function readStatus() {
@@ -44,8 +77,7 @@ async function readStatus() {
     versionElement.textContent = `v${status.version}`;
     configPathElement.textContent = `配置：${status.configPath}`;
     if (status.serverUrl) {
-      setStatus("已注册，正在打开 Board…");
-      window.location.replace(status.serverUrl);
+      showWorkspacePanel(status.serverUrl);
       return;
     }
     loadingPanel.hidden = true;
@@ -79,13 +111,65 @@ form.addEventListener("submit", async (event) => {
       pairingCode,
     });
     pairingCodeInput.value = "";
-    setStatus("注册成功，正在打开 Board…");
-    window.location.replace(result.serverUrl);
+    showWorkspacePanel(result.serverUrl);
   } catch (error) {
     showError(String(error));
     setStatus("设备注册失败。");
     submitButton.disabled = false;
     submitButton.textContent = "注册并打开看板";
+  }
+});
+
+pickWorkspaceButton.addEventListener("click", async () => {
+  if (!invoke) return;
+  clearWorkspaceError();
+  pickWorkspaceButton.disabled = true;
+  try {
+    const selected = await invoke("pick_workspace");
+    if (selected) {
+      workspacePathInput.value = selected;
+      showWorkspaceResult("已选择目录，点击“初始化/修复”写入 Trellis 工作区。");
+    }
+  } catch (error) {
+    showWorkspaceError(String(error));
+  } finally {
+    pickWorkspaceButton.disabled = false;
+  }
+});
+
+initWorkspaceButton.addEventListener("click", async () => {
+  if (!invoke) return;
+  clearWorkspaceError();
+  const path = workspacePathInput.value.trim();
+  if (!path) {
+    showWorkspaceError("请先选择或填写 workspace 目录。");
+    return;
+  }
+  initWorkspaceButton.disabled = true;
+  initWorkspaceButton.textContent = "正在初始化…";
+  try {
+    const result = await invoke("init_workspace", {
+      path,
+      tools: WORKSPACE_TOOLS,
+    });
+    const created = result.createdFiles?.length ?? 0;
+    const skipped = result.skippedFiles?.length ?? 0;
+    showWorkspaceResult(
+      `初始化完成：developer=${result.developer}，模板=${result.templateVersion}` +
+        `（${result.source || "unknown"}），创建 ${created}，跳过 ${skipped}。`,
+    );
+    setStatus("workspace 已初始化，可以打开看板。");
+  } catch (error) {
+    showWorkspaceError(String(error));
+  } finally {
+    initWorkspaceButton.disabled = false;
+    initWorkspaceButton.textContent = "初始化/修复";
+  }
+});
+
+openBoardButton.addEventListener("click", () => {
+  if (boardServerUrl) {
+    window.location.replace(boardServerUrl);
   }
 });
 
