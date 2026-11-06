@@ -34,9 +34,7 @@ export type BoardStatus = {
 }
 
 export type TeamRuntime = {
-  /** 旧字段：服务端只在团队模式返回 true。 */
   team?: boolean
-  /** 当前服务端契约："team" | "standalone"。 */
   mode?: string
   authenticated: boolean
   user: { displayName?: string; username?: string; role?: string; developerId?: string; mustChangePassword?: boolean } | null

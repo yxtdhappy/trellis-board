@@ -23,8 +23,8 @@ import {
   fetchGitOperation,
   retryGitOperation,
 } from '@/api/board'
-import type { BoardPayload, BoardStatus, TeamQueryPage, TeamRuntime } from '@/api/board'
-import type { BoardTask } from '@/features/board/task-view'
+import type { BoardPayload, BoardStatus, Project, TeamQueryPage, TeamRuntime } from '@/api/board'
+import { teamRowToBoardTask, type BoardTask } from '@/features/board/task-view'
 
 export type BoardFilters = {
   projectId: string
@@ -77,7 +77,6 @@ export function useBoard(): BoardController {
   const teamPageIndex = useRef(0)
   const loadBoardRef = useRef<(force?: boolean, quiet?: boolean) => Promise<void>>(async () => {})
 
-  // 服务端历史版本只给 mode，较新版本额外返回 team: true，两者都认。
   const teamMode = runtime?.team === true || runtime?.mode === 'team'
 
   const loadBoard = useCallback(async (force = false, quiet = false) => {
@@ -259,7 +258,10 @@ export function useBoard(): BoardController {
         await loadBoard(false, true)
       },
       createTask: async (payload: Record<string, unknown>) => {
-        const result = await createTaskRequest(payload)
+        const result = await createTaskRequest({
+          ...payload,
+          idempotencyKey: payload.idempotencyKey || crypto.randomUUID(),
+        })
         trackOperation(result)
         await reloadCurrentSource()
       },
@@ -327,8 +329,16 @@ export function useBoard(): BoardController {
     [teamMode, loadBoard, loadTeamPage, loadTeamStatus, loadAssignments, reloadCurrentSource, trackOperation, operation, filters.executionView],
   )
 
-  const projects = board?.projects || []
-  const tasks: BoardTask[] = teamMode ? (teamPage?.tasks as BoardTask[]) || [] : board?.tasks || []
+  const teamProjects = useMemo<Project[]>(() => {
+    const rows = (teamStatus?.projects as { id?: string; name?: string; path?: string }[] | undefined) || []
+    return rows
+      .filter((row): row is { id: string; name?: string; path?: string } => Boolean(row?.id))
+      .map((row) => ({ ...row, id: row.id, name: row.name || row.id, path: row.path || '' }))
+  }, [teamStatus])
+  const projects: Project[] = teamMode ? teamProjects : board?.projects || []
+  const tasks: BoardTask[] = teamMode
+    ? (teamPage?.tasks || []).map((row) => teamRowToBoardTask(row as Record<string, unknown>))
+    : board?.tasks || []
 
   return {
     board,

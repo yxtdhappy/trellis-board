@@ -176,7 +176,7 @@ export function createTaskWriteService({
     return project;
   }
 
-  function resolveAssignee(projectId, value, { allowReadOnly = false } = {}) {
+  function resolveAssignee(projectId, value, { allowReadOnly = false, label = "负责人" } = {}) {
     const input = String(value || "").trim();
     if (!input) throw teamError(400, ERROR_CODES.INVALID_INPUT, "缺少负责人");
     const member = db.prepare(`
@@ -191,13 +191,13 @@ export function createTaskWriteService({
       LIMIT 1
     `).get(projectId, input, input, input);
     if (!member || member.status !== "active") {
-      throw teamError(400, ERROR_CODES.INVALID_INPUT, "负责人不是项目有效成员");
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label}不是项目有效成员`);
     }
     if (!allowReadOnly && member.role === "read_only") {
-      throw teamError(400, ERROR_CODES.INVALID_INPUT, "只读成员不能成为任务负责人");
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label}是只读成员，不能写任务`);
     }
     if (!member.trellis_dev_id) {
-      throw teamError(400, ERROR_CODES.INVALID_INPUT, "负责人尚未映射 Trellis developer ID");
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label}尚未映射 Trellis developer ID`);
     }
     return member;
   }
@@ -581,7 +581,7 @@ export function createTaskWriteService({
   async function executeCreate(actor, project, input, idempotencyKey) {
     const normalized = normalizeCreateInput(actor, project.id, input);
     const assignee = resolveAssignee(project.id, normalized.assignee);
-    const actorMember = resolveAssignee(project.id, actor.userId);
+    const actorMember = resolveAssignee(project.id, actor.userId, { label: "当前账号" });
     assertTrustedToolchain(project);
     await precheckLifecycleHooks(project.path);
     resolveDeveloperWorkspace(project.path, assignee.trellis_dev_id);

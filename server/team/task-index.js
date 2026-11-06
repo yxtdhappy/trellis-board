@@ -221,9 +221,6 @@ function rowFromIndex(row) {
   };
 }
 
-// team_task_index 的 priority / derived_stage 是 NOT NULL，而 task.json 不保证提供；
-// SQLite 绑定拒绝 undefined（会报 “Provided value cannot be bound to SQLite parameter 8”），
-// 所以统一在写库前把非空列兜成空串、可空列兜成 null。
 export function taskIndexInsertArgs(task, {
   projectId,
   searchText,
@@ -468,7 +465,6 @@ export function createTaskIndex({
         task.derivedStage,
         ...(task.execution?.tags || [])
       ].filter(Boolean).join("\n").toLowerCase();
-      // 单条 task.json 缺字段时不能让整库索引失败：非空列给空串，可空列给 null。
       insert.run(...taskIndexInsertArgs(task, {
         projectId,
         searchText,

@@ -73,6 +73,10 @@ export function CreateTaskDialog({
       setMessage('请选择项目成员作为负责人')
       return
     }
+    if (!description.trim()) {
+      setMessage('请填写任务描述')
+      return
+    }
     const finalSlug = manualSlug ? normalizeTaskSlug(slug) : slugifyTaskTitle(title)
     if (!finalSlug || !TASK_SLUG_PATTERN.test(finalSlug)) {
       setMessage('任务标识只能包含小写英文字母、数字和单个中划线，例如 board-task-export。')
@@ -88,6 +92,7 @@ export function CreateTaskDialog({
         priority,
         slug: finalSlug,
         baseBranch: branch.trim() || undefined,
+        idempotencyKey: crypto.randomUUID(),
       })
       onOpenChange(false)
       setTitle('')

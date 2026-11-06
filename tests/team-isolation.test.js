@@ -231,7 +231,6 @@ test("团队 CRUD、活动团队切换与跨团队读写隔离", async (t) => {
   const bothCookie = cookieOf(await login(runtime, "both"));
   const runtimeA = await request(runtime, "/api/runtime", { cookie: bothCookie });
   assert.equal(runtimeA.status, 200);
-  // 前端靠 team 标志决定走团队分支还是单机分支；mode 之外必须同时给出 team: true。
   assert.equal(runtimeA.body.mode, "team");
   assert.equal(runtimeA.body.team, true);
   assert.equal(runtimeA.body.activeTeamId, teamA.id);

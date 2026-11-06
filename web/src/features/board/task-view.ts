@@ -1,5 +1,6 @@
 import {
   ATTENTION_REASON_LABELS,
+  FILTER_STAGES,
   dueDateDistance,
   laneForStageIndex,
   taskTagNames,
@@ -87,22 +88,56 @@ export function initials(name?: string) {
 }
 
 export function taskProgress(task: BoardTask) {
-  const required = task.stages.filter((stage) => !stage.optional)
+  const stages = Array.isArray(task.stages) ? task.stages : []
+  const required = stages.filter((stage) => !stage.optional)
   const done = required.filter((stage) => stage.complete || stage.source === 'manual').length
-  const total = required.length || task.stages.length
+  const total = required.length || stages.length
   return { done, total, percent: total ? Math.round((done / total) * 100) : 0 }
 }
 
 export function nextStage(task: BoardTask) {
+  const stages = Array.isArray(task.stages) ? task.stages : []
   return (
-    task.stages.find((stage) => stage.id === task.derivedStage) ||
-    task.stages.find((stage) => !stage.complete) ||
-    task.stages[task.stages.length - 1]
+    stages.find((stage) => stage.id === task.derivedStage) ||
+    stages.find((stage) => !stage.complete) ||
+    stages[stages.length - 1]
   )
 }
 
 export function laneForTask(task: BoardTask) {
-  return laneForStageIndex(task, task.stages.findIndex((stage) => stage.id === task.derivedStage))
+  const stages = Array.isArray(task.stages) ? task.stages : []
+  return laneForStageIndex(task, stages.findIndex((stage) => stage.id === task.derivedStage))
+}
+
+/**
+ * 团队查询返回的是扁平行：只有 derivedStage，没有 stages / execution。
+ * 视图层（泳道、进度条、下一阶段）都依赖 stages，所以在这里把 13 个阶段
+ * 按 derivedStage 位置展开成完整数组。
+ */
+export function teamRowToBoardTask(row: Record<string, unknown>): BoardTask {
+  const derivedStage = String(row.derivedStage ?? '')
+  const current = FILTER_STAGES.findIndex((stage) => stage.id === derivedStage)
+  const stages: Stage[] = FILTER_STAGES.map((stage, position) => ({
+    id: stage.id,
+    label: stage.label,
+    index: position,
+    complete: current === -1 ? false : position < current,
+    source: position === current ? 'board' : undefined,
+  }))
+  return {
+    ...row,
+    derivedStage,
+    archived: Boolean(row.archived),
+    assignee: (row.assignee as string | undefined) ?? (row.assigneeDevId as string | undefined),
+    execution: {
+      ...(row.execution as TaskExecution | undefined),
+      dueDate: (row.dueDate as string | null) ?? null,
+      lastActivityAt: (row.lastActivityAt as string | null) ?? null,
+      isBlocked: Boolean(row.isBlocked),
+      isUnblockedReady: Boolean(row.isUnblockedReady),
+    },
+    stages,
+  } as BoardTask
 }
 
 export function isAttention(task: BoardTask) {

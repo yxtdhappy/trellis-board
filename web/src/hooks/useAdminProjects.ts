@@ -149,7 +149,6 @@ export function useAdminProjects({
     if (isAdmin) void reloadProjects(true)
   }, [isAdmin, reloadProjects])
 
-  // 在另一个页面/标签里修复或批准了项目时，切回来要看到最新状态。
   useEffect(() => {
     if (!isAdmin) return
     const refresh = () => {
@@ -278,7 +277,6 @@ export function useAdminProjects({
         })
         setPendingApproval(null)
         if (result.warning?.message) {
-          // 项目已启用，只是首轮索引没建好；提示而不是当成失败。
           toast.warning(result.warning.message)
         } else {
           toast.success('项目工具链已批准，首个负责人已配置。')

@@ -44,7 +44,6 @@ function createTable() {
 test("缺失 priority/derivedStage 的任务不会让索引写库失败", () => {
   const db = createTable();
   const args = taskIndexInsertArgs(
-    // 线上真实成因：task.json 没写 priority/derivedStage/assignee/execution。
     { taskKey: "11-06-demo", relativeDir: ".trellis/tasks/11-06-demo", title: "演示任务", taskVersion: "v1" },
     { projectId: "p1", searchText: "演示任务", boardVersion: "b1", now: "2026-11-06T00:00:00.000Z" }
   );

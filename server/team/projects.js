@@ -395,19 +395,18 @@ export function createProjectService({
           projectId
         );
         taskIndex.incrementQueryRevision();
-        // 项目已经克隆、批准并启用，只是首轮索引没建起来；
-        // 返回 200 + warning，避免前端把「已启用但需修复」显示成批准失败。
         scanWarning = {
           code: ERROR_CODES.PROJECT_REPAIR_REQUIRED,
           message: "项目已启用，但首次索引扫描失败，请执行受控修复",
           details: { projectId }
         };
       }
-      return {
+      const response = {
         project: publicProject(projectRow(db, projectId)),
-        result,
-        ...(scanWarning ? { warning: scanWarning } : {})
+        result
       };
+      if (scanWarning) response.warning = scanWarning;
+      return response;
     });
   }
 
