@@ -217,6 +217,7 @@ function makeBinding(repoPath) {
     localId: "local-1",
     serverBindingId: "binding-1",
     projectId: "project-1",
+    teamId: "team-1",
     repoPath,
     branchName: "main",
     remoteIdentityKey: "a".repeat(64),
@@ -255,26 +256,37 @@ test("主循环领取白名单命令并上报结果，不发送仓库绝对路�
   const logger = createFileOnlyLogger({ logsDir: store.paths.logsDir });
   const credentials = { loadCredential: async () => "c".repeat(32) };
   const controller = new AbortController();
-  const calls = { heartbeats: 0, polls: 0, results: [] };
+  const calls = { heartbeats: 0, streams: 0, results: [] };
   const api = {
     heartbeat: async () => {
       calls.heartbeats += 1;
       return { protocolVersion: 1, compatible: true, bindings: [] };
     },
-    pollCommands: async (_input, options) => {
-      calls.polls += 1;
-      if (calls.polls > 1) {
-        await new Promise((resolve) => {
-          options.signal.addEventListener("abort", resolve, { once: true });
+    streamEvents: async (input, options) => {
+      calls.streams += 1;
+      assert.equal(input.teamId, "team-1");
+      options.onOpen?.({ status: 200, headers: {} });
+      if (calls.streams === 1) {
+        await options.onEvent({
+          id: "1",
+          type: "command",
+          data: {
+            payload: {
+              command: {
+                id: "command-1",
+                bindingId: "binding-1",
+                type: "refresh_status",
+                payload: { protocolVersion: 1, projectId: "project-1", branchName: "main" },
+              },
+            },
+          },
         });
-        return [];
       }
-      return [{
-        id: "command-1",
-        bindingId: "binding-1",
-        type: "refresh_status",
-        payload: { protocolVersion: 1, projectId: "project-1", branchName: "main" },
-      }];
+      await new Promise((resolve) => {
+        if (options.signal.aborted) resolve();
+        else options.signal.addEventListener("abort", resolve, { once: true });
+      });
+      return { reason: "closed" };
     },
     submitCommandResult: async (id, result) => {
       calls.results.push({ id, result });
@@ -299,8 +311,7 @@ test("主循环领取白名单命令并上报结果，不发送仓库绝对路�
         remoteIdentityKey: "a".repeat(64),
       }),
       heartbeatMs: 10,
-      pollWaitMs: 5,
-      pollIdleMs: 5,
+      eventReconcileMs: 5,
       signal: controller.signal,
     });
     const result = await runtime.run();
@@ -327,7 +338,7 @@ test("401 撤销停止主循环且保留本地配置", async () => {
     heartbeat: async () => {
       throw new AgentApiError(AGENT_ERROR_CODE.AUTH_REVOKED, "revoked", { status: 401 });
     },
-    pollCommands: async () => [],
+    streamEvents: async () => ({ reason: "closed" }),
   };
   try {
     await store.saveConfig(makeConfig(repoPath));
@@ -338,8 +349,7 @@ test("401 撤销停止主循环且保留本地配置", async () => {
       apiFactory: () => api,
       inspectRepository: async () => { throw new Error("must not inspect"); },
       heartbeatMs: 10,
-      pollWaitMs: 5,
-      pollIdleMs: 5,
+      eventReconcileMs: 5,
       signal: controller.signal,
     });
     const result = await runtime.run();
@@ -367,8 +377,7 @@ test("协议不兼容只保留心跳并关闭命令领取", async () => {
         heartbeat: async () => ({ protocolVersion: 2, compatible: false, bindings: [] }),
       }),
       heartbeatMs: 10,
-      pollWaitMs: 5,
-      pollIdleMs: 5,
+      eventReconcileMs: 5,
     });
     await runtime.heartbeatOnce();
     assert.equal(runtime.pollEnabled, false);

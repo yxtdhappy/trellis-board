@@ -10,6 +10,7 @@ import {
 } from "../config.js";
 import { openDatabase } from "../database.js";
 import { STAGE_IDS } from "../metadata.js";
+import { createAgentEventService } from "./agent-events.js";
 import { createAgentService } from "./agents.js";
 import { appendAuditEvent, listAuditEvents } from "./audit.js";
 import {
@@ -57,7 +58,6 @@ const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const applicationDir = path.resolve(serverDir, "../..");
 const defaultPublicDir = path.join(applicationDir, "public");
 const MAX_JSON_BYTES = 64 * 1024;
-const DEFAULT_WAIT_MS = 25_000;
 const EXECUTION_WIP_LIMIT = 2;
 const DEFAULT_REFRESH_CONCURRENCY = 4;
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -413,9 +413,9 @@ function createRequestHandler({
   taskIndex,
   taskWrites,
   agentService,
+  agentEvents,
   publicDir,
   logger,
-  signal,
   isClosing
 }) {
   function readActor(request) {
@@ -493,15 +493,21 @@ function createRequestHandler({
       sendJson(response, 200, agentService.heartbeat(agent, body));
       return true;
     }
-    if (pathname === "/api/agent/commands" && request.method === "POST") {
-      const body = await readJsonBody(request);
-      const waitMs = Math.min(
-        DEFAULT_WAIT_MS,
-        Math.max(0, Number(body.waitMs) || 0)
-      );
-      const commandPage = await agentService.pollCommands(agent, { ...body, waitMs });
-      sendJson(response, 200, commandPage);
+    if (pathname === "/api/agent/events" && request.method === "GET") {
+      agentEvents.openStream({
+        agent,
+        teamId: url.searchParams.get("teamId"),
+        lastEventId: request.headers["last-event-id"],
+        response
+      });
       return true;
+    }
+    if (pathname === "/api/agent/commands" && request.method === "POST") {
+      throw teamError(
+        410,
+        ERROR_CODES.AGENT_LONG_POLL_REMOVED,
+        "命令长轮询已移除，请升级 Agent 并使用 GET /api/agent/events"
+      );
     }
     const resultMatch = routeMatch(pathname, /^\/api\/agent\/commands\/([^/]+)\/result$/);
     if (resultMatch && request.method === "POST") {
@@ -1318,10 +1324,12 @@ export async function createTeamRuntime({
       );
     }
     const gitManager = createGitManager({ db, config, dataDir });
+    const agentEvents = createAgentEventService({ db, logger });
     const taskIndex = createTaskIndex({
       db,
       stageIds: STAGE_IDS,
-      executionWipLimit: EXECUTION_WIP_LIMIT
+      executionWipLimit: EXECUTION_WIP_LIMIT,
+      agentEvents
     });
     const projectService = createProjectService({
       db,
@@ -1334,14 +1342,20 @@ export async function createTeamRuntime({
       db,
       gitManager,
       projectService,
-      taskIndex
+      taskIndex,
+      agentEvents
     });
     const agentService = createAgentService({
       db,
       config,
-      logger,
-      signal: shutdown.signal
+      events: agentEvents
     });
+    agentEvents.setCommandDelivery(
+      (agentId, commandId) => agentService.beginCommandDelivery(agentId, commandId)
+    );
+    agentEvents.setCommandLister(
+      (agentId, teamId) => agentService.listPendingCommands(agentId, teamId)
+    );
     const boardService = createBoardService({
       db,
       taskIndex,
@@ -1356,9 +1370,9 @@ export async function createTeamRuntime({
       taskIndex,
       taskWrites,
       agentService,
+      agentEvents,
       publicDir,
       logger,
-      signal: shutdown.signal,
       isClosing: () => closing
     });
     const server = http.createServer((request, response) => {
@@ -1447,6 +1461,7 @@ export async function createTeamRuntime({
         shutdown.abort();
         if (pollTimer) clearInterval(pollTimer);
         pollTimer = null;
+        await agentEvents.close().catch(() => {});
         await agentService.close().catch(() => {});
         await closeServer(server);
         await refreshScheduler.stop();
@@ -1462,6 +1477,7 @@ export async function createTeamRuntime({
       shutdown.abort();
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = null;
+      await agentEvents.close();
       await agentService.close();
       await closeServer(server);
       await refreshScheduler.stop();
@@ -1480,6 +1496,7 @@ export async function createTeamRuntime({
         projectService,
         taskWrites,
         agentService,
+        agentEvents,
         boardService,
         refreshScheduler
       },

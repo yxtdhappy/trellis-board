@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端约束与模块索引"}
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "服务端模块职责、事件表与异步边界"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "Agent HTTP 路由、SSE 与路径安全"}
+{"file": ".trellis/spec/backend/scanning-and-persistence.md", "reason": "任务索引/缓存/事件持久化"}

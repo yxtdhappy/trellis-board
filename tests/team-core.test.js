@@ -885,7 +885,7 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
   assert.equal(adminAudit.status, 200);
   assert.ok(adminAudit.body.events.some((event) => event.action === "agent_binding_approved"));
 
-  const commands = await request(runtime, "/api/agent/commands", {
+  const legacyPoll = await request(runtime, "/api/agent/commands", {
     method: "POST",
     origin: null,
     agentCredential: enrolled.body.credential,
@@ -896,9 +896,19 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
       waitMs: 0
     }
   });
-  assert.equal(commands.status, 200);
-  assert.equal(commands.body.commands.length, 1);
-  const command = commands.body.commands[0];
+  assert.equal(legacyPoll.status, 410);
+  assert.equal(legacyPoll.body.code, "AGENT_LONG_POLL_REMOVED");
+
+  const pending = runtime.services.agentService.listPendingCommands(
+    enrolled.body.agentId,
+    "t1"
+  );
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].type, "sync_branch");
+  const command = runtime.services.agentService.beginCommandDelivery(
+    enrolled.body.agentId,
+    pending[0].commandId
+  );
   assert.equal(command.type, "sync_branch");
   assert.deepEqual(
     Object.keys(command.payload).sort(),

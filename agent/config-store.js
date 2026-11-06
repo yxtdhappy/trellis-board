@@ -28,6 +28,8 @@ export function createAgentPaths(root = defaultAgentRoot()) {
     configFile: path.join(resolvedRoot, "config.json"),
     credentialFile: path.join(resolvedRoot, "credential.dpapi"),
     stateFile: path.join(resolvedRoot, "runtime.json"),
+    eventCursorsFile: path.join(resolvedRoot, "event-cursors.json"),
+    eventsDir: path.join(resolvedRoot, "events"),
     logsDir: path.join(resolvedRoot, "logs"),
     lockFile: path.join(resolvedRoot, "agent.lock"),
     configLockFile: path.join(resolvedRoot, ".config.lock"),
@@ -105,6 +107,7 @@ export function validateConfig(config) {
       projectId,
       repoPath: path.resolve(requireString(binding.repoPath, "repoPath", 4096)),
       branchName: validateBranchNameSyntax(requireString(binding.branchName, "branchName", 255)),
+      teamId: optionalString(binding.teamId, "teamId", 128),
       remoteIdentityKey: requireHash(binding.remoteIdentityKey, "remoteIdentityKey"),
       localRepoKey: requireHash(binding.localRepoKey, "localRepoKey"),
       displayName: requireString(binding.displayName, "displayName", 255),
@@ -166,6 +169,7 @@ export class ConfigStore {
         await fs.mkdir(this.paths.root, { recursive: true, mode: 0o700 });
         await fs.mkdir(this.paths.logsDir, { recursive: true, mode: 0o700 });
         await fs.mkdir(this.paths.hooksBaseDir, { recursive: true, mode: 0o700 });
+        await fs.mkdir(this.paths.eventsDir, { recursive: true, mode: 0o700 });
         if (process.platform === "win32" && this.secureDirectory) {
           await this._restrictWindowsAcl(this.paths.root);
         }
@@ -353,6 +357,55 @@ export class ConfigStore {
       ...state,
     };
     await this.writeAtomic(this.paths.stateFile, `${JSON.stringify(payload, null, 2)}\n`);
+  }
+
+  async readEventCursors() {
+    let parsed;
+    try {
+      parsed = JSON.parse(await fs.readFile(this.paths.eventCursorsFile, "utf8"));
+    } catch {
+      return {};
+    }
+    if (parsed?.schemaVersion !== 1 || !parsed.cursors || typeof parsed.cursors !== "object") {
+      return {};
+    }
+    const cursors = {};
+    for (const [teamId, value] of Object.entries(parsed.cursors)) {
+      const lastEventId = Number(value?.lastEventId);
+      if (Number.isSafeInteger(lastEventId) && lastEventId >= 0) {
+        cursors[teamId] = lastEventId;
+      }
+    }
+    return cursors;
+  }
+
+  async writeEventCursor(teamId, lastEventId) {
+    const key = String(teamId || "");
+    if (!key) return;
+    const value = Number(lastEventId);
+    if (!Number.isSafeInteger(value) || value < 0) return;
+    const operation = async () => {
+      const cursors = await this.readEventCursors();
+      if (cursors[key] != null && cursors[key] > value) return;
+      cursors[key] = value;
+      const payload = {
+        schemaVersion: 1,
+        cursors: Object.fromEntries(
+          Object.entries(cursors).map(([id, cursor]) => [
+            id,
+            { lastEventId: cursor, updatedAt: new Date().toISOString() },
+          ]),
+        ),
+      };
+      await this.writeAtomic(
+        this.paths.eventCursorsFile,
+        `${JSON.stringify(payload, null, 2)}\n`,
+      );
+    };
+    this._cursorWrite = (this._cursorWrite || Promise.resolve())
+      .catch(() => {})
+      .then(operation);
+    return this._cursorWrite;
   }
 
   async writeCredentialRecord(record) {

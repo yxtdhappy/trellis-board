@@ -1,7 +1,8 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AgentApiClient, loadCaFile } from "./api.js";
-import { ConfigStore, createConfigRevision } from "./config-store.js";
+import { ConfigStore } from "./config-store.js";
+import { createEventCache } from "./event-cache.js";
 import { DpapiCredentialStore } from "./credential-store.js";
 import {
   formatBindingHealth,
@@ -19,10 +20,11 @@ import {
   compareVersions,
   isAuthenticationError,
   safeErrorMessage,
+  validateCommand,
 } from "./protocol.js";
 
 const HEARTBEAT_MS = 15_000;
-const POLL_WAIT_MS = 25_000;
+const EVENT_RECONCILE_MS = 5_000;
 const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 60_000;
 
@@ -57,6 +59,7 @@ function publicBinding(binding) {
     remoteIdentityKey: binding.remoteIdentityKey,
     displayName: binding.displayName,
     branchName: binding.branchName,
+    teamId: binding.teamId ?? null,
     status: binding.syncStatus,
     lastSyncedAt: binding.lastSyncedAt,
     lastErrorCode: binding.lastErrorCode,
@@ -115,8 +118,10 @@ export class AgentRuntime {
     this.inspectRepository = options.inspectRepository || inspectRepository;
     this.syncRepository = options.syncRepository || syncRepository;
     this.heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
-    this.pollWaitMs = options.pollWaitMs ?? POLL_WAIT_MS;
-    this.pollIdleMs = options.pollIdleMs ?? 500;
+    this.eventIdleMs = options.eventIdleMs ?? 60_000;
+    this.eventReconcileMs = options.eventReconcileMs ?? EVENT_RECONCILE_MS;
+    this.eventCache = options.eventCache || createEventCache({ root: this.store.paths.root });
+    this._syncInFlight = new Map();
     this.abortController = new AbortController();
     this.signal = this.abortController.signal;
     if (options.signal?.aborted) {
@@ -196,6 +201,7 @@ export class AgentRuntime {
         const next = {
           ...binding,
           serverBindingId: remote.id,
+          teamId: remote.teamId ?? binding.teamId ?? null,
           syncStatus: remote.status,
           lastErrorCode: remote.errorCode,
           lastError: remote.error,
@@ -206,6 +212,7 @@ export class AgentRuntime {
         }
         if (
           next.serverBindingId !== binding.serverBindingId ||
+          next.teamId !== binding.teamId ||
           next.syncStatus !== binding.syncStatus ||
           next.lastErrorCode !== binding.lastErrorCode ||
           next.lastError !== binding.lastError
@@ -238,6 +245,7 @@ export class AgentRuntime {
       lastHeartbeatAt: this.lastHeartbeat.at,
       lastHeartbeatError: this.lastHeartbeat.error,
       commandPollingEnabled: this.pollEnabled,
+      eventStreamEnabled: this.pollEnabled,
     });
   }
 
@@ -356,6 +364,227 @@ export class AgentRuntime {
     });
   }
 
+  _repoOptions(binding) {
+    return {
+      repoPath: binding.repoPath,
+      branchName: binding.branchName,
+      hooksDir: path.join(this.store.paths.hooksBaseDir, binding.localId),
+      expectedRemoteIdentity: binding.remoteIdentityKey,
+      allowFileRemote: binding.allowFileRemote,
+    };
+  }
+
+  async _syncBinding(binding) {
+    const existing = this._syncInFlight.get(binding.localId);
+    if (existing) return existing;
+    const run = (async () => {
+      const result = await this.syncRepository(this._repoOptions(binding));
+      await this._updateBindingResult(binding, result);
+      return {
+        bindingId: binding.serverBindingId,
+        projectId: binding.projectId,
+        branchName: result.branchName,
+        head: result.head,
+        clean: result.clean,
+        syncedAt: result.syncedAt,
+        localRepoKey: result.localRepoKey,
+        remoteIdentityKey: result.remoteIdentityKey,
+      };
+    })();
+    this._syncInFlight.set(binding.localId, run);
+    try {
+      return await run;
+    } finally {
+      if (this._syncInFlight.get(binding.localId) === run) {
+        this._syncInFlight.delete(binding.localId);
+      }
+    }
+  }
+
+  _bindingFor(teamId, projectId) {
+    return (this.config?.bindings || []).find((binding) =>
+      binding.teamId === teamId &&
+      binding.projectId === projectId &&
+      binding.syncStatus === "approved"
+    ) || null;
+  }
+
+  async _syncProject(teamId, projectId) {
+    if (!projectId) return;
+    const binding = this._bindingFor(teamId, projectId);
+    if (!binding) {
+      this.logger.warn("收到未知项目的事件", { teamId, projectId });
+      return;
+    }
+    try {
+      await this._syncBinding(binding);
+    } catch (error) {
+      this.logger.warn("处理事件时同步仓库失败", error);
+    }
+  }
+
+  async _handleTaskEvent(teamId, type, data) {
+    if (!data || typeof data !== "object") return;
+    if (data.teamId && data.teamId !== teamId) {
+      this.logger.warn("忽略跨团队任务事件", { teamId, eventTeamId: data.teamId });
+      return;
+    }
+    await this.eventCache.writeSnapshot(data).catch((error) => {
+      this.logger.warn("写入任务快照缓存失败", error);
+    });
+    if (type === "task.snapshot_required") {
+      await this._syncProject(teamId, data.projectId);
+    }
+    this.logger.info("收到任务事件", {
+      type,
+      taskId: data.executionTaskKey || data.taskId || null,
+      taskVersion: data.taskVersion ?? null,
+    });
+  }
+
+  async _handleEvent(teamId, event) {
+    const data = event.data && typeof event.data === "object" ? event.data : {};
+    switch (event.type) {
+      case "agent.revoked":
+        this.logger.warn("服务端已撤销 Agent，停止事件流", { teamId });
+        this.stop("agent_revoked");
+        return;
+      case "server.shutdown":
+        return;
+      case "resync.required":
+        this.logger.warn("事件游标已过期，重新同步", {
+          teamId,
+          reason: data.reason || null,
+        });
+        await this.store.writeEventCursor(teamId, 0).catch(() => {});
+        return;
+      case "sync.required":
+        await this._syncProject(teamId, data.projectId);
+        return;
+      case "task.created":
+      case "task.assigned":
+      case "task.updated":
+      case "task.cancelled":
+      case "task.snapshot_required":
+        await this._handleTaskEvent(teamId, event.type, data);
+        return;
+      case "command": {
+        const raw = data.payload?.command;
+        if (!raw) return;
+        const command = validateCommand(raw);
+        await this._processCommand(command);
+        return;
+      }
+      default:
+        this.logger.warn("忽略未知事件类型", { teamId, type: event.type });
+    }
+  }
+
+  async _teamEventLoop(teamId, signal) {
+    let attempt = 0;
+    while (!signal.aborted && !this.signal.aborted && this.pollEnabled) {
+      await this.loadContext().catch((error) => {
+        this.logger.warn("加载 Agent 配置失败", error);
+        return null;
+      });
+      const binding = (this.config?.bindings || []).find((item) =>
+        item.teamId === teamId && item.syncStatus === "approved"
+      );
+      if (!binding) return;
+      const cursors = await this.store.readEventCursors();
+      try {
+        await this.api.streamEvents(
+          { teamId, lastEventId: cursors[teamId] ?? null },
+          {
+            signal,
+            idleTimeoutMs: this.eventIdleMs,
+            onOpen: () => {
+              attempt = 0;
+              this.logger.info("Agent 事件流已连接", { teamId });
+            },
+            onEvent: async (event) => {
+              try {
+                await this._handleEvent(teamId, event);
+              } finally {
+                const id = Number(event.id);
+                if (Number.isSafeInteger(id) && id >= 0) {
+                  await this.store.writeEventCursor(teamId, id).catch(() => {});
+                }
+              }
+            },
+          },
+        );
+        if (signal.aborted || this.signal.aborted) return;
+        await sleep(1_000, signal);
+      } catch (error) {
+        if (signal.aborted || this.signal.aborted) return;
+        if (error.status === 403 && error.serverCode === "FORBIDDEN") {
+          this.logger.warn("Agent 对该团队的事件流无权限，停止该团队连接", { teamId });
+          return;
+        }
+        if (isAuthenticationError(error)) {
+          this.authRevoked = true;
+          this.logger.error("Agent 凭证已撤销，停止重试，请重新配对");
+          this.stop("auth_revoked");
+          return;
+        }
+        if (error.status === 404) {
+          this.logger.warn("Agent 事件流目标不存在，停止该团队连接", { teamId });
+          return;
+        }
+        const delay = nextDelay(attempt, error.retryAfterMs) +
+          Math.floor(Math.random() * 250);
+        attempt += 1;
+        this.logger.warn("Agent 事件流断开，稍后重连", error);
+        await sleep(delay, signal);
+      }
+    }
+  }
+
+  async _eventLoop() {
+    const handles = new Map();
+    const startTeam = (teamId) => {
+      const controller = new AbortController();
+      const forward = () => controller.abort();
+      this.signal.addEventListener("abort", forward, { once: true });
+      const promise = this._teamEventLoop(teamId, controller.signal)
+        .catch((error) => {
+          if (!controller.signal.aborted) {
+            this.logger.error("Agent 事件循环异常退出", error);
+          }
+        })
+        .finally(() => {
+          this.signal.removeEventListener("abort", forward);
+          handles.delete(teamId);
+        });
+      handles.set(teamId, { controller, promise });
+    };
+    while (!this.signal.aborted) {
+      if (!this.pollEnabled) {
+        await sleep(this.eventReconcileMs, this.signal);
+        continue;
+      }
+      await this.loadContext().catch(() => null);
+      const teams = new Set(
+        (this.config?.bindings || [])
+          .filter((binding) => binding.teamId && binding.syncStatus === "approved")
+          .map((binding) => binding.teamId),
+      );
+      for (const teamId of teams) {
+        if (!handles.has(teamId)) startTeam(teamId);
+      }
+      for (const [teamId, handle] of handles) {
+        if (!teams.has(teamId)) {
+          handle.controller.abort();
+          handles.delete(teamId);
+        }
+      }
+      await sleep(this.eventReconcileMs, this.signal);
+    }
+    for (const handle of handles.values()) handle.controller.abort();
+    await Promise.allSettled([...handles.values()].map((handle) => handle.promise));
+  }
+
   async _runCommand(command) {
     const { config } = await this.loadContext();
     const binding = commandBinding(config, command);
@@ -389,18 +618,7 @@ export class AgentRuntime {
       allowFileRemote: binding.allowFileRemote,
     };
     if (command.type === "sync_branch") {
-      const result = await this.syncRepository(options);
-      await this._updateBindingResult(binding, result);
-      return {
-        bindingId: binding.serverBindingId,
-        projectId: binding.projectId,
-        branchName: result.branchName,
-        head: result.head,
-        clean: result.clean,
-        syncedAt: result.syncedAt,
-        localRepoKey: result.localRepoKey,
-        remoteIdentityKey: result.remoteIdentityKey,
-      };
+      return this._syncBinding(binding);
     }
     if (command.type === "refresh_status") {
       const result = await this.inspectRepository(options);
@@ -450,52 +668,6 @@ export class AgentRuntime {
     }
   }
 
-  async _commandLoop() {
-    let attempt = 0;
-    while (!this.signal.aborted) {
-      if (!this.pollEnabled) {
-        await sleep(this.pollIdleMs, this.signal);
-        continue;
-      }
-      try {
-        await this.loadContext();
-        const commands = await this.api.pollCommands(
-          {
-            agentId: this.config.agentId,
-            deviceId: this.config.agentId,
-            waitMs: this.pollWaitMs,
-          },
-          {
-            signal: this.signal,
-            timeoutMs: this.pollWaitMs + 25_000,
-          },
-        );
-        attempt = 0;
-        for (const command of commands) {
-          if (this.signal.aborted || !this.pollEnabled) {
-            break;
-          }
-          await this._processCommand(command);
-        }
-      } catch (error) {
-        if (isAuthenticationError(error)) {
-          this.authRevoked = true;
-          this.stop("auth_revoked");
-          return;
-        }
-        if (error.code === AGENT_ERROR_CODE.PROTOCOL_INCOMPATIBLE) {
-          this.pollEnabled = false;
-          this.logger.warn("Agent 协议不兼容，暂停命令轮询");
-          continue;
-        }
-        const delay = nextDelay(attempt, error.retryAfterMs);
-        attempt += 1;
-        this.logger.warn("命令长轮询失败，稍后重试", error);
-        await sleep(delay, this.signal);
-      }
-    }
-  }
-
   async run() {
     this.startedAt = new Date().toISOString();
     await this.store.ensureDirectories();
@@ -507,8 +679,8 @@ export class AgentRuntime {
     });
     this.logger.info("Trellis Agent 已启动");
     const heartbeat = this._heartbeatLoop();
-    const commands = this._commandLoop();
-    await Promise.all([heartbeat, commands]);
+    const events = this._eventLoop();
+    await Promise.all([heartbeat, events]);
     await this.store.writeState({
       status: this.authRevoked ? "auth_revoked" : "stopped",
       pid: process.pid,
@@ -547,7 +719,8 @@ export async function runAgentProcess(options = {}) {
       inspectRepository: options.inspectRepository,
       syncRepository: options.syncRepository,
       heartbeatMs: options.heartbeatMs,
-      pollWaitMs: options.pollWaitMs,
+      eventIdleMs: options.eventIdleMs,
+      eventReconcileMs: options.eventReconcileMs,
       signal: options.signal,
     });
     return await runtime.run();

@@ -214,6 +214,7 @@ function normalizeServerBinding(value) {
   return {
     id,
     projectId,
+    teamId: value.teamId == null ? null : assertSafeId(value.teamId, "团队 ID"),
     localRepoKey,
     status,
     branchName: typeof value.branchName === "string" ? value.branchName : null,

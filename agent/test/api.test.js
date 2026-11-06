@@ -27,11 +27,16 @@ function readBody(request) {
   });
 }
 
-test("HTTP stub 验证配对、心跳、命令和 Bearer", async () => {
+test("HTTP stub 验证配对、心跳、SSE 事件和 Bearer", async () => {
   const seen = [];
   await withServer(async (request, response) => {
     const body = await readBody(request);
-    seen.push({ url: request.url, authorization: request.headers.authorization, body });
+    seen.push({
+      url: request.url,
+      authorization: request.headers.authorization,
+      lastEventId: request.headers["last-event-id"],
+      body,
+    });
     response.setHeader("content-type", "application/json");
     if (request.url === "/api/agent/enroll") {
       response.end(JSON.stringify({
@@ -49,19 +54,13 @@ test("HTTP stub 验证配对、心跳、命令和 Bearer", async () => {
       }));
       return;
     }
-    if (request.url === "/api/agent/commands") {
-      response.end(JSON.stringify({
-        commands: [{
-          id: "command-1",
-          bindingId: "binding-1",
-          type: "refresh_status",
-          payload: {
-            protocolVersion: 1,
-            projectId: "project-1",
-            reason: "binding_approved",
-          },
-        }],
-      }));
+    if (request.url === "/api/agent/events?teamId=team-1") {
+      response.setHeader("content-type", "text/event-stream");
+      response.write("retry: 3000\n\n");
+      response.write("id: 7\n");
+      response.write("event: task.assigned\n");
+      response.write('data: {"teamId":"team-1","executionTaskKey":"task-1"}\n\n');
+      response.end();
       return;
     }
     if (request.url === "/api/agent/commands/command-1/result") {
@@ -77,15 +76,21 @@ test("HTTP stub 验证配对、心跳、命令和 Bearer", async () => {
     client.setCredential(enroll.credential);
     const heartbeat = await client.heartbeat({ agentId: enroll.agentId });
     assert.equal(heartbeat.compatible, true);
-    const commands = await client.pollCommands({ agentId: enroll.agentId });
-    assert.equal(commands[0].type, "refresh_status");
+    const events = [];
+    await client.streamEvents(
+      { teamId: "team-1", lastEventId: 6 },
+      { onEvent: (event) => events.push(event) },
+    );
+    assert.equal(events.length, 1);
+    assert.equal(events[0].id, "7");
+    assert.equal(events[0].type, "task.assigned");
+    assert.equal(events[0].data.executionTaskKey, "task-1");
     await client.submitCommandResult("command-1", { status: "failed" });
   });
   assert.equal(seen.find((item) => item.url === "/api/agent/enroll").authorization, undefined);
-  assert.equal(
-    seen.find((item) => item.url === "/api/agent/commands").authorization,
-    `Bearer ${"c".repeat(32)}`,
-  );
+  const streamRequest = seen.find((item) => item.url === "/api/agent/events?teamId=team-1");
+  assert.equal(streamRequest.authorization, `Bearer ${"c".repeat(32)}`);
+  assert.equal(streamRequest.lastEventId, "6");
   assert.equal(seen.some((item) => item.body.includes("pairingCode")), true);
 });
 
