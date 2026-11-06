@@ -218,7 +218,7 @@ exe/快捷方式/自启，保留 `data`。
 | 4 | `cargo tauri build` | `bundle\nsis\Trellis Board_0.2.0_x64-setup.exe` 存在 |
 | 5 | `.\TrellisBoard_0.2.0_x64-setup.exe /S` | 静默安装到 `%LOCALAPPDATA%\TrellisBoard`，开始菜单出现快捷方式 |
 | 6 | `Test-Path "$env:LOCALAPPDATA\TrellisBoard\trellis-board-client.exe"; Test-Path "$env:LOCALAPPDATA\TrellisBoard\trellis-agent.exe"` | 两行均为 `True` |
-| 7 | 启动客户端 → 生成设备令牌 → “打开桌面客户端”或粘贴 → 注册 | 跳转 Board；`%LOCALAPPDATA%\TrellisBoard\data\agent\credential.dpapi` 存在且不是明文 |
+| 7 | 启动客户端 → 生成设备令牌 → “打开桌面客户端”或粘贴 → 注册 | 进入 workspace 面板（点“打开看板”才跳 Board）；`%LOCALAPPDATA%\TrellisBoard\data\agent\credential.dpapi` 存在且不是明文 |
 | 7b | 同一令牌再次兑换 | 服务端 401 `DESKTOP_TOKEN_INVALID`，客户端提示“已使用” |
 | 7c | 注册成功后在 workspace 面板点“选择目录” → “初始化/修复” | 目标目录出现 `.trellis`、`.opencode`、`.agents`；`.trellis/.developer` 的 `name` 等于该账号用户名；输出里有模板版本与来源 `network`/`cache` |
 | 7d | 断网后重复 7c（保留上次缓存） | 仍能初始化，来源为 `cache`；哈希不匹配或路径为符号链接时中止并提示 |
