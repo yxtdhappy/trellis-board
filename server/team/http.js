@@ -136,6 +136,14 @@ function sendNotModified(response, etag) {
   response.end();
 }
 
+function etagMatches(headerValue, etag) {
+  const value = String(headerValue || "").trim();
+  if (!value || !etag) return false;
+  const strip = (tag) => tag.trim().replace(/^W\//i, "");
+  const expected = strip(etag);
+  return value.split(",").some((item) => strip(item) === expected);
+}
+
 function clientIp(request, trustProxy) {
   if (trustProxy) {
     const forwarded = String(request.headers["x-forwarded-for"] || "")
@@ -550,13 +558,16 @@ function createRequestHandler({
     authorizeWorkspaceTemplate(db, { teamId, ...identity });
     const template = readWorkspaceTemplate();
     const version = template.manifest.version;
-    if (String(request.headers["if-none-match"] || "") === template.etag) {
-      sendNotModified(response, template.etag);
+    const etag = manifestRoute === "manifest"
+      ? template.manifestEtag
+      : template.etag;
+    if (etagMatches(request.headers["if-none-match"], etag)) {
+      sendNotModified(response, etag);
       return true;
     }
     if (manifestRoute === "manifest") {
       sendJson(response, 200, publicWorkspaceTemplateManifest(template), {
-        etag: template.etag,
+        etag,
         "x-template-sha256": template.sha256,
         "x-template-version": version
       });
@@ -571,7 +582,7 @@ function createRequestHandler({
       "cache-control": "private, max-age=0, must-revalidate",
       "x-template-sha256": template.sha256,
       "x-template-version": version,
-      etag: template.etag
+      etag
     });
     if (request.method === "HEAD") {
       response.end();
