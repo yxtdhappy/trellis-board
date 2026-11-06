@@ -10,16 +10,6 @@ export const scanCacheFile = path.join(dataDir, "scan-cache.json");
 export const stateFile = path.join(dataDir, "board-state.json");
 export const repositoriesFile = path.join(dataDir, "repos.json");
 
-export const defaultRepositories = process.platform === "win32"
-  ? [
-    "D:/wit/mdp-management-web",
-    "D:/wit/mdp-report-service",
-    "D:/wit/mdp-report-config-agent-service",
-    "D:/wit/mdp-backend-service",
-    "D:/wit/mdp-backend-web"
-  ]
-  : [];
-
 export function normalizeRepositoryEntry(repo) {
   const rawPath = String(repo?.path || "").trim();
   if (!rawPath) throw new Error("仓库配置中存在缺少 path 的项目");

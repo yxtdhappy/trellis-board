@@ -3,7 +3,6 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   databaseFile as defaultDatabaseFile,
-  defaultRepositories,
   metadataFile,
   normalizeRepositoryEntry,
   repositoriesFile,
@@ -739,7 +738,7 @@ export function withTransaction(db, callback) {
 export function openDatabase({
   databaseFile = defaultDatabaseFile,
   legacyFiles = {},
-  fallbackRepositories = defaultRepositories,
+  fallbackRepositories = [],
   importLegacyRepositories = true,
   legacyJsonImport = true,
   logger = console
