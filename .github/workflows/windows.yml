@@ -1,0 +1,142 @@
+---
+# yamllint disable rule:line-length
+name: windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node-tests:
+    name: node tests (windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            desktop/package-lock.json
+      - name: Install web dependencies
+        run: npm ci --prefix web
+      - name: Build web
+        run: npm run build
+      - name: Server and web tests
+        run: npm test
+      - name: Agent tests (includes Windows DPAPI)
+        run: node --test "agent/test/*.test.js"
+
+  desktop-build:
+    name: desktop build (windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            desktop/package-lock.json
+      - name: Install rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a  # v2.8.2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Cache tauri cli
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-tauri.exe
+          key: tauri-cli-${{ runner.os }}-v2
+      - name: Install tauri cli
+        run: cargo install tauri-cli --locked --version "^2"
+      - name: Install build dependencies
+        run: |
+          npm ci --prefix web
+          npm --prefix desktop ci
+      - name: Build web
+        run: npm run build
+      - name: Build sidecar
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File `
+            desktop/sidecar/build-sidecar.ps1
+      - name: Rust unit tests
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+      - name: Bundle desktop client
+        working-directory: desktop
+        run: cargo tauri build
+      - name: Check artifacts
+        run: |
+          $release = "desktop/src-tauri/target/release"
+          $exe = Join-Path $release "trellis-board-client.exe"
+          if (-not (Test-Path $exe)) { throw "missing $exe" }
+          $pattern = Join-Path $release "bundle/nsis/*-setup.exe"
+          $setup = Get-ChildItem $pattern
+          if (-not $setup) { throw "missing NSIS installer" }
+          Write-Host "client=$exe"
+          Write-Host "installer=$($setup.FullName)"
+      - name: Installer smoke test
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = "desktop/src-tauri/target/release/trellis-board-client.exe"
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+          $installDir = Join-Path $env:LOCALAPPDATA "TrellisBoard"
+          $script = "desktop/install.ps1"
+          $flags = "-NoProfile -ExecutionPolicy Bypass -File"
+          if (Test-Path $installDir) {
+            Remove-Item $installDir -Recurse -Force
+          }
+          $bad = "0" * 64
+          powershell -NoProfile -ExecutionPolicy Bypass `
+            -File $script -Source $exe -Checksum $bad -NoLaunch -Quiet
+          if ($LASTEXITCODE -ne 2) {
+            throw "bad checksum exit $LASTEXITCODE, want 2"
+          }
+          powershell -NoProfile -ExecutionPolicy Bypass `
+            -File $script -Source $exe -Checksum $hash `
+            -NoAutostart -NoLaunch -Quiet
+          if ($LASTEXITCODE -ne 0) {
+            throw "install exit $LASTEXITCODE"
+          }
+          $client = Join-Path $installDir "trellis-board-client.exe"
+          if (-not (Test-Path $client)) { throw "client not installed" }
+          powershell -NoProfile -ExecutionPolicy Bypass `
+            -File $script -Uninstall -Quiet
+          if ($LASTEXITCODE -ne 0) {
+            throw "uninstall exit $LASTEXITCODE"
+          }
+          if (Test-Path $client) { throw "client not removed" }
+      - name: Launch smoke test
+        continue-on-error: true
+        run: |
+          $exe = "desktop/src-tauri/target/release/trellis-board-client.exe"
+          $env:TRELLIS_DESKTOP_HOME = Join-Path $env:TEMP "tb-smoke"
+          $proc = Start-Process -FilePath $exe `
+            -ArgumentList "--minimized" -PassThru
+          Start-Sleep -Seconds 10
+          if ($proc.HasExited) {
+            throw "client exited with $($proc.ExitCode)"
+          }
+          Stop-Process -Id $proc.Id -Force
+          $log = Join-Path $env:TEMP "tb-smoke/desktop.log"
+          if (Test-Path $log) { Get-Content $log -Tail 20 }
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: trellis-board-desktop-windows
+          path: |
+            desktop/src-tauri/target/release/trellis-board-client.exe
+            desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14

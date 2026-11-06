@@ -6,18 +6,7 @@
     <meta name="description" content="Trellis Board 团队管理台。" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>团队管理 · Trellis Board</title>
-    <script>
-      (function () {
-        try {
-          var stored = localStorage.getItem('trellis-theme');
-          var dark = stored ? stored === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
-          document.documentElement.classList.toggle('dark', dark);
-          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
-        } catch (error) {
-          /* 首屏主题探测失败时保持默认浅色 */
-        }
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

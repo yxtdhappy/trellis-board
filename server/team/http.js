@@ -72,7 +72,14 @@ const STATIC_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"],
   [".svg", "image/svg+xml"],
-  [".png", "image/png"]
+  [".png", "image/png"],
+  [".woff2", "font/woff2"],
+  [".woff", "font/woff"],
+  [".ttf", "font/ttf"],
+  [".ico", "image/x-icon"],
+  [".webmanifest", "application/manifest+json"],
+  [".map", "application/json"],
+  [".txt", "text/plain; charset=utf-8"]
 ]);
 
 function securityHeaders() {
