@@ -1,4 +1,4 @@
-# 桌面客户端自定义命令权限。capability 只引用这两个标识符；
+# 桌面客户端自定义命令权限。capability 只引用这些标识符；
 # 远程 Board 页面不属于该 capability，因此即使能拿到 window.__TAURI__，
 # invoke 也会被 Tauri 拒绝。
 
@@ -11,3 +11,13 @@ commands.allow = ["app_status"]
 identifier = "allow-enroll-device"
 description = "用一次性配对码注册桌面设备；配对码不落盘、不进日志。"
 commands.allow = ["enroll_device"]
+
+[[permission]]
+identifier = "allow-pick-workspace"
+description = "仅允许本地加载页打开系统目录选择器。"
+commands.allow = ["pick_workspace"]
+
+[[permission]]
+identifier = "allow-init-workspace"
+description = "把本地加载页选择的目录交给 sidecar 初始化 workspace。"
+commands.allow = ["init_workspace"]

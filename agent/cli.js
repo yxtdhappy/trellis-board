@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -27,6 +28,11 @@ import {
   validatePairingCode,
 } from "./protocol.js";
 import { buildEnvironment, runProcess } from "./process.js";
+import {
+  initializeWorkspace,
+  WORKSPACE_ERROR_CODE,
+  WorkspaceBootstrapError,
+} from "./workspace.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SERVICE_SCRIPT = path.join(HERE, "windows", "service.ps1");
@@ -41,6 +47,10 @@ export const CLI_EXIT_CODE = Object.freeze({
   WINDOWS_ONLY: 6,
   LOCKED: 7,
   CHECK_FAILED: 8,
+  WORKSPACE_CONFLICT: 9,
+  WORKSPACE_PERMISSION: 10,
+  WORKSPACE_OFFLINE: 11,
+  WORKSPACE_TEMPLATE: 12,
 });
 
 const COMMAND_HELP = Object.freeze({
@@ -51,6 +61,7 @@ const COMMAND_HELP = Object.freeze({
   diagnose: "diagnose [--json] [--offline]",
   run: "run",
   service: "service <install|uninstall|status>",
+  workspace: "workspace <init|status> --path <绝对路径> [--tools .opencode,.agents] [--username <name>] [--team <ID>] [--json]",
 });
 
 function usageText() {
@@ -244,6 +255,8 @@ async function commandPair(args, context) {
     caFile,
     agentId: enrolled.agentId,
     deviceName,
+    username: enrolled.username || null,
+    teamId: enrolled.teamId || null,
     protocolVersion: AGENT_PROTOCOL_VERSION,
     agentVersion: AGENT_VERSION,
     pairedAt: now,
@@ -401,7 +414,7 @@ function isProcessAlive(pid) {
 }
 
 async function commandStatus(args, context) {
-  const { values, positionals } = parseOptions(args, { json: { boolean: true } });
+  const { positionals } = parseOptions(args, { json: { boolean: true } });
   if (positionals.length) {
     throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, "status 不接受位置参数");
   }
@@ -485,7 +498,7 @@ async function commandDiagnose(args, context) {
     addCheck("配置", true, "配置读取成功");
   } catch (error) {
     addCheck("配置", false, safeErrorMessage(error), error.code);
-    return finishDiagnose(context, values, checks);
+    return finishDiagnose(context, checks);
   }
   const credentialStore = context.credentialStore || new DpapiCredentialStore(context.store);
   try {
@@ -536,10 +549,10 @@ async function commandDiagnose(args, context) {
       addCheck(`仓库 ${binding.displayName}`, false, safeErrorMessage(error), error.code);
     }
   }
-  return finishDiagnose(context, values, checks);
+  return finishDiagnose(context, checks);
 }
 
-function finishDiagnose(context, values, checks) {
+function finishDiagnose(context, checks) {
   const ok = checks.every((check) => check.ok);
   if (context.json) {
     writeJson(context.io, { ok, checks });
@@ -636,6 +649,219 @@ async function commandService(args, context) {
   return CLI_EXIT_CODE.OK;
 }
 
+function parseWorkspaceTools(value) {
+  if (value == null) return null;
+  const tools = String(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (!tools.length) {
+    throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, "--tools 至少需要一个工具目录");
+  }
+  for (const tool of tools) {
+    if (!/^\.[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(tool)) {
+      throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, `工具目录格式无效：${tool}`);
+    }
+  }
+  return tools;
+}
+
+function readWorkspaceDeveloper(workspacePath) {
+  try {
+    const content = fsSync.readFileSync(
+      path.join(workspacePath, ".trellis", ".developer"),
+      "utf8",
+    );
+    const match = /^name=(.*)$/m.exec(content);
+    return match ? match[1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveWorkspaceUsername(context, values, workspacePath) {
+  if (values.username) return values.username;
+  const config = await context.store.readConfig();
+  if (config?.username) return config.username;
+  return readWorkspaceDeveloper(workspacePath);
+}
+
+async function loadWorkspaceCredential(context) {
+  if (context.agentCredential) return context.agentCredential;
+  if (context.workspaceInitializer) return null;
+  const credentialStore = context.credentialStore || new DpapiCredentialStore(context.store);
+  try {
+    return await credentialStore.loadCredential();
+  } catch {
+    return null;
+  }
+}
+
+function workspaceSummary(result) {
+  return {
+    workspace: result.workspace,
+    developer: result.developer,
+    templateVersion: result.templateVersion,
+    templateSha256: result.templateSha256,
+    source: result.source,
+    tools: result.tools,
+    created: result.createdFiles?.length ?? 0,
+    updated: result.updatedFiles?.length ?? 0,
+    skipped: result.skippedFiles?.length ?? 0,
+    backupDir: result.backupDir || null,
+    developerSwitched: Boolean(result.developerSwitched),
+    changed: Boolean(result.changed),
+  };
+}
+
+async function commandWorkspaceInit(args, context) {
+  const { values, positionals } = parseOptions(args, {
+    path: {},
+    tools: {},
+    username: {},
+    team: {},
+    server: {},
+  });
+  if (positionals.length) {
+    throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, "workspace init 不接受位置参数");
+  }
+  const workspacePath = requireOption(values, "path");
+  const tools = parseWorkspaceTools(values.tools);
+  const config = await context.store.readConfig();
+  const username = await resolveWorkspaceUsername(context, values, workspacePath);
+  if (!username) {
+    throw new AgentError(
+      AGENT_ERROR_CODE.CONFIG_INVALID,
+      "缺少登录用户名；请使用 --username 或在 config.json/.trellis/.developer 中提供",
+    );
+  }
+  const initializer = context.workspaceInitializer || initializeWorkspace;
+  const result = await initializer({
+    workspacePath,
+    username,
+    tools,
+    teamId: values.team || config?.teamId || null,
+    serverUrl: values.server || config?.serverUrl || null,
+    dataRoot: context.store.paths.root,
+    agentCredential: await loadWorkspaceCredential(context),
+    logger: context.logger,
+  });
+  const summary = workspaceSummary(result);
+  if (context.json) {
+    writeJson(context.io, summary);
+    return CLI_EXIT_CODE.OK;
+  }
+  writeLine(context.io, `workspace 初始化完成：${summary.workspace}`);
+  writeLine(context.io, `developer：${summary.developer}`);
+  writeLine(
+    context.io,
+    `模板：${summary.templateVersion}（${summary.source || "unknown"}）`,
+  );
+  writeLine(
+    context.io,
+    `创建 ${summary.created}，更新 ${summary.updated}，跳过 ${summary.skipped}，` +
+      `备份：${summary.backupDir || "无"}`,
+  );
+  return CLI_EXIT_CODE.OK;
+}
+
+async function commandWorkspaceStatus(args, context) {
+  const { values, positionals } = parseOptions(args, { path: {} });
+  if (positionals.length) {
+    throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, "workspace status 不接受位置参数");
+  }
+  const target = requireOption(values, "path");
+  if (!path.isAbsolute(target)) {
+    throw new WorkspaceBootstrapError(
+      WORKSPACE_ERROR_CODE.PATH_INVALID,
+      "workspace 必须使用绝对路径",
+    );
+  }
+  let stat;
+  try {
+    stat = fsSync.lstatSync(target);
+  } catch {
+    throw new WorkspaceBootstrapError(
+      WORKSPACE_ERROR_CODE.PATH_INVALID,
+      "workspace 目录不存在",
+    );
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new WorkspaceBootstrapError(
+      WORKSPACE_ERROR_CODE.PATH_INVALID,
+      "workspace 必须是目录且不能是符号链接",
+    );
+  }
+  const trellis = path.join(target, ".trellis");
+  let trellisEntry = null;
+  try {
+    trellisEntry = fsSync.lstatSync(trellis);
+  } catch {
+    trellisEntry = null;
+  }
+  if (trellisEntry?.isSymbolicLink()) {
+    throw new WorkspaceBootstrapError(
+      WORKSPACE_ERROR_CODE.PATH_INVALID,
+      ".trellis 不能是符号链接",
+    );
+  }
+  const initialized = Boolean(trellisEntry?.isDirectory());
+  const developer = readWorkspaceDeveloper(target);
+  let templateVersion = null;
+  try {
+    const hashes = JSON.parse(
+      fsSync.readFileSync(path.join(trellis, ".template-hashes.json"), "utf8"),
+    );
+    templateVersion = hashes?.templateVersion || null;
+  } catch {
+    templateVersion = null;
+  }
+  const tools = {};
+  for (const tool of [".opencode", ".agents"]) {
+    const directory = path.join(target, tool);
+    let status = "missing";
+    try {
+      const entry = fsSync.lstatSync(directory);
+      status = entry.isDirectory() && fsSync.readdirSync(directory).length > 0
+        ? "present"
+        : "empty";
+    } catch {
+      status = "missing";
+    }
+    tools[tool] = status;
+  }
+  const summary = {
+    workspace: path.basename(path.resolve(target)),
+    path: path.resolve(target),
+    initialized,
+    developer,
+    templateVersion,
+    tools,
+  };
+  if (context.json) {
+    writeJson(context.io, summary);
+  } else {
+    writeLine(context.io, `workspace：${summary.workspace}`);
+    writeLine(context.io, `已初始化：${initialized ? "是" : "否"}`);
+    writeLine(context.io, `developer：${developer || "无"}`);
+    writeLine(context.io, `模板版本：${templateVersion || "无"}`);
+    for (const [tool, status] of Object.entries(tools)) {
+      writeLine(context.io, `${tool}：${status}`);
+    }
+  }
+  return initialized ? CLI_EXIT_CODE.OK : CLI_EXIT_CODE.CHECK_FAILED;
+}
+
+async function commandWorkspace(args, context) {
+  const [subcommand, ...rest] = args;
+  if (subcommand === "init") return commandWorkspaceInit(rest, context);
+  if (subcommand === "status") return commandWorkspaceStatus(rest, context);
+  throw new AgentError(
+    AGENT_ERROR_CODE.CONFIG_INVALID,
+    "workspace 只支持 init 或 status",
+  );
+}
+
 async function commandRun(args, context) {
   if (args.length) {
     throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, "run 不接受参数");
@@ -653,6 +879,22 @@ async function commandRun(args, context) {
 }
 
 function mapCliError(error) {
+  if (error instanceof WorkspaceBootstrapError) {
+    if (error.code === WORKSPACE_ERROR_CODE.DEVELOPER_CONFLICT) {
+      return CLI_EXIT_CODE.WORKSPACE_CONFLICT;
+    }
+    if (
+      error.code === WORKSPACE_ERROR_CODE.PATH_INVALID ||
+      error.code === WORKSPACE_ERROR_CODE.PATH_UNWRITABLE ||
+      error.code === WORKSPACE_ERROR_CODE.USERNAME_INVALID
+    ) {
+      return CLI_EXIT_CODE.WORKSPACE_PERMISSION;
+    }
+    if (error.code === WORKSPACE_ERROR_CODE.TEMPLATE_UNAVAILABLE) {
+      return CLI_EXIT_CODE.WORKSPACE_OFFLINE;
+    }
+    return CLI_EXIT_CODE.WORKSPACE_TEMPLATE;
+  }
   if (error instanceof AgentError) {
     if (error.code === AGENT_ERROR_CODE.AUTH_REVOKED) {
       return CLI_EXIT_CODE.AUTH;
@@ -693,6 +935,8 @@ export async function runCli(argv = process.argv.slice(2), options = {}) {
     logger: options.logger,
     signal: options.signal,
     readSecret: options.readSecret || createTerminalSecretReader(),
+    workspaceInitializer: options.workspaceInitializer,
+    agentCredential: options.agentCredential,
     io,
     json,
   };
@@ -717,6 +961,8 @@ export async function runCli(argv = process.argv.slice(2), options = {}) {
         return await commandRun(args, context);
       case "service":
         return await commandService(args, context);
+      case "workspace":
+        return await commandWorkspace(args, context);
       default:
         throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, `未知命令：${command}`);
     }

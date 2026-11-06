@@ -73,6 +73,8 @@ export async function enrollDesktopDevice(options = {}) {
     caFile: null,
     agentId: enrolled.agentId,
     deviceName,
+    username: enrolled.username || null,
+    teamId: enrolled.teamId || null,
     protocolVersion: AGENT_PROTOCOL_VERSION,
     agentVersion: AGENT_VERSION,
     pairedAt: new Date().toISOString(),

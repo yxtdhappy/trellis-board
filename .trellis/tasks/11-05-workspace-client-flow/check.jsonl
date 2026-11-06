@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查测试覆盖 CLI 退出码、sidecar 真实初始化、失败无半成品"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查注册用户名、teamId、模板缓存、侧车 RPC 与 UI 展示的一致性"}
+{"file": ".trellis/tasks/11-05-workspace-client-flow/prd.md", "reason": "逐条核对验收标准与范围"}
+{"file": ".trellis/tasks/11-05-workspace-client-flow/design.md", "reason": "核对命令、权限、退出码与测试设计"}
+{"file": ".trellis/tasks/11-05-workspace-client-flow/implement.md", "reason": "核对实施步骤、验证命令与未验证项"}

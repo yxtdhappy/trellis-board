@@ -189,10 +189,17 @@ export function parseEnrollResponse(payload) {
   if (typeof credential !== "string" || credential.length < 32 || /\s/.test(credential)) {
     throw new AgentError(AGENT_ERROR_CODE.INVALID_RESPONSE, "配对响应缺少有效 Agent 凭证");
   }
+  const username = body.username == null ? null : String(body.username).trim();
+  if (username !== null && !/^[A-Za-z0-9._-]{3,64}$/.test(username)) {
+    throw new AgentError(AGENT_ERROR_CODE.INVALID_RESPONSE, "配对响应包含无效用户名");
+  }
+  const teamId = body.teamId == null ? null : assertSafeId(body.teamId, "团队 ID");
   return {
     agentId,
     credential,
     protocolVersion: body.protocolVersion ?? AGENT_PROTOCOL_VERSION,
+    username: username || null,
+    teamId,
   };
 }
 

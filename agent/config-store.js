@@ -140,6 +140,8 @@ export function validateConfig(config) {
     caFile: config.caFile ?? null,
     agentId,
     deviceName,
+    username: optionalString(config.username, "username", 64),
+    teamId: optionalString(config.teamId, "teamId", 128),
     protocolVersion: config.protocolVersion,
     agentVersion: typeof config.agentVersion === "string" ? config.agentVersion : null,
     pairedAt: typeof config.pairedAt === "string" ? config.pairedAt : null,

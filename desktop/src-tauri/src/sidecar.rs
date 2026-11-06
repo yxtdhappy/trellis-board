@@ -224,3 +224,64 @@ pub async fn enroll(
     }
     Ok(stdout)
 }
+
+/// 运行 sidecar 的 `workspace-init` 子命令；初始化逻辑与备份/回滚都在 Node 侧。
+pub async fn workspace_init(
+    app: &AppHandle,
+    workspace_path: &str,
+    tools: Option<Vec<String>>,
+    agent_root: &Path,
+) -> Result<String, String> {
+    let mut args = vec![
+        "workspace-init".to_string(),
+        "--path".to_string(),
+        workspace_path.to_string(),
+    ];
+    if let Some(tools) = tools.filter(|items| !items.is_empty()) {
+        args.push("--tools".to_string());
+        args.push(tools.join(","));
+    }
+    let command = app
+        .shell()
+        .sidecar(SIDECAR_NAME)
+        .map_err(|error| format!("sidecar 未随安装包提供：{error}"))?
+        .args(args)
+        .env("TRELLIS_AGENT_ROOT", agent_root.to_string_lossy().to_string());
+    let (mut receiver, _child) = command
+        .spawn()
+        .map_err(|error| format!("无法启动 workspace 初始化进程：{error}"))?;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit_code = None;
+    while let Some(event) = receiver.recv().await {
+        match event {
+            CommandEvent::Stdout(line) => {
+                stdout.push_str(&String::from_utf8_lossy(&line));
+            }
+            CommandEvent::Stderr(line) => {
+                stderr.push_str(&String::from_utf8_lossy(&line));
+            }
+            CommandEvent::Terminated(payload) => {
+                exit_code = payload.code;
+                break;
+            }
+            CommandEvent::Error(error) => {
+                return Err(format!("workspace 初始化进程错误：{error}"));
+            }
+            _ => {}
+        }
+    }
+    if exit_code != Some(0)
+        && !stdout.lines().any(|line| {
+            serde_json::from_str::<serde_json::Value>(line.trim()).is_ok()
+        })
+    {
+        let message = crate::logging::redact(stderr.trim());
+        return Err(if message.is_empty() {
+            "workspace 初始化失败".to_string()
+        } else {
+            message
+        });
+    }
+    Ok(stdout)
+}

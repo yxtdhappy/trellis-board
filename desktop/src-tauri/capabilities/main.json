@@ -1,13 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "只允许本地加载/设置页调用两个白名单命令；远程 Board 页面不在本 capability 中，因此没有 IPC 权限。",
+  "description": "只允许本地加载/设置页调用白名单命令；远程 Board 页面不在本 capability 中，因此没有 IPC 权限。",
   "windows": [
     "main"
   ],
   "permissions": [
     "core:default",
     "allow-app-status",
-    "allow-enroll-device"
+    "allow-enroll-device",
+    "allow-pick-workspace",
+    "allow-init-workspace",
+    "dialog:allow-open"
   ]
 }

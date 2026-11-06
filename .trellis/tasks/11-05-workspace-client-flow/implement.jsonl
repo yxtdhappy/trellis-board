@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "模块依赖方向、sidecar/CLI 不重写 workspace 逻辑、异步边界"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Node 内置测试、临时目录、失败无半成品与验证基线"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "设备注册身份、config、sidecar、Tauri 与 UI 的跨层契约一致性"}
+{"file": ".trellis/tasks/11-05-workspace-client-flow/prd.md", "reason": "验收范围、客户端流程与退出码要求"}
+{"file": ".trellis/tasks/11-05-workspace-client-flow/design.md", "reason": "CLI/sidecar/Tauri/UI 的入口、身份来源和权限设计"}
