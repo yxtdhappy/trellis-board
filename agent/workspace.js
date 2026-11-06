@@ -637,12 +637,12 @@ function ensureDeveloperWorkspaceFiles(workspacePath, realRoot, username, now, c
   if (!lstatOrNull(journalFile)) {
     assertSafeWorkspacePath(workspacePath, realRoot, journalFile);
     fs.writeFileSync(journalFile, journalContent(username, now), { flag: "wx" });
-    created.push(path.relative(workspacePath, journalFile));
+    created.push(relativePosix(workspacePath, journalFile));
   }
   if (!lstatOrNull(indexPath)) {
     assertSafeWorkspacePath(workspacePath, realRoot, indexPath);
     fs.writeFileSync(indexPath, indexContent(username), { flag: "wx" });
-    created.push(path.relative(workspacePath, indexPath));
+    created.push(relativePosix(workspacePath, indexPath));
   }
   return created;
 }
@@ -781,12 +781,16 @@ function safeRestore(root, realRoot, source, target) {
   fs.copyFileSync(source, target);
 }
 
+function relativePosix(root, target) {
+  return path.relative(root, target).split(path.sep).join("/");
+}
+
 function relativeTemplatePath(workspacePath, entryName) {
   const target = path.join(workspacePath, ...String(entryName).split("/"));
   if (!isWithin(workspacePath, target)) {
     throw fail(WORKSPACE_ERROR_CODE.TEMPLATE_INVALID, "模板条目路径逃逸 workspace");
   }
-  return { target, relative: path.relative(workspacePath, target) };
+  return { target, relative: relativePosix(workspacePath, target) };
 }
 
 function ensureDirectoryTracked(workspacePath, realRoot, directory, createdDirs) {

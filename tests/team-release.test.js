@@ -57,13 +57,24 @@ test("真实 Git 仓库完成团队任务创建、推送、接受和 Agent 快�
   write(path.join(seed, ".trellis", "workspace", "bob", "index.md"), "# bob\n");
   write(path.join(seed, ".trellis", "tasks", ".keep"), "tasks\n");
   write(path.join(seed, "README.md"), "release integration fixture\n");
+  write(path.join(seed, ".gitattributes"), "* text=auto eol=lf\n");
   git(seed, ["add", "--", "."]);
   git(seed, ["commit", "-m", "seed release project"]);
   git(seed, ["remote", "add", "origin", remoteUrl]);
   git(seed, ["push", "-u", "origin", "dev"]);
 
   const initialHead = git(bare, ["rev-parse", "dev"]).stdout.trim();
-  git(root, ["clone", "--branch", "dev", remoteUrl, local]);
+  git(root, [
+    "-c",
+    "core.autocrlf=false",
+    "-c",
+    "core.eol=lf",
+    "clone",
+    "--branch",
+    "dev",
+    remoteUrl,
+    local,
+  ]);
   fs.mkdirSync(hooksDir, { recursive: true });
 
   runtime = await createTeamRuntime({
