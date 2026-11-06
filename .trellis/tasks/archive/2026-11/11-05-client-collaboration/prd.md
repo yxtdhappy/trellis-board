@@ -74,6 +74,79 @@
 - [ ] 现有 standalone 模式行为与测试不回归；当前 schema 为 v5，本任务新增 v6 并按全新数据库初始化，不提供 v5 → v6 迁移，旧开发库可删除重建。
 - [ ] 所有新增文件操作限制在用户选定目录内，不写系统目录，不把凭证写入日志或配置文件明文。
 
+## 跨任务验收记录（2026-11-06）
+
+集成基线：`codex/team-board`，合并提交 `d0b8ee4`（workspace-bootstrap）与 `5df50db`（desktop-client-package）。以下每条均给出命令、测试名或关键输出。
+
+### 1. 管理员建号与团队分配 — 通过
+
+- 仅系统管理员：`tests/team-registration.test.js`「管理员建号、团队分配、重置密码与跨团队隔离」断言团队管理员调用 `POST /api/admin/users`、`PATCH /api/admin/users/:id`、`POST .../reset-password`、`PUT .../teams` 全部 403，普通成员访问 `/api/admin/users` 也是 403。
+- 密码 ≥6 code point：`server/team/auth.js:102` 使用 `Array.from(password).length < 6`；「密码策略为 6 到 1024 字节且无复杂度要求」断言 `abcde`→400、`abcdef`/`123456` 通过、1025 字节→400、纯中文短密码→400。
+- 无公开注册：`server/team/http.js:655`（`handleAuth`）与 `server/team/http.js:1272`（先于 `assertJsonWrite`）对 `/api/auth/register` 直接返回 404，因此非 JSON 请求不会先触发 400/415。现场脚本 `node /tmp/verify-acceptance.mjs` 输出 `register json : 404 NOT_FOUND`、`register text : 404 {"error":"接口不存在","code":"NOT_FOUND"}`；测试同时断言未写入 `user_account`。
+- 审计不落明文密码：测试断言 `audit_event.detail_json` 不含 `abcdef` / `newpass` / `Legacy-Password-123`。
+
+### 2. 团队隔离 — 通过
+
+- 跨团队读写：`tests/team-isolation.test.js`「团队 CRUD、活动团队切换与跨团队读写隔离」断言非成员访问项目详情/成员 404、`/api/tasks/query` 403、看板 404；跨团队分页游标返回 409 `CURSOR_INVALID` 且 `recoverable: true`。
+- 停用团队拒绝：`tests/team-workspace-template.test.js`「非成员、停用团队和未登录请求被拒绝」断言停用团队成员下载模板 403 且错误含「团队已停用」，非成员 403 且不回显停用状态（`server/team/workspace-templates.js:282,293`）。
+- 系统管理员跨团队：同一测试中管理员可 `POST /api/auth/team` 切到任意团队；`activeTeamId=null` 时 `/api/admin/projects` 返回 p-a+p-b，`/api/admin/audit?teamId=` 只返回该团队事件。
+- `workspace_key` 团队内唯一：`server/database.js:236` 定义 `UNIQUE (team_id, workspace_key)`；`tests/database.test.js:240`「workspace_key 仅在同一团队内唯一」断言跨团队同 key 可插入、同团队重复触发 `UNIQUE constraint failed`。
+- 审计/游标按团队：审计断言 `events.every(event => event.teamId === teamA.id)`；游标隔离见 `tests/team-events.test.js`「事件按团队隔离，不同团队游标互不影响」。
+
+### 3. SSE 下发 — 通过
+
+- `GET /api/agent/events` 鉴权：`server/team/http.js:617` 的 `agentEvents.openStream` 要求 Agent Bearer；测试「事件流按团队鉴权、完整快照并支持 Last-Event-ID 断线补发」。
+- 断线补发：同上测试用 `Last-Event-ID` 重放缺失事件；另有「慢消费者不会阻塞同一团队的其他事件流」。
+- `resync.required`：「游标不可识别时发送 resync.required 并保留明确语义」断言 `reason=unknown_cursor`；「游标落后于保留窗口时返回 cursor_expired」断言 `reason=cursor_expired`。
+- 旧长轮询 410：`server/team/http.js:623-629` 返回 410 `AGENT_LONG_POLL_REMOVED`，`tests/team-core.test.js:903` 断言状态码与 code。
+- 协议 v2 心跳：`tests/team-core.test.js:865-866` 断言 `bindings[0].teamId` 非空、`protocolVersion === 2`、`minimumAgentVersion` 为字符串；实现见 `server/team/agents.js:551-553`。
+
+### 4. workspace 初始化 — 通过
+
+- 模板下载权限：`tests/team-workspace-template.test.js`「Agent Bearer 可下载其所属团队模板」与「非成员、停用团队和未登录请求被拒绝」；manifest 返回 64 位 hex `sha256`、ETag，HEAD 无 body，`If-None-Match` 命中 304。
+- SHA-256：「模板哈希不匹配时中止且不写入」「下载哈希头不匹配时不写缓存也不初始化」「离线时回落到最近成功缓存并可初始化」。
+- 默认目录：「空目录初始化生成 .trellis/.opencode/.agents、developer 和模板哈希，不创建 .git」。
+- developer 用登录用户名：「显式确认后备份原 .developer 并切换为登录用户名」；用户名不符时「developer 用户名不同默认中止且不写入模板文件」。
+- 冲突备份：同上，另有「repair 模式先备份再覆盖被修改的已展开文件」。
+- 符号链接拒绝：「拒绝符号链接条目」「拒绝 .opencode 指向工作区外的符号链接且外部目录无写入」「拒绝 .trellis/scripts 符号链接且回滚不删除外部文件」「拒绝根目录与符号链接 workspace 目标」。
+- 不执行 Python / 不 `git init`：「不执行模板内 init_developer.py，developer 文件与 journal/index 由本地生成」；默认初始化测试断言未创建 `.git`。
+
+### 5. Tauri 客户端 — 静态通过，Windows 运行时未验证
+
+- 脚手架：`desktop/` 含 `src-tauri`（main/config/navigation/sidecar/logging）、`ui/`、`sidecar/`、`install.ps1`、`uninstall.ps1`；`tests/desktop-package.test.js` 10 条全过。
+- capability 最小化：「capability 不授予 shell、文件系统或远程页面权限」；`desktop/src-tauri/capabilities/main.json` 仅 `core:default` + `allow-app-status` + `allow-enroll-device`，`desktop/src-tauri/permissions/desktop.toml` 只有 2 条自定义命令。
+- install.ps1 静态断言：「install.ps1 默认按用户安装、校验 SHA256 并可回滚」「uninstall.ps1 拒绝受保护目录并复用现有撤销流程」。
+- sidecar 入口：「sidecar 构建脚本引用的入口文件都存在且使用 Node SEA」「sidecar CLI 报告协议 v2，未注册时以配置错误退出」「桌面设备注册复用 pairing-codes + agent/enroll，凭证不落明文」。
+- 未验证（本机 Linux，无 cargo/rustc/pwsh/Node 24）：`cargo build` / `cargo tauri build` / NSIS 产物、`build-sidecar.ps1` 的 SEA 注入产物、`install.ps1` / `uninstall.ps1` 实际执行、WebView2 bootstrapper、DPAPI 加解密、托盘/单实例/导航拦截运行时行为、代码签名与 SmartScreen。清单见 `desktop/README.md` 的「Windows 验证清单」（14 项）与「Linux 未验证项」（7 项）。
+
+### 6. 五条链路一致性 — 通过
+
+- 桌面设备注册复用配对码：`desktop/sidecar/desktop-device.js:62` 调用 `AgentApiClient.enroll`（同一 `/api/agent/enroll`），凭证写入 `DpapiCredentialStore`；测试「桌面设备注册复用 pairing-codes + agent/enroll，凭证不落明文」。
+- 设备凭证即 SSE Bearer：`agent/api.js:159` 使用 `authorization: Bearer ${this.credential}`，sidecar 复用 `runAgentProcess`（`desktop/sidecar/main.js:8`），事件流与设备注册共用同一凭证。
+- workspace 模板授权与团队隔离一致：`server/team/workspace-templates.js:282,293` 用团队成员与停用状态判定；模板测试与隔离测试共用 `setUserTeams` 与同一团队模型。
+- 协议版本单一来源：`server/team/agents.js:11` `AGENT_PROTOCOL_VERSION = 2`，合并冲突处保留常量而非字面量 `2`；心跳回传的 `teamId` 供客户端建立对应团队的 SSE。
+- 撤销链路复用：`desktop/sidecar/desktop-device.js:151` 调 `/api/admin/agents/{id}/revoke`，测试「卸载撤销复用 /api/admin/agents/{id}/revoke 并标记设备」。
+
+### 集成验证命令与结果
+
+```text
+npm test                       # tests 327, pass 326, fail 0, skipped 1
+npm run build                  # ✓ built in 965ms
+git diff --check               # clean
+node --test tests/team-isolation.test.js tests/team-registration.test.js \
+  tests/team-workspace-template.test.js tests/workspace-bootstrap.test.js \
+  tests/team-events.test.js tests/desktop-package.test.js
+                               # tests 59, pass 59, fail 0
+python3 .trellis/scripts/task.py validate <五个子任务>  # 全部 ✓
+node /tmp/verify-acceptance.mjs
+  register json : 404 NOT_FOUND
+  register text : 404 {"error":"接口不存在","code":"NOT_FOUND"}
+  create user   : 201
+  foreign team  : 403 FORBIDDEN
+  short password: 400
+  admin teams   : 200 count: 2 | audit teamA: 200
+```
+
 ## Out of Scope（父任务层面）
 
 - macOS / Linux 客户端。

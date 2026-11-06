@@ -3,7 +3,7 @@
   "name": "client-server-push",
   "title": "客户端与服务端事件通道",
   "description": "通过 SSE 建立服务端到客户端的单向下发通道，携带完整任务内容；移除命令长轮询，按团队维护游标。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "kyf",
   "assignee": "kyf",
   "createdAt": "2026-11-05",
-  "completedAt": null,
+  "completedAt": "2026-11-06",
   "branch": "codex/11-05-client-server-push",
   "base_branch": "team-board",
   "worktree_path": null,
@@ -22,5 +22,7 @@
   "parent": "11-05-client-collaboration",
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "commit": "18621c5"
+  }
 }

@@ -3,7 +3,7 @@
   "name": "team-isolation",
   "title": "服务端团队隔离",
   "description": "在服务端引入团队边界，团队只能由系统管理员创建和配置，账号、项目、任务、Agent 与审计数据按团队隔离；系统管理员可读所有团队；不做旧库迁移。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "kyf",
   "assignee": "kyf",
   "createdAt": "2026-11-05",
-  "completedAt": null,
+  "completedAt": "2026-11-06",
   "branch": "codex/11-05-team-isolation",
   "base_branch": "codex/team-board",
   "worktree_path": "/opt/app/work/github/trellis-board/.worktree/11-05-team-isolation",
@@ -22,5 +22,7 @@
   "parent": "11-05-client-collaboration",
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "commit": "b15d969"
+  }
 }

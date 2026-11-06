@@ -3,7 +3,7 @@
   "name": "workspace-bootstrap",
   "title": "客户端 workspace 初始化",
   "description": "客户端选择 workspace 目录后从服务端下载团队模板，注入 .trellis 并默认生成 .opencode/.agents；可勾选其他 Agent 工具，以登录用户名初始化 developer。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "kyf",
   "assignee": "kyf",
   "createdAt": "2026-11-05",
-  "completedAt": null,
+  "completedAt": "2026-11-06",
   "branch": "codex/11-05-workspace-bootstrap",
   "base_branch": "team-board",
   "worktree_path": null,
@@ -22,5 +22,7 @@
   "parent": "11-05-client-collaboration",
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "commit": "d0b8ee4"
+  }
 }

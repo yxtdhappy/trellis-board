@@ -3,7 +3,7 @@
   "name": "user-registration",
   "title": "服务端用户管理（仅管理员建号）",
   "description": "仅系统管理员创建账号、配置用户团队与重置密码；密码最少 6 位、管理员直接填写，不强制改密；不提供公开注册入口。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "kyf",
   "assignee": "kyf",
   "createdAt": "2026-11-05",
-  "completedAt": null,
+  "completedAt": "2026-11-06",
   "branch": "codex/11-05-user-registration",
   "base_branch": "team-board",
   "worktree_path": null,
@@ -22,5 +22,7 @@
   "parent": "11-05-client-collaboration",
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "commit": "11785fc"
+  }
 }
