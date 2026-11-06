@@ -318,7 +318,7 @@ test("主循环领取白名单命令并上报结果，不发送仓库绝对路�
     const result = await runtime.run();
     assert.equal(result.exitCode, 0);
     assert.equal(calls.results.length, 1);
-    assert.equal(calls.results[0].result.result.clean, true);
+    assert.equal(calls.results[0].result.result?.clean, true, calls.results[0].result.error ?? "");
     assert.equal(JSON.stringify(calls.results[0]).includes(repoPath), false);
     const config = await store.readConfig();
     assert.equal(config.bindings[0].lastHead, "d".repeat(40));
