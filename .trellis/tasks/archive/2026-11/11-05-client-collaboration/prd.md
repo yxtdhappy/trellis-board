@@ -177,7 +177,7 @@ npm test                                  # tests 343, pass 342, fail 0, skipped
 npm run build                             # ✓ built in 1.05s
 git diff --check                          # clean
 git status --short                        # 空
-git grep -n '<<<<<<<'                     # 无命中
+git grep -nE '^<{7}'                     # 冲突标记：无命中
 node --test tests/workspace-client-flow.test.js tests/desktop-device-auth.test.js \
   tests/desktop-package.test.js tests/workspace-bootstrap.test.js \
   tests/team-workspace-template.test.js   # tests 58, pass 58, fail 0
