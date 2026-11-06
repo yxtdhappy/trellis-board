@@ -76,6 +76,7 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File `
             desktop/sidecar/build-sidecar.ps1
       - name: Rust unit tests
+        timeout-minutes: 25
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
       - name: Bundle desktop client
         working-directory: desktop

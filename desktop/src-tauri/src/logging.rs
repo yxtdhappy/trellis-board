@@ -42,17 +42,25 @@ pub fn warn(message: &str) {
 /// 删除日志中可能出现的 Bearer 凭证、设备凭证、令牌和配对码字段值。
 pub fn redact(input: &str) -> String {
     let mut value = input.to_string();
-    for marker in ["Bearer ", "bearer "] {
-        while let Some(index) = value.find(marker) {
-            let start = index + marker.len();
-            let end = value[start..]
-                .find(|character: char| {
-                    character.is_whitespace() || character == '"' || character == ','
-                })
-                .map(|offset| start + offset)
-                .unwrap_or(value.len());
-            value.replace_range(start..end, "***");
+    let mut search = 0;
+    while search < value.len() {
+        let rest = &value[search..];
+        let found = ["Bearer ", "bearer "]
+            .iter()
+            .filter_map(|marker| rest.find(marker))
+            .min();
+        let Some(offset) = found else { break };
+        let token_start = search + offset + "Bearer ".len();
+        let token_end = value[token_start..]
+            .find(|character: char| {
+                character.is_whitespace() || character == '"' || character == ','
+            })
+            .map(|offset| token_start + offset)
+            .unwrap_or(value.len());
+        if token_end > token_start {
+            value.replace_range(token_start..token_end, "***");
         }
+        search = token_start + 3;
     }
     for marker in ["\"credential\"", "\"pairingCode\"", "\"token\"", "\"password\""] {
         if let Some(index) = value.find(marker) {
