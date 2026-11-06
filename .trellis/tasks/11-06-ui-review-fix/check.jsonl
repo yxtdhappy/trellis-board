@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量验证、lint 与无回归断言"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "状态刷新与轮询不造成抖动的规范"}
