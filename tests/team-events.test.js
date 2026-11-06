@@ -398,6 +398,10 @@ test("游标落后于保留窗口时返回 cursor_expired", async (t) => {
     lastEventId: staleId
   });
   assert.equal((await stream.ready).status, 200);
+  // 保留窗口内的事件先补发，最后才发 resync.required。
+  const replayed = await stream.next();
+  assert.equal(replayed.type, "task.updated", JSON.stringify({ staleId, rows, replayed }));
+  assert.equal(replayed.data.payload.taskVersion, "v2");
   const event = await stream.next();
   assert.equal(event.type, "resync.required", JSON.stringify({ staleId, rows, event }));
   assert.equal(event.data.payload.reason, "cursor_expired");
@@ -675,5 +679,75 @@ test("撤销 Agent 会关闭团队事件流并发送 agent.revoked", async (t) =
   assert.equal(event.type, "agent.revoked");
   assert.equal(event.data.payload.agentId, agent.agentId);
   await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(stream.ended, true);
+});
+
+test("按 task-writes 的真实参数形状发布任务事件", async (t) => {
+  const { runtime, user, repositoryPath, teamId, projectId } = await setupRuntime(t);
+  createAgent(runtime, {
+    userId: user.id,
+    teamId,
+    projectId,
+    credential: `c${"q".repeat(40)}`
+  });
+  const task = writeTask(repositoryPath, { taskVersion: "v3" });
+  // task-writes 传入的是 board task 对象，而不是展开字段。
+  const rows = await runtime.services.agentEvents.publishTaskEvent({
+    eventType: AGENT_EVENT_TYPES.TASK_ASSIGNED,
+    projectId,
+    task,
+    assignedUserIds: [user.id],
+    dedupeKey: `task.assigned:${task.executionTaskKey}:v3`
+  });
+  assert.equal(rows.length, 1);
+  const payload = JSON.parse(rows[0].payload_json);
+  assert.equal(rows[0].type, "task.assigned");
+  assert.equal(payload.executionTaskKey, task.executionTaskKey);
+  assert.equal(payload.relativeDir, task.relativeDir);
+  assert.equal(payload.taskVersion, "v3");
+});
+
+test("已建立的事件流在用户被禁用后停止投递", async (t) => {
+  const { runtime, user, teamId, projectId } = await setupRuntime(t);
+  const agent = createAgent(runtime, {
+    userId: user.id,
+    teamId,
+    projectId,
+    credential: `c${"r".repeat(40)}`
+  });
+  const stream = openEventStream(runtime, { credential: agent.credential, teamId });
+  assert.equal((await stream.ready).status, 200);
+  runtime.db.prepare("UPDATE user_account SET status = 'disabled' WHERE id = ?").run(user.id);
+  const task = writeTask(runtime.db.prepare(
+    "SELECT path FROM repositories WHERE id = ?"
+  ).get(projectId).path, { dir: "11-05-after-disable" });
+  await publishCreated(runtime, projectId, task);
+  const deadline = Date.now() + 3_000;
+  while (!stream.ended && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.equal(stream.ended, true);
+  assert.equal(stream.events.some((event) => event.type === "task.created"), false);
+});
+
+test("团队被停用后已建立的事件流停止投递", async (t) => {
+  const { runtime, user, teamId, projectId } = await setupRuntime(t);
+  const agent = createAgent(runtime, {
+    userId: user.id,
+    teamId,
+    projectId,
+    credential: `c${"s".repeat(40)}`
+  });
+  const stream = openEventStream(runtime, { credential: agent.credential, teamId });
+  assert.equal((await stream.ready).status, 200);
+  runtime.db.prepare("UPDATE team SET status = 'disabled' WHERE id = ?").run(teamId);
+  const task = writeTask(runtime.db.prepare(
+    "SELECT path FROM repositories WHERE id = ?"
+  ).get(projectId).path, { dir: "11-05-after-team-disable" });
+  await publishCreated(runtime, projectId, task);
+  const deadline = Date.now() + 3_000;
+  while (!stream.ended && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
   assert.equal(stream.ended, true);
 });

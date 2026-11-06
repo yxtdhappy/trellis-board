@@ -8,7 +8,8 @@ import {
   semanticRemoteIdentityHash
 } from "./remote-identity.js";
 
-export const AGENT_PROTOCOL_VERSION = 1;
+export const AGENT_PROTOCOL_VERSION = 2;
+export const MINIMUM_AGENT_VERSION = "0.1.0";
 const PAIRING_TTL_MS = 10 * 60 * 1000;
 const COMMAND_LEASE_MS = 5 * 60 * 1000;
 const MAX_FAILURES = 3;
@@ -548,10 +549,12 @@ export function createAgentService({
     else update();
     return {
       protocolVersion: AGENT_PROTOCOL_VERSION,
+      minimumAgentVersion: MINIMUM_AGENT_VERSION,
       compatible: true,
       bindings: responses.map((row) => ({
         id: row.id,
         bindingId: row.id,
+        teamId: row.teamId ?? row.team_id ?? null,
         projectId: row.projectId,
         localRepoKey: row.localRepoKey,
         status: row.status,

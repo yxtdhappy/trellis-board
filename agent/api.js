@@ -16,6 +16,7 @@ import {
 } from "./protocol.js";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+const MAX_SSE_BUFFER_BYTES = 1024 * 1024;
 
 export async function loadCaFile(caFile) {
   if (caFile == null) {
@@ -269,22 +270,37 @@ export class AgentApiClient {
           return;
         }
         options.onOpen?.({ status: response.statusCode, headers: response.headers });
+        let chain = Promise.resolve();
+        const enqueue = (block) => {
+          // 串行处理，保证命令不并发执行、游标写入顺序稳定。
+          chain = chain.then(() => dispatch(block)).catch((error) => {
+            fail(error instanceof AgentError
+              ? error
+              : new AgentError(AGENT_ERROR_CODE.NETWORK_ERROR, safeErrorMessage(error)));
+          });
+        };
         response.on("data", (chunk) => {
           resetIdle();
-          buffer += decoder.decode(chunk, { stream: true });
+          // 兼容 nginx 等代理改写的 CRLF 行尾。
+          buffer = (buffer + decoder.decode(chunk, { stream: true })).replace(/\r\n?/g, "\n");
+          if (buffer.length > MAX_SSE_BUFFER_BYTES) {
+            fail(new AgentError(
+              AGENT_ERROR_CODE.INVALID_RESPONSE,
+              "事件流单帧数据过大",
+            ));
+            return;
+          }
           let boundary = buffer.indexOf("\n\n");
           while (boundary !== -1) {
             const block = buffer.slice(0, boundary);
             buffer = buffer.slice(boundary + 2);
-            dispatch(block).catch((error) => {
-              fail(error instanceof AgentError
-                ? error
-                : new AgentError(AGENT_ERROR_CODE.NETWORK_ERROR, safeErrorMessage(error)));
-            });
+            enqueue(block);
             boundary = buffer.indexOf("\n\n");
           }
         });
-        response.on("end", () => finish(null, { reason: "closed" }));
+        response.on("end", () => {
+          chain = chain.then(() => finish(null, { reason: "closed" }));
+        });
         response.on("error", (error) => finish(mapNetworkError(error)));
       });
       request.on("error", (error) => {

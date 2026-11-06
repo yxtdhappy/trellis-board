@@ -103,7 +103,7 @@ function withEnrollServer(callback) {
           response.end(JSON.stringify({
             agentId: "agent-cli-1",
             credential: "c".repeat(32),
-            protocolVersion: 1,
+            protocolVersion: 2,
           }));
           return;
         }
@@ -241,7 +241,7 @@ function makeConfig(repoPath) {
     caFile: null,
     agentId: "agent-runtime-1",
     deviceName: "Runtime Test",
-    protocolVersion: 1,
+    protocolVersion: 2,
     agentVersion: "0.1.0",
     pairedAt: "2026-11-03T00:00:00.000Z",
     bindings: [makeBinding(repoPath)],
@@ -260,7 +260,7 @@ test("主循环领取白名单命令并上报结果，不发送仓库绝对路�
   const api = {
     heartbeat: async () => {
       calls.heartbeats += 1;
-      return { protocolVersion: 1, compatible: true, bindings: [] };
+      return { protocolVersion: 2, compatible: true, bindings: [] };
     },
     streamEvents: async (input, options) => {
       calls.streams += 1;
@@ -276,7 +276,7 @@ test("主循环领取白名单命令并上报结果，不发送仓库绝对路�
                 id: "command-1",
                 bindingId: "binding-1",
                 type: "refresh_status",
-                payload: { protocolVersion: 1, projectId: "project-1", branchName: "main" },
+                payload: { protocolVersion: 2, projectId: "project-1", branchName: "main" },
               },
             },
           },

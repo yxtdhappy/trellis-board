@@ -42,13 +42,13 @@ test("HTTP stub 验证配对、心跳、SSE 事件和 Bearer", async () => {
       response.end(JSON.stringify({
         agentId: "agent-1",
         credential: "c".repeat(32),
-        protocolVersion: 1,
+        protocolVersion: 2,
       }));
       return;
     }
     if (request.url === "/api/agent/heartbeat") {
       response.end(JSON.stringify({
-        protocolVersion: 1,
+        protocolVersion: 2,
         compatible: true,
         bindings: [],
       }));
@@ -59,7 +59,7 @@ test("HTTP stub 验证配对、心跳、SSE 事件和 Bearer", async () => {
       response.write("retry: 3000\n\n");
       response.write("id: 7\n");
       response.write("event: task.assigned\n");
-      response.write('data: {"teamId":"team-1","executionTaskKey":"task-1"}\n\n');
+      response.write('data: {"id":7,"teamId":"team-1","type":"task.assigned","projectId":"project-1","taskId":"task-1","taskVersion":"v1","payload":{"teamId":"team-1","projectId":"project-1","executionTaskKey":"task-1","relativeDir":".trellis/tasks/task-1","taskVersion":"v1"}}\n\n');
       response.end();
       return;
     }
@@ -84,7 +84,8 @@ test("HTTP stub 验证配对、心跳、SSE 事件和 Bearer", async () => {
     assert.equal(events.length, 1);
     assert.equal(events[0].id, "7");
     assert.equal(events[0].type, "task.assigned");
-    assert.equal(events[0].data.executionTaskKey, "task-1");
+    assert.equal(events[0].data.payload.executionTaskKey, "task-1");
+    assert.equal(events[0].data.payload.relativeDir, ".trellis/tasks/task-1");
     await client.submitCommandResult("command-1", { status: "failed" });
   });
   assert.equal(seen.find((item) => item.url === "/api/agent/enroll").authorization, undefined);

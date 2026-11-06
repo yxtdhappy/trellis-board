@@ -83,6 +83,7 @@ export function createAgentEventService({
   db,
   logger = console,
   retentionMs = EVENT_RETENTION_MS,
+  heartbeatMs = STREAM_HEARTBEAT_MS,
   now = () => new Date()
 }) {
   const streams = new Map();
@@ -94,6 +95,39 @@ export function createAgentEventService({
   function purgeExpired() {
     const cutoff = now().toISOString();
     db.prepare("DELETE FROM agent_event WHERE expires_at <= ?").run(cutoff);
+  }
+
+  // 已建立的流必须复查授权：禁用用户、停用团队、移除成员后不能继续收取任务正文。
+  function streamAuthorized(stream) {
+    const state = db.prepare(`
+      SELECT a.status AS agent_status, u.status AS user_status, t.status AS team_status
+      FROM agent_device a
+      JOIN user_account u ON u.id = a.user_id
+      JOIN team t ON t.id = ?
+      WHERE a.id = ?
+    `).get(stream.teamId, stream.agentId);
+    if (!state) return false;
+    if (state.agent_status !== "active" || state.user_status !== "active") return false;
+    if (state.team_status !== "active") return false;
+    const membership = db.prepare(`
+      SELECT 1 FROM team_member WHERE team_id = ? AND user_id = ?
+    `).get(stream.teamId, stream.userId);
+    if (!membership) return false;
+    const binding = db.prepare(`
+      SELECT 1
+      FROM agent_project_binding b
+      JOIN team_project p ON p.repository_id = b.project_id
+      WHERE b.agent_id = ? AND b.team_id = ?
+        AND b.sync_status <> 'revoked' AND p.team_id = b.team_id
+      LIMIT 1
+    `).get(stream.agentId, stream.teamId);
+    return Boolean(binding);
+  }
+
+  function closeUnauthorized(stream) {
+    if (streamAuthorized(stream)) return false;
+    endStream(stream);
+    return true;
   }
 
   function readProject(projectId) {
@@ -262,7 +296,13 @@ export function createAgentEventService({
     const row = db.prepare(`
       SELECT * FROM agent_event WHERE team_id = ? AND dedupe_key = ?
     `).get(teamId, scopedKey);
-    return row || null;
+    if (!row) return null;
+    // 同键行可能已过期但尚未被清理：延长保留期，避免命令/任务事件被静默吞掉。
+    if (row.expires_at <= new Date().toISOString()) {
+      db.prepare(`UPDATE agent_event SET expires_at = ? WHERE id = ?`).run(expiresAt, row.id);
+      row.expires_at = expiresAt;
+    }
+    return row;
   }
 
   function notifyAgent(agentId, teamId) {
@@ -284,7 +324,7 @@ export function createAgentEventService({
     dedupeKey,
     payload
   }) {
-    if (closed || !teamId || !dedupeKey) return null;
+    if (closed || !teamId || !dedupeKey || !targetAgentId) return null;
     const row = insertEvent({
       teamId,
       type,
@@ -297,6 +337,7 @@ export function createAgentEventService({
       payload
     });
     if (targetAgentId) notifyAgent(targetAgentId, teamId);
+    purgeExpired();
     return row;
   }
 
@@ -319,7 +360,8 @@ export function createAgentEventService({
   function publishTaskEvent({
     eventType,
     projectId,
-    relativeDir,
+    task = null,
+    relativeDir = null,
     taskKey = null,
     executionTaskKey = null,
     taskVersion = null,
@@ -331,6 +373,12 @@ export function createAgentEventService({
     if (closed) return [];
     const project = readProject(projectId);
     if (!project) return [];
+    // 兼容调用方直接传 board task 对象（task-writes 的真实形状）。
+    relativeDir = relativeDir ?? task?.relativeDir ?? null;
+    taskKey = taskKey ?? task?.taskKey ?? null;
+    executionTaskKey = executionTaskKey ?? task?.executionTaskKey ?? taskKey;
+    taskVersion = taskVersion ?? task?.taskVersion ?? null;
+    taskIndexRow = taskIndexRow ?? task ?? null;
     let payload = buildTaskSnapshot({
       project,
       relativeDir,
@@ -556,6 +604,7 @@ export function createAgentEventService({
 
   function drain(stream) {
     if (closed || stream.closed || stream.busy || stream.drainTimer) return;
+    if (closeUnauthorized(stream)) return;
     stream.busy = true;
     try {
       for (;;) {
@@ -606,11 +655,14 @@ export function createAgentEventService({
     assertTeamBinding(agent, teamId);
     const requested = parseLastEventId(lastEventId);
     const active = streams.get(agent.id);
-    if (active && active.size >= MAX_STREAMS_PER_AGENT) {
+    const activeForTeam = active
+      ? [...active].filter((stream) => stream.teamId === teamId).length
+      : 0;
+    if (activeForTeam >= MAX_STREAMS_PER_AGENT) {
       throw teamError(
         429,
         ERROR_CODES.RATE_LIMITED,
-        "同一 Agent 的事件连接过多，请关闭旧连接后重试",
+        "同一 Agent 在该团队的事件连接过多，请关闭旧连接后重试",
         { details: { retryAfterMs: 5_000 } }
       );
     }
@@ -618,25 +670,32 @@ export function createAgentEventService({
     let start = requested == null ? readCursor(agent.id, teamId) : requested;
     const bounds = historyBounds(teamId, agent.id);
     let resyncReason = null;
+    let row = null;
     if (bounds.maxId != null && start > bounds.maxId) {
       resyncReason = "unknown_cursor";
     } else if (start > 0 && bounds.minId != null && start + 1 < bounds.minId) {
       resyncReason = "cursor_expired";
     }
     if (resyncReason) {
-      const row = publish({
+      row = publish({
         teamId,
         type: AGENT_EVENT_TYPES.RESYNC_REQUIRED,
         targetAgentId: agent.id,
         targetUserId: agent.userId,
-        dedupeKey: `resync.required:${agent.id}:${start}:${now().toISOString()}`,
+        // 按分钟窗口去重：游标持续失效时避免每 3 秒写一行。
+        dedupeKey: `resync.required:${agent.id}:${start}:${Math.floor(Date.now() / 60_000)}`,
         payload: {
           teamId,
           requestedLastEventId: start,
           reason: resyncReason
         }
       });
-      start = row ? row.id - 1 : start;
+      // 保留窗口内仍存在的事件必须继续补发，不能从 resync 行之后开始。
+      if (resyncReason === "cursor_expired" && bounds.minId != null) {
+        start = Math.min(start, bounds.minId - 1);
+      } else if (row) {
+        start = row.id - 1;
+      }
     }
     response.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -648,6 +707,7 @@ export function createAgentEventService({
     response.flushHeaders?.();
     const stream = {
       agentId: agent.id,
+      userId: agent.userId,
       teamId,
       response,
       cursor: start,
@@ -661,9 +721,11 @@ export function createAgentEventService({
     list.add(stream);
     streams.set(agent.id, list);
     stream.heartbeat = setInterval(() => {
-      if (stream.closed || stream.busy || stream.drainTimer) return;
+      if (stream.closed) return;
+      if (closeUnauthorized(stream)) return;
+      if (stream.busy || stream.drainTimer) return;
       if (!writeFrame(stream, { comment: "heartbeat" })) waitForDrain(stream);
-    }, STREAM_HEARTBEAT_MS);
+    }, heartbeatMs);
     stream.heartbeat.unref?.();
     response.on("close", () => endStream(stream));
     response.on("error", () => endStream(stream));

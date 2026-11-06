@@ -6,7 +6,6 @@ import {
   buildCommandResult,
   compareVersions,
   normalizeServerUrl,
-  parseCommandsResponse,
   parseHeartbeatResponse,
   parseEnrollResponse,
   safeErrorMessage,
@@ -60,14 +59,14 @@ test("配对码长度和字符集受限，服务地址只允许安全协议", ()
 
 test("协议响应兼容 data 包装并验证命令字段", () => {
   const enroll = parseEnrollResponse({
-    data: { agentId: "agent-1", credential: "x".repeat(32), protocolVersion: 1 },
+    data: { agentId: "agent-1", credential: "x".repeat(32), protocolVersion: 2 },
   });
   assert.equal(enroll.agentId, "agent-1");
-  assert.equal(enroll.protocolVersion, 1);
+  assert.equal(enroll.protocolVersion, 2);
 
   const heartbeat = parseHeartbeatResponse({
     data: {
-      protocolVersion: 1,
+      protocolVersion: 2,
       minimumAgentVersion: "0.1.0",
       bindings: [{
         bindingId: "binding-1",
@@ -86,7 +85,7 @@ test("协议响应兼容 data 包装并验证命令字段", () => {
     bindingId: "binding-1",
     type: "sync_branch",
     payload: {
-      protocolVersion: 1,
+      protocolVersion: 2,
       projectId: "project-1",
       branchName: "main",
       reason: "binding_approved",
@@ -100,10 +99,6 @@ test("协议响应兼容 data 包装并验证命令字段", () => {
       type: "sync_branch",
       payload: { path: "C:\\secret" },
     }),
-    hasCode(AGENT_ERROR_CODE.COMMAND_INVALID),
-  );
-  assert.throws(
-    () => parseCommandsResponse({ commands: [{ id: "x" }] }),
     hasCode(AGENT_ERROR_CODE.COMMAND_INVALID),
   );
 });

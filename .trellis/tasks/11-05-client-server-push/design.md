@@ -35,7 +35,7 @@ CREATE INDEX agent_event_expiry ON agent_event(expires_at);
 - `id` 全局单调（`AUTOINCREMENT`），团队内顺序由 `id` 保证；每 `(agent, team)` 游标记录该 Agent 在该团队已消费到的全局 id，禁止用单游标跨团队推进。
 - **扇出写入**：每条逻辑事件在发布时按目标 Agent 各写一行，`target_agent_id` 精确指向接收设备，`target_user_id` 保留审计语义。这样 replay 查询只按 `target_agent_id + team_id + id` 过滤，不存在跨团队/跨项目泄漏路径。
 - `dedupe_key` 由调用方提供稳定键（如 `task.created:<executionTaskKey>:<taskVersion>`），写入时追加 `:agent:<agentId>`；`INSERT OR IGNORE` 保证同一逻辑事件对同一 Agent 只落一次。
-- 保留窗口 `EVENT_RETENTION_MS = 7 天`；发布/建流时清理过期行。
+- 保留窗口 `EVENT_RETENTION_MS = 7 天`；每次发布与建流时清理过期行。同键行若已过期但仍未清理，发布时延长其 `expires_at` 而不是静默忽略。
 
 ## 3. 事件类型与目标
 
@@ -96,7 +96,9 @@ Last-Event-ID: <last consumed event id>   (可选)
 ## 6. 游标与补发
 
 - 建流起点：`Last-Event-ID` 优先；缺失时读 `agent_event_cursor(agent_id, team_id)`；都没有从 0 开始。
-- 过期判定：该团队保留窗口内 `MIN(id)` 为 `minId`、`MAX(id)` 为 `maxId`。`requested > maxId` 或 `requested + 1 < minId` 视为游标过期/未知，先插入一条定向 `resync.required` 事件（payload 带 `requestedLastEventId`、`reason`），从该事件开始推送；不重放已清理事件。
+- 过期判定：该团队保留窗口内 `MIN(id)` 为 `minId`、`MAX(id)` 为 `maxId`。`requested > maxId` 为 `unknown_cursor`，`requested + 1 < minId` 为 `cursor_expired`，两者都插入一条定向 `resync.required` 事件（payload 带 `requestedLastEventId`、`reason`）。
+- `cursor_expired` 时从 `minId - 1` 起推：先把窗口内仍保留的事件补发完，再推 `resync.required`（该帧 id 最大，顺序与 id 单调一致）；`unknown_cursor` 时无从补发，直接把 `resync.required` 作为第一帧。已清理的事件仍不重放。
+- `resync.required` 的去重键按分钟窗口（`resync.required:<agent>:<cursor>:<minute>`），避免游标持续失效时每 3 秒写一行。
 - 正常补发：`SELECT * FROM agent_event WHERE team_id=? AND target_agent_id=? AND id > ? AND expires_at > ? ORDER BY id LIMIT 50`。
 - 每批发送后 upsert `agent_event_cursor`；重复事件由客户端按 id 去重，服务端按 `dedupe_key` 去重。
 
@@ -110,12 +112,15 @@ Last-Event-ID: <last consumed event id>   (可选)
 
 ## 8. Agent 消费
 
-- 心跳响应绑定项新增 `teamId`；Agent 以绑定中的团队集合为每个团队维护一条 SSE 连接。
+- 心跳响应绑定项新增 `teamId`、响应新增 `minimumAgentVersion`；Agent 以绑定中的团队集合为每个团队维护一条 SSE 连接。协议版本升为 2：旧 Agent 心跳得到 426 `AGENT_PROTOCOL_UNSUPPORTED` 并停止重试，服务端对旧长轮询返回 410 `AGENT_LONG_POLL_REMOVED`。升级顺序为先 Agent 后服务端。
 - `agent/api.js` 新增 `streamEvents()`：原生 `http/https` 增量解析 SSE，支持 `signal`、60 秒无数据超时、401/403 → `AUTH_REVOKED`、410 → `AGENT_OUTDATED`、429 尊重 `Retry-After`。
-- `agent/index.js` 用 `_eventLoop()` / `_teamEventLoop(teamId)` 替换 `_commandLoop`；断线重连指数退避 1s → 30s（±20% 抖动），401/403 停止，不做忙等。
+- `agent/index.js` 用 `_eventLoop()` / `_teamEventLoop(teamId)` 替换 `_commandLoop`；断线重连指数退避 1s → 30s（±20% 抖动），不做忙等。403 只放弃该团队（加入 `abandonedTeams`，不再重建），401 停止整个进程。
+- 每个 Agent 每团队最多 4 条并发流（超限 429）。
+- 客户端串行处理 SSE 帧（含 CRLF 兼容与 1 MiB 缓冲上限），命令不再并发执行；`resync.required` 帧不推进游标，改为清空该团队本地游标，让下一次连接从服务端游标续传。
 - 游标持久化到 `%LOCALAPPDATA%\TrellisBoardAgent\event-cursors.json`（`ConfigStore.readEventCursors/writeEventCursors`），进程重启后继续使用。
 - 任务事件落盘到 Agent 根目录 `events/<teamId>/<projectId>/<sha256(executionTaskKey)>.json`，限制在 Agent 数据根内；按 `taskVersion` 幂等：同版本忽略、低版本丢弃、高版本覆盖。不写 workspace，不操作 Git 索引。
-- `sync.required` 触发对应绑定 `syncRepository`；`resync.required` 把该团队缓存标为 stale 并对绑定执行 `inspectRepository`；`agent.revoked` 停止进程；`server.shutdown` 让连接自然结束并按退避重连。
+- `sync.required` 触发对应绑定 `syncRepository`；`resync.required` 对该团队全部已批准绑定执行一次同步并清空本地游标；`agent.revoked` 只停止该团队的事件流（服务端团队级撤销不会停掉整个进程）；`server.shutdown` 让连接自然结束并按退避重连。
+- 任务事件按 `data.payload` 解析（envelope 外层只有 `taskId`），跨团队校验用 `payload.teamId`；快照按 `taskVersion` 幂等落盘。
 
 ## 9. 兼容与关闭
 

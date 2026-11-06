@@ -408,6 +408,33 @@ export class ConfigStore {
     return this._cursorWrite;
   }
 
+  async clearEventCursor(teamId) {
+    const key = String(teamId || "");
+    if (!key) return;
+    const operation = async () => {
+      const cursors = await this.readEventCursors();
+      if (cursors[key] == null) return;
+      delete cursors[key];
+      const payload = {
+        schemaVersion: 1,
+        cursors: Object.fromEntries(
+          Object.entries(cursors).map(([id, cursor]) => [
+            id,
+            { lastEventId: cursor, updatedAt: new Date().toISOString() },
+          ]),
+        ),
+      };
+      await this.writeAtomic(
+        this.paths.eventCursorsFile,
+        `${JSON.stringify(payload, null, 2)}\n`,
+      );
+    };
+    this._cursorWrite = (this._cursorWrite || Promise.resolve())
+      .catch(() => {})
+      .then(operation);
+    return this._cursorWrite;
+  }
+
   async writeCredentialRecord(record) {
     await this.writeAtomic(
       this.paths.credentialFile,

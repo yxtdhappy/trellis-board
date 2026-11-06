@@ -137,6 +137,8 @@ export class AgentRuntime {
     this.ca = null;
     this.lastHeartbeat = null;
     this.pollEnabled = false;
+    // 已被服务端撤销/拒绝的团队：不再重建事件流，避免 403 风暴。
+    this.abandonedTeams = new Set();
     this.authRevoked = false;
     this.stopReason = null;
     this.fatalError = null;
@@ -423,22 +425,24 @@ export class AgentRuntime {
     }
   }
 
-  async _handleTaskEvent(teamId, type, data) {
-    if (!data || typeof data !== "object") return;
+  async _handleTaskEvent(teamId, type, envelope) {
+    const data = envelope?.payload && typeof envelope.payload === "object" ? envelope.payload : {};
     if (data.teamId && data.teamId !== teamId) {
       this.logger.warn("忽略跨团队任务事件", { teamId, eventTeamId: data.teamId });
       return;
     }
-    await this.eventCache.writeSnapshot(data).catch((error) => {
-      this.logger.warn("写入任务快照缓存失败", error);
-    });
+    if (data.relativeDir || data.executionTaskKey || data.taskKey) {
+      await this.eventCache.writeSnapshot(data).catch((error) => {
+        this.logger.warn("写入任务快照缓存失败", error);
+      });
+    }
     if (type === "task.snapshot_required") {
-      await this._syncProject(teamId, data.projectId);
+      await this._syncProject(teamId, envelope.projectId || data.projectId);
     }
     this.logger.info("收到任务事件", {
       type,
-      taskId: data.executionTaskKey || data.taskId || null,
-      taskVersion: data.taskVersion ?? null,
+      taskId: data.executionTaskKey || data.taskId || envelope.taskId || null,
+      taskVersion: data.taskVersion ?? envelope.taskVersion ?? null,
     });
   }
 
@@ -446,18 +450,28 @@ export class AgentRuntime {
     const data = event.data && typeof event.data === "object" ? event.data : {};
     switch (event.type) {
       case "agent.revoked":
-        this.logger.warn("服务端已撤销 Agent，停止事件流", { teamId });
-        this.stop("agent_revoked");
-        return;
+        this.logger.warn("服务端已撤销该团队的 Agent 绑定，停止该团队事件流", { teamId });
+        this.abandonedTeams.add(teamId);
+        return { stopTeam: true };
       case "server.shutdown":
         return;
-      case "resync.required":
+      case "resync.required": {
         this.logger.warn("事件游标已过期，重新同步", {
           teamId,
-          reason: data.reason || null,
+          reason: data.payload?.reason || null,
         });
-        await this.store.writeEventCursor(teamId, 0).catch(() => {});
-        return;
+        const bindings = (this.config?.bindings || []).filter(
+          (binding) => binding.teamId === teamId && binding.syncStatus === "approved",
+        );
+        for (const binding of bindings) {
+          await this._syncBinding(binding).catch((error) => {
+            this.logger.warn("游标失效后重新同步失败", error);
+          });
+        }
+        // 不写该帧的游标：让下一次连接不带 Last-Event-ID，从服务端游标续传。
+        await this.store.clearEventCursor(teamId).catch(() => {});
+        return { skipCursor: true };
+      }
       case "sync.required":
         await this._syncProject(teamId, data.projectId);
         return;
@@ -483,6 +497,7 @@ export class AgentRuntime {
   async _teamEventLoop(teamId, signal) {
     let attempt = 0;
     while (!signal.aborted && !this.signal.aborted && this.pollEnabled) {
+      if (this.abandonedTeams.has(teamId)) return;
       await this.loadContext().catch((error) => {
         this.logger.warn("加载 Agent 配置失败", error);
         return null;
@@ -491,6 +506,7 @@ export class AgentRuntime {
         item.teamId === teamId && item.syncStatus === "approved"
       );
       if (!binding) return;
+      let stopTeam = false;
       const cursors = await this.store.readEventCursors();
       try {
         await this.api.streamEvents(
@@ -503,23 +519,29 @@ export class AgentRuntime {
               this.logger.info("Agent 事件流已连接", { teamId });
             },
             onEvent: async (event) => {
+              let skipCursor = false;
+              let result = null;
               try {
-                await this._handleEvent(teamId, event);
+                result = await this._handleEvent(teamId, event);
+                skipCursor = result?.skipCursor === true;
+                if (result?.stopTeam) stopTeam = true;
               } finally {
                 const id = Number(event.id);
-                if (Number.isSafeInteger(id) && id >= 0) {
+                if (!skipCursor && Number.isSafeInteger(id) && id >= 0) {
                   await this.store.writeEventCursor(teamId, id).catch(() => {});
                 }
               }
             },
           },
         );
+        if (stopTeam) return;
         if (signal.aborted || this.signal.aborted) return;
         await sleep(1_000, signal);
       } catch (error) {
         if (signal.aborted || this.signal.aborted) return;
         if (error.status === 403 && error.serverCode === "FORBIDDEN") {
           this.logger.warn("Agent 对该团队的事件流无权限，停止该团队连接", { teamId });
+          this.abandonedTeams.add(teamId);
           return;
         }
         if (isAuthenticationError(error)) {
@@ -571,7 +593,7 @@ export class AgentRuntime {
           .map((binding) => binding.teamId),
       );
       for (const teamId of teams) {
-        if (!handles.has(teamId)) startTeam(teamId);
+        if (!handles.has(teamId) && !this.abandonedTeams.has(teamId)) startTeam(teamId);
       }
       for (const [teamId, handle] of handles) {
         if (!teams.has(teamId)) {

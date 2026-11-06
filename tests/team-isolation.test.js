@@ -484,7 +484,7 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
     method: "POST",
     origin: null,
     body: {
-      protocolVersion: 1,
+      protocolVersion: 2,
       agentVersion: "1.0.0",
       platform: "win32",
       pairingCode: pairing.body.pairingCode,
@@ -497,7 +497,7 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
     origin: null,
     agentCredential: enrolled.body.credential,
     body: {
-      protocolVersion: 1,
+      protocolVersion: 2,
       agentId: enrolled.body.agentId,
       agentVersion: "1.0.0",
       deviceName: "隔离测试设备",
