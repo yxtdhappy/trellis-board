@@ -45,6 +45,7 @@ function initRepository(withIgnore = false) {
   write(path.join(seed, ".trellis", "tasks", ".keep"), "tasks\n");
   write(path.join(seed, ".trellis", "workspace", ".keep"), "workspace\n");
   write(path.join(seed, "README.md"), "initial\n");
+  write(path.join(seed, ".gitattributes"), "* text=auto eol=lf\n");
   if (withIgnore) {
     write(path.join(seed, ".gitignore"), "ignored.txt\n");
   }
@@ -53,7 +54,7 @@ function initRepository(withIgnore = false) {
   const remoteUrl = pathToFileURL(remote).href;
   git(seed, ["remote", "add", "origin", remoteUrl]);
   git(seed, ["push", "-u", "origin", "main"]);
-  git(base, ["clone", remoteUrl, local]);
+  git(base, ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "clone", remoteUrl, local]);
   git(local, ["config", "user.email", "agent-test@example.invalid"]);
   git(local, ["config", "user.name", "Agent Test"]);
   return { base, remote, seed, local, remoteUrl };
