@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Node 内置测试、无 lint/类型检查、真实服务验收的项目约定"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "复用现有 /api 契约与文件边界，避免新增平行认证或路径写入"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "设备注册与凭证必须复用 agent/ 现有模块，不复制同步/DPAPI 逻辑"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "桌面壳、sidecar、服务端契约跨层变更时的核对方式"}
