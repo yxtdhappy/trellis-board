@@ -398,6 +398,9 @@ test("桌面端 enrollWithToken 走新端点并保留配对码兜底", async (t)
   const configText = fs.readFileSync(path.join(root, "config.json"), "utf8");
   const config = JSON.parse(configText);
   assert.equal(config.agentId, result.agentId);
+  // 兑换结果里的用户名/团队写入 sidecar 配置，workspace init 直接复用，无需再次输入。
+  assert.equal(config.username, "sysadmin");
+  assert.equal(config.teamId, null);
   assert.equal(config.credential, undefined);
   assert.ok(!configText.includes(saved[0]), "凭证不得写入 config.json");
   assert.ok(!configText.includes(issued.body.token), "令牌不得写入 config.json");
