@@ -1,6 +1,6 @@
 import path from "node:path";
 
-export const AGENT_PROTOCOL_VERSION = 1;
+export const AGENT_PROTOCOL_VERSION = 2;
 export const AGENT_VERSION = "0.1.0";
 
 export const COMMAND_TYPE = Object.freeze({
@@ -214,6 +214,7 @@ function normalizeServerBinding(value) {
   return {
     id,
     projectId,
+    teamId: value.teamId == null ? null : assertSafeId(value.teamId, "团队 ID"),
     localRepoKey,
     status,
     branchName: typeof value.branchName === "string" ? value.branchName : null,
@@ -297,16 +298,6 @@ export function validateCommand(value) {
     throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, "命令原因格式无效");
   }
   return { id, bindingId, type, payload };
-}
-
-export function parseCommandsResponse(payload) {
-  const body = payload?.data && typeof payload.data === "object"
-    ? { ...payload, ...payload.data }
-    : payload;
-  if (!body || typeof body !== "object" || !Array.isArray(body.commands)) {
-    throw new AgentError(AGENT_ERROR_CODE.INVALID_RESPONSE, "长轮询响应缺少命令列表");
-  }
-  return body.commands.map(validateCommand);
 }
 
 export function buildCommandResult(status, result = null, error = null) {

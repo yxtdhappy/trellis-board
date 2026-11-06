@@ -224,7 +224,8 @@ function rowFromIndex(row) {
 export function createTaskIndex({
   db,
   stageIds,
-  executionWipLimit = 2
+  executionWipLimit = 2,
+  agentEvents = null
 }) {
   let worker = null;
   let requestId = 0;
@@ -470,15 +471,87 @@ export function createTaskIndex({
     };
   }
 
+  function indexTaskRow(task) {
+    return {
+      task_key: task.taskKey,
+      execution_task_key: task.executionTaskKey || task.taskKey,
+      relative_dir: task.relativeDir,
+      task_version: task.taskVersion,
+      title: task.title,
+      priority: task.priority,
+      assignee_dev_id: task.assignee || null,
+      assignee_user_id: null,
+      archived: task.archived ? 1 : 0
+    };
+  }
+
+  function publishIndexEvents(projectId, previousRows, board) {
+    if (!agentEvents) return;
+    const teamId = db.prepare(`
+      SELECT team_id FROM team_project WHERE repository_id = ?
+    `).get(projectId)?.team_id;
+    if (!teamId) return;
+    const previous = new Map(previousRows.map((row) => [
+      row.execution_task_key || row.task_key,
+      row
+    ]));
+    const current = new Map();
+    for (const task of board.tasks || []) {
+      if (!task.taskVersion) continue;
+      current.set(task.executionTaskKey || task.taskKey, task);
+    }
+    const publish = (eventType, task, taskIndexRow) => {
+      const executionTaskKey = taskIndexRow.execution_task_key || taskIndexRow.task_key;
+      try {
+        agentEvents.publishTaskEvent({
+          eventType,
+          projectId,
+          relativeDir: taskIndexRow.relative_dir,
+          taskKey: taskIndexRow.task_key,
+          executionTaskKey,
+          taskVersion: taskIndexRow.task_version,
+          taskIndexRow,
+          dedupeKey: `${eventType}:${executionTaskKey}:${taskIndexRow.task_version}`
+        });
+      } catch (error) {
+        process.emitWarning(`任务索引事件发布失败: ${error.message}`);
+      }
+    };
+    for (const [key, task] of current) {
+      const row = previous.get(key);
+      const indexRow = indexTaskRow(task);
+      if (!row) {
+        publish("task.created", task, indexRow);
+      } else if (Boolean(row.archived) !== Boolean(task.archived)) {
+        if (task.archived) publish("task.cancelled", task, indexRow);
+        else publish("task.updated", task, indexRow);
+      } else if (String(row.task_version) !== String(task.taskVersion)) {
+        publish("task.updated", task, indexRow);
+      }
+    }
+    for (const [key, row] of previous) {
+      if (current.has(key) || row.archived) continue;
+      publish("task.cancelled", null, row);
+    }
+  }
+
   function replaceProjectIndex(options) {
-    return withTransaction(db, () => {
-      const result = replaceProjectIndexInTransaction(options);
+    const previousRows = db.prepare(`
+      SELECT execution_task_key, task_key, relative_dir, task_version,
+             archived, title, priority, assignee_dev_id, assignee_user_id
+      FROM team_task_index
+      WHERE project_id = ?
+    `).all(options.projectId);
+    const result = withTransaction(db, () => {
+      const applied = replaceProjectIndexInTransaction(options);
       incrementQueryRevision();
       return {
-        ...result,
+        ...applied,
         queryRevision: queryRevision()
       };
     });
+    publishIndexEvents(options.projectId, previousRows, options.board);
+    return result;
   }
 
   function refreshProjectIndexFromDatabase({

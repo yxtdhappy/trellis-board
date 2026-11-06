@@ -8,10 +8,10 @@ import {
   semanticRemoteIdentityHash
 } from "./remote-identity.js";
 
-export const AGENT_PROTOCOL_VERSION = 1;
+export const AGENT_PROTOCOL_VERSION = 2;
+export const MINIMUM_AGENT_VERSION = "0.1.0";
 const PAIRING_TTL_MS = 10 * 60 * 1000;
 const COMMAND_LEASE_MS = 5 * 60 * 1000;
-const MAX_WAIT_MS = 25_000;
 const MAX_FAILURES = 3;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SEMVER = /^\d+\.\d+\.\d+$/;
@@ -68,23 +68,6 @@ function deviceName(value) {
   return text(value, "设备名称", { max: 80 });
 }
 
-function waitForNotification(signal, timeoutMs) {
-  return new Promise((resolve) => {
-    if (signal?.aborted) {
-      resolve();
-      return;
-    }
-    const timer = setTimeout(done, timeoutMs);
-    timer.unref?.();
-    function done() {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", done);
-      resolve();
-    }
-    signal?.addEventListener("abort", done, { once: true });
-  });
-}
-
 function publicAgent(row) {
   return {
     id: row.id,
@@ -104,6 +87,7 @@ function publicBinding(row) {
   return {
     id: row.id,
     agentId: row.agent_id,
+    teamId: row.team_id || null,
     projectId: row.project_id,
     localRepoKey: row.local_repo_key,
     displayName: row.local_display_name || null,
@@ -176,33 +160,9 @@ function projectRemoteIdentityHash(remoteUrl, config) {
 export function createAgentService({
   db,
   config,
-  logger = console,
-  signal = null
+  events = null
 }) {
-  const waiters = new Map();
   const pairAttempts = new Map();
-
-  function notify(agentId) {
-    const pending = waiters.get(agentId);
-    if (!pending) return;
-    for (const resolve of pending) resolve();
-    waiters.delete(agentId);
-  }
-
-  function waitOnce(agentId, timeoutMs) {
-    if (timeoutMs <= 0) return Promise.resolve();
-    return new Promise((resolve) => {
-      const list = waiters.get(agentId) || new Set();
-      const done = () => {
-        list.delete(done);
-        if (!list.size && waiters.get(agentId) === list) waiters.delete(agentId);
-        resolve();
-      };
-      list.add(done);
-      waiters.set(agentId, list);
-      waitForNotification(signal, timeoutMs).then(done);
-    });
-  }
 
   function consumePairAttempt(ip) {
     const key = String(ip || "unknown").slice(0, 128);
@@ -589,10 +549,12 @@ export function createAgentService({
     else update();
     return {
       protocolVersion: AGENT_PROTOCOL_VERSION,
+      minimumAgentVersion: MINIMUM_AGENT_VERSION,
       compatible: true,
       bindings: responses.map((row) => ({
         id: row.id,
         bindingId: row.id,
+        teamId: row.teamId ?? row.team_id ?? null,
         projectId: row.projectId,
         localRepoKey: row.localRepoKey,
         status: row.status,
@@ -701,7 +663,9 @@ export function createAgentService({
         detail: { ownerUserId: binding.user_id, commandQueued: Boolean(commandId) }
       });
     });
-    notify(binding.agent_id);
+    if (commandId && events) {
+      events.syncPendingCommands(binding.agent_id, binding.team_id);
+    }
     return {
       binding: listProjectBindings(actor, projectId)
         .find((item) => item.id === binding.id),
@@ -821,7 +785,7 @@ export function createAgentService({
         detail: { scope: teamId ? "team" : "global" }
       });
     });
-    notify(agentId);
+    events?.publishAgentRevoked(agentId, teamId);
     return { revoked: true, agentId };
   }
 
@@ -853,35 +817,56 @@ export function createAgentService({
     `).run(agentId, now, MAX_FAILURES);
   }
 
-  function takeCommand(agent) {
-    recoverExpiredLeases(agent.id);
+  const deliverableCommandSql = `
+    SELECT c.*, b.project_id, b.branch_name, b.team_id, a.user_id
+    FROM agent_command c
+    JOIN agent_project_binding b ON b.id = c.binding_id
+    JOIN agent_device a ON a.id = c.agent_id
+    JOIN team_project p ON p.repository_id = b.project_id
+    WHERE c.agent_id = ?
+      AND c.status = 'pending'
+      AND b.sync_status = 'approved'
+      AND p.sync_status IN ('current', 'stale', 'pending_push', 'needs_repair')
+  `;
+
+  function listPendingCommands(agentId, teamId) {
+    recoverExpiredLeases(agentId);
+    return db.prepare(`${deliverableCommandSql}
+      AND b.team_id = ?
+      ORDER BY c.created_at, c.id
+      LIMIT 50
+    `).all(agentId, teamId).map((row) => ({
+      commandId: row.id,
+      type: row.command_type,
+      bindingId: row.binding_id,
+      attempts: Number(row.attempts),
+      projectId: row.project_id,
+      branchName: row.branch_name,
+      userId: row.user_id
+    }));
+  }
+
+  function beginCommandDelivery(agentId, commandId) {
+    recoverExpiredLeases(agentId);
+    const row = db.prepare(`${deliverableCommandSql}
+      AND c.id = ?
+      LIMIT 1
+    `).get(agentId, String(commandId || ""));
+    if (!row) return null;
+    if (!ALLOWED_COMMANDS.has(row.command_type)) {
+      throw teamError(500, "INTERNAL_ERROR", "Agent 命令类型无效");
+    }
     const now = new Date();
     const leaseExpiresAt = new Date(now.getTime() + COMMAND_LEASE_MS).toISOString();
-    const row = db.prepare(`
-      SELECT c.*
-      FROM agent_command c
-      JOIN agent_project_binding b ON b.id = c.binding_id
-      JOIN team_project p ON p.repository_id = b.project_id
-      WHERE c.agent_id = ?
-        AND c.status = 'pending'
-        AND b.sync_status = 'approved'
-        AND p.sync_status IN ('current', 'stale', 'pending_push', 'needs_repair')
-      ORDER BY c.created_at, c.id
-      LIMIT 1
-    `).get(agent.id);
-    if (!row) return null;
     const delivered = db.prepare(`
       UPDATE agent_command
       SET status = 'delivered',
           attempts = attempts + 1,
           delivered_at = ?,
           lease_expires_at = ?
-      WHERE id = ? AND status = 'pending'
-    `).run(now.toISOString(), leaseExpiresAt, row.id);
+      WHERE id = ? AND agent_id = ? AND status = 'pending'
+    `).run(now.toISOString(), leaseExpiresAt, row.id, agentId);
     if (delivered.changes !== 1) return null;
-    if (!ALLOWED_COMMANDS.has(row.command_type)) {
-      throw teamError(500, "INTERNAL_ERROR", "Agent 命令类型无效");
-    }
     let payload;
     try {
       payload = JSON.parse(row.payload_json);
@@ -894,25 +879,6 @@ export function createAgentService({
       type: row.command_type,
       payload
     };
-  }
-
-  async function pollCommands(agent, input = {}) {
-    protocolVersion(input.protocolVersion);
-    assertAgentIdentity(agent, input);
-    agentVersion(input.agentVersion);
-    const requestedWait = input.waitMs == null ? MAX_WAIT_MS : Number(input.waitMs);
-    if (!Number.isFinite(requestedWait) || requestedWait < 0) {
-      throw teamError(400, ERROR_CODES.INVALID_INPUT, "waitMs 无效");
-    }
-    const deadline = Date.now() + Math.min(MAX_WAIT_MS, Math.floor(requestedWait));
-    while (!signal?.aborted) {
-      const command = takeCommand(agent);
-      if (command) return { commands: [command] };
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) return { commands: [] };
-      await waitOnce(agent.id, Math.min(remaining, 1000));
-    }
-    return { commands: [] };
   }
 
   function submitCommandResult(agent, commandId, input = {}) {
@@ -990,7 +956,9 @@ export function createAgentService({
         detail: { commandType: command.command_type, attempts: command.attempts }
       });
     });
-    notify(agent.id);
+    if (nextStatus === "pending") {
+      events?.syncPendingCommands(agent.id, command.binding_team_id);
+    }
     return {
       commandId,
       status: nextStatus,
@@ -1058,10 +1026,7 @@ export function createAgentService({
   }
 
   async function close() {
-    for (const list of waiters.values()) {
-      for (const resolve of list) resolve();
-    }
-    waiters.clear();
+    // 事件连接由 agentEventService.close() 统一关闭。
   }
 
   return {
@@ -1077,7 +1042,8 @@ export function createAgentService({
     revokeDevice,
     readEventCursor,
     writeEventCursor,
-    pollCommands,
+    listPendingCommands,
+    beginCommandDelivery,
     submitCommandResult,
     close
   };

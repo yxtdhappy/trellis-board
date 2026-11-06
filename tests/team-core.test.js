@@ -829,7 +829,7 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
     method: "POST",
     origin: null,
     body: {
-      protocolVersion: 1,
+      protocolVersion: 2,
       agentVersion: "1.0.0",
       platform: "win32",
       pairingCode: pairing.body.pairingCode,
@@ -843,7 +843,7 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
     origin: null,
     agentCredential: enrolled.body.credential,
     body: {
-      protocolVersion: 1,
+      protocolVersion: 2,
       agentId: enrolled.body.agentId,
       deviceName: "测试设备",
       agentVersion: "1.0.0",
@@ -859,6 +859,10 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
   });
   assert.equal(heartbeat.status, 200);
   assert.equal(heartbeat.body.bindings[0].status, "pending");
+  // 客户端靠心跳回传的 teamId 决定为哪个团队建立 SSE 连接。
+  assert.ok(heartbeat.body.bindings[0].teamId, JSON.stringify(heartbeat.body));
+  assert.equal(heartbeat.body.protocolVersion, 2);
+  assert.equal(typeof heartbeat.body.minimumAgentVersion, "string");
   const bindingId = heartbeat.body.bindings[0].bindingId;
   assert.equal(
     runtime.db.prepare(`
@@ -885,20 +889,30 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
   assert.equal(adminAudit.status, 200);
   assert.ok(adminAudit.body.events.some((event) => event.action === "agent_binding_approved"));
 
-  const commands = await request(runtime, "/api/agent/commands", {
+  const legacyPoll = await request(runtime, "/api/agent/commands", {
     method: "POST",
     origin: null,
     agentCredential: enrolled.body.credential,
     body: {
-      protocolVersion: 1,
+      protocolVersion: 2,
       agentId: enrolled.body.agentId,
       agentVersion: "1.0.0",
       waitMs: 0
     }
   });
-  assert.equal(commands.status, 200);
-  assert.equal(commands.body.commands.length, 1);
-  const command = commands.body.commands[0];
+  assert.equal(legacyPoll.status, 410);
+  assert.equal(legacyPoll.body.code, "AGENT_LONG_POLL_REMOVED");
+
+  const pending = runtime.services.agentService.listPendingCommands(
+    enrolled.body.agentId,
+    "t1"
+  );
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].type, "sync_branch");
+  const command = runtime.services.agentService.beginCommandDelivery(
+    enrolled.body.agentId,
+    pending[0].commandId
+  );
   assert.equal(command.type, "sync_branch");
   assert.deepEqual(
     Object.keys(command.payload).sort(),
@@ -913,7 +927,7 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
       origin: null,
       agentCredential: enrolled.body.credential,
       body: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         agentVersion: "1.0.0",
         status: "failed",
         result: {},

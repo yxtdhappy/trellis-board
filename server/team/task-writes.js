@@ -166,7 +166,8 @@ export function createTaskWriteService({
   db,
   gitManager,
   projectService,
-  taskIndex
+  taskIndex,
+  agentEvents = null
 }) {
   function findProjectForInput(actor, projectId) {
     authorizeProject(actor, projectId, CAPABILITIES.WRITE_TASK, { db });
@@ -353,6 +354,36 @@ export function createTaskWriteService({
     });
   }
 
+  function publishAppliedOperationEvents(operation, project, task, assignedUserId) {
+    if (!agentEvents) return;
+    const teamId = db.prepare(`
+      SELECT team_id FROM team_project WHERE repository_id = ?
+    `).get(project.id)?.team_id;
+    if (!teamId) return;
+    const applied = readOperation(db, operation.id);
+    try {
+      const eventType = operation.operation_type === "create_task"
+        ? "task.created"
+        : "task.assigned";
+      agentEvents.publishTaskEvent({
+        teamId,
+        projectId: project.id,
+        eventType,
+        task,
+        assignedUserIds: [assignedUserId],
+        dedupeKey: `${eventType}:${task.executionTaskKey}:${task.taskVersion}`
+      });
+      agentEvents.publishSyncRequired({
+        projectId: project.id,
+        commitSha: applied.remote_commit_sha || applied.local_commit_sha || applied.id,
+        dedupeKey: `sync.required:${project.id}:${applied.remote_commit_sha || applied.id}`
+      });
+    } catch (error) {
+      // Git 已推送，事件发布失败不能回滚任务写入；重连补发与索引重建会兜底。
+      process.emitWarning(`任务事件发布失败: ${error.message}`);
+    }
+  }
+
   async function applyOperation(operation) {
     if (operation.status === "applied") return operationObject(operation);
     const project = readGitProject(db, operation.project_id);
@@ -457,6 +488,7 @@ export function createTaskWriteService({
         }
       });
     });
+    publishAppliedOperationEvents(operation, project, task, assignedUserId);
     return operationObject(readOperation(db, operation.id));
   }
 

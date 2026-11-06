@@ -65,6 +65,7 @@ function columnNames(db, table) {
 const EXPECTED_TABLES = [
   "agent_command",
   "agent_device",
+  "agent_event",
   "agent_event_cursor",
   "agent_pairing_code",
   "agent_project_binding",
