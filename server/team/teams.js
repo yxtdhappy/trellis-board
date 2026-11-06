@@ -406,6 +406,9 @@ export function setUserTeams(db, {
   const previousTeams = listUserTeams(db, userId);
   const previous = new Map(previousTeams.map((team) => [team.id, team.role]));
   const next = new Set(assignments.map((item) => item.teamId));
+  const unchanged = assignments.length === previous.size
+    && assignments.every((item) => previous.get(item.teamId) === item.role);
+  if (unchanged) return listUserTeams(db, userId);
   const now = new Date().toISOString();
   withTransaction(db, () => {
     for (const [teamId, role] of previous) {

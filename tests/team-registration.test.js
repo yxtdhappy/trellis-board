@@ -265,6 +265,16 @@ test("管理员建号、团队分配、重置密码与跨团队隔离", async (t
     body: { teamIds: [teamA.id] }
   });
   assert.equal(teamAdminPatch.status, 403);
+  assert.equal((await request(runtime, `/api/admin/users/${alice.id}/reset-password`, {
+    method: "POST",
+    cookie: teamAdminCookie,
+    body: { password: "abcdef" }
+  })).status, 403);
+  assert.equal((await request(runtime, `/api/admin/users/${alice.id}`, {
+    method: "PATCH",
+    cookie: teamAdminCookie,
+    body: { status: "disabled" }
+  })).status, 403);
   assert.equal((await request(runtime, `/api/admin/users/${alice.id}/teams`, {
     method: "PUT",
     cookie: teamAdminCookie,

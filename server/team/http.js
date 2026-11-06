@@ -327,7 +327,12 @@ function teamAssignmentsFromBody(db, userId, body) {
     if (usesTeamIds) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, "团队 ID 必须是字符串");
     }
-    return item;
+    const teamId = String(item?.teamId || item?.id || "").trim();
+    return {
+      ...item,
+      teamId,
+      role: item?.role || existing.get(teamId) || TEAM_ROLES.MEMBER
+    };
   });
 }
 
@@ -1163,6 +1168,9 @@ function createRequestHandler({
     if (!url.pathname.startsWith("/api/")) {
       serveStatic(request, response, url, publicDir);
       return;
+    }
+    if (url.pathname === "/api/auth/register") {
+      throw teamError(404, ERROR_CODES.NOT_FOUND, "接口不存在");
     }
     if (WRITE_METHODS.has(request.method)) assertJsonWrite(request, config);
     if (await handleAuth(request, response, url)) return;

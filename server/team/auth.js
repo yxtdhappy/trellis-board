@@ -216,6 +216,8 @@ export async function createUser(db, {
   }
   if (teams != null) validateTeamAssignments(db, teams);
   const passwordRecord = await hashPassword(password);
+  // 密码哈希会让出事件循环；插入前再次校验，避免团队在校验后被并发停用/删除。
+  if (teams != null) validateTeamAssignments(db, teams);
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   try {
@@ -323,6 +325,8 @@ export async function updateUserAdmin(db, {
       userId,
       crypto.randomUUID(),
       JSON.stringify({
+        displayName: nextDisplay,
+        previousDisplayName: current.displayName,
         status: nextStatus,
         systemAdmin: nextAdmin
       }),

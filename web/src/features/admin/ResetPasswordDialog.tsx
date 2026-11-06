@@ -12,6 +12,7 @@ import {
 import { Input } from '@/components/ui/input'
 import type { AdminUser } from '@/api/admin'
 import { Field } from './shared'
+import { adminPasswordError } from './password-policy'
 
 export function ResetPasswordDialog({
   user,
@@ -36,8 +37,9 @@ export function ResetPasswordDialog({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (password.length < 6) {
-      setError('密码至少需要 6 个字符。')
+    const passwordError = adminPasswordError(password)
+    if (passwordError) {
+      setError(passwordError)
       return
     }
     if (password !== confirmation) {

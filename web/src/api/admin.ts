@@ -136,7 +136,7 @@ export type ApprovalDraft = {
 }
 
 export function canManageProject(project: RuntimeProject): boolean {
-  if (Boolean(project.capabilities.manageMembers ?? project.capabilities.manage_members)) return true
+  if (project.capabilities.manageMembers ?? project.capabilities.manage_members) return true
   return project.role === 'lead'
 }
 

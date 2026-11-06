@@ -144,7 +144,7 @@ export function AccountDialog({
         </DialogHeader>
         {user ? (
           <AccountForm
-            key={user.id}
+            key={`${user.id}:${user.displayName}:${user.status}:${user.systemAdmin}:${user.teams.map((team) => team.id).join(',')}`}
             user={user}
             teams={teams}
             submitLabel="保存账号"

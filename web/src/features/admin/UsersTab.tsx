@@ -11,6 +11,7 @@ import type { AdminConsole } from '@/hooks/useAdminConsole'
 import { formatTime } from '@/lib/admin-shared'
 import { AccountDialog, AccountForm } from './AccountDialog'
 import type { AccountFormValues } from './AccountDialog'
+import { adminPasswordError } from './password-policy'
 import { ResetPasswordDialog } from './ResetPasswordDialog'
 import { EmptyRow, Field, Panel, Row, StatusPill } from './shared'
 
@@ -55,6 +56,11 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const passwordError = adminPasswordError(password)
+    if (passwordError) {
+      toast.error(passwordError)
+      return
+    }
     setBusy(true)
     const created = await createUser({
       username: username.trim(),
@@ -163,7 +169,7 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
           >
             {selectedUser ? (
               <AccountForm
-                key={selectedUser.id}
+                key={`${selectedUser.id}:${selectedUser.displayName}:${selectedUser.status}:${selectedUser.systemAdmin}:${selectedUser.teams.map((team) => team.id).join(',')}`}
                 user={selectedUser}
                 teams={teams}
                 submitLabel="保存账号"
