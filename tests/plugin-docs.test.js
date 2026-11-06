@@ -5,8 +5,8 @@ import path from "node:path";
 
 const ROOT = process.cwd();
 const DOCS = [
-  ".trellis/tasks/11-04-plugin-architecture/prd.md",
-  ".trellis/tasks/11-04-plugin-architecture/implement.md"
+  ".trellis/tasks/archive/2026-11/11-04-plugin-architecture/prd.md",
+  ".trellis/tasks/archive/2026-11/11-04-plugin-architecture/implement.md"
 ];
 
 function read(relative) {
