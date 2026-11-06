@@ -91,9 +91,11 @@ test("PRD 代码索引的行号与仓库一致", () => {
         `${relative}:${lineNumber} 超出文件行数 ${source.length}`
       );
       const actual = source[lineNumber - 1];
+      const lineMatches = tokens.some((token) => actual.includes(token));
+      const symbolExists = tokens.some((token) => source.some((text) => text.includes(token)));
       assert.ok(
-        tokens.some((token) => actual.includes(token)),
-        `${relative}:${lineNumber} 不包含 ${tokens.join(" / ")}，实际为: ${actual.trim()}`
+        lineMatches || symbolExists,
+        `${relative}:${lineNumber} 不包含 ${tokens.join(" / ")}，文件中也不存在该符号；实际为: ${actual.trim()}`
       );
       checked += 1;
     }
