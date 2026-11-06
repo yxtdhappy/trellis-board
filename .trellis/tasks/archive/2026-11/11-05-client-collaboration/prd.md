@@ -114,7 +114,7 @@
 ### 5. Tauri 客户端 — 静态通过，Windows 运行时未验证
 
 - 脚手架：`desktop/` 含 `src-tauri`（main/config/navigation/sidecar/logging）、`ui/`、`sidecar/`、`install.ps1`、`uninstall.ps1`；`tests/desktop-package.test.js` 10 条全过。
-- capability 最小化：「capability 不授予 shell、文件系统或远程页面权限」；`desktop/src-tauri/capabilities/main.json` 仅 `core:default` + `allow-app-status` + `allow-enroll-device`，`desktop/src-tauri/permissions/desktop.toml` 只有 2 条自定义命令。
+- capability 最小化：`desktop/src-tauri/capabilities/main.json` 仅 `core:default` + `dialog:allow-open` + 本地命令，`desktop/src-tauri/permissions/desktop.toml` 6 条自定义命令；修正轮后的完整清单与断言见下文「修正轮验收记录」。
 - install.ps1 静态断言：「install.ps1 默认按用户安装、校验 SHA256 并可回滚」「uninstall.ps1 拒绝受保护目录并复用现有撤销流程」。
 - sidecar 入口：「sidecar 构建脚本引用的入口文件都存在且使用 Node SEA」「sidecar CLI 报告协议 v2，未注册时以配置错误退出」「桌面设备注册复用 pairing-codes + agent/enroll，凭证不落明文」。
 - 未验证（本机 Linux，无 cargo/rustc/pwsh/Node 24）：`cargo build` / `cargo tauri build` / NSIS 产物、`build-sidecar.ps1` 的 SEA 注入产物、`install.ps1` / `uninstall.ps1` 实际执行、WebView2 bootstrapper、DPAPI 加解密、托盘/单实例/导航拦截运行时行为、代码签名与 SmartScreen。清单见 `desktop/README.md` 的「Windows 验证清单」（14 项）与「Linux 未验证项」（7 项）。
@@ -147,6 +147,68 @@ node /tmp/verify-acceptance.mjs
   admin teams   : 200 count: 2 | audit teamA: 200
 ```
 
+## 修正轮验收记录（2026-11-06）
+
+修正轮补齐两条被遗漏的支线（workspace 客户端接线、登录会话签发设备令牌），并按「先审阅、后串行
+合并」的流程重新集成本任务树。基线为 `38200e8`（`docs(tasks): archive client collaboration task tree`）。
+
+### 合并提交
+
+| 顺序 | 分支 | 合并提交 | 冲突 |
+| --- | --- | --- | --- |
+| 1 | `codex/11-05-workspace-client-flow` @ `d1c83e6` | `cf7c55c` | 无 |
+| 2 | `codex/11-05-desktop-device-auth` @ `e3b8d47` | `5624ffc` | 6 个文件，全部语义合并，未用 `--ours/--theirs` |
+
+冲突与解决方式：
+
+| 文件 | 解决方式 |
+| --- | --- |
+| `desktop/src-tauri/capabilities/main.json` | 取并集：`core:default`、`allow-app-status`、`allow-enroll-with-token`、`allow-enroll-device`、`allow-open-board-login`、`allow-pick-workspace`、`allow-init-workspace`、`dialog:allow-open` |
+| `desktop/src-tauri/permissions/desktop.toml` | 6 条自定义 permission（两条注册命令 + 两条 workspace 命令 + status + open_board_login） |
+| `desktop/src-tauri/src/main.rs` | 命令取并集（`enroll_with_token`、`enroll_device`、`open_board_login`、`pick_workspace`、`init_workspace`），保留 `tauri_plugin_dialog::init()` |
+| `desktop/ui/setup.js` | 保留深链 `enroll-token`/`enroll-complete`/`enroll-failed` 监听与 `resetButtons`，并保留 workspace 面板；令牌兑换成功后进入 workspace 面板（与配对码路径一致），不跳过初始化步骤 |
+| `server/team/agents.js` | 保留 `insertDevice` 抽取；`insertDevice` 统一返回 `username`/`teamId`，`enroll` 与 `enrollDesktop` 共用，避免两条路径行为分叉 |
+| `tests/desktop-package.test.js`、`tests/desktop-device-auth.test.js` | 断言改为合并后的并集（8 条 capability、6 条自定义 permission、合并后的 `generate_handler!` 顺序） |
+
+### 验证数字
+
+```text
+npm test                                  # tests 343, pass 342, fail 0, skipped 1（基线 327）
+npm run build                             # ✓ built in 1.05s
+git diff --check                          # clean
+git status --short                        # 空
+git grep -n '<<<<<<<'                     # 无命中
+node --test tests/workspace-client-flow.test.js tests/desktop-device-auth.test.js \
+  tests/desktop-package.test.js tests/workspace-bootstrap.test.js \
+  tests/team-workspace-template.test.js   # tests 58, pass 58, fail 0
+```
+
+### 端到端链路（登录 → 签发 → 深链/粘贴 → 兑换 → 保存 → workspace → SSE）
+
+1. **登录后签发一次性令牌**：`web/src/features/admin/DevicesTab.tsx:118` 生成 `trellisboard://enroll?token=...&server=...` 链接，`web/src/api/admin.ts:644` 调 `POST /api/desktop/enroll-tokens`；服务端入口 `server/team/http.js:1246`（`handleDesktop`）→ `server/team/desktop-auth.js:85`（`issue`）。TTL 5 分钟（`server/team/desktop-auth.js:5`）、只存哈希（`:112`）、每用户上限 5（`:92`）、审计 `desktop_enroll_token_issued`（`:119`）。测试：「签发设备令牌要求登录会话、JSON 与同源 Origin」「同一用户未使用的设备令牌上限为 5，已使用令牌不占额度」。
+2. **深链与手动粘贴**：`desktop/src-tauri/src/navigation.rs:57`（`parse_enroll_link`，只接受 `trellisboard://enroll`）→ `desktop/src-tauri/src/main.rs:295`（`handle_enroll_links`）向本地页 `emit("enroll-token")`（`:301`）并直接兑换（`:316`）；`desktop/ui/setup.js:188` 监听事件预填令牌。粘贴路径：`desktop/ui/setup.js:130` → `invoke("enroll_with_token")` → `desktop/src-tauri/src/main.rs:123`。
+3. **兑换设备凭证**：`server/team/http.js:607`（`POST /api/agent/enroll-desktop`，`verify` 与 `consume` 之间不 `await`）→ `server/team/agents.js:342`（`enrollDesktop`）→ `server/team/agents.js:252`（`insertDevice`，返回 `username`/`teamId`）。令牌无效 401 `DESKTOP_TOKEN_INVALID`、账号禁用 403（`:344-350`），成功审计 `desktop_device_enrolled`（`:360`）。测试：「设备令牌只能兑换一次并签发可用凭证」「过期令牌返回 401 且不创建设备」「无效、已撤销会话与禁用用户分别被拒绝」。
+4. **保存凭证与身份**：`desktop/sidecar/desktop-device.js:69`（`completeDesktopEnrollment`）把凭证写入 DPAPI、把 `username`/`teamId` 写入 sidecar 配置；`desktop/sidecar/main.js:182`（`commandEnroll`）按 `--pairing-code` 选择兑换接口，两条路径共用同一份 `common`。
+5. **workspace init 使用兑换回来的用户名**：`desktop/sidecar/main.js:220`（`commandWorkspaceInit`，缺省取 `config.username`）；等价 CLI `agent/cli.js:729`（`resolveWorkspaceUsername`：`--username` → `config.username` → `.trellis/.developer`）→ `agent/cli.js:738`（`initializeWorkspace`）。测试：「workspace init 从 config.json 读取用户名、团队和服务端」。
+6. **SSE 用同一凭证**：`server/team/http.js:624`（`GET /api/agent/events`）→ `authenticate()` 按 `credential_hash` 查 `agent_device`（`server/team/agents.js:370`）；凭证与心跳/SSE 共用同一 Bearer。测试：「事件流按团队鉴权、完整快照并支持 Last-Event-ID 断线补发」（`tests/team-events.test.js:291`）。
+
+### 安全边界复核
+
+- 令牌只存哈希、审计不落明文：`server/team/desktop-auth.js:112`（`tokens.set(hash, record)`）；测试断言审计 `detail_json` 不含令牌明文。
+- 一次性：`server/team/desktop-auth.js:143`（`consume` 标记 `usedAtMs`），重放返回 401「已使用」。
+- TTL 与上限：`DESKTOP_ENROLL_TOKEN_TTL_MS = 5 * 60 * 1000`、`MAX_PENDING_DESKTOP_ENROLL_TOKENS = 5`。
+- 禁用用户：`server/team/agents.js:344-350` 在读令牌后复查 `user_account.status`。
+- 非成员无法用别队令牌：令牌的 `teamId` 只来自会话 `activeTeamId`（`server/team/auth.js:441`），切换团队必须通过成员校验（`server/team/teams.js:221-238`）；测试「团队 CRUD、活动团队切换与跨团队读写隔离」。
+- 远程页面无 IPC：capability 不含 `remote`，测试「桌面 capability 只增加本地命令且不允许远程页面」「capability 只授予本地命令与最小 dialog 权限，不授予 shell、文件系统或远程页面权限」。
+- workspace 路径符号链接拒绝、不执行 Python：`tests/workspace-bootstrap.test.js` 的「拒绝符号链接条目」「拒绝根目录与符号链接 workspace 目标」「拒绝 .opencode 指向工作区外的符号链接且外部目录无写入」「拒绝 .trellis/scripts 符号链接且回滚不删除外部文件」「不执行模板内 init_developer.py，developer 文件与 journal/index 由本地生成」。
+
+### 流程偏差（如实记录）
+
+- 编排者在修正轮之前直接合并了 `codex/11-05-user-registration`（`11785fc merge: administrator-managed user accounts`）与 `codex/11-05-client-server-push`（`18621c5 merge: SSE event channel`），没有先建修正分支、也没有逐条给出合并证据；本记录只对 `cf7c55c` / `5624ffc` 两个修正轮合并负责，未改写历史。
+- 修正过程中曾创建 `/tmp/merge-task2` 工作树做隔离合并，该工作树已删除（`ls /tmp/merge-task2` 不存在，`git worktree list` 无该项）；残留的分支 `tmp/merge-task2` 按“不删除分支”的约束保留。
+- Windows 专属项仍未验证：`cargo tauri build` / NSIS 产物、`build-sidecar.ps1` SEA 注入、`install.ps1` / `uninstall.ps1` 实际执行、`trellisboard://` 协议注册与深链转发、DPAPI 加解密、托盘/单实例运行时行为、代码签名与 SmartScreen。清单见 `desktop/README.md` 的「Windows 验证清单」与「Linux 未验证项」。
+- 修正轮合并后一次全量 `npm test` 出现过 1 条失败（342 通过 / 1 失败），随后连续 8 次全量运行均为 0 失败，未能复现，未定位到具体用例；作为已知抖动记录在此。
+
 ## Out of Scope（父任务层面）
 
 - macOS / Linux 客户端。
@@ -159,7 +221,9 @@ node /tmp/verify-acceptance.mjs
 
 所有产品决策已确认，无开放问题。已确认：Tauri、SSE、多团队切换、仅管理员建号与配置团队、不做旧数据迁移、系统管理员可读所有团队、workspace 模板由服务端下发、事件携带完整任务内容、团队可留空、管理员填密码、远程 Board 页面、按用户安装、Node SEA sidecar、桌面设备注册、默认生成 `.opencode` + `.agents` 并可勾选其他工具、developer 冲突中止、不自动 `git init`、事件按类型定向、首版移除长轮询、按团队分游标。
 
-按用户要求，本阶段仍停留在 PRD；下一步需经用户确认后再为各子任务编写 `design.md` / `implement.md` 并执行 `task.py start`。
+本阶段的执行方式（2026-11-05 决策）：为每个子任务单独建分支 + worktree，先写 `design.md` /
+`implement.md` 再实现，全部子任务合并回 `codex/team-board` 后才归档本任务树。该决策已执行完毕：
+子任务分别落在 `codex/11-05-*` 分支，归档副本见 `.trellis/tasks/archive/2026-11/`。
 
 ## Notes
 

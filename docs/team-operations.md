@@ -147,6 +147,50 @@ pwsh -File .\agent\package-agent.ps1
 Agent 本地数据位于 `%LOCALAPPDATA%\TrellisBoardAgent`，服务端凭证使用 Windows DPAPI
 CurrentUser 加密。安装任务只监听当前用户登录启动，不创建系统级服务。
 
+### 6.1 桌面客户端注册（主路径：登录会话签发的一次性设备令牌）
+
+1. 用户在 Board 登录，进入“团队管理 → 设备”，点“生成桌面设备令牌”
+   （`POST /api/desktop/enroll-tokens`）。令牌 5 分钟有效、一次性、同一用户最多 5 个未使用；
+   服务端只保存 SHA-256 哈希，并写审计 `desktop_enroll_token_issued`。
+2. 令牌有两种交付方式：点“打开桌面客户端”走 `trellisboard://enroll?token=...&server=...` 深链，
+   或复制后在桌面客户端粘贴。深链由 `install.ps1` 注册到
+   `HKCU\Software\Classes\trellisboard`，NSIS 安装器目前不注册（见 `desktop/README.md`）。
+3. 客户端把令牌经 stdin 交给 sidecar，sidecar 调 `POST /api/agent/enroll-desktop` 兑换设备凭证；
+   令牌无效/过期/已用返回 401 `DESKTOP_TOKEN_INVALID`，账号被禁用返回 403；
+   兑换成功写审计 `desktop_device_enrolled`。凭证只进 DPAPI，`client.json` 只有 `serverUrl`。
+4. 兑换结果带回 `username` / `teamId`，与凭证一起写入 `data\agent\config.json`。
+5. 本地页随后进入 workspace 面板：选择目录 → 初始化 → 打开看板（见 6.2）。
+
+### 6.2 workspace 选择与初始化
+
+桌面端与 CLI 共用同一套初始化实现（`agent/workspace.js`）：
+
+```powershell
+# 桌面端：本地注册页“选择目录”→“初始化/修复” → sidecar workspace-init → initializeWorkspace
+# 等价 CLI（无桌面端或排查时）：
+node agent\cli.js workspace init --path D:\work\project --tools .opencode,.agents
+node agent\cli.js workspace status --path D:\work\project --json
+```
+
+- 用户名默认取注册时保存的 `config.json` 里的 `username`（即兑换回来的登录用户名），
+  可用 `--username` 覆盖；`.trellis/.developer` 由服务端账号用户名生成。
+- 模板来自服务端团队模板（Agent Bearer 授权，按团队隔离），缓存最近成功版本并通过 SHA-256 校验；
+  离线且无缓存时报 `WORKSPACE_OFFLINE`。
+- 工作区路径不接受符号链接，模板内的 `init_developer.py` 不会被执行，不自动 `git init`。
+- 冲突、离线、权限三类失败用不同退出码区分，便于脚本化排查。
+
+### 6.3 配对码（管理员兜底）
+
+配对码只在桌面端无法走登录会话时使用：管理员在 Web 生成配对码
+（`POST /api/team/pairing-codes`），用户在桌面本地页折叠区粘贴，sidecar 需显式带
+`--pairing-code`。配对码同样一次性、只存哈希；两条路径写盘与后续 SSE 共用同一份设备凭证。
+
+### 6.4 Windows 验证清单
+
+`desktop/README.md` 的「Windows 验证清单」是该流程的验收表（1–14 项 + 7c/7d/7e 三项 workspace
+注册后检查）。开发环境是 Linux，`cargo tauri build`、NSIS 产物、DPAPI、`trellisboard://`
+注册与深链转发、托盘/单实例这些只能在 Windows 上验证，不得在发布记录里写成“已通过”。
+
 ## 7. 数据库升级与回滚
 
 升级前必须停止服务，并同时备份主库、WAL 和 SHM：
@@ -221,6 +265,9 @@ Agent 离线：检查当前用户计划任务、`%LOCALAPPDATA%\TrellisBoardAgen
 - standalone 和 team 模式均能真实启动、访问健康接口并正常停止。
 - 空库创建 v6 schema 成功；旧库拒绝启动并提示重建，回滚演练完成。
 - 临时 Git 远端完成创建/委派、push、接受和 Agent `ff-only` 同步。
+- 桌面端链路在 Windows 上跑通：登录 → 生成设备令牌 → 深链/粘贴 → 兑换凭证 →
+  workspace 初始化 → 打开看板；同一令牌二次兑换被拒（见 6.1 / 6.2 与
+  `desktop/README.md` 的 Windows 验证清单）。
 - dirty、错分支、版本冲突、push 失败和 repair 分支均有可恢复结果。
 - Agent 包不包含凭证、数据库、日志或开发机绝对路径。
 - 容量基线达标，反向代理和日志未泄露敏感信息。

@@ -19,10 +19,34 @@ Tauri v2 外壳 + 现有 Agent sidecar。桌面端只负责：加载 Board 网�
 4. 桌面端把令牌经 stdin 交给 sidecar；sidecar 调用 `POST /api/agent/enroll-desktop` 换取
    `agentId` + 设备凭证，凭证只写入 Windows DPAPI（`agent\credential.dpapi`），
    `client.json` 仍只保存 `serverUrl`。
-5. 服务端保存令牌哈希，不保存明文；令牌在进程内存中记录，服务重启后未使用令牌全部失效。
+5. 兑换结果里的 `username` / `teamId` 与凭证一起写入 sidecar 配置
+   （`data\agent\config.json`），后续 `workspace init` 直接复用该用户名，不再要求手工输入。
+6. 注册成功后本地页切换到 workspace 面板：选择目录 → “初始化/修复”写入 `.trellis` /
+   `.opencode` / `.agents` → “打开看板”加载 Board。
+7. 服务端保存令牌哈希，不保存明文；令牌在进程内存中记录，服务重启后未使用令牌全部失效。
 
 配对码只作为管理员排障入口：桌面本地页折叠区可手工输入配对码，sidecar 需显式传入
-`--pairing-code`；桌面端默认不会请求或使用配对码。
+`--pairing-code`；桌面端默认不会请求或使用配对码。两条注册路径的差别只有兑换接口，
+写盘、workspace 初始化与后续 SSE 使用的是同一份设备凭证。
+
+## workspace 选择与初始化
+
+桌面端不自己实现路径 / 模板 / developer 逻辑，只把参数交给 sidecar：
+
+- 命令：`init_workspace(path, tools)`（Rust，`desktop/src-tauri/src/main.rs`）→
+  sidecar `workspace-init --path <绝对路径> [--tools .opencode,.agents]` →
+  `desktop/sidecar/workspace-init.js` → `agent/workspace.js` 的 `initializeWorkspace`。
+- 目录选择用 `pick_workspace`（`tauri-plugin-dialog`，仅本地页可调用）；
+  capability 只开放 `dialog:allow-open`，没有文件系统权限。
+- 模板来自服务端团队模板（`GET /api/team/workspace-template`，Agent Bearer），
+  已缓存时离线也能初始化；哈希不匹配或路径是符号链接时中止。
+- 不执行模板里的 Python：`init_developer.py` 只做静态校验，`.trellis/.developer` 由本地生成。
+- 等价 CLI（排查用）：
+
+```powershell
+node agent/cli.js workspace init --path D:\work\project --tools .opencode,.agents --username <登录用户名>
+node agent/cli.js workspace status --path D:\work\project --json
+```
 
 ## 目录
 
@@ -39,7 +63,8 @@ desktop/
     tauri.conf.json
     binaries/            build-sidecar.ps1 输出（trellis-agent-<target>.exe）
   sidecar/               Node SEA 打包入口与设备注册/撤销命令
-    main.js              run / enroll / revoke / status / version
+    main.js              run / enroll / revoke / status / workspace-init / version
+    workspace-init.js    归一化 workspace 参数并调用 agent/workspace.js
     desktop-device.js    复用 agent 的 ConfigStore、AgentApiClient、DPAPI
     bundle.mjs           esbuild 单文件 + SEA 配置
     build-sidecar.ps1    Windows x64 打包（Node 24）
@@ -52,8 +77,9 @@ desktop/
 - 导航：只允许配置的 Board origin（`https` 任意主机；`http` 仅 `localhost`/`127.0.0.1`/`::1`），
   且必须是根路径、无账号密码/查询/片段。同源跳转留在 webview；`mailto:`/`http(s)` 外链用
   `shell.open` 交给系统浏览器；`window.open` 一律拒绝。
-- 远程页面没有 Tauri IPC：capability `main` 只包含 `core:default` 和本地命令
-  `app_status`、`enroll_with_token`、`enroll_device`（配对码兜底）、`open_board_login`，
+- 远程页面没有 Tauri IPC：capability `main` 只包含 `core:default`、`dialog:allow-open`
+  （目录选择器的系统对话框）和本地命令 `app_status`、`enroll_with_token`、`enroll_device`
+  （配对码兜底）、`open_board_login`、`pick_workspace`、`init_workspace`，
   没有 `shell:allow-open`、文件系统、进程或 updater 权限。
   Rust 命令还会校验调用页面 URL 必须是本地页（`ensure_local_caller`），作为 capability 之外的
   第二道防线。设备凭证只存在 sidecar 的 DPAPI 文件中，不注入 webview，也不写 cookie。
@@ -194,6 +220,9 @@ exe/快捷方式/自启，保留 `data`。
 | 6 | `Test-Path "$env:LOCALAPPDATA\TrellisBoard\trellis-board-client.exe"; Test-Path "$env:LOCALAPPDATA\TrellisBoard\trellis-agent.exe"` | 两行均为 `True` |
 | 7 | 启动客户端 → 生成设备令牌 → “打开桌面客户端”或粘贴 → 注册 | 跳转 Board；`%LOCALAPPDATA%\TrellisBoard\data\agent\credential.dpapi` 存在且不是明文 |
 | 7b | 同一令牌再次兑换 | 服务端 401 `DESKTOP_TOKEN_INVALID`，客户端提示“已使用” |
+| 7c | 注册成功后在 workspace 面板点“选择目录” → “初始化/修复” | 目标目录出现 `.trellis`、`.opencode`、`.agents`；`.trellis\.developer` 的 `name` 等于该账号用户名；输出里有模板版本与来源 `network`/`cache` |
+| 7d | 断网后重复 7c（保留上次缓存） | 仍能初始化，来源为 `cache`；哈希不匹配或路径为符号链接时中止并提示 |
+| 7e | 已注册设备上再次运行 deep link `trellisboard://enroll?token=...` | 客户端提示“当前安装已经注册设备”，不会静默覆盖 |
 | 8 | `Get-Content "$env:LOCALAPPDATA\TrellisBoard\data\agent\credential.dpapi" -TotalCount 1` | 二进制/DPAPI 内容，不含 64 字符 base64url 凭证 |
 | 9 | 关闭窗口 | 进程仍在，托盘图标存在；托盘“退出”后进程消失 |
 | 10 | 再次双击 exe | 不产生第二个进程，只聚焦已有窗口 |
