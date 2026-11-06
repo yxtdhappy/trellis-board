@@ -9,6 +9,7 @@ import {
   readGitProject
 } from "./git-manager.js";
 import { CAPABILITIES, authorizeProject } from "./permissions.js";
+import { assertTeamMember, resolveProjectTeam } from "./teams.js";
 import {
   computeScriptTreeHash,
   precheckLifecycleHooks,
@@ -17,12 +18,6 @@ import {
 } from "./toolchain.js";
 
 const ROLES = new Set(["lead", "member", "read_only"]);
-
-function requireAdmin(actor) {
-  if (!actor?.systemAdmin) {
-    throw teamError(403, ERROR_CODES.FORBIDDEN, "只有系统管理员可以管理项目接入");
-  }
-}
 
 function cleanName(value, label, max = 80) {
   const result = String(value || "").trim();
@@ -47,6 +42,7 @@ function publicProject(row) {
   return {
     id: row.repository_id,
     repositoryId: row.repository_id,
+    teamId: row.team_id || null,
     name: row.repository_name,
     syncBranch: row.sync_branch,
     syncStatus: row.sync_status,
@@ -133,37 +129,56 @@ export function createProjectService({
   taskIndex
 }) {
   const projectsRoot = path.join(dataDir, "projects");
-  let statusBaseCache = null;
-  let statusRoleCache = null;
+
+  function requireProjectManager(actor, projectId) {
+    return authorizeProject(actor, projectId, CAPABILITIES.MANAGE_PROJECT, { db });
+  }
 
   function read(projectId) {
     return projectRow(db, projectId);
   }
 
-  function listAll() {
+  function listAll(actor = null) {
+    const teamId = actor?.activeTeamId || null;
+    const filter = teamId ? "WHERE p.team_id = ?" : "";
+    const params = teamId ? [teamId] : [];
     return db.prepare(`
       SELECT
         p.*, r.name AS repository_name, r.path AS repository_path
       FROM team_project p
       JOIN repositories r ON r.id = p.repository_id
+      ${filter}
       ORDER BY p.created_at DESC
-    `).all().map(publicProject);
+    `).all(...params).map(publicProject);
   }
 
   function listReadable(actor, { includeAssignees = true } = {}) {
+    const membershipJoin = actor.systemAdmin || actor.teamRole === "admin"
+      ? "LEFT JOIN project_member m ON m.project_id = p.repository_id AND m.user_id = ?"
+      : "JOIN project_member m ON m.project_id = p.repository_id AND m.user_id = ?";
+    const params = [actor.userId];
+    let teamFilter = "AND t.status = 'active'";
+    if (actor.activeTeamId) {
+      teamFilter += " AND p.team_id = ?";
+      params.push(actor.activeTeamId);
+    } else if (!actor.systemAdmin) {
+      return [];
+    }
     const rows = db.prepare(`
       SELECT
         p.*, r.name AS repository_name, r.path AS repository_path,
+        t.name AS team_name,
         m.role, m.trellis_dev_id,
         c.scanned_content_key, c.scanned_branch_sha, c.saved_at
       FROM team_project p
       JOIN repositories r ON r.id = p.repository_id
-      JOIN project_member m
-        ON m.project_id = p.repository_id AND m.user_id = ?
+      JOIN team t ON t.id = p.team_id
+      ${membershipJoin}
       LEFT JOIN project_scan_cache c ON c.project_id = p.repository_id
       WHERE p.sync_status IN ('current', 'stale', 'pending_push', 'needs_repair')
+        ${teamFilter}
       ORDER BY r.name COLLATE NOCASE, p.repository_id
-    `).all(actor.userId);
+    `).all(...params);
     const candidates = new Map();
     if (includeAssignees) {
       memberCandidateRows(db, [...new Set(rows.map((row) => row.repository_id))])
@@ -174,7 +189,9 @@ export function createProjectService({
     }
     return rows.map((row) => ({
       ...publicProject(row),
-      role: row.role,
+      teamId: row.team_id,
+      teamName: row.team_name,
+      role: row.role || (actor.systemAdmin ? "system_admin" : "team_admin"),
       trellisDevId: row.trellis_dev_id,
       boardVersion: row.scanned_content_key || null,
       scannedAt: row.saved_at || null,
@@ -184,50 +201,11 @@ export function createProjectService({
   }
 
   function listStatusReadable(actor) {
-    const revision = taskIndex.queryRevision();
-    if (!statusBaseCache || statusBaseCache.revision !== revision) {
-      const rows = db.prepare(`
-        SELECT
-          p.*, r.name AS repository_name,
-          c.scanned_content_key, c.saved_at
-        FROM team_project p
-        JOIN repositories r ON r.id = p.repository_id
-        LEFT JOIN project_scan_cache c ON c.project_id = p.repository_id
-        WHERE p.sync_status IN ('current', 'stale', 'pending_push', 'needs_repair')
-        ORDER BY r.name COLLATE NOCASE, p.repository_id
-      `).all();
-      statusBaseCache = {
-        revision,
-        projects: rows.map((row) => ({
-          ...publicProject(row),
-          boardVersion: row.scanned_content_key || null,
-          scannedAt: row.saved_at || null,
-          stale: row.sync_status !== "current"
-        }))
-      };
-    }
-    if (!statusRoleCache) {
-      const users = new Map();
-      db.prepare(`
-        SELECT user_id, project_id, role
-        FROM project_member
-      `).all().forEach((row) => {
-        if (!users.has(row.user_id)) users.set(row.user_id, new Map());
-        users.get(row.user_id).set(row.project_id, row.role);
-      });
-      statusRoleCache = { users };
-    }
-    const roles = statusRoleCache.users.get(actor.userId) || new Map();
-    return statusBaseCache.projects
-      .filter((project) => roles.has(project.id))
-      .map((project) => ({
-        ...project,
-        role: roles.get(project.id)
-      }));
+    return listReadable(actor, { includeAssignees: false });
   }
 
   async function connect(actor, input = {}) {
-    requireAdmin(actor);
+    const teamId = resolveProjectTeam(db, actor, input.teamId);
     const name = cleanName(input.name, "项目名称");
     const syncBranch = await gitManager.assertValidBranch(input.syncBranch);
     const remote = normalizeGitRemote(input.remoteUrl, config);
@@ -245,6 +223,12 @@ export function createProjectService({
       repositoryId = crypto.randomUUID();
     }
     const workspaceKey = crypto.randomUUID();
+    const existingWorkspace = db.prepare(`
+      SELECT 1 FROM team_project WHERE team_id = ? AND workspace_key = ?
+    `).get(teamId, workspaceKey);
+    if (existingWorkspace) {
+      throw teamError(409, ERROR_CODES.CONFLICT, "团队内工作区标识已存在");
+    }
     const cloneProject = {
       id: repositoryId,
       workspaceKey,
@@ -274,12 +258,13 @@ export function createProjectService({
         }
         db.prepare(`
           INSERT INTO team_project(
-            repository_id, workspace_key, remote_url, remote_identity_hash,
+            repository_id, team_id, workspace_key, remote_url, remote_identity_hash,
             sync_branch, trusted_task_toolchain_sha256, sync_status,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'provisioning', ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?)
         `).run(
           repositoryId,
+          teamId,
           workspaceKey,
           remote.url,
           remote.identityHash,
@@ -290,6 +275,7 @@ export function createProjectService({
         );
         appendAuditEvent(db, {
           actorUserId: actor.userId,
+          teamId,
           projectId: repositoryId,
           action: "project_connected",
           targetType: "project",
@@ -323,8 +309,8 @@ export function createProjectService({
   }
 
   async function approve(actor, input = {}) {
-    requireAdmin(actor);
     const projectId = String(input.projectId || "").trim();
+    requireProjectManager(actor, projectId);
     const approved = String(input.toolchainSha256 || "").trim().toLowerCase();
     if (!/^[a-f0-9]{64}$/.test(approved)) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, "工具链摘要格式无效");
@@ -345,6 +331,7 @@ export function createProjectService({
       await precheckLifecycleHooks(project.path);
       const leadUserId = String(input.leadUserId || "").trim();
       activeUser(db, leadUserId);
+      assertTeamMember(db, row.team_id, leadUserId);
       const developerId = validateDeveloperId(input.leadTrellisDevId);
       resolveDeveloperWorkspace(project.path, developerId);
       const now = new Date().toISOString();
@@ -414,7 +401,6 @@ export function createProjectService({
           { recoverable: true, details: { projectId } }
         );
       }
-      statusRoleCache = null;
       return { project: publicProject(projectRow(db, projectId)), result };
     });
   }
@@ -463,7 +449,7 @@ export function createProjectService({
   function listVisibleMembers(actor, projectId) {
     if (actor?.systemAdmin) return listMembers(actor, projectId);
     const access = authorizeProject(actor, projectId, CAPABILITIES.VIEW, { db });
-    if (access.role === "lead") return listMembers(actor, projectId);
+    if (access.role === "lead" || access.team_manager) return listMembers(actor, projectId);
     return memberCandidateRows(db, [projectId]).map(publicMemberCandidate);
   }
 
@@ -472,6 +458,8 @@ export function createProjectService({
     const access = authorizeProject(actor, projectId, CAPABILITIES.MANAGE_MEMBERS, { db });
     const userId = String(input.userId || "").trim();
     activeUser(db, userId);
+    const projectMeta = projectRow(db, projectId);
+    assertTeamMember(db, projectMeta.team_id, userId);
     const role = String(input.role || "").trim();
     if (!ROLES.has(role)) throw teamError(400, ERROR_CODES.INVALID_INPUT, "项目角色无效");
     const project = readGitProject(db, projectId);
@@ -512,7 +500,6 @@ export function createProjectService({
         }
       });
     });
-    statusRoleCache = null;
     return listMembers(actor, projectId);
   }
 
@@ -553,7 +540,6 @@ export function createProjectService({
         detail: { role: member.role, via: access.via }
       });
     });
-    statusRoleCache = null;
     return listMembers(actor, projectId);
   }
 
@@ -679,8 +665,8 @@ export function createProjectService({
   }
 
   async function disable(actor, input = {}) {
-    requireAdmin(actor);
     const projectId = String(input.projectId || "").trim();
+    requireProjectManager(actor, projectId);
     return gitManager.withProjectLock(projectId, async () => {
       const project = projectRow(db, projectId);
       if (!project) throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");
@@ -713,7 +699,7 @@ export function createProjectService({
   }
 
   async function repair(actor, projectId) {
-    requireAdmin(actor);
+    requireProjectManager(actor, projectId);
     return gitManager.withProjectLock(projectId, async () => {
       const project = readGitProject(db, projectId);
       if (!project) throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");

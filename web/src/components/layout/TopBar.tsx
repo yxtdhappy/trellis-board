@@ -11,6 +11,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { useTheme } from '@/app/theme'
 import { initials } from '@/features/board/task-view'
+import { TeamSwitcher } from '@/features/admin/TeamSwitcher'
 
 export type BoardNavItem = { id: string; label: string }
 
@@ -71,6 +72,7 @@ export function TopBar({
       </nav>
 
       <div className="ml-auto flex items-center gap-2">
+        <TeamSwitcher />
         <div className="relative hidden md:block">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input

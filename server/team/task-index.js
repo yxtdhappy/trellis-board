@@ -172,9 +172,10 @@ function filterHash(filters, projectIds, revision, day) {
   return hashValue({ filters, projectIds, revision, day });
 }
 
-function cursorBinding(filters, projectIds, userId, revision, day) {
+function cursorBinding(filters, projectIds, userId, revision, day, teamId = null) {
   return {
     u: userId,
+    g: teamId,
     p: projectIdsHash(projectIds),
     f: filterHash(filters, projectIds, revision, day),
     r: revision,
@@ -541,6 +542,7 @@ export function createTaskIndex({
     const day = shanghaiDay();
     const etag = `"${hashValue({
       user: actor.userId,
+      team: actor.activeTeamId || null,
       projects: [...projectIds].sort(),
       filters,
       revision,
@@ -556,6 +558,7 @@ export function createTaskIndex({
     }
     const cacheKey = hashValue({
       user: filters.scope === "mine" || input.cursor ? actor.userId : null,
+      team: actor.activeTeamId || null,
       cursor: input.cursor || null,
       projects: [...projectIds].sort(),
       filters,
@@ -566,7 +569,7 @@ export function createTaskIndex({
     if (cached) {
       queryCache.delete(cacheKey);
       queryCache.set(cacheKey, cached);
-      const binding = cursorBinding(filters, projectIds, actor.userId, revision, day);
+      const binding = cursorBinding(filters, projectIds, actor.userId, revision, day, actor.activeTeamId || null);
       return {
         tasks: cached.tasks,
         total: cached.total,
@@ -659,7 +662,7 @@ export function createTaskIndex({
     const pageParams = [...params];
     if (input.cursor) {
       const cursor = decryptCursor(input.cursor);
-      const binding = cursorBinding(filters, projectIds, actor.userId, revision, day);
+      const binding = cursorBinding(filters, projectIds, actor.userId, revision, day, actor.activeTeamId || null);
       if (
         Date.now() > cursor.exp ||
         Object.entries(binding).some(([key, value]) => cursor[key] !== value)
@@ -708,7 +711,7 @@ export function createTaskIndex({
     if (rows.length > filters.limit) {
       const last = pageRows.at(-1);
       nextCursor = encryptCursor({
-        ...cursorBinding(filters, projectIds, actor.userId, revision, day),
+        ...cursorBinding(filters, projectIds, actor.userId, revision, day, actor.activeTeamId || null),
         sa: last.last_activity_at || last.updated_at,
         pid: last.project_id,
         tk: last.task_key,

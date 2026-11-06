@@ -114,19 +114,23 @@ export function createBoardService({
     }
   }
 
-  function readWipLimit(userId) {
+  function teamScope(actor) {
+    return actor?.activeTeamId || "";
+  }
+
+  function readWipLimit(actor) {
     const row = db.prepare(`
       SELECT value_json
       FROM user_board_state
-      WHERE user_id = ? AND key = 'executionWipLimit'
-    `).get(userId);
+      WHERE user_id = ? AND team_id = ? AND key = 'executionWipLimit'
+    `).get(actor.userId, teamScope(actor));
     const value = parseUserState(row?.value_json, null);
     return Number.isInteger(value) && value >= 1 && value <= 9
       ? value
       : executionWipLimit;
   }
 
-  function writeWipLimit(userId, value) {
+  function writeWipLimit(actor, value) {
     if (!Number.isInteger(value) || value < 1 || value > 9) {
       throw teamError(
         400,
@@ -135,12 +139,12 @@ export function createBoardService({
       );
     }
     db.prepare(`
-      INSERT INTO user_board_state(user_id, key, value_json, updated_at)
-      VALUES (?, 'executionWipLimit', ?, ?)
-      ON CONFLICT(user_id, key) DO UPDATE SET
+      INSERT INTO user_board_state(user_id, team_id, key, value_json, updated_at)
+      VALUES (?, ?, 'executionWipLimit', ?, ?)
+      ON CONFLICT(user_id, team_id, key) DO UPDATE SET
         value_json = excluded.value_json,
         updated_at = excluded.updated_at
-    `).run(userId, JSON.stringify(value), new Date().toISOString());
+    `).run(actor.userId, teamScope(actor), JSON.stringify(value), new Date().toISOString());
     return value;
   }
 
@@ -265,7 +269,7 @@ export function createBoardService({
       [],
       db,
       new Date(),
-      { executionWipLimit: readWipLimit(actor.userId) }
+      { executionWipLimit: readWipLimit(actor) }
     );
     taskIndex.refreshProjectIndexFromDatabase({
       projectId,
@@ -347,11 +351,12 @@ export function createBoardService({
       projects.map((project) => project.id),
       new Date(Math.floor((now - staleMs) / 1000) * 1000).toISOString()
     );
-    const pendingAssignments = Number(db.prepare(`
-      SELECT COUNT(*) AS count
+    const projectIds = new Set(projects.map((project) => project.id));
+    const pendingAssignments = db.prepare(`
+      SELECT project_id
       FROM task_assignment
       WHERE assigned_user_id = ? AND state = 'pending'
-    `).get(actor.userId).count);
+    `).all(actor.userId).filter((row) => projectIds.has(row.project_id)).length;
     return {
       queryRevision: taskIndex.queryRevision(),
       queryDay: shanghaiDay(),
@@ -394,8 +399,8 @@ export function createBoardService({
       projectIds: [id]
     });
     const cached = readCachedProject(id);
-    const executionWipLimitForUser = readWipLimit(actor.userId);
-    const savedViews = executionStore.listSavedViews(actor.userId);
+    const executionWipLimitForUser = readWipLimit(actor);
+    const savedViews = executionStore.listSavedViews(actor.userId, actor.activeTeamId || null);
     const projected = cached?.board
       ? projectBoardExecution(
           {
@@ -478,7 +483,7 @@ export function createBoardService({
       200,
       {
         boardTasks: context.cached?.board?.tasks || [],
-        executionWipLimit: readWipLimit(actor.userId),
+        executionWipLimit: readWipLimit(actor),
         actorUserId: actor.userId
       }
     );
@@ -501,7 +506,11 @@ export function createBoardService({
     if (state != null && !new Set(["pending", "accepted"]).has(state)) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, "assignment state 无效");
     }
-    const ids = new Set(readableProjectIds(actor, { db }));
+    const projectIds = [...new Set(readableProjectIds(actor, { db }))];
+    if (!projectIds.length) {
+      return { assignments: [] };
+    }
+    const placeholders = projectIds.map(() => "?").join(", ");
     const rows = db.prepare(`
       SELECT
         a.*, t.*, p.sync_status AS project_sync_status,
@@ -515,12 +524,12 @@ export function createBoardService({
       WHERE a.assigned_user_id = ?
         AND (? IS NULL OR a.state = ?)
         AND t.archived = 0
+        AND a.project_id IN (${placeholders})
       ORDER BY
         CASE a.state WHEN 'pending' THEN 0 ELSE 1 END,
         a.assigned_at DESC
       LIMIT 200
-    `).all(actor.userId, state, state)
-      .filter((row) => ids.has(row.project_id));
+    `).all(actor.userId, state, state, ...projectIds);
     return {
       assignments: rows.map((row) => ({
         ...indexRow({
@@ -673,15 +682,15 @@ export function createBoardService({
       WHERE id = ?
     `).get(dependencyId);
     if (!row) throw teamError(404, ERROR_CODES.NOT_FOUND, "依赖不存在");
-    if (row.resolved_at) {
-      throw teamError(409, ERROR_CODES.CONFLICT, "这条依赖已经解除");
-    }
     const blocked = resolveTask(actor, {
       executionTaskKey: row.blocked_task_key
     }, CAPABILITIES.WRITE_TASK);
     const blocker = resolveTask(actor, {
       executionTaskKey: row.blocker_task_key
     }, CAPABILITIES.VIEW);
+    if (row.resolved_at) {
+      throw teamError(409, ERROR_CODES.CONFLICT, "这条依赖已经解除");
+    }
     requireMutableTask(blocked.task);
     requireMutableTask(blocker.task);
     const dependency = userError(() => executionStore.resolveDependency(
@@ -740,33 +749,33 @@ export function createBoardService({
   }
 
   function listSavedViews(actor) {
-    return executionStore.listSavedViews(actor.userId);
+    return executionStore.listSavedViews(actor.userId, actor.activeTeamId || null);
   }
 
   function createSavedView(actor, input = {}) {
     const view = userError(() =>
-      executionStore.createSavedView(input, actor.userId)
+      executionStore.createSavedView(input, actor.userId, actor.activeTeamId || null)
     );
     return { message: "组合视图已保存", view };
   }
 
   function updateSavedView(actor, input = {}) {
     const view = userError(() =>
-      executionStore.updateSavedView(input, actor.userId)
+      executionStore.updateSavedView(input, actor.userId, actor.activeTeamId || null)
     );
     return { message: "组合视图已更新", view };
   }
 
   function deleteSavedView(actor, input = {}) {
     const view = userError(() =>
-      executionStore.deleteSavedView(input.id, actor.userId)
+      executionStore.deleteSavedView(input.id, actor.userId, actor.activeTeamId || null)
     );
     return { message: "组合视图已删除", view };
   }
 
   function updateWipLimit(actor, input = {}) {
     const executionWipLimitForUser = writeWipLimit(
-      actor.userId,
+      actor,
       Number(input.executionWipLimit)
     );
     return {

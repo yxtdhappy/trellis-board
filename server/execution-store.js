@@ -844,17 +844,17 @@ export function createExecutionStore({
     return readExecutionDetail(db, executionTaskKey, limit);
   }
 
-  function listSavedViews(ownerUserId = null) {
+  function listSavedViews(ownerUserId = null, teamId = null) {
     const owner = normalizeActor(ownerUserId);
     return db.prepare(`
       SELECT id, name, filter_json, position, created_at, updated_at
       FROM saved_view
-      WHERE owner_user_id IS ?
+      WHERE owner_user_id IS ? AND team_id IS ?
       ORDER BY position, id
-    `).all(owner).map(rowToSavedView);
+    `).all(owner, teamId ?? null).map(rowToSavedView);
   }
 
-  function createSavedView(input = {}, ownerUserId = null) {
+  function createSavedView(input = {}, ownerUserId = null, teamId = null) {
     if (!isPlainObject(input)) throw new Error("保存视图必须是对象");
     const name = normalizeViewName(input.name);
     const filter = normalizeSavedViewFilter(input.filter, allowedStages);
@@ -865,17 +865,18 @@ export function createExecutionStore({
       const next = db.prepare(`
         SELECT COALESCE(MAX(position), -1) + 1 AS position
         FROM saved_view
-        WHERE owner_user_id IS ?
-      `).get(owner);
+        WHERE owner_user_id IS ? AND team_id IS ?
+      `).get(owner, teamId ?? null);
       db.prepare(`
         INSERT INTO saved_view(
-          id, name, filter_json, position, created_at, updated_at, owner_user_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          id, name, filter_json, position, team_id, created_at, updated_at, owner_user_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
         name,
         JSON.stringify(filter),
         Number(next.position),
+        teamId ?? null,
         now,
         now,
         owner
@@ -891,7 +892,7 @@ export function createExecutionStore({
     });
   }
 
-  function updateSavedView(input = {}, ownerUserId = null) {
+  function updateSavedView(input = {}, ownerUserId = null, teamId = null) {
     if (!isPlainObject(input)) throw new Error("保存视图必须是对象");
     const id = String(input.id || "").trim();
     if (!id) throw new Error("缺少保存视图 ID");
@@ -902,19 +903,19 @@ export function createExecutionStore({
     const result = db.prepare(`
       UPDATE saved_view
       SET name = ?, filter_json = ?, updated_at = ?
-      WHERE id = ? AND owner_user_id IS ?
-    `).run(name, JSON.stringify(filter), updatedAt, id, owner);
+      WHERE id = ? AND owner_user_id IS ? AND team_id IS ?
+    `).run(name, JSON.stringify(filter), updatedAt, id, owner, teamId ?? null);
     if (!result.changes) throw new Error("保存视图不存在");
     return {
       ...rowToSavedView(db.prepare(`
         SELECT id, name, filter_json, position, created_at, updated_at
         FROM saved_view
-        WHERE id = ? AND owner_user_id IS ?
-      `).get(id, owner))
+        WHERE id = ? AND owner_user_id IS ? AND team_id IS ?
+      `).get(id, owner, teamId ?? null))
     };
   }
 
-  function deleteSavedView(id, ownerUserId = null) {
+  function deleteSavedView(id, ownerUserId = null, teamId = null) {
     const viewId = String(id || "").trim();
     if (!viewId) throw new Error("缺少保存视图 ID");
     const owner = normalizeActor(ownerUserId);
@@ -922,16 +923,16 @@ export function createExecutionStore({
       const row = db.prepare(`
         SELECT id, name, filter_json, position, created_at, updated_at
         FROM saved_view
-        WHERE id = ? AND owner_user_id IS ?
-      `).get(viewId, owner);
+        WHERE id = ? AND owner_user_id IS ? AND team_id IS ?
+      `).get(viewId, owner, teamId ?? null);
       if (!row) throw new Error("保存视图不存在");
-      db.prepare("DELETE FROM saved_view WHERE id = ? AND owner_user_id IS ?")
-        .run(viewId, owner);
+      db.prepare("DELETE FROM saved_view WHERE id = ? AND owner_user_id IS ? AND team_id IS ?")
+        .run(viewId, owner, teamId ?? null);
       db.prepare(`
         UPDATE saved_view
         SET position = position - 1
-        WHERE position > ? AND owner_user_id IS ?
-      `).run(row.position, owner);
+        WHERE position > ? AND owner_user_id IS ? AND team_id IS ?
+      `).run(row.position, owner, teamId ?? null);
       return rowToSavedView(row);
     });
   }

@@ -67,6 +67,7 @@ test("项目接入克隆后工具链失败会清理本次 UUID 工作副本", as
     db.close();
     fs.rmSync(root, { recursive: true, force: true });
   });
+  seedTeam({ db });
   let clonedTarget = null;
   const projectService = createProjectService({
     db,
@@ -91,6 +92,7 @@ test("项目接入克隆后工具链失败会清理本次 UUID 工作副本", as
     projectService.connect(
       { userId: "11111111-1111-4111-8111-111111111111", systemAdmin: true },
       {
+        teamId: "t1",
         name: "无效工具链项目",
         remoteUrl: "https://example.com/invalid-toolchain.git",
         syncBranch: "main"
@@ -136,7 +138,7 @@ test("首管理员 CLI 只初始化一次且不会导入本机默认仓库", asy
     db.close();
   }
   const status = diagnose({ config: testConfig(), databaseFile });
-  assert.equal(status.schemaVersion, "5");
+  assert.equal(status.schemaVersion, "6");
   assert.equal(status.activeAdmin, true);
   assert.equal(status.integrity, "ok");
   await assert.rejects(
@@ -278,8 +280,26 @@ async function login(runtime, password, username = "admin") {
   });
 }
 
-function seedProject(runtime, user, root) {
+function seedTeam(runtime, teamId = "t1") {
   const now = new Date().toISOString();
+  runtime.db.prepare(`
+    INSERT OR IGNORE INTO team(id, name, slug, status, created_at, updated_at)
+    VALUES (?, ?, ?, 'active', ?, ?)
+  `).run(teamId, `团队 ${teamId}`, teamId, now, now);
+}
+
+function addTeamMember(runtime, teamId, userId, role = "member") {
+  const now = new Date().toISOString();
+  runtime.db.prepare(`
+    INSERT OR IGNORE INTO team_member(team_id, user_id, role, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(teamId, userId, role, now, now);
+}
+
+function seedProject(runtime, user, root, teamId = "t1") {
+  const now = new Date().toISOString();
+  seedTeam(runtime, teamId);
+  addTeamMember(runtime, teamId, user.id, "admin");
   const repositoryPath = path.join(root, "projects", "p1");
   fs.mkdirSync(repositoryPath, { recursive: true });
   runtime.db.prepare(`
@@ -288,11 +308,11 @@ function seedProject(runtime, user, root) {
   `).run(repositoryPath, repositoryPath.toLowerCase(), now, now);
   runtime.db.prepare(`
     INSERT INTO team_project(
-      repository_id, workspace_key, remote_url, remote_identity_hash,
+      repository_id, team_id, workspace_key, remote_url, remote_identity_hash,
       sync_branch, trusted_task_toolchain_sha256, sync_status, created_at, updated_at
-    ) VALUES ('p1', 'p1-workspace', 'https://example.com/p1.git', ?,
+    ) VALUES ('p1', ?, 'p1-workspace', 'https://example.com/p1.git', ?,
       'main', ?, 'current', ?, ?)
-  `).run("f".repeat(64), "a".repeat(64), now, now);
+  `).run(teamId, "f".repeat(64), "a".repeat(64), now, now);
   runtime.db.prepare(`
     INSERT INTO project_member(
       project_id, user_id, role, trellis_dev_id, created_by, created_at, updated_at
@@ -348,6 +368,7 @@ function seedIndexedTasks(runtime) {
 
 function seedPollingProjects(runtime, root, count) {
   const now = new Date().toISOString();
+  seedTeam(runtime);
   for (let index = 0; index < count; index += 1) {
     const projectId = `poll-${index}`;
     const repositoryPath = path.join(root, "projects", projectId);
@@ -366,9 +387,9 @@ function seedPollingProjects(runtime, root, count) {
     );
     runtime.db.prepare(`
       INSERT INTO team_project(
-        repository_id, workspace_key, remote_url, remote_identity_hash,
+        repository_id, team_id, workspace_key, remote_url, remote_identity_hash,
         sync_branch, trusted_task_toolchain_sha256, sync_status, created_at, updated_at
-      ) VALUES (?, ?, 'https://example.com/project.git', ?,
+      ) VALUES (?, 't1', ?, 'https://example.com/project.git', ?,
         'main', ?, 'current', ?, ?)
     `).run(
       projectId,
@@ -453,6 +474,7 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
       project_id, user_id, role, trellis_dev_id, created_by, created_at, updated_at
     ) VALUES ('p1', ?, 'read_only', NULL, ?, ?, ?)
   `).run(readOnlyUser.id, user.id, now, now);
+  addTeamMember(runtime, "t1", readOnlyUser.id);
   const memberUser = await createUser(runtime.db, {
     username: "member",
     displayName: "项目成员",
@@ -465,6 +487,7 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
       project_id, user_id, role, trellis_dev_id, created_by, created_at, updated_at
     ) VALUES ('p1', ?, 'member', 'bob', ?, ?, ?)
   `).run(memberUser.id, user.id, now, now);
+  addTeamMember(runtime, "t1", memberUser.id);
   const memberLogin = await login(runtime, "Member-Password-123", "member");
   const memberCookie = sessionCookie(memberLogin);
   const memberProjects = await request(runtime, "/api/team/projects", {

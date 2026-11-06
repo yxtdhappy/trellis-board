@@ -24,6 +24,7 @@ function sanitize(value, depth = 0) {
 export function appendAuditEvent(db, {
   actorUserId = null,
   actorAgentId = null,
+  teamId = null,
   projectId = null,
   action,
   targetType,
@@ -33,14 +34,19 @@ export function appendAuditEvent(db, {
   detail = {},
   occurredAt = new Date().toISOString()
 }) {
+  const resolvedTeamId = teamId || (projectId
+    ? db.prepare("SELECT team_id FROM team_project WHERE repository_id = ?")
+        .get(projectId)?.team_id || null
+    : null);
   const info = db.prepare(`
     INSERT INTO audit_event(
-      actor_user_id, actor_agent_id, project_id, action, target_type,
+      actor_user_id, actor_agent_id, team_id, project_id, action, target_type,
       target_id, result, correlation_id, detail_json, occurred_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     actorUserId,
     actorAgentId,
+    resolvedTeamId,
     projectId,
     String(action).slice(0, 100),
     String(targetType).slice(0, 100),
@@ -67,6 +73,7 @@ function auditRow(row) {
     id: Number(row.id),
     actorUserId: row.actor_user_id || null,
     actorAgentId: row.actor_agent_id || null,
+    teamId: row.team_id || null,
     projectId: row.project_id || null,
     action: row.action,
     targetType: row.target_type,
@@ -79,6 +86,7 @@ function auditRow(row) {
 }
 
 export function listAuditEvents(db, {
+  teamId = null,
   projectId = null,
   limit = 100,
   beforeId = null
@@ -87,11 +95,14 @@ export function listAuditEvents(db, {
   return db.prepare(`
     SELECT *
     FROM audit_event
-    WHERE (? IS NULL OR project_id = ?)
+    WHERE (? IS NULL OR team_id = ?)
+      AND (? IS NULL OR project_id = ?)
       AND (? IS NULL OR id < ?)
     ORDER BY occurred_at DESC, id DESC
     LIMIT ?
   `).all(
+    teamId,
+    teamId,
     projectId,
     projectId,
     beforeId,

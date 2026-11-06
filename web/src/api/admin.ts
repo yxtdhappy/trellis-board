@@ -3,7 +3,7 @@ import { redactSensitiveDetail } from '@/lib/team-client.js'
 
 export const AUDIT_PAGE_LIMIT = 100
 
-export type AdminView = 'project-access' | 'users' | 'projects' | 'agents' | 'audit'
+export type AdminView = 'project-access' | 'users' | 'teams' | 'projects' | 'agents' | 'audit'
 
 export type SessionUser = {
   id: string
@@ -42,9 +42,30 @@ export type TeamProject = RuntimeProject & {
   members: ProjectMember[]
 }
 
+export type Team = {
+  id: string
+  name: string
+  slug: string
+  status: string
+  role: string | null
+  active: boolean
+  memberCount: number
+  projectCount: number
+}
+
+export type TeamMember = {
+  userId: string
+  username: string
+  displayName: string
+  systemAdmin: boolean
+  status: string
+  role: string
+}
+
 export type AdminUser = SessionUser & {
   passwordChangedAt: string | null
   createdAt: string | null
+  teams: Team[]
 }
 
 export type AgentDevice = {
@@ -102,6 +123,10 @@ export type Runtime = {
   authenticated: boolean
   user: SessionUser | null
   systemAdmin: boolean
+  activeTeamId: string | null
+  activeTeam: Team | null
+  teamRole: string | null
+  teams: Team[]
   projects: RuntimeProject[]
 }
 
@@ -165,6 +190,32 @@ function readSessionUser(input: unknown): SessionUser {
     systemAdmin: flag(row.systemAdmin ?? row.system_admin),
     status: text(row.status, 'active'),
     mustChangePassword: flag(row.mustChangePassword ?? row.must_change_password)
+  }
+}
+
+function readTeam(input: unknown): Team {
+  const row = record(input)
+  return {
+    id: text(row.id),
+    name: text(row.name),
+    slug: text(row.slug),
+    status: text(row.status, 'active'),
+    role: optionalText(row.role),
+    active: flag(row.active),
+    memberCount: Number(row.memberCount ?? row.member_count ?? 0) || 0,
+    projectCount: Number(row.projectCount ?? row.project_count ?? 0) || 0
+  }
+}
+
+function readTeamMember(input: unknown): TeamMember {
+  const row = record(input)
+  return {
+    userId: text(row.userId ?? row.user_id),
+    username: text(row.username),
+    displayName: text(row.displayName ?? row.display_name, text(row.username)),
+    systemAdmin: flag(row.systemAdmin ?? row.system_admin),
+    status: text(row.status, 'active'),
+    role: text(row.role ?? row.teamRole ?? row.team_role, 'member')
   }
 }
 
@@ -246,6 +297,12 @@ export function readRuntime(payload: unknown): Runtime {
     authenticated: row.authenticated !== false,
     user,
     systemAdmin: flag(row.systemAdmin ?? row.system_admin) || Boolean(user?.systemAdmin),
+    activeTeamId: optionalText(row.activeTeamId ?? row.active_team_id),
+    activeTeam: row.activeTeam || row.active_team
+      ? readTeam(row.activeTeam ?? row.active_team)
+      : null,
+    teamRole: optionalText(row.teamRole ?? row.team_role),
+    teams: rows(row.teams).map(readTeam),
     projects: rows(row.projects ?? row.items).map(readRuntimeProject)
   }
 }
@@ -255,7 +312,8 @@ function readAdminUser(input: unknown): AdminUser {
   return {
     ...readSessionUser(row),
     passwordChangedAt: optionalText(row.passwordChangedAt ?? row.password_changed_at),
-    createdAt: optionalText(row.createdAt ?? row.created_at)
+    createdAt: optionalText(row.createdAt ?? row.created_at),
+    teams: rows(row.teams).map(readTeam)
   }
 }
 
@@ -334,6 +392,60 @@ function auditQuery(beforeId: number | null, limit = AUDIT_PAGE_LIMIT): string {
 export async function fetchRuntime(): Promise<Runtime> {
   const { data } = await requestJson<unknown>('/api/runtime')
   return readRuntime(data)
+}
+
+export async function switchTeam(teamId: string): Promise<Team | null> {
+  const { data } = await requestJson<unknown>('/api/auth/team', {
+    method: 'POST',
+    body: { teamId }
+  })
+  return record(data).team ? readTeam(record(data).team) : null
+}
+
+export async function fetchAdminTeams(): Promise<Team[]> {
+  const { data } = await requestJson<unknown>('/api/admin/teams')
+  return collection(data, 'teams', readTeam)
+}
+
+export async function createTeam(name: string, slug?: string): Promise<Team | null> {
+  const { data } = await requestJson<unknown>('/api/admin/teams', {
+    method: 'POST',
+    body: { name, slug: slug?.trim() || undefined }
+  })
+  return record(data).team ? readTeam(record(data).team) : null
+}
+
+export async function updateTeam(
+  teamId: string,
+  updates: { name?: string; status?: string }
+): Promise<Team | null> {
+  const { data } = await requestJson<unknown>(`/api/admin/teams/${encodeURIComponent(teamId)}`, {
+    method: 'PATCH',
+    body: updates
+  })
+  return record(data).team ? readTeam(record(data).team) : null
+}
+
+export async function fetchTeamDetail(
+  teamId: string
+): Promise<{ team: Team | null; members: TeamMember[] }> {
+  const { data } = await requestJson<unknown>(`/api/admin/teams/${encodeURIComponent(teamId)}`)
+  const row = record(data)
+  return {
+    team: record(row.team).id ? readTeam(record(row.team)) : null,
+    members: rows(record(row.team).members).map(readTeamMember)
+  }
+}
+
+export async function saveUserTeams(
+  userId: string,
+  teams: { teamId: string; role: string }[]
+): Promise<Team[]> {
+  const { data } = await requestJson<unknown>(
+    `/api/admin/users/${encodeURIComponent(userId)}/teams`,
+    { method: 'PUT', body: { teams } }
+  )
+  return rows(record(data).teams).map(readTeam)
 }
 
 export async function fetchUsers(): Promise<AdminUser[]> {

@@ -145,8 +145,13 @@ if (Test-Path data\board.sqlite-wal) { Copy-Item data\board.sqlite-wal "$backup\
 if (Test-Path data\board.sqlite-shm) { Copy-Item data\board.sqlite-shm "$backup\board.sqlite-shm" }
 ```
 
-v3 数据库首次以 team 模式打开时自动升级到 v4，并在同目录生成
-`data/board.sqlite.v3-backup-<timestamp>`。升级完成后运行：
+本版本**不做旧数据库迁移**，schema v6 只对新建数据库生效。已有 `data/board.sqlite` 若不是
+v6，服务会拒绝启动并提示删除重建。升级步骤：
+
+1. 停止服务并再次保留当前数据库、日志和配置。
+2. 备份并移走 `data/board.sqlite`、`data/board.sqlite-wal`、`data/board.sqlite-shm`。
+3. 重新启动服务，让空库创建 v6 schema。
+4. 运行 `node server/team/cli.js status`。
 
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
@@ -154,15 +159,15 @@ $env:TRELLIS_TEAM_PUBLIC_URL = 'https://board.example.com'
 node server/team/cli.js status
 ```
 
-结果必须显示 `schemaVersion=4`、`journalMode=wal` 和 `integrity=ok`。任一步失败时停止服务，
-保留失败数据库和日志，不要继续接受写入。
+结果必须显示 `schemaVersion=6`、`journalMode=wal` 和 `integrity=ok`。旧库中的账号、项目、
+审计和任务索引不会自动回填，需要由系统管理员重新创建团队、分配成员并接入项目。
 
 回滚步骤：
 
 1. 停止服务并再次保留当前数据库、日志和配置。
 2. 切回旧应用版本。
 3. 把当前 `data/board.sqlite*` 移到独立目录。
-4. 恢复升级前数据库、WAL 和 SHM，或使用迁移生成的 v3 快照。
+4. 恢复旧版本对应的数据库、WAL 和 SHM 备份，或让旧版本重建空库。
 5. 以 standalone 模式启动并检查健康接口和任务数量。
 
 数据库回滚不会删除 Git 远端已经成功推送的任务提交，也不会自动撤回 Agent 已同步的新提交。
@@ -199,7 +204,7 @@ Agent 离线：检查当前用户计划任务、`%LOCALAPPDATA%\TrellisBoardAgen
 
 - `npm test` 和全部 JS 语法检查通过。
 - standalone 和 team 模式均能真实启动、访问健康接口并正常停止。
-- v3 数据库副本升级成功，备份完整，回滚演练完成。
+- 空库创建 v6 schema 成功；旧库拒绝启动并提示重建，回滚演练完成。
 - 临时 Git 远端完成创建/委派、push、接受和 Agent `ff-only` 同步。
 - dirty、错分支、版本冲突、push 失败和 repair 分支均有可恢复结果。
 - Agent 包不包含凭证、数据库、日志或开发机绝对路径。
