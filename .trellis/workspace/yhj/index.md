@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
+- **Total Sessions**: 10
 - **Last Active**: 2026-11-07
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~248 | Active |
+| `journal-1.md` | ~282 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-11-07 | 按项目过滤任务委派人 | `ac142a4` | `codex/team-board` |
 | 9 | 2026-11-07 | 归档检查阶段看板分栏任务 | `2a993b0` | `codex/team-board` |
 | 8 | 2026-11-07 | 修复项目删除参数契约并清理团队版活跃任务 | `23c493e`, `88b068c` | `codex/team-board` |
 | 7 | 2026-10-31 | 完成看板复制任务名入口 | `2860ef2`, `9d9dc95` | `codex/personal-execution-enhancements` |

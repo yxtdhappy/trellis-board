@@ -246,3 +246,37 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 10: 按项目过滤任务委派人
+<!-- trellis-session: v=2 fp=f6eb5bfdd0f2dc39 -->
+
+**Date**: 2026-11-07
+**Task**: 按项目过滤任务委派人
+**Branch**: `codex/team-board`
+
+### Summary
+
+任务详情派发候选改为当前任务所属项目 workspace 成员，并补充严格成员投影、按钮校验与跨层契约。
+
+### Main Changes
+
+- 项目投影新增 workspaceMembers，区分 workspace 成员与历史任务参与人
+- 任务详情按 projectId 使用对应项目成员候选
+- 当前负责人不在候选时禁用更新派发
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ac142a4` | fix(web): 按项目过滤任务委派人 |
+
+### Testing
+
+- [OK] node --test tests/loader.test.js：28/28 通过
+- [OK] 前端 lint、TypeScript 和 Vite 构建通过
+- [OK] ego-browser 验证 mdp-report-service 仅 yhj，mdp-backend-web 为 flyfly6/kanyifei/yhj
+
+### Status
+
+[OK] **Completed**
