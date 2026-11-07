@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"确认 BoardPage 到弹窗的数据流，以及项目切换后的状态更新边界"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"确认 TypeScript、React 列表选项和真实页面验收要求"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"确认项目 members 与 task.projectId 的前后端字段契约"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"确认负责人写入仍由后端校验目标项目 workspace 成员"}

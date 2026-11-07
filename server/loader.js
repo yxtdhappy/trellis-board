@@ -695,7 +695,8 @@ export function scanRepository(project, options = {}) {
   return {
     project: {
       ...baseProject,
-      members
+      members,
+      workspaceMembers: baseProject.members
     },
     tasks,
     error: null,

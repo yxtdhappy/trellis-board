@@ -120,6 +120,24 @@ test("扫描嵌套归档目录并使用文件证据推导阶段", () => {
   }
 });
 
+test("项目分别投影 workspace 成员和任务参与人", () => {
+  const root = makeRepo();
+  try {
+    const taskPath = path.join(root, ".trellis", "tasks", "10-20-live", "task.json");
+    const task = JSON.parse(fs.readFileSync(taskPath, "utf8"));
+    task.assignee = "historical-user";
+    fs.writeFileSync(taskPath, JSON.stringify(task));
+
+    clearScanCaches();
+    const result = scanRepository({ id: "demo", name: "Demo", path: root });
+    assert.deepEqual(result.project.workspaceMembers, ["dev"]);
+    assert.deepEqual(result.project.members, ["dev", "historical-user"]);
+  } finally {
+    clearScanCaches();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("稳定执行身份在任务归档后保持不变", () => {
   const root = makeRepo();
   const project = { id: "identity-demo", name: "Identity Demo", path: root };

@@ -180,6 +180,7 @@ export function TaskDetailDialog({
   const progress = current ? taskProgress(current) : null
   const stage = current ? nextStage(current) : null
   const artifacts = readArtifacts(current)
+  const canAssign = Boolean(current && assignee && assignees.includes(assignee))
 
   async function reloadDetail() {
     if (!task) return
@@ -534,8 +535,9 @@ export function TaskDetailDialog({
               <Button
                 size="sm"
                 className="h-8 text-[11px]"
+                disabled={!canAssign}
                 onClick={async () => {
-                  if (!current || !assignee) return
+                  if (!current || !canAssign) return
                   try {
                     await onAssign(current, assignee)
                     toast.success('负责人已更新')

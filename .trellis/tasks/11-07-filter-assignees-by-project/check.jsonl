@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"检查详情弹窗候选列表是否跟随当前任务所属项目"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查前端类型、lint、构建和真实页面验收"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 projectId、project.members 和负责人写入契约的一致性"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"确认后端 workspace 成员校验没有被绕过"}

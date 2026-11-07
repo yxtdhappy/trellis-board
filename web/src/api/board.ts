@@ -5,6 +5,8 @@ export type Project = {
   id: string
   name: string
   path: string
+  members?: string[]
+  workspaceMembers?: string[]
   developer?: string | null
   syncStatus?: string
   scanStatus?: string

@@ -107,6 +107,62 @@ await onRemove(row.id)
 api('/api/repositories', 'DELETE', { id })
 ```
 
+### Scenario: 项目 workspace 成员投影
+
+#### 1. Scope / Trigger
+
+项目人员选择跨越扫描 Worker、`/api/board` 项目投影、React 页面和负责人写接口。可委派人员必须来自任务所属仓库的 `.trellis/workspace/<developer>`，不能用跨项目人员并集作为候选。
+
+#### 2. Signatures
+
+- 项目投影：`{ members: string[], workspaceMembers: string[] }`
+- `members`：workspace 成员与历史任务负责人/创建人的去重并集，供展示和筛选。
+- `workspaceMembers`：仅 `.trellis/workspace` 的直接子目录名，供负责人委派候选。
+- `POST /api/tasks/assign`：仍由后端校验目标人员属于任务项目 workspace。
+
+#### 3. Contracts
+
+- 前端按 `task.projectId` 选择对应项目。
+- 委派下拉优先使用 `project.workspaceMembers`。
+- 旧缓存缺少 `workspaceMembers` 时可回退 `project.members`；两者都缺失时保留原候选列表并依赖后端校验。
+- 项目成员变化依赖 `.trellis/workspace` 扫描刷新。
+
+#### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 候选人属于任务项目 workspace | 后端允许更新负责人 |
+| 候选人来自其他项目 workspace | 前端不展示；直接提交时后端拒绝 |
+| 当前负责人不在候选列表 | 禁止提交未变化的旧值 |
+| `workspaceMembers` 缺失 | 使用兼容回退，不臆造人员 |
+
+#### 5. Good/Base/Bad Cases
+
+- Good：任务 `projectId=mdp-report-service`，下拉只使用该项目 `workspaceMembers`。
+- Base：项目没有历史任务参与人时，`members` 与 `workspaceMembers` 可以相同。
+- Bad：把全部任务的 `assignee` 并集直接传给详情弹窗，导致跨项目人员可选。
+
+#### 6. Tests Required
+
+- loader 测试：历史任务参与人只进入 `members`，不污染 `workspaceMembers`。
+- 前端构建：`Project` 类型同时声明两个成员字段。
+- 页面验收：切换不同项目任务后，候选列表随 `projectId` 变化。
+
+#### 7. Wrong vs Correct
+
+Bad:
+
+```tsx
+assignees={[...new Set(allTasks.map((task) => task.assignee))]}
+```
+
+Good:
+
+```tsx
+const project = projects.find((item) => item.id === selected.projectId)
+assignees={project?.workspaceMembers ?? project?.members ?? allAssignees}
+```
+
 ## 写操作边界
 
 ### 创建任务

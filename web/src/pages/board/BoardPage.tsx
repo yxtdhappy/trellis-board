@@ -61,6 +61,11 @@ export function BoardPage() {
     () => [...new Set(tasks.map((task) => task.assignee).filter((name): name is string => Boolean(name)))],
     [tasks],
   )
+  const selectedProject = selected
+    ? projects.find((project) => project.id === selected.projectId)
+    : null
+  const detailAssignees =
+    selectedProject?.workspaceMembers ?? selectedProject?.members ?? assignees
   const displayName = runtime?.user?.displayName || runtime?.user?.username || '看板用户'
   const savedViews = useMemo(() => normalizeViews(board?.savedViews), [board?.savedViews])
   const archived = tasks.filter((task) => task.archived)
@@ -227,7 +232,7 @@ export function BoardPage() {
         task={selected}
         open={Boolean(selected)}
         onOpenChange={(open) => !open && setSelected(null)}
-        assignees={assignees}
+        assignees={detailAssignees}
         onAssign={async (task, assignee) => {
           if (teamMode) {
             const version = taskVersion(task)
