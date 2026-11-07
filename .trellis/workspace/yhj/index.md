@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
-- **Last Active**: 2026-10-31
+- **Total Sessions**: 8
+- **Last Active**: 2026-11-07
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~181 | Active |
+| `journal-1.md` | ~216 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-11-07 | 修复项目删除参数契约并清理团队版活跃任务 | `23c493e`, `88b068c` | `codex/team-board` |
 | 7 | 2026-10-31 | 完成看板复制任务名入口 | `2860ef2`, `9d9dc95` | `codex/personal-execution-enhancements` |
 | 6 | 2026-10-31 | 个人版执行增强集成 | `a00f9155eeb0ddc8b41ada056fd992004322128f`, `292281e` | `codex/personal-execution-enhancements` |
 | 5 | 2026-10-31 | 个人执行：追溯与复盘 | `8c8ccdca5f62967846fd86eecb12c71f309b3986`, `62c0a60c19c9d405212e9c4aa3e58b934bf4f0fe` | `codex/personal-history-insights` |

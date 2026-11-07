@@ -179,3 +179,38 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 8: 修复项目删除参数契约并清理团队版活跃任务
+<!-- trellis-session: v=2 fp=8633077fc193632d -->
+
+**Date**: 2026-11-07
+**Task**: 修复项目删除参数契约并清理团队版活跃任务
+**Branch**: `codex/team-board`
+
+### Summary
+
+删除项目改为使用仓库 id，消除缺少项目 ID 错误；同时清理 5 个团队版活跃任务及其 Board 索引，保留归档任务。
+
+### Main Changes
+
+- ProjectManagerDialog、useBoard 和前端 API 的删除参数统一为 id
+- 补充删除接口跨层契约规范
+- 删除 11-03 团队版父任务和 4 个子任务，清理对应 SQLite 事件索引
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `23c493e` | fix(web): 修复项目删除参数契约 |
+| `88b068c` | chore(tasks): 删除团队版活跃任务树 |
+
+### Testing
+
+- [OK] npm test：324 通过、5 跳过、0 失败
+- [OK] 前端 lint、TypeScript 和 Vite 构建通过
+- [OK] 隔离 HTTP 删除验证通过，源目录保留
+
+### Status
+
+[OK] **Completed**
