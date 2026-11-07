@@ -1,7 +1,0 @@
-{"file":".trellis/tasks/11-03-team-board/design.md","reason":"集成验收必须核对父设计的全部跨模块契约。"}
-{"file":".trellis/tasks/11-03-team-board/implement.md","reason":"父计划定义子任务依赖、提交边界和最终验证策略。"}
-{"file":".trellis/tasks/11-03-team-board/research/security-boundaries.md","reason":"发布和安全验收覆盖全部信任边界。"}
-{"file":".trellis/tasks/11-03-team-board/research/capacity-and-board-scaling.md","reason":"容量验收必须覆盖跨项目查询、400 账号、200 在线、100 项目、10,000 任务和 400 Agent 连接。"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"真实 E2E 连接 Web、服务端、Git 和 Windows Agent。"}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"集成、迁移和容量测试遵循后端质量规则。"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"最终浏览器验收遵循现有前端质量规则。"}

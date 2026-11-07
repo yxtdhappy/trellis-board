@@ -1,4 +1,0 @@
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"验证子进程、错误路径和 Windows 真实 Git 行为。"}
-{"file":".trellis/tasks/11-03-team-board/research/security-boundaries.md","reason":"检查凭证泄漏、任意命令和 dirty 工作区风险。"}
-{"file":".trellis/tasks/11-03-team-board/research/contract-decisions.md","reason":"确认 Agent 只同步、不写任务。"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对远端、本地分支、HEAD 和服务端状态。"}
