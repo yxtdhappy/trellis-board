@@ -214,3 +214,35 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: 归档检查阶段看板分栏任务
+<!-- trellis-session: v=2 fp=2b1f79abce42ddc6 -->
+
+**Date**: 2026-11-07
+**Task**: 归档检查阶段看板分栏任务
+**Branch**: `codex/team-board`
+
+### Summary
+
+确认检查阶段分栏与阶段证据门禁已实现并合并，针对性回归测试 33/33 通过，归档历史遗留任务。
+
+### Main Changes
+
+- 核对 derivedStage=check 进入检查/收尾泳道，implement 保持实现泳道
+- 核对 in_progress 不再单独作为实施完成证据
+- 归档 11-01-check-stage-kanban-lane，保留历史任务记录
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2a993b0` | feat: add team board control plane |
+
+### Testing
+
+- [OK] node --test tests/loader.test.js tests/execution-filter.test.js：33/33 通过
+
+### Status
+
+[OK] **Completed**
