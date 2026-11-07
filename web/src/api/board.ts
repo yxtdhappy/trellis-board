@@ -111,8 +111,8 @@ export const pickFolders = () =>
 export const addRepositories = (paths: string[]) =>
   api<BoardPayload>('/api/repositories', 'POST', { repositories: paths.map((path) => ({ path })) })
 
-export const removeRepository = (path: string) =>
-  api('/api/repositories', 'DELETE', { path })
+export const removeRepository = (id: string) =>
+  api('/api/repositories', 'DELETE', { id })
 
 export const createTaskRequest = (payload: Record<string, unknown>) =>
   api('/api/tasks', 'POST', payload)

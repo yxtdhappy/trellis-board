@@ -19,7 +19,7 @@ type ProjectManagerProps = {
   onList: () => Promise<{ id?: string; name?: string; path?: string }[]>
   onPick: () => Promise<string[]>
   onAdd: (paths: string[]) => Promise<void>
-  onRemove: (path: string) => Promise<void>
+  onRemove: (id: string) => Promise<void>
   onScan: () => Promise<void>
 }
 
@@ -97,10 +97,10 @@ export function ProjectManagerDialog({
   }
 
   async function remove(row: { path?: string; id?: string }) {
-    if (!row.path) return
+    if (!row.id) return
     setBusy(true)
     try {
-      await onRemove(row.path)
+      await onRemove(row.id)
       await reload()
       toast.success('已移除项目')
     } catch (error) {

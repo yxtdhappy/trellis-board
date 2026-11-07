@@ -1,0 +1,5 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查前端请求体、hook action、后端路由和仓库存储之间的删除契约"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"检查弹窗操作、刷新行为和错误展示是否符合现有状态流"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查 TypeScript、React 和前端构建验收"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"检查 API 输入校验、白名单删除语义和源文件安全边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查自动测试覆盖和真实 HTTP 验收"}

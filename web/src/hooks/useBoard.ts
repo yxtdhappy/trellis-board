@@ -364,8 +364,8 @@ export function useBoard(): BoardController {
           await addRepositories(paths);
           await loadBoard(false, true);
         },
-        remove: async (path: string) => {
-          await removeRepository(path);
+        remove: async (id: string) => {
+          await removeRepository(id);
           await loadBoard(false, true);
         },
       },
@@ -466,7 +466,7 @@ export type BoardActions = {
     list: () => Promise<{ id?: string; name?: string; path?: string }[]>;
     pick: () => Promise<string[]>;
     add: (paths: string[]) => Promise<void>;
-    remove: (path: string) => Promise<void>;
+    remove: (id: string) => Promise<void>;
   };
 };
 

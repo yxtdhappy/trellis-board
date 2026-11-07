@@ -50,6 +50,63 @@
 - 批量插入、删除和删除后的位置重排都在 SQLite 事务中完成。
 - 移除项目只改白名单，不删除仓库目录。
 
+### Scenario: 移除看板项目
+
+#### 1. Scope / Trigger
+
+删除项目跨越弹窗、hook、前端 API、HTTP 路由和 SQLite 仓库存储，必须统一使用稳定业务键 `id`。路径 `path` 用于展示和文件扫描，不能代替仓库身份。
+
+#### 2. Signatures
+
+- `ProjectManagerDialog.onRemove(id: string): Promise<void>`
+- `useBoard().actions.repositories.remove(id: string): Promise<void>`
+- `removeRepository(id: string)` 调用 `DELETE /api/repositories`
+- `repositoryStore.remove({ id: string })`
+
+#### 3. Contracts
+
+- 请求体：`{ "id": "<repositories.id>" }`。
+- 成功响应：HTTP 200，包含中文 `message` 和被移除的 `repository`。
+- 删除范围：白名单记录、对应人工阶段、执行扩展数据和任一侧依赖行。
+- 禁止删除：仓库目录、Trellis 任务文件和其他项目的白名单。
+
+#### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| `id` 缺失或为空 | HTTP 400，`缺少项目 ID` |
+| `id` 不在白名单 | HTTP 400，`项目不在看板中` |
+| `id` 有效 | HTTP 200，事务内移除项目及关联 Board 数据 |
+| 只发送 `path` | HTTP 400，`缺少项目 ID` |
+
+#### 5. Good/Base/Bad Cases
+
+- Good：弹窗把列表行的 `row.id` 传给 hook，API 发送 `{ id }`，成功后再读取 `/api/repositories` 和 `/api/board`。
+- Base：项目没有关联阶段、执行数据或依赖时，只删除白名单记录。
+- Bad：把 `row.path` 当作删除参数，导致所有项目都因缺少 `id` 而失败。
+
+#### 6. Tests Required
+
+- 仓库存储测试：有效 `id` 只删除目标项目并清理关联数据，源目录仍存在。
+- HTTP 验证：有效 `id` 返回 200；空 `id` 返回“缺少项目 ID”；未知 `id` 返回“项目不在看板中”。
+- 前端构建断言：`ProjectManagerDialog`、hook action 和 API 函数的参数都必须是 `id: string`。
+
+#### 7. Wrong vs Correct
+
+Bad:
+
+```ts
+await onRemove(row.path)
+api('/api/repositories', 'DELETE', { path })
+```
+
+Good:
+
+```ts
+await onRemove(row.id)
+api('/api/repositories', 'DELETE', { id })
+```
+
 ## 写操作边界
 
 ### 创建任务
