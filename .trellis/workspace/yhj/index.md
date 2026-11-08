@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 14
+- **Total Sessions**: 15
 - **Last Active**: 2026-11-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~370 | Active |
+| `journal-1.md` | ~392 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-11-08 | 完善开工条件与完成条件检查 | `23fa790` | `codex/team-board` |
 | 14 | 2026-11-08 | 精简概览并强化任务详情操作 | `b8016ab` | `codex/team-board` |
 | 13 | 2026-11-08 | 阶段证据改为只读展示 | `06e287d` | `codex/team-board` |
 | 12 | 2026-11-08 | 修复 Markdown 产物预览初始滚动位置 | `ad8f0c3` | `codex/team-board` |

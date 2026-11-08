@@ -368,3 +368,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 15: 完善开工条件与完成条件检查
+<!-- trellis-session: v=2 fp=52fc4d8d0d16fb8e -->
+
+**Date**: 2026-11-08
+**Task**: 完善开工条件与完成条件检查
+**Branch**: `codex/team-board`
+
+### Summary
+
+按 Pen 效果稿完成开工条件与完成条件中文化、分阶段展示、实现中开工欠债提示、1240px 桌面与 860px 窄屏布局；补齐全栈测试、构建和真实浏览器验收，并同步跨层规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `23fa790` | feat(board): 增加开工与完成条件检查 |
+
+### Status
+
+[OK] **Completed**
