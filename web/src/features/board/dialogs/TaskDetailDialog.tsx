@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -140,6 +140,7 @@ export function TaskDetailDialog({
   const [loading, setLoading] = useState(false)
   const [assignee, setAssignee] = useState('')
   const [artifact, setArtifact] = useState<{ label: string; entry: ArtifactEntry } | null>(null)
+  const artifactHeaderRef = useRef<HTMLDivElement>(null)
   const [editingPlan, setEditingPlan] = useState(false)
   const [dueDate, setDueDate] = useState('')
   const [milestone, setMilestone] = useState('')
@@ -557,8 +558,11 @@ export function TaskDetailDialog({
       </Dialog>
 
       <Dialog open={Boolean(artifact)} onOpenChange={(value) => !value && setArtifact(null)}>
-        <DialogContent className="max-h-[86dvh] overflow-y-auto sm:max-w-[820px]">
-          <DialogHeader>
+        <DialogContent
+          className="max-h-[86dvh] overflow-y-auto sm:max-w-[820px]"
+          initialFocus={artifactHeaderRef}
+        >
+          <DialogHeader ref={artifactHeaderRef} tabIndex={-1} className="outline-none">
             <DialogTitle className="text-base">工件查看 · {artifact?.label}</DialogTitle>
             <DialogDescription>{artifact?.entry?.path}</DialogDescription>
           </DialogHeader>

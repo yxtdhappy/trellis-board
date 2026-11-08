@@ -1,0 +1,28 @@
+{
+  "id": "fix-markdown-artifact-open-scroll",
+  "name": "fix-markdown-artifact-open-scroll",
+  "title": "修复 Markdown 产物预览打开时自动滚到底部",
+  "description": "任务卡片产物预览打开后错误聚焦正文末尾关闭按钮，导致长 Markdown 默认显示末尾",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-07",
+  "completedAt": null,
+  "branch": "codex/team-board",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/spec/frontend/rendering-and-state.md"
+  ],
+  "notes": "",
+  "meta": {}
+}
