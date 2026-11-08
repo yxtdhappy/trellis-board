@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
+- **Total Sessions**: 12
 - **Last Active**: 2026-11-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~304 | Active |
+| `journal-1.md` | ~326 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-11-08 | 修复 Markdown 产物预览初始滚动位置 | `ad8f0c3` | `codex/team-board` |
 | 11 | 2026-11-08 | 任务卡片显示真实目录名 | `224d4bb` | `codex/team-board` |
 | 10 | 2026-11-07 | 按项目过滤任务委派人 | `ac142a4` | `codex/team-board` |
 | 9 | 2026-11-07 | 归档检查阶段看板分栏任务 | `2a993b0` | `codex/team-board` |

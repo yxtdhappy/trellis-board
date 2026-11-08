@@ -302,3 +302,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 12: 修复 Markdown 产物预览初始滚动位置
+<!-- trellis-session: v=2 fp=a7fe0be310b29482 -->
+
+**Date**: 2026-11-08
+**Task**: 修复 Markdown 产物预览初始滚动位置
+**Branch**: `codex/team-board`
+
+### Summary
+
+将产物弹层首次焦点移到顶部标题区，修复长 Markdown 打开即滚到底部；完成规范回写、真实浏览器回归、lint、构建与远端推送后归档任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ad8f0c3` | fix(web): 保持 Markdown 产物预览从顶部打开 |
+
+### Status
+
+[OK] **Completed**
