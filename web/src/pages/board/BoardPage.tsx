@@ -151,7 +151,6 @@ export function BoardPage() {
                 active={activeCount}
                 archived={archived.length}
                 attention={tasks.filter((task) => !task.archived && isAttention(task)).length}
-                owners={assignees.length}
                 repositories={projects.length}
               />
               <Kanban groups={groups} onOpen={(task) => setSelected(task)} onEditPlan={(task) => setSelected(task)} />

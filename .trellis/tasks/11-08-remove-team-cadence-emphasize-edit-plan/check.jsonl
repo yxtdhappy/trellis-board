@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/index.md","reason":"检查改动是否仍符合任务流水线、弹层和主题契约。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查按钮语义、响应式布局、构建结果和浏览器表现。"}

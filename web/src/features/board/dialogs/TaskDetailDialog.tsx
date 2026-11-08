@@ -105,7 +105,6 @@ function readArtifacts(task: BoardTask | null) {
 }
 
 type TaskDetailActions = {
-  undo: (payload: { projectId: string; taskPath: string }) => Promise<void>
   addDependency: (payload: {
     blocked: { projectId: string; taskPath: string }
     blocker: { projectId: string; taskPath: string }
@@ -317,9 +316,8 @@ export function TaskDetailDialog({
                 <div className="flex items-center gap-2">
                   <h3 className="text-[11px] font-semibold text-muted-foreground">阶段证据</h3>
                   <Button
-                    variant="ghost"
                     size="sm"
-                    className="ml-auto h-6 text-[10.5px]"
+                    className="ml-auto h-7 px-3 text-[11px] font-semibold"
                     onClick={() => {
                       setEditingPlan((value) => !value)
                       setDueDate(current.execution?.dueDate || '')
@@ -328,23 +326,6 @@ export function TaskDetailDialog({
                     }}
                   >
                     编辑计划
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 text-[10.5px]"
-                    disabled={!current.history?.undo?.available || Boolean(busy)}
-                    title={current.history?.undo?.disabledReason || undefined}
-                    onClick={() =>
-                      void run(
-                        'undo',
-                        () =>
-                          actions.undo({ projectId: current.projectId, taskPath: current.relativeDir }),
-                        '最近操作已撤销',
-                      )
-                    }
-                  >
-                    {busy === 'undo' ? '正在撤销…' : '撤销最近操作'}
                   </Button>
                 </div>
                 {editingPlan ? (

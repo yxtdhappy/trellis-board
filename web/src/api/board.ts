@@ -132,9 +132,6 @@ export const saveSavedView = (payload: { name: string; filter: Record<string, un
 
 export const deleteSavedView = (id: string) => api('/api/saved-views', 'DELETE', { id })
 
-export const undoTaskOperation = (payload: { projectId: string; taskPath: string }) =>
-  api('/api/tasks/undo', 'POST', payload)
-
 export const createDependency = (payload: {
   blocked: { projectId: string; taskPath: string }
   blocker: { projectId: string; taskPath: string }
