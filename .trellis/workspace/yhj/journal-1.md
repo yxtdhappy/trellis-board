@@ -390,3 +390,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 16: 禁止归档任务更新派发
+<!-- trellis-session: v=2 fp=26f1302a2fb04299 -->
+
+**Date**: 2026-11-08
+**Task**: 禁止归档任务更新派发
+**Branch**: `codex/team-board`
+
+### Summary
+
+归档任务详情禁用负责人选择与更新派发；个人版在读取 task.json 前拒绝归档后代路径，团队版在 Git 操作前拒绝；补充路径边界、后端拦截和共享前端状态测试，并完成构建与真实浏览器验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c356fa1` | fix: 禁止归档任务更新派发 |
+
+### Status
+
+[OK] **Completed**
