@@ -16,7 +16,6 @@ import {
   saveWipLimit,
   saveSavedView,
   deleteSavedView,
-  setTaskStage,
   undoTaskOperation,
   createDependency,
   removeDependency,
@@ -306,14 +305,6 @@ export function useBoard(): BoardController {
         trackOperation(result);
         await reloadCurrentSource();
       },
-      setStage: async (payload: {
-        projectId: string;
-        taskPath: string;
-        stage: string;
-      }) => {
-        await setTaskStage(payload);
-        await reloadCurrentSource();
-      },
       undo: async (payload: { projectId: string; taskPath: string }) => {
         await undoTaskOperation(payload);
         await reloadCurrentSource();
@@ -444,11 +435,6 @@ export type BoardActions = {
   saveWip: (limit: number) => Promise<void>;
   createTask: (payload: Record<string, unknown>) => Promise<void>;
   assign: (payload: Record<string, unknown>) => Promise<void>;
-  setStage: (payload: {
-    projectId: string;
-    taskPath: string;
-    stage: string;
-  }) => Promise<void>;
   undo: (payload: { projectId: string; taskPath: string }) => Promise<void>;
   addDependency: (payload: {
     blocked: { projectId: string; taskPath: string };

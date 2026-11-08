@@ -42,6 +42,8 @@ public/app.js api()
 
 `task.json.status=in_progress` 只证明任务已启动，不能单独完成 `implement` 或进入 `check`。阶段推导必须等待实施报告、检查报告、验收勾选、commit 或 `completed` 等完成证据；已勾选实施计划项也不能绕过实施完成门禁。
 
+任务详情中的阶段证据是只读投影，必须由 Trellis 任务文件、workspace 和 Board 推导结果自动更新；前端不得提供 `setStage` 按钮或调用 `PUT /api/tasks/stage` 人工推进阶段。
+
 ### 任务身份与路径
 
 - 仓库身份来自 SQLite `repositories.id`，扫描结果中的 `projectId` 使用该值。

@@ -132,9 +132,6 @@ export const saveSavedView = (payload: { name: string; filter: Record<string, un
 
 export const deleteSavedView = (id: string) => api('/api/saved-views', 'DELETE', { id })
 
-export const setTaskStage = (payload: { projectId: string; taskPath: string; stage: string }) =>
-  api('/api/tasks/stage', 'PUT', payload)
-
 export const undoTaskOperation = (payload: { projectId: string; taskPath: string }) =>
   api('/api/tasks/undo', 'POST', payload)
 

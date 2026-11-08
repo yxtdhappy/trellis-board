@@ -105,7 +105,6 @@ function readArtifacts(task: BoardTask | null) {
 }
 
 type TaskDetailActions = {
-  setStage: (payload: { projectId: string; taskPath: string; stage: string }) => Promise<void>
   undo: (payload: { projectId: string; taskPath: string }) => Promise<void>
   addDependency: (payload: {
     blocked: { projectId: string; taskPath: string }
@@ -370,23 +369,7 @@ export function TaskDetailDialog({
                 <ul className="flex flex-col divide-y divide-border/60 rounded-lg border border-border">
                   {current.stages.map((item: Stage) => (
                     <li key={item.id}>
-                      <button
-                        type="button"
-                        disabled={Boolean(current.archived) || Boolean(busy)}
-                        onClick={() =>
-                          void run(
-                            `stage:${item.id}`,
-                            () =>
-                              actions.setStage({
-                                projectId: current.projectId,
-                                taskPath: current.relativeDir,
-                                stage: item.id,
-                              }),
-                            `已记录检查点：${item.label}`,
-                          )
-                        }
-                        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
+                      <div className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px]">
                         <span className="w-4 text-[10px] text-muted-foreground">{item.index}</span>
                         <span
                           className={`rounded-full px-1.5 py-px text-[10px] font-medium ${stageTone(item.label)}`}
@@ -397,7 +380,7 @@ export function TaskDetailDialog({
                         <span className="max-w-[45%] truncate text-[10px] text-muted-foreground" title={item.evidence}>
                           {item.evidence || '等待执行'}
                         </span>
-                      </button>
+                      </div>
                     </li>
                   ))}
                 </ul>
