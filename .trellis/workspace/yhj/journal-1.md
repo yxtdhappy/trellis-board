@@ -412,3 +412,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 17: 修复桌面客户端 SEA sidecar 启动与 NSIS CI
+<!-- trellis-session: v=2 fp=1f14d454d58ee44d -->
+
+**Date**: 2026-11-08
+**Task**: 修复桌面客户端 SEA sidecar 启动与 NSIS CI
+**Branch**: `codex/team-board`
+
+### Summary
+
+重构 sidecar 源码/SEA 入口并显式注入 DPAPI 路径；增加 Windows sidecar 冒烟测试；通过 GitHub API 预热 NSIS 缓存绕开 Releases 直连 504；完成全量测试、Windows 构建和新安装包注册验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9d4b98e` | fix(desktop): 重构 SEA sidecar 启动入口 |
+| `5026ebf` | fix(ci): 预热 Tauri NSIS 工具缓存 |
+
+### Status
+
+[OK] **Completed**
