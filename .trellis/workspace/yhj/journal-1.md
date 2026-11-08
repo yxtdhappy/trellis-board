@@ -280,3 +280,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 11: 任务卡片显示真实目录名
+<!-- trellis-session: v=2 fp=d553f93ce0ec88b2 -->
+
+**Date**: 2026-11-08
+**Task**: 任务卡片显示真实目录名
+**Branch**: `codex/team-board`
+
+### Summary
+
+在任务卡片标题下方以淡色小字显示完整 dirName，并验证复制任务名仍复制该目录名；完成 lint、TypeScript、构建和页面验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `224d4bb` | fix(web): 在任务卡片显示目录名 |
+
+### Status
+
+[OK] **Completed**
