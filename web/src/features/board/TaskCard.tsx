@@ -68,6 +68,7 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
       </div>
 
       <h4 className="line-clamp-2 text-[12px] leading-4 font-semibold text-foreground">{task.title}</h4>
+      <p className="break-all text-[10px] leading-3.5 text-muted-foreground">{task.dirName}</p>
 
       <div className="flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
         <span>{dueLabel(task.execution?.dueDate)}</span>

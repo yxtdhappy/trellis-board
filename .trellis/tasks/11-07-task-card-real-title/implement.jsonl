@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "任务卡片属于前端组件，需遵守 React、主题 token 和组件边界约定。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "修改后需按前端质量规范执行构建与页面验收。"}

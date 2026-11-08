@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查新字段的可访问性、token 样式和构建验证。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "确认只改卡片展示，不误改 taskKey、dirName 或列表 API 契约。"}
