@@ -67,6 +67,7 @@ const EXPECTED_TABLES = [
   "agent_device",
   "agent_event",
   "agent_event_cursor",
+  "agent_live_cursor",
   "agent_pairing_code",
   "agent_project_binding",
   "app_meta",
@@ -77,6 +78,9 @@ const EXPECTED_TABLES = [
   "plugin_audit",
   "plugin_run",
   "plugin_state",
+  "project_live_batch",
+  "project_live_file",
+  "project_live_revision",
   "project_member",
   "project_scan_cache",
   "repositories",
@@ -98,18 +102,18 @@ const EXPECTED_TABLES = [
   "user_session"
 ];
 
-test("新库一次创建 schema v6 与团队隔离表", () => {
+test("新库一次创建 schema v7 与实时同步表", () => {
   const workspace = makeWorkspace();
   let db;
   try {
     db = openTestDatabase(workspace);
-    assert.equal(DATABASE_SCHEMA_VERSION, 6);
+    assert.equal(DATABASE_SCHEMA_VERSION, 7);
     assert.deepEqual(tableNames(db), EXPECTED_TABLES);
     const meta = Object.fromEntries(
       db.prepare("SELECT key, value FROM app_meta").all()
         .map((row) => [row.key, row.value])
     );
-    assert.equal(meta.schema_version, "6");
+    assert.equal(meta.schema_version, "7");
     assert.equal(meta.legacy_json_imported_v1, "1");
     assert.equal(Number.isNaN(Date.parse(meta.execution_events_started_at)), false);
 
@@ -167,7 +171,7 @@ test("新库一次创建 schema v6 与团队隔离表", () => {
   }
 });
 
-test("schema v6 重复打开保持幂等", () => {
+test("schema v7 重复打开保持幂等", () => {
   const workspace = makeWorkspace();
   let db;
   try {
@@ -177,10 +181,38 @@ test("schema v6 重复打开保持幂等", () => {
     db = openTestDatabase(workspace);
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      "6"
+      "7"
     );
     assert.deepEqual(columnNames(db, "team_project"), firstColumns);
     assert.deepEqual(tableNames(db), EXPECTED_TABLES);
+  } finally {
+    closeQuietly(db);
+    fs.rmSync(workspace.root, { recursive: true, force: true });
+  }
+});
+
+test("schema v6 数据库原地补齐实时同步表", () => {
+  const workspace = makeWorkspace();
+  let db;
+  try {
+    db = openTestDatabase(workspace);
+    db.exec(`
+      DROP TABLE agent_live_cursor;
+      DROP TABLE project_live_batch;
+      DROP TABLE project_live_file;
+      DROP TABLE project_live_revision;
+      UPDATE app_meta SET value = '6' WHERE key = 'schema_version';
+    `);
+    db.close();
+    db = openTestDatabase(workspace);
+    assert.equal(
+      db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+      "7"
+    );
+    assert.ok(tableNames(db).includes("project_live_revision"));
+    assert.ok(tableNames(db).includes("project_live_file"));
+    assert.ok(tableNames(db).includes("project_live_batch"));
+    assert.ok(tableNames(db).includes("agent_live_cursor"));
   } finally {
     closeQuietly(db);
     fs.rmSync(workspace.root, { recursive: true, force: true });

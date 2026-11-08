@@ -218,6 +218,8 @@ function rowFromIndex(row) {
     attentionReasons,
     groupKey: row.group_key,
     groupRole: row.group_role,
+    liveRevision: Number(row.live_revision || 0),
+    livePending: Number(row.live_revision || 0) > 0,
     projectSyncStatus: row.sync_status,
     stale: row.sync_status !== "current",
     syncError: row.last_error || null
@@ -268,6 +270,7 @@ export function createTaskIndex({
   let requestId = 0;
   const pending = new Map();
   const queryCache = new Map();
+  let projectIndexedHook = null;
 
   function rejectPending(error) {
     for (const request of pending.values()) {
@@ -572,7 +575,17 @@ export function createTaskIndex({
         queryRevision: queryRevision()
       };
     });
-    publishIndexEvents(options.projectId, previousRows, options.board);
+    let suppressTaskEvents = false;
+    if (!options.skipLiveHook && projectIndexedHook) {
+      try {
+        suppressTaskEvents = projectIndexedHook(options.projectId) === true;
+      } catch (error) {
+        process.emitWarning(`实时覆盖层重投影失败: ${error.message}`);
+      }
+    }
+    if (options.publishEvents !== false && !suppressTaskEvents) {
+      publishIndexEvents(options.projectId, previousRows, options.board);
+    }
     return result;
   }
 
@@ -867,6 +880,9 @@ export function createTaskIndex({
     queryTasks,
     queryRevision,
     readProjectScanCache,
+    setProjectIndexedHook(hook) {
+      projectIndexedHook = typeof hook === "function" ? hook : null;
+    },
     close,
     INDEX_SCHEMA_VERSION,
     DEFAULT_LIMIT,

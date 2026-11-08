@@ -160,6 +160,46 @@ export class AgentApiClient {
     return parseHeartbeatResponse(payload);
   }
 
+  async preflightLiveChanges(input, options = {}) {
+    return this._requestJson("/api/agent/live-changes/preflight", {
+      method: "POST",
+      auth: true,
+      signal: options.signal,
+      body: input
+    });
+  }
+
+  async uploadLiveChanges(input, options = {}) {
+    return this._requestJson("/api/agent/live-changes", {
+      method: "POST",
+      auth: true,
+      signal: options.signal,
+      timeoutMs: options.timeoutMs ?? 30_000,
+      body: input
+    });
+  }
+
+  async fetchLiveFiles(input = {}, options = {}) {
+    const url = new URL("/api/agent/live-files", this.serverUrl);
+    url.searchParams.set("projectId", String(input.projectId || ""));
+    url.searchParams.set("afterRevision", String(input.afterRevision || 0));
+    return this._requestJson(`${url.pathname}${url.search}`, {
+      method: "GET",
+      auth: true,
+      signal: options.signal,
+      maxResponseBytes: 16 * 1024 * 1024
+    });
+  }
+
+  async writeLiveCursor(input, options = {}) {
+    return this._requestJson("/api/agent/live-cursor", {
+      method: "PUT",
+      auth: true,
+      signal: options.signal,
+      body: input
+    });
+  }
+
   async streamEvents(input = {}, options = {}) {
     if (!this.credential || this.credential.length < 32) {
       throw new AgentError(
@@ -423,9 +463,10 @@ export class AgentApiClient {
       request.on("response", (response) => {
         const chunks = [];
         let byteLength = 0;
+        const maxResponseBytes = options.maxResponseBytes ?? this.maxResponseBytes;
         response.on("data", (chunk) => {
           byteLength += chunk.length;
-          if (byteLength > this.maxResponseBytes) {
+          if (byteLength > maxResponseBytes) {
             response.destroy();
             finish(
               new AgentError(

@@ -85,6 +85,7 @@ test("协议响应兼容 data 包装并验证命令字段", () => {
   });
   assert.equal(heartbeat.compatible, true);
   assert.equal(heartbeat.bindings[0].id, "binding-1");
+  assert.equal(heartbeat.bindings[0].readOnly, false);
 
   const command = validateCommand({
     id: "command-1",

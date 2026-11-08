@@ -75,6 +75,16 @@ export function BoardPage() {
     setSelected(null)
   }, [filters.teamId])
 
+  useEffect(() => {
+    if (!selected) return
+    const fresh = tasks.find((task) => task.taskKey === selected.taskKey)
+    if (fresh && fresh !== selected) setSelected(fresh)
+  }, [tasks, selected])
+
+  useEffect(() => {
+    if (runtime?.user?.mustChangePassword) setPasswordOpen(true)
+  }, [runtime?.user?.mustChangePassword])
+
   const syncLabel = teamMode
     ? `${projects.length} 个授权项目 · 每 3 秒检查同步状态`
     : controller.status?.refreshRunning

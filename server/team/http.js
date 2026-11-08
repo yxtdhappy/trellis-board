@@ -32,6 +32,7 @@ import {
 import { createBoardService } from "./board.js";
 import { ERROR_CODES, errorPayload, teamError } from "./errors.js";
 import { createGitManager } from "./git-manager.js";
+import { createLiveSyncService } from "./live-sync.js";
 import {
   CAPABILITIES,
   authorizeProject,
@@ -63,6 +64,7 @@ const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const applicationDir = path.resolve(serverDir, "../..");
 const defaultPublicDir = path.join(applicationDir, "public");
 const MAX_JSON_BYTES = 64 * 1024;
+const MAX_LIVE_BATCH_BYTES = 9 * 1024 * 1024;
 const EXECUTION_WIP_LIMIT = 2;
 const DEFAULT_REFRESH_CONCURRENCY = 4;
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -85,6 +87,7 @@ function securityHeaders() {
   return {
     "content-security-policy":
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+      "connect-src 'self' ipc: http://ipc.localhost; " +
       "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
@@ -204,7 +207,7 @@ async function readJsonBody(request, maxBytes = MAX_JSON_BYTES) {
     throw teamError(
       413,
       ERROR_CODES.BODY_TOO_LARGE,
-      "请求体超过 64 KiB 限制"
+      `请求体超过 ${Math.floor(maxBytes / 1024)} KiB 限制`
     );
   }
   const chunks = [];
@@ -215,7 +218,7 @@ async function readJsonBody(request, maxBytes = MAX_JSON_BYTES) {
       throw teamError(
         413,
         ERROR_CODES.BODY_TOO_LARGE,
-        "请求体超过 64 KiB 限制"
+        `请求体超过 ${Math.floor(maxBytes / 1024)} KiB 限制`
       );
     }
     chunks.push(chunk);
@@ -297,7 +300,8 @@ function statusEtag(status) {
     queryRevision: status.queryRevision,
     queryDay: status.queryDay,
     assignments: status.assignments,
-    projects: status.projects.map(({ agents: _agents, ...project }) => project)
+    projects: status.projects.map(({ agents: _agents, ...project }) => project),
+    associationProjects: status.associationProjects || []
   });
   return `"status-${crypto.createHash("sha256").update(version).digest("base64url").slice(0, 24)}"`;
 }
@@ -484,6 +488,7 @@ function createRequestHandler({
   taskWrites,
   agentService,
   agentEvents,
+  liveSync,
   desktopAuth,
   publicDir,
   logger,
@@ -652,6 +657,28 @@ function createRequestHandler({
     if (pathname === "/api/agent/heartbeat" && request.method === "POST") {
       const body = await readJsonBody(request);
       sendJson(response, 200, agentService.heartbeat(agent, body));
+      return true;
+    }
+    if (pathname === "/api/agent/live-changes/preflight" && request.method === "POST") {
+      const body = await readJsonBody(request, MAX_LIVE_BATCH_BYTES);
+      sendJson(response, 200, liveSync.preflight(agent, body));
+      return true;
+    }
+    if (pathname === "/api/agent/live-changes" && request.method === "POST") {
+      const body = await readJsonBody(request, MAX_LIVE_BATCH_BYTES);
+      sendJson(response, 200, liveSync.applyChanges(agent, body));
+      return true;
+    }
+    if (pathname === "/api/agent/live-files" && request.method === "GET") {
+      sendJson(response, 200, liveSync.listFiles(agent, {
+        projectId: url.searchParams.get("projectId"),
+        afterRevision: url.searchParams.get("afterRevision")
+      }));
+      return true;
+    }
+    if (pathname === "/api/agent/live-cursor" && request.method === "PUT") {
+      const body = await readJsonBody(request);
+      sendJson(response, 200, liveSync.writeCursor(agent, body));
       return true;
     }
     if (pathname === "/api/agent/events" && request.method === "GET") {
@@ -1282,6 +1309,13 @@ function createRequestHandler({
       });
       return true;
     }
+    if (pathname === "/api/team/live-revision" && request.method === "GET") {
+      sendJson(response, 200, liveSync.liveRevisionForActor(
+        actor,
+        url.searchParams.get("teamId") || "all"
+      ));
+      return true;
+    }
     if (
       (pathname === "/api/team/status" || pathname === "/api/status") &&
       request.method === "GET"
@@ -1565,6 +1599,12 @@ export async function createTeamRuntime({
       config,
       events: agentEvents
     });
+    const liveSync = createLiveSyncService({
+      db,
+      dataDir,
+      taskIndex,
+      agentEvents
+    });
     const desktopAuthService = createDesktopAuthService({ db, ...desktopAuth });
     agentEvents.setCommandDelivery(
       (agentId, commandId) => agentService.beginCommandDelivery(agentId, commandId)
@@ -1576,6 +1616,7 @@ export async function createTeamRuntime({
       db,
       taskIndex,
       projectService,
+      liveSync,
       executionWipLimit: EXECUTION_WIP_LIMIT
     });
     const requestHandler = createRequestHandler({
@@ -1587,6 +1628,7 @@ export async function createTeamRuntime({
       taskWrites,
       agentService,
       agentEvents,
+      liveSync,
       desktopAuth: desktopAuthService,
       publicDir,
       logger,
@@ -1714,6 +1756,7 @@ export async function createTeamRuntime({
         taskWrites,
         agentService,
         agentEvents,
+        liveSync,
         boardService,
         refreshScheduler
       },

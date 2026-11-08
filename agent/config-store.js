@@ -29,6 +29,10 @@ export function createAgentPaths(root = defaultAgentRoot()) {
     credentialFile: path.join(resolvedRoot, "credential.dpapi"),
     stateFile: path.join(resolvedRoot, "runtime.json"),
     eventCursorsFile: path.join(resolvedRoot, "event-cursors.json"),
+    liveCursorsFile: path.join(resolvedRoot, "live-cursors.json"),
+    liveSuppressionFile: path.join(resolvedRoot, "live-suppression.json"),
+    liveBackupsDir: path.join(resolvedRoot, "live-backups"),
+    pendingLiveDir: path.join(resolvedRoot, "pending-live"),
     eventsDir: path.join(resolvedRoot, "events"),
     logsDir: path.join(resolvedRoot, "logs"),
     lockFile: path.join(resolvedRoot, "agent.lock"),
@@ -113,6 +117,7 @@ export function validateConfig(config) {
       displayName: requireString(binding.displayName, "displayName", 255),
       createdAt: requireString(binding.createdAt, "createdAt", 64),
       allowFileRemote: binding.allowFileRemote === true,
+      readOnly: binding.readOnly === true,
       syncStatus,
       lastSyncedAt: optionalString(binding.lastSyncedAt, "lastSyncedAt", 64),
       lastHead: optionalString(binding.lastHead, "lastHead", 64),
@@ -203,6 +208,8 @@ export class ConfigStore {
         await fs.mkdir(this.paths.logsDir, { recursive: true, mode: 0o700 });
         await fs.mkdir(this.paths.hooksBaseDir, { recursive: true, mode: 0o700 });
         await fs.mkdir(this.paths.eventsDir, { recursive: true, mode: 0o700 });
+        await fs.mkdir(this.paths.liveBackupsDir, { recursive: true, mode: 0o700 });
+        await fs.mkdir(this.paths.pendingLiveDir, { recursive: true, mode: 0o700 });
         if (process.platform === "win32" && this.secureDirectory && created) {
           await this._restrictWindowsAcl(this.paths.root);
         }

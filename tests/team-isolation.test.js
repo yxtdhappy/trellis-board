@@ -667,7 +667,8 @@ test("系统管理员 Agent 可绑定项目、读写游标并订阅事件", asyn
   });
   assert.equal(heartbeat.status, 200);
   assert.equal(heartbeat.body.bindings[0].teamId, "t-system");
-  assert.equal(heartbeat.body.bindings[0].status, "pending");
+  assert.equal(heartbeat.body.bindings[0].status, "approved");
+  assert.equal(heartbeat.body.bindings[0].readOnly, false);
 
   const approved = await request(
     runtime,
@@ -718,6 +719,7 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
   const { root, runtime, adminCookie } = await startRuntime(t);
   seedTeam(runtime, "t1", "团队一");
   seedTeam(runtime, "t2", "团队二");
+  seedTeam(runtime, "t3", "团队三");
   const agentUser = await makeUser(runtime, "agent-user", {
     teams: [
       { teamId: "t1", role: "member" },
@@ -766,6 +768,11 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
   seedProject(runtime, root, {
     projectId: "p3",
     teamId: "t2",
+    userId: otherAdmin.id
+  });
+  seedProject(runtime, root, {
+    projectId: "p4",
+    teamId: "t3",
     userId: otherAdmin.id
   });
 
@@ -827,14 +834,24 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
           remoteIdentityKey: normalizeRemoteIdentity(
             "https://example.com/p3.git"
           ).identityHash
+        },
+        {
+          projectId: "p4",
+          localRepoKey: "f".repeat(64),
+          branchName: "main",
+          remoteIdentityKey: normalizeRemoteIdentity(
+            "https://example.com/p4.git"
+          ).identityHash
         }
       ]
     }
   });
   assert.equal(heartbeat.status, 200);
   const bindingId = heartbeat.body.bindings[0].bindingId;
-  assert.equal(heartbeat.body.bindings[2].status, "rejected");
-  assert.equal(heartbeat.body.bindings[2].errorCode, "PROJECT_FORBIDDEN");
+  assert.equal(heartbeat.body.bindings[2].status, "approved");
+  assert.equal(heartbeat.body.bindings[2].readOnly, true);
+  assert.equal(heartbeat.body.bindings[3].status, "rejected");
+  assert.equal(heartbeat.body.bindings[3].errorCode, "PROJECT_FORBIDDEN");
   assert.equal(
     runtime.db.prepare("SELECT team_id FROM agent_project_binding WHERE id = ?")
       .get(bindingId).team_id,
@@ -922,7 +939,7 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
   );
   assert.equal(
     runtime.db.prepare("SELECT sync_status FROM agent_project_binding WHERE project_id = 'p2'").get().sync_status,
-    "pending"
+    "approved"
   );
   const revokedOneTeam = await request(
     runtime,
@@ -940,7 +957,7 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
   );
   assert.equal(
     runtime.db.prepare("SELECT sync_status FROM agent_project_binding WHERE project_id = 'p2'").get().sync_status,
-    "pending"
+    "approved"
   );
   assert.equal(
     runtime.db.prepare("SELECT status FROM agent_device WHERE id = ?").get(enrolled.body.agentId).status,
@@ -978,4 +995,158 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
   )));
   assert.equal(runtime.db.prepare("SELECT COUNT(*) AS count FROM team_member WHERE user_id = ?")
     .get(teamAdmin.id).count, 1);
+});
+
+test("团队成员通过 Git 身份校验后直接绑定，read_only 保持只读", async (t) => {
+  const { root, runtime } = await startRuntime(t);
+  seedTeam(runtime, "t-readonly", "只读团队");
+  const reader = await makeUser(runtime, "readonly-user", {
+    teams: [{ teamId: "t-readonly", role: "member" }]
+  });
+  seedProject(runtime, root, {
+    projectId: "p-readonly",
+    teamId: "t-readonly",
+    userId: reader.id,
+    role: "read_only"
+  });
+  const cookie = cookieOf(await login(runtime, "readonly-user"));
+  const issued = await request(runtime, "/api/desktop/enroll-tokens", {
+    method: "POST",
+    cookie,
+    body: { deviceName: "只读成员设备" }
+  });
+  assert.equal(issued.status, 201);
+  const enrolled = await request(runtime, "/api/agent/enroll-desktop", {
+    method: "POST",
+    origin: null,
+    body: {
+      token: issued.body.token,
+      deviceName: "只读成员设备",
+      platform: "win32",
+      agentVersion: "0.1.0",
+      protocolVersion: 2
+    }
+  });
+  assert.equal(enrolled.status, 201);
+  const heartbeat = await request(runtime, "/api/agent/heartbeat", {
+    method: "POST",
+    origin: null,
+    agentCredential: enrolled.body.credential,
+    body: {
+      protocolVersion: 2,
+      agentId: enrolled.body.agentId,
+      agentVersion: "0.1.0",
+      deviceName: "只读成员设备",
+      bindings: [{
+        projectId: "p-readonly",
+        localRepoKey: "9".repeat(64),
+        branchName: "main",
+        remoteIdentityKey: normalizeRemoteIdentity(
+          "https://example.com/p-readonly.git"
+        ).identityHash
+      }]
+    }
+  });
+  assert.equal(heartbeat.status, 200);
+  assert.equal(heartbeat.body.bindings[0].status, "approved");
+  assert.equal(heartbeat.body.bindings[0].readOnly, true);
+  const deniedWrite = await request(runtime, "/api/tasks", {
+    method: "POST",
+    cookie,
+    body: {
+      projectId: "p-readonly",
+      idempotencyKey: "readonly-write-denied"
+    }
+  });
+  assert.equal(deniedWrite.status, 403);
+  assert.equal(deniedWrite.body.code, "FORBIDDEN");
+  assert.match(deniedWrite.body.error, /只读成员/);
+
+  const mismatch = await request(runtime, "/api/agent/heartbeat", {
+    method: "POST",
+    origin: null,
+    agentCredential: enrolled.body.credential,
+    body: {
+      protocolVersion: 2,
+      agentId: enrolled.body.agentId,
+      agentVersion: "0.1.0",
+      deviceName: "只读成员设备",
+      bindings: [{
+        projectId: "p-readonly",
+        localRepoKey: "9".repeat(64),
+        branchName: "main",
+        remoteIdentityKey: normalizeRemoteIdentity(
+          "https://evil.example.com/p-readonly.git"
+        ).identityHash
+      }]
+    }
+  });
+  assert.equal(mismatch.status, 200);
+  assert.equal(mismatch.body.bindings[0].status, "rejected");
+  assert.equal(mismatch.body.bindings[0].errorCode, "REMOTE_MISMATCH");
+  assert.equal(
+    runtime.db.prepare(`
+      SELECT sync_status FROM agent_project_binding WHERE project_id = 'p-readonly'
+    `).get().sync_status,
+    "rejected"
+  );
+
+  const restored = await request(runtime, "/api/agent/heartbeat", {
+    method: "POST",
+    origin: null,
+    agentCredential: enrolled.body.credential,
+    body: {
+      protocolVersion: 2,
+      agentId: enrolled.body.agentId,
+      agentVersion: "0.1.0",
+      deviceName: "只读成员设备",
+      bindings: [{
+        projectId: "p-readonly",
+        localRepoKey: "9".repeat(64),
+        branchName: "main",
+        remoteIdentityKey: normalizeRemoteIdentity(
+          "https://example.com/p-readonly.git"
+        ).identityHash
+      }]
+    }
+  });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.body.bindings[0].status, "approved");
+  assert.equal(restored.body.bindings[0].readOnly, true);
+});
+
+test("普通团队成员可看到关联候选项目，但不会因此获得任务读取权限", async (t) => {
+  const { root, runtime } = await startRuntime(t);
+  seedTeam(runtime, "t-candidate", "关联候选团队");
+  const owner = await makeUser(runtime, "candidate-owner", {
+    teams: [{ teamId: "t-candidate", role: "admin" }]
+  });
+  const member = await makeUser(runtime, "candidate-member", {
+    teams: [{ teamId: "t-candidate", role: "member" }]
+  });
+  seedProject(runtime, root, {
+    projectId: "p-candidate",
+    teamId: "t-candidate",
+    userId: owner.id,
+    role: "lead",
+    developerId: "owner"
+  });
+  const cookie = cookieOf(await login(runtime, "candidate-member"));
+
+  const status = await request(runtime, "/api/team/status", { cookie });
+  assert.equal(status.status, 200);
+  assert.deepEqual(status.body.projects, []);
+  assert.equal(status.body.associationProjects.length, 1);
+  assert.deepEqual(
+    {
+      id: status.body.associationProjects[0].id,
+      syncBranch: status.body.associationProjects[0].syncBranch,
+      readOnly: status.body.associationProjects[0].readOnly
+    },
+    { id: "p-candidate", syncBranch: "main", readOnly: true }
+  );
+
+  const projects = await request(runtime, "/api/team/projects", { cookie });
+  assert.equal(projects.status, 200);
+  assert.deepEqual(projects.body.projects, []);
 });

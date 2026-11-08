@@ -138,7 +138,7 @@ test("首管理员 CLI 只初始化一次且不会导入本机默认仓库", asy
     db.close();
   }
   const status = diagnose({ config: testConfig(), databaseFile });
-  assert.equal(status.schemaVersion, "6");
+  assert.equal(status.schemaVersion, "7");
   assert.equal(status.activeAdmin, true);
   assert.equal(status.integrity, "ok");
   await assert.rejects(
@@ -564,7 +564,24 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
       tags: ["协作"]
     }
   });
-  assert.equal(memberPlan.status, 200);
+  assert.equal(memberPlan.status, 409);
+  assert.equal(memberPlan.body.code, "ASSIGNEE_CONFIRMATION_REQUIRED");
+  const memberPlanConfirmed = await request(runtime, "/api/tasks/execution", {
+    method: "PUT",
+    cookie: memberCookie,
+    body: {
+      projectId: "p1",
+      taskPath: ".trellis/tasks/task-1",
+      dueDate: "2026-11-20",
+      milestone: "成员计划",
+      tags: ["协作"],
+      assigneeDecision: {
+        warningId: memberPlan.body.details.warningId,
+        action: "continue"
+      }
+    }
+  });
+  assert.equal(memberPlanConfirmed.status, 200);
   const adminPlan = await request(runtime, "/api/tasks/execution", {
     method: "PUT",
     cookie: firstCookie,
@@ -610,7 +627,22 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
       stage: "check"
     }
   });
-  assert.equal(memberStage.status, 200);
+  assert.equal(memberStage.status, 409);
+  assert.equal(memberStage.body.code, "ASSIGNEE_CONFIRMATION_REQUIRED");
+  const memberStageConfirmed = await request(runtime, "/api/tasks/stage", {
+    method: "PUT",
+    cookie: memberCookie,
+    body: {
+      projectId: "p1",
+      taskPath: ".trellis/tasks/task-1",
+      stage: "check",
+      assigneeDecision: {
+        warningId: memberStage.body.details.warningId,
+        action: "continue"
+      }
+    }
+  });
+  assert.equal(memberStageConfirmed.status, 200);
   assert.equal(
     runtime.db.prepare(`
       SELECT actor_user_id
@@ -630,13 +662,41 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
       reason: "等待任务二"
     }
   });
-  assert.equal(dependency.status, 201);
+  assert.equal(dependency.status, 409);
+  assert.equal(dependency.body.code, "ASSIGNEE_CONFIRMATION_REQUIRED");
+  const dependencyConfirmed = await request(runtime, "/api/tasks/dependencies", {
+    method: "POST",
+    cookie: memberCookie,
+    body: {
+      blocked: { projectId: "p1", taskPath: ".trellis/tasks/task-1" },
+      blocker: { projectId: "p1", taskPath: ".trellis/tasks/task-2" },
+      reason: "等待任务二",
+      assigneeDecision: {
+        warningId: dependency.body.details.warningId,
+        action: "continue"
+      }
+    }
+  });
+  assert.equal(dependencyConfirmed.status, 201);
   const resolved = await request(runtime, "/api/tasks/dependencies", {
     method: "DELETE",
     cookie: memberCookie,
-    body: { id: dependency.body.dependency.id }
+    body: { id: dependencyConfirmed.body.dependency.id }
   });
-  assert.equal(resolved.status, 200);
+  assert.equal(resolved.status, 409);
+  assert.equal(resolved.body.code, "ASSIGNEE_CONFIRMATION_REQUIRED");
+  const resolvedConfirmed = await request(runtime, "/api/tasks/dependencies", {
+    method: "DELETE",
+    cookie: memberCookie,
+    body: {
+      id: dependencyConfirmed.body.dependency.id,
+      assigneeDecision: {
+        warningId: resolved.body.details.warningId,
+        action: "continue"
+      }
+    }
+  });
+  assert.equal(resolvedConfirmed.status, 200);
 
   const memberView = await request(runtime, "/api/saved-views", {
     method: "POST",
@@ -858,7 +918,8 @@ test("团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
     }
   });
   assert.equal(heartbeat.status, 200);
-  assert.equal(heartbeat.body.bindings[0].status, "pending");
+  assert.equal(heartbeat.body.bindings[0].status, "approved");
+  assert.equal(heartbeat.body.bindings[0].readOnly, false);
   // 客户端靠心跳回传的 teamId 决定为哪个团队建立 SSE 连接。
   assert.ok(heartbeat.body.bindings[0].teamId, JSON.stringify(heartbeat.body));
   assert.equal(heartbeat.body.protocolVersion, 2);

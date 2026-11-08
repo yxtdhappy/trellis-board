@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { withTransaction } from "../database.js";
 import { appendAuditEvent } from "./audit.js";
 import { ERROR_CODES, teamError } from "./errors.js";
-import { CAPABILITIES, authorizeProject } from "./permissions.js";
+import { CAPABILITIES, authorizeProject, roleCanWrite } from "./permissions.js";
 import {
   semanticLocalPathIdentityHash,
   semanticRemoteIdentityHash
@@ -83,7 +83,7 @@ function publicAgent(row) {
   };
 }
 
-function publicBinding(row) {
+function publicBinding(row, readOnly = false) {
   return {
     id: row.id,
     agentId: row.agent_id,
@@ -99,8 +99,13 @@ function publicBinding(row) {
     updatedAt: row.updated_at,
     agentStatus: row.agent_status || null,
     deviceName: row.device_name || null,
-    lastSeenAt: row.last_seen_at || null
+    lastSeenAt: row.last_seen_at || null,
+    readOnly
   };
+}
+
+function bindingReadOnly(role, systemAdmin = false) {
+  return role ? !roleCanWrite(role) : !systemAdmin;
 }
 
 function safeCommandResult(value) {
@@ -427,6 +432,25 @@ export function createAgentService({
     return { errorCode: code, error: message };
   }
 
+  function rejectExistingBinding(existing, error) {
+    const now = new Date().toISOString();
+    const syncStatus = existing.sync_status === "revoked" ? "revoked" : "rejected";
+    db.prepare(`
+      UPDATE agent_project_binding
+      SET sync_status = ?, last_error = ?, updated_at = ?
+      WHERE id = ?
+    `).run(syncStatus, error.error, now, existing.id);
+    return {
+      ...publicBinding({
+        ...existing,
+        sync_status: syncStatus,
+        last_error: error.error,
+        updated_at: now
+      }),
+      ...error
+    };
+  }
+
   function upsertHeartbeatBinding(agent, value) {
     if (!value || typeof value !== "object") return null;
     const projectId = safeId(value.projectId, "项目 ID");
@@ -462,14 +486,10 @@ export function createAgentService({
       `).get(String(value.serverBindingId), agent.id);
       if (candidate?.project_id === projectId) existing = candidate;
     }
-    if (!project || !(
-      project.system_admin ||
-      project.role ||
-      project.team_role === "admin"
-    )) {
+    if (!project || !(project.system_admin || project.team_role)) {
       const error = bindingError("当前账号无权绑定该项目", "PROJECT_FORBIDDEN");
       return existing
-        ? { ...publicBinding({ ...existing, ...error }), ...error }
+        ? rejectExistingBinding(existing, error)
         : {
             id: localRepoKey,
             projectId,
@@ -481,24 +501,21 @@ export function createAgentService({
     }
     if (!new Set(["current", "stale", "pending_push", "needs_repair"]).has(project.sync_status)) {
       const error = bindingError("项目尚未启用或已停用", "PROJECT_NOT_READY");
-      return {
-        id: existing?.id || localRepoKey,
-        projectId,
-        localRepoKey,
-        branchName,
-        status: "rejected",
-        ...error
-      };
+      return existing
+        ? rejectExistingBinding(existing, error)
+        : {
+            id: localRepoKey,
+            projectId,
+            localRepoKey,
+            branchName,
+            status: "rejected",
+            ...error
+          };
     }
     if (branchName !== project.sync_branch) {
       const error = bindingError("本地分支与项目同步分支不一致", "BINDING_BRANCH_MISMATCH");
       if (existing) {
-        db.prepare(`
-          UPDATE agent_project_binding
-          SET last_error = ?, updated_at = ?
-          WHERE id = ?
-        `).run(error.error, new Date().toISOString(), existing.id);
-        return { ...publicBinding(existing), ...error };
+        return rejectExistingBinding(existing, error);
       }
       return {
         id: localRepoKey,
@@ -524,12 +541,7 @@ export function createAgentService({
       ) {
         const error = bindingError("本地仓库远端与项目不一致", "REMOTE_MISMATCH");
         if (existing) {
-          db.prepare(`
-            UPDATE agent_project_binding
-            SET last_error = ?, updated_at = ?
-            WHERE id = ?
-          `).run(error.error, new Date().toISOString(), existing.id);
-          return { ...publicBinding(existing), ...error };
+          return rejectExistingBinding(existing, error);
         }
         return {
           id: localRepoKey,
@@ -552,13 +564,14 @@ export function createAgentService({
     const displayName = String(value.displayName || project.project_name || "本地仓库")
       .trim()
       .slice(0, 120);
+    const readOnly = bindingReadOnly(project.role, Boolean(project.system_admin));
     if (!existing) {
       const id = crypto.randomUUID();
       db.prepare(`
         INSERT INTO agent_project_binding(
           id, agent_id, team_id, project_id, local_repo_key, local_display_name,
           branch_name, sync_status, last_error, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', NULL, ?, ?)
       `).run(
         id,
         agent.id,
@@ -574,19 +587,44 @@ export function createAgentService({
       appendAuditEvent(db, {
         actorAgentId: agent.id,
         projectId,
-        action: "agent_binding_requested",
+        action: "agent_binding_approved",
         targetType: "agent_binding",
         targetId: id,
-        detail: { deviceName: agent.deviceName, branchName }
+        detail: {
+          deviceName: agent.deviceName,
+          branchName,
+          automatic: true,
+          readOnly
+        }
       });
     } else {
+      const previousStatus = existing.sync_status;
       db.prepare(`
         UPDATE agent_project_binding
         SET local_repo_key = ?, local_display_name = ?, branch_name = ?,
+            sync_status = CASE
+              WHEN sync_status = 'revoked' THEN sync_status
+              ELSE 'approved'
+            END,
             last_error = NULL, updated_at = ?
         WHERE id = ?
       `).run(localRepoKey, displayName, branchName, now, existing.id);
       existing = db.prepare("SELECT * FROM agent_project_binding WHERE id = ?").get(existing.id);
+      if (previousStatus !== "approved" && previousStatus !== "revoked") {
+        appendAuditEvent(db, {
+          actorAgentId: agent.id,
+          projectId,
+          action: "agent_binding_approved",
+          targetType: "agent_binding",
+          targetId: existing.id,
+          detail: {
+            deviceName: agent.deviceName,
+            branchName,
+            automatic: true,
+            readOnly
+          }
+        });
+      }
     }
     const errorCode = value.errorCode || value.lastErrorCode || null;
     const errorMessage = value.error || value.lastError || null;
@@ -607,7 +645,7 @@ export function createAgentService({
       FROM agent_project_binding b
       JOIN agent_device a ON a.id = b.agent_id
       WHERE b.id = ?
-    `).get(existing.id));
+    `).get(existing.id), readOnly);
   }
 
   function heartbeat(agent, input = {}) {
@@ -649,6 +687,7 @@ export function createAgentService({
         projectId: row.projectId,
         localRepoKey: row.localRepoKey,
         status: row.status,
+        readOnly: row.readOnly === true,
         errorCode: row.errorCode || null,
         error: row.error || null,
         branchName: row.branchName
@@ -662,14 +701,20 @@ export function createAgentService({
       SELECT
         b.*, a.status AS agent_status, a.device_name, a.last_seen_at,
         u.id AS owner_user_id, u.username AS owner_username,
-        u.display_name AS owner_display_name
+        u.display_name AS owner_display_name, u.system_admin AS owner_system_admin,
+        pm.role AS owner_project_role
       FROM agent_project_binding b
       JOIN agent_device a ON a.id = b.agent_id
       JOIN user_account u ON u.id = a.user_id
+      LEFT JOIN project_member pm
+        ON pm.project_id = b.project_id AND pm.user_id = a.user_id
       WHERE b.project_id = ?
       ORDER BY b.created_at DESC
     `).all(projectId).map((row) => ({
-      ...publicBinding(row),
+      ...publicBinding(
+        row,
+        bindingReadOnly(row.owner_project_role, Boolean(row.owner_system_admin))
+      ),
       ownerUserId: row.owner_user_id,
       ownerUsername: row.owner_username,
       ownerDisplayName: row.owner_display_name

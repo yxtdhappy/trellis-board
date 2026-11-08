@@ -9,8 +9,13 @@ import { fileURLToPath } from "node:url";
 
 import { createUser } from "../server/team/auth.js";
 import { createTeamRuntime } from "../server/team/http.js";
+import { AGENT_ERROR_CODE, AgentError } from "../agent/protocol.js";
+import { ConfigStore } from "../agent/config-store.js";
 import {
   enrollWithToken,
+  loginDesktop,
+  logoutDesktopSession,
+  parseSessionCookie,
   validateEnrollToken
 } from "../desktop/sidecar/desktop-device.js";
 
@@ -382,7 +387,7 @@ test("同一用户未使用的设备令牌上限为 5，已使用令牌不占额
   assert.ok(!deviceAudit.detail_json.includes(enrolled.body.credential));
 });
 
-test("桌面端 enrollWithToken 走新端点并保留配对码兜底", async (t) => {
+test("桌面端底层设备兑换走一次性令牌端点", async (t) => {
   const { runtime, adminCookie, serverUrl, teamId } = await startRuntime(t);
   const issued = await issueToken(runtime, adminCookie, { deviceName: "开发机" });
   assert.equal(issued.status, 201);
@@ -440,10 +445,6 @@ test("桌面端 enrollWithToken 走新端点并保留配对码兜底", async (t)
   assert.equal(validateEnrollToken(issued.body.token), issued.body.token);
   assert.throws(() => validateEnrollToken("short"), /设备令牌格式无效/);
 
-  const sidecar = readText("desktop/sidecar/main.js");
-  assert.match(sidecar, /"pairing-code": \{ flag: true \}/);
-  assert.match(sidecar, /enrollWithToken/);
-  assert.match(sidecar, /DESKTOP_TOKEN_INVALID/);
 });
 
 test("桌面设备注册要求显式注入凭证存储", async (t) => {
@@ -458,68 +459,308 @@ test("桌面设备注册要求显式注入凭证存储", async (t) => {
   );
 });
 
-test("桌面 capability 只增加本地命令且不允许远程页面", () => {
+test("账号密码登录建立 Board 会话与设备凭据并可复用同一设备", async (t) => {
+  const { runtime, serverUrl } = await startRuntime(t);
+  const root = await withTempRoot(t, "trellis-desktop-login-");
+  let credential = null;
+  const credentialStore = {
+    async saveCredential(value) {
+      credential = value;
+    },
+    async loadCredential() {
+      if (!credential) throw new Error("credential missing");
+      return credential;
+    }
+  };
+
+  const first = await loginDesktop({
+    serverUrl,
+    username: "sysadmin",
+    password: "Legacy-Password-123",
+    deviceName: "Windows 桌面",
+    root,
+    secureDirectory: false,
+    credentialStore
+  });
+  assert.equal(first.deviceReady, true);
+  assert.match(first.sessionToken, /^[A-Za-z0-9_-]{16,}$/);
+  assert.ok(credential);
+  const configText = fs.readFileSync(path.join(root, "config.json"), "utf8");
+  assert.ok(!configText.includes("Legacy-Password-123"));
+  assert.ok(!configText.includes(first.sessionToken));
+  assert.ok(!configText.includes(credential));
+
+  const second = await loginDesktop({
+    serverUrl,
+    username: "sysadmin",
+    password: "Legacy-Password-123",
+    deviceName: "Windows 桌面",
+    root,
+    secureDirectory: false,
+    credentialStore
+  });
+  assert.equal(second.deviceReady, true);
+  assert.equal(
+    runtime.db.prepare("SELECT COUNT(*) AS count FROM agent_device").get().count,
+    1
+  );
+
+  const logout = await logoutDesktopSession({
+    serverUrl,
+    sessionToken: second.sessionToken
+  });
+  assert.equal(logout.loggedOut, true);
+  const loggedOutRuntime = await request(runtime, "/api/runtime", {
+    cookie: `trellis_team_session=${second.sessionToken}`
+  });
+  assert.equal(loggedOutRuntime.status, 200);
+  assert.equal(loggedOutRuntime.body.authenticated, false);
+});
+
+test("错误密码不创建配置、会话或设备", async (t) => {
+  const { runtime, serverUrl } = await startRuntime(t);
+  const root = await withTempRoot(t, "trellis-desktop-login-password-");
+  await assert.rejects(
+    loginDesktop({
+      serverUrl,
+      username: "sysadmin",
+      password: "wrong-password",
+      deviceName: "Windows 桌面",
+      root,
+      secureDirectory: false,
+      credentialStore: {
+        async loadCredential() {
+          throw new Error("credential missing");
+        },
+        async saveCredential() {}
+      }
+    }),
+    (error) => error instanceof AgentError
+      && error.code === AGENT_ERROR_CODE.HTTP_ERROR
+      && /用户名或密码错误/.test(error.message)
+  );
+  assert.equal(
+    runtime.db.prepare("SELECT COUNT(*) AS count FROM agent_device").get().count,
+    0
+  );
+  assert.equal(fs.existsSync(path.join(root, "config.json")), false);
+});
+
+test("首次登录需要改密时只建立会话，并清除旧客户端设备", async (t) => {
+  const { runtime, serverUrl, teamId } = await startRuntime(t, {
+    users: [{
+      username: "pending-user",
+      displayName: "待改密用户",
+      mustChangePassword: true
+    }]
+  });
+  const root = await withTempRoot(t, "trellis-desktop-login-pending-");
+  const store = new ConfigStore(root, { secureDirectory: false });
+  await store.saveConfig({
+    schemaVersion: 1,
+    revision: "d".repeat(32),
+    serverUrl,
+    caFile: null,
+    agentId: "legacy-pending-agent",
+    deviceName: "旧客户端设备",
+    username: "pending-user",
+    teamId: null,
+    teams: [{ id: teamId, name: "旧团队", role: "member" }],
+    protocolVersion: 2,
+    agentVersion: "0.1.0",
+    pairedAt: new Date().toISOString(),
+    bindings: []
+  });
+  const result = await loginDesktop({
+    serverUrl,
+    username: "pending-user",
+    password: "Legacy-Password-123",
+    deviceName: "Windows 桌面",
+    root,
+    secureDirectory: false,
+    credentialStore: {
+      async loadCredential() {
+        throw new Error("credential missing");
+      },
+      async saveCredential() {}
+    },
+    forceNew: true
+  });
+  assert.equal(result.mustChangePassword, true);
+  assert.equal(result.deviceReady, false);
+  assert.match(result.sessionToken, /^[A-Za-z0-9_-]{16,}$/);
+  assert.equal(
+    runtime.db.prepare("SELECT COUNT(*) AS count FROM agent_device").get().count,
+    0
+  );
+  assert.equal(fs.existsSync(path.join(root, "config.json")), false);
+  assert.equal(fs.existsSync(path.join(root, "credential.dpapi")), false);
+});
+
+test("设备 heartbeat 网络失败不会被误判为凭证失效并重复注册", async (t) => {
+  const { runtime, serverUrl } = await startRuntime(t);
+  const root = await withTempRoot(t, "trellis-desktop-login-network-");
+  let savedCredential = null;
+  const credentialStore = {
+    async saveCredential(value) {
+      savedCredential = value;
+    },
+    async loadCredential() {
+      if (!savedCredential) throw new Error("credential missing");
+      return savedCredential;
+    }
+  };
+  await loginDesktop({
+    serverUrl,
+    username: "sysadmin",
+    password: "Legacy-Password-123",
+    deviceName: "Windows 桌面",
+    root,
+    secureDirectory: false,
+    credentialStore
+  });
+  assert.equal(
+    runtime.db.prepare("SELECT COUNT(*) AS count FROM agent_device").get().count,
+    1
+  );
+
+  await assert.rejects(
+    loginDesktop({
+      serverUrl,
+      username: "sysadmin",
+      password: "Legacy-Password-123",
+      deviceName: "Windows 桌面",
+      root,
+      secureDirectory: false,
+      credentialStore,
+      apiClientFactory: () => ({
+        async heartbeat() {
+          throw new AgentError(
+            AGENT_ERROR_CODE.NETWORK_ERROR,
+            "模拟网络中断"
+          );
+        }
+      })
+    }),
+    (error) => error instanceof AgentError
+      && error.code === AGENT_ERROR_CODE.NETWORK_ERROR
+  );
+  assert.equal(
+    runtime.db.prepare("SELECT COUNT(*) AS count FROM agent_device").get().count,
+    1
+  );
+  assert.equal(fs.existsSync(path.join(root, "config.json")), true);
+});
+
+test("--force-new 替换旧设备时不继承旧账号本地关联", async (t) => {
+  const { runtime, serverUrl, teamId } = await startRuntime(t);
+  const root = await withTempRoot(t, "trellis-desktop-login-force-new-");
+  const store = new ConfigStore(root, { secureDirectory: false });
+  await store.saveConfig({
+    schemaVersion: 1,
+    revision: "a".repeat(32),
+    serverUrl,
+    caFile: null,
+    agentId: "legacy-agent",
+    deviceName: "旧设备",
+    username: "sysadmin",
+    teamId: null,
+    teams: [{ id: teamId, name: "旧团队", role: "member" }],
+    protocolVersion: 2,
+    agentVersion: "0.1.0",
+    pairedAt: new Date().toISOString(),
+    bindings: [{
+      localId: "legacy-binding",
+      serverBindingId: "legacy-server-binding",
+      projectId: "legacy-project",
+      repoPath: path.join(root, "legacy-repo"),
+      branchName: "main",
+      teamId,
+      remoteIdentityKey: "b".repeat(64),
+      localRepoKey: "c".repeat(64),
+      displayName: "旧仓库",
+      createdAt: new Date().toISOString(),
+      allowFileRemote: false,
+      readOnly: false,
+      syncStatus: "approved",
+      lastSyncedAt: null,
+      lastHead: null,
+      lastError: null,
+      lastErrorCode: null
+    }]
+  });
+  let savedCredential = null;
+  const result = await loginDesktop({
+    serverUrl,
+    username: "sysadmin",
+    password: "Legacy-Password-123",
+    deviceName: "新设备",
+    root,
+    secureDirectory: false,
+    forceNew: true,
+    credentialStore: {
+      async loadCredential() {
+        throw new Error("旧凭证不应被读取");
+      },
+      async saveCredential(value) {
+        savedCredential = value;
+      }
+    }
+  });
+  assert.equal(result.deviceReady, true);
+  assert.ok(savedCredential);
+  const config = await store.readConfig({ allowMissing: false });
+  assert.notEqual(config.agentId, "legacy-agent");
+  assert.deepEqual(config.bindings, []);
+  assert.equal(
+    runtime.db.prepare("SELECT COUNT(*) AS count FROM agent_device").get().count,
+    1
+  );
+});
+
+test("登录 Cookie 与会话错误严格校验", async () => {
+  assert.equal(
+    parseSessionCookie({
+      "set-cookie": ["trellis_team_session=abcdefghijklmnop; Path=/; HttpOnly"]
+    }),
+    "abcdefghijklmnop"
+  );
+  assert.throws(
+    () => parseSessionCookie({ "set-cookie": [] }),
+    /缺少会话 Cookie/
+  );
+  assert.throws(
+    () => parseSessionCookie({
+      "set-cookie": [
+        "trellis_team_session=abcdefghijklmnop; Path=/",
+        "trellis_team_session=ponmlkjihgfedcba; Path=/"
+      ]
+    }),
+    /重复会话 Cookie/
+  );
+});
+
+test("桌面 capability 配置拆分本地登录与远程项目关联权限", () => {
   const capability = readJson("desktop/src-tauri/capabilities/main.json");
   assert.deepEqual(capability.windows, ["main"]);
   assert.equal(capability.remote, undefined);
   assert.deepEqual(capability.permissions.slice().sort(), [
     "allow-app-status",
-    "allow-enroll-device",
-    "allow-enroll-with-token",
-    "allow-init-workspace",
-    "allow-open-board-login",
-    "allow-pick-workspace",
+    "allow-desktop-login",
     "core:default",
-    "dialog:allow-open"
   ]);
-  for (const permission of capability.permissions) {
-    if (permission === "dialog:allow-open") continue;
-    assert.doesNotMatch(
-      permission,
-      /shell|fs:|http:|process:|updater:|dialog:|clipboard|global-shortcut|os:|path:|webview|window-state|autostart/i
-    );
-  }
-
-  const custom = readText("desktop/src-tauri/permissions/desktop.toml");
-  assert.match(custom, /commands\.allow = \["enroll_with_token"\]/);
-  assert.match(custom, /commands\.allow = \["open_board_login"\]/);
-  assert.match(custom, /commands\.allow = \["enroll_device"\]/);
-  assert.match(custom, /commands\.allow = \["pick_workspace"\]/);
-  assert.match(custom, /commands\.allow = \["init_workspace"\]/);
-  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 6);
-
-  const main = readText("desktop/src-tauri/src/main.rs");
-  assert.match(main, /enroll_with_token/);
-  assert.match(main, /handle_enroll_links/);
-  assert.match(main, /tauri::generate_handler!\[/);
-  assert.match(main, /enroll_device/);
-  assert.match(main, /open_board_login/);
-  assert.match(main, /sidecar_plugin_enroll|sidecar::enroll\(/);
-  assert.doesNotMatch(main, /open_devtools|devtools:\s*true/);
-
-  const navigation = readText("desktop/src-tauri/src/navigation.rs");
-  assert.match(navigation, /trellisboard/);
-  assert.match(navigation, /parse_enroll_link/);
-  assert.match(navigation, /"server"/);
-
-  const ui = readText("desktop/ui/index.html");
-  assert.match(ui, /id="enroll-token"/);
-  assert.match(ui, /id="open-login"/);
-  assert.match(ui, /id="pairing-code"/);
-  const setup = readText("desktop/ui/setup.js");
-  assert.match(setup, /invoke\("enroll_with_token"/);
-  assert.match(setup, /invoke\("enroll_device"/);
-  assert.match(setup, /invoke\("open_board_login"/);
-  assert.match(setup, /listen\("enroll-token"/);
-
-  const install = readText("desktop/install.ps1");
-  assert.match(install, /\$ProtocolScheme = 'trellisboard'/);
-  assert.match(install, /shell\\open\\command/);
-  assert.match(install, /URL Protocol/);
-  const uninstall = readText("desktop/uninstall.ps1");
-  assert.match(uninstall, /Remove-Item -LiteralPath \$ProtocolKey/);
+  const remote = readJson("desktop/src-tauri/capabilities/board-local-association.json");
+  assert.deepEqual(remote.permissions.slice().sort(), [
+    "allow-associate-local-project",
+    "allow-desktop-sidecar-status",
+    "allow-list-local-associations",
+  ]);
+  assert.ok(remote.remote.urls.includes("https://*"));
 
   const tauri = readJson("desktop/src-tauri/tauri.conf.json");
-  assert.deepEqual(tauri.app.security.capabilities, ["main"]);
+  assert.deepEqual(
+    tauri.app.security.capabilities,
+    ["main", "board-local-association", "live-control"]
+  );
   assert.doesNotMatch(tauri.app.security.csp, /unsafe-eval|https:/);
 });

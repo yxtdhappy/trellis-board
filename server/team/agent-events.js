@@ -8,6 +8,8 @@ export const AGENT_EVENT_TYPES = Object.freeze({
   TASK_UPDATED: "task.updated",
   TASK_CANCELLED: "task.cancelled",
   TASK_SNAPSHOT_REQUIRED: "task.snapshot_required",
+  LIVE_CHANGED: "live.changed",
+  TASK_LIVE_OVERRIDDEN: "task.live.overridden",
   SYNC_REQUIRED: "sync.required",
   COMMAND: "command",
   AGENT_REVOKED: "agent.revoked",
@@ -121,7 +123,7 @@ export function createAgentEventService({
       FROM agent_project_binding b
       JOIN team_project p ON p.repository_id = b.project_id
       WHERE b.agent_id = ? AND b.team_id = ?
-        AND b.sync_status <> 'revoked' AND p.team_id = b.team_id
+        AND b.sync_status = 'approved' AND p.team_id = b.team_id
       LIMIT 1
     `).get(stream.agentId, stream.teamId);
     return Boolean(binding);
@@ -327,7 +329,9 @@ export function createAgentEventService({
     dedupeKey,
     payload
   }) {
-    if (closed || !teamId || !dedupeKey || !targetAgentId) return null;
+    if (closed || !teamId || !dedupeKey || (!targetAgentId && !targetUserId)) {
+      return null;
+    }
     const row = insertEvent({
       teamId,
       type,
@@ -449,6 +453,86 @@ export function createAgentEventService({
     })).filter(Boolean);
   }
 
+  function publishLiveChanged({
+    projectId,
+    revision,
+    taskKeys = [],
+    sourceAgentId = null
+  }) {
+    if (closed) return [];
+    const project = readProject(projectId);
+    if (!project) return [];
+    return projectTargets(projectId)
+      .filter((target) => target.agent_id !== sourceAgentId)
+      .map((target) => publish({
+        teamId: target.team_id,
+        type: AGENT_EVENT_TYPES.LIVE_CHANGED,
+        projectId,
+        targetAgentId: target.agent_id,
+        targetUserId: target.user_id,
+        dedupeKey: `live.changed:${projectId}:${revision}`,
+        payload: {
+          teamId: target.team_id,
+          projectId,
+          revision,
+          taskKeys,
+          sourceAgentId
+        }
+      })).filter(Boolean);
+  }
+
+  function publishLiveOverridden({
+    projectId,
+    taskKey,
+    revision,
+    assigneeUserId,
+    actorAgentId,
+    action,
+    dedupeKey = null
+  }) {
+    if (closed) return [];
+    const project = readProject(projectId);
+    if (!project || !assigneeUserId) return [];
+    const taskTitle = db.prepare(`
+      SELECT title
+      FROM team_task_index
+      WHERE project_id = ? AND task_key = ?
+    `).get(projectId, taskKey)?.title || null;
+    const payload = {
+      teamId: project.team_id,
+      projectId,
+      taskKey,
+      taskTitle,
+      revision,
+      actorAgentId,
+      action
+    };
+    const eventKey = dedupeKey || `task.live.overridden:${taskKey}:${revision}`;
+    const rows = projectTargets(projectId, { userIds: [assigneeUserId] })
+      .filter((target) => target.agent_id !== actorAgentId)
+      .map((target) => publish({
+        teamId: target.team_id,
+        type: AGENT_EVENT_TYPES.TASK_LIVE_OVERRIDDEN,
+        projectId,
+        targetAgentId: target.agent_id,
+        targetUserId: target.user_id,
+        taskId: taskKey,
+        dedupeKey: `${eventKey}:${target.agent_id}`,
+        payload
+      })).filter(Boolean);
+    // 浏览器通知不依赖目标用户是否绑定 Agent。
+    const browserRow = publish({
+      teamId: project.team_id,
+      type: AGENT_EVENT_TYPES.TASK_LIVE_OVERRIDDEN,
+      projectId,
+      targetUserId: assigneeUserId,
+      taskId: taskKey,
+      dedupeKey: `${eventKey}:browser`,
+      payload
+    });
+    return browserRow ? [...rows, browserRow] : rows;
+  }
+
   function publishAgentRevoked(agentId, teamId = null) {
     if (closed) return [];
     const teams = teamId
@@ -516,7 +600,7 @@ export function createAgentEventService({
       LEFT JOIN team_member tm
         ON tm.team_id = b.team_id AND tm.user_id = u.id
       WHERE b.agent_id = ? AND b.team_id = ?
-        AND b.sync_status <> 'revoked'
+        AND b.sync_status = 'approved'
         AND p.team_id = b.team_id
         AND (u.system_admin = 1 OR tm.user_id IS NOT NULL)
       LIMIT 1
@@ -831,6 +915,8 @@ export function createAgentEventService({
     },
     publish,
     publishTaskEvent,
+    publishLiveChanged,
+    publishLiveOverridden,
     publishSyncRequired,
     publishAgentRevoked,
     syncPendingCommands,

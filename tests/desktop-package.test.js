@@ -161,7 +161,10 @@ test("tauri.conf.json 固定 NSIS currentUser 且 CSP 无 unsafe 指令", () => 
   assert.equal(config.bundle.windows.webviewInstallMode.type, "downloadBootstrapper");
   assert.equal(config.bundle.windows.webviewInstallMode.silent, true);
   assert.deepEqual(config.bundle.externalBin, ["binaries/trellis-agent"]);
-  assert.deepEqual(config.app.security.capabilities, ["main"]);
+  assert.deepEqual(
+    config.app.security.capabilities,
+    ["main", "board-local-association", "live-control"]
+  );
   assert.deepEqual(config.app.windows, []);
   const csp = config.app.security.csp;
   assert.match(csp, /default-src 'self'/);
@@ -174,9 +177,10 @@ test("tauri.conf.json 固定 NSIS currentUser 且 CSP 无 unsafe 指令", () => 
   assert.match(cargo, /^name = "trellis-board-client"$/m);
   assert.match(cargo, /^version = "0\.2\.0"$/m);
   assert.doesNotMatch(cargo, /tauri.*features.*devtools/);
+  assert.match(readText("desktop/src-tauri/src/config.rs"), /SCHEMA_VERSION: u32 = 2/);
 });
 
-test("capability 只授予本地命令与最小 dialog 权限，不授予 shell、文件系统或远程页面权限", () => {
+test("capability 将本地登录与远程项目关联权限分开", () => {
   const capability = readJson("desktop/src-tauri/capabilities/main.json");
   assert.equal(capability.identifier, "main");
   assert.deepEqual(capability.windows, ["main"]);
@@ -185,35 +189,39 @@ test("capability 只授予本地命令与最小 dialog 权限，不授予 shell�
   const permissions = capability.permissions;
   assert.deepEqual(permissions.slice().sort(), [
     "allow-app-status",
-    "allow-enroll-device",
-    "allow-enroll-with-token",
-    "allow-init-workspace",
-    "allow-open-board-login",
-    "allow-pick-workspace",
+    "allow-desktop-login",
     "core:default",
-    "dialog:allow-open"
   ]);
-  for (const permission of permissions) {
-    if (permission === "dialog:allow-open") continue;
-    assert.doesNotMatch(
-      permission,
-      /shell|fs:|http:|process:|updater:|dialog::|clipboard|global-shortcut|os:|path:|webview|window-state|autostart/i
-    );
-  }
+  const remote = readJson("desktop/src-tauri/capabilities/board-local-association.json");
+  assert.deepEqual(remote.permissions.slice().sort(), [
+    "allow-associate-local-project",
+    "allow-desktop-sidecar-status",
+    "allow-list-local-associations",
+  ]);
+  assert.ok(remote.remote.urls.includes("https://*"));
+  assert.ok(remote.remote.urls.includes("http://127.0.0.1:*"));
   const custom = readText("desktop/src-tauri/permissions/desktop.toml");
   assert.match(custom, /identifier = "allow-app-status"/);
   assert.match(custom, /commands\.allow = \["app_status"\]/);
-  assert.match(custom, /identifier = "allow-enroll-device"/);
-  assert.match(custom, /commands\.allow = \["enroll_device"\]/);
-  assert.match(custom, /identifier = "allow-enroll-with-token"/);
-  assert.match(custom, /commands\.allow = \["enroll_with_token"\]/);
-  assert.match(custom, /identifier = "allow-open-board-login"/);
-  assert.match(custom, /commands\.allow = \["open_board_login"\]/);
-  assert.match(custom, /identifier = "allow-pick-workspace"/);
-  assert.match(custom, /commands\.allow = \["pick_workspace"\]/);
-  assert.match(custom, /identifier = "allow-init-workspace"/);
-  assert.match(custom, /commands\.allow = \["init_workspace"\]/);
-  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 6);
+  assert.match(custom, /identifier = "allow-desktop-login"/);
+  assert.match(custom, /commands\.allow = \["desktop_login"\]/);
+  assert.match(custom, /commands\.allow = \["associate_local_project"\]/);
+  assert.match(custom, /commands\.allow = \["list_local_associations"\]/);
+  assert.match(custom, /commands\.allow = \["desktop_sidecar_status"\]/);
+  assert.match(custom, /commands\.allow = \["live_control_pending"\]/);
+  assert.match(custom, /commands\.allow = \["live_control_decide"\]/);
+  assert.match(custom, /commands\.allow = \["live_control_restore"\]/);
+  assert.match(custom, /commands\.allow = \["live_control_dismiss"\]/);
+  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 9);
+  const control = readJson("desktop/src-tauri/capabilities/live-control.json");
+  assert.deepEqual(control.windows, ["live-control"]);
+  assert.deepEqual(control.permissions.slice().sort(), [
+    "allow-live-control-decide",
+    "allow-live-control-dismiss",
+    "allow-live-control-get",
+    "allow-live-control-restore",
+    "core:default",
+  ]);
 });
 
 test("导航、新窗口、托盘与日志边界在 Rust 源中显式实现", () => {
@@ -233,15 +241,32 @@ test("导航、新窗口、托盘与日志边界在 Rust 源中显式实现", ()
   assert.match(main, /window\.hide\(\)/);
   assert.match(main, /"quit" =>/);
   assert.match(main, /"autostart" =>/);
-  assert.match(main, /generate_handler!\[\s*app_status,[\s\S]*?enroll_with_token,[\s\S]*?enroll_device,[\s\S]*?open_board_login,[\s\S]*?pick_workspace,[\s\S]*?init_workspace\s*\]/);
-  assert.match(main, /fn ensure_local_caller\(window: &tauri::WebviewWindow\)/);
-  assert.match(main, /该命令仅允许本地页面调用/);
+  assert.match(main, /generate_handler!\[\s*app_status,[\s\S]*?desktop_login,[\s\S]*?associate_local_project,[\s\S]*?list_local_associations,[\s\S]*?desktop_sidecar_status,[\s\S]*?live_control_pending,[\s\S]*?live_control_decide,[\s\S]*?live_control_restore,[\s\S]*?live_control_dismiss\s*\]/);
+  assert.match(main, /fn ensure_local_caller\(window: &WebviewWindow\)/);
+  assert.match(main, /ensure_board_caller/);
+  assert.match(main, /该命令仅允许本地登录页调用/);
   assert.doesNotMatch(main, /open_devtools|devtools:\s*true/);
+  assert.doesNotMatch(main, /trellisboard|workspace_init|pick_workspace/);
+  assert.match(main, /async fn live_control_pending/);
+  assert.match(main, /async fn live_control_decide/);
+  assert.match(main, /async fn live_control_restore/);
+  assert.match(main, /async fn live_control_dismiss/);
+
+  const sidecar = readText("desktop/src-tauri/src/sidecar.rs");
+  assert.match(sidecar, /pending_control: Mutex<VecDeque<Value>>/);
+  assert.match(sidecar, /WebviewUrl::App\("control\.html"\.into\(\)\)/);
+  assert.match(sidecar, /"live-decide"/);
+  assert.match(sidecar, /"live-restore"/);
+  assert.match(readText("desktop/ui/control.js"), /live_control_dismiss/);
+  assert.equal(fs.existsSync(path.join(ROOT, "desktop/ui/control.html")), true);
+  assert.equal(fs.existsSync(path.join(ROOT, "desktop/ui/control.css")), true);
+  assert.equal(fs.existsSync(path.join(ROOT, "desktop/ui/control.js")), true);
 
   const logging = readText("desktop/src-tauri/src/logging.rs");
   assert.match(logging, /pub fn redact/);
   assert.match(logging, /"\\"credential\\""/);
   assert.match(logging, /"\\"pairingCode\\""/);
+  assert.match(logging, /"\\"sessionToken\\""/);
 });
 
 test("安装脚本以 UTF-8 BOM 保存以兼容 Windows PowerShell 5.1", () => {
@@ -299,6 +324,7 @@ test("sidecar 构建脚本引用的入口文件都存在且使用 Node SEA", () 
     "desktop/sidecar/sea-entry.js",
     "desktop/sidecar/main.js",
     "desktop/sidecar/desktop-device.js",
+    "desktop/sidecar/desktop-association.js",
     "desktop/sidecar/bundle.mjs",
     "agent/index.js",
     "agent/api.js",

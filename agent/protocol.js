@@ -246,6 +246,7 @@ function normalizeServerBinding(value) {
     branchName: typeof value.branchName === "string" ? value.branchName : null,
     errorCode: typeof value.errorCode === "string" ? value.errorCode : null,
     error: typeof value.error === "string" ? value.error.slice(0, 500) : null,
+    readOnly: value.readOnly === true,
   };
 }
 

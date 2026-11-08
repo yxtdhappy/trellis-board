@@ -3,119 +3,64 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Trellis Board</title>
+    <title>Trellis Board 登录</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main class="shell">
-      <header>
-        <h1>Trellis Board</h1>
-        <p id="status" class="status" role="status" aria-live="polite">正在读取本地配置…</p>
-      </header>
-
-      <section id="setup-panel" class="panel" hidden>
-        <p class="lede">
-          在浏览器登录 Board，于“团队管理 → 设备”生成一次性设备令牌，然后粘贴到下面；
-          已注册协议处理程序时，页面上的“连接桌面客户端”会直接唤起本程序。
-        </p>
-        <form id="setup-form" novalidate>
-          <label>
-            <span>服务端地址</span>
-            <input
-              id="server-url"
-              name="serverUrl"
-              type="url"
-              inputmode="url"
-              placeholder="https://board.example.com"
-              autocomplete="off"
-              spellcheck="false"
-              required
-            />
-          </label>
-          <label>
-            <span>设备名称</span>
-            <input id="device-name" name="deviceName" type="text" maxlength="80" required />
-          </label>
-          <label>
-            <span>设备令牌</span>
-            <input
-              id="enroll-token"
-              name="token"
-              type="password"
-              autocomplete="off"
-              spellcheck="false"
-              minlength="32"
-              required
-            />
-          </label>
-          <div class="actions">
-            <button id="submit" type="submit">用设备令牌注册并打开看板</button>
-            <button id="open-login" type="button" class="secondary">从浏览器完成登录</button>
+      <section class="card" aria-labelledby="title">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">T</span>
+          <div>
+            <p class="eyebrow">TRELLIS DESKTOP</p>
+            <h1 id="title">登录团队看板</h1>
           </div>
-        </form>
-        <p id="error" class="error" role="alert" hidden></p>
-        <p class="hint">
-          设备令牌只用于本次注册，5 分钟内有效且只能使用一次；设备凭证由 Windows DPAPI 保护，
-          不会写入本地存储或日志。
-        </p>
-
-        <details class="fallback">
-          <summary>管理员兜底：使用配对码</summary>
-          <p class="hint">
-            配对码仅用于管理员排障，不作为桌面端默认注册方式；可在 Board 设备页生成。
-          </p>
-          <form id="pairing-form" novalidate>
-            <label>
-              <span>配对码</span>
-              <input
-                id="pairing-code"
-                name="pairingCode"
-                type="password"
-                autocomplete="off"
-                spellcheck="false"
-                minlength="16"
-                required
-              />
-            </label>
-            <button id="pairing-submit" type="submit">使用配对码注册</button>
-          </form>
-        </details>
-      </section>
-
-      <section id="workspace-panel" class="panel" hidden>
-        <h2>初始化 workspace</h2>
-        <p class="lede">
-          选择一个本地项目目录。客户端会写入 <code>.trellis</code>、<code>.opencode</code>、
-          <code>.agents</code>，并用当前设备注册账号的用户名初始化 developer；不会创建 Git 仓库。
-        </p>
-        <label>
-          <span>初始化团队</span>
-          <select id="workspace-team" name="workspaceTeam" required>
-            <option value="">正在读取可初始化团队…</option>
-          </select>
-        </label>
-        <label>
-          <span>workspace 路径</span>
-          <input
-            id="workspace-path"
-            name="workspacePath"
-            type="text"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="D:\projects\my-workspace"
-          />
-        </label>
-        <div class="workspace-actions">
-          <button id="pick-workspace" type="button">选择目录</button>
-          <button id="init-workspace" type="button">初始化/修复</button>
         </div>
-        <p id="workspace-result" class="hint" role="status" aria-live="polite" hidden></p>
-        <p id="workspace-error" class="error" role="alert" hidden></p>
-        <button id="open-board" type="button">打开看板</button>
-      </section>
+        <p id="status" class="status" role="status" aria-live="polite">
+          正在读取上次登录设置…
+        </p>
 
-      <section id="loading-panel" class="panel">
-        <p>正在连接 Board 服务端…</p>
+        <form id="login-form" novalidate>
+          <label for="server-url">服务器地址</label>
+          <input
+            id="server-url"
+            name="serverUrl"
+            type="url"
+            inputmode="url"
+            placeholder="https://board.example.com"
+            autocomplete="url"
+            spellcheck="false"
+            required
+          />
+
+          <label for="username">登录名</label>
+          <input
+            id="username"
+            name="username"
+            type="text"
+            maxlength="64"
+            autocomplete="username"
+            spellcheck="false"
+            required
+          />
+
+          <label for="password">密码</label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            maxlength="1024"
+            autocomplete="current-password"
+            required
+          />
+
+          <p id="error" class="error" role="alert" hidden></p>
+          <button id="submit" type="submit">登录</button>
+        </form>
+
+        <p class="hint">
+          登录后会在当前窗口打开 Board。密码只交给本地后台进程完成认证，不写入配置或日志。
+        </p>
       </section>
 
       <footer>

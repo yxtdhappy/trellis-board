@@ -63,6 +63,11 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
               关系异常
             </Badge>
           ) : null}
+          {Number(task.liveRevision) > 0 ? (
+            <Badge variant="outline" className="h-4 rounded-full px-1.5 text-[9px] text-muted-foreground">
+              实时未入 Git
+            </Badge>
+          ) : null}
           <span
             className={`rounded-full px-1.5 py-px text-[9px] font-semibold ${priorityTone(task.priority)}`}
           >

@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/remote-schema.json",
+  "identifier": "board-local-association",
+  "description": "远程 Board 仅可列出本地关联并选择本地仓库，Rust 还会复核当前 Board origin。",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "https://*",
+      "http://localhost:*",
+      "http://127.0.0.1:*"
+    ]
+  },
+  "permissions": [
+    "allow-associate-local-project",
+    "allow-list-local-associations",
+    "allow-desktop-sidecar-status"
+  ]
+}

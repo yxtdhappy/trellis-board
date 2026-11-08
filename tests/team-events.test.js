@@ -337,6 +337,45 @@ test("事件流按团队鉴权、完整快照并支持 Last-Event-ID 断线补�
   replay.close();
 });
 
+test("实时 revision 向同项目其他设备广播且不回发来源设备", async (t) => {
+  const { runtime, user, teamId, projectId } = await setupRuntime(t);
+  const source = createAgent(runtime, {
+    userId: user.id,
+    teamId,
+    projectId,
+    credential: `c${"r".repeat(40)}`
+  });
+  const target = createAgent(runtime, {
+    userId: user.id,
+    teamId,
+    projectId,
+    credential: `c${"s".repeat(40)}`
+  });
+  const sourceStream = openEventStream(runtime, {
+    credential: source.credential,
+    teamId
+  });
+  const targetStream = openEventStream(runtime, {
+    credential: target.credential,
+    teamId
+  });
+  assert.equal((await sourceStream.ready).status, 200);
+  assert.equal((await targetStream.ready).status, 200);
+  runtime.services.agentEvents.publishLiveChanged({
+    projectId,
+    revision: 9,
+    taskKeys: ["p1::.trellis/tasks/live"],
+    sourceAgentId: source.agentId
+  });
+  const event = await targetStream.next();
+  assert.equal(event.type, "live.changed");
+  assert.equal(event.data.payload.revision, 9);
+  assert.equal(event.data.payload.sourceAgentId, source.agentId);
+  await assert.rejects(sourceStream.next(120), /超时/);
+  sourceStream.close();
+  targetStream.close();
+});
+
 test("游标不可识别时发送 resync.required 并保留明确语义", async (t) => {
   const { runtime, user, repositoryPath, teamId, projectId } = await setupRuntime(t);
   const agent = createAgent(runtime, {

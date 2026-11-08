@@ -1,33 +1,46 @@
-# 桌面客户端自定义命令权限。capability 只引用这些标识符；
-# 远程 Board 页面不属于该 capability，因此即使能拿到 window.__TAURI__，
-# invoke 也会被 Tauri 拒绝。
+# 本地登录页与远程 Board 使用分离的 capability。
 
 [[permission]]
 identifier = "allow-app-status"
-description = "读取本地桌面客户端版本、服务端地址和 sidecar 状态。"
+description = "读取本地桌面客户端版本、上次服务端地址和 sidecar 状态。"
 commands.allow = ["app_status"]
 
 [[permission]]
-identifier = "allow-enroll-with-token"
-description = "用登录会话签发的一次性设备令牌注册桌面设备；令牌不落盘、不进日志。"
-commands.allow = ["enroll_with_token"]
+identifier = "allow-desktop-login"
+description = "仅本地登录页通过 stdin 向 sidecar 提交账号密码。"
+commands.allow = ["desktop_login"]
 
 [[permission]]
-identifier = "allow-enroll-device"
-description = "管理员兜底：用一次性配对码注册桌面设备；配对码不落盘、不进日志。"
-commands.allow = ["enroll_device"]
+identifier = "allow-associate-local-project"
+description = "当前 Board origin 可选择本地 Git 仓库并请求关联服务端项目。"
+commands.allow = ["associate_local_project"]
 
 [[permission]]
-identifier = "allow-open-board-login"
-description = "在系统浏览器打开配置的 Board 地址完成登录并生成设备令牌。"
-commands.allow = ["open_board_login"]
+identifier = "allow-list-local-associations"
+description = "当前 Board origin 可读取本地项目关联状态。"
+commands.allow = ["list_local_associations"]
 
 [[permission]]
-identifier = "allow-pick-workspace"
-description = "仅允许本地加载页打开系统目录选择器。"
-commands.allow = ["pick_workspace"]
+identifier = "allow-desktop-sidecar-status"
+description = "当前 Board origin 可读取客户端后台同步运行状态。"
+commands.allow = ["desktop_sidecar_status"]
 
 [[permission]]
-identifier = "allow-init-workspace"
-description = "把本地加载页选择的目录交给 sidecar 初始化 workspace。"
-commands.allow = ["init_workspace"]
+identifier = "allow-live-control-get"
+description = "本地实时同步控制窗口读取当前待处理事件。"
+commands.allow = ["live_control_pending"]
+
+[[permission]]
+identifier = "allow-live-control-decide"
+description = "本地实时同步控制窗口提交责任人确认动作。"
+commands.allow = ["live_control_decide"]
+
+[[permission]]
+identifier = "allow-live-control-restore"
+description = "本地实时同步控制窗口一键恢复备份。"
+commands.allow = ["live_control_restore"]
+
+[[permission]]
+identifier = "allow-live-control-dismiss"
+description = "本地实时同步控制窗口关闭已读通知。"
+commands.allow = ["live_control_dismiss"]

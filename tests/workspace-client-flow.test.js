@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,17 +8,8 @@ import { fileURLToPath } from "node:url";
 
 import { CLI_EXIT_CODE, runCli } from "../agent/cli.js";
 import { WORKSPACE_ERROR_CODE, WorkspaceBootstrapError } from "../agent/workspace.js";
-import { runWorkspaceInit } from "../desktop/sidecar/workspace-init.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-
-function readText(relativePath) {
-  return fs.readFileSync(path.join(ROOT, relativePath), "utf8");
-}
-
-function readJson(relativePath) {
-  return JSON.parse(readText(relativePath));
-}
 
 function captureIo() {
   const stdout = [];
@@ -264,121 +254,12 @@ test("workspace status 只读报告 developer、模板版本和工具目录", as
   );
 });
 
-function seedTemplateCache(dataRoot, teamId) {
-  const manifest = readJson("server/templates/workspace/manifest.json");
-  const archive = fs.readFileSync(
-    path.join(ROOT, "server/templates/workspace/workspace-template.zip"),
-  );
-  const sha256 = crypto.createHash("sha256").update(archive).digest("hex");
-  const cacheDir = path.join(dataRoot, "templates", "workspace", teamId);
-  const versionDir = path.join(cacheDir, sha256);
-  fs.mkdirSync(versionDir, { recursive: true });
-  fs.writeFileSync(path.join(versionDir, "template.zip"), archive);
-  fs.writeFileSync(
-    path.join(versionDir, "manifest.json"),
-    `${JSON.stringify({ version: manifest.version, sha256 }, null, 2)}\n`,
-  );
-  fs.writeFileSync(
-    path.join(cacheDir, "latest.json"),
-    `${JSON.stringify({ version: manifest.version, sha256 }, null, 2)}\n`,
-  );
-  return { manifest, sha256 };
-}
-
-test("sidecar workspace-init 用本地缓存真实初始化且不依赖网络", async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-workspace-sidecar-"));
-  const workspacePath = path.join(root, "workspace");
-  const dataRoot = path.join(root, "agent");
-  fs.mkdirSync(workspacePath);
-  fs.mkdirSync(dataRoot);
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const { manifest, sha256 } = seedTemplateCache(dataRoot, "team-1");
-  const tools = [".opencode", ".agents"];
-
-  const result = await runWorkspaceInit({
-    workspacePath,
-    tools,
-    username: "alice",
-    teamId: "team-1",
-    serverUrl: "http://127.0.0.1:1",
-    dataRoot,
-    agentCredential: "x".repeat(32),
-    fetchImpl: async () => {
-      throw new Error("network disabled");
-    },
-  });
-
-  assert.equal(result.source, "cache");
-  assert.equal(result.templateVersion, manifest.version);
-  assert.equal(result.templateSha256, sha256);
-  assert.equal(result.developer, "alice");
-  assert.equal(
-    fs.readFileSync(path.join(workspacePath, ".trellis", ".developer"), "utf8")
-      .match(/^name=(.*)$/m)[1],
-    "alice",
-  );
-  assert.ok(fs.existsSync(path.join(workspacePath, ".trellis", "workspace", "alice", "journal-1.md")));
-  assert.ok(fs.existsSync(path.join(workspacePath, ".trellis", "workspace", "alice", "index.md")));
-  for (const tool of tools) {
-    assert.ok(fs.readdirSync(path.join(workspacePath, tool)).length > 0, `${tool} should be non-empty`);
-  }
-  assert.equal(fs.existsSync(path.join(workspacePath, ".git")), false);
-
-  const second = await runWorkspaceInit({
-    workspacePath,
-    tools,
-    username: "alice",
-    teamId: "team-1",
-    serverUrl: "http://127.0.0.1:1",
-    dataRoot,
-    agentCredential: "x".repeat(32),
-    fetchImpl: async () => {
-      throw new Error("network disabled");
-    },
-  });
-  assert.equal(second.changed, false);
-  assert.equal(second.createdFiles.length, 0);
-});
-
-test("sidecar workspace-init 在 developer 冲突时中止且不写模板", async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-workspace-conflict-"));
-  const workspacePath = path.join(root, "workspace");
-  const dataRoot = path.join(root, "agent");
-  fs.mkdirSync(path.join(workspacePath, ".trellis"), { recursive: true });
-  fs.mkdirSync(dataRoot);
-  fs.writeFileSync(path.join(workspacePath, ".trellis", ".developer"), "name=other\n");
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  seedTemplateCache(dataRoot, "team-1");
-
-  await assert.rejects(
-    runWorkspaceInit({
-      workspacePath,
-      tools: [".opencode", ".agents"],
-      username: "alice",
-      teamId: "team-1",
-      serverUrl: "http://127.0.0.1:1",
-      dataRoot,
-      agentCredential: "x".repeat(32),
-      fetchImpl: async () => {
-        throw new Error("network disabled");
-      },
-    }),
-    (error) => error.code === WORKSPACE_ERROR_CODE.DEVELOPER_CONFLICT,
-  );
-  assert.equal(
-    fs.readFileSync(path.join(workspacePath, ".trellis", ".developer"), "utf8"),
-    "name=other\n",
-  );
-  assert.equal(fs.existsSync(path.join(workspacePath, ".opencode")), false);
-  assert.equal(fs.existsSync(path.join(workspacePath, ".agents")), false);
-});
-
 test("sidecar 命令在未注册时返回结构化配置错误", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-workspace-sidecar-cli-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const result = spawnSync(
     process.execPath,
-    ["desktop/sidecar/cli.js", "workspace-init", "--path", path.join(root, "workspace")],
+    ["desktop/sidecar/cli.js", "associations"],
     {
       cwd: ROOT,
       encoding: "utf8",
@@ -389,52 +270,4 @@ test("sidecar 命令在未注册时返回结构化配置错误", (t) => {
   const payload = JSON.parse(result.stdout.trim());
   assert.equal(payload.ok, false);
   assert.match(payload.error, /尚未配对|配置/);
-});
-
-test("CLI、UI、Tauri、capability 与 sidecar 都接入了 workspace 流程", () => {
-  const cli = readText("agent/cli.js");
-  assert.match(cli, /case "workspace":/);
-  assert.match(cli, /commandWorkspaceInit/);
-  assert.match(cli, /initializeWorkspace/);
-  assert.match(cli, /WORKSPACE_CONFLICT/);
-  assert.match(cli, /WORKSPACE_OFFLINE/);
-
-  const sidecar = readText("desktop/sidecar/main.js");
-  assert.match(sidecar, /runWorkspaceInit/);
-  assert.match(sidecar, /case "workspace-init":/);
-  assert.match(readText("desktop/sidecar/workspace-init.js"), /initializeWorkspace/);
-
-  const html = readText("desktop/ui/index.html");
-  assert.match(html, /id="workspace-panel"/);
-  assert.match(html, /id="workspace-path"/);
-  assert.match(html, /id="pick-workspace"/);
-  assert.match(html, /id="init-workspace"/);
-  assert.match(html, /id="workspace-result"/);
-  assert.match(html, /id="workspace-error"/);
-  const ui = readText("desktop/ui/setup.js");
-  assert.match(ui, /invoke\("pick_workspace"\)/);
-  assert.match(ui, /invoke\("init_workspace"/);
-  assert.doesNotMatch(ui, /initializeWorkspace|child_process|require\(/);
-
-  const main = readText("desktop/src-tauri/src/main.rs");
-  assert.match(main, /async fn pick_workspace/);
-  assert.match(main, /async fn init_workspace/);
-  assert.match(main, /tauri_plugin_dialog::init\(\)/);
-  assert.match(main, /DialogExt/);
-  assert.match(main, /sidecar::workspace_init/);
-  assert.match(readText("desktop/src-tauri/src/sidecar.rs"), /pub async fn workspace_init/);
-  assert.match(readText("desktop/src-tauri/Cargo.toml"), /tauri-plugin-dialog = "2"/);
-
-  const capability = readJson("desktop/src-tauri/capabilities/main.json");
-  assert.equal(capability.remote, undefined);
-  assert.ok(capability.permissions.includes("dialog:allow-open"));
-  assert.ok(capability.permissions.includes("allow-pick-workspace"));
-  assert.ok(capability.permissions.includes("allow-init-workspace"));
-  assert.ok(!capability.permissions.includes("shell:allow-open"));
-  for (const permission of capability.permissions) {
-    assert.doesNotMatch(permission, /^shell:|^fs:|^http:|^process:/);
-  }
-  const config = readJson("desktop/src-tauri/tauri.conf.json");
-  assert.deepEqual(config.app.security.capabilities, ["main"]);
-  assert.doesNotMatch(config.app.security.csp, /unsafe-inline|unsafe-eval/);
 });

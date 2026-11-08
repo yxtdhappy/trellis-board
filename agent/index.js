@@ -8,6 +8,7 @@ import {
   syncRepository,
 } from "./git-sync.js";
 import { SingleInstanceLock } from "./lock.js";
+import { AgentLiveSync } from "./live-sync.js";
 import { AgentLogger } from "./logger.js";
 import {
   AgentError,
@@ -58,6 +59,7 @@ function publicBinding(binding) {
     displayName: binding.displayName,
     branchName: binding.branchName,
     teamId: binding.teamId ?? null,
+    readOnly: binding.readOnly === true,
     status: binding.syncStatus,
     lastSyncedAt: binding.lastSyncedAt,
     lastErrorCode: binding.lastErrorCode,
@@ -119,6 +121,13 @@ export class AgentRuntime {
     this.eventIdleMs = options.eventIdleMs ?? 60_000;
     this.eventReconcileMs = options.eventReconcileMs ?? EVENT_RECONCILE_MS;
     this.eventCache = options.eventCache || createEventCache({ root: this.store.paths.root });
+    this.liveSync = options.liveSync || new AgentLiveSync({
+      store: this.store,
+      loadContext: () => this.loadContext(),
+      logger: this.logger,
+      emitControl: options.emitControl,
+      watch: options.watch
+    });
     this._syncInFlight = new Map();
     this.abortController = new AbortController();
     this.signal = this.abortController.signal;
@@ -143,6 +152,7 @@ export class AgentRuntime {
   }
 
   stop(reason = "requested") {
+    this.liveSync?.stop();
     if (!this.signal.aborted) {
       this.stopReason ||= reason;
       this.abortController.abort();
@@ -202,6 +212,7 @@ export class AgentRuntime {
           ...binding,
           serverBindingId: remote.id,
           teamId: remote.teamId ?? binding.teamId ?? null,
+          readOnly: remote.readOnly === true,
           syncStatus: remote.status,
           lastErrorCode: remote.errorCode,
           lastError: remote.error,
@@ -213,6 +224,7 @@ export class AgentRuntime {
         if (
           next.serverBindingId !== binding.serverBindingId ||
           next.teamId !== binding.teamId ||
+          next.readOnly !== binding.readOnly ||
           next.syncStatus !== binding.syncStatus ||
           next.lastErrorCode !== binding.lastErrorCode ||
           next.lastError !== binding.lastError
@@ -224,6 +236,12 @@ export class AgentRuntime {
       });
       return changed ? { ...config, bindings } : undefined;
     });
+    try {
+      this.config = await this.store.readConfig({ allowMissing: false });
+      this.liveSync.updateBindings(this.config.bindings);
+    } catch (error) {
+      this.logger.warn("更新本地实时监听绑定失败", error);
+    }
   }
 
   async _recordHeartbeat(heartbeat, error = null) {
@@ -473,6 +491,24 @@ export class AgentRuntime {
       case "sync.required":
         await this._syncProject(teamId, data.projectId);
         return;
+      case "live.changed":
+        await this.liveSync.pullProject(teamId, data.projectId);
+        return;
+      case "task.live.overridden":
+        this.logger.warn("任务被其他成员推进或接管", {
+          teamId,
+          projectId: data.projectId,
+          taskKey: data.taskKey,
+          action: data.action
+        });
+        this.liveSync.notifyControl({
+          type: "assignment_overridden",
+          projectId: data.projectId,
+          taskKey: data.taskKey,
+          action: data.action,
+          revision: data.revision
+        });
+        return;
       case "task.created":
       case "task.assigned":
       case "task.updated":
@@ -515,6 +551,7 @@ export class AgentRuntime {
             onOpen: () => {
               attempt = 0;
               this.logger.info("Agent 事件流已连接", { teamId });
+              void this.liveSync.pullTeam(teamId);
             },
             onEvent: async (event) => {
               let skipCursor = false;
@@ -697,10 +734,12 @@ export class AgentRuntime {
       pid: process.pid,
       startedAt: this.startedAt,
     });
+    await this.liveSync.start();
     this.logger.info("Trellis Agent 已启动");
     const heartbeat = this._heartbeatLoop();
     const events = this._eventLoop();
     await Promise.all([heartbeat, events]);
+    this.liveSync.stop();
     await this.store.writeState({
       status: this.authRevoked ? "auth_revoked" : "stopped",
       pid: process.pid,
@@ -746,6 +785,9 @@ export async function runAgentProcess(options = {}) {
       heartbeatMs: options.heartbeatMs,
       eventIdleMs: options.eventIdleMs,
       eventReconcileMs: options.eventReconcileMs,
+      emitControl: options.emitControl,
+      watch: options.watch,
+      liveSync: options.liveSync,
       signal: options.signal,
     });
     return await runtime.run();

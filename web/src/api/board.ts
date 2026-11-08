@@ -11,6 +11,8 @@ export type Project = {
   workspaceMembers?: string[]
   developer?: string | null
   syncStatus?: string
+  syncBranch?: string | null
+  role?: string | null
   scanStatus?: string
   lastScanAt?: string | null
   taskCount?: number
@@ -123,6 +125,28 @@ export async function queryTeamTasks(query: string, etag: string | null) {
 
 export const fetchTeamStatus = () => api<Record<string, unknown>>('/api/team/status')
 
+export type TeamLiveRevision = {
+  revision: number
+  revisionKey: string
+  projects: { projectId: string; revision: number }[]
+  notifications: {
+    id: number
+    type: 'task.live.overridden'
+    projectId: string
+    taskKey: string | null
+    taskTitle: string | null
+    revision: number
+    action: 'continue' | 'takeover' | null
+    actorAgentId: string | null
+    createdAt: string
+  }[]
+}
+
+export const fetchTeamLiveRevision = (teamId: string) =>
+  api<TeamLiveRevision>(
+    `/api/team/live-revision?teamId=${encodeURIComponent(teamId || 'all')}`,
+  )
+
 export const fetchAssignments = () =>
   api<{ assignments?: unknown[] }>('/api/assignments?state=pending')
 
@@ -163,9 +187,16 @@ export const createDependency = (payload: {
   blocked: { projectId: string; taskPath: string }
   blocker: { projectId: string; taskPath: string }
   reason: string
+  assigneeDecision?: { warningId: string; action: 'continue' | 'takeover' }
 }) => api('/api/tasks/dependencies', 'POST', payload)
 
-export const removeDependency = (id: string) => api('/api/tasks/dependencies', 'DELETE', { id })
+export const removeDependency = (
+  id: string,
+  assigneeDecision?: { warningId: string; action: 'continue' | 'takeover' },
+) => api('/api/tasks/dependencies', 'DELETE', {
+  id,
+  ...(assigneeDecision ? { assigneeDecision } : {}),
+})
 
 export const fetchGitOperation = (id: string) =>
   api<Record<string, unknown>>(`/api/git-operations/${encodeURIComponent(id)}`)

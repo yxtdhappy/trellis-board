@@ -118,7 +118,7 @@ test("plugin_audit 追加并按时间倒序查询", () => {
   }
 });
 
-test("新库 schema v6 包含插件表并保留项目数据", () => {
+test("新库 schema v7 包含插件表并保留项目数据", () => {
   const workspace = makeWorkspace();
   const db = openPluginDatabase(workspace);
   try {
@@ -126,7 +126,7 @@ test("新库 schema v6 包含插件表并保留项目数据", () => {
       .prepare("SELECT value FROM app_meta WHERE key = 'schema_version'")
       .get().value;
     assert.equal(Number(version), DATABASE_SCHEMA_VERSION);
-    assert.equal(DATABASE_SCHEMA_VERSION, 6);
+    assert.equal(DATABASE_SCHEMA_VERSION, 7);
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
       .all()
@@ -145,7 +145,7 @@ test("新库 schema v6 包含插件表并保留项目数据", () => {
   }
 });
 
-test("schema v6 重复打开幂等且版本保持 6", () => {
+test("schema v7 重复打开幂等且版本保持 7", () => {
   const workspace = makeWorkspace();
   const db = openPluginDatabase(workspace);
   db.close();
@@ -159,7 +159,7 @@ test("schema v6 重复打开幂等且版本保持 6", () => {
   try {
     const value = again.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value;
     assert.equal(value, String(DATABASE_SCHEMA_VERSION));
-    assert.equal(value, "6");
+    assert.equal(value, "7");
     assert.equal(path.basename(workspace.databaseFile), "board.sqlite");
   } finally {
     again.close();

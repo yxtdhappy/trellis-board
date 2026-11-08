@@ -45,11 +45,14 @@ $requiredFiles = @(
   (Join-Path $sidecarRoot 'sea-entry.js'),
   (Join-Path $sidecarRoot 'main.js'),
   (Join-Path $sidecarRoot 'desktop-device.js'),
+  (Join-Path $sidecarRoot 'desktop-association.js'),
   (Join-Path $sidecarRoot 'bundle.mjs'),
   (Join-Path $repoRoot 'agent\index.js'),
+  (Join-Path $repoRoot 'agent\live-sync.js'),
   (Join-Path $repoRoot 'agent\api.js'),
   (Join-Path $repoRoot 'agent\credential-store.js'),
   (Join-Path $repoRoot 'agent\windows\dpapi.ps1'),
+  (Join-Path $repoRoot 'shared\trellis-watcher.js'),
   (Join-Path $repoRoot 'package.json')
 )
 foreach ($file in $requiredFiles) {

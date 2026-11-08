@@ -8,7 +8,11 @@ import {
   normalizeGitRemote,
   readGitProject
 } from "./git-manager.js";
-import { CAPABILITIES, authorizeProject } from "./permissions.js";
+import {
+  CAPABILITIES,
+  authorizeProject,
+  roleCanWrite
+} from "./permissions.js";
 import { assertTeamMember, resolveProjectTeam } from "./teams.js";
 import {
   computeScriptTreeHash,
@@ -217,6 +221,47 @@ export function createProjectService({
 
   function listStatusReadable(actor) {
     return listReadable(actor, { includeAssignees: false });
+  }
+
+  function listAssociationCandidates(actor) {
+    if (!actor?.userId) return [];
+    const rows = actor.systemAdmin
+      ? db.prepare(`
+          SELECT
+            p.*, r.name AS repository_name, r.path AS repository_path,
+            t.name AS team_name, m.role, tm.role AS team_role
+          FROM team_project p
+          JOIN repositories r ON r.id = p.repository_id
+          JOIN team t ON t.id = p.team_id
+          LEFT JOIN team_member tm
+            ON tm.team_id = p.team_id AND tm.user_id = ?
+          LEFT JOIN project_member m
+            ON m.project_id = p.repository_id AND m.user_id = ?
+          WHERE p.sync_status IN ('current', 'stale', 'pending_push', 'needs_repair')
+            AND t.status = 'active'
+          ORDER BY t.name COLLATE NOCASE, r.name COLLATE NOCASE, p.repository_id
+        `).all(actor.userId, actor.userId)
+      : db.prepare(`
+          SELECT
+            p.*, r.name AS repository_name, r.path AS repository_path,
+            t.name AS team_name, m.role, tm.role AS team_role
+          FROM team_project p
+          JOIN repositories r ON r.id = p.repository_id
+          JOIN team t ON t.id = p.team_id
+          JOIN team_member tm
+            ON tm.team_id = p.team_id AND tm.user_id = ?
+          LEFT JOIN project_member m
+            ON m.project_id = p.repository_id AND m.user_id = ?
+          WHERE p.sync_status IN ('current', 'stale', 'pending_push', 'needs_repair')
+            AND t.status = 'active'
+          ORDER BY t.name COLLATE NOCASE, r.name COLLATE NOCASE, p.repository_id
+        `).all(actor.userId, actor.userId);
+    return rows.map((row) => ({
+      ...publicProject(row),
+      role: row.role || (actor.systemAdmin ? "system_admin" : "team_admin"),
+      teamRole: row.team_role || null,
+      readOnly: row.role ? !roleCanWrite(row.role) : !actor.systemAdmin
+    }));
   }
 
   async function connect(actor, input = {}) {
@@ -762,6 +807,7 @@ export function createProjectService({
     listAll,
     listReadable,
     listStatusReadable,
+    listAssociationCandidates,
     listMembers,
     listVisibleMembers,
     upsertMember,

@@ -62,7 +62,13 @@ pub fn redact(input: &str) -> String {
         }
         search = token_start + 3;
     }
-    for marker in ["\"credential\"", "\"pairingCode\"", "\"token\"", "\"password\""] {
+    for marker in [
+        "\"credential\"",
+        "\"pairingCode\"",
+        "\"sessionToken\"",
+        "\"token\"",
+        "\"password\"",
+    ] {
         if let Some(index) = value.find(marker) {
             let tail = &value[index + marker.len()..];
             let colon = tail.find(':');
@@ -96,5 +102,6 @@ mod tests {
         );
         assert_eq!(redact(r#"{"credential":"secret-value"}"#), r#"{"credential":"***"}"#);
         assert_eq!(redact(r#"{"pairingCode":"abc123"}"#), r#"{"pairingCode":"***"}"#);
+        assert_eq!(redact(r#"{"sessionToken":"abc123"}"#), r#"{"sessionToken":"***"}"#);
     }
 }

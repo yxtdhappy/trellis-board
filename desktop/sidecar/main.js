@@ -6,24 +6,26 @@ import { ConfigStore } from "../../agent/config-store.js";
 import { DpapiCredentialStore } from "../../agent/credential-store.js";
 import { runAgentProcess } from "../../agent/index.js";
 import {
+  decidePendingLiveChange,
+  liveControlLine,
+  restoreLiveBackup,
+} from "../../agent/live-sync.js";
+import {
   AgentError,
   AGENT_PROTOCOL_VERSION,
   AGENT_VERSION,
   safeErrorMessage,
 } from "../../agent/protocol.js";
 import {
-  WORKSPACE_ERROR_CODE,
-  WorkspaceBootstrapError,
-} from "../../agent/workspace.js";
-import { runWorkspaceInit } from "./workspace-init.js";
-import {
-  enrollDesktopDevice,
-  enrollWithToken,
+  loginDesktop,
+  logoutDesktopSession,
+  readLocalAssociations,
   readAgentIdentity,
   revokeDesktopDevice,
   validateAgentId,
   validateDeviceName,
 } from "./desktop-device.js";
+import { associateDesktopProject } from "./desktop-association.js";
 
 export const SIDECAR_EXIT_CODE = Object.freeze({
   OK: 0,
@@ -32,10 +34,6 @@ export const SIDECAR_EXIT_CODE = Object.freeze({
   AUTH: 4,
   NETWORK: 5,
   IO: 6,
-  WORKSPACE_CONFLICT: 9,
-  WORKSPACE_PERMISSION: 10,
-  WORKSPACE_OFFLINE: 11,
-  WORKSPACE_TEMPLATE: 12,
 });
 
 const DPAPI_ASSET = "dpapi.ps1";
@@ -45,22 +43,6 @@ function writeJson(value) {
 }
 
 function exitCodeFor(error) {
-  if (error instanceof WorkspaceBootstrapError) {
-    if (error.code === WORKSPACE_ERROR_CODE.DEVELOPER_CONFLICT) {
-      return SIDECAR_EXIT_CODE.WORKSPACE_CONFLICT;
-    }
-    if (
-      error.code === WORKSPACE_ERROR_CODE.PATH_INVALID ||
-      error.code === WORKSPACE_ERROR_CODE.PATH_UNWRITABLE ||
-      error.code === WORKSPACE_ERROR_CODE.USERNAME_INVALID
-    ) {
-      return SIDECAR_EXIT_CODE.WORKSPACE_PERMISSION;
-    }
-    if (error.code === WORKSPACE_ERROR_CODE.TEMPLATE_UNAVAILABLE) {
-      return SIDECAR_EXIT_CODE.WORKSPACE_OFFLINE;
-    }
-    return SIDECAR_EXIT_CODE.WORKSPACE_TEMPLATE;
-  }
   if (!(error instanceof AgentError)) return SIDECAR_EXIT_CODE.IO;
   if (error.code === "CONFIG_INVALID" || error.code === "CONFIG_MISSING") {
     return SIDECAR_EXIT_CODE.CONFIG;
@@ -108,7 +90,7 @@ function requireOption(values, key) {
 
 async function readSecret() {
   if (process.stdin.isTTY) {
-    throw new AgentError("CONFIG_INVALID", "桌面注册凭证必须由客户端通过标准输入提供");
+    throw new AgentError("CONFIG_INVALID", "桌面敏感输入必须由客户端通过标准输入提供");
   }
   const reader = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   try {
@@ -119,7 +101,20 @@ async function readSecret() {
   } finally {
     reader.close();
   }
-  throw new AgentError("CONFIG_INVALID", "没有收到注册凭证");
+  throw new AgentError("CONFIG_INVALID", "没有收到标准输入");
+}
+
+async function readJsonInput() {
+  const payload = await readSecret();
+  try {
+    const value = JSON.parse(payload);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("not object");
+    }
+    return value;
+  } catch {
+    throw new AgentError("CONFIG_INVALID", "标准输入必须是单个 JSON 对象");
+  }
 }
 
 async function extractSeaAsset(key, directory) {
@@ -168,6 +163,7 @@ async function commandRun(options) {
     const result = await runAgentProcess({
       store: agent.store,
       credentialStore: agent.credentialStore,
+      emitControl: (event) => process.stdout.write(liveControlLine(event)),
       signal: controller.signal,
     });
     return result.exitCode === 0 ? SIDECAR_EXIT_CODE.OK : (result.exitCode || 1);
@@ -177,21 +173,35 @@ async function commandRun(options) {
   }
 }
 
-async function commandEnroll(args, options) {
-  const values = parseOptions(args, { server: {}, name: {}, "pairing-code": { flag: true } });
-  const secret = await readSecret();
+async function commandLogin(args, options) {
+  const values = parseOptions(args, {
+    server: {},
+    name: {},
+    "force-new": { flag: true },
+  });
+  const credentials = await readJsonInput();
   const store = new ConfigStore();
   const agent = await prepareAgent(store, options.fallbackDpapiScript);
-  const common = {
+  const result = await loginDesktop({
     serverUrl: requireOption(values, "server"),
+    username: credentials.username,
+    password: credentials.password,
     deviceName: validateDeviceName(values.name),
     store: agent.store,
     credentialStore: agent.credentialStore,
-    replace: false,
-  };
-  const result = values["pairing-code"]
-    ? await enrollDesktopDevice({ ...common, pairingCode: secret })
-    : await enrollWithToken(secret, common);
+    forceNew: values["force-new"] === true,
+  });
+  writeJson({ ok: true, ...result });
+  return SIDECAR_EXIT_CODE.OK;
+}
+
+async function commandLogout(args) {
+  const values = parseOptions(args, { server: {} });
+  const input = await readJsonInput();
+  const result = await logoutDesktopSession({
+    serverUrl: requireOption(values, "server"),
+    sessionToken: input.sessionToken,
+  });
   writeJson({ ok: true, ...result });
   return SIDECAR_EXIT_CODE.OK;
 }
@@ -215,42 +225,52 @@ async function commandStatus(args) {
   return SIDECAR_EXIT_CODE.OK;
 }
 
-async function commandWorkspaceInit(args, options) {
+async function commandAssociate(args, options) {
   const values = parseOptions(args, {
+    project: {},
     path: {},
-    tools: {},
-    username: {},
-    team: {},
-    server: {},
+    branch: {},
   });
   const store = new ConfigStore();
   const agent = await prepareAgent(store, options.fallbackDpapiScript);
-  const config = await store.readConfig({ allowMissing: false });
-  const username = values.username || config.username;
-  if (!username) {
-    throw new AgentError(
-      "CONFIG_INVALID",
-      "本地配置缺少登录用户名；请重新注册设备",
-    );
-  }
-  const teamId = values.team
-    || config.teamId
-    || (config.teams?.length === 1 ? config.teams[0].id : null);
-  if (!teamId) {
-    throw new AgentError(
-      "CONFIG_INVALID",
-      "请选择要初始化 workspace 的团队",
-    );
-  }
-  const agentCredential = await agent.credentialStore.loadCredential();
-  const result = await runWorkspaceInit({
-    workspacePath: requireOption(values, "path"),
-    tools: values.tools || null,
-    username,
-    teamId,
-    serverUrl: values.server || config.serverUrl,
-    dataRoot: store.paths.root,
-    agentCredential,
+  const result = await associateDesktopProject({
+    projectId: requireOption(values, "project"),
+    repoPath: requireOption(values, "path"),
+    branchName: requireOption(values, "branch"),
+    store: agent.store,
+    credentialStore: agent.credentialStore,
+  });
+  writeJson({ ok: true, ...result });
+  return SIDECAR_EXIT_CODE.OK;
+}
+
+async function commandAssociations() {
+  writeJson({ ok: true, associations: await readLocalAssociations() });
+  return SIDECAR_EXIT_CODE.OK;
+}
+
+async function commandLiveDecide(args, options) {
+  const values = parseOptions(args, { pending: {}, action: {} });
+  const store = new ConfigStore();
+  const agent = await prepareAgent(store, options.fallbackDpapiScript);
+  const result = await decidePendingLiveChange({
+    store: agent.store,
+    credentialStore: agent.credentialStore,
+    pendingId: requireOption(values, "pending"),
+    action: requireOption(values, "action"),
+  });
+  writeJson({ ok: true, ...result });
+  return SIDECAR_EXIT_CODE.OK;
+}
+
+async function commandLiveRestore(args, options) {
+  const values = parseOptions(args, { backup: {} });
+  const store = new ConfigStore();
+  const agent = await prepareAgent(store, options.fallbackDpapiScript);
+  const result = await restoreLiveBackup({
+    store: agent.store,
+    credentialStore: agent.credentialStore,
+    backupId: requireOption(values, "backup"),
   });
   writeJson({ ok: true, ...result });
   return SIDECAR_EXIT_CODE.OK;
@@ -260,11 +280,14 @@ function usage() {
   return [
     "trellis-agent-sidecar <command>",
     "  run",
-    "  enroll --server <URL> --name <设备名>   (一次性设备令牌从标准输入读取)",
-    "  enroll --server <URL> --name <设备名> --pairing-code  (管理员兜底：配对码从标准输入读取)",
+    "  login --server <URL> --name <设备名> [--force-new]  (用户名和密码从标准输入 JSON 读取)",
+    "  logout --server <URL> (会话 Token 从标准输入 JSON 读取)",
+    "  associate --project <项目 ID> --path <仓库根目录> --branch <同步分支>",
+    "  associations",
+    "  live-decide --pending <待确认 ID> --action continue|takeover|cancel",
+    "  live-restore --backup <备份 ID>",
     "  revoke --server <URL> --agent <设备 ID> (会话 Cookie 从 TRELLIS_BOARD_SESSION 读取)",
     "  status [--root <Agent 数据目录>]",
-    "  workspace-init --path <绝对路径> --team <ID> [--tools .opencode,.agents] [--username <name>]",
     "  version",
   ].join("\n");
 }
@@ -278,14 +301,22 @@ export async function runSidecarMain(
     switch (command) {
       case "run":
         return await commandRun(options);
-      case "enroll":
-        return await commandEnroll(args, options);
+      case "login":
+        return await commandLogin(args, options);
+      case "logout":
+        return await commandLogout(args);
+      case "associate":
+        return await commandAssociate(args, options);
+      case "associations":
+        return await commandAssociations();
+      case "live-decide":
+        return await commandLiveDecide(args, options);
+      case "live-restore":
+        return await commandLiveRestore(args, options);
       case "revoke":
         return await commandRevoke(args);
       case "status":
         return await commandStatus(args);
-      case "workspace-init":
-        return await commandWorkspaceInit(args, options);
       case "version":
         writeJson({
           ok: true,

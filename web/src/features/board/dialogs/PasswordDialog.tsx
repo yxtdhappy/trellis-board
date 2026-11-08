@@ -18,7 +18,7 @@ type PasswordDialogProps = {
   onOpenChange: (open: boolean) => void
 }
 
-const MIN_LENGTH = 12
+const MIN_LENGTH = 6
 
 export function PasswordDialog({ open, onOpenChange }: PasswordDialogProps) {
   const [current, setCurrent] = useState('')
@@ -92,7 +92,7 @@ export function PasswordDialog({ open, onOpenChange }: PasswordDialogProps) {
             />
           </div>
           <p className="rounded-lg bg-muted px-3 py-2 text-[11px] leading-5 text-muted-foreground">
-            至少 {MIN_LENGTH} 位，包含大小写字母与数字。更新成功后其他会话会立即失效。
+            至少 {MIN_LENGTH} 位。更新成功后其他会话会立即失效。
           </p>
           {message ? (
             <p className="text-xs text-destructive" role="alert">

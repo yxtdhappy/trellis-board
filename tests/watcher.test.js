@@ -8,6 +8,7 @@ import {
   isRelevantTrellisChange,
   normalizeWatchPath
 } from "../server/watcher.js";
+import { createTrellisWatcher } from "../shared/trellis-watcher.js";
 
 test("只把 Trellis 任务、工作区与开发者变更视为看板相关事件", () => {
   assert.equal(isRelevantTrellisChange("tasks/10-27-demo/task.json"), true);
@@ -58,6 +59,43 @@ test("任务文件变更会触发监听回调", async () => {
     const event = await changed;
     assert.equal(event.repositoryId, "demo");
     assert.match(event.relativePath, /tasks\/10-27-live\/task\.json/);
+  } finally {
+    runtime.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("共享 watcher 支持防抖批次与动态重建", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-shared-watch-"));
+  fs.mkdirSync(path.join(root, ".trellis"), { recursive: true });
+  let callback;
+  let closed = 0;
+  const batches = [];
+  const runtime = createTrellisWatcher({
+    repositories: [{ id: "demo", name: "Demo", path: root }],
+    debounceMs: 10,
+    watch: (_root, _options, handler) => {
+      callback = handler;
+      return {
+        on() {},
+        close() {
+          closed += 1;
+        }
+      };
+    },
+    onChange: (events) => batches.push(events)
+  });
+  try {
+    callback("change", "tasks/a/task.json");
+    callback("change", "workspace/dev/journal-1.md");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(batches.length, 1);
+    assert.equal(batches[0].length, 2);
+    assert.equal(batches[0][0].trellisPath, ".trellis/tasks/a/task.json");
+
+    runtime.rebuild([]);
+    assert.equal(closed, 1);
+    assert.deepEqual(runtime.status().watchedRepositories, []);
   } finally {
     runtime.close();
     fs.rmSync(root, { recursive: true, force: true });

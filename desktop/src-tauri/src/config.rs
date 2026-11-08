@@ -2,23 +2,13 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfig {
     pub schema_version: u32,
     pub server_url: String,
-    #[serde(default)]
-    pub teams: Vec<DesktopTeam>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopTeam {
-    pub id: String,
-    pub name: String,
-    pub role: Option<String>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -58,13 +48,12 @@ pub fn load() -> Result<Option<ClientConfig>, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("无法读取桌面配置 {}: {error}", path.display())),
     };
-    let config: ClientConfig =
-        serde_json::from_str(&payload).map_err(|error| format!("桌面配置格式无效: {error}"))?;
+    let payload = payload.strip_prefix('\u{feff}').unwrap_or(&payload);
+    let Ok(config) = serde_json::from_str::<ClientConfig>(payload) else {
+        return Ok(None);
+    };
     if config.schema_version != SCHEMA_VERSION {
-        return Err(format!(
-            "桌面配置版本 {} 不受支持（需要 {SCHEMA_VERSION}）",
-            config.schema_version
-        ));
+        return Ok(None);
     }
     Ok(Some(config))
 }
@@ -116,17 +105,29 @@ mod tests {
         let config = ClientConfig {
             schema_version: SCHEMA_VERSION,
             server_url: "https://board.example.com".to_string(),
-            teams: vec![DesktopTeam {
-                id: "team-1".to_string(),
-                name: "团队一".to_string(),
-                role: Some("member".to_string()),
-            }],
         };
         save(&config).expect("save config");
         let loaded = load().expect("load config").expect("config exists");
         assert_eq!(loaded, config);
         let payload = std::fs::read_to_string(config_path()).unwrap();
         assert!(!payload.contains("credential"));
+        assert!(!payload.contains("password"));
+        assert!(!payload.contains("session"));
+        std::fs::write(
+            config_path(),
+            "\u{feff}{\"schemaVersion\":2,\"serverUrl\":\"https://bom.example.com\"}",
+        )
+        .expect("write BOM config");
+        assert_eq!(
+            load().expect("load BOM config").expect("BOM config exists").server_url,
+            "https://bom.example.com"
+        );
+        std::fs::write(
+            config_path(),
+            r#"{"schemaVersion":1,"serverUrl":"https://old.example.com"}"#,
+        )
+        .expect("write old config");
+        assert!(load().expect("load config").is_none());
         let _ = std::fs::remove_dir_all(directory);
     }
 }

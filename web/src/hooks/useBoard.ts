@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   api,
   acceptTask,
@@ -12,6 +13,7 @@ import {
   fetchRepositories,
   fetchSavedViews,
   fetchTeamStatus,
+  fetchTeamLiveRevision,
   pickFolders,
   queryTeamTasks,
   removeRepository,
@@ -99,6 +101,8 @@ export function useBoard(): BoardController {
     (force?: boolean, quiet?: boolean) => Promise<void>
   >(async () => {});
   const lastLoadedAtRef = useRef<string | null>(null);
+  const liveRevisionKey = useRef<string | null>(null);
+  const seenLiveNotifications = useRef(new Set<number>());
 
   const teamMode = runtime?.team === true || runtime?.mode === "team";
 
@@ -258,6 +262,50 @@ export function useBoard(): BoardController {
   }, [runtime, teamMode]);
 
   useEffect(() => {
+    if (!teamMode) {
+      liveRevisionKey.current = null;
+      seenLiveNotifications.current.clear();
+      return;
+    }
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const next = await fetchTeamLiveRevision(filters.teamId);
+        if (cancelled) return;
+        for (const notice of next?.notifications || []) {
+          if (seenLiveNotifications.current.has(notice.id)) continue;
+          seenLiveNotifications.current.add(notice.id);
+          const taskLabel = notice.taskTitle
+            ? `任务「${notice.taskTitle}」`
+            : `任务 ${notice.taskKey || notice.projectId}`;
+          const actionLabel = notice.action === "takeover"
+            ? "已被他人接管"
+            : "已被他人继续推进";
+          toast.warning(`${taskLabel}${actionLabel}，原责任人是你。`);
+        }
+        const key = next?.revisionKey || "";
+        if (liveRevisionKey.current != null && liveRevisionKey.current !== key) {
+          await Promise.all([
+            loadTeamPage(true),
+            loadTeamStatus(),
+          ]);
+        }
+        liveRevisionKey.current = key;
+      } catch {
+        // 实时版本轮询失败时保留现有 3 秒团队状态轮询作为兜底。
+      }
+      if (!cancelled) timer = window.setTimeout(poll, 750);
+    };
+    liveRevisionKey.current = null;
+    timer = window.setTimeout(poll, 750);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [teamMode, filters.teamId, loadTeamPage, loadTeamStatus]);
+
+  useEffect(() => {
     if (teamMode) void loadTeamPage(true);
   }, [filters, teamMode, loadTeamPage]);
 
@@ -374,12 +422,16 @@ export function useBoard(): BoardController {
         blocked: { projectId: string; taskPath: string };
         blocker: { projectId: string; taskPath: string };
         reason: string;
+        assigneeDecision?: { warningId: string; action: "continue" | "takeover" };
       }) => {
         await createDependency(payload);
         await reloadCurrentSource();
       },
-      removeDependency: async (id: string) => {
-        await removeDependency(id);
+      removeDependency: async (
+        id: string,
+        assigneeDecision?: { warningId: string; action: "continue" | "takeover" },
+      ) => {
+        await removeDependency(id, assigneeDecision);
         await reloadCurrentSource();
       },
       saveView: async (name: string, viewFilter: Record<string, unknown>) => {
@@ -444,16 +496,30 @@ export function useBoard(): BoardController {
   );
 
   const teamProjects = useMemo<Project[]>(() => {
-    const rows =
-      (teamStatus?.projects as
-        { id?: string; name?: string; path?: string; teamId?: string; teamName?: string }[] | undefined) || [];
-    return rows
+    type TeamProjectRow = {
+      id?: string;
+      name?: string;
+      path?: string;
+      teamId?: string;
+      teamName?: string;
+      syncBranch?: string | null;
+    };
+    const rows = [
+      ...(((teamStatus?.projects as TeamProjectRow[] | undefined) || [])),
+      ...(((teamStatus?.associationProjects as TeamProjectRow[] | undefined) || [])),
+    ];
+    const unique = new Map<string, TeamProjectRow>();
+    rows.forEach((row) => {
+      if (row?.id && !unique.has(row.id)) unique.set(row.id, row);
+    });
+    return [...unique.values()]
       .filter((row): row is {
         id: string;
         name?: string;
         path?: string;
         teamId?: string;
         teamName?: string;
+        syncBranch?: string | null;
       } =>
         Boolean(row?.id) &&
         (filters.teamId === "all" || row.teamId === filters.teamId),
@@ -463,6 +529,7 @@ export function useBoard(): BoardController {
         id: row.id,
         name: row.name || row.id,
         path: row.path || "",
+        syncBranch: row.syncBranch || null,
       }));
   }, [teamStatus, filters.teamId]);
   const projects: Project[] = teamMode ? teamProjects : board?.projects || [];
@@ -515,8 +582,12 @@ export type BoardActions = {
     blocked: { projectId: string; taskPath: string };
     blocker: { projectId: string; taskPath: string };
     reason: string;
+    assigneeDecision?: { warningId: string; action: "continue" | "takeover" };
   }) => Promise<void>;
-  removeDependency: (id: string) => Promise<void>;
+  removeDependency: (
+    id: string,
+    assigneeDecision?: { warningId: string; action: "continue" | "takeover" },
+  ) => Promise<void>;
   saveView: (name: string, filter: Record<string, unknown>) => Promise<string>;
   deleteView: (id: string) => Promise<void>;
   retryOperation: () => Promise<void>;

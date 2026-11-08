@@ -12,6 +12,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { fetchTaskDetail, api } from '@/api/board'
+import { ApiError } from '@/api/request'
 import { renderMarkdown } from '@/lib/markdown.js'
 import type { Stage } from '../task-view'
 import { dueLabel, isAttention, attentionReasons, nextStage, stageSourceLabel, taskProgress, taskTags } from '../task-view'
@@ -22,6 +23,10 @@ import { toast } from 'sonner'
 import { SelectField } from '../SelectField'
 import { priorityTone, stageTone, statusLabel, statusTone } from '../tone'
 import { assignmentActionState } from '@/lib/team-client.js'
+import {
+  AssigneeWarningDialog,
+  type AssigneeWarningDetails,
+} from './AssigneeWarningDialog'
 
 const ARTIFACTS = [
   { key: 'prd', label: 'PRD', hint: '需求、范围与验收标准' },
@@ -111,8 +116,15 @@ type TaskDetailActions = {
     blocked: { projectId: string; taskPath: string }
     blocker: { projectId: string; taskPath: string }
     reason: string
+    assigneeDecision?: {
+      warningId: string
+      action: 'continue' | 'takeover'
+    }
   }) => Promise<void>
-  removeDependency: (id: string) => Promise<void>
+  removeDependency: (
+    id: string,
+    assigneeDecision?: { warningId: string; action: 'continue' | 'takeover' },
+  ) => Promise<void>
 }
 
 type TaskDetailDialogProps = {
@@ -148,6 +160,9 @@ export function TaskDetailDialog({
   const [blockerKey, setBlockerKey] = useState('')
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState('')
+  const [assigneeWarning, setAssigneeWarning] = useState<AssigneeWarningDetails | null>(null)
+  const assigneeRetryRef = useRef<((decision?: { warningId: string; action: 'continue' | 'takeover' }) => Promise<void>) | null>(null)
+  const detailTaskKeyRef = useRef<string | null>(null)
 
   const dependencyCandidates = tasks
     .filter(
@@ -164,18 +179,29 @@ export function TaskDetailDialog({
 
 
   useEffect(() => {
-    if (!open || !task) return
-    setDetail(null)
-    setAssignee(task.assignee || '')
-    setEditingPlan(false)
-    setBlockerKey('')
-    setReason('')
+    if (!open || !task) {
+      if (!open) detailTaskKeyRef.current = null
+      return
+    }
+    const taskChanged = detailTaskKeyRef.current !== task.taskKey
+    if (taskChanged) {
+      detailTaskKeyRef.current = task.taskKey
+      setDetail(null)
+      setAssignee(task.assignee || '')
+      setEditingPlan(false)
+      setBlockerKey('')
+      setReason('')
+    }
     setLoading(true)
     fetchTaskDetail(task)
-      .then((payload) => setDetail(payload || task))
+      .then((payload) => {
+        const fresh = payload || task
+        setDetail(fresh)
+        if (!editingPlan) setAssignee(fresh.assignee || '')
+      })
       .catch((error: unknown) => toast.error(error instanceof Error ? error.message : '读取任务失败'))
       .finally(() => setLoading(false))
-  }, [open, task])
+  }, [editingPlan, open, task])
 
   const current = detail || task
   const progress = current ? taskProgress(current) : null
@@ -196,14 +222,34 @@ export function TaskDetailDialog({
     }
   }
 
-  async function run(label: string, operation: () => Promise<void>, success: string) {
+  async function run(
+    label: string,
+    operation: (decision?: { warningId: string; action: 'continue' | 'takeover' }) => Promise<void>,
+    success: string,
+  ): Promise<boolean> {
     setBusy(label)
     try {
       await operation()
       await reloadDetail()
       toast.success(success)
+      return true
     } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.code === 'ASSIGNEE_CONFIRMATION_REQUIRED' &&
+        error.details &&
+        typeof error.details === 'object'
+      ) {
+        assigneeRetryRef.current = async (decision) => {
+          await operation(decision)
+          await reloadDetail()
+          toast.success(success)
+        }
+        setAssigneeWarning(error.details as AssigneeWarningDetails)
+        return false
+      }
       toast.error(error instanceof Error ? error.message : '操作失败')
+      return false
     } finally {
       setBusy('')
     }
@@ -211,23 +257,25 @@ export function TaskDetailDialog({
 
   async function savePlan() {
     if (!current) return
-    try {
-      await api('/api/tasks/execution', 'PUT', {
-        projectId: current.projectId,
-        taskPath: current.relativeDir,
-        dueDate: dueDate || null,
-        milestone,
-        tags: tags
-          .split(/[,，\s]+/)
-          .map((tag) => tag.trim())
-          .filter(Boolean),
-      })
-      setEditingPlan(false)
-      onPlanSaved()
-      toast.success('计划字段已保存')
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '保存失败')
-    }
+    await run(
+      'plan',
+      async (assigneeDecision) => {
+        await api('/api/tasks/execution', 'PUT', {
+          projectId: current.projectId,
+          taskPath: current.relativeDir,
+          dueDate: dueDate || null,
+          milestone,
+          tags: tags
+            .split(/[,，\s]+/)
+            .map((tag) => tag.trim())
+            .filter(Boolean),
+          ...(assigneeDecision ? { assigneeDecision } : {}),
+        })
+        setEditingPlan(false)
+        onPlanSaved()
+      },
+      '计划字段已保存',
+    )
   }
 
   async function addDependency() {
@@ -241,18 +289,21 @@ export function TaskDetailDialog({
       toast.error('阻断原因不能为空')
       return
     }
-    await run(
+    const succeeded = await run(
       'dependency',
-      () =>
+      (assigneeDecision) =>
         actions.addDependency({
           blocked: { projectId: current.projectId, taskPath: current.relativeDir },
           blocker: { projectId: blocker.projectId, taskPath: blocker.relativeDir },
           reason: reason.trim(),
+          ...(assigneeDecision ? { assigneeDecision } : {}),
         }),
       '阻断依赖已创建',
     )
-    setBlockerKey('')
-    setReason('')
+    if (succeeded) {
+      setBlockerKey('')
+      setReason('')
+    }
   }
 
   return (
@@ -397,7 +448,11 @@ export function TaskDetailDialog({
                             relation="blocked"
                             disabled={Boolean(current.archived) || Boolean(busy)}
                             onResolve={() =>
-                              void run('resolve:' + item.id, () => actions.removeDependency(item.id), '阻断依赖已解除')
+                              void run(
+                                'resolve:' + item.id,
+                                (decision) => actions.removeDependency(item.id, decision),
+                                '阻断依赖已解除',
+                              )
                             }
                           />
                         ))
@@ -558,6 +613,33 @@ export function TaskDetailDialog({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <AssigneeWarningDialog
+        warning={assigneeWarning}
+        onCancel={() => {
+          setAssigneeWarning(null)
+          assigneeRetryRef.current = null
+        }}
+        onContinue={async () => {
+          if (!assigneeWarning || !assigneeRetryRef.current) return
+          await assigneeRetryRef.current({
+            warningId: assigneeWarning.warningId,
+            action: 'continue',
+          })
+          setAssigneeWarning(null)
+          assigneeRetryRef.current = null
+        }}
+        onTakeover={async () => {
+          if (!assigneeWarning?.actorAssignee || !assigneeRetryRef.current || !current) {
+            throw new Error('当前账号尚未映射到项目 Trellis developer ID')
+          }
+          await assigneeRetryRef.current({
+            warningId: assigneeWarning.warningId,
+            action: 'takeover',
+          })
+          setAssigneeWarning(null)
+          assigneeRetryRef.current = null
+        }}
+      />
     </>
   )
 }

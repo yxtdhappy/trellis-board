@@ -1,18 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "只允许本地加载/设置页调用白名单命令；远程 Board 页面不在本 capability 中，因此没有 IPC 权限。",
+  "description": "本地登录页只允许读取状态和提交账号密码。",
   "windows": [
     "main"
   ],
   "permissions": [
     "core:default",
     "allow-app-status",
-    "allow-enroll-with-token",
-    "allow-enroll-device",
-    "allow-open-board-login",
-    "allow-pick-workspace",
-    "allow-init-workspace",
-    "dialog:allow-open"
+    "allow-desktop-login"
   ]
 }

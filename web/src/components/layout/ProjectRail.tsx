@@ -1,8 +1,38 @@
-import { Plus, RefreshCw } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { FolderGit2, LockKeyhole, Plus, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
+type Project = {
+  id: string
+  name: string
+  syncBranch?: string | null
+  teamName?: string | null
+}
+
+type LocalAssociation = {
+  projectId: string
+  repoPath: string
+  displayName: string
+  branchName: string
+  teamId: string | null
+  status: string
+  readOnly: boolean
+  lastErrorCode: string | null
+  lastError: string | null
+}
+
+type SidecarStatus = {
+  running: boolean
+  paused: boolean
+}
+
+type TauriInvoke = (
+  command: string,
+  args?: Record<string, unknown>,
+) => Promise<unknown>
+
 type ProjectRailProps = {
-  projects: { id: string; name: string }[]
+  projects: Project[]
   current: string
   onSelect: (id: string) => void
   onManage: () => void
@@ -10,6 +40,55 @@ type ProjectRailProps = {
   syncLive: boolean
   refreshing: boolean
   onRefresh: () => void
+}
+
+function tauriInvoke(): TauriInvoke | null {
+  const runtime = window as Window & {
+    __TAURI__?: { core?: { invoke?: TauriInvoke } }
+  }
+  return runtime.__TAURI__?.core?.invoke || null
+}
+
+function normalizeAssociation(value: unknown): LocalAssociation | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (
+    typeof record.projectId !== 'string' ||
+    typeof record.repoPath !== 'string' ||
+    typeof record.displayName !== 'string' ||
+    typeof record.branchName !== 'string' ||
+    typeof record.status !== 'string'
+  ) {
+    return null
+  }
+  return {
+    projectId: record.projectId,
+    repoPath: record.repoPath,
+    displayName: record.displayName,
+    branchName: record.branchName,
+    teamId: typeof record.teamId === 'string' ? record.teamId : null,
+    status: record.status,
+    readOnly: record.readOnly === true,
+    lastErrorCode: typeof record.lastErrorCode === 'string' ? record.lastErrorCode : null,
+    lastError: typeof record.lastError === 'string' ? record.lastError : null,
+  }
+}
+
+function normalizeAssociations(value: unknown): LocalAssociation[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    const association = normalizeAssociation(item)
+    return association ? [association] : []
+  })
+}
+
+function normalizeSidecarStatus(value: unknown): SidecarStatus | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (typeof record.running !== 'boolean' || typeof record.paused !== 'boolean') {
+    return null
+  }
+  return { running: record.running, paused: record.paused }
 }
 
 export function ProjectRail({
@@ -22,6 +101,98 @@ export function ProjectRail({
   refreshing,
   onRefresh,
 }: ProjectRailProps) {
+  const invoke = useMemo(() => tauriInvoke(), [])
+  const [associations, setAssociations] = useState<Map<string, LocalAssociation>>(
+    () => new Map(),
+  )
+  const [associating, setAssociating] = useState<string | null>(null)
+  const [associationError, setAssociationError] = useState('')
+  const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus | null>(null)
+
+  useEffect(() => {
+    if (!invoke) return
+    const currentInvoke = invoke
+    let cancelled = false
+    async function loadAssociations() {
+      try {
+        const result = await currentInvoke('list_local_associations')
+        if (cancelled) return
+        setAssociations(
+          new Map(normalizeAssociations(result).map((item) => [item.projectId, item])),
+        )
+        setAssociationError('')
+      } catch (error) {
+        if (!cancelled) {
+          setAssociationError(
+            error instanceof Error ? error.message : String(error || '无法读取本地项目关联'),
+          )
+        }
+      }
+    }
+    void loadAssociations()
+    const associationTimer = window.setInterval(() => void loadAssociations(), 3_000)
+    async function loadSidecarStatus() {
+      try {
+        const result = await currentInvoke('desktop_sidecar_status')
+        if (!cancelled) setSidecarStatus(normalizeSidecarStatus(result))
+      } catch {
+        if (!cancelled) setSidecarStatus(null)
+      }
+    }
+    void loadSidecarStatus()
+    const timer = window.setInterval(() => void loadSidecarStatus(), 3_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(associationTimer)
+      window.clearInterval(timer)
+    }
+  }, [invoke])
+
+  async function associate(project: Project) {
+    if (!invoke || associating) return
+    if (!project.syncBranch) {
+      setAssociationError('服务端未返回项目同步分支，请刷新后重试。')
+      return
+    }
+    setAssociationError('')
+    setAssociating(project.id)
+    try {
+      const result = await invoke('associate_local_project', {
+        projectId: project.id,
+        syncBranch: project.syncBranch,
+      })
+      const association = normalizeAssociation(result)
+      if (association) {
+        setAssociations((currentMap) => {
+          const next = new Map(currentMap)
+          next.set(association.projectId, association)
+          return next
+        })
+      } else {
+        const refreshed = await invoke('list_local_associations')
+        setAssociations(
+          new Map(normalizeAssociations(refreshed).map((item) => [item.projectId, item])),
+        )
+      }
+    } catch (error) {
+      setAssociationError(
+        error instanceof Error ? error.message : String(error || '本地项目关联失败'),
+      )
+    } finally {
+      setAssociating(null)
+    }
+  }
+
+  function localLabel(association: LocalAssociation | undefined) {
+    if (!association) return null
+    if (association.status !== 'approved') {
+      return association.lastError || '本地关联已失效'
+    }
+    return association.readOnly
+      ? `${association.displayName} · 只读`
+      : association.displayName
+  }
+
   return (
     <aside className="hidden w-[230px] shrink-0 flex-col gap-1 border-r border-border bg-sidebar px-2.5 py-3.5 lg:flex">
       <p className="px-2 pb-1 text-[10px] font-semibold tracking-[0.12em] text-muted-foreground">项目</p>
@@ -37,37 +208,95 @@ export function ProjectRail({
         <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
         全部项目
       </button>
-      {projects.map((project) => (
-        <button
-          key={project.id}
-          type="button"
-          onClick={() => onSelect(project.id)}
-          className={
-            current === project.id
-              ? 'flex h-7.5 items-center gap-2 rounded-lg bg-sidebar-accent px-2 text-left text-xs font-semibold text-sidebar-accent-foreground'
-              : 'flex h-7.5 items-center gap-2 rounded-lg px-2 text-left text-xs font-medium text-foreground hover:bg-sidebar-accent/60'
-          }
-          title={project.name}
-        >
-          <span className="size-1.5 rounded-full bg-chart-3" aria-hidden="true" />
-          <span className="truncate">{project.name}</span>
-        </button>
-      ))}
+      {projects.map((project) => {
+        const association = associations.get(project.id)
+        const label = localLabel(association)
+        return (
+          <div
+            key={project.id}
+            className={
+              current === project.id
+                ? 'flex items-center rounded-lg bg-sidebar-accent text-sidebar-accent-foreground'
+                : 'flex items-center rounded-lg hover:bg-sidebar-accent/60'
+            }
+          >
+            <button
+              type="button"
+              onClick={() => onSelect(project.id)}
+              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
+              title={project.name}
+            >
+              <span className="size-1.5 shrink-0 rounded-full bg-chart-3" aria-hidden="true" />
+              <span className="min-w-0">
+                <span className="block truncate text-xs font-medium">{project.name}</span>
+                {label ? (
+                  <span
+                    className={
+                      association?.status === 'approved'
+                        ? 'block truncate text-[9.5px] text-muted-foreground'
+                        : 'block truncate text-[9.5px] text-destructive'
+                    }
+                  >
+                    {label}
+                  </span>
+                ) : null}
+              </span>
+            </button>
+            {invoke ? (
+              association?.status === 'approved' ? (
+                <span
+                  className="mr-1.5 flex size-6 shrink-0 items-center justify-center text-muted-foreground"
+                  title={label || '本地已关联'}
+                >
+                  {association.readOnly ? (
+                    <LockKeyhole className="size-3.5" />
+                  ) : (
+                    <FolderGit2 className="size-3.5" />
+                  )}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="mr-1.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                  aria-label={`关联 ${project.name} 的本地 Git 仓库`}
+                  title="关联本地 Git 仓库"
+                  disabled={associating !== null}
+                  onClick={() => void associate(project)}
+                >
+                  <FolderGit2 className={associating === project.id ? 'size-3.5 animate-pulse' : 'size-3.5'} />
+                </button>
+              )
+            ) : null}
+          </div>
+        )
+      })}
 
-      <button
-        type="button"
-        onClick={onManage}
-        className="mt-2 flex h-7 items-center gap-1.5 rounded-lg px-2 text-left text-xs text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
-      >
-        <Plus className="size-3.5" />
-        管理
-      </button>
+      {associationError ? (
+        <p role="alert" className="mx-1 mt-1 rounded-md bg-destructive/10 px-2 py-1.5 text-[10px] leading-4 text-destructive">
+          {associationError}
+        </p>
+      ) : null}
+
+      {!invoke ? (
+        <button
+          type="button"
+          onClick={onManage}
+          className="mt-2 flex h-7 items-center gap-1.5 rounded-lg px-2 text-left text-xs text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+        >
+          <Plus className="size-3.5" />
+          管理
+        </button>
+      ) : null}
 
       <div className="mt-auto flex flex-col gap-2 rounded-xl bg-card p-2.5">
         <div className="flex items-center gap-1.5">
           <span
             className={
-              syncLive
+              invoke
+                ? sidecarStatus?.running
+                  ? 'size-1.5 rounded-full bg-primary'
+                  : 'size-1.5 rounded-full bg-destructive'
+                : syncLive
                 ? 'size-1.5 rounded-full bg-primary'
                 : 'size-1.5 rounded-full bg-muted-foreground/50'
             }
@@ -76,6 +305,16 @@ export function ProjectRail({
           <span className="text-[11px] font-semibold text-foreground">同步状态</span>
         </div>
         <p className="text-[10.5px] leading-4 text-muted-foreground">{syncLabel}</p>
+        {invoke ? (
+          <p className="text-[10.5px] leading-4 text-muted-foreground">
+            客户端后台：
+            {sidecarStatus?.running
+              ? '运行中'
+              : sidecarStatus?.paused
+                ? '已暂停'
+                : '未运行'}
+          </p>
+        ) : null}
         <Button
           variant="outline"
           size="sm"

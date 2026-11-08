@@ -80,6 +80,7 @@ test("团队模式静态资源能提供字体与外部主题脚本", async (t) =
   assert.equal(script.status, 200);
   assert.match(String(script.headers["content-type"]), /text\/javascript/);
   assert.match(String(script.headers["content-security-policy"]), /script-src 'self'/);
+  assert.match(String(script.headers["content-security-policy"]), /connect-src 'self' ipc: http:\/\/ipc\.localhost/);
 
   assert.equal((await get(runtime, "/assets/missing.woff2")).status, 404);
   assert.equal((await get(runtime, "/index.html")).status, 200);

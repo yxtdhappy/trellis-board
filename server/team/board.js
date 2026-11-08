@@ -101,6 +101,7 @@ export function createBoardService({
   db,
   taskIndex,
   projectService,
+  liveSync = null,
   executionWipLimit = 2
 }) {
   const executionStore = createExecutionStore({
@@ -108,6 +109,7 @@ export function createBoardService({
     stageIds: STAGE_IDS
   });
   let statusAgentCache = null;
+  const assigneeWarnings = new Map();
 
   function parseUserState(value, fallback) {
     try {
@@ -219,6 +221,25 @@ export function createBoardService({
     );
     const project = projectService.read(identity.projectId);
     if (!project) throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");
+    const liveBoard = Number(indexed.live_revision || 0) > 0
+      ? liveSync?.ensureProject(identity.projectId) || null
+      : null;
+    const liveTask = liveBoard
+      ? liveSync.findTask(
+          identity.projectId,
+          indexed.task_key,
+          indexed.execution_task_key
+        )
+      : null;
+    if (liveTask) {
+      return {
+        task: liveTask,
+        access,
+        cached: { board: liveBoard },
+        project,
+        indexed
+      };
+    }
     const cached = readCachedProject(identity.projectId);
     let resolved;
     try {
@@ -267,6 +288,128 @@ export function createBoardService({
     });
   }
 
+  function assertAssigneeConfirmation(actor, context, input) {
+    const timestamp = Date.now();
+    for (const [id, warning] of assigneeWarnings) {
+      if (warning.expiresAt <= timestamp) assigneeWarnings.delete(id);
+    }
+    const row = db.prepare(`
+      SELECT
+        t.assignee_user_id, t.assignee_dev_id,
+        m.trellis_dev_id AS actor_dev_id
+      FROM team_task_index t
+      LEFT JOIN project_member m
+        ON m.project_id = t.project_id AND m.user_id = ?
+      WHERE t.project_id = ? AND t.task_key = ?
+    `).get(actor.userId, context.indexed.project_id, context.indexed.task_key);
+    if (!row || (!row.assignee_user_id && !row.assignee_dev_id)) return;
+    const sameUser = row.assignee_user_id === actor.userId;
+    const sameDeveloper = row.assignee_dev_id &&
+      row.actor_dev_id &&
+      row.assignee_dev_id.toLowerCase() === row.actor_dev_id.toLowerCase();
+    if (sameUser || sameDeveloper) return;
+    const decision = input.assigneeDecision;
+    if (decision?.action === "continue" || decision?.action === "takeover") {
+      const warning = assigneeWarnings.get(String(decision.warningId || ""));
+      if (
+        warning &&
+        warning.expiresAt > timestamp &&
+        warning.actorUserId === actor.userId &&
+        warning.taskKey === context.indexed.task_key &&
+        warning.taskVersion === context.indexed.task_version
+      ) {
+        assigneeWarnings.delete(String(decision.warningId));
+        if (decision.action === "takeover") {
+          if (!row.actor_dev_id) {
+            throw teamError(403, ERROR_CODES.FORBIDDEN, "当前账号尚未映射 Trellis developer ID");
+          }
+          liveSync.takeoverTask({
+            projectId: context.indexed.project_id,
+            taskKey: context.indexed.task_key,
+            actorUserId: actor.userId,
+            actorDevId: row.actor_dev_id
+          });
+          auditTaskWrite(
+            actor,
+            context.indexed.project_id,
+            "task_assignee_confirmation_takeover",
+            context.indexed.execution_task_key,
+            {
+              previousAssigneeUserId: row.assignee_user_id,
+              action: "takeover",
+              assigneeDevId: row.actor_dev_id
+            }
+          );
+          return { action: "takeover" };
+        }
+        return {
+          action: "continue",
+          assigneeUserId: row.assignee_user_id
+        };
+      }
+    }
+    const warningId = crypto.randomUUID();
+    const expiresAt = Date.now() + 5 * 60 * 1000;
+    assigneeWarnings.set(warningId, {
+      warningId,
+      actorUserId: actor.userId,
+      taskKey: context.indexed.task_key,
+      taskVersion: context.indexed.task_version,
+      expiresAt
+    });
+    const assignee = row.assignee_user_id
+      ? db.prepare(`
+          SELECT username, display_name
+          FROM user_account
+          WHERE id = ?
+        `).get(row.assignee_user_id)
+      : null;
+    throw teamError(
+      409,
+      "ASSIGNEE_CONFIRMATION_REQUIRED",
+      "修改他人负责的任务前需要确认",
+      {
+        recoverable: true,
+        details: {
+          warningId,
+          expiresAt: new Date(expiresAt).toISOString(),
+          assignee: {
+            userId: row.assignee_user_id || null,
+            username: assignee?.username || null,
+            displayName: assignee?.display_name || row.assignee_dev_id || null
+          },
+          actorAssignee: row.actor_dev_id || null,
+          task: {
+            taskKey: context.indexed.task_key,
+            executionTaskKey: context.indexed.execution_task_key,
+            title: context.task.title
+          }
+        }
+      }
+    );
+  }
+
+  function completeAssigneeConfirmation(actor, context, confirmation) {
+    if (confirmation?.action !== "continue") return;
+    auditTaskWrite(
+      actor,
+      context.indexed.project_id,
+      "task_assignee_confirmation_continued",
+      context.indexed.execution_task_key,
+      {
+        assigneeUserId: confirmation.assigneeUserId,
+        action: "continue"
+      }
+    );
+    liveSync?.notifyAssigneeOverride({
+      projectId: context.indexed.project_id,
+      taskKey: context.indexed.task_key,
+      assigneeUserId: confirmation.assigneeUserId,
+      action: "continue",
+      notificationId: `task.live.overridden:${context.indexed.task_key}:${crypto.randomUUID()}`
+    });
+  }
+
   function refreshProjectProjection(projectId, actor) {
     const cached = readCachedProject(projectId);
     if (!cached?.board) return;
@@ -312,6 +455,10 @@ export function createBoardService({
 
   function listStatusProjects(actor) {
     return projectService.listStatusReadable(actor);
+  }
+
+  function listAssociationProjects(actor) {
+    return projectService.listAssociationCandidates(actor);
   }
 
   function projectAgentSummaries(projectIds, onlineSince) {
@@ -394,6 +541,7 @@ export function createBoardService({
           online: 0
         }
       })),
+      associationProjects: listAssociationProjects(actor),
       serverTime: new Date().toISOString()
     };
   }
@@ -413,6 +561,7 @@ export function createBoardService({
       projectIds: [id]
     });
     const cached = readCachedProject(id);
+    const liveBoard = liveSync?.ensureProject(id) || null;
     const preferenceTeamId = resolveTeamScope(
       db,
       actor,
@@ -423,11 +572,11 @@ export function createBoardService({
     }
     const executionWipLimitForUser = readWipLimit(actor, preferenceTeamId);
     const savedViews = executionStore.listSavedViews(actor.userId, preferenceTeamId || null);
-    const projected = cached?.board
+    const projected = liveBoard || cached?.board
       ? projectBoardExecution(
           {
-            ...cached.board,
-            tasks: cached.board.tasks || []
+            ...(liveBoard || cached.board),
+            tasks: (liveBoard || cached.board).tasks || []
           },
           savedViews,
           db,
@@ -460,7 +609,7 @@ export function createBoardService({
       ...(projected || cached?.board || {}),
       savedViews,
       executionWipLimit: executionWipLimitForUser,
-      generatedAt: cached?.savedAt || new Date().toISOString(),
+      generatedAt: liveBoard?.generatedAt || cached?.savedAt || new Date().toISOString(),
       projects: [{
         ...project,
         taskCount: Number(db.prepare(`
@@ -595,6 +744,7 @@ export function createBoardService({
   function updatePlan(actor, input = {}) {
     const context = resolveTask(actor, input, CAPABILITIES.WRITE_TASK);
     requireMutableTask(context.task);
+    const confirmation = assertAssigneeConfirmation(actor, context, input);
     const result = userError(() => executionStore.updatePlan(
       context.indexed.execution_task_key,
       input,
@@ -602,6 +752,7 @@ export function createBoardService({
       actor.userId
     ));
     if (result.changed) {
+      completeAssigneeConfirmation(actor, context, confirmation);
       auditTaskWrite(
         actor,
         context.indexed.project_id,
@@ -621,6 +772,7 @@ export function createBoardService({
   function setStage(actor, input = {}) {
     const context = resolveTask(actor, input, CAPABILITIES.WRITE_TASK);
     requireMutableTask(context.task);
+    const confirmation = assertAssigneeConfirmation(actor, context, input);
     const stage = userError(() => setManualStage(
       context.indexed.project_id,
       context.indexed.relative_dir,
@@ -632,6 +784,7 @@ export function createBoardService({
         actorUserId: actor.userId
       }
     ));
+    completeAssigneeConfirmation(actor, context, confirmation);
     auditTaskWrite(
       actor,
       context.indexed.project_id,
@@ -658,6 +811,7 @@ export function createBoardService({
     const blocker = resolveTask(actor, input.blocker, CAPABILITIES.VIEW);
     requireMutableTask(blocked.task);
     requireMutableTask(blocker.task);
+    const confirmation = assertAssigneeConfirmation(actor, blocked, input);
     const dependency = userError(() => executionStore.createDependency({
       blockerTaskKey: blocker.indexed.execution_task_key,
       blockedTaskKey: blocked.indexed.execution_task_key,
@@ -666,6 +820,7 @@ export function createBoardService({
       blockedLabel: blocked.task.title,
       taskLabels: dependencyTaskLabels([blocked, blocker])
     }, actor.user.username, actor.userId));
+    completeAssigneeConfirmation(actor, blocked, confirmation);
     auditTaskWrite(
       actor,
       blocked.indexed.project_id,
@@ -723,11 +878,13 @@ export function createBoardService({
     }
     requireMutableTask(blocked.task);
     requireMutableTask(blocker.task);
+    const confirmation = assertAssigneeConfirmation(actor, blocked, input);
     const dependency = userError(() => executionStore.resolveDependency(
       dependencyId,
       actor.user.username,
       actor.userId
     ));
+    completeAssigneeConfirmation(actor, blocked, confirmation);
     auditTaskWrite(
       actor,
       blocked.indexed.project_id,
@@ -749,6 +906,7 @@ export function createBoardService({
   function undo(actor, input = {}) {
     const context = resolveTask(actor, input, CAPABILITIES.WRITE_TASK);
     requireMutableTask(context.task);
+    const confirmation = assertAssigneeConfirmation(actor, context, input);
     const undone = userError(() => undoLastOperation({
       db,
       executionTaskKey: context.indexed.execution_task_key,
@@ -758,6 +916,7 @@ export function createBoardService({
       actor: actor.user.username,
       actorUserId: actor.userId
     }));
+    completeAssigneeConfirmation(actor, context, confirmation);
     auditTaskWrite(
       actor,
       context.indexed.project_id,

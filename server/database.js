@@ -11,7 +11,7 @@ import {
   stateFile
 } from "./config.js";
 
-export const DATABASE_SCHEMA_VERSION = 6;
+export const DATABASE_SCHEMA_VERSION = 7;
 
 const LEGACY_IMPORT_KEY = "legacy_json_imported_v1";
 const EXECUTION_EVENTS_STARTED_KEY = "execution_events_started_at";
@@ -579,6 +579,79 @@ function ensureV6Schema(db) {
   `);
 }
 
+const SCHEMA_V7_SQL = `
+  CREATE TABLE IF NOT EXISTS project_live_revision (
+    project_id TEXT PRIMARY KEY REFERENCES team_project(repository_id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS project_live_file (
+    project_id TEXT NOT NULL REFERENCES team_project(repository_id) ON DELETE CASCADE,
+    relative_path TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    content_text TEXT,
+    deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
+    task_key TEXT,
+    source_agent_id TEXT,
+    source_user_id TEXT,
+    source_client_sequence INTEGER,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, relative_path)
+  );
+
+  CREATE INDEX IF NOT EXISTS project_live_file_revision
+    ON project_live_file(project_id, revision);
+  CREATE INDEX IF NOT EXISTS project_live_file_task
+    ON project_live_file(project_id, task_key);
+
+  CREATE TABLE IF NOT EXISTS project_live_batch (
+    batch_id TEXT NOT NULL,
+    project_id TEXT NOT NULL REFERENCES team_project(repository_id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agent_device(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES user_account(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    client_sequence INTEGER,
+    request_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, project_id, batch_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS project_live_batch_project_time
+    ON project_live_batch(project_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS agent_live_cursor (
+    agent_id TEXT NOT NULL REFERENCES agent_device(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES team_project(repository_id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, project_id)
+  );
+`;
+
+function ensureV7Schema(db) {
+  db.exec(SCHEMA_V7_SQL);
+  if (!hasColumn(db, "team_task_index", "live_revision")) {
+    db.exec(`
+      ALTER TABLE team_task_index
+      ADD COLUMN live_revision INTEGER NOT NULL DEFAULT 0
+    `);
+  }
+  if (!hasColumn(db, "project_live_file", "source_client_sequence")) {
+    db.exec(`
+      ALTER TABLE project_live_file
+      ADD COLUMN source_client_sequence INTEGER
+    `);
+  }
+  if (!hasColumn(db, "project_live_batch", "client_sequence")) {
+    db.exec(`
+      ALTER TABLE project_live_batch
+      ADD COLUMN client_sequence INTEGER
+    `);
+  }
+}
+
 function ensureSchema(db) {
   withTransaction(db, () => {
     db.exec(BASE_SCHEMA_V1_SQL);
@@ -589,6 +662,7 @@ function ensureSchema(db) {
       ensureV4Schema(db);
       ensureV5Schema(db);
       ensureV6Schema(db);
+      ensureV7Schema(db);
       writeMeta(db, "schema_version", DATABASE_SCHEMA_VERSION);
       return;
     }
@@ -598,6 +672,17 @@ function ensureSchema(db) {
       ensureV4Schema(db);
       ensureV5Schema(db);
       ensureV6Schema(db);
+      ensureV7Schema(db);
+      return;
+    }
+    if (Number(schemaVersion) === 6) {
+      ensureV2Schema(db, new Date().toISOString());
+      ensureV3Schema(db);
+      ensureV4Schema(db);
+      ensureV5Schema(db);
+      ensureV6Schema(db);
+      ensureV7Schema(db);
+      writeMeta(db, "schema_version", DATABASE_SCHEMA_VERSION);
       return;
     }
     throw new Error(
