@@ -67,6 +67,8 @@ runAgentProcess({
   `version/status` 正常。
 - `tests/desktop-device-auth.test.js`：设备注册必须注入 credential store。
 - Windows CI：构建后执行 sidecar `version`，断言退出码 0 和 `protocolVersion === 2`。
+- Windows CI 必须在 `tauri build` 前通过 GitHub CLI/API 填充 `%LOCALAPPDATA%\tauri\NSIS`，校验
+  NSIS zip 与 `nsis_tauri_utils.dll` 的固定 SHA1；Tauri 使用的 GitHub Releases 直链可能返回 504。
 - 最终安装包必须重新生成，旧 sidecar 不会被仓库代码自动替换。
 
 ## 7. Wrong vs Correct

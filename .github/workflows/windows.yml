@@ -90,6 +90,52 @@ jobs:
       - name: Rust unit tests
         timeout-minutes: 25
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+      - name: Prepare NSIS tool cache
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $toolsRoot = Join-Path $env:LOCALAPPDATA "tauri"
+          $nsisRoot = Join-Path $toolsRoot "NSIS"
+          $downloadRoot = Join-Path $env:RUNNER_TEMP "nsis-3.13"
+          New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
+
+          gh release download nsis-3.13 `
+            --repo tauri-apps/binary-releases `
+            --pattern "nsis-3.13.zip" `
+            --dir $downloadRoot
+          if ($LASTEXITCODE -ne 0) { throw "failed to download NSIS 3.13" }
+
+          $zip = Join-Path $downloadRoot "nsis-3.13.zip"
+          $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA1).Hash
+          if ($zipHash -ne "DB14F8AF2EA346B786C6AE19343F61AAF5E09B8E") {
+            throw "NSIS zip SHA1 mismatch: $zipHash"
+          }
+
+          Expand-Archive -LiteralPath $zip -DestinationPath $toolsRoot -Force
+          $extracted = Join-Path $toolsRoot "nsis-3.13"
+          if (-not (Test-Path -LiteralPath $extracted -PathType Container)) {
+            throw "missing extracted NSIS directory"
+          }
+          if (Test-Path -LiteralPath $nsisRoot) {
+            Remove-Item -LiteralPath $nsisRoot -Recurse -Force
+          }
+          Move-Item -LiteralPath $extracted -Destination $nsisRoot
+
+          gh release download nsis_tauri_utils-v0.5.3 `
+            --repo tauri-apps/nsis-tauri-utils `
+            --pattern "nsis_tauri_utils.dll" `
+            --dir $downloadRoot
+          if ($LASTEXITCODE -ne 0) { throw "failed to download NSIS Tauri utilities" }
+
+          $plugin = Join-Path $downloadRoot "nsis_tauri_utils.dll"
+          $pluginHash = (Get-FileHash -LiteralPath $plugin -Algorithm SHA1).Hash
+          if ($pluginHash -ne "75197FEE3C6A814FE035788D1C34EAD39349B860") {
+            throw "NSIS plugin SHA1 mismatch: $pluginHash"
+          }
+          $pluginRoot = Join-Path $nsisRoot "Plugins\x86-unicode\additional"
+          New-Item -ItemType Directory -Path $pluginRoot -Force | Out-Null
+          Copy-Item -LiteralPath $plugin -Destination (Join-Path $pluginRoot "nsis_tauri_utils.dll") -Force
       - name: Bundle desktop client
         working-directory: desktop
         run: tauri build

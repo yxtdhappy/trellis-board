@@ -27,6 +27,7 @@
 5. 增加 Windows CI 保护
    - 在 `.github/workflows/windows.yml` 的 sidecar 构建后执行生成的 `trellis-agent` `version`。
    - 检查退出码和协议版本，构建失败时在 Tauri 打包前停止。
+   - 通过 GitHub CLI/API 预填充并校验 Tauri 的 NSIS 工具缓存，避免 Releases 直链 504 阻断安装包生成。
 
 ## 涉及文件
 
