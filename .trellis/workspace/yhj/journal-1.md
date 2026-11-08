@@ -324,3 +324,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: 阶段证据改为只读展示
+<!-- trellis-session: v=2 fp=f455214dc77cf122 -->
+
+**Date**: 2026-11-08
+**Task**: 阶段证据改为只读展示
+**Branch**: `codex/team-board`
+
+### Summary
+
+将任务详情阶段行改为只读展示，移除前端 setStage 调用与 API helper，补充跨层规范，并完成构建与 lint 验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `06e287d` | fix(web): 将阶段证据改为只读展示 |
+
+### Status
+
+[OK] **Completed**
