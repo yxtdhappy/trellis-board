@@ -195,12 +195,30 @@ export function parseEnrollResponse(payload) {
     throw new AgentError(AGENT_ERROR_CODE.INVALID_RESPONSE, "配对响应包含无效用户名");
   }
   const teamId = body.teamId == null ? null : assertSafeId(body.teamId, "团队 ID");
+  const teams = Array.isArray(body.teams)
+    ? body.teams.map((team) => {
+        if (!team || typeof team !== "object") {
+          throw new AgentError(AGENT_ERROR_CODE.INVALID_RESPONSE, "配对响应包含无效团队");
+        }
+        const id = assertSafeId(team.id, "团队 ID");
+        const name = String(team.name || "").trim();
+        if (!name || name.length > 160) {
+          throw new AgentError(AGENT_ERROR_CODE.INVALID_RESPONSE, "配对响应包含无效团队名称");
+        }
+        return {
+          id,
+          name,
+          role: team.role == null ? null : String(team.role).slice(0, 32),
+        };
+      })
+    : [];
   return {
     agentId,
     credential,
     protocolVersion: body.protocolVersion ?? AGENT_PROTOCOL_VERSION,
     username: username || null,
     teamId,
+    teams,
   };
 }
 

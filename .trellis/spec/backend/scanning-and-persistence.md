@@ -80,7 +80,9 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 - SQL：`task_dependency(id, blocker_task_key, blocked_task_key, reason, created_by, created_at, resolved_at)`。
 - `POST /api/tasks/dependencies`：请求 `{ blocked: { projectId, taskPath }, blocker: { projectId, taskPath }, reason }`，成功 `201`。
 - `DELETE /api/tasks/dependencies`：请求 `{ id }`，成功 `200`。
-- `PUT /api/board/settings`：请求 `{ executionWipLimit }`，成功 `200`。
+- `GET /api/board/settings?teamId=`：读取全局或指定团队 WIP，成功 `200`。
+- `PUT /api/board/settings`：请求 `{ executionWipLimit, teamId }`，成功 `200`。
+- `GET /api/saved-views?teamId=`、`POST/PUT/DELETE /api/saved-views`：全局或指定团队作用域。
 
 #### 3. Contracts
 
@@ -92,6 +94,7 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 - 开工条件对未归档任务在所有阶段计算；进入实现后仍可返回尚未补齐的规划证据。归档任务不再返回开工条件缺口。
 - 完成条件不把归档扫描补出的 `archive-gap` 阶段当作实施或检查报告；归档任务仍要求真实报告、验收状态和 commit 证据。
 - 保存视图 `blocked` 只接受 `any | blocked | unblocked`；缺失字段按 `any`。
+- 保存视图 `team_id = NULL` 表示全部团队全局视图，具体值表示团队视图；`user_board_state.team_id = ''` 同理表示全局 WIP。移除团队成员时删除该团队作用域，保留全局数据。
 
 #### 4. Validation & Error Matrix
 

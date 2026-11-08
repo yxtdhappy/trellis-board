@@ -41,13 +41,12 @@ import {
 import { createProjectService } from "./projects.js";
 import {
   TEAM_ROLES,
-  assertActiveTeam,
   createTeam,
   listTeamMembers,
   listTeamsForActor,
   listUserTeams,
   readTeam,
-  setActiveTeam,
+  resolveTeamScope,
   setUserTeams,
   updateTeam,
   validateTeamAssignments
@@ -271,7 +270,8 @@ function taskQueryInput(url) {
     preset: queryScalar(params, "preset"),
     limit: queryScalar(params, "limit"),
     cursor: queryScalar(params, "cursor"),
-    projectIds: queryList(params, "projectIds")
+    projectIds: queryList(params, "projectIds"),
+    teamId: queryScalar(params, "teamId")
   };
   for (const key of Object.keys(input)) {
     if (input[key] === undefined) delete input[key];
@@ -323,11 +323,30 @@ function requireAdmin(actor) {
   }
 }
 
-function requireTeamAdmin(actor) {
-  if (!actor?.systemAdmin && actor?.teamRole !== TEAM_ROLES.ADMIN) {
+function requireTeamAdmin(db, actor, teamId = null) {
+  if (actor?.systemAdmin) {
+    return resolveTeamScope(db, actor, teamId);
+  }
+  const adminTeams = (actor?.teams || [])
+    .filter((team) => team.role === TEAM_ROLES.ADMIN);
+  if (!adminTeams.length) {
     throw teamError(403, ERROR_CODES.FORBIDDEN, "只有团队管理员可以执行该操作");
   }
-  assertActiveTeam(actor);
+  const requested = String(teamId || "").trim();
+  if (!requested) {
+    if (adminTeams.length === 1) return adminTeams[0].id;
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, "请选择管理团队");
+  }
+  if (requested === "all") return null;
+  return resolveTeamScope(db, actor, requested, { adminOnly: true });
+}
+
+function manageableTeamIds(actor, teamId = null) {
+  if (actor?.systemAdmin) return teamId ? [teamId] : null;
+  if (teamId) return [teamId];
+  return (actor?.teams || [])
+    .filter((team) => team.role === TEAM_ROLES.ADMIN)
+    .map((team) => team.id);
 }
 
 function teamAssignmentsFromBody(db, userId, body) {
@@ -422,9 +441,16 @@ function serveStatic(request, response, url, publicDir) {
 }
 
 function runtimeProject(project, actor) {
+  const teamAdmin = Boolean(
+    actor?.systemAdmin ||
+    actor?.teams?.some(
+      (team) => team.id === project.teamId && team.role === TEAM_ROLES.ADMIN
+    )
+  );
   return {
     id: project.id,
     teamId: project.teamId || null,
+    teamName: project.teamName || null,
     name: project.name,
     syncStatus: project.syncStatus,
     syncBranch: project.syncBranch,
@@ -434,7 +460,7 @@ function runtimeProject(project, actor) {
     lastError: project.lastError || null,
     capabilities: projectCapabilities(project.role, {
       systemAdmin: Boolean(actor?.systemAdmin),
-      teamAdmin: actor?.teamRole === TEAM_ROLES.ADMIN
+      teamAdmin
     })
   };
 }
@@ -472,9 +498,7 @@ function createRequestHandler({
       userId: session.user.id,
       sessionId: session.sessionId,
       systemAdmin: session.user.systemAdmin,
-      activeTeamId: session.activeTeamId,
-      teamRole: session.teamRole,
-      team: session.team,
+      teams: session.teams,
       user: session.user,
       expiresAt: session.expiresAt
     };
@@ -492,7 +516,7 @@ function createRequestHandler({
       };
     }
     const projects = boardService.listProjects(actor);
-    const teams = listTeamsForActor(db, actor);
+    const teams = listTeamsForActor(db, actor, { activeOnly: true });
     return {
       mode: "team",
       team: true,
@@ -500,17 +524,17 @@ function createRequestHandler({
       user: actor.user,
       sessionExpiresAt: actor.expiresAt,
       systemAdmin: actor.systemAdmin,
-      activeTeamId: actor.activeTeamId,
-      activeTeam: teams.find((team) => team.id === actor.activeTeamId) || null,
-      teamRole: actor.systemAdmin ? null : actor.teamRole,
+      activeTeamId: null,
+      activeTeam: null,
+      teamRole: null,
       teams,
       projects: projects.map((project) => runtimeProject(project, actor)),
       capabilities: {
         manageUsers: actor.systemAdmin,
         manageTeams: actor.systemAdmin,
-        manageProjects: actor.systemAdmin || actor.teamRole === TEAM_ROLES.ADMIN,
-        manageAgents: actor.systemAdmin || actor.teamRole === TEAM_ROLES.ADMIN,
-        viewSystemAudit: actor.systemAdmin || actor.teamRole === TEAM_ROLES.ADMIN
+        manageProjects: actor.systemAdmin || teams.some((team) => team.role === TEAM_ROLES.ADMIN),
+        manageAgents: actor.systemAdmin || teams.some((team) => team.role === TEAM_ROLES.ADMIN),
+        viewSystemAudit: actor.systemAdmin || teams.some((team) => team.role === TEAM_ROLES.ADMIN)
       }
     };
   }
@@ -710,10 +734,13 @@ function createRequestHandler({
       return true;
     }
     if (pathname === "/api/auth/team" && request.method === "POST") {
-      const actor = requireActor(request);
-      const body = await readJsonBody(request);
-      sendJson(response, 200, setActiveTeam(db, actor, body.teamId));
-      return true;
+      requireActor(request);
+      await readJsonBody(request);
+      throw teamError(
+        410,
+        "ACTIVE_TEAM_REMOVED",
+        "活动团队已移除，请使用团队筛选切换展示范围"
+      );
     }
     if (pathname === "/api/auth/password" && request.method === "POST") {
       const actor = requireActor(request);
@@ -738,10 +765,18 @@ function createRequestHandler({
     const actor = requireActor(request);
 
     if (pathname === "/api/admin/users" && request.method === "GET") {
-      if (!actor.systemAdmin) requireTeamAdmin(actor);
-      const memberIds = actor.systemAdmin
-        ? null
-        : new Set(listTeamMembers(db, actor.activeTeamId).map((member) => member.userId));
+      const scope = requireTeamAdmin(
+        db,
+        actor,
+        url.searchParams.get("teamId")
+      );
+      const adminTeamIds = manageableTeamIds(actor, scope);
+      const memberIds = adminTeamIds
+        ? new Set(adminTeamIds.flatMap((teamId) =>
+            listTeamMembers(db, teamId).map((member) => member.userId)
+          ))
+        : null;
+      const editableTeamIds = actor.systemAdmin ? null : adminTeamIds;
       sendJson(response, 200, {
         users: listUsers(db)
           .filter((user) => !memberIds || memberIds.has(user.id))
@@ -749,9 +784,9 @@ function createRequestHandler({
             const teams = listUserTeams(db, user.id);
             return {
               ...user,
-              teams: actor.systemAdmin
-                ? teams
-                : teams.filter((team) => team.id === actor.activeTeamId)
+              teams: editableTeamIds
+                ? teams.filter((team) => editableTeamIds.includes(team.id))
+                : teams
             };
           })
       });
@@ -876,13 +911,19 @@ function createRequestHandler({
       return true;
     }
     if (pathname === "/api/admin/projects" && request.method === "GET") {
-      requireTeamAdmin(actor);
-      sendJson(response, 200, { projects: projectService.listAll(actor) });
+      const teamId = requireTeamAdmin(
+        db,
+        actor,
+        url.searchParams.get("teamId")
+      );
+      sendJson(response, 200, {
+        projects: projectService.listAll(actor, { teamId })
+      });
       return true;
     }
     if (pathname === "/api/admin/projects" && request.method === "POST") {
-      requireTeamAdmin(actor);
       const body = await readJsonBody(request);
+      requireTeamAdmin(db, actor, body.teamId);
       sendJson(response, 201, await projectService.connect(actor, body));
       return true;
     }
@@ -905,17 +946,21 @@ function createRequestHandler({
       return true;
     }
     if (pathname === "/api/admin/agents" && request.method === "GET") {
-      requireTeamAdmin(actor);
-      sendJson(response, 200, { agents: agentService.listDevices(actor) });
+      const teamId = requireTeamAdmin(
+        db,
+        actor,
+        url.searchParams.get("teamId")
+      );
+      sendJson(response, 200, {
+        agents: agentService.listDevices(actor, { teamId })
+      });
       return true;
     }
     if (pathname === "/api/admin/audit" && request.method === "GET") {
-      requireTeamAdmin(actor);
-      const teamId = actor.systemAdmin
-        ? (String(url.searchParams.get("teamId") || "").trim() || actor.activeTeamId || null)
-        : actor.activeTeamId;
+      const requestedTeamId = String(url.searchParams.get("teamId") || "").trim();
+      const teamId = requireTeamAdmin(db, actor, requestedTeamId);
       const events = listAuditEvents(db, {
-        teamId,
+        teamIds: manageableTeamIds(actor, teamId),
         limit: parseInteger(url.searchParams.get("limit"), "limit", 100),
         beforeId: parseInteger(url.searchParams.get("beforeId"), "beforeId", null)
       });
@@ -927,8 +972,11 @@ function createRequestHandler({
       /^\/api\/admin\/agents\/([^/]+)\/revoke$/
     );
     if (agentMatch && request.method === "POST") {
-      await readJsonBody(request);
-      sendJson(response, 200, agentService.revokeDevice(actor, agentMatch[0]));
+      const body = await readJsonBody(request);
+      const teamId = requireTeamAdmin(db, actor, body.teamId);
+      sendJson(response, 200, agentService.revokeDevice(actor, agentMatch[0], {
+        teamId
+      }));
       return true;
     }
     return false;
@@ -1058,6 +1106,12 @@ function createRequestHandler({
       sendJson(response, 200, pagePayload(page), { etag: page.etag });
       return true;
     }
+    if (pathname === "/api/board/settings" && request.method === "GET") {
+      sendJson(response, 200, boardService.readSettings(actor, {
+        teamId: url.searchParams.get("teamId")
+      }));
+      return true;
+    }
     if (pathname === "/api/board/settings" && request.method === "PUT") {
       sendJson(
         response,
@@ -1067,7 +1121,11 @@ function createRequestHandler({
       return true;
     }
     if (pathname === "/api/saved-views" && request.method === "GET") {
-      sendJson(response, 200, { views: boardService.listSavedViews(actor) });
+      sendJson(response, 200, {
+        views: boardService.listSavedViews(actor, {
+          teamId: url.searchParams.get("teamId")
+        })
+      });
       return true;
     }
     if (pathname === "/api/saved-views" && request.method === "POST") {
@@ -1239,8 +1297,8 @@ function createRequestHandler({
     }
     if (pathname === "/api/teams" && request.method === "GET") {
       sendJson(response, 200, {
-        teams: listTeamsForActor(db, actor),
-        activeTeamId: actor.activeTeamId
+        teams: listTeamsForActor(db, actor, { activeOnly: true }),
+        activeTeamId: null
       });
       return true;
     }

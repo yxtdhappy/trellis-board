@@ -35,7 +35,7 @@ export type AdminProjects = {
   saveMember: (input: MemberInput) => Promise<boolean>
   removeMember: (member: ProjectMember) => Promise<void>
   bindingAction: (binding: AgentBinding, action: admin.BindingAction) => Promise<void>
-  connectProject: (input: ConnectProjectInput) => Promise<boolean>
+  connectProject: (input: Omit<ConnectProjectInput, 'teamId'>) => Promise<boolean>
   openApproval: (project: TeamProject, draft?: ApprovalDraft | null) => Promise<void>
   pendingApproval: PendingApproval | null
   closeApproval: () => void
@@ -46,6 +46,7 @@ export type AdminProjects = {
 type AdminProjectsOptions = {
   report: (error: unknown, quiet?: boolean) => void
   isAdmin: boolean
+  teamId: string
   runtimeProjects: RuntimeProject[]
   users: AdminUser[]
   reloadUsers: (quiet?: boolean) => Promise<AdminUser[]>
@@ -54,6 +55,7 @@ type AdminProjectsOptions = {
 export function useAdminProjects({
   report,
   isAdmin,
+  teamId,
   runtimeProjects,
   users,
   reloadUsers
@@ -73,7 +75,7 @@ export function useAdminProjects({
   const reloadProjects = useCallback(
     async (quiet = false) => {
       try {
-        const list = await admin.fetchAdminProjects()
+        const list = await admin.fetchAdminProjects(teamId)
         setProjects(list)
         return list
       } catch (error) {
@@ -81,13 +83,14 @@ export function useAdminProjects({
         return []
       }
     },
-    [report]
+    [report, teamId]
   )
 
   const projectOptions = useMemo(() => {
-    const list: RuntimeProject[] = isAdmin
-      ? projects
-      : runtimeProjects.filter((project) => admin.canManageProject(project))
+    const list: RuntimeProject[] = [
+      ...(isAdmin ? projects : []),
+      ...runtimeProjects.filter((project) => admin.canManageProject(project))
+    ]
     const seen = new Set<string>()
     return list
       .filter((project) => {
@@ -253,9 +256,13 @@ export function useAdminProjects({
   )
 
   const connectProject = useCallback(
-    async (input: ConnectProjectInput) => {
+    async (input: Omit<ConnectProjectInput, 'teamId'>) => {
+      if (!teamId || teamId === 'all') {
+        toast.error('请先在顶部选择一个具体团队，再接入项目。')
+        return false
+      }
       try {
-        const result = await admin.connectProject(input)
+        const result = await admin.connectProject({ ...input, teamId })
         await reloadProjects(true)
         await openApproval(result.project, result.approval)
         return true
@@ -264,7 +271,7 @@ export function useAdminProjects({
         return false
       }
     },
-    [openApproval, reloadProjects, report]
+    [openApproval, reloadProjects, report, teamId]
   )
 
   const approveProject = useCallback(

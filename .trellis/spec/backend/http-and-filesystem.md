@@ -23,7 +23,9 @@
 | `POST /api/tasks/dependencies` | 创建任务阻断依赖 | 201 |
 | `DELETE /api/tasks/dependencies` | 解除活动阻断依赖并保留历史 | 200 |
 | `POST /api/tasks/undo` | 撤销当前任务最近一次未撤销的可逆操作 | 200 |
-| `PUT /api/board/settings` | 保存个人 WIP 软上限 | 200 |
+| `GET /api/board/settings` | 读取指定团队作用域的 WIP 软上限 | 200 |
+| `PUT /api/board/settings` | 保存指定团队作用域的 WIP 软上限 | 200 |
+| `GET /api/saved-views` | 读取指定团队作用域的保存视图 | 200 |
 | `POST /api/saved-views` | 创建组合视图 | 201 |
 | `PUT /api/saved-views` | 更新组合视图 | 200 |
 | `DELETE /api/saved-views` | 删除组合视图 | 200 |
@@ -189,7 +191,7 @@ assignees={project?.workspaceMembers ?? project?.members ?? allAssignees}
 
 `PUT /api/tasks/execution` 只接受 `projectId + taskPath` 定位当前任务，客户端不能直接指定执行身份。服务端在写入前完成日期、里程碑、标签、身份有效性和归档状态校验；计划字段、标签集合与 `task_plan_updated` 事件在同一事务提交。
 
-保存视图只接受结构化筛选 JSON，拒绝未知字段、非对象筛选和类型错误的整数窗口。视图 ID 由服务端生成，内置视图不写入 `saved_view` 表。
+保存视图只接受结构化筛选 JSON，拒绝未知字段、非对象筛选和类型错误的整数窗口。视图 ID 由服务端生成，内置视图不写入 `saved_view` 表。读、写、更新和删除均接受 `teamId`：`all` 或空值映射全局作用域，具体团队 ID 必须先通过实时 membership 校验。
 
 ### 阻断依赖
 
@@ -205,7 +207,77 @@ assignees={project?.workspaceMembers ?? project?.members ?? allAssignees}
 
 ### 看板设置
 
-`PUT /api/board/settings` 只接受 `executionWipLimit`，必须是 `1`–`9` 的整数。该值写入 `board_state`，服务端只把达到或超过上限投影成提醒，不拦截阶段确认。
+`GET/PUT /api/board/settings` 使用 `teamId`：`all` 或空值读取/写入账号级全局作用域，具体团队 ID 必须属于当前账号。写入值 `executionWipLimit` 必须是 `1`–`9` 的整数。该值写入 `board_state`，服务端只把达到或超过上限投影成提醒，不拦截阶段确认。
+
+### Scenario: 多团队筛选与设备授权
+
+#### 1. Scope / Trigger
+
+- Trigger：认证不再选择活动团队，任务查询、保存视图、WIP、管理台和 Agent 授权改为可跨团队。
+- 目标：团队筛选只改变展示范围，不改变 Session 身份；权限每次从 active 团队成员关系和项目成员关系实时计算。
+
+#### 2. Signatures
+
+- Session/runtime：`activeTeamId=null`、`activeTeam=null`、`teamRole=null`、`teams[]`。
+- `GET /api/tasks/query`：可选 `teamId=<all|teamId>`，列表行返回 `teamId`、`teamName`。
+- `GET|PUT /api/board/settings`、`GET|POST|PUT|DELETE /api/saved-views`：使用 `teamId` 选择全局或团队作用域。
+- 管理接口：`/api/admin/{users,projects,agents,audit}` 使用 `teamId`；项目接入、设备撤销和配对码使用具体团队。
+- Agent 注册：返回 `teams[]`，兼容字段 `teamId=null`；绑定和事件流仍按项目所属团队校验。
+
+#### 3. Contracts
+
+- `teamId` 缺省或 `all` 表示全部授权团队；具体团队必须存在且为 active。
+- 非系统管理员必须是该团队成员；系统管理员可跨 active 团队，但不能访问已停用团队。
+- `saved_view.team_id=NULL`、`user_board_state.team_id=''` 表示全局作用域；具体团队写团队 ID。
+- 查询 ETag、缓存键和游标绑定包含用户、实际团队作用域、可读项目集合和筛选哈希。
+- 系统管理员按团队筛选用户时，`user.teams` 仍返回完整成员关系；筛选只收窄用户列表。
+- 单管理团队可省略 `teamId` 自动落位；多管理团队必须显式选择具体团队或 `all`。
+- Agent 设备绑定“用户 + 设备”；同一设备可按项目所属团队建立多个绑定，撤销必须限定团队。
+
+#### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 用户请求未加入或已停用团队 | `403`；为避免泄露团队状态可用 `404` |
+| 查询 `projectIds` 与目标团队或可读集合不一致 | `403` |
+| 成员被移除后复用旧游标 | `409 CURSOR_INVALID` |
+| 多团队管理员缺少 `teamId` | `400 INVALID_INPUT` |
+| 非系统管理员撤销设备但未指定具体团队 | `400 INVALID_INPUT` |
+| 系统管理员访问已停用团队 | `404 NOT_FOUND` |
+| Agent 绑定无权限项目 | 返回 `PROJECT_FORBIDDEN`，不创建 binding |
+
+#### 5. Good/Base/Bad Cases
+
+- Good：双团队用户默认查询全部团队；切换 A/B 后任务、保存视图、WIP、ETag 和游标同步切换。
+- Base：单团队成员不显示强制切换器，默认全局作用域只包含该团队数据。
+- Bad：用前端隐藏代替服务端授权；从活动团队推导项目；撤销 A 团队设备时同时撤销 B 团队 binding。
+
+#### 6. Tests Required
+
+- 登录 runtime 返回全部 active teams，`/api/auth/team` 返回 `410`。
+- `all/A/B` 任务查询、保存视图和 WIP 隔离；跨团队 `projectIds` 被拒绝。
+- 成员移除后 runtime、项目和旧游标立即失效。
+- 同一设备绑定两个团队项目；按团队撤销只改变目标团队 binding。
+- 无 `team_member` 的系统管理员可注册设备、绑定项目、读写游标和订阅事件。
+- 系统管理员按团队筛选用户后原样保存，不删除其他团队成员关系。
+
+#### 7. Wrong vs Correct
+
+Wrong：
+
+```js
+const scope = actor.activeTeamId || "";
+const projects = listProjectsForTeam(scope);
+```
+
+Correct：
+
+```js
+const scope = resolveTeamScope(db, actor, input.teamId);
+const projectIds = readableProjectIds(actor).filter((id) => (
+  !scope || projectTeamId(id) === scope
+));
+```
 
 ## 路径安全
 

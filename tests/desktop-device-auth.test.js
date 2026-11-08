@@ -135,6 +135,12 @@ async function startRuntime(t, { desktopAuth, users = [] } = {}) {
     systemAdmin: true,
     mustChangePassword: false
   });
+  const teamId = "team-desktop-system-admin";
+  const now = new Date().toISOString();
+  runtime.db.prepare(`
+    INSERT INTO team(id, name, slug, status, created_at, updated_at)
+    VALUES (?, ?, ?, 'active', ?, ?)
+  `).run(teamId, "桌面系统管理团队", teamId, now, now);
   const created = new Map();
   for (const user of users) {
     const row = await createUser(runtime.db, {
@@ -154,7 +160,8 @@ async function startRuntime(t, { desktopAuth, users = [] } = {}) {
     adminCookie: cookieOf(login),
     sysadminId: sysadmin.id,
     users: created,
-    serverUrl
+    serverUrl,
+    teamId
   };
 }
 
@@ -231,7 +238,7 @@ test("签发设备令牌要求登录会话、JSON 与同源 Origin", async (t) =
 });
 
 test("设备令牌只能兑换一次并签发可用凭证", async (t) => {
-  const { runtime, adminCookie, sysadminId } = await startRuntime(t);
+  const { runtime, adminCookie, sysadminId, teamId } = await startRuntime(t);
   const issued = await issueToken(runtime, adminCookie, { deviceName: "开发机" });
   assert.equal(issued.status, 201);
 
@@ -240,6 +247,7 @@ test("设备令牌只能兑换一次并签发可用凭证", async (t) => {
   assert.match(enrolled.body.agentId, /^[A-Za-z0-9-]{8,64}$/);
   assert.match(enrolled.body.credential, /^[A-Za-z0-9_-]{43}$/);
   assert.equal(enrolled.body.protocolVersion, 2);
+  assert.deepEqual(enrolled.body.teams.map((team) => team.id), [teamId]);
 
   const device = runtime.db.prepare("SELECT * FROM agent_device WHERE id = ?")
     .get(enrolled.body.agentId);
@@ -375,7 +383,7 @@ test("同一用户未使用的设备令牌上限为 5，已使用令牌不占额
 });
 
 test("桌面端 enrollWithToken 走新端点并保留配对码兜底", async (t) => {
-  const { runtime, adminCookie, serverUrl } = await startRuntime(t);
+  const { runtime, adminCookie, serverUrl, teamId } = await startRuntime(t);
   const issued = await issueToken(runtime, adminCookie, { deviceName: "开发机" });
   assert.equal(issued.status, 201);
 
@@ -398,9 +406,10 @@ test("桌面端 enrollWithToken 走新端点并保留配对码兜底", async (t)
   const configText = fs.readFileSync(path.join(root, "config.json"), "utf8");
   const config = JSON.parse(configText);
   assert.equal(config.agentId, result.agentId);
-  // 兑换结果里的用户名/团队写入 sidecar 配置，workspace init 直接复用，无需再次输入。
+  // 设备绑定用户与设备；workspace init 从注册返回的团队列表显式选择目标团队。
   assert.equal(config.username, "sysadmin");
   assert.equal(config.teamId, null);
+  assert.deepEqual(config.teams.map((team) => team.id), [teamId]);
   assert.equal(config.credential, undefined);
   assert.ok(!configText.includes(saved[0]), "凭证不得写入 config.json");
   assert.ok(!configText.includes(issued.body.token), "令牌不得写入 config.json");

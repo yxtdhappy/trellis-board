@@ -32,13 +32,12 @@ export function isTeamManager(actor, teamId) {
   if (actor?.systemAdmin) return true;
   return Boolean(
     actor?.userId &&
-    actor.teamRole === "admin" &&
-    actor.activeTeamId &&
-    actor.activeTeamId === teamId
+    teamId &&
+    actor.teams?.some((team) => team.id === teamId && team.role === "admin")
   );
 }
 
-function projectRow(db, projectId) {
+function projectRow(db, projectId, userId = null) {
   return db.prepare(`
     SELECT
       p.repository_id AS project_id,
@@ -46,11 +45,14 @@ function projectRow(db, projectId) {
       p.sync_status,
       p.sync_branch,
       t.status AS team_status,
-      t.name AS team_name
+      t.name AS team_name,
+      tm.role AS team_role
     FROM team_project p
     JOIN team t ON t.id = p.team_id
+    LEFT JOIN team_member tm
+      ON tm.team_id = p.team_id AND tm.user_id = ?
     WHERE p.repository_id = ?
-  `).get(projectId) || null;
+  `).get(userId, projectId) || null;
 }
 
 function memberRole(db, projectId, userId) {
@@ -62,30 +64,28 @@ function memberRole(db, projectId, userId) {
 }
 
 export function readProjectAccess(db, projectId, actor) {
-  const row = projectRow(db, projectId);
+  const row = projectRow(db, projectId, actor?.userId || null);
   if (!row) return null;
   const member = actor?.userId ? memberRole(db, projectId, actor.userId) : null;
   return {
     ...row,
     role: member?.role || null,
     trellis_dev_id: member?.trellis_dev_id || null,
-    team_manager: isTeamManager(actor, row.team_id)
+    team_role: row.team_role || null,
+    team_manager: Boolean(actor?.systemAdmin || row.team_role === "admin")
   };
 }
 
 function findProjectAccess(db, projectId, actor) {
   const access = readProjectAccess(db, projectId, actor);
   if (!access) throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");
-  if (!actor.systemAdmin) {
-    if (
-      access.team_status !== "active" ||
-      !actor.activeTeamId ||
-      access.team_id !== actor.activeTeamId ||
-      !actor.teamRole
-    ) {
-      // 不泄露其他团队的项目是否存在。
-      throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");
-    }
+  if (access.team_status !== "active") {
+    // 已停用团队与越权团队统一按项目不存在处理。
+    throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");
+  }
+  if (!actor.systemAdmin && !access.team_role) {
+    // 不泄露其他团队的项目是否存在。
+    throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");
   }
   return access;
 }
@@ -174,11 +174,13 @@ function publicAccessRow(row) {
   return {
     id: row.repository_id,
     teamId: row.team_id,
+    teamName: row.team_name || null,
     sync_status: row.sync_status,
     syncStatus: row.sync_status,
     sync_branch: row.sync_branch,
     syncBranch: row.sync_branch,
     role: row.role,
+    teamRole: row.team_role || null,
     trellis_dev_id: row.trellis_dev_id,
     trellisDevId: row.trellis_dev_id,
     via: row.via
@@ -192,60 +194,39 @@ export function listAuthorizedProjects(actor, { db } = {}) {
   const visible = "p.sync_status IN ('current', 'stale', 'pending_push', 'needs_repair')";
   let rows;
   if (actor.systemAdmin) {
-    if (actor.activeTeamId) {
-      rows = db.prepare(`
-        SELECT
-          p.repository_id, p.team_id, p.sync_status, p.sync_branch,
-          m.role, m.trellis_dev_id
-        FROM team_project p
-        JOIN team t ON t.id = p.team_id
-        LEFT JOIN project_member m
-          ON m.project_id = p.repository_id AND m.user_id = ?
-        WHERE ${visible} AND p.team_id = ? AND t.status = 'active'
-        ORDER BY p.repository_id
-      `).all(actor.userId, actor.activeTeamId);
-    } else {
-      rows = db.prepare(`
-        SELECT
-          p.repository_id, p.team_id, p.sync_status, p.sync_branch,
-          m.role, m.trellis_dev_id
-        FROM team_project p
-        JOIN team t ON t.id = p.team_id
-        LEFT JOIN project_member m
-          ON m.project_id = p.repository_id AND m.user_id = ?
-        WHERE ${visible} AND t.status = 'active'
-        ORDER BY p.repository_id
-      `).all(actor.userId);
-    }
-    return rows.map((row) => publicAccessRow({ ...row, via: "system_admin" }));
-  }
-  if (!actor.activeTeamId || !actor.teamRole) return [];
-  if (actor.teamRole === "admin") {
     rows = db.prepare(`
       SELECT
         p.repository_id, p.team_id, p.sync_status, p.sync_branch,
-        m.role, m.trellis_dev_id
+        t.name AS team_name, m.role, m.trellis_dev_id
       FROM team_project p
       JOIN team t ON t.id = p.team_id
       LEFT JOIN project_member m
         ON m.project_id = p.repository_id AND m.user_id = ?
-      WHERE ${visible} AND p.team_id = ? AND t.status = 'active'
-      ORDER BY p.repository_id
-    `).all(actor.userId, actor.activeTeamId);
-    return rows.map((row) => publicAccessRow({ ...row, via: "team_admin" }));
+      WHERE ${visible} AND t.status = 'active'
+      ORDER BY t.name COLLATE NOCASE, p.repository_id
+    `).all(actor.userId);
+    return rows.map((row) => publicAccessRow({ ...row, via: "system_admin" }));
   }
   rows = db.prepare(`
     SELECT
       p.repository_id, p.team_id, p.sync_status, p.sync_branch,
-      m.role, m.trellis_dev_id
+      t.name AS team_name, m.role, m.trellis_dev_id,
+      tm.role AS team_role
     FROM team_project p
     JOIN team t ON t.id = p.team_id
-    JOIN project_member m
+    JOIN team_member tm
+      ON tm.team_id = p.team_id AND tm.user_id = ?
+    LEFT JOIN project_member m
       ON m.project_id = p.repository_id AND m.user_id = ?
-    WHERE ${visible} AND p.team_id = ? AND t.status = 'active'
-    ORDER BY p.repository_id
-  `).all(actor.userId, actor.activeTeamId);
-  return rows.map((row) => publicAccessRow({ ...row, via: row.role }));
+    WHERE ${visible}
+      AND t.status = 'active'
+      AND (tm.role = 'admin' OR m.user_id IS NOT NULL)
+    ORDER BY t.name COLLATE NOCASE, p.repository_id
+  `).all(actor.userId, actor.userId);
+  return rows.map((row) => publicAccessRow({
+    ...row,
+    via: row.team_role === "admin" ? "team_admin" : row.role
+  }));
 }
 
 export function readableProjectIds(actor, { db } = {}) {

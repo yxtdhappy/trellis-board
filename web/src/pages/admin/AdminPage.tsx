@@ -77,6 +77,9 @@ export function AdminPage() {
     setView,
     isAdmin,
     systemAdmin,
+    adminTeams,
+    adminTeamId,
+    setAdminTeamId,
     roleLabel,
     displayName,
     avatarText,
@@ -110,7 +113,13 @@ export function AdminPage() {
           </a>
         </div>
         <div className="flex items-center gap-2">
-          <TeamSwitcher />
+          <TeamSwitcher
+            teams={adminTeams}
+            value={adminTeamId}
+            includeAll={systemAdmin || adminTeams.length > 1}
+            onChange={setAdminTeamId}
+            ariaLabel="管理团队范围"
+          />
           <DropdownMenu>
             <DropdownMenuTrigger className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Avatar size="sm" className="size-7">

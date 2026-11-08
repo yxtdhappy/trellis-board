@@ -197,7 +197,7 @@ async function startRuntime(t) {
   return { root, runtime, admin, adminCookie: cookieOf(adminLogin) };
 }
 
-test("团队 CRUD、活动团队切换与跨团队读写隔离", async (t) => {
+test("多团队 Session、筛选、保存视图、管理范围与成员移除", async (t) => {
   const { root, runtime, adminCookie } = await startRuntime(t);
   const teamA = (await request(runtime, "/api/admin/teams", {
     method: "POST",
@@ -223,6 +223,12 @@ test("团队 CRUD、活动团队切换与跨团队读写隔离", async (t) => {
   await makeUser(runtime, "team-admin", {
     teams: [{ teamId: teamA.id, role: "admin" }]
   });
+  await makeUser(runtime, "multi-admin", {
+    teams: [
+      { teamId: teamA.id, role: "admin" },
+      { teamId: teamB.id, role: "admin" }
+    ]
+  });
   seedProject(runtime, root, { projectId: "p-a", teamId: teamA.id, userId: both.id });
   seedProject(runtime, root, { projectId: "p-b", teamId: teamB.id, userId: both.id });
   seedTasks(runtime, "p-a", 2);
@@ -233,76 +239,143 @@ test("团队 CRUD、活动团队切换与跨团队读写隔离", async (t) => {
   assert.equal(runtimeA.status, 200);
   assert.equal(runtimeA.body.mode, "team");
   assert.equal(runtimeA.body.team, true);
-  assert.equal(runtimeA.body.activeTeamId, teamA.id);
+  assert.equal(runtimeA.body.activeTeamId, null);
+  assert.equal(runtimeA.body.activeTeam, null);
+  assert.equal(runtimeA.body.teamRole, null);
   assert.deepEqual(runtimeA.body.teams.map((team) => team.id), [teamA.id, teamB.id]);
+  const teamsPayload = await request(runtime, "/api/teams", { cookie: bothCookie });
+  assert.equal(teamsPayload.body.activeTeamId, null);
   const projectsA = await request(runtime, "/api/team/projects", { cookie: bothCookie });
-  assert.deepEqual(projectsA.body.projects.map((project) => project.id), ["p-a"]);
+  assert.deepEqual(
+    projectsA.body.projects.map((project) => project.id),
+    ["p-a", "p-b"]
+  );
   assert.equal((await request(runtime, "/api/projects/p-a/members", {
     method: "PUT",
     cookie: adminCookie,
     body: { userId: outsider.id, role: "member", trellisDevId: "outsider" }
   })).status, 400);
-  assert.equal((await request(runtime, "/api/tasks/p-b::.trellis/tasks/task-1", {
-    cookie: bothCookie
-  })).status, 404);
-
   assert.equal((await request(runtime, "/api/board?projectId=p-b", {
     cookie: bothCookie
-  })).status, 404);
-  assert.equal((await request(runtime, "/api/tasks/query?projectIds=p-b", {
-    cookie: bothCookie
-  })).status, 403);
-  assert.equal((await request(runtime, "/api/projects/p-b/members", {
-    cookie: bothCookie
+  })).status, 200);
+  const outsiderCookie = cookieOf(await login(runtime, "outsider"));
+  assert.equal((await request(runtime, "/api/task", {
+    method: "POST",
+    cookie: outsiderCookie,
+    body: { projectId: "p-a", taskPath: ".trellis/tasks/task-1" }
   })).status, 404);
 
+  assert.equal((await request(runtime, "/api/board?projectId=p-a", {
+    cookie: outsiderCookie
+  })).status, 404);
+  assert.equal((await request(runtime, "/api/board?projectId=p-b", {
+    cookie: outsiderCookie
+  })).status, 403);
+  assert.equal((await request(runtime, "/api/tasks/query?projectIds=p-b", {
+    cookie: outsiderCookie
+  })).status, 403);
+  assert.equal((await request(runtime, "/api/projects/p-b/members", {
+    cookie: outsiderCookie
+  })).status, 403);
+
+  const queryAll = await request(runtime, "/api/tasks/query", {
+    cookie: bothCookie
+  });
+  assert.equal(queryAll.status, 200);
+  assert.equal(queryAll.body.total, 4);
+  assert.deepEqual(
+    new Set(queryAll.body.tasks.map((task) => task.teamId)),
+    new Set([teamA.id, teamB.id])
+  );
+  assert.ok(queryAll.body.tasks.every((task) => task.teamName));
+  const queryA = await request(runtime, `/api/tasks/query?teamId=${teamA.id}`, {
+    cookie: bothCookie
+  });
+  assert.equal(queryA.status, 200);
+  assert.equal(queryA.body.total, 2);
+  assert.ok(queryA.body.tasks.every((task) => task.teamId === teamA.id));
+  const queryB = await request(runtime, `/api/tasks/query?teamId=${teamB.id}`, {
+    cookie: bothCookie
+  });
+  assert.equal(queryB.status, 200);
+  assert.equal(queryB.body.total, 2);
+  assert.ok(queryB.body.tasks.every((task) => task.teamId === teamB.id));
+  assert.equal((await request(runtime, `/api/tasks/query?teamId=${teamA.id}`, {
+    cookie: outsiderCookie
+  })).status, 403);
+  assert.equal((await request(runtime, `/api/tasks/query?teamId=${teamA.id}&projectIds=p-b`, {
+    cookie: bothCookie
+  })).status, 403);
+
+  const savedAll = await request(runtime, "/api/saved-views", {
+    method: "POST",
+    cookie: bothCookie,
+    body: { teamId: "all", name: "全局视图", filter: { blocked: "blocked" } }
+  });
   const savedA = await request(runtime, "/api/saved-views", {
     method: "POST",
     cookie: bothCookie,
-    body: { name: "A 视图", filter: { blocked: "blocked" } }
+    body: { teamId: teamA.id, name: "A 视图", filter: { blocked: "blocked" } }
   });
-  assert.equal(savedA.status, 201);
-  const switchedB = await request(runtime, "/api/auth/team", {
+  const savedB = await request(runtime, "/api/saved-views", {
     method: "POST",
     cookie: bothCookie,
-    body: { teamId: teamB.id }
+    body: { teamId: teamB.id, name: "B 视图", filter: { blocked: "unblocked" } }
   });
-  assert.equal(switchedB.status, 200);
-  assert.equal((await request(runtime, "/api/runtime", { cookie: bothCookie })).body.activeTeamId, teamB.id);
+  assert.equal(savedAll.status, 201);
+  assert.equal(savedA.status, 201);
+  assert.equal(savedB.status, 201);
   assert.deepEqual(
-    (await request(runtime, "/api/saved-views", { cookie: bothCookie })).body.views,
-    []
+    (await request(runtime, "/api/saved-views?teamId=all", { cookie: bothCookie }))
+      .body.views.map((view) => view.name),
+    ["全局视图"]
+  );
+  assert.deepEqual(
+    (await request(runtime, `/api/saved-views?teamId=${teamA.id}`, { cookie: bothCookie }))
+      .body.views.map((view) => view.name),
+    ["A 视图"]
+  );
+  assert.deepEqual(
+    (await request(runtime, `/api/saved-views?teamId=${teamB.id}`, { cookie: bothCookie }))
+      .body.views.map((view) => view.name),
+    ["B 视图"]
   );
   assert.equal((await request(runtime, "/api/saved-views", {
     method: "PUT",
     cookie: bothCookie,
-    body: { id: savedA.body.view.id, name: "越权改", filter: { blocked: "blocked" } }
+    body: {
+      id: savedA.body.view.id,
+      teamId: teamB.id,
+      name: "越权改",
+      filter: { blocked: "blocked" }
+    }
   })).body.code, "INVALID_INPUT");
 
-  assert.equal((await request(runtime, "/api/board/settings", {
-    method: "PUT",
-    cookie: bothCookie,
-    body: { executionWipLimit: 5 }
-  })).status, 200);
+  for (const [teamId, value] of [["all", 5], [teamA.id, 3], [teamB.id, 4]]) {
+    assert.equal((await request(runtime, "/api/board/settings", {
+      method: "PUT",
+      cookie: bothCookie,
+      body: { teamId, executionWipLimit: value }
+    })).status, 200);
+  }
+  assert.equal((await request(runtime, "/api/board/settings?teamId=all", {
+    cookie: bothCookie
+  })).body.executionWipLimit, 5);
+  assert.equal((await request(runtime, `/api/board/settings?teamId=${teamA.id}`, {
+    cookie: bothCookie
+  })).body.executionWipLimit, 3);
+  assert.equal((await request(runtime, `/api/board/settings?teamId=${teamB.id}`, {
+    cookie: bothCookie
+  })).body.executionWipLimit, 4);
 
-  const pageA = await request(runtime, "/api/tasks/query?limit=1&projectIds=p-b", {
+  const pageA = await request(runtime, "/api/tasks/query?limit=1", {
     cookie: bothCookie
   });
   assert.equal(pageA.status, 200);
   assert.ok(pageA.body.nextCursor);
-  await request(runtime, "/api/auth/team", {
-    method: "POST",
-    cookie: bothCookie,
-    body: { teamId: teamA.id }
-  });
-  assert.equal((await request(runtime, "/api/board/settings", {
-    method: "PUT",
-    cookie: bothCookie,
-    body: { executionWipLimit: 3 }
-  })).status, 200);
   const crossCursor = await request(
     runtime,
-    `/api/tasks/query?limit=1&cursor=${encodeURIComponent(pageA.body.nextCursor)}`,
+    `/api/tasks/query?limit=1&teamId=${teamA.id}&cursor=${encodeURIComponent(pageA.body.nextCursor)}`,
     { cookie: bothCookie }
   );
   assert.equal(crossCursor.status, 409);
@@ -321,12 +394,15 @@ test("团队 CRUD、活动团队切换与跨团队读写隔离", async (t) => {
   assert.equal(teamUsers.status, 200);
   assert.deepEqual(
     teamUsers.body.users.map((user) => user.username),
-    ["both", "team-admin"]
+    ["both", "multi-admin", "team-admin"]
   );
   assert.deepEqual(
     teamUsers.body.users.find((user) => user.username === "both").teams.map((team) => team.id),
     [teamA.id]
   );
+  assert.equal((await request(runtime, `/api/admin/users?teamId=${teamB.id}`, {
+    cookie: adminCookieForTeam
+  })).status, 403);
   assert.equal((await request(runtime, "/api/admin/users", {
     cookie: bothCookie
   })).status, 403);
@@ -346,12 +422,12 @@ test("团队 CRUD、活动团队切换与跨团队读写隔离", async (t) => {
     method: "POST",
     cookie: adminCookieForTeam,
     body: { teamId: teamB.id }
-  })).status, 403);
+  })).status, 410);
   assert.equal((await request(runtime, "/api/auth/team", {
     method: "POST",
     cookie: adminCookieForTeam,
     body: { teamId: "missing-team" }
-  })).status, 403);
+  })).status, 410);
   assert.equal((await request(runtime, "/api/admin/projects", {
     method: "POST",
     cookie: adminCookieForTeam,
@@ -373,25 +449,51 @@ test("团队 CRUD、活动团队切换与跨团队读写隔离", async (t) => {
     }
   })).status, 403);
 
-  const adminTeamA = await request(runtime, "/api/auth/team", {
-    method: "POST",
-    cookie: adminCookie,
-    body: { teamId: teamA.id }
-  });
-  assert.equal(adminTeamA.status, 200);
-  assert.equal(adminTeamA.body.activeTeamId, teamA.id);
+  const multiAdminCookie = cookieOf(await login(runtime, "multi-admin"));
+  assert.equal((await request(runtime, "/api/admin/projects", {
+    cookie: multiAdminCookie
+  })).status, 400);
+  assert.equal((await request(runtime, "/api/admin/users", {
+    cookie: multiAdminCookie
+  })).status, 400);
   assert.deepEqual(
-    (await request(runtime, "/api/admin/projects", { cookie: adminCookie }))
+    (await request(runtime, `/api/admin/projects?teamId=${teamA.id}`, {
+      cookie: multiAdminCookie
+    }))
       .body.projects.map((project) => project.id),
     ["p-a"]
   );
-  const adminAllTeams = await request(runtime, "/api/auth/team", {
-    method: "POST",
-    cookie: adminCookie,
-    body: { teamId: "" }
+  assert.deepEqual(
+    (await request(runtime, `/api/admin/projects?teamId=${teamB.id}`, {
+      cookie: multiAdminCookie
+    })).body.projects.map((project) => project.id),
+    ["p-b"]
+  );
+  assert.deepEqual(
+    (await request(runtime, "/api/admin/projects?teamId=all", {
+      cookie: multiAdminCookie
+    })).body.projects.map((project) => project.id).sort(),
+    ["p-a", "p-b"]
+  );
+  const multiAdminAudit = await request(runtime, "/api/admin/audit?teamId=all", {
+    cookie: multiAdminCookie
   });
-  assert.equal(adminAllTeams.status, 200);
-  assert.equal(adminAllTeams.body.activeTeamId, null);
+  assert.equal(multiAdminAudit.status, 200);
+  assert.ok(multiAdminAudit.body.events.every((event) => (
+    event.teamId === teamA.id || event.teamId === teamB.id
+  )));
+  assert.deepEqual(
+    (await request(runtime, `/api/admin/projects?teamId=${teamA.id}`, {
+      cookie: adminCookie
+    })).body.projects.map((project) => project.id),
+    ["p-a"]
+  );
+  assert.deepEqual(
+    (await request(runtime, `/api/admin/projects?teamId=${teamB.id}`, {
+      cookie: adminCookie
+    })).body.projects.map((project) => project.id),
+    ["p-b"]
+  );
 
   const orphan = await request(runtime, "/api/admin/users", {
     method: "POST",
@@ -414,29 +516,202 @@ test("团队 CRUD、活动团队切换与跨团队读写隔离", async (t) => {
     allProjects.body.projects.map((project) => project.id).sort(),
     ["p-a", "p-b"]
   );
+  const usersB = await request(runtime, `/api/admin/users?teamId=${teamB.id}`, {
+    cookie: adminCookie
+  });
+  assert.equal(usersB.status, 200);
+  assert.equal(usersB.body.users.some((user) => user.username === "team-admin"), false);
+  const bothUser = usersB.body.users.find((user) => user.username === "both");
+  assert.deepEqual(bothUser.teams.map((team) => team.id), [teamA.id, teamB.id]);
+  assert.equal((await request(runtime, `/api/admin/users/${both.id}/teams`, {
+    method: "PUT",
+    cookie: adminCookie,
+    body: {
+      teams: bothUser.teams.map((team) => ({
+        teamId: team.id,
+        role: team.role
+      }))
+    }
+  })).status, 200);
+  assert.equal(runtime.db.prepare(`
+    SELECT COUNT(*) AS count FROM team_member WHERE user_id = ?
+  `).get(both.id).count, 2);
   const auditB = await request(runtime, `/api/admin/audit?teamId=${teamB.id}`, {
     cookie: adminCookie
   });
   assert.ok(auditB.body.events.every((event) => event.teamId === teamB.id));
+  assert.equal((await request(runtime, `/api/admin/teams/${teamB.id}`, {
+    method: "PATCH",
+    cookie: adminCookie,
+    body: { status: "disabled" }
+  })).status, 200);
+  assert.equal((await request(runtime, "/api/board?projectId=p-b", {
+    cookie: adminCookie
+  })).status, 404);
+  assert.equal((await request(runtime, "/api/task", {
+    method: "POST",
+    cookie: adminCookie,
+    body: { projectId: "p-b", taskPath: ".trellis/tasks/task-1" }
+  })).status, 404);
+  assert.equal((await request(runtime, `/api/tasks/query?teamId=${teamB.id}`, {
+    cookie: adminCookie
+  })).status, 404);
+  assert.equal((await request(runtime, `/api/admin/teams/${teamB.id}`, {
+    method: "PATCH",
+    cookie: adminCookie,
+    body: { status: "active" }
+  })).status, 200);
 
   assert.equal(runtime.db.prepare(`
     SELECT COUNT(*) AS count FROM user_board_state WHERE user_id = ?
-  `).get(both.id).count, 2);
+  `).get(both.id).count, 3);
   const removeB = await request(runtime, `/api/admin/users/${both.id}/teams`, {
     method: "PUT",
     cookie: adminCookie,
     body: { teams: [{ teamId: teamA.id, role: "member" }] }
   });
   assert.equal(removeB.status, 200);
-  assert.equal((await request(runtime, "/api/auth/team", {
-    method: "POST",
-    cookie: bothCookie,
-    body: { teamId: teamB.id }
+  assert.deepEqual(
+    (await request(runtime, "/api/runtime", { cookie: bothCookie }))
+      .body.teams.map((team) => team.id),
+    [teamA.id]
+  );
+  assert.equal((await request(runtime, `/api/tasks/query?teamId=${teamB.id}`, {
+    cookie: bothCookie
   })).status, 403);
+  assert.equal((await request(runtime, "/api/board?projectId=p-b", {
+    cookie: bothCookie
+  })).status, 404);
+  const invalidatedCursor = await request(
+    runtime,
+    `/api/tasks/query?limit=1&cursor=${encodeURIComponent(pageA.body.nextCursor)}`,
+    { cookie: bothCookie }
+  );
+  assert.equal(invalidatedCursor.status, 409);
+  assert.equal(invalidatedCursor.body.code, "CURSOR_INVALID");
+  assert.equal((await request(runtime, "/api/tasks/query", {
+    cookie: bothCookie
+  })).body.total, 2);
+  assert.equal((await request(runtime, `/api/saved-views?teamId=${teamB.id}`, {
+    cookie: bothCookie
+  })).status, 403);
+  assert.equal(runtime.db.prepare(`
+    SELECT COUNT(*) AS count FROM saved_view
+    WHERE owner_user_id = ? AND team_id = ?
+  `).get(both.id, teamB.id).count, 0);
   const stateRows = runtime.db.prepare(`
     SELECT team_id FROM user_board_state WHERE user_id = ? ORDER BY team_id
   `).all(both.id);
-  assert.deepEqual(stateRows.map((row) => row.team_id), [teamA.id]);
+  assert.deepEqual(
+    new Set(stateRows.map((row) => row.team_id)),
+    new Set(["", teamA.id])
+  );
+});
+
+test("系统管理员 Agent 可绑定项目、读写游标并订阅事件", async (t) => {
+  const { root, runtime, admin, adminCookie } = await startRuntime(t);
+  seedTeam(runtime, "t-system", "系统团队");
+  const owner = await makeUser(runtime, "project-owner", {
+    teams: [{ teamId: "t-system", role: "admin" }]
+  });
+  seedProject(runtime, root, {
+    projectId: "p-system",
+    teamId: "t-system",
+    userId: owner.id
+  });
+  assert.equal(runtime.db.prepare(`
+    SELECT COUNT(*) AS count FROM team_member WHERE user_id = ?
+  `).get(admin.id).count, 0);
+
+  const pairing = await request(runtime, "/api/team/pairing-codes", {
+    method: "POST",
+    cookie: adminCookie,
+    body: { teamId: "t-system" }
+  });
+  assert.equal(pairing.status, 201);
+  const enrolled = await request(runtime, "/api/agent/enroll", {
+    method: "POST",
+    origin: null,
+    body: {
+      protocolVersion: 2,
+      agentVersion: "1.0.0",
+      platform: "win32",
+      pairingCode: pairing.body.pairingCode,
+      deviceName: "系统管理员设备"
+    }
+  });
+  assert.equal(enrolled.status, 201);
+  assert.deepEqual(
+    enrolled.body.teams.map((team) => team.id),
+    ["t-system"]
+  );
+
+  const heartbeat = await request(runtime, "/api/agent/heartbeat", {
+    method: "POST",
+    origin: null,
+    agentCredential: enrolled.body.credential,
+    body: {
+      protocolVersion: 2,
+      agentId: enrolled.body.agentId,
+      agentVersion: "1.0.0",
+      deviceName: "系统管理员设备",
+      bindings: [{
+        projectId: "p-system",
+        localRepoKey: "e".repeat(64),
+        branchName: "main",
+        remoteIdentityKey: normalizeRemoteIdentity(
+          "https://example.com/p-system.git"
+        ).identityHash
+      }]
+    }
+  });
+  assert.equal(heartbeat.status, 200);
+  assert.equal(heartbeat.body.bindings[0].teamId, "t-system");
+  assert.equal(heartbeat.body.bindings[0].status, "pending");
+
+  const approved = await request(
+    runtime,
+    `/api/projects/p-system/agents/${heartbeat.body.bindings[0].bindingId}/approve`,
+    {
+      method: "POST",
+      cookie: adminCookie,
+      body: {}
+    }
+  );
+  assert.equal(approved.status, 200);
+  assert.equal((await request(runtime, "/api/agent/event-cursor?teamId=t-system", {
+    agentCredential: enrolled.body.credential
+  })).status, 200);
+  assert.equal((await request(runtime, "/api/agent/event-cursor?teamId=t-system", {
+    method: "PUT",
+    agentCredential: enrolled.body.credential,
+    body: { lastEventId: 3 }
+  })).status, 200);
+
+  const agent = runtime.services.agentService.authenticate({
+    headers: {
+      authorization: `Bearer ${enrolled.body.credential}`
+    }
+  });
+  const response = {
+    destroyed: false,
+    writeHead() {},
+    flushHeaders() {},
+    write() {
+      return true;
+    },
+    end() {
+      this.destroyed = true;
+    },
+    on() {}
+  };
+  const stream = runtime.services.agentEvents.openStream({
+    agent,
+    teamId: null,
+    response
+  });
+  assert.equal(stream.teamId, "t-system");
+  assert.equal(response.destroyed, false);
 });
 
 test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async (t) => {
@@ -444,7 +719,10 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
   seedTeam(runtime, "t1", "团队一");
   seedTeam(runtime, "t2", "团队二");
   const agentUser = await makeUser(runtime, "agent-user", {
-    teams: [{ teamId: "t1", role: "member" }]
+    teams: [
+      { teamId: "t1", role: "member" },
+      { teamId: "t2", role: "member" }
+    ]
   });
   const teamAdmin = await makeUser(runtime, "t1-admin", {
     teams: [{ teamId: "t1", role: "admin" }]
@@ -454,6 +732,12 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
   });
   const otherAdmin = await makeUser(runtime, "t2-admin", {
     teams: [{ teamId: "t2", role: "admin" }]
+  });
+  const multiAdmin = await makeUser(runtime, "multi-admin", {
+    teams: [
+      { teamId: "t1", role: "admin" },
+      { teamId: "t2", role: "admin" }
+    ]
   });
   seedProject(runtime, root, {
     projectId: "p1",
@@ -473,12 +757,23 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
     teamId: "t2",
     userId: otherAdmin.id
   });
+  const now = new Date().toISOString();
+  runtime.db.prepare(`
+    INSERT INTO project_member(
+      project_id, user_id, role, trellis_dev_id, created_by, created_at, updated_at
+    ) VALUES ('p2', ?, 'member', 'agent-user', ?, ?, ?)
+  `).run(agentUser.id, agentUser.id, now, now);
+  seedProject(runtime, root, {
+    projectId: "p3",
+    teamId: "t2",
+    userId: otherAdmin.id
+  });
 
   const agentCookie = cookieOf(await login(runtime, "agent-user"));
   const pairing = await request(runtime, "/api/team/pairing-codes", {
     method: "POST",
     cookie: agentCookie,
-    body: {}
+    body: { teamId: "t1" }
   });
   assert.equal(pairing.status, 201);
   assert.equal(pairing.body.teamId, "t1");
@@ -494,6 +789,11 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
     }
   });
   assert.equal(enrolled.status, 201);
+  assert.equal(enrolled.body.teamId, null);
+  assert.deepEqual(
+    enrolled.body.teams.map((team) => team.id).sort(),
+    ["t1", "t2"]
+  );
   const heartbeat = await request(runtime, "/api/agent/heartbeat", {
     method: "POST",
     origin: null,
@@ -503,18 +803,38 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
       agentId: enrolled.body.agentId,
       agentVersion: "1.0.0",
       deviceName: "隔离测试设备",
-      bindings: [{
-        projectId: "p1",
-        localRepoKey: "b".repeat(64),
-        branchName: "main",
-        remoteIdentityKey: normalizeRemoteIdentity(
-          "https://example.com/p1.git"
-        ).identityHash
-      }]
+      bindings: [
+        {
+          projectId: "p1",
+          localRepoKey: "b".repeat(64),
+          branchName: "main",
+          remoteIdentityKey: normalizeRemoteIdentity(
+            "https://example.com/p1.git"
+          ).identityHash
+        },
+        {
+          projectId: "p2",
+          localRepoKey: "c".repeat(64),
+          branchName: "main",
+          remoteIdentityKey: normalizeRemoteIdentity(
+            "https://example.com/p2.git"
+          ).identityHash
+        },
+        {
+          projectId: "p3",
+          localRepoKey: "d".repeat(64),
+          branchName: "main",
+          remoteIdentityKey: normalizeRemoteIdentity(
+            "https://example.com/p3.git"
+          ).identityHash
+        }
+      ]
     }
   });
   assert.equal(heartbeat.status, 200);
   const bindingId = heartbeat.body.bindings[0].bindingId;
+  assert.equal(heartbeat.body.bindings[2].status, "rejected");
+  assert.equal(heartbeat.body.bindings[2].errorCode, "PROJECT_FORBIDDEN");
   assert.equal(
     runtime.db.prepare("SELECT team_id FROM agent_project_binding WHERE id = ?")
       .get(bindingId).team_id,
@@ -533,7 +853,7 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
   assert.equal(savedCursor.body.lastEventId, 7);
   assert.equal((await request(runtime, "/api/agent/event-cursor?teamId=t2", {
     agentCredential: enrolled.body.credential
-  })).status, 403);
+  })).status, 200);
 
   assert.equal((await request(
     runtime,
@@ -565,6 +885,67 @@ test("Agent 绑定、审计与团队成员移除按团队隔离并清理", async
   assert.ok(teamAudit.body.events.some((event) => (
     event.action === "agent_binding_approved" && event.teamId === "t1"
   )));
+
+  const multiAdminCookie = cookieOf(await login(runtime, "multi-admin"));
+  const devicesByTeam = await request(runtime, "/api/admin/agents?teamId=t1", {
+    cookie: multiAdminCookie
+  });
+  assert.equal(devicesByTeam.status, 200);
+  assert.equal(devicesByTeam.body.agents.some((agent) => agent.id === enrolled.body.agentId), true);
+  const devicesByOtherTeam = await request(runtime, "/api/admin/agents?teamId=t2", {
+    cookie: multiAdminCookie
+  });
+  assert.equal(devicesByOtherTeam.body.agents.some((agent) => agent.id === enrolled.body.agentId), true);
+  const pairingByScope = await request(runtime, "/api/team/pairing-codes", {
+    method: "POST",
+    cookie: multiAdminCookie,
+    body: { teamId: "t2" }
+  });
+  assert.equal(pairingByScope.status, 201);
+  assert.equal(pairingByScope.body.teamId, "t2");
+  for (const body of [{}, { teamId: "all" }]) {
+    const rejected = await request(
+      runtime,
+      `/api/admin/agents/${enrolled.body.agentId}/revoke`,
+      {
+        method: "POST",
+        cookie: multiAdminCookie,
+        body
+      }
+    );
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.body.code, "INVALID_INPUT");
+  }
+  assert.equal(
+    runtime.db.prepare("SELECT sync_status FROM agent_project_binding WHERE project_id = 'p1'").get().sync_status,
+    "approved"
+  );
+  assert.equal(
+    runtime.db.prepare("SELECT sync_status FROM agent_project_binding WHERE project_id = 'p2'").get().sync_status,
+    "pending"
+  );
+  const revokedOneTeam = await request(
+    runtime,
+    `/api/admin/agents/${enrolled.body.agentId}/revoke`,
+    {
+      method: "POST",
+      cookie: multiAdminCookie,
+      body: { teamId: "t1" }
+    }
+  );
+  assert.equal(revokedOneTeam.status, 200);
+  assert.equal(
+    runtime.db.prepare("SELECT sync_status FROM agent_project_binding WHERE project_id = 'p1'").get().sync_status,
+    "revoked"
+  );
+  assert.equal(
+    runtime.db.prepare("SELECT sync_status FROM agent_project_binding WHERE project_id = 'p2'").get().sync_status,
+    "pending"
+  );
+  assert.equal(
+    runtime.db.prepare("SELECT status FROM agent_device WHERE id = ?").get(enrolled.body.agentId).status,
+    "active"
+  );
 
   const removed = await request(runtime, `/api/admin/users/${agentUser.id}/teams`, {
     method: "PUT",

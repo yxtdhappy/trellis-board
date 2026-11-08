@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ApiError, redirectToLogin } from '@/api/request'
 import * as admin from '@/api/admin'
-import type { AdminUser, AdminView, AgentDevice, AuditEvent, NewUserInput, SessionUser, UserUpdate } from '@/api/admin'
+import type { AdminUser, AdminView, AgentDevice, AuditEvent, NewUserInput, SessionUser, Team, UserUpdate } from '@/api/admin'
 import { formatTime } from '@/lib/admin-shared'
 import { useAdminProjects } from './useAdminProjects'
 import type { AdminProjects } from './useAdminProjects'
@@ -22,6 +22,10 @@ export type AdminConsole = AdminProjects & {
   setView: (view: AdminView) => void
   isAdmin: boolean
   systemAdmin: boolean
+  teams: Team[]
+  adminTeams: Team[]
+  adminTeamId: string
+  setAdminTeamId: (teamId: string) => void
   displayName: string
   roleLabel: string
   avatarText: string
@@ -38,7 +42,7 @@ export type AdminConsole = AdminProjects & {
   toggleUser: (target: AdminUser) => Promise<void>
   resetPassword: (target: AdminUser, password: string) => Promise<boolean>
   revokeDevice: (device: AgentDevice) => Promise<void>
-  createPairingCode: () => Promise<void>
+  createPairingCode: (teamId?: string) => Promise<void>
   pairingCode: { code: string; expiresAt: string | null } | null
   createDesktopEnrollToken: () => Promise<void>
   desktopToken: { token: string; expiresAt: string | null } | null
@@ -61,6 +65,8 @@ export function useAdminConsole(): AdminConsole {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [systemAdmin, setSystemAdmin] = useState(false)
+  const [teams, setTeams] = useState<Team[]>([])
+  const [adminTeamId, setAdminTeamId] = useState('')
   const [runtimeProjects, setRuntimeProjects] = useState<admin.RuntimeProject[]>([])
   const [view, setView] = useState<AdminView>('project-access')
 
@@ -76,6 +82,9 @@ export function useAdminConsole(): AdminConsole {
   )
 
   const systemAuditBeforeRef = useRef<number | null>(null)
+  const adminTeams = systemAdmin
+    ? teams
+    : teams.filter((team) => team.role === 'admin')
 
   const report = useCallback((error: unknown, quiet = false) => {
     if (redirectIfUnauthorized(error)) return
@@ -90,6 +99,7 @@ export function useAdminConsole(): AdminConsole {
         if (cancelled) return
         setUser(runtime.user)
         setSystemAdmin(runtime.systemAdmin)
+        setTeams(runtime.teams)
         setRuntimeProjects(runtime.projects)
         if (!runtime.team && !runtime.systemAdmin) {
           window.location.replace('/')
@@ -103,7 +113,15 @@ export function useAdminConsole(): AdminConsole {
           window.location.replace('/')
           return
         }
-        const canAdmin = runtime.systemAdmin || runtime.teamRole === 'admin'
+        const manageableTeams = runtime.systemAdmin
+          ? runtime.teams
+          : runtime.teams.filter((team) => team.role === 'admin')
+        const canAdmin = runtime.systemAdmin || manageableTeams.length > 0
+        setAdminTeamId(
+          runtime.systemAdmin
+            ? 'all'
+            : manageableTeams[0]?.id || ''
+        )
         const canManage =
           canAdmin ||
           runtime.projects.some((project) => admin.canManageProject(project))
@@ -121,10 +139,20 @@ export function useAdminConsole(): AdminConsole {
     }
   }, [])
 
+  useEffect(() => {
+    systemAuditBeforeRef.current = null
+    setUsers([])
+    setDevices([])
+    setSystemAudit([])
+    setSystemAuditHasMore(false)
+    setPairingCode(null)
+    setCredential(null)
+  }, [adminTeamId])
+
   const reloadUsers = useCallback(
     async (quiet = false) => {
       try {
-        const list = await admin.fetchUsers()
+        const list = await admin.fetchUsers(adminTeamId || undefined)
         setUsers(list)
         return list
       } catch (error) {
@@ -132,14 +160,14 @@ export function useAdminConsole(): AdminConsole {
         return []
       }
     },
-    [report]
+    [adminTeamId, report]
   )
 
   const reloadDevices = useCallback(
     async (quiet = false) => {
       if (!isAdmin) return []
       try {
-        const list = await admin.fetchDevices()
+        const list = await admin.fetchDevices(adminTeamId || undefined)
         setDevices(list)
         return list
       } catch (error) {
@@ -147,14 +175,14 @@ export function useAdminConsole(): AdminConsole {
         return []
       }
     },
-    [isAdmin, report]
+    [adminTeamId, isAdmin, report]
   )
 
   const loadSystemAudit = useCallback(
     async (reset: boolean) => {
       const before = reset ? null : systemAuditBeforeRef.current
       try {
-        const events = await admin.fetchSystemAudit(before)
+        const events = await admin.fetchSystemAudit(before, adminTeamId || undefined)
         systemAuditBeforeRef.current = events.at(-1)?.id ?? (reset ? null : before)
         setSystemAudit((current) => (reset ? events : [...current, ...events]))
         setSystemAuditHasMore(events.length >= admin.AUDIT_PAGE_LIMIT)
@@ -170,7 +198,7 @@ export function useAdminConsole(): AdminConsole {
         report(error)
       }
     },
-    [report]
+    [adminTeamId, report]
   )
 
   const showCredential = useCallback(
@@ -246,21 +274,30 @@ export function useAdminConsole(): AdminConsole {
 
   const revokeDevice = useCallback(
     async (device: AgentDevice) => {
+      if (!adminTeamId || adminTeamId === 'all') {
+        toast.error('请先在顶部选择一个具体团队，再撤销该团队的设备绑定。')
+        return
+      }
       if (!window.confirm(`撤销 Agent 设备 ${device.deviceName}？相关绑定和待执行命令会失效。`)) return
       try {
-        await admin.revokeDevice(device.id)
+        await admin.revokeDevice(device.id, adminTeamId)
         toast.success('Agent 设备已撤销。')
         await reloadDevices(true)
       } catch (error) {
         report(error)
       }
     },
-    [reloadDevices, report]
+    [adminTeamId, reloadDevices, report]
   )
 
-  const createPairingCode = useCallback(async () => {
+  const createPairingCode = useCallback(async (teamId?: string) => {
+    const targetTeamId = teamId || adminTeamId
+    if (!targetTeamId || targetTeamId === 'all') {
+      toast.error('请先在顶部选择一个具体团队，再生成配对码。')
+      return
+    }
     try {
-      const result = await admin.createPairingCode()
+      const result = await admin.createPairingCode(targetTeamId)
       if (result.pairingCode) {
         setPairingCode({ code: result.pairingCode, expiresAt: result.expiresAt })
       }
@@ -274,7 +311,7 @@ export function useAdminConsole(): AdminConsole {
     } catch (error) {
       report(error)
     }
-  }, [report, showCredential])
+  }, [adminTeamId, report, showCredential])
 
   const createDesktopEnrollToken = useCallback(async () => {
     try {
@@ -297,7 +334,14 @@ export function useAdminConsole(): AdminConsole {
     window.location.replace('/login.html')
   }, [])
 
-  const projects = useAdminProjects({ report, isAdmin, runtimeProjects, users, reloadUsers })
+  const projects = useAdminProjects({
+    report,
+    isAdmin,
+    teamId: adminTeamId,
+    runtimeProjects,
+    users,
+    reloadUsers,
+  })
   const displayName = user?.displayName || user?.username || '团队账号'
 
   return {
@@ -308,6 +352,10 @@ export function useAdminConsole(): AdminConsole {
     setView,
     isAdmin,
     systemAdmin,
+    teams,
+    adminTeams,
+    adminTeamId,
+    setAdminTeamId,
     displayName,
     roleLabel: systemAdmin ? '系统管理员' : isAdmin ? '团队管理员' : '项目负责人',
     avatarText: displayName.slice(0, 1),

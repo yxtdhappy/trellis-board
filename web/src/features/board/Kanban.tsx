@@ -57,7 +57,11 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
                   return (
                     <div key={group.key} className="flex flex-col gap-1.5 rounded-lg bg-background/40 p-1.5">
                       <div className="flex items-center justify-between px-1 text-[9.5px] text-muted-foreground">
-                        <span className="truncate">父任务 · {group.parent.projectName}</span>
+                        <span className="truncate">
+                          父任务 · {group.parent.teamName
+                            ? `${group.parent.teamName} · ${group.parent.projectName}`
+                            : group.parent.projectName}
+                        </span>
                         <span>{children.length} 个子任务</span>
                       </div>
                       <TaskCard task={group.parent} onOpen={onOpen} onEditPlan={onEditPlan} showCopy={false} />
@@ -77,7 +81,10 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
                                 <span className="flex min-w-0 flex-col">
                                   <b className="truncate font-medium">{child.title}</b>
                                   <small className="truncate text-[9.5px] text-muted-foreground">
-                                    {child.projectName} · {child.status}
+                                    {child.teamName
+                                      ? `${child.teamName} · ${child.projectName}`
+                                      : child.projectName}{" "}
+                                    · {child.status}
                                   </small>
                                 </span>
                                 <span className="ml-auto whitespace-nowrap text-[9.5px] text-muted-foreground">

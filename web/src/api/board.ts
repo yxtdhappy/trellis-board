@@ -3,6 +3,8 @@ import type { BoardTask } from '@/features/board/task-view'
 
 export type Project = {
   id: string
+  teamId?: string
+  teamName?: string
   name: string
   path: string
   members?: string[]
@@ -40,6 +42,15 @@ export type TeamRuntime = {
   mode?: string
   authenticated: boolean
   user: { displayName?: string; username?: string; role?: string; developerId?: string; mustChangePassword?: boolean } | null
+  systemAdmin?: boolean
+  teams?: RuntimeTeam[]
+}
+
+export type RuntimeTeam = {
+  id: string
+  name: string
+  role?: string | null
+  status?: string
 }
 
 async function apiRequest(
@@ -72,8 +83,21 @@ export const fetchBoard = (force = false) =>
 
 export const fetchBoardStatus = () => api<BoardStatus>('/api/board/status')
 
-export const saveWipLimit = (executionWipLimit: number) =>
-  api('/api/board/settings', 'PUT', { executionWipLimit })
+export const saveWipLimit = (executionWipLimit: number, teamId?: string) =>
+  api('/api/board/settings', 'PUT', {
+    executionWipLimit,
+    ...(teamId ? { teamId } : {}),
+  })
+
+export const fetchBoardSettings = (teamId: string) =>
+  api<{ teamId?: string | null; executionWipLimit?: number }>(
+    `/api/board/settings?teamId=${encodeURIComponent(teamId)}`,
+  )
+
+export const fetchSavedViews = (teamId: string) =>
+  api<{ views?: unknown[] }>(
+    `/api/saved-views?teamId=${encodeURIComponent(teamId)}`,
+  ).then((payload) => payload?.views || [])
 
 export const fetchTaskDetail = (task: BoardTask) =>
   api<{ task?: BoardTask }>('/api/task', 'POST', {
@@ -127,10 +151,13 @@ export const changePassword = (payload: { currentPassword: string; newPassword: 
 
 export const logout = () => api('/api/auth/logout', 'POST')
 
-export const saveSavedView = (payload: { name: string; filter: Record<string, unknown> }) =>
+export const saveSavedView = (
+  payload: { name: string; filter: Record<string, unknown>; teamId?: string },
+) =>
   api<{ view?: { id: string } }>('/api/saved-views', 'POST', payload)
 
-export const deleteSavedView = (id: string) => api('/api/saved-views', 'DELETE', { id })
+export const deleteSavedView = (id: string, teamId?: string) =>
+  api('/api/saved-views', 'DELETE', { id, ...(teamId ? { teamId } : {}) })
 
 export const createDependency = (payload: {
   blocked: { projectId: string; taskPath: string }

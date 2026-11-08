@@ -23,6 +23,7 @@ import { initials } from "@/features/board/task-view";
 import { TeamSwitcher } from "@/features/admin/TeamSwitcher";
 
 export type BoardNavItem = { id: string; label: string };
+type TeamOption = { id: string; name: string };
 
 type TopBarProps = {
   nav: BoardNavItem[];
@@ -32,6 +33,9 @@ type TopBarProps = {
   onSearch: (value: string) => void;
   onCreate: () => void;
   displayName: string;
+  teams: TeamOption[];
+  teamId: string;
+  onTeamChange: (teamId: string) => void;
   onOpenAssignments: () => void;
   onOpenPassword: () => void;
   onLogout: () => void;
@@ -46,6 +50,9 @@ export function TopBar({
   onSearch,
   onCreate,
   displayName,
+  teams,
+  teamId,
+  onTeamChange,
   onOpenAssignments,
   onOpenPassword,
   onLogout,
@@ -83,7 +90,14 @@ export function TopBar({
       </nav>
 
       <div className="ml-auto flex items-center gap-2">
-        <TeamSwitcher />
+        {teams.length > 1 ? (
+          <TeamSwitcher
+            teams={teams}
+            value={teamId}
+            includeAll
+            onChange={onTeamChange}
+          />
+        ) : null}
         <div className="relative hidden md:block">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input

@@ -30,9 +30,11 @@ function cleanName(value, label, max = 80) {
 function projectRow(db, projectId) {
   return db.prepare(`
     SELECT
-      p.*, r.name AS repository_name, r.path AS repository_path
+      p.*, r.name AS repository_name, r.path AS repository_path,
+      t.name AS team_name
     FROM team_project p
     JOIN repositories r ON r.id = p.repository_id
+    JOIN team t ON t.id = p.team_id
     WHERE p.repository_id = ?
   `).get(projectId) || null;
 }
@@ -43,6 +45,7 @@ function publicProject(row) {
     id: row.repository_id,
     repositoryId: row.repository_id,
     teamId: row.team_id || null,
+    teamName: row.team_name || null,
     name: row.repository_name,
     syncBranch: row.sync_branch,
     syncStatus: row.sync_status,
@@ -138,46 +141,57 @@ export function createProjectService({
     return projectRow(db, projectId);
   }
 
-  function listAll(actor = null) {
-    const teamId = actor?.activeTeamId || null;
-    const filter = teamId ? "WHERE p.team_id = ?" : "";
-    const params = teamId ? [teamId] : [];
+  function listAll(actor = null, { teamId = null } = {}) {
+    const requestedTeamId = String(teamId || "").trim();
+    const scopedTeamId = requestedTeamId && requestedTeamId !== "all"
+      ? requestedTeamId
+      : null;
+    let teamIds = null;
+    if (actor && !actor.systemAdmin) {
+      teamIds = [...new Set((actor.teams || [])
+        .filter((team) => team.role === "admin" && team.status === "active")
+        .map((team) => team.id))];
+      if (!teamIds.length) return [];
+      if (scopedTeamId) teamIds = [scopedTeamId];
+    } else if (scopedTeamId) {
+      teamIds = [scopedTeamId];
+    }
+    const filter = teamIds?.length
+      ? `WHERE p.team_id IN (${teamIds.map(() => "?").join(", ")})`
+      : "";
+    const params = teamIds || [];
     return db.prepare(`
       SELECT
-        p.*, r.name AS repository_name, r.path AS repository_path
+        p.*, r.name AS repository_name, r.path AS repository_path,
+        t.name AS team_name
       FROM team_project p
       JOIN repositories r ON r.id = p.repository_id
+      JOIN team t ON t.id = p.team_id
       ${filter}
       ORDER BY p.created_at DESC
     `).all(...params).map(publicProject);
   }
 
   function listReadable(actor, { includeAssignees = true } = {}) {
-    const membershipJoin = actor.systemAdmin || actor.teamRole === "admin"
-      ? "LEFT JOIN project_member m ON m.project_id = p.repository_id AND m.user_id = ?"
-      : "JOIN project_member m ON m.project_id = p.repository_id AND m.user_id = ?";
-    const params = [actor.userId];
-    let teamFilter = "AND t.status = 'active'";
-    if (actor.activeTeamId) {
-      teamFilter += " AND p.team_id = ?";
-      params.push(actor.activeTeamId);
-    } else if (!actor.systemAdmin) {
-      return [];
-    }
+    const params = [actor.userId, actor.userId, actor.systemAdmin ? 1 : 0];
     const rows = db.prepare(`
       SELECT
         p.*, r.name AS repository_name, r.path AS repository_path,
         t.name AS team_name,
-        m.role, m.trellis_dev_id,
+        m.role, m.trellis_dev_id, tm.role AS team_role,
         c.scanned_content_key, c.scanned_branch_sha, c.saved_at
       FROM team_project p
       JOIN repositories r ON r.id = p.repository_id
       JOIN team t ON t.id = p.team_id
-      ${membershipJoin}
+      LEFT JOIN team_member tm
+        ON tm.team_id = p.team_id AND tm.user_id = ?
+      LEFT JOIN project_member m
+        ON m.project_id = p.repository_id AND m.user_id = ?
       LEFT JOIN project_scan_cache c ON c.project_id = p.repository_id
       WHERE p.sync_status IN ('current', 'stale', 'pending_push', 'needs_repair')
-        ${teamFilter}
-      ORDER BY r.name COLLATE NOCASE, p.repository_id
+        AND t.status = 'active'
+        AND (? = 1 OR tm.role = 'admin' OR m.user_id IS NOT NULL)
+      ORDER BY t.name COLLATE NOCASE, r.name COLLATE NOCASE, p.repository_id
     `).all(...params);
     const candidates = new Map();
     if (includeAssignees) {
@@ -191,6 +205,7 @@ export function createProjectService({
       ...publicProject(row),
       teamId: row.team_id,
       teamName: row.team_name,
+      teamRole: row.team_role || null,
       role: row.role || (actor.systemAdmin ? "system_admin" : "team_admin"),
       trellisDevId: row.trellis_dev_id,
       boardVersion: row.scanned_content_key || null,

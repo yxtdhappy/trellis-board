@@ -104,6 +104,8 @@ function withEnrollServer(callback) {
             agentId: "agent-cli-1",
             credential: "c".repeat(32),
             protocolVersion: 2,
+            teamId: null,
+            teams: [{ id: "team-1", name: "团队一", role: "member" }],
           }));
           return;
         }
@@ -151,6 +153,8 @@ test("CLI 配对和绑定不把凭证或绝对路径写入配置输出", async (
       assert.equal(output.stdoutText().includes(credentials.credential), false);
       const config = await store.readConfig();
       assert.equal(config.agentId, "agent-cli-1");
+      assert.equal(config.teamId, null);
+      assert.deepEqual(config.teams.map((team) => team.id), ["team-1"]);
       assert.equal(JSON.stringify(config).includes(credentials.credential), false);
 
       const bindCode = await runCli([

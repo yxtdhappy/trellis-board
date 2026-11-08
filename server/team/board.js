@@ -19,6 +19,7 @@ import {
   authorizeProject,
   readableProjectIds
 } from "./permissions.js";
+import { resolveTeamScope } from "./teams.js";
 
 function shanghaiDay(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -60,6 +61,8 @@ function indexRow(row) {
     taskVersion: row.task_version,
     projectId: row.project_id,
     projectName: row.project_name,
+    teamId: row.team_id || null,
+    teamName: row.team_name || null,
     relativeDir: row.relative_dir,
     title: row.title,
     priority: row.priority,
@@ -114,23 +117,24 @@ export function createBoardService({
     }
   }
 
-  function teamScope(actor) {
-    return actor?.activeTeamId || "";
+  function teamScope(actor, requestedTeamId) {
+    return resolveTeamScope(db, actor, requestedTeamId) || "";
   }
 
-  function readWipLimit(actor) {
+  function readWipLimit(actor, requestedTeamId) {
+    const scope = teamScope(actor, requestedTeamId);
     const row = db.prepare(`
       SELECT value_json
       FROM user_board_state
       WHERE user_id = ? AND team_id = ? AND key = 'executionWipLimit'
-    `).get(actor.userId, teamScope(actor));
+    `).get(actor.userId, scope);
     const value = parseUserState(row?.value_json, null);
     return Number.isInteger(value) && value >= 1 && value <= 9
       ? value
       : executionWipLimit;
   }
 
-  function writeWipLimit(actor, value) {
+  function writeWipLimit(actor, value, requestedTeamId) {
     if (!Number.isInteger(value) || value < 1 || value > 9) {
       throw teamError(
         400,
@@ -144,7 +148,12 @@ export function createBoardService({
       ON CONFLICT(user_id, team_id, key) DO UPDATE SET
         value_json = excluded.value_json,
         updated_at = excluded.updated_at
-    `).run(actor.userId, teamScope(actor), JSON.stringify(value), new Date().toISOString());
+    `).run(
+      actor.userId,
+      teamScope(actor, requestedTeamId),
+      JSON.stringify(value),
+      new Date().toISOString()
+    );
     return value;
   }
 
@@ -261,6 +270,9 @@ export function createBoardService({
   function refreshProjectProjection(projectId, actor) {
     const cached = readCachedProject(projectId);
     if (!cached?.board) return;
+    const project = db.prepare(`
+      SELECT team_id FROM team_project WHERE repository_id = ?
+    `).get(projectId);
     const board = projectBoardExecution(
       {
         ...cached.board,
@@ -269,7 +281,7 @@ export function createBoardService({
       [],
       db,
       new Date(),
-      { executionWipLimit: readWipLimit(actor) }
+      { executionWipLimit: readWipLimit(actor, project?.team_id || null) }
     );
     taskIndex.refreshProjectIndexFromDatabase({
       projectId,
@@ -366,6 +378,8 @@ export function createBoardService({
       ),
       projects: projects.map((project) => ({
         id: project.id,
+        teamId: project.teamId || null,
+        teamName: project.teamName || null,
         name: project.name,
         syncStatus: project.syncStatus,
         syncBranch: project.syncBranch,
@@ -399,8 +413,16 @@ export function createBoardService({
       projectIds: [id]
     });
     const cached = readCachedProject(id);
-    const executionWipLimitForUser = readWipLimit(actor);
-    const savedViews = executionStore.listSavedViews(actor.userId, actor.activeTeamId || null);
+    const preferenceTeamId = resolveTeamScope(
+      db,
+      actor,
+      input.teamId || access.team_id
+    );
+    if (preferenceTeamId && preferenceTeamId !== access.team_id) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, "团队筛选与项目所属团队不一致");
+    }
+    const executionWipLimitForUser = readWipLimit(actor, preferenceTeamId);
+    const savedViews = executionStore.listSavedViews(actor.userId, preferenceTeamId || null);
     const projected = cached?.board
       ? projectBoardExecution(
           {
@@ -421,11 +443,15 @@ export function createBoardService({
       const detail = cachedByKey.get(task.taskKey) || task;
       return {
         ...detail,
+        teamId: task.teamId,
+        teamName: task.teamName,
         assignment: assignments.get(task.executionTaskKey) || null
       };
     });
     const project = listProjects(actor).find((item) => item.id === id) || {
       id,
+      teamId: access.team_id,
+      teamName: access.team_name,
       syncStatus: access.sync_status,
       syncBranch: access.sync_branch,
       role: access.role
@@ -483,7 +509,7 @@ export function createBoardService({
       200,
       {
         boardTasks: context.cached?.board?.tasks || [],
-        executionWipLimit: readWipLimit(actor),
+        executionWipLimit: readWipLimit(actor, context.access.team_id),
         actorUserId: actor.userId
       }
     );
@@ -492,6 +518,8 @@ export function createBoardService({
         ...detail,
         projectId: context.indexed.project_id,
         projectName: context.project.repository_name,
+        teamId: context.project.team_id || null,
+        teamName: context.project.team_name || null,
         projectSyncStatus: context.access.sync_status,
         stale: context.access.sync_status !== "current",
         assignment: readAssignment(db, executionTaskKey)
@@ -514,12 +542,14 @@ export function createBoardService({
     const rows = db.prepare(`
       SELECT
         a.*, t.*, p.sync_status AS project_sync_status,
-        p.last_error AS project_error, r.name AS project_name
+        p.last_error AS project_error, p.team_id,
+        team_info.name AS team_name, r.name AS project_name
       FROM task_assignment a
       JOIN team_task_index t
         ON t.project_id = a.project_id
         AND t.execution_task_key = a.execution_task_key
       JOIN team_project p ON p.repository_id = a.project_id
+      JOIN team team_info ON team_info.id = p.team_id
       JOIN repositories r ON r.id = a.project_id
       WHERE a.assigned_user_id = ?
         AND (? IS NULL OR a.state = ?)
@@ -748,27 +778,31 @@ export function createBoardService({
     return { message: "最近操作已撤销", ...undone };
   }
 
-  function listSavedViews(actor) {
-    return executionStore.listSavedViews(actor.userId, actor.activeTeamId || null);
+  function listSavedViews(actor, input = {}) {
+    const scope = resolveTeamScope(db, actor, input.teamId);
+    return executionStore.listSavedViews(actor.userId, scope || null);
   }
 
   function createSavedView(actor, input = {}) {
+    const scope = resolveTeamScope(db, actor, input.teamId);
     const view = userError(() =>
-      executionStore.createSavedView(input, actor.userId, actor.activeTeamId || null)
+      executionStore.createSavedView(input, actor.userId, scope || null)
     );
     return { message: "组合视图已保存", view };
   }
 
   function updateSavedView(actor, input = {}) {
+    const scope = resolveTeamScope(db, actor, input.teamId);
     const view = userError(() =>
-      executionStore.updateSavedView(input, actor.userId, actor.activeTeamId || null)
+      executionStore.updateSavedView(input, actor.userId, scope || null)
     );
     return { message: "组合视图已更新", view };
   }
 
   function deleteSavedView(actor, input = {}) {
+    const scope = resolveTeamScope(db, actor, input.teamId);
     const view = userError(() =>
-      executionStore.deleteSavedView(input.id, actor.userId, actor.activeTeamId || null)
+      executionStore.deleteSavedView(input.id, actor.userId, scope || null)
     );
     return { message: "组合视图已删除", view };
   }
@@ -776,11 +810,20 @@ export function createBoardService({
   function updateWipLimit(actor, input = {}) {
     const executionWipLimitForUser = writeWipLimit(
       actor,
-      Number(input.executionWipLimit)
+      Number(input.executionWipLimit),
+      input.teamId
     );
     return {
       message: "实现中 WIP 软上限已保存",
       executionWipLimit: executionWipLimitForUser
+    };
+  }
+
+  function readSettings(actor, input = {}) {
+    const scope = resolveTeamScope(db, actor, input.teamId);
+    return {
+      teamId: scope,
+      executionWipLimit: readWipLimit(actor, scope)
     };
   }
 
@@ -800,6 +843,7 @@ export function createBoardService({
     createSavedView,
     updateSavedView,
     deleteSavedView,
+    readSettings,
     updateWipLimit
   };
 }

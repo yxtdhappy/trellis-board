@@ -66,7 +66,7 @@ const COMMAND_HELP = Object.freeze({
   diagnose: "diagnose [--json] [--offline]",
   run: "run",
   service: "service <install|uninstall|status>",
-  workspace: "workspace <init|status> --path <绝对路径> [--tools .opencode,.agents] [--username <name>] [--team <ID>] [--json]",
+  workspace: "workspace <init|status> --path <绝对路径> [--tools .opencode,.agents] [--username <name>] --team <ID> [--json]",
 });
 
 function usageText() {
@@ -262,6 +262,7 @@ async function commandPair(args, context) {
     deviceName,
     username: enrolled.username || null,
     teamId: enrolled.teamId || null,
+    teams: Array.isArray(enrolled.teams) ? enrolled.teams : [],
     protocolVersion: AGENT_PROTOCOL_VERSION,
     agentVersion: AGENT_VERSION,
     pairedAt: now,
@@ -740,12 +741,21 @@ async function commandWorkspaceInit(args, context) {
       "缺少登录用户名；请使用 --username 或在 config.json/.trellis/.developer 中提供",
     );
   }
+  const teamId = values.team
+    || config?.teamId
+    || (config?.teams?.length === 1 ? config.teams[0].id : null);
+  if (!teamId) {
+    throw new AgentError(
+      AGENT_ERROR_CODE.CONFIG_INVALID,
+      "请使用 --team 选择要初始化 workspace 的团队",
+    );
+  }
   const initializer = context.workspaceInitializer || initializeWorkspace;
   const result = await initializer({
     workspacePath,
     username,
     tools,
-    teamId: values.team || config?.teamId || null,
+    teamId,
     serverUrl: values.server || config?.serverUrl || null,
     dataRoot: context.store.paths.root,
     agentCredential: await loadWorkspaceCredential(context),

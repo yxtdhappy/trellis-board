@@ -59,7 +59,7 @@ export function TeamView({
     return scopedTasks.filter((task) => {
       if (
         keyword &&
-        ![task.title, task.assignee, task.projectName, task.dirName]
+        ![task.title, task.assignee, task.teamName, task.projectName, task.dirName]
           .map((value) => String(value || "").toLowerCase())
           .some((value) => value.includes(keyword))
       ) {
@@ -280,6 +280,9 @@ export function TeamView({
                     const stageLabel = task.stages.find(
                       (item) => item.id === task.derivedStage,
                     )?.label;
+                    const projectLabel = task.teamName
+                      ? `${task.teamName} · ${task.projectName}`
+                      : task.projectName;
                     return (
                       <tr
                         key={task.taskKey}
@@ -291,7 +294,7 @@ export function TeamView({
                             {task.title}
                           </span>
                           <small className="text-[10px] text-muted-foreground">
-                            #{task.dirName} · {task.projectName}
+                            #{task.dirName} · {projectLabel}
                           </small>
                         </td>
                         <td className="px-3 py-2">
@@ -303,7 +306,7 @@ export function TeamView({
                           </span>
                         </td>
                         <td className="px-3 py-2 text-[11px] text-muted-foreground">
-                          {task.projectName}
+                          {projectLabel}
                         </td>
                         <td className="px-3 py-2">
                           <span

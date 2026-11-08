@@ -9,6 +9,16 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub struct ClientConfig {
     pub schema_version: u32,
     pub server_url: String,
+    #[serde(default)]
+    pub teams: Vec<DesktopTeam>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopTeam {
+    pub id: String,
+    pub name: String,
+    pub role: Option<String>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -106,6 +116,11 @@ mod tests {
         let config = ClientConfig {
             schema_version: SCHEMA_VERSION,
             server_url: "https://board.example.com".to_string(),
+            teams: vec![DesktopTeam {
+                id: "team-1".to_string(),
+                name: "团队一".to_string(),
+                role: Some("member".to_string()),
+            }],
         };
         save(&config).expect("save config");
         let loaded = load().expect("load config").expect("config exists");

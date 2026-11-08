@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { logout } from '@/api/board'
 import { ProjectRail } from '@/components/layout/ProjectRail'
 import { TopBar, type BoardNavItem } from '@/components/layout/TopBar'
@@ -71,6 +71,10 @@ export function BoardPage() {
   const archived = tasks.filter((task) => task.archived)
   const activeCount = tasks.filter((task) => !task.archived).length
 
+  useEffect(() => {
+    setSelected(null)
+  }, [filters.teamId])
+
   const syncLabel = teamMode
     ? `${projects.length} 个授权项目 · 每 3 秒检查同步状态`
     : controller.status?.refreshRunning
@@ -95,6 +99,9 @@ export function BoardPage() {
         onSearch={(value) => setFilters({ search: value })}
         onCreate={() => setCreateOpen(true)}
         displayName={displayName}
+        teams={runtime?.teams || []}
+        teamId={filters.teamId}
+        onTeamChange={(teamId) => setFilters({ teamId })}
         onOpenAssignments={() => setAssignmentsOpen(true)}
         onOpenPassword={() => setPasswordOpen(true)}
         onLogout={handleLogout}

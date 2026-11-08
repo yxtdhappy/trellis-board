@@ -43,7 +43,8 @@ function writeConfig(root, overrides = {}) {
     agentId: "agent-1",
     deviceName: "测试设备",
     username: "carol",
-    teamId: "team-1",
+    teamId: null,
+    teams: [{ id: "team-1", name: "团队一", role: "member" }],
     protocolVersion: 2,
     agentVersion: "0.2.0",
     pairedAt: "2026-11-05T00:00:00.000Z",
@@ -146,6 +147,26 @@ test("workspace init 从 config.json 读取用户名、团队和服务端", asyn
   assert.deepEqual(calls[0].tools, null);
 });
 
+test("workspace init 缺少显式团队时拒绝执行", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-workspace-team-"));
+  const workspacePath = path.join(root, "demo");
+  fs.mkdirSync(workspacePath);
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const output = captureIo();
+  const code = await runCli(
+    ["workspace", "init", "--path", workspacePath, "--username", "alice"],
+    {
+      root: path.join(root, "agent"),
+      io: output.io,
+      workspaceInitializer: async () => {
+        throw new Error("不应调用初始化器");
+      },
+    },
+  );
+  assert.equal(code, CLI_EXIT_CODE.USAGE);
+  assert.match(output.stderr(), /--team/);
+});
+
 test("workspace init 从 .trellis/.developer 回退用户名", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-workspace-developer-"));
   const workspacePath = path.join(root, "demo");
@@ -155,7 +176,7 @@ test("workspace init 从 .trellis/.developer 回退用户名", async (t) => {
   const calls = [];
   const output = captureIo();
   const code = await runCli(
-    ["workspace", "init", "--path", workspacePath],
+    ["workspace", "init", "--path", workspacePath, "--team", "team-1"],
     {
       root: path.join(root, "agent"),
       io: output.io,
@@ -186,7 +207,16 @@ test("workspace init 用退出码区分冲突、权限和离线无缓存", async
   for (const [workspaceCode, expected] of cases) {
     const output = captureIo();
     const code = await runCli(
-      ["workspace", "init", "--path", path.join(root, "demo"), "--username", "alice"],
+      [
+        "workspace",
+        "init",
+        "--path",
+        path.join(root, "demo"),
+        "--team",
+        "team-1",
+        "--username",
+        "alice",
+      ],
       {
         root: path.join(root, "agent"),
         io: output.io,

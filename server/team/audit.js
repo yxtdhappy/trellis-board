@@ -87,22 +87,31 @@ function auditRow(row) {
 
 export function listAuditEvents(db, {
   teamId = null,
+  teamIds = null,
   projectId = null,
   limit = 100,
   beforeId = null
 } = {}) {
   const boundedLimit = Math.min(200, Math.max(1, Number(limit) || 100));
+  const scopedTeamIds = Array.isArray(teamIds)
+    ? [...new Set(teamIds.map((id) => String(id || "").trim()).filter(Boolean))]
+    : null;
+  const teamFilter = scopedTeamIds == null
+    ? "(? IS NULL OR team_id = ?)"
+    : scopedTeamIds.length
+      ? `team_id IN (${scopedTeamIds.map(() => "?").join(", ")})`
+      : "0 = 1";
+  const teamParams = scopedTeamIds == null ? [teamId, teamId] : scopedTeamIds;
   return db.prepare(`
     SELECT *
     FROM audit_event
-    WHERE (? IS NULL OR team_id = ?)
+    WHERE ${teamFilter}
       AND (? IS NULL OR project_id = ?)
       AND (? IS NULL OR id < ?)
     ORDER BY occurred_at DESC, id DESC
     LIMIT ?
   `).all(
-    teamId,
-    teamId,
+    ...teamParams,
     projectId,
     projectId,
     beforeId,

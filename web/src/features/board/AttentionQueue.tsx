@@ -39,7 +39,9 @@ export function AttentionQueue({ tasks, onOpen }: AttentionQueueProps) {
                     {task.priority || 'P2'}
                   </span>
                   <span className="truncate text-[11.5px] font-medium">{task.title}</span>
-                  <span className="shrink-0 text-[10px] text-muted-foreground">{task.projectName}</span>
+                  <span className="shrink-0 text-[10px] text-muted-foreground">
+                    {task.teamName ? `${task.teamName} · ${task.projectName}` : task.projectName}
+                  </span>
                   <span className="ml-auto flex shrink-0 items-center gap-1">
                     {attentionReasons(task)
                       .slice(0, 2)

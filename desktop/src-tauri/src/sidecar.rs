@@ -27,6 +27,9 @@ pub struct EnrollSummary {
     pub ok: bool,
     #[serde(rename = "agentId")]
     pub agent_id: Option<String>,
+    pub username: Option<String>,
+    #[serde(default)]
+    pub teams: Vec<crate::config::DesktopTeam>,
     pub error: Option<String>,
 }
 
@@ -241,6 +244,7 @@ pub async fn workspace_init(
     app: &AppHandle,
     workspace_path: &str,
     tools: Option<Vec<String>>,
+    team_id: Option<&str>,
     agent_root: &Path,
 ) -> Result<String, String> {
     let mut args = vec![
@@ -248,6 +252,10 @@ pub async fn workspace_init(
         "--path".to_string(),
         workspace_path.to_string(),
     ];
+    if let Some(team_id) = team_id {
+        args.push("--team".to_string());
+        args.push(team_id.to_string());
+    }
     if let Some(tools) = tools.filter(|items| !items.is_empty()) {
         args.push("--tools".to_string());
         args.push(tools.join(","));

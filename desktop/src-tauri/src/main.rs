@@ -22,6 +22,7 @@ use tauri_plugin_shell::ShellExt;
 struct AppStatus {
     version: String,
     server_url: Option<String>,
+    teams: Vec<config::DesktopTeam>,
     config_path: String,
     logs_dir: String,
     sidecar_running: bool,
@@ -33,6 +34,8 @@ struct EnrollResult {
     agent_id: String,
     server_url: String,
     device_name: String,
+    username: Option<String>,
+    teams: Vec<config::DesktopTeam>,
 }
 
 fn ensure_local_caller(window: &tauri::WebviewWindow) -> Result<(), String> {
@@ -50,9 +53,14 @@ fn ensure_local_caller(window: &tauri::WebviewWindow) -> Result<(), String> {
 async fn app_status(app: AppHandle, window: tauri::WebviewWindow) -> Result<AppStatus, String> {
     ensure_local_caller(&window)?;
     let config = config::load()?;
+    let teams = config
+        .as_ref()
+        .map(|value| value.teams.clone())
+        .unwrap_or_default();
     Ok(AppStatus {
         version: env!("CARGO_PKG_VERSION").to_string(),
         server_url: config.map(|value| value.server_url),
+        teams,
         config_path: config::config_path().display().to_string(),
         logs_dir: config::logs_dir().display().to_string(),
         sidecar_running: sidecar::is_running(&app),
@@ -110,12 +118,15 @@ async fn perform_enroll(
     config::save(&config::ClientConfig {
         schema_version: config::SCHEMA_VERSION,
         server_url: board.as_str().to_string(),
+        teams: summary.teams.clone(),
     })?;
     sidecar::restart(app);
     Ok(EnrollResult {
         agent_id,
         server_url: board.as_str().to_string(),
         device_name: device_name.to_string(),
+        username: summary.username,
+        teams: summary.teams,
     })
 }
 
@@ -187,14 +198,16 @@ async fn init_workspace(
     window: tauri::WebviewWindow,
     path: String,
     tools: Option<Vec<String>>,
+    team_id: Option<String>,
 ) -> Result<serde_json::Value, String> {
     ensure_local_caller(&window)?;
     let target = path.trim();
     if target.is_empty() {
         return Err("workspace 路径不能为空".to_string());
     }
+    let team_id = team_id.as_deref().map(str::trim).filter(|value| !value.is_empty());
     let agent_root = config::agent_root();
-    let output = sidecar::workspace_init(&app, target, tools, &agent_root).await?;
+    let output = sidecar::workspace_init(&app, target, tools, team_id, &agent_root).await?;
     let summary: serde_json::Value = output
         .lines()
         .rev()

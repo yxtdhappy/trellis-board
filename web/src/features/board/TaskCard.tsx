@@ -28,6 +28,9 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
   const tags = taskTags(task)
   const conditions = conditionBadges(task)
   const attention = attentionReasons(task).slice(0, 3)
+  const projectLabel = task.teamName
+    ? `${task.teamName} · ${task.projectName}`
+    : task.projectName
 
   async function copyName() {
     try {
@@ -53,7 +56,7 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
         onClick={() => onOpen(task)}
       />
       <div className="flex items-start gap-2">
-        <span className="truncate text-[10.5px] text-muted-foreground">{task.projectName}</span>
+        <span className="truncate text-[10.5px] text-muted-foreground">{projectLabel}</span>
         <div className="ml-auto flex items-center gap-1">
           {task.groupRelationsValid === false ? (
             <Badge variant="outline" className="h-4 rounded-full px-1.5 text-[9px] text-destructive">

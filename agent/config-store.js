@@ -132,6 +132,21 @@ export function validateConfig(config) {
     seenProjects.add(binding.projectId);
     seenRepos.add(binding.localRepoKey);
   }
+  const teams = Array.isArray(config.teams)
+    ? config.teams.map((team, index) => {
+        if (!team || typeof team !== "object" || Array.isArray(team)) {
+          throw new AgentError(
+            AGENT_ERROR_CODE.CONFIG_INVALID,
+            `第 ${index + 1} 个团队信息无效`,
+          );
+        }
+        return {
+          id: requireString(team.id, "teams.id", 128),
+          name: requireString(team.name, "teams.name", 160),
+          role: optionalString(team.role, "teams.role", 32),
+        };
+      })
+    : [];
 
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
@@ -142,6 +157,7 @@ export function validateConfig(config) {
     deviceName,
     username: optionalString(config.username, "username", 64),
     teamId: optionalString(config.teamId, "teamId", 128),
+    teams,
     protocolVersion: config.protocolVersion,
     agentVersion: typeof config.agentVersion === "string" ? config.agentVersion : null,
     pairedAt: typeof config.pairedAt === "string" ? config.pairedAt : null,

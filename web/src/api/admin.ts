@@ -16,6 +16,8 @@ export type SessionUser = {
 
 export type RuntimeProject = {
   id: string
+  teamId: string | null
+  teamName: string | null
   name: string
   syncStatus: string
   syncBranch: string
@@ -123,9 +125,6 @@ export type Runtime = {
   authenticated: boolean
   user: SessionUser | null
   systemAdmin: boolean
-  activeTeamId: string | null
-  activeTeam: Team | null
-  teamRole: string | null
   teams: Team[]
   projects: RuntimeProject[]
 }
@@ -224,6 +223,8 @@ function readRuntimeProject(input: unknown): RuntimeProject {
   const syncStatus = text(row.syncStatus ?? row.sync_status, 'unknown')
   return {
     id: text(row.id ?? row.repositoryId ?? row.repository_id),
+    teamId: optionalText(row.teamId ?? row.team_id),
+    teamName: optionalText(row.teamName ?? row.team_name),
     name: text(row.name ?? row.repositoryName ?? row.repository_name),
     syncStatus,
     syncBranch: text(row.syncBranch ?? row.sync_branch),
@@ -297,11 +298,6 @@ export function readRuntime(payload: unknown): Runtime {
     authenticated: row.authenticated !== false,
     user,
     systemAdmin: flag(row.systemAdmin ?? row.system_admin) || Boolean(user?.systemAdmin),
-    activeTeamId: optionalText(row.activeTeamId ?? row.active_team_id),
-    activeTeam: row.activeTeam || row.active_team
-      ? readTeam(row.activeTeam ?? row.active_team)
-      : null,
-    teamRole: optionalText(row.teamRole ?? row.team_role),
     teams: rows(row.teams).map(readTeam),
     projects: rows(row.projects ?? row.items).map(readRuntimeProject)
   }
@@ -389,17 +385,14 @@ function auditQuery(beforeId: number | null, limit = AUDIT_PAGE_LIMIT): string {
   return `?limit=${limit}${cursor}`
 }
 
+function teamQuery(teamId?: string | null): string {
+  const value = teamId?.trim()
+  return value ? `?teamId=${encodeURIComponent(value)}` : ''
+}
+
 export async function fetchRuntime(): Promise<Runtime> {
   const { data } = await requestJson<unknown>('/api/runtime')
   return readRuntime(data)
-}
-
-export async function switchTeam(teamId: string): Promise<Team | null> {
-  const { data } = await requestJson<unknown>('/api/auth/team', {
-    method: 'POST',
-    body: { teamId }
-  })
-  return record(data).team ? readTeam(record(data).team) : null
 }
 
 export async function fetchAdminTeams(): Promise<Team[]> {
@@ -448,18 +441,18 @@ export async function saveUserTeams(
   return rows(record(data).teams).map(readTeam)
 }
 
-export async function fetchUsers(): Promise<AdminUser[]> {
-  const { data } = await requestJson<unknown>('/api/admin/users')
+export async function fetchUsers(teamId?: string | null): Promise<AdminUser[]> {
+  const { data } = await requestJson<unknown>(`/api/admin/users${teamQuery(teamId)}`)
   return collection(data, 'users', readAdminUser)
 }
 
-export async function fetchAdminProjects(): Promise<TeamProject[]> {
-  const { data } = await requestJson<unknown>('/api/admin/projects')
+export async function fetchAdminProjects(teamId?: string | null): Promise<TeamProject[]> {
+  const { data } = await requestJson<unknown>(`/api/admin/projects${teamQuery(teamId)}`)
   return collection(data, 'projects', readTeamProject)
 }
 
-export async function fetchDevices(): Promise<AgentDevice[]> {
-  const { data } = await requestJson<unknown>('/api/admin/agents')
+export async function fetchDevices(teamId?: string | null): Promise<AgentDevice[]> {
+  const { data } = await requestJson<unknown>(`/api/admin/agents${teamQuery(teamId)}`)
   return collection(data, 'agents', readAgentDevice)
 }
 
@@ -510,6 +503,7 @@ export async function resetUserPassword(userId: string, password: string): Promi
 }
 
 export type ConnectProjectInput = {
+  teamId: string
   name: string
   syncBranch: string
   remoteUrl: string
@@ -522,6 +516,7 @@ export async function connectProject(
   const { data } = await requestJson<unknown>('/api/admin/projects', {
     method: 'POST',
     body: {
+      teamId: input.teamId,
       name: input.name,
       syncBranch: input.syncBranch,
       remoteUrl: input.remoteUrl,
@@ -632,18 +627,24 @@ export async function fetchProjectAudit(
   return collection(data, 'events', readAuditEvent)
 }
 
-export async function fetchSystemAudit(beforeId: number | null): Promise<AuditEvent[]> {
-  const { data } = await requestJson<unknown>(`/api/admin/audit${auditQuery(beforeId)}`)
+export async function fetchSystemAudit(
+  beforeId: number | null,
+  teamId?: string | null
+): Promise<AuditEvent[]> {
+  const query = new URLSearchParams({ limit: String(AUDIT_PAGE_LIMIT) })
+  if (beforeId) query.set('beforeId', String(beforeId))
+  if (teamId?.trim()) query.set('teamId', teamId.trim())
+  const { data } = await requestJson<unknown>(`/api/admin/audit?${query}`)
   return collection(data, 'events', readAuditEvent)
 }
 
-export async function createPairingCode(): Promise<{
+export async function createPairingCode(teamId?: string | null): Promise<{
   pairingCode: string | null
   expiresAt: string | null
 }> {
   const { data } = await requestJson<unknown>('/api/team/pairing-codes', {
     method: 'POST',
-    body: {}
+    body: { teamId: teamId?.trim() || undefined }
   })
   const row = record(data)
   return {
@@ -667,10 +668,10 @@ export async function createDesktopEnrollToken(): Promise<{
   }
 }
 
-export async function revokeDevice(deviceId: string): Promise<void> {
+export async function revokeDevice(deviceId: string, teamId?: string | null): Promise<void> {
   await requestJson(`/api/admin/agents/${encodeURIComponent(deviceId)}/revoke`, {
     method: 'POST',
-    body: {}
+    body: { teamId: teamId?.trim() || undefined }
   })
 }
 

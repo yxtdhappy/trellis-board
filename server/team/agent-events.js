@@ -100,7 +100,8 @@ export function createAgentEventService({
   // 已建立的流必须复查授权：禁用用户、停用团队、移除成员后不能继续收取任务正文。
   function streamAuthorized(stream) {
     const state = db.prepare(`
-      SELECT a.status AS agent_status, u.status AS user_status, t.status AS team_status
+      SELECT a.status AS agent_status, u.status AS user_status,
+        u.system_admin, t.status AS team_status
       FROM agent_device a
       JOIN user_account u ON u.id = a.user_id
       JOIN team t ON t.id = ?
@@ -109,10 +110,12 @@ export function createAgentEventService({
     if (!state) return false;
     if (state.agent_status !== "active" || state.user_status !== "active") return false;
     if (state.team_status !== "active") return false;
-    const membership = db.prepare(`
-      SELECT 1 FROM team_member WHERE team_id = ? AND user_id = ?
-    `).get(stream.teamId, stream.userId);
-    if (!membership) return false;
+    if (!state.system_admin) {
+      const membership = db.prepare(`
+        SELECT 1 FROM team_member WHERE team_id = ? AND user_id = ?
+      `).get(stream.teamId, stream.userId);
+      if (!membership) return false;
+    }
     const binding = db.prepare(`
       SELECT 1
       FROM agent_project_binding b
@@ -475,9 +478,12 @@ export function createAgentEventService({
     if (requested) {
       const membership = db.prepare(`
         SELECT t.id
-        FROM team_member m
-        JOIN team t ON t.id = m.team_id
-        WHERE m.team_id = ? AND m.user_id = ? AND t.status = 'active'
+        FROM user_account u
+        JOIN team t ON t.id = ?
+        LEFT JOIN team_member m
+          ON m.team_id = t.id AND m.user_id = u.id
+        WHERE u.id = ? AND t.status = 'active'
+          AND (u.system_admin = 1 OR m.user_id IS NOT NULL)
       `).get(requested, agent.userId);
       if (!membership) {
         throw teamError(403, ERROR_CODES.FORBIDDEN, "Agent 账号不属于该团队");
@@ -486,9 +492,11 @@ export function createAgentEventService({
     }
     const first = db.prepare(`
       SELECT t.id
-      FROM team_member m
-      JOIN team t ON t.id = m.team_id
-      WHERE m.user_id = ? AND t.status = 'active'
+      FROM user_account u
+      JOIN team t ON t.status = 'active'
+      LEFT JOIN team_member m
+        ON m.team_id = t.id AND m.user_id = u.id
+      WHERE u.id = ? AND (u.system_admin = 1 OR m.user_id IS NOT NULL)
       ORDER BY t.name COLLATE NOCASE, t.id
       LIMIT 1
     `).get(agent.userId);
@@ -503,11 +511,16 @@ export function createAgentEventService({
       SELECT 1
       FROM agent_project_binding b
       JOIN team_project p ON p.repository_id = b.project_id
+      JOIN team t ON t.id = b.team_id AND t.status = 'active'
+      JOIN user_account u ON u.id = ?
+      LEFT JOIN team_member tm
+        ON tm.team_id = b.team_id AND tm.user_id = u.id
       WHERE b.agent_id = ? AND b.team_id = ?
         AND b.sync_status <> 'revoked'
         AND p.team_id = b.team_id
+        AND (u.system_admin = 1 OR tm.user_id IS NOT NULL)
       LIMIT 1
-    `).get(agent.id, teamId);
+    `).get(agent.userId, agent.id, teamId);
     if (!binding) {
       throw teamError(403, ERROR_CODES.FORBIDDEN, "Agent 在该团队没有可用项目绑定");
     }

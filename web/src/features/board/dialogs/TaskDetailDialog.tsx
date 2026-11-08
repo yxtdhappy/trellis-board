@@ -262,7 +262,9 @@ export function TaskDetailDialog({
           <DialogHeader>
             <DialogTitle className="pr-8 text-base">{current?.title || '任务详情'}</DialogTitle>
             <DialogDescription>
-              {current ? `${current.projectName} / ${current.dirName}` : '正在读取任务…'}
+              {current
+                ? `${current.teamName ? `${current.teamName} · ` : ''}${current.projectName} / ${current.dirName}`
+                : '正在读取任务…'}
             </DialogDescription>
           </DialogHeader>
 

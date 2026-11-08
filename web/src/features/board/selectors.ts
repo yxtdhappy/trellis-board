@@ -34,6 +34,7 @@ export function filterTasks(
         task.title,
         task.description,
         task.assignee,
+        task.teamName,
         task.projectName,
         task.projectId,
         task.execution?.milestone,

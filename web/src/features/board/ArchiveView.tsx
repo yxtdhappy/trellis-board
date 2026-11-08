@@ -49,7 +49,7 @@ export function ArchiveView({
       .filter(
         (task) =>
           !keyword ||
-          [task.title, task.assignee, task.projectName, task.dirName]
+          [task.title, task.assignee, task.teamName, task.projectName, task.dirName]
             .map((value) => String(value || "").toLowerCase())
             .some((value) => value.includes(keyword)),
       );

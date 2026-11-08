@@ -53,6 +53,14 @@ export function normalizeRuntime(payload = {}) {
     user,
     systemAdmin: boolean(source.systemAdmin ?? source.system_admin) || Boolean(user?.systemAdmin),
     capabilities: source.capabilities ?? {},
+    teams: Array.isArray(source.teams)
+      ? source.teams.map((team) => ({
+          id: String(team?.id ?? ""),
+          name: String(team?.name ?? team?.id ?? ""),
+          role: team?.role ?? null,
+          status: team?.status ?? "active"
+        })).filter((team) => team.id)
+      : [],
     projects: normalizeTeamProjects(source.projects ?? source.items ?? []),
     raw: source
   };
@@ -102,6 +110,8 @@ export function normalizeTeamProject(project = {}) {
       project.repositoryId ?? project.repository_id ?? id
     ),
     name: project.name ?? project.repositoryName ?? project.repository_name ?? String(id),
+    teamId: project.teamId ?? project.team_id ?? null,
+    teamName: project.teamName ?? project.team_name ?? null,
     syncBranch: project.syncBranch ?? project.sync_branch ?? "",
     syncStatus: project.syncStatus ?? project.sync_status ?? "unknown",
     role: project.role ?? project.projectRole ?? project.project_role ?? null,
@@ -150,6 +160,8 @@ export function normalizeTeamTaskRow(row = {}) {
     assignmentVersion: assignmentVersion(row),
     projectId: String(row.projectId ?? row.project_id ?? ""),
     projectName: row.projectName ?? row.project_name ?? "",
+    teamId: row.teamId ?? row.team_id ?? null,
+    teamName: row.teamName ?? row.team_name ?? null,
     relativeDir,
     dirName: row.dirName ?? row.dir_name ?? relativeDir.replaceAll("\\", "/").split("/").filter(Boolean).pop() ?? "",
     title: row.title ?? "",
@@ -364,7 +376,11 @@ export function buildTaskQuery(filters = {}, { limit = TEAM_PAGE_LIMIT, cursor =
     if (value == null || value === "" || value === false) return;
     params.set(key, String(value));
   };
+  add("teamId", filters.teamId && filters.teamId !== "all" ? filters.teamId : null);
   add("scope", filters.scope === "mine" ? "mine" : "all");
+  if (filters.projectId && filters.projectId !== "all") {
+    add("projectIds", filters.projectId);
+  }
   for (const [key] of ARRAY_FILTERS) {
     const value = filters[key];
     if (Array.isArray(value) && value.length) add(key, value.join(","));

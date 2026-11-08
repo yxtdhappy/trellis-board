@@ -20,7 +20,7 @@ export function TeamsTab() {
   const reload = useCallback(async () => {
     const [nextTeams, nextUsers] = await Promise.all([
       admin.fetchAdminTeams(),
-      admin.fetchUsers()
+      admin.fetchUsers('all')
     ])
     setTeams(nextTeams)
     setUsers(nextUsers)

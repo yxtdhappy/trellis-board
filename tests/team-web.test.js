@@ -36,6 +36,7 @@ test("团队查询参数保留服务端筛选并限制页大小", () => {
     archived: true
   }, { limit: 500, cursor: "next token" }));
   assert.equal(query.get("scope"), "mine");
+  assert.equal(query.get("teamId"), null);
   assert.equal(query.get("projectIds"), "p1,p2");
   assert.equal(query.get("priorities"), "P0,P1");
   assert.equal(query.get("q"), "看板");
@@ -43,6 +44,12 @@ test("团队查询参数保留服务端筛选并限制页大小", () => {
   assert.equal(query.get("cursor"), "next token");
   assert.equal(query.get("blocked"), "blocked");
   assert.equal(query.get("archived"), "1");
+  const scoped = new URLSearchParams(buildTaskQuery({
+    teamId: "team-a",
+    projectId: "p1"
+  }));
+  assert.equal(scoped.get("teamId"), "team-a");
+  assert.equal(scoped.get("projectIds"), "p1");
 });
 
 test("任务页兼容驼峰和下划线响应", () => {
@@ -87,6 +94,11 @@ test("runtime 只在显式 team 模式启用团队界面", () => {
   assert.equal(team.team, true);
   assert.equal(team.user.displayName, "张三");
   assert.equal(team.systemAdmin, true);
+  const withTeams = normalizeRuntime({
+    mode: "team",
+    teams: [{ id: "t1", name: "团队一", role: "member" }]
+  });
+  assert.deepEqual(withTeams.teams, [{ id: "t1", name: "团队一", role: "member", status: "active" }]);
 });
 
 test("项目写能力同时受角色和同步状态约束", () => {

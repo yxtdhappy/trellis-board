@@ -390,7 +390,8 @@ test("桌面设备注册复用 pairing-codes + agent/enroll，凭证不落明文
   assert.equal(config.serverUrl, serverUrl);
   assert.equal(config.agentId, result.agentId);
   assert.equal(config.username, "sysadmin");
-  assert.equal(config.teamId, teamId);
+  assert.equal(config.teamId, null);
+  assert.deepEqual(config.teams.map((team) => team.id), [teamId]);
   assert.equal(config.protocolVersion, 2);
   assert.equal(config.credential, undefined);
   assert.ok(!configText.includes(saved[0]), "设备凭证不得写入 config.json");

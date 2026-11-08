@@ -30,6 +30,9 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
   const [role, setRole] = useState('member')
   const [developerId, setDeveloperId] = useState('')
   const readOnly = role === 'read_only'
+  const selectedTeamId = projectOptions.find(
+    (project) => project.id === accessProjectId,
+  )?.teamId
 
   async function handleSaveMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -198,7 +201,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
               size="sm"
               type="button"
               className="rounded-full"
-              onClick={() => void createPairingCode()}
+              onClick={() => void createPairingCode(selectedTeamId || undefined)}
             >
               生成我的配对码
             </Button>

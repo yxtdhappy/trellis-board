@@ -59,10 +59,16 @@ test("配对码长度和字符集受限，服务地址只允许安全协议", ()
 
 test("协议响应兼容 data 包装并验证命令字段", () => {
   const enroll = parseEnrollResponse({
-    data: { agentId: "agent-1", credential: "x".repeat(32), protocolVersion: 2 },
+    data: {
+      agentId: "agent-1",
+      credential: "x".repeat(32),
+      protocolVersion: 2,
+      teams: [{ id: "team-1", name: "团队一", role: "member" }],
+    },
   });
   assert.equal(enroll.agentId, "agent-1");
   assert.equal(enroll.protocolVersion, 2);
+  assert.deepEqual(enroll.teams, [{ id: "team-1", name: "团队一", role: "member" }]);
 
   const heartbeat = parseHeartbeatResponse({
     data: {

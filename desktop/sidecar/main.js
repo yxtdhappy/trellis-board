@@ -233,11 +233,13 @@ async function commandWorkspaceInit(args, options) {
       "本地配置缺少登录用户名；请重新注册设备",
     );
   }
-  const teamId = values.team || config.teamId;
+  const teamId = values.team
+    || config.teamId
+    || (config.teams?.length === 1 ? config.teams[0].id : null);
   if (!teamId) {
     throw new AgentError(
       "CONFIG_INVALID",
-      "本地配置缺少团队信息；请重新注册设备",
+      "请选择要初始化 workspace 的团队",
     );
   }
   const agentCredential = await agent.credentialStore.loadCredential();
@@ -262,7 +264,7 @@ function usage() {
     "  enroll --server <URL> --name <设备名> --pairing-code  (管理员兜底：配对码从标准输入读取)",
     "  revoke --server <URL> --agent <设备 ID> (会话 Cookie 从 TRELLIS_BOARD_SESSION 读取)",
     "  status [--root <Agent 数据目录>]",
-    "  workspace-init --path <绝对路径> [--tools .opencode,.agents] [--username <name>] [--team <ID>]",
+    "  workspace-init --path <绝对路径> --team <ID> [--tools .opencode,.agents] [--username <name>]",
     "  version",
   ].join("\n");
 }

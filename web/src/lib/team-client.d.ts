@@ -13,6 +13,7 @@ export type Runtime = {
   team: boolean
   authenticated: boolean
   user: RuntimeUser | null
+  teams?: Array<{ id: string; name: string; role?: string | null; status?: string }>
 }
 
 export type TaskPage = {

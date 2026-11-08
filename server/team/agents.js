@@ -180,12 +180,6 @@ export function createAgentService({
       throw teamError(401, ERROR_CODES.AUTH_REQUIRED, "需要登录");
     }
     const requested = String(requestedTeamId || "").trim();
-    if (actor.activeTeamId) {
-      if (requested && requested !== actor.activeTeamId) {
-        throw teamError(403, ERROR_CODES.FORBIDDEN, "不能为其他团队创建配对码");
-      }
-      return actor.activeTeamId;
-    }
     if (actor.systemAdmin) {
       const team = requested
         ? db.prepare("SELECT id FROM team WHERE id = ? AND status = 'active'").get(requested)
@@ -193,7 +187,18 @@ export function createAgentService({
       if (!team) throw teamError(409, ERROR_CODES.CONFLICT, "系统还没有可用团队");
       return team.id;
     }
-    throw teamError(403, ERROR_CODES.FORBIDDEN, "请先切换到目标团队");
+    const teams = actor.teams || [];
+    if (requested) {
+      if (!teams.some((team) => team.id === requested)) {
+        throw teamError(403, ERROR_CODES.FORBIDDEN, "无权为该团队创建配对码");
+      }
+      return requested;
+    }
+    if (teams.length === 1) return teams[0].id;
+    if (!teams.length) {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, "当前账号没有可用团队");
+    }
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, "请先选择目标团队");
   }
 
   function createPairingCode(actor, input = {}) {
@@ -284,12 +289,29 @@ export function createAgentService({
       FROM user_account
       WHERE id = ?
     `).get(userId);
+    const teams = db.prepare(`
+      SELECT t.id, t.name, t.slug, t.status,
+        CASE WHEN u.system_admin = 1 THEN 'admin' ELSE m.role END AS role
+      FROM user_account u
+      JOIN team t ON t.status = 'active'
+      LEFT JOIN team_member m
+        ON m.team_id = t.id AND m.user_id = u.id
+      WHERE u.id = ? AND (u.system_admin = 1 OR m.user_id IS NOT NULL)
+      ORDER BY t.name COLLATE NOCASE, t.id
+    `).all(userId).map((team) => ({
+      id: team.id,
+      name: team.name,
+      slug: team.slug,
+      status: team.status,
+      role: team.role
+    }));
     return {
       agentId,
       credential,
       protocolVersion: AGENT_PROTOCOL_VERSION,
       username: owner?.username || null,
-      teamId
+      teamId: null,
+      teams
     };
   }
 
@@ -308,9 +330,12 @@ export function createAgentService({
     }
     const membership = db.prepare(`
       SELECT 1
-      FROM team_member m
-      JOIN team t ON t.id = m.team_id
-      WHERE m.team_id = ? AND m.user_id = ? AND t.status = 'active'
+      FROM user_account u
+      JOIN team t ON t.id = ?
+      LEFT JOIN team_member m
+        ON m.team_id = t.id AND m.user_id = u.id
+      WHERE u.id = ? AND t.status = 'active'
+        AND (u.system_admin = 1 OR m.user_id IS NOT NULL)
     `).get(pairing.team_id, pairing.user_id);
     if (!membership) {
       throw teamError(401, ERROR_CODES.AUTH_FAILED, "配对码无效、已使用或已过期");
@@ -413,16 +438,17 @@ export function createAgentService({
     const project = db.prepare(`
       SELECT
         p.*, r.name AS project_name,
-        m.role, tm.role AS team_role
+        m.role, tm.role AS team_role, u.system_admin
       FROM team_project p
       JOIN repositories r ON r.id = p.repository_id
       JOIN team t ON t.id = p.team_id
-      JOIN team_member tm
-        ON tm.team_id = p.team_id AND tm.user_id = ?
+      JOIN user_account u ON u.id = ?
+      LEFT JOIN team_member tm
+        ON tm.team_id = p.team_id AND tm.user_id = u.id
       LEFT JOIN project_member m
-        ON m.project_id = p.repository_id AND m.user_id = ?
+        ON m.project_id = p.repository_id AND m.user_id = u.id
       WHERE p.repository_id = ? AND t.status = 'active'
-    `).get(agent.userId, agent.userId, projectId);
+    `).get(agent.userId, projectId);
     let existing = db.prepare(`
       SELECT *
       FROM agent_project_binding
@@ -436,7 +462,11 @@ export function createAgentService({
       `).get(String(value.serverBindingId), agent.id);
       if (candidate?.project_id === projectId) existing = candidate;
     }
-    if (!project || !project.role || !project.team_role) {
+    if (!project || !(
+      project.system_admin ||
+      project.role ||
+      project.team_role === "admin"
+    )) {
       const error = bindingError("当前账号无权绑定该项目", "PROJECT_FORBIDDEN");
       return existing
         ? { ...publicBinding({ ...existing, ...error }), ...error }
@@ -656,10 +686,18 @@ export function createAgentService({
     `).get(bindingId, projectId);
     if (!binding) throw teamError(404, ERROR_CODES.NOT_FOUND, "Agent 绑定不存在");
     const member = db.prepare(`
-      SELECT role
-      FROM project_member
-      WHERE project_id = ? AND user_id = ?
-    `).get(projectId, binding.user_id);
+      SELECT 1
+      FROM team_project p
+      JOIN user_account u ON u.id = ?
+      LEFT JOIN project_member m
+        ON m.project_id = p.repository_id AND m.user_id = u.id
+      LEFT JOIN team_member tm
+        ON tm.team_id = p.team_id AND tm.user_id = u.id
+      JOIN team t
+        ON t.id = p.team_id AND t.status = 'active'
+      WHERE p.repository_id = ?
+        AND (u.system_admin = 1 OR m.user_id IS NOT NULL OR tm.role = 'admin')
+    `).get(binding.user_id, projectId);
     if (!member) {
       throw teamError(409, ERROR_CODES.CONFLICT, "绑定用户已不属于该项目");
     }
@@ -746,27 +784,49 @@ export function createAgentService({
     return setBindingStatus(actor, projectId, bindingId, "revoked");
   }
 
-  function listDevices(actor) {
-    const scoped = actor?.systemAdmin && !actor.activeTeamId
+  function manageableTeamIds(actor, requestedTeamId) {
+    const requested = String(requestedTeamId || "").trim();
+    if (!actor?.systemAdmin && !actor?.teams?.some((team) => team.role === "admin")) {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, "只有团队管理员可以查看 Agent");
+    }
+    if (actor.systemAdmin) {
+      if (!requested || requested === "all") return null;
+      const team = db.prepare(`
+        SELECT id FROM team WHERE id = ? AND status = 'active'
+      `).get(requested);
+      if (!team) throw teamError(404, ERROR_CODES.NOT_FOUND, "团队不存在");
+      return [requested];
+    }
+    const adminTeamIds = actor.teams
+      .filter((team) => team.role === "admin")
+      .map((team) => team.id);
+    if (!requested || requested === "all") return adminTeamIds;
+    if (!adminTeamIds.includes(requested)) {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, "无权管理该团队的 Agent");
+    }
+    return [requested];
+  }
+
+  function listDevices(actor, { teamId = null } = {}) {
+    const teamIds = manageableTeamIds(actor, teamId);
+    const scoped = teamIds == null
       ? db.prepare(`
           SELECT a.*, u.username, u.display_name
           FROM agent_device a
           JOIN user_account u ON u.id = a.user_id
           ORDER BY a.created_at DESC
         `).all()
-      : actor?.activeTeamId
+      : teamIds.length
         ? db.prepare(`
             SELECT DISTINCT a.*, u.username, u.display_name
             FROM agent_device a
             JOIN user_account u ON u.id = a.user_id
             JOIN agent_project_binding b ON b.agent_id = a.id
-            WHERE b.team_id = ? AND b.sync_status <> 'revoked'
+            WHERE b.team_id IN (${teamIds.map(() => "?").join(", ")})
+              AND b.sync_status <> 'revoked'
             ORDER BY a.created_at DESC
-          `).all(actor.activeTeamId)
+          `).all(...teamIds)
         : [];
-    if (!actor?.systemAdmin && actor?.teamRole !== "admin") {
-      throw teamError(403, ERROR_CODES.FORBIDDEN, "只有团队管理员可以查看 Agent");
-    }
     return scoped.map((row) => ({
       ...publicAgent(row),
       username: row.username,
@@ -774,22 +834,24 @@ export function createAgentService({
     }));
   }
 
-  function revokeDevice(actor, agentId) {
-    if (!actor?.systemAdmin && actor?.teamRole !== "admin") {
-      throw teamError(403, ERROR_CODES.FORBIDDEN, "只有团队管理员可以撤销 Agent");
+  function revokeDevice(actor, agentId, { teamId = null } = {}) {
+    const requestedTeamId = String(teamId || "").trim();
+    if (!actor?.systemAdmin && (!requestedTeamId || requestedTeamId === "all")) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, "团队管理员必须指定具体团队");
     }
+    const teamIds = manageableTeamIds(actor, requestedTeamId || null);
     const device = db.prepare("SELECT * FROM agent_device WHERE id = ?").get(agentId);
     if (!device) throw teamError(404, ERROR_CODES.NOT_FOUND, "Agent 不存在");
-    if (!actor.systemAdmin && !actor.activeTeamId) {
-      throw teamError(403, ERROR_CODES.FORBIDDEN, "当前账号没有可用的活动团队");
-    }
-    const teamId = actor.activeTeamId || null;
     let bindingIds = null;
-    if (teamId) {
-      bindingIds = db.prepare(`
-        SELECT id FROM agent_project_binding
-        WHERE agent_id = ? AND team_id = ? AND sync_status <> 'revoked'
-      `).all(agentId, teamId).map((row) => row.id);
+    if (teamIds != null) {
+      bindingIds = teamIds.length
+        ? db.prepare(`
+            SELECT id FROM agent_project_binding
+            WHERE agent_id = ?
+              AND team_id IN (${teamIds.map(() => "?").join(", ")})
+              AND sync_status <> 'revoked'
+          `).all(agentId, ...teamIds).map((row) => row.id)
+        : [];
       if (!bindingIds.length) {
         throw teamError(404, ERROR_CODES.NOT_FOUND, "Agent 不存在");
       }
@@ -839,14 +901,18 @@ export function createAgentService({
       appendAuditEvent(db, {
         actorUserId: actor.userId,
         actorAgentId: agentId,
-        teamId,
+        teamId: teamIds?.length === 1 ? teamIds[0] : null,
         action: "agent_revoked",
         targetType: "agent",
         targetId: agentId,
-        detail: { scope: teamId ? "team" : "global" }
+        detail: { scope: teamIds ? "team" : "global", teamIds }
       });
     });
-    events?.publishAgentRevoked(agentId, teamId);
+    if (teamIds) {
+      teamIds.forEach((id) => events?.publishAgentRevoked(agentId, id));
+    } else {
+      events?.publishAgentRevoked(agentId, null);
+    }
     return { revoked: true, agentId };
   }
 
@@ -1032,9 +1098,12 @@ export function createAgentService({
     if (requested) {
       const membership = db.prepare(`
         SELECT t.id
-        FROM team_member m
-        JOIN team t ON t.id = m.team_id
-        WHERE m.team_id = ? AND m.user_id = ? AND t.status = 'active'
+        FROM user_account u
+        JOIN team t ON t.id = ?
+        LEFT JOIN team_member m
+          ON m.team_id = t.id AND m.user_id = u.id
+        WHERE u.id = ? AND t.status = 'active'
+          AND (u.system_admin = 1 OR m.user_id IS NOT NULL)
       `).get(requested, agent.userId);
       if (!membership) {
         throw teamError(403, ERROR_CODES.FORBIDDEN, "Agent 账号不属于该团队");
@@ -1043,9 +1112,11 @@ export function createAgentService({
     }
     const first = db.prepare(`
       SELECT t.id
-      FROM team_member m
-      JOIN team t ON t.id = m.team_id
-      WHERE m.user_id = ? AND t.status = 'active'
+      FROM user_account u
+      JOIN team t ON t.status = 'active'
+      LEFT JOIN team_member m
+        ON m.team_id = t.id AND m.user_id = u.id
+      WHERE u.id = ? AND (u.system_admin = 1 OR m.user_id IS NOT NULL)
       ORDER BY t.name COLLATE NOCASE, t.id
       LIMIT 1
     `).get(agent.userId);

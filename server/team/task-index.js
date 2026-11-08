@@ -11,6 +11,7 @@ import { getManualRecords } from "../metadata.js";
 import { projectBoardExecution } from "../execution-projection.js";
 import { syncAssignmentsFromBoardInTransaction } from "./assignments.js";
 import { ERROR_CODES, teamError } from "./errors.js";
+import { resolveTeamScope } from "./teams.js";
 
 const workerFile = fileURLToPath(new URL("./scan-worker.js", import.meta.url));
 const CURSOR_KEY = crypto.randomBytes(32);
@@ -172,10 +173,10 @@ function filterHash(filters, projectIds, revision, day) {
   return hashValue({ filters, projectIds, revision, day });
 }
 
-function cursorBinding(filters, projectIds, userId, revision, day, teamId = null) {
+function cursorBinding(filters, projectIds, userId, revision, day, teamScope = null) {
   return {
     u: userId,
-    g: teamId,
+    g: teamScope,
     p: projectIdsHash(projectIds),
     f: filterHash(filters, projectIds, revision, day),
     r: revision,
@@ -201,6 +202,8 @@ function rowFromIndex(row) {
     taskVersion: row.task_version,
     projectId: row.project_id,
     projectName: row.project_name,
+    teamId: row.team_id || null,
+    teamName: row.team_name || null,
     relativeDir: row.relative_dir,
     title: row.title,
     priority: row.priority,
@@ -620,11 +623,20 @@ export function createTaskIndex({
 
   function queryTasks(actor, readableIds, input = {}) {
     const filters = normalizeFilters(input);
+    const teamScope = resolveTeamScope(db, actor, input.teamId);
     const requested = stringList(input.projectIds, "projectIds", {
       maxItems: 200,
       maxLength: 200
     });
-    const readable = [...new Set(readableIds)];
+    const teamProjectIds = teamScope
+      ? new Set(db.prepare(`
+          SELECT repository_id
+          FROM team_project
+          WHERE team_id = ?
+        `).all(teamScope).map((row) => row.repository_id))
+      : null;
+    const readable = [...new Set(readableIds)]
+      .filter((projectId) => !teamProjectIds || teamProjectIds.has(projectId));
     const readableSet = new Set(readable);
     if (requested.some((projectId) => !readableSet.has(projectId))) {
       throw teamError(403, ERROR_CODES.FORBIDDEN, "查询包含无权访问的项目");
@@ -634,7 +646,7 @@ export function createTaskIndex({
     const day = shanghaiDay();
     const etag = `"${hashValue({
       user: actor.userId,
-      team: actor.activeTeamId || null,
+      team: teamScope,
       projects: [...projectIds].sort(),
       filters,
       revision,
@@ -650,7 +662,7 @@ export function createTaskIndex({
     }
     const cacheKey = hashValue({
       user: filters.scope === "mine" || input.cursor ? actor.userId : null,
-      team: actor.activeTeamId || null,
+      team: teamScope,
       cursor: input.cursor || null,
       projects: [...projectIds].sort(),
       filters,
@@ -661,7 +673,7 @@ export function createTaskIndex({
     if (cached) {
       queryCache.delete(cacheKey);
       queryCache.set(cacheKey, cached);
-      const binding = cursorBinding(filters, projectIds, actor.userId, revision, day, actor.activeTeamId || null);
+      const binding = cursorBinding(filters, projectIds, actor.userId, revision, day, teamScope);
       return {
         tasks: cached.tasks,
         total: cached.total,
@@ -754,7 +766,7 @@ export function createTaskIndex({
     const pageParams = [...params];
     if (input.cursor) {
       const cursor = decryptCursor(input.cursor);
-      const binding = cursorBinding(filters, projectIds, actor.userId, revision, day, actor.activeTeamId || null);
+      const binding = cursorBinding(filters, projectIds, actor.userId, revision, day, teamScope);
       if (
         Date.now() > cursor.exp ||
         Object.entries(binding).some(([key, value]) => cursor[key] !== value)
@@ -787,9 +799,11 @@ export function createTaskIndex({
 
     const rows = db.prepare(`
       SELECT
-        t.*, p.sync_status, p.last_error, r.name AS project_name
+        t.*, p.sync_status, p.last_error, p.team_id,
+        team_info.name AS team_name, r.name AS project_name
       FROM team_task_index t
       JOIN team_project p ON p.repository_id = t.project_id
+      JOIN team team_info ON team_info.id = p.team_id
       JOIN repositories r ON r.id = t.project_id
       WHERE ${pageWhere.join(" AND ")}
       ORDER BY
@@ -803,7 +817,7 @@ export function createTaskIndex({
     if (rows.length > filters.limit) {
       const last = pageRows.at(-1);
       nextCursor = encryptCursor({
-        ...cursorBinding(filters, projectIds, actor.userId, revision, day, actor.activeTeamId || null),
+        ...cursorBinding(filters, projectIds, actor.userId, revision, day, teamScope),
         sa: last.last_activity_at || last.updated_at,
         pid: last.project_id,
         tk: last.task_key,

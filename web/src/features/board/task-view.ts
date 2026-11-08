@@ -63,6 +63,8 @@ export type BoardTask = {
   priority?: string
   projectId: string
   projectName: string
+  teamId?: string | null
+  teamName?: string | null
   archived?: boolean
   derivedStage: string
   manualStage?: string | null

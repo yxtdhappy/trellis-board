@@ -19,7 +19,7 @@ Tauri v2 外壳 + 现有 Agent sidecar。桌面端只负责：加载 Board 网�
 4. 桌面端把令牌经 stdin 交给 sidecar；sidecar 调用 `POST /api/agent/enroll-desktop` 换取
    `agentId` + 设备凭证，凭证只写入 Windows DPAPI（`agent\credential.dpapi`），
    `client.json` 仍只保存 `serverUrl`。
-5. 兑换结果里的 `username` / `teamId` 与凭证一起写入 sidecar 配置
+5. 兑换结果里的 `username` / `teams` 写入 sidecar 配置；兼容字段 `teamId` 固定为 `null`
    （`data\agent\config.json`），后续 `workspace init` 直接复用该用户名，不再要求手工输入。
 6. 注册成功后本地页切换到 workspace 面板：选择目录 → “初始化/修复”写入 `.trellis` /
    `.opencode` / `.agents` → “打开看板”加载 Board。
@@ -33,8 +33,8 @@ Tauri v2 外壳 + 现有 Agent sidecar。桌面端只负责：加载 Board 网�
 
 桌面端不自己实现路径 / 模板 / developer 逻辑，只把参数交给 sidecar：
 
-- 命令：`init_workspace(path, tools)`（Rust，`desktop/src-tauri/src/main.rs`）→
-  sidecar `workspace-init --path <绝对路径> [--tools .opencode,.agents]` →
+- 命令：`init_workspace(path, teamId, tools)`（Rust，`desktop/src-tauri/src/main.rs`）→
+  sidecar `workspace-init --path <绝对路径> --team <ID> [--tools .opencode,.agents]` →
   `desktop/sidecar/workspace-init.js` → `agent/workspace.js` 的 `initializeWorkspace`。
 - 目录选择用 `pick_workspace`（`tauri-plugin-dialog`，仅本地页可调用）；
   capability 只开放 `dialog:allow-open`，没有文件系统权限。
@@ -44,7 +44,7 @@ Tauri v2 外壳 + 现有 Agent sidecar。桌面端只负责：加载 Board 网�
 - 等价 CLI（排查用）：
 
 ```powershell
-node agent/cli.js workspace init --path D:\work\project --tools .opencode,.agents --username <登录用户名>
+node agent/cli.js workspace init --path D:\work\project --team <团队 ID> --tools .opencode,.agents --username <登录用户名>
 node agent/cli.js workspace status --path D:\work\project --json
 ```
 

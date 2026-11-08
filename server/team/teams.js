@@ -95,7 +95,7 @@ function readTeamMembership(db, teamId, userId) {
   `).get(teamId, userId) || null;
 }
 
-export function listTeamsForActor(db, actor) {
+export function listTeamsForActor(db, actor, { activeOnly = false } = {}) {
   if (actor?.systemAdmin) {
     return db.prepare(`
       SELECT
@@ -103,10 +103,9 @@ export function listTeamsForActor(db, actor) {
         (SELECT COUNT(*) FROM team_member m WHERE m.team_id = t.id) AS member_count,
         (SELECT COUNT(*) FROM team_project p WHERE p.team_id = t.id) AS project_count
       FROM team t
+      ${activeOnly ? "WHERE t.status = 'active'" : ""}
       ORDER BY t.name COLLATE NOCASE, t.id
-    `).all().map((row) => publicTeam(row, {
-      active: row.id === actor.activeTeamId
-    }));
+    `).all().map((row) => publicTeam(row));
   }
   if (!actor?.userId) return [];
   return db.prepare(`
@@ -119,8 +118,7 @@ export function listTeamsForActor(db, actor) {
     WHERE t.status = 'active'
     ORDER BY t.name COLLATE NOCASE, t.id
   `).all(actor.userId).map((row) => publicTeam(row, {
-    role: row.role,
-    active: row.id === actor.activeTeamId
+    role: row.role
   }));
 }
 
@@ -157,96 +155,37 @@ export function listUserTeams(db, userId) {
   `).all(userId).map((row) => publicTeam(row, { role: row.role }));
 }
 
-export function firstActiveTeamForUser(db, userId) {
+export function listActiveTeamMemberships(db, userId) {
   return db.prepare(`
-    SELECT t.id
+    SELECT t.*, m.role
     FROM team_member m
     JOIN team t ON t.id = m.team_id
     WHERE m.user_id = ? AND t.status = 'active'
     ORDER BY t.name COLLATE NOCASE, t.id
-    LIMIT 1
-  `).get(userId)?.id || null;
+  `).all(userId).map((row) => publicTeam(row, { role: row.role }));
 }
 
-export function resolveActiveTeam(db, {
-  userId,
-  systemAdmin = false,
-  activeTeamId = null,
-  sessionId = null
-}) {
-  if (systemAdmin) {
-    if (!activeTeamId) return { teamId: null, role: null, team: null };
-    const row = teamRow(db, activeTeamId);
-    if (!row || row.status !== "active") {
-      if (sessionId) {
-        db.prepare("UPDATE user_session SET active_team_id = NULL WHERE id = ?")
-          .run(sessionId);
-      }
-      return { teamId: null, role: null, team: null };
+export function resolveTeamScope(db, actor, requestedTeamId, { adminOnly = false } = {}) {
+  const requested = String(requestedTeamId || "").trim();
+  if (!requested || requested === "all") return null;
+  if (actor?.systemAdmin) {
+    const team = teamRow(db, requested);
+    if (!team || team.status !== "active") {
+      throw teamError(404, ERROR_CODES.NOT_FOUND, "团队不存在");
     }
-    return { teamId: row.id, role: "admin", team: publicTeam(row) };
+    return requested;
   }
-  if (!userId) return { teamId: null, role: null, team: null };
-  let membership = activeTeamId
-    ? db.prepare(`
-        SELECT m.role, t.*
-        FROM team_member m
-        JOIN team t ON t.id = m.team_id
-        WHERE m.team_id = ? AND m.user_id = ? AND t.status = 'active'
-      `).get(activeTeamId, userId)
-    : null;
-  if (!membership) {
-    const nextTeamId = firstActiveTeamForUser(db, userId);
-    membership = nextTeamId
-      ? db.prepare(`
-          SELECT m.role, t.*
-          FROM team_member m
-          JOIN team t ON t.id = m.team_id
-          WHERE m.team_id = ? AND m.user_id = ? AND t.status = 'active'
-        `).get(nextTeamId, userId)
-      : null;
-    if (sessionId) {
-      db.prepare("UPDATE user_session SET active_team_id = ? WHERE id = ?")
-        .run(membership?.id || null, sessionId);
-    }
+  if (!actor?.userId) {
+    throw teamError(401, ERROR_CODES.AUTH_REQUIRED, "需要登录");
   }
-  if (!membership) return { teamId: null, role: null, team: null };
-  return {
-    teamId: membership.id,
-    role: membership.role,
-    team: publicTeam(membership)
-  };
-}
-
-export function setActiveTeam(db, actor, teamId) {
-  if (actor?.systemAdmin && !String(teamId || "").trim()) {
-    db.prepare("UPDATE user_session SET active_team_id = NULL WHERE id = ?")
-      .run(actor.sessionId);
-    return { team: null, activeTeamId: null };
+  const membership = readTeamMembership(db, requested, actor.userId);
+  if (!membership || membership.team_status !== "active") {
+    throw teamError(403, ERROR_CODES.FORBIDDEN, "无权访问该团队");
   }
-  const id = requireTeamId(teamId);
-  if (!actor?.systemAdmin) {
-    const membership = readTeamMembership(db, id, actor.userId);
-    if (!membership || membership.team_status !== "active") {
-      throw teamError(403, ERROR_CODES.FORBIDDEN, "无权切换到该团队");
-    }
-    db.prepare("UPDATE user_session SET active_team_id = ? WHERE id = ?")
-      .run(id, actor.sessionId);
-    return {
-      team: publicTeam(teamRow(db, id), { role: membership.role, active: true }),
-      activeTeamId: id
-    };
+  if (adminOnly && membership.role !== TEAM_ROLES.ADMIN) {
+    throw teamError(403, ERROR_CODES.FORBIDDEN, "只有团队管理员可以执行该操作");
   }
-  const team = teamRow(db, id);
-  if (!team || team.status !== "active") {
-    throw teamError(404, ERROR_CODES.NOT_FOUND, "团队不存在");
-  }
-  db.prepare("UPDATE user_session SET active_team_id = ? WHERE id = ?")
-    .run(id, actor.sessionId);
-  return {
-    team: publicTeam(team, { role: "admin", active: true }),
-    activeTeamId: id
-  };
+  return requested;
 }
 
 export function createTeam(db, {
@@ -454,20 +393,6 @@ export function setUserTeams(db, {
         });
       }
     }
-    const active = db.prepare(`
-      SELECT active_team_id FROM user_session
-      WHERE user_id = ? AND revoked_at IS NULL
-    `).all(userId);
-    for (const session of active) {
-      if (session.active_team_id && !next.has(session.active_team_id)) {
-        const replacement = assignments.find((item) => {
-          const row = teamRow(db, item.teamId);
-          return row?.status === "active";
-        });
-        db.prepare("UPDATE user_session SET active_team_id = ? WHERE user_id = ? AND active_team_id = ?")
-          .run(replacement?.teamId || null, userId, session.active_team_id);
-      }
-    }
     appendAuditEvent(db, {
       actorUserId,
       action: "user_teams_updated",
@@ -485,14 +410,6 @@ export function validateTeamAssignments(db, teams) {
   normalizeTeamAssignments(db, teams);
 }
 
-export function assertActiveTeam(actor) {
-  if (actor?.systemAdmin) return null;
-  if (!actor?.activeTeamId) {
-    throw teamError(403, ERROR_CODES.FORBIDDEN, "当前账号没有可用的活动团队");
-  }
-  return actor.activeTeamId;
-}
-
 export function assertTeamMember(db, teamId, userId) {
   const membership = readTeamMembership(db, teamId, userId);
   if (!membership || membership.team_status !== "active") {
@@ -504,26 +421,33 @@ export function assertTeamMember(db, teamId, userId) {
 export function resolveProjectTeam(db, actor, requestedTeamId) {
   const requested = String(requestedTeamId || "").trim();
   if (actor?.systemAdmin) {
-    const id = String(requested || actor.activeTeamId || "").trim();
-    if (!id) {
+    if (!requested) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, "请先选择目标团队");
     }
-    const team = teamRow(db, id);
+    const team = teamRow(db, requested);
     if (!team || team.status !== "active") {
       throw teamError(404, ERROR_CODES.NOT_FOUND, "团队不存在");
     }
-    return id;
+    return requested;
   }
-  const activeTeamId = assertActiveTeam(actor);
-  if (requested && requested !== activeTeamId) {
-    throw teamError(403, ERROR_CODES.FORBIDDEN, "不能在其他团队创建项目");
+  const adminTeams = listUserTeams(db, actor?.userId)
+    .filter((team) => team.status === "active" && team.role === TEAM_ROLES.ADMIN);
+  if (!requested && adminTeams.length === 1) {
+    return adminTeams[0].id;
   }
-  const membership = readTeamMembership(db, activeTeamId, actor.userId);
+  if (!requested) {
+    throw teamError(
+      adminTeams.length ? 400 : 403,
+      adminTeams.length ? ERROR_CODES.INVALID_INPUT : ERROR_CODES.FORBIDDEN,
+      adminTeams.length ? "请先选择目标团队" : "只有团队管理员可以接入项目"
+    );
+  }
+  const membership = readTeamMembership(db, requested, actor.userId);
   if (!membership || membership.team_status !== "active") {
-    throw teamError(403, ERROR_CODES.FORBIDDEN, "当前账号不属于活动团队");
+    throw teamError(403, ERROR_CODES.FORBIDDEN, "当前账号不属于目标团队");
   }
   if (membership.role !== TEAM_ROLES.ADMIN) {
     throw teamError(403, ERROR_CODES.FORBIDDEN, "只有团队管理员可以接入项目");
   }
-  return activeTeamId;
+  return requested;
 }

@@ -97,6 +97,7 @@ async function completeDesktopEnrollment({
     deviceName,
     username: enrolled.username || null,
     teamId: enrolled.teamId || null,
+    teams: Array.isArray(enrolled.teams) ? enrolled.teams : [],
     protocolVersion: AGENT_PROTOCOL_VERSION,
     agentVersion: AGENT_VERSION,
     pairedAt: new Date().toISOString(),
@@ -111,6 +112,8 @@ async function completeDesktopEnrollment({
     deviceName,
     serverUrl,
     protocolVersion: enrolled.protocolVersion,
+    username: enrolled.username || null,
+    teams: Array.isArray(enrolled.teams) ? enrolled.teams : [],
   };
 }
 

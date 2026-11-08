@@ -13,6 +13,7 @@ const pairingForm = document.getElementById("pairing-form");
 const pairingSubmitButton = document.getElementById("pairing-submit");
 const pairingCodeInput = document.getElementById("pairing-code");
 const workspacePathInput = document.getElementById("workspace-path");
+const workspaceTeamSelect = document.getElementById("workspace-team");
 const pickWorkspaceButton = document.getElementById("pick-workspace");
 const initWorkspaceButton = document.getElementById("init-workspace");
 const openBoardButton = document.getElementById("open-board");
@@ -59,8 +60,33 @@ function defaultDeviceName() {
   return "Windows 桌面";
 }
 
-function showWorkspacePanel(serverUrl) {
+function populateWorkspaceTeams(teams) {
+  const rows = Array.isArray(teams) ? teams.filter((team) => team?.id) : [];
+  const previous = workspaceTeamSelect.value;
+  workspaceTeamSelect.replaceChildren();
+  if (rows.length !== 1) {
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = rows.length ? "请选择目标团队" : "当前账号没有可用团队";
+    workspaceTeamSelect.append(placeholder);
+  }
+  for (const team of rows) {
+    const option = document.createElement("option");
+    option.value = team.id;
+    option.textContent = team.name || team.id;
+    workspaceTeamSelect.append(option);
+  }
+  const selected = rows.some((team) => team.id === previous)
+    ? previous
+    : rows.length === 1
+      ? rows[0].id
+      : "";
+  workspaceTeamSelect.value = selected;
+}
+
+function showWorkspacePanel(serverUrl, teams = null) {
   boardServerUrl = serverUrl || boardServerUrl;
+  if (teams) populateWorkspaceTeams(teams);
   loadingPanel.hidden = true;
   setupPanel.hidden = true;
   workspacePanel.hidden = false;
@@ -89,7 +115,7 @@ async function readStatus() {
     versionElement.textContent = `v${status.version}`;
     configPathElement.textContent = `配置：${status.configPath}`;
     if (status.serverUrl) {
-      showWorkspacePanel(status.serverUrl);
+      showWorkspacePanel(status.serverUrl, status.teams || []);
       return;
     }
     loadingPanel.hidden = true;
@@ -133,7 +159,7 @@ form.addEventListener("submit", async (event) => {
       token,
     });
     enrollTokenInput.value = "";
-    showWorkspacePanel(result.serverUrl);
+    showWorkspacePanel(result.serverUrl, result.teams || []);
     setStatus("注册成功，请选择 workspace 并完成初始化。");
   } catch (error) {
     showError(String(error));
@@ -176,7 +202,7 @@ pairingForm.addEventListener("submit", async (event) => {
       pairingCode,
     });
     pairingCodeInput.value = "";
-    showWorkspacePanel(result.serverUrl);
+    showWorkspacePanel(result.serverUrl, result.teams || []);
   } catch (error) {
     showError(String(error));
     setStatus("设备注册失败。");
@@ -226,8 +252,14 @@ initWorkspaceButton.addEventListener("click", async () => {
   if (!invoke) return;
   clearWorkspaceError();
   const path = workspacePathInput.value.trim();
+  const teamId = workspaceTeamSelect.value;
   if (!path) {
     showWorkspaceError("请先选择或填写 workspace 目录。");
+    return;
+  }
+  const hasTeamOptions = [...workspaceTeamSelect.options].some((option) => option.value);
+  if (!teamId && hasTeamOptions) {
+    showWorkspaceError("请选择要初始化 workspace 的团队。");
     return;
   }
   initWorkspaceButton.disabled = true;
@@ -236,6 +268,7 @@ initWorkspaceButton.addEventListener("click", async () => {
     const result = await invoke("init_workspace", {
       path,
       tools: WORKSPACE_TOOLS,
+      teamId: teamId || undefined,
     });
     const created = result.createdFiles?.length ?? 0;
     const skipped = result.skippedFiles?.length ?? 0;

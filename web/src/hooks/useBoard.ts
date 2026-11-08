@@ -7,8 +7,10 @@ import {
   createTaskRequest,
   fetchAssignments,
   fetchBoard,
+  fetchBoardSettings,
   fetchBoardStatus,
   fetchRepositories,
+  fetchSavedViews,
   fetchTeamStatus,
   pickFolders,
   queryTeamTasks,
@@ -29,8 +31,10 @@ import type {
   TeamRuntime,
 } from "@/api/board";
 import { teamRowToBoardTask, type BoardTask } from "@/features/board/task-view";
+import { ApiError } from "@/api/request";
 
 export type BoardFilters = {
+  teamId: string;
   projectId: string;
   scope: "all" | "mine";
   search: string;
@@ -72,6 +76,7 @@ export function useBoard(): BoardController {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [filters, setFiltersState] = useState<BoardFilters>({
+    teamId: "all",
     projectId: "all",
     scope: "all",
     search: "",
@@ -88,6 +93,8 @@ export function useBoard(): BoardController {
   const boardEtag = useRef<string | null>(null);
   const teamCursors = useRef<(string | null)[]>([null]);
   const teamPageIndex = useRef(0);
+  const teamPageRequest = useRef(0);
+  const teamPreferenceRequest = useRef(0);
   const loadBoardRef = useRef<
     (force?: boolean, quiet?: boolean) => Promise<void>
   >(async () => {});
@@ -113,6 +120,7 @@ export function useBoard(): BoardController {
 
   const loadTeamPage = useCallback(
     async (quiet = false) => {
+      const request = ++teamPageRequest.current;
       if (!quiet) setLoading(true);
       try {
         const cursor = teamCursors.current[teamPageIndex.current] || null;
@@ -121,6 +129,7 @@ export function useBoard(): BoardController {
           { limit: 100, cursor },
         );
         const result = await queryTeamTasks(String(query), boardEtag.current);
+        if (request !== teamPageRequest.current) return;
         if (result.notModified || !result.page) return;
         boardEtag.current = result.etag;
         setTeamPage(result.page);
@@ -130,13 +139,47 @@ export function useBoard(): BoardController {
         }
         setError("");
       } catch (err) {
+        if (request !== teamPageRequest.current) return;
         setError((err as Error).message);
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+          setTeamPage(null);
+          boardEtag.current = null;
+          teamCursors.current = [null];
+          setBoard((current) => current
+            ? { ...current, savedViews: [], settings: {} }
+            : current);
+        }
       } finally {
-        if (!quiet) setLoading(false);
+        if (request === teamPageRequest.current && !quiet) setLoading(false);
       }
     },
     [filters],
   );
+
+  const loadTeamPreferences = useCallback(async () => {
+    const request = ++teamPreferenceRequest.current;
+    let savedViews: unknown[] = [];
+    let settings: { teamId?: string | null; executionWipLimit?: number } | null = null;
+    try {
+      [savedViews, settings] = await Promise.all([
+        fetchSavedViews(filters.teamId),
+        fetchBoardSettings(filters.teamId),
+      ]);
+    } catch (err) {
+      if (request !== teamPreferenceRequest.current) return;
+      throw err;
+    }
+    if (request !== teamPreferenceRequest.current) return;
+    setBoard((current) => ({
+      projects: current?.projects || [],
+      tasks: current?.tasks || [],
+      ...current,
+      savedViews,
+      settings: {
+        executionWipLimit: settings?.executionWipLimit,
+      },
+    }));
+  }, [filters.teamId]);
 
   const loadTeamStatus = useCallback(async () => {
     try {
@@ -218,6 +261,13 @@ export function useBoard(): BoardController {
     if (teamMode) void loadTeamPage(true);
   }, [filters, teamMode, loadTeamPage]);
 
+  useEffect(() => {
+    if (!teamMode) return;
+    void loadTeamPreferences().catch((err: unknown) => {
+      setError((err as Error).message);
+    });
+  }, [teamMode, loadTeamPreferences]);
+
   const reloadCurrentSource = useCallback(async () => {
     if (teamMode) {
       await loadTeamPage(true);
@@ -265,11 +315,26 @@ export function useBoard(): BoardController {
   }, [operation, reloadCurrentSource, loadTeamStatus]);
 
   const setFilters = useCallback((patch: Partial<BoardFilters>) => {
-    setFiltersState((current) => ({ ...current, ...patch }));
-    if (patch.projectId !== undefined || patch.search !== undefined) {
-      teamPageIndex.current = 0;
-      teamCursors.current = [null];
-      boardEtag.current = null;
+    setFiltersState((current) => {
+      const next = { ...current, ...patch };
+      if (patch.teamId !== undefined && patch.projectId === undefined) {
+        next.projectId = "all";
+      }
+      if (patch.teamId !== undefined && patch.executionView === undefined) {
+        next.executionView = "all";
+      }
+      return next;
+    });
+    teamPageIndex.current = 0;
+    teamCursors.current = [null];
+    boardEtag.current = null;
+    teamPageRequest.current += 1;
+    if (patch.teamId !== undefined) {
+      teamPreferenceRequest.current += 1;
+      setTeamPage(null);
+      setBoard((current) => current
+        ? { ...current, savedViews: [], settings: {} }
+        : current);
     }
   }, []);
 
@@ -284,8 +349,9 @@ export function useBoard(): BoardController {
         await loadBoard(true);
       },
       saveWip: async (limit: number) => {
-        await saveWipLimit(limit);
-        await loadBoard(false, true);
+        await saveWipLimit(limit, teamMode ? filters.teamId : undefined);
+        if (teamMode) await loadTeamPreferences();
+        else await loadBoard(false, true);
       },
       createTask: async (payload: Record<string, unknown>) => {
         const idempotencyKey =
@@ -317,16 +383,22 @@ export function useBoard(): BoardController {
         await reloadCurrentSource();
       },
       saveView: async (name: string, viewFilter: Record<string, unknown>) => {
-        const saved = await saveSavedView({ name, filter: viewFilter });
+        const saved = await saveSavedView({
+          name,
+          filter: viewFilter,
+          ...(teamMode ? { teamId: filters.teamId } : {}),
+        });
         await reloadCurrentSource();
+        if (teamMode) await loadTeamPreferences();
         return saved?.view?.id ?? "";
       },
       deleteView: async (id: string) => {
-        await deleteSavedView(id);
+        await deleteSavedView(id, teamMode ? filters.teamId : undefined);
         if (filters.executionView === id) {
           setFiltersState((current) => ({ ...current, executionView: "all" }));
         }
         await reloadCurrentSource();
+        if (teamMode) await loadTeamPreferences();
       },
       retryOperation: async () => {
         if (!operation?.id) return;
@@ -360,11 +432,13 @@ export function useBoard(): BoardController {
       teamMode,
       loadBoard,
       loadTeamPage,
+      loadTeamPreferences,
       loadTeamStatus,
       loadAssignments,
       reloadCurrentSource,
       trackOperation,
       operation,
+      filters.teamId,
       filters.executionView,
     ],
   );
@@ -372,10 +446,17 @@ export function useBoard(): BoardController {
   const teamProjects = useMemo<Project[]>(() => {
     const rows =
       (teamStatus?.projects as
-        { id?: string; name?: string; path?: string }[] | undefined) || [];
+        { id?: string; name?: string; path?: string; teamId?: string; teamName?: string }[] | undefined) || [];
     return rows
-      .filter((row): row is { id: string; name?: string; path?: string } =>
-        Boolean(row?.id),
+      .filter((row): row is {
+        id: string;
+        name?: string;
+        path?: string;
+        teamId?: string;
+        teamName?: string;
+      } =>
+        Boolean(row?.id) &&
+        (filters.teamId === "all" || row.teamId === filters.teamId),
       )
       .map((row) => ({
         ...row,
@@ -383,7 +464,7 @@ export function useBoard(): BoardController {
         name: row.name || row.id,
         path: row.path || "",
       }));
-  }, [teamStatus]);
+  }, [teamStatus, filters.teamId]);
   const projects: Project[] = teamMode ? teamProjects : board?.projects || [];
   const tasks: BoardTask[] = teamMode
     ? (teamPage?.tasks || []).map((row) =>

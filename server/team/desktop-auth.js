@@ -104,7 +104,6 @@ export function createDesktopAuthService({
     const record = {
       id,
       userId: actor.userId,
-      teamId: actor.activeTeamId || null,
       deviceName: name,
       expiresAtMs,
       usedAtMs: null
@@ -115,7 +114,7 @@ export function createDesktopAuthService({
     const expiresAt = new Date(expiresAtMs).toISOString();
     appendAuditEvent(db, {
       actorUserId: actor.userId,
-      teamId: record.teamId,
+      teamId: null,
       action: "desktop_enroll_token_issued",
       targetType: "desktop_enroll_token",
       targetId: id,
@@ -132,7 +131,6 @@ export function createDesktopAuthService({
     if (record.expiresAtMs <= now()) throw invalidToken("expired");
     return {
       userId: record.userId,
-      teamId: record.teamId,
       deviceName: record.deviceName
     };
   }

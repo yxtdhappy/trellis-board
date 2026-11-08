@@ -1,0 +1,8 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"多团队改造同时修改 Session、项目授权、任务查询、缓存游标、前端筛选和测试，必须保持跨层契约一致。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"团队成员解析、项目团队推导和团队作用域选择应复用现有所有者模块，避免在 HTTP、任务和前端重复实现。"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"明确 Node HTTP 服务、团队模块、扫描缓存和 Worker 的边界。"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"修改公开 API 请求形状、权限错误、项目身份和任务写入边界。"}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"保存视图、WIP、SQLite 作用域和任务索引变更必须保持持久化与事务约束。"}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"团队筛选状态应放在现有 hooks/api/features 边界，组件不得直接请求接口。"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"团队切换会影响轮询、ETag、分页游标、保存视图和 WIP 的前端状态源。"}
+{"file":".trellis/tasks/11-08-support-multi-team-board/research/multi-team-auth-and-device-analysis.md","reason":"汇总当前 activeTeamId 依赖、可复用能力、产品决策和全部主要修改面。"}

@@ -12,14 +12,14 @@ type FlowSignalsProps = {
 }
 
 export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
-  const [value, setValue] = useState(String(wipLimit ?? 6))
+  const [value, setValue] = useState(String(wipLimit ?? 2))
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    setValue(String(wipLimit ?? 6))
+    setValue(String(wipLimit ?? 2))
   }, [wipLimit])
 
-  const limit = wipLimit ?? 6
+  const limit = wipLimit ?? 2
   const implementing = tasks.filter((task) => task.derivedStage === 'implement').length
   const blocked = tasks.filter((task) => task.execution?.isBlocked).length
   const unblocked = tasks.filter((task) => task.execution?.isUnblockedReady).length
@@ -32,8 +32,8 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
 
   async function save() {
     const next = Number(value)
-    if (!Number.isInteger(next) || next < 1 || next > 99) {
-      toast.error('WIP 软上限必须是 1 到 99 的整数')
+    if (!Number.isInteger(next) || next < 1 || next > 9) {
+      toast.error('WIP 软上限必须是 1 到 9 的整数')
       return
     }
     setSaving(true)
