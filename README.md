@@ -58,11 +58,13 @@ Board 自身可变状态统一保存在 `data/board.sqlite`：
 - `team_project`、`project_member`：团队项目、项目角色和 Agent 绑定
 - `user_session`、`saved_view`、`user_board_state`：活动团队、保存视图和个人 WIP
 - `audit_event`、`agent_event_cursor`：团队审计与按团队隔离的 Agent 事件游标
+- `project_live_revision`、`project_live_file`、`project_live_batch`：团队实时文件覆盖层、单调 revision 与幂等批次
+- `agent_live_cursor`：每台桌面设备已成功落盘的实时文件 revision
 - `app_meta`：数据库 schema 版本和旧 JSON 迁移标记
 
-全新数据库会直接创建当前 schema（v6），包含团队、团队成员、团队项目、活动团队、团队审计和 Agent 团队事件游标。首次打开空库时仍会在一个事务中读取 `data/repos.json`、`data/task-metadata.json`、`data/scan-cache.json` 和 `data/board-state.json` 并导入 standalone 数据，然后写入一次性的 `legacy_json_imported_v1` 标记。非法或损坏的旧 JSON 只记录警告并跳过，不会阻止服务启动。运行时不修改这四个 JSON 文件。
+全新数据库会直接创建当前 schema（v7），包含团队、团队成员、团队项目、团队审计、Agent 事件游标和实时文件覆盖层。首次打开空库时仍会在一个事务中读取 `data/repos.json`、`data/task-metadata.json`、`data/scan-cache.json` 和 `data/board-state.json` 并导入 standalone 数据，然后写入一次性的 `legacy_json_imported_v1` 标记。非法或损坏的旧 JSON 只记录警告并跳过，不会阻止服务启动。运行时不修改这四个 JSON 文件。
 
-本版本**不做旧数据库迁移**。如果 `data/board.sqlite` 的 `schema_version` 不是 6，服务会拒绝启动并提示删除数据库重建。重建前先停止服务并归档 `data/board.sqlite`、`data/board.sqlite-wal`、`data/board.sqlite-shm`；删除后重新启动会创建 v6 新库。旧库中的账号、项目、审计和任务索引不会自动回填，团队需要由系统管理员重新创建和分配。
+v6 数据库会在启动事务中原地补齐实时同步表和 `team_task_index.live_revision`，随后升级为 v7。`v5` 及更旧版本仍拒绝启动并提示删除数据库重建。重建前先停止服务并归档 `data/board.sqlite`、`data/board.sqlite-wal`、`data/board.sqlite-shm`。
 
 SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目增删、批量新增和看板状态的多字段更新均使用事务；失败时回滚整个操作。你可以单独备份 `data/board.sqlite`，但热备份前应先停止服务，并同时处理可能存在的 `board.sqlite-wal` 与 `board.sqlite-shm`。
 
@@ -106,10 +108,16 @@ SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目
 2. 设置 `TRELLIS_BOARD_MODE=team`、`TRELLIS_TEAM_PUBLIC_URL` 等环境变量。
 3. 运行 `node server/team/cli.js init-admin --username admin` 创建首个管理员。
 4. 启动服务，在 `/admin.html` 接入项目、确认脚本摘要并添加项目成员。
-5. 在项目中生成一次性配对码，安装 Windows Agent、绑定本地仓库并等待项目负责人批准。
+5. 安装 Windows 客户端，用服务器地址、账号和密码登录；在 Board 项目栏选择本地 Git 仓库关联。
 
 团队任务由服务端工作副本创建或修改，只有 Git push 成功后才进入待接受状态。Agent 只执行
 本地分支的 `fetch` 和 `ff-only` 同步，不会自动 stash、reset、checkout、rebase 或 push。
+
+桌面客户端还会复用同一 watcher 监听已关联项目的 `.trellis/tasks`、`.trellis/workspace` 和
+`.trellis/.developer`。未提交文本文件以文件级批次上传，服务端按到达顺序分配项目 revision，
+通过 SSE 通知其他客户端，Board 以 750ms revision 轮询快速刷新。覆盖本地冲突前会备份到工作区外，
+控制窗口可一键复原并把备份作为新的服务端 revision 广播。非任务责任人推进任务时必须选择取消、
+继续推进或接管；项目 `read_only` 只接收，不上传本地修改。
 
 ## 插件
 
@@ -156,5 +164,6 @@ SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目
 - 服务端权威 Git 工作副本、任务创建/委派推送、版本冲突保护和审计
 - 跨项目团队查询、单项目分组看板和个人保存视图
 - Windows 用户级同步 Agent、配对、项目绑定、`ff-only` 同步和登录自启
+- 团队实时未提交任务同步、服务端权威覆盖层、本地备份复原和非责任人确认
 
 评论、通知、审批流、SSO、多实例高可用和 macOS/Linux Agent 不在当前范围内。

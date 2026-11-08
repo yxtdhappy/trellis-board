@@ -12,6 +12,7 @@
 | [插件运行时](./plugin-runtime.md) | 子进程协议、清单与版本、生命周期、存储与命名空间、任务写入 |
 | [插件测试](./plugin-testing.md) | 协议契约、插件功能、真实组合的分层测试与覆盖矩阵 |
 | [桌面 sidecar 与 SEA 打包](./desktop-sidecar-packaging.md) | 源码/SEA 入口分离、DPAPI 路径注入和 Windows 构建验证 |
+| [桌面实时任务同步](./desktop-realtime-sync.md) | 共享 watcher、实时文件覆盖层、版本、SSE、备份与责任人确认 |
 | [质量与验证](./quality-guidelines.md) | Node 内置测试、夹具、真实服务验收 |
 
 ## 基本约束

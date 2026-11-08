@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/11-08-team-realtime-collaboration/prd.md","reason":"父任务组合验收标准"}
+{"file":".trellis/tasks/11-08-team-realtime-collaboration/design.md","reason":"子任务依赖顺序和跨任务契约"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"组合交付的服务端质量门"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Board 项目栏和实时刷新验收"}

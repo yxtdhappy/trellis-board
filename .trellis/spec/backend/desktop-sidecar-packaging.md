@@ -24,6 +24,33 @@ runAgentProcess({
   logger,
   signal
 }): Promise<{ exitCode: number, error?: Error }>
+
+loginDesktop({
+  serverUrl,
+  username,
+  password,                // 只来自 stdin
+  deviceName,
+  credentialStore,
+  forceNew
+}): Promise<LoginResult>
+
+associateDesktopProject({
+  projectId,
+  repoPath,
+  branchName,
+  credentialStore,
+  inspectRepository
+}): Promise<AssociationResult>
+
+desktop_sidecar_status(): Promise<{
+  running: boolean,
+  paused: boolean
+}>
+
+AgentLiveSync.start(): Promise<void>
+AgentLiveSync.pullProject(teamId, projectId): Promise<LiveFilesPayload|null>
+decidePendingLiveChange({ store, credentialStore, pendingId, action }): Promise<Result>
+restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
 ```
 
 - 源码入口：`desktop/sidecar/cli.js`
@@ -42,6 +69,23 @@ runAgentProcess({
 - `DpapiCredentialStore` 不得自行推导默认脚本路径；Agent CLI 和 sidecar 入口必须显式传入。
 - esbuild 不得定义或替换 `import.meta.url`，不得使用 `file:///...` 伪模块 URL。
 - 设备令牌继续只通过 stdin 传递，路径注入值不得来自用户请求或远端输入。
+- 账号密码只通过 sidecar stdin 的 JSON 对象传入；Session Cookie、设备和设备凭证不落盘。
+- `desktop/sidecar/workspace-init.js` 不属于桌面产品路径；workspace 能力只保留给 Agent CLI。
+- 本地项目关联复用 `agent/git-sync.js` 的 `inspectRepository()`，不另写 Git 身份校验。
+- 新绑定的 immediate heartbeat 直接使用服务端结果；绝不把 pending 状态当作桌面审批流程。
+- 已存在的绑定再次心跳时，分支或远端身份校验失败必须转为 `rejected` 并停止命令投递；
+  修正本地分支或远端后的合法心跳可恢复为 `approved`。
+- `readOnly` 按实际任务写能力投影：项目 `lead`/`member`，以及没有显式项目角色的系统管理员
+  为可写；显式 `read_only`，或普通团队成员/团队管理员仅靠团队身份建立关联时必须返回 `true`。
+- “可关联项目”与“可读取任务项目”是两个集合。`/api/team/status` 的 `associationProjects`
+  允许 active team member 看到团队内全部 active 项目；`projects` 仍只包含当前账号能读取任务的
+  项目。不得为了填充关联下拉而放宽 `/api/team/projects` 或任务查询权限。
+- 远程 Board 只额外开放只读 `desktop_sidecar_status`；项目栏用它显示后台同步“运行中 / 已暂停 /
+  未运行”，不能把 Board 自身刷新状态误当成 sidecar 状态。
+- sidecar `run` 的标准输出可发送单行 `{"control": {...}}` 控制事件；Tauri 解析后打开本地
+  `live-control` 窗口。控制事件不得包含文件正文、密码、Cookie 或设备凭证。
+- `live-decide` 与 `live-restore` 使用独立 sidecar 命令，不依赖运行进程内存；待确认批次和备份
+  manifest 必须原子落盘。完成本地写回后写入短时摘要抑制文件，防止 watcher 把刚应用的版本再次上传。
 
 ## 4. Validation & Error Matrix
 
@@ -51,7 +95,15 @@ runAgentProcess({
 | 源码 sidecar 缺少真实 DPAPI helper | `DPAPI_FAILED` |
 | SEA 缺少 `dpapi.ps1` asset 且无回退路径 | `CONFIG_INVALID` |
 | `runAgentProcess` 缺少 credential store | `CONFIG_INVALID` |
-| sidecar 未注册设备执行 `status/workspace-init` | `CONFIG_MISSING`，退出码 3 |
+| sidecar 未注册设备执行 `status/associations` | `CONFIG_MISSING`，退出码 3 |
+| sidecar 未注册设备执行 `login` | 登录成功后创建新设备，不依赖旧配置 |
+| sidecar `login` 未从 stdin 收到单个 JSON 对象 | `CONFIG_INVALID` |
+| `associate` 的 Git 分支、origin、远端或 `.trellis` 校验失败 | 不写绑定，返回对应 Git 错误 |
+| 服务端拒绝关联 | sidecar 删除刚写入的本地绑定并返回 `REMOTE_MISMATCH` 等服务端错误 |
+| 普通团队成员无 `project_member` | 可出现在 `associationProjects`，但不出现在可读 `projects` |
+| Board 远程页面调用 `desktop_sidecar_status` | Rust 复核 Origin 后仅返回布尔运行状态 |
+| sidecar 控制事件 | Tauri 只复用本地 `live-control` 窗口，不授予远程 Board 控制命令 |
+| 实时同步账号切换 | 清理 live cursor、pending、suppression 和 backup，不跨账号继承 |
 | SEA 顶层启动成功执行 `version` | 输出协议版本并以 0 退出 |
 
 ## 5. Good / Base / Bad Cases
@@ -66,6 +118,12 @@ runAgentProcess({
 - `tests/desktop-package.test.js`：SEA 入口不得包含 `import.meta`；bundle 不得包含伪模块 URL；源码 CLI
   `version/status` 正常。
 - `tests/desktop-device-auth.test.js`：设备注册必须注入 credential store。
+- `tests/desktop-device-auth.test.js`：账号密码登录、Cookie 严格解析、同账号设备复用和退出登录。
+- `tests/desktop-association.test.js`：本地关联保存服务端 approved/readOnly 状态。
+- `tests/desktop-association.test.js`：服务端拒绝关联时回滚本地绑定。
+- `tests/team-isolation.test.js`：只读成员关联后任务写操作被拒绝，Git 身份失配会转为 rejected。
+- `tests/team-isolation.test.js`：普通团队成员能看到关联候选项目，但任务项目列表仍为空。
+- `tests/desktop-package.test.js`：远程 capability 只允许关联命令、关联列表和 sidecar 状态。
 - Windows CI：构建后执行 sidecar `version`，断言退出码 0 和 `protocolVersion === 2`。
 - Windows CI 必须在 `tauri build` 前通过 GitHub CLI/API 填充 `%LOCALAPPDATA%\tauri\NSIS`，校验
   NSIS zip 与 `nsis_tauri_utils.dll` 的固定 SHA1；Tauri 使用的 GitHub Releases 直链可能返回 504。

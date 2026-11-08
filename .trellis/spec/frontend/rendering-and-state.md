@@ -18,7 +18,9 @@
 ## 轮询
 
 - 独立模式：`/api/board/status` 每 750ms 轮询；`lastRefreshAt !== board.generatedAt` 时静默重载 board。
-- 团队模式：`/api/tasks/query?…` 使用 `if-none-match` 复用 ETag，304 时跳过状态更新；`/api/team/status` 每 3 秒轮询。
+- 团队模式：`/api/tasks/query?…` 使用 `if-none-match` 复用 ETag，304 时跳过状态更新；
+  `/api/team/live-revision` 每 750ms 轮询，revision key 变化时重载任务页，`/api/team/status`
+  每 3 秒轮询作为兜底。
 - 轮询必须在组件卸载时清理 `setTimeout/clearInterval`；不要用固定延时等待业务状态。
 
 ## 多团队状态
@@ -28,6 +30,15 @@
 - 任务查询和团队偏好请求使用请求序号或其他取消机制；旧团队的迟到响应不得覆盖当前团队状态。作用域失效返回 401/403 时清空旧任务页。
 - 管理台的 `adminTeamId` 只控制管理范围。项目选项必须合并团队管理员可管理项目与当前用户在其他团队担任项目负责人的可管理项目，去重后供选择。
 - 任务卡片、注意力队列、团队视图和详情必须显示服务端返回的 `teamName`；项目栏和项目筛选只展示当前团队范围。
+- 团队项目栏合并 `/api/team/status` 的 `projects` 与 `associationProjects` 并按项目 ID 去重。
+  `associationProjects` 只表示该团队成员有本地关联资格，不表示已有任务读取权限；不得据此放宽
+  任务查询或让前端自行授予项目角色。
+- Tauri 桌面端每 3 秒调用只读 `desktop_sidecar_status`，按 `{ running, paused }` 显示真实后台同步
+  状态。普通浏览器没有 `window.__TAURI__`，不显示本地关联和 sidecar 状态入口。
+- 任务卡对 `liveRevision > 0` 显示“实时未入 Git”。任务详情和单项目 Board 必须优先使用服务端
+  实时覆盖层，不能回退到旧 Git 扫描缓存。
+- `ASSIGNEE_CONFIRMATION_REQUIRED` 必须复用三态对话框：取消、继续推进、接管任务；继续携带
+  `warningId + action=continue` 重试，接管携带 `action=takeover`，不能在前端自行改派。
 
 ## 弹层
 

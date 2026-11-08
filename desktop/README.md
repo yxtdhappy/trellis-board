@@ -1,251 +1,242 @@
-# Trellis Board 桌面客户端（Windows）
+# Trellis Board Windows 客户端
 
-Tauri v2 外壳 + 现有 Agent sidecar。桌面端只负责：加载 Board 网页、托盘/单实例/开机自启、
-把设备注册为桌面客户端。SSE、心跳、任务执行仍由 `agent/` 实现，桌面端不重复实现业务。
+Tauri v2 外壳 + Node SEA sidecar。客户端冷启动固定显示本地登录页，用户只填写服务器地址、
+登录名和密码；登录成功后当前 WebView 直接进入 Board，后台 sidecar 使用同一账号的设备凭证
+同步 Agent 生命周期。
 
-- 协议版本：`AGENT_PROTOCOL_VERSION = 2`（`agent/protocol.js`）
-- 客户端版本：`desktop/package.json` / `src-tauri/Cargo.toml` 的 `0.2.0`
-- 设备注册主路径：`POST /api/desktop/enroll-tokens`（登录会话签发一次性令牌）
-  → `POST /api/agent/enroll-desktop`（令牌换设备凭证）
-- 管理员兜底路径：`POST /api/team/pairing-codes` → `POST /api/agent/enroll`
-- 设备撤销复用：`POST /api/admin/agents/{id}/revoke`
+- 客户端版本：`desktop/package.json`、`desktop/src-tauri/Cargo.toml`
+- Agent 协议：`AGENT_PROTOCOL_VERSION = 2`
+- 本地配置：`%LOCALAPPDATA%\TrellisBoard\data\client.json`
+- Agent 数据：`%LOCALAPPDATA%\TrellisBoard\data\agent`
 
-## 注册流程（主路径）
+## 登录流程
 
-1. 在 Board 登录，进入“团队管理 → 设备”，点“生成桌面设备令牌”。
-2. 令牌 5 分钟内有效、只能使用一次；同一用户最多 5 个未使用令牌。
-3. 两种交付方式：点“打开桌面客户端”走 `trellisboard://enroll?token=...&server=...` 深链，
-   或复制令牌后在桌面客户端粘贴。
-4. 桌面端把令牌经 stdin 交给 sidecar；sidecar 调用 `POST /api/agent/enroll-desktop` 换取
-   `agentId` + 设备凭证，凭证只写入 Windows DPAPI（`agent\credential.dpapi`），
-   `client.json` 仍只保存 `serverUrl`。
-5. 兑换结果里的 `username` / `teams` 写入 sidecar 配置；兼容字段 `teamId` 固定为 `null`
-   （`data\agent\config.json`），后续 `workspace init` 直接复用该用户名，不再要求手工输入。
-6. 注册成功后本地页切换到 workspace 面板：选择目录 → “初始化/修复”写入 `.trellis` /
-   `.opencode` / `.agents` → “打开看板”加载 Board。
-7. 服务端保存令牌哈希，不保存明文；令牌在进程内存中记录，服务重启后未使用令牌全部失效。
-
-配对码只作为管理员排障入口：桌面本地页折叠区可手工输入配对码，sidecar 需显式传入
-`--pairing-code`；桌面端默认不会请求或使用配对码。两条注册路径的差别只有兑换接口，
-写盘、workspace 初始化与后续 SSE 使用的是同一份设备凭证。
-
-## workspace 选择与初始化
-
-桌面端不自己实现路径 / 模板 / developer 逻辑，只把参数交给 sidecar：
-
-- 命令：`init_workspace(path, teamId, tools)`（Rust，`desktop/src-tauri/src/main.rs`）→
-  sidecar `workspace-init --path <绝对路径> --team <ID> [--tools .opencode,.agents]` →
-  `desktop/sidecar/workspace-init.js` → `agent/workspace.js` 的 `initializeWorkspace`。
-- 目录选择用 `pick_workspace`（`tauri-plugin-dialog`，仅本地页可调用）；
-  capability 只开放 `dialog:allow-open`，没有文件系统权限。
-- 模板来自服务端团队模板（`GET /api/team/workspace-template`，Agent Bearer），
-  已缓存时离线也能初始化；哈希不匹配或路径是符号链接时中止。
-- 不执行模板里的 Python：`init_developer.py` 只做静态校验，`.trellis/.developer` 由本地生成。
-- 等价 CLI（排查用）：
-
-```powershell
-node agent/cli.js workspace init --path D:\work\project --team <团队 ID> --tools .opencode,.agents --username <登录用户名>
-node agent/cli.js workspace status --path D:\work\project --json
+```text
+本地登录页
+  -> app_status（预填上次服务器地址）
+  -> desktop_login(serverUrl, username, password)
+  -> Tauri IPC
+  -> sidecar stdin（单个 JSON 对象）
+  -> POST /api/auth/login
+  -> 写入 WebView HttpOnly Session Cookie
+  -> 复用或创建当前账号的桌面设备
+  -> 当前 WebView 打开 Board
 ```
+
+安全边界：
+
+- 密码只经过 `invoke -> Rust -> sidecar stdin -> HTTPS`，不进入 argv、环境变量、日志或配置文件。
+- Session Cookie 只存在当前 WebView Cookie Store 和 Rust 内存；冷启动后必须重新登录。
+- 设备凭证只由 Windows DPAPI 保存，`client.json` 只保存 `serverUrl`。
+- 首次使用新客户端会忽略旧 `client.json` schema 并强制创建新设备；不迁移旧设备令牌。
+- 同服务器、同账号再次登录会先用已有设备做 heartbeat，有效则复用。
+- 不同账号、不同服务器或显式 `--force-new` 会重新兑换设备并清理旧账号的游标、事件缓存和运行状态。
+- 切换账号还会清理旧的实时游标、待确认批次和本地冲突备份，避免跨账号展示。
+- `mustChangePassword=true` 时只建立 Board 会话，不创建设备；完成改密后下一次登录再建立设备。
+
+sidecar 内部仍会用一次性的设备兑换令牌调用现有
+`POST /api/desktop/enroll-tokens -> POST /api/agent/enroll-desktop`，但令牌不进入 UI、磁盘、
+命令参数或日志，只存在于 sidecar 单次调用内存。
+
+## 本地项目关联
+
+项目栏由服务端 Board 渲染。只有 Tauri WebView 会显示本地关联入口；普通浏览器不显示。
+
+```text
+Board ProjectRail
+  -> invoke("list_local_associations")
+  -> invoke("associate_local_project", { projectId, syncBranch })
+  -> Rust 校验当前页面 origin == 本次登录 Board origin
+  -> Rust 打开系统目录选择器
+  -> sidecar associate
+  -> inspectRepository 校验 Git 根、.trellis、当前分支和 origin
+  -> 一次 Agent heartbeat
+  -> 服务端校验团队成员、项目状态、分支和远端身份
+  -> 绑定直接 approved
+```
+
+- 账号属于启用团队即可关联该团队项目；不再需要项目负责人人工审批。
+- `project_member.role=read_only` 可以关联并接收服务端内容，但项目栏显示只读，服务端拒绝任务写操作。
+- 项目停用、团队移除、设备撤销、远端或分支不一致时，关联失效。
+- 客户端不能新增服务端项目；项目必须先由管理台创建并启用。
+- 本地关联用于桌面 WebView，不开放通用文件系统、Shell、进程或 dialog 权限给远程页面。
+
+## 实时任务同步
+
+已关联、`approved` 且非 `read_only` 的项目会由 sidecar 启动与单机服务端相同的 watcher：
+
+```text
+.trellis 文件变化
+  -> 250ms 聚合
+  -> 读取未提交 UTF-8 文本
+  -> assignee preflight
+  -> 责任人确认（需要时）
+  -> POST /api/agent/live-changes
+  -> 服务端项目 revision + live.changed
+  -> 其他客户端拉取
+  -> 冲突文件先备份
+  -> 临时文件、fsync、原子 rename
+```
+
+- 单文件上限 1 MiB，单批次 8 MiB / 64 文件；只同步 `.trellis/.developer`、
+  `.trellis/tasks/**` 和 `.trellis/workspace/**` 下的 JSON、JSONL、Markdown、文本和 YAML。
+- 任务列表、单项目 Board 和任务详情都优先使用服务端实时覆盖层；Board 每 750ms 检查实时 revision。
+- 远端版本覆盖本地不同内容前，原文件备份到
+  `%LOCALAPPDATA%\TrellisBoard\data\agent\live-backups\<projectId>\<backupId>`。
+- 控制窗口可一键复原；复原会作为更高 revision 上传并广播。取消责任人操作会先备份，再恢复
+  服务端或 Git 当前版本。
+- 非责任人可选择取消、继续推进或接管。继续保留原责任人并写审计；接管会更新 `task.json.assignee`
+  并形成新的实时 revision；原责任人收到通知。
+- `read_only` 项目只接收和落盘，不启动上传 watcher。
+- Git 内容与实时文件摘要一致后覆盖行自动收敛；不一致时任务卡显示“实时未入 Git”，不会回退。
+
+## Tauri 权限
+
+`capabilities/main.json` 只允许本地页面：
+
+- `app_status`
+- `desktop_login`
+
+`capabilities/board-local-association.json` 通过 `remote.urls` 只给 Board origin 候选开放：
+
+- `associate_local_project`
+- `list_local_associations`
+- `desktop_sidecar_status`
+
+远程 capability 的 URL pattern 必然较宽；Rust 命令还会把当前 WebView origin 与本次登录成功的
+Board origin 做同源比较，其他远程页面即使命中 capability 也会被拒绝。
+
+`capabilities/live-control.json` 只绑定本地 `live-control` 窗口：
+
+- `live_control_pending`
+- `live_control_decide`
+- `live_control_restore`
+
+控制窗口只处理当前实时同步事件，不拥有文件系统、Shell 或远程页面权限。
+
+本地登录页没有通用 dialog 权限。目录选择器由 `associate_local_project` 在 Rust 内部调用
+`tauri-plugin-dialog`，不向页面暴露 `dialog:allow-open`。
+
+## 导航与退出
+
+- 冷启动始终加载 `tauri://localhost/index.html` 或 Windows 等价本地 URL，不根据历史配置直接打开 Board。
+- 登录成功后动态写入允许的 Board origin，再在同一 WebView 内导航。
+- 同源 Board 导航允许；外链仍交给系统浏览器；`window.open` 一律拒绝。
+- Board 同源跳转到 `/login.html` 或 `/login` 时，客户端拦截导航、停止 sidecar、撤销会话、
+  删除 Cookie、清空 Board origin，并返回本地登录页。
 
 ## 目录
 
-```
+```text
 desktop/
-  ui/                    本地加载页/注册页（无打包器、无第三方依赖）
-  src-tauri/             Rust 外壳
-    src/main.rs          窗口、托盘、单实例、命令
-    src/navigation.rs    导航白名单（仅 Board origin；外链交系统浏览器）
-    src/config.rs        本地配置（serverUrl，不含任何凭证）
-    src/sidecar.rs       tauri-plugin-shell 启动/重启/停止 sidecar，转发日志
-    src/logging.rs       desktop.log + 凭证脱敏
-    capabilities/main.json
-    tauri.conf.json
-    binaries/            build-sidecar.ps1 输出（trellis-agent-<target>.exe）
-  sidecar/               Node SEA 打包入口与设备注册/撤销命令
-    cli.js               源码直接运行入口，注入真实 DPAPI helper 路径
-    sea-entry.js         SEA 打包入口，不依赖模块文件路径
-    main.js              run / enroll / revoke / status / workspace-init / version 库
-    workspace-init.js    归一化 workspace 参数并调用 agent/workspace.js
-    desktop-device.js    复用 agent 的 ConfigStore、AgentApiClient、DPAPI
-    bundle.mjs           esbuild 单文件 + SEA 配置
-    build-sidecar.ps1    Windows x64 打包（Node 24）
-  install.ps1            按用户安装（无需管理员）
-  uninstall.ps1          按用户卸载
+  ui/                         本地登录页、实时同步控制窗口
+  src-tauri/
+    src/main.rs               窗口、登录、Cookie、动态导航、本地关联命令
+    src/navigation.rs         Board URL 白名单和同源导航
+    src/config.rs             client.json schema 2
+    src/sidecar.rs            sidecar JSON 命令、生命周期和日志转发
+    src/logging.rs            日志脱敏
+    capabilities/             本地登录与远程关联分离的 capability
+    permissions/desktop.toml  登录、关联、状态和控制窗口的显式命令
+    binaries/                 SEA sidecar 构建产物
+  sidecar/
+    cli.js                    源码运行入口，注入 DPAPI helper 路径
+    sea-entry.js              SEA 入口，不做模块路径推断
+    main.js                   login/logout/associate/associations/live-decide/live-restore/run/...
+    desktop-device.js         登录、Cookie 解析、设备复用和兑换
+    desktop-association.js    本地 Git 检查、绑定写入和即时 heartbeat
+    bundle.mjs                esbuild + SEA 配置
+    build-sidecar.ps1         Node 24 x64 打包
+  install.ps1                 按用户安装、SHA256、暂存与回滚
+  uninstall.ps1               卸载、可选设备撤销和数据处理
 ```
 
-## 安全边界
-
-- 导航：只允许配置的 Board origin（`https` 任意主机；`http` 仅 `localhost`/`127.0.0.1`/`::1`），
-  且必须是根路径、无账号密码/查询/片段。同源跳转留在 webview；`mailto:`/`http(s)` 外链用
-  `shell.open` 交给系统浏览器；`window.open` 一律拒绝。
-- 远程页面没有 Tauri IPC：capability `main` 只包含 `core:default`、`dialog:allow-open`
-  （目录选择器的系统对话框）和本地命令 `app_status`、`enroll_with_token`、`enroll_device`
-  （配对码兜底）、`open_board_login`、`pick_workspace`、`init_workspace`，
-  没有 `shell:allow-open`、文件系统、进程或 updater 权限。
-  Rust 命令还会校验调用页面 URL 必须是本地页（`ensure_local_caller`），作为 capability 之外的
-  第二道防线。设备凭证只存在 sidecar 的 DPAPI 文件中，不注入 webview，也不写 cookie。
-- 生产构建禁用 devtools（未启用 `devtools` feature，且只在 debug 构建可打开）。
-- CSP：`default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;
-  connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`。
-- 日志：`desktop.log` 对 `Bearer ...`、`"credential"`、`"pairingCode"`、`"token"`、`"password"`
-  做脱敏；设备令牌/配对码只经 stdin 传给 sidecar，不进命令行、不落盘。
-- 深链：`install.ps1` 在 `HKCU\Software\Classes\trellisboard` 注册 `trellisboard://` 协议；
-  Rust 解析启动参数与单实例 argv，令牌经 stdin 交给 sidecar。深链里的 `server` 参数走同一套
-  Board URL 白名单；未带 `server` 时使用已保存地址。
-- 关闭窗口 = 最小化到托盘；托盘菜单：打开主窗口、暂停同步、打开日志目录、开机自启、退出。
-- 单实例：重复启动只聚焦已有窗口。
-
-## 配置与命令行
-
-配置保存在 `%LOCALAPPDATA%\TrellisBoard\data\client.json`：
+## 配置
 
 ```json
-{ "schemaVersion": 1, "serverUrl": "https://board.example.com" }
+{
+  "schemaVersion": 2,
+  "serverUrl": "https://board.example.com"
+}
 ```
 
-覆盖顺序：`--server <url>` > `TRELLIS_DESKTOP_SERVER_URL` > `client.json`。URL 不符合白名单时
-客户端退回本地注册页。`--minimized` 启动时隐藏主窗口（自启使用）。`TRELLIS_DESKTOP_HOME`
-可整体重定向数据目录（测试/便携场景）。
+不保存用户名、密码、Session Cookie、设备凭证或团队缓存。schema 1 配置不参与设备复用，首次
+新登录时按无配置处理。
 
-sidecar 数据在 `%LOCALAPPDATA%\TrellisBoard\data\agent`（`TRELLIS_AGENT_ROOT` 由客户端注入）。
+服务器地址预填顺序：
 
-## 构建（Windows x64 构建机）
+```text
+--server <url> > TRELLIS_DESKTOP_SERVER_URL > client.json
+```
+
+URL 必须为 HTTPS 根地址；仅 `localhost`、`127.0.0.1`、`::1` 允许 HTTP。
+`--minimized` 启动时隐藏主窗口。`TRELLIS_DESKTOP_HOME` 可重定向整个桌面数据目录。
+
+## 构建
 
 前置：
 
 - Windows 10/11 x64
-- Node.js 24 x64（`agent/package-agent.ps1` 同款要求；Node 22 会拒绝打包）
-- Rust stable（MSVC toolchain）+ Visual Studio Build Tools（C++ 桌面负载）
-- Tauri CLI：`cargo install tauri-cli --locked --version "^2"`（提供 `cargo tauri`）
-- WebView2 Runtime（Win11 自带；Win10 由 NSIS 安装包以 `downloadBootstrapper` 静默安装）
+- Node.js 24 x64
+- Rust stable（MSVC toolchain）
+- Visual Studio Build Tools（C++ 桌面负载）
+- `cargo install tauri-cli --locked --version "^2"`
+- WebView2 Runtime
 
 ```powershell
-# 1) 安装构建期 Node 依赖（仅 esbuild/postject，运行时无依赖）
 npm --prefix desktop install
-
-# 2) 打包 sidecar -> desktop\src-tauri\binaries\trellis-agent-x86_64-pc-windows-msvc.exe
 powershell -NoProfile -ExecutionPolicy Bypass -File desktop\sidecar\build-sidecar.ps1
 
-# 3) 前端无需构建（desktop/ui 是静态文件）
-
-# 4) 进入 desktop，Tauri CLI 从 src-tauri 读取配置
 cd desktop
-
-# 4a) 生成单可执行文件（不打包安装器）
 cargo tauri build --no-bundle
-# 产物：desktop\src-tauri\target\release\trellis-board-client.exe
-
-# 4b) 生成 NSIS 安装器（*-setup.exe，支持 /S 静默）
 cargo tauri build
-# 产物：desktop\src-tauri\target\release\bundle\nsis\Trellis Board_0.2.0_x64-setup.exe
 ```
 
-`tauri.conf.json` 已固定 `bundle.targets=["nsis"]`、`nsis.installMode="currentUser"`、
-`webviewInstallMode=downloadBootstrapper`（`silent: true`）。
-`bundle.externalBin=["binaries/trellis-agent"]`，因此 **必须先执行步骤 2**，否则 Rust 构建失败。
+产物：
 
-### 单可执行文件分发（不装 NSIS）
+- `desktop\src-tauri\target\release\trellis-board-client.exe`
+- `desktop\src-tauri\target\release\bundle\nsis\Trellis Board_<version>_x64-setup.exe`
 
-把 `trellis-board-client.exe` 和 `trellis-agent-x86_64-pc-windows-msvc.exe` 放同一目录
-（`install.ps1` 会把后者复制并重命名为 `trellis-agent.exe`），然后：
+必须先构建 sidecar，`tauri.conf.json` 的 `externalBin` 依赖
+`binaries/trellis-agent-x86_64-pc-windows-msvc.exe`。
 
-```powershell
-# 生成 SHA256SUMS.txt（安装脚本默认读取同目录清单）
-Get-FileHash .\trellis-board-client.exe -Algorithm SHA256 |
-  ForEach-Object { "$($_.Hash.ToLower())  trellis-board-client.exe" } |
-  Set-Content .\SHA256SUMS.txt -Encoding ascii
-
-powershell -NoProfile -ExecutionPolicy Bypass -File desktop\install.ps1 `
-  -Source .\trellis-board-client.exe -ServerUrl https://board.example.com
-```
-
-## 安装 / 卸载脚本
+## 安装与卸载
 
 ```powershell
-# 安装（默认 %LOCALAPPDATA%\TrellisBoard；-Source 是客户端 exe，不是 setup.exe）
 powershell -NoProfile -ExecutionPolicy Bypass -File desktop\install.ps1 `
   -Source .\trellis-board-client.exe -ServerUrl https://board.example.com
 
-# 静默安装（不写自启、不启动）
-powershell -NoProfile -ExecutionPolicy Bypass -File desktop\install.ps1 -Quiet -NoAutostart -NoLaunch
+.\TrellisBoard_<version>_x64-setup.exe /S
 
-# NSIS 安装器走自己的 currentUser 流程；静默安装 /S 必须大写
-.\TrellisBoard_0.2.0_x64-setup.exe /S
-
-# 卸载（保留 data；-PurgeData 删除 data；-RevokeDevice 先调用撤销接口）
 powershell -NoProfile -ExecutionPolicy Bypass -File desktop\uninstall.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File desktop\uninstall.ps1 -PurgeData
 $env:TRELLIS_BOARD_SESSION = '<trellis_team_session cookie>'
 powershell -NoProfile -ExecutionPolicy Bypass -File desktop\uninstall.ps1 -RevokeDevice
 ```
 
-安装脚本行为：校验源文件存在、校验 SHA256（`SHA256SUMS.txt` 或 `-Checksum`）、停止正在运行的
-客户端、把同目录的 `trellis-agent*.exe` 复制为 `<InstallDir>\trellis-agent.exe`、暂存目录 +
-备份 + 失败回滚、创建开始菜单/桌面快捷方式、写
-`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `"<exe>" --minimized`、可选写入
-`data\client.json`。路径全部用引号/`-LiteralPath` 处理空格。退出码：
+`install.ps1` 不再注册 `trellisboard://` 深链。卸载脚本保留旧协议清理，便于升级后的机器不残留
+历史注册项。
 
-| 脚本 | 0 | 1 | 2 | 3 | 4 | 6 |
-| --- | --- | --- | --- | --- | --- | --- |
-| install.ps1 | 成功 | 参数/源文件/架构错误 | SHA256 失败（未落盘） | 复制/安装失败（已回滚） | 快捷方式/自启失败（已回滚） | — |
-| uninstall.ps1 | 成功/未安装 | 参数或受保护目录 | — | 删除失败 | — | 撤销失败（未删本地文件） |
+## 验证清单
 
-`uninstall.ps1` 拒绝删除盘符根、`%LOCALAPPDATA%`、`%USERPROFILE%`、`%APPDATA%`；默认只删
-exe/快捷方式/自启，保留 `data`。
-
-## 签名、SmartScreen、WebView2
-
-- 代码签名：用 EV/OV 证书对 `trellis-board-client.exe`、`trellis-agent.exe`、最终
-  `*-setup.exe` 签名（`signtool sign /fd SHA256 /tr <timestamp> /td SHA256 /a <file>`）。
-  Tauri 可用 `bundle.windows.certificateThumbprint` + `digestAlgorithm` + `timestampUrl` 让
-  NSIS 产物自动签名；本项目未内置证书。
-- SmartScreen：未签名或新证书会提示“Windows 已保护你的电脑”。正式发布必须签名并积累声誉；
-  内测可提供 SHA256 供用户核对，不要建议关闭 SmartScreen。
-- WebView2：`downloadBootstrapper` 在安装时联网下载 Evergreen Runtime；离线环境需改为
-  `offlineInstaller` 并随包放 `MicrosoftEdgeWebview2Setup.exe`。
-- 升级顺序：**先升 Agent/桌面端，再升服务端**。协议 v2 下旧 Agent 仍可连接新服务端；
-  反过来（新 Agent + 旧服务端）会在 enroll/心跳阶段报 `PROTOCOL_INCOMPATIBLE`。
-  回滚：卸载客户端不会撤销服务端设备记录；需要时在 Board 撤销后重装。
-
-## Windows 验证清单
-
-在 Windows x64 构建机上逐项执行并记录输出（Linux 无法执行）：
-
-| # | 命令 | 预期 |
+| # | 操作 | 预期 |
 | --- | --- | --- |
-| 1 | `node -p "process.versions.node + ' ' + process.arch"` | `24.x x64` |
-| 2 | `powershell -NoProfile -ExecutionPolicy Bypass -File desktop\sidecar\build-sidecar.ps1` | 退出码 0；`binaries\trellis-agent-x86_64-pc-windows-msvc.exe` 与 `SHA256SUMS.txt` 存在 |
-| 3 | `cargo tauri build --no-bundle` | 退出码 0；`target\release\trellis-board-client.exe` 存在 |
-| 4 | `cargo tauri build` | `bundle\nsis\Trellis Board_0.2.0_x64-setup.exe` 存在 |
-| 5 | `.\TrellisBoard_0.2.0_x64-setup.exe /S` | 静默安装到 `%LOCALAPPDATA%\TrellisBoard`，开始菜单出现快捷方式 |
-| 6 | `Test-Path "$env:LOCALAPPDATA\TrellisBoard\trellis-board-client.exe"; Test-Path "$env:LOCALAPPDATA\TrellisBoard\trellis-agent.exe"` | 两行均为 `True` |
-| 7 | 启动客户端 → 生成设备令牌 → “打开桌面客户端”或粘贴 → 注册 | 进入 workspace 面板（点“打开看板”才跳 Board）；`%LOCALAPPDATA%\TrellisBoard\data\agent\credential.dpapi` 存在且不是明文 |
-| 7b | 同一令牌再次兑换 | 服务端 401 `DESKTOP_TOKEN_INVALID`，客户端提示“已使用” |
-| 7c | 注册成功后在 workspace 面板点“选择目录” → “初始化/修复” | 目标目录出现 `.trellis`、`.opencode`、`.agents`；`.trellis/.developer` 的 `name` 等于该账号用户名；输出里有模板版本与来源 `network`/`cache` |
-| 7d | 断网后重复 7c（保留上次缓存） | 仍能初始化，来源为 `cache`；哈希不匹配或路径为符号链接时中止并提示 |
-| 7e | 已注册设备上再次运行 deep link `trellisboard://enroll?token=...` | 客户端提示“当前安装已经注册设备”，不会静默覆盖 |
-| 8 | `Get-Content "$env:LOCALAPPDATA\TrellisBoard\data\agent\credential.dpapi" -TotalCount 1` | 二进制/DPAPI 内容，不含 64 字符 base64url 凭证 |
-| 9 | 关闭窗口 | 进程仍在，托盘图标存在；托盘“退出”后进程消失 |
-| 10 | 再次双击 exe | 不产生第二个进程，只聚焦已有窗口 |
-| 11 | 托盘勾选“开机自启”，注销重登 | 客户端以 `--minimized` 启动 |
-| 12 | 在 Board 页面点外链 | 系统浏览器打开，客户端窗口 URL 不变 |
-| 13 | `powershell -NoProfile -ExecutionPolicy Bypass -File desktop\uninstall.ps1 -PurgeData` | 退出码 0；安装目录与快捷方式消失，Run 值消失 |
-| 14 | Board 设备列表 | 设备在下次心跳超时后离线；`-RevokeDevice` 后立即显示已撤销 |
+| 1 | 全新安装后双击 | 只出现服务器地址、登录名、密码登录页 |
+| 2 | 错误密码 | 停留登录页，密码清空，无设备配置 |
+| 3 | 正确密码 | 当前窗口进入 Board，不弹系统浏览器；`credential.dpapi` 存在 |
+| 4 | 检查 `client.json` | 只有 schema 2 与 serverUrl，无密码、Cookie 或设备凭证 |
+| 5 | 多团队账号登录 | 无需选择团队，直接看到授权范围 |
+| 6 | 同账号再次启动登录 | 复用同一设备，设备总数不增加 |
+| 7 | 另一账号登录 | 不复用旧账号 Credential、游标或事件缓存 |
+| 8 | Board 项目栏关联本地仓库 | 分支和 origin 不匹配时拒绝；匹配后直接显示已关联 |
+| 9 | 普通浏览器打开 Board | 不显示本地关联入口 |
+| 10 | read_only 项目 | 显示只读，任务写请求被服务端拒绝 |
+| 11 | Board 退出登录 | sidecar 停止，会话失效，返回本地登录页 |
+| 12 | 重启客户端 | 仍先显示本地登录页 |
+| 13 | A 修改未提交任务文件 | B 的 Board 与本地 `.trellis` 在正常网络 P95 3 秒内更新 |
+| 14 | A/B 同时修改同一文件 | 后到 revision 生效；先到方先生成备份并显示冲突提示 |
+| 15 | 从控制窗口一键复原 | 备份作为新 revision 广播，双方最终一致 |
+| 16 | 非责任人修改任务 | 出现取消/继续/接管；继续保留责任人，接管才改派 |
+| 17 | `read_only` 项目修改本地文件 | 本地可接收服务端内容，但修改不上传 |
 
-## Linux 未验证项
-
-开发/CI 环境是 Linux，**没有 cargo/rustc，也没有 pwsh**，以下均未在本仓库验证：
-
-1. `cargo test` / `cargo build` / `tauri build`（Rust 编译、`generate_context!`、Cargo.lock 解析）。
-2. `build-sidecar.ps1` 的 `node --experimental-sea-config` 与 postject 注入实际产物。
-3. `install.ps1` / `uninstall.ps1` 的真实执行（仅做静态断言），包括 `trellisboard://` 协议注册与
-   深链单实例转发。
-4. NSIS 产物、`/S` 静默安装、WebView2 bootstrapper、快捷方式/自启注册表；NSIS 安装路径目前
-   不注册 `trellisboard://`，企业批量分发需改用 `install.ps1` 或在安装后补注册。
-5. DPAPI 加解密（`agent/windows/dpapi.ps1`）与 sidecar 的 SEA asset 解包。
-6. 托盘/单实例/导航拦截的运行时行为。
-7. 代码签名与 SmartScreen 表现。
-
-复现步骤即上表 1–14。CI 在 Linux 上只跑 `npm test` 中的静态契约测试
-（`tests/desktop-package.test.js`）。
+Windows 实机仍需验证 WebView2 Cookie 写入、远程 capability、动态导航和 NSIS 安装包。

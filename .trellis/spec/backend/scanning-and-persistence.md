@@ -1,5 +1,12 @@
 # 扫描与持久化
 
+## 共享 watcher
+
+- `shared/trellis-watcher.js` 是目录过滤、递归监听、事件字段和 close/rebuild 的唯一实现。
+- 单机 `server/watcher.js` 只做兼容包装；桌面 sidecar 直接使用共享模块。
+- 团队服务端不得启动该 watcher 监听自己的项目工作副本。
+- 事件保留兼容字段 `relativePath`（相对 `.trellis`）和 `trellisPath`（相对仓库，含 `.trellis/`）。
+
 ## 扫描输入
 
 每个仓库的扫描根为 `.trellis/tasks`。只有包含 `task.json` 的任务目录成为任务；`archive/` 下任意嵌套层级的任务仍会被发现并标记为归档。

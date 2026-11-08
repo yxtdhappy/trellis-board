@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/11-08-team-realtime-task-sync/research/realtime-consistency-options.md","reason":"已确认的远端权威、备份覆盖、责任警告和文件级并发语义"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"服务端模块边界、SQLite 事务和 Worker 约束"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"Agent API、输入校验、路径和错误协议"}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"Trellis 扫描、缓存、文件监听和持久化约束"}
+{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"sidecar CLI、SEA 打包和 DPAPI 凭据约束"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"Board 轮询、状态更新和弹层交互"}
+{"file":".trellis/tasks/archive/2026-11/11-08-support-multi-team-board/design.md","reason":"多团队项目、Agent 绑定和权限契约"}

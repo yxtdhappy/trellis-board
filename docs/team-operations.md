@@ -68,8 +68,9 @@ HTTP 不提供首次注册接口，也没有公开注册页。首个管理员只
 
 ## 4. 反向代理
 
-代理必须保留原始 Host，限制请求体不超过 64 KiB，不记录 Cookie、Authorization、配对码和
-请求正文。Agent 通过 `GET /api/agent/events` 维持 SSE 长连接：该路径必须关闭响应缓冲
+代理必须保留原始 Host。普通接口请求体上限 64 KiB；`/api/agent/live-changes` 和
+`/api/agent/live-changes/preflight` 上限 9 MiB，以便接收单批最多 8 MiB 的实时任务文本。
+不得记录 Cookie、Authorization、配对码和请求正文。Agent 通过 `GET /api/agent/events` 维持 SSE 长连接：该路径必须关闭响应缓冲
 （`proxy_buffering off`），读超时设为不小于 30 分钟；其它接口读超时 60 秒即可。
 
 Nginx 示例：
@@ -99,6 +100,14 @@ server {
         proxy_cache off;
         proxy_read_timeout 1800s;
     }
+
+    location ~ ^/api/agent/live-changes(?:/preflight)?$ {
+        client_max_body_size 9m;
+        proxy_pass http://127.0.0.1:4317;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_http_version 1.1;
+    }
 }
 ```
 
@@ -123,73 +132,41 @@ server {
 服务端不会为每个任务创建独立分支或 worktree。所有任务写入同一项目共享分支，每个项目的
 写操作串行执行。非快进冲突最多安全重试 3 次，禁止强推。
 
-## 6. Windows Agent
+## 6. Windows 客户端与实时同步
 
-生成自包含分发包：
+双击安装后的 `trellis-board-client.exe`，冷启动只显示服务器地址、登录名和密码。登录成功后，
+Tauri 写入当前 Board origin 的 HttpOnly Session Cookie，并用同一账号建立或复用 DPAPI 设备凭证。
+`client.json` 只保存服务器地址。sidecar 数据位于 `%LOCALAPPDATA%\TrellisBoard\data\agent`。
 
-```powershell
-pwsh -File .\agent\package-agent.ps1
-```
+### 6.1 本地项目关联
 
-目标机器解压后运行：
+Board 项目栏通过窄权限 Tauri IPC 调用 sidecar 选择本地仓库。Rust 先复核当前页面与本次登录
+Board origin 同源，sidecar 再校验 Git 根、`.trellis`、当前分支和规范化 origin。账号属于目标
+启用团队即可关联；不再要求项目负责人审批。项目级 `read_only` 可以关联和接收内容，但不能上传。
 
-```powershell
-.\trellis-agent.cmd pair --server https://board.example.com --name $env:COMPUTERNAME
-.\trellis-agent.cmd bind --project <项目ID> --path D:\work\project --branch dev
-.\trellis-agent.cmd status
-.\trellis-agent.cmd service install
-.\trellis-agent.cmd service status
-```
+### 6.2 未提交任务实时同步
 
-项目负责人或系统管理员在 Web 中批准绑定后，Agent 才会收到同步命令。Agent 遇到 dirty
-工作区、错分支、sparse checkout、本地领先、远端分叉或 ignored 文件覆盖风险时拒绝同步。
+- 单机服务端继续使用共享 watcher 刷新本地 Board；团队服务端不监听自己的 `.trellis` 工作副本。
+- 桌面 sidecar 对已关联、approved、非 `read_only` 项目启动同一 watcher，允许上传未提交的 UTF-8
+  `task.json`、JSONL、Markdown、YAML 和 workspace journal。
+- `POST /api/agent/live-changes` 按项目单调 revision 和 `batchId` 幂等提交；路径、扩展名、摘要、
+  1 MiB 单文件、8 MiB 单批次、64 文件和每秒 5 批限制由服务端再校验。
+- 服务端把文件保存为实时覆盖层，复用 `scanRepository()` 推导任务，并向其他设备发送
+  `live.changed`。Board 每 750ms 查询 `/api/team/live-revision`，变化后立即重载。
+- 其他客户端收到事件后从本地 cursor 拉取最新文件；覆盖不同内容前把原文件备份到
+  `%LOCALAPPDATA%\TrellisBoard\data\agent\live-backups\<projectId>\<backupId>`。
+- 客户端控制窗口显示冲突与责任人警告。一键复原会把备份作为新 revision 上传；取消先备份再恢复
+  服务端或 Git 当前版本；继续推进保留原责任人并审计；接管任务显式改派。
+- Git 拉取只有在文件摘要已经一致时才清除实时覆盖行。Git 内容不同或更旧时保留实时版本，任务卡片
+  显示“实时未入 Git”，不会静默回退阶段。
 
-Agent 本地数据位于 `%LOCALAPPDATA%\TrellisBoardAgent`，服务端凭证使用 Windows DPAPI
-CurrentUser 加密。安装任务只监听当前用户登录启动，不创建系统级服务。
+Agent 遇到 dirty 工作区、错分支、sparse checkout、本地领先、远端分叉或 ignored 文件覆盖风险时
+仍拒绝 Git 同步。实时文件同步与 Git commit/push 是两条不同链路。
 
-### 6.1 桌面客户端注册（主路径：登录会话签发的一次性设备令牌）
+### 6.3 Windows 验证清单
 
-1. 用户在 Board 登录，进入“团队管理 → 设备”，点“生成桌面设备令牌”
-   （`POST /api/desktop/enroll-tokens`）。令牌 5 分钟有效、一次性、同一用户最多 5 个未使用；
-   服务端只保存 SHA-256 哈希，并写审计 `desktop_enroll_token_issued`。
-2. 令牌有两种交付方式：点“打开桌面客户端”走 `trellisboard://enroll?token=...&server=...` 深链，
-   或复制后在桌面客户端粘贴。深链由 `install.ps1` 注册到
-   `HKCU\Software\Classes\trellisboard`，NSIS 安装器目前不注册（见 `desktop/README.md`）。
-3. 客户端把令牌经 stdin 交给 sidecar，sidecar 调 `POST /api/agent/enroll-desktop` 兑换设备凭证；
-   令牌无效/过期/已用返回 401 `DESKTOP_TOKEN_INVALID`，账号被禁用返回 403；
-   兑换成功写审计 `desktop_device_enrolled`。凭证只进 DPAPI，`client.json` 只有 `serverUrl`。
-4. 兑换结果带回 `username` / `teamId`，与凭证一起写入 `data\agent\config.json`。
-5. 本地页随后进入 workspace 面板：选择目录 → 初始化 → 打开看板（见 6.2）。
-
-### 6.2 workspace 选择与初始化
-
-桌面端与 CLI 共用同一套初始化实现（`agent/workspace.js`）：
-
-```powershell
-# 桌面端：本地注册页“选择目录”→“初始化/修复” → sidecar workspace-init → initializeWorkspace
-# 等价 CLI（无桌面端或排查时）：
-node agent\cli.js workspace init --path D:\work\project --tools .opencode,.agents
-node agent\cli.js workspace status --path D:\work\project --json
-```
-
-- 用户名默认取注册时保存的 `config.json` 里的 `username`（即兑换回来的登录用户名），
-  可用 `--username` 覆盖；`.trellis/.developer` 由服务端账号用户名生成。
-- 模板来自服务端团队模板（Agent Bearer 授权，按团队隔离），缓存最近成功版本并通过 SHA-256 校验；
-  离线且无缓存时报 `WORKSPACE_OFFLINE`。
-- 工作区路径不接受符号链接，模板内的 `init_developer.py` 不会被执行，不自动 `git init`。
-- 冲突、离线、权限三类失败用不同退出码区分，便于脚本化排查。
-
-### 6.3 配对码（管理员兜底）
-
-配对码只在桌面端无法走登录会话时使用：管理员在 Web 生成配对码
-（`POST /api/team/pairing-codes`），用户在桌面本地页折叠区粘贴，sidecar 需显式带
-`--pairing-code`。配对码同样一次性、只存哈希；两条路径写盘与后续 SSE 共用同一份设备凭证。
-
-### 6.4 Windows 验证清单
-
-`desktop/README.md` 的「Windows 验证清单」是该流程的验收表（1–14 项 + 7c/7d/7e 三项 workspace
-注册后检查）。开发环境是 Linux，`cargo tauri build`、NSIS 产物、DPAPI、`trellisboard://`
-注册与深链转发、托盘/单实例这些只能在 Windows 上验证，不得在发布记录里写成“已通过”。
+`desktop/README.md` 的验证清单是发布验收表。开发机没有 Rust/MSVC 时，`cargo tauri build`、
+NSIS、WebView2 Cookie、真实 Tauri IPC 和控制窗口只能在 Windows 上验证，不得写成“已通过”。
 
 ## 7. 数据库升级与回滚
 
@@ -204,13 +181,13 @@ if (Test-Path data\board.sqlite-wal) { Copy-Item data\board.sqlite-wal "$backup\
 if (Test-Path data\board.sqlite-shm) { Copy-Item data\board.sqlite-shm "$backup\board.sqlite-shm" }
 ```
 
-本版本**不做旧数据库迁移**，schema v6 只对新建数据库生效。已有 `data/board.sqlite` 若不是
-v6，服务会拒绝启动并提示删除重建。升级步骤：
+v6 数据库会在启动事务中原地补齐实时覆盖层表与 `team_task_index.live_revision`，并更新为
+schema v7。v5 及更旧数据库仍拒绝启动。升级步骤：
 
-1. 停止服务并再次保留当前数据库、日志和配置。
-2. 备份并移走 `data/board.sqlite`、`data/board.sqlite-wal`、`data/board.sqlite-shm`。
-3. 重新启动服务，让空库创建 v6 schema。
-4. 运行 `node server/team/cli.js status`。
+1. 停止服务并保留当前数据库、日志和配置备份。
+2. 在维护窗口启动新版本，让 v6 原地升级为 v7。
+3. 运行 `node server/team/cli.js status`，确认 schema v7、WAL 和 integrity。
+4. 检查现有项目、任务索引、Agent 绑定和登录；如有异常，停止服务并恢复升级前备份。
 
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
@@ -218,8 +195,7 @@ $env:TRELLIS_TEAM_PUBLIC_URL = 'https://board.example.com'
 node server/team/cli.js status
 ```
 
-结果必须显示 `schemaVersion=6`、`journalMode=wal` 和 `integrity=ok`。旧库中的账号、项目、
-审计和任务索引不会自动回填，需要由系统管理员重新创建团队、分配成员并接入项目。
+结果必须显示 `schemaVersion=7`、`journalMode=wal` 和 `integrity=ok`。
 
 回滚步骤：
 
@@ -236,6 +212,9 @@ node server/team/cli.js status
 - 每日至少备份一次数据库；升级、修复项目或批量操作前额外备份。
 - 最稳妥的备份窗口是停止服务后复制 `data/board.sqlite*`。
 - 项目工作副本不是唯一事实源，任务提交已推送到项目远端；数据库还保存账号、接受状态、审计和索引。
+- 数据库还保存尚未进入 Git 的实时文件覆盖层与 revision，备份时不能只保存 Git 远端。
+- 客户端实时冲突备份位于 `%LOCALAPPDATA%\TrellisBoard\data\agent\live-backups`，默认保留 30 天，
+  每个任务至少保留最近 20 份。
 - 恢复后运行 `node server/team/cli.js status`，再检查登录、项目状态、待接受任务和 Agent 在线状态。
 - 不使用 `git reset --hard`、强推或手工改写远端历史修复 Board。
 
@@ -250,8 +229,11 @@ node server/team/cli.js status
 `git status`、当前分支和远端，再按 Web 中 operation ID 与提交 trailer 恢复。无法确认时保持
 项目阻塞，不得强推。
 
-Agent 离线：检查当前用户计划任务、`%LOCALAPPDATA%\TrellisBoardAgent\logs\agent.log`、
+Agent 离线：检查当前用户计划任务、`%LOCALAPPDATA%\TrellisBoard\data\agent\logs\agent.log`、
 证书链、DNS 和反向代理 SSE 缓冲或超时（`/api/agent/events` 必须关闭 buffering）。
+
+实时同步不收敛：检查项目实时 revision、`project_live_file` 摘要与 Git 文件是否一致；不要手工删除
+覆盖行迫使任务回退。先在客户端处理冲突/备份，再提交并推送对应 `.trellis` 文件。
 
 `REMOTE_MISMATCH`：确认本地 `origin` 与项目远端是同一语义地址；不要在 HTTPS URL 中加入
 账号或令牌。
@@ -263,11 +245,10 @@ Agent 离线：检查当前用户计划任务、`%LOCALAPPDATA%\TrellisBoardAgen
 
 - `npm test` 和全部 JS 语法检查通过。
 - standalone 和 team 模式均能真实启动、访问健康接口并正常停止。
-- 空库创建 v6 schema 成功；旧库拒绝启动并提示重建，回滚演练完成。
+- 空库创建 v7 schema 成功；v6 原地升级成功；v5 及旧库拒绝启动，回滚演练完成。
 - 临时 Git 远端完成创建/委派、push、接受和 Agent `ff-only` 同步。
-- 桌面端链路在 Windows 上跑通：登录 → 生成设备令牌 → 深链/粘贴 → 兑换凭证 →
-  workspace 初始化 → 打开看板；同一令牌二次兑换被拒（见 6.1 / 6.2 与
-  `desktop/README.md` 的 Windows 验证清单）。
+- 桌面端链路在 Windows 上跑通：登录 → Board → 关联项目 → 实时修改其他客户端可见 →
+  冲突备份/复原和责任警告/接管可用（见 6.1 / 6.2 与 `desktop/README.md`）。
 - dirty、错分支、版本冲突、push 失败和 repair 分支均有可恢复结果。
 - Agent 包不包含凭证、数据库、日志或开发机绝对路径。
 - 容量基线达标，反向代理和日志未泄露敏感信息。
