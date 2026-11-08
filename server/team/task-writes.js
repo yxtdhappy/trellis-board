@@ -792,7 +792,7 @@ export function createTaskWriteService({
       throw teamError(409, ERROR_CODES.CONFLICT, "任务执行身份冲突，请刷新后重试");
     }
     const taskJsonPath = path.join(project.path, resolved.task.relativeDir, "task.json");
-    if (fileVersion(taskJsonPath) !== expectedTaskVersion || resolved.task.archived) {
+    if (resolved.task.archived || fileVersion(taskJsonPath) !== expectedTaskVersion) {
       throw teamError(
         409,
         ERROR_CODES.VERSION_CONFLICT,

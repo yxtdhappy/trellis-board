@@ -42,6 +42,11 @@ export function normalizeAuditEvent(payload: unknown): Record<string, unknown>
 export function canWriteProject(project: unknown, user: unknown): boolean
 export function canManageProject(project: unknown, user: unknown): boolean
 export function assignableProjectMembers(project: unknown): unknown[]
+export function assignmentActionState(
+  task: unknown,
+  assignee: unknown,
+  assignees?: unknown[],
+): { readOnly: boolean; canSubmit: boolean }
 export function buildTaskQuery(
   filters: Record<string, unknown>,
   options?: { limit?: number; cursor?: string | null },

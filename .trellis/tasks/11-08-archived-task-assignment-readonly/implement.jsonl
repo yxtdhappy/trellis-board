@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"统一页面写操作、个人版 HTTP 文件写入和团队版 Git 写入链路的边界与错误契约"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"负责人更新接口必须校验白名单仓库、任务根路径、归档状态，并继续使用临时文件原子写回"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"任务详情弹层应直接使用任务归档状态控制只读交互，写操作仍通过现有 Board action 处理"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"确保禁用的负责人选择与派发按钮符合现有 React、可访问性和构建约束"}

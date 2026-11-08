@@ -179,7 +179,7 @@ assignees={project?.workspaceMembers ?? project?.members ?? allAssignees}
 
 ### 更新负责人
 
-任务目录解析为 `.trellis/tasks` 内的真实路径，并确认没有越出根目录。读取 `task.json`、只替换 `assignee`，再用临时文件加 rename 原子写回。
+任务目录解析为 `.trellis/tasks` 内的真实路径，并确认没有越出根目录。`.trellis/tasks/archive` 下的任意后代任务都只读，包括目录名以 `..` 开头的路径；读取任何 `task.json` 前必须先拒绝。读取非归档任务的 `task.json` 后只替换 `assignee`，再用临时文件加 rename 原子写回。
 
 ### 记录人工阶段
 
@@ -210,6 +210,7 @@ assignees={project?.workspaceMembers ?? project?.members ?? allAssignees}
 ## 路径安全
 
 - 仓库路径先 `path.resolve()`，再做白名单匹配。
+- 判断目录包含关系必须使用 `path.relative()` 的完整路径段：只有 `..` 或 `..${path.sep}` 前缀才表示父级之外，不能把所有 `..` 字符串前缀都当成越界。
 - 消费任务路径的接口必须以目标 `.trellis/tasks` 为父根，不能靠字符串前缀误判兄弟目录；详情、负责人、计划字段和人工阶段接口都必须复用同一运行时校验。
 - 静态资源把 URL 映射到 `public/` 后检查最终绝对路径仍在 `public/` 内。
 - 浏览器传入的名称、slug、负责人和阶段都要做运行时字符串/枚举校验；不能因前端当前只发送相对路径就省略后端路径校验。

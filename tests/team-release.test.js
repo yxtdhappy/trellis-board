@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -367,6 +368,70 @@ test("真实 Git 仓库完成团队任务创建、推送、接受和 Agent 快�
     `${recoveredHead}:${createdTaskDir}/task.json`
   ]).stdout);
   assert.equal(recoveredTask.assignee, "bob");
+
+  git(local, ["fetch", "origin", "dev"]);
+  git(local, ["merge", "--ff-only", "FETCH_HEAD"]);
+  const archivedTaskDir = ".trellis/tasks/archive/2026-11/11-08-archived";
+  const archivedTaskFile = path.join(local, archivedTaskDir, "task.json");
+  write(archivedTaskFile, `${JSON.stringify({
+    id: "archived-task",
+    title: "Archived assignment guard",
+    status: "completed",
+    priority: "P2",
+    assignee: "alice",
+    creator: "alice"
+  }, null, 2)}\n`);
+  const archivedTaskContent = fs.readFileSync(archivedTaskFile, "utf8");
+  const archivedTaskVersion = crypto.createHash("sha256")
+    .update(archivedTaskContent)
+    .digest("hex");
+  git(local, ["add", "--", archivedTaskDir]);
+  git(local, [
+    "-c", "user.name=Release Test",
+    "-c", "user.email=release-test@example.invalid",
+    "commit",
+    "-m",
+    "seed archived task"
+  ]);
+  git(local, ["push", "origin", "dev"]);
+  const archivedLocalHead = git(local, ["rev-parse", "HEAD"]).stdout.trim();
+  const archivedLocalStatus = git(local, [
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all"
+  ]).stdout;
+  const archivedRemoteHead = git(bare, ["rev-parse", "dev"]).stdout.trim();
+
+  const archivedIdempotencyKey = "release-archived-0001";
+  const archivedAssignment = await request(runtime, "/api/tasks/assign", {
+    method: "POST",
+    cookie: aliceCookie,
+    body: {
+      executionTaskKey: `${projectId}::archived-task`,
+      taskPath: archivedTaskDir,
+      assigneeUserId: bob.id,
+      expectedTaskVersion: archivedTaskVersion,
+      idempotencyKey: archivedIdempotencyKey
+    }
+  });
+  assert.equal(archivedAssignment.status, 409);
+  assert.equal(archivedAssignment.body.code, "VERSION_CONFLICT");
+  assert.match(archivedAssignment.body.error, /已归档/);
+  assert.equal(git(local, ["rev-parse", "HEAD"]).stdout.trim(), archivedLocalHead);
+  assert.equal(
+    git(local, ["status", "--porcelain=v1", "--untracked-files=all"]).stdout,
+    archivedLocalStatus
+  );
+  assert.equal(git(bare, ["rev-parse", "dev"]).stdout.trim(), archivedRemoteHead);
+  assert.equal(fs.readFileSync(archivedTaskFile, "utf8"), archivedTaskContent);
+  assert.equal(
+    runtime.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM git_operation
+      WHERE project_id = ? AND idempotency_key = ?
+    `).get(projectId, archivedIdempotencyKey).count,
+    0
+  );
 });
 
 function request(runtime, pathname, {

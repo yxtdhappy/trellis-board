@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { escapeHtml } from "../web/src/lib/dom.js";
 import {
+  assignmentActionState,
   assignableProjectMembers,
   canWriteProject,
   buildTaskQuery,
@@ -105,6 +106,21 @@ test("团队负责人候选只包含 active 的 lead/member developer", () => {
     ]
   });
   assert.deepEqual(members.map((member) => member.trellisDevId), ["dev-lead", "dev-member"]);
+});
+
+test("归档任务禁用派发选择并阻止提交", () => {
+  assert.deepEqual(
+    assignmentActionState({ archived: false }, "dev-a", ["dev-a"]),
+    { readOnly: false, canSubmit: true }
+  );
+  assert.deepEqual(
+    assignmentActionState({ archived: true }, "dev-a", ["dev-a"]),
+    { readOnly: true, canSubmit: false }
+  );
+  assert.deepEqual(
+    assignmentActionState(null, "dev-a", ["dev-a"]),
+    { readOnly: false, canSubmit: false }
+  );
 });
 
 test("assignment 兼容下划线响应并保留条件更新版本", () => {

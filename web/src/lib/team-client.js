@@ -349,6 +349,15 @@ export function assignableProjectMembers(project = {}) {
   );
 }
 
+export function assignmentActionState(task = {}, assignee, assignees = []) {
+  const readOnly = Boolean(task?.archived);
+  const candidates = Array.isArray(assignees) ? assignees : [];
+  return {
+    readOnly,
+    canSubmit: Boolean(task) && !readOnly && Boolean(assignee) && candidates.includes(assignee)
+  };
+}
+
 export function buildTaskQuery(filters = {}, { limit = TEAM_PAGE_LIMIT, cursor = null } = {}) {
   const params = new URLSearchParams();
   const add = (key, value) => {

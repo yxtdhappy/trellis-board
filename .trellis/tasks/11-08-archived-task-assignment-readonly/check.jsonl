@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查归档只读约束是否同时覆盖共用前端入口、个人版文件写入和团队版 Git 写入"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"校验新增分支具备 Node 测试，并证明归档任务在任何文件或 Git 写入前失败"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"校验弹层禁用状态、候选负责人保持可读以及写操作仍集中在现有 hook action"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"校验 TypeScript 构建、可访问性和不读取源码文本的行为测试边界"}

@@ -20,7 +20,12 @@ function cleanText(value, label, maxLength) {
 
 function isPathInside(target, parent) {
   const relative = path.relative(parent, target);
-  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  return (
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
 }
 
 function runTaskPython(repoPath, args) {
@@ -125,6 +130,9 @@ export async function assignTask(input, { listRepositories = getRepositories } =
   const tasksRoot = path.resolve(repo.path, ".trellis", "tasks");
   if (!isPathInside(fullTaskPath, tasksRoot)) {
     throw new Error("任务目录必须在目标仓库的 .trellis/tasks 下");
+  }
+  if (isPathInside(fullTaskPath, path.join(tasksRoot, "archive"))) {
+    throw new Error("归档任务只读，不能更新派发");
   }
 
   const taskJsonPath = path.join(fullTaskPath, "task.json");
