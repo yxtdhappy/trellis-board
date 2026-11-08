@@ -346,3 +346,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 14: 精简概览并强化任务详情操作
+<!-- trellis-session: v=2 fp=c55617dcde328aa7 -->
+
+**Date**: 2026-11-08
+**Task**: 精简概览并强化任务详情操作
+**Branch**: `codex/team-board`
+
+### Summary
+
+移除概览团队节奏卡片，强化编辑计划按钮并删除任务详情撤销入口；完成构建、浏览器和测试复核。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b8016ab` | fix(web): 精简概览并强化计划编辑入口 |
+
+### Status
+
+[OK] **Completed**
