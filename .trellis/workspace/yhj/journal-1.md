@@ -435,3 +435,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 18: 多团队任务看板与设备授权
+<!-- trellis-session: v=2 fp=0f52b921ea211070 -->
+
+**Date**: 2026-11-08
+**Task**: 多团队任务看板与设备授权
+**Branch**: `codex/team-board`
+
+### Summary
+
+移除活动团队 Session 依赖，默认聚合全部授权团队；任务查询、保存视图与 WIP 支持 all/A/B 独立作用域；管理台改为显式团队范围；设备与 Agent 支持跨团队绑定及按团队撤销；补充服务端、前端、桌面端测试与规范，最终测试 334 通过、5 跳过，构建通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `12388ac` | feat(team): 支持多团队任务看板与设备授权 |
+
+### Status
+
+[OK] **Completed**

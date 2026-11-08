@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-11-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~437 | Active |
+| `journal-1.md` | ~459 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-11-08 | 多团队任务看板与设备授权 | `12388ac` | `codex/team-board` |
 | 17 | 2026-11-08 | 修复桌面客户端 SEA sidecar 启动与 NSIS CI | `9d4b98e`, `5026ebf` | `codex/team-board` |
 | 16 | 2026-11-08 | 禁止归档任务更新派发 | `c356fa1` | `codex/team-board` |
 | 15 | 2026-11-08 | 完善开工条件与完成条件检查 | `23fa790` | `codex/team-board` |
