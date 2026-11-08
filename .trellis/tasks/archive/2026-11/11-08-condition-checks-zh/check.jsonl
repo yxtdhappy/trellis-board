@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查风险只影响展示、不改变阶段门禁，并覆盖后端分支测试。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查中文文案、类型、可访问性、测试和浏览器验收。"}

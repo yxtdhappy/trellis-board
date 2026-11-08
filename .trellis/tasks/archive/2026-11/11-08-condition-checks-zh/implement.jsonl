@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "约束列表轻量摘要、详情完整缺口与前后端数据流边界。"}
+{"file": ".trellis/spec/backend/scanning-and-persistence.md", "reason": "约束风险派生、扫描证据、列表与详情投影契约。"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "约束任务详情按需请求详情接口并使用现有状态流。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "约束动态布局、真实浏览器验收、无硬编码颜色和窄屏适配。"}
