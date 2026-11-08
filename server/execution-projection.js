@@ -14,14 +14,6 @@ import {
 const DEFAULT_DUE_SOON_DAYS = 3;
 const DEFAULT_STALE_DAYS = 5;
 const DEFAULT_EXECUTION_WIP_LIMIT = 2;
-const PLANNING_STAGES = new Set([
-  "prd",
-  "research",
-  "design",
-  "implementPlan",
-  "context",
-  "review"
-]);
 const CLOSEOUT_STAGES = new Set([
   "implement",
   "check",
@@ -130,7 +122,7 @@ export function deriveTaskRisk(task, {
   const summary = task?.summary || {};
   const dorMissing = [];
   const dodMissing = [];
-  if (!task.archived && PLANNING_STAGES.has(task.derivedStage)) {
+  if (!task.archived) {
     const prdMeaningful = summary.prdMeaningful ??
       Boolean(stageOf(task, "prd")?.complete);
     const hasAcceptance = !Number.isInteger(summary.prdAcceptanceCount) ||

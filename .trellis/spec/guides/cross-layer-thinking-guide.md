@@ -70,8 +70,9 @@ public/app.js api()
 
 风险与依赖字段的投影边界：
 
-- 列表只返回 `blockedByCount`、`blocksCount`、活动阻断时长、WIP 状态和 DoR/DoD 缺口数量。
-- 详情才返回活动 `blockedBy` / `blocks`、已结束 `resolvedBlockedBy` / `resolvedBlocks`、原因、创建人、固定区间时长和 DoR/DoD 缺口数组。
+- 列表只返回 `blockedByCount`、`blocksCount`、活动阻断时长、WIP 状态、开工条件缺口数量和完成条件缺口数量。
+- 详情才返回活动 `blockedBy` / `blocks`、已结束 `resolvedBlockedBy` / `resolvedBlocks`、原因、创建人、固定区间时长，以及开工条件和完成条件的完整缺口数组。
+- 未归档任务在所有流程阶段都要计算开工条件缺口；进入实现后仍要把未补齐项显示为返工风险。完成条件只在实现、检查和收尾阶段计算。
 - 列表证据摘要必须保留 PRD 验收计数、Design 有效性和 Implement 存在性，供风险派生使用；产物正文仍然清空。
 
 ### 依赖与流动
@@ -79,7 +80,7 @@ public/app.js api()
 - A blocked by B 表示 `blocked_task_key = A`、`blocker_task_key = B`；A 的 `blockedBy` 与 B 的 `blocks` 由同一行双向投影。
 - 创建和解除依赖必须与 `task_event` 同事务。环检测只读取活动边；解除后保留行、创建时间和解除时间，后续可以创建新的活动边。
 - `flow` 和任务风险摘要由执行投影实时叠加，不属于原始扫描缓存。依赖或 WIP 写入后，前端必须重新请求 `/api/board` 和 `/api/task`，不能只改本地状态。
-- `executionWipLimit` 存在 `board_state`，范围 `1`–`9`，默认 `2`；它和 DoR/DoD 一样只提醒，不参与阶段写入门禁。
+- `executionWipLimit` 存在 `board_state`，范围 `1`–`9`，默认 `2`；它和开工、完成条件一样只提醒，不参与阶段写入门禁。
 - 保存视图 `blocked` 只接受 `any`、`blocked`、`unblocked`；缺失字段按 `any` 兼容旧视图。
 
 ### HTTP 错误

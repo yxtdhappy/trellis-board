@@ -34,7 +34,13 @@ export type TaskExecution = {
   isBlocked?: boolean
   blockedByCount?: number
   blocksCount?: number
-  risk?: { dorMissingCount?: number; dodMissingCount?: number; wipState?: string }
+  risk?: {
+    dorMissingCount?: number
+    dodMissingCount?: number
+    dorMissing?: string[]
+    dodMissing?: string[]
+    wipState?: string
+  }
   lastActivityAt?: string | null
   blockedBy?: DependencyRecord[]
   blocks?: DependencyRecord[]

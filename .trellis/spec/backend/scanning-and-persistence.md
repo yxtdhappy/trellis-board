@@ -86,10 +86,11 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 - A blocked by B 固定写为 `blocked_task_key = A`、`blocker_task_key = B`；B 的 `blocks` 由同一行反向生成。
 - 活动边 `(blocker_task_key, blocked_task_key)` 唯一；解除只写 `resolved_at`，不删除行。创建/解除时间与对应 `task_event` 同事务。
-- 列表只返回 `blockedByCount`、`blocksCount`、活动阻断时长、WIP 状态和 DoR/DoD 缺口数量。
+- 列表只返回 `blockedByCount`、`blocksCount`、活动阻断时长、WIP 状态、开工条件缺口数量和完成条件缺口数量。
 - 详情返回活动 `blockedBy` / `blocks`，以及已结束 `resolvedBlockedBy` / `resolvedBlocks`；历史项必须带 `createdAt`、`resolvedAt` 和区间 `durationMs`。
 - 当前 WIP 指未归档、身份有效且 `derivedStage === "implement"` 的任务数。上限存 `board_state.executionWipLimit`，默认 `2`、允许 `1`–`9`，只提醒。
-- DoD 不把归档扫描补出的 `archive-gap` 阶段当作实施或检查报告；归档任务仍要求真实报告、验收状态和 commit 证据。
+- 开工条件对未归档任务在所有阶段计算；进入实现后仍可返回尚未补齐的规划证据。归档任务不再返回开工条件缺口。
+- 完成条件不把归档扫描补出的 `archive-gap` 阶段当作实施或检查报告；归档任务仍要求真实报告、验收状态和 commit 证据。
 - 保存视图 `blocked` 只接受 `any | blocked | unblocked`；缺失字段按 `any`。
 
 #### 4. Validation & Error Matrix
@@ -114,7 +115,7 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 - `database.test.js`：新库 v3、v1/v2 升级、源版本备份、失败回滚和大于 v3 拒绝。
 - `execution-store.test.js`：缺失、自引用、重复、原因边界、二/三节点环、创建/解除事件回滚、重开和重新创建。
-- `execution-projection.test.js`：列表不带完整数组；详情同时返回活动与已结束双向历史；解除区间时长使用 `resolvedAt - createdAt`；DoR/DoD 不改变阶段完成状态。
+- `execution-projection.test.js`：列表不带完整数组；详情同时返回活动与已结束双向历史；解除区间时长使用 `resolvedAt - createdAt`；开工、完成条件不改变阶段完成状态。
 - 真实 HTTP：失败前后依赖与事件计数一致；循环错误含标题闭环。
 - 浏览器：创建/解除后刷新一致，解除历史可见，860px 无页面级横向溢出。
 
@@ -142,6 +143,67 @@ if (dependency.resolvedAt) {
 ```
 
 只记录“曾经解除过”不足以解释阻断成本；历史投影必须保留双方、原因和固定结束时长。
+
+#### Scenario: 开工条件与完成条件投影
+
+##### 1. Scope / Trigger
+
+- Trigger：修改风险派生、`/api/board` 风险摘要、`/api/task` 缺口数组或任务详情的条件检查布局。
+
+##### 2. Signatures
+
+- `deriveTaskRisk(task)` 返回 `{ wipState, dorMissing, dodMissing }`。
+- `/api/board` 的任务 `execution.risk` 只返回 `dorMissingCount`、`dodMissingCount` 和 `wipState`。
+- `/api/task` 除数量外还返回 `dorMissing: string[]` 与 `dodMissing: string[]`。
+
+##### 3. Contracts
+
+- 未归档任务无论处于规划、实现、检查还是收尾阶段，都必须计算 `dorMissing`；归档任务返回空数组。
+- `dodMissing` 只在归档或收尾阶段计算。
+- 列表不得返回完整缺口数组；详情可以返回数组，但不得因此携带产物正文或事件正文。
+- 前端用户文案统一使用“开工条件”和“完成条件”，内部字段名保持兼容。
+- 前端映射未知缺口文本时必须保留原文本，并显示“其他 / 补齐证据”，不能静默丢弃。
+
+##### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 详情尚未加载，只有数量 | 显示读取中，不把未知数量当成“全部满足” |
+| 详情加载失败且没有数组 | 显示“条件明细暂不可用”并禁用“查看明细” |
+| 缺口文本没有前端匹配规则 | 归入“其他”，保留原文本和兜底建议 |
+| 归档任务 | 不显示开工条件，只显示完成条件结果 |
+| 实现中已有开工缺口 | 显示缺口数量，并允许在详情内联展开 |
+
+##### 5. Good/Base/Bad Cases
+
+- Good：实现中任务缺少设计和实施计划时，列表显示“开工条件仍缺 2”，详情展开后显示对应阶段、证据和下一步。
+- Base：规划任务只突出开工条件，完成条件显示“暂不适用”。
+- Bad：进入实现后把开工缺口清零，导致带着准入问题推进却不可见。
+- Bad：在列表响应中包含完整缺口数组、阶段证据或产物正文。
+
+##### 6. Tests Required
+
+- `execution-projection.test.js`：规划、实现、检查和归档任务的开工条件计算，以及完成条件边界。
+- `condition-checks.test.js`：全部已知缺口文本、动态验收计数、阶段映射、阶段标签和未知文本兜底。
+- 浏览器：1440px、1024px、860px、浅色和深色；实现中“查看明细”内联展开，13 阶段证据保持可见。
+
+##### 7. Wrong vs Correct
+
+Wrong：
+
+```js
+if (!task.archived && PLANNING_STAGES.has(task.derivedStage)) {
+  // 开始实现后不再计算开工缺口
+}
+```
+
+Correct：
+
+```js
+if (!task.archived) {
+  // 开工缺口在所有活动阶段持续可见
+}
+```
 
 扫描缓存中的 JSON 损坏或 schema 版本不匹配都视为 cache miss。SQLite 打开、schema、迁移和运行期查询失败是致命错误，不回退到旧 JSON。
 
@@ -270,7 +332,7 @@ withTransaction(db, () => {
 - [ ] 输出结构不兼容时更新 `SCAN_SCHEMA_VERSION`。
 - [ ] 列表摘要保留证据计数和 Design 有效性，但不泄漏完整依赖数组、事件或产物正文。
 - [ ] 依赖创建/解除与事件同事务，所有失败场景不产生部分写入。
-- [ ] 列表只返回风险摘要，详情才返回完整 `blockedBy`、`blocks`、原因、时长和 DoR/DoD 明细。
+- [ ] 列表只返回风险摘要，详情才返回完整 `blockedBy`、`blocks`、原因、时长和开工、完成条件明细。
 - [ ] 首次追踪只建立基线，不补造迁移前阶段事件。
 - [ ] 身份冲突清除后不会从冲突快照补写虚假阶段变化。
 - [ ] 删除或重命名任务后缓存能清理旧项。

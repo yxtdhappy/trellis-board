@@ -81,7 +81,7 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
         />
         <Signal label="当前被阻断" value={blocked} caption="等待外部条件" tone={blocked ? 'destructive' : 'muted'} />
         <Signal label="阻断已解除" value={unblocked} caption="可以立即推进" tone={unblocked ? 'success' : 'muted'} />
-        <Signal label="DoR·DoD 缺口" value={gaps} caption="进入实现前先补齐" tone={gaps ? 'warning' : 'muted'} />
+        <Signal label="条件缺口" value={gaps} caption="按当前阶段检查" tone={gaps ? 'warning' : 'muted'} />
       </div>
 
       <p className="text-[11px] text-muted-foreground">

@@ -17,9 +17,11 @@ import type { Stage } from '../task-view'
 import { dueLabel, isAttention, attentionReasons, nextStage, stageSourceLabel, taskProgress, taskTags } from '../task-view'
 import type { BoardTask, DependencyRecord } from '../task-view'
 import { StageTape } from '../StageTape'
+import { ConditionChecks } from '../ConditionChecks'
 import { toast } from 'sonner'
 import { SelectField } from '../SelectField'
 import { priorityTone, stageTone, statusLabel, statusTone } from '../tone'
+import { assignmentActionState } from '@/lib/team-client.js'
 
 const ARTIFACTS = [
   { key: 'prd', label: 'PRD', hint: '需求、范围与验收标准' },
@@ -179,7 +181,10 @@ export function TaskDetailDialog({
   const progress = current ? taskProgress(current) : null
   const stage = current ? nextStage(current) : null
   const artifacts = readArtifacts(current)
-  const canAssign = Boolean(current && assignee && assignees.includes(assignee))
+  const {
+    readOnly: assignmentReadOnly,
+    canSubmit: canAssign,
+  } = assignmentActionState(current, assignee, assignees)
 
   async function reloadDetail() {
     if (!task) return
@@ -253,7 +258,7 @@ export function TaskDetailDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[88dvh] overflow-y-auto sm:max-w-[1000px]">
+        <DialogContent className="max-h-[88dvh] overflow-y-auto sm:max-w-[1240px]">
           <DialogHeader>
             <DialogTitle className="pr-8 text-base">{current?.title || '任务详情'}</DialogTitle>
             <DialogDescription>
@@ -311,6 +316,12 @@ export function TaskDetailDialog({
                   {stage?.label} · {progress?.percent}% · {progress?.done}/{progress?.total} 必需阶段
                 </span>
               </div>
+
+              <ConditionChecks
+                key={`${current.taskKey}:${current.derivedStage}`}
+                task={current}
+                loading={loading}
+              />
 
               <section className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2">
@@ -496,6 +507,7 @@ export function TaskDetailDialog({
                 options={assignees.map((name) => ({ value: name, label: name }))}
                 onChange={setAssignee}
                 ariaLabel="负责人"
+                disabled={assignmentReadOnly}
               />
               <Button
                 size="sm"

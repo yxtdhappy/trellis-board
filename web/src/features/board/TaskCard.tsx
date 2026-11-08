@@ -1,5 +1,6 @@
 import { Copy } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { conditionBadges } from '@/lib/condition-checks.js'
 import { toast } from 'sonner'
 import {
   attentionReasons,
@@ -25,7 +26,7 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
   const progress = taskProgress(task)
   const next = nextStage(task)
   const tags = taskTags(task)
-  const risks = task.execution?.risk
+  const conditions = conditionBadges(task)
   const attention = attentionReasons(task).slice(0, 3)
 
   async function copyName() {
@@ -78,12 +79,11 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
             {tag}
           </span>
         ))}
-        {risks?.dorMissingCount ? (
-          <span className="rounded-sm bg-muted px-1 py-px text-[9.5px]">DoR 缺 {risks.dorMissingCount}</span>
-        ) : null}
-        {risks?.dodMissingCount ? (
-          <span className="rounded-sm bg-muted px-1 py-px text-[9.5px]">DoD 缺 {risks.dodMissingCount}</span>
-        ) : null}
+        {conditions.map((condition) => (
+          <span key={condition.kind} className="rounded-sm bg-muted px-1 py-px text-[9.5px]">
+            {condition.label}
+          </span>
+        ))}
       </div>
 
       <StageTape stages={task.stages} current={task.derivedStage} />

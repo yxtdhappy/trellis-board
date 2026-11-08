@@ -313,6 +313,37 @@ test("DoR 和 DoD 缺口从现有阶段证据派生且不修改阶段完成状�
     "PRD 的 Requirements 与 Acceptance Criteria"
   ]);
 
+  const implementing = {
+    archived: false,
+    derivedStage: "implement",
+    summary: {
+      prdMeaningful: true,
+      prdAcceptanceCount: 1,
+      hasDesign: false,
+      designMeaningful: false,
+      hasImplement: false
+    },
+    stages: [
+      { id: "prd", complete: true },
+      { id: "design", complete: false },
+      { id: "implementPlan", complete: false },
+      { id: "review", complete: true }
+    ]
+  };
+  assert.deepEqual(deriveTaskRisk(implementing).dorMissing, [
+    "非骨架的 Design 文档",
+    "Implement 执行计划"
+  ]);
+
+  const archivedWithPlanningGaps = {
+    ...implementing,
+    archived: true
+  };
+  assert.deepEqual(
+    deriveTaskRisk(archivedWithPlanningGaps).dorMissing,
+    []
+  );
+
   const closeout = {
     archived: false,
     derivedStage: "check",
