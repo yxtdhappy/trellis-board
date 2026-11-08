@@ -1,13 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { AgentError, AGENT_ERROR_CODE } from "./protocol.js";
 import { buildEnvironment, ProcessError, runProcess } from "./process.js";
 
 const CREDENTIAL_SCHEMA_VERSION = 1;
 const CREDENTIAL_ALGORITHM = "WindowsDPAPI-CurrentUser";
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DPAPI_SCRIPT_FILE = path.join(HERE, "windows", "dpapi.ps1");
 
 function fixedPowerShellPath() {
   const systemRoot = process.env.SystemRoot || "C:\\Windows";
@@ -31,9 +28,12 @@ function classifyPowerShellFailure(error) {
 
 export class DpapiCredentialStore {
   constructor(store, options = {}) {
+    if (typeof options.scriptFile !== "string" || !options.scriptFile.trim()) {
+      throw new TypeError("DpapiCredentialStore 需要显式 scriptFile");
+    }
     this.store = store;
     this.powerShellPath = options.powerShellPath || fixedPowerShellPath();
-    this.scriptFile = options.scriptFile || DPAPI_SCRIPT_FILE;
+    this.scriptFile = options.scriptFile;
   }
 
   async _execute(action, input) {

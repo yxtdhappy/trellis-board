@@ -41,6 +41,8 @@ if ($nodeArch -ne 'x64') {
 }
 
 $requiredFiles = @(
+  (Join-Path $sidecarRoot 'cli.js'),
+  (Join-Path $sidecarRoot 'sea-entry.js'),
   (Join-Path $sidecarRoot 'main.js'),
   (Join-Path $sidecarRoot 'desktop-device.js'),
   (Join-Path $sidecarRoot 'bundle.mjs'),

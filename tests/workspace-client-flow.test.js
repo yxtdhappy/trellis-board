@@ -348,7 +348,7 @@ test("sidecar 命令在未注册时返回结构化配置错误", (t) => {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const result = spawnSync(
     process.execPath,
-    ["desktop/sidecar/main.js", "workspace-init", "--path", path.join(root, "workspace")],
+    ["desktop/sidecar/cli.js", "workspace-init", "--path", path.join(root, "workspace")],
     {
       cwd: ROOT,
       encoding: "utf8",

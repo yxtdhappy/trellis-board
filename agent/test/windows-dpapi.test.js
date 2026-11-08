@@ -3,13 +3,21 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ConfigStore } from "../config-store.js";
 import { DpapiCredentialStore } from "../credential-store.js";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const DPAPI_SCRIPT_FILE = path.join(HERE, "..", "windows", "dpapi.ps1");
+
+test("DPAPI 存储要求显式脚本路径", () => {
+  assert.throws(() => new DpapiCredentialStore({}), /scriptFile/);
+});
 
 test("Windows DPAPI CurrentUser 加密凭证且不写明文", { skip: process.platform !== "win32" }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-agent-dpapi-"));
   const store = new ConfigStore(root, { secureDirectory: false });
-  const credentials = new DpapiCredentialStore(store);
+  const credentials = new DpapiCredentialStore(store, { scriptFile: DPAPI_SCRIPT_FILE });
   const plaintext = `agent-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
     await credentials.selfTest();

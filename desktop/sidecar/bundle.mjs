@@ -4,11 +4,8 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..", "..");
-const ENTRY = path.join(HERE, "main.js");
+const ENTRY = path.join(HERE, "sea-entry.js");
 const DPAPI_SCRIPT = path.join(REPO_ROOT, "agent", "windows", "dpapi.ps1");
-// SEA 没有可解析的模块 URL；给 bundle 一个固定哨兵，避免 agent/index.js 的
-// "直接运行" 守卫在 SEA 中误触发。
-const BUNDLE_MODULE_URL = "file:///trellis-sidecar/trellis-agent-bundle.cjs";
 
 export function createSeaConfig({ bundleFile, blobFile, dpapiScript }) {
   return {
@@ -53,11 +50,6 @@ export async function bundleSidecar(options = {}) {
     target: "node24",
     sourcemap: false,
     legalComments: "none",
-    define: {
-      "import.meta.url": "__trellisBundleUrl",
-      __TRELLIS_SIDECAR_BUNDLE__: "true",
-    },
-    banner: { js: `const __trellisBundleUrl = ${JSON.stringify(BUNDLE_MODULE_URL)};` },
     logLevel: "silent",
   });
   const seaConfig = createSeaConfig({ bundleFile, blobFile, dpapiScript });

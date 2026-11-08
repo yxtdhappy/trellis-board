@@ -1,0 +1,5 @@
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"约束入口拆分、调用方复用与避免重复路径推断"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"确保启动副作用、路径常量和运行时边界符合项目架构"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"遵循 Node 测试、错误处理和验证基线"}
+{"file":".trellis/tasks/11-08-fix-desktop-sidecar-sea-file-url/research/sea-sidecar-entry-analysis.md","reason":"提供 SEA 故障证据、受影响调用点和选定方案"}
+{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"约束源码/SEA 入口分离、DPAPI 路径注入和打包验证"}

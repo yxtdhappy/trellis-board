@@ -63,7 +63,9 @@ desktop/
     tauri.conf.json
     binaries/            build-sidecar.ps1 输出（trellis-agent-<target>.exe）
   sidecar/               Node SEA 打包入口与设备注册/撤销命令
-    main.js              run / enroll / revoke / status / workspace-init / version
+    cli.js               源码直接运行入口，注入真实 DPAPI helper 路径
+    sea-entry.js         SEA 打包入口，不依赖模块文件路径
+    main.js              run / enroll / revoke / status / workspace-init / version 库
     workspace-init.js    归一化 workspace 参数并调用 agent/workspace.js
     desktop-device.js    复用 agent 的 ConfigStore、AgentApiClient、DPAPI
     bundle.mjs           esbuild 单文件 + SEA 配置

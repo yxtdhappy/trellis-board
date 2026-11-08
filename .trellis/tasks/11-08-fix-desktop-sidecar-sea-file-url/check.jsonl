@@ -1,0 +1,5 @@
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复核入口拆分没有遗漏消费者或引入重复路径逻辑"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"复核 Node 测试、错误信息和验证结果"}
+{"file":".trellis/tasks/11-08-fix-desktop-sidecar-sea-file-url/prd.md","reason":"按验收标准复核源码 CLI、SEA 启动和安装包结果"}
+{"file":".trellis/tasks/11-08-fix-desktop-sidecar-sea-file-url/research/sea-sidecar-entry-analysis.md","reason":"复核修复确实移除虚拟模块 URL 依赖而不是只更换伪装路径"}
+{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"按新增的 sidecar/SEA 可执行契约复核实现和测试"}

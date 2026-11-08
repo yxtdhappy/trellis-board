@@ -437,6 +437,18 @@ test("桌面端 enrollWithToken 走新端点并保留配对码兜底", async (t)
   assert.match(sidecar, /DESKTOP_TOKEN_INVALID/);
 });
 
+test("桌面设备注册要求显式注入凭证存储", async (t) => {
+  const root = await withTempRoot(t, "trellis-enroll-no-store-");
+  await assert.rejects(
+    enrollWithToken("a".repeat(43), {
+      serverUrl: "http://127.0.0.1:4317",
+      deviceName: "无凭证存储",
+      root,
+    }),
+    /凭证存储/,
+  );
+});
+
 test("桌面 capability 只增加本地命令且不允许远程页面", () => {
   const capability = readJson("desktop/src-tauri/capabilities/main.json");
   assert.deepEqual(capability.windows, ["main"]);

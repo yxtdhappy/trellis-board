@@ -2,7 +2,6 @@ import http from "node:http";
 import https from "node:https";
 import { AgentApiClient } from "../../agent/api.js";
 import { ConfigStore, createConfigRevision } from "../../agent/config-store.js";
-import { DpapiCredentialStore } from "../../agent/credential-store.js";
 import {
   AgentError,
   AGENT_ERROR_CODE,
@@ -66,6 +65,16 @@ function mapEnrollError(error) {
   return error;
 }
 
+function requireCredentialStore(store) {
+  if (!store) {
+    throw new AgentError(
+      AGENT_ERROR_CODE.CONFIG_INVALID,
+      "设备注册缺少凭证存储",
+    );
+  }
+  return store;
+}
+
 async function completeDesktopEnrollment({
   enrolled,
   serverUrl,
@@ -125,7 +134,7 @@ export async function enrollWithToken(token, deviceInfo = {}) {
       );
     }
   }
-  const credentialStore = deviceInfo.credentialStore || new DpapiCredentialStore(store);
+  const credentialStore = requireCredentialStore(deviceInfo.credentialStore);
   const api = deviceInfo.apiClient || new AgentApiClient({ serverUrl });
   let enrolled;
   try {
@@ -159,7 +168,7 @@ export async function enrollDesktopDevice(options = {}) {
       );
     }
   }
-  const credentialStore = options.credentialStore || new DpapiCredentialStore(store);
+  const credentialStore = requireCredentialStore(options.credentialStore);
   const api = options.apiClient || new AgentApiClient({ serverUrl });
   const enrolled = await api.enroll({ pairingCode, deviceName });
   return completeDesktopEnrollment({

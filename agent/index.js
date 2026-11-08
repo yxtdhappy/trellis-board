@@ -1,9 +1,7 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { AgentApiClient, loadCaFile } from "./api.js";
 import { ConfigStore } from "./config-store.js";
 import { createEventCache } from "./event-cache.js";
-import { DpapiCredentialStore } from "./credential-store.js";
 import {
   formatBindingHealth,
   inspectRepository,
@@ -731,8 +729,13 @@ export async function runAgentProcess(options = {}) {
   try {
     await lock.acquire();
     acquired = true;
-    const credentialStore =
-      options.credentialStore || new DpapiCredentialStore(store);
+    if (!options.credentialStore) {
+      throw new AgentError(
+        AGENT_ERROR_CODE.CONFIG_INVALID,
+        "Agent 凭证存储未初始化",
+      );
+    }
+    const credentialStore = options.credentialStore;
     const runtime = new AgentRuntime({
       store,
       credentialStore,
@@ -758,30 +761,4 @@ export async function runAgentProcess(options = {}) {
     }
     await logger.close();
   }
-}
-
-export async function runAgentMain() {
-  const controller = new AbortController();
-  const stop = () => controller.abort();
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
-  try {
-    const result = await runAgentProcess({ signal: controller.signal });
-    return result.exitCode;
-  } finally {
-    process.removeListener("SIGINT", stop);
-    process.removeListener("SIGTERM", stop);
-  }
-}
-
-const currentFile = fileURLToPath(import.meta.url);
-if (process.argv[1] && path.resolve(process.argv[1]) === currentFile) {
-  runAgentMain()
-    .then((exitCode) => {
-      process.exitCode = exitCode;
-    })
-    .catch((error) => {
-      process.stderr.write(`${safeErrorMessage(error)}\n`);
-      process.exitCode = 1;
-    });
 }

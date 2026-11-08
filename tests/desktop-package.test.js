@@ -295,6 +295,8 @@ test("uninstall.ps1 拒绝受保护目录并复用现有撤销流程", () => {
 test("sidecar 构建脚本引用的入口文件都存在且使用 Node SEA", () => {
   const script = readText("desktop/sidecar/build-sidecar.ps1");
   for (const relative of [
+    "desktop/sidecar/cli.js",
+    "desktop/sidecar/sea-entry.js",
     "desktop/sidecar/main.js",
     "desktop/sidecar/desktop-device.js",
     "desktop/sidecar/bundle.mjs",
@@ -314,6 +316,12 @@ test("sidecar 构建脚本引用的入口文件都存在且使用 Node SEA", () 
   assert.match(script, /SHA256SUMS\.txt/);
   assert.match(script, /trellis-agent-\$target\.exe|trellis-agent-x86_64-pc-windows-msvc\.exe/);
 
+  const seaEntry = readText("desktop/sidecar/sea-entry.js");
+  assert.doesNotMatch(seaEntry, /import\.meta|fileURLToPath/);
+  const bundle = readText("desktop/sidecar/bundle.mjs");
+  assert.doesNotMatch(bundle, /BUNDLE_MODULE_URL|trellis-sidecar\/trellis-agent-bundle/);
+  assert.match(bundle, /sea-entry\.js/);
+
   const config = createSeaConfig({
     bundleFile: path.join(DESKTOP, "dist", "trellis-agent.cjs"),
     blobFile: path.join(DESKTOP, "dist", "sea-prep.blob"),
@@ -326,7 +334,7 @@ test("sidecar 构建脚本引用的入口文件都存在且使用 Node SEA", () 
 });
 
 test("sidecar CLI 报告协议 v2，未注册时以配置错误退出", () => {
-  const version = spawnSync(process.execPath, ["desktop/sidecar/main.js", "version"], {
+  const version = spawnSync(process.execPath, ["desktop/sidecar/cli.js", "version"], {
     cwd: ROOT,
     encoding: "utf8"
   });
@@ -336,7 +344,7 @@ test("sidecar CLI 报告协议 v2，未注册时以配置错误退出", () => {
   assert.equal(payload.protocolVersion, 2);
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-sidecar-status-"));
-  const status = spawnSync(process.execPath, ["desktop/sidecar/main.js", "status", "--root", root], {
+  const status = spawnSync(process.execPath, ["desktop/sidecar/cli.js", "status", "--root", root], {
     cwd: ROOT,
     encoding: "utf8"
   });

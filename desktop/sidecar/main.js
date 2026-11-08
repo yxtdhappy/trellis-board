@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
-import { fileURLToPath } from "node:url";
 import sea from "node:sea";
 import { ConfigStore } from "../../agent/config-store.js";
 import { DpapiCredentialStore } from "../../agent/credential-store.js";
@@ -40,14 +39,6 @@ export const SIDECAR_EXIT_CODE = Object.freeze({
 });
 
 const DPAPI_ASSET = "dpapi.ps1";
-const DEFAULT_DPAPI_SCRIPT = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  "agent",
-  "windows",
-  "dpapi.ps1",
-);
 
 function writeJson(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -145,23 +136,30 @@ async function extractSeaAsset(key, directory) {
   return target;
 }
 
-async function prepareAgent(store) {
+async function prepareAgent(store, fallbackDpapiScript) {
   const scriptFile = await extractSeaAsset(
     DPAPI_ASSET,
     path.join(store.paths.root, "windows"),
   );
+  const resolvedScriptFile = scriptFile || fallbackDpapiScript;
+  if (!resolvedScriptFile) {
+    throw new AgentError(
+      "CONFIG_INVALID",
+      "sidecar 缺少 DPAPI helper，无法初始化凭证存储",
+    );
+  }
   return {
     store,
     credentialStore: new DpapiCredentialStore(store, {
-      scriptFile: scriptFile || DEFAULT_DPAPI_SCRIPT,
+      scriptFile: resolvedScriptFile,
     }),
   };
 }
 
-async function commandRun() {
+async function commandRun(options) {
   const store = new ConfigStore();
   await store.ensureDirectories();
-  const agent = await prepareAgent(store);
+  const agent = await prepareAgent(store, options.fallbackDpapiScript);
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.once("SIGINT", stop);
@@ -179,11 +177,11 @@ async function commandRun() {
   }
 }
 
-async function commandEnroll(args) {
+async function commandEnroll(args, options) {
   const values = parseOptions(args, { server: {}, name: {}, "pairing-code": { flag: true } });
   const secret = await readSecret();
   const store = new ConfigStore();
-  const agent = await prepareAgent(store);
+  const agent = await prepareAgent(store, options.fallbackDpapiScript);
   const common = {
     serverUrl: requireOption(values, "server"),
     deviceName: validateDeviceName(values.name),
@@ -217,7 +215,7 @@ async function commandStatus(args) {
   return SIDECAR_EXIT_CODE.OK;
 }
 
-async function commandWorkspaceInit(args) {
+async function commandWorkspaceInit(args, options) {
   const values = parseOptions(args, {
     path: {},
     tools: {},
@@ -226,7 +224,7 @@ async function commandWorkspaceInit(args) {
     server: {},
   });
   const store = new ConfigStore();
-  const agent = await prepareAgent(store);
+  const agent = await prepareAgent(store, options.fallbackDpapiScript);
   const config = await store.readConfig({ allowMissing: false });
   const username = values.username || config.username;
   if (!username) {
@@ -269,20 +267,23 @@ function usage() {
   ].join("\n");
 }
 
-export async function runSidecarMain(argv = process.argv.slice(2)) {
+export async function runSidecarMain(
+  argv = process.argv.slice(2),
+  options = {},
+) {
   const [command = "run", ...args] = argv;
   try {
     switch (command) {
       case "run":
-        return await commandRun();
+        return await commandRun(options);
       case "enroll":
-        return await commandEnroll(args);
+        return await commandEnroll(args, options);
       case "revoke":
         return await commandRevoke(args);
       case "status":
         return await commandStatus(args);
       case "workspace-init":
-        return await commandWorkspaceInit(args);
+        return await commandWorkspaceInit(args, options);
       case "version":
         writeJson({
           ok: true,
@@ -311,17 +312,4 @@ export async function runSidecarMain(argv = process.argv.slice(2)) {
     }
     return exitCodeFor(error);
   }
-}
-
-const currentFile = fileURLToPath(import.meta.url);
-const isBundled = typeof __TRELLIS_SIDECAR_BUNDLE__ !== "undefined";
-if (isBundled || (process.argv[1] && path.resolve(process.argv[1]) === currentFile)) {
-  runSidecarMain()
-    .then((exitCode) => {
-      process.exitCode = exitCode;
-    })
-    .catch((error) => {
-      process.stderr.write(`${safeErrorMessage(error)}\n`);
-      process.exitCode = SIDECAR_EXIT_CODE.IO;
-    });
 }

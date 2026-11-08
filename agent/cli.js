@@ -35,8 +35,13 @@ import {
 } from "./workspace.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const DPAPI_SCRIPT_FILE = path.join(HERE, "windows", "dpapi.ps1");
 const SERVICE_SCRIPT = path.join(HERE, "windows", "service.ps1");
 const SERVICE_TASK_NAME = "TrellisBoardAgent";
+
+function createCredentialStore(store) {
+  return new DpapiCredentialStore(store, { scriptFile: DPAPI_SCRIPT_FILE });
+}
 
 export const CLI_EXIT_CODE = Object.freeze({
   OK: 0,
@@ -262,7 +267,7 @@ async function commandPair(args, context) {
     pairedAt: now,
     bindings: [],
   };
-  const credentialStore = context.credentialStore || new DpapiCredentialStore(store);
+  const credentialStore = context.credentialStore;
   await store.updateConfig(async (current) => {
     if (current && !values.replace) {
       throw new AgentError(
@@ -500,7 +505,7 @@ async function commandDiagnose(args, context) {
     addCheck("配置", false, safeErrorMessage(error), error.code);
     return finishDiagnose(context, checks);
   }
-  const credentialStore = context.credentialStore || new DpapiCredentialStore(context.store);
+  const credentialStore = context.credentialStore;
   try {
     await credentialStore.selfTest();
     addCheck("DPAPI", true, "CurrentUser 加解密往返成功");
@@ -689,7 +694,7 @@ async function resolveWorkspaceUsername(context, values, workspacePath) {
 async function loadWorkspaceCredential(context) {
   if (context.agentCredential) return context.agentCredential;
   if (context.workspaceInitializer) return null;
-  const credentialStore = context.credentialStore || new DpapiCredentialStore(context.store);
+  const credentialStore = context.credentialStore;
   try {
     return await credentialStore.loadCredential();
   } catch {
@@ -929,9 +934,10 @@ export async function runCli(argv = process.argv.slice(2), options = {}) {
   const store = options.store || new ConfigStore(options.root);
   const json = argv.includes("--json");
   const commandArgs = argv.filter((token) => token !== "--json");
+  const credentialStore = options.credentialStore || createCredentialStore(store);
   const context = {
     store,
-    credentialStore: options.credentialStore,
+    credentialStore,
     logger: options.logger,
     signal: options.signal,
     readSecret: options.readSecret || createTerminalSecretReader(),

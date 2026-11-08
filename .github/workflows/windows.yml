@@ -76,6 +76,17 @@ jobs:
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File `
             desktop/sidecar/build-sidecar.ps1
+      - name: Smoke test sidecar
+        run: |
+          $sidecar = "desktop/src-tauri/binaries/trellis-agent-x86_64-pc-windows-msvc.exe"
+          $output = & $sidecar version
+          if ($LASTEXITCODE -ne 0) {
+            throw "sidecar version exited with $LASTEXITCODE"
+          }
+          $version = ($output -join "`n") | ConvertFrom-Json
+          if ($version.protocolVersion -ne 2) {
+            throw "sidecar protocolVersion=$($version.protocolVersion), want 2"
+          }
       - name: Rust unit tests
         timeout-minutes: 25
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
