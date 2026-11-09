@@ -15,7 +15,7 @@
   "branch": "codex/git-credentials-onboarding",
   "base_branch": "codex/team-board",
   "worktree_path": "D:\\wit\\trellis-board-git-credentials",
-  "commit": null,
+  "commit": "768579b217d15e13b87d4244590f776a6e92926a",
   "pr_url": null,
   "subtasks": [],
   "children": [],
