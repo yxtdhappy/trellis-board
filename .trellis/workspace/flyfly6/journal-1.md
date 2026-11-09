@@ -51,3 +51,27 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 统一弹层骨架、下拉宽度与 Markdown 预览改造
+<!-- trellis-session: v=2 fp=6090c09cf7fbb868 -->
+
+**Date**: 2026-11-09
+**Task**: 统一弹层骨架、下拉宽度与 Markdown 预览改造
+**Branch**: `codex/team-board`
+
+### Summary
+
+统一 16 处弹层骨架（DialogContent flex 列 + 新增 DialogBody 唯一滚动区，表单弹层保留 submit 语义）、修正 Base UI Select 弹层宽度与选项换行、Markdown 预览改为 markdown-it + github-markdown-css + highlight.js/common（主题切换注入对应 CSS），归档索引项目筛选统一走 BoardPage 的 filters.projectId；接入 oxfmt 作为唯一格式化工具并全仓统一格式（220 个纯格式化文件单独提交）。浏览器实测弹层滚动/Flex 与下拉宽度、Markdown 排版与深浅主题、归档联动均符合预期；合并远端 5 个提交后 oxfmt 279 files、tsc、oxlint、379 项测试全部通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0981be5` | chore(format): 接入 oxfmt 统一全仓代码格式 |
+| `f0f84ca` | feat(web): 统一弹层骨架与下拉宽度并切换 Markdown 渲染 |
+| `4ee7d80` | merge: 合并远端团队同步与 Trellis 换行符规范 |
+
+### Status
+
+[OK] **Completed**
