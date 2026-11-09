@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-const SENSITIVE_KEY = /(password|token|secret|credential|authorization|cookie|private.?key)/i;
+const SENSITIVE_KEY = /(password|token|secret|credential|authorization|cookie|private.?key|passphrase)/i;
 
 function sanitize(value, depth = 0) {
   if (depth > 4) return "[truncated]";

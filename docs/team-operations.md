@@ -179,15 +179,19 @@ New-Item -ItemType Directory -Path $backup | Out-Null
 Copy-Item data\board.sqlite "$backup\board.sqlite"
 if (Test-Path data\board.sqlite-wal) { Copy-Item data\board.sqlite-wal "$backup\board.sqlite-wal" }
 if (Test-Path data\board.sqlite-shm) { Copy-Item data\board.sqlite-shm "$backup\board.sqlite-shm" }
+if (Test-Path data\git-credentials.key) { Copy-Item data\git-credentials.key "$backup\git-credentials.key" }
 ```
 
-v6 数据库会在启动事务中原地补齐实时覆盖层表与 `team_task_index.live_revision`，并更新为
-schema v7。v5 及更旧数据库仍拒绝启动。升级步骤：
+本版本支持 `v6 -> v7` 附加式迁移。服务启动时先创建
+`data/backups/board.sqlite.pre-v7.*` 快照，再补齐实时覆盖层、
+`team_task_index.live_revision`、Git 凭据表和 SSH 主机信任表；旧账号、团队、项目、审计和
+任务索引会保留。其他 schema 版本仍会拒绝启动，不得通过删除数据库代替迁移。升级步骤：
 
-1. 停止服务并保留当前数据库、日志和配置备份。
-2. 在维护窗口启动新版本，让 v6 原地升级为 v7。
-3. 运行 `node server/team/cli.js status`，确认 schema v7、WAL 和 integrity。
-4. 检查现有项目、任务索引、Agent 绑定和登录；如有异常，停止服务并恢复升级前备份。
+1. 停止服务并再次保留当前数据库、日志和配置。
+2. 按上面的 PowerShell 备份数据库、WAL、SHM 和 `data/git-credentials.key`。
+3. 启动新版服务，等待 v6 自动升级到 v7。
+4. 运行 `node server/team/cli.js status`，确认 schema v7、WAL 和 integrity。
+5. 检查现有项目、任务索引、Agent 绑定、登录和 Git 凭据；如有异常，停止服务并恢复升级前备份。
 
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
@@ -195,14 +199,15 @@ $env:TRELLIS_TEAM_PUBLIC_URL = 'https://board.example.com'
 node server/team/cli.js status
 ```
 
-结果必须显示 `schemaVersion=7`、`journalMode=wal` 和 `integrity=ok`。
+结果必须显示 `schemaVersion=7`、`journalMode=wal` 和 `integrity=ok`。如果启动失败，保留
+原库和 `data/backups/board.sqlite.pre-v7.*`，不要删除或重建数据库。
 
 回滚步骤：
 
 1. 停止服务并再次保留当前数据库、日志和配置。
 2. 切回旧应用版本。
-3. 把当前 `data/board.sqlite*` 移到独立目录。
-4. 恢复旧版本对应的数据库、WAL 和 SHM 备份，或让旧版本重建空库。
+3. 把当前 `data/board.sqlite*` 和 `data/git-credentials.key` 移到独立目录。
+4. 恢复旧版本对应的数据库、WAL、SHM 和密钥备份；不要删除被回滚任务的远端提交。
 5. 以 standalone 模式启动并检查健康接口和任务数量。
 
 数据库回滚不会删除 Git 远端已经成功推送的任务提交，也不会自动撤回 Agent 已同步的新提交。
@@ -210,7 +215,8 @@ node server/team/cli.js status
 ## 8. 备份与恢复
 
 - 每日至少备份一次数据库；升级、修复项目或批量操作前额外备份。
-- 最稳妥的备份窗口是停止服务后复制 `data/board.sqlite*`。
+- 最稳妥的备份窗口是停止服务后复制 `data/board.sqlite*` 和 `data/git-credentials.key`。
+- `data/git-credentials.key` 与数据库一起构成完整恢复单元；只有数据库没有密钥时，Git 凭据无法恢复。
 - 项目工作副本不是唯一事实源，任务提交已推送到项目远端；数据库还保存账号、接受状态、审计和索引。
 - 数据库还保存尚未进入 Git 的实时文件覆盖层与 revision，备份时不能只保存 Git 远端。
 - 客户端实时冲突备份位于 `%LOCALAPPDATA%\TrellisBoard\data\agent\live-backups`，默认保留 30 天，

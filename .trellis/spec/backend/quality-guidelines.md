@@ -40,6 +40,8 @@ import assert from "node:assert/strict";
 | --- | --- |
 | [server/loader.js](../../../server/loader.js) | 嵌套归档、阶段证据、缓存复用、workspace 变化、Git、元数据、E2E 语义、父子继承、冲突和循环 |
 | [server/database.js](../../../server/database.js) | schema、旧 JSON 迁移幂等、损坏输入和版本拒绝 |
+| [server/team/git-credentials.js](../../../server/team/git-credentials.js) | Git 凭据密文、团队/主机隔离、引用删除、SSH 主机信任 |
+| [server/team/git-manager.js](../../../server/team/git-manager.js) | Git HTTPS/SSH 认证、远端探测、名称和默认分支解析 |
 | [server/repositories.js](../../../server/repositories.js) | SQLite 规范化、ID、重复路径、未初始化目录、批量事务回滚、只移除配置 |
 | [server/metadata.js](../../../server/metadata.js) | 人工阶段合法 ID 与 SQLite upsert |
 | [server/persistence.js](../../../server/persistence.js) | 缓存 schema 失效、看板状态保留 `null` 和多字段更新 |

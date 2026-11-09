@@ -457,7 +457,7 @@ export function safeReturnTo(value, fallback = "/") {
   }
 }
 
-const SENSITIVE_KEY = /(password|token|secret|credential|authorization|cookie|private.?key)/i;
+const SENSITIVE_KEY = /(password|token|secret|credential|authorization|cookie|private.?key|passphrase)/i;
 
 export function redactSensitiveDetail(value, depth = 0) {
   if (depth > 4) return "[已截断]";

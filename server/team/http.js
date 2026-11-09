@@ -31,6 +31,7 @@ import {
 } from "./auth.js";
 import { createBoardService } from "./board.js";
 import { ERROR_CODES, errorPayload, teamError } from "./errors.js";
+import { createGitCredentialService } from "./git-credentials.js";
 import { createGitManager } from "./git-manager.js";
 import { createLiveSyncService } from "./live-sync.js";
 import {
@@ -484,6 +485,8 @@ function createRequestHandler({
   db,
   boardService,
   projectService,
+  gitManager,
+  credentialService,
   taskIndex,
   taskWrites,
   agentService,
@@ -948,10 +951,73 @@ function createRequestHandler({
       });
       return true;
     }
+    if (pathname === "/api/admin/git-credentials" && request.method === "GET") {
+      const teamId = requireTeamAdmin(
+        db,
+        actor,
+        url.searchParams.get("teamId")
+      );
+      sendJson(response, 200, {
+        credentials: credentialService.list(actor, teamId)
+      });
+      return true;
+    }
+    if (pathname === "/api/admin/git-credentials" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      requireTeamAdmin(db, actor, body.teamId);
+      sendJson(response, 201, {
+        credential: credentialService.create(actor, body)
+      });
+      return true;
+    }
+    const credentialMatch = routeMatch(
+      pathname,
+      /^\/api\/admin\/git-credentials\/([^/]+)$/
+    );
+    if (credentialMatch && request.method === "PATCH") {
+      const body = await readJsonBody(request);
+      sendJson(response, 200, {
+        credential: credentialService.update(actor, credentialMatch[0], body)
+      });
+      return true;
+    }
+    if (credentialMatch && request.method === "DELETE") {
+      await readJsonBody(request);
+      sendJson(response, 200, credentialService.remove(actor, credentialMatch[0]));
+      return true;
+    }
+    if (pathname === "/api/admin/projects/probe" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      requireTeamAdmin(db, actor, body.teamId);
+      sendJson(response, 200, await projectService.probeRemote(actor, body));
+      return true;
+    }
+    if (pathname === "/api/admin/git-ssh-hosts/trust" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      sendJson(response, 200, gitManager.confirmSshHost(actor, body.challengeId));
+      return true;
+    }
     if (pathname === "/api/admin/projects" && request.method === "POST") {
       const body = await readJsonBody(request);
       requireTeamAdmin(db, actor, body.teamId);
       sendJson(response, 201, await projectService.connect(actor, body));
+      return true;
+    }
+    const projectCredentialMatch = routeMatch(
+      pathname,
+      /^\/api\/admin\/projects\/([^/]+)\/credential$/
+    );
+    if (projectCredentialMatch && request.method === "PUT") {
+      const body = await readJsonBody(request);
+      sendJson(
+        response,
+        200,
+        await projectService.changeCredential(
+          actor,
+          projectCredentialMatch[0],
+          body
+        )
+      );
       return true;
     }
     const projectAction = routeMatch(
@@ -1572,7 +1638,13 @@ export async function createTeamRuntime({
         "团队模式尚无系统管理员，请先在本机运行 server/team/cli.js init-admin"
       );
     }
-    const gitManager = createGitManager({ db, config, dataDir });
+    const credentialService = createGitCredentialService({ db, dataDir });
+    const gitManager = createGitManager({
+      db,
+      config,
+      dataDir,
+      credentialService
+    });
     const agentEvents = createAgentEventService({ db, logger });
     const taskIndex = createTaskIndex({
       db,
@@ -1585,6 +1657,7 @@ export async function createTeamRuntime({
       config,
       dataDir,
       gitManager,
+      credentialService,
       taskIndex
     });
     const taskWrites = createTaskWriteService({
@@ -1624,6 +1697,8 @@ export async function createTeamRuntime({
       db,
       boardService,
       projectService,
+      gitManager,
+      credentialService,
       taskIndex,
       taskWrites,
       agentService,

@@ -13,7 +13,7 @@
 ## 页面入口
 
 - `web/index.html` → `src/main-board.tsx` → [BoardPage](../../../web/src/pages/board/BoardPage.tsx)：任务流水线 / 团队视角 / 归档索引。
-- `web/admin.html` → `src/main-admin.tsx` → [AdminPage](../../../web/src/pages/admin/AdminPage.tsx)：团队管理五个 tab。
+- `web/admin.html` → `src/main-admin.tsx` → [AdminPage](../../../web/src/pages/admin/AdminPage.tsx)：团队管理七个 tab。
 - `web/login.html` → `src/main-login.tsx` → [LoginPage](../../../web/src/pages/login/LoginPage.tsx)：登录与首登改密跳转。
 - 构建：`npm run build`（内部 `npm --prefix web run build`），产物写入 `public/`，服务端无需改动。
 - 本地联调：`npm run web:dev`，Vite 把 `/api` 代理到 `http://127.0.0.1:4317`。

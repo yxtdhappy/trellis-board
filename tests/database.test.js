@@ -73,7 +73,9 @@ const EXPECTED_TABLES = [
   "app_meta",
   "audit_event",
   "board_state",
+  "git_credential",
   "git_operation",
+  "git_ssh_known_host",
   "login_attempt",
   "plugin_audit",
   "plugin_run",
@@ -102,7 +104,7 @@ const EXPECTED_TABLES = [
   "user_session"
 ];
 
-test("新库一次创建 schema v7 与实时同步表", () => {
+test("新库一次创建 schema v7 与实时同步、Git 凭据表", () => {
   const workspace = makeWorkspace();
   let db;
   try {
@@ -130,7 +132,8 @@ test("新库一次创建 schema v7 与实时同步表", () => {
       "last_push_at",
       "last_error",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "git_credential_id"
     ]);
     assert.ok(columnNames(db, "user_session").includes("active_team_id"));
     assert.ok(columnNames(db, "saved_view").includes("team_id"));
@@ -191,19 +194,37 @@ test("schema v7 重复打开保持幂等", () => {
   }
 });
 
-test("schema v6 数据库原地补齐实时同步表", () => {
+test("schema v6 升级到 v7 前备份并补齐实时同步与凭据表", () => {
   const workspace = makeWorkspace();
   let db;
   try {
     db = openTestDatabase(workspace);
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO team(id, name, slug, status, created_at, updated_at) VALUES ('t1','团队一','t1','active',?,?)").run(now, now);
+    db.prepare(`
+      INSERT INTO repositories(id, name, path, path_key, position, created_at, updated_at)
+      VALUES ('p1', '项目一', '/tmp/p1', '/tmp/p1', 0, ?, ?)
+    `).run(now, now);
+    db.prepare(`
+      INSERT INTO team_project(
+        repository_id, team_id, workspace_key, remote_url, remote_identity_hash,
+        sync_branch, trusted_task_toolchain_sha256, sync_status, created_at, updated_at
+      ) VALUES ('p1', 't1', 'p1', 'https://example.com/p1.git', 'hash',
+        'main', ?, 'current', ?, ?)
+    `).run("a".repeat(64), now, now);
+    db.exec("DROP INDEX IF EXISTS team_project_credential");
+    db.exec("ALTER TABLE team_project DROP COLUMN git_credential_id");
+    db.exec("DROP TABLE git_ssh_known_host");
+    db.exec("DROP TABLE git_credential");
     db.exec(`
       DROP TABLE agent_live_cursor;
       DROP TABLE project_live_batch;
       DROP TABLE project_live_file;
       DROP TABLE project_live_revision;
-      UPDATE app_meta SET value = '6' WHERE key = 'schema_version';
     `);
+    db.prepare("UPDATE app_meta SET value = '6' WHERE key = 'schema_version'").run();
     db.close();
+    db = null;
     db = openTestDatabase(workspace);
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
@@ -213,6 +234,15 @@ test("schema v6 数据库原地补齐实时同步表", () => {
     assert.ok(tableNames(db).includes("project_live_file"));
     assert.ok(tableNames(db).includes("project_live_batch"));
     assert.ok(tableNames(db).includes("agent_live_cursor"));
+    assert.ok(tableNames(db).includes("git_credential"));
+    assert.ok(tableNames(db).includes("git_ssh_known_host"));
+    assert.ok(columnNames(db, "team_project").includes("git_credential_id"));
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS count FROM team_project WHERE repository_id = 'p1'").get().count,
+      1
+    );
+    const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), "backups"));
+    assert.equal(backups.some((name) => name.startsWith("board.sqlite.pre-v7.")), true);
   } finally {
     closeQuietly(db);
     fs.rmSync(workspace.root, { recursive: true, force: true });

@@ -22,13 +22,20 @@ export function minimalEnvironment(extra = {}) {
   return { ...env, ...extra };
 }
 
-export function sanitizeProcessOutput(value) {
-  return String(value || "")
+export function sanitizeProcessOutput(value, {
+  maxBytes = OUTPUT_LIMIT,
+  redact = []
+} = {}) {
+  let result = String(value || "")
     .replace(/(?:https?|ssh):\/\/[^/\s@]+@/gi, (match) =>
       match.replace(/[^/]+@$/, "***@")
     )
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 ***")
-    .slice(0, OUTPUT_LIMIT);
+  for (const secret of redact) {
+    const value = String(secret || "");
+    if (value) result = result.split(value).join("[redacted]");
+  }
+  return result.slice(0, maxBytes);
 }
 
 export function terminateTree(child) {
@@ -59,7 +66,9 @@ export function runProcess(command, args, {
   cwd,
   env = minimalEnvironment(),
   timeoutMs = 30_000,
-  allowFailure = false
+  allowFailure = false,
+  maxOutputBytes = OUTPUT_LIMIT,
+  redact = []
 } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -69,8 +78,13 @@ export function runProcess(command, args, {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
-    let stdout = "";
-    let stderr = "";
+    const stdout = [];
+    const stderr = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let stdoutStored = 0;
+    let stderrStored = 0;
+    let truncated = false;
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
@@ -79,13 +93,25 @@ export function runProcess(command, args, {
       reject(new Error(`${command} 执行超过 ${timeoutMs}ms，已终止`));
     }, timeoutMs);
 
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
-      if (stdout.length < OUTPUT_LIMIT) stdout += chunk;
+      stdoutBytes += chunk.length;
+      const remaining = maxOutputBytes - stdoutStored;
+      if (remaining > 0) {
+        const next = chunk.subarray(0, remaining);
+        stdout.push(next);
+        stdoutStored += next.length;
+      }
+      if (stdoutBytes > maxOutputBytes) truncated = true;
     });
     child.stderr.on("data", (chunk) => {
-      if (stderr.length < OUTPUT_LIMIT) stderr += chunk;
+      stderrBytes += chunk.length;
+      const remaining = maxOutputBytes - stderrStored;
+      if (remaining > 0) {
+        const next = chunk.subarray(0, remaining);
+        stderr.push(next);
+        stderrStored += next.length;
+      }
+      if (stderrBytes > maxOutputBytes) truncated = true;
     });
     child.once("error", (error) => {
       if (settled) return;
@@ -94,7 +120,14 @@ export function runProcess(command, args, {
       const candidates = command === "python" ? pythonCommandCandidates(env) : [];
       const next = candidates[candidates.indexOf("python") + 1];
       if (error.code === "ENOENT" && next) {
-        runProcess(next, args, { cwd, env, timeoutMs, allowFailure }).then(resolve, reject);
+        runProcess(next, args, {
+          cwd,
+          env,
+          timeoutMs,
+          allowFailure,
+          maxOutputBytes,
+          redact
+        }).then(resolve, reject);
         return;
       }
       reject(error);
@@ -106,8 +139,15 @@ export function runProcess(command, args, {
       const result = {
         code,
         signal,
-        stdout: sanitizeProcessOutput(stdout),
-        stderr: sanitizeProcessOutput(stderr)
+        stdout: sanitizeProcessOutput(Buffer.concat(stdout).toString("utf8"), {
+          maxBytes: maxOutputBytes,
+          redact
+        }),
+        stderr: sanitizeProcessOutput(Buffer.concat(stderr).toString("utf8"), {
+          maxBytes: maxOutputBytes,
+          redact
+        }),
+        truncated
       };
       if (code === 0 || allowFailure) {
         resolve(result);

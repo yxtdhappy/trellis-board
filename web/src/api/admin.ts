@@ -3,7 +3,14 @@ import { redactSensitiveDetail } from '@/lib/team-client.js'
 
 export const AUDIT_PAGE_LIMIT = 100
 
-export type AdminView = 'project-access' | 'users' | 'teams' | 'projects' | 'agents' | 'audit'
+export type AdminView =
+  | 'project-access'
+  | 'users'
+  | 'teams'
+  | 'projects'
+  | 'git-credentials'
+  | 'agents'
+  | 'audit'
 
 export type SessionUser = {
   id: string
@@ -42,6 +49,7 @@ export type TeamProject = RuntimeProject & {
   lastFetchAt: string | null
   lastPushAt: string | null
   members: ProjectMember[]
+  credential: GitCredentialSummary | null
 }
 
 export type Team = {
@@ -134,6 +142,73 @@ export type ApprovalDraft = {
   files: string[] | number | null
 }
 
+export type GitCredentialAuthType = 'https_token' | 'ssh_key'
+
+function isGitCredentialAuthType(value: string): value is GitCredentialAuthType {
+  return value === 'https_token' || value === 'ssh_key'
+}
+
+export type GitCredentialSummary = {
+  id: string
+  name: string
+  host: string
+  authType: GitCredentialAuthType
+}
+
+export type GitCredentialProject = {
+  id: string
+  name: string
+}
+
+export type GitCredential = GitCredentialSummary & {
+  teamId: string
+  teamName: string | null
+  username: string | null
+  publicKeyFingerprint: string | null
+  projectCount: number
+  projects: GitCredentialProject[]
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export type GitCredentialInput = {
+  teamId: string
+  name: string
+  host: string
+  authType: GitCredentialAuthType
+  username?: string
+  token?: string
+  privateKey?: string
+  passphrase?: string
+}
+
+export type RemoteProbeResult = {
+  remote: {
+    url: string
+    scheme: 'https' | 'ssh' | 'file'
+    host: string
+  }
+  recommendedName: string
+  defaultBranch: string | null
+  branches: string[]
+  credential: GitCredentialSummary | null
+}
+
+export type SshTrustKey = {
+  algorithm: string
+  fingerprint: string
+}
+
+export type SshTrustChallenge = {
+  challengeId: string
+  host: string
+  port: number
+  replaced: boolean
+  keys: SshTrustKey[]
+}
+
+export type SshTrustResult = Omit<SshTrustChallenge, 'challengeId'>
+
 export function canManageProject(project: RuntimeProject): boolean {
   if (project.capabilities.manageMembers ?? project.capabilities.manage_members) return true
   return project.role === 'lead'
@@ -145,6 +220,24 @@ export function formatError(error: unknown): string {
   }
   if (error instanceof Error) return error.message || '请求失败'
   return '请求失败'
+}
+
+export function readSshTrustChallenge(error: unknown): SshTrustChallenge | null {
+  if (!(error instanceof ApiError)) return null
+  if (!['SSH_HOST_UNTRUSTED', 'SSH_HOST_CHANGED'].includes(error.code || '')) return null
+  const details = record(error.details)
+  const challengeId = text(details.challengeId ?? details.challenge_id)
+  if (!challengeId) return null
+  return {
+    challengeId,
+    host: text(details.host),
+    port: Number(details.port || 22) || 22,
+    replaced: flag(details.replaced),
+    keys: rows(details.keys).map((key) => ({
+      algorithm: text(record(key).algorithm),
+      fingerprint: text(record(key).fingerprint)
+    }))
+  }
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -257,6 +350,39 @@ function readProjectMember(input: unknown): ProjectMember {
   }
 }
 
+function readGitCredentialSummary(input: unknown): GitCredentialSummary | null {
+  const row = record(input)
+  const id = text(row.id)
+  const authType = text(row.authType ?? row.auth_type)
+  if (!id || !isGitCredentialAuthType(authType)) return null
+  return {
+    id,
+    name: text(row.name),
+    host: text(row.host),
+    authType
+  }
+}
+
+function readGitCredential(input: unknown): GitCredential | null {
+  const summary = readGitCredentialSummary(input)
+  if (!summary) return null
+  const row = record(input)
+  return {
+    ...summary,
+    teamId: text(row.teamId ?? row.team_id),
+    teamName: optionalText(row.teamName ?? row.team_name),
+    username: optionalText(row.username),
+    publicKeyFingerprint: optionalText(row.publicKeyFingerprint ?? row.public_key_fingerprint),
+    projectCount: Number(row.projectCount ?? row.project_count ?? 0) || 0,
+    projects: rows(row.projects).map((project) => ({
+      id: text(record(project).id),
+      name: text(record(project).name)
+    })),
+    createdAt: optionalText(row.createdAt ?? row.created_at),
+    updatedAt: optionalText(row.updatedAt ?? row.updated_at)
+  }
+}
+
 export function readProjectMembers(source: Record<string, unknown>): ProjectMember[] {
   const seen = new Set<string>()
   const members: ProjectMember[] = []
@@ -283,7 +409,8 @@ export function readTeamProject(input: unknown): TeamProject {
     hooksStatus: optionalText(row.hooksStatus ?? row.hooks_status),
     lastFetchAt: optionalText(row.lastFetchAt ?? row.last_fetch_at),
     lastPushAt: optionalText(row.lastPushAt ?? row.last_push_at),
-    members: readProjectMembers(row)
+    members: readProjectMembers(row),
+    credential: readGitCredentialSummary(row.credential)
   }
 }
 
@@ -508,6 +635,7 @@ export type ConnectProjectInput = {
   syncBranch: string
   remoteUrl: string
   repositoryId?: string
+  credentialId?: string | null
 }
 
 export async function connectProject(
@@ -520,7 +648,8 @@ export async function connectProject(
       name: input.name,
       syncBranch: input.syncBranch,
       remoteUrl: input.remoteUrl,
-      repositoryId: input.repositoryId?.trim() || undefined
+      repositoryId: input.repositoryId?.trim() || undefined,
+      credentialId: input.credentialId || undefined
     }
   })
   const row = record(data)
@@ -534,6 +663,94 @@ export async function connectProject(
         }
       : null
   }
+}
+
+export async function fetchGitCredentials(teamId?: string | null): Promise<GitCredential[]> {
+  const { data } = await requestJson<unknown>(`/api/admin/git-credentials${teamQuery(teamId)}`)
+  return rows(record(data).credentials).map(readGitCredential).filter((item): item is GitCredential => Boolean(item))
+}
+
+export async function createGitCredential(input: GitCredentialInput): Promise<GitCredential | null> {
+  const { data } = await requestJson<unknown>('/api/admin/git-credentials', {
+    method: 'POST',
+    body: input
+  })
+  return readGitCredential(record(data).credential)
+}
+
+export async function updateGitCredential(
+  credentialId: string,
+  input: Omit<GitCredentialInput, 'teamId' | 'host' | 'authType'>
+): Promise<GitCredential | null> {
+  const { data } = await requestJson<unknown>(
+    `/api/admin/git-credentials/${encodeURIComponent(credentialId)}`,
+    { method: 'PATCH', body: input }
+  )
+  return readGitCredential(record(data).credential)
+}
+
+export async function deleteGitCredential(credentialId: string): Promise<void> {
+  await requestJson(
+    `/api/admin/git-credentials/${encodeURIComponent(credentialId)}`,
+    { method: 'DELETE', body: {} }
+  )
+}
+
+export async function probeGitRemote(input: {
+  teamId: string
+  remoteUrl: string
+  credentialId?: string | null
+}): Promise<RemoteProbeResult> {
+  const { data } = await requestJson<unknown>('/api/admin/projects/probe', {
+    method: 'POST',
+    body: {
+      teamId: input.teamId,
+      remoteUrl: input.remoteUrl,
+      credentialId: input.credentialId || null
+    }
+  })
+  const row = record(data)
+  const remote = record(row.remote)
+  const scheme = text(remote.scheme, 'https')
+  return {
+    remote: {
+      url: text(remote.url),
+      scheme: scheme === 'ssh' || scheme === 'file' ? scheme : 'https',
+      host: text(remote.host)
+    },
+    recommendedName: text(row.recommendedName ?? row.recommended_name),
+    defaultBranch: optionalText(row.defaultBranch ?? row.default_branch),
+    branches: rows(row.branches).map((branch) => text(branch)).filter(Boolean),
+    credential: readGitCredentialSummary(row.credential)
+  }
+}
+
+export async function confirmSshHost(challengeId: string): Promise<SshTrustResult> {
+  const { data } = await requestJson<unknown>('/api/admin/git-ssh-hosts/trust', {
+    method: 'POST',
+    body: { challengeId }
+  })
+  const row = record(data)
+  return {
+    host: text(row.host),
+    port: Number(row.port || 22) || 22,
+    replaced: flag(row.replaced),
+    keys: rows(row.keys).map((key) => ({
+      algorithm: text(record(key).algorithm),
+      fingerprint: text(record(key).fingerprint)
+    }))
+  }
+}
+
+export async function changeProjectCredential(
+  projectId: string,
+  credentialId: string | null
+): Promise<TeamProject> {
+  const { data } = await requestJson<unknown>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/credential`,
+    { method: 'PUT', body: { credentialId } }
+  )
+  return readTeamProject(record(data).project ?? data)
 }
 
 export type ApprovalInput = {
