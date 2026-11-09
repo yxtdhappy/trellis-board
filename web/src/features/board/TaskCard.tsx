@@ -28,9 +28,7 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
   const tags = taskTags(task)
   const conditions = conditionBadges(task)
   const attention = attentionReasons(task).slice(0, 3)
-  const projectLabel = task.teamName
-    ? `${task.teamName} · ${task.projectName}`
-    : task.projectName
+  const projectLabel = task.teamName ? `${task.teamName} · ${task.projectName}` : task.projectName
 
   async function copyName() {
     try {
@@ -59,12 +57,18 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
         <span className="truncate text-[10.5px] text-muted-foreground">{projectLabel}</span>
         <div className="ml-auto flex items-center gap-1">
           {task.groupRelationsValid === false ? (
-            <Badge variant="outline" className="h-4 rounded-full px-1.5 text-[9px] text-destructive">
+            <Badge
+              variant="outline"
+              className="h-4 rounded-full px-1.5 text-[9px] text-destructive"
+            >
               关系异常
             </Badge>
           ) : null}
           {Number(task.liveRevision) > 0 ? (
-            <Badge variant="outline" className="h-4 rounded-full px-1.5 text-[9px] text-muted-foreground">
+            <Badge
+              variant="outline"
+              className="h-4 rounded-full px-1.5 text-[9px] text-muted-foreground"
+            >
               实时未入 Git
             </Badge>
           ) : null}
@@ -76,12 +80,16 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
         </div>
       </div>
 
-      <h4 className="line-clamp-2 text-[12px] leading-4 font-semibold text-foreground">{task.title}</h4>
+      <h4 className="line-clamp-2 text-[12px] leading-4 font-semibold text-foreground">
+        {task.title}
+      </h4>
       <p className="break-all text-[10px] leading-3.5 text-muted-foreground">{task.dirName}</p>
 
       <div className="flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
         <span>{dueLabel(task.execution?.dueDate)}</span>
-        {task.execution?.milestone ? <span className="text-foreground/70">{task.execution.milestone}</span> : null}
+        {task.execution?.milestone ? (
+          <span className="text-foreground/70">{task.execution.milestone}</span>
+        ) : null}
         {tags.slice(0, 2).map((tag) => (
           <span key={tag} className="rounded-sm bg-muted px-1 py-px text-[9.5px]">
             {tag}

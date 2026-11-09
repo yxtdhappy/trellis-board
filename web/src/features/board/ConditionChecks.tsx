@@ -28,9 +28,7 @@ type ConditionTableProps = {
 
 function ConditionTable({ rows, kind }: ConditionTableProps) {
   const tone =
-    kind === 'start'
-      ? 'bg-destructive-soft text-destructive'
-      : 'bg-warning-soft text-warning'
+    kind === 'start' ? 'bg-destructive-soft text-destructive' : 'bg-warning-soft text-warning'
 
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-card">
@@ -50,12 +48,16 @@ function ConditionTable({ rows, kind }: ConditionTableProps) {
           </span>
           <span className="font-semibold text-foreground">{row.label}</span>
           <span className="min-w-0">
-            <span className="mb-0.5 block text-[9px] text-muted-foreground lg:hidden">当前证据</span>
+            <span className="mb-0.5 block text-[9px] text-muted-foreground lg:hidden">
+              当前证据
+            </span>
             <span className="line-clamp-2 text-muted-foreground" title={row.evidence}>
               {row.evidence}
             </span>
           </span>
-          <span className={`flex items-center gap-1 text-[9.5px] font-semibold ${kind === 'start' ? 'text-destructive' : 'text-warning'}`}>
+          <span
+            className={`flex items-center gap-1 text-[9.5px] font-semibold ${kind === 'start' ? 'text-destructive' : 'text-warning'}`}
+          >
             <span className="mr-1 text-muted-foreground lg:hidden">下一步</span>
             {row.nextAction}
             <ArrowRightIcon className="size-3" aria-hidden="true" />
@@ -147,10 +149,10 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
                 {!startKnown
                   ? '正在读取开工条件状态。'
                   : startCount
-                  ? mode === 'planning'
-                    ? '进入实现前需要补齐，不会强制阻止操作。'
-                    : `带着 ${startCount} 项缺口进入实现，可能增加返工风险。`
-                  : '开工前准备条件已满足。'}
+                    ? mode === 'planning'
+                      ? '进入实现前需要补齐，不会强制阻止操作。'
+                      : `带着 ${startCount} 项缺口进入实现，可能增加返工风险。`
+                    : '开工前准备条件已满足。'}
               </p>
             </div>
             {startKnown && startCount ? (
@@ -196,7 +198,9 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
           </span>
           <div className="min-w-0">
             <h4 className="text-[11.5px] font-semibold text-foreground">完成条件</h4>
-            <p className="text-[9.5px] text-muted-foreground">进入实现后开始检查，规划阶段暂不适用。</p>
+            <p className="text-[9.5px] text-muted-foreground">
+              进入实现后开始检查，规划阶段暂不适用。
+            </p>
           </div>
           <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[9.5px] font-semibold text-muted-foreground">
             暂不适用

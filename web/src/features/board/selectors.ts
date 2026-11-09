@@ -26,7 +26,8 @@ export function filterTasks(
   const search = filters.search.toLowerCase()
   const me = filters.scope === 'mine' ? myDeveloper(projects) : null
   const now = new Date()
-  const view = filters.executionView === 'all' ? null : findView(savedViews || [], filters.executionView)
+  const view =
+    filters.executionView === 'all' ? null : findView(savedViews || [], filters.executionView)
   const matches = (task: BoardTask) => {
     const hit =
       !search ||
@@ -39,7 +40,11 @@ export function filterTasks(
         task.projectId,
         task.execution?.milestone,
         ...taskTagNames(task),
-      ].some((value) => String(value || '').toLowerCase().includes(search))
+      ].some((value) =>
+        String(value || '')
+          .toLowerCase()
+          .includes(search),
+      )
     const projectHit = filters.projectId === 'all' || task.projectId === filters.projectId
     const ownerHit = filters.scope !== 'mine' || Boolean(me && task.assignee === me)
     const assigneeHit = !filters.assignee || task.assignee === filters.assignee
@@ -47,9 +52,20 @@ export function filterTasks(
     const stageHit = !filters.stage || task.derivedStage === filters.stage
     const blockedHit =
       filters.blocked === 'any' ||
-      (filters.blocked === 'blocked' ? Boolean(task.execution?.isBlocked) : !task.execution?.isBlocked)
+      (filters.blocked === 'blocked'
+        ? Boolean(task.execution?.isBlocked)
+        : !task.execution?.isBlocked)
     const viewHit = !view || taskMatchesView(task, view, now)
-    return hit && projectHit && ownerHit && assigneeHit && priorityHit && stageHit && blockedHit && viewHit
+    return (
+      hit &&
+      projectHit &&
+      ownerHit &&
+      assigneeHit &&
+      priorityHit &&
+      stageHit &&
+      blockedHit &&
+      viewHit
+    )
   }
   return groupActiveTasks(activeTasks(tasks)).flatMap((group) => {
     const hitMembers = group.members.filter(matches)

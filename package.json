@@ -10,7 +10,12 @@
     "build": "npm --prefix web run build",
     "web:dev": "npm --prefix web run dev",
     "capacity": "node scripts/team-capacity-check.js",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
     "test": "node --test tests/*.test.js plugins/*/test/*.test.js"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.77.0"
   },
   "engines": {
     "node": ">=24"

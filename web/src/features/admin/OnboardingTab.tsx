@@ -2,16 +2,8 @@ import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { FolderGit2, Radar } from 'lucide-react'
 import { toast } from 'sonner'
-import {
-  formatError,
-  readSshTrustChallenge
-} from '@/api/admin'
-import type {
-  RemoteProbeResult,
-  SshTrustChallenge,
-  SshTrustResult,
-  TeamProject
-} from '@/api/admin'
+import { formatError, readSshTrustChallenge } from '@/api/admin'
+import type { RemoteProbeResult, SshTrustChallenge, SshTrustResult, TeamProject } from '@/api/admin'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { SelectField } from '@/features/board/SelectField'
@@ -27,7 +19,7 @@ const EMPTY_FORM = {
   credentialId: '',
   name: '',
   branch: '',
-  repositoryId: ''
+  repositoryId: '',
 }
 
 type ProbeEvidence = {
@@ -54,7 +46,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
     probeRemote,
     confirmSshTrust,
     changeProjectCredential,
-    adminTeamId
+    adminTeamId,
   } = consoleApi
   const [form, setForm] = useState(EMPTY_FORM)
   const [nameManual, setNameManual] = useState(false)
@@ -73,24 +65,25 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
     { value: '', label: '无需凭据（公开仓库）' },
     ...credentials.map((credential) => ({
       value: credential.id,
-      label: `${credential.name} · ${credential.host} · ${credential.authType === 'https_token' ? 'HTTPS' : 'SSH'}`
-    }))
+      label: `${credential.name} · ${credential.host} · ${credential.authType === 'https_token' ? 'HTTPS' : 'SSH'}`,
+    })),
   ]
-  const filteredBranches = branches.filter((branch) => (
-    !branchQuery.trim() ||
-    branch.toLowerCase().includes(branchQuery.trim().toLowerCase()) ||
-    branch === form.branch
-  ))
+  const filteredBranches = branches.filter(
+    (branch) =>
+      !branchQuery.trim() ||
+      branch.toLowerCase().includes(branchQuery.trim().toLowerCase()) ||
+      branch === form.branch,
+  )
   const branchOptions = filteredBranches.map((branch) => ({
     value: branch,
-    label: branch
+    label: branch,
   }))
   const probeValid = Boolean(
     probe &&
     form.remote.trim() === probe.remote &&
     form.credentialId === probe.credentialId &&
     form.branch &&
-    branches.includes(form.branch)
+    branches.includes(form.branch),
   )
 
   function resetProbe() {
@@ -140,18 +133,14 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
     }
   }
 
-  function applyProbeResult(
-    result: RemoteProbeResult,
-    remote: string,
-    credentialId: string
-  ) {
+  function applyProbeResult(result: RemoteProbeResult, remote: string, credentialId: string) {
     setBranches(result.branches)
     setBranchQuery('')
     setProbe({ remote, credentialId })
     setForm((current) => ({
       ...current,
       name: nameManual ? current.name : result.recommendedName,
-      branch: result.defaultBranch || ''
+      branch: result.defaultBranch || '',
     }))
   }
 
@@ -161,7 +150,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
       ...current,
       remote,
       name: nameManual ? current.name : '',
-      branch: ''
+      branch: '',
     }))
   }
 
@@ -171,7 +160,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
       ...current,
       credentialId,
       name: nameManual ? current.name : '',
-      branch: ''
+      branch: '',
     }))
   }
 
@@ -187,7 +176,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
       syncBranch: form.branch,
       remoteUrl: probe.remote,
       credentialId: probe.credentialId || null,
-      repositoryId: form.repositoryId.trim()
+      repositoryId: form.repositoryId.trim(),
     })
     setBusy(false)
     if (connected) resetForm()
@@ -206,17 +195,11 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
     return result
   }
 
-  async function saveProjectCredential(
-    project: TeamProject,
-    credentialId: string | null
-  ) {
+  async function saveProjectCredential(project: TeamProject, credentialId: string | null) {
     setCredentialBusy(true)
     try {
       await changeProjectCredential(project.id, credentialId)
-      await Promise.all([
-        reloadProjects(true),
-        reloadCredentials(true)
-      ])
+      await Promise.all([reloadProjects(true), reloadCredentials(true)])
       toast.success('项目 Git 凭据已更新。')
       setCredentialProject(null)
       return true
@@ -258,7 +241,13 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
                     type="button"
                     size="sm"
                     className="shrink-0"
-                    disabled={!form.remote.trim() || probeBusy || busy || !adminTeamId || adminTeamId === 'all'}
+                    disabled={
+                      !form.remote.trim() ||
+                      probeBusy ||
+                      busy ||
+                      !adminTeamId ||
+                      adminTeamId === 'all'
+                    }
                     onClick={() => void runProbe()}
                   >
                     <Radar className={probeBusy ? 'size-3.5 animate-pulse' : 'size-3.5'} />
@@ -483,9 +472,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
           project={credentialProject}
           credentials={credentials}
           busy={credentialBusy}
-          onSave={(credentialId) => (
-            saveProjectCredential(credentialProject, credentialId)
-          )}
+          onSave={(credentialId) => saveProjectCredential(credentialProject, credentialId)}
           onClose={() => {
             if (!credentialBusy) setCredentialProject(null)
           }}

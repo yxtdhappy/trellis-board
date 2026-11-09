@@ -18,10 +18,7 @@ export const FILTER_STAGES: FilterStage[]
 export const BUILTIN_VIEWS: BuiltinView[]
 export const ATTENTION_REASON_LABELS: Record<string, string>
 export function laneForStageIndex(task: unknown, current: number): string | null
-export function normalizeTagsInput(
-  value: unknown,
-  options?: { rejectEmpty?: boolean },
-): string[]
+export function normalizeTagsInput(value: unknown, options?: { rejectEmpty?: boolean }): string[]
 export function taskTagNames(task: unknown): string[]
 export function localDaySerial(value: unknown): number | null
 export function dueDateDistance(due: string, now?: Date): number | null
@@ -31,7 +28,4 @@ export function taskMatchesFilter(
   now?: Date,
 ): boolean
 export function taskMatchesView(task: unknown, view: unknown, now?: Date): boolean
-export function findView(
-  views: unknown[],
-  id: string,
-): { id: string; name: string } | null
+export function findView(views: unknown[], id: string): { id: string; name: string } | null

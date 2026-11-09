@@ -2,7 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ApiError, redirectToLogin } from '@/api/request'
 import * as admin from '@/api/admin'
-import type { AdminUser, AdminView, AgentDevice, AuditEvent, NewUserInput, SessionUser, Team, UserUpdate } from '@/api/admin'
+import type {
+  AdminUser,
+  AdminView,
+  AgentDevice,
+  AuditEvent,
+  NewUserInput,
+  SessionUser,
+  Team,
+  UserUpdate,
+} from '@/api/admin'
 import { formatTime } from '@/lib/admin-shared'
 import { useAdminProjects } from './useAdminProjects'
 import type { AdminProjects } from './useAdminProjects'
@@ -17,42 +26,43 @@ export type Credential = {
   value: string
 }
 
-export type AdminConsole = AdminProjects & AdminGitCredentials & {
-  phase: AdminPhase
-  bootError: string
-  view: AdminView
-  setView: (view: AdminView) => void
-  isAdmin: boolean
-  systemAdmin: boolean
-  teams: Team[]
-  adminTeams: Team[]
-  adminTeamId: string
-  setAdminTeamId: (teamId: string) => void
-  displayName: string
-  roleLabel: string
-  avatarText: string
-  users: AdminUser[]
-  reloadUsers: (quiet?: boolean) => Promise<AdminUser[]>
-  devices: AgentDevice[]
-  reloadDevices: (quiet?: boolean) => Promise<AgentDevice[]>
-  systemAudit: AuditEvent[]
-  systemAuditHasMore: boolean
-  systemAuditUnavailable: boolean
-  loadSystemAudit: (reset: boolean) => Promise<void>
-  createUser: (input: NewUserInput) => Promise<boolean>
-  updateUser: (target: AdminUser, updates: UserUpdate) => Promise<AdminUser | null>
-  toggleUser: (target: AdminUser) => Promise<void>
-  resetPassword: (target: AdminUser, password: string) => Promise<boolean>
-  revokeDevice: (device: AgentDevice) => Promise<void>
-  createPairingCode: (teamId?: string) => Promise<void>
-  pairingCode: { code: string; expiresAt: string | null } | null
-  createDesktopEnrollToken: () => Promise<void>
-  desktopToken: { token: string; expiresAt: string | null } | null
-  credential: Credential | null
-  showCredential: (title: string, description: string, value: string | null) => void
-  closeCredential: () => void
-  logout: () => Promise<void>
-}
+export type AdminConsole = AdminProjects &
+  AdminGitCredentials & {
+    phase: AdminPhase
+    bootError: string
+    view: AdminView
+    setView: (view: AdminView) => void
+    isAdmin: boolean
+    systemAdmin: boolean
+    teams: Team[]
+    adminTeams: Team[]
+    adminTeamId: string
+    setAdminTeamId: (teamId: string) => void
+    displayName: string
+    roleLabel: string
+    avatarText: string
+    users: AdminUser[]
+    reloadUsers: (quiet?: boolean) => Promise<AdminUser[]>
+    devices: AgentDevice[]
+    reloadDevices: (quiet?: boolean) => Promise<AgentDevice[]>
+    systemAudit: AuditEvent[]
+    systemAuditHasMore: boolean
+    systemAuditUnavailable: boolean
+    loadSystemAudit: (reset: boolean) => Promise<void>
+    createUser: (input: NewUserInput) => Promise<boolean>
+    updateUser: (target: AdminUser, updates: UserUpdate) => Promise<AdminUser | null>
+    toggleUser: (target: AdminUser) => Promise<void>
+    resetPassword: (target: AdminUser, password: string) => Promise<boolean>
+    revokeDevice: (device: AgentDevice) => Promise<void>
+    createPairingCode: (teamId?: string) => Promise<void>
+    pairingCode: { code: string; expiresAt: string | null } | null
+    createDesktopEnrollToken: () => Promise<void>
+    desktopToken: { token: string; expiresAt: string | null } | null
+    credential: Credential | null
+    showCredential: (title: string, description: string, value: string | null) => void
+    closeCredential: () => void
+    logout: () => Promise<void>
+  }
 
 function redirectIfUnauthorized(error: unknown): boolean {
   if (!(error instanceof ApiError) || error.status !== 401) return false
@@ -78,15 +88,16 @@ export function useAdminConsole(): AdminConsole {
   const [systemAuditHasMore, setSystemAuditHasMore] = useState(false)
   const [systemAuditUnavailable, setSystemAuditUnavailable] = useState(false)
   const [credential, setCredential] = useState<Credential | null>(null)
-  const [pairingCode, setPairingCode] = useState<{ code: string; expiresAt: string | null } | null>(null)
-  const [desktopToken, setDesktopToken] = useState<{ token: string; expiresAt: string | null } | null>(
-    null
+  const [pairingCode, setPairingCode] = useState<{ code: string; expiresAt: string | null } | null>(
+    null,
   )
+  const [desktopToken, setDesktopToken] = useState<{
+    token: string
+    expiresAt: string | null
+  } | null>(null)
 
   const systemAuditBeforeRef = useRef<number | null>(null)
-  const adminTeams = systemAdmin
-    ? teams
-    : teams.filter((team) => team.role === 'admin')
+  const adminTeams = systemAdmin ? teams : teams.filter((team) => team.role === 'admin')
 
   const report = useCallback((error: unknown, quiet = false) => {
     if (redirectIfUnauthorized(error)) return
@@ -119,14 +130,9 @@ export function useAdminConsole(): AdminConsole {
           ? runtime.teams
           : runtime.teams.filter((team) => team.role === 'admin')
         const canAdmin = runtime.systemAdmin || manageableTeams.length > 0
-        setAdminTeamId(
-          runtime.systemAdmin
-            ? 'all'
-            : manageableTeams[0]?.id || ''
-        )
+        setAdminTeamId(runtime.systemAdmin ? 'all' : manageableTeams[0]?.id || '')
         const canManage =
-          canAdmin ||
-          runtime.projects.some((project) => admin.canManageProject(project))
+          canAdmin || runtime.projects.some((project) => admin.canManageProject(project))
         setIsAdmin(canAdmin)
         setPhase(canManage ? 'ready' : 'denied')
       } catch (error) {
@@ -162,7 +168,7 @@ export function useAdminConsole(): AdminConsole {
         return []
       }
     },
-    [adminTeamId, report]
+    [adminTeamId, report],
   )
 
   const reloadDevices = useCallback(
@@ -177,7 +183,7 @@ export function useAdminConsole(): AdminConsole {
         return []
       }
     },
-    [adminTeamId, isAdmin, report]
+    [adminTeamId, isAdmin, report],
   )
 
   const loadSystemAudit = useCallback(
@@ -200,19 +206,16 @@ export function useAdminConsole(): AdminConsole {
         report(error)
       }
     },
-    [adminTeamId, report]
+    [adminTeamId, report],
   )
 
-  const showCredential = useCallback(
-    (title: string, description: string, value: string | null) => {
-      if (!value) {
-        toast.error('服务端没有返回一次性凭证，请重新执行操作。')
-        return
-      }
-      setCredential({ title, description, value })
-    },
-    []
-  )
+  const showCredential = useCallback((title: string, description: string, value: string | null) => {
+    if (!value) {
+      toast.error('服务端没有返回一次性凭证，请重新执行操作。')
+      return
+    }
+    setCredential({ title, description, value })
+  }, [])
 
   const createUser = useCallback(
     async (input: NewUserInput) => {
@@ -230,7 +233,7 @@ export function useAdminConsole(): AdminConsole {
         return false
       }
     },
-    [reloadUsers, report]
+    [reloadUsers, report],
   )
 
   const updateUser = useCallback(
@@ -244,19 +247,20 @@ export function useAdminConsole(): AdminConsole {
         return null
       }
     },
-    [report]
+    [report],
   )
 
   const toggleUser = useCallback(
     async (target: AdminUser) => {
       const status = target.status === 'active' ? 'disabled' : 'active'
-      if (!window.confirm(`${status === 'disabled' ? '停用' : '启用'}账号 ${target.username}？`)) return
+      if (!window.confirm(`${status === 'disabled' ? '停用' : '启用'}账号 ${target.username}？`))
+        return
       const updated = await updateUser(target, { status })
       if (updated) {
         toast.success(`账号 ${updated.username} 已${status === 'active' ? '启用' : '停用'}。`)
       }
     },
-    [updateUser]
+    [updateUser],
   )
 
   const resetPassword = useCallback(
@@ -271,7 +275,7 @@ export function useAdminConsole(): AdminConsole {
         return false
       }
     },
-    [reloadUsers, report]
+    [reloadUsers, report],
   )
 
   const revokeDevice = useCallback(
@@ -280,7 +284,8 @@ export function useAdminConsole(): AdminConsole {
         toast.error('请先在顶部选择一个具体团队，再撤销该团队的设备绑定。')
         return
       }
-      if (!window.confirm(`撤销 Agent 设备 ${device.deviceName}？相关绑定和待执行命令会失效。`)) return
+      if (!window.confirm(`撤销 Agent 设备 ${device.deviceName}？相关绑定和待执行命令会失效。`))
+        return
       try {
         await admin.revokeDevice(device.id, adminTeamId)
         toast.success('Agent 设备已撤销。')
@@ -289,31 +294,34 @@ export function useAdminConsole(): AdminConsole {
         report(error)
       }
     },
-    [adminTeamId, reloadDevices, report]
+    [adminTeamId, reloadDevices, report],
   )
 
-  const createPairingCode = useCallback(async (teamId?: string) => {
-    const targetTeamId = teamId || adminTeamId
-    if (!targetTeamId || targetTeamId === 'all') {
-      toast.error('请先在顶部选择一个具体团队，再生成配对码。')
-      return
-    }
-    try {
-      const result = await admin.createPairingCode(targetTeamId)
-      if (result.pairingCode) {
-        setPairingCode({ code: result.pairingCode, expiresAt: result.expiresAt })
+  const createPairingCode = useCallback(
+    async (teamId?: string) => {
+      const targetTeamId = teamId || adminTeamId
+      if (!targetTeamId || targetTeamId === 'all') {
+        toast.error('请先在顶部选择一个具体团队，再生成配对码。')
+        return
       }
-      showCredential(
-        'Agent 配对码',
-        result.expiresAt
-          ? `仅显示一次，有效期至 ${formatTime(result.expiresAt)}。`
-          : '仅显示一次，请立即完成 Agent 配对。',
-        result.pairingCode
-      )
-    } catch (error) {
-      report(error)
-    }
-  }, [adminTeamId, report, showCredential])
+      try {
+        const result = await admin.createPairingCode(targetTeamId)
+        if (result.pairingCode) {
+          setPairingCode({ code: result.pairingCode, expiresAt: result.expiresAt })
+        }
+        showCredential(
+          'Agent 配对码',
+          result.expiresAt
+            ? `仅显示一次，有效期至 ${formatTime(result.expiresAt)}。`
+            : '仅显示一次，请立即完成 Agent 配对。',
+          result.pairingCode,
+        )
+      } catch (error) {
+        report(error)
+      }
+    },
+    [adminTeamId, report, showCredential],
+  )
 
   const createDesktopEnrollToken = useCallback(async () => {
     try {
@@ -347,7 +355,7 @@ export function useAdminConsole(): AdminConsole {
   const gitCredentials = useGitCredentials({
     report,
     isAdmin,
-    teamId: adminTeamId
+    teamId: adminTeamId,
   })
   const displayName = user?.displayName || user?.username || '团队账号'
 
@@ -387,6 +395,6 @@ export function useAdminConsole(): AdminConsole {
     credential,
     showCredential,
     closeCredential: () => setCredential(null),
-    logout
+    logout,
   }
 }

@@ -6,14 +6,7 @@
   "engines": {
     "board": ">=0.2.0"
   },
-  "permissions": [
-    "tasks:read",
-    "store",
-    "events",
-    "http:route",
-    "runs:read",
-    "runs:write"
-  ],
+  "permissions": ["tasks:read", "store", "events", "http:route", "runs:read", "runs:write"],
   "http": {
     "rootPaths": []
   },

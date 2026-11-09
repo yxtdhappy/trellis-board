@@ -49,9 +49,9 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
   const selectedUser = users.find((user) => user.id === selectedId) ?? null
 
   function toggleCreateTeam(teamId: string, checked: boolean) {
-    setTeamIds((current) => checked
-      ? [...current, teamId]
-      : current.filter((id) => id !== teamId))
+    setTeamIds((current) =>
+      checked ? [...current, teamId] : current.filter((id) => id !== teamId),
+    )
   }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -67,7 +67,7 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
       displayName: displayName.trim(),
       password,
       teamIds,
-      systemAdmin
+      systemAdmin,
     })
     setBusy(false)
     if (created) {
@@ -250,7 +250,8 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                         <code>{user.username}</code> · ID <code>{user.id}</code>
                       </p>
                       <p className="truncate text-[10px] text-muted-foreground">
-                        团队 {user.teams.length
+                        团队{' '}
+                        {user.teams.length
                           ? user.teams.map((team) => team.name).join('、')
                           : '未分配'}
                       </p>

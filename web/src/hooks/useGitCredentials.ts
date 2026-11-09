@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import * as admin from '@/api/admin'
-import type {
-  GitCredential,
-  GitCredentialInput,
-  RemoteProbeResult,
-  TeamProject
-} from '@/api/admin'
+import type { GitCredential, GitCredentialInput, RemoteProbeResult, TeamProject } from '@/api/admin'
 
 export type AdminGitCredentials = {
   credentials: GitCredential[]
@@ -15,7 +10,7 @@ export type AdminGitCredentials = {
   createCredential: (input: Omit<GitCredentialInput, 'teamId'>) => Promise<boolean>
   updateCredential: (
     credential: GitCredential,
-    input: Omit<GitCredentialInput, 'teamId' | 'host' | 'authType'>
+    input: Omit<GitCredentialInput, 'teamId' | 'host' | 'authType'>,
   ) => Promise<boolean>
   deleteCredential: (credential: GitCredential) => Promise<boolean>
   probeRemote: (input: {
@@ -23,10 +18,7 @@ export type AdminGitCredentials = {
     credentialId?: string | null
   }) => Promise<RemoteProbeResult>
   confirmSshTrust: (challengeId: string) => Promise<admin.SshTrustResult>
-  changeProjectCredential: (
-    projectId: string,
-    credentialId: string | null
-  ) => Promise<TeamProject>
+  changeProjectCredential: (projectId: string, credentialId: string | null) => Promise<TeamProject>
 }
 
 type Options = {
@@ -35,11 +27,7 @@ type Options = {
   teamId: string
 }
 
-export function useGitCredentials({
-  report,
-  isAdmin,
-  teamId
-}: Options): AdminGitCredentials {
+export function useGitCredentials({ report, isAdmin, teamId }: Options): AdminGitCredentials {
   const [credentials, setCredentials] = useState<GitCredential[]>([])
   const [credentialsLoading, setCredentialsLoading] = useState(false)
   const requestRef = useRef(0)
@@ -61,7 +49,7 @@ export function useGitCredentials({
         if (requestRef.current === requestId) setCredentialsLoading(false)
       }
     },
-    [isAdmin, report, teamId]
+    [isAdmin, report, teamId],
   )
 
   useEffect(() => {
@@ -85,13 +73,13 @@ export function useGitCredentials({
         return false
       }
     },
-    [reloadCredentials, report, teamId]
+    [reloadCredentials, report, teamId],
   )
 
   const updateCredential = useCallback(
     async (
       credential: GitCredential,
-      input: Omit<GitCredentialInput, 'teamId' | 'host' | 'authType'>
+      input: Omit<GitCredentialInput, 'teamId' | 'host' | 'authType'>,
     ) => {
       try {
         await admin.updateGitCredential(credential.id, input)
@@ -103,7 +91,7 @@ export function useGitCredentials({
         return false
       }
     },
-    [reloadCredentials, report]
+    [reloadCredentials, report],
   )
 
   const deleteCredential = useCallback(
@@ -119,7 +107,7 @@ export function useGitCredentials({
         return false
       }
     },
-    [reloadCredentials, report]
+    [reloadCredentials, report],
   )
 
   const probeRemote = useCallback(
@@ -129,22 +117,20 @@ export function useGitCredentials({
       }
       return admin.probeGitRemote({ ...input, teamId })
     },
-    [teamId]
+    [teamId],
   )
 
   const confirmSshTrust = useCallback((challengeId: string) => {
     return admin.confirmSshHost(challengeId)
   }, [])
 
-  const changeProjectCredential = useCallback(
-    (projectId: string, credentialId: string | null) => {
-      return admin.changeProjectCredential(projectId, credentialId)
-    },
-    []
-  )
-  const visibleCredentials = teamId && teamId !== 'all'
-    ? credentials.filter((credential) => credential.teamId === teamId)
-    : credentials
+  const changeProjectCredential = useCallback((projectId: string, credentialId: string | null) => {
+    return admin.changeProjectCredential(projectId, credentialId)
+  }, [])
+  const visibleCredentials =
+    teamId && teamId !== 'all'
+      ? credentials.filter((credential) => credential.teamId === teamId)
+      : credentials
 
   return {
     credentials: visibleCredentials,
@@ -155,6 +141,6 @@ export function useGitCredentials({
     deleteCredential,
     probeRemote,
     confirmSshTrust,
-    changeProjectCredential
+    changeProjectCredential,
   }
 }

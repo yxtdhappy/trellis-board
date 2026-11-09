@@ -14,9 +14,14 @@ export function Overview({ active, archived, attention, repositories }: Overview
   return (
     <section className="grid grid-cols-2 gap-2 lg:grid-cols-3">
       {cards.map((card) => (
-        <div key={card.label} className="flex flex-col gap-0.5 rounded-xl border border-border bg-card px-3 py-2">
+        <div
+          key={card.label}
+          className="flex flex-col gap-0.5 rounded-xl border border-border bg-card px-3 py-2"
+        >
           <p className="text-[10.5px] text-muted-foreground">{card.label}</p>
-          <p className="text-[20px] leading-6 font-semibold font-heading tabular-nums">{card.value}</p>
+          <p className="text-[20px] leading-6 font-semibold font-heading tabular-nums">
+            {card.value}
+          </p>
           <p className="truncate text-[10px] text-muted-foreground">{card.caption}</p>
         </div>
       ))}

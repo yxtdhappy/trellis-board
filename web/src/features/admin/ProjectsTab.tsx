@@ -23,23 +23,21 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
     saveMember,
     removeMember,
     bindingAction,
-    createPairingCode
+    createPairingCode,
   } = consoleApi
 
   const [userId, setUserId] = useState('')
   const [role, setRole] = useState('member')
   const [developerId, setDeveloperId] = useState('')
   const readOnly = role === 'read_only'
-  const selectedTeamId = projectOptions.find(
-    (project) => project.id === accessProjectId,
-  )?.teamId
+  const selectedTeamId = projectOptions.find((project) => project.id === accessProjectId)?.teamId
 
   async function handleSaveMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const saved = await saveMember({
       userId: userId.trim(),
       role,
-      trellisDevId: readOnly ? null : developerId.trim() || null
+      trellisDevId: readOnly ? null : developerId.trim() || null,
     })
     if (saved) {
       setUserId('')
@@ -89,7 +87,9 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           kicker="MEMBERS"
           title="项目成员"
           action={
-            <span className="text-[11px] font-semibold text-muted-foreground">{members.length}</span>
+            <span className="text-[11px] font-semibold text-muted-foreground">
+              {members.length}
+            </span>
           }
         >
           <form className="flex flex-col gap-2" onSubmit={handleSaveMember}>
@@ -269,7 +269,8 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                       仓库 <code>{binding.displayName || binding.localRepoKey || '未返回'}</code>
                     </p>
                     <p className="truncate text-[10px] text-muted-foreground">
-                      最近心跳 {formatTime(binding.lastSeenAt)} · 同步 {formatTime(binding.lastSyncedAt)}
+                      最近心跳 {formatTime(binding.lastSeenAt)} · 同步{' '}
+                      {formatTime(binding.lastSyncedAt)}
                     </p>
                     {binding.lastError ? (
                       <p className="text-[10px] text-destructive">{binding.lastError}</p>

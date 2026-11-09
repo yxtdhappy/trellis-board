@@ -47,7 +47,9 @@ export function ExecutionHeader({
             PERSONAL / CURRENT REPOSITORY
           </p>
           <h1 className="text-[19px] leading-6 font-semibold font-heading">把每个任务放回流程里</h1>
-          <p className="text-[11.5px] text-muted-foreground">全部授权项目 · 13 阶段证据 · {total} 个进行中任务</p>
+          <p className="text-[11.5px] text-muted-foreground">
+            全部授权项目 · 13 阶段证据 · {total} 个进行中任务
+          </p>
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -126,25 +128,37 @@ export function ExecutionHeader({
         <FilterField
           label="项目"
           value={filters.projectId}
-          options={[{ id: 'all', name: '全部授权项目' }, ...projects.map((p) => ({ id: p.id, name: p.name }))]}
+          options={[
+            { id: 'all', name: '全部授权项目' },
+            ...projects.map((p) => ({ id: p.id, name: p.name })),
+          ]}
           onChange={(value) => onChange({ projectId: value })}
         />
         <FilterField
           label="负责人"
           value={filters.assignee || '__all'}
-          options={[{ id: '__all', name: '全部负责人' }, ...assignees.map((name) => ({ id: name, name }))]}
+          options={[
+            { id: '__all', name: '全部负责人' },
+            ...assignees.map((name) => ({ id: name, name })),
+          ]}
           onChange={(value) => onChange({ assignee: value === '__all' ? '' : value })}
         />
         <FilterField
           label="优先级"
           value={filters.priority || '__all'}
-          options={[{ id: '__all', name: '全部优先级' }, ...PRIORITIES.map((p) => ({ id: p, name: p }))]}
+          options={[
+            { id: '__all', name: '全部优先级' },
+            ...PRIORITIES.map((p) => ({ id: p, name: p })),
+          ]}
           onChange={(value) => onChange({ priority: value === '__all' ? '' : value })}
         />
         <FilterField
           label="阶段"
           value={filters.stage || '__all'}
-          options={[{ id: '__all', name: '全部阶段' }, ...stages.map((stage) => ({ id: stage.id, name: stage.label }))]}
+          options={[
+            { id: '__all', name: '全部阶段' },
+            ...stages.map((stage) => ({ id: stage.id, name: stage.label })),
+          ]}
           onChange={(value) => onChange({ stage: value === '__all' ? '' : value })}
         />
         <FilterField

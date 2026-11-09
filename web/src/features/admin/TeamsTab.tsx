@@ -20,13 +20,13 @@ export function TeamsTab() {
   const reload = useCallback(async () => {
     const [nextTeams, nextUsers] = await Promise.all([
       admin.fetchAdminTeams(),
-      admin.fetchUsers('all')
+      admin.fetchUsers('all'),
     ])
     setTeams(nextTeams)
     setUsers(nextUsers)
-    setSelectedId((current) => (
-      nextTeams.some((team) => team.id === current) ? current : (nextTeams[0]?.id || '')
-    ))
+    setSelectedId((current) =>
+      nextTeams.some((team) => team.id === current) ? current : nextTeams[0]?.id || '',
+    )
   }, [])
 
   useEffect(() => {
@@ -39,7 +39,8 @@ export function TeamsTab() {
       return
     }
     let cancelled = false
-    void admin.fetchTeamDetail(selectedId)
+    void admin
+      .fetchTeamDetail(selectedId)
       .then((detail) => {
         if (!cancelled) setMembers(detail.members)
       })
@@ -74,7 +75,7 @@ export function TeamsTab() {
   function toggleStatus(team: Team) {
     void run(async () => {
       await admin.updateTeam(team.id, {
-        status: team.status === 'active' ? 'disabled' : 'active'
+        status: team.status === 'active' ? 'disabled' : 'active',
       })
     })
   }
@@ -88,7 +89,7 @@ export function TeamsTab() {
         ...user.teams
           .filter((team) => team.id !== selected.id)
           .map((team) => ({ teamId: team.id, role: team.role || 'member' })),
-        { teamId: selected.id, role }
+        { teamId: selected.id, role },
       ])
       setUserId('')
       toast.success('团队成员已更新。')
@@ -99,9 +100,12 @@ export function TeamsTab() {
     const user = users.find((item) => item.id === member.userId)
     if (!user || !selected) return
     void run(async () => {
-      await admin.saveUserTeams(user.id, user.teams
-        .filter((team) => team.id !== selected.id)
-        .map((team) => ({ teamId: team.id, role: team.role || 'member' })))
+      await admin.saveUserTeams(
+        user.id,
+        user.teams
+          .filter((team) => team.id !== selected.id)
+          .map((team) => ({ teamId: team.id, role: team.role || 'member' })),
+      )
     })
   }
 
@@ -145,17 +149,19 @@ export function TeamsTab() {
       <Panel
         title={selected ? selected.name : '团队详情'}
         description={selected ? `slug: ${selected.slug}` : '选择一个团队查看成员。'}
-        action={selected ? (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 px-2 text-xs"
-            disabled={busy}
-            onClick={() => toggleStatus(selected)}
-          >
-            {selected.status === 'active' ? '停用团队' : '启用团队'}
-          </Button>
-        ) : null}
+        action={
+          selected ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              disabled={busy}
+              onClick={() => toggleStatus(selected)}
+            >
+              {selected.status === 'active' ? '停用团队' : '启用团队'}
+            </Button>
+          ) : null
+        }
       >
         {selected ? (
           <>
@@ -182,7 +188,12 @@ export function TeamsTab() {
                 <option value="member">成员</option>
                 <option value="admin">团队管理员</option>
               </select>
-              <Button size="sm" className="h-7 px-2 text-xs" disabled={busy || !userId} onClick={addMember}>
+              <Button
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={busy || !userId}
+                onClick={addMember}
+              >
                 加入团队
               </Button>
             </div>
@@ -212,7 +223,9 @@ export function TeamsTab() {
               {members.length === 0 ? <EmptyRow>该团队还没有成员</EmptyRow> : null}
             </div>
           </>
-        ) : <EmptyRow>暂无团队</EmptyRow>}
+        ) : (
+          <EmptyRow>暂无团队</EmptyRow>
+        )}
       </Panel>
     </div>
   )

@@ -5,6 +5,7 @@
 - 运行时要求 Node `>=24`。
 - 类型检查与构建：`npm --prefix web run build`（`tsc -b && vite build`，产物写入 `public/`）。
 - 单元测试：`npm test`（`node --test tests/*.test.js`）。
+- 格式化：`npm run format`（`oxfmt .`）、`npm run format:check`（CI 用）。oxfmt 是唯一格式化工具，配置在根 `.oxfmtrc.json`（`printWidth 100`、无分号、单引号、2 空格、LF），不要再引入 Prettier/ESLint 格式化规则；改完代码先跑 `npm run format`。
 - 本地联调：`npm run web:dev`（Vite 代理由 `/api` → `127.0.0.1:4317`，先 `npm start` 起服务端）。
 - 交付前必须实际打开 `/`、`/admin.html`、`/login.html` 验收；构建成功不等于功能正确。
 

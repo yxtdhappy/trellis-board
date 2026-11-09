@@ -1,15 +1,11 @@
-import path from "node:path";
-import { AgentApiClient, loadCaFile } from "./api.js";
-import { ConfigStore } from "./config-store.js";
-import { createEventCache } from "./event-cache.js";
-import {
-  formatBindingHealth,
-  inspectRepository,
-  syncRepository,
-} from "./git-sync.js";
-import { SingleInstanceLock } from "./lock.js";
-import { AgentLiveSync } from "./live-sync.js";
-import { AgentLogger } from "./logger.js";
+import path from 'node:path'
+import { AgentApiClient, loadCaFile } from './api.js'
+import { ConfigStore } from './config-store.js'
+import { createEventCache } from './event-cache.js'
+import { formatBindingHealth, inspectRepository, syncRepository } from './git-sync.js'
+import { SingleInstanceLock } from './lock.js'
+import { AgentLiveSync } from './live-sync.js'
+import { AgentLogger } from './logger.js'
 import {
   AgentError,
   AGENT_ERROR_CODE,
@@ -20,33 +16,33 @@ import {
   isAuthenticationError,
   safeErrorMessage,
   validateCommand,
-} from "./protocol.js";
+} from './protocol.js'
 
-const HEARTBEAT_MS = 15_000;
-const EVENT_RECONCILE_MS = 5_000;
-const RETRY_BASE_MS = 1_000;
-const RETRY_MAX_MS = 60_000;
+const HEARTBEAT_MS = 15_000
+const EVENT_RECONCILE_MS = 5_000
+const RETRY_BASE_MS = 1_000
+const RETRY_MAX_MS = 60_000
 
 function sleep(ms, signal) {
   if (signal?.aborted) {
-    return Promise.resolve();
+    return Promise.resolve()
   }
   return new Promise((resolve) => {
-    const timer = setTimeout(done, ms);
+    const timer = setTimeout(done, ms)
     function done() {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", done);
-      resolve();
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
     }
-    signal?.addEventListener("abort", done, { once: true });
-  });
+    signal?.addEventListener('abort', done, { once: true })
+  })
 }
 
 function nextDelay(attempt, retryAfterMs = null) {
   if (Number.isFinite(retryAfterMs) && retryAfterMs >= 0) {
-    return Math.min(Math.max(retryAfterMs, RETRY_BASE_MS), RETRY_MAX_MS);
+    return Math.min(Math.max(retryAfterMs, RETRY_BASE_MS), RETRY_MAX_MS)
   }
-  return Math.min(RETRY_BASE_MS * 2 ** Math.min(attempt, 6), RETRY_MAX_MS);
+  return Math.min(RETRY_BASE_MS * 2 ** Math.min(attempt, 6), RETRY_MAX_MS)
 }
 
 function publicBinding(binding) {
@@ -64,109 +60,109 @@ function publicBinding(binding) {
     lastSyncedAt: binding.lastSyncedAt,
     lastErrorCode: binding.lastErrorCode,
     lastError: binding.lastError,
-  };
+  }
 }
 
 function commandBinding(config, command) {
   const byServerId = config.bindings.find(
     (binding) => binding.serverBindingId === command.bindingId,
-  );
+  )
   if (byServerId) {
-    return byServerId;
+    return byServerId
   }
   if (command.payload.projectId) {
-    return config.bindings.find(
-      (binding) => binding.projectId === command.payload.projectId,
-    ) || null;
+    return (
+      config.bindings.find((binding) => binding.projectId === command.payload.projectId) || null
+    )
   }
-  return null;
+  return null
 }
 
 function bindingMatchesCommand(binding, command) {
   if (command.payload.projectId && binding.projectId !== command.payload.projectId) {
-    return false;
+    return false
   }
-  if (binding.serverBindingId &&
-      binding.serverBindingId !== command.bindingId) {
-    return false;
+  if (binding.serverBindingId && binding.serverBindingId !== command.bindingId) {
+    return false
   }
-  return !command.payload.branchName || command.payload.branchName === binding.branchName;
+  return !command.payload.branchName || command.payload.branchName === binding.branchName
 }
 
 function activeCommandEnabled(heartbeat) {
   if (!heartbeat?.compatible) {
-    return false;
+    return false
   }
   if (!heartbeat.minimumAgentVersion) {
-    return true;
+    return true
   }
-  const comparison = compareVersions(AGENT_VERSION, heartbeat.minimumAgentVersion);
-  return comparison != null && comparison >= 0;
+  const comparison = compareVersions(AGENT_VERSION, heartbeat.minimumAgentVersion)
+  return comparison != null && comparison >= 0
 }
 
 export class AgentRuntime {
   constructor(options) {
-    this.store = options.store;
-    this.credentialStore = options.credentialStore;
-    this.logger = options.logger;
-    this.apiFactory = options.apiFactory || ((config, credential, ca) =>
-      new AgentApiClient({
-        serverUrl: config.serverUrl,
-        credential,
-        ca,
-      }));
-    this.inspectRepository = options.inspectRepository || inspectRepository;
-    this.syncRepository = options.syncRepository || syncRepository;
-    this.heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
-    this.eventIdleMs = options.eventIdleMs ?? 60_000;
-    this.eventReconcileMs = options.eventReconcileMs ?? EVENT_RECONCILE_MS;
-    this.eventCache = options.eventCache || createEventCache({ root: this.store.paths.root });
-    this.liveSync = options.liveSync || new AgentLiveSync({
-      store: this.store,
-      loadContext: () => this.loadContext(),
-      logger: this.logger,
-      emitControl: options.emitControl,
-      watch: options.watch
-    });
-    this._syncInFlight = new Map();
-    this.abortController = new AbortController();
-    this.signal = this.abortController.signal;
+    this.store = options.store
+    this.credentialStore = options.credentialStore
+    this.logger = options.logger
+    this.apiFactory =
+      options.apiFactory ||
+      ((config, credential, ca) =>
+        new AgentApiClient({
+          serverUrl: config.serverUrl,
+          credential,
+          ca,
+        }))
+    this.inspectRepository = options.inspectRepository || inspectRepository
+    this.syncRepository = options.syncRepository || syncRepository
+    this.heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS
+    this.eventIdleMs = options.eventIdleMs ?? 60_000
+    this.eventReconcileMs = options.eventReconcileMs ?? EVENT_RECONCILE_MS
+    this.eventCache = options.eventCache || createEventCache({ root: this.store.paths.root })
+    this.liveSync =
+      options.liveSync ||
+      new AgentLiveSync({
+        store: this.store,
+        loadContext: () => this.loadContext(),
+        logger: this.logger,
+        emitControl: options.emitControl,
+        watch: options.watch,
+      })
+    this._syncInFlight = new Map()
+    this.abortController = new AbortController()
+    this.signal = this.abortController.signal
     if (options.signal?.aborted) {
-      this.stop("signal");
+      this.stop('signal')
     } else if (options.signal) {
-      options.signal.addEventListener("abort", () => this.stop("signal"), {
+      options.signal.addEventListener('abort', () => this.stop('signal'), {
         once: true,
-      });
+      })
     }
-    this.api = null;
-    this.config = null;
-    this.credential = null;
-    this.ca = null;
-    this.lastHeartbeat = null;
-    this.pollEnabled = false;
+    this.api = null
+    this.config = null
+    this.credential = null
+    this.ca = null
+    this.lastHeartbeat = null
+    this.pollEnabled = false
     // 已被服务端撤销/拒绝的团队：不再重建事件流，避免 403 风暴。
-    this.abandonedTeams = new Set();
-    this.authRevoked = false;
-    this.stopReason = null;
-    this.fatalError = null;
+    this.abandonedTeams = new Set()
+    this.authRevoked = false
+    this.stopReason = null
+    this.fatalError = null
   }
 
-  stop(reason = "requested") {
-    this.liveSync?.stop();
+  stop(reason = 'requested') {
+    this.liveSync?.stop()
     if (!this.signal.aborted) {
-      this.stopReason ||= reason;
-      this.abortController.abort();
+      this.stopReason ||= reason
+      this.abortController.abort()
     }
   }
 
   async loadContext(force = false) {
-    const config = await this.store.readConfig({ allowMissing: false });
-    const credential = force || !this.credential
-      ? await this.credentialStore.loadCredential()
-      : this.credential;
-    const ca = force || !this.api
-      ? await loadCaFile(config.caFile)
-      : this.ca;
+    const config = await this.store.readConfig({ allowMissing: false })
+    const credential =
+      force || !this.credential ? await this.credentialStore.loadCredential() : this.credential
+    const ca = force || !this.api ? await loadCaFile(config.caFile) : this.ca
     if (
       force ||
       !this.api ||
@@ -175,12 +171,12 @@ export class AgentRuntime {
       this.credential !== credential ||
       this.ca !== ca
     ) {
-      this.api = this.apiFactory(config, credential, ca);
+      this.api = this.apiFactory(config, credential, ca)
     }
-    this.config = config;
-    this.credential = credential;
-    this.ca = ca;
-    return { config, credential, api: this.api };
+    this.config = config
+    this.credential = credential
+    this.ca = ca
+    return { config, credential, api: this.api }
   }
 
   _heartbeatPayload() {
@@ -191,22 +187,20 @@ export class AgentRuntime {
       protocolVersion: AGENT_PROTOCOL_VERSION,
       agentVersion: AGENT_VERSION,
       bindings: this.config.bindings.map(publicBinding),
-    };
+    }
   }
 
   async _applyHeartbeatBindings(heartbeat) {
     if (!heartbeat.bindings?.length) {
-      return;
+      return
     }
-    const byProject = new Map(
-      heartbeat.bindings.map((binding) => [binding.projectId, binding]),
-    );
+    const byProject = new Map(heartbeat.bindings.map((binding) => [binding.projectId, binding]))
     await this.store.updateConfig((config) => {
-      let changed = false;
+      let changed = false
       const bindings = config.bindings.map((binding) => {
-        const remote = byProject.get(binding.projectId);
+        const remote = byProject.get(binding.projectId)
         if (!remote || remote.localRepoKey !== binding.localRepoKey) {
-          return binding;
+          return binding
         }
         const next = {
           ...binding,
@@ -216,10 +210,10 @@ export class AgentRuntime {
           syncStatus: remote.status,
           lastErrorCode: remote.errorCode,
           lastError: remote.error,
-        };
+        }
         if (remote.branchName && remote.branchName !== binding.branchName) {
-          next.lastErrorCode = "BINDING_BRANCH_MISMATCH";
-          next.lastError = "服务端项目管理分支与本地绑定不一致";
+          next.lastErrorCode = 'BINDING_BRANCH_MISMATCH'
+          next.lastError = '服务端项目管理分支与本地绑定不一致'
         }
         if (
           next.serverBindingId !== binding.serverBindingId ||
@@ -229,18 +223,18 @@ export class AgentRuntime {
           next.lastErrorCode !== binding.lastErrorCode ||
           next.lastError !== binding.lastError
         ) {
-          changed = true;
-          return next;
+          changed = true
+          return next
         }
-        return binding;
-      });
-      return changed ? { ...config, bindings } : undefined;
-    });
+        return binding
+      })
+      return changed ? { ...config, bindings } : undefined
+    })
     try {
-      this.config = await this.store.readConfig({ allowMissing: false });
-      this.liveSync.updateBindings(this.config.bindings);
+      this.config = await this.store.readConfig({ allowMissing: false })
+      this.liveSync.updateBindings(this.config.bindings)
     } catch (error) {
-      this.logger.warn("更新本地实时监听绑定失败", error);
+      this.logger.warn('更新本地实时监听绑定失败', error)
     }
   }
 
@@ -250,97 +244,99 @@ export class AgentRuntime {
       compatible: heartbeat?.compatible ?? false,
       protocolVersion: heartbeat?.protocolVersion ?? null,
       minimumAgentVersion: heartbeat?.minimumAgentVersion ?? null,
-      error: error ? {
-        code: error.code || AGENT_ERROR_CODE.NETWORK_ERROR,
-        message: safeErrorMessage(error),
-      } : null,
-    };
-    this.pollEnabled = error == null && activeCommandEnabled(this.lastHeartbeat);
+      error: error
+        ? {
+            code: error.code || AGENT_ERROR_CODE.NETWORK_ERROR,
+            message: safeErrorMessage(error),
+          }
+        : null,
+    }
+    this.pollEnabled = error == null && activeCommandEnabled(this.lastHeartbeat)
     await this.store.writeState({
-      status: this.authRevoked ? "auth_revoked" : error ? "degraded" : "running",
+      status: this.authRevoked ? 'auth_revoked' : error ? 'degraded' : 'running',
       pid: process.pid,
       startedAt: this.startedAt || null,
       lastHeartbeatAt: this.lastHeartbeat.at,
       lastHeartbeatError: this.lastHeartbeat.error,
       commandPollingEnabled: this.pollEnabled,
       eventStreamEnabled: this.pollEnabled,
-    });
+    })
   }
 
   async heartbeatOnce() {
-    await this.loadContext();
+    await this.loadContext()
     try {
       const heartbeat = await this.api.heartbeat(this._heartbeatPayload(), {
         signal: this.signal,
-      });
-      await this._applyHeartbeatBindings(heartbeat);
-      await this._recordHeartbeat(heartbeat);
+      })
+      await this._applyHeartbeatBindings(heartbeat)
+      await this._recordHeartbeat(heartbeat)
       if (!heartbeat.compatible) {
-        this.logger.warn("服务端协议不兼容，仅保留心跳");
+        this.logger.warn('服务端协议不兼容，仅保留心跳')
       } else if (!activeCommandEnabled(heartbeat)) {
-        this.logger.warn("Agent 版本低于服务端最低版本，暂停领取命令", {
+        this.logger.warn('Agent 版本低于服务端最低版本，暂停领取命令', {
           minimumAgentVersion: heartbeat.minimumAgentVersion,
-        });
+        })
       }
-      return heartbeat;
+      return heartbeat
     } catch (error) {
-      await this._recordHeartbeat(null, error);
+      await this._recordHeartbeat(null, error)
       if (isAuthenticationError(error)) {
-        this.authRevoked = true;
-        this.logger.error("Agent 凭证已撤销，停止重试，请重新配对");
-        this.stop("auth_revoked");
-        return null;
+        this.authRevoked = true
+        this.logger.error('Agent 凭证已撤销，停止重试，请重新配对')
+        this.stop('auth_revoked')
+        return null
       }
-      throw error;
+      throw error
     }
   }
 
   async _heartbeatLoop() {
-    let attempt = 0;
+    let attempt = 0
     while (!this.signal.aborted) {
       try {
-        await this.heartbeatOnce();
-        attempt = 0;
+        await this.heartbeatOnce()
+        attempt = 0
       } catch (error) {
         if (isAuthenticationError(error)) {
-          return;
+          return
         }
-        const delay = nextDelay(attempt, error.retryAfterMs);
-        attempt += 1;
-        this.logger.warn("心跳失败，稍后重试", error);
-        await sleep(delay, this.signal);
-        continue;
+        const delay = nextDelay(attempt, error.retryAfterMs)
+        attempt += 1
+        this.logger.warn('心跳失败，稍后重试', error)
+        await sleep(delay, this.signal)
+        continue
       }
-      await sleep(this.heartbeatMs, this.signal);
+      await sleep(this.heartbeatMs, this.signal)
     }
   }
 
   async _submitResult(command, result, attempt = 0) {
     try {
-      await this.loadContext();
+      await this.loadContext()
       await this.api.submitCommandResult(command.id, result, {
         signal: this.signal,
-      });
-      return true;
+      })
+      return true
     } catch (error) {
       if (isAuthenticationError(error)) {
-        this.authRevoked = true;
-        this.stop("auth_revoked");
-        return false;
+        this.authRevoked = true
+        this.stop('auth_revoked')
+        return false
       }
       if (this.signal.aborted) {
-        return false;
+        return false
       }
       if (error.retryable !== true && error.code !== AGENT_ERROR_CODE.NETWORK_ERROR) {
-        this.logger.error("命令结果上报被服务端拒绝", error);
-        return false;
+        this.logger.error('命令结果上报被服务端拒绝', error)
+        return false
       }
       if (attempt >= 2) {
-        this.logger.error("命令结果上报失败，等待服务端租约重投", error);
-        return false;
+        this.logger.error('命令结果上报失败，等待服务端租约重投', error)
+        return false
       }
-      await sleep(nextDelay(attempt, error.retryAfterMs), this.signal);
-      return this._submitResult(command, result, attempt + 1);
+      await sleep(nextDelay(attempt, error.retryAfterMs), this.signal)
+      return this._submitResult(command, result, attempt + 1)
     }
   }
 
@@ -350,36 +346,36 @@ export class AgentRuntime {
       : result?.clean === false
         ? {
             errorCode: AGENT_ERROR_CODE.LOCAL_DIRTY,
-            error: "本地工作区存在未提交或未跟踪文件",
+            error: '本地工作区存在未提交或未跟踪文件',
           }
-        : null;
+        : null
     await this.store.updateConfig((config) => {
-      let changed = false;
+      let changed = false
       const bindings = config.bindings.map((item) => {
         if (item.localId !== binding.localId) {
-          return item;
+          return item
         }
         const next = {
           ...item,
-          syncStatus: result ? "approved" : item.syncStatus,
+          syncStatus: result ? 'approved' : item.syncStatus,
           lastSyncedAt: result?.syncedAt ?? item.lastSyncedAt,
           lastHead: result?.head ?? item.lastHead,
           lastErrorCode: health?.errorCode ?? null,
           lastError: health?.error ?? null,
-        };
+        }
         if (
           next.lastSyncedAt !== item.lastSyncedAt ||
           next.lastHead !== item.lastHead ||
           next.lastErrorCode !== item.lastErrorCode ||
           next.lastError !== item.lastError
         ) {
-          changed = true;
-          return next;
+          changed = true
+          return next
         }
-        return item;
-      });
-      return changed ? { ...config, bindings } : undefined;
-    });
+        return item
+      })
+      return changed ? { ...config, bindings } : undefined
+    })
   }
 
   _repoOptions(binding) {
@@ -389,15 +385,15 @@ export class AgentRuntime {
       hooksDir: path.join(this.store.paths.hooksBaseDir, binding.localId),
       expectedRemoteIdentity: binding.remoteIdentityKey,
       allowFileRemote: binding.allowFileRemote,
-    };
+    }
   }
 
   async _syncBinding(binding) {
-    const existing = this._syncInFlight.get(binding.localId);
-    if (existing) return existing;
+    const existing = this._syncInFlight.get(binding.localId)
+    if (existing) return existing
     const run = (async () => {
-      const result = await this.syncRepository(this._repoOptions(binding));
-      await this._updateBindingResult(binding, result);
+      const result = await this.syncRepository(this._repoOptions(binding))
+      await this._updateBindingResult(binding, result)
       return {
         bindingId: binding.serverBindingId,
         projectId: binding.projectId,
@@ -407,141 +403,144 @@ export class AgentRuntime {
         syncedAt: result.syncedAt,
         localRepoKey: result.localRepoKey,
         remoteIdentityKey: result.remoteIdentityKey,
-      };
-    })();
-    this._syncInFlight.set(binding.localId, run);
+      }
+    })()
+    this._syncInFlight.set(binding.localId, run)
     try {
-      return await run;
+      return await run
     } finally {
       if (this._syncInFlight.get(binding.localId) === run) {
-        this._syncInFlight.delete(binding.localId);
+        this._syncInFlight.delete(binding.localId)
       }
     }
   }
 
   _bindingFor(teamId, projectId) {
-    return (this.config?.bindings || []).find((binding) =>
-      binding.teamId === teamId &&
-      binding.projectId === projectId &&
-      binding.syncStatus === "approved"
-    ) || null;
+    return (
+      (this.config?.bindings || []).find(
+        (binding) =>
+          binding.teamId === teamId &&
+          binding.projectId === projectId &&
+          binding.syncStatus === 'approved',
+      ) || null
+    )
   }
 
   async _syncProject(teamId, projectId) {
-    if (!projectId) return;
-    const binding = this._bindingFor(teamId, projectId);
+    if (!projectId) return
+    const binding = this._bindingFor(teamId, projectId)
     if (!binding) {
-      this.logger.warn("收到未知项目的事件", { teamId, projectId });
-      return;
+      this.logger.warn('收到未知项目的事件', { teamId, projectId })
+      return
     }
     try {
-      await this._syncBinding(binding);
+      await this._syncBinding(binding)
     } catch (error) {
-      this.logger.warn("处理事件时同步仓库失败", error);
+      this.logger.warn('处理事件时同步仓库失败', error)
     }
   }
 
   async _handleTaskEvent(teamId, type, envelope) {
-    const data = envelope?.payload && typeof envelope.payload === "object" ? envelope.payload : {};
+    const data = envelope?.payload && typeof envelope.payload === 'object' ? envelope.payload : {}
     if (data.teamId && data.teamId !== teamId) {
-      this.logger.warn("忽略跨团队任务事件", { teamId, eventTeamId: data.teamId });
-      return;
+      this.logger.warn('忽略跨团队任务事件', { teamId, eventTeamId: data.teamId })
+      return
     }
     if (data.relativeDir || data.executionTaskKey || data.taskKey) {
       await this.eventCache.writeSnapshot(data).catch((error) => {
-        this.logger.warn("写入任务快照缓存失败", error);
-      });
+        this.logger.warn('写入任务快照缓存失败', error)
+      })
     }
-    if (type === "task.snapshot_required") {
-      await this._syncProject(teamId, envelope.projectId || data.projectId);
+    if (type === 'task.snapshot_required') {
+      await this._syncProject(teamId, envelope.projectId || data.projectId)
     }
-    this.logger.info("收到任务事件", {
+    this.logger.info('收到任务事件', {
       type,
       taskId: data.executionTaskKey || data.taskId || envelope.taskId || null,
       taskVersion: data.taskVersion ?? envelope.taskVersion ?? null,
-    });
+    })
   }
 
   async _handleEvent(teamId, event) {
-    const data = event.data && typeof event.data === "object" ? event.data : {};
+    const data = event.data && typeof event.data === 'object' ? event.data : {}
     switch (event.type) {
-      case "agent.revoked":
-        this.logger.warn("服务端已撤销该团队的 Agent 绑定，停止该团队事件流", { teamId });
-        this.abandonedTeams.add(teamId);
-        return { stopTeam: true };
-      case "server.shutdown":
-        return;
-      case "resync.required": {
-        this.logger.warn("事件游标已过期，重新同步", {
+      case 'agent.revoked':
+        this.logger.warn('服务端已撤销该团队的 Agent 绑定，停止该团队事件流', { teamId })
+        this.abandonedTeams.add(teamId)
+        return { stopTeam: true }
+      case 'server.shutdown':
+        return
+      case 'resync.required': {
+        this.logger.warn('事件游标已过期，重新同步', {
           teamId,
           reason: data.payload?.reason || null,
-        });
+        })
         const bindings = (this.config?.bindings || []).filter(
-          (binding) => binding.teamId === teamId && binding.syncStatus === "approved",
-        );
+          (binding) => binding.teamId === teamId && binding.syncStatus === 'approved',
+        )
         for (const binding of bindings) {
           await this._syncBinding(binding).catch((error) => {
-            this.logger.warn("游标失效后重新同步失败", error);
-          });
+            this.logger.warn('游标失效后重新同步失败', error)
+          })
         }
         // 不写该帧的游标：让下一次连接不带 Last-Event-ID，从服务端游标续传。
-        await this.store.clearEventCursor(teamId).catch(() => {});
-        return { skipCursor: true };
+        await this.store.clearEventCursor(teamId).catch(() => {})
+        return { skipCursor: true }
       }
-      case "sync.required":
-        await this._syncProject(teamId, data.projectId);
-        return;
-      case "live.changed":
-        await this.liveSync.pullProject(teamId, data.projectId);
-        return;
-      case "task.live.overridden":
-        this.logger.warn("任务被其他成员推进或接管", {
+      case 'sync.required':
+        await this._syncProject(teamId, data.projectId)
+        return
+      case 'live.changed':
+        await this.liveSync.pullProject(teamId, data.projectId)
+        return
+      case 'task.live.overridden':
+        this.logger.warn('任务被其他成员推进或接管', {
           teamId,
-          projectId: data.projectId,
-          taskKey: data.taskKey,
-          action: data.action
-        });
-        this.liveSync.notifyControl({
-          type: "assignment_overridden",
           projectId: data.projectId,
           taskKey: data.taskKey,
           action: data.action,
-          revision: data.revision
-        });
-        return;
-      case "task.created":
-      case "task.assigned":
-      case "task.updated":
-      case "task.cancelled":
-      case "task.snapshot_required":
-        await this._handleTaskEvent(teamId, event.type, data);
-        return;
-      case "command": {
-        const raw = data.payload?.command;
-        if (!raw) return;
-        const command = validateCommand(raw);
-        await this._processCommand(command);
-        return;
+        })
+        this.liveSync.notifyControl({
+          type: 'assignment_overridden',
+          projectId: data.projectId,
+          taskKey: data.taskKey,
+          action: data.action,
+          revision: data.revision,
+        })
+        return
+      case 'task.created':
+      case 'task.assigned':
+      case 'task.updated':
+      case 'task.cancelled':
+      case 'task.snapshot_required':
+        await this._handleTaskEvent(teamId, event.type, data)
+        return
+      case 'command': {
+        const raw = data.payload?.command
+        if (!raw) return
+        const command = validateCommand(raw)
+        await this._processCommand(command)
+        return
       }
       default:
-        this.logger.warn("忽略未知事件类型", { teamId, type: event.type });
+        this.logger.warn('忽略未知事件类型', { teamId, type: event.type })
     }
   }
 
   async _teamEventLoop(teamId, signal) {
-    let attempt = 0;
+    let attempt = 0
     while (!signal.aborted && !this.signal.aborted && this.pollEnabled) {
-      if (this.abandonedTeams.has(teamId)) return;
+      if (this.abandonedTeams.has(teamId)) return
       await this.loadContext().catch((error) => {
-        this.logger.warn("加载 Agent 配置失败", error);
-        return null;
-      });
-      const binding = (this.config?.bindings || []).find((item) =>
-        item.teamId === teamId && item.syncStatus === "approved"
-      );
-      if (!binding) return;
-      let stopTeam = false;
-      const cursors = await this.store.readEventCursors();
+        this.logger.warn('加载 Agent 配置失败', error)
+        return null
+      })
+      const binding = (this.config?.bindings || []).find(
+        (item) => item.teamId === teamId && item.syncStatus === 'approved',
+      )
+      if (!binding) return
+      let stopTeam = false
+      const cursors = await this.store.readEventCursors()
       try {
         await this.api.streamEvents(
           { teamId, lastEventId: cursors[teamId] ?? null },
@@ -549,123 +548,119 @@ export class AgentRuntime {
             signal,
             idleTimeoutMs: this.eventIdleMs,
             onOpen: () => {
-              attempt = 0;
-              this.logger.info("Agent 事件流已连接", { teamId });
-              void this.liveSync.pullTeam(teamId);
+              attempt = 0
+              this.logger.info('Agent 事件流已连接', { teamId })
+              void this.liveSync.pullTeam(teamId)
             },
             onEvent: async (event) => {
-              let skipCursor = false;
-              let result = null;
+              let skipCursor = false
+              let result = null
               try {
-                result = await this._handleEvent(teamId, event);
-                skipCursor = result?.skipCursor === true;
-                if (result?.stopTeam) stopTeam = true;
+                result = await this._handleEvent(teamId, event)
+                skipCursor = result?.skipCursor === true
+                if (result?.stopTeam) stopTeam = true
               } finally {
-                const id = Number(event.id);
+                const id = Number(event.id)
                 if (!skipCursor && Number.isSafeInteger(id) && id >= 0) {
-                  await this.store.writeEventCursor(teamId, id).catch(() => {});
+                  await this.store.writeEventCursor(teamId, id).catch(() => {})
                 }
               }
             },
           },
-        );
-        if (stopTeam) return;
-        if (signal.aborted || this.signal.aborted) return;
-        await sleep(1_000, signal);
+        )
+        if (stopTeam) return
+        if (signal.aborted || this.signal.aborted) return
+        await sleep(1_000, signal)
       } catch (error) {
-        if (signal.aborted || this.signal.aborted) return;
-        if (error.status === 403 && error.serverCode === "FORBIDDEN") {
-          this.logger.warn("Agent 对该团队的事件流无权限，停止该团队连接", { teamId });
-          this.abandonedTeams.add(teamId);
-          return;
+        if (signal.aborted || this.signal.aborted) return
+        if (error.status === 403 && error.serverCode === 'FORBIDDEN') {
+          this.logger.warn('Agent 对该团队的事件流无权限，停止该团队连接', { teamId })
+          this.abandonedTeams.add(teamId)
+          return
         }
         if (isAuthenticationError(error)) {
-          this.authRevoked = true;
-          this.logger.error("Agent 凭证已撤销，停止重试，请重新配对");
-          this.stop("auth_revoked");
-          return;
+          this.authRevoked = true
+          this.logger.error('Agent 凭证已撤销，停止重试，请重新配对')
+          this.stop('auth_revoked')
+          return
         }
         if (error.status === 404) {
-          this.logger.warn("Agent 事件流目标不存在，停止该团队连接", { teamId });
-          return;
+          this.logger.warn('Agent 事件流目标不存在，停止该团队连接', { teamId })
+          return
         }
-        const delay = nextDelay(attempt, error.retryAfterMs) +
-          Math.floor(Math.random() * 250);
-        attempt += 1;
-        this.logger.warn("Agent 事件流断开，稍后重连", error);
-        await sleep(delay, signal);
+        const delay = nextDelay(attempt, error.retryAfterMs) + Math.floor(Math.random() * 250)
+        attempt += 1
+        this.logger.warn('Agent 事件流断开，稍后重连', error)
+        await sleep(delay, signal)
       }
     }
   }
 
   async _eventLoop() {
-    const handles = new Map();
+    const handles = new Map()
     const startTeam = (teamId) => {
-      const controller = new AbortController();
-      const forward = () => controller.abort();
-      this.signal.addEventListener("abort", forward, { once: true });
+      const controller = new AbortController()
+      const forward = () => controller.abort()
+      this.signal.addEventListener('abort', forward, { once: true })
       const promise = this._teamEventLoop(teamId, controller.signal)
         .catch((error) => {
           if (!controller.signal.aborted) {
-            this.logger.error("Agent 事件循环异常退出", error);
+            this.logger.error('Agent 事件循环异常退出', error)
           }
         })
         .finally(() => {
-          this.signal.removeEventListener("abort", forward);
-          handles.delete(teamId);
-        });
-      handles.set(teamId, { controller, promise });
-    };
+          this.signal.removeEventListener('abort', forward)
+          handles.delete(teamId)
+        })
+      handles.set(teamId, { controller, promise })
+    }
     while (!this.signal.aborted) {
       if (!this.pollEnabled) {
-        await sleep(this.eventReconcileMs, this.signal);
-        continue;
+        await sleep(this.eventReconcileMs, this.signal)
+        continue
       }
-      await this.loadContext().catch(() => null);
+      await this.loadContext().catch(() => null)
       const teams = new Set(
         (this.config?.bindings || [])
-          .filter((binding) => binding.teamId && binding.syncStatus === "approved")
+          .filter((binding) => binding.teamId && binding.syncStatus === 'approved')
           .map((binding) => binding.teamId),
-      );
+      )
       for (const teamId of teams) {
-        if (!handles.has(teamId) && !this.abandonedTeams.has(teamId)) startTeam(teamId);
+        if (!handles.has(teamId) && !this.abandonedTeams.has(teamId)) startTeam(teamId)
       }
       for (const [teamId, handle] of handles) {
         if (!teams.has(teamId)) {
-          handle.controller.abort();
-          handles.delete(teamId);
+          handle.controller.abort()
+          handles.delete(teamId)
         }
       }
-      await sleep(this.eventReconcileMs, this.signal);
+      await sleep(this.eventReconcileMs, this.signal)
     }
-    for (const handle of handles.values()) handle.controller.abort();
-    await Promise.allSettled([...handles.values()].map((handle) => handle.promise));
+    for (const handle of handles.values()) handle.controller.abort()
+    await Promise.allSettled([...handles.values()].map((handle) => handle.promise))
   }
 
   async _runCommand(command) {
-    const { config } = await this.loadContext();
-    const binding = commandBinding(config, command);
+    const { config } = await this.loadContext()
+    const binding = commandBinding(config, command)
     if (!binding) {
-      throw new AgentError(
-        AGENT_ERROR_CODE.BINDING_UNKNOWN,
-        "服务端命令引用了未知的本地项目绑定",
-      );
+      throw new AgentError(AGENT_ERROR_CODE.BINDING_UNKNOWN, '服务端命令引用了未知的本地项目绑定')
     }
     if (!bindingMatchesCommand(binding, command)) {
       throw new AgentError(
         AGENT_ERROR_CODE.COMMAND_INVALID,
-        "服务端命令的项目或分支与本地绑定不一致",
-      );
+        '服务端命令的项目或分支与本地绑定不一致',
+      )
     }
     const serverAuthorized =
-      binding.syncStatus === "pending" &&
+      binding.syncStatus === 'pending' &&
       binding.serverBindingId != null &&
-      binding.serverBindingId === command.bindingId;
-    if (binding.syncStatus !== "approved" && !serverAuthorized) {
+      binding.serverBindingId === command.bindingId
+    if (binding.syncStatus !== 'approved' && !serverAuthorized) {
       throw new AgentError(
         AGENT_ERROR_CODE.BINDING_NOT_APPROVED,
-        "本地项目绑定尚未获项目负责人批准",
-      );
+        '本地项目绑定尚未获项目负责人批准',
+      )
     }
     const options = {
       repoPath: binding.repoPath,
@@ -673,12 +668,12 @@ export class AgentRuntime {
       hooksDir: path.join(this.store.paths.hooksBaseDir, binding.localId),
       expectedRemoteIdentity: binding.remoteIdentityKey,
       allowFileRemote: binding.allowFileRemote,
-    };
-    if (command.type === "sync_branch") {
-      return this._syncBinding(binding);
     }
-    if (command.type === "refresh_status") {
-      const result = await this.inspectRepository(options);
+    if (command.type === 'sync_branch') {
+      return this._syncBinding(binding)
+    }
+    if (command.type === 'refresh_status') {
+      const result = await this.inspectRepository(options)
       const reported = {
         bindingId: binding.serverBindingId,
         projectId: binding.projectId,
@@ -688,93 +683,88 @@ export class AgentRuntime {
         syncedAt: new Date().toISOString(),
         localRepoKey: result.localRepoKey,
         remoteIdentityKey: result.remoteIdentityKey,
-      };
-      await this._updateBindingResult(binding, reported);
-      return reported;
+      }
+      await this._updateBindingResult(binding, reported)
+      return reported
     }
-    throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, "不支持的服务端命令");
+    throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, '不支持的服务端命令')
   }
 
   async _processCommand(command) {
     try {
-      const result = await this._runCommand(command);
-      const payload = buildCommandResult("succeeded", result);
-      const delivered = await this._submitResult(command, payload);
+      const result = await this._runCommand(command)
+      const payload = buildCommandResult('succeeded', result)
+      const delivered = await this._submitResult(command, payload)
       if (delivered) {
-        this.logger.info("Agent 命令执行成功", {
+        this.logger.info('Agent 命令执行成功', {
           commandId: command.id,
           commandType: command.type,
-        });
+        })
       } else {
-        this.logger.warn("Agent 命令执行成功，但结果未上报", {
+        this.logger.warn('Agent 命令执行成功，但结果未上报', {
           commandId: command.id,
           commandType: command.type,
-        });
+        })
       }
-      return payload;
+      return payload
     } catch (error) {
-      const { config } = await this.loadContext().catch(() => ({ config: this.config }));
-      const binding = config ? commandBinding(config, command) : null;
+      const { config } = await this.loadContext().catch(() => ({ config: this.config }))
+      const binding = config ? commandBinding(config, command) : null
       if (binding) {
-        await this._updateBindingResult(binding, null, error).catch(() => {});
+        await this._updateBindingResult(binding, null, error).catch(() => {})
       }
-      const payload = buildCommandResult("failed", null, error);
-      await this._submitResult(command, payload);
-      this.logger.warn("Agent 命令执行失败", error);
-      return payload;
+      const payload = buildCommandResult('failed', null, error)
+      await this._submitResult(command, payload)
+      this.logger.warn('Agent 命令执行失败', error)
+      return payload
     }
   }
 
   async run() {
-    this.startedAt = new Date().toISOString();
-    await this.store.ensureDirectories();
-    await this.loadContext(true);
+    this.startedAt = new Date().toISOString()
+    await this.store.ensureDirectories()
+    await this.loadContext(true)
     await this.store.writeState({
-      status: "starting",
+      status: 'starting',
       pid: process.pid,
       startedAt: this.startedAt,
-    });
-    await this.liveSync.start();
-    this.logger.info("Trellis Agent 已启动");
-    const heartbeat = this._heartbeatLoop();
-    const events = this._eventLoop();
-    await Promise.all([heartbeat, events]);
-    this.liveSync.stop();
+    })
+    await this.liveSync.start()
+    this.logger.info('Trellis Agent 已启动')
+    const heartbeat = this._heartbeatLoop()
+    const events = this._eventLoop()
+    await Promise.all([heartbeat, events])
+    this.liveSync.stop()
     await this.store.writeState({
-      status: this.authRevoked ? "auth_revoked" : "stopped",
+      status: this.authRevoked ? 'auth_revoked' : 'stopped',
       pid: process.pid,
       startedAt: this.startedAt,
       stoppedAt: new Date().toISOString(),
-      reason: this.stopReason || "requested",
+      reason: this.stopReason || 'requested',
       lastHeartbeatAt: this.lastHeartbeat?.at ?? null,
-    });
-    this.logger.info(
-      this.authRevoked ? "Trellis Agent 因凭证撤销停止" : "Trellis Agent 已停止",
-    );
+    })
+    this.logger.info(this.authRevoked ? 'Trellis Agent 因凭证撤销停止' : 'Trellis Agent 已停止')
     return {
       exitCode: 0,
       authRevoked: this.authRevoked,
       reason: this.stopReason,
-    };
+    }
   }
 }
 
 export async function runAgentProcess(options = {}) {
-  const store = options.store || new ConfigStore();
-  await store.ensureDirectories();
-  const logger = options.logger || new AgentLogger({ logsDir: store.paths.logsDir });
-  const lock = options.lock || new SingleInstanceLock(store.paths.lockFile);
-  let acquired = false;
+  const store = options.store || new ConfigStore()
+  await store.ensureDirectories()
+  const logger = options.logger || new AgentLogger({ logsDir: store.paths.logsDir })
+  const lock = options.lock || new SingleInstanceLock(store.paths.lockFile)
+  let acquired = false
   try {
-    await lock.acquire();
-    acquired = true;
+    await lock.acquire()
+    acquired = true
     if (!options.credentialStore) {
-      throw new AgentError(
-        AGENT_ERROR_CODE.CONFIG_INVALID,
-        "Agent 凭证存储未初始化",
-      );
+      throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, 'Agent 凭证存储未初始化')
     }
-    const credentialStore = options.credentialStore;
+    const credentialStore = options.credentialStore
     const runtime = new AgentRuntime({
       store,
       credentialStore,
@@ -789,18 +779,18 @@ export async function runAgentProcess(options = {}) {
       watch: options.watch,
       liveSync: options.liveSync,
       signal: options.signal,
-    });
-    return await runtime.run();
+    })
+    return await runtime.run()
   } catch (error) {
-    logger.error("Trellis Agent 启动或运行失败", error);
+    logger.error('Trellis Agent 启动或运行失败', error)
     return {
       exitCode: error.code === AGENT_ERROR_CODE.LOCKED ? 7 : 1,
       error,
-    };
+    }
   } finally {
     if (acquired) {
-      await lock.release();
+      await lock.release()
     }
-    await logger.close();
+    await logger.close()
   }
 }

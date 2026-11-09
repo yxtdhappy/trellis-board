@@ -114,7 +114,10 @@ export function nextStage(task: BoardTask) {
 
 export function laneForTask(task: BoardTask) {
   const stages = Array.isArray(task.stages) ? task.stages : []
-  return laneForStageIndex(task, stages.findIndex((stage) => stage.id === task.derivedStage))
+  return laneForStageIndex(
+    task,
+    stages.findIndex((stage) => stage.id === task.derivedStage),
+  )
 }
 
 /**

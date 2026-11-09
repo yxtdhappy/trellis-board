@@ -6,7 +6,7 @@ import {
   TableCell,
   TableHead,
   TableHeader,
-  TableRow
+  TableRow,
 } from '@/components/ui/table'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import type { AuditEvent } from '@/api/admin'
@@ -17,7 +17,7 @@ import { SelectField } from '@/features/board/SelectField'
 const RANGE_OPTIONS = [
   { value: '7', label: '最近 7 天' },
   { value: '30', label: '最近 30 天' },
-  { value: 'all', label: '全部时间' }
+  { value: 'all', label: '全部时间' },
 ]
 
 function actorOf(event: AuditEvent): string {
@@ -36,19 +36,17 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
 
   const actions = useMemo(
     () => [...new Set(systemAudit.map((event) => event.action).filter(Boolean))].sort(),
-    [systemAudit]
+    [systemAudit],
   )
-  const actors = useMemo(
-    () => [...new Set(systemAudit.map(actorOf))].sort(),
-    [systemAudit]
-  )
+  const actors = useMemo(() => [...new Set(systemAudit.map(actorOf))].sort(), [systemAudit])
   const filtered = useMemo(() => {
     const days = range === 'all' ? 0 : Number(range)
     const cutoff = days ? Date.now() - days * 86_400_000 : 0
     return systemAudit.filter((event) => {
       if (action !== 'all' && event.action !== action) return false
       if (actor !== 'all' && actorOf(event) !== actor) return false
-      if (cutoff && (!event.occurredAt || new Date(event.occurredAt).getTime() < cutoff)) return false
+      if (cutoff && (!event.occurredAt || new Date(event.occurredAt).getTime() < cutoff))
+        return false
       return true
     })
   }, [action, actor, range, systemAudit])
@@ -86,7 +84,10 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
             <SelectField
               className={controlClass}
               value={range}
-              options={RANGE_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+              options={RANGE_OPTIONS.map((option) => ({
+                value: option.value,
+                label: option.label,
+              }))}
               onChange={setRange}
             />
           </label>
@@ -124,9 +125,7 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
         }
       >
         {systemAuditUnavailable ? (
-          <EmptyRow>
-            核心服务尚未提供 /api/admin/audit；项目审计仍可从“项目协作”查看。
-          </EmptyRow>
+          <EmptyRow>核心服务尚未提供 /api/admin/audit；项目审计仍可从“项目协作”查看。</EmptyRow>
         ) : filtered.length === 0 ? (
           <EmptyRow>暂无审计事件。</EmptyRow>
         ) : (
@@ -152,7 +151,9 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
                       <TableCell className="whitespace-nowrap">
                         <code>{actorOf(event)}</code>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap">{event.action || 'unknown'}</TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {event.action || 'unknown'}
+                      </TableCell>
                       <TableCell>
                         <span className="text-muted-foreground">
                           {event.targetType || 'unknown'}

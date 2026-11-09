@@ -19,7 +19,7 @@ const STAGE_TONES: Record<string, string> = {
   实现中: LANE_TONES.implementation,
   检查: LANE_TONES.verification,
   检查中: LANE_TONES.verification,
-  '检查·收尾': LANE_TONES.verification,
+  检查·收尾: LANE_TONES.verification,
   planning: LANE_TONES.planning,
   in_progress: LANE_TONES.implementation,
   review: LANE_TONES.review,
@@ -50,7 +50,8 @@ export function statusTone(label?: string | null) {
   if (PRIORITY_TONES[text]) return PRIORITY_TONES[text]
   if (STAGE_TONES[text]) return STAGE_TONES[text]
   if (SUCCESS_WORDS.some((word) => text.includes(word))) return 'bg-success-soft text-success'
-  if (DESTRUCTIVE_WORDS.some((word) => text.includes(word))) return 'bg-destructive-soft text-destructive'
+  if (DESTRUCTIVE_WORDS.some((word) => text.includes(word)))
+    return 'bg-destructive-soft text-destructive'
   if (WARNING_WORDS.some((word) => text.includes(word))) return 'bg-warning-soft text-warning'
   return 'bg-secondary text-secondary-foreground'
 }

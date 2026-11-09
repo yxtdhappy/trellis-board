@@ -235,8 +235,8 @@ export function readSshTrustChallenge(error: unknown): SshTrustChallenge | null 
     replaced: flag(details.replaced),
     keys: rows(details.keys).map((key) => ({
       algorithm: text(record(key).algorithm),
-      fingerprint: text(record(key).fingerprint)
-    }))
+      fingerprint: text(record(key).fingerprint),
+    })),
   }
 }
 
@@ -281,7 +281,7 @@ function readSessionUser(input: unknown): SessionUser {
     displayName: text(row.displayName ?? row.display_name, username),
     systemAdmin: flag(row.systemAdmin ?? row.system_admin),
     status: text(row.status, 'active'),
-    mustChangePassword: flag(row.mustChangePassword ?? row.must_change_password)
+    mustChangePassword: flag(row.mustChangePassword ?? row.must_change_password),
   }
 }
 
@@ -295,7 +295,7 @@ function readTeam(input: unknown): Team {
     role: optionalText(row.role),
     active: flag(row.active),
     memberCount: Number(row.memberCount ?? row.member_count ?? 0) || 0,
-    projectCount: Number(row.projectCount ?? row.project_count ?? 0) || 0
+    projectCount: Number(row.projectCount ?? row.project_count ?? 0) || 0,
   }
 }
 
@@ -307,7 +307,7 @@ function readTeamMember(input: unknown): TeamMember {
     displayName: text(row.displayName ?? row.display_name, text(row.username)),
     systemAdmin: flag(row.systemAdmin ?? row.system_admin),
     status: text(row.status, 'active'),
-    role: text(row.role ?? row.teamRole ?? row.team_role, 'member')
+    role: text(row.role ?? row.teamRole ?? row.team_role, 'member'),
   }
 }
 
@@ -324,7 +324,7 @@ function readRuntimeProject(input: unknown): RuntimeProject {
     role: optionalText(row.role ?? row.projectRole ?? row.project_role),
     stale: flag(row.stale) || ['stale', 'pending_push', 'needs_repair'].includes(syncStatus),
     lastError: optionalText(row.lastError ?? row.last_error),
-    capabilities: record(row.capabilities ?? row.permissions)
+    capabilities: record(row.capabilities ?? row.permissions),
   }
 }
 
@@ -336,7 +336,7 @@ function readProjectMember(input: unknown): ProjectMember {
       displayName: input,
       trellisDevId: input,
       role: null,
-      status: 'active'
+      status: 'active',
     }
   }
   const row = record(input)
@@ -346,7 +346,7 @@ function readProjectMember(input: unknown): ProjectMember {
     displayName: text(row.displayName ?? row.display_name, text(row.username)),
     trellisDevId: optionalText(row.trellisDevId ?? row.trellis_dev_id),
     role: optionalText(row.role),
-    status: text(row.status, 'active')
+    status: text(row.status, 'active'),
   }
 }
 
@@ -359,7 +359,7 @@ function readGitCredentialSummary(input: unknown): GitCredentialSummary | null {
     id,
     name: text(row.name),
     host: text(row.host),
-    authType
+    authType,
   }
 }
 
@@ -376,10 +376,10 @@ function readGitCredential(input: unknown): GitCredential | null {
     projectCount: Number(row.projectCount ?? row.project_count ?? 0) || 0,
     projects: rows(row.projects).map((project) => ({
       id: text(record(project).id),
-      name: text(record(project).name)
+      name: text(record(project).name),
     })),
     createdAt: optionalText(row.createdAt ?? row.created_at),
-    updatedAt: optionalText(row.updatedAt ?? row.updated_at)
+    updatedAt: optionalText(row.updatedAt ?? row.updated_at),
   }
 }
 
@@ -390,7 +390,7 @@ export function readProjectMembers(source: Record<string, unknown>): ProjectMemb
     ...rows(source.members),
     ...rows(source.validAssignees),
     ...rows(source.valid_assignees),
-    ...rows(source.assignees)
+    ...rows(source.assignees),
   ]) {
     const member = readProjectMember(item)
     const key = member.userId || member.trellisDevId || member.username || member.displayName
@@ -410,7 +410,7 @@ export function readTeamProject(input: unknown): TeamProject {
     lastFetchAt: optionalText(row.lastFetchAt ?? row.last_fetch_at),
     lastPushAt: optionalText(row.lastPushAt ?? row.last_push_at),
     members: readProjectMembers(row),
-    credential: readGitCredentialSummary(row.credential)
+    credential: readGitCredentialSummary(row.credential),
   }
 }
 
@@ -426,7 +426,7 @@ export function readRuntime(payload: unknown): Runtime {
     user,
     systemAdmin: flag(row.systemAdmin ?? row.system_admin) || Boolean(user?.systemAdmin),
     teams: rows(row.teams).map(readTeam),
-    projects: rows(row.projects ?? row.items).map(readRuntimeProject)
+    projects: rows(row.projects ?? row.items).map(readRuntimeProject),
   }
 }
 
@@ -436,7 +436,7 @@ function readAdminUser(input: unknown): AdminUser {
     ...readSessionUser(row),
     passwordChangedAt: optionalText(row.passwordChangedAt ?? row.password_changed_at),
     createdAt: optionalText(row.createdAt ?? row.created_at),
-    teams: rows(row.teams).map(readTeam)
+    teams: rows(row.teams).map(readTeam),
   }
 }
 
@@ -454,7 +454,7 @@ function readAgentDevice(input: unknown): AgentDevice {
     status: text(row.status, 'unknown'),
     lastSeenAt: optionalText(row.lastSeenAt ?? row.last_seen_at),
     createdAt: optionalText(row.createdAt ?? row.created_at),
-    revokedAt: optionalText(row.revokedAt ?? row.revoked_at)
+    revokedAt: optionalText(row.revokedAt ?? row.revoked_at),
   }
 }
 
@@ -477,7 +477,7 @@ function readAgentBinding(input: unknown): AgentBinding {
     ownerDisplayName: text(row.ownerDisplayName ?? row.owner_display_name),
     lastSeenAt: optionalText(row.lastSeenAt ?? row.last_seen_at),
     createdAt: optionalText(row.createdAt ?? row.created_at),
-    updatedAt: optionalText(row.updatedAt ?? row.updated_at)
+    updatedAt: optionalText(row.updatedAt ?? row.updated_at),
   }
 }
 
@@ -494,7 +494,7 @@ function readAuditEvent(input: unknown): AuditEvent {
     result: text(row.result, 'unknown'),
     correlationId: text(row.correlationId ?? row.correlation_id),
     detail: redactSensitiveDetail(row.detail ?? {}),
-    occurredAt: optionalText(row.occurredAt ?? row.occurred_at)
+    occurredAt: optionalText(row.occurredAt ?? row.occurred_at),
   }
 }
 
@@ -530,40 +530,40 @@ export async function fetchAdminTeams(): Promise<Team[]> {
 export async function createTeam(name: string, slug?: string): Promise<Team | null> {
   const { data } = await requestJson<unknown>('/api/admin/teams', {
     method: 'POST',
-    body: { name, slug: slug?.trim() || undefined }
+    body: { name, slug: slug?.trim() || undefined },
   })
   return record(data).team ? readTeam(record(data).team) : null
 }
 
 export async function updateTeam(
   teamId: string,
-  updates: { name?: string; status?: string }
+  updates: { name?: string; status?: string },
 ): Promise<Team | null> {
   const { data } = await requestJson<unknown>(`/api/admin/teams/${encodeURIComponent(teamId)}`, {
     method: 'PATCH',
-    body: updates
+    body: updates,
   })
   return record(data).team ? readTeam(record(data).team) : null
 }
 
 export async function fetchTeamDetail(
-  teamId: string
+  teamId: string,
 ): Promise<{ team: Team | null; members: TeamMember[] }> {
   const { data } = await requestJson<unknown>(`/api/admin/teams/${encodeURIComponent(teamId)}`)
   const row = record(data)
   return {
     team: record(row.team).id ? readTeam(record(row.team)) : null,
-    members: rows(record(row.team).members).map(readTeamMember)
+    members: rows(record(row.team).members).map(readTeamMember),
   }
 }
 
 export async function saveUserTeams(
   userId: string,
-  teams: { teamId: string; role: string }[]
+  teams: { teamId: string; role: string }[],
 ): Promise<Team[]> {
   const { data } = await requestJson<unknown>(
     `/api/admin/users/${encodeURIComponent(userId)}/teams`,
-    { method: 'PUT', body: { teams } }
+    { method: 'PUT', body: { teams } },
   )
   return rows(record(data).teams).map(readTeam)
 }
@@ -599,8 +599,8 @@ export async function createUser(input: NewUserInput): Promise<AdminUser | null>
       displayName: input.displayName,
       password: input.password,
       teamIds: input.teamIds,
-      systemAdmin: input.systemAdmin
-    }
+      systemAdmin: input.systemAdmin,
+    },
   })
   const row = record(data)
   return row.user ? readAdminUser(row.user) : null
@@ -616,17 +616,17 @@ export type UserUpdate = {
 export async function updateUser(userId: string, updates: UserUpdate): Promise<AdminUser> {
   const { data } = await requestJson<unknown>(`/api/admin/users/${encodeURIComponent(userId)}`, {
     method: 'PATCH',
-    body: updates
+    body: updates,
   })
   const row = record(data)
   return readAdminUser(row.user ?? data)
 }
 
 export async function resetUserPassword(userId: string, password: string): Promise<void> {
-  await requestJson<unknown>(
-    `/api/admin/users/${encodeURIComponent(userId)}/reset-password`,
-    { method: 'POST', body: { password } }
-  )
+  await requestJson<unknown>(`/api/admin/users/${encodeURIComponent(userId)}/reset-password`, {
+    method: 'POST',
+    body: { password },
+  })
 }
 
 export type ConnectProjectInput = {
@@ -639,7 +639,7 @@ export type ConnectProjectInput = {
 }
 
 export async function connectProject(
-  input: ConnectProjectInput
+  input: ConnectProjectInput,
 ): Promise<{ project: TeamProject; approval: ApprovalDraft | null }> {
   const { data } = await requestJson<unknown>('/api/admin/projects', {
     method: 'POST',
@@ -649,8 +649,8 @@ export async function connectProject(
       syncBranch: input.syncBranch,
       remoteUrl: input.remoteUrl,
       repositoryId: input.repositoryId?.trim() || undefined,
-      credentialId: input.credentialId || undefined
-    }
+      credentialId: input.credentialId || undefined,
+    },
   })
   const row = record(data)
   const approval = record(row.approval)
@@ -659,41 +659,45 @@ export async function connectProject(
     approval: row.approval
       ? {
           toolchainSha256: optionalText(approval.toolchainSha256),
-          files: readApprovalFiles(approval.files)
+          files: readApprovalFiles(approval.files),
         }
-      : null
+      : null,
   }
 }
 
 export async function fetchGitCredentials(teamId?: string | null): Promise<GitCredential[]> {
   const { data } = await requestJson<unknown>(`/api/admin/git-credentials${teamQuery(teamId)}`)
-  return rows(record(data).credentials).map(readGitCredential).filter((item): item is GitCredential => Boolean(item))
+  return rows(record(data).credentials)
+    .map(readGitCredential)
+    .filter((item): item is GitCredential => Boolean(item))
 }
 
-export async function createGitCredential(input: GitCredentialInput): Promise<GitCredential | null> {
+export async function createGitCredential(
+  input: GitCredentialInput,
+): Promise<GitCredential | null> {
   const { data } = await requestJson<unknown>('/api/admin/git-credentials', {
     method: 'POST',
-    body: input
+    body: input,
   })
   return readGitCredential(record(data).credential)
 }
 
 export async function updateGitCredential(
   credentialId: string,
-  input: Omit<GitCredentialInput, 'teamId' | 'host' | 'authType'>
+  input: Omit<GitCredentialInput, 'teamId' | 'host' | 'authType'>,
 ): Promise<GitCredential | null> {
   const { data } = await requestJson<unknown>(
     `/api/admin/git-credentials/${encodeURIComponent(credentialId)}`,
-    { method: 'PATCH', body: input }
+    { method: 'PATCH', body: input },
   )
   return readGitCredential(record(data).credential)
 }
 
 export async function deleteGitCredential(credentialId: string): Promise<void> {
-  await requestJson(
-    `/api/admin/git-credentials/${encodeURIComponent(credentialId)}`,
-    { method: 'DELETE', body: {} }
-  )
+  await requestJson(`/api/admin/git-credentials/${encodeURIComponent(credentialId)}`, {
+    method: 'DELETE',
+    body: {},
+  })
 }
 
 export async function probeGitRemote(input: {
@@ -706,8 +710,8 @@ export async function probeGitRemote(input: {
     body: {
       teamId: input.teamId,
       remoteUrl: input.remoteUrl,
-      credentialId: input.credentialId || null
-    }
+      credentialId: input.credentialId || null,
+    },
   })
   const row = record(data)
   const remote = record(row.remote)
@@ -716,19 +720,21 @@ export async function probeGitRemote(input: {
     remote: {
       url: text(remote.url),
       scheme: scheme === 'ssh' || scheme === 'file' ? scheme : 'https',
-      host: text(remote.host)
+      host: text(remote.host),
     },
     recommendedName: text(row.recommendedName ?? row.recommended_name),
     defaultBranch: optionalText(row.defaultBranch ?? row.default_branch),
-    branches: rows(row.branches).map((branch) => text(branch)).filter(Boolean),
-    credential: readGitCredentialSummary(row.credential)
+    branches: rows(row.branches)
+      .map((branch) => text(branch))
+      .filter(Boolean),
+    credential: readGitCredentialSummary(row.credential),
   }
 }
 
 export async function confirmSshHost(challengeId: string): Promise<SshTrustResult> {
   const { data } = await requestJson<unknown>('/api/admin/git-ssh-hosts/trust', {
     method: 'POST',
-    body: { challengeId }
+    body: { challengeId },
   })
   const row = record(data)
   return {
@@ -737,18 +743,18 @@ export async function confirmSshHost(challengeId: string): Promise<SshTrustResul
     replaced: flag(row.replaced),
     keys: rows(row.keys).map((key) => ({
       algorithm: text(record(key).algorithm),
-      fingerprint: text(record(key).fingerprint)
-    }))
+      fingerprint: text(record(key).fingerprint),
+    })),
   }
 }
 
 export async function changeProjectCredential(
   projectId: string,
-  credentialId: string | null
+  credentialId: string | null,
 ): Promise<TeamProject> {
   const { data } = await requestJson<unknown>(
     `/api/admin/projects/${encodeURIComponent(projectId)}/credential`,
-    { method: 'PUT', body: { credentialId } }
+    { method: 'PUT', body: { credentialId } },
   )
   return readTeamProject(record(data).project ?? data)
 }
@@ -765,15 +771,22 @@ export type ApprovalResult = {
   warning?: { code?: string; message?: string; details?: Record<string, unknown> }
 }
 
-export async function approveProject(projectId: string, input: ApprovalInput): Promise<ApprovalResult> {
-  const { data } = await requestJson<unknown>(`/api/admin/projects/${encodeURIComponent(projectId)}/approve`, {
-    method: 'POST',
-    body: input
-  })
+export async function approveProject(
+  projectId: string,
+  input: ApprovalInput,
+): Promise<ApprovalResult> {
+  const { data } = await requestJson<unknown>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/approve`,
+    {
+      method: 'POST',
+      body: input,
+    },
+  )
   const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {}
-  const warning = record.warning && typeof record.warning === 'object'
-    ? (record.warning as ApprovalResult['warning'])
-    : undefined
+  const warning =
+    record.warning && typeof record.warning === 'object'
+      ? (record.warning as ApprovalResult['warning'])
+      : undefined
   return { project: record.project as TeamProject | undefined, result: record.result, warning }
 }
 
@@ -782,14 +795,19 @@ export type ProjectAction = 'refresh' | 'repair' | 'disable'
 export async function runProjectAction(projectId: string, action: ProjectAction): Promise<void> {
   const encoded = encodeURIComponent(projectId)
   if (action === 'refresh') {
-    await requestJson(`/api/projects/${encoded}/refresh`, { method: 'POST', body: { force: false } })
+    await requestJson(`/api/projects/${encoded}/refresh`, {
+      method: 'POST',
+      body: { force: false },
+    })
     return
   }
   await requestJson(`/api/admin/projects/${encoded}/${action}`, { method: 'POST', body: {} })
 }
 
 export async function fetchMembers(projectId: string): Promise<ProjectMember[]> {
-  const { data } = await requestJson<unknown>(`/api/projects/${encodeURIComponent(projectId)}/members`)
+  const { data } = await requestJson<unknown>(
+    `/api/projects/${encodeURIComponent(projectId)}/members`,
+  )
   return readProjectMembers(record(data))
 }
 
@@ -800,23 +818,28 @@ export type MemberInput = {
 }
 
 export async function saveMember(projectId: string, input: MemberInput): Promise<ProjectMember[]> {
-  const { data } = await requestJson<unknown>(`/api/projects/${encodeURIComponent(projectId)}/members`, {
-    method: 'PUT',
-    body: input
-  })
+  const { data } = await requestJson<unknown>(
+    `/api/projects/${encodeURIComponent(projectId)}/members`,
+    {
+      method: 'PUT',
+      body: input,
+    },
+  )
   return readProjectMembers(record(data))
 }
 
 export async function removeMember(projectId: string, userId: string): Promise<ProjectMember[]> {
   const { data } = await requestJson<unknown>(
     `/api/projects/${encodeURIComponent(projectId)}/members?userId=${encodeURIComponent(userId)}`,
-    { method: 'DELETE' }
+    { method: 'DELETE' },
   )
   return readProjectMembers(record(data))
 }
 
 export async function fetchBindings(projectId: string): Promise<AgentBinding[]> {
-  const { data } = await requestJson<unknown>(`/api/projects/${encodeURIComponent(projectId)}/agents`)
+  const { data } = await requestJson<unknown>(
+    `/api/projects/${encodeURIComponent(projectId)}/agents`,
+  )
   return collection(data, 'agents', readAgentBinding)
 }
 
@@ -825,28 +848,28 @@ export type BindingAction = 'approve' | 'reject' | 'revoke'
 export async function runBindingAction(
   projectId: string,
   bindingId: string,
-  action: BindingAction
+  action: BindingAction,
 ): Promise<{ commandQueued: boolean }> {
   const { data } = await requestJson<unknown>(
     `/api/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(bindingId)}/${action}`,
-    { method: 'POST', body: {} }
+    { method: 'POST', body: {} },
   )
   return { commandQueued: flag(record(data).commandQueued) }
 }
 
 export async function fetchProjectAudit(
   projectId: string,
-  beforeId: number | null
+  beforeId: number | null,
 ): Promise<AuditEvent[]> {
   const { data } = await requestJson<unknown>(
-    `/api/projects/${encodeURIComponent(projectId)}/audit${auditQuery(beforeId)}`
+    `/api/projects/${encodeURIComponent(projectId)}/audit${auditQuery(beforeId)}`,
   )
   return collection(data, 'events', readAuditEvent)
 }
 
 export async function fetchSystemAudit(
   beforeId: number | null,
-  teamId?: string | null
+  teamId?: string | null,
 ): Promise<AuditEvent[]> {
   const query = new URLSearchParams({ limit: String(AUDIT_PAGE_LIMIT) })
   if (beforeId) query.set('beforeId', String(beforeId))
@@ -861,12 +884,12 @@ export async function createPairingCode(teamId?: string | null): Promise<{
 }> {
   const { data } = await requestJson<unknown>('/api/team/pairing-codes', {
     method: 'POST',
-    body: { teamId: teamId?.trim() || undefined }
+    body: { teamId: teamId?.trim() || undefined },
   })
   const row = record(data)
   return {
     pairingCode: optionalText(row.pairingCode),
-    expiresAt: optionalText(row.expiresAt)
+    expiresAt: optionalText(row.expiresAt),
   }
 }
 
@@ -876,19 +899,19 @@ export async function createDesktopEnrollToken(): Promise<{
 }> {
   const { data } = await requestJson<unknown>('/api/desktop/enroll-tokens', {
     method: 'POST',
-    body: {}
+    body: {},
   })
   const row = record(data)
   return {
     token: optionalText(row.token),
-    expiresAt: optionalText(row.expiresAt)
+    expiresAt: optionalText(row.expiresAt),
   }
 }
 
 export async function revokeDevice(deviceId: string, teamId?: string | null): Promise<void> {
   await requestJson(`/api/admin/agents/${encodeURIComponent(deviceId)}/revoke`, {
     method: 'POST',
-    body: { teamId: teamId?.trim() || undefined }
+    body: { teamId: teamId?.trim() || undefined },
   })
 }
 

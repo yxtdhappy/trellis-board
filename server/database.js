@@ -1,6 +1,6 @@
-import fs from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import fs from 'node:fs'
+import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import {
   databaseFile as defaultDatabaseFile,
   metadataFile,
@@ -8,35 +8,35 @@ import {
   repositoriesFile,
   repositoryPathKey,
   scanCacheFile,
-  stateFile
-} from "./config.js";
+  stateFile,
+} from './config.js'
 
-export const DATABASE_SCHEMA_VERSION = 7;
+export const DATABASE_SCHEMA_VERSION = 7
 
-const LEGACY_IMPORT_KEY = "legacy_json_imported_v1";
-const EXECUTION_EVENTS_STARTED_KEY = "execution_events_started_at";
-let defaultDatabase = null;
+const LEGACY_IMPORT_KEY = 'legacy_json_imported_v1'
+const EXECUTION_EVENTS_STARTED_KEY = 'execution_events_started_at'
+let defaultDatabase = null
 
 function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
+  return error instanceof Error ? error.message : String(error)
 }
 
 function readLegacyJson(file, label, logger) {
   try {
     return {
       exists: true,
-      value: JSON.parse(fs.readFileSync(file, "utf8"))
-    };
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      logger.warn(`跳过无法读取的旧数据 ${label}: ${errorMessage(error)}`);
+      value: JSON.parse(fs.readFileSync(file, 'utf8')),
     }
-    return { exists: error?.code !== "ENOENT", value: null };
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      logger.warn(`跳过无法读取的旧数据 ${label}: ${errorMessage(error)}`)
+    }
+    return { exists: error?.code !== 'ENOENT', value: null }
   }
 }
 
 function readMeta(db, key) {
-  return db.prepare("SELECT value FROM app_meta WHERE key = ?").get(key)?.value ?? null;
+  return db.prepare('SELECT value FROM app_meta WHERE key = ?').get(key)?.value ?? null
 }
 
 function writeMeta(db, key, value) {
@@ -46,7 +46,7 @@ function writeMeta(db, key, value) {
     ON CONFLICT(key) DO UPDATE SET
       value = excluded.value,
       updated_at = excluded.updated_at
-  `).run(key, String(value), new Date().toISOString());
+  `).run(key, String(value), new Date().toISOString())
 }
 
 const BASE_SCHEMA_V1_SQL = `
@@ -84,7 +84,7 @@ const BASE_SCHEMA_V1_SQL = `
     value_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
-`;
+`
 
 const SCHEMA_V2_SQL = `
   CREATE TABLE IF NOT EXISTS task_execution (
@@ -132,7 +132,7 @@ const SCHEMA_V2_SQL = `
     ON task_event(execution_task_key, occurred_at, id);
   CREATE INDEX IF NOT EXISTS task_event_correlation
     ON task_event(correlation_id);
-`;
+`
 
 const SCHEMA_V3_SQL = `
   CREATE TABLE IF NOT EXISTS task_dependency (
@@ -154,7 +154,7 @@ const SCHEMA_V3_SQL = `
 
   CREATE INDEX IF NOT EXISTS task_dependency_blocker
     ON task_dependency(blocker_task_key, resolved_at);
-`;
+`
 
 const SCHEMA_V4_SQL = `
   CREATE TABLE IF NOT EXISTS team (
@@ -459,7 +459,7 @@ const SCHEMA_V4_SQL = `
 
   CREATE INDEX IF NOT EXISTS team_task_tag_lookup
     ON team_task_index_tag(tag_key, project_id, task_key);
-`;
+`
 
 const SCHEMA_V5_SQL = `
   CREATE TABLE IF NOT EXISTS plugin_state (
@@ -501,42 +501,44 @@ const SCHEMA_V5_SQL = `
 
   CREATE INDEX IF NOT EXISTS plugin_audit_timeline
     ON plugin_audit(plugin_id, created_at, id);
-`;
+`
 
 function ensureV2Schema(db, now) {
-  db.exec(SCHEMA_V2_SQL);
+  db.exec(SCHEMA_V2_SQL)
   if (readMeta(db, EXECUTION_EVENTS_STARTED_KEY) == null) {
-    writeMeta(db, EXECUTION_EVENTS_STARTED_KEY, now);
+    writeMeta(db, EXECUTION_EVENTS_STARTED_KEY, now)
   }
 }
 
 function ensureV3Schema(db) {
-  db.exec(SCHEMA_V3_SQL);
+  db.exec(SCHEMA_V3_SQL)
 }
 
 function hasColumn(db, table, column) {
-  return db.prepare(`PRAGMA table_info(${table})`).all()
-    .some((item) => item.name === column);
+  return db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .some((item) => item.name === column)
 }
 
 function ensureV4Schema(db) {
-  db.exec(SCHEMA_V4_SQL);
-  if (!hasColumn(db, "saved_view", "owner_user_id")) {
-    db.exec("ALTER TABLE saved_view ADD COLUMN owner_user_id TEXT REFERENCES user_account(id)");
+  db.exec(SCHEMA_V4_SQL)
+  if (!hasColumn(db, 'saved_view', 'owner_user_id')) {
+    db.exec('ALTER TABLE saved_view ADD COLUMN owner_user_id TEXT REFERENCES user_account(id)')
   }
-  if (!hasColumn(db, "task_event", "actor_user_id")) {
-    db.exec("ALTER TABLE task_event ADD COLUMN actor_user_id TEXT REFERENCES user_account(id)");
+  if (!hasColumn(db, 'task_event', 'actor_user_id')) {
+    db.exec('ALTER TABLE task_event ADD COLUMN actor_user_id TEXT REFERENCES user_account(id)')
   }
   db.exec(`
     CREATE INDEX IF NOT EXISTS saved_view_owner_order
       ON saved_view(owner_user_id, position, id);
     CREATE INDEX IF NOT EXISTS task_event_actor_timeline
       ON task_event(actor_user_id, execution_task_key, occurred_at, id);
-  `);
+  `)
 }
 
 function ensureV5Schema(db) {
-  db.exec(SCHEMA_V5_SQL);
+  db.exec(SCHEMA_V5_SQL)
 }
 
 const SCHEMA_V6_SQL = `
@@ -569,14 +571,14 @@ const SCHEMA_V6_SQL = `
     ON agent_event(team_id, target_agent_id, id);
   CREATE INDEX IF NOT EXISTS agent_event_expiry
     ON agent_event(expires_at);
-`;
+`
 
 function ensureV6Schema(db) {
-  db.exec(SCHEMA_V6_SQL);
+  db.exec(SCHEMA_V6_SQL)
   db.exec(`
     CREATE INDEX IF NOT EXISTS saved_view_team_owner_order
       ON saved_view(team_id, owner_user_id, position, id);
-  `);
+  `)
 }
 
 const SCHEMA_V7_SQL = `
@@ -664,113 +666,114 @@ const SCHEMA_V7_SQL = `
     trusted_at TEXT NOT NULL,
     PRIMARY KEY (team_id, host, port, algorithm, key_base64)
   );
-`;
+`
 
 function ensureV7Schema(db) {
-  db.exec(SCHEMA_V7_SQL);
-  if (!hasColumn(db, "team_task_index", "live_revision")) {
+  db.exec(SCHEMA_V7_SQL)
+  if (!hasColumn(db, 'team_task_index', 'live_revision')) {
     db.exec(`
       ALTER TABLE team_task_index
       ADD COLUMN live_revision INTEGER NOT NULL DEFAULT 0
-    `);
+    `)
   }
-  if (!hasColumn(db, "project_live_file", "source_client_sequence")) {
+  if (!hasColumn(db, 'project_live_file', 'source_client_sequence')) {
     db.exec(`
       ALTER TABLE project_live_file
       ADD COLUMN source_client_sequence INTEGER
-    `);
+    `)
   }
-  if (!hasColumn(db, "project_live_batch", "client_sequence")) {
+  if (!hasColumn(db, 'project_live_batch', 'client_sequence')) {
     db.exec(`
       ALTER TABLE project_live_batch
       ADD COLUMN client_sequence INTEGER
-    `);
+    `)
   }
-  if (!hasColumn(db, "team_project", "git_credential_id")) {
+  if (!hasColumn(db, 'team_project', 'git_credential_id')) {
     db.exec(`
       ALTER TABLE team_project
       ADD COLUMN git_credential_id TEXT REFERENCES git_credential(id) ON DELETE RESTRICT
-    `);
+    `)
   }
   db.exec(`
     CREATE INDEX IF NOT EXISTS team_project_credential
       ON team_project(git_credential_id);
-  `);
+  `)
 }
 
 function tableExists(db, table) {
-  return Boolean(db.prepare(`
+  return Boolean(
+    db
+      .prepare(`
     SELECT 1
     FROM sqlite_master
     WHERE type = 'table' AND name = ?
-  `).get(table));
+  `)
+      .get(table),
+  )
 }
 
 function backupBeforeV7(db, databaseFile) {
-  if (!databaseFile || databaseFile === ":memory:") return null;
-  const backupDir = path.join(path.dirname(databaseFile), "backups");
-  fs.mkdirSync(backupDir, { recursive: true });
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const backupFile = path.join(backupDir, `board.sqlite.pre-v7.${stamp}`);
-  const quoted = backupFile.replaceAll("'", "''");
-  db.exec(`VACUUM INTO '${quoted}'`);
-  return backupFile;
+  if (!databaseFile || databaseFile === ':memory:') return null
+  const backupDir = path.join(path.dirname(databaseFile), 'backups')
+  fs.mkdirSync(backupDir, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const backupFile = path.join(backupDir, `board.sqlite.pre-v7.${stamp}`)
+  const quoted = backupFile.replaceAll("'", "''")
+  db.exec(`VACUUM INTO '${quoted}'`)
+  return backupFile
 }
 
 function ensureSchema(db, { databaseFile } = {}) {
-  const schemaVersion = tableExists(db, "app_meta")
-    ? readMeta(db, "schema_version")
-    : null;
-  const numericVersion = schemaVersion == null ? null : Number(schemaVersion);
+  const schemaVersion = tableExists(db, 'app_meta') ? readMeta(db, 'schema_version') : null
+  const numericVersion = schemaVersion == null ? null : Number(schemaVersion)
 
   if (numericVersion !== null && ![6, 7].includes(numericVersion)) {
     throw new Error(
-      `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除 data/board.sqlite 后重建`
-    );
+      `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除 data/board.sqlite 后重建`,
+    )
   }
   if (numericVersion === 6) {
-    backupBeforeV7(db, databaseFile);
+    backupBeforeV7(db, databaseFile)
   }
 
   withTransaction(db, () => {
-    db.exec(BASE_SCHEMA_V1_SQL);
-    ensureV2Schema(db, new Date().toISOString());
-    ensureV3Schema(db);
-    ensureV4Schema(db);
-    ensureV5Schema(db);
-    ensureV6Schema(db);
-    ensureV7Schema(db);
+    db.exec(BASE_SCHEMA_V1_SQL)
+    ensureV2Schema(db, new Date().toISOString())
+    ensureV3Schema(db)
+    ensureV4Schema(db)
+    ensureV5Schema(db)
+    ensureV6Schema(db)
+    ensureV7Schema(db)
     if (numericVersion == null || numericVersion === 6) {
-      writeMeta(db, "schema_version", DATABASE_SCHEMA_VERSION);
+      writeMeta(db, 'schema_version', DATABASE_SCHEMA_VERSION)
     }
-  });
+  })
 }
 
-
 function importRepositories(db, legacyFile, fallbackRepositories, logger) {
-  const legacy = readLegacyJson(legacyFile, "data/repos.json", logger);
-  let entries;
+  const legacy = readLegacyJson(legacyFile, 'data/repos.json', logger)
+  let entries
   if (!legacy.exists) {
-    entries = fallbackRepositories.map((repoPath) => ({ path: repoPath }));
+    entries = fallbackRepositories.map((repoPath) => ({ path: repoPath }))
   } else if (!legacy.value) {
-    return;
+    return
   } else if (!Array.isArray(legacy.value.repositories)) {
-    logger.warn("跳过结构无效的旧数据 data/repos.json: 缺少 repositories 数组");
-    return;
+    logger.warn('跳过结构无效的旧数据 data/repos.json: 缺少 repositories 数组')
+    return
   } else {
-    entries = legacy.value.repositories;
+    entries = legacy.value.repositories
   }
 
-  const now = new Date().toISOString();
+  const now = new Date().toISOString()
   const insert = db.prepare(`
     INSERT OR IGNORE INTO repositories(
       id, name, path, path_key, position, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  let position = 0;
+  `)
+  let position = 0
   entries.forEach((entry, sourceIndex) => {
     try {
-      const repository = normalizeRepositoryEntry(entry);
+      const repository = normalizeRepositoryEntry(entry)
       const result = insert.run(
         repository.id,
         repository.name,
@@ -778,44 +781,43 @@ function importRepositories(db, legacyFile, fallbackRepositories, logger) {
         repositoryPathKey(repository.path),
         position,
         now,
-        now
-      );
-      if (result.changes > 0) position += 1;
+        now,
+      )
+      if (result.changes > 0) position += 1
     } catch (error) {
-      logger.warn(`跳过无效的旧项目记录 data/repos.json[${sourceIndex}]: ${errorMessage(error)}`);
+      logger.warn(`跳过无效的旧项目记录 data/repos.json[${sourceIndex}]: ${errorMessage(error)}`)
     }
-  });
+  })
 }
 
 function importManualStages(db, legacyFile, logger) {
-  const legacy = readLegacyJson(legacyFile, "data/task-metadata.json", logger);
-  if (!legacy.value || typeof legacy.value.tasks !== "object" || !legacy.value.tasks) return;
+  const legacy = readLegacyJson(legacyFile, 'data/task-metadata.json', logger)
+  if (!legacy.value || typeof legacy.value.tasks !== 'object' || !legacy.value.tasks) return
 
-  const now = new Date().toISOString();
+  const now = new Date().toISOString()
   const insert = db.prepare(`
     INSERT OR IGNORE INTO task_stage(task_key, stage, updated_at)
     VALUES (?, ?, ?)
-  `);
+  `)
   for (const [taskKey, record] of Object.entries(legacy.value.tasks)) {
-    const stage = String(record?.stage || "").trim();
-    if (!taskKey || !stage) continue;
-    const updatedAt = typeof record?.updatedAt === "string" ? record.updatedAt : now;
-    insert.run(taskKey, stage, updatedAt);
+    const stage = String(record?.stage || '').trim()
+    if (!taskKey || !stage) continue
+    const updatedAt = typeof record?.updatedAt === 'string' ? record.updatedAt : now
+    insert.run(taskKey, stage, updatedAt)
   }
 }
 
 function importScanCache(db, legacyFile, logger) {
-  const legacy = readLegacyJson(legacyFile, "data/scan-cache.json", logger);
-  const board = legacy.value?.board;
-  if (!board || typeof board !== "object" || Array.isArray(board)) return;
-  const schemaVersion = Number(legacy.value.schemaVersion);
+  const legacy = readLegacyJson(legacyFile, 'data/scan-cache.json', logger)
+  const board = legacy.value?.board
+  if (!board || typeof board !== 'object' || Array.isArray(board)) return
+  const schemaVersion = Number(legacy.value.schemaVersion)
   if (!Number.isInteger(schemaVersion)) {
-    logger.warn("跳过结构无效的旧数据 data/scan-cache.json: schemaVersion 不是整数");
-    return;
+    logger.warn('跳过结构无效的旧数据 data/scan-cache.json: schemaVersion 不是整数')
+    return
   }
-  const savedAt = typeof legacy.value.savedAt === "string"
-    ? legacy.value.savedAt
-    : new Date().toISOString();
+  const savedAt =
+    typeof legacy.value.savedAt === 'string' ? legacy.value.savedAt : new Date().toISOString()
   db.prepare(`
     INSERT INTO scan_cache(id, schema_version, saved_at, board_json)
     VALUES (1, ?, ?, ?)
@@ -823,20 +825,20 @@ function importScanCache(db, legacyFile, logger) {
       schema_version = excluded.schema_version,
       saved_at = excluded.saved_at,
       board_json = excluded.board_json
-  `).run(schemaVersion, savedAt, JSON.stringify(board));
+  `).run(schemaVersion, savedAt, JSON.stringify(board))
 }
 
 function importBoardState(db, legacyFile, logger) {
-  const legacy = readLegacyJson(legacyFile, "data/board-state.json", logger);
-  if (!legacy.value || Array.isArray(legacy.value) || typeof legacy.value !== "object") return;
+  const legacy = readLegacyJson(legacyFile, 'data/board-state.json', logger)
+  if (!legacy.value || Array.isArray(legacy.value) || typeof legacy.value !== 'object') return
 
-  const now = new Date().toISOString();
+  const now = new Date().toISOString()
   const insert = db.prepare(`
     INSERT OR IGNORE INTO board_state(key, value_json, updated_at)
     VALUES (?, ?, ?)
-  `);
+  `)
   for (const [key, value] of Object.entries(legacy.value)) {
-    insert.run(key, JSON.stringify(value), now);
+    insert.run(key, JSON.stringify(value), now)
   }
 }
 
@@ -845,33 +847,33 @@ function importLegacyData(
   legacyFiles,
   fallbackRepositories,
   logger,
-  importLegacyRepositories = true
+  importLegacyRepositories = true,
 ) {
   withTransaction(db, () => {
-    if (readMeta(db, LEGACY_IMPORT_KEY) === "1") return;
+    if (readMeta(db, LEGACY_IMPORT_KEY) === '1') return
     if (importLegacyRepositories) {
-      importRepositories(db, legacyFiles.repositoriesFile, fallbackRepositories, logger);
+      importRepositories(db, legacyFiles.repositoriesFile, fallbackRepositories, logger)
     }
-    importManualStages(db, legacyFiles.metadataFile, logger);
-    importScanCache(db, legacyFiles.scanCacheFile, logger);
-    importBoardState(db, legacyFiles.stateFile, logger);
-    writeMeta(db, LEGACY_IMPORT_KEY, 1);
-  });
+    importManualStages(db, legacyFiles.metadataFile, logger)
+    importScanCache(db, legacyFiles.scanCacheFile, logger)
+    importBoardState(db, legacyFiles.stateFile, logger)
+    writeMeta(db, LEGACY_IMPORT_KEY, 1)
+  })
 }
 
 export function withTransaction(db, callback) {
-  db.exec("BEGIN IMMEDIATE");
+  db.exec('BEGIN IMMEDIATE')
   try {
-    const result = callback();
-    db.exec("COMMIT");
-    return result;
+    const result = callback()
+    db.exec('COMMIT')
+    return result
   } catch (error) {
     try {
-      db.exec("ROLLBACK");
+      db.exec('ROLLBACK')
     } catch {
       // 保留原始失败，避免回滚错误覆盖真正原因。
     }
-    throw error;
+    throw error
   }
 }
 
@@ -881,42 +883,48 @@ export function openDatabase({
   fallbackRepositories = [],
   importLegacyRepositories = true,
   legacyJsonImport = true,
-  logger = console
+  logger = console,
 } = {}) {
-  if (databaseFile !== ":memory:") {
-    fs.mkdirSync(path.dirname(databaseFile), { recursive: true });
+  if (databaseFile !== ':memory:') {
+    fs.mkdirSync(path.dirname(databaseFile), { recursive: true })
   }
 
-  const db = new DatabaseSync(databaseFile);
+  const db = new DatabaseSync(databaseFile)
   try {
-    db.exec("PRAGMA foreign_keys = ON");
-    db.exec("PRAGMA busy_timeout = 5000");
-    db.exec("PRAGMA journal_mode = WAL");
-    db.exec("PRAGMA synchronous = NORMAL");
-    ensureSchema(db, { databaseFile });
+    db.exec('PRAGMA foreign_keys = ON')
+    db.exec('PRAGMA busy_timeout = 5000')
+    db.exec('PRAGMA journal_mode = WAL')
+    db.exec('PRAGMA synchronous = NORMAL')
+    ensureSchema(db, { databaseFile })
     if (legacyJsonImport) {
-      importLegacyData(db, {
-        repositoriesFile,
-        metadataFile,
-        scanCacheFile,
-        stateFile,
-        ...legacyFiles
-      }, fallbackRepositories, logger, importLegacyRepositories);
+      importLegacyData(
+        db,
+        {
+          repositoriesFile,
+          metadataFile,
+          scanCacheFile,
+          stateFile,
+          ...legacyFiles,
+        },
+        fallbackRepositories,
+        logger,
+        importLegacyRepositories,
+      )
     }
-    return db;
+    return db
   } catch (error) {
     try {
-      db.close();
+      db.close()
     } catch {
       // 打开阶段失败时不再覆盖原始异常。
     }
-    throw error;
+    throw error
   }
 }
 
 export function getDefaultDatabase() {
   if (!defaultDatabase) {
-    defaultDatabase = openDatabase();
+    defaultDatabase = openDatabase()
   }
-  return defaultDatabase;
+  return defaultDatabase
 }

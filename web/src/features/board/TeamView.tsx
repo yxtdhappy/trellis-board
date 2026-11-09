@@ -1,30 +1,30 @@
-import { useMemo, useState } from "react";
-import { Input } from "@/components/ui/input";
-import { Pagination } from "./Pagination";
-import { SelectField } from "./SelectField";
-import { dueLabel, initials, type BoardTask } from "./task-view";
-import { priorityTone, stageTone, statusLabel } from "./tone";
-import type { BoardFilters } from "@/hooks/useBoard";
+import { useMemo, useState } from 'react'
+import { Input } from '@/components/ui/input'
+import { Pagination } from './Pagination'
+import { SelectField } from './SelectField'
+import { dueLabel, initials, type BoardTask } from './task-view'
+import { priorityTone, stageTone, statusLabel } from './tone'
+import type { BoardFilters } from '@/hooks/useBoard'
 
 type TeamViewProps = {
-  tasks: BoardTask[];
-  projects: { id: string; name: string }[];
-  stages: { id: string; label: string }[];
-  filters: BoardFilters;
-  onChange: (patch: Partial<BoardFilters>) => void;
-  onApply: () => void;
-  onOpen: (task: BoardTask) => void;
-  loading: boolean;
-  summary: string;
-};
+  tasks: BoardTask[]
+  projects: { id: string; name: string }[]
+  stages: { id: string; label: string }[]
+  filters: BoardFilters
+  onChange: (patch: Partial<BoardFilters>) => void
+  onApply: () => void
+  onOpen: (task: BoardTask) => void
+  loading: boolean
+  summary: string
+}
 
-const PAGE_SIZE = 10;
-const PRIORITIES = ["P0", "P1", "P2", "P3"];
+const PAGE_SIZE = 10
+const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const BLOCKED_OPTIONS = [
-  { value: "any", label: "不限" },
-  { value: "blocked", label: "仅被阻断" },
-  { value: "unblocked", label: "阻断已解除" },
-];
+  { value: 'any', label: '不限' },
+  { value: 'blocked', label: '仅被阻断' },
+  { value: 'unblocked', label: '阻断已解除' },
+]
 
 export function TeamView({
   tasks,
@@ -37,84 +37,65 @@ export function TeamView({
   loading,
   summary,
 }: TeamViewProps) {
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(0);
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
 
   const scopedTasks = useMemo(() => {
-    if (!filters.projectId || filters.projectId === "all") return tasks;
-    return tasks.filter((task) => task.projectId === filters.projectId);
-  }, [tasks, filters.projectId]);
+    if (!filters.projectId || filters.projectId === 'all') return tasks
+    return tasks.filter((task) => task.projectId === filters.projectId)
+  }, [tasks, filters.projectId])
 
   const owners = useMemo(() => {
-    const counts = new Map<string, number>();
+    const counts = new Map<string, number>()
     for (const task of scopedTasks) {
-      const owner = task.assignee || "未派发";
-      counts.set(owner, (counts.get(owner) ?? 0) + 1);
+      const owner = task.assignee || '未派发'
+      counts.set(owner, (counts.get(owner) ?? 0) + 1)
     }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  }, [scopedTasks]);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])
+  }, [scopedTasks])
 
-  const keyword = search.trim().toLowerCase();
+  const keyword = search.trim().toLowerCase()
   const rows = useMemo(() => {
     return scopedTasks.filter((task) => {
       if (
         keyword &&
         ![task.title, task.assignee, task.teamName, task.projectName, task.dirName]
-          .map((value) => String(value || "").toLowerCase())
+          .map((value) => String(value || '').toLowerCase())
           .some((value) => value.includes(keyword))
       ) {
-        return false;
+        return false
       }
       if (filters.assignee && task.assignee !== filters.assignee) {
-        return false;
+        return false
       }
-      if (
-        filters.priority &&
-        filters.priority !== "__all" &&
-        task.priority !== filters.priority
-      ) {
-        return false;
+      if (filters.priority && filters.priority !== '__all' && task.priority !== filters.priority) {
+        return false
       }
-      if (filters.stage && filters.stage !== "__all") {
-        const currentStage = task.stage || task.derivedStage;
-        if (currentStage !== filters.stage) return false;
+      if (filters.stage && filters.stage !== '__all') {
+        const currentStage = task.stage || task.derivedStage
+        if (currentStage !== filters.stage) return false
       }
-      if (filters.blocked === "blocked" && !task.execution?.isBlocked) {
-        return false;
+      if (filters.blocked === 'blocked' && !task.execution?.isBlocked) {
+        return false
       }
-      if (
-        filters.blocked === "unblocked" &&
-        !task.execution?.isUnblockedReady
-      ) {
-        return false;
+      if (filters.blocked === 'unblocked' && !task.execution?.isUnblockedReady) {
+        return false
       }
-      return true;
-    });
-  }, [
-    scopedTasks,
-    keyword,
-    filters.assignee,
-    filters.priority,
-    filters.stage,
-    filters.blocked,
-  ]);
+      return true
+    })
+  }, [scopedTasks, keyword, filters.assignee, filters.priority, filters.stage, filters.blocked])
 
-  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const current = Math.min(page, pageCount - 1);
-  const visible = rows.slice(
-    current * PAGE_SIZE,
-    current * PAGE_SIZE + PAGE_SIZE,
-  );
-  const maxOwnerCount = owners[0]?.[1] ?? 1;
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const current = Math.min(page, pageCount - 1)
+  const visible = rows.slice(current * PAGE_SIZE, current * PAGE_SIZE + PAGE_SIZE)
+  const maxOwnerCount = owners[0]?.[1] ?? 1
 
   return (
     <div className="flex min-h-0 flex-1 gap-3">
       <aside className="flex w-[268px] shrink-0 flex-col gap-2.5 overflow-y-auto rounded-xl border border-border bg-card p-3">
         <div className="flex flex-col gap-1">
           <h2 className="text-[13px] font-semibold font-heading">跨项目查询</h2>
-          <p className="text-[10.5px] text-muted-foreground">
-            按负责人 / 阶段 / 项目筛选
-          </p>
+          <p className="text-[10.5px] text-muted-foreground">按负责人 / 阶段 / 项目筛选</p>
         </div>
         <button
           type="button"
@@ -125,9 +106,7 @@ export function TeamView({
         </button>
 
         <div className="border-t border-border/60 pt-2">
-          <p className="text-[10.5px] font-semibold text-muted-foreground">
-            按负责人统计
-          </p>
+          <p className="text-[10.5px] font-semibold text-muted-foreground">按负责人统计</p>
           <ul className="mt-1.5 flex flex-col gap-1.5">
             {owners.length === 0 ? (
               <li className="text-[10.5px] text-muted-foreground">暂无任务</li>
@@ -163,7 +142,7 @@ export function TeamView({
             className="h-8 text-[11.5px]"
             value={filters.projectId}
             options={[
-              { value: "all", label: "全部授权项目" },
+              { value: 'all', label: '全部授权项目' },
               ...projects.map((p) => ({ value: p.id, label: p.name })),
             ]}
             onChange={(next) => onChange({ projectId: next })}
@@ -171,47 +150,39 @@ export function TeamView({
           <SelectField
             ariaLabel="负责人"
             className="h-8 text-[11.5px]"
-            value={filters.assignee || "__all"}
+            value={filters.assignee || '__all'}
             options={[
-              { value: "__all", label: "全部负责人" },
+              { value: '__all', label: '全部负责人' },
               ...owners.map(([owner]) => ({ value: owner, label: owner })),
             ]}
-            onChange={(next) =>
-              onChange({ assignee: next === "__all" ? "" : next })
-            }
+            onChange={(next) => onChange({ assignee: next === '__all' ? '' : next })}
           />
           <SelectField
             ariaLabel="优先级"
             className="h-8 text-[11.5px]"
-            value={filters.priority || "__all"}
+            value={filters.priority || '__all'}
             options={[
-              { value: "__all", label: "不限" },
+              { value: '__all', label: '不限' },
               ...PRIORITIES.map((p) => ({ value: p, label: p })),
             ]}
-            onChange={(next) =>
-              onChange({ priority: next === "__all" ? "" : next })
-            }
+            onChange={(next) => onChange({ priority: next === '__all' ? '' : next })}
           />
           <SelectField
             ariaLabel="阶段"
             className="h-8 text-[11.5px]"
-            value={filters.stage || "__all"}
+            value={filters.stage || '__all'}
             options={[
-              { value: "__all", label: "全部阶段" },
+              { value: '__all', label: '全部阶段' },
               ...stages.map((s) => ({ value: s.id, label: s.label })),
             ]}
-            onChange={(next) =>
-              onChange({ stage: next === "__all" ? "" : next })
-            }
+            onChange={(next) => onChange({ stage: next === '__all' ? '' : next })}
           />
           <SelectField
             ariaLabel="阻断"
             className="h-8 text-[11.5px]"
             value={filters.blocked}
             options={BLOCKED_OPTIONS}
-            onChange={(next) =>
-              onChange({ blocked: next as BoardFilters["blocked"] })
-            }
+            onChange={(next) => onChange({ blocked: next as BoardFilters['blocked'] })}
           />
         </div>
       </aside>
@@ -226,8 +197,7 @@ export function TeamView({
               谁在推进，谁需要帮助
             </h1>
             <p className="text-[11px] text-muted-foreground">
-              {summary ||
-                "任务按负责人归集；阶段与风险来自任务产物和人工检查点。"}
+              {summary || '任务按负责人归集；阶段与风险来自任务产物和人工检查点。'}
             </p>
           </div>
           <Input
@@ -235,8 +205,8 @@ export function TeamView({
             placeholder="搜索任务或负责人"
             value={search}
             onChange={(event) => {
-              setSearch(event.target.value);
-              setPage(0);
+              setSearch(event.target.value)
+              setPage(0)
             }}
           />
           <button
@@ -249,9 +219,7 @@ export function TeamView({
         </div>
 
         {loading ? (
-          <p className="px-1 py-10 text-center text-xs text-muted-foreground">
-            正在读取团队任务…
-          </p>
+          <p className="px-1 py-10 text-center text-xs text-muted-foreground">正在读取团队任务…</p>
         ) : (
           <div className="min-h-0 flex-1 overflow-auto">
             <table className="w-full border-collapse text-left">
@@ -279,10 +247,10 @@ export function TeamView({
                   visible.map((task) => {
                     const stageLabel = task.stages.find(
                       (item) => item.id === task.derivedStage,
-                    )?.label;
+                    )?.label
                     const projectLabel = task.teamName
                       ? `${task.teamName} · ${task.projectName}`
-                      : task.projectName;
+                      : task.projectName
                     return (
                       <tr
                         key={task.taskKey}
@@ -290,9 +258,7 @@ export function TeamView({
                         onClick={() => onOpen(task)}
                       >
                         <td className="px-3 py-2">
-                          <span className="block font-medium">
-                            {task.title}
-                          </span>
+                          <span className="block font-medium">{task.title}</span>
                           <small className="text-[10px] text-muted-foreground">
                             #{task.dirName} · {projectLabel}
                           </small>
@@ -302,7 +268,7 @@ export function TeamView({
                             <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-[8px] font-semibold">
                               {initials(task.assignee)}
                             </span>
-                            {task.assignee || "未派发"}
+                            {task.assignee || '未派发'}
                           </span>
                         </td>
                         <td className="px-3 py-2 text-[11px] text-muted-foreground">
@@ -312,23 +278,21 @@ export function TeamView({
                           <span
                             className={`rounded-full px-1.5 py-px text-[10px] font-medium ${stageTone(stageLabel)}`}
                           >
-                            {stageLabel ||
-                              statusLabel(task.stage || task.status) ||
-                              "未开始"}
+                            {stageLabel || statusLabel(task.stage || task.status) || '未开始'}
                           </span>
                         </td>
                         <td className="px-3 py-2">
                           <span
                             className={`rounded-full px-1.5 py-px text-[10px] font-semibold ${priorityTone(task.priority)}`}
                           >
-                            {task.priority || "P2"}
+                            {task.priority || 'P2'}
                           </span>
                         </td>
                         <td className="px-3 py-2 text-right text-[10.5px] text-muted-foreground">
                           {dueLabel(task.execution?.dueDate)}
                         </td>
                       </tr>
-                    );
+                    )
                   })
                 )}
               </tbody>
@@ -344,5 +308,5 @@ export function TeamView({
         />
       </section>
     </div>
-  );
+  )
 }

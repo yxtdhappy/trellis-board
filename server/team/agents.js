@@ -1,47 +1,44 @@
-import crypto from "node:crypto";
-import { withTransaction } from "../database.js";
-import { appendAuditEvent } from "./audit.js";
-import { ERROR_CODES, teamError } from "./errors.js";
-import { CAPABILITIES, authorizeProject, roleCanWrite } from "./permissions.js";
-import {
-  semanticLocalPathIdentityHash,
-  semanticRemoteIdentityHash
-} from "./remote-identity.js";
+import crypto from 'node:crypto'
+import { withTransaction } from '../database.js'
+import { appendAuditEvent } from './audit.js'
+import { ERROR_CODES, teamError } from './errors.js'
+import { CAPABILITIES, authorizeProject, roleCanWrite } from './permissions.js'
+import { semanticLocalPathIdentityHash, semanticRemoteIdentityHash } from './remote-identity.js'
 
-export const AGENT_PROTOCOL_VERSION = 2;
-export const MINIMUM_AGENT_VERSION = "0.1.0";
-const PAIRING_TTL_MS = 10 * 60 * 1000;
-const COMMAND_LEASE_MS = 5 * 60 * 1000;
-const MAX_FAILURES = 3;
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const SEMVER = /^\d+\.\d+\.\d+$/;
-const LOCAL_REPO_KEY = /^[a-f0-9]{64}$/;
-const ALLOWED_COMMANDS = new Set(["sync_branch", "refresh_status"]);
+export const AGENT_PROTOCOL_VERSION = 2
+export const MINIMUM_AGENT_VERSION = '0.1.0'
+const PAIRING_TTL_MS = 10 * 60 * 1000
+const COMMAND_LEASE_MS = 5 * 60 * 1000
+const MAX_FAILURES = 3
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const SEMVER = /^\d+\.\d+\.\d+$/
+const LOCAL_REPO_KEY = /^[a-f0-9]{64}$/
+const ALLOWED_COMMANDS = new Set(['sync_branch', 'refresh_status'])
 
 function sha256(value) {
-  return crypto.createHash("sha256").update(String(value)).digest("hex");
+  return crypto.createHash('sha256').update(String(value)).digest('hex')
 }
 
 function randomToken(bytes = 32) {
-  return crypto.randomBytes(bytes).toString("base64url");
+  return crypto.randomBytes(bytes).toString('base64url')
 }
 
 function text(value, label, { min = 1, max = 200 } = {}) {
-  if (typeof value !== "string") {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label}格式无效`);
+  if (typeof value !== 'string') {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label}格式无效`)
   }
-  const result = value.trim();
+  const result = value.trim()
   if (Array.from(result).length < min || Array.from(result).length > max) {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label}长度无效`);
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label}长度无效`)
   }
-  return result;
+  return result
 }
 
 function safeId(value, label) {
-  if (typeof value !== "string" || !SAFE_ID.test(value)) {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label}格式无效`);
+  if (typeof value !== 'string' || !SAFE_ID.test(value)) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label}格式无效`)
   }
-  return value;
+  return value
 }
 
 function protocolVersion(value) {
@@ -49,23 +46,23 @@ function protocolVersion(value) {
     throw teamError(
       426,
       ERROR_CODES.AGENT_PROTOCOL_UNSUPPORTED,
-      "Agent 协议版本不兼容，请升级 Agent",
-      { details: { protocolVersion: AGENT_PROTOCOL_VERSION } }
-    );
+      'Agent 协议版本不兼容，请升级 Agent',
+      { details: { protocolVersion: AGENT_PROTOCOL_VERSION } },
+    )
   }
-  return AGENT_PROTOCOL_VERSION;
+  return AGENT_PROTOCOL_VERSION
 }
 
 function agentVersion(value) {
-  const version = String(value || "").trim();
+  const version = String(value || '').trim()
   if (!SEMVER.test(version)) {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, "Agent 版本格式无效");
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'Agent 版本格式无效')
   }
-  return version.slice(0, 32);
+  return version.slice(0, 32)
 }
 
 function deviceName(value) {
-  return text(value, "设备名称", { max: 80 });
+  return text(value, '设备名称', { max: 80 })
 }
 
 function publicAgent(row) {
@@ -79,8 +76,8 @@ function publicAgent(row) {
     status: row.status,
     lastSeenAt: row.last_seen_at || null,
     createdAt: row.created_at,
-    revokedAt: row.revoked_at || null
-  };
+    revokedAt: row.revoked_at || null,
+  }
 }
 
 function publicBinding(row, readOnly = false) {
@@ -100,159 +97,136 @@ function publicBinding(row, readOnly = false) {
     agentStatus: row.agent_status || null,
     deviceName: row.device_name || null,
     lastSeenAt: row.last_seen_at || null,
-    readOnly
-  };
+    readOnly,
+  }
 }
 
 function bindingReadOnly(role, systemAdmin = false) {
-  return role ? !roleCanWrite(role) : !systemAdmin;
+  return role ? !roleCanWrite(role) : !systemAdmin
 }
 
 function safeCommandResult(value) {
-  let encoded;
+  let encoded
   try {
-    encoded = JSON.stringify(value ?? {});
+    encoded = JSON.stringify(value ?? {})
   } catch {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, "命令结果不是合法 JSON");
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, '命令结果不是合法 JSON')
   }
-  if (Buffer.byteLength(encoded, "utf8") > 16 * 1024) {
-    throw teamError(413, ERROR_CODES.BODY_TOO_LARGE, "命令结果过大");
+  if (Buffer.byteLength(encoded, 'utf8') > 16 * 1024) {
+    throw teamError(413, ERROR_CODES.BODY_TOO_LARGE, '命令结果过大')
   }
-  if (
-    /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|file:\/\/)/i.test(encoded)
-  ) {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, "命令结果不能包含本地路径");
+  if (/(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|file:\/\/)/i.test(encoded)) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, '命令结果不能包含本地路径')
   }
-  return value ?? {};
+  return value ?? {}
 }
 
 function commandErrorParts(value) {
-  if (value == null) return { code: null, message: null };
-  if (typeof value === "string") {
-    return { code: null, message: value.slice(0, 1000) };
+  if (value == null) return { code: null, message: null }
+  if (typeof value === 'string') {
+    return { code: null, message: value.slice(0, 1000) }
   }
-  if (typeof value === "object") {
-    const code = value.code == null
-      ? null
-      : String(value.code).slice(0, 100);
-    const message = value.message == null
-      ? null
-      : String(value.message).slice(0, 1000);
+  if (typeof value === 'object') {
+    const code = value.code == null ? null : String(value.code).slice(0, 100)
+    const message = value.message == null ? null : String(value.message).slice(0, 1000)
     return {
       code,
-      message: message || code || "Agent 命令执行失败"
-    };
+      message: message || code || 'Agent 命令执行失败',
+    }
   }
-  return { code: null, message: String(value).slice(0, 1000) };
+  return { code: null, message: String(value).slice(0, 1000) }
 }
 
 function projectRemoteIdentityHash(remoteUrl, config) {
-  const remote = String(remoteUrl || "").trim();
-  if (
-    /^[A-Za-z]:[\\/]/.test(remote) ||
-    remote.startsWith("/") ||
-    remote.startsWith("\\\\")
-  ) {
-    return semanticLocalPathIdentityHash(
-      remote.replaceAll("\\", "/")
-    );
+  const remote = String(remoteUrl || '').trim()
+  if (/^[A-Za-z]:[\\/]/.test(remote) || remote.startsWith('/') || remote.startsWith('\\\\')) {
+    return semanticLocalPathIdentityHash(remote.replaceAll('\\', '/'))
   }
   return semanticRemoteIdentityHash(remote, {
-    allowFileRemote: Boolean(config.allowLocalGitRemotes)
-  });
+    allowFileRemote: Boolean(config.allowLocalGitRemotes),
+  })
 }
 
-export function createAgentService({
-  db,
-  config,
-  events = null
-}) {
-  const pairAttempts = new Map();
+export function createAgentService({ db, config, events = null }) {
+  const pairAttempts = new Map()
 
   function consumePairAttempt(ip) {
-    const key = String(ip || "unknown").slice(0, 128);
-    const now = Date.now();
-    const recent = (pairAttempts.get(key) || []).filter((at) => now - at < 60 * 60 * 1000);
+    const key = String(ip || 'unknown').slice(0, 128)
+    const now = Date.now()
+    const recent = (pairAttempts.get(key) || []).filter((at) => now - at < 60 * 60 * 1000)
     if (recent.length >= 30) {
-      throw teamError(429, ERROR_CODES.RATE_LIMITED, "配对尝试过多，请稍后再试");
+      throw teamError(429, ERROR_CODES.RATE_LIMITED, '配对尝试过多，请稍后再试')
     }
-    recent.push(now);
-    pairAttempts.set(key, recent);
+    recent.push(now)
+    pairAttempts.set(key, recent)
   }
 
   function pairingTeamId(actor, requestedTeamId) {
     if (!actor?.userId) {
-      throw teamError(401, ERROR_CODES.AUTH_REQUIRED, "需要登录");
+      throw teamError(401, ERROR_CODES.AUTH_REQUIRED, '需要登录')
     }
-    const requested = String(requestedTeamId || "").trim();
+    const requested = String(requestedTeamId || '').trim()
     if (actor.systemAdmin) {
       const team = requested
         ? db.prepare("SELECT id FROM team WHERE id = ? AND status = 'active'").get(requested)
-        : db.prepare("SELECT id FROM team WHERE status = 'active' ORDER BY name LIMIT 1").get();
-      if (!team) throw teamError(409, ERROR_CODES.CONFLICT, "系统还没有可用团队");
-      return team.id;
+        : db.prepare("SELECT id FROM team WHERE status = 'active' ORDER BY name LIMIT 1").get()
+      if (!team) throw teamError(409, ERROR_CODES.CONFLICT, '系统还没有可用团队')
+      return team.id
     }
-    const teams = actor.teams || [];
+    const teams = actor.teams || []
     if (requested) {
       if (!teams.some((team) => team.id === requested)) {
-        throw teamError(403, ERROR_CODES.FORBIDDEN, "无权为该团队创建配对码");
+        throw teamError(403, ERROR_CODES.FORBIDDEN, '无权为该团队创建配对码')
       }
-      return requested;
+      return requested
     }
-    if (teams.length === 1) return teams[0].id;
+    if (teams.length === 1) return teams[0].id
     if (!teams.length) {
-      throw teamError(403, ERROR_CODES.FORBIDDEN, "当前账号没有可用团队");
+      throw teamError(403, ERROR_CODES.FORBIDDEN, '当前账号没有可用团队')
     }
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, "请先选择目标团队");
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, '请先选择目标团队')
   }
 
   function createPairingCode(actor, input = {}) {
-    const teamId = pairingTeamId(actor, input.teamId);
-    const code = randomToken(32);
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + PAIRING_TTL_MS).toISOString();
+    const teamId = pairingTeamId(actor, input.teamId)
+    const code = randomToken(32)
+    const now = new Date()
+    const expiresAt = new Date(now.getTime() + PAIRING_TTL_MS).toISOString()
     withTransaction(db, () => {
       db.prepare(`
         UPDATE agent_pairing_code
         SET used_at = ?
         WHERE user_id = ? AND team_id = ? AND used_at IS NULL
-      `).run(now.toISOString(), actor.userId, teamId);
+      `).run(now.toISOString(), actor.userId, teamId)
       db.prepare(`
         INSERT INTO agent_pairing_code(id, user_id, team_id, code_hash, expires_at, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
-        crypto.randomUUID(),
-        actor.userId,
-        teamId,
-        sha256(code),
-        expiresAt,
-        now.toISOString()
-      );
+      `).run(crypto.randomUUID(), actor.userId, teamId, sha256(code), expiresAt, now.toISOString())
       appendAuditEvent(db, {
         actorUserId: actor.userId,
         teamId,
-        action: "agent_pairing_code_created",
-        targetType: "agent_pairing_code",
-        detail: { expiresAt }
-      });
-    });
+        action: 'agent_pairing_code_created',
+        targetType: 'agent_pairing_code',
+        detail: { expiresAt },
+      })
+    })
     return {
       pairingCode: code,
       expiresAt,
       teamId,
-      protocolVersion: AGENT_PROTOCOL_VERSION
-    };
+      protocolVersion: AGENT_PROTOCOL_VERSION,
+    }
   }
 
   function validateEnrollment(input = {}) {
-    protocolVersion(input.protocolVersion);
-    const version = agentVersion(input.agentVersion);
-    const platform = text(input.platform, "平台", { max: 32 });
+    protocolVersion(input.protocolVersion)
+    const version = agentVersion(input.agentVersion)
+    const platform = text(input.platform, '平台', { max: 32 })
     if (!/^[A-Za-z0-9._-]+$/.test(platform)) {
-      throw teamError(400, ERROR_CODES.INVALID_INPUT, "平台格式无效");
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, '平台格式无效')
     }
-    const name = deviceName(input.deviceName);
-    return { name, platform, version };
+    const name = deviceName(input.deviceName)
+    return { name, platform, version }
   }
 
   /**
@@ -260,9 +234,9 @@ export function createAgentService({
    * 调用方负责把它放进事务。
    */
   function insertDevice({ userId, teamId = null, name, platform, version, action, detail }) {
-    const credential = randomToken(32);
-    const agentId = crypto.randomUUID();
-    const now = new Date().toISOString();
+    const credential = randomToken(32)
+    const agentId = crypto.randomUUID()
+    const now = new Date().toISOString()
     db.prepare(`
       INSERT INTO agent_device(
         id, user_id, device_name, platform, agent_version, protocol_version,
@@ -277,24 +251,27 @@ export function createAgentService({
       AGENT_PROTOCOL_VERSION,
       sha256(credential),
       now,
-      now
-    );
+      now,
+    )
     appendAuditEvent(db, {
       actorUserId: userId,
       actorAgentId: agentId,
       teamId,
       action,
-      targetType: "agent",
+      targetType: 'agent',
       targetId: agentId,
-      detail: { ...detail, deviceId: agentId, userId }
-    });
+      detail: { ...detail, deviceId: agentId, userId },
+    })
     // 桌面端 workspace init 需要兑换结果里的用户名与团队，由这里统一补齐。
-    const owner = db.prepare(`
+    const owner = db
+      .prepare(`
       SELECT username
       FROM user_account
       WHERE id = ?
-    `).get(userId);
-    const teams = db.prepare(`
+    `)
+      .get(userId)
+    const teams = db
+      .prepare(`
       SELECT t.id, t.name, t.slug, t.status,
         CASE WHEN u.system_admin = 1 THEN 'admin' ELSE m.role END AS role
       FROM user_account u
@@ -303,37 +280,42 @@ export function createAgentService({
         ON m.team_id = t.id AND m.user_id = u.id
       WHERE u.id = ? AND (u.system_admin = 1 OR m.user_id IS NOT NULL)
       ORDER BY t.name COLLATE NOCASE, t.id
-    `).all(userId).map((team) => ({
-      id: team.id,
-      name: team.name,
-      slug: team.slug,
-      status: team.status,
-      role: team.role
-    }));
+    `)
+      .all(userId)
+      .map((team) => ({
+        id: team.id,
+        name: team.name,
+        slug: team.slug,
+        status: team.status,
+        role: team.role,
+      }))
     return {
       agentId,
       credential,
       protocolVersion: AGENT_PROTOCOL_VERSION,
       username: owner?.username || null,
       teamId: null,
-      teams
-    };
+      teams,
+    }
   }
 
-  function enroll(input = {}, { ip = "" } = {}) {
-    consumePairAttempt(ip);
-    const { name, platform, version } = validateEnrollment(input);
-    const pairingCode = text(input.pairingCode, "配对码", { min: 16, max: 512 });
-    const now = new Date().toISOString();
-    const pairing = db.prepare(`
+  function enroll(input = {}, { ip = '' } = {}) {
+    consumePairAttempt(ip)
+    const { name, platform, version } = validateEnrollment(input)
+    const pairingCode = text(input.pairingCode, '配对码', { min: 16, max: 512 })
+    const now = new Date().toISOString()
+    const pairing = db
+      .prepare(`
       SELECT *
       FROM agent_pairing_code
       WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?
-    `).get(sha256(pairingCode), now);
+    `)
+      .get(sha256(pairingCode), now)
     if (!pairing) {
-      throw teamError(401, ERROR_CODES.AUTH_FAILED, "配对码无效、已使用或已过期");
+      throw teamError(401, ERROR_CODES.AUTH_FAILED, '配对码无效、已使用或已过期')
     }
-    const membership = db.prepare(`
+    const membership = db
+      .prepare(`
       SELECT 1
       FROM user_account u
       JOIN team t ON t.id = ?
@@ -341,18 +323,21 @@ export function createAgentService({
         ON m.team_id = t.id AND m.user_id = u.id
       WHERE u.id = ? AND t.status = 'active'
         AND (u.system_admin = 1 OR m.user_id IS NOT NULL)
-    `).get(pairing.team_id, pairing.user_id);
+    `)
+      .get(pairing.team_id, pairing.user_id)
     if (!membership) {
-      throw teamError(401, ERROR_CODES.AUTH_FAILED, "配对码无效、已使用或已过期");
+      throw teamError(401, ERROR_CODES.AUTH_FAILED, '配对码无效、已使用或已过期')
     }
     return withTransaction(db, () => {
-      const consumed = db.prepare(`
+      const consumed = db
+        .prepare(`
         UPDATE agent_pairing_code
         SET used_at = ?
         WHERE id = ? AND used_at IS NULL AND expires_at > ?
-      `).run(now, pairing.id, now);
+      `)
+        .run(now, pairing.id, now)
       if (consumed.changes !== 1) {
-        throw teamError(401, ERROR_CODES.AUTH_FAILED, "配对码无效、已使用或已过期");
+        throw teamError(401, ERROR_CODES.AUTH_FAILED, '配对码无效、已使用或已过期')
       }
       return insertDevice({
         userId: pairing.user_id,
@@ -360,106 +345,114 @@ export function createAgentService({
         name,
         platform,
         version,
-        action: "agent_enrolled",
-        detail: { deviceName: name, platform, agentVersion: version }
-      });
-    });
+        action: 'agent_enrolled',
+        detail: { deviceName: name, platform, agentVersion: version },
+      })
+    })
   }
 
   /**
    * 登录会话签发的桌面令牌兑换设备凭证。调用方已完成令牌校验与一次性消费。
    */
-  function enrollDesktop(input = {}, { userId, teamId = null, deviceName: tokenDeviceName = null } = {}) {
+  function enrollDesktop(
+    input = {},
+    { userId, teamId = null, deviceName: tokenDeviceName = null } = {},
+  ) {
     if (!userId) {
-      throw teamError(401, ERROR_CODES.DESKTOP_TOKEN_INVALID, "设备令牌无效，请在 Board 重新生成");
+      throw teamError(401, ERROR_CODES.DESKTOP_TOKEN_INVALID, '设备令牌无效，请在 Board 重新生成')
     }
-    const account = db.prepare("SELECT status FROM user_account WHERE id = ?").get(userId);
-    if (!account || account.status !== "active") {
-      throw teamError(403, ERROR_CODES.FORBIDDEN, "账号已禁用，无法注册桌面设备");
+    const account = db.prepare('SELECT status FROM user_account WHERE id = ?').get(userId)
+    if (!account || account.status !== 'active') {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, '账号已禁用，无法注册桌面设备')
     }
     const { name, platform, version } = validateEnrollment({
       ...input,
-      deviceName: tokenDeviceName || input.deviceName
-    });
-    return withTransaction(db, () => insertDevice({
-      userId,
-      teamId,
-      name,
-      platform,
-      version,
-      action: "desktop_device_enrolled",
-      detail: {
-        deviceName: name,
+      deviceName: tokenDeviceName || input.deviceName,
+    })
+    return withTransaction(db, () =>
+      insertDevice({
+        userId,
+        teamId,
+        name,
         platform,
-        agentVersion: version,
-        source: "desktop_enroll_token"
-      }
-    }));
+        version,
+        action: 'desktop_device_enrolled',
+        detail: {
+          deviceName: name,
+          platform,
+          agentVersion: version,
+          source: 'desktop_enroll_token',
+        },
+      }),
+    )
   }
 
   function authenticate(request) {
-    const authorization = String(request?.headers?.authorization || "");
-    const match = /^Bearer ([A-Za-z0-9._~+/-]+={0,2})$/.exec(authorization);
+    const authorization = String(request?.headers?.authorization || '')
+    const match = /^Bearer ([A-Za-z0-9._~+/-]+={0,2})$/.exec(authorization)
     if (!match || match[1].length < 32 || match[1].length > 512) {
-      throw teamError(401, ERROR_CODES.AGENT_AUTH_REQUIRED, "Agent 凭证无效或已撤销");
+      throw teamError(401, ERROR_CODES.AGENT_AUTH_REQUIRED, 'Agent 凭证无效或已撤销')
     }
-    const row = db.prepare(`
+    const row = db
+      .prepare(`
       SELECT a.*, u.status AS user_status
       FROM agent_device a
       JOIN user_account u ON u.id = a.user_id
       WHERE a.credential_hash = ?
         AND a.status = 'active'
         AND u.status = 'active'
-    `).get(sha256(match[1]));
+    `)
+      .get(sha256(match[1]))
     if (!row) {
-      throw teamError(401, ERROR_CODES.AGENT_AUTH_REQUIRED, "Agent 凭证无效或已撤销");
+      throw teamError(401, ERROR_CODES.AGENT_AUTH_REQUIRED, 'Agent 凭证无效或已撤销')
     }
     return {
       ...publicAgent(row),
       userId: row.user_id,
-      lastSeenAt: row.last_seen_at
-    };
+      lastSeenAt: row.last_seen_at,
+    }
   }
 
   function assertAgentIdentity(agent, input) {
-    const agentId = safeId(input.agentId || input.deviceId, "Agent ID");
+    const agentId = safeId(input.agentId || input.deviceId, 'Agent ID')
     if (agentId !== agent.id) {
-      throw teamError(403, ERROR_CODES.FORBIDDEN, "Agent 身份不匹配");
+      throw teamError(403, ERROR_CODES.FORBIDDEN, 'Agent 身份不匹配')
     }
   }
 
   function bindingError(message, code) {
-    return { errorCode: code, error: message };
+    return { errorCode: code, error: message }
   }
 
   function rejectExistingBinding(existing, error) {
-    const now = new Date().toISOString();
-    const syncStatus = existing.sync_status === "revoked" ? "revoked" : "rejected";
+    const now = new Date().toISOString()
+    const syncStatus = existing.sync_status === 'revoked' ? 'revoked' : 'rejected'
     db.prepare(`
       UPDATE agent_project_binding
       SET sync_status = ?, last_error = ?, updated_at = ?
       WHERE id = ?
-    `).run(syncStatus, error.error, now, existing.id);
+    `).run(syncStatus, error.error, now, existing.id)
     return {
       ...publicBinding({
         ...existing,
         sync_status: syncStatus,
         last_error: error.error,
-        updated_at: now
+        updated_at: now,
       }),
-      ...error
-    };
+      ...error,
+    }
   }
 
   function upsertHeartbeatBinding(agent, value) {
-    if (!value || typeof value !== "object") return null;
-    const projectId = safeId(value.projectId, "项目 ID");
-    const localRepoKey = String(value.localRepoKey || "");
+    if (!value || typeof value !== 'object') return null
+    const projectId = safeId(value.projectId, '项目 ID')
+    const localRepoKey = String(value.localRepoKey || '')
     if (!LOCAL_REPO_KEY.test(localRepoKey)) {
-      throw teamError(400, ERROR_CODES.INVALID_INPUT, "本地仓库标识格式无效");
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, '本地仓库标识格式无效')
     }
-    const branchName = text(value.branchName, "同步分支", { max: 255 });
-    const project = db.prepare(`
+    const branchName = text(value.branchName, '同步分支', { max: 255 })
+    const project = db
+      .prepare(`
       SELECT
         p.*, r.name AS project_name,
         m.role, tm.role AS team_role, u.system_admin
@@ -472,22 +465,27 @@ export function createAgentService({
       LEFT JOIN project_member m
         ON m.project_id = p.repository_id AND m.user_id = u.id
       WHERE p.repository_id = ? AND t.status = 'active'
-    `).get(agent.userId, projectId);
-    let existing = db.prepare(`
+    `)
+      .get(agent.userId, projectId)
+    let existing = db
+      .prepare(`
       SELECT *
       FROM agent_project_binding
       WHERE agent_id = ? AND project_id = ?
-    `).get(agent.id, projectId);
+    `)
+      .get(agent.id, projectId)
     if (!existing && value.serverBindingId) {
-      const candidate = db.prepare(`
+      const candidate = db
+        .prepare(`
         SELECT *
         FROM agent_project_binding
         WHERE id = ? AND agent_id = ?
-      `).get(String(value.serverBindingId), agent.id);
-      if (candidate?.project_id === projectId) existing = candidate;
+      `)
+        .get(String(value.serverBindingId), agent.id)
+      if (candidate?.project_id === projectId) existing = candidate
     }
     if (!project || !(project.system_admin || project.team_role)) {
-      const error = bindingError("当前账号无权绑定该项目", "PROJECT_FORBIDDEN");
+      const error = bindingError('当前账号无权绑定该项目', 'PROJECT_FORBIDDEN')
       return existing
         ? rejectExistingBinding(existing, error)
         : {
@@ -495,12 +493,12 @@ export function createAgentService({
             projectId,
             localRepoKey,
             branchName,
-            status: "rejected",
-            ...error
-          };
+            status: 'rejected',
+            ...error,
+          }
     }
-    if (!new Set(["current", "stale", "pending_push", "needs_repair"]).has(project.sync_status)) {
-      const error = bindingError("项目尚未启用或已停用", "PROJECT_NOT_READY");
+    if (!new Set(['current', 'stale', 'pending_push', 'needs_repair']).has(project.sync_status)) {
+      const error = bindingError('项目尚未启用或已停用', 'PROJECT_NOT_READY')
       return existing
         ? rejectExistingBinding(existing, error)
         : {
@@ -508,65 +506,65 @@ export function createAgentService({
             projectId,
             localRepoKey,
             branchName,
-            status: "rejected",
-            ...error
-          };
+            status: 'rejected',
+            ...error,
+          }
     }
     if (branchName !== project.sync_branch) {
-      const error = bindingError("本地分支与项目同步分支不一致", "BINDING_BRANCH_MISMATCH");
+      const error = bindingError('本地分支与项目同步分支不一致', 'BINDING_BRANCH_MISMATCH')
       if (existing) {
-        return rejectExistingBinding(existing, error);
+        return rejectExistingBinding(existing, error)
       }
       return {
         id: localRepoKey,
         projectId,
         localRepoKey,
         branchName,
-        status: "rejected",
-        ...error
-      };
+        status: 'rejected',
+        ...error,
+      }
     }
-    const remoteKey = String(value.remoteIdentityKey || "");
+    const remoteKey = String(value.remoteIdentityKey || '')
     if (remoteKey) {
-      let expectedRemoteKey = null;
+      let expectedRemoteKey = null
       try {
-        expectedRemoteKey = projectRemoteIdentityHash(project.remote_url, config);
+        expectedRemoteKey = projectRemoteIdentityHash(project.remote_url, config)
       } catch {
-        expectedRemoteKey = null;
+        expectedRemoteKey = null
       }
       if (
         !LOCAL_REPO_KEY.test(remoteKey) ||
         !expectedRemoteKey ||
         remoteKey !== expectedRemoteKey
       ) {
-        const error = bindingError("本地仓库远端与项目不一致", "REMOTE_MISMATCH");
+        const error = bindingError('本地仓库远端与项目不一致', 'REMOTE_MISMATCH')
         if (existing) {
-          return rejectExistingBinding(existing, error);
+          return rejectExistingBinding(existing, error)
         }
         return {
           id: localRepoKey,
           projectId,
           localRepoKey,
           branchName,
-          status: "rejected",
-          ...error
-        };
+          status: 'rejected',
+          ...error,
+        }
       }
       if (project.remote_identity_hash !== expectedRemoteKey) {
         db.prepare(`
           UPDATE team_project
           SET remote_identity_hash = ?, updated_at = ?
           WHERE repository_id = ?
-        `).run(expectedRemoteKey, new Date().toISOString(), projectId);
+        `).run(expectedRemoteKey, new Date().toISOString(), projectId)
       }
     }
-    const now = new Date().toISOString();
-    const displayName = String(value.displayName || project.project_name || "本地仓库")
+    const now = new Date().toISOString()
+    const displayName = String(value.displayName || project.project_name || '本地仓库')
       .trim()
-      .slice(0, 120);
-    const readOnly = bindingReadOnly(project.role, Boolean(project.system_admin));
+      .slice(0, 120)
+    const readOnly = bindingReadOnly(project.role, Boolean(project.system_admin))
     if (!existing) {
-      const id = crypto.randomUUID();
+      const id = crypto.randomUUID()
       db.prepare(`
         INSERT INTO agent_project_binding(
           id, agent_id, team_id, project_id, local_repo_key, local_display_name,
@@ -581,24 +579,24 @@ export function createAgentService({
         displayName,
         branchName,
         now,
-        now
-      );
-      existing = db.prepare("SELECT * FROM agent_project_binding WHERE id = ?").get(id);
+        now,
+      )
+      existing = db.prepare('SELECT * FROM agent_project_binding WHERE id = ?').get(id)
       appendAuditEvent(db, {
         actorAgentId: agent.id,
         projectId,
-        action: "agent_binding_approved",
-        targetType: "agent_binding",
+        action: 'agent_binding_approved',
+        targetType: 'agent_binding',
         targetId: id,
         detail: {
           deviceName: agent.deviceName,
           branchName,
           automatic: true,
-          readOnly
-        }
-      });
+          readOnly,
+        },
+      })
     } else {
-      const previousStatus = existing.sync_status;
+      const previousStatus = existing.sync_status
       db.prepare(`
         UPDATE agent_project_binding
         SET local_repo_key = ?, local_display_name = ?, branch_name = ?,
@@ -608,53 +606,54 @@ export function createAgentService({
             END,
             last_error = NULL, updated_at = ?
         WHERE id = ?
-      `).run(localRepoKey, displayName, branchName, now, existing.id);
-      existing = db.prepare("SELECT * FROM agent_project_binding WHERE id = ?").get(existing.id);
-      if (previousStatus !== "approved" && previousStatus !== "revoked") {
+      `).run(localRepoKey, displayName, branchName, now, existing.id)
+      existing = db.prepare('SELECT * FROM agent_project_binding WHERE id = ?').get(existing.id)
+      if (previousStatus !== 'approved' && previousStatus !== 'revoked') {
         appendAuditEvent(db, {
           actorAgentId: agent.id,
           projectId,
-          action: "agent_binding_approved",
-          targetType: "agent_binding",
+          action: 'agent_binding_approved',
+          targetType: 'agent_binding',
           targetId: existing.id,
           detail: {
             deviceName: agent.deviceName,
             branchName,
             automatic: true,
-            readOnly
-          }
-        });
+            readOnly,
+          },
+        })
       }
     }
-    const errorCode = value.errorCode || value.lastErrorCode || null;
-    const errorMessage = value.error || value.lastError || null;
+    const errorCode = value.errorCode || value.lastErrorCode || null
+    const errorMessage = value.error || value.lastError || null
     if (errorCode || errorMessage) {
       db.prepare(`
         UPDATE agent_project_binding
         SET last_error = ?, updated_at = ?
         WHERE id = ?
-      `).run(
-        String(errorMessage || errorCode).slice(0, 500),
-        now,
-        existing.id
-      );
-      existing.last_error = String(errorMessage || errorCode).slice(0, 500);
+      `).run(String(errorMessage || errorCode).slice(0, 500), now, existing.id)
+      existing.last_error = String(errorMessage || errorCode).slice(0, 500)
     }
-    return publicBinding(db.prepare(`
+    return publicBinding(
+      db
+        .prepare(`
       SELECT b.*, a.status AS agent_status, a.device_name, a.last_seen_at
       FROM agent_project_binding b
       JOIN agent_device a ON a.id = b.agent_id
       WHERE b.id = ?
-    `).get(existing.id), readOnly);
+    `)
+        .get(existing.id),
+      readOnly,
+    )
   }
 
   function heartbeat(agent, input = {}) {
-    protocolVersion(input.protocolVersion);
-    assertAgentIdentity(agent, input);
-    const version = agentVersion(input.agentVersion);
-    const name = deviceName(input.deviceName || agent.deviceName);
-    const bindings = Array.isArray(input.bindings) ? input.bindings.slice(0, 64) : [];
-    const responses = [];
+    protocolVersion(input.protocolVersion)
+    assertAgentIdentity(agent, input)
+    const version = agentVersion(input.agentVersion)
+    const name = deviceName(input.deviceName || agent.deviceName)
+    const bindings = Array.isArray(input.bindings) ? input.bindings.slice(0, 64) : []
+    const responses = []
     const update = () => {
       db.prepare(`
         UPDATE agent_device
@@ -667,15 +666,15 @@ export function createAgentService({
         AGENT_PROTOCOL_VERSION,
         new Date().toISOString(),
         JSON.stringify({ bindings: bindings.length }).slice(0, 2000),
-        agent.id
-      );
+        agent.id,
+      )
       for (const binding of bindings) {
-        const row = upsertHeartbeatBinding(agent, binding);
-        if (row) responses.push(row);
+        const row = upsertHeartbeatBinding(agent, binding)
+        if (row) responses.push(row)
       }
-    };
-    if (bindings.length) withTransaction(db, update);
-    else update();
+    }
+    if (bindings.length) withTransaction(db, update)
+    else update()
     return {
       protocolVersion: AGENT_PROTOCOL_VERSION,
       minimumAgentVersion: MINIMUM_AGENT_VERSION,
@@ -690,14 +689,15 @@ export function createAgentService({
         readOnly: row.readOnly === true,
         errorCode: row.errorCode || null,
         error: row.error || null,
-        branchName: row.branchName
-      }))
-    };
+        branchName: row.branchName,
+      })),
+    }
   }
 
   function listProjectBindings(actor, projectId) {
-    authorizeProject(actor, projectId, CAPABILITIES.MANAGE_AGENTS, { db });
-    return db.prepare(`
+    authorizeProject(actor, projectId, CAPABILITIES.MANAGE_AGENTS, { db })
+    return db
+      .prepare(`
       SELECT
         b.*, a.status AS agent_status, a.device_name, a.last_seen_at,
         u.id AS owner_user_id, u.username AS owner_username,
@@ -710,27 +710,32 @@ export function createAgentService({
         ON pm.project_id = b.project_id AND pm.user_id = a.user_id
       WHERE b.project_id = ?
       ORDER BY b.created_at DESC
-    `).all(projectId).map((row) => ({
-      ...publicBinding(
-        row,
-        bindingReadOnly(row.owner_project_role, Boolean(row.owner_system_admin))
-      ),
-      ownerUserId: row.owner_user_id,
-      ownerUsername: row.owner_username,
-      ownerDisplayName: row.owner_display_name
-    }));
+    `)
+      .all(projectId)
+      .map((row) => ({
+        ...publicBinding(
+          row,
+          bindingReadOnly(row.owner_project_role, Boolean(row.owner_system_admin)),
+        ),
+        ownerUserId: row.owner_user_id,
+        ownerUsername: row.owner_username,
+        ownerDisplayName: row.owner_display_name,
+      }))
   }
 
   function requireBinding(actor, projectId, bindingId) {
-    authorizeProject(actor, projectId, CAPABILITIES.MANAGE_AGENTS, { db });
-    const binding = db.prepare(`
+    authorizeProject(actor, projectId, CAPABILITIES.MANAGE_AGENTS, { db })
+    const binding = db
+      .prepare(`
       SELECT b.*, a.user_id, a.status AS agent_status
       FROM agent_project_binding b
       JOIN agent_device a ON a.id = b.agent_id
       WHERE b.id = ? AND b.project_id = ?
-    `).get(bindingId, projectId);
-    if (!binding) throw teamError(404, ERROR_CODES.NOT_FOUND, "Agent 绑定不存在");
-    const member = db.prepare(`
+    `)
+      .get(bindingId, projectId)
+    if (!binding) throw teamError(404, ERROR_CODES.NOT_FOUND, 'Agent 绑定不存在')
+    const member = db
+      .prepare(`
       SELECT 1
       FROM team_project p
       JOIN user_account u ON u.id = ?
@@ -742,227 +747,239 @@ export function createAgentService({
         ON t.id = p.team_id AND t.status = 'active'
       WHERE p.repository_id = ?
         AND (u.system_admin = 1 OR m.user_id IS NOT NULL OR tm.role = 'admin')
-    `).get(binding.user_id, projectId);
+    `)
+      .get(binding.user_id, projectId)
     if (!member) {
-      throw teamError(409, ERROR_CODES.CONFLICT, "绑定用户已不属于该项目");
+      throw teamError(409, ERROR_CODES.CONFLICT, '绑定用户已不属于该项目')
     }
-    if (binding.agent_status !== "active") {
-      throw teamError(409, ERROR_CODES.CONFLICT, "Agent 设备已撤销");
+    if (binding.agent_status !== 'active') {
+      throw teamError(409, ERROR_CODES.CONFLICT, 'Agent 设备已撤销')
     }
-    return binding;
+    return binding
   }
 
   function queueCommand(binding, type, payload = {}) {
-    const now = new Date().toISOString();
-    const id = crypto.randomUUID();
-    const result = db.prepare(`
+    const now = new Date().toISOString()
+    const id = crypto.randomUUID()
+    const result = db
+      .prepare(`
       INSERT OR IGNORE INTO agent_command(
         id, agent_id, binding_id, command_type, payload_json, status,
         attempts, created_at
       ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?)
-    `).run(
-      id,
-      binding.agent_id,
-      binding.id,
-      type,
-      JSON.stringify({
-        protocolVersion: AGENT_PROTOCOL_VERSION,
-        projectId: binding.project_id,
-        branchName: binding.branch_name,
-        ...payload
-      }),
-      now
-    );
-    return result.changes ? id : null;
+    `)
+      .run(
+        id,
+        binding.agent_id,
+        binding.id,
+        type,
+        JSON.stringify({
+          protocolVersion: AGENT_PROTOCOL_VERSION,
+          projectId: binding.project_id,
+          branchName: binding.branch_name,
+          ...payload,
+        }),
+        now,
+      )
+    return result.changes ? id : null
   }
 
   function setBindingStatus(actor, projectId, bindingId, status) {
-    const binding = requireBinding(actor, projectId, bindingId);
-    if (binding.sync_status === "revoked" && status !== "revoked") {
-      throw teamError(409, ERROR_CODES.CONFLICT, "已撤销的 Agent 绑定不能恢复");
+    const binding = requireBinding(actor, projectId, bindingId)
+    if (binding.sync_status === 'revoked' && status !== 'revoked') {
+      throw teamError(409, ERROR_CODES.CONFLICT, '已撤销的 Agent 绑定不能恢复')
     }
-    const now = new Date().toISOString();
-    let commandId = null;
+    const now = new Date().toISOString()
+    let commandId = null
     withTransaction(db, () => {
       db.prepare(`
         UPDATE agent_project_binding
         SET sync_status = ?, last_error = NULL, updated_at = ?
         WHERE id = ?
-      `).run(status, now, binding.id);
-      if (status !== "approved") {
+      `).run(status, now, binding.id)
+      if (status !== 'approved') {
         db.prepare(`
           UPDATE agent_command
           SET status = 'cancelled', completed_at = ?
           WHERE binding_id = ? AND status IN ('pending', 'delivered')
-        `).run(now, binding.id);
+        `).run(now, binding.id)
       } else {
-        commandId = queueCommand(binding, "sync_branch");
+        commandId = queueCommand(binding, 'sync_branch')
       }
       appendAuditEvent(db, {
         actorUserId: actor.userId,
         projectId,
         action: `agent_binding_${status}`,
-        targetType: "agent_binding",
+        targetType: 'agent_binding',
         targetId: binding.id,
-        detail: { ownerUserId: binding.user_id, commandQueued: Boolean(commandId) }
-      });
-    });
+        detail: { ownerUserId: binding.user_id, commandQueued: Boolean(commandId) },
+      })
+    })
     if (commandId && events) {
-      events.syncPendingCommands(binding.agent_id, binding.team_id);
+      events.syncPendingCommands(binding.agent_id, binding.team_id)
     }
     return {
-      binding: listProjectBindings(actor, projectId)
-        .find((item) => item.id === binding.id),
-      commandQueued: Boolean(commandId)
-    };
+      binding: listProjectBindings(actor, projectId).find((item) => item.id === binding.id),
+      commandQueued: Boolean(commandId),
+    }
   }
 
   function approveBinding(actor, projectId, bindingId) {
-    return setBindingStatus(actor, projectId, bindingId, "approved");
+    return setBindingStatus(actor, projectId, bindingId, 'approved')
   }
 
   function rejectBinding(actor, projectId, bindingId) {
-    return setBindingStatus(actor, projectId, bindingId, "rejected");
+    return setBindingStatus(actor, projectId, bindingId, 'rejected')
   }
 
   function revokeBinding(actor, projectId, bindingId) {
-    return setBindingStatus(actor, projectId, bindingId, "revoked");
+    return setBindingStatus(actor, projectId, bindingId, 'revoked')
   }
 
   function manageableTeamIds(actor, requestedTeamId) {
-    const requested = String(requestedTeamId || "").trim();
-    if (!actor?.systemAdmin && !actor?.teams?.some((team) => team.role === "admin")) {
-      throw teamError(403, ERROR_CODES.FORBIDDEN, "只有团队管理员可以查看 Agent");
+    const requested = String(requestedTeamId || '').trim()
+    if (!actor?.systemAdmin && !actor?.teams?.some((team) => team.role === 'admin')) {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, '只有团队管理员可以查看 Agent')
     }
     if (actor.systemAdmin) {
-      if (!requested || requested === "all") return null;
-      const team = db.prepare(`
+      if (!requested || requested === 'all') return null
+      const team = db
+        .prepare(`
         SELECT id FROM team WHERE id = ? AND status = 'active'
-      `).get(requested);
-      if (!team) throw teamError(404, ERROR_CODES.NOT_FOUND, "团队不存在");
-      return [requested];
+      `)
+        .get(requested)
+      if (!team) throw teamError(404, ERROR_CODES.NOT_FOUND, '团队不存在')
+      return [requested]
     }
-    const adminTeamIds = actor.teams
-      .filter((team) => team.role === "admin")
-      .map((team) => team.id);
-    if (!requested || requested === "all") return adminTeamIds;
+    const adminTeamIds = actor.teams.filter((team) => team.role === 'admin').map((team) => team.id)
+    if (!requested || requested === 'all') return adminTeamIds
     if (!adminTeamIds.includes(requested)) {
-      throw teamError(403, ERROR_CODES.FORBIDDEN, "无权管理该团队的 Agent");
+      throw teamError(403, ERROR_CODES.FORBIDDEN, '无权管理该团队的 Agent')
     }
-    return [requested];
+    return [requested]
   }
 
   function listDevices(actor, { teamId = null } = {}) {
-    const teamIds = manageableTeamIds(actor, teamId);
-    const scoped = teamIds == null
-      ? db.prepare(`
+    const teamIds = manageableTeamIds(actor, teamId)
+    const scoped =
+      teamIds == null
+        ? db
+            .prepare(`
           SELECT a.*, u.username, u.display_name
           FROM agent_device a
           JOIN user_account u ON u.id = a.user_id
           ORDER BY a.created_at DESC
-        `).all()
-      : teamIds.length
-        ? db.prepare(`
+        `)
+            .all()
+        : teamIds.length
+          ? db
+              .prepare(`
             SELECT DISTINCT a.*, u.username, u.display_name
             FROM agent_device a
             JOIN user_account u ON u.id = a.user_id
             JOIN agent_project_binding b ON b.agent_id = a.id
-            WHERE b.team_id IN (${teamIds.map(() => "?").join(", ")})
+            WHERE b.team_id IN (${teamIds.map(() => '?').join(', ')})
               AND b.sync_status <> 'revoked'
             ORDER BY a.created_at DESC
-          `).all(...teamIds)
-        : [];
+          `)
+              .all(...teamIds)
+          : []
     return scoped.map((row) => ({
       ...publicAgent(row),
       username: row.username,
-      displayName: row.display_name
-    }));
+      displayName: row.display_name,
+    }))
   }
 
   function revokeDevice(actor, agentId, { teamId = null } = {}) {
-    const requestedTeamId = String(teamId || "").trim();
-    if (!actor?.systemAdmin && (!requestedTeamId || requestedTeamId === "all")) {
-      throw teamError(400, ERROR_CODES.INVALID_INPUT, "团队管理员必须指定具体团队");
+    const requestedTeamId = String(teamId || '').trim()
+    if (!actor?.systemAdmin && (!requestedTeamId || requestedTeamId === 'all')) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, '团队管理员必须指定具体团队')
     }
-    const teamIds = manageableTeamIds(actor, requestedTeamId || null);
-    const device = db.prepare("SELECT * FROM agent_device WHERE id = ?").get(agentId);
-    if (!device) throw teamError(404, ERROR_CODES.NOT_FOUND, "Agent 不存在");
-    let bindingIds = null;
+    const teamIds = manageableTeamIds(actor, requestedTeamId || null)
+    const device = db.prepare('SELECT * FROM agent_device WHERE id = ?').get(agentId)
+    if (!device) throw teamError(404, ERROR_CODES.NOT_FOUND, 'Agent 不存在')
+    let bindingIds = null
     if (teamIds != null) {
       bindingIds = teamIds.length
-        ? db.prepare(`
+        ? db
+            .prepare(`
             SELECT id FROM agent_project_binding
             WHERE agent_id = ?
-              AND team_id IN (${teamIds.map(() => "?").join(", ")})
+              AND team_id IN (${teamIds.map(() => '?').join(', ')})
               AND sync_status <> 'revoked'
-          `).all(agentId, ...teamIds).map((row) => row.id)
-        : [];
+          `)
+            .all(agentId, ...teamIds)
+            .map((row) => row.id)
+        : []
       if (!bindingIds.length) {
-        throw teamError(404, ERROR_CODES.NOT_FOUND, "Agent 不存在");
+        throw teamError(404, ERROR_CODES.NOT_FOUND, 'Agent 不存在')
       }
     }
-    const now = new Date().toISOString();
+    const now = new Date().toISOString()
     withTransaction(db, () => {
       if (bindingIds) {
-        const placeholders = bindingIds.map(() => "?").join(", ");
+        const placeholders = bindingIds.map(() => '?').join(', ')
         db.prepare(`
           UPDATE agent_project_binding
           SET sync_status = 'revoked', updated_at = ?
           WHERE id IN (${placeholders})
-        `).run(now, ...bindingIds);
+        `).run(now, ...bindingIds)
         db.prepare(`
           UPDATE agent_command
           SET status = 'cancelled', completed_at = ?
           WHERE binding_id IN (${placeholders}) AND status IN ('pending', 'delivered')
-        `).run(now, ...bindingIds);
-        const remaining = db.prepare(`
+        `).run(now, ...bindingIds)
+        const remaining = db
+          .prepare(`
           SELECT COUNT(*) AS count FROM agent_project_binding
           WHERE agent_id = ? AND sync_status <> 'revoked'
-        `).get(agentId).count;
+        `)
+          .get(agentId).count
         if (remaining === 0) {
           db.prepare(`
             UPDATE agent_device
             SET status = 'revoked', revoked_at = ?
             WHERE id = ?
-          `).run(now, agentId);
+          `).run(now, agentId)
         }
       } else {
         db.prepare(`
           UPDATE agent_device
           SET status = 'revoked', revoked_at = ?
           WHERE id = ?
-        `).run(now, agentId);
+        `).run(now, agentId)
         db.prepare(`
           UPDATE agent_project_binding
           SET sync_status = 'revoked', updated_at = ?
           WHERE agent_id = ?
-        `).run(now, agentId);
+        `).run(now, agentId)
         db.prepare(`
           UPDATE agent_command
           SET status = 'cancelled', completed_at = ?
           WHERE agent_id = ? AND status IN ('pending', 'delivered')
-        `).run(now, agentId);
+        `).run(now, agentId)
       }
       appendAuditEvent(db, {
         actorUserId: actor.userId,
         actorAgentId: agentId,
         teamId: teamIds?.length === 1 ? teamIds[0] : null,
-        action: "agent_revoked",
-        targetType: "agent",
+        action: 'agent_revoked',
+        targetType: 'agent',
         targetId: agentId,
-        detail: { scope: teamIds ? "team" : "global", teamIds }
-      });
-    });
+        detail: { scope: teamIds ? 'team' : 'global', teamIds },
+      })
+    })
     if (teamIds) {
-      teamIds.forEach((id) => events?.publishAgentRevoked(agentId, id));
+      teamIds.forEach((id) => events?.publishAgentRevoked(agentId, id))
     } else {
-      events?.publishAgentRevoked(agentId, null);
+      events?.publishAgentRevoked(agentId, null)
     }
-    return { revoked: true, agentId };
+    return { revoked: true, agentId }
   }
 
   function recoverExpiredLeases(agentId) {
-    const now = new Date().toISOString();
+    const now = new Date().toISOString()
     db.prepare(`
       UPDATE agent_command
       SET status = 'failed',
@@ -974,11 +991,11 @@ export function createAgentService({
         AND attempts >= ?
     `).run(
       now,
-      JSON.stringify({ status: "failed", error: "命令连续投递失败" }),
+      JSON.stringify({ status: 'failed', error: '命令连续投递失败' }),
       agentId,
       now,
-      MAX_FAILURES
-    );
+      MAX_FAILURES,
+    )
     db.prepare(`
       UPDATE agent_command
       SET status = 'pending', delivered_at = NULL, lease_expires_at = NULL
@@ -986,7 +1003,7 @@ export function createAgentService({
         AND status = 'delivered'
         AND lease_expires_at <= ?
         AND attempts < ?
-    `).run(agentId, now, MAX_FAILURES);
+    `).run(agentId, now, MAX_FAILURES)
   }
 
   const deliverableCommandSql = `
@@ -999,89 +1016,97 @@ export function createAgentService({
       AND c.status = 'pending'
       AND b.sync_status = 'approved'
       AND p.sync_status IN ('current', 'stale', 'pending_push', 'needs_repair')
-  `;
+  `
 
   function listPendingCommands(agentId, teamId) {
-    recoverExpiredLeases(agentId);
-    return db.prepare(`${deliverableCommandSql}
+    recoverExpiredLeases(agentId)
+    return db
+      .prepare(`${deliverableCommandSql}
       AND b.team_id = ?
       ORDER BY c.created_at, c.id
       LIMIT 50
-    `).all(agentId, teamId).map((row) => ({
-      commandId: row.id,
-      type: row.command_type,
-      bindingId: row.binding_id,
-      attempts: Number(row.attempts),
-      projectId: row.project_id,
-      branchName: row.branch_name,
-      userId: row.user_id
-    }));
+    `)
+      .all(agentId, teamId)
+      .map((row) => ({
+        commandId: row.id,
+        type: row.command_type,
+        bindingId: row.binding_id,
+        attempts: Number(row.attempts),
+        projectId: row.project_id,
+        branchName: row.branch_name,
+        userId: row.user_id,
+      }))
   }
 
   function beginCommandDelivery(agentId, commandId) {
-    recoverExpiredLeases(agentId);
-    const row = db.prepare(`${deliverableCommandSql}
+    recoverExpiredLeases(agentId)
+    const row = db
+      .prepare(`${deliverableCommandSql}
       AND c.id = ?
       LIMIT 1
-    `).get(agentId, String(commandId || ""));
-    if (!row) return null;
+    `)
+      .get(agentId, String(commandId || ''))
+    if (!row) return null
     if (!ALLOWED_COMMANDS.has(row.command_type)) {
-      throw teamError(500, "INTERNAL_ERROR", "Agent 命令类型无效");
+      throw teamError(500, 'INTERNAL_ERROR', 'Agent 命令类型无效')
     }
-    const now = new Date();
-    const leaseExpiresAt = new Date(now.getTime() + COMMAND_LEASE_MS).toISOString();
-    const delivered = db.prepare(`
+    const now = new Date()
+    const leaseExpiresAt = new Date(now.getTime() + COMMAND_LEASE_MS).toISOString()
+    const delivered = db
+      .prepare(`
       UPDATE agent_command
       SET status = 'delivered',
           attempts = attempts + 1,
           delivered_at = ?,
           lease_expires_at = ?
       WHERE id = ? AND agent_id = ? AND status = 'pending'
-    `).run(now.toISOString(), leaseExpiresAt, row.id, agentId);
-    if (delivered.changes !== 1) return null;
-    let payload;
+    `)
+      .run(now.toISOString(), leaseExpiresAt, row.id, agentId)
+    if (delivered.changes !== 1) return null
+    let payload
     try {
-      payload = JSON.parse(row.payload_json);
+      payload = JSON.parse(row.payload_json)
     } catch {
-      payload = {};
+      payload = {}
     }
     return {
       id: row.id,
       bindingId: row.binding_id,
       type: row.command_type,
-      payload
-    };
+      payload,
+    }
   }
 
   function submitCommandResult(agent, commandId, input = {}) {
-    protocolVersion(input.protocolVersion);
-    agentVersion(input.agentVersion);
-    safeId(commandId, "命令 ID");
-    const status = input.status;
-    if (!new Set(["succeeded", "failed"]).has(status)) {
-      throw teamError(400, ERROR_CODES.INVALID_INPUT, "命令结果状态无效");
+    protocolVersion(input.protocolVersion)
+    agentVersion(input.agentVersion)
+    safeId(commandId, '命令 ID')
+    const status = input.status
+    if (!new Set(['succeeded', 'failed']).has(status)) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, '命令结果状态无效')
     }
-    const command = db.prepare(`
+    const command = db
+      .prepare(`
       SELECT c.*, b.team_id AS binding_team_id, b.project_id AS binding_project_id
       FROM agent_command c
       LEFT JOIN agent_project_binding b ON b.id = c.binding_id
       WHERE c.id = ? AND c.agent_id = ?
-    `).get(commandId, agent.id);
-    if (!command) throw teamError(404, ERROR_CODES.NOT_FOUND, "命令不存在");
-    if (["completed", "failed", "cancelled"].includes(command.status)) {
+    `)
+      .get(commandId, agent.id)
+    if (!command) throw teamError(404, ERROR_CODES.NOT_FOUND, '命令不存在')
+    if (['completed', 'failed', 'cancelled'].includes(command.status)) {
       return {
         commandId,
         status: command.status,
-        idempotent: true
-      };
+        idempotent: true,
+      }
     }
-    const result = safeCommandResult(input.result);
-    const commandError = commandErrorParts(input.error);
-    const error = commandError.message;
-    const now = new Date().toISOString();
-    const nextStatus = status === "succeeded"
-      ? "completed"
-      : command.attempts >= MAX_FAILURES ? "failed" : "pending";
+    const result = safeCommandResult(input.result)
+    const commandError = commandErrorParts(input.error)
+    const error = commandError.message
+    const now = new Date().toISOString()
+    const nextStatus =
+      status === 'succeeded' ? 'completed' : command.attempts >= MAX_FAILURES ? 'failed' : 'pending'
     withTransaction(db, () => {
       db.prepare(`
         UPDATE agent_command
@@ -1090,17 +1115,17 @@ export function createAgentService({
         WHERE id = ?
       `).run(
         nextStatus,
-        nextStatus === "pending" ? null : now,
+        nextStatus === 'pending' ? null : now,
         JSON.stringify({
           status,
           result,
           error,
           errorCode: commandError.code,
-          submittedAt: now
+          submittedAt: now,
         }).slice(0, 20_000),
-        commandId
-      );
-      if (nextStatus === "completed" && command.command_type === "sync_branch") {
+        commandId,
+      )
+      if (nextStatus === 'completed' && command.command_type === 'sync_branch') {
         db.prepare(`
           UPDATE agent_project_binding
           SET sync_status = 'approved',
@@ -1108,40 +1133,41 @@ export function createAgentService({
               last_error = NULL,
               updated_at = ?
           WHERE id = ?
-        `).run(now, now, command.binding_id);
+        `).run(now, now, command.binding_id)
       }
-      if (nextStatus === "failed") {
+      if (nextStatus === 'failed') {
         db.prepare(`
           UPDATE agent_project_binding
           SET last_error = ?, updated_at = ?
           WHERE id = ?
-        `).run(error || "命令连续执行失败", now, command.binding_id);
+        `).run(error || '命令连续执行失败', now, command.binding_id)
       }
       appendAuditEvent(db, {
         actorAgentId: agent.id,
         teamId: command.binding_team_id || null,
         projectId: command.binding_project_id || null,
         action: `agent_command_${status}`,
-        targetType: "agent_command",
+        targetType: 'agent_command',
         targetId: commandId,
-        result: status === "succeeded" ? "success" : "failed",
-        detail: { commandType: command.command_type, attempts: command.attempts }
-      });
-    });
-    if (nextStatus === "pending") {
-      events?.syncPendingCommands(agent.id, command.binding_team_id);
+        result: status === 'succeeded' ? 'success' : 'failed',
+        detail: { commandType: command.command_type, attempts: command.attempts },
+      })
+    })
+    if (nextStatus === 'pending') {
+      events?.syncPendingCommands(agent.id, command.binding_team_id)
     }
     return {
       commandId,
       status: nextStatus,
-      idempotent: false
-    };
+      idempotent: false,
+    }
   }
 
   function eventCursorTeam(agent, requestedTeamId, { required = true } = {}) {
-    const requested = String(requestedTeamId || "").trim();
+    const requested = String(requestedTeamId || '').trim()
     if (requested) {
-      const membership = db.prepare(`
+      const membership = db
+        .prepare(`
         SELECT t.id
         FROM user_account u
         JOIN team t ON t.id = ?
@@ -1149,13 +1175,15 @@ export function createAgentService({
           ON m.team_id = t.id AND m.user_id = u.id
         WHERE u.id = ? AND t.status = 'active'
           AND (u.system_admin = 1 OR m.user_id IS NOT NULL)
-      `).get(requested, agent.userId);
+      `)
+        .get(requested, agent.userId)
       if (!membership) {
-        throw teamError(403, ERROR_CODES.FORBIDDEN, "Agent 账号不属于该团队");
+        throw teamError(403, ERROR_CODES.FORBIDDEN, 'Agent 账号不属于该团队')
       }
-      return requested;
+      return requested
     }
-    const first = db.prepare(`
+    const first = db
+      .prepare(`
       SELECT t.id
       FROM user_account u
       JOIN team t ON t.status = 'active'
@@ -1164,42 +1192,45 @@ export function createAgentService({
       WHERE u.id = ? AND (u.system_admin = 1 OR m.user_id IS NOT NULL)
       ORDER BY t.name COLLATE NOCASE, t.id
       LIMIT 1
-    `).get(agent.userId);
+    `)
+      .get(agent.userId)
     if (!first && required) {
-      throw teamError(403, ERROR_CODES.FORBIDDEN, "Agent 账号没有可用团队");
+      throw teamError(403, ERROR_CODES.FORBIDDEN, 'Agent 账号没有可用团队')
     }
-    return first?.id || null;
+    return first?.id || null
   }
 
   function readEventCursor(agent, input = {}) {
-    const teamId = eventCursorTeam(agent, input.teamId);
-    const row = db.prepare(`
+    const teamId = eventCursorTeam(agent, input.teamId)
+    const row = db
+      .prepare(`
       SELECT last_event_id, updated_at
       FROM agent_event_cursor
       WHERE agent_id = ? AND team_id = ?
-    `).get(agent.id, teamId);
+    `)
+      .get(agent.id, teamId)
     return {
       teamId,
       lastEventId: Number(row?.last_event_id || 0),
-      updatedAt: row?.updated_at || null
-    };
+      updatedAt: row?.updated_at || null,
+    }
   }
 
   function writeEventCursor(agent, input = {}) {
-    const teamId = eventCursorTeam(agent, input.teamId);
-    const lastEventId = Number(input.lastEventId);
+    const teamId = eventCursorTeam(agent, input.teamId)
+    const lastEventId = Number(input.lastEventId)
     if (!Number.isInteger(lastEventId) || lastEventId < 0) {
-      throw teamError(400, ERROR_CODES.INVALID_INPUT, "lastEventId 必须是非负整数");
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, 'lastEventId 必须是非负整数')
     }
-    const now = new Date().toISOString();
+    const now = new Date().toISOString()
     db.prepare(`
       INSERT INTO agent_event_cursor(agent_id, team_id, last_event_id, updated_at)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(agent_id, team_id) DO UPDATE SET
         last_event_id = MAX(agent_event_cursor.last_event_id, excluded.last_event_id),
         updated_at = excluded.updated_at
-    `).run(agent.id, teamId, lastEventId, now);
-    return { teamId, lastEventId, updatedAt: now };
+    `).run(agent.id, teamId, lastEventId, now)
+    return { teamId, lastEventId, updatedAt: now }
   }
 
   async function close() {
@@ -1223,6 +1254,6 @@ export function createAgentService({
     listPendingCommands,
     beginCommandDelivery,
     submitCommandResult,
-    close
-  };
+    close,
+  }
 }

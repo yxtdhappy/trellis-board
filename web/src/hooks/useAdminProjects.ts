@@ -11,7 +11,7 @@ import type {
   ProjectAction,
   ProjectMember,
   RuntimeProject,
-  TeamProject
+  TeamProject,
 } from '@/api/admin'
 
 export type PendingApproval = {
@@ -58,7 +58,7 @@ export function useAdminProjects({
   teamId,
   runtimeProjects,
   users,
-  reloadUsers
+  reloadUsers,
 }: AdminProjectsOptions): AdminProjects {
   const [projects, setProjects] = useState<TeamProject[]>([])
   const [accessProjectId, setAccessProjectId] = useState('')
@@ -83,13 +83,13 @@ export function useAdminProjects({
         return []
       }
     },
-    [report, teamId]
+    [report, teamId],
   )
 
   const projectOptions = useMemo(() => {
     const list: RuntimeProject[] = [
       ...(isAdmin ? projects : []),
-      ...runtimeProjects.filter((project) => admin.canManageProject(project))
+      ...runtimeProjects.filter((project) => admin.canManageProject(project)),
     ]
     const seen = new Set<string>()
     return list
@@ -116,7 +116,7 @@ export function useAdminProjects({
       const [membersResult, bindingsResult, auditResult] = await Promise.allSettled([
         admin.fetchMembers(projectId),
         admin.fetchBindings(projectId),
-        admin.fetchProjectAudit(projectId, null)
+        admin.fetchProjectAudit(projectId, null),
       ])
       if (requestRef.current !== token) return
       if (membersResult.status === 'fulfilled') setMembers(membersResult.value)
@@ -131,7 +131,7 @@ export function useAdminProjects({
         report(auditResult.reason)
       }
     },
-    [report]
+    [report],
   )
 
   useEffect(() => {
@@ -185,7 +185,7 @@ export function useAdminProjects({
         report(error)
       }
     },
-    [report]
+    [report],
   )
 
   const saveMember = useCallback(
@@ -204,7 +204,7 @@ export function useAdminProjects({
         return false
       }
     },
-    [report]
+    [report],
   )
 
   const removeMember = useCallback(
@@ -222,7 +222,7 @@ export function useAdminProjects({
         report(error)
       }
     },
-    [report]
+    [report],
   )
 
   const bindingAction = useCallback(
@@ -238,7 +238,7 @@ export function useAdminProjects({
         report(error)
       }
     },
-    [report, selectProject]
+    [report, selectProject],
   )
 
   const openApproval = useCallback(
@@ -252,7 +252,7 @@ export function useAdminProjects({
       }
       setPendingApproval({ project, sha256, files: draft?.files ?? null })
     },
-    [isAdmin, reloadUsers, users.length]
+    [isAdmin, reloadUsers, users.length],
   )
 
   const connectProject = useCallback(
@@ -271,7 +271,7 @@ export function useAdminProjects({
         return false
       }
     },
-    [openApproval, reloadProjects, report, teamId]
+    [openApproval, reloadProjects, report, teamId],
   )
 
   const approveProject = useCallback(
@@ -280,7 +280,7 @@ export function useAdminProjects({
       try {
         const result = await admin.approveProject(pendingApproval.project.id, {
           toolchainSha256: pendingApproval.sha256,
-          ...input
+          ...input,
         })
         setPendingApproval(null)
         if (result.warning?.message) {
@@ -295,12 +295,15 @@ export function useAdminProjects({
         return false
       }
     },
-    [pendingApproval, reloadProjects, report]
+    [pendingApproval, reloadProjects, report],
   )
 
   const projectAction = useCallback(
     async (project: TeamProject, action: ProjectAction) => {
-      if (action === 'disable' && !window.confirm(`停用项目 ${project.name}？相关 Agent 绑定会被删除。`)) {
+      if (
+        action === 'disable' &&
+        !window.confirm(`停用项目 ${project.name}？相关 Agent 绑定会被删除。`)
+      ) {
         return
       }
       if (action === 'repair' && !window.confirm(`对 ${project.name} 执行受控修复？`)) return
@@ -314,7 +317,7 @@ export function useAdminProjects({
         report(error)
       }
     },
-    [reloadProjects, report]
+    [reloadProjects, report],
   )
 
   return {
@@ -337,6 +340,6 @@ export function useAdminProjects({
     pendingApproval,
     closeApproval: () => setPendingApproval(null),
     approveProject,
-    projectAction
+    projectAction,
   }
 }

@@ -6,6 +6,6 @@
  * `TRELLIS_PYTHON` 可显式指定解释器路径。
  */
 export function pythonCommandCandidates(env = process.env) {
-  const explicit = String(env.TRELLIS_PYTHON || "").trim();
-  return explicit ? [explicit] : ["python", "python3"];
+  const explicit = String(env.TRELLIS_PYTHON || '').trim()
+  return explicit ? [explicit] : ['python', 'python3']
 }

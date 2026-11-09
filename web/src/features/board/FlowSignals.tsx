@@ -25,7 +25,8 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
   const unblocked = tasks.filter((task) => task.execution?.isUnblockedReady).length
   const gaps = tasks.filter(
     (task) =>
-      (task.execution?.risk?.dorMissingCount || 0) > 0 || (task.execution?.risk?.dodMissingCount || 0) > 0,
+      (task.execution?.risk?.dorMissingCount || 0) > 0 ||
+      (task.execution?.risk?.dodMissingCount || 0) > 0,
   ).length
   const nextUp = recommendedTask(tasks)
   const overLimit = implementing > limit
@@ -51,7 +52,9 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
     <section className="flex flex-col gap-2.5 rounded-xl border border-border bg-card p-3">
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold tracking-[0.08em] text-muted-foreground">FLOW / 个人承载</p>
+          <p className="text-[10px] font-semibold tracking-[0.08em] text-muted-foreground">
+            FLOW / 个人承载
+          </p>
           <h2 className="text-[14.5px] leading-5 font-semibold font-heading">流动信号</h2>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
@@ -65,7 +68,13 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
               aria-label="WIP 软上限"
             />
           </label>
-          <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={save} disabled={saving}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-[11px]"
+            onClick={save}
+            disabled={saving}
+          >
             {saving ? '保存中…' : '保存'}
           </Button>
         </div>
@@ -79,9 +88,24 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
           caption={overLimit ? '已超出软上限' : '仍在承载范围内'}
           tone={overLimit ? 'warning' : 'primary'}
         />
-        <Signal label="当前被阻断" value={blocked} caption="等待外部条件" tone={blocked ? 'destructive' : 'muted'} />
-        <Signal label="阻断已解除" value={unblocked} caption="可以立即推进" tone={unblocked ? 'success' : 'muted'} />
-        <Signal label="条件缺口" value={gaps} caption="按当前阶段检查" tone={gaps ? 'warning' : 'muted'} />
+        <Signal
+          label="当前被阻断"
+          value={blocked}
+          caption="等待外部条件"
+          tone={blocked ? 'destructive' : 'muted'}
+        />
+        <Signal
+          label="阻断已解除"
+          value={unblocked}
+          caption="可以立即推进"
+          tone={unblocked ? 'success' : 'muted'}
+        />
+        <Signal
+          label="条件缺口"
+          value={gaps}
+          caption="按当前阶段检查"
+          tone={gaps ? 'warning' : 'muted'}
+        />
       </div>
 
       <p className="text-[11px] text-muted-foreground">
@@ -118,7 +142,9 @@ function Signal({ label, value, suffix, caption, tone }: SignalProps) {
       <p className="text-[10.5px] text-muted-foreground">{label}</p>
       <p className={`text-[19px] leading-6 font-semibold font-heading ${TONES[tone]}`}>
         {value}
-        {suffix ? <span className="text-[11px] font-normal text-muted-foreground">{suffix}</span> : null}
+        {suffix ? (
+          <span className="text-[11px] font-normal text-muted-foreground">{suffix}</span>
+        ) : null}
       </p>
       <p className="text-[10px] text-muted-foreground">{caption}</p>
     </div>

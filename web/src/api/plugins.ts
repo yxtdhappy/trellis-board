@@ -35,7 +35,11 @@ export type PluginLogEntry = {
 
 export async function fetchPlugins(): Promise<PluginList> {
   const { data } = await requestJson<PluginList>('/api/plugins')
-  return { disabled: Boolean(data?.disabled), hostVersion: data?.hostVersion, plugins: data?.plugins ?? [] }
+  return {
+    disabled: Boolean(data?.disabled),
+    hostVersion: data?.hostVersion,
+    plugins: data?.plugins ?? [],
+  }
 }
 
 export async function startPlugin(id: string): Promise<void> {

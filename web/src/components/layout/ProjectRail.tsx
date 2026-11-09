@@ -26,10 +26,7 @@ type SidecarStatus = {
   paused: boolean
 }
 
-type TauriInvoke = (
-  command: string,
-  args?: Record<string, unknown>,
-) => Promise<unknown>
+type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 type ProjectRailProps = {
   projects: Project[]
@@ -102,9 +99,7 @@ export function ProjectRail({
   onRefresh,
 }: ProjectRailProps) {
   const invoke = useMemo(() => tauriInvoke(), [])
-  const [associations, setAssociations] = useState<Map<string, LocalAssociation>>(
-    () => new Map(),
-  )
+  const [associations, setAssociations] = useState<Map<string, LocalAssociation>>(() => new Map())
   const [associating, setAssociating] = useState<string | null>(null)
   const [associationError, setAssociationError] = useState('')
   const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus | null>(null)
@@ -188,14 +183,14 @@ export function ProjectRail({
     if (association.status !== 'approved') {
       return association.lastError || '本地关联已失效'
     }
-    return association.readOnly
-      ? `${association.displayName} · 只读`
-      : association.displayName
+    return association.readOnly ? `${association.displayName} · 只读` : association.displayName
   }
 
   return (
     <aside className="hidden w-[230px] shrink-0 flex-col gap-1 border-r border-border bg-sidebar px-2.5 py-3.5 lg:flex">
-      <p className="px-2 pb-1 text-[10px] font-semibold tracking-[0.12em] text-muted-foreground">项目</p>
+      <p className="px-2 pb-1 text-[10px] font-semibold tracking-[0.12em] text-muted-foreground">
+        项目
+      </p>
       <button
         type="button"
         onClick={() => onSelect('all')}
@@ -263,7 +258,9 @@ export function ProjectRail({
                   disabled={associating !== null}
                   onClick={() => void associate(project)}
                 >
-                  <FolderGit2 className={associating === project.id ? 'size-3.5 animate-pulse' : 'size-3.5'} />
+                  <FolderGit2
+                    className={associating === project.id ? 'size-3.5 animate-pulse' : 'size-3.5'}
+                  />
                 </button>
               )
             ) : null}
@@ -272,7 +269,10 @@ export function ProjectRail({
       })}
 
       {associationError ? (
-        <p role="alert" className="mx-1 mt-1 rounded-md bg-destructive/10 px-2 py-1.5 text-[10px] leading-4 text-destructive">
+        <p
+          role="alert"
+          className="mx-1 mt-1 rounded-md bg-destructive/10 px-2 py-1.5 text-[10px] leading-4 text-destructive"
+        >
           {associationError}
         </p>
       ) : null}
@@ -297,8 +297,8 @@ export function ProjectRail({
                   ? 'size-1.5 rounded-full bg-primary'
                   : 'size-1.5 rounded-full bg-destructive'
                 : syncLive
-                ? 'size-1.5 rounded-full bg-primary'
-                : 'size-1.5 rounded-full bg-muted-foreground/50'
+                  ? 'size-1.5 rounded-full bg-primary'
+                  : 'size-1.5 rounded-full bg-muted-foreground/50'
             }
             aria-hidden="true"
           />
@@ -308,11 +308,7 @@ export function ProjectRail({
         {invoke ? (
           <p className="text-[10.5px] leading-4 text-muted-foreground">
             客户端后台：
-            {sidecarStatus?.running
-              ? '运行中'
-              : sidecarStatus?.paused
-                ? '已暂停'
-                : '未运行'}
+            {sidecarStatus?.running ? '运行中' : sidecarStatus?.paused ? '已暂停' : '未运行'}
           </p>
         ) : null}
         <Button

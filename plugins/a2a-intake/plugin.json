@@ -6,22 +6,10 @@
   "engines": {
     "board": ">=0.2.0"
   },
-  "permissions": [
-    "tasks:read",
-    "tasks:write",
-    "store",
-    "http:root"
-  ],
+  "permissions": ["tasks:read", "tasks:write", "store", "http:root"],
   "http": {
-    "rootPaths": [
-      "/a2a",
-      "/.well-known/agent-card.json",
-      "/.well-known/agent.json"
-    ],
-    "openPaths": [
-      "/.well-known/agent-card.json",
-      "/.well-known/agent.json"
-    ]
+    "rootPaths": ["/a2a", "/.well-known/agent-card.json", "/.well-known/agent.json"],
+    "openPaths": ["/.well-known/agent-card.json", "/.well-known/agent.json"]
   },
   "config": {
     "token": "env:A2A_TOKEN",

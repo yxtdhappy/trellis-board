@@ -9,20 +9,9 @@
   "bytes": 436797,
   "entryCount": 220,
   "fileCount": 162,
-  "defaultTools": [
-    ".opencode",
-    ".agents"
-  ],
-  "tools": [
-    ".opencode",
-    ".agents",
-    ".codex"
-  ],
-  "baseFiles": [
-    "AGENTS.md",
-    ".gitattributes",
-    ".trellis"
-  ],
+  "defaultTools": [".opencode", ".agents"],
+  "tools": [".opencode", ".agents", ".codex"],
+  "baseFiles": ["AGENTS.md", ".gitattributes", ".trellis"],
   "files": {
     ".codex/hooks/session-start.py": "efdd015c7c4687227ce34a84ac6249d5554c704f737e00d4844c9284ddcf696f",
     ".codex/hooks/inject-workflow-state.py": "71ef1aa1ed1051a697cae3c9ebffa518958a3bbd4d147434f382348829915f8c",

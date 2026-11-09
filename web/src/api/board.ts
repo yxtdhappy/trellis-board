@@ -44,7 +44,13 @@ export type TeamRuntime = {
   team?: boolean
   mode?: string
   authenticated: boolean
-  user: { displayName?: string; username?: string; role?: string; developerId?: string; mustChangePassword?: boolean } | null
+  user: {
+    displayName?: string
+    username?: string
+    role?: string
+    developerId?: string
+    mustChangePassword?: boolean
+  } | null
   systemAdmin?: boolean
   teams?: RuntimeTeam[]
 }
@@ -81,7 +87,9 @@ export const getRuntime = () => api<TeamRuntime>('/api/runtime')
 
 export const fetchBoard = (force = false) =>
   force
-    ? api<BoardPayload>('/api/board/refresh/start', 'POST').then(() => api<BoardPayload>('/api/board'))
+    ? api<BoardPayload>('/api/board/refresh/start', 'POST').then(() =>
+        api<BoardPayload>('/api/board'),
+      )
     : api<BoardPayload>('/api/board')
 
 export const fetchBoardStatus = () => api<BoardStatus>('/api/board/status')
@@ -98,9 +106,9 @@ export const fetchBoardSettings = (teamId: string) =>
   )
 
 export const fetchSavedViews = (teamId: string) =>
-  api<{ views?: unknown[] }>(
-    `/api/saved-views?teamId=${encodeURIComponent(teamId)}`,
-  ).then((payload) => payload?.views || [])
+  api<{ views?: unknown[] }>(`/api/saved-views?teamId=${encodeURIComponent(teamId)}`).then(
+    (payload) => payload?.views || [],
+  )
 
 export const fetchTaskDetail = (task: BoardTask) =>
   api<{ task?: BoardTask }>('/api/task', 'POST', {
@@ -148,9 +156,7 @@ export type TeamLiveRevision = {
 }
 
 export const fetchTeamLiveRevision = (teamId: string) =>
-  api<TeamLiveRevision>(
-    `/api/team/live-revision?teamId=${encodeURIComponent(teamId || 'all')}`,
-  )
+  api<TeamLiveRevision>(`/api/team/live-revision?teamId=${encodeURIComponent(teamId || 'all')}`)
 
 export const fetchAssignments = () =>
   api<{ assignments?: unknown[] }>('/api/assignments?state=pending')
@@ -161,13 +167,14 @@ export const fetchRepositories = () =>
   api<{ repositories: Project[] }>('/api/repositories').then((data) => data?.repositories || [])
 
 export const pickFolders = () =>
-  api<{ paths: string[] }>('/api/repositories/pick-folders', 'POST').then((data) => data?.paths || [])
+  api<{ paths: string[] }>('/api/repositories/pick-folders', 'POST').then(
+    (data) => data?.paths || [],
+  )
 
 export const addRepositories = (paths: string[]) =>
   api<BoardPayload>('/api/repositories', 'POST', { repositories: paths.map((path) => ({ path })) })
 
-export const removeRepository = (id: string) =>
-  api('/api/repositories', 'DELETE', { id })
+export const removeRepository = (id: string) => api('/api/repositories', 'DELETE', { id })
 
 export const createTaskRequest = (payload: Record<string, unknown>) =>
   api('/api/tasks', 'POST', payload)
@@ -180,10 +187,11 @@ export const changePassword = (payload: { currentPassword: string; newPassword: 
 
 export const logout = () => api('/api/auth/logout', 'POST')
 
-export const saveSavedView = (
-  payload: { name: string; filter: Record<string, unknown>; teamId?: string },
-) =>
-  api<{ view?: { id: string } }>('/api/saved-views', 'POST', payload)
+export const saveSavedView = (payload: {
+  name: string
+  filter: Record<string, unknown>
+  teamId?: string
+}) => api<{ view?: { id: string } }>('/api/saved-views', 'POST', payload)
 
 export const deleteSavedView = (id: string, teamId?: string) =>
   api('/api/saved-views', 'DELETE', { id, ...(teamId ? { teamId } : {}) })
@@ -198,10 +206,11 @@ export const createDependency = (payload: {
 export const removeDependency = (
   id: string,
   assigneeDecision?: { warningId: string; action: 'continue' | 'takeover' },
-) => api('/api/tasks/dependencies', 'DELETE', {
-  id,
-  ...(assigneeDecision ? { assigneeDecision } : {}),
-})
+) =>
+  api('/api/tasks/dependencies', 'DELETE', {
+    id,
+    ...(assigneeDecision ? { assigneeDecision } : {}),
+  })
 
 export const fetchGitOperation = (id: string) =>
   api<Record<string, unknown>>(`/api/git-operations/${encodeURIComponent(id)}`)

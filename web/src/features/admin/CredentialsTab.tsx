@@ -29,12 +29,12 @@ const EMPTY_FORM: CredentialForm = {
   username: '',
   token: '',
   privateKey: '',
-  passphrase: ''
+  passphrase: '',
 }
 
 const AUTH_OPTIONS = [
   { value: 'https_token', label: 'HTTPS 用户名与访问令牌' },
-  { value: 'ssh_key', label: 'SSH 私钥' }
+  { value: 'ssh_key', label: 'SSH 私钥' },
 ]
 
 export function CredentialsTab({ console: consoleApi }: { console: AdminConsole }) {
@@ -45,7 +45,7 @@ export function CredentialsTab({ console: consoleApi }: { console: AdminConsole 
     createCredential,
     updateCredential,
     deleteCredential,
-    adminTeamId
+    adminTeamId,
   } = consoleApi
   const [form, setForm] = useState<CredentialForm>(EMPTY_FORM)
   const [busy, setBusy] = useState(false)
@@ -61,7 +61,7 @@ export function CredentialsTab({ console: consoleApi }: { console: AdminConsole 
       username: credential.username || '',
       token: '',
       privateKey: '',
-      passphrase: ''
+      passphrase: '',
     })
   }
 
@@ -69,9 +69,7 @@ export function CredentialsTab({ console: consoleApi }: { console: AdminConsole 
     event.preventDefault()
     if (!canEdit || busy) return
     setBusy(true)
-    const target = form.id
-      ? credentials.find((item) => item.id === form.id)
-      : null
+    const target = form.id ? credentials.find((item) => item.id === form.id) : null
     let saved = false
     if (target) {
       saved = await updateCredential(target, {
@@ -79,12 +77,12 @@ export function CredentialsTab({ console: consoleApi }: { console: AdminConsole 
         ...(form.authType === 'https_token'
           ? {
               username: form.username.trim(),
-              token: form.token || undefined
+              token: form.token || undefined,
             }
           : {
               privateKey: form.privateKey || undefined,
-              passphrase: form.passphrase || undefined
-            })
+              passphrase: form.passphrase || undefined,
+            }),
       })
     } else {
       saved = await createCredential({
@@ -94,12 +92,12 @@ export function CredentialsTab({ console: consoleApi }: { console: AdminConsole 
         ...(form.authType === 'https_token'
           ? {
               username: form.username.trim(),
-              token: form.token
+              token: form.token,
             }
           : {
               privateKey: form.privateKey,
-              passphrase: form.passphrase || undefined
-            })
+              passphrase: form.passphrase || undefined,
+            }),
       })
     }
     setBusy(false)
@@ -142,10 +140,12 @@ export function CredentialsTab({ console: consoleApi }: { console: AdminConsole 
                   value={form.authType}
                   options={AUTH_OPTIONS}
                   disabled={busy || editing}
-                  onChange={(value) => setForm({
-                    ...form,
-                    authType: value === 'ssh_key' ? 'ssh_key' : 'https_token'
-                  })}
+                  onChange={(value) =>
+                    setForm({
+                      ...form,
+                      authType: value === 'ssh_key' ? 'ssh_key' : 'https_token',
+                    })
+                  }
                 />
               </Field>
             </div>
@@ -278,7 +278,9 @@ export function CredentialsTab({ console: consoleApi }: { console: AdminConsole 
                         {credential.authType === 'https_token' ? 'HTTPS' : 'SSH'}
                       </span>
                       {credential.teamName ? (
-                        <span className="text-[10px] text-muted-foreground">{credential.teamName}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {credential.teamName}
+                        </span>
                       ) : null}
                     </div>
                     <p className="truncate text-[10px] text-muted-foreground">

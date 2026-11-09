@@ -40,9 +40,8 @@ async function runAction(action) {
       current = null
       await refresh()
     } catch (actionError) {
-      error.textContent = actionError instanceof Error
-        ? actionError.message
-        : String(actionError || '关闭通知失败')
+      error.textContent =
+        actionError instanceof Error ? actionError.message : String(actionError || '关闭通知失败')
     }
     return
   }
@@ -64,9 +63,8 @@ async function runAction(action) {
     }
     current = null
   } catch (actionError) {
-    error.textContent = actionError instanceof Error
-      ? actionError.message
-      : String(actionError || '操作失败')
+    error.textContent =
+      actionError instanceof Error ? actionError.message : String(actionError || '操作失败')
     busy = false
     render(current)
   }
@@ -121,9 +119,10 @@ async function refresh() {
       render(current)
     }
   } catch (refreshError) {
-    error.textContent = refreshError instanceof Error
-      ? refreshError.message
-      : String(refreshError || '读取待确认事件失败')
+    error.textContent =
+      refreshError instanceof Error
+        ? refreshError.message
+        : String(refreshError || '读取待确认事件失败')
   }
 }
 

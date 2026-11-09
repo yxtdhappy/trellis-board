@@ -6,7 +6,7 @@ export function formatTime(value: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) return String(value)
   return new Intl.DateTimeFormat('zh-CN', {
     dateStyle: 'medium',
-    timeStyle: 'short'
+    timeStyle: 'short',
   }).format(date)
 }
 
@@ -27,7 +27,7 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   error: 'danger',
   rejected: 'danger',
   revoked: 'danger',
-  disabled: 'danger'
+  disabled: 'danger',
 }
 
 export function statusTone(status: string | null | undefined): Tone {
