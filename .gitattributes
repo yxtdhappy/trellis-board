@@ -7,3 +7,10 @@
 # picking either side (task state lives in task.json, not index.md). See
 # .trellis/spec/cli/backend/directory-structure.md for details.
 .trellis/workspace/*/journal-*.md merge=union
+
+.trellis/**/*.md text eol=lf
+.trellis/**/*.json text eol=lf
+.trellis/**/*.jsonl text eol=lf
+.trellis/**/*.yml text eol=lf
+.trellis/**/*.yaml text eol=lf
+.trellis/.developer text eol=lf
