@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ERROR_CODES, teamError } from './errors.js'
-import { minimalEnvironment, runProcess } from './process.js'
+import { minimalEnvironment, runProcess, sanitizeProcessOutput } from './process.js'
 import { semanticLocalPathIdentityHash, semanticRemoteIdentityHash } from './remote-identity.js'
 
 const RESERVED_BRANCHES = new Set(['HEAD', 'FETCH_HEAD', 'ORIG_HEAD', 'MERGE_HEAD', '@'])
@@ -167,6 +167,30 @@ export function recommendedProjectName(remote) {
   return Array.from(name).slice(0, 80).join('')
 }
 
+function redactLocalPaths(value) {
+  return String(value || '')
+    .replace(/[A-Za-z]:\\(?:[^\\\s"'<>]+\\)*[^\\\s"'<>]*/g, '[local-path]')
+    .replace(/\/(?:Users|home|root|tmp|private|var\/folders)\/[^\s"'<>]+/g, '[local-path]')
+}
+
+export function sshScanFailureDetails(result) {
+  return {
+    code: result?.code ?? null,
+    signal: result?.signal ?? null,
+    stderr: redactLocalPaths(sanitizeProcessOutput(result?.stderr, { maxBytes: 2048 })).trim(),
+    stdoutBytes: Buffer.byteLength(String(result?.stdout || ''), 'utf8'),
+    environmentKeys: Array.isArray(result?.environmentKeys) ? result.environmentKeys : [],
+    gitConfigGlobalIsolated: result?.gitConfigGlobalIsolated === true,
+  }
+}
+
+export function sshScanEnvironment({
+  platform = process.platform,
+  programData = process.env.PROGRAMDATA,
+} = {}) {
+  return minimalEnvironment(platform === 'win32' && programData ? { PROGRAMDATA: programData } : {})
+}
+
 function isInside(root, candidate) {
   const relative = path.relative(root, candidate)
   return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative)
@@ -205,12 +229,14 @@ export function readGitProject(db, projectId) {
   return row ? projectFromRow(row) : null
 }
 
-export function createGitManager({ db, config, dataDir, credentialService }) {
+export function createGitManager({ db, config, dataDir, credentialService, logger = console }) {
   const hooksDir = path.join(dataDir, '.empty-git-hooks')
   const projectsRoot = path.join(dataDir, 'projects')
   const authRoot = path.join(dataDir, '.git-auth')
+  const emptyConfigFile = path.join(dataDir, '.empty-git-config')
   fs.mkdirSync(hooksDir, { recursive: true })
   fs.mkdirSync(projectsRoot, { recursive: true })
+  fs.writeFileSync(emptyConfigFile, '', 'utf8')
   // 崩溃遗留的认证目录可能含明文私钥，启动时整目录重建。
   fs.rmSync(authRoot, { recursive: true, force: true })
   fs.mkdirSync(authRoot, { recursive: true, mode: 0o700 })
@@ -270,14 +296,21 @@ export function createGitManager({ db, config, dataDir, credentialService }) {
       maxOutputBytes = undefined,
     } = {},
   ) {
-    return runProcess('git', [...baseConfig(), ...args], {
+    const env = gitEnvironment({
+      GIT_CONFIG_GLOBAL: emptyConfigFile,
+      ...(auth?.env || {}),
+    })
+    const result = await runProcess('git', [...baseConfig(), ...args], {
       cwd,
-      env: gitEnvironment(auth?.env),
+      env,
       timeoutMs,
       allowFailure,
       maxOutputBytes,
       redact: auth?.redact || [],
     })
+    result.environmentKeys = Object.keys(env).sort()
+    result.gitConfigGlobalIsolated = env.GIT_CONFIG_GLOBAL === emptyConfigFile
+    return result
   }
 
   function shellQuote(value) {
@@ -302,12 +335,16 @@ export function createGitManager({ db, config, dataDir, credentialService }) {
   function writeSshWrapper(dir, { identityFile, knownHostsFile, passphrase }) {
     const wrapperPath =
       process.platform === 'win32' ? path.join(dir, 'ssh.cmd') : path.join(dir, 'ssh.sh')
+    const sshConfigFile = path.join(dir, 'ssh_config')
+    const globalKnownHostsFile = path.join(dir, 'global_known_hosts')
+    fs.writeFileSync(sshConfigFile, '', { mode: 0o600, encoding: 'utf8' })
+    fs.writeFileSync(globalKnownHostsFile, '', { mode: 0o600, encoding: 'utf8' })
     const quotePath = (value) => (process.platform === 'win32' ? `"${value}"` : shellQuote(value))
     const options = [
       '-o BatchMode=yes',
       '-o ConnectTimeout=15',
       '-o StrictHostKeyChecking=yes',
-      `-o GlobalKnownHostsFile=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`,
+      `-o GlobalKnownHostsFile=${quotePath(globalKnownHostsFile)}`,
       `-o UserKnownHostsFile=${quotePath(knownHostsFile)}`,
       '-o IdentitiesOnly=yes',
       `-o IdentityFile=${quotePath(identityFile)}`,
@@ -315,8 +352,8 @@ export function createGitManager({ db, config, dataDir, credentialService }) {
     if (passphrase) options[0] = '-o BatchMode=no'
     const content =
       process.platform === 'win32'
-        ? `@echo off\r\nssh -F NUL ${options.join(' ')} %*\r\n`
-        : `#!/bin/sh\nexec ssh -F ${shellQuote(process.platform === 'win32' ? 'NUL' : '/dev/null')} ${options.join(' ')} "$@"\n`
+        ? `@echo off\r\nssh -F ${quotePath(sshConfigFile)} ${options.join(' ')} %*\r\n`
+        : `#!/bin/sh\nexec ssh -F ${shellQuote(sshConfigFile)} ${options.join(' ')} "$@"\n`
     fs.writeFileSync(wrapperPath, content, {
       mode: 0o700,
       encoding: 'utf8',
@@ -789,15 +826,35 @@ export function createGitManager({ db, config, dataDir, credentialService }) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, 'SSH 主机地址无效')
     }
     const port = Number(remote.port) || 22
+    const command = 'ssh-keyscan'
     const args = ['-T', '10']
     if (port !== 22) args.push('-p', String(port))
     args.push(remote.host)
-    const result = await runProcess('ssh-keyscan', args, {
-      cwd: projectsRoot,
-      timeoutMs: 15_000,
-      allowFailure: true,
-      maxOutputBytes: SSH_SCAN_OUTPUT_LIMIT,
-    })
+    const environment = sshScanEnvironment()
+    let result
+    try {
+      result = await runProcess(command, args, {
+        cwd: projectsRoot,
+        env: environment,
+        timeoutMs: 15_000,
+        allowFailure: true,
+        maxOutputBytes: SSH_SCAN_OUTPUT_LIMIT,
+      })
+    } catch (error) {
+      logger?.warn?.('SSH 主机公钥扫描进程失败', {
+        host: remote.host,
+        port,
+        command,
+        error: redactLocalPaths(
+          sanitizeProcessOutput(error?.message || error, {
+            maxBytes: 2048,
+          }),
+        ),
+        environmentKeys: Object.keys(environment).sort(),
+      })
+      throw teamError(502, 'SSH_HOST_UNREACHABLE', '无法读取 SSH 主机公钥')
+    }
+    result.environmentKeys = Object.keys(environment).sort()
     if (result.truncated) {
       throw teamError(422, 'SSH_HOST_KEY_TOO_LARGE', 'SSH 主机公钥输出超过限制')
     }
@@ -819,6 +876,12 @@ export function createGitManager({ db, config, dataDir, credentialService }) {
       })
     }
     if (!entries.length) {
+      logger?.warn?.('SSH 主机公钥扫描失败', {
+        host: remote.host,
+        port,
+        command,
+        ...sshScanFailureDetails(result),
+      })
       throw teamError(502, 'SSH_HOST_UNREACHABLE', '无法读取 SSH 主机公钥')
     }
     return entries
@@ -918,7 +981,16 @@ export function createGitManager({ db, config, dataDir, credentialService }) {
       if (result.truncated) {
         throw teamError(422, 'GIT_REMOTE_OUTPUT_TOO_LARGE', 'Git 远端引用过多，超出识别限制')
       }
-      if (result.code !== 0) throw classifyProbeFailure(result)
+      if (result.code !== 0) {
+        logger?.warn?.('Git 远端探测失败', {
+          scheme: remote.scheme,
+          host: remote.host,
+          port: remote.port,
+          command: 'git ls-remote',
+          ...sshScanFailureDetails(result),
+        })
+        throw classifyProbeFailure(result)
+      }
       const parsed = parseRemoteHeads(result.stdout)
       if (!parsed.branches.length) {
         throw teamError(422, 'GIT_REMOTE_NO_HEADS', 'Git 远端没有可选择的共享分支')

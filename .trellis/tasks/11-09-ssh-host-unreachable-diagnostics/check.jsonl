@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "检查 SSH 子进程环境、日志和错误路径没有扩大权限边界"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "检查主机指纹确认、known_hosts 隔离和探测响应契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查诊断输出脱敏、自动化测试和真实服务验收"}

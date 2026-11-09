@@ -1561,6 +1561,7 @@ export async function createTeamRuntime({
       config,
       dataDir,
       credentialService,
+      logger,
     })
     const agentEvents = createAgentEventService({ db, logger })
     const taskIndex = createTaskIndex({

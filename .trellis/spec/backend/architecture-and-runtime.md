@@ -134,6 +134,68 @@ minimalEnvironment({
 });
 ```
 
+### Scenario: Windows OpenSSH 的环境与空配置
+
+#### 1. Scope / Trigger
+
+Windows OpenSSH 的 `ssh-keyscan.exe` 和 `ssh.exe` 在最小子进程环境中存在两个非预期行为：缺少 `PROGRAMDATA` 时会退出 255 且无输出；`-F NUL` 会被当作普通配置文件并报 `Can't open user config file NUL`。问题发生在认证前，不能通过更换私钥或凭据解决。
+
+#### 2. Signatures
+
+- `sshScanEnvironment({ platform, programData }) -> object`：构造 `ssh-keyscan` 的最小环境。
+- `sshScanFailureDetails(result) -> object`：生成脱敏后的退出码、stderr 摘要、实际环境键和全局配置隔离状态。
+- `writeSshWrapper(dir, options) -> path`：为 SSH Git 操作生成临时 `ssh` 包装器。
+- `runGit(args, options)`：复用经过隔离的 Git 环境。
+
+#### 3. Contracts
+
+- Windows 的 SSH 扫描环境必须保留 `PROGRAMDATA`；其他平台不得凭空注入该变量。
+- `ssh-keyscan` 通过 PATH 执行，不硬编码 Windows 用户路径；安装 `openssh-client` 的 Linux 使用 PATH 中的命令。
+- `GIT_CONFIG_GLOBAL` 指向应用目录中的真实空文件，不能使用 Node/Windows 的 `NUL` 伪路径。
+- SSH wrapper 使用临时目录中的空 `ssh_config`，不使用 `-F NUL`；`GlobalKnownHostsFile` 和 `UserKnownHostsFile` 也使用临时文件。
+- 失败日志可包含 host、port、命令、退出码、脱敏 stderr、实际环境键和全局配置隔离状态，但不能包含本机文件路径、私钥、口令、令牌或完整主机公钥。
+
+#### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| Windows 最小环境缺少 `PROGRAMDATA` | `ssh-keyscan` 可能退出 255 且 stdout/stderr 为空 |
+| SSH wrapper 使用 `-F NUL` | `git ls-remote` 报 `Can't open user config file NUL` |
+| `ssh-keyscan` 未返回合法主机公钥 | API 返回 `SSH_HOST_UNREACHABLE`，日志带脱敏诊断 |
+| Git 远端返回非零退出码 | 保留认证/网络/仓库错误分类 |
+| host key 未确认 | 仍返回主机指纹确认挑战，不自动信任 |
+
+#### 5. Good/Base/Bad Cases
+
+- Good：Windows 服务用最小环境扫描 `git.weintdata.cn:1022`，在确认三组主机指纹后通过 Deploy Key 读取默认分支。
+- Base：Linux 服务安装 `openssh-client`，从 PATH 找到 `ssh-keyscan` 和 `ssh`，使用临时 `known_hosts`。
+- Bad：硬编码 `C:\Users\...`、使用 `-F NUL`、关闭 `StrictHostKeyChecking` 或把整个宿主环境传给所有子进程。
+
+#### 6. Tests Required
+
+- 断言 Windows 扫描环境包含 `PROGRAMDATA`，Linux 分支不注入。
+- 断言失败摘要保留 code、stderr 摘要并完成 URL/Bearer 脱敏。
+- 断言失败摘要不包含测试机路径，并记录实际环境键和全局配置隔离状态。
+- 运行 `npm test`，覆盖 Git 凭据、代理环境、SSH 扫描和 HTTP 探测。
+- 真实服务确认主机指纹后断言项目名称和默认分支成功回填。
+
+#### 7. Wrong vs Correct
+
+Wrong：
+
+```js
+ssh -F NUL -o StrictHostKeyChecking=no ...
+minimalEnvironment() // Windows 缺少 PROGRAMDATA
+```
+
+Correct：
+
+```js
+ssh -F "<temp>/ssh_config" \
+  -o GlobalKnownHostsFile="<temp>/global_known_hosts" \
+  -o UserKnownHostsFile="<temp>/known_hosts" ...
+```
+
 ## 配置与常量
 
 路径常量和旧 JSON 迁移来源由 [server/config.js](../../../server/config.js) 定义。业务模块按名称导入，不在本地重新拼接 `data/` 路径。运行时可变 Board 状态只通过 SQLite 读取和写入。

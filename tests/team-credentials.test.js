@@ -15,6 +15,8 @@ import {
   normalizeGitRemote,
   readGitProject,
   recommendedProjectName,
+  sshScanEnvironment,
+  sshScanFailureDetails,
 } from '../server/team/git-manager.js'
 import { createTeamRuntime } from '../server/team/http.js'
 import { minimalEnvironment, runProcess, sanitizeProcessOutput } from '../server/team/process.js'
@@ -49,6 +51,10 @@ test('Git 子进程仅继承标准代理环境', () => {
     assert.equal(upper.NO_PROXY, 'localhost,*.example.com')
     assert.equal(upper.https_proxy, undefined)
     assert.equal(upper.GIT_CONFIG_NOSYSTEM, '1')
+    assert.equal(
+      gitEnvironment({ GIT_CONFIG_GLOBAL: 'C:/tmp/trellis-empty-git-config' }).GIT_CONFIG_GLOBAL,
+      'C:/tmp/trellis-empty-git-config',
+    )
     assert.equal(minimalEnvironment().HTTP_PROXY, undefined)
 
     delete process.env.HTTP_PROXY
@@ -70,6 +76,51 @@ test('Git 子进程仅继承标准代理环境', () => {
       if (value !== undefined) process.env[key] = value
     }
   }
+})
+
+test('SSH 主机扫描失败摘要脱敏并保留退出信息', () => {
+  const details = sshScanFailureDetails({
+    code: 1,
+    signal: null,
+    stderr: [
+      'fetch https://user:secret@example.test failed Bearer abc.def',
+      String.raw`load C:\Users\example\private\id_ed25519`,
+    ].join('\n'),
+    stdout: 'host key material',
+    environmentKeys: ['PATH', 'PROGRAMDATA'],
+    gitConfigGlobal: 'C:/Users/example/private/.empty-git-config',
+    gitConfigGlobalIsolated: true,
+  })
+
+  assert.equal(details.code, 1)
+  assert.equal(details.signal, null)
+  assert.equal(details.stdoutBytes, Buffer.byteLength('host key material', 'utf8'))
+  assert.deepEqual(details.environmentKeys, ['PATH', 'PROGRAMDATA'])
+  assert.equal(details.gitConfigGlobalIsolated, true)
+  assert.match(details.stderr, /https:\/\/\*\*\*@example\.test/)
+  assert.match(details.stderr, /Bearer \*\*\*/)
+  assert.equal(details.stderr.includes('secret'), false)
+  assert.equal(details.stderr.includes('abc.def'), false)
+  assert.equal(details.stderr.includes(String.raw`C:\Users\example`), false)
+  assert.match(details.stderr, /\[local-path\]/)
+  assert.equal(JSON.stringify(details).includes('C:/Users/example'), false)
+})
+
+test('SSH 扫描仅保留 Windows OpenSSH 所需的 PROGRAMDATA', () => {
+  assert.equal(
+    sshScanEnvironment({
+      platform: 'win32',
+      programData: 'C:/ProgramData',
+    }).PROGRAMDATA,
+    'C:/ProgramData',
+  )
+  assert.equal(
+    sshScanEnvironment({
+      platform: 'linux',
+      programData: 'C:/ProgramData',
+    }).PROGRAMDATA,
+    undefined,
+  )
 })
 
 function testConfig(overrides = {}) {
@@ -318,6 +369,7 @@ test('远端探测返回推荐名称、默认分支、全部分支，并处理�
     dataDir,
     credentialService: createGitCredentialService({ db, dataDir }),
   })
+  assert.equal(fs.readFileSync(path.join(dataDir, '.empty-git-config'), 'utf8'), '')
   assert.equal(fs.existsSync(staleAuthDir), false)
   const bare = path.join(root, 'repo.git')
   const seed = path.join(root, 'seed')

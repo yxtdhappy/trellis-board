@@ -7,6 +7,7 @@ data/plugins.json
 data/plugins.secrets.json
 data/plugins/
 data/.git-auth/
+data/.empty-git-config
 data/backups/
 data/git-credentials.key
 data/*.tmp
