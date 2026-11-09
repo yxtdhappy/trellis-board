@@ -457,3 +457,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 19: 修复任务详情重复请求
+<!-- trellis-session: v=2 fp=81299a8529ffa4aa -->
+
+**Date**: 2026-11-09
+**Task**: 修复任务详情重复请求
+**Branch**: `codex/team-board`
+
+### Summary
+
+修复团队模式下任务数组身份不稳定导致的 /api/task 重复请求风暴；补充派生集合 memo 规范，并完成 lint、类型检查、构建和浏览器单次请求回归。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ef7eb4f` | 新增多个trellis任务 |
+| `6212a0f` | docs(task): 补齐任务详情请求修复记录 |
+
+### Status
+
+[OK] **Completed**
