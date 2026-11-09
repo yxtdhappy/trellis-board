@@ -248,8 +248,9 @@ export function createTaskService({
   }
 
   function get(params = {}) {
-    const project = findRepository(params.repositoryId);
-    const relativeDir = params.relativeDir || splitTaskKey(params.taskKey).relativeDir;
+    const split = params.taskKey ? splitTaskKey(params.taskKey) : null;
+    const project = findRepository(params.repositoryId || split?.projectId);
+    const relativeDir = params.relativeDir || split.relativeDir;
     const full = taskDirectory(project.path, relativeDir);
     const taskJson = path.join(full, "task.json");
     if (!fs.existsSync(taskJson)) {
@@ -267,7 +268,28 @@ export function createTaskService({
     });
   }
 
-  function listFiles(full) {
+  function taskDirectories(tasksRoot, includeArchived) {
+  const directories = [];
+  const walk = (root, prefix, depth) => {
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const relativeDir = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const full = path.join(root, entry.name);
+      if (fs.existsSync(path.join(full, "task.json"))) {
+        directories.push({ relativeDir, full });
+        continue;
+      }
+      if (!includeArchived || depth >= 3) continue;
+      if (entry.name === "archive" || prefix === "archive" || prefix.startsWith("archive/")) {
+        walk(full, relativeDir, depth + 1);
+      }
+    }
+  };
+  walk(tasksRoot, "", 0);
+  return directories;
+}
+
+function listFiles(full) {
     try {
       return fs.readdirSync(full).filter((name) => !name.endsWith(".tmp"));
     } catch {
@@ -284,21 +306,21 @@ export function createTaskService({
     for (const project of projects) {
       const tasksRoot = path.join(project.path, ".trellis", "tasks");
       if (!fs.existsSync(tasksRoot)) continue;
-      for (const entry of fs.readdirSync(tasksRoot, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        const taskJson = path.join(tasksRoot, entry.name, "task.json");
-        if (!fs.existsSync(taskJson)) continue;
+      for (const entry of taskDirectories(tasksRoot, params.includeArchived === true)) {
+        const taskJson = path.join(entry.full, "task.json");
         const task = readJson(taskJson);
         if (!task) continue;
         if (params.status && task.status !== params.status) continue;
         if (params.assignee && task.assignee !== params.assignee) continue;
         if (params.agent && task.meta?.agent !== params.agent) continue;
-        if (!params.includeArchived && task.archived === true) continue;
-        const key = normalizeTaskKey(project.id, entry.name);
+        const archived = entry.relativeDir.startsWith("archive/");
+        if (!params.includeArchived && (archived || task.archived === true)) continue;
+        const key = normalizeTaskKey(project.id, entry.relativeDir);
         const stage = stageMap.get(key) || {};
-        results.push(toTaskDto(project, entry.name, task, {
+        results.push(toTaskDto(project, entry.relativeDir, task, {
           stage: stage.derivedStage ?? task.status ?? null,
-          manualStage: stage.manualStage ?? null
+          manualStage: stage.manualStage ?? null,
+          archived
         }));
         if (results.length >= MAX_TASKS_PER_LIST) return results;
       }

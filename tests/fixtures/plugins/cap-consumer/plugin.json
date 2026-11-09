@@ -1,0 +1,14 @@
+{
+  "id": "cap-consumer",
+  "name": "capability consumer fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "permissions": ["capabilities:call", "http:route"],
+  "requires": [
+    {
+      "name": "demo.echo",
+      "version": "^1.0.0",
+      "methods": ["echo"]
+    }
+  ]
+}

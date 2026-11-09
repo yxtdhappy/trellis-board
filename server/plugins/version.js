@@ -164,6 +164,107 @@ function stringArray(value) {
 }
 
 export const DEFAULT_MANIFEST_FILENAME = "plugin.json";
+const PANEL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const PANEL_PLACEMENTS = new Set(["view", "board-tab"]);
+const CAPABILITY_NAME = /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9-]*)+$/;
+const CAPABILITY_METHOD = /^[A-Za-z][A-Za-z0-9._-]*$/;
+const CAPABILITY_ACCESS = new Set(["read", "write"]);
+const MAX_CAPABILITY_TIMEOUT_MS = 300_000;
+
+function validateProvides(raw) {
+  if (raw === undefined) return { ok: true, provides: [] };
+  if (!Array.isArray(raw)) return { ok: false };
+  const names = new Set();
+  const provides = [];
+  for (const item of raw) {
+    if (!isPlainObject(item)) return { ok: false };
+    if (typeof item.name !== "string" || !CAPABILITY_NAME.test(item.name) || names.has(item.name)) {
+      return { ok: false };
+    }
+    if (!isValidSemver(item.version)) return { ok: false };
+    if (!isPlainObject(item.methods) || Object.keys(item.methods).length === 0) return { ok: false };
+    const methods = {};
+    for (const [method, definition] of Object.entries(item.methods)) {
+      if (!CAPABILITY_METHOD.test(method) || !isPlainObject(definition)) return { ok: false };
+      if (definition.access !== undefined && !CAPABILITY_ACCESS.has(definition.access)) return { ok: false };
+      if (definition.timeoutMs !== undefined &&
+          (!Number.isInteger(definition.timeoutMs) || definition.timeoutMs < 1000 ||
+           definition.timeoutMs > MAX_CAPABILITY_TIMEOUT_MS)) {
+        return { ok: false };
+      }
+      methods[method] = {
+        access: definition.access ?? "read",
+        timeoutMs: definition.timeoutMs ?? 30_000
+      };
+    }
+    names.add(item.name);
+    provides.push({
+      name: item.name,
+      version: item.version,
+      description: typeof item.description === "string" ? item.description : "",
+      methods
+    });
+  }
+  return { ok: true, provides };
+}
+
+function validateRequires(raw) {
+  if (raw === undefined) return { ok: true, requires: [] };
+  if (!Array.isArray(raw)) return { ok: false };
+  const names = new Set();
+  const requires = [];
+  for (const item of raw) {
+    if (!isPlainObject(item)) return { ok: false };
+    if (typeof item.name !== "string" || !CAPABILITY_NAME.test(item.name) || names.has(item.name)) {
+      return { ok: false };
+    }
+    if (typeof item.version !== "string" || !item.version.trim()) return { ok: false };
+    if (!satisfiesRange(item.version, "0.0.0").ok &&
+        satisfiesRange(item.version, "0.0.0").reason === "invalid-manifest") {
+      return { ok: false };
+    }
+    if (!stringArray(item.methods) || item.methods.length === 0) return { ok: false };
+    if (item.methods.some((method) => !CAPABILITY_METHOD.test(method))) return { ok: false };
+    if (new Set(item.methods).size !== item.methods.length) return { ok: false };
+    names.add(item.name);
+    requires.push({
+      name: item.name,
+      version: item.version.trim(),
+      methods: [...item.methods]
+    });
+  }
+  return { ok: true, requires };
+}
+
+function normalizePanels(raw) {
+  return raw.map((panel) => ({
+    id: panel.id,
+    title: panel.title,
+    entry: panel.entry,
+    placement: panel.placement ?? "view",
+    order: Number.isInteger(panel.order) ? panel.order : 0
+  }));
+}
+
+function validatePanels(raw) {
+  if (raw === undefined) return { ok: true, panels: [] };
+  if (!Array.isArray(raw)) return { ok: false };
+  const ids = new Set();
+  for (const panel of raw) {
+    if (!isPlainObject(panel)) return { ok: false };
+    if (typeof panel.id !== "string" || !PANEL_ID.test(panel.id) || ids.has(panel.id)) {
+      return { ok: false };
+    }
+    ids.add(panel.id);
+    if (typeof panel.title !== "string" || !panel.title.trim()) return { ok: false };
+    if (typeof panel.entry !== "string" || !panel.entry.startsWith("/") || panel.entry.includes("*")) {
+      return { ok: false };
+    }
+    if (panel.placement !== undefined && !PANEL_PLACEMENTS.has(panel.placement)) return { ok: false };
+    if (panel.order !== undefined && !Number.isInteger(panel.order)) return { ok: false };
+  }
+  return { ok: true, panels: normalizePanels(raw) };
+}
 
 /**
  * 校验 plugin.json。返回 { ok: true, manifest } 或 { ok: false, reason }。
@@ -212,6 +313,22 @@ export function validateManifest(raw, {
       return { ok: false, reason: "invalid-manifest" };
     }
   }
+  const panels = validatePanels(raw.panels);
+  if (!panels.ok) return { ok: false, reason: "invalid-manifest" };
+  if (panels.panels.length && !(raw.permissions ?? []).includes("panels")) {
+    return { ok: false, reason: "invalid-manifest" };
+  }
+  const provided = validateProvides(raw.provides);
+  if (!provided.ok) return { ok: false, reason: "invalid-manifest" };
+  const required = validateRequires(raw.requires);
+  if (!required.ok) return { ok: false, reason: "invalid-manifest" };
+  const permissions = raw.permissions ?? [];
+  if (provided.provides.length && !permissions.includes("capabilities:provide")) {
+    return { ok: false, reason: "invalid-manifest" };
+  }
+  if (required.requires.length && !permissions.includes("capabilities:call")) {
+    return { ok: false, reason: "invalid-manifest" };
+  }
   if (configId !== undefined && raw.id !== configId) {
     return { ok: false, reason: "id-mismatch" };
   }
@@ -236,6 +353,9 @@ export function validateManifest(raw, {
       engines: { board: raw.engines?.board ?? "*" },
       permissions: raw.permissions ?? [],
       http: { rootPaths: raw.http?.rootPaths ?? [], openPaths: raw.http?.openPaths ?? [] },
+      panels: panels.panels,
+      provides: provided.provides,
+      requires: required.requires,
       entry: raw.entry
     }
   };

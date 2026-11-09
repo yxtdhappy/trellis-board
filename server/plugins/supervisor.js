@@ -27,7 +27,8 @@ import {
 import {
   validateManifest,
   manifestFailureMessage,
-  isValidSemver
+  isValidSemver,
+  satisfiesRange
 } from "./version.js";
 import {
   defaultSecretsFile,
@@ -381,8 +382,10 @@ export class PluginSupervisor {
     this.timeoutOverrides = timeoutOverrides;
     this.now = now;
     this.plugins = new Map();
+    this.capabilities = new Map();
     this.eventSequence = 0;
     this.eventRing = [];
+    this.eventSubscribers = new Set();
     this.rootPaths = new Map();
     this.healthTimer = null;
     this.stopping = false;
@@ -401,6 +404,7 @@ export class PluginSupervisor {
     for (const state of this.plugins.values()) {
       this.inspectManifest(state);
     }
+    this.resolveCapabilities();
     this.resolveRootPaths();
     return this.list();
   }
@@ -516,9 +520,64 @@ export class PluginSupervisor {
     }
   }
 
+  resolveCapabilities() {
+    this.capabilities.clear();
+    for (const state of this.plugins.values()) {
+      if (!state.compatible || !state.manifest?.provides?.length) continue;
+      for (const capability of state.manifest.provides) {
+        const owner = this.capabilities.get(capability.name);
+        if (owner && owner !== state.id) {
+          state.blocked = true;
+          state.status = state.enabled ? "error" : state.status;
+          state.lastError = `capability 已被 ${owner} 占用: ${capability.name}`;
+          this.audit(state, "capability", { error: state.lastError });
+          break;
+        }
+        this.capabilities.set(capability.name, state.id);
+      }
+    }
+  }
+
+  orderedStates() {
+    const ordered = [];
+    const visited = new Set();
+    const visiting = new Set();
+    const visit = (state) => {
+      if (!state || visited.has(state.id)) return;
+      if (!state.enabled || state.manualStopped || !state.compatible || state.blocked) return;
+      if (visiting.has(state.id)) {
+        state.blocked = true;
+        state.lastError = "capability 依赖存在循环";
+        this.audit(state, "capability", { error: state.lastError });
+        return;
+      }
+      visiting.add(state.id);
+      for (const requirement of state.manifest.requires ?? []) {
+        const ownerId = this.capabilities.get(requirement.name);
+        if (ownerId && ownerId !== state.id) visit(this.plugins.get(ownerId));
+      }
+      visiting.delete(state.id);
+      visited.add(state.id);
+      ordered.push(state);
+    };
+    for (const state of this.plugins.values()) visit(state);
+    return ordered;
+  }
+
+  publishCapabilityState(state, kind) {
+    for (const capability of state.manifest?.provides ?? []) {
+      this.publish(`capability.${kind}`, {
+        name: capability.name,
+        version: capability.version,
+        provider: state.id,
+        occurredAt: this.now()
+      }, { source: "core", isPublic: false });
+    }
+  }
+
   async start() {
     const started = [];
-    for (const state of this.plugins.values()) {
+    for (const state of this.orderedStates()) {
       if (!state.enabled || state.manualStopped) continue;
       if (!state.compatible || state.blocked) continue;
       if (state.missingSecrets.length) {
@@ -685,6 +744,7 @@ export class PluginSupervisor {
       apiVersion: HOST_API_VERSION,
       hostVersion: this.hostVersion
     });
+    this.publishCapabilityState(state, "available");
     this.flushQueue(state);
     return state;
   }
@@ -702,6 +762,86 @@ export class PluginSupervisor {
     if (!isValidSemver(handshake.version) || handshake.version !== state.manifest.version) {
       throw new RpcError(ERROR_CODES.VERSION_MISMATCH, "插件握手版本与清单不一致");
     }
+    const registered = Array.isArray(handshake.provides) ? handshake.provides : [];
+    for (const capability of state.manifest.provides ?? []) {
+      const actual = registered.find((item) => item?.name === capability.name);
+      if (!actual) {
+        throw new RpcError(
+          ERROR_CODES.VERSION_MISMATCH,
+          `插件未注册清单声明的 capability: ${capability.name}`
+        );
+      }
+      const methods = new Set(Array.isArray(actual.methods) ? actual.methods : []);
+      for (const method of Object.keys(capability.methods)) {
+        if (!methods.has(method)) {
+          throw new RpcError(
+            ERROR_CODES.VERSION_MISMATCH,
+            `插件未注册 capability 方法: ${capability.name}.${method}`
+          );
+        }
+      }
+    }
+  }
+
+  async callCapability(state, params) {
+    const name = String(params?.name ?? "").trim();
+    const method = String(params?.method ?? "").trim();
+    if (!name || !method) throw invalidParams("capability/call 缺少 name 或 method");
+    const requirement = (state.manifest.requires ?? []).find((item) => item.name === name);
+    if (!requirement) {
+      throw appError(ERROR_CODES.PERMISSION_DENIED, `插件未声明 capability 依赖: ${name}`);
+    }
+    if (!requirement.methods.includes(method)) {
+      throw appError(ERROR_CODES.PERMISSION_DENIED, `插件未声明 capability 方法: ${name}.${method}`);
+    }
+    const providerId = this.capabilities.get(name);
+    if (!providerId) {
+      throw appError(ERROR_CODES.CAPABILITY_UNAVAILABLE, `capability 不可用: ${name}`);
+    }
+    const provider = this.plugins.get(providerId);
+    if (!provider || provider.status !== "running" || !provider.process) {
+      throw appError(ERROR_CODES.CAPABILITY_UNAVAILABLE, `capability 提供者未运行: ${providerId}`);
+    }
+    const capability = (provider.manifest.provides ?? []).find((item) => item.name === name);
+    const definition = capability?.methods?.[method];
+    if (!definition) {
+      throw appError(ERROR_CODES.CAPABILITY_METHOD_DENIED, `capability 未提供方法: ${name}.${method}`);
+    }
+    const range = satisfiesRange(requirement.version, capability.version);
+    if (!range.ok) {
+      throw appError(
+        ERROR_CODES.CAPABILITY_UNAVAILABLE,
+        `capability 版本不满足: ${name} 需要 ${requirement.version}，提供者 ${capability.version}`
+      );
+    }
+    const started = Date.now();
+    try {
+      const result = await provider.process.request("capability/call", {
+        name,
+        method,
+        params: params.params ?? null,
+        caller: { pluginId: state.id }
+      }, definition.timeoutMs);
+      this.audit(state, "capability.call", {
+        name,
+        method,
+        provider: providerId,
+        durationMs: Date.now() - started,
+        ok: true
+      });
+      return { value: result?.value ?? null };
+    } catch (error) {
+      this.audit(state, "capability.call", {
+        name,
+        method,
+        provider: providerId,
+        durationMs: Date.now() - started,
+        ok: false,
+        code: error?.code ?? null
+      });
+      if (error instanceof RpcError) throw error;
+      throw appError(ERROR_CODES.CAPABILITY_UNAVAILABLE, `capability 调用失败: ${error?.message || error}`);
+    }
   }
 
   async stopPlugin(id) {
@@ -712,6 +852,7 @@ export class PluginSupervisor {
     clearTimeout(state.restartTimer);
     state.restartTimer = null;
     await this.shutdownState(state);
+    this.publishCapabilityState(state, "unavailable");
     const interrupted = this.store.failActiveRuns(state.id, "插件已停止，run 已中断");
     state.status = "stopped";
     this.audit(state, "stopped", interrupted ? { interruptedRuns: interrupted } : {});
@@ -756,6 +897,7 @@ export class PluginSupervisor {
     state.process = null;
     state.pid = null;
     if (!wasRunning) return;
+    this.publishCapabilityState(state, "unavailable");
     state.status = "error";
     state.lastError = `插件进程退出（code=${code}, signal=${signal ?? "-"}）`;
     this.store.failActiveRuns(state.id, state.lastError);
@@ -881,7 +1023,11 @@ export class PluginSupervisor {
             limit: params.limit
           })
         };
+      case "capability/call":
+        return this.callCapability(state, params);
       case "event/emit":
+        return this.emitPluginEvent(state, params);
+      case "event/publish":
         return this.emitPluginEvent(state, params);
       case "store/get":
         return {
@@ -1017,17 +1163,27 @@ export class PluginSupervisor {
     const rawName = String(params?.name ?? "").trim();
     if (!rawName) throw invalidParams("event/emit 缺少 name");
     const name = rawName.startsWith(`${state.id}/`) ? rawName : `${state.id}/${rawName}`;
-    this.publish(name, params?.payload ?? {}, { source: state.id });
+    this.publish(name, params?.payload ?? {}, {
+      source: state.id,
+      isPublic: params?.public === true
+    });
     return { name };
   }
 
-  publish(name, payload, { source = "core" } = {}) {
+  onEvent(listener) {
+    if (typeof listener !== "function") return () => {};
+    this.eventSubscribers.add(listener);
+    return () => this.eventSubscribers.delete(listener);
+  }
+
+  publish(name, payload, { source = "core", isPublic = source === "core" } = {}) {
     const event = {
       eventId: ++this.eventSequence,
       name,
       payload,
       occurredAt: this.now(),
-      source
+      source,
+      public: isPublic
     };
     this.eventRing.push(event);
     if (this.eventRing.length > EVENT_RING_LIMIT) {
@@ -1039,6 +1195,13 @@ export class PluginSupervisor {
         continue;
       }
       this.deliverEvent(state, event);
+    }
+    for (const listener of this.eventSubscribers) {
+      try {
+        listener(event);
+      } catch {
+        // 订阅方异常不能影响事件投递。
+      }
     }
     return event;
   }
@@ -1164,6 +1327,20 @@ export class PluginSupervisor {
       lastError: state.lastError,
       droppedEvents: state.droppedEvents,
       permissions: state.manifest?.permissions ?? [],
+      panels: state.manifest?.panels ?? [],
+      provides: state.manifest?.provides ?? [],
+      requires: state.manifest?.requires ?? [],
+      capabilityStatus: (state.manifest?.requires ?? []).map((requirement) => {
+        const ownerId = this.capabilities.get(requirement.name) ?? null;
+        const owner = ownerId ? this.plugins.get(ownerId) : null;
+        return {
+          name: requirement.name,
+          version: requirement.version,
+          methods: requirement.methods,
+          provider: ownerId,
+          available: Boolean(owner && owner.status === "running")
+        };
+      }),
       rootPaths: state.manifest?.http.rootPaths ?? [],
       openPaths: state.manifest?.http.openPaths ?? [],
       config: redactConfig(state.config),

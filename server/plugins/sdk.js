@@ -31,13 +31,15 @@ const DEFAULT_TIMEOUTS = {
   "task/assign": 30_000,
   "task/setStage": 10_000,
   "event/emit": 5_000,
+  "event/publish": 5_000,
   "store/get": 5_000,
   "store/set": 5_000,
   "store/delete": 5_000,
   "store/list": 5_000,
   "log/write": 5_000,
   "schedule/register": 5_000,
-  "schedule/unregister": 5_000
+  "schedule/unregister": 5_000,
+  "capability/call": 30_000
 };
 
 export class PluginError extends Error {
@@ -110,6 +112,7 @@ export function startPluginRuntime(plugin, {
   const handlers = new Map();
   const disposers = [];
   const timers = new Map();
+  const capabilityHandlers = new Map();
   const pending = new Map();
   const controllers = new Map();
   const settled = new Set();
@@ -156,6 +159,40 @@ export function startPluginRuntime(plugin, {
     write(notificationFrame(method, params));
   }
 
+  function registerCapability(name, methods) {
+    const capabilityName = String(name ?? "").trim();
+    if (!capabilityName) throw new PluginError(-32602, "capability 名称不能为空");
+    if (capabilityHandlers.has(capabilityName)) {
+      throw new PluginError(-32602, `capability 已注册: ${capabilityName}`);
+    }
+    if (!isObject(methods) || Object.keys(methods).length === 0) {
+      throw new PluginError(-32602, `capability 缺少方法: ${capabilityName}`);
+    }
+    const handlers = {};
+    for (const [method, handler] of Object.entries(methods)) {
+      if (typeof handler !== "function") {
+        throw new PluginError(-32602, `capability 方法必须是函数: ${capabilityName}.${method}`);
+      }
+      handlers[method] = handler;
+    }
+    capabilityHandlers.set(capabilityName, handlers);
+    return {
+      name: capabilityName,
+      methods: Object.keys(handlers)
+    };
+  }
+
+  function capabilityClient(name) {
+    const capabilityName = String(name ?? "").trim();
+    return {
+      name: capabilityName,
+      call: (method, params = null, options = {}) =>
+        call("capability/call", { name: capabilityName, method: String(method), params }, {
+          timeoutMs: options.timeoutMs
+        }).then((result) => result?.value ?? null)
+    };
+  }
+
   const ctx = {
     plugin: {
       id: plugin.name,
@@ -169,6 +206,12 @@ export function startPluginRuntime(plugin, {
       setStage: (params) => call("task/setStage", params),
       get: (params) => call("task/get", params),
       list: (params = {}) => call("task/list", params)
+    },
+    capabilities: {
+      register: registerCapability,
+      client: capabilityClient,
+      call: (name, method, params = null, options = {}) =>
+        capabilityClient(name).call(method, params, options)
     },
     runs: {
       start: (params = {}) =>
@@ -195,7 +238,9 @@ export function startPluginRuntime(plugin, {
           if (index >= 0) list.splice(index, 1);
         };
       },
-      emit: (eventName, payload = {}) => call("event/emit", { name: eventName, payload })
+      emit: (eventName, payload = {}) => call("event/emit", { name: eventName, payload }),
+      publish: (eventName, payload = {}) =>
+        call("event/publish", { name: eventName, payload, public: true })
     },
     http: {
       route(method, routePath, handler) {
@@ -279,6 +324,13 @@ export function startPluginRuntime(plugin, {
     };
   }
 
+  function providedCapabilities() {
+    return [...capabilityHandlers.entries()].map(([name, handlers]) => ({
+      name,
+      methods: Object.keys(handlers)
+    }));
+  }
+
   async function handleInitialize(message) {
     const params = message.params ?? {};
     config = params.config ?? {};
@@ -288,12 +340,14 @@ export function startPluginRuntime(plugin, {
     }
     await plugin.onStart(ctx, config);
     started = true;
+    const provides = providedCapabilities();
     return {
       apiVersion: plugin.apiVersion,
       id: plugin.name,
       name: plugin.name,
       version: plugin.version,
-      capabilities: capabilities()
+      capabilities: capabilities(),
+      ...(provides.length ? { provides } : {})
     };
   }
 
@@ -329,6 +383,18 @@ export function startPluginRuntime(plugin, {
       return result;
     }
     return { status: 200, body: result };
+  }
+
+  async function handleCapability(message) {
+    const params = message.params ?? {};
+    const name = String(params.name ?? "").trim();
+    const method = String(params.method ?? "").trim();
+    const handlers = capabilityHandlers.get(name);
+    if (!handlers) throw new PluginError(1002, `未提供 capability: ${name}`);
+    const handler = handlers[method];
+    if (!handler) throw new PluginError(1010, `capability 未提供方法: ${name}.${method}`);
+    const result = await handler(params.params ?? null, { caller: params.caller ?? null });
+    return { value: result ?? null };
   }
 
   async function handleEvent(message) {
@@ -371,6 +437,8 @@ export function startPluginRuntime(plugin, {
         return handleInitialize(message);
       case "http/request":
         return handleRoute(message, signal);
+      case "capability/call":
+        return handleCapability(message);
       case "event/dispatch":
         return handleEvent(message);
       case "timer/fire": {

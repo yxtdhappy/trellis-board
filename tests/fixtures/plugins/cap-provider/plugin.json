@@ -1,0 +1,17 @@
+{
+  "id": "cap-provider",
+  "name": "capability provider fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "permissions": ["capabilities:provide"],
+  "provides": [
+    {
+      "name": "demo.echo",
+      "version": "1.0.0",
+      "methods": {
+        "echo": { "access": "read", "timeoutMs": 5000 },
+        "fail": { "access": "read", "timeoutMs": 5000 }
+      }
+    }
+  ]
+}
