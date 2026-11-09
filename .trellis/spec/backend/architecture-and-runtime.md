@@ -75,6 +75,65 @@ Worker 内会缓存各仓库最近结果，并根据事件判断是仓库级重�
 
 新增长耗时逻辑时先判断是否会阻塞 HTTP 主线程。单纯数百毫秒内的配置读写可沿用同步模式；全仓库扫描、递归目录和大文件解析应留在 Worker 或明确的异步流程。
 
+### Scenario: Git 子进程的出站代理环境
+
+#### 1. Scope / Trigger
+
+Git 探测、clone、fetch、push 和远端身份检查都通过共享 `runGit()` 启动子进程。服务进程自身的代理环境不会自动传给使用最小环境的子进程；漏传会让企业代理网络中的 HTTPS 远端统一退化为 `GIT_REMOTE_FAILED`。
+
+#### 2. Signatures
+
+- `gitEnvironment(extra = {}) -> object`：构造所有 Git 子进程使用的环境。
+- `runGit(args, options) -> Promise<{ code, stdout, stderr, truncated }>`：必须复用 `gitEnvironment()`。
+- `minimalEnvironment(extra = {}) -> object`：通用子进程边界，不负责 Git 网络代理。
+
+#### 3. Contracts
+
+- Git 环境可继承 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及对应小写变量。
+- 只复制非空值；未设置的代理变量不得以空字符串注入。
+- `GIT_TERMINAL_PROMPT=0`、`GIT_CONFIG_NOSYSTEM=1`、全局配置隔离、askpass、SSH、TLS 和秘密脱敏必须继续生效。
+- 代理变量不得因此进入插件、Python、工具链或其他通用子进程。
+
+#### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 服务进程设置大写代理变量 | Git 子进程收到对应变量 |
+| 服务进程只设置小写代理变量 | Git 子进程收到对应小写变量 |
+| 代理变量为空或未设置 | Git 环境不包含该变量 |
+| 通用 `minimalEnvironment()` 被调用 | 仍不包含代理变量 |
+| Git 网络失败 | 保留现有 `GIT_REMOTE_FAILED`、认证、SSH 和超时分类 |
+
+#### 5. Good/Base/Bad Cases
+
+- Good：服务经 `HTTPS_PROXY=http://127.0.0.1:7897` 访问 GitHub，`git ls-remote` 成功并解析默认分支。
+- Base：服务未配置代理，Git 子进程环境与本修复前一致。
+- Bad：把整个 `process.env` 传给所有子进程，导致插件和脚本意外获得代理、凭证或宿主配置。
+
+#### 6. Tests Required
+
+- 单元测试断言大写、小写和空代理变量。
+- 单元测试断言 `minimalEnvironment()` 不额外继承代理。
+- 真实服务测试断言远端探测不再返回 `GIT_REMOTE_FAILED`。
+- 浏览器测试断言“识别远端”成功回填项目名称和共享分支。
+
+#### 7. Wrong vs Correct
+
+Wrong：
+
+```js
+minimalEnvironment({ ...process.env });
+```
+
+Correct：
+
+```js
+minimalEnvironment({
+  ...gitProcessOptions,
+  ...proxyEnvironmentFromProcessEnv()
+});
+```
+
 ## 配置与常量
 
 路径常量和旧 JSON 迁移来源由 [server/config.js](../../../server/config.js) 定义。业务模块按名称导入，不在本地重新拼接 `data/` 路径。运行时可变 Board 状态只通过 SQLite 读取和写入。

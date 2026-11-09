@@ -11,12 +11,17 @@ import { createUser } from "../server/team/auth.js";
 import { createGitCredentialService } from "../server/team/git-credentials.js";
 import {
   createGitManager,
+  gitEnvironment,
   normalizeGitRemote,
   readGitProject,
   recommendedProjectName
 } from "../server/team/git-manager.js";
 import { createTeamRuntime } from "../server/team/http.js";
-import { runProcess, sanitizeProcessOutput } from "../server/team/process.js";
+import {
+  minimalEnvironment,
+  runProcess,
+  sanitizeProcessOutput
+} from "../server/team/process.js";
 
 const PUBLIC_ORIGIN = "http://127.0.0.1:4317";
 const SILENT_LOGGER = {
@@ -25,6 +30,53 @@ const SILENT_LOGGER = {
   error() {}
 };
 const HOST = "127.0.0.1:4317";
+const PROXY_ENV_KEYS = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "no_proxy"
+];
+
+test("Git 子进程仅继承标准代理环境", () => {
+  const original = Object.fromEntries(
+    PROXY_ENV_KEYS.map((key) => [key, process.env[key]])
+  );
+  try {
+    for (const key of PROXY_ENV_KEYS) delete process.env[key];
+    process.env.HTTP_PROXY = "http://upper-proxy.example:8080";
+    process.env.NO_PROXY = "localhost,*.example.com";
+
+    const upper = gitEnvironment();
+    assert.equal(upper.HTTP_PROXY, "http://upper-proxy.example:8080");
+    assert.equal(upper.NO_PROXY, "localhost,*.example.com");
+    assert.equal(upper.https_proxy, undefined);
+    assert.equal(upper.GIT_CONFIG_NOSYSTEM, "1");
+    assert.equal(minimalEnvironment().HTTP_PROXY, undefined);
+
+    delete process.env.HTTP_PROXY;
+    delete process.env.NO_PROXY;
+    process.env.https_proxy = "http://lower-proxy.example:8080";
+
+    const lower = gitEnvironment();
+    assert.equal(lower.https_proxy, "http://lower-proxy.example:8080");
+    assert.equal(lower.HTTP_PROXY, undefined);
+
+    delete process.env.https_proxy;
+    process.env.http_proxy = "";
+
+    const empty = gitEnvironment();
+    assert.equal(empty.http_proxy, undefined);
+  } finally {
+    for (const key of PROXY_ENV_KEYS) delete process.env[key];
+    for (const [key, value] of Object.entries(original)) {
+      if (value !== undefined) process.env[key] = value;
+    }
+  }
+});
 
 function testConfig(overrides = {}) {
   return {
