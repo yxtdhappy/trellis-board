@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
+- **Total Sessions**: 22
 - **Last Active**: 2026-11-09
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~526 | Active |
+| `journal-1.md` | ~548 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-11-09 | Board 实时刷新改为 SSE | `08c9359` | `codex/team-board` |
 | 21 | 2026-11-09 | 修复 Windows SSH 远端探测 | `52d226e` | `codex/team-board` |
 | 20 | 2026-11-09 | 团队任务卡目录名修复 | `1e7bb50` | `codex/team-board` |
 | 19 | 2026-11-09 | 修复任务详情重复请求 | `ef7eb4f`, `6212a0f` | `codex/team-board` |

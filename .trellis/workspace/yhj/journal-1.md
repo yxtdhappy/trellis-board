@@ -524,3 +524,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 22: Board 实时刷新改为 SSE
+<!-- trellis-session: v=2 fp=ba6485b1bca47102 -->
+
+**Date**: 2026-11-09
+**Task**: Board 实时刷新改为 SSE
+**Branch**: `codex/team-board`
+
+### Summary
+
+新增单机与团队 Board SSE 变更广播，前端以 EventSource 替代 750ms 轮询并保留 REST/ETag 对齐；补齐团队鉴权、断线重连、ETag 304 修复、自动测试和真实浏览器验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `08c9359` | feat(board): 使用 SSE 替代实时刷新轮询 |
+
+### Status
+
+[OK] **Completed**
