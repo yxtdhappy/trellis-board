@@ -502,3 +502,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 21: 修复 Windows SSH 远端探测
+<!-- trellis-session: v=2 fp=482b33f653222dc2 -->
+
+**Date**: 2026-11-09
+**Task**: 修复 Windows SSH 远端探测
+**Branch**: `codex/team-board`
+
+### Summary
+
+修复 Windows OpenSSH 缺少 PROGRAMDATA 与 -F NUL 配置导致的 SSH 主机探测失败；补充脱敏诊断、空配置隔离和回归测试。任务定向测试 9/9 通过，工作提交 52d226e。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `52d226e` | fix(team): 修复 Windows SSH 远端探测 |
+
+### Status
+
+[OK] **Completed**
