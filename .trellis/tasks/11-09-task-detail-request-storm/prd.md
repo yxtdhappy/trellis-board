@@ -34,5 +34,6 @@
 
 ## Notes
 
-- 当前代码修改位于 `web/src/hooks/useBoard.ts`，尚未提交。
+- 代码修改位于 `web/src/hooks/useBoard.ts`，已包含在提交 `ef7eb4f`。
+- 本次补录的任务元数据、实施/检查报告和前端 spec 回写仍需作为收尾提交。
 - 仓库没有可直接复用的 React hook 渲染测试入口，因此本次回归以构建和真实浏览器网络记录为证据。

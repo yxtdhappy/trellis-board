@@ -43,6 +43,23 @@
 - 已保存 Git 凭据的 Token、私钥和口令不得回填到表单、写入本地存储或进入一次性凭证弹窗。编辑时秘密字段留空表示保持原值。
 - 项目接入只由“识别远端”按钮触发探测；URL 或凭据变化后，旧分支和自动项目名称必须立即失效。无有效 symbolic `HEAD` 时不猜测默认分支。
 
+## 派生集合与 effect 依赖
+
+- hook 从服务端快照派生任务数组、成员数组或对象列表时，必须按源字段使用 `useMemo`，让引用只随真实源数据变化。禁止在每次渲染中直接 `map()` 后交给选择同步或详情加载 effect，否则对象 identity 会驱动 `setState → render → 再次 setState` 的请求循环。
+
+```typescript
+// 正确：源任务页未变化时，tasks 引用保持稳定
+const tasks = useMemo(
+  () => (teamPage?.tasks || []).map(teamRowToBoardTask),
+  [teamPage?.tasks],
+)
+
+// 错误：每次渲染都会生成新数组和新任务对象
+const tasks = (teamPage?.tasks || []).map(teamRowToBoardTask)
+```
+
+- 相关回归至少断言：同一源快照连续渲染时派生数组引用不变；打开一次任务详情只产生一次 `/api/task` 请求。仓库尚未提供 React hook 渲染测试入口时，必须用生产构建和真实浏览器 Network 面板闭环。
+
 ## 弹层
 
 - 统一使用 `components/ui/dialog` 的 `Dialog`/`DialogContent`；`Dialog` 内部维护弹层栈，Esc 只关闭最上层。

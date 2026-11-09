@@ -3,8 +3,8 @@
   "name": "task-detail-request-storm",
   "title": "修复团队任务详情重复请求",
   "description": "修复团队模式下任务详情因任务数组身份不稳定而无限请求 API、最终触发客户端连接资源耗尽的问题",
-  "status": "planning",
-  "dev_type": null,
+  "status": "in_progress",
+  "dev_type": "bugfix",
   "scope": "frontend",
   "package": null,
   "priority": "P2",
@@ -14,13 +14,18 @@
   "completedAt": null,
   "branch": "codex/team-board",
   "base_branch": "codex/team-board",
-  "worktree_path": null,
-  "commit": null,
+  "worktree_path": "D:\\wit\\trellis-board",
+  "commit": "ef7eb4f39357f599834d93b6c6ceb62fcf2f73ac",
   "pr_url": null,
   "subtasks": [],
   "children": [],
   "parent": null,
-  "relatedFiles": [],
-  "notes": "",
-  "meta": {}
+  "relatedFiles": [
+    "web/src/hooks/useBoard.ts",
+    ".trellis/spec/frontend/rendering-and-state.md"
+  ],
+  "notes": "补录任务：代码修改先于任务创建，已包含在 ef7eb4f；spec、报告和任务元数据作为收尾提交。",
+  "meta": {
+    "retroactive": true
+  }
 }
