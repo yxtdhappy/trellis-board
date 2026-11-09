@@ -18,6 +18,7 @@ import { UsersTab } from "@/features/admin/UsersTab";
 import { TeamsTab } from "@/features/admin/TeamsTab";
 import { TeamSwitcher } from "@/features/admin/TeamSwitcher";
 import { OnboardingTab } from "@/features/admin/OnboardingTab";
+import { CredentialsTab } from "@/features/admin/CredentialsTab";
 import { DevicesTab } from "@/features/admin/DevicesTab";
 import { AuditTab } from "@/features/admin/AuditTab";
 import { OneTimeCredentialDialog } from "@/features/admin/OneTimeCredentialDialog";
@@ -51,6 +52,12 @@ const VIEWS: {
     id: "projects",
     label: "项目接入",
     subtitle: "管理服务端项目工作副本、共享分支和工具链批准。",
+    adminOnly: true,
+  },
+  {
+    id: "git-credentials",
+    label: "Git 凭据",
+    subtitle: "维护团队级 HTTPS/SSH 凭据并查看项目引用关系。",
     adminOnly: true,
   },
   {
@@ -228,7 +235,10 @@ export function AdminPage() {
               {view === "users" ? <UsersTab console={consoleApi} /> : null}
               {view === "teams" ? <TeamsTab /> : null}
               {view === "projects" ? (
-                <OnboardingTab console={consoleApi} />
+                <OnboardingTab key={adminTeamId} console={consoleApi} />
+              ) : null}
+              {view === "git-credentials" ? (
+                <CredentialsTab key={adminTeamId} console={consoleApi} />
               ) : null}
               {view === "agents" ? <DevicesTab console={consoleApi} /> : null}
               {view === "audit" ? <AuditTab console={consoleApi} /> : null}

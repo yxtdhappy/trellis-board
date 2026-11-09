@@ -6,6 +6,8 @@ import type { AdminUser, AdminView, AgentDevice, AuditEvent, NewUserInput, Sessi
 import { formatTime } from '@/lib/admin-shared'
 import { useAdminProjects } from './useAdminProjects'
 import type { AdminProjects } from './useAdminProjects'
+import { useGitCredentials } from './useGitCredentials'
+import type { AdminGitCredentials } from './useGitCredentials'
 
 export type AdminPhase = 'loading' | 'ready' | 'denied' | 'error'
 
@@ -15,7 +17,7 @@ export type Credential = {
   value: string
 }
 
-export type AdminConsole = AdminProjects & {
+export type AdminConsole = AdminProjects & AdminGitCredentials & {
   phase: AdminPhase
   bootError: string
   view: AdminView
@@ -342,10 +344,16 @@ export function useAdminConsole(): AdminConsole {
     users,
     reloadUsers,
   })
+  const gitCredentials = useGitCredentials({
+    report,
+    isAdmin,
+    teamId: adminTeamId
+  })
   const displayName = user?.displayName || user?.username || '团队账号'
 
   return {
     ...projects,
+    ...gitCredentials,
     phase,
     bootError,
     view,

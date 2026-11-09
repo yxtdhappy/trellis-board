@@ -628,6 +628,42 @@ const SCHEMA_V7_SQL = `
     updated_at TEXT NOT NULL,
     PRIMARY KEY (agent_id, project_id)
   );
+
+  CREATE TABLE IF NOT EXISTS git_credential (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES team(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    host TEXT NOT NULL,
+    auth_type TEXT NOT NULL CHECK (auth_type IN ('https_token', 'ssh_key')),
+    username TEXT,
+    public_key_fingerprint TEXT,
+    secret_version INTEGER NOT NULL DEFAULT 1,
+    secret_iv TEXT NOT NULL,
+    secret_tag TEXT NOT NULL,
+    secret_ciphertext TEXT NOT NULL,
+    created_by TEXT REFERENCES user_account(id),
+    updated_by TEXT REFERENCES user_account(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS git_credential_team_name
+    ON git_credential(team_id, name COLLATE NOCASE);
+  CREATE INDEX IF NOT EXISTS git_credential_team_host
+    ON git_credential(team_id, host);
+
+  CREATE TABLE IF NOT EXISTS git_ssh_known_host (
+    team_id TEXT NOT NULL REFERENCES team(id) ON DELETE CASCADE,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    algorithm TEXT NOT NULL,
+    key_base64 TEXT NOT NULL,
+    fingerprint_sha256 TEXT NOT NULL,
+    known_hosts_line TEXT NOT NULL,
+    trusted_by TEXT REFERENCES user_account(id),
+    trusted_at TEXT NOT NULL,
+    PRIMARY KEY (team_id, host, port, algorithm, key_base64)
+  );
 `;
 
 function ensureV7Schema(db) {
@@ -650,44 +686,63 @@ function ensureV7Schema(db) {
       ADD COLUMN client_sequence INTEGER
     `);
   }
+  if (!hasColumn(db, "team_project", "git_credential_id")) {
+    db.exec(`
+      ALTER TABLE team_project
+      ADD COLUMN git_credential_id TEXT REFERENCES git_credential(id) ON DELETE RESTRICT
+    `);
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS team_project_credential
+      ON team_project(git_credential_id);
+  `);
 }
 
-function ensureSchema(db) {
-  withTransaction(db, () => {
-    db.exec(BASE_SCHEMA_V1_SQL);
-    const schemaVersion = readMeta(db, "schema_version");
-    if (schemaVersion == null) {
-      ensureV2Schema(db, new Date().toISOString());
-      ensureV3Schema(db);
-      ensureV4Schema(db);
-      ensureV5Schema(db);
-      ensureV6Schema(db);
-      ensureV7Schema(db);
-      writeMeta(db, "schema_version", DATABASE_SCHEMA_VERSION);
-      return;
-    }
-    if (Number(schemaVersion) === DATABASE_SCHEMA_VERSION) {
-      ensureV2Schema(db, new Date().toISOString());
-      ensureV3Schema(db);
-      ensureV4Schema(db);
-      ensureV5Schema(db);
-      ensureV6Schema(db);
-      ensureV7Schema(db);
-      return;
-    }
-    if (Number(schemaVersion) === 6) {
-      ensureV2Schema(db, new Date().toISOString());
-      ensureV3Schema(db);
-      ensureV4Schema(db);
-      ensureV5Schema(db);
-      ensureV6Schema(db);
-      ensureV7Schema(db);
-      writeMeta(db, "schema_version", DATABASE_SCHEMA_VERSION);
-      return;
-    }
+function tableExists(db, table) {
+  return Boolean(db.prepare(`
+    SELECT 1
+    FROM sqlite_master
+    WHERE type = 'table' AND name = ?
+  `).get(table));
+}
+
+function backupBeforeV7(db, databaseFile) {
+  if (!databaseFile || databaseFile === ":memory:") return null;
+  const backupDir = path.join(path.dirname(databaseFile), "backups");
+  fs.mkdirSync(backupDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupFile = path.join(backupDir, `board.sqlite.pre-v7.${stamp}`);
+  const quoted = backupFile.replaceAll("'", "''");
+  db.exec(`VACUUM INTO '${quoted}'`);
+  return backupFile;
+}
+
+function ensureSchema(db, { databaseFile } = {}) {
+  const schemaVersion = tableExists(db, "app_meta")
+    ? readMeta(db, "schema_version")
+    : null;
+  const numericVersion = schemaVersion == null ? null : Number(schemaVersion);
+
+  if (numericVersion !== null && ![6, 7].includes(numericVersion)) {
     throw new Error(
       `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除 data/board.sqlite 后重建`
     );
+  }
+  if (numericVersion === 6) {
+    backupBeforeV7(db, databaseFile);
+  }
+
+  withTransaction(db, () => {
+    db.exec(BASE_SCHEMA_V1_SQL);
+    ensureV2Schema(db, new Date().toISOString());
+    ensureV3Schema(db);
+    ensureV4Schema(db);
+    ensureV5Schema(db);
+    ensureV6Schema(db);
+    ensureV7Schema(db);
+    if (numericVersion == null || numericVersion === 6) {
+      writeMeta(db, "schema_version", DATABASE_SCHEMA_VERSION);
+    }
   });
 }
 
@@ -838,7 +893,7 @@ export function openDatabase({
     db.exec("PRAGMA busy_timeout = 5000");
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA synchronous = NORMAL");
-    ensureSchema(db);
+    ensureSchema(db, { databaseFile });
     if (legacyJsonImport) {
       importLegacyData(db, {
         repositoriesFile,

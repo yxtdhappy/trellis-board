@@ -279,6 +279,17 @@ const projectIds = readableProjectIds(actor).filter((id) => (
 ));
 ```
 
+### Scenario: 团队 Git 凭据与远端探测
+
+- 凭据管理、远端探测和 SSH 主机确认都属于团队管理员接口：
+  `/api/admin/git-credentials`、`/api/admin/projects/probe`、
+  `/api/admin/git-ssh-hosts/trust`。
+- Git 凭据按团队隔离并绑定一个主机和认证类型；项目只能引用同团队、同主机、同认证类型的凭据。
+- API、审计和错误详情只返回凭据元数据，不返回 Token、私钥、口令或加密载荷。
+- 远端探测只执行 `git ls-remote`，不创建工作副本、不写数据库；SSH 主机确认是独立写操作。
+- `data/git-credentials.key` 是 Git 凭据密文的主密钥，必须与 `data/board.sqlite` 一起备份。数据库中的凭据 AAD 绑定团队、主机和认证类型，修改这些列会导致解密失败。
+- 当前数据库从 v6 升级到 v7 时只新增 Git 凭据表、SSH 信任表和 `team_project.git_credential_id`，迁移前备份到 `data/backups/`。
+
 ## 路径安全
 
 - 仓库路径先 `path.resolve()`，再做白名单匹配。

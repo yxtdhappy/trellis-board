@@ -35,10 +35,13 @@ function projectRow(db, projectId) {
   return db.prepare(`
     SELECT
       p.*, r.name AS repository_name, r.path AS repository_path,
-      t.name AS team_name
+      t.name AS team_name,
+      c.name AS credential_name, c.host AS credential_host,
+      c.auth_type AS credential_auth_type
     FROM team_project p
     JOIN repositories r ON r.id = p.repository_id
     JOIN team t ON t.id = p.team_id
+    LEFT JOIN git_credential c ON c.id = p.git_credential_id
     WHERE p.repository_id = ?
   `).get(projectId) || null;
 }
@@ -52,6 +55,12 @@ function publicProject(row) {
     teamName: row.team_name || null,
     name: row.repository_name,
     syncBranch: row.sync_branch,
+    credential: row.git_credential_id ? {
+      id: row.git_credential_id,
+      name: row.credential_name,
+      host: row.credential_host,
+      authType: row.credential_auth_type
+    } : null,
     syncStatus: row.sync_status,
     trustedToolchainSha256: row.trusted_task_toolchain_sha256 || null,
     lastFetchAt: row.last_fetch_at || null,
@@ -133,6 +142,7 @@ export function createProjectService({
   config,
   dataDir,
   gitManager,
+  credentialService,
   taskIndex
 }) {
   const projectsRoot = path.join(dataDir, "projects");
@@ -167,10 +177,13 @@ export function createProjectService({
     return db.prepare(`
       SELECT
         p.*, r.name AS repository_name, r.path AS repository_path,
-        t.name AS team_name
+        t.name AS team_name,
+        c.name AS credential_name, c.host AS credential_host,
+        c.auth_type AS credential_auth_type
       FROM team_project p
       JOIN repositories r ON r.id = p.repository_id
       JOIN team t ON t.id = p.team_id
+      LEFT JOIN git_credential c ON c.id = p.git_credential_id
       ${filter}
       ORDER BY p.created_at DESC
     `).all(...params).map(publicProject);
@@ -182,11 +195,14 @@ export function createProjectService({
       SELECT
         p.*, r.name AS repository_name, r.path AS repository_path,
         t.name AS team_name,
+        gc.name AS credential_name, gc.host AS credential_host,
+        gc.auth_type AS credential_auth_type,
         m.role, m.trellis_dev_id, tm.role AS team_role,
         c.scanned_content_key, c.scanned_branch_sha, c.saved_at
       FROM team_project p
       JOIN repositories r ON r.id = p.repository_id
       JOIN team t ON t.id = p.team_id
+      LEFT JOIN git_credential gc ON gc.id = p.git_credential_id
       LEFT JOIN team_member tm
         ON tm.team_id = p.team_id AND tm.user_id = ?
       LEFT JOIN project_member m
@@ -264,11 +280,33 @@ export function createProjectService({
     }));
   }
 
+  async function probeRemote(actor, input = {}) {
+    const teamId = resolveProjectTeam(db, actor, input.teamId);
+    const remote = normalizeGitRemote(input.remoteUrl, config);
+    const credentialId = String(input.credentialId || "").trim() || null;
+    const credential = credentialId
+      ? credentialService.resolveForRemote(actor, {
+          teamId,
+          credentialId,
+          remote
+        })
+      : null;
+    return gitManager.probeRemote({ actor, remote, credential });
+  }
+
   async function connect(actor, input = {}) {
     const teamId = resolveProjectTeam(db, actor, input.teamId);
     const name = cleanName(input.name, "项目名称");
     const syncBranch = await gitManager.assertValidBranch(input.syncBranch);
     const remote = normalizeGitRemote(input.remoteUrl, config);
+    const credentialId = String(input.credentialId || "").trim() || null;
+    const credential = credentialId
+      ? credentialService.resolveForRemote(actor, {
+          teamId,
+          credentialId,
+          remote
+        })
+      : null;
     const existingRepositoryId = String(input.repositoryId || "").trim();
     let repositoryId;
     let existing = null;
@@ -293,9 +331,11 @@ export function createProjectService({
       id: repositoryId,
       workspaceKey,
       remoteUrl: remote.url,
-      syncBranch
+      syncBranch,
+      teamId,
+      credentialId
     };
-    const target = await gitManager.cloneProject(cloneProject);
+    const target = await gitManager.cloneProject(cloneProject, credential);
     let toolchain;
     try {
       toolchain = computeScriptTreeHash(target);
@@ -319,9 +359,9 @@ export function createProjectService({
         db.prepare(`
           INSERT INTO team_project(
             repository_id, team_id, workspace_key, remote_url, remote_identity_hash,
-            sync_branch, trusted_task_toolchain_sha256, sync_status,
+            sync_branch, git_credential_id, trusted_task_toolchain_sha256, sync_status,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?)
         `).run(
           repositoryId,
           teamId,
@@ -329,6 +369,7 @@ export function createProjectService({
           remote.url,
           remote.identityHash,
           syncBranch,
+          credentialId,
           toolchain.sha256,
           now,
           now
@@ -342,6 +383,8 @@ export function createProjectService({
           targetId: repositoryId,
           detail: {
             syncBranch,
+            credentialId,
+            credentialName: credential?.name || null,
             toolchainSha256: toolchain.sha256,
             existingRepository: Boolean(existing)
           }
@@ -485,6 +528,48 @@ export function createProjectService({
       persistCache: true
     });
     taskIndex.incrementQueryRevision();
+  }
+
+  async function changeCredential(actor, projectId, input = {}) {
+    const access = requireProjectManager(actor, projectId);
+    return gitManager.withProjectLock(projectId, async () => {
+      const row = projectRow(db, projectId);
+      if (!row) throw teamError(404, ERROR_CODES.NOT_FOUND, "项目不存在");
+      const remote = normalizeGitRemote(row.remote_url, config);
+      const credentialId = String(input.credentialId || "").trim() || null;
+      const credential = credentialId
+        ? credentialService.resolveForRemote(actor, {
+            teamId: row.team_id,
+            credentialId,
+            remote
+          })
+        : null;
+      await gitManager.probeRemote({ actor, remote, credential });
+      if (credentialId !== row.git_credential_id) {
+        const now = new Date().toISOString();
+        withTransaction(db, () => {
+          db.prepare(`
+            UPDATE team_project
+            SET git_credential_id = ?, updated_at = ?
+            WHERE repository_id = ?
+          `).run(credentialId, now, projectId);
+          appendAuditEvent(db, {
+            actorUserId: actor.userId,
+            projectId,
+            action: "project_credential_changed",
+            targetType: "project",
+            targetId: projectId,
+            detail: {
+              fromCredentialId: row.git_credential_id || null,
+              toCredentialId: credentialId,
+              toCredentialName: credential?.name || null,
+              via: access.via
+            }
+          });
+        });
+      }
+      return publicProject(projectRow(db, projectId));
+    });
   }
 
   function listMembers(actor, projectId) {
@@ -803,6 +888,7 @@ export function createProjectService({
 
   return {
     connect,
+    probeRemote,
     approve,
     listAll,
     listReadable,
@@ -817,6 +903,7 @@ export function createProjectService({
     disable,
     repair,
     read,
+    changeCredential,
     projectsRoot
   };
 }

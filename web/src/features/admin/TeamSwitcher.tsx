@@ -22,7 +22,7 @@ export function TeamSwitcher({
   disabled = false,
   ariaLabel = '筛选团队',
 }: TeamSwitcherProps) {
-  if (!teams.length || (teams.length === 1 && value === teams[0].id)) return null
+  if (!teams.length || (!includeAll && teams.length === 1)) return null
 
   return (
     <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">

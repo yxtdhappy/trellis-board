@@ -60,15 +60,16 @@ Board 自身可变状态统一保存在 `data/board.sqlite`：
 - `audit_event`、`agent_event_cursor`：团队审计与按团队隔离的 Agent 事件游标
 - `project_live_revision`、`project_live_file`、`project_live_batch`：团队实时文件覆盖层、单调 revision 与幂等批次
 - `agent_live_cursor`：每台桌面设备已成功落盘的实时文件 revision
+- `git_credential`、`git_ssh_known_host`：团队 Git 凭据密文、项目引用和 SSH 主机信任
 - `app_meta`：数据库 schema 版本和旧 JSON 迁移标记
 
-全新数据库会直接创建当前 schema（v7），包含团队、团队成员、团队项目、团队审计、Agent 事件游标和实时文件覆盖层。首次打开空库时仍会在一个事务中读取 `data/repos.json`、`data/task-metadata.json`、`data/scan-cache.json` 和 `data/board-state.json` 并导入 standalone 数据，然后写入一次性的 `legacy_json_imported_v1` 标记。非法或损坏的旧 JSON 只记录警告并跳过，不会阻止服务启动。运行时不修改这四个 JSON 文件。
+全新数据库会直接创建当前 schema（v7），包含团队、团队成员、团队项目、团队审计、Agent 事件游标、实时文件覆盖层、Git 凭据和 SSH 主机信任。首次打开空库时仍会在一个事务中读取 `data/repos.json`、`data/task-metadata.json`、`data/scan-cache.json` 和 `data/board-state.json` 并导入 standalone 数据，然后写入一次性的 `legacy_json_imported_v1` 标记。非法或损坏的旧 JSON 只记录警告并跳过，不会阻止服务启动。运行时不修改这四个 JSON 文件。
 
-v6 数据库会在启动事务中原地补齐实时同步表和 `team_task_index.live_revision`，随后升级为 v7。`v5` 及更旧版本仍拒绝启动并提示删除数据库重建。重建前先停止服务并归档 `data/board.sqlite`、`data/board.sqlite-wal`、`data/board.sqlite-shm`。
+v6 数据库升级到 v7 前会写入 `data/backups/board.sqlite.pre-v7.*` 快照，再补齐实时同步表、`team_task_index.live_revision`、Git 凭据表、SSH 主机信任表和 `team_project.git_credential_id`，已有账号、项目、审计和任务索引保持不变。`v5` 及更旧版本仍拒绝启动，不能通过删除数据库代替迁移。重建前先停止服务并归档 `data/board.sqlite`、`data/board.sqlite-wal`、`data/board.sqlite-shm`。
 
-SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目增删、批量新增和看板状态的多字段更新均使用事务；失败时回滚整个操作。你可以单独备份 `data/board.sqlite`，但热备份前应先停止服务，并同时处理可能存在的 `board.sqlite-wal` 与 `board.sqlite-shm`。
+SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目增删、批量新增和看板状态的多字段更新均使用事务；失败时回滚整个操作。Git 凭据使用 `data/git-credentials.key` 做 AES-256-GCM 加密，备份数据库时必须同时备份该密钥；丢失密钥后凭据无法解密，只能重新录入。热备份前应先停止服务，并同时处理可能存在的 `board.sqlite-wal` 与 `board.sqlite-shm`。
 
-回滚到旧版 Board 时，先停止服务并归档当前 `data/board.sqlite*`，再切换到旧代码和旧库备份。团队版成功推送的 Git 任务不会被回滚，数据库中的接受状态、团队成员和审计会随备份回退。详细步骤见[团队版运维手册](./docs/team-operations.md)。
+回滚到旧版 Board 时，先停止服务并归档当前 `data/board.sqlite*` 与 `data/git-credentials.key`，再切换到旧代码和旧库备份。团队版成功推送的 Git 任务不会被回滚，数据库中的接受状态、团队成员和审计会随备份回退。详细步骤见[团队版运维手册](./docs/team-operations.md)。
 
 ## 重要限制
 
