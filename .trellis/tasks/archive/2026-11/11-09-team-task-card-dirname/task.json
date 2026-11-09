@@ -1,0 +1,30 @@
+{
+  "id": "team-task-card-dirname",
+  "name": "team-task-card-dirname",
+  "title": "团队任务卡片补齐目录名",
+  "description": "修复团队模式任务卡标题下方任务目录名为空的问题，复用现有任务页规范化逻辑并补充回归测试。",
+  "status": "completed",
+  "dev_type": "bugfix",
+  "scope": "frontend",
+  "package": null,
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-09",
+  "completedAt": "2026-11-09",
+  "branch": "codex/team-board",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": "1e7bb50c573494933c8c267033b3fb0b0f690f9c",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "web/src/api/board.ts",
+    "tests/team-web.test.js",
+    ".trellis/spec/frontend/rendering-and-state.md"
+  ],
+  "notes": "代码提交 1e7bb50 已推送 origin/codex/team-board；任务记录与报告保留在工作区，待后续归档提交。",
+  "meta": {}
+}

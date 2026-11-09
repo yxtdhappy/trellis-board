@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"检查团队任务页规范化后 ETag、304、分页字段和 hook 状态没有回归。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查类型、单元测试、构建和可访问性边界。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 relativeDir 到 dirName 的前端字段契约与实际页面行为。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查实现确实复用既有规范化函数且没有新增重复逻辑。"}

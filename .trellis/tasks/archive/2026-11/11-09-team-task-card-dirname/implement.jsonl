@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"前端模块入口与共享逻辑边界，确认团队查询应通过现有 lib 规范化模块处理。"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"团队查询、ETag、分页与 hook 状态流的既有约定，修复必须保持这些行为不变。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"前端类型、测试和最终构建门禁要求。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"团队接口字段、relativeDir 与前端展示字段的一致性约束。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"优先复用现有 normalizeTaskPage，避免重复目录名解析逻辑。"}
