@@ -4,10 +4,11 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
-  DialogTitle
+  DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import type { AdminUser, Team } from '@/api/admin'
@@ -37,9 +38,9 @@ export function AccountForm({ user, teams, submitLabel, onSubmit, onCancel }: Ac
   const [busy, setBusy] = useState(false)
 
   function toggleTeam(teamId: string, checked: boolean) {
-    setTeamIds((current) => checked
-      ? [...current, teamId]
-      : current.filter((id) => id !== teamId))
+    setTeamIds((current) =>
+      checked ? [...current, teamId] : current.filter((id) => id !== teamId),
+    )
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -118,7 +119,7 @@ export function AccountDialog({
   user,
   teams,
   onSave,
-  onClose
+  onClose,
 }: {
   user: AdminUser | null
   teams: Team[]
@@ -143,18 +144,20 @@ export function AccountDialog({
           </DialogDescription>
         </DialogHeader>
         {user ? (
-          <AccountForm
-            key={`${user.id}:${user.displayName}:${user.status}:${user.systemAdmin}:${user.teams.map((team) => team.id).join(',')}`}
-            user={user}
-            teams={teams}
-            submitLabel="保存账号"
-            onCancel={onClose}
-            onSubmit={async (values) => {
-              const ok = await onSave(user, values)
-              if (ok) onClose()
-              return ok
-            }}
-          />
+          <DialogBody className="flex flex-col gap-2.5">
+            <AccountForm
+              key={`${user.id}:${user.displayName}:${user.status}:${user.systemAdmin}:${user.teams.map((team) => team.id).join(',')}`}
+              user={user}
+              teams={teams}
+              submitLabel="保存账号"
+              onCancel={onClose}
+              onSubmit={async (values) => {
+                const ok = await onSave(user, values)
+                if (ok) onClose()
+                return ok
+              }}
+            />
+          </DialogBody>
         ) : null}
       </DialogContent>
     </Dialog>

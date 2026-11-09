@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -60,45 +61,47 @@ export function PasswordDialog({ open, onOpenChange }: PasswordDialogProps) {
           <DialogTitle>修改密码</DialogTitle>
           <DialogDescription>首次登录或密码被重置后需要先更新密码。</DialogDescription>
         </DialogHeader>
-        <form className="flex flex-col gap-3" onSubmit={submit}>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password-current">当前密码</Label>
-            <Input
-              id="password-current"
-              type="password"
-              autoComplete="current-password"
-              value={current}
-              onChange={(event) => setCurrent(event.target.value)}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password-next">新密码</Label>
-            <Input
-              id="password-next"
-              type="password"
-              autoComplete="new-password"
-              value={next}
-              onChange={(event) => setNext(event.target.value)}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password-confirm">确认新密码</Label>
-            <Input
-              id="password-confirm"
-              type="password"
-              autoComplete="new-password"
-              value={confirm}
-              onChange={(event) => setConfirm(event.target.value)}
-            />
-          </div>
-          <p className="rounded-lg bg-muted px-3 py-2 text-[11px] leading-5 text-muted-foreground">
-            至少 {MIN_LENGTH} 位。更新成功后其他会话会立即失效。
-          </p>
-          {message ? (
-            <p className="text-xs text-destructive" role="alert">
-              {message}
+        <form className="flex min-h-0 flex-1 flex-col gap-3" onSubmit={submit}>
+          <DialogBody className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="password-current">当前密码</Label>
+              <Input
+                id="password-current"
+                type="password"
+                autoComplete="current-password"
+                value={current}
+                onChange={(event) => setCurrent(event.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="password-next">新密码</Label>
+              <Input
+                id="password-next"
+                type="password"
+                autoComplete="new-password"
+                value={next}
+                onChange={(event) => setNext(event.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="password-confirm">确认新密码</Label>
+              <Input
+                id="password-confirm"
+                type="password"
+                autoComplete="new-password"
+                value={confirm}
+                onChange={(event) => setConfirm(event.target.value)}
+              />
+            </div>
+            <p className="rounded-lg bg-muted px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+              至少 {MIN_LENGTH} 位。更新成功后其他会话会立即失效。
             </p>
-          ) : null}
+            {message ? (
+              <p className="text-xs text-destructive" role="alert">
+                {message}
+              </p>
+            ) : null}
+          </DialogBody>
           <DialogFooter className="gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               取消

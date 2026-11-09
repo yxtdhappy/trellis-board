@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import { applyMarkdownTheme } from '@/lib/markdown-theme'
 
 type Theme = 'light' | 'dark'
 
@@ -24,6 +25,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement
     root.classList.toggle('dark', theme === 'dark')
     root.style.colorScheme = theme
+    applyMarkdownTheme(theme)
     try {
       localStorage.setItem(STORAGE_KEY, theme)
     } catch {

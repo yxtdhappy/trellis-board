@@ -5,17 +5,18 @@ import type { SshTrustChallenge, SshTrustResult } from '@/api/admin'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogTitle
+  DialogTitle,
 } from '@/components/ui/dialog'
 
 export function SshTrustDialog({
   challenge,
   onConfirm,
-  onClose
+  onClose,
 }: {
   challenge: SshTrustChallenge | null
   onConfirm: (challengeId: string) => Promise<SshTrustResult>
@@ -50,19 +51,23 @@ export function SshTrustDialog({
               : ''}
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-1.5 rounded-lg bg-muted/50 p-3">
-          {challenge?.keys.map((key) => (
-            <div key={`${key.algorithm}:${key.fingerprint}`} className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-medium text-muted-foreground">{key.algorithm}</span>
-              <code className="break-all text-[11px] text-foreground">{key.fingerprint}</code>
-            </div>
-          ))}
-        </div>
-        {challenge?.replaced ? (
-          <p className="text-[11px] text-destructive">
-            主机密钥与已保存值不同。确认前必须核对变化原因，不能仅凭连接成功继续。
-          </p>
-        ) : null}
+        <DialogBody className="flex flex-col gap-2">
+          <div className="flex flex-col gap-1.5 rounded-lg bg-muted/50 p-3">
+            {challenge?.keys.map((key) => (
+              <div key={`${key.algorithm}:${key.fingerprint}`} className="flex flex-col gap-0.5">
+                <span className="text-[10px] font-medium text-muted-foreground">
+                  {key.algorithm}
+                </span>
+                <code className="break-all text-[11px] text-foreground">{key.fingerprint}</code>
+              </div>
+            ))}
+          </div>
+          {challenge?.replaced ? (
+            <p className="text-[11px] text-destructive">
+              主机密钥与已保存值不同。确认前必须核对变化原因，不能仅凭连接成功继续。
+            </p>
+          ) : null}
+        </DialogBody>
         <DialogFooter>
           <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
             取消

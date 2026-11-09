@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -117,10 +118,12 @@ export function ProjectManagerDialog({
           <DialogTitle>管理看板项目</DialogTitle>
           <DialogDescription>选择文件夹纳入看板，项目名称自动使用文件夹名称。</DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-2">
+        <DialogBody className="flex flex-col gap-2">
           <p className="text-[11px] font-semibold text-muted-foreground">已纳入看板</p>
           {rows.length === 0 ? (
-            <p className="rounded-lg bg-muted px-3 py-6 text-center text-xs text-muted-foreground">还没有项目</p>
+            <p className="rounded-lg bg-muted px-3 py-6 text-center text-xs text-muted-foreground">
+              还没有项目
+            </p>
           ) : (
             rows.map((row) => (
               <div
@@ -144,7 +147,12 @@ export function ProjectManagerDialog({
               </div>
             ))
           )}
-          <Button variant="outline" className="h-10 gap-2 text-xs" onClick={addFolders} disabled={busy}>
+          <Button
+            variant="outline"
+            className="h-10 gap-2 text-xs"
+            onClick={addFolders}
+            disabled={busy}
+          >
             <FolderPlus className="size-3.5" />
             选择文件夹
           </Button>
@@ -173,9 +181,14 @@ export function ProjectManagerDialog({
             只读取仓库元数据与 Trellis 配置，不会修改项目文件。文件夹选择器依赖 Windows 桌面，
             其他环境可直接填写绝对路径。
           </p>
-        </div>
+        </DialogBody>
         <DialogFooter className="gap-2">
-          <Button variant="outline" className="gap-1.5" onClick={() => void rescan()} disabled={busy}>
+          <Button
+            variant="outline"
+            className="gap-1.5"
+            onClick={() => void rescan()}
+            disabled={busy}
+          >
             <RefreshCw className={busy ? 'size-3.5 animate-spin' : 'size-3.5'} />
             重新扫描仓库
           </Button>

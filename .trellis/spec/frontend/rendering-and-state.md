@@ -67,6 +67,12 @@ const tasks = (teamPage?.tasks || []).map(teamRowToBoardTask)
 ## 弹层
 
 - 统一使用 `components/ui/dialog` 的 `Dialog`/`DialogContent`；`Dialog` 内部维护弹层栈，Esc 只关闭最上层。
+- `DialogContent` 是 flex 列容器：`DialogHeader`、`DialogFooter` 固定，正文必须包进 `DialogBody`（`data-slot="dialog-body"`，`min-h-0 flex-1 overflow-y-auto`）；不要在 `DialogContent` 上加 `overflow-y-auto` 或 `max-h-[…]`，否则标题和底部按钮会跟着滚走。
+- 表单弹层：`<form className="flex min-h-0 flex-1 flex-col gap-*">`，字段与错误信息进 `DialogBody`，`DialogFooter` 留在 `form` 内。
+- `Select` 弹层宽度跟随触发器（`min-w-(--anchor-width) max-w-(--available-width)`），选项文字换行（`whitespace-normal break-words`），不要加单行截断或 `whitespace-nowrap`。
+- Markdown 预览容器固定为 `markdown-body` + `break-words [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_img]:max-w-full`；排版由 `github-markdown-css` 提供，不要另接 tailwind typography 等第二套版式。
+- `renderMarkdown()` 由 markdown-it 渲染，代码块经 `markdown-it-highlightjs`（`hljs` 取自 `highlight.js/lib/common`）输出 `<pre><code class="hljs language-*">`，任务项输出 `<span class="md-checkbox">`。
+- `github-markdown-css` 与 hljs 主题都是字面颜色、同一组 `.markdown-body` 选择器，禁止静态全局引入；只能经 `lib/markdown-theme.ts` 的 `applyMarkdownTheme(theme)` 把 light/dark 四份 CSS 以 `?inline` 合并写入 `<style id="markdown-theme">`，由 `ThemeProvider` 在主题切换时刷新。
 - 弹层写操作：提交中禁用按钮、错误保留输入、成功后关闭并刷新数据源。
 - 打开详情弹层时才请求 `/api/task`；列表不使用详情里的重量字段。
 - 可滚动且正文较长的弹层必须显式指定顶部容器作为 `initialFocus`，不能依赖默认的“第一个可 Tab 元素”。默认策略可能聚焦正文末尾按钮，并让 `overflow-y-auto` 容器自动滚到底部。

@@ -1,4 +1,11 @@
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import type { PluginLogEntry } from '@/api/plugins'
 
 type PluginLogsDialogProps = {
@@ -12,13 +19,22 @@ type PluginLogsDialogProps = {
 
 function formatEntry(entry: PluginLogEntry) {
   const time = entry.at ? new Date(entry.at).toLocaleTimeString() : ''
-  const level = String(entry.level || 'info').toUpperCase().padEnd(5)
+  const level = String(entry.level || 'info')
+    .toUpperCase()
+    .padEnd(5)
   const fields =
     entry.fields && Object.keys(entry.fields).length ? ` ${JSON.stringify(entry.fields)}` : ''
   return `${time} ${level} ${entry.message || ''}${fields}`.trim()
 }
 
-export function PluginLogsDialog({ open, onOpenChange, title, loading, error, entries }: PluginLogsDialogProps) {
+export function PluginLogsDialog({
+  open,
+  onOpenChange,
+  title,
+  loading,
+  error,
+  entries,
+}: PluginLogsDialogProps) {
   const body = loading
     ? '加载中…'
     : error
@@ -31,13 +47,17 @@ export function PluginLogsDialog({ open, onOpenChange, title, loading, error, en
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[760px]">
         <DialogHeader>
-          <p className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground">PLUGIN LOGS</p>
+          <p className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground">
+            PLUGIN LOGS
+          </p>
           <DialogTitle>插件日志</DialogTitle>
           <DialogDescription>{title}</DialogDescription>
         </DialogHeader>
-        <pre className="max-h-[52vh] overflow-auto rounded-lg bg-muted px-3 py-2.5 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">
-          {body}
-        </pre>
+        <DialogBody className="rounded-lg bg-muted px-3 py-2.5">
+          <pre className="font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap">
+            {body}
+          </pre>
+        </DialogBody>
       </DialogContent>
     </Dialog>
   )

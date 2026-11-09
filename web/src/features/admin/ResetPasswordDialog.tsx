@@ -3,11 +3,12 @@ import type { FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogTitle
+  DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import type { AdminUser } from '@/api/admin'
@@ -17,7 +18,7 @@ import { adminPasswordError } from './password-policy'
 export function ResetPasswordDialog({
   user,
   onConfirm,
-  onClose
+  onClose,
 }: {
   user: AdminUser | null
   onConfirm: (user: AdminUser, password: string) => Promise<boolean>
@@ -71,30 +72,36 @@ export function ResetPasswordDialog({
             {user ? `${user.username} 的全部会话会立即失效，需要重新登录。` : ''}
           </DialogDescription>
         </DialogHeader>
-        <form className="flex flex-col gap-2.5" onSubmit={handleSubmit}>
-          <Field label="新密码" hint="至少 6 个字符，不做复杂度校验。">
-            <Input
-              type="password"
-              minLength={6}
-              required
-              autoComplete="new-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              disabled={busy}
-            />
-          </Field>
-          <Field label="确认新密码">
-            <Input
-              type="password"
-              minLength={6}
-              required
-              autoComplete="new-password"
-              value={confirmation}
-              onChange={(event) => setConfirmation(event.target.value)}
-              disabled={busy}
-            />
-          </Field>
-          {error ? <p role="alert" className="text-[11px] text-destructive">{error}</p> : null}
+        <form className="flex min-h-0 flex-1 flex-col gap-2.5" onSubmit={handleSubmit}>
+          <DialogBody className="flex flex-col gap-2.5">
+            <Field label="新密码" hint="至少 6 个字符，不做复杂度校验。">
+              <Input
+                type="password"
+                minLength={6}
+                required
+                autoComplete="new-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                disabled={busy}
+              />
+            </Field>
+            <Field label="确认新密码">
+              <Input
+                type="password"
+                minLength={6}
+                required
+                autoComplete="new-password"
+                value={confirmation}
+                onChange={(event) => setConfirmation(event.target.value)}
+                disabled={busy}
+              />
+            </Field>
+            {error ? (
+              <p role="alert" className="text-[11px] text-destructive">
+                {error}
+              </p>
+            ) : null}
+          </DialogBody>
           <DialogFooter>
             <Button variant="outline" size="sm" type="button" onClick={close} disabled={busy}>
               取消

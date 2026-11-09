@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -15,7 +16,15 @@ import { fetchTaskDetail, api } from '@/api/board'
 import { ApiError } from '@/api/request'
 import { renderMarkdown } from '@/lib/markdown.js'
 import type { Stage } from '../task-view'
-import { dueLabel, isAttention, attentionReasons, nextStage, stageSourceLabel, taskProgress, taskTags } from '../task-view'
+import {
+  dueLabel,
+  isAttention,
+  attentionReasons,
+  nextStage,
+  stageSourceLabel,
+  taskProgress,
+  taskTags,
+} from '../task-view'
 import type { BoardTask, DependencyRecord } from '../task-view'
 import { StageTape } from '../StageTape'
 import { ConditionChecks } from '../ConditionChecks'
@@ -23,10 +32,7 @@ import { toast } from 'sonner'
 import { SelectField } from '../SelectField'
 import { priorityTone, stageTone, statusLabel, statusTone } from '../tone'
 import { assignmentActionState } from '@/lib/team-client.js'
-import {
-  AssigneeWarningDialog,
-  type AssigneeWarningDetails,
-} from './AssigneeWarningDialog'
+import { AssigneeWarningDialog, type AssigneeWarningDetails } from './AssigneeWarningDialog'
 
 const ARTIFACTS = [
   { key: 'prd', label: 'PRD', hint: '需求、范围与验收标准' },
@@ -106,9 +112,10 @@ function readArtifacts(task: BoardTask | null) {
   const source = task?.artifacts
   if (!source || typeof source !== 'object') return []
   const record = source as Record<string, ArtifactEntry>
-  return ARTIFACTS.map((definition) => ({ ...definition, artifact: record[definition.key] })).filter(
-    (item) => item.artifact?.path,
-  )
+  return ARTIFACTS.map((definition) => ({
+    ...definition,
+    artifact: record[definition.key],
+  })).filter((item) => item.artifact?.path)
 }
 
 type TaskDetailActions = {
@@ -161,7 +168,9 @@ export function TaskDetailDialog({
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState('')
   const [assigneeWarning, setAssigneeWarning] = useState<AssigneeWarningDetails | null>(null)
-  const assigneeRetryRef = useRef<((decision?: { warningId: string; action: 'continue' | 'takeover' }) => Promise<void>) | null>(null)
+  const assigneeRetryRef = useRef<
+    ((decision?: { warningId: string; action: 'continue' | 'takeover' }) => Promise<void>) | null
+  >(null)
   const detailTaskKeyRef = useRef<string | null>(null)
 
   const dependencyCandidates = tasks
@@ -176,7 +185,6 @@ export function TaskDetailDialog({
         String(left.projectName).localeCompare(String(right.projectName), 'zh-CN') ||
         String(left.title).localeCompare(String(right.title), 'zh-CN'),
     )
-
 
   useEffect(() => {
     if (!open || !task) {
@@ -199,7 +207,9 @@ export function TaskDetailDialog({
         setDetail(fresh)
         if (!editingPlan) setAssignee(fresh.assignee || '')
       })
-      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : '读取任务失败'))
+      .catch((error: unknown) =>
+        toast.error(error instanceof Error ? error.message : '读取任务失败'),
+      )
       .finally(() => setLoading(false))
   }, [editingPlan, open, task])
 
@@ -207,10 +217,11 @@ export function TaskDetailDialog({
   const progress = current ? taskProgress(current) : null
   const stage = current ? nextStage(current) : null
   const artifacts = readArtifacts(current)
-  const {
-    readOnly: assignmentReadOnly,
-    canSubmit: canAssign,
-  } = assignmentActionState(current, assignee, assignees)
+  const { readOnly: assignmentReadOnly, canSubmit: canAssign } = assignmentActionState(
+    current,
+    assignee,
+    assignees,
+  )
 
   async function reloadDetail() {
     if (!task) return
@@ -309,7 +320,7 @@ export function TaskDetailDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[88dvh] overflow-y-auto sm:max-w-[1240px]">
+        <DialogContent className="sm:max-w-[1240px]">
           <DialogHeader>
             <DialogTitle className="pr-8 text-base">{current?.title || '任务详情'}</DialogTitle>
             <DialogDescription>
@@ -322,7 +333,7 @@ export function TaskDetailDialog({
           {!current ? (
             <p className="py-10 text-center text-xs text-muted-foreground">正在读取任务详情…</p>
           ) : (
-            <div className="flex flex-col gap-4">
+            <DialogBody className="flex flex-col gap-4">
               <StageTape stages={current.stages} current={current.derivedStage} />
 
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -366,7 +377,8 @@ export function TaskDetailDialog({
                   </span>
                 )}
                 <span className="ml-auto text-[10.5px] text-muted-foreground">
-                  {stage?.label} · {progress?.percent}% · {progress?.done}/{progress?.total} 必需阶段
+                  {stage?.label} · {progress?.percent}% · {progress?.done}/{progress?.total}{' '}
+                  必需阶段
                 </span>
               </div>
 
@@ -396,15 +408,28 @@ export function TaskDetailDialog({
                   <div className="grid gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_1fr_auto]">
                     <div className="flex flex-col gap-1">
                       <Label className="text-[10px]">截止日期</Label>
-                      <Input className="h-8 text-xs" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                      <Input
+                        className="h-8 text-xs"
+                        type="date"
+                        value={dueDate}
+                        onChange={(e) => setDueDate(e.target.value)}
+                      />
                     </div>
                     <div className="flex flex-col gap-1">
                       <Label className="text-[10px]">里程碑</Label>
-                      <Input className="h-8 text-xs" value={milestone} onChange={(e) => setMilestone(e.target.value)} />
+                      <Input
+                        className="h-8 text-xs"
+                        value={milestone}
+                        onChange={(e) => setMilestone(e.target.value)}
+                      />
                     </div>
                     <div className="flex flex-col gap-1">
                       <Label className="text-[10px]">标签</Label>
-                      <Input className="h-8 text-xs" value={tags} onChange={(e) => setTags(e.target.value)} />
+                      <Input
+                        className="h-8 text-xs"
+                        value={tags}
+                        onChange={(e) => setTags(e.target.value)}
+                      />
                     </div>
                     <Button size="sm" className="mt-auto h-8 text-[11px]" onClick={savePlan}>
                       保存计划字段
@@ -421,8 +446,13 @@ export function TaskDetailDialog({
                         >
                           {item.label}
                         </span>
-                        <span className="ml-auto text-[10px] text-muted-foreground">{stageSourceLabel(item)}</span>
-                        <span className="max-w-[45%] truncate text-[10px] text-muted-foreground" title={item.evidence}>
+                        <span className="ml-auto text-[10px] text-muted-foreground">
+                          {stageSourceLabel(item)}
+                        </span>
+                        <span
+                          className="max-w-[45%] truncate text-[10px] text-muted-foreground"
+                          title={item.evidence}
+                        >
                           {item.evidence || '等待执行'}
                         </span>
                       </div>
@@ -435,11 +465,15 @@ export function TaskDetailDialog({
                 <section className="flex flex-col gap-1.5">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-[11px] font-semibold text-muted-foreground">风险与依赖</h3>
-                    <span className="text-[10px] text-muted-foreground">{dependencyStateText(current)}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {dependencyStateText(current)}
+                    </span>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div className="flex flex-col gap-1">
-                      <h4 className="text-[10px] font-semibold text-muted-foreground">Blocked by / 被谁阻断</h4>
+                      <h4 className="text-[10px] font-semibold text-muted-foreground">
+                        Blocked by / 被谁阻断
+                      </h4>
                       {(current.execution.blockedBy || []).length ? (
                         current.execution.blockedBy.map((item) => (
                           <DependencyItem
@@ -461,13 +495,17 @@ export function TaskDetailDialog({
                       )}
                     </div>
                     <div className="flex flex-col gap-1">
-                      <h4 className="text-[10px] font-semibold text-muted-foreground">Blocks / 阻断了谁</h4>
+                      <h4 className="text-[10px] font-semibold text-muted-foreground">
+                        Blocks / 阻断了谁
+                      </h4>
                       {(current.execution.blocks || []).length ? (
                         (current.execution.blocks || []).map((item) => (
                           <DependencyItem key={item.id} item={item} relation="blocks" disabled />
                         ))
                       ) : (
-                        <p className="text-[10.5px] text-muted-foreground">这个任务目前没有阻断其他任务。</p>
+                        <p className="text-[10.5px] text-muted-foreground">
+                          这个任务目前没有阻断其他任务。
+                        </p>
                       )}
                     </div>
                   </div>
@@ -475,17 +513,18 @@ export function TaskDetailDialog({
                   (current.execution.resolvedBlocks || []).length ? (
                     <details className="rounded-lg border border-border px-2.5 py-1.5 text-[10.5px] text-muted-foreground">
                       <summary className="cursor-pointer">
-                        已解除依赖：曾被阻断 {(current.execution.resolvedBlockedBy || []).length} 项 · 曾阻断其他任务{' '}
-                        {(current.execution.resolvedBlocks || []).length} 项
+                        已解除依赖：曾被阻断 {(current.execution.resolvedBlockedBy || []).length} 项
+                        · 曾阻断其他任务 {(current.execution.resolvedBlocks || []).length} 项
                       </summary>
                       <ul className="mt-1 flex flex-col gap-0.5">
-                        {[...(current.execution.resolvedBlockedBy || []), ...(current.execution.resolvedBlocks || [])].map(
-                          (item) => (
-                            <li key={item.id} className="truncate">
-                              {item.title || '未命名任务'} · {item.reason || '未记录原因'}
-                            </li>
-                          ),
-                        )}
+                        {[
+                          ...(current.execution.resolvedBlockedBy || []),
+                          ...(current.execution.resolvedBlocks || []),
+                        ].map((item) => (
+                          <li key={item.id} className="truncate">
+                            {item.title || '未命名任务'} · {item.reason || '未记录原因'}
+                          </li>
+                        ))}
                       </ul>
                     </details>
                   ) : null}
@@ -549,10 +588,12 @@ export function TaskDetailDialog({
                     ))}
                   </div>
                 ) : (
-                  <p className="text-[11px] text-muted-foreground">这个任务没有可读取的 Markdown 产物。</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    这个任务没有可读取的 Markdown 产物。
+                  </p>
                 )}
               </section>
-            </div>
+            </DialogBody>
           )}
 
           <DialogFooter className="gap-2 sm:justify-between">
@@ -583,7 +624,12 @@ export function TaskDetailDialog({
                 更新派发
               </Button>
             </div>
-            <Button variant="outline" size="sm" className="h-8 text-[11px]" onClick={() => onOpenChange(false)}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-[11px]"
+              onClick={() => onOpenChange(false)}
+            >
               关闭
             </Button>
           </DialogFooter>
@@ -591,16 +637,13 @@ export function TaskDetailDialog({
       </Dialog>
 
       <Dialog open={Boolean(artifact)} onOpenChange={(value) => !value && setArtifact(null)}>
-        <DialogContent
-          className="max-h-[86dvh] overflow-y-auto sm:max-w-[820px]"
-          initialFocus={artifactHeaderRef}
-        >
+        <DialogContent className="sm:max-w-[820px]" initialFocus={artifactHeaderRef}>
           <DialogHeader ref={artifactHeaderRef} tabIndex={-1} className="outline-none">
             <DialogTitle className="text-base">工件查看 · {artifact?.label}</DialogTitle>
             <DialogDescription>{artifact?.entry?.path}</DialogDescription>
           </DialogHeader>
-          <div
-            className="prose prose-sm max-w-none text-xs leading-6 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-xs [&_p]:my-1.5 [&_li]:my-0.5 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5"
+          <DialogBody
+            className="markdown-body max-w-none break-words [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_img]:max-w-full"
             dangerouslySetInnerHTML={{
               __html: renderMarkdown(artifact?.entry?.content || '（无可预览内容）'),
             }}

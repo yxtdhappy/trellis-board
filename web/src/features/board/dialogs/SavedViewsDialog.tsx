@@ -1,6 +1,14 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
@@ -80,16 +88,20 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88dvh] overflow-y-auto sm:max-w-[960px]">
+      <DialogContent className="sm:max-w-[960px]">
         <DialogHeader>
           <DialogTitle className="text-base">保存组合视图</DialogTitle>
           <DialogDescription>把当前勾选的筛选条件保存成一条可复用的执行视图。</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-3">
+        <DialogBody className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
             <Label className="text-[10px]">视图名称</Label>
-            <Input className="h-8 text-xs" value={name} onChange={(event) => setName(event.target.value)} />
+            <Input
+              className="h-8 text-xs"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
           </div>
 
           <div className="flex flex-col gap-1">
@@ -135,7 +147,11 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
               <Label className="text-[10px]">标签（逗号分隔）</Label>
-              <Input className="h-8 text-xs" value={tags} onChange={(event) => setTags(event.target.value)} />
+              <Input
+                className="h-8 text-xs"
+                value={tags}
+                onChange={(event) => setTags(event.target.value)}
+              />
             </div>
             <div className="flex flex-col gap-1">
               <Label className="text-[10px]">阻断状态</Label>
@@ -143,7 +159,10 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
                 ariaLabel="阻断状态"
                 className="h-8 text-xs"
                 value={blocked}
-                options={BLOCKED_OPTIONS.map((option) => ({ value: option.id, label: option.label }))}
+                options={BLOCKED_OPTIONS.map((option) => ({
+                  value: option.id,
+                  label: option.label,
+                }))}
                 onChange={(next) => setBlocked(next as (typeof BLOCKED_OPTIONS)[number]['id'])}
               />
             </div>
@@ -168,13 +187,23 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
               />
             </div>
           </div>
-        </div>
+        </DialogBody>
 
         <DialogFooter className="gap-2">
-          <Button variant="outline" size="sm" className="h-8 text-[11px]" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-[11px]"
+            onClick={() => onOpenChange(false)}
+          >
             取消
           </Button>
-          <Button size="sm" className="h-8 text-[11px]" disabled={saving} onClick={() => void submit()}>
+          <Button
+            size="sm"
+            className="h-8 text-[11px]"
+            disabled={saving}
+            onClick={() => void submit()}
+          >
             {saving ? '正在保存…' : '保存组合视图'}
           </Button>
         </DialogFooter>

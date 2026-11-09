@@ -42,10 +42,10 @@ const NAV: BoardNavItem[] = [
 
 export function BoardPage() {
   const controller = useBoard()
-  const adminHref =
-    (window as Window & { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__?.core?.invoke
-      ? undefined
-      : '/admin.html'
+  const adminHref = (window as Window & { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__
+    ?.core?.invoke
+    ? undefined
+    : '/admin.html'
   const [view, setView] = useState<BoardView>('pipeline')
   const [selected, setSelected] = useState<BoardTask | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -54,22 +54,36 @@ export function BoardPage() {
   const [projectsOpen, setProjectsOpen] = useState(false)
   const [viewsOpen, setViewsOpen] = useState(false)
 
-  const { board, tasks, projects, filters, setFilters, actions, teamMode, runtime, teamPage, loading, error } =
-    controller
+  const {
+    board,
+    tasks,
+    projects,
+    filters,
+    setFilters,
+    actions,
+    teamMode,
+    runtime,
+    teamPage,
+    loading,
+    error,
+  } = controller
 
   const groups = useMemo(
     () => filterGroups(tasks, filters, projects, board?.savedViews || []),
     [tasks, filters, projects, board?.savedViews],
   )
   const assignees = useMemo(
-    () => [...new Set(tasks.map((task) => task.assignee).filter((name): name is string => Boolean(name)))],
+    () => [
+      ...new Set(
+        tasks.map((task) => task.assignee).filter((name): name is string => Boolean(name)),
+      ),
+    ],
     [tasks],
   )
   const selectedProject = selected
     ? projects.find((project) => project.id === selected.projectId)
     : null
-  const detailAssignees =
-    selectedProject?.workspaceMembers ?? selectedProject?.members ?? assignees
+  const detailAssignees = selectedProject?.workspaceMembers ?? selectedProject?.members ?? assignees
   const displayName = runtime?.user?.displayName || runtime?.user?.username || '看板用户'
   const savedViews = useMemo(() => normalizeViews(board?.savedViews), [board?.savedViews])
   const archived = tasks.filter((task) => task.archived)
@@ -136,7 +150,10 @@ export function BoardPage() {
 
         <main className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
           {error ? (
-            <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <p
+              role="alert"
+              className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
               {error}
             </p>
           ) : null}
@@ -174,7 +191,11 @@ export function BoardPage() {
                 attention={tasks.filter((task) => !task.archived && isAttention(task)).length}
                 repositories={projects.length}
               />
-              <Kanban groups={groups} onOpen={(task) => setSelected(task)} onEditPlan={(task) => setSelected(task)} />
+              <Kanban
+                groups={groups}
+                onOpen={(task) => setSelected(task)}
+                onEditPlan={(task) => setSelected(task)}
+              />
             </>
           ) : null}
 
@@ -200,8 +221,10 @@ export function BoardPage() {
 
           {view === 'archive' ? (
             <ArchiveView
+              key={filters.projectId}
               tasks={archived}
               projects={projects}
+              projectId={filters.projectId}
               onOpen={(task) => setSelected(task)}
               onRefresh={() => void actions.refresh()}
             />
@@ -265,7 +288,11 @@ export function BoardPage() {
             })
             return
           }
-          await actions.assign({ repositoryId: task.projectId, taskDir: task.relativeDir, assignee })
+          await actions.assign({
+            repositoryId: task.projectId,
+            taskDir: task.relativeDir,
+            assignee,
+          })
         }}
         onPlanSaved={() => void actions.refresh()}
         tasks={tasks}

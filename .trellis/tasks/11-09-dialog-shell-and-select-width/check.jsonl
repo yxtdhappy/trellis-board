@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查改动是否只用 token 类、图标按钮可访问性、lint/type-check 口径"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "检查弹层结构、Markdown 渲染安全边界与 initialFocus 约定"}

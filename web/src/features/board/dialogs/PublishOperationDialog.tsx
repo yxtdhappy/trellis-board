@@ -1,5 +1,13 @@
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { isCompleteOperation, isRetryableOperation, operationPollDelay } from '@/lib/team-client.js'
 import type { PublishOperation } from '@/hooks/useBoard'
 
@@ -27,7 +35,11 @@ type PublishOperationDialogProps = {
   onRetry: () => void
 }
 
-export function PublishOperationDialog({ operation, onClose, onRetry }: PublishOperationDialogProps) {
+export function PublishOperationDialog({
+  operation,
+  onClose,
+  onRetry,
+}: PublishOperationDialogProps) {
   const status = operation?.status || 'prepared'
   const retryable = isRetryableOperation(operation)
   const complete = isCompleteOperation(operation)
@@ -42,7 +54,7 @@ export function PublishOperationDialog({ operation, onClose, onRetry }: PublishO
           <DialogDescription>{EXPLANATIONS[status] || '正在跟踪 Git 发布状态…'}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-2 text-[11px]">
+        <DialogBody className="flex flex-col gap-2 text-[11px]">
           <div className="flex items-center gap-2">
             <span
               className={
@@ -73,10 +85,11 @@ export function PublishOperationDialog({ operation, onClose, onRetry }: PublishO
           ) : null}
           {retryable ? (
             <p className="text-[10px] text-muted-foreground">
-              每 {Math.round(operationPollDelay(1) / 1000)} 秒刷新一次状态；未推送成功前不能视为完成。
+              每 {Math.round(operationPollDelay(1) / 1000)}{' '}
+              秒刷新一次状态；未推送成功前不能视为完成。
             </p>
           ) : null}
-        </div>
+        </DialogBody>
 
         <DialogFooter className="gap-2">
           {retryable ? (

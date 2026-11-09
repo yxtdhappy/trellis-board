@@ -3,10 +3,11 @@ import type { FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
-  DialogTitle
+  DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import type { AdminUser } from '@/api/admin'
@@ -21,7 +22,7 @@ export type ApprovalFormValues = {
 
 export function ApprovalSummary({
   sha256,
-  files
+  files,
 }: {
   sha256: string
   files: string[] | number | null
@@ -57,7 +58,7 @@ export function ApprovalSummary({
 export function ApprovalForm({
   users,
   onSubmit,
-  onCancel
+  onCancel,
 }: {
   users: AdminUser[]
   onSubmit: (values: ApprovalFormValues) => Promise<unknown>
@@ -117,7 +118,7 @@ export function ApproveProjectDialog({
   approval,
   users,
   onApprove,
-  onClose
+  onClose,
 }: {
   approval: PendingApproval | null
   users: AdminUser[]
@@ -144,7 +145,7 @@ export function ApproveProjectDialog({
           </DialogDescription>
         </DialogHeader>
         {approval ? (
-          <>
+          <DialogBody className="flex flex-col gap-2.5">
             <ApprovalSummary sha256={approval.sha256} files={approval.files} />
             <ApprovalForm
               key={approval.project.id}
@@ -159,7 +160,7 @@ export function ApproveProjectDialog({
             <p className="text-[11px] leading-relaxed text-muted-foreground">
               批准后服务端会运行已批准工具链的 hooks 预检；摘要变化会要求重新批准。
             </p>
-          </>
+          </DialogBody>
         ) : null}
       </DialogContent>
     </Dialog>
