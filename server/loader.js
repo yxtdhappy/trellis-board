@@ -617,6 +617,7 @@ function collectTaskDirs(repoPath) {
 
 export function scanRepository(project, options = {}) {
   const includeContent = Boolean(options.includeContent);
+  const metadataRepoPath = options.metadataRepoPath || project.path;
   const stats = {
     tasksParsed: 0,
     tasksReused: 0,
@@ -630,8 +631,8 @@ export function scanRepository(project, options = {}) {
     ...project,
     developer: readDeveloper(project.path),
     members: readMembers(project.path),
-    head: latestCommit(project.path),
-    ...readCachedGitMetadata(project.path, options, stats)
+    head: latestCommit(metadataRepoPath),
+    ...readCachedGitMetadata(metadataRepoPath, options, stats)
   };
   const workspaceCache = new Map();
   const getWorkspaceSummary = (repoPath, member) => {

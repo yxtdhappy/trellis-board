@@ -27,7 +27,6 @@ AgentLiveSync({
 
 createLiveSyncService({
   db,
-  dataDir,
   taskIndex,
   agentEvents,
   now?
@@ -57,6 +56,10 @@ SSE：`live.changed`、`task.live.overridden`。
 - sidecar 对同一项目的 watcher 批次串行处理和上传，避免旧文件快照晚于新快照到达服务端。
 - `project_live_revision` 在 `BEGIN IMMEDIATE` 事务内单调递增。后到并成功提交的同文件版本覆盖先到版本。
 - 服务端存储后必须复用 `scanRepository()` 和 `taskIndex.buildBoard()` 生成任务行；不能在 API 内另写阶段推导。
+- 实时物化的临时目录必须位于所有业务 Git 工作区之外，不能依赖接入项目配置 `.gitignore` 或服务端 Git 全局排除规则。
+- 物化扫描只从临时目录读取 `.trellis` 内容，Git HEAD 与分支元数据仍从未修改的业务工作区读取。
+- 幂等批次重放且内存中已有项目实时投影时，不得再次执行全量物化。
+- 定时 Git 脏检查使用目录级未跟踪扫描，不能展开每个未跟踪文件；不得通过修改接入项目 `.gitignore` 降低扫描成本。
 - 实时投影只给实际受覆盖文件影响的任务设置 `live_revision`；只有 `.trellis/.developer`、
   `.trellis/workspace/**` 或无法映射到具体任务的项目级覆盖才标记整个项目。
 - 接收方先备份冲突文件，再临时写、fsync、原子 rename；全部成功后推进 `agent_live_cursor`。

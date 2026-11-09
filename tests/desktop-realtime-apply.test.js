@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ConfigStore } from "../agent/config-store.js";
@@ -383,9 +384,24 @@ test("网络失败后使用原 batchId 重试上传", async (t) => {
   assert.equal(uploads.length, 1);
   const pendingNames = fs.readdirSync(store.paths.pendingLiveDir);
   assert.equal(pendingNames.length, 1);
+  const originalUnlink = fsPromises.unlink;
+  let injectedUnlinkFailure = false;
+  fsPromises.unlink = async (file) => {
+    if (!injectedUnlinkFailure && String(file).endsWith(`${uploads[0].batchId}.json`)) {
+      injectedUnlinkFailure = true;
+      const error = new Error("模拟 Windows 文件占用");
+      error.code = "EBUSY";
+      throw error;
+    }
+    return originalUnlink(file);
+  };
+  t.after(() => {
+    fsPromises.unlink = originalUnlink;
+  });
   await sync.retryPendingUploads();
   assert.equal(uploads.length, 2);
   assert.equal(uploads[1].batchId, uploads[0].batchId);
+  assert.equal(injectedUnlinkFailure, true);
   assert.equal(fs.readdirSync(store.paths.pendingLiveDir).length, 0);
 });
 

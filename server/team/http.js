@@ -1674,7 +1674,6 @@ export async function createTeamRuntime({
     });
     const liveSync = createLiveSyncService({
       db,
-      dataDir,
       taskIndex,
       agentEvents
     });

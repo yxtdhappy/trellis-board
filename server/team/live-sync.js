@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { withTransaction } from "../database.js";
@@ -15,6 +16,8 @@ const MAX_FILES = 64;
 const RATE_WINDOW_MS = 1000;
 const RATE_LIMIT = 5;
 const WARNING_TTL_MS = 5 * 60 * 1000;
+const RENAME_RETRY_DELAYS_MS = [10, 20, 50, 100, 200];
+const TRANSIENT_FILE_LOCK_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SAFE_BATCH_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
 const TEXT_EXTENSIONS = new Set([
@@ -102,6 +105,46 @@ function assertNoSymlink(root, relativePath) {
   }
 }
 
+function renameWithRetry(source, target) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.renameSync(source, target);
+      return;
+    } catch (error) {
+      const retryable = TRANSIENT_FILE_LOCK_CODES.has(error?.code);
+      if (!retryable || attempt >= RENAME_RETRY_DELAYS_MS.length) throw error;
+      Atomics.wait(
+        new Int32Array(new SharedArrayBuffer(4)),
+        0,
+        0,
+        RENAME_RETRY_DELAYS_MS[attempt]
+      );
+    }
+  }
+}
+
+function removeTreeWithRetry(target) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (
+        !TRANSIENT_FILE_LOCK_CODES.has(error?.code) ||
+        attempt >= RENAME_RETRY_DELAYS_MS.length
+      ) {
+        throw error;
+      }
+      Atomics.wait(
+        new Int32Array(new SharedArrayBuffer(4)),
+        0,
+        0,
+        RENAME_RETRY_DELAYS_MS[attempt]
+      );
+    }
+  }
+}
+
 function safeWrite(root, relativePath, content) {
   const target = path.resolve(root, ...relativePath.split("/"));
   if (!isInside(root, target)) {
@@ -119,7 +162,7 @@ function safeWrite(root, relativePath, content) {
   const temp = `${target}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
   fs.writeFileSync(temp, content, "utf8");
   try {
-    fs.renameSync(temp, target);
+    renameWithRetry(temp, target);
   } catch (error) {
     try {
       fs.unlinkSync(temp);
@@ -187,7 +230,6 @@ function parseJson(content) {
 
 export function createLiveSyncService({
   db,
-  dataDir,
   taskIndex,
   agentEvents,
   now = () => new Date()
@@ -632,7 +674,7 @@ export function createLiveSyncService({
           "同一 batchId 不能提交不同内容"
         );
       }
-      reapplyProject(projectId);
+      if (!liveBoards.has(projectId)) reapplyProject(projectId);
       agentEvents?.publishLiveChanged({
         projectId,
         revision: Number(existing.revision),
@@ -1104,8 +1146,7 @@ export function createLiveSyncService({
     }
     const project = readGitProject(db, projectId);
     if (!project || !fs.existsSync(path.join(project.path, ".trellis"))) return false;
-    fs.mkdirSync(dataDir, { recursive: true });
-    const tempRoot = fs.mkdtempSync(path.join(dataDir, "live-materialize-"));
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-live-materialize-"));
     try {
       copyLiveBase(
         path.join(project.path, ".trellis"),
@@ -1115,7 +1156,8 @@ export function createLiveSyncService({
       const tempProject = { ...project, path: tempRoot };
       const scan = scanRepository(tempProject, {
         includeContent: true,
-        refreshRepositoryMetadata: true
+        refreshRepositoryMetadata: true,
+        metadataRepoPath: project.path
       });
       scan.tasks = scan.tasks.map((task) => ({
         ...task,
@@ -1175,7 +1217,11 @@ export function createLiveSyncService({
       });
       return true;
     } finally {
-      fs.rmSync(tempRoot, { recursive: true, force: true });
+      try {
+        removeTreeWithRetry(tempRoot);
+      } catch {
+        // 临时目录在工作区外，清理失败不能反向令已提交的实时批次失败。
+      }
     }
   }
 

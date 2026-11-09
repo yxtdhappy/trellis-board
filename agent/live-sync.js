@@ -12,6 +12,8 @@ const MAX_BATCH_BYTES = 8 * 1024 * 1024;
 const WATCH_DEBOUNCE_MS = 250;
 const EXPECTED_WRITE_MS = 10_000;
 const RETRY_MS = 5_000;
+const UNLINK_RETRY_DELAYS_MS = [25, 50, 100, 200, 400];
+const TRANSIENT_FILE_LOCK_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 const BACKUP_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const SAFE_LOCAL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
 const TEXT_EXTENSIONS = new Set([
@@ -26,6 +28,28 @@ const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function unlinkWithRetry(file) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await fs.unlink(file);
+      return;
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      if (
+        !TRANSIENT_FILE_LOCK_CODES.has(error?.code) ||
+        attempt >= UNLINK_RETRY_DELAYS_MS.length
+      ) {
+        throw error;
+      }
+      await sleep(UNLINK_RETRY_DELAYS_MS[attempt]);
+    }
+  }
 }
 
 function isLivePath(value) {
@@ -530,9 +554,17 @@ export class AgentLiveSync {
       assigneeDecision: decision,
       files: batch.files
     });
-    await fs.unlink(
-      path.join(this.store.paths.pendingLiveDir, `${batch.batchId}.json`)
-    ).catch(() => {});
+    const pendingFile = path.join(
+      this.store.paths.pendingLiveDir,
+      `${batch.batchId}.json`
+    );
+    await unlinkWithRetry(pendingFile).catch((error) => {
+      this.logger?.warn("已同步批次清理失败，将在重试时幂等跳过", {
+        projectId: binding.projectId,
+        batchId: batch.batchId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
     this.logger?.info("实时任务变化已同步", {
       projectId: binding.projectId,
       batchId: batch.batchId,

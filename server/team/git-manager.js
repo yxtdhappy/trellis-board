@@ -570,7 +570,7 @@ export function createGitManager({
     return withProjectAuth(project, async (auth) => {
       const cwd = await fetchProjectWithAuth(project, auth);
       const dirty = await runGit(
-        ["status", "--porcelain=v1", "--untracked-files=all"],
+        ["status", "--porcelain=v1", "--untracked-files=normal"],
         { cwd }
       );
       const dirtyPaths = dirty.stdout.trim();

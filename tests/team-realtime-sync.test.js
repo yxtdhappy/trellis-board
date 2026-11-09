@@ -756,6 +756,103 @@ test("实时批次按文件版本广播，幂等重试不会重复写", async (t
   );
 });
 
+test("实时投影目录位于系统临时区，幂等重放不重复物化且可重试 Windows 重命名", async (t) => {
+  const { root, runtime } = await startRuntime(t);
+  seedTeam(runtime);
+  const owner = await makeUser(runtime, "materialize-owner", "t-live", "member");
+  const writer = await makeUser(runtime, "materialize-writer", "t-live", "member");
+  const { repoPath, initial } = seedProject(runtime, root, owner, writer);
+  const project = {
+    id: "p-live",
+    name: "实时项目",
+    path: repoPath,
+    syncBranch: "main"
+  };
+  await runtime.services.taskIndex.scanAndIndexProject(project, { force: true });
+  const agent = await enroll(runtime, "materialize-owner");
+  const heartbeat = await bindRealtimeAgent(runtime, agent);
+  assert.equal(heartbeat.status, 200);
+  fs.mkdirSync(path.join(repoPath, ".git"), { recursive: true });
+  fs.writeFileSync(
+    path.join(repoPath, ".git", "HEAD"),
+    "ref: refs/heads/main\n"
+  );
+
+  const originalMkdtempSync = fs.mkdtempSync;
+  const originalRenameSync = fs.renameSync;
+  const originalRmSync = fs.rmSync;
+  const materialized = [];
+  let injectedRenameFailure = false;
+  let injectedCleanupFailure = false;
+  fs.mkdtempSync = (prefix, ...args) => {
+    const created = originalMkdtempSync(prefix, ...args);
+    materialized.push(created);
+    return created;
+  };
+  fs.renameSync = (source, target) => {
+    if (!injectedRenameFailure && String(source).endsWith(".tmp")) {
+      injectedRenameFailure = true;
+      const error = new Error("模拟 Windows 文件锁");
+      error.code = "EPERM";
+      throw error;
+    }
+    return originalRenameSync(source, target);
+  };
+  fs.rmSync = (target, options) => {
+    if (!injectedCleanupFailure && materialized.includes(target)) {
+      injectedCleanupFailure = true;
+      const error = new Error("模拟 Windows 临时目录锁");
+      error.code = "EPERM";
+      throw error;
+    }
+    return originalRmSync(target, options);
+  };
+  t.after(() => {
+    fs.mkdtempSync = originalMkdtempSync;
+    fs.renameSync = originalRenameSync;
+    fs.rmSync = originalRmSync;
+  });
+
+  const content = `${JSON.stringify({
+    ...initial,
+    title: "物化目录测试"
+  }, null, 2)}\n`;
+  const body = {
+    projectId: "p-live",
+    batchId: "batch-materialize-0001",
+    clientSequence: 1,
+    files: [liveUpsert(".trellis/tasks/task-live/task.json", content)]
+  };
+  const applied = await request(runtime, "/api/agent/live-changes", {
+    method: "POST",
+    origin: null,
+    agentCredential: agent.credential,
+    body
+  });
+  assert.equal(applied.status, 200, JSON.stringify(applied.body));
+  assert.equal(injectedRenameFailure, true);
+  assert.equal(injectedCleanupFailure, true);
+  assert.equal(materialized.length, 1);
+  assert.equal(
+    runtime.services.liveSync.board("p-live").projects[0].branch,
+    "main"
+  );
+  const relativeMaterialized = path.relative(repoPath, materialized[0]);
+  assert.ok(
+    relativeMaterialized.startsWith("..") || path.isAbsolute(relativeMaterialized)
+  );
+
+  const replay = await request(runtime, "/api/agent/live-changes", {
+    method: "POST",
+    origin: null,
+    agentCredential: agent.credential,
+    body
+  });
+  assert.equal(replay.status, 200, JSON.stringify(replay.body));
+  assert.equal(replay.body.replayed, true);
+  assert.equal(materialized.length, 1);
+});
+
 test("实时上报拒绝路径越界、无修改权限和未批准绑定", async (t) => {
   const { root, runtime } = await startRuntime(t);
   seedTeam(runtime);
