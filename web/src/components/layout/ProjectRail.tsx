@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { FolderGit2, LockKeyhole, Plus, RefreshCw } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 
 type Project = {
@@ -8,6 +9,8 @@ type Project = {
   syncBranch?: string | null
   teamName?: string | null
 }
+
+type LiveSyncStatus = 'pending' | 'syncing' | 'ready' | 'error'
 
 type LocalAssociation = {
   projectId: string
@@ -19,11 +22,20 @@ type LocalAssociation = {
   readOnly: boolean
   lastErrorCode: string | null
   lastError: string | null
+  liveSyncStatus: LiveSyncStatus
+  liveSyncError: string | null
 }
 
 type SidecarStatus = {
   running: boolean
   paused: boolean
+}
+
+type ProjectAssociationView = {
+  label: string
+  detail: string | null
+  dotClassName: string
+  textClassName: string
 }
 
 type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
@@ -44,6 +56,10 @@ function tauriInvoke(): TauriInvoke | null {
     __TAURI__?: { core?: { invoke?: TauriInvoke } }
   }
   return runtime.__TAURI__?.core?.invoke || null
+}
+
+function normalizeLiveSyncStatus(value: unknown): LiveSyncStatus {
+  return value === 'syncing' || value === 'ready' || value === 'error' ? value : 'pending'
 }
 
 function normalizeAssociation(value: unknown): LocalAssociation | null {
@@ -68,6 +84,11 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
     readOnly: record.readOnly === true,
     lastErrorCode: typeof record.lastErrorCode === 'string' ? record.lastErrorCode : null,
     lastError: typeof record.lastError === 'string' ? record.lastError : null,
+    liveSyncStatus: normalizeLiveSyncStatus(record.liveSyncStatus),
+    liveSyncError:
+      typeof record.liveSyncError === 'string' && record.liveSyncError.trim()
+        ? record.liveSyncError.trim()
+        : null,
   }
 }
 
@@ -86,6 +107,89 @@ function normalizeSidecarStatus(value: unknown): SidecarStatus | null {
     return null
   }
   return { running: record.running, paused: record.paused }
+}
+
+function associationErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  return message.trim() || '本地项目关联失败，请检查仓库和同步分支后重试。'
+}
+
+function projectAssociationView(
+  association: LocalAssociation | undefined,
+  associating: boolean,
+): ProjectAssociationView {
+  if (associating) {
+    return {
+      label: '关联中 · 正在校验本地仓库',
+      detail: null,
+      dotClassName: 'bg-chart-3 animate-pulse',
+      textClassName: 'text-muted-foreground',
+    }
+  }
+  if (!association) {
+    return {
+      label: '未关联 · 关联本地仓库',
+      detail: null,
+      dotClassName: 'bg-muted-foreground/40',
+      textClassName: 'text-muted-foreground',
+    }
+  }
+  if (association.status !== 'approved') {
+    const error =
+      association.lastError?.trim() || association.lastErrorCode?.trim() || '本地关联已失效'
+    return {
+      label: `关联失效 · ${error}`,
+      detail: error,
+      dotClassName: 'bg-destructive',
+      textClassName: 'text-destructive',
+    }
+  }
+  if (association.readOnly) {
+    if (association.liveSyncStatus === 'error') {
+      return {
+        label: '只读已关联 · 同步异常，等待重试',
+        detail: association.liveSyncError || '等待客户端自动重试。',
+        dotClassName: 'bg-destructive',
+        textClassName: 'text-destructive',
+      }
+    }
+    return {
+      label: '只读已关联 · 不同步本地修改',
+      detail: null,
+      dotClassName: 'bg-muted-foreground',
+      textClassName: 'text-muted-foreground',
+    }
+  }
+  switch (association.liveSyncStatus) {
+    case 'syncing':
+      return {
+        label: '已关联 · 正在同步已有任务',
+        detail: null,
+        dotClassName: 'bg-primary animate-pulse',
+        textClassName: 'text-muted-foreground',
+      }
+    case 'ready':
+      return {
+        label: '已关联 · 同步正常',
+        detail: null,
+        dotClassName: 'bg-primary',
+        textClassName: 'text-muted-foreground',
+      }
+    case 'error':
+      return {
+        label: '已关联 · 同步异常，等待重试',
+        detail: association.liveSyncError || '等待客户端自动重试。',
+        dotClassName: 'bg-destructive',
+        textClassName: 'text-destructive',
+      }
+    default:
+      return {
+        label: '已关联 · 等待后台同步',
+        detail: null,
+        dotClassName: 'bg-chart-3',
+        textClassName: 'text-muted-foreground',
+      }
+  }
 }
 
 export function ProjectRail({
@@ -146,44 +250,40 @@ export function ProjectRail({
   async function associate(project: Project) {
     if (!invoke || associating) return
     if (!project.syncBranch) {
-      setAssociationError('服务端未返回项目同步分支，请刷新后重试。')
+      const message = '服务端未返回项目同步分支，请刷新后重试。'
+      setAssociationError(message)
+      toast.error(message)
       return
     }
     setAssociationError('')
     setAssociating(project.id)
+    const toastId = toast.loading('正在关联本地项目…')
     try {
       const result = await invoke('associate_local_project', {
         projectId: project.id,
         syncBranch: project.syncBranch,
       })
-      const association = normalizeAssociation(result)
-      if (association) {
-        setAssociations((currentMap) => {
-          const next = new Map(currentMap)
-          next.set(association.projectId, association)
-          return next
-        })
-      } else {
-        const refreshed = await invoke('list_local_associations')
-        setAssociations(
-          new Map(normalizeAssociations(refreshed).map((item) => [item.projectId, item])),
-        )
+      if (result == null) {
+        toast.dismiss(toastId)
+        return
       }
+      const association = normalizeAssociation(result)
+      if (!association) {
+        throw new Error('sidecar 返回了无效的项目关联结果，请重试。')
+      }
+      setAssociations((currentMap) => {
+        const next = new Map(currentMap)
+        next.set(association.projectId, association)
+        return next
+      })
+      toast.success('本地项目关联成功，已有任务正在同步。', { id: toastId })
     } catch (error) {
-      setAssociationError(
-        error instanceof Error ? error.message : String(error || '本地项目关联失败'),
-      )
+      const message = associationErrorMessage(error)
+      setAssociationError(message)
+      toast.error(message, { id: toastId })
     } finally {
       setAssociating(null)
     }
-  }
-
-  function localLabel(association: LocalAssociation | undefined) {
-    if (!association) return null
-    if (association.status !== 'approved') {
-      return association.lastError || '本地关联已失效'
-    }
-    return association.readOnly ? `${association.displayName} · 只读` : association.displayName
   }
 
   return (
@@ -205,7 +305,8 @@ export function ProjectRail({
       </button>
       {projects.map((project) => {
         const association = associations.get(project.id)
-        const label = localLabel(association)
+        const isAssociating = associating === project.id
+        const view = invoke ? projectAssociationView(association, isAssociating) : null
         return (
           <div
             key={project.id}
@@ -220,19 +321,22 @@ export function ProjectRail({
               onClick={() => onSelect(project.id)}
               className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
               title={project.name}
+              aria-busy={isAssociating}
             >
-              <span className="size-1.5 shrink-0 rounded-full bg-chart-3" aria-hidden="true" />
+              <span
+                className={`size-1.5 shrink-0 rounded-full ${view?.dotClassName || 'bg-chart-3'}`}
+                aria-hidden="true"
+              />
               <span className="min-w-0">
                 <span className="block truncate text-xs font-medium">{project.name}</span>
-                {label ? (
+                {view ? (
                   <span
-                    className={
-                      association?.status === 'approved'
-                        ? 'block truncate text-[9.5px] text-muted-foreground'
-                        : 'block truncate text-[9.5px] text-destructive'
-                    }
+                    className={`block truncate text-[9.5px] ${view.textClassName}`}
+                    title={view.detail || view.label}
+                    aria-live="polite"
                   >
-                    {label}
+                    {view.label}
+                    {view.detail ? <span className="sr-only">，详情：{view.detail}</span> : null}
                   </span>
                 ) : null}
               </span>
@@ -241,25 +345,26 @@ export function ProjectRail({
               association?.status === 'approved' ? (
                 <span
                   className="mr-1.5 flex size-6 shrink-0 items-center justify-center text-muted-foreground"
-                  title={label || '本地已关联'}
+                  title={view?.label || '本地已关联'}
                 >
                   {association.readOnly ? (
-                    <LockKeyhole className="size-3.5" />
+                    <LockKeyhole className="size-3.5" aria-hidden="true" />
                   ) : (
-                    <FolderGit2 className="size-3.5" />
+                    <FolderGit2 className="size-3.5" aria-hidden="true" />
                   )}
                 </span>
               ) : (
                 <button
                   type="button"
                   className="mr-1.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
-                  aria-label={`关联 ${project.name} 的本地 Git 仓库`}
-                  title="关联本地 Git 仓库"
+                  aria-label={`${association ? '重新关联' : '关联'} ${project.name} 的本地 Git 仓库`}
+                  title={association ? '重新关联本地 Git 仓库' : '关联本地 Git 仓库'}
                   disabled={associating !== null}
                   onClick={() => void associate(project)}
                 >
                   <FolderGit2
-                    className={associating === project.id ? 'size-3.5 animate-pulse' : 'size-3.5'}
+                    className={isAssociating ? 'size-3.5 animate-pulse' : 'size-3.5'}
+                    aria-hidden="true"
                   />
                 </button>
               )

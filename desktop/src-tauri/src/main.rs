@@ -378,6 +378,8 @@ async fn associate_local_project(
         &config::agent_root(),
     )
     .await?;
+    // 关联后立即重启 sidecar，触发首次 full pull 和本地任务补传。
+    sidecar::restart(&app);
     Ok(Some(association))
 }
 

@@ -66,6 +66,14 @@ SSE：`live.changed`、`task.live.overridden`。
 - 远端写入用 `(absolutePath, sha256)` 抑制 watcher 自触发；摘要变化时必须照常上传。
 - Git 扫描后逐文件比较摘要；只有一致内容才删除覆盖行。仍有覆盖行时必须重新投影。
 - `read_only` binding 可以拉取和落盘，但 preflight/upload 返回 403。
+- 每个 approved binding 在进程启动或绑定签名变化时先执行 `afterRevision=0` 的 full pull，
+  再补传关联前已存在的本地变化；初始化与 watcher 批次共用项目串行队列。
+- 首次补传候选来自 `git diff --name-only -z HEAD -- .trellis` 与
+  `git ls-files --others --exclude-standard -z -- .trellis`，并单独检查被忽略但存在的
+  `.trellis/.developer`；与 full pull 摘要一致的路径不得重复上传。
+- binding 的 `liveSyncStatus` 取值为 `pending|syncing|ready|error`。初始化、运行期上传和
+  pending 冲刷共用该状态；初始化仍失败时，其他 pending 上传成功不能把项目误写为 `ready`。
+- 初始化与 pending 冲刷重试必须单飞；同一绑定已有重试进行中时，后续触发复用同一 Promise。
 - 非责任人确认返回 409 `ASSIGNEE_CONFIRMATION_REQUIRED`；继续保留责任人，接管形成新的实时 revision，
   原责任人通过 `task.live.overridden` 收到通知。
 - 原责任人通知不能依赖其是否绑定 Agent。每次覆盖同时写入 `target_agent_id=NULL` 的用户级事件，
@@ -102,7 +110,8 @@ SSE：`live.changed`、`task.live.overridden`。
   Git 收敛、继续与接管审计、`clientSequence` 乱序防回退、精确任务标记、无 Agent 的浏览器通知，
   以及两个真实 `AgentLiveSync` 经 HTTP/SSE/watcher 连续同步 20 次的 P95 ≤3 秒断言。
 - `tests/desktop-realtime-apply.test.js`：冲突备份、自触发抑制、真实编辑继续上报、待确认批次、
-  继续上传、一键复原、本地写回和同一项目批次串行。
+  继续上传、一键复原、本地写回、同一项目批次串行、首次 full pull 后续传、
+  `read_only` 不上传、重启幂等、重试单飞和状态恢复。
 - `tests/team-events.test.js`：`live.changed` 不回发来源设备。
 - `tests/desktop-package.test.js`：`live-control` capability、Rust 命令和 sidecar 控制窗口接线。
 - Windows E2E：两个真实客户端完成 P95 ≤3 秒、并发覆盖、备份复原、断线补偿和责任人三态确认。

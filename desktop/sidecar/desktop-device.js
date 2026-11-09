@@ -507,6 +507,8 @@ export function readLocalAssociations(root) {
       teamId: binding.teamId,
       status: binding.syncStatus,
       readOnly: binding.readOnly === true,
+      liveSyncStatus: binding.liveSyncStatus,
+      liveSyncError: binding.liveSyncError,
       lastErrorCode: binding.lastErrorCode,
       lastError: binding.lastError,
     })),

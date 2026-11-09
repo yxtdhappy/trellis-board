@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,6 +13,38 @@ use tauri_plugin_shell::ShellExt;
 const MAX_RESTARTS: u32 = 5;
 const STABLE_RUN: Duration = Duration::from_secs(60);
 const SIDECAR_NAME: &str = "trellis-agent";
+
+fn default_live_sync_status() -> String {
+    "pending".to_string()
+}
+
+fn live_id_is_safe(value: &str) -> bool {
+    (8..=128).contains(&value.len())
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')
+        })
+}
+
+fn control_is_stale(control: &Value, now_ms: u128, pending_dir: &Path) -> bool {
+    if control
+        .get("expiresAtEpochMs")
+        .and_then(Value::as_u64)
+        .is_some_and(|expires_at| u128::from(expires_at) <= now_ms)
+    {
+        return true;
+    }
+    if control.get("type").and_then(Value::as_str) != Some("assignment_warning") {
+        return false;
+    }
+    let Some(pending_id) = control.get("pendingId").and_then(Value::as_str) else {
+        return true;
+    };
+    !live_id_is_safe(pending_id) || !pending_dir.join(format!("{pending_id}.json")).is_file()
+}
 
 #[derive(Default)]
 pub struct SidecarState {
@@ -49,6 +81,9 @@ pub struct LocalAssociation {
     pub team_id: Option<String>,
     pub status: String,
     pub read_only: bool,
+    #[serde(default = "default_live_sync_status")]
+    pub live_sync_status: String,
+    pub live_sync_error: Option<String>,
     pub last_error_code: Option<String>,
     pub last_error: Option<String>,
 }
@@ -71,6 +106,8 @@ struct AssociationSummary {
     team_id: Option<String>,
     status: Option<String>,
     read_only: Option<bool>,
+    live_sync_status: Option<String>,
+    live_sync_error: Option<String>,
     error: Option<String>,
     code: Option<String>,
 }
@@ -209,11 +246,26 @@ fn show_control(app: &AppHandle) {
 }
 
 pub fn pending_control(app: &AppHandle) -> Option<Value> {
-    app.state::<SidecarState>()
+    let pending_dir = crate::config::agent_root().join("pending-live");
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let next = app
+        .state::<SidecarState>()
         .pending_control
         .lock()
         .ok()
-        .and_then(|value| value.front().cloned())
+        .and_then(|mut pending| {
+            pending.retain(|item| !control_is_stale(item, now_ms, &pending_dir));
+            pending.front().cloned()
+        });
+    if next.is_none() {
+        if let Some(window) = app.get_webview_window("live-control") {
+            let _ = window.hide();
+        }
+    }
+    next
 }
 
 fn pop_control(app: &AppHandle) -> bool {
@@ -553,6 +605,11 @@ pub async fn associate(
             .status
             .ok_or_else(|| "关联结果缺少状态".to_string())?,
         read_only: summary.read_only.unwrap_or(false),
+        live_sync_status: summary
+            .live_sync_status
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(default_live_sync_status),
+        live_sync_error: summary.live_sync_error.filter(|value| !value.is_empty()),
         last_error_code: None,
         last_error: None,
     })
@@ -581,4 +638,68 @@ pub async fn list_associations(
             .unwrap_or_else(|| "无法读取本地项目关联".to_string()));
     }
     Ok(response.associations.unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_association_keeps_old_sidecar_compatibility() {
+        let association: LocalAssociation = serde_json::from_value(serde_json::json!({
+            "projectId": "project-1",
+            "repoPath": "D:\\repo",
+            "displayName": "repo",
+            "branchName": "main",
+            "teamId": "team-1",
+            "status": "approved",
+            "readOnly": false,
+            "lastErrorCode": null,
+            "lastError": null
+        }))
+        .expect("解析旧 sidecar 关联结果");
+        assert_eq!(association.live_sync_status, "pending");
+        assert_eq!(association.live_sync_error, None);
+    }
+
+    #[test]
+    fn expired_control_is_stale() {
+        let control = serde_json::json!({
+            "type": "assignment_warning",
+            "pendingId": "warning-123",
+            "expiresAtEpochMs": 100
+        });
+        assert!(control_is_stale(&control, 100, Path::new("missing")));
+    }
+
+    #[test]
+    fn missing_pending_file_is_stale() {
+        let control = serde_json::json!({
+            "type": "assignment_warning",
+            "pendingId": "warning-123",
+            "expiresAtEpochMs": 200
+        });
+        assert!(control_is_stale(&control, 100, Path::new("missing")));
+    }
+
+    #[test]
+    fn current_pending_control_is_kept() {
+        let pending_dir = std::env::temp_dir().join(format!(
+            "trellis-control-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&pending_dir).expect("创建测试目录");
+        std::fs::write(pending_dir.join("warning-123.json"), "{}").expect("写入测试事件");
+        let control = serde_json::json!({
+            "type": "assignment_warning",
+            "pendingId": "warning-123",
+            "expiresAtEpochMs": 200
+        });
+        assert!(!control_is_stale(&control, 100, &pending_dir));
+        std::fs::remove_dir_all(pending_dir).expect("清理测试目录");
+    }
 }

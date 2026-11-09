@@ -19,8 +19,35 @@ const PROBE_WINDOW_MS = 60_000
 const PROBE_LIMIT_PER_WINDOW = 5
 const PROBE_GLOBAL_CONCURRENCY = 4
 const SSH_TRUST_TTL_MS = 5 * 60_000
+const PROXY_ENV_KEYS = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'all_proxy',
+  'no_proxy',
+]
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
 const ASKPASS_HELPER = path.join(serverDir, 'git-askpass.js')
+
+export function gitEnvironment(extra = {}) {
+  const proxyEnvironment = {}
+  for (const key of PROXY_ENV_KEYS) {
+    if (process.env[key]) proxyEnvironment[key] = process.env[key]
+  }
+  return minimalEnvironment({
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'Never',
+    GIT_SSH_COMMAND: SSH_COMMAND,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
+    PYTHONUTF8: '1',
+    ...extra,
+    ...proxyEnvironment,
+  })
+}
 
 function isLoopback(hostname) {
   const host = String(hostname || '').toLowerCase()
@@ -205,18 +232,6 @@ export function createGitManager({ db, config, dataDir, credentialService }) {
       })
       .catch(() => {})
     return run
-  }
-
-  function gitEnvironment(extra = {}) {
-    return minimalEnvironment({
-      GIT_TERMINAL_PROMPT: '0',
-      GCM_INTERACTIVE: 'Never',
-      GIT_SSH_COMMAND: SSH_COMMAND,
-      GIT_CONFIG_NOSYSTEM: '1',
-      GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
-      PYTHONUTF8: '1',
-      ...extra,
-    })
   }
 
   function baseConfig(extra = []) {

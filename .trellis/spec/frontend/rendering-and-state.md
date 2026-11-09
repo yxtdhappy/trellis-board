@@ -37,6 +37,11 @@
   任务查询或让前端自行授予项目角色。
 - Tauri 桌面端每 3 秒调用只读 `desktop_sidecar_status`，按 `{ running, paused }` 显示真实后台同步
   状态。普通浏览器没有 `window.__TAURI__`，不显示本地关联和 sidecar 状态入口。
+- Tauri 项目行必须常驻展示关联状态：未关联、关联中、等待后台同步、正在同步已有任务、同步正常、
+  只读已关联或关联失效；`liveSyncStatus=error` 时显示同步异常并通过可见辅助文本或 `title`
+  展示脱敏后的 `liveSyncError`。
+- 点击关联后先进入项目级 loading 并禁用全部关联按钮；目录选择取消只结束 loading，不显示成功或失败。
+  成功和失败使用 Sonner 明确提示，失败后保留重新关联入口。
 - “团队管理”入口只属于普通浏览器管理界面；Tauri 客户端即使账号具备管理权限也不显示该入口，
   浏览器仍使用 `/admin.html`。
 - 任务卡对 `liveRevision > 0` 显示“实时未入 Git”。任务详情和单项目 Board 必须优先使用服务端

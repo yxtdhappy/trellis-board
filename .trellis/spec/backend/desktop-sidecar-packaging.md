@@ -72,6 +72,10 @@ restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
 - 账号密码只通过 sidecar stdin 的 JSON 对象传入；Session Cookie、设备和设备凭证不落盘。
 - `desktop/sidecar/workspace-init.js` 不属于桌面产品路径；workspace 能力只保留给 Agent CLI。
 - 本地项目关联复用 `agent/git-sync.js` 的 `inspectRepository()`，不另写 Git 身份校验。
+- 本地关联 DTO 必须透传 `liveSyncStatus`（`pending|syncing|ready|error`）和
+  `liveSyncError`；旧 sidecar 缺少字段时 Tauri/前端按 `pending + null` 兼容。
+- Tauri 关联命令在服务端批准并持久化本地 binding 后重启一次 sidecar，触发首次 full pull；
+  用户取消目录选择时返回空结果且不得重启或显示失败。
 - 新绑定的 immediate heartbeat 直接使用服务端结果；绝不把 pending 状态当作桌面审批流程。
 - 已存在的绑定再次心跳时，分支或远端身份校验失败必须转为 `rejected` 并停止命令投递；
   修正本地分支或远端后的合法心跳可恢复为 `approved`。
@@ -120,10 +124,12 @@ restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
 - `tests/desktop-device-auth.test.js`：设备注册必须注入 credential store。
 - `tests/desktop-device-auth.test.js`：账号密码登录、Cookie 严格解析、同账号设备复用和退出登录。
 - `tests/desktop-association.test.js`：本地关联保存服务端 approved/readOnly 状态。
+- `tests/desktop-association.test.js`：关联结果和本地列表透传实时同步状态字段。
 - `tests/desktop-association.test.js`：服务端拒绝关联时回滚本地绑定。
 - `tests/team-isolation.test.js`：只读成员关联后任务写操作被拒绝，Git 身份失配会转为 rejected。
 - `tests/team-isolation.test.js`：普通团队成员能看到关联候选项目，但任务项目列表仍为空。
-- `tests/desktop-package.test.js`：远程 capability 只允许关联命令、关联列表和 sidecar 状态。
+- `tests/desktop-package.test.js`：远程 capability 只允许关联命令、关联列表和 sidecar 状态；
+  Rust DTO 对旧 sidecar 缺省字段保持兼容，关联成功后只重启既有 sidecar。
 - Windows CI：构建后执行 sidecar `version`，断言退出码 0 和 `protocolVersion === 2`。
 - Windows CI 必须在 `tauri build` 前通过 GitHub CLI/API 填充 `%LOCALAPPDATA%\tauri\NSIS`，校验
   NSIS zip 与 `nsis_tauri_utils.dll` 的固定 SHA1；Tauri 使用的 GitHub Releases 直链可能返回 504。

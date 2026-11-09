@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/11-09-project-association-initial-sync/prd.md","reason":"逐项核对首次同步、冲突、loading、成功失败和项目状态验收标准"}
+{"file":".trellis/tasks/11-09-project-association-initial-sync/implement.md","reason":"按实施顺序核对改动范围、测试和最终验证"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"检查服务端优先、摘要抑制、幂等、read_only 和冲突恢复"}
+{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"检查关联 DTO、heartbeat 字段保留和 sidecar/Tauri 发布一致性"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 Node 测试覆盖、文件边界和错误处理"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查类型、可访问性、暗色模式和真实页面验收"}

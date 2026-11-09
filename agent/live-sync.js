@@ -4,6 +4,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { TextDecoder } from 'node:util'
 import { AgentApiClient } from './api.js'
+import { safeErrorMessage } from './protocol.js'
 import { createTrellisWatcher } from '../shared/trellis-watcher.js'
 
 const MAX_FILE_BYTES = 1024 * 1024
@@ -15,12 +16,40 @@ const RETRY_MS = 5_000
 const UNLINK_RETRY_DELAYS_MS = [25, 50, 100, 200, 400]
 const TRANSIENT_FILE_LOCK_CODES = new Set(['EACCES', 'EBUSY', 'EPERM'])
 const BACKUP_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+const GIT_PATH_MAX_BUFFER = 16 * 1024 * 1024
 const SAFE_LOCAL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/
 const TEXT_EXTENSIONS = new Set(['.json', '.jsonl', '.md', '.txt', '.yaml', '.yml'])
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex')
+}
+
+function bindingSignature(binding) {
+  return JSON.stringify([
+    binding.projectId,
+    binding.localRepoKey,
+    path.resolve(binding.repoPath),
+    binding.serverBindingId,
+  ])
+}
+
+function assignmentWarningControl(pending) {
+  const expiresAt = pending.warning?.expiresAt || null
+  const expiresAtEpochMs = expiresAt == null ? null : Date.parse(expiresAt)
+  return {
+    type: 'assignment_warning',
+    pendingId: pending.batchId,
+    projectId: pending.projectId,
+    task: pending.warning?.task,
+    assignee: pending.warning?.assignee,
+    expiresAt,
+    expiresAtEpochMs: Number.isFinite(expiresAtEpochMs) ? expiresAtEpochMs : null,
+  }
+}
+
+function liveSyncFailure(error) {
+  return `实时同步失败：${safeErrorMessage(error)}`.slice(0, 500)
 }
 
 function sleep(ms) {
@@ -216,13 +245,16 @@ export class AgentLiveSync {
     this.watch = options.watch
     this.debounceMs = options.debounceMs ?? WATCH_DEBOUNCE_MS
     this.expectedWrites = new Map()
+    this.approvedBindings = new Map()
     this.bindings = new Map()
+    this.initializing = new Map()
     this.pullInFlight = new Map()
     this.projectQueues = new Map()
     this.liveCursors = {}
     this.clientSequence = Date.now()
     this.watcher = null
     this.retryTimer = null
+    this.retryInFlight = null
     this.closed = false
   }
 
@@ -231,6 +263,7 @@ export class AgentLiveSync {
     await this.cleanupBackups()
     const { config } = await this.loadContext()
     this.updateBindings(config.bindings)
+    await this._waitForInitializations()
     await this._emitPendingDecisions()
     this.retryTimer = setInterval(() => {
       void this.retryPendingUploads()
@@ -267,34 +300,30 @@ export class AgentLiveSync {
         await fs.unlink(file).catch(() => {})
         continue
       }
-      this.emitControl({
-        type: 'assignment_warning',
-        pendingId: pending.batchId,
-        projectId: pending.projectId,
-        task: pending.warning?.task,
-        assignee: pending.warning?.assignee,
-        expiresAt: pending.warning?.expiresAt,
-      })
+      this.emitControl(assignmentWarningControl(pending))
     }
   }
 
   updateBindings(bindings) {
     if (this.closed) return
+    const approved = new Map()
     const next = new Map()
     for (const binding of bindings || []) {
-      if (binding.syncStatus === 'approved' && binding.teamId && binding.readOnly !== true) {
-        next.set(binding.projectId, binding)
+      if (binding.syncStatus !== 'approved') continue
+      approved.set(binding.projectId, binding)
+      if (binding.readOnly !== true) next.set(binding.projectId, binding)
+    }
+    const previousApproved = this.approvedBindings
+    const signature = [...next.values()].map(bindingSignature).sort().join('|')
+    const previous = [...this.bindings.values()].map(bindingSignature).sort().join('|')
+    this.approvedBindings = approved
+    this.bindings = next
+    for (const binding of approved.values()) {
+      const previousBinding = previousApproved.get(binding.projectId)
+      if (!previousBinding || bindingSignature(previousBinding) !== bindingSignature(binding)) {
+        void this._enqueueInitialization(binding)
       }
     }
-    const signature = [...next.values()]
-      .map((binding) => `${binding.projectId}:${binding.repoPath}:${binding.serverBindingId}`)
-      .sort()
-      .join('|')
-    const previous = [...this.bindings.values()]
-      .map((binding) => `${binding.projectId}:${binding.repoPath}:${binding.serverBindingId}`)
-      .sort()
-      .join('|')
-    this.bindings = next
     if (signature === previous && this.watcher) return
     this.watcher?.close()
     this.watcher = createTrellisWatcher({
@@ -312,6 +341,12 @@ export class AgentLiveSync {
         this.logger?.warn('本地实时监听失败', error)
       },
     })
+  }
+
+  async _waitForInitializations() {
+    while (this.initializing.size) {
+      await Promise.allSettled(this.initializing.values())
+    }
   }
 
   async _loadLiveCursors() {
@@ -345,6 +380,188 @@ export class AgentLiveSync {
     )
   }
 
+  async _setBindingLiveSyncState(binding, status, error = null) {
+    const signature = bindingSignature(binding)
+    const liveSyncError = status === 'error' ? liveSyncFailure(error) : null
+    try {
+      await this.store.updateConfig((config) => {
+        const index = config.bindings.findIndex(
+          (item) => item.projectId === binding.projectId && bindingSignature(item) === signature,
+        )
+        if (index < 0) return undefined
+        const current = config.bindings[index]
+        if (current.liveSyncStatus === status && current.liveSyncError === liveSyncError) {
+          return undefined
+        }
+        const bindings = [...config.bindings]
+        bindings[index] = {
+          ...current,
+          liveSyncStatus: status,
+          liveSyncError,
+        }
+        return { ...config, bindings }
+      })
+    } catch (updateError) {
+      this.logger?.warn('保存实时同步状态失败', updateError)
+    }
+    const update = (item) =>
+      item.projectId === binding.projectId && bindingSignature(item) === signature
+        ? { ...item, liveSyncStatus: status, liveSyncError }
+        : item
+    this.approvedBindings = new Map(
+      [...this.approvedBindings].map(([projectId, item]) => [projectId, update(item)]),
+    )
+    this.bindings = new Map(
+      [...this.bindings].map(([projectId, item]) => [projectId, update(item)]),
+    )
+  }
+
+  _isCurrentBinding(binding) {
+    const current = this.approvedBindings.get(binding.projectId)
+    return Boolean(current && bindingSignature(current) === bindingSignature(binding))
+  }
+
+  _queueProjectOperation(projectId, operation) {
+    const previous = this.projectQueues.get(projectId) || Promise.resolve()
+    const current = previous.catch(() => {}).then(operation)
+    this.projectQueues.set(projectId, current)
+    current
+      .finally(() => {
+        if (this.projectQueues.get(projectId) === current) {
+          this.projectQueues.delete(projectId)
+        }
+      })
+      .catch(() => {})
+    return current
+  }
+
+  _enqueueInitialization(binding) {
+    const signature = bindingSignature(binding)
+    const existing = this.initializing.get(signature)
+    if (existing) return existing
+    const current = this._queueProjectOperation(binding.projectId, () =>
+      this._initializeBinding(binding),
+    )
+    const tracked = current.finally(() => {
+      if (this.initializing.get(signature) === tracked) {
+        this.initializing.delete(signature)
+      }
+    })
+    this.initializing.set(signature, tracked)
+    tracked.catch(() => {})
+    return tracked
+  }
+
+  async _initializeBinding(binding) {
+    if (this.closed || !this._isCurrentBinding(binding)) return
+    await this._setBindingLiveSyncState(binding, 'syncing')
+    try {
+      const { config, api } = await this.loadContext()
+      const current = config.bindings.find(
+        (item) =>
+          item.projectId === binding.projectId &&
+          item.syncStatus === 'approved' &&
+          bindingSignature(item) === bindingSignature(binding),
+      )
+      if (!current) return
+      const payload = await api.fetchLiveFiles({
+        projectId: current.projectId,
+        afterRevision: 0,
+      })
+      await this._applyRemoteFiles(current, payload)
+      if (current.readOnly !== true) {
+        const remotePaths = new Set(
+          (Array.isArray(payload?.files) ? payload.files : []).map((file) =>
+            String(file.path || ''),
+          ),
+        )
+        const pendingPaths = await this._pendingLivePaths(current.projectId)
+        const files = []
+        for (const relativePath of await this._dirtyLivePaths(current)) {
+          if (remotePaths.has(relativePath) || pendingPaths.has(relativePath)) continue
+          const descriptor = await this._fileDescriptor(current, relativePath, {
+            strict: true,
+          })
+          if (descriptor) files.push(descriptor)
+        }
+        for (const batchFiles of splitLiveBatches(current.projectId, files)) {
+          if (this.closed || !this._isCurrentBinding(binding)) return
+          await this._submitOrWait(current, batchFiles)
+        }
+      }
+      if (this._isCurrentBinding(binding)) {
+        await this._setBindingLiveSyncState(binding, 'ready')
+      }
+    } catch (error) {
+      this.logger?.warn('首次实时同步失败，等待重试', error)
+      await this._setBindingLiveSyncState(binding, 'error', error)
+    }
+  }
+
+  async _dirtyLivePaths(binding) {
+    const [tracked, untracked] = await Promise.all([
+      this._gitPaths(binding, ['diff', '--name-only', '-z', 'HEAD', '--', '.trellis']),
+      this._gitPaths(binding, [
+        'ls-files',
+        '--others',
+        '--exclude-standard',
+        '-z',
+        '--',
+        '.trellis',
+      ]),
+    ])
+    const paths = new Set(
+      [...tracked, ...untracked]
+        .map((value) => String(value || '').replaceAll('\\', '/'))
+        .filter(isLivePath),
+    )
+    try {
+      await fs.lstat(safeProjectPath(binding.repoPath, '.trellis/.developer'))
+      paths.add('.trellis/.developer')
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+    return [...paths].sort()
+  }
+
+  _gitPaths(binding, args) {
+    const result = spawnSync('git', args, {
+      cwd: binding.repoPath,
+      encoding: 'buffer',
+      maxBuffer: GIT_PATH_MAX_BUFFER,
+      windowsHide: true,
+    })
+    if (result.error || result.status !== 0) {
+      throw new Error('Git 本地变化扫描失败')
+    }
+    return Buffer.from(result.stdout || [])
+      .toString('utf8')
+      .split('\0')
+      .filter(Boolean)
+  }
+
+  async _pendingLivePaths(projectId) {
+    let entries
+    try {
+      entries = await fs.readdir(this.store.paths.pendingLiveDir)
+    } catch (error) {
+      if (error?.code === 'ENOENT') return new Set()
+      throw error
+    }
+    const paths = new Set()
+    for (const name of entries) {
+      if (!name.endsWith('.json')) continue
+      const pending = await readJson(path.join(this.store.paths.pendingLiveDir, name), null)
+      if (pending?.projectId !== projectId || !Array.isArray(pending.files)) continue
+      if (pending.kind === 'decision' && pending.warning?.expiresAt <= new Date().toISOString()) {
+        await fs.unlink(path.join(this.store.paths.pendingLiveDir, name)).catch(() => {})
+        continue
+      }
+      for (const file of pending.files) paths.add(String(file.path || ''))
+    }
+    return paths
+  }
+
   async _loadExternalSuppressions() {
     const payload = await readJson(this.store.paths.liveSuppressionFile, null)
     if (payload?.schemaVersion !== 1 || !payload.entries) return
@@ -367,7 +584,8 @@ export class AgentLiveSync {
     return this.bindings.get(projectId) || null
   }
 
-  async _fileDescriptor(binding, trellisPath) {
+  async _fileDescriptor(binding, trellisPath, options = {}) {
+    const strict = options.strict === true
     if (!isLivePath(trellisPath)) return null
     const target = safeProjectPath(binding.repoPath, trellisPath)
     await assertNoSymlink(binding.repoPath, trellisPath)
@@ -375,11 +593,15 @@ export class AgentLiveSync {
     let content
     try {
       const stat = await fs.lstat(target)
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_FILE_BYTES) return null
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_FILE_BYTES) {
+        if (strict) throw new Error('实时文件不是普通文件或超过 1 MiB')
+        return null
+      }
       const bytes = await fs.readFile(target)
       try {
         content = utf8Decoder.decode(bytes)
       } catch {
+        if (strict) throw new Error('实时文件不是合法 UTF-8')
         this.logger?.warn('忽略非 UTF-8 实时文件', { path: trellisPath })
         return null
       }
@@ -423,17 +645,7 @@ export class AgentLiveSync {
   }
 
   _enqueueProject(projectId, paths) {
-    const previous = this.projectQueues.get(projectId) || Promise.resolve()
-    const current = previous.catch(() => {}).then(() => this._processProjectPaths(projectId, paths))
-    this.projectQueues.set(projectId, current)
-    current
-      .finally(() => {
-        if (this.projectQueues.get(projectId) === current) {
-          this.projectQueues.delete(projectId)
-        }
-      })
-      .catch(() => {})
-    return current
+    return this._queueProjectOperation(projectId, () => this._processProjectPaths(projectId, paths))
   }
 
   async _processProjectPaths(projectId, paths) {
@@ -450,18 +662,27 @@ export class AgentLiveSync {
       if (!files.length) return
     } catch (error) {
       this.logger?.warn('本地实时变化上报失败，稍后重试', error)
+      await this._setBindingLiveSyncState(binding, 'error', error)
       for (const batchFiles of splitLiveBatches(binding.projectId, files)) {
         await this._persistUpload(binding, batchFiles, null).catch(() => {})
       }
       return
     }
+    let failure = null
     for (const batchFiles of splitLiveBatches(binding.projectId, files)) {
       if (this.closed) return
       try {
         await this._submitOrWait(binding, batchFiles)
       } catch (error) {
+        failure ||= error
         this.logger?.warn('本地实时变化上报失败，稍后重试', error)
       }
+    }
+    if (this.closed) return
+    if (failure) {
+      await this._setBindingLiveSyncState(binding, 'error', failure)
+    } else {
+      await this._setBindingLiveSyncState(binding, 'ready')
     }
   }
 
@@ -512,18 +733,12 @@ export class AgentLiveSync {
           assignee: preflight.assignee,
           task: preflight.task,
           expiresAt: preflight.expiresAt,
+          expiresAtEpochMs: Date.parse(preflight.expiresAt),
           batchId: batch.batchId,
         },
       }
       await this._writePending(pending)
-      this.emitControl({
-        type: 'assignment_warning',
-        pendingId: pending.batchId,
-        projectId: binding.projectId,
-        task: preflight.task,
-        assignee: preflight.assignee,
-        expiresAt: preflight.expiresAt,
-      })
+      this.emitControl(assignmentWarningControl(pending))
       return
     }
     await this._uploadBatch(api, binding, batch, null)
@@ -554,13 +769,43 @@ export class AgentLiveSync {
     })
   }
 
+  async _retryErrorBindings() {
+    const retries = [...this.approvedBindings.values()]
+      .filter((binding) => binding.liveSyncStatus === 'error')
+      .map((binding) => this._enqueueInitialization(binding))
+    await Promise.allSettled(retries)
+    return new Set(
+      [...this.approvedBindings.values()]
+        .filter((binding) => binding.liveSyncStatus === 'error')
+        .map((binding) => binding.projectId),
+    )
+  }
+
   async retryPendingUploads() {
     if (this.closed) return
+    if (this.retryInFlight) return this.retryInFlight
+    const current = this._retryPendingUploads()
+    this.retryInFlight = current
+    try {
+      await current
+    } finally {
+      if (this.retryInFlight === current) {
+        this.retryInFlight = null
+      }
+    }
+  }
+
+  async _retryPendingUploads() {
+    const initializationErrors = await this._retryErrorBindings()
     let entries
     try {
       entries = await fs.readdir(this.store.paths.pendingLiveDir)
     } catch {
       return
+    }
+    const outcomes = new Map()
+    const recordOutcome = (projectId, success) => {
+      outcomes.set(projectId, (outcomes.get(projectId) ?? true) && success)
     }
     for (const name of entries) {
       if (!name.endsWith('.json')) continue
@@ -572,14 +817,7 @@ export class AgentLiveSync {
           await fs.unlink(file).catch(() => {})
           continue
         }
-        this.emitControl({
-          type: 'assignment_warning',
-          pendingId: pending.batchId,
-          projectId: pending.projectId,
-          task: pending.warning?.task,
-          assignee: pending.warning?.assignee,
-          expiresAt: pending.warning?.expiresAt,
-        })
+        this.emitControl(assignmentWarningControl(pending))
         continue
       }
       if (pending.kind !== 'upload') continue
@@ -589,6 +827,7 @@ export class AgentLiveSync {
         const { api } = await this.loadContext()
         try {
           await this._uploadBatch(api, binding, pending, null)
+          recordOutcome(binding.projectId, true)
           continue
         } catch (error) {
           if (error?.serverCode !== 'ASSIGNEE_CONFIRMATION_REQUIRED') {
@@ -611,24 +850,33 @@ export class AgentLiveSync {
               assignee: preflight.assignee,
               task: preflight.task,
               expiresAt: preflight.expiresAt,
+              expiresAtEpochMs: Date.parse(preflight.expiresAt),
               batchId: pending.batchId,
             },
           }
           await this.store.writeAtomic(file, `${JSON.stringify(next, null, 2)}\n`)
-          this.emitControl({
-            type: 'assignment_warning',
-            pendingId: pending.batchId,
-            projectId: binding.projectId,
-            task: preflight.task,
-            assignee: preflight.assignee,
-            expiresAt: preflight.expiresAt,
-          })
+          this.emitControl(assignmentWarningControl(next))
+          recordOutcome(binding.projectId, true)
           continue
         }
         await this._uploadBatch(api, binding, pending, null)
-      } catch {
+        recordOutcome(binding.projectId, true)
+      } catch (error) {
+        recordOutcome(binding.projectId, false)
+        this.logger?.warn('待重试实时变化上传失败', error)
         // 保留 pending 文件，下一轮继续。
       }
+    }
+    for (const [projectId, success] of outcomes) {
+      const binding = this._binding(projectId)
+      if (!binding) continue
+      if (initializationErrors.has(projectId)) continue
+      if (success && binding.liveSyncStatus === 'error') continue
+      await this._setBindingLiveSyncState(
+        binding,
+        success ? 'ready' : 'error',
+        success ? null : new Error('待重试实时变化上传失败'),
+      )
     }
   }
 
@@ -643,9 +891,11 @@ export class AgentLiveSync {
     }
   }
 
-  async pullProject(teamId, projectId) {
+  async pullProject(teamId, projectId, options = {}) {
     const previous = this.pullInFlight.get(projectId) || Promise.resolve()
-    const current = previous.catch(() => {}).then(() => this._pullProject(teamId, projectId))
+    const current = previous
+      .catch(() => {})
+      .then(() => this._pullProject(teamId, projectId, options))
     this.pullInFlight.set(projectId, current)
     try {
       return await current
@@ -656,7 +906,7 @@ export class AgentLiveSync {
     }
   }
 
-  async _pullProject(teamId, projectId) {
+  async _pullProject(teamId, projectId, options = {}) {
     const { config, api } = await this.loadContext()
     const binding = config.bindings.find(
       (item) =>
@@ -665,7 +915,7 @@ export class AgentLiveSync {
     if (!binding) return null
     const payload = await api.fetchLiveFiles({
       projectId,
-      afterRevision: this.liveCursors[projectId] || 0,
+      afterRevision: options.full === true ? 0 : this.liveCursors[projectId] || 0,
     })
     await this._applyRemoteFiles(binding, payload)
     return payload
@@ -764,7 +1014,8 @@ export class AgentLiveSync {
         backupId: backup.backupId,
         projectId: binding.projectId,
         revision,
-        taskKeys: taskKeysFromFiles(binding.projectId, files),
+        taskKeys: taskKeysFromFiles(binding.projectId, backup.files),
+        files: backup.files.map((file) => file.path),
         fileCount: backup.files.length,
         backupPath: path.join(this.store.paths.liveBackupsDir, binding.projectId, backup.backupId),
       })

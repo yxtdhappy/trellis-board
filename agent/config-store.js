@@ -105,6 +105,13 @@ export function validateConfig(config) {
     if (!['pending', 'approved', 'rejected', 'revoked'].includes(syncStatus)) {
       throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, `第 ${index + 1} 个绑定状态无效`)
     }
+    const liveSyncStatus = binding.liveSyncStatus ?? 'pending'
+    if (!['pending', 'syncing', 'ready', 'error'].includes(liveSyncStatus)) {
+      throw new AgentError(
+        AGENT_ERROR_CODE.CONFIG_INVALID,
+        `第 ${index + 1} 个绑定的实时同步状态无效`,
+      )
+    }
     return {
       localId: requireString(binding.localId, 'localId', 128),
       serverBindingId,
@@ -119,6 +126,8 @@ export function validateConfig(config) {
       allowFileRemote: binding.allowFileRemote === true,
       readOnly: binding.readOnly === true,
       syncStatus,
+      liveSyncStatus,
+      liveSyncError: optionalString(binding.liveSyncError, 'liveSyncError', 500),
       lastSyncedAt: optionalString(binding.lastSyncedAt, 'lastSyncedAt', 64),
       lastHead: optionalString(binding.lastHead, 'lastHead', 64),
       lastError: optionalString(binding.lastError, 'lastError', 500),

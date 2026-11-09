@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/11-09-project-association-initial-sync/prd.md","reason":"首次关联基线同步、服务端优先冲突和项目状态反馈的产品要求"}
+{"file":".trellis/tasks/11-09-project-association-initial-sync/design.md","reason":"跨 Agent、Tauri DTO 和 ProjectRail 的技术边界与数据流"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"实时文件、冲突备份、full pull、幂等和 watcher 串行契约"}
+{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"sidecar 关联命令、SEA 打包、Tauri DTO 和安装包同步要求"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Agent、Tauri、前端之间的数据流与路径契约"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"ProjectRail 状态来源、轮询、toast 和安全边界"}
