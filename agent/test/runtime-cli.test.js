@@ -174,7 +174,19 @@ test("CLI 配对和绑定不把凭证或绝对路径写入配置输出", async (
       const canonicalRepoPath = fs.realpathSync.native(repo.local);
       assert.equal(bound.bindings[0].repoPath, canonicalRepoPath);
       assert.equal(bound.bindings[0].localRepoKey.length, 64);
+      assert.equal(bound.bindings[0].liveSyncStatus, "pending");
+      assert.equal(bound.bindings[0].liveSyncError, null);
       assert.equal(output.stdoutText().includes(canonicalRepoPath), false);
+
+      const statusOutput = ioCapture();
+      const statusCode = await runCli(["status", "--json"], {
+        store,
+        io: statusOutput.io,
+      });
+      assert.equal(statusCode, CLI_EXIT_CODE.OK);
+      const status = JSON.parse(statusOutput.stdoutText());
+      assert.equal(status.bindings[0].liveSyncStatus, "pending");
+      assert.equal(status.bindings[0].liveSyncError, null);
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -252,6 +264,44 @@ function makeConfig(repoPath) {
     bindings: [makeBinding(repoPath)],
   };
 }
+
+test("心跳绑定更新不覆盖本地实时同步状态", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-agent-live-state-"));
+  const repoPath = path.join(root, "repo");
+  fs.mkdirSync(repoPath, { recursive: true });
+  const store = new ConfigStore(root, { secureDirectory: false });
+  const config = makeConfig(repoPath);
+  config.bindings[0].liveSyncStatus = "error";
+  config.bindings[0].liveSyncError = "实时同步失败：网络不可用";
+  await store.saveConfig(config);
+  const runtime = new AgentRuntime({
+    store,
+    credentialStore: new MemoryCredentialStore(),
+    logger: createFileOnlyLogger({ logsDir: store.paths.logsDir }),
+    liveSync: {
+      updateBindings() {},
+      stop() {},
+    },
+  });
+  t.after(async () => {
+    await runtime.logger.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  await runtime._applyHeartbeatBindings({
+    bindings: [{
+      id: "binding-1",
+      projectId: "project-1",
+      localRepoKey: "b".repeat(64),
+      teamId: "team-1",
+      status: "approved",
+      readOnly: false,
+    }],
+  });
+  const updated = await store.readConfig({ allowMissing: false });
+  assert.equal(updated.bindings[0].liveSyncStatus, "error");
+  assert.equal(updated.bindings[0].liveSyncError, "实时同步失败：网络不可用");
+});
 
 test("主循环领取白名单命令并上报结果，不发送仓库绝对路径", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-agent-runtime-"));

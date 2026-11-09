@@ -448,6 +448,8 @@ async function commandStatus(args, context) {
           branchName: binding.branchName,
           readOnly: binding.readOnly === true,
           status: binding.syncStatus,
+          liveSyncStatus: binding.liveSyncStatus,
+          liveSyncError: binding.liveSyncError,
           lastHead: binding.lastHead,
           lastSyncedAt: binding.lastSyncedAt,
           lastErrorCode: binding.lastErrorCode,
@@ -478,8 +480,12 @@ async function commandStatus(args, context) {
     for (const binding of result.bindings) {
       writeLine(
         context.io,
-        `  ${binding.projectId}  ${binding.branchName}  ${binding.status}  ${binding.repoPath}`,
+        `  ${binding.projectId}  ${binding.branchName}  ${binding.status}  ` +
+          `实时同步:${binding.liveSyncStatus}  ${binding.repoPath}`,
       );
+      if (binding.liveSyncError) {
+        writeLine(context.io, `    实时同步错误：${binding.liveSyncError}`);
+      }
       if (binding.lastError) {
         writeLine(context.io, `    错误：${binding.lastErrorCode || "ERROR"} ${binding.lastError}`);
       }

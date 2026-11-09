@@ -48,6 +48,7 @@ async function runAction(action) {
   }
   busy = true
   error.textContent = ''
+  message.textContent = '正在提交，请稍候…'
   actions.querySelectorAll('button').forEach((item) => {
     item.disabled = true
   })
@@ -95,6 +96,8 @@ function render(event) {
     message.textContent =
       `冲突文件已先备份到工作区外。确认远端版本不正确时，可以一键复原，` +
       '复原会形成新的团队版本并广播给其他客户端。'
+    addDetail('任务', event.taskKeys?.join('、'))
+    addDetail('冲突文件', event.files?.join('、'))
     addDetail('文件数', event.fileCount)
     addDetail('版本', event.revision)
     addDetail('备份位置', event.backupPath)

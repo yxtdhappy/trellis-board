@@ -251,13 +251,23 @@ test("导航、新窗口、托盘与日志边界在 Rust 源中显式实现", ()
   assert.match(main, /async fn live_control_decide/);
   assert.match(main, /async fn live_control_restore/);
   assert.match(main, /async fn live_control_dismiss/);
+  assert.match(
+    main,
+    /async fn associate_local_project[\s\S]*?sidecar::restart\(&app\);\s*Ok\(Some\(association\)\)/
+  );
 
   const sidecar = readText("desktop/src-tauri/src/sidecar.rs");
   assert.match(sidecar, /pending_control: Mutex<VecDeque<Value>>/);
   assert.match(sidecar, /WebviewUrl::App\("control\.html"\.into\(\)\)/);
+  assert.match(sidecar, /pub live_sync_status: String/);
+  assert.match(sidecar, /pub live_sync_error: Option<String>/);
+  assert.match(sidecar, /expiresAtEpochMs/);
+  assert.match(sidecar, /pending-live/);
   assert.match(sidecar, /"live-decide"/);
   assert.match(sidecar, /"live-restore"/);
-  assert.match(readText("desktop/ui/control.js"), /live_control_dismiss/);
+  const control = readText("desktop/ui/control.js");
+  assert.match(control, /live_control_dismiss/);
+  assert.match(control, /正在提交，请稍候/);
   assert.equal(fs.existsSync(path.join(ROOT, "desktop/ui/control.html")), true);
   assert.equal(fs.existsSync(path.join(ROOT, "desktop/ui/control.css")), true);
   assert.equal(fs.existsSync(path.join(ROOT, "desktop/ui/control.js")), true);

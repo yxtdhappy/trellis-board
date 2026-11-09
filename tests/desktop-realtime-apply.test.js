@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import os from "node:os";
@@ -25,12 +26,29 @@ function fakeWatcher() {
   };
 }
 
+function git(cwd, args) {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    windowsHide: true
+  });
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+  }
+  return result.stdout.trim();
+}
+
 function setupRepo() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-live-agent-"));
   const repoPath = path.join(root, "repo");
   const taskDir = path.join(repoPath, ".trellis", "tasks", "task-live");
   fs.mkdirSync(taskDir, { recursive: true });
   fs.writeFileSync(path.join(taskDir, "task.json"), "{\"title\":\"local\"}\n");
+  git(repoPath, ["init", "-b", "main"]);
+  git(repoPath, ["config", "user.email", "live-test@example.invalid"]);
+  git(repoPath, ["config", "user.name", "Live Test"]);
+  git(repoPath, ["add", ".trellis/tasks/task-live/task.json"]);
+  git(repoPath, ["commit", "-m", "baseline"]);
   return { root, repoPath, taskDir };
 }
 
@@ -138,6 +156,8 @@ test("远端覆盖先备份，自触发事件被摘要抑制而真实修改继�
     remoteContent
   );
   assert.equal(controls[0].type, "remote_overwrite");
+  assert.deepEqual(controls[0].files, [".trellis/tasks/task-live/task.json"]);
+  assert.deepEqual(controls[0].taskKeys, ["p-live::.trellis/tasks/task-live"]);
   const manifest = JSON.parse(fs.readFileSync(
     path.join(
       store.paths.liveBackupsDir,
@@ -204,10 +224,258 @@ test("只读绑定只拉取服务端文件，不创建本地上传监听", async
   assert.equal(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"), remoteContent);
   assert.equal(fake.calls.preflights.length, 0);
   assert.equal(fake.calls.uploads.length, 0);
+  const config = await store.readConfig({ allowMissing: false });
+  assert.equal(config.bindings[0].liveSyncStatus, "ready");
+});
+
+test("只读首次初始化不扫描或上传关联前本地变化", async (t) => {
+  const { root, repoPath, taskDir } = setupRepo();
+  const localContent = "{\"title\":\"dirty-readonly\"}\n";
+  fs.writeFileSync(path.join(taskDir, "task.json"), localContent);
+  const store = new ConfigStore(path.join(root, "agent"));
+  await store.ensureDirectories();
+  const local = { ...binding(repoPath), readOnly: true };
+  await persistConfig(store, local);
+  const fake = fakeApi();
+  const sync = new AgentLiveSync({
+    store,
+    logger: silentLogger,
+    watch: fakeWatcher,
+    loadContext: async () => ({
+      config: { bindings: [local] },
+      api: fake.api
+    })
+  });
+  await sync.start();
+  t.after(() => {
+    sync.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  assert.equal(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"), localContent);
+  assert.equal(fake.calls.preflights.length, 0);
+  assert.equal(fake.calls.uploads.length, 0);
+  const config = await store.readConfig({ allowMissing: false });
+  assert.equal(config.bindings[0].liveSyncStatus, "ready");
+});
+
+test("首次初始化同路径冲突按服务端优先并保留本地备份", async (t) => {
+  const { root, repoPath, taskDir } = setupRepo();
+  const target = path.join(taskDir, "task.json");
+  const localContent = "{\"title\":\"local-conflict\"}\n";
+  const remoteContent = "{\"title\":\"remote-conflict\"}\n";
+  fs.writeFileSync(target, localContent);
+  const store = new ConfigStore(path.join(root, "agent"));
+  await store.ensureDirectories();
+  const local = binding(repoPath);
+  await persistConfig(store, local);
+  const controls = [];
+  const fake = fakeApi({
+    fetchLiveFiles: async () => ({
+      revision: 4,
+      files: [{
+        path: ".trellis/tasks/task-live/task.json",
+        operation: "upsert",
+        revision: 4,
+        sha256: sha256(remoteContent),
+        content: remoteContent
+      }]
+    })
+  });
+  const sync = new AgentLiveSync({
+    store,
+    logger: silentLogger,
+    emitControl: (event) => controls.push(event),
+    watch: fakeWatcher,
+    loadContext: async () => ({
+      config: { bindings: [local] },
+      api: fake.api
+    })
+  });
+  await sync.start();
+  t.after(() => {
+    sync.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  assert.equal(fs.readFileSync(target, "utf8"), remoteContent);
+  assert.equal(fake.calls.preflights.length, 0);
+  assert.equal(fake.calls.uploads.length, 0);
+  assert.equal(controls[0].type, "remote_overwrite");
+  assert.deepEqual(controls[0].files, [".trellis/tasks/task-live/task.json"]);
+  assert.equal(
+    fs.readFileSync(
+      path.join(controls[0].backupPath, "files", "tasks", "task-live", "task.json"),
+      "utf8"
+    ),
+    localContent
+  );
+  const config = await store.readConfig({ allowMissing: false });
+  assert.equal(config.bindings[0].liveSyncStatus, "ready");
+});
+
+test("首次初始化补传 Git 基线后的新增、修改和删除", async (t) => {
+  const { root, repoPath, taskDir } = setupRepo();
+  const prdFile = path.join(taskDir, "prd.md");
+  const gitignoreFile = path.join(repoPath, ".trellis", ".gitignore");
+  const workspaceDir = path.join(repoPath, ".trellis", "workspace");
+  const workspaceFile = path.join(workspaceDir, "notes.md");
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  fs.writeFileSync(prdFile, "# 初始需求\n");
+  fs.writeFileSync(gitignoreFile, ".developer\n");
+  fs.writeFileSync(workspaceFile, "unchanged\n");
+  git(repoPath, [
+    "add",
+    ".trellis/.gitignore",
+    ".trellis/tasks/task-live/prd.md",
+    ".trellis/workspace/notes.md"
+  ]);
+  git(repoPath, ["commit", "-m", "add baseline files"]);
+
+  const modified = "{\"title\":\"modified\"}\n";
+  fs.writeFileSync(path.join(taskDir, "task.json"), modified);
+  fs.writeFileSync(path.join(repoPath, ".trellis", ".developer"), "name=writer\n");
+  fs.rmSync(prdFile);
+  const createdDir = path.join(repoPath, ".trellis", "tasks", "task-created");
+  fs.mkdirSync(createdDir, { recursive: true });
+  fs.writeFileSync(path.join(createdDir, "task.json"), "{\"title\":\"created\"}\n");
+
+  const store = new ConfigStore(path.join(root, "agent"));
+  await store.ensureDirectories();
+  const local = binding(repoPath);
+  await persistConfig(store, local);
+  const fake = fakeApi();
+  const sync = new AgentLiveSync({
+    store,
+    logger: silentLogger,
+    watch: fakeWatcher,
+    loadContext: async () => ({
+      config: { bindings: [local] },
+      api: fake.api
+    })
+  });
+  t.after(() => {
+    sync.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  await sync.start();
+
+  const files = new Map(
+    fake.calls.uploads.flatMap((upload) =>
+      upload.files.map((file) => [file.path, file])
+    )
+  );
+  assert.equal(files.get(".trellis/tasks/task-live/task.json").content, modified);
+  assert.equal(files.get(".trellis/tasks/task-live/prd.md").operation, "delete");
+  assert.equal(files.get(".trellis/tasks/task-created/task.json").operation, "upsert");
+  assert.equal(files.get(".trellis/.developer").content, "name=writer\n");
+  assert.equal(files.has(".trellis/workspace/notes.md"), false);
+  const config = await store.readConfig({ allowMissing: false });
+  assert.equal(config.bindings[0].liveSyncStatus, "ready");
+  assert.equal(config.bindings[0].liveSyncError, null);
+});
+
+test("首次初始化与服务端同摘要时跳过，重启后保持幂等", async (t) => {
+  const { root, repoPath } = setupRepo();
+  const createdDir = path.join(repoPath, ".trellis", "tasks", "task-created");
+  fs.mkdirSync(createdDir, { recursive: true });
+  const content = "{\"title\":\"created\"}\n";
+  const relativePath = ".trellis/tasks/task-created/task.json";
+  fs.writeFileSync(path.join(repoPath, ...relativePath.split("/")), content);
+  const store = new ConfigStore(path.join(root, "agent"));
+  await store.ensureDirectories();
+  const local = binding(repoPath);
+  await persistConfig(store, local);
+  const fake = fakeApi({
+    fetchLiveFiles: async () => ({
+      revision: 2,
+      files: [{
+        path: relativePath,
+        operation: "upsert",
+        revision: 2,
+        sha256: sha256(content),
+        content
+      }]
+    })
+  });
+  const first = new AgentLiveSync({
+    store,
+    logger: silentLogger,
+    watch: fakeWatcher,
+    loadContext: async () => ({
+      config: { bindings: [local] },
+      api: fake.api
+    })
+  });
+  const second = new AgentLiveSync({
+    store,
+    logger: silentLogger,
+    watch: fakeWatcher,
+    loadContext: async () => ({
+      config: { bindings: [local] },
+      api: fake.api
+    })
+  });
+  t.after(() => {
+    first.stop();
+    second.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  await first.start();
+  first.stop();
+  await second.start();
+  assert.equal(fake.calls.preflights.length, 0);
+  assert.equal(fake.calls.uploads.length, 0);
+  const config = await store.readConfig({ allowMissing: false });
+  assert.equal(config.bindings[0].liveSyncStatus, "ready");
+});
+
+test("初始化失败写错误状态，修复 Git 基线后可重试恢复", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-live-retry-"));
+  const repoPath = path.join(root, "repo");
+  const taskDir = path.join(repoPath, ".trellis", "tasks", "task-live");
+  fs.mkdirSync(taskDir, { recursive: true });
+  fs.writeFileSync(path.join(taskDir, "task.json"), "{\"title\":\"local\"}\n");
+  git(repoPath, ["init", "-b", "main"]);
+  git(repoPath, ["config", "user.email", "live-test@example.invalid"]);
+  git(repoPath, ["config", "user.name", "Live Test"]);
+  const store = new ConfigStore(path.join(root, "agent"));
+  await store.ensureDirectories();
+  const local = binding(repoPath);
+  await persistConfig(store, local);
+  const fake = fakeApi();
+  const sync = new AgentLiveSync({
+    store,
+    logger: silentLogger,
+    watch: fakeWatcher,
+    loadContext: async () => ({
+      config: { bindings: [local] },
+      api: fake.api
+    })
+  });
+  t.after(() => {
+    sync.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  await sync.start();
+  let config = await store.readConfig({ allowMissing: false });
+  assert.equal(config.bindings[0].liveSyncStatus, "error");
+  assert.match(config.bindings[0].liveSyncError, /Git 本地变化扫描失败/);
+
+  git(repoPath, ["add", ".trellis/tasks/task-live/task.json"]);
+  git(repoPath, ["commit", "-m", "baseline"]);
+  await sync.retryPendingUploads();
+  config = await store.readConfig({ allowMissing: false });
+  assert.equal(config.bindings[0].liveSyncStatus, "ready");
+  assert.equal(config.bindings[0].liveSyncError, null);
 });
 
 test("客户端拒绝服务端返回 .trellis 白名单之外的路径", async (t) => {
   const { root, repoPath } = setupRepo();
+  const gitConfigFile = path.join(repoPath, ".git", "config");
+  const originalGitConfig = fs.readFileSync(gitConfigFile, "utf8");
   const store = new ConfigStore(path.join(root, "agent"));
   await store.ensureDirectories();
   const local = binding(repoPath);
@@ -243,14 +511,12 @@ test("客户端拒绝服务端返回 .trellis 白名单之外的路径", async (
     () => sync.pullProject("t-live", "p-live"),
     /路径越界/
   );
-  assert.equal(fs.existsSync(path.join(repoPath, ".git", "config")), false);
+  assert.equal(fs.readFileSync(gitConfigFile, "utf8"), originalGitConfig);
 });
 
 test("同一项目变化按任务拆分批次", async (t) => {
   const { root, repoPath, taskDir } = setupRepo();
   const secondDir = path.join(repoPath, ".trellis", "tasks", "task-second");
-  fs.mkdirSync(secondDir, { recursive: true });
-  fs.writeFileSync(path.join(secondDir, "task.json"), "{\"title\":\"second\"}\n");
   const store = new ConfigStore(path.join(root, "agent"));
   await store.ensureDirectories();
   const local = binding(repoPath);
@@ -271,6 +537,8 @@ test("同一项目变化按任务拆分批次", async (t) => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  fs.mkdirSync(secondDir, { recursive: true });
+  fs.writeFileSync(path.join(secondDir, "task.json"), "{\"title\":\"second\"}\n");
   fs.writeFileSync(path.join(taskDir, "task.json"), "{\"title\":\"first\"}\n");
   await sync._handleWatcherEvents([
     { repositoryId: "p-live", trellisPath: ".trellis/tasks/task-live/task.json" },
@@ -384,6 +652,9 @@ test("网络失败后使用原 batchId 重试上传", async (t) => {
   assert.equal(uploads.length, 1);
   const pendingNames = fs.readdirSync(store.paths.pendingLiveDir);
   assert.equal(pendingNames.length, 1);
+  let config = await store.readConfig({ allowMissing: false });
+  assert.equal(config.bindings[0].liveSyncStatus, "error");
+  assert.match(config.bindings[0].liveSyncError, /上传失败|network/i);
   const originalUnlink = fsPromises.unlink;
   let injectedUnlinkFailure = false;
   fsPromises.unlink = async (file) => {
@@ -403,6 +674,128 @@ test("网络失败后使用原 batchId 重试上传", async (t) => {
   assert.equal(uploads[1].batchId, uploads[0].batchId);
   assert.equal(injectedUnlinkFailure, true);
   assert.equal(fs.readdirSync(store.paths.pendingLiveDir).length, 0);
+  config = await store.readConfig({ allowMissing: false });
+  assert.equal(config.bindings[0].liveSyncStatus, "ready");
+  assert.equal(config.bindings[0].liveSyncError, null);
+});
+
+test("重试循环不会并发处理同一 pending 批次", async (t) => {
+  const { root, repoPath, taskDir } = setupRepo();
+  const store = new ConfigStore(path.join(root, "agent"));
+  await store.ensureDirectories();
+  const local = binding(repoPath);
+  await persistConfig(store, local);
+  const content = fs.readFileSync(path.join(taskDir, "task.json"), "utf8");
+  const batchId = "pending-serial-1";
+  fs.writeFileSync(
+    path.join(store.paths.pendingLiveDir, `${batchId}.json`),
+    JSON.stringify({
+      kind: "upload",
+      createdAt: new Date().toISOString(),
+      projectId: local.projectId,
+      bindingId: local.serverBindingId,
+      batchId,
+      clientSequence: Date.now(),
+      observedAt: new Date().toISOString(),
+      files: [{
+        path: ".trellis/tasks/task-live/task.json",
+        operation: "upsert",
+        sha256: sha256(content),
+        content
+      }]
+    })
+  );
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const uploads = [];
+  const fake = fakeApi({
+    uploadLiveChanges: async (input) => {
+      uploads.push(input);
+      await gate;
+      return { revision: 8 };
+    }
+  });
+  const sync = new AgentLiveSync({
+    store,
+    logger: silentLogger,
+    watch: fakeWatcher,
+    loadContext: async () => ({
+      config: { bindings: [local] },
+      api: fake.api
+    })
+  });
+  sync.updateBindings([local]);
+  await sync._waitForInitializations();
+  t.after(() => {
+    sync.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const first = sync.retryPendingUploads();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const second = sync.retryPendingUploads();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(uploads.length, 1);
+  release();
+  await Promise.all([first, second]);
+  assert.equal(uploads.length, 1);
+  assert.equal(fs.existsSync(path.join(store.paths.pendingLiveDir, `${batchId}.json`)), false);
+});
+
+test("初始化仍失败时 pending 上传成功不会误报同步正常", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-live-error-"));
+  const repoPath = path.join(root, "repo");
+  const taskDir = path.join(repoPath, ".trellis", "tasks", "task-live");
+  fs.mkdirSync(taskDir, { recursive: true });
+  const content = "{\"title\":\"local\"}\n";
+  fs.writeFileSync(path.join(taskDir, "task.json"), content);
+  git(repoPath, ["init", "-b", "main"]);
+  const store = new ConfigStore(path.join(root, "agent"));
+  await store.ensureDirectories();
+  const local = binding(repoPath);
+  await persistConfig(store, local);
+  const fake = fakeApi();
+  const sync = new AgentLiveSync({
+    store,
+    logger: silentLogger,
+    watch: fakeWatcher,
+    loadContext: async () => ({
+      config: { bindings: [local] },
+      api: fake.api
+    })
+  });
+  await sync.start();
+  const batchId = "pending-with-init-error";
+  fs.writeFileSync(
+    path.join(store.paths.pendingLiveDir, `${batchId}.json`),
+    JSON.stringify({
+      kind: "upload",
+      createdAt: new Date().toISOString(),
+      projectId: local.projectId,
+      bindingId: local.serverBindingId,
+      batchId,
+      clientSequence: Date.now(),
+      observedAt: new Date().toISOString(),
+      files: [{
+        path: ".trellis/tasks/task-live/task.json",
+        operation: "upsert",
+        sha256: sha256(content),
+        content
+      }]
+    })
+  );
+  t.after(() => {
+    sync.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  await sync.retryPendingUploads();
+  assert.equal(fake.calls.uploads.length, 1);
+  const config = await store.readConfig({ allowMissing: false });
+  assert.equal(config.bindings[0].liveSyncStatus, "error");
+  assert.match(config.bindings[0].liveSyncError, /Git 本地变化扫描失败/);
 });
 
 function taskKeysForTest(projectId, filePath) {
@@ -453,6 +846,8 @@ test("责任人警告持久化为待确认批次，继续推进时携带确认�
     trellisPath: ".trellis/tasks/task-live/task.json"
   }]);
   assert.equal(controls[0].type, "assignment_warning");
+  assert.equal(typeof controls[0].expiresAtEpochMs, "number");
+  assert.ok(controls[0].expiresAtEpochMs > Date.now());
   assert.equal(fake.calls.uploads.length, 0);
   await sync._emitPendingDecisions();
   assert.equal(controls.length, 2);
@@ -489,6 +884,41 @@ test("责任人警告持久化为待确认批次，继续推进时携带确认�
     )),
     false
   );
+});
+
+test("过期的责任人确认事件不会再次弹出", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-live-expired-"));
+  const store = new ConfigStore(path.join(root, "agent"));
+  await store.ensureDirectories();
+  const pendingId = "expired-warning-1";
+  const pendingFile = path.join(store.paths.pendingLiveDir, `${pendingId}.json`);
+  fs.writeFileSync(pendingFile, JSON.stringify({
+    kind: "decision",
+    batchId: pendingId,
+    projectId: "p-live",
+    files: [],
+    warning: {
+      expiresAt: new Date(Date.now() - 1_000).toISOString(),
+      task: { taskKey: "p-live::.trellis/tasks/task-live" }
+    }
+  }));
+  const controls = [];
+  const sync = new AgentLiveSync({
+    store,
+    logger: silentLogger,
+    emitControl: (event) => controls.push(event),
+    loadContext: async () => {
+      throw new Error("不应读取上下文");
+    }
+  });
+  t.after(() => {
+    sync.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  await sync._emitPendingDecisions();
+  assert.equal(controls.length, 0);
+  assert.equal(fs.existsSync(pendingFile), false);
 });
 
 test("一键复原把备份作为新的实时批次上传", async (t) => {

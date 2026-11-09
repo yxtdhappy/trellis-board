@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { ConfigStore } from "../agent/config-store.js";
 import { associateDesktopProject } from "../desktop/sidecar/desktop-association.js";
+import { readLocalAssociations } from "../desktop/sidecar/desktop-device.js";
 
 test("桌面项目关联写入本地配置并持久化服务端只读状态", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-associate-"));
@@ -64,11 +65,18 @@ test("桌面项目关联写入本地配置并持久化服务端只读状态", as
   });
   assert.equal(result.status, "approved");
   assert.equal(result.readOnly, true);
+  assert.equal(result.liveSyncStatus, "pending");
+  assert.equal(result.liveSyncError, null);
   const config = await store.readConfig({ allowMissing: false });
   assert.equal(config.bindings.length, 1);
   assert.equal(config.bindings[0].serverBindingId, "binding-1");
   assert.equal(config.bindings[0].syncStatus, "approved");
   assert.equal(config.bindings[0].readOnly, true);
+  assert.equal(config.bindings[0].liveSyncStatus, "pending");
+  assert.equal(config.bindings[0].liveSyncError, null);
+  const associations = await readLocalAssociations(root);
+  assert.equal(associations[0].liveSyncStatus, "pending");
+  assert.equal(associations[0].liveSyncError, null);
   assert.ok(!fs.readFileSync(store.paths.configFile, "utf8").includes("x".repeat(43)));
 });
 

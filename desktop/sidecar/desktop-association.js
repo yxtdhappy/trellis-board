@@ -78,6 +78,8 @@ export async function associateDesktopProject(options = {}) {
     allowFileRemote,
     readOnly: false,
     syncStatus: "pending",
+    liveSyncStatus: "pending",
+    liveSyncError: null,
     lastSyncedAt: null,
     lastHead: inspected.head,
     lastError: inspected.clean ? null : "本地工作区存在未提交或未跟踪文件",
@@ -131,6 +133,8 @@ export async function associateDesktopProject(options = {}) {
           teamId: remote.teamId ?? null,
           readOnly: remote.readOnly === true,
           syncStatus: remote.status,
+          liveSyncStatus: "pending",
+          liveSyncError: null,
           lastError: null,
           lastErrorCode: null,
         }
@@ -144,6 +148,8 @@ export async function associateDesktopProject(options = {}) {
     teamId: remote.teamId ?? null,
     status: remote.status,
     readOnly: remote.readOnly === true,
+    liveSyncStatus: "pending",
+    liveSyncError: null,
   };
 }
 
