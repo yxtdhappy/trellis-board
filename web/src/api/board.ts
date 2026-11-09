@@ -1,5 +1,6 @@
 import { ApiError, requestJson, redirectToLogin } from './request'
 import type { BoardTask } from '@/features/board/task-view'
+import { normalizeTaskPage } from '@/lib/team-client.js'
 
 export type Project = {
   id: string
@@ -120,7 +121,11 @@ export async function queryTeamTasks(query: string, etag: string | null) {
     headers: etag ? { 'if-none-match': etag } : {},
   })
   if (result.status === 304) return { notModified: true as const, page: null, etag: result.etag }
-  return { notModified: false as const, page: result.data as TeamQueryPage, etag: result.etag }
+  return {
+    notModified: false as const,
+    page: normalizeTaskPage(result.data) as TeamQueryPage,
+    etag: result.etag,
+  }
 }
 
 export const fetchTeamStatus = () => api<Record<string, unknown>>('/api/team/status')

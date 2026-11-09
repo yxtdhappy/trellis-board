@@ -21,6 +21,8 @@
 - 团队模式：`/api/tasks/query?…` 使用 `if-none-match` 复用 ETag，304 时跳过状态更新；
   `/api/team/live-revision` 每 750ms 轮询，revision key 变化时重载任务页，`/api/team/status`
   每 3 秒轮询作为兜底。
+- `/api/tasks/query` 的 200 响应必须先经过 `normalizeTaskPage` 再写入 `teamPage`。团队接口可能只返回
+  `relativeDir`，而任务卡使用 `dirName`；304 响应没有 body，保持 ETag 分支不规范化。
 - 轮询必须在组件卸载时清理 `setTimeout/clearInterval`；不要用固定延时等待业务状态。
 
 ## 多团队状态

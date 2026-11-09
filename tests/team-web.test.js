@@ -54,13 +54,25 @@ test("团队查询参数保留服务端筛选并限制页大小", () => {
 
 test("任务页兼容驼峰和下划线响应", () => {
   const page = normalizeTaskPage({
-    rows: [{ taskKey: "a" }],
+    rows: [
+      {
+        taskKey: "a",
+        relativeDir: ".trellis/tasks/11-08-project-onboarding-remote-info"
+      },
+      {
+        taskKey: "b",
+        relative_dir: ".trellis/tasks/11-09-task-detail-request-storm"
+      }
+    ],
     next_cursor: "c2",
     total_count: 12,
     query_revision: 7,
     query_day: "2026-11-03"
   });
   assert.equal(page.tasks[0].taskKey, "a");
+  assert.equal(page.tasks[0].dirName, "11-08-project-onboarding-remote-info");
+  assert.equal(page.tasks[1].taskKey, "b");
+  assert.equal(page.tasks[1].dirName, "11-09-task-detail-request-storm");
   assert.equal(page.nextCursor, "c2");
   assert.equal(page.total, 12);
   assert.equal(page.queryRevision, 7);
