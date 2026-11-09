@@ -535,10 +535,11 @@ async function handlePluginRequest(request, response, url) {
 }
 
 async function handleApi(request, response, url) {
-  if (
-    url.pathname.startsWith('/api/plugins') &&
-    (await handlePluginRequest(request, response, url))
-  ) {
+  const pluginPath =
+    url.pathname.startsWith('/api/plugins') ||
+    url.pathname === '/api/panels' ||
+    url.pathname === '/api/events'
+  if (pluginPath && (await handlePluginRequest(request, response, url))) {
     return
   }
   if (request.method === 'GET' && url.pathname === '/api/board') {

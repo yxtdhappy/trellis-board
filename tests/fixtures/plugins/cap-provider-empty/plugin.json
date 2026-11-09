@@ -1,0 +1,14 @@
+{
+  "id": "cap-provider-empty",
+  "name": "capability provider without registration",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "permissions": ["capabilities:provide"],
+  "provides": [
+    {
+      "name": "demo.empty",
+      "version": "1.0.0",
+      "methods": { "ping": { "access": "read", "timeoutMs": 5000 } }
+    }
+  ]
+}

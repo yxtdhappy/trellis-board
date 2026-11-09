@@ -19,6 +19,8 @@ export const ERROR_CODES = Object.freeze({
   API_VERSION_MISMATCH: 1006,
   DISABLED: 1007,
   VERSION_MISMATCH: 1008,
+  CAPABILITY_UNAVAILABLE: 1009,
+  CAPABILITY_METHOD_DENIED: 1010,
 })
 
 export const RPC = Object.freeze({
@@ -37,6 +39,7 @@ export const HOST_TO_PLUGIN_TIMEOUTS = Object.freeze({
   'event/dispatch': 10_000,
   'timer/fire': 10_000,
   'plugin/status': 5_000,
+  'capability/call': 30_000,
   shutdown: 5_000,
 })
 
@@ -47,6 +50,7 @@ export const PLUGIN_TO_HOST_TIMEOUTS = Object.freeze({
   'task/assign': 30_000,
   'task/setStage': 10_000,
   'event/emit': 5_000,
+  'event/publish': 5_000,
   'store/get': 5_000,
   'store/set': 5_000,
   'store/delete': 5_000,
@@ -54,6 +58,7 @@ export const PLUGIN_TO_HOST_TIMEOUTS = Object.freeze({
   'log/write': 5_000,
   'schedule/register': 5_000,
   'schedule/unregister': 5_000,
+  'capability/call': 30_000,
 })
 
 export const HOST_REQUEST_METHODS = Object.freeze(Object.keys(HOST_TO_PLUGIN_TIMEOUTS))
@@ -66,6 +71,7 @@ export const PERMISSION_BY_METHOD = Object.freeze({
   'task/assign': 'tasks:write',
   'task/setStage': 'tasks:write',
   'event/emit': 'events:emit',
+  'event/publish': 'events:publish',
   'store/get': 'store',
   'store/set': 'store',
   'store/delete': 'store',
@@ -76,6 +82,7 @@ export const PERMISSION_BY_METHOD = Object.freeze({
   'run/progress': 'runs:write',
   'run/finish': 'runs:write',
   'run/list': 'runs:read',
+  'capability/call': 'capabilities:call',
 })
 
 export const ALWAYS_ALLOWED_METHODS = Object.freeze(['log/write'])

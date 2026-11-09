@@ -10,8 +10,9 @@ import { FlowSignals } from '@/features/board/FlowSignals'
 import { Kanban } from '@/features/board/Kanban'
 import { Overview } from '@/features/board/Overview'
 import { PluginsView } from '@/features/plugins/PluginsView'
+import { PluginPanel } from '@/features/plugins/PluginPanel'
 import { TeamView } from '@/features/board/TeamView'
-import { filterGroups, type BoardView } from '@/features/board/selectors'
+import { filterGroups } from '@/features/board/selectors'
 import { AssignmentsDialog } from '@/features/board/dialogs/AssignmentsDialog'
 import { CreateTaskDialog } from '@/features/board/dialogs/CreateTaskDialog'
 import { PasswordDialog } from '@/features/board/dialogs/PasswordDialog'
@@ -21,6 +22,7 @@ import { SavedViewsDialog } from '@/features/board/dialogs/SavedViewsDialog'
 import { TaskDetailDialog } from '@/features/board/dialogs/TaskDetailDialog'
 import { isAttention, type BoardTask } from '@/features/board/task-view'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
+import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
 import { taskVersion } from '@/lib/team-client.js'
 
 function normalizeViews(value: unknown): { id: string; name: string }[] {
@@ -46,7 +48,8 @@ export function BoardPage() {
     ?.core?.invoke
     ? undefined
     : '/admin.html'
-  const [view, setView] = useState<BoardView>('pipeline')
+  const [view, setView] = useState('pipeline')
+  const [panels, setPanels] = useState<PluginPanelInfo[]>([])
   const [selected, setSelected] = useState<BoardTask | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [assignmentsOpen, setAssignmentsOpen] = useState(false)
@@ -88,6 +91,16 @@ export function BoardPage() {
   const savedViews = useMemo(() => normalizeViews(board?.savedViews), [board?.savedViews])
   const archived = tasks.filter((task) => task.archived)
   const activeCount = tasks.filter((task) => !task.archived).length
+  const navItems = useMemo<BoardNavItem[]>(
+    () => [
+      ...NAV,
+      ...panels
+        .filter((panel) => panel.placement === 'view')
+        .map((panel) => ({ id: `panel:${panel.pluginId}:${panel.id}`, label: panel.title })),
+    ],
+    [panels],
+  )
+  const activePanel = panels.find((panel) => `panel:${panel.pluginId}:${panel.id}` === view)
 
   useEffect(() => {
     setSelected(null)
@@ -102,6 +115,29 @@ export function BoardPage() {
   useEffect(() => {
     if (runtime?.user?.mustChangePassword) setPasswordOpen(true)
   }, [runtime?.user?.mustChangePassword])
+
+  useEffect(() => {
+    let cancelled = false
+    fetchPanels()
+      .then((list) => {
+        if (!cancelled) setPanels(list)
+      })
+      .catch(() => {
+        /* 团队模式或插件关闭时没有面板 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (view !== 'plugins') return
+    fetchPanels()
+      .then(setPanels)
+      .catch(() => {
+        /* 插件页不可用时保留已有面板 */
+      })
+  }, [view])
 
   const syncLabel = teamMode
     ? `${projects.length} 个授权项目 · 每 3 秒检查同步状态`
@@ -120,9 +156,9 @@ export function BoardPage() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
       <TopBar
-        nav={NAV}
+        nav={navItems}
         activeNav={view}
-        onNavigate={(id) => setView(id as BoardView)}
+        onNavigate={(id) => setView(id)}
         search={filters.search}
         onSearch={(value) => setFilters({ search: value })}
         onCreate={() => setCreateOpen(true)}
@@ -218,6 +254,8 @@ export function BoardPage() {
           ) : null}
 
           {view === 'plugins' ? <PluginsView /> : null}
+
+          {activePanel ? <PluginPanel panel={activePanel} /> : null}
 
           {view === 'archive' ? (
             <ArchiveView

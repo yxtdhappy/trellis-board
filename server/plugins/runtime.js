@@ -5,6 +5,7 @@ import { PluginSupervisor } from './supervisor.js'
 import { ERROR_CODES, RpcError } from './protocol.js'
 
 const BODY_LIMIT = 1024 * 1024
+const STREAM_HEARTBEAT_MS = 15_000
 
 function readRawBody(request) {
   return new Promise((resolve, reject) => {
@@ -142,6 +143,67 @@ export function createPluginRuntime({
     return { id: decodeURIComponent(match[1]), action: match[2] || null }
   }
 
+  function panels() {
+    const result = []
+    for (const state of supervisor.plugins.values()) {
+      if (state.status !== 'running') continue
+      for (const panel of state.manifest?.panels ?? []) {
+        result.push({
+          ...panel,
+          pluginId: state.id,
+          pluginName: state.manifest?.name ?? state.id,
+          src: `/api/plugins/${encodeURIComponent(state.id)}${panel.entry}`,
+        })
+      }
+    }
+    return {
+      panels: result.sort(
+        (left, right) => left.order - right.order || left.title.localeCompare(right.title, 'zh'),
+      ),
+    }
+  }
+
+  function topicMatcher(url) {
+    const topics = String(url.searchParams.get('topics') || '')
+      .split(',')
+      .map((topic) => topic.trim())
+      .filter(Boolean)
+    if (!topics.length) return () => true
+    return (name) => topics.some((topic) => name === topic || name.startsWith(`${topic}/`))
+  }
+
+  function openEventStream({ request, response, url }) {
+    const matches = topicMatcher(url)
+    response.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-store, no-transform',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    })
+    response.write(': connected\n\n')
+    const write = (event) => {
+      if (!event.public || !matches(event.name)) return
+      response.write(`id: ${event.eventId}\ndata: ${JSON.stringify(event)}\n\n`)
+    }
+    const lastEventId = Number(request.headers['last-event-id'])
+    if (Number.isFinite(lastEventId) && lastEventId > 0) {
+      for (const event of supervisor.eventRing) {
+        if (event.eventId > lastEventId) write(event)
+      }
+    }
+    const unsubscribe = supervisor.onEvent(write)
+    const heartbeat = setInterval(() => response.write(': ping\n\n'), STREAM_HEARTBEAT_MS)
+    heartbeat.unref?.()
+    const close = () => {
+      clearInterval(heartbeat)
+      unsubscribe()
+    }
+    request.on('close', close)
+    response.on('close', close)
+    response.on('error', close)
+    return true
+  }
+
   /**
    * 返回 true 表示已处理（已写响应）。未匹配任何插件路由时返回 false。
    */
@@ -155,6 +217,13 @@ export function createPluginRuntime({
     if (url.pathname === '/api/plugins' && request.method === 'GET') {
       sendJson(response, 200, list())
       return true
+    }
+    if (url.pathname === '/api/panels' && request.method === 'GET') {
+      sendJson(response, 200, panels())
+      return true
+    }
+    if (url.pathname === '/api/events' && request.method === 'GET') {
+      return openEventStream({ request, response, url })
     }
 
     const admin = pluginAdminMatch(url.pathname)
