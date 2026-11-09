@@ -2,8 +2,14 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { getTrellisAgentTool } from '../../shared/trellis-agent-tools.js'
 import { ERROR_CODES, teamError } from './errors.js'
-import { minimalEnvironment, runProcess, sanitizeProcessOutput } from './process.js'
+import {
+  minimalEnvironment,
+  runProcess,
+  sanitizeProcessOutput,
+  trellisEnvironment,
+} from './process.js'
 import { semanticLocalPathIdentityHash, semanticRemoteIdentityHash } from './remote-identity.js'
 
 const RESERVED_BRANCHES = new Set(['HEAD', 'FETCH_HEAD', 'ORIG_HEAD', 'MERGE_HEAD', '@'])
@@ -19,6 +25,8 @@ const PROBE_WINDOW_MS = 60_000
 const PROBE_LIMIT_PER_WINDOW = 5
 const PROBE_GLOBAL_CONCURRENCY = 4
 const SSH_TRUST_TTL_MS = 5 * 60_000
+const TRELLIS_INIT_TIMEOUT = 180_000
+const TRELLIS_PUSH_RETRIES = 1
 const PROXY_ENV_KEYS = [
   'HTTP_PROXY',
   'HTTPS_PROXY',
@@ -31,6 +39,14 @@ const PROXY_ENV_KEYS = [
 ]
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
 const ASKPASS_HELPER = path.join(serverDir, 'git-askpass.js')
+const DEFAULT_TRELLIS_CLI = path.join(
+  path.resolve(serverDir, '..', '..'),
+  'node_modules',
+  '@mindfoldhq',
+  'trellis',
+  'bin',
+  'trellis.js',
+)
 
 export function gitEnvironment(extra = {}) {
   const proxyEnvironment = {}
@@ -167,6 +183,38 @@ export function recommendedProjectName(remote) {
   return Array.from(name).slice(0, 80).join('')
 }
 
+export async function runTrellisInitializer({
+  cwd,
+  agentTools,
+  leadTrellisDevId,
+  cliPath = DEFAULT_TRELLIS_CLI,
+}) {
+  if (!fs.existsSync(cliPath)) {
+    throw teamError(
+      503,
+      ERROR_CODES.GIT_UNAVAILABLE,
+      '服务端缺少固定的 Trellis CLI，请先安装项目依赖',
+    )
+  }
+  const flags = agentTools.map((id) => {
+    const tool = getTrellisAgentTool(id)
+    if (!tool) throw teamError(400, ERROR_CODES.INVALID_INPUT, `不支持的 Agent 工具: ${id}`)
+    return tool.flag
+  })
+  const result = await runProcess(
+    process.execPath,
+    [cliPath, 'init', '-y', '--skip-existing', ...flags, '-u', leadTrellisDevId],
+    {
+      cwd,
+      env: trellisEnvironment({ CI: '1' }),
+      timeoutMs: TRELLIS_INIT_TIMEOUT,
+      allowFailure: true,
+      maxOutputBytes: 2 * 1024 * 1024,
+    },
+  )
+  return result
+}
+
 function redactLocalPaths(value) {
   return String(value || '')
     .replace(/[A-Za-z]:\\(?:[^\\\s"'<>]+\\)*[^\\\s"'<>]*/g, '[local-path]')
@@ -194,6 +242,16 @@ export function sshScanEnvironment({
 function isInside(root, candidate) {
   const relative = path.relative(root, candidate)
   return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative)
+}
+
+function removeEmptyDirectoryTree(target) {
+  if (!fs.existsSync(target) || !fs.lstatSync(target).isDirectory()) return false
+  for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
+    if (entry.isDirectory()) removeEmptyDirectoryTree(path.join(target, entry.name))
+  }
+  if (fs.readdirSync(target).length) return false
+  fs.rmdirSync(target)
+  return true
 }
 
 function projectFromRow(row) {
@@ -229,7 +287,14 @@ export function readGitProject(db, projectId) {
   return row ? projectFromRow(row) : null
 }
 
-export function createGitManager({ db, config, dataDir, credentialService, logger = console }) {
+export function createGitManager({
+  db,
+  config,
+  dataDir,
+  credentialService,
+  logger = console,
+  trellisRunner = runTrellisInitializer,
+}) {
   const hooksDir = path.join(dataDir, '.empty-git-hooks')
   const projectsRoot = path.join(dataDir, 'projects')
   const authRoot = path.join(dataDir, '.git-auth')
@@ -311,6 +376,267 @@ export function createGitManager({ db, config, dataDir, credentialService, logge
     result.environmentKeys = Object.keys(env).sort()
     result.gitConfigGlobalIsolated = env.GIT_CONFIG_GLOBAL === emptyConfigFile
     return result
+  }
+
+  async function applyTrellisSparse(cwd, { requireTrellis = true } = {}) {
+    const init = await runGit(['sparse-checkout', 'init', '--no-cone'], {
+      cwd,
+      allowFailure: true,
+    })
+    if (init.code !== 0) {
+      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', '无法初始化 .trellis 稀疏检出')
+    }
+    const set = await runGit(['sparse-checkout', 'set', '.trellis/'], {
+      cwd,
+      allowFailure: true,
+    })
+    if (set.code !== 0) {
+      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', '无法设置 .trellis 稀疏检出')
+    }
+    const update = await runGit(['read-tree', '-mu', 'HEAD'], {
+      cwd,
+      allowFailure: true,
+    })
+    if (update.code !== 0) {
+      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', '无法收敛 .trellis 工作副本')
+    }
+    for (const entry of fs.readdirSync(cwd, { withFileTypes: true })) {
+      if (entry.name !== '.git' && entry.name !== '.trellis' && entry.isDirectory()) {
+        removeEmptyDirectoryTree(path.join(cwd, entry.name))
+      }
+    }
+    const entries = fs
+      .readdirSync(cwd, { withFileTypes: true })
+      .filter((entry) => entry.name !== '.git')
+    const unexpected = entries
+      .filter((entry) => entry.name !== '.trellis')
+      .map((entry) => entry.name)
+    if (
+      requireTrellis &&
+      (!entries.some((entry) => entry.name === '.trellis' && entry.isDirectory()) ||
+        unexpected.length)
+    ) {
+      throw teamError(
+        503,
+        'GIT_SPARSE_CHECKOUT_FAILED',
+        `稀疏检出后仍有非 .trellis 文件: ${unexpected.join(', ')}`,
+      )
+    }
+    if (!requireTrellis && unexpected.length) {
+      throw teamError(
+        503,
+        'GIT_SPARSE_CHECKOUT_FAILED',
+        `稀疏检出初始化后出现业务文件: ${unexpected.join(', ')}`,
+      )
+    }
+  }
+
+  async function remoteHasTrellis(cwd) {
+    const result = await runGit(['ls-tree', '-d', '--name-only', 'HEAD', '--', '.trellis'], {
+      cwd,
+      allowFailure: true,
+    })
+    if (result.code !== 0) {
+      throw teamError(502, ERROR_CODES.GIT_REMOTE_FAILED, '无法读取远端 .trellis 目录状态')
+    }
+    return result.stdout.trim() === '.trellis'
+  }
+
+  function readInitializationManifest(cwd) {
+    const manifestFile = path.join(cwd, '.trellis', '.template-hashes.json')
+    if (!fs.existsSync(manifestFile)) {
+      throw teamError(409, 'TRELLIS_INIT_INVALID', 'Trellis 初始化未生成模板清单')
+    }
+    let manifest
+    try {
+      manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'))
+    } catch {
+      throw teamError(409, 'TRELLIS_INIT_INVALID', 'Trellis 初始化模板清单不是合法 JSON')
+    }
+    if (
+      !manifest ||
+      typeof manifest !== 'object' ||
+      !manifest.hashes ||
+      typeof manifest.hashes !== 'object'
+    ) {
+      throw teamError(409, 'TRELLIS_INIT_INVALID', 'Trellis 初始化模板清单格式无效')
+    }
+    return new Set(
+      Object.keys(manifest.hashes).filter((item) => {
+        const normalized = String(item || '').replaceAll('\\', '/')
+        return (
+          normalized &&
+          !normalized.split('/').includes('..') &&
+          !normalized.startsWith('/') &&
+          !normalized.startsWith('.git/')
+        )
+      }),
+    )
+  }
+
+  async function changedPaths(cwd) {
+    const result = await runGit(['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
+      cwd,
+    })
+    return result.stdout
+      .split('\0')
+      .filter(Boolean)
+      .map((entry) => entry.slice(3).replaceAll('\\', '/'))
+      .filter(Boolean)
+  }
+
+  async function validateInitialization(cwd, leadTrellisDevId) {
+    const required = [
+      '.trellis/scripts/task.py',
+      '.trellis/workflow.md',
+      `.trellis/workspace/${leadTrellisDevId}`,
+    ]
+    for (const relativePath of required) {
+      const target = path.resolve(cwd, relativePath)
+      if (!isInside(path.resolve(cwd), target) || !fs.existsSync(target)) {
+        throw teamError(409, 'TRELLIS_INIT_INVALID', `Trellis 初始化缺少 ${relativePath}`)
+      }
+    }
+
+    const changed = await changedPaths(cwd)
+    if (!changed.length) {
+      throw teamError(409, 'TRELLIS_INIT_INVALID', 'Trellis 初始化没有产生可提交文件')
+    }
+    const manifestPaths = readInitializationManifest(cwd)
+    const forbidden = changed.filter((relativePath) => {
+      const normalized = relativePath.replaceAll('\\', '/')
+      if (
+        normalized.startsWith('/') ||
+        normalized.split('/').includes('..') ||
+        normalized === '.git' ||
+        normalized.startsWith('.git/')
+      ) {
+        return true
+      }
+      return !(
+        normalized.startsWith('.trellis/') ||
+        normalized === '.gitattributes' ||
+        manifestPaths.has(normalized)
+      )
+    })
+    if (forbidden.length) {
+      throw teamError(
+        409,
+        'TRELLIS_INIT_INVALID',
+        `Trellis 初始化产生未授权文件: ${forbidden.slice(0, 5).join(', ')}`,
+      )
+    }
+
+    const existing = await runGit(
+      ['ls-tree', '-r', '--name-only', '-z', 'HEAD', '--', ...changed],
+      { cwd, maxOutputBytes: 4 * 1024 * 1024 },
+    )
+    const overwritten = existing.stdout.split('\0').filter(Boolean)
+    if (overwritten.length) {
+      throw teamError(
+        409,
+        'TRELLIS_INIT_CONFLICT',
+        `自动初始化会覆盖远端已有文件: ${overwritten.slice(0, 5).join(', ')}`,
+      )
+    }
+    return changed
+  }
+
+  async function commitInitialization(cwd, relativePaths) {
+    const add = await runGit(['add', '--sparse', '--', ...relativePaths], {
+      cwd,
+      allowFailure: true,
+    })
+    if (add.code !== 0) {
+      throw teamError(
+        503,
+        'TRELLIS_INIT_FAILED',
+        `无法暂存 Trellis 初始化文件：${sanitizeProcessOutput(
+          add.stderr || add.stdout || 'Git 返回非零退出码',
+          { maxBytes: 2048 },
+        ).trim()}`,
+      )
+    }
+    const commit = await runGit(
+      ['commit', '--no-gpg-sign', '-m', 'trellis(team): initialize Trellis workspace'],
+      { cwd, allowFailure: true },
+    )
+    if (commit.code !== 0) {
+      throw teamError(
+        503,
+        'TRELLIS_INIT_FAILED',
+        `无法提交 Trellis 初始化文件：${sanitizeProcessOutput(
+          commit.stderr || commit.stdout || 'Git 返回非零退出码',
+          { maxBytes: 2048 },
+        ).trim()}`,
+      )
+    }
+    return (await runGit(['rev-parse', 'HEAD'], { cwd })).stdout.trim()
+  }
+
+  async function pushInitialization(project, cwd, auth) {
+    let localCommitSha = (await runGit(['rev-parse', 'HEAD'], { cwd })).stdout.trim()
+    for (let attempt = 0; attempt <= TRELLIS_PUSH_RETRIES; attempt += 1) {
+      const pushed = await runGit(
+        ['push', '--porcelain', '--', project.remoteUrl, `HEAD:refs/heads/${project.syncBranch}`],
+        {
+          cwd,
+          timeoutMs: PUSH_TIMEOUT,
+          allowFailure: true,
+          auth,
+        },
+      )
+      if (pushed.code === 0) {
+        const remote = await runGit(
+          ['ls-remote', '--heads', '--', project.remoteUrl, `refs/heads/${project.syncBranch}`],
+          {
+            cwd,
+            timeoutMs: REMOTE_TIMEOUT,
+            auth,
+          },
+        )
+        return remote.stdout.trim().split(/\s+/)[0] || localCommitSha
+      }
+
+      const nonFastForward = /non-fast-forward|fetch first/i.test(
+        `${pushed.stderr}\n${pushed.stdout}`,
+      )
+      if (!nonFastForward || attempt === TRELLIS_PUSH_RETRIES) {
+        throw teamError(
+          503,
+          ERROR_CODES.GIT_REMOTE_FAILED,
+          'Trellis 初始化提交未能推送到共享分支',
+          {
+            recoverable: true,
+            details: { projectId: project.id, branch: project.syncBranch },
+          },
+        )
+      }
+      const fetched = await runGit(
+        ['fetch', '--no-tags', '--', project.remoteUrl, `refs/heads/${project.syncBranch}`],
+        {
+          cwd,
+          timeoutMs: REMOTE_TIMEOUT,
+          allowFailure: true,
+          auth,
+        },
+      )
+      if (fetched.code !== 0) {
+        throw teamError(502, ERROR_CODES.GIT_REMOTE_FAILED, '拉取初始化后的远端分支失败')
+      }
+      const rebased = await runGit(['rebase', 'FETCH_HEAD'], { cwd, allowFailure: true })
+      if (rebased.code !== 0) {
+        await runGit(['rebase', '--abort'], { cwd, allowFailure: true })
+        throw teamError(
+          409,
+          ERROR_CODES.PROJECT_REPAIR_REQUIRED,
+          '远端分支在初始化期间发生变化，请重新接入',
+          { recoverable: true },
+        )
+      }
+      localCommitSha = (await runGit(['rev-parse', 'HEAD'], { cwd })).stdout.trim()
+    }
+    throw teamError(503, ERROR_CODES.GIT_REMOTE_FAILED, 'Trellis 初始化推送重试次数已用尽')
   }
 
   function shellQuote(value) {
@@ -473,18 +799,22 @@ export function createGitManager({ db, config, dataDir, credentialService, logge
     return value
   }
 
-  async function cloneProject(project, credential = null) {
+  async function cloneForTeam(project, credential, { agentTools, leadTrellisDevId }) {
+    if (!Array.isArray(agentTools) || !agentTools.length) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, 'Agent 工具必须至少选择一项')
+    }
     const target = path.join(projectsRoot, project.workspaceKey)
     if (fs.existsSync(target)) {
       throw teamError(409, ERROR_CODES.CONFLICT, '项目工作副本目录已存在')
     }
     const remote = normalizeGitRemote(project.remoteUrl, config)
-    let result
     try {
-      result = await withGitAuth(credential, remote, (auth) =>
-        runGit(
+      return await withGitAuth(credential, remote, async (auth) => {
+        const cloned = await runGit(
           [
             'clone',
+            '--filter=blob:none',
+            '--no-checkout',
             `--branch=${project.syncBranch}`,
             '--single-branch',
             '--',
@@ -496,26 +826,94 @@ export function createGitManager({ db, config, dataDir, credentialService, logge
             allowFailure: true,
             auth,
           },
-        ),
-      )
+        )
+        if (cloned.code !== 0) {
+          throw teamError(
+            502,
+            ERROR_CODES.GIT_REMOTE_FAILED,
+            `无法克隆项目：${cloned.stderr.trim() || cloned.stdout.trim() || 'Git 失败'}`,
+          )
+        }
+
+        await applyTrellisSparse(target, { requireTrellis: false })
+        const checkout = await runGit(['checkout', project.syncBranch], {
+          cwd: target,
+          allowFailure: true,
+          auth,
+        })
+        if (checkout.code !== 0) {
+          throw teamError(
+            503,
+            'GIT_SPARSE_CHECKOUT_FAILED',
+            `无法检出共享分支：${checkout.stderr.trim() || checkout.stdout.trim() || 'Git 失败'}`,
+          )
+        }
+        await applyTrellisSparse(target, { requireTrellis: false })
+
+        const alreadyInitialized = await remoteHasTrellis(target)
+        if (alreadyInitialized) {
+          await applyTrellisSparse(target)
+          return {
+            target,
+            initialized: false,
+            initializedPaths: [],
+            remoteCommitSha: (await runGit(['rev-parse', 'HEAD'], { cwd: target })).stdout.trim(),
+          }
+        }
+
+        let initializedResult
+        try {
+          initializedResult = await trellisRunner({
+            cwd: target,
+            agentTools,
+            leadTrellisDevId,
+          })
+        } catch (error) {
+          if (error?.name === 'TeamError') throw error
+          throw teamError(
+            503,
+            'TRELLIS_INIT_FAILED',
+            `Trellis 自动初始化失败：${sanitizeProcessOutput(error?.message || error, {
+              maxBytes: 2048,
+            })}`,
+          )
+        }
+        if (initializedResult?.code !== 0) {
+          throw teamError(
+            503,
+            'TRELLIS_INIT_FAILED',
+            `Trellis 自动初始化失败：${sanitizeProcessOutput(
+              initializedResult?.stderr || initializedResult?.stdout || 'CLI 返回非零退出码',
+              { maxBytes: 2048 },
+            ).trim()}`,
+          )
+        }
+
+        const initializedPaths = await validateInitialization(target, leadTrellisDevId)
+        await commitInitialization(target, initializedPaths)
+        await applyTrellisSparse(target)
+        const remoteCommitSha = await pushInitialization(project, target, auth)
+        await applyTrellisSparse(target)
+        return {
+          target,
+          initialized: true,
+          initializedPaths,
+          remoteCommitSha,
+        }
+      })
     } catch (error) {
       if (fs.existsSync(target)) {
         fs.rmSync(target, { recursive: true, force: true })
       }
       throw remoteException(error, '克隆项目')
     }
-    if (result.code !== 0) {
-      if (fs.existsSync(target)) {
-        // 只清理本次以全新 UUID 创建的目录。
-        fs.rmSync(target, { recursive: true, force: true })
-      }
-      throw teamError(
-        502,
-        ERROR_CODES.GIT_REMOTE_FAILED,
-        `无法克隆项目：${result.stderr.trim() || result.stdout.trim() || 'Git 失败'}`,
-      )
-    }
-    return target
+  }
+
+  async function ensureSparseTrellis(project) {
+    await assertClean(project)
+    const cwd = assertProjectWorktree(project)
+    await applyTrellisSparse(cwd)
+    return cwd
   }
 
   function assertProjectWorktree(project) {
@@ -1044,7 +1442,8 @@ export function createGitManager({ db, config, dataDir, credentialService, logge
     projectsRoot,
     withProjectLock,
     assertValidBranch,
-    cloneProject,
+    cloneForTeam,
+    ensureSparseTrellis,
     assertProjectWorktree,
     assertProjectBranch,
     assertClean,

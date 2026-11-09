@@ -1,16 +1,6 @@
 # Runtime state (local only)
 .audit/
-data/board.sqlite*
-data/task-metadata.json
-data/repos.json
-data/plugins.json
-data/plugins.secrets.json
-data/plugins/
-data/.git-auth/
-data/.empty-git-config
-data/backups/
-data/git-credentials.key
-data/*.tmp
+/data/
 
 # Dependencies
 node_modules/

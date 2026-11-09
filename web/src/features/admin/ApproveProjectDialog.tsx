@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
+import { TRELLIS_AGENT_TOOLS } from '@shared/trellis-agent-tools.js'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -14,6 +15,9 @@ import type { AdminUser } from '@/api/admin'
 import type { PendingApproval } from '@/hooks/useAdminProjects'
 import { Field, controlClass } from './shared'
 import { SelectField } from '@/features/board/SelectField'
+
+const DEVELOPER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+const AGENT_TOOL_LABELS = new Map(TRELLIS_AGENT_TOOLS.map((tool) => [tool.id, tool.label]))
 
 export type ApprovalFormValues = {
   leadUserId: string
@@ -57,20 +61,30 @@ export function ApprovalSummary({
 
 export function ApprovalForm({
   users,
+  defaultLeadUserId,
+  defaultLeadTrellisDevId,
+  agentTools = [],
   onSubmit,
   onCancel,
 }: {
   users: AdminUser[]
+  defaultLeadUserId?: string | null
+  defaultLeadTrellisDevId?: string | null
+  agentTools?: string[]
   onSubmit: (values: ApprovalFormValues) => Promise<unknown>
   onCancel?: () => void
 }) {
   const activeUsers = users.filter((user) => user.status === 'active')
-  const [leadUserId, setLeadUserId] = useState(activeUsers[0]?.id ?? '')
-  const [developerId, setDeveloperId] = useState('')
+  const lockedLead = Boolean(defaultLeadUserId && defaultLeadTrellisDevId)
+  const [leadUserId, setLeadUserId] = useState(defaultLeadUserId || activeUsers[0]?.id || '')
+  const [developerId, setDeveloperId] = useState(defaultLeadTrellisDevId || '')
   const [busy, setBusy] = useState(false)
+  const leadUser = activeUsers.find((user) => user.id === leadUserId)
+  const developerIdValid = DEVELOPER_ID_PATTERN.test(developerId.trim())
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!leadUserId || !developerIdValid) return
     setBusy(true)
     await onSubmit({ leadUserId, leadTrellisDevId: developerId.trim() })
     setBusy(false)
@@ -78,35 +92,68 @@ export function ApprovalForm({
 
   return (
     <form className="flex flex-col gap-2.5" onSubmit={handleSubmit}>
-      <Field label="首个负责人">
-        <SelectField
-          className={controlClass}
-          value={leadUserId}
-          placeholder="没有 active 用户"
-          options={activeUsers.map((user) => ({
-            value: user.id,
-            label: `${user.displayName || user.username}（${user.username}）`,
-          }))}
-          onChange={setLeadUserId}
-          disabled={busy || activeUsers.length === 0}
-        />
-      </Field>
-      <Field label="负责人 Trellis developer ID">
-        <Input
-          maxLength={100}
-          required
-          value={developerId}
-          onChange={(event) => setDeveloperId(event.target.value)}
-          disabled={busy || activeUsers.length === 0}
-        />
-      </Field>
+      {lockedLead ? (
+        <div className="grid gap-2 rounded-lg border border-border bg-muted/30 p-2.5 sm:grid-cols-2">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[11px] font-medium text-muted-foreground">首个负责人</span>
+            <span className="text-xs text-foreground">
+              {leadUser
+                ? `${leadUser.displayName || leadUser.username}（${leadUser.username}）`
+                : leadUserId}
+            </span>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[11px] font-medium text-muted-foreground">
+              Trellis developer ID
+            </span>
+            <code className="text-xs text-foreground">{developerId}</code>
+          </div>
+          <div className="flex flex-col gap-0.5 sm:col-span-2">
+            <span className="text-[11px] font-medium text-muted-foreground">Agent 工具</span>
+            <span className="text-xs text-foreground">
+              {agentTools.length
+                ? agentTools.map((tool) => AGENT_TOOL_LABELS.get(tool) || tool).join('、')
+                : '未记录'}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <>
+          <Field label="首个负责人">
+            <SelectField
+              className={controlClass}
+              value={leadUserId}
+              placeholder="没有 active 用户"
+              options={activeUsers.map((user) => ({
+                value: user.id,
+                label: `${user.displayName || user.username}（${user.username}）`,
+              }))}
+              onChange={setLeadUserId}
+              disabled={busy || activeUsers.length === 0}
+            />
+          </Field>
+          <Field
+            label="负责人 Trellis developer ID"
+            hint={developerId && !developerIdValid ? '格式无效' : undefined}
+          >
+            <Input
+              maxLength={64}
+              required
+              pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+              value={developerId}
+              onChange={(event) => setDeveloperId(event.target.value)}
+              disabled={busy || activeUsers.length === 0}
+            />
+          </Field>
+        </>
+      )}
       <div className="flex items-center justify-end gap-2 pt-1">
         {onCancel ? (
           <Button variant="outline" size="sm" type="button" onClick={onCancel} disabled={busy}>
             取消
           </Button>
         ) : null}
-        <Button size="sm" type="submit" disabled={busy || activeUsers.length === 0}>
+        <Button size="sm" type="submit" disabled={busy || !leadUserId || !developerIdValid}>
           确认摘要并启用
         </Button>
       </div>
@@ -141,7 +188,7 @@ export function ApproveProjectDialog({
           <DialogDescription>
             {approval
               ? `${approval.project.name || approval.project.id} · ${approval.project.syncBranch || '共享分支未返回'}`
-              : '核对工具链摘要后指定首个负责人。'}
+              : '核对工具链摘要和接入信息。'}
           </DialogDescription>
         </DialogHeader>
         {approval ? (
@@ -150,6 +197,9 @@ export function ApproveProjectDialog({
             <ApprovalForm
               key={approval.project.id}
               users={users}
+              defaultLeadUserId={approval.project.bootstrapLeadUserId}
+              defaultLeadTrellisDevId={approval.project.bootstrapLeadTrellisDevId}
+              agentTools={approval.project.agentTools}
               onCancel={onClose}
               onSubmit={async (values) => {
                 const ok = await onApprove(values)

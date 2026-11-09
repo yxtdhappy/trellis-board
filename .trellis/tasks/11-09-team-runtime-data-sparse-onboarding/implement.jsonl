@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"确定服务启动、数据目录、SQLite、Git 子进程和稀疏工作副本的模块边界。"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"约束项目接入 API、路径安全、仓库白名单和任务写操作。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"约束 schema 迁移、子进程、测试和真实 HTTP/UI 验收。"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"约束管理台表单、弹层、状态源、多选控件和请求刷新。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"约束前端类型、可访问性、构建和浏览器验收。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"同步 API、数据库、Git 工作区和前端字段契约。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用现有路径、状态和多选原语，避免复制工具枚举与路径逻辑。"}
+{"file":".trellis/tasks/11-09-team-runtime-data-sparse-onboarding/research/repository-findings.md","reason":"记录远端 data 历史、IDE 自动注册、Trellis CLI 和现有接入流程证据。"}

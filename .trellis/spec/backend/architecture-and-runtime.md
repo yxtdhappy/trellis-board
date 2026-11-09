@@ -4,8 +4,9 @@
 
 | 模块 | 职责 |
 | --- | --- |
-| [server/config.js](../../../server/config.js) | 应用目录、SQLite 与旧 JSON 路径、默认仓库、仓库路径规范化 |
-| [server/database.js](../../../server/database.js) | `node:sqlite` 连接、PRAGMA、schema v1 -> v3 顺序迁移、事务辅助和旧 JSON 一次性迁移 |
+| [server/config.js](../../../server/config.js) | 跨平台运行数据根、SQLite 与旧 JSON 路径、默认仓库、仓库路径规范化 |
+| [server/data-migration.js](../../../server/data-migration.js) | 从旧源码 `data/` 迁移运行数据并重写受管项目路径 |
+| [server/database.js](../../../server/database.js) | `node:sqlite` 连接、PRAGMA、schema v6/v7 -> v8 顺序迁移、事务辅助和旧 JSON 一次性迁移 |
 | [server/repositories.js](../../../server/repositories.js) | SQLite 白名单增删、ID 生成、路径规范化和显示顺序 |
 | [server/metadata.js](../../../server/metadata.js) | 13 个阶段的合法 ID、SQLite 人工阶段存储 |
 | [server/persistence.js](../../../server/persistence.js) | SQLite 扫描缓存和看板状态 facade |
@@ -58,7 +59,7 @@ Worker 内会缓存各仓库最近结果，并根据事件判断是仓库级重�
 
 [server/index.js](../../../server/index.js) 启动时：
 
-1. 打开 `data/board.sqlite`，按顺序迁移到 schema v3，创建仓库存储和 HTTP 服务。
+1. 准备跨平台运行数据根并迁移旧源码 `data/`，打开新根下的 `board.sqlite`，按顺序迁移到 schema v8，创建仓库存储和 HTTP 服务。
 2. 监听 `127.0.0.1:4317`。
 3. 启动对白名单仓库的文件监听。
 4. 异步触发启动扫描。
@@ -199,7 +200,7 @@ ssh -F "<temp>/ssh_config" \
 
 ## 配置与常量
 
-路径常量和旧 JSON 迁移来源由 [server/config.js](../../../server/config.js) 定义。业务模块按名称导入，不在本地重新拼接 `data/` 路径。运行时可变 Board 状态只通过 SQLite 读取和写入。
+路径常量和旧 JSON 迁移来源由 [server/config.js](../../../server/config.js) 定义。业务模块按名称导入，不在本地重新拼接源码 `data/` 路径。运行时可变 Board 状态只通过 SQLite 读取和写入。
 
 扫描输出结构由 `SCAN_SCHEMA_VERSION` 控制，当前为 `11`。该常量属于缓存兼容协议，不属于普通版本号；执行风险摘要、指标摘要或 flow 输出形状变化时必须同步递增。
 

@@ -6,8 +6,9 @@
 
 - 服务端：Node.js 24、Git、Python；单实例 Node 进程和 SQLite WAL。
 - 客户端：Windows 10/11 x64；正式 Agent 包内置 Node 24。
-- 数据库：默认 `data/board.sqlite`。
-- 项目工作副本：默认 `data/projects/<workspace-key>`。
+- 运行数据：由 `TRELLIS_BOARD_DATA_DIR` 指定，Ubuntu 部署建议使用 `/var/lib/trellis-board`。
+- 数据库：运行数据目录中的 `board.sqlite`。
+- 项目工作副本：运行数据目录中的 `projects/<workspace-key>`，只检出 `.trellis/`。
 - 团队模式必须使用 HTTPS；只有回环测试地址允许 HTTP。
 - 私网 Git 建议使用 SSH deploy key。不要把账号、令牌或密码写入远端 URL。
 
@@ -21,6 +22,7 @@
 | 变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `TRELLIS_BOARD_MODE` | 是 | `standalone` | 团队部署设为 `team` |
+| `TRELLIS_BOARD_DATA_DIR` | 生产必填 | 平台用户数据目录 | Windows 默认 `%LOCALAPPDATA%\TrellisBoard\server`；Ubuntu 建议 `/var/lib/trellis-board` |
 | `TRELLIS_TEAM_PUBLIC_URL` | 是 | 无 | 浏览器和 Agent 使用的公开根地址，例如 `https://board.example.com` |
 | `TRELLIS_TEAM_BIND_HOST` | 是 | `127.0.0.1` | 服务监听地址；通常保持回环，由反向代理转发 |
 | `TRELLIS_TEAM_PORT` | 否 | `4317` | 团队服务端口 |
@@ -31,17 +33,29 @@
 | `TRELLIS_TEAM_TRUST_PROXY` | 否 | `false` | 仅当请求只能来自受信反向代理时开启 |
 | `TRELLIS_TEAM_ALLOW_LOCAL_GIT_REMOTES` | 否 | `false` | 只用于隔离的真实 E2E，生产保持 false |
 
-PowerShell 前台启动示例：
+Windows PowerShell 前台启动示例：
 
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
 $env:TRELLIS_TEAM_PUBLIC_URL = 'https://board.example.com'
 $env:TRELLIS_TEAM_BIND_HOST = '127.0.0.1'
 $env:TRELLIS_TEAM_PORT = '4317'
+$env:TRELLIS_BOARD_DATA_DIR = Join-Path $env:LOCALAPPDATA 'TrellisBoard\server'
 node server/index.js
 ```
 
-服务账号必须能读取 `data/`，能写项目工作副本，并能非交互执行 `git` 和 `python`。
+Ubuntu 前台启动示例：
+
+```bash
+export TRELLIS_BOARD_MODE=team
+export TRELLIS_TEAM_PUBLIC_URL=https://board.example.com
+export TRELLIS_TEAM_BIND_HOST=127.0.0.1
+export TRELLIS_TEAM_PORT=4317
+export TRELLIS_BOARD_DATA_DIR=/var/lib/trellis-board
+node server/index.js
+```
+
+服务账号必须能读写 `TRELLIS_BOARD_DATA_DIR`，能写项目工作副本，并能非交互执行 `git`、`node` 和 `python`。
 SSH 远端应提前完成主机指纹校验，deploy key 只授予目标项目所需权限。
 
 ## 3. 首次部署
@@ -116,10 +130,11 @@ server {
 ## 5. 项目接入
 
 1. 在 `/admin.html` 输入项目名称、SSH/HTTPS 远端和一个已存在的共享分支。
-2. 服务端克隆到 `data/projects/<workspace-key>`，进入 `provisioning`。
-3. 核对 `.trellis/scripts` 摘要，确认没有 lifecycle hooks、符号链接、`__pycache__` 或字节码。
-4. 指定首个项目负责人及其 Trellis developer ID。
-5. 批准后项目进入 `current`，首次扫描完成后才可读写。
+2. 选择首个项目负责人、Trellis developer ID，并多选本次初始化需要安装的 Agent 工具。
+3. 服务端稀疏克隆到 `projects/<workspace-key>`；目标分支没有 `.trellis/` 时自动初始化、提交并推送。
+4. 服务端重新收敛为仅检出 `.trellis/`，项目进入 `provisioning`。
+5. 核对 `.trellis/scripts` 摘要，确认没有 lifecycle hooks、符号链接、`__pycache__` 或字节码。
+6. 批准后项目进入 `current`，首次扫描完成后才可读写。
 
 接入后的常规任务流程：
 
@@ -174,24 +189,24 @@ NSIS、WebView2 Cookie、真实 Tauri IPC 和控制窗口只能在 Windows 上�
 升级前必须停止服务，并同时备份主库、WAL 和 SHM：
 
 ```powershell
+$dataDir = if ($env:TRELLIS_BOARD_DATA_DIR) { $env:TRELLIS_BOARD_DATA_DIR } else { Join-Path $env:LOCALAPPDATA 'TrellisBoard\server' }
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$backup = "data\backup-$stamp"
+$backup = Join-Path $dataDir "backup-$stamp"
 New-Item -ItemType Directory -Path $backup | Out-Null
-Copy-Item data\board.sqlite "$backup\board.sqlite"
-if (Test-Path data\board.sqlite-wal) { Copy-Item data\board.sqlite-wal "$backup\board.sqlite-wal" }
-if (Test-Path data\board.sqlite-shm) { Copy-Item data\board.sqlite-shm "$backup\board.sqlite-shm" }
-if (Test-Path data\git-credentials.key) { Copy-Item data\git-credentials.key "$backup\git-credentials.key" }
+Copy-Item (Join-Path $dataDir 'board.sqlite') (Join-Path $backup 'board.sqlite')
+if (Test-Path (Join-Path $dataDir 'board.sqlite-wal')) { Copy-Item (Join-Path $dataDir 'board.sqlite-wal') (Join-Path $backup 'board.sqlite-wal') }
+if (Test-Path (Join-Path $dataDir 'board.sqlite-shm')) { Copy-Item (Join-Path $dataDir 'board.sqlite-shm') (Join-Path $backup 'board.sqlite-shm') }
+if (Test-Path (Join-Path $dataDir 'git-credentials.key')) { Copy-Item (Join-Path $dataDir 'git-credentials.key') (Join-Path $backup 'git-credentials.key') }
 ```
 
-本版本支持 `v6 -> v7` 附加式迁移。服务启动时先创建
-`data/backups/board.sqlite.pre-v7.*` 快照，再补齐实时覆盖层、
-`team_task_index.live_revision`、Git 凭据表和 SSH 主机信任表；旧账号、团队、项目、审计和
-任务索引会保留。其他 schema 版本仍会拒绝启动，不得通过删除数据库代替迁移。升级步骤：
+本版本支持 `v6/v7 -> v8` 附加式迁移。服务启动时先创建运行数据目录中的
+`backups/board.sqlite.pre-v8.*` 快照，再补齐项目 Agent 工具和 bootstrap 负责人字段；
+旧账号、团队、项目、审计和任务索引会保留。其他 schema 版本仍会拒绝启动，不得通过删除数据库代替迁移。升级步骤：
 
 1. 停止服务并再次保留当前数据库、日志和配置。
-2. 按上面的 PowerShell 备份数据库、WAL、SHM 和 `data/git-credentials.key`。
-3. 启动新版服务，等待 v6 自动升级到 v7。
-4. 运行 `node server/team/cli.js status`，确认 schema v7、WAL 和 integrity。
+2. 按上面的 PowerShell 备份数据库、WAL、SHM 和运行数据目录中的 `git-credentials.key`。
+3. 启动新版服务，等待 v6/v7 自动升级到 v8。
+4. 运行 `node server/team/cli.js status`，确认 schema v8、WAL 和 integrity。
 5. 检查现有项目、任务索引、Agent 绑定、登录和 Git 凭据；如有异常，停止服务并恢复升级前备份。
 
 ```powershell
@@ -200,14 +215,14 @@ $env:TRELLIS_TEAM_PUBLIC_URL = 'https://board.example.com'
 node server/team/cli.js status
 ```
 
-结果必须显示 `schemaVersion=7`、`journalMode=wal` 和 `integrity=ok`。如果启动失败，保留
-原库和 `data/backups/board.sqlite.pre-v7.*`，不要删除或重建数据库。
+结果必须显示 `schemaVersion=8`、`journalMode=wal` 和 `integrity=ok`。如果启动失败，保留
+原库和 `backups/board.sqlite.pre-v8.*`，不要删除或重建数据库。
 
 回滚步骤：
 
 1. 停止服务并再次保留当前数据库、日志和配置。
 2. 切回旧应用版本。
-3. 把当前 `data/board.sqlite*` 和 `data/git-credentials.key` 移到独立目录。
+3. 把当前运行数据目录中的 `board.sqlite*` 和 `git-credentials.key` 移到独立目录。
 4. 恢复旧版本对应的数据库、WAL、SHM 和密钥备份；不要删除被回滚任务的远端提交。
 5. 以 standalone 模式启动并检查健康接口和任务数量。
 
@@ -216,14 +231,18 @@ node server/team/cli.js status
 ## 8. 备份与恢复
 
 - 每日至少备份一次数据库；升级、修复项目或批量操作前额外备份。
-- 最稳妥的备份窗口是停止服务后复制 `data/board.sqlite*` 和 `data/git-credentials.key`。
-- `data/git-credentials.key` 与数据库一起构成完整恢复单元；只有数据库没有密钥时，Git 凭据无法恢复。
+- 最稳妥的备份窗口是停止服务后复制运行数据目录中的 `board.sqlite*` 和 `git-credentials.key`。
+- `git-credentials.key` 与数据库一起构成完整恢复单元；只有数据库没有密钥时，Git 凭据无法恢复。
 - 项目工作副本不是唯一事实源，任务提交已推送到项目远端；数据库还保存账号、接受状态、审计和索引。
 - 数据库还保存尚未进入 Git 的实时文件覆盖层与 revision，备份时不能只保存 Git 远端。
 - 客户端实时冲突备份位于 `%LOCALAPPDATA%\TrellisBoard\data\agent\live-backups`，默认保留 30 天，
   每个任务至少保留最近 20 份。
 - 恢复后运行 `node server/team/cli.js status`，再检查登录、项目状态、待接受任务和 Agent 在线状态。
 - 不使用 `git reset --hard`、强推或手工改写远端历史修复 Board。
+
+如果历史中误提交了 `data/`，维护者必须先创建本地 mirror/bundle 备份，再清理全部可达 refs，
+最后使用 `--force-with-lease` 推送。GitHub 可能因其他分支、PR 缓存或内部对象回收策略暂时保留
+失联对象，因此只能确认“远端可达历史已清除”，不能承诺存储介质立即物理擦除。
 
 ## 9. 故障处置
 

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { normalizeTrellisAgentTools } from '../../shared/trellis-agent-tools.js'
 import { withTransaction } from '../database.js'
 import { appendAuditEvent } from './audit.js'
 import { ERROR_CODES, teamError } from './errors.js'
@@ -43,6 +44,23 @@ function projectRow(db, projectId) {
   )
 }
 
+function storedAgentTools(value) {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function validatedAgentTools(value) {
+  try {
+    return normalizeTrellisAgentTools(value)
+  } catch (error) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, error.message)
+  }
+}
+
 function publicProject(row) {
   if (!row) return null
   return {
@@ -61,6 +79,9 @@ function publicProject(row) {
         }
       : null,
     syncStatus: row.sync_status,
+    agentTools: storedAgentTools(row.agent_tools_json),
+    bootstrapLeadUserId: row.bootstrap_lead_user_id || null,
+    bootstrapLeadTrellisDevId: row.bootstrap_lead_trellis_dev_id || null,
     trustedToolchainSha256: row.trusted_task_toolchain_sha256 || null,
     lastFetchAt: row.last_fetch_at || null,
     lastPushAt: row.last_push_at || null,
@@ -310,6 +331,11 @@ export function createProjectService({
   async function connect(actor, input = {}) {
     const teamId = resolveProjectTeam(db, actor, input.teamId)
     const name = cleanName(input.name, '项目名称')
+    const agentTools = validatedAgentTools(input.agentTools)
+    const leadUserId = String(input.leadUserId || '').trim()
+    activeUser(db, leadUserId)
+    assertTeamMember(db, teamId, leadUserId)
+    const leadTrellisDevId = validateDeveloperId(input.leadTrellisDevId)
     const syncBranch = await gitManager.assertValidBranch(input.syncBranch)
     const remote = normalizeGitRemote(input.remoteUrl, config)
     const credentialId = String(input.credentialId || '').trim() || null
@@ -350,7 +376,11 @@ export function createProjectService({
       teamId,
       credentialId,
     }
-    const target = await gitManager.cloneProject(cloneProject, credential)
+    const cloned = await gitManager.cloneForTeam(cloneProject, credential, {
+      agentTools,
+      leadTrellisDevId,
+    })
+    const target = cloned.target
     let toolchain
     try {
       toolchain = computeScriptTreeHash(target)
@@ -375,8 +405,9 @@ export function createProjectService({
           INSERT INTO team_project(
             repository_id, team_id, workspace_key, remote_url, remote_identity_hash,
             sync_branch, git_credential_id, trusted_task_toolchain_sha256, sync_status,
+            agent_tools_json, bootstrap_lead_user_id, bootstrap_lead_trellis_dev_id,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?)
         `).run(
           repositoryId,
           teamId,
@@ -386,6 +417,9 @@ export function createProjectService({
           syncBranch,
           credentialId,
           toolchain.sha256,
+          JSON.stringify(agentTools),
+          leadUserId,
+          leadTrellisDevId,
           now,
           now,
         )
@@ -402,6 +436,11 @@ export function createProjectService({
             credentialName: credential?.name || null,
             toolchainSha256: toolchain.sha256,
             existingRepository: Boolean(existing),
+            agentTools,
+            leadUserId,
+            trellisDevId: leadTrellisDevId,
+            initialized: cloned.initialized === true,
+            targetCommit: cloned.remoteCommitSha || null,
           },
         })
       })
@@ -449,10 +488,21 @@ export function createProjectService({
         )
       }
       await precheckLifecycleHooks(project.path)
-      const leadUserId = String(input.leadUserId || '').trim()
+      const requestedLeadUserId = String(input.leadUserId || '').trim()
+      const requestedDeveloperId = validateDeveloperId(input.leadTrellisDevId)
+      if (row.bootstrap_lead_user_id && requestedLeadUserId !== row.bootstrap_lead_user_id) {
+        throw teamError(409, ERROR_CODES.CONFLICT, '批准负责人必须与项目接入时选择的首个负责人一致')
+      }
+      if (
+        row.bootstrap_lead_trellis_dev_id &&
+        requestedDeveloperId !== row.bootstrap_lead_trellis_dev_id
+      ) {
+        throw teamError(409, ERROR_CODES.CONFLICT, '批准 developer ID 必须与项目接入时的配置一致')
+      }
+      const leadUserId = row.bootstrap_lead_user_id || requestedLeadUserId
       activeUser(db, leadUserId)
       assertTeamMember(db, row.team_id, leadUserId)
-      const developerId = validateDeveloperId(input.leadTrellisDevId)
+      const developerId = row.bootstrap_lead_trellis_dev_id || requestedDeveloperId
       resolveDeveloperWorkspace(project.path, developerId)
       const now = new Date().toISOString()
       const target = path.join(projectsRoot, project.workspaceKey)
@@ -497,6 +547,7 @@ export function createProjectService({
             toolchainSha256: computed.sha256,
             leadUserId,
             trellisDevId: developerId,
+            agentTools: storedAgentTools(row.agent_tools_json),
           },
         })
       })
@@ -915,6 +966,29 @@ export function createProjectService({
     })
   }
 
+  async function ensureSparse(projectId) {
+    return gitManager.withProjectLock(projectId, async () => {
+      const project = readGitProject(db, projectId)
+      if (!project || ['disabled', 'provisioning'].includes(project.syncStatus)) return false
+      try {
+        await gitManager.ensureSparseTrellis(project)
+        return true
+      } catch (error) {
+        db.prepare(`
+          UPDATE team_project
+          SET sync_status = 'needs_repair', last_error = ?, updated_at = ?
+          WHERE repository_id = ?
+        `).run(
+          String(error.message || '转换为 .trellis 稀疏检出失败').slice(0, 1000),
+          new Date().toISOString(),
+          projectId,
+        )
+        taskIndex.incrementQueryRevision()
+        return false
+      }
+    })
+  }
+
   return {
     connect,
     probeRemote,
@@ -931,6 +1005,7 @@ export function createProjectService({
     refreshScheduled,
     disable,
     repair,
+    ensureSparse,
     read,
     changeCredential,
     projectsRoot,

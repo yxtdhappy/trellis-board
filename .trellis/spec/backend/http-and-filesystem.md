@@ -53,7 +53,7 @@
 
 ## 仓库白名单
 
-白名单存放在 SQLite `repositories` 表。首次建库且 `data/repos.json` 不存在时，使用 [server/config.js](../../../server/config.js) 的默认仓库一次性导入。API 返回每项 `id`、`name`、`path`，路径使用 `/`。
+白名单存放在 SQLite `repositories` 表。首次建库且运行数据目录中的 `repos.json` 不存在时，使用 [server/config.js](../../../server/config.js) 的默认仓库一次性导入。API 返回每项 `id`、`name`、`path`，路径使用 `/`。
 
 [server/repositories.js](../../../server/repositories.js) 的规则：
 
@@ -299,8 +299,15 @@ const projectIds = readableProjectIds(actor).filter((id) => (
 - Git 凭据按团队隔离并绑定一个主机和认证类型；项目只能引用同团队、同主机、同认证类型的凭据。
 - API、审计和错误详情只返回凭据元数据，不返回 Token、私钥、口令或加密载荷。
 - 远端探测只执行 `git ls-remote`，不创建工作副本、不写数据库；SSH 主机确认是独立写操作。
-- `data/git-credentials.key` 是 Git 凭据密文的主密钥，必须与 `data/board.sqlite` 一起备份。数据库中的凭据 AAD 绑定团队、主机和认证类型，修改这些列会导致解密失败。
-- 当前数据库从 v6 升级到 v7 时只新增 Git 凭据表、SSH 信任表和 `team_project.git_credential_id`，迁移前备份到 `data/backups/`。
+- 运行数据目录中的 `git-credentials.key` 是 Git 凭据密文的主密钥，必须与 `board.sqlite` 一起备份。数据库中的凭据 AAD 绑定团队、主机和认证类型，修改这些列会导致解密失败。
+- 当前数据库支持 v6/v7 升级到 v8，升级前备份到运行数据目录的 `backups/`。
+
+### Scenario: 团队项目稀疏检出与自动初始化
+
+- 项目接入请求包含 `agentTools`、`leadUserId` 和 `leadTrellisDevId`；服务端在 clone 前校验工具白名单、团队成员关系和 developer ID。
+- 服务端仅检出 `.trellis/`。目标分支缺少 `.trellis/` 时，使用固定的本地 Trellis CLI 按所选工具初始化。
+- 初始化产物提交并非强制推送到共享分支，成功后项目进入 `provisioning` 并继续工具链摘要审核。
+- 初始化失败、文件越界或 push 失败时，不能写入可用项目状态。
 
 ## 路径安全
 

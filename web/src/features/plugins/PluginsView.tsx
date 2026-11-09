@@ -137,7 +137,8 @@ export function PluginsView() {
         </p>
       ) : plugins.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
-          还没有加载任何插件。把插件目录放到 plugins/&lt;id&gt;/ 并写入 data/plugins.json 后刷新。
+          还没有加载任何插件。把插件目录放到 plugins/&lt;id&gt;/ 并写入运行数据目录中的 plugins.json
+          后刷新。
         </p>
       ) : (
         <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">

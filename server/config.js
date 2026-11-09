@@ -1,9 +1,33 @@
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
-const appDir = path.resolve(serverDir, '..')
-export const dataDir = path.join(appDir, 'data')
+export const appDir = path.resolve(serverDir, '..')
+export const legacyDataDir = path.join(appDir, 'data')
+
+export function resolveBoardDataDir({
+  platform = process.platform,
+  env = process.env,
+  homeDir = os.homedir(),
+} = {}) {
+  const platformPath = platform === 'win32' ? path.win32 : path.posix
+  const override = String(env.TRELLIS_BOARD_DATA_DIR || '').trim()
+  if (override) return platformPath.resolve(override)
+  if (platform === 'win32') {
+    const base =
+      String(env.LOCALAPPDATA || '').trim() || platformPath.join(homeDir, 'AppData', 'Local')
+    return platformPath.join(base, 'TrellisBoard', 'server')
+  }
+  if (platform === 'darwin') {
+    return platformPath.join(homeDir, 'Library', 'Application Support', 'TrellisBoard', 'server')
+  }
+  const base =
+    String(env.XDG_DATA_HOME || '').trim() || platformPath.join(homeDir, '.local', 'share')
+  return platformPath.join(base, 'TrellisBoard', 'server')
+}
+
+export const dataDir = resolveBoardDataDir()
 export const databaseFile = path.join(dataDir, 'board.sqlite')
 export const metadataFile = path.join(dataDir, 'task-metadata.json')
 export const scanCacheFile = path.join(dataDir, 'scan-cache.json')

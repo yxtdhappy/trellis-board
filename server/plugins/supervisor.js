@@ -95,10 +95,10 @@ export function loadPluginConfigFile(file, { env = process.env, secretsFile } = 
   try {
     raw = JSON.parse(fs.readFileSync(file, 'utf8'))
   } catch {
-    throw new Error('data/plugins.json 不是合法 JSON')
+    throw new Error('plugins.json 不是合法 JSON')
   }
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.plugins)) {
-    throw new Error('data/plugins.json 必须包含 plugins 数组')
+    throw new Error('plugins.json 必须包含 plugins 数组')
   }
   const secrets = loadSecretsFile(
     secretsFile || env.TRELLIS_BOARD_SECRETS_FILE || defaultSecretsFile(file),
@@ -107,10 +107,10 @@ export function loadPluginConfigFile(file, { env = process.env, secretsFile } = 
   const missing = []
   const plugins = raw.plugins.map((entry, index) => {
     if (!entry || typeof entry !== 'object') {
-      throw new Error(`data/plugins.json 第 ${index + 1} 项不是对象`)
+      throw new Error(`plugins.json 第 ${index + 1} 项不是对象`)
     }
     const id = String(entry.id || '').trim()
-    if (!id) throw new Error(`data/plugins.json 第 ${index + 1} 项缺少 id`)
+    if (!id) throw new Error(`plugins.json 第 ${index + 1} 项缺少 id`)
     if (!/^[A-Za-z0-9._-]+$/.test(id)) {
       throw new Error(`插件 id 只能包含字母、数字、点、下划线与中划线: ${id}`)
     }

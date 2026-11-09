@@ -44,7 +44,14 @@ standalone 模式固定监听本机回环地址 `127.0.0.1`。需要多人访问
 
 ## 本地持久化
 
-Board 自身可变状态统一保存在 `data/board.sqlite`：
+Board 运行数据不再写入源码目录。默认根目录为：
+
+- Windows：`%LOCALAPPDATA%\TrellisBoard\server`
+- macOS：`~/Library/Application Support/TrellisBoard/server`
+- Linux：`${XDG_DATA_HOME:-~/.local/share}/TrellisBoard/server`
+
+部署环境应通过 `TRELLIS_BOARD_DATA_DIR` 指向独立持久化目录；Ubuntu 服务建议使用
+`/var/lib/trellis-board`。Board 自身可变状态统一保存在该目录下的 `board.sqlite`：
 
 - `repositories`：项目白名单和显示顺序
 - `task_stage`：人工流程检查点
@@ -63,13 +70,13 @@ Board 自身可变状态统一保存在 `data/board.sqlite`：
 - `git_credential`、`git_ssh_known_host`：团队 Git 凭据密文、项目引用和 SSH 主机信任
 - `app_meta`：数据库 schema 版本和旧 JSON 迁移标记
 
-全新数据库会直接创建当前 schema（v7），包含团队、团队成员、团队项目、团队审计、Agent 事件游标、实时文件覆盖层、Git 凭据和 SSH 主机信任。首次打开空库时仍会在一个事务中读取 `data/repos.json`、`data/task-metadata.json`、`data/scan-cache.json` 和 `data/board-state.json` 并导入 standalone 数据，然后写入一次性的 `legacy_json_imported_v1` 标记。非法或损坏的旧 JSON 只记录警告并跳过，不会阻止服务启动。运行时不修改这四个 JSON 文件。
+全新数据库会直接创建当前 schema（v8），包含团队、团队成员、团队项目、团队审计、Agent 事件游标、实时文件覆盖层、Git 凭据、SSH 主机信任、项目初始化工具和 bootstrap 负责人。首次打开空库时仍会在一个事务中读取运行数据目录中的 `repos.json`、`task-metadata.json`、`scan-cache.json` 和 `board-state.json` 并导入 standalone 数据，然后写入一次性的 `legacy_json_imported_v1` 标记。非法或损坏的旧 JSON 只记录警告并跳过，不会阻止服务启动。运行时不修改这四个 JSON 文件。
 
-v6 数据库升级到 v7 前会写入 `data/backups/board.sqlite.pre-v7.*` 快照，再补齐实时同步表、`team_task_index.live_revision`、Git 凭据表、SSH 主机信任表和 `team_project.git_credential_id`，已有账号、项目、审计和任务索引保持不变。`v5` 及更旧版本仍拒绝启动，不能通过删除数据库代替迁移。重建前先停止服务并归档 `data/board.sqlite`、`data/board.sqlite-wal`、`data/board.sqlite-shm`。
+v6/v7 数据库升级到 v8 前会在运行数据目录的 `backups/` 写入 `board.sqlite.pre-v8.*` 快照，再补项目 Agent 工具和 bootstrap 负责人字段，已有账号、项目、审计和任务索引保持不变。`v5` 及更旧版本仍拒绝启动，不能通过删除数据库代替迁移。重建前先停止服务并归档运行数据目录中的 `board.sqlite`、`board.sqlite-wal` 和 `board.sqlite-shm`。
 
-SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目增删、批量新增和看板状态的多字段更新均使用事务；失败时回滚整个操作。Git 凭据使用 `data/git-credentials.key` 做 AES-256-GCM 加密，备份数据库时必须同时备份该密钥；丢失密钥后凭据无法解密，只能重新录入。热备份前应先停止服务，并同时处理可能存在的 `board.sqlite-wal` 与 `board.sqlite-shm`。
+SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目增删、批量新增和看板状态的多字段更新均使用事务；失败时回滚整个操作。Git 凭据使用运行数据目录中的 `git-credentials.key` 做 AES-256-GCM 加密，备份数据库时必须同时备份该密钥；丢失密钥后凭据无法解密，只能重新录入。热备份前应先停止服务，并同时处理可能存在的 `board.sqlite-wal` 与 `board.sqlite-shm`。
 
-回滚到旧版 Board 时，先停止服务并归档当前 `data/board.sqlite*` 与 `data/git-credentials.key`，再切换到旧代码和旧库备份。团队版成功推送的 Git 任务不会被回滚，数据库中的接受状态、团队成员和审计会随备份回退。详细步骤见[团队版运维手册](./docs/team-operations.md)。
+回滚到旧版 Board 时，先停止服务并归档当前运行数据目录中的 `board.sqlite*` 与 `git-credentials.key`，再切换到旧代码和旧库备份。团队版成功推送的 Git 任务不会被回滚，数据库中的接受状态、团队成员和审计会随备份回退。详细步骤见[团队版运维手册](./docs/team-operations.md)。
 
 ## 重要限制
 
@@ -91,7 +98,7 @@ SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目
 
 - 创建任务：调用目标仓库自己的 `.trellis/scripts/task.py create --no-start`
 - 派发任务：更新指定任务的 `task.json.assignee`
-- 流程勾选：只写入看板的 `data/board.sqlite`，不改写 Trellis 的正式任务状态
+- 流程勾选：只写入看板数据库，不改写 Trellis 的正式任务状态
 - 计划字段：从任务卡片或详情维护截止日期、里程碑和标签，只写 SQLite
 - 组合视图：保存、复用和删除个人筛选条件
 - 阻断依赖：从任务详情创建或解除，依赖与事件同事务写入 SQLite
@@ -108,11 +115,14 @@ SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目
 1. 准备 Node.js 24、Git、Python，并让服务账号能够通过 SSH 访问项目远端。
 2. 设置 `TRELLIS_BOARD_MODE=team`、`TRELLIS_TEAM_PUBLIC_URL` 等环境变量。
 3. 运行 `node server/team/cli.js init-admin --username admin` 创建首个管理员。
-4. 启动服务，在 `/admin.html` 接入项目、确认脚本摘要并添加项目成员。
+4. 启动服务，在 `/admin.html` 选择首个负责人、Trellis developer ID 和 Agent 工具，接入项目后确认脚本摘要并添加项目成员。
 5. 安装 Windows 客户端，用服务器地址、账号和密码登录；在 Board 项目栏选择本地 Git 仓库关联。
 
 团队任务由服务端工作副本创建或修改，只有 Git push 成功后才进入待接受状态。Agent 只执行
 本地分支的 `fetch` 和 `ff-only` 同步，不会自动 stash、reset、checkout、rebase 或 push。
+
+服务端项目工作副本只稀疏检出 `.trellis/`。目标分支尚无 `.trellis/` 时，服务端使用本地固定版本的
+Trellis CLI 按页面所选 Agent 工具初始化，提交并推送后重新收敛为 `.trellis/` 工作区。
 
 桌面客户端还会复用同一 watcher 监听已关联项目的 `.trellis/tasks`、`.trellis/workspace` 和
 `.trellis/.developer`。未提交文本文件以文件级批次上传，服务端按到达顺序分配项目 revision，
@@ -125,12 +135,12 @@ SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目
 插件运行在独立子进程里，通过 NDJSON / JSON-RPC 与宿主通信；宿主不把插件代码加载进主进程。
 仓库内置 `a2a-intake` 与 `acp-dispatch` 两个参考插件；业务插件建议放在本地，不随仓库分发。
 
-1. 复制 `data/plugins.example.json` 为 `data/plugins.json`（该文件已在 `.gitignore`）。
+1. 复制 `config/examples/plugins.json` 为运行数据目录中的 `plugins.json`。
 2. 插件目录固定为 `plugins/<id>/`，必须有 `plugin.json`（`id`、`version`、`apiVersion`、`engines.board`）。
-3. 敏感值推荐放在 `data/plugins.secrets.json`（复制 `data/plugins.secrets.example.json`，并执行
-   `chmod 600`），配置里用 `secret:scope/key` 引用；也支持 `env:NAME`。
+3. 敏感值推荐放在运行数据目录中的 `plugins.secrets.json`（复制 `config/examples/plugins.secrets.json`，
+   并执行 `chmod 600`），配置里用 `secret:scope/key` 引用；也支持 `env:NAME`。
 4. 明文敏感值仍会加载，但启动时告警；`/api/plugins` 只回显 `***`。secrets 文件不提供写入 API，
-   手动编辑后重启生效；备份 `data/` 时注意其中包含密钥。
+   手动编辑后重启生效；备份运行数据目录时注意其中包含密钥。
 
 | 插件 | 作用 |
 | --- | --- |

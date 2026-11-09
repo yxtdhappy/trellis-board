@@ -11,7 +11,7 @@ import {
   stateFile,
 } from './config.js'
 
-export const DATABASE_SCHEMA_VERSION = 7
+export const DATABASE_SCHEMA_VERSION = 8
 
 const LEGACY_IMPORT_KEY = 'legacy_json_imported_v1'
 const EXECUTION_EVENTS_STARTED_KEY = 'execution_events_started_at'
@@ -700,6 +700,27 @@ function ensureV7Schema(db) {
   `)
 }
 
+function ensureV8Schema(db) {
+  if (!hasColumn(db, 'team_project', 'agent_tools_json')) {
+    db.exec(`
+      ALTER TABLE team_project
+      ADD COLUMN agent_tools_json TEXT NOT NULL DEFAULT '[]'
+    `)
+  }
+  if (!hasColumn(db, 'team_project', 'bootstrap_lead_user_id')) {
+    db.exec(`
+      ALTER TABLE team_project
+      ADD COLUMN bootstrap_lead_user_id TEXT
+    `)
+  }
+  if (!hasColumn(db, 'team_project', 'bootstrap_lead_trellis_dev_id')) {
+    db.exec(`
+      ALTER TABLE team_project
+      ADD COLUMN bootstrap_lead_trellis_dev_id TEXT
+    `)
+  }
+}
+
 function tableExists(db, table) {
   return Boolean(
     db
@@ -712,12 +733,12 @@ function tableExists(db, table) {
   )
 }
 
-function backupBeforeV7(db, databaseFile) {
+function backupBeforeUpgrade(db, databaseFile) {
   if (!databaseFile || databaseFile === ':memory:') return null
   const backupDir = path.join(path.dirname(databaseFile), 'backups')
   fs.mkdirSync(backupDir, { recursive: true })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const backupFile = path.join(backupDir, `board.sqlite.pre-v7.${stamp}`)
+  const backupFile = path.join(backupDir, `board.sqlite.pre-v8.${stamp}`)
   const quoted = backupFile.replaceAll("'", "''")
   db.exec(`VACUUM INTO '${quoted}'`)
   return backupFile
@@ -727,13 +748,13 @@ function ensureSchema(db, { databaseFile } = {}) {
   const schemaVersion = tableExists(db, 'app_meta') ? readMeta(db, 'schema_version') : null
   const numericVersion = schemaVersion == null ? null : Number(schemaVersion)
 
-  if (numericVersion !== null && ![6, 7].includes(numericVersion)) {
+  if (numericVersion !== null && ![6, 7, 8].includes(numericVersion)) {
     throw new Error(
-      `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除 data/board.sqlite 后重建`,
+      `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除当前 board.sqlite 后重建`,
     )
   }
-  if (numericVersion === 6) {
-    backupBeforeV7(db, databaseFile)
+  if (numericVersion === 6 || numericVersion === 7) {
+    backupBeforeUpgrade(db, databaseFile)
   }
 
   withTransaction(db, () => {
@@ -744,21 +765,22 @@ function ensureSchema(db, { databaseFile } = {}) {
     ensureV5Schema(db)
     ensureV6Schema(db)
     ensureV7Schema(db)
-    if (numericVersion == null || numericVersion === 6) {
+    ensureV8Schema(db)
+    if (numericVersion == null || numericVersion < DATABASE_SCHEMA_VERSION) {
       writeMeta(db, 'schema_version', DATABASE_SCHEMA_VERSION)
     }
   })
 }
 
 function importRepositories(db, legacyFile, fallbackRepositories, logger) {
-  const legacy = readLegacyJson(legacyFile, 'data/repos.json', logger)
+  const legacy = readLegacyJson(legacyFile, 'repos.json', logger)
   let entries
   if (!legacy.exists) {
     entries = fallbackRepositories.map((repoPath) => ({ path: repoPath }))
   } else if (!legacy.value) {
     return
   } else if (!Array.isArray(legacy.value.repositories)) {
-    logger.warn('跳过结构无效的旧数据 data/repos.json: 缺少 repositories 数组')
+    logger.warn('跳过结构无效的旧数据 repos.json: 缺少 repositories 数组')
     return
   } else {
     entries = legacy.value.repositories
@@ -785,13 +807,13 @@ function importRepositories(db, legacyFile, fallbackRepositories, logger) {
       )
       if (result.changes > 0) position += 1
     } catch (error) {
-      logger.warn(`跳过无效的旧项目记录 data/repos.json[${sourceIndex}]: ${errorMessage(error)}`)
+      logger.warn(`跳过无效的旧项目记录 repos.json[${sourceIndex}]: ${errorMessage(error)}`)
     }
   })
 }
 
 function importManualStages(db, legacyFile, logger) {
-  const legacy = readLegacyJson(legacyFile, 'data/task-metadata.json', logger)
+  const legacy = readLegacyJson(legacyFile, 'task-metadata.json', logger)
   if (!legacy.value || typeof legacy.value.tasks !== 'object' || !legacy.value.tasks) return
 
   const now = new Date().toISOString()
@@ -808,12 +830,12 @@ function importManualStages(db, legacyFile, logger) {
 }
 
 function importScanCache(db, legacyFile, logger) {
-  const legacy = readLegacyJson(legacyFile, 'data/scan-cache.json', logger)
+  const legacy = readLegacyJson(legacyFile, 'scan-cache.json', logger)
   const board = legacy.value?.board
   if (!board || typeof board !== 'object' || Array.isArray(board)) return
   const schemaVersion = Number(legacy.value.schemaVersion)
   if (!Number.isInteger(schemaVersion)) {
-    logger.warn('跳过结构无效的旧数据 data/scan-cache.json: schemaVersion 不是整数')
+    logger.warn('跳过结构无效的旧数据 scan-cache.json: schemaVersion 不是整数')
     return
   }
   const savedAt =
@@ -829,7 +851,7 @@ function importScanCache(db, legacyFile, logger) {
 }
 
 function importBoardState(db, legacyFile, logger) {
-  const legacy = readLegacyJson(legacyFile, 'data/board-state.json', logger)
+  const legacy = readLegacyJson(legacyFile, 'board-state.json', logger)
   if (!legacy.value || Array.isArray(legacy.value) || typeof legacy.value !== 'object') return
 
   const now = new Date().toISOString()

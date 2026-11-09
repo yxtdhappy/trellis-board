@@ -8,7 +8,7 @@
 白名单仓库 .trellis/**
   -> server/loader.js 扫描与阶段推导
   -> server/scan-worker.js Worker Thread 汇总
-  -> data/board.sqlite scan_cache、task_dependency、board_state 与内存 boardCache
+  -> 运行数据目录中的 board.sqlite scan_cache、task_dependency、board_state 与内存 boardCache
   -> server/index.js /api/board、/api/task
   -> public/app.js state 与 renderX/bindX
   -> public/index.html 原生 DOM

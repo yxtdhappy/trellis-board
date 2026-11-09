@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { FolderGit2, Radar } from 'lucide-react'
 import { toast } from 'sonner'
+import { TRELLIS_AGENT_TOOLS } from '@shared/trellis-agent-tools.js'
 import { formatError, readSshTrustChallenge } from '@/api/admin'
 import type { RemoteProbeResult, SshTrustChallenge, SshTrustResult, TeamProject } from '@/api/admin'
 import { Button } from '@/components/ui/button'
@@ -10,9 +11,13 @@ import { SelectField } from '@/features/board/SelectField'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import { formatTime } from '@/lib/admin-shared'
 import { ApprovalForm, ApprovalSummary } from './ApproveProjectDialog'
+import { MultiSelectField } from './MultiSelectField'
 import { ProjectCredentialDialog } from './ProjectCredentialDialog'
 import { EmptyRow, Field, Panel, Row, StatusPill } from './shared'
 import { SshTrustDialog } from './SshTrustDialog'
+
+const DEVELOPER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+const AGENT_TOOL_LABELS = new Map(TRELLIS_AGENT_TOOLS.map((tool) => [tool.id, tool.label]))
 
 const EMPTY_FORM = {
   remote: '',
@@ -20,6 +25,9 @@ const EMPTY_FORM = {
   name: '',
   branch: '',
   repositoryId: '',
+  agentTools: [] as string[],
+  leadUserId: '',
+  leadTrellisDevId: '',
 }
 
 type ProbeEvidence = {
@@ -48,7 +56,12 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
     changeProjectCredential,
     adminTeamId,
   } = consoleApi
-  const [form, setForm] = useState(EMPTY_FORM)
+  const activeUsers = users.filter((user) => user.status === 'active')
+  const defaultLeadUserId = activeUsers[0]?.id ?? ''
+  const [form, setForm] = useState(() => ({
+    ...EMPTY_FORM,
+    leadUserId: defaultLeadUserId,
+  }))
   const [nameManual, setNameManual] = useState(false)
   const [branches, setBranches] = useState<string[]>([])
   const [branchQuery, setBranchQuery] = useState('')
@@ -78,6 +91,19 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
     value: branch,
     label: branch,
   }))
+  const agentToolOptions = TRELLIS_AGENT_TOOLS.map((tool) => ({
+    value: tool.id,
+    label: tool.label,
+  }))
+  const leadOptions = activeUsers.map((user) => ({
+    value: user.id,
+    label: `${user.displayName || user.username}（${user.username}）`,
+  }))
+  const leadUserId =
+    form.leadUserId && activeUsers.some((user) => user.id === form.leadUserId)
+      ? form.leadUserId
+      : defaultLeadUserId
+  const developerIdValid = DEVELOPER_ID_PATTERN.test(form.leadTrellisDevId.trim())
   const probeValid = Boolean(
     probe &&
     form.remote.trim() === probe.remote &&
@@ -96,7 +122,11 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
 
   function resetForm() {
     requestRef.current += 1
-    setForm(EMPTY_FORM)
+    setForm({
+      ...EMPTY_FORM,
+      agentTools: [],
+      leadUserId: activeUsers[0]?.id ?? '',
+    })
     setNameManual(false)
     setBranches([])
     setBranchQuery('')
@@ -170,6 +200,14 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
       toast.error('请先选择凭据并成功识别远端分支。')
       return
     }
+    if (!form.agentTools.length) {
+      toast.error('请至少选择一个 Agent 工具。')
+      return
+    }
+    if (!leadUserId || !developerIdValid) {
+      toast.error('请选择首个负责人并填写合法的 Trellis developer ID。')
+      return
+    }
     setBusy(true)
     const connected = await connectProject({
       name: form.name.trim(),
@@ -177,6 +215,9 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
       remoteUrl: probe.remote,
       credentialId: probe.credentialId || null,
       repositoryId: form.repositoryId.trim(),
+      agentTools: form.agentTools,
+      leadUserId,
+      leadTrellisDevId: form.leadTrellisDevId.trim(),
     })
     setBusy(false)
     if (connected) resetForm()
@@ -224,7 +265,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
           <Panel
             kicker="GIT / PROJECT ONBOARDING"
             title="新增或升级项目"
-            description="先选择凭据并识别远端，再确认工具链摘要和首个负责人。"
+            description="识别远端后选择初始化工具和首个负责人，再确认工具链摘要。"
           >
             <form className="flex flex-col gap-2" onSubmit={handleCreate}>
               <Field label="Git 远端 URL">
@@ -299,6 +340,48 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
                   />
                 </Field>
               ) : null}
+              <Field
+                label="Agent 工具"
+                hint="至少选择一项；目标仓库缺少 .trellis 时会在接入过程中自动初始化。"
+              >
+                <MultiSelectField
+                  value={form.agentTools}
+                  options={agentToolOptions}
+                  placeholder="选择要初始化的 Agent 工具"
+                  ariaLabel="Agent 工具"
+                  disabled={busy || probeBusy}
+                  onChange={(agentTools) => setForm((current) => ({ ...current, agentTools }))}
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="首个负责人">
+                  <SelectField
+                    value={leadUserId}
+                    options={leadOptions}
+                    placeholder="没有 active 团队用户"
+                    disabled={busy || probeBusy || activeUsers.length === 0}
+                    onChange={(leadUserId) => setForm((current) => ({ ...current, leadUserId }))}
+                  />
+                </Field>
+                <Field
+                  label="负责人 Trellis developer ID"
+                  hint={form.leadTrellisDevId && !developerIdValid ? '格式无效' : undefined}
+                >
+                  <Input
+                    maxLength={64}
+                    required
+                    pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+                    disabled={busy || probeBusy}
+                    value={form.leadTrellisDevId}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        leadTrellisDevId: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+              </div>
               <Field label="已有本地仓库 ID（可选）">
                 <Input
                   maxLength={100}
@@ -311,9 +394,17 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
                 size="sm"
                 type="submit"
                 className="self-start"
-                disabled={busy || probeBusy || !probeValid || !form.name.trim()}
+                disabled={
+                  busy ||
+                  probeBusy ||
+                  !probeValid ||
+                  !form.name.trim() ||
+                  !form.agentTools.length ||
+                  !leadUserId ||
+                  !developerIdValid
+                }
               >
-                {busy ? '克隆检查中…' : '克隆并检查工具链'}
+                {busy ? '接入与初始化中…' : '克隆、初始化并检查工具链'}
               </Button>
             </form>
           </Panel>
@@ -333,6 +424,9 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
                 <ApprovalForm
                   key={pendingApproval.project.id}
                   users={users}
+                  defaultLeadUserId={pendingApproval.project.bootstrapLeadUserId}
+                  defaultLeadTrellisDevId={pendingApproval.project.bootstrapLeadTrellisDevId}
+                  agentTools={pendingApproval.project.agentTools}
                   onSubmit={(values) => approveProject(values)}
                 />
               </>
@@ -434,6 +528,14 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
                         </p>
                         <p className="truncate text-[10px] text-muted-foreground">
                           Git 凭据 {project.credential?.name || '无需凭据'}
+                        </p>
+                        <p className="truncate text-[10px] text-muted-foreground">
+                          Agent 工具{' '}
+                          {project.agentTools.length
+                            ? project.agentTools
+                                .map((tool) => AGENT_TOOL_LABELS.get(tool) || tool)
+                                .join('、')
+                            : '未记录'}
                         </p>
                         <p className="truncate text-[10px] text-muted-foreground">
                           工具链摘要 <code>{project.scriptsSha256 || '尚未批准'}</code>

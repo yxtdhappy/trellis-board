@@ -142,11 +142,44 @@ test('真实 Git 仓库完成团队任务创建、推送、接受和 Agent 快�
       name: 'Release integration',
       remoteUrl,
       syncBranch: 'dev',
+      agentTools: ['codex'],
+      leadUserId: alice.id,
+      leadTrellisDevId: 'alice',
     },
   })
   assert.equal(connected.status, 201)
   const projectId = connected.body.project.id
   assert.ok(projectId)
+  assert.deepEqual(connected.body.project.agentTools, ['codex'])
+  assert.equal(connected.body.project.bootstrapLeadUserId, alice.id)
+  assert.equal(connected.body.project.bootstrapLeadTrellisDevId, 'alice')
+  const storedBootstrap = runtime.db
+    .prepare(`
+      SELECT agent_tools_json, bootstrap_lead_user_id, bootstrap_lead_trellis_dev_id
+      FROM team_project
+      WHERE repository_id = ?
+    `)
+    .get(projectId)
+  assert.deepEqual(
+    { ...storedBootstrap },
+    {
+      agent_tools_json: '["codex"]',
+      bootstrap_lead_user_id: alice.id,
+      bootstrap_lead_trellis_dev_id: 'alice',
+    },
+  )
+
+  const mismatchedApproval = await request(runtime, `/api/admin/projects/${projectId}/approve`, {
+    method: 'POST',
+    cookie: adminCookie,
+    body: {
+      toolchainSha256: connected.body.approval.toolchainSha256,
+      leadUserId: bob.id,
+      leadTrellisDevId: 'bob',
+    },
+  })
+  assert.equal(mismatchedApproval.status, 409)
+  assert.equal(mismatchedApproval.body.code, 'CONFLICT')
 
   const approved = await request(runtime, `/api/admin/projects/${projectId}/approve`, {
     method: 'POST',

@@ -1,6 +1,6 @@
 # 后端开发规范
 
-适用范围：`server/`。后端是 Node.js 原生 HTTP 服务，不依赖 Web 框架、数据库驱动包或第三方运行库；任务事实来自白名单 Trellis 仓库的文件系统，Board 自身状态来自 `data/board.sqlite`。
+适用范围：`server/`。后端是 Node.js 原生 HTTP 服务，不依赖 Web 框架或数据库驱动包；外部固定版本 Trellis CLI 只作为受限子进程使用。任务事实来自白名单 Trellis 仓库的文件系统，Board 自身状态来自跨平台运行数据目录中的 `board.sqlite`。
 
 ## 规范索引
 

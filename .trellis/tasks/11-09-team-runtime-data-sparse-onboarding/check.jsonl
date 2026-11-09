@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"检查运行数据迁移、schema 升级和 Git 初始化没有越过既定模块边界。"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"检查接入 API 输入校验、路径安全、提交范围和错误返回。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查无效输入、失败回滚、schema 迁移和真实服务验证。"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"检查多选下拉、负责人前移、批准兼容和状态刷新。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查类型安全、可访问性、主题和最终构建。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查请求字段、响应投影、数据库状态和 Git 副作用一致。"}
+{"file":".trellis/tasks/11-09-team-runtime-data-sparse-onboarding/research/repository-findings.md","reason":"按已确认证据验证 data 历史清除和 sparse onboarding 验收。"}

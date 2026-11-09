@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import { parseTeamConfig, dataDir } from './config.js'
+import { migrateLegacyRuntimeData } from './data-migration.js'
 import { getDefaultDatabase } from './database.js'
 import { createTeamRuntime } from './team/http.js'
 import { STAGE_IDS, setManualStage } from './metadata.js'
@@ -934,6 +935,7 @@ export async function stopStandaloneServer() {
 }
 
 export async function startApplication(config = parseTeamConfig()) {
+  migrateLegacyRuntimeData()
   if (config.mode === 'team') {
     const runtime = await createTeamRuntime({ config })
     return runtime.start()

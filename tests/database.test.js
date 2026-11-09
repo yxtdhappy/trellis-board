@@ -110,12 +110,12 @@ const EXPECTED_TABLES = [
   'user_session',
 ]
 
-test('新库一次创建 schema v7 与实时同步、Git 凭据表', () => {
+test('新库一次创建 schema v8 与实时同步、Git 凭据表和接入字段', () => {
   const workspace = makeWorkspace()
   let db
   try {
     db = openTestDatabase(workspace)
-    assert.equal(DATABASE_SCHEMA_VERSION, 7)
+    assert.equal(DATABASE_SCHEMA_VERSION, 8)
     assert.deepEqual(tableNames(db), EXPECTED_TABLES)
     const meta = Object.fromEntries(
       db
@@ -123,7 +123,7 @@ test('新库一次创建 schema v7 与实时同步、Git 凭据表', () => {
         .all()
         .map((row) => [row.key, row.value]),
     )
-    assert.equal(meta.schema_version, '7')
+    assert.equal(meta.schema_version, '8')
     assert.equal(meta.legacy_json_imported_v1, '1')
     assert.equal(Number.isNaN(Date.parse(meta.execution_events_started_at)), false)
 
@@ -142,6 +142,9 @@ test('新库一次创建 schema v7 与实时同步、Git 凭据表', () => {
       'created_at',
       'updated_at',
       'git_credential_id',
+      'agent_tools_json',
+      'bootstrap_lead_user_id',
+      'bootstrap_lead_trellis_dev_id',
     ])
     assert.ok(columnNames(db, 'user_session').includes('active_team_id'))
     assert.ok(columnNames(db, 'saved_view').includes('team_id'))
@@ -181,7 +184,7 @@ test('新库一次创建 schema v7 与实时同步、Git 凭据表', () => {
   }
 })
 
-test('schema v7 重复打开保持幂等', () => {
+test('schema v8 重复打开保持幂等', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -191,7 +194,7 @@ test('schema v7 重复打开保持幂等', () => {
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '7',
+      '8',
     )
     assert.deepEqual(columnNames(db, 'team_project'), firstColumns)
     assert.deepEqual(tableNames(db), EXPECTED_TABLES)
@@ -201,7 +204,7 @@ test('schema v7 重复打开保持幂等', () => {
   }
 })
 
-test('schema v6 升级到 v7 前备份并补齐实时同步与凭据表', () => {
+test('schema v6 升级到 v8 前备份并补齐实时同步、凭据与接入字段', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -231,13 +234,16 @@ test('schema v6 升级到 v7 前备份并补齐实时同步与凭据表', () => 
       DROP TABLE project_live_file;
       DROP TABLE project_live_revision;
     `)
+    db.exec('ALTER TABLE team_project DROP COLUMN agent_tools_json')
+    db.exec('ALTER TABLE team_project DROP COLUMN bootstrap_lead_user_id')
+    db.exec('ALTER TABLE team_project DROP COLUMN bootstrap_lead_trellis_dev_id')
     db.prepare("UPDATE app_meta SET value = '6' WHERE key = 'schema_version'").run()
     db.close()
     db = null
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '7',
+      '8',
     )
     assert.ok(tableNames(db).includes('project_live_revision'))
     assert.ok(tableNames(db).includes('project_live_file'))
@@ -246,6 +252,9 @@ test('schema v6 升级到 v7 前备份并补齐实时同步与凭据表', () => 
     assert.ok(tableNames(db).includes('git_credential'))
     assert.ok(tableNames(db).includes('git_ssh_known_host'))
     assert.ok(columnNames(db, 'team_project').includes('git_credential_id'))
+    assert.ok(columnNames(db, 'team_project').includes('agent_tools_json'))
+    assert.ok(columnNames(db, 'team_project').includes('bootstrap_lead_user_id'))
+    assert.ok(columnNames(db, 'team_project').includes('bootstrap_lead_trellis_dev_id'))
     assert.equal(
       db.prepare("SELECT COUNT(*) AS count FROM team_project WHERE repository_id = 'p1'").get()
         .count,
@@ -253,7 +262,59 @@ test('schema v6 升级到 v7 前备份并补齐实时同步与凭据表', () => 
     )
     const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
     assert.equal(
-      backups.some((name) => name.startsWith('board.sqlite.pre-v7.')),
+      backups.some((name) => name.startsWith('board.sqlite.pre-v8.')),
+      true,
+    )
+  } finally {
+    closeQuietly(db)
+    fs.rmSync(workspace.root, { recursive: true, force: true })
+  }
+})
+
+test('schema v7 升级到 v8 前备份并补齐接入字段默认值', () => {
+  const workspace = makeWorkspace()
+  let db
+  try {
+    db = openTestDatabase(workspace)
+    const now = new Date().toISOString()
+    db.prepare(
+      "INSERT INTO team(id, name, slug, status, created_at, updated_at) VALUES ('t1','团队一','t1','active',?,?)",
+    ).run(now, now)
+    db.prepare(`
+      INSERT INTO repositories(id, name, path, path_key, position, created_at, updated_at)
+      VALUES ('p1', '项目一', '/tmp/p1', '/tmp/p1', 0, ?, ?)
+    `).run(now, now)
+    db.prepare(`
+      INSERT INTO team_project(
+        repository_id, team_id, workspace_key, remote_url, remote_identity_hash,
+        sync_branch, trusted_task_toolchain_sha256, sync_status, created_at, updated_at
+      ) VALUES ('p1', 't1', 'p1', 'https://example.com/p1.git', 'hash',
+        'main', ?, 'current', ?, ?)
+    `).run('a'.repeat(64), now, now)
+    db.exec('ALTER TABLE team_project DROP COLUMN agent_tools_json')
+    db.exec('ALTER TABLE team_project DROP COLUMN bootstrap_lead_user_id')
+    db.exec('ALTER TABLE team_project DROP COLUMN bootstrap_lead_trellis_dev_id')
+    db.prepare("UPDATE app_meta SET value = '7' WHERE key = 'schema_version'").run()
+    db.close()
+    db = null
+    db = openTestDatabase(workspace)
+    assert.equal(
+      db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+      '8',
+    )
+    const migrated = db
+      .prepare(`
+        SELECT agent_tools_json, bootstrap_lead_user_id, bootstrap_lead_trellis_dev_id
+        FROM team_project
+        WHERE repository_id = 'p1'
+      `)
+      .get()
+    assert.equal(migrated.agent_tools_json, '[]')
+    assert.equal(migrated.bootstrap_lead_user_id, null)
+    assert.equal(migrated.bootstrap_lead_trellis_dev_id, null)
+    const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
+    assert.equal(
+      backups.some((name) => name.startsWith('board.sqlite.pre-v8.')),
       true,
     )
   } finally {
@@ -272,7 +333,7 @@ test('旧 v5 数据库不做迁移，要求删除后重建', () => {
     db = null
     assert.throws(
       () => openTestDatabase(workspace),
-      /不支持的数据库 schema 版本: 5.*删除 data\/board\.sqlite 后重建/,
+      /不支持的数据库 schema 版本: 5.*删除当前 board\.sqlite 后重建/,
     )
     const check = new DatabaseSync(workspace.databaseFile, { readOnly: true })
     try {

@@ -70,6 +70,14 @@ test('项目接入克隆后工具链失败会清理本次 UUID 工作副本', as
     fs.rmSync(root, { recursive: true, force: true })
   })
   seedTeam({ db })
+  const lead = await createUser(db, {
+    username: 'connect-lead',
+    displayName: '接入负责人',
+    password: 'Connect-Password-123',
+    systemAdmin: false,
+    mustChangePassword: false,
+  })
+  addTeamMember({ db }, 't1', lead.id, 'member')
   let clonedTarget = null
   const projectService = createProjectService({
     db,
@@ -79,11 +87,11 @@ test('项目接入克隆后工具链失败会清理本次 UUID 工作副本', as
       async assertValidBranch(branch) {
         return branch
       },
-      async cloneProject(project) {
+      async cloneForTeam(project) {
         clonedTarget = path.join(dataPath, 'projects', project.workspaceKey)
         fs.mkdirSync(clonedTarget, { recursive: true })
         fs.writeFileSync(path.join(clonedTarget, 'README.md'), 'clone')
-        return clonedTarget
+        return { target: clonedTarget, initialized: true, initializedPaths: [] }
       },
     },
     taskIndex: {
@@ -98,12 +106,80 @@ test('项目接入克隆后工具链失败会清理本次 UUID 工作副本', as
         name: '无效工具链项目',
         remoteUrl: 'https://example.com/invalid-toolchain.git',
         syncBranch: 'main',
+        agentTools: ['codex'],
+        leadUserId: lead.id,
+        leadTrellisDevId: 'connect-lead',
       },
     ),
     (error) => error.code === 'TOOLCHAIN_MISMATCH',
   )
   assert.equal(fs.existsSync(clonedTarget), false)
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM repositories').get().count, 0)
+})
+
+test('项目接入在 clone 前拒绝空工具、未知工具、无效负责人和 developer ID', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-connect-validation-'))
+  const dataPath = path.join(root, 'data')
+  const db = openDatabase({
+    databaseFile: path.join(dataPath, 'board.sqlite'),
+    fallbackRepositories: [],
+    importLegacyRepositories: false,
+    legacyJsonImport: false,
+    logger: SILENT_LOGGER,
+  })
+  t.after(() => {
+    db.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  seedTeam({ db })
+  const lead = await createUser(db, {
+    username: 'valid-lead',
+    displayName: '有效负责人',
+    password: 'Valid-Lead-Password-123',
+    systemAdmin: false,
+    mustChangePassword: false,
+  })
+  addTeamMember({ db }, 't1', lead.id, 'member')
+  let cloneCalls = 0
+  const projectService = createProjectService({
+    db,
+    config: testConfig(),
+    dataDir: dataPath,
+    gitManager: {
+      async assertValidBranch(branch) {
+        return branch
+      },
+      async cloneForTeam() {
+        cloneCalls += 1
+        throw new Error('不应执行 clone')
+      },
+    },
+    taskIndex: {
+      incrementQueryRevision() {},
+    },
+  })
+  const actor = { userId: lead.id, systemAdmin: true }
+  const base = {
+    teamId: 't1',
+    name: '校验项目',
+    remoteUrl: 'https://example.com/validation.git',
+    syncBranch: 'main',
+    leadUserId: lead.id,
+    leadTrellisDevId: 'valid-lead',
+  }
+
+  for (const input of [
+    { ...base, agentTools: [] },
+    { ...base, agentTools: ['unknown'] },
+    { ...base, agentTools: ['codex'], leadUserId: 'missing-user' },
+    { ...base, agentTools: ['codex'], leadTrellisDevId: '../bad' },
+  ]) {
+    await assert.rejects(
+      () => projectService.connect(actor, input),
+      (error) => error.status === 400,
+    )
+  }
+  assert.equal(cloneCalls, 0)
 })
 
 test('首管理员 CLI 只初始化一次且不会导入本机默认仓库', async (t) => {
@@ -134,7 +210,7 @@ test('首管理员 CLI 只初始化一次且不会导入本机默认仓库', asy
     db.close()
   }
   const status = diagnose({ config: testConfig(), databaseFile })
-  assert.equal(status.schemaVersion, '7')
+  assert.equal(status.schemaVersion, '8')
   assert.equal(status.activeAdmin, true)
   assert.equal(status.integrity, 'ok')
   await assert.rejects(

@@ -19,7 +19,12 @@ import {
   sshScanFailureDetails,
 } from '../server/team/git-manager.js'
 import { createTeamRuntime } from '../server/team/http.js'
-import { minimalEnvironment, runProcess, sanitizeProcessOutput } from '../server/team/process.js'
+import {
+  minimalEnvironment,
+  runProcess,
+  sanitizeProcessOutput,
+  trellisEnvironment,
+} from '../server/team/process.js'
 
 const PUBLIC_ORIGIN = 'http://127.0.0.1:4317'
 const SILENT_LOGGER = {
@@ -56,6 +61,10 @@ test('Git 子进程仅继承标准代理环境', () => {
       'C:/tmp/trellis-empty-git-config',
     )
     assert.equal(minimalEnvironment().HTTP_PROXY, undefined)
+    const trellisEnv = trellisEnvironment()
+    assert.equal(trellisEnv.NO_COLOR, '1')
+    assert.equal(trellisEnv.FORCE_COLOR, '0')
+    assert.equal(trellisEnv.HTTP_PROXY, undefined)
 
     delete process.env.HTTP_PROXY
     delete process.env.NO_PROXY

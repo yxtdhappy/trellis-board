@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { databaseFile as defaultDatabaseFile, parseTeamConfig } from '../config.js'
+import { migrateLegacyRuntimeData } from '../data-migration.js'
 import { openDatabase } from '../database.js'
 import { createUser, hasActiveAdmin, listUsers } from './auth.js'
 
@@ -154,6 +155,7 @@ function usage() {
       '  node server/team/cli.js status',
       '',
       '环境变量:',
+      '  TRELLIS_BOARD_DATA_DIR=<运行数据目录>',
       '  TRELLIS_BOARD_MODE=team',
       '  TRELLIS_TEAM_PUBLIC_URL=https://...',
       '  TRELLIS_TEAM_INITIAL_PASSWORD=<仅自动化初始化时使用>',
@@ -172,6 +174,7 @@ export async function main(argv = process.argv.slice(2)) {
   const databaseFile = options.database
     ? path.resolve(String(options.database))
     : defaultDatabaseFile
+  if (!options.database) migrateLegacyRuntimeData()
   if (command === 'init-admin') {
     const username = String(options.username || '').trim()
     if (!username) throw new Error('init-admin 必须提供 --username')

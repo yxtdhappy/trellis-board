@@ -48,6 +48,9 @@ export type TeamProject = RuntimeProject & {
   hooksStatus: string | null
   lastFetchAt: string | null
   lastPushAt: string | null
+  agentTools: string[]
+  bootstrapLeadUserId: string | null
+  bootstrapLeadTrellisDevId: string | null
   members: ProjectMember[]
   credential: GitCredentialSummary | null
 }
@@ -266,6 +269,20 @@ function rows(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
 }
 
+function textArray(value: unknown): string[] {
+  let input = value
+  if (typeof input === 'string') {
+    try {
+      input = JSON.parse(input)
+    } catch {
+      return []
+    }
+  }
+  return rows(input)
+    .map((item) => optionalText(item))
+    .filter((item): item is string => Boolean(item))
+}
+
 function collection<T>(payload: unknown, key: string, read: (row: unknown) => T): T[] {
   const source = record(payload)
   const value = source[key]
@@ -409,6 +426,11 @@ export function readTeamProject(input: unknown): TeamProject {
     hooksStatus: optionalText(row.hooksStatus ?? row.hooks_status),
     lastFetchAt: optionalText(row.lastFetchAt ?? row.last_fetch_at),
     lastPushAt: optionalText(row.lastPushAt ?? row.last_push_at),
+    agentTools: textArray(row.agentTools ?? row.agent_tools ?? row.agent_tools_json),
+    bootstrapLeadUserId: optionalText(row.bootstrapLeadUserId ?? row.bootstrap_lead_user_id),
+    bootstrapLeadTrellisDevId: optionalText(
+      row.bootstrapLeadTrellisDevId ?? row.bootstrap_lead_trellis_dev_id,
+    ),
     members: readProjectMembers(row),
     credential: readGitCredentialSummary(row.credential),
   }
@@ -634,6 +656,9 @@ export type ConnectProjectInput = {
   name: string
   syncBranch: string
   remoteUrl: string
+  agentTools: string[]
+  leadUserId: string
+  leadTrellisDevId: string
   repositoryId?: string
   credentialId?: string | null
 }
@@ -648,6 +673,9 @@ export async function connectProject(
       name: input.name,
       syncBranch: input.syncBranch,
       remoteUrl: input.remoteUrl,
+      agentTools: input.agentTools,
+      leadUserId: input.leadUserId,
+      leadTrellisDevId: input.leadTrellisDevId.trim(),
       repositoryId: input.repositoryId?.trim() || undefined,
       credentialId: input.credentialId || undefined,
     },

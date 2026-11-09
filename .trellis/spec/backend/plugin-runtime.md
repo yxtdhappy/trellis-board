@@ -60,8 +60,8 @@
 
 ## 6. 配置与敏感信息
 
-- `data/plugins.json` 只放路径、开关与运行参数；敏感值优先用 `secret:scope/key` 引用
-  `data/plugins.secrets.json`，也支持 `env:NAME`。
+- 运行数据目录中的 `plugins.json` 只放路径、开关与运行参数；敏感值优先用 `secret:scope/key` 引用
+  同目录的 `plugins.secrets.json`，也支持 `env:NAME`。
 - secrets 文件默认与 `plugins.json` 同目录，可用 `TRELLIS_BOARD_SECRETS_FILE` 覆盖；格式为
   `{"version": 1, "refs": {"scope/key": "value"}}`，refs key 必须是 `scope/key`，值必须是非空字符串。
 - POSIX 下 secrets 文件必须是 `0600`；group/other 可读时直接拒绝加载，错误只报文件名与权限，不回显内容。
@@ -69,7 +69,7 @@
 - 明文敏感字段允许加载但写启动告警；`describe()` 的 `config` 只回显 `***`，`credentials.source`
   标 `secret` / `env` / `inline` / `mixed` / `none`。
 - 不提供 secrets 写入 API/CLI/UI；手动编辑后重启生效。热重载与 OS keychain 暂不做。
-- 同 UID 的进程仍可读该文件，文件权限只防其他用户；备份 `data/` 会包含密钥。
+- 同 UID 的进程仍可读该文件，文件权限只防其他用户；备份运行数据目录会包含密钥。
 
 ## 7. 测试约定
 
@@ -103,4 +103,4 @@
 | 清理 | `ctx.effect(dispose)` | 无 | 插件停止或崩溃时逆序执行 |
 | 敏感信息 | `ctx.secrets` | 无 | 只读环境变量；不提供写入 API |
 
-宿主能力是插件唯一稳定接口。插件不得直接读 `data/`、`server/` 或宿主数据库；需要新能力时先扩展本清单和 SDK，而不是在插件里绕过。
+宿主能力是插件唯一稳定接口。插件不得直接读运行数据目录、`server/` 或宿主数据库；需要新能力时先扩展本清单和 SDK，而不是在插件里绕过。

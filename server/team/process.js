@@ -22,6 +22,16 @@ export function minimalEnvironment(extra = {}) {
   return { ...env, ...extra }
 }
 
+export function trellisEnvironment(extra = {}) {
+  return minimalEnvironment({
+    NO_COLOR: '1',
+    FORCE_COLOR: '0',
+    PYTHONUTF8: '1',
+    ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+    ...extra,
+  })
+}
+
 export function sanitizeProcessOutput(value, { maxBytes = OUTPUT_LIMIT, redact = [] } = {}) {
   let result = String(value || '')
     .replace(/(?:https?|ssh):\/\/[^/\s@]+@/gi, (match) => match.replace(/[^/]+@$/, '***@'))

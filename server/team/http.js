@@ -1548,6 +1548,7 @@ export async function createTeamRuntime({
   enablePolling = true,
   refreshConcurrency = DEFAULT_REFRESH_CONCURRENCY,
   scheduledRefresh = null,
+  trellisRunner = undefined,
   desktopAuth = {},
   boardEventOptions = {},
 }) {
@@ -1579,6 +1580,7 @@ export async function createTeamRuntime({
       dataDir,
       credentialService,
       logger,
+      trellisRunner,
     })
     const agentEvents = createAgentEventService({ db, logger })
     const boardEvents = createBoardEventService(boardEventOptions)
@@ -1661,6 +1663,14 @@ export async function createTeamRuntime({
     let started = false
 
     async function recoverProjects() {
+      const projects = projectService.listAll()
+      for (const project of projects) {
+        if (!['current', 'stale', 'pending_push'].includes(project.syncStatus)) continue
+        const sparse = await projectService.ensureSparse(project.id)
+        if (!sparse) {
+          logger.warn('项目无法自动转换为 .trellis 稀疏检出', { projectId: project.id })
+        }
+      }
       for (const project of projectService.listAll()) {
         if (project.syncStatus !== 'pending_push') continue
         try {

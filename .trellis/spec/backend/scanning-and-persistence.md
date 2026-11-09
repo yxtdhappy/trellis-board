@@ -63,11 +63,11 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 ## SQLite 持久化
 
-`data/board.sqlite` 使用 Node 24 内置 `node:sqlite`，没有第三方驱动。主线程共享一个进程级连接，扫描 Worker 在自身线程内另开连接；`DatabaseSync` 不跨线程传递。
+运行数据目录中的 `board.sqlite` 使用 Node 24 内置 `node:sqlite`，没有第三方驱动。主线程共享一个进程级连接，扫描 Worker 在自身线程内另开连接；`DatabaseSync` 不跨线程传递。
 
 `database.js` 是 schema 和迁移的唯一所有者：
 
-- schema v3 包含 v2 的 `app_meta`、`repositories`、`task_stage`、`scan_cache`、`board_state`、`task_execution`、`task_tag`、`saved_view`、`task_event`，并新增 `task_dependency`。
+- 当前 schema v8 包含 `app_meta`、`repositories`、任务阶段、扫描缓存、看板状态、计划字段、标签、保存视图、事件、依赖、团队、实时同步、插件和 Git 凭据相关表；`team_project` 还保存 Agent 工具、bootstrap 负责人和 developer ID。
 - `task_dependency` 保存稳定 `executionTaskKey` 双方、原因、创建人、创建时间和可空解除时间；活动边 `(blocker_task_key, blocked_task_key)` 唯一，双向查询有索引。解除只写 `resolved_at`，历史行不删除。
 - 启用 WAL、外键、`busy_timeout=5000` 和 `synchronous=NORMAL`。
 - v1 -> v2 -> v3 顺序迁移在单一 `BEGIN IMMEDIATE` 事务中完成；迁移前用 `VACUUM INTO` 写入可独立打开的源版本快照，命名为 `board.sqlite.v1-backup` 或 `board.sqlite.v2-backup`。失败时主库保留源版本和原表，备份仍可独立打开。
@@ -123,7 +123,7 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 #### 6. Tests Required
 
-- `database.test.js`：新库 v3、v1/v2 升级、源版本备份、失败回滚和大于 v3 拒绝。
+- `database.test.js`：新库 v8、v6/v7 升级、源版本备份、失败回滚和大于 v8 拒绝。
 - `execution-store.test.js`：缺失、自引用、重复、原因边界、二/三节点环、创建/解除事件回滚、重开和重新创建。
 - `execution-projection.test.js`：列表不带完整数组；详情同时返回活动与已结束双向历史；解除区间时长使用 `resolvedAt - createdAt`；开工、完成条件不改变阶段完成状态。
 - 真实 HTTP：失败前后依赖与事件计数一致；循环错误含标题闭环。
@@ -333,8 +333,8 @@ withTransaction(db, () => {
 
 ## 修改检查
 
-- [ ] schema v3 包含活动边唯一索引、双向查询索引，且大于 v3 的版本仍被拒绝。
-- [ ] v1 -> v3、v2 -> v3 顺序迁移成功；源版本备份可独立打开，迁移失败能回滚。
+- [ ] schema v8 包含依赖活动边唯一索引、双向查询索引和接入字段，且大于 v8 的版本仍被拒绝。
+- [ ] v6/v7 -> v8 顺序迁移成功；源版本备份可独立打开，迁移失败能回滚。
 - [ ] 扫描只把包含 `task.json` 的目录认作任务。
 - [ ] 新证据文件已加入读取和缓存签名范围。
 - [ ] 缓存失效范围覆盖 workspace、关系和 Git 元数据影响。
