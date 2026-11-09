@@ -44,8 +44,37 @@
 
 - 未修改正在运行的旧 4317 服务，未迁移真实 `data/`。
 - 未自动修改 `.idea/vcs.xml`。
-- 远端历史清理和全新克隆审计在功能提交后执行，结果应追加在本报告。
+
+## 远端历史清理
+
+- 原远端分支：`39e67e71ddb4d23d8e03c003c61a2af4c4a21dda`。
+- 功能提交后的本地分支：`fb92e3e6c8da6acba159d8102db9ded2e6d7b979`。
+- 独立 mirror 重写后的分支：`054d19a7d203cc80a8961c6b25165a3a8f0a1c58`。
+- 重写前后根树均为 `a0f20e75f713a37d823dc4fe6cd9d2892a83971b`，确认当前内容未变化。
+- 使用 `--force-with-lease=refs/heads/codex/team-board:39e67e71ddb4d23d8e03c003c61a2af4c4a21dda` 完成一次受控强推。
+- 全新克隆 `origin/codex/team-board` 指向 `054d19a7d203cc80a8961c6b25165a3a8f0a1c58`。
+- 全新克隆执行 `git log --all --name-only --pretty=format:` 后匹配 `^data/` 的数量为 0。
+- 全新克隆执行 `git ls-tree -r origin/codex/team-board -- data` 的输出数量为 0。
+
+历史审计确认移除的路径：
+
+- `data/.gitignore`
+- `data/repos.example.json`
+- `data/plugins.example.json`
+- `data/plugins.secrets.example.json`
+- `data/standalone-backup-20261108-142014/board.sqlite`
+
+误提交的 SQLite 备份由 `ef7eb4f39357f599834d93b6c6ceb62fcf2f73ac` 引入，大小 5,271,552 字节。此前的只读检查确认库内没有用户、团队、项目或凭据记录，但包含 5 条本地仓库路径。
+
+## 备份
+
+- 目录：`D:\wit\trellis-board-history-backups\20261109-225313-team-runtime-data-sparse-onboarding`
+- `all-refs.bundle`：SHA-256 `213DB1770736A65F90F8321C8E2DE91969213F12F22D8AAEC812757321103C52`
+- `working-tree.patch`：SHA-256 `1042534503F0437E4C26B78705F1C57C391157CFD07CABBE9B27BF017F646073`
+- `unrelated-untracked.zip`：SHA-256 `1E55547EF6589224894CA82B7673A7CD35021EEF23692D51F90B55C55D1C03B1`
+- `repo.git` 为完整 mirror；`verify-clone` 为全新验证克隆。
 
 ## 限制
 
 - IntelliJ 已保存的旧 VCS 映射属于用户 IDE 配置。当前产品代码不再在源码 `data/projects` 创建新仓库，但已有映射需要手动移除。
+- GitHub 可能对失联对象、缓存、PR 引用和其他内部副本延迟回收。本次可以确认远端可达分支历史不再包含 `data/`，不能承诺 GitHub 存储介质立即物理擦除。
