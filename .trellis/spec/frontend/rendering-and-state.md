@@ -37,6 +37,8 @@
   任务查询或让前端自行授予项目角色。
 - Tauri 桌面端每 3 秒调用只读 `desktop_sidecar_status`，按 `{ running, paused }` 显示真实后台同步
   状态。普通浏览器没有 `window.__TAURI__`，不显示本地关联和 sidecar 状态入口。
+- “团队管理”入口只属于普通浏览器管理界面；Tauri 客户端即使账号具备管理权限也不显示该入口，
+  浏览器仍使用 `/admin.html`。
 - 任务卡对 `liveRevision > 0` 显示“实时未入 Git”。任务详情和单项目 Board 必须优先使用服务端
   实时覆盖层，不能回退到旧 Git 扫描缓存。
 - `ASSIGNEE_CONFIRMATION_REQUIRED` 必须复用三态对话框：取消、继续推进、接管任务；继续携带

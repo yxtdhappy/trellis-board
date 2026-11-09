@@ -42,6 +42,10 @@ const NAV: BoardNavItem[] = [
 
 export function BoardPage() {
   const controller = useBoard()
+  const adminHref =
+    (window as Window & { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__?.core?.invoke
+      ? undefined
+      : '/admin.html'
   const [view, setView] = useState<BoardView>('pipeline')
   const [selected, setSelected] = useState<BoardTask | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -115,7 +119,7 @@ export function BoardPage() {
         onOpenAssignments={() => setAssignmentsOpen(true)}
         onOpenPassword={() => setPasswordOpen(true)}
         onLogout={handleLogout}
-        adminHref="/admin.html"
+        adminHref={adminHref}
       />
 
       <div className="flex min-h-0 flex-1">
