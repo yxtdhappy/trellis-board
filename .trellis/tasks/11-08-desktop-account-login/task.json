@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "11-09-desktop-client-hide-admin-menu"
+  ],
   "parent": "11-08-team-realtime-collaboration",
   "relatedFiles": [],
   "notes": "",

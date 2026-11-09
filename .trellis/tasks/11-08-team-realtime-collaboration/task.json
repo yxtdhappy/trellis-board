@@ -20,7 +20,8 @@
   "subtasks": [],
   "children": [
     "11-08-team-realtime-task-sync",
-    "11-08-desktop-account-login"
+    "11-08-desktop-account-login",
+    "11-09-project-association-initial-sync"
   ],
   "parent": null,
   "relatedFiles": [],

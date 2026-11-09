@@ -533,11 +533,12 @@ export function useBoard(): BoardController {
       }));
   }, [teamStatus, filters.teamId]);
   const projects: Project[] = teamMode ? teamProjects : board?.projects || [];
-  const tasks: BoardTask[] = teamMode
-    ? (teamPage?.tasks || []).map((row) =>
-        teamRowToBoardTask(row as Record<string, unknown>),
-      )
-    : board?.tasks || [];
+  const tasks = useMemo<BoardTask[]>(() => {
+    if (!teamMode) return board?.tasks || [];
+    return (teamPage?.tasks || []).map((row) =>
+      teamRowToBoardTask(row as Record<string, unknown>),
+    );
+  }, [teamMode, teamPage?.tasks, board?.tasks]);
 
   return {
     board,
