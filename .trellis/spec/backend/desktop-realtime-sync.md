@@ -15,6 +15,7 @@ POST /api/agent/live-changes
 GET  /api/agent/live-files?projectId&afterRevision
 PUT  /api/agent/live-cursor
 GET  /api/team/live-revision?teamId
+GET  /api/board/events
 
 AgentLiveSync({
   store,
@@ -41,7 +42,8 @@ SQLite v7：
 - `agent_live_cursor(agent_id, project_id, revision, updated_at)`
 - `team_task_index.live_revision` 非 0 表示该行由实时覆盖层投影。
 
-SSE：`live.changed`、`task.live.overridden`。
+SSE：Agent 事件流为 `live.changed`、`task.live.overridden`；Board 事件流为轻量
+`tasks.changed`，只通知页面重新查询 REST 快照。
 
 ## 3. Contracts
 
@@ -79,6 +81,10 @@ SSE：`live.changed`、`task.live.overridden`。
 - 原责任人通知不能依赖其是否绑定 Agent。每次覆盖同时写入 `target_agent_id=NULL` 的用户级事件，
   `/api/team/live-revision` 只向当前登录、当前可读项目和指定团队范围内的目标用户返回最近通知；
   Board 按事件 ID 去重并显示警告。
+- Board 通过同源 `GET /api/board/events` 接收 `tasks.changed`，收到事件后复用
+  `/api/tasks/query` 的筛选、分页、ETag 和项目权限校验；SSE 不传输任务正文。
+- `/api/team/live-revision` 保留为兼容接口，但 Board 只在 SSE 建连、任务变更、页面聚焦或恢复可见时
+  按需查询，不再每 750ms 常态轮询。
 
 ## 4. Validation & Error Matrix
 
@@ -98,7 +104,7 @@ SSE：`live.changed`、`task.live.overridden`。
 ## 5. Good / Base / Bad Cases
 
 - Good：A 保存未提交 `task.json`，服务端 revision+1，B 收到 `live.changed` 后备份并写入同内容，
-  Board 750ms 内重载。
+  Board 收到 `tasks.changed` 后立即通过 REST 对齐任务快照。
 - Base：远端文件与本地摘要相同，不创建备份，只推进 cursor。
 - Bad：服务端 Git 扫描删除全部 `team_task_index` 后不重放 live 覆盖行，导致 Board 回退。
 - Bad：仅按路径和时间抑制 watcher，吞掉远端写入后紧接着发生的真实本地编辑。

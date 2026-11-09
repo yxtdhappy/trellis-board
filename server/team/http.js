@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzip } from 'node:zlib'
 import { databaseFile as defaultDatabaseFile, dataDir as defaultDataDir } from '../config.js'
+import { createBoardEventService } from '../board-events.js'
 import { openDatabase } from '../database.js'
 import { STAGE_IDS } from '../metadata.js'
 import { createAgentEventService } from './agent-events.js'
@@ -483,6 +484,7 @@ function createRequestHandler({
   taskWrites,
   agentService,
   agentEvents,
+  boardEvents,
   liveSync,
   desktopAuth,
   publicDir,
@@ -1294,6 +1296,20 @@ function createRequestHandler({
   async function handleTeam(request, response, url) {
     const { pathname } = url
     const actor = requireActor(request)
+    if (pathname === '/api/board/events' && request.method === 'GET') {
+      const token = parseCookieHeader(request.headers.cookie).get(SESSION_COOKIE)
+      const opened = boardEvents.open({
+        response,
+        authorize: () => {
+          const session = readSession(db, token)
+          return Boolean(session && session.sessionId === actor.sessionId)
+        },
+      })
+      if (!opened) {
+        throw teamError(401, ERROR_CODES.AUTH_REQUIRED, '会话已失效')
+      }
+      return true
+    }
     if (pathname === '/api/team/projects' && request.method === 'GET') {
       sendJson(response, 200, {
         projects: boardService.listProjects(actor),
@@ -1533,6 +1549,7 @@ export async function createTeamRuntime({
   refreshConcurrency = DEFAULT_REFRESH_CONCURRENCY,
   scheduledRefresh = null,
   desktopAuth = {},
+  boardEventOptions = {},
 }) {
   if (config?.mode !== 'team') {
     throw new Error('createTeamRuntime 只接受 team 配置')
@@ -1564,11 +1581,13 @@ export async function createTeamRuntime({
       logger,
     })
     const agentEvents = createAgentEventService({ db, logger })
+    const boardEvents = createBoardEventService(boardEventOptions)
     const taskIndex = createTaskIndex({
       db,
       stageIds: STAGE_IDS,
       executionWipLimit: EXECUTION_WIP_LIMIT,
       agentEvents,
+      onQueryRevisionChanged: (revision) => boardEvents.publish({ revision }),
     })
     const projectService = createProjectService({
       db,
@@ -1620,6 +1639,7 @@ export async function createTeamRuntime({
       taskWrites,
       agentService,
       agentEvents,
+      boardEvents,
       liveSync,
       desktopAuth: desktopAuthService,
       publicDir,
@@ -1710,6 +1730,7 @@ export async function createTeamRuntime({
         shutdown.abort()
         if (pollTimer) clearInterval(pollTimer)
         pollTimer = null
+        boardEvents.close()
         await agentEvents.close().catch(() => {})
         await agentService.close().catch(() => {})
         await closeServer(server)
@@ -1726,6 +1747,7 @@ export async function createTeamRuntime({
       shutdown.abort()
       if (pollTimer) clearInterval(pollTimer)
       pollTimer = null
+      boardEvents.close()
       await agentEvents.close()
       await agentService.close()
       await closeServer(server)
@@ -1746,6 +1768,7 @@ export async function createTeamRuntime({
         taskWrites,
         agentService,
         agentEvents,
+        boardEvents,
         liveSync,
         boardService,
         refreshScheduler,

@@ -152,7 +152,8 @@ Board origin 同源，sidecar 再校验 Git 根、`.trellis`、当前分支和�
 - `POST /api/agent/live-changes` 按项目单调 revision 和 `batchId` 幂等提交；路径、扩展名、摘要、
   1 MiB 单文件、8 MiB 单批次、64 文件和每秒 5 批限制由服务端再校验。
 - 服务端把文件保存为实时覆盖层，复用 `scanRepository()` 推导任务，并向其他设备发送
-  `live.changed`。Board 每 750ms 查询 `/api/team/live-revision`，变化后立即重载。
+  `live.changed`。Board 通过 `tasks.changed` SSE 收到任务索引变化后立即重载，不再轮询
+  `/api/team/live-revision`；该接口保留用于按需查询责任人覆盖通知。
 - 其他客户端收到事件后从本地 cursor 拉取最新文件；覆盖不同内容前把原文件备份到
   `%LOCALAPPDATA%\TrellisBoard\data\agent\live-backups\<projectId>\<backupId>`。
 - 客户端控制窗口显示冲突与责任人警告。一键复原会把备份作为新 revision 上传；取消先备份再恢复

@@ -7,6 +7,7 @@
 | 方法与路径 | 用途 | 成功状态 |
 | --- | --- | --- |
 | `GET /api/board` | 优先返回本地缓存，必要时后台刷新 | 200 |
+| `GET /api/board/events` | Board 任务变更 SSE；单机免登录，团队使用 Session Cookie | 200 |
 | `GET /api/board/status` | 刷新、队列和监听状态 | 200 |
 | `GET /api/health` | 健康检查与进程 ID | 200 |
 | `POST /api/board/refresh/start` | 后台启动完整扫描 | 202 |
@@ -38,6 +39,17 @@
 - `readJsonBody()` 上限为 `1MB`。无请求体视为 `{}`；超限返回“请求体过大”；非法 JSON 返回“请求体不是合法 JSON”。
 - API 处理异常在主路由统一捕获，返回 400 和 `{ "error": message }`。
 - 前端依赖 `payload.error`，不要改成嵌套错误结构而不更新 `public/app.js` 的 `api()`。
+
+## Board SSE
+
+- 单机与团队 Board 共用 `GET /api/board/events`；团队模式在建立连接和每次心跳时用当前
+  Session Cookie 重新校验会话，失效后关闭连接。
+- 响应使用 `text/event-stream; charset=utf-8`、`cache-control: no-store`、
+  `connection: keep-alive` 和 `x-accel-buffering: no`，初始发送 3 秒重连提示并每 15 秒发送心跳。
+- 事件名固定为 `tasks.changed`，数据只含单调版本和生成时间；不携带项目、任务或文件正文。
+- 服务端短时间内的多次变更合并广播；客户端收到事件后重新请求现有 REST 快照，权限、筛选、分页和
+  ETag 仍由原接口负责。
+- 服务关闭时先结束全部 SSE 响应，再关闭 HTTP server，避免活动连接拖住关闭流程。
 
 ## 仓库白名单
 

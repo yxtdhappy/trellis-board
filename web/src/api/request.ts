@@ -73,7 +73,7 @@ export async function requestJson<T = unknown>(
   }
 
   const payload = await readPayload(response)
-  if (!response.ok) {
+  if (response.status !== 304 && !response.ok) {
     throw new ApiError(payload?.error || `请求失败 (${response.status})`, {
       status: response.status,
       code: payload?.code || null,

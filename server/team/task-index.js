@@ -252,7 +252,13 @@ export function taskIndexInsertArgs(
   ]
 }
 
-export function createTaskIndex({ db, stageIds, executionWipLimit = 2, agentEvents = null }) {
+export function createTaskIndex({
+  db,
+  stageIds,
+  executionWipLimit = 2,
+  agentEvents = null,
+  onQueryRevisionChanged = null,
+}) {
   let worker = null
   let requestId = 0
   const pending = new Map()
@@ -354,6 +360,7 @@ export function createTaskIndex({ db, stageIds, executionWipLimit = 2, agentEven
         value = CAST(CAST(value AS INTEGER) + 1 AS TEXT),
         updated_at = excluded.updated_at
     `).run(now)
+    onQueryRevisionChanged?.(queryRevision())
   }
 
   function queryRevision() {

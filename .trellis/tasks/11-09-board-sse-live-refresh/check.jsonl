@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/11-09-board-sse-live-refresh/design.md","reason":"按设计检查 SSE 协议、发布覆盖、鉴权和断线对齐"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Node 测试、真实 HTTP、关闭顺序和事务后广播验证"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"TypeScript、effect 清理、真实浏览器和最终构建验收"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"确认实时上报、Git 收敛和责任人通知没有回归"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 REST 字段、权限、ETag 和前端刷新链路一致性"}

@@ -9,7 +9,6 @@ import {
   fetchAssignments,
   fetchBoard,
   fetchBoardSettings,
-  fetchBoardStatus,
   fetchRepositories,
   fetchSavedViews,
   fetchTeamStatus,
@@ -82,9 +81,7 @@ export function useBoard(): BoardController {
   const teamPageIndex = useRef(0)
   const teamPageRequest = useRef(0)
   const teamPreferenceRequest = useRef(0)
-  const loadBoardRef = useRef<(force?: boolean, quiet?: boolean) => Promise<void>>(async () => {})
-  const lastLoadedAtRef = useRef<string | null>(null)
-  const liveRevisionKey = useRef<string | null>(null)
+  const liveNotificationsRequest = useRef(0)
   const seenLiveNotifications = useRef(new Set<number>())
 
   const teamMode = runtime?.team === true || runtime?.mode === 'team'
@@ -95,7 +92,7 @@ export function useBoard(): BoardController {
       const payload = await fetchBoard(force)
       if (payload) {
         setBoard(payload)
-        lastLoadedAtRef.current = payload.generatedAt ?? null
+        setStatus({ refreshRunning: Boolean(payload.refreshRunning) })
         setError('')
       }
     } catch (err) {
@@ -170,6 +167,26 @@ export function useBoard(): BoardController {
     }
   }, [])
 
+  const loadTeamNotifications = useCallback(async () => {
+    if (!teamMode) return
+    const request = ++liveNotificationsRequest.current
+    try {
+      const next = await fetchTeamLiveRevision(filters.teamId)
+      if (request !== liveNotificationsRequest.current) return
+      for (const notice of next?.notifications || []) {
+        if (seenLiveNotifications.current.has(notice.id)) continue
+        seenLiveNotifications.current.add(notice.id)
+        const taskLabel = notice.taskTitle
+          ? `任务「${notice.taskTitle}」`
+          : `任务 ${notice.taskKey || notice.projectId}`
+        const actionLabel = notice.action === 'takeover' ? '已被他人接管' : '已被他人继续推进'
+        toast.warning(`${taskLabel}${actionLabel}，原责任人是你。`)
+      }
+    } catch {
+      // 通知查询失败不影响看板数据刷新，下一次事件或页面聚焦时会再次对齐。
+    }
+  }, [teamMode, filters.teamId])
+
   const loadAssignments = useCallback(async () => {
     try {
       const payload = await fetchAssignments()
@@ -195,10 +212,6 @@ export function useBoard(): BoardController {
   }, [])
 
   useEffect(() => {
-    loadBoardRef.current = loadBoard
-  }, [loadBoard])
-
-  useEffect(() => {
     if (!runtime) return
     if (teamMode) {
       void loadTeamPage(true)
@@ -210,68 +223,53 @@ export function useBoard(): BoardController {
       return () => window.clearInterval(timer)
     }
     void loadBoard()
-    let cancelled = false
-    let timer = 0
-    const poll = async () => {
-      if (cancelled) return
-      try {
-        const next = await fetchBoardStatus()
-        setStatus(next)
-        if (next?.lastRefreshAt && next.lastRefreshAt !== lastLoadedAtRef.current) {
-          lastLoadedAtRef.current = next.lastRefreshAt
-          await loadBoardRef.current(false, true)
-        }
-      } catch {
-        /* 忽略轮询错误，等待下一轮 */
-      }
-      if (!cancelled) timer = window.setTimeout(poll, 750)
-    }
-    timer = window.setTimeout(poll, 750)
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只按运行模式起停轮询
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 初始化一次并按运行模式起停团队状态轮询
   }, [runtime, teamMode])
 
   useEffect(() => {
-    if (!teamMode) {
-      liveRevisionKey.current = null
-      seenLiveNotifications.current.clear()
+    if (teamMode) void loadTeamNotifications()
+  }, [teamMode, filters.teamId, loadTeamNotifications])
+
+  const alignBoard = useCallback(async () => {
+    if (teamMode) {
+      await Promise.all([loadTeamPage(true), loadTeamStatus(), loadTeamNotifications()])
       return
     }
-    let cancelled = false
+    await loadBoard(false, true)
+  }, [teamMode, loadBoard, loadTeamPage, loadTeamStatus, loadTeamNotifications])
+
+  const alignBoardRef = useRef(alignBoard)
+  useEffect(() => {
+    alignBoardRef.current = alignBoard
+  }, [alignBoard])
+
+  useEffect(() => {
+    if (!runtime) return
     let timer = 0
-    const poll = async () => {
-      try {
-        const next = await fetchTeamLiveRevision(filters.teamId)
-        if (cancelled) return
-        for (const notice of next?.notifications || []) {
-          if (seenLiveNotifications.current.has(notice.id)) continue
-          seenLiveNotifications.current.add(notice.id)
-          const taskLabel = notice.taskTitle
-            ? `任务「${notice.taskTitle}」`
-            : `任务 ${notice.taskKey || notice.projectId}`
-          const actionLabel = notice.action === 'takeover' ? '已被他人接管' : '已被他人继续推进'
-          toast.warning(`${taskLabel}${actionLabel}，原责任人是你。`)
-        }
-        const key = next?.revisionKey || ''
-        if (liveRevisionKey.current != null && liveRevisionKey.current !== key) {
-          await Promise.all([loadTeamPage(true), loadTeamStatus()])
-        }
-        liveRevisionKey.current = key
-      } catch {
-        // 实时版本轮询失败时保留现有 3 秒团队状态轮询作为兜底。
-      }
-      if (!cancelled) timer = window.setTimeout(poll, 750)
+    const align = () => {
+      if (timer) window.clearTimeout(timer)
+      timer = 0
+      void alignBoardRef.current()
     }
-    liveRevisionKey.current = null
-    timer = window.setTimeout(poll, 750)
+    const scheduleAlign = () => {
+      if (timer) window.clearTimeout(timer)
+      timer = window.setTimeout(align, 100)
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') scheduleAlign()
+    }
+    const events = new EventSource('/api/board/events')
+    events.onopen = align
+    events.addEventListener('tasks.changed', scheduleAlign)
+    window.addEventListener('focus', scheduleAlign)
+    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
-      cancelled = true
-      window.clearTimeout(timer)
+      events.close()
+      if (timer) window.clearTimeout(timer)
+      window.removeEventListener('focus', scheduleAlign)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [teamMode, filters.teamId, loadTeamPage, loadTeamStatus])
+  }, [runtime])
 
   useEffect(() => {
     if (teamMode) void loadTeamPage(true)
@@ -347,6 +345,7 @@ export function useBoard(): BoardController {
     teamPageRequest.current += 1
     if (patch.teamId !== undefined) {
       teamPreferenceRequest.current += 1
+      liveNotificationsRequest.current += 1
       setTeamPage(null)
       setBoard((current) => (current ? { ...current, savedViews: [], settings: {} } : current))
     }

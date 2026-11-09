@@ -17,13 +17,18 @@
 
 ## 轮询
 
-- 独立模式：`/api/board/status` 每 750ms 轮询；`lastRefreshAt !== board.generatedAt` 时静默重载 board。
+- Board 不再按 750ms 轮询 `/api/board/status` 或 `/api/team/live-revision`。`useBoard` 在 runtime
+  确定后建立同源 `EventSource('/api/board/events')`，收到 `tasks.changed`、连接建立/重连、窗口 focus
+  或页面恢复可见时执行一次 REST 对齐。
+- 独立模式收到事件后静默重载 `/api/board`；团队模式重载当前 `/api/tasks/query` 与团队状态，并按需
+  查询 `/api/team/live-revision` 获取责任人覆盖通知。
 - 团队模式：`/api/tasks/query?…` 使用 `if-none-match` 复用 ETag，304 时跳过状态更新；
-  `/api/team/live-revision` 每 750ms 轮询，revision key 变化时重载任务页，`/api/team/status`
-  每 3 秒轮询作为兜底。
+  `/api/team/status` 每 3 秒轮询作为 Agent、项目同步和待委派状态的数据源。
 - `/api/tasks/query` 的 200 响应必须先经过 `normalizeTaskPage` 再写入 `teamPage`。团队接口可能只返回
   `relativeDir`，而任务卡使用 `dirName`；304 响应没有 body，保持 ETag 分支不规范化。
-- 轮询必须在组件卸载时清理 `setTimeout/clearInterval`；不要用固定延时等待业务状态。
+- EventSource 只随 runtime 生命周期创建，筛选和 teamId 变化不能反复断开重连；刷新回调通过 ref
+  取最新版本。组件卸载时必须关闭 EventSource、清空合并计时器并移除 focus/visibility 监听。
+- 团队 `status`、项目栏本地关联和 Git 操作现有 3 秒或操作进度轮询保持不变。
 
 ## 多团队状态
 

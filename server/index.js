@@ -18,6 +18,7 @@ import { projectBoardExecution, projectTaskDetailExecution } from './execution-p
 import { resolveTaskLocation } from './task-location.js'
 import { createPluginRuntime } from './plugins/runtime.js'
 import { publishRepositoryChange } from './plugins/repository-events.js'
+import { createBoardEventService } from './board-events.js'
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
 const appDir = path.resolve(serverDir, '..')
@@ -39,6 +40,7 @@ let watchDebounceTimer = null
 let folderPickerActive = false
 let scanWorkerRuntime = null
 let pluginRuntime = null
+let boardEventService = null
 let nextScanRequestId = 0
 const pendingScanRequests = new Map()
 const WATCH_DEBOUNCE_MS = Math.max(100, Number(process.env.TRELLIS_WATCH_DEBOUNCE_MS || 400))
@@ -50,6 +52,7 @@ function initializeStandaloneState(standalonePort = Number(process.env.PORT || 4
   persistence = createPersistenceStore()
   repositoryStore = createRepositoryStore()
   executionStore = createExecutionStore({ db: database, stageIds: STAGE_IDS })
+  boardEventService = createBoardEventService()
 }
 
 function sendJson(response, status, payload) {
@@ -213,6 +216,7 @@ function refreshBoardFromFiles(reason = 'manual', event = null, options = {}) {
         lastWatchEvent: latestWatchEvent(activeEvent) || readBoardState().lastWatchEvent || null,
         lastScanStats: result.stats,
       })
+      boardEventService?.publish({ generatedAt: board.generatedAt })
       pluginRuntime?.publishScan(previousBoard, board, result.stats, activeReason)
 
       if (queuedRefresh) {
@@ -540,6 +544,12 @@ async function handleApi(request, response, url) {
     url.pathname === '/api/panels' ||
     url.pathname === '/api/events'
   if (pluginPath && (await handlePluginRequest(request, response, url))) {
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/api/board/events') {
+    if (!boardEventService?.open({ response })) {
+      sendJson(response, 503, { error: '实时刷新服务不可用' })
+    }
     return
   }
   if (request.method === 'GET' && url.pathname === '/api/board') {
@@ -898,6 +908,8 @@ export async function startStandaloneServer({
 }
 
 export async function stopStandaloneServer() {
+  boardEventService?.close()
+  boardEventService = null
   await pluginRuntime?.stop()
   pluginRuntime = null
   watchRuntime?.close()

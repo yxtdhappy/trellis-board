@@ -16,6 +16,7 @@
 | [server/scan-worker.js](../../../server/scan-worker.js) | Worker Thread 内执行仓库扫描、增量任务刷新和结果汇总 |
 | [server/watcher.js](../../../server/watcher.js) | 监听 `.trellis` 的 tasks、workspace、`.developer`，过滤相关事件 |
 | [server/actions.js](../../../server/actions.js) | 创建任务、更新负责人和写操作边界校验 |
+| [server/board-events.js](../../../server/board-events.js) | 单机与团队 Board 的 SSE 连接、鉴权复查、合并广播和关闭 |
 | [server/index.js](../../../server/index.js) | HTTP 路由、静态资源、缓存、刷新队列、Worker 生命周期 |
 
 依赖方向保持简单：

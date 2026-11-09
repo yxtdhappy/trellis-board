@@ -92,8 +92,6 @@ export const fetchBoard = (force = false) =>
       )
     : api<BoardPayload>('/api/board')
 
-export const fetchBoardStatus = () => api<BoardStatus>('/api/board/status')
-
 export const saveWipLimit = (executionWipLimit: number, teamId?: string) =>
   api('/api/board/settings', 'PUT', {
     executionWipLimit,

@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/11-09-board-sse-live-refresh/design.md","reason":"SSE 事件总线、单机与团队发布点、前端对齐和回滚契约"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"团队实时版本、Agent SSE、责任人通知和实时索引边界"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"HTTP 路由、团队 Session 权限和响应边界"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"主线程 SSE 生命周期、Worker 扫描完成和关闭顺序"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"useBoard 状态源、轮询替换、请求竞态和 EventSource 清理"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"服务端事件触发到 REST 快照再到任务卡片的跨层契约"}
