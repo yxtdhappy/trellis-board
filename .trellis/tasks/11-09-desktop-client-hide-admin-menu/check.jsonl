@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"用于检查类型、前端质量与验收要求"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"用于检查 Tauri 客户端与普通浏览器行为隔离"}

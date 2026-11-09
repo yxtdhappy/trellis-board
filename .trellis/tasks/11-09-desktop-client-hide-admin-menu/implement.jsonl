@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/index.md","reason":"确认前端页面入口与模块边界"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"确认 Tauri 与普通浏览器的运行时差异和页面组合职责"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"确认 TypeScript、React 和前端验收要求"}
