@@ -15,7 +15,7 @@
   "branch": "codex/team-board",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "7e51ed6",
   "pr_url": null,
   "subtasks": [],
   "children": [],
