@@ -480,3 +480,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: 团队任务卡目录名修复
+<!-- trellis-session: v=2 fp=d8ab5c5bdec359e5 -->
+
+**Date**: 2026-11-09
+**Task**: 团队任务卡目录名修复
+**Branch**: `codex/team-board`
+
+### Summary
+
+修复团队任务查询未规范化导致任务卡目录名为空的问题；复用 normalizeTaskPage，补充相对路径与下划线字段测试和前端规范；单元测试、lint、类型检查、生产构建及浏览器 E2E 均通过，代码已推送 origin/codex/team-board。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1e7bb50` | fix(web): 团队任务卡显示任务目录名 |
+
+### Status
+
+[OK] **Completed**
