@@ -546,3 +546,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 23: 团队运行数据外移与 .trellis 稀疏接入
+<!-- trellis-session: v=2 fp=9a6f6377e4c00295 -->
+
+**Date**: 2026-11-09
+**Task**: 团队运行数据外移与 .trellis 稀疏接入
+**Branch**: `codex/team-board`
+
+### Summary
+
+运行数据迁移到跨平台数据根；团队项目仅检出 .trellis，缺目录时自动初始化、提交和推送；远端所有可达历史已清除 data/。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `054d19a` | feat(team): 外移运行数据并支持 .trellis 稀疏接入 |
+| `879ad51` | chore(task): 记录远端 data 历史清理结果 |
+
+### Status
+
+[OK] **Completed**
