@@ -103,14 +103,16 @@ Board ProjectRail
 - `app_status`
 - `desktop_login`
 
-`capabilities/board-local-association.json` 通过 `remote.urls` 只给 Board origin 候选开放：
+`capabilities/board-local-association.json` 通过 `remote.urls` 允许任意主机和端口的 HTTP/HTTPS
+Board origin 调用：
 
 - `associate_local_project`
 - `list_local_associations`
 - `desktop_sidecar_status`
 
-远程 capability 的 URL pattern 必然较宽；Rust 命令还会把当前 WebView origin 与本次登录成功的
-Board origin 做同源比较，其他远程页面即使命中 capability 也会被拒绝。
+远程 capability 同时使用 `http://*:*` 和 `https://*:*`；不带端口的 `http://*` 只匹配默认端口，
+不能用于局域网地址加自定义端口。Rust 命令还会把当前 WebView origin 与本次登录成功的 Board origin
+做同源比较，其他远程页面即使命中 capability 也会被拒绝。
 
 `capabilities/live-control.json` 只绑定本地 `live-control` 窗口：
 

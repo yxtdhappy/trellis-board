@@ -87,6 +87,8 @@ restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
   项目。不得为了填充关联下拉而放宽 `/api/team/projects` 或任务查询权限。
 - 远程 Board 只额外开放只读 `desktop_sidecar_status`；项目栏用它显示后台同步“运行中 / 已暂停 /
   未运行”，不能把 Board 自身刷新状态误当成 sidecar 状态。
+- 远程 capability 的 URL pattern 必须显式通配端口，使用 `http://*:*` 和 `https://*:*`；
+  `http://*` 只匹配默认 80 端口，会拒绝局域网地址加自定义端口的 Board origin。
 - sidecar `run` 的标准输出可发送单行 `{"control": {...}}` 控制事件；Tauri 解析后打开本地
   `live-control` 窗口。控制事件不得包含文件正文、密码、Cookie 或设备凭证。
 - `live-decide` 与 `live-restore` 使用独立 sidecar 命令，不依赖运行进程内存；待确认批次和备份

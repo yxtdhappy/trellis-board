@@ -262,6 +262,8 @@ Tauri capability 单独新增 `board-local-association`，通过 `remote.urls` �
 - 新客户端第一次登录强制创建设备，不认旧 sidecar 配置。
 - 回滚点按“本地 UI/权限 -> sidecar 登录 -> Tauri Cookie/导航”拆分；任一层失败可停止后续接线。
 - 最大技术风险是 Tauri WebView Cookie 域名语义。必须在 Windows WebView2 上实测 HTTPS 域名和远程 HTTP 两种来源，不能只依赖 Rust 单元测试。
-- 远程 capability 使用 `https://*` 和 `http://*` pattern，必须由 Rust 二次校验动态 Board origin，避免其他远程页面调用本地关联命令。
+- 远程 capability 使用 `https://*:*` 和 `http://*:*` pattern；不带端口的 `http://*` 只匹配默认
+  端口，无法覆盖局域网地址的自定义端口。必须由 Rust 二次校验动态 Board origin，避免其他远程页面
+  调用本地关联命令。
 - 每次冷启动要求重新登录意味着 `--minimized` 开机自启在用户登录前不会启动 sidecar。该取舍符合“双击后先登录”的当前要求，后续若要恢复无人值守同步需单独设计持久会话。
 

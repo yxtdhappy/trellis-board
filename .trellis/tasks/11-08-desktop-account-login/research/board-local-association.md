@@ -17,7 +17,7 @@ Tauri v2 capability 支持通过 `remote.urls` 仅向指定远程 origin 暴露�
   "identifier": "board-local-association",
   "windows": ["main"],
   "remote": {
-    "urls": ["https://*", "http://localhost:*", "http://127.0.0.1:*"]
+    "urls": ["https://*:*", "http://*:*"]
   },
   "permissions": [
     "allow-associate-local-project",
@@ -25,6 +25,9 @@ Tauri v2 capability 支持通过 `remote.urls` 仅向指定远程 origin 暴露�
   ]
 }
 ```
+
+远程 URL pattern 必须显式包含端口通配；`http://*` 只匹配默认 80 端口，无法匹配局域网地址的
+`http://192.168.65.27:4317` 等实际 Board origin。
 
 远程页面只获得这两个命令，不获得通用文件系统、Shell、进程或 dialog 权限。Rust 命令仍必须动态校验当前页面 origin 等于本次登录成功的 Board origin，形成第二道防线。
 

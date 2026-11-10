@@ -204,9 +204,10 @@ test('capability 将本地登录与远程项目关联权限分开', () => {
     'allow-desktop-sidecar-status',
     'allow-list-local-associations',
   ])
-  assert.ok(remote.remote.urls.includes('https://*'))
-  assert.ok(remote.remote.urls.includes('http://*'))
-  assert.ok(remote.remote.urls.includes('http://127.0.0.1:*'))
+  assert.deepEqual(remote.remote.urls, ['https://*:*', 'http://*:*'])
+  assert.equal(new URLPattern(remote.remote.urls[0]).test('https://board.example.com:8443/'), true)
+  assert.equal(new URLPattern(remote.remote.urls[1]).test('http://192.168.65.27:4317/'), true)
+  assert.equal(new URLPattern('http://*').test('http://192.168.65.27:4317/'), false)
   const custom = readText('desktop/src-tauri/permissions/desktop.toml')
   assert.match(custom, /identifier = "allow-app-status"/)
   assert.match(custom, /commands\.allow = \["app_status"\]/)
