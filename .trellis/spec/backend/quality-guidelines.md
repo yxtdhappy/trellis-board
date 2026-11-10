@@ -19,6 +19,7 @@
 ## 运行基线
 
 - Node `>=24`，SQLite 使用内置 `node:sqlite`；当前开发机验证版本为 Node `24.21.0`。
+- CI 运行 `npm test` 前必须先在仓库根目录执行 `npm ci`，真实 Trellis CLI 测试依赖根目录固定版本依赖。
 - 自动测试：`npm test`。
 - 启动：`node server/index.js` 或 `npm start`。
 - 项目没有 lint、类型检查或构建步骤，不能把不存在的检查写成通过项。

@@ -102,6 +102,7 @@
 | `acp-dispatch` | `plugins/acp-dispatch/test/manifest.test.js` | 同上 | `plugins/acp-dispatch/test/index.test.js` | `plugins/acp-dispatch/test/real.test.js`（`TRELLIS_REAL_ACP=1`） |
 
 私有插件不进入本仓库，测试由维护者在本地执行。
+私有插件测试放在被忽略的 `plugins/<id>/test/`；同一用例文件同时依赖多个私有插件时，缺少插件必须以 `skip` 跳过，不能让公开测试套件失败。
 
 ## 执行命令
 

@@ -307,7 +307,7 @@ test('干净完整克隆可以收敛为 .trellis 稀疏检出', async (t) => {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const { remoteUrl } = createRemote(root, { withTrellis: true })
   const worktree = path.join(root, 'data', 'projects', 'workspace-1')
-  git(root, ['clone', '--branch', 'dev', remoteUrl, worktree])
+  git(root, ['-c', 'core.autocrlf=false', 'clone', '--branch', 'dev', remoteUrl, worktree])
   const instance = manager(root)
   await instance.ensureSparseTrellis({
     id: 'project-1',
