@@ -206,14 +206,14 @@ if (Test-Path (Join-Path $dataDir 'board.sqlite-shm')) { Copy-Item (Join-Path $d
 if (Test-Path (Join-Path $dataDir 'git-credentials.key')) { Copy-Item (Join-Path $dataDir 'git-credentials.key') (Join-Path $backup 'git-credentials.key') }
 ```
 
-本版本支持 `v6/v7 -> v8` 附加式迁移。服务启动时先创建运行数据目录中的
-`backups/board.sqlite.pre-v8.*` 快照，再补齐项目 Agent 工具和 bootstrap 负责人字段；
+本版本支持 `v6/v7/v8 -> v9` 附加式迁移。服务启动时先创建运行数据目录中的
+`backups/board.sqlite.pre-v9.*` 快照，再补齐团队任务索引的归档时间并回填已有归档任务；
 旧账号、团队、项目、审计和任务索引会保留。其他 schema 版本仍会拒绝启动，不得通过删除数据库代替迁移。升级步骤：
 
 1. 停止服务并再次保留当前数据库、日志和配置。
 2. 按上面的 PowerShell 备份数据库、WAL、SHM 和运行数据目录中的 `git-credentials.key`。
-3. 启动新版服务，等待 v6/v7 自动升级到 v8。
-4. 运行 `node server/team/cli.js status`，确认 schema v8、WAL 和 integrity。
+3. 启动新版服务，等待 v6/v7/v8 自动升级到 v9。
+4. 运行 `node server/team/cli.js status`，确认 schema v9、WAL 和 integrity。
 5. 检查现有项目、任务索引、Agent 绑定、登录和 Git 凭据；如有异常，停止服务并恢复升级前备份。
 
 ```powershell
@@ -222,8 +222,8 @@ $env:TRELLIS_TEAM_PUBLIC_URL = 'https://board.example.com'
 node server/team/cli.js status
 ```
 
-结果必须显示 `schemaVersion=8`、`journalMode=wal` 和 `integrity=ok`。如果启动失败，保留
-原库和 `backups/board.sqlite.pre-v8.*`，不要删除或重建数据库。
+结果必须显示 `schemaVersion=9`、`journalMode=wal` 和 `integrity=ok`。如果启动失败，保留
+原库和 `backups/board.sqlite.pre-v9.*`，不要删除或重建数据库。
 
 回滚步骤：
 

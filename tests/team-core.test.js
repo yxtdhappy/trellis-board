@@ -733,7 +733,7 @@ test('首管理员 CLI 只初始化一次且不会导入本机默认仓库', asy
     db.close()
   }
   const status = diagnose({ config: testConfig(), databaseFile })
-  assert.equal(status.schemaVersion, '8')
+  assert.equal(status.schemaVersion, '9')
   assert.equal(status.activeAdmin, true)
   assert.equal(status.integrity, 'ok')
   await assert.rejects(
@@ -1052,6 +1052,43 @@ function seedIndexedTasks(runtime) {
   runtime.services.taskIndex.incrementQueryRevision()
 }
 
+function seedArchivedTasks(runtime) {
+  const insert = runtime.db.prepare(`
+    INSERT INTO team_task_index(
+      project_id, task_key, execution_task_key, relative_dir, title,
+      search_text, archived, archived_at, priority, derived_stage, assignee_dev_id,
+      assignee_user_id, due_date, last_activity_at, is_blocked,
+      is_unblocked_ready, attention_flags_json, group_key, group_role,
+      task_version, board_version, updated_at
+    ) VALUES (
+      'p1', ?, ?, ?, ?, ?, 1, ?, 'P2', 'archive', ?,
+      NULL, NULL, ?, 0, 0, '[]', ?, 'parent', ?, 'board-1', ?
+    )
+  `)
+  const rows = [
+    ['old', '2026-11-01T08:00:00.000Z', 'alice', '2026-11-09T08:00:00.000Z'],
+    ['new', '2026-11-08T08:00:00.000Z', 'bob', '2026-11-02T08:00:00.000Z'],
+    ['middle', '2026-11-05T08:00:00.000Z', 'alice', '2026-11-06T08:00:00.000Z'],
+  ]
+  rows.forEach(([name, archivedAt, assignee, activity]) => {
+    const taskKey = `p1::.trellis/tasks/archive/2026-11/${name}`
+    insert.run(
+      taskKey,
+      `p1::${name}`,
+      `.trellis/tasks/archive/2026-11/${name}`,
+      `归档任务 ${name}`,
+      `归档任务 ${name}`,
+      archivedAt,
+      assignee,
+      activity,
+      name,
+      `version-${name}`,
+      activity,
+    )
+  })
+  runtime.services.taskIndex.incrementQueryRevision()
+}
+
 function seedPollingProjects(runtime, root, count) {
   const now = new Date().toISOString()
   seedTeam(runtime)
@@ -1135,6 +1172,7 @@ test('团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
 
   seedProject(runtime, user, root)
   seedIndexedTasks(runtime)
+  seedArchivedTasks(runtime)
 
   const readOnlyUser = await createUser(runtime.db, {
     username: 'reader',
@@ -1485,6 +1523,42 @@ test('团队 HTTP 鉴权、改密保留当前会话、CSRF、游标与 Agent 协
   )
   assert.equal(badCursor.status, 409)
   assert.equal(badCursor.body.code, 'CURSOR_INVALID')
+
+  const archiveFirstPage = await request(
+    runtime,
+    '/api/tasks/query?projectIds=p1&archived=1&limit=2',
+    { cookie: firstCookie },
+  )
+  assert.equal(archiveFirstPage.status, 200)
+  assert.equal(archiveFirstPage.body.total, 3)
+  assert.equal(archiveFirstPage.body.tasks[0].taskKey, 'p1::.trellis/tasks/archive/2026-11/new')
+  assert.equal(archiveFirstPage.body.tasks[0].archivedAt, '2026-11-08T08:00:00.000Z')
+  assert.equal(archiveFirstPage.body.tasks[0].lastActivityAt, '2026-11-02T08:00:00.000Z')
+  assert.deepEqual(archiveFirstPage.body.assignees, ['alice', 'bob'])
+  assert.ok(archiveFirstPage.body.nextCursor)
+
+  const archiveSecondPage = await request(
+    runtime,
+    `/api/tasks/query?projectIds=p1&archived=1&limit=2&cursor=${encodeURIComponent(
+      archiveFirstPage.body.nextCursor,
+    )}`,
+    { cookie: firstCookie },
+  )
+  assert.equal(archiveSecondPage.status, 200)
+  assert.equal(archiveSecondPage.body.tasks.length, 1)
+  assert.equal(archiveSecondPage.body.tasks[0].taskKey, 'p1::.trellis/tasks/archive/2026-11/old')
+  assert.equal(archiveSecondPage.body.tasks[0].archivedAt, '2026-11-01T08:00:00.000Z')
+  assert.equal(archiveSecondPage.body.tasks[0].lastActivityAt, '2026-11-09T08:00:00.000Z')
+  assert.notEqual(archiveSecondPage.body.tasks[0].taskKey, archiveFirstPage.body.tasks[0].taskKey)
+  const changedArchiveFilter = await request(
+    runtime,
+    `/api/tasks/query?projectIds=p1&archived=1&limit=2&assignee=bob&cursor=${encodeURIComponent(
+      archiveFirstPage.body.nextCursor,
+    )}`,
+    { cookie: firstCookie },
+  )
+  assert.equal(changedArchiveFilter.status, 409)
+  assert.equal(changedArchiveFilter.body.code, 'CURSOR_INVALID')
 
   const forbiddenProject = await request(runtime, '/api/tasks/query?projectIds=p2', {
     cookie: firstCookie,

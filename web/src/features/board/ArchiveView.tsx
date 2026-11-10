@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { useArchiveTasks } from '@/hooks/useArchiveTasks'
 import { formatArchiveTimestamp, sortArchivedTasks } from '@/lib/archive-sort.js'
 import { Pagination } from './Pagination'
 import { SelectField } from './SelectField'
@@ -11,27 +12,48 @@ type ArchiveViewProps = {
   tasks: BoardTask[]
   projects: { id: string; name: string }[]
   projectId: string
+  teamMode: boolean
+  teamId: string
+  queryRevision?: number | string | null
   onOpen: (task: BoardTask) => void
   onRefresh?: () => void
 }
 
 const PAGE_SIZE = 20
 
-export function ArchiveView({ tasks, projects, projectId, onOpen, onRefresh }: ArchiveViewProps) {
+export function ArchiveView({
+  tasks,
+  projects,
+  projectId,
+  teamMode,
+  teamId,
+  queryRevision,
+  onOpen,
+  onRefresh,
+}: ArchiveViewProps) {
   const [assignee, setAssignee] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
+  const archive = useArchiveTasks({
+    enabled: teamMode,
+    teamId,
+    projectId,
+    revision: queryRevision,
+  })
 
   const owners = useMemo(
     () => [
       ...new Set(
-        tasks.map((task) => task.assignee).filter((name): name is string => Boolean(name)),
+        (teamMode ? archive.assignees : tasks.map((task) => task.assignee)).filter(
+          (name): name is string => Boolean(name),
+        ),
       ),
     ],
-    [tasks],
+    [archive.assignees, tasks, teamMode],
   )
 
   const rows = useMemo(() => {
+    if (teamMode) return archive.tasks
     const keyword = search.trim().toLowerCase()
     const filtered = tasks
       .filter((task) => projectId === 'all' || task.projectId === projectId)
@@ -43,12 +65,13 @@ export function ArchiveView({ tasks, projects, projectId, onOpen, onRefresh }: A
             .map((value) => String(value || '').toLowerCase())
             .some((value) => value.includes(keyword)),
       )
-    return sortArchivedTasks(filtered).slice(0, 80)
-  }, [tasks, projectId, assignee, search])
+    return sortArchivedTasks(filtered)
+  }, [archive.tasks, tasks, projectId, assignee, search, teamMode])
 
-  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
-  const current = Math.min(page, pageCount - 1)
-  const visible = rows.slice(current * PAGE_SIZE, current * PAGE_SIZE + PAGE_SIZE)
+  const pageCount = teamMode ? archive.pageCount : Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const current = teamMode ? archive.pageIndex : Math.min(page, pageCount - 1)
+  const visible = teamMode ? rows : rows.slice(current * PAGE_SIZE, current * PAGE_SIZE + PAGE_SIZE)
+  const total = teamMode ? archive.total : rows.length
   const projectName =
     projectId === 'all'
       ? '全部项目'
@@ -67,7 +90,11 @@ export function ArchiveView({ tasks, projects, projectId, onOpen, onRefresh }: A
         </div>
         <button
           type="button"
-          onClick={onRefresh}
+          onClick={() => {
+            if (teamMode) archive.refresh()
+            else onRefresh?.()
+          }}
+          disabled={teamMode && archive.loading}
           className="ml-auto h-8 rounded-md px-2.5 text-[11.5px] text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           刷新
@@ -78,29 +105,41 @@ export function ArchiveView({ tasks, projects, projectId, onOpen, onRefresh }: A
         <Input
           className="h-8 w-64 text-xs"
           placeholder="搜索任务名或证据"
-          value={search}
+          value={teamMode ? archive.search : search}
           onChange={(event) => {
-            setSearch(event.target.value)
+            if (teamMode) archive.setSearch(event.target.value)
+            else setSearch(event.target.value)
             setPage(0)
           }}
         />
         <SelectField
           ariaLabel="负责人"
           className="h-8 w-36 text-[11.5px]"
-          value={assignee || '__all'}
+          value={(teamMode ? archive.assignee : assignee) || '__all'}
           options={[
             { value: '__all', label: '全部负责人' },
             ...owners.map((name) => ({ value: name, label: name })),
           ]}
           onChange={(next) => {
-            setAssignee(next === '__all' ? '' : next)
+            const value = next === '__all' ? '' : next
+            if (teamMode) archive.setAssignee(value)
+            else setAssignee(value)
             setPage(0)
           }}
         />
         <span className="ml-auto text-[11px] text-muted-foreground">{projectName}</span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card">
+      {teamMode && archive.error ? (
+        <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {archive.error}
+        </p>
+      ) : null}
+
+      <div
+        className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card"
+        aria-busy={teamMode && archive.loading}
+      >
         <ScrollArea className="h-full">
           <table className="w-full border-collapse text-left">
             <thead className="sticky top-0 bg-muted text-[10.5px] text-muted-foreground">
@@ -113,7 +152,16 @@ export function ArchiveView({ tasks, projects, projectId, onOpen, onRefresh }: A
               </tr>
             </thead>
             <tbody>
-              {visible.length === 0 ? (
+              {teamMode && archive.loading && visible.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-3 py-10 text-center text-[11.5px] text-muted-foreground"
+                  >
+                    正在加载归档任务
+                  </td>
+                </tr>
+              ) : visible.length === 0 ? (
                 <tr>
                   <td
                     colSpan={5}
@@ -192,10 +240,24 @@ export function ArchiveView({ tasks, projects, projectId, onOpen, onRefresh }: A
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[11px] text-muted-foreground">
           显示 {visible.length ? current * PAGE_SIZE + 1 : 0}-{current * PAGE_SIZE + visible.length}{' '}
-          / 共 {rows.length} 条
+          / 共 {total} 条
         </span>
         <div className="ml-auto">
-          <Pagination page={current} pageCount={pageCount} onChange={setPage} />
+          <Pagination
+            page={current}
+            pageCount={pageCount}
+            onChange={(next) => {
+              if (!teamMode) {
+                setPage(next)
+              } else if (next > current) {
+                archive.next()
+              } else if (next < current) {
+                archive.previous()
+              }
+            }}
+            numbered={!teamMode}
+            hasNext={teamMode ? archive.hasNext : undefined}
+          />
         </div>
       </div>
     </div>

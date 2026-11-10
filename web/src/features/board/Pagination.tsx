@@ -5,6 +5,8 @@ type PaginationProps = {
   pageCount: number
   onChange: (page: number) => void
   label?: string
+  numbered?: boolean
+  hasNext?: boolean
 }
 
 function pageItems(page: number, pageCount: number): (number | 'gap')[] {
@@ -19,9 +21,44 @@ function pageItems(page: number, pageCount: number): (number | 'gap')[] {
   return items
 }
 
-export function Pagination({ page, pageCount, onChange, label }: PaginationProps) {
+export function Pagination({
+  page,
+  pageCount,
+  onChange,
+  label,
+  numbered = true,
+  hasNext,
+}: PaginationProps) {
   if (pageCount <= 1) {
     return label ? <span className="text-[11px] text-muted-foreground">{label}</span> : null
+  }
+  if (!numbered) {
+    return (
+      <div className="flex items-center gap-2">
+        {label ? <span className="text-[11px] text-muted-foreground">{label}</span> : null}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 px-2 text-[11px]"
+          onClick={() => onChange(page - 1)}
+          disabled={page === 0}
+        >
+          上一页
+        </Button>
+        <span className="text-[11px] text-muted-foreground">
+          第 {page + 1} / {pageCount} 页
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 px-2 text-[11px]"
+          onClick={() => onChange(page + 1)}
+          disabled={hasNext === false || page >= pageCount - 1}
+        >
+          下一页
+        </Button>
+      </div>
+    )
   }
   return (
     <div className="flex items-center gap-1">

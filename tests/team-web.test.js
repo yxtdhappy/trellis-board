@@ -69,8 +69,10 @@ test('任务页兼容驼峰和下划线响应', () => {
       {
         taskKey: 'b',
         relative_dir: '.trellis/tasks/11-09-task-detail-request-storm',
+        archived_at: '2026-11-09T08:00:00.000Z',
       },
     ],
+    assignees: ['alice', 'bob'],
     next_cursor: 'c2',
     total_count: 12,
     query_revision: 7,
@@ -80,6 +82,8 @@ test('任务页兼容驼峰和下划线响应', () => {
   assert.equal(page.tasks[0].dirName, '11-08-project-onboarding-remote-info')
   assert.equal(page.tasks[1].taskKey, 'b')
   assert.equal(page.tasks[1].dirName, '11-09-task-detail-request-storm')
+  assert.equal(page.tasks[1].archivedAt, '2026-11-09T08:00:00.000Z')
+  assert.deepEqual(page.assignees, ['alice', 'bob'])
   assert.equal(page.nextCursor, 'c2')
   assert.equal(page.total, 12)
   assert.equal(page.queryRevision, 7)

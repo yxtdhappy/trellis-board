@@ -14,7 +14,7 @@ const CURSOR_KEY = crypto.randomBytes(32)
 const CURSOR_TTL_MS = 10 * 60 * 1000
 const DEFAULT_LIMIT = 100
 const MAX_LIMIT = 200
-const INDEX_SCHEMA_VERSION = 1
+const INDEX_SCHEMA_VERSION = 2
 const QUERY_CACHE_ENTRIES = 64
 
 function text(value, fallback = '') {
@@ -205,6 +205,7 @@ function rowFromIndex(row) {
     priority: row.priority,
     derivedStage: row.derived_stage,
     archived: Boolean(row.archived),
+    archivedAt: row.archived_at || null,
     assigneeDevId: row.assignee_dev_id || null,
     assigneeUserId: row.assignee_user_id || null,
     dueDate: row.due_date || null,
@@ -235,6 +236,7 @@ export function taskIndexInsertArgs(
     text(task.title),
     text(searchText),
     task.archived ? 1 : 0,
+    task.archivedAt || null,
     text(task.priority).trim(),
     text(task.derivedStage).trim(),
     assigneeDevId ?? null,
@@ -250,6 +252,26 @@ export function taskIndexInsertArgs(
     boardVersion,
     now,
   ]
+}
+
+export function taskIndexSearchText(task) {
+  return [
+    task.title,
+    task.description,
+    task.projectName,
+    task.taskKey,
+    task.executionTaskKey,
+    task.assignee,
+    task.priority,
+    task.derivedStage,
+    ...(task.stages || []).flatMap((stage) =>
+      stage.complete ? [stage.label, stage.evidence] : [],
+    ),
+    ...(task.execution?.tags || []),
+  ]
+    .filter(Boolean)
+    .join('\n')
+    .toLowerCase()
 }
 
 export function createTaskIndex({
@@ -434,11 +456,11 @@ export function createTaskIndex({
     const insert = db.prepare(`
       INSERT INTO team_task_index(
         project_id, task_key, execution_task_key, relative_dir, title,
-        search_text, archived, priority, derived_stage, assignee_dev_id,
+        search_text, archived, archived_at, priority, derived_stage, assignee_dev_id,
         assignee_user_id, due_date, last_activity_at, is_blocked,
         is_unblocked_ready, attention_flags_json, group_key, group_role,
         task_version, board_version, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const insertTag = db.prepare(`
       INSERT OR IGNORE INTO team_task_index_tag(project_id, task_key, tag_key)
@@ -452,19 +474,7 @@ export function createTaskIndex({
         ? users.get(String(assigneeDevId).toLowerCase()) || null
         : null
       const tags = (task.execution?.tags || []).map((tag) => String(tag).toLowerCase())
-      const searchText = [
-        task.title,
-        task.description,
-        task.taskKey,
-        task.executionTaskKey,
-        task.assignee,
-        task.priority,
-        task.derivedStage,
-        ...(task.execution?.tags || []),
-      ]
-        .filter(Boolean)
-        .join('\n')
-        .toLowerCase()
+      const searchText = taskIndexSearchText(task)
       insert.run(
         ...taskIndexInsertArgs(task, {
           projectId,
@@ -692,6 +702,7 @@ export function createTaskIndex({
       return {
         tasks: cached.tasks,
         total: cached.total,
+        assignees: cached.assignees,
         nextCursor: cached.last
           ? encryptCursor({
               ...binding,
@@ -708,6 +719,7 @@ export function createTaskIndex({
       return {
         tasks: [],
         total: 0,
+        assignees: [],
         nextCursor: null,
         etag,
         queryRevision: revision,
@@ -742,6 +754,8 @@ export function createTaskIndex({
       )`)
       params.push(...filters.tags.map((tag) => tag.toLowerCase()))
     }
+    const assigneeFacetWhere = [...where]
+    const assigneeFacetParams = [...params]
     if (filters.assignee) {
       where.push('(t.assignee_user_id = ? OR t.assignee_dev_id = ? COLLATE NOCASE)')
       params.push(filters.assignee, filters.assignee)
@@ -777,9 +791,25 @@ export function createTaskIndex({
     `)
         .get(...params).count,
     )
+    const assignees = filters.archived
+      ? db
+          .prepare(`
+        SELECT DISTINCT t.assignee_dev_id AS assignee
+        FROM team_task_index t
+        WHERE ${assigneeFacetWhere.join(' AND ')}
+          AND t.assignee_dev_id IS NOT NULL
+          AND length(trim(t.assignee_dev_id)) > 0
+        ORDER BY t.assignee_dev_id COLLATE NOCASE
+      `)
+          .all(...assigneeFacetParams)
+          .map((row) => row.assignee)
+      : []
 
     const pageWhere = [...where]
     const pageParams = [...params]
+    const orderAnchor = filters.archived
+      ? 'COALESCE(t.archived_at, t.updated_at)'
+      : 'COALESCE(t.last_activity_at, t.updated_at)'
     if (input.cursor) {
       const cursor = decryptCursor(input.cursor)
       const binding = cursorBinding(filters, projectIds, actor.userId, revision, day, teamScope)
@@ -795,9 +825,9 @@ export function createTaskIndex({
         )
       }
       pageWhere.push(`(
-        COALESCE(t.last_activity_at, t.updated_at) < ?
+        ${orderAnchor} < ?
         OR (
-          COALESCE(t.last_activity_at, t.updated_at) = ?
+          ${orderAnchor} = ?
           AND (
             t.project_id < ?
             OR (t.project_id = ? AND t.task_key < ?)
@@ -818,7 +848,7 @@ export function createTaskIndex({
       JOIN repositories r ON r.id = t.project_id
       WHERE ${pageWhere.join(' AND ')}
       ORDER BY
-        COALESCE(t.last_activity_at, t.updated_at) DESC,
+        ${orderAnchor} DESC,
         t.project_id DESC,
         t.task_key DESC
       LIMIT ?
@@ -828,9 +858,12 @@ export function createTaskIndex({
     let nextCursor = null
     if (rows.length > filters.limit) {
       const last = pageRows.at(-1)
+      const sortAt = filters.archived
+        ? last.archived_at || last.updated_at
+        : last.last_activity_at || last.updated_at
       nextCursor = encryptCursor({
         ...cursorBinding(filters, projectIds, actor.userId, revision, day, teamScope),
-        sa: last.last_activity_at || last.updated_at,
+        sa: sortAt,
         pid: last.project_id,
         tk: last.task_key,
         exp: Date.now() + CURSOR_TTL_MS,
@@ -841,9 +874,12 @@ export function createTaskIndex({
     const cachedPage = {
       tasks,
       total,
+      assignees,
       last: last
         ? {
-            sa: last.last_activity_at || last.updated_at,
+            sa: filters.archived
+              ? last.archived_at || last.updated_at
+              : last.last_activity_at || last.updated_at,
             pid: last.project_id,
             tk: last.task_key,
           }
@@ -856,6 +892,7 @@ export function createTaskIndex({
     return {
       tasks,
       total,
+      assignees,
       nextCursor,
       etag,
       queryRevision: revision,

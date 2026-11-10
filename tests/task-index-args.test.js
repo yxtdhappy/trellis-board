@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
-import { taskIndexInsertArgs } from '../server/team/task-index.js'
+import { taskIndexInsertArgs, taskIndexSearchText } from '../server/team/task-index.js'
 
 const COLUMNS = [
   'project_id',
@@ -11,6 +11,7 @@ const COLUMNS = [
   'title',
   'search_text',
   'archived',
+  'archived_at',
   'priority',
   'derived_stage',
   'assignee_dev_id',
@@ -38,6 +39,7 @@ function createTable() {
       title TEXT NOT NULL,
       search_text TEXT NOT NULL,
       archived INTEGER NOT NULL,
+      archived_at TEXT,
       priority TEXT NOT NULL,
       derived_stage TEXT NOT NULL,
       assignee_dev_id TEXT,
@@ -97,6 +99,7 @@ test('保留已有字段并在 groupKey/executionTaskKey 缺省时回落到 task
       derivedStage: 'dev',
       groupRole: 'child',
       archived: true,
+      archivedAt: '2026-11-09T08:00:00.000Z',
       taskVersion: 'v2',
       execution: { dueDate: '2026-11-10', isBlocked: true, tags: ['ui'] },
     },
@@ -116,8 +119,33 @@ test('保留已有字段并在 groupKey/executionTaskKey 缺省时回落到 task
   assert.equal(row.priority, 'P1')
   assert.equal(row.derived_stage, 'dev')
   assert.equal(row.archived, 1)
+  assert.equal(row.archived_at, '2026-11-09T08:00:00.000Z')
   assert.equal(row.is_blocked, 1)
   assert.equal(row.due_date, '2026-11-10')
   assert.equal(row.assignee_dev_id, 'tester')
   assert.equal(row.assignee_user_id, 'user-1')
+})
+
+test('归档搜索文本包含项目名、已完成阶段和证据', () => {
+  const text = taskIndexSearchText({
+    title: '修复归档',
+    projectName: '订单服务',
+    taskKey: 'p1::.trellis/tasks/archive/2026-11/fix',
+    stages: [
+      {
+        complete: true,
+        label: '检查报告',
+        evidence: 'tests/archive.test.js 通过',
+      },
+      {
+        complete: false,
+        label: '未完成阶段',
+        evidence: '不应进入索引',
+      },
+    ],
+  })
+  assert.match(text, /订单服务/)
+  assert.match(text, /检查报告/)
+  assert.match(text, /tests\/archive\.test\.js 通过/)
+  assert.doesNotMatch(text, /未完成阶段/)
 })

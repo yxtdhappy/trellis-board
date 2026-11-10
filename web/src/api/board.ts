@@ -116,6 +116,7 @@ export const fetchTaskDetail = (task: BoardTask) =>
 
 export type TeamQueryPage = {
   tasks: BoardTask[]
+  assignees: string[]
   total: number
   nextCursor?: string | null
   queryRevision?: string

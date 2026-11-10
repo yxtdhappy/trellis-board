@@ -90,7 +90,12 @@ export function BoardPage() {
   const detailAssignees = selectedProject?.workspaceMembers ?? selectedProject?.members ?? assignees
   const displayName = runtime?.user?.displayName || runtime?.user?.username || '看板用户'
   const savedViews = useMemo(() => normalizeViews(board?.savedViews), [board?.savedViews])
-  const archived = tasks.filter((task) => task.archived)
+  const archived = useMemo(() => tasks.filter((task) => task.archived), [tasks])
+  const archiveRevision =
+    typeof controller.teamStatus?.queryRevision === 'number' ||
+    typeof controller.teamStatus?.queryRevision === 'string'
+      ? controller.teamStatus.queryRevision
+      : null
   const activeCount = tasks.filter((task) => !task.archived).length
   const navItems = useMemo<BoardNavItem[]>(
     () => [
@@ -264,6 +269,9 @@ export function BoardPage() {
               tasks={archived}
               projects={projects}
               projectId={filters.projectId}
+              teamMode={teamMode}
+              teamId={filters.teamId}
+              queryRevision={archiveRevision}
               onOpen={(task) => setSelected(task)}
               onRefresh={() => void actions.refresh()}
             />

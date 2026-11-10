@@ -6,7 +6,7 @@
 | --- | --- |
 | [server/config.js](../../../server/config.js) | 跨平台运行数据根、SQLite 与旧 JSON 路径、默认仓库、仓库路径规范化 |
 | [server/data-migration.js](../../../server/data-migration.js) | 从旧源码 `data/` 迁移运行数据并重写受管项目路径 |
-| [server/database.js](../../../server/database.js) | `node:sqlite` 连接、PRAGMA、schema v6/v7 -> v8 顺序迁移、事务辅助和旧 JSON 一次性迁移 |
+| [server/database.js](../../../server/database.js) | `node:sqlite` 连接、PRAGMA、schema v6/v7/v8 -> v9 顺序迁移、事务辅助和旧 JSON 一次性迁移 |
 | [server/repositories.js](../../../server/repositories.js) | SQLite 白名单增删、ID 生成、路径规范化和显示顺序 |
 | [server/metadata.js](../../../server/metadata.js) | 13 个阶段的合法 ID、SQLite 人工阶段存储 |
 | [server/persistence.js](../../../server/persistence.js) | SQLite 扫描缓存和看板状态 facade |
@@ -59,7 +59,7 @@ Worker 内会缓存各仓库最近结果，并根据事件判断是仓库级重�
 
 [server/index.js](../../../server/index.js) 启动时：
 
-1. 准备跨平台运行数据根并迁移旧源码 `data/`，打开新根下的 `board.sqlite`，按顺序迁移到 schema v8，创建仓库存储和 HTTP 服务。
+1. 准备跨平台运行数据根并迁移旧源码 `data/`，打开新根下的 `board.sqlite`，按顺序迁移到 schema v9，创建仓库存储和 HTTP 服务。
 2. 默认监听 `0.0.0.0:4317`；显式配置 `TRELLIS_BOARD_BIND_HOST` 或
    `TRELLIS_TEAM_BIND_HOST=127.0.0.1` 时收窄为本机回环。
 3. 启动对白名单仓库的文件监听。

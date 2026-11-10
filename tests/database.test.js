@@ -110,12 +110,12 @@ const EXPECTED_TABLES = [
   'user_session',
 ]
 
-test('新库一次创建 schema v8 与实时同步、Git 凭据表和接入字段', () => {
+test('新库一次创建 schema v9 与实时同步、Git 凭据表和接入字段', () => {
   const workspace = makeWorkspace()
   let db
   try {
     db = openTestDatabase(workspace)
-    assert.equal(DATABASE_SCHEMA_VERSION, 8)
+    assert.equal(DATABASE_SCHEMA_VERSION, 9)
     assert.deepEqual(tableNames(db), EXPECTED_TABLES)
     const meta = Object.fromEntries(
       db
@@ -123,7 +123,7 @@ test('新库一次创建 schema v8 与实时同步、Git 凭据表和接入字�
         .all()
         .map((row) => [row.key, row.value]),
     )
-    assert.equal(meta.schema_version, '8')
+    assert.equal(meta.schema_version, '9')
     assert.equal(meta.legacy_json_imported_v1, '1')
     assert.equal(Number.isNaN(Date.parse(meta.execution_events_started_at)), false)
 
@@ -184,7 +184,7 @@ test('新库一次创建 schema v8 与实时同步、Git 凭据表和接入字�
   }
 })
 
-test('schema v8 重复打开保持幂等', () => {
+test('schema v9 重复打开保持幂等', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -194,7 +194,7 @@ test('schema v8 重复打开保持幂等', () => {
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '8',
+      '9',
     )
     assert.deepEqual(columnNames(db, 'team_project'), firstColumns)
     assert.deepEqual(tableNames(db), EXPECTED_TABLES)
@@ -204,7 +204,7 @@ test('schema v8 重复打开保持幂等', () => {
   }
 })
 
-test('schema v6 升级到 v8 前备份并补齐实时同步、凭据与接入字段', () => {
+test('schema v6 升级到 v9 前备份并补齐实时同步、凭据与接入字段', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -237,13 +237,15 @@ test('schema v6 升级到 v8 前备份并补齐实时同步、凭据与接入字
     db.exec('ALTER TABLE team_project DROP COLUMN agent_tools_json')
     db.exec('ALTER TABLE team_project DROP COLUMN bootstrap_lead_user_id')
     db.exec('ALTER TABLE team_project DROP COLUMN bootstrap_lead_trellis_dev_id')
+    db.exec('DROP INDEX IF EXISTS team_task_archive_order')
+    db.exec('ALTER TABLE team_task_index DROP COLUMN archived_at')
     db.prepare("UPDATE app_meta SET value = '6' WHERE key = 'schema_version'").run()
     db.close()
     db = null
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '8',
+      '9',
     )
     assert.ok(tableNames(db).includes('project_live_revision'))
     assert.ok(tableNames(db).includes('project_live_file'))
@@ -254,6 +256,7 @@ test('schema v6 升级到 v8 前备份并补齐实时同步、凭据与接入字
     assert.ok(columnNames(db, 'team_project').includes('git_credential_id'))
     assert.ok(columnNames(db, 'team_project').includes('agent_tools_json'))
     assert.ok(columnNames(db, 'team_project').includes('bootstrap_lead_user_id'))
+    assert.ok(columnNames(db, 'team_task_index').includes('archived_at'))
     assert.ok(columnNames(db, 'team_project').includes('bootstrap_lead_trellis_dev_id'))
     assert.equal(
       db.prepare("SELECT COUNT(*) AS count FROM team_project WHERE repository_id = 'p1'").get()
@@ -262,7 +265,7 @@ test('schema v6 升级到 v8 前备份并补齐实时同步、凭据与接入字
     )
     const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
     assert.equal(
-      backups.some((name) => name.startsWith('board.sqlite.pre-v8.')),
+      backups.some((name) => name.startsWith('board.sqlite.pre-v9.')),
       true,
     )
   } finally {
@@ -271,7 +274,7 @@ test('schema v6 升级到 v8 前备份并补齐实时同步、凭据与接入字
   }
 })
 
-test('schema v7 升级到 v8 前备份并补齐接入字段默认值', () => {
+test('schema v7 升级到 v9 前备份并补齐接入字段默认值', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -294,13 +297,15 @@ test('schema v7 升级到 v8 前备份并补齐接入字段默认值', () => {
     db.exec('ALTER TABLE team_project DROP COLUMN agent_tools_json')
     db.exec('ALTER TABLE team_project DROP COLUMN bootstrap_lead_user_id')
     db.exec('ALTER TABLE team_project DROP COLUMN bootstrap_lead_trellis_dev_id')
+    db.exec('DROP INDEX IF EXISTS team_task_archive_order')
+    db.exec('ALTER TABLE team_task_index DROP COLUMN archived_at')
     db.prepare("UPDATE app_meta SET value = '7' WHERE key = 'schema_version'").run()
     db.close()
     db = null
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '8',
+      '9',
     )
     const migrated = db
       .prepare(`
@@ -314,7 +319,98 @@ test('schema v7 升级到 v8 前备份并补齐接入字段默认值', () => {
     assert.equal(migrated.bootstrap_lead_trellis_dev_id, null)
     const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
     assert.equal(
-      backups.some((name) => name.startsWith('board.sqlite.pre-v8.')),
+      backups.some((name) => name.startsWith('board.sqlite.pre-v9.')),
+      true,
+    )
+  } finally {
+    closeQuietly(db)
+    fs.rmSync(workspace.root, { recursive: true, force: true })
+  }
+})
+
+test('schema v8 升级到 v9 回填归档时间并建立归档排序索引', () => {
+  const workspace = makeWorkspace()
+  let db
+  try {
+    db = openTestDatabase(workspace)
+    const now = new Date().toISOString()
+    const archivedAt = '2026-11-09T08:00:00.000Z'
+    db.prepare(
+      "INSERT INTO team(id, name, slug, status, created_at, updated_at) VALUES ('t1','团队一','t1','active',?,?)",
+    ).run(now, now)
+    db.prepare(`
+      INSERT INTO repositories(id, name, path, path_key, position, created_at, updated_at)
+      VALUES ('p1', '项目一', '/tmp/p1', '/tmp/p1', 0, ?, ?)
+    `).run(now, now)
+    db.prepare(`
+      INSERT INTO team_project(
+        repository_id, team_id, workspace_key, remote_url, remote_identity_hash,
+        sync_branch, trusted_task_toolchain_sha256, sync_status, created_at, updated_at
+      ) VALUES ('p1', 't1', 'p1', 'https://example.com/p1.git', 'hash',
+        'main', ?, 'current', ?, ?)
+    `).run('a'.repeat(64), now, now)
+    db.prepare(`
+      INSERT INTO project_scan_cache(
+        project_id, schema_version, scanned_content_key, saved_at, board_json
+      ) VALUES ('p1', 1, 'content-1', ?, ?)
+    `).run(
+      now,
+      JSON.stringify({
+        tasks: [
+          {
+            taskKey: 'p1::.trellis/tasks/archive/2026-11/old',
+            archived: true,
+            archivedAt,
+          },
+        ],
+      }),
+    )
+    db.prepare(`
+      INSERT INTO team_task_index(
+        project_id, task_key, execution_task_key, relative_dir, title,
+        search_text, archived, archived_at, priority, derived_stage,
+        assignee_dev_id, assignee_user_id, due_date, last_activity_at,
+        is_blocked, is_unblocked_ready, attention_flags_json, group_key,
+        group_role, task_version, board_version, updated_at
+      ) VALUES (
+        'p1', 'p1::.trellis/tasks/archive/2026-11/old', 'p1::old',
+        '.trellis/tasks/archive/2026-11/old', '旧任务', '旧任务', 1, ?,
+        'P2', 'archive', 'alice', NULL, NULL, ?, 0, 0, '[]', 'old',
+        'parent', 'version-1', 'board-1', ?
+      )
+    `).run(archivedAt, now, now)
+    db.exec('DROP INDEX IF EXISTS team_task_archive_order')
+    db.exec('ALTER TABLE team_task_index DROP COLUMN archived_at')
+    db.prepare("UPDATE app_meta SET value = '8' WHERE key = 'schema_version'").run()
+    db.close()
+    db = null
+
+    db = openTestDatabase(workspace)
+    assert.equal(
+      db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+      '9',
+    )
+    assert.equal(
+      db
+        .prepare(`
+        SELECT archived_at FROM team_task_index
+        WHERE project_id = 'p1' AND task_key = 'p1::.trellis/tasks/archive/2026-11/old'
+      `)
+        .get().archived_at,
+      archivedAt,
+    )
+    assert.equal(
+      db
+        .prepare(`
+        SELECT COUNT(*) AS count FROM sqlite_master
+        WHERE type = 'index' AND name = 'team_task_archive_order'
+      `)
+        .get().count,
+      1,
+    )
+    const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
+    assert.equal(
+      backups.some((name) => name.startsWith('board.sqlite.pre-v9.')),
       true,
     )
   } finally {

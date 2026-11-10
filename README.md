@@ -77,9 +77,10 @@ Board 自身可变状态统一保存在该目录下的 `board.sqlite`：
 - `git_credential`、`git_ssh_known_host`：团队 Git 凭据密文、项目引用和 SSH 主机信任
 - `app_meta`：数据库 schema 版本和旧 JSON 迁移标记
 
-全新数据库会直接创建当前 schema（v8），包含团队、团队成员、团队项目、团队审计、Agent 事件游标、实时文件覆盖层、Git 凭据、SSH 主机信任、项目初始化工具和 bootstrap 负责人。首次打开空库时仍会在一个事务中读取运行数据目录中的 `repos.json`、`task-metadata.json`、`scan-cache.json` 和 `board-state.json` 并导入 standalone 数据，然后写入一次性的 `legacy_json_imported_v1` 标记。非法或损坏的旧 JSON 只记录警告并跳过，不会阻止服务启动。运行时不修改这四个 JSON 文件。
+全新数据库会直接创建当前 schema（v9），包含团队、团队成员、团队项目、团队审计、Agent 事件游标、实时文件覆盖层、Git 凭据、SSH 主机信任、项目初始化工具、bootstrap 负责人和团队归档任务索引。首次打开空库时仍会在一个事务中读取运行数据目录中的 `repos.json`、`task-metadata.json`、`scan-cache.json` 和 `board-state.json` 并导入 standalone 数据，然后写入一次性的 `legacy_json_imported_v1` 标记。非法或损坏的旧 JSON 只记录警告并跳过，不会阻止服务启动。运行时不修改这四个 JSON 文件。
 
-v6/v7 数据库升级到 v8 前会在运行数据目录的 `backups/` 写入 `board.sqlite.pre-v8.*` 快照，再补项目 Agent 工具和 bootstrap 负责人字段，已有账号、项目、审计和任务索引保持不变。`v5` 及更旧版本仍拒绝启动，不能通过删除数据库代替迁移。重建前先停止服务并归档运行数据目录中的 `board.sqlite`、`board.sqlite-wal` 和 `board.sqlite-shm`。
+v6/v7/v8 数据库升级到 v9 前会在运行数据目录的 `backups/` 写入
+`board.sqlite.pre-v9.*` 快照，再补团队任务索引的归档时间并回填已有归档任务，已有账号、项目、审计和任务索引保持不变。`v5` 及更旧版本仍拒绝启动，不能通过删除数据库代替迁移。重建前先停止服务并归档运行数据目录中的 `board.sqlite`、`board.sqlite-wal` 和 `board.sqlite-shm`。
 
 SQLite 使用 WAL 模式，主线程和扫描 Worker 各自持有连接。项目增删、批量新增和看板状态的多字段更新均使用事务；失败时回滚整个操作。Git 凭据使用运行数据目录中的 `git-credentials.key` 做 AES-256-GCM 加密，备份数据库时必须同时备份该密钥；丢失密钥后凭据无法解密，只能重新录入。热备份前应先停止服务，并同时处理可能存在的 `board.sqlite-wal` 与 `board.sqlite-shm`。
 

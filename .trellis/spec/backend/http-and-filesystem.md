@@ -254,6 +254,7 @@ assignees={project?.workspaceMembers ?? project?.members ?? allAssignees}
 - 系统管理员按团队筛选用户时，`user.teams` 仍返回完整成员关系；筛选只收窄用户列表。
 - 单管理团队可省略 `teamId` 自动落位；多管理团队必须显式选择具体团队或 `all`。
 - Agent 设备绑定“用户 + 设备”；同一设备可按项目所属团队建立多个绑定，撤销必须限定团队。
+- `GET /api/tasks/query?archived=1` 返回真实归档时间并按 `archivedAt` 倒序分页，分页对象同时返回当前搜索、团队和项目范围出现过的负责人集合；活动任务查询仍按最后活动时间倒序。
 
 #### 4. Validation & Error Matrix
 
@@ -309,7 +310,7 @@ const projectIds = readableProjectIds(actor).filter((id) => (
 - API、审计和错误详情只返回凭据元数据，不返回 Token、私钥、口令或加密载荷。
 - 远端探测先执行 `git ls-remote --symref` 读取分支；指定分支或存在有效默认分支时，再在运行数据目录创建临时 partial clone，读取该分支 tree 中的 Agent 配置目录和 `.trellis` 状态。临时工作副本无论成功失败都必须删除，探测不写数据库；SSH 主机确认仍是独立写操作。
 - 运行数据目录中的 `git-credentials.key` 是 Git 凭据密文的主密钥，必须与 `board.sqlite` 一起备份。数据库中的凭据 AAD 绑定团队、主机和认证类型，修改这些列会导致解密失败。
-- 当前数据库支持 v6/v7 升级到 v8，升级前备份到运行数据目录的 `backups/`。
+- 当前数据库支持 v6/v7/v8 升级到 v9，升级前备份到运行数据目录的 `backups/`。
 
 ### Scenario: 团队项目稀疏检出与自动初始化
 

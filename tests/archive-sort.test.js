@@ -43,4 +43,5 @@ test('归档列表显示归档时间到分钟，缺少时间时回退完成日�
   })
   assert.match(withArchiveTime, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
   assert.equal(formatArchiveTimestamp({ completedAt: '2026-10-28' }), '2026-10-28')
+  assert.equal(formatArchiveTimestamp({}), '未知')
 })

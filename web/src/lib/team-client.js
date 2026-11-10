@@ -144,6 +144,7 @@ export function normalizeTaskPage(payload = {}) {
   const tasks = source.tasks ?? source.items ?? source.rows
   return {
     tasks: Array.isArray(tasks) ? tasks.map(normalizeTeamTaskRow) : [],
+    assignees: Array.isArray(source.assignees) ? source.assignees.map(String) : [],
     nextCursor: existingValue(source, 'nextCursor', 'next_cursor') ?? null,
     total: Number(existingValue(source, 'total', 'total_count') ?? 0),
     queryRevision: existingValue(source, 'queryRevision', 'query_revision') ?? null,
@@ -176,6 +177,7 @@ export function normalizeTeamTaskRow(row = {}) {
     priority: row.priority ?? '',
     derivedStage: row.derivedStage ?? row.derived_stage ?? '',
     archived: boolean(row.archived),
+    archivedAt: row.archivedAt ?? row.archived_at ?? null,
     assignee: row.assigneeDevId ?? row.assignee_dev_id ?? row.assignee ?? '',
     assigneeDevId: row.assigneeDevId ?? row.assignee_dev_id ?? row.assignee ?? '',
     assigneeUserId: row.assigneeUserId ?? row.assignee_user_id ?? null,

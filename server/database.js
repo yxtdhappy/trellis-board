@@ -11,7 +11,7 @@ import {
   stateFile,
 } from './config.js'
 
-export const DATABASE_SCHEMA_VERSION = 8
+export const DATABASE_SCHEMA_VERSION = 9
 
 const LEGACY_IMPORT_KEY = 'legacy_json_imported_v1'
 const EXECUTION_EVENTS_STARTED_KEY = 'execution_events_started_at'
@@ -420,6 +420,7 @@ const SCHEMA_V4_SQL = `
     title TEXT NOT NULL,
     search_text TEXT NOT NULL,
     archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+    archived_at TEXT,
     priority TEXT NOT NULL,
     derived_stage TEXT NOT NULL,
     assignee_dev_id TEXT,
@@ -721,6 +722,37 @@ function ensureV8Schema(db) {
   }
 }
 
+function ensureV9Schema(db) {
+  if (!hasColumn(db, 'team_task_index', 'archived_at')) {
+    db.exec(`
+      ALTER TABLE team_task_index
+      ADD COLUMN archived_at TEXT
+    `)
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS team_task_archive_order
+      ON team_task_index(archived, archived_at DESC, project_id DESC, task_key DESC);
+
+    UPDATE team_task_index
+    SET archived_at = (
+      SELECT json_extract(item.value, '$.archivedAt')
+      FROM project_scan_cache cache,
+        json_each(
+          CASE
+            WHEN json_valid(cache.board_json) THEN cache.board_json
+            ELSE '{"tasks":[]}'
+          END,
+          '$.tasks'
+        ) item
+      WHERE cache.project_id = team_task_index.project_id
+        AND json_extract(item.value, '$.taskKey') = team_task_index.task_key
+        AND json_extract(item.value, '$.archived') = 1
+      LIMIT 1
+    )
+    WHERE archived = 1 AND archived_at IS NULL;
+  `)
+}
+
 function tableExists(db, table) {
   return Boolean(
     db
@@ -738,7 +770,7 @@ function backupBeforeUpgrade(db, databaseFile) {
   const backupDir = path.join(path.dirname(databaseFile), 'backups')
   fs.mkdirSync(backupDir, { recursive: true })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const backupFile = path.join(backupDir, `board.sqlite.pre-v8.${stamp}`)
+  const backupFile = path.join(backupDir, `board.sqlite.pre-v${DATABASE_SCHEMA_VERSION}.${stamp}`)
   const quoted = backupFile.replaceAll("'", "''")
   db.exec(`VACUUM INTO '${quoted}'`)
   return backupFile
@@ -748,12 +780,12 @@ function ensureSchema(db, { databaseFile } = {}) {
   const schemaVersion = tableExists(db, 'app_meta') ? readMeta(db, 'schema_version') : null
   const numericVersion = schemaVersion == null ? null : Number(schemaVersion)
 
-  if (numericVersion !== null && ![6, 7, 8].includes(numericVersion)) {
+  if (numericVersion !== null && ![6, 7, 8, 9].includes(numericVersion)) {
     throw new Error(
       `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除当前 board.sqlite 后重建`,
     )
   }
-  if (numericVersion === 6 || numericVersion === 7) {
+  if (numericVersion !== null && numericVersion >= 6 && numericVersion < DATABASE_SCHEMA_VERSION) {
     backupBeforeUpgrade(db, databaseFile)
   }
 
@@ -766,6 +798,7 @@ function ensureSchema(db, { databaseFile } = {}) {
     ensureV6Schema(db)
     ensureV7Schema(db)
     ensureV8Schema(db)
+    ensureV9Schema(db)
     if (numericVersion == null || numericVersion < DATABASE_SCHEMA_VERSION) {
       writeMeta(db, 'schema_version', DATABASE_SCHEMA_VERSION)
     }

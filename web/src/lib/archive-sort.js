@@ -22,7 +22,7 @@ export function formatArchiveTimestamp(task) {
       ].join(' ')
     }
   }
-  return String(task.completedAt || task.createdAt || '')
+  return String(task.completedAt || task.createdAt || '未知')
 }
 
 export function sortArchivedTasks(tasks) {

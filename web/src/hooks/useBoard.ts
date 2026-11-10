@@ -38,8 +38,6 @@ export type BoardFilters = {
   stage: string
   blocked: 'any' | 'blocked' | 'unblocked'
   executionView: string
-  archiveProject: string
-  archiveSearch: string
 }
 import {
   buildTaskQuery,
@@ -71,8 +69,6 @@ export function useBoard(): BoardController {
     stage: '',
     blocked: 'any',
     executionView: 'all',
-    archiveProject: 'all',
-    archiveSearch: '',
   })
 
   const operationAttempt = useRef(0)
