@@ -61,6 +61,10 @@ function validatedAgentTools(value) {
   }
 }
 
+function uniqueAgentTools(values) {
+  return [...new Set(values.filter((value) => typeof value === 'string' && value))]
+}
+
 function publicProject(row) {
   if (!row) return null
   return {
@@ -325,7 +329,7 @@ export function createProjectService({
           remote,
         })
       : null
-    return gitManager.probeRemote({ actor, remote, credential })
+    return gitManager.probeRemote({ actor, remote, credential, branch: input.branch })
   }
 
   async function connect(actor, input = {}) {
@@ -381,6 +385,16 @@ export function createProjectService({
       leadTrellisDevId,
     })
     const target = cloned.target
+    const existingAgentTools = Array.isArray(cloned.existingAgentTools)
+      ? cloned.existingAgentTools
+      : []
+    const initializedAgentTools = Array.isArray(cloned.initializedAgentTools)
+      ? cloned.initializedAgentTools
+      : cloned.initialized
+        ? agentTools
+        : []
+    const persistedAgentTools = uniqueAgentTools([...existingAgentTools, ...initializedAgentTools])
+    if (!persistedAgentTools.length) persistedAgentTools.push(...agentTools)
     let toolchain
     try {
       toolchain = computeScriptTreeHash(target)
@@ -417,7 +431,7 @@ export function createProjectService({
           syncBranch,
           credentialId,
           toolchain.sha256,
-          JSON.stringify(agentTools),
+          JSON.stringify(persistedAgentTools),
           leadUserId,
           leadTrellisDevId,
           now,
@@ -436,7 +450,9 @@ export function createProjectService({
             credentialName: credential?.name || null,
             toolchainSha256: toolchain.sha256,
             existingRepository: Boolean(existing),
-            agentTools,
+            agentTools: persistedAgentTools,
+            existingAgentTools,
+            initializedAgentTools,
             leadUserId,
             trellisDevId: leadTrellisDevId,
             initialized: cloned.initialized === true,
@@ -612,7 +628,12 @@ export function createProjectService({
             remote,
           })
         : null
-      await gitManager.probeRemote({ actor, remote, credential })
+      await gitManager.probeRemote({
+        actor,
+        remote,
+        credential,
+        branch: row.sync_branch,
+      })
       if (credentialId !== row.git_credential_id) {
         const now = new Date().toISOString()
         withTransaction(db, () => {

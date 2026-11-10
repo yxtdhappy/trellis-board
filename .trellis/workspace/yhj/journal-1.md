@@ -569,3 +569,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 24: 项目接入 Agent 目录锁定与 dev 验收
+<!-- trellis-session: v=2 fp=86e9ca6a2d0d598b -->
+
+**Date**: 2026-11-10
+**Task**: 项目接入 Agent 目录锁定与 dev 验收
+**Branch**: `codex/team-board`
+
+### Summary
+
+按目标分支探测并锁定已有 Agent，增量初始化缺失项；28/28 测试、构建及 mdp-backend-web dev 分支真实页面 E2E 通过，远端提交 d6cb54e。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a441eaa` | fix(team): 按分支锁定项目接入 Agent |
+| `d6cb54e` | fix(team): 按分支锁定项目接入 Agent |
+
+### Status
+
+[OK] **Completed**

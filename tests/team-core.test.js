@@ -182,6 +182,132 @@ test('项目接入在 clone 前拒绝空工具、未知工具、无效负责人�
   assert.equal(cloneCalls, 0)
 })
 
+test('项目远端探测把目标分支传给 Git tree 探测', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-probe-branch-'))
+  const dataPath = path.join(root, 'data')
+  const db = openDatabase({
+    databaseFile: path.join(dataPath, 'board.sqlite'),
+    fallbackRepositories: [],
+    importLegacyRepositories: false,
+    legacyJsonImport: false,
+    logger: SILENT_LOGGER,
+  })
+  t.after(() => {
+    db.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  seedTeam({ db })
+  let probeInput = null
+  const projectService = createProjectService({
+    db,
+    config: testConfig(),
+    dataDir: dataPath,
+    gitManager: {
+      async probeRemote(input) {
+        probeInput = input
+        return { branch: input.branch }
+      },
+    },
+    taskIndex: {
+      incrementQueryRevision() {},
+    },
+  })
+
+  const result = await projectService.probeRemote(
+    { userId: '11111111-1111-4111-8111-111111111111', systemAdmin: true },
+    {
+      teamId: 't1',
+      remoteUrl: 'https://example.com/probe-branch.git',
+      branch: 'dev',
+    },
+  )
+
+  assert.equal(probeInput.branch, 'dev')
+  assert.equal(result.branch, 'dev')
+})
+
+test('项目接入持久化并审计已有与本次初始化 Agent 的并集', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-agent-tools-'))
+  const dataPath = path.join(root, 'data')
+  const db = openDatabase({
+    databaseFile: path.join(dataPath, 'board.sqlite'),
+    fallbackRepositories: [],
+    importLegacyRepositories: false,
+    legacyJsonImport: false,
+    logger: SILENT_LOGGER,
+  })
+  t.after(() => {
+    db.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  seedTeam({ db })
+  const lead = await createUser(db, {
+    username: 'agent-tools-lead',
+    displayName: 'Agent 工具负责人',
+    password: 'Agent-Tools-Password-123',
+    systemAdmin: false,
+    mustChangePassword: false,
+  })
+  addTeamMember({ db }, 't1', lead.id, 'member')
+  const projectService = createProjectService({
+    db,
+    config: testConfig(),
+    dataDir: dataPath,
+    gitManager: {
+      async assertValidBranch(branch) {
+        return branch
+      },
+      async cloneForTeam(project) {
+        const target = path.join(dataPath, 'projects', project.workspaceKey)
+        fs.mkdirSync(path.join(target, '.trellis', 'scripts'), { recursive: true })
+        fs.writeFileSync(path.join(target, '.trellis', 'scripts', 'task.py'), '# task tool\n')
+        return {
+          target,
+          initialized: true,
+          initializedPaths: ['.opencode/plugins/trellis.js'],
+          existingAgentTools: ['codex'],
+          initializedAgentTools: ['opencode'],
+          remoteCommitSha: 'a'.repeat(40),
+        }
+      },
+    },
+    taskIndex: {
+      incrementQueryRevision() {},
+    },
+  })
+
+  const connected = await projectService.connect(
+    { userId: lead.id, systemAdmin: true },
+    {
+      teamId: 't1',
+      name: 'Agent 工具项目',
+      remoteUrl: 'https://example.com/agent-tools.git',
+      syncBranch: 'main',
+      agentTools: ['codex', 'opencode'],
+      leadUserId: lead.id,
+      leadTrellisDevId: 'agent-tools-lead',
+    },
+  )
+
+  assert.deepEqual(connected.project.agentTools, ['codex', 'opencode'])
+  const project = db.prepare('SELECT * FROM team_project').get()
+  assert.deepEqual(JSON.parse(project.agent_tools_json), ['codex', 'opencode'])
+  const audit = db
+    .prepare(`
+    SELECT detail_json
+    FROM audit_event
+    WHERE action = 'project_connected'
+  `)
+    .get()
+  const detail = JSON.parse(audit.detail_json)
+  assert.match(detail.toolchainSha256, /^[a-f0-9]{64}$/)
+  assert.deepEqual(detail.agentTools, ['codex', 'opencode'])
+  assert.deepEqual(detail.existingAgentTools, ['codex'])
+  assert.deepEqual(detail.initializedAgentTools, ['opencode'])
+  assert.equal(detail.initialized, true)
+  assert.equal(detail.targetCommit, 'a'.repeat(40))
+})
+
 test('首管理员 CLI 只初始化一次且不会导入本机默认仓库', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-cli-'))
   const databaseFile = path.join(root, 'data', 'board.sqlite')

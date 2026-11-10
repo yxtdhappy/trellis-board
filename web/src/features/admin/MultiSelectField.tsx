@@ -16,6 +16,7 @@ export type MultiSelectOption = {
 
 export function MultiSelectField({
   value,
+  lockedValues = [],
   options,
   onChange,
   placeholder = '请选择',
@@ -24,6 +25,7 @@ export function MultiSelectField({
   className,
 }: {
   value: string[]
+  lockedValues?: string[]
   options: MultiSelectOption[]
   onChange: (value: string[]) => void
   placeholder?: string
@@ -31,7 +33,8 @@ export function MultiSelectField({
   disabled?: boolean
   className?: string
 }) {
-  const selected = options.filter((option) => value.includes(option.value))
+  const selectedValues = new Set([...value, ...lockedValues])
+  const selected = options.filter((option) => selectedValues.has(option.value))
   const summary =
     selected.length === 0
       ? placeholder
@@ -65,22 +68,28 @@ export function MultiSelectField({
         <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent className="max-h-72">
-        <DropdownMenuLabel>Agent 工具</DropdownMenuLabel>
         <DropdownMenuGroup>
+          <DropdownMenuLabel>Agent 工具</DropdownMenuLabel>
           {options.map((option) => (
             <DropdownMenuCheckboxItem
               key={option.value}
-              checked={value.includes(option.value)}
+              checked={selectedValues.has(option.value)}
               closeOnClick={false}
+              disabled={lockedValues.includes(option.value)}
               onCheckedChange={(checked) =>
                 onChange(
                   checked
-                    ? [...value, option.value]
-                    : value.filter((item) => item !== option.value),
+                    ? [...selectedValues, option.value]
+                    : [...selectedValues].filter((item) => item !== option.value),
                 )
               }
             >
-              {option.label}
+              <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                <span className="truncate">{option.label}</span>
+                {lockedValues.includes(option.value) ? (
+                  <span className="shrink-0 text-[10px] text-muted-foreground">已接入</span>
+                ) : null}
+              </span>
             </DropdownMenuCheckboxItem>
           ))}
         </DropdownMenuGroup>

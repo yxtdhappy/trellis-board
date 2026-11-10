@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { FolderGit2, Radar } from 'lucide-react'
 import { toast } from 'sonner'
@@ -33,10 +33,11 @@ const EMPTY_FORM = {
 type ProbeEvidence = {
   remote: string
   credentialId: string
+  branch: string
 }
 
 type SshRetry =
-  | { kind: 'probe'; remote: string; credentialId: string }
+  | { kind: 'probe'; remote: string; credentialId: string; branch?: string }
   | { kind: 'project'; project: TeamProject; credentialId: string | null }
 
 export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }) {
@@ -44,6 +45,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
     projects,
     reloadProjects,
     users,
+    reloadUsers,
     connectProject,
     openApproval,
     pendingApproval,
@@ -66,6 +68,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
   const [branches, setBranches] = useState<string[]>([])
   const [branchQuery, setBranchQuery] = useState('')
   const [probe, setProbe] = useState<ProbeEvidence | null>(null)
+  const [existingAgentTools, setExistingAgentTools] = useState<string[]>([])
   const [probeBusy, setProbeBusy] = useState(false)
   const [busy, setBusy] = useState(false)
   const [sshChallenge, setSshChallenge] = useState<SshTrustChallenge | null>(null)
@@ -73,6 +76,10 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
   const [credentialProject, setCredentialProject] = useState<TeamProject | null>(null)
   const [credentialBusy, setCredentialBusy] = useState(false)
   const requestRef = useRef(0)
+
+  useEffect(() => {
+    if (adminTeamId && adminTeamId !== 'all' && users.length === 0) void reloadUsers(true)
+  }, [adminTeamId, reloadUsers, users.length])
 
   const credentialOptions = [
     { value: '', label: '无需凭据（公开仓库）' },
@@ -108,6 +115,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
     probe &&
     form.remote.trim() === probe.remote &&
     form.credentialId === probe.credentialId &&
+    form.branch === probe.branch &&
     form.branch &&
     branches.includes(form.branch),
   )
@@ -117,6 +125,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
     setProbe(null)
     setBranches([])
     setBranchQuery('')
+    setExistingAgentTools([])
     setProbeBusy(false)
   }
 
@@ -131,10 +140,15 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
     setBranches([])
     setBranchQuery('')
     setProbe(null)
+    setExistingAgentTools([])
     setProbeBusy(false)
   }
 
-  async function runProbe(remote = form.remote.trim(), credentialId = form.credentialId) {
+  async function runProbe(
+    remote = form.remote.trim(),
+    credentialId = form.credentialId,
+    branch?: string,
+  ) {
     if (!remote) {
       toast.error('请先填写 Git 远端 URL。')
       return
@@ -142,18 +156,26 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
     const requestId = requestRef.current + 1
     requestRef.current = requestId
     setProbe(null)
-    setBranches([])
-    setBranchQuery('')
+    setExistingAgentTools([])
+    setForm((current) => ({ ...current, agentTools: [] }))
+    if (!branch) {
+      setBranches([])
+      setBranchQuery('')
+    }
     setProbeBusy(true)
     try {
-      const result = await probeRemote({ remoteUrl: remote, credentialId: credentialId || null })
+      const result = await probeRemote({
+        remoteUrl: remote,
+        credentialId: credentialId || null,
+        branch,
+      })
       if (requestRef.current !== requestId) return
       applyProbeResult(result, remote, credentialId)
     } catch (error) {
       if (requestRef.current !== requestId) return
       const challenge = readSshTrustChallenge(error)
       if (challenge) {
-        setSshRetry({ kind: 'probe', remote, credentialId })
+        setSshRetry({ kind: 'probe', remote, credentialId, branch })
         setSshChallenge(challenge)
       } else {
         toast.error(formatError(error))
@@ -166,11 +188,14 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
   function applyProbeResult(result: RemoteProbeResult, remote: string, credentialId: string) {
     setBranches(result.branches)
     setBranchQuery('')
-    setProbe({ remote, credentialId })
+    const branch = result.branch || result.defaultBranch || ''
+    setExistingAgentTools(result.existingAgentTools)
+    setProbe({ remote, credentialId, branch })
     setForm((current) => ({
       ...current,
       name: nameManual ? current.name : result.recommendedName,
-      branch: result.defaultBranch || '',
+      branch,
+      agentTools: result.existingAgentTools,
     }))
   }
 
@@ -181,6 +206,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
       remote,
       name: nameManual ? current.name : '',
       branch: '',
+      agentTools: [],
     }))
   }
 
@@ -191,7 +217,14 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
       credentialId,
       name: nameManual ? current.name : '',
       branch: '',
+      agentTools: [],
     }))
+  }
+
+  function changeBranch(branch: string) {
+    setExistingAgentTools([])
+    setForm((current) => ({ ...current, branch, agentTools: [] }))
+    void runProbe(form.remote.trim(), form.credentialId, branch)
   }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -215,7 +248,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
       remoteUrl: probe.remote,
       credentialId: probe.credentialId || null,
       repositoryId: form.repositoryId.trim(),
-      agentTools: form.agentTools,
+      agentTools: [...new Set([...existingAgentTools, ...form.agentTools])],
       leadUserId,
       leadTrellisDevId: form.leadTrellisDevId.trim(),
     })
@@ -229,7 +262,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
     setSshChallenge(null)
     setSshRetry(null)
     if (retry?.kind === 'probe') {
-      await runProbe(retry.remote, retry.credentialId)
+      await runProbe(retry.remote, retry.credentialId, retry.branch)
     } else if (retry?.kind === 'project') {
       await saveProjectCredential(retry.project, retry.credentialId)
     }
@@ -267,7 +300,14 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
             title="新增或升级项目"
             description="识别远端后选择初始化工具和首个负责人，再确认工具链摘要。"
           >
-            <form className="flex flex-col gap-2" onSubmit={handleCreate}>
+            {adminTeamId === 'all' ? (
+              <EmptyRow>请先在顶部选择一个具体团队，再接入项目。</EmptyRow>
+            ) : null}
+            <form
+              className="flex flex-col gap-2"
+              hidden={adminTeamId === 'all'}
+              onSubmit={handleCreate}
+            >
               <Field label="Git 远端 URL">
                 <div className="flex items-center gap-1.5">
                   <Input
@@ -326,7 +366,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
                     options={branchOptions}
                     placeholder={probe ? '选择真实分支' : '请先识别远端'}
                     disabled={busy || probeBusy || !branches.length}
-                    onChange={(branch) => setForm({ ...form, branch })}
+                    onChange={changeBranch}
                   />
                 </Field>
               </div>
@@ -346,6 +386,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
               >
                 <MultiSelectField
                   value={form.agentTools}
+                  lockedValues={existingAgentTools}
                   options={agentToolOptions}
                   placeholder="选择要初始化的 Agent 工具"
                   ariaLabel="Agent 工具"

@@ -65,6 +65,11 @@ SSE：Agent 事件流为 `live.changed`、`task.live.overridden`；Board 事件�
 - 实时投影只给实际受覆盖文件影响的任务设置 `live_revision`；只有 `.trellis/.developer`、
   `.trellis/workspace/**` 或无法映射到具体任务的项目级覆盖才标记整个项目。
 - 接收方先备份冲突文件，再临时写、fsync、原子 rename；全部成功后推进 `agent_live_cursor`。
+- 冲突 manifest 文件明细记录路径、`taskKey`、文件自身 revision、摘要和
+  `changeType=content|line-endings`；只有规范 UTF-8 且除 LF/CRLF 外完全相同才标记
+  `line-endings`，该分类不改变备份和覆盖顺序。
+- `remote_overwrite` 控制事件的 `taskKeys`、`files` 和 `fileCount` 只来自真实冲突文件；
+  新增 `conflicts` 文件明细，同时保留旧字段兼容。事件中的全局 revision 不得替代文件自身 revision。
 - 远端写入用 `(absolutePath, sha256)` 抑制 watcher 自触发；摘要变化时必须照常上传。
 - Git 扫描后逐文件比较摘要；只有一致内容才删除覆盖行。仍有覆盖行时必须重新投影。
 - `read_only` binding 可以拉取和落盘，但 preflight/upload 返回 403。

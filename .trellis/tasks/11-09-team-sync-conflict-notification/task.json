@@ -1,0 +1,36 @@
+{
+  "id": "team-sync-conflict-notification",
+  "name": "team-sync-conflict-notification",
+  "title": "优化实时同步冲突覆盖提示",
+  "description": "修正实时同步冲突事件的任务归属，完整展示冲突任务、文件和版本，并区分仅换行差异与实质内容覆盖，降低一键复原误操作。",
+  "status": "in_progress",
+  "dev_type": "bugfix",
+  "scope": "full-stack",
+  "package": null,
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-09",
+  "completedAt": null,
+  "branch": "codex/team-sync-conflict-notification",
+  "base_branch": "codex/team-board",
+  "worktree_path": "D:\\wit\\trellis-board-team-sync-conflict-notification",
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "11-08-team-realtime-collaboration",
+  "relatedFiles": [
+    "agent/live-sync.js",
+    "desktop/ui/control.js",
+    "desktop/ui/control.css",
+    "tests/desktop-realtime-apply.test.js",
+    "tests/desktop-package.test.js",
+    ".trellis/spec/backend/desktop-realtime-sync.md"
+  ],
+  "notes": "已实施并完成定向测试；真实 Tauri 壳层未启动，未提交。",
+  "meta": {
+    "area": "team-live-sync",
+    "severity": "ux"
+  }
+}
