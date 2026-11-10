@@ -6,7 +6,9 @@
 node_modules/
 .omp/
 *.log
-/public/
+# No trailing slash: worktrees link public/ in as a symlink, and a
+# dir-only rule (`/public/`) would leave that symlink untracked-but-visible.
+/public
 
 # Build and test output
 coverage/
