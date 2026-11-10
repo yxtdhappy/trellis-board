@@ -12,19 +12,17 @@ export function archivedTasks(tasks: BoardTask[]) {
   return tasks.filter((task) => task.archived)
 }
 
-export function myDeveloper(projects: { developer?: string | null }[]) {
-  const developers = [...new Set(projects.map((project) => project.developer).filter(Boolean))]
-  return developers.length === 1 ? developers[0] : null
-}
-
 export function filterTasks(
   tasks: BoardTask[],
   filters: BoardFilters,
   projects: { id: string; developer?: string | null }[],
   savedViews: unknown[],
+  options: { scopedByServer?: boolean } = {},
 ) {
   const search = filters.search.toLowerCase()
-  const me = filters.scope === 'mine' ? myDeveloper(projects) : null
+  const developerByProject = new Map(
+    projects.map((project) => [project.id, project.developer || null]),
+  )
   const now = new Date()
   const view =
     filters.executionView === 'all' ? null : findView(savedViews || [], filters.executionView)
@@ -46,7 +44,10 @@ export function filterTasks(
           .includes(search),
       )
     const projectHit = filters.projectId === 'all' || task.projectId === filters.projectId
-    const ownerHit = filters.scope !== 'mine' || Boolean(me && task.assignee === me)
+    const ownerHit =
+      filters.scope !== 'mine' ||
+      options.scopedByServer === true ||
+      Boolean(task.assignee && task.assignee === developerByProject.get(task.projectId))
     const assigneeHit = !filters.assignee || task.assignee === filters.assignee
     const priorityHit = !filters.priority || task.priority === filters.priority
     const stageHit = !filters.stage || task.derivedStage === filters.stage
@@ -82,8 +83,9 @@ export function filterGroups(
   filters: BoardFilters,
   projects: { id: string; developer?: string | null }[],
   savedViews: unknown[],
+  options: { scopedByServer?: boolean } = {},
 ) {
-  return groupActiveTasks(filterTasks(tasks, filters, projects, savedViews))
+  return groupActiveTasks(filterTasks(tasks, filters, projects, savedViews, options))
 }
 
 export function tasksByOwner(tasks: BoardTask[]) {
