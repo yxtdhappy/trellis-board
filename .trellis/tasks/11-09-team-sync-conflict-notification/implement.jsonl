@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "实时冲突备份、控制事件字段、任务归属含义和测试边界"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "taskKey、相对路径和跨层事件字段必须保持一致"}

@@ -22,6 +22,23 @@ function addDetail(label, value) {
   details.append(term, description)
 }
 
+function taskLabel(taskKey) {
+  const value = String(taskKey || '')
+  const separator = value.indexOf('::')
+  return separator >= 0 ? value.slice(separator + 2) : value
+}
+
+function conflictLabel(conflict) {
+  if (typeof conflict === 'string') return conflict
+  const details = [String(conflict?.path || '')]
+  if (Number.isSafeInteger(conflict?.revision)) {
+    details.push(`文件版本 r${conflict.revision}`)
+  }
+  if (conflict?.changeType === 'line-endings') details.push('仅换行差异')
+  if (conflict?.changeType === 'content') details.push('内容变化')
+  return details.filter(Boolean).join(' · ')
+}
+
 function button(label, action, className = '') {
   const element = document.createElement('button')
   element.type = 'button'
@@ -90,14 +107,17 @@ function render(event) {
     button('继续推进', 'continue')
     button('接管任务', 'takeover', 'primary')
   } else if (event.type === 'remote_overwrite') {
+    const taskKeys = event.taskKeys || []
+    const conflicts = event.conflicts?.length ? event.conflicts : event.files || []
+    const fileCount = event.fileCount ?? conflicts.length
     title.textContent = '本地文件已被团队最新版本更新'
     message.textContent =
-      `冲突文件已先备份到工作区外。确认远端版本不正确时，可以一键复原，` +
-      '复原会形成新的团队版本并广播给其他客户端。'
-    addDetail('任务', event.taskKeys?.join('、'))
-    addDetail('冲突文件', event.files?.join('、'))
-    addDetail('文件数', event.fileCount)
-    addDetail('版本', event.revision)
+      `冲突文件已先备份到工作区外。仅在远端版本不正确时使用一键复原；` +
+      `它会恢复本次全部 ${fileCount} 个冲突文件，形成新的团队版本并广播给其他客户端。`
+    addDetail('影响范围', `${taskKeys.length} 个任务、${fileCount} 个文件`)
+    addDetail('任务', taskKeys.map(taskLabel).join('、'))
+    addDetail('冲突文件', conflicts.map(conflictLabel).join('\n'))
+    addDetail('同步版本', event.revision)
     addDetail('备份位置', event.backupPath)
     button('关闭', 'close')
     button('一键复原', 'restore', 'primary')
