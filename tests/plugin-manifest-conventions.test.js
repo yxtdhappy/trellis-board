@@ -11,7 +11,7 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 function manifests() {
   return fs
     .readdirSync(pluginsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
     .map((entry) => {
       const manifestPath = path.join(pluginsDir, entry.name, 'plugin.json')
       assert.ok(fs.existsSync(manifestPath), `${entry.name} 缺少 plugin.json`)
