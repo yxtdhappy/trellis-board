@@ -33,6 +33,13 @@
 - 升级/降级按 `plugin_state.__manifest.version` 比较并写审计；降级额外告警。
 - `HOST_API_VERSION` 是协议版本，与 `SCAN_SCHEMA_VERSION`、`package.json` 版本无关。
 
+### 2.1 命名约定
+
+- 目录名与 `id` 必须一致，使用 `<领域>-<能力>` 的 kebab-case；`plugins/` 下的插件都属于 Trellis Board，
+  不加 `trellis-board-` 前缀。
+- `name` 是展示名（中文或产品名），不能与 `id` 相同；`description` 必填，说明插件职责。
+- 同一领域的能力使用同一前缀，例如 `witops-core`、`witops-intake`、`witops-workbench`。
+
 ## 3. 生命周期与稳定性
 
 - 崩溃重启指数退避：1s、2s、4s、8s、16s，上限 60s；10 分钟内 5 次则自动 `disabled`。
@@ -104,3 +111,9 @@
 | 敏感信息 | `ctx.secrets` | 无 | 只读环境变量；不提供写入 API |
 
 宿主能力是插件唯一稳定接口。插件不得直接读运行数据目录、`server/` 或宿主数据库；需要新能力时先扩展本清单和 SDK，而不是在插件里绕过。
+
+宿主核心 capability 与插件 capability 共用 `provides` / `requires` 模型。`trellis.repositories` 管理工作区；
+`trellis.capabilities` 提供能力目录与通用调用（`list` / `call`），调用方需要声明 `capabilities:invoke`
+（应只授予受信任的桥接插件）。
+插件不应把可选或私有插件名写进自己的 manifest 或代码；需要跨插件调用时，通过 `trellis.capabilities.call`
+由运行时参数决定目标。
