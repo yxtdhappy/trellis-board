@@ -685,3 +685,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 29: 修复团队归档索引查询与分页
+<!-- trellis-session: v=2 fp=bbdc1916a8afc51e -->
+
+**Date**: 2026-11-10
+**Task**: 修复团队归档索引查询与分页
+**Branch**: `codex/team-board`
+
+### Summary
+
+接通团队归档 archived=true 查询，按真实归档时间实现每页 20 条的服务端游标分页，取消 80 条上限；补齐负责人筛选选项保持、归档详情只读、回归测试、规范与真实 E2E。最终验证 633 条归档、分页筛选正常，构建通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9b5fd83` | fix(team): paginate archived task index |
+| `67458e9` | fix(team): stabilize archived index filters |
+
+### Status
+
+[OK] **Completed**
