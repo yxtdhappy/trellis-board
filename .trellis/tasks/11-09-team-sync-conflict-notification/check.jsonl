@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "核验冲突备份安全、事件契约、任务归属和一键复原行为"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "使用 Node 内置测试并补充真实控制窗口验收"}

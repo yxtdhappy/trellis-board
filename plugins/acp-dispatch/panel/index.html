@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent 派发</title>
+    <link rel="stylesheet" href="/api/plugins/acp-dispatch/panel/app.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <strong>运行记录</strong>
+          <span id="agent-label" class="muted">—</span>
+        </div>
+        <ul id="runs" class="run-list"></ul>
+      </aside>
+      <section class="detail">
+        <header class="detail-head">
+          <div>
+            <h1 id="task-title">选择一个任务</h1>
+            <p id="task-meta" class="muted"></p>
+          </div>
+          <button id="refresh" class="ghost" type="button">刷新</button>
+        </header>
+
+        <div id="outcome" class="cards"></div>
+
+        <div class="prompt">
+          <label for="prompt-text">继续下发命令</label>
+          <textarea
+            id="prompt-text"
+            rows="4"
+            placeholder="例如：继续完成剩余测试并汇报结果"
+          ></textarea>
+          <div class="prompt-actions">
+            <button id="send" type="button">发送</button>
+            <button id="cancel" class="ghost" type="button">取消运行</button>
+            <span id="prompt-status" class="muted"></span>
+          </div>
+        </div>
+      </section>
+    </div>
+    <script src="/api/plugins/acp-dispatch/panel/app.js"></script>
+  </body>
+</html>

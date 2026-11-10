@@ -21,7 +21,10 @@
   "children": [
     "11-08-team-realtime-task-sync",
     "11-08-desktop-account-login",
-    "11-09-project-association-initial-sync"
+    "11-09-project-association-initial-sync",
+    "11-09-board-sse-live-refresh",
+    "11-10-team-sync-line-ending-normalization",
+    "11-09-team-sync-conflict-notification"
   ],
   "parent": null,
   "relatedFiles": [],

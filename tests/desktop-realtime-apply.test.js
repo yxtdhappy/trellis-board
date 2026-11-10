@@ -153,6 +153,14 @@ test('远端覆盖先备份，自触发事件被摘要抑制而真实修改继�
   assert.equal(controls[0].type, 'remote_overwrite')
   assert.deepEqual(controls[0].files, ['.trellis/tasks/task-live/task.json'])
   assert.deepEqual(controls[0].taskKeys, ['p-live::.trellis/tasks/task-live'])
+  assert.deepEqual(controls[0].conflicts, [
+    {
+      path: '.trellis/tasks/task-live/task.json',
+      taskKey: 'p-live::.trellis/tasks/task-live',
+      revision: 3,
+      changeType: 'content',
+    },
+  ])
   const manifest = JSON.parse(
     fs.readFileSync(
       path.join(store.paths.liveBackupsDir, 'p-live', controls[0].backupId, 'manifest.json'),
@@ -160,6 +168,9 @@ test('远端覆盖先备份，自触发事件被摘要抑制而真实修改继�
     ),
   )
   assert.equal(manifest.files.length, 1)
+  assert.equal(manifest.files[0].revision, 3)
+  assert.equal(manifest.files[0].changeType, 'content')
+  assert.deepEqual(manifest.taskKeys, ['p-live::.trellis/tasks/task-live'])
 
   await sync._handleWatcherEvents([
     {
@@ -303,6 +314,7 @@ test('首次初始化同路径冲突按服务端优先并保留本地备份', as
   assert.equal(fake.calls.uploads.length, 0)
   assert.equal(controls[0].type, 'remote_overwrite')
   assert.deepEqual(controls[0].files, ['.trellis/tasks/task-live/task.json'])
+  assert.equal(controls[0].conflicts[0].changeType, 'content')
   assert.equal(
     fs.readFileSync(
       path.join(controls[0].backupPath, 'files', 'tasks', 'task-live', 'task.json'),
@@ -312,6 +324,170 @@ test('首次初始化同路径冲突按服务端优先并保留本地备份', as
   )
   const config = await store.readConfig({ allowMissing: false })
   assert.equal(config.bindings[0].liveSyncStatus, 'ready')
+})
+
+test('混合拉取只报告真实冲突并把 LF/CRLF 差异标记为仅换行', async (t) => {
+  const { root, repoPath, taskDir } = setupRepo()
+  const sameTaskDir = path.join(repoPath, '.trellis', 'tasks', 'task-same')
+  const secondTaskDir = path.join(repoPath, '.trellis', 'tasks', 'task-second')
+  const prdFile = path.join(taskDir, 'prd.md')
+  fs.mkdirSync(sameTaskDir, { recursive: true })
+  fs.mkdirSync(secondTaskDir, { recursive: true })
+  const sameContent = '{"title":"same"}\n'
+  const remotePrd = '# local  \n'
+  const remoteSecond = '{"title":"second-remote"}\n'
+  fs.writeFileSync(path.join(sameTaskDir, 'task.json'), sameContent)
+  fs.writeFileSync(prdFile, remotePrd)
+  fs.writeFileSync(path.join(secondTaskDir, 'task.json'), remoteSecond)
+  git(repoPath, [
+    'add',
+    '.trellis/tasks/task-same/task.json',
+    '.trellis/tasks/task-live/prd.md',
+    '.trellis/tasks/task-second/task.json',
+  ])
+  git(repoPath, ['commit', '-m', 'add same task'])
+
+  const localContent = '{"title":"line-endings"}\r\n'
+  const remoteContent = '{"title":"line-endings"}\n'
+  fs.writeFileSync(path.join(taskDir, 'task.json'), localContent)
+  fs.writeFileSync(prdFile, '# local\n')
+  fs.writeFileSync(path.join(secondTaskDir, 'task.json'), '{"title":"second-local"}\n')
+
+  const store = new ConfigStore(path.join(root, 'agent'))
+  await store.ensureDirectories()
+  const local = binding(repoPath)
+  await persistConfig(store, local)
+  const controls = []
+  const fake = fakeApi({
+    fetchLiveFiles: async () => ({
+      revision: 12,
+      files: [
+        {
+          path: '.trellis/tasks/task-live/task.json',
+          operation: 'upsert',
+          revision: 10,
+          sha256: sha256(remoteContent),
+          content: remoteContent,
+          taskKey: 'p-live::.trellis/tasks/task-live',
+        },
+        {
+          path: '.trellis/tasks/task-live/prd.md',
+          operation: 'upsert',
+          revision: 11,
+          sha256: sha256(remotePrd),
+          content: remotePrd,
+          taskKey: 'p-live::.trellis/tasks/task-live',
+        },
+        {
+          path: '.trellis/tasks/task-second/task.json',
+          operation: 'upsert',
+          revision: 12,
+          sha256: sha256(remoteSecond),
+          content: remoteSecond,
+          taskKey: 'p-live::.trellis/tasks/task-second',
+        },
+        {
+          path: '.trellis/tasks/task-same/task.json',
+          operation: 'upsert',
+          revision: 11,
+          sha256: sha256(sameContent),
+          content: sameContent,
+          taskKey: 'p-live::.trellis/tasks/task-same',
+        },
+      ],
+    }),
+  })
+  const sync = new AgentLiveSync({
+    store,
+    logger: silentLogger,
+    emitControl: (event) => controls.push(event),
+    watch: fakeWatcher,
+    loadContext: async () => ({
+      config: { bindings: [local] },
+      api: fake.api,
+    }),
+  })
+  await sync.start()
+  t.after(() => {
+    sync.stop()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  assert.equal(fs.readFileSync(path.join(taskDir, 'task.json'), 'utf8'), remoteContent)
+  assert.equal(fs.readFileSync(prdFile, 'utf8'), remotePrd)
+  assert.equal(fs.readFileSync(path.join(secondTaskDir, 'task.json'), 'utf8'), remoteSecond)
+  assert.equal(fs.readFileSync(path.join(sameTaskDir, 'task.json'), 'utf8'), sameContent)
+  assert.equal(controls.length, 1)
+  assert.deepEqual(controls[0].taskKeys, [
+    'p-live::.trellis/tasks/task-live',
+    'p-live::.trellis/tasks/task-second',
+  ])
+  assert.deepEqual(controls[0].files, [
+    '.trellis/tasks/task-live/task.json',
+    '.trellis/tasks/task-live/prd.md',
+    '.trellis/tasks/task-second/task.json',
+  ])
+  assert.equal(controls[0].fileCount, 3)
+  assert.deepEqual(controls[0].conflicts, [
+    {
+      path: '.trellis/tasks/task-live/task.json',
+      taskKey: 'p-live::.trellis/tasks/task-live',
+      revision: 10,
+      changeType: 'line-endings',
+    },
+    {
+      path: '.trellis/tasks/task-live/prd.md',
+      taskKey: 'p-live::.trellis/tasks/task-live',
+      revision: 11,
+      changeType: 'content',
+    },
+    {
+      path: '.trellis/tasks/task-second/task.json',
+      taskKey: 'p-live::.trellis/tasks/task-second',
+      revision: 12,
+      changeType: 'content',
+    },
+  ])
+
+  const manifest = JSON.parse(
+    fs.readFileSync(
+      path.join(store.paths.liveBackupsDir, 'p-live', controls[0].backupId, 'manifest.json'),
+      'utf8',
+    ),
+  )
+  assert.deepEqual(manifest.taskKeys, [
+    'p-live::.trellis/tasks/task-live',
+    'p-live::.trellis/tasks/task-second',
+  ])
+  assert.deepEqual(manifest.files, [
+    {
+      path: '.trellis/tasks/task-live/task.json',
+      taskKey: 'p-live::.trellis/tasks/task-live',
+      revision: 10,
+      localSha256: sha256(localContent),
+      remoteSha256: sha256(remoteContent),
+      existedLocally: true,
+      changeType: 'line-endings',
+    },
+    {
+      path: '.trellis/tasks/task-live/prd.md',
+      taskKey: 'p-live::.trellis/tasks/task-live',
+      revision: 11,
+      localSha256: sha256('# local\n'),
+      remoteSha256: sha256(remotePrd),
+      existedLocally: true,
+      changeType: 'content',
+    },
+    {
+      path: '.trellis/tasks/task-second/task.json',
+      taskKey: 'p-live::.trellis/tasks/task-second',
+      revision: 12,
+      localSha256: sha256('{"title":"second-local"}\n'),
+      remoteSha256: sha256(remoteSecond),
+      existedLocally: true,
+      changeType: 'content',
+    },
+  ])
 })
 
 test('首次初始化补传 Git 基线后的新增、修改和删除', async (t) => {

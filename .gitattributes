@@ -1,3 +1,9 @@
+# Repo-wide default: text files are stored in the repo and checked out as LF.
+# Binary files are still detected by content, so images/zips are unaffected.
+# No `*.cmd text eol=crlf` exception is declared: agent/trellis-agent.cmd uses
+# no goto/labels, so cmd.exe parses it fine with LF line endings.
+* text=auto eol=lf
+
 # Trellis: append-only developer journals should merge cleanly across
 # parallel sessions/worktrees — each session only appends a new block, so
 # there is nothing to actually conflict on.

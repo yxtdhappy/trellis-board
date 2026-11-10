@@ -194,6 +194,19 @@ function taskKeysFromFiles(projectId, files) {
   ]
 }
 
+function conflictChangeType(file, local) {
+  if (file.operation !== 'upsert' || local == null) return 'content'
+  try {
+    const localText = utf8Decoder.decode(local)
+    const remoteText = utf8Decoder.decode(Buffer.from(String(file.content ?? ''), 'utf8'))
+    return localText.replaceAll('\r\n', '\n') === remoteText.replaceAll('\r\n', '\n')
+      ? 'line-endings'
+      : 'content'
+  } catch {
+    return 'content'
+  }
+}
+
 function splitLiveBatches(projectId, files) {
   const groups = new Map()
   for (const file of files) {
@@ -946,11 +959,18 @@ export class AgentLiveSync {
       if (conflict.local != null) {
         await atomicWrite(backupPath, conflict.local.toString('utf8'))
       }
+      const fileRevision = Number(conflict.file.revision)
       manifestFiles.push({
         path: conflict.file.path,
+        taskKey:
+          String(conflict.file.taskKey || '').trim() ||
+          taskKeysFromFiles(binding.projectId, [conflict.file])[0] ||
+          null,
+        revision: Number.isSafeInteger(fileRevision) ? fileRevision : null,
         localSha256: conflict.local == null ? null : sha256(conflict.local),
         remoteSha256: conflict.file.sha256 || null,
         existedLocally: conflict.local != null,
+        changeType: conflictChangeType(conflict.file, conflict.local),
       })
     }
     const manifest = {
@@ -959,7 +979,7 @@ export class AgentLiveSync {
       projectId: binding.projectId,
       revision,
       createdAt: new Date().toISOString(),
-      taskKeys: taskKeysFromFiles(binding.projectId, files),
+      taskKeys: taskKeysFromFiles(binding.projectId, manifestFiles),
       restoredAt: null,
       files: manifestFiles,
     }
@@ -1016,6 +1036,12 @@ export class AgentLiveSync {
         revision,
         taskKeys: taskKeysFromFiles(binding.projectId, backup.files),
         files: backup.files.map((file) => file.path),
+        conflicts: backup.files.map((file) => ({
+          path: file.path,
+          taskKey: file.taskKey,
+          revision: file.revision,
+          changeType: file.changeType,
+        })),
         fileCount: backup.files.length,
         backupPath: path.join(this.store.paths.liveBackupsDir, binding.projectId, backup.backupId),
       })
