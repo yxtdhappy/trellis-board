@@ -1,0 +1,22 @@
+{
+  "id": "repo-consumer",
+  "name": "repository consumer fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "permissions": [
+    "capabilities:call",
+    "repositories:read",
+    "repositories:write",
+    "http:route"
+  ],
+  "requires": [
+    {
+      "name": "trellis.repositories",
+      "version": "^1.0.0",
+      "methods": [
+        "list",
+        "add"
+      ]
+    }
+  ]
+}

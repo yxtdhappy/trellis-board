@@ -3,12 +3,12 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createHarness, startHttpServer } from '../../../tests/helpers/plugin-runtime.js'
+import { createHarness, fixtureModule, startHttpServer } from '../../../tests/helpers/plugin-runtime.js'
 import { createTaskRepository } from '../../../tests/helpers/task-repository.js'
 
 const PLUGIN_MODULE = fileURLToPath(new URL('../index.js', import.meta.url))
 
-async function setup(config = {}) {
+async function setup(config = {}, extraPlugins = []) {
   const repo = createTaskRepository()
   const harness = await createHarness({
     plugins: [
@@ -25,6 +25,7 @@ async function setup(config = {}) {
           ...config,
         },
       },
+      ...extraPlugins,
     ],
     repositories: repo.repositories,
     hostVersion: '0.2.0',
@@ -79,7 +80,11 @@ test('Agent Card 公开可读', async () => {
     const card = await response.json()
     assert.equal(card.protocolVersion, '0.3.0')
     assert.equal(card.url, 'https://board.example/a2a')
-    assert.equal(card.skills[0].id, 'create-task')
+    assert.deepEqual(
+      card.skills.map((skill) => skill.id),
+      ['create-task', 'manage-repositories', 'query-tasks', 'invoke-capability'],
+    )
+    assert.equal(card.skills.some((skill) => skill.id === 'board-control'), false)
   } finally {
     await context.cleanup()
   }
@@ -298,6 +303,32 @@ test('缺少 assignee 时返回 -32602 且不建任务', async () => {
     )
     assert.equal(response.json.error.code, -32602)
     assert.equal(context.taskDirs().length, 0)
+  } finally {
+    await context.cleanup()
+  }
+})
+
+
+test('board/action 通过通用 capability 桥调用其他插件', async () => {
+  const context = await setup({}, [
+    { id: 'cap-provider', module: fixtureModule('cap-provider'), enabled: true },
+  ])
+  try {
+    const listed = await context.rpc('board/action', {
+      action: 'capabilities.list',
+      input: {},
+    })
+    assert.equal(listed.status, 200, JSON.stringify(listed.json))
+    const demo = listed.json.result.capabilities.find((item) => item.name === 'demo.echo')
+    assert.ok(demo, '能力目录缺少 demo.echo')
+    assert.equal(demo.provider, 'cap-provider')
+
+    const called = await context.rpc('board/action', {
+      action: 'capabilities.call',
+      input: { name: 'demo.echo', method: 'echo', params: { text: 'hello' } },
+    })
+    assert.equal(called.status, 200, JSON.stringify(called.json))
+    assert.deepEqual(called.json.result, { text: 'hello', caller: 'a2a-intake' })
   } finally {
     await context.cleanup()
   }

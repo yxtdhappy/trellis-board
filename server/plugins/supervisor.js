@@ -30,6 +30,7 @@ import {
   isValidSemver,
   satisfiesRange,
 } from './version.js'
+import { createCoreCapabilities } from './core-capabilities.js'
 import {
   defaultSecretsFile,
   inlineSecretFields,
@@ -347,6 +348,7 @@ export class PluginSupervisor {
     hostVersion,
     repositories = [],
     tasks,
+    repositoryService = null,
     store,
     configFile,
     spawnImpl = spawn,
@@ -366,6 +368,12 @@ export class PluginSupervisor {
     this.hostVersion = hostVersion
     this.repositories = repositories
     this.tasks = tasks
+    this.coreCapabilities = createCoreCapabilities({
+      repositories,
+      repositoryService,
+      listCapabilities: () => this.capabilityCatalog(),
+      invokeCapability: (request) => this.invokeBrokeredCapability(request),
+    })
     this.store = store
     this.configFile = configFile
     this.spawnImpl = spawnImpl
@@ -522,8 +530,19 @@ export class PluginSupervisor {
 
   resolveCapabilities() {
     this.capabilities.clear()
+    const coreNames = new Set(this.coreCapabilities.definitions().map((item) => item.name))
     for (const state of this.plugins.values()) {
       if (!state.compatible || !state.manifest?.provides?.length) continue
+      const coreConflict = state.manifest.provides.find((capability) =>
+        coreNames.has(capability.name),
+      )
+      if (coreConflict) {
+        state.blocked = true
+        state.status = state.enabled ? 'error' : state.status
+        state.lastError = `capability 由宿主提供，插件不可覆盖: ${coreConflict.name}`
+        this.audit(state, 'capability', { error: state.lastError })
+        continue
+      }
       for (const capability of state.manifest.provides) {
         const owner = this.capabilities.get(capability.name)
         if (owner && owner !== state.id) {
@@ -803,6 +822,96 @@ export class PluginSupervisor {
     if (!requirement.methods.includes(method)) {
       throw appError(ERROR_CODES.PERMISSION_DENIED, `插件未声明 capability 方法: ${name}.${method}`)
     }
+    return this.dispatchCapability(state, name, method, params.params, requirement)
+  }
+
+  capabilityCatalog() {
+    const entries = []
+    for (const definition of this.coreCapabilities.definitions()) {
+      entries.push({
+        name: definition.name,
+        version: definition.version,
+        description: definition.description ?? '',
+        provider: 'core',
+        available: true,
+        methods: Object.entries(definition.methods).map(([method, meta]) => ({
+          name: method,
+          access: meta.access ?? 'read',
+          timeoutMs: meta.timeoutMs ?? 30_000,
+        })),
+      })
+    }
+    for (const [name, providerId] of this.capabilities.entries()) {
+      const provider = this.plugins.get(providerId)
+      const capability = (provider?.manifest?.provides ?? []).find((item) => item.name === name)
+      if (!capability) continue
+      entries.push({
+        name,
+        version: capability.version,
+        description: capability.description ?? '',
+        provider: providerId,
+        available: provider.status === 'running',
+        methods: Object.entries(capability.methods).map(([method, meta]) => ({
+          name: method,
+          access: meta.access ?? 'read',
+          timeoutMs: meta.timeoutMs ?? 30_000,
+        })),
+      })
+    }
+    return entries.sort((left, right) => left.name.localeCompare(right.name))
+  }
+
+  async invokeBrokeredCapability({ state, name, method, params, timeoutMs }) {
+    if (name === 'trellis.capabilities' && method === 'call') {
+      throw invalidParams('不能通过能力代理递归调用 trellis.capabilities.call')
+    }
+    return this.dispatchCapability(
+      state,
+      name,
+      method,
+      params,
+      { version: '*', methods: [method] },
+      timeoutMs,
+    )
+  }
+
+  async dispatchCapability(state, name, method, params, requirement, timeoutMs) {
+    const coreDefinition = this.coreCapabilities.definition(name)
+    if (coreDefinition) {
+      const range = satisfiesRange(requirement.version, coreDefinition.version)
+      if (!range.ok) {
+        throw appError(
+          ERROR_CODES.CAPABILITY_UNAVAILABLE,
+          `capability 版本不满足: ${name} 需要 ${requirement.version}，宿主提供 ${coreDefinition.version}`,
+        )
+      }
+      const started = Date.now()
+      try {
+        const value = await this.coreCapabilities.call(state, name, method, params)
+        this.audit(state, 'capability.call', {
+          name,
+          method,
+          provider: 'core',
+          durationMs: Date.now() - started,
+          ok: true,
+        })
+        return { value: value ?? null }
+      } catch (error) {
+        this.audit(state, 'capability.call', {
+          name,
+          method,
+          provider: 'core',
+          durationMs: Date.now() - started,
+          ok: false,
+          code: error?.code ?? null,
+        })
+        if (error instanceof RpcError) throw error
+        throw appError(
+          ERROR_CODES.CAPABILITY_UNAVAILABLE,
+          `capability 调用失败: ${error?.message || error}`,
+        )
+      }
+    }
     const providerId = this.capabilities.get(name)
     if (!providerId) {
       throw appError(ERROR_CODES.CAPABILITY_UNAVAILABLE, `capability 不可用: ${name}`)
@@ -833,10 +942,10 @@ export class PluginSupervisor {
         {
           name,
           method,
-          params: params.params ?? null,
+          params: params ?? null,
           caller: { pluginId: state.id },
         },
-        definition.timeoutMs,
+        Number.isInteger(timeoutMs) ? timeoutMs : definition.timeoutMs,
       )
       this.audit(state, 'capability.call', {
         name,
@@ -1359,6 +1468,16 @@ export class PluginSupervisor {
       provides: state.manifest?.provides ?? [],
       requires: state.manifest?.requires ?? [],
       capabilityStatus: (state.manifest?.requires ?? []).map((requirement) => {
+        const core = this.coreCapabilities.definition(requirement.name)
+        if (core) {
+          return {
+            name: requirement.name,
+            version: requirement.version,
+            methods: requirement.methods,
+            provider: 'core',
+            available: true,
+          }
+        }
         const ownerId = this.capabilities.get(requirement.name) ?? null
         const owner = ownerId ? this.plugins.get(ownerId) : null
         return {

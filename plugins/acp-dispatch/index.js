@@ -99,6 +99,7 @@ export default createPlugin({
   permissions: [
     'tasks:read',
     'store',
+    'events',
     'events:emit',
     'events:publish',
     'http:route',

@@ -1,6 +1,7 @@
 {
   "id": "scenario-copilot",
   "name": "场景自动化测试",
+  "description": "按任务测试大纲生成并执行 Playwright 场景，结果在「自动化测试」面板查看。",
   "version": "0.1.0",
   "apiVersion": 1,
   "engines": {

@@ -1,12 +1,34 @@
 {
   "id": "a2a-intake",
-  "name": "a2a intake",
+  "name": "A2A 接入",
+  "description": "通过 A2A JSON-RPC 接入消息、创建 Trellis 任务，并以标准 capability 桥接宿主与其他插件能力。",
   "version": "1.0.0",
   "apiVersion": 1,
   "engines": {
     "board": ">=0.2.0"
   },
-  "permissions": ["tasks:read", "tasks:write", "store", "http:root"],
+  "permissions": [
+    "tasks:read",
+    "tasks:write",
+    "store",
+    "http:root",
+    "capabilities:call",
+    "capabilities:invoke",
+    "repositories:read",
+    "repositories:write"
+  ],
+  "requires": [
+    {
+      "name": "trellis.repositories",
+      "version": "^1.0.0",
+      "methods": ["list", "add", "remove"]
+    },
+    {
+      "name": "trellis.capabilities",
+      "version": "^1.0.0",
+      "methods": ["list", "call"]
+    }
+  ],
   "http": {
     "rootPaths": ["/a2a", "/.well-known/agent-card.json", "/.well-known/agent.json"],
     "openPaths": ["/.well-known/agent-card.json", "/.well-known/agent.json"]
