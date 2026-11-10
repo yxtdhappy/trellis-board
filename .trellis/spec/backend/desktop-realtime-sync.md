@@ -85,7 +85,9 @@ SSE：Agent 事件流为 `live.changed`、`task.live.overridden`；Board 事件�
 - `remote_overwrite` 控制事件的 `taskKeys`、`files` 和 `fileCount` 只来自真实冲突文件；
   新增 `conflicts` 文件明细，同时保留旧字段兼容。事件中的全局 revision 不得替代文件自身 revision。
 - 远端写入用 `(absolutePath, sha256)` 抑制 watcher 自触发；摘要变化时必须照常上传。
-- Git 扫描后逐文件比较摘要；只有一致内容才删除覆盖行。仍有覆盖行时必须重新投影。
+- Git 扫描后逐文件比较摘要；同路径一致或两边都已删除时删除覆盖行。仍有覆盖行时必须重新投影。
+- 任务从普通目录移动到归档目录时，用归档目标和任务索引定位同名任务文件。目标内容一致时删除旧覆盖；
+  内容不同且目标没有覆盖时迁移到归档路径，不能继续生成活动任务副本。
 - `read_only` binding 可以拉取和落盘，但 preflight/upload 返回 403。
 - 每个 approved binding 在进程启动或绑定签名变化时先执行 `afterRevision=0` 的 full pull，
   再补传关联前已存在的本地变化；初始化与 watcher 批次共用项目串行队列。

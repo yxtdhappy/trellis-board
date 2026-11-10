@@ -118,6 +118,44 @@ function taskDirFromIndex(db, projectId, relativePath) {
     : null
 }
 
+function movedTaskFile(db, project, liveFile) {
+  const projectPrefix = `${project.id}::`
+  const sourceDir = String(liveFile.task_key || '').startsWith(projectPrefix)
+    ? String(liveFile.task_key).slice(projectPrefix.length)
+    : relativeTaskDir(liveFile.relative_path)
+  if (!sourceDir?.startsWith('.trellis/tasks/')) return null
+  if (!liveFile.relative_path.startsWith(`${sourceDir}/`)) return null
+
+  const sourceName = path.posix.basename(sourceDir)
+  const destinations = db
+    .prepare(`
+      SELECT relative_dir, task_key
+      FROM team_task_index
+      WHERE project_id = ? AND archived = 1 AND relative_dir LIKE '.trellis/tasks/archive/%'
+      ORDER BY archived_at DESC
+    `)
+    .all(project.id)
+    .filter((destination) => path.posix.basename(destination.relative_dir) === sourceName)
+  const suffix = liveFile.relative_path.slice(sourceDir.length + 1)
+  for (const destination of destinations) {
+    const relativePath = path.posix.join(destination.relative_dir, suffix)
+    const target = path.resolve(project.path, ...relativePath.split('/'))
+    const relative = path.relative(project.path, target)
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) continue
+    try {
+      if (!fs.lstatSync(target).isFile()) continue
+      return {
+        relativePath,
+        taskKey: destination.task_key,
+        sha256: digest(fs.readFileSync(target)),
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+  }
+  return null
+}
+
 function parseJson(content) {
   try {
     return JSON.parse(content)
@@ -1186,7 +1224,7 @@ export function createLiveSyncService({
     if (!project) return false
     const rows = db
       .prepare(`
-      SELECT relative_path, sha256, deleted
+      SELECT relative_path, sha256, deleted, task_key
       FROM project_live_file
       WHERE project_id = ?
     `)
@@ -1204,7 +1242,41 @@ export function createLiveSyncService({
           WHERE project_id = ? AND relative_path = ?
         `).run(projectId, row.relative_path)
         changed = true
+        continue
       }
+      if (!gitDeleted) continue
+
+      const moved = movedTaskFile(db, project, row)
+      if (!moved) continue
+      if (row.deleted || moved.sha256 === row.sha256) {
+        db.prepare(`
+          DELETE FROM project_live_file
+          WHERE project_id = ? AND relative_path = ?
+        `).run(projectId, row.relative_path)
+        changed = true
+        continue
+      }
+      const destinationLive = db
+        .prepare(`
+          SELECT relative_path
+          FROM project_live_file
+          WHERE project_id = ? AND relative_path = ?
+        `)
+        .get(projectId, moved.relativePath)
+      if (destinationLive) {
+        db.prepare(`
+          DELETE FROM project_live_file
+          WHERE project_id = ? AND relative_path = ?
+        `).run(projectId, row.relative_path)
+        changed = true
+        continue
+      }
+      db.prepare(`
+        UPDATE project_live_file
+        SET relative_path = ?, task_key = ?
+        WHERE project_id = ? AND relative_path = ?
+      `).run(moved.relativePath, moved.taskKey, projectId, row.relative_path)
+      changed = true
     }
     if (changed) taskIndex.incrementQueryRevision()
     return changed

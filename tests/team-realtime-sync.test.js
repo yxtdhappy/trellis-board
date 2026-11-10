@@ -228,6 +228,25 @@ function liveUpsert(relativePath, content) {
   }
 }
 
+function seedLiveFile(runtime, relativePath, content, taskKey = null) {
+  const sha256 = crypto.createHash('sha256').update(content).digest('hex')
+  runtime.db
+    .prepare(`
+      INSERT INTO project_live_file(
+        project_id, relative_path, revision, sha256, content_text,
+        deleted, task_key, updated_at
+      ) VALUES ('p-live', ?, 1, ?, ?, 0, ?, ?)
+    `)
+    .run(relativePath, sha256, content, taskKey, new Date().toISOString())
+  runtime.db
+    .prepare(`
+      INSERT INTO project_live_revision(project_id, revision, updated_at)
+      VALUES ('p-live', 1, ?)
+      ON CONFLICT(project_id) DO NOTHING
+    `)
+    .run(new Date().toISOString())
+}
+
 async function startRuntime(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-live-'))
   const runtime = await createTeamRuntime({
@@ -825,6 +844,91 @@ test('实时批次按文件版本广播，幂等重试不会重复写', async (t
       .get().live_revision,
     0,
   )
+})
+
+test('Git 归档任务移动时实时覆盖迁移到归档路径并自动收敛', async (t) => {
+  const { root, runtime } = await startRuntime(t)
+  seedTeam(runtime)
+  const owner = await makeUser(runtime, 'archive-owner', 't-live', 'member')
+  const writer = await makeUser(runtime, 'archive-writer', 't-live', 'member')
+  const { repoPath, taskDir } = seedProject(runtime, root, owner, writer)
+  const secondDir = path.join(repoPath, '.trellis', 'tasks', 'task-second')
+  fs.mkdirSync(secondDir, { recursive: true })
+  fs.writeFileSync(path.join(secondDir, 'prd.md'), '# 第二任务\n')
+  fs.writeFileSync(
+    path.join(secondDir, 'task.json'),
+    `${JSON.stringify({
+      id: 'task-second',
+      title: '第二任务',
+      description: '归档移动测试',
+      status: 'planning',
+      priority: 'P2',
+      assignee: 'owner',
+      creator: 'owner',
+      created_at: new Date().toISOString(),
+    })}\n`,
+  )
+  const project = {
+    id: 'p-live',
+    name: '实时项目',
+    path: repoPath,
+    syncBranch: 'main',
+  }
+  await runtime.services.taskIndex.scanAndIndexProject(project, { force: true })
+
+  const sameContent = '# 实时任务\n'
+  const staleContent = '# 尚未合并的旧内容\n'
+  seedLiveFile(
+    runtime,
+    '.trellis/tasks/task-live/prd.md',
+    sameContent,
+    'p-live::.trellis/tasks/task-live',
+  )
+  seedLiveFile(
+    runtime,
+    '.trellis/tasks/task-second/prd.md',
+    staleContent,
+    'p-live::.trellis/tasks/task-second',
+  )
+
+  const archiveRoot = path.join(repoPath, '.trellis', 'tasks', 'archive', '2026-11')
+  fs.mkdirSync(archiveRoot, { recursive: true })
+  const archivedLive = path.join(archiveRoot, 'task-live')
+  const archivedSecond = path.join(archiveRoot, 'task-second')
+  fs.renameSync(taskDir, archivedLive)
+  fs.renameSync(secondDir, archivedSecond)
+
+  await runtime.services.taskIndex.scanAndIndexProject(project, { force: true })
+  await waitForCondition(() => {
+    const active = runtime.db
+      .prepare(`
+        SELECT relative_dir
+        FROM team_task_index
+        WHERE project_id = 'p-live'
+          AND archived = 0
+          AND relative_dir IN (
+            '.trellis/tasks/task-live',
+            '.trellis/tasks/task-second'
+          )
+      `)
+      .all()
+    return active.length === 0
+  })
+
+  const rows = runtime.db
+    .prepare(`
+      SELECT relative_path, content_text, task_key
+      FROM project_live_file
+      WHERE project_id = 'p-live'
+      ORDER BY relative_path
+    `)
+    .all()
+  assert.deepEqual(
+    rows.map((row) => row.relative_path),
+    ['.trellis/tasks/archive/2026-11/task-second/prd.md'],
+  )
+  assert.equal(rows[0].content_text, staleContent)
+  assert.equal(rows[0].task_key, 'p-live::.trellis/tasks/archive/2026-11/task-second')
 })
 
 test('实时覆盖在系统临时区物化，幂等重放不重复投影', async (t) => {
