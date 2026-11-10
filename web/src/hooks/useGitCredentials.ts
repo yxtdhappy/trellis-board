@@ -16,6 +16,7 @@ export type AdminGitCredentials = {
   probeRemote: (input: {
     remoteUrl: string
     credentialId?: string | null
+    branch?: string | null
   }) => Promise<RemoteProbeResult>
   confirmSshTrust: (challengeId: string) => Promise<admin.SshTrustResult>
   changeProjectCredential: (projectId: string, credentialId: string | null) => Promise<TeamProject>
@@ -111,7 +112,7 @@ export function useGitCredentials({ report, isAdmin, teamId }: Options): AdminGi
   )
 
   const probeRemote = useCallback(
-    (input: { remoteUrl: string; credentialId?: string | null }) => {
+    (input: { remoteUrl: string; credentialId?: string | null; branch?: string | null }) => {
       if (!teamId || teamId === 'all') {
         return Promise.reject(new Error('请先在顶部选择一个具体团队。'))
       }

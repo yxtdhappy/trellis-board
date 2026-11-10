@@ -77,6 +77,15 @@ Worker 内会缓存各仓库最近结果，并根据事件判断是仓库级重�
 
 新增长耗时逻辑时先判断是否会阻塞 HTTP 主线程。单纯数百毫秒内的配置读写可沿用同步模式；全仓库扫描、递归目录和大文件解析应留在 Worker 或明确的异步流程。
 
+### Scenario: 被 .gitignore 排除的 Agent 目录识别
+
+Agent 配置目录可能被项目 `.gitignore` 排除，因此不能只依赖 Git tree 或 `git ls-files --exclude-standard`。模板清单 `.trellis/.template-hashes.json` 的 `hashes` 键是可提交的补充证据。
+
+- 远端探测通过临时 partial clone 中的 `git show HEAD:.trellis/.template-hashes.json` 读取清单，并与受限 `ls-tree` 路径合并后调用 `detectTrellisAgentTools()`。
+- 工作副本初始化校验直接读取清单，并与 cached/untracked Agent 路径合并。
+- 清单缺失、JSON 损坏或读取失败时返回空集合，原有 tree 探测继续工作。
+- 初始化成功后只清理临时克隆中的已知 Agent 路径，再执行 `.trellis` 稀疏收敛；不得扩大到业务文件。
+
 ### Scenario: Git 子进程的出站代理环境
 
 #### 1. Scope / Trigger

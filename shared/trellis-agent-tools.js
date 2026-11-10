@@ -1,29 +1,84 @@
 export const TRELLIS_AGENT_TOOLS = Object.freeze([
-  { id: 'cursor', flag: '--cursor', label: 'Cursor' },
-  { id: 'claude-code', flag: '--claude', label: 'Claude Code' },
-  { id: 'opencode', flag: '--opencode', label: 'OpenCode' },
-  { id: 'codex', flag: '--codex', label: 'Codex' },
-  { id: 'kilo', flag: '--kilo', label: 'Kilo' },
-  { id: 'kiro', flag: '--kiro', label: 'Kiro' },
-  { id: 'gemini', flag: '--gemini', label: 'Gemini' },
-  { id: 'antigravity', flag: '--antigravity', label: 'Antigravity' },
-  { id: 'devin', flag: '--devin', label: 'Devin' },
-  { id: 'qoder', flag: '--qoder', label: 'Qoder' },
-  { id: 'codebuddy', flag: '--codebuddy', label: 'CodeBuddy' },
-  { id: 'copilot', flag: '--copilot', label: 'GitHub Copilot' },
-  { id: 'droid', flag: '--droid', label: 'Droid' },
-  { id: 'dsh', flag: '--dsh', label: 'DeepSeek Harness' },
-  { id: 'pi', flag: '--pi', label: 'Pi' },
-  { id: 'reasonix', flag: '--reasonix', label: 'Reasonix' },
-  { id: 'zcode', flag: '--zcode', label: 'ZCode' },
-  { id: 'omp', flag: '--omp', label: 'Oh My Pi' },
-  { id: 'trae', flag: '--trae', label: 'Trae' },
-  { id: 'grok', flag: '--grok', label: 'Grok' },
-  { id: 'kimi', flag: '--kimi', label: 'Kimi' },
-  { id: 'snow', flag: '--snow', label: 'Snow' },
+  { id: 'cursor', flag: '--cursor', label: 'Cursor', presencePaths: ['.cursor'] },
+  { id: 'claude-code', flag: '--claude', label: 'Claude Code', presencePaths: ['.claude'] },
+  { id: 'opencode', flag: '--opencode', label: 'OpenCode', presencePaths: ['.opencode'] },
+  { id: 'codex', flag: '--codex', label: 'Codex', presencePaths: ['.codex'] },
+  { id: 'kilo', flag: '--kilo', label: 'Kilo', presencePaths: ['.kilocode'] },
+  {
+    id: 'kiro',
+    flag: '--kiro',
+    label: 'Kiro',
+    presencePaths: ['.kiro/skills', '.kiro/agents', '.kiro/hooks'],
+  },
+  { id: 'gemini', flag: '--gemini', label: 'Gemini', presencePaths: ['.gemini'] },
+  {
+    id: 'antigravity',
+    flag: '--antigravity',
+    label: 'Antigravity',
+    presencePaths: ['.agent/workflows', '.agent/skills'],
+  },
+  {
+    id: 'devin',
+    flag: '--devin',
+    label: 'Devin',
+    presencePaths: ['.devin/workflows', '.devin/skills'],
+  },
+  { id: 'qoder', flag: '--qoder', label: 'Qoder', presencePaths: ['.qoder'] },
+  { id: 'codebuddy', flag: '--codebuddy', label: 'CodeBuddy', presencePaths: ['.codebuddy'] },
+  {
+    id: 'copilot',
+    flag: '--copilot',
+    label: 'GitHub Copilot',
+    presencePaths: ['.github/copilot', '.github/copilot-instructions.md'],
+  },
+  { id: 'droid', flag: '--droid', label: 'Droid', presencePaths: ['.factory'] },
+  { id: 'dsh', flag: '--dsh', label: 'DeepSeek Harness', presencePaths: ['.dsh'] },
+  { id: 'pi', flag: '--pi', label: 'Pi', presencePaths: ['.pi'] },
+  { id: 'reasonix', flag: '--reasonix', label: 'Reasonix', presencePaths: ['.reasonix'] },
+  { id: 'zcode', flag: '--zcode', label: 'ZCode', presencePaths: ['.zcode'] },
+  { id: 'omp', flag: '--omp', label: 'Oh My Pi', presencePaths: ['.omp'] },
+  { id: 'trae', flag: '--trae', label: 'Trae', presencePaths: ['.trae'] },
+  { id: 'grok', flag: '--grok', label: 'Grok', presencePaths: ['.grok'] },
+  { id: 'kimi', flag: '--kimi', label: 'Kimi', presencePaths: ['.kimi-code'] },
+  {
+    id: 'snow',
+    flag: '--snow',
+    label: 'Snow',
+    presencePaths: ['.snow/skills', '.snow/commands', '.snow/agents', '.snow/hooks'],
+  },
 ])
 
 const TOOL_BY_ID = new Map(TRELLIS_AGENT_TOOLS.map((tool) => [tool.id, tool]))
+
+function normalizeTreePath(value) {
+  const normalized = String(value || '')
+    .trim()
+    .replaceAll('\\', '/')
+    .replace(/^\.\/+/, '')
+    .replace(/\/+$/, '')
+  if (
+    !normalized ||
+    normalized.startsWith('/') ||
+    normalized.split('/').includes('..') ||
+    normalized === '.git' ||
+    normalized.startsWith('.git/')
+  ) {
+    return ''
+  }
+  return normalized
+}
+
+export function detectTrellisAgentTools(paths) {
+  if (!Array.isArray(paths)) return []
+  const treePaths = [...new Set(paths.map(normalizeTreePath).filter(Boolean))]
+  return TRELLIS_AGENT_TOOLS.filter((tool) =>
+    tool.presencePaths.some((presencePath) =>
+      treePaths.some(
+        (treePath) => treePath === presencePath || treePath.startsWith(`${presencePath}/`),
+      ),
+    ),
+  ).map((tool) => tool.id)
+}
 
 export function getTrellisAgentTool(id) {
   return TOOL_BY_ID.get(String(id || '').trim()) || null

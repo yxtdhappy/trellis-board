@@ -194,6 +194,9 @@ export type RemoteProbeResult = {
   recommendedName: string
   defaultBranch: string | null
   branches: string[]
+  branch: string | null
+  existingAgentTools: string[]
+  hasTrellis: boolean
   credential: GitCredentialSummary | null
 }
 
@@ -732,6 +735,7 @@ export async function probeGitRemote(input: {
   teamId: string
   remoteUrl: string
   credentialId?: string | null
+  branch?: string | null
 }): Promise<RemoteProbeResult> {
   const { data } = await requestJson<unknown>('/api/admin/projects/probe', {
     method: 'POST',
@@ -739,6 +743,7 @@ export async function probeGitRemote(input: {
       teamId: input.teamId,
       remoteUrl: input.remoteUrl,
       credentialId: input.credentialId || null,
+      branch: input.branch?.trim() || null,
     },
   })
   const row = record(data)
@@ -755,6 +760,9 @@ export async function probeGitRemote(input: {
     branches: rows(row.branches)
       .map((branch) => text(branch))
       .filter(Boolean),
+    branch: optionalText(row.branch),
+    existingAgentTools: textArray(row.existingAgentTools ?? row.existing_agent_tools),
+    hasTrellis: flag(row.hasTrellis ?? row.has_trellis),
     credential: readGitCredentialSummary(row.credential),
   }
 }

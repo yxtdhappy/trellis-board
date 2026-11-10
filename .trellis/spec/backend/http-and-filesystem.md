@@ -298,14 +298,16 @@ const projectIds = readableProjectIds(actor).filter((id) => (
   `/api/admin/git-ssh-hosts/trust`。
 - Git 凭据按团队隔离并绑定一个主机和认证类型；项目只能引用同团队、同主机、同认证类型的凭据。
 - API、审计和错误详情只返回凭据元数据，不返回 Token、私钥、口令或加密载荷。
-- 远端探测只执行 `git ls-remote`，不创建工作副本、不写数据库；SSH 主机确认是独立写操作。
+- 远端探测先执行 `git ls-remote --symref` 读取分支；指定分支或存在有效默认分支时，再在运行数据目录创建临时 partial clone，读取该分支 tree 中的 Agent 配置目录和 `.trellis` 状态。临时工作副本无论成功失败都必须删除，探测不写数据库；SSH 主机确认仍是独立写操作。
 - 运行数据目录中的 `git-credentials.key` 是 Git 凭据密文的主密钥，必须与 `board.sqlite` 一起备份。数据库中的凭据 AAD 绑定团队、主机和认证类型，修改这些列会导致解密失败。
 - 当前数据库支持 v6/v7 升级到 v8，升级前备份到运行数据目录的 `backups/`。
 
 ### Scenario: 团队项目稀疏检出与自动初始化
 
-- 项目接入请求包含 `agentTools`、`leadUserId` 和 `leadTrellisDevId`；服务端在 clone 前校验工具白名单、团队成员关系和 developer ID。
-- 服务端仅检出 `.trellis/`。目标分支缺少 `.trellis/` 时，使用固定的本地 Trellis CLI 按所选工具初始化。
+- 项目接入请求包含 `agentTools`、`leadUserId` 和 `leadTrellisDevId`；服务端在 clone 前校验工具白名单、团队成员关系和 developer ID，并在克隆后重新读取目标分支 tree，不信任前端传入的“已存在”状态。
+- 常规工作副本只检出 `.trellis/`。初始化前临时检出 `.trellis/`、根级配置文件、共享技能目录和 Agent 探测路径，让 `--skip-existing` 能看见远端已有文件；初始化、提交和推送后重新收敛为只检出 `.trellis/`。
+- 目标分支已有 `.trellis/` 时，只把缺失 Agent 传给固定的本地 Trellis CLI；没有缺失 Agent 时跳过初始化且不产生空提交。目标分支缺少 `.trellis/` 时仍执行基础初始化。
+- `team_project.agent_tools_json` 保存目标分支已有 Agent 与本次成功初始化 Agent 的并集。
 - 初始化产物提交并非强制推送到共享分支，成功后项目进入 `provisioning` 并继续工具链摘要审核。
 - 初始化失败、文件越界或 push 失败时，不能写入可用项目状态。
 

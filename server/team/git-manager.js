@@ -2,7 +2,11 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getTrellisAgentTool } from '../../shared/trellis-agent-tools.js'
+import {
+  TRELLIS_AGENT_TOOLS,
+  detectTrellisAgentTools,
+  getTrellisAgentTool,
+} from '../../shared/trellis-agent-tools.js'
 import { ERROR_CODES, teamError } from './errors.js'
 import {
   minimalEnvironment,
@@ -27,6 +31,20 @@ const PROBE_GLOBAL_CONCURRENCY = 4
 const SSH_TRUST_TTL_MS = 5 * 60_000
 const TRELLIS_INIT_TIMEOUT = 180_000
 const TRELLIS_PUSH_RETRIES = 1
+const AGENT_PRESENCE_PATHS = Object.freeze([
+  ...new Set(TRELLIS_AGENT_TOOLS.flatMap((tool) => tool.presencePaths)),
+])
+const REMOTE_TREE_PATHS = Object.freeze([
+  ...AGENT_PRESENCE_PATHS,
+  '.trellis',
+  'AGENTS.md',
+  '.gitattributes',
+])
+const INITIALIZATION_CONTEXT_PATHS = Object.freeze([...AGENT_PRESENCE_PATHS, '.agents/skills'])
+const INCREMENTAL_TRELLIS_METADATA = new Set([
+  '.trellis/.template-hashes.json',
+  '.trellis/.version',
+])
 const PROXY_ENV_KEYS = [
   'HTTP_PROXY',
   'HTTPS_PROXY',
@@ -81,6 +99,7 @@ export function validateSyncBranch(branch) {
     value.startsWith('refs/') ||
     value.includes('\0') ||
     value.includes(' ') ||
+    /[\r\n\t]/.test(value) ||
     RESERVED_BRANCHES.has(value) ||
     /@\{-\d+\}/.test(value)
   ) {
@@ -206,7 +225,7 @@ export async function runTrellisInitializer({
     [cliPath, 'init', '-y', '--skip-existing', ...flags, '-u', leadTrellisDevId],
     {
       cwd,
-      env: trellisEnvironment({ CI: '1' }),
+      env: trellisEnvironment({ CI: '1', PYTHONDONTWRITEBYTECODE: '1' }),
       timeoutMs: TRELLIS_INIT_TIMEOUT,
       allowFailure: true,
       maxOutputBytes: 2 * 1024 * 1024,
@@ -378,28 +397,32 @@ export function createGitManager({
     return result
   }
 
-  async function applyTrellisSparse(cwd, { requireTrellis = true } = {}) {
+  async function setSparsePaths(cwd, paths) {
     const init = await runGit(['sparse-checkout', 'init', '--no-cone'], {
       cwd,
       allowFailure: true,
     })
     if (init.code !== 0) {
-      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', '无法初始化 .trellis 稀疏检出')
+      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', '无法初始化项目稀疏检出')
     }
-    const set = await runGit(['sparse-checkout', 'set', '.trellis/'], {
+    const set = await runGit(['sparse-checkout', 'set', '--', ...paths], {
       cwd,
       allowFailure: true,
     })
     if (set.code !== 0) {
-      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', '无法设置 .trellis 稀疏检出')
+      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', '无法设置项目稀疏检出')
     }
     const update = await runGit(['read-tree', '-mu', 'HEAD'], {
       cwd,
       allowFailure: true,
     })
     if (update.code !== 0) {
-      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', '无法收敛 .trellis 工作副本')
+      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', '无法收敛项目工作副本')
     }
+  }
+
+  async function applyTrellisSparse(cwd, { requireTrellis = true } = {}) {
+    await setSparsePaths(cwd, ['.trellis/'])
     for (const entry of fs.readdirSync(cwd, { withFileTypes: true })) {
       if (entry.name !== '.git' && entry.name !== '.trellis' && entry.isDirectory()) {
         removeEmptyDirectoryTree(path.join(cwd, entry.name))
@@ -431,15 +454,103 @@ export function createGitManager({
     }
   }
 
-  async function remoteHasTrellis(cwd) {
-    const result = await runGit(['ls-tree', '-d', '--name-only', 'HEAD', '--', '.trellis'], {
+  async function checkoutInitializationContext(cwd) {
+    await setSparsePaths(cwd, [
+      '.trellis/',
+      'AGENTS.md',
+      '.gitattributes',
+      ...INITIALIZATION_CONTEXT_PATHS,
+    ])
+  }
+
+  function manifestPaths(manifest) {
+    if (
+      !manifest ||
+      typeof manifest !== 'object' ||
+      !manifest.hashes ||
+      typeof manifest.hashes !== 'object'
+    ) {
+      return []
+    }
+    return Object.keys(manifest.hashes)
+  }
+
+  function parseManifestPaths(content) {
+    try {
+      return manifestPaths(JSON.parse(content))
+    } catch {
+      return []
+    }
+  }
+
+  function readWorkingManifestPaths(cwd) {
+    try {
+      return parseManifestPaths(
+        fs.readFileSync(path.join(cwd, '.trellis', '.template-hashes.json'), 'utf8'),
+      )
+    } catch {
+      return []
+    }
+  }
+
+  async function readRemoteManifestPaths(cwd, options = {}) {
+    const result = await runGit(['show', 'HEAD:.trellis/.template-hashes.json'], {
       cwd,
       allowFailure: true,
+      maxOutputBytes: 4 * 1024 * 1024,
+      ...options,
     })
+    if (result.code !== 0 || result.truncated) return []
+    return parseManifestPaths(result.stdout)
+  }
+
+  async function readRemoteTree(cwd, options = {}) {
+    const result = await runGit(
+      ['ls-tree', '-r', '--name-only', '-z', 'HEAD', '--', ...REMOTE_TREE_PATHS],
+      {
+        cwd,
+        allowFailure: true,
+        maxOutputBytes: 4 * 1024 * 1024,
+        ...options,
+      },
+    )
     if (result.code !== 0) {
-      throw teamError(502, ERROR_CODES.GIT_REMOTE_FAILED, '无法读取远端 .trellis 目录状态')
+      throw teamError(502, ERROR_CODES.GIT_REMOTE_FAILED, '无法读取远端 Agent 初始化目录')
     }
-    return result.stdout.trim() === '.trellis'
+    if (result.truncated) {
+      throw teamError(422, 'GIT_REMOTE_OUTPUT_TOO_LARGE', 'Agent 初始化目录超出识别限制')
+    }
+    const treePaths = result.stdout.split('\0').filter(Boolean)
+    // Agent 目录可能被项目 .gitignore 排除，模板清单是可提交的第二证据源。
+    const detectedPaths = [...treePaths, ...(await readRemoteManifestPaths(cwd, options))]
+    return {
+      existingAgentTools: detectTrellisAgentTools(detectedPaths),
+      hasTrellis: treePaths.some(
+        (treePath) => treePath === '.trellis' || treePath.startsWith('.trellis/'),
+      ),
+    }
+  }
+
+  async function readWorkingTreeAgentTools(cwd) {
+    const result = await runGit(
+      [
+        'ls-files',
+        '--cached',
+        '--others',
+        '--exclude-standard',
+        '-z',
+        '--',
+        ...AGENT_PRESENCE_PATHS,
+      ],
+      { cwd, maxOutputBytes: 4 * 1024 * 1024 },
+    )
+    if (result.truncated) {
+      throw teamError(409, 'TRELLIS_INIT_INVALID', 'Agent 初始化目录超出校验限制')
+    }
+    return detectTrellisAgentTools([
+      ...result.stdout.split('\0').filter(Boolean),
+      ...readWorkingManifestPaths(cwd),
+    ])
   }
 
   function readInitializationManifest(cwd) {
@@ -462,7 +573,7 @@ export function createGitManager({
       throw teamError(409, 'TRELLIS_INIT_INVALID', 'Trellis 初始化模板清单格式无效')
     }
     return new Set(
-      Object.keys(manifest.hashes).filter((item) => {
+      manifestPaths(manifest).filter((item) => {
         const normalized = String(item || '').replaceAll('\\', '/')
         return (
           normalized &&
@@ -485,7 +596,28 @@ export function createGitManager({
       .filter(Boolean)
   }
 
-  async function validateInitialization(cwd, leadTrellisDevId) {
+  async function cleanGeneratedAgentPaths(cwd) {
+    const result = await runGit(['clean', '-fdx', '--', ...AGENT_PRESENCE_PATHS], {
+      cwd,
+      allowFailure: true,
+    })
+    if (result.code !== 0) {
+      throw teamError(
+        503,
+        'TRELLIS_INIT_FAILED',
+        `无法清理初始化产生的 Agent 文件：${sanitizeProcessOutput(
+          result.stderr || result.stdout || 'Git 返回非零退出码',
+          { maxBytes: 2048 },
+        ).trim()}`,
+      )
+    }
+  }
+
+  async function validateInitialization(
+    cwd,
+    leadTrellisDevId,
+    { existingTrellis = false, gitattributesBefore = null } = {},
+  ) {
     const required = [
       '.trellis/scripts/task.py',
       '.trellis/workflow.md',
@@ -531,7 +663,20 @@ export function createGitManager({
       ['ls-tree', '-r', '--name-only', '-z', 'HEAD', '--', ...changed],
       { cwd, maxOutputBytes: 4 * 1024 * 1024 },
     )
-    const overwritten = existing.stdout.split('\0').filter(Boolean)
+    const overwritten = existing.stdout
+      .split('\0')
+      .filter(Boolean)
+      .filter(
+        (relativePath) =>
+          !(existingTrellis && INCREMENTAL_TRELLIS_METADATA.has(relativePath)) &&
+          !(
+            relativePath === '.gitattributes' &&
+            gitattributesBefore !== null &&
+            fs
+              .readFileSync(path.join(cwd, '.gitattributes'), 'utf8')
+              .startsWith(gitattributesBefore)
+          ),
+      )
     if (overwritten.length) {
       throw teamError(
         409,
@@ -850,22 +995,33 @@ export function createGitManager({
         }
         await applyTrellisSparse(target, { requireTrellis: false })
 
-        const alreadyInitialized = await remoteHasTrellis(target)
-        if (alreadyInitialized) {
+        const remoteTree = await readRemoteTree(target)
+        const newTools = agentTools.filter(
+          (toolId) => !remoteTree.existingAgentTools.includes(toolId),
+        )
+        if (remoteTree.hasTrellis && !newTools.length) {
           await applyTrellisSparse(target)
           return {
             target,
             initialized: false,
             initializedPaths: [],
+            existingAgentTools: remoteTree.existingAgentTools,
+            initializedAgentTools: [],
+            hasTrellis: true,
             remoteCommitSha: (await runGit(['rev-parse', 'HEAD'], { cwd: target })).stdout.trim(),
           }
         }
 
+        await checkoutInitializationContext(target)
+        const gitattributesFile = path.join(target, '.gitattributes')
+        const gitattributesBefore = fs.existsSync(gitattributesFile)
+          ? fs.readFileSync(gitattributesFile, 'utf8')
+          : null
         let initializedResult
         try {
           initializedResult = await trellisRunner({
             cwd: target,
-            agentTools,
+            agentTools: remoteTree.hasTrellis ? newTools : agentTools,
             leadTrellisDevId,
           })
         } catch (error) {
@@ -889,8 +1045,22 @@ export function createGitManager({
           )
         }
 
-        const initializedPaths = await validateInitialization(target, leadTrellisDevId)
+        const generatedTools = await readWorkingTreeAgentTools(target)
+        const missingTools = newTools.filter((toolId) => !generatedTools.includes(toolId))
+        if (missingTools.length) {
+          throw teamError(
+            409,
+            'TRELLIS_INIT_INVALID',
+            `Trellis 初始化未生成 Agent 目录: ${missingTools.join(', ')}`,
+          )
+        }
+
+        const initializedPaths = await validateInitialization(target, leadTrellisDevId, {
+          existingTrellis: remoteTree.hasTrellis,
+          gitattributesBefore,
+        })
         await commitInitialization(target, initializedPaths)
+        await cleanGeneratedAgentPaths(target)
         await applyTrellisSparse(target)
         const remoteCommitSha = await pushInitialization(project, target, auth)
         await applyTrellisSparse(target)
@@ -898,6 +1068,9 @@ export function createGitManager({
           target,
           initialized: true,
           initializedPaths,
+          existingAgentTools: remoteTree.existingAgentTools,
+          initializedAgentTools: newTools,
+          hasTrellis: true,
           remoteCommitSha,
         }
       })
@@ -1362,7 +1535,7 @@ export function createGitManager({
     }
   }
 
-  async function probeRemote({ actor, remote, credential = null }) {
+  async function probeRemote({ actor, remote, credential = null, branch = null }) {
     const release = beginProbe(actor)
     try {
       if (credential?.authType === 'ssh_key') {
@@ -1397,6 +1570,54 @@ export function createGitManager({
       if (!name) {
         throw teamError(400, ERROR_CODES.INVALID_INPUT, '无法从 Git 远端推导项目名称')
       }
+      const requestedBranch = String(branch || '').trim()
+      const selectedBranch = requestedBranch
+        ? validateSyncBranch(requestedBranch)
+        : parsed.defaultBranch
+      if (selectedBranch && !parsed.branches.includes(selectedBranch)) {
+        throw teamError(400, ERROR_CODES.INVALID_INPUT, `Git 远端不存在共享分支: ${selectedBranch}`)
+      }
+
+      let tree = { existingAgentTools: [], hasTrellis: false }
+      if (selectedBranch) {
+        const probeDir = fs.mkdtempSync(path.join(projectsRoot, '.probe-'))
+        try {
+          await withGitAuth(credential, remote, async (auth) => {
+            const cloned = await runGit(
+              [
+                'clone',
+                '--filter=blob:none',
+                '--no-checkout',
+                '--depth=1',
+                '--single-branch',
+                `--branch=${selectedBranch}`,
+                '--',
+                remote.url,
+                probeDir,
+              ],
+              {
+                timeoutMs: REMOTE_TIMEOUT,
+                allowFailure: true,
+                auth,
+              },
+            )
+            if (cloned.code !== 0) {
+              logger?.warn?.('Git 分支目录探测失败', {
+                scheme: remote.scheme,
+                host: remote.host,
+                port: remote.port,
+                command: 'git clone --filter=blob:none',
+                branch: selectedBranch,
+                ...sshScanFailureDetails(cloned),
+              })
+              throw classifyProbeFailure(cloned)
+            }
+            tree = await readRemoteTree(probeDir, { auth })
+          })
+        } finally {
+          fs.rmSync(probeDir, { recursive: true, force: true })
+        }
+      }
       return {
         remote: {
           url: remote.url,
@@ -1406,6 +1627,9 @@ export function createGitManager({
         recommendedName: name,
         defaultBranch: parsed.defaultBranch,
         branches: parsed.branches,
+        branch: selectedBranch,
+        existingAgentTools: tree.existingAgentTools,
+        hasTrellis: tree.hasTrellis,
         credential: credential
           ? {
               id: credential.id,
