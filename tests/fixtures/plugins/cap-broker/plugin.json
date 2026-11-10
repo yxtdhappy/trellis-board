@@ -1,0 +1,14 @@
+{
+  "id": "cap-broker",
+  "name": "capability broker fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "permissions": ["capabilities:call", "capabilities:invoke", "http:route"],
+  "requires": [
+    {
+      "name": "trellis.capabilities",
+      "version": "^1.0.0",
+      "methods": ["list", "call"]
+    }
+  ]
+}

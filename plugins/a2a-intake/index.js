@@ -19,7 +19,34 @@ const METHOD_ALIASES = new Map([
   ['GetTask', 'get'],
   ['tasks/cancel', 'cancel'],
   ['CancelTask', 'cancel'],
+  ['board/action', 'board'],
+  ['board/call', 'board'],
+  ['BoardAction', 'board'],
 ])
+
+const BOARD_ACTIONS = Object.freeze({
+  'repositories.list': {
+    capability: 'trellis.repositories',
+    method: 'list',
+    timeoutMs: 10_000,
+    params: () => ({}),
+  },
+  'repositories.add': { capability: 'trellis.repositories', method: 'add' },
+  'repositories.remove': { capability: 'trellis.repositories', method: 'remove' },
+  'tasks.list': { host: 'tasks', method: 'list', wrap: 'tasks' },
+  'tasks.get': { host: 'tasks', method: 'get' },
+  'capabilities.list': {
+    capability: 'trellis.capabilities',
+    method: 'list',
+    timeoutMs: 10_000,
+    params: () => ({}),
+  },
+  'capabilities.call': {
+    capability: 'trellis.capabilities',
+    method: 'call',
+    timeoutMs: 300_000,
+  },
+})
 
 function normalizeConfig(raw = {}) {
   return { ...DEFAULTS, ...raw }
@@ -70,7 +97,16 @@ export default createPlugin({
   name: PLUGIN_ID,
   version: '1.0.0',
   apiVersion: 1,
-  permissions: ['tasks:read', 'tasks:write', 'store', 'http:root'],
+  permissions: [
+    'tasks:read',
+    'tasks:write',
+    'store',
+    'http:root',
+    'capabilities:call',
+    'capabilities:invoke',
+    'repositories:read',
+    'repositories:write',
+  ],
 
   async onStart(ctx) {
     const config = normalizeConfig(ctx.config)
@@ -80,7 +116,8 @@ export default createPlugin({
       const base = String(config.publicBaseUrl || '').replace(/\/+$/, '')
       return {
         name: `${PLUGIN_ID}`,
-        description: '把 A2A 消息转换成 Trellis 任务',
+        description:
+          '通过 A2A JSON-RPC 创建 Trellis 任务，并以标准 capability 桥接宿主与其他插件能力',
         version: '1.0.0',
         protocolVersion: config.protocolVersion,
         url: `${base}/a2a`,
@@ -97,6 +134,44 @@ export default createPlugin({
             inputModes: ['text/plain', 'application/json'],
             outputModes: ['application/json'],
             examples: ['{"title":"修复登录","assignee":"alice","priority":"P2"}'],
+          },
+          {
+            id: 'manage-repositories',
+            name: '管理工作区',
+            description: '通过宿主 trellis.repositories 能力注册、查询或移除 Trellis 工作区',
+            tags: ['trellis', 'repository', 'workspace'],
+            inputModes: ['application/json'],
+            outputModes: ['application/json'],
+            examples: [
+              '{"action":"repositories.list","input":{}}',
+              '{"action":"repositories.add","input":{"path":"/path/to/repo","name":"demo"}}',
+              '{"action":"repositories.remove","input":{"id":"demo"}}',
+            ],
+          },
+          {
+            id: 'query-tasks',
+            name: '查询 Trellis 任务',
+            description: '通过宿主 tasks 能力查询任务列表或单条任务',
+            tags: ['trellis', 'task', 'query'],
+            inputModes: ['application/json'],
+            outputModes: ['application/json'],
+            examples: [
+              '{"action":"tasks.list","input":{"repositoryId":"demo","includeArchived":true}}',
+              '{"action":"tasks.get","input":{"repositoryId":"demo","relativeDir":"11-04-demo"}}',
+            ],
+          },
+          {
+            id: 'invoke-capability',
+            name: '调用标准能力',
+            description:
+              '通过宿主 trellis.capabilities 发现并调用已注册的 capability；具体目标由运行时决定，不在 A2A 接入层硬编码',
+            tags: ['capability', 'plugin', 'bridge'],
+            inputModes: ['application/json'],
+            outputModes: ['application/json'],
+            examples: [
+              '{"action":"capabilities.list","input":{}}',
+              '{"action":"capabilities.call","input":{"name":"<capability>","method":"<method>","params":{}}}',
+            ],
           },
         ],
       }
@@ -246,7 +321,50 @@ export default createPlugin({
       return rpcResult(id, await taskDto(record))
     }
 
-    const handlers = { send: handleSend, get: handleGet, cancel: handleCancel }
+    function actionInput(params = {}) {
+      if (params.input && typeof params.input === 'object') return params.input
+      if (params.params && typeof params.params === 'object') return params.params
+      const rest = { ...params }
+      delete rest.action
+      delete rest.operation
+      return rest
+    }
+
+    async function callCapability(name, method, params, timeoutMs = 120_000) {
+      return ctx.capabilities.call(name, method, params ?? {}, { timeoutMs })
+    }
+
+    async function handleBoard(id, params) {
+      const action = String(params?.action ?? params?.operation ?? '').trim()
+      const definition = BOARD_ACTIONS[action]
+      if (!definition) {
+        return rpcError(id, -32601, `不支持的 action: ${action}`, {
+          supported: Object.keys(BOARD_ACTIONS),
+        })
+      }
+      const input = actionInput(params)
+      try {
+        if (definition.host === 'tasks') {
+          const value = await ctx.tasks[definition.method](input)
+          return rpcResult(id, definition.wrap === 'tasks' ? { tasks: value } : value)
+        }
+        const value = await callCapability(
+          definition.capability,
+          definition.method,
+          definition.params ? definition.params(input) : input,
+          definition.timeoutMs,
+        )
+        return rpcResult(id, value)
+      } catch (error) {
+        ctx.log.error('A2A 能力调用失败', { action, message: error.message })
+        return rpcError(id, -32603, error.message, {
+          code: error.code ?? null,
+          detail: error.detail ?? null,
+        })
+      }
+    }
+
+    const handlers = { send: handleSend, get: handleGet, cancel: handleCancel, board: handleBoard }
 
     ctx.http.public('GET', '/.well-known/agent-card.json', async () => ({
       status: 200,
@@ -280,7 +398,8 @@ export default createPlugin({
       const protocol =
         envelope.method === 'SendMessage' ||
         envelope.method === 'GetTask' ||
-        envelope.method === 'CancelTask'
+        envelope.method === 'CancelTask' ||
+        envelope.method === 'BoardAction'
           ? '1.0'
           : '0.3'
       const body = await handlers[action](envelope.id, envelope.params ?? {}, protocol)

@@ -1,0 +1,14 @@
+{
+  "id": "repo-reader-without-permission",
+  "name": "repository reader without permission fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "permissions": ["capabilities:call", "http:route"],
+  "requires": [
+    {
+      "name": "trellis.repositories",
+      "version": "^1.0.0",
+      "methods": ["list"]
+    }
+  ]
+}

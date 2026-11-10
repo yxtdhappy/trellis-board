@@ -493,6 +493,22 @@ function resolveCurrentTask(payload) {
   })
 }
 
+const repositoryService = {
+  list: () => repositoryStore.list(),
+  async addMany(inputs) {
+    const added = repositoryStore.addMany(inputs)
+    await refreshAfterRepositoryChange('add', added)
+    publishRepositoryChange(pluginRuntime, 'add', added)
+    return { added }
+  },
+  async remove(input) {
+    const removed = repositoryStore.remove(input)
+    await refreshAfterRepositoryChange('remove', [removed])
+    publishRepositoryChange(pluginRuntime, 'remove', [removed])
+    return { removed }
+  },
+}
+
 async function startPluginRuntime() {
   if (!database) return
   let hostVersion = '0.0.0'
@@ -508,6 +524,7 @@ async function startPluginRuntime() {
     dataDir,
     hostVersion,
     repositories: getRepositories(),
+    repositoryService,
     boardProvider: () => boardCache || readScanCache(),
     logger: console,
   })
