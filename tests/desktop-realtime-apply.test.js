@@ -4,8 +4,10 @@ import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import fsPromises from 'node:fs/promises'
+import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { AgentApiClient } from '../agent/api.js'
 import { ConfigStore } from '../agent/config-store.js'
 import { AgentLiveSync, decidePendingLiveChange, restoreLiveBackup } from '../agent/live-sync.js'
 
@@ -109,6 +111,146 @@ async function persistConfig(store, local) {
     bindings: [local],
   })
 }
+
+test('Git 已收敛的文件写回不上报，真实未提交修改继续上报', async (t) => {
+  const { root, repoPath, taskDir } = setupRepo()
+  const store = new ConfigStore(path.join(root, 'agent'))
+  await store.ensureDirectories()
+  const local = binding(repoPath)
+  await persistConfig(store, local)
+  const controls = []
+  const fake = fakeApi()
+  const sync = new AgentLiveSync({
+    store,
+    logger: silentLogger,
+    emitControl: (event) => controls.push(event),
+    watch: fakeWatcher,
+    loadContext: async () => ({
+      config: await store.readConfig({ allowMissing: false }),
+      api: fake.api,
+    }),
+  })
+  await sync.start()
+  t.after(() => {
+    sync.stop()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  const taskFile = path.join(taskDir, 'task.json')
+  fs.writeFileSync(taskFile, '{"title":"local"}\n')
+  await sync._handleWatcherEvents([
+    {
+      repositoryId: 'p-live',
+      trellisPath: '.trellis/tasks/task-live/task.json',
+    },
+  ])
+  assert.equal(fake.calls.preflights.length, 0)
+  assert.equal(fake.calls.uploads.length, 0)
+  assert.equal(controls.length, 0)
+
+  fs.writeFileSync(taskFile, '{"title":"edited"}\n')
+  await sync._handleWatcherEvents([
+    {
+      repositoryId: 'p-live',
+      trellisPath: '.trellis/tasks/task-live/task.json',
+    },
+  ])
+  assert.equal(fake.calls.preflights.length, 1)
+  assert.equal(fake.calls.uploads.length, 1)
+})
+
+test('已收敛的责任人 pending 在展示和重试前自动清理', async (t) => {
+  const { root, repoPath, taskDir } = setupRepo()
+  const store = new ConfigStore(path.join(root, 'agent'))
+  await store.ensureDirectories()
+  const local = binding(repoPath)
+  await persistConfig(store, local)
+  const controls = []
+  const fake = fakeApi()
+  const sync = new AgentLiveSync({
+    store,
+    logger: silentLogger,
+    emitControl: (event) => controls.push(event),
+    watch: fakeWatcher,
+    loadContext: async () => ({
+      config: await store.readConfig({ allowMissing: false }),
+      api: fake.api,
+    }),
+  })
+  await sync.start()
+  t.after(() => {
+    sync.stop()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  const content = fs.readFileSync(path.join(taskDir, 'task.json'), 'utf8')
+  const pendingId = 'converged-warning-1'
+  const pendingFile = path.join(store.paths.pendingLiveDir, `${pendingId}.json`)
+  const pendingPayload = {
+    kind: 'decision',
+    projectId: 'p-live',
+    batchId: pendingId,
+    files: [
+      {
+        path: '.trellis/tasks/task-live/task.json',
+        operation: 'upsert',
+        sha256: sha256(content),
+        content,
+      },
+    ],
+    warning: {
+      warningId: 'warning-converged',
+      assignee: { username: 'owner' },
+      task: {
+        taskKey: 'p-live::.trellis/tasks/task-live',
+        title: '已收敛任务',
+      },
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      expiresAtEpochMs: Date.now() + 60_000,
+      batchId: pendingId,
+    },
+  }
+  fs.writeFileSync(pendingFile, `${JSON.stringify(pendingPayload, null, 2)}\n`)
+
+  await sync._emitPendingDecisions()
+  await sync.retryPendingUploads()
+  assert.equal(fs.existsSync(pendingFile), false)
+  assert.equal(controls.length, 0)
+  assert.equal(fake.calls.uploads.length, 0)
+
+  sync.bindings.get('p-live').repoPath = path.join(root, 'missing-repository')
+  fs.writeFileSync(pendingFile, `${JSON.stringify(pendingPayload, null, 2)}\n`)
+  await sync._emitPendingDecisions()
+  assert.equal(fs.existsSync(pendingFile), true)
+  assert.equal(controls.length, 1)
+})
+
+test('Agent API 区分请求超时和显式取消', async (t) => {
+  const server = http.createServer(() => {})
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => {
+    server.closeAllConnections?.()
+    server.close()
+  })
+  const address = server.address()
+  const client = new AgentApiClient({
+    serverUrl: `http://127.0.0.1:${address.port}`,
+    timeoutMs: 30,
+  })
+
+  await assert.rejects(
+    () => client.health({ timeoutMs: 30 }),
+    (error) => error.code === 'NETWORK_ERROR' && error.message === 'Agent 服务请求超时',
+  )
+
+  const controller = new AbortController()
+  const request = client.health({ timeoutMs: 1_000, signal: controller.signal })
+  setTimeout(() => controller.abort(), 20)
+  await assert.rejects(
+    () => request,
+    (error) => error.code === 'NETWORK_ERROR' && error.message === 'Agent 请求已取消',
+  )
+})
 
 test('远端覆盖先备份，自触发事件被摘要抑制而真实修改继续上报', async (t) => {
   const { root, repoPath, taskDir } = setupRepo()
@@ -866,7 +1008,8 @@ test('重试循环不会并发处理同一 pending 批次', async (t) => {
   await store.ensureDirectories()
   const local = binding(repoPath)
   await persistConfig(store, local)
-  const content = fs.readFileSync(path.join(taskDir, 'task.json'), 'utf8')
+  const content = '{"title":"dirty pending"}\n'
+  fs.writeFileSync(path.join(taskDir, 'task.json'), content)
   const batchId = 'pending-serial-1'
   fs.writeFileSync(
     path.join(store.paths.pendingLiveDir, `${batchId}.json`),

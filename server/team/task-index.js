@@ -305,7 +305,9 @@ export function createTaskIndex({
       clearTimeout(request.timer)
       pending.delete(message.id)
       if (message.type === 'scan-error') request.reject(new Error(message.error))
-      else request.resolve(message)
+      else if (request.expectedType && message.type !== request.expectedType) {
+        request.reject(new Error('团队扫描 worker 返回了无效结果'))
+      } else request.resolve(message)
     })
     current.on('error', (error) => {
       if (worker === current) worker = null
@@ -318,21 +320,34 @@ export function createTaskIndex({
     return worker
   }
 
-  function scanProject(project) {
+  function requestWorker(type, payload, timeoutMessage, expectedType) {
     const runtime = ensureWorker()
     const id = ++requestId
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id)
-        reject(new Error('项目扫描超过 180 秒'))
+        reject(new Error(timeoutMessage))
       }, 180_000)
-      pending.set(id, { resolve, reject, timer })
+      pending.set(id, { resolve, reject, timer, expectedType })
       runtime.postMessage({
-        type: 'scan',
+        ...payload,
+        type,
         id,
-        project,
       })
     })
+  }
+
+  function scanProject(project) {
+    return requestWorker('scan', { project }, '项目扫描超过 180 秒', 'scan-result')
+  }
+
+  function materializeLiveProject(project, rows, revision) {
+    return requestWorker(
+      'live-materialize',
+      { project, rows, revision },
+      '实时投影扫描超过 180 秒',
+      'live-materialize-result',
+    ).then((message) => ({ scan: message.scan, revision: message.revision }))
   }
 
   function buildBoard(scan) {
@@ -449,6 +464,8 @@ export function createTaskIndex({
     contentKey = null,
     branchSha = null,
     persistCache = true,
+    liveRevision = null,
+    affectedTaskKeys = undefined,
   }) {
     db.prepare('DELETE FROM team_task_index_tag WHERE project_id = ?').run(projectId)
     db.prepare('DELETE FROM team_task_index WHERE project_id = ?').run(projectId)
@@ -496,6 +513,30 @@ export function createTaskIndex({
       })
     }
     syncAssignmentsFromBoardInTransaction(db, projectId, board)
+    if (Number.isSafeInteger(liveRevision) && liveRevision > 0) {
+      db.prepare(`
+        UPDATE team_task_index
+        SET live_revision = 0
+        WHERE project_id = ?
+      `).run(projectId)
+      if (affectedTaskKeys === null) {
+        db.prepare(`
+          UPDATE team_task_index
+          SET live_revision = ?
+          WHERE project_id = ?
+        `).run(liveRevision, projectId)
+      } else {
+        const keys = [...(affectedTaskKeys || [])]
+        if (keys.length) {
+          db.prepare(`
+            UPDATE team_task_index
+            SET live_revision = ?
+            WHERE project_id = ?
+              AND task_key IN (${keys.map(() => '?').join(', ')})
+          `).run(liveRevision, projectId, ...keys)
+        }
+      }
+    }
     return {
       changed: true,
       queryRevision: queryRevision() + 1,
@@ -910,6 +951,7 @@ export function createTaskIndex({
 
   return {
     scanAndIndexProject,
+    materializeLiveProject,
     buildBoard,
     replaceProjectIndexInTransaction,
     replaceProjectIndex,

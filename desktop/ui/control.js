@@ -44,13 +44,14 @@ function button(label, action, className = '') {
   element.type = 'button'
   element.textContent = label
   element.className = className
+  element.dataset.alwaysEnabled = String(action === 'close')
   element.addEventListener('click', () => void runAction(action))
   actions.append(element)
   return element
 }
 
 async function runAction(action) {
-  if (!current || busy) return
+  if (!current) return
   if (action === 'close') {
     try {
       await invoke('live_control_dismiss')
@@ -62,11 +63,12 @@ async function runAction(action) {
     }
     return
   }
+  if (busy) return
   busy = true
   error.textContent = ''
   message.textContent = '正在提交，请稍候…'
   actions.querySelectorAll('button').forEach((item) => {
-    item.disabled = true
+    item.disabled = item.dataset.alwaysEnabled !== 'true'
   })
   try {
     if (current.type === 'assignment_warning') {
@@ -80,6 +82,7 @@ async function runAction(action) {
       })
     }
     current = null
+    busy = false
   } catch (actionError) {
     error.textContent =
       actionError instanceof Error ? actionError.message : String(actionError || '操作失败')
@@ -99,13 +102,15 @@ function render(event) {
     title.textContent = '你正在修改他人负责的任务'
     message.textContent =
       `当前责任人是 ${assignee}。建议先沟通，避免多人重复推进同一任务。` +
-      '继续推进会保留原责任人并记录审计；只有接管任务才会显式改派。'
+      '继续推进会保留原责任人并记录审计；只有接管任务才会显式改派。' +
+      '选择稍后处理后，可从托盘重新打开。'
     addDetail('任务', event.task?.title || event.task?.taskKey)
     addDetail('责任人', assignee)
     if (event.expiresAt) addDetail('确认截止', new Date(event.expiresAt).toLocaleString())
     button('取消并恢复', 'cancel', 'danger')
     button('继续推进', 'continue')
     button('接管任务', 'takeover', 'primary')
+    button('稍后处理', 'close')
   } else if (event.type === 'remote_overwrite') {
     const taskKeys = event.taskKeys || []
     const conflicts = event.conflicts?.length ? event.conflicts : event.files || []

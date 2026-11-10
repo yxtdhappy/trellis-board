@@ -296,6 +296,37 @@ export class AgentLiveSync {
     this.retryTimer = null
   }
 
+  async _dirtyPathSet(binding) {
+    try {
+      return new Set(
+        (await this._dirtyLivePaths(binding)).map((value) => String(value).replaceAll('\\', '/')),
+      )
+    } catch (error) {
+      this.logger?.warn('Git 本地变化检查失败，保留待确认事件', {
+        projectId: binding.projectId,
+        error: safeErrorMessage(error),
+      })
+      return null
+    }
+  }
+
+  async _removeConvergedPending(file, pending, dirtyPathsByProject) {
+    if (!Array.isArray(pending.files) || !pending.files.length) return false
+    const binding = this._binding(pending.projectId)
+    if (!binding) return false
+    if (!dirtyPathsByProject.has(pending.projectId)) {
+      dirtyPathsByProject.set(pending.projectId, await this._dirtyPathSet(binding))
+    }
+    const dirtyPaths = dirtyPathsByProject.get(pending.projectId)
+    if (!dirtyPaths) return false
+    const stillDirty = pending.files.some((item) =>
+      dirtyPaths.has(String(item?.path || '').replaceAll('\\', '/')),
+    )
+    if (stillDirty) return false
+    await fs.unlink(file).catch(() => {})
+    return true
+  }
+
   async _emitPendingDecisions() {
     let entries
     try {
@@ -304,6 +335,7 @@ export class AgentLiveSync {
       return
     }
     const now = new Date().toISOString()
+    const dirtyPathsByProject = new Map()
     for (const name of entries) {
       if (!name.endsWith('.json')) continue
       const file = path.join(this.store.paths.pendingLiveDir, name)
@@ -313,6 +345,7 @@ export class AgentLiveSync {
         await fs.unlink(file).catch(() => {})
         continue
       }
+      if (await this._removeConvergedPending(file, pending, dirtyPathsByProject)) continue
       this.emitControl(assignmentWarningControl(pending))
     }
   }
@@ -666,9 +699,14 @@ export class AgentLiveSync {
     await this._loadExternalSuppressions()
     const binding = this._binding(projectId)
     if (!binding) return
+    const dirtyPaths = await this._dirtyPathSet(binding)
+    const candidatePaths = dirtyPaths
+      ? [...paths].filter((item) => dirtyPaths.has(String(item || '').replaceAll('\\', '/')))
+      : [...paths]
+    if (!candidatePaths.length) return
     let files = []
     try {
-      for (const relativePath of paths) {
+      for (const relativePath of candidatePaths) {
         const descriptor = await this._fileDescriptor(binding, relativePath)
         if (descriptor) files.push(descriptor)
       }
@@ -817,6 +855,7 @@ export class AgentLiveSync {
       return
     }
     const outcomes = new Map()
+    const dirtyPathsByProject = new Map()
     const recordOutcome = (projectId, success) => {
       outcomes.set(projectId, (outcomes.get(projectId) ?? true) && success)
     }
@@ -830,12 +869,14 @@ export class AgentLiveSync {
           await fs.unlink(file).catch(() => {})
           continue
         }
+        if (await this._removeConvergedPending(file, pending, dirtyPathsByProject)) continue
         this.emitControl(assignmentWarningControl(pending))
         continue
       }
       if (pending.kind !== 'upload') continue
       const binding = this._binding(pending.projectId)
       if (!binding) continue
+      if (await this._removeConvergedPending(file, pending, dirtyPathsByProject)) continue
       try {
         const { api } = await this.loadContext()
         try {

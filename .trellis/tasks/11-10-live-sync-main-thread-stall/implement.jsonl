@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"约束 HTTP 主线程、Worker Thread、长扫描和关闭生命周期"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"定义实时批次、责任人确认、Git 收敛、SSE 和控制窗口现有契约"}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"约束任务索引、SQLite revision 和 Git 覆盖层收敛"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"约束测试、缓存、事务、Windows 真实服务和回归验收"}
+{"file":".trellis/tasks/11-10-live-sync-main-thread-stall/research/root-cause.md","reason":"提供误弹窗、主线程阻塞、耗时基线和时间线证据"}
