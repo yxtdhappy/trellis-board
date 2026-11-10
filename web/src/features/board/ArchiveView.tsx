@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useArchiveTasks } from '@/hooks/useArchiveTasks'
 import { formatArchiveTimestamp, sortArchivedTasks } from '@/lib/archive-sort.js'
+import { archiveAssigneeOptions } from '@/lib/team-client.js'
 import { Pagination } from './Pagination'
 import { SelectField } from './SelectField'
 import { initials, type BoardTask } from './task-view'
@@ -116,10 +117,7 @@ export function ArchiveView({
           ariaLabel="负责人"
           className="h-8 w-36 text-[11.5px]"
           value={(teamMode ? archive.assignee : assignee) || '__all'}
-          options={[
-            { value: '__all', label: '全部负责人' },
-            ...owners.map((name) => ({ value: name, label: name })),
-          ]}
+          options={archiveAssigneeOptions(owners, teamMode ? archive.assignee : assignee)}
           onChange={(next) => {
             const value = next === '__all' ? '' : next
             if (teamMode) archive.setAssignee(value)

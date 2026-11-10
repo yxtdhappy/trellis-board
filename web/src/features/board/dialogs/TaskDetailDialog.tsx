@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -31,7 +31,7 @@ import { ConditionChecks } from '../ConditionChecks'
 import { toast } from 'sonner'
 import { SelectField } from '../SelectField'
 import { priorityTone, stageTone, statusLabel, statusTone } from '../tone'
-import { assignmentActionState } from '@/lib/team-client.js'
+import { assignmentActionState, planEditingState } from '@/lib/team-client.js'
 import { AssigneeWarningDialog, type AssigneeWarningDetails } from './AssigneeWarningDialog'
 
 const ARTIFACTS = [
@@ -200,20 +200,36 @@ export function TaskDetailDialog({
       setBlockerKey('')
       setReason('')
     }
+    let cancelled = false
     setLoading(true)
     fetchTaskDetail(task)
       .then((payload) => {
+        if (cancelled) return
         const fresh = payload || task
         setDetail(fresh)
+        if (fresh.archived) setEditingPlan(false)
         if (!editingPlan) setAssignee(fresh.assignee || '')
       })
-      .catch((error: unknown) =>
-        toast.error(error instanceof Error ? error.message : '读取任务失败'),
-      )
-      .finally(() => setLoading(false))
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          toast.error(error instanceof Error ? error.message : '读取任务失败')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [editingPlan, open, task])
 
-  const current = detail || task
+  const current = useMemo<BoardTask | null>(() => {
+    if (!detail || (task && detail.taskKey !== task.taskKey)) return task
+    return {
+      ...detail,
+      archived: Boolean(detail.archived || task?.archived),
+    }
+  }, [detail, task])
   const progress = current ? taskProgress(current) : null
   const stage = current ? nextStage(current) : null
   const artifacts = readArtifacts(current)
@@ -222,6 +238,7 @@ export function TaskDetailDialog({
     assignee,
     assignees,
   )
+  const { readOnly: planReadOnly, canEdit: canEditPlan } = planEditingState(current)
 
   async function reloadDetail() {
     if (!task) return
@@ -268,6 +285,10 @@ export function TaskDetailDialog({
 
   async function savePlan() {
     if (!current) return
+    if (planReadOnly) {
+      setEditingPlan(false)
+      return
+    }
     await run(
       'plan',
       async (assigneeDecision) => {
@@ -391,20 +412,22 @@ export function TaskDetailDialog({
               <section className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2">
                   <h3 className="text-[11px] font-semibold text-muted-foreground">阶段证据</h3>
-                  <Button
-                    size="sm"
-                    className="ml-auto h-7 px-3 text-[11px] font-semibold"
-                    onClick={() => {
-                      setEditingPlan((value) => !value)
-                      setDueDate(current.execution?.dueDate || '')
-                      setMilestone(String(current.execution?.milestone || ''))
-                      setTags(taskTags(current).join(', '))
-                    }}
-                  >
-                    编辑计划
-                  </Button>
+                  {canEditPlan ? (
+                    <Button
+                      size="sm"
+                      className="ml-auto h-7 px-3 text-[11px] font-semibold"
+                      onClick={() => {
+                        setEditingPlan((value) => !value)
+                        setDueDate(current.execution?.dueDate || '')
+                        setMilestone(String(current.execution?.milestone || ''))
+                        setTags(taskTags(current).join(', '))
+                      }}
+                    >
+                      编辑计划
+                    </Button>
+                  ) : null}
                 </div>
-                {editingPlan ? (
+                {editingPlan && canEditPlan ? (
                   <div className="grid gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_1fr_auto]">
                     <div className="flex flex-col gap-1">
                       <Label className="text-[10px]">截止日期</Label>

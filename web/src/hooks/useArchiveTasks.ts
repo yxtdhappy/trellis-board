@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { queryTeamTasks, type TeamQueryPage } from '@/api/board'
 import { ApiError } from '@/api/request'
+import { teamRowToBoardTask } from '@/features/board/task-view'
 import { buildTaskQuery } from '@/lib/team-client.js'
 
 const PAGE_SIZE = 20
@@ -75,7 +76,10 @@ export function useArchiveTasks({
         )
         const result = await queryTeamTasks(query, null)
         if (currentRequest !== requestId.current || !result.page) return
-        setPage(result.page)
+        setPage({
+          ...result.page,
+          tasks: result.page.tasks.map((row) => teamRowToBoardTask(row as Record<string, unknown>)),
+        })
         setPageIndex(index)
         setError('')
       } catch (err) {

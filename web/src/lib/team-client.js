@@ -398,6 +398,14 @@ export function assignmentActionState(task = {}, assignee, assignees = []) {
   }
 }
 
+export function planEditingState(task = {}) {
+  const readOnly = Boolean(task?.archived)
+  return {
+    readOnly,
+    canEdit: Boolean(task) && !readOnly,
+  }
+}
+
 export function buildTaskQuery(filters = {}, { limit = TEAM_PAGE_LIMIT, cursor = null } = {}) {
   const params = new URLSearchParams()
   const add = (key, value) => {
@@ -424,6 +432,17 @@ export function buildTaskQuery(filters = {}, { limit = TEAM_PAGE_LIMIT, cursor =
   add('limit', Math.max(1, Math.min(200, Number(limit) || TEAM_PAGE_LIMIT)))
   add('cursor', cursor)
   return params.toString()
+}
+
+export function archiveAssigneeOptions(assignees = [], selected = '') {
+  const values = [
+    String(selected || '').trim(),
+    ...(Array.isArray(assignees) ? assignees.map(String) : []),
+  ].filter(Boolean)
+  return [
+    { value: '__all', label: '全部负责人' },
+    ...[...new Set(values)].map((value) => ({ value, label: value })),
+  ]
 }
 
 function projectBoardVersion(status, projectId) {

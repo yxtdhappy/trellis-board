@@ -48,10 +48,15 @@ export function assignmentActionState(
   assignee: unknown,
   assignees?: unknown[],
 ): { readOnly: boolean; canSubmit: boolean }
+export function planEditingState(task: unknown): { readOnly: boolean; canEdit: boolean }
 export function buildTaskQuery(
   filters: Record<string, unknown>,
   options?: { limit?: number; cursor?: string | null },
 ): string
+export function archiveAssigneeOptions(
+  assignees?: unknown[],
+  selected?: unknown,
+): Array<{ value: string; label: string }>
 export function shouldReloadTasks(status: unknown, previous: unknown): boolean
 export function assignmentVersion(assignment: unknown): string
 export function taskVersion(task: unknown): string

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import { escapeHtml } from '../web/src/lib/dom.js'
 import {
+  archiveAssigneeOptions,
   assignmentActionState,
   assignableProjectMembers,
   canWriteProject,
@@ -15,6 +16,7 @@ import {
   normalizeTaskPage,
   normalizeTeamTaskRow,
   normalizeTeamStatus,
+  planEditingState,
   redactSensitiveDetail,
   safeReturnTo,
   shouldReloadTasks,
@@ -57,6 +59,31 @@ test('团队查询参数保留服务端筛选并限制页大小', () => {
   )
   assert.equal(scoped.get('teamId'), 'team-a')
   assert.equal(scoped.get('projectIds'), 'p1')
+})
+
+test('归档负责人选择在选项刷新时保持并继续查询该负责人', () => {
+  assert.deepEqual(archiveAssigneeOptions(['alice', 'bob'], ''), [
+    { value: '__all', label: '全部负责人' },
+    { value: 'alice', label: 'alice' },
+    { value: 'bob', label: 'bob' },
+  ])
+  assert.deepEqual(archiveAssigneeOptions(['alice', 'yhj', 'alice'], 'yhj'), [
+    { value: '__all', label: '全部负责人' },
+    { value: 'yhj', label: 'yhj' },
+    { value: 'alice', label: 'alice' },
+  ])
+  assert.deepEqual(archiveAssigneeOptions([], 'yhj'), [
+    { value: '__all', label: '全部负责人' },
+    { value: 'yhj', label: 'yhj' },
+  ])
+  const query = new URLSearchParams(
+    buildTaskQuery({
+      assignee: 'yhj',
+      archived: true,
+    }),
+  )
+  assert.equal(query.get('assignee'), 'yhj')
+  assert.equal(query.get('archived'), '1')
 })
 
 test('任务页兼容驼峰和下划线响应', () => {
@@ -160,6 +187,21 @@ test('归档任务禁用派发选择并阻止提交', () => {
   assert.deepEqual(assignmentActionState(null, 'dev-a', ['dev-a']), {
     readOnly: false,
     canSubmit: false,
+  })
+})
+
+test('归档任务隐藏并阻止编辑计划字段', () => {
+  assert.deepEqual(planEditingState({ archived: false }), {
+    readOnly: false,
+    canEdit: true,
+  })
+  assert.deepEqual(planEditingState({ archived: true }), {
+    readOnly: true,
+    canEdit: false,
+  })
+  assert.deepEqual(planEditingState(null), {
+    readOnly: false,
+    canEdit: false,
   })
 })
 
