@@ -74,6 +74,28 @@ Worker 内会缓存各仓库最近结果，并根据事件判断是仓库级重�
 - 依赖行与其创建/解除事件必须处于同一事务；活动依赖边在写入前完成重复和环检测。
 - 目标仓库的任务 `task.json` 仍使用同步临时文件加 rename，保证文件原子替换。
 - 外部 `task.py` 使用 `spawn()` 和参数数组，不启用 shell；环境设置 `PYTHONUTF8=1`。
+- 团队 Git/Trellis 子进程超时后，`terminateTree()` 必须等到 Windows `taskkill /T /F` 完成或
+  到达有界超时，`runProcess()` 才能以原始超时错误 reject。调用方必须消费返回的 Promise，
+  fire-and-forget 位置要显式使用 `void`。
+- clone 和项目接入失败后的工作副本清理使用 `fs.rmSync()` 的 `maxRetries` 与 `retryDelay`；
+  清理失败只记录原始错误和清理错误，不能覆盖返回给调用方的业务错误。
+- `--filter=blob:none` 创建 promisor 仓库后，任何可能懒取对象的命令都必须继承发起操作的认证：
+  sparse-checkout/read-tree、初始化上下文检出、远端 tree/模板清单读取和 `ensureSparseTrellis()`
+  不得单独启动无认证 Git 子进程。后者使用项目绑定的凭据。
+- 操作执行超时统一在各自原值上增加 30 秒：`LOCAL_TIMEOUT=60s`、`REMOTE_TIMEOUT=210s`、
+  `PUSH_TIMEOUT=150s`、`PROBE_TIMEOUT=60s`、`TRELLIS_INIT_TIMEOUT=210s`；
+  SSH 主机扫描 45 秒、toolchain 预检 60 秒、团队 `task.py` 150 秒、
+  `runProcess` 默认 60 秒。
+- 探测速率窗口 60 秒、SSH 信任 TTL 5 分钟、taskkill fallback 2 秒和 HTTP 关闭等待
+  5 秒不是操作执行超时，不得随该矩阵一起放大。
+- promisor lazy fetch 还可能带来真实网络耗时。`sparse-checkout init` 使用本地 60 秒；
+  `set`、`read-tree`、checkout、merge、分叉恢复 rebase、clone 和远端 tree/模板清单读取
+  使用远端 210 秒，不能共用本地超时。
+- 公开的项目拉取、同步、推送、稀疏收敛和远端提交检查必须复用统一远端错误映射；原始子进程
+  超时转换为 `GIT_REMOTE_TIMEOUT`，已有 `TeamError` 不得被二次改写。
+- 定时刷新 scheduler 的失败日志必须保留 `name/code/status/message/details` 和兼容字段
+  `error`；非 `TeamError` 还要记录脱敏后的 stack/cause。团队服务的日志边界只接受经过统一
+  脱敏函数处理的对象，不能直接展开原始异常。
 
 新增长耗时逻辑时先判断是否会阻塞 HTTP 主线程。单纯数百毫秒内的配置读写可沿用同步模式；全仓库扫描、递归目录和大文件解析应留在 Worker 或明确的异步流程。
 

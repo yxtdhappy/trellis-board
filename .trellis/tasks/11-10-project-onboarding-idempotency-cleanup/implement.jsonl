@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"约束项目接入错误契约、Git/文件系统清理、SQLite 事务和路径安全"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"约束团队服务进程边界、Git 子进程超时、SSH 环境和错误分类"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"约束 Node 测试、失败回滚、日志安全和最终验证命令"}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"约束 SQLite BEGIN IMMEDIATE、并发写入和持久化失败处理"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"约束管理台冲突提示、项目列表刷新和异步错误处理"}

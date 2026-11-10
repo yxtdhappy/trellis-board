@@ -4,6 +4,7 @@ import path from 'node:path'
 import { normalizeTrellisAgentTools } from '../../shared/trellis-agent-tools.js'
 import { withTransaction } from '../database.js'
 import { appendAuditEvent } from './audit.js'
+import { errorSummary } from './error-diagnostics.js'
 import { ERROR_CODES, teamError } from './errors.js'
 import { normalizeGitRemote, readGitProject } from './git-manager.js'
 import { CAPABILITIES, authorizeProject, roleCanWrite } from './permissions.js'
@@ -42,6 +43,54 @@ function projectRow(db, projectId) {
   `)
       .get(projectId) || null
   )
+}
+
+function connectedProjectRow(db, teamId, remoteIdentityHash, syncBranch) {
+  return (
+    db
+      .prepare(`
+    SELECT
+      p.repository_id, p.sync_branch, p.sync_status,
+      r.name AS repository_name
+    FROM team_project p
+    JOIN repositories r ON r.id = p.repository_id
+    WHERE p.team_id = ?
+      AND p.remote_identity_hash = ?
+      AND p.sync_branch = ?
+    ORDER BY p.created_at, p.repository_id
+    LIMIT 1
+  `)
+      .get(teamId, remoteIdentityHash, syncBranch) || null
+  )
+}
+
+function projectAlreadyConnectedError(row) {
+  return teamError(
+    409,
+    ERROR_CODES.PROJECT_ALREADY_CONNECTED,
+    `项目 ${row.repository_name} 已在当前团队接入分支 ${row.sync_branch}`,
+    {
+      details: {
+        projectId: row.repository_id,
+        projectName: row.repository_name,
+        syncBranch: row.sync_branch,
+        syncStatus: row.sync_status,
+      },
+    },
+  )
+}
+
+function assertRepositoryNotConnected(db, teamId, repositoryId) {
+  const connected = projectRow(db, repositoryId)
+  if (!connected) return
+  if (connected.team_id === teamId) throw projectAlreadyConnectedError(connected)
+  throw teamError(409, ERROR_CODES.PROJECT_ALREADY_CONNECTED, '该项目已接入团队模式')
+}
+
+function assertProjectNotConnected(db, teamId, remoteIdentityHash, syncBranch) {
+  const row = connectedProjectRow(db, teamId, remoteIdentityHash, syncBranch)
+  if (!row) return
+  throw projectAlreadyConnectedError(row)
 }
 
 function storedAgentTools(value) {
@@ -172,6 +221,7 @@ export function createProjectService({
   gitManager,
   credentialService,
   taskIndex,
+  logger = console,
 }) {
   const projectsRoot = path.join(dataDir, 'projects')
 
@@ -356,13 +406,12 @@ export function createProjectService({
     if (existingRepositoryId) {
       existing = db.prepare('SELECT * FROM repositories WHERE id = ?').get(existingRepositoryId)
       if (!existing) throw teamError(404, ERROR_CODES.NOT_FOUND, '待升级项目不存在')
-      if (projectRow(db, existingRepositoryId)) {
-        throw teamError(409, ERROR_CODES.CONFLICT, '该项目已接入团队模式')
-      }
+      assertRepositoryNotConnected(db, teamId, existingRepositoryId)
       repositoryId = existing.id
     } else {
       repositoryId = crypto.randomUUID()
     }
+    assertProjectNotConnected(db, teamId, remote.identityHash, syncBranch)
     const workspaceKey = crypto.randomUUID()
     const existingWorkspace = db
       .prepare(`
@@ -401,6 +450,8 @@ export function createProjectService({
       const now = new Date().toISOString()
 
       withTransaction(db, () => {
+        if (existing) assertRepositoryNotConnected(db, teamId, repositoryId)
+        assertProjectNotConnected(db, teamId, remote.identityHash, syncBranch)
         if (!existing) {
           db.prepare(`
             INSERT INTO repositories(
@@ -466,9 +517,28 @@ export function createProjectService({
         if (path.resolve(target) !== expectedTarget) {
           throw new Error('拒绝清理非本次 UUID 的项目目录')
         }
-        fs.rmSync(expectedTarget, { recursive: true, force: true })
+        fs.rmSync(expectedTarget, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 100,
+        })
       } catch (cleanupError) {
         error.cleanupError = cleanupError
+        try {
+          logger?.warn?.('项目接入失败后的工作副本清理失败', {
+            projectId: repositoryId,
+            workspaceKey,
+            teamId,
+            actorUserId: actor.userId,
+            syncBranch,
+            remoteIdentityHash: remote.identityHash,
+            error: error?.message || String(error),
+            cleanupError: cleanupError?.message || String(cleanupError),
+          })
+        } catch {
+          // 日志失败不能覆盖原始接入错误。
+        }
       }
       throw error
     }
@@ -816,12 +886,7 @@ export function createProjectService({
           UPDATE team_project
           SET sync_status = ?, last_error = ?, updated_at = ?
           WHERE repository_id = ?
-        `).run(
-          nextStatus,
-          String(error.message || 'Git 同步失败').slice(0, 1000),
-          new Date().toISOString(),
-          projectId,
-        )
+        `).run(nextStatus, errorSummary(error, 'Git 同步失败'), new Date().toISOString(), projectId)
         taskIndex.incrementQueryRevision()
         throw error
       }
@@ -837,11 +902,7 @@ export function createProjectService({
           UPDATE team_project
           SET sync_status = 'stale', last_error = ?, updated_at = ?
           WHERE repository_id = ?
-        `).run(
-          String(error.message || '工具链校验失败').slice(0, 1000),
-          new Date().toISOString(),
-          projectId,
-        )
+        `).run(errorSummary(error, '工具链校验失败'), new Date().toISOString(), projectId)
         taskIndex.incrementQueryRevision()
         throw error
       }
@@ -883,11 +944,7 @@ export function createProjectService({
           UPDATE team_project
           SET sync_status = 'stale', last_error = ?, updated_at = ?
           WHERE repository_id = ?
-        `).run(
-          String(error.message || '项目扫描失败').slice(0, 1000),
-          new Date().toISOString(),
-          projectId,
-        )
+        `).run(errorSummary(error, '项目扫描失败'), new Date().toISOString(), projectId)
         taskIndex.incrementQueryRevision()
         throw error
       }

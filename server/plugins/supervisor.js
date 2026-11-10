@@ -331,12 +331,12 @@ class PluginProcess {
       this.exitPromise.then(() => true),
       new Promise((resolve) => setTimeout(() => resolve(false), graceMs)),
     ])
-    if (!exited && this.child) terminateTree(this.child)
+    if (!exited && this.child) await terminateTree(this.child)
     await Promise.race([this.exitPromise, new Promise((resolve) => setTimeout(resolve, graceMs))])
   }
 
   kill() {
-    if (this.child && !this.exited) terminateTree(this.child)
+    if (this.child && !this.exited) void terminateTree(this.child)
   }
 }
 

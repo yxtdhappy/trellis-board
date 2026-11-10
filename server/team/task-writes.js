@@ -240,7 +240,7 @@ export function createTaskWriteService({
         PYTHONUTF8: '1',
         TRELLIS_DEVELOPER: developerId,
       }),
-      timeoutMs: 120_000,
+      timeoutMs: 150_000,
     })
   }
 

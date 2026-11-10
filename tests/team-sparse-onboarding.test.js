@@ -6,6 +6,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { createGitManager, normalizeGitRemote } from '../server/team/git-manager.js'
+import { runProcess } from '../server/team/process.js'
 
 function makeRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-sparse-onboarding-'))
@@ -79,13 +80,14 @@ function createRemote(root, { withTrellis, agentPaths = [] }) {
   return { bare, seed, remoteUrl: pathToFileURL(bare).href }
 }
 
-function manager(root, trellisRunner) {
+function manager(root, trellisRunner, options = {}) {
   return createGitManager({
     db: null,
     config: testConfig(),
     dataDir: path.join(root, 'data'),
-    credentialService: null,
+    credentialService: options.credentialService || null,
     logger: { warn() {}, error() {}, info() {} },
+    runProcessImpl: options.runProcessImpl,
     trellisRunner,
   })
 }
@@ -97,6 +99,68 @@ function project(remoteUrl) {
     remoteUrl,
     syncBranch: 'dev',
   }
+}
+
+function fixtureHttpsCredential() {
+  return {
+    id: 'credential-1',
+    teamId: 'team-1',
+    name: 'fixture credential',
+    host: 'github.com',
+    authType: 'https_token',
+    username: 'fixture-user',
+    payload: {
+      token: 'fixture-token',
+    },
+  }
+}
+
+function gitOperation(args) {
+  if (args.includes('sparse-checkout')) {
+    if (args.includes('init')) return 'sparse-init'
+    if (args.includes('set')) return 'sparse-set'
+    return 'sparse-checkout'
+  }
+  return (
+    [
+      'clone',
+      'read-tree',
+      'checkout',
+      'ls-tree',
+      'show',
+      'merge',
+      'rebase',
+      'push',
+      'ls-remote',
+      'fetch',
+    ].find((action) => args.includes(action)) || null
+  )
+}
+
+function protectedGitCalls(calls) {
+  return calls
+    .map((call) => ({
+      ...call,
+      operation: gitOperation(call.args),
+    }))
+    .filter((call) => call.operation)
+}
+
+function hasFixtureAuthEnvironment(call) {
+  return (
+    call.options.env.GIT_ASKPASS_REQUIRE === 'force' &&
+    /askpass/.test(call.options.env.GIT_ASKPASS || '') &&
+    call.options.env.TRELLIS_GIT_USERNAME === 'fixture-user' &&
+    call.options.env.TRELLIS_GIT_SECRET === 'fixture-token'
+  )
+}
+
+function assertFixtureAuthEnvironment(call) {
+  assert.equal(hasFixtureAuthEnvironment(call), true, call.operation)
+}
+
+function assertCallTimeout(call, expected) {
+  assert.equal(call.options.timeoutMs, expected, call.operation)
 }
 
 function writeInitializedTrellis(cwd, developerId, agentTools = ['codex']) {
@@ -137,7 +201,13 @@ test('远端探测按目标分支读取 Agent 目录并清理临时克隆', asyn
   git(seed, ['push', '-u', 'origin', 'main'])
   git(seed, ['checkout', 'dev'])
 
-  const instance = manager(root)
+  const calls = []
+  const instance = manager(root, undefined, {
+    runProcessImpl: (command, args, options) => {
+      calls.push({ command, args, options })
+      return runProcess(command, args, options)
+    },
+  })
   const remote = normalizeGitRemote(remoteUrl, testConfig())
   const dev = await instance.probeRemote({
     actor: { userId: 'branch-probe-user' },
@@ -171,6 +241,49 @@ test('远端探测按目标分支读取 Agent 目录并清理临时克隆', asyn
       .filter((name) => name.startsWith('.probe-')),
     [],
   )
+  const probeCalls = calls.filter((call) => call.args.includes('--symref'))
+  assert.ok(probeCalls.length > 0)
+  probeCalls.forEach((call) => assertCallTimeout(call, 60_000))
+})
+
+test('SSH 主机扫描使用 45 秒操作超时', async (t) => {
+  const root = makeRoot()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const calls = []
+  const instance = manager(root, undefined, {
+    credentialService: {
+      listSshKnownHosts() {
+        return []
+      },
+    },
+    runProcessImpl: (command, args, options) => {
+      calls.push({ command, args, options })
+      return Promise.resolve({
+        code: 0,
+        signal: null,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+      })
+    },
+  })
+
+  await assert.rejects(
+    () =>
+      instance.probeRemote({
+        actor: { userId: 'ssh-scan-timeout-user' },
+        remote: normalizeGitRemote('ssh://git@git.example.com/group/repo.git', testConfig()),
+        credential: {
+          id: 'credential-ssh',
+          teamId: 'team-1',
+          authType: 'ssh_key',
+        },
+      }),
+    (error) => error.code === 'SSH_HOST_UNREACHABLE',
+  )
+  const scanCalls = calls.filter((call) => call.command === 'ssh-keyscan')
+  assert.equal(scanCalls.length, 1)
+  assertCallTimeout(scanCalls[0], 45_000)
 })
 
 test('远端 tree 缺少被忽略的 Agent 目录时按模板清单识别', async (t) => {
@@ -248,6 +361,155 @@ test('已有 .trellis 的项目只检出 .trellis', async (t) => {
   assert.equal(fs.existsSync(path.join(result.target, 'README.md')), false)
   assert.equal(fs.existsSync(path.join(result.target, 'src', 'index.js')), false)
   assert.equal(fs.existsSync(path.join(result.target, '.trellis', 'scripts', 'task.py')), true)
+})
+
+test('partial clone 的稀疏检出继承认证并使用远端超时', async (t) => {
+  const root = makeRoot()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const { bare, remoteUrl } = createRemote(root, { withTrellis: false })
+  const calls = []
+  const runProcessImpl = (command, args, options) => {
+    calls.push({ command, args, options })
+    return runProcess(command, args, options)
+  }
+
+  const result = await manager(
+    root,
+    async ({ cwd, leadTrellisDevId }) => {
+      writeInitializedTrellis(cwd, leadTrellisDevId)
+      return { code: 0, stdout: 'initialized', stderr: '' }
+    },
+    { runProcessImpl },
+  ).cloneForTeam(project(remoteUrl), fixtureHttpsCredential(), {
+    agentTools: ['codex'],
+    leadTrellisDevId: 'alice',
+  })
+
+  assert.equal(result.initialized, true)
+  assert.equal(git(bare, ['rev-parse', 'dev']).stdout.trim(), result.remoteCommitSha)
+  const protectedCalls = protectedGitCalls(calls)
+  const operations = new Set(protectedCalls.map((call) => call.operation))
+  for (const operation of [
+    'clone',
+    'checkout',
+    'sparse-init',
+    'sparse-set',
+    'read-tree',
+    'ls-tree',
+    'show',
+    'push',
+    'ls-remote',
+  ]) {
+    assert.equal(operations.has(operation), true, `缺少 Git 操作: ${operation}`)
+  }
+  for (const operation of [
+    'clone',
+    'checkout',
+    'sparse-init',
+    'sparse-set',
+    'read-tree',
+    'push',
+    'ls-remote',
+  ]) {
+    const operationCalls = protectedCalls.filter((call) => call.operation === operation)
+    assert.ok(operationCalls.length > 0, operation)
+    operationCalls.forEach(assertFixtureAuthEnvironment)
+  }
+  for (const operation of ['ls-tree', 'show']) {
+    assert.ok(
+      protectedCalls.some(
+        (call) => call.operation === operation && hasFixtureAuthEnvironment(call),
+      ),
+      `${operation} 未继承认证环境`,
+    )
+  }
+
+  protectedCalls
+    .filter((call) => call.operation === 'sparse-init')
+    .forEach((call) => assertCallTimeout(call, 60_000))
+  protectedCalls
+    .filter((call) => ['sparse-set', 'read-tree', 'checkout'].includes(call.operation))
+    .forEach((call) => assertCallTimeout(call, 210_000))
+  assert.ok(
+    protectedCalls.some(
+      (call) => call.operation === 'ls-tree' && call.options.timeoutMs === 210_000,
+    ),
+    'readRemoteTree 的 ls-tree 未使用 210000ms 超时',
+  )
+  protectedCalls
+    .filter((call) => call.operation === 'show')
+    .forEach((call) => assertCallTimeout(call, 210_000))
+  protectedCalls
+    .filter((call) => call.operation === 'ls-remote')
+    .forEach((call) => assertCallTimeout(call, 210_000))
+  protectedCalls
+    .filter((call) => call.operation === 'clone')
+    .forEach((call) => assertCallTimeout(call, 210_000))
+  protectedCalls
+    .filter((call) => call.operation === 'push')
+    .forEach((call) => assertCallTimeout(call, 150_000))
+  const localRevParseCalls = calls.filter((call) => call.args.includes('rev-parse'))
+  assert.ok(localRevParseCalls.length > 0)
+  localRevParseCalls.forEach((call) => assertCallTimeout(call, 60_000))
+  const authContexts = new Map()
+  for (const call of protectedCalls.filter((item) => item.options.env.GIT_ASKPASS)) {
+    const askpass = call.options.env.GIT_ASKPASS
+    if (!authContexts.has(askpass)) authContexts.set(askpass, [])
+    authContexts.get(askpass).push(call.operation)
+  }
+  assert.equal(
+    authContexts.size,
+    1,
+    [...authContexts.values()].map((operations) => operations.join(',')).join(' | '),
+  )
+  const pushIndex = calls.findIndex((call) => gitOperation(call.args) === 'push')
+  assert.ok(pushIndex >= 0)
+  assert.equal(
+    calls
+      .slice(pushIndex + 1)
+      .some(
+        (call) =>
+          ['sparse-init', 'sparse-set', 'read-tree'].includes(gitOperation(call.args)) &&
+          hasFixtureAuthEnvironment(call),
+      ),
+    true,
+    'push 后未使用原认证执行最终稀疏收敛',
+  )
+})
+
+test('稀疏检出失败消息保留脱敏后的 Git 输出', async (t) => {
+  const root = makeRoot()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const { remoteUrl } = createRemote(root, { withTrellis: true })
+  const credential = fixtureHttpsCredential()
+
+  await assert.rejects(
+    () =>
+      manager(root, undefined, {
+        runProcessImpl: (command, args, options) => {
+          if (args.includes('read-tree')) {
+            return Promise.resolve({
+              code: 1,
+              signal: null,
+              stdout: '',
+              stderr: "fatal: could not read Username for 'https://github.com': fixture-token",
+              truncated: false,
+            })
+          }
+          return runProcess(command, args, options)
+        },
+      }).cloneForTeam(project(remoteUrl), credential, {
+        agentTools: ['codex'],
+        leadTrellisDevId: 'alice',
+      }),
+    (error) => {
+      assert.equal(error.code, 'GIT_SPARSE_CHECKOUT_FAILED')
+      assert.match(error.message, /无法收敛项目工作副本：fatal: could not read Username/)
+      assert.match(error.message, /\[redacted\]/)
+      assert.equal(error.message.includes('fixture-token'), false)
+      return true
+    },
+  )
 })
 
 test('已有 .trellis 且没有缺失 Agent 时跳过初始化', async (t) => {
@@ -413,15 +675,25 @@ test('初始化推送遇到远端分叉时 fetch + rebase 后重试一次', asyn
   const root = makeRoot()
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const { bare, seed, remoteUrl } = createRemote(root, { withTrellis: false })
+  const calls = []
 
-  const result = await manager(root, async ({ cwd, leadTrellisDevId }) => {
-    writeInitializedTrellis(cwd, leadTrellisDevId)
-    write(path.join(seed, 'README.md'), '# concurrent remote change\n')
-    git(seed, ['add', '--', 'README.md'])
-    git(seed, ['commit', '-m', 'concurrent remote change'])
-    git(seed, ['push', 'origin', 'dev'])
-    return { code: 0, stdout: 'initialized', stderr: '' }
-  }).cloneForTeam(project(remoteUrl), null, {
+  const result = await manager(
+    root,
+    async ({ cwd, leadTrellisDevId }) => {
+      writeInitializedTrellis(cwd, leadTrellisDevId)
+      write(path.join(seed, 'README.md'), '# concurrent remote change\n')
+      git(seed, ['add', '--', 'README.md'])
+      git(seed, ['commit', '-m', 'concurrent remote change'])
+      git(seed, ['push', 'origin', 'dev'])
+      return { code: 0, stdout: 'initialized', stderr: '' }
+    },
+    {
+      runProcessImpl: (command, args, options) => {
+        calls.push({ command, args, options })
+        return runProcess(command, args, options)
+      },
+    },
+  ).cloneForTeam(project(remoteUrl), fixtureHttpsCredential(), {
     agentTools: ['codex'],
     leadTrellisDevId: 'alice',
   })
@@ -442,6 +714,10 @@ test('初始化推送遇到远端分叉时 fetch + rebase 后重试一次', asyn
     fs.readdirSync(result.target).filter((name) => name !== '.git'),
     ['.trellis'],
   )
+  const rebaseCalls = protectedGitCalls(calls).filter((call) => call.operation === 'rebase')
+  assert.equal(rebaseCalls.length, 1)
+  assertFixtureAuthEnvironment(rebaseCalls[0])
+  assertCallTimeout(rebaseCalls[0], 210_000)
 })
 
 test('初始化产生越界文件时拒绝推送并清理工作副本', async (t) => {
@@ -600,5 +876,243 @@ test('干净完整克隆可以收敛为 .trellis 稀疏检出', async (t) => {
   assert.deepEqual(
     fs.readdirSync(worktree).filter((name) => name !== '.git'),
     ['.trellis'],
+  )
+})
+
+test('fetchAndFastForward 的 merge 继承认证并使用远端超时', async (t) => {
+  const root = makeRoot()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const { seed, remoteUrl } = createRemote(root, { withTrellis: true })
+  const worktree = path.join(root, 'data', 'projects', 'workspace-1')
+  git(root, ['-c', 'core.autocrlf=false', 'clone', '--branch', 'dev', remoteUrl, worktree])
+  write(path.join(seed, 'README.md'), '# fetched remote change\n')
+  git(seed, ['add', '--', 'README.md'])
+  git(seed, ['commit', '-m', 'remote change'])
+  git(seed, ['push', 'origin', 'dev'])
+  const calls = []
+  const credential = fixtureHttpsCredential()
+  const instance = manager(root, undefined, {
+    credentialService: {
+      resolveProjectCredential() {
+        return credential
+      },
+    },
+    runProcessImpl: (command, args, options) => {
+      calls.push({ command, args, options })
+      return runProcess(command, args, options)
+    },
+  })
+
+  await instance.fetchAndFastForward({
+    id: 'project-1',
+    workspaceKey: 'workspace-1',
+    teamId: 'team-1',
+    credentialId: 'credential-1',
+    path: worktree,
+    remoteUrl,
+    syncBranch: 'dev',
+  })
+
+  assert.equal(
+    fs.readFileSync(path.join(worktree, 'README.md'), 'utf8'),
+    '# fetched remote change\n',
+  )
+  const mergeCalls = protectedGitCalls(calls).filter((call) => call.operation === 'merge')
+  assert.equal(mergeCalls.length, 1)
+  assertFixtureAuthEnvironment(mergeCalls[0])
+  assertCallTimeout(mergeCalls[0], 210_000)
+})
+
+test('fetchAndFastForward 将 promisor lazy-fetch 超时映射为 TeamError', async (t) => {
+  const root = makeRoot()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const { remoteUrl } = createRemote(root, { withTrellis: true })
+  const worktree = path.join(root, 'data', 'projects', 'workspace-1')
+  git(root, ['-c', 'core.autocrlf=false', 'clone', '--branch', 'dev', remoteUrl, worktree])
+  const credential = fixtureHttpsCredential()
+  const instance = manager(root, undefined, {
+    credentialService: {
+      resolveProjectCredential() {
+        return credential
+      },
+    },
+    runProcessImpl: (command, args, options) => {
+      if (args.includes('merge')) {
+        return Promise.reject(new Error('git 执行超过 210000ms，已终止'))
+      }
+      return runProcess(command, args, options)
+    },
+  })
+
+  await assert.rejects(
+    () =>
+      instance.fetchAndFastForward({
+        id: 'project-1',
+        workspaceKey: 'workspace-1',
+        teamId: 'team-1',
+        credentialId: 'credential-1',
+        path: worktree,
+        remoteUrl,
+        syncBranch: 'dev',
+      }),
+    (error) => {
+      assert.equal(error.name, 'TeamError')
+      assert.equal(error.status, 504)
+      assert.equal(error.code, 'GIT_REMOTE_TIMEOUT')
+      assert.match(error.message, /同步项目超时/)
+      return true
+    },
+  )
+})
+
+test('pushCommit 分叉恢复的 rebase 继承认证并使用远端超时', async (t) => {
+  const root = makeRoot()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const { bare, seed, remoteUrl } = createRemote(root, { withTrellis: true })
+  const worktree = path.join(root, 'data', 'projects', 'workspace-1')
+  git(root, ['-c', 'core.autocrlf=false', 'clone', '--branch', 'dev', remoteUrl, worktree])
+  git(worktree, ['config', 'user.name', 'Push Test'])
+  git(worktree, ['config', 'user.email', 'push@example.invalid'])
+  write(path.join(worktree, '.trellis', 'workflow.md'), '# local workflow change\n')
+  git(worktree, ['add', '--', '.trellis/workflow.md'])
+  git(worktree, ['commit', '-m', 'local workflow change'])
+  const localCommitSha = git(worktree, ['rev-parse', 'HEAD']).stdout.trim()
+  write(path.join(seed, 'README.md'), '# concurrent remote change\n')
+  git(seed, ['add', '--', 'README.md'])
+  git(seed, ['commit', '-m', 'remote change before push'])
+  git(seed, ['push', 'origin', 'dev'])
+  const calls = []
+  const credential = fixtureHttpsCredential()
+  const instance = manager(root, undefined, {
+    credentialService: {
+      resolveProjectCredential() {
+        return credential
+      },
+    },
+    runProcessImpl: (command, args, options) => {
+      calls.push({ command, args, options })
+      return runProcess(command, args, options)
+    },
+  })
+
+  const result = await instance.pushCommit(
+    {
+      ...project(remoteUrl),
+      teamId: 'team-1',
+      credentialId: 'credential-1',
+      path: worktree,
+    },
+    { id: 'operation-1', operationType: 'update' },
+    localCommitSha,
+  )
+
+  assert.equal(result.status, 'pushed')
+  assert.equal(git(bare, ['rev-parse', 'dev']).stdout.trim(), result.remoteCommitSha)
+  assert.equal(
+    git(bare, ['show', `${result.remoteCommitSha}:README.md`]).stdout,
+    '# concurrent remote change\n',
+  )
+  assert.equal(
+    git(bare, ['show', `${result.remoteCommitSha}:.trellis/workflow.md`]).stdout,
+    '# local workflow change\n',
+  )
+  const rebaseCalls = protectedGitCalls(calls).filter((call) => call.operation === 'rebase')
+  assert.equal(rebaseCalls.length, 1)
+  assertFixtureAuthEnvironment(rebaseCalls[0])
+  assertCallTimeout(rebaseCalls[0], 210_000)
+})
+
+test('ensureSparseTrellis 使用项目凭据执行懒取和 read-tree', async (t) => {
+  const root = makeRoot()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const { remoteUrl } = createRemote(root, { withTrellis: true })
+  const worktree = path.join(root, 'data', 'projects', 'workspace-1')
+  git(root, ['-c', 'core.autocrlf=false', 'clone', '--branch', 'dev', remoteUrl, worktree])
+  const calls = []
+  let resolvedCredential = false
+  const credential = fixtureHttpsCredential()
+  const instance = manager(root, undefined, {
+    credentialService: {
+      resolveProjectCredential() {
+        resolvedCredential = true
+        return credential
+      },
+    },
+    runProcessImpl: (command, args, options) => {
+      calls.push({ command, args, options })
+      return runProcess(command, args, options)
+    },
+  })
+
+  await instance.ensureSparseTrellis({
+    id: 'project-1',
+    workspaceKey: 'workspace-1',
+    path: worktree,
+    remoteUrl,
+    syncBranch: 'dev',
+  })
+
+  assert.equal(resolvedCredential, true)
+  const protectedCalls = protectedGitCalls(calls).filter(
+    (call) =>
+      call.operation === 'sparse-init' ||
+      call.operation === 'sparse-set' ||
+      call.operation === 'read-tree',
+  )
+  assert.deepEqual(
+    new Set(protectedCalls.map((call) => call.operation)),
+    new Set(['sparse-init', 'sparse-set', 'read-tree']),
+  )
+  protectedCalls.forEach(assertFixtureAuthEnvironment)
+  protectedCalls
+    .filter((call) => call.operation === 'sparse-init')
+    .forEach((call) => assertCallTimeout(call, 60_000))
+  protectedCalls
+    .filter((call) => call.operation === 'sparse-set' || call.operation === 'read-tree')
+    .forEach((call) => assertCallTimeout(call, 210_000))
+})
+
+test('ensureSparseTrellis 凭据解析失败时不回退为无认证懒取', async (t) => {
+  const root = makeRoot()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const { remoteUrl } = createRemote(root, { withTrellis: true })
+  const worktree = path.join(root, 'data', 'projects', 'workspace-1')
+  git(root, ['-c', 'core.autocrlf=false', 'clone', '--branch', 'dev', remoteUrl, worktree])
+  const calls = []
+  const resolutionError = Object.assign(new Error('测试凭据解析失败'), {
+    name: 'TeamError',
+    status: 409,
+    code: 'GIT_CREDENTIAL_KEY_MISSING',
+  })
+  const instance = manager(root, undefined, {
+    credentialService: {
+      resolveProjectCredential() {
+        throw resolutionError
+      },
+    },
+    runProcessImpl: (command, args, options) => {
+      calls.push({ command, args, options })
+      return runProcess(command, args, options)
+    },
+  })
+
+  await assert.rejects(
+    () =>
+      instance.ensureSparseTrellis({
+        id: 'project-1',
+        workspaceKey: 'workspace-1',
+        teamId: 'team-1',
+        credentialId: 'credential-1',
+        path: worktree,
+        remoteUrl,
+        syncBranch: 'dev',
+      }),
+    (error) => error === resolutionError,
+  )
+  assert.equal(
+    protectedGitCalls(calls).some((call) =>
+      ['sparse-init', 'sparse-set', 'read-tree'].includes(call.operation),
+    ),
+    false,
   )
 })

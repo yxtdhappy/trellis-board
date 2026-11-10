@@ -65,6 +65,17 @@ import assert from "node:assert/strict";
 - E2E 文本判断至少覆盖计划、否定、完成和表格结论。
 - 依赖测试至少覆盖缺失、自引用、重复、空/超长原因、二/三节点循环、事件失败回滚、解除历史、重开和重新创建。
 - 迁移测试至少覆盖新库 v8、v6/v7 -> v8、源版本备份、失败回滚和大于 v8 拒绝。
+- 项目接入测试至少覆盖 clone 前重复冲突、事务内并发去重、同仓库多分支、
+  Windows 进程树超时退出、清理失败时的原始错误保留和诊断日志。
+- partial clone 测试至少断言 sparse-checkout、read-tree、远端 tree/模板清单读取和
+  `ensureSparseTrellis()` 继承认证环境；失败消息断言保留脱敏后的 Git 输出。
+- promisor lazy-fetch 测试必须区分 `sparse-checkout init` 与 `set`，断言 init 为 60000ms，
+  clone/set/read-tree/checkout/merge/rebase 和远端 tree/模板清单读取为 210000ms；
+  push 为 150000ms，本地 Git 默认值为 60000ms。
+- 错误诊断测试至少覆盖 TeamError 结构化字段、非 TeamError 的 stack/cause、递归对象与循环引用、
+  Authorization/Cookie/JWT/复合 token 键脱敏、绝对路径脱敏、`last_error` 的 `code: message`
+  格式以及 1000 字符上限；结构化详情还必须验证总长度预算，并断言
+  `AUTHORIZATION_REQUIRED`、`TOKEN_EXPIRED` 等错误 code 不被误脱敏。
 
 ## 代码风格
 

@@ -117,6 +117,96 @@ test('项目接入克隆后工具链失败会清理本次 UUID 工作副本', as
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM repositories').get().count, 0)
 })
 
+test('项目接入清理失败时保留工具链错误并记录清理错误', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-cleanup-log-'))
+  const dataPath = path.join(root, 'data')
+  const originalRmSync = fs.rmSync
+  const warnings = []
+  let cleanupTarget = null
+  const db = openDatabase({
+    databaseFile: path.join(dataPath, 'board.sqlite'),
+    fallbackRepositories: [],
+    importLegacyRepositories: false,
+    legacyJsonImport: false,
+    logger: SILENT_LOGGER,
+  })
+  t.after(() => {
+    fs.rmSync = originalRmSync
+    db.close()
+    originalRmSync(root, { recursive: true, force: true })
+  })
+  seedTeam({ db })
+  const lead = await createUser(db, {
+    username: 'cleanup-log-lead',
+    displayName: '清理日志负责人',
+    password: 'Cleanup-Log-Password-123',
+    systemAdmin: false,
+    mustChangePassword: false,
+  })
+  addTeamMember({ db }, 't1', lead.id, 'member')
+  const projectService = createProjectService({
+    db,
+    config: testConfig(),
+    dataDir: dataPath,
+    logger: {
+      warn(message, context) {
+        warnings.push({ message, context })
+      },
+    },
+    gitManager: {
+      async assertValidBranch(branch) {
+        return branch
+      },
+      async cloneForTeam(project) {
+        cleanupTarget = path.resolve(dataPath, 'projects', project.workspaceKey)
+        fs.mkdirSync(cleanupTarget, { recursive: true })
+        fs.writeFileSync(path.join(cleanupTarget, 'README.md'), 'clone')
+        return { target: cleanupTarget, initialized: true, initializedPaths: [] }
+      },
+    },
+    taskIndex: {
+      incrementQueryRevision() {},
+    },
+  })
+  fs.rmSync = (target, options) => {
+    if (cleanupTarget && path.resolve(String(target)) === cleanupTarget) {
+      const error = new Error('simulated EPERM')
+      error.code = 'EPERM'
+      throw error
+    }
+    return originalRmSync(target, options)
+  }
+
+  await assert.rejects(
+    projectService.connect(
+      { userId: '11111111-1111-4111-8111-111111111111', systemAdmin: true },
+      {
+        teamId: 't1',
+        name: '清理失败项目',
+        remoteUrl: 'https://example.com/cleanup-failure.git',
+        syncBranch: 'main',
+        agentTools: ['codex'],
+        leadUserId: lead.id,
+        leadTrellisDevId: 'cleanup-log-lead',
+      },
+    ),
+    (error) => {
+      assert.equal(error.code, 'TOOLCHAIN_MISMATCH')
+      assert.equal(error.cleanupError.code, 'EPERM')
+      return true
+    },
+  )
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM repositories').get().count, 0)
+  assert.equal(
+    warnings.some(
+      (entry) =>
+        entry.message === '项目接入失败后的工作副本清理失败' &&
+        entry.context.cleanupError.includes('simulated EPERM'),
+    ),
+    true,
+  )
+})
+
 test('项目接入在 clone 前拒绝空工具、未知工具、无效负责人和 developer ID', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-connect-validation-'))
   const dataPath = path.join(root, 'data')
@@ -308,6 +398,190 @@ test('项目接入持久化并审计已有与本次初始化 Agent 的并集', a
   assert.equal(detail.targetCommit, 'a'.repeat(40))
 })
 
+test('同一团队、远端和同步分支重复接入在 clone 前返回冲突', async (t) => {
+  const harness = await createProjectConnectHarness(t, {
+    username: 'repeat-connect-lead',
+  })
+  const input = harness.input({ name: '幂等项目' })
+
+  const first = await harness.projectService.connect(harness.actor, input)
+  await assert.rejects(
+    () =>
+      harness.projectService.connect(harness.actor, {
+        ...input,
+        name: '重复接入项目',
+      }),
+    (error) => {
+      assert.equal(error.status, 409)
+      assert.equal(error.code, 'PROJECT_ALREADY_CONNECTED')
+      assert.deepEqual(error.details, {
+        projectId: first.project.id,
+        projectName: '幂等项目',
+        syncBranch: 'main',
+        syncStatus: 'provisioning',
+      })
+      return true
+    },
+  )
+
+  assert.equal(harness.cloneCalls(), 1)
+  assert.equal(harness.db.prepare('SELECT COUNT(*) AS count FROM team_project').get().count, 1)
+})
+
+test('显式升级已接入的本地仓库返回统一冲突错误', async (t) => {
+  const harness = await createProjectConnectHarness(t, {
+    username: 'upgrade-connect-lead',
+  })
+  const now = new Date().toISOString()
+  harness.db
+    .prepare(`
+    INSERT INTO repositories(id, name, path, path_key, position, created_at, updated_at)
+    VALUES ('local-upgrade', '本地升级项目', ?, ?, 0, ?, ?)
+  `)
+    .run(path.join(harness.projectsRoot, 'local-upgrade'), 'local-upgrade', now, now)
+  const input = harness.input({
+    name: '本地升级项目',
+    repositoryId: 'local-upgrade',
+  })
+
+  await harness.projectService.connect(harness.actor, input)
+  await assert.rejects(
+    () => harness.projectService.connect(harness.actor, input),
+    (error) => {
+      assert.equal(error.status, 409)
+      assert.equal(error.code, 'PROJECT_ALREADY_CONNECTED')
+      assert.equal(error.details.projectId, 'local-upgrade')
+      return true
+    },
+  )
+
+  assert.equal(harness.cloneCalls(), 1)
+})
+
+test('显式升级其他团队项目不泄漏项目详情', async (t) => {
+  const harness = await createProjectConnectHarness(t, {
+    username: 'cross-team-upgrade-lead',
+  })
+  const now = new Date().toISOString()
+  seedTeam({ db: harness.db }, 't2')
+  harness.db
+    .prepare(`
+    INSERT INTO repositories(id, name, path, path_key, position, created_at, updated_at)
+    VALUES ('other-team-repo', '其他团队项目', ?, ?, 0, ?, ?)
+  `)
+    .run(path.join(harness.projectsRoot, 'other-team-repo'), 'other-team-repo', now, now)
+  harness.db
+    .prepare(`
+    INSERT INTO team_project(
+      repository_id, team_id, workspace_key, remote_url, remote_identity_hash,
+      sync_branch, trusted_task_toolchain_sha256, sync_status, created_at, updated_at
+    ) VALUES ('other-team-repo', 't2', 'other-team-workspace',
+      'https://example.com/other-team.git', ?, 'main', ?, 'current', ?, ?)
+  `)
+    .run('f'.repeat(64), 'a'.repeat(64), now, now)
+
+  await assert.rejects(
+    () =>
+      harness.projectService.connect(
+        harness.actor,
+        harness.input({ repositoryId: 'other-team-repo' }),
+      ),
+    (error) => {
+      assert.equal(error.status, 409)
+      assert.equal(error.code, 'PROJECT_ALREADY_CONNECTED')
+      assert.equal(error.details, null)
+      assert.equal(error.message.includes('其他团队项目'), false)
+      return true
+    },
+  )
+  assert.equal(harness.cloneCalls(), 0)
+})
+
+test('并发升级同一本地仓库到不同团队时不泄漏失败方的项目详情', async (t) => {
+  const harness = await createProjectConnectHarness(t, {
+    username: 'cross-team-race-lead',
+    delayClone: true,
+  })
+  seedTeam({ db: harness.db }, 't2')
+  addTeamMember({ db: harness.db }, 't2', harness.actor.userId, 'member')
+  const now = new Date().toISOString()
+  harness.db
+    .prepare(`
+    INSERT INTO repositories(id, name, path, path_key, position, created_at, updated_at)
+    VALUES ('cross-team-race-repo', '跨团队竞态项目', ?, ?, 0, ?, ?)
+  `)
+    .run(path.join(harness.projectsRoot, 'cross-team-race-repo'), 'cross-team-race-repo', now, now)
+  const input = harness.input({
+    name: '跨团队竞态项目',
+    repositoryId: 'cross-team-race-repo',
+  })
+
+  const results = await Promise.allSettled([
+    harness.projectService.connect(harness.actor, input),
+    harness.projectService.connect(harness.actor, { ...input, teamId: 't2' }),
+  ])
+  const fulfilled = results.filter((result) => result.status === 'fulfilled')
+  const rejected = results.filter((result) => result.status === 'rejected')
+
+  assert.equal(fulfilled.length, 1)
+  assert.equal(rejected.length, 1)
+  assert.equal(rejected[0].reason.status, 409)
+  assert.equal(rejected[0].reason.code, 'PROJECT_ALREADY_CONNECTED')
+  assert.equal(rejected[0].reason.details, null)
+  assert.equal(rejected[0].reason.message.includes('跨团队竞态项目'), false)
+  assert.equal(harness.cloneCalls(), 2)
+  assert.equal(harness.db.prepare('SELECT COUNT(*) AS count FROM team_project').get().count, 1)
+})
+
+test('并发重复接入最多写入一个团队项目', async (t) => {
+  const harness = await createProjectConnectHarness(t, {
+    username: 'concurrent-connect-lead',
+    delayClone: true,
+  })
+  const input = harness.input({ name: '并发接入项目' })
+
+  const results = await Promise.allSettled([
+    harness.projectService.connect(harness.actor, input),
+    harness.projectService.connect(harness.actor, input),
+  ])
+  const fulfilled = results.filter((result) => result.status === 'fulfilled')
+  const rejected = results.filter((result) => result.status === 'rejected')
+
+  assert.equal(fulfilled.length, 1)
+  assert.equal(rejected.length, 1)
+  assert.equal(rejected[0].reason.status, 409)
+  assert.equal(rejected[0].reason.code, 'PROJECT_ALREADY_CONNECTED')
+  assert.equal(harness.cloneCalls(), 2)
+  assert.equal(harness.db.prepare('SELECT COUNT(*) AS count FROM team_project').get().count, 1)
+  const projectDirectories = fs
+    .readdirSync(harness.projectsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+  assert.equal(projectDirectories.length, 1)
+})
+
+test('同一远端仓库的不同同步分支可以分别接入', async (t) => {
+  const harness = await createProjectConnectHarness(t, {
+    username: 'branch-connect-lead',
+  })
+  const input = harness.input({ name: '多分支项目' })
+
+  await harness.projectService.connect(harness.actor, {
+    ...input,
+    syncBranch: 'dev',
+  })
+  await harness.projectService.connect(harness.actor, {
+    ...input,
+    syncBranch: 'main',
+  })
+
+  assert.equal(harness.cloneCalls(), 2)
+  const branches = harness.db
+    .prepare('SELECT sync_branch FROM team_project ORDER BY sync_branch')
+    .all()
+    .map((row) => row.sync_branch)
+  assert.deepEqual(branches, ['dev', 'main'])
+})
+
 test('首管理员 CLI 只初始化一次且不会导入本机默认仓库', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-cli-'))
   const databaseFile = path.join(root, 'data', 'board.sqlite')
@@ -497,6 +771,83 @@ function addTeamMember(runtime, teamId, userId, role = 'member') {
     VALUES (?, ?, ?, ?, ?)
   `)
     .run(teamId, userId, role, now, now)
+}
+
+async function createProjectConnectHarness(t, { username, delayClone = false }) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-connect-idempotency-'))
+  const dataPath = path.join(root, 'data')
+  const projectsRoot = path.join(dataPath, 'projects')
+  const db = openDatabase({
+    databaseFile: path.join(dataPath, 'board.sqlite'),
+    fallbackRepositories: [],
+    importLegacyRepositories: false,
+    legacyJsonImport: false,
+    logger: SILENT_LOGGER,
+  })
+  t.after(() => {
+    db.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  seedTeam({ db })
+  const lead = await createUser(db, {
+    username,
+    displayName: '接入测试负责人',
+    password: 'Connect-Harness-Password-123',
+    systemAdmin: false,
+    mustChangePassword: false,
+  })
+  addTeamMember({ db }, 't1', lead.id, 'member')
+
+  let cloneCount = 0
+  const projectService = createProjectService({
+    db,
+    config: testConfig(),
+    dataDir: dataPath,
+    gitManager: {
+      async assertValidBranch(branch) {
+        return branch
+      },
+      async cloneForTeam(project) {
+        cloneCount += 1
+        if (delayClone) {
+          await new Promise((resolve) => setImmediate(resolve))
+        }
+        const target = path.join(projectsRoot, project.workspaceKey)
+        fs.mkdirSync(path.join(target, '.trellis', 'scripts'), { recursive: true })
+        fs.writeFileSync(path.join(target, '.trellis', 'scripts', 'task.py'), '# task tool\n')
+        return {
+          target,
+          initialized: true,
+          initializedPaths: [],
+          existingAgentTools: [],
+          initializedAgentTools: ['codex'],
+        }
+      },
+    },
+    taskIndex: {
+      incrementQueryRevision() {},
+    },
+  })
+
+  return {
+    db,
+    projectsRoot,
+    projectService,
+    actor: { userId: lead.id, systemAdmin: true },
+    cloneCalls: () => cloneCount,
+    input(overrides = {}) {
+      return {
+        teamId: 't1',
+        name: '接入测试项目',
+        remoteUrl: 'https://example.com/connect-idempotency.git',
+        syncBranch: 'main',
+        agentTools: ['codex'],
+        leadUserId: lead.id,
+        leadTrellisDevId: username,
+        ...overrides,
+      }
+    },
+  }
 }
 
 function seedProject(runtime, user, root, teamId = 't1') {

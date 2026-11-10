@@ -91,7 +91,7 @@ export async function precheckLifecycleHooks(repoPath) {
   const result = await runProcess('python', ['-I', '-B', '-c', code, repoPath, parserFile], {
     cwd: repoPath,
     env: minimalEnvironment({ PYTHONUTF8: '1' }),
-    timeoutMs: 30_000,
+    timeoutMs: 60_000,
   })
   let parsed
   try {

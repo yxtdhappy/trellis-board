@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import * as admin from '@/api/admin'
+import { ApiError } from '@/api/request'
 import type {
   AdminUser,
   AgentBinding,
@@ -267,6 +268,9 @@ export function useAdminProjects({
         await openApproval(result.project, result.approval)
         return true
       } catch (error) {
+        if (error instanceof ApiError && error.code === 'PROJECT_ALREADY_CONNECTED') {
+          await reloadProjects(true)
+        }
         report(error)
         return false
       }

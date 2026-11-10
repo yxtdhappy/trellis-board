@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"核验 409 错误契约、事务复检、UUID 清理和路径不泄露"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"核验超时进程树终止、原始错误保留和 Git 子进程边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核验顺序/并发/分支测试覆盖和最终验证证据"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"核验重复接入后的列表刷新、提示和状态一致性"}

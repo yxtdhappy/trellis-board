@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { SelectField } from '@/features/board/SelectField'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import { formatTime } from '@/lib/admin-shared'
+import { canProbeBranch } from '@/lib/onboarding-probe.js'
 import { ApprovalForm, ApprovalSummary } from './ApproveProjectDialog'
 import { MultiSelectField } from './MultiSelectField'
 import { ProjectCredentialDialog } from './ProjectCredentialDialog'
@@ -224,6 +225,7 @@ export function OnboardingTab({ console: consoleApi }: { console: AdminConsole }
   function changeBranch(branch: string) {
     setExistingAgentTools([])
     setForm((current) => ({ ...current, branch, agentTools: [] }))
+    if (!canProbeBranch(branch, form.remote)) return
     void runProbe(form.remote.trim(), form.credentialId, branch)
   }
 

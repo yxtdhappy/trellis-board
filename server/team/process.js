@@ -44,27 +44,50 @@ export function sanitizeProcessOutput(value, { maxBytes = OUTPUT_LIMIT, redact =
 }
 
 export function terminateTree(child) {
-  if (!child?.pid) return
+  if (!child?.pid) return Promise.resolve()
   if (process.platform === 'win32') {
-    const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
-      windowsHide: true,
-      shell: false,
-      stdio: 'ignore',
-    })
-    killer.on('error', () => {
-      try {
-        child.kill()
-      } catch {
-        // 进程可能已结束。
+    return new Promise((resolve) => {
+      let settled = false
+      let timer
+      const finish = () => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        resolve()
       }
+      const fallback = () => {
+        try {
+          child.kill()
+        } catch {
+          // 进程可能已结束。
+        }
+        finish()
+      }
+      let killer
+      try {
+        killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+          windowsHide: true,
+          shell: false,
+          stdio: 'ignore',
+        })
+      } catch {
+        fallback()
+        return
+      }
+      timer = setTimeout(fallback, 2_000)
+      killer.once('error', fallback)
+      killer.once('close', (code) => {
+        if (code === 0) finish()
+        else fallback()
+      })
     })
-    return
   }
   try {
     child.kill('SIGKILL')
   } catch {
     // 进程可能已结束。
   }
+  return Promise.resolve()
 }
 
 export function runProcess(
@@ -73,7 +96,7 @@ export function runProcess(
   {
     cwd,
     env = minimalEnvironment(),
-    timeoutMs = 30_000,
+    timeoutMs = 60_000,
     allowFailure = false,
     maxOutputBytes = OUTPUT_LIMIT,
     redact = [],
@@ -98,8 +121,11 @@ export function runProcess(
     const timer = setTimeout(() => {
       if (settled) return
       settled = true
-      terminateTree(child)
-      reject(new Error(`${command} 执行超过 ${timeoutMs}ms，已终止`))
+      const timeoutError = new Error(`${command} 执行超过 ${timeoutMs}ms，已终止`)
+      void terminateTree(child).then(
+        () => reject(timeoutError),
+        () => reject(timeoutError),
+      )
     }, timeoutMs)
 
     child.stdout.on('data', (chunk) => {

@@ -18,10 +18,10 @@ import { semanticLocalPathIdentityHash, semanticRemoteIdentityHash } from './rem
 
 const RESERVED_BRANCHES = new Set(['HEAD', 'FETCH_HEAD', 'ORIG_HEAD', 'MERGE_HEAD', '@'])
 const SSH_COMMAND = 'ssh -o BatchMode=yes -o StrictHostKeyChecking=yes'
-const LOCAL_TIMEOUT = 30_000
-const REMOTE_TIMEOUT = 180_000
-const PUSH_TIMEOUT = 120_000
-const PROBE_TIMEOUT = 30_000
+const LOCAL_TIMEOUT = 60_000
+const REMOTE_TIMEOUT = 210_000
+const PUSH_TIMEOUT = 150_000
+const PROBE_TIMEOUT = 60_000
 const PROBE_OUTPUT_LIMIT = 1024 * 1024
 const SSH_SCAN_OUTPUT_LIMIT = 256 * 1024
 const MAX_SAFE_REBASES = 3
@@ -29,7 +29,7 @@ const PROBE_WINDOW_MS = 60_000
 const PROBE_LIMIT_PER_WINDOW = 5
 const PROBE_GLOBAL_CONCURRENCY = 4
 const SSH_TRUST_TTL_MS = 5 * 60_000
-const TRELLIS_INIT_TIMEOUT = 180_000
+const TRELLIS_INIT_TIMEOUT = 210_000
 const TRELLIS_PUSH_RETRIES = 1
 const AGENT_PRESENCE_PATHS = Object.freeze([
   ...new Set(TRELLIS_AGENT_TOOLS.flatMap((tool) => tool.presencePaths)),
@@ -313,6 +313,7 @@ export function createGitManager({
   credentialService,
   logger = console,
   trellisRunner = runTrellisInitializer,
+  runProcessImpl = runProcess,
 }) {
   const hooksDir = path.join(dataDir, '.empty-git-hooks')
   const projectsRoot = path.join(dataDir, 'projects')
@@ -384,7 +385,7 @@ export function createGitManager({
       GIT_CONFIG_GLOBAL: emptyConfigFile,
       ...(auth?.env || {}),
     })
-    const result = await runProcess('git', [...baseConfig(), ...args], {
+    const result = await runProcessImpl('git', [...baseConfig(), ...args], {
       cwd,
       env,
       timeoutMs,
@@ -397,32 +398,49 @@ export function createGitManager({
     return result
   }
 
-  async function setSparsePaths(cwd, paths) {
+  async function setSparsePaths(cwd, paths, { auth = null } = {}) {
     const init = await runGit(['sparse-checkout', 'init', '--no-cone'], {
       cwd,
       allowFailure: true,
+      auth,
     })
     if (init.code !== 0) {
-      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', '无法初始化项目稀疏检出')
+      const output = sanitizeProcessOutput(init.stderr || init.stdout || 'Git 返回非零退出码', {
+        maxBytes: 2048,
+        redact: auth?.redact || [],
+      }).trim()
+      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', `无法初始化项目稀疏检出：${output}`)
     }
     const set = await runGit(['sparse-checkout', 'set', '--', ...paths], {
       cwd,
+      timeoutMs: REMOTE_TIMEOUT,
       allowFailure: true,
+      auth,
     })
     if (set.code !== 0) {
-      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', '无法设置项目稀疏检出')
+      const output = sanitizeProcessOutput(set.stderr || set.stdout || 'Git 返回非零退出码', {
+        maxBytes: 2048,
+        redact: auth?.redact || [],
+      }).trim()
+      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', `无法设置项目稀疏检出：${output}`)
     }
     const update = await runGit(['read-tree', '-mu', 'HEAD'], {
       cwd,
+      timeoutMs: REMOTE_TIMEOUT,
       allowFailure: true,
+      auth,
     })
     if (update.code !== 0) {
-      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', '无法收敛项目工作副本')
+      const output = sanitizeProcessOutput(update.stderr || update.stdout || 'Git 返回非零退出码', {
+        maxBytes: 2048,
+        redact: auth?.redact || [],
+      }).trim()
+      throw teamError(503, 'GIT_SPARSE_CHECKOUT_FAILED', `无法收敛项目工作副本：${output}`)
     }
   }
 
-  async function applyTrellisSparse(cwd, { requireTrellis = true } = {}) {
-    await setSparsePaths(cwd, ['.trellis/'])
+  async function applyTrellisSparse(cwd, { requireTrellis = true, auth = null } = {}) {
+    await setSparsePaths(cwd, ['.trellis/'], { auth })
     for (const entry of fs.readdirSync(cwd, { withFileTypes: true })) {
       if (entry.name !== '.git' && entry.name !== '.trellis' && entry.isDirectory()) {
         removeEmptyDirectoryTree(path.join(cwd, entry.name))
@@ -454,13 +472,12 @@ export function createGitManager({
     }
   }
 
-  async function checkoutInitializationContext(cwd) {
-    await setSparsePaths(cwd, [
-      '.trellis/',
-      'AGENTS.md',
-      '.gitattributes',
-      ...INITIALIZATION_CONTEXT_PATHS,
-    ])
+  async function checkoutInitializationContext(cwd, { auth = null } = {}) {
+    await setSparsePaths(
+      cwd,
+      ['.trellis/', 'AGENTS.md', '.gitattributes', ...INITIALIZATION_CONTEXT_PATHS],
+      { auth },
+    )
   }
 
   function manifestPaths(manifest) {
@@ -496,6 +513,7 @@ export function createGitManager({
   async function readRemoteManifestPaths(cwd, options = {}) {
     const result = await runGit(['show', 'HEAD:.trellis/.template-hashes.json'], {
       cwd,
+      timeoutMs: REMOTE_TIMEOUT,
       allowFailure: true,
       maxOutputBytes: 4 * 1024 * 1024,
       ...options,
@@ -505,13 +523,17 @@ export function createGitManager({
   }
 
   async function readRemoteTree(cwd, options = {}) {
+    const remoteOptions = {
+      timeoutMs: REMOTE_TIMEOUT,
+      ...options,
+    }
     const result = await runGit(
       ['ls-tree', '-r', '--name-only', '-z', 'HEAD', '--', ...REMOTE_TREE_PATHS],
       {
         cwd,
         allowFailure: true,
         maxOutputBytes: 4 * 1024 * 1024,
-        ...options,
+        ...remoteOptions,
       },
     )
     if (result.code !== 0) {
@@ -522,7 +544,7 @@ export function createGitManager({
     }
     const treePaths = result.stdout.split('\0').filter(Boolean)
     // Agent 目录可能被项目 .gitignore 排除，模板清单是可提交的第二证据源。
-    const detectedPaths = [...treePaths, ...(await readRemoteManifestPaths(cwd, options))]
+    const detectedPaths = [...treePaths, ...(await readRemoteManifestPaths(cwd, remoteOptions))]
     return {
       existingAgentTools: detectTrellisAgentTools(detectedPaths),
       hasTrellis: treePaths.some(
@@ -769,9 +791,19 @@ export function createGitManager({
       if (fetched.code !== 0) {
         throw teamError(502, ERROR_CODES.GIT_REMOTE_FAILED, '拉取初始化后的远端分支失败')
       }
-      const rebased = await runGit(['rebase', 'FETCH_HEAD'], { cwd, allowFailure: true })
+      const rebased = await runGit(['rebase', 'FETCH_HEAD'], {
+        cwd,
+        timeoutMs: REMOTE_TIMEOUT,
+        allowFailure: true,
+        auth,
+      })
       if (rebased.code !== 0) {
-        await runGit(['rebase', '--abort'], { cwd, allowFailure: true })
+        await runGit(['rebase', '--abort'], {
+          cwd,
+          timeoutMs: REMOTE_TIMEOUT,
+          allowFailure: true,
+          auth,
+        })
         throw teamError(
           409,
           ERROR_CODES.PROJECT_REPAIR_REQUIRED,
@@ -932,6 +964,14 @@ export function createGitManager({
     return withGitAuth(credential, remote, callback)
   }
 
+  async function mapRemoteOperationFailure(operation, callback) {
+    try {
+      return await callback()
+    } catch (error) {
+      throw remoteException(error, operation)
+    }
+  }
+
   async function assertValidBranch(branch) {
     const value = validateSyncBranch(branch)
     const result = await runGit(['check-ref-format', `refs/heads/${value}`], {
@@ -980,9 +1020,10 @@ export function createGitManager({
           )
         }
 
-        await applyTrellisSparse(target, { requireTrellis: false })
+        await applyTrellisSparse(target, { requireTrellis: false, auth })
         const checkout = await runGit(['checkout', project.syncBranch], {
           cwd: target,
+          timeoutMs: REMOTE_TIMEOUT,
           allowFailure: true,
           auth,
         })
@@ -993,14 +1034,14 @@ export function createGitManager({
             `无法检出共享分支：${checkout.stderr.trim() || checkout.stdout.trim() || 'Git 失败'}`,
           )
         }
-        await applyTrellisSparse(target, { requireTrellis: false })
+        await applyTrellisSparse(target, { requireTrellis: false, auth })
 
-        const remoteTree = await readRemoteTree(target)
+        const remoteTree = await readRemoteTree(target, { auth })
         const newTools = agentTools.filter(
           (toolId) => !remoteTree.existingAgentTools.includes(toolId),
         )
         if (remoteTree.hasTrellis && !newTools.length) {
-          await applyTrellisSparse(target)
+          await applyTrellisSparse(target, { auth })
           return {
             target,
             initialized: false,
@@ -1012,7 +1053,7 @@ export function createGitManager({
           }
         }
 
-        await checkoutInitializationContext(target)
+        await checkoutInitializationContext(target, { auth })
         const gitattributesFile = path.join(target, '.gitattributes')
         const gitattributesBefore = fs.existsSync(gitattributesFile)
           ? fs.readFileSync(gitattributesFile, 'utf8')
@@ -1061,9 +1102,9 @@ export function createGitManager({
         })
         await commitInitialization(target, initializedPaths)
         await cleanGeneratedAgentPaths(target)
-        await applyTrellisSparse(target)
+        await applyTrellisSparse(target, { auth })
         const remoteCommitSha = await pushInitialization(project, target, auth)
-        await applyTrellisSparse(target)
+        await applyTrellisSparse(target, { auth })
         return {
           target,
           initialized: true,
@@ -1075,18 +1116,41 @@ export function createGitManager({
         }
       })
     } catch (error) {
-      if (fs.existsSync(target)) {
-        fs.rmSync(target, { recursive: true, force: true })
+      try {
+        if (fs.existsSync(target)) {
+          fs.rmSync(target, {
+            recursive: true,
+            force: true,
+            maxRetries: 5,
+            retryDelay: 100,
+          })
+        }
+      } catch (cleanupError) {
+        try {
+          logger?.warn?.('克隆失败后清理项目工作副本失败', {
+            projectId: project.id,
+            workspaceKey: project.workspaceKey,
+            teamId: project.teamId,
+            syncBranch: project.syncBranch,
+            remoteIdentityHash: remote.identityHash,
+            error: error?.message || String(error),
+            cleanupError: cleanupError?.message || String(cleanupError),
+          })
+        } catch {
+          // 日志失败不能覆盖原始克隆错误。
+        }
       }
       throw remoteException(error, '克隆项目')
     }
   }
 
   async function ensureSparseTrellis(project) {
-    await assertClean(project)
-    const cwd = assertProjectWorktree(project)
-    await applyTrellisSparse(cwd)
-    return cwd
+    return mapRemoteOperationFailure('转换项目稀疏检出', async () => {
+      await assertClean(project)
+      const cwd = assertProjectWorktree(project)
+      await withProjectAuth(project, (auth) => applyTrellisSparse(cwd, { auth }))
+      return cwd
+    })
   }
 
   function assertProjectWorktree(project) {
@@ -1151,32 +1215,40 @@ export function createGitManager({
   }
 
   async function fetchProject(project) {
-    return withProjectAuth(project, (auth) => fetchProjectWithAuth(project, auth))
+    return mapRemoteOperationFailure('拉取项目', () =>
+      withProjectAuth(project, (auth) => fetchProjectWithAuth(project, auth)),
+    )
   }
 
   async function fetchAndFastForward(project) {
-    return withProjectAuth(project, async (auth) => {
-      const cwd = await fetchProjectWithAuth(project, auth)
-      const dirty = await runGit(['status', '--porcelain=v1', '--untracked-files=normal'], { cwd })
-      const dirtyPaths = dirty.stdout.trim()
-      if (dirtyPaths) {
-        throw teamError(409, ERROR_CODES.PROJECT_REPAIR_REQUIRED, '项目工作副本存在未提交变更', {
-          details: { dirtyPaths: dirtyPaths.split(/\r?\n/).slice(0, 50) },
+    return mapRemoteOperationFailure('同步项目', () =>
+      withProjectAuth(project, async (auth) => {
+        const cwd = await fetchProjectWithAuth(project, auth)
+        const dirty = await runGit(['status', '--porcelain=v1', '--untracked-files=normal'], {
+          cwd,
         })
-      }
-      const merge = await runGit(['merge', '--ff-only', '--no-overwrite-ignore', 'FETCH_HEAD'], {
-        cwd,
-        allowFailure: true,
-      })
-      if (merge.code !== 0) {
-        throw teamError(
-          409,
-          ERROR_CODES.PROJECT_REPAIR_REQUIRED,
-          `无法快进同步：${merge.stderr.trim() || merge.stdout.trim() || 'Git 失败'}`,
-        )
-      }
-      return cwd
-    })
+        const dirtyPaths = dirty.stdout.trim()
+        if (dirtyPaths) {
+          throw teamError(409, ERROR_CODES.PROJECT_REPAIR_REQUIRED, '项目工作副本存在未提交变更', {
+            details: { dirtyPaths: dirtyPaths.split(/\r?\n/).slice(0, 50) },
+          })
+        }
+        const merge = await runGit(['merge', '--ff-only', '--no-overwrite-ignore', 'FETCH_HEAD'], {
+          cwd,
+          timeoutMs: REMOTE_TIMEOUT,
+          allowFailure: true,
+          auth,
+        })
+        if (merge.code !== 0) {
+          throw teamError(
+            409,
+            ERROR_CODES.PROJECT_REPAIR_REQUIRED,
+            `无法快进同步：${merge.stderr.trim() || merge.stdout.trim() || 'Git 失败'}`,
+          )
+        }
+        return cwd
+      }),
+    )
   }
 
   async function headSha(project) {
@@ -1223,85 +1295,103 @@ export function createGitManager({
   }
 
   async function pushCommit(project, operation, localCommitSha) {
-    return withProjectAuth(project, async (auth) => {
-      const cwd = await assertProjectBranch(project)
-      for (let attempt = 0; attempt <= MAX_SAFE_REBASES; attempt += 1) {
-        const result = await runGit(
-          ['push', '--porcelain', '--', project.remoteUrl, `HEAD:refs/heads/${project.syncBranch}`],
-          {
-            cwd,
-            timeoutMs: PUSH_TIMEOUT,
-            allowFailure: true,
-            auth,
-          },
-        )
-        if (result.code === 0) {
-          const remote = await runGit(
-            ['ls-remote', '--heads', '--', project.remoteUrl, `refs/heads/${project.syncBranch}`],
+    return mapRemoteOperationFailure('推送项目', () =>
+      withProjectAuth(project, async (auth) => {
+        const cwd = await assertProjectBranch(project)
+        for (let attempt = 0; attempt <= MAX_SAFE_REBASES; attempt += 1) {
+          const result = await runGit(
+            [
+              'push',
+              '--porcelain',
+              '--',
+              project.remoteUrl,
+              `HEAD:refs/heads/${project.syncBranch}`,
+            ],
             {
               cwd,
-              timeoutMs: REMOTE_TIMEOUT,
+              timeoutMs: PUSH_TIMEOUT,
+              allowFailure: true,
               auth,
             },
           )
-          return {
-            status: 'pushed',
-            remoteCommitSha: remote.stdout.trim().split(/\s+/)[0] || localCommitSha,
+          if (result.code === 0) {
+            const remote = await runGit(
+              ['ls-remote', '--heads', '--', project.remoteUrl, `refs/heads/${project.syncBranch}`],
+              {
+                cwd,
+                timeoutMs: REMOTE_TIMEOUT,
+                auth,
+              },
+            )
+            return {
+              status: 'pushed',
+              remoteCommitSha: remote.stdout.trim().split(/\s+/)[0] || localCommitSha,
+            }
           }
-        }
-        const nonFastForward = /non-fast-forward|fetch first/i.test(
-          `${result.stderr}\n${result.stdout}`,
-        )
-        if (!nonFastForward || attempt === MAX_SAFE_REBASES) {
-          const network = /timed out|could not resolve|connection|authentication|permission/i.test(
+          const nonFastForward = /non-fast-forward|fetch first/i.test(
             `${result.stderr}\n${result.stdout}`,
           )
-          throw teamError(
-            network ? 502 : 503,
-            ERROR_CODES.GIT_REMOTE_FAILED,
-            '提交未能推送到远端，operation 已保留用于恢复',
-            {
-              recoverable: true,
-              details: {
-                operationId: operation.id,
-                retryable: true,
+          if (!nonFastForward || attempt === MAX_SAFE_REBASES) {
+            const network =
+              /timed out|could not resolve|connection|authentication|permission/i.test(
+                `${result.stderr}\n${result.stdout}`,
+              )
+            throw teamError(
+              network ? 502 : 503,
+              ERROR_CODES.GIT_REMOTE_FAILED,
+              '提交未能推送到远端，operation 已保留用于恢复',
+              {
+                recoverable: true,
+                details: {
+                  operationId: operation.id,
+                  retryable: true,
+                },
               },
-            },
-          )
+            )
+          }
+          await fetchProjectWithAuth(project, auth)
+          const rebase = await runGit(['rebase', 'FETCH_HEAD'], {
+            cwd,
+            timeoutMs: REMOTE_TIMEOUT,
+            allowFailure: true,
+            auth,
+          })
+          if (rebase.code !== 0) {
+            await runGit(['rebase', '--abort'], {
+              cwd,
+              timeoutMs: REMOTE_TIMEOUT,
+              allowFailure: true,
+              auth,
+            })
+            throw teamError(
+              409,
+              ERROR_CODES.PROJECT_REPAIR_REQUIRED,
+              '远端分支发生冲突，项目需要管理员修复',
+              {
+                recoverable: true,
+                details: { operationId: operation.id },
+              },
+            )
+          }
+          localCommitSha = (await runGit(['rev-parse', 'HEAD'], { cwd })).stdout.trim()
         }
-        await fetchProjectWithAuth(project, auth)
-        const rebase = await runGit(['rebase', 'FETCH_HEAD'], {
-          cwd,
-          allowFailure: true,
-        })
-        if (rebase.code !== 0) {
-          await runGit(['rebase', '--abort'], { cwd, allowFailure: true })
-          throw teamError(
-            409,
-            ERROR_CODES.PROJECT_REPAIR_REQUIRED,
-            '远端分支发生冲突，项目需要管理员修复',
-            {
-              recoverable: true,
-              details: { operationId: operation.id },
-            },
-          )
-        }
-        localCommitSha = (await runGit(['rev-parse', 'HEAD'], { cwd })).stdout.trim()
-      }
-      throw teamError(503, ERROR_CODES.GIT_REMOTE_FAILED, '推送重试次数已用尽')
-    })
+        throw teamError(503, ERROR_CODES.GIT_REMOTE_FAILED, '推送重试次数已用尽')
+      }),
+    )
   }
 
   async function remoteContainsCommit(project, commitSha) {
-    return withProjectAuth(project, async (auth) => {
-      const cwd = await assertProjectBranch(project)
-      await fetchProjectWithAuth(project, auth)
-      const result = await runGit(['merge-base', '--is-ancestor', commitSha, 'FETCH_HEAD'], {
-        cwd,
-        allowFailure: true,
-      })
-      return result.code === 0
-    })
+    return mapRemoteOperationFailure('检查远端提交', () =>
+      withProjectAuth(project, async (auth) => {
+        const cwd = await assertProjectBranch(project)
+        await fetchProjectWithAuth(project, auth)
+        const result = await runGit(['merge-base', '--is-ancestor', commitSha, 'FETCH_HEAD'], {
+          cwd,
+          allowFailure: true,
+        })
+        return result.code === 0
+      }),
+    )
   }
 
   function parseRemoteHeads(output) {
@@ -1404,10 +1494,10 @@ export function createGitManager({
     const environment = sshScanEnvironment()
     let result
     try {
-      result = await runProcess(command, args, {
+      result = await runProcessImpl(command, args, {
         cwd: projectsRoot,
         env: environment,
-        timeoutMs: 15_000,
+        timeoutMs: 45_000,
         allowFailure: true,
         maxOutputBytes: SSH_SCAN_OUTPUT_LIMIT,
       })

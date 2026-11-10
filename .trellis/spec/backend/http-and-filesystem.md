@@ -306,10 +306,30 @@ const projectIds = readableProjectIds(actor).filter((id) => (
 
 - 项目接入请求包含 `agentTools`、`leadUserId` 和 `leadTrellisDevId`；服务端在 clone 前校验工具白名单、团队成员关系和 developer ID，并在克隆后重新读取目标分支 tree，不信任前端传入的“已存在”状态。
 - 常规工作副本只检出 `.trellis/`。初始化前临时检出 `.trellis/`、根级配置文件、共享技能目录和 Agent 探测路径，让 `--skip-existing` 能看见远端已有文件；初始化、提交和推送后重新收敛为只检出 `.trellis/`。
+- partial clone 的 sparse-checkout、read-tree、初始化上下文检出和远端 tree/模板清单读取必须复用
+  当前 Git 认证；后续 `ensureSparseTrellis()` 使用项目绑定凭据。稀疏检出错误消息保留经脱敏的
+  Git stderr/stdout，不能只返回泛化文案。
+- 操作执行超时统一在各自原值上增加 30 秒：本地 Git 默认 60 秒，远端/promisor 操作
+  210 秒，push 150 秒，探测 60 秒，Trellis CLI 初始化 210 秒，SSH 主机扫描 45 秒，
+  toolchain 预检 60 秒，团队 `task.py` 150 秒，`runProcess` 默认 60 秒。
+- `sparse-checkout init` 使用 `LOCAL_TIMEOUT=60s`；`set`、`read-tree`、checkout、merge、
+  分叉恢复 rebase、clone 与远端 `ls-tree`/`show` 使用 `REMOTE_TIMEOUT=210s`，因为它们
+  可能触发 promisor lazy fetch 或真实远端 I/O。
 - 目标分支已有 `.trellis/` 时，只把缺失 Agent 传给固定的本地 Trellis CLI；没有缺失 Agent 时跳过初始化且不产生空提交。目标分支缺少 `.trellis/` 时仍执行基础初始化。
 - `team_project.agent_tools_json` 保存目标分支已有 Agent 与本次成功初始化 Agent 的并集。
 - 初始化产物提交并非强制推送到共享分支，成功后项目进入 `provisioning` 并继续工具链摘要审核。
 - 初始化失败、文件越界或 push 失败时，不能写入可用项目状态。
+- 项目接入判重键固定为 `team_id + remote_identity_hash + sync_branch`。clone 前先检查，
+  写数据库前必须在同一 `BEGIN IMMEDIATE` 事务内复检；同一仓库的不同同步分支可以分别接入。
+- 命中判重时返回 `409 PROJECT_ALREADY_CONNECTED`。只有当前团队可收到项目 ID、名称、分支和状态的
+  `details`；其他团队只返回通用冲突文案，不能泄露项目元数据。
+- 并发请求可能都完成 clone，但事务复检必须保证最多一个请求写入成功；失败请求只清理自己的 UUID
+  工作副本。清理使用有界重试，清理错误只追加到服务端日志并保留原始接入/Git 错误。
+- 项目刷新写入 `team_project.last_error` 时使用 `code: message` 的脱敏摘要，最多 1000 个字符；
+  摘要不得包含 Token、私钥、口令、Authorization、Cookie、文件 URL 或绝对路径。当前项目恢复后
+  不为了补写诊断而强制更新数据库；失败诊断只对后续真实失败生效。
+- 结构化诊断详情与 cause 共享 128 个节点、约 12 KiB 文本预算；超限节点返回
+  `[truncated]`，循环引用返回 `[circular]`，避免异常详情无限放大日志。
 
 ## 路径安全
 

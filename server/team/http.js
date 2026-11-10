@@ -12,6 +12,7 @@ import { createAgentEventService } from './agent-events.js'
 import { createAgentService } from './agents.js'
 import { appendAuditEvent, listAuditEvents } from './audit.js'
 import { createDesktopAuthService } from './desktop-auth.js'
+import { diagnosticError } from './error-diagnostics.js'
 import {
   changePassword,
   clearSessionCookie,
@@ -1500,9 +1501,11 @@ export function createRefreshScheduler({
       const operation = Promise.resolve()
         .then(() => refresh(projectId))
         .catch((error) => {
+          const diagnostic = diagnosticError(error)
           logger.warn('团队项目定时拉取失败', {
             projectId,
-            error: error instanceof Error ? error.message : String(error),
+            ...diagnostic,
+            error: diagnostic.message,
           })
         })
         .finally(() => {
@@ -1598,6 +1601,7 @@ export async function createTeamRuntime({
       gitManager,
       credentialService,
       taskIndex,
+      logger,
     })
     const taskWrites = createTaskWriteService({
       db,
