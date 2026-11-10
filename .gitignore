@@ -52,7 +52,6 @@ plugins/*
 !plugins/acp-dispatch/**
 !plugins/scenario-copilot/
 !plugins/scenario-copilot/**
-plugins/scenario-copilot/workspace/
 
 # Desktop client build output
 desktop/dist/
