@@ -72,8 +72,9 @@ export function BoardPage() {
   } = controller
 
   const groups = useMemo(
-    () => filterGroups(tasks, filters, projects, board?.savedViews || []),
-    [tasks, filters, projects, board?.savedViews],
+    () =>
+      filterGroups(tasks, filters, projects, board?.savedViews || [], { scopedByServer: teamMode }),
+    [tasks, filters, projects, board?.savedViews, teamMode],
   )
   const assignees = useMemo(
     () => [
