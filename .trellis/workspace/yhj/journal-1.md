@@ -618,3 +618,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 26: 项目接入稳定性与同步诊断修复
+<!-- trellis-session: v=2 fp=f9e7240c054da0aa -->
+
+**Date**: 2026-11-10
+**Task**: 项目接入稳定性与同步诊断修复
+**Branch**: `codex/team-board`
+
+### Summary
+
+修复项目接入幂等、Windows 超时清理、partial clone 认证继承、远端 Git 超时分档、成功接入后的伪错误提示，并补充脱敏的定时同步结构化诊断；完成真实 SSH/GitHub 隔离克隆、重启后浏览器状态流、测试和生产构建验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9f20554` | fix(team): harden project onboarding and sync recovery |
+
+### Status
+
+[OK] **Completed**
