@@ -114,7 +114,6 @@ test('派发 in_progress 任务：握手、建会话、提示词、allow_once �
     assert.ok(methods.includes('initialize'))
     assert.ok(methods.includes('session/new'))
     assert.ok(methods.includes('session/prompt'))
-    assert.ok(methods.includes('session/close'))
 
     const prompt = trace.find((entry) => entry.message.method === 'session/prompt')
     assert.match(prompt.message.params.prompt[0].text, /11-04-run1/)
@@ -125,10 +124,10 @@ test('派发 in_progress 任务：握手、建会话、提示词、allow_once �
     assert.equal(decision.result.outcome.optionId, 'opt-allow')
 
     assert.equal(state.runId, `acp-dispatch:${context.taskKeys[0]}:1`)
-    assert.equal(state.result.stopReason, 'end_turn')
-    assert.equal(state.result.decisions[0].kind, 'edit')
-    assert.equal(state.result.decisions[0].optionKind, 'allow_once')
-    assert.ok(state.result.updateCount >= 1)
+    assert.equal(state.result.outcome.stopReason, 'end_turn')
+    assert.ok(state.result.stats.permissions.allow >= 1)
+    assert.ok(state.result.stats.updates >= 1)
+    assert.match(state.result.summary.text, /完成/)
   } finally {
     await context.cleanup()
   }
@@ -168,10 +167,9 @@ test('没有对应极性的选项时回 cancelled 并记录 permission-unavailab
   try {
     context.harness.runtime.publish('scan.completed', {})
     const state = await context.waitForRun(context.taskKeys[0])
-    assert.equal(state.result.decisions[0].cancelled, true)
-    assert.equal(state.result.decisions[0].reason, 'permission-unavailable')
     const decision = context.trace().find((entry) => entry.dir === 'decision')
     assert.equal(decision.result.outcome.outcome, 'cancelled')
+    assert.equal(state.result.stats.permissions.allow, 0)
   } finally {
     await context.cleanup()
   }
@@ -191,6 +189,7 @@ test('运行超时触发 session/cancel 并标记 timeout', async () => {
       .filter((entry) => entry.dir === 'in')
       .map((entry) => entry.message.method)
     assert.ok(methods.includes('session/cancel'))
+    assert.match(state.result.outcome.error, /运行超时/)
   } finally {
     await context.cleanup()
   }
@@ -202,7 +201,7 @@ test('agent 提前退出时运行标记 failed', async () => {
     context.harness.runtime.publish('scan.completed', {})
     const state = await context.waitForRun(context.taskKeys[0])
     assert.equal(state.status, 'failed')
-    assert.match(state.result.error, /已退出/)
+    assert.match(state.result.outcome.error, /已退出/)
   } finally {
     await context.cleanup()
   }
@@ -277,13 +276,13 @@ test('GET /status 与 GET /executions 可见运行记录', async () => {
     assert.equal(hostRuns.runs.length, 1)
     assert.equal(hostRuns.runs[0].runId, `acp-dispatch:${context.taskKeys[0]}:1`)
     assert.equal(hostRuns.runs[0].status, 'succeeded')
-    assert.equal(hostRuns.runs[0].pluginVersion, '1.0.0')
+    assert.equal(hostRuns.runs[0].pluginVersion, '1.1.0')
   } finally {
     await context.cleanup()
   }
 })
 
-test('agent 声明 loadSession 时复用上一轮 session', async () => {
+test('同一任务复用常驻 ACP 会话，不再重复 session/new', async () => {
   const context = await setup({
     env: { FAKE_ACP_LOAD_SESSION: '1' },
     config: { rerunSucceeded: true },
@@ -305,14 +304,15 @@ test('agent 声明 loadSession 时复用上一轮 session', async () => {
     }
     assert.ok(second, '应产生第二次 run')
     assert.equal(second.status, 'succeeded')
+    assert.equal(second.result.session.id, first.result.session.id)
+    assert.equal(second.result.session.resumed, true)
 
     const methods = context
       .trace()
       .filter((entry) => entry.dir === 'in')
       .map((entry) => entry.message.method)
-    assert.ok(methods.includes('session/load'), '第二次应调用 session/load')
-    assert.equal(methods.filter((method) => method === 'session/load').length, 1)
     assert.equal(methods.filter((method) => method === 'session/new').length, 1)
+    assert.equal(methods.filter((method) => method === 'session/prompt').length, 2)
   } finally {
     await context.cleanup()
   }
@@ -327,7 +327,7 @@ test('idle 超时先 session/cancel，run 标记 timeout', async () => {
     context.harness.runtime.publish('scan.completed', {})
     const state = await context.waitForRun(context.taskKeys[0])
     assert.equal(state.status, 'timeout')
-    assert.match(String(state.result.error), /idle 超时/)
+    assert.match(String(state.result.outcome.error), /idle 超时/)
     const methods = context
       .trace()
       .filter((entry) => entry.dir === 'in')
@@ -399,6 +399,179 @@ test('agent 写入 check-report 后 watcher 把 derivedStage 从 implement 推�
       `watchedStage=${watchedStage}`,
     )
     watcher.close()
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('没有 meta.agent 绑定的 in_progress 任务默认也参与派发', async () => {
+  const context = await setup({ tasks: [{ dir: '11-04-unbound', agent: null }] })
+  try {
+    context.harness.runtime.publish('scan.completed', {})
+    const run = await context.waitForRun('repo::11-04-unbound')
+    assert.equal(run.status, 'succeeded')
+    const status = await fetch(`${context.http.baseUrl}/api/plugins/acp-dispatch/status`).then(
+      (response) => response.json(),
+    )
+    assert.equal(status.dispatchUnbound, true)
+    assert.equal(status.lastDiscovery.dispatched, 1)
+    assert.equal(status.lastDiscovery.skippedUnbound, 0)
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('dispatchUnbound=false 时跳过未绑定任务并在 /status 计数', async () => {
+  const context = await setup({
+    tasks: [{ dir: '11-04-unbound-off', agent: null }],
+    config: { dispatchUnbound: false },
+  })
+  try {
+    context.harness.runtime.publish('scan.completed', {})
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    assert.deepEqual(context.runs('repo::11-04-unbound-off'), [])
+    const status = await fetch(`${context.http.baseUrl}/api/plugins/acp-dispatch/status`).then(
+      (response) => response.json(),
+    )
+    assert.equal(status.dispatchUnbound, false)
+    assert.equal(status.lastDiscovery.skippedUnbound, 1)
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('手动派发接受看板风格的 taskKey（含 .trellis/tasks 前缀）', async () => {
+  const context = await setup()
+  try {
+    const boardStyleKey = context.taskKeys[0].replace('::', '::.trellis/tasks/')
+    const response = await fetch(`${context.http.baseUrl}/api/plugins/acp-dispatch/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ taskKey: boardStyleKey }),
+    })
+    assert.equal(response.status, 202)
+    const state = await context.waitForRun(context.taskKeys[0])
+    assert.equal(state.status, 'succeeded')
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('流式 chunk 不写 session/update 日志', async () => {
+  const context = await setup()
+  try {
+    context.harness.runtime.publish('scan.completed', {})
+    await context.waitForRun(context.taskKeys[0])
+    const logs = context.harness.supervisor.getLogs('acp-dispatch', 500).entries
+    const chunkLogs = logs.filter(
+      (entry) =>
+        entry.message === 'session/update' &&
+        String(entry.fields?.sessionUpdate || '').endsWith('_chunk'),
+    )
+    assert.deepEqual(chunkLogs, [])
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('tool call 执行中不按 idle 超时误杀长命令', async () => {
+  const context = await setup({
+    env: { FAKE_ACP_HANG: '1', FAKE_ACP_TOOL_STATUS: 'in_progress' },
+    config: { idleTimeoutMs: 400, runTimeoutMs: 10_000 },
+  })
+  try {
+    context.harness.runtime.publish('scan.completed', {})
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    const [before] = context.runs(context.taskKeys[0])
+    assert.equal(before.status, 'running')
+    const cancelled = await fetch(`${context.http.baseUrl}/api/plugins/acp-dispatch/cancel`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ taskKey: context.taskKeys[0] }),
+    })
+    assert.equal(cancelled.status, 200)
+    const done = await context.waitForRun(context.taskKeys[0])
+    assert.equal(done.status, 'cancelled')
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('面板路由提供资源、会话与运行结果', async () => {
+  const context = await setup()
+  try {
+    context.harness.runtime.publish('scan.completed', {})
+    const run = await context.waitForRun(context.taskKeys[0])
+    assert.equal(run.status, 'succeeded')
+
+    const html = await fetch(`${context.http.baseUrl}/api/plugins/acp-dispatch/panel`).then(
+      (response) => response.text(),
+    )
+    assert.match(html, /Agent 派发/)
+    const css = await fetch(`${context.http.baseUrl}/api/plugins/acp-dispatch/panel/app.css`).then(
+      (response) => response.text(),
+    )
+    assert.match(css, /--accent/)
+    const script = await fetch(
+      `${context.http.baseUrl}/api/plugins/acp-dispatch/panel/app.js`,
+    ).then((response) => response.text())
+    assert.match(script, /trellis:ready/)
+
+    const data = await fetch(`${context.http.baseUrl}/api/plugins/acp-dispatch/panel/data`).then(
+      (response) => response.json(),
+    )
+    assert.equal(data.configured, true)
+    assert.equal(data.runs.length, 1)
+    assert.equal(data.runs[0].result.outcome.status, 'succeeded')
+    assert.equal(data.runs[0].result.session.id, 'sess-1')
+    assert.equal(data.sessions.length, 1)
+    assert.equal(data.sessions[0].sessionId, 'sess-1')
+    assert.equal(data.active.length, 0)
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('面板下发命令复用会话并回写结果', async () => {
+  const context = await setup()
+  try {
+    context.harness.runtime.publish('scan.completed', {})
+    const first = await context.waitForRun(context.taskKeys[0])
+    assert.equal(first.status, 'succeeded')
+
+    const response = await fetch(`${context.http.baseUrl}/api/plugins/acp-dispatch/panel/prompt`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ taskKey: context.taskKeys[0], text: '继续修复剩余测试' }),
+    })
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.result.outcome.status, 'succeeded')
+    assert.equal(body.result.session.id, first.result.session.id)
+    assert.match(body.result.summary.text, /完成/)
+
+    const prompts = context.trace().filter((entry) => entry.message?.method === 'session/prompt')
+    assert.equal(prompts.length, 2)
+    assert.equal(prompts[1].message.params.prompt[0].text, '继续修复剩余测试')
+    assert.equal(context.runs(context.taskKeys[0]).length, 2)
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('运行事件以公开事件发布', async () => {
+  const context = await setup()
+  try {
+    context.harness.runtime.publish('scan.completed', {})
+    await context.waitForRun(context.taskKeys[0])
+    const events = context.harness.supervisor.eventRing
+    const started = events.find((event) => event.name === 'acp-dispatch/session.started')
+    const finished = events.find((event) => event.name === 'acp-dispatch/session.finished')
+    assert.ok(started)
+    assert.ok(finished)
+    assert.equal(finished.public, true)
+    assert.equal(finished.source, 'acp-dispatch')
+    assert.equal(finished.payload.outcome.status, 'succeeded')
   } finally {
     await context.cleanup()
   }

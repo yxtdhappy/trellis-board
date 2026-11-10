@@ -6,7 +6,9 @@
 node_modules/
 .omp/
 *.log
-/public/
+# No trailing slash: worktrees link public/ in as a symlink, and a
+# dir-only rule (`/public/`) would leave that symlink untracked-but-visible.
+/public
 
 # Build and test output
 coverage/
@@ -43,12 +45,15 @@ Thumbs.db
 *.swo
 *~
 
-# Only the built-in reference plugins are published; private plugins stay local.
+# Built-in and reference plugins are published; private plugins stay local.
 plugins/*
+!plugins/README.md
 !plugins/a2a-intake/
 !plugins/a2a-intake/**
 !plugins/acp-dispatch/
 !plugins/acp-dispatch/**
+!plugins/scenario-copilot/
+!plugins/scenario-copilot/**
 
 # Desktop client build output
 desktop/dist/

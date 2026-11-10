@@ -1,0 +1,40 @@
+{
+  "id": "scenario-copilot",
+  "name": "场景自动化测试",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "engines": {
+    "board": ">=0.2.0"
+  },
+  "permissions": [
+    "tasks:read",
+    "store",
+    "events:emit",
+    "events:publish",
+    "http:route",
+    "panels"
+  ],
+  "panels": [
+    {
+      "id": "scenario-copilot",
+      "title": "自动化测试",
+      "entry": "/panel",
+      "placement": "view",
+      "order": 30
+    }
+  ],
+  "config": {
+    "scenarioRoot": "",
+    "workspaceDir": "",
+    "orgName": "",
+    "username": "",
+    "password": "",
+    "llmApiKey": "",
+    "llmBaseUrl": "",
+    "llmModel": "",
+    "timeoutMs": 900000,
+    "maxRuns": 20,
+    "outlinesDir": "",
+    "knowledgePath": ""
+  }
+}
