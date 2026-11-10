@@ -7,6 +7,12 @@ import { spawn } from 'node:child_process'
  * session/cancel / session/close，以及 session/update 与
  * session/request_permission 两个反向消息。
  */
+const CHUNK_SESSION_UPDATES = new Set([
+  'agent_message_chunk',
+  'agent_thought_chunk',
+  'user_message_chunk',
+])
+
 export class AcpError extends Error {
   constructor(message, { code = null, data = null } = {}) {
     super(message)
@@ -63,10 +69,15 @@ export class AcpClient {
     this.sequence = 0
     this.pending = new Map()
     this.toolKinds = new Map()
+    this.runningTools = new Set()
     this.pendingPermissions = new Set()
     this.child = null
     this.closed = false
     this.decisions = []
+    this.chunkUpdates = 0
+    this.toolCalls = 0
+    this.assistantText = ''
+    this.timeoutReason = null
     this.agentCapabilities = {}
     this.idleTimeoutMs = idleTimeoutMs
     this.idleGraceMs = idleGraceMs
@@ -141,11 +152,20 @@ export class AcpClient {
       const update = message.params?.update ?? {}
       const toolCallId = update.toolCallId
       if (toolCallId && update.kind) this.toolKinds.set(toolCallId, update.kind)
-      this.log('debug', 'session/update', {
-        sessionUpdate: update.sessionUpdate ?? null,
-        toolCallId: toolCallId ?? null,
-        kind: update.kind ?? null,
-      })
+      if (toolCallId) this.trackToolCall(toolCallId, update.status)
+      if (update.sessionUpdate === 'tool_call') this.toolCalls += 1
+      if (CHUNK_SESSION_UPDATES.has(update.sessionUpdate)) {
+        this.chunkUpdates += 1
+        if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
+          this.assistantText = (this.assistantText + update.content.text).slice(-32_768)
+        }
+      } else {
+        this.log('debug', 'session/update', {
+          sessionUpdate: update.sessionUpdate ?? null,
+          toolCallId: toolCallId ?? null,
+          kind: update.kind ?? null,
+        })
+      }
       try {
         this.onUpdate?.(update)
       } catch (error) {
@@ -154,6 +174,16 @@ export class AcpClient {
       return
     }
     this.log('debug', '未知 ACP 通知', { method: message.method })
+  }
+
+  trackToolCall(toolCallId, status) {
+    if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+      this.runningTools.delete(toolCallId)
+      return
+    }
+    if (status === 'pending' || status === 'in_progress') {
+      this.runningTools.add(toolCallId)
+    }
   }
 
   handleAgentRequest(message) {
@@ -275,8 +305,10 @@ export class AcpClient {
     const interval = Math.max(200, Math.min(10_000, Math.floor(this.idleTimeoutMs / 10)))
     this.idleTimer = setInterval(() => {
       if (this.closed || !this.sessionId) return
+      if (this.runningTools.size > 0) return
       if (Date.now() - this.lastActivityAt < this.idleTimeoutMs) return
       this.idleTimedOut = true
+      this.timeoutReason = 'idle'
       this.log('warn', 'ACP 会话 idle 超时，先 cancel 再终止', {
         idleTimeoutMs: this.idleTimeoutMs,
         graceMs: this.idleGraceMs,
@@ -311,6 +343,11 @@ export class AcpClient {
         { sessionId: this.sessionId, prompt: [{ type: 'text', text: String(text) }] },
         { timeoutMs: timeoutMs ?? this.runTimeoutMs },
       )
+    } catch (error) {
+      if (this.timeoutReason === null && /超时/.test(error?.message || '')) {
+        this.timeoutReason = 'run'
+      }
+      throw error
     } finally {
       this.disarmIdleWatch()
     }

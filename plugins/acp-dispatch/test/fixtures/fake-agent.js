@@ -18,6 +18,7 @@ import readline from 'node:readline'
 
 const traceFile = process.env.FAKE_ACP_TRACE || ''
 const kind = process.env.FAKE_ACP_KIND || 'edit'
+const toolStatus = process.env.FAKE_ACP_TOOL_STATUS || ''
 const stopReason = process.env.FAKE_ACP_STOP || 'end_turn'
 const hang = process.env.FAKE_ACP_HANG === '1'
 const exitOnPrompt = process.env.FAKE_ACP_EXIT_ON_PROMPT === '1'
@@ -109,7 +110,13 @@ function handleRequest(message) {
         method: 'session/update',
         params: {
           sessionId,
-          update: { sessionUpdate: 'tool_call', toolCallId: 'call-1', kind, title: '编辑文件' },
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'call-1',
+            kind,
+            title: '编辑文件',
+            ...(toolStatus ? { status: toolStatus } : {}),
+          },
         },
       })
       send({

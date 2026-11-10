@@ -1,15 +1,34 @@
 {
   "id": "acp-dispatch",
   "name": "acp dispatch",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "apiVersion": 1,
   "engines": {
     "board": ">=0.2.0"
   },
-  "permissions": ["tasks:read", "store", "events", "http:route", "runs:read", "runs:write"],
+  "permissions": [
+    "tasks:read",
+    "store",
+    "events",
+    "events:emit",
+    "events:publish",
+    "http:route",
+    "panels",
+    "runs:read",
+    "runs:write"
+  ],
   "http": {
     "rootPaths": []
   },
+  "panels": [
+    {
+      "id": "agent",
+      "title": "Agent 派发",
+      "entry": "/panel",
+      "placement": "view",
+      "order": 20
+    }
+  ],
   "config": {
     "agent": "opencode",
     "command": "",
@@ -23,10 +42,13 @@
         "switch_mode": "deny"
       }
     },
-    "runTimeoutMs": 1800000,
+    "runTimeoutMs": 21600000,
     "maxConcurrent": 1,
     "retryFailed": false,
     "rerunSucceeded": false,
-    "idleTimeoutMs": 600000
+    "dispatchUnbound": true,
+    "idleTimeoutMs": 1800000,
+    "sessionIdleMs": 600000,
+    "maxSessions": 3
   }
 }
