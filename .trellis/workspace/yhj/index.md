@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
-- **Last Active**: 2026-11-09
+- **Total Sessions**: 24
+- **Last Active**: 2026-11-10
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~571 | Active |
+| `journal-1.md` | ~594 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-11-10 | 项目接入 Agent 目录锁定与 dev 验收 | `a441eaa`, `d6cb54e` | `codex/team-board` |
 | 23 | 2026-11-09 | 团队运行数据外移与 .trellis 稀疏接入 | `054d19a`, `879ad51` | `codex/team-board` |
 | 22 | 2026-11-09 | Board 实时刷新改为 SSE | `08c9359` | `codex/team-board` |
 | 21 | 2026-11-09 | 修复 Windows SSH 远端探测 | `52d226e` | `codex/team-board` |
