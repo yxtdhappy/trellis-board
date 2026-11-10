@@ -592,3 +592,29 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 25: 归档团队同步已完成任务
+<!-- trellis-session: v=2 fp=7e54d93b5d074e99 -->
+
+**Date**: 2026-11-10
+**Task**: 归档团队同步已完成任务
+**Branch**: `codex/team-board`
+
+### Summary
+
+归档客户端隐藏管理入口、Git 代理环境、首次项目关联同步、冲突通知和项目 Agent 目录锁定；清理已归档任务被合并恢复出的重复活跃目录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0e95cf9` | fix(web): 客户端隐藏团队管理入口 |
+| `885f8d1` | fix(team): 继承 Git 子进程代理环境 |
+| `25beab0` | feat(team): 支持首次项目关联自动同步与状态反馈 |
+| `f727212` | fix(team): 优化实时同步冲突覆盖提示 |
+| `d6cb54e` | fix(team): 按分支锁定项目接入 Agent |
+
+### Status
+
+[OK] **Completed**
