@@ -20,6 +20,7 @@ import { resolveTaskLocation } from './task-location.js'
 import { createPluginRuntime } from './plugins/runtime.js'
 import { publishRepositoryChange } from './plugins/repository-events.js'
 import { createBoardEventService } from './board-events.js'
+import { createServerLogger } from './logger.js'
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
 const appDir = path.resolve(serverDir, '..')
@@ -43,13 +44,18 @@ let scanWorkerRuntime = null
 let pluginRuntime = null
 let boardEventService = null
 let nextScanRequestId = 0
+let activeLogger = console
 const pendingScanRequests = new Map()
 const WATCH_DEBOUNCE_MS = Math.max(100, Number(process.env.TRELLIS_WATCH_DEBOUNCE_MS || 400))
 
-function initializeStandaloneState(standalonePort = Number(process.env.PORT || 4317)) {
+function initializeStandaloneState(
+  standalonePort = Number(process.env.PORT || 4317),
+  logger = console,
+) {
+  activeLogger = logger
   if (database) return
   port = standalonePort
-  database = getDefaultDatabase()
+  database = getDefaultDatabase({ logger })
   persistence = createPersistenceStore()
   repositoryStore = createRepositoryStore()
   executionStore = createExecutionStore({ db: database, stageIds: STAGE_IDS })
@@ -251,7 +257,7 @@ function refreshBoardFromFiles(reason = 'manual', event = null, options = {}) {
         const next = queuedRefresh
         queuedRefresh = null
         refreshBoardFromFiles(next.reason, next.event, next.options).catch((error) => {
-          console.error('排队中的看板刷新失败', error)
+          activeLogger.error('排队中的看板刷新失败', error)
         })
       }
     })
@@ -266,7 +272,7 @@ function scheduleWatchRefresh(event) {
     const events = pendingWatchEvents
     pendingWatchEvents = []
     refreshBoardFromFiles('watcher', events).catch((error) => {
-      console.error('文件变更后自动刷新失败', error)
+      activeLogger.error('文件变更后自动刷新失败', error)
     })
   }, WATCH_DEBOUNCE_MS)
 }
@@ -277,11 +283,11 @@ function startFileWatcher() {
     watchRuntime = createWatchRuntime({
       repositories: getRepositories(),
       onChange: scheduleWatchRefresh,
-      onError: (error) => console.error('Trellis 文件监听失败', error),
+      onError: (error) => activeLogger.error('Trellis 文件监听失败', error),
     })
     status = watchRuntime.status()
   } catch (error) {
-    console.error('启动 Trellis 文件监听失败', error)
+    activeLogger.error('启动 Trellis 文件监听失败', error)
     return
   }
   try {
@@ -289,12 +295,12 @@ function startFileWatcher() {
       watcherStartedAt: new Date().toISOString(),
       watcherEnabled: status.enabled,
     })
-    console.log(
+    activeLogger.log(
       `Trellis watcher: ${status.enabled ? 'enabled' : 'disabled'}, ` +
         `${status.watchedRepositories.length} repositories, debounce=${WATCH_DEBOUNCE_MS}ms`,
     )
   } catch (error) {
-    console.error('启动 Trellis 文件监听后保存状态失败', error)
+    activeLogger.error('启动 Trellis 文件监听后保存状态失败', error)
     throw error
   }
 }
@@ -305,7 +311,7 @@ function restartFileWatcher() {
   try {
     previous?.close()
   } catch (error) {
-    console.error('关闭旧 Trellis 文件监听失败', error)
+    activeLogger.error('关闭旧 Trellis 文件监听失败', error)
   }
   startFileWatcher()
 }
@@ -526,16 +532,16 @@ async function startPluginRuntime() {
     repositories: getRepositories(),
     repositoryService,
     boardProvider: () => boardCache || readScanCache(),
-    logger: console,
+    logger: activeLogger,
   })
   try {
     await pluginRuntime.load()
     const started = await pluginRuntime.start()
     if (!started.disabled) {
-      console.log(`Trellis 插件: ${started.plugins.length} 个已加载`)
+      activeLogger.log(`Trellis 插件: ${started.plugins.length} 个已加载`)
     }
   } catch (error) {
-    console.error('加载插件失败，核心功能继续运行', error)
+    activeLogger.error('加载插件失败，核心功能继续运行', error)
   }
 }
 
@@ -548,7 +554,7 @@ async function handlePluginRequest(request, response, url) {
   try {
     return await pluginRuntime.handleHttp(serverContext(request, response, url))
   } catch (error) {
-    console.error('插件路由处理失败', error)
+    activeLogger.error('插件路由处理失败', error)
     sendJson(response, 500, {
       error: error instanceof Error ? error.message : '插件请求失败',
     })
@@ -604,7 +610,7 @@ async function handleApi(request, response, url) {
       refreshBoardFromFiles('manual', null, {
         refreshRepositoryMetadata: true,
         forceFull: true,
-      }).catch((error) => console.error('后台刷新失败', error))
+      }).catch((error) => activeLogger.error('后台刷新失败', error))
     }
     sendJson(response, 202, {
       refreshRunning: true,
@@ -866,7 +872,7 @@ const server = http.createServer(async (request, response) => {
       serveStatic(response, url)
     }
   } catch (error) {
-    console.error(error)
+    activeLogger.error(error)
     sendJson(response, 400, { error: error instanceof Error ? error.message : '执行失败' })
   }
 })
@@ -890,8 +896,9 @@ function listenStandalone(bindHost = '127.0.0.1') {
 export async function startStandaloneServer({
   standalonePort = Number(process.env.PORT || 4317),
   bindHost = String(process.env.TRELLIS_BOARD_BIND_HOST || '127.0.0.1').trim() || '127.0.0.1',
+  logger = console,
 } = {}) {
-  initializeStandaloneState(standalonePort)
+  initializeStandaloneState(standalonePort, logger)
   try {
     await listenStandalone(bindHost)
     writeBoardState({
@@ -904,15 +911,15 @@ export async function startStandaloneServer({
     startFileWatcher()
     await startPluginRuntime()
     refreshBoardFromFiles('startup').catch((error) => {
-      console.error('启动后的后台扫描失败', error)
+      activeLogger.error('启动后的后台扫描失败', error)
     })
     const loopbackHost = bindHost === '127.0.0.1' || bindHost === 'localhost' || bindHost === '::1'
     if (!loopbackHost) {
-      console.warn(
+      activeLogger.warn(
         `Trellis Board 监听 ${bindHost}，standalone 模式没有账号鉴权，请只在可信网络内使用`,
       )
     }
-    console.log(`Trellis Board: http://${loopbackHost ? '127.0.0.1' : bindHost}:${port}`)
+    activeLogger.log(`Trellis Board: http://${loopbackHost ? '127.0.0.1' : bindHost}:${port}`)
     return {
       mode: 'standalone',
       server,
@@ -949,15 +956,21 @@ export async function stopStandaloneServer() {
   }
   database?.close()
   database = null
+  activeLogger = console
 }
 
-export async function startApplication(config = parseTeamConfig()) {
+export async function startApplication(config = parseTeamConfig(), logger = console) {
+  activeLogger = logger
   migrateLegacyRuntimeData()
   if (config.mode === 'team') {
-    const runtime = await createTeamRuntime({ config })
+    const runtime = await createTeamRuntime({ config, logger })
     return runtime.start()
   }
-  return startStandaloneServer({ standalonePort: config.port, bindHost: config.bindHost })
+  return startStandaloneServer({
+    standalonePort: config.port,
+    bindHost: config.bindHost,
+    logger,
+  })
 }
 
 let activeRuntime = null
@@ -969,22 +982,28 @@ async function stopActiveRuntime() {
   try {
     await activeRuntime.stop()
   } catch (error) {
-    console.error('关闭服务失败', error)
+    activeLogger.error('关闭服务失败', error)
   }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  startApplication()
+  const logger = createServerLogger({ dataDir })
+  startApplication(undefined, logger)
     .then((runtime) => {
       activeRuntime = runtime
     })
-    .catch((error) => {
-      console.error('Trellis Board 启动失败', error)
+    .catch(async (error) => {
+      logger.error('Trellis Board 启动失败', error)
+      await logger.close()
       process.exitCode = 1
     })
+  let shutdownPromise = null
   const shutdown = () => {
-    stopActiveRuntime().finally(() => process.exit())
+    if (shutdownPromise) return
+    shutdownPromise = stopActiveRuntime()
+      .then(() => logger.close())
+      .finally(() => process.exit())
   }
-  process.once('SIGINT', shutdown)
-  process.once('SIGTERM', shutdown)
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 }

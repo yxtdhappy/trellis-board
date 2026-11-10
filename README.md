@@ -51,7 +51,13 @@ Board 运行数据不再写入源码目录。默认根目录为：
 - Linux：`${XDG_DATA_HOME:-~/.local/share}/TrellisBoard/server`
 
 部署环境应通过 `TRELLIS_BOARD_DATA_DIR` 指向独立持久化目录；Ubuntu 服务建议使用
-`/var/lib/trellis-board`。Board 自身可变状态统一保存在该目录下的 `board.sqlite`：
+`/var/lib/trellis-board`。服务端主进程同时把日志写入
+`<运行数据目录>/logs/server.log`；默认即 Windows 的
+`%LOCALAPPDATA%\TrellisBoard\server\logs\server.log`。日志按 `5 MiB × 5` 轮转，
+当前文件加 4 个历史文件，总容量上限约 25 MiB；正常退出会等待内存中的日志批次落盘。
+强制终止、断电或系统崩溃时，尚未刷新的尾部日志可能丢失。
+
+Board 自身可变状态统一保存在该目录下的 `board.sqlite`：
 
 - `repositories`：项目白名单和显示顺序
 - `task_stage`：人工流程检查点

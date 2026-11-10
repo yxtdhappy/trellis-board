@@ -66,6 +66,19 @@ Worker 内会缓存各仓库最近结果，并根据事件判断是仓库级重�
 
 测试导入 `loader`、`repositories`、`actions` 等模块时不应意外启动 HTTP 服务。服务启动逻辑只保留在 `server/index.js` 的顶层入口。
 
+## 服务端日志
+
+- 主入口创建 `createServerLogger({ dataDir })`，standalone 和 team runtime 必须接收同一个注入 logger。
+- 文件固定为 `<dataDir>/logs/server.log`，控制台继续接收原始参数；文件记录使用
+  `<ISO-8601> <LEVEL> <message>` 格式并在写入前统一脱敏。
+- 日志调用不得等待磁盘 I/O。文件 sink 使用异步追加、500 ms 或 64 KiB 批次、1 MiB 有界缓冲，
+  并通过 Promise 链串行 flush 和轮转。
+- 当前文件上限 5 MiB，保留当前文件加 4 个历史文件；写入或轮转失败时向控制台报告一次并停用
+  文件 sink，不能让日志故障影响 HTTP 或业务。
+- `SIGINT`/`SIGTERM` 必须先停止 runtime，再等待 logger `close()`，最后退出。强制终止、断电或
+  系统崩溃不保证尾部异步日志落盘。
+- 插件子进程继续使用自身日志文件，不属于主进程 server logger。
+
 ## 同步与异步
 
 - HTTP 请求体和网络处理使用 async API。

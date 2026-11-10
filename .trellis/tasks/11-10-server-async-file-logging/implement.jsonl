@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"约束服务端启动、运行数据边界、日志脱敏和关闭流程"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"约束异步文件系统测试、失败降级、真实启动验证和安全日志要求"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"约束运行数据目录写入、文件错误处理和路径安全"}

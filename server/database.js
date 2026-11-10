@@ -944,9 +944,9 @@ export function openDatabase({
   }
 }
 
-export function getDefaultDatabase() {
+export function getDefaultDatabase({ logger = console } = {}) {
   if (!defaultDatabase) {
-    defaultDatabase = openDatabase()
+    defaultDatabase = openDatabase({ logger })
   }
   return defaultDatabase
 }
