@@ -25,7 +25,8 @@ Tauri v2 外壳 + Node SEA sidecar。客户端冷启动固定显示本地登录�
 
 安全边界：
 
-- 密码只经过 `invoke -> Rust -> sidecar stdin -> HTTPS`，不进入 argv、环境变量、日志或配置文件。
+- 密码只经过 `invoke -> Rust -> sidecar stdin -> HTTP/HTTPS`，不进入 argv、环境变量、日志或配置文件。
+- 远程 HTTP 不提供传输加密，密码、会话 Cookie 和任务内容可能被监听或篡改；非可信网络应使用 HTTPS。
 - Session Cookie 只存在当前 WebView Cookie Store 和 Rust 内存；冷启动后必须重新登录。
 - 设备凭证只由 Windows DPAPI 保存，`client.json` 只保存 `serverUrl`。
 - 首次使用新客户端会忽略旧 `client.json` schema 并强制创建新设备；不迁移旧设备令牌。
@@ -169,7 +170,7 @@ desktop/
 --server <url> > TRELLIS_DESKTOP_SERVER_URL > client.json
 ```
 
-URL 必须为 HTTPS 根地址；仅 `localhost`、`127.0.0.1`、`::1` 允许 HTTP。
+URL 必须为 HTTP 或 HTTPS 根地址。HTTP 可用于内网或测试环境，但不提供传输加密；生产环境仍建议使用 HTTPS。
 `--minimized` 启动时隐藏主窗口。`TRELLIS_DESKTOP_HOME` 可重定向整个桌面数据目录。
 
 ## 构建

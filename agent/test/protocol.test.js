@@ -39,13 +39,14 @@ test('分支校验拒绝特殊引用和 refspec 字符', () => {
   assert.equal(validateBranchNameSyntax('feature/team-1'), 'feature/team-1')
 })
 
-test('配对码长度和字符集受限，服务地址只允许安全协议', () => {
+test('配对码长度和字符集受限，服务地址支持 HTTP 和 HTTPS', () => {
   const code = 'a'.repeat(16)
   assert.equal(validatePairingCode(code), code)
   assert.throws(() => validatePairingCode('short'), hasCode(AGENT_ERROR_CODE.CONFIG_INVALID))
   assert.equal(normalizeServerUrl('http://127.0.0.1:4317'), 'http://127.0.0.1:4317')
+  assert.equal(normalizeServerUrl('http://board.example.com'), 'http://board.example.com')
   assert.throws(
-    () => normalizeServerUrl('http://board.example.com'),
+    () => normalizeServerUrl('ftp://board.example.com'),
     hasCode(AGENT_ERROR_CODE.CONFIG_INVALID),
   )
   assert.throws(

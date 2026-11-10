@@ -63,13 +63,10 @@ function Assert-BoardUrl {
   if (-not [Uri]::TryCreate($Value, [UriKind]::Absolute, [ref]$uri)) {
     Fail 1 "服务端地址不是合法 URL: $Value"
   }
-  if ($uri.Scheme -eq 'https' -and $uri.AbsolutePath -eq '/') {
+  if (@('http', 'https') -contains $uri.Scheme -and $uri.AbsolutePath -eq '/') {
     return $uri.GetLeftPart([UriPartial]::Authority)
   }
-  if ($uri.Scheme -eq 'http' -and @('localhost', '127.0.0.1') -contains $uri.Host -and $uri.AbsolutePath -eq '/') {
-    return $uri.GetLeftPart([UriPartial]::Authority)
-  }
-  Fail 1 "服务端地址必须使用 HTTPS；仅 localhost/127.0.0.1 允许 HTTP 根地址"
+  Fail 1 "服务端地址必须使用 HTTP 或 HTTPS 根地址"
 }
 
 function Get-ExpectedHash {

@@ -9,7 +9,7 @@
 - 运行数据：由 `TRELLIS_BOARD_DATA_DIR` 指定，Ubuntu 部署建议使用 `/var/lib/trellis-board`。
 - 数据库：运行数据目录中的 `board.sqlite`。
 - 项目工作副本：运行数据目录中的 `projects/<workspace-key>`，只检出 `.trellis/`。
-- 团队模式必须使用 HTTPS；只有回环测试地址允许 HTTP。
+- 团队模式默认监听所有网络接口；`TRELLIS_TEAM_PUBLIC_URL` 使用非回环地址时仍必须启用 HTTPS。
 - 私网 Git 建议使用 SSH deploy key。不要把账号、令牌或密码写入远端 URL。
 
 当前容量基线为 400 个账号、200 个在线 Web 用户、100 个项目、10,000 个当前任务快照和
@@ -24,7 +24,7 @@
 | `TRELLIS_BOARD_MODE` | 是 | `standalone` | 团队部署设为 `team` |
 | `TRELLIS_BOARD_DATA_DIR` | 生产必填 | 平台用户数据目录 | Windows 默认 `%LOCALAPPDATA%\TrellisBoard\server`；Ubuntu 建议 `/var/lib/trellis-board` |
 | `TRELLIS_TEAM_PUBLIC_URL` | 是 | 无 | 浏览器和 Agent 使用的公开根地址，例如 `https://board.example.com` |
-| `TRELLIS_TEAM_BIND_HOST` | 是 | `127.0.0.1` | 服务监听地址；通常保持回环，由反向代理转发 |
+| `TRELLIS_TEAM_BIND_HOST` | 否 | `0.0.0.0` | 服务监听地址；默认允许所有网卡连接，反向代理部署可显式设为 `127.0.0.1` |
 | `TRELLIS_TEAM_PORT` | 否 | `4317` | 团队服务端口 |
 | `TRELLIS_TEAM_SESSION_TTL_MS` | 否 | `43200000` | 登录会话有效期，默认 12 小时 |
 | `TRELLIS_TEAM_AGENT_STALE_MS` | 否 | `60000` | Agent 超过该时间未心跳即显示离线 |
@@ -43,6 +43,13 @@ $env:TRELLIS_TEAM_PORT = '4317'
 $env:TRELLIS_BOARD_DATA_DIR = Join-Path $env:LOCALAPPDATA 'TrellisBoard\server'
 node server/index.js
 ```
+
+`0.0.0.0` 是默认值，允许其他机器通过局域网 IP、机器名或其他可解析到本机的主机名访问。
+通配监听时服务接受任意合法请求 Host，但 JSON 写请求仍要求 `Origin` 与当前 Host 同源且协议一致；
+显式设置 `TRELLIS_TEAM_BIND_HOST=127.0.0.1` 后恢复为只接受 `TRELLIS_TEAM_PUBLIC_URL` 的 Host。
+网络安全组、Windows 防火墙和反向代理仍应按实际访问范围限制来源。
+通配监听也放弃了固定 Host allowlist；不要直接暴露到不可信网络，生产部署应优先使用反向代理并把
+上游监听收窄到 `127.0.0.1`。
 
 Ubuntu 前台启动示例：
 

@@ -70,6 +70,7 @@ restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
 - esbuild 不得定义或替换 `import.meta.url`，不得使用 `file:///...` 伪模块 URL。
 - 设备令牌继续只通过 stdin 传递，路径注入值不得来自用户请求或远端输入。
 - 账号密码只通过 sidecar stdin 的 JSON 对象传入；Session Cookie、设备和设备凭证不落盘。
+- 桌面登录服务地址支持 HTTP/HTTPS 根地址；HTTP 不提供传输加密，只适用于可信内网或测试环境。
 - `desktop/sidecar/workspace-init.js` 不属于桌面产品路径；workspace 能力只保留给 Agent CLI。
 - 本地项目关联复用 `agent/git-sync.js` 的 `inspectRepository()`，不另写 Git 身份校验。
 - 本地关联 DTO 必须透传 `liveSyncStatus`（`pending|syncing|ready|error`）和

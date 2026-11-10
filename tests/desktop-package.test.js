@@ -205,6 +205,7 @@ test('capability 将本地登录与远程项目关联权限分开', () => {
     'allow-list-local-associations',
   ])
   assert.ok(remote.remote.urls.includes('https://*'))
+  assert.ok(remote.remote.urls.includes('http://*'))
   assert.ok(remote.remote.urls.includes('http://127.0.0.1:*'))
   const custom = readText('desktop/src-tauri/permissions/desktop.toml')
   assert.match(custom, /identifier = "allow-app-status"/)
@@ -233,8 +234,7 @@ test('capability 将本地登录与远程项目关联权限分开', () => {
 test('导航、新窗口、托盘与日志边界在 Rust 源中显式实现', () => {
   const navigation = readText('desktop/src-tauri/src/navigation.rs')
   assert.match(navigation, /pub fn validate_board_url/)
-  assert.match(navigation, /"https" => Ok\(url\)/)
-  assert.match(navigation, /"http" if is_loopback_host\(url\.host_str\(\)\)/)
+  assert.match(navigation, /"http" \| "https" => Ok\(url\)/)
   assert.match(navigation, /pub fn same_origin/)
   assert.match(navigation, /app\.shell\(\)\.open/)
   assert.match(navigation, /pub fn handle_navigation/)

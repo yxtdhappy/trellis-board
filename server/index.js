@@ -877,7 +877,7 @@ const server = http.createServer(async (request, response) => {
   }
 })
 
-function listenStandalone(bindHost = '127.0.0.1') {
+function listenStandalone(bindHost = '0.0.0.0') {
   return new Promise((resolve, reject) => {
     const onError = (error) => {
       server.off('listening', onListening)
@@ -895,7 +895,7 @@ function listenStandalone(bindHost = '127.0.0.1') {
 
 export async function startStandaloneServer({
   standalonePort = Number(process.env.PORT || 4317),
-  bindHost = String(process.env.TRELLIS_BOARD_BIND_HOST || '127.0.0.1').trim() || '127.0.0.1',
+  bindHost = String(process.env.TRELLIS_BOARD_BIND_HOST || '0.0.0.0').trim() || '0.0.0.0',
   logger = console,
 } = {}) {
   initializeStandaloneState(standalonePort, logger)
@@ -914,12 +914,17 @@ export async function startStandaloneServer({
       activeLogger.error('启动后的后台扫描失败', error)
     })
     const loopbackHost = bindHost === '127.0.0.1' || bindHost === 'localhost' || bindHost === '::1'
+    const allInterfaces = bindHost === '0.0.0.0' || bindHost === '::' || bindHost === '[::]'
     if (!loopbackHost) {
       activeLogger.warn(
         `Trellis Board 监听 ${bindHost}，standalone 模式没有账号鉴权，请只在可信网络内使用`,
       )
     }
-    activeLogger.log(`Trellis Board: http://${loopbackHost ? '127.0.0.1' : bindHost}:${port}`)
+    activeLogger.log(
+      `Trellis Board: http://${loopbackHost ? '127.0.0.1' : bindHost}:${port}${
+        allInterfaces ? '（所有网络接口）' : ''
+      }`,
+    )
     return {
       mode: 'standalone',
       server,

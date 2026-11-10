@@ -759,6 +759,7 @@ test('桌面 capability 配置拆分本地登录与远程项目关联权限', ()
     'allow-list-local-associations',
   ])
   assert.ok(remote.remote.urls.includes('https://*'))
+  assert.ok(remote.remote.urls.includes('http://*'))
 
   const tauri = readJson('desktop/src-tauri/tauri.conf.json')
   assert.deepEqual(tauri.app.security.capabilities, [

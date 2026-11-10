@@ -29,12 +29,37 @@ test('团队配置按公开地址默认安全 Cookie，并拒绝非回环不安�
     TRELLIS_TEAM_PUBLIC_URL: 'http://127.0.0.1:4317',
   })
   assert.equal(local.cookieSecure, false)
+  assert.equal(local.bindHost, '0.0.0.0')
 
   const secure = parseTeamConfig({
     TRELLIS_BOARD_MODE: 'team',
     TRELLIS_TEAM_PUBLIC_URL: 'https://127.0.0.1:4317',
   })
   assert.equal(secure.cookieSecure, true)
+  assert.equal(secure.bindHost, '0.0.0.0')
+  assert.equal(parseTeamConfig({}).bindHost, '0.0.0.0')
+  assert.equal(
+    parseTeamConfig({
+      TRELLIS_BOARD_BIND_HOST: '127.0.0.1',
+    }).bindHost,
+    '127.0.0.1',
+  )
+  assert.equal(
+    parseTeamConfig({
+      TRELLIS_BOARD_MODE: 'team',
+      TRELLIS_TEAM_PUBLIC_URL: 'http://127.0.0.1:4317',
+      TRELLIS_TEAM_BIND_HOST: '127.0.0.1',
+    }).bindHost,
+    '127.0.0.1',
+  )
+  assert.equal(
+    parseTeamConfig({
+      TRELLIS_BOARD_MODE: 'team',
+      TRELLIS_TEAM_PUBLIC_URL: 'http://127.0.0.1:4317',
+      TRELLIS_TEAM_BIND_HOST: '   ',
+    }).bindHost,
+    '0.0.0.0',
+  )
 
   assert.throws(
     () =>
@@ -53,6 +78,104 @@ test('团队配置按公开地址默认安全 Cookie，并拒绝非回环不安�
       }),
     /非回环团队地址必须启用安全 Cookie/,
   )
+})
+
+test('通配监听接受局域网 Host，同时要求写请求 Origin 与当前 Host 同源', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-wildcard-host-'))
+  const runtime = await createTeamRuntime({
+    config: {
+      ...testConfig(),
+      bindHost: '0.0.0.0',
+    },
+    databaseFile: path.join(root, 'data', 'board.sqlite'),
+    dataDir: path.join(root, 'data'),
+    logger: SILENT_LOGGER,
+    requireAdmin: false,
+    enablePolling: false,
+  })
+  await runtime.start()
+  t.after(async () => {
+    await runtime.stop()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  const networkHost = '192.168.65.27:4317'
+  const networkOrigin = 'http://192.168.65.27:4317'
+  const health = await request(runtime, '/api/health', {
+    headers: { host: networkHost },
+  })
+  assert.equal(health.status, 200)
+  for (const host of ['a,b:4317', 'a%2cb:4317']) {
+    const invalidHost = await request(runtime, '/api/health', {
+      headers: { host },
+    })
+    assert.equal(invalidHost.status, 400, host)
+    assert.equal(invalidHost.body.code, 'INVALID_HOST', host)
+  }
+  const duplicateHost = await request(runtime, '/api/health', {
+    rawHeaders: [
+      ['Host', 'first:4317'],
+      ['Host', 'second:4317'],
+    ],
+  })
+  assert.equal(duplicateHost.status, 400)
+  assert.equal(duplicateHost.body.code, 'INVALID_HOST')
+
+  await createUser(runtime.db, {
+    username: 'network-admin',
+    displayName: '网络管理员',
+    password: 'Network-Password-123',
+    systemAdmin: true,
+    mustChangePassword: false,
+  })
+  const login = await request(runtime, '/api/auth/login', {
+    method: 'POST',
+    headers: { host: networkHost },
+    origin: networkOrigin,
+    body: { username: 'network-admin', password: 'Network-Password-123' },
+  })
+  assert.equal(login.status, 200)
+
+  const rejected = await request(runtime, '/api/auth/login', {
+    method: 'POST',
+    headers: { host: networkHost },
+    origin: 'http://10.0.0.8:4317',
+    body: { username: 'network-admin', password: 'Network-Password-123' },
+  })
+  assert.equal(rejected.status, 403)
+  assert.equal(rejected.body.code, 'CSRF_REJECTED')
+
+  const wrongProtocol = await request(runtime, '/api/auth/login', {
+    method: 'POST',
+    headers: { host: networkHost },
+    origin: 'https://192.168.65.27:4317',
+    body: { username: 'network-admin', password: 'Network-Password-123' },
+  })
+  assert.equal(wrongProtocol.status, 403)
+  assert.equal(wrongProtocol.body.code, 'CSRF_REJECTED')
+})
+
+test('非通配监听仍拒绝非公开 Host', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-strict-host-'))
+  const runtime = await createTeamRuntime({
+    config: testConfig(),
+    databaseFile: path.join(root, 'data', 'board.sqlite'),
+    dataDir: path.join(root, 'data'),
+    logger: SILENT_LOGGER,
+    requireAdmin: false,
+    enablePolling: false,
+  })
+  await runtime.start()
+  t.after(async () => {
+    await runtime.stop()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  const rejected = await request(runtime, '/api/health', {
+    headers: { host: 'localhost:4317' },
+  })
+  assert.equal(rejected.status, 400)
+  assert.equal(rejected.body.code, 'INVALID_HOST')
 })
 
 test('项目接入克隆后工具链失败会清理本次 UUID 工作副本', async (t) => {
@@ -686,15 +809,13 @@ function request(
     origin = PUBLIC_ORIGIN,
     contentType = 'application/json',
     headers = {},
+    rawHeaders = null,
   } = {},
 ) {
   const address = runtime.address()
   const payload = body == null ? null : JSON.stringify(body)
   return new Promise((resolve, reject) => {
-    const requestHeaders = {
-      host: HOST,
-      ...headers,
-    }
+    const requestHeaders = rawHeaders || { host: HOST, ...headers }
     if (payload != null) {
       requestHeaders['content-type'] = contentType
       requestHeaders['content-length'] = Buffer.byteLength(payload)

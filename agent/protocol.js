@@ -99,14 +99,8 @@ export function normalizeServerUrl(input) {
   if (url.pathname !== '/' && url.pathname !== '') {
     throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, 'Agent 服务地址必须使用根路径')
   }
-  if (
-    url.protocol !== 'https:' &&
-    !(url.protocol === 'http:' && isLoopbackHostname(url.hostname))
-  ) {
-    throw new AgentError(
-      AGENT_ERROR_CODE.CONFIG_INVALID,
-      'Agent 服务必须使用 HTTPS；仅回环测试允许 HTTP',
-    )
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, 'Agent 服务地址只支持 HTTP 或 HTTPS')
   }
   if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
     throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, '禁止关闭 Node TLS 证书校验')

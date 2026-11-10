@@ -15,18 +15,9 @@ pub fn validate_board_url(input: &str) -> Result<Url, String> {
         return Err("Board 地址必须使用根路径".to_string());
     }
     match url.scheme() {
-        "https" => Ok(url),
-        "http" if is_loopback_host(url.host_str()) => Ok(url),
-        "http" => Err("Board 地址必须使用 HTTPS；仅回环地址允许 HTTP".to_string()),
-        _ => Err("Board 地址只支持 https 或回环 http".to_string()),
+        "http" | "https" => Ok(url),
+        _ => Err("Board 地址只支持 HTTP 或 HTTPS".to_string()),
     }
-}
-
-pub fn is_loopback_host(host: Option<&str>) -> bool {
-    matches!(
-        host.map(|value| value.to_ascii_lowercase()),
-        Some(value) if value == "localhost" || value == "127.0.0.1" || value == "::1" || value == "[::1]"
-    )
 }
 
 pub fn same_origin(candidate: &Url, board: &Url) -> bool {
@@ -66,18 +57,19 @@ mod tests {
     }
 
     #[test]
-    fn accepts_https_and_loopback_http() {
+    fn accepts_http_and_https() {
         assert!(validate_board_url("https://board.example.com").is_ok());
+        assert!(validate_board_url("http://board.example.com").is_ok());
         assert!(validate_board_url("http://127.0.0.1:4317").is_ok());
         assert!(validate_board_url("http://localhost:4317/").is_ok());
     }
 
     #[test]
-    fn rejects_remote_http_and_credentials() {
-        assert!(validate_board_url("http://board.example.com").is_err());
+    fn rejects_credentials_and_invalid_urls() {
         assert!(validate_board_url("https://user:secret@board.example.com").is_err());
         assert!(validate_board_url("https://board.example.com/app").is_err());
         assert!(validate_board_url("https://board.example.com/?team=a").is_err());
+        assert!(validate_board_url("ftp://board.example.com").is_err());
         assert!(validate_board_url("file:///etc/passwd").is_err());
     }
 

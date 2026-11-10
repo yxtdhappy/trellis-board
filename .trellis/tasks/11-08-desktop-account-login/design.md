@@ -39,6 +39,10 @@
   -> WebView 打开 Board
 ```
 
+服务端 standalone 和 team 默认监听 `0.0.0.0`。团队模式在通配监听时以请求 Host
+作为当前 origin，并继续要求写请求 Origin 与 Host 同源；显式配置 `127.0.0.1` 时仍只接受
+`TRELLIS_TEAM_PUBLIC_URL`。这样其他机器可直接通过局域网地址连接，同时保留 CSRF 校验。
+
 服务端调用顺序：
 
 ```text
@@ -229,7 +233,7 @@ Tauri capability 单独新增 `board-local-association`，通过 `remote.urls` �
 
 | 场景 | 行为 |
 | --- | --- |
-| Board URL 非 HTTPS 且非回环 HTTP | 停留登录页，提示地址不合法 |
+| Board URL 不是 HTTP/HTTPS 根地址 | 停留登录页，提示地址不合法 |
 | 用户名或密码错误 | 清空密码，停留登录页 |
 | 登录限流 | 显示服务端限流信息 |
 | 网络或 TLS 失败 | 不导航，不写设备配置 |
@@ -240,19 +244,24 @@ Tauri capability 单独新增 `board-local-association`，通过 `remote.urls` �
 
 ## 9. 安全边界
 
-- 密码只经过 `invoke -> Rust -> sidecar stdin -> HTTPS`，不进入 argv、环境变量、配置文件或日志。
+- 密码只经过 `invoke -> Rust -> sidecar stdin -> HTTP/HTTPS`，不进入 argv、环境变量、配置文件或日志。
+- 远程 HTTP 不提供传输加密；密码、Session Cookie 和任务内容可能被监听或篡改，非可信网络必须使用 HTTPS。
 - 设备凭据继续只存 Windows DPAPI。
 - Session Cookie 只进入 WebView Cookie Store。
 - 远程 Board 页面只拥有本地关联相关的两个窄权限命令，没有通用文件系统、Shell 或进程能力。
 - 本地登录页只保留 `app_status`、`desktop_login` 和基础窗口权限。
 - 改密要求、账号禁用、CSRF Origin、Host 校验和登录限流继续由服务端执行。
+- standalone 默认监听所有接口且没有鉴权，只能部署在可信网络；需要本机限定时显式绑定
+  `127.0.0.1`。
+- 通配监听接受任意 Host，降低固定 Host allowlist 的防护；生产环境应使用反向代理并显式绑定
+  `127.0.0.1`。
 
 ## 10. 兼容、回滚与风险
 
 - 不兼容旧 `client.json`、旧桌面设备注册、旧深链和旧 workspace 初始化页。
 - 新客户端第一次登录强制创建设备，不认旧 sidecar 配置。
 - 回滚点按“本地 UI/权限 -> sidecar 登录 -> Tauri Cookie/导航”拆分；任一层失败可停止后续接线。
-- 最大技术风险是 Tauri WebView Cookie 域名语义。必须在 Windows WebView2 上实测 HTTPS 域名和回环 HTTP 两种来源，不能只依赖 Rust 单元测试。
-- 远程 capability 使用 `https://*` 和回环 HTTP pattern，必须由 Rust 二次校验动态 Board origin，避免其他远程页面调用本地关联命令。
+- 最大技术风险是 Tauri WebView Cookie 域名语义。必须在 Windows WebView2 上实测 HTTPS 域名和远程 HTTP 两种来源，不能只依赖 Rust 单元测试。
+- 远程 capability 使用 `https://*` 和 `http://*` pattern，必须由 Rust 二次校验动态 Board origin，避免其他远程页面调用本地关联命令。
 - 每次冷启动要求重新登录意味着 `--minimized` 开机自启在用户登录前不会启动 sidecar。该取舍符合“双击后先登录”的当前要求，后续若要恢复无人值守同步需单独设计持久会话。
 

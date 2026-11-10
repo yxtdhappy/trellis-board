@@ -87,7 +87,7 @@ export function parseTeamConfig(env = process.env) {
     return {
       mode,
       port: integerSetting(env, 'PORT', 4317, 1, 65535),
-      bindHost: String(env.TRELLIS_BOARD_BIND_HOST || '127.0.0.1').trim() || '127.0.0.1',
+      bindHost: String(env.TRELLIS_BOARD_BIND_HOST || '0.0.0.0').trim() || '0.0.0.0',
     }
   }
 
@@ -124,7 +124,7 @@ export function parseTeamConfig(env = process.env) {
   }
   return {
     mode,
-    bindHost: String(env.TRELLIS_TEAM_BIND_HOST || '127.0.0.1').trim(),
+    bindHost: String(env.TRELLIS_TEAM_BIND_HOST || '0.0.0.0').trim() || '0.0.0.0',
     port: integerSetting(env, 'TRELLIS_TEAM_PORT', 4317, 1, 65535),
     publicUrl,
     publicOrigin: publicUrl.origin,

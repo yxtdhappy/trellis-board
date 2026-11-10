@@ -166,14 +166,43 @@ function requestOrigin(request) {
   return String(request.headers.origin || '')
 }
 
+function isWildcardBindHost(value) {
+  const host = String(value || '')
+    .trim()
+    .toLowerCase()
+  return host === '0.0.0.0' || host === '::' || host === '[::]'
+}
+
+function hasSingleHostHeader(request) {
+  if (!Array.isArray(request.rawHeaders)) return Boolean(request.headers.host)
+  let count = 0
+  for (let index = 0; index < request.rawHeaders.length; index += 2) {
+    if (String(request.rawHeaders[index]).toLowerCase() === 'host') count += 1
+  }
+  return count === 1
+}
+
+function requestHostOrigin(request, config) {
+  if (!hasSingleHostHeader(request)) return ''
+  const host = String(request.headers.host || '')
+    .trim()
+    .toLowerCase()
+  if (!host || /[\u0000-\u0020\u007f/?#\\,;%]/.test(host)) return ''
+  try {
+    const url = new URL(`${config.publicUrl.protocol}//${host}`)
+    if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return ''
+    return url.origin
+  } catch {
+    return ''
+  }
+}
+
 function assertHost(request, config) {
-  const actual = String(request.headers.host || '')
-    .trim()
-    .toLowerCase()
-  const expected = String(config.publicUrl.host || '')
-    .trim()
-    .toLowerCase()
-  if (!actual || actual !== expected) {
+  const actualOrigin = requestHostOrigin(request, config)
+  if (
+    !actualOrigin ||
+    (!isWildcardBindHost(config.bindHost) && actualOrigin !== config.publicOrigin)
+  ) {
     throw teamError(400, ERROR_CODES.INVALID_HOST, '请求 Host 与团队公开地址不一致')
   }
 }
@@ -190,7 +219,8 @@ function assertJsonWrite(request, config) {
   } catch {
     actualOrigin = ''
   }
-  if (!actualOrigin || actualOrigin !== config.publicOrigin) {
+  const expectedOrigin = requestHostOrigin(request, config)
+  if (!actualOrigin || !expectedOrigin || actualOrigin !== expectedOrigin) {
     throw teamError(403, ERROR_CODES.CSRF_REJECTED, '请求 Origin 校验失败')
   }
 }

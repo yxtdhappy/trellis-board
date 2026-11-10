@@ -60,7 +60,8 @@ Worker 内会缓存各仓库最近结果，并根据事件判断是仓库级重�
 [server/index.js](../../../server/index.js) 启动时：
 
 1. 准备跨平台运行数据根并迁移旧源码 `data/`，打开新根下的 `board.sqlite`，按顺序迁移到 schema v8，创建仓库存储和 HTTP 服务。
-2. 监听 `127.0.0.1:4317`。
+2. 默认监听 `0.0.0.0:4317`；显式配置 `TRELLIS_BOARD_BIND_HOST` 或
+   `TRELLIS_TEAM_BIND_HOST=127.0.0.1` 时收窄为本机回环。
 3. 启动对白名单仓库的文件监听。
 4. 异步触发启动扫描。
 
