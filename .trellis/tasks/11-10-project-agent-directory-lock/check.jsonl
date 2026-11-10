@@ -1,8 +1,0 @@
-{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"检查运行时、Git 和稀疏检出边界。"}
-{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"检查 API 契约与输入校验。"}
-{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"检查持久化和索引一致性。"}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查自动化测试与真实 Git 验证。"}
-{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"检查页面状态、异步加载和交互行为。"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查前端质量门和浏览器验收。"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查跨层数据流与字段一致性。"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查目录映射是否单一来源。"}

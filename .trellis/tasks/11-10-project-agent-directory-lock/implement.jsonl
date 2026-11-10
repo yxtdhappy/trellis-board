@@ -1,9 +1,0 @@
-{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"约束团队运行时、Git 子进程、稀疏工作副本和运行数据边界。"}
-{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"约束 probe/connect API 输入校验、错误结构和文件边界。"}
-{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"约束项目持久化字段与任务索引刷新。"}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"约束真实 Git 夹具、测试分层和验证基线。"}
-{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"约束管理页 hook、表单状态和异步加载模式。"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"约束前端类型检查、构建和无障碍验收。"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"约束 probe/connect 字段在 API、服务端、数据库和页面之间的一致性。"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"要求 Agent 目录映射和探测逻辑集中复用。"}
-{"file":".trellis/tasks/11-10-project-agent-directory-lock/research/agent-directory-detection.md","reason":"提供 Trellis 0.6.17 平台目录和现有代码边界证据。"}
