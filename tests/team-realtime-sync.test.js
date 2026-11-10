@@ -501,6 +501,16 @@ test('实时批次按文件版本广播，幂等重试不会重复写', async (t
   })
   assert.equal(applied.status, 200, JSON.stringify(applied.body))
   assert.equal(applied.body.revision, 1)
+  await waitForCondition(() => {
+    const row = runtime.db
+      .prepare(`
+      SELECT title, live_revision
+      FROM team_task_index
+      WHERE project_id = 'p-live' AND task_key = 'p-live::.trellis/tasks/task-live'
+    `)
+      .get()
+    return row?.title === '实时标题' && Number(row.live_revision) === 1
+  })
   assert.equal(
     runtime.db
       .prepare(`
@@ -634,6 +644,15 @@ test('实时批次按文件版本广播，幂等重试不会重复写', async (t
     `${JSON.stringify(initial, null, 2)}\n`,
   )
   await runtime.services.taskIndex.scanAndIndexProject(project, { force: true })
+  await waitForCondition(() => {
+    const row = runtime.db
+      .prepare(`
+      SELECT title FROM team_task_index
+      WHERE project_id = 'p-live' AND task_key = 'p-live::.trellis/tasks/task-live'
+    `)
+      .get()
+    return row?.title === '实时标题'
+  })
   assert.equal(
     runtime.db
       .prepare(`
@@ -698,6 +717,15 @@ test('实时批次按文件版本广播，幂等重试不会重复写', async (t
     },
   })
   assert.equal(ownerTaskApplied.status, 200, JSON.stringify(ownerTaskApplied.body))
+  await waitForCondition(() => {
+    const row = runtime.db
+      .prepare(`
+      SELECT title FROM team_task_index
+      WHERE project_id = 'p-live' AND task_key = 'p-live::.trellis/tasks/task-live'
+    `)
+      .get()
+    return row?.title === 'Owner 最后写入'
+  })
   const latestFiles = await request(
     runtime,
     '/api/agent/live-files?projectId=p-live&afterRevision=0',
@@ -742,6 +770,15 @@ test('实时批次按文件版本广播，幂等重试不会重复写', async (t
     },
   })
   assert.equal(takeover.status, 200)
+  await waitForCondition(() => {
+    const row = runtime.db
+      .prepare(`
+      SELECT assignee_user_id FROM team_task_index
+      WHERE project_id = 'p-live' AND task_key = 'p-live::.trellis/tasks/task-live'
+    `)
+      .get()
+    return row?.assignee_user_id === writer.id
+  })
   assert.equal(
     runtime.db
       .prepare(`
@@ -790,7 +827,7 @@ test('实时批次按文件版本广播，幂等重试不会重复写', async (t
   )
 })
 
-test('实时投影目录位于系统临时区，幂等重放不重复物化且可重试 Windows 重命名', async (t) => {
+test('实时覆盖在系统临时区物化，幂等重放不重复投影', async (t) => {
   const { root, runtime } = await startRuntime(t)
   seedTeam(runtime)
   const owner = await makeUser(runtime, 'materialize-owner', 't-live', 'member')
@@ -809,41 +846,6 @@ test('实时投影目录位于系统临时区，幂等重放不重复物化且�
   fs.mkdirSync(path.join(repoPath, '.git'), { recursive: true })
   fs.writeFileSync(path.join(repoPath, '.git', 'HEAD'), 'ref: refs/heads/main\n')
 
-  const originalMkdtempSync = fs.mkdtempSync
-  const originalRenameSync = fs.renameSync
-  const originalRmSync = fs.rmSync
-  const materialized = []
-  let injectedRenameFailure = false
-  let injectedCleanupFailure = false
-  fs.mkdtempSync = (prefix, ...args) => {
-    const created = originalMkdtempSync(prefix, ...args)
-    materialized.push(created)
-    return created
-  }
-  fs.renameSync = (source, target) => {
-    if (!injectedRenameFailure && String(source).endsWith('.tmp')) {
-      injectedRenameFailure = true
-      const error = new Error('模拟 Windows 文件锁')
-      error.code = 'EPERM'
-      throw error
-    }
-    return originalRenameSync(source, target)
-  }
-  fs.rmSync = (target, options) => {
-    if (!injectedCleanupFailure && materialized.includes(target)) {
-      injectedCleanupFailure = true
-      const error = new Error('模拟 Windows 临时目录锁')
-      error.code = 'EPERM'
-      throw error
-    }
-    return originalRmSync(target, options)
-  }
-  t.after(() => {
-    fs.mkdtempSync = originalMkdtempSync
-    fs.renameSync = originalRenameSync
-    fs.rmSync = originalRmSync
-  })
-
   const content = `${JSON.stringify(
     {
       ...initial,
@@ -852,6 +854,60 @@ test('实时投影目录位于系统临时区，幂等重放不重复物化且�
     null,
     2,
   )}\n`
+  const tempPrefix = 'trellis-live-materialize-'
+  const before = new Set(fs.readdirSync(os.tmpdir()))
+  const materialized = await runtime.services.taskIndex.materializeLiveProject(
+    project,
+    [
+      {
+        relative_path: '.trellis/tasks/task-live/task.json',
+        content_text: content,
+        deleted: 0,
+        task_key: 'p-live::.trellis/tasks/task-live',
+      },
+    ],
+    1,
+  )
+  assert.equal(
+    materialized.scan.tasks.find((task) => task.taskKey === 'p-live::.trellis/tasks/task-live')
+      .title,
+    '物化目录测试',
+  )
+  assert.deepEqual(
+    fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith(tempPrefix) && !before.has(name)),
+    [],
+  )
+  await assert.rejects(
+    () =>
+      runtime.services.taskIndex.materializeLiveProject(
+        project,
+        [
+          {
+            relative_path: '../outside.md',
+            content_text: 'bad',
+            deleted: 0,
+            task_key: null,
+          },
+        ],
+        1,
+      ),
+    /实时物化文件路径无效/,
+  )
+  assert.deepEqual(
+    fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith(tempPrefix) && !before.has(name)),
+    [],
+  )
+
+  const originalMaterialize = runtime.services.taskIndex.materializeLiveProject
+  let materializeCalls = 0
+  runtime.services.taskIndex.materializeLiveProject = async (...args) => {
+    materializeCalls += 1
+    return originalMaterialize(...args)
+  }
+  t.after(() => {
+    runtime.services.taskIndex.materializeLiveProject = originalMaterialize
+  })
+
   const body = {
     projectId: 'p-live',
     batchId: 'batch-materialize-0001',
@@ -865,12 +921,17 @@ test('实时投影目录位于系统临时区，幂等重放不重复物化且�
     body,
   })
   assert.equal(applied.status, 200, JSON.stringify(applied.body))
-  assert.equal(injectedRenameFailure, true)
-  assert.equal(injectedCleanupFailure, true)
-  assert.equal(materialized.length, 1)
+  await waitForCondition(
+    () =>
+      runtime.services.liveSync
+        .board('p-live')
+        ?.tasks?.some(
+          (task) =>
+            task.taskKey === 'p-live::.trellis/tasks/task-live' && task.title === '物化目录测试',
+        ) === true,
+  )
   assert.equal(runtime.services.liveSync.board('p-live').projects[0].branch, 'main')
-  const relativeMaterialized = path.relative(repoPath, materialized[0])
-  assert.ok(relativeMaterialized.startsWith('..') || path.isAbsolute(relativeMaterialized))
+  assert.equal(materializeCalls, 1)
 
   const replay = await request(runtime, '/api/agent/live-changes', {
     method: 'POST',
@@ -880,7 +941,283 @@ test('实时投影目录位于系统临时区，幂等重放不重复物化且�
   })
   assert.equal(replay.status, 200, JSON.stringify(replay.body))
   assert.equal(replay.body.replayed, true)
-  assert.equal(materialized.length, 1)
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  assert.equal(materializeCalls, 1)
+})
+
+test(
+  '实时重投影立即返回、健康检查不受阻塞并只应用最新 revision',
+  { timeout: 15_000 },
+  async (t) => {
+    const { root, runtime } = await startRuntime(t)
+    seedTeam(runtime)
+    const owner = await makeUser(runtime, 'async-owner', 't-live', 'member')
+    const writer = await makeUser(runtime, 'async-writer', 't-live', 'member')
+    const { repoPath, initial } = seedProject(runtime, root, owner, writer)
+    const project = {
+      id: 'p-live',
+      name: '实时项目',
+      path: repoPath,
+      syncBranch: 'main',
+    }
+    await runtime.services.taskIndex.scanAndIndexProject(project, { force: true })
+    const agent = await enroll(runtime, 'async-owner')
+    const heartbeat = await bindRealtimeAgent(runtime, agent)
+    assert.equal(heartbeat.status, 200)
+
+    const originalMaterialize = runtime.services.taskIndex.materializeLiveProject
+    let releaseFirst
+    const firstGate = new Promise((resolve) => {
+      releaseFirst = resolve
+    })
+    let materializeCalls = 0
+    runtime.services.taskIndex.materializeLiveProject = async (...args) => {
+      materializeCalls += 1
+      if (materializeCalls === 1) await firstGate
+      return originalMaterialize(...args)
+    }
+    t.after(() => {
+      runtime.services.taskIndex.materializeLiveProject = originalMaterialize
+    })
+
+    const firstContent = `${JSON.stringify({ ...initial, title: '旧 revision' }, null, 2)}\n`
+    const first = await request(runtime, '/api/agent/live-changes', {
+      method: 'POST',
+      origin: null,
+      agentCredential: agent.credential,
+      body: {
+        projectId: 'p-live',
+        batchId: 'batch-async-old-0001',
+        clientSequence: 1,
+        files: [liveUpsert('.trellis/tasks/task-live/task.json', firstContent)],
+      },
+    })
+    assert.equal(first.status, 200, JSON.stringify(first.body))
+    await waitForCondition(() => materializeCalls === 1)
+
+    const latestContent = `${JSON.stringify({ ...initial, title: '最新 revision' }, null, 2)}\n`
+    const latest = await request(runtime, '/api/agent/live-changes', {
+      method: 'POST',
+      origin: null,
+      agentCredential: agent.credential,
+      body: {
+        projectId: 'p-live',
+        batchId: 'batch-async-latest-0001',
+        clientSequence: 2,
+        files: [liveUpsert('.trellis/tasks/task-live/task.json', latestContent)],
+      },
+    })
+    assert.equal(latest.status, 200, JSON.stringify(latest.body))
+    assert.equal(latest.body.revision, 2)
+    assert.equal(materializeCalls, 1)
+
+    const latencies = []
+    for (let index = 0; index < 5; index += 1) {
+      const startedAt = performance.now()
+      const health = await request(runtime, '/api/health')
+      latencies.push(performance.now() - startedAt)
+      assert.equal(health.status, 200)
+    }
+    t.diagnostic(`实时投影解耦后健康检查 max=${Math.max(...latencies).toFixed(0)}ms`)
+    assert.ok(Math.max(...latencies) < 1_000)
+
+    releaseFirst()
+    await waitForCondition(
+      () =>
+        runtime.services.liveSync
+          .board('p-live')
+          ?.tasks?.some(
+            (task) =>
+              task.taskKey === 'p-live::.trellis/tasks/task-live' && task.title === '最新 revision',
+          ) === true,
+      { timeoutMs: 10_000 },
+    )
+    assert.equal(materializeCalls, 2)
+  },
+)
+
+test('实时投影失败保留上一份 Board 并自动重试', { timeout: 15_000 }, async (t) => {
+  const { root, runtime } = await startRuntime(t)
+  seedTeam(runtime)
+  const owner = await makeUser(runtime, 'retry-owner', 't-live', 'member')
+  const writer = await makeUser(runtime, 'retry-writer', 't-live', 'member')
+  const { repoPath, initial } = seedProject(runtime, root, owner, writer)
+  const project = {
+    id: 'p-live',
+    name: '实时项目',
+    path: repoPath,
+    syncBranch: 'main',
+  }
+  await runtime.services.taskIndex.scanAndIndexProject(project, { force: true })
+  const agent = await enroll(runtime, 'retry-owner')
+  const heartbeat = await bindRealtimeAgent(runtime, agent)
+  assert.equal(heartbeat.status, 200)
+
+  const firstContent = `${JSON.stringify({ ...initial, title: '成功版本' }, null, 2)}\n`
+  const first = await request(runtime, '/api/agent/live-changes', {
+    method: 'POST',
+    origin: null,
+    agentCredential: agent.credential,
+    body: {
+      projectId: 'p-live',
+      batchId: 'batch-retry-first-0001',
+      clientSequence: 1,
+      files: [liveUpsert('.trellis/tasks/task-live/task.json', firstContent)],
+    },
+  })
+  assert.equal(first.status, 200, JSON.stringify(first.body))
+  await waitForCondition(
+    () =>
+      runtime.services.liveSync
+        .board('p-live')
+        ?.tasks?.some(
+          (task) =>
+            task.taskKey === 'p-live::.trellis/tasks/task-live' && task.title === '成功版本',
+        ) === true,
+  )
+
+  const originalMaterialize = runtime.services.taskIndex.materializeLiveProject
+  let failOnce = true
+  let materializeCalls = 0
+  runtime.services.taskIndex.materializeLiveProject = async (...args) => {
+    materializeCalls += 1
+    if (failOnce) {
+      failOnce = false
+      throw new Error('模拟实时投影失败')
+    }
+    return originalMaterialize(...args)
+  }
+  t.after(() => {
+    runtime.services.taskIndex.materializeLiveProject = originalMaterialize
+  })
+
+  const latestContent = `${JSON.stringify({ ...initial, title: '重试成功版本' }, null, 2)}\n`
+  const latest = await request(runtime, '/api/agent/live-changes', {
+    method: 'POST',
+    origin: null,
+    agentCredential: agent.credential,
+    body: {
+      projectId: 'p-live',
+      batchId: 'batch-retry-latest-0001',
+      clientSequence: 2,
+      files: [liveUpsert('.trellis/tasks/task-live/task.json', latestContent)],
+    },
+  })
+  assert.equal(latest.status, 200, JSON.stringify(latest.body))
+  await waitForCondition(() => materializeCalls >= 1)
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  assert.equal(
+    runtime.db
+      .prepare(`
+        SELECT revision FROM project_live_revision WHERE project_id = 'p-live'
+      `)
+      .get().revision,
+    2,
+  )
+  assert.equal(
+    runtime.services.liveSync
+      .board('p-live')
+      .tasks.find((task) => task.taskKey === 'p-live::.trellis/tasks/task-live').title,
+    '成功版本',
+  )
+
+  await waitForCondition(
+    () =>
+      runtime.services.liveSync
+        .board('p-live')
+        ?.tasks?.some(
+          (task) =>
+            task.taskKey === 'p-live::.trellis/tasks/task-live' && task.title === '重试成功版本',
+        ) === true,
+    { timeoutMs: 10_000 },
+  )
+  assert.equal(materializeCalls, 2)
+})
+
+test('320 任务项目实时投影期间健康检查保持在 1 秒内', { timeout: 45_000 }, async (t) => {
+  const { root, runtime } = await startRuntime(t)
+  seedTeam(runtime)
+  const owner = await makeUser(runtime, 'large-owner', 't-live', 'member')
+  const writer = await makeUser(runtime, 'large-writer', 't-live', 'member')
+  const { repoPath, initial } = seedProject(runtime, root, owner, writer)
+  const now = new Date().toISOString()
+  for (let index = 0; index < 319; index += 1) {
+    const taskDir = path.join(
+      repoPath,
+      '.trellis',
+      'tasks',
+      `task-fixture-${String(index).padStart(3, '0')}`,
+    )
+    fs.mkdirSync(taskDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(taskDir, 'task.json'),
+      `${JSON.stringify(
+        {
+          id: `fixture-${index}`,
+          title: `性能夹具 ${index}`,
+          description: '实时投影健康检查',
+          status: 'planning',
+          priority: 'P2',
+          assignee: 'owner',
+          creator: 'owner',
+          created_at: now,
+        },
+        null,
+        2,
+      )}\n`,
+    )
+  }
+  const project = {
+    id: 'p-live',
+    name: '实时项目',
+    path: repoPath,
+    syncBranch: 'main',
+  }
+  await runtime.services.taskIndex.scanAndIndexProject(project, { force: true })
+  const agent = await enroll(runtime, 'large-owner')
+  const heartbeat = await bindRealtimeAgent(runtime, agent)
+  assert.equal(heartbeat.status, 200)
+
+  const content = `${JSON.stringify({ ...initial, title: '320 任务实时版本' }, null, 2)}\n`
+  const startedAt = performance.now()
+  const applied = await request(runtime, '/api/agent/live-changes', {
+    method: 'POST',
+    origin: null,
+    agentCredential: agent.credential,
+    body: {
+      projectId: 'p-live',
+      batchId: 'batch-large-project-0001',
+      clientSequence: 1,
+      files: [liveUpsert('.trellis/tasks/task-live/task.json', content)],
+    },
+  })
+  assert.equal(applied.status, 200, JSON.stringify(applied.body))
+
+  const latencies = []
+  const deadline = Date.now() + 30_000
+  let projected = false
+  while (Date.now() < deadline) {
+    const healthStartedAt = performance.now()
+    const health = await request(runtime, '/api/health')
+    latencies.push(performance.now() - healthStartedAt)
+    assert.equal(health.status, 200)
+    projected =
+      runtime.services.liveSync
+        .board('p-live')
+        ?.tasks?.some(
+          (task) =>
+            task.taskKey === 'p-live::.trellis/tasks/task-live' &&
+            task.title === '320 任务实时版本',
+        ) === true
+    if (projected) break
+    await new Promise((resolve) => setTimeout(resolve, 40))
+  }
+  assert.equal(projected, true)
+  t.diagnostic(
+    `320 任务实时投影 total=${(performance.now() - startedAt).toFixed(0)}ms ` +
+      `healthMax=${Math.max(...latencies).toFixed(0)}ms`,
+  )
+  assert.ok(Math.max(...latencies) < 1_000)
 })
 
 test('实时上报拒绝路径越界、无修改权限和未批准绑定', async (t) => {
@@ -1157,6 +1494,16 @@ test('实时覆盖只标记实际变化的任务', async (t) => {
     },
   })
   assert.equal(applied.status, 200, JSON.stringify(applied.body))
+  await waitForCondition(() => {
+    const row = runtime.db
+      .prepare(`
+      SELECT live_revision
+      FROM team_task_index
+      WHERE project_id = 'p-live' AND task_key = 'p-live::.trellis/tasks/task-live'
+    `)
+      .get()
+    return Number(row?.live_revision) === Number(applied.body.revision)
+  })
 
   const rows = runtime.db
     .prepare(`

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"检查重投影不再运行于 HTTP 主线程且 Worker 生命周期完整"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"检查实时协议、责任人语义、幂等、Git 收敛和控制窗口兼容"}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"检查任务索引重建、revision 单调和失败回退"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查自动测试、事务、错误诊断和 Windows E2E 证据"}
+{"file":".trellis/tasks/11-10-live-sync-main-thread-stall/research/root-cause.md","reason":"逐项确认原始故障路径和性能验收具备可复现证据"}

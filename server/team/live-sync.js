@@ -1,10 +1,8 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { TextDecoder } from 'node:util'
 import { withTransaction } from '../database.js'
-import { scanRepository } from '../loader.js'
 import { appendAuditEvent } from './audit.js'
 import { ERROR_CODES, teamError } from './errors.js'
 import { readGitProject } from './git-manager.js'
@@ -16,8 +14,8 @@ const MAX_FILES = 64
 const RATE_WINDOW_MS = 1000
 const RATE_LIMIT = 5
 const WARNING_TTL_MS = 5 * 60 * 1000
-const RENAME_RETRY_DELAYS_MS = [10, 20, 50, 100, 200]
-const TRANSIENT_FILE_LOCK_CODES = new Set(['EACCES', 'EBUSY', 'EPERM'])
+const PROJECTION_RETRY_BASE_MS = 1000
+const PROJECTION_RETRY_MAX_MS = 30_000
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const SAFE_BATCH_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/
 const TEXT_EXTENSIONS = new Set(['.json', '.jsonl', '.md', '.txt', '.yaml', '.yml'])
@@ -40,11 +38,6 @@ function stableValue(value) {
 
 function requestHash(value) {
   return digest(JSON.stringify(stableValue(value)))
-}
-
-function isInside(root, candidate) {
-  const relative = path.relative(root, candidate)
-  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative)
 }
 
 function normalizeLivePath(value) {
@@ -92,77 +85,6 @@ function assertNoSymlink(root, relativePath) {
   }
 }
 
-function renameWithRetry(source, target) {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      fs.renameSync(source, target)
-      return
-    } catch (error) {
-      const retryable = TRANSIENT_FILE_LOCK_CODES.has(error?.code)
-      if (!retryable || attempt >= RENAME_RETRY_DELAYS_MS.length) throw error
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, RENAME_RETRY_DELAYS_MS[attempt])
-    }
-  }
-}
-
-function removeTreeWithRetry(target) {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      fs.rmSync(target, { recursive: true, force: true })
-      return
-    } catch (error) {
-      if (!TRANSIENT_FILE_LOCK_CODES.has(error?.code) || attempt >= RENAME_RETRY_DELAYS_MS.length) {
-        throw error
-      }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, RENAME_RETRY_DELAYS_MS[attempt])
-    }
-  }
-}
-
-function safeWrite(root, relativePath, content) {
-  const target = path.resolve(root, ...relativePath.split('/'))
-  if (!isInside(root, target)) {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, '实时文件写入路径越界')
-  }
-  assertNoSymlink(root, relativePath)
-  fs.mkdirSync(path.dirname(target), { recursive: true })
-  try {
-    if (fs.lstatSync(target).isSymbolicLink()) {
-      throw teamError(400, ERROR_CODES.INVALID_INPUT, '实时同步不能覆盖符号链接')
-    }
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error
-  }
-  const temp = `${target}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`
-  fs.writeFileSync(temp, content, 'utf8')
-  try {
-    renameWithRetry(temp, target)
-  } catch (error) {
-    try {
-      fs.unlinkSync(temp)
-    } catch {
-      // 清理失败不覆盖真实写入错误。
-    }
-    throw error
-  }
-}
-
-function safeDelete(root, relativePath) {
-  const target = path.resolve(root, ...relativePath.split('/'))
-  if (!isInside(root, target)) {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, '实时文件删除路径越界')
-  }
-  assertNoSymlink(root, relativePath)
-  try {
-    if (fs.lstatSync(target).isDirectory()) {
-      throw teamError(400, ERROR_CODES.INVALID_INPUT, '实时删除不能作用于目录')
-    }
-    fs.unlinkSync(target)
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error
-  }
-}
-
 function relativeTaskDir(relativePath) {
   if (!relativePath.startsWith('.trellis/tasks/') || relativePath === '.trellis/tasks/') {
     return null
@@ -204,11 +126,19 @@ function parseJson(content) {
   }
 }
 
-export function createLiveSyncService({ db, taskIndex, agentEvents, now = () => new Date() }) {
+export function createLiveSyncService({
+  db,
+  taskIndex,
+  agentEvents,
+  now = () => new Date(),
+  logger = console,
+}) {
   const warnings = new Map()
   const rateBuckets = new Map()
   const liveBoards = new Map()
   const liveDetails = new Map()
+  const projectionStates = new Map()
+  let closed = false
 
   function readBinding(agent, projectId, { write = false } = {}) {
     const row = db
@@ -652,13 +582,13 @@ export function createLiveSyncService({ db, taskIndex, agentEvents, now = () => 
       if (clientHash !== existing.request_sha256) {
         throw teamError(409, ERROR_CODES.IDEMPOTENCY_CONFLICT, '同一 batchId 不能提交不同内容')
       }
-      if (!liveBoards.has(projectId)) reapplyProject(projectId)
-      agentEvents?.publishLiveChanged({
-        projectId,
-        revision: Number(existing.revision),
-        taskKeys: requestedTaskKeys,
-        sourceAgentId: agent.id,
-      })
+      if (!liveBoards.has(projectId)) {
+        scheduleProjectProjection(projectId, {
+          revision: Number(existing.revision),
+          taskKeys: requestedTaskKeys,
+          sourceAgentId: agent.id,
+        })
+      }
       return {
         revision: Number(existing.revision),
         batchId,
@@ -824,17 +754,15 @@ export function createLiveSyncService({ db, taskIndex, agentEvents, now = () => 
       }
     }
     taskKeys = taskKeysForFiles(projectId, appliedFiles)
-    reapplyProject(projectId)
-    db.prepare(`
-      DELETE FROM project_live_batch
-      WHERE created_at < ?
-    `).run(new Date(now().getTime() - 30 * 24 * 60 * 60 * 1000).toISOString())
-    agentEvents?.publishLiveChanged({
-      projectId,
+    scheduleProjectProjection(projectId, {
       revision,
       taskKeys,
       sourceAgentId: agent.id,
     })
+    db.prepare(`
+      DELETE FROM project_live_batch
+      WHERE created_at < ?
+    `).run(new Date(now().getTime() - 30 * 24 * 60 * 60 * 1000).toISOString())
     if (decision) {
       agentEvents?.publishLiveOverridden({
         projectId,
@@ -1001,9 +929,7 @@ export function createLiveSyncService({ db, taskIndex, agentEvents, now = () => 
         occurredAt: timestamp,
       })
     })
-    reapplyProject(projectId)
-    agentEvents?.publishLiveChanged({
-      projectId,
+    scheduleProjectProjection(projectId, {
       revision,
       taskKeys: [taskKey],
       sourceAgentId: null,
@@ -1077,35 +1003,24 @@ export function createLiveSyncService({ db, taskIndex, agentEvents, now = () => 
     }
   }
 
-  function applyRowsToTree(root, rows) {
-    for (const row of rows) {
-      const relative = row.relative_path.startsWith('.trellis/')
-        ? row.relative_path.slice('.trellis/'.length)
-        : null
-      if (!relative) continue
-      if (row.deleted) safeDelete(root, relative)
-      else safeWrite(root, relative, row.content_text)
-    }
-  }
-
-  function copyLiveBase(sourceRoot, targetRoot) {
-    fs.mkdirSync(targetRoot, { recursive: true })
-    for (const relative of ['tasks', 'workspace']) {
-      const source = path.join(sourceRoot, relative)
-      if (!fs.existsSync(source)) continue
-      fs.cpSync(source, path.join(targetRoot, relative), {
-        recursive: true,
-        force: true,
+  function projectionState(projectId) {
+    if (!projectionStates.has(projectId)) {
+      projectionStates.set(projectId, {
+        running: false,
+        scheduled: false,
+        requestedRevision: 0,
+        retryAttempt: 0,
+        retryTimer: null,
+        taskKeys: new Set(),
+        sourceAgentIds: new Set(),
+        forceBroadcast: false,
       })
     }
-    const developer = path.join(sourceRoot, '.developer')
-    if (fs.existsSync(developer)) {
-      fs.copyFileSync(developer, path.join(targetRoot, '.developer'))
-    }
+    return projectionStates.get(projectId)
   }
 
-  function reapplyProject(projectId) {
-    const rows = db
+  function readProjectionRows(projectId) {
+    return db
       .prepare(`
       SELECT relative_path, content_text, deleted, task_key
       FROM project_live_file
@@ -1113,89 +1028,157 @@ export function createLiveSyncService({ db, taskIndex, agentEvents, now = () => 
       ORDER BY relative_path
     `)
       .all(projectId)
-    if (!rows.length) {
-      liveBoards.delete(projectId)
-      liveDetails.delete(projectId)
-      return false
-    }
-    const project = readGitProject(db, projectId)
-    if (!project || !fs.existsSync(path.join(project.path, '.trellis'))) return false
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-live-materialize-'))
+  }
+
+  function taskKeysForRows(projectId, rows) {
+    return [
+      ...new Set(
+        rows
+          .map(
+            (row) => row.task_key || taskDirFromIndex(db, projectId, row.relative_path)?.task_key,
+          )
+          .filter(Boolean),
+      ),
+    ]
+  }
+
+  function applyProjectProjection(projectId, rows, revision, scan) {
+    const affectedTaskKeys = affectedLiveTaskKeys(projectId, rows)
+    const isAffected = (taskKey) => affectedTaskKeys === null || affectedTaskKeys.has(taskKey)
+    const details = new Map(
+      scan.tasks.map((task) => [
+        task.taskKey,
+        {
+          ...task,
+          liveRevision: isAffected(task.taskKey) ? revision : 0,
+        },
+      ]),
+    )
+    const board = taskIndex.buildBoard(scan)
+    board.tasks = (board.tasks || []).map((task) => ({
+      ...task,
+      liveRevision: isAffected(task.taskKey) ? revision : 0,
+    }))
+    taskIndex.replaceProjectIndex({
+      projectId,
+      board,
+      boardVersion: `live:${revision}`,
+      persistCache: false,
+      skipLiveHook: true,
+      publishEvents: false,
+      liveRevision: revision,
+      affectedTaskKeys,
+    })
+    liveDetails.set(projectId, details)
+    liveBoards.set(projectId, board)
+  }
+
+  function resetProjectionNotification(state) {
+    state.taskKeys.clear()
+    state.sourceAgentIds.clear()
+    state.forceBroadcast = false
+  }
+
+  async function runProjectProjection(projectId) {
+    const state = projectionStates.get(projectId)
+    if (!state || state.running || closed) return
+    state.running = true
     try {
-      copyLiveBase(path.join(project.path, '.trellis'), path.join(tempRoot, '.trellis'))
-      applyRowsToTree(path.join(tempRoot, '.trellis'), rows)
-      const tempProject = { ...project, path: tempRoot }
-      const scan = scanRepository(tempProject, {
-        includeContent: true,
-        refreshRepositoryMetadata: true,
-        metadataRepoPath: project.path,
-      })
-      scan.tasks = scan.tasks.map((task) => ({
-        ...task,
-        taskVersion: digest(
-          fs.readFileSync(path.join(task.repoPath, task.relativeDir, 'task.json')),
-        ),
-      }))
-      const board = taskIndex.buildBoard(scan)
-      const revision = currentRevision(projectId)
-      const affectedTaskKeys = affectedLiveTaskKeys(projectId, rows)
-      const isAffected = (taskKey) => affectedTaskKeys === null || affectedTaskKeys.has(taskKey)
-      liveDetails.set(
-        projectId,
-        new Map(
-          scan.tasks.map((task) => [
-            task.taskKey,
-            {
-              ...task,
-              liveRevision: isAffected(task.taskKey) ? revision : 0,
-            },
-          ]),
-        ),
-      )
-      board.tasks = (board.tasks || []).map((task) => ({
-        ...task,
-        liveRevision: isAffected(task.taskKey) ? revision : 0,
-      }))
-      liveBoards.set(projectId, board)
-      taskIndex.replaceProjectIndex({
-        projectId,
-        board,
-        boardVersion: `live:${revision}`,
-        persistCache: false,
-        skipLiveHook: true,
-        publishEvents: false,
-      })
-      withTransaction(db, () => {
-        db.prepare(`
-          UPDATE team_task_index
-          SET live_revision = 0
-          WHERE project_id = ?
-        `).run(projectId)
-        if (affectedTaskKeys === null) {
-          db.prepare(`
-            UPDATE team_task_index
-            SET live_revision = ?
-            WHERE project_id = ?
-          `).run(revision, projectId)
+      while (!closed) {
+        const revision = Math.max(state.requestedRevision, currentRevision(projectId))
+        state.requestedRevision = revision
+        const rows = readProjectionRows(projectId)
+        if (!rows.length) {
+          liveBoards.delete(projectId)
+          liveDetails.delete(projectId)
+          state.retryAttempt = 0
+          resetProjectionNotification(state)
           return
         }
-        const keys = [...affectedTaskKeys]
-        if (!keys.length) return
-        db.prepare(`
-          UPDATE team_task_index
-          SET live_revision = ?
-          WHERE project_id = ?
-            AND task_key IN (${keys.map(() => '?').join(', ')})
-        `).run(revision, projectId, ...keys)
-      })
-      return true
-    } finally {
-      try {
-        removeTreeWithRetry(tempRoot)
-      } catch {
-        // 临时目录在工作区外，清理失败不能反向令已提交的实时批次失败。
+        const project = readGitProject(db, projectId)
+        if (!project || !fs.existsSync(path.join(project.path, '.trellis'))) {
+          throw new Error('项目工作副本不可用')
+        }
+        const result = await taskIndex.materializeLiveProject(project, rows, revision)
+        if (closed) return
+        const latestRevision = Math.max(state.requestedRevision, currentRevision(projectId))
+        if (latestRevision !== revision) {
+          state.requestedRevision = latestRevision
+          continue
+        }
+        if (Number(result?.revision) !== revision || !result?.scan) {
+          throw new Error('实时投影返回了无效结果')
+        }
+        applyProjectProjection(projectId, rows, revision, result.scan)
+        const taskKeys = state.taskKeys.size
+          ? [...state.taskKeys]
+          : taskKeysForRows(projectId, rows)
+        const sourceAgentId =
+          state.forceBroadcast || state.sourceAgentIds.size !== 1
+            ? null
+            : [...state.sourceAgentIds][0]
+        state.retryAttempt = 0
+        resetProjectionNotification(state)
+        agentEvents?.publishLiveChanged({
+          projectId,
+          revision,
+          taskKeys,
+          sourceAgentId,
+        })
+        return
       }
+    } catch (error) {
+      if (closed) return
+      const attempt = (state.retryAttempt += 1)
+      const delay = Math.min(
+        PROJECTION_RETRY_MAX_MS,
+        PROJECTION_RETRY_BASE_MS * 2 ** Math.min(attempt - 1, 5),
+      )
+      logger.warn('实时投影失败，将按退避重试', {
+        projectId,
+        revision: state.requestedRevision,
+        attempt,
+        retryInMs: delay,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      state.retryTimer = setTimeout(() => {
+        state.retryTimer = null
+        void runProjectProjection(projectId)
+      }, delay)
+      state.retryTimer.unref?.()
+    } finally {
+      state.running = false
     }
+  }
+
+  function scheduleProjectProjection(
+    projectId,
+    { revision = currentRevision(projectId), taskKeys = [], sourceAgentId = null } = {},
+  ) {
+    if (closed) return false
+    const state = projectionState(projectId)
+    state.requestedRevision = Math.max(state.requestedRevision, Number(revision) || 0)
+    for (const taskKey of taskKeys || []) {
+      if (taskKey) state.taskKeys.add(String(taskKey))
+    }
+    if (sourceAgentId === null) state.forceBroadcast = true
+    else if (sourceAgentId) state.sourceAgentIds.add(String(sourceAgentId))
+    if (state.retryTimer) {
+      clearTimeout(state.retryTimer)
+      state.retryTimer = null
+    }
+    if (!state.running && !state.scheduled) {
+      state.scheduled = true
+      queueMicrotask(() => {
+        state.scheduled = false
+        void runProjectProjection(projectId)
+      })
+    }
+    return true
+  }
+
+  function reapplyProject(projectId) {
+    return scheduleProjectProjection(projectId)
   }
 
   function convergeGit(projectId) {
@@ -1245,7 +1228,6 @@ export function createLiveSyncService({ db, taskIndex, agentEvents, now = () => 
           revision = project_live_revision.revision + 1,
           updated_at = excluded.updated_at
       `).run(projectId, timestamp)
-      reapplyProject(projectId)
     } else if (converged) {
       const timestamp = now().toISOString()
       db.prepare(`
@@ -1267,12 +1249,20 @@ export function createLiveSyncService({ db, taskIndex, agentEvents, now = () => 
       `)
         .all(projectId)
         .map((row) => row.task_key)
-      agentEvents?.publishLiveChanged({
-        projectId,
-        revision: currentRevision(projectId),
-        taskKeys,
-        sourceAgentId: null,
-      })
+      if (remaining > 0) {
+        scheduleProjectProjection(projectId, {
+          revision: currentRevision(projectId),
+          taskKeys,
+          sourceAgentId: null,
+        })
+      } else {
+        agentEvents?.publishLiveChanged({
+          projectId,
+          revision: currentRevision(projectId),
+          taskKeys,
+          sourceAgentId: null,
+        })
+      }
       return remaining > 0
     }
     return false
@@ -1289,7 +1279,15 @@ export function createLiveSyncService({ db, taskIndex, agentEvents, now = () => 
     takeoverTask,
     liveRevisionForActor,
     reapplyProject,
+    scheduleProjectProjection,
     convergeGit,
+    close() {
+      closed = true
+      for (const state of projectionStates.values()) {
+        if (state.retryTimer) clearTimeout(state.retryTimer)
+      }
+      projectionStates.clear()
+    },
     board(projectId) {
       return liveBoards.get(projectId) || null
     },

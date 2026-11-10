@@ -29,6 +29,56 @@ fn live_id_is_safe(value: &str) -> bool {
         })
 }
 
+fn control_text<'a>(control: &'a Value, pointer: &str) -> &'a str {
+    control.pointer(pointer).and_then(Value::as_str).unwrap_or("")
+}
+
+fn control_key(control: &Value) -> String {
+    match control.get("type").and_then(Value::as_str) {
+        Some("assignment_warning") => {
+            let assignee = [
+                control_text(control, "/assignee/userId"),
+                control_text(control, "/assignee/username"),
+                control_text(control, "/assignee/displayName"),
+            ]
+            .into_iter()
+            .find(|value| !value.is_empty())
+            .unwrap_or("");
+            format!(
+                "assignment_warning\0{}\0{}\0{}",
+                control_text(control, "/projectId"),
+                control_text(control, "/task/taskKey"),
+                assignee
+            )
+        }
+        Some("remote_overwrite") => {
+            format!("remote_overwrite\0{}", control_text(control, "/backupId"))
+        }
+        Some("assignment_overridden") => format!(
+            "assignment_overridden\0{}\0{}\0{}",
+            control_text(control, "/projectId"),
+            control_text(control, "/taskKey"),
+            control.get("revision").and_then(Value::as_i64).unwrap_or(0)
+        ),
+        _ => format!("control\0{}", control),
+    }
+}
+
+fn enqueue_control(pending: &mut VecDeque<Value>, control: Value) {
+    let key = control_key(&control);
+    if let Some(existing) = pending
+        .iter_mut()
+        .find(|item| control_key(item) == key)
+    {
+        *existing = control;
+        return;
+    }
+    if pending.len() >= 32 {
+        pending.pop_front();
+    }
+    pending.push_back(control);
+}
+
 fn control_is_stale(control: &Value, now_ms: u128, pending_dir: &Path) -> bool {
     if control
         .get("expiresAtEpochMs")
@@ -54,6 +104,8 @@ pub struct SidecarState {
     running: AtomicBool,
     restarts: AtomicU32,
     generation: AtomicU64,
+    auto_focus_consumed: AtomicBool,
+    focus_suppressed: AtomicBool,
     last_start: Mutex<Option<Instant>>,
     pending_control: Mutex<VecDeque<Value>>,
 }
@@ -216,15 +268,20 @@ pub fn start(app: &AppHandle) {
 
 fn publish_control(app: &AppHandle, control: Value) {
     let state = app.state::<SidecarState>();
-    if let Ok(mut pending) = state.pending_control.lock() {
-        if !pending.iter().any(|item| item == &control) {
-            if pending.len() >= 32 {
-                pending.pop_front();
-            }
-            pending.push_back(control);
-        }
+    let queued = state
+        .pending_control
+        .lock()
+        .map(|mut pending| {
+            enqueue_control(&mut pending, control);
+            true
+        })
+        .unwrap_or(false);
+    let first_auto_show = queued
+        && !state.focus_suppressed.load(Ordering::SeqCst)
+        && !state.auto_focus_consumed.swap(true, Ordering::SeqCst);
+    if first_auto_show {
+        show_control(app);
     }
-    show_control(app);
 }
 
 fn show_control(app: &AppHandle) {
@@ -234,7 +291,7 @@ fn show_control(app: &AppHandle) {
         let _ = window.set_focus();
         return;
     }
-    let _ = WebviewWindowBuilder::new(
+    let built = WebviewWindowBuilder::new(
         app,
         "live-control",
         WebviewUrl::App("control.html".into())
@@ -243,6 +300,10 @@ fn show_control(app: &AppHandle) {
     .inner_size(560.0, 420.0)
     .min_inner_size(480.0, 360.0)
     .build();
+    if let Ok(window) = built {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 pub fn pending_control(app: &AppHandle) -> Option<Value> {
@@ -278,12 +339,34 @@ fn pop_control(app: &AppHandle) -> bool {
             !pending.is_empty()
         })
         .unwrap_or(false);
-    if has_more {
-        show_control(app);
-    } else if let Some(window) = app.get_webview_window("live-control") {
-        let _ = window.hide();
+    if !has_more {
+        if let Some(window) = app.get_webview_window("live-control") {
+            let _ = window.hide();
+        }
     }
     has_more
+}
+
+pub fn show_pending_control(app: &AppHandle) -> bool {
+    if pending_control(app).is_none() {
+        return false;
+    }
+    let state = app.state::<SidecarState>();
+    state.focus_suppressed.store(false, Ordering::SeqCst);
+    show_control(app);
+    true
+}
+
+pub fn suppress_and_hide_control(app: &AppHandle) {
+    let state = app.state::<SidecarState>();
+    state.focus_suppressed.store(true, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window("live-control") {
+        let _ = window.hide();
+    }
+}
+
+pub fn close_control_window(app: &AppHandle) {
+    suppress_and_hide_control(app);
 }
 
 pub fn clear_control(app: &AppHandle) {
@@ -293,7 +376,8 @@ pub fn clear_control(app: &AppHandle) {
 pub fn dismiss_control(app: &AppHandle) -> Result<(), String> {
     let control = pending_control(app).ok_or_else(|| "当前没有待处理事件".to_string())?;
     if control.get("type").and_then(Value::as_str) == Some("assignment_warning") {
-        return Err("责任人确认必须选择取消、继续推进或接管任务".to_string());
+        suppress_and_hide_control(app);
+        return Ok(());
     }
     pop_control(app);
     Ok(())
@@ -701,5 +785,54 @@ mod tests {
         });
         assert!(!control_is_stale(&control, 100, &pending_dir));
         std::fs::remove_dir_all(pending_dir).expect("清理测试目录");
+    }
+
+    #[test]
+    fn control_key_is_stable_for_same_assignment_warning() {
+        let first = serde_json::json!({
+            "type": "assignment_warning",
+            "pendingId": "warning-old",
+            "projectId": "project-1",
+            "task": { "taskKey": "project-1::.trellis/tasks/task-1" },
+            "assignee": { "userId": "user-1" }
+        });
+        let second = serde_json::json!({
+            "type": "assignment_warning",
+            "pendingId": "warning-new",
+            "projectId": "project-1",
+            "task": { "taskKey": "project-1::.trellis/tasks/task-1" },
+            "assignee": { "userId": "user-1" }
+        });
+        assert_eq!(control_key(&first), control_key(&second));
+    }
+
+    #[test]
+    fn duplicate_control_replaces_pending_item_in_place() {
+        let mut pending = VecDeque::new();
+        enqueue_control(
+            &mut pending,
+            serde_json::json!({
+                "type": "assignment_warning",
+                "pendingId": "warning-old",
+                "projectId": "project-1",
+                "task": { "taskKey": "task-1" },
+                "assignee": { "username": "owner" }
+            }),
+        );
+        enqueue_control(
+            &mut pending,
+            serde_json::json!({
+                "type": "assignment_warning",
+                "pendingId": "warning-new",
+                "projectId": "project-1",
+                "task": { "taskKey": "task-1" },
+                "assignee": { "username": "owner" }
+            }),
+        );
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending.front().and_then(|item| item.get("pendingId")),
+            Some(&Value::String("warning-new".to_string()))
+        );
     }
 }

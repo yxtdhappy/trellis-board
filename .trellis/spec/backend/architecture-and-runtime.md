@@ -51,9 +51,17 @@ HTTP 进程在主线程维护：
 - `watchRuntime`、防抖计时器和待合并事件。
 - 一个进程级默认 SQLite 连接，仓库、人工阶段和持久化 facade 共享它。
 
-完整扫描交给 Worker Thread，避免长时间同步文件读取阻塞 API。Worker 协议使用消息类型 `scan`、`scan-result`、`scan-error`；请求通过 ID 匹配。单次扫描超时为 `180_000ms`。
+完整扫描交给 Worker Thread，避免长时间同步文件读取阻塞 API。单机扫描协议使用
+`scan`、`scan-result`、`scan-error`；团队任务索引 worker 还接收 `live-materialize`，
+在系统临时目录复制 `.trellis` 基线、应用实时覆盖行并返回 `live-materialize-result`。
+请求通过 ID 匹配，单次扫描或实时物化超时均为 `180_000ms`。
 
 Worker 内会缓存各仓库最近结果，并根据事件判断是仓库级重扫还是单任务增量刷新。Worker 模块加载后打开自己的 SQLite 连接，不跨线程共享 `DatabaseSync`。最终仍要重建跨仓库父子任务关系，因此前端状态变化不能只看单个任务结果。
+
+团队实时变更的 HTTP 请求只完成事务提交、递增 `project_live_revision` 和调度投影，不能
+在请求栈内复制目录、调用 `scanRepository()` 或重建整个项目索引。同项目最多一个实时物化
+请求在途，期间新 revision 合并为下一轮最新快照；旧 worker 结果必须丢弃。投影失败保留上一份
+一致 Board 和已提交 revision，按退避重试；成功后才发布 `live.changed`。
 
 ## 启动与关闭
 

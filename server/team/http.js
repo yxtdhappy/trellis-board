@@ -1649,6 +1649,7 @@ export async function createTeamRuntime({
       db,
       taskIndex,
       agentEvents,
+      logger,
     })
     const desktopAuthService = createDesktopAuthService({ db, ...desktopAuth })
     agentEvents.setCommandDelivery((agentId, commandId) =>
@@ -1775,6 +1776,7 @@ export async function createTeamRuntime({
         if (pollTimer) clearInterval(pollTimer)
         pollTimer = null
         boardEvents.close()
+        liveSync.close()
         await agentEvents.close().catch(() => {})
         await agentService.close().catch(() => {})
         await closeServer(server)
@@ -1796,6 +1798,7 @@ export async function createTeamRuntime({
       await agentService.close()
       await closeServer(server)
       await refreshScheduler.stop()
+      liveSync.close()
       await taskIndex.close()
       db.close()
     }

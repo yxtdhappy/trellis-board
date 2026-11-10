@@ -69,7 +69,8 @@ Board ProjectRail
 ```text
 .trellis 文件变化
   -> 250ms 聚合
-  -> 读取未提交 UTF-8 文本
+  -> Git dirty 路径过滤
+  -> 读取仍未提交的 UTF-8 文本
   -> assignee preflight
   -> 责任人确认（需要时）
   -> POST /api/agent/live-changes
@@ -88,6 +89,10 @@ Board ProjectRail
   服务端或 Git 当前版本。
 - 非责任人可选择取消、继续推进或接管。继续保留原责任人并写审计；接管会更新 `task.json.assignee`
   并形成新的实时 revision；原责任人收到通知。
+- 控制窗口只在客户端启动后的第一次待确认事件自动显示和聚焦。点击系统 X 或“稍后处理”
+  只隐藏窗口，不删除待确认批次；后续事件继续静默排队，可从托盘“处理实时确认”重新打开。
+- Git merge、checkout 或 fast-forward 写回但最终与 HEAD 一致时，sidecar 不会上传或弹窗；
+  真实未提交修改仍按责任人确认流程处理。
 - `read_only` 项目只接收和落盘，不启动上传 watcher。
 - Git 内容与实时文件摘要一致后覆盖行自动收敛；不一致时任务卡显示“实时未入 Git”，不会回退。
 
@@ -112,6 +117,7 @@ Board origin 做同源比较，其他远程页面即使命中 capability 也会�
 - `live_control_pending`
 - `live_control_decide`
 - `live_control_restore`
+- `live_control_dismiss`
 
 控制窗口只处理当前实时同步事件，不拥有文件系统、Shell 或远程页面权限。
 
@@ -237,7 +243,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File desktop\uninstall.ps1 -Revok
 | 13 | A 修改未提交任务文件 | B 的 Board 与本地 `.trellis` 在正常网络 P95 3 秒内更新 |
 | 14 | A/B 同时修改同一文件 | 后到 revision 生效；先到方先生成备份并显示冲突提示 |
 | 15 | 从控制窗口一键复原 | 备份作为新 revision 广播，双方最终一致 |
-| 16 | 非责任人修改任务 | 出现取消/继续/接管；继续保留责任人，接管才改派 |
-| 17 | `read_only` 项目修改本地文件 | 本地可接收服务端内容，但修改不上传 |
+| 16 | 非责任人修改任务 | 首次出现取消/继续/接管/稍后处理；继续保留责任人，接管才改派 |
+| 17 | 关闭控制窗口后继续产生事件 | 不自动显示或抢焦点；从托盘“处理实时确认”恢复 |
+| 18 | Board 服务离线时关闭控制窗口 | 窗口立即隐藏，待确认批次保留 |
+| 19 | `read_only` 项目修改本地文件 | 本地可接收服务端内容，但修改不上传 |
 
 Windows 实机仍需验证 WebView2 Cookie 写入、远程 capability、动态导航和 NSIS 安装包。

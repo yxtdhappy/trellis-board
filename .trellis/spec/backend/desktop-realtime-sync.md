@@ -30,8 +30,11 @@ createLiveSyncService({
   db,
   taskIndex,
   agentEvents,
-  now?
+  now?,
+  logger?
 })
+
+taskIndex.materializeLiveProject(project, rows, revision)
 ```
 
 SQLite v7：
@@ -58,6 +61,17 @@ SSE：Agent 事件流为 `live.changed`、`task.live.overridden`；Board 事件�
 - sidecar 对同一项目的 watcher 批次串行处理和上传，避免旧文件快照晚于新快照到达服务端。
 - `project_live_revision` 在 `BEGIN IMMEDIATE` 事务内单调递增。后到并成功提交的同文件版本覆盖先到版本。
 - 服务端存储后必须复用 `scanRepository()` 和 `taskIndex.buildBoard()` 生成任务行；不能在 API 内另写阶段推导。
+- Agent watcher 批次先按项目执行一次 Git dirty 判断，只读取和上传仍存在于
+  `git diff HEAD` 或未跟踪文件集合中的路径。Git 状态判断失败时保留 pending，下一次监听或
+  重试继续判断；已收敛的旧 pending 在展示或上传前删除。
+- 服务端实时覆盖层物化必须在团队任务索引 Worker 中执行。HTTP 请求提交实时 revision 后只调度
+  投影并返回；同项目最多一个物化在途，期间的新 revision 合并为下一轮最新快照，旧 worker 结果
+  不得覆盖新 revision。
+- 实时物化成功后再更新 `team_task_index`、内存 Board/详情并发布 `live.changed`。内存中已有
+  投影时，幂等重放不得再次物化；`ensureProject()` 在投影缺失时只调度 worker，并允许调用方先
+  使用上一份 Git Board。
+- 实时物化失败保留已提交 revision 和上一份一致 Board，按 1/2/4 秒、最大 30 秒退避重试。
+  服务关闭时停止重试计时器并终止 worker，失败的 Promise 不得继续重试。
 - 实时物化的临时目录必须位于所有业务 Git 工作区之外，不能依赖接入项目配置 `.gitignore` 或服务端 Git 全局排除规则。
 - 物化扫描只从临时目录读取 `.trellis` 内容，Git HEAD 与分支元数据仍从未修改的业务工作区读取。
 - 幂等批次重放且内存中已有项目实时投影时，不得再次执行全量物化。
@@ -90,6 +104,11 @@ SSE：Agent 事件流为 `live.changed`、`task.live.overridden`；Board 事件�
   `/api/tasks/query` 的筛选、分页、ETag 和项目权限校验；SSE 不传输任务正文。
 - `/api/team/live-revision` 保留为兼容接口，但 Board 只在 SSE 建连、任务变更、页面聚焦或恢复可见时
   按需查询，不再每 750ms 常态轮询。
+- 桌面控制窗口在进程生命周期内只自动显示和聚焦第一次事件。用户点击系统 X 或
+  “稍后处理”只隐藏窗口并抑制后续自动聚焦，不删除 `pending-live` 文件；运行时在内存队列中
+  保留该事件。托盘“处理实时确认”是用户主动恢复隐藏窗口的入口。
+- 同任务、同责任人的 `assignment_warning` 使用稳定 key 原位替换；`remote_overwrite` 使用
+  `backupId`，`assignment_overridden` 使用任务和 revision 去重，不能因 watcher 批次追加重复项。
 
 ## 4. Validation & Error Matrix
 
@@ -113,18 +132,23 @@ SSE：Agent 事件流为 `live.changed`、`task.live.overridden`；Board 事件�
 - Base：远端文件与本地摘要相同，不创建备份，只推进 cursor。
 - Bad：服务端 Git 扫描删除全部 `team_task_index` 后不重放 live 覆盖行，导致 Board 回退。
 - Bad：仅按路径和时间抑制 watcher，吞掉远端写入后紧接着发生的真实本地编辑。
+- Bad：在 `/api/agent/live-changes` 的请求栈里同步复制整个 `.trellis` 并扫描，导致心跳、
+  `/api/health` 和确认请求一起排队超时。
+- Good：Git merge 写回与 HEAD 一致时 Agent 直接跳过；真实未提交编辑仍进入责任人确认。
 
 ## 6. Tests Required
 
 - `tests/watcher.test.js`：共享过滤、防抖批次、动态 rebuild 和 close。
 - `tests/team-realtime-sync.test.js`：幂等、revision、路径越界、read_only、详情/单项目 Board 实时投影、
   Git 收敛、继续与接管审计、`clientSequence` 乱序防回退、精确任务标记、无 Agent 的浏览器通知，
-  以及两个真实 `AgentLiveSync` 经 HTTP/SSE/watcher 连续同步 20 次的 P95 ≤3 秒断言。
+  Worker 临时物化、请求提前返回、健康检查 `<1s`、revision 合并、失败重试，以及两个真实
+  `AgentLiveSync` 经 HTTP/SSE/watcher 连续同步 20 次的 P95 ≤3 秒断言。
 - `tests/desktop-realtime-apply.test.js`：冲突备份、自触发抑制、真实编辑继续上报、待确认批次、
   继续上传、一键复原、本地写回、同一项目批次串行、首次 full pull 后续传、
   `read_only` 不上传、重启幂等、重试单飞和状态恢复。
 - `tests/team-events.test.js`：`live.changed` 不回发来源设备。
-- `tests/desktop-package.test.js`：`live-control` capability、Rust 命令和 sidecar 控制窗口接线。
+- `tests/desktop-package.test.js`：`live-control` capability、Rust 命令、托盘恢复、关闭抑制和
+  sidecar 控制窗口接线。
 - Windows E2E：两个真实客户端完成 P95 ≤3 秒、并发覆盖、备份复原、断线补偿和责任人三态确认。
 
 ## 7. Wrong vs Correct

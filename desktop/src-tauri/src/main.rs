@@ -486,6 +486,8 @@ fn autostart_enabled(app: &AppHandle) -> bool {
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "打开主窗口", true, None::<&str>)?;
+    let live_control =
+        MenuItem::with_id(app, "review-live", "处理实时确认", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "暂停同步", true, None::<&str>)?;
     let logs = MenuItem::with_id(app, "logs", "打开日志目录", true, None::<&str>)?;
     let autostart = CheckMenuItem::with_id(
@@ -497,7 +499,10 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &pause, &logs, &autostart, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[&show, &live_control, &pause, &logs, &autostart, &quit],
+    )?;
     let Some(icon) = app.default_window_icon().cloned() else {
         logging::warn("客户端缺少窗口图标，托盘不可用");
         return Ok(());
@@ -509,6 +514,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => focus_main_window(app),
+            "review-live" => {
+                sidecar::show_pending_control(app);
+            }
             "pause" => sidecar::toggle_pause(app),
             "logs" => {
                 let directory = config::logs_dir();
@@ -621,6 +629,9 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "live-control" {
+                    sidecar::close_control_window(window.app_handle());
+                }
                 let _ = window.hide();
                 api.prevent_close();
             }

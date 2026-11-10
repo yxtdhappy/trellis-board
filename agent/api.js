@@ -89,6 +89,12 @@ function mapNetworkError(error) {
   if (error instanceof AgentError) {
     return error
   }
+  if (error?.name === 'TimeoutError') {
+    return new AgentError(AGENT_ERROR_CODE.NETWORK_ERROR, 'Agent 服务请求超时', {
+      cause: error,
+      retryable: true,
+    })
+  }
   if (error?.name === 'AbortError') {
     return new AgentError(AGENT_ERROR_CODE.NETWORK_ERROR, 'Agent 请求已取消', {
       cause: error,
@@ -445,7 +451,7 @@ export class AgentApiClient {
 
       timer = setTimeout(() => {
         const error = new Error('request timeout')
-        error.name = 'AbortError'
+        error.name = 'TimeoutError'
         request.destroy(error)
       }, timeoutMs)
       timer.unref?.()
