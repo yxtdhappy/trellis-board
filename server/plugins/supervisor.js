@@ -1488,8 +1488,8 @@ export class PluginSupervisor {
           available: Boolean(owner && owner.status === 'running'),
         }
       }),
-      rootPaths: state.manifest?.http.rootPaths ?? [],
-      openPaths: state.manifest?.http.openPaths ?? [],
+      rootPaths: state.manifest?.http?.rootPaths ?? [],
+      openPaths: state.manifest?.http?.openPaths ?? [],
       config: redactConfig(state.config),
       credentials: hasCredentials
         ? {

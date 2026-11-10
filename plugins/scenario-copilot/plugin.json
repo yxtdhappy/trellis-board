@@ -1,19 +1,65 @@
 {
   "id": "scenario-copilot",
   "name": "场景自动化测试",
-  "description": "按任务测试大纲生成并执行 Playwright 场景，结果在「自动化测试」面板查看。",
-  "version": "0.1.0",
+  "description": "按任务测试大纲或需求级测试对象生成并执行 Playwright 场景，结果在「自动化测试」面板查看。",
+  "version": "0.2.0",
   "apiVersion": 1,
   "engines": {
     "board": ">=0.2.0"
   },
   "permissions": [
+    "capabilities:provide",
     "tasks:read",
     "store",
     "events:emit",
     "events:publish",
     "http:route",
     "panels"
+  ],
+  "provides": [
+    {
+      "name": "scenario.copilot",
+      "version": "1.0.0",
+      "description": "场景测试运行与回归任务能力，支持 Trellis 任务或需求级测试对象",
+      "methods": {
+        "defaults.get": {
+          "access": "read",
+          "timeoutMs": 10000
+        },
+        "bindings.get": {
+          "access": "read",
+          "timeoutMs": 10000
+        },
+        "runs.list": {
+          "access": "read",
+          "timeoutMs": 10000
+        },
+        "runs.get": {
+          "access": "read",
+          "timeoutMs": 10000
+        },
+        "runs.start": {
+          "access": "write",
+          "timeoutMs": 300000
+        },
+        "runs.cancel": {
+          "access": "write",
+          "timeoutMs": 10000
+        },
+        "regressions.start": {
+          "access": "write",
+          "timeoutMs": 300000
+        },
+        "regressions.get": {
+          "access": "read",
+          "timeoutMs": 10000
+        },
+        "regressions.cancel": {
+          "access": "write",
+          "timeoutMs": 10000
+        }
+      }
+    }
   ],
   "panels": [
     {
@@ -27,15 +73,18 @@
   "config": {
     "scenarioRoot": "",
     "workspaceDir": "",
+    "outlinesDir": "",
+    "knowledgePath": "",
+    "targetUrl": "",
     "orgName": "",
     "username": "",
     "password": "",
     "llmApiKey": "",
     "llmBaseUrl": "",
     "llmModel": "",
+    "defaultOutline": "",
     "timeoutMs": 900000,
     "maxRuns": 20,
-    "outlinesDir": "",
-    "knowledgePath": ""
+    "maxHealingRetries": 1
   }
 }
