@@ -640,3 +640,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 27: 服务端日志异步落盘
+<!-- trellis-session: v=2 fp=98f2fed6a12e0a4b -->
+
+**Date**: 2026-11-10
+**Task**: 服务端日志异步落盘
+**Branch**: `codex/team-board`
+
+### Summary
+
+新增异步有界文件日志 sink，接入 standalone/team、数据库与信号关闭；覆盖脱敏、5 MiB×5 轮转、失败降级和 flush/close 测试，并在真实 team 服务上验证启动及运行日志实时追加。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `30bafe4` | feat(server): add async file logging |
+
+### Status
+
+[OK] **Completed**
