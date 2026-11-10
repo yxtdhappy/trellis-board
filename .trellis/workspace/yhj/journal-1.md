@@ -662,3 +662,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 28: 修复团队实时同步阻塞主线程与误弹窗
+<!-- trellis-session: v=2 fp=e651e3a9cb497379 -->
+
+**Date**: 2026-11-10
+**Task**: 修复团队实时同步阻塞主线程与误弹窗
+**Branch**: `codex/team-board`
+
+### Summary
+
+完成实时同步异步单飞重投影、旧 revision 丢弃、失败退避重试、控制窗口聚焦修复与托盘处理入口；已合并到 codex/team-board，相关测试通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `af34da7` | merge: live sync main-thread stall |
+| `0c8048c` | fix(team): prevent live sync main-thread stalls |
+
+### Status
+
+[OK] **Completed**
