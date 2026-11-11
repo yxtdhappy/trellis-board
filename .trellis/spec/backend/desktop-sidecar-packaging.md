@@ -89,8 +89,11 @@ restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
   未运行”，不能把 Board 自身刷新状态误当成 sidecar 状态。
 - 远程 capability 的 URL pattern 必须显式通配端口，使用 `http://*:*` 和 `https://*:*`；
   `http://*` 只匹配默认 80 端口，会拒绝局域网地址加自定义端口的 Board origin。
-- sidecar `run` 的标准输出可发送单行 `{"control": {...}}` 控制事件；Tauri 解析后打开本地
-  `live-control` 窗口。控制事件不得包含文件正文、密码、Cookie 或设备凭证。
+- sidecar `run` 的标准输出可发送单行 `{"control":{"type":"...", ...}}` 控制事件；Tauri 只接受
+  顶层 `control` 对象且该对象必须有非空字符串 `type`，随后打开本地 `live-control` 窗口。
+  不得再输出顶层 `{"type":"trellis-control", ...}`。控制事件只携带展示和操作所需摘要，
+  不得包含文件正文、密码、Cookie 或设备凭证；`initial_sync_review` 的 `differences`
+  只传 `type/taskId/taskDir/local/server` 元数据。
 - `live-decide` 与 `live-restore` 使用独立 sidecar 命令，不依赖运行进程内存；待确认批次和备份
   manifest 必须原子落盘。完成本地写回后写入短时摘要抑制文件，防止 watcher 把刚应用的版本再次上传。
 
@@ -133,6 +136,9 @@ restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
 - `tests/team-isolation.test.js`：普通团队成员能看到关联候选项目，但任务项目列表仍为空。
 - `tests/desktop-package.test.js`：远程 capability 只允许关联命令、关联列表和 sidecar 状态；
   Rust DTO 对旧 sidecar 缺省字段保持兼容，关联成功后只重启既有 sidecar。
+- `agent/test/task-snapshot-sync.test.js` + Rust `sidecar` 单测：只接受带非空 `type` 的
+  `{"control": event}`；旧顶层 `trellis-control`、普通 stdout JSON、`control:null` 和
+  无 `type` 对象不得进入控制窗口；审查事件不得包含任务正文。
 - Windows CI：构建后执行 sidecar `version`，断言退出码 0 和 `protocolVersion === 2`。
 - Windows CI 必须在 `tauri build` 前通过 GitHub CLI/API 填充 `%LOCALAPPDATA%\tauri\NSIS`，校验
   NSIS zip 与 `nsis_tauri_utils.dll` 的固定 SHA1；Tauri 使用的 GitHub Releases 直链可能返回 504。
@@ -169,3 +175,17 @@ process.exitCode = await runSidecarMain();
 ```
 
 SEA 入口不推断模块路径；DPAPI 脚本通过 `node:sea` asset 提供。
+
+### Wrong
+
+```json
+{"type":"trellis-control","type":"initial_sync_review","taskSpaceId":"space-1"}
+```
+
+重复 `type` 且没有顶层 `control`，Tauri 会把事件当普通日志，确认窗口不会出现。
+
+### Correct
+
+```json
+{"control":{"type":"initial_sync_review","taskSpaceId":"space-1","revision":4,"differences":[]}}
+```

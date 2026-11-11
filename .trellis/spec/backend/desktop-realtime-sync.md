@@ -107,6 +107,9 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   `snapshotSha256()` 计算摘要；客户端必须用 fatal UTF-8 解码，服务端必须拒绝
   `sha256` 与规范化内容不一致、`baseSha256` 非法或格式错误的记录。
 - 服务端每秒最多接受每个 Agent/taskSpace 5 个批次。
+- 客户端必须主动遵守服务端批次上限：同一 taskSpace 的上传请求完整结束后至少等待 260ms
+  才可开始下一批；收到 `429 RATE_LIMITED` 时最多重试 2 次，且必须复用原
+  `batchId/clientSequence/files`。不得一次 bootstrap 连续裸发几十个任务批次。
 
 ### 原子批次与 CAS
 
@@ -154,6 +157,9 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   真实后续编辑必须重新上传。
 - 同步队列按 taskSpace 串行。网络响应丢失时 cursor 中保留原 pending batch，重试复用原 `batchId`，
   不生成第二个 revision。
+- 中断后恢复 `bootstrap` 时，只有服务端已有任务全部为 `same` 且其余差异均为 `local-only`
+  才允许继续上传剩余本地任务。上传结束后必须重新获取 full snapshot；只有全部收敛为 `same`
+  才能写 cursor 和 `initialSyncCompleted=true`，否则重新进入差异审查。
 
 ### 首次接入预检
 
@@ -305,7 +311,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - `tests/team-events.test.js`：Agent SSE 只包含新事件，旧事件游标和覆盖协议不存在。
 - `agent/test/project-onboarding.test.js`：仓库预检、固定 CLI 初始化、推送状态和已有 `.trellis`。
 - `agent/test/task-snapshot-sync.test.js`：首次/增量、cursor v3 文件基线、离线并发冲突、延后目录、
-  目录移动和 pending batch 重放。
+  目录移动和 pending batch 重放；还应断言上传请求不重叠、6 批滑动窗口不超过 5 批、429 最多
+  重试 2 次且复用原请求、部分 bootstrap 可续传、并发 server-only 会重新进入审查。
 - `agent/test/task-command.test.js`：真实 `task.py`、负责人写入、路径级 dirty 保护、上传失败不报成功。
 - `tests/desktop-realtime-apply.test.js`：首次冲突、归档移动、备份、batchId 重试。
 - `tests/desktop-package.test.js`：协议 v3、Trellis runtime 资源、窄 Tauri capability 和新控制窗口命令。
@@ -346,4 +353,23 @@ db.prepare('UPDATE sync_task_space_file SET content_text = ? WHERE relative_path
 ```js
 // 在同一 BEGIN IMMEDIATE 中比较每文件 baseSha256。
 // 任一不一致时整批返回 TASK_FILE_CONFLICT，所有文件均不写入。
+```
+
+### Wrong
+
+```js
+for (const taskDir of localOnlyDirectories) {
+  await uploadTaskSpaceChanges(taskDir)
+}
+```
+
+几十个任务会在 1 秒内触发服务端第 6 批限流，中断后留下不完整的首次快照。
+
+### Correct
+
+```js
+await runUploadWithSlot(taskSpaceId, () =>
+  uploadTaskSpaceChanges(taskSpaceId, request),
+)
+// 请求完整结束后至少等待 260ms；429 仅复用同一 request 做有界重试。
 ```

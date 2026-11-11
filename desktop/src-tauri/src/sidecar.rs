@@ -33,6 +33,19 @@ fn control_text<'a>(control: &'a Value, pointer: &str) -> &'a str {
     control.pointer(pointer).and_then(Value::as_str).unwrap_or("")
 }
 
+fn control_from_line(line: &str) -> Option<Value> {
+    let value = serde_json::from_str::<Value>(line.trim()).ok()?;
+    let control = value.get("control")?;
+    if !control.is_object() {
+        return None;
+    }
+    let event_type = control.get("type").and_then(Value::as_str)?;
+    if event_type.is_empty() {
+        return None;
+    }
+    Some(control.clone())
+}
+
 fn control_key(control: &Value) -> String {
     match control.get("type").and_then(Value::as_str) {
         Some("assignment_warning") => {
@@ -245,11 +258,7 @@ pub fn start(app: &AppHandle) {
                     match event {
                         CommandEvent::Stdout(line) => {
                             let text = String::from_utf8_lossy(&line);
-                            let trimmed = text.trim();
-                            let control = serde_json::from_str::<Value>(trimmed)
-                                .ok()
-                                .and_then(|value| value.get("control").cloned());
-                            if let Some(control) = control {
+                            if let Some(control) = control_from_line(&text) {
                                 publish_control(&handle, control);
                             } else {
                                 crate::logging::line(&text);
@@ -988,6 +997,80 @@ mod tests {
             "assignee": { "userId": "user-1" }
         });
         assert_eq!(control_key(&first), control_key(&second));
+    }
+
+    #[test]
+    fn control_key_uses_review_revision_and_conflict_id() {
+        let review = serde_json::json!({
+            "type": "initial_sync_review",
+            "taskSpaceId": "space-1",
+            "revision": 4
+        });
+        let conflict = serde_json::json!({
+            "type": "task_file_conflict",
+            "taskSpaceId": "space-1",
+            "conflict": { "conflictId": "conflict-1" }
+        });
+        assert_eq!(
+            control_key(&review),
+            format!("initial_sync_review\0space-1\0{}", 4)
+        );
+        assert_eq!(
+            control_key(&conflict),
+            "task_file_conflict\0space-1\0conflict-1"
+        );
+    }
+
+    #[test]
+    fn control_envelope_accepts_only_typed_control_events() {
+        let control = serde_json::json!({
+            "type": "task_sync_error",
+            "taskSpaceId": "space-1",
+            "message": "同步暂时失败"
+        });
+        assert_eq!(
+            control_from_line(&serde_json::json!({ "control": control }).to_string()),
+            Some(control)
+        );
+        assert_eq!(
+            control_from_line(r#"{"type":"trellis-control","taskSpaceId":"space-1"}"#),
+            None
+        );
+        assert_eq!(control_from_line(r#"{"ok":true,"protocolVersion":3}"#), None);
+        assert_eq!(control_from_line(r#"{"control":null}"#), None);
+        assert_eq!(
+            control_from_line(r#"{"control":{"message":"普通日志"}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn control_envelope_preserves_review_conflict_and_error_fields() {
+        let events = [
+            serde_json::json!({
+                "type": "initial_sync_review",
+                "taskSpaceId": "space-1",
+                "revision": 4,
+                "differences": [{ "type": "content-conflict", "taskId": "task-1" }]
+            }),
+            serde_json::json!({
+                "type": "task_file_conflict",
+                "taskSpaceId": "space-1",
+                "conflict": {
+                    "conflictId": "conflict-1",
+                    "message": "任务文件已被修改"
+                }
+            }),
+            serde_json::json!({
+                "type": "task_sync_error",
+                "taskSpaceId": "space-1",
+                "message": "同步暂时失败"
+            }),
+        ];
+        for event in events {
+            let line = serde_json::json!({ "control": event.clone() }).to_string();
+            assert_eq!(control_from_line(&line), Some(event));
+        }
     }
 
     #[test]

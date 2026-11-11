@@ -4,7 +4,8 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { ConfigStore } from '../config-store.js'
-import { AgentTaskSnapshotSync } from '../task-snapshot-sync.js'
+import { AgentTaskSnapshotSync, liveControlLine } from '../task-snapshot-sync.js'
+import { AgentApiError, AGENT_ERROR_CODE } from '../protocol.js'
 import { snapshotSha256 } from '../../shared/task-snapshot.js'
 
 function write(file, content) {
@@ -23,6 +24,15 @@ function serverFile(relativePath, content, overrides = {}) {
     deleted: false,
     ...overrides,
   }
+}
+
+function applyServerFiles(current, files) {
+  const byPath = new Map((current || []).map((file) => [file.path, file]))
+  for (const file of files || []) {
+    if (file.deleted) byPath.delete(file.path)
+    else byPath.set(file.path, serverFile(file.path, file.content))
+  }
+  return [...byPath.values()]
 }
 
 async function setup(localTasks) {
@@ -90,6 +100,43 @@ function createSync(context, api, controls = []) {
   sync.updateBindings(context.config.bindings)
   return sync
 }
+
+test('liveControlLine 使用顶层 control 包装，普通 stdout JSON 不会触发控制事件', () => {
+  const parseControl = (line) => JSON.parse(line).control
+  const events = [
+    {
+      type: 'initial_sync_review',
+      taskSpaceId: 'space-1',
+      revision: 4,
+      differences: [{ type: 'content-conflict', taskId: 'task-1' }],
+    },
+    {
+      type: 'task_file_conflict',
+      taskSpaceId: 'space-1',
+      conflict: { conflictId: 'conflict-1', message: '任务文件已被修改' },
+    },
+    {
+      type: 'task_sync_error',
+      taskSpaceId: 'space-1',
+      message: '同步暂时失败',
+    },
+  ]
+  for (const event of events) {
+    const envelope = JSON.parse(liveControlLine(event))
+    assert.deepEqual(envelope.control, event)
+    assert.equal(envelope.type, undefined)
+  }
+  assert.equal(
+    parseControl(
+      `${JSON.stringify({
+        type: 'trellis-control',
+        taskSpaceId: 'space-1',
+      })}\n`,
+    ),
+    undefined,
+  )
+  assert.equal(parseControl(`${JSON.stringify({ ok: true, protocolVersion: 3 })}\n`), undefined)
+})
 
 test('safe 首次接入只下载服务端独有任务，不上传本地独有内容', async () => {
   const localTaskJson = `${JSON.stringify({ id: 'local-task', title: '本地任务' })}\n`
@@ -330,8 +377,9 @@ test('服务端修改延后处理的任务时重新要求确认而不是覆盖�
 
 test('bootstrap 首次接入把空服务端任务空间初始化为本地任务快照', async () => {
   const localTaskJson = `${JSON.stringify({ id: 'local-task', title: '本地任务' })}\n`
+  const taskDir = '.trellis/tasks/01-local'
   const context = await setup({
-    '.trellis/tasks/01-local': {
+    [taskDir]: {
       'task.json': localTaskJson,
     },
   })
@@ -343,16 +391,22 @@ test('bootstrap 首次接入把空服务端任务空间初始化为本地任务�
     const uploads = []
     const cursors = []
     const controls = []
+    let revision = 0
+    let serverFiles = []
+    let snapshotCalls = 0
     const api = {
       async fetchTaskSpaceSnapshot() {
-        return { revision: 0, files: [] }
+        snapshotCalls += 1
+        return { revision, files: serverFiles }
       },
       async fetchTaskDirectory() {
         return { files: [] }
       },
       async uploadTaskSpaceChanges(taskSpaceId, input) {
         uploads.push({ taskSpaceId, input })
-        return { revision: 1, taskSpaceId }
+        revision += 1
+        serverFiles = applyServerFiles(serverFiles, input.files)
+        return { revision, taskSpaceId }
       },
       async writeTaskSpaceCursor(taskSpaceId, input) {
         cursors.push({ taskSpaceId, input })
@@ -365,9 +419,277 @@ test('bootstrap 首次接入把空服务端任务空间初始化为本地任务�
     assert.equal(uploads.length, 1)
     assert.equal(uploads[0].input.files.length, 1)
     assert.equal(cursors.at(-1).input.revision, 1)
+    assert.equal(snapshotCalls, 2)
     const binding = (await context.store.readConfig()).bindings[0]
     assert.equal(binding.initialSyncMode, 'bootstrap')
     assert.equal(binding.initialSyncCompleted, true)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('bootstrap 遇到限流后复用批次重试，并按安全间隔继续上传', async () => {
+  const taskDirs = Array.from({ length: 6 }, (_, index) => `.trellis/tasks/01-rate-${index + 1}`)
+  const context = await setup(
+    Object.fromEntries(
+      taskDirs.map((taskDir, index) => [
+        taskDir,
+        {
+          'task.json': `${JSON.stringify({ id: `rate-task-${index + 1}`, title: '限流测试' })}\n`,
+        },
+      ]),
+    ),
+  )
+  try {
+    context.config.bindings[0].initialSyncMode = 'bootstrap'
+    context.config.bindings[0].initialSyncCompleted = false
+    context.config.bindings[0].initialReviewPending = false
+    await context.store.saveConfig(context.config)
+    const attempts = []
+    const successTimes = []
+    let revision = 0
+    let serverFiles = []
+    let limited = false
+    const controls = []
+    const api = {
+      async fetchTaskSpaceSnapshot() {
+        return { revision, files: serverFiles }
+      },
+      async fetchTaskDirectory(taskSpaceId, taskDir) {
+        return {
+          files: serverFiles.filter((file) => file.taskDir === taskDir),
+        }
+      },
+      async uploadTaskSpaceChanges(taskSpaceId, input) {
+        attempts.push({ taskSpaceId, input, at: Date.now() })
+        if (!limited) {
+          limited = true
+          throw new AgentApiError(AGENT_ERROR_CODE.HTTP_ERROR, '同步批次过于频繁，请稍后重试', {
+            status: 429,
+            serverCode: 'RATE_LIMITED',
+            retryable: true,
+          })
+        }
+        revision += 1
+        successTimes.push(Date.now())
+        serverFiles = applyServerFiles(serverFiles, input.files)
+        return { revision, taskSpaceId }
+      },
+      async writeTaskSpaceCursor() {},
+    }
+    const sync = createSync(context, api, controls)
+    const result = await sync.pullTaskSpace('space-1')
+    assert.equal(result.pendingReview, false)
+    assert.equal(controls.length, 0)
+    assert.equal(successTimes.length, taskDirs.length)
+    assert.deepEqual(attempts[0].input, attempts[1].input)
+    assert.equal(new Set(attempts.map((attempt) => attempt.input.batchId)).size, taskDirs.length)
+    for (let index = 5; index < successTimes.length; index += 1) {
+      assert.ok(successTimes[index] - successTimes[index - 5] >= 1000)
+    }
+    const binding = (await context.store.readConfig()).bindings[0]
+    assert.equal(binding.initialSyncCompleted, true)
+    assert.equal((await sync._readCursor('space-1')).pending, null)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('同一 taskSpace 的上传请求完成前不会并发启动下一批', async () => {
+  const taskJson = `${JSON.stringify({ id: 'serial-task', title: '串行上传' })}\n`
+  const context = await setup({})
+  try {
+    const sync = createSync(context, {})
+    let active = 0
+    let maxActive = 0
+    const api = {
+      async uploadTaskSpaceChanges(taskSpaceId, input) {
+        active += 1
+        maxActive = Math.max(maxActive, active)
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        active -= 1
+        return { revision: input.clientSequence, taskSpaceId }
+      },
+    }
+    const binding = sync._binding('space-1')
+    const filesFor = (taskDir) => [
+      {
+        path: `${taskDir}/task.json`,
+        content: taskJson,
+        sha256: snapshotSha256(taskJson),
+        baseSha256: null,
+      },
+    ]
+    await Promise.all([
+      sync._uploadBatch(binding, api, {
+        batchId: 'serial-batch-1',
+        clientSequence: 1,
+        files: filesFor('.trellis/tasks/01-serial-a'),
+      }),
+      sync._uploadBatch(binding, api, {
+        batchId: 'serial-batch-2',
+        clientSequence: 2,
+        files: filesFor('.trellis/tasks/01-serial-b'),
+      }),
+    ])
+    assert.equal(maxActive, 1)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('429 最多重试两次，失败后保留原批次供重启继续', async () => {
+  const taskJson = `${JSON.stringify({ id: 'retry-limit', title: '限流重试' })}\n`
+  const context = await setup({})
+  try {
+    const sync = createSync(context, {})
+    const files = [
+      {
+        path: '.trellis/tasks/01-retry-limit/task.json',
+        content: taskJson,
+        sha256: snapshotSha256(taskJson),
+        baseSha256: null,
+      },
+    ]
+    const attempts = []
+    let allowsSuccess = false
+    const api = {
+      async uploadTaskSpaceChanges(taskSpaceId, input) {
+        attempts.push({ taskSpaceId, input })
+        if (!allowsSuccess) {
+          throw new AgentApiError(AGENT_ERROR_CODE.HTTP_ERROR, '同步批次过于频繁，请稍后重试', {
+            status: 429,
+            serverCode: 'RATE_LIMITED',
+            retryable: true,
+            retryAfterMs: 1,
+          })
+        }
+        return { revision: 1, taskSpaceId }
+      },
+    }
+    const binding = sync._binding('space-1')
+    const cursor = await sync._readCursor('space-1')
+    await assert.rejects(
+      () => sync._uploadPersistedBatch(binding, api, cursor, files),
+      /同步批次过于频繁/,
+    )
+    assert.equal(attempts.length, 3)
+    assert.deepEqual(attempts[0].input, attempts[1].input)
+    assert.deepEqual(attempts[1].input, attempts[2].input)
+    const pendingCursor = await sync._readCursor('space-1')
+    assert.deepEqual(pendingCursor.pending.files, files)
+
+    allowsSuccess = true
+    const retried = await sync._retryPendingBatch(binding, api, pendingCursor)
+    assert.equal(retried.conflict, false)
+    assert.deepEqual(attempts[3].input, pendingCursor.pending)
+    assert.equal((await sync._readCursor('space-1')).pending, null)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('bootstrap 从上次部分上传恢复时继续上传剩余本地任务', async () => {
+  const uploadedDir = '.trellis/tasks/01-uploaded'
+  const remainingDir = '.trellis/tasks/02-remaining'
+  const uploadedJson = `${JSON.stringify({ id: 'uploaded-task', title: '已上传' })}\n`
+  const remainingJson = `${JSON.stringify({ id: 'remaining-task', title: '待上传' })}\n`
+  const context = await setup({
+    [uploadedDir]: { 'task.json': uploadedJson },
+    [remainingDir]: { 'task.json': remainingJson },
+  })
+  try {
+    context.config.bindings[0].initialSyncMode = 'bootstrap'
+    context.config.bindings[0].initialSyncCompleted = false
+    context.config.bindings[0].initialReviewPending = false
+    await context.store.saveConfig(context.config)
+    const uploads = []
+    const controls = []
+    let revision = 1
+    let serverFiles = [serverFile(`${uploadedDir}/task.json`, uploadedJson)]
+    const api = {
+      async fetchTaskSpaceSnapshot() {
+        return { revision, files: serverFiles }
+      },
+      async fetchTaskDirectory(taskSpaceId, taskDir) {
+        return {
+          files: serverFiles.filter((file) => file.taskDir === taskDir),
+        }
+      },
+      async uploadTaskSpaceChanges(taskSpaceId, input) {
+        uploads.push({ taskSpaceId, input })
+        revision += 1
+        serverFiles = applyServerFiles(serverFiles, input.files)
+        return { revision, taskSpaceId }
+      },
+      async writeTaskSpaceCursor() {},
+    }
+    const sync = createSync(context, api, controls)
+    const result = await sync.pullTaskSpace('space-1')
+    assert.equal(result.pendingReview, false)
+    assert.equal(controls.length, 0)
+    assert.equal(uploads.length, 1)
+    assert.equal(uploads[0].input.files[0].path, `${remainingDir}/task.json`)
+    const binding = (await context.store.readConfig()).bindings[0]
+    assert.equal(binding.initialSyncCompleted, true)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('bootstrap 上传期间出现其他客户端任务时重新进入审查，不完成接入', async () => {
+  const uploadedDir = '.trellis/tasks/01-uploaded'
+  const remainingDir = '.trellis/tasks/02-remaining'
+  const concurrentDir = '.trellis/tasks/03-concurrent'
+  const uploadedJson = `${JSON.stringify({ id: 'uploaded-task', title: '已上传' })}\n`
+  const remainingJson = `${JSON.stringify({ id: 'remaining-task', title: '待上传' })}\n`
+  const concurrentJson = `${JSON.stringify({ id: 'concurrent-task', title: '并发任务' })}\n`
+  const context = await setup({
+    [uploadedDir]: { 'task.json': uploadedJson },
+    [remainingDir]: { 'task.json': remainingJson },
+  })
+  try {
+    context.config.bindings[0].initialSyncMode = 'bootstrap'
+    context.config.bindings[0].initialSyncCompleted = false
+    context.config.bindings[0].initialReviewPending = false
+    await context.store.saveConfig(context.config)
+    const controls = []
+    let snapshotCalls = 0
+    let cursorWrites = 0
+    const api = {
+      async fetchTaskSpaceSnapshot() {
+        snapshotCalls += 1
+        return {
+          revision: snapshotCalls === 1 ? 1 : 3,
+          files:
+            snapshotCalls === 1
+              ? [serverFile(`${uploadedDir}/task.json`, uploadedJson)]
+              : [
+                  serverFile(`${uploadedDir}/task.json`, uploadedJson),
+                  serverFile(`${remainingDir}/task.json`, remainingJson),
+                  serverFile(`${concurrentDir}/task.json`, concurrentJson),
+                ],
+        }
+      },
+      async fetchTaskDirectory() {
+        return { files: [] }
+      },
+      async uploadTaskSpaceChanges() {
+        return { revision: 2 }
+      },
+      async writeTaskSpaceCursor() {
+        cursorWrites += 1
+      },
+    }
+    const sync = createSync(context, api, controls)
+    const result = await sync.pullTaskSpace('space-1')
+    assert.equal(result.pendingReview, true)
+    assert.equal(controls.at(-1).type, 'initial_sync_review')
+    assert.ok(controls.at(-1).differences.some((item) => item.type === 'server-only'))
+    assert.equal(snapshotCalls, 2)
+    assert.equal(cursorWrites, 0)
+    const binding = (await context.store.readConfig()).bindings[0]
+    assert.equal(binding.initialSyncCompleted, false)
   } finally {
     fs.rmSync(context.root, { recursive: true, force: true })
   }
@@ -432,6 +754,7 @@ test('bootstrap 上传期间发生 CAS 冲突时保持待审查且不推进游�
     context.config.bindings[0].initialReviewPending = false
     await context.store.saveConfig(context.config)
     const controls = []
+    let attempts = 0
     const api = {
       async fetchTaskSpaceSnapshot() {
         return { revision: 0, files: [] }
@@ -440,13 +763,13 @@ test('bootstrap 上传期间发生 CAS 冲突时保持待审查且不推进游�
         return { files: [] }
       },
       async uploadTaskSpaceChanges() {
-        return {
+        attempts += 1
+        throw new AgentApiError(AGENT_ERROR_CODE.HTTP_ERROR, '任务已被其他成员创建', {
           status: 409,
-          code: 'TASK_FILE_CONFLICT',
+          serverCode: 'TASK_FILE_CONFLICT',
           conflictId: 'bootstrap-race',
-          message: '任务已被其他成员创建',
           details: { taskId: 'race-task', files: [] },
-        }
+        })
       },
       async writeTaskSpaceCursor() {
         throw new Error('冲突时不能推进服务端游标')
@@ -459,6 +782,7 @@ test('bootstrap 上传期间发生 CAS 冲突时保持待审查且不推进游�
       controls.some((event) => event.type === 'task_file_conflict'),
       true,
     )
+    assert.equal(attempts, 1)
     assert.equal(fs.existsSync(context.store.paths.liveCursorsFile), true)
     const cursor = await sync._readCursor('space-1')
     assert.equal(cursor.revision, 0)
@@ -508,6 +832,13 @@ test('首次接入遇到内容冲突只发出审查事件，不覆盖文件也�
     assert.equal(controls.length, 1)
     assert.equal(controls[0].type, 'initial_sync_review')
     assert.equal(controls[0].revision, 4)
+    assert.equal(
+      JSON.stringify(controls[0]).includes(localJson.trim()) ||
+        JSON.stringify(controls[0]).includes(serverJson.trim()),
+      false,
+    )
+    assert.equal(controls[0].differences[0].local.taskDir, '.trellis/tasks/01-same')
+    assert.equal(controls[0].differences[0].local.files, undefined)
     assert.equal(
       fs.readFileSync(
         path.join(context.repoPath, '.trellis', 'tasks', '01-same', 'task.json'),

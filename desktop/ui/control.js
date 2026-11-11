@@ -354,6 +354,11 @@ function render(event) {
     button('用我的版本覆盖', 'overwrite-server', 'danger')
     button('仅保存本地副本', 'save-local-copy')
     button('稍后处理', 'close')
+  } else if (event.type === 'task_sync_error') {
+    title.textContent = '任务同步失败'
+    message.textContent = event.message || '任务空间同步暂时失败，请稍后重试。'
+    addDetail('任务空间', event.taskSpaceId)
+    button('关闭', 'close', 'primary')
   } else if (event.type === 'assignment_warning') {
     const assignee = event.assignee?.displayName || event.assignee?.username || '其他成员'
     title.textContent = '你正在修改他人负责的任务'

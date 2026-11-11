@@ -11,12 +11,31 @@ import {
 } from '../shared/task-snapshot.js'
 import { createTrellisWatcher } from '../shared/trellis-watcher.js'
 import { readLocalTaskSnapshotFiles } from './local-task-snapshot.js'
-import { AgentError, AGENT_ERROR_CODE, safeErrorMessage } from './protocol.js'
+import { AgentApiError, AgentError, AGENT_ERROR_CODE, safeErrorMessage } from './protocol.js'
 
 const DEBOUNCE_MS = 250
 const CURSOR_VERSION = 3
+const UPLOAD_MIN_INTERVAL_MS = 260
+const RATE_LIMIT_RETRY_DELAY_MS = 1000
+const RATE_LIMIT_RETRY_MAX_DELAY_MS = 5000
+const MAX_RATE_LIMIT_RETRIES = 2
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true })
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isRateLimitError(error) {
+  return error instanceof AgentApiError && error.status === 429 && error.retryable === true
+}
+
+function rateLimitRetryDelay(error) {
+  const retryAfterMs = Number(error.retryAfterMs)
+  return Number.isFinite(retryAfterMs) && retryAfterMs > 0
+    ? Math.min(retryAfterMs, RATE_LIMIT_RETRY_MAX_DELAY_MS)
+    : RATE_LIMIT_RETRY_DELAY_MS
+}
 
 function decodeUtf8(bytes) {
   try {
@@ -70,6 +89,22 @@ function conflictSummary(result) {
     message: result.message || result.error || '任务文件已被其他成员修改',
     suggestion: result.details?.suggestion || '先查看差异，再选择保留哪一份',
   }
+}
+
+function controlTaskGroup(group) {
+  if (!group) return null
+  return {
+    taskId: group.taskId,
+    taskDir: group.taskDir,
+  }
+}
+
+function controlDifferences(differences) {
+  return (differences || []).map((difference) => ({
+    ...difference,
+    local: controlTaskGroup(difference.local),
+    server: controlTaskGroup(difference.server),
+  }))
 }
 
 function taskConflictFromError(error) {
@@ -175,7 +210,7 @@ function clearDeferredForFiles(deferred, files) {
 }
 
 export function liveControlLine(event) {
-  return `${JSON.stringify({ type: 'trellis-control', ...event })}\n`
+  return `${JSON.stringify({ control: event })}\n`
 }
 
 export class AgentTaskSnapshotSync {
@@ -195,6 +230,8 @@ export class AgentTaskSnapshotSync {
     this.debounceMs = debounceMs
     this.bindings = new Map()
     this.queues = new Map()
+    this.uploadGates = new Map()
+    this.nextUploadAt = new Map()
     this.watcher = null
     this.stopped = true
     this.suppressed = new Map()
@@ -591,7 +628,7 @@ export class AgentTaskSnapshotSync {
         type: 'initial_sync_review',
         taskSpaceId: binding.taskSpaceId,
         revision: snapshot.revision,
-        differences,
+        differences: controlDifferences(differences),
       })
       return {
         conflicts: actionable.filter((item) =>
@@ -607,13 +644,13 @@ export class AgentTaskSnapshotSync {
     let completionBaselines = { ...serverBaselines }
     let deferred = {}
     if (mode === 'bootstrap') {
-      const invalid = differences.filter((item) => item.type === 'invalid')
-      if (invalid.length || (serverGroups.length && actionable.length)) {
+      const blocking = actionable.filter((item) => item.type !== 'local-only')
+      if (blocking.length) {
         this.emitControl({
           type: 'initial_sync_review',
           taskSpaceId: binding.taskSpaceId,
           revision: snapshot.revision,
-          differences,
+          differences: controlDifferences(differences),
         })
         return {
           conflicts: actionable.filter((item) =>
@@ -655,6 +692,40 @@ export class AgentTaskSnapshotSync {
         if (difference.type === 'server-only' || !difference.local) continue
         deferred[difference.local.taskDir] = fileStateFromGroup(difference.local)
       }
+    }
+
+    if (mode === 'bootstrap') {
+      const verifiedSnapshot = await api.fetchTaskSpaceSnapshot(binding.taskSpaceId, {
+        afterRevision: 0,
+      })
+      const verifiedLocalGroups = groupTaskSnapshotFiles(
+        await this._localFiles(binding),
+        allFileGroups,
+      )
+      const verifiedServerGroups = groupTaskSnapshotFiles(
+        (verifiedSnapshot.files || []).filter((file) => !file.deleted),
+        allFileGroups,
+      )
+      const verifiedDifferences = classifyTaskSnapshots(verifiedLocalGroups, verifiedServerGroups)
+      const unresolved = verifiedDifferences.filter((item) => item.type !== 'same')
+      if (unresolved.length) {
+        this.emitControl({
+          type: 'initial_sync_review',
+          taskSpaceId: binding.taskSpaceId,
+          revision: verifiedSnapshot.revision,
+          differences: controlDifferences(verifiedDifferences),
+        })
+        return {
+          conflicts: verifiedDifferences.filter((item) =>
+            new Set(['content-conflict', 'move-delete-conflict', 'invalid']).has(item.type),
+          ),
+          differences: verifiedDifferences,
+          revision: verifiedSnapshot.revision,
+          pendingReview: true,
+        }
+      }
+      latestRevision = Math.max(latestRevision, Number(verifiedSnapshot.revision || 0))
+      completionBaselines = baselinesFromSnapshot(verifiedSnapshot.files)
     }
 
     await this._writeCursor(binding.taskSpaceId, {
@@ -739,7 +810,7 @@ export class AgentTaskSnapshotSync {
           type: 'initial_sync_review',
           taskSpaceId: binding.taskSpaceId,
           revision: snapshot.revision,
-          differences,
+          differences: controlDifferences(differences),
         })
         return {
           conflicts,
@@ -801,7 +872,7 @@ export class AgentTaskSnapshotSync {
           type: 'initial_sync_review',
           taskSpaceId: binding.taskSpaceId,
           revision: snapshot.revision,
-          differences,
+          differences: controlDifferences(differences),
         })
         return {
           conflicts: differences.filter((item) =>
@@ -848,18 +919,55 @@ export class AgentTaskSnapshotSync {
     return this._uploadDirectories(binding, [...taskDirs])
   }
 
+  async _runUploadWithSlot(taskSpaceId, minimumDelayMs, operation) {
+    const previous = this.uploadGates.get(taskSpaceId) || Promise.resolve()
+    const current = previous
+      .catch(() => {})
+      .then(async () => {
+        const now = Date.now()
+        const readyAt = Math.max(now + minimumDelayMs, this.nextUploadAt.get(taskSpaceId) || 0)
+        if (readyAt > now) {
+          await wait(readyAt - now)
+        }
+        try {
+          return await operation()
+        } finally {
+          this.nextUploadAt.set(taskSpaceId, Date.now() + UPLOAD_MIN_INTERVAL_MS)
+        }
+      })
+    this.uploadGates.set(taskSpaceId, current)
+    try {
+      return await current
+    } finally {
+      if (this.uploadGates.get(taskSpaceId) === current) {
+        this.uploadGates.delete(taskSpaceId)
+      }
+    }
+  }
+
   async _uploadBatch(binding, api, batch) {
     let result
-    try {
-      result = await api.uploadTaskSpaceChanges(binding.taskSpaceId, {
-        batchId: batch.batchId,
-        clientSequence: batch.clientSequence,
-        files: batch.files,
-      })
-    } catch (error) {
-      const conflict = taskConflictFromError(error)
-      if (!conflict) throw error
-      result = conflict
+    let retryDelayMs = 0
+    const request = {
+      batchId: batch.batchId,
+      clientSequence: batch.clientSequence,
+      files: batch.files,
+    }
+    for (let retryCount = 0; ; retryCount += 1) {
+      try {
+        result = await this._runUploadWithSlot(binding.taskSpaceId, retryDelayMs, () =>
+          api.uploadTaskSpaceChanges(binding.taskSpaceId, request),
+        )
+        break
+      } catch (error) {
+        const conflict = taskConflictFromError(error)
+        if (conflict) {
+          result = conflict
+          break
+        }
+        if (!isRateLimitError(error) || retryCount >= MAX_RATE_LIMIT_RETRIES) throw error
+        retryDelayMs = rateLimitRetryDelay(error)
+      }
     }
     const cursor = await this._readCursor(binding.taskSpaceId)
     if (result.code === 'TASK_FILE_CONFLICT') {
