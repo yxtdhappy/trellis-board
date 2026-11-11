@@ -137,6 +137,7 @@ pub struct DesktopLoginSummary {
 #[serde(rename_all = "camelCase")]
 pub struct LocalAssociation {
     pub project_id: String,
+    #[serde(default)]
     pub task_space_id: String,
     pub repo_path: String,
     pub display_name: String,
