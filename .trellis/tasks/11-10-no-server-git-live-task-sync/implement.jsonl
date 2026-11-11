@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/","type":"directory","reason":"服务端数据库、权限、HTTP、Worker、持久化和子进程安全边界"}
+{"file":".trellis/spec/frontend/","type":"directory","reason":"React 数据流、弹层、状态、可访问性和构建验收规范"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"project/taskSpace 身份、API 字段和跨客户端同步的跨层契约"}
+{"file":".trellis/tasks/11-10-no-server-git-live-task-sync/implement.md","reason":"实施顺序、风险文件、验证命令、E2E 和回滚门禁"}

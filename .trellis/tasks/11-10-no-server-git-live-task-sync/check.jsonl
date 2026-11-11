@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/11-10-no-server-git-live-task-sync/prd.md","reason":"逐项核对产品范围、冲突语义、团队权限和验收标准"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"检查实时路径、revision、幂等、SSE、冲突和客户端落盘语义"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 Node 测试、真实服务和 Windows E2E 质量门"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查类型、构建、弹层和真实浏览器验收"}
