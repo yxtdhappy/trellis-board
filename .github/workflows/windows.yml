@@ -88,8 +88,8 @@ jobs:
             throw "sidecar version exited with $LASTEXITCODE"
           }
           $version = ($output -join "`n") | ConvertFrom-Json
-          if ($version.protocolVersion -ne 2) {
-            throw "sidecar protocolVersion=$($version.protocolVersion), want 2"
+          if ($version.protocolVersion -ne 3) {
+            throw "sidecar protocolVersion=$($version.protocolVersion), want 3"
           }
       - name: Rust unit tests
         timeout-minutes: 25
