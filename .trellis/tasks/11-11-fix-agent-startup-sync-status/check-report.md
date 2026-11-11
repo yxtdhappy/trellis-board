@@ -33,7 +33,8 @@
 - 已记录 Web Board 修复后必须重建客户端或重新登录/重启，不能用服务端静态资源更新替代 WebView
   实机验收。
 
-## 剩余验收
+## 桌面验收
 
-- GitHub Windows 工作流构建结果。
-- 新安装客户端上的 WebView2 实机复核。
+- GitHub Windows run `43052058709` 的 `node-tests` 与 `desktop-build` 均为 `success`。
+- 新安装客户端已通过真实 WebView2 复核。新增 `mdp-management-web` binding 处于 `syncing`
+  等待首次任务差异确认时，四个旧 binding 仍是 `ready`，项目栏没有发生跨项目状态污染。

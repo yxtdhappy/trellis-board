@@ -27,7 +27,9 @@
 - 本次涉及文件 `oxfmt --check`：通过。
 - `git diff --check`：通过。
 
-## 待完成
+## 桌面验收
 
-- 通过 GitHub Windows 工作流重新构建客户端/NSIS 安装包。
-- 使用新客户端重启或重新登录后复核新增项目同步时其他项目状态不被污染。
+- GitHub Windows run `43052058709` 的 `node-tests` 和 `desktop-build` 均成功。
+- 安装新的 NSIS 客户端后，以 `mdp-management-web` 的真实新 taskSpace 接入场景复核：新项目为
+  `syncing` 时，其余四个既有项目持续保持 `ready`，WebView 分别显示“正在同步已有任务”和
+  “同步正常”。

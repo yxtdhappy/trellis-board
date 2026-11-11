@@ -25,8 +25,8 @@
       `syncing`。
 - [x] 五个 approved binding 仍全部触发后台 `pullTaskSpace`，不能为保持状态而跳过增量追赶。
 - [x] 前端隔离修复和 sidecar 状态保持均有自动化测试，不再依赖当前选中 taskSpace。
-- [ ] GitHub Windows 工作流重新构建成功并生成新的客户端/NSIS 安装包。
-- [ ] 新客户端重新启动或重新登录后，WebView 加载修复后的前端 bundle，新增项目同步时其他项目
+- [x] GitHub Windows 工作流重新构建成功并生成新的客户端/NSIS 安装包。
+- [x] 新客户端重新启动或重新登录后，WebView 加载修复后的前端 bundle，新增项目同步时其他项目
       不再显示为同步中。
 
 ## Notes
