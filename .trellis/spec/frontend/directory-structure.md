@@ -13,15 +13,17 @@
 | `web/src/hooks/` | `useBoard`、`useAdminConsole`、`useAdminProjects` |
 | `web/src/components/ui/` | shadcn 生成的原语，不手工改结构 |
 | `web/src/components/layout/` | `TopBar`、`ProjectRail` |
+| `web/src/browser/` | 浏览器专用 DOM/Web API 适配器（如 `clipboard`） |
 | `web/src/lib/` | 浏览器/Node 共用的纯逻辑模块（`.js`）与其 `.d.ts` |
 | `shared/` | 前后端共用纯模块（当前仅 `slug.js`） |
 | `public/` | **构建产物**，由 `npm run build` 生成，不手改 |
 
 ## 模块边界
 
-- `features/*` 依赖 `hooks/*`、`api/*`、`lib/*`、`components/ui/*`；页面只做组合，不写数据请求。
+- `features/*` 依赖 `hooks/*`、`api/*`、`browser/*`、`lib/*`、`components/ui/*`；页面只做组合，不写数据请求。
 - `hooks/*` 是唯一的数据源；组件不直接 `fetch`。
 - `web/src/lib/*.js` 与 `shared/slug.js` 必须保持无 DOM 依赖、无 Node 内置依赖，Node 测试可直接 import。
+- `web/src/browser/*.js` 可依赖浏览器全局对象，但不得依赖 React、hooks、api 或 Node 内置模块；Node 测试通过注入全局对象覆盖行为。
 - 跨端增加的纯模块放 `shared/`，并在 `web/vite.config.ts` 的 `@shared` 别名与 `tsconfig.app.json` 的 `paths` 同步登记。
 - `server/` 通过 `../shared/slug.js` 复用 slug 逻辑；不要让它再依赖 `public/`（构建会清空该目录）。
 

@@ -1,8 +1,10 @@
 import { useEffect } from 'react'
 import { MonitorSmartphone } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import { formatTime } from '@/lib/admin-shared'
+import { copyText } from '@/browser/clipboard.js'
 import { EmptyRow, Panel, Row, StatusPill } from './shared'
 
 export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
@@ -19,6 +21,10 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
   useEffect(() => {
     void reloadDevices()
   }, [reloadDevices])
+
+  async function copyDesktopToken() {
+    if (desktopToken && !(await copyText(desktopToken.token))) toast.error('复制失败')
+  }
 
   return (
     <div className="grid gap-3.5 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -111,7 +117,7 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
                   size="sm"
                   type="button"
                   variant="outline"
-                  onClick={() => void navigator.clipboard.writeText(desktopToken.token)}
+                  onClick={() => void copyDesktopToken()}
                 >
                   复制令牌
                 </Button>

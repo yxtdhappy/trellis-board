@@ -1,5 +1,6 @@
 import { Copy } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { copyText } from '@/browser/clipboard.js'
 import { conditionBadges } from '@/lib/condition-checks.js'
 import { toast } from 'sonner'
 import {
@@ -37,10 +38,9 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
     .join(' · ')
 
   async function copyName() {
-    try {
-      await navigator.clipboard.writeText(task.dirName)
+    if (await copyText(task.dirName)) {
       toast.success('已复制')
-    } catch {
+    } else {
       toast.error('复制失败')
     }
   }
