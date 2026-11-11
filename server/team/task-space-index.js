@@ -131,6 +131,10 @@ function normalizeFilters(input = {}) {
   if (q.length > 200) {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, '搜索词不能超过 200 个字符')
   }
+  const branch = text(input.branch).trim().toLowerCase()
+  if (branch.length > 200) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, '分支筛选不能超过 200 个字符')
+  }
   const days = (name) => {
     if (input[name] == null || input[name] === '') return null
     const value = Number(input[name])
@@ -142,6 +146,7 @@ function normalizeFilters(input = {}) {
   return {
     scope,
     q,
+    branch,
     priorities: stringList(input.priorities, 'priorities', { maxItems: 4, maxLength: 2 }),
     stages: stringList(input.stages, 'stages', { maxItems: 20, maxLength: 30 }),
     tags: stringList(input.tags, 'tags', { maxItems: 50, maxLength: 50 }),
@@ -681,21 +686,71 @@ export function createTaskSpaceIndex({
     return materialized.get(taskSpaceId) || null
   }
 
-  function queryTasks(actor, input = {}) {
-    const taskSpaceId = String(input.taskSpaceId || '').trim()
-    if (!taskSpaceId) {
-      throw teamError(400, ERROR_CODES.INVALID_INPUT, '任务查询必须指定 taskSpaceId')
+  function resolveQueryScope(actor, input) {
+    const requestedTaskSpaceId = String(input.taskSpaceId || '').trim()
+    const taskSpaceId = requestedTaskSpaceId === 'all' ? '' : requestedTaskSpaceId
+    const requestedProjectIds = stringList(input.projectIds, 'projectIds', {
+      maxItems: 200,
+      maxLength: 200,
+    })
+    if (taskSpaceId) {
+      const context = taskSpaces.authorizeTaskSpace(actor, taskSpaceId, 'view')
+      const projectId = context.taskSpace.project_id
+      if (
+        requestedProjectIds.length &&
+        (requestedProjectIds.length !== 1 || requestedProjectIds[0] !== projectId)
+      ) {
+        throw teamError(403, ERROR_CODES.FORBIDDEN, '查询包含无权访问的项目')
+      }
+      const teamScope = String(input.teamId || '').trim()
+      if (teamScope && teamScope !== 'all') {
+        const readable = taskSpaces.listReadable(actor, { teamId: teamScope })
+        const scoped = readable.some(
+          (project) =>
+            project.id === projectId &&
+            project.taskSpaces.some((taskSpace) => taskSpace.id === taskSpaceId),
+        )
+        if (!scoped) {
+          throw teamError(404, ERROR_CODES.NOT_FOUND, '任务空间不存在')
+        }
+      }
+      return {
+        projectIds: [projectId],
+        taskSpaceIds: [taskSpaceId],
+      }
     }
-    taskSpaces.authorizeTaskSpace(actor, taskSpaceId, 'view')
+    const readable = taskSpaces.listReadable(actor, { teamId: input.teamId })
+    const byProjectId = new Map(readable.map((project) => [project.id, project]))
+    const requested = requestedProjectIds.filter((projectId) => byProjectId.has(projectId))
+    if (requested.length !== requestedProjectIds.length) {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, '查询包含无权访问的项目')
+    }
+    const projects = requested.length
+      ? requested.map((projectId) => byProjectId.get(projectId))
+      : readable
+    return {
+      projectIds: [...new Set(projects.map((project) => project.id))].sort(),
+      taskSpaceIds: [
+        ...new Set(
+          projects.flatMap((project) => project.taskSpaces.map((taskSpace) => taskSpace.id)),
+        ),
+      ].sort(),
+    }
+  }
+
+  function queryTasks(actor, input = {}) {
     const filters = normalizeFilters(input)
     const teamScope = resolveTeamScope(db, actor, input.teamId)
+    const scope = resolveQueryScope(actor, input)
+    const scopeHash = hashValue(scope)
+    const filterHash = hashValue(filters)
     const revision = queryRevision()
     const day = shanghaiDay()
     const etag = `"${hashValue({
       user: actor.userId,
       team: teamScope,
-      taskSpaceId,
-      filters,
+      scope,
+      filterHash,
       revision,
       day,
     })}"`
@@ -710,14 +765,25 @@ export function createTaskSpaceIndex({
     const cacheKey = hashValue({
       user: filters.scope === 'mine' || input.cursor ? actor.userId : null,
       team: teamScope,
-      taskSpaceId,
+      scopeHash,
+      filterHash,
       cursor: input.cursor || null,
-      filters,
       revision,
       day,
     })
-    const where = ['t.task_space_id = ?', 't.archived = ?']
-    const params = [taskSpaceId, filters.archived ? 1 : 0]
+    if (!scope.taskSpaceIds.length) {
+      return {
+        tasks: [],
+        total: 0,
+        assignees: [],
+        nextCursor: null,
+        etag,
+        queryRevision: revision,
+        queryDay: day,
+      }
+    }
+    const where = [`t.task_space_id IN (${bindList(scope.taskSpaceIds)})`, 't.archived = ?']
+    const params = [...scope.taskSpaceIds, filters.archived ? 1 : 0]
     if (filters.scope === 'mine') {
       where.push('t.assignee_user_id = ?')
       params.push(actor.userId)
@@ -725,6 +791,10 @@ export function createTaskSpaceIndex({
     if (filters.q) {
       where.push("t.search_text LIKE ? ESCAPE '\\'")
       params.push(`%${filters.q.replace(/[\\%_]/g, '\\$&')}%`)
+    }
+    if (filters.branch) {
+      where.push("trellis_lower(t.branch_name) LIKE ? ESCAPE '\\'")
+      params.push(`%${filters.branch.replace(/[\\%_]/g, '\\$&')}%`)
     }
     if (filters.priorities.length) {
       where.push(`t.priority IN (${bindList(filters.priorities)})`)
@@ -794,7 +864,9 @@ export function createTaskSpaceIndex({
       if (
         Date.now() > cursor.exp ||
         cursor.u !== actor.userId ||
-        cursor.t !== taskSpaceId ||
+        cursor.g !== teamScope ||
+        cursor.s !== scopeHash ||
+        cursor.f !== filterHash ||
         cursor.r !== revision ||
         cursor.d !== day
       ) {
@@ -804,9 +876,15 @@ export function createTaskSpaceIndex({
       }
       pageWhere.push(`(
         ${orderAnchor} < ?
-        OR (${orderAnchor} = ? AND t.task_key < ?)
+        OR (
+          ${orderAnchor} = ?
+          AND (
+            t.task_space_id < ?
+            OR (t.task_space_id = ? AND t.task_key < ?)
+          )
+        )
       )`)
-      pageParams.push(cursor.sa, cursor.sa, cursor.tk)
+      pageParams.push(cursor.sa, cursor.sa, cursor.ts, cursor.ts, cursor.tk)
     }
     const rows = db
       .prepare(`
@@ -824,7 +902,7 @@ export function createTaskSpaceIndex({
       JOIN sync_project p ON p.id = t.project_id
       JOIN team ON team.id = p.owner_team_id
       WHERE ${pageWhere.join(' AND ')}
-      ORDER BY ${orderAnchor} DESC, t.task_key DESC
+      ORDER BY ${orderAnchor} DESC, t.task_space_id DESC, t.task_key DESC
       LIMIT ?
     `)
       .all(...pageParams, filters.limit + 1)
@@ -833,12 +911,15 @@ export function createTaskSpaceIndex({
     const nextCursor = last
       ? encryptCursor({
           u: actor.userId,
-          t: taskSpaceId,
+          g: teamScope,
+          s: scopeHash,
+          f: filterHash,
           r: revision,
           d: day,
           sa: filters.archived
             ? last.archived_at || last.updated_at
             : last.last_activity_at || last.updated_at,
+          ts: last.task_space_id,
           tk: last.task_key,
           exp: Date.now() + CURSOR_TTL_MS,
         })

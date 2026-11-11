@@ -20,6 +20,7 @@ export const ATTENTION_REASON_LABELS: Record<string, string>
 export function laneForStageIndex(task: unknown, current: number): string | null
 export function normalizeTagsInput(value: unknown, options?: { rejectEmpty?: boolean }): string[]
 export function taskTagNames(task: unknown): string[]
+export function branchMatches(branchName: unknown, filter: unknown): boolean
 export function localDaySerial(value: unknown): number | null
 export function dueDateDistance(due: string, now?: Date): number | null
 export function taskMatchesFilter(

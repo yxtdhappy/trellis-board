@@ -50,6 +50,7 @@ test('团队查询参数保留服务端筛选并限制页大小', () => {
         tags: ['后端'],
         q: ' 看板 ',
         blocked: 'blocked',
+        branch: ' DEV ',
         archived: true,
       },
       { limit: 500, cursor: 'next token' },
@@ -60,6 +61,7 @@ test('团队查询参数保留服务端筛选并限制页大小', () => {
   assert.equal(query.get('projectIds'), 'p1,p2')
   assert.equal(query.get('priorities'), 'P0,P1')
   assert.equal(query.get('q'), '看板')
+  assert.equal(query.get('branch'), 'DEV')
   assert.equal(query.get('limit'), '200')
   assert.equal(query.get('cursor'), 'next token')
   assert.equal(query.get('blocked'), 'blocked')
@@ -72,6 +74,16 @@ test('团队查询参数保留服务端筛选并限制页大小', () => {
   )
   assert.equal(scoped.get('teamId'), 'team-a')
   assert.equal(scoped.get('projectIds'), 'p1')
+  const allProjects = new URLSearchParams(
+    buildTaskQuery({
+      projectId: 'all',
+      taskSpaceId: 'all',
+      branch: 'feature/dev',
+    }),
+  )
+  assert.equal(allProjects.get('projectIds'), null)
+  assert.equal(allProjects.get('taskSpaceId'), null)
+  assert.equal(allProjects.get('branch'), 'feature/dev')
 })
 
 test('归档负责人选择在选项刷新时保持并继续查询该负责人', () => {

@@ -3,6 +3,7 @@ import { laneTone } from './tone'
 import type { BoardTask } from './task-view'
 import { laneForTask, nextStage, STAGE_LANES, taskProgress } from './task-view'
 import { TaskCard } from './TaskCard'
+import { taskInstanceKey } from '@/lib/task-view-key.js'
 
 type KanbanProps = {
   groups: { key: string; parent: BoardTask; members: BoardTask[] }[]
@@ -96,7 +97,7 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
                                 const progress = taskProgress(child)
                                 return (
                                   <button
-                                    key={child.taskKey}
+                                    key={taskInstanceKey(child)}
                                     type="button"
                                     onClick={() => onOpen(child)}
                                     className="flex items-center gap-2 rounded-md px-1.5 py-1 text-left text-[10.5px] hover:bg-muted"

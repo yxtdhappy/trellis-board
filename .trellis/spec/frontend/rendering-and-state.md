@@ -55,8 +55,12 @@
   推送确认完成后先调用预检，不能在预检前 attach。
 - “团队管理”入口只属于普通浏览器管理界面；Tauri 客户端即使账号具备管理权限也不显示该入口，
   浏览器仍使用 `/admin.html`。
-- Team 任务卡和详情必须显示 `taskSpaceId` 对应分支 `branchName`；同一仓库不同分支不得混在同一个任务页。
-- Team Board 的“全部项目/项目”只展示分支摘要；需要任务列表时必须选中具体 taskSpace。
+- Team 任务卡和详情必须显示 `taskSpaceId` 对应分支 `branchName`。“全部项目”聚合所有可读 taskSpace，
+  具体项目聚合该项目所有可读 taskSpace，具体 taskSpace 只展示该分支。
+- 同一 taskKey 出现在不同 taskSpace 时必须按 `taskSpaceId + taskKey` 形成独立业务实例；分组、React key、
+  选中任务刷新和归档行身份都必须使用复合 key，禁止跨分支合并。
+- 任务流水线、团队视角和归档视图提供单值“分支”模糊筛选。输入先 trim，再按大小写不敏感的任意子串匹配；
+  团队模式由 `/api/tasks/query?branch=` 服务端过滤，独立模式复用 `branchMatches()`。不做正则、多选或候选下拉。
 - 同步中的已关联 taskSpace 在项目栏显示固定风险提示：切换 Git 分支可能造成任务错位或污染，
   建议等待同步完成。该提示不阻断分支切换，也不承诺自动修复。
 - `ASSIGNEE_CONFIRMATION_REQUIRED` 必须复用三态对话框：取消、继续推进、接管任务；继续携带
@@ -100,7 +104,8 @@
 
 - 团队归档索引使用独立查询状态，不读取活动任务 `teamPage`，也不复用其游标。
 - 归档查询固定携带 `archived=true` 和 `limit=20`；上一页读取本地游标栈，下一页写入服务端 `nextCursor`。
-- 团队、项目、搜索、负责人或 `queryRevision` 变化时清空游标并从第一页重载；`CURSOR_INVALID` 同样回到第一页。
+- 团队、项目、分支、搜索、负责人或 `queryRevision` 变化时清空游标并从第一页重载；
+  `CURSOR_INVALID` 同样回到第一页。
 - 归档搜索做短延迟合并，请求序号必须阻止旧响应覆盖新筛选结果。
 - 负责人选项来自服务端归档聚合，不得只使用当前页任务。
 - 切换负责人时加载态会暂时清空当前页聚合；选项刷新期间必须把当前选中值保留在

@@ -285,6 +285,7 @@ function taskQueryInput(url) {
   const input = {
     scope: queryScalar(params, 'scope'),
     q: queryScalar(params, 'q'),
+    branch: queryScalar(params, 'branch'),
     priorities: queryList(params, 'priorities'),
     stages: queryList(params, 'stages'),
     tags: queryList(params, 'tags'),

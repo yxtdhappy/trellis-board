@@ -4,6 +4,8 @@ import { Pagination } from './Pagination'
 import { SelectField } from './SelectField'
 import { dueLabel, initials, type BoardTask } from './task-view'
 import { priorityTone, stageTone, statusLabel } from './tone'
+import { branchMatches } from '@/lib/execution-filter.js'
+import { taskInstanceKey } from '@/lib/task-view-key.js'
 import type { BoardFilters } from '@/hooks/useBoard'
 
 type TeamViewProps = {
@@ -41,9 +43,14 @@ export function TeamView({
   const [page, setPage] = useState(0)
 
   const scopedTasks = useMemo(() => {
-    if (!filters.projectId || filters.projectId === 'all') return tasks
-    return tasks.filter((task) => task.projectId === filters.projectId)
-  }, [tasks, filters.projectId])
+    return tasks.filter(
+      (task) =>
+        (!filters.projectId ||
+          filters.projectId === 'all' ||
+          task.projectId === filters.projectId) &&
+        branchMatches(task.branchName, filters.branch),
+    )
+  }, [tasks, filters.projectId, filters.branch])
 
   const owners = useMemo(() => {
     const counts = new Map<string, number>()
@@ -147,6 +154,19 @@ export function TeamView({
             ]}
             onChange={(next) => onChange({ projectId: next })}
           />
+          <label className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
+            分支
+            <Input
+              className="h-8 min-w-0 flex-1 text-[11.5px]"
+              value={filters.branch}
+              maxLength={200}
+              placeholder="模糊匹配"
+              onChange={(event) => {
+                onChange({ branch: event.target.value })
+                setPage(0)
+              }}
+            />
+          </label>
           <SelectField
             ariaLabel="负责人"
             className="h-8 text-[11.5px]"
@@ -248,12 +268,16 @@ export function TeamView({
                     const stageLabel = task.stages.find(
                       (item) => item.id === task.derivedStage,
                     )?.label
-                    const projectLabel = task.teamName
-                      ? `${task.teamName} · ${task.projectName}`
-                      : task.projectName
+                    const projectLabel = [
+                      task.teamName,
+                      task.projectName,
+                      task.branchName ? `分支 ${task.branchName}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
                     return (
                       <tr
-                        key={task.taskKey}
+                        key={taskInstanceKey(task)}
                         className="cursor-pointer border-b border-border/60 text-[11.5px] hover:bg-muted/40"
                         onClick={() => onOpen(task)}
                       >

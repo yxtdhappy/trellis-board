@@ -1,5 +1,5 @@
 import { groupActiveTasks, type BoardTask } from './task-view'
-import { findView, taskMatchesView, taskTagNames } from '@/lib/execution-filter.js'
+import { branchMatches, findView, taskMatchesView, taskTagNames } from '@/lib/execution-filter.js'
 import type { BoardFilters } from '@/hooks/useBoard'
 
 export type BoardView = 'pipeline' | 'team' | 'archive' | 'plugins'
@@ -44,6 +44,7 @@ export function filterTasks(
           .includes(search),
       )
     const projectHit = filters.projectId === 'all' || task.projectId === filters.projectId
+    const branchHit = branchMatches(task.branchName, filters.branch)
     const ownerHit =
       filters.scope !== 'mine' ||
       options.scopedByServer === true ||
@@ -60,6 +61,7 @@ export function filterTasks(
     return (
       hit &&
       projectHit &&
+      branchHit &&
       ownerHit &&
       assigneeHit &&
       priorityHit &&

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"检查 /api/tasks/query 的项目集合权限、团队范围和错误矩阵"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 Node 测试、真实 HTTP 验证和团队权限回归覆盖"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查前端纯函数测试、业务 key、构建和真实浏览器验收"}
+{"file":".trellis/tasks/11-11-all-projects-task-list/prd.md","reason":"逐项核对全部项目、分支模糊筛选、权限、分页和同任务跨分支验收"}
+{"file":".trellis/tasks/11-11-all-projects-task-list/design.md","reason":"核对实现是否遵守单查询路径、作用域哈希和复合任务身份设计"}
