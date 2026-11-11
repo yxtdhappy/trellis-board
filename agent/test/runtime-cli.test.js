@@ -102,6 +102,7 @@ function withEnrollServer(callback) {
               credential: 'c'.repeat(32),
               protocolVersion: 3,
               teamId: null,
+              allowLocalGitRemotes: true,
               teams: [{ id: 'team-1', name: '团队一', role: 'member' }],
             }),
           )
@@ -267,6 +268,7 @@ function makeConfig(repoPath) {
     revision: 'c'.repeat(32),
     serverUrl: 'http://127.0.0.1:4317',
     caFile: null,
+    allowLocalGitRemotes: true,
     agentId: 'agent-runtime-1',
     deviceName: 'Runtime Test',
     protocolVersion: 3,

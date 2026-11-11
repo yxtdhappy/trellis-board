@@ -220,14 +220,12 @@ const assignees = await fetchTaskSpaceAssignees(taskSpace.id)
 
 ## 写操作边界
 
-- standalone 与 team 默认监听 `0.0.0.0`。团队模式在通配监听时接受任意合法 Host；
-  非通配监听仍要求 Host 等于 `TRELLIS_TEAM_PUBLIC_URL`。
-- JSON 写请求的 `Origin` 必须与当前请求 Host 派生出的 origin 一致，且协议等于团队公开地址的协议。
-  该规则同时阻止跨站写入，并允许其他机器通过局域网 IP 或机器名访问。
-- standalone 没有账号鉴权，默认全接口暴露只适用于可信网络；需要本机限定时显式设置
-  `TRELLIS_BOARD_BIND_HOST=127.0.0.1`。
-- 通配监听会放弃固定 Host allowlist；仅适合可信内网。生产反向代理部署应收窄监听并把 Host
-  固定回 `TRELLIS_TEAM_PUBLIC_URL`。
+- standalone 与 team 固定监听 `0.0.0.0`，接受任意合法 Host。
+- JSON 写请求的 `Origin` 必须与当前请求 Host 派生出的 origin 一致；协议由 TLS socket 或
+  `X-Forwarded-Proto` 自动识别。该规则阻止跨站写入，并允许局域网 IP、机器名或 HTTPS 域名访问。
+- standalone 没有账号鉴权，全接口暴露只适用于可信网络。
+- Team 服务启动配置包括 `TRELLIS_BOARD_MODE`、`TRELLIS_BOARD_DATA_DIR`、`PORT` 和
+  `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES`。
 
 ### 创建任务
 

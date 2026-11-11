@@ -208,6 +208,7 @@ export function parseEnrollResponse(payload) {
     username: username || null,
     teamId,
     teams,
+    allowLocalGitRemotes: body.allowLocalGitRemotes === true,
   }
 }
 

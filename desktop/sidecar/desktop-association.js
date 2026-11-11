@@ -8,7 +8,6 @@ import { attachProject, preflightProject } from '../../agent/project-onboarding.
 import {
   AgentError,
   AGENT_ERROR_CODE,
-  isLoopbackHostname,
   safeErrorMessage,
   validateBranchNameSyntax,
 } from '../../agent/protocol.js'
@@ -39,7 +38,7 @@ export async function associateDesktopProject(options = {}) {
   const localId = crypto.randomUUID()
   const hooksDir = path.join(store.paths.hooksBaseDir, localId)
   await fs.mkdir(hooksDir, { recursive: true, mode: 0o700 })
-  const allowFileRemote = isLoopbackHostname(new URL(config.serverUrl).hostname)
+  const allowFileRemote = config.allowLocalGitRemotes === true
   const apiFactory =
     options.apiClientFactory ||
     (({ serverUrl, credential: value }) =>
@@ -91,7 +90,7 @@ export async function preflightDesktopProject(options = {}) {
   }
   const config = await store.readConfig({ allowMissing: false })
   const credential = await options.credentialStore.loadCredential()
-  const allowFileRemote = isLoopbackHostname(new URL(config.serverUrl).hostname)
+  const allowFileRemote = config.allowLocalGitRemotes === true
   const apiFactory =
     options.apiClientFactory ||
     (({ serverUrl, credential: value }) =>

@@ -120,12 +120,12 @@ async function freePort() {
   })
 }
 
-async function startRuntime(t, { desktopAuth, users = [] } = {}) {
+async function startRuntime(t, { desktopAuth, users = [], allowLocalGitRemotes = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-desktop-auth-'))
   const port = await freePort()
   const serverUrl = `http://127.0.0.1:${port}`
   const runtime = await createTeamRuntime({
-    config: testConfig(serverUrl, port),
+    config: { ...testConfig(serverUrl, port), allowLocalGitRemotes },
     databaseFile: path.join(root, 'data', 'board.sqlite'),
     dataDir: path.join(root, 'data'),
     logger: SILENT_LOGGER,
@@ -481,7 +481,7 @@ test('桌面设备注册要求显式注入凭证存储', async (t) => {
 })
 
 test('账号密码登录建立 Board 会话与设备凭据并可复用同一设备', async (t) => {
-  const { runtime, serverUrl } = await startRuntime(t)
+  const { runtime, serverUrl } = await startRuntime(t, { allowLocalGitRemotes: true })
   const root = await withTempRoot(t, 'trellis-desktop-login-')
   let credential = null
   const credentialStore = {
@@ -504,8 +504,14 @@ test('账号密码登录建立 Board 会话与设备凭据并可复用同一设�
     credentialStore,
   })
   assert.equal(first.deviceReady, true)
+  assert.equal(first.allowLocalGitRemotes, true)
   assert.match(first.sessionToken, /^[A-Za-z0-9_-]{16,}$/)
   assert.ok(credential)
+  assert.equal(
+    (await new ConfigStore(root, { secureDirectory: false }).readConfig({ allowMissing: false }))
+      .allowLocalGitRemotes,
+    true,
+  )
   const configText = fs.readFileSync(path.join(root, 'config.json'), 'utf8')
   assert.ok(!configText.includes('Legacy-Password-123'))
   assert.ok(!configText.includes(first.sessionToken))

@@ -24,35 +24,37 @@
 | --- | --- | --- | --- |
 | `TRELLIS_BOARD_MODE` | 是 | `standalone` | Team 部署设为 `team` |
 | `TRELLIS_BOARD_DATA_DIR` | 生产必填 | 平台用户数据目录 | Windows 默认 `%LOCALAPPDATA%\TrellisBoard\server`；Ubuntu 建议 `/var/lib/trellis-board` |
-| `TRELLIS_TEAM_PUBLIC_URL` | 是 | 无 | 浏览器和 Agent 使用的公开根地址 |
-| `TRELLIS_TEAM_BIND_HOST` | 否 | `0.0.0.0` | 服务监听地址；反向代理部署建议设为 `127.0.0.1` |
-| `TRELLIS_TEAM_PORT` | 否 | `4317` | Team 服务端口 |
-| `TRELLIS_TEAM_SESSION_TTL_MS` | 否 | `43200000` | 登录会话有效期，默认 12 小时 |
-| `TRELLIS_TEAM_AGENT_STALE_MS` | 否 | `60000` | Agent 超过该时间未心跳即不视为在线 |
-| `TRELLIS_TEAM_COOKIE_SECURE` | 否 | HTTPS 时为 true | 非回环地址不允许关闭 |
-| `TRELLIS_TEAM_TRUST_PROXY` | 否 | `false` | 仅当请求只能来自受信反向代理时开启 |
-| `TRELLIS_TEAM_ALLOW_LOCAL_GIT_REMOTES` | 否 | `false` | 只用于隔离 E2E 的 `file://` 远端，生产保持 false |
+| `PORT` | 否 | `4317` | HTTP 和 Team 服务端口 |
+| `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES` | 否 | standalone `true`，team `false` | 是否接受本地 `file://` Git 远端 |
 
 Team 模式没有 `TRELLIS_TEAM_GIT_POLL_MS`。项目远端不再由服务端轮询。
+服务固定监听 `0.0.0.0`。直接使用 HTTP 或通过反向代理提供 HTTPS 均可；反向代理应传递
+`X-Forwarded-Proto`，服务会据此自动设置安全 Cookie。
+团队版需要本地 Git 远端时显式设置 `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES=true`；团队版默认关闭，
+单机版默认开启。修改后需要重启服务并重新登录客户端，客户端才会刷新该能力。
 
 Windows PowerShell 前台启动：
 
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
-$env:TRELLIS_TEAM_PUBLIC_URL = 'https://board.example.com'
-$env:TRELLIS_TEAM_BIND_HOST = '127.0.0.1'
-$env:TRELLIS_TEAM_PORT = '4317'
+$env:PORT = '4317'
 $env:TRELLIS_BOARD_DATA_DIR = Join-Path $env:LOCALAPPDATA 'TrellisBoard\server'
 node server/index.js
 ```
+
+团队需要本地 Git 远端时，在启动前额外设置：
+
+```powershell
+$env:TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES = 'true'
+```
+
+局域网客户端直接访问 `http://<服务端IP>:4317`。
 
 Ubuntu 前台启动：
 
 ```bash
 export TRELLIS_BOARD_MODE=team
-export TRELLIS_TEAM_PUBLIC_URL=https://board.example.com
-export TRELLIS_TEAM_BIND_HOST=127.0.0.1
-export TRELLIS_TEAM_PORT=4317
+export PORT=4317
 export TRELLIS_BOARD_DATA_DIR=/var/lib/trellis-board
 node server/index.js
 ```
@@ -62,16 +64,16 @@ node server/index.js
 
 ## 3. 首次部署
 
-1. 准备运行数据目录和 HTTPS 反向代理。
+1. 准备运行数据目录；需要 HTTPS 时再准备反向代理。
 2. 在 Team 环境变量下创建首管理员：
 
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
-$env:TRELLIS_TEAM_PUBLIC_URL = 'https://board.example.com'
+$env:PORT = '4317'
 node server/team/cli.js init-admin --username admin --display-name '系统管理员'
 ```
 
-3. 启动服务并打开 `https://board.example.com/login.html`。
+3. 启动服务并打开 `http://<服务端IP>:4317/login.html`；使用 HTTPS 时打开对应域名。
 4. 首管理员首次登录必须修改临时密码。
 5. 在 `/admin.html` 创建团队和用户；用户登录名不区分大小写，初始密码至少 6 个字符。
 6. 用户打开 Windows 客户端登录，再由客户端选择本地 Git 项目。
@@ -129,8 +131,8 @@ server {
 }
 ```
 
-只有在代理独占上游访问时才设置 `TRELLIS_TEAM_TRUST_PROXY=true`。不得记录 Cookie、Authorization、
-配对码、任务正文或本地仓库路径。
+反向代理必须传递 `X-Forwarded-Proto`。不得记录 Cookie、Authorization、配对码、任务正文或
+本地仓库路径。
 
 ## 5. 项目接入与任务空间
 
@@ -252,7 +254,7 @@ if (Test-Path (Join-Path $dataDir 'board.sqlite-shm')) { Copy-Item (Join-Path $d
 
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
-$env:TRELLIS_TEAM_PUBLIC_URL = 'https://board.example.com'
+$env:PORT = '4317'
 node server/team/cli.js status
 ```
 

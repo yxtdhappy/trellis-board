@@ -270,7 +270,10 @@ export function createSyncAgentService({
       events?.publishAgentRevoked?.(agentId)
     }
     const { revokedAgentIds: _revokedAgentIds, ...result } = enrolled
-    return result
+    return {
+      ...result,
+      allowLocalGitRemotes: Boolean(config.allowLocalGitRemotes),
+    }
   }
 
   function enroll(input = {}, { ip = '' } = {}) {

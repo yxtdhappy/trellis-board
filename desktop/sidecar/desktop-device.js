@@ -239,6 +239,7 @@ async function readRuntime({ serverUrl, sessionToken, request = requestJson }) {
   return {
     username: validateUsername(payload.user.username),
     teams: normalizeTeams(payload.teams),
+    allowLocalGitRemotes: payload.allowLocalGitRemotes === true,
   }
 }
 
@@ -400,6 +401,7 @@ export async function loginDesktop(options = {}) {
         ...session,
         serverUrl,
         teams: runtime.teams,
+        allowLocalGitRemotes: runtime.allowLocalGitRemotes,
         deviceReady: false,
       }
     }
@@ -423,6 +425,7 @@ export async function loginDesktop(options = {}) {
           deviceName,
           username,
           teams: runtime.teams,
+          allowLocalGitRemotes: runtime.allowLocalGitRemotes,
         }),
         { allowMissing: false },
       )
@@ -430,6 +433,7 @@ export async function loginDesktop(options = {}) {
         ...session,
         serverUrl,
         teams: runtime.teams,
+        allowLocalGitRemotes: runtime.allowLocalGitRemotes,
         deviceReady: true,
       }
     }
@@ -467,6 +471,7 @@ export async function loginDesktop(options = {}) {
         ...current,
         username,
         teams: runtime.teams,
+        allowLocalGitRemotes: runtime.allowLocalGitRemotes,
       }),
       { allowMissing: false },
     )
@@ -477,6 +482,7 @@ export async function loginDesktop(options = {}) {
       ...session,
       serverUrl,
       teams: runtime.teams,
+      allowLocalGitRemotes: runtime.allowLocalGitRemotes,
       deviceReady: true,
     }
   } catch (error) {

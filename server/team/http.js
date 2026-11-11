@@ -165,11 +165,13 @@ function requestOrigin(request) {
   return String(request.headers.origin || '')
 }
 
-function isWildcardBindHost(value) {
-  const host = String(value || '')
+function requestProtocol(request) {
+  if (request.socket?.encrypted) return 'https:'
+  const forwarded = String(request.headers['x-forwarded-proto'] || '')
+    .split(',')[0]
     .trim()
     .toLowerCase()
-  return host === '0.0.0.0' || host === '::' || host === '[::]'
+  return forwarded === 'https' ? 'https:' : 'http:'
 }
 
 function hasSingleHostHeader(request) {
@@ -181,14 +183,14 @@ function hasSingleHostHeader(request) {
   return count === 1
 }
 
-function requestHostOrigin(request, config) {
+function requestHostOrigin(request) {
   if (!hasSingleHostHeader(request)) return ''
   const host = String(request.headers.host || '')
     .trim()
     .toLowerCase()
   if (!host || /[\u0000-\u0020\u007f/?#\\,;%]/.test(host)) return ''
   try {
-    const url = new URL(`${config.publicUrl.protocol}//${host}`)
+    const url = new URL(`${requestProtocol(request)}//${host}`)
     if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return ''
     return url.origin
   } catch {
@@ -196,17 +198,13 @@ function requestHostOrigin(request, config) {
   }
 }
 
-function assertHost(request, config) {
-  const actualOrigin = requestHostOrigin(request, config)
-  if (
-    !actualOrigin ||
-    (!isWildcardBindHost(config.bindHost) && actualOrigin !== config.publicOrigin)
-  ) {
-    throw teamError(400, ERROR_CODES.INVALID_HOST, '请求 Host 与团队公开地址不一致')
+function assertHost(request) {
+  if (!requestHostOrigin(request)) {
+    throw teamError(400, ERROR_CODES.INVALID_HOST, '请求 Host 无效')
   }
 }
 
-function assertJsonWrite(request, config) {
+function assertJsonWrite(request) {
   const contentType = String(request.headers['content-type'] || '').toLowerCase()
   if (!/^application\/json\s*(?:;|$)/.test(contentType)) {
     throw teamError(415, ERROR_CODES.JSON_REQUIRED, '写请求必须使用 application/json')
@@ -218,7 +216,7 @@ function assertJsonWrite(request, config) {
   } catch {
     actualOrigin = ''
   }
-  const expectedOrigin = requestHostOrigin(request, config)
+  const expectedOrigin = requestHostOrigin(request)
   if (!actualOrigin || !expectedOrigin || actualOrigin !== expectedOrigin) {
     throw teamError(403, ERROR_CODES.CSRF_REJECTED, '请求 Origin 校验失败')
   }
@@ -552,6 +550,7 @@ function createRequestHandler({
         user: null,
         projects: [],
         capabilities: {},
+        allowLocalGitRemotes: Boolean(config.allowLocalGitRemotes),
       }
     }
     const projects = boardService.listProjects(actor)
@@ -567,6 +566,7 @@ function createRequestHandler({
       activeTeam: null,
       teamRole: null,
       teams,
+      allowLocalGitRemotes: Boolean(config.allowLocalGitRemotes),
       projects: projects.map((project) => runtimeProject(project, actor)),
       capabilities: {
         manageUsers: actor.systemAdmin,
@@ -674,7 +674,7 @@ function createRequestHandler({
         response,
         201,
         agentService.enroll(body, {
-          ip: clientIp(request, config.trustProxy),
+          ip: clientIp(request, false),
         }),
       )
       return true
@@ -822,7 +822,7 @@ function createRequestHandler({
         username: body.username,
         password: body.password,
         request,
-        trustProxy: config.trustProxy,
+        trustProxy: false,
         sessionTtlMs: config.sessionTtlMs,
       })
       sendJson(
@@ -834,7 +834,9 @@ function createRequestHandler({
           mode: 'team',
         },
         {
-          'set-cookie': sessionCookie(result.token, config),
+          'set-cookie': sessionCookie(result.token, {
+            cookieSecure: requestProtocol(request) === 'https:',
+          }),
         },
       )
       return true
@@ -847,7 +849,9 @@ function createRequestHandler({
         200,
         { ok: true },
         {
-          'set-cookie': clearSessionCookie(config),
+          'set-cookie': clearSessionCookie({
+            cookieSecure: requestProtocol(request) === 'https:',
+          }),
         },
       )
       return true
@@ -1383,7 +1387,7 @@ function createRequestHandler({
       (pathname === '/api/team/status' || pathname === '/api/status') &&
       request.method === 'GET'
     ) {
-      const status = boardService.status(actor, { staleMs: config.agentStaleMs })
+      const status = boardService.status(actor, { staleMs: config.agentStaleMs || 60_000 })
       const etag = statusEtag(status)
       if (String(request.headers['if-none-match'] || '') === etag) {
         sendNotModified(response, etag)
@@ -1417,11 +1421,11 @@ function createRequestHandler({
 
   async function dispatch(request, response) {
     response.setHeader('x-request-id', crypto.randomUUID())
-    assertHost(request, config)
+    assertHost(request)
     if (isClosing()) {
       throw teamError(503, ERROR_CODES.SERVICE_SHUTTING_DOWN, '服务正在关闭')
     }
-    const url = new URL(request.url || '/', config.publicOrigin)
+    const url = new URL(request.url || '/', requestHostOrigin(request))
     const isAgent = url.pathname === '/api/agent/enroll' || url.pathname.startsWith('/api/agent/')
     if (isAgent) {
       if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -1450,7 +1454,7 @@ function createRequestHandler({
     if (url.pathname === '/api/auth/register') {
       throw teamError(404, ERROR_CODES.NOT_FOUND, '接口不存在')
     }
-    if (WRITE_METHODS.has(request.method)) assertJsonWrite(request, config)
+    if (WRITE_METHODS.has(request.method)) assertJsonWrite(request)
     if (await handleAuth(request, response, url)) return
     if (await handleWorkspaceTemplate(request, response, url)) return
 
@@ -1721,18 +1725,18 @@ export async function createTeamRuntime({
     async function start() {
       if (started) return runtime
       try {
-        await listen(server, config.port, config.bindHost)
+        await listen(server, config.port || 4317, config.bindHost || '0.0.0.0')
         started = true
         taskSnapshotBackups.start()
         requestHandler.setStartedAt(new Date().toISOString())
         logger.warn('team 模式不加载插件', {
           reason: 'v1 只支持 standalone；插件路由返回空列表',
-          url: config.publicOrigin,
+          url: `http://${config.bindHost || '0.0.0.0'}:${config.port || 4317}`,
         })
         logger.info('Trellis Team Board 已启动', {
-          url: config.publicOrigin,
-          bindHost: config.bindHost,
-          port: config.port,
+          url: `http://${config.bindHost || '0.0.0.0'}:${config.port || 4317}`,
+          bindHost: config.bindHost || '0.0.0.0',
+          port: config.port || 4317,
         })
         return runtime
       } catch (error) {

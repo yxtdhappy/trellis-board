@@ -61,11 +61,13 @@ test('协议响应兼容 data 包装并验证命令字段', () => {
       agentId: 'agent-1',
       credential: 'x'.repeat(32),
       protocolVersion: 3,
+      allowLocalGitRemotes: true,
       teams: [{ id: 'team-1', name: '团队一', role: 'member' }],
     },
   })
   assert.equal(enroll.agentId, 'agent-1')
   assert.equal(enroll.protocolVersion, 3)
+  assert.equal(enroll.allowLocalGitRemotes, true)
   assert.deepEqual(enroll.teams, [{ id: 'team-1', name: '团队一', role: 'member' }])
 
   const heartbeat = parseHeartbeatResponse({

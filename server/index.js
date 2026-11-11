@@ -895,7 +895,7 @@ function listenStandalone(bindHost = '0.0.0.0') {
 
 export async function startStandaloneServer({
   standalonePort = Number(process.env.PORT || 4317),
-  bindHost = String(process.env.TRELLIS_BOARD_BIND_HOST || '0.0.0.0').trim() || '0.0.0.0',
+  bindHost = '0.0.0.0',
   logger = console,
 } = {}) {
   initializeStandaloneState(standalonePort, logger)

@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
+const serverPort = process.env.PORT || '4317'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -29,7 +30,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:4317',
+        target: `http://127.0.0.1:${serverPort}`,
         changeOrigin: true,
       },
     },

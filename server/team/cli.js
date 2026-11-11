@@ -71,9 +71,6 @@ function readHidden(question) {
 }
 
 async function readPassword() {
-  if (process.env.TRELLIS_TEAM_INITIAL_PASSWORD) {
-    return process.env.TRELLIS_TEAM_INITIAL_PASSWORD
-  }
   const first = await readHidden('管理员密码（输入不回显）: ')
   const second = await readHidden('再次输入管理员密码: ')
   if (first !== second) throw new Error('两次输入的密码不一致')
@@ -157,8 +154,8 @@ function usage() {
       '环境变量:',
       '  TRELLIS_BOARD_DATA_DIR=<运行数据目录>',
       '  TRELLIS_BOARD_MODE=team',
-      '  TRELLIS_TEAM_PUBLIC_URL=https://...',
-      '  TRELLIS_TEAM_INITIAL_PASSWORD=<仅自动化初始化时使用>',
+      '  TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES=<true|false>',
+      '  PORT=<监听端口，默认 4317>',
       '',
     ].join('\n'),
   )

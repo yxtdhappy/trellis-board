@@ -22,11 +22,10 @@ node server/index.js
 
 也可以运行 `npm start` 或 `npm run board`。
 
-前端开发用 `npm run dev`：并行启动 `node --watch server/index.js`（服务端改动自动重启）和 Vite 开发服务器（页面 HMR），`/api` 由 Vite 代理到 `http://127.0.0.1:4317`；5173 被占用时 Vite 会自动递增端口，以控制台打印的地址为准。
+前端开发用 `npm run dev`：并行启动 `node --watch server/index.js`（服务端改动自动重启）和 Vite 开发服务器（页面 HMR），`/api` 由 Vite 代理到 `PORT` 指定的端口，默认 `http://127.0.0.1:4317`；5173 被占用时 Vite 会自动递增端口，以控制台打印的地址为准。
 
-standalone 模式默认监听所有网络接口 `0.0.0.0`，且没有账号鉴权，只能用于可信网络；
-需要限制为本机访问时设置 `TRELLIS_BOARD_BIND_HOST=127.0.0.1`。团队模式默认同样监听所有接口，
-生产环境建议在可信反向代理后提供 HTTPS。
+standalone 模式监听所有网络接口 `0.0.0.0`，且没有账号鉴权，只能用于可信网络。团队模式同样
+监听所有接口，HTTP 和 HTTPS 均可使用。
 
 standalone 页面先显示本地扫描缓存。服务启动后会监听白名单仓库的 `.trellis/tasks`、
 `.trellis/workspace` 和 `.trellis/.developer`；相关文件变更会经过 400ms 防抖合并，再由独立
@@ -142,7 +141,7 @@ SQLite 使用 WAL 模式。standalone 主线程和扫描 Worker 各自持有连�
 最小启动步骤：
 
 1. 准备 Node.js 24 和独立运行数据目录；Team 服务端不需要项目 Git、Git 凭据或 Python。
-2. 设置 `TRELLIS_BOARD_MODE=team`、`TRELLIS_TEAM_PUBLIC_URL` 等环境变量。
+2. 设置 `TRELLIS_BOARD_MODE=team`、`TRELLIS_BOARD_DATA_DIR`，需要时设置 `PORT` 和本地 Git 远端开关。
 3. 运行 `node server/team/cli.js init-admin --username admin` 创建首个管理员。
 4. 启动服务，在 `/admin.html` 创建团队和用户。
 5. 安装 Windows 客户端，用服务器地址、账号和密码登录；项目由客户端选择本地 Git 仓库后接入。

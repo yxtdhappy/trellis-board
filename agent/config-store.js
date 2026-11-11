@@ -177,6 +177,7 @@ export function validateConfig(config) {
     revision: config.revision,
     serverUrl,
     caFile: config.caFile ?? null,
+    allowLocalGitRemotes: config.allowLocalGitRemotes === true,
     agentId,
     deviceName,
     username: optionalString(config.username, 'username', 64),

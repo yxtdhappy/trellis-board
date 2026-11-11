@@ -74,7 +74,8 @@ Git 项目身份是规范化后的 Git 远端：
 - SSH/scp 写法统一为同一主机、端口和仓库路径；
 - 主机名小写；
 - 默认端口 `443`/`22` 不进入身份；
-- 本地路径远端只在显式允许本地 Git 远端的开发环境使用。
+- 本地路径远端由 `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES` 控制；standalone 默认开启，
+  team 默认关闭，team 需要时显式开启。
 
 规范化函数放在共享纯模块中，客户端和服务端使用同一实现。服务端不运行 `git ls-remote`，
 因此它以认证 Agent 自报的 origin 为项目身份输入。Agent 必须先验证：

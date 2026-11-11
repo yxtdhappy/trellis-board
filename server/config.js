@@ -69,13 +69,6 @@ function booleanSetting(env, name, fallback) {
   throw new Error(`${name} 只能是 true 或 false`)
 }
 
-function isLoopbackHost(hostname) {
-  const host = hostname.toLowerCase()
-  return (
-    host === 'localhost' || host === '::1' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host)
-  )
-}
-
 export function parseTeamConfig(env = process.env) {
   const mode = String(env.TRELLIS_BOARD_MODE || 'standalone')
     .trim()
@@ -83,67 +76,28 @@ export function parseTeamConfig(env = process.env) {
   if (!new Set(['standalone', 'team']).has(mode)) {
     throw new Error('TRELLIS_BOARD_MODE 只能是 standalone 或 team')
   }
+  const port = integerSetting(env, 'PORT', 4317, 1, 65535)
+  const allowLocalGitRemotes = booleanSetting(
+    env,
+    'TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES',
+    mode === 'standalone',
+  )
   if (mode === 'standalone') {
     return {
       mode,
-      port: integerSetting(env, 'PORT', 4317, 1, 65535),
-      bindHost: String(env.TRELLIS_BOARD_BIND_HOST || '0.0.0.0').trim() || '0.0.0.0',
+      port,
+      bindHost: '0.0.0.0',
+      allowLocalGitRemotes,
     }
   }
 
-  const publicUrlValue = String(env.TRELLIS_TEAM_PUBLIC_URL || '').trim()
-  if (!publicUrlValue) throw new Error('团队模式必须配置 TRELLIS_TEAM_PUBLIC_URL')
-  let publicUrl
-  try {
-    publicUrl = new URL(publicUrlValue)
-  } catch {
-    throw new Error('TRELLIS_TEAM_PUBLIC_URL 不是合法 URL')
-  }
-  if (!new Set(['http:', 'https:']).has(publicUrl.protocol)) {
-    throw new Error('TRELLIS_TEAM_PUBLIC_URL 只支持 HTTP 或 HTTPS')
-  }
-  if (
-    publicUrl.username ||
-    publicUrl.password ||
-    publicUrl.search ||
-    publicUrl.hash ||
-    publicUrl.pathname !== '/'
-  ) {
-    throw new Error('TRELLIS_TEAM_PUBLIC_URL 不能包含 userinfo、query、hash 或根路径以外的路径')
-  }
-  if (!isLoopbackHost(publicUrl.hostname) && publicUrl.protocol !== 'https:') {
-    throw new Error('非回环团队地址必须使用 HTTPS')
-  }
-  const cookieSecure = booleanSetting(
-    env,
-    'TRELLIS_TEAM_COOKIE_SECURE',
-    publicUrl.protocol === 'https:',
-  )
-  if (!isLoopbackHost(publicUrl.hostname) && !cookieSecure) {
-    throw new Error('非回环团队地址必须启用安全 Cookie')
-  }
   return {
     mode,
-    bindHost: String(env.TRELLIS_TEAM_BIND_HOST || '0.0.0.0').trim() || '0.0.0.0',
-    port: integerSetting(env, 'TRELLIS_TEAM_PORT', 4317, 1, 65535),
-    publicUrl,
-    publicOrigin: publicUrl.origin,
-    sessionTtlMs: integerSetting(
-      env,
-      'TRELLIS_TEAM_SESSION_TTL_MS',
-      12 * 60 * 60 * 1000,
-      60_000,
-      30 * 24 * 60 * 60 * 1000,
-    ),
-    agentStaleMs: integerSetting(
-      env,
-      'TRELLIS_TEAM_AGENT_STALE_MS',
-      60_000,
-      5_000,
-      24 * 60 * 60 * 1000,
-    ),
-    cookieSecure,
-    trustProxy: booleanSetting(env, 'TRELLIS_TEAM_TRUST_PROXY', false),
-    allowLocalGitRemotes: booleanSetting(env, 'TRELLIS_TEAM_ALLOW_LOCAL_GIT_REMOTES', false),
+    bindHost: '0.0.0.0',
+    port,
+    sessionTtlMs: 12 * 60 * 60 * 1000,
+    agentStaleMs: 60_000,
+    trustProxy: false,
+    allowLocalGitRemotes,
   }
 }

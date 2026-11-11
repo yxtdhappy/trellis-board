@@ -125,7 +125,7 @@ Team 扫描不读取 Git 元数据、workspace 会话、`.developer`、scripts�
 Standalone 启动：
 
 1. 准备跨平台运行数据根，打开 `board.sqlite` 并顺序迁移到 schema v10；
-2. 默认监听 `0.0.0.0:4317`，可用 `TRELLIS_BOARD_BIND_HOST=127.0.0.1` 收窄；
+2. 固定监听 `0.0.0.0:4317`，端口可通过 `PORT` 调整；
 3. 启动白名单仓库 watcher；
 4. 异步触发初始扫描。
 
@@ -165,8 +165,10 @@ Team 启动：
 - `DATABASE_SCHEMA_VERSION` 当前为 `10`。v10 只新增 `sync_*` 表，不删除旧表和历史文件。
 - `SCAN_SCHEMA_VERSION` 当前为 `11`；Board 输出结构不兼容时同步递增。
 - `AGENT_PROTOCOL_VERSION` 当前为 `3`；命令 payload 和 Agent 事件都按 v3 校验。
-- `TRELLIS_TEAM_AGENT_STALE_MS` 决定在线 Agent 的 `last_seen_at` 窗口。
-- `TRELLIS_TEAM_ALLOW_LOCAL_GIT_REMOTES` 只用于隔离测试中的 `file://` 远端，生产保持 false。
+- 在线 Agent 的 `last_seen_at` 窗口固定为 60 秒。
+- standalone 默认接受本地 `file://` 远端；team 默认拒绝，必须显式设置
+  `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES=true`。
+- Team 服务启动配置包括 `TRELLIS_BOARD_MODE`、`TRELLIS_BOARD_DATA_DIR`、`PORT` 和上述远端开关。
 - Team 模式没有 Git 轮询间隔、项目工作副本路径或 Git 凭据密钥依赖。
 
 ## 反模式

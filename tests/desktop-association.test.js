@@ -43,13 +43,14 @@ function createRepository() {
   return { root, local }
 }
 
-async function createStore(root) {
+async function createStore(root, allowLocalGitRemotes = true) {
   const store = new ConfigStore(path.join(root, 'agent'), { secureDirectory: false })
   await store.saveConfig({
     schemaVersion: 2,
     revision: 'a'.repeat(32),
     serverUrl: 'http://127.0.0.1:4317',
     caFile: null,
+    allowLocalGitRemotes,
     agentId: 'agent-1',
     deviceName: '测试设备',
     username: 'alice',
@@ -62,6 +63,34 @@ async function createStore(root) {
   })
   return store
 }
+
+test('团队服务关闭本地远端时客户端拒绝 file origin', async (t) => {
+  const repository = createRepository()
+  t.after(() => fs.rmSync(repository.root, { recursive: true, force: true }))
+  const store = await createStore(repository.root, false)
+  await assert.rejects(
+    () =>
+      associateDesktopProject({
+        teamId: 'team-1',
+        developerId: 'alice',
+        repoPath: repository.local,
+        branchName: 'main',
+        initialSyncMode: 'review',
+        store,
+        credentialStore: {
+          async loadCredential() {
+            return 'x'.repeat(43)
+          },
+        },
+        apiClientFactory: () => ({
+          async attachTaskSpace() {
+            throw new Error('本地远端关闭时不应调用 attach')
+          },
+        }),
+      }),
+    /Git 远端只允许 HTTPS、SSH 或受控测试的 file URL/,
+  )
+})
 
 test('桌面接入选择本地 Git 项目并持久化任务空间绑定', async (t) => {
   const repository = createRepository()

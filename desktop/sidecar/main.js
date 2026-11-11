@@ -105,6 +105,11 @@ async function withEphemeralHooks(callback) {
   }
 }
 
+async function allowLocalGitRemotes() {
+  const config = await new ConfigStore().readConfig()
+  return config?.allowLocalGitRemotes === true
+}
+
 async function readSecret() {
   if (process.stdin.isTTY) {
     throw new AgentError('CONFIG_INVALID', '桌面敏感输入必须由客户端通过标准输入提供')
@@ -285,11 +290,12 @@ async function commandPreflightProject(args, options) {
 async function commandInspectProject(args) {
   const values = parseOptions(args, { path: {} })
   const root = path.resolve(requireOption(values, 'path'))
+  const allowFileRemote = await allowLocalGitRemotes()
   const inspected = await withEphemeralHooks((hooksDir) =>
     inspectProject({
       repoPath: root,
       hooksDir,
-      allowFileRemote: false,
+      allowFileRemote,
     }),
   )
   writeJson({ ok: true, project: inspected })
@@ -308,12 +314,14 @@ async function commandInitializeProject(args) {
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean)
+  const allowFileRemote = await allowLocalGitRemotes()
   const project = await withEphemeralHooks((hooksDir) =>
     initializeProject({
       repoPath: root,
       hooksDir,
       developerId: requireOption(values, 'developer'),
       agentTools: tools,
+      allowFileRemote,
       initialize: (input) =>
         initializeTrellis({
           ...input,
@@ -330,11 +338,13 @@ async function commandInitializeProject(args) {
 async function commandCheckPush(args) {
   const values = parseOptions(args, { path: {}, branch: {} })
   const root = path.resolve(requireOption(values, 'path'))
+  const allowFileRemote = await allowLocalGitRemotes()
   const result = await withEphemeralHooks((hooksDir) =>
     checkInitialPush({
       repoPath: root,
       branchName: requireOption(values, 'branch'),
       hooksDir,
+      allowFileRemote,
     }),
   )
   writeJson({ ok: true, ...result })

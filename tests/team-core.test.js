@@ -23,70 +23,61 @@ const SILENT_LOGGER = {
   error() {},
 }
 
-test('团队配置按公开地址默认安全 Cookie，并拒绝非回环不安全配置', () => {
-  const local = parseTeamConfig({
-    TRELLIS_BOARD_MODE: 'team',
-    TRELLIS_TEAM_PUBLIC_URL: 'http://127.0.0.1:4317',
-  })
-  assert.equal(local.cookieSecure, false)
-  assert.equal(local.bindHost, '0.0.0.0')
+test('团队配置只保留模式、端口和固定监听地址', () => {
+  const standalone = parseTeamConfig({})
+  assert.equal(standalone.allowLocalGitRemotes, true)
 
-  const secure = parseTeamConfig({
+  const team = parseTeamConfig({
     TRELLIS_BOARD_MODE: 'team',
-    TRELLIS_TEAM_PUBLIC_URL: 'https://127.0.0.1:4317',
   })
-  assert.equal(secure.cookieSecure, true)
-  assert.equal(secure.bindHost, '0.0.0.0')
-  assert.equal(parseTeamConfig({}).bindHost, '0.0.0.0')
-  assert.equal(
-    parseTeamConfig({
-      TRELLIS_BOARD_BIND_HOST: '127.0.0.1',
-    }).bindHost,
-    '127.0.0.1',
-  )
+  assert.equal(team.bindHost, '0.0.0.0')
+  assert.equal(team.port, 4317)
+  assert.equal(team.sessionTtlMs, 12 * 60 * 60 * 1000)
+  assert.equal(team.agentStaleMs, 60_000)
+  assert.equal(team.trustProxy, false)
+  assert.equal(team.allowLocalGitRemotes, false)
+  assert.equal(standalone.bindHost, '0.0.0.0')
   assert.equal(
     parseTeamConfig({
       TRELLIS_BOARD_MODE: 'team',
-      TRELLIS_TEAM_PUBLIC_URL: 'http://127.0.0.1:4317',
-      TRELLIS_TEAM_BIND_HOST: '127.0.0.1',
-    }).bindHost,
-    '127.0.0.1',
-  )
-  assert.equal(
-    parseTeamConfig({
-      TRELLIS_BOARD_MODE: 'team',
-      TRELLIS_TEAM_PUBLIC_URL: 'http://127.0.0.1:4317',
-      TRELLIS_TEAM_BIND_HOST: '   ',
-    }).bindHost,
-    '0.0.0.0',
-  )
-
-  assert.throws(
-    () =>
-      parseTeamConfig({
-        TRELLIS_BOARD_MODE: 'team',
-        TRELLIS_TEAM_PUBLIC_URL: 'http://board.example.com',
-      }),
-    /非回环团队地址必须使用 HTTPS/,
+      PORT: '5000',
+    }).port,
+    5000,
   )
   assert.throws(
     () =>
       parseTeamConfig({
-        TRELLIS_BOARD_MODE: 'team',
-        TRELLIS_TEAM_PUBLIC_URL: 'https://board.example.com',
-        TRELLIS_TEAM_COOKIE_SECURE: 'false',
+        PORT: '70000',
       }),
-    /非回环团队地址必须启用安全 Cookie/,
+    /PORT 必须是 1 到 65535 的整数/,
+  )
+  assert.throws(
+    () =>
+      parseTeamConfig({
+        TRELLIS_BOARD_MODE: 'invalid',
+      }),
+    /TRELLIS_BOARD_MODE 只能是 standalone 或 team/,
+  )
+
+  assert.equal(
+    parseTeamConfig({
+      TRELLIS_BOARD_MODE: 'team',
+      TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES: 'true',
+    }).allowLocalGitRemotes,
+    true,
+  )
+  assert.equal(
+    parseTeamConfig({
+      TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES: 'false',
+    }).allowLocalGitRemotes,
+    false,
   )
 })
 
-test('通配监听接受局域网 Host，同时要求写请求 Origin 与当前 Host 同源', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-wildcard-host-'))
+test('服务接受局域网 HTTP/HTTPS Host，并按请求协议设置安全 Cookie', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-network-host-'))
   const runtime = await createTeamRuntime({
-    config: {
-      ...testConfig(),
-      bindHost: '0.0.0.0',
-    },
+    config: { ...testConfig(), port: 0 },
     databaseFile: path.join(root, 'data', 'board.sqlite'),
     dataDir: path.join(root, 'data'),
     logger: SILENT_LOGGER,
@@ -135,6 +126,21 @@ test('通配监听接受局域网 Host，同时要求写请求 Origin 与当前 
     body: { username: 'network-admin', password: 'Network-Password-123' },
   })
   assert.equal(login.status, 200)
+  assert.doesNotMatch(String(login.headers['set-cookie']), /; Secure/)
+  const runtimePayload = await request(runtime, '/api/runtime', {
+    cookie: sessionCookie(login),
+  })
+  assert.equal(runtimePayload.status, 200)
+  assert.equal(runtimePayload.body.allowLocalGitRemotes, false)
+
+  const secureLogin = await request(runtime, '/api/auth/login', {
+    method: 'POST',
+    headers: { host: networkHost, 'x-forwarded-proto': 'https' },
+    origin: 'https://192.168.65.27:4317',
+    body: { username: 'network-admin', password: 'Network-Password-123' },
+  })
+  assert.equal(secureLogin.status, 200)
+  assert.match(String(secureLogin.headers['set-cookie']), /; Secure/)
 
   const rejected = await request(runtime, '/api/auth/login', {
     method: 'POST',
@@ -155,27 +161,17 @@ test('通配监听接受局域网 Host，同时要求写请求 Origin 与当前 
   assert.equal(wrongProtocol.body.code, 'CSRF_REJECTED')
 })
 
-test('非通配监听仍拒绝非公开 Host', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-strict-host-'))
-  const runtime = await createTeamRuntime({
-    config: testConfig(),
-    databaseFile: path.join(root, 'data', 'board.sqlite'),
-    dataDir: path.join(root, 'data'),
-    logger: SILENT_LOGGER,
-    requireAdmin: false,
-    enablePolling: false,
+test('旧的公开地址配置不会影响端口和监听地址', () => {
+  const config = parseTeamConfig({
+    TRELLIS_BOARD_MODE: 'team',
+    TRELLIS_TEAM_PUBLIC_URL: 'https://ignored.example.com',
+    TRELLIS_TEAM_BIND_HOST: '127.0.0.1',
+    TRELLIS_TEAM_PORT: '5000',
+    TRELLIS_TEAM_ALLOW_LOCAL_GIT_REMOTES: 'true',
   })
-  await runtime.start()
-  t.after(async () => {
-    await runtime.stop()
-    fs.rmSync(root, { recursive: true, force: true })
-  })
-
-  const rejected = await request(runtime, '/api/health', {
-    headers: { host: 'localhost:4317' },
-  })
-  assert.equal(rejected.status, 400)
-  assert.equal(rejected.body.code, 'INVALID_HOST')
+  assert.equal(config.bindHost, '0.0.0.0')
+  assert.equal(config.port, 4317)
+  assert.equal(config.allowLocalGitRemotes, false)
 })
 
 test('项目接入克隆后工具链失败会清理本次 UUID 工作副本', async (t) => {

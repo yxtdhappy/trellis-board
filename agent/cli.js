@@ -22,7 +22,6 @@ import {
   AGENT_PROTOCOL_VERSION,
   AGENT_VERSION,
   isAuthenticationError,
-  isLoopbackHostname,
   normalizeServerUrl,
   safeErrorMessage,
   validateBranchNameSyntax,
@@ -251,6 +250,7 @@ async function commandPair(args, context) {
     revision: createConfigRevision(),
     serverUrl,
     caFile,
+    allowLocalGitRemotes: enrolled.allowLocalGitRemotes,
     agentId: enrolled.agentId,
     deviceName,
     username: enrolled.username || null,
@@ -311,7 +311,7 @@ async function commandBind(args, context) {
   const localId = crypto.randomUUID()
   const hooksDir = path.join(context.store.paths.hooksBaseDir, localId)
   await fs.mkdir(hooksDir, { recursive: true, mode: 0o700 })
-  const allowFileRemote = isLoopbackHostname(new URL(config.serverUrl).hostname)
+  const allowFileRemote = config.allowLocalGitRemotes === true
   const inspected = await inspectRepository({
     repoPath,
     branchName,
