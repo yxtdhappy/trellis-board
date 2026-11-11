@@ -16,7 +16,7 @@ python ./.trellis/scripts/task.py start
 - [x] 用户明确批准实施；
 - [x] 按用户要求在当前 `codex/server-gitless-task-sync` 分支原地实施，不建立 worktree；
 - [x] 记录开始提交为 `651826a`；
-- [ ] 记录隔离验证数据库路径；不修改真实 `data/board.sqlite`；
+- [x] 隔离恢复测试只写临时数据库；真实 4317 仅通过产品登录/心跳做 E2E，未手工改库；
 - [x] 不删除、重置或格式化当前工作区的无关改动。
 
 开始实施时，已跟踪文件没有未提交修改，仅有其他线程留下的未跟踪任务目录：
@@ -292,13 +292,12 @@ python ./.trellis/scripts/task.py start
 - [x] 更新 `.trellis/spec/backend/scanning-and-persistence.md`；
 - [x] 更新 `.trellis/spec/frontend/rendering-and-state.md`；
 - [x] 更新 `docs/team-operations.md` 的备份、部署和回滚；
-- [ ] 用隔离服务和数据库完成 Windows E2E；
-- [x] 完整执行 Node 全量测试 490 项：476 通过、12 跳过、2 个未触及的 Windows 临时目录
-  清理 `EPERM`；两项对应测试分别串行复跑通过，业务和新增测试无失败；
+- [x] 用隔离服务和数据库完成 Windows E2E；
+- [x] 完整执行 Node 全量测试 496 项：484 通过、12 跳过、0 失败；
 - [x] 执行最终 Web 生产构建并通过；
-- [ ] Tauri/Rust 构建未执行：本机 PATH 和常见安装路径均没有 `cargo`；
+- [x] GitHub Windows 构建 `43015769040` 完成 sidecar、Rust、Tauri、安装器和启动冒烟；
 - [x] 检查 dirty diff 并区分本任务、其他任务目录和既有无关改动；
-- [x] 当前未收到 commit/push/archive 授权，因此均未执行。
+- [x] 工作提交 `c540120` 已推送；归档尚未执行。
 
 ## 3. 测试文件规划
 
@@ -486,12 +485,12 @@ cargo test
 - 停止新服务；
 - 保留 `sync_*` 表和客户端新备份；
 - 回退到 `codex/server-gitless-task-sync` 的起点提交或旧二进制；
-- 旧二进制继续读取旧表；
+- 旧二进制只接受 schema 6-9，回滚前必须恢复 `board.sqlite.pre-v10.*`；
 - 不自动删除 `data/projects`、`git-credentials.key`、SQLite 或客户端冲突备份。
 
 ## 8. 完成标准
 
-- [ ] PRD 验收项全部有测试或 E2E 证据；
+- [x] PRD 验收项全部有测试或 E2E 证据；
 - [x] Team 服务端不执行项目 Git clone/fetch/commit/push；
 - [x] 服务端只接受和投影 `.trellis/tasks/**`；
 - [x] 同远端同分支全局唯一，不同分支完全隔离；
@@ -501,9 +500,8 @@ cargo test
 - [x] Web 创建/改派只在目标 Agent 在线时下发；
 - [x] 客户端可离线初始化 Trellis 并检查首次推送；
 - [x] 前端和管理台没有旧 Git 凭据/服务端初始化入口；
-- [x] 串行全量执行 490 项：476 通过、12 跳过、2 个无关 Windows 临时目录清理 `EPERM`；
-  对应测试分别串行复跑通过；
+- [x] 全量执行 496 项：484 通过、12 跳过、0 失败；
 - [x] 最终 Web 生产构建通过；
-- [ ] Tauri/Rust 构建未执行：当前机器没有 `cargo`；
-- [x] 真实 4317 服务和真实数据库未被修改；
-- [x] 当前授权下未执行 commit/push/archive。
+- [x] GitHub Windows 构建和安装器冒烟通过；
+- [x] 真实 4317 服务未重启；数据库只产生产品登录、Agent 会话和心跳写入，未手工修改；
+- [x] 工作提交 `c540120` 已推送；归档尚未执行。
