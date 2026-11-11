@@ -730,3 +730,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 31: 服务端无 Git 实时任务同步收尾
+<!-- trellis-session: v=2 fp=b02b6b6b04691ca2 -->
+
+**Date**: 2026-11-11
+**Task**: 服务端无 Git 实时任务同步收尾
+**Branch**: `codex/server-gitless-task-sync`
+
+### Summary
+
+完成服务端去 Git 实时任务同步重构与验收：修复项目初始化参数透传、SEA sidecar 运行时解析、Windows 本地 Git 配置、端口 0 处理和数据库损坏后的快照恢复；npm test 共 496 项，484 通过、12 跳过、0 失败，Web 生产构建通过；Windows GitHub 构建及安装/初始化冒烟通过，未修改运行中的真实 4317 服务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c540120` | fix(team): harden runtime and recovery acceptance |
+| `59018db` | docs(task): record gitless sync acceptance |
+
+### Status
+
+[OK] **Completed**
