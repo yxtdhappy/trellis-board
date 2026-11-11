@@ -1,5 +1,15 @@
 export const TEAM_PAGE_LIMIT = 100
 
+export function createIdempotencyKey(cryptoApi = globalThis.crypto) {
+  if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID()
+  if (typeof cryptoApi?.getRandomValues === 'function') {
+    return Array.from(cryptoApi.getRandomValues(new Uint8Array(16)), (value) =>
+      value.toString(16).padStart(2, '0'),
+    ).join('')
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 const ARRAY_FILTERS = [
   ['projectIds', 'projectIds'],
   ['priorities', 'priorities'],

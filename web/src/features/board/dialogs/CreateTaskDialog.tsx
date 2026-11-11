@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { fetchTaskSpaceAssignees, type TaskSpaceAssignee } from '@/api/board'
 import { normalizeTaskSlug, slugifyTaskTitle, TASK_SLUG_PATTERN } from '@shared/slug.js'
+import { createIdempotencyKey } from '@/lib/team-client.js'
 import { SelectField } from '../SelectField'
 
 type CreateTaskDialogProps = {
@@ -142,7 +143,7 @@ export function CreateTaskDialog({
         assigneeUserId,
         priority,
         slug: finalSlug,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: createIdempotencyKey(),
       })
       onOpenChange(false)
       setTitle('')

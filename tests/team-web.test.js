@@ -8,6 +8,7 @@ import {
   assignableProjectMembers,
   canManageProject,
   canWriteProject,
+  createIdempotencyKey,
   buildTaskQuery,
   normalizeAuditEvent,
   normalizeAssignments,
@@ -22,6 +23,17 @@ import {
   safeReturnTo,
   shouldReloadTasks,
 } from '../web/src/lib/team-client.js'
+
+test('幂等键在没有 randomUUID 的 HTTP 页面仍可生成', () => {
+  const fallback = createIdempotencyKey({})
+  const random = createIdempotencyKey({
+    getRandomValues(bytes) {
+      return bytes.fill(7)
+    },
+  })
+  assert.match(fallback, /^[A-Za-z0-9._:-]{8,200}$/)
+  assert.equal(random, '07'.repeat(16))
+})
 
 test('escapeHtml 转义所有 HTML 上下文危险字符', () => {
   assert.equal(escapeHtml(`<a title="'">&</a>`), '&lt;a title=&quot;&#39;&quot;&gt;&amp;&lt;/a&gt;')

@@ -24,7 +24,7 @@ import { TaskOperationList } from '@/features/board/TaskOperationList'
 import { isAttention, type BoardTask } from '@/features/board/task-view'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
-import { canManageProject, taskVersion } from '@/lib/team-client.js'
+import { canManageProject, createIdempotencyKey, taskVersion } from '@/lib/team-client.js'
 
 function normalizeViews(value: unknown): { id: string; name: string }[] {
   if (!Array.isArray(value)) return []
@@ -371,7 +371,7 @@ export function BoardPage() {
               executionTaskKey: task.executionTaskKey,
               assigneeUserId: target.userId,
               expectedTaskVersion: version,
-              idempotencyKey: crypto.randomUUID(),
+              idempotencyKey: createIdempotencyKey(),
             })
             return
           }

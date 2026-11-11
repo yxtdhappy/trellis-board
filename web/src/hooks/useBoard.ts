@@ -42,6 +42,7 @@ export type BoardFilters = {
 }
 import {
   buildTaskQuery,
+  createIdempotencyKey,
   normalizeOperation,
   isRetryableOperation,
   isCompleteOperation,
@@ -380,9 +381,7 @@ export function useBoard(): BoardController {
         const idempotencyKey =
           typeof payload.idempotencyKey === 'string' && payload.idempotencyKey
             ? payload.idempotencyKey
-            : typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-              ? crypto.randomUUID()
-              : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+            : createIdempotencyKey()
         const result = await createTaskRequest({
           ...payload,
           taskSpaceId:

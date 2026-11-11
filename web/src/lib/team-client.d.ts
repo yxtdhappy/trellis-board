@@ -25,6 +25,12 @@ export type TaskPage = {
 }
 
 export const TEAM_PAGE_LIMIT: number
+export function createIdempotencyKey(
+  cryptoApi?: {
+    randomUUID?: () => string
+    getRandomValues?: (array: Uint8Array) => Uint8Array
+  } | null,
+): string
 export function normalizeUser(payload: unknown): RuntimeUser | null
 export function normalizeRuntime(payload: unknown): Runtime
 export function normalizeProjectMembers(payload: unknown): unknown[]
