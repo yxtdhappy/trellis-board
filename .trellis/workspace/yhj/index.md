@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 29
-- **Last Active**: 2026-11-10
+- **Total Sessions**: 30
+- **Last Active**: 2026-11-11
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~710 | Active |
+| `journal-1.md` | ~732 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 30 | 2026-11-11 | 普通成员隐藏团队管理入口 | `50e20f7` | `codex/server-gitless-task-sync` |
 | 29 | 2026-11-10 | 修复团队归档索引查询与分页 | `9b5fd83`, `67458e9` | `codex/team-board` |
 | 28 | 2026-11-10 | 修复团队实时同步阻塞主线程与误弹窗 | `af34da7`, `0c8048c` | `codex/team-board` |
 | 27 | 2026-11-10 | 服务端日志异步落盘 | `30bafe4` | `codex/team-board` |

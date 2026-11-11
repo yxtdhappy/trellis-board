@@ -708,3 +708,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 30: 普通成员隐藏团队管理入口
+<!-- trellis-session: v=2 fp=3daa9b57cd1092c3 -->
+
+**Date**: 2026-11-11
+**Task**: 普通成员隐藏团队管理入口
+**Branch**: `codex/server-gitless-task-sync`
+
+### Summary
+
+修复普通成员仍看到团队管理入口的问题；补充可管理任务空间判断，完成前端单测、生产构建和隔离浏览器 E2E 验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `50e20f7` | fix(board): hide admin entry from members |
+
+### Status
+
+[OK] **Completed**
