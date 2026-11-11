@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { copyText } from '@/browser/clipboard.js'
 import {
   Dialog,
   DialogBody,
@@ -22,10 +23,9 @@ export function OneTimeCredentialDialog({
 
   async function copy() {
     if (!credential) return
-    try {
-      await navigator.clipboard.writeText(credential.value)
+    if (await copyText(credential.value)) {
       setCopyLabel('已复制')
-    } catch {
+    } else {
       setCopyLabel('请手动复制')
     }
   }
