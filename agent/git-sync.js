@@ -273,7 +273,17 @@ export function normalizeRemoteIdentity(rawValue, options = {}) {
     throw new AgentError(AGENT_ERROR_CODE.REMOTE_INVALID, 'Git 远端地址无效')
   }
   if (/^[A-Za-z]:[\\/]/.test(raw)) {
-    throw new AgentError(AGENT_ERROR_CODE.REMOTE_INVALID, 'Git origin 不能直接使用本地文件系统路径')
+    if (options.allowFileRemote !== true) {
+      throw new AgentError(
+        AGENT_ERROR_CODE.REMOTE_INVALID,
+        'Git origin 不能直接使用本地文件系统路径',
+      )
+    }
+    const identity = buildRemoteIdentity('file', 0, raw, 0)
+    return {
+      ...identity,
+      identityHash: crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex'),
+    }
   }
 
   const scpIdentity = parseScpRemote(raw, options.allowFileRemote === true)

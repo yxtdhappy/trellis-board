@@ -6,10 +6,15 @@ import { trellisAgentToolFlags } from '../../shared/trellis-agent-tools.js'
 
 const INIT_TIMEOUT_MS = 210_000
 
-export async function resolveTrellisRuntime({ resourcesPath, applicationDir } = {}) {
+export async function resolveTrellisRuntime({
+  resourcesPath,
+  applicationDir,
+  executablePath = process.execPath,
+} = {}) {
   const roots = [
     resourcesPath ? path.join(resourcesPath, 'trellis-runtime') : null,
     applicationDir ? path.join(applicationDir, 'trellis-runtime') : null,
+    path.join(path.dirname(executablePath), 'trellis-runtime'),
     path.resolve(process.cwd(), 'trellis-runtime'),
   ].filter(Boolean)
   for (const root of roots) {

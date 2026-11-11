@@ -56,6 +56,9 @@ test('v9 升级到 v10 保留旧项目行并创建备份', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v10-'))
   const databaseFile = path.join(root, 'board.sqlite')
   try {
+    fs.mkdirSync(path.join(root, 'projects'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'projects', 'keep.txt'), 'old project\n')
+    fs.writeFileSync(path.join(root, 'git-credentials.key'), 'old key material\n')
     const db = openDatabase({
       databaseFile,
       fallbackRepositories: [],
@@ -123,7 +126,20 @@ test('v9 升级到 v10 保留旧项目行并创建备份', () => {
       assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM team_project').get().count, 1)
       assert.ok(tableNames(reopened).includes('sync_project'))
       const backups = fs.readdirSync(path.join(root, 'backups'))
-      assert.ok(backups.some((name) => name.includes('pre-v10')))
+      const backupName = backups.find((name) => name.includes('pre-v10'))
+      assert.ok(backupName)
+      const backup = new DatabaseSync(path.join(root, 'backups', backupName))
+      try {
+        assert.equal(
+          backup.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+          '9',
+        )
+        assert.equal(backup.prepare('SELECT COUNT(*) AS count FROM team_project').get().count, 1)
+      } finally {
+        backup.close()
+      }
+      assert.equal(fs.existsSync(path.join(root, 'projects', 'keep.txt')), true)
+      assert.equal(fs.existsSync(path.join(root, 'git-credentials.key')), true)
     } finally {
       reopened.close()
     }

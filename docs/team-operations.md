@@ -267,8 +267,9 @@ node server/team/cli.js status
 
 1. 停止新版服务并再次备份当前数据库。
 2. 切回旧二进制版本。
-3. 恢复升级前完整数据库、WAL 和 SHM。
-4. 旧二进制继续读取旧表；新版 `sync_*` 数据不会被旧版本解释。
+3. 旧二进制只接受 schema 6-9，必须恢复 `backups/board.sqlite.pre-v10.*` 备份以及对应的
+   WAL 和 SHM；不能直接把 schema v10 数据库交给旧二进制。
+4. 恢复后升级阶段产生的 `sync_*` 数据不会保留在旧数据库中；需要保留时先另存当前 v10 数据库。
 5. 不删除 `data/projects/**`、旧 `git-credentials.key` 和旧数据库表；它们只作为人工回滚材料保留。
 
 ## 8. 备份与恢复

@@ -1725,18 +1725,20 @@ export async function createTeamRuntime({
     async function start() {
       if (started) return runtime
       try {
-        await listen(server, config.port || 4317, config.bindHost || '0.0.0.0')
+        await listen(server, config.port ?? 4317, config.bindHost || '0.0.0.0')
         started = true
+        const address = server.address()
+        const port = address && typeof address === 'object' ? address.port : config.port
         taskSnapshotBackups.start()
         requestHandler.setStartedAt(new Date().toISOString())
         logger.warn('team 模式不加载插件', {
           reason: 'v1 只支持 standalone；插件路由返回空列表',
-          url: `http://${config.bindHost || '0.0.0.0'}:${config.port || 4317}`,
+          url: `http://${config.bindHost || '0.0.0.0'}:${port}`,
         })
         logger.info('Trellis Team Board 已启动', {
-          url: `http://${config.bindHost || '0.0.0.0'}:${config.port || 4317}`,
+          url: `http://${config.bindHost || '0.0.0.0'}:${port}`,
           bindHost: config.bindHost || '0.0.0.0',
-          port: config.port || 4317,
+          port,
         })
         return runtime
       } catch (error) {

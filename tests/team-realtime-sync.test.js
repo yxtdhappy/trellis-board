@@ -27,6 +27,7 @@ async function setupRuntime(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-task-sync-'))
   const port = await freePort()
   const publicOrigin = `http://127.0.0.1:${port}`
+  const databaseFile = path.join(root, 'data', 'board.sqlite')
   const runtime = await createTeamRuntime({
     config: {
       mode: 'team',
@@ -40,15 +41,16 @@ async function setupRuntime(t) {
       trustProxy: false,
       allowLocalGitRemotes: false,
     },
-    databaseFile: path.join(root, 'data', 'board.sqlite'),
+    databaseFile,
     dataDir: path.join(root, 'data'),
     logger: SILENT_LOGGER,
     requireAdmin: false,
     enablePolling: false,
   })
   await runtime.start()
+  const cleanup = { runtime }
   t.after(async () => {
-    await runtime.stop()
+    await cleanup.runtime.stop()
     fs.rmSync(root, { recursive: true, force: true })
   })
 
@@ -148,6 +150,8 @@ async function setupRuntime(t) {
       serverUrl: publicOrigin,
       credential: memberEnrollment.credential,
     }),
+    databaseFile,
+    cleanup,
   }
 }
 
@@ -330,5 +334,53 @@ test('在线 Agent 通过 SSE 收到独立任务命令，离线时服务端拒�
         idempotencyKey: 'command-live-2',
       }),
     (error) => error.code === 'AGENT_OFFLINE',
+  )
+})
+
+test('数据库损坏后可恢复最近快照并继续通过原客户端读取任务', async (t) => {
+  const context = await setupRuntime(t)
+  await context.ownerClient.uploadTaskSpaceChanges(context.taskSpaceId, {
+    batchId: 'batch-backup',
+    clientSequence: 1,
+    files: taskFiles('备份恢复任务'),
+  })
+  const backup = context.runtime.services.taskSnapshotBackups.backupNow({ force: true })
+  assert.equal(typeof backup, 'string')
+  assert.equal(fs.existsSync(backup), true)
+
+  await context.runtime.stop()
+  fs.writeFileSync(context.databaseFile, 'not a sqlite database')
+  await assert.rejects(
+    () =>
+      createTeamRuntime({
+        config: context.runtime.config,
+        databaseFile: context.databaseFile,
+        dataDir: path.dirname(context.databaseFile),
+        logger: SILENT_LOGGER,
+        requireAdmin: false,
+        enablePolling: false,
+      }),
+    /file is not a database/,
+  )
+
+  fs.copyFileSync(backup, context.databaseFile)
+  const restored = await createTeamRuntime({
+    config: context.runtime.config,
+    databaseFile: context.databaseFile,
+    dataDir: path.dirname(context.databaseFile),
+    logger: SILENT_LOGGER,
+    requireAdmin: false,
+    enablePolling: false,
+  })
+  await restored.start()
+  context.cleanup.runtime = restored
+  assert.equal(restored.db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok')
+  const snapshot = await context.ownerClient.fetchTaskSpaceSnapshot(context.taskSpaceId)
+  assert.equal(snapshot.revision, 1)
+  assert.equal(
+    snapshot.files
+      .find((file) => file.path.endsWith('task.json'))
+      ?.content.includes('备份恢复任务'),
+    true,
   )
 })

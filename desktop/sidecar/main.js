@@ -302,7 +302,7 @@ async function commandInspectProject(args) {
   return SIDECAR_EXIT_CODE.OK
 }
 
-async function commandInitializeProject(args) {
+async function commandInitializeProject(args, options) {
   const values = parseOptions(args, {
     path: {},
     developer: {},

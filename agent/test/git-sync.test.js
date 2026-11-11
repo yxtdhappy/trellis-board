@@ -91,6 +91,10 @@ test('远端归一化忽略协议、用户名、默认端口和 .git 后缀', ()
     () => normalizeRemoteIdentity('C:\\work\\repo'),
     hasCode(AGENT_ERROR_CODE.REMOTE_INVALID),
   )
+  assert.equal(
+    normalizeRemoteIdentity('C:\\work\\repo.git', { allowFileRemote: true }).identityHash,
+    normalizeRemoteIdentity('file:///C:/work/repo', { allowFileRemote: true }).identityHash,
+  )
 })
 
 test('Git 操作白名单拒绝危险命令', () => {

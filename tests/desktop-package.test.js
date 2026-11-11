@@ -17,6 +17,7 @@ import {
   validateDeviceName,
 } from '../desktop/sidecar/desktop-device.js'
 import { createSeaConfig } from '../desktop/sidecar/bundle.mjs'
+import { resolveTrellisRuntime } from '../desktop/sidecar/trellis-runtime.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const DESKTOP = path.join(ROOT, 'desktop')
@@ -459,6 +460,120 @@ test('sidecar CLI 报告协议 v3，未注册时以配置错误退出', () => {
   assert.equal(status.status, 3)
   assert.match(status.stderr, /尚未注册|未注册|配置/)
   fs.rmSync(root, { recursive: true, force: true })
+})
+
+test('Trellis runtime 从 sidecar 可执行文件同目录解析', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-runtime-resolve-'))
+  try {
+    const runtimeRoot = path.join(root, 'trellis-runtime')
+    const cliFile = path.join(
+      runtimeRoot,
+      'node_modules',
+      '@mindfoldhq',
+      'trellis',
+      'bin',
+      'trellis.js',
+    )
+    fs.mkdirSync(path.dirname(cliFile), { recursive: true })
+    fs.writeFileSync(path.join(runtimeRoot, 'node.exe'), '')
+    fs.writeFileSync(cliFile, '')
+    const resolved = await resolveTrellisRuntime({
+      executablePath: path.join(root, 'trellis-agent.exe'),
+    })
+    assert.equal(resolved.root, runtimeRoot)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('sidecar CLI 使用应用内置 Trellis runtime 初始化项目', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-sidecar-runtime-'))
+  const appRoot = path.join(root, 'app')
+  const runtimeRoot = path.join(appRoot, 'trellis-runtime')
+  const cliFile = path.join(
+    runtimeRoot,
+    'node_modules',
+    '@mindfoldhq',
+    'trellis',
+    'bin',
+    'trellis.js',
+  )
+  const agentRoot = path.join(root, 'agent')
+  const remote = path.join(root, 'remote.git')
+  const repo = path.join(root, 'repo')
+  try {
+    fs.mkdirSync(path.dirname(cliFile), { recursive: true })
+    fs.mkdirSync(agentRoot, { recursive: true })
+    const bundledNode = path.join(runtimeRoot, 'node.exe')
+    try {
+      fs.linkSync(process.execPath, bundledNode)
+    } catch {
+      fs.copyFileSync(process.execPath, bundledNode)
+    }
+    fs.writeFileSync(
+      cliFile,
+      [
+        "const fs = require('node:fs')",
+        "const path = require('node:path')",
+        "fs.mkdirSync(path.join(process.cwd(), '.trellis', 'tasks'), { recursive: true })",
+        "fs.mkdirSync(path.join(process.cwd(), '.codex'), { recursive: true })",
+        "fs.writeFileSync(path.join(process.cwd(), '.trellis', 'tasks', '.keep'), '')",
+        "fs.writeFileSync(path.join(process.cwd(), '.codex', '.keep'), '')",
+      ].join('\n'),
+    )
+    fs.writeFileSync(
+      path.join(agentRoot, 'config.json'),
+      `${JSON.stringify(
+        {
+          schemaVersion: 2,
+          revision: '0'.repeat(31) + '1',
+          serverUrl: PUBLIC_ORIGIN,
+          caFile: null,
+          allowLocalGitRemotes: true,
+          agentId: 'sidecar-runtime-test',
+          deviceName: 'Sidecar Runtime Test',
+          username: null,
+          teamId: null,
+          teams: [],
+          protocolVersion: 3,
+          agentVersion: '0.2.0',
+          pairedAt: null,
+          bindings: [],
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    spawnSync('git', ['init', '--bare', '--initial-branch=main', remote], { encoding: 'utf8' })
+    fs.mkdirSync(repo)
+    spawnSync('git', ['init', '-b', 'main'], { cwd: repo, encoding: 'utf8' })
+    spawnSync('git', ['remote', 'add', 'origin', remote], { cwd: repo, encoding: 'utf8' })
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(ROOT, 'desktop', 'sidecar', 'cli.js'),
+        'initialize-project',
+        '--path',
+        repo,
+        '--developer',
+        'yhj',
+        '--tools',
+        'codex',
+      ],
+      {
+        cwd: appRoot,
+        encoding: 'utf8',
+        env: { ...process.env, TRELLIS_AGENT_ROOT: agentRoot },
+      },
+    )
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(JSON.parse(result.stdout.trim()).ok, true)
+    assert.equal(fs.existsSync(path.join(repo, '.trellis', 'tasks')), true)
+    assert.equal(fs.existsSync(path.join(repo, '.codex')), true)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('桌面设备注册复用 pairing-codes + agent/enroll，凭证不落明文', async (t) => {

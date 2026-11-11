@@ -62,7 +62,10 @@ export function normalizeGitRemote(rawValue, { allowFileRemote = false } = {}) {
     throw new Error('Git 远端地址无效')
   }
   if (/^[A-Za-z]:[\\/]/.test(raw)) {
-    throw new Error('Git 远端不能直接使用本地文件系统路径')
+    if (!allowFileRemote) {
+      throw new Error('Git 远端不能直接使用本地文件系统路径')
+    }
+    return buildIdentity('file', 0, raw, 0, 'file')
   }
   const scp = parseScpRemote(raw)
   if (scp) return scp

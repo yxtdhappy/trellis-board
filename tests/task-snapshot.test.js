@@ -125,10 +125,10 @@ test('重复 task ID 和同目录不同 task ID 均标记为 invalid，不能自
   const duplicateResult = classifyTaskSnapshots(duplicateLocal, [])
   assert.equal(duplicateResult.length, 2)
   assert.ok(duplicateResult.every((item) => item.type === 'invalid'))
-  assert.deepEqual(
-    duplicateResult.map((item) => item.taskDir).sort(),
-    ['.trellis/tasks/11-10-a', '.trellis/tasks/11-10-b'],
-  )
+  assert.deepEqual(duplicateResult.map((item) => item.taskDir).sort(), [
+    '.trellis/tasks/11-10-a',
+    '.trellis/tasks/11-10-b',
+  ])
 
   const sameDirectoryLocal = groupTaskSnapshotFiles([
     file('.trellis/tasks/11-10-a/task.json', JSON.stringify({ id: 'local-id' })),

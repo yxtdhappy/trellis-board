@@ -29,6 +29,10 @@ test('非默认端口保留在远端身份中', () => {
 test('拒绝带查询参数和非受控协议的远端', () => {
   assert.throws(() => normalizeGitRemote('https://example.com/repo.git?token=x'), /查询或片段/)
   assert.throws(() => normalizeGitRemote('ftp://example.com/repo.git'), /只允许/)
+  assert.equal(
+    gitRemoteIdentityKey('C:\\work\\repo.git', { allowFileRemote: true }),
+    gitRemoteIdentityKey('file:///C:/work/repo', { allowFileRemote: true }),
+  )
 })
 
 test('分支校验拒绝危险形式', () => {

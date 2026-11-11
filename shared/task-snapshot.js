@@ -180,10 +180,7 @@ export function classifyTaskSnapshots(localGroups, serverGroups) {
   indexGroups(serverGroups, serverGroupsByTaskId, serverGroupsByDir, badServerGroups)
 
   // 同一侧重复 task ID 无法唯一确定任务身份，两侧相关目录都交给用户审查。
-  for (const taskId of new Set([
-    ...localGroupsByTaskId.keys(),
-    ...serverGroupsByTaskId.keys(),
-  ])) {
+  for (const taskId of new Set([...localGroupsByTaskId.keys(), ...serverGroupsByTaskId.keys()])) {
     const localMatches = localGroupsByTaskId.get(taskId) || []
     const serverMatches = serverGroupsByTaskId.get(taskId) || []
     if (localMatches.length < 2 && serverMatches.length < 2) continue
@@ -244,7 +241,12 @@ export function classifyTaskSnapshots(localGroups, serverGroups) {
         return { type: 'local-only', taskId: key, taskDir: localGroup.taskDir, local: localGroup }
       }
       if (!localGroup && serverGroup) {
-        return { type: 'server-only', taskId: key, taskDir: serverGroup.taskDir, server: serverGroup }
+        return {
+          type: 'server-only',
+          taskId: key,
+          taskDir: serverGroup.taskDir,
+          server: serverGroup,
+        }
       }
       const localFiles = fileMap(localGroup)
       const serverFiles = fileMap(serverGroup)

@@ -180,9 +180,7 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
       scope && scope !== 'all'
         ? (actor.teams || []).filter((team) => team.id === scope)
         : actor.teams || []
-    return teams.some((team) =>
-      access.teamAccessByProject.has(`${project.id}\0${team.id}`),
-    )
+    return teams.some((team) => access.teamAccessByProject.has(`${project.id}\0${team.id}`))
   }
 
   function loadProjectRow(projectId) {
