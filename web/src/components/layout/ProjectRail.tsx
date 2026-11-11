@@ -3,6 +3,7 @@ import { FolderGit2, LockKeyhole, Plus, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { ProjectOnboardingDialog } from '@/features/board/dialogs/ProjectOnboardingDialog'
+import { selectProjectAssociation } from '@/lib/project-rail-association.js'
 
 type Project = {
   id: string
@@ -323,10 +324,10 @@ export function ProjectRail({
           current === project.id
             ? taskSpaces.find((taskSpace) => taskSpace.id === currentTaskSpace) || taskSpaces[0]
             : null
-        const association = activeTaskSpace
-          ? associations.get(activeTaskSpace.id)
-          : associations.get(currentTaskSpace)
+        const association = selectProjectAssociation(project, associations)
+        const activeAssociation = activeTaskSpace ? associations.get(activeTaskSpace.id) : undefined
         const view = invoke ? projectAssociationView(association) : null
+        const activeView = invoke ? projectAssociationView(activeAssociation) : null
         return (
           <div key={project.id} className="flex flex-col">
             <div
@@ -364,12 +365,12 @@ export function ProjectRail({
                 </span>
               </button>
               {invoke && activeTaskSpace ? (
-                association?.status === 'approved' ? (
+                activeAssociation?.status === 'approved' ? (
                   <span
                     className="mr-1.5 flex size-6 shrink-0 items-center justify-center text-muted-foreground"
-                    title={view?.label || '本地已关联'}
+                    title={activeView?.label || '本地已关联'}
                   >
-                    {association.readOnly ? (
+                    {activeAssociation.readOnly ? (
                       <LockKeyhole className="size-3.5" aria-hidden="true" />
                     ) : (
                       <FolderGit2 className="size-3.5" aria-hidden="true" />
@@ -379,8 +380,8 @@ export function ProjectRail({
                   <button
                     type="button"
                     className="mr-1.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
-                    aria-label={`${association ? '重新关联' : '关联'} ${project.name} ${activeTaskSpace.branchName} 的本地 Git 仓库`}
-                    title={association ? '重新关联本地 Git 仓库' : '关联本地 Git 仓库'}
+                    aria-label={`${activeAssociation ? '重新关联' : '关联'} ${project.name} ${activeTaskSpace.branchName} 的本地 Git 仓库`}
+                    title={activeAssociation ? '重新关联本地 Git 仓库' : '关联本地 Git 仓库'}
                     disabled={inspectingProject}
                     onClick={() => void startProjectOnboarding()}
                   >
