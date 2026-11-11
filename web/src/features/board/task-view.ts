@@ -5,6 +5,7 @@ import {
   laneForStageIndex,
   taskTagNames,
 } from '@/lib/execution-filter.js'
+import { taskGroupInstanceKey } from '@/lib/task-view-key.js'
 
 export type Stage = {
   id: string
@@ -202,7 +203,7 @@ export function taskTags(task: BoardTask) {
 export function groupActiveTasks(tasks: BoardTask[]) {
   const groups = new Map<string, BoardTask[]>()
   tasks.forEach((task) => {
-    const key = task.groupKey || task.taskKey
+    const key = taskGroupInstanceKey(task)
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key)!.push(task)
   })

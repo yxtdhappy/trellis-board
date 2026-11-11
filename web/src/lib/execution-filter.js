@@ -93,6 +93,16 @@ export function taskTagNames(task) {
       : []
 }
 
+export function branchMatches(branchName, filter) {
+  const needle = String(filter || '')
+    .trim()
+    .toLowerCase()
+  if (!needle) return true
+  return String(branchName || '')
+    .toLowerCase()
+    .includes(needle)
+}
+
 export function localDaySerial(value) {
   const date = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(date.getTime())) return null

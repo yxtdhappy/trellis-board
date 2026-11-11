@@ -11,6 +11,7 @@ type ArchiveTaskOptions = {
   teamId: string
   projectId: string
   taskSpaceId: string
+  branch: string
   revision?: number | string | null
 }
 
@@ -37,6 +38,7 @@ export function useArchiveTasks({
   teamId,
   projectId,
   taskSpaceId,
+  branch,
   revision,
 }: ArchiveTaskOptions): ArchiveTasksController {
   const [searchInput, setSearchInput] = useState('')
@@ -70,6 +72,7 @@ export function useArchiveTasks({
             teamId,
             projectId,
             taskSpaceId,
+            branch,
             scope: 'all',
             q: search,
             assignee,
@@ -97,7 +100,7 @@ export function useArchiveTasks({
         if (currentRequest === requestId.current) setLoading(false)
       }
     },
-    [teamId, projectId, taskSpaceId, search, assignee],
+    [teamId, projectId, taskSpaceId, branch, search, assignee],
   )
 
   useEffect(() => {

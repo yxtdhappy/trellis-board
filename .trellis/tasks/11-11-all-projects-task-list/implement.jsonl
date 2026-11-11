@@ -1,0 +1,6 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"API、项目、任务空间、ETag、游标和前端状态必须保持同一跨层契约"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用现有任务索引和前端纯函数边界，避免复制筛选逻辑"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"tasks-only 索引、单 taskSpace 查询和 Web HTTP 契约"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"团队任务查询、分支模糊筛选、分页、归档和复合任务状态设计"}
+{"file":".trellis/tasks/11-11-all-projects-task-list/design.md","reason":"本次跨 taskSpace 查询、权限、ETag、游标和前端身份设计"}
+{"file":".trellis/tasks/11-11-all-projects-task-list/implement.md","reason":"实施顺序、风险文件、验证命令和回滚门禁"}

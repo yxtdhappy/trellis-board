@@ -284,7 +284,8 @@ const assignees = await fetchTaskSpaceAssignees(taskSpace.id)
 #### 2. Signatures
 
 - Session/runtime：`activeTeamId=null`、`activeTeam=null`、`teamRole=null`、`teams[]`。
-- `GET /api/tasks/query`：可选 `teamId=<all|teamId>`，列表行返回 `teamId`、`teamName`。
+- `GET /api/tasks/query`：可选 `teamId=<all|teamId>`、`taskSpaceId`、`projectIds` 和 `branch`；
+  列表行返回 `teamId`、`teamName`、`projectId`、`taskSpaceId` 和 `branchName`。
 - `GET|PUT /api/board/settings`、`GET|POST|PUT|DELETE /api/saved-views`：使用 `teamId` 选择全局或团队作用域。
 - 管理接口：`/api/admin/{users,projects,agents,audit}` 使用 `teamId`；项目接入、设备撤销和配对码使用具体团队。
 - Agent 注册：返回 `teams[]`，兼容字段 `teamId=null`；绑定和事件流仍按项目所属团队校验。
@@ -295,6 +296,9 @@ const assignees = await fetchTaskSpaceAssignees(taskSpace.id)
 - 非系统管理员必须是该团队成员；系统管理员可跨 active 团队，但不能访问已停用团队。
 - `saved_view.team_id=NULL`、`user_board_state.team_id=''` 表示全局作用域；具体团队写团队 ID。
 - 查询 ETag、缓存键和游标绑定包含用户、实际团队作用域、可读项目集合和筛选哈希。
+- `taskSpaceId` 缺省、空或 `all` 时查询当前团队与 projectIds 范围内的所有可读 taskSpace；
+  显式 projectIds 不在可读集合时返回 `403`。指定 taskSpaceId 时仍执行单任务空间授权。
+- `branch` 为可选单值筛选，trim 后按大小写不敏感任意子串匹配；通配符字符必须转义为字面量。
 - 系统管理员按团队筛选用户时，`user.teams` 仍返回完整成员关系；筛选只收窄用户列表。
 - 单管理团队可省略 `teamId` 自动落位；多管理团队必须显式选择具体团队或 `all`。
 - Agent 设备绑定“用户 + 设备”；同一设备可按项目所属团队建立多个绑定，撤销必须限定团队。

@@ -318,6 +318,69 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   assert.equal(query.body.tasks[0].taskSpaceId, taskSpaceId)
   assert.equal(query.body.tasks[0].branchName, 'main')
 
+  const devAttached = await request(runtime, '/api/agent/task-spaces/attach', {
+    method: 'POST',
+    agentCredential: enrolled.body.credential,
+    body: {
+      remoteUrl: 'https://example.com/team/repo.git',
+      branchName: 'dev',
+      teamId: 'team-1',
+      developerId: 'owner',
+      displayName: '示例项目',
+      localRepoKey: 'b'.repeat(64),
+    },
+  })
+  assert.equal(devAttached.status, 201)
+  const devTaskSpaceId = devAttached.body.taskSpace.id
+  const devChanges = await request(
+    runtime,
+    `/api/agent/task-spaces/${encodeURIComponent(devTaskSpaceId)}/changes`,
+    {
+      method: 'POST',
+      agentCredential: enrolled.body.credential,
+      body: {
+        batchId: 'batch-dev',
+        clientSequence: 1,
+        files: [
+          {
+            path: '.trellis/tasks/02-dev/task.json',
+            content: `${JSON.stringify({
+              id: 'task-dev',
+              title: '分支任务',
+              status: 'planning',
+              assignee: 'owner',
+              priority: 'P2',
+            })}\n`,
+            baseSha256: null,
+          },
+          {
+            path: '.trellis/tasks/02-dev/prd.md',
+            content:
+              '# 分支任务\n\n## Requirements\n- 验证\n\n## Acceptance Criteria\n- [ ] 完成\n',
+            baseSha256: null,
+          },
+        ],
+      },
+    },
+  )
+  assert.equal(devChanges.status, 200, JSON.stringify(devChanges.body))
+  await runtime.services.taskSpaceIndex.ensureMaterialized(devTaskSpaceId)
+
+  const allProjectsQuery = await request(runtime, '/api/tasks/query?limit=20', { cookie: session })
+  assert.equal(allProjectsQuery.status, 200, JSON.stringify(allProjectsQuery.body))
+  assert.equal(allProjectsQuery.body.tasks.length, 2)
+  assert.deepEqual(
+    new Set(allProjectsQuery.body.tasks.map((task) => task.taskSpaceId)),
+    new Set([taskSpaceId, devTaskSpaceId]),
+  )
+
+  const devBranchQuery = await request(runtime, '/api/tasks/query?branch=DEV&limit=20', {
+    cookie: session,
+  })
+  assert.equal(devBranchQuery.status, 200, JSON.stringify(devBranchQuery.body))
+  assert.equal(devBranchQuery.body.tasks.length, 1)
+  assert.equal(devBranchQuery.body.tasks[0].branchName, 'dev')
+
   const operation = await request(runtime, '/api/tasks', {
     method: 'POST',
     cookie: session,

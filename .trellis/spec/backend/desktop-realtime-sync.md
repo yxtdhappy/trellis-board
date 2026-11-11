@@ -38,7 +38,7 @@ POST   /api/agent/commands/:commandId/result
 ### Web HTTP
 
 ```text
-GET  /api/tasks/query?taskSpaceId=...
+GET  /api/tasks/query?[taskSpaceId=...][&projectIds=...][&branch=...]
 GET  /api/task-spaces/:taskSpaceId/assignees
 POST /api/tasks
 POST /api/tasks/assign
@@ -49,6 +49,13 @@ POST /api/task-operations/:id/cancel
 ```
 
 创建和改派成功入队返回 `202 + operation`。目标 Agent 离线或未绑定时在创建操作项前拒绝。
+
+`taskSpaceId` 可选：指定时查询单分支；缺省或 `all` 时按当前 `teamId` 和可选 `projectIds` 查询所有可读
+taskSpace。服务端使用 `taskSpaces.listReadable()` 生成项目/任务空间集合并校验显式 projectIds。
+ETag、缓存键和游标绑定用户、团队、项目/taskSpace 集合哈希、规范化 filters、query revision 和查询日；
+分页以 `last_activity_at/archived_at + taskSpaceId + taskKey` 稳定排序。
+`branch` 为可选单值子串筛选，trim 后大小写不敏感匹配，`%`、`_` 等字符按字面处理。
+分支匹配使用与前端一致的 Unicode 小写语义，不能直接依赖 SQLite 内置 `lower()`，它只折叠 ASCII。
 
 ### SQLite v10
 

@@ -1254,6 +1254,10 @@ export function openDatabase({
 
   const db = new DatabaseSync(databaseFile)
   try {
+    // SQLite 内置 lower() 只折叠 ASCII，分支筛选需要与前端一致的 Unicode 小写语义。
+    db.function('trellis_lower', { deterministic: true }, (value) =>
+      String(value ?? '').toLowerCase(),
+    )
     db.exec('PRAGMA foreign_keys = ON')
     db.exec('PRAGMA busy_timeout = 5000')
     db.exec('PRAGMA journal_mode = WAL')

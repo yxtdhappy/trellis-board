@@ -441,6 +441,7 @@ export function buildTaskQuery(filters = {}, { limit = TEAM_PAGE_LIMIT, cursor =
     else if (typeof value === 'string' && value.trim()) add(key, value.trim())
   }
   add('q', filters.q?.trim())
+  add('branch', filters.branch?.trim())
   add('assignee', filters.assignee?.trim())
   add('dueWithinDays', filters.dueWithinDays)
   add('staleDays', filters.staleDays)

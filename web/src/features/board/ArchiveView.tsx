@@ -4,7 +4,9 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useArchiveTasks } from '@/hooks/useArchiveTasks'
 import { formatArchiveTimestamp, sortArchivedTasks } from '@/lib/archive-sort.js'
+import { branchMatches } from '@/lib/execution-filter.js'
 import { archiveAssigneeOptions } from '@/lib/team-client.js'
+import { taskInstanceKey } from '@/lib/task-view-key.js'
 import { Pagination } from './Pagination'
 import { SelectField } from './SelectField'
 import { initials, type BoardTask } from './task-view'
@@ -14,6 +16,8 @@ type ArchiveViewProps = {
   projects: { id: string; name: string }[]
   projectId: string
   taskSpaceId: string
+  branch: string
+  onBranchChange: (branch: string) => void
   teamMode: boolean
   teamId: string
   queryRevision?: number | string | null
@@ -28,6 +32,8 @@ export function ArchiveView({
   projects,
   projectId,
   taskSpaceId,
+  branch,
+  onBranchChange,
   teamMode,
   teamId,
   queryRevision,
@@ -38,22 +44,26 @@ export function ArchiveView({
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const archive = useArchiveTasks({
-    enabled: teamMode && taskSpaceId !== 'all',
+    enabled: teamMode,
     teamId,
     projectId,
     taskSpaceId,
+    branch,
     revision: queryRevision,
   })
 
   const owners = useMemo(
     () => [
       ...new Set(
-        (teamMode ? archive.assignees : tasks.map((task) => task.assignee)).filter(
-          (name): name is string => Boolean(name),
-        ),
+        (teamMode
+          ? archive.assignees
+          : tasks
+              .filter((task) => branchMatches(task.branchName, branch))
+              .map((task) => task.assignee)
+        ).filter((name): name is string => Boolean(name)),
       ),
     ],
-    [archive.assignees, tasks, teamMode],
+    [archive.assignees, tasks, branch, teamMode],
   )
 
   const rows = useMemo(() => {
@@ -61,6 +71,7 @@ export function ArchiveView({
     const keyword = search.trim().toLowerCase()
     const filtered = tasks
       .filter((task) => projectId === 'all' || task.projectId === projectId)
+      .filter((task) => branchMatches(task.branchName, branch))
       .filter((task) => !assignee || task.assignee === assignee)
       .filter(
         (task) =>
@@ -70,7 +81,7 @@ export function ArchiveView({
             .some((value) => value.includes(keyword)),
       )
     return sortArchivedTasks(filtered)
-  }, [archive.tasks, tasks, projectId, assignee, search, teamMode])
+  }, [archive.tasks, tasks, projectId, branch, assignee, search, teamMode])
 
   const pageCount = teamMode ? archive.pageCount : Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
   const current = teamMode ? archive.pageIndex : Math.min(page, pageCount - 1)
@@ -113,6 +124,17 @@ export function ArchiveView({
           onChange={(event) => {
             if (teamMode) archive.setSearch(event.target.value)
             else setSearch(event.target.value)
+            setPage(0)
+          }}
+        />
+        <Input
+          className="h-8 w-36 text-xs"
+          aria-label="分支模糊筛选"
+          value={branch}
+          maxLength={200}
+          placeholder="分支模糊筛选"
+          onChange={(event) => {
+            onBranchChange(event.target.value)
             setPage(0)
           }}
         />
@@ -177,16 +199,23 @@ export function ArchiveView({
                     .filter((stage) => stage.complete)
                     .map((stage) => stage.label)
                     .slice(0, 2)
+                  const projectLabel = [
+                    task.teamName,
+                    task.projectName,
+                    task.branchName ? `分支 ${task.branchName}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
                   return (
                     <tr
-                      key={task.taskKey}
+                      key={taskInstanceKey(task)}
                       className="cursor-pointer border-b border-border/60 text-[11.5px] hover:bg-muted/40"
                       onClick={() => onOpen(task)}
                     >
                       <td className="px-3 py-2.5">
                         <span className="block font-medium">{task.title}</span>
                         <small className="text-[10px] text-muted-foreground">
-                          #{task.dirName} · 已归档
+                          #{task.dirName} · {projectLabel} · 已归档
                         </small>
                       </td>
                       <td className="px-3 py-2.5">

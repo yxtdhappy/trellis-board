@@ -339,10 +339,7 @@ export function ProjectRail({
             >
               <button
                 type="button"
-                onClick={() => {
-                  onSelect(project.id)
-                  if (taskSpaces[0]) onSelectTaskSpace(taskSpaces[0].id)
-                }}
+                onClick={() => onSelect(project.id)}
                 className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
                 title={project.name}
               >

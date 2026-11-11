@@ -25,6 +25,7 @@ import { isAttention, type BoardTask } from '@/features/board/task-view'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
 import { canManageProject, createIdempotencyKey, taskVersion } from '@/lib/team-client.js'
+import { taskInstanceKey } from '@/lib/task-view-key.js'
 
 function normalizeViews(value: unknown): { id: string; name: string }[] {
   if (!Array.isArray(value)) return []
@@ -120,7 +121,7 @@ export function BoardPage() {
 
   useEffect(() => {
     if (!selected) return
-    const fresh = tasks.find((task) => task.taskKey === selected.taskKey)
+    const fresh = tasks.find((task) => taskInstanceKey(task) === taskInstanceKey(selected))
     if (fresh && fresh !== selected) setSelected(fresh)
   }, [tasks, selected])
 
@@ -307,6 +308,8 @@ export function BoardPage() {
               projects={projects}
               projectId={filters.projectId}
               taskSpaceId={filters.taskSpaceId}
+              branch={filters.branch}
+              onBranchChange={(branch) => setFilters({ branch })}
               teamMode={teamMode}
               teamId={filters.teamId}
               queryRevision={archiveRevision}

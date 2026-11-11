@@ -34,6 +34,7 @@ export type BoardFilters = {
   taskSpaceId: string
   scope: 'all' | 'mine'
   search: string
+  branch: string
   assignee: string
   priority: string
   stage: string
@@ -68,6 +69,7 @@ export function useBoard(): BoardController {
     taskSpaceId: 'all',
     scope: 'all',
     search: '',
+    branch: '',
     assignee: '',
     priority: '',
     stage: '',
@@ -102,10 +104,6 @@ export function useBoard(): BoardController {
 
   const loadTeamPage = useCallback(
     async (quiet = false) => {
-      if (filters.taskSpaceId === 'all') {
-        setTeamPage(null)
-        return
-      }
       const request = ++teamPageRequest.current
       if (!quiet) setLoading(true)
       try {
@@ -528,21 +526,11 @@ export function useBoard(): BoardController {
   const projects: Project[] = teamMode ? teamProjects : board?.projects || []
 
   useEffect(() => {
-    if (!teamMode || projects.length === 0) return
-    const selectedProject =
-      projects.find((project) => project.id === filters.projectId) || projects[0]
-    const taskSpaces = selectedProject.taskSpaces || []
-    if (filters.projectId === 'all') {
-      setFilters({
-        projectId: selectedProject.id,
-        taskSpaceId: taskSpaces[0]?.id || 'all',
-      })
-      return
+    if (!teamMode || projects.length === 0 || filters.projectId === 'all') return
+    if (!projects.some((project) => project.id === filters.projectId)) {
+      setFilters({ projectId: projects[0].id, taskSpaceId: 'all' })
     }
-    if (filters.taskSpaceId === 'all' && taskSpaces.length > 0) {
-      setFilters({ taskSpaceId: taskSpaces[0].id })
-    }
-  }, [teamMode, projects, filters.projectId, filters.taskSpaceId, setFilters])
+  }, [teamMode, projects, filters.projectId, setFilters])
 
   const tasks = useMemo<BoardTask[]>(() => {
     if (!teamMode) return board?.tasks || []

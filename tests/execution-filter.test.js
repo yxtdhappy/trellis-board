@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   BUILTIN_VIEWS,
+  branchMatches,
   dueDateDistance,
   laneForStageIndex,
   normalizeTagsInput,
@@ -38,6 +39,17 @@ test('标签输入去空白、忽略大小写去重并限制数量和长度', ()
     () => normalizeTagsInput(Array.from({ length: 11 }, (_, index) => `tag-${index}`)),
     /最多 10 个/,
   )
+})
+
+test('分支模糊筛选忽略大小写和首尾空格，按任意子串匹配', () => {
+  assert.equal(branchMatches('dev', ' DEV '), true)
+  assert.equal(branchMatches('feature/dev-sync', 'DEV'), true)
+  assert.equal(branchMatches('main', 'dev'), false)
+  assert.equal(branchMatches('', ''), true)
+  assert.equal(branchMatches('feature/a.b', 'a.b'), true)
+  assert.equal(branchMatches('feature/a_b', 'A_B'), true)
+  assert.equal(branchMatches('feature/a%b', 'A%B'), true)
+  assert.equal(branchMatches('feature/aXb', 'a_b'), false)
 })
 
 test('检查阶段及后续阶段进入检查/收尾分栏', () => {

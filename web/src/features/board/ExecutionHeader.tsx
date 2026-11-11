@@ -1,4 +1,5 @@
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
 import { BUILTIN_VIEWS } from '@/lib/execution-filter.js'
 import type { BoardFilters } from '@/hooks/useBoard'
 
@@ -134,6 +135,16 @@ export function ExecutionHeader({
           ]}
           onChange={(value) => onChange({ projectId: value })}
         />
+        <label className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
+          分支
+          <Input
+            className="h-8 w-32 text-[12px]"
+            value={filters.branch}
+            maxLength={200}
+            placeholder="模糊匹配"
+            onChange={(event) => onChange({ branch: event.target.value })}
+          />
+        </label>
         <FilterField
           label="负责人"
           value={filters.assignee || '__all'}

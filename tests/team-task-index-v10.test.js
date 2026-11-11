@@ -170,3 +170,181 @@ test('同一 taskSpace 重复 task.json.id 会标记身份冲突而不是静默�
     ctx.db.close()
   }
 })
+
+test('全部项目查询覆盖多个项目与分支，并保持权限、筛选和游标隔离', async () => {
+  const ctx = setup()
+  try {
+    const dev = ctx.taskSpaces.attach('user-1', ctx.agent.id, {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'feature/dev-sync',
+      displayName: 'Acme',
+      teamId: 'team-1',
+      developerId: 'alice',
+      localRepoKey: 'b'.repeat(64),
+    })
+    const other = ctx.taskSpaces.attach('user-1', ctx.agent.id, {
+      remoteUrl: 'https://example.com/acme/other.git',
+      branchName: 'main',
+      displayName: 'Other',
+      teamId: 'team-1',
+      developerId: 'alice',
+      localRepoKey: 'c'.repeat(64),
+    })
+
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-all-main-shared',
+      clientSequence: 1,
+      files: taskFiles('.trellis/tasks/11-10-shared', 'shared', '共享任务 main'),
+    })
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-all-main-only',
+      clientSequence: 2,
+      files: taskFiles('.trellis/tasks/11-10-main-only', 'main-only', 'main 任务'),
+    })
+    ctx.snapshots.applyChanges(ctx.agent, dev.taskSpace.id, {
+      batchId: 'batch-all-dev-shared',
+      clientSequence: 1,
+      files: taskFiles('.trellis/tasks/11-10-shared', 'shared', '共享任务 dev'),
+    })
+    ctx.snapshots.applyChanges(ctx.agent, dev.taskSpace.id, {
+      batchId: 'batch-all-dev-only',
+      clientSequence: 2,
+      files: taskFiles('.trellis/tasks/11-10-dev-only', 'dev-only', 'dev 任务'),
+    })
+    ctx.snapshots.applyChanges(ctx.agent, other.taskSpace.id, {
+      batchId: 'batch-all-other',
+      clientSequence: 1,
+      files: taskFiles('.trellis/tasks/11-10-other', 'other', '其他项目任务'),
+    })
+
+    await Promise.all([
+      ctx.index.materializeNow(ctx.taskSpaceId),
+      ctx.index.materializeNow(dev.taskSpace.id),
+      ctx.index.materializeNow(other.taskSpace.id),
+    ])
+    const now = new Date().toISOString()
+    ctx.db
+      .prepare(
+        `INSERT INTO team(id, name, slug, status, created_at, updated_at)
+         VALUES ('team-2', '团队二', 'team-2', 'active', ?, ?)`,
+      )
+      .run(now, now)
+    ctx.db
+      .prepare(
+        `INSERT INTO team_member(team_id, user_id, role, created_at, updated_at)
+         VALUES ('team-2', 'user-1', 'member', ?, ?)`,
+      )
+      .run(now, now)
+    const actor = ctx.taskSpaces.actorContext('user-1')
+    const first = ctx.index.queryTasks(actor, { limit: 2 })
+    assert.equal(first.total, 5)
+    assert.equal(first.tasks.length, 2)
+    assert.ok(first.tasks.every((task) => task.taskSpaceId && task.branchName))
+
+    const seen = new Set(first.tasks.map((task) => `${task.taskSpaceId}:${task.taskKey}`))
+    let cursor = first.nextCursor
+    while (cursor) {
+      const page = ctx.index.queryTasks(actor, { limit: 2, cursor })
+      page.tasks.forEach((task) => seen.add(`${task.taskSpaceId}:${task.taskKey}`))
+      cursor = page.nextCursor
+    }
+    assert.equal(seen.size, 5)
+
+    const branchFiltered = ctx.index.queryTasks(actor, { branch: ' DEV ' })
+    assert.equal(branchFiltered.total, 2)
+    assert.ok(branchFiltered.tasks.every((task) => task.taskSpaceId === dev.taskSpace.id))
+    assert.equal(ctx.index.queryTasks(actor, { branch: '%' }).total, 0)
+    assert.equal(ctx.index.queryTasks(actor, { branch: '_' }).total, 0)
+    assert.throws(
+      () => ctx.index.queryTasks(actor, { branch: 'x'.repeat(201) }),
+      (error) => error.status === 400 && error.code === 'INVALID_INPUT',
+    )
+
+    const oneProject = ctx.index.queryTasks(actor, { projectIds: [dev.project.id] })
+    assert.equal(oneProject.total, 4)
+    assert.ok(oneProject.tasks.every((task) => task.projectId === dev.project.id))
+    assert.throws(
+      () => ctx.index.queryTasks(actor, { projectIds: ['missing-project'] }),
+      (error) => error.status === 403 && error.code === 'FORBIDDEN',
+    )
+
+    const single = ctx.index.queryTasks(actor, { taskSpaceId: ctx.taskSpaceId })
+    assert.equal(single.total, 2)
+    assert.ok(single.tasks.every((task) => task.taskSpaceId === ctx.taskSpaceId))
+    assert.equal(ctx.index.queryTasks(actor, { taskSpaceId: 'all' }).total, 5)
+    assert.throws(
+      () =>
+        ctx.index.queryTasks(actor, {
+          taskSpaceId: ctx.taskSpaceId,
+          projectIds: [other.project.id],
+        }),
+      (error) => error.status === 403 && error.code === 'FORBIDDEN',
+    )
+    const mainProjectId = ctx.db
+      .prepare('SELECT project_id FROM sync_task_space WHERE id = ?')
+      .get(ctx.taskSpaceId).project_id
+    assert.throws(
+      () =>
+        ctx.index.queryTasks(actor, {
+          taskSpaceId: ctx.taskSpaceId,
+          projectIds: [mainProjectId, other.project.id],
+        }),
+      (error) => error.status === 403 && error.code === 'FORBIDDEN',
+    )
+
+    assert.throws(
+      () =>
+        ctx.index.queryTasks(actor, {
+          taskSpaceId: ctx.taskSpaceId,
+          teamId: 'team-2',
+        }),
+      (error) => error.status === 404 && error.code === 'NOT_FOUND',
+    )
+
+    const staleCursor = ctx.index.queryTasks(actor, { limit: 1 }).nextCursor
+    assert.throws(
+      () => ctx.index.queryTasks(actor, { branch: 'dev', cursor: staleCursor }),
+      (error) => error.status === 409 && error.code === 'CURSOR_INVALID',
+    )
+
+    const beforeRevision = ctx.index.queryTasks(actor).etag
+    ctx.snapshots.applyChanges(ctx.agent, other.taskSpace.id, {
+      batchId: 'batch-all-other-change',
+      clientSequence: 2,
+      files: taskFiles('.trellis/tasks/11-10-other-2', 'other-2', '其他项目新任务'),
+    })
+    await ctx.index.materializeNow(other.taskSpace.id)
+    assert.notEqual(ctx.index.queryTasks(actor).etag, beforeRevision)
+  } finally {
+    await ctx.index.close()
+    ctx.db.close()
+  }
+})
+
+test('分支筛选使用 Unicode 大小写不敏感匹配', async () => {
+  const ctx = setup()
+  try {
+    const unicode = ctx.taskSpaces.attach('user-1', ctx.agent.id, {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'feature/ÄBC-sync',
+      displayName: 'Acme',
+      teamId: 'team-1',
+      developerId: 'alice',
+      localRepoKey: 'd'.repeat(64),
+    })
+    ctx.snapshots.applyChanges(ctx.agent, unicode.taskSpace.id, {
+      batchId: 'batch-unicode-branch',
+      clientSequence: 1,
+      files: taskFiles('.trellis/tasks/11-10-unicode', 'unicode', 'Unicode 分支任务'),
+    })
+    await ctx.index.materializeNow(unicode.taskSpace.id)
+
+    const actor = ctx.taskSpaces.actorContext('user-1')
+    const result = ctx.index.queryTasks(actor, { branch: 'äbc' })
+    assert.equal(result.total, 1)
+    assert.equal(result.tasks[0].taskSpaceId, unicode.taskSpace.id)
+  } finally {
+    await ctx.index.close()
+    ctx.db.close()
+  }
+})

@@ -1,6 +1,7 @@
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { priorityTone } from './tone'
 import { attentionReasons, dueLabel, isAttention, type BoardTask } from './task-view'
+import { taskInstanceKey } from '@/lib/task-view-key.js'
 
 type AttentionQueueProps = {
   tasks: BoardTask[]
@@ -33,7 +34,7 @@ export function AttentionQueue({ tasks, onOpen }: AttentionQueueProps) {
         <ScrollArea className="max-h-[196px]">
           <ul className="flex flex-col divide-y divide-border/60 pr-2">
             {queue.slice(0, MAX_ROWS).map((task) => (
-              <li key={task.taskKey}>
+              <li key={taskInstanceKey(task)}>
                 <button
                   type="button"
                   onClick={() => onOpen(task)}
@@ -46,7 +47,13 @@ export function AttentionQueue({ tasks, onOpen }: AttentionQueueProps) {
                   </span>
                   <span className="truncate text-[11.5px] font-medium">{task.title}</span>
                   <span className="shrink-0 text-[10px] text-muted-foreground">
-                    {task.teamName ? `${task.teamName} · ${task.projectName}` : task.projectName}
+                    {[
+                      task.teamName,
+                      task.projectName,
+                      task.branchName ? `分支 ${task.branchName}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </span>
                   <span className="ml-auto flex shrink-0 items-center gap-1">
                     {attentionReasons(task)
