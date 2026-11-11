@@ -82,6 +82,8 @@ function mapServerError(status, body, auth, retryAfterMs) {
     serverCode,
     retryable,
     retryAfterMs,
+    conflictId: typeof body?.conflictId === 'string' ? body.conflictId : null,
+    details: body?.details && typeof body.details === 'object' ? body.details : null,
   })
 }
 
@@ -164,8 +166,8 @@ export class AgentApiClient {
     return parseHeartbeatResponse(payload)
   }
 
-  async preflightLiveChanges(input, options = {}) {
-    return this._requestJson('/api/agent/live-changes/preflight', {
+  async resolveTaskSpace(input, options = {}) {
+    return this._requestJson('/api/agent/task-spaces/resolve', {
       method: 'POST',
       auth: true,
       signal: options.signal,
@@ -173,19 +175,28 @@ export class AgentApiClient {
     })
   }
 
-  async uploadLiveChanges(input, options = {}) {
-    return this._requestJson('/api/agent/live-changes', {
+  async preflightTaskSpaceAccess(input, options = {}) {
+    return this._requestJson('/api/agent/task-spaces/preflight', {
       method: 'POST',
       auth: true,
       signal: options.signal,
-      timeoutMs: options.timeoutMs ?? 30_000,
+      body: input,
+      maxResponseBytes: 16 * 1024 * 1024,
+    })
+  }
+
+  async attachTaskSpace(input, options = {}) {
+    return this._requestJson('/api/agent/task-spaces/attach', {
+      method: 'POST',
+      auth: true,
+      signal: options.signal,
       body: input,
     })
   }
 
-  async fetchLiveFiles(input = {}, options = {}) {
-    const url = new URL('/api/agent/live-files', this.serverUrl)
-    url.searchParams.set('projectId', String(input.projectId || ''))
+  async fetchTaskSpaceSnapshot(taskSpaceId, input = {}, options = {}) {
+    const encodedId = encodeURIComponent(taskSpaceId)
+    const url = new URL(`/api/agent/task-spaces/${encodedId}/snapshot`, this.serverUrl)
     url.searchParams.set('afterRevision', String(input.afterRevision || 0))
     return this._requestJson(`${url.pathname}${url.search}`, {
       method: 'GET',
@@ -195,8 +206,42 @@ export class AgentApiClient {
     })
   }
 
-  async writeLiveCursor(input, options = {}) {
-    return this._requestJson('/api/agent/live-cursor', {
+  async fetchTaskDirectory(taskSpaceId, taskDir, options = {}) {
+    const encodedId = encodeURIComponent(taskSpaceId)
+    const url = new URL(`/api/agent/task-spaces/${encodedId}/files`, this.serverUrl)
+    url.searchParams.set('taskDir', String(taskDir || ''))
+    return this._requestJson(`${url.pathname}${url.search}`, {
+      method: 'GET',
+      auth: true,
+      signal: options.signal,
+      maxResponseBytes: 16 * 1024 * 1024,
+    })
+  }
+
+  async preflightTaskSpace(taskSpaceId, input, options = {}) {
+    const encodedId = encodeURIComponent(taskSpaceId)
+    return this._requestJson(`/api/agent/task-spaces/${encodedId}/preflight`, {
+      method: 'POST',
+      auth: true,
+      signal: options.signal,
+      body: input,
+    })
+  }
+
+  async uploadTaskSpaceChanges(taskSpaceId, input, options = {}) {
+    const encodedId = encodeURIComponent(taskSpaceId)
+    return this._requestJson(`/api/agent/task-spaces/${encodedId}/changes`, {
+      method: 'POST',
+      auth: true,
+      signal: options.signal,
+      timeoutMs: options.timeoutMs ?? 30_000,
+      body: input,
+    })
+  }
+
+  async writeTaskSpaceCursor(taskSpaceId, input, options = {}) {
+    const encodedId = encodeURIComponent(taskSpaceId)
+    return this._requestJson(`/api/agent/task-spaces/${encodedId}/cursor`, {
       method: 'PUT',
       auth: true,
       signal: options.signal,
@@ -204,16 +249,35 @@ export class AgentApiClient {
     })
   }
 
+  async fetchTaskSpaceConflicts(taskSpaceId, options = {}) {
+    const encodedId = encodeURIComponent(taskSpaceId)
+    return this._requestJson(`/api/agent/task-spaces/${encodedId}/conflicts`, {
+      method: 'GET',
+      auth: true,
+      signal: options.signal,
+    })
+  }
+
+  async resolveTaskSpaceConflict(taskSpaceId, conflictId, input, options = {}) {
+    const encodedId = encodeURIComponent(taskSpaceId)
+    const encodedConflict = encodeURIComponent(conflictId)
+    return this._requestJson(
+      `/api/agent/task-spaces/${encodedId}/conflicts/${encodedConflict}/resolve`,
+      {
+        method: 'POST',
+        auth: true,
+        signal: options.signal,
+        timeoutMs: options.timeoutMs ?? 30_000,
+        body: input,
+      },
+    )
+  }
+
   async streamEvents(input = {}, options = {}) {
     if (!this.credential || this.credential.length < 32) {
       throw new AgentError(AGENT_ERROR_CODE.CREDENTIAL_MISSING, 'Agent 凭证不存在，请重新配对')
     }
-    const teamId = String(input.teamId || '').trim()
-    if (!teamId) {
-      throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, '事件流缺少团队 ID')
-    }
     const url = new URL(`${this.serverUrl}/api/agent/events`)
-    url.searchParams.set('teamId', teamId)
     const headers = {
       accept: 'text/event-stream',
       'cache-control': 'no-cache',
@@ -379,6 +443,16 @@ export class AgentApiClient {
       auth: true,
       signal: options.signal,
       body: result,
+    })
+  }
+
+  async startCommand(commandId, options = {}) {
+    const encodedId = encodeURIComponent(commandId)
+    return this._requestJson(`/api/agent/commands/${encodedId}/start`, {
+      method: 'POST',
+      auth: true,
+      signal: options.signal,
+      body: {},
     })
   }
 

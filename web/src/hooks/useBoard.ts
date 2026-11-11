@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { toast } from 'sonner'
 import {
   api,
   acceptTask,
@@ -12,7 +11,6 @@ import {
   fetchRepositories,
   fetchSavedViews,
   fetchTeamStatus,
-  fetchTeamLiveRevision,
   pickFolders,
   queryTeamTasks,
   removeRepository,
@@ -21,8 +19,10 @@ import {
   deleteSavedView,
   createDependency,
   removeDependency,
-  fetchGitOperation,
-  retryGitOperation,
+  fetchTaskOperation,
+  fetchTaskOperations,
+  retryTaskOperation,
+  cancelTaskOperation,
 } from '@/api/board'
 import type { BoardPayload, BoardStatus, Project, TeamQueryPage, TeamRuntime } from '@/api/board'
 import { teamRowToBoardTask, type BoardTask } from '@/features/board/task-view'
@@ -31,6 +31,7 @@ import { ApiError } from '@/api/request'
 export type BoardFilters = {
   teamId: string
   projectId: string
+  taskSpaceId: string
   scope: 'all' | 'mine'
   search: string
   assignee: string
@@ -57,11 +58,13 @@ export function useBoard(): BoardController {
   const [teamStatus, setTeamStatus] = useState<Record<string, unknown> | null>(null)
   const [assignments, setAssignments] = useState<unknown[]>([])
   const [operation, setOperation] = useState<PublishOperation | null>(null)
+  const [operations, setOperations] = useState<PublishOperation[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [filters, setFiltersState] = useState<BoardFilters>({
     teamId: 'all',
     projectId: 'all',
+    taskSpaceId: 'all',
     scope: 'all',
     search: '',
     assignee: '',
@@ -77,15 +80,13 @@ export function useBoard(): BoardController {
   const teamPageIndex = useRef(0)
   const teamPageRequest = useRef(0)
   const teamPreferenceRequest = useRef(0)
-  const liveNotificationsRequest = useRef(0)
-  const seenLiveNotifications = useRef(new Set<number>())
 
   const teamMode = runtime?.team === true || runtime?.mode === 'team'
 
-  const loadBoard = useCallback(async (force = false, quiet = false) => {
+  const loadBoard = useCallback(async (_force = false, quiet = false) => {
     if (!quiet) setLoading(true)
     try {
-      const payload = await fetchBoard(force)
+      const payload = await fetchBoard()
       if (payload) {
         setBoard(payload)
         setStatus({ refreshRunning: Boolean(payload.refreshRunning) })
@@ -100,6 +101,10 @@ export function useBoard(): BoardController {
 
   const loadTeamPage = useCallback(
     async (quiet = false) => {
+      if (filters.taskSpaceId === 'all') {
+        setTeamPage(null)
+        return
+      }
       const request = ++teamPageRequest.current
       if (!quiet) setLoading(true)
       try {
@@ -163,25 +168,20 @@ export function useBoard(): BoardController {
     }
   }, [])
 
-  const loadTeamNotifications = useCallback(async () => {
-    if (!teamMode) return
-    const request = ++liveNotificationsRequest.current
-    try {
-      const next = await fetchTeamLiveRevision(filters.teamId)
-      if (request !== liveNotificationsRequest.current) return
-      for (const notice of next?.notifications || []) {
-        if (seenLiveNotifications.current.has(notice.id)) continue
-        seenLiveNotifications.current.add(notice.id)
-        const taskLabel = notice.taskTitle
-          ? `任务「${notice.taskTitle}」`
-          : `任务 ${notice.taskKey || notice.projectId}`
-        const actionLabel = notice.action === 'takeover' ? '已被他人接管' : '已被他人继续推进'
-        toast.warning(`${taskLabel}${actionLabel}，原责任人是你。`)
-      }
-    } catch {
-      // 通知查询失败不影响看板数据刷新，下一次事件或页面聚焦时会再次对齐。
+  const loadOperations = useCallback(async () => {
+    if (!teamMode || filters.taskSpaceId === 'all') {
+      setOperations([])
+      return
     }
-  }, [teamMode, filters.teamId])
+    try {
+      const result = await fetchTaskOperations(filters.taskSpaceId)
+      setOperations(
+        (result?.operations || []).map((item) => normalizeOperation(item) as PublishOperation),
+      )
+    } catch {
+      // 操作列表失败不覆盖正式任务查询结果。
+    }
+  }, [teamMode, filters.taskSpaceId])
 
   const loadAssignments = useCallback(async () => {
     try {
@@ -222,17 +222,13 @@ export function useBoard(): BoardController {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 初始化一次并按运行模式起停团队状态轮询
   }, [runtime, teamMode])
 
-  useEffect(() => {
-    if (teamMode) void loadTeamNotifications()
-  }, [teamMode, filters.teamId, loadTeamNotifications])
-
   const alignBoard = useCallback(async () => {
     if (teamMode) {
-      await Promise.all([loadTeamPage(true), loadTeamStatus(), loadTeamNotifications()])
+      await Promise.all([loadTeamPage(true), loadTeamStatus()])
       return
     }
     await loadBoard(false, true)
-  }, [teamMode, loadBoard, loadTeamPage, loadTeamStatus, loadTeamNotifications])
+  }, [teamMode, loadBoard, loadTeamPage, loadTeamStatus])
 
   const alignBoardRef = useRef(alignBoard)
   useEffect(() => {
@@ -278,6 +274,16 @@ export function useBoard(): BoardController {
     })
   }, [teamMode, loadTeamPreferences])
 
+  useEffect(() => {
+    if (!teamMode) {
+      setOperations([])
+      return
+    }
+    void loadOperations()
+    const timer = window.setInterval(() => void loadOperations(), 3_000)
+    return () => window.clearInterval(timer)
+  }, [teamMode, loadOperations])
+
   const reloadCurrentSource = useCallback(async () => {
     if (teamMode) {
       await loadTeamPage(true)
@@ -286,13 +292,17 @@ export function useBoard(): BoardController {
     await loadBoard(false, true)
   }, [teamMode, loadBoard, loadTeamPage])
 
-  const trackOperation = useCallback((payload: unknown) => {
-    const next = normalizeOperation(payload) as PublishOperation
-    if (!next?.id && !next?.status) return false
-    operationAttempt.current = 0
-    setOperation(next)
-    return true
-  }, [])
+  const trackOperation = useCallback(
+    (payload: unknown) => {
+      const next = normalizeOperation(payload) as PublishOperation
+      if (!next?.id && !next?.status) return false
+      operationAttempt.current = 0
+      setOperation(next)
+      void loadOperations()
+      return true
+    },
+    [loadOperations],
+  )
 
   useEffect(() => {
     if (!operation?.id || !isRetryableOperation(operation)) return
@@ -302,13 +312,14 @@ export function useBoard(): BoardController {
     const timer = window.setTimeout(async () => {
       try {
         const next = normalizeOperation(
-          await fetchGitOperation(String(operation.id)),
+          await fetchTaskOperation(String(operation.id)),
         ) as PublishOperation
         if (cancelled) return
         setOperation(next)
         if (isCompleteOperation(next)) {
           await reloadCurrentSource()
           await loadTeamStatus()
+          await loadOperations()
         }
       } catch (err) {
         if (!cancelled) {
@@ -322,13 +333,17 @@ export function useBoard(): BoardController {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [operation, reloadCurrentSource, loadTeamStatus])
+  }, [operation, reloadCurrentSource, loadTeamStatus, loadOperations])
 
   const setFilters = useCallback((patch: Partial<BoardFilters>) => {
     setFiltersState((current) => {
       const next = { ...current, ...patch }
       if (patch.teamId !== undefined && patch.projectId === undefined) {
         next.projectId = 'all'
+        next.taskSpaceId = 'all'
+      }
+      if (patch.projectId !== undefined && patch.taskSpaceId === undefined) {
+        next.taskSpaceId = 'all'
       }
       if (patch.teamId !== undefined && patch.executionView === undefined) {
         next.executionView = 'all'
@@ -341,7 +356,6 @@ export function useBoard(): BoardController {
     teamPageRequest.current += 1
     if (patch.teamId !== undefined) {
       teamPreferenceRequest.current += 1
-      liveNotificationsRequest.current += 1
       setTeamPage(null)
       setBoard((current) => (current ? { ...current, savedViews: [], settings: {} } : current))
     }
@@ -369,18 +383,29 @@ export function useBoard(): BoardController {
             : typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
               ? crypto.randomUUID()
               : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-        const result = await createTaskRequest({ ...payload, idempotencyKey })
+        const result = await createTaskRequest({
+          ...payload,
+          taskSpaceId:
+            payload.taskSpaceId ||
+            (filters.taskSpaceId !== 'all' ? filters.taskSpaceId : undefined),
+          idempotencyKey,
+        })
         trackOperation(result)
         await reloadCurrentSource()
       },
       assign: async (payload: Record<string, unknown>) => {
-        const result = await assignTaskRequest(payload)
+        const result = await assignTaskRequest({
+          ...payload,
+          taskSpaceId:
+            payload.taskSpaceId ||
+            (filters.taskSpaceId !== 'all' ? filters.taskSpaceId : undefined),
+        })
         trackOperation(result)
         await reloadCurrentSource()
       },
       addDependency: async (payload: {
-        blocked: { projectId: string; taskPath: string }
-        blocker: { projectId: string; taskPath: string }
+        blocked: { taskSpaceId: string; executionTaskKey?: string; taskPath?: string }
+        blocker: { taskSpaceId: string; executionTaskKey?: string; taskPath?: string }
         reason: string
         assigneeDecision?: { warningId: string; action: 'continue' | 'takeover' }
       }) => {
@@ -412,11 +437,17 @@ export function useBoard(): BoardController {
         await reloadCurrentSource()
         if (teamMode) await loadTeamPreferences()
       },
-      retryOperation: async () => {
-        if (!operation?.id) return
+      retryOperation: async (id?: string) => {
+        const operationId = id || operation?.id
+        if (!operationId) return
         setOperation(
-          normalizeOperation(await retryGitOperation(String(operation.id))) as PublishOperation,
+          normalizeOperation(await retryTaskOperation(String(operationId))) as PublishOperation,
         )
+        await loadOperations()
+      },
+      cancelOperation: async (id: string) => {
+        await cancelTaskOperation(id)
+        await loadOperations()
       },
       dismissOperation: () => setOperation(null),
       accept: async (payload: unknown) => {
@@ -448,7 +479,9 @@ export function useBoard(): BoardController {
       reloadCurrentSource,
       trackOperation,
       operation,
+      loadOperations,
       filters.teamId,
+      filters.taskSpaceId,
       filters.executionView,
     ],
   )
@@ -461,6 +494,7 @@ export function useBoard(): BoardController {
       teamId?: string
       teamName?: string
       syncBranch?: string | null
+      taskSpaces?: Project['taskSpaces']
     }
     const rows = [
       ...((teamStatus?.projects as TeamProjectRow[] | undefined) || []),
@@ -481,6 +515,7 @@ export function useBoard(): BoardController {
           teamId?: string
           teamName?: string
           syncBranch?: string | null
+          taskSpaces?: Project['taskSpaces']
         } => Boolean(row?.id) && (filters.teamId === 'all' || row.teamId === filters.teamId),
       )
       .map((row) => ({
@@ -492,6 +527,24 @@ export function useBoard(): BoardController {
       }))
   }, [teamStatus, filters.teamId])
   const projects: Project[] = teamMode ? teamProjects : board?.projects || []
+
+  useEffect(() => {
+    if (!teamMode || projects.length === 0) return
+    const selectedProject =
+      projects.find((project) => project.id === filters.projectId) || projects[0]
+    const taskSpaces = selectedProject.taskSpaces || []
+    if (filters.projectId === 'all') {
+      setFilters({
+        projectId: selectedProject.id,
+        taskSpaceId: taskSpaces[0]?.id || 'all',
+      })
+      return
+    }
+    if (filters.taskSpaceId === 'all' && taskSpaces.length > 0) {
+      setFilters({ taskSpaceId: taskSpaces[0].id })
+    }
+  }, [teamMode, projects, filters.projectId, filters.taskSpaceId, setFilters])
+
   const tasks = useMemo<BoardTask[]>(() => {
     if (!teamMode) return board?.tasks || []
     return (teamPage?.tasks || []).map((row) => teamRowToBoardTask(row as Record<string, unknown>))
@@ -512,6 +565,7 @@ export function useBoard(): BoardController {
     error,
     loading,
     operation,
+    operations,
     actions,
     builtinViews: BUILTIN_VIEW_IDS,
   }
@@ -522,11 +576,10 @@ export type PublishOperation = {
   status?: string
   code?: string | null
   error?: string | null
-  operationType?: string | null
+  commandType?: string | null
+  taskSpaceId?: string | null
   taskKey?: string | null
   projectId?: string | null
-  localSha?: string | null
-  remoteSha?: string | null
   result?: Record<string, unknown>
   raw?: unknown
 }
@@ -537,8 +590,8 @@ export type BoardActions = {
   createTask: (payload: Record<string, unknown>) => Promise<void>
   assign: (payload: Record<string, unknown>) => Promise<void>
   addDependency: (payload: {
-    blocked: { projectId: string; taskPath: string }
-    blocker: { projectId: string; taskPath: string }
+    blocked: { taskSpaceId: string; executionTaskKey?: string; taskPath?: string }
+    blocker: { taskSpaceId: string; executionTaskKey?: string; taskPath?: string }
     reason: string
     assigneeDecision?: { warningId: string; action: 'continue' | 'takeover' }
   }) => Promise<void>
@@ -548,7 +601,8 @@ export type BoardActions = {
   ) => Promise<void>
   saveView: (name: string, filter: Record<string, unknown>) => Promise<string>
   deleteView: (id: string) => Promise<void>
-  retryOperation: () => Promise<void>
+  retryOperation: (id?: string) => Promise<void>
+  cancelOperation: (id: string) => Promise<void>
   dismissOperation: () => void
   accept: (payload: unknown) => Promise<void>
   reloadAssignments: () => Promise<void>
@@ -575,6 +629,7 @@ export type BoardController = {
   error: string
   loading: boolean
   operation: PublishOperation | null
+  operations: PublishOperation[]
   actions: BoardActions
   builtinViews: readonly string[]
 }

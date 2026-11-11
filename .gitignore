@@ -61,3 +61,4 @@ desktop/src-tauri/target/
 desktop/src-tauri/gen/
 desktop/src-tauri/binaries/*
 !desktop/src-tauri/binaries/README.md
+desktop/src-tauri/resources/trellis-runtime/

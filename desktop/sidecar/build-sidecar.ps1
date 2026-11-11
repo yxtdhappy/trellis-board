@@ -2,7 +2,8 @@ param(
   [string]$NodeExecutable = "",
   [string]$OutputDirectory = "",
   [string]$Version = "",
-  [string]$StageDirectory = ""
+  [string]$StageDirectory = "",
+  [string]$ResourcesDirectory = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,13 +47,20 @@ $requiredFiles = @(
   (Join-Path $sidecarRoot 'main.js'),
   (Join-Path $sidecarRoot 'desktop-device.js'),
   (Join-Path $sidecarRoot 'desktop-association.js'),
+  (Join-Path $sidecarRoot 'trellis-runtime.js'),
   (Join-Path $sidecarRoot 'bundle.mjs'),
   (Join-Path $repoRoot 'agent\index.js'),
-  (Join-Path $repoRoot 'agent\live-sync.js'),
+  (Join-Path $repoRoot 'agent\task-snapshot-sync.js'),
+  (Join-Path $repoRoot 'agent\task-command.js'),
+  (Join-Path $repoRoot 'agent\project-onboarding.js'),
+  (Join-Path $repoRoot 'agent\git-sync.js'),
   (Join-Path $repoRoot 'agent\api.js'),
   (Join-Path $repoRoot 'agent\credential-store.js'),
   (Join-Path $repoRoot 'agent\windows\dpapi.ps1'),
   (Join-Path $repoRoot 'shared\trellis-watcher.js'),
+  (Join-Path $repoRoot 'shared\task-snapshot.js'),
+  (Join-Path $repoRoot 'shared\slug.js'),
+  (Join-Path $repoRoot 'shared\trellis-agent-tools.js'),
   (Join-Path $repoRoot 'package.json')
 )
 foreach ($file in $requiredFiles) {
@@ -91,6 +99,23 @@ New-Item -ItemType Directory -Path $StageDirectory -Force | Out-Null
 $StageDirectory = (Resolve-Path -LiteralPath $StageDirectory).Path
 $buildDirectory = Join-Path $StageDirectory 'build'
 New-Item -ItemType Directory -Path $buildDirectory -Force | Out-Null
+$runtimeStage = Join-Path $StageDirectory 'trellis-runtime'
+
+if (-not $ResourcesDirectory) {
+  $ResourcesDirectory = Join-Path $desktopRoot 'src-tauri\resources'
+}
+New-Item -ItemType Directory -Path $ResourcesDirectory -Force | Out-Null
+$ResourcesDirectory = (Resolve-Path -LiteralPath $ResourcesDirectory).Path
+$runtimeTarget = Join-Path $ResourcesDirectory 'trellis-runtime'
+
+$rootNodeModules = Join-Path $repoRoot 'node_modules'
+$trellisCli = Join-Path $rootNodeModules '@mindfoldhq\trellis\bin\trellis.js'
+if (-not (Test-Path -LiteralPath $trellisCli -PathType Leaf)) {
+  Fail 1 "Bundled Trellis CLI is missing: $trellisCli. Run npm install in the repository root."
+}
+$trellisPackage = Get-Content -LiteralPath (Join-Path $rootNodeModules '@mindfoldhq\trellis\package.json') -Raw |
+  ConvertFrom-Json
+$trellisVersion = [string]$trellisPackage.version
 
 $bundleFile = Join-Path $buildDirectory 'trellis-agent.cjs'
 $blobFile = Join-Path $buildDirectory 'sea-prep.blob'
@@ -140,7 +165,15 @@ try {
     Fail 7 "Sidecar executable was not copied: $targetExe"
   }
 
-  $protocolVersion = '2'
+  New-Item -ItemType Directory -Path $runtimeStage -Force | Out-Null
+  Copy-Item -LiteralPath $NodeExecutable -Destination (Join-Path $runtimeStage 'node.exe')
+  Copy-Item -LiteralPath $rootNodeModules -Destination (Join-Path $runtimeStage 'node_modules') -Recurse
+  $stagedCli = Join-Path $runtimeStage 'node_modules\@mindfoldhq\trellis\bin\trellis.js'
+  if (-not (Test-Path -LiteralPath $stagedCli -PathType Leaf)) {
+    Fail 7 "Bundled Trellis CLI was not staged: $stagedCli"
+  }
+
+  $protocolVersion = '3'
   $protocolMatch = Select-String -LiteralPath (Join-Path $repoRoot 'agent\protocol.js') `
     -Pattern 'AGENT_PROTOCOL_VERSION\s*=\s*([0-9]+)' | Select-Object -First 1
   if ($protocolMatch) {
@@ -154,6 +187,29 @@ try {
     "nodeVersion=$nodeVersion"
     "nodeArch=$nodeArch"
   ) | Set-Content -LiteralPath (Join-Path $OutputDirectory 'VERSION.txt') -Encoding utf8
+
+  @(
+    "package=trellis-runtime"
+    "trellisVersion=$trellisVersion"
+    "nodeVersion=$nodeVersion"
+    "nodeArch=$nodeArch"
+  ) | Set-Content -LiteralPath (Join-Path $runtimeStage 'VERSION.txt') -Encoding utf8
+
+  $resolvedResources = [IO.Path]::GetFullPath($ResourcesDirectory)
+  $resolvedTarget = [IO.Path]::GetFullPath($runtimeTarget)
+  if (
+    -not $resolvedTarget.StartsWith(
+      $resolvedResources + [IO.Path]::DirectorySeparatorChar,
+      [StringComparison]::OrdinalIgnoreCase
+    ) -or
+    ([IO.Path]::GetFileName($resolvedTarget) -ne 'trellis-runtime')
+  ) {
+    Fail 7 "Refusing to replace unexpected runtime directory: $resolvedTarget"
+  }
+  if (Test-Path -LiteralPath $runtimeTarget) {
+    Remove-Item -LiteralPath $runtimeTarget -Recurse
+  }
+  Copy-Item -LiteralPath $runtimeStage -Destination $runtimeTarget -Recurse
 
   $hash = (Get-FileHash -LiteralPath $targetExe -Algorithm SHA256).Hash.ToLowerInvariant()
   "$hash  $binaryName" | Set-Content -LiteralPath (Join-Path $OutputDirectory 'SHA256SUMS.txt') -Encoding ascii
@@ -170,7 +226,7 @@ try {
     ([IO.Path]::GetFileName($resolvedStage) -like 'trellis-sidecar-build-*') -and
     (Test-Path -LiteralPath $resolvedStage)
   ) {
-    Remove-Item -LiteralPath $resolvedStage -Recurse -Force
+    Remove-Item -LiteralPath $resolvedStage -Recurse
   }
 }
 

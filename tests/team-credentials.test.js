@@ -141,7 +141,6 @@ function testConfig(overrides = {}) {
     publicOrigin: PUBLIC_ORIGIN,
     sessionTtlMs: 12 * 60 * 60 * 1000,
     agentStaleMs: 60_000,
-    gitPollMs: 60_000,
     cookieSecure: false,
     trustProxy: false,
     allowLocalGitRemotes: true,
@@ -479,7 +478,7 @@ test('远端探测按用户限流', async (t) => {
   )
 })
 
-test('团队 HTTP 凭据接口不下发秘密并隔离非团队管理员', async (t) => {
+test('团队 HTTP 不再暴露 Git 凭据和远端探测路由', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-credential-http-'))
   const runtime = await createTeamRuntime({
     config: testConfig(),
@@ -531,92 +530,36 @@ test('团队 HTTP 凭据接口不下发秘密并隔离非团队管理员', async
 
   const adminCookie = await login(runtime, admin.username, 'Credential-Password-123')
   const memberCookie = await login(runtime, member.username, 'Member-Password-123')
-  const created = await request(runtime, '/api/admin/git-credentials', {
-    method: 'POST',
-    cookie: adminCookie,
-    body: {
-      teamId: 'credential-team',
-      name: 'HTTP GitHub',
-      host: 'github.com',
-      authType: 'https_token',
-      username: 'build-bot',
-      token: 'http-secret-token',
-    },
-  })
-  assert.equal(created.status, 201, JSON.stringify(created.body))
-  assert.equal(JSON.stringify(created.body).includes('http-secret-token'), false)
-  insertProject(runtime.db, {
-    projectId: 'http-credential-project',
-    teamId: 'credential-team',
-    credentialId: created.body.credential.id,
-  })
-
-  const listed = await request(runtime, '/api/admin/git-credentials?teamId=credential-team', {
-    cookie: adminCookie,
-  })
-  assert.equal(listed.status, 200)
-  assert.equal(listed.body.credentials.length, 1)
-  assert.equal(listed.body.credentials[0].projectCount, 1)
-  assert.equal(listed.body.credentials[0].projects[0].id, 'http-credential-project')
-  assert.equal(JSON.stringify(listed.body).includes('http-secret-token'), false)
-  const projects = await request(runtime, '/api/admin/projects?teamId=credential-team', {
-    cookie: adminCookie,
-  })
-  assert.equal(projects.status, 200)
-  assert.equal(projects.body.projects[0].credential.id, created.body.credential.id)
-  assert.equal(JSON.stringify(projects.body).includes('http-secret-token'), false)
-  assert.equal(
-    (
-      await request(runtime, '/api/team/projects', {
-        cookie: adminCookie,
-      })
-    ).status,
-    200,
-  )
-
-  const inUse = await request(runtime, `/api/admin/git-credentials/${created.body.credential.id}`, {
-    method: 'DELETE',
-    cookie: adminCookie,
-    body: {},
-  })
-  assert.equal(inUse.status, 409)
-  assert.equal(inUse.body.code, 'GIT_CREDENTIAL_IN_USE')
-
-  const forbidden = await request(runtime, '/api/admin/git-credentials', {
-    method: 'POST',
-    cookie: memberCookie,
-    body: {
-      teamId: 'credential-team',
-      name: '不应创建',
-      host: 'gitlab.com',
-      authType: 'https_token',
-      username: 'member',
-      token: 'member-secret',
-    },
-  })
-  assert.equal(forbidden.status, 403)
-  assert.equal(
-    (
-      await request(runtime, '/api/admin/git-credentials?teamId=credential-team', {
-        cookie: memberCookie,
-      })
-    ).status,
-    403,
-  )
-
-  const bare = path.join(root, 'http-probe.git')
-  git(root, ['init', '--bare', '--initial-branch=main', bare])
-  const probed = await request(runtime, '/api/admin/projects/probe', {
-    method: 'POST',
-    cookie: adminCookie,
-    body: {
-      teamId: 'credential-team',
-      remoteUrl: bare,
-      credentialId: null,
-    },
-  })
-  assert.equal(probed.status, 422)
-  assert.equal(probed.body.code, 'GIT_REMOTE_NO_HEADS')
+  for (const cookie of [adminCookie, memberCookie]) {
+    assert.equal(
+      (
+        await request(runtime, '/api/admin/git-credentials?teamId=credential-team', {
+          cookie,
+        })
+      ).status,
+      404,
+    )
+    assert.equal(
+      (
+        await request(runtime, '/api/admin/git-credentials', {
+          method: 'POST',
+          cookie,
+          body: { teamId: 'credential-team' },
+        })
+      ).status,
+      404,
+    )
+    assert.equal(
+      (
+        await request(runtime, '/api/admin/projects/probe', {
+          method: 'POST',
+          cookie,
+          body: { teamId: 'credential-team' },
+        })
+      ).status,
+      404,
+    )
+  }
 })
 
 test('子进程输出按字节截断并按已知秘密脱敏', async () => {

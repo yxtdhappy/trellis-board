@@ -4,7 +4,6 @@ import path from 'node:path'
 import {
   AgentError,
   AGENT_ERROR_CODE,
-  isPathInside,
   safeErrorMessage,
   validateBranchNameSyntax,
 } from './protocol.js'
@@ -19,8 +18,12 @@ const ALLOWED_GIT_OPERATIONS = new Set([
   'show-toplevel',
   'current-branch',
   'head',
+  'git-path',
   'status',
+  'status-paths',
   'remote-url',
+  'ls-remote',
+  'ls-tree',
   'fetch',
   'rev-list',
   'merge',
@@ -35,6 +38,13 @@ const FORBIDDEN_GIT_OPERATIONS = new Set([
   'switch',
   'restore',
   'clean',
+])
+const GIT_STATE_MARKERS = new Set([
+  'MERGE_HEAD',
+  'rebase-merge',
+  'rebase-apply',
+  'CHERRY_PICK_HEAD',
+  'REVERT_HEAD',
 ])
 
 export function assertGitOperationAllowed(operation) {
@@ -88,6 +98,11 @@ function gitArgs(operation, repoPath, options = {}) {
       return [...common, '-c', 'core.fsmonitor=false', 'branch', '--show-current']
     case 'head':
       return [...common, '-c', 'core.fsmonitor=false', 'rev-parse', '--verify', 'HEAD^{commit}']
+    case 'git-path':
+      if (!GIT_STATE_MARKERS.has(options.marker)) {
+        throw new AgentError(AGENT_ERROR_CODE.GIT_FAILED, 'Git 状态标记无效')
+      }
+      return [...common, '-c', 'core.fsmonitor=false', 'rev-parse', '--git-path', options.marker]
     case 'status':
       return [
         ...common,
@@ -97,8 +112,31 @@ function gitArgs(operation, repoPath, options = {}) {
         '--porcelain=v1',
         '--untracked-files=normal',
       ]
+    case 'status-paths':
+      return [
+        ...common,
+        '-c',
+        'core.fsmonitor=false',
+        'status',
+        '--porcelain=v1',
+        '--untracked-files=all',
+        '--',
+        ...(options.paths || []),
+      ]
     case 'remote-url':
       return [...common, 'remote', 'get-url', 'origin']
+    case 'ls-remote':
+      return [...common, 'ls-remote', '--exit-code', 'origin', `refs/heads/${options.branchName}`]
+    case 'ls-tree':
+      return [
+        ...common,
+        'ls-tree',
+        '-r',
+        '--name-only',
+        options.revision || 'HEAD',
+        '--',
+        '.trellis',
+      ]
     case 'fetch':
       return [...common, 'fetch', '--no-tags', 'origin', options.branchName]
     case 'rev-list':
@@ -281,19 +319,6 @@ export function normalizeRemoteIdentity(rawValue, options = {}) {
   }
 }
 
-async function realDirectory(target, code, label) {
-  let stat
-  try {
-    stat = await fs.lstat(target)
-  } catch (error) {
-    throw new AgentError(code, `${label}不存在`, { cause: error })
-  }
-  if (!stat.isDirectory() || stat.isSymbolicLink()) {
-    throw new AgentError(code, `${label}必须是真实目录`)
-  }
-  return fs.realpath(target)
-}
-
 async function validateRepositoryRoot(repoPath, hooksDir) {
   if (typeof repoPath !== 'string' || !repoPath || repoPath.length > 4_096) {
     throw new AgentError(AGENT_ERROR_CODE.REPO_PATH_INVALID, '本地仓库路径无效')
@@ -322,17 +347,90 @@ async function validateRepositoryRoot(repoPath, hooksDir) {
   if (!pathEquals(selectedReal, topLevel)) {
     throw new AgentError(AGENT_ERROR_CODE.REPO_PATH_INVALID, '请选择 Git 仓库根目录，而不是子目录')
   }
-  for (const relative of ['.trellis', '.trellis/tasks', '.trellis/workspace']) {
-    const directory = await realDirectory(
-      path.join(topLevel, ...relative.split('/')),
-      AGENT_ERROR_CODE.MISSING_TRELLIS,
-      relative,
-    )
-    if (!isPathInside(topLevel, directory)) {
-      throw new AgentError(AGENT_ERROR_CODE.MISSING_TRELLIS, 'Trellis 工作区链接到了仓库外部')
+  return { root: topLevel, localRepoKey: normalizeLocalRepoKey(topLevel) }
+}
+
+export async function inspectGitProject({
+  repoPath,
+  branchName,
+  hooksDir,
+  allowFileRemote = false,
+  allowUnborn = false,
+}) {
+  await ensureHooksDirectory(hooksDir)
+  const repo = await validateRepositoryRoot(repoPath, hooksDir)
+  const state = await readRepositoryState(repo.root, hooksDir, { allowUnborn })
+  const remote = normalizeRemoteIdentity(state.remoteUrl, { allowFileRemote })
+  if (branchName != null) {
+    await validateBranch(repo.root, branchName, hooksDir)
+    if (state.currentBranch !== branchName) {
+      throw new AgentError(
+        AGENT_ERROR_CODE.BRANCH_MISMATCH,
+        `本地当前分支为 ${state.currentBranch || '未知'}，期望 ${branchName}`,
+      )
     }
   }
-  return { root: topLevel, localRepoKey: normalizeLocalRepoKey(topLevel) }
+  return {
+    root: repo.root,
+    localRepoKey: repo.localRepoKey,
+    branchName: state.currentBranch,
+    currentBranch: state.currentBranch,
+    head: state.head,
+    clean: state.clean,
+    dirtySummary: state.dirtySummary,
+    remoteUrl: state.remoteUrl,
+    remoteIdentityKey: remote.identityHash,
+  }
+}
+
+export async function readGitStatus({ repoPath, hooksDir, paths = [] }) {
+  await ensureHooksDirectory(hooksDir)
+  return runGit('status-paths', repoPath, { hooksDir, paths })
+}
+
+export async function readRemoteBranch({
+  repoPath,
+  branchName,
+  hooksDir,
+  timeoutMs = NETWORK_TIMEOUT_MS,
+}) {
+  await ensureHooksDirectory(hooksDir)
+  return runGit('ls-remote', repoPath, { hooksDir, branchName, timeoutMs })
+}
+
+export async function readHeadTrellisFiles({ repoPath, hooksDir }) {
+  await ensureHooksDirectory(hooksDir)
+  return runGit('ls-tree', repoPath, { hooksDir })
+}
+
+export async function readGitStatePath({ repoPath, hooksDir, marker }) {
+  await ensureHooksDirectory(hooksDir)
+  const result = await runGit('git-path', repoPath, { hooksDir, marker })
+  if (result.exitCode !== 0) {
+    throw new AgentError(AGENT_ERROR_CODE.GIT_FAILED, '无法解析本地 Git 状态目录')
+  }
+  const value = result.stdout.trim()
+  if (!value) {
+    throw new AgentError(AGENT_ERROR_CODE.GIT_FAILED, 'Git 状态标记路径为空')
+  }
+  return path.resolve(repoPath, value)
+}
+
+export async function compareRemoteBranch({
+  repoPath,
+  branchName,
+  hooksDir,
+  timeoutMs = NETWORK_TIMEOUT_MS,
+}) {
+  await ensureHooksDirectory(hooksDir)
+  const fetchResult = await runGit('fetch', repoPath, {
+    hooksDir,
+    branchName,
+    timeoutMs,
+  })
+  if (fetchResult.exitCode !== 0) return { ok: false, fetchResult, countsResult: null }
+  const countsResult = await runGit('rev-list', repoPath, { hooksDir })
+  return { ok: countsResult.exitCode === 0, fetchResult, countsResult }
 }
 
 async function ensureHooksDirectory(hooksDir) {
@@ -369,7 +467,7 @@ async function validateBranch(repoPath, branchName, hooksDir) {
   return branch
 }
 
-async function readRepositoryState(repoPath, hooksDir) {
+async function readRepositoryState(repoPath, hooksDir, { allowUnborn = false } = {}) {
   const statusResult = await runGit('status', repoPath, { hooksDir })
   if (statusResult.exitCode !== 0) {
     throw new AgentError(AGENT_ERROR_CODE.GIT_FAILED, '无法检查本地工作区状态')
@@ -390,11 +488,13 @@ async function readRepositoryState(repoPath, hooksDir) {
       '本地仓库启用了 sparse checkout，Agent 拒绝同步',
     )
   }
-  const head = requireGitSuccess(
-    await runGit('head', repoPath, { hooksDir }),
-    AGENT_ERROR_CODE.GIT_FAILED,
-    '无法读取本地 HEAD',
-  )
+  const headResult = await runGit('head', repoPath, { hooksDir })
+  const head =
+    headResult.exitCode === 0
+      ? headResult.stdout.trim()
+      : allowUnborn
+        ? null
+        : requireGitSuccess(headResult, AGENT_ERROR_CODE.GIT_FAILED, '无法读取本地 HEAD')
   const remoteResult = await runGit('remote-url', repoPath, { hooksDir })
   if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) {
     throw new AgentError(AGENT_ERROR_CODE.REMOTE_MISSING, '本地仓库缺少 origin remote')

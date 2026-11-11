@@ -2,8 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pluginsDir = fileURLToPath(new URL('../plugins/', import.meta.url))
 const ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
@@ -12,6 +14,14 @@ function manifests() {
   return fs
     .readdirSync(pluginsDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+    .filter((entry) => {
+      const tracked = spawnSync('git', ['ls-files', '--', `plugins/${entry.name}`], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        shell: false,
+      })
+      return tracked.status === 0 && tracked.stdout.trim()
+    })
     .map((entry) => {
       const manifestPath = path.join(pluginsDir, entry.name, 'plugin.json')
       assert.ok(fs.existsSync(manifestPath), `${entry.name} 缺少 plugin.json`)

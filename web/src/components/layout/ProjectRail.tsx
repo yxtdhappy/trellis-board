@@ -2,18 +2,27 @@ import { useEffect, useMemo, useState } from 'react'
 import { FolderGit2, LockKeyhole, Plus, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { ProjectOnboardingDialog } from '@/features/board/dialogs/ProjectOnboardingDialog'
 
 type Project = {
   id: string
   name: string
+  teamId?: string | null
   syncBranch?: string | null
   teamName?: string | null
+  taskSpaces?: {
+    id: string
+    branchName: string
+    readOnly?: boolean
+    status?: string
+  }[]
 }
 
 type LiveSyncStatus = 'pending' | 'syncing' | 'ready' | 'error'
 
 type LocalAssociation = {
   projectId: string
+  taskSpaceId: string
   repoPath: string
   displayName: string
   branchName: string
@@ -42,9 +51,14 @@ type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<
 
 type ProjectRailProps = {
   projects: Project[]
+  teams: { id: string; name: string }[]
   current: string
+  teamId: string
   onSelect: (id: string) => void
+  currentTaskSpace: string
+  onSelectTaskSpace: (taskSpaceId: string) => void
   onManage: () => void
+  manageEnabled?: boolean
   syncLabel: string
   syncLive: boolean
   refreshing: boolean
@@ -67,6 +81,7 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
   const record = value as Record<string, unknown>
   if (
     typeof record.projectId !== 'string' ||
+    typeof record.taskSpaceId !== 'string' ||
     typeof record.repoPath !== 'string' ||
     typeof record.displayName !== 'string' ||
     typeof record.branchName !== 'string' ||
@@ -76,6 +91,7 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
   }
   return {
     projectId: record.projectId,
+    taskSpaceId: record.taskSpaceId,
     repoPath: record.repoPath,
     displayName: record.displayName,
     branchName: record.branchName,
@@ -114,18 +130,7 @@ function associationErrorMessage(error: unknown): string {
   return message.trim() || '本地项目关联失败，请检查仓库和同步分支后重试。'
 }
 
-function projectAssociationView(
-  association: LocalAssociation | undefined,
-  associating: boolean,
-): ProjectAssociationView {
-  if (associating) {
-    return {
-      label: '关联中 · 正在校验本地仓库',
-      detail: null,
-      dotClassName: 'bg-chart-3 animate-pulse',
-      textClassName: 'text-muted-foreground',
-    }
-  }
+function projectAssociationView(association: LocalAssociation | undefined): ProjectAssociationView {
   if (!association) {
     return {
       label: '未关联 · 关联本地仓库',
@@ -194,9 +199,14 @@ function projectAssociationView(
 
 export function ProjectRail({
   projects,
+  teams,
   current,
+  teamId,
   onSelect,
+  currentTaskSpace,
+  onSelectTaskSpace,
   onManage,
+  manageEnabled = true,
   syncLabel,
   syncLive,
   refreshing,
@@ -204,9 +214,11 @@ export function ProjectRail({
 }: ProjectRailProps) {
   const invoke = useMemo(() => tauriInvoke(), [])
   const [associations, setAssociations] = useState<Map<string, LocalAssociation>>(() => new Map())
-  const [associating, setAssociating] = useState<string | null>(null)
   const [associationError, setAssociationError] = useState('')
   const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus | null>(null)
+  const [onboardingOpen, setOnboardingOpen] = useState(false)
+  const [onboardingProject, setOnboardingProject] = useState<unknown>(null)
+  const [inspectingProject, setInspectingProject] = useState(false)
 
   useEffect(() => {
     if (!invoke) return
@@ -217,7 +229,7 @@ export function ProjectRail({
         const result = await currentInvoke('list_local_associations')
         if (cancelled) return
         setAssociations(
-          new Map(normalizeAssociations(result).map((item) => [item.projectId, item])),
+          new Map(normalizeAssociations(result).map((item) => [item.taskSpaceId, item])),
         )
         setAssociationError('')
       } catch (error) {
@@ -247,50 +259,52 @@ export function ProjectRail({
     }
   }, [invoke])
 
-  async function associate(project: Project) {
-    if (!invoke || associating) return
-    if (!project.syncBranch) {
-      const message = '服务端未返回项目同步分支，请刷新后重试。'
-      setAssociationError(message)
-      toast.error(message)
-      return
-    }
+  async function startProjectOnboarding() {
+    if (!invoke || inspectingProject) return
     setAssociationError('')
-    setAssociating(project.id)
-    const toastId = toast.loading('正在关联本地项目…')
+    setInspectingProject(true)
     try {
-      const result = await invoke('associate_local_project', {
-        projectId: project.id,
-        syncBranch: project.syncBranch,
-      })
-      if (result == null) {
-        toast.dismiss(toastId)
-        return
-      }
-      const association = normalizeAssociation(result)
-      if (!association) {
-        throw new Error('sidecar 返回了无效的项目关联结果，请重试。')
-      }
-      setAssociations((currentMap) => {
-        const next = new Map(currentMap)
-        next.set(association.projectId, association)
-        return next
-      })
-      toast.success('本地项目关联成功，已有任务正在同步。', { id: toastId })
+      const inspected = await invoke('inspect_local_project')
+      if (inspected == null) return
+      setOnboardingProject(inspected)
+      setOnboardingOpen(true)
     } catch (error) {
       const message = associationErrorMessage(error)
       setAssociationError(message)
-      toast.error(message, { id: toastId })
+      toast.error(message)
     } finally {
-      setAssociating(null)
+      setInspectingProject(false)
     }
   }
+
+  const syncingAssociations = [...associations.values()].filter(
+    (association) => association.status === 'approved' && association.liveSyncStatus === 'syncing',
+  )
 
   return (
     <aside className="hidden w-[230px] shrink-0 flex-col gap-1 border-r border-border bg-sidebar px-2.5 py-3.5 lg:flex">
       <p className="px-2 pb-1 text-[10px] font-semibold tracking-[0.12em] text-muted-foreground">
         项目
       </p>
+      {invoke ? (
+        <button
+          type="button"
+          onClick={() => void startProjectOnboarding()}
+          disabled={inspectingProject}
+          className="mb-1 flex h-7.5 items-center gap-2 rounded-lg border border-dashed border-border px-2 text-left text-[11px] text-muted-foreground hover:border-primary/50 hover:text-foreground disabled:opacity-60"
+        >
+          <Plus className={inspectingProject ? 'size-3.5 animate-pulse' : 'size-3.5'} />
+          {inspectingProject ? '正在检查本地项目…' : '接入本地项目'}
+        </button>
+      ) : null}
+      {invoke && syncingAssociations.length ? (
+        <div
+          role="status"
+          className="mb-1 rounded-lg border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[10px] leading-4 text-amber-800 dark:text-amber-300"
+        >
+          正在同步任务，此时切换 Git 分支可能导致任务错位或污染，建议等待同步完成后再切换。
+        </div>
+      ) : null}
       <button
         type="button"
         onClick={() => onSelect('all')}
@@ -304,70 +318,106 @@ export function ProjectRail({
         全部项目
       </button>
       {projects.map((project) => {
-        const association = associations.get(project.id)
-        const isAssociating = associating === project.id
-        const view = invoke ? projectAssociationView(association, isAssociating) : null
+        const taskSpaces = project.taskSpaces || []
+        const activeTaskSpace =
+          current === project.id
+            ? taskSpaces.find((taskSpace) => taskSpace.id === currentTaskSpace) || taskSpaces[0]
+            : null
+        const association = activeTaskSpace
+          ? associations.get(activeTaskSpace.id)
+          : associations.get(currentTaskSpace)
+        const view = invoke ? projectAssociationView(association) : null
         return (
-          <div
-            key={project.id}
-            className={
-              current === project.id
-                ? 'flex items-center rounded-lg bg-sidebar-accent text-sidebar-accent-foreground'
-                : 'flex items-center rounded-lg hover:bg-sidebar-accent/60'
-            }
-          >
-            <button
-              type="button"
-              onClick={() => onSelect(project.id)}
-              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
-              title={project.name}
-              aria-busy={isAssociating}
+          <div key={project.id} className="flex flex-col">
+            <div
+              className={
+                current === project.id
+                  ? 'flex items-center rounded-lg bg-sidebar-accent text-sidebar-accent-foreground'
+                  : 'flex items-center rounded-lg hover:bg-sidebar-accent/60'
+              }
             >
-              <span
-                className={`size-1.5 shrink-0 rounded-full ${view?.dotClassName || 'bg-chart-3'}`}
-                aria-hidden="true"
-              />
-              <span className="min-w-0">
-                <span className="block truncate text-xs font-medium">{project.name}</span>
-                {view ? (
-                  <span
-                    className={`block truncate text-[9.5px] ${view.textClassName}`}
-                    title={view.detail || view.label}
-                    aria-live="polite"
-                  >
-                    {view.label}
-                    {view.detail ? <span className="sr-only">，详情：{view.detail}</span> : null}
-                  </span>
-                ) : null}
-              </span>
-            </button>
-            {invoke ? (
-              association?.status === 'approved' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onSelect(project.id)
+                  if (taskSpaces[0]) onSelectTaskSpace(taskSpaces[0].id)
+                }}
+                className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
+                title={project.name}
+              >
                 <span
-                  className="mr-1.5 flex size-6 shrink-0 items-center justify-center text-muted-foreground"
-                  title={view?.label || '本地已关联'}
-                >
-                  {association.readOnly ? (
-                    <LockKeyhole className="size-3.5" aria-hidden="true" />
-                  ) : (
-                    <FolderGit2 className="size-3.5" aria-hidden="true" />
-                  )}
+                  className={`size-1.5 shrink-0 rounded-full ${view?.dotClassName || 'bg-chart-3'}`}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-medium">{project.name}</span>
+                  {view ? (
+                    <span
+                      className={`block truncate text-[9.5px] ${view.textClassName}`}
+                      title={view.detail || view.label}
+                      aria-live="polite"
+                    >
+                      {view.label}
+                      {view.detail ? <span className="sr-only">，详情：{view.detail}</span> : null}
+                    </span>
+                  ) : null}
                 </span>
-              ) : (
-                <button
-                  type="button"
-                  className="mr-1.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
-                  aria-label={`${association ? '重新关联' : '关联'} ${project.name} 的本地 Git 仓库`}
-                  title={association ? '重新关联本地 Git 仓库' : '关联本地 Git 仓库'}
-                  disabled={associating !== null}
-                  onClick={() => void associate(project)}
-                >
-                  <FolderGit2
-                    className={isAssociating ? 'size-3.5 animate-pulse' : 'size-3.5'}
-                    aria-hidden="true"
-                  />
-                </button>
-              )
+              </button>
+              {invoke && activeTaskSpace ? (
+                association?.status === 'approved' ? (
+                  <span
+                    className="mr-1.5 flex size-6 shrink-0 items-center justify-center text-muted-foreground"
+                    title={view?.label || '本地已关联'}
+                  >
+                    {association.readOnly ? (
+                      <LockKeyhole className="size-3.5" aria-hidden="true" />
+                    ) : (
+                      <FolderGit2 className="size-3.5" aria-hidden="true" />
+                    )}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="mr-1.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                    aria-label={`${association ? '重新关联' : '关联'} ${project.name} ${activeTaskSpace.branchName} 的本地 Git 仓库`}
+                    title={association ? '重新关联本地 Git 仓库' : '关联本地 Git 仓库'}
+                    disabled={inspectingProject}
+                    onClick={() => void startProjectOnboarding()}
+                  >
+                    <FolderGit2
+                      className={inspectingProject ? 'size-3.5 animate-pulse' : 'size-3.5'}
+                      aria-hidden="true"
+                    />
+                  </button>
+                )
+              ) : null}
+            </div>
+            {current === project.id ? (
+              <div className="ml-5 flex flex-col border-l border-border/70 pl-1">
+                {taskSpaces.map((taskSpace) => {
+                  const branchAssociation = associations.get(taskSpace.id)
+                  const branchView = invoke ? projectAssociationView(branchAssociation) : null
+                  return (
+                    <button
+                      key={taskSpace.id}
+                      type="button"
+                      onClick={() => onSelectTaskSpace(taskSpace.id)}
+                      className={
+                        currentTaskSpace === taskSpace.id
+                          ? 'flex items-center gap-1.5 rounded-md bg-sidebar-accent/70 px-2 py-1 text-left text-[10px] font-medium text-foreground'
+                          : 'flex items-center gap-1.5 rounded-md px-2 py-1 text-left text-[10px] text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'
+                      }
+                      title={branchView?.label || taskSpace.branchName}
+                    >
+                      <span
+                        className={`size-1 shrink-0 rounded-full ${branchView?.dotClassName || 'bg-chart-3'}`}
+                        aria-hidden="true"
+                      />
+                      <span className="truncate">{taskSpace.branchName}</span>
+                    </button>
+                  )
+                })}
+              </div>
             ) : null}
           </div>
         )
@@ -382,7 +432,7 @@ export function ProjectRail({
         </p>
       ) : null}
 
-      {!invoke ? (
+      {!invoke && manageEnabled ? (
         <button
           type="button"
           onClick={onManage}
@@ -427,6 +477,25 @@ export function ProjectRail({
           {refreshing ? '正在扫描…' : '重新扫描仓库'}
         </Button>
       </div>
+      {invoke ? (
+        <ProjectOnboardingDialog
+          open={onboardingOpen}
+          onOpenChange={setOnboardingOpen}
+          inspection={onboardingProject}
+          teams={teams}
+          defaultTeamId={teamId === 'all' ? '' : teamId}
+          invoke={invoke}
+          onAssociated={(association) => {
+            setAssociations((currentMap) => {
+              const next = new Map(currentMap)
+              next.set(association.taskSpaceId, association)
+              return next
+            })
+            toast.success('本地项目已接入团队任务空间，正在同步任务。')
+            void onRefresh()
+          }}
+        />
+      ) : null}
     </aside>
   )
 }

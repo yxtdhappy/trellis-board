@@ -194,7 +194,7 @@ test('dirty、错分支、本地领先和缺失工作区都拒绝且不清理文
   }
 })
 
-test('sparse checkout、缺失 Trellis 工作区和不可达远端返回稳定错误', async () => {
+test('sparse checkout 和不可达远端返回稳定错误，任务同步不依赖 workspace', async () => {
   const repo = initRepository()
   try {
     const hooks = hooksDir(repo.base)
@@ -213,18 +213,14 @@ test('sparse checkout、缺失 Trellis 工作区和不可达远端返回稳定�
     )
     git(repo.local, ['config', 'core.sparseCheckout', 'false'])
     fs.rmSync(path.join(repo.local, '.trellis', 'workspace'), { recursive: true, force: true })
-    await assert.rejects(
-      () =>
-        inspectRepository({
-          repoPath: repo.local,
-          branchName: 'main',
-          hooksDir: hooks,
-          expectedRemoteIdentity: expected,
-          allowFileRemote: true,
-        }),
-      hasCode(AGENT_ERROR_CODE.MISSING_TRELLIS),
-    )
-    fs.mkdirSync(path.join(repo.local, '.trellis', 'workspace'), { recursive: true })
+    const inspected = await inspectRepository({
+      repoPath: repo.local,
+      branchName: 'main',
+      hooksDir: hooks,
+      expectedRemoteIdentity: expected,
+      allowFileRemote: true,
+    })
+    assert.equal(inspected.branchName, 'main')
     write(path.join(repo.local, '.trellis', 'workspace', '.keep'), 'workspace\n')
     git(repo.local, [
       'remote',

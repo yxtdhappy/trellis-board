@@ -105,6 +105,17 @@ export function normalizeProjectMembers(project = {}) {
 
 export function normalizeTeamProject(project = {}) {
   const id = project.id ?? project.repositoryId ?? project.repository_id ?? ''
+  const taskSpaces = Array.isArray(project.taskSpaces)
+    ? project.taskSpaces.map((taskSpace) => ({
+        ...taskSpace,
+        id: String(taskSpace?.id ?? ''),
+        projectId: String(taskSpace?.projectId ?? taskSpace?.project_id ?? id),
+        branchName: String(taskSpace?.branchName ?? taskSpace?.branch_name ?? ''),
+        revision: Number(taskSpace?.revision ?? 0),
+        indexedRevision: Number(taskSpace?.indexedRevision ?? taskSpace?.indexed_revision ?? 0),
+        readOnly: taskSpace?.readOnly === true,
+      }))
+    : []
   return {
     ...project,
     id: String(id),
@@ -123,14 +134,11 @@ export function normalizeTeamProject(project = {}) {
     archivedCount: Number(project.archivedCount ?? project.archived_count ?? 0),
     stale:
       boolean(project.stale) ||
-      ['stale', 'pending_push', 'needs_repair'].includes(project.syncStatus ?? project.sync_status),
+      ['stale', 'needs_repair'].includes(project.syncStatus ?? project.sync_status),
     lastError:
       project.lastError ?? project.last_error ?? project.syncError ?? project.sync_error ?? null,
-    lastFetchAt: project.lastFetchAt ?? project.last_fetch_at ?? null,
-    lastPushAt: project.lastPushAt ?? project.last_push_at ?? null,
-    scriptsSha256: project.trustedToolchainSha256 ?? project.trusted_task_toolchain_sha256 ?? null,
-    hooksStatus: project.hooksStatus ?? project.hooks_status ?? null,
     members: normalizeProjectMembers(project),
+    taskSpaces,
   }
 }
 
@@ -164,7 +172,10 @@ export function normalizeTeamTaskRow(row = {}) {
     taskVersion: taskVersion(row),
     assignmentVersion: assignmentVersion(row),
     projectId: String(row.projectId ?? row.project_id ?? ''),
+    taskSpaceId: String(row.taskSpaceId ?? row.task_space_id ?? ''),
     projectName: row.projectName ?? row.project_name ?? '',
+    branchName: row.branchName ?? row.branch_name ?? '',
+    taskSpaceRevision: Number(row.taskSpaceRevision ?? row.task_space_revision ?? 0),
     teamId: row.teamId ?? row.team_id ?? null,
     teamName: row.teamName ?? row.team_name ?? null,
     relativeDir,
@@ -245,26 +256,19 @@ export function normalizeAssignments(payload = {}) {
 }
 
 export function normalizeOperation(payload = {}) {
-  const operation = payload?.operation ?? payload?.gitOperation ?? payload?.git_operation ?? payload
+  const operation = payload?.operation ?? payload
   return {
     id: existingValue(operation, 'id', 'id') ?? null,
     status: existingValue(operation, 'status', 'status') ?? null,
     code: existingValue(operation, 'code', 'code') ?? null,
     error: existingValue(operation, 'error', 'error') ?? null,
-    operationType: existingValue(operation, 'operationType', 'operation_type') ?? null,
+    commandType: existingValue(operation, 'commandType', 'command_type') ?? null,
+    taskSpaceId: existingValue(operation, 'taskSpaceId', 'task_space_id') ?? null,
     taskKey:
       existingValue(operation, 'taskKey', 'task_key') ??
       operation?.result?.executionTaskKey ??
       null,
     projectId: existingValue(operation, 'projectId', 'project_id') ?? null,
-    localSha:
-      existingValue(operation, 'localSha', 'local_sha') ??
-      existingValue(operation, 'localCommitSha', 'local_commit_sha') ??
-      null,
-    remoteSha:
-      existingValue(operation, 'remoteSha', 'remote_sha') ??
-      existingValue(operation, 'remoteCommitSha', 'remote_commit_sha') ??
-      null,
     result: operation?.result ?? {},
     raw: operation,
   }
@@ -361,11 +365,7 @@ export function normalizeAuditEvent(row = {}) {
 
 export function canWriteProject(project = {}) {
   project = project || {}
-  if (
-    ['stale', 'pending_push', 'needs_repair', 'disabled', 'provisioning'].includes(
-      project.syncStatus,
-    )
-  ) {
+  if (['stale', 'needs_repair', 'disabled'].includes(project.syncStatus)) {
     return false
   }
   const capabilities = project.capabilities ?? project.permissions ?? project
@@ -413,6 +413,10 @@ export function buildTaskQuery(filters = {}, { limit = TEAM_PAGE_LIMIT, cursor =
     params.set(key, String(value))
   }
   add('teamId', filters.teamId && filters.teamId !== 'all' ? filters.teamId : null)
+  add(
+    'taskSpaceId',
+    filters.taskSpaceId && filters.taskSpaceId !== 'all' ? filters.taskSpaceId : null,
+  )
   add('scope', filters.scope === 'mine' ? 'mine' : 'all')
   if (filters.projectId && filters.projectId !== 'all') {
     add('projectIds', filters.projectId)
@@ -481,15 +485,17 @@ export function taskVersion(row = {}) {
 }
 
 export function isRetryableOperation(operation) {
-  return ['prepared', 'committed', 'pending_push'].includes(operation?.status)
+  return ['pending', 'delivered', 'running', 'failed'].includes(operation?.status)
 }
 
 export function isCompleteOperation(operation) {
-  return operation?.status === 'applied'
+  return ['succeeded', 'cancelled'].includes(operation?.status)
 }
 
 export function operationPollDelay(attempt, status) {
-  if (status === 'pending_push') return Math.min(8_000, 1_500 * (attempt + 1))
+  if (status === 'delivered' || status === 'running') {
+    return Math.min(8_000, 1_500 * (attempt + 1))
+  }
   return Math.min(4_000, 700 * 2 ** attempt)
 }
 

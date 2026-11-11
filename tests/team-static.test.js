@@ -9,6 +9,38 @@ import { createTeamRuntime } from '../server/team/http.js'
 const PUBLIC_ORIGIN = 'http://127.0.0.1:4319'
 const SILENT_LOGGER = { info() {}, warn() {}, error() {} }
 
+function read(relativePath) {
+  return fs.readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8')
+}
+
+test('Team runtime 只装配任务空间快照链路，不导入旧 Git 或实时覆盖层', () => {
+  const http = read('server/team/http.js')
+  for (const legacy of [
+    './git-manager.js',
+    './git-credentials.js',
+    './live-sync.js',
+    './projects.js',
+    './task-writes.js',
+    './task-index.js',
+  ]) {
+    assert.equal(http.includes(legacy), false, legacy)
+  }
+  for (const current of [
+    './gitless-board-service.js',
+    './task-space-service.js',
+    './task-snapshot-service.js',
+    './task-space-index.js',
+    './task-command-service.js',
+  ]) {
+    assert.equal(http.includes(current), true, current)
+  }
+  assert.match(http, /task-spaces\/preflight/)
+  assert.doesNotMatch(http, /detachAgent/)
+  assert.doesNotMatch(read('server/team/task-space-service.js'), /detachAgent/)
+  assert.doesNotMatch(http, /\bspawn\s*\(|\bexecFile\s*\(/)
+  assert.doesNotMatch(read('server/team/task-snapshot-service.js'), /\bgit\b/i)
+})
+
 function testConfig() {
   return {
     mode: 'team',
@@ -18,7 +50,6 @@ function testConfig() {
     publicOrigin: PUBLIC_ORIGIN,
     sessionTtlMs: 12 * 60 * 60 * 1000,
     agentStaleMs: 60_000,
-    gitPollMs: 60_000,
     cookieSecure: false,
     trustProxy: false,
     allowLocalGitRemotes: false,

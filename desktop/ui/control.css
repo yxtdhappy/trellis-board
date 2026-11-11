@@ -68,6 +68,56 @@ h1 {
   white-space: pre-line;
 }
 
+.diff-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.diff-grid section {
+  min-width: 0;
+}
+
+.diff-grid strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.diff-grid pre {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.06);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.source {
+  margin: 6px 0 0;
+  color: #6d6557;
+  font-size: 12px;
+}
+
+.review-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.review-choice select {
+  min-width: 150px;
+  padding: 7px 9px;
+  border: 1px solid #cfc7b8;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -131,6 +181,16 @@ button:disabled {
 
   .details {
     background: #27241d;
+  }
+
+  .source {
+    color: #aaa18f;
+  }
+
+  .diff-grid pre,
+  .review-choice select {
+    border-color: #4b4438;
+    background: #2c2922;
   }
 
   button {

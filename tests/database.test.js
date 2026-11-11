@@ -94,6 +94,23 @@ const EXPECTED_TABLES = [
   'repositories',
   'saved_view',
   'scan_cache',
+  'sync_active_agent',
+  'sync_agent_binding',
+  'sync_agent_cursor',
+  'sync_conflict',
+  'sync_conflict_backup',
+  'sync_file_audit',
+  'sync_project',
+  'sync_project_member',
+  'sync_project_team_access',
+  'sync_task_assignment',
+  'sync_task_command',
+  'sync_task_index',
+  'sync_task_index_tag',
+  'sync_task_space',
+  'sync_task_space_batch',
+  'sync_task_space_file',
+  'sync_task_space_scan_cache',
   'task_assignment',
   'task_dependency',
   'task_event',
@@ -110,12 +127,12 @@ const EXPECTED_TABLES = [
   'user_session',
 ]
 
-test('新库一次创建 schema v9 与实时同步、Git 凭据表和接入字段', () => {
+test('新库一次创建 schema v10，同时保留旧 Git 凭据表和任务空间表', () => {
   const workspace = makeWorkspace()
   let db
   try {
     db = openTestDatabase(workspace)
-    assert.equal(DATABASE_SCHEMA_VERSION, 9)
+    assert.equal(DATABASE_SCHEMA_VERSION, 10)
     assert.deepEqual(tableNames(db), EXPECTED_TABLES)
     const meta = Object.fromEntries(
       db
@@ -123,7 +140,7 @@ test('新库一次创建 schema v9 与实时同步、Git 凭据表和接入字�
         .all()
         .map((row) => [row.key, row.value]),
     )
-    assert.equal(meta.schema_version, '9')
+    assert.equal(meta.schema_version, '10')
     assert.equal(meta.legacy_json_imported_v1, '1')
     assert.equal(Number.isNaN(Date.parse(meta.execution_events_started_at)), false)
 
@@ -184,7 +201,7 @@ test('新库一次创建 schema v9 与实时同步、Git 凭据表和接入字�
   }
 })
 
-test('schema v9 重复打开保持幂等', () => {
+test('schema v10 重复打开保持幂等', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -194,7 +211,7 @@ test('schema v9 重复打开保持幂等', () => {
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '9',
+      '10',
     )
     assert.deepEqual(columnNames(db, 'team_project'), firstColumns)
     assert.deepEqual(tableNames(db), EXPECTED_TABLES)
@@ -204,7 +221,7 @@ test('schema v9 重复打开保持幂等', () => {
   }
 })
 
-test('schema v6 升级到 v9 前备份并补齐实时同步、凭据与接入字段', () => {
+test('schema v6 升级到 v10 前备份并补齐旧字段与任务空间表', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -245,7 +262,7 @@ test('schema v6 升级到 v9 前备份并补齐实时同步、凭据与接入字
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '9',
+      '10',
     )
     assert.ok(tableNames(db).includes('project_live_revision'))
     assert.ok(tableNames(db).includes('project_live_file'))
@@ -265,7 +282,7 @@ test('schema v6 升级到 v9 前备份并补齐实时同步、凭据与接入字
     )
     const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
     assert.equal(
-      backups.some((name) => name.startsWith('board.sqlite.pre-v9.')),
+      backups.some((name) => name.startsWith('board.sqlite.pre-v10.')),
       true,
     )
   } finally {
@@ -274,7 +291,7 @@ test('schema v6 升级到 v9 前备份并补齐实时同步、凭据与接入字
   }
 })
 
-test('schema v7 升级到 v9 前备份并补齐接入字段默认值', () => {
+test('schema v7 升级到 v10 前备份并补齐接入字段默认值', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -305,7 +322,7 @@ test('schema v7 升级到 v9 前备份并补齐接入字段默认值', () => {
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '9',
+      '10',
     )
     const migrated = db
       .prepare(`
@@ -319,7 +336,7 @@ test('schema v7 升级到 v9 前备份并补齐接入字段默认值', () => {
     assert.equal(migrated.bootstrap_lead_trellis_dev_id, null)
     const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
     assert.equal(
-      backups.some((name) => name.startsWith('board.sqlite.pre-v9.')),
+      backups.some((name) => name.startsWith('board.sqlite.pre-v10.')),
       true,
     )
   } finally {
@@ -328,7 +345,7 @@ test('schema v7 升级到 v9 前备份并补齐接入字段默认值', () => {
   }
 })
 
-test('schema v8 升级到 v9 回填归档时间并建立归档排序索引', () => {
+test('schema v8 升级到 v10 回填归档时间并建立归档排序索引', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -388,7 +405,7 @@ test('schema v8 升级到 v9 回填归档时间并建立归档排序索引', () 
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '9',
+      '10',
     )
     assert.equal(
       db
@@ -410,7 +427,7 @@ test('schema v8 升级到 v9 回填归档时间并建立归档排序索引', () 
     )
     const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
     assert.equal(
-      backups.some((name) => name.startsWith('board.sqlite.pre-v9.')),
+      backups.some((name) => name.startsWith('board.sqlite.pre-v10.')),
       true,
     )
   } finally {

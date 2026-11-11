@@ -11,9 +11,34 @@ description = "仅本地登录页通过 stdin 向 sidecar 提交账号密码。"
 commands.allow = ["desktop_login"]
 
 [[permission]]
-identifier = "allow-associate-local-project"
-description = "当前 Board origin 可选择本地 Git 仓库并请求关联服务端项目。"
-commands.allow = ["associate_local_project"]
+identifier = "allow-inspect-local-project"
+description = "当前 Board origin 可选择本地 Git 仓库并执行只读项目预检。"
+commands.allow = ["inspect_local_project"]
+
+[[permission]]
+identifier = "allow-initialize-pending-project"
+description = "当前 Board origin 只能初始化用户刚刚选择的本地项目。"
+commands.allow = ["initialize_pending_project"]
+
+[[permission]]
+identifier = "allow-check-pending-project-push"
+description = "当前 Board origin 只能检查用户刚刚选择的本地项目首次推送状态。"
+commands.allow = ["check_pending_project_push"]
+
+[[permission]]
+identifier = "allow-preflight-pending-project"
+description = "当前 Board origin 只能只读预检用户刚刚选择的本地项目，不得建立绑定。"
+commands.allow = ["preflight_pending_project"]
+
+[[permission]]
+identifier = "allow-cancel-pending-project"
+description = "当前 Board origin 只能清除用户刚刚选择的待接入项目路径。"
+commands.allow = ["cancel_pending_project"]
+
+[[permission]]
+identifier = "allow-associate-pending-project"
+description = "当前 Board origin 只能接入用户刚刚选择并完成预检的本地项目。"
+commands.allow = ["associate_pending_project"]
 
 [[permission]]
 identifier = "allow-list-local-associations"
@@ -32,8 +57,18 @@ commands.allow = ["live_control_pending"]
 
 [[permission]]
 identifier = "allow-live-control-decide"
-description = "本地实时同步控制窗口提交责任人确认动作。"
+description = "本地实时同步控制窗口提交任务冲突处理动作。"
 commands.allow = ["live_control_decide"]
+
+[[permission]]
+identifier = "allow-live-control-diff"
+description = "本地实时同步控制窗口读取冲突任务的本地与服务端内容。"
+commands.allow = ["live_control_diff"]
+
+[[permission]]
+identifier = "allow-live-control-initial"
+description = "本地实时同步控制窗口处理已经明确接入后的首次同步差异。"
+commands.allow = ["live_control_initial"]
 
 [[permission]]
 identifier = "allow-live-control-restore"

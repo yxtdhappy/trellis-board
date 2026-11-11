@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { AGENT_PROTOCOL_VERSION } from '../server/team/agents.js'
+import { AGENT_PROTOCOL_VERSION } from '../server/team/sync-agent-service.js'
 import { createUser } from '../server/team/auth.js'
 import { createTeamRuntime } from '../server/team/http.js'
 import { setUserTeams } from '../server/team/teams.js'
@@ -26,7 +26,6 @@ function testConfig() {
     publicOrigin: PUBLIC_ORIGIN,
     sessionTtlMs: 12 * 60 * 60 * 1000,
     agentStaleMs: 60_000,
-    gitPollMs: 60_000,
     cookieSecure: false,
     trustProxy: false,
     allowLocalGitRemotes: false,

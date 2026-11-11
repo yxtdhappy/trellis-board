@@ -13,15 +13,19 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { fetchTaskSpaceAssignees, type TaskSpaceAssignee } from '@/api/board'
 import { normalizeTaskSlug, slugifyTaskTitle, TASK_SLUG_PATTERN } from '@shared/slug.js'
 import { SelectField } from '../SelectField'
 
 type CreateTaskDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
-  projects: { id: string; name: string }[]
+  projects: {
+    id: string
+    name: string
+    taskSpaces?: { id: string; branchName: string }[]
+  }[]
   defaultProjectId: string
-  assignees: string[]
   onCreate: (payload: Record<string, unknown>) => Promise<void>
 }
 
@@ -30,19 +34,19 @@ export function CreateTaskDialog({
   onOpenChange,
   projects,
   defaultProjectId,
-  assignees,
   onCreate,
 }: CreateTaskDialogProps) {
   const [projectId, setProjectId] = useState(
     defaultProjectId === 'all' ? projects[0]?.id || '' : defaultProjectId,
   )
+  const [taskSpaceId, setTaskSpaceId] = useState('')
   const [title, setTitle] = useState('')
   const [slug, setSlug] = useState('')
   const [manualSlug, setManualSlug] = useState(false)
   const [description, setDescription] = useState('')
-  const [assignee, setAssignee] = useState('')
+  const [assigneeUserId, setAssigneeUserId] = useState('')
+  const [taskAssignees, setTaskAssignees] = useState<TaskSpaceAssignee[]>([])
   const [priority, setPriority] = useState('P1')
-  const [branch, setBranch] = useState('')
   const [message, setMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -60,6 +64,42 @@ export function CreateTaskDialog({
     setProjectId((current) => (projects.some((project) => project.id === current) ? current : pick))
   }, [open, projects, defaultProjectId])
 
+  const selectedProject = projects.find((project) => project.id === projectId)
+  const taskSpaces = selectedProject?.taskSpaces || []
+
+  useEffect(() => {
+    if (!open) return
+    if (taskSpaces.some((taskSpace) => taskSpace.id === taskSpaceId)) return
+    setTaskSpaceId(taskSpaces[0]?.id || '')
+    setAssigneeUserId('')
+  }, [open, taskSpaceId, taskSpaces])
+
+  useEffect(() => {
+    if (!open || !taskSpaceId) {
+      setTaskAssignees([])
+      setAssigneeUserId('')
+      return
+    }
+    let active = true
+    fetchTaskSpaceAssignees(taskSpaceId)
+      .then((values) => {
+        if (!active) return
+        setTaskAssignees(values)
+        setAssigneeUserId((current) =>
+          values.some((value) => value.userId === current) ? current : '',
+        )
+      })
+      .catch((error) => {
+        if (active) {
+          setTaskAssignees([])
+          setMessage(error instanceof Error ? error.message : '无法读取项目负责人')
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [open, taskSpaceId])
+
   const suggestedSlug = useMemo(
     () => normalizeTaskSlug(slug) || slugifyTaskTitle(title),
     [slug, title],
@@ -72,11 +112,15 @@ export function CreateTaskDialog({
       setMessage('请选择项目')
       return
     }
+    if (!taskSpaceId) {
+      setMessage('请选择项目分支任务空间')
+      return
+    }
     if (!title.trim()) {
       setMessage('请填写任务标题')
       return
     }
-    if (!assignee.trim()) {
+    if (!assigneeUserId) {
       setMessage('请选择项目成员作为负责人')
       return
     }
@@ -92,20 +136,19 @@ export function CreateTaskDialog({
     setSubmitting(true)
     try {
       await onCreate({
-        repositoryId: projectId,
+        taskSpaceId,
         title: title.trim(),
         description,
-        assignee: assignee.trim(),
+        assigneeUserId,
         priority,
         slug: finalSlug,
-        baseBranch: branch.trim() || undefined,
         idempotencyKey: crypto.randomUUID(),
       })
       onOpenChange(false)
       setTitle('')
       setSlug('')
       setDescription('')
-      setMessage('任务已创建，状态保持 planning；请继续补齐 PRD 并完成规划评审。')
+      setMessage('创建命令已发送，目标客户端执行并同步成功后会出现在任务列表。')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '创建失败')
     } finally {
@@ -135,6 +178,19 @@ export function CreateTaskDialog({
               />
             </div>
             <div className="flex flex-col gap-1.5">
+              <Label htmlFor="create-task-space">共享分支任务空间</Label>
+              <SelectField
+                id="create-task-space"
+                value={taskSpaceId}
+                placeholder={taskSpaces.length ? '请选择分支' : '该项目还没有任务空间'}
+                options={taskSpaces.map((taskSpace) => ({
+                  value: taskSpace.id,
+                  label: taskSpace.branchName,
+                }))}
+                onChange={setTaskSpaceId}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
               <Label htmlFor="create-title">任务标题</Label>
               <Input
                 id="create-title"
@@ -148,13 +204,13 @@ export function CreateTaskDialog({
                 <Label htmlFor="create-assignee">负责人</Label>
                 <SelectField
                   id="create-assignee"
-                  value={assignee}
+                  value={assigneeUserId}
                   placeholder="请选择负责人"
-                  options={assignees.map((name) => ({
-                    value: name,
-                    label: name,
+                  options={taskAssignees.map((member) => ({
+                    value: member.userId,
+                    label: `${member.displayName || member.username}${member.online ? ' · 在线' : ' · 离线'}`,
                   }))}
-                  onChange={setAssignee}
+                  onChange={setAssigneeUserId}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -189,15 +245,6 @@ export function CreateTaskDialog({
                 rows={3}
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="create-branch">分支</Label>
-              <Input
-                id="create-branch"
-                value={branch}
-                placeholder="使用 Trellis 默认分支"
-                onChange={(event) => setBranch(event.target.value)}
               />
             </div>
             {message ? (

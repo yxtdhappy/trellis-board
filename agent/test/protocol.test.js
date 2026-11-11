@@ -60,21 +60,22 @@ test('协议响应兼容 data 包装并验证命令字段', () => {
     data: {
       agentId: 'agent-1',
       credential: 'x'.repeat(32),
-      protocolVersion: 2,
+      protocolVersion: 3,
       teams: [{ id: 'team-1', name: '团队一', role: 'member' }],
     },
   })
   assert.equal(enroll.agentId, 'agent-1')
-  assert.equal(enroll.protocolVersion, 2)
+  assert.equal(enroll.protocolVersion, 3)
   assert.deepEqual(enroll.teams, [{ id: 'team-1', name: '团队一', role: 'member' }])
 
   const heartbeat = parseHeartbeatResponse({
     data: {
-      protocolVersion: 2,
+      protocolVersion: 3,
       minimumAgentVersion: '0.1.0',
       bindings: [
         {
           bindingId: 'binding-1',
+          taskSpaceId: 'space-1',
           projectId: 'project-1',
           localRepoKey: 'a'.repeat(64),
           status: 'approved',
@@ -85,6 +86,7 @@ test('协议响应兼容 data 包装并验证命令字段', () => {
   })
   assert.equal(heartbeat.compatible, true)
   assert.equal(heartbeat.bindings[0].id, 'binding-1')
+  assert.equal(heartbeat.bindings[0].taskSpaceId, 'space-1')
   assert.equal(heartbeat.bindings[0].readOnly, false)
 
   const command = validateCommand({
@@ -92,7 +94,8 @@ test('协议响应兼容 data 包装并验证命令字段', () => {
     bindingId: 'binding-1',
     type: 'sync_branch',
     payload: {
-      protocolVersion: 2,
+      protocolVersion: 3,
+      taskSpaceId: 'space-1',
       projectId: 'project-1',
       branchName: 'main',
       reason: 'binding_approved',

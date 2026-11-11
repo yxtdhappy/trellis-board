@@ -8,8 +8,7 @@ import { databaseFile as defaultDatabaseFile, dataDir as defaultDataDir } from '
 import { createBoardEventService } from '../board-events.js'
 import { openDatabase } from '../database.js'
 import { STAGE_IDS } from '../metadata.js'
-import { createAgentEventService } from './agent-events.js'
-import { createAgentService } from './agents.js'
+import { createAgentEventStream } from './agent-event-stream.js'
 import { appendAuditEvent, listAuditEvents } from './audit.js'
 import { createDesktopAuthService } from './desktop-auth.js'
 import { diagnosticError } from './error-diagnostics.js'
@@ -28,13 +27,15 @@ import {
   sessionCookie,
   updateUserAdmin,
 } from './auth.js'
-import { createBoardService } from './board.js'
 import { ERROR_CODES, errorPayload, teamError } from './errors.js'
-import { createGitCredentialService } from './git-credentials.js'
-import { createGitManager } from './git-manager.js'
-import { createLiveSyncService } from './live-sync.js'
-import { CAPABILITIES, authorizeProject, readableProjectIds, roleCanWrite } from './permissions.js'
-import { createProjectService } from './projects.js'
+import { createGitlessBoardService } from './gitless-board-service.js'
+import { CAPABILITIES, roleCanWrite } from './permissions.js'
+import { createSyncAgentService } from './sync-agent-service.js'
+import { createTaskCommandService } from './task-command-service.js'
+import { createTaskSnapshotBackupService } from './task-snapshot-backup.js'
+import { createTaskSnapshotService } from './task-snapshot-service.js'
+import { createTaskSpaceIndex } from './task-space-index.js'
+import { createTaskSpaceService } from './task-space-service.js'
 import {
   TEAM_ROLES,
   createTeam,
@@ -47,8 +48,6 @@ import {
   updateTeam,
   validateTeamAssignments,
 } from './teams.js'
-import { createTaskIndex } from './task-index.js'
-import { createTaskWriteService } from './task-writes.js'
 import {
   authorizeWorkspaceTemplate,
   publicWorkspaceTemplateManifest,
@@ -476,18 +475,27 @@ function runtimeProject(project, actor) {
     actor?.systemAdmin ||
     actor?.teams?.some((team) => team.id === project.teamId && team.role === TEAM_ROLES.ADMIN),
   )
+  const roles = (project.taskSpaces || []).map((taskSpace) => taskSpace.role).filter(Boolean)
+  const role = roles.includes('lead')
+    ? 'lead'
+    : roles.includes('member')
+      ? 'member'
+      : roles.includes('team_admin')
+        ? 'team_admin'
+        : roles[0] || null
   return {
     id: project.id,
     teamId: project.teamId || null,
     teamName: project.teamName || null,
     name: project.name,
     syncStatus: project.syncStatus,
-    syncBranch: project.syncBranch,
-    role: project.role,
+    syncBranch: project.taskSpaces?.[0]?.branchName || project.syncBranch || null,
+    role,
+    taskSpaces: project.taskSpaces || [],
     boardVersion: project.boardVersion || null,
     stale: Boolean(project.stale),
     lastError: project.lastError || null,
-    capabilities: projectCapabilities(project.role, {
+    capabilities: projectCapabilities(role, {
       systemAdmin: Boolean(actor?.systemAdmin),
       teamAdmin,
     }),
@@ -508,15 +516,13 @@ function createRequestHandler({
   config,
   db,
   boardService,
-  projectService,
-  gitManager,
-  credentialService,
-  taskIndex,
-  taskWrites,
+  taskSpaces,
+  taskSnapshots,
+  taskSpaceIndex,
+  taskCommands,
   agentService,
   agentEvents,
   boardEvents,
-  liveSync,
   desktopAuth,
   publicDir,
   logger,
@@ -690,37 +696,88 @@ function createRequestHandler({
       sendJson(response, 200, agentService.heartbeat(agent, body))
       return true
     }
-    if (pathname === '/api/agent/live-changes/preflight' && request.method === 'POST') {
-      const body = await readJsonBody(request, MAX_LIVE_BATCH_BYTES)
-      sendJson(response, 200, liveSync.preflight(agent, body))
+    if (pathname === '/api/agent/task-spaces/preflight' && request.method === 'POST') {
+      const body = await readJsonBody(request)
+      sendJson(response, 200, taskSpaces.preflight(agent.userId, body))
       return true
     }
-    if (pathname === '/api/agent/live-changes' && request.method === 'POST') {
-      const body = await readJsonBody(request, MAX_LIVE_BATCH_BYTES)
-      sendJson(response, 200, liveSync.applyChanges(agent, body))
+    if (pathname === '/api/agent/task-spaces/resolve' && request.method === 'POST') {
+      const body = await readJsonBody(request)
+      sendJson(response, 200, taskSpaces.resolve(agent.userId, body))
       return true
     }
-    if (pathname === '/api/agent/live-files' && request.method === 'GET') {
+    if (pathname === '/api/agent/task-spaces/attach' && request.method === 'POST') {
+      const body = await readJsonBody(request, MAX_LIVE_BATCH_BYTES)
+      sendJson(response, 201, taskSpaces.attach(agent.userId, agent.id, body))
+      return true
+    }
+    const snapshotMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/snapshot$/)
+    if (snapshotMatch && request.method === 'GET') {
       sendJson(
         response,
         200,
-        liveSync.listFiles(agent, {
-          projectId: url.searchParams.get('projectId'),
+        taskSnapshots.snapshot(agent, snapshotMatch[0], {
           afterRevision: url.searchParams.get('afterRevision'),
         }),
       )
       return true
     }
-    if (pathname === '/api/agent/live-cursor' && request.method === 'PUT') {
+    const filesMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/files$/)
+    if (filesMatch && request.method === 'GET') {
+      sendJson(
+        response,
+        200,
+        taskSnapshots.directorySnapshot(agent, filesMatch[0], url.searchParams.get('taskDir')),
+      )
+      return true
+    }
+    const preflightMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/preflight$/)
+    if (preflightMatch && request.method === 'POST') {
+      const body = await readJsonBody(request, MAX_LIVE_BATCH_BYTES)
+      sendJson(response, 200, taskSnapshots.preflight(agent, preflightMatch[0], body))
+      return true
+    }
+    const changesMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/changes$/)
+    if (changesMatch && request.method === 'POST') {
+      const body = await readJsonBody(request, MAX_LIVE_BATCH_BYTES)
+      const result = taskSnapshots.applyChanges(agent, changesMatch[0], body)
+      sendJson(response, result.status || 200, result)
+      return true
+    }
+    const cursorMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/cursor$/)
+    if (cursorMatch && request.method === 'PUT') {
       const body = await readJsonBody(request)
-      sendJson(response, 200, liveSync.writeCursor(agent, body))
+      sendJson(response, 200, taskSnapshots.writeCursor(agent, cursorMatch[0], body))
+      return true
+    }
+    const conflictsMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/conflicts$/)
+    if (conflictsMatch && request.method === 'GET') {
+      sendJson(response, 200, {
+        conflicts: taskSnapshots.listConflicts(agent, conflictsMatch[0]),
+      })
+      return true
+    }
+    const conflictResolveMatch = routeMatch(
+      pathname,
+      /^\/api\/agent\/task-spaces\/([^/]+)\/conflicts\/([^/]+)\/resolve$/,
+    )
+    if (conflictResolveMatch && request.method === 'POST') {
+      const body = await readJsonBody(request, MAX_LIVE_BATCH_BYTES)
+      sendJson(
+        response,
+        200,
+        taskSnapshots.resolveConflict(
+          agent,
+          conflictResolveMatch[0],
+          conflictResolveMatch[1],
+          body,
+        ),
+      )
       return true
     }
     if (pathname === '/api/agent/events' && request.method === 'GET') {
-      agentEvents.openStream({
+      agentEvents.open({
         agent,
-        teamId: url.searchParams.get('teamId'),
-        lastEventId: request.headers['last-event-id'],
         response,
       })
       return true
@@ -732,25 +789,15 @@ function createRequestHandler({
         '命令长轮询已移除，请升级 Agent 并使用 GET /api/agent/events',
       )
     }
+    const startMatch = routeMatch(pathname, /^\/api\/agent\/commands\/([^/]+)\/start$/)
+    if (startMatch && request.method === 'POST') {
+      sendJson(response, 200, taskCommands.start(agent.id, startMatch[0]))
+      return true
+    }
     const resultMatch = routeMatch(pathname, /^\/api\/agent\/commands\/([^/]+)\/result$/)
     if (resultMatch && request.method === 'POST') {
       const body = await readJsonBody(request)
-      sendJson(response, 200, agentService.submitCommandResult(agent, resultMatch[0], body))
-      return true
-    }
-    if (pathname === '/api/agent/event-cursor' && request.method === 'GET') {
-      sendJson(
-        response,
-        200,
-        agentService.readEventCursor(agent, {
-          teamId: url.searchParams.get('teamId'),
-        }),
-      )
-      return true
-    }
-    if (pathname === '/api/agent/event-cursor' && request.method === 'PUT') {
-      const body = await readJsonBody(request)
-      sendJson(response, 200, agentService.writeEventCursor(agent, body))
+      sendJson(response, 200, taskCommands.complete(agent, resultMatch[0], body))
       return true
     }
     return false
@@ -973,84 +1020,14 @@ function createRequestHandler({
     if (pathname === '/api/admin/projects' && request.method === 'GET') {
       const teamId = requireTeamAdmin(db, actor, url.searchParams.get('teamId'))
       sendJson(response, 200, {
-        projects: projectService.listAll(actor, { teamId }),
+        projects: taskSpaces.listAll(actor, { teamId }),
       })
       return true
     }
-    if (pathname === '/api/admin/git-credentials' && request.method === 'GET') {
-      const teamId = requireTeamAdmin(db, actor, url.searchParams.get('teamId'))
-      sendJson(response, 200, {
-        credentials: credentialService.list(actor, teamId),
-      })
-      return true
-    }
-    if (pathname === '/api/admin/git-credentials' && request.method === 'POST') {
-      const body = await readJsonBody(request)
-      requireTeamAdmin(db, actor, body.teamId)
-      sendJson(response, 201, {
-        credential: credentialService.create(actor, body),
-      })
-      return true
-    }
-    const credentialMatch = routeMatch(pathname, /^\/api\/admin\/git-credentials\/([^/]+)$/)
-    if (credentialMatch && request.method === 'PATCH') {
-      const body = await readJsonBody(request)
-      sendJson(response, 200, {
-        credential: credentialService.update(actor, credentialMatch[0], body),
-      })
-      return true
-    }
-    if (credentialMatch && request.method === 'DELETE') {
-      await readJsonBody(request)
-      sendJson(response, 200, credentialService.remove(actor, credentialMatch[0]))
-      return true
-    }
-    if (pathname === '/api/admin/projects/probe' && request.method === 'POST') {
-      const body = await readJsonBody(request)
-      requireTeamAdmin(db, actor, body.teamId)
-      sendJson(response, 200, await projectService.probeRemote(actor, body))
-      return true
-    }
-    if (pathname === '/api/admin/git-ssh-hosts/trust' && request.method === 'POST') {
-      const body = await readJsonBody(request)
-      sendJson(response, 200, gitManager.confirmSshHost(actor, body.challengeId))
-      return true
-    }
-    if (pathname === '/api/admin/projects' && request.method === 'POST') {
-      const body = await readJsonBody(request)
-      requireTeamAdmin(db, actor, body.teamId)
-      sendJson(response, 201, await projectService.connect(actor, body))
-      return true
-    }
-    const projectCredentialMatch = routeMatch(
-      pathname,
-      /^\/api\/admin\/projects\/([^/]+)\/credential$/,
-    )
-    if (projectCredentialMatch && request.method === 'PUT') {
-      const body = await readJsonBody(request)
-      sendJson(
-        response,
-        200,
-        await projectService.changeCredential(actor, projectCredentialMatch[0], body),
-      )
-      return true
-    }
-    const projectAction = routeMatch(
-      pathname,
-      /^\/api\/admin\/projects\/([^/]+)\/(approve|repair|disable)$/,
-    )
+    const projectAction = routeMatch(pathname, /^\/api\/admin\/projects\/([^/]+)\/disable$/)
     if (projectAction && request.method === 'POST') {
-      const [projectId, action] = projectAction
-      const body = await readJsonBody(request)
-      let result
-      if (action === 'approve') {
-        result = await projectService.approve(actor, { ...body, projectId })
-      } else if (action === 'repair') {
-        result = await projectService.repair(actor, projectId)
-      } else {
-        result = await projectService.disable(actor, { ...body, projectId })
-      }
-      sendJson(response, 200, result)
+      const [projectId] = projectAction
+      sendJson(response, 200, taskSpaces.disableProject(actor, projectId))
       return true
     }
     if (pathname === '/api/admin/agents' && request.method === 'GET') {
@@ -1090,29 +1067,17 @@ function createRequestHandler({
   async function handleProjects(request, response, url) {
     const { pathname } = url
     const actor = requireActor(request)
-    const refreshMatch = routeMatch(pathname, /^\/api\/projects\/([^/]+)\/refresh$/)
-    if (refreshMatch && request.method === 'POST') {
-      const body = await readJsonBody(request)
-      sendJson(
-        response,
-        200,
-        await projectService.refresh(actor, refreshMatch[0], {
-          force: body.force === true,
-        }),
-      )
-      return true
-    }
     const membersMatch = routeMatch(pathname, /^\/api\/projects\/([^/]+)\/members$/)
     if (membersMatch && request.method === 'GET') {
       sendJson(response, 200, {
-        members: projectService.listVisibleMembers(actor, membersMatch[0]),
+        members: taskSpaces.listVisibleMembers(actor, membersMatch[0]),
       })
       return true
     }
     if (membersMatch && request.method === 'PUT') {
       const body = await readJsonBody(request)
       sendJson(response, 200, {
-        members: await projectService.upsertMember(actor, {
+        member: taskSpaces.upsertMember(actor, {
           ...body,
           projectId: membersMatch[0],
         }),
@@ -1122,7 +1087,7 @@ function createRequestHandler({
     if (membersMatch && request.method === 'DELETE') {
       const userId = String(url.searchParams.get('userId') || '').trim()
       sendJson(response, 200, {
-        members: await projectService.removeMember(actor, {
+        members: taskSpaces.removeMember(actor, {
           projectId: membersMatch[0],
           userId,
         }),
@@ -1132,7 +1097,8 @@ function createRequestHandler({
     const auditMatch = routeMatch(pathname, /^\/api\/projects\/([^/]+)\/audit$/)
     if (auditMatch && request.method === 'GET') {
       const projectId = auditMatch[0]
-      authorizeProject(actor, projectId, CAPABILITIES.VIEW_AUDIT, { db })
+      const project = taskSpaces.readProject(projectId, actor)
+      if (!project) throw teamError(404, ERROR_CODES.NOT_FOUND, '项目不存在')
       const events = listAuditEvents(db, {
         projectId,
         limit: parseInteger(url.searchParams.get('limit'), 'limit', 100),
@@ -1143,24 +1109,63 @@ function createRequestHandler({
     }
     const agentsMatch = routeMatch(pathname, /^\/api\/projects\/([^/]+)\/agents$/)
     if (agentsMatch && request.method === 'GET') {
+      const project = taskSpaces.readProject(agentsMatch[0], actor)
+      if (!project) throw teamError(404, ERROR_CODES.NOT_FOUND, '项目不存在')
       sendJson(response, 200, {
-        agents: agentService.listProjectBindings(actor, agentsMatch[0]),
+        agents: db
+          .prepare(`
+          SELECT b.*, a.device_name, a.platform, a.last_seen_at, a.status AS agent_status,
+                 s.branch_name, u.username, u.display_name,
+                 active.agent_id IS NOT NULL AS current_effective
+          FROM sync_agent_binding b
+          JOIN sync_task_space s ON s.id = b.task_space_id
+          JOIN agent_device a ON a.id = b.agent_id
+          JOIN user_account u ON u.id = a.user_id
+          LEFT JOIN sync_active_agent active
+            ON active.user_id = a.user_id AND active.agent_id = a.id
+          WHERE s.project_id = ?
+          ORDER BY b.created_at DESC
+        `)
+          .all(agentsMatch[0])
+          .map((row) => ({
+            id: row.id,
+            agentId: row.agent_id,
+            taskSpaceId: row.task_space_id,
+            branchName: row.branch_name,
+            userId: row.user_id,
+            username: row.username,
+            displayName: row.display_name,
+            deviceName: row.device_name,
+            platform: row.platform,
+            status: row.sync_status,
+            lastSeenAt: row.last_seen_at || null,
+            current: Boolean(row.current_effective),
+          })),
       })
       return true
     }
-    const bindingMatch = routeMatch(
-      pathname,
-      /^\/api\/projects\/([^/]+)\/agents\/([^/]+)\/(approve|reject|revoke)$/,
-    )
-    if (bindingMatch && request.method === 'POST') {
-      await readJsonBody(request)
-      const [projectId, bindingId, action] = bindingMatch
-      const method = {
-        approve: 'approveBinding',
-        reject: 'rejectBinding',
-        revoke: 'revokeBinding',
-      }[action]
-      sendJson(response, 200, agentService[method](actor, projectId, bindingId))
+    const teamAccessMatch = routeMatch(pathname, /^\/api\/projects\/([^/]+)\/team-access$/)
+    if (teamAccessMatch && request.method === 'GET') {
+      sendJson(response, 200, {
+        teams: taskSpaces.listTeamAccess(actor, teamAccessMatch[0]),
+      })
+      return true
+    }
+    if (teamAccessMatch && request.method === 'POST') {
+      const body = await readJsonBody(request)
+      sendJson(
+        response,
+        200,
+        taskSpaces.inviteTeam(actor, teamAccessMatch[0], body.teamId, body.accessRole),
+      )
+      return true
+    }
+    if (teamAccessMatch && request.method === 'DELETE') {
+      sendJson(
+        response,
+        200,
+        taskSpaces.removeTeam(actor, teamAccessMatch[0], url.searchParams.get('teamId')),
+      )
       return true
     }
     return false
@@ -1172,8 +1177,9 @@ function createRequestHandler({
 
     if (pathname === '/api/tasks/query' && request.method === 'GET') {
       const queryInput = taskQueryInput(url)
+      queryInput.taskSpaceId = url.searchParams.get('taskSpaceId')
       queryInput.ifNoneMatch = String(request.headers['if-none-match'] || '')
-      const page = taskIndex.queryTasks(actor, readableProjectIds(actor, { db }), queryInput)
+      const page = taskSpaceIndex.queryTasks(actor, queryInput)
       if (page.notModified) {
         sendNotModified(response, page.etag)
         return true
@@ -1182,8 +1188,9 @@ function createRequestHandler({
       return true
     }
     if (pathname === '/api/board' && request.method === 'GET') {
-      const projectId = String(url.searchParams.get('projectId') || '').trim()
-      const page = boardService.getBoard(actor, projectId, taskQueryInput(url))
+      const input = taskQueryInput(url)
+      input.taskSpaceId = url.searchParams.get('taskSpaceId')
+      const page = boardService.getBoard(actor, input)
       if (String(request.headers['if-none-match'] || '') === page.etag) {
         sendNotModified(response, page.etag)
         return true
@@ -1226,23 +1233,31 @@ function createRequestHandler({
       return true
     }
     if (pathname === '/api/tasks/execution' && request.method === 'PUT') {
-      sendJson(response, 200, boardService.updatePlan(actor, await readJsonBody(request)))
+      sendJson(response, 200, await boardService.updatePlan(actor, await readJsonBody(request)))
       return true
     }
     if (pathname === '/api/tasks/stage' && request.method === 'PUT') {
-      sendJson(response, 200, boardService.setStage(actor, await readJsonBody(request)))
+      sendJson(response, 200, await boardService.setStage(actor, await readJsonBody(request)))
       return true
     }
     if (pathname === '/api/tasks/dependencies' && request.method === 'POST') {
-      sendJson(response, 201, boardService.createDependency(actor, await readJsonBody(request)))
+      sendJson(
+        response,
+        201,
+        await boardService.createDependency(actor, await readJsonBody(request)),
+      )
       return true
     }
     if (pathname === '/api/tasks/dependencies' && request.method === 'DELETE') {
-      sendJson(response, 200, boardService.resolveDependency(actor, await readJsonBody(request)))
+      sendJson(
+        response,
+        200,
+        await boardService.resolveDependency(actor, await readJsonBody(request)),
+      )
       return true
     }
     if (pathname === '/api/tasks/undo' && request.method === 'POST') {
-      sendJson(response, 200, boardService.undo(actor, await readJsonBody(request)))
+      sendJson(response, 200, await boardService.undo(actor, await readJsonBody(request)))
       return true
     }
     if (pathname === '/api/assignments' && request.method === 'GET') {
@@ -1263,27 +1278,22 @@ function createRequestHandler({
     }
     if (pathname === '/api/tasks/assign' && request.method === 'POST') {
       const body = await readJsonBody(request)
-      const result = await taskWrites.assignTask(actor, body)
-      sendJson(response, result.statusCode || 200, {
-        ...result,
-        operation: result.operation || null,
-      })
+      const result = taskCommands.enqueue(actor, { ...body, commandType: 'assign_task' })
+      sendJson(response, result.statusCode, result)
       return true
     }
     if (pathname === '/api/tasks' && request.method === 'POST') {
       const body = await readJsonBody(request)
-      const result = await taskWrites.createTask(actor, body)
-      sendJson(response, result.statusCode || 201, {
-        ...result,
-        operation: result.operation || null,
-      })
+      const result = taskCommands.enqueue(actor, { ...body, commandType: 'create_task' })
+      sendJson(response, result.statusCode, result)
       return true
     }
     if (pathname === '/api/tasks' && request.method === 'GET') {
       sendJson(
         response,
         200,
-        boardService.getTask(actor, {
+        await boardService.getTask(actor, {
+          taskSpaceId: url.searchParams.get('taskSpaceId'),
           executionTaskKey: url.searchParams.get('executionTaskKey'),
           projectId: url.searchParams.get('projectId'),
           taskPath: url.searchParams.get('taskPath'),
@@ -1292,7 +1302,7 @@ function createRequestHandler({
       return true
     }
     if (pathname === '/api/task' && request.method === 'POST') {
-      sendJson(response, 200, boardService.getTask(actor, await readJsonBody(request)))
+      sendJson(response, 200, await boardService.getTask(actor, await readJsonBody(request)))
       return true
     }
     const taskMatch = routeMatch(pathname, /^\/api\/tasks\/([^/]+)$/)
@@ -1300,25 +1310,45 @@ function createRequestHandler({
       sendJson(
         response,
         200,
-        boardService.getTask(actor, {
+        await boardService.getTask(actor, {
+          taskSpaceId: url.searchParams.get('taskSpaceId'),
           executionTaskKey: taskMatch[0],
         }),
       )
       return true
     }
-    const retryMatch = routeMatch(pathname, /^\/api\/git-operations\/([^/]+)\/retry$/)
-    if (retryMatch && request.method === 'POST') {
-      await readJsonBody(request)
+    const assigneeMatch = routeMatch(pathname, /^\/api\/task-spaces\/([^/]+)\/assignees$/)
+    if (assigneeMatch && request.method === 'GET') {
       sendJson(response, 200, {
-        operation: await taskWrites.retry(actor, retryMatch[0]),
+        assignees: boardService.assigneeCandidates(actor, assigneeMatch[0]),
       })
       return true
     }
-    const operationMatch = routeMatch(pathname, /^\/api\/git-operations\/([^/]+)$/)
+    if (pathname === '/api/task-operations' && request.method === 'GET') {
+      sendJson(
+        response,
+        200,
+        taskCommands.list(actor, {
+          taskSpaceId: url.searchParams.get('taskSpaceId'),
+        }),
+      )
+      return true
+    }
+    const operationMatch = routeMatch(pathname, /^\/api\/task-operations\/([^/]+)$/)
     if (operationMatch && request.method === 'GET') {
-      sendJson(response, 200, {
-        operation: taskWrites.get(actor, operationMatch[0]),
-      })
+      sendJson(response, 200, taskCommands.get(actor, operationMatch[0]))
+      return true
+    }
+    const retryMatch = routeMatch(pathname, /^\/api\/task-operations\/([^/]+)\/retry$/)
+    if (retryMatch && request.method === 'POST') {
+      await readJsonBody(request)
+      sendJson(response, 200, taskCommands.retry(actor, retryMatch[0]))
+      return true
+    }
+    const cancelMatch = routeMatch(pathname, /^\/api\/task-operations\/([^/]+)\/cancel$/)
+    if (cancelMatch && request.method === 'POST') {
+      await readJsonBody(request)
+      sendJson(response, 200, taskCommands.cancel(actor, cancelMatch[0]))
       return true
     }
     return false
@@ -1343,16 +1373,10 @@ function createRequestHandler({
     }
     if (pathname === '/api/team/projects' && request.method === 'GET') {
       sendJson(response, 200, {
-        projects: boardService.listProjects(actor),
+        projects: taskSpaces.listReadable(actor, {
+          teamId: url.searchParams.get('teamId'),
+        }),
       })
-      return true
-    }
-    if (pathname === '/api/team/live-revision' && request.method === 'GET') {
-      sendJson(
-        response,
-        200,
-        liveSync.liveRevisionForActor(actor, url.searchParams.get('teamId') || 'all'),
-      )
       return true
     }
     if (
@@ -1595,6 +1619,11 @@ export async function createTeamRuntime({
     legacyJsonImport: false,
     logger,
   })
+  const taskSnapshotBackups = createTaskSnapshotBackupService({
+    db,
+    databaseFile,
+    logger,
+  })
   let closing = false
   const shutdown = new AbortController()
 
@@ -1606,78 +1635,71 @@ export async function createTeamRuntime({
         '团队模式尚无系统管理员，请先在本机运行 server/team/cli.js init-admin',
       )
     }
-    const credentialService = createGitCredentialService({ db, dataDir })
-    const gitManager = createGitManager({
-      db,
-      config,
-      dataDir,
-      credentialService,
-      logger,
-      trellisRunner,
-    })
-    const agentEvents = createAgentEventService({ db, logger })
     const boardEvents = createBoardEventService(boardEventOptions)
-    const taskIndex = createTaskIndex({
+    let taskCommands = null
+    const commandsProxy = {
+      available: (agentId) => taskCommands.available(agentId),
+      markDelivered: (agentId, commandId) => taskCommands.markDelivered(agentId, commandId),
+      staleLeases: (agentId) => taskCommands.staleLeases(agentId),
+    }
+    const agentEvents = createAgentEventStream({
       db,
-      stageIds: STAGE_IDS,
-      executionWipLimit: EXECUTION_WIP_LIMIT,
-      agentEvents,
-      onQueryRevisionChanged: (revision) => boardEvents.publish({ revision }),
-    })
-    const projectService = createProjectService({
-      db,
-      config,
-      dataDir,
-      gitManager,
-      credentialService,
-      taskIndex,
+      commands: commandsProxy,
       logger,
     })
-    const taskWrites = createTaskWriteService({
-      db,
-      gitManager,
-      projectService,
-      taskIndex,
-      agentEvents,
-    })
-    const agentService = createAgentService({
+    const agentService = createSyncAgentService({
       db,
       config,
       events: agentEvents,
     })
-    const liveSync = createLiveSyncService({
+    const taskSpaces = createTaskSpaceService({
       db,
-      taskIndex,
-      agentEvents,
+      config,
+    })
+    taskCommands = createTaskCommandService({
+      db,
+      taskSpaces,
+      agents: agentService,
+      events: agentEvents,
+    })
+    const taskSpaceIndex = createTaskSpaceIndex({
+      db,
+      stageIds: STAGE_IDS,
+      taskSpaces,
+      executionWipLimit: EXECUTION_WIP_LIMIT,
+      onQueryRevisionChanged: (revision) => boardEvents.publish({ revision }),
+      onProjected: ({ taskSpaceId, revision }) => {
+        boardEvents.publish({ revision })
+        agentEvents.notifyTaskSpaceChanged(taskSpaceId, revision)
+      },
       logger,
     })
-    const desktopAuthService = createDesktopAuthService({ db, ...desktopAuth })
-    agentEvents.setCommandDelivery((agentId, commandId) =>
-      agentService.beginCommandDelivery(agentId, commandId),
-    )
-    agentEvents.setCommandLister((agentId, teamId) =>
-      agentService.listPendingCommands(agentId, teamId),
-    )
-    const boardService = createBoardService({
+    const taskSnapshots = createTaskSnapshotService({
       db,
-      taskIndex,
-      projectService,
-      liveSync,
+      taskSpaces,
+      onRevisionCommitted: ({ taskSpaceId }) => {
+        void taskSpaceIndex.enqueue(taskSpaceId)
+      },
+    })
+    const desktopAuthService = createDesktopAuthService({ db, ...desktopAuth })
+    const boardService = createGitlessBoardService({
+      db,
+      taskSpaces,
+      taskSpaceIndex,
+      agents: agentService,
       executionWipLimit: EXECUTION_WIP_LIMIT,
     })
     const requestHandler = createRequestHandler({
       config,
       db,
       boardService,
-      projectService,
-      gitManager,
-      credentialService,
-      taskIndex,
-      taskWrites,
+      taskSpaces,
+      taskSnapshots,
+      taskSpaceIndex,
+      taskCommands,
       agentService,
       agentEvents,
       boardEvents,
-      liveSync,
       desktopAuth: desktopAuthService,
       publicDir,
       logger,
@@ -1694,72 +1716,15 @@ export async function createTeamRuntime({
       if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n')
       logger.warn('团队 HTTP 客户端连接错误', { error: error.message })
     })
-    let pollTimer = null
     let started = false
-
-    async function recoverProjects() {
-      const projects = projectService.listAll()
-      for (const project of projects) {
-        if (!['current', 'stale', 'pending_push'].includes(project.syncStatus)) continue
-        const sparse = await projectService.ensureSparse(project.id)
-        if (!sparse) {
-          logger.warn('项目无法自动转换为 .trellis 稀疏检出', { projectId: project.id })
-        }
-      }
-      for (const project of projectService.listAll()) {
-        if (project.syncStatus !== 'pending_push') continue
-        try {
-          await taskWrites.recoverProject(project.id)
-        } catch (error) {
-          db.prepare(`
-            UPDATE team_project
-            SET sync_status = 'needs_repair', last_error = ?, updated_at = ?
-            WHERE repository_id = ?
-          `).run(
-            String(error.message || '启动恢复失败').slice(0, 1000),
-            new Date().toISOString(),
-            project.id,
-          )
-          taskIndex.incrementQueryRevision()
-          logger.error('项目 Git 操作启动恢复失败', {
-            projectId: project.id,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        }
-      }
-    }
-
-    const refreshScheduler = createRefreshScheduler({
-      concurrency: refreshConcurrency,
-      refresh: scheduledRefresh || ((projectId) => projectService.refreshScheduled(projectId)),
-      logger,
-    })
-    const pollableStatuses = new Set(['current', 'stale', 'pending_push'])
-
-    function refreshDueProjects() {
-      if (closing) return refreshScheduler.snapshot()
-      for (const project of projectService.listAll()) {
-        if (pollableStatuses.has(project.syncStatus)) {
-          refreshScheduler.enqueue(project.id)
-        }
-      }
-      return refreshScheduler.snapshot()
-    }
-
-    function startPolling() {
-      if (!enablePolling || pollTimer) return
-      pollTimer = setInterval(refreshDueProjects, config.gitPollMs)
-      pollTimer.unref?.()
-    }
 
     async function start() {
       if (started) return runtime
       try {
-        await recoverProjects()
         await listen(server, config.port, config.bindHost)
         started = true
+        taskSnapshotBackups.start()
         requestHandler.setStartedAt(new Date().toISOString())
-        startPolling()
         logger.warn('team 模式不加载插件', {
           reason: 'v1 只支持 standalone；插件路由返回空列表',
           url: config.publicOrigin,
@@ -1773,15 +1738,11 @@ export async function createTeamRuntime({
       } catch (error) {
         closing = true
         shutdown.abort()
-        if (pollTimer) clearInterval(pollTimer)
-        pollTimer = null
         boardEvents.close()
-        liveSync.close()
-        await agentEvents.close().catch(() => {})
-        await agentService.close().catch(() => {})
+        agentEvents.close()
+        taskSnapshotBackups.stop()
         await closeServer(server)
-        await refreshScheduler.stop()
-        await taskIndex.close().catch(() => {})
+        await taskSpaceIndex.close().catch(() => {})
         db.close()
         throw error
       }
@@ -1791,15 +1752,11 @@ export async function createTeamRuntime({
       if (closing) return
       closing = true
       shutdown.abort()
-      if (pollTimer) clearInterval(pollTimer)
-      pollTimer = null
       boardEvents.close()
-      await agentEvents.close()
-      await agentService.close()
+      agentEvents.close()
+      taskSnapshotBackups.stop()
       await closeServer(server)
-      await refreshScheduler.stop()
-      liveSync.close()
-      await taskIndex.close()
+      await taskSpaceIndex.close()
       db.close()
     }
 
@@ -1809,20 +1766,15 @@ export async function createTeamRuntime({
       db,
       server,
       services: {
-        gitManager,
-        taskIndex,
-        projectService,
-        taskWrites,
+        taskSpaces,
+        taskSnapshots,
+        taskSpaceIndex,
+        taskCommands,
         agentService,
         agentEvents,
         boardEvents,
-        liveSync,
         boardService,
-        refreshScheduler,
-      },
-      polling: {
-        tick: refreshDueProjects,
-        snapshot: refreshScheduler.snapshot,
+        taskSnapshotBackups,
       },
       start,
       stop,

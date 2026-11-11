@@ -26,7 +26,7 @@ function captureIo() {
 
 function writeConfig(root, overrides = {}) {
   const config = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 'a'.repeat(32),
     serverUrl: 'http://127.0.0.1:4317',
     caFile: null,
@@ -35,8 +35,8 @@ function writeConfig(root, overrides = {}) {
     username: 'carol',
     teamId: null,
     teams: [{ id: 'team-1', name: '团队一', role: 'member' }],
-    protocolVersion: 2,
-    agentVersion: '0.2.0',
+    protocolVersion: 3,
+    agentVersion: '0.1.0',
     pairedAt: '2026-11-05T00:00:00.000Z',
     bindings: [],
     ...overrides,

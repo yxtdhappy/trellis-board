@@ -120,8 +120,8 @@ function readArtifacts(task: BoardTask | null) {
 
 type TaskDetailActions = {
   addDependency: (payload: {
-    blocked: { projectId: string; taskPath: string }
-    blocker: { projectId: string; taskPath: string }
+    blocked: { taskSpaceId: string; executionTaskKey?: string; taskPath?: string }
+    blocker: { taskSpaceId: string; executionTaskKey?: string; taskPath?: string }
     reason: string
     assigneeDecision?: {
       warningId: string
@@ -177,6 +177,7 @@ export function TaskDetailDialog({
     .filter(
       (candidate) =>
         !candidate.archived &&
+        candidate.taskSpaceId === task?.taskSpaceId &&
         candidate.taskKey !== task?.taskKey &&
         candidate.executionIdentityValid !== false,
     )
@@ -293,7 +294,7 @@ export function TaskDetailDialog({
       'plan',
       async (assigneeDecision) => {
         await api('/api/tasks/execution', 'PUT', {
-          projectId: current.projectId,
+          taskSpaceId: current.taskSpaceId,
           taskPath: current.relativeDir,
           dueDate: dueDate || null,
           milestone,
@@ -312,11 +313,21 @@ export function TaskDetailDialog({
 
   async function addDependency() {
     if (!current) return
+    if (!current.taskSpaceId || !blockerKey) {
+      toast.error('当前任务缺少任务空间信息，请刷新后重试')
+      return
+    }
     const blocker = dependencyCandidates.find((candidate) => candidate.taskKey === blockerKey)
     if (!blocker) {
       toast.error('请选择当前看板中的阻断方任务')
       return
     }
+    if (!blocker.taskSpaceId) {
+      toast.error('阻断方任务缺少任务空间信息，请刷新后重试')
+      return
+    }
+    const currentTaskSpaceId = current.taskSpaceId
+    const blockerTaskSpaceId = blocker.taskSpaceId
     if (!reason.trim()) {
       toast.error('阻断原因不能为空')
       return
@@ -325,8 +336,14 @@ export function TaskDetailDialog({
       'dependency',
       (assigneeDecision) =>
         actions.addDependency({
-          blocked: { projectId: current.projectId, taskPath: current.relativeDir },
-          blocker: { projectId: blocker.projectId, taskPath: blocker.relativeDir },
+          blocked: {
+            taskSpaceId: currentTaskSpaceId,
+            executionTaskKey: current.executionTaskKey,
+          },
+          blocker: {
+            taskSpaceId: blockerTaskSpaceId,
+            executionTaskKey: blocker.executionTaskKey,
+          },
           reason: reason.trim(),
           ...(assigneeDecision ? { assigneeDecision } : {}),
         }),
@@ -346,7 +363,7 @@ export function TaskDetailDialog({
             <DialogTitle className="pr-8 text-base">{current?.title || '任务详情'}</DialogTitle>
             <DialogDescription>
               {current
-                ? `${current.teamName ? `${current.teamName} · ` : ''}${current.projectName} / ${current.dirName}`
+                ? `${current.teamName ? `${current.teamName} · ` : ''}${current.projectName}${current.branchName ? ` · 分支 ${current.branchName}` : ''} / ${current.dirName}`
                 : '正在读取任务…'}
             </DialogDescription>
           </DialogHeader>

@@ -63,6 +63,9 @@ export type BoardTask = {
   priority?: string
   projectId: string
   projectName: string
+  taskSpaceId?: string
+  branchName?: string
+  taskVersion?: string
   teamId?: string | null
   teamName?: string | null
   archived?: boolean
@@ -139,6 +142,8 @@ export function teamRowToBoardTask(row: Record<string, unknown>): BoardTask {
     ...row,
     derivedStage,
     archived: Boolean(row.archived),
+    taskSpaceId: String(row.taskSpaceId ?? ''),
+    branchName: String(row.branchName ?? ''),
     assignee: (row.assignee as string | undefined) ?? (row.assigneeDevId as string | undefined),
     execution: {
       ...(row.execution as TaskExecution | undefined),

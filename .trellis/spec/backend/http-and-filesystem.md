@@ -33,6 +33,39 @@
 
 未知 `/api/*` 返回 404 `{ "error": "接口不存在" }`。
 
+### Team tasks-only 与命令路由
+
+Team 模式在原 standalone 路由之外只装配以下任务快照和命令边界：
+
+| 方法与路径 | 用途 | 成功状态 |
+| --- | --- | --- |
+| `POST /api/agent/task-spaces/preflight` | 接入前只读读取项目、任务空间和任务文件元数据，不写任何 `sync_*` 表 | 200 |
+| `POST /api/agent/task-spaces/resolve` | 只读解析远端、项目、团队权限和分支 | 200 |
+| `POST /api/agent/task-spaces/attach` | 创建/加入项目并建立 Agent binding | 201 |
+| `GET /api/agent/task-spaces/:id/snapshot` | full 或增量 tasks 快照 | 200 |
+| `GET /api/agent/task-spaces/:id/files` | 读取完整任务目录正文 | 200 |
+| `POST /api/agent/task-spaces/:id/preflight` | 已绑定任务的责任人确认和待写摘要预检 | 200 |
+| `POST /api/agent/task-spaces/:id/changes` | 文件级 CAS 原子批次 | 200/409 |
+| `PUT /api/agent/task-spaces/:id/cursor` | 推进 Agent 已应用游标 | 200 |
+| `GET /api/agent/task-spaces/:id/conflicts` | 当前待处理冲突 | 200 |
+| `POST /api/agent/task-spaces/:id/conflicts/:conflictId/resolve` | 使用服务端、覆盖或保存副本 | 200 |
+| `GET /api/agent/events` | Agent 命令/撤销 SSE | 200 |
+| `POST /api/agent/commands/:id/start` | 领取 running 租约 | 200 |
+| `POST /api/agent/commands/:id/result` | 回写失败或成功结果 | 200 |
+| `GET /api/task-operations?taskSpaceId=` | 创建/改派操作列表 | 200 |
+| `POST /api/task-operations/:id/retry` | 同幂等键重试失败命令 | 200 |
+| `POST /api/task-operations/:id/cancel` | 取消未成功命令 | 200 |
+
+- `POST /api/agent/commands` 旧长轮询固定返回 `410 AGENT_LONG_POLL_REMOVED`。
+- 旧 `/api/agent/live-changes*`、`/api/agent/live-files`、`/api/agent/live-cursor`、
+  `/api/admin/git-credentials*`、`/api/admin/projects/probe`、SSH trust、项目 refresh/repair 和
+  `/api/git-operations/*` 在 Team 模式返回 404。
+- Team `changes` 请求体上限为 `MAX_LIVE_BATCH_BYTES`，即 9 MiB；单批业务上限仍是 8 MiB / 64 文件。
+- 新接入预检只返回路径、摘要和稳定 task ID，不返回任务正文；调用前后
+  `sync_project`、`sync_task_space`、`sync_agent_binding` 和 `sync_agent_cursor` 行数必须不变。
+- Agent 认证和团队 Session 是两条独立鉴权链。Agent 路由要求设备 Bearer，Web 路由要求 Session Cookie
+  并对写请求执行同源 Origin 校验。
+
 ## JSON 协议
 
 - `sendJson()` 统一返回 `application/json; charset=utf-8` 和 `cache-control: no-store`。
@@ -125,42 +158,49 @@ api('/api/repositories', 'DELETE', { id })
 
 #### 1. Scope / Trigger
 
-项目人员选择跨越扫描 Worker、`/api/board` 项目投影、React 页面和负责人写接口。可委派人员必须来自任务所属仓库的 `.trellis/workspace/<developer>`，不能用跨项目人员并集作为候选。
+standalone 的项目人员来自任务所属仓库 `.trellis/workspace/<developer>`；Team 的任务快照不包含
+workspace，项目写成员和可委派人员只能来自 `sync_project_member` 的 `lead|member` 与
+`trellis_dev_id` 映射。
 
 #### 2. Signatures
 
 - 项目投影：`{ members: string[], workspaceMembers: string[] }`
-- `members`：workspace 成员与历史任务负责人/创建人的去重并集，供展示和筛选。
-- `workspaceMembers`：仅 `.trellis/workspace` 的直接子目录名，供负责人委派候选。
-- `POST /api/tasks/assign`：仍由后端校验目标人员属于任务项目 workspace。
+- standalone `members`：workspace 成员与历史任务负责人/创建人的去重并集。
+- standalone `workspaceMembers`：仅 `.trellis/workspace` 的直接子目录名。
+- Team `GET /api/task-spaces/:id/assignees`：返回项目内已映射 developer ID 的可写成员。
+- `POST /api/tasks/assign`：Team 模式入队 `assign_task` 命令，不直接改项目文件。
 
 #### 3. Contracts
 
-- 前端按 `task.projectId` 选择对应项目。
-- 委派下拉优先使用 `project.workspaceMembers`。
-- 旧缓存缺少 `workspaceMembers` 时可回退 `project.members`；两者都缺失时保留原候选列表并依赖后端校验。
-- 项目成员变化依赖 `.trellis/workspace` 扫描刷新。
+- standalone 前端按 `task.projectId` 选择项目，委派下拉优先使用 `project.workspaceMembers`。
+- Team 前端按 `task.taskSpaceId` 请求候选人；候选必须 active、属于项目写角色且有
+  `trellis_dev_id`。
+- Team 创建/改派命令还要求目标用户唯一活动 Agent 在线并绑定该 taskSpace。
+- Team 项目成员变化写 `sync_project_member`，不依赖 `.trellis/workspace` 扫描。
+- 旧 standalone 缓存缺少 `workspaceMembers` 时可回退 `project.members`；Team 不用该回退伪造成员。
 
 #### 4. Validation & Error Matrix
 
 | 条件 | 结果 |
 | --- | --- |
-| 候选人属于任务项目 workspace | 后端允许更新负责人 |
-| 候选人来自其他项目 workspace | 前端不展示；直接提交时后端拒绝 |
-| 当前负责人不在候选列表 | 禁止提交未变化的旧值 |
-| `workspaceMembers` 缺失 | 使用兼容回退，不臆造人员 |
+| standalone 候选人属于任务项目 workspace | 后端允许更新负责人 |
+| standalone 候选人来自其他项目 workspace | 前端不展示；直接提交时后端拒绝 |
+| Team 候选人不是 lead/member 或没有 developer ID | `ASSIGNEE_NOT_WRITABLE`，不生成命令 |
+| Team 候选人没有在线唯一 Agent 或未绑定 taskSpace | `AGENT_OFFLINE` / `AGENT_NOT_UNIQUE`，不生成命令 |
+| Team 目标文件版本与命令 baseline 不同 | Agent 拒绝改派并提示重新同步 |
 
 #### 5. Good/Base/Bad Cases
 
-- Good：任务 `projectId=mdp-report-service`，下拉只使用该项目 `workspaceMembers`。
-- Base：项目没有历史任务参与人时，`members` 与 `workspaceMembers` 可以相同。
-- Bad：把全部任务的 `assignee` 并集直接传给详情弹窗，导致跨项目人员可选。
+- Good：Team 任务 `taskSpaceId=space-a`，下拉只显示该项目 `trellis_dev_id` 已映射的 lead/member。
+- Base：项目没有历史任务参与人时，standalone `members` 与 `workspaceMembers` 可以相同。
+- Bad：把全部任务的 `assignee` 并集直接传给 Team 详情弹窗，导致跨项目人员可选。
 
 #### 6. Tests Required
 
-- loader 测试：历史任务参与人只进入 `members`，不污染 `workspaceMembers`。
-- 前端构建：`Project` 类型同时声明两个成员字段。
-- 页面验收：切换不同项目任务后，候选列表随 `projectId` 变化。
+- standalone loader 测试：历史任务参与人只进入 `members`，不污染 `workspaceMembers`。
+- `team-task-spaces.test.js`：owner/invite、项目成员和 developer ID 映射。
+- `team-task-commands.test.js`：不可写成员、离线 Agent、非唯一 Agent 和改派 baseline。
+- 页面验收：切换 taskSpace 后候选列表随 taskSpace 和团队权限变化。
 
 #### 7. Wrong vs Correct
 
@@ -173,8 +213,9 @@ assignees={[...new Set(allTasks.map((task) => task.assignee))]}
 Good:
 
 ```tsx
-const project = projects.find((item) => item.id === selected.projectId)
-assignees={project?.workspaceMembers ?? project?.members ?? allAssignees}
+const taskSpace = projects.flatMap((project) => project.taskSpaces)
+  .find((item) => item.id === selected.taskSpaceId)
+const assignees = await fetchTaskSpaceAssignees(taskSpace.id)
 ```
 
 ## 写操作边界
@@ -301,45 +342,83 @@ const projectIds = readableProjectIds(actor).filter((id) => (
 ));
 ```
 
-### Scenario: 团队 Git 凭据与远端探测
+### Scenario: Team 项目接入与任务快照
 
-- 凭据管理、远端探测和 SSH 主机确认都属于团队管理员接口：
-  `/api/admin/git-credentials`、`/api/admin/projects/probe`、
-  `/api/admin/git-ssh-hosts/trust`。
-- Git 凭据按团队隔离并绑定一个主机和认证类型；项目只能引用同团队、同主机、同认证类型的凭据。
-- API、审计和错误详情只返回凭据元数据，不返回 Token、私钥、口令或加密载荷。
-- 远端探测先执行 `git ls-remote --symref` 读取分支；指定分支或存在有效默认分支时，再在运行数据目录创建临时 partial clone，读取该分支 tree 中的 Agent 配置目录和 `.trellis` 状态。临时工作副本无论成功失败都必须删除，探测不写数据库；SSH 主机确认仍是独立写操作。
-- 运行数据目录中的 `git-credentials.key` 是 Git 凭据密文的主密钥，必须与 `board.sqlite` 一起备份。数据库中的凭据 AAD 绑定团队、主机和认证类型，修改这些列会导致解密失败。
-- 当前数据库支持 v6/v7/v8 升级到 v9，升级前备份到运行数据目录的 `backups/`。
+#### 1. Scope / Trigger
 
-### Scenario: 团队项目稀疏检出与自动初始化
+项目接入、分支任务空间、tasks-only 快照、团队邀请和 Agent binding 跨桌面客户端、Agent API、
+SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保存 Git 凭据。
 
-- 项目接入请求包含 `agentTools`、`leadUserId` 和 `leadTrellisDevId`；服务端在 clone 前校验工具白名单、团队成员关系和 developer ID，并在克隆后重新读取目标分支 tree，不信任前端传入的“已存在”状态。
-- 常规工作副本只检出 `.trellis/`。初始化前临时检出 `.trellis/`、根级配置文件、共享技能目录和 Agent 探测路径，让 `--skip-existing` 能看见远端已有文件；初始化、提交和推送后重新收敛为只检出 `.trellis/`。
-- partial clone 的 sparse-checkout、read-tree、初始化上下文检出和远端 tree/模板清单读取必须复用
-  当前 Git 认证；后续 `ensureSparseTrellis()` 使用项目绑定凭据。稀疏检出错误消息保留经脱敏的
-  Git stderr/stdout，不能只返回泛化文案。
-- 操作执行超时统一在各自原值上增加 30 秒：本地 Git 默认 60 秒，远端/promisor 操作
-  210 秒，push 150 秒，探测 60 秒，Trellis CLI 初始化 210 秒，SSH 主机扫描 45 秒，
-  toolchain 预检 60 秒，团队 `task.py` 150 秒，`runProcess` 默认 60 秒。
-- `sparse-checkout init` 使用 `LOCAL_TIMEOUT=60s`；`set`、`read-tree`、checkout、merge、
-  分叉恢复 rebase、clone 与远端 `ls-tree`/`show` 使用 `REMOTE_TIMEOUT=210s`，因为它们
-  可能触发 promisor lazy fetch 或真实远端 I/O。
-- 目标分支已有 `.trellis/` 时，只把缺失 Agent 传给固定的本地 Trellis CLI；没有缺失 Agent 时跳过初始化且不产生空提交。目标分支缺少 `.trellis/` 时仍执行基础初始化。
-- `team_project.agent_tools_json` 保存目标分支已有 Agent 与本次成功初始化 Agent 的并集。
-- 初始化产物提交并非强制推送到共享分支，成功后项目进入 `provisioning` 并继续工具链摘要审核。
-- 初始化失败、文件越界或 push 失败时，不能写入可用项目状态。
-- 项目接入判重键固定为 `team_id + remote_identity_hash + sync_branch`。clone 前先检查，
-  写数据库前必须在同一 `BEGIN IMMEDIATE` 事务内复检；同一仓库的不同同步分支可以分别接入。
-- 命中判重时返回 `409 PROJECT_ALREADY_CONNECTED`。只有当前团队可收到项目 ID、名称、分支和状态的
-  `details`；其他团队只返回通用冲突文案，不能泄露项目元数据。
-- 并发请求可能都完成 clone，但事务复检必须保证最多一个请求写入成功；失败请求只清理自己的 UUID
-  工作副本。清理使用有界重试，清理错误只追加到服务端日志并保留原始接入/Git 错误。
-- 项目刷新写入 `team_project.last_error` 时使用 `code: message` 的脱敏摘要，最多 1000 个字符；
-  摘要不得包含 Token、私钥、口令、Authorization、Cookie、文件 URL 或绝对路径。当前项目恢复后
-  不为了补写诊断而强制更新数据库；失败诊断只对后续真实失败生效。
-- 结构化诊断详情与 cause 共享 128 个节点、约 12 KiB 文本预算；超限节点返回
-  `[truncated]`，循环引用返回 `[circular]`，避免异常详情无限放大日志。
+#### 2. Signatures
+
+- `POST /api/agent/task-spaces/resolve`：
+  `{ remoteUrl, branchName, teamId }`，返回 `new|existing|branch_new|access_required`。
+- `POST /api/agent/task-spaces/attach`：
+  `{ remoteUrl, branchName, teamId, developerId, displayName, localRepoKey }`。
+- `GET /api/agent/task-spaces/:id/snapshot?afterRevision=N`。
+- `POST /api/agent/task-spaces/:id/changes`：`{ batchId, clientSequence, files[] }`。
+- `POST/DELETE /api/projects/:id/team-access`：owner team 邀请或移除其他团队。
+- SQLite：`sync_project(remote_identity_hash UNIQUE)`、
+  `sync_task_space UNIQUE(project_id, branch_name)`、`sync_project_member`、
+  `sync_agent_binding`。
+
+#### 3. Contracts
+
+- 项目身份由 `shared/remote-identity.js` 规范化；HTTPS/SSH/scp、默认端口、userinfo、末尾 `/` 和
+  `.git` 等价差异命中同一项目。
+- 首次接入团队成为 `sync_project_team_access.owner`；owner team active 成员默认可读。
+- 其他团队未邀请时只返回 `access_required`，不泄漏任务正文、revision 或成员。
+- 同远端不同分支各自创建 taskSpace，revision、cursor、command 和 index 独立。
+- Agent 只上传 `.trellis/tasks/**`；初始化 scripts/spec/config/workflow/agents 由客户端 Git 管理。
+- 项目成员写角色和 `trellis_dev_id` 写入 `sync_project_member`，Board 委派不再读取 workspace。
+- binding 不保存客户端绝对路径；`local_repo_key` 只用于服务端幂等绑定，不参与文件夹访问。
+
+#### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 非 Git 根、origin 无效、分支非法 | 客户端预检失败，不调用 attach |
+| 远端已有但当前团队无访问 | `access_required`，不返回任务内容 |
+| 同远端并发 attach | 唯一键与事务收敛到一个 `sync_project` |
+| 同远端不同分支 attach | 两个 `sync_task_space`，数据不串流 |
+| 非 owner/admin 邀请团队 | 403，访问关系不变 |
+| 项目或 taskSpace 停用 | 拒绝快照、命令和 Web 写操作 |
+| Team 模式访问旧 Git 凭据/probe/refresh/repair | 404 |
+
+#### 5. Good/Base/Bad Cases
+
+- Good：团队 A 首次接入 `https://host/repo.git` 的 `main`，创建全局项目、owner access 和 taskSpace；
+  团队 B 得到 `access_required`，邀请后加入同一 taskSpace。
+- Base：本地已有 `.trellis/tasks` 的项目跳过初始化，直接执行首次快照预检。
+- Bad：按团队复制项目和任务，会导致同仓库同分支出现两套 revision。
+- Bad：服务端 clone 后把 Git 任务当基线，又与客户端快照合并，会重新形成两个事实源。
+
+#### 6. Tests Required
+
+- `tests/shared-remote-identity.test.js`：协议、默认端口、userinfo、`.git` 和非法输入。
+- `tests/team-task-spaces.test.js`：owner/invite、全局唯一、不同分支隔离和访问授权。
+- `tests/team-gitless-http.test.js`：新路由可真实读写，旧 Git/live 路由 404。
+- `tests/team-release.test.js`：Team 启动不创建 `data/projects`，也不读取 Git 密钥。
+- `tests/database-v10.test.js`：v9 升级保留旧表，v10 新表可独立使用。
+
+#### 7. Wrong vs Correct
+
+Wrong：
+
+```js
+const projectKey = `${teamId}:${remoteUrl}:${branchName}`
+```
+
+同仓库同分支会被每个团队复制成不同项目。
+
+Correct：
+
+```js
+const projectKey = remoteIdentityHash
+const taskSpaceKey = `${projectId}:${branchName}`
+```
+
+项目全局唯一，团队只进入 `sync_project_team_access`，分支进入独立 taskSpace。
 
 ## 路径安全
 

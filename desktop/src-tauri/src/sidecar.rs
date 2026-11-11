@@ -60,6 +60,16 @@ fn control_key(control: &Value) -> String {
             control_text(control, "/taskKey"),
             control.get("revision").and_then(Value::as_i64).unwrap_or(0)
         ),
+        Some("initial_sync_review") => format!(
+            "initial_sync_review\0{}\0{}",
+            control_text(control, "/taskSpaceId"),
+            control.get("revision").and_then(Value::as_i64).unwrap_or(0)
+        ),
+        Some("task_file_conflict") => format!(
+            "task_file_conflict\0{}\0{}",
+            control_text(control, "/taskSpaceId"),
+            control_text(control, "/conflict/conflictId")
+        ),
         _ => format!("control\0{}", control),
     }
 }
@@ -127,6 +137,7 @@ pub struct DesktopLoginSummary {
 #[serde(rename_all = "camelCase")]
 pub struct LocalAssociation {
     pub project_id: String,
+    pub task_space_id: String,
     pub repo_path: String,
     pub display_name: String,
     pub branch_name: String,
@@ -152,6 +163,7 @@ pub struct SidecarStatus {
 struct AssociationSummary {
     ok: bool,
     project_id: Option<String>,
+    task_space_id: Option<String>,
     repo_path: Option<String>,
     display_name: Option<String>,
     branch_name: Option<String>,
@@ -385,7 +397,8 @@ pub fn dismiss_control(app: &AppHandle) -> Result<(), String> {
 
 pub async fn decide_live_change(
     app: &AppHandle,
-    pending_id: &str,
+    task_space_id: &str,
+    conflict_id: &str,
     action: &str,
     agent_root: &Path,
 ) -> Result<(), String> {
@@ -393,8 +406,10 @@ pub async fn decide_live_change(
         app,
         vec![
             "live-decide".to_string(),
-            "--pending".to_string(),
-            pending_id.to_string(),
+            "--task-space".to_string(),
+            task_space_id.to_string(),
+            "--conflict".to_string(),
+            conflict_id.to_string(),
             "--action".to_string(),
             action.to_string(),
         ],
@@ -404,6 +419,65 @@ pub async fn decide_live_change(
     )
     .await
     .map(|_| ())
+}
+
+pub async fn live_conflict_details(
+    app: &AppHandle,
+    task_space_id: &str,
+    conflict_id: &str,
+    agent_root: &Path,
+) -> Result<Value, String> {
+    let output = run_json_command(
+        app,
+        vec![
+            "live-diff".to_string(),
+            "--task-space".to_string(),
+            task_space_id.to_string(),
+            "--conflict".to_string(),
+            conflict_id.to_string(),
+        ],
+        None,
+        agent_root,
+        "读取冲突差异失败",
+    )
+    .await?;
+    let line = last_json_line(&output).ok_or_else(|| "sidecar 返回了无效的冲突差异".to_string())?;
+    serde_json::from_str(line).map_err(|_| "sidecar 返回了无效的冲突差异".to_string())
+}
+
+pub async fn resolve_initial_sync(
+    app: &AppHandle,
+    task_space_id: &str,
+    mode: &str,
+    decisions: Option<Value>,
+    agent_root: &Path,
+) -> Result<Value, String> {
+    let stdin = if mode == "review" {
+        Some(
+            serde_json::json!({
+                "decisions": decisions.unwrap_or_else(|| serde_json::json!([]))
+            })
+            .to_string(),
+        )
+    } else {
+        None
+    };
+    let output = run_json_command(
+        app,
+        vec![
+            "live-initial".to_string(),
+            "--task-space".to_string(),
+            task_space_id.to_string(),
+            "--mode".to_string(),
+            mode.to_string(),
+        ],
+        stdin,
+        agent_root,
+        "处理首次任务同步失败",
+    )
+    .await?;
+    let line = last_json_line(&output).ok_or_else(|| "sidecar 返回了无效的同步结果".to_string())?;
+    serde_json::from_str(line).map_err(|_| "sidecar 返回了无效的同步结果".to_string())
 }
 
 pub async fn restore_live_backup(
@@ -639,22 +713,33 @@ pub async fn logout(
 
 pub async fn associate(
     app: &AppHandle,
-    project_id: &str,
     repo_path: &str,
     branch_name: &str,
+    team_id: &str,
+    developer_id: &str,
+    require_pushed: bool,
+    initial_mode: &str,
     agent_root: &Path,
 ) -> Result<LocalAssociation, String> {
+    let mut args = vec![
+        "associate".to_string(),
+        "--path".to_string(),
+        repo_path.to_string(),
+        "--branch".to_string(),
+        branch_name.to_string(),
+        "--team".to_string(),
+        team_id.to_string(),
+        "--developer".to_string(),
+        developer_id.to_string(),
+        "--initial-mode".to_string(),
+        initial_mode.to_string(),
+    ];
+    if require_pushed {
+        args.push("--require-pushed".to_string());
+    }
     let output = run_json_command(
         app,
-        vec![
-            "associate".to_string(),
-            "--project".to_string(),
-            project_id.to_string(),
-            "--path".to_string(),
-            repo_path.to_string(),
-            "--branch".to_string(),
-            branch_name.to_string(),
-        ],
+        args,
         None,
         agent_root,
         "本地项目关联失败",
@@ -675,6 +760,9 @@ pub async fn associate(
         project_id: summary
             .project_id
             .ok_or_else(|| "关联结果缺少项目 ID".to_string())?,
+        task_space_id: summary
+            .task_space_id
+            .ok_or_else(|| "关联结果缺少任务空间 ID".to_string())?,
         repo_path: summary
             .repo_path
             .ok_or_else(|| "关联结果缺少本地路径".to_string())?,
@@ -697,6 +785,101 @@ pub async fn associate(
         last_error_code: None,
         last_error: None,
     })
+}
+
+pub async fn preflight_project(
+    app: &AppHandle,
+    repo_path: &str,
+    team_id: &str,
+    require_pushed: bool,
+    agent_root: &Path,
+) -> Result<Value, String> {
+    let mut args = vec![
+        "preflight-project".to_string(),
+        "--path".to_string(),
+        repo_path.to_string(),
+        "--team".to_string(),
+        team_id.to_string(),
+    ];
+    if require_pushed {
+        args.push("--require-pushed".to_string());
+    }
+    let output = run_json_command(app, args, None, agent_root, "预检本地项目失败").await?;
+    let line =
+        last_json_line(&output).ok_or_else(|| "sidecar 返回了无效的项目预检结果".to_string())?;
+    serde_json::from_str(line).map_err(|_| "sidecar 返回了无效的项目预检结果".to_string())
+}
+
+pub async fn inspect_project(
+    app: &AppHandle,
+    repo_path: &str,
+    agent_root: &Path,
+) -> Result<Value, String> {
+    let output = run_json_command(
+        app,
+        vec![
+            "inspect-project".to_string(),
+            "--path".to_string(),
+            repo_path.to_string(),
+        ],
+        None,
+        agent_root,
+        "检查本地项目失败",
+    )
+    .await?;
+    let line = last_json_line(&output).ok_or_else(|| "sidecar 返回了无效的项目检查结果".to_string())?;
+    serde_json::from_str(line).map_err(|_| "sidecar 返回了无效的项目检查结果".to_string())
+}
+
+pub async fn initialize_project(
+    app: &AppHandle,
+    repo_path: &str,
+    developer_id: &str,
+    agent_tools: &[String],
+    agent_root: &Path,
+) -> Result<Value, String> {
+    let output = run_json_command(
+        app,
+        vec![
+            "initialize-project".to_string(),
+            "--path".to_string(),
+            repo_path.to_string(),
+            "--developer".to_string(),
+            developer_id.to_string(),
+            "--tools".to_string(),
+            agent_tools.join(","),
+        ],
+        None,
+        agent_root,
+        "初始化 Trellis 失败",
+    )
+    .await?;
+    let line = last_json_line(&output).ok_or_else(|| "sidecar 返回了无效的初始化结果".to_string())?;
+    serde_json::from_str(line).map_err(|_| "sidecar 返回了无效的初始化结果".to_string())
+}
+
+pub async fn check_initial_push(
+    app: &AppHandle,
+    repo_path: &str,
+    branch_name: &str,
+    agent_root: &Path,
+) -> Result<Value, String> {
+    let output = run_json_command(
+        app,
+        vec![
+            "check-push".to_string(),
+            "--path".to_string(),
+            repo_path.to_string(),
+            "--branch".to_string(),
+            branch_name.to_string(),
+        ],
+        None,
+        agent_root,
+        "检查首次推送失败",
+    )
+    .await?;
+    let line = last_json_line(&output).ok_or_else(|| "sidecar 返回了无效的推送检查结果".to_string())?;
+    serde_json::from_str(line).map_err(|_| "sidecar 返回了无效的推送检查结果".to_string())
 }
 
 pub async fn list_associations(

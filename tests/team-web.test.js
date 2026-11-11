@@ -292,15 +292,15 @@ test('团队状态读取 assignments.pending 并保留项目版本', () => {
   assert.equal(status.boardVersions.p1, 'v1')
 })
 
-test('Git 操作同时兼容 commit sha 字段', () => {
+test('任务操作保留命令类型和任务空间', () => {
   const operation = normalizeOperation({
     id: 'op1',
-    status: 'pushed',
-    local_commit_sha: 'local',
-    remote_commit_sha: 'remote',
+    status: 'running',
+    command_type: 'assign_task',
+    task_space_id: 'space-1',
   })
-  assert.equal(operation.localSha, 'local')
-  assert.equal(operation.remoteSha, 'remote')
+  assert.equal(operation.commandType, 'assign_task')
+  assert.equal(operation.taskSpaceId, 'space-1')
 })
 
 test('登录回跳只接受同源相对路径', () => {

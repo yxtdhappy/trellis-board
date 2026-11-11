@@ -11,6 +11,12 @@
 
 每个仓库的扫描根为 `.trellis/tasks`。只有包含 `task.json` 的任务目录成为任务；`archive/` 下任意嵌套层级的任务仍会被发现并标记为归档。
 
+这里有两类扫描输入：
+
+- standalone 直接扫描 SQLite 白名单中的本机仓库，可读取 workspace 和 Git 元数据。
+- Team taskSpace 只扫描 `sync_task_space_file` 物化到系统临时目录的 `.trellis/tasks/**`，不读取
+  Git、workspace、`.developer`、scripts、spec、config 或 workflow。
+
 任务证据主要来自：
 
 - `task.json`、`prd.md`、`design.md`、`implement.md`。
@@ -56,6 +62,8 @@ E2E 只接受明确的执行完成证据。`implement.md` 中的计划、条件�
 - 任务缓存按文件 stat 签名判断是否复用。
 - Git 元数据缓存 TTL 为 `60_000ms`。
 - 消失的任务会从缓存中清理。
+- Team snapshot Worker 使用唯一临时根物化，必须传 `disableTaskCache: true`；否则
+  `taskScanCache` 会按临时路径累积旧条目。
 - 单个任务变化可以走 `refreshCachedTask()`；workspace 或关系变化可能要求更宽范围重算。
 - PRD 验收计数、Design 是否非骨架等轻量摘要必须随新证据进入任务缓存签名，并通过 `toTaskListItem()` 保留摘要对象、移除产物正文；不要在列表投影中再套一层不存在的 `summary.summary`。
 
@@ -69,7 +77,15 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 `database.js` 是 schema 和迁移的唯一所有者：
 
-- 当前 schema v9 包含 `app_meta`、`repositories`、任务阶段、扫描缓存、看板状态、计划字段、标签、保存视图、事件、依赖、团队、实时同步、插件和 Git 凭据相关表；`team_project` 还保存 Agent 工具、bootstrap 负责人和 developer ID，`team_task_index` 保存真实归档时间 `archived_at` 及归档排序索引。
+- 当前 schema 为 v10。新库和 v9 升级库都保留旧账号、团队、`team_project`、`project_live_*`、
+  `git_operation`、`git_credential` 和插件表，并新增 `sync_project`、
+  `sync_task_space`、`sync_task_space_file`、`sync_task_space_batch`、`sync_active_agent`、
+  `sync_agent_binding`、`sync_agent_cursor`、`sync_task_index`、`sync_task_command`、
+  `sync_conflict` 和 `sync_file_audit` 等 tasks-only 表。
+- Team runtime 只读写 `sync_*`、账号、团队、审计和执行扩展表；旧 Git 和实时覆盖表只作为人工回滚材料，
+  不在启动、扫描、项目接入或命令链路中读取。
+- `sync_task_space_file` 保存 LF 规范化后的当前正文、摘要、删除墓碑、来源 Agent/用户和 revision；
+  `sync_task_index` 以 `(task_space_id, task_key)` 和稳定 `execution_task_key` 隔离分支任务。
 - `task_dependency` 保存稳定 `executionTaskKey` 双方、原因、创建人、创建时间和可空解除时间；活动边 `(blocker_task_key, blocked_task_key)` 唯一，双向查询有索引。解除只写 `resolved_at`，历史行不删除。
 - 启用 WAL、外键、`busy_timeout=5000` 和 `synchronous=NORMAL`。
 - v1 -> v2 -> v3 顺序迁移在单一 `BEGIN IMMEDIATE` 事务中完成；迁移前用 `VACUUM INTO` 写入可独立打开的源版本快照，命名为 `board.sqlite.v1-backup` 或 `board.sqlite.v2-backup`。失败时主库保留源版本和原表，备份仍可独立打开。
@@ -77,6 +93,21 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 - 迁移后不再读写旧 JSON；它们只作为迁移来源和回滚备份。
 - 损坏的旧 JSON 记录警告并跳过，不阻止服务启动。
 - 项目批量新增、删除及重排、看板状态多字段更新、依赖创建/解除必须在事务中完成。移除项目时，同一事务按 `projectId::` 前缀清理其执行数据，并删除任一侧属于该项目的依赖行。
+
+### Team tasks-only 持久化契约
+
+- `sync_task_space.revision` 只由成功的非 no-op 快照批次递增；`indexed_revision` 只由成功投影推进。
+- `sync_task_space_file` 的主键是 `(task_space_id, relative_path)`；删除写墓碑而不是物理删除，供增量
+  cursor 获取最后一次删除。
+- `sync_task_space_batch` 的主键是 `(agent_id, task_space_id, batch_id)`；请求摘要不同时拒绝相同 batchId。
+- `sync_active_agent` 与 `agent_device` 同事务替换；`sync_agent_binding`、cursor 和命令都只能引用当前
+  active Agent。
+- `sync_task_command` 的 `pending -> delivered -> running -> succeeded|failed|cancelled` 状态变更必须
+  使用条件更新；过期 `delivered/running` 租约恢复 `pending`，不能并发执行同一命令。
+- `sync_conflict` 只保存待处理冲突摘要；`sync_conflict_backup` 只在覆盖服务端时保存双方正文；
+  `sync_file_audit` append-only，不保存完整历史正文。
+- `sync_task_space_scan_cache` 以 taskSpace 和 `indexed_revision` 隔离；旧 revision Board 不得覆盖新 revision。
+- 每日 `board.sqlite.snapshot.*` 备份由 `VACUUM INTO` 产生，保留 7 份；备份失败记录告警，不回滚业务。
 
 ### 依赖图与风险投影
 
@@ -125,7 +156,8 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 #### 6. Tests Required
 
-- `database.test.js`：新库 v9、v6/v7/v8 升级、源版本备份、归档时间回填、失败回滚和大于 v9 拒绝。
+- `database.test.js` / `database-v10.test.js`：新库 v10、v6/v7/v8/v9 升级、源版本备份、
+  旧表保留、归档时间回填、失败回滚和大于 v10 拒绝。
 - `execution-store.test.js`：缺失、自引用、重复、原因边界、二/三节点环、创建/解除事件回滚、重开和重新创建。
 - `execution-projection.test.js`：列表不带完整数组；详情同时返回活动与已结束双向历史；解除区间时长使用 `resolvedAt - createdAt`；开工、完成条件不改变阶段完成状态。
 - 真实 HTTP：失败前后依赖与事件计数一致；循环错误含标题闭环。
@@ -335,11 +367,11 @@ withTransaction(db, () => {
 
 ## 修改检查
 
-- [ ] schema v9 包含依赖活动边唯一索引、双向查询索引、接入字段、归档时间及归档排序索引，且大于 v9 的版本仍被拒绝。
-- [ ] v6/v7/v8 -> v9 顺序迁移成功；源版本备份可独立打开，归档时间回填和迁移失败回滚正确。
+- [ ] schema v10 只新增 `sync_*` tasks-only 表，旧依赖、归档、团队和 Git 表仍可打开，大于 v10 的版本仍被拒绝。
+- [ ] v6/v7/v8/v9 -> v10 顺序迁移成功；源版本备份可独立打开，旧数据保留和迁移失败回滚正确。
 - [ ] 扫描只把包含 `task.json` 的目录认作任务。
 - [ ] 新证据文件已加入读取和缓存签名范围。
-- [ ] 缓存失效范围覆盖 workspace、关系和 Git 元数据影响。
+- [ ] standalone 缓存失效范围覆盖 workspace、关系和 Git 元数据影响；Team 只按 taskSpace revision 失效。
 - [ ] E2E 计划/否定/完成三种语义均有测试。
 - [ ] 输出结构不兼容时更新 `SCAN_SCHEMA_VERSION`。
 - [ ] 列表摘要保留证据计数和 Design 有效性，但不泄漏完整依赖数组、事件或产物正文。
@@ -349,3 +381,5 @@ withTransaction(db, () => {
 - [ ] 身份冲突清除后不会从冲突快照补写虚假阶段变化。
 - [ ] 删除或重命名任务后缓存能清理旧项。
 - [ ] 移除项目时同一事务清理对应 `task_stage` 和执行扩展数据，且不会误删相似项目 ID 的记录。
+- [ ] Team 快照投影只读取 `.trellis/tasks/**`，不依赖 `data/projects/**`、Git 子进程或 workspace。
+- [ ] Team 每日数据库快照使用 `VACUUM INTO`，保留最近 7 份且备份失败不阻塞服务。

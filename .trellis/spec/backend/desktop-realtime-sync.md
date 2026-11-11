@@ -1,181 +1,349 @@
-# 桌面实时任务同步
+# 桌面任务快照同步
 
 ## 1. Scope / Trigger
 
-- 修改 `shared/trellis-watcher.js`、`agent/live-sync.js`、`server/team/live-sync.js`、
-  实时同步 API/SSE、`project_live_*` schema、桌面控制窗口或责任人确认时必须遵循本文。
-- 单机 watcher 与团队客户端 watcher 必须复用同一目录过滤和事件归一化实现。
-- 团队服务端不得监听自己的 `.trellis` 工作副本；团队实时内容只由已关联客户端上报。
+- 修改 `shared/task-snapshot.js`、`shared/remote-identity.js`、`agent/task-snapshot-sync.js`、
+  `agent/task-command.js`、`agent/project-onboarding.js`、`server/team/task-space-*.js`、
+  `server/team/task-snapshot-service.js`、`server/team/task-command-service.js`、
+  `server/team/sync-agent-service.js`、团队同步 API/SSE、`sync_*` schema 或桌面控制窗口时必须遵循本文。
+- 单机 watcher 与团队客户端 watcher 继续复用 `shared/trellis-watcher.js` 的事件归一化；团队客户端
+  只监听 `.trellis/tasks/**`。
+- Team 服务端不 clone、fetch、commit 或 push 项目 Git，不创建项目工作副本，也不读取 Git 凭据。
+- 项目 Git 只由客户端使用，负责源码、`.trellis/scripts`、`spec`、`config.yaml`、`workflow.md`、
+  `agents`、workspace 和本机编码 Agent 目录的一致性；Team Board 只同步任务目录。
 
 ## 2. Signatures
 
+### Agent HTTP
+
 ```text
-POST /api/agent/live-changes/preflight
-POST /api/agent/live-changes
-GET  /api/agent/live-files?projectId&afterRevision
-PUT  /api/agent/live-cursor
-GET  /api/team/live-revision?teamId
-GET  /api/board/events
-
-AgentLiveSync({
-  store,
-  loadContext,
-  logger,
-  emitControl,
-  watch?,
-  debounceMs?
-})
-
-createLiveSyncService({
-  db,
-  taskIndex,
-  agentEvents,
-  now?,
-  logger?
-})
-
-taskIndex.materializeLiveProject(project, rows, revision)
+POST   /api/agent/task-spaces/preflight
+POST   /api/agent/task-spaces/resolve
+POST   /api/agent/task-spaces/attach
+GET    /api/agent/task-spaces/:taskSpaceId/snapshot?afterRevision=N
+GET    /api/agent/task-spaces/:taskSpaceId/files?taskDir=...
+POST   /api/agent/task-spaces/:taskSpaceId/preflight
+POST   /api/agent/task-spaces/:taskSpaceId/changes
+PUT    /api/agent/task-spaces/:taskSpaceId/cursor
+GET    /api/agent/task-spaces/:taskSpaceId/conflicts
+POST   /api/agent/task-spaces/:taskSpaceId/conflicts/:conflictId/resolve
+GET    /api/agent/events
+POST   /api/agent/commands/:commandId/start
+POST   /api/agent/commands/:commandId/result
 ```
 
-SQLite v7：
+`POST /api/agent/commands` 旧长轮询固定返回 `410 AGENT_LONG_POLL_REMOVED`。Agent 协议版本为 `3`，
+旧协议返回 `426`。
 
-- `project_live_revision(project_id, revision, updated_at)`
-- `project_live_file(project_id, relative_path, revision, sha256, content_text, deleted, ...)`
-- `project_live_batch(batch_id, project_id, agent_id, user_id, revision, request_sha256, ...)`
-- `agent_live_cursor(agent_id, project_id, revision, updated_at)`
-- `team_task_index.live_revision` 非 0 表示该行由实时覆盖层投影。
+### Web HTTP
 
-SSE：Agent 事件流为 `live.changed`、`task.live.overridden`；Board 事件流为轻量
-`tasks.changed`，只通知页面重新查询 REST 快照。
+```text
+GET  /api/tasks/query?taskSpaceId=...
+GET  /api/task-spaces/:taskSpaceId/assignees
+POST /api/tasks
+POST /api/tasks/assign
+GET  /api/task-operations?taskSpaceId=...
+GET  /api/task-operations/:id
+POST /api/task-operations/:id/retry
+POST /api/task-operations/:id/cancel
+```
+
+创建和改派成功入队返回 `202 + operation`。目标 Agent 离线或未绑定时在创建操作项前拒绝。
+
+### SQLite v10
+
+新模式只使用以下表；旧 `project_live_*`、`team_project`、`git_operation`、`git_credential`
+等表保留但不读写：
+
+- `sync_project`、`sync_project_team_access`、`sync_project_member`
+- `sync_task_space`、`sync_task_space_file`、`sync_task_space_batch`
+- `sync_active_agent`、`sync_agent_binding`、`sync_agent_cursor`
+- `sync_task_index`、`sync_task_index_tag`、`sync_task_space_scan_cache`
+- `sync_task_assignment`
+- `sync_task_command`
+- `sync_conflict`、`sync_conflict_backup`、`sync_file_audit`
+
+### 服务与 SSE
+
+```text
+createTaskSpaceService({ db, config })
+createTaskSnapshotService({ db, taskSpaces, onRevisionCommitted })
+createTaskCommandService({ db, taskSpaces, agents, events })
+createSyncAgentService({ db, config, events })
+createTaskSnapshotBackupService({ db, databaseFile, logger })
+createAgentEventStream({ db, commands, logger })
+```
+
+Agent SSE 事件为 `command.available`、`agent.revoked`、`task.changed`、`cursor.invalidated`。
+Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快照，不通过 SSE 传输任务正文。
 
 ## 3. Contracts
 
-- 文件路径以 `.trellis/` 开头，只允许 `.developer`、`tasks/**`、`workspace/**`。
-- 首版只接受 `.json/.jsonl/.md/.txt/.yaml/.yml`；内容必须是规范 UTF-8。
-- 单文件 ≤1 MiB、单批次 ≤8 MiB / 64 文件；同一 Agent+项目每秒最多 5 批。
-- `batchId` 在 `(agent_id, project_id)` 内幂等；重试必须返回同一 revision，不同内容复用同一
-  `batchId` 返回 `IDEMPOTENCY_CONFLICT`。
-- 同一 Agent、同一项目的 `clientSequence` 必须单调递增；同一文件收到不高于已存来源序号的批次时
-  跳过该文件。整批都被跳过时不得增加 revision、重投影或广播。`clientSequence` 属于幂等请求摘要，
-  同一 `batchId` 改序号按冲突拒绝。
-- sidecar 对同一项目的 watcher 批次串行处理和上传，避免旧文件快照晚于新快照到达服务端。
-- `project_live_revision` 在 `BEGIN IMMEDIATE` 事务内单调递增。后到并成功提交的同文件版本覆盖先到版本。
-- 服务端存储后必须复用 `scanRepository()` 和 `taskIndex.buildBoard()` 生成任务行；不能在 API 内另写阶段推导。
-- Agent watcher 批次先按项目执行一次 Git dirty 判断，只读取和上传仍存在于
-  `git diff HEAD` 或未跟踪文件集合中的路径。Git 状态判断失败时保留 pending，下一次监听或
-  重试继续判断；已收敛的旧 pending 在展示或上传前删除。
-- 服务端实时覆盖层物化必须在团队任务索引 Worker 中执行。HTTP 请求提交实时 revision 后只调度
-  投影并返回；同项目最多一个物化在途，期间的新 revision 合并为下一轮最新快照，旧 worker 结果
-  不得覆盖新 revision。
-- 实时物化成功后再更新 `team_task_index`、内存 Board/详情并发布 `live.changed`。内存中已有
-  投影时，幂等重放不得再次物化；`ensureProject()` 在投影缺失时只调度 worker，并允许调用方先
-  使用上一份 Git Board。
-- 实时物化失败保留已提交 revision 和上一份一致 Board，按 1/2/4 秒、最大 30 秒退避重试。
-  服务关闭时停止重试计时器并终止 worker，失败的 Promise 不得继续重试。
-- 实时物化的临时目录必须位于所有业务 Git 工作区之外，不能依赖接入项目配置 `.gitignore` 或服务端 Git 全局排除规则。
-- 物化扫描只从临时目录读取 `.trellis` 内容，Git HEAD 与分支元数据仍从未修改的业务工作区读取。
-- 幂等批次重放且内存中已有项目实时投影时，不得再次执行全量物化。
-- 定时 Git 脏检查使用目录级未跟踪扫描，不能展开每个未跟踪文件；不得通过修改接入项目 `.gitignore` 降低扫描成本。
-- 实时投影只给实际受覆盖文件影响的任务设置 `live_revision`；只有 `.trellis/.developer`、
-  `.trellis/workspace/**` 或无法映射到具体任务的项目级覆盖才标记整个项目。
-- 接收方先备份冲突文件，再临时写、fsync、原子 rename；全部成功后推进 `agent_live_cursor`。
-- 冲突 manifest 文件明细记录路径、`taskKey`、文件自身 revision、摘要和
-  `changeType=content|line-endings`；只有规范 UTF-8 且除 LF/CRLF 外完全相同才标记
-  `line-endings`，该分类不改变备份和覆盖顺序。
-- `remote_overwrite` 控制事件的 `taskKeys`、`files` 和 `fileCount` 只来自真实冲突文件；
-  新增 `conflicts` 文件明细，同时保留旧字段兼容。事件中的全局 revision 不得替代文件自身 revision。
-- 远端写入用 `(absolutePath, sha256)` 抑制 watcher 自触发；摘要变化时必须照常上传。
-- Git 扫描后逐文件比较摘要；同路径一致或两边都已删除时删除覆盖行。仍有覆盖行时必须重新投影。
-- 任务从普通目录移动到归档目录时，用归档目标和任务索引定位同名任务文件。目标内容一致时删除旧覆盖；
-  内容不同且目标没有覆盖时迁移到归档路径，不能继续生成活动任务副本。
-- `read_only` binding 可以拉取和落盘，但 preflight/upload 返回 403。
-- 没有持久化游标时才执行 `afterRevision=0` 的 full pull；已有游标的客户端重启和错误重试
-  必须从该游标走增量，再补传本地未提交变化，不能用服务端旧覆盖层覆盖本地工作区。
-- 初始化、恢复和 watcher 批次共用项目串行队列。
-- 首次补传候选来自 `git diff --name-only -z HEAD -- .trellis` 与
-  `git ls-files --others --exclude-standard -z -- .trellis`，并单独检查被忽略但存在的
-  `.trellis/.developer`；与 full pull 摘要一致的路径不得重复上传。
-- binding 的 `liveSyncStatus` 取值为 `pending|syncing|ready|error`。初始化、运行期上传和
-  pending 冲刷共用该状态；初始化仍失败时，其他 pending 上传成功不能把项目误写为 `ready`。
-- 初始化与 pending 冲刷重试必须单飞；同一绑定已有重试进行中时，后续触发复用同一 Promise。
-- 非责任人确认返回 409 `ASSIGNEE_CONFIRMATION_REQUIRED`；继续保留责任人，接管形成新的实时 revision，
-  原责任人通过 `task.live.overridden` 收到通知。
-- 原责任人通知不能依赖其是否绑定 Agent。每次覆盖同时写入 `target_agent_id=NULL` 的用户级事件，
-  `/api/team/live-revision` 只向当前登录、当前可读项目和指定团队范围内的目标用户返回最近通知；
-  Board 按事件 ID 去重并显示警告。
-- Board 通过同源 `GET /api/board/events` 接收 `tasks.changed`，收到事件后复用
-  `/api/tasks/query` 的筛选、分页、ETag 和项目权限校验；SSE 不传输任务正文。
-- `/api/team/live-revision` 保留为兼容接口，但 Board 只在 SSE 建连、任务变更、页面聚焦或恢复可见时
-  按需查询，不再每 750ms 常态轮询。
-- 桌面控制窗口在进程生命周期内只自动显示和聚焦第一次事件。用户点击系统 X 或
-  “稍后处理”只隐藏窗口并抑制后续自动聚焦，不删除 `pending-live` 文件；运行时在内存队列中
-  保留该事件。托盘“处理实时确认”是用户主动恢复隐藏窗口的入口。
-- 同任务、同责任人的 `assignment_warning` 使用稳定 key 原位替换；`remote_overwrite` 使用
-  `backupId`，`assignment_overridden` 使用任务和 revision 去重，不能因 watcher 批次追加重复项。
+### 项目与任务空间身份
+
+- 项目身份是规范化 Git 远端：HTTPS/SSH/scp 的协议、userinfo、默认端口、末尾 `/` 和 `.git`
+  差异归一；`remote_identity_hash` 全局唯一。
+- 同步空间身份是 `canonicalRemoteIdentity + branchName`，即
+  `sync_task_space UNIQUE(project_id, branch_name)`。
+- 同一仓库不同分支拥有独立 project taskSpace、revision、cursor、命令、冲突和索引。
+- 服务端信任已认证 Agent 上报的 origin 字符串，不访问 Git 远端证明其存在；Agent 必须先验证
+  所选目录是仓库根、origin 可规范化、当前分支合法。
+
+### 单账号单 Agent
+
+- `sync_active_agent(user_id PRIMARY KEY, agent_id UNIQUE)` 决定账号唯一有效 Agent。
+- 新设备生效时，同一事务撤销旧设备、旧 binding，取消旧 pending/delivered/running 命令，替换活动槽，
+  再向旧 Agent 发布 `agent.revoked` 并关闭 SSE。
+- 账号级项目权限保留；旧设备本地仓库绝对路径和 binding 不迁移。新设备必须手动选择本地仓库。
+- 只有 active Agent、approved binding、active project/taskSpace 和可写项目成员可上传快照或领取命令。
+
+### 路径与内容
+
+- 只接受 `.trellis/tasks/<task-dir>/<file>` 和
+  `.trellis/tasks/archive/<YYYY-MM>/<task-dir>/<file>`。
+- 拒绝绝对路径、反斜杠、NUL、`.`/`..`、符号链接、非白名单扩展名和非 UTF-8 内容。
+- 允许 `.json/.jsonl/.md/.txt/.yaml/.yml`；单文件不超过 1 MiB，单批不超过 8 MiB / 64 文件。
+- 客户端和服务端都用 `normalizeSnapshotText()` 去除 BOM 并把 CRLF/CR 转为 LF，再用
+  `snapshotSha256()` 计算摘要；客户端必须用 fatal UTF-8 解码，服务端必须拒绝
+  `sha256` 与规范化内容不一致、`baseSha256` 非法或格式错误的记录。
+- 服务端每秒最多接受每个 Agent/taskSpace 5 个批次。
+
+### 原子批次与 CAS
+
+`POST changes` 请求：
+
+```json
+{
+  "batchId": "uuid",
+  "clientSequence": 12,
+  "files": [
+    {
+      "path": ".trellis/tasks/example/task.json",
+      "content": "{\"id\":\"example\"}\n",
+      "sha256": "...",
+      "baseSha256": "..."
+    }
+  ]
+}
+```
+
+- `baseSha256=null` 表示客户端认为路径不存在；64 位摘要表示基于的服务端当前内容。
+- 服务端在 `BEGIN IMMEDIATE` 中逐文件比较当前摘要；任一不一致整批拒绝，不写入部分任务。
+- 同一请求的 `batchId + clientSequence + files` 摘要幂等重放返回原 revision；同 `batchId` 不同摘要拒绝。
+- `clientSequence` 在同一 Agent/taskSpace 内必须严格递增。
+- 同一批最多涉及一个完整任务目录，或一次同 task ID 的活动目录到归档目录移动；移动前后都必须保留
+  `task.json` 和稳定 `id`。
+- 成功且有变化的批次只增加 taskSpace revision 一次，并写 `sync_file_audit`；无变化批次不增加 revision。
+- 删除保留 `deleted=1` 墓碑供增量拉取；full snapshot 不返回墓碑。
+
+### revision、cursor 与本地应用
+
+- 首次接入使用 `afterRevision=0` 获取当前完整快照；已接入客户端重启从本地 cursor 增量拉取。
+- 只有本地完整应用后才推进本地 cursor，再上报 `PUT cursor`；服务端 cursor 使用
+  `MAX(existing, incoming)` 防止回退。
+- 客户端 cursor v3 额外保存每个已同步文件的服务端摘要。增量上传的 `baseSha256` 必须来自
+  上次成功应用或上传后的本地基线，不能在提交前临时读取服务端最新摘要来充当基线，否则会
+  绕过离线并发冲突。
+- 每次拉取前先比较本地任务目录与 cursor 基线：本地有未上传变化时先走 CAS 上传；上传成功后再
+  拉取新 revision，发生冲突时停止应用远端目录。首次接入选择“仅同步无冲突项”或“暂不处理”
+  跳过的本地目录作为延后状态持久化，用户再次修改前不得自动上传；延后目录随后被服务端修改时
+  重新要求确认，不能覆盖本地。
+- 客户端以完整任务目录为原子单位：先在同卷临时目录写 `next`，把原目录 rename 为 `previous`，
+  再 rename `next` 到目标；失败时恢复原目录。
+- 服务端 revision 应用后的 watcher 事件按 `(absolutePath, sha256)` 抑制；只有内容仍匹配才吞掉事件，
+  真实后续编辑必须重新上传。
+- 同步队列按 taskSpace 串行。网络响应丢失时 cursor 中保留原 pending batch，重试复用原 `batchId`，
+  不生成第二个 revision。
+
+### 首次接入预检
+
+首次接入必须分成“只读预检”和“明确接入”两个阶段。客户端先调用无 taskSpace ID 的
+`POST /api/agent/task-spaces/preflight`，请求只包含规范化前的远端、分支和团队。服务端仅按当前
+Agent 账号和团队访问权限读取项目、taskSpace、revision 与任务文件元数据，不建立 project、
+taskSpace、binding 或 cursor，也不返回任务正文。返回结果按稳定 task ID 分类：
+
+```json
+{
+  "status": "new | branch_new | access_required | unavailable | existing",
+  "revision": 12,
+  "tasks": [
+    {
+      "taskId": "task-id",
+      "taskDir": ".trellis/tasks/task-id",
+      "files": [{ "path": ".trellis/tasks/task-id/task.json", "sha256": "..." }]
+    }
+  ]
+}
+```
+
+`new`、`branch_new`、`access_required` 和 `unavailable` 不返回任何任务元数据。只有 `existing`
+且项目、taskSpace 均可用时才返回任务分组；客户端使用这些元数据与本地文件摘要分类：
+
+- `same`
+- `local-only`
+- `server-only`
+- `content-conflict`
+- `move-delete-conflict`
+- `invalid`
+
+界面提供三个入口：
+
+- 暂不接入：只关闭向导并清除待接入路径，不调用 attach，不写本地 binding/cursor，不写服务端。
+- 仅同步无冲突项：只下载 `server-only`，跳过本地独有、冲突和移动删除争议，不上传本地内容。
+- 查看并处理差异：按任务目录统一选择服务端、本地、保存副本或跳过，不能写半个任务。
+
+服务端没有快照时返回 `new` 或 `branch_new`。用户确认接入后使用内部 `bootstrap` 模式，把空
+服务端任务空间初始化为当前本地任务快照；只有这种情况允许首次上传本地任务。若预检到接入之间
+其他客户端已经写入服务端任务，`bootstrap` 必须转为差异审查，不能盲目覆盖。
+
+只有用户明确选择“仅同步无冲突项”或“查看并处理差异”后才调用 attach。新 binding 持久化
+`initialSyncMode=bootstrap|safe|review` 和 `initialSyncCompleted=false`：
+
+- `safe` 只应用服务端独有任务，不上传本地独有内容；
+- `review` 有差异时只展示审查事件，不安装 watcher、不读写任务目录、不推进 cursor；
+- 双方一致时直接完成，不显示空审查窗口；
+- 完成后写 `initialSyncCompleted=true`，再启动 tasks watcher 和正常增量同步。
+
+不得在 attach 后通过删除 binding 来实现“暂不接入”。服务端不提供该补偿接口。
+
+### 冲突
+
+CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、路径、服务端 revision、
+最后修改人、设备、时间、客户端基线、服务端当前摘要和可执行建议。普通界面先显示可读信息，
+技术摘要放在次级详情。
+
+处理动作：
+
+- 查看差异：本地读取本地目录和服务端目录，逐文件返回内容差异。
+- `use-server`：先备份本地完整目录，再用服务端目录原子替换。
+- `overwrite-server`：重新核对冲突后摘要，保存服务端旧内容与新内容到 `sync_conflict_backup`，
+  写新 revision 和审计，并标记冲突已解决。
+- `save-local-copy`：复制本地完整目录到客户端备份，不改变服务端任务快照。
+
+第一版不自动合并 Markdown、JSON 或 JSONL。
+
+### 创建与改派命令
+
+- `create_task` 和 `assign_task` 只允许投递给目标用户唯一在线 Agent。
+- Agent 收到 `command.available` 后先 `POST /commands/:id/start` 获取 `running` 租约；同一命令状态为
+  `running` 时不并发执行。
+- `delivered` 租约默认 5 分钟，`running` 租约默认 30 分钟；过期后恢复 `pending`。
+- 创建操作调用目标仓库的 `.trellis/scripts/task.py create ... --no-start`，只允许新增目标任务目录。
+- 改派只改目标 `task.json.assignee`；只保护该任务目录，其他源码或任务允许 dirty。
+- 两种命令都拒绝仓库根、origin、分支不一致，存在 merge/rebase/cherry-pick/revert，或目标路径 dirty。
+- 命令成功后必须先走同一 CAS 上传。`complete(status=succeeded)` 还要求 taskSpace 已索引到结果 revision、
+  task 身份匹配；改派还要求索引中的负责人已更新，否则返回可重试的 `COMMAND_WAITING_INDEX`。
+- 失败命令可用同一 command ID 和幂等键重试；成功或取消后不能重试。正式任务只在快照投影后出现。
+
+### 首次项目接入与推送确认
+
+- 客户端只接受 Git 仓库根；已有 `.trellis/tasks` 时直接预检，不重复初始化。
+- 缺少 `.trellis` 或 `tasks` 时，客户端使用安装包内固定 Trellis runtime 执行初始化，Agent 工具只影响
+  当前设备，可后续追加。
+- 新初始化仓库不自动 commit/push。`checkInitialPush()` 先确认 `.trellis` 已进入 HEAD 且相关路径干净，
+  再用 `git ls-remote origin refs/heads/<branch>` 比较本地 HEAD。
+- 仓库预检必须返回 `hasCommittedTrellis`（由 `git ls-tree -r --name-only HEAD -- .trellis` 得出）。
+  本地已有 `.trellis` 但 HEAD 中没有该目录时，首次推送门禁在接入向导关闭后重新打开仍必须保持；
+  已从 Git 检出且 `.trellis` 已在 HEAD 的既有项目不得被误判为首次初始化。
+- 只有新建 `.trellis` 或 `.trellis/tasks` 时才要求首次 push 确认；已有任务树仅追加本机 Codex、
+  OpenCode、Pi 等 Agent 工具时，不把本机工具配置作为任务接入的推送门禁。
+- 状态区分 `waiting_commit`、`waiting_push`、`branch_missing`、`remote_ahead`、`diverged`、
+  `unable_to_verify`、`ready`；网络不可达不得显示为“未推送”。
+
+### 备份
+
+- schema 升级前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v10.*`。
+- Team runtime 启动时和每 24 小时写入
+  `backups/board.sqlite.snapshot.<UTC timestamp>`，保留最近 7 份。
+- 备份失败只记结构化告警，不阻塞 HTTP、快照提交或 SSE。
+- 客户端冲突备份位于
+  `%LOCALAPPDATA%\TrellisBoard\data\agent\live-backups\<taskSpaceId>\<backupId>`。
 
 ## 4. Validation & Error Matrix
 
 | 条件 | 结果 |
 | --- | --- |
-| 非 approved binding、停用团队/项目、设备撤销 | 403，拒绝上传和拉取 |
-| `read_only` 或无项目写角色上传 | 403 |
-| 绝对路径、`..`、NUL、非允许扩展名、符号链接 | 400，整批拒绝 |
-| 非规范 UTF-8、摘要不匹配、非法 operation | 400 |
-| 单文件/批次/文件数超限 | 413 |
-| 每秒超过 5 批 | 429，可重试 |
-| 同一 batchId 不同内容 | 409 `IDEMPOTENCY_CONFLICT` |
-| 责任人确认过期、revision 变化或动作无效 | 409，重新 preflight |
-| 本地写入失败 | 保留备份，不推进 cursor，停止该批次后续写入 |
-| SSE 断线 | 重连 `onOpen` 时从本地 cursor 补拉 |
+| Agent 非 active slot、binding 未批准、项目/任务空间停用 | `401/403`，不读写快照 |
+| 目标用户无在线 Agent、无 approved binding、非项目写成员 | 创建操作项前 `409`，返回用户、项目、分支和下一步 |
+| 路径越界、反斜杠、非白名单扩展名、符号链接、非 UTF-8 | 整批拒绝，任务快照不变 |
+| 单文件、单批、文件数超限 | 拒绝，任务快照不变 |
+| 同一 `batchId` 不同请求摘要 | `409` |
+| `clientSequence` 不递增 | `409` |
+| 任一 `baseSha256` 不一致 | `409 TASK_FILE_CONFLICT`，同批全部不写 |
+| 任务目录缺 `task.json`、缺稳定 ID、移动前后 ID 不同 | `409`，整批拒绝 |
+| 无变化批次 | `200 noop=true`，revision 不增加 |
+| 投影尚未追上成功 revision 或负责人尚未更新 | `409 COMMAND_WAITING_INDEX`，可重试结果 |
+| Agent 租约过期 | 状态恢复 `pending`，可安全重投 |
+| 每日数据库备份失败 | 记录告警，服务继续运行 |
+| 旧 `/api/agent/live-*`、Git 凭据、probe、refresh、repair、git-operation 路由 | `404` |
 
 ## 5. Good / Base / Bad Cases
 
-- Good：A 保存未提交 `task.json`，服务端 revision+1，B 收到 `live.changed` 后备份并写入同内容，
-  Board 收到 `tasks.changed` 后立即通过 REST 对齐任务快照。
-- Base：远端文件与本地摘要相同，不创建备份，只推进 cursor。
-- Bad：服务端 Git 扫描删除全部 `team_task_index` 后不重放 live 覆盖行，导致 Board 回退。
-- Bad：仅按路径和时间抑制 watcher，吞掉远端写入后紧接着发生的真实本地编辑。
-- Bad：在 `/api/agent/live-changes` 的请求栈里同步复制整个 `.trellis` 并扫描，导致心跳、
-  `/api/health` 和确认请求一起排队超时。
-- Good：Git merge 写回与 HEAD 一致时 Agent 直接跳过；真实未提交编辑仍进入责任人确认。
+- Good：A 修改 `task.json` 并以服务端当前摘要为基线提交；revision+1，B 从 cursor 拉取后原子替换
+  完整任务目录，再推进 cursor；Board 收到 `tasks.changed` 后重载 REST 快照。
+- Good：A 把任务从活动目录移动到归档目录，一个批次包含旧目录删除和新目录写入；B 不会恢复旧活动路径。
+- Base：本地和服务端任务目录文件集合及摘要相同，不写文件、不增加 revision。
+- Base：同步请求已提交但响应丢失，客户端重启后复用 pending `batchId`，服务端返回原 revision。
+- Bad：以“后到覆盖先到”写同一任务文件，会静默丢更新；服务端必须使用文件级 CAS。
+- Bad：收到 watcher 后只按路径抑制，不校验新摘要，会吞掉远端应用后紧接发生的真实本地编辑。
+- Bad：服务端在 HTTP 请求栈里 clone/fetch 或扫描项目 Git，会重新引入两套事实源和长时间阻塞。
+- Bad：命令失败时提前插入正式任务卡或修改负责人，会让 Board 显示未实际落盘的状态。
 
 ## 6. Tests Required
 
-- `tests/watcher.test.js`：共享过滤、防抖批次、动态 rebuild 和 close。
-- `tests/team-realtime-sync.test.js`：幂等、revision、路径越界、read_only、详情/单项目 Board 实时投影、
-  Git 收敛、继续与接管审计、`clientSequence` 乱序防回退、精确任务标记、无 Agent 的浏览器通知，
-  Worker 临时物化、请求提前返回、健康检查 `<1s`、revision 合并、失败重试，以及两个真实
-  `AgentLiveSync` 经 HTTP/SSE/watcher 连续同步 20 次的 P95 ≤3 秒断言。
-- `tests/desktop-realtime-apply.test.js`：冲突备份、自触发抑制、真实编辑继续上报、待确认批次、
-  继续上传、一键复原、本地写回、同一项目批次串行、首次 full pull 后续传、
-  `read_only` 不上传、重启幂等、重试单飞和状态恢复。
-- `tests/team-events.test.js`：`live.changed` 不回发来源设备。
-- `tests/desktop-package.test.js`：`live-control` capability、Rust 命令、托盘恢复、关闭抑制和
-  sidecar 控制窗口接线。
-- Windows E2E：两个真实客户端完成 P95 ≤3 秒、并发覆盖、备份复原、断线补偿和责任人三态确认。
+- `tests/shared-remote-identity.test.js`：HTTPS/SSH/scp 归一、端口、非法协议和分支。
+- `tests/task-snapshot.test.js`：路径边界、LF 摘要、任务目录分组、移动和六类差异。
+- `tests/database-v10.test.js`：新旧表并存、升级备份、旧数据保留和重复启动。
+- `tests/team-task-spaces.test.js`：全局唯一、owner/invite、同远端不同分支隔离。
+- `tests/team-task-snapshot.test.js`：首次写入、CAS 冲突、整批回滚、幂等、删除墓碑、覆盖备份。
+- `tests/team-task-index-v10.test.js`：tasks-only 物化、归档移动、revision 隔离、不读取 Git/workspace。
+- `tests/team-agent-slot.test.js`：新设备踢下线、旧 SSE 关闭、旧命令取消、新设备重建 binding。
+- `tests/team-task-commands.test.js`：在线目标、命令状态机、租约恢复、索引等待、重试和取消。
+- `tests/team-realtime-sync.test.js`：两个真实 Agent HTTP 快照 + SSE 对齐、CAS 并发和离线拒绝。
+- `tests/team-gitless-http.test.js`：新路由可用，旧 Git/live 路由 404，Team 启动不访问 Git 工作副本。
+- `tests/team-release.test.js`：服务端仓库无工作副本，命令成功前不生成正式任务。
+- `tests/team-events.test.js`：Agent SSE 只包含新事件，旧事件游标和覆盖协议不存在。
+- `agent/test/project-onboarding.test.js`：仓库预检、固定 CLI 初始化、推送状态和已有 `.trellis`。
+- `agent/test/task-snapshot-sync.test.js`：首次/增量、cursor v3 文件基线、离线并发冲突、延后目录、
+  目录移动和 pending batch 重放。
+- `agent/test/task-command.test.js`：真实 `task.py`、负责人写入、路径级 dirty 保护、上传失败不报成功。
+- `tests/desktop-realtime-apply.test.js`：首次冲突、归档移动、备份、batchId 重试。
+- `tests/desktop-package.test.js`：协议 v3、Trellis runtime 资源、窄 Tauri capability 和新控制窗口命令。
+
+Windows 发布前仍需两个真实安装客户端完成登录、本地项目初始化、首次推送、任务同步、并发冲突、
+命令投递、换设备踢下线和归档重启验收；Node 测试不能替代该 E2E。
 
 ## 7. Wrong vs Correct
 
 ### Wrong
 
 ```js
-// 每次扫描直接覆盖索引，没有重放实时覆盖层。
-taskIndex.replaceProjectIndex({ projectId, board });
+// 以路径和时间判断“这是自己刚写入的事件”。
+if (recentlyAppliedPaths.has(relativePath)) return
 ```
 
-Git 内容较旧时会把团队刚推进的任务阶段静默回退。
+远端应用后用户立刻真实编辑同一文件时，该编辑会被错误吞掉。
 
 ### Correct
 
 ```js
-taskIndex.setProjectIndexedHook((projectId) => {
-  liveSync.convergeGit(projectId);
-});
+const expected = this.suppressed.get(absolutePath)
+const current = snapshotSha256(await readFile(absolutePath, 'utf8'))
+if (current === expected) return
+// 摘要不同，说明是新的本地编辑，继续上传。
+```
 
-// 仍有摘要不一致的实时覆盖行时，重新 materialize 并 skipLiveHook。
-taskIndex.replaceProjectIndex({
-  projectId,
-  board: liveBoard,
-  skipLiveHook: true
-});
+### Wrong
+
+```js
+db.prepare('UPDATE sync_task_space_file SET content_text = ? WHERE relative_path = ?')
+```
+
+没有 base 摘要校验会后写覆盖先写。
+
+### Correct
+
+```js
+// 在同一 BEGIN IMMEDIATE 中比较每文件 baseSha256。
+// 任一不一致时整批返回 TASK_FILE_CONFLICT，所有文件均不写入。
 ```

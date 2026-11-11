@@ -152,6 +152,7 @@ function materializeLiveProject(project, rows) {
       includeContent: true,
       refreshRepositoryMetadata: true,
       metadataRepoPath: project.path,
+      disableTaskCache: true,
     })
     const versions = new Map(
       result.tasks
@@ -172,6 +173,71 @@ function materializeLiveProject(project, rows) {
       removeTreeWithRetry(tempRoot)
     } catch {
       // 临时目录在工作区外，清理失败不能反向令已提交的实时批次失败。
+    }
+  }
+}
+
+function materializeSnapshotProject(project, rows) {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-task-space-'))
+  try {
+    for (const row of rows) {
+      if (row?.deleted) continue
+      const relativePath = String(row?.relative_path || '')
+      const normalized = path.posix.normalize(relativePath)
+      if (
+        normalized !== relativePath ||
+        !relativePath.startsWith('.trellis/tasks/') ||
+        relativePath.includes('\0')
+      ) {
+        throw new Error('任务快照文件路径无效')
+      }
+      const target = path.resolve(tempRoot, ...relativePath.split('/'))
+      if (!isInside(tempRoot, target)) throw new Error('任务快照文件路径越界')
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, String(row.content_text ?? ''), 'utf8')
+    }
+    const versions = new Map(rows.map((row) => [row.relative_path, row.sha256]))
+    const result = scanRepository(
+      {
+        ...project,
+        path: tempRoot,
+      },
+      {
+        includeContent: true,
+        disableTaskCache: true,
+        developer: null,
+        members: Array.isArray(project.members) ? project.members : [],
+        repositoryMetadata: {
+          branch: project.branchName,
+          branches: [project.branchName],
+          head: null,
+        },
+        workspaceSummaryResolver: () => ({
+          indexExists: false,
+          journals: 0,
+          lastJournal: null,
+        }),
+      },
+    )
+    return {
+      ...result,
+      project: {
+        ...result.project,
+        path: null,
+        head: null,
+        branch: project.branchName,
+      },
+      tasks: result.tasks.map((task) => ({
+        ...task,
+        repoPath: path.join(os.tmpdir(), 'trellis-task-space-snapshot', String(project.id)),
+        taskVersion: versions.get(`${task.relativeDir}/task.json`) || null,
+      })),
+    }
+  } finally {
+    try {
+      removeTreeWithRetry(tempRoot)
+    } catch {
+      // 临时目录清理失败不影响已经得到的扫描结果。
     }
   }
 }
@@ -227,10 +293,25 @@ function contentTreeHash(repoPath) {
 }
 
 parentPort.on('message', (message) => {
-  if (message?.type !== 'scan' && message?.type !== 'live-materialize') return
+  if (
+    message?.type !== 'scan' &&
+    message?.type !== 'live-materialize' &&
+    message?.type !== 'snapshot-materialize'
+  ) {
+    return
+  }
   try {
     const project = message.project
     if (!project) throw new Error('扫描项目不存在')
+    if (message.type === 'snapshot-materialize') {
+      parentPort.postMessage({
+        type: 'snapshot-materialize-result',
+        id: message.id,
+        revision: message.revision,
+        scan: materializeSnapshotProject(project, Array.isArray(message.rows) ? message.rows : []),
+      })
+      return
+    }
     if (message.type === 'live-materialize') {
       parentPort.postMessage({
         type: 'live-materialize-result',

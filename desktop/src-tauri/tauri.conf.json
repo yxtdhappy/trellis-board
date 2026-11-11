@@ -30,6 +30,9 @@
     "externalBin": [
       "binaries/trellis-agent"
     ],
+    "resources": {
+      "resources/trellis-runtime/": "trellis-runtime/"
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper",

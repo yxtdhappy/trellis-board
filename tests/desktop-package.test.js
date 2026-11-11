@@ -40,7 +40,6 @@ function testConfig(origin = PUBLIC_ORIGIN, port = 0) {
     publicOrigin: origin,
     sessionTtlMs: 12 * 60 * 60 * 1000,
     agentStaleMs: 60_000,
-    gitPollMs: 60_000,
     cookieSecure: false,
     trustProxy: false,
     allowLocalGitRemotes: false,
@@ -166,6 +165,9 @@ test('tauri.conf.json 固定 NSIS currentUser 且 CSP 无 unsafe 指令', () => 
   assert.equal(config.bundle.windows.webviewInstallMode.type, 'downloadBootstrapper')
   assert.equal(config.bundle.windows.webviewInstallMode.silent, true)
   assert.deepEqual(config.bundle.externalBin, ['binaries/trellis-agent'])
+  assert.deepEqual(config.bundle.resources, {
+    'resources/trellis-runtime/': 'trellis-runtime/',
+  })
   assert.deepEqual(config.app.security.capabilities, [
     'main',
     'board-local-association',
@@ -200,9 +202,14 @@ test('capability 将本地登录与远程项目关联权限分开', () => {
   ])
   const remote = readJson('desktop/src-tauri/capabilities/board-local-association.json')
   assert.deepEqual(remote.permissions.slice().sort(), [
-    'allow-associate-local-project',
+    'allow-associate-pending-project',
+    'allow-cancel-pending-project',
+    'allow-check-pending-project-push',
     'allow-desktop-sidecar-status',
+    'allow-initialize-pending-project',
+    'allow-inspect-local-project',
     'allow-list-local-associations',
+    'allow-preflight-pending-project',
   ])
   assert.deepEqual(remote.remote.urls, ['https://*:*', 'http://*:*'])
   assert.equal(new URLPattern(remote.remote.urls[0]).test('https://board.example.com:8443/'), true)
@@ -213,23 +220,50 @@ test('capability 将本地登录与远程项目关联权限分开', () => {
   assert.match(custom, /commands\.allow = \["app_status"\]/)
   assert.match(custom, /identifier = "allow-desktop-login"/)
   assert.match(custom, /commands\.allow = \["desktop_login"\]/)
-  assert.match(custom, /commands\.allow = \["associate_local_project"\]/)
+  assert.doesNotMatch(custom, /commands\.allow = \["associate_local_project"\]/)
+  assert.match(custom, /commands\.allow = \["inspect_local_project"\]/)
+  assert.match(custom, /commands\.allow = \["initialize_pending_project"\]/)
+  assert.match(custom, /commands\.allow = \["check_pending_project_push"\]/)
+  assert.match(custom, /commands\.allow = \["preflight_pending_project"\]/)
+  assert.match(custom, /commands\.allow = \["cancel_pending_project"\]/)
+  assert.match(custom, /commands\.allow = \["associate_pending_project"\]/)
   assert.match(custom, /commands\.allow = \["list_local_associations"\]/)
   assert.match(custom, /commands\.allow = \["desktop_sidecar_status"\]/)
   assert.match(custom, /commands\.allow = \["live_control_pending"\]/)
   assert.match(custom, /commands\.allow = \["live_control_decide"\]/)
+  assert.match(custom, /commands\.allow = \["live_control_diff"\]/)
+  assert.match(custom, /commands\.allow = \["live_control_initial"\]/)
   assert.match(custom, /commands\.allow = \["live_control_restore"\]/)
   assert.match(custom, /commands\.allow = \["live_control_dismiss"\]/)
-  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 9)
+  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 16)
   const control = readJson('desktop/src-tauri/capabilities/live-control.json')
   assert.deepEqual(control.windows, ['live-control'])
   assert.deepEqual(control.permissions.slice().sort(), [
     'allow-live-control-decide',
+    'allow-live-control-diff',
     'allow-live-control-dismiss',
     'allow-live-control-get',
+    'allow-live-control-initial',
     'allow-live-control-restore',
     'core:default',
   ])
+})
+
+test('首次推送检查支持定时、窗口聚焦和手动触发', () => {
+  const source = readText('web/src/features/board/dialogs/ProjectOnboardingDialog.tsx')
+  assert.match(source, /check_pending_project_push/)
+  assert.match(source, /window\.setInterval\(\(\) => \{\s*void checkPush\(\{ silent: true \}\)/)
+  assert.match(source, /window\.addEventListener\('focus', onFocus\)/)
+  assert.match(source, /push\?\.state === 'ready'/)
+  assert.match(source, /onClick=\{\(\) => void checkPush\(\)\}/)
+  assert.match(source, /preflight_pending_project/)
+  assert.match(source, /cancel_pending_project/)
+  assert.match(source, /仅同步无冲突项/)
+  assert.match(source, /查看并处理差异/)
+  assert.match(source, /initialMode/)
+  const rail = readText('web/src/components/layout/ProjectRail.tsx')
+  assert.doesNotMatch(rail, /associate_local_project/)
+  assert.match(rail, /startProjectOnboarding/)
 })
 
 test('导航、新窗口、托盘与日志边界在 Rust 源中显式实现', () => {
@@ -254,7 +288,7 @@ test('导航、新窗口、托盘与日志边界在 Rust 源中显式实现', ()
   assert.match(main, /"autostart" =>/)
   assert.match(
     main,
-    /generate_handler!\[\s*app_status,[\s\S]*?desktop_login,[\s\S]*?associate_local_project,[\s\S]*?list_local_associations,[\s\S]*?desktop_sidecar_status,[\s\S]*?live_control_pending,[\s\S]*?live_control_decide,[\s\S]*?live_control_restore,[\s\S]*?live_control_dismiss\s*\]/,
+    /generate_handler!\[\s*app_status,[\s\S]*?desktop_login,[\s\S]*?preflight_pending_project,[\s\S]*?cancel_pending_project,[\s\S]*?associate_pending_project,[\s\S]*?list_local_associations,[\s\S]*?desktop_sidecar_status,[\s\S]*?live_control_pending,[\s\S]*?live_control_decide,[\s\S]*?live_control_restore,[\s\S]*?live_control_dismiss\s*\]/,
   )
   assert.match(main, /fn ensure_local_caller\(window: &WebviewWindow\)/)
   assert.match(main, /ensure_board_caller/)
@@ -265,10 +299,9 @@ test('导航、新窗口、托盘与日志边界在 Rust 源中显式实现', ()
   assert.match(main, /async fn live_control_decide/)
   assert.match(main, /async fn live_control_restore/)
   assert.match(main, /async fn live_control_dismiss/)
-  assert.match(
-    main,
-    /async fn associate_local_project[\s\S]*?sidecar::restart\(&app\);\s*Ok\(Some\(association\)\)/,
-  )
+  assert.doesNotMatch(main, /async fn associate_local_project/)
+  assert.match(main, /async fn preflight_pending_project/)
+  assert.match(main, /async fn cancel_pending_project/)
 
   const sidecar = readText('desktop/src-tauri/src/sidecar.rs')
   assert.match(sidecar, /pending_control: Mutex<VecDeque<Value>>/)
@@ -284,12 +317,14 @@ test('导航、新窗口、托盘与日志边界在 Rust 源中显式实现', ()
   assert.match(sidecar, /pending-live/)
   assert.match(sidecar, /"live-decide"/)
   assert.match(sidecar, /"live-restore"/)
+  assert.match(sidecar, /"preflight-project"/)
   const control = readText('desktop/ui/control.js')
   assert.match(control, /live_control_dismiss/)
   assert.match(control, /正在提交，请稍候/)
   assert.match(control, /个任务.*个文件/)
   assert.match(control, /文件版本 r/)
   assert.match(control, /仅换行差异/)
+  assert.doesNotMatch(control, /button\('暂不接入'/)
   assert.match(control, /仅在远端版本不正确时使用一键复原/)
   assert.match(control, /event\.conflicts\?\.length/)
   assert.match(control, /稍后处理/)
@@ -368,6 +403,7 @@ test('sidecar 构建脚本引用的入口文件都存在且使用 Node SEA', () 
     'desktop/sidecar/main.js',
     'desktop/sidecar/desktop-device.js',
     'desktop/sidecar/desktop-association.js',
+    'desktop/sidecar/trellis-runtime.js',
     'desktop/sidecar/bundle.mjs',
     'agent/index.js',
     'agent/api.js',
@@ -384,6 +420,9 @@ test('sidecar 构建脚本引用的入口文件都存在且使用 Node SEA', () 
   assert.match(script, /postject/)
   assert.match(script, /SHA256SUMS\.txt/)
   assert.match(script, /trellis-agent-\$target\.exe|trellis-agent-x86_64-pc-windows-msvc\.exe/)
+  assert.match(script, /trellis-runtime/)
+  assert.match(script, /@mindfoldhq\\trellis\\bin\\trellis\.js/)
+  assert.match(script, /trellisVersion=\$trellisVersion/)
 
   const seaEntry = readText('desktop/sidecar/sea-entry.js')
   assert.doesNotMatch(seaEntry, /import\.meta|fileURLToPath/)
@@ -402,7 +441,7 @@ test('sidecar 构建脚本引用的入口文件都存在且使用 Node SEA', () 
   assert.deepEqual(Object.keys(config.assets), ['dpapi.ps1'])
 })
 
-test('sidecar CLI 报告协议 v2，未注册时以配置错误退出', () => {
+test('sidecar CLI 报告协议 v3，未注册时以配置错误退出', () => {
   const version = spawnSync(process.execPath, ['desktop/sidecar/cli.js', 'version'], {
     cwd: ROOT,
     encoding: 'utf8',
@@ -410,7 +449,7 @@ test('sidecar CLI 报告协议 v2，未注册时以配置错误退出', () => {
   assert.equal(version.status, 0, version.stderr)
   const payload = JSON.parse(version.stdout.trim())
   assert.equal(payload.ok, true)
-  assert.equal(payload.protocolVersion, 2)
+  assert.equal(payload.protocolVersion, 3)
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-sidecar-status-'))
   const status = spawnSync(process.execPath, ['desktop/sidecar/cli.js', 'status', '--root', root], {
@@ -430,7 +469,7 @@ test('桌面设备注册复用 pairing-codes + agent/enroll，凭证不落明文
     body: {},
   })
   assert.equal(pairing.status, 201)
-  assert.equal(pairing.body.protocolVersion, 2)
+  assert.equal(pairing.body.protocolVersion, 3)
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-desktop-enroll-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
@@ -449,7 +488,7 @@ test('桌面设备注册复用 pairing-codes + agent/enroll，凭证不落明文
     credentialStore,
     secureDirectory: false,
   })
-  assert.equal(result.protocolVersion, 2)
+  assert.equal(result.protocolVersion, 3)
   assert.match(result.agentId, /^[A-Za-z0-9-]{8,64}$/)
   assert.equal(saved.length, 1)
   assert.match(saved[0], /^[A-Za-z0-9_-]{43,128}$/)
@@ -464,7 +503,7 @@ test('桌面设备注册复用 pairing-codes + agent/enroll，凭证不落明文
     config.teams.map((team) => team.id),
     [teamId],
   )
-  assert.equal(config.protocolVersion, 2)
+  assert.equal(config.protocolVersion, 3)
   assert.equal(config.credential, undefined)
   assert.ok(!configText.includes(saved[0]), '设备凭证不得写入 config.json')
   assert.ok(!configText.includes(pairing.body.pairingCode), '配对码不得落盘')

@@ -21,7 +21,6 @@ function testConfig() {
     publicOrigin: PUBLIC_ORIGIN,
     sessionTtlMs: 12 * 60 * 60 * 1000,
     agentStaleMs: 60_000,
-    gitPollMs: 60_000,
     cookieSecure: false,
     trustProxy: false,
     allowLocalGitRemotes: false,
@@ -162,8 +161,8 @@ test('团队 Board SSE 使用 Session 鉴权并广播任务变更', async (t) =>
   assert.equal(stream.response.headers['cache-control'], 'no-store')
   assert.equal(stream.response.headers['x-accel-buffering'], 'no')
 
-  runtime.services.taskIndex.incrementQueryRevision()
-  runtime.services.taskIndex.incrementQueryRevision()
+  runtime.services.boardEvents.publish({ revision: 41 })
+  runtime.services.boardEvents.publish({ revision: 42 })
   await waitFor(() => stream.text().includes('event: tasks.changed'))
   assert.equal(stream.text().match(/event: tasks\.changed/g)?.length, 1)
   const dataLine = stream
@@ -172,7 +171,7 @@ test('团队 Board SSE 使用 Session 鉴权并广播任务变更', async (t) =>
     .find((line) => line.startsWith('data: '))
   assert.ok(dataLine)
   const event = JSON.parse(dataLine.slice(6))
-  assert.equal(event.revision, runtime.services.taskIndex.queryRevision())
+  assert.equal(event.revision, 42)
 
   const token = cookie.slice(cookie.indexOf('=') + 1)
   const session = readSession(runtime.db, token)

@@ -1,478 +1,34 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { spawnSync } from 'node:child_process'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import { normalizeRemoteIdentity, syncRepository } from '../agent/git-sync.js'
-import { AGENT_ERROR_CODE } from '../agent/protocol.js'
+import test from 'node:test'
 import { createUser } from '../server/team/auth.js'
 import { createTeamRuntime } from '../server/team/http.js'
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PUBLIC_ORIGIN = 'http://127.0.0.1:4317'
 const HOST = '127.0.0.1:4317'
-const SILENT_LOGGER = {
-  info() {},
-  warn() {},
-  error() {},
-}
-
-test('真实 Git 仓库完成团队任务创建、推送、接受和 Agent 快进同步', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-release-'))
-  let runtime = null
-  t.after(async () => {
-    if (runtime) await runtime.stop()
-    fs.rmSync(root, { recursive: true, force: true })
-  })
-
-  const bare = path.join(root, 'remote.git')
-  const seed = path.join(root, 'seed')
-  const local = path.join(root, 'local')
-  const remoteUrl = pathToFileURL(bare).href
-  const hooksDir = path.join(root, 'agent-hooks')
-  const scriptsSource = path.join(REPO_ROOT, '.trellis', 'scripts')
-  const scriptsTarget = path.join(seed, '.trellis', 'scripts')
-
-  git(root, ['init', '--bare', '--initial-branch=dev', bare])
-  fs.mkdirSync(seed)
-  git(seed, ['init', '--initial-branch=dev'])
-  git(seed, ['config', 'user.name', 'Release Test'])
-  git(seed, ['config', 'user.email', 'release-test@example.invalid'])
-
-  fs.cpSync(scriptsSource, scriptsTarget, {
-    recursive: true,
-    filter(source) {
-      const segments = path.relative(scriptsSource, source).split(path.sep)
-      return !segments.includes('__pycache__') && !/\.(?:pyc|pyo)$/i.test(source)
-    },
-  })
-  write(path.join(seed, '.trellis', 'config.yaml'), 'session_auto_commit: false\n')
-  write(path.join(seed, '.trellis', 'workspace', 'alice', 'index.md'), '# alice\n')
-  write(path.join(seed, '.trellis', 'workspace', 'bob', 'index.md'), '# bob\n')
-  write(path.join(seed, '.trellis', 'tasks', '.keep'), 'tasks\n')
-  write(path.join(seed, 'README.md'), 'release integration fixture\n')
-  write(path.join(seed, '.gitattributes'), '* text=auto eol=lf\n')
-  git(seed, ['add', '--', '.'])
-  git(seed, ['commit', '-m', 'seed release project'])
-  git(seed, ['remote', 'add', 'origin', remoteUrl])
-  git(seed, ['push', '-u', 'origin', 'dev'])
-
-  const initialHead = git(bare, ['rev-parse', 'dev']).stdout.trim()
-  git(root, [
-    '-c',
-    'core.autocrlf=false',
-    '-c',
-    'core.eol=lf',
-    'clone',
-    '--branch',
-    'dev',
-    remoteUrl,
-    local,
-  ])
-  fs.mkdirSync(hooksDir, { recursive: true })
-
-  runtime = await createTeamRuntime({
-    config: {
-      mode: 'team',
-      bindHost: '127.0.0.1',
-      port: 0,
-      publicUrl: new URL(PUBLIC_ORIGIN),
-      publicOrigin: PUBLIC_ORIGIN,
-      sessionTtlMs: 12 * 60 * 60 * 1000,
-      agentStaleMs: 60_000,
-      gitPollMs: 60_000,
-      cookieSecure: false,
-      trustProxy: false,
-      allowLocalGitRemotes: true,
-    },
-    databaseFile: path.join(root, 'data', 'board.sqlite'),
-    dataDir: path.join(root, 'data'),
-    logger: SILENT_LOGGER,
-    requireAdmin: false,
-    enablePolling: false,
-  })
-  await runtime.start()
-
-  await createUser(runtime.db, {
-    username: 'admin',
-    displayName: '系统管理员',
-    password: 'Admin-Password-123',
-    systemAdmin: true,
-    mustChangePassword: false,
-  })
-  const adminCookie = await login(runtime, 'admin', 'Admin-Password-123')
-  const team = (
-    await request(runtime, '/api/admin/teams', {
-      method: 'POST',
-      cookie: adminCookie,
-      body: { name: 'Release Team', slug: 'release-team' },
-    })
-  ).body.team
-
-  const alice = await createUserThroughHttp(runtime, adminCookie, {
-    username: 'alice',
-    displayName: 'Alice',
-    password: 'Alice-Password-123',
-  })
-  const bob = await createUserThroughHttp(runtime, adminCookie, {
-    username: 'bob',
-    displayName: 'Bob',
-    password: 'Bob-Password-123',
-  })
-  for (const user of [alice, bob]) {
-    const assigned = await request(runtime, `/api/admin/users/${user.id}/teams`, {
-      method: 'PUT',
-      cookie: adminCookie,
-      body: { teams: [{ teamId: team.id, role: 'member' }] },
-    })
-    assert.equal(assigned.status, 200)
-  }
-  const aliceCookie = await login(runtime, 'alice', 'Alice-Password-123')
-  const bobCookie = await login(runtime, 'bob', 'Bob-Password-123')
-
-  const connected = await request(runtime, '/api/admin/projects', {
-    method: 'POST',
-    cookie: adminCookie,
-    body: {
-      teamId: team.id,
-      name: 'Release integration',
-      remoteUrl,
-      syncBranch: 'dev',
-      agentTools: ['codex'],
-      leadUserId: alice.id,
-      leadTrellisDevId: 'alice',
-    },
-  })
-  assert.equal(connected.status, 201)
-  const projectId = connected.body.project.id
-  assert.ok(projectId)
-  assert.deepEqual(connected.body.project.agentTools, ['codex'])
-  assert.equal(connected.body.project.bootstrapLeadUserId, alice.id)
-  assert.equal(connected.body.project.bootstrapLeadTrellisDevId, 'alice')
-  const storedBootstrap = runtime.db
-    .prepare(`
-      SELECT agent_tools_json, bootstrap_lead_user_id, bootstrap_lead_trellis_dev_id
-      FROM team_project
-      WHERE repository_id = ?
-    `)
-    .get(projectId)
-  assert.deepEqual(
-    { ...storedBootstrap },
-    {
-      agent_tools_json: '["codex"]',
-      bootstrap_lead_user_id: alice.id,
-      bootstrap_lead_trellis_dev_id: 'alice',
-    },
-  )
-
-  const mismatchedApproval = await request(runtime, `/api/admin/projects/${projectId}/approve`, {
-    method: 'POST',
-    cookie: adminCookie,
-    body: {
-      toolchainSha256: connected.body.approval.toolchainSha256,
-      leadUserId: bob.id,
-      leadTrellisDevId: 'bob',
-    },
-  })
-  assert.equal(mismatchedApproval.status, 409)
-  assert.equal(mismatchedApproval.body.code, 'CONFLICT')
-
-  const approved = await request(runtime, `/api/admin/projects/${projectId}/approve`, {
-    method: 'POST',
-    cookie: adminCookie,
-    body: {
-      toolchainSha256: connected.body.approval.toolchainSha256,
-      leadUserId: alice.id,
-      leadTrellisDevId: 'alice',
-    },
-  })
-  assert.equal(approved.status, 200)
-  assert.equal(approved.body.project.syncStatus, 'current')
-
-  const member = await request(runtime, `/api/projects/${projectId}/members`, {
-    method: 'PUT',
-    cookie: adminCookie,
-    body: {
-      userId: bob.id,
-      role: 'member',
-      trellisDevId: 'bob',
-    },
-  })
-  assert.equal(member.status, 200)
-  assert.deepEqual(member.body.members.map((item) => item.trellisDevId).sort(), ['alice', 'bob'])
-
-  const created = await request(runtime, '/api/tasks', {
-    method: 'POST',
-    cookie: aliceCookie,
-    body: {
-      projectId,
-      title: 'Release integration task',
-      description: 'Verify the real Git task publishing path.',
-      priority: 'P2',
-      slug: 'good',
-      assigneeUserId: bob.id,
-      idempotencyKey: 'release-good-0001',
-    },
-  })
-  assert.equal(created.status, 201, JSON.stringify(created.body))
-  assert.equal(created.body.status, 'applied')
-  const createdTaskDir = created.body.result?.relativeDir
-  assert.match(createdTaskDir, /^\.trellis\/tasks\/\d{2}-\d{2}-good$/)
-
-  const remoteHead = git(bare, ['rev-parse', 'dev']).stdout.trim()
-  assert.notEqual(remoteHead, initialHead)
-  assert.equal(created.body.remoteCommitSha, remoteHead)
-
-  const remoteTaskJson = JSON.parse(
-    git(bare, ['show', `${remoteHead}:${createdTaskDir}/task.json`]).stdout,
-  )
-  assert.equal(remoteTaskJson.assignee, 'bob')
-  assert.equal(remoteTaskJson.branch, 'dev')
-  assert.equal(remoteTaskJson.base_branch, null)
-
-  const commitMessage = git(bare, ['log', '-1', '--format=%B', remoteHead]).stdout
-  assert.match(commitMessage, /Trellis-Operation:\s+[0-9a-f-]{36}/i)
-  assert.match(commitMessage, new RegExp(`Trellis-Operation:\\s+${created.body.id}`, 'i'))
-
-  const remotePaths = git(bare, ['ls-tree', '-r', '--name-only', remoteHead])
-    .stdout.trim()
-    .split(/\r?\n/)
-    .filter(Boolean)
-  assert.equal(
-    remotePaths.some(
-      (entry) => entry.split('/').includes('__pycache__') || /\.(?:pyc|pyo)$/i.test(entry),
-    ),
-    false,
-    '远端任务提交不能包含 Python 字节码缓存',
-  )
-
-  const assignments = await request(runtime, '/api/assignments?state=pending', {
-    cookie: bobCookie,
-  })
-  assert.equal(assignments.status, 200)
-  assert.equal(assignments.body.tasks.length, 1)
-  const pending = assignments.body.tasks[0]
-  assert.equal(pending.assignment.state, 'pending')
-  assert.equal(pending.assignment.assignedUserId, bob.id)
-
-  const accepted = await request(runtime, '/api/tasks/accept', {
-    method: 'POST',
-    cookie: bobCookie,
-    body: {
-      executionTaskKey: pending.executionTaskKey,
-      assignmentVersion: pending.assignmentVersion,
-    },
-  })
-  assert.equal(accepted.status, 200)
-  assert.equal(accepted.body.assignment.state, 'accepted')
-
-  const expectedRemoteIdentity = normalizeRemoteIdentity(remoteUrl, {
-    allowFileRemote: true,
-  }).identityHash
-  const synced = await syncRepository({
-    repoPath: local,
-    branchName: 'dev',
-    hooksDir,
-    expectedRemoteIdentity,
-    allowFileRemote: true,
-  })
-  assert.equal(synced.head, remoteHead)
-  assert.equal(git(local, ['rev-parse', 'HEAD']).stdout.trim(), remoteHead)
-  assert.deepEqual(
-    JSON.parse(fs.readFileSync(path.join(local, createdTaskDir, 'task.json'), 'utf8')),
-    remoteTaskJson,
-  )
-
-  const dirtyFile = path.join(local, 'agent-dirty.txt')
-  write(dirtyFile, 'keep this local change\n')
-  await assert.rejects(
-    () =>
-      syncRepository({
-        repoPath: local,
-        branchName: 'dev',
-        hooksDir,
-        expectedRemoteIdentity,
-        allowFileRemote: true,
-      }),
-    (error) => error.code === AGENT_ERROR_CODE.LOCAL_DIRTY,
-  )
-  assert.equal(fs.readFileSync(dirtyFile, 'utf8'), 'keep this local change\n')
-  assert.equal(git(local, ['rev-parse', 'HEAD']).stdout.trim(), remoteHead)
-
-  const reassigned = await request(runtime, '/api/tasks/assign', {
-    method: 'POST',
-    cookie: aliceCookie,
-    body: {
-      executionTaskKey: created.body.result.executionTaskKey,
-      assigneeUserId: alice.id,
-      expectedTaskVersion: created.body.result.taskVersion,
-      idempotencyKey: 'release-reassign-0001',
-    },
-  })
-  assert.equal(reassigned.status, 200, JSON.stringify(reassigned.body))
-  const reassignedHead = git(bare, ['rev-parse', 'dev']).stdout.trim()
-  assert.equal(reassigned.body.remoteCommitSha, reassignedHead)
-  const reassignedTask = JSON.parse(
-    git(bare, ['show', `${reassignedHead}:${createdTaskDir}/task.json`]).stdout,
-  )
-  assert.equal(reassignedTask.assignee, 'alice')
-
-  const stale = await request(runtime, '/api/tasks/assign', {
-    method: 'POST',
-    cookie: aliceCookie,
-    body: {
-      executionTaskKey: created.body.result.executionTaskKey,
-      assigneeUserId: bob.id,
-      expectedTaskVersion: created.body.result.taskVersion,
-      idempotencyKey: 'release-stale-0001',
-    },
-  })
-  assert.equal(stale.status, 409)
-  assert.equal(stale.body.code, 'VERSION_CONFLICT')
-  assert.equal(git(bare, ['rev-parse', 'dev']).stdout.trim(), reassignedHead)
-
-  const rejectPush = path.join(bare, 'hooks', 'pre-receive')
-  write(rejectPush, '#!/bin/sh\nexit 1\n')
-  fs.chmodSync(rejectPush, 0o755)
-  const failedPush = await request(runtime, '/api/tasks/assign', {
-    method: 'POST',
-    cookie: aliceCookie,
-    body: {
-      executionTaskKey: created.body.result.executionTaskKey,
-      assigneeUserId: bob.id,
-      expectedTaskVersion: reassigned.body.result.taskVersion,
-      idempotencyKey: 'release-push-failure-0001',
-    },
-  })
-  assert.equal(failedPush.status, 503)
-  assert.equal(failedPush.body.code, 'GIT_REMOTE_FAILED')
-  assert.equal(failedPush.body.recoverable, true)
-  const failedOperationId = failedPush.body.details?.operationId
-  assert.ok(failedOperationId)
-  const pendingProjects = await request(runtime, '/api/team/projects', {
-    cookie: aliceCookie,
-  })
-  assert.equal(pendingProjects.status, 200)
-  assert.equal(
-    pendingProjects.body.projects.find((project) => project.id === projectId)?.syncStatus,
-    'pending_push',
-  )
-  assert.equal(git(bare, ['rev-parse', 'dev']).stdout.trim(), reassignedHead)
-
-  fs.rmSync(rejectPush, { force: true })
-  const retried = await request(runtime, `/api/git-operations/${failedOperationId}/retry`, {
-    method: 'POST',
-    cookie: aliceCookie,
-    body: {},
-  })
-  assert.equal(retried.status, 200, JSON.stringify(retried.body))
-  assert.equal(retried.body.operation.status, 'applied')
-  const recoveredHead = git(bare, ['rev-parse', 'dev']).stdout.trim()
-  assert.notEqual(recoveredHead, reassignedHead)
-  assert.equal(retried.body.operation.remoteCommitSha, recoveredHead, JSON.stringify(retried.body))
-  const recoveredTask = JSON.parse(
-    git(bare, ['show', `${recoveredHead}:${createdTaskDir}/task.json`]).stdout,
-  )
-  assert.equal(recoveredTask.assignee, 'bob')
-
-  git(local, ['fetch', 'origin', 'dev'])
-  git(local, ['merge', '--ff-only', 'FETCH_HEAD'])
-  const archivedTaskDir = '.trellis/tasks/archive/2026-11/11-08-archived'
-  const archivedTaskFile = path.join(local, archivedTaskDir, 'task.json')
-  write(
-    archivedTaskFile,
-    `${JSON.stringify(
-      {
-        id: 'archived-task',
-        title: 'Archived assignment guard',
-        status: 'completed',
-        priority: 'P2',
-        assignee: 'alice',
-        creator: 'alice',
-      },
-      null,
-      2,
-    )}\n`,
-  )
-  const archivedTaskContent = fs.readFileSync(archivedTaskFile, 'utf8')
-  const archivedTaskVersion = crypto.createHash('sha256').update(archivedTaskContent).digest('hex')
-  git(local, ['add', '--', archivedTaskDir])
-  git(local, [
-    '-c',
-    'user.name=Release Test',
-    '-c',
-    'user.email=release-test@example.invalid',
-    'commit',
-    '-m',
-    'seed archived task',
-  ])
-  git(local, ['push', 'origin', 'dev'])
-  const archivedLocalHead = git(local, ['rev-parse', 'HEAD']).stdout.trim()
-  const archivedLocalStatus = git(local, [
-    'status',
-    '--porcelain=v1',
-    '--untracked-files=all',
-  ]).stdout
-  const archivedRemoteHead = git(bare, ['rev-parse', 'dev']).stdout.trim()
-
-  const archivedIdempotencyKey = 'release-archived-0001'
-  const archivedAssignment = await request(runtime, '/api/tasks/assign', {
-    method: 'POST',
-    cookie: aliceCookie,
-    body: {
-      executionTaskKey: `${projectId}::archived-task`,
-      taskPath: archivedTaskDir,
-      assigneeUserId: bob.id,
-      expectedTaskVersion: archivedTaskVersion,
-      idempotencyKey: archivedIdempotencyKey,
-    },
-  })
-  assert.equal(archivedAssignment.status, 409)
-  assert.equal(archivedAssignment.body.code, 'VERSION_CONFLICT')
-  assert.match(archivedAssignment.body.error, /已归档/)
-  assert.equal(git(local, ['rev-parse', 'HEAD']).stdout.trim(), archivedLocalHead)
-  assert.equal(
-    git(local, ['status', '--porcelain=v1', '--untracked-files=all']).stdout,
-    archivedLocalStatus,
-  )
-  assert.equal(git(bare, ['rev-parse', 'dev']).stdout.trim(), archivedRemoteHead)
-  assert.equal(fs.readFileSync(archivedTaskFile, 'utf8'), archivedTaskContent)
-  assert.equal(
-    runtime.db
-      .prepare(`
-      SELECT COUNT(*) AS count
-      FROM git_operation
-      WHERE project_id = ? AND idempotency_key = ?
-    `)
-      .get(projectId, archivedIdempotencyKey).count,
-    0,
-  )
-})
+const PASSWORD = 'Release-Password-123'
+const SILENT_LOGGER = { info() {}, warn() {}, error() {} }
 
 function request(runtime, pathname, { method = 'GET', body = null, cookie = null } = {}) {
   const payload = body == null ? null : JSON.stringify(body)
   return new Promise((resolve, reject) => {
-    const requestHeaders = { host: HOST }
+    const headers = { host: HOST }
     if (payload != null) {
-      requestHeaders['content-type'] = 'application/json'
-      requestHeaders['content-length'] = Buffer.byteLength(payload)
+      headers['content-type'] = 'application/json'
+      headers['content-length'] = Buffer.byteLength(payload)
     }
-    if (method !== 'GET' && method !== 'HEAD') {
-      requestHeaders.origin = PUBLIC_ORIGIN
-    }
-    if (cookie) requestHeaders.cookie = cookie
-
+    if (method !== 'GET') headers.origin = PUBLIC_ORIGIN
+    if (cookie) headers.cookie = cookie
     const req = http.request(
       {
         hostname: '127.0.0.1',
         port: runtime.address().port,
         path: pathname,
         method,
-        headers: requestHeaders,
+        headers,
       },
       (response) => {
         const chunks = []
@@ -480,18 +36,12 @@ function request(runtime, pathname, { method = 'GET', body = null, cookie = null
         response.on('end', () => {
           const text = Buffer.concat(chunks).toString('utf8')
           let parsed = null
-          if (text) {
-            try {
-              parsed = JSON.parse(text)
-            } catch {
-              parsed = text
-            }
+          try {
+            parsed = text ? JSON.parse(text) : null
+          } catch {
+            parsed = text
           }
-          resolve({
-            status: response.statusCode,
-            headers: response.headers,
-            body: parsed,
-          })
+          resolve({ status: response.statusCode, headers: response.headers, body: parsed })
         })
       },
     )
@@ -501,43 +51,104 @@ function request(runtime, pathname, { method = 'GET', body = null, cookie = null
   })
 }
 
-async function login(runtime, username, password) {
-  const response = await request(runtime, '/api/auth/login', {
-    method: 'POST',
-    body: { username, password },
-  })
-  assert.equal(response.status, 200)
-  return String((response.headers['set-cookie'] || [])[0] || '').split(';')[0]
-}
-
-async function createUserThroughHttp(runtime, adminCookie, user) {
-  const response = await request(runtime, '/api/admin/users', {
-    method: 'POST',
-    cookie: adminCookie,
-    body: {
-      ...user,
-      systemAdmin: false,
-      mustChangePassword: false,
+test('Team 发布边界不再依赖服务端 Git，命令成功前不生成正式任务', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-release-'))
+  const dataDir = path.join(root, 'data')
+  const runtime = await createTeamRuntime({
+    config: {
+      mode: 'team',
+      bindHost: '127.0.0.1',
+      port: 0,
+      publicUrl: new URL(PUBLIC_ORIGIN),
+      publicOrigin: PUBLIC_ORIGIN,
+      sessionTtlMs: 12 * 60 * 60 * 1000,
+      agentStaleMs: 60_000,
+      cookieSecure: false,
+      trustProxy: false,
+      allowLocalGitRemotes: false,
     },
+    databaseFile: path.join(dataDir, 'board.sqlite'),
+    dataDir,
+    logger: SILENT_LOGGER,
+    requireAdmin: false,
+    enablePolling: false,
   })
-  assert.equal(response.status, 201)
-  return response.body.user
-}
+  await runtime.start()
+  t.after(async () => {
+    await runtime.stop()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  const now = new Date().toISOString()
+  runtime.db
+    .prepare(`
+      INSERT INTO team(id, name, slug, status, created_at, updated_at)
+      VALUES ('team-1', '发布团队', 'release-team', 'active', ?, ?)
+    `)
+    .run(now, now)
+  const user = await createUser(runtime.db, {
+    username: 'release-user',
+    displayName: '发布用户',
+    password: PASSWORD,
+    systemAdmin: true,
+    mustChangePassword: false,
+  })
+  runtime.db
+    .prepare(`
+      INSERT INTO team_member(team_id, user_id, role, created_at, updated_at)
+      VALUES ('team-1', ?, 'admin', ?, ?)
+    `)
+    .run(user.id, now, now)
+  const actor = runtime.services.taskSpaces.actorContext(user.id)
+  const pairing = runtime.services.agentService.createPairingCode(actor, { teamId: 'team-1' })
+  const enrolled = runtime.services.agentService.enroll(
+    {
+      protocolVersion: 3,
+      agentVersion: '0.1.0',
+      platform: 'win32',
+      deviceName: '发布设备',
+      pairingCode: pairing.pairingCode,
+    },
+    { ip: 'release' },
+  )
+  const attached = runtime.services.taskSpaces.attach(user.id, enrolled.agentId, {
+    remoteUrl: 'https://example.com/release/repo.git',
+    branchName: 'main',
+    displayName: '发布项目',
+    teamId: 'team-1',
+    developerId: 'release-user',
+    localRepoKey: 'a'.repeat(64),
+  })
+  const operation = runtime.services.taskCommands.enqueue(actor, {
+    commandType: 'create_task',
+    taskSpaceId: attached.taskSpace.id,
+    assigneeUserId: user.id,
+    title: '发布后创建',
+    priority: 'P2',
+    slug: 'release-created',
+    idempotencyKey: 'release-command-1',
+  })
+  assert.equal(operation.statusCode, 202)
+  assert.equal(operation.operation.status, 'pending')
+  assert.equal(runtime.db.prepare('SELECT COUNT(*) AS count FROM sync_task_index').get().count, 0)
+  assert.equal(fs.existsSync(path.join(dataDir, 'projects')), false)
 
-function git(cwd, args) {
-  const result = spawnSync('git', args, {
-    cwd,
-    encoding: 'utf8',
-    shell: false,
-    env: process.env,
+  const login = await request(runtime, '/api/auth/login', {
+    method: 'POST',
+    body: { username: user.username, password: PASSWORD },
   })
-  if (result.status !== 0) {
-    throw new Error(`git ${args.join(' ')} 失败：${result.stderr || result.stdout}`)
+  assert.equal(login.status, 200)
+  const cookie = String((login.headers['set-cookie'] || [])[0] || '').split(';')[0]
+  for (const [pathname, method] of [
+    ['/api/git-operations/missing/retry', 'POST'],
+    ['/api/admin/git-credentials', 'GET'],
+    ['/api/admin/projects/probe', 'POST'],
+    ['/api/team/live-revision', 'GET'],
+  ]) {
+    const response = await request(runtime, pathname, {
+      method,
+      cookie,
+      body: method === 'POST' ? {} : null,
+    })
+    assert.equal(response.status, 404, pathname)
   }
-  return result
-}
-
-function write(filePath, content) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true })
-  fs.writeFileSync(filePath, content, 'utf8')
-}
+})

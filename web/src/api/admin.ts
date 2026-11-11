@@ -3,14 +3,7 @@ import { redactSensitiveDetail } from '@/lib/team-client.js'
 
 export const AUDIT_PAGE_LIMIT = 100
 
-export type AdminView =
-  | 'project-access'
-  | 'users'
-  | 'teams'
-  | 'projects'
-  | 'git-credentials'
-  | 'agents'
-  | 'audit'
+export type AdminView = 'project-access' | 'users' | 'teams' | 'agents' | 'audit'
 
 export type SessionUser = {
   id: string
@@ -32,6 +25,13 @@ export type RuntimeProject = {
   stale: boolean
   lastError: string | null
   capabilities: Record<string, unknown>
+  taskSpaces: {
+    id: string
+    branchName: string
+    revision: number
+    indexedRevision: number
+    readOnly: boolean
+  }[]
 }
 
 export type ProjectMember = {
@@ -44,15 +44,7 @@ export type ProjectMember = {
 }
 
 export type TeamProject = RuntimeProject & {
-  scriptsSha256: string | null
-  hooksStatus: string | null
-  lastFetchAt: string | null
-  lastPushAt: string | null
-  agentTools: string[]
-  bootstrapLeadUserId: string | null
-  bootstrapLeadTrellisDevId: string | null
   members: ProjectMember[]
-  credential: GitCredentialSummary | null
 }
 
 export type Team = {
@@ -116,6 +108,15 @@ export type AgentBinding = {
   updatedAt: string | null
 }
 
+export type ProjectTeamAccess = {
+  projectId: string
+  teamId: string
+  teamName: string
+  teamStatus: string
+  accessRole: string
+  createdAt: string | null
+}
+
 export type AuditEvent = {
   id: number
   actorUserId: string | null
@@ -140,81 +141,6 @@ export type Runtime = {
   projects: RuntimeProject[]
 }
 
-export type ApprovalDraft = {
-  toolchainSha256: string | null
-  files: string[] | number | null
-}
-
-export type GitCredentialAuthType = 'https_token' | 'ssh_key'
-
-function isGitCredentialAuthType(value: string): value is GitCredentialAuthType {
-  return value === 'https_token' || value === 'ssh_key'
-}
-
-export type GitCredentialSummary = {
-  id: string
-  name: string
-  host: string
-  authType: GitCredentialAuthType
-}
-
-export type GitCredentialProject = {
-  id: string
-  name: string
-}
-
-export type GitCredential = GitCredentialSummary & {
-  teamId: string
-  teamName: string | null
-  username: string | null
-  publicKeyFingerprint: string | null
-  projectCount: number
-  projects: GitCredentialProject[]
-  createdAt: string | null
-  updatedAt: string | null
-}
-
-export type GitCredentialInput = {
-  teamId: string
-  name: string
-  host: string
-  authType: GitCredentialAuthType
-  username?: string
-  token?: string
-  privateKey?: string
-  passphrase?: string
-}
-
-export type RemoteProbeResult = {
-  remote: {
-    url: string
-    scheme: 'https' | 'ssh' | 'file'
-    host: string
-  }
-  recommendedName: string
-  defaultBranch: string | null
-  branches: string[]
-  branch: string | null
-  existingAgentTools: string[]
-  hasTrellis: boolean
-  credential: GitCredentialSummary | null
-}
-
-export type SshTrustKey = {
-  algorithm: string
-  fingerprint: string
-}
-
-export type SshTrustChallenge = {
-  challengeId: string
-  host: string
-  port: number
-  replaced: boolean
-  keys: SshTrustKey[]
-}
-
-export type SshTrustResult = Omit<SshTrustChallenge, 'challengeId'>
-
 export function canManageProject(project: RuntimeProject): boolean {
   if (project.capabilities.manageMembers ?? project.capabilities.manage_members) return true
   return project.role === 'lead'
@@ -226,24 +152,6 @@ export function formatError(error: unknown): string {
   }
   if (error instanceof Error) return error.message || '请求失败'
   return '请求失败'
-}
-
-export function readSshTrustChallenge(error: unknown): SshTrustChallenge | null {
-  if (!(error instanceof ApiError)) return null
-  if (!['SSH_HOST_UNTRUSTED', 'SSH_HOST_CHANGED'].includes(error.code || '')) return null
-  const details = record(error.details)
-  const challengeId = text(details.challengeId ?? details.challenge_id)
-  if (!challengeId) return null
-  return {
-    challengeId,
-    host: text(details.host),
-    port: Number(details.port || 22) || 22,
-    replaced: flag(details.replaced),
-    keys: rows(details.keys).map((key) => ({
-      algorithm: text(record(key).algorithm),
-      fingerprint: text(record(key).fingerprint),
-    })),
-  }
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -270,20 +178,6 @@ function flag(value: unknown): boolean {
 
 function rows(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
-}
-
-function textArray(value: unknown): string[] {
-  let input = value
-  if (typeof input === 'string') {
-    try {
-      input = JSON.parse(input)
-    } catch {
-      return []
-    }
-  }
-  return rows(input)
-    .map((item) => optionalText(item))
-    .filter((item): item is string => Boolean(item))
 }
 
 function collection<T>(payload: unknown, key: string, read: (row: unknown) => T): T[] {
@@ -342,9 +236,19 @@ function readRuntimeProject(input: unknown): RuntimeProject {
     syncStatus,
     syncBranch: text(row.syncBranch ?? row.sync_branch),
     role: optionalText(row.role ?? row.projectRole ?? row.project_role),
-    stale: flag(row.stale) || ['stale', 'pending_push', 'needs_repair'].includes(syncStatus),
+    stale: flag(row.stale) || ['stale', 'needs_repair'].includes(syncStatus),
     lastError: optionalText(row.lastError ?? row.last_error),
     capabilities: record(row.capabilities ?? row.permissions),
+    taskSpaces: rows(row.taskSpaces).map((item) => {
+      const taskSpace = record(item)
+      return {
+        id: text(taskSpace.id),
+        branchName: text(taskSpace.branchName ?? taskSpace.branch_name),
+        revision: Number(taskSpace.revision ?? 0),
+        indexedRevision: Number(taskSpace.indexedRevision ?? taskSpace.indexed_revision ?? 0),
+        readOnly: flag(taskSpace.readOnly ?? taskSpace.read_only),
+      }
+    }),
   }
 }
 
@@ -370,39 +274,6 @@ function readProjectMember(input: unknown): ProjectMember {
   }
 }
 
-function readGitCredentialSummary(input: unknown): GitCredentialSummary | null {
-  const row = record(input)
-  const id = text(row.id)
-  const authType = text(row.authType ?? row.auth_type)
-  if (!id || !isGitCredentialAuthType(authType)) return null
-  return {
-    id,
-    name: text(row.name),
-    host: text(row.host),
-    authType,
-  }
-}
-
-function readGitCredential(input: unknown): GitCredential | null {
-  const summary = readGitCredentialSummary(input)
-  if (!summary) return null
-  const row = record(input)
-  return {
-    ...summary,
-    teamId: text(row.teamId ?? row.team_id),
-    teamName: optionalText(row.teamName ?? row.team_name),
-    username: optionalText(row.username),
-    publicKeyFingerprint: optionalText(row.publicKeyFingerprint ?? row.public_key_fingerprint),
-    projectCount: Number(row.projectCount ?? row.project_count ?? 0) || 0,
-    projects: rows(row.projects).map((project) => ({
-      id: text(record(project).id),
-      name: text(record(project).name),
-    })),
-    createdAt: optionalText(row.createdAt ?? row.created_at),
-    updatedAt: optionalText(row.updatedAt ?? row.updated_at),
-  }
-}
-
 export function readProjectMembers(source: Record<string, unknown>): ProjectMember[] {
   const seen = new Set<string>()
   const members: ProjectMember[] = []
@@ -425,17 +296,7 @@ export function readTeamProject(input: unknown): TeamProject {
   const row = record(input)
   return {
     ...readRuntimeProject(row),
-    scriptsSha256: optionalText(row.trustedToolchainSha256 ?? row.trusted_task_toolchain_sha256),
-    hooksStatus: optionalText(row.hooksStatus ?? row.hooks_status),
-    lastFetchAt: optionalText(row.lastFetchAt ?? row.last_fetch_at),
-    lastPushAt: optionalText(row.lastPushAt ?? row.last_push_at),
-    agentTools: textArray(row.agentTools ?? row.agent_tools ?? row.agent_tools_json),
-    bootstrapLeadUserId: optionalText(row.bootstrapLeadUserId ?? row.bootstrap_lead_user_id),
-    bootstrapLeadTrellisDevId: optionalText(
-      row.bootstrapLeadTrellisDevId ?? row.bootstrap_lead_trellis_dev_id,
-    ),
     members: readProjectMembers(row),
-    credential: readGitCredentialSummary(row.credential),
   }
 }
 
@@ -521,15 +382,6 @@ function readAuditEvent(input: unknown): AuditEvent {
     detail: redactSensitiveDetail(row.detail ?? {}),
     occurredAt: optionalText(row.occurredAt ?? row.occurred_at),
   }
-}
-
-function readApprovalFiles(value: unknown): string[] | number | null {
-  if (typeof value === 'number') return value
-  if (Array.isArray(value)) {
-    const files = value.map((item) => text(item)).filter((item) => item.length > 0)
-    return files.length > 0 ? files : null
-  }
-  return null
 }
 
 function auditQuery(beforeId: number | null, limit = AUDIT_PAGE_LIMIT): string {
@@ -654,192 +506,6 @@ export async function resetUserPassword(userId: string, password: string): Promi
   })
 }
 
-export type ConnectProjectInput = {
-  teamId: string
-  name: string
-  syncBranch: string
-  remoteUrl: string
-  agentTools: string[]
-  leadUserId: string
-  leadTrellisDevId: string
-  repositoryId?: string
-  credentialId?: string | null
-}
-
-export async function connectProject(
-  input: ConnectProjectInput,
-): Promise<{ project: TeamProject; approval: ApprovalDraft | null }> {
-  const { data } = await requestJson<unknown>('/api/admin/projects', {
-    method: 'POST',
-    body: {
-      teamId: input.teamId,
-      name: input.name,
-      syncBranch: input.syncBranch,
-      remoteUrl: input.remoteUrl,
-      agentTools: input.agentTools,
-      leadUserId: input.leadUserId,
-      leadTrellisDevId: input.leadTrellisDevId.trim(),
-      repositoryId: input.repositoryId?.trim() || undefined,
-      credentialId: input.credentialId || undefined,
-    },
-  })
-  const row = record(data)
-  const approval = record(row.approval)
-  return {
-    project: readTeamProject(row.project ?? {}),
-    approval: row.approval
-      ? {
-          toolchainSha256: optionalText(approval.toolchainSha256),
-          files: readApprovalFiles(approval.files),
-        }
-      : null,
-  }
-}
-
-export async function fetchGitCredentials(teamId?: string | null): Promise<GitCredential[]> {
-  const { data } = await requestJson<unknown>(`/api/admin/git-credentials${teamQuery(teamId)}`)
-  return rows(record(data).credentials)
-    .map(readGitCredential)
-    .filter((item): item is GitCredential => Boolean(item))
-}
-
-export async function createGitCredential(
-  input: GitCredentialInput,
-): Promise<GitCredential | null> {
-  const { data } = await requestJson<unknown>('/api/admin/git-credentials', {
-    method: 'POST',
-    body: input,
-  })
-  return readGitCredential(record(data).credential)
-}
-
-export async function updateGitCredential(
-  credentialId: string,
-  input: Omit<GitCredentialInput, 'teamId' | 'host' | 'authType'>,
-): Promise<GitCredential | null> {
-  const { data } = await requestJson<unknown>(
-    `/api/admin/git-credentials/${encodeURIComponent(credentialId)}`,
-    { method: 'PATCH', body: input },
-  )
-  return readGitCredential(record(data).credential)
-}
-
-export async function deleteGitCredential(credentialId: string): Promise<void> {
-  await requestJson(`/api/admin/git-credentials/${encodeURIComponent(credentialId)}`, {
-    method: 'DELETE',
-    body: {},
-  })
-}
-
-export async function probeGitRemote(input: {
-  teamId: string
-  remoteUrl: string
-  credentialId?: string | null
-  branch?: string | null
-}): Promise<RemoteProbeResult> {
-  const { data } = await requestJson<unknown>('/api/admin/projects/probe', {
-    method: 'POST',
-    body: {
-      teamId: input.teamId,
-      remoteUrl: input.remoteUrl,
-      credentialId: input.credentialId || null,
-      branch: input.branch?.trim() || null,
-    },
-  })
-  const row = record(data)
-  const remote = record(row.remote)
-  const scheme = text(remote.scheme, 'https')
-  return {
-    remote: {
-      url: text(remote.url),
-      scheme: scheme === 'ssh' || scheme === 'file' ? scheme : 'https',
-      host: text(remote.host),
-    },
-    recommendedName: text(row.recommendedName ?? row.recommended_name),
-    defaultBranch: optionalText(row.defaultBranch ?? row.default_branch),
-    branches: rows(row.branches)
-      .map((branch) => text(branch))
-      .filter(Boolean),
-    branch: optionalText(row.branch),
-    existingAgentTools: textArray(row.existingAgentTools ?? row.existing_agent_tools),
-    hasTrellis: flag(row.hasTrellis ?? row.has_trellis),
-    credential: readGitCredentialSummary(row.credential),
-  }
-}
-
-export async function confirmSshHost(challengeId: string): Promise<SshTrustResult> {
-  const { data } = await requestJson<unknown>('/api/admin/git-ssh-hosts/trust', {
-    method: 'POST',
-    body: { challengeId },
-  })
-  const row = record(data)
-  return {
-    host: text(row.host),
-    port: Number(row.port || 22) || 22,
-    replaced: flag(row.replaced),
-    keys: rows(row.keys).map((key) => ({
-      algorithm: text(record(key).algorithm),
-      fingerprint: text(record(key).fingerprint),
-    })),
-  }
-}
-
-export async function changeProjectCredential(
-  projectId: string,
-  credentialId: string | null,
-): Promise<TeamProject> {
-  const { data } = await requestJson<unknown>(
-    `/api/admin/projects/${encodeURIComponent(projectId)}/credential`,
-    { method: 'PUT', body: { credentialId } },
-  )
-  return readTeamProject(record(data).project ?? data)
-}
-
-export type ApprovalInput = {
-  toolchainSha256: string
-  leadUserId: string
-  leadTrellisDevId: string
-}
-
-export type ApprovalResult = {
-  project?: TeamProject
-  result?: unknown
-  warning?: { code?: string; message?: string; details?: Record<string, unknown> }
-}
-
-export async function approveProject(
-  projectId: string,
-  input: ApprovalInput,
-): Promise<ApprovalResult> {
-  const { data } = await requestJson<unknown>(
-    `/api/admin/projects/${encodeURIComponent(projectId)}/approve`,
-    {
-      method: 'POST',
-      body: input,
-    },
-  )
-  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {}
-  const warning =
-    record.warning && typeof record.warning === 'object'
-      ? (record.warning as ApprovalResult['warning'])
-      : undefined
-  return { project: record.project as TeamProject | undefined, result: record.result, warning }
-}
-
-export type ProjectAction = 'refresh' | 'repair' | 'disable'
-
-export async function runProjectAction(projectId: string, action: ProjectAction): Promise<void> {
-  const encoded = encodeURIComponent(projectId)
-  if (action === 'refresh') {
-    await requestJson(`/api/projects/${encoded}/refresh`, {
-      method: 'POST',
-      body: { force: false },
-    })
-    return
-  }
-  await requestJson(`/api/admin/projects/${encoded}/${action}`, { method: 'POST', body: {} })
-}
-
 export async function fetchMembers(projectId: string): Promise<ProjectMember[]> {
   const { data } = await requestJson<unknown>(
     `/api/projects/${encodeURIComponent(projectId)}/members`,
@@ -877,6 +543,41 @@ export async function fetchBindings(projectId: string): Promise<AgentBinding[]> 
     `/api/projects/${encodeURIComponent(projectId)}/agents`,
   )
   return collection(data, 'agents', readAgentBinding)
+}
+
+export async function fetchProjectTeams(projectId: string): Promise<ProjectTeamAccess[]> {
+  const { data } = await requestJson<unknown>(
+    `/api/projects/${encodeURIComponent(projectId)}/team-access`,
+  )
+  return collection(data, 'teams', (value) => {
+    const row = record(value)
+    return {
+      projectId: optionalText(row.projectId) || '',
+      teamId: optionalText(row.teamId) || '',
+      teamName: optionalText(row.teamName) || '未知团队',
+      teamStatus: optionalText(row.teamStatus) || 'unknown',
+      accessRole: optionalText(row.accessRole) || 'member',
+      createdAt: optionalText(row.createdAt),
+    }
+  }).filter((item) => item.projectId && item.teamId)
+}
+
+export async function inviteProjectTeam(
+  projectId: string,
+  teamId: string,
+  accessRole = 'member',
+): Promise<void> {
+  await requestJson(`/api/projects/${encodeURIComponent(projectId)}/team-access`, {
+    method: 'POST',
+    body: { teamId, accessRole },
+  })
+}
+
+export async function removeProjectTeam(projectId: string, teamId: string): Promise<void> {
+  await requestJson(
+    `/api/projects/${encodeURIComponent(projectId)}/team-access?teamId=${encodeURIComponent(teamId)}`,
+    { method: 'DELETE' },
+  )
 }
 
 export type BindingAction = 'approve' | 'reject' | 'revoke'

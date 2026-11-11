@@ -64,14 +64,15 @@ import assert from "node:assert/strict";
 - 缓存测试同时验证首次解析、命中复用和只刷新变化任务，不能只断言数组长度。
 - E2E 文本判断至少覆盖计划、否定、完成和表格结论。
 - 依赖测试至少覆盖缺失、自引用、重复、空/超长原因、二/三节点循环、事件失败回滚、解除历史、重开和重新创建。
-- 迁移测试至少覆盖新库 v9、v6/v7/v8 -> v9、源版本备份、归档时间回填、失败回滚和大于 v9 拒绝。
-- 项目接入测试至少覆盖 clone 前重复冲突、事务内并发去重、同仓库多分支、
-  Windows 进程树超时退出、清理失败时的原始错误保留和诊断日志。
-- partial clone 测试至少断言 sparse-checkout、read-tree、远端 tree/模板清单读取和
-  `ensureSparseTrellis()` 继承认证环境；失败消息断言保留脱敏后的 Git 输出。
-- promisor lazy-fetch 测试必须区分 `sparse-checkout init` 与 `set`，断言 init 为 60000ms，
-  clone/set/read-tree/checkout/merge/rebase 和远端 tree/模板清单读取为 210000ms；
-  push 为 150000ms，本地 Git 默认值为 60000ms。
+- 迁移测试至少覆盖新库 v10、v6/v7/v8/v9 -> v10、源版本备份、旧表保留、失败回滚和大于 v10 拒绝。
+- Team 项目接入测试至少覆盖规范化远端去重、同远端不同分支隔离、owner/invite、
+  `access_required` 不泄漏任务内容，以及并发 attach 收敛到同一项目。
+- tasks-only 测试至少覆盖路径白名单、LF 摘要、完整任务目录、文件级 CAS、整批回滚、
+  `batchId` 幂等、删除墓碑、活动到归档移动和 `clientSequence` 单调。
+- Agent 测试至少覆盖唯一 active slot、新设备撤销旧 SSE/命令、在线命令租约、索引完成门禁、
+  客户端目标路径 dirty 保护、pending batch 重放和摘要级 watcher 自触发抑制。
+- Team 静态边界必须断言运行时不 import Git manager/live overlay，不访问 `data/projects/**`，
+  旧 Git/live 路由返回 404，扫描 Worker 不读取 workspace、scripts、spec、config 或 workflow。
 - 错误诊断测试至少覆盖 TeamError 结构化字段、非 TeamError 的 stack/cause、递归对象与循环引用、
   Authorization/Cookie/JWT/复合 token 键脱敏、绝对路径脱敏、`last_error` 的 `code: message`
   格式以及 1000 字符上限；结构化详情还必须验证总长度预算，并断言

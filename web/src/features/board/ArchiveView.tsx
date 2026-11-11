@@ -13,6 +13,7 @@ type ArchiveViewProps = {
   tasks: BoardTask[]
   projects: { id: string; name: string }[]
   projectId: string
+  taskSpaceId: string
   teamMode: boolean
   teamId: string
   queryRevision?: number | string | null
@@ -26,6 +27,7 @@ export function ArchiveView({
   tasks,
   projects,
   projectId,
+  taskSpaceId,
   teamMode,
   teamId,
   queryRevision,
@@ -36,9 +38,10 @@ export function ArchiveView({
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const archive = useArchiveTasks({
-    enabled: teamMode,
+    enabled: teamMode && taskSpaceId !== 'all',
     teamId,
     projectId,
+    taskSpaceId,
     revision: queryRevision,
   })
 

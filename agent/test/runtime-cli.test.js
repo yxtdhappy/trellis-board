@@ -100,7 +100,7 @@ function withEnrollServer(callback) {
             JSON.stringify({
               agentId: 'agent-cli-1',
               credential: 'c'.repeat(32),
-              protocolVersion: 2,
+              protocolVersion: 3,
               teamId: null,
               teams: [{ id: 'team-1', name: '团队一', role: 'member' }],
             }),
@@ -155,12 +155,24 @@ test('CLI 配对和绑定不把凭证或绝对路径写入配置输出', async (
       assert.equal(JSON.stringify(config).includes(credentials.credential), false)
 
       const bindCode = await runCli(
-        ['bind', '--project', 'project-1', '--path', repo.local, '--branch', 'main', '--json'],
+        [
+          'bind',
+          '--task-space',
+          'space-1',
+          '--project',
+          'project-1',
+          '--path',
+          repo.local,
+          '--branch',
+          'main',
+          '--json',
+        ],
         { store, io: output.io, credentialStore: credentials },
       )
       assert.equal(bindCode, CLI_EXIT_CODE.OK, output.stderrText())
       const bound = await store.readConfig()
       assert.equal(bound.bindings.length, 1)
+      assert.equal(bound.bindings[0].taskSpaceId, 'space-1')
       assert.equal(bound.bindings[0].projectId, 'project-1')
       const canonicalRepoPath = fs.realpathSync.native(repo.local)
       assert.equal(bound.bindings[0].repoPath, canonicalRepoPath)
@@ -196,7 +208,17 @@ test('CLI 参数校验和未配对诊断返回稳定退出码', async () => {
     })
     assert.equal(invalid, CLI_EXIT_CODE.USAGE)
     const bind = await runCli(
-      ['bind', '--project', 'project-1', '--path', root, '--branch', 'main'],
+      [
+        'bind',
+        '--task-space',
+        'space-1',
+        '--project',
+        'project-1',
+        '--path',
+        root,
+        '--branch',
+        'main',
+      ],
       { store, io: output.io },
     )
     assert.equal(bind, CLI_EXIT_CODE.CONFIG)
@@ -219,6 +241,7 @@ function makeBinding(repoPath) {
   return {
     localId: 'local-1',
     serverBindingId: 'binding-1',
+    taskSpaceId: 'space-1',
     projectId: 'project-1',
     teamId: 'team-1',
     repoPath,
@@ -229,6 +252,8 @@ function makeBinding(repoPath) {
     createdAt: '2026-11-03T00:00:00.000Z',
     allowFileRemote: true,
     syncStatus: 'approved',
+    liveSyncStatus: 'ready',
+    liveSyncError: null,
     lastSyncedAt: null,
     lastHead: null,
     lastError: null,
@@ -238,13 +263,13 @@ function makeBinding(repoPath) {
 
 function makeConfig(repoPath) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 'c'.repeat(32),
     serverUrl: 'http://127.0.0.1:4317',
     caFile: null,
     agentId: 'agent-runtime-1',
     deviceName: 'Runtime Test',
-    protocolVersion: 2,
+    protocolVersion: 3,
     agentVersion: '0.1.0',
     pairedAt: '2026-11-03T00:00:00.000Z',
     bindings: [makeBinding(repoPath)],
@@ -278,6 +303,7 @@ test('心跳绑定更新不覆盖本地实时同步状态', async (t) => {
     bindings: [
       {
         id: 'binding-1',
+        taskSpaceId: 'space-1',
         projectId: 'project-1',
         localRepoKey: 'b'.repeat(64),
         teamId: 'team-1',
@@ -303,11 +329,11 @@ test('主循环领取白名单命令并上报结果，不发送仓库绝对路�
   const api = {
     heartbeat: async () => {
       calls.heartbeats += 1
-      return { protocolVersion: 2, compatible: true, bindings: [] }
+      return { protocolVersion: 3, compatible: true, bindings: [] }
     },
     streamEvents: async (input, options) => {
       calls.streams += 1
-      assert.equal(input.teamId, 'team-1')
+      assert.equal(input.teamId, undefined)
       options.onOpen?.({ status: 200, headers: {} })
       if (calls.streams === 1) {
         await options.onEvent({
@@ -319,7 +345,12 @@ test('主循环领取白名单命令并上报结果，不发送仓库绝对路�
                 id: 'command-1',
                 bindingId: 'binding-1',
                 type: 'refresh_status',
-                payload: { protocolVersion: 2, projectId: 'project-1', branchName: 'main' },
+                payload: {
+                  protocolVersion: 3,
+                  taskSpaceId: 'space-1',
+                  projectId: 'project-1',
+                  branchName: 'main',
+                },
               },
             },
           },
@@ -335,6 +366,7 @@ test('主循环领取白名单命令并上报结果，不发送仓库绝对路�
       calls.results.push({ id, result })
       controller.abort()
     },
+    startCommand: async () => ({ execute: true }),
   }
   try {
     await store.saveConfig(makeConfig(repoPath))
@@ -343,6 +375,12 @@ test('主循环领取白名单命令并上报结果，不发送仓库绝对路�
       credentialStore: credentials,
       logger,
       apiFactory: () => api,
+      taskSync: {
+        async start() {},
+        stop() {},
+        updateBindings() {},
+        async pullTaskSpace() {},
+      },
       inspectRepository: async () => ({
         root: repoPath,
         localRepoKey: 'b'.repeat(64),
@@ -390,6 +428,12 @@ test('401 撤销停止主循环且保留本地配置', async () => {
       credentialStore: { loadCredential: async () => 'c'.repeat(32) },
       logger,
       apiFactory: () => api,
+      taskSync: {
+        async start() {},
+        stop() {},
+        updateBindings() {},
+        async pullTaskSpace() {},
+      },
       inspectRepository: async () => {
         throw new Error('must not inspect')
       },
@@ -419,7 +463,7 @@ test('协议不兼容只保留心跳并关闭命令领取', async () => {
       credentialStore: { loadCredential: async () => 'c'.repeat(32) },
       logger,
       apiFactory: () => ({
-        heartbeat: async () => ({ protocolVersion: 2, compatible: false, bindings: [] }),
+        heartbeat: async () => ({ protocolVersion: 3, compatible: false, bindings: [] }),
       }),
       heartbeatMs: 10,
       eventReconcileMs: 5,

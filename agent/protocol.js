@@ -1,9 +1,11 @@
 import path from 'node:path'
 
-export const AGENT_PROTOCOL_VERSION = 2
+export const AGENT_PROTOCOL_VERSION = 3
 export const AGENT_VERSION = '0.1.0'
 
 export const COMMAND_TYPE = Object.freeze({
+  CREATE_TASK: 'create_task',
+  ASSIGN_TASK: 'assign_task',
   SYNC_BRANCH: 'sync_branch',
   REFRESH_STATUS: 'refresh_status',
 })
@@ -77,6 +79,8 @@ export class AgentApiError extends AgentError {
     this.status = options.status ?? null
     this.serverCode = options.serverCode ?? null
     this.retryAfterMs = options.retryAfterMs ?? null
+    this.conflictId = options.conflictId ?? null
+    this.details = options.details ?? null
   }
 }
 
@@ -212,7 +216,8 @@ function normalizeServerBinding(value) {
     throw new AgentError(AGENT_ERROR_CODE.INVALID_RESPONSE, '心跳响应包含无效绑定')
   }
   const id = assertSafeId(value.id ?? value.bindingId, '绑定 ID')
-  const projectId = assertSafeId(value.projectId, '项目 ID')
+  const taskSpaceId = assertSafeId(value.taskSpaceId ?? value.task_space_id, '任务空间 ID')
+  const projectId = assertSafeId(value.projectId ?? value.project_id, '项目 ID')
   const localRepoKey = String(value.localRepoKey || '')
   if (!/^[a-f0-9]{64}$/.test(localRepoKey)) {
     throw new AgentError(AGENT_ERROR_CODE.INVALID_RESPONSE, '心跳响应包含无效本地仓库标识')
@@ -224,6 +229,7 @@ function normalizeServerBinding(value) {
   }
   return {
     id,
+    taskSpaceId,
     projectId,
     teamId: value.teamId == null ? null : assertSafeId(value.teamId, '团队 ID'),
     localRepoKey,
@@ -279,17 +285,59 @@ export function validateCommand(value) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, '命令载荷格式无效')
   }
-  const allowedKeys = new Set(['projectId', 'branchName', 'protocolVersion', 'reason'])
+  const allowedKeys = new Set([
+    'taskSpaceId',
+    'projectId',
+    'branchName',
+    'title',
+    'description',
+    'priority',
+    'slug',
+    'assigneeUserId',
+    'assigneeDevId',
+    'executionTaskKey',
+    'taskKey',
+    'relativeDir',
+    'baseTaskVersion',
+    'baseTaskSha256',
+    'protocolVersion',
+    'reason',
+  ])
   for (const key of Object.keys(payload)) {
     if (!allowedKeys.has(key)) {
       throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, '命令载荷包含未允许字段')
     }
   }
-  if (payload.projectId != null) {
-    assertSafeId(payload.projectId, '项目 ID', AGENT_ERROR_CODE.COMMAND_INVALID)
+  for (const [key, label] of [
+    ['taskSpaceId', '任务空间 ID'],
+    ['projectId', '项目 ID'],
+    ['assigneeUserId', '负责人用户 ID'],
+  ]) {
+    if (payload[key] != null) {
+      assertSafeId(payload[key], label, AGENT_ERROR_CODE.COMMAND_INVALID)
+    }
   }
   if (payload.branchName != null && typeof payload.branchName !== 'string') {
     throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, '命令分支格式无效')
+  }
+  if (type === COMMAND_TYPE.CREATE_TASK || type === COMMAND_TYPE.ASSIGN_TASK) {
+    if (!payload.taskSpaceId || !payload.assigneeUserId) {
+      throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, '任务命令缺少任务空间或负责人')
+    }
+  }
+  if (
+    type === COMMAND_TYPE.CREATE_TASK &&
+    (typeof payload.title !== 'string' ||
+      !payload.title.trim() ||
+      Array.from(payload.title).length > 200)
+  ) {
+    throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, '创建任务命令标题无效')
+  }
+  if (
+    type === COMMAND_TYPE.ASSIGN_TASK &&
+    (typeof payload.executionTaskKey !== 'string' || !payload.executionTaskKey)
+  ) {
+    throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, '改派命令缺少任务身份')
   }
   if (
     payload.protocolVersion != null &&
@@ -317,7 +365,7 @@ export function buildCommandResult(status, result = null, error = null) {
     status,
     result,
     error: error
-      ? `${typeof error.code === 'string' ? error.code : AGENT_ERROR_CODE.GIT_FAILED}: ${safeErrorMessage(
+      ? `${typeof error.code === 'string' ? error.code : AGENT_ERROR_CODE.HTTP_ERROR}: ${safeErrorMessage(
           error,
         )}`
       : null,

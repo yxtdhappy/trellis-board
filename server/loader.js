@@ -636,6 +636,7 @@ function collectTaskDirs(repoPath) {
 export function scanRepository(project, options = {}) {
   const includeContent = Boolean(options.includeContent)
   const metadataRepoPath = options.metadataRepoPath || project.path
+  const repositoryMetadata = options.repositoryMetadata || null
   const stats = {
     tasksParsed: 0,
     tasksReused: 0,
@@ -647,21 +648,31 @@ export function scanRepository(project, options = {}) {
   }
   const baseProject = {
     ...project,
-    developer: readDeveloper(project.path),
-    members: readMembers(project.path),
-    head: latestCommit(metadataRepoPath),
-    ...readCachedGitMetadata(metadataRepoPath, options, stats),
+    developer: Object.prototype.hasOwnProperty.call(options, 'developer')
+      ? options.developer
+      : readDeveloper(project.path),
+    members: Array.isArray(options.members) ? options.members : readMembers(project.path),
+    head:
+      repositoryMetadata && Object.prototype.hasOwnProperty.call(repositoryMetadata, 'head')
+        ? repositoryMetadata.head
+        : latestCommit(metadataRepoPath),
+    ...(repositoryMetadata || readCachedGitMetadata(metadataRepoPath, options, stats)),
   }
   const workspaceCache = new Map()
+  const workspaceSummaryResolver =
+    typeof options.workspaceSummaryResolver === 'function'
+      ? options.workspaceSummaryResolver
+      : readWorkspaceSummary
   const getWorkspaceSummary = (repoPath, member) => {
     if (!workspaceCache.has(member)) {
-      workspaceCache.set(member, readWorkspaceSummary(repoPath, member))
+      workspaceCache.set(member, workspaceSummaryResolver(repoPath, member))
     }
     return workspaceCache.get(member)
   }
   const dirs = collectTaskDirs(project.path)
   const cachePrefix = `${normalizePath(project.path)}::`
   const activeCacheKeys = new Set()
+  const useTaskCache = options.disableTaskCache !== true
   const tasks = [
     ...dirs.active.map((dir) => ({ dir, archived: false })),
     ...dirs.archived.map((dir) => ({ dir, archived: true })),
@@ -670,7 +681,7 @@ export function scanRepository(project, options = {}) {
       const cacheKey = taskCacheKey(project, dir, includeContent)
       activeCacheKeys.add(cacheKey)
       const baseSignature = taskBaseSignature(project, dir)
-      const cached = taskScanCache.get(cacheKey)
+      const cached = useTaskCache ? taskScanCache.get(cacheKey) : null
       if (cached?.baseSignature === baseSignature) {
         const summary = getWorkspaceSummary(project.path, cached.workspaceMember)
         const signature = `${baseSignature}|workspace=${workspaceSignature(project.path, cached.workspaceMember)}`
@@ -683,20 +694,24 @@ export function scanRepository(project, options = {}) {
       const task = buildTask(project, dir, archived, includeContent, getWorkspaceSummary)
       if (!task) return null
       const workspaceMember = taskWorkspaceMember(task)
-      taskScanCache.set(cacheKey, {
-        baseSignature,
-        signature: `${baseSignature}|workspace=${workspaceSignature(project.path, workspaceMember)}`,
-        workspaceMember,
-        task,
-      })
+      if (useTaskCache) {
+        taskScanCache.set(cacheKey, {
+          baseSignature,
+          signature: `${baseSignature}|workspace=${workspaceSignature(project.path, workspaceMember)}`,
+          workspaceMember,
+          task,
+        })
+      }
       stats.tasksParsed += 1
       return task
     })
     .filter(Boolean)
 
-  for (const cacheKey of taskScanCache.keys()) {
-    if (cacheKey.startsWith(cachePrefix) && !activeCacheKeys.has(cacheKey)) {
-      taskScanCache.delete(cacheKey)
+  if (useTaskCache) {
+    for (const cacheKey of taskScanCache.keys()) {
+      if (cacheKey.startsWith(cachePrefix) && !activeCacheKeys.has(cacheKey)) {
+        taskScanCache.delete(cacheKey)
+      }
     }
   }
 
@@ -734,9 +749,13 @@ export function refreshCachedTask(project, taskDir, options = {}) {
   const baseSignature = taskBaseSignature(project, taskDir)
   const cached = taskScanCache.get(cacheKey)
   const workspaceCache = new Map()
+  const workspaceSummaryResolver =
+    typeof options.workspaceSummaryResolver === 'function'
+      ? options.workspaceSummaryResolver
+      : readWorkspaceSummary
   const getWorkspaceSummary = (repoPath, member) => {
     if (!workspaceCache.has(member)) {
-      workspaceCache.set(member, readWorkspaceSummary(repoPath, member))
+      workspaceCache.set(member, workspaceSummaryResolver(repoPath, member))
     }
     return workspaceCache.get(member)
   }

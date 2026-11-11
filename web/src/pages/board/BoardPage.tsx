@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { logout } from '@/api/board'
+import { fetchTaskSpaceAssignees, logout, type TaskSpaceAssignee } from '@/api/board'
 import { ProjectRail } from '@/components/layout/ProjectRail'
 import { TopBar, type BoardNavItem } from '@/components/layout/TopBar'
 import { useBoard } from '@/hooks/useBoard'
@@ -20,6 +20,7 @@ import { ProjectManagerDialog } from '@/features/board/dialogs/ProjectManagerDia
 import { PublishOperationDialog } from '@/features/board/dialogs/PublishOperationDialog'
 import { SavedViewsDialog } from '@/features/board/dialogs/SavedViewsDialog'
 import { TaskDetailDialog } from '@/features/board/dialogs/TaskDetailDialog'
+import { TaskOperationList } from '@/features/board/TaskOperationList'
 import { isAttention, type BoardTask } from '@/features/board/task-view'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
@@ -56,6 +57,7 @@ export function BoardPage() {
   const [passwordOpen, setPasswordOpen] = useState(false)
   const [projectsOpen, setProjectsOpen] = useState(false)
   const [viewsOpen, setViewsOpen] = useState(false)
+  const [taskAssignees, setTaskAssignees] = useState<TaskSpaceAssignee[]>([])
 
   const {
     board,
@@ -84,10 +86,9 @@ export function BoardPage() {
     ],
     [tasks],
   )
-  const selectedProject = selected
-    ? projects.find((project) => project.id === selected.projectId)
-    : null
-  const detailAssignees = selectedProject?.workspaceMembers ?? selectedProject?.members ?? assignees
+  const detailAssignees = taskAssignees.length
+    ? taskAssignees.map((member) => member.trellisDevId)
+    : assignees
   const displayName = runtime?.user?.displayName || runtime?.user?.username || '看板用户'
   const savedViews = useMemo(() => normalizeViews(board?.savedViews), [board?.savedViews])
   const archived = useMemo(() => tasks.filter((task) => task.archived), [tasks])
@@ -117,6 +118,24 @@ export function BoardPage() {
     const fresh = tasks.find((task) => task.taskKey === selected.taskKey)
     if (fresh && fresh !== selected) setSelected(fresh)
   }, [tasks, selected])
+
+  useEffect(() => {
+    if (!selected?.taskSpaceId) {
+      setTaskAssignees([])
+      return
+    }
+    let active = true
+    fetchTaskSpaceAssignees(selected.taskSpaceId)
+      .then((values) => {
+        if (active) setTaskAssignees(values)
+      })
+      .catch(() => {
+        if (active) setTaskAssignees([])
+      })
+    return () => {
+      active = false
+    }
+  }, [selected?.taskSpaceId])
 
   useEffect(() => {
     if (runtime?.user?.mustChangePassword) setPasswordOpen(true)
@@ -181,9 +200,14 @@ export function BoardPage() {
       <div className="flex min-h-0 flex-1">
         <ProjectRail
           projects={projects}
+          teams={runtime?.teams || []}
           current={filters.projectId}
-          onSelect={(id) => setFilters({ projectId: id })}
+          teamId={filters.teamId}
+          onSelect={(id) => setFilters({ projectId: id, taskSpaceId: 'all' })}
+          currentTaskSpace={filters.taskSpaceId}
+          onSelectTaskSpace={(taskSpaceId) => setFilters({ taskSpaceId })}
           onManage={() => setProjectsOpen(true)}
+          manageEnabled={!teamMode}
           syncLabel={syncLabel}
           syncLive={!controller.status?.refreshRunning}
           refreshing={Boolean(controller.status?.refreshRunning) || loading}
@@ -198,6 +222,14 @@ export function BoardPage() {
             >
               {error}
             </p>
+          ) : null}
+
+          {teamMode && view === 'pipeline' ? (
+            <TaskOperationList
+              operations={controller.operations}
+              onRetry={actions.retryOperation}
+              onCancel={actions.cancelOperation}
+            />
           ) : null}
 
           {view === 'pipeline' ? (
@@ -265,10 +297,11 @@ export function BoardPage() {
 
           {view === 'archive' ? (
             <ArchiveView
-              key={filters.projectId}
+              key={`${filters.projectId}:${filters.taskSpaceId}`}
               tasks={archived}
               projects={projects}
               projectId={filters.projectId}
+              taskSpaceId={filters.taskSpaceId}
               teamMode={teamMode}
               teamId={filters.teamId}
               queryRevision={archiveRevision}
@@ -284,7 +317,6 @@ export function BoardPage() {
         onOpenChange={setCreateOpen}
         projects={projects}
         defaultProjectId={filters.projectId}
-        assignees={assignees}
         onCreate={actions.createTask}
       />
       <AssignmentsDialog
@@ -327,9 +359,12 @@ export function BoardPage() {
           if (teamMode) {
             const version = taskVersion(task)
             if (!version) throw new Error('服务端未返回 taskVersion，请刷新项目后重试')
+            const target = taskAssignees.find((member) => member.trellisDevId === assignee)
+            if (!target) throw new Error('目标负责人没有可写项目身份，请刷新后重试')
             await actions.assign({
+              taskSpaceId: task.taskSpaceId,
               executionTaskKey: task.executionTaskKey,
-              assignee,
+              assigneeUserId: target.userId,
               expectedTaskVersion: version,
               idempotencyKey: crypto.randomUUID(),
             })

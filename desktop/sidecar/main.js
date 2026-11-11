@@ -1,15 +1,22 @@
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
 import sea from 'node:sea'
+import { AgentApiClient } from '../../agent/api.js'
 import { ConfigStore } from '../../agent/config-store.js'
 import { DpapiCredentialStore } from '../../agent/credential-store.js'
 import { runAgentProcess } from '../../agent/index.js'
 import {
-  decidePendingLiveChange,
+  checkInitialPush,
+  initializeProject,
+  inspectProject,
+} from '../../agent/project-onboarding.js'
+import {
+  AgentTaskSnapshotSync,
   liveControlLine,
   restoreLiveBackup,
-} from '../../agent/live-sync.js'
+} from '../../agent/task-snapshot-sync.js'
 import {
   AgentError,
   AGENT_PROTOCOL_VERSION,
@@ -25,7 +32,8 @@ import {
   validateAgentId,
   validateDeviceName,
 } from './desktop-device.js'
-import { associateDesktopProject } from './desktop-association.js'
+import { associateDesktopProject, preflightDesktopProject } from './desktop-association.js'
+import { initializeTrellis } from './trellis-runtime.js'
 
 export const SIDECAR_EXIT_CODE = Object.freeze({
   OK: 0,
@@ -86,6 +94,15 @@ function requireOption(values, key) {
     throw new AgentError('CONFIG_INVALID', `缺少参数 --${key}`)
   }
   return values[key]
+}
+
+async function withEphemeralHooks(callback) {
+  const hooksDir = await fs.mkdtemp(path.join(os.tmpdir(), 'trellis-agent-hooks-'))
+  try {
+    return await callback(hooksDir)
+  } finally {
+    await fs.rm(hooksDir, { recursive: true }).catch(() => {})
+  }
 }
 
 async function readSecret() {
@@ -221,19 +238,105 @@ async function commandStatus(args) {
 
 async function commandAssociate(args, options) {
   const values = parseOptions(args, {
-    project: {},
     path: {},
     branch: {},
+    team: {},
+    developer: {},
+    name: {},
+    'initial-mode': {},
+    'require-pushed': { flag: true },
   })
   const store = new ConfigStore()
   const agent = await prepareAgent(store, options.fallbackDpapiScript)
   const result = await associateDesktopProject({
-    projectId: requireOption(values, 'project'),
+    teamId: requireOption(values, 'team'),
+    developerId: requireOption(values, 'developer'),
     repoPath: requireOption(values, 'path'),
     branchName: requireOption(values, 'branch'),
+    displayName: values.name || null,
+    requirePushed: values['require-pushed'] === true,
+    initialSyncMode: requireOption(values, 'initial-mode'),
     store: agent.store,
     credentialStore: agent.credentialStore,
   })
+  writeJson({ ok: true, ...result })
+  return SIDECAR_EXIT_CODE.OK
+}
+
+async function commandPreflightProject(args, options) {
+  const values = parseOptions(args, {
+    path: {},
+    team: {},
+    'require-pushed': { flag: true },
+  })
+  const store = new ConfigStore()
+  const agent = await prepareAgent(store, options.fallbackDpapiScript)
+  const result = await preflightDesktopProject({
+    teamId: requireOption(values, 'team'),
+    repoPath: requireOption(values, 'path'),
+    requirePushed: values['require-pushed'] === true,
+    store: agent.store,
+    credentialStore: agent.credentialStore,
+  })
+  writeJson({ ok: true, ...result })
+  return SIDECAR_EXIT_CODE.OK
+}
+
+async function commandInspectProject(args) {
+  const values = parseOptions(args, { path: {} })
+  const root = path.resolve(requireOption(values, 'path'))
+  const inspected = await withEphemeralHooks((hooksDir) =>
+    inspectProject({
+      repoPath: root,
+      hooksDir,
+      allowFileRemote: false,
+    }),
+  )
+  writeJson({ ok: true, project: inspected })
+  return SIDECAR_EXIT_CODE.OK
+}
+
+async function commandInitializeProject(args) {
+  const values = parseOptions(args, {
+    path: {},
+    developer: {},
+    tools: {},
+    runtime: {},
+  })
+  const root = path.resolve(requireOption(values, 'path'))
+  const tools = requireOption(values, 'tools')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const project = await withEphemeralHooks((hooksDir) =>
+    initializeProject({
+      repoPath: root,
+      hooksDir,
+      developerId: requireOption(values, 'developer'),
+      agentTools: tools,
+      initialize: (input) =>
+        initializeTrellis({
+          ...input,
+          runtime: values.runtime || null,
+          resourcesPath: options.resourcesPath,
+          applicationDir: options.applicationDir,
+        }),
+    }),
+  )
+  writeJson({ ok: true, project })
+  return SIDECAR_EXIT_CODE.OK
+}
+
+async function commandCheckPush(args) {
+  const values = parseOptions(args, { path: {}, branch: {} })
+  const root = path.resolve(requireOption(values, 'path'))
+  const result = await withEphemeralHooks((hooksDir) =>
+    checkInitialPush({
+      repoPath: root,
+      branchName: requireOption(values, 'branch'),
+      hooksDir,
+    }),
+  )
   writeJson({ ok: true, ...result })
   return SIDECAR_EXIT_CODE.OK
 }
@@ -244,14 +347,87 @@ async function commandAssociations() {
 }
 
 async function commandLiveDecide(args, options) {
-  const values = parseOptions(args, { pending: {}, action: {} })
+  const values = parseOptions(args, {
+    taskSpace: {},
+    conflict: {},
+    action: {},
+  })
   const store = new ConfigStore()
   const agent = await prepareAgent(store, options.fallbackDpapiScript)
-  const result = await decidePendingLiveChange({
-    store: agent.store,
-    credentialStore: agent.credentialStore,
-    pendingId: requireOption(values, 'pending'),
+  const config = await store.readConfig({ allowMissing: false })
+  const credential = await agent.credentialStore.loadCredential()
+  const api = new AgentApiClient({
+    serverUrl: config.serverUrl,
+    credential,
+  })
+  const taskSync = new AgentTaskSnapshotSync({
+    store,
+    loadContext: async () => ({ config, credential, api }),
+  })
+  taskSync.updateBindings(config.bindings)
+  const result = await taskSync.decideConflict({
+    taskSpaceId: requireOption(values, 'taskSpace'),
+    conflictId: requireOption(values, 'conflict'),
     action: requireOption(values, 'action'),
+  })
+  writeJson({ ok: true, ...result })
+  return SIDECAR_EXIT_CODE.OK
+}
+
+async function commandLiveDiff(args, options) {
+  const values = parseOptions(args, {
+    taskSpace: {},
+    conflict: {},
+  })
+  const store = new ConfigStore()
+  const agent = await prepareAgent(store, options.fallbackDpapiScript)
+  const config = await store.readConfig({ allowMissing: false })
+  const credential = await agent.credentialStore.loadCredential()
+  const api = new AgentApiClient({
+    serverUrl: config.serverUrl,
+    credential,
+  })
+  const taskSync = new AgentTaskSnapshotSync({
+    store,
+    loadContext: async () => ({ config, credential, api }),
+  })
+  taskSync.updateBindings(config.bindings)
+  const result = await taskSync.conflictDetails({
+    taskSpaceId: requireOption(values, 'taskSpace'),
+    conflictId: requireOption(values, 'conflict'),
+  })
+  writeJson({ ok: true, ...result })
+  return SIDECAR_EXIT_CODE.OK
+}
+
+async function commandLiveInitial(args, options) {
+  const values = parseOptions(args, {
+    taskSpace: {},
+    mode: {},
+  })
+  const mode = requireOption(values, 'mode')
+  if (!new Set(['safe', 'review']).has(mode)) {
+    throw new AgentError('CONFIG_INVALID', '首次同步处理方式无效')
+  }
+  const store = new ConfigStore()
+  const agent = await prepareAgent(store, options.fallbackDpapiScript)
+  const config = await store.readConfig({ allowMissing: false })
+  const credential = await agent.credentialStore.loadCredential()
+  const api = new AgentApiClient({
+    serverUrl: config.serverUrl,
+    credential,
+  })
+  const taskSync = new AgentTaskSnapshotSync({
+    store,
+    loadContext: async () => ({ config, credential, api }),
+  })
+  taskSync.updateBindings(config.bindings)
+  const taskSpaceId = requireOption(values, 'taskSpace')
+  const input = mode === 'review' ? await readJsonInput() : {}
+  const result = await taskSync.resolveInitialSync({
+    taskSpaceId,
+    mode,
+    decisions: Array.isArray(input.decisions) ? input.decisions : [],
   })
   writeJson({ ok: true, ...result })
   return SIDECAR_EXIT_CODE.OK
@@ -276,9 +452,15 @@ function usage() {
     '  run',
     '  login --server <URL> --name <设备名> [--force-new]  (用户名和密码从标准输入 JSON 读取)',
     '  logout --server <URL> (会话 Token 从标准输入 JSON 读取)',
-    '  associate --project <项目 ID> --path <仓库根目录> --branch <同步分支>',
+    '  preflight-project --path <仓库根目录> --team <团队 ID> [--require-pushed]',
+    '  associate --path <仓库根目录> --branch <同步分支> --team <团队 ID> --developer <Trellis ID> --initial-mode bootstrap|safe|review',
+    '  inspect-project --path <仓库根目录>',
+    '  initialize-project --path <仓库根目录> --developer <Trellis ID> --tools <id,id>',
+    '  check-push --path <仓库根目录> --branch <同步分支>',
     '  associations',
-    '  live-decide --pending <待确认 ID> --action continue|takeover|cancel',
+    '  live-decide --task-space <任务空间 ID> --conflict <冲突 ID> --action use-server|overwrite-server|save-local-copy',
+    '  live-diff --task-space <任务空间 ID> --conflict <冲突 ID>',
+    '  live-initial --task-space <任务空间 ID> --mode safe|review',
     '  live-restore --backup <备份 ID>',
     '  revoke --server <URL> --agent <设备 ID> (会话 Cookie 从 TRELLIS_BOARD_SESSION 读取)',
     '  status [--root <Agent 数据目录>]',
@@ -298,10 +480,22 @@ export async function runSidecarMain(argv = process.argv.slice(2), options = {})
         return await commandLogout(args)
       case 'associate':
         return await commandAssociate(args, options)
+      case 'preflight-project':
+        return await commandPreflightProject(args, options)
+      case 'inspect-project':
+        return await commandInspectProject(args)
+      case 'initialize-project':
+        return await commandInitializeProject(args, options)
+      case 'check-push':
+        return await commandCheckPush(args)
       case 'associations':
         return await commandAssociations()
       case 'live-decide':
         return await commandLiveDecide(args, options)
+      case 'live-diff':
+        return await commandLiveDiff(args, options)
+      case 'live-initial':
+        return await commandLiveInitial(args, options)
       case 'live-restore':
         return await commandLiveRestore(args, options)
       case 'revoke':

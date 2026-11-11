@@ -23,6 +23,23 @@ public/app.js api()
   -> 前端状态轮询并加载新看板
 ```
 
+```text
+Team Agent A .trellis/tasks/**
+  -> baseSha256 CAS -> server/team/task-snapshot-service.js
+  -> sync_task_space_file revision
+  -> server/team/task-space-index.js tasks-only 临时快照
+  -> sync_task_index -> Board SSE tasks.changed
+  -> web/src/hooks/useBoard.ts REST 对齐
+  -> Team Agent B cursor 拉取 + 完整任务目录原子替换
+
+Web 创建/改派
+  -> sync_task_command
+  -> Agent SSE command.available
+  -> 目标客户端本地 task.py / task.json
+  -> 同一 CAS 快照链
+  -> 索引命中后才 succeeded
+```
+
 ## 必须保持一致的契约
 
 ### 阶段
@@ -49,6 +66,8 @@ public/app.js api()
 - 仓库身份来自 SQLite `repositories.id`，扫描结果中的 `projectId` 使用该值。
 - `relativeDir` 是相对白名单仓库根的路径，正常任务以 `.trellis/tasks/` 开头，归档任务还包含 `archive/`。
 - 任务列表身份 `taskKey` 为 `${projectId}::${relativeDir}`，用于当前路径定位；`executionTaskKey` 为 `${projectId}::${task.id || dirName}`，用于归档后仍关联计划字段、标签和事件。两者不能混用。
+- Team 模式必须把上述前缀替换为 `taskSpaceId`，即 `${taskSpaceId}::${relativeDir}` 和
+  `${taskSpaceId}::${task.id}`；同仓库不同分支可使用相同 task ID 和相对路径而互不冲突。
 - 同一项目内重复 `executionTaskKey` 时任务仍可见，但必须标记 `executionIdentityValid=false`、隐藏扩展数据并拒绝计划或人工阶段写入。
 - 有 board 快照时，若同一 `taskKey` 在磁盘最新扫描出的 `executionTaskKey` 与快照不同，或快照外的新路径认领了另一个任务已有的身份，均视为身份漂移并拒绝写扩展数据，直到刷新快照；新身份可能已属于另一任务，不能直接复用其计划字段或事件。
 - API 字段名并不统一：创建和负责人更新使用 `repositoryId`，详情、计划字段与人工阶段使用 `projectId`；任务定位字段 `taskDir` / `taskPath` 都承载上述 `relativeDir`，不是相对 `.trellis/tasks` 的短路径。后端消费定位字段时必须解析到白名单仓库并确认仍在任务根内，新增任务写接口复用 `resolveTaskLocation()`。

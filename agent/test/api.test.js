@@ -41,7 +41,7 @@ test('HTTP stub 验证配对、心跳、SSE 事件和 Bearer', async () => {
           JSON.stringify({
             agentId: 'agent-1',
             credential: 'c'.repeat(32),
-            protocolVersion: 2,
+            protocolVersion: 3,
           }),
         )
         return
@@ -49,26 +49,34 @@ test('HTTP stub 验证配对、心跳、SSE 事件和 Bearer', async () => {
       if (request.url === '/api/agent/heartbeat') {
         response.end(
           JSON.stringify({
-            protocolVersion: 2,
+            protocolVersion: 3,
             compatible: true,
             bindings: [],
           }),
         )
         return
       }
-      if (request.url === '/api/agent/events?teamId=team-1') {
+      if (request.url === '/api/agent/task-spaces/preflight') {
+        response.end(JSON.stringify({ status: 'new', revision: 0, tasks: [] }))
+        return
+      }
+      if (request.url === '/api/agent/events') {
         response.setHeader('content-type', 'text/event-stream')
         response.write('retry: 3000\n\n')
         response.write('id: 7\n')
-        response.write('event: task.assigned\n')
+        response.write('event: command\n')
         response.write(
-          'data: {"id":7,"teamId":"team-1","type":"task.assigned","projectId":"project-1","taskId":"task-1","taskVersion":"v1","payload":{"teamId":"team-1","projectId":"project-1","executionTaskKey":"task-1","relativeDir":".trellis/tasks/task-1","taskVersion":"v1"}}\n\n',
+          'data: {"type":"command","payload":{"command":{"id":"command-1","bindingId":"binding-1","type":"create_task","payload":{"taskSpaceId":"space-1","projectId":"project-1","branchName":"main","title":"客户端任务","assigneeUserId":"user-1","assigneeDevId":"alice"}}}}\n\n',
         )
         response.end()
         return
       }
       if (request.url === '/api/agent/commands/command-1/result') {
         response.end('{}')
+        return
+      }
+      if (request.url === '/api/agent/commands/command-1/start') {
+        response.end(JSON.stringify({ execute: true }))
         return
       }
       response.statusCode = 404
@@ -81,22 +89,29 @@ test('HTTP stub 验证配对、心跳、SSE 事件和 Bearer', async () => {
       client.setCredential(enroll.credential)
       const heartbeat = await client.heartbeat({ agentId: enroll.agentId })
       assert.equal(heartbeat.compatible, true)
+      const preflight = await client.preflightTaskSpaceAccess({
+        remoteUrl: 'https://example.com/repo.git',
+        branchName: 'main',
+        teamId: 'team-1',
+      })
+      assert.equal(preflight.status, 'new')
       const events = []
-      await client.streamEvents(
-        { teamId: 'team-1', lastEventId: 6 },
-        { onEvent: (event) => events.push(event) },
-      )
+      await client.streamEvents({ lastEventId: 6 }, { onEvent: (event) => events.push(event) })
       assert.equal(events.length, 1)
       assert.equal(events[0].id, '7')
-      assert.equal(events[0].type, 'task.assigned')
-      assert.equal(events[0].data.payload.executionTaskKey, 'task-1')
-      assert.equal(events[0].data.payload.relativeDir, '.trellis/tasks/task-1')
+      assert.equal(events[0].type, 'command')
+      assert.equal(events[0].data.payload.command.payload.taskSpaceId, 'space-1')
+      assert.equal(events[0].data.payload.command.type, 'create_task')
+      assert.equal((await client.startCommand('command-1')).execute, true)
       await client.submitCommandResult('command-1', { status: 'failed' })
     },
   )
   assert.equal(seen.find((item) => item.url === '/api/agent/enroll').authorization, undefined)
-  const streamRequest = seen.find((item) => item.url === '/api/agent/events?teamId=team-1')
+  const streamRequest = seen.find((item) => item.url === '/api/agent/events')
   assert.equal(streamRequest.authorization, `Bearer ${'c'.repeat(32)}`)
+  const preflightRequest = seen.find((item) => item.url === '/api/agent/task-spaces/preflight')
+  assert.equal(preflightRequest.authorization, `Bearer ${'c'.repeat(32)}`)
+  assert.match(preflightRequest.body, /https:\/\/example\.com\/repo\.git/)
   assert.equal(streamRequest.lastEventId, '6')
   assert.equal(
     seen.some((item) => item.body.includes('pairingCode')),

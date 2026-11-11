@@ -44,7 +44,6 @@ function teamConfig() {
     publicOrigin: PUBLIC_ORIGIN,
     sessionTtlMs: 12 * 60 * 60 * 1000,
     agentStaleMs: 60_000,
-    gitPollMs: 60_000,
     cookieSecure: false,
     trustProxy: false,
     allowLocalGitRemotes: false,

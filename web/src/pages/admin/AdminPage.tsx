@@ -17,12 +17,9 @@ import { ProjectsTab } from '@/features/admin/ProjectsTab'
 import { UsersTab } from '@/features/admin/UsersTab'
 import { TeamsTab } from '@/features/admin/TeamsTab'
 import { TeamSwitcher } from '@/features/admin/TeamSwitcher'
-import { OnboardingTab } from '@/features/admin/OnboardingTab'
-import { CredentialsTab } from '@/features/admin/CredentialsTab'
 import { DevicesTab } from '@/features/admin/DevicesTab'
 import { AuditTab } from '@/features/admin/AuditTab'
 import { OneTimeCredentialDialog } from '@/features/admin/OneTimeCredentialDialog'
-import { ApproveProjectDialog } from '@/features/admin/ApproveProjectDialog'
 
 const VIEWS: {
   id: AdminView
@@ -46,18 +43,6 @@ const VIEWS: {
     id: 'teams',
     label: '团队',
     subtitle: '创建团队、启停团队并分配团队成员。',
-    adminOnly: true,
-  },
-  {
-    id: 'projects',
-    label: '项目接入',
-    subtitle: '管理服务端项目工作副本、共享分支和工具链批准。',
-    adminOnly: true,
-  },
-  {
-    id: 'git-credentials',
-    label: 'Git 凭据',
-    subtitle: '维护团队级 HTTPS/SSH 凭据并查看项目引用关系。',
     adminOnly: true,
   },
   {
@@ -209,12 +194,6 @@ export function AdminPage() {
               {view === 'project-access' ? <ProjectsTab console={consoleApi} /> : null}
               {view === 'users' ? <UsersTab console={consoleApi} /> : null}
               {view === 'teams' ? <TeamsTab /> : null}
-              {view === 'projects' ? (
-                <OnboardingTab key={adminTeamId} console={consoleApi} />
-              ) : null}
-              {view === 'git-credentials' ? (
-                <CredentialsTab key={adminTeamId} console={consoleApi} />
-              ) : null}
               {view === 'agents' ? <DevicesTab console={consoleApi} /> : null}
               {view === 'audit' ? <AuditTab console={consoleApi} /> : null}
             </div>
@@ -225,12 +204,6 @@ export function AdminPage() {
       <OneTimeCredentialDialog
         credential={consoleApi.credential}
         onClose={consoleApi.closeCredential}
-      />
-      <ApproveProjectDialog
-        approval={consoleApi.pendingApproval}
-        users={consoleApi.users}
-        onApprove={consoleApi.approveProject}
-        onClose={consoleApi.closeApproval}
       />
     </div>
   )

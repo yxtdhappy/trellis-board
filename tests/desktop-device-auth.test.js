@@ -40,7 +40,6 @@ function testConfig(origin = PUBLIC_ORIGIN, port = 0) {
     publicOrigin: origin,
     sessionTtlMs: 12 * 60 * 60 * 1000,
     agentStaleMs: 60_000,
-    gitPollMs: 60_000,
     cookieSecure: false,
     trustProxy: false,
     allowLocalGitRemotes: false,
@@ -204,7 +203,7 @@ function redeem(runtime, token, overrides = {}) {
       deviceName: 'Windows 桌面',
       platform: 'win32',
       agentVersion: '0.1.0',
-      protocolVersion: 2,
+      protocolVersion: 3,
       ...overrides,
     },
   })
@@ -260,7 +259,7 @@ test('设备令牌只能兑换一次并签发可用凭证', async (t) => {
   assert.equal(enrolled.status, 201)
   assert.match(enrolled.body.agentId, /^[A-Za-z0-9-]{8,64}$/)
   assert.match(enrolled.body.credential, /^[A-Za-z0-9_-]{43}$/)
-  assert.equal(enrolled.body.protocolVersion, 2)
+  assert.equal(enrolled.body.protocolVersion, 3)
   assert.deepEqual(
     enrolled.body.teams.map((team) => team.id),
     [teamId],
@@ -290,7 +289,7 @@ test('设备令牌只能兑换一次并签发可用凭证', async (t) => {
     method: 'POST',
     body: {
       agentId: enrolled.body.agentId,
-      protocolVersion: 2,
+      protocolVersion: 3,
       agentVersion: '0.1.0',
       platform: 'win32',
       deviceName: '开发机',
@@ -299,7 +298,7 @@ test('设备令牌只能兑换一次并签发可用凭证', async (t) => {
     authorization: `Bearer ${enrolled.body.credential}`,
   })
   assert.equal(heartbeat.status, 200)
-  assert.equal(heartbeat.body.protocolVersion, 2)
+  assert.equal(heartbeat.body.protocolVersion, 3)
   assert.equal(heartbeat.body.compatible, true)
 
   const devices = await request(runtime, '/api/admin/agents', { cookie: adminCookie })
@@ -347,7 +346,7 @@ test('无效、已撤销会话与禁用用户分别被拒绝', async (t) => {
   const cookieOnly = await request(runtime, '/api/agent/enroll-desktop', {
     method: 'POST',
     cookie: adminCookie,
-    body: { protocolVersion: 2 },
+    body: { protocolVersion: 3 },
   })
   assert.equal(cookieOnly.status, 401)
   assert.equal(cookieOnly.body.code, 'DESKTOP_TOKEN_INVALID')
@@ -425,7 +424,7 @@ test('桌面端底层设备兑换走一次性令牌端点', async (t) => {
     root,
     credentialStore,
   })
-  assert.equal(result.protocolVersion, 2)
+  assert.equal(result.protocolVersion, 3)
   assert.equal(result.serverUrl, serverUrl)
   assert.equal(saved.length, 1)
   const configText = fs.readFileSync(path.join(root, 'config.json'), 'utf8')
@@ -576,7 +575,7 @@ test('首次登录需要改密时只建立会话，并清除旧客户端设备',
   const root = await withTempRoot(t, 'trellis-desktop-login-pending-')
   const store = new ConfigStore(root, { secureDirectory: false })
   await store.saveConfig({
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 'd'.repeat(32),
     serverUrl,
     caFile: null,
@@ -585,7 +584,7 @@ test('首次登录需要改密时只建立会话，并清除旧客户端设备',
     username: 'pending-user',
     teamId: null,
     teams: [{ id: teamId, name: '旧团队', role: 'member' }],
-    protocolVersion: 2,
+    protocolVersion: 3,
     agentVersion: '0.1.0',
     pairedAt: new Date().toISOString(),
     bindings: [],
@@ -663,7 +662,7 @@ test('--force-new 替换旧设备时不继承旧账号本地关联', async (t) =
   const root = await withTempRoot(t, 'trellis-desktop-login-force-new-')
   const store = new ConfigStore(root, { secureDirectory: false })
   await store.saveConfig({
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 'a'.repeat(32),
     serverUrl,
     caFile: null,
@@ -672,13 +671,14 @@ test('--force-new 替换旧设备时不继承旧账号本地关联', async (t) =
     username: 'sysadmin',
     teamId: null,
     teams: [{ id: teamId, name: '旧团队', role: 'member' }],
-    protocolVersion: 2,
+    protocolVersion: 3,
     agentVersion: '0.1.0',
     pairedAt: new Date().toISOString(),
     bindings: [
       {
         localId: 'legacy-binding',
         serverBindingId: 'legacy-server-binding',
+        taskSpaceId: 'legacy-task-space',
         projectId: 'legacy-project',
         repoPath: path.join(root, 'legacy-repo'),
         branchName: 'main',
@@ -690,6 +690,8 @@ test('--force-new 替换旧设备时不继承旧账号本地关联', async (t) =
         allowFileRemote: false,
         readOnly: false,
         syncStatus: 'approved',
+        liveSyncStatus: 'ready',
+        liveSyncError: null,
         lastSyncedAt: null,
         lastHead: null,
         lastError: null,
@@ -754,9 +756,14 @@ test('桌面 capability 配置拆分本地登录与远程项目关联权限', ()
   ])
   const remote = readJson('desktop/src-tauri/capabilities/board-local-association.json')
   assert.deepEqual(remote.permissions.slice().sort(), [
-    'allow-associate-local-project',
+    'allow-associate-pending-project',
+    'allow-cancel-pending-project',
+    'allow-check-pending-project-push',
     'allow-desktop-sidecar-status',
+    'allow-initialize-pending-project',
+    'allow-inspect-local-project',
     'allow-list-local-associations',
+    'allow-preflight-pending-project',
   ])
   assert.deepEqual(remote.remote.urls, ['https://*:*', 'http://*:*'])
 

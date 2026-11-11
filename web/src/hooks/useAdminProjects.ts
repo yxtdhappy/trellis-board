@@ -1,25 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import * as admin from '@/api/admin'
-import { ApiError } from '@/api/request'
 import type {
-  AdminUser,
   AgentBinding,
-  ApprovalDraft,
   AuditEvent,
-  ConnectProjectInput,
   MemberInput,
-  ProjectAction,
   ProjectMember,
+  ProjectTeamAccess,
   RuntimeProject,
   TeamProject,
 } from '@/api/admin'
-
-export type PendingApproval = {
-  project: TeamProject
-  sha256: string
-  files: string[] | number | null
-}
 
 export type AdminProjects = {
   projects: TeamProject[]
@@ -30,18 +20,15 @@ export type AdminProjects = {
   refreshAccess: () => void
   members: ProjectMember[]
   bindings: AgentBinding[]
+  projectTeams: ProjectTeamAccess[]
   projectAudit: AuditEvent[]
   projectAuditHasMore: boolean
   loadProjectAudit: (reset: boolean) => Promise<void>
   saveMember: (input: MemberInput) => Promise<boolean>
   removeMember: (member: ProjectMember) => Promise<void>
+  inviteProjectTeam: (teamId: string, accessRole?: string) => Promise<void>
+  removeProjectTeam: (access: ProjectTeamAccess) => Promise<void>
   bindingAction: (binding: AgentBinding, action: admin.BindingAction) => Promise<void>
-  connectProject: (input: Omit<ConnectProjectInput, 'teamId'>) => Promise<boolean>
-  openApproval: (project: TeamProject, draft?: ApprovalDraft | null) => Promise<void>
-  pendingApproval: PendingApproval | null
-  closeApproval: () => void
-  approveProject: (input: { leadUserId: string; leadTrellisDevId: string }) => Promise<boolean>
-  projectAction: (project: TeamProject, action: ProjectAction) => Promise<void>
 }
 
 type AdminProjectsOptions = {
@@ -49,8 +36,6 @@ type AdminProjectsOptions = {
   isAdmin: boolean
   teamId: string
   runtimeProjects: RuntimeProject[]
-  users: AdminUser[]
-  reloadUsers: (quiet?: boolean) => Promise<AdminUser[]>
 }
 
 export function useAdminProjects({
@@ -58,16 +43,14 @@ export function useAdminProjects({
   isAdmin,
   teamId,
   runtimeProjects,
-  users,
-  reloadUsers,
 }: AdminProjectsOptions): AdminProjects {
   const [projects, setProjects] = useState<TeamProject[]>([])
   const [accessProjectId, setAccessProjectId] = useState('')
   const [members, setMembers] = useState<ProjectMember[]>([])
   const [bindings, setBindings] = useState<AgentBinding[]>([])
+  const [projectTeams, setProjectTeams] = useState<ProjectTeamAccess[]>([])
   const [projectAudit, setProjectAudit] = useState<AuditEvent[]>([])
   const [projectAuditHasMore, setProjectAuditHasMore] = useState(false)
-  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
 
   const accessProjectRef = useRef('')
   const projectAuditBeforeRef = useRef<number | null>(null)
@@ -111,12 +94,14 @@ export function useAdminProjects({
       setAccessProjectId(projectId)
       setMembers([])
       setBindings([])
+      setProjectTeams([])
       setProjectAudit([])
       setProjectAuditHasMore(false)
       if (!projectId) return
-      const [membersResult, bindingsResult, auditResult] = await Promise.allSettled([
+      const [membersResult, bindingsResult, teamsResult, auditResult] = await Promise.allSettled([
         admin.fetchMembers(projectId),
         admin.fetchBindings(projectId),
+        admin.fetchProjectTeams(projectId),
         admin.fetchProjectAudit(projectId, null),
       ])
       if (requestRef.current !== token) return
@@ -124,6 +109,8 @@ export function useAdminProjects({
       else report(membersResult.reason)
       if (bindingsResult.status === 'fulfilled') setBindings(bindingsResult.value)
       else report(bindingsResult.reason)
+      if (teamsResult.status === 'fulfilled') setProjectTeams(teamsResult.value)
+      else report(teamsResult.reason)
       if (auditResult.status === 'fulfilled') {
         projectAuditBeforeRef.current = auditResult.value.at(-1)?.id ?? null
         setProjectAudit(auditResult.value)
@@ -144,6 +131,7 @@ export function useAdminProjects({
     setAccessProjectId('')
     setMembers([])
     setBindings([])
+    setProjectTeams([])
     setProjectAudit([])
     setProjectAuditHasMore(false)
   }, [accessProjectId, projectOptions])
@@ -226,6 +214,40 @@ export function useAdminProjects({
     [report],
   )
 
+  const inviteProjectTeam = useCallback(
+    async (targetTeamId: string, accessRole = 'member') => {
+      const projectId = accessProjectRef.current
+      if (!projectId || !targetTeamId) {
+        toast.error('先选择项目和要邀请的团队。')
+        return
+      }
+      try {
+        await admin.inviteProjectTeam(projectId, targetTeamId, accessRole)
+        setProjectTeams(await admin.fetchProjectTeams(projectId))
+        toast.success('团队访问权限已授予。')
+      } catch (error) {
+        report(error)
+      }
+    },
+    [report],
+  )
+
+  const removeProjectTeam = useCallback(
+    async (access: ProjectTeamAccess) => {
+      const projectId = accessProjectRef.current
+      if (!projectId || !access.teamId) return
+      if (!window.confirm(`移除团队 ${access.teamName} 对该项目的访问权限？`)) return
+      try {
+        await admin.removeProjectTeam(projectId, access.teamId)
+        setProjectTeams(await admin.fetchProjectTeams(projectId))
+        toast.success('团队访问权限已移除。')
+      } catch (error) {
+        report(error)
+      }
+    },
+    [report],
+  )
+
   const bindingAction = useCallback(
     async (binding: AgentBinding, action: admin.BindingAction) => {
       const projectId = accessProjectRef.current
@@ -242,88 +264,6 @@ export function useAdminProjects({
     [report, selectProject],
   )
 
-  const openApproval = useCallback(
-    async (project: TeamProject, draft: ApprovalDraft | null = null) => {
-      if (!isAdmin) return
-      if (!users.length) await reloadUsers(true)
-      const sha256 = draft?.toolchainSha256 || project.scriptsSha256
-      if (!sha256) {
-        toast.error('项目没有可批准的工具链摘要，请重新连接或修复项目。')
-        return
-      }
-      setPendingApproval({ project, sha256, files: draft?.files ?? null })
-    },
-    [isAdmin, reloadUsers, users.length],
-  )
-
-  const connectProject = useCallback(
-    async (input: Omit<ConnectProjectInput, 'teamId'>) => {
-      if (!teamId || teamId === 'all') {
-        toast.error('请先在顶部选择一个具体团队，再接入项目。')
-        return false
-      }
-      try {
-        const result = await admin.connectProject({ ...input, teamId })
-        await reloadProjects(true)
-        await openApproval(result.project, result.approval)
-        return true
-      } catch (error) {
-        if (error instanceof ApiError && error.code === 'PROJECT_ALREADY_CONNECTED') {
-          await reloadProjects(true)
-        }
-        report(error)
-        return false
-      }
-    },
-    [openApproval, reloadProjects, report, teamId],
-  )
-
-  const approveProject = useCallback(
-    async (input: { leadUserId: string; leadTrellisDevId: string }) => {
-      if (!pendingApproval) return false
-      try {
-        const result = await admin.approveProject(pendingApproval.project.id, {
-          toolchainSha256: pendingApproval.sha256,
-          ...input,
-        })
-        setPendingApproval(null)
-        if (result.warning?.message) {
-          toast.warning(result.warning.message)
-        } else {
-          toast.success('项目工具链已批准，首个负责人已配置。')
-        }
-        await reloadProjects(true)
-        return true
-      } catch (error) {
-        report(error)
-        return false
-      }
-    },
-    [pendingApproval, reloadProjects, report],
-  )
-
-  const projectAction = useCallback(
-    async (project: TeamProject, action: ProjectAction) => {
-      if (
-        action === 'disable' &&
-        !window.confirm(`停用项目 ${project.name}？相关 Agent 绑定会被删除。`)
-      ) {
-        return
-      }
-      if (action === 'repair' && !window.confirm(`对 ${project.name} 执行受控修复？`)) return
-      try {
-        await admin.runProjectAction(project.id, action)
-        const suffix =
-          action === 'refresh' ? '已刷新。' : action === 'repair' ? '已执行修复检查。' : '已停用。'
-        toast.success(`项目 ${project.name} ${suffix}`)
-        await reloadProjects(true)
-      } catch (error) {
-        report(error)
-      }
-    },
-    [reloadProjects, report],
-  )
-
   return {
     projects,
     reloadProjects,
@@ -333,17 +273,14 @@ export function useAdminProjects({
     refreshAccess,
     members,
     bindings,
+    projectTeams,
     projectAudit,
     projectAuditHasMore,
     loadProjectAudit,
     saveMember,
     removeMember,
+    inviteProjectTeam,
+    removeProjectTeam,
     bindingAction,
-    connectProject,
-    openApproval,
-    pendingApproval,
-    closeApproval: () => setPendingApproval(null),
-    approveProject,
-    projectAction,
   }
 }

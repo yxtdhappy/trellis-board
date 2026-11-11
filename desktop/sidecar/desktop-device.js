@@ -2,7 +2,11 @@ import http from 'node:http'
 import https from 'node:https'
 import fs from 'node:fs/promises'
 import { AgentApiClient } from '../../agent/api.js'
-import { ConfigStore, createConfigRevision } from '../../agent/config-store.js'
+import {
+  CONFIG_SCHEMA_VERSION,
+  ConfigStore,
+  createConfigRevision,
+} from '../../agent/config-store.js'
 import {
   AgentError,
   AGENT_ERROR_CODE,
@@ -109,7 +113,7 @@ async function completeDesktopEnrollment({
     )
   }
   const config = {
-    schemaVersion: 1,
+    schemaVersion: CONFIG_SCHEMA_VERSION,
     revision: createConfigRevision(),
     serverUrl,
     caFile: null,
@@ -292,18 +296,6 @@ async function clearDeviceRegistration(store) {
   await clearAgentTransientState(store)
 }
 
-function resetBindingsForDevice(bindings) {
-  return (Array.isArray(bindings) ? bindings : []).map((binding) => ({
-    ...binding,
-    serverBindingId: null,
-    syncStatus: 'pending',
-    lastSyncedAt: null,
-    lastHead: null,
-    lastError: null,
-    lastErrorCode: null,
-  }))
-}
-
 async function reusableDevice({
   existing,
   serverUrl,
@@ -336,6 +328,7 @@ async function reusableDevice({
       protocolVersion: AGENT_PROTOCOL_VERSION,
       agentVersion: AGENT_VERSION,
       bindings: existing.bindings.map((binding) => ({
+        taskSpaceId: binding.taskSpaceId,
         projectId: binding.projectId,
         localRepoKey: binding.localRepoKey,
         branchName: binding.branchName,
@@ -457,8 +450,8 @@ export async function loginDesktop(options = {}) {
       existing &&
       existing.serverUrl === serverUrl &&
       String(existing.username || '').toLowerCase() === username
-    const bindings =
-      sameAccount && options.forceNew !== true ? resetBindingsForDevice(existing.bindings) : []
+    // 设备槽替换后旧 binding 已由服务端撤销，新设备必须由用户手动重新选择仓库。
+    const bindings = []
     const api = options.apiClient || new AgentApiClient({ serverUrl })
     const enrolled = await api.enrollWithToken({ token, deviceName })
     await completeDesktopEnrollment({
@@ -500,6 +493,7 @@ export function readLocalAssociations(root) {
   const store = new ConfigStore(root)
   return store.readConfig({ allowMissing: false }).then((config) =>
     config.bindings.map((binding) => ({
+      taskSpaceId: binding.taskSpaceId,
       projectId: binding.projectId,
       repoPath: binding.repoPath,
       displayName: binding.displayName,

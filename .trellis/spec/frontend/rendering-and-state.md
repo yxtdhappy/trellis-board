@@ -15,20 +15,23 @@
 - 服务端快照（`board`、`teamPage`、`users`…）只由 API 成功响应更新；筛选、搜索、当前视图保存在 hook 内的 UI 状态。
 - 能由 `board.tasks` 推导的显示值（进度、阶段、关注信号）在渲染期计算，不复制成长期状态。
 
-## 轮询
+## 事件、刷新与操作进度
 
-- Board 不再按 750ms 轮询 `/api/board/status` 或 `/api/team/live-revision`。`useBoard` 在 runtime
-  确定后建立同源 `EventSource('/api/board/events')`，收到 `tasks.changed`、连接建立/重连、窗口 focus
-  或页面恢复可见时执行一次 REST 对齐。
-- 独立模式收到事件后静默重载 `/api/board`；团队模式重载当前 `/api/tasks/query` 与团队状态，并按需
-  查询 `/api/team/live-revision` 获取责任人覆盖通知。
-- 团队模式：`/api/tasks/query?…` 使用 `if-none-match` 复用 ETag，304 时跳过状态更新；
-  `/api/team/status` 每 3 秒轮询作为 Agent、项目同步和待委派状态的数据源。
+- `useBoard` 在 runtime 确定后建立同源 `EventSource('/api/board/events')`。收到 `tasks.changed`、
+  连接建立/重连、窗口 focus 或页面恢复可见时执行一次 REST 对齐，不按 750ms 轮询任务 revision。
+- 独立模式收到事件后静默重载 `/api/board`；团队模式重载当前 `/api/tasks/query`、
+  `/api/team/status` 和当前 taskSpace 的操作列表。
+- `tasks.changed` 只携带轻量 revision；任务正文、conflict、command result 和 cursor 均通过 REST 获取。
+- 团队模式 `/api/tasks/query` 使用 `if-none-match` 复用 ETag，304 时跳过状态更新。
+  `/api/team/status`、本地项目关联和 `/api/task-operations?taskSpaceId=` 可使用 3 秒状态刷新；
+  它们不替代 Board SSE 的 revision 对齐。
 - `/api/tasks/query` 的 200 响应必须先经过 `normalizeTaskPage` 再写入 `teamPage`。团队接口可能只返回
   `relativeDir`，而任务卡使用 `dirName`；304 响应没有 body，保持 ETag 分支不规范化。
 - EventSource 只随 runtime 生命周期创建，筛选和 teamId 变化不能反复断开重连；刷新回调通过 ref
-  取最新版本。组件卸载时必须关闭 EventSource、清空合并计时器并移除 focus/visibility 监听。
-- 团队 `status`、项目栏本地关联和 Git 操作现有 3 秒或操作进度轮询保持不变。
+  取最新版本。组件卸载时必须关闭 EventSource、清空合并计时器和所有状态轮询。
+- taskSpace 切换必须清空旧分页 cursor、ETag、操作列表、冲突详情和负责人候选；请求序号阻止旧响应覆盖。
+- 任务操作状态使用 `normalizeOperation()` 统一驼峰/下划线字段。`failed` 显示重试，`pending/delivered/running`
+  显示“创建中/改派中”和取消；`succeeded` 后才重载正式任务和负责人。
 
 ## 多团队状态
 
@@ -45,24 +48,50 @@
 - Tauri 项目行必须常驻展示关联状态：未关联、关联中、等待后台同步、正在同步已有任务、同步正常、
   只读已关联或关联失效；`liveSyncStatus=error` 时显示同步异常并通过可见辅助文本或 `title`
   展示脱敏后的 `liveSyncError`。
-- 点击关联后先进入项目级 loading 并禁用全部关联按钮；目录选择取消只结束 loading，不显示成功或失败。
-  成功和失败使用 Sonner 明确提示，失败后保留重新关联入口。
+- 点击关联后先进入只读项目检查并禁用重复入口；目录选择取消只结束 loading，不显示成功或失败。
+  推送确认完成后先调用预检，不能在预检前 attach。
 - “团队管理”入口只属于普通浏览器管理界面；Tauri 客户端即使账号具备管理权限也不显示该入口，
   浏览器仍使用 `/admin.html`。
-- 任务卡对 `liveRevision > 0` 显示“实时未入 Git”。任务详情和单项目 Board 必须优先使用服务端
-  实时覆盖层，不能回退到旧 Git 扫描缓存。
+- Team 任务卡和详情必须显示 `taskSpaceId` 对应分支 `branchName`；同一仓库不同分支不得混在同一个任务页。
+- Team Board 的“全部项目/项目”只展示分支摘要；需要任务列表时必须选中具体 taskSpace。
+- 同步中的已关联 taskSpace 在项目栏显示固定风险提示：切换 Git 分支可能造成任务错位或污染，
+  建议等待同步完成。该提示不阻断分支切换，也不承诺自动修复。
 - `ASSIGNEE_CONFIRMATION_REQUIRED` 必须复用三态对话框：取消、继续推进、接管任务；继续携带
   `warningId + action=continue` 重试，接管携带 `action=takeover`，不能在前端自行改派。
-- Git 凭据列表和项目接入探测同样受 `adminTeamId` 管理范围控制；切换团队必须清空旧表单、旧分支和旧探测结果，迟到响应按请求序号丢弃。
-- 已保存 Git 凭据的 Token、私钥和口令不得回填到表单、写入本地存储或进入一次性凭证弹窗。编辑时秘密字段留空表示保持原值。
-- 项目接入只由“识别远端”按钮触发探测；URL 或凭据变化后，旧分支和自动项目名称必须立即失效。无有效 symbolic `HEAD` 时不猜测默认分支。
-- 受控分支 Select 在表单重置、接入成功、URL 或凭据变化时可能回调空分支。`changeBranch()`
-  只有在分支和当前远端 URL 去空白后均非空时才自动探测；内部重置不得显示
-  “请先填写 Git 远端 URL”等用户操作错误。用户显式点击“识别远端”时仍执行空 URL 校验。
-- 探测和切换共享分支都必须携带目标分支重新读取 tree；响应中的 `existingAgentTools` 自动选中并锁定，用户只能新增选择缺失 Agent。分支切换成功后重置未提交的新选择，迟到响应按请求序号丢弃。
-- 项目接入表单同时收集 Agent 工具多选、首个负责人和负责人 Trellis developer ID；锁定项显示“已接入”且不可取消，提交载荷包含锁定 Agent 与新选择 Agent 的完整并集。
-- 项目接入在“全部团队”范围只显示选择具体团队的提示；进入具体团队且用户快照为空时必须加载 active 团队成员。
-- 新项目的批准面板只读显示 bootstrap 负责人和工具；旧 `provisioning` 项目继续兼容原负责人表单。
+- Tauri“接入本地项目”由客户端选择 Git 根目录并预检仓库名、远端、当前分支、`.trellis/tasks` 和
+  Agent 工具；服务端项目列表不再是接入前置条件。
+- 项目接入在“全部团队”范围必须要求选择具体 owner team；developer ID 和本机 Agent 工具只写入当前
+  设备 binding，不要求其他设备一致。
+- 缺少 `.trellis` 或 `tasks` 时显示初始化面板；新建任务树后显示 `waiting_commit`、
+  `waiting_push`、`branch_missing`、`remote_ahead`、`diverged`、`unable_to_verify`、`ready`
+  的明确状态。已有任务树仅追加本机 Agent 工具时，这些配置不属于共享任务同步内容，不要求先
+  commit/push。
+- 接入向导重新打开时不能只依赖本次打开期间的内存状态判断首次推送门禁；必须使用仓库预检返回的
+  `hasCommittedTrellis` 恢复“本地已有 `.trellis`、但尚未进入 HEAD”的等待提交/推送状态。
+- 客户端不得自动 commit/push；用户完成提交和推送后，通过“检查推送状态”比较本地 HEAD 与远端分支。
+- 首次接入在 Web 向导展示预检结果，再提供“暂不接入 / 仅同步无冲突项 / 查看并处理差异”。
+  “暂不接入”只清除 Tauri 内存中的待接入路径，不 attach、不写本地 binding/cursor、不写服务端。
+- 服务端没有该分支快照时明确显示“服务端暂无任务快照”；用户确认后才以 `bootstrap` 模式 attach，
+  并将当前本地任务作为初始快照上传。双方一致时直接安全接入，不显示空差异窗口。
+- 用户明确选择后才创建 binding，并持久化 `initialSyncMode` 和 `initialSyncCompleted`。已进入
+  review 后的“稍后处理”只关闭控制窗口，不能通过删除服务端 binding 实现取消。
+- CAS 冲突显示任务名、文件、最后修改人、设备、时间、建议和 `conflictId`；技术 SHA 只能放在
+  次级详情。动作区提供查看差异、使用服务端版本、用我的版本覆盖、仅保存本地副本。
+- 覆盖服务端必须二次确认并说明会先备份双方；保存副本不改变服务端，使用服务端版本不得推进服务端
+  revision。
+- Git 凭据、SSH trust、项目 probe、toolchain 批准和 Git operation 入口必须从 Team 管理台移除。
+- 管理台项目访问页只保留团队邀请/移除、项目成员、developer 映射、Agent binding 和审计。
+
+## 创建与改派操作项
+
+- Web 创建带负责人任务或改派返回 `202 operation` 时只更新独立操作列表，不向 `teamPage.tasks`
+  插入临时卡片，也不提前修改任务负责人。
+- 操作状态固定映射：`pending=等待投递`、`delivered=等待 Agent 执行`、`running=Agent 正在执行`、
+  `succeeded=已完成，正式任务已同步`、`failed=执行失败`、`cancelled=已取消`。
+- `failed` 才显示重试；`pending/delivered/running` 显示取消；`succeeded/cancelled` 不显示可执行按钮。
+- 同一 taskSpace 的操作列表是最多 100 条的服务端快照，前端最多展示最近 8 条并保留近期成功项。
+- 创建表单只在请求成功入队后关闭；正式任务出现仍由下一次 Board SSE/REST 对齐决定。
+- Agent 离线、目标成员不可写、binding 缺失等错误必须保留表单输入并显示服务端中文原因。
 
 ## 归档分页
 

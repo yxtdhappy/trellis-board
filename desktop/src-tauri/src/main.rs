@@ -27,6 +27,7 @@ struct DesktopAuthState {
     board_url: Arc<RwLock<Option<Url>>>,
     session_token: Arc<Mutex<Option<String>>>,
     local_url: Arc<Mutex<Option<Url>>>,
+    pending_project_path: Arc<Mutex<Option<PathBuf>>>,
 }
 
 #[derive(Serialize)]
@@ -355,14 +356,16 @@ async fn desktop_login(
 }
 
 #[tauri::command]
-async fn associate_local_project(
+async fn inspect_local_project(
     app: AppHandle,
     window: WebviewWindow,
-    project_id: String,
-    sync_branch: String,
-) -> Result<Option<sidecar::LocalAssociation>, String> {
+) -> Result<Option<serde_json::Value>, String> {
     ensure_board_caller(&app, &window)?;
-    let project_id = validate_project_id(project_id)?;
+    *app
+        .state::<DesktopAuthState>()
+        .pending_project_path
+        .lock()
+        .map_err(|_| "无法清除旧的待接入项目路径".to_string())? = None;
     let folder = app.dialog().file().blocking_pick_folder();
     let Some(path) = folder else {
         return Ok(None);
@@ -370,17 +373,178 @@ async fn associate_local_project(
     let path = path
         .into_path()
         .map_err(|error| format!("无法读取所选目录：{error}"))?;
-    let association = sidecar::associate(
+    let inspected = sidecar::inspect_project(
         &app,
-        &project_id,
         &path.to_string_lossy(),
-        sync_branch.trim(),
         &config::agent_root(),
     )
     .await?;
-    // 关联后立即重启 sidecar，触发首次 full pull 和本地任务补传。
+    let state = app.state::<DesktopAuthState>();
+    *state
+        .pending_project_path
+        .lock()
+        .map_err(|_| "无法保存待接入项目路径".to_string())? = Some(path);
+    Ok(Some(inspected))
+}
+
+#[tauri::command]
+async fn initialize_pending_project(
+    app: AppHandle,
+    window: WebviewWindow,
+    developer_id: String,
+    agent_tools: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let developer_id = developer_id.trim().to_string();
+    if developer_id.is_empty() || developer_id.chars().count() > 120 {
+        return Err("请填写有效的 Trellis developer ID".to_string());
+    }
+    if agent_tools.is_empty() || agent_tools.len() > 20 {
+        return Err("请至少选择一个、且不超过二十个编码 Agent 工具".to_string());
+    }
+    if agent_tools.iter().any(|tool| {
+        tool.is_empty()
+            || tool.len() > 40
+            || !tool.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    }) {
+        return Err("编码 Agent 工具列表格式无效".to_string());
+    }
+    let path = app
+        .state::<DesktopAuthState>()
+        .pending_project_path
+        .lock()
+        .map_err(|_| "无法读取待接入项目路径".to_string())?
+        .clone()
+        .ok_or_else(|| "请先选择本地 Git 项目目录".to_string())?;
+    sidecar::initialize_project(
+        &app,
+        &path.to_string_lossy(),
+        &developer_id,
+        &agent_tools,
+        &config::agent_root(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn check_pending_project_push(
+    app: AppHandle,
+    window: WebviewWindow,
+    branch_name: String,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let path = app
+        .state::<DesktopAuthState>()
+        .pending_project_path
+        .lock()
+        .map_err(|_| "无法读取待接入项目路径".to_string())?
+        .clone()
+        .ok_or_else(|| "请先选择本地 Git 项目目录".to_string())?;
+    sidecar::check_initial_push(
+        &app,
+        &path.to_string_lossy(),
+        branch_name.trim(),
+        &config::agent_root(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn preflight_pending_project(
+    app: AppHandle,
+    window: WebviewWindow,
+    team_id: String,
+    developer_id: String,
+    require_pushed: bool,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let team_id = validate_project_id(team_id)?;
+    let developer_id = developer_id.trim();
+    if developer_id.is_empty() || developer_id.chars().count() > 120 {
+        return Err("请填写有效的 Trellis developer ID".to_string());
+    }
+    let path = app
+        .state::<DesktopAuthState>()
+        .pending_project_path
+        .lock()
+        .map_err(|_| "无法读取待接入项目路径".to_string())?
+        .clone()
+        .ok_or_else(|| "请先选择本地 Git 项目目录".to_string())?;
+    sidecar::preflight_project(
+        &app,
+        &path.to_string_lossy(),
+        &team_id,
+        require_pushed,
+        &config::agent_root(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn cancel_pending_project(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    ensure_board_caller(&app, &window)?;
+    *app
+        .state::<DesktopAuthState>()
+        .pending_project_path
+        .lock()
+        .map_err(|_| "无法清除待接入项目路径".to_string())? = None;
+    Ok(())
+}
+
+#[tauri::command]
+async fn associate_pending_project(
+    app: AppHandle,
+    window: WebviewWindow,
+    team_id: String,
+    developer_id: String,
+    require_pushed: bool,
+    initial_mode: String,
+) -> Result<sidecar::LocalAssociation, String> {
+    ensure_board_caller(&app, &window)?;
+    let team_id = validate_project_id(team_id)?;
+    let developer_id = developer_id.trim().to_string();
+    if developer_id.is_empty() || developer_id.chars().count() > 120 {
+        return Err("请填写有效的 Trellis developer ID".to_string());
+    }
+    if !matches!(initial_mode.as_str(), "bootstrap" | "safe" | "review") {
+        return Err("首次同步处理方式无效".to_string());
+    }
+    let inspected = app
+        .state::<DesktopAuthState>()
+        .pending_project_path
+        .lock()
+        .map_err(|_| "无法读取待接入项目路径".to_string())?
+        .clone()
+        .ok_or_else(|| "请先选择本地 Git 项目目录".to_string())?;
+    let check = sidecar::inspect_project(
+        &app,
+        &inspected.to_string_lossy(),
+        &config::agent_root(),
+    )
+    .await?;
+    let branch_name = check
+        .pointer("/project/branchName")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "无法确认本地项目分支".to_string())?
+        .to_string();
+    let association = sidecar::associate(
+        &app,
+        &inspected.to_string_lossy(),
+        &branch_name,
+        &team_id,
+        &developer_id,
+        require_pushed,
+        &initial_mode,
+        &config::agent_root(),
+    )
+    .await?;
+    *app
+        .state::<DesktopAuthState>()
+        .pending_project_path
+        .lock()
+        .map_err(|_| "无法清除待接入项目路径".to_string())? = None;
     sidecar::restart(&app);
-    Ok(Some(association))
+    Ok(association)
 }
 
 #[tauri::command]
@@ -414,23 +578,73 @@ async fn live_control_pending(
 async fn live_control_decide(
     app: AppHandle,
     window: WebviewWindow,
-    pending_id: String,
+    task_space_id: String,
+    conflict_id: String,
     action: String,
 ) -> Result<(), String> {
     ensure_local_caller(&window)?;
-    let pending_id = validate_live_id(&pending_id, "待确认 ID")?;
-    if !matches!(action.as_str(), "continue" | "takeover" | "cancel") {
+    let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
+    let conflict_id = validate_live_id(&conflict_id, "冲突 ID")?;
+    if !matches!(
+        action.as_str(),
+        "use-server" | "overwrite-server" | "save-local-copy"
+    ) {
         return Err("实时同步确认动作无效".to_string());
     }
     sidecar::decide_live_change(
         &app,
-        &pending_id,
+        &task_space_id,
+        &conflict_id,
         &action,
         &config::agent_root(),
     )
     .await?;
     sidecar::clear_control(&app);
     Ok(())
+}
+
+#[tauri::command]
+async fn live_control_diff(
+    app: AppHandle,
+    window: WebviewWindow,
+    task_space_id: String,
+    conflict_id: String,
+) -> Result<serde_json::Value, String> {
+    ensure_local_caller(&window)?;
+    let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
+    let conflict_id = validate_live_id(&conflict_id, "冲突 ID")?;
+    sidecar::live_conflict_details(
+        &app,
+        &task_space_id,
+        &conflict_id,
+        &config::agent_root(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn live_control_initial(
+    app: AppHandle,
+    window: WebviewWindow,
+    task_space_id: String,
+    mode: String,
+    decisions: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    ensure_local_caller(&window)?;
+    let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
+    if !matches!(mode.as_str(), "safe" | "review") {
+        return Err("首次同步处理方式无效".to_string());
+    }
+    let result = sidecar::resolve_initial_sync(
+        &app,
+        &task_space_id,
+        &mode,
+        decisions,
+        &config::agent_root(),
+    )
+    .await?;
+    sidecar::clear_control(&app);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -608,11 +822,18 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_status,
             desktop_login,
-            associate_local_project,
+            inspect_local_project,
+            initialize_pending_project,
+            check_pending_project_push,
+            preflight_pending_project,
+            cancel_pending_project,
+            associate_pending_project,
             list_local_associations,
             desktop_sidecar_status,
             live_control_pending,
             live_control_decide,
+            live_control_diff,
+            live_control_initial,
             live_control_restore,
             live_control_dismiss
         ])

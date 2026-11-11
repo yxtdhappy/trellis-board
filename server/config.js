@@ -142,7 +142,6 @@ export function parseTeamConfig(env = process.env) {
       5_000,
       24 * 60 * 60 * 1000,
     ),
-    gitPollMs: integerSetting(env, 'TRELLIS_TEAM_GIT_POLL_MS', 60_000, 60_000, 24 * 60 * 60 * 1000),
     cookieSecure,
     trustProxy: booleanSetting(env, 'TRELLIS_TEAM_TRUST_PROXY', false),
     allowLocalGitRemotes: booleanSetting(env, 'TRELLIS_TEAM_ALLOW_LOCAL_GIT_REMOTES', false),

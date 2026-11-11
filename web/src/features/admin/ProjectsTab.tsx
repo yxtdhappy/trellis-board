@@ -17,18 +17,23 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
     refreshAccess,
     members,
     bindings,
+    projectTeams,
+    teams,
     projectAudit,
     projectAuditHasMore,
     loadProjectAudit,
     saveMember,
     removeMember,
-    bindingAction,
+    inviteProjectTeam,
+    removeProjectTeam,
     createPairingCode,
   } = consoleApi
 
   const [userId, setUserId] = useState('')
   const [role, setRole] = useState('member')
   const [developerId, setDeveloperId] = useState('')
+  const [inviteTeamId, setInviteTeamId] = useState('')
+  const [accessRole, setAccessRole] = useState('member')
   const readOnly = role === 'read_only'
   const selectedTeamId = projectOptions.find((project) => project.id === accessProjectId)?.teamId
 
@@ -193,6 +198,80 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
 
       <div className="flex flex-col gap-3.5">
         <Panel
+          kicker="TEAM ACCESS"
+          title="跨团队访问"
+          description="同一个 Git 项目只保留一个全局任务空间；邀请其他团队不会复制项目或任务。"
+        >
+          <div className="grid grid-cols-[minmax(0,1fr)_110px_auto] gap-2">
+            <SelectField
+              ariaLabel="邀请团队"
+              className={controlClass}
+              value={inviteTeamId}
+              placeholder="选择要邀请的团队"
+              options={teams
+                .filter((team) => !projectTeams.some((access) => access.teamId === team.id))
+                .map((team) => ({ value: team.id, label: team.name }))}
+              onChange={setInviteTeamId}
+            />
+            <SelectField
+              ariaLabel="团队访问角色"
+              className={controlClass}
+              value={accessRole}
+              options={[
+                { value: 'member', label: '成员团队' },
+                { value: 'owner', label: '共同所有者' },
+              ]}
+              onChange={setAccessRole}
+            />
+            <Button
+              size="sm"
+              type="button"
+              disabled={!accessProjectId || !inviteTeamId}
+              onClick={() => {
+                void inviteProjectTeam(inviteTeamId, accessRole)
+                setInviteTeamId('')
+              }}
+            >
+              邀请
+            </Button>
+          </div>
+          <div className="flex flex-col">
+            {!accessProjectId ? (
+              <EmptyRow>先选择项目。</EmptyRow>
+            ) : projectTeams.length === 0 ? (
+              <EmptyRow>暂无团队访问记录。</EmptyRow>
+            ) : (
+              projectTeams.map((access) => (
+                <Row
+                  key={access.teamId}
+                  actions={
+                    access.accessRole === 'owner' ? (
+                      <span className="px-2 text-[10px] text-muted-foreground">所有者团队</span>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        className="text-destructive"
+                        onClick={() => void removeProjectTeam(access)}
+                      >
+                        移除
+                      </Button>
+                    )
+                  }
+                >
+                  <div className="flex items-center gap-1.5">
+                    <strong className="text-xs font-medium">{access.teamName}</strong>
+                    <StatusPill value={access.accessRole} />
+                    <StatusPill value={access.teamStatus} />
+                  </div>
+                </Row>
+              ))
+            )}
+          </div>
+        </Panel>
+
+        <Panel
           kicker="AGENT BINDINGS"
           title="Agent 绑定"
           action={
@@ -215,44 +294,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
               <EmptyRow>暂无 Agent 绑定。</EmptyRow>
             ) : (
               bindings.map((binding) => (
-                <Row
-                  key={binding.id}
-                  actions={
-                    <>
-                      {binding.status === 'pending' ? (
-                        <>
-                          <Button
-                            size="sm"
-                            type="button"
-                            onClick={() => void bindingAction(binding, 'approve')}
-                          >
-                            确认
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            type="button"
-                            className="text-destructive"
-                            onClick={() => void bindingAction(binding, 'reject')}
-                          >
-                            拒绝
-                          </Button>
-                        </>
-                      ) : null}
-                      {binding.status === 'approved' ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          type="button"
-                          className="text-destructive"
-                          onClick={() => void bindingAction(binding, 'revoke')}
-                        >
-                          撤销
-                        </Button>
-                      ) : null}
-                    </>
-                  }
-                >
+                <Row key={binding.id}>
                   <div className="flex min-w-0 flex-col gap-0.5">
                     <div className="flex items-center gap-1.5">
                       <strong className="truncate text-xs font-medium">

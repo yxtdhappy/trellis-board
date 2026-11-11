@@ -4,6 +4,7 @@ import { normalizeTaskPage } from '@/lib/team-client.js'
 
 export type Project = {
   id: string
+  taskSpaces?: TaskSpace[]
   teamId?: string
   teamName?: string
   name: string
@@ -18,6 +19,19 @@ export type Project = {
   lastScanAt?: string | null
   taskCount?: number
   [key: string]: unknown
+}
+
+export type TaskSpace = {
+  id: string
+  projectId: string
+  branchName: string
+  status: string
+  revision: number
+  indexedRevision: number
+  role?: string | null
+  readOnly?: boolean
+  canManage?: boolean
+  lastError?: string | null
 }
 
 export type BoardPayload = {
@@ -85,12 +99,10 @@ export async function api<T = unknown>(url: string, method = 'GET', body?: unkno
 
 export const getRuntime = () => api<TeamRuntime>('/api/runtime')
 
-export const fetchBoard = (force = false) =>
-  force
-    ? api<BoardPayload>('/api/board/refresh/start', 'POST').then(() =>
-        api<BoardPayload>('/api/board'),
-      )
-    : api<BoardPayload>('/api/board')
+export const fetchBoard = (taskSpaceId?: string) =>
+  api<BoardPayload>(
+    taskSpaceId ? `/api/board?taskSpaceId=${encodeURIComponent(taskSpaceId)}` : '/api/board',
+  )
 
 export const saveWipLimit = (executionWipLimit: number, teamId?: string) =>
   api('/api/board/settings', 'PUT', {
@@ -110,6 +122,7 @@ export const fetchSavedViews = (teamId: string) =>
 
 export const fetchTaskDetail = (task: BoardTask) =>
   api<{ task?: BoardTask }>('/api/task', 'POST', {
+    taskSpaceId: task.taskSpaceId,
     projectId: task.projectId,
     taskPath: task.relativeDir,
   }).then((payload) => payload?.task || (payload as BoardTask | null))
@@ -137,26 +150,6 @@ export async function queryTeamTasks(query: string, etag: string | null) {
 
 export const fetchTeamStatus = () => api<Record<string, unknown>>('/api/team/status')
 
-export type TeamLiveRevision = {
-  revision: number
-  revisionKey: string
-  projects: { projectId: string; revision: number }[]
-  notifications: {
-    id: number
-    type: 'task.live.overridden'
-    projectId: string
-    taskKey: string | null
-    taskTitle: string | null
-    revision: number
-    action: 'continue' | 'takeover' | null
-    actorAgentId: string | null
-    createdAt: string
-  }[]
-}
-
-export const fetchTeamLiveRevision = (teamId: string) =>
-  api<TeamLiveRevision>(`/api/team/live-revision?teamId=${encodeURIComponent(teamId || 'all')}`)
-
 export const fetchAssignments = () =>
   api<{ assignments?: unknown[] }>('/api/assignments?state=pending')
 
@@ -181,6 +174,20 @@ export const createTaskRequest = (payload: Record<string, unknown>) =>
 export const assignTaskRequest = (payload: Record<string, unknown>) =>
   api('/api/tasks/assign', 'POST', payload)
 
+export type TaskSpaceAssignee = {
+  userId: string
+  username: string
+  displayName: string
+  role: string
+  trellisDevId: string
+  online: boolean
+}
+
+export const fetchTaskSpaceAssignees = (taskSpaceId: string) =>
+  api<{ assignees?: TaskSpaceAssignee[] }>(
+    `/api/task-spaces/${encodeURIComponent(taskSpaceId)}/assignees`,
+  ).then((payload) => payload?.assignees || [])
+
 export const changePassword = (payload: { currentPassword: string; newPassword: string }) =>
   api('/api/auth/password', 'POST', payload)
 
@@ -196,8 +203,8 @@ export const deleteSavedView = (id: string, teamId?: string) =>
   api('/api/saved-views', 'DELETE', { id, ...(teamId ? { teamId } : {}) })
 
 export const createDependency = (payload: {
-  blocked: { projectId: string; taskPath: string }
-  blocker: { projectId: string; taskPath: string }
+  blocked: { taskSpaceId: string; executionTaskKey?: string; taskPath?: string }
+  blocker: { taskSpaceId: string; executionTaskKey?: string; taskPath?: string }
   reason: string
   assigneeDecision?: { warningId: string; action: 'continue' | 'takeover' }
 }) => api('/api/tasks/dependencies', 'POST', payload)
@@ -211,8 +218,16 @@ export const removeDependency = (
     ...(assigneeDecision ? { assigneeDecision } : {}),
   })
 
-export const fetchGitOperation = (id: string) =>
-  api<Record<string, unknown>>(`/api/git-operations/${encodeURIComponent(id)}`)
+export const fetchTaskOperation = (id: string) =>
+  api<{ operation?: Record<string, unknown> }>(`/api/task-operations/${encodeURIComponent(id)}`)
 
-export const retryGitOperation = (id: string) =>
-  api<Record<string, unknown>>(`/api/git-operations/${encodeURIComponent(id)}/retry`, 'POST', {})
+export const retryTaskOperation = (id: string) =>
+  api<Record<string, unknown>>(`/api/task-operations/${encodeURIComponent(id)}/retry`, 'POST', {})
+
+export const cancelTaskOperation = (id: string) =>
+  api<Record<string, unknown>>(`/api/task-operations/${encodeURIComponent(id)}/cancel`, 'POST', {})
+
+export const fetchTaskOperations = (taskSpaceId: string) =>
+  api<{ operations?: Record<string, unknown>[] }>(
+    `/api/task-operations?taskSpaceId=${encodeURIComponent(taskSpaceId)}`,
+  )

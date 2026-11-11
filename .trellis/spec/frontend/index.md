@@ -7,7 +7,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [目录与模块](./directory-structure.md) | 源码结构、共享纯逻辑模块、构建产物落点 |
-| [渲染与状态](./rendering-and-state.md) | hooks、数据流、轮询、弹层、安全边界 |
+| [渲染与状态](./rendering-and-state.md) | hooks、SSE/REST 对齐、任务空间、操作项、冲突弹层与安全边界 |
 | [质量与验证](./quality-guidelines.md) | 类型检查、构建、测试、可访问性、浏览器验收 |
 
 ## 页面入口

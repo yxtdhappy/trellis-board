@@ -18,6 +18,9 @@ test('只把 Trellis 任务、工作区与开发者变更视为看板相关事�
   assert.equal(isRelevantTrellisChange('scripts/task.py'), false)
   assert.equal(isRelevantTrellisChange('config.yaml'), false)
   assert.equal(isRelevantTrellisChange(''), false)
+  assert.equal(isRelevantTrellisChange('tasks/a/task.json', ['tasks']), true)
+  assert.equal(isRelevantTrellisChange('workspace/dev/journal-1.md', ['tasks']), false)
+  assert.equal(isRelevantTrellisChange('.developer', ['tasks']), false)
   assert.equal(normalizeWatchPath('./tasks/demo/'), 'tasks/demo')
 })
 
@@ -96,6 +99,7 @@ test('共享 watcher 支持防抖批次与动态重建', async () => {
     runtime.rebuild([])
     assert.equal(closed, 1)
     assert.deepEqual(runtime.status().watchedRepositories, [])
+    assert.deepEqual(runtime.status().watchedRoots, ['tasks', 'workspace', '.developer'])
   } finally {
     runtime.close()
     fs.rmSync(root, { recursive: true, force: true })

@@ -4,263 +4,178 @@
 
 | 模块 | 职责 |
 | --- | --- |
-| [server/config.js](../../../server/config.js) | 跨平台运行数据根、SQLite 与旧 JSON 路径、默认仓库、仓库路径规范化 |
+| [server/config.js](../../../server/config.js) | 跨平台运行数据根、SQLite 路径、团队监听与公开地址配置 |
 | [server/data-migration.js](../../../server/data-migration.js) | 从旧源码 `data/` 迁移运行数据并重写受管项目路径 |
-| [server/database.js](../../../server/database.js) | `node:sqlite` 连接、PRAGMA、schema v6/v7/v8 -> v9 顺序迁移、事务辅助和旧 JSON 一次性迁移 |
-| [server/repositories.js](../../../server/repositories.js) | SQLite 白名单增删、ID 生成、路径规范化和显示顺序 |
-| [server/metadata.js](../../../server/metadata.js) | 13 个阶段的合法 ID、SQLite 人工阶段存储 |
-| [server/persistence.js](../../../server/persistence.js) | SQLite 扫描缓存和看板状态 facade |
-| [server/task-location.js](../../../server/task-location.js) | 白名单任务定位、真实路径校验、身份冲突检查 |
-| [server/execution-store.js](../../../server/execution-store.js) | 计划字段、标签、保存视图、阻断依赖和不可变事件事务 |
-| [server/execution-projection.js](../../../server/execution-projection.js) | Board 批量执行摘要、依赖图、WIP/DoR/DoD 风险、注意力原因和详情事件投影 |
-| [server/loader.js](../../../server/loader.js) | 扫描任务、读取证据、推导阶段、父子关系、列表投影 |
-| [server/scan-worker.js](../../../server/scan-worker.js) | Worker Thread 内执行仓库扫描、增量任务刷新和结果汇总 |
-| [server/watcher.js](../../../server/watcher.js) | 监听 `.trellis` 的 tasks、workspace、`.developer`，过滤相关事件 |
-| [server/actions.js](../../../server/actions.js) | 创建任务、更新负责人和写操作边界校验 |
-| [server/board-events.js](../../../server/board-events.js) | 单机与团队 Board 的 SSE 连接、鉴权复查、合并广播和关闭 |
-| [server/index.js](../../../server/index.js) | HTTP 路由、静态资源、缓存、刷新队列、Worker 生命周期 |
+| [server/database.js](../../../server/database.js) | `node:sqlite` 连接、PRAGMA、顺序迁移到 schema v10、事务辅助 |
+| [server/repositories.js](../../../server/repositories.js) | standalone 白名单增删、ID 生成和路径规范化 |
+| [server/loader.js](../../../server/loader.js) | 扫描任务、读取证据、推导阶段和父子关系 |
+| [server/scan-worker.js](../../../server/scan-worker.js) | standalone Worker Thread 扫描与增量任务刷新 |
+| [server/watcher.js](../../../server/watcher.js) | standalone 仓库 watcher；团队服务端不使用 |
+| [shared/trellis-watcher.js](../../../shared/trellis-watcher.js) | 单机与桌面客户端共用的任务/workspace 监听见 |
+| [shared/task-snapshot.js](../../../shared/task-snapshot.js) | tasks-only 路径、LF 摘要、任务目录分组和首次差异分类 |
+| [shared/remote-identity.js](../../../shared/remote-identity.js) | Git 远端规范化和任务空间身份输入 |
+| [server/team/task-space-service.js](../../../server/team/task-space-service.js) | 全局项目、分支任务空间、团队访问、成员和 Agent binding |
+| [server/team/task-snapshot-service.js](../../../server/team/task-snapshot-service.js) | tasks 快照、文件级 CAS、revision、游标、冲突和审计 |
+| [server/team/task-space-index.js](../../../server/team/task-space-index.js) | 从持久化快照物化临时任务目录并生成 taskSpace 索引 |
+| [server/team/task-command-service.js](../../../server/team/task-command-service.js) | Web 创建/改派命令、在线 Agent 检查、租约、重试和完成门禁 |
+| [server/team/sync-agent-service.js](../../../server/team/sync-agent-service.js) | Agent 注册/鉴权、单账号活动槽和设备替换 |
+| [server/team/agent-event-stream.js](../../../server/team/agent-event-stream.js) | Agent SSE 命令与撤销通知 |
+| [server/team/task-snapshot-backup.js](../../../server/team/task-snapshot-backup.js) | 每日 SQLite `VACUUM INTO` 快照和 7 份保留策略 |
+| [server/team/gitless-board-service.js](../../../server/team/gitless-board-service.js) | Team Board 查询、任务详情、计划写入和权限投影 |
+| [server/team/http.js](../../../server/team/http.js) | Team HTTP 装配、路由、生命周期和 Session/Agent 鉴权 |
 
-依赖方向保持简单：
+## 依赖方向
 
 ```text
+standalone:
 server/index.js
-  -> database / loader / metadata / persistence / actions / repositories / watcher
-  -> task-location / execution-store / execution-projection
+  -> database / loader / persistence / actions / repositories / watcher
+  -> execution-store / execution-projection
 
 server/scan-worker.js
   -> database / loader / metadata / repositories
 
-server/actions.js
-  -> repositories / public/slug.js
+team:
+server/team/http.js
+  -> task-space-service
+  -> task-snapshot-service
+  -> task-space-index -> loader + sync_task_space_file
+  -> task-command-service -> task-space-service + sync-agent-service
+  -> gitless-board-service -> task-space-index + execution stores
+  -> agent-event-stream / board-events
 
-server/task-location.js
-  -> database / loader / metadata
-
-server/loader.js
-  -> config / public/slug.js
+desktop Agent:
+agent/task-snapshot-sync.js
+  -> shared/task-snapshot.js + shared/trellis-watcher.js + AgentApi
+agent/task-command.js
+  -> git-sync.js + 项目 task.py + task-snapshot-sync.js
+agent/project-onboarding.js
+  -> git-sync.js + 安装包内 Trellis runtime + AgentApi
 ```
 
-`config.js` 不应反向导入业务模块。`database.js` 是 SQLite schema 和迁移的唯一所有者；业务模块不绕过它的连接、事务和旧数据导入入口。`loader.js` 是可复用扫描核心，Worker、详情接口和测试都依赖它；不要在 HTTP 路由里另写一套扫描。
+`config.js` 不反向导入业务模块。`database.js` 是 SQLite schema 和迁移的唯一所有者。业务模块不绕过
+`database.js` 的连接、事务和迁移入口。`loader.js` 是可复用扫描核心；Worker、详情接口和 Team 快照
+投影都复用它，不在 HTTP 路由另写阶段推导。
 
-## 主线程与 Worker
+## Standalone 运行时
 
-HTTP 进程在主线程维护：
+单机模式继续读取 SQLite `repositories` 白名单中的本机仓库：
 
-- `boardCache`、`inflightScan`、`queuedRefresh`。
-- `scanWorkerRuntime`、请求 ID 和待完成请求 Map。
-- `watchRuntime`、防抖计时器和待合并事件。
-- 一个进程级默认 SQLite 连接，仓库、人工阶段和持久化 facade 共享它。
+```text
+.trellis/tasks + workspace + task.json evidence
+  -> server/scan-worker.js
+  -> server/loader.js
+  -> scan_cache + execution tables
+  -> /api/board + /api/task
+```
 
-完整扫描交给 Worker Thread，避免长时间同步文件读取阻塞 API。单机扫描协议使用
-`scan`、`scan-result`、`scan-error`；团队任务索引 worker 还接收 `live-materialize`，
-在系统临时目录复制 `.trellis` 基线、应用实时覆盖行并返回 `live-materialize-result`。
-请求通过 ID 匹配，单次扫描或实时物化超时均为 `180_000ms`。
+- HTTP 主线程维护 `boardCache`、`inflightScan`、`queuedRefresh`、Worker 请求 Map 和 watcher。
+- 完整仓库扫描在 Worker Thread 内执行；单任务事件可走增量刷新。
+- 跨项目父子关系仍在主线程组合，不能只看单个任务结果。
+- 创建任务和负责人写入由 standalone 路由调用目标仓库自己的 `task.py` 或原子写 `task.json`。
 
-Worker 内会缓存各仓库最近结果，并根据事件判断是仓库级重扫还是单任务增量刷新。Worker 模块加载后打开自己的 SQLite 连接，不跨线程共享 `DatabaseSync`。最终仍要重建跨仓库父子任务关系，因此前端状态变化不能只看单个任务结果。
+## Team 无 Git 运行时
 
-团队实时变更的 HTTP 请求只完成事务提交、递增 `project_live_revision` 和调度投影，不能
-在请求栈内复制目录、调用 `scanRepository()` 或重建整个项目索引。同项目最多一个实时物化
-请求在途，期间新 revision 合并为下一轮最新快照；旧 worker 结果必须丢弃。投影失败保留上一份
-一致 Board 和已提交 revision，按退避重试；成功后才发布 `live.changed`。
+Team runtime 的事实链只有客户端任务快照：
+
+```text
+本地 Git 仓库 A .trellis/tasks/**
+  -> Agent watcher + 完整任务目录 CAS
+  -> sync_task_space_file / batch / audit
+  -> taskSpaceIndex 在系统临时目录写入 tasks-only 快照
+  -> scanRepository()
+  -> sync_task_index + Board SSE
+
+本地 Git 仓库 B <-- snapshot/cursor/SSE -- 同一 taskSpace
+```
+
+关键边界：
+
+- 服务端不执行项目 Git clone、fetch、commit、push，不持有项目凭据，不创建
+  `data/projects/**` 工作副本。
+- 项目身份是 Agent 自报并校验格式的规范化 Git 远端；服务端不访问远端证明仓库存在。
+- 任务空间键是“规范化远端 + 分支”。同一远端不同分支 revision、cursor、命令和索引完全隔离。
+- 服务端只持久化 `.trellis/tasks/**`。`scripts`、`spec`、`config.yaml`、`workflow.md`、`agents`、
+  workspace、`.developer` 和本机编码 Agent 目录不属于 Team 同步协议。
+- Team Board 的创建/改派不直接写项目文件。Web 只创建 `sync_task_command`；目标用户唯一在线 Agent
+  在本地执行 `task.py create` 或原子修改 `task.json.assignee`，再通过同一 CAS 链上传。
+- `sync_active_agent` 保证一个账号同一时刻只有一个有效 Agent。新设备生效会撤销旧设备 binding、
+  取消旧命令并关闭旧 SSE。
+
+## Team 快照投影
+
+[server/team/task-space-index.js](../../../server/team/task-space-index.js) 对每个 taskSpace 串行投影：
+
+1. 在系统临时目录创建空根，所有业务 Git 工作区之外；
+2. 从 `sync_task_space_file` 读取当前 revision 的非删除文件；
+3. 只写 `.trellis/tasks/**`；
+4. 以 taskSpace 的 branch、project member developer ID 和显式 workspace-unavailable 上下文调用
+   `scanRepository()`；
+5. 原子替换 `sync_task_index`、标签和 `sync_task_space_scan_cache`；
+6. 更新 `indexed_revision`，再发布 Board `tasks.changed` 和 Agent `task.changed`。
+
+同 taskSpace 最多一个物化在途。期间新 revision 合并为下一轮最新快照，旧结果不得覆盖新 revision。
+投影失败保留已提交快照和上一份一致 Board，按指数退避重试；恢复成功后 Board 自动对齐。
+
+Team 扫描不读取 Git 元数据、workspace 会话、`.developer`、scripts、spec、config 或 workflow。
+`workspace` 显示“服务端不判定”，不能伪造 journal 完成状态。
 
 ## 启动与关闭
 
-[server/index.js](../../../server/index.js) 启动时：
+Standalone 启动：
 
-1. 准备跨平台运行数据根并迁移旧源码 `data/`，打开新根下的 `board.sqlite`，按顺序迁移到 schema v9，创建仓库存储和 HTTP 服务。
-2. 默认监听 `0.0.0.0:4317`；显式配置 `TRELLIS_BOARD_BIND_HOST` 或
-   `TRELLIS_TEAM_BIND_HOST=127.0.0.1` 时收窄为本机回环。
-3. 启动对白名单仓库的文件监听。
-4. 异步触发启动扫描。
+1. 准备跨平台运行数据根，打开 `board.sqlite` 并顺序迁移到 schema v10；
+2. 默认监听 `0.0.0.0:4317`，可用 `TRELLIS_BOARD_BIND_HOST=127.0.0.1` 收窄；
+3. 启动白名单仓库 watcher；
+4. 异步触发初始扫描。
 
-测试导入 `loader`、`repositories`、`actions` 等模块时不应意外启动 HTTP 服务。服务启动逻辑只保留在 `server/index.js` 的顶层入口。
+Team 启动：
 
-## 服务端日志
+1. 打开同一个 schema v10，但禁止导入本机默认仓库或旧 JSON；
+2. 装配 `taskSpaces`、`taskSnapshots`、`taskSpaceIndex`、`taskCommands`、`agentService`、
+   `agentEvents`、`boardEvents` 和 `taskSnapshotBackups`；
+3. 不装配 `git-manager`、Git 凭据、项目 clone、Git 定时刷新或旧实时覆盖层；
+4. HTTP 监听成功后启动每日数据库快照备份。
 
-- 主入口创建 `createServerLogger({ dataDir })`，standalone 和 team runtime 必须接收同一个注入 logger。
-- 文件固定为 `<dataDir>/logs/server.log`，控制台继续接收原始参数；文件记录使用
-  `<ISO-8601> <LEVEL> <message>` 格式并在写入前统一脱敏。
-- 日志调用不得等待磁盘 I/O。文件 sink 使用异步追加、500 ms 或 64 KiB 批次、1 MiB 有界缓冲，
-  并通过 Promise 链串行 flush 和轮转。
-- 当前文件上限 5 MiB，保留当前文件加 4 个历史文件；写入或轮转失败时向控制台报告一次并停用
-  文件 sink，不能让日志故障影响 HTTP 或业务。
-- `SIGINT`/`SIGTERM` 必须先停止 runtime，再等待 logger `close()`，最后退出。强制终止、断电或
-  系统崩溃不保证尾部异步日志落盘。
-- 插件子进程继续使用自身日志文件，不属于主进程 server logger。
+关闭顺序为停止新请求、关闭 Board/Agent SSE、停止备份定时器、关闭 HTTP server、关闭索引 Worker，
+最后关闭 SQLite 连接。`SIGINT`/`SIGTERM` 还必须在 runtime 停止后等待 logger `close()`。
 
-## 同步与异步
+测试导入 `loader`、`task-space-service` 等模块时不能意外监听端口；端口生命周期只在
+`server/index.js`、`createTeamRuntime()` 或 CLI 顶层触发。
 
-- HTTP 请求体和网络处理使用 async API。
-- 扫描内部大量使用同步 `fs`，但通过 Worker 隔离长扫描。
-- SQLite 使用同步 `DatabaseSync`；多行状态写入必须在 `BEGIN IMMEDIATE` 事务中完成。
-- 依赖行与其创建/解除事件必须处于同一事务；活动依赖边在写入前完成重复和环检测。
-- 目标仓库的任务 `task.json` 仍使用同步临时文件加 rename，保证文件原子替换。
-- 外部 `task.py` 使用 `spawn()` 和参数数组，不启用 shell；环境设置 `PYTHONUTF8=1`。
-- 团队 Git/Trellis 子进程超时后，`terminateTree()` 必须等到 Windows `taskkill /T /F` 完成或
-  到达有界超时，`runProcess()` 才能以原始超时错误 reject。调用方必须消费返回的 Promise，
-  fire-and-forget 位置要显式使用 `void`。
-- clone 和项目接入失败后的工作副本清理使用 `fs.rmSync()` 的 `maxRetries` 与 `retryDelay`；
-  清理失败只记录原始错误和清理错误，不能覆盖返回给调用方的业务错误。
-- `--filter=blob:none` 创建 promisor 仓库后，任何可能懒取对象的命令都必须继承发起操作的认证：
-  sparse-checkout/read-tree、初始化上下文检出、远端 tree/模板清单读取和 `ensureSparseTrellis()`
-  不得单独启动无认证 Git 子进程。后者使用项目绑定的凭据。
-- 操作执行超时统一在各自原值上增加 30 秒：`LOCAL_TIMEOUT=60s`、`REMOTE_TIMEOUT=210s`、
-  `PUSH_TIMEOUT=150s`、`PROBE_TIMEOUT=60s`、`TRELLIS_INIT_TIMEOUT=210s`；
-  SSH 主机扫描 45 秒、toolchain 预检 60 秒、团队 `task.py` 150 秒、
-  `runProcess` 默认 60 秒。
-- 探测速率窗口 60 秒、SSH 信任 TTL 5 分钟、taskkill fallback 2 秒和 HTTP 关闭等待
-  5 秒不是操作执行超时，不得随该矩阵一起放大。
-- promisor lazy fetch 还可能带来真实网络耗时。`sparse-checkout init` 使用本地 60 秒；
-  `set`、`read-tree`、checkout、merge、分叉恢复 rebase、clone 和远端 tree/模板清单读取
-  使用远端 210 秒，不能共用本地超时。
-- 公开的项目拉取、同步、推送、稀疏收敛和远端提交检查必须复用统一远端错误映射；原始子进程
-  超时转换为 `GIT_REMOTE_TIMEOUT`，已有 `TeamError` 不得被二次改写。
-- 定时刷新 scheduler 的失败日志必须保留 `name/code/status/message/details` 和兼容字段
-  `error`；非 `TeamError` 还要记录脱敏后的 stack/cause。团队服务的日志边界只接受经过统一
-  脱敏函数处理的对象，不能直接展开原始异常。
+## 日志
 
-新增长耗时逻辑时先判断是否会阻塞 HTTP 主线程。单纯数百毫秒内的配置读写可沿用同步模式；全仓库扫描、递归目录和大文件解析应留在 Worker 或明确的异步流程。
+- 主入口创建 `createServerLogger({ dataDir })`，standalone 和 team runtime 接收同一个 logger。
+- 文件固定为 `<dataDir>/logs/server.log`；文件格式为 `<ISO-8601> <LEVEL> <message>`。
+- 日志调用不等待磁盘 I/O；使用有界异步批次并在写入前统一脱敏。
+- 当前文件上限 5 MiB，保留当前文件加 4 个历史文件；失败时控制台告警一次并停用文件 sink。
+- Team 日志不得记录任务正文、Agent 凭证、Cookie、Git 凭据、本地仓库绝对路径或冲突双方完整内容。
 
-### Scenario: 被 .gitignore 排除的 Agent 目录识别
+## 子进程与异步边界
 
-Agent 配置目录可能被项目 `.gitignore` 排除，因此不能只依赖 Git tree 或 `git ls-files --exclude-standard`。模板清单 `.trellis/.template-hashes.json` 的 `hashes` 键是可提交的补充证据。
-
-- 远端探测通过临时 partial clone 中的 `git show HEAD:.trellis/.template-hashes.json` 读取清单，并与受限 `ls-tree` 路径合并后调用 `detectTrellisAgentTools()`。
-- 工作副本初始化校验直接读取清单，并与 cached/untracked Agent 路径合并。
-- 清单缺失、JSON 损坏或读取失败时返回空集合，原有 tree 探测继续工作。
-- 初始化成功后只清理临时克隆中的已知 Agent 路径，再执行 `.trellis` 稀疏收敛；不得扩大到业务文件。
-
-### Scenario: Git 子进程的出站代理环境
-
-#### 1. Scope / Trigger
-
-Git 探测、clone、fetch、push 和远端身份检查都通过共享 `runGit()` 启动子进程。服务进程自身的代理环境不会自动传给使用最小环境的子进程；漏传会让企业代理网络中的 HTTPS 远端统一退化为 `GIT_REMOTE_FAILED`。
-
-#### 2. Signatures
-
-- `gitEnvironment(extra = {}) -> object`：构造所有 Git 子进程使用的环境。
-- `runGit(args, options) -> Promise<{ code, stdout, stderr, truncated }>`：必须复用 `gitEnvironment()`。
-- `minimalEnvironment(extra = {}) -> object`：通用子进程边界，不负责 Git 网络代理。
-
-#### 3. Contracts
-
-- Git 环境可继承 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及对应小写变量。
-- 只复制非空值；未设置的代理变量不得以空字符串注入。
-- `GIT_TERMINAL_PROMPT=0`、`GIT_CONFIG_NOSYSTEM=1`、全局配置隔离、askpass、SSH、TLS 和秘密脱敏必须继续生效。
-- 代理变量不得因此进入插件、Python、工具链或其他通用子进程。
-
-#### 4. Validation & Error Matrix
-
-| 条件 | 结果 |
-| --- | --- |
-| 服务进程设置大写代理变量 | Git 子进程收到对应变量 |
-| 服务进程只设置小写代理变量 | Git 子进程收到对应小写变量 |
-| 代理变量为空或未设置 | Git 环境不包含该变量 |
-| 通用 `minimalEnvironment()` 被调用 | 仍不包含代理变量 |
-| Git 网络失败 | 保留现有 `GIT_REMOTE_FAILED`、认证、SSH 和超时分类 |
-
-#### 5. Good/Base/Bad Cases
-
-- Good：服务经 `HTTPS_PROXY=http://127.0.0.1:7897` 访问 GitHub，`git ls-remote` 成功并解析默认分支。
-- Base：服务未配置代理，Git 子进程环境与本修复前一致。
-- Bad：把整个 `process.env` 传给所有子进程，导致插件和脚本意外获得代理、凭证或宿主配置。
-
-#### 6. Tests Required
-
-- 单元测试断言大写、小写和空代理变量。
-- 单元测试断言 `minimalEnvironment()` 不额外继承代理。
-- 真实服务测试断言远端探测不再返回 `GIT_REMOTE_FAILED`。
-- 浏览器测试断言“识别远端”成功回填项目名称和共享分支。
-
-#### 7. Wrong vs Correct
-
-Wrong：
-
-```js
-minimalEnvironment({ ...process.env });
-```
-
-Correct：
-
-```js
-minimalEnvironment({
-  ...gitProcessOptions,
-  ...proxyEnvironmentFromProcessEnv()
-});
-```
-
-### Scenario: Windows OpenSSH 的环境与空配置
-
-#### 1. Scope / Trigger
-
-Windows OpenSSH 的 `ssh-keyscan.exe` 和 `ssh.exe` 在最小子进程环境中存在两个非预期行为：缺少 `PROGRAMDATA` 时会退出 255 且无输出；`-F NUL` 会被当作普通配置文件并报 `Can't open user config file NUL`。问题发生在认证前，不能通过更换私钥或凭据解决。
-
-#### 2. Signatures
-
-- `sshScanEnvironment({ platform, programData }) -> object`：构造 `ssh-keyscan` 的最小环境。
-- `sshScanFailureDetails(result) -> object`：生成脱敏后的退出码、stderr 摘要、实际环境键和全局配置隔离状态。
-- `writeSshWrapper(dir, options) -> path`：为 SSH Git 操作生成临时 `ssh` 包装器。
-- `runGit(args, options)`：复用经过隔离的 Git 环境。
-
-#### 3. Contracts
-
-- Windows 的 SSH 扫描环境必须保留 `PROGRAMDATA`；其他平台不得凭空注入该变量。
-- `ssh-keyscan` 通过 PATH 执行，不硬编码 Windows 用户路径；安装 `openssh-client` 的 Linux 使用 PATH 中的命令。
-- `GIT_CONFIG_GLOBAL` 指向应用目录中的真实空文件，不能使用 Node/Windows 的 `NUL` 伪路径。
-- SSH wrapper 使用临时目录中的空 `ssh_config`，不使用 `-F NUL`；`GlobalKnownHostsFile` 和 `UserKnownHostsFile` 也使用临时文件。
-- 失败日志可包含 host、port、命令、退出码、脱敏 stderr、实际环境键和全局配置隔离状态，但不能包含本机文件路径、私钥、口令、令牌或完整主机公钥。
-
-#### 4. Validation & Error Matrix
-
-| 条件 | 结果 |
-| --- | --- |
-| Windows 最小环境缺少 `PROGRAMDATA` | `ssh-keyscan` 可能退出 255 且 stdout/stderr 为空 |
-| SSH wrapper 使用 `-F NUL` | `git ls-remote` 报 `Can't open user config file NUL` |
-| `ssh-keyscan` 未返回合法主机公钥 | API 返回 `SSH_HOST_UNREACHABLE`，日志带脱敏诊断 |
-| Git 远端返回非零退出码 | 保留认证/网络/仓库错误分类 |
-| host key 未确认 | 仍返回主机指纹确认挑战，不自动信任 |
-
-#### 5. Good/Base/Bad Cases
-
-- Good：Windows 服务用最小环境扫描 `git.weintdata.cn:1022`，在确认三组主机指纹后通过 Deploy Key 读取默认分支。
-- Base：Linux 服务安装 `openssh-client`，从 PATH 找到 `ssh-keyscan` 和 `ssh`，使用临时 `known_hosts`。
-- Bad：硬编码 `C:\Users\...`、使用 `-F NUL`、关闭 `StrictHostKeyChecking` 或把整个宿主环境传给所有子进程。
-
-#### 6. Tests Required
-
-- 断言 Windows 扫描环境包含 `PROGRAMDATA`，Linux 分支不注入。
-- 断言失败摘要保留 code、stderr 摘要并完成 URL/Bearer 脱敏。
-- 断言失败摘要不包含测试机路径，并记录实际环境键和全局配置隔离状态。
-- 运行 `npm test`，覆盖 Git 凭据、代理环境、SSH 扫描和 HTTP 探测。
-- 真实服务确认主机指纹后断言项目名称和默认分支成功回填。
-
-#### 7. Wrong vs Correct
-
-Wrong：
-
-```js
-ssh -F NUL -o StrictHostKeyChecking=no ...
-minimalEnvironment() // Windows 缺少 PROGRAMDATA
-```
-
-Correct：
-
-```js
-ssh -F "<temp>/ssh_config" \
-  -o GlobalKnownHostsFile="<temp>/global_known_hosts" \
-  -o UserKnownHostsFile="<temp>/known_hosts" ...
-```
+- SQLite 使用同步 `DatabaseSync`；多行业务写入必须在 `BEGIN IMMEDIATE` 事务内完成。
+- Standalone 的外部 `task.py` 使用 `spawn()` 参数数组，不启用 shell，并设置 `PYTHONUTF8=1`。
+- 桌面 Agent 的 `task.py`、Git 检查、Trellis 初始化和 Git 子进程都在客户端执行。
+- Team 服务端不因任务同步或命令投递启动 Git/Python 子进程；Agent 命令通过 SSE 和 HTTP 结果协议完成。
+- 子进程超时后必须等待进程树退出再 reject；超时、错误和输出摘要必须脱敏。
+- HTTP 主线程不得执行完整仓库扫描、递归目录复制或大文件解析；Team 投影放在索引 Worker/异步队列。
 
 ## 配置与常量
 
-路径常量和旧 JSON 迁移来源由 [server/config.js](../../../server/config.js) 定义。业务模块按名称导入，不在本地重新拼接源码 `data/` 路径。运行时可变 Board 状态只通过 SQLite 读取和写入。
-
-扫描输出结构由 `SCAN_SCHEMA_VERSION` 控制，当前为 `11`。该常量属于缓存兼容协议，不属于普通版本号；执行风险摘要、指标摘要或 flow 输出形状变化时必须同步递增。
+- `DATABASE_SCHEMA_VERSION` 当前为 `10`。v10 只新增 `sync_*` 表，不删除旧表和历史文件。
+- `SCAN_SCHEMA_VERSION` 当前为 `11`；Board 输出结构不兼容时同步递增。
+- `AGENT_PROTOCOL_VERSION` 当前为 `3`；命令 payload 和 Agent 事件都按 v3 校验。
+- `TRELLIS_TEAM_AGENT_STALE_MS` 决定在线 Agent 的 `last_seen_at` 窗口。
+- `TRELLIS_TEAM_ALLOW_LOCAL_GIT_REMOTES` 只用于隔离测试中的 `file://` 远端，生产保持 false。
+- Team 模式没有 Git 轮询间隔、项目工作副本路径或 Git 凭据密钥依赖。
 
 ## 反模式
 
-- 在 HTTP 路由中直接递归扫描任务。
-- 让 `loader.js` 持有 HTTP response、DOM 或页面状态。
-- 用 shell 拼接用户输入后执行 `task.py`。
-- 绕过 `database.js` / `persistence.js` 直接打开 SQLite，或为当前单机 MVP 引入外部数据库和 Web 框架。
-- 在模块导入阶段启动监听器、Worker 或端口。
+- 在 Team 服务端重新 clone/fetch 项目 Git，或用 Git 文件覆盖任务快照。
+- 在 HTTP 路由中同步递归扫描任务或等待整个 taskSpace 投影完成。
+- 把 Team tasks-only 同步扩回 workspace、`.developer`、scripts、spec 或 Agent 适配目录。
+- 绕过 `task-space-service` 直接按团队复制项目或 taskSpace。
+- 绕过 `task-snapshot-service` 直接写 `sync_task_space_file` 或静默后写覆盖。
+- 在 Web 请求线程直接运行 `task.py`、改 `task.json` 或 commit/push。
+- 用路径和时间抑制 watcher，却不校验应用后文件摘要。
+- 在模块导入阶段启动监听器、Worker、定时备份或端口。

@@ -10,8 +10,8 @@ import {
 } from './protocol.js'
 import { buildEnvironment, runProcess } from './process.js'
 
-export const CONFIG_SCHEMA_VERSION = 1
-export const STATE_SCHEMA_VERSION = 1
+export const CONFIG_SCHEMA_VERSION = 2
+export const STATE_SCHEMA_VERSION = 2
 
 export function defaultAgentRoot() {
   if (process.env.TRELLIS_AGENT_ROOT) {
@@ -99,6 +99,7 @@ export function validateConfig(config) {
     if (!binding || typeof binding !== 'object') {
       throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, `第 ${index + 1} 个绑定无效`)
     }
+    const taskSpaceId = requireString(binding.taskSpaceId, 'taskSpaceId', 128)
     const projectId = requireString(binding.projectId, 'projectId', 128)
     const serverBindingId = optionalString(binding.serverBindingId, 'serverBindingId', 128)
     const syncStatus = binding.syncStatus ?? 'pending'
@@ -112,9 +113,23 @@ export function validateConfig(config) {
         `第 ${index + 1} 个绑定的实时同步状态无效`,
       )
     }
+    const initialSyncMode =
+      binding.initialSyncMode ?? (binding.initialReviewPending === true ? 'review' : 'safe')
+    if (!['bootstrap', 'safe', 'review'].includes(initialSyncMode)) {
+      throw new AgentError(
+        AGENT_ERROR_CODE.CONFIG_INVALID,
+        `第 ${index + 1} 个绑定的首次同步方式无效`,
+      )
+    }
+    const initialSyncCompleted =
+      typeof binding.initialSyncCompleted === 'boolean'
+        ? binding.initialSyncCompleted
+        : binding.initialSyncMode == null && binding.initialReviewPending !== true
+    const initialReviewPending = initialSyncMode === 'review' && !initialSyncCompleted
     return {
       localId: requireString(binding.localId, 'localId', 128),
       serverBindingId,
+      taskSpaceId,
       projectId,
       repoPath: path.resolve(requireString(binding.repoPath, 'repoPath', 4096)),
       branchName: validateBranchNameSyntax(requireString(binding.branchName, 'branchName', 255)),
@@ -126,6 +141,9 @@ export function validateConfig(config) {
       allowFileRemote: binding.allowFileRemote === true,
       readOnly: binding.readOnly === true,
       syncStatus,
+      initialSyncMode,
+      initialSyncCompleted,
+      initialReviewPending,
       liveSyncStatus,
       liveSyncError: optionalString(binding.liveSyncError, 'liveSyncError', 500),
       lastSyncedAt: optionalString(binding.lastSyncedAt, 'lastSyncedAt', 64),
@@ -134,17 +152,12 @@ export function validateConfig(config) {
       lastErrorCode: optionalString(binding.lastErrorCode, 'lastErrorCode', 128),
     }
   })
-  const seenProjects = new Set()
-  const seenRepos = new Set()
+  const seenTaskSpaces = new Set()
   for (const binding of bindings) {
-    if (seenProjects.has(binding.projectId)) {
-      throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, '同一项目只能绑定一个本地仓库')
+    if (seenTaskSpaces.has(binding.taskSpaceId)) {
+      throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, '同一任务空间只能绑定一次')
     }
-    if (seenRepos.has(binding.localRepoKey)) {
-      throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, '同一本地仓库只能绑定一个项目')
-    }
-    seenProjects.add(binding.projectId)
-    seenRepos.add(binding.localRepoKey)
+    seenTaskSpaces.add(binding.taskSpaceId)
   }
   const teams = Array.isArray(config.teams)
     ? config.teams.map((team, index) => {

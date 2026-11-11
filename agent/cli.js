@@ -7,7 +7,12 @@ import process from 'node:process'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { AgentApiClient, loadCaFile } from './api.js'
-import { ConfigStore, createConfigRevision, defaultAgentRoot } from './config-store.js'
+import {
+  CONFIG_SCHEMA_VERSION,
+  ConfigStore,
+  createConfigRevision,
+  defaultAgentRoot,
+} from './config-store.js'
 import { DpapiCredentialStore } from './credential-store.js'
 import { inspectRepository } from './git-sync.js'
 import { runAgentProcess } from './index.js'
@@ -52,7 +57,7 @@ export const CLI_EXIT_CODE = Object.freeze({
 
 const COMMAND_HELP = Object.freeze({
   pair: 'pair --server <URL> --name <设备名> [--ca <绝对路径>] [--replace]',
-  bind: 'bind --project <项目 ID> --path <仓库根目录> --branch <同步分支>',
+  bind: 'bind --task-space <任务空间 ID> --project <项目 ID> --path <仓库根目录> --branch <同步分支>',
   unbind: 'unbind (--project <项目 ID> | --binding <本地绑定 ID>)',
   status: 'status [--json]',
   diagnose: 'diagnose [--json] [--offline]',
@@ -242,7 +247,7 @@ async function commandPair(args, context) {
   }
   const now = new Date().toISOString()
   const config = {
-    schemaVersion: 1,
+    schemaVersion: CONFIG_SCHEMA_VERSION,
     revision: createConfigRevision(),
     serverUrl,
     caFile,
@@ -290,6 +295,7 @@ async function commandPair(args, context) {
 
 async function commandBind(args, context) {
   const { values, positionals } = parseOptions(args, {
+    'task-space': {},
     project: {},
     path: {},
     branch: {},
@@ -297,6 +303,7 @@ async function commandBind(args, context) {
   if (positionals.length) {
     throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, 'bind 不接受位置参数')
   }
+  const taskSpaceId = validateProjectId(requireOption(values, 'task-space'))
   const projectId = validateProjectId(requireOption(values, 'project'))
   const branchName = validateBranchNameSyntax(requireOption(values, 'branch'))
   const repoPath = path.resolve(requireOption(values, 'path'))
@@ -314,9 +321,11 @@ async function commandBind(args, context) {
   const binding = {
     localId,
     serverBindingId: null,
+    taskSpaceId,
     projectId,
     repoPath: inspected.root,
     branchName,
+    teamId: null,
     remoteIdentityKey: inspected.remoteIdentityKey,
     localRepoKey: inspected.localRepoKey,
     displayName: path.basename(inspected.root),
@@ -324,6 +333,8 @@ async function commandBind(args, context) {
     allowFileRemote,
     readOnly: false,
     syncStatus: 'pending',
+    liveSyncStatus: 'pending',
+    liveSyncError: null,
     lastSyncedAt: null,
     lastHead: inspected.head,
     lastError: inspected.clean ? null : '本地工作区存在未提交或未跟踪文件',
@@ -331,8 +342,8 @@ async function commandBind(args, context) {
   }
   await context.store.updateConfig(
     (current) => {
-      if (current.bindings.some((item) => item.projectId === projectId)) {
-        throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, '该项目已经绑定本地仓库')
+      if (current.bindings.some((item) => item.taskSpaceId === taskSpaceId)) {
+        throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, '该任务空间已经绑定本地仓库')
       }
       if (current.bindings.some((item) => item.localRepoKey === binding.localRepoKey)) {
         throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, '该本地仓库已经绑定其他项目')
@@ -346,6 +357,7 @@ async function commandBind(args, context) {
   )
   const summary = {
     localId,
+    taskSpaceId,
     projectId,
     displayName: binding.displayName,
     branchName,
@@ -356,7 +368,7 @@ async function commandBind(args, context) {
   if (context.json) {
     writeJson(context.io, summary)
   } else {
-    writeLine(context.io, `已创建待确认绑定：${projectId}`)
+    writeLine(context.io, `已创建待确认绑定：${taskSpaceId}`)
     writeLine(context.io, `仓库：${binding.displayName}`)
     writeLine(context.io, `分支：${branchName}   HEAD：${inspected.head.slice(0, 12)}`)
     if (!inspected.clean) {
@@ -437,6 +449,7 @@ async function commandStatus(args, context) {
         bindings: config.bindings.map((binding) => ({
           localId: binding.localId,
           serverBindingId: binding.serverBindingId,
+          taskSpaceId: binding.taskSpaceId,
           projectId: binding.projectId,
           repoPath: binding.repoPath,
           branchName: binding.branchName,
@@ -477,7 +490,7 @@ async function commandStatus(args, context) {
     for (const binding of result.bindings) {
       writeLine(
         context.io,
-        `  ${binding.projectId}  ${binding.branchName}  ${binding.status}  ` +
+        `  ${binding.taskSpaceId}  ${binding.branchName}  ${binding.status}  ` +
           `实时同步:${binding.liveSyncStatus}  ${binding.repoPath}`,
       )
       if (binding.liveSyncError) {

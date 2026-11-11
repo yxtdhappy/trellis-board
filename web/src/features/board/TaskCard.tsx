@@ -28,7 +28,13 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
   const tags = taskTags(task)
   const conditions = conditionBadges(task)
   const attention = attentionReasons(task).slice(0, 3)
-  const projectLabel = task.teamName ? `${task.teamName} · ${task.projectName}` : task.projectName
+  const projectLabel = [
+    task.teamName,
+    task.projectName,
+    task.branchName ? `分支 ${task.branchName}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   async function copyName() {
     try {
@@ -62,14 +68,6 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
               className="h-4 rounded-full px-1.5 text-[9px] text-destructive"
             >
               关系异常
-            </Badge>
-          ) : null}
-          {Number(task.liveRevision) > 0 ? (
-            <Badge
-              variant="outline"
-              className="h-4 rounded-full px-1.5 text-[9px] text-muted-foreground"
-            >
-              实时未入 Git
             </Badge>
           ) : null}
           <span

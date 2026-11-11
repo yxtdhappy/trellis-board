@@ -15,8 +15,6 @@ import type {
 import { formatTime } from '@/lib/admin-shared'
 import { useAdminProjects } from './useAdminProjects'
 import type { AdminProjects } from './useAdminProjects'
-import { useGitCredentials } from './useGitCredentials'
-import type { AdminGitCredentials } from './useGitCredentials'
 
 export type AdminPhase = 'loading' | 'ready' | 'denied' | 'error'
 
@@ -26,43 +24,42 @@ export type Credential = {
   value: string
 }
 
-export type AdminConsole = AdminProjects &
-  AdminGitCredentials & {
-    phase: AdminPhase
-    bootError: string
-    view: AdminView
-    setView: (view: AdminView) => void
-    isAdmin: boolean
-    systemAdmin: boolean
-    teams: Team[]
-    adminTeams: Team[]
-    adminTeamId: string
-    setAdminTeamId: (teamId: string) => void
-    displayName: string
-    roleLabel: string
-    avatarText: string
-    users: AdminUser[]
-    reloadUsers: (quiet?: boolean) => Promise<AdminUser[]>
-    devices: AgentDevice[]
-    reloadDevices: (quiet?: boolean) => Promise<AgentDevice[]>
-    systemAudit: AuditEvent[]
-    systemAuditHasMore: boolean
-    systemAuditUnavailable: boolean
-    loadSystemAudit: (reset: boolean) => Promise<void>
-    createUser: (input: NewUserInput) => Promise<boolean>
-    updateUser: (target: AdminUser, updates: UserUpdate) => Promise<AdminUser | null>
-    toggleUser: (target: AdminUser) => Promise<void>
-    resetPassword: (target: AdminUser, password: string) => Promise<boolean>
-    revokeDevice: (device: AgentDevice) => Promise<void>
-    createPairingCode: (teamId?: string) => Promise<void>
-    pairingCode: { code: string; expiresAt: string | null } | null
-    createDesktopEnrollToken: () => Promise<void>
-    desktopToken: { token: string; expiresAt: string | null } | null
-    credential: Credential | null
-    showCredential: (title: string, description: string, value: string | null) => void
-    closeCredential: () => void
-    logout: () => Promise<void>
-  }
+export type AdminConsole = AdminProjects & {
+  phase: AdminPhase
+  bootError: string
+  view: AdminView
+  setView: (view: AdminView) => void
+  isAdmin: boolean
+  systemAdmin: boolean
+  teams: Team[]
+  adminTeams: Team[]
+  adminTeamId: string
+  setAdminTeamId: (teamId: string) => void
+  displayName: string
+  roleLabel: string
+  avatarText: string
+  users: AdminUser[]
+  reloadUsers: (quiet?: boolean) => Promise<AdminUser[]>
+  devices: AgentDevice[]
+  reloadDevices: (quiet?: boolean) => Promise<AgentDevice[]>
+  systemAudit: AuditEvent[]
+  systemAuditHasMore: boolean
+  systemAuditUnavailable: boolean
+  loadSystemAudit: (reset: boolean) => Promise<void>
+  createUser: (input: NewUserInput) => Promise<boolean>
+  updateUser: (target: AdminUser, updates: UserUpdate) => Promise<AdminUser | null>
+  toggleUser: (target: AdminUser) => Promise<void>
+  resetPassword: (target: AdminUser, password: string) => Promise<boolean>
+  revokeDevice: (device: AgentDevice) => Promise<void>
+  createPairingCode: (teamId?: string) => Promise<void>
+  pairingCode: { code: string; expiresAt: string | null } | null
+  createDesktopEnrollToken: () => Promise<void>
+  desktopToken: { token: string; expiresAt: string | null } | null
+  credential: Credential | null
+  showCredential: (title: string, description: string, value: string | null) => void
+  closeCredential: () => void
+  logout: () => Promise<void>
+}
 
 function redirectIfUnauthorized(error: unknown): boolean {
   if (!(error instanceof ApiError) || error.status !== 401) return false
@@ -349,19 +346,11 @@ export function useAdminConsole(): AdminConsole {
     isAdmin,
     teamId: adminTeamId,
     runtimeProjects,
-    users,
-    reloadUsers,
-  })
-  const gitCredentials = useGitCredentials({
-    report,
-    isAdmin,
-    teamId: adminTeamId,
   })
   const displayName = user?.displayName || user?.username || '团队账号'
 
   return {
     ...projects,
-    ...gitCredentials,
     phase,
     bootError,
     view,

@@ -12,7 +12,7 @@
 | [插件运行时](./plugin-runtime.md) | 子进程协议、清单与版本、生命周期、存储与命名空间、任务写入 |
 | [插件测试](./plugin-testing.md) | 协议契约、插件功能、真实组合的分层测试与覆盖矩阵 |
 | [桌面 sidecar 与 SEA 打包](./desktop-sidecar-packaging.md) | 源码/SEA 入口分离、DPAPI 路径注入和 Windows 构建验证 |
-| [桌面实时任务同步](./desktop-realtime-sync.md) | 共享 watcher、实时文件覆盖层、版本、SSE、备份与责任人确认 |
+| [桌面任务快照同步](./desktop-realtime-sync.md) | tasks-only 快照、CAS、任务空间、SSE、命令、冲突与备份 |
 | [质量与验证](./quality-guidelines.md) | Node 内置测试、夹具、真实服务验收 |
 
 ## 基本约束
@@ -21,7 +21,8 @@
 - 服务默认监听 `0.0.0.0`、端口 `4317`；可用环境变量显式收窄到 `127.0.0.1`。
 - 无构建步骤。启动命令直接执行 `node server/index.js`。
 - 运营数据只写本应用 `data/`；用户要求的任务操作只写白名单仓库 `.trellis/` 内允许的文件。
-- 当前版本是单机 MVP，不提供认证、审计或多用户权限；SQLite 只解决本机持久化，不能把它描述成共享数据库。
+- `standalone` 是无账号鉴权、只适合可信网络的本机/局域网模式；`team` 才有账号、团队、审计和
+  Agent 权限。Team 仍使用单实例 SQLite 和内存 SSE，不能描述成共享数据库或多实例高可用。
 
 ## 关键边界
 
