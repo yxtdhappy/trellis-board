@@ -75,6 +75,9 @@ restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
 - 本地项目关联复用 `agent/git-sync.js` 的 `inspectRepository()`，不另写 Git 身份校验。
 - 本地关联 DTO 必须透传 `liveSyncStatus`（`pending|syncing|ready|error`）和
   `liveSyncError`；旧 sidecar 缺少字段时 Tauri/前端按 `pending + null` 兼容。
+- `AgentTaskSnapshotSync.start()` / `_setBindings()` 恢复 approved binding 时必须保留各 binding 已持久化
+  的 `liveSyncStatus`，不得在启动时统一改写为 `syncing`；同时仍要为每个 binding 触发后台
+  `pullTaskSpace` 增量追赶。
 - Tauri 关联命令在服务端批准并持久化本地 binding 后重启一次 sidecar，触发首次 full pull；
   用户取消目录选择时返回空结果且不得重启或显示失败。
 - 新绑定的 immediate heartbeat 直接使用服务端结果；绝不把 pending 状态当作桌面审批流程。
@@ -139,10 +142,14 @@ restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
 - `agent/test/task-snapshot-sync.test.js` + Rust `sidecar` 单测：只接受带非空 `type` 的
   `{"control": event}`；旧顶层 `trellis-control`、普通 stdout JSON、`control:null` 和
   无 `type` 对象不得进入控制窗口；审查事件不得包含任务正文。
+- `agent/test/task-snapshot-sync.test.js`：启动恢复多个 approved binding 时保持各自
+  `liveSyncStatus`，并断言所有 binding 仍触发后台 `pullTaskSpace`。
 - Windows CI：构建后执行 sidecar `version`，断言退出码 0 和 `protocolVersion === 2`。
 - Windows CI 必须在 `tauri build` 前通过 GitHub CLI/API 填充 `%LOCALAPPDATA%\tauri\NSIS`，校验
   NSIS zip 与 `nsis_tauri_utils.dll` 的固定 SHA1；Tauri 使用的 GitHub Releases 直链可能返回 504。
-- 最终安装包必须重新生成，旧 sidecar 不会被仓库代码自动替换。
+- 最终安装包必须重新生成，旧 sidecar 不会被仓库代码自动替换。Web Board 修复后，已运行的 Tauri
+  客户端也可能继续持有旧 WebView bundle；必须重建客户端或重新登录/重启完成复核，不能只以服务端
+  静态资源已更新判定桌面修复生效。
 
 ## 7. Wrong vs Correct
 
@@ -189,3 +196,24 @@ SEA 入口不推断模块路径；DPAPI 脚本通过 `node:sea` asset 提供。
 ```json
 {"control":{"type":"initial_sync_review","taskSpaceId":"space-1","revision":4,"differences":[]}}
 ```
+
+### Wrong
+
+```js
+this.bindings = new Map(
+  bindings.map((binding) => [binding.taskSpaceId, { ...binding, liveSyncStatus: "syncing" }]),
+)
+```
+
+启动或新增项目触发 sidecar 重启时，把所有 binding 统一标成 `syncing`，会让无关项目一起显示同步中。
+
+### Correct
+
+```js
+this.bindings = new Map(
+  bindings.map((binding) => [binding.taskSpaceId, binding]),
+)
+for (const taskSpaceId of this.bindings.keys()) void this.pullTaskSpace(taskSpaceId)
+```
+
+保留每个 binding 已持久化的 `liveSyncStatus`，后台拉取只推进该 taskSpace 的数据和自身状态。

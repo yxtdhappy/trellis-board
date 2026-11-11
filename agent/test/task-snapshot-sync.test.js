@@ -138,6 +138,54 @@ test('liveControlLine 使用顶层 control 包装，普通 stdout JSON 不会触
   assert.equal(parseControl(`${JSON.stringify({ ok: true, protocolVersion: 3 })}\n`), undefined)
 })
 
+test('sidecar 启动恢复 binding 时保留已有实时状态，只由新增项目保持 syncing', async () => {
+  const binding = (taskSpaceId, liveSyncStatus) => ({
+    taskSpaceId,
+    projectId: taskSpaceId,
+    displayName: taskSpaceId,
+    repoPath: path.join(os.tmpdir(), `missing-${taskSpaceId}`),
+    syncStatus: 'approved',
+    initialSyncCompleted: true,
+    liveSyncStatus,
+  })
+  const bindings = [
+    binding('project-a', 'ready'),
+    binding('project-b', 'ready'),
+    binding('project-c', 'ready'),
+    binding('project-d', 'ready'),
+    binding('project-new', 'syncing'),
+  ]
+  const expectedStatuses = bindings.map(({ taskSpaceId, liveSyncStatus }) => ({
+    taskSpaceId,
+    liveSyncStatus,
+  }))
+  const pulled = []
+  const sync = new AgentTaskSnapshotSync({
+    store: {},
+    loadContext: async () => ({ config: { bindings }, api: {} }),
+    logger: { warn() {} },
+  })
+  sync.pullTaskSpace = async (taskSpaceId) => {
+    pulled.push(taskSpaceId)
+    return null
+  }
+
+  try {
+    await sync.start()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(
+      [...sync.bindings.values()].map(({ taskSpaceId, liveSyncStatus }) => ({
+        taskSpaceId,
+        liveSyncStatus,
+      })),
+      expectedStatuses,
+    )
+    assert.deepEqual(pulled.sort(), bindings.map(({ taskSpaceId }) => taskSpaceId).sort())
+  } finally {
+    sync.stop()
+  }
+})
+
 test('safe 首次接入只下载服务端独有任务，不上传本地独有内容', async () => {
   const localTaskJson = `${JSON.stringify({ id: 'local-task', title: '本地任务' })}\n`
   const context = await setup({
