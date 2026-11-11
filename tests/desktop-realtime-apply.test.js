@@ -749,6 +749,68 @@ test('首次初始化与服务端同摘要时跳过，重启后保持幂等', as
   assert.equal(config.bindings[0].liveSyncStatus, 'ready')
 })
 
+test('已有持久化游标时重启走增量并保留本地未提交修改', async (t) => {
+  const { root, repoPath, taskDir } = setupRepo()
+  const target = path.join(taskDir, 'task.json')
+  const original = fs.readFileSync(target, 'utf8')
+  const store = new ConfigStore(path.join(root, 'agent'))
+  await store.ensureDirectories()
+  const local = binding(repoPath)
+  await persistConfig(store, local)
+  const fetches = []
+  const controls = []
+  const fake = fakeApi({
+    fetchLiveFiles: async ({ afterRevision }) => {
+      fetches.push(afterRevision)
+      return afterRevision === 0
+        ? {
+            revision: 2,
+            files: [
+              {
+                path: '.trellis/tasks/task-live/task.json',
+                operation: 'upsert',
+                revision: 2,
+                sha256: sha256(original),
+                content: original,
+              },
+            ],
+          }
+        : { revision: 2, files: [] }
+    },
+  })
+  const createSync = () =>
+    new AgentLiveSync({
+      store,
+      logger: silentLogger,
+      emitControl: (event) => controls.push(event),
+      watch: fakeWatcher,
+      loadContext: async () => ({
+        config: { bindings: [local] },
+        api: fake.api,
+      }),
+    })
+  const first = createSync()
+  const second = createSync()
+  t.after(() => {
+    first.stop()
+    second.stop()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  await first.start()
+  first.stop()
+  const modified = '{"title":"local-modified"}\n'
+  fs.writeFileSync(target, modified)
+  await second.start()
+
+  assert.deepEqual(fetches, [0, 2])
+  assert.equal(fs.readFileSync(target, 'utf8'), modified)
+  assert.equal(controls.length, 0)
+  assert.equal(fake.calls.preflights.length, 1)
+  assert.equal(fake.calls.uploads.length, 1)
+  assert.equal(fake.calls.uploads[0].files[0].content, modified)
+})
+
 test('初始化失败写错误状态，修复 Git 基线后可重试恢复', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-live-retry-'))
   const repoPath = path.join(root, 'repo')

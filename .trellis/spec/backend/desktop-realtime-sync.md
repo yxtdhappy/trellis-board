@@ -89,8 +89,9 @@ SSE：Agent 事件流为 `live.changed`、`task.live.overridden`；Board 事件�
 - 任务从普通目录移动到归档目录时，用归档目标和任务索引定位同名任务文件。目标内容一致时删除旧覆盖；
   内容不同且目标没有覆盖时迁移到归档路径，不能继续生成活动任务副本。
 - `read_only` binding 可以拉取和落盘，但 preflight/upload 返回 403。
-- 每个 approved binding 在进程启动或绑定签名变化时先执行 `afterRevision=0` 的 full pull，
-  再补传关联前已存在的本地变化；初始化与 watcher 批次共用项目串行队列。
+- 没有持久化游标时才执行 `afterRevision=0` 的 full pull；已有游标的客户端重启和错误重试
+  必须从该游标走增量，再补传本地未提交变化，不能用服务端旧覆盖层覆盖本地工作区。
+- 初始化、恢复和 watcher 批次共用项目串行队列。
 - 首次补传候选来自 `git diff --name-only -z HEAD -- .trellis` 与
   `git ls-files --others --exclude-standard -z -- .trellis`，并单独检查被忽略但存在的
   `.trellis/.developer`；与 full pull 摘要一致的路径不得重复上传。

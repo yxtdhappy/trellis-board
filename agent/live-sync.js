@@ -367,7 +367,9 @@ export class AgentLiveSync {
     for (const binding of approved.values()) {
       const previousBinding = previousApproved.get(binding.projectId)
       if (!previousBinding || bindingSignature(previousBinding) !== bindingSignature(binding)) {
-        void this._enqueueInitialization(binding)
+        void this._enqueueInitialization(binding, {
+          full: Number(this.liveCursors[binding.projectId] || 0) === 0,
+        })
       }
     }
     if (signature === previous && this.watcher) return
@@ -481,12 +483,12 @@ export class AgentLiveSync {
     return current
   }
 
-  _enqueueInitialization(binding) {
+  _enqueueInitialization(binding, options = {}) {
     const signature = bindingSignature(binding)
     const existing = this.initializing.get(signature)
     if (existing) return existing
     const current = this._queueProjectOperation(binding.projectId, () =>
-      this._initializeBinding(binding),
+      this._initializeBinding(binding, options),
     )
     const tracked = current.finally(() => {
       if (this.initializing.get(signature) === tracked) {
@@ -498,7 +500,7 @@ export class AgentLiveSync {
     return tracked
   }
 
-  async _initializeBinding(binding) {
+  async _initializeBinding(binding, { full = true } = {}) {
     if (this.closed || !this._isCurrentBinding(binding)) return
     await this._setBindingLiveSyncState(binding, 'syncing')
     try {
@@ -512,7 +514,7 @@ export class AgentLiveSync {
       if (!current) return
       const payload = await api.fetchLiveFiles({
         projectId: current.projectId,
-        afterRevision: 0,
+        afterRevision: full ? 0 : this.liveCursors[current.projectId] || 0,
       })
       await this._applyRemoteFiles(current, payload)
       if (current.readOnly !== true) {
@@ -823,7 +825,11 @@ export class AgentLiveSync {
   async _retryErrorBindings() {
     const retries = [...this.approvedBindings.values()]
       .filter((binding) => binding.liveSyncStatus === 'error')
-      .map((binding) => this._enqueueInitialization(binding))
+      .map((binding) =>
+        this._enqueueInitialization(binding, {
+          full: Number(this.liveCursors[binding.projectId] || 0) === 0,
+        }),
+      )
     await Promise.allSettled(retries)
     return new Set(
       [...this.approvedBindings.values()]
