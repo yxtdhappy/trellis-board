@@ -41,7 +41,7 @@ export function normalizeAgentDevice(payload: unknown): Record<string, unknown>
 export function normalizeAgentBinding(payload: unknown): Record<string, unknown>
 export function normalizeAuditEvent(payload: unknown): Record<string, unknown>
 export function canWriteProject(project: unknown, user: unknown): boolean
-export function canManageProject(project: unknown, user: unknown): boolean
+export function canManageProject(project: unknown, user?: unknown): boolean
 export function assignableProjectMembers(project: unknown): unknown[]
 export function assignmentActionState(
   task: unknown,

@@ -24,7 +24,7 @@ import { TaskOperationList } from '@/features/board/TaskOperationList'
 import { isAttention, type BoardTask } from '@/features/board/task-view'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
-import { taskVersion } from '@/lib/team-client.js'
+import { canManageProject, taskVersion } from '@/lib/team-client.js'
 
 function normalizeViews(value: unknown): { id: string; name: string }[] {
   if (!Array.isArray(value)) return []
@@ -45,10 +45,6 @@ const NAV: BoardNavItem[] = [
 
 export function BoardPage() {
   const controller = useBoard()
-  const adminHref = (window as Window & { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__
-    ?.core?.invoke
-    ? undefined
-    : '/admin.html'
   const [view, setView] = useState('pipeline')
   const [panels, setPanels] = useState<PluginPanelInfo[]>([])
   const [selected, setSelected] = useState<BoardTask | null>(null)
@@ -72,6 +68,15 @@ export function BoardPage() {
     loading,
     error,
   } = controller
+
+  const isTauri = Boolean(
+    (window as Window & { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__?.core?.invoke,
+  )
+  const canManageAdmin =
+    Boolean(runtime?.systemAdmin) ||
+    Boolean(runtime?.teams?.some((team) => team.role === 'admin')) ||
+    projects.some((project) => canManageProject(project))
+  const adminHref = !isTauri && teamMode && canManageAdmin ? '/admin.html' : undefined
 
   const groups = useMemo(
     () =>

@@ -377,7 +377,11 @@ export function canManageProject(project = {}) {
   project = project || {}
   const capabilities = project.capabilities ?? project.permissions ?? project
   if (capabilities.manageMembers ?? capabilities.manage_members) return true
-  return project.role === 'lead'
+  return (
+    project.role === 'lead' ||
+    (Array.isArray(project.taskSpaces) &&
+      project.taskSpaces.some((taskSpace) => taskSpace?.canManage === true))
+  )
 }
 
 export function assignableProjectMembers(project = {}) {

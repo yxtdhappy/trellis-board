@@ -6,6 +6,7 @@ import {
   archiveAssigneeOptions,
   assignmentActionState,
   assignableProjectMembers,
+  canManageProject,
   canWriteProject,
   buildTaskQuery,
   normalizeAuditEvent,
@@ -157,6 +158,13 @@ test('项目写能力同时受角色和同步状态约束', () => {
   assert.equal(canWriteProject({ role: 'member', syncStatus: 'current' }), true)
   assert.equal(canWriteProject({ role: 'read_only', syncStatus: 'current' }), false)
   assert.equal(canWriteProject({ role: 'lead', syncStatus: 'needs_repair' }), false)
+})
+
+test('项目负责人或可管理任务空间具备项目管理能力', () => {
+  assert.equal(canManageProject({ role: 'member', taskSpaces: [] }), false)
+  assert.equal(canManageProject({ role: 'lead' }), true)
+  assert.equal(canManageProject({ role: null, capabilities: { manageMembers: true } }), true)
+  assert.equal(canManageProject({ role: null, taskSpaces: [{ canManage: true }] }), true)
 })
 
 test('团队负责人候选只包含 active 的 lead/member developer', () => {

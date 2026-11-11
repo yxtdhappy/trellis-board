@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "修复后需执行前端类型检查、生产构建和真实页面权限显示验收"}
