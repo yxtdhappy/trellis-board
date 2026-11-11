@@ -21,3 +21,18 @@
 单独复跑同用例通过，判定为全量并发执行下的环境抖动。
 
 全仓 `npm run format:check` 仍命中 9 个与本任务无关的既有格式问题，本次未修改这些文件。
+
+## 页面 E2E
+
+- 重启本地 team 服务：旧 PID `34124` 停止，新 PID `26024` 启动；
+  `/api/health` 返回 `status=ok, mode=team`，日志确认 `Trellis Team Board 已启动`。
+- 在 `http://127.0.0.1:4317/` 注入最小 Tauri IPC 数据后验证：
+  `mdp-backend-service=已关联 · 正在同步已有任务`、
+  `trellis-board=已关联 · 同步正常`、`mdp-backend-web=未关联 · 关联本地仓库`。
+- 依次选择 `mdp-backend-service`、`trellis-board`、`mdp-backend-service`、
+  `mdp-backend-web`，三个项目状态均保持自身值，没有跟随当前项目切换。
+- 项目切换触发 `/api/tasks/query`、`/api/task-operations` 返回 200；
+  对应服务端日志增量无 ERROR、WARN 或异常堆栈。
+- 页面控制台唯一 404 为 team 模式预期的 `/api/panels`，不属于本任务。
+- 限制：浏览器不提供真实 Tauri IPC，本轮使用最小 mock 验证前端桌面渲染分支；
+  未自动完成已安装 Tauri 客户端的冷启动账号登录。

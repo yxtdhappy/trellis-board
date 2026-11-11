@@ -26,3 +26,12 @@
 - 根因位置：`web/src/components/layout/ProjectRail.tsx` 中，未选中项目会回退读取全局 `currentTaskSpace` 的 association。
 - 当前两个项目各有独立 taskSpace，底层 `associations` Map 以 `taskSpaceId` 为 key，数据本身未串。
 - 截图中的状态污染是确定性的前端渲染问题，不是轮询竞态。
+
+## Verification Evidence
+
+- 2026-11-11 本地 team 服务重启后 PID `26024`，`/api/health` 返回 `status=ok, mode=team`。
+- 浏览器真实项目列表加最小 Tauri IPC mock：`mdp-backend-service=正在同步`、
+  `trellis-board=同步正常`、`mdp-backend-web=未关联`；来回切换三个项目后状态保持不变。
+- 项目切换请求 `/api/tasks/query` 与 `/api/task-operations` 均返回 200，服务端日志窗口内无 ERROR/WARN。
+- 当前环境没有执行已安装 Tauri 客户端冷启动登录，因此 WebView2 真实 IPC 仍需桌面端手工复核；
+  多分支聚合由 `project-rail-association.test.js` 覆盖。
