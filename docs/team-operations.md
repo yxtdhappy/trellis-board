@@ -85,7 +85,8 @@ HTTP 不提供公开注册。首个管理员只能通过服务器本机 CLI 创�
 代理必须保留原始 Host，并关闭 SSE 缓冲。`GET /api/board/events` 和 `GET /api/agent/events`
 都是长连接；读超时建议不小于 30 分钟。
 
-任务快照请求体上限为 9 MiB，业务层再限制单批 8 MiB / 64 文件：
+任务快照 JSON 请求体硬上限为 96 MiB，业务层再限制单批 64 MiB / 1024 文件。超过 96 MiB
+的请求即使解码后正文不超过 64 MiB 也会在业务校验前返回 413：
 
 ```text
 POST /api/agent/task-spaces/:id/preflight
@@ -122,7 +123,7 @@ server {
     }
 
     location ~ ^/api/agent/task-spaces/[^/]+/(preflight|changes|conflicts/.+/resolve)$ {
-        client_max_body_size 9m;
+        client_max_body_size 96m;
         proxy_pass http://127.0.0.1:4317;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $remote_addr;
@@ -204,7 +205,7 @@ binding 必须持久化 `initialSyncMode` 和 `initialSyncCompleted`。处理结
 
 - 只同步 `.trellis/tasks/**`；spec、scripts、config、workflow、agents、workspace、`.developer`
   和编码 Agent 目录仍由 Git 管理。
-- 单文件上限 1 MiB，单批 8 MiB / 64 文件。
+- 单文件上限 1 MiB，单批 64 MiB / 1024 文件；JSON 运输硬上限为 96 MiB，两个条件都必须满足。
 - 删除使用墓碑；活动目录到归档目录的移动在同一批次完成。
 - 客户端持久化 cursor 和 pending batch。网络响应丢失后复用原 `batchId`。
 - 服务端应用后的 watcher 事件按 `(absolutePath, sha256)` 抑制，真实后续编辑仍会上传。

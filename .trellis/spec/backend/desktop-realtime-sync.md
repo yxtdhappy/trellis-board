@@ -102,7 +102,9 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 只接受 `.trellis/tasks/<task-dir>/<file>` 和
   `.trellis/tasks/archive/<YYYY-MM>/<task-dir>/<file>`。
 - 拒绝绝对路径、反斜杠、NUL、`.`/`..`、符号链接、非白名单扩展名和非 UTF-8 内容。
-- 允许 `.json/.jsonl/.md/.txt/.yaml/.yml`；单文件不超过 1 MiB，单批不超过 8 MiB / 64 文件。
+- 允许 `.json/.jsonl/.md/.txt/.yaml/.yml`；单文件不超过 1 MiB，单批正文不超过
+  64 MiB / 1024 文件。JSON 请求和 Agent 大响应使用编码后 96 MiB 硬运输上限，运输上限
+  不参与业务写入；超过 96 MiB 即使解码后正文不超过 64 MiB 也返回 413。
 - 客户端和服务端都用 `normalizeSnapshotText()` 去除 BOM 并把 CRLF/CR 转为 LF，再用
   `snapshotSha256()` 计算摘要；客户端必须用 fatal UTF-8 解码，服务端必须拒绝
   `sha256` 与规范化内容不一致、`baseSha256` 非法或格式错误的记录。
@@ -273,6 +275,7 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | 目标用户无在线 Agent、无 approved binding、非项目写成员 | 创建操作项前 `409`，返回用户、项目、分支和下一步 |
 | 路径越界、反斜杠、非白名单扩展名、符号链接、非 UTF-8 | 整批拒绝，任务快照不变 |
 | 单文件、单批、文件数超限 | 拒绝，任务快照不变 |
+| JSON 编码请求或大响应超过 96 MiB | `413 BODY_TOO_LARGE`，不读取为业务批次、不写快照 |
 | 同一 `batchId` 不同请求摘要 | `409` |
 | `clientSequence` 不递增 | `409` |
 | 任一 `baseSha256` 不一致 | `409 TASK_FILE_CONFLICT`，同批全部不写 |
@@ -294,11 +297,14 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - Bad：收到 watcher 后只按路径抑制，不校验新摘要，会吞掉远端应用后紧接发生的真实本地编辑。
 - Bad：服务端在 HTTP 请求栈里 clone/fetch 或扫描项目 Git，会重新引入两套事实源和长时间阻塞。
 - Bad：命令失败时提前插入正式任务卡或修改负责人，会让 Board 显示未实际落盘的状态。
+- Bad：为了覆盖任意 JSON 转义最坏膨胀，把 96 MiB 运输硬上限提高到数百 MiB；这会放大单请求
+  内存占用和拒绝服务风险。64 MiB 是正常文本任务目标，运输表示仍必须受 96 MiB 约束。
 
 ## 6. Tests Required
 
 - `tests/shared-remote-identity.test.js`：HTTPS/SSH/scp 归一、端口、非法协议和分支。
-- `tests/task-snapshot.test.js`：路径边界、LF 摘要、任务目录分组、移动和六类差异。
+- `tests/task-snapshot.test.js`：路径边界、LF 摘要、任务目录分组、1024/1025 文件、
+  64 MiB/64 MiB+1 字节、移动和六类差异。
 - `tests/database-v10.test.js`：新旧表并存、升级备份、旧数据保留和重复启动。
 - `tests/team-task-spaces.test.js`：全局唯一、owner/invite、同远端不同分支隔离。
 - `tests/team-task-snapshot.test.js`：首次写入、CAS 冲突、整批回滚、幂等、删除墓碑、覆盖备份。
@@ -307,6 +313,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - `tests/team-task-commands.test.js`：在线目标、命令状态机、租约恢复、索引等待、重试和取消。
 - `tests/team-realtime-sync.test.js`：两个真实 Agent HTTP 快照 + SSE 对齐、CAS 并发和离线拒绝。
 - `tests/team-gitless-http.test.js`：新路由可用，旧 Git/live 路由 404，Team 启动不访问 Git 工作副本。
+- `tests/team-gitless-http.test.js` 还必须断言：超过旧 9 MiB 的合法 Agent 批次可写入；
+  Content-Length 超过 96 MiB 返回 `413 BODY_TOO_LARGE`；普通 JSON 仍为 64 KiB。
 - `tests/team-release.test.js`：服务端仓库无工作副本，命令成功前不生成正式任务。
 - `tests/team-events.test.js`：Agent SSE 只包含新事件，旧事件游标和覆盖协议不存在。
 - `agent/test/project-onboarding.test.js`：仓库预检、固定 CLI 初始化、推送状态和已有 `.trellis`。

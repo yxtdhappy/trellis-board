@@ -53,12 +53,13 @@ import {
   publicWorkspaceTemplateManifest,
   readWorkspaceTemplate,
 } from './workspace-templates.js'
+import { TASK_SNAPSHOT_MAX_TRANSPORT_BYTES } from '../../shared/task-snapshot.js'
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
 const applicationDir = path.resolve(serverDir, '../..')
 const defaultPublicDir = path.join(applicationDir, 'public')
 const MAX_JSON_BYTES = 64 * 1024
-const MAX_LIVE_BATCH_BYTES = 9 * 1024 * 1024
+const MAX_LIVE_BATCH_BYTES = TASK_SNAPSHOT_MAX_TRANSPORT_BYTES
 const EXECUTION_WIP_LIMIT = 2
 const DEFAULT_REFRESH_CONCURRENCY = 4
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -1795,4 +1796,4 @@ export async function createTeamRuntime({
   }
 }
 
-export { MAX_JSON_BYTES }
+export { MAX_JSON_BYTES, MAX_LIVE_BATCH_BYTES, readJsonBody }

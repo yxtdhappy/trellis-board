@@ -4,12 +4,24 @@ import {
   classifyTaskSnapshots,
   groupTaskSnapshotFiles,
   snapshotSha256,
+  TASK_SNAPSHOT_LIMIT_ERROR_CODE,
   validateSnapshotFile,
 } from '../../shared/task-snapshot.js'
 import { ERROR_CODES, teamError } from './errors.js'
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const MAX_RATE_BATCHES_PER_SECOND = 5
+
+function requireSnapshotGroups(files, options) {
+  try {
+    return groupTaskSnapshotFiles(files, options)
+  } catch (error) {
+    if (error?.code === TASK_SNAPSHOT_LIMIT_ERROR_CODE) {
+      throw teamError(413, ERROR_CODES.BODY_TOO_LARGE, error.message)
+    }
+    throw error
+  }
+}
 
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue)
@@ -170,8 +182,8 @@ export function createTaskSnapshotService({
   function preflight(agent, taskSpaceId, input = {}) {
     bindingContext(agent, taskSpaceId)
     const allFileGroups = { maxFiles: Number.POSITIVE_INFINITY, maxBytes: Number.POSITIVE_INFINITY }
-    const localGroups = groupTaskSnapshotFiles(input.files || [], allFileGroups)
-    const serverGroups = groupTaskSnapshotFiles(
+    const localGroups = requireSnapshotGroups(input.files || [], allFileGroups)
+    const serverGroups = requireSnapshotGroups(
       db
         .prepare(`
         SELECT relative_path AS path, content_text AS content, sha256
@@ -376,7 +388,7 @@ export function createTaskSnapshotService({
     const batchId = requestId(input.batchId, '批次 ID')
     const clientSequence = sequence(input.clientSequence)
     const rawFiles = Array.isArray(input.files) ? input.files : []
-    const files = groupTaskSnapshotFiles(rawFiles).flatMap((group) => group.files)
+    const files = requireSnapshotGroups(rawFiles).flatMap((group) => group.files)
     if (!files.length) throw teamError(400, ERROR_CODES.INVALID_INPUT, '同步批次不能为空')
     const requestSha256 = hashJson({ taskSpaceId, batchId, clientSequence, files })
     const outcome = withTransaction(db, () => {
@@ -664,7 +676,7 @@ export function createTaskSnapshotService({
     }
     if (action === 'overwrite-server') {
       const files = Array.isArray(input.files) ? input.files : []
-      const groupedFiles = groupTaskSnapshotFiles(files)
+      const groupedFiles = requireSnapshotGroups(files)
       const normalizedFiles = groupedFiles.flatMap((group) => group.files)
       const taskDirs = [...new Set(normalizedFiles.map((file) => file.taskDir))]
       const currentRows = affectedDirectoryRows(conflict.task_space_id, taskDirs)

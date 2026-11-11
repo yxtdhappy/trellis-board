@@ -5,7 +5,13 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { createUser } from '../server/team/auth.js'
-import { createTeamRuntime } from '../server/team/http.js'
+import {
+  createTeamRuntime,
+  MAX_JSON_BYTES,
+  MAX_LIVE_BATCH_BYTES,
+  readJsonBody,
+} from '../server/team/http.js'
+import { TASK_SNAPSHOT_MAX_TRANSPORT_BYTES } from '../shared/task-snapshot.js'
 
 const PUBLIC_ORIGIN = 'http://127.0.0.1:4317'
 const HOST = '127.0.0.1:4317'
@@ -65,6 +71,31 @@ function request(
 function cookie(response) {
   return String((response.headers['set-cookie'] || [])[0] || '').split(';')[0]
 }
+
+test('Agent 大批次运输体超过 96 MiB 时返回 413', async () => {
+  assert.equal(MAX_LIVE_BATCH_BYTES, TASK_SNAPSHOT_MAX_TRANSPORT_BYTES)
+  await assert.rejects(
+    () =>
+      readJsonBody(
+        {
+          headers: {
+            'content-length': String(TASK_SNAPSHOT_MAX_TRANSPORT_BYTES + 1),
+          },
+        },
+        MAX_LIVE_BATCH_BYTES,
+      ),
+    (error) => error.status === 413 && error.code === 'BODY_TOO_LARGE',
+  )
+  await assert.rejects(
+    () =>
+      readJsonBody({
+        headers: {
+          'content-length': String(MAX_JSON_BYTES + 1),
+        },
+      }),
+    (error) => error.status === 413 && error.code === 'BODY_TOO_LARGE',
+  )
+})
 
 test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Git 路由', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-gitless-http-'))
@@ -254,6 +285,27 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   assert.equal(JSON.stringify(existingPreflight.body).includes(enrolled.body.credential), false)
   assert.equal(fs.existsSync(path.join(dataDir, 'projects')), false)
   assert.deepEqual(syncCounts(), beforeExistingPreflight)
+
+  const largeContent = 'a'.repeat(1024 * 1024)
+  const largeChanges = await request(
+    runtime,
+    `/api/agent/task-spaces/${encodeURIComponent(taskSpaceId)}/changes`,
+    {
+      method: 'POST',
+      agentCredential: enrolled.body.credential,
+      body: {
+        batchId: 'batch-large-http',
+        clientSequence: 2,
+        files: Array.from({ length: 10 }, (_, index) => ({
+          path: `.trellis/tasks/01-snapshot/evidence-${index}.md`,
+          content: largeContent,
+          baseSha256: null,
+        })),
+      },
+    },
+  )
+  assert.equal(largeChanges.status, 200, JSON.stringify(largeChanges.body))
+  assert.equal(largeChanges.body.revision, 2)
 
   await runtime.services.taskSpaceIndex.ensureMaterialized(taskSpaceId)
   const query = await request(

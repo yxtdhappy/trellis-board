@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { AgentApiClient } from '../api.js'
 import { AGENT_ERROR_CODE, AgentApiError } from '../protocol.js'
+import { TASK_SNAPSHOT_MAX_TRANSPORT_BYTES } from '../../shared/task-snapshot.js'
 
 async function withServer(handler, callback) {
   const server = http.createServer(handler)
@@ -177,6 +178,36 @@ test('426 和 429 保留协议及 Retry-After 信息', async () => {
           error.retryable === true &&
           error.retryAfterMs === 3000,
       )
+    },
+  )
+})
+
+test('完整快照和任务目录响应可超过旧 16 MiB 上限', async () => {
+  const content = 'a'.repeat(1024 * 1024)
+  const files = Array.from({ length: 17 }, (_, index) => ({
+    path: `.trellis/tasks/01-large/file-${index}.md`,
+    content,
+    sha256: 'a'.repeat(64),
+    deleted: false,
+  }))
+  const payload = JSON.stringify({ revision: 1, files })
+  assert.ok(Buffer.byteLength(payload) > 16 * 1024 * 1024)
+  assert.ok(Buffer.byteLength(payload) < TASK_SNAPSHOT_MAX_TRANSPORT_BYTES)
+  await withServer(
+    async (request, response) => {
+      await readBody(request)
+      response.setHeader('content-type', 'application/json')
+      response.end(payload)
+    },
+    async (serverUrl) => {
+      const client = new AgentApiClient({
+        serverUrl,
+        credential: 'c'.repeat(32),
+      })
+      const snapshot = await client.fetchTaskSpaceSnapshot('space-1')
+      const directory = await client.fetchTaskDirectory('space-1', '.trellis/tasks/01-large')
+      assert.equal(snapshot.files.length, files.length)
+      assert.equal(directory.files.length, files.length)
     },
   )
 })

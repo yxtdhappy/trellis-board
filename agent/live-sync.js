@@ -6,10 +6,12 @@ import { TextDecoder } from 'node:util'
 import { AgentApiClient } from './api.js'
 import { safeErrorMessage } from './protocol.js'
 import { createTrellisWatcher } from '../shared/trellis-watcher.js'
+import {
+  TASK_SNAPSHOT_MAX_BATCH_BYTES,
+  TASK_SNAPSHOT_MAX_FILE_BYTES,
+  TASK_SNAPSHOT_MAX_FILES,
+} from '../shared/task-snapshot.js'
 
-const MAX_FILE_BYTES = 1024 * 1024
-const MAX_BATCH_FILES = 64
-const MAX_BATCH_BYTES = 8 * 1024 * 1024
 const WATCH_DEBOUNCE_MS = 250
 const EXPECTED_WRITE_MS = 10_000
 const RETRY_MS = 5_000
@@ -220,12 +222,10 @@ function splitLiveBatches(projectId, files) {
     let bytes = 0
     for (const file of group) {
       const fileBytes =
-        file.operation === 'delete'
-          ? 0
-          : Buffer.byteLength(JSON.stringify(String(file.content || '')), 'utf8')
+        file.operation === 'delete' ? 0 : Buffer.byteLength(String(file.content || ''), 'utf8')
       if (
-        batch.length >= MAX_BATCH_FILES ||
-        (batch.length && bytes + fileBytes > MAX_BATCH_BYTES)
+        batch.length >= TASK_SNAPSHOT_MAX_FILES ||
+        (batch.length && bytes + fileBytes > TASK_SNAPSHOT_MAX_BATCH_BYTES)
       ) {
         batches.push(batch)
         batch = []
@@ -243,7 +243,7 @@ function gitHeadFile(binding, relativePath) {
   const result = spawnSync('git', ['show', `HEAD:${relativePath}`], {
     cwd: binding.repoPath,
     encoding: 'utf8',
-    maxBuffer: MAX_FILE_BYTES + 1,
+    maxBuffer: TASK_SNAPSHOT_MAX_FILE_BYTES + 1,
     windowsHide: true,
   })
   return result.status === 0 ? result.stdout : null
@@ -641,7 +641,7 @@ export class AgentLiveSync {
     let content
     try {
       const stat = await fs.lstat(target)
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_FILE_BYTES) {
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > TASK_SNAPSHOT_MAX_FILE_BYTES) {
         if (strict) throw new Error('实时文件不是普通文件或超过 1 MiB')
         return null
       }
@@ -1374,7 +1374,7 @@ export async function restoreLiveBackup(options = {}) {
     )
     if (item.existedLocally) {
       const stat = await fs.stat(backupFile)
-      if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {
+      if (!stat.isFile() || stat.size > TASK_SNAPSHOT_MAX_FILE_BYTES) {
         throw new Error('实时同步备份文件无效或超过 1 MiB')
       }
       const content = await fs.readFile(backupFile, 'utf8')

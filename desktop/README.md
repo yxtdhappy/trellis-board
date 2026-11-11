@@ -110,7 +110,8 @@ Board 项目栏
 
 同步约束：
 
-- 文件允许 JSON、JSONL、Markdown、文本和 YAML；单文件 1 MiB、单批 8 MiB / 64 文件。
+- 文件允许 JSON、JSONL、Markdown、文本和 YAML；单文件 1 MiB、单批 64 MiB / 1024 文件，
+  且编码后的 JSON 请求不得超过 96 MiB。
 - 同一批任一文件 `baseSha256` 变化，整批拒绝并返回 `TASK_FILE_CONFLICT`。
 - 删除写墓碑；活动目录到归档目录的移动在一个 batch 内完成。
 - 客户端按 taskSpace 串行上传和拉取；只在完整任务目录应用成功后推进 cursor。

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"核对 1024/64 MiB、pending 幂等、CAS、原子批次和客户端应用约束"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"核对请求体、路径、UTF-8、单文件和超限回滚"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"确定自动测试、构建和真实 E2E 的完成标准"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查客户端、服务端、HTTP、游标和 Board 索引全链路一致"}

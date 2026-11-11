@@ -1159,12 +1159,16 @@ test('本地归档移动把旧目录删除和新目录写入合并为同一批�
   }
 })
 
-test('网络失败后保留原批次 ID，恢复时按幂等批次重试', async () => {
+test('250 文件网络失败后保留原 batchId、clientSequence 和 files 重试', async () => {
   const taskDir = '.trellis/tasks/01-retry'
   const taskJson = `${JSON.stringify({ id: 'retry-task', title: '重试' })}\n`
+  const evidence = Object.fromEntries(
+    Array.from({ length: 249 }, (_, index) => [`evidence-${index}.md`, `# 证据 ${index}\n`]),
+  )
   const context = await setup({
     [taskDir]: {
       'task.json': taskJson,
+      ...evidence,
     },
   })
   try {
@@ -1184,11 +1188,15 @@ test('网络失败后保留原批次 ID，恢复时按幂等批次重试', async
     await sync.syncTaskDirectories('space-1', [taskDir], { reconcile: false })
     const pending = await sync._readCursor('space-1')
     assert.ok(pending.pending)
+    assert.equal(pending.pending.files.length, 250)
+    assert.equal(attempts[0].input.files.length, 250)
 
     online = true
     const retried = await sync._retryPendingBatch(sync._binding('space-1'), api, pending)
     assert.equal(attempts.length, 2)
-    assert.equal(attempts[0].input.batchId, attempts[1].input.batchId)
+    assert.deepEqual(attempts[1].input, attempts[0].input)
+    assert.equal(attempts[1].input.batchId, pending.pending.batchId)
+    assert.equal(attempts[1].input.clientSequence, pending.pending.clientSequence)
     assert.equal(retried.conflict, false)
     assert.equal((await sync._readCursor('space-1')).pending, null)
   } finally {

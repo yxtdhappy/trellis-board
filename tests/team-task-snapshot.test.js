@@ -7,7 +7,12 @@ import { openDatabase } from '../server/database.js'
 import { createTaskSnapshotBackupService } from '../server/team/task-snapshot-backup.js'
 import { createTaskSnapshotService } from '../server/team/task-snapshot-service.js'
 import { createTaskSpaceService } from '../server/team/task-space-service.js'
-import { snapshotSha256 } from '../shared/task-snapshot.js'
+import {
+  snapshotSha256,
+  TASK_SNAPSHOT_MAX_BATCH_BYTES,
+  TASK_SNAPSHOT_MAX_FILE_BYTES,
+  TASK_SNAPSHOT_MAX_FILES,
+} from '../shared/task-snapshot.js'
 
 test('任务快照数据库每日备份保留最近七份', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-task-backup-'))
@@ -118,6 +123,22 @@ function batch(taskId, title, prd = '# PRD\n') {
   ]
 }
 
+function directoryBatch(taskId, fileCount) {
+  const taskDir = `.trellis/tasks/11-10-${taskId}`
+  return [
+    {
+      path: `${taskDir}/task.json`,
+      content: JSON.stringify({ id: taskId, title: '大任务' }),
+      baseSha256: null,
+    },
+    ...Array.from({ length: fileCount - 1 }, (_, index) => ({
+      path: `${taskDir}/evidence-${index}.md`,
+      content: `# 证据 ${index}\n`,
+      baseSha256: null,
+    })),
+  ]
+}
+
 test('首次上传写入快照并推进 revision', () => {
   const { db, snapshots, agentA, taskSpaceId } = setup()
   try {
@@ -131,6 +152,82 @@ test('首次上传写入快照并推进 revision', () => {
     assert.equal(payload.revision, 1)
     assert.equal(payload.files.length, 2)
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_file_audit').get().count, 2)
+  } finally {
+    db.close()
+  }
+})
+
+test('250 个文件的单任务批次可以一次写入', () => {
+  const { db, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    const files = directoryBatch('large', 250)
+    const result = snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-0250',
+      clientSequence: 1,
+      files,
+    })
+    assert.equal(result.revision, 1)
+    assert.equal(snapshots.snapshot(agentA, taskSpaceId).files.length, files.length)
+    const preflight = snapshots.preflight(agentA, taskSpaceId, { files })
+    assert.equal(preflight.tasks.length, 1)
+    assert.equal(preflight.tasks[0].type, 'same')
+  } finally {
+    db.close()
+  }
+})
+
+test('超过文件数或正文上限返回 413 且不推进 revision', () => {
+  const { db, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    const tooMany = Array.from({ length: TASK_SNAPSHOT_MAX_FILES + 1 }, (_, index) => ({
+      path: `.trellis/tasks/11-10-too-many/file-${index}.md`,
+      content: '',
+      baseSha256: null,
+    }))
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'batch-too-many',
+          clientSequence: 1,
+          files: tooMany,
+        }),
+      (error) => error.status === 413 && error.code === 'BODY_TOO_LARGE',
+    )
+
+    const oneMiB = 'a'.repeat(TASK_SNAPSHOT_MAX_FILE_BYTES)
+    const tooLarge = directoryBatch('too-large', 1)
+    tooLarge.push(
+      ...Array.from(
+        { length: TASK_SNAPSHOT_MAX_BATCH_BYTES / TASK_SNAPSHOT_MAX_FILE_BYTES },
+        (_, index) => ({
+          path: `.trellis/tasks/11-10-too-large/bulk-${index}.md`,
+          content: oneMiB,
+          baseSha256: null,
+        }),
+      ),
+    )
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'batch-too-large',
+          clientSequence: 1,
+          files: tooLarge,
+        }),
+      (error) =>
+        error.status === 413 && error.code === 'BODY_TOO_LARGE' && /64 MiB/.test(error.message),
+    )
+    assert.equal(
+      db.prepare('SELECT revision FROM sync_task_space WHERE id = ?').get(taskSpaceId).revision,
+      0,
+    )
+    for (const table of [
+      'sync_task_space_batch',
+      'sync_task_space_file',
+      'sync_task_index',
+      'sync_file_audit',
+    ]) {
+      assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0)
+    }
   } finally {
     db.close()
   }
@@ -365,6 +462,73 @@ test('覆盖服务端冲突时备份双方内容并与解决状态同一事务�
     assert.equal(backups.length, 2)
     assert.ok(backups.some((row) => row.old_content === '{"id":"demo","title":"服务端版本"}'))
     assert.ok(backups.some((row) => row.new_content === '{"id":"demo","title":"客户端版本"}'))
+  } finally {
+    db.close()
+  }
+})
+
+test('250 个文件的单任务目录可通过 preflight 和覆盖冲突处理', () => {
+  const { db, snapshots, agentA, agentB, taskSpaceId } = setup()
+  const taskDir = '.trellis/tasks/11-10-large-conflict'
+  try {
+    const initialFiles = directoryBatch('large-conflict', 250)
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-large-conflict-1',
+      clientSequence: 1,
+      files: initialFiles,
+    })
+    const initialDirectory = snapshots.directorySnapshot(agentB, taskSpaceId, taskDir)
+    const clientFiles = initialDirectory.files.map(({ path, content, sha256 }) => ({
+      path,
+      content,
+      sha256,
+      baseSha256: sha256,
+    }))
+    const preflight = snapshots.preflight(agentB, taskSpaceId, { files: clientFiles })
+    assert.equal(preflight.tasks.length, 1)
+    assert.equal(preflight.tasks[0].type, 'same')
+
+    const taskJson = clientFiles.find((file) => file.path.endsWith('/task.json'))
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-large-conflict-2',
+      clientSequence: 2,
+      files: [
+        {
+          path: taskJson.path,
+          content: JSON.stringify({ id: 'large-conflict', title: '服务端版本' }),
+          baseSha256: taskJson.sha256,
+        },
+      ],
+    })
+    const conflict = snapshots.applyChanges(agentB, taskSpaceId, {
+      batchId: 'batch-large-conflict-3',
+      clientSequence: 1,
+      files: clientFiles,
+    })
+    assert.equal(conflict.code, 'TASK_FILE_CONFLICT')
+
+    const current = snapshots.directorySnapshot(agentB, taskSpaceId, taskDir)
+    const overwriteFiles = current.files.map(({ path, content, sha256 }) => ({
+      path,
+      content: path.endsWith('/task.json')
+        ? JSON.stringify({ id: 'large-conflict', title: '客户端版本' })
+        : content,
+      baseSha256: sha256,
+    }))
+    const resolved = snapshots.resolveConflict(agentB, taskSpaceId, conflict.conflictId, {
+      action: 'overwrite-server',
+      batchId: 'batch-large-conflict-4',
+      clientSequence: 2,
+      files: overwriteFiles,
+    })
+    assert.equal(resolved.action, 'overwrite-server')
+    assert.equal(resolved.revision, 3)
+    assert.equal(resolved.backupPaths.length, 250)
+    assert.equal(snapshots.directorySnapshot(agentB, taskSpaceId, taskDir).files.length, 250)
+    assert.equal(
+      db.prepare('SELECT status FROM sync_conflict WHERE id = ?').get(conflict.conflictId).status,
+      'resolved',
+    )
   } finally {
     db.close()
   }

@@ -7,10 +7,12 @@ import { appendAuditEvent } from './audit.js'
 import { ERROR_CODES, teamError } from './errors.js'
 import { readGitProject } from './git-manager.js'
 import { readableProjectIds, roleCanWrite } from './permissions.js'
+import {
+  TASK_SNAPSHOT_MAX_BATCH_BYTES,
+  TASK_SNAPSHOT_MAX_FILE_BYTES,
+  TASK_SNAPSHOT_MAX_FILES,
+} from '../../shared/task-snapshot.js'
 
-const MAX_FILE_BYTES = 1024 * 1024
-const MAX_BATCH_BYTES = 8 * 1024 * 1024
-const MAX_FILES = 64
 const RATE_WINDOW_MS = 1000
 const RATE_LIMIT = 5
 const WARNING_TTL_MS = 5 * 60 * 1000
@@ -319,7 +321,7 @@ export function createLiveSyncService({
     if (!Array.isArray(rawFiles) || !rawFiles.length) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, '实时批次没有文件')
     }
-    if (rawFiles.length > MAX_FILES) {
+    if (rawFiles.length > TASK_SNAPSHOT_MAX_FILES) {
       throw teamError(413, ERROR_CODES.BODY_TOO_LARGE, '实时批次文件数超过限制')
     }
     let totalBytes = 0
@@ -340,12 +342,12 @@ export function createLiveSyncService({
       if (operation === 'upsert') {
         const content = String(file.content ?? '')
         const bytes = Buffer.byteLength(content, 'utf8')
-        if (bytes > MAX_FILE_BYTES) {
+        if (bytes > TASK_SNAPSHOT_MAX_FILE_BYTES) {
           throw teamError(413, ERROR_CODES.BODY_TOO_LARGE, '单个实时文件超过 1 MiB')
         }
         totalBytes += bytes
-        if (totalBytes > MAX_BATCH_BYTES) {
-          throw teamError(413, ERROR_CODES.BODY_TOO_LARGE, '实时批次超过 8 MiB')
+        if (totalBytes > TASK_SNAPSHOT_MAX_BATCH_BYTES) {
+          throw teamError(413, ERROR_CODES.BODY_TOO_LARGE, '实时批次超过 64 MiB')
         }
         let decoded
         try {

@@ -60,7 +60,9 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
 - 旧 `/api/agent/live-changes*`、`/api/agent/live-files`、`/api/agent/live-cursor`、
   `/api/admin/git-credentials*`、`/api/admin/projects/probe`、SSH trust、项目 refresh/repair 和
   `/api/git-operations/*` 在 Team 模式返回 404。
-- Team `changes` 请求体上限为 `MAX_LIVE_BATCH_BYTES`，即 9 MiB；单批业务上限仍是 8 MiB / 64 文件。
+- Team 大批次请求体上限为共享的 `TASK_SNAPSHOT_MAX_TRANSPORT_BYTES`，即 96 MiB；
+  单批业务上限仍是 64 MiB / 1024 文件，普通 JSON 请求仍限制为 64 KiB。96 MiB 是编码后
+  JSON 的硬运输上限：超过时返回 413，即使解码后的正文不超过 64 MiB。
 - 新接入预检只返回路径、摘要和稳定 task ID，不返回任务正文；调用前后
   `sync_project`、`sync_task_space`、`sync_agent_binding` 和 `sync_agent_cursor` 行数必须不变。
 - Agent 认证和团队 Session 是两条独立鉴权链。Agent 路由要求设备 Bearer，Web 路由要求 Session Cookie
@@ -69,7 +71,10 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
 ## JSON 协议
 
 - `sendJson()` 统一返回 `application/json; charset=utf-8` 和 `cache-control: no-store`。
-- `readJsonBody()` 上限为 `1MB`。无请求体视为 `{}`；超限返回“请求体过大”；非法 JSON 返回“请求体不是合法 JSON”。
+- `readJsonBody()` 默认上限为 `64 KiB`。无请求体视为 `{}`；超限返回“请求体过大”；非法 JSON 返回“请求体不是合法 JSON”。
+- Agent 大批次接口显式传入 96 MiB 运输上限。业务正文 64 MiB 是正常文本任务目标；反斜杠
+  或控制字符的 JSON 转义若使编码体超过 96 MiB，必须按运输边界返回
+  `413 BODY_TOO_LARGE`，不得通过提高到数百 MiB 放宽内存和拒绝服务边界。
 - API 处理异常在主路由统一捕获，返回 400 和 `{ "error": message }`。
 - 前端依赖 `payload.error`，不要改成嵌套错误结构而不更新 `public/app.js` 的 `api()`。
 

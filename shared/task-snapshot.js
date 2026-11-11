@@ -1,8 +1,10 @@
 import crypto from 'node:crypto'
 
-export const TASK_SNAPSHOT_MAX_FILES = 64
+export const TASK_SNAPSHOT_MAX_FILES = 1024
 export const TASK_SNAPSHOT_MAX_FILE_BYTES = 1024 * 1024
-export const TASK_SNAPSHOT_MAX_BATCH_BYTES = 8 * 1024 * 1024
+export const TASK_SNAPSHOT_MAX_BATCH_BYTES = 64 * 1024 * 1024
+export const TASK_SNAPSHOT_MAX_TRANSPORT_BYTES = 96 * 1024 * 1024
+export const TASK_SNAPSHOT_LIMIT_ERROR_CODE = 'TASK_SNAPSHOT_LIMIT'
 export const TASK_SNAPSHOT_EXTENSIONS = Object.freeze([
   '.json',
   '.jsonl',
@@ -11,6 +13,16 @@ export const TASK_SNAPSHOT_EXTENSIONS = Object.freeze([
   '.yaml',
   '.yml',
 ])
+
+function snapshotLimitError(message) {
+  const error = new Error(message)
+  error.code = TASK_SNAPSHOT_LIMIT_ERROR_CODE
+  return error
+}
+
+function byteLimitLabel(bytes) {
+  return bytes % (1024 * 1024) === 0 ? `${bytes / (1024 * 1024)} MiB` : `${bytes} 字节`
+}
 
 export function normalizeSnapshotText(value) {
   return String(value ?? '')
@@ -74,7 +86,9 @@ export function validateSnapshotFile(file) {
   const content = file.content == null ? '' : String(file.content)
   const normalizedContent = normalizeSnapshotText(content)
   const bytes = Buffer.byteLength(normalizedContent, 'utf8')
-  if (bytes > TASK_SNAPSHOT_MAX_FILE_BYTES) throw new Error('单个任务文件超过 1 MiB')
+  if (bytes > TASK_SNAPSHOT_MAX_FILE_BYTES) {
+    throw snapshotLimitError(`单个任务文件超过 ${byteLimitLabel(TASK_SNAPSHOT_MAX_FILE_BYTES)}`)
+  }
   if (content.includes('\0')) throw new Error('任务文件不能包含 NUL')
   const expectedSha256 = snapshotSha256(normalizedContent)
   const suppliedSha256 = file.sha256 == null ? null : String(file.sha256)
@@ -109,9 +123,8 @@ export function groupTaskSnapshotFiles(
   files,
   { maxFiles = TASK_SNAPSHOT_MAX_FILES, maxBytes = TASK_SNAPSHOT_MAX_BATCH_BYTES } = {},
 ) {
-  if (!Array.isArray(files) || files.length > maxFiles) {
-    throw new Error('单批任务文件数量无效')
-  }
+  if (!Array.isArray(files)) throw new Error('任务文件列表无效')
+  if (files.length > maxFiles) throw snapshotLimitError(`单批任务文件不能超过 ${maxFiles} 个`)
   const grouped = new Map()
   const seenPaths = new Set()
   let totalBytes = 0
@@ -120,7 +133,9 @@ export function groupTaskSnapshotFiles(
     if (seenPaths.has(file.path)) throw new Error('任务文件路径不能重复')
     seenPaths.add(file.path)
     totalBytes += Buffer.byteLength(file.content, 'utf8')
-    if (totalBytes > maxBytes) throw new Error('任务文件批次超过 8 MiB')
+    if (totalBytes > maxBytes) {
+      throw snapshotLimitError(`任务文件批次超过 ${byteLimitLabel(maxBytes)}`)
+    }
     const current = grouped.get(file.taskDir) || {
       taskDir: file.taskDir,
       archived: file.archived,

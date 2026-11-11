@@ -5,6 +5,9 @@ import {
   groupTaskSnapshotFiles,
   normalizeSnapshotPath,
   snapshotSha256,
+  TASK_SNAPSHOT_MAX_BATCH_BYTES,
+  TASK_SNAPSHOT_MAX_FILE_BYTES,
+  TASK_SNAPSHOT_MAX_FILES,
   taskDirectoryFromPath,
 } from '../shared/task-snapshot.js'
 
@@ -90,17 +93,61 @@ test('同一批次拒绝重复文件路径', () => {
   )
 })
 
-test('完整本地扫描可超过单批文件上限，但单批默认仍限制为 64 个文件', () => {
-  const files = Array.from({ length: 65 }, (_, index) => ({
+test('单批允许 1024 个文件并拒绝第 1025 个', () => {
+  const files = Array.from({ length: TASK_SNAPSHOT_MAX_FILES }, (_, index) => ({
     path: `.trellis/tasks/11-10-demo/file-${index}.md`,
-    content: `# ${index}\n`,
+    content: '',
   }))
-  assert.throws(() => groupTaskSnapshotFiles(files), /数量无效/)
-  const groups = groupTaskSnapshotFiles(files, {
+  const groups = groupTaskSnapshotFiles(files)
+  assert.equal(groups[0].files.length, TASK_SNAPSHOT_MAX_FILES)
+  assert.throws(
+    () =>
+      groupTaskSnapshotFiles([
+        ...files,
+        { path: '.trellis/tasks/11-10-demo/file-overflow.md', content: '' },
+      ]),
+    /不能超过 1024 个/,
+  )
+  const unlimited = groupTaskSnapshotFiles(files, {
     maxFiles: Number.POSITIVE_INFINITY,
     maxBytes: Number.POSITIVE_INFINITY,
   })
-  assert.equal(groups[0].files.length, 65)
+  assert.equal(unlimited[0].files.length, TASK_SNAPSHOT_MAX_FILES)
+})
+
+test('单批正文允许 64 MiB 并拒绝多 1 字节', () => {
+  const content = 'a'.repeat(TASK_SNAPSHOT_MAX_FILE_BYTES)
+  const files = Array.from(
+    { length: TASK_SNAPSHOT_MAX_BATCH_BYTES / TASK_SNAPSHOT_MAX_FILE_BYTES },
+    (_, index) => ({
+      path: `.trellis/tasks/11-10-demo/bulk-${index}.md`,
+      content,
+    }),
+  )
+  const groups = groupTaskSnapshotFiles(files)
+  assert.equal(groups[0].files.length, 64)
+  assert.equal(
+    groups[0].files.reduce((total, file) => total + Buffer.byteLength(file.content), 0),
+    TASK_SNAPSHOT_MAX_BATCH_BYTES,
+  )
+  assert.throws(
+    () =>
+      groupTaskSnapshotFiles([
+        ...files,
+        { path: '.trellis/tasks/11-10-demo/one-more-byte.md', content: 'a' },
+      ]),
+    /超过 64 MiB/,
+  )
+  assert.throws(
+    () =>
+      groupTaskSnapshotFiles([
+        {
+          path: '.trellis/tasks/11-10-demo/too-large.md',
+          content: 'a'.repeat(TASK_SNAPSHOT_MAX_FILE_BYTES + 1),
+        },
+      ]),
+    /单个任务文件超过 1 MiB/,
+  )
 })
 
 test('首次接入差异按任务分类', () => {

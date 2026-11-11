@@ -14,9 +14,11 @@ import {
   parseHeartbeatResponse,
   safeErrorMessage,
 } from './protocol.js'
+import { TASK_SNAPSHOT_MAX_TRANSPORT_BYTES } from '../shared/task-snapshot.js'
 
 const MAX_RESPONSE_BYTES = 1024 * 1024
 const MAX_SSE_BUFFER_BYTES = 1024 * 1024
+const TASK_SNAPSHOT_REQUEST_TIMEOUT_MS = 120_000
 
 export async function loadCaFile(caFile) {
   if (caFile == null) {
@@ -180,8 +182,9 @@ export class AgentApiClient {
       method: 'POST',
       auth: true,
       signal: options.signal,
+      timeoutMs: options.timeoutMs ?? TASK_SNAPSHOT_REQUEST_TIMEOUT_MS,
       body: input,
-      maxResponseBytes: 16 * 1024 * 1024,
+      maxResponseBytes: TASK_SNAPSHOT_MAX_TRANSPORT_BYTES,
     })
   }
 
@@ -202,7 +205,8 @@ export class AgentApiClient {
       method: 'GET',
       auth: true,
       signal: options.signal,
-      maxResponseBytes: 16 * 1024 * 1024,
+      timeoutMs: options.timeoutMs ?? TASK_SNAPSHOT_REQUEST_TIMEOUT_MS,
+      maxResponseBytes: TASK_SNAPSHOT_MAX_TRANSPORT_BYTES,
     })
   }
 
@@ -214,7 +218,8 @@ export class AgentApiClient {
       method: 'GET',
       auth: true,
       signal: options.signal,
-      maxResponseBytes: 16 * 1024 * 1024,
+      timeoutMs: options.timeoutMs ?? TASK_SNAPSHOT_REQUEST_TIMEOUT_MS,
+      maxResponseBytes: TASK_SNAPSHOT_MAX_TRANSPORT_BYTES,
     })
   }
 
@@ -224,6 +229,7 @@ export class AgentApiClient {
       method: 'POST',
       auth: true,
       signal: options.signal,
+      timeoutMs: options.timeoutMs ?? TASK_SNAPSHOT_REQUEST_TIMEOUT_MS,
       body: input,
     })
   }
@@ -234,7 +240,7 @@ export class AgentApiClient {
       method: 'POST',
       auth: true,
       signal: options.signal,
-      timeoutMs: options.timeoutMs ?? 30_000,
+      timeoutMs: options.timeoutMs ?? TASK_SNAPSHOT_REQUEST_TIMEOUT_MS,
       body: input,
     })
   }
@@ -267,7 +273,7 @@ export class AgentApiClient {
         method: 'POST',
         auth: true,
         signal: options.signal,
-        timeoutMs: options.timeoutMs ?? 30_000,
+        timeoutMs: options.timeoutMs ?? TASK_SNAPSHOT_REQUEST_TIMEOUT_MS,
         body: input,
       },
     )

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"任务快照、pending 重试、CAS、HTTP 和客户端同步的完整契约"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"HTTP 请求体边界、Agent 路由和文件写入安全约束"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Node 测试、Team 同步和真实 E2E 验证要求"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"共享常量、客户端、服务端、HTTP 和游标链路必须同步修改"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"批量上限应保持单一所有者，避免重复常量漂移"}
