@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 31
+- **Total Sessions**: 32
 - **Last Active**: 2026-11-11
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~755 | Active |
+| `journal-1.md` | ~777 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 32 | 2026-11-11 | 任务快照批量上限提升与真实 E2E | `2fe7d0d` | `codex/server-gitless-task-sync` |
 | 31 | 2026-11-11 | 服务端无 Git 实时任务同步收尾 | `c540120`, `59018db` | `codex/server-gitless-task-sync` |
 | 30 | 2026-11-11 | 普通成员隐藏团队管理入口 | `50e20f7` | `codex/server-gitless-task-sync` |
 | 29 | 2026-11-10 | 修复团队归档索引查询与分页 | `9b5fd83`, `67458e9` | `codex/team-board` |

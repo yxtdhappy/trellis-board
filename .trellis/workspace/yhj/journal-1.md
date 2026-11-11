@@ -753,3 +753,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 32: 任务快照批量上限提升与真实 E2E
+<!-- trellis-session: v=2 fp=fe9ab5883fba0947 -->
+
+**Date**: 2026-11-11
+**Task**: 任务快照批量上限提升与真实 E2E
+**Branch**: `codex/server-gitless-task-sync`
+
+### Summary
+
+任务快照和实时同步上限提升到 1024 文件/64 MiB，JSON 运输硬上限为 96 MiB；服务端升级后原 250 文件 pending 批次自动恢复，最终 135 个任务、1518 个文件与本地逐项一致，聚焦测试和全量测试通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2fe7d0d` | fix(team): raise task snapshot batch limits |
+
+### Status
+
+[OK] **Completed**
