@@ -71,6 +71,7 @@ jobs:
           "$env:RUNNER_TEMP\tauri-cli\node_modules\.bin" | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Install build dependencies
         run: |
+          npm ci
           npm ci --prefix web
           npm --prefix desktop ci
       - name: Build web
