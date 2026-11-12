@@ -20,7 +20,15 @@ function isBridgeRequest(message: BridgeMessage): message is BridgeRequest {
   )
 }
 
-export function PluginPanel({ panel }: { panel: PluginPanelInfo }) {
+export function PluginPanel({
+  panel,
+  projectId = '',
+  projectName = '',
+}: {
+  panel: PluginPanelInfo
+  projectId?: string
+  projectName?: string
+}) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const { theme } = useTheme()
 
@@ -50,6 +58,7 @@ export function PluginPanel({ panel }: { panel: PluginPanelInfo }) {
         type: 'trellis:init',
         theme,
         panel: { id: panel.id, pluginId: panel.pluginId, title: panel.title },
+        context: { repositoryId: projectId, projectName },
       })
       subscribe()
     }
@@ -106,13 +115,17 @@ export function PluginPanel({ panel }: { panel: PluginPanelInfo }) {
       frame.removeEventListener('load', init)
       events?.close()
     }
-  }, [panel, theme])
+  }, [panel, theme, projectId, projectName])
 
   return (
     <iframe
       ref={frameRef}
       title={panel.title}
-      src={panel.src}
+      src={
+        projectId
+          ? `${panel.src}${panel.src.includes('?') ? '&' : '?'}repositoryId=${encodeURIComponent(projectId)}`
+          : panel.src
+      }
       sandbox="allow-scripts allow-forms"
       className="min-h-0 w-full flex-1 rounded-xl border border-border bg-card"
     />

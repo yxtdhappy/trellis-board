@@ -21,6 +21,16 @@ export const CORE_CAPABILITIES = Object.freeze([
     },
   },
   {
+    name: 'trellis.projects',
+    version: '1.0.0',
+    description: '当前看板项目上下文',
+    methods: {
+      list: { access: 'read', permission: 'projects:read', timeoutMs: 10_000 },
+      get: { access: 'read', permission: 'projects:read', timeoutMs: 10_000 },
+      current: { access: 'read', permission: 'projects:read', timeoutMs: 10_000 },
+    },
+  },
+  {
     name: 'trellis.repositories',
     version: '1.0.0',
     description: 'Trellis 看板工作区仓库',
@@ -34,6 +44,14 @@ export const CORE_CAPABILITIES = Object.freeze([
 
 function publicRepository({ id, name, path: repositoryPath }) {
   return { id, name, path: repositoryPath }
+}
+
+function publicProject({ id, name, path: repositoryPath }) {
+  return { repositoryId: id, name, path: repositoryPath }
+}
+
+function projectList(repositories, repositoryService) {
+  return (repositoryService?.list ? repositoryService.list() : repositories).map(publicProject)
 }
 
 function repositoryList(repositories, repositoryService) {
@@ -121,6 +139,27 @@ export function createCoreCapabilities({
         timeoutMs,
       })
       return result?.value ?? null
+    },
+  })
+
+  handlers.set('trellis.projects', {
+    async list() {
+      return { projects: projectList(repositories, repositoryService) }
+    },
+    async get(params) {
+      const id = String(params?.id ?? params?.repositoryId ?? '').trim()
+      if (!id) throw invalidParams('projects/get 缺少 id')
+      const project = projectList(repositories, repositoryService).find((item) => item.repositoryId === id)
+      if (!project) throw appError(ERROR_CODES.NOT_FOUND, `项目不存在: ${id}`)
+      return { project }
+    },
+    async current(params) {
+      const projects = projectList(repositories, repositoryService)
+      const requested = String(params?.repositoryId ?? params?.id ?? '').trim()
+      const project = requested
+        ? projects.find((item) => item.repositoryId === requested) ?? null
+        : projects.length === 1 ? projects[0] : null
+      return { project }
     },
   })
 
