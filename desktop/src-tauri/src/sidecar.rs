@@ -13,6 +13,11 @@ use tauri_plugin_shell::ShellExt;
 const MAX_RESTARTS: u32 = 5;
 const STABLE_RUN: Duration = Duration::from_secs(60);
 const SIDECAR_NAME: &str = "trellis-agent";
+const SHORT_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
+const STANDARD_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+const SYNC_COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
+const GIT_CHECK_TIMEOUT: Duration = Duration::from_secs(240);
+const GIT_MUTATION_TIMEOUT: Duration = Duration::from_secs(600);
 
 fn default_live_sync_status() -> String {
     "pending".to_string()
@@ -236,7 +241,9 @@ pub fn start(app: &AppHandle) {
     let command = match app.shell().sidecar(SIDECAR_NAME) {
         Ok(command) => command
             .args(["run"])
-            .env("TRELLIS_AGENT_ROOT", agent_root.to_string_lossy().to_string()),
+            .env("TRELLIS_AGENT_ROOT", agent_root.to_string_lossy().to_string())
+            .set_process_group(true)
+            .kill_on_drop(true),
         Err(error) => {
             crate::logging::warn(&format!(
                 "sidecar 未随安装包提供（{error}）；后台同步不可用"
@@ -425,6 +432,7 @@ pub async fn decide_live_change(
         ],
         None,
         agent_root,
+        STANDARD_COMMAND_TIMEOUT,
         "提交实时同步确认失败",
     )
     .await
@@ -448,6 +456,7 @@ pub async fn live_conflict_details(
         ],
         None,
         agent_root,
+        STANDARD_COMMAND_TIMEOUT,
         "读取冲突差异失败",
     )
     .await?;
@@ -483,6 +492,7 @@ pub async fn resolve_initial_sync(
         ],
         stdin,
         agent_root,
+        SYNC_COMMAND_TIMEOUT,
         "处理首次任务同步失败",
     )
     .await?;
@@ -504,6 +514,7 @@ pub async fn restore_live_backup(
         ],
         None,
         agent_root,
+        SYNC_COMMAND_TIMEOUT,
         "恢复实时同步备份失败",
     )
     .await
@@ -615,11 +626,19 @@ fn sidecar_error(stdout: &str, stderr: &str, fallback: &str) -> String {
     }
 }
 
+fn terminate_command_child(child: CommandChild, message: String) -> String {
+    match child.kill() {
+        Ok(()) => message,
+        Err(error) => format!("{message}；终止客户端后台进程失败：{error}"),
+    }
+}
+
 async fn run_json_command(
     app: &AppHandle,
     args: Vec<String>,
     stdin: Option<String>,
     agent_root: &Path,
+    timeout: Duration,
     fallback: &str,
 ) -> Result<String, String> {
     let command = app
@@ -627,38 +646,60 @@ async fn run_json_command(
         .sidecar(SIDECAR_NAME)
         .map_err(|error| format!("sidecar 未随安装包提供：{error}"))?
         .args(args)
-        .env("TRELLIS_AGENT_ROOT", agent_root.to_string_lossy().to_string());
+        .env("TRELLIS_AGENT_ROOT", agent_root.to_string_lossy().to_string())
+        .set_process_group(true)
+        .kill_on_drop(true);
     let (mut receiver, mut child) = command
         .spawn()
         .map_err(|error| format!("无法启动客户端后台进程：{error}"))?;
     if let Some(payload) = stdin {
-        child
-            .write(format!("{payload}\n").as_bytes())
-            .map_err(|error| format!("无法写入客户端后台输入：{error}"))?;
-    }
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    while let Some(event) = receiver.recv().await {
-        match event {
-            CommandEvent::Stdout(line) => {
-                stdout.push_str(&String::from_utf8_lossy(&line));
-            }
-            CommandEvent::Stderr(line) => {
-                stderr.push_str(&String::from_utf8_lossy(&line));
-            }
-            CommandEvent::Terminated(payload) => {
-                if payload.code != Some(0) {
-                    return Err(sidecar_error(&stdout, &stderr, fallback));
-                }
-                break;
-            }
-            CommandEvent::Error(error) => {
-                return Err(format!("客户端后台进程错误：{error}"));
-            }
-            _ => {}
+        if let Err(error) = child.write(format!("{payload}\n").as_bytes()) {
+            return Err(terminate_command_child(
+                child,
+                format!("无法写入客户端后台输入：{error}"),
+            ));
         }
     }
-    Ok(stdout)
+    let result = tokio::time::timeout(timeout, async {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        while let Some(event) = receiver.recv().await {
+            match event {
+                CommandEvent::Stdout(line) => {
+                    stdout.push_str(&String::from_utf8_lossy(&line));
+                }
+                CommandEvent::Stderr(line) => {
+                    stderr.push_str(&String::from_utf8_lossy(&line));
+                }
+                CommandEvent::Terminated(payload) => {
+                    if payload.code != Some(0) {
+                        return Err(sidecar_error(&stdout, &stderr, fallback));
+                    }
+                    return Ok(stdout);
+                }
+                CommandEvent::Error(error) => {
+                    return Err(format!("客户端后台进程错误：{error}"));
+                }
+                _ => {}
+            }
+        }
+        Err(format!("{fallback}：客户端后台进程未返回结果"))
+    })
+    .await;
+    match result {
+        Ok(Ok(stdout)) => Ok(stdout),
+        Ok(Err(message)) => Err(terminate_command_child(child, message)),
+        Err(_) => {
+            let message = format!(
+                "{fallback}：客户端后台进程超过 {} 秒未完成",
+                timeout.as_secs()
+            );
+            match child.kill() {
+                Ok(()) => Err(format!("{message}，已终止")),
+                Err(error) => Err(format!("{message}；终止进程树失败：{error}")),
+            }
+        }
+    }
 }
 
 pub async fn login(
@@ -685,7 +726,15 @@ pub async fn login(
         "password": password,
     })
     .to_string();
-    let output = run_json_command(app, args, Some(input), agent_root, "登录失败").await?;
+    let output = run_json_command(
+        app,
+        args,
+        Some(input),
+        agent_root,
+        STANDARD_COMMAND_TIMEOUT,
+        "登录失败",
+    )
+    .await?;
     let line = last_json_line(&output).ok_or_else(|| "sidecar 返回了无效的登录结果".to_string())?;
     let summary: DesktopLoginSummary =
         serde_json::from_str(line).map_err(|_| "sidecar 返回了无效的登录结果".to_string())?;
@@ -715,6 +764,7 @@ pub async fn logout(
         ],
         Some(input),
         agent_root,
+        SHORT_COMMAND_TIMEOUT,
         "退出登录失败",
     )
     .await
@@ -752,6 +802,7 @@ pub async fn associate(
         args,
         None,
         agent_root,
+        GIT_MUTATION_TIMEOUT,
         "本地项目关联失败",
     )
     .await?;
@@ -814,7 +865,15 @@ pub async fn preflight_project(
     if require_pushed {
         args.push("--require-pushed".to_string());
     }
-    let output = run_json_command(app, args, None, agent_root, "预检本地项目失败").await?;
+    let output = run_json_command(
+        app,
+        args,
+        None,
+        agent_root,
+        GIT_CHECK_TIMEOUT,
+        "预检本地项目失败",
+    )
+    .await?;
     let line =
         last_json_line(&output).ok_or_else(|| "sidecar 返回了无效的项目预检结果".to_string())?;
     serde_json::from_str(line).map_err(|_| "sidecar 返回了无效的项目预检结果".to_string())
@@ -834,6 +893,7 @@ pub async fn inspect_project(
         ],
         None,
         agent_root,
+        STANDARD_COMMAND_TIMEOUT,
         "检查本地项目失败",
     )
     .await?;
@@ -861,6 +921,7 @@ pub async fn initialize_project(
         ],
         None,
         agent_root,
+        GIT_MUTATION_TIMEOUT,
         "初始化 Trellis 失败",
     )
     .await?;
@@ -885,6 +946,7 @@ pub async fn check_initial_push(
         ],
         None,
         agent_root,
+        GIT_CHECK_TIMEOUT,
         "检查首次推送失败",
     )
     .await?;
@@ -901,6 +963,7 @@ pub async fn list_associations(
         vec!["associations".to_string()],
         None,
         agent_root,
+        SHORT_COMMAND_TIMEOUT,
         "无法读取本地项目关联",
     )
     .await?;

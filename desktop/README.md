@@ -43,6 +43,13 @@ POST /api/agent/enroll-desktop
 
 令牌不进入 UI、磁盘、命令参数或日志，只存在于 sidecar 单次调用内存。
 
+## Sidecar 进程生命周期
+
+- 每个 sidecar 命令启动后每秒检查父客户端 PID；父进程明确消失时以 IO 退出码自行结束。
+- Tauri 启动的长驻和一次性 sidecar 都启用进程组与 `kill_on_drop`，Rust 命令按 15 秒至 600 秒的操作预算等待，超时或错误会终止整个进程树。
+- 项目栏仍每 3 秒读取本地关联，但上一请求未结束时跳过本次 tick，不堆积 IPC 调用。
+- NSIS `PREINSTALL` 和 `PREUNINSTALL` 会先结束运行中的客户端与残留 sidecar；Windows CI 会启动同名 `trellis-agent.exe` 锁文件后执行一次静默升级和卸载。
+
 ## 本地项目接入
 
 项目栏由服务端 Board 渲染。只有 Tauri WebView 显示“接入本地项目”、关联状态和 sidecar 状态。
@@ -235,10 +242,12 @@ desktop/
     permissions/desktop.toml      显式命令权限
     resources/trellis-runtime/    打包后固定的 Node + Trellis CLI
     binaries/                     SEA sidecar 构建产物
+    windows/hooks.nsh             NSIS 安装/卸载前进程清理
   sidecar/
     cli.js                        源码运行入口
     sea-entry.js                  SEA 入口
     main.js                       login/logout/关联/任务同步/命令执行/run
+    parent-watchdog.js            父客户端退出检测
     desktop-device.js             登录、Cookie、设备复用和兑换
     desktop-association.js        本地 Git 检查、pending 项目操作和 binding
     trellis-runtime.js            定位并调用打包内固定 Trellis CLI

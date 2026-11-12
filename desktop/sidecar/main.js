@@ -33,6 +33,7 @@ import {
   validateDeviceName,
 } from './desktop-device.js'
 import { associateDesktopProject, preflightDesktopProject } from './desktop-association.js'
+import { startParentWatchdog } from './parent-watchdog.js'
 import { initializeTrellis } from './trellis-runtime.js'
 
 export const SIDECAR_EXIT_CODE = Object.freeze({
@@ -480,6 +481,9 @@ function usage() {
 
 export async function runSidecarMain(argv = process.argv.slice(2), options = {}) {
   const [command = 'run', ...args] = argv
+  const stopParentWatchdog = startParentWatchdog({
+    onParentExit: () => process.exit(SIDECAR_EXIT_CODE.IO),
+  })
   try {
     switch (command) {
       case 'run':
@@ -539,5 +543,7 @@ export async function runSidecarMain(argv = process.argv.slice(2), options = {})
       })
     }
     return exitCodeFor(error)
+  } finally {
+    stopParentWatchdog()
   }
 }

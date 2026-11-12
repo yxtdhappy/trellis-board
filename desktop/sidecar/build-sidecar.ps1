@@ -47,6 +47,7 @@ $requiredFiles = @(
   (Join-Path $sidecarRoot 'main.js'),
   (Join-Path $sidecarRoot 'desktop-device.js'),
   (Join-Path $sidecarRoot 'desktop-association.js'),
+  (Join-Path $sidecarRoot 'parent-watchdog.js'),
   (Join-Path $sidecarRoot 'trellis-runtime.js'),
   (Join-Path $sidecarRoot 'bundle.mjs'),
   (Join-Path $repoRoot 'agent\index.js'),

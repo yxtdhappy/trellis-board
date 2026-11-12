@@ -163,6 +163,7 @@ test('tauri.conf.json 固定 NSIS currentUser 且 CSP 无 unsafe 指令', () => 
   assert.equal(config.bundle.active, true)
   assert.deepEqual(config.bundle.targets, ['nsis'])
   assert.equal(config.bundle.windows.nsis.installMode, 'currentUser')
+  assert.equal(config.bundle.windows.nsis.installerHooks, './windows/hooks.nsh')
   assert.equal(config.bundle.windows.webviewInstallMode.type, 'downloadBootstrapper')
   assert.equal(config.bundle.windows.webviewInstallMode.silent, true)
   assert.deepEqual(config.bundle.externalBin, ['binaries/trellis-agent'])
@@ -187,6 +188,20 @@ test('tauri.conf.json 固定 NSIS currentUser 且 CSP 无 unsafe 指令', () => 
   assert.match(cargo, /^version = "0\.2\.0"$/m)
   assert.doesNotMatch(cargo, /tauri.*features.*devtools/)
   assert.match(readText('desktop/src-tauri/src/config.rs'), /SCHEMA_VERSION: u32 = 2/)
+})
+
+test('NSIS 安装和卸载前清理客户端与残留 sidecar', () => {
+  const hooks = readText('desktop/src-tauri/windows/hooks.nsh')
+  assert.match(
+    hooks,
+    /!macro\s+NSIS_HOOK_PREINSTALL[\s\S]*?!insertmacro\s+TrellisStopRunningProcesses[\s\S]*?!macroend/,
+  )
+  assert.match(
+    hooks,
+    /!macro\s+NSIS_HOOK_PREUNINSTALL[\s\S]*?!insertmacro\s+TrellisStopRunningProcesses[\s\S]*?!macroend/,
+  )
+  assert.match(hooks, /taskkill\.exe" \/F \/T \/IM "trellis-board-client\.exe"/)
+  assert.match(hooks, /taskkill\.exe" \/F \/T \/IM "trellis-agent\.exe"/)
 })
 
 test('capability 将本地登录与远程项目关联权限分开', () => {
@@ -404,6 +419,7 @@ test('sidecar 构建脚本引用的入口文件都存在且使用 Node SEA', () 
     'desktop/sidecar/main.js',
     'desktop/sidecar/desktop-device.js',
     'desktop/sidecar/desktop-association.js',
+    'desktop/sidecar/parent-watchdog.js',
     'desktop/sidecar/trellis-runtime.js',
     'desktop/sidecar/bundle.mjs',
     'agent/index.js',

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"约束 sidecar/SEA 入口、进程边界和 Windows 安装构建行为"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"约束 Node/Rust 验证、错误处理与 Windows 真实进程测试"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"约束项目栏轮询、卸载清理和状态更新方式"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"约束前端构建、浏览器验收和可访问性"}
