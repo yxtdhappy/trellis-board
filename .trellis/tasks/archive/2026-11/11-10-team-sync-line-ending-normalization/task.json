@@ -1,0 +1,35 @@
+{
+  "id": "team-sync-line-ending-normalization",
+  "name": "team-sync-line-ending-normalization",
+  "title": "实时同步换行规范化与新客户端兼容",
+  "description": "服务端以 LF 为实时文本规范，语义相同的换行差异不产生 revision；新客户端对仅换行差异静默收敛，不兼容旧客户端或历史数据。",
+  "status": "completed",
+  "dev_type": "bugfix",
+  "scope": "full-stack",
+  "package": null,
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-10",
+  "completedAt": "2026-11-12",
+  "branch": null,
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "shared/live-text.js",
+    "server/team/live-sync.js",
+    "agent/live-sync.js",
+    "tests/team-realtime-sync.test.js",
+    "tests/desktop-realtime-apply.test.js"
+  ],
+  "notes": "远端实时文本以 LF 为唯一规范；不迁移历史数据，不保证旧客户端提示行为，只以新客户端为准。",
+  "meta": {
+    "area": "team-live-sync",
+    "canonical_eol": "lf"
+  }
+}

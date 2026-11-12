@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "核验实时写入、摘要、revision、SSE 和 Git 收敛边界"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Node 测试、真实服务和 E2E 验收要求"}

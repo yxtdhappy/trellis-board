@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "实时文件摘要、幂等、revision、备份和 Git 收敛契约"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "共享 taskKey、路径和跨层实时内容契约"}
