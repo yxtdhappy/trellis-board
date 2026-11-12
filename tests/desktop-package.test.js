@@ -345,11 +345,21 @@ test('导航、新窗口、托盘与日志边界在 Rust 源中显式实现', ()
   assert.match(logging, /"\\"sessionToken\\""/)
 })
 
-test('安装脚本以 UTF-8 BOM 保存以兼容 Windows PowerShell 5.1', () => {
-  for (const relative of ['desktop/install.ps1', 'desktop/uninstall.ps1']) {
+test('Windows PowerShell 脚本以 UTF-8 BOM 保存', () => {
+  for (const relative of [
+    'desktop/install.ps1',
+    'desktop/uninstall.ps1',
+    'desktop/package-portable.ps1',
+  ]) {
     const bytes = fs.readFileSync(path.join(ROOT, relative))
     assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], relative)
   }
+})
+
+test('绿色打包脚本无参数调用时从 desktop 目录解析默认路径', () => {
+  const script = readText('desktop/package-portable.ps1')
+  assert.match(script, /^\$desktopRoot = \$PSScriptRoot$/m)
+  assert.match(script, /Join-Path \$desktopRoot 'src-tauri\\target\\release'/)
 })
 
 test('install.ps1 默认按用户安装、校验 SHA256 并可回滚', () => {

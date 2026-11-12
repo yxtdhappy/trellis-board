@@ -94,6 +94,10 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 - 新绑定的 immediate heartbeat 直接使用服务端结果；绝不把 pending 状态当作桌面审批流程。
 - 已存在的绑定再次心跳时，分支或远端身份校验失败必须转为 `rejected` 并停止命令投递；
   修正本地分支或远端后的合法心跳可恢复为 `approved`。
+- Windows 绿色 ZIP 必须与 NSIS 来自同一次构建，包内固定包含客户端 EXE、重命名后的
+  `trellis-agent.exe`、`trellis-runtime/`、版本文件和 SHA256 清单，不得携带本地用户数据。
+- 绿色版只免安装，用户数据继续写 `%LOCALAPPDATA%\TrellisBoard\data`；Evergreen WebView2
+  是目标电脑前置条件，不随绿色 ZIP 提供安装器或 Fixed Version Runtime。
 - `readOnly` 按实际任务写能力投影：项目 `lead`/`member`，以及没有显式项目角色的系统管理员
   为可写；显式 `read_only`，或普通团队成员/团队管理员仅靠团队身份建立关联时必须返回 `true`。
 - “可关联项目”与“可读取任务项目”是两个集合。`/api/team/status` 的 `associationProjects`
@@ -170,6 +174,9 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 - Windows CI：构建后执行 sidecar `version`，断言退出码 0 和 `protocolVersion === 2`。
 - Windows CI 必须在 `tauri build` 前通过 GitHub CLI/API 填充 `%LOCALAPPDATA%\tauri\NSIS`，校验
   NSIS zip 与 `nsis_tauri_utils.dll` 的固定 SHA1；Tauri 使用的 GitHub Releases 直链可能返回 504。
+- Windows CI 必须在同一次 `tauri build` 后无参数运行 `desktop/package-portable.ps1`，校验绿色
+  ZIP 的 `/` 条目、内外 SHA256 和关键文件，并解压到含空格或中文的目录执行 sidecar `version`
+  与内置 Node 版本检查。
 - 最终安装包必须重新生成，旧 sidecar 不会被仓库代码自动替换。Web Board 修复后，已运行的 Tauri
   客户端也可能继续持有旧 WebView bundle；必须重建客户端或重新登录/重启完成复核，不能只以服务端
   静态资源已更新判定桌面修复生效。

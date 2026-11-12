@@ -153,6 +153,82 @@ jobs:
           if (-not $setup) { throw "missing NSIS installer" }
           Write-Host "client=$exe"
           Write-Host "installer=$($setup.FullName)"
+      - name: Package portable client
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass `
+            -File desktop/package-portable.ps1
+          if ($LASTEXITCODE -ne 0) {
+            throw "portable packaging exited with $LASTEXITCODE"
+          }
+      - name: Portable package smoke test
+        run: |
+          $ErrorActionPreference = "Stop"
+          $portableRoot = "desktop/src-tauri/target/release/bundle/portable"
+          $zip = Get-ChildItem (Join-Path $portableRoot "*.zip") | Select-Object -First 1
+          if (-not $zip) { throw "missing portable ZIP" }
+          $zipChecksum = Get-ChildItem (Join-Path $portableRoot "*.zip.sha256") |
+            Select-Object -First 1
+          if (-not $zipChecksum) { throw "missing portable ZIP checksum" }
+
+          $actualZipHash = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expectedZipHash = ((Get-Content -LiteralPath $zipChecksum.FullName -Raw).Trim() -split '\s+')[0]
+          if ($actualZipHash -ne $expectedZipHash) {
+            throw "portable ZIP SHA256 mismatch"
+          }
+
+          $extractRoot = Join-Path $env:RUNNER_TEMP "portable smoke 中文"
+          if (Test-Path -LiteralPath $extractRoot) {
+            Remove-Item -LiteralPath $extractRoot -Recurse -Force
+          }
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $extractRoot
+          $package = Get-ChildItem -LiteralPath $extractRoot -Directory | Select-Object -First 1
+          if (-not $package) { throw "portable package directory missing" }
+
+          foreach ($relative in @(
+              "trellis-board-client.exe",
+              "trellis-agent.exe",
+              "trellis-runtime/node.exe",
+              "VERSION.txt",
+              "SHA256SUMS.txt",
+              "使用说明.txt"
+            )) {
+            $file = Join-Path $package.FullName $relative
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+              throw "portable package missing $relative"
+            }
+          }
+
+          $checksumCount = 0
+          foreach ($line in Get-Content -LiteralPath (Join-Path $package.FullName "SHA256SUMS.txt")) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') {
+              throw "invalid SHA256SUMS line: $line"
+            }
+            $expected = $Matches[1]
+            $relative = $Matches[2].Replace('/', '\')
+            $actual = (Get-FileHash -LiteralPath (Join-Path $package.FullName $relative) `
+              -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) {
+              throw "portable checksum mismatch: $relative"
+            }
+            $checksumCount++
+          }
+          if ($checksumCount -lt 4) { throw "portable checksum manifest is incomplete" }
+
+          $sidecar = Join-Path $package.FullName "trellis-agent.exe"
+          $output = & $sidecar version
+          if ($LASTEXITCODE -ne 0) {
+            throw "portable sidecar version exited with $LASTEXITCODE"
+          }
+          $version = ($output -join "`n") | ConvertFrom-Json
+          if ($version.protocolVersion -ne 3) {
+            throw "portable sidecar protocolVersion=$($version.protocolVersion), want 3"
+          }
+
+          $node = Join-Path $package.FullName "trellis-runtime/node.exe"
+          $nodeVersion = & $node --version
+          if ($LASTEXITCODE -ne 0 -or $nodeVersion -notmatch '^v24\.') {
+            throw "portable runtime node version failed: $nodeVersion"
+          }
       - name: Installer smoke test
         run: |
           $ErrorActionPreference = "Stop"
@@ -205,5 +281,7 @@ jobs:
           path: |
             desktop/src-tauri/target/release/trellis-board-client.exe
             desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+            desktop/src-tauri/target/release/bundle/portable/*.zip
+            desktop/src-tauri/target/release/bundle/portable/*.zip.sha256
           if-no-files-found: error
           retention-days: 14

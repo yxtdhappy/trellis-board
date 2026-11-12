@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"约束 sidecar、SEA、固定 Trellis runtime 和 Windows 打包契约"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"定义 Node 测试、Windows 构建和桌面产物验证基线"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"要求复用现有构建所有者，避免新增重复打包或路径抽象"}
+{"file":".trellis/tasks/11-12-windows-portable-zip-distribution/research/portable-packaging-evidence.md","reason":"记录仓库现状、Tauri 能力和 WebView2 产品决策证据"}

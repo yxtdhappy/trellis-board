@@ -8,6 +8,7 @@ Tauri v2 外壳 + Node SEA sidecar。客户端冷启动固定显示本地登录�
 - 本地配置：`%LOCALAPPDATA%\TrellisBoard\data\client.json`
 - Agent 数据：`%LOCALAPPDATA%\TrellisBoard\data\agent`
 - 内置 Trellis runtime：`<安装目录>\trellis-runtime\`
+- 分发方式：NSIS 安装包或解压即用的 Windows x64 绿色 ZIP
 
 ## 登录与单 Agent
 
@@ -33,6 +34,7 @@ Tauri v2 外壳 + Node SEA sidecar。客户端冷启动固定显示本地登录�
 - 一个账号同一时刻只有一个有效 Agent。新设备生效后旧设备凭证立即失效，旧 SSE 关闭，旧命令取消。
 - 换设备不迁移本地仓库绝对路径、project binding、cursor 或 pending batch；新设备必须重新选择项目。
 - `mustChangePassword=true` 时只建立 Board 会话，不创建设备；改密后下一次登录再建立设备。
+- NSIS 安装和卸载会在写文件前结束旧版客户端及其 `trellis-agent.exe`，避免托盘常驻进程锁定升级文件。
 
 sidecar 通过一次性的桌面兑换令牌调用：
 
@@ -244,6 +246,7 @@ desktop/
     trellis-runtime.js            定位并调用打包内固定 Trellis CLI
     bundle.mjs                    esbuild + SEA 配置
     build-sidecar.ps1             Node 24 x64 打包和 runtime 资源复制
+  package-portable.ps1            组装绿色目录、校验文件和 ZIP
   install.ps1                     按用户安装、SHA256、暂存与回滚
   uninstall.ps1                   卸载、可选设备撤销和数据处理
 ```
@@ -266,6 +269,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File desktop\sidecar\build-sideca
 cd desktop
 cargo tauri build --no-bundle
 cargo tauri build
+cd ..
+powershell -NoProfile -ExecutionPolicy Bypass -File desktop\package-portable.ps1
 ```
 
 `build-sidecar.ps1` 还要求仓库根已执行 `npm install`，并会：
@@ -280,6 +285,35 @@ cargo tauri build
 
 - `desktop\src-tauri\target\release\trellis-board-client.exe`
 - `desktop\src-tauri\target\release\bundle\nsis\Trellis Board_<version>_x64-setup.exe`
+- `desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>_x64-portable.zip`
+
+## 绿色 ZIP（免安装）
+
+绿色包适用于不允许运行安装器的 Windows x64 电脑。运行条件：
+
+- Windows 10/11 x64。
+- 系统已安装 Microsoft Edge WebView2 Evergreen Runtime。Windows 11 默认预装；目标 Windows 10
+  镜像需由 IT 确认。
+
+执行构建命令后，解压并运行：
+
+```text
+desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>_x64-portable.zip
+  TrellisBoard_<version>_x64-portable\
+    trellis-board-client.exe
+    trellis-agent.exe
+    trellis-runtime\
+    VERSION.txt
+    SHA256SUMS.txt
+    使用说明.txt
+```
+
+双击 `trellis-board-client.exe` 即可启动，不需要管理员权限。绿色版不会创建快捷方式或开机自启项。
+登录配置、设备凭证、日志和同步数据仍保存在 `%LOCALAPPDATA%\TrellisBoard\data`。
+
+升级前先退出托盘客户端并确认 `trellis-agent.exe` 已停止，再用新版目录替换程序文件。删除程序目录
+即可移除程序；如不再使用，可额外删除 `%LOCALAPPDATA%\TrellisBoard` 清除本地数据。ZIP 同目录的
+`.sha256` 文件用于校验压缩包完整性。
 
 ## 安装与卸载
 
