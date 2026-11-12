@@ -1,0 +1,111 @@
+{
+  "startedAt": "2026-11-12T14:00:13.349Z",
+  "topology": {
+    "serverUrl": "http://127.0.0.1:4318",
+    "proxyUrl": "http://127.0.0.1:4319",
+    "tempRoot": "C:\\Users\\yuhaojie\\AppData\\Local\\Temp\\trellis-branch-e2e-5cPDIh",
+    "workingRepo": "C:\\Users\\yuhaojie\\AppData\\Local\\Temp\\trellis-branch-e2e-5cPDIh\\repositories\\working"
+  },
+  "operations": [
+    {
+      "name": "main-upload",
+      "branch": "main",
+      "serverRevision": 1,
+      "serverFiles": 2,
+      "proxyEvidence": [
+        "[proxy] POST /api/agent/task-spaces/3bcae78b-de20-43dd-8a22-2ee8df5cfb1f/changes -> /api http://127.0.0.1:4318/api/agent/task-spaces/3bcae78b-de20-43dd-8a22-2ee8df5cfb1f/changes",
+        "[proxy] 200 POST /api/agent/task-spaces/3bcae78b-de20-43dd-8a22-2ee8df5cfb1f/changes 66ms"
+      ]
+    },
+    {
+      "name": "feature-upload-rejected",
+      "branch": "feature/e2e-branch",
+      "configErrorCode": "BRANCH_MISMATCH",
+      "serverRevision": 1,
+      "cursor": {
+        "updatedAt": "2026-11-12T14:00:48.977Z",
+        "revision": 1,
+        "sequence": 1,
+        "baselines": {
+          ".trellis/tasks/00-e2e-main/prd.md": "cf3a63f159451720bbe98e368eb8c4d49eb632cbb59d57bad84ffbd55ac62a84",
+          ".trellis/tasks/00-e2e-main/task.json": "1bd30417d11ba3a999e8dbabe71b757fa290e38dc8b188a15c4bf44b066ebbd6"
+        },
+        "deferred": {}
+      },
+      "recentProxyLines": [],
+      "agentEvidence": [
+        "2026-11-12T14:00:51.187Z WARN 任务空间同步失败 {\"taskSpaceId\":\"3bcae78b-de20-43dd-8a22-2ee8df5cfb1f\",\"error\":\"本地当前分支为 feature/e2e-branch，绑定分支为 main\"}"
+      ]
+    },
+    {
+      "name": "observed-branch-http-guards",
+      "missing": {
+        "status": 400,
+        "code": "BRANCH_OBSERVATION_REQUIRED"
+      },
+      "mismatch": {
+        "status": 400,
+        "code": "BRANCH_TASK_SPACE_MISMATCH"
+      }
+    },
+    {
+      "name": "feature-pull-rejected",
+      "branch": "feature/e2e-branch",
+      "serverRevision": 2,
+      "cursor": {
+        "updatedAt": "2026-11-12T14:00:48.977Z",
+        "revision": 1,
+        "sequence": 1,
+        "baselines": {
+          ".trellis/tasks/00-e2e-main/prd.md": "cf3a63f159451720bbe98e368eb8c4d49eb632cbb59d57bad84ffbd55ac62a84",
+          ".trellis/tasks/00-e2e-main/task.json": "1bd30417d11ba3a999e8dbabe71b757fa290e38dc8b188a15c4bf44b066ebbd6"
+        },
+        "deferred": {}
+      },
+      "localFileWritten": false
+    },
+    {
+      "name": "main-recovery",
+      "branch": "main",
+      "localFileWritten": true,
+      "serverRevision": 3,
+      "cursorRevision": 3,
+      "bindingStatus": "ready"
+    },
+    {
+      "name": "feature-reassociation",
+      "serverBindings": [
+        {
+          "branch": "main",
+          "status": "revoked"
+        },
+        {
+          "branch": "feature/e2e-branch",
+          "status": "approved"
+        }
+      ],
+      "localBindingCount": 1,
+      "featureRevision": 1,
+      "mainRevision": 3,
+      "mainFiles": 4
+    }
+  ],
+  "checks": [],
+  "serverAddress": {
+    "address": "127.0.0.1",
+    "family": "IPv4",
+    "port": 4318
+  },
+  "proxyPid": 37440,
+  "agentId": "87e10194-09e6-4598-ab46-c0f3871f0370",
+  "mainTaskSpaceId": "3bcae78b-de20-43dd-8a22-2ee8df5cfb1f",
+  "projectId": "5036f99f-379a-46d6-9303-ba06140bc056",
+  "agentPid": 38416,
+  "featureTaskSpaceId": "a5e7e87e-231e-4706-8737-6afba6660b88",
+  "replacedAgentPid": 39240,
+  "result": "passed",
+  "finishedAt": "2026-11-12T14:01:17.687Z",
+  "cleanup": {
+    "tempRootRemoved": true
+  }
+}
