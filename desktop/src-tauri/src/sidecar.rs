@@ -1,17 +1,25 @@
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::menu::MenuItem;
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 const MAX_RESTARTS: u32 = 5;
 const STABLE_RUN: Duration = Duration::from_secs(60);
+const LOCK_RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
+const FORCE_RESTART_TIMEOUT: Duration = Duration::from_secs(15);
+const FORCE_RESTART_STABLE: Duration = Duration::from_secs(2);
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SIDECAR_NAME: &str = "trellis-agent";
 const SHORT_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 const STANDARD_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
@@ -134,8 +142,11 @@ pub struct SidecarState {
     generation: AtomicU64,
     auto_focus_consumed: AtomicBool,
     focus_suppressed: AtomicBool,
+    force_restarting: AtomicBool,
+    recovery_prompted: AtomicBool,
     last_start: Mutex<Option<Instant>>,
     pending_control: Mutex<VecDeque<Value>>,
+    sync_menu_item: Mutex<Option<MenuItem<Wry>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +217,14 @@ pub fn register(app: &AppHandle) {
     app.manage(SidecarState::default());
 }
 
+pub fn set_sync_menu_item(app: &AppHandle, item: MenuItem<Wry>) {
+    let state = app.state::<SidecarState>();
+    if let Ok(mut current) = state.sync_menu_item.lock() {
+        *current = Some(item);
+    }
+    refresh_sync_menu(app);
+}
+
 pub fn is_running(app: &AppHandle) -> bool {
     let state = app.state::<SidecarState>();
     state.running.load(Ordering::SeqCst) && state.child.lock().map(|guard| guard.is_some()).unwrap_or(false)
@@ -216,6 +235,50 @@ pub fn status(app: &AppHandle) -> SidecarStatus {
     SidecarStatus {
         running: is_running(app),
         paused: state.paused.load(Ordering::SeqCst),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SyncMenuMode {
+    Pause,
+    Resume,
+    Restarting,
+}
+
+fn sync_menu_mode(running: bool, force_restarting: bool) -> SyncMenuMode {
+    if force_restarting {
+        SyncMenuMode::Restarting
+    } else if running {
+        SyncMenuMode::Pause
+    } else {
+        SyncMenuMode::Resume
+    }
+}
+
+fn sync_menu_label(mode: &SyncMenuMode) -> (&'static str, bool) {
+    match mode {
+        SyncMenuMode::Pause => ("暂停同步", true),
+        SyncMenuMode::Resume => ("恢复同步", true),
+        SyncMenuMode::Restarting => ("正在强制重启", false),
+    }
+}
+
+fn refresh_sync_menu(app: &AppHandle) {
+    let state = app.state::<SidecarState>();
+    let mode = sync_menu_mode(
+        is_running(app),
+        state.force_restarting.load(Ordering::SeqCst),
+    );
+    let (label, enabled) = sync_menu_label(&mode);
+    if let Ok(current) = state.sync_menu_item.lock() {
+        if let Some(item) = current.as_ref() {
+            if let Err(error) = item.set_text(label) {
+                crate::logging::warn(&format!("无法更新同步菜单文案：{error}"));
+            }
+            if let Err(error) = item.set_enabled(enabled) {
+                crate::logging::warn(&format!("无法更新同步菜单状态：{error}"));
+            }
+        }
     }
 }
 
@@ -259,6 +322,8 @@ pub fn start(app: &AppHandle) {
                 *started = Some(Instant::now());
             }
             state.running.store(true, Ordering::SeqCst);
+            drop(guard);
+            refresh_sync_menu(app);
             let handle = app.clone();
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = receiver.recv().await {
@@ -521,6 +586,19 @@ pub async fn restore_live_backup(
     .map(|_| ())
 }
 
+fn restart_delay(attempt: u32) -> Option<Duration> {
+    (attempt <= MAX_RESTARTS)
+        .then(|| Duration::from_secs(1u64 << (attempt - 1).min(4)))
+}
+
+fn agent_process_check_failed(error: std::io::Error) -> String {
+    format!("无法确认 trellis-agent 进程状态：{error}")
+}
+
+fn begin_exclusive_restart(flag: &AtomicBool) -> bool {
+    !flag.swap(true, Ordering::SeqCst)
+}
+
 fn on_exit(app: &AppHandle, generation: u64) {
     let state = app.state::<SidecarState>();
     let Ok(mut guard) = state.child.lock() else {
@@ -532,7 +610,11 @@ fn on_exit(app: &AppHandle, generation: u64) {
     state.running.store(false, Ordering::SeqCst);
     *guard = None;
     drop(guard);
-    if state.quitting.load(Ordering::SeqCst) || state.paused.load(Ordering::SeqCst) {
+    refresh_sync_menu(app);
+    if state.quitting.load(Ordering::SeqCst)
+        || state.paused.load(Ordering::SeqCst)
+        || state.force_restarting.load(Ordering::SeqCst)
+    {
         return;
     }
     let stable = state
@@ -544,19 +626,47 @@ fn on_exit(app: &AppHandle, generation: u64) {
         .unwrap_or(false);
     if stable {
         state.restarts.store(0, Ordering::SeqCst);
+        state.recovery_prompted.store(false, Ordering::SeqCst);
     }
     let attempt = state.restarts.fetch_add(1, Ordering::SeqCst) + 1;
-    if attempt > MAX_RESTARTS {
+    let Some(delay) = restart_delay(attempt) else {
         crate::logging::warn("sidecar 连续崩溃，已停止自动重启；请从托盘恢复同步");
+        show_recovery_dialog(app);
         return;
-    }
-    let delay = 1u64 << (attempt - 1).min(4);
-    crate::logging::warn(&format!("sidecar 将在 {delay} 秒后重启（第 {attempt} 次）"));
+    };
+    crate::logging::warn(&format!(
+        "sidecar 将在 {} 秒后重启（第 {attempt} 次）",
+        delay.as_secs()
+    ));
     let handle = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(delay));
+        std::thread::sleep(delay);
         start(&handle);
     });
+}
+
+fn show_recovery_dialog(app: &AppHandle) {
+    let state = app.state::<SidecarState>();
+    if state.force_restarting.load(Ordering::SeqCst)
+        || state.recovery_prompted.swap(true, Ordering::SeqCst)
+    {
+        return;
+    }
+    refresh_sync_menu(app);
+    let handle = app.clone();
+    app.dialog()
+        .message("后台同步连续重启 5 次仍未成功。可以尝试强制重启同步；如果仍失败，客户端将自动重启。")
+        .title("后台同步连续启动失败")
+        .buttons(MessageDialogButtons::OkCustom(
+            "强制重启同步".to_string(),
+        ))
+        .show(move |confirmed| {
+            if confirmed {
+                force_restart(&handle);
+            } else {
+                crate::logging::warn("用户暂未执行强制重启同步");
+            }
+        });
 }
 
 pub fn stop(app: &AppHandle) {
@@ -569,20 +679,24 @@ pub fn stop(app: &AppHandle) {
         if let Some(child) = guard.take() {
             let _ = child.kill();
         }
-    };
+    }
+    refresh_sync_menu(app);
 }
 
-pub fn toggle_pause(app: &AppHandle) {
+pub fn handle_sync_action(app: &AppHandle) {
     let state = app.state::<SidecarState>();
-    let paused = !state.paused.load(Ordering::SeqCst);
-    state.paused.store(paused, Ordering::SeqCst);
-    if paused {
+    if state.force_restarting.load(Ordering::SeqCst) {
+        return;
+    }
+    if is_running(app) {
         stop(app);
         crate::logging::warn("已暂停后台同步");
     } else {
+        state.paused.store(false, Ordering::SeqCst);
         state.restarts.store(0, Ordering::SeqCst);
+        state.recovery_prompted.store(false, Ordering::SeqCst);
         crate::logging::warn("已恢复后台同步");
-        start(app);
+        restart(app);
     }
 }
 
@@ -591,13 +705,210 @@ pub fn restart(app: &AppHandle) {
     let state = app.state::<SidecarState>();
     state.paused.store(false, Ordering::SeqCst);
     state.restarts.store(0, Ordering::SeqCst);
-    start(app);
+    state.recovery_prompted.store(false, Ordering::SeqCst);
+    refresh_sync_menu(app);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let lock_file = crate::config::agent_root().join("agent.lock");
+        let deadline = Instant::now() + LOCK_RELEASE_TIMEOUT;
+        while lock_file.exists() && Instant::now() < deadline {
+            std::thread::sleep(PROCESS_POLL_INTERVAL);
+        }
+        start(&handle);
+    });
 }
 
 pub fn shutdown(app: &AppHandle) {
     let state = app.state::<SidecarState>();
     state.quitting.store(true, Ordering::SeqCst);
     stop(app);
+}
+
+pub fn force_restart(app: &AppHandle) {
+    let state = app.state::<SidecarState>();
+    if !begin_exclusive_restart(&state.force_restarting) {
+        crate::logging::warn("强制重启同步已在进行中");
+        return;
+    }
+    state.paused.store(false, Ordering::SeqCst);
+    state.restarts.store(0, Ordering::SeqCst);
+    state.recovery_prompted.store(false, Ordering::SeqCst);
+    stop(app);
+    state.paused.store(false, Ordering::SeqCst);
+    refresh_sync_menu(app);
+    crate::logging::warn("开始强制重启后台同步");
+
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let result = force_restart_agent(&handle);
+        let state = handle.state::<SidecarState>();
+        match result {
+            Ok(()) => {
+                state.force_restarting.store(false, Ordering::SeqCst);
+                crate::logging::warn("强制重启后台同步成功");
+                refresh_sync_menu(&handle);
+            }
+            Err(error) => {
+                crate::logging::warn(&format!("强制重启后台同步失败：{error}；即将重启客户端"));
+                shutdown(&handle);
+                handle.restart();
+            }
+        }
+    });
+}
+
+fn force_restart_agent(app: &AppHandle) -> Result<(), String> {
+    let agent_root = crate::config::agent_root();
+    let lock_file = agent_root.join("agent.lock");
+    let previous_token = read_lock_token(&lock_file);
+    terminate_agent_processes()?;
+    backup_lock_file(&lock_file)?;
+    start(app);
+
+    let deadline = Instant::now() + FORCE_RESTART_TIMEOUT;
+    let mut matched_token = None;
+    let mut stable_since = None;
+    while Instant::now() < deadline {
+        if let Some((token, pid)) = read_lock_owner(&lock_file) {
+            if token != previous_token && agent_process_is_alive(pid)? {
+                if matched_token.as_deref() != Some(token.as_str()) {
+                    matched_token = Some(token);
+                    stable_since = Some(Instant::now());
+                } else if stable_since
+                    .map(|started| started.elapsed() >= FORCE_RESTART_STABLE)
+                    .unwrap_or(false)
+                    && read_lock_owner(&lock_file)
+                        .map(|(latest, _)| latest == token)
+                        .unwrap_or(false)
+                {
+                    return Ok(());
+                }
+            } else {
+                matched_token = None;
+                stable_since = None;
+            }
+        }
+        std::thread::sleep(PROCESS_POLL_INTERVAL);
+    }
+    Err("新 Agent 在限定时间内未建立有效的运行锁".to_string())
+}
+
+fn read_lock_owner(lock_file: &Path) -> Option<(String, u32)> {
+    let metadata: Value = serde_json::from_str(&std::fs::read_to_string(lock_file).ok()?).ok()?;
+    let token = metadata.get("token")?.as_str()?.to_string();
+    let pid = u32::try_from(metadata.get("pid")?.as_u64()?).ok()?;
+    Some((token, pid))
+}
+
+fn read_lock_pid(lock_file: &Path) -> Option<u32> {
+    let metadata: Value = serde_json::from_str(&std::fs::read_to_string(lock_file).ok()?).ok()?;
+    u32::try_from(metadata.get("pid")?.as_u64()?).ok()
+}
+
+fn read_lock_token(lock_file: &Path) -> Option<String> {
+    read_lock_owner(lock_file).map(|(token, _)| token)
+}
+
+fn backup_lock_file(lock_file: &Path) -> Result<(), String> {
+    if !lock_file.exists() {
+        return Ok(());
+    }
+    if let Some(pid) = read_lock_pid(lock_file) {
+        if process_is_alive(pid)? {
+            return Err(format!("agent.lock 仍被存活进程 PID {pid} 持有"));
+        }
+    }
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let backup: PathBuf = lock_file.with_file_name(format!("agent.lock.force-restart-{stamp}.bak"));
+    std::fs::rename(lock_file, &backup)
+        .map_err(|error| format!("无法备份残留锁 {}：{error}", backup.display()))
+}
+
+#[cfg(windows)]
+fn terminate_agent_processes() -> Result<(), String> {
+    let _ = Command::new("taskkill")
+        .args(["/F", "/T", "/IM", "trellis-agent.exe"])
+        .output();
+    let deadline = Instant::now() + LOCK_RELEASE_TIMEOUT;
+    while Instant::now() < deadline {
+        if !agent_processes_running()? {
+            return Ok(());
+        }
+        std::thread::sleep(PROCESS_POLL_INTERVAL);
+    }
+    Err("仍有 trellis-agent.exe 进程无法结束".to_string())
+}
+
+#[cfg(not(windows))]
+fn terminate_agent_processes() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn agent_processes_running() -> Result<bool, String> {
+    Command::new("tasklist")
+        .args([
+            "/FI",
+            "IMAGENAME eq trellis-agent.exe",
+            "/FO",
+            "CSV",
+            "/NH",
+        ])
+        .output()
+        .map_err(agent_process_check_failed)
+        .and_then(|output| {
+            if !output.status.success() {
+                return Err(format!(
+                    "无法查询 trellis-agent 进程：{}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+            Ok(String::from_utf8_lossy(&output.stdout)
+                .to_ascii_lowercase()
+                .contains("trellis-agent.exe"))
+        })
+}
+
+#[cfg(windows)]
+fn tasklist_for_pid(pid: u32) -> Result<String, String> {
+    let filter = format!("PID eq {pid}");
+    Command::new("tasklist")
+        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        .output()
+        .map_err(agent_process_check_failed)
+        .and_then(|output| {
+            if !output.status.success() {
+                return Err(format!(
+                    "无法查询进程 {pid}：{}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+            Ok(String::from_utf8_lossy(&output.stdout).to_ascii_lowercase())
+        })
+}
+
+#[cfg(windows)]
+fn process_is_alive(pid: u32) -> Result<bool, String> {
+    Ok(tasklist_for_pid(pid)?.contains(&format!("\"{pid}\"")))
+}
+
+#[cfg(not(windows))]
+fn process_is_alive(pid: u32) -> Result<bool, String> {
+    Ok(Path::new("/proc").join(pid.to_string()).exists())
+}
+
+#[cfg(windows)]
+fn agent_process_is_alive(pid: u32) -> Result<bool, String> {
+    let text = tasklist_for_pid(pid)?;
+    Ok(text.contains("trellis-agent.exe") && text.contains(&format!("\"{pid}\"")))
+}
+
+#[cfg(not(windows))]
+fn agent_process_is_alive(pid: u32) -> Result<bool, String> {
+    process_is_alive(pid)
 }
 
 fn last_json_line(output: &str) -> Option<&str> {
@@ -983,6 +1294,68 @@ pub async fn list_associations(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_menu_matches_runtime_state() {
+        assert_eq!(
+            sync_menu_label(&sync_menu_mode(true, false)),
+            ("暂停同步", true)
+        );
+        assert_eq!(
+            sync_menu_label(&sync_menu_mode(false, false)),
+            ("恢复同步", true)
+        );
+        assert_eq!(
+            sync_menu_label(&sync_menu_mode(false, true)),
+            ("正在强制重启", false)
+        );
+    }
+
+    #[test]
+    fn restart_delay_stops_after_five_retries() {
+        assert_eq!(restart_delay(1), Some(Duration::from_secs(1)));
+        assert_eq!(restart_delay(5), Some(Duration::from_secs(16)));
+        assert_eq!(restart_delay(6), None);
+    }
+
+    #[test]
+    fn force_restart_is_single_flight() {
+        let flag = AtomicBool::new(false);
+        assert!(begin_exclusive_restart(&flag));
+        assert!(!begin_exclusive_restart(&flag));
+    }
+
+    #[test]
+    fn force_restart_backs_up_lock_without_deleting_it() {
+        let directory = std::env::temp_dir().join(format!(
+            "trellis-lock-backup-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).expect("创建测试目录");
+        let lock_file = directory.join("agent.lock");
+        std::fs::write(
+            &lock_file,
+            "{\"pid\":2000000000,\"token\":\"old\"}\n",
+        )
+        .expect("写入锁");
+
+        backup_lock_file(&lock_file).expect("备份锁");
+        assert!(!lock_file.exists());
+        let backup = std::fs::read_dir(&directory)
+            .expect("读取测试目录")
+            .filter_map(Result::ok)
+            .find(|entry| entry.file_name().to_string_lossy().starts_with("agent.lock.force-restart-"))
+            .expect("找到锁备份");
+        assert_eq!(
+            std::fs::read_to_string(backup.path()).expect("读取锁备份"),
+            "{\"pid\":2000000000,\"token\":\"old\"}\n"
+        );
+        std::fs::remove_dir_all(directory).expect("清理测试目录");
+    }
 
     #[test]
     fn local_association_keeps_old_sidecar_compatibility() {

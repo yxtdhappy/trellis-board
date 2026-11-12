@@ -13,7 +13,8 @@ function processIsAlive(pid) {
     process.kill(pid, 0)
     return true
   } catch (error) {
-    return error.code === 'EPERM'
+    // 只有明确不存在才允许回收；权限不足或未知错误均按仍存活处理。
+    return error.code !== 'ESRCH'
   }
 }
 
@@ -40,6 +41,7 @@ export class SingleInstanceLock {
     this.lockFile = lockFile
     this.staleMs = options.staleMs || DEFAULT_STALE_MS
     this.now = options.now || Date.now
+    this.processIsAlive = options.processIsAlive || processIsAlive
     this.token = null
     this.heartbeatTimer = null
     this.handle = null
@@ -82,15 +84,22 @@ export class SingleInstanceLock {
           continue
         }
         const age = this.now() - current.mtimeMs
-        const sameHost =
-          typeof current.metadata?.hostname === 'string' &&
-          current.metadata.hostname === (process.env.COMPUTERNAME || 'local')
-        const ownerAlive = sameHost && processIsAlive(current.metadata?.pid)
-        if (ownerAlive || (!sameHost && age <= this.staleMs)) {
+        const ownerPid = current.metadata?.pid
+        const ownerPidValid = Number.isInteger(ownerPid) && ownerPid > 0
+        const ownerAlive = ownerPidValid && this.processIsAlive(ownerPid)
+        if (ownerAlive || (!ownerPidValid && age <= this.staleMs)) {
           throw new AgentError(
             AGENT_ERROR_CODE.LOCKED,
             '已有 Trellis Agent 实例在运行，本次启动退出',
           )
+        }
+        const latest = await readLock(this.lockFile)
+        if (
+          !latest ||
+          latest.mtimeMs !== current.mtimeMs ||
+          latest.metadata?.token !== current.metadata?.token
+        ) {
+          continue
         }
         await fs.unlink(this.lockFile).catch((unlinkError) => {
           if (unlinkError.code !== 'ENOENT') {

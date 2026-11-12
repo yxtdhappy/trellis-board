@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"检查锁回收、重试耗尽、强制重启、动态托盘和桌面打包契约是否同步更新"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 Node/Rust/Windows 测试覆盖、错误路径和无损数据操作"}
+{"file":".trellis/tasks/11-12-fix-desktop-sidecar-lock-recovery-menu/research/sidecar-lock-recovery-evidence.md","reason":"逐项核对本次根因、用户决策和强制重启验收证据"}
