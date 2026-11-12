@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { TRELLIS_AGENT_TOOLS } from '@shared/trellis-agent-tools.js'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
+import { onboardingErrorMessage, preflightBlockReason } from '@/lib/onboarding-probe.js'
 import { SelectField } from '../SelectField'
 
 type TeamOption = {
@@ -295,9 +296,7 @@ export function ProjectOnboardingDialog({
       })
       .catch((error: unknown) => {
         if (cancelled) return
-        setAssociationLoadError(
-          error instanceof Error ? error.message : '无法读取当前设备的本地项目关联',
-        )
+        setAssociationLoadError(onboardingErrorMessage(error, '无法读取当前设备的本地项目关联'))
       })
     return () => {
       cancelled = true
@@ -324,6 +323,14 @@ export function ProjectOnboardingDialog({
     Boolean(inspection && missingTools.some((tool) => selectedTools.includes(tool.id)))
   const requiresPushCheck = requiresInitialPush
   const pushReady = push?.state === 'ready'
+  const preflightBlockedReason = inspection
+    ? preflightBlockReason({
+        hasTrellis: inspection.hasTrellis,
+        hasTasks: inspection.hasTasks,
+        requiresPushCheck,
+        pushState: push?.state,
+      })
+    : ''
   const replacedAssociations = useMemo(
     () =>
       inspection
@@ -378,7 +385,7 @@ export function ProjectOnboardingDialog({
           : '本机编码 Agent 工具初始化完成，不影响当前任务空间接入。',
       )
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Trellis 初始化失败')
+      setMessage(onboardingErrorMessage(error, 'Trellis 初始化失败'))
     } finally {
       setBusy(false)
     }
@@ -405,7 +412,7 @@ export function ProjectOnboardingDialog({
       if (!silent) setMessage(stateLabel(next))
     } catch (error) {
       if (!silent) {
-        setMessage(error instanceof Error ? error.message : '检查推送状态失败')
+        setMessage(onboardingErrorMessage(error, '检查推送状态失败'))
       }
     } finally {
       pushCheckInFlight.current = false
@@ -432,16 +439,16 @@ export function ProjectOnboardingDialog({
 
   function validateBeforePreflight() {
     if (!inspection) return
+    if (preflightBlockedReason) {
+      setMessage(preflightBlockedReason)
+      return false
+    }
     if (!teamId) {
       setMessage('请选择项目归属团队。')
       return false
     }
     if (!developerId.trim()) {
       setMessage('请填写 Trellis developer ID。')
-      return false
-    }
-    if (requiresPushCheck && !pushReady) {
-      setMessage('请先确认初始化文件已经提交并成功推送到远端分支。')
       return false
     }
     return true
@@ -461,7 +468,7 @@ export function ProjectOnboardingDialog({
       if (!next) throw new Error('没有返回有效的任务预检结果')
       setPreflight(next)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '任务预检失败')
+      setMessage(onboardingErrorMessage(error, '任务预检失败'))
     } finally {
       setBusy(false)
     }
@@ -502,7 +509,7 @@ export function ProjectOnboardingDialog({
       onAssociated(association)
       onOpenChange(false)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '本地项目接入失败')
+      setMessage(onboardingErrorMessage(error, '本地项目接入失败'))
     } finally {
       setBusy(false)
     }
@@ -781,6 +788,11 @@ export function ProjectOnboardingDialog({
               {message}
             </p>
           ) : null}
+          {!preflight && !message && preflightBlockedReason ? (
+            <p id="onboard-preflight-reason" className="text-xs text-amber-700 dark:text-amber-400">
+              {preflightBlockedReason}
+            </p>
+          ) : null}
         </DialogBody>
         <DialogFooter className="flex-wrap gap-2">
           <Button type="button" variant="outline" disabled={busy} onClick={cancelPendingProject}>
@@ -789,7 +801,10 @@ export function ProjectOnboardingDialog({
           {!preflight ? (
             <Button
               type="button"
-              disabled={busy || !inspection || (requiresPushCheck && !pushReady)}
+              disabled={busy || !inspection || Boolean(preflightBlockedReason)}
+              aria-describedby={
+                preflightBlockedReason && !message ? 'onboard-preflight-reason' : undefined
+              }
               onClick={() => void runPreflight()}
             >
               {busy ? '正在检查…' : '检查任务差异'}

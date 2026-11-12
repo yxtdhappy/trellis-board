@@ -84,6 +84,10 @@
   `waiting_push`、`branch_missing`、`remote_ahead`、`diverged`、`unable_to_verify`、`ready`
   的明确状态。已有任务树仅追加本机 Agent 工具时，这些配置不属于共享任务同步内容，不要求先
   commit/push。
+- 接入向导只有在 `.trellis/tasks` 已存在且首次推送门禁已满足时才允许“检查任务差异”；
+  缺少任务树或推送未 `ready` 时按钮必须禁用并显示具体原因，仅缺少可选 Agent 工具不得阻塞预检。
+  初始化、预检和关联的 Tauri `invoke` 拒绝值必须经 `onboardingErrorMessage()` 提取 `Error`、
+  字符串或对象 `message`，空消息才回落到通用文案；禁止直接序列化整个错误对象。
 - 接入向导重新打开时不能只依赖本次打开期间的内存状态判断首次推送门禁；必须使用仓库预检返回的
   `hasCommittedTrellis` 恢复“本地已有 `.trellis`、但尚未进入 HEAD”的等待提交/推送状态。
 - 客户端不得自动 commit/push；用户完成提交和推送后，通过“检查推送状态”比较本地 HEAD 与远端分支。
