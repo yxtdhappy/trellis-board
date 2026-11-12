@@ -7,3 +7,8 @@
 - 面板 id 默认与插件 id 相同；一个插件有多个面板时使用 `<id>-<surface>`。
 
 命名之外，插件仓库内不提交任何真实环境信息：本地绝对路径、账号、目标 URL、外部项目大纲/知识库都通过 `config` 注入。
+
+## 测试
+
+从仓库根目录运行 `npm run test:plugins`（等价于 `node --test plugins/*/test/*.test.js`）。
+根 `npm test` 默认只跑宿主测试 `tests/*.test.js`，不包含这里的插件测试。

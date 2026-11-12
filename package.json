@@ -12,7 +12,9 @@
     "capacity": "node scripts/team-capacity-check.js",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "test": "node --test tests/*.test.js plugins/*/test/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "test:plugins": "node --test plugins/*/test/*.test.js",
+    "test:all": "node --test tests/*.test.js plugins/*/test/*.test.js"
   },
   "dependencies": {
     "@mindfoldhq/trellis": "0.6.17"
