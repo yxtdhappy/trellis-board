@@ -2,8 +2,8 @@
 
 ## 共享 watcher
 
-- `shared/trellis-watcher.js` 是目录过滤、递归监听、事件字段和 close/rebuild 的唯一实现。
-- 单机 `server/watcher.js` 只做兼容包装；桌面 sidecar 直接使用共享模块。
+- `packages/shared/trellis-watcher.js` 是目录过滤、递归监听、事件字段和 close/rebuild 的唯一实现。
+- 单机 `apps/server/watcher.js` 只做兼容包装；桌面 sidecar 直接使用共享模块。
 - 团队服务端不得启动该 watcher 监听自己的项目工作副本。
 - 事件保留兼容字段 `relativePath`（相对 `.trellis`）和 `trellisPath`（相对仓库，含 `.trellis/`）。
 
@@ -41,7 +41,7 @@ prd -> research -> design -> implementPlan -> context -> review
 
 `task.status=in_progress` 只表示任务已开始，不能单独完成 `implement`。实施完成还必须存在实施报告、检查报告、已勾选验收项、提交或 `status=completed`；`implement.md` 中已勾选的检查项只有在已有上述实施完成证据时，才能进一步完成 `check`。归档任务仍按归档目录补齐历史阶段，不因这项证据门禁回退已完成阶段。
 
-E2E 只接受明确的执行完成证据。`implement.md` 中的计划、条件句或“下一步做 E2E”不能计为完成；否定语句也不能计为完成。[tests/loader.test.js](../../../tests/loader.test.js) 对这些分支有回归。
+E2E 只接受明确的执行完成证据。`implement.md` 中的计划、条件句或“下一步做 E2E”不能计为完成；否定语句也不能计为完成。[apps/server/test/loader.test.js](../../../apps/server/test/loader.test.js) 对这些分支有回归。
 
 人工阶段由 `setManualStage()` 写入 SQLite `task_stage` 表，键为 `${projectId}/${relativeDir}`。`withManualStages()` 只覆盖被勾选的阶段，不自动补齐前序阶段。写入人工阶段时还必须把 `executionTaskKey` 传入同一事务，追加 `stage_manual_confirmed` 事件。移除项目时必须在同一事务中清理该 `${projectId}/` 前缀下的人工阶段和 `${projectId}::` 前缀下的执行扩展数据，避免项目重新加入或任务路径复用时继承旧值。
 
@@ -336,7 +336,7 @@ withTransaction(db, () => {
 
 ## 刷新与监听
 
-[server/watcher.js](../../../server/watcher.js) 只监听白名单仓库的：
+[apps/server/watcher.js](../../../apps/server/watcher.js) 只监听白名单仓库的：
 
 - `.trellis/tasks`
 - `.trellis/workspace`
@@ -344,7 +344,7 @@ withTransaction(db, () => {
 
 路径统一为 `/`。当前使用递归 `fs.watch`，主要面向 Windows/macOS 本机；Linux 或网络盘不支持递归监听时保留手动刷新回退。
 
-事件进入 [server/index.js](../../../server/index.js) 后经过：
+事件进入 [apps/server/index.js](../../../apps/server/index.js) 后经过：
 
 1. 默认 `400ms` 防抖，可由 `TRELLIS_WATCH_DEBOUNCE_MS` 调整，最低 `100ms`。
 2. 合并多个事件。

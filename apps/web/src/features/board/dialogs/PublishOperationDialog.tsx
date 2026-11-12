@@ -1,0 +1,101 @@
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { isCompleteOperation, isRetryableOperation, operationPollDelay } from '@/lib/team-client.js'
+import type { PublishOperation } from '@/hooks/useBoard'
+
+const OPERATION_LABELS: Record<string, string> = {
+  pending: '等待目标客户端',
+  delivered: '已投递',
+  running: '客户端执行中',
+  succeeded: '已完成',
+  cancelled: '已取消',
+  failed: '失败',
+}
+
+const EXPLANATIONS: Record<string, string> = {
+  pending: '操作等待目标用户唯一在线 Agent 接收。',
+  delivered: '命令已投递给目标客户端，等待本地执行。',
+  running: '目标客户端正在本地调用 task.py 或修改负责人。',
+  succeeded: '任务文件已同步并由服务端索引成功。',
+  cancelled: '操作已取消，没有生成或修改正式任务。',
+  failed: '操作失败，服务端返回了可读错误。',
+}
+
+type PublishOperationDialogProps = {
+  operation: PublishOperation | null
+  onClose: () => void
+  onRetry: () => void
+}
+
+export function PublishOperationDialog({
+  operation,
+  onClose,
+  onRetry,
+}: PublishOperationDialogProps) {
+  const status = operation?.status || 'pending'
+  const retryable = isRetryableOperation(operation)
+  const complete = isCompleteOperation(operation)
+
+  return (
+    <Dialog open={Boolean(operation)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-[620px]">
+        <DialogHeader>
+          <DialogTitle className="text-base">
+            {operation?.commandType === 'assign_task'
+              ? '改派任务'
+              : operation?.commandType === 'create_task'
+                ? '创建任务'
+                : '任务操作'}
+          </DialogTitle>
+          <DialogDescription>{EXPLANATIONS[status] || '正在跟踪任务操作…'}</DialogDescription>
+        </DialogHeader>
+
+        <DialogBody className="flex flex-col gap-2 text-[11px]">
+          <div className="flex items-center gap-2">
+            <span
+              className={
+                status === 'failed'
+                  ? 'rounded-full bg-destructive/10 px-2 py-0.5 font-semibold text-destructive'
+                  : complete
+                    ? 'rounded-full bg-emerald-500/10 px-2 py-0.5 font-semibold text-emerald-600'
+                    : 'rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary'
+              }
+            >
+              {OPERATION_LABELS[status] || status}
+            </span>
+            <span className="text-muted-foreground">操作 #{operation?.id || '待服务端返回'}</span>
+          </div>
+          {operation?.taskKey ? (
+            <p className="text-muted-foreground">任务：{operation.taskKey}</p>
+          ) : null}
+          {operation?.error ? (
+            <p role="alert" className="rounded-lg bg-destructive/10 px-2.5 py-1.5 text-destructive">
+              {operation.error}
+            </p>
+          ) : null}
+          {status === 'failed' && retryable ? (
+            <p className="text-[10px] text-muted-foreground">
+              每 {Math.round(operationPollDelay(1) / 1000)}{' '}
+              秒刷新一次状态；目标客户端完成执行并同步任务后才算成功。
+            </p>
+          ) : null}
+        </DialogBody>
+
+        <DialogFooter className="gap-2">
+          {status === 'failed' ? <Button onClick={onRetry}>重试操作</Button> : null}
+          <Button variant="outline" onClick={onClose}>
+            关闭
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}

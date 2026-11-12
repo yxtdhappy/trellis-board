@@ -1,0 +1,106 @@
+# 本地登录页与远程 Board 使用分离的 capability。
+
+[[permission]]
+identifier = "allow-app-status"
+description = "读取本地桌面客户端版本、上次服务端地址和 Agent 运行状态。"
+commands.allow = ["app_status"]
+
+[[permission]]
+identifier = "allow-desktop-login"
+description = "仅本地登录页向进程内 Agent 提交账号密码。"
+commands.allow = ["desktop_login"]
+
+[[permission]]
+identifier = "allow-pick-local-project-folder"
+description = "当前 Board origin 只能弹出系统目录选择器并拿到用户选中的本地项目根目录。"
+commands.allow = ["pick_local_project_folder"]
+
+[[permission]]
+identifier = "allow-inspect-local-project"
+description = "当前 Board origin 只能对用户刚选中的本地项目执行只读预检。"
+commands.allow = ["inspect_local_project"]
+
+[[permission]]
+identifier = "allow-initialize-pending-project"
+description = "当前 Board origin 只能初始化用户刚刚选择的本地项目。"
+commands.allow = ["initialize_pending_project"]
+
+[[permission]]
+identifier = "allow-check-pending-project-push"
+description = "当前 Board origin 只能检查用户刚刚选择的本地项目首次推送状态。"
+commands.allow = ["check_pending_project_push"]
+
+[[permission]]
+identifier = "allow-preflight-pending-project"
+description = "当前 Board origin 只能只读预检用户刚刚选择的本地项目，不得建立绑定。"
+commands.allow = ["preflight_pending_project"]
+
+[[permission]]
+identifier = "allow-cancel-pending-project"
+description = "当前 Board origin 只能清除用户刚刚选择的待接入项目路径。"
+commands.allow = ["cancel_pending_project"]
+
+[[permission]]
+identifier = "allow-associate-pending-project"
+description = "当前 Board origin 只能接入用户刚刚选择并完成预检的本地项目。"
+commands.allow = ["associate_pending_project"]
+
+[[permission]]
+identifier = "allow-list-local-associations"
+description = "当前 Board origin 可读取本地项目关联状态。"
+commands.allow = ["list_local_associations"]
+
+[[permission]]
+identifier = "allow-inspect-associated-project-agents"
+description = "当前 Board origin 可按已批准的任务空间关联只读检查本机编码 Agent。"
+commands.allow = ["inspect_associated_project_agents"]
+
+[[permission]]
+identifier = "allow-initialize-associated-project-agents"
+description = "当前 Board origin 可为已批准的任务空间关联追加本机编码 Agent。"
+commands.allow = ["initialize_associated_project_agents"]
+
+[[permission]]
+identifier = "allow-sync-deferred-tasks"
+description = "当前 Board origin 可为已关联任务空间显式上传本地待同步任务。"
+commands.allow = ["sync_deferred_tasks"]
+
+[[permission]]
+identifier = "allow-desktop-sidecar-status"
+description = "当前 Board origin 可读取客户端后台同步运行状态。"
+commands.allow = ["desktop_sidecar_status"]
+
+[[permission]]
+identifier = "allow-live-control-get"
+description = "本地实时同步控制窗口读取当前待处理事件。"
+commands.allow = ["live_control_pending"]
+
+[[permission]]
+identifier = "allow-live-control-decide"
+description = "本地实时同步控制窗口提交任务冲突处理动作。"
+commands.allow = ["live_control_decide"]
+
+[[permission]]
+identifier = "allow-live-control-diff"
+description = "本地实时同步控制窗口读取冲突任务的本地与服务端内容。"
+commands.allow = ["live_control_diff"]
+
+[[permission]]
+identifier = "allow-live-control-initial"
+description = "本地实时同步控制窗口处理已经明确接入后的首次同步差异。"
+commands.allow = ["live_control_initial"]
+
+[[permission]]
+identifier = "allow-live-control-dismiss"
+description = "本地实时同步控制窗口关闭已读通知。"
+commands.allow = ["live_control_dismiss"]
+
+[[permission]]
+identifier = "allow-runtime-status"
+description = "本地登录页可检查 Node.js 与 Trellis CLI 运行环境。"
+commands.allow = ["runtime_status"]
+
+[[permission]]
+identifier = "allow-runtime-install"
+description = "本地登录页可在环境缺失时安装运行环境。"
+commands.allow = ["runtime_install"]

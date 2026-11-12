@@ -6,18 +6,18 @@
 
 ```text
 白名单仓库 .trellis/**
-  -> server/loader.js 扫描与阶段推导
-  -> server/scan-worker.js Worker Thread 汇总
+  -> apps/server/loader.js 扫描与阶段推导
+  -> apps/server/scan-worker.js Worker Thread 汇总
   -> 运行数据目录中的 board.sqlite scan_cache、task_dependency、board_state 与内存 boardCache
-  -> server/index.js /api/board、/api/task
+  -> apps/server/index.js /api/board、/api/task
   -> public/app.js state 与 renderX/bindX
   -> public/index.html 原生 DOM
 ```
 
 ```text
 public/app.js api()
-  -> server/index.js 路由
-  -> server/actions.js / metadata.js / execution-store.js
+  -> apps/server/index.js 路由
+  -> apps/server/actions.js / metadata.js / execution-store.js
   -> 目标仓库 task.json / 本应用 SQLite task_stage、task_execution、task_tag、saved_view、task_event、task_dependency、board_state
   -> watcher 防抖、排队、重新扫描
   -> 前端状态轮询并加载新看板
@@ -25,11 +25,11 @@ public/app.js api()
 
 ```text
 Team Agent A .trellis/tasks/**
-  -> baseSha256 CAS -> server/team/task-snapshot-service.js
+  -> baseSha256 CAS -> apps/server/team/task-snapshot-service.js
   -> sync_task_space_file revision
-  -> server/team/task-space-index.js tasks-only 临时快照
+  -> apps/server/team/task-space-index.js tasks-only 临时快照
   -> sync_task_index -> Board SSE tasks.changed
-  -> web/src/hooks/useBoard.ts REST 对齐
+  -> apps/web/src/hooks/useBoard.ts REST 对齐
   -> Team Agent B cursor 拉取 + 完整任务目录原子替换
 
 Web 创建/改派
@@ -46,12 +46,12 @@ Web 创建/改派
 
 13 个阶段及顺序分布在多个真实位置：
 
-- [server/metadata.js](../../../server/metadata.js)：人工阶段的合法 ID。
-- [server/loader.js](../../../server/loader.js)：`STAGE_ORDER`、`STAGE_META`、阶段证据和推导。
-- [server/scan-worker.js](../../../server/scan-worker.js)：Worker 返回的阶段骨架。
+- [apps/server/metadata.js](../../../apps/server/metadata.js)：人工阶段的合法 ID。
+- [apps/server/loader.js](../../../apps/server/loader.js)：`STAGE_ORDER`、`STAGE_META`、阶段证据和推导。
+- [apps/server/scan-worker.js](../../../apps/server/scan-worker.js)：Worker 返回的阶段骨架。
 - [public/app.js](../../../public/app.js)：`STAGE_LANES` 按阶段数组索引映射流水线列。
 
-当前重复定义是已知实现状态。修改阶段时没有统一常量可改，必须逐个定位并同步；同时更新 [tests/loader.test.js](../../../tests/loader.test.js) 中阶段、人工覆盖、E2E 和父任务继承相关断言。不要只改后端导致前端列错位。
+当前重复定义是已知实现状态。修改阶段时没有统一常量可改，必须逐个定位并同步；同时更新 [apps/server/test/loader.test.js](../../../apps/server/test/loader.test.js) 中阶段、人工覆盖、E2E 和父任务继承相关断言。不要只改后端导致前端列错位。
 
 阶段 ID 表示流程语义，阶段 `index` 从 1 开始，前端数组下标从 0 开始。E2E 是唯一标记为 `optional: true` 的阶段；缺失 E2E 不阻塞规范回写和工作提交。
 
@@ -74,7 +74,7 @@ Web 创建/改派
 - 仓库配置和监听事件把路径分隔符统一为 `/`；Node 文件操作前再用 `path.resolve()` 得到本机路径。
 - 详情请求合并列表任务和最新磁盘扫描结果时，仍以 `taskKey` 匹配。
 
-修改路径格式时，同时检查 [server/config.js](../../../server/config.js)、[server/repositories.js](../../../server/repositories.js)、[server/loader.js](../../../server/loader.js)、[server/watcher.js](../../../server/watcher.js)、[server/actions.js](../../../server/actions.js) 和 [public/app.js](../../../public/app.js)。
+修改路径格式时，同时检查 [apps/server/config.js](../../../apps/server/config.js)、[apps/server/repositories.js](../../../apps/server/repositories.js)、[apps/server/loader.js](../../../apps/server/loader.js)、[apps/server/watcher.js](../../../apps/server/watcher.js)、[apps/server/actions.js](../../../apps/server/actions.js) 和 [public/app.js](../../../public/app.js)。
 
 ### 列表与详情
 
@@ -82,7 +82,7 @@ Web 创建/改派
 
 修改任务字段时先判断它属于：
 
-- 列表和详情都需要：加入 [server/loader.js](../../../server/loader.js) 的 `toTaskListItem()` 和前端卡片/详情渲染。
+- 列表和详情都需要：加入 [apps/server/loader.js](../../../apps/server/loader.js) 的 `toTaskListItem()` 和前端卡片/详情渲染。
 - 只有详情需要：保留在完整 task 中，不进入 `toTaskListItem()`。
 
 增加大字段前必须确认不会被列表接口意外带出。
@@ -120,7 +120,7 @@ Web 创建/改派
 
 ### 扫描缓存版本
 
-[server/index.js](../../../server/index.js) 的 `SCAN_SCHEMA_VERSION` 当前为 `11`。只要 board 输出形状（包括执行风险摘要、指标摘要和 flow）发生不兼容变化，就递增该值，让 SQLite `scan_cache` 行失效。只改内部实现、不改变持久化输出形状时无需递增。
+[apps/server/index.js](../../../apps/server/index.js) 的 `SCAN_SCHEMA_VERSION` 当前为 `11`。只要 board 输出形状（包括执行风险摘要、指标摘要和 flow）发生不兼容变化，就递增该值，让 SQLite `scan_cache` 行失效。只改内部实现、不改变持久化输出形状时无需递增。
 
 ## 反向链路检查
 

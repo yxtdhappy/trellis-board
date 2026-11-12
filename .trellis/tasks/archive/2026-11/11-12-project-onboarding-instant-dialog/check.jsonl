@@ -1,0 +1,6 @@
+{"file": "desktop/src-tauri/src/main.rs", "reason": "校验 pick 只回路径、inspect 只吃路径，二者都做 ensure_board_caller 与 pending 清理"}
+{"file": "desktop/src-tauri/permissions/desktop.toml", "reason": "校验 pick 权限只给目录选择器，inspect 权限未被过度放宽"}
+{"file": "desktop/src-tauri/capabilities/board-local-association.json", "reason": "校验 Board capability 同时授予两个命令且未牵扯本地控制窗"}
+{"file": "web/src/components/layout/ProjectRail.tsx", "reason": "校验开窗时机不再依赖 inspect 返回；取消选目录不弹窗不报错"}
+{"file": "web/src/features/board/dialogs/ProjectOnboardingDialog.tsx", "reason": "校验 loading/error/正常三态、loading 期关闭清理 pending、表单与下游动作未改动"}
+{"file": "desktop/README.md", "reason": "校验接入流程说明与命令清单同步"}

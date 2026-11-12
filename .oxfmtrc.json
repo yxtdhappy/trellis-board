@@ -6,14 +6,14 @@
   "singleQuote": true,
   "trailingComma": "all",
   "ignorePatterns": [
-    "public",
+    "apps/server/public",
     ".trellis",
     ".agents",
     ".claude",
     ".codex",
     "node_modules",
     ".github",
-    "desktop/src-tauri",
+    "apps/desktop/src-tauri",
     "**/*.md",
     "*.pen"
   ]

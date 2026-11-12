@@ -84,7 +84,7 @@
   统一置灰，成功提示后关闭，失败保留输入。
 - 项目接入在“全部团队”范围必须要求选择具体 owner team；developer ID 和本机 Agent 工具只写入当前
   设备 binding，不要求其他设备一致。
-- 接入向导的本机 Agent 列表必须直接读取 `shared/trellis-agent-tools.js` 的完整目录，按名称或 ID
+- 接入向导的本机 Agent 列表必须直接读取 `packages/shared/trellis-agent-tools.js` 的完整目录，按名称或 ID
   做大小写不敏感搜索；过滤只影响可见项，不改变已勾选或已存在状态。
 - 接入向导打开或切换仓库时，developer ID 默认使用当前登录账号的 `runtime.user.username`，不得使用
   显示名；用户手动输入或清空后，迟到的运行时用户数据不得覆盖该值，缺少用户名时保持为空并沿用现有校验。
@@ -187,7 +187,7 @@ const tasks = (teamPage?.tasks || []).map(teamRowToBoardTask)
 
 ## 主题
 
-- token 在 `web/src/index.css`：`:root` 浅色、`.dark` 深色、`@theme inline` 暴露 utility。
+- token 在 `apps/web/src/index.css`：`:root` 浅色、`.dark` 深色、`@theme inline` 暴露 utility。
 - 首屏由三个 HTML 入口的内联脚本在 React 挂载前决定 `.dark` 类，避免闪烁。
 - 新增颜色一律使用 shadcn 语义 token；不要直接写 `#hex`、`bg-white`、`text-black`。
 - preset：`b3awTjpuKm`（mira / neutral / violet / indigo / Inter + Geist / radius default）。

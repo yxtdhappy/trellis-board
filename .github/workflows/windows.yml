@@ -28,20 +28,17 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            web/package-lock.json
-            desktop/package-lock.json
-      - name: Install server dependencies
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
         run: npm ci
-      - name: Install web dependencies
-        run: npm ci --prefix web
       - name: Build web
         run: npm run build
+      - name: Build desktop UI
+        run: npm run build:desktop
+      - name: Check package boundaries
+        run: npm run check:boundaries
       - name: Server and web tests
-        run: npm test
-      - name: Agent tests (includes Windows DPAPI)
-        run: node --test "agent/test/*.test.js"
+        run: npm run test:all
 
   desktop-build:
     name: desktop build (windows)
@@ -55,45 +52,27 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: |
-            web/package-lock.json
-            desktop/package-lock.json
+          cache-dependency-path: package-lock.json
       - name: Install rust stable
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
       - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a  # v2.8.2
         with:
-          workspaces: desktop/src-tauri
+          workspaces: apps/desktop/src-tauri
       - name: Install tauri cli
         run: |
           npm install --prefix "$env:RUNNER_TEMP\tauri-cli" "@tauri-apps/cli@^2"
           "$env:RUNNER_TEMP\tauri-cli\node_modules\.bin" | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Install build dependencies
-        run: |
-          npm ci
-          npm ci --prefix web
-          npm --prefix desktop ci
+        run: npm ci
       - name: Build web
         run: npm run build
-      - name: Build sidecar
-        run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File `
-            desktop/sidecar/build-sidecar.ps1
-      - name: Smoke test sidecar
-        run: |
-          $sidecar = "desktop/src-tauri/binaries/trellis-agent-x86_64-pc-windows-msvc.exe"
-          $output = & $sidecar version
-          if ($LASTEXITCODE -ne 0) {
-            throw "sidecar version exited with $LASTEXITCODE"
-          }
-          $version = ($output -join "`n") | ConvertFrom-Json
-          if ($version.protocolVersion -ne 3) {
-            throw "sidecar protocolVersion=$($version.protocolVersion), want 3"
-          }
+      - name: Build desktop UI
+        run: npm run build:desktop
       - name: Rust unit tests
         timeout-minutes: 25
-        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
       - name: Prepare NSIS tool cache
         env:
           GH_TOKEN: ${{ github.token }}
@@ -141,11 +120,11 @@ jobs:
           New-Item -ItemType Directory -Path $pluginRoot -Force | Out-Null
           Copy-Item -LiteralPath $plugin -Destination (Join-Path $pluginRoot "nsis_tauri_utils.dll") -Force
       - name: Bundle desktop client
-        working-directory: desktop
+        working-directory: apps/desktop
         run: tauri build
       - name: Check artifacts
         run: |
-          $release = "desktop/src-tauri/target/release"
+          $release = "apps/desktop/src-tauri/target/release"
           $exe = Join-Path $release "trellis-board-client.exe"
           if (-not (Test-Path $exe)) { throw "missing $exe" }
           $pattern = Join-Path $release "bundle/nsis/*-setup.exe"
@@ -156,14 +135,14 @@ jobs:
       - name: Package portable client
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass `
-            -File desktop/package-portable.ps1
+            -File apps/desktop/package-portable.ps1
           if ($LASTEXITCODE -ne 0) {
             throw "portable packaging exited with $LASTEXITCODE"
           }
       - name: Portable package smoke test
         run: |
           $ErrorActionPreference = "Stop"
-          $portableRoot = "desktop/src-tauri/target/release/bundle/portable"
+          $portableRoot = "apps/desktop/src-tauri/target/release/bundle/portable"
           $zip = Get-ChildItem (Join-Path $portableRoot "*.zip") | Select-Object -First 1
           if (-not $zip) { throw "missing portable ZIP" }
           $zipChecksum = Get-ChildItem (Join-Path $portableRoot "*.zip.sha256") |
@@ -186,8 +165,6 @@ jobs:
 
           foreach ($relative in @(
               "trellis-board-client.exe",
-              "trellis-agent.exe",
-              "trellis-runtime/node.exe",
               "VERSION.txt",
               "SHA256SUMS.txt",
               "使用说明.txt"
@@ -212,30 +189,14 @@ jobs:
             }
             $checksumCount++
           }
-          if ($checksumCount -lt 4) { throw "portable checksum manifest is incomplete" }
-
-          $sidecar = Join-Path $package.FullName "trellis-agent.exe"
-          $output = & $sidecar version
-          if ($LASTEXITCODE -ne 0) {
-            throw "portable sidecar version exited with $LASTEXITCODE"
-          }
-          $version = ($output -join "`n") | ConvertFrom-Json
-          if ($version.protocolVersion -ne 3) {
-            throw "portable sidecar protocolVersion=$($version.protocolVersion), want 3"
-          }
-
-          $node = Join-Path $package.FullName "trellis-runtime/node.exe"
-          $nodeVersion = & $node --version
-          if ($LASTEXITCODE -ne 0 -or $nodeVersion -notmatch '^v24\.') {
-            throw "portable runtime node version failed: $nodeVersion"
-          }
+          if ($checksumCount -lt 2) { throw "portable checksum manifest is incomplete" }
       - name: Installer smoke test
         run: |
           $ErrorActionPreference = "Stop"
-          $exe = "desktop/src-tauri/target/release/trellis-board-client.exe"
+          $exe = "apps/desktop/src-tauri/target/release/trellis-board-client.exe"
           $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
           $installDir = Join-Path $env:LOCALAPPDATA "TrellisBoard"
-          $script = "desktop/install.ps1"
+          $script = "apps/desktop/install.ps1"
           $flags = "-NoProfile -ExecutionPolicy Bypass -File"
           if (Test-Path $installDir) {
             Remove-Item $installDir -Recurse -Force
@@ -260,124 +221,10 @@ jobs:
             throw "uninstall exit $LASTEXITCODE"
           }
           if (Test-Path $client) { throw "client not removed" }
-      - name: Running sidecar upgrade smoke test
-        run: |
-          $ErrorActionPreference = "Stop"
-          $installer = Get-ChildItem "desktop/src-tauri/target/release/bundle/nsis/*-setup.exe" |
-            Select-Object -First 1
-          if (-not $installer) { throw "缺少 NSIS 安装包" }
-
-          $installDir = Join-Path $env:LOCALAPPDATA "Trellis Board"
-          $client = Join-Path $installDir "trellis-board-client.exe"
-          $sidecar = Join-Path $installDir "trellis-agent.exe"
-          $uninstaller = Join-Path $installDir "uninstall.exe"
-          $clientProcess = $null
-          $lockerProcess = $null
-          $failure = $null
-          $uninstallExitCode = $null
-
-          try {
-            $firstInstall = Start-Process -FilePath $installer.FullName -ArgumentList "/S" `
-              -Wait -PassThru -WindowStyle Hidden
-            if ($firstInstall.ExitCode -ne 0) {
-              throw "首次静默安装退出码 $($firstInstall.ExitCode)"
-            }
-            if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) {
-              throw "安装后的 sidecar 缺失：$sidecar"
-            }
-            $sidecarHash = (Get-FileHash -LiteralPath $sidecar -Algorithm SHA256).Hash
-
-            Copy-Item -LiteralPath (Join-Path $env:SystemRoot "System32\PING.EXE") `
-              -Destination $sidecar -Force
-            $clientProcess = Start-Process -FilePath $client -ArgumentList "--minimized" `
-              -PassThru -WindowStyle Hidden
-            $lockerProcess = Start-Process -FilePath $sidecar `
-              -ArgumentList "-t", "127.0.0.1" -PassThru -WindowStyle Hidden
-            Start-Sleep -Seconds 2
-            if ($clientProcess.HasExited) {
-              throw "升级前客户端已退出"
-            }
-            if ($lockerProcess.HasExited) {
-              throw "升级前 sidecar 锁进程已退出"
-            }
-
-            $upgrade = Start-Process -FilePath $installer.FullName -ArgumentList "/S" `
-              -Wait -PassThru -WindowStyle Hidden
-            if ($upgrade.ExitCode -ne 0) {
-              throw "静默升级退出码 $($upgrade.ExitCode)"
-            }
-            for ($attempt = 0; $attempt -lt 10; $attempt += 1) {
-              $clientProcess.Refresh()
-              $lockerProcess.Refresh()
-              if ($clientProcess.HasExited -and $lockerProcess.HasExited) { break }
-              Start-Sleep -Seconds 1
-            }
-            if (-not ($clientProcess.HasExited)) {
-              throw "运行中的客户端未在 PREINSTALL 阶段终止"
-            }
-            if (-not ($lockerProcess.HasExited)) {
-              throw "运行中的 sidecar 未在 PREINSTALL 阶段终止"
-            }
-
-            $restoredHash = (Get-FileHash -LiteralPath $sidecar -Algorithm SHA256).Hash
-            if ($restoredHash -ne $sidecarHash) {
-              throw "升级后 sidecar 未恢复"
-            }
-            $sidecarOutput = & $sidecar version
-            if ($LASTEXITCODE -ne 0) {
-              throw "升级后的 sidecar version 退出码 $LASTEXITCODE"
-            }
-            $sidecarVersion = ($sidecarOutput -join "`n") | ConvertFrom-Json
-            if ($sidecarVersion.protocolVersion -ne 3) {
-              throw "升级后的 sidecar protocolVersion=$($sidecarVersion.protocolVersion)，期望 3"
-            }
-          } catch {
-            $failure = $_
-          } finally {
-            foreach ($process in @($clientProcess, $lockerProcess)) {
-              if ($null -ne $process) {
-                try {
-                  $process.Refresh()
-                  if (-not ($process.HasExited)) {
-                    Stop-Process -Id $process.Id -Force
-                  }
-                } catch {}
-              }
-            }
-            if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
-              try {
-                $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/S" `
-                  -Wait -PassThru -WindowStyle Hidden
-                $uninstallExitCode = $uninstall.ExitCode
-              } catch {
-                if ($null -eq $failure) { $failure = $_ }
-              }
-            }
-          }
-
-          if ($null -ne $failure) { throw $failure }
-          if ($uninstallExitCode -ne 0) {
-            throw "静默卸载退出码 $uninstallExitCode"
-          }
-          for ($attempt = 0; $attempt -lt 10; $attempt += 1) {
-            if (
-              -not (Test-Path -LiteralPath $client -PathType Leaf) -and
-              -not (Test-Path -LiteralPath $sidecar -PathType Leaf)
-            ) {
-              break
-            }
-            Start-Sleep -Seconds 1
-          }
-          if (Test-Path -LiteralPath $client) {
-            throw "静默卸载后客户端仍存在"
-          }
-          if (Test-Path -LiteralPath $sidecar) {
-            throw "静默卸载后 sidecar 仍存在"
-          }
       - name: Launch smoke test
         continue-on-error: true
         run: |
-          $exe = "desktop/src-tauri/target/release/trellis-board-client.exe"
+          $exe = "apps/desktop/src-tauri/target/release/trellis-board-client.exe"
           $env:TRELLIS_DESKTOP_HOME = Join-Path $env:TEMP "tb-smoke"
           $proc = Start-Process -FilePath $exe `
             -ArgumentList "--minimized" -PassThru
@@ -393,9 +240,9 @@ jobs:
         with:
           name: trellis-board-desktop-windows
           path: |
-            desktop/src-tauri/target/release/trellis-board-client.exe
-            desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
-            desktop/src-tauri/target/release/bundle/portable/*.zip
-            desktop/src-tauri/target/release/bundle/portable/*.zip.sha256
+            apps/desktop/src-tauri/target/release/trellis-board-client.exe
+            apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+            apps/desktop/src-tauri/target/release/bundle/portable/*.zip
+            apps/desktop/src-tauri/target/release/bundle/portable/*.zip.sha256
           if-no-files-found: error
           retention-days: 14

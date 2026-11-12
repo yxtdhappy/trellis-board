@@ -1,0 +1,19 @@
+{"file": "desktop/src-tauri/src/agent/protocol.rs", "reason": "校验错误码映射、URL/ID/命令解析与单测"}
+{"file": "desktop/src-tauri/src/agent/store.rs", "reason": "校验路径命名兼容、原子写重试与 schema 版本"}
+{"file": "desktop/src-tauri/src/agent/credential.rs", "reason": "校验 DPAPI 加解密往返与旧凭据兼容"}
+{"file": "desktop/src-tauri/src/agent/http.rs", "reason": "校验端点路径、响应上限与 SSE 分帧"}
+{"file": "desktop/src-tauri/src/agent/runtime.rs", "reason": "校验心跳/SSE/命令重试/暂停恢复/401 停止"}
+{"file": "desktop/src-tauri/src/agent/live_sync.rs", "reason": "校验实时同步白名单、pending 重放、备份与回滚"}
+{"file": "desktop/src-tauri/src/agent/task_sync.rs", "reason": "校验 cursor、initial sync 三模式、冲突解决与快照上限"}
+{"file": "desktop/src-tauri/src/agent/trellis_cli.rs", "reason": "校验 init 使用环境门解析的 node/cli 路径、210s 超时与环境未就绪错误（不含安装逻辑）"}
+{"file": "desktop/src-tauri/src/agent/control.rs", "reason": "校验控制事件去重键、队列上限与过期判定"}
+{"file": "desktop/src-tauri/src/main.rs", "reason": "校验 Tauri 命令名/参数/返回结构与托盘行为未变"}
+{"file": "desktop/src-tauri/tauri.conf.json", "reason": "校验产物无 externalBin/resources，单 exe 可构建"}
+{"file": "desktop/src-tauri/Cargo.toml", "reason": "校验依赖与 release 配置，agent 代码无 unwrap/expect"}
+{"file": "desktop/README.md", "reason": "校验构建/运行期依赖/初始化流程说明与实际一致"}
+{"file": "tests/desktop-package.test.js", "reason": "该测试断言 SEA/sidecar 构建链，改造后必须删除；确认无残留断言"}
+{"file": "tests/workspace-client-flow.test.js", "reason": "其中调用 desktop/sidecar/cli.js 的用例需删除，其余用例仍应通过"}
+{"file": "desktop/src-tauri/src/agent/env.rs", "reason": "校验双项检查（Node/Trellis）、版本比较、flag 快路径、下载 sha256、解压原子替换与失败清理"}
+{"file": "desktop/src-tauri/src/agent/mod.rs", "reason": "校验模块挂载与 agent 代码无 unwrap/expect/panic 的约束"}
+{"file": "desktop/ui/setup.js", "reason": "校验环境门→登录的状态切换、runtime-progress 渲染与失败重试，不破坏自动登录"}
+{"file": "desktop/src-tauri/permissions/desktop.toml", "reason": "校验 allow-runtime-status/allow-runtime-install 与 capability 一致，未过度授权"}

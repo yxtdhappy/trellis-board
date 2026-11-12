@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "三个子任务共同验收：视觉/组件/弹层是否仍符合前端契约"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "新增目录与别名是否按结构规范登记"}
+{"file": ".trellis/spec/backend/desktop-sidecar-packaging.md", "reason": "desktop/ui 由源码变产物后，打包契约是否同步更新"}
+{"file": "tests/desktop-package.test.js", "reason": "桌面断言全部通过且改指向新源码/构建脚本"}

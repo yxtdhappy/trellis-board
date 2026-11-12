@@ -2,7 +2,7 @@
 
 ## API 路由
 
-[server/index.js](../../../server/index.js) 当前路由：
+[apps/server/index.js](../../../apps/server/index.js) 当前路由：
 
 | 方法与路径 | 用途 | 成功状态 |
 | --- | --- | --- |
@@ -91,9 +91,9 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
 
 ## 仓库白名单
 
-白名单存放在 SQLite `repositories` 表。首次建库且运行数据目录中的 `repos.json` 不存在时，使用 [server/config.js](../../../server/config.js) 的默认仓库一次性导入。API 返回每项 `id`、`name`、`path`，路径使用 `/`。
+白名单存放在 SQLite `repositories` 表。首次建库且运行数据目录中的 `repos.json` 不存在时，使用 [apps/server/config.js](../../../apps/server/config.js) 的默认仓库一次性导入。API 返回每项 `id`、`name`、`path`，路径使用 `/`。
 
-[server/repositories.js](../../../server/repositories.js) 的规则：
+[apps/server/repositories.js](../../../apps/server/repositories.js) 的规则：
 
 - 同一路径去重；Windows 路径比较不区分大小写。
 - ID 从目录名派生，冲突追加 `-2`、`-3`。
@@ -234,7 +234,7 @@ const assignees = await fetchTaskSpaceAssignees(taskSpace.id)
 
 ### 创建任务
 
-[server/actions.js](../../../server/actions.js) 先校验：
+[apps/server/actions.js](../../../apps/server/actions.js) 先校验：
 
 - 标题、描述、负责人和最大长度。
 - 优先级仅允许 `P0`、`P1`、`P2`、`P3`。
@@ -371,7 +371,7 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
 
 #### 3. Contracts
 
-- 项目身份由 `shared/remote-identity.js` 规范化；HTTPS/SSH/scp、默认端口、userinfo、末尾 `/` 和
+- 项目身份由 `packages/shared/remote-identity.js` 规范化；HTTPS/SSH/scp、默认端口、userinfo、末尾 `/` 和
   `.git` 等价差异命中同一项目。
 - 首次接入团队成为 `sync_project_team_access.owner`；owner team active 成员默认可读。
 - 其他团队未邀请时只返回 `access_required`，不泄漏任务正文、revision 或成员。
@@ -402,11 +402,11 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
 
 #### 6. Tests Required
 
-- `tests/shared-remote-identity.test.js`：协议、默认端口、userinfo、`.git` 和非法输入。
-- `tests/team-task-spaces.test.js`：owner/invite、全局唯一、不同分支隔离和访问授权。
-- `tests/team-gitless-http.test.js`：新路由可真实读写，旧 Git/live 路由 404。
-- `tests/team-release.test.js`：Team 启动不创建 `data/projects`，也不读取 Git 密钥。
-- `tests/database-v10.test.js`：v9 升级保留旧表，v10 新表可独立使用。
+- `packages/shared/test/shared-remote-identity.test.js`：协议、默认端口、userinfo、`.git` 和非法输入。
+- `apps/server/test/team-task-spaces.test.js`：owner/invite、全局唯一、不同分支隔离和访问授权。
+- `apps/server/test/team-gitless-http.test.js`：新路由可真实读写，旧 Git/live 路由 404。
+- `apps/server/test/team-release.test.js`：Team 启动不创建 `data/projects`，也不读取 Git 密钥。
+- `apps/server/test/database-v10.test.js`：v9 升级保留旧表，v10 新表可独立使用。
 
 #### 7. Wrong vs Correct
 

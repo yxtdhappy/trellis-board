@@ -1,0 +1,8 @@
+{"file": "web/src/components/ui/input.tsx", "reason": "校验默认 h-8 且无页面层覆盖时实际渲染 32px"}
+{"file": "web/src/components/ui/button.tsx", "reason": "校验 default/sm/xs/icon 系列高度为 32/28/24，svg 尺寸与档位匹配"}
+{"file": "web/src/features/board/TeamView.tsx", "reason": "校验筛选行控件等高、无 text-[11.5px] 残留、无 h-8 覆盖"}
+{"file": "web/src/features/board/dialogs/TaskDetailDialog.tsx", "reason": "校验表单区控件 32px 等高、dialog 单一滚动壳行为未变"}
+{"file": "web/src/features/board/dialogs/ProjectManagerDialog.tsx", "reason": "校验 h-10/h-9 已消除，按钮与输入框等高"}
+{"file": "web/src/components/layout/ProjectRail.tsx", "reason": "校验 h-7.5 已消除，接入按钮/导航行为未变"}
+{"file": "web/src/pages/admin/AdminPage.tsx", "reason": "校验 admin 各 tab 控件基线一致"}
+{"file": "tests/team-web.test.js", "reason": "npm test 通过，web 相关静态断言未因控件改动失效"}

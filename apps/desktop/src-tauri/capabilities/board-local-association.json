@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/remote-schema.json",
+  "identifier": "board-local-association",
+  "description": "远程 Board 仅可列出本地关联并选择本地仓库，Rust 还会复核当前 Board origin。",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "https://*:*",
+      "http://*:*"
+    ]
+  },
+  "permissions": [
+    "allow-associate-pending-project",
+    "allow-cancel-pending-project",
+    "allow-check-pending-project-push",
+    "allow-initialize-pending-project",
+    "allow-inspect-local-project",
+    "allow-initialize-associated-project-agents",
+    "allow-inspect-associated-project-agents",
+    "allow-pick-local-project-folder",
+    "allow-list-local-associations",
+    "allow-sync-deferred-tasks",
+    "allow-desktop-sidecar-status",
+    "allow-preflight-pending-project"
+  ]
+}

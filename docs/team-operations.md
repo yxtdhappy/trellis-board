@@ -39,7 +39,7 @@ Windows PowerShell 前台启动：
 $env:TRELLIS_BOARD_MODE = 'team'
 $env:PORT = '4317'
 $env:TRELLIS_BOARD_DATA_DIR = Join-Path $env:LOCALAPPDATA 'TrellisBoard\server'
-node server/index.js
+node apps/server/index.js
 ```
 
 团队需要本地 Git 远端时，在启动前额外设置：
@@ -56,7 +56,7 @@ Ubuntu 前台启动：
 export TRELLIS_BOARD_MODE=team
 export PORT=4317
 export TRELLIS_BOARD_DATA_DIR=/var/lib/trellis-board
-node server/index.js
+node apps/server/index.js
 ```
 
 服务账号必须能读写 `TRELLIS_BOARD_DATA_DIR` 和 SQLite 文件。Team 服务端不需要安装项目 Git 或
@@ -70,7 +70,7 @@ node server/index.js
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
 $env:PORT = '4317'
-node server/team/cli.js init-admin --username admin --display-name '系统管理员'
+node apps/server/team/cli.js init-admin --username admin --display-name '系统管理员'
 ```
 
 3. 启动服务并打开 `http://<服务端IP>:4317/login.html`；使用 HTTPS 时打开对应域名。
@@ -180,14 +180,14 @@ binding 必须持久化 `initialSyncMode` 和 `initialSyncCompleted`。处理结
 
 ## 6. Windows 客户端与任务同步
 
-双击 `trellis-board-client.exe`，客户端先显示本地登录页。登录成功后进入 Board，sidecar 使用同一账号
-建立或复用当前设备凭证。
+双击 `trellis-board-client.exe`，客户端先检查本机 Node.js 与 Trellis CLI（缺失时从 npm 镜像安装），
+检查通过后显示本地登录页。登录成功后进入 Board，客户端进程内的 Agent 使用同一账号建立或复用当前设备凭证。
 
 ### 6.1 本地项目关联
 
-- 只有 Tauri 页面显示“接入本地项目”、关联状态和 sidecar 状态。
+- 只有 Tauri 页面显示“接入本地项目”、关联状态和 Agent 运行状态。
 - 客户端只操作本次刚选择的 pending 项目路径；远程页面不能传任意本地路径。
-- 项目关联成功后，sidecar 只监听该仓库 `.trellis/tasks/**`。
+- 项目关联成功后，客户端进程内的 Agent 只监听该仓库 `.trellis/tasks/**`。
 - 项目栏按 taskSpace 显示分支和关联状态；同步中显示“此时切换 Git 分支可能导致任务错位或污染”的提示。
 - 登录同账号新设备后，旧设备立即失去 Agent 鉴权，旧 SSE 关闭，旧待执行命令取消。新设备必须重新选择本地仓库。
 
@@ -256,7 +256,7 @@ if (Test-Path (Join-Path $dataDir 'board.sqlite-shm')) { Copy-Item (Join-Path $d
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
 $env:PORT = '4317'
-node server/team/cli.js status
+node apps/server/team/cli.js status
 ```
 
 结果应显示 `schemaVersion=10`、`journalMode=wal` 和 `integrity=ok`。

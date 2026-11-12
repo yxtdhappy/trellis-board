@@ -8,10 +8,10 @@ import path from 'node:path'
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
-import { withTransaction } from '../server/database.js'
-import { createSession, hashPassword, SESSION_COOKIE } from '../server/team/auth.js'
-import { AGENT_PROTOCOL_VERSION } from '../server/team/agents.js'
-import { createTeamRuntime } from '../server/team/http.js'
+import { withTransaction } from '../apps/server/database.js'
+import { createSession, hashPassword, SESSION_COOKIE } from '../apps/server/team/auth.js'
+import { AGENT_PROTOCOL_VERSION } from '../apps/server/team/agents.js'
+import { createTeamRuntime } from '../apps/server/team/http.js'
 
 const TARGETS = Object.freeze({
   accounts: 400,

@@ -2,11 +2,11 @@
 
 ## 1. Scope / Trigger
 
-- 修改 `shared/task-snapshot.js`、`shared/remote-identity.js`、`agent/task-snapshot-sync.js`、
-  `agent/task-command.js`、`agent/project-onboarding.js`、`server/team/task-space-*.js`、
-  `server/team/task-snapshot-service.js`、`server/team/task-command-service.js`、
-  `server/team/sync-agent-service.js`、团队同步 API/SSE、`sync_*` schema 或桌面控制窗口时必须遵循本文。
-- 单机 watcher 与团队客户端 watcher 继续复用 `shared/trellis-watcher.js` 的事件归一化；团队客户端
+- 修改 `packages/shared/task-snapshot.js`、`packages/shared/remote-identity.js`、
+  `apps/desktop/src-tauri/src/agent/{task_sync,task_command,onboarding}.rs`、`apps/server/team/task-space-*.js`、
+  `apps/server/team/task-snapshot-service.js`、`apps/server/team/task-command-service.js`、
+  `apps/server/team/sync-agent-service.js`、团队同步 API/SSE、`sync_*` schema 或桌面控制窗口时必须遵循本文。
+- 单机 watcher 与团队客户端 watcher 继续复用 `packages/shared/trellis-watcher.js` 的事件归一化；团队客户端
   只监听 `.trellis/tasks/**`。
 - Team 服务端不 clone、fetch、commit 或 push 项目 Git，不创建项目工作副本，也不读取 Git 凭据。
 - 项目 Git 只由客户端使用，负责源码、`.trellis/scripts`、`spec`、`config.yaml`、`workflow.md`、
@@ -344,40 +344,32 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 
 ## 6. Tests Required
 
-- `tests/shared-remote-identity.test.js`：HTTPS/SSH/scp 归一、端口、非法协议和分支。
-- `tests/task-snapshot.test.js`：路径边界、LF 摘要、任务目录分组、1024/1025 文件、
+- `packages/shared/test/shared-remote-identity.test.js`：HTTPS/SSH/scp 归一、端口、非法协议和分支。
+- `packages/shared/test/task-snapshot.test.js`：路径边界、LF 摘要、任务目录分组、1024/1025 文件、
   64 MiB/64 MiB+1 字节、移动和六类差异。
-- `tests/database-v10.test.js`：新旧表并存、升级备份、旧数据保留和重复启动。
-- `tests/team-task-spaces.test.js`：全局唯一、owner/invite、同远端不同分支隔离，以及切换分支只撤销
+- `apps/server/test/database-v10.test.js`：新旧表并存、升级备份、旧数据保留和重复启动。
+- `apps/server/test/team-task-spaces.test.js`：全局唯一、owner/invite、同远端不同分支隔离，以及切换分支只撤销
   当前 Agent 的旧 binding、保留旧 taskSpace 和其他设备 binding。
-- `tests/team-task-snapshot.test.js`：首次写入、CAS 冲突、整批回滚、幂等、删除墓碑、覆盖备份、
+- `apps/server/test/team-task-snapshot.test.js`：首次写入、CAS 冲突、整批回滚、幂等、删除墓碑、覆盖备份、
   非法/不一致 `observedBranchName`，以及升级前 pending batch 补字段重放。
-- `tests/team-task-index-v10.test.js`：tasks-only 物化、归档移动、revision 隔离、不读取 Git/workspace。
-- `tests/team-agent-slot.test.js`：新设备踢下线、旧 SSE 关闭、旧命令取消、新设备重建 binding。
-- `tests/team-task-commands.test.js`：在线目标、命令状态机、租约恢复、索引等待、重试和取消。
-- `tests/team-realtime-sync.test.js`：两个真实 Agent HTTP 快照 + SSE 对齐、CAS 并发和离线拒绝。
-- `tests/team-gitless-http.test.js`：新路由可用，旧 Git/live 路由 404，Team 启动不访问 Git 工作副本。
-- `tests/team-gitless-http.test.js` 还必须断言：超过旧 9 MiB 的合法 Agent 批次可写入；
+- `apps/server/test/team-task-index-v10.test.js`：tasks-only 物化、归档移动、revision 隔离、不读取 Git/workspace。
+- `apps/server/test/team-agent-slot.test.js`：新设备踢下线、旧 SSE 关闭、旧命令取消、新设备重建 binding。
+- `apps/server/test/team-task-commands.test.js`：在线目标、命令状态机、租约恢复、索引等待、重试和取消。
+- 双客户端实时对齐（两个真实 Agent 的 HTTP 快照 + SSE、CAS 并发、离线拒绝）随 Node Agent 删除而
+  不再有自动化测试；发布前由 Windows 客户端 E2E 覆盖，服务端行为由 `team-task-snapshot`、
+  `team-agent-slot`、`team-gitless-http` 三条测试约束。
+- `apps/server/test/team-gitless-http.test.js`：新路由可用，旧 Git/live 路由 404，Team 启动不访问 Git 工作副本。
+- `apps/server/test/team-gitless-http.test.js` 还必须断言：超过旧 9 MiB 的合法 Agent 批次可写入；
   Content-Length 超过 96 MiB 返回 `413 BODY_TOO_LARGE`；普通 JSON 仍为 64 KiB；缺少
   `observedBranchName` 返回 `400 BRANCH_OBSERVATION_REQUIRED`。
-- `tests/team-release.test.js`：服务端仓库无工作副本，命令成功前不生成正式任务。
-- `tests/team-events.test.js`：Agent SSE 只包含新事件，旧事件游标和覆盖协议不存在。
-- `agent/test/project-onboarding.test.js`：仓库预检、固定 CLI 初始化、推送状态、已有 `.trellis`
-  和同 `localRepoKey` 切换分支时替换旧本地 binding。
-- `agent/test/task-snapshot-sync.test.js`：首次/增量、cursor v3 文件基线、离线并发冲突、延后目录、
-  目录移动和 pending batch 重放；还应断言上传请求不重叠、6 批滑动窗口不超过 5 批、429 最多
-  重试 2 次且复用原请求、部分 bootstrap 可续传、并发 server-only 会重新进入审查，以及错分支
-  上传/拉取/pending/deferred 全部失败关闭并在切回后恢复。
-- `agent/test/runtime-cli.test.js`：心跳不覆盖本地分支错误；配置读取兼容历史双绑定但禁止新增；
-  SSE 重连只补拉激活 binding，未激活分支和单个补拉失败不得产生未处理 rejection。
-- `agent/test/git-sync.test.js`：错分支和 detached HEAD 拒绝；同一仓库两个 worktree 生成不同
-  `localRepoKey`。
-- `tests/onboarding-associations.test.js`：Windows 仓库路径比较忽略大小写、斜杠方向和末尾分隔符。
-- `tests/task-space-duplicate-cleanup.test.js`：默认 dry-run、只墓碑指定旧 taskSpace、不动归档、
+- `apps/server/test/team-release.test.js`：服务端仓库无工作副本，命令成功前不生成正式任务。
+- `apps/desktop/src-tauri/src/agent/{onboarding,task_sync,task_command,git,protocol}.rs` 的 `mod tests`：
+  仓库预检、固定 CLI 初始化、推送状态、已有 `.trellis`、同 `localRepoKey` 换分支、首次/增量同步、
+  cursor 文件基线、离线并发冲突、延后目录、目录移动、pending batch 重放、错分支与 detached HEAD 拒绝。
+- `apps/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、
+  DPAPI 往返、SSE 分帧、控制事件去重与过期。
+- `apps/server/test/task-space-duplicate-cleanup.test.js`：默认 dry-run、只墓碑指定旧 taskSpace、不动归档、
   `VACUUM INTO` 备份、内容差异和缺少稳定 ID 时拒绝自动清理。
-- `agent/test/task-command.test.js`：真实 `task.py`、负责人写入、路径级 dirty 保护、上传失败不报成功。
-- `tests/desktop-realtime-apply.test.js`：首次冲突、归档移动、备份、batchId 重试。
-- `tests/desktop-package.test.js`：协议 v3、Trellis runtime 资源、窄 Tauri capability 和新控制窗口命令。
 
 Windows 发布前仍需两个真实安装客户端完成登录、本地项目初始化、首次推送、任务同步、并发冲突、
 命令投递、换设备踢下线和归档重启验收；Node 测试不能替代该 E2E。

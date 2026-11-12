@@ -1,4 +1,4 @@
-import { createPlugin } from '../../server/plugins/sdk.js'
+import { createPlugin } from '../../apps/server/plugins/sdk.js'
 
 const PLUGIN_ID = 'a2a-intake'
 

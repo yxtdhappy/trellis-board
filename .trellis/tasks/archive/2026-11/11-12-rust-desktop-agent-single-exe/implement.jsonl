@@ -1,0 +1,31 @@
+{"file": "desktop/src-tauri/src/sidecar.rs", "reason": "现有 sidecar 生命周期、命令桥、控制事件队列与超时预算的唯一事实来源；Rust agent 需按此保持 Tauri 命令与 control 语义"}
+{"file": "desktop/src-tauri/src/main.rs", "reason": "Tauri 命令注册、托盘菜单、会话 cookie、app_status/desktop_login 等对外契约，改造中只替换内部实现"}
+{"file": "desktop/src-tauri/src/config.rs", "reason": "data_dir/agent_root/logs_dir 与 client.json schema 2；agent 数据目录必须与之对齐"}
+{"file": "desktop/src-tauri/src/logging.rs", "reason": "日志目录与滚动策略，agent runtime 与 init 子进程日志复用"}
+{"file": "desktop/src-tauri/Cargo.toml", "reason": "需新增 reqwest/notify/windows/sha2/base64/uuid/futures-util 与 tokio 特性；release panic=abort 约束"}
+{"file": "desktop/src-tauri/tauri.conf.json", "reason": "删除 externalBin 与 resources(trellis-runtime)，保留 NSIS 与 webviewInstallMode"}
+{"file": "agent/protocol.js", "reason": "PROTOCOL_VERSION=3、39 个 AGENT_ERROR_CODE、URL/ID/命令校验、结果构造；必须逐字对齐"}
+{"file": "agent/config-store.js", "reason": "AgentPaths 命名、config/state schema 版本、原子写重试、TRELLIS_AGENT_ROOT 优先级"}
+{"file": "agent/credential-store.js", "reason": "DPAPI 文件格式(schemaVersion 1/algorithm/ciphertext)、凭证明文约束、错误码映射"}
+{"file": "agent/api.js", "reason": "全部 /api/agent/* 端点、请求头、1 MiB/96 MiB 上限、SSE 参数与续传"}
+{"file": "agent/process.js", "reason": "环境白名单、超时与输出上限、进程树终止"}
+{"file": "agent/git-sync.js", "reason": "git 固定参数、操作白名单、GIT_STATE_MARKERS、status/fetch/merge 具体参数"}
+{"file": "agent/project-onboarding.js", "reason": "inspect/initialize/checkInitialPush/preflight/attach 的返回字段与状态机"}
+{"file": "agent/live-sync.js", "reason": "实时同步全部行为：白名单、pending 持久化、preflight→decision、备份与 remote_overwrite、cancel 回滚、cleanup 策略"}
+{"file": "agent/task-snapshot-sync.js", "reason": "任务快照同步全部行为：cursor 结构、initial sync 三种模式、dirty 上传、429、TASK_FILE_CONFLICT、冲突三选一"}
+{"file": "agent/task-command.js", "reason": "create_task/assign_task/sync_branch/refresh_status 的命令执行细节与 task.py 调用"}
+{"file": "agent/index.js", "reason": "runtime 循环：心跳 15s、SSE 事件、命令重试次数、401 停止、state.json 状态机"}
+{"file": "desktop/sidecar/main.js", "reason": "各 CLI 子命令的参数、stdin 协议与返回 DTO；一次性命令封装为 Rust 函数时逐条对照"}
+{"file": "desktop/sidecar/desktop-device.js", "reason": "登录/登出/撤销/配对入网/本地关联的校验规则与请求序列"}
+{"file": "desktop/sidecar/desktop-association.js", "reason": "associate/preflight 的编排顺序与错误格式化"}
+{"file": "desktop/sidecar/trellis-runtime.js", "reason": "trellis init 参数、210s 超时与错误文案；运行环境改由环境门提供（node.exe + cli.js），不再在此安装"}
+{"file": "shared/task-snapshot.js", "reason": "快照上限常量、文本归一化、sha256、路径规范化、分组与差异分类算法；服务端仍使用，需 Rust 端对齐"}
+{"file": "shared/trellis-agent-tools.js", "reason": "22 个 agent 工具 id→CLI flag 映射与 pi 的 presenceMode:all 检测规则"}
+{"file": "desktop/package-portable.ps1", "reason": "绿色包打包流程，需改为只含 exe + VERSION/SHA256"}
+{"file": "desktop/src-tauri/windows/hooks.nsh", "reason": "NSIS 安装/卸载钩子，移除 trellis-agent.exe 清理逻辑"}
+{"file": ".trellis/spec/backend/desktop-sidecar-packaging.md", "reason": "现有打包与 sidecar 契约，改造后需重写为 in-process 契约"}
+{"file": "desktop/ui/index.html", "reason": "单卡片登录页；需拆为环境面板(#env-panel)与登录面板(#login-panel)"}
+{"file": "desktop/ui/setup.js", "reason": "现状 app_status→自动登录；需先 runtime_status/runtime_install 并监听 runtime-progress 事件"}
+{"file": "desktop/ui/styles.css", "reason": "现有卡片与状态样式变量；环境页步骤/进度复用同一套变量"}
+{"file": "desktop/src-tauri/permissions/desktop.toml", "reason": "新增 allow-runtime-status/allow-runtime-install 权限声明"}
+{"file": "desktop/src-tauri/capabilities/main.json", "reason": "主窗口 capability 需加入两个新命令权限"}
