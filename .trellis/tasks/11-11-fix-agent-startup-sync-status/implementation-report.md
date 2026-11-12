@@ -43,6 +43,10 @@
 - 安装新的 NSIS 客户端后，以 `mdp-management-web` 的真实新 taskSpace 接入场景复核：新项目为
   `syncing` 时，其余四个既有项目持续保持 `ready`，WebView 分别显示“正在同步已有任务”和
   “同步正常”。
-- 该安装包仍早于本次 `--task-space` 参数修复；实机点击“仅同步无冲突项”返回“未知参数
-  --task-space”。参数回归已通过，但必须重新构建、安装并用新 sidecar 完成点击复测后，才能勾选
-  PRD 最后一项验收。
+- GitHub Windows run `43124918574`（commit `62edbe3`）重新构建成功；安装包
+  `Trellis Board_0.2.0_x64-setup.exe` 的 SHA256 为
+  `33473B8D1EAAE2D748CF7CB5E85A8BA48F3FF812A1FB1B26C128BC0125482FCC`，安装后的 sidecar
+  SHA256 为 `8BB834D5FF7B0D9B481BC29896B8E3B683B49401255A63F12786F4354D4E8633`。
+- 2026-11-12 08:39:17（Asia/Shanghai）在新客户端点击“仅同步无冲突项”，不再出现
+  “未知参数 --task-space”；约 4 秒后 `mdp-management-web` 变为 `ready`，
+  `initialSyncCompleted=true`、`initialReviewPending=false`，其他四个项目继续保持 `ready`。

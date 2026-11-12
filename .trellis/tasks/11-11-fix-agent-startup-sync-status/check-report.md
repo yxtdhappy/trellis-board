@@ -43,5 +43,6 @@ Tauri 与 sidecar 的 live CLI 参数名不一致，已做同任务范围内的�
 - GitHub Windows run `43052058709` 的 `node-tests` 与 `desktop-build` 均为 `success`。
 - 新安装客户端已通过真实 WebView2 复核。新增 `mdp-management-web` binding 处于 `syncing`
   等待首次任务差异确认时，四个旧 binding 仍是 `ready`，项目栏没有发生跨项目状态污染。
-- 上述安装包早于参数修复；点击“仅同步无冲突项”后返回“未知参数 --task-space”。自动回归已修复，
-  但新 sidecar 构建安装后的真实点击仍待执行，不能把该 E2E 记为通过。
+- 含参数修复的 GitHub Windows run `43124918574`（commit `62edbe3`）安装包已完成真实点击：不再
+  返回“未知参数 --task-space”，新增项目最终进入 `ready`、`initialSyncCompleted=true`，其余四个
+  项目保持 `ready`；最终实机验收通过。

@@ -32,7 +32,9 @@
       不再显示为同步中。
 - [x] 自动化回归覆盖 `live-decide`、`live-diff`、`live-initial` 的 `--task-space` 参数解析，
       不再返回“未知参数 --task-space”。
-- [ ] 新客户端点击“仅同步无冲突项”能够继续首次同步，不出现 CLI 参数错误。
+- [x] 新客户端点击“仅同步无冲突项”能够继续首次同步，不出现 CLI 参数错误。
+      （2026-11-12 新安装客户端：`mdp-management-web` 变为 `ready` 且
+      `initialSyncCompleted=true`，其他四个项目保持 `ready`）
 
 ## Notes
 

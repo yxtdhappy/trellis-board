@@ -50,5 +50,46 @@
 
 - `mdp-management-web` binding 已保留在客户端中，首次任务差异选择了“稍后处理”，因此该新项目继续
   显示 `syncing` 属于等待人工确认，不是同步状态泄漏或异常。
-- 后续需要用包含参数修复的新客户端完成“仅同步无冲突项”实机复测；在此之前 PRD 最后一项保持
-  未勾选。
+- 2026-11-12 已安装包含 `--task-space` 参数修复的新客户端，并完成最终点击复测，详见下一节。
+
+## 参数修复构建实机复测
+
+### 测试产物
+
+- GitHub Windows run：`43124918574`，commit `62edbe3`，`node-tests` 与 `desktop-build` 均成功。
+- NSIS 安装包：`C:\Users\yuhaojie\AppData\Local\Trellis Board_0.2.0_x64-setup.exe`。
+- 安装包 SHA256：`33473B8D1EAAE2D748CF7CB5E85A8BA48F3FF812A1FB1B26C128BC0125482FCC`。
+- 安装后 sidecar SHA256：`8BB834D5FF7B0D9B481BC29896B8E3B683B49401255A63F12786F4354D4E8633`。
+- 安装后客户端 SHA256：`39ED7689A91B6EC977E6B1E13737BA8ABA15011391D4EFA30309250113520E0C`。
+- 服务端重启后 `GET /api/health` 返回 HTTP 200：`mode=team`、`processId=11224`。
+
+### 测试步骤
+
+1. 停止旧客户端与 sidecar，保留 `%LOCALAPPDATA%\TrellisBoard\data`；覆盖安装新 NSIS 客户端。
+2. 重启 team 模式服务端并确认健康检查通过。
+3. 启动新客户端并完成真实账号登录；首次同步确认重新出现。
+4. 2026-11-12 08:39:17（Asia/Shanghai）点击“仅同步无冲突项”。
+5. 点击后约 4 秒检查任务空间 `9269f774-5cd1-40e9-b3f0-4a5dc998b8b2` 的配置状态，并在 10 秒后
+   再次确认五个项目仍保持稳定。
+
+### 最终证据
+
+| 项目 | `liveSyncStatus` | `initialSyncCompleted` | WebView 文案 |
+| --- | --- | --- | --- |
+| `trellis-board` | `ready` | `true` | 已关联 · 同步正常 |
+| `mdp-backend-service` | `ready` | `true` | 已关联 · 同步正常 |
+| `mdp-backend-web` | `ready` | `true` | 已关联 · 同步正常 |
+| `mdp-report-service` | `ready` | `true` | 已关联 · 同步正常 |
+| `mdp-management-web` | `ready` | `true` | 已关联 · 同步正常 |
+
+- `mdp-management-web`：`initialReviewPending=false`、`lastError=null`、
+  `lastSyncedAt=2026-11-12T00:39:21Z`。
+- 其余四个项目均为 `ready`，没有 `lastError` 或 `lastErrorCode`。
+- 点击后的 Agent 日志没有新的“未知参数 --task-space”或“任务空间同步失败”记录。
+- 最终截图：`C:\Users\yuhaojie\AppData\Local\Temp\trellis-board-sync-fixed.png`（SHA256
+  `C506F54FFE6C7B744FA12DD5E8B8BD56E892408A3E5717ED0A4C3F6B9641BAD0`）。
+
+### 结论
+
+Tauri 与 sidecar 的 `--task-space` 参数契约已在真实安装包中生效。“仅同步无冲突项”可以完成首次
+同步，新增项目最终进入正常同步状态，其他项目状态没有被污染。PRD 最后一项实机验收通过。
