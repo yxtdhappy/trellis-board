@@ -20,10 +20,42 @@ type TaskCardProps = {
   task: BoardTask
   onOpen: (task: BoardTask) => void
   onEditPlan?: (task: BoardTask) => void
-  showCopy?: boolean
 }
 
-export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCardProps) {
+type CopyTaskNameButtonProps = {
+  task: BoardTask
+  compact?: boolean
+  className?: string
+}
+
+export function CopyTaskNameButton({
+  task,
+  compact = false,
+  className = '',
+}: CopyTaskNameButtonProps) {
+  async function copyName() {
+    if (await copyText(task.dirName)) {
+      toast.success('已复制')
+    } else {
+      toast.error('复制失败')
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className={`flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted ${className}`}
+      onClick={copyName}
+      title={`复制任务名：${task.dirName}`}
+      aria-label={`复制任务名：${task.dirName}`}
+    >
+      <Copy className="size-2.5" />
+      {compact ? null : '复制任务名'}
+    </button>
+  )
+}
+
+export function TaskCard({ task, onOpen, onEditPlan }: TaskCardProps) {
   const progress = taskProgress(task)
   const next = nextStage(task)
   const tags = taskTags(task)
@@ -36,14 +68,6 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
   ]
     .filter(Boolean)
     .join(' · ')
-
-  async function copyName() {
-    if (await copyText(task.dirName)) {
-      toast.success('已复制')
-    } else {
-      toast.error('复制失败')
-    }
-  }
 
   return (
     <article
@@ -137,17 +161,7 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
             计划
           </button>
         ) : null}
-        {showCopy ? (
-          <button
-            type="button"
-            className="flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
-            onClick={copyName}
-            title={`复制任务名：${task.dirName}`}
-          >
-            <Copy className="size-2.5" />
-            复制任务名
-          </button>
-        ) : null}
+        <CopyTaskNameButton task={task} />
       </div>
     </article>
   )
