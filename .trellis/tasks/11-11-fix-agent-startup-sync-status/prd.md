@@ -12,11 +12,13 @@
 - `AgentTaskSnapshotSync.start()` 必须继续为所有 approved binding 启动后台拉取，但状态字段只表达
   每个 binding 自身的工作状态。
 - 首次完整同步、首次接入 review/bootstrap、read-only binding 和真实错误的现有语义保持不变。
+- Tauri 调用的 `live-decide`、`live-diff`、`live-initial` 必须统一接受 `--task-space` 参数；
+  sidecar 不能混用 camelCase `taskSpace` 导致首次同步按钮在参数解析阶段失败。
 - 前端 `ProjectRail` 已按项目自身 taskSpace 展示状态；本任务不得回退或重新引入全局
   `currentTaskSpace` 回退。
 - 不迁移现有 `config.json`、cursor、binding 或服务端数据。
-- 本任务不修改 sidecar 生产逻辑；前端隔离修复已由前序任务完成。交付需要重新构建桌面客户端，
-  让 Tauri WebView 加载修复后的 Web 前端 bundle。
+- 除修复 live-control CLI 参数契约外，本任务不扩大 sidecar 同步状态逻辑；交付需要同时重建
+  sidecar 与桌面客户端，让 Tauri WebView 加载修复后的前后端实现。
 
 ## Acceptance Criteria
 
@@ -28,6 +30,9 @@
 - [x] GitHub Windows 工作流重新构建成功并生成新的客户端/NSIS 安装包。
 - [x] 新客户端重新启动或重新登录后，WebView 加载修复后的前端 bundle，新增项目同步时其他项目
       不再显示为同步中。
+- [x] 自动化回归覆盖 `live-decide`、`live-diff`、`live-initial` 的 `--task-space` 参数解析，
+      不再返回“未知参数 --task-space”。
+- [ ] 新客户端点击“仅同步无冲突项”能够继续首次同步，不出现 CLI 参数错误。
 
 ## Notes
 
@@ -39,6 +44,9 @@
   `ready` 加一个 `syncing` 的临时运行验证后，结果仍为四个 `ready` 和一个 `syncing`。
 - 已安装客户端进程启动于前端修复部署前，Tauri WebView 未重新加载；截图中所有项目同值更符合
   修复前 `ProjectRail` 复用当前 taskSpace 状态的旧 bundle。
-- 本任务不再修改 sidecar 生产逻辑，只补启动状态保持回归、重建客户端并通过新 WebView 实机复核。
+- 原同步状态逻辑不再扩大修改；仅修复实机暴露的 live-control CLI 参数契约缺陷，并补启动状态保持
+  与参数解析回归，重建客户端后通过新 WebView 实机复核。
 - 前端隔离修复已由归档任务 `11-11-fix-project-rail-sync-status-leak` 完成并验证，本任务只处理
-  最终客户端重建与旧 WebView 缓存排除。
+  live-control 参数契约、最终客户端重建与旧 WebView 缓存排除。
+- 实机点击“仅同步无冲突项”发现 Tauri 已传 `--task-space`，但 sidecar 三条 live CLI 均注册成
+  camelCase `taskSpace`；这是独立参数契约缺陷，已在同任务内纳入最小修复。

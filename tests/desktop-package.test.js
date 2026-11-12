@@ -462,6 +462,39 @@ test('sidecar CLI 报告协议 v3，未注册时以配置错误退出', () => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+test('sidecar live 命令统一接受 --task-space 参数', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-sidecar-live-args-'))
+  const env = { ...process.env, TRELLIS_AGENT_ROOT: root }
+  const commands = [
+    [
+      'live-decide',
+      '--task-space',
+      'space-1',
+      '--conflict',
+      'conflict-1',
+      '--action',
+      'use-server',
+    ],
+    ['live-diff', '--task-space', 'space-1', '--conflict', 'conflict-1'],
+    ['live-initial', '--task-space', 'space-1', '--mode', 'safe'],
+  ]
+  try {
+    for (const args of commands) {
+      const result = spawnSync(process.execPath, ['desktop/sidecar/cli.js', ...args], {
+        cwd: ROOT,
+        encoding: 'utf8',
+        env,
+      })
+      assert.equal(result.status, 3, `${args[0]}: ${result.stderr}`)
+      const payload = JSON.parse(result.stdout.trim())
+      assert.equal(payload.code, 'CONFIG_MISSING', `${args[0]}: ${result.stdout}`)
+      assert.doesNotMatch(result.stderr + result.stdout, /未知参数 --task-space/)
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('Trellis runtime 从 sidecar 可执行文件同目录解析', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-runtime-resolve-'))
   try {

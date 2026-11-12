@@ -358,7 +358,7 @@ async function commandAssociations() {
 
 async function commandLiveDecide(args, options) {
   const values = parseOptions(args, {
-    taskSpace: {},
+    'task-space': {},
     conflict: {},
     action: {},
   })
@@ -376,7 +376,7 @@ async function commandLiveDecide(args, options) {
   })
   taskSync.updateBindings(config.bindings)
   const result = await taskSync.decideConflict({
-    taskSpaceId: requireOption(values, 'taskSpace'),
+    taskSpaceId: requireOption(values, 'task-space'),
     conflictId: requireOption(values, 'conflict'),
     action: requireOption(values, 'action'),
   })
@@ -386,7 +386,7 @@ async function commandLiveDecide(args, options) {
 
 async function commandLiveDiff(args, options) {
   const values = parseOptions(args, {
-    taskSpace: {},
+    'task-space': {},
     conflict: {},
   })
   const store = new ConfigStore()
@@ -403,7 +403,7 @@ async function commandLiveDiff(args, options) {
   })
   taskSync.updateBindings(config.bindings)
   const result = await taskSync.conflictDetails({
-    taskSpaceId: requireOption(values, 'taskSpace'),
+    taskSpaceId: requireOption(values, 'task-space'),
     conflictId: requireOption(values, 'conflict'),
   })
   writeJson({ ok: true, ...result })
@@ -412,7 +412,7 @@ async function commandLiveDiff(args, options) {
 
 async function commandLiveInitial(args, options) {
   const values = parseOptions(args, {
-    taskSpace: {},
+    'task-space': {},
     mode: {},
   })
   const mode = requireOption(values, 'mode')
@@ -432,7 +432,7 @@ async function commandLiveInitial(args, options) {
     loadContext: async () => ({ config, credential, api }),
   })
   taskSync.updateBindings(config.bindings)
-  const taskSpaceId = requireOption(values, 'taskSpace')
+  const taskSpaceId = requireOption(values, 'task-space')
   const input = mode === 'review' ? await readJsonInput() : {}
   const result = await taskSync.resolveInitialSync({
     taskSpaceId,

@@ -51,6 +51,10 @@ AgentLiveSync.start(): Promise<void>
 AgentLiveSync.pullProject(teamId, projectId): Promise<LiveFilesPayload|null>
 decidePendingLiveChange({ store, credentialStore, pendingId, action }): Promise<Result>
 restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
+
+trellis-agent live-decide --task-space <id> --conflict <id> --action <action>
+trellis-agent live-diff --task-space <id> --conflict <id>
+trellis-agent live-initial --task-space <id> --mode safe|review
 ```
 
 - 源码入口：`desktop/sidecar/cli.js`
@@ -99,6 +103,9 @@ restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
   只传 `type/taskId/taskDir/local/server` 元数据。
 - `live-decide` 与 `live-restore` 使用独立 sidecar 命令，不依赖运行进程内存；待确认批次和备份
   manifest 必须原子落盘。完成本地写回后写入短时摘要抑制文件，防止 watcher 把刚应用的版本再次上传。
+- Tauri 到 sidecar 的 live 命令统一使用连字符参数 `--task-space`。`live-decide`、`live-diff`、
+  `live-initial` 的 CLI 注册键和 `requireOption()` 必须使用同一个字符串 `task-space`；
+  `taskSpace` 只可用于 JavaScript DTO/API 字段，不能作为命令行 flag。
 
 ## 4. Validation & Error Matrix
 
@@ -117,6 +124,7 @@ restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
 | Board 远程页面调用 `desktop_sidecar_status` | Rust 复核 Origin 后仅返回布尔运行状态 |
 | sidecar 控制事件 | Tauri 只复用本地 `live-control` 窗口，不授予远程 Board 控制命令 |
 | 实时同步账号切换 | 清理 live cursor、pending、suppression 和 backup，不跨账号继承 |
+| live CLI 收到未知参数 | 在读取配置前返回 `CONFIG_INVALID`，不得继续同步 |
 | SEA 顶层启动成功执行 `version` | 输出协议版本并以 0 退出 |
 
 ## 5. Good / Base / Bad Cases
@@ -144,6 +152,9 @@ restoreLiveBackup({ store, credentialStore, backupId }): Promise<Result>
   无 `type` 对象不得进入控制窗口；审查事件不得包含任务正文。
 - `agent/test/task-snapshot-sync.test.js`：启动恢复多个 approved binding 时保持各自
   `liveSyncStatus`，并断言所有 binding 仍触发后台 `pullTaskSpace`。
+- `tests/desktop-package.test.js`：隔离 `TRELLIS_AGENT_ROOT` 后分别执行 `live-decide`、
+  `live-diff`、`live-initial` 的 `--task-space` 参数，必须越过解析并到达 `CONFIG_MISSING`，
+  不得返回“未知参数 --task-space”。
 - Windows CI：构建后执行 sidecar `version`，断言退出码 0 和 `protocolVersion === 2`。
 - Windows CI 必须在 `tauri build` 前通过 GitHub CLI/API 填充 `%LOCALAPPDATA%\tauri\NSIS`，校验
   NSIS zip 与 `nsis_tauri_utils.dll` 的固定 SHA1；Tauri 使用的 GitHub Releases 直链可能返回 504。
@@ -217,3 +228,23 @@ for (const taskSpaceId of this.bindings.keys()) void this.pullTaskSpace(taskSpac
 ```
 
 保留每个 binding 已持久化的 `liveSyncStatus`，后台拉取只推进该 taskSpace 的数据和自身状态。
+
+### Wrong
+
+```js
+const values = parseOptions(args, { taskSpace: {} })
+const taskSpaceId = requireOption(values, 'taskSpace')
+```
+
+Tauri 实际传的是 `--task-space`，参数解析会直接返回 `CONFIG_INVALID: 未知参数 --task-space`，
+首次同步和冲突处理按钮都无法执行。
+
+### Correct
+
+```js
+const values = parseOptions(args, { 'task-space': {} })
+const taskSpaceId = requireOption(values, 'task-space')
+```
+
+Rust/Tauri、usage 和 sidecar CLI 使用同一个 `--task-space` 契约；内部传给业务方法时再映射为
+`taskSpaceId`。

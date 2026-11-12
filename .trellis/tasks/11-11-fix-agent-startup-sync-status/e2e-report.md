@@ -37,8 +37,18 @@
 已安装的新客户端中，新增项目处于 `syncing` 时其他项目仍保持各自 `ready`，项目栏没有再次出现
 “所有项目同时正在同步”。原跨项目状态污染问题在新 WebView bundle 中已修复。
 
+## 后续操作发现
+
+- 在同一安装客户端点击“仅同步无冲突项”后，界面返回“未知参数 --task-space”，首次安全同步未完成。
+- 根因是 Tauri 传 `--task-space`，而 `live-decide`、`live-diff`、`live-initial` 注册成
+  camelCase `taskSpace`；该安装包不包含后续参数修复。
+- 自动化回归已覆盖三条命令并全部通过，但 Node 测试不能替代新 sidecar 与 WebView 的真实点击。
+- 待重新构建和安装包含参数修复的客户端后，必须继续验证：不再出现 CLI 参数错误，
+  `mdp-management-web` 最终为 `ready` 且 `initialSyncCompleted=true`，其他四个项目仍为 `ready`。
+
 ## 当前保留状态
 
 - `mdp-management-web` binding 已保留在客户端中，首次任务差异选择了“稍后处理”，因此该新项目继续
   显示 `syncing` 属于等待人工确认，不是同步状态泄漏或异常。
-- 后续需要完成审查时，应在实时同步确认窗口选择“仅同步无冲突项”或“查看并处理差异”。
+- 后续需要用包含参数修复的新客户端完成“仅同步无冲突项”实机复测；在此之前 PRD 最后一项保持
+  未勾选。
