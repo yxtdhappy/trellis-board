@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 41
+- **Total Sessions**: 42
 - **Last Active**: 2026-11-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~978 | Active |
+| `journal-1.md` | ~1002 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 42 | 2026-11-12 | 修复跨分支任务同步串写 | `d58b021`, `878d63b`, `e1b3efe` | `main` |
 | 41 | 2026-11-12 | 修复双分支绑定导致后台同步崩溃循环 | `0caf270f8ef77f981483d77f9c883493236bb495` | `main` |
 | 40 | 2026-11-12 | 修复桌面跨进程同步序号竞态 | `0fd2dc0` | `main` |
 | 39 | 2026-11-12 | 完善项目接入预检门禁与错误透传 | `2e8894b` | `main` |

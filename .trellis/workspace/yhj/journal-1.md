@@ -976,3 +976,27 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 42: 修复跨分支任务同步串写
+<!-- trellis-session: v=2 fp=b6770eb815de9456 -->
+
+**Date**: 2026-11-12
+**Task**: 修复跨分支任务同步串写
+**Branch**: `main`
+
+### Summary
+
+按真实 Git 分支隔离任务空间与同步门禁，阻止同仓库跨分支任务重复和串写；补充项目栏分支暂停状态、存量重复任务 dry-run 清理工具及检查报告。代码级质量门禁通过，4317 重启 E2E 与数据库 --apply 尚未执行。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d58b021` | fix(sync): isolate task sync by repository branch |
+| `878d63b` | fix(web): scope project rail sync status by branch |
+| `e1b3efe` | fix(web): summarize paused branches for whole project |
+
+### Status
+
+[OK] **Completed**
