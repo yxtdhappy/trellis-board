@@ -449,7 +449,12 @@ export function createTaskSnapshotService({
           .get(agent.id, taskSpaceId).sequence,
       )
       if (clientSequence <= previousSequence) {
-        throw teamError(409, ERROR_CODES.CONFLICT, 'clientSequence 必须严格递增')
+        throw teamError(409, ERROR_CODES.CONFLICT, 'clientSequence 必须严格递增', {
+          details: {
+            previousSequence,
+            requiredClientSequence: previousSequence + 1,
+          },
+        })
       }
       const complete = validateCompleteTaskGroups(taskSpaceId, files)
       const current = currentPathRows(

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { TextDecoder } from 'node:util'
+import { TextDecoder, isDeepStrictEqual } from 'node:util'
 import {
   classifyTaskSnapshots,
   groupTaskSnapshotFiles,
@@ -20,6 +20,7 @@ const UPLOAD_MIN_INTERVAL_MS = 260
 const RATE_LIMIT_RETRY_DELAY_MS = 1000
 const RATE_LIMIT_RETRY_MAX_DELAY_MS = 5000
 const MAX_RATE_LIMIT_RETRIES = 2
+const MAX_PENDING_REPLAY_ATTEMPTS = 3
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true })
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 export const BRANCH_GUARD_ERROR_CODES = new Set([
@@ -128,6 +129,12 @@ function taskConflictFromError(error) {
   }
 }
 
+function requiredClientSequenceFromError(error) {
+  if (error?.serverCode !== 'CONFLICT') return null
+  const required = error.details?.requiredClientSequence
+  return Number.isSafeInteger(required) && required > 0 ? required : null
+}
+
 function initialSyncModeFor(binding) {
   if (new Set(['bootstrap', 'safe', 'review']).has(binding.initialSyncMode)) {
     return binding.initialSyncMode
@@ -202,6 +209,24 @@ function normalizeDeferred(value) {
   return deferred
 }
 
+function normalizePending(value) {
+  if (
+    !value ||
+    typeof value.batchId !== 'string' ||
+    !Number.isSafeInteger(Number(value.clientSequence)) ||
+    Number(value.clientSequence) < 1 ||
+    !Array.isArray(value.files) ||
+    !value.files.length
+  ) {
+    return null
+  }
+  return {
+    batchId: value.batchId,
+    clientSequence: Number(value.clientSequence),
+    files: value.files,
+  }
+}
+
 function baselinesForTaskDir(baselines, taskDir) {
   return Object.fromEntries(
     Object.entries(normalizeBaselines(baselines)).filter(
@@ -247,7 +272,6 @@ export class AgentTaskSnapshotSync {
     this.watcher = null
     this.stopped = true
     this.suppressed = new Map()
-    this.cursorState = null
     this.cursorWriteQueue = Promise.resolve()
   }
 
@@ -468,49 +492,48 @@ export class AgentTaskSnapshotSync {
   }
 
   async _readCursorState() {
-    if (this.cursorState) return this.cursorState
     try {
       const parsed = JSON.parse(await fs.readFile(this.store.paths.liveCursorsFile, 'utf8'))
-      this.cursorState =
-        parsed?.version === CURSOR_VERSION &&
+      return parsed?.version === CURSOR_VERSION &&
         parsed.taskSpaces &&
         typeof parsed.taskSpaces === 'object'
-          ? parsed
-          : { version: CURSOR_VERSION, taskSpaces: {} }
+        ? parsed
+        : { version: CURSOR_VERSION, taskSpaces: {} }
     } catch {
-      this.cursorState = { version: CURSOR_VERSION, taskSpaces: {} }
+      return { version: CURSOR_VERSION, taskSpaces: {} }
     }
-    return this.cursorState
   }
 
   async _readCursor(taskSpaceId) {
     const state = await this._readCursorState()
     const value = state.taskSpaces[taskSpaceId] || {}
-    const pending =
-      value.pending &&
-      typeof value.pending.batchId === 'string' &&
-      Number.isSafeInteger(Number(value.pending.clientSequence)) &&
-      Number(value.pending.clientSequence) > 0 &&
-      Array.isArray(value.pending.files) &&
-      value.pending.files.length
-        ? {
-            batchId: value.pending.batchId,
-            clientSequence: Number(value.pending.clientSequence),
-            files: value.pending.files,
-          }
-        : null
     return {
       revision: Number(value.revision || 0),
       sequence: Number(value.sequence || 0),
-      pending,
+      pending: normalizePending(value.pending),
       baselines: normalizeBaselines(value.baselines),
       deferred: normalizeDeferred(value.deferred),
     }
   }
 
+  async _mutateCursorState(taskSpaceId, mutator) {
+    const operation = this.cursorWriteQueue.then(() =>
+      this.store.withLiveCursorLock(async () => {
+        const state = await this._readCursorState()
+        const result = await mutator(state)
+        await this.store.writeAtomic(
+          this.store.paths.liveCursorsFile,
+          `${JSON.stringify(state, null, 2)}\n`,
+        )
+        return result
+      }),
+    )
+    this.cursorWriteQueue = operation.catch(() => {})
+    return operation
+  }
+
   async _writeCursor(taskSpaceId, next) {
-    const operation = this.cursorWriteQueue.then(async () => {
-      const state = await this._readCursorState()
+    return this._mutateCursorState(taskSpaceId, (state) => {
       const current = state.taskSpaces[taskSpaceId] || {}
       const entry = {
         ...current,
@@ -533,13 +556,7 @@ export class AgentTaskSnapshotSync {
         else delete entry.pending
       }
       state.taskSpaces[taskSpaceId] = entry
-      await this.store.writeAtomic(
-        this.store.paths.liveCursorsFile,
-        `${JSON.stringify(state, null, 2)}\n`,
-      )
     })
-    this.cursorWriteQueue = operation.catch(() => {})
-    return operation
   }
 
   _binding(taskSpaceId) {
@@ -1117,7 +1134,9 @@ export class AgentTaskSnapshotSync {
       clientSequence: batch.clientSequence,
       files: batch.files,
     }
-    for (let retryCount = 0; ; retryCount += 1) {
+    let activeBatch = { ...batch }
+    let sequenceRecovered = false
+    for (let retryCount = 0; ;) {
       try {
         result = await this._runUploadWithSlot(binding.taskSpaceId, retryDelayMs, async () => {
           const observedBranchName = await this._assertBindingBranch(binding)
@@ -1133,18 +1152,29 @@ export class AgentTaskSnapshotSync {
           result = conflict
           break
         }
+        const requiredSequence = requiredClientSequenceFromError(error)
+        if (
+          !sequenceRecovered &&
+          requiredSequence != null &&
+          requiredSequence > request.clientSequence &&
+          (await this._updatePendingClientSequence(
+            binding.taskSpaceId,
+            activeBatch.batchId,
+            requiredSequence,
+          ))
+        ) {
+          request.clientSequence = requiredSequence
+          activeBatch = { ...activeBatch, clientSequence: requiredSequence }
+          sequenceRecovered = true
+          continue
+        }
         if (!isRateLimitError(error) || retryCount >= MAX_RATE_LIMIT_RETRIES) throw error
         retryDelayMs = rateLimitRetryDelay(error)
+        retryCount += 1
       }
     }
-    const cursor = await this._readCursor(binding.taskSpaceId)
     if (result.code === 'TASK_FILE_CONFLICT') {
-      await this._writeCursor(binding.taskSpaceId, {
-        revision: cursor.revision,
-        sequence: batch.clientSequence,
-        deferred: clearDeferredForFiles(cursor.deferred, batch.files),
-        pending: null,
-      })
+      await this._finishBatchCursor(binding.taskSpaceId, activeBatch)
       this.emitControl({
         type: 'task_file_conflict',
         taskSpaceId: binding.taskSpaceId,
@@ -1152,38 +1182,112 @@ export class AgentTaskSnapshotSync {
       })
       return { result, conflict: true }
     }
-    const revision = Math.max(cursor.revision, Number(result.revision || 0))
-    const baselines = mergeSnapshotBaselines(cursor.baselines, batch.files)
-    await this._writeCursor(binding.taskSpaceId, {
-      revision,
-      sequence: batch.clientSequence,
-      baselines,
-      deferred: clearDeferredForFiles(cursor.deferred, batch.files),
-      pending: null,
+    const completed = await this._finishBatchCursor(binding.taskSpaceId, activeBatch, {
+      revision: result.revision,
+      mergeBaselines: true,
     })
     return {
       result,
       conflict: false,
-      revision,
-      baselines,
-      baselineFiles: batch.files,
+      revision: completed.revision,
+      baselines: completed.baselines,
+      baselineFiles: activeBatch.files,
     }
   }
 
-  async _uploadPersistedBatch(binding, api, cursor, files) {
-    if (!files.length) return null
-    const batch = {
-      batchId: crypto.randomUUID(),
-      clientSequence: cursor.sequence + 1,
-      files,
-    }
-    // 先持久化原始批次，网络响应丢失时必须复用同一 batchId。
-    await this._writeCursor(binding.taskSpaceId, {
-      revision: cursor.revision,
-      sequence: cursor.sequence,
-      pending: batch,
+  async _reserveBatch(taskSpaceId, files) {
+    return this._mutateCursorState(taskSpaceId, (state) => {
+      const current = state.taskSpaces[taskSpaceId] || {}
+      const pending = normalizePending(current.pending)
+      if (pending) return { pending }
+      const batch = {
+        batchId: crypto.randomUUID(),
+        clientSequence: Math.max(0, Number(current.sequence || 0)) + 1,
+        files,
+      }
+      state.taskSpaces[taskSpaceId] = {
+        ...current,
+        pending: batch,
+        updatedAt: new Date().toISOString(),
+      }
+      return { batch }
     })
-    return this._uploadBatch(binding, api, batch)
+  }
+
+  async _updatePendingClientSequence(taskSpaceId, batchId, clientSequence) {
+    return this._mutateCursorState(taskSpaceId, (state) => {
+      const current = state.taskSpaces[taskSpaceId] || {}
+      const pending = normalizePending(current.pending)
+      if (!pending || pending.batchId !== batchId) {
+        return Number(current.sequence || 0) >= clientSequence
+      }
+      if (pending.clientSequence >= clientSequence) return true
+      state.taskSpaces[taskSpaceId] = {
+        ...current,
+        pending: {
+          ...current.pending,
+          clientSequence,
+        },
+        updatedAt: new Date().toISOString(),
+      }
+      return true
+    })
+  }
+
+  async _finishBatchCursor(
+    taskSpaceId,
+    batch,
+    { revision = 0, mergeBaselines = false, clearPending = true } = {},
+  ) {
+    return this._mutateCursorState(taskSpaceId, (state) => {
+      const current = state.taskSpaces[taskSpaceId] || {}
+      const pending = normalizePending(current.pending)
+      const currentSequence = Number(current.sequence || 0)
+      const batchSequence = Number(batch.clientSequence || 0)
+      const supersededBySameBatch =
+        pending?.batchId === batch.batchId && pending.clientSequence > batchSequence
+      const advancesSequence = batchSequence >= currentSequence && !supersededBySameBatch
+      const entry = {
+        ...current,
+        revision: Math.max(Number(current.revision || 0), Number(revision || 0)),
+        sequence: Math.max(currentSequence, batchSequence),
+        baselines:
+          mergeBaselines && advancesSequence
+            ? mergeSnapshotBaselines(current.baselines, batch.files)
+            : normalizeBaselines(current.baselines),
+        deferred: advancesSequence
+          ? clearDeferredForFiles(current.deferred, batch.files)
+          : normalizeDeferred(current.deferred),
+        updatedAt: new Date().toISOString(),
+      }
+      if (
+        clearPending &&
+        pending?.batchId === batch.batchId &&
+        pending.clientSequence === batchSequence
+      ) {
+        delete entry.pending
+      }
+      state.taskSpaces[taskSpaceId] = entry
+      return {
+        revision: entry.revision,
+        sequence: entry.sequence,
+        baselines: entry.baselines,
+      }
+    })
+  }
+
+  async _uploadPersistedBatch(binding, api, files) {
+    if (!files.length) return null
+    for (let attempt = 0; attempt < MAX_PENDING_REPLAY_ATTEMPTS; attempt += 1) {
+      const reservation = await this._reserveBatch(binding.taskSpaceId, files)
+      if (reservation.batch) {
+        return this._uploadBatch(binding, api, reservation.batch)
+      }
+      const retried = await this._uploadBatch(binding, api, reservation.pending)
+      if (retried?.conflict) return retried
+      if (isDeepStrictEqual(reservation.pending.files, files)) return retried
+    }
+    throw new AgentError(AGENT_ERROR_CODE.LOCKED, '同步批次持续被另一个进程占用')
   }
 
   async _retryPendingBatch(binding, api, cursor) {
@@ -1277,7 +1381,7 @@ export class AgentTaskSnapshotSync {
           baseShaByPath ?? cursor.baselines,
         ),
       ]
-      const uploaded = await this._uploadPersistedBatch(binding, api, cursor, files)
+      const uploaded = await this._uploadPersistedBatch(binding, api, files)
       if (!uploaded) continue
       if (uploaded.conflict) return uploaded.result
       handled.add(source.taskDir)
@@ -1295,7 +1399,7 @@ export class AgentTaskSnapshotSync {
         entry.serverFiles,
         baseShaByPath ?? cursor.baselines,
       )
-      const uploaded = await this._uploadPersistedBatch(binding, api, cursor, files)
+      const uploaded = await this._uploadPersistedBatch(binding, api, files)
       if (!uploaded) continue
       if (uploaded.conflict) return uploaded.result
       latestRevision = Math.max(latestRevision, Number(uploaded.revision || 0))
@@ -1420,7 +1524,6 @@ export class AgentTaskSnapshotSync {
     const server = serverDir
       ? await api.fetchTaskDirectory(binding.taskSpaceId, serverDir)
       : { files: [] }
-    const cursor = await this._readCursor(binding.taskSpaceId)
     const files = localGroup.files.map((file) => ({
       path: file.path,
       content: file.content,
@@ -1435,7 +1538,7 @@ export class AgentTaskSnapshotSync {
         baseSha256: file.sha256,
       })
     }
-    const uploaded = await this._uploadPersistedBatch(binding, api, cursor, files)
+    const uploaded = await this._uploadPersistedBatch(binding, api, files)
     return uploaded?.result
   }
 
@@ -1570,7 +1673,7 @@ export class AgentTaskSnapshotSync {
     if (!binding) {
       throw new AgentError(AGENT_ERROR_CODE.BINDING_UNKNOWN, '任务空间绑定未激活')
     }
-    let observedBranchName = await this._assertBindingBranch(binding)
+    await this._assertBindingBranch(binding)
     const { api } = await this.loadContext()
     const conflict = (await api.fetchTaskSpaceConflicts(taskSpaceId)).conflicts.find(
       (item) => item.id === conflictId,
@@ -1650,23 +1753,53 @@ export class AgentTaskSnapshotSync {
     }
     const cursor = await this._readCursor(taskSpaceId)
     const backup = await this._backupDirectory(binding, directories.local)
-    observedBranchName = await this._assertBindingBranch(binding)
-    const result = await api.resolveTaskSpaceConflict(taskSpaceId, conflictId, {
+    const request = {
       action,
-      observedBranchName,
       batchId: crypto.randomUUID(),
       clientSequence: cursor.sequence + 1,
       files: selected,
-    })
+    }
+    let result
+    let sequenceRecovered = false
+    for (;;) {
+      try {
+        request.observedBranchName = await this._assertBindingBranch(binding)
+        result = await api.resolveTaskSpaceConflict(taskSpaceId, conflictId, request)
+        break
+      } catch (error) {
+        const conflictResult = taskConflictFromError(error)
+        if (conflictResult) {
+          result = conflictResult
+          break
+        }
+        const requiredSequence = requiredClientSequenceFromError(error)
+        if (
+          !sequenceRecovered &&
+          requiredSequence != null &&
+          requiredSequence > request.clientSequence
+        ) {
+          request.clientSequence = requiredSequence
+          sequenceRecovered = true
+          continue
+        }
+        throw error
+      }
+    }
     if (result?.code !== 'TASK_FILE_CONFLICT') {
-      const nextSequence = cursor.sequence + 1
       const nextRevision = Math.max(cursor.revision, Number(result?.revision || 0))
-      await this._writeCursor(taskSpaceId, {
-        revision: nextRevision,
-        sequence: nextSequence,
-        baselines: mergeSnapshotBaselines(cursor.baselines, selected),
-        pending: null,
-      })
+      await this._finishBatchCursor(
+        taskSpaceId,
+        {
+          batchId: request.batchId,
+          clientSequence: request.clientSequence,
+          files: selected,
+        },
+        {
+          revision: nextRevision,
+          mergeBaselines: true,
+          clearPending: false,
+        },
+      )
       await api.writeTaskSpaceCursor(taskSpaceId, { revision: nextRevision })
     }
     return { ...result, backup }

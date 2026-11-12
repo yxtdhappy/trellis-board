@@ -30,6 +30,7 @@ export function createAgentPaths(root = defaultAgentRoot()) {
     stateFile: path.join(resolvedRoot, 'runtime.json'),
     eventCursorsFile: path.join(resolvedRoot, 'event-cursors.json'),
     liveCursorsFile: path.join(resolvedRoot, 'live-cursors.json'),
+    liveCursorLockFile: path.join(resolvedRoot, '.live-cursors.lock'),
     liveSuppressionFile: path.join(resolvedRoot, 'live-suppression.json'),
     liveBackupsDir: path.join(resolvedRoot, 'live-backups'),
     pendingLiveDir: path.join(resolvedRoot, 'pending-live'),
@@ -371,6 +372,22 @@ export class ConfigStore {
   }
 
   async withConfigLock(operation, options = {}) {
+    return this._withFileLock(this.paths.configLockFile, operation, {
+      ...options,
+      openMessage: '无法锁定 Agent 配置',
+      timeoutMessage: 'Agent 配置正被另一个进程更新',
+    })
+  }
+
+  async withLiveCursorLock(operation, options = {}) {
+    return this._withFileLock(this.paths.liveCursorLockFile, operation, {
+      ...options,
+      openMessage: '无法锁定 Agent 同步游标',
+      timeoutMessage: 'Agent 同步游标正被另一个进程更新',
+    })
+  }
+
+  async _withFileLock(lockFile, operation, options = {}) {
     const timeoutMs = options.timeoutMs ?? 5_000
     const staleMs = options.staleMs ?? 30_000
     const deadline = Date.now() + timeoutMs
@@ -378,16 +395,16 @@ export class ConfigStore {
     let handle
     while (!handle) {
       try {
-        handle = await fs.open(this.paths.configLockFile, 'wx', 0o600)
+        handle = await fs.open(lockFile, 'wx', 0o600)
       } catch (error) {
         if (error.code !== 'EEXIST') {
-          throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, '无法锁定 Agent 配置', {
+          throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, options.openMessage, {
             cause: error,
           })
         }
         let stale = false
         try {
-          stale = Date.now() - (await fs.stat(this.paths.configLockFile)).mtimeMs > staleMs
+          stale = Date.now() - (await fs.stat(lockFile)).mtimeMs > staleMs
         } catch (statError) {
           if (statError.code === 'ENOENT') {
             continue
@@ -395,11 +412,11 @@ export class ConfigStore {
           throw statError
         }
         if (stale) {
-          await fs.unlink(this.paths.configLockFile).catch(() => {})
+          await fs.unlink(lockFile).catch(() => {})
           continue
         }
         if (Date.now() >= deadline) {
-          throw new AgentError(AGENT_ERROR_CODE.LOCKED, 'Agent 配置正被另一个进程更新')
+          throw new AgentError(AGENT_ERROR_CODE.LOCKED, options.timeoutMessage)
         }
         await new Promise((resolve) => setTimeout(resolve, 40))
       }
@@ -408,7 +425,7 @@ export class ConfigStore {
       return await operation()
     } finally {
       await handle.close().catch(() => {})
-      await fs.unlink(this.paths.configLockFile).catch(() => {})
+      await fs.unlink(lockFile).catch(() => {})
     }
   }
 

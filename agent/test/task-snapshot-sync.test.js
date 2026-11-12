@@ -95,9 +95,10 @@ function createSync(
   api,
   controls = [],
   assertBranch = async ({ branchName }) => ({ branchName }),
+  store = context.store,
 ) {
   const sync = new AgentTaskSnapshotSync({
-    store: context.store,
+    store,
     loadContext: async () => ({ config: context.config, api }),
     logger: { warn() {} },
     emitControl: (event) => controls.push(event),
@@ -903,6 +904,434 @@ test('同一 taskSpace 的上传请求完成前不会并发启动下一批', asy
   }
 })
 
+test('跨同步实例始终读取磁盘上的最新游标', async () => {
+  const context = await setup({})
+  try {
+    const secondStore = new ConfigStore(context.root, { secureDirectory: false })
+    const first = createSync(context, {})
+    const second = createSync(context, {}, [], undefined, secondStore)
+
+    await first._writeCursor('space-1', { revision: 1, sequence: 1 })
+    assert.equal((await second._readCursor('space-1')).sequence, 1)
+
+    await second._writeCursor('space-1', { revision: 2, sequence: 2 })
+    assert.equal((await first._readCursor('space-1')).sequence, 2)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('两个同步实例并发预占批次时生成不同且严格递增的序号', async () => {
+  const context = await setup({})
+  try {
+    const secondStore = new ConfigStore(context.root, { secureDirectory: false })
+    const attempts = []
+    const revisions = new Map()
+    const api = {
+      async uploadTaskSpaceChanges(taskSpaceId, input) {
+        attempts.push({ taskSpaceId, input })
+        if (!revisions.has(input.batchId)) revisions.set(input.batchId, revisions.size + 1)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        return { revision: revisions.get(input.batchId), taskSpaceId }
+      },
+    }
+    const first = createSync(context, api)
+    const second = createSync(context, api, [], undefined, secondStore)
+    const filesFor = (taskDir, id) => {
+      const content = `${JSON.stringify({ id, title: id })}\n`
+      return [
+        {
+          path: `${taskDir}/task.json`,
+          content,
+          sha256: snapshotSha256(content),
+          baseSha256: null,
+        },
+      ]
+    }
+
+    await Promise.all([
+      first._uploadPersistedBatch(
+        first._binding('space-1'),
+        api,
+        filesFor('.trellis/tasks/01-race-a', 'race-a'),
+      ),
+      second._uploadPersistedBatch(
+        second._binding('space-1'),
+        api,
+        filesFor('.trellis/tasks/02-race-b', 'race-b'),
+      ),
+    ])
+
+    const sequencesByBatch = new Map()
+    for (const { input } of attempts) {
+      sequencesByBatch.set(input.batchId, input.clientSequence)
+    }
+    assert.deepEqual(
+      [...sequencesByBatch.values()].sort((left, right) => left - right),
+      [1, 2],
+    )
+    assert.equal((await first._readCursor('space-1')).pending, null)
+    assert.equal((await second._readCursor('space-1')).sequence, 2)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('历史 pending 序号落后时按服务端提示修正并复用原批次', async () => {
+  const taskDir = '.trellis/tasks/01-stale-pending'
+  const content = `${JSON.stringify({ id: 'stale-pending', title: '历史批次' })}\n`
+  const context = await setup({
+    [taskDir]: {
+      'task.json': content,
+    },
+  })
+  try {
+    const files = [
+      {
+        path: `${taskDir}/task.json`,
+        content,
+        sha256: snapshotSha256(content),
+        baseSha256: null,
+      },
+    ]
+    const attempts = []
+    const api = {
+      async uploadTaskSpaceChanges(taskSpaceId, input) {
+        attempts.push({ taskSpaceId, input })
+        if (attempts.length === 1) {
+          throw new AgentApiError(AGENT_ERROR_CODE.HTTP_ERROR, 'clientSequence 必须严格递增', {
+            status: 409,
+            serverCode: 'CONFLICT',
+            details: {
+              previousSequence: 1,
+              requiredClientSequence: 2,
+            },
+          })
+        }
+        return { revision: 1, taskSpaceId }
+      },
+    }
+    const sync = createSync(context, api)
+    await sync._writeCursor('space-1', {
+      revision: 0,
+      sequence: 0,
+      pending: {
+        batchId: 'stale-batch',
+        clientSequence: 1,
+        files,
+      },
+    })
+
+    const result = await sync._uploadPersistedBatch(sync._binding('space-1'), api, files)
+    assert.equal(result.conflict, false)
+    assert.deepEqual(
+      attempts.map(({ input }) => ({
+        batchId: input.batchId,
+        clientSequence: input.clientSequence,
+        files: input.files,
+      })),
+      [
+        { batchId: 'stale-batch', clientSequence: 1, files },
+        { batchId: 'stale-batch', clientSequence: 2, files },
+      ],
+    )
+    const cursor = await sync._readCursor('space-1')
+    assert.equal(cursor.sequence, 2)
+    assert.equal(cursor.pending, null)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('连续序号冲突最多自动恢复一次并保留已推进的 pending', async () => {
+  const taskDir = '.trellis/tasks/01-sequence-retry-limit'
+  const content = `${JSON.stringify({ id: 'sequence-retry-limit', title: '连续序号冲突' })}\n`
+  const context = await setup({})
+  try {
+    const files = [
+      {
+        path: `${taskDir}/task.json`,
+        content,
+        sha256: snapshotSha256(content),
+        baseSha256: null,
+      },
+    ]
+    const attempts = []
+    const api = {
+      async uploadTaskSpaceChanges(taskSpaceId, input) {
+        attempts.push({ taskSpaceId, input })
+        throw new AgentApiError(AGENT_ERROR_CODE.HTTP_ERROR, 'clientSequence 必须严格递增', {
+          status: 409,
+          serverCode: 'CONFLICT',
+          details: {
+            previousSequence: attempts.length,
+            requiredClientSequence: attempts.length + 1,
+          },
+        })
+      },
+    }
+    const sync = createSync(context, api)
+    await sync._writeCursor('space-1', {
+      revision: 0,
+      sequence: 0,
+      pending: {
+        batchId: 'sequence-retry-limit',
+        clientSequence: 1,
+        files,
+      },
+    })
+
+    await assert.rejects(
+      () => sync._uploadPersistedBatch(sync._binding('space-1'), api, files),
+      /clientSequence 必须严格递增/,
+    )
+    assert.deepEqual(
+      attempts.map(({ input }) => input.clientSequence),
+      [1, 2],
+    )
+    const cursor = await sync._readCursor('space-1')
+    assert.equal(cursor.pending.batchId, 'sequence-retry-limit')
+    assert.equal(cursor.pending.clientSequence, 2)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('旧批次成功响应不会清除另一实例新预占的 pending', async () => {
+  const context = await setup({})
+  try {
+    const secondStore = new ConfigStore(context.root, { secureDirectory: false })
+    const first = createSync(context, {})
+    const second = createSync(context, {}, [], undefined, secondStore)
+    const firstContent = '{"id":"first"}\n'
+    const secondContent = '{"id":"second"}\n'
+    const firstFiles = [
+      {
+        path: '.trellis/tasks/01-first/task.json',
+        content: firstContent,
+        sha256: snapshotSha256(firstContent),
+        baseSha256: null,
+      },
+    ]
+    const secondFiles = [
+      {
+        path: '.trellis/tasks/02-second/task.json',
+        content: secondContent,
+        sha256: snapshotSha256(secondContent),
+        baseSha256: null,
+      },
+    ]
+    const firstBatch = {
+      batchId: 'batch-first',
+      clientSequence: 1,
+      files: firstFiles,
+    }
+    await first._writeCursor('space-1', {
+      revision: 0,
+      sequence: 0,
+      pending: firstBatch,
+    })
+
+    let releaseFirstResponse
+    let markFirstStarted
+    const firstStarted = new Promise((resolve) => {
+      markFirstStarted = resolve
+    })
+    const firstResponse = new Promise((resolve) => {
+      releaseFirstResponse = resolve
+    })
+    const firstUpload = first._uploadBatch(
+      first._binding('space-1'),
+      {
+        async uploadTaskSpaceChanges() {
+          markFirstStarted()
+          await firstResponse
+          return { revision: 1 }
+        },
+      },
+      firstBatch,
+    )
+    await firstStarted
+
+    await second._uploadBatch(
+      second._binding('space-1'),
+      {
+        async uploadTaskSpaceChanges() {
+          return { revision: 1 }
+        },
+      },
+      firstBatch,
+    )
+    const reservation = await second._reserveBatch('space-1', secondFiles)
+    releaseFirstResponse()
+    const completed = await firstUpload
+
+    assert.equal(completed.revision, 1)
+    const cursor = await first._readCursor('space-1')
+    assert.equal(cursor.pending.batchId, reservation.batch.batchId)
+    assert.equal(cursor.pending.clientSequence, 2)
+    assert.equal(cursor.sequence, 1)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('旧批次迟到响应不会清除同一批次已推进的 pending', async () => {
+  const context = await setup({})
+  try {
+    const secondStore = new ConfigStore(context.root, { secureDirectory: false })
+    const first = createSync(context, {})
+    const second = createSync(context, {}, [], undefined, secondStore)
+    const content = '{"id":"late-response"}\n'
+    const files = [
+      {
+        path: '.trellis/tasks/01-late-response/task.json',
+        content,
+        sha256: snapshotSha256(content),
+        baseSha256: null,
+      },
+    ]
+    const batch = {
+      batchId: 'batch-late-response',
+      clientSequence: 1,
+      files,
+    }
+    await first._writeCursor('space-1', {
+      revision: 0,
+      sequence: 0,
+      pending: batch,
+    })
+
+    let releaseFirstResponse
+    let markFirstStarted
+    const firstStarted = new Promise((resolve) => {
+      markFirstStarted = resolve
+    })
+    const firstResponse = new Promise((resolve) => {
+      releaseFirstResponse = resolve
+    })
+    const firstUpload = first._uploadBatch(
+      first._binding('space-1'),
+      {
+        async uploadTaskSpaceChanges() {
+          markFirstStarted()
+          await firstResponse
+          return { revision: 1 }
+        },
+      },
+      batch,
+    )
+    await firstStarted
+
+    assert.equal(await second._updatePendingClientSequence('space-1', batch.batchId, 2), true)
+    assert.equal(await first._updatePendingClientSequence('space-1', batch.batchId, 2), true)
+    releaseFirstResponse()
+    await firstUpload
+
+    const cursor = await first._readCursor('space-1')
+    assert.equal(cursor.sequence, 1)
+    assert.equal(cursor.pending.batchId, batch.batchId)
+    assert.equal(cursor.pending.clientSequence, 2)
+    assert.equal(cursor.baselines[files[0].path], undefined)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('较旧批次迟到响应不会回退较新的文件基线', async () => {
+  const context = await setup({})
+  try {
+    const sync = createSync(context, {})
+    const taskPath = '.trellis/tasks/01-baseline-race/task.json'
+    const oldContent = '{"id":"baseline-race","title":"旧"}\n'
+    const newContent = '{"id":"baseline-race","title":"新"}\n'
+    const oldFiles = [
+      {
+        path: taskPath,
+        content: oldContent,
+        sha256: snapshotSha256(oldContent),
+        baseSha256: null,
+      },
+    ]
+    const newFiles = [
+      {
+        path: taskPath,
+        content: newContent,
+        sha256: snapshotSha256(newContent),
+        baseSha256: snapshotSha256(oldContent),
+      },
+    ]
+    await sync._finishBatchCursor(
+      'space-1',
+      { batchId: 'batch-newer', clientSequence: 2, files: newFiles },
+      { revision: 2, mergeBaselines: true },
+    )
+    await sync._finishBatchCursor(
+      'space-1',
+      { batchId: 'batch-older', clientSequence: 1, files: oldFiles },
+      { revision: 1, mergeBaselines: true },
+    )
+
+    const cursor = await sync._readCursor('space-1')
+    assert.equal(cursor.sequence, 2)
+    assert.equal(cursor.revision, 2)
+    assert.equal(cursor.baselines[taskPath], snapshotSha256(newContent))
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('服务端序号提示非法时不自动改写 pending', async () => {
+  const taskDir = '.trellis/tasks/01-invalid-sequence-hint'
+  const content = `${JSON.stringify({ id: 'invalid-sequence-hint', title: '非法序号提示' })}\n`
+  const context = await setup({})
+  try {
+    const files = [
+      {
+        path: `${taskDir}/task.json`,
+        content,
+        sha256: snapshotSha256(content),
+        baseSha256: null,
+      },
+    ]
+    let attempts = 0
+    const api = {
+      async uploadTaskSpaceChanges() {
+        attempts += 1
+        throw new AgentApiError(AGENT_ERROR_CODE.HTTP_ERROR, 'clientSequence 必须严格递增', {
+          status: 409,
+          serverCode: 'CONFLICT',
+          details: {
+            previousSequence: 1,
+            requiredClientSequence: '2',
+          },
+        })
+      },
+    }
+    const sync = createSync(context, api)
+    await sync._writeCursor('space-1', {
+      revision: 0,
+      sequence: 0,
+      pending: {
+        batchId: 'invalid-sequence-hint',
+        clientSequence: 1,
+        files,
+      },
+    })
+
+    await assert.rejects(
+      () => sync._uploadPersistedBatch(sync._binding('space-1'), api, files),
+      /clientSequence 必须严格递增/,
+    )
+    assert.equal(attempts, 1)
+    const cursor = await sync._readCursor('space-1')
+    assert.equal(cursor.pending.batchId, 'invalid-sequence-hint')
+    assert.equal(cursor.pending.clientSequence, 1)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
 test('429 最多重试两次，失败后保留原批次供重启继续', async () => {
   const taskJson = `${JSON.stringify({ id: 'retry-limit', title: '限流重试' })}\n`
   const context = await setup({})
@@ -933,11 +1362,7 @@ test('429 最多重试两次，失败后保留原批次供重启继续', async (
       },
     }
     const binding = sync._binding('space-1')
-    const cursor = await sync._readCursor('space-1')
-    await assert.rejects(
-      () => sync._uploadPersistedBatch(binding, api, cursor, files),
-      /同步批次过于频繁/,
-    )
+    await assert.rejects(() => sync._uploadPersistedBatch(binding, api, files), /同步批次过于频繁/)
     assert.equal(attempts.length, 3)
     assert.deepEqual(attempts[0].input, attempts[1].input)
     assert.deepEqual(attempts[1].input, attempts[2].input)
@@ -1746,6 +2171,155 @@ test('仅保存本地副本不解决服务端冲突', async () => {
       fs.readFileSync(path.join(context.repoPath, ...taskDir.split('/'), 'task.json'), 'utf8'),
       localJson,
     )
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('覆盖服务端冲突时按服务端提示修正序号并复用批次', async () => {
+  const taskDir = '.trellis/tasks/01-overwrite'
+  const localJson = `${JSON.stringify({ id: 'overwrite', title: '本地版本' })}\n`
+  const serverJson = `${JSON.stringify({ id: 'overwrite', title: '服务端版本' })}\n`
+  const context = await setup({
+    [taskDir]: {
+      'task.json': localJson,
+    },
+  })
+  try {
+    const requests = []
+    const cursors = []
+    const api = {
+      async fetchTaskSpaceConflicts() {
+        return {
+          conflicts: [
+            {
+              id: 'conflict-overwrite',
+              taskId: 'overwrite',
+              taskDir,
+              serverRevision: 3,
+              files: [{ path: `${taskDir}/task.json`, changedBy: { displayName: '李四' } }],
+            },
+          ],
+        }
+      },
+      async fetchTaskDirectory() {
+        return {
+          files: [serverFile(`${taskDir}/task.json`, serverJson, { taskId: 'overwrite' })],
+        }
+      },
+      async resolveTaskSpaceConflict(taskSpaceId, conflictId, input) {
+        requests.push({ taskSpaceId, conflictId, input: structuredClone(input) })
+        if (requests.length === 1) {
+          throw new AgentApiError(AGENT_ERROR_CODE.HTTP_ERROR, 'clientSequence 必须严格递增', {
+            status: 409,
+            serverCode: 'CONFLICT',
+            details: {
+              previousSequence: 1,
+              requiredClientSequence: 2,
+            },
+          })
+        }
+        return { resolved: true, revision: 4 }
+      },
+      async writeTaskSpaceCursor(taskSpaceId, input) {
+        cursors.push({ taskSpaceId, input })
+      },
+    }
+    const sync = createSync(context, api)
+    const result = await sync.decideConflict({
+      taskSpaceId: 'space-1',
+      conflictId: 'conflict-overwrite',
+      action: 'overwrite-server',
+    })
+    assert.equal(result.resolved, true)
+    assert.deepEqual(
+      requests.map(({ input }) => ({
+        batchId: input.batchId,
+        clientSequence: input.clientSequence,
+        files: input.files,
+      })),
+      [
+        { batchId: requests[0].input.batchId, clientSequence: 1, files: requests[0].input.files },
+        { batchId: requests[0].input.batchId, clientSequence: 2, files: requests[0].input.files },
+      ],
+    )
+    const cursor = await sync._readCursor('space-1')
+    assert.equal(cursor.sequence, 2)
+    assert.deepEqual(cursors, [{ taskSpaceId: 'space-1', input: { revision: 4 } }])
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('覆盖服务端冲突成功时保留其他实例的 pending 和基线', async () => {
+  const taskDir = '.trellis/tasks/01-overwrite-preserve'
+  const localJson = `${JSON.stringify({ id: 'overwrite-preserve', title: '本地版本' })}\n`
+  const serverJson = `${JSON.stringify({ id: 'overwrite-preserve', title: '服务端版本' })}\n`
+  const pendingPath = '.trellis/tasks/00-other-pending/task.json'
+  const pendingContent = '{"id":"other-pending"}\n'
+  const context = await setup({
+    [taskDir]: {
+      'task.json': localJson,
+    },
+  })
+  try {
+    const api = {
+      async fetchTaskSpaceConflicts() {
+        return {
+          conflicts: [
+            {
+              id: 'conflict-overwrite-preserve',
+              taskId: 'overwrite-preserve',
+              taskDir,
+              serverRevision: 3,
+              files: [{ path: `${taskDir}/task.json` }],
+            },
+          ],
+        }
+      },
+      async fetchTaskDirectory() {
+        return {
+          files: [serverFile(`${taskDir}/task.json`, serverJson, { taskId: 'overwrite-preserve' })],
+        }
+      },
+      async resolveTaskSpaceConflict() {
+        return { resolved: true, revision: 4 }
+      },
+      async writeTaskSpaceCursor() {},
+    }
+    const sync = createSync(context, api)
+    await sync._writeCursor('space-1', {
+      revision: 3,
+      sequence: 0,
+      baselines: {
+        [pendingPath]: snapshotSha256(pendingContent),
+      },
+      pending: {
+        batchId: 'other-pending',
+        clientSequence: 1,
+        files: [
+          {
+            path: pendingPath,
+            content: pendingContent,
+            sha256: snapshotSha256(pendingContent),
+            baseSha256: null,
+          },
+        ],
+      },
+    })
+
+    await sync.decideConflict({
+      taskSpaceId: 'space-1',
+      conflictId: 'conflict-overwrite-preserve',
+      action: 'overwrite-server',
+    })
+
+    const cursor = await sync._readCursor('space-1')
+    assert.equal(cursor.sequence, 1)
+    assert.equal(cursor.pending.batchId, 'other-pending')
+    assert.equal(cursor.pending.clientSequence, 1)
+    assert.equal(cursor.baselines[pendingPath], snapshotSha256(pendingContent))
+    assert.equal(cursor.baselines[`${taskDir}/task.json`], snapshotSha256(localJson))
   } finally {
     fs.rmSync(context.root, { recursive: true, force: true })
   }

@@ -188,6 +188,14 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   真实后续编辑必须重新上传。
 - 同步队列按 taskSpace 串行。网络响应丢失时 cursor 中保留原 pending batch，重试复用原 `batchId`，
   不生成第二个 revision。
+- 常驻 Agent 与控制 Sidecar 是不同进程，`AgentTaskSnapshotSync` 不得永久缓存
+  `live-cursors.json`；每次预占批次和提交游标都必须在 `.live-cursors.lock` 内重新读取并原子写回。
+- 新批次在锁内先持久化 pending，再发网络请求。已有 pending 时优先按原
+  `batchId/clientSequence/files` 重放；迟到响应只有同时匹配 pending 的批次和序号时才能清除它，
+  较旧响应不得覆盖较新文件的基线。
+- 服务端继续拒绝非递增 `clientSequence`，并在 `409 CONFLICT` 的
+  `details` 返回 `previousSequence/requiredClientSequence`。客户端只可按明确返回值自动修正一次
+  pending 序号并复用原批次；第二次冲突或非法提示继续交给正常错误处理。
 - 中断后恢复 `bootstrap` 时，只有服务端已有任务全部为 `same` 且其余差异均为 `local-only`
   才允许继续上传剩余本地任务。上传结束后必须重新获取 full snapshot；只有全部收敛为 `same`
   才能写 cursor 和 `initialSyncCompleted=true`，否则重新进入差异审查。

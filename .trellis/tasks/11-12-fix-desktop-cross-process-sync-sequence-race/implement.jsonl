@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "任务快照同步、CAS、pending batch、cursor 和 clientSequence 契约"}
+{"file": ".trellis/spec/backend/desktop-sidecar-packaging.md", "reason": "一次性 Sidecar 命令、Agent 单实例锁和 live 控制流程约束"}

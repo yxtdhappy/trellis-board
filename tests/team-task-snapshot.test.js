@@ -157,6 +157,37 @@ test('首次上传写入快照并推进 revision', () => {
   }
 })
 
+test('非递增 clientSequence 返回可恢复序号且不写入部分批次', () => {
+  const { db, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-sequence-1',
+      clientSequence: 1,
+      files: batch('sequence', '首个批次'),
+    })
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'batch-sequence-stale',
+          clientSequence: 1,
+          files: batch('sequence', '重复序号'),
+        }),
+      (error) =>
+        error.status === 409 &&
+        error.code === 'CONFLICT' &&
+        error.details?.previousSequence === 1 &&
+        error.details?.requiredClientSequence === 2,
+    )
+    assert.equal(
+      db.prepare('SELECT revision FROM sync_task_space WHERE id = ?').get(taskSpaceId).revision,
+      1,
+    )
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_space_batch').get().count, 1)
+  } finally {
+    db.close()
+  }
+})
+
 test('上报分支与任务空间不一致时拒绝写入且不推进 revision', () => {
   const { db, snapshots, agentA, taskSpaceId } = setup()
   try {
