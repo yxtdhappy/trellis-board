@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { selectProjectAssociation } from '../web/src/lib/project-rail-association.js'
+import {
+  countProjectPausedBranches,
+  isBranchAssociationPaused,
+  selectProjectAssociation,
+} from '../web/src/lib/project-rail-association.js'
 
 function association(taskSpaceId, liveSyncStatus, overrides = {}) {
   return {
@@ -114,4 +118,69 @@ test('当前分支未关联时不借用其他分支的暂停状态', () => {
   ])
 
   assert.equal(selectProjectAssociation(project, associations, 'space-unassociated'), undefined)
+})
+
+test('多分支项目只统计已批准且分支不一致的关联', () => {
+  const project = {
+    taskSpaces: [{ id: 'space-paused' }, { id: 'space-ready' }],
+  }
+  const associations = new Map([
+    [
+      'space-paused',
+      association('space-paused', 'error', {
+        lastErrorCode: 'BRANCH_MISMATCH',
+      }),
+    ],
+    ['space-ready', association('space-ready', 'ready')],
+  ])
+
+  assert.equal(isBranchAssociationPaused(associations.get('space-paused')), true)
+  assert.equal(isBranchAssociationPaused(associations.get('space-ready')), false)
+  assert.equal(countProjectPausedBranches(project, associations), 1)
+})
+
+test('两种绑定分支错误码都识别为暂停', () => {
+  const project = {
+    taskSpaces: [{ id: 'space-local-mismatch' }, { id: 'space-binding-mismatch' }],
+  }
+  const associations = new Map([
+    [
+      'space-local-mismatch',
+      association('space-local-mismatch', 'error', {
+        lastErrorCode: 'BRANCH_MISMATCH',
+      }),
+    ],
+    [
+      'space-binding-mismatch',
+      association('space-binding-mismatch', 'error', {
+        lastErrorCode: 'BINDING_BRANCH_MISMATCH',
+      }),
+    ],
+  ])
+
+  assert.equal(countProjectPausedBranches(project, associations), 2)
+})
+
+test('其他项目和未批准关联不计入暂停分支', () => {
+  const project = {
+    taskSpaces: [{ id: 'space-own' }, { id: 'space-revoked' }],
+  }
+  const associations = new Map([
+    ['space-own', association('space-own', 'ready')],
+    [
+      'space-revoked',
+      association('space-revoked', 'error', {
+        status: 'revoked',
+        lastErrorCode: 'BRANCH_MISMATCH',
+      }),
+    ],
+    [
+      'space-other',
+      association('space-other', 'error', {
+        lastErrorCode: 'BRANCH_MISMATCH',
+      }),
+    ],
+  ])
+
+  assert.equal(countProjectPausedBranches(project, associations), 0)
 })

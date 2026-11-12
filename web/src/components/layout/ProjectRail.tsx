@@ -4,7 +4,11 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { ProjectOnboardingDialog } from '@/features/board/dialogs/ProjectOnboardingDialog'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
-import { selectProjectAssociation } from '@/lib/project-rail-association.js'
+import {
+  countProjectPausedBranches,
+  isBranchAssociationPaused,
+  selectProjectAssociation,
+} from '@/lib/project-rail-association.js'
 
 type Project = {
   id: string
@@ -424,7 +428,19 @@ export function ProjectRail({
           associations,
           selectedTaskSpace?.id,
         )
-        const view = invoke ? projectAssociationView(projectAssociation) : null
+        const pausedBranchCount = countProjectPausedBranches(project, associations)
+        const showPartialPause =
+          !selectedTaskSpace && taskSpaces.length > 1 && pausedBranchCount > 0
+        const view = invoke
+          ? showPartialPause
+            ? {
+                label: `已关联 · ${pausedBranchCount}/${taskSpaces.length} 个分支已暂停`,
+                detail: '各分支仅按自身状态同步。',
+                dotClassName: 'bg-warning',
+                textClassName: 'text-warning',
+              }
+            : projectAssociationView(projectAssociation)
+          : null
         const activeView = invoke ? projectAssociationView(activeAssociation) : null
         return (
           <div key={project.id} className="flex flex-col">
@@ -493,10 +509,7 @@ export function ProjectRail({
                 {taskSpaces.map((taskSpace) => {
                   const branchAssociation = associations.get(taskSpace.id)
                   const branchView = invoke ? projectAssociationView(branchAssociation) : null
-                  const branchPaused =
-                    branchAssociation?.status === 'approved' &&
-                    (branchAssociation.lastErrorCode === 'BRANCH_MISMATCH' ||
-                      branchAssociation.lastErrorCode === 'BINDING_BRANCH_MISMATCH')
+                  const branchPaused = isBranchAssociationPaused(branchAssociation)
                   const deferredDetails = branchAssociation?.deferredTaskDirs
                     .map((taskDir) => taskDir.split('/').at(-1))
                     .join('、')

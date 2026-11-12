@@ -12,6 +12,23 @@ function associationPriority(association) {
   return Math.max(syncPriority, association.deferredCount > 0 ? 2.5 : 0)
 }
 
+export function isBranchAssociationPaused(association) {
+  return (
+    association?.status === 'approved' &&
+    (association.lastErrorCode === 'BRANCH_MISMATCH' ||
+      association.lastErrorCode === 'BINDING_BRANCH_MISMATCH')
+  )
+}
+
+export function countProjectPausedBranches(project, associations) {
+  const taskSpaces = Array.isArray(project?.taskSpaces) ? project.taskSpaces : []
+  return taskSpaces.reduce(
+    (count, taskSpace) =>
+      count + (isBranchAssociationPaused(associations.get(taskSpace?.id)) ? 1 : 0),
+    0,
+  )
+}
+
 export function selectProjectAssociation(project, associations, preferredTaskSpaceId) {
   const taskSpaces = Array.isArray(project?.taskSpaces) ? project.taskSpaces : []
   const candidates = taskSpaces.map((taskSpace) => associations.get(taskSpace?.id)).filter(Boolean)
