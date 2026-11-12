@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "服务端结构与运行时约定，重排后入口/静态目录/插件必须遵守"}
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "插件宿主与 SDK 边界；SDK 留在 apps/server/plugins，协议不变"}
+{"file": ".trellis/spec/backend/plugin-testing.md", "reason": "插件测试与 fixtures 路径约定"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "前端目录与 shared 消费方式"}
+{"file": ".trellis/tasks/11-13-monorepo-restructure/research/import-inventory.md", "reason": "71 个测试归属与跨包引用点实测清单"}

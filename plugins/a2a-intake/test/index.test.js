@@ -7,8 +7,8 @@ import {
   createHarness,
   fixtureModule,
   startHttpServer,
-} from '../../../tests/helpers/plugin-runtime.js'
-import { createTaskRepository } from '../../../tests/helpers/task-repository.js'
+} from '../../../packages/test-support/plugin-runtime.js'
+import { createTaskRepository } from '../../../packages/test-support/task-repository.js'
 
 const PLUGIN_MODULE = fileURLToPath(new URL('../index.js', import.meta.url))
 

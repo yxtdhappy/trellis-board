@@ -8,7 +8,7 @@ node_modules/
 *.log
 # No trailing slash: worktrees link public/ in as a symlink, and a
 # dir-only rule (`/public/`) would leave that symlink untracked-but-visible.
-/public
+/apps/server/public/
 
 # Build and test output
 coverage/
@@ -56,6 +56,6 @@ plugins/*
 !plugins/scenario-copilot/**
 
 # Desktop client build output
-desktop/src-tauri/target/
-desktop/src-tauri/gen/
-desktop/ui/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+apps/desktop/ui/

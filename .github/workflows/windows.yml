@@ -28,21 +28,17 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            web/package-lock.json
-      - name: Install server dependencies
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
         run: npm ci
-      - name: Install web dependencies
-        run: npm ci --prefix web
       - name: Build web
         run: npm run build
       - name: Build desktop UI
-        run: npm --prefix web run build:desktop
+        run: npm run build:desktop
+      - name: Check package boundaries
+        run: npm run check:boundaries
       - name: Server and web tests
-        run: npm test
-      - name: Agent tests (includes Windows DPAPI)
-        run: node --test "agent/test/*.test.js"
+        run: npm run test:all
 
   desktop-build:
     name: desktop build (windows)
@@ -56,30 +52,27 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: |
-            web/package-lock.json
+          cache-dependency-path: package-lock.json
       - name: Install rust stable
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
       - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a  # v2.8.2
         with:
-          workspaces: desktop/src-tauri
+          workspaces: apps/desktop/src-tauri
       - name: Install tauri cli
         run: |
           npm install --prefix "$env:RUNNER_TEMP\tauri-cli" "@tauri-apps/cli@^2"
           "$env:RUNNER_TEMP\tauri-cli\node_modules\.bin" | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Install build dependencies
-        run: |
-          npm ci
-          npm ci --prefix web
+        run: npm ci
       - name: Build web
         run: npm run build
       - name: Build desktop UI
-        run: npm --prefix web run build:desktop
+        run: npm run build:desktop
       - name: Rust unit tests
         timeout-minutes: 25
-        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
       - name: Prepare NSIS tool cache
         env:
           GH_TOKEN: ${{ github.token }}
@@ -127,11 +120,11 @@ jobs:
           New-Item -ItemType Directory -Path $pluginRoot -Force | Out-Null
           Copy-Item -LiteralPath $plugin -Destination (Join-Path $pluginRoot "nsis_tauri_utils.dll") -Force
       - name: Bundle desktop client
-        working-directory: desktop
+        working-directory: apps/desktop
         run: tauri build
       - name: Check artifacts
         run: |
-          $release = "desktop/src-tauri/target/release"
+          $release = "apps/desktop/src-tauri/target/release"
           $exe = Join-Path $release "trellis-board-client.exe"
           if (-not (Test-Path $exe)) { throw "missing $exe" }
           $pattern = Join-Path $release "bundle/nsis/*-setup.exe"
@@ -142,14 +135,14 @@ jobs:
       - name: Package portable client
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass `
-            -File desktop/package-portable.ps1
+            -File apps/desktop/package-portable.ps1
           if ($LASTEXITCODE -ne 0) {
             throw "portable packaging exited with $LASTEXITCODE"
           }
       - name: Portable package smoke test
         run: |
           $ErrorActionPreference = "Stop"
-          $portableRoot = "desktop/src-tauri/target/release/bundle/portable"
+          $portableRoot = "apps/desktop/src-tauri/target/release/bundle/portable"
           $zip = Get-ChildItem (Join-Path $portableRoot "*.zip") | Select-Object -First 1
           if (-not $zip) { throw "missing portable ZIP" }
           $zipChecksum = Get-ChildItem (Join-Path $portableRoot "*.zip.sha256") |
@@ -200,10 +193,10 @@ jobs:
       - name: Installer smoke test
         run: |
           $ErrorActionPreference = "Stop"
-          $exe = "desktop/src-tauri/target/release/trellis-board-client.exe"
+          $exe = "apps/desktop/src-tauri/target/release/trellis-board-client.exe"
           $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
           $installDir = Join-Path $env:LOCALAPPDATA "TrellisBoard"
-          $script = "desktop/install.ps1"
+          $script = "apps/desktop/install.ps1"
           $flags = "-NoProfile -ExecutionPolicy Bypass -File"
           if (Test-Path $installDir) {
             Remove-Item $installDir -Recurse -Force
@@ -231,7 +224,7 @@ jobs:
       - name: Launch smoke test
         continue-on-error: true
         run: |
-          $exe = "desktop/src-tauri/target/release/trellis-board-client.exe"
+          $exe = "apps/desktop/src-tauri/target/release/trellis-board-client.exe"
           $env:TRELLIS_DESKTOP_HOME = Join-Path $env:TEMP "tb-smoke"
           $proc = Start-Process -FilePath $exe `
             -ArgumentList "--minimized" -PassThru
@@ -247,9 +240,9 @@ jobs:
         with:
           name: trellis-board-desktop-windows
           path: |
-            desktop/src-tauri/target/release/trellis-board-client.exe
-            desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
-            desktop/src-tauri/target/release/bundle/portable/*.zip
-            desktop/src-tauri/target/release/bundle/portable/*.zip.sha256
+            apps/desktop/src-tauri/target/release/trellis-board-client.exe
+            apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+            apps/desktop/src-tauri/target/release/bundle/portable/*.zip
+            apps/desktop/src-tauri/target/release/bundle/portable/*.zip.sha256
           if-no-files-found: error
           retention-days: 14

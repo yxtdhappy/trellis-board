@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createPlugin } from '../../server/plugins/sdk.js'
+import { createPlugin } from '../../apps/server/plugins/sdk.js'
 import { AcpClient } from './acp-client.js'
 
 const PLUGIN_ID = 'acp-dispatch'

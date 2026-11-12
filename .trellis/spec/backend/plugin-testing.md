@@ -1,6 +1,6 @@
 # 插件测试规范
 
-适用范围：`server/plugins/`、`plugins/<id>/test/`、`tests/plugin-*.test.js`、`tests/fixtures/plugins/`。
+适用范围：`apps/server/plugins/`、`plugins/<id>/test/`、`packages/test-support/plugin-*.test.js`、`packages/test-support/fixtures/plugins/`。
 
 目标：协议回归能定位到具体帧、方法和错误码；功能回归能定位到任务文件、`plugin_run`、HTTP 响应或事件，而不是只证明插件进程能启动。
 
@@ -8,13 +8,13 @@
 
 | 层 | 测什么 | 入口 | 允许替身 | 代表文件 |
 | --- | --- | --- | --- | --- |
-| L1 协议单元 | 帧编解码、JSON-RPC 形状、版本范围、超时 | 纯函数 | 无 | `tests/plugin-protocol.test.js`、`tests/plugin-version.test.js` |
-| L2 宿主-插件契约 | 握手、权限、事件、取消、生命周期、HTTP 命名空间 | 真实子进程 + fixture 插件 | 仅时钟、端口 | `tests/plugin-supervisor.test.js`、`plugin-sdk.test.js`、`plugin-http.test.js`、`plugin-events.test.js`、`plugin-cancel.test.js`、`plugin-oversized-frame.test.js` |
+| L1 协议单元 | 帧编解码、JSON-RPC 形状、版本范围、超时 | 纯函数 | 无 | `apps/server/test/plugin-protocol.test.js`、`apps/server/test/plugin-version.test.js` |
+| L2 宿主-插件契约 | 握手、权限、事件、取消、生命周期、HTTP 命名空间 | 真实子进程 + fixture 插件 | 仅时钟、端口 | `apps/server/test/plugin-supervisor.test.js`、`plugin-sdk.test.js`、`plugin-http.test.js`、`plugin-events.test.js`、`plugin-cancel.test.js`、`plugin-oversized-frame.test.js` |
 | L3 插件功能 | 单个插件的业务结果 | `createHarness` 启动真实插件，经 HTTP/事件驱动 | 外部平台 HTTP、ACP agent、时钟 | `plugins/acp-dispatch/test/index.test.js`、`plugins/a2a-intake/test/index.test.js` |
 | L4 真实组合 | 真实 agent/平台 | 真实 CLI/网络，env 开关 | 仅外部服务 | `plugins/acp-dispatch/test/real.test.js` |
 
 - 每个产品插件至少有一个 L3 文件：`plugins/<id>/test/index.test.js`；清单/握手测试放同目录 `manifest.test.js`。
-- 插件私有的 fixture 放 `plugins/<id>/test/fixtures/`；跨插件 harness 与任务仓库辅助仍放 `tests/helpers/`。
+- 插件私有的 fixture 放 `plugins/<id>/test/fixtures/`；跨插件 harness 与任务仓库辅助仍放 `packages/test-support/`。
 - L3 必须走真实入口：`createHarness` 读取 `plugin.json`、启动子进程、经 `/api/plugins/<id>/...` 或事件驱动；不得直接 import 插件内部函数来替代入口。
 - L2 不为单个业务插件写分支；新增协议行为先加 fixture 插件和 L2 用例。
 - L4 默认跳过，不能成为唯一证据。
@@ -109,7 +109,7 @@
 根 `npm test` 只跑宿主测试，默认不包含 `plugins/` 下的插件测试；插件测试必须显式运行。
 
 ```bash
-npm test                                  # 宿主测试：tests/*.test.js
+npm test                                  # 宿主测试：packages/test-support/*.test.js
 npm run test:plugins                      # 插件测试：plugins/*/test/*.test.js
 npm run test:all                          # 宿主 + 插件一起跑
 TRELLIS_REAL_ACP=1 node --test plugins/acp-dispatch/test/real.test.js

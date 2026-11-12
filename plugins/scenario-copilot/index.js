@@ -4,7 +4,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { createPlugin } from '../../server/plugins/sdk.js'
+import { createPlugin } from '../../apps/server/plugins/sdk.js'
 
 const PLUGIN_ID = 'scenario-copilot'
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url))

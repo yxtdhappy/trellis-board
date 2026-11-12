@@ -3,8 +3,8 @@
 ## 运行与检查
 
 - 运行时要求 Node `>=24`。
-- 类型检查与构建：`npm --prefix web run build`（`tsc -b && vite build`，产物写入 `public/`）。
-- 单元测试：`npm test`（`node --test tests/*.test.js`）。
+- 类型检查与构建：`npm run build`（`tsc -b && vite build`，产物写入 `public/`）。
+- 单元测试：`npm test`（`node --test packages/test-support/*.test.js`）。
 - 格式化：`npm run format`（`oxfmt .`）、`npm run format:check`（CI 用）。oxfmt 是唯一格式化工具，配置在根 `.oxfmtrc.json`（`printWidth 100`、无分号、单引号、2 空格、LF），不要再引入 Prettier/ESLint 格式化规则；改完代码先跑 `npm run format`。
 - 本地联调：`npm run web:dev`（Vite 代理由 `/api` → `127.0.0.1:4317`，先 `npm start` 起服务端）。
 - 交付前必须实际打开 `/`、`/admin.html`、`/login.html` 验收；构建成功不等于功能正确。
@@ -59,8 +59,8 @@
 
 ## 测试边界
 
-- 纯逻辑模块（`web/src/lib/*.js`、`shared/slug.js`）的现有断言必须保留；迁移只能改 import 路径。
-- 组件内部状态重置所需的纯守卫优先放入 `web/src/lib/*.js`，由现有 Node 测试覆盖，不为单个
+- 纯逻辑模块（`apps/web/src/lib/*.js`、`packages/shared/slug.js`）的现有断言必须保留；迁移只能改 import 路径。
+- 组件内部状态重置所需的纯守卫优先放入 `apps/web/src/lib/*.js`，由现有 Node 测试覆盖，不为单个
   条件引入 React 渲染测试框架。
 - 不要新增“读取源码文本”的断言（例如匹配函数名或字符串字面量）；行为用单元测试或浏览器验收证明。
-- 改变 API 请求形状时必须同步 `server/` 侧测试与 `.trellis/spec/backend/`。
+- 改变 API 请求形状时必须同步 `apps/server/` 侧测试与 `.trellis/spec/backend/`。

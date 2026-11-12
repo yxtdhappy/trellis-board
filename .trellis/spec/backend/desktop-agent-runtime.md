@@ -1,7 +1,7 @@
 # 桌面 Agent 运行契约（进程内 Rust）
 
-**何时阅读**：修改 `desktop/src-tauri/src/agent/**`、`agent_service.rs`、`runtime_commands.rs`、
-`desktop/src-tauri/src/main.rs` 的 Tauri 命令、`web/src/desktop/**` 本地登录/环境门/控制窗口 UI，
+**何时阅读**：修改 `apps/desktop/src-tauri/src/agent/**`、`agent_service.rs`、`runtime_commands.rs`、
+`apps/desktop/src-tauri/src/main.rs` 的 Tauri 命令、`apps/web/src/desktop/**` 本地登录/环境门/控制窗口 UI，
 或 Windows 打包脚本时。
 
 桌面客户端是单进程 Tauri 应用：Agent（心跳、SSE、任务快照同步、任务命令）全部在
@@ -9,7 +9,7 @@
 
 ## 1. 模块与职责
 
-| 模块 | 对应 JSON 行业务 | 职责 |
+| 模块 | 迁移前 JS 实现（已删除） | 职责 |
 | --- | --- | --- |
 | `agent/protocol.rs` | `agent/protocol.js` | 协议版本 3、39 个错误码、URL/ID/命令校验、结果构造、错误脱敏 |
 | `agent/store.rs` | `agent/config-store.js` | `client.json`/`state.json`/cursor/credential 记录、原子写、config 锁 |
@@ -18,22 +18,25 @@
 | `agent/process.rs` | `agent/process.js` | 受控子进程、环境白名单、超时、进程树结束 |
 | `agent/git.rs` | `agent/git-sync.js` | git 参数白名单、status 解析、状态标记检测 |
 | `agent/onboarding.rs` | `agent/project-onboarding.js` | inspect / initialize / checkPush / preflight / attach |
-| `agent/trellis_cli.rs` | `desktop/sidecar/trellis-runtime.js` | 执行 `node <cli.js> init ...`，不含安装逻辑 |
+| `agent/trellis_cli.rs` | `apps/desktop/sidecar/trellis-runtime.js` | 执行 `node <cli.js> init ...`，不含安装逻辑 |
 | `agent/env.rs` | 新增 | 环境门：Node/Trellis 检查、npmmirror 下载、npm 私有前缀安装 |
-| `agent/device.rs` | `desktop/sidecar/desktop-device.js` | 登录、登出、入网、撤销、本地关联读取 |
-| `agent/association.rs` | `desktop/sidecar/desktop-association.js` | associate / preflight 编排与错误文案 |
+| `agent/device.rs` | `apps/desktop/sidecar/desktop-device.js` | 登录、登出、入网、撤销、本地关联读取 |
+| `agent/association.rs` | `apps/desktop/sidecar/desktop-association.js` | associate / preflight 编排与错误文案 |
 | `agent/task_sync.rs` | `agent/task-snapshot-sync.js` | 任务快照 cursor、上传/拉取、冲突与首次同步 |
 | `agent/task_command.rs` | `agent/task-command.js` | create_task / assign_task / sync_branch / refresh_status |
 | `agent/runtime.rs` | `agent/index.js` | 心跳 15s、SSE 事件循环、命令重试、state.json 状态机 |
 | `agent/control.rs` | — | 控制事件队列（上限 32、按 key 去重、过期与 suppression） |
-| `agent_service.rs` | `desktop/sidecar/main.js` | 进程内生命周期、Tauri 命令实现、控制窗口显隐 |
+| `agent_service.rs` | `apps/desktop/sidecar/main.js` | 进程内生命周期、Tauri 命令实现、控制窗口显隐 |
+
+根目录 `agent/`（Node CLI）与 `apps/desktop/sidecar/` 都已删除；右列只用于追溯协议版本、错误码和数据
+格式的来源，不是可修改的代码路径。行为以 Rust 模块和 `cargo test` 为准。
 
 ## 2. 必须保持的契约
 
-- 协议版本固定 `AGENT_PROTOCOL_VERSION = 3`；错误码集合与 `agent/protocol.js` 逐字一致，
+- 协议版本固定 `AGENT_PROTOCOL_VERSION = 3`；错误码集合固定在 `apps/desktop/src-tauri/src/agent/protocol.rs`，
   服务端据此判定可重试与终止。
 - 控制事件只允许 `{"type": ..., ...}` 结构，类型：`initial_sync_review`、`task_file_conflict`、
-  `task_sync_error`。`agent/live-sync.js` 从未装配（其 `fetchLiveFiles`/`preflightLiveChanges` 在 JS 侧
+  `task_sync_error`。已删除的旧 JS Agent 里 `live-sync.js` 从未装配（其 `fetchLiveFiles`/`preflightLiveChanges` 在 JS 侧
   无任何实现，服务端也无对应路由），属死代码，Rust 不再移植实时文件同步。
 - 超时预算：登录/登出/关联列表 15s；inspect-project / 实时决策 60s；首次同步与备份恢复 120s；
   check-push / preflight 240s；associate / initialize-project 600s；`trellis init` 210s；
@@ -91,10 +94,10 @@
 
 ## 6. 本地前端（环境门、登录页、控制窗口）
 
-- 源码是 `web/desktop/{index,control}.html` 与 `web/src/desktop/**`（React 19 + TypeScript +
-  Tailwind v4 + `web/src/components/ui`），由 `web/vite.desktop.config.ts` 输出到 `desktop/ui/`；
-  `desktop/ui/` 被 `.gitignore` 忽略，是构建产物，不得手写页面或脚本。
-- `npm --prefix web run build:desktop` 必须先于 `cargo tauri build`；`cargo tauri build` 只打包
+- 源码是 `apps/web/desktop/{index,control}.html` 与 `apps/web/src/desktop/**`（React 19 + TypeScript +
+  Tailwind v4 + `apps/web/src/components/ui`），由 `apps/web/vite.desktop.config.ts` 输出到 `apps/desktop/ui/`；
+  `apps/desktop/ui/` 被 `.gitignore` 忽略，是构建产物，不得手写页面或脚本。
+- `npm run build:desktop` 必须先于 `cargo tauri build`；`cargo tauri build` 只打包
   `frontendDist = ../ui` 的现有产物，CI 在 `windows.yml` 的 `Build desktop UI` 步骤构建。
 - `control.html` 必须保留 `Content-Security-Policy` meta（`script-src 'self'` / `style-src 'self'`）；
   构建产物不得包含内联 `<script>`/`style`，Vite 用 `base: './'` 输出相对资源路径。
@@ -109,7 +112,7 @@
 ## 7. 打包与验证
 
 - `tauri.conf.json` 不得出现 `bundle.externalBin` 或 `bundle.resources`（trellis-runtime）。
-- `desktop/` 下不得出现 `sidecar/`、`package.json`、`package-lock.json`、`binaries/`、`resources/`。
+- `apps/desktop/` 下不得出现 `sidecar/`、`package.json`、`package-lock.json`、`binaries/`、`resources/`。
 - `package-portable.ps1` 只打包 `trellis-board-client.exe` + `VERSION.txt` + `SHA256SUMS.txt` + 使用说明。
 - `windows/hooks.nsh` 只结束 `trellis-board-client.exe`（保留旧版 `trellis-agent.exe` 清理）。
 - 验证：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test --lib`、

@@ -39,7 +39,7 @@ Windows PowerShell 前台启动：
 $env:TRELLIS_BOARD_MODE = 'team'
 $env:PORT = '4317'
 $env:TRELLIS_BOARD_DATA_DIR = Join-Path $env:LOCALAPPDATA 'TrellisBoard\server'
-node server/index.js
+node apps/server/index.js
 ```
 
 团队需要本地 Git 远端时，在启动前额外设置：
@@ -56,7 +56,7 @@ Ubuntu 前台启动：
 export TRELLIS_BOARD_MODE=team
 export PORT=4317
 export TRELLIS_BOARD_DATA_DIR=/var/lib/trellis-board
-node server/index.js
+node apps/server/index.js
 ```
 
 服务账号必须能读写 `TRELLIS_BOARD_DATA_DIR` 和 SQLite 文件。Team 服务端不需要安装项目 Git 或
@@ -70,7 +70,7 @@ node server/index.js
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
 $env:PORT = '4317'
-node server/team/cli.js init-admin --username admin --display-name '系统管理员'
+node apps/server/team/cli.js init-admin --username admin --display-name '系统管理员'
 ```
 
 3. 启动服务并打开 `http://<服务端IP>:4317/login.html`；使用 HTTPS 时打开对应域名。
@@ -256,7 +256,7 @@ if (Test-Path (Join-Path $dataDir 'board.sqlite-shm')) { Copy-Item (Join-Path $d
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
 $env:PORT = '4317'
-node server/team/cli.js status
+node apps/server/team/cli.js status
 ```
 
 结果应显示 `schemaVersion=10`、`journalMode=wal` 和 `integrity=ok`。

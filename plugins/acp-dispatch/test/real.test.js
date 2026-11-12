@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createHarness } from '../../../tests/helpers/plugin-runtime.js'
-import { createTaskRepository } from '../../../tests/helpers/task-repository.js'
+import { createHarness } from '../../../packages/test-support/plugin-runtime.js'
+import { createTaskRepository } from '../../../packages/test-support/task-repository.js'
 
 // 默认跳过：需要本机已安装并登录 ACP agent，且会真实调用模型。
 // 运行：TRELLIS_REAL_ACP=1 node --test plugins/acp-dispatch/test/real.test.js

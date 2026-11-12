@@ -9,20 +9,45 @@ Trellis Board 提供两种运行模式：
 两种模式共用同一套任务推导、看板和 SQLite 代码。团队版的部署、升级、备份和故障处置见
 [团队版运维手册](./docs/team-operations.md)。
 
+## 仓库结构
+
+项目是 npm workspaces monorepo：应用放在 `apps/`，可复用包放在 `packages/`，插件和脚本保留在根。
+
+```text
+apps/
+  apps/server/       Node HTTP/SSE 服务、SQLite、任务扫描与 Team 快照（含 plugins 宿主与 SDK）
+  apps/web/          React + Vite 前端，构建产物写入 apps/server/public 与 apps/desktop/ui
+  apps/desktop/      Tauri v2 桌面客户端（Rust + 前端产物）
+packages/
+  packages/shared/       服务端、Agent 与前端共用的纯 ESM 模块（含 zip 读取）
+  test-support/ 测试 harness、fixture 和插件 fixture
+plugins/        随仓库分发的参考插件，插件 id 与目录名一致
+scripts/        开发启动、容量检查、边界守卫等脚本
+docs/           运维与设计文档
+```
+
+运行时 Node 代码只用仓库相对路径跨包引用（如 `../../packages/shared/slug.js`），不依赖 workspace
+包名解析，因此 `node apps/server/index.js` 在未安装依赖的目录中也能启动。前端构建期通过 Vite alias
+`@shared` 指向 `packages/shared`。
+
+常用命令：`npm run dev`、`npm start`、`npm run build`、`npm run build:desktop`、`npm run test:all`、
+`npm run check:boundaries`、`npm run desktop:build`、`npm run desktop:package`。
+
 ## 启动
 
 需要 Node.js 24 或更高版本，持久化使用 Node 内置的 `node:sqlite`，没有第三方运行时依赖。
 
 ```powershell
 cd D:\workspace\wiki\trellis-board
-node server/index.js
+npm install
+node apps/server/index.js
 ```
 
 打开 `http://127.0.0.1:4317`。
 
 也可以运行 `npm start` 或 `npm run board`。
 
-前端开发用 `npm run dev`：并行启动 `node --watch server/index.js`（服务端改动自动重启）和 Vite 开发服务器（页面 HMR），`/api` 由 Vite 代理到 `PORT` 指定的端口，默认 `http://127.0.0.1:4317`；5173 被占用时 Vite 会自动递增端口，以控制台打印的地址为准。
+前端开发用 `npm run dev`：并行启动 `node --watch apps/server/index.js`（服务端改动自动重启）和 Vite 开发服务器（页面 HMR），`/api` 由 Vite 代理到 `PORT` 指定的端口，默认 `http://127.0.0.1:4317`；5173 被占用时 Vite 会自动递增端口，以控制台打印的地址为准。
 
 standalone 模式监听所有网络接口 `0.0.0.0`，且没有账号鉴权，只能用于可信网络。团队模式同样
 监听所有接口，HTTP 和 HTTPS 均可使用。
@@ -134,7 +159,7 @@ SQLite 使用 WAL 模式。standalone 主线程和扫描 Worker 各自持有连�
 
 接口只允许操作 SQLite `repositories` 表中的白名单仓库；不提供任意路径读取。
 
-主要源码入口：[server/index.js](./server/index.js)、[server/database.js](./server/database.js)、[server/repositories.js](./server/repositories.js)、[server/persistence.js](./server/persistence.js)、[server/watcher.js](./server/watcher.js)、[server/loader.js](./server/loader.js)、[server/scan-worker.js](./server/scan-worker.js)、[server/actions.js](./server/actions.js)、[public/app.js](./public/app.js)。
+主要源码入口：[apps/server/index.js](./apps/server/index.js)、[apps/server/database.js](./apps/server/database.js)、[apps/server/repositories.js](./apps/server/repositories.js)、[apps/server/persistence.js](./apps/server/persistence.js)、[apps/server/watcher.js](./apps/server/watcher.js)、[apps/server/loader.js](./apps/server/loader.js)、[apps/server/scan-worker.js](./apps/server/scan-worker.js)、[apps/server/actions.js](./apps/server/actions.js)、[apps/web/src/main.tsx](./apps/web/src/main.tsx)。
 
 ## 团队模式
 
@@ -142,7 +167,7 @@ SQLite 使用 WAL 模式。standalone 主线程和扫描 Worker 各自持有连�
 
 1. 准备 Node.js 24 和独立运行数据目录；Team 服务端不需要项目 Git、Git 凭据或 Python。
 2. 设置 `TRELLIS_BOARD_MODE=team`、`TRELLIS_BOARD_DATA_DIR`，需要时设置 `PORT` 和本地 Git 远端开关。
-3. 运行 `node server/team/cli.js init-admin --username admin` 创建首个管理员。
+3. 运行 `node apps/server/team/cli.js init-admin --username admin` 创建首个管理员。
 4. 启动服务，在 `/admin.html` 创建团队和用户。
 5. 安装 Windows 客户端，用服务器地址、账号和密码登录；项目由客户端选择本地 Git 仓库后接入。
 
@@ -193,8 +218,8 @@ binding 不一致时暂停该仓库同步，不写任务目录、不上传、不
 
 管理接口：`GET /api/plugins`、`POST /api/plugins/<id>/start|stop`、`GET /api/plugins/<id>/logs|runs|audit`；
 前端入口在左侧导航「插件」。设置 `TRELLIS_PLUGINS_DISABLED=1` 可整体关闭。
-内置插件的功能测试与 fixture 放在 `plugins/<id>/test/`，宿主级协议测试仍在 `tests/`；
-`npm test` 默认只跑宿主测试，插件测试用 `npm run test:plugins`。
+内置插件的功能测试与 fixture 放在 `plugins/<id>/test/`，宿主级协议测试在 `apps/server/test/`；
+`npm test` 默认只跑 workspace 测试，插件测试用 `npm run test:plugins`。
 
 插件默认没有沙箱：`acp-dispatch` 默认放行编辑与执行，只应在受信仓库、专用账号下启用。
 
