@@ -113,7 +113,8 @@
 宿主能力是插件唯一稳定接口。插件不得直接读运行数据目录、`server/` 或宿主数据库；需要新能力时先扩展本清单和 SDK，而不是在插件里绕过。
 
 宿主核心 capability 与插件 capability 共用 `provides` / `requires` 模型。`trellis.repositories` 管理工作区；
-`trellis.capabilities` 提供能力目录与通用调用（`list` / `call`），调用方需要声明 `capabilities:invoke`
+`trellis.projects` 提供项目上下文（`list` / `get` / `current`，权限 `projects:read`），供插件按左侧选中的项目
+解析 `repositoryId`、名称与路径；`trellis.capabilities` 提供能力目录与通用调用（`list` / `call`），调用方需要声明 `capabilities:invoke`
 （应只授予受信任的桥接插件）。
 插件不应把可选或私有插件名写进自己的 manifest 或代码；需要跨插件调用时，通过 `trellis.capabilities.call`
 由运行时参数决定目标。

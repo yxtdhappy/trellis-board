@@ -73,6 +73,7 @@
   "config": {
     "scenarioRoot": "",
     "workspaceDir": "",
+    "outputRoot": "",
     "outlinesDir": "",
     "knowledgePath": "",
     "targetUrl": "",
@@ -82,9 +83,13 @@
     "llmApiKey": "",
     "llmBaseUrl": "",
     "llmModel": "",
+    "effort": "",
+    "effortField": "reasoning_effort",
+    "reconSnapshots": [],
     "defaultOutline": "",
     "timeoutMs": 900000,
     "maxRuns": 20,
-    "maxHealingRetries": 1
+    "maxHealingRetries": 1,
+    "maxTokens": 32768
   }
 }
