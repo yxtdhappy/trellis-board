@@ -300,7 +300,13 @@ export function BoardPage() {
 
           {view === 'plugins' ? <PluginsView /> : null}
 
-          {activePanel ? <PluginPanel panel={activePanel} /> : null}
+          {activePanel ? (
+            <PluginPanel
+              panel={activePanel}
+              projectId={filters.projectId}
+              projectName={projects.find((project) => project.id === filters.projectId)?.name || ''}
+            />
+          ) : null}
 
           {view === 'archive' ? (
             <ArchiveView

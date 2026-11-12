@@ -7,9 +7,18 @@
     "capabilities:call",
     "repositories:read",
     "repositories:write",
+    "projects:read",
     "http:route"
   ],
   "requires": [
+    {
+      "name": "trellis.projects",
+      "version": "^1.0.0",
+      "methods": [
+        "list",
+        "current"
+      ]
+    },
     {
       "name": "trellis.repositories",
       "version": "^1.0.0",
