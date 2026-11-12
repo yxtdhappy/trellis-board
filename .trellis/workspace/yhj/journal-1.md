@@ -798,3 +798,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 34: 客户端接入项目默认填入登录账号
+<!-- trellis-session: v=2 fp=a726e03428214138 -->
+
+**Date**: 2026-11-12
+**Task**: 客户端接入项目默认填入登录账号
+**Branch**: `codex/server-gitless-task-sync`
+
+### Summary
+
+接入项目时 developer ID 默认使用当前登录账号；保留手动修改，迟到运行时数据不覆盖输入；补充前端规范、检查报告和桌面端 E2E。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7b360ec` | fix(web): default onboarding developer id to login account |
+
+### Status
+
+[OK] **Completed**
