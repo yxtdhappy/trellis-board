@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
-- **Last Active**: 2026-11-09
+- **Total Sessions**: 4
+- **Last Active**: 2026-11-12
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~77 | Active |
+| `journal-1.md` | ~117 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-11-12 | web 控件高度统一到 32/28/24 三档并优先 shadcn | `849c8df`, `669672f` | `codex/rust-desktop-agent-single-exe` |
 | 3 | 2026-11-09 | 统一弹层骨架、下拉宽度与 Markdown 预览改造 | `0981be5`, `f0f84ca`, `4ee7d80` | `codex/team-board` |
 | 2 | 2026-11-06 | 设计稿缺陷修复与界面还原对齐 | `bfc4b59` | `codex/team-board` |
 | 1 | 2026-11-05 | 设计稿还原与插件面板移植 | `fbad32d`, `e3f5fec`, `daf351c` | `codex/team-board` |

@@ -75,3 +75,43 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: web 控件高度统一到 32/28/24 三档并优先 shadcn
+<!-- trellis-session: v=2 fp=d194f529ad767cd4 -->
+
+**Date**: 2026-11-12
+**Task**: web 控件高度统一到 32/28/24 三档并优先 shadcn
+**Branch**: `codex/rust-desktop-agent-single-exe`
+
+### Summary
+
+Input/Button/icon 尺寸改为 32/28/24 三档，删除页面层 h-8/h-9/h-10/h-7.5 覆盖与控件字级离群值，动作型裸 button 换 shadcn Button，并把控件尺度与 shadcn 优先写进前端规范
+
+### Main Changes
+
+- web/src/components/ui/input.tsx 与 button.tsx 尺寸改为 32/28/24 三档
+- TopBar、ProjectRail、ExecutionHeader、TeamView、ArchiveView、Pagination、TaskCard、ConditionChecks、TaskOperationList、TeamsTab、PluginsView、ProjectManagerDialog、PublishOperationDialog、SavedViewsDialog、TaskDetailDialog 清理高度与字级覆盖
+- .trellis/spec/frontend/quality-guidelines.md 新增控件尺度表与 shadcn 优先/裸 button 豁免清单
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `849c8df` | feat(web): unify control heights to 32/28/24 scale |
+| `669672f` | chore(task): archive 11-12-web-controls-unification |
+
+### Testing
+
+- [OK] npm run format + npm --prefix web run lint（无 error）+ npm --prefix web run build
+- [OK] npm test：433 pass / 0 fail / 5 skipped
+- [OK] 浏览器实测流水线、团队视角、任务详情弹窗与 /admin.html：Input/Select 32px、Button 32/28px 无离群高度
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 任务 B：接入本地项目弹窗即时打开并 loading 占位
+- 任务 A：客户端 UI 迁移到 web 的 Vite+React+shadcn 构建（需等 11-12-rust-desktop-agent-single-exe 归档）
