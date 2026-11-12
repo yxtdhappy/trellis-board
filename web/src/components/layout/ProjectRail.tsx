@@ -413,13 +413,18 @@ export function ProjectRail({
       ) : null}
       {projects.map((project) => {
         const taskSpaces = project.taskSpaces || []
-        const activeTaskSpace =
+        const selectedTaskSpace =
           current === project.id
-            ? taskSpaces.find((taskSpace) => taskSpace.id === currentTaskSpace) || taskSpaces[0]
-            : null
-        const association = selectProjectAssociation(project, associations)
+            ? taskSpaces.find((taskSpace) => taskSpace.id === currentTaskSpace)
+            : undefined
+        const activeTaskSpace = current === project.id ? selectedTaskSpace || taskSpaces[0] : null
         const activeAssociation = activeTaskSpace ? associations.get(activeTaskSpace.id) : undefined
-        const view = invoke ? projectAssociationView(association) : null
+        const projectAssociation = selectProjectAssociation(
+          project,
+          associations,
+          selectedTaskSpace?.id,
+        )
+        const view = invoke ? projectAssociationView(projectAssociation) : null
         const activeView = invoke ? projectAssociationView(activeAssociation) : null
         return (
           <div key={project.id} className="flex flex-col">
@@ -488,6 +493,10 @@ export function ProjectRail({
                 {taskSpaces.map((taskSpace) => {
                   const branchAssociation = associations.get(taskSpace.id)
                   const branchView = invoke ? projectAssociationView(branchAssociation) : null
+                  const branchPaused =
+                    branchAssociation?.status === 'approved' &&
+                    (branchAssociation.lastErrorCode === 'BRANCH_MISMATCH' ||
+                      branchAssociation.lastErrorCode === 'BINDING_BRANCH_MISMATCH')
                   const deferredDetails = branchAssociation?.deferredTaskDirs
                     .map((taskDir) => taskDir.split('/').at(-1))
                     .join('、')
@@ -510,7 +519,12 @@ export function ProjectRail({
                           className={`size-1 shrink-0 rounded-full ${branchView?.dotClassName || 'bg-chart-3'}`}
                           aria-hidden="true"
                         />
-                        <span className="truncate">{taskSpace.branchName}</span>
+                        <span className="min-w-0 flex-1 truncate">{taskSpace.branchName}</span>
+                        {branchPaused ? (
+                          <span className="shrink-0 text-[8.5px] font-medium text-destructive">
+                            已暂停
+                          </span>
+                        ) : null}
                       </button>
                       {branchAssociation?.status === 'approved' &&
                       !branchAssociation.readOnly &&

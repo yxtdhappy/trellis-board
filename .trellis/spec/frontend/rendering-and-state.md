@@ -50,9 +50,12 @@
   展示脱敏后的 `liveSyncError`。
 - `liveSyncStatus=ready` 但 `deferredCount>0` 时必须显示“N 个本地任务未同步”，不能显示同步正常。
   可写关联提供显式确认后的补同步入口；只读关联不显示上传动作。补同步失败或冲突不得提示成功。
-- 项目栏父行状态只能聚合该项目自身 `taskSpaces` 的关联，禁止回退到全局 `currentTaskSpace`；
-  多分支按“关联失效、`error`、`syncing`、deferred、`pending`、`ready`”的优先级展示，
-  选中分支只影响展开行和该分支的关联入口。
+- 项目栏父行状态只能读取该项目自身 `taskSpaces` 的关联，禁止回退到其他项目的
+  `currentTaskSpace`。项目展开时父行优先展示当前选中分支的状态，不能被他分支的
+  `error` 或分支不一致覆盖；项目未展开时可按“关联失效、`error`、`syncing`、deferred、
+  `pending`、`ready`”聚合。
+- 多分支项目的展开行必须分别展示各分支状态。`BRANCH_MISMATCH` /
+  `BINDING_BRANCH_MISMATCH` 只在该分支行显示红色“已暂停”，不得把暂停状态投影成整个项目暂停。
 - 点击关联后先进入只读项目检查并禁用重复入口；目录选择取消只结束 loading，不显示成功或失败。
   推送确认完成后先调用预检，不能在预检前 attach。
 - “团队管理”入口只属于普通浏览器管理界面；Tauri 客户端即使账号具备管理权限也不显示该入口，

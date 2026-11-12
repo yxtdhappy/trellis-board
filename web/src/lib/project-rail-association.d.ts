@@ -11,4 +11,8 @@ type ProjectRailAssociation = {
 export function selectProjectAssociation<
   TProject extends { taskSpaces?: ProjectRailTaskSpace[] },
   TAssociation extends ProjectRailAssociation,
->(project: TProject, associations: ReadonlyMap<string, TAssociation>): TAssociation | undefined
+>(
+  project: TProject,
+  associations: ReadonlyMap<string, TAssociation>,
+  preferredTaskSpaceId?: string,
+): TAssociation | undefined

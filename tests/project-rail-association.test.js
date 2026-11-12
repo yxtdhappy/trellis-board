@@ -74,3 +74,44 @@ test('关联失效优先于正常同步，无本地关联时返回未关联', ()
     undefined,
   )
 })
+
+test('当前分支正常时不被他分支的暂停状态覆盖', () => {
+  const project = {
+    taskSpaces: [{ id: 'space-paused' }, { id: 'space-main' }],
+  }
+  const associations = new Map([
+    [
+      'space-paused',
+      association('space-paused', 'error', {
+        lastErrorCode: 'BRANCH_MISMATCH',
+      }),
+    ],
+    ['space-main', association('space-main', 'ready')],
+  ])
+
+  assert.equal(selectProjectAssociation(project, associations)?.taskSpaceId, 'space-paused')
+  assert.equal(
+    selectProjectAssociation(project, associations, 'space-main')?.liveSyncStatus,
+    'ready',
+  )
+  assert.equal(
+    selectProjectAssociation(project, associations, 'space-missing')?.taskSpaceId,
+    'space-paused',
+  )
+})
+
+test('当前分支未关联时不借用其他分支的暂停状态', () => {
+  const project = {
+    taskSpaces: [{ id: 'space-paused' }, { id: 'space-unassociated' }],
+  }
+  const associations = new Map([
+    [
+      'space-paused',
+      association('space-paused', 'error', {
+        lastErrorCode: 'BRANCH_MISMATCH',
+      }),
+    ],
+  ])
+
+  assert.equal(selectProjectAssociation(project, associations, 'space-unassociated'), undefined)
+})
