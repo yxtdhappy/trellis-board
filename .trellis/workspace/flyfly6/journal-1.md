@@ -319,3 +319,39 @@ merge origin/main 后把分支隔离、游标串行化、deferred 补同步、�
 ### Next Steps
 
 - 外部自建插件如需兼容旧 SDK 路径，可后续补 server/plugins/sdk.js 转发层
+
+
+## Session 10: 合并 Rust 单文件客户端分支并迁移快速初始化编码 Agent
+<!-- trellis-session: v=2 fp=4fc90c6a2a381934 -->
+
+**Date**: 2026-11-13
+**Task**: 合并 Rust 单文件客户端分支并迁移快速初始化编码 Agent
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+把 codex/rust-desktop-agent-single-exe 合入 main，保留 sidecar/Node 运行时删除，将 main 侧快速初始化编码 Agent 能力迁移到进程内 Rust。
+
+### Main Changes
+
+- Rust 新增 inspect/initialize_associated_project_agents 与三个校验函数并补单测与 capability；Web 新增 project-inspection、AgentToolSelector、AgentQuickInitDialog 并接入 ProjectRail/ProjectOnboardingDialog；修复 clippy 17 处告警与 package-portable.ps1 相等判定。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `19949c7` | merge: 合入 Rust 单文件客户端分支并迁移快速初始化编码 Agent |
+| `561eba1` | chore(task): archive 11-13-merge-rust-agent-branch |
+
+### Testing
+
+- [OK] cargo fmt/clippy/test（90 通过）、npm test（399 通过）、check:boundaries、build:desktop、cargo build --release + 绿色包冒烟、真实 team 服务端全链路 E2E。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 观察 CI windows.yml 的 NSIS 安装包与绿色包步骤，确认 opener 插件替换在安装包产物中同样通过。
