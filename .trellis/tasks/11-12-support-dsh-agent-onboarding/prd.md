@@ -24,6 +24,7 @@
 - [ ] 已有 `.dsh` 时，DSH 显示“已存在”且不可重复勾选。
 - [ ] 勾选 DSH 并执行初始化时，传给 `initialize_pending_project` 的 `agentTools` 包含 `dsh`。
 - [x] 前端 lint 与 TypeScript/Vite 构建通过；失败项仅为仓库既有告警或已明确记录的无关问题。
+- [x] 真实 Tauri WebView2 客户端已展示完整 Agent 列表与搜索输入框，用户验收无问题。
 
 ## Out of Scope
 

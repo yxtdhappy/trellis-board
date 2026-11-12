@@ -19,5 +19,5 @@
 
 ## 剩余风险
 
-- 真实 Tauri WebView2/Rust IPC 冷启动未执行；浏览器 E2E 使用最小 `window.__TAURI__.core.invoke` mock。
+- 用户在真实 Tauri WebView2 客户端完成页面验收，确认完整 Agent 列表与搜索输入框无问题。
 - 未提交 `initialize_pending_project`，因为会自动初始化或改变真实本地绑定。
