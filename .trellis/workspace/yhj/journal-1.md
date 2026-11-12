@@ -820,3 +820,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 35: 加固桌面 sidecar 生命周期并完成 Windows 升级验收
+<!-- trellis-session: v=2 fp=127bdf0e2fb481b7 -->
+
+**Date**: 2026-11-12
+**Task**: 加固桌面 sidecar 生命周期并完成 Windows 升级验收
+**Branch**: `codex/harden-desktop-sidecar-lifecycle`
+
+### Summary
+
+新增 sidecar 父进程看门狗、命令超时与进程树清理、项目栏轮询防重入及 NSIS 安装前进程清理；本机 515 个测试 0 失败，GitHub Windows 构建与运行中升级/卸载烟测全部通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7bfbf6f` | fix(desktop): harden sidecar process lifecycle |
+| `cd84ff1` | docs(task): record sidecar lifecycle verification |
+
+### Status
+
+[OK] **Completed**
