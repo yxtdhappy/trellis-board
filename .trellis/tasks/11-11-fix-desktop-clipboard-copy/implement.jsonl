@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/directory-structure.md","reason":"确定共享浏览器复制工具的放置位置和模块依赖边界"}
-{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"核对 Tauri/WebView2、toast、焦点恢复和浏览器状态约束"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"确定 lint、构建和真实浏览器/桌面验收标准"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"三个复制入口应复用单一实现，避免继续直接调用 Clipboard API"}
