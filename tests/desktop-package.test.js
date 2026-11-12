@@ -222,7 +222,9 @@ test('capability 将本地登录与远程项目关联权限分开', () => {
     'allow-cancel-pending-project',
     'allow-check-pending-project-push',
     'allow-desktop-sidecar-status',
+    'allow-initialize-associated-project-agents',
     'allow-initialize-pending-project',
+    'allow-inspect-associated-project-agents',
     'allow-inspect-local-project',
     'allow-list-local-associations',
     'allow-preflight-pending-project',
@@ -245,6 +247,8 @@ test('capability 将本地登录与远程项目关联权限分开', () => {
   assert.match(custom, /commands\.allow = \["cancel_pending_project"\]/)
   assert.match(custom, /commands\.allow = \["associate_pending_project"\]/)
   assert.match(custom, /commands\.allow = \["list_local_associations"\]/)
+  assert.match(custom, /commands\.allow = \["inspect_associated_project_agents"\]/)
+  assert.match(custom, /commands\.allow = \["initialize_associated_project_agents"\]/)
   assert.match(custom, /commands\.allow = \["sync_deferred_tasks"\]/)
   assert.match(custom, /commands\.allow = \["desktop_sidecar_status"\]/)
   assert.match(custom, /commands\.allow = \["live_control_pending"\]/)
@@ -253,7 +257,7 @@ test('capability 将本地登录与远程项目关联权限分开', () => {
   assert.match(custom, /commands\.allow = \["live_control_initial"\]/)
   assert.match(custom, /commands\.allow = \["live_control_restore"\]/)
   assert.match(custom, /commands\.allow = \["live_control_dismiss"\]/)
-  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 17)
+  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 19)
   const control = readJson('desktop/src-tauri/capabilities/live-control.json')
   assert.deepEqual(control.windows, ['live-control'])
   assert.deepEqual(control.permissions.slice().sort(), [

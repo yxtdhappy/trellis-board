@@ -21,6 +21,8 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_shell::ShellExt;
 
 const SESSION_COOKIE: &str = "trellis_team_session";
+// 与 shared/trellis-agent-tools.js 当前目录数量保持一致。
+const MAX_AGENT_TOOLS: usize = 22;
 
 #[derive(Clone, Default)]
 struct DesktopAuthState {
@@ -116,6 +118,48 @@ fn validate_session_token(value: &str) -> Result<String, String> {
         return Err("Board 登录响应包含无效会话令牌".to_string());
     }
     Ok(token.to_string())
+}
+
+fn validate_developer_id(value: &str) -> Result<String, String> {
+    let developer_id = value.trim().to_string();
+    if developer_id.is_empty() || developer_id.chars().count() > 120 {
+        return Err("请填写有效的 Trellis developer ID".to_string());
+    }
+    Ok(developer_id)
+}
+
+fn validate_agent_tools(agent_tools: &[String]) -> Result<Vec<String>, String> {
+    if agent_tools.is_empty() || agent_tools.len() > MAX_AGENT_TOOLS {
+        return Err(format!(
+            "请至少选择一个、且不超过 {MAX_AGENT_TOOLS} 个编码 Agent 工具"
+        ));
+    }
+    let agent_tools = agent_tools
+        .iter()
+        .map(|tool| tool.trim().to_string())
+        .collect::<Vec<_>>();
+    if agent_tools.iter().any(|tool| {
+        tool.is_empty()
+            || tool.len() > 40
+            || !tool
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    }) {
+        return Err("编码 Agent 工具列表格式无效".to_string());
+    }
+    Ok(agent_tools)
+}
+
+fn approved_association_for_task_space<'a>(
+    associations: &'a [sidecar::LocalAssociation],
+    task_space_id: &str,
+) -> Result<&'a sidecar::LocalAssociation, String> {
+    associations
+        .iter()
+        .find(|association| {
+            association.task_space_id == task_space_id && association.status == "approved"
+        })
+        .ok_or_else(|| "请先关联本地 Git 项目，并确认关联状态为 approved".to_string())
 }
 
 fn validate_project_id(value: String) -> Result<String, String> {
@@ -402,20 +446,8 @@ async fn initialize_pending_project(
     agent_tools: Vec<String>,
 ) -> Result<serde_json::Value, String> {
     ensure_board_caller(&app, &window)?;
-    let developer_id = developer_id.trim().to_string();
-    if developer_id.is_empty() || developer_id.chars().count() > 120 {
-        return Err("请填写有效的 Trellis developer ID".to_string());
-    }
-    if agent_tools.is_empty() || agent_tools.len() > 20 {
-        return Err("请至少选择一个、且不超过二十个编码 Agent 工具".to_string());
-    }
-    if agent_tools.iter().any(|tool| {
-        tool.is_empty()
-            || tool.len() > 40
-            || !tool.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-    }) {
-        return Err("编码 Agent 工具列表格式无效".to_string());
-    }
+    let developer_id = validate_developer_id(&developer_id)?;
+    let agent_tools = validate_agent_tools(&agent_tools)?;
     let path = app
         .state::<DesktopAuthState>()
         .pending_project_path
@@ -466,10 +498,7 @@ async fn preflight_pending_project(
 ) -> Result<serde_json::Value, String> {
     ensure_board_caller(&app, &window)?;
     let team_id = validate_project_id(team_id)?;
-    let developer_id = developer_id.trim();
-    if developer_id.is_empty() || developer_id.chars().count() > 120 {
-        return Err("请填写有效的 Trellis developer ID".to_string());
-    }
+    validate_developer_id(&developer_id)?;
     let path = app
         .state::<DesktopAuthState>()
         .pending_project_path
@@ -509,10 +538,7 @@ async fn associate_pending_project(
 ) -> Result<sidecar::LocalAssociation, String> {
     ensure_board_caller(&app, &window)?;
     let team_id = validate_project_id(team_id)?;
-    let developer_id = developer_id.trim().to_string();
-    if developer_id.is_empty() || developer_id.chars().count() > 120 {
-        return Err("请填写有效的 Trellis developer ID".to_string());
-    }
+    let developer_id = validate_developer_id(&developer_id)?;
     if !matches!(initial_mode.as_str(), "bootstrap" | "safe" | "review") {
         return Err("首次同步处理方式无效".to_string());
     }
@@ -561,6 +587,47 @@ async fn list_local_associations(
 ) -> Result<Vec<sidecar::LocalAssociation>, String> {
     ensure_board_caller(&app, &window)?;
     sidecar::list_associations(&app, &config::agent_root()).await
+}
+
+#[tauri::command]
+async fn inspect_associated_project_agents(
+    app: AppHandle,
+    window: WebviewWindow,
+    task_space_id: String,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
+    let associations = sidecar::list_associations(&app, &config::agent_root()).await?;
+    let repo_path = approved_association_for_task_space(&associations, &task_space_id)?
+        .repo_path
+        .clone();
+    sidecar::inspect_project(&app, &repo_path, &config::agent_root()).await
+}
+
+#[tauri::command]
+async fn initialize_associated_project_agents(
+    app: AppHandle,
+    window: WebviewWindow,
+    task_space_id: String,
+    developer_id: String,
+    agent_tools: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
+    let developer_id = validate_developer_id(&developer_id)?;
+    let agent_tools = validate_agent_tools(&agent_tools)?;
+    let associations = sidecar::list_associations(&app, &config::agent_root()).await?;
+    let repo_path = approved_association_for_task_space(&associations, &task_space_id)?
+        .repo_path
+        .clone();
+    sidecar::initialize_project(
+        &app,
+        &repo_path,
+        &developer_id,
+        &agent_tools,
+        &config::agent_root(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -848,6 +915,8 @@ fn main() {
             cancel_pending_project,
             associate_pending_project,
             list_local_associations,
+            inspect_associated_project_agents,
+            initialize_associated_project_agents,
             sync_deferred_tasks,
             desktop_sidecar_status,
             live_control_pending,
@@ -884,4 +953,71 @@ fn main() {
                 sidecar::shutdown(app);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn association(task_space_id: &str, status: &str) -> sidecar::LocalAssociation {
+        sidecar::LocalAssociation {
+            project_id: "project-1".to_string(),
+            task_space_id: task_space_id.to_string(),
+            repo_path: "D:\\work\\project".to_string(),
+            display_name: "project".to_string(),
+            branch_name: "main".to_string(),
+            team_id: Some("team-1".to_string()),
+            status: status.to_string(),
+            read_only: false,
+            live_sync_status: "ready".to_string(),
+            live_sync_error: None,
+            last_error_code: None,
+            last_error: None,
+            deferred_count: 0,
+            deferred_task_dirs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn selects_only_approved_association_for_task_space() {
+        let associations = vec![
+            association("space-target", "revoked"),
+            association("space-other", "approved"),
+            association("space-target", "approved"),
+        ];
+
+        let selected =
+            approved_association_for_task_space(&associations, "space-target").unwrap();
+        assert_eq!(selected.status, "approved");
+        assert_eq!(selected.task_space_id, "space-target");
+    }
+
+    #[test]
+    fn rejects_missing_or_unapproved_association() {
+        let associations = vec![
+            association("space-revoked", "revoked"),
+            association("space-pending", "pending"),
+        ];
+
+        assert!(approved_association_for_task_space(&associations, "space-missing").is_err());
+        assert!(
+            approved_association_for_task_space(&associations, "space-revoked").is_err()
+        );
+        assert!(
+            approved_association_for_task_space(&associations, "space-pending").is_err()
+        );
+    }
+
+    #[test]
+    fn accepts_full_agent_catalog_and_rejects_oversized_input() {
+        let supported = (0..MAX_AGENT_TOOLS)
+            .map(|index| format!("agent-{index}"))
+            .collect::<Vec<_>>();
+        assert_eq!(validate_agent_tools(&supported).unwrap().len(), MAX_AGENT_TOOLS);
+
+        let oversized = (0..=MAX_AGENT_TOOLS)
+            .map(|index| format!("agent-{index}"))
+            .collect::<Vec<_>>();
+        assert!(validate_agent_tools(&oversized).is_err());
+    }
 }

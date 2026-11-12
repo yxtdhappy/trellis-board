@@ -76,6 +76,12 @@
   `warningId + action=continue` 重试，接管携带 `action=takeover`，不能在前端自行改派。
 - Tauri“接入本地项目”由客户端选择 Git 根目录并预检仓库名、远端、当前分支、`.trellis/tasks` 和
   Agent 工具；服务端项目列表不再是接入前置条件。
+- Tauri 项目行只有在当前分支存在 `approved` 本地关联时，才在关联文件夹图标右侧显示编码 Agent
+  快速初始化入口；只读 approved 关联也可显示。入口只提交 `taskSpaceId`，禁止重新选择目录或提交
+  任意本地路径。
+- 快速初始化弹窗与接入向导共用 Agent 列表、项目预检规范化和统一错误提取；developer ID 默认当前
+  `runtime.user.username`，已初始化 Agent 禁用并标记“已初始化”，全部已初始化时仍展示完整列表并
+  统一置灰，成功提示后关闭，失败保留输入。
 - 项目接入在“全部团队”范围必须要求选择具体 owner team；developer ID 和本机 Agent 工具只写入当前
   设备 binding，不要求其他设备一致。
 - 接入向导的本机 Agent 列表必须直接读取 `shared/trellis-agent-tools.js` 的完整目录，按名称或 ID

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FolderGit2, LockKeyhole, Plus, RefreshCw, Upload } from 'lucide-react'
+import { Bot, FolderGit2, LockKeyhole, Plus, RefreshCw, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { AgentQuickInitDialog } from '@/features/board/dialogs/AgentQuickInitDialog'
 import { ProjectOnboardingDialog } from '@/features/board/dialogs/ProjectOnboardingDialog'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import {
@@ -267,6 +268,7 @@ export function ProjectRail({
   const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus | null>(null)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [onboardingProject, setOnboardingProject] = useState<unknown>(null)
+  const [quickAgentTaskSpaceId, setQuickAgentTaskSpaceId] = useState<string | null>(null)
   const [inspectingProject, setInspectingProject] = useState(false)
   const [syncingDeferredTaskSpace, setSyncingDeferredTaskSpace] = useState<string | null>(null)
   const [associationRefreshNonce, setAssociationRefreshNonce] = useState(0)
@@ -477,16 +479,27 @@ export function ProjectRail({
               </button>
               {invoke && activeTaskSpace ? (
                 activeAssociation?.status === 'approved' ? (
-                  <span
-                    className="mr-1.5 flex size-6 shrink-0 items-center justify-center text-muted-foreground"
-                    title={activeView?.label || '本地已关联'}
-                  >
-                    {activeAssociation.readOnly ? (
-                      <LockKeyhole className="size-3.5" aria-hidden="true" />
-                    ) : (
-                      <FolderGit2 className="size-3.5" aria-hidden="true" />
-                    )}
-                  </span>
+                  <>
+                    <span
+                      className="flex size-6 shrink-0 items-center justify-center text-muted-foreground"
+                      title={activeView?.label || '本地已关联'}
+                    >
+                      {activeAssociation.readOnly ? (
+                        <LockKeyhole className="size-3.5" aria-hidden="true" />
+                      ) : (
+                        <FolderGit2 className="size-3.5" aria-hidden="true" />
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      className="mr-1.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                      aria-label={`初始化 ${project.name} ${activeTaskSpace.branchName} 的编码 Agent`}
+                      title="初始化编码 Agent"
+                      onClick={() => setQuickAgentTaskSpaceId(activeTaskSpace.id)}
+                    >
+                      <Bot className="size-3.5" aria-hidden="true" />
+                    </button>
+                  </>
                 ) : (
                   <button
                     type="button"
@@ -629,37 +642,48 @@ export function ProjectRail({
         </Button>
       </div>
       {invoke ? (
-        <ProjectOnboardingDialog
-          open={onboardingOpen}
-          onOpenChange={setOnboardingOpen}
-          inspection={onboardingProject}
-          teams={teams}
-          defaultTeamId={teamId === 'all' ? '' : teamId}
-          defaultDeveloperId={defaultDeveloperId}
-          invoke={invoke}
-          onAssociated={(association) => {
-            const normalized = normalizeAssociation(association)
-            if (!normalized) {
-              toast.error('项目关联成功，但客户端返回了无效的关联状态')
-              return
-            }
-            setAssociations((currentMap) => {
-              const next = new Map(currentMap)
-              for (const [taskSpaceId, existing] of next) {
-                if (
-                  taskSpaceId !== normalized.taskSpaceId &&
-                  sameLocalRepositoryPath(existing.repoPath, normalized.repoPath)
-                ) {
-                  next.delete(taskSpaceId)
-                }
+        <>
+          <ProjectOnboardingDialog
+            open={onboardingOpen}
+            onOpenChange={setOnboardingOpen}
+            inspection={onboardingProject}
+            teams={teams}
+            defaultTeamId={teamId === 'all' ? '' : teamId}
+            defaultDeveloperId={defaultDeveloperId}
+            invoke={invoke}
+            onAssociated={(association) => {
+              const normalized = normalizeAssociation(association)
+              if (!normalized) {
+                toast.error('项目关联成功，但客户端返回了无效的关联状态')
+                return
               }
-              next.set(normalized.taskSpaceId, normalized)
-              return next
-            })
-            toast.success('本地项目已接入团队任务空间，正在同步任务。')
-            void onRefresh()
-          }}
-        />
+              setAssociations((currentMap) => {
+                const next = new Map(currentMap)
+                for (const [taskSpaceId, existing] of next) {
+                  if (
+                    taskSpaceId !== normalized.taskSpaceId &&
+                    sameLocalRepositoryPath(existing.repoPath, normalized.repoPath)
+                  ) {
+                    next.delete(taskSpaceId)
+                  }
+                }
+                next.set(normalized.taskSpaceId, normalized)
+                return next
+              })
+              toast.success('本地项目已接入团队任务空间，正在同步任务。')
+              void onRefresh()
+            }}
+          />
+          <AgentQuickInitDialog
+            open={quickAgentTaskSpaceId !== null}
+            onOpenChange={(open) => {
+              if (!open) setQuickAgentTaskSpaceId(null)
+            }}
+            taskSpaceId={quickAgentTaskSpaceId || ''}
+            defaultDeveloperId={defaultDeveloperId}
+            invoke={invoke}
+          />
+        </>
       ) : null}
     </aside>
   )

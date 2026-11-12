@@ -58,6 +58,9 @@ desktop_sidecar_status(): Promise<{
   paused: boolean
 }>
 
+inspect_associated_project_agents(taskSpaceId): Promise<ProjectInspection>
+initialize_associated_project_agents(taskSpaceId, developerId, agentTools): Promise<ProjectInspection>
+
 AgentLiveSync.start(): Promise<void>
 AgentLiveSync.pullProject(teamId, projectId): Promise<LiveFilesPayload|null>
 decidePendingLiveChange({ store, credentialStore, pendingId, action }): Promise<Result>
@@ -141,6 +144,12 @@ trellis-agent live-initial --task-space <id> --mode safe|review
   项目。不得为了填充关联下拉而放宽 `/api/team/projects` 或任务查询权限。
 - 远程 Board 只额外开放只读 `desktop_sidecar_status`；项目栏用它显示后台同步“运行中 / 已暂停 /
   未运行”，不能把 Board 自身刷新状态误当成 sidecar 状态。
+- 项目栏编码 Agent 快速初始化只接受 `taskSpaceId`、`developerId` 和 `agentTools`。Rust 必须先
+  `validate_live_id()`，再从 `list_associations()` 中选择同 taskSpace 且 `status == approved`
+  的 binding 解析 `repoPath`；未找到时在写文件前拒绝，禁止远程页面提交路径。工具数量上限必须
+  覆盖 `shared/trellis-agent-tools.js` 的完整目录，不能低于当前 22 项。
+- 快速预检与初始化继续复用 `sidecar::inspect_project()` / `sidecar::initialize_project()`，
+  不新增 sidecar CLI、不重启同步 sidecar、不修改 binding 或服务端任务数据。
 - 远程 capability 的 URL pattern 必须显式通配端口，使用 `http://*:*` 和 `https://*:*`；
   `http://*` 只匹配默认 80 端口，会拒绝局域网地址加自定义端口的 Board origin。
 - sidecar `run` 的标准输出可发送单行 `{"control":{"type":"...", ...}}` 控制事件；Tauri 只接受
@@ -169,6 +178,8 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 | 服务端拒绝关联 | sidecar 删除刚写入的本地绑定并返回 `REMOTE_MISMATCH` 等服务端错误 |
 | 普通团队成员无 `project_member` | 可出现在 `associationProjects`，但不出现在可读 `projects` |
 | Board 远程页面调用 `desktop_sidecar_status` | Rust 复核 Origin 后仅返回布尔运行状态 |
+| 快速初始化找不到 approved binding 或 binding 已撤销 | 在调用初始化器前拒绝，不写仓库 |
+| 快速初始化传入空 developer ID、空 Agent 或非法 Agent ID | 在调用初始化器前拒绝 |
 | sidecar 控制事件 | Tauri 只复用本地 `live-control` 窗口，不授予远程 Board 控制命令 |
 | 实时同步账号切换 | 清理 live cursor、pending、suppression 和 backup，不跨账号继承 |
 | live CLI 收到未知参数 | 在读取配置前返回 `CONFIG_INVALID`，不得继续同步 |
@@ -214,6 +225,10 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 - `tests/team-isolation.test.js`：普通团队成员能看到关联候选项目，但任务项目列表仍为空。
 - `tests/desktop-package.test.js`：远程 capability 只允许关联命令、关联列表和 sidecar 状态；
   Rust DTO 对旧 sidecar 缺省字段保持兼容，关联成功后只重启既有 sidecar。
+- Rust `main` 单测：快速初始化只选择同 taskSpace 的 approved binding，缺失、revoked、pending
+  均拒绝。
+- `tests/desktop-package.test.js`：两个快速初始化命令同时出现在 permission 和远程 capability；
+  Rust 单测覆盖 approved binding 选择与完整 Agent 目录上限。
 - `agent/test/task-snapshot-sync.test.js` + Rust `sidecar` 单测：只接受带非空 `type` 的
   `{"control": event}`；旧顶层 `trellis-control`、普通 stdout JSON、`control:null` 和
   无 `type` 对象不得进入控制窗口；审查事件不得包含任务正文。

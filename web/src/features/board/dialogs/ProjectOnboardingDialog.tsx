@@ -11,28 +11,17 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import type { ProjectInspection } from '@/lib/project-inspection.js'
+import { normalizeProjectInspection } from '@/lib/project-inspection.js'
 import { TRELLIS_AGENT_TOOLS } from '@shared/trellis-agent-tools.js'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import { onboardingErrorMessage, preflightBlockReason } from '@/lib/onboarding-probe.js'
 import { SelectField } from '../SelectField'
+import { AgentToolSelector } from './AgentToolSelector'
 
 type TeamOption = {
   id: string
   name: string
-}
-
-type ProjectInspection = {
-  root: string
-  repositoryName: string
-  remoteUrl: string
-  branchName: string
-  head: string
-  clean: boolean
-  hasTrellis: boolean
-  hasTasks: boolean
-  hasCommittedTrellis: boolean
-  requiresInitialization: boolean
-  existingAgentTools: string[]
 }
 
 type PushState = {
@@ -96,38 +85,6 @@ type ProjectOnboardingDialogProps = {
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : ''
-}
-
-function stringList(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : []
-}
-
-function normalizeInspection(value: unknown): ProjectInspection | null {
-  if (!value || typeof value !== 'object') return null
-  const outer = value as Record<string, unknown>
-  const project =
-    outer.project && typeof outer.project === 'object'
-      ? (outer.project as Record<string, unknown>)
-      : outer
-  const root = text(project.root)
-  const remoteUrl = text(project.remoteUrl)
-  const branchName = text(project.branchName)
-  if (!root || !remoteUrl || !branchName) return null
-  return {
-    root,
-    repositoryName: text(project.repositoryName) || '本地项目',
-    remoteUrl,
-    branchName,
-    head: text(project.head),
-    clean: project.clean === true,
-    hasTrellis: project.hasTrellis === true,
-    hasTasks: project.hasTasks === true,
-    hasCommittedTrellis: project.hasCommittedTrellis === true,
-    requiresInitialization: project.requiresInitialization === true,
-    existingAgentTools: stringList(project.existingAgentTools),
-  }
 }
 
 function normalizeAssociation(value: unknown): Association | null {
@@ -252,7 +209,7 @@ export function ProjectOnboardingDialog({
 
   useEffect(() => {
     if (!open) return
-    const normalized = normalizeInspection(rawInspection)
+    const normalized = normalizeProjectInspection(rawInspection)
     setInspection(normalized)
     const preferredTeam = teams.some((team) => team.id === defaultTeamId)
       ? defaultTeamId
@@ -310,13 +267,6 @@ export function ProjectOnboardingDialog({
         : [],
     [inspection],
   )
-  const visibleAgentTools = useMemo(() => {
-    const query = agentSearch.trim().toLowerCase()
-    if (!query) return TRELLIS_AGENT_TOOLS
-    return TRELLIS_AGENT_TOOLS.filter(
-      (tool) => tool.label.toLowerCase().includes(query) || tool.id.toLowerCase().includes(query),
-    )
-  }, [agentSearch])
   const needsInitialization =
     !inspection?.hasTrellis ||
     !inspection?.hasTasks ||
@@ -373,7 +323,7 @@ export function ProjectOnboardingDialog({
         developerId: developerId.trim(),
         agentTools: selectedTools,
       })
-      const next = normalizeInspection(result)
+      const next = normalizeProjectInspection(result)
       if (!next) throw new Error('初始化后没有返回有效项目信息')
       setInspection(next)
       setRequiresInitialPush(needsInitialPush)
@@ -633,52 +583,14 @@ export function ProjectOnboardingDialog({
 
               {!inspection.hasTrellis || !inspection.hasTasks || missingTools.length ? (
                 <div className="flex flex-col gap-2">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <p className="font-medium">本机编码 Agent</p>
-                      <p className="text-muted-foreground">
-                        只影响当前电脑；已存在的工具不会重复初始化，其他设备无需选择相同工具。
-                      </p>
-                    </div>
-                    <Input
-                      type="search"
-                      aria-label="搜索 Agent"
-                      className="h-8 w-full sm:w-52"
-                      placeholder="搜索名称或 ID"
-                      value={agentSearch}
-                      onChange={(event) => setAgentSearch(event.target.value)}
-                    />
-                  </div>
-                  <div className="grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
-                    {visibleAgentTools.length ? (
-                      visibleAgentTools.map((tool) => {
-                        const existing = inspection.existingAgentTools.includes(tool.id)
-                        return (
-                          <label
-                            key={tool.id}
-                            className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={existing || selectedTools.includes(tool.id)}
-                              disabled={existing || busy}
-                              onChange={() => toggleTool(tool.id)}
-                            />
-                            <span>{tool.label}</span>
-                            {existing ? (
-                              <span className="ml-auto text-[10px] text-muted-foreground">
-                                已存在
-                              </span>
-                            ) : null}
-                          </label>
-                        )
-                      })
-                    ) : (
-                      <p className="rounded-md border border-dashed border-border px-2.5 py-3 text-muted-foreground sm:col-span-2">
-                        没有匹配的 Agent
-                      </p>
-                    )}
-                  </div>
+                  <AgentToolSelector
+                    existingTools={inspection.existingAgentTools}
+                    selectedTools={selectedTools}
+                    search={agentSearch}
+                    disabled={busy}
+                    onSearchChange={setAgentSearch}
+                    onToggleTool={toggleTool}
+                  />
                   {needsInitialization ? (
                     <Button
                       type="button"

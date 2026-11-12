@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"快速入口、弹窗状态和 Tauri 本机能力必须遵守现有项目栏与关联交互契约。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"约束 React/TypeScript 写法、可访问性、弹层和最终真实页面验收。"}
+{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"新增 Tauri 命令必须复用 sidecar、控制超时并遵守远程 capability 边界。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Agent 目录、项目预检和初始化逻辑必须扩展既有所有者，避免复制规则。"}

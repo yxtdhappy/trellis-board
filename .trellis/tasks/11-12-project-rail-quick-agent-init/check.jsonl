@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"检查入口可见性、弹窗错误处理、已初始化状态和现有接入流程是否回归。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查类型、可访问性、格式、测试和最终真实 Tauri 验收证据。"}
+{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"检查 Rust 输入校验、Board 同源限制、capability 最小授权和 sidecar 复用。"}

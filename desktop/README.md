@@ -91,6 +91,32 @@ Board 项目栏
 - 读取、初始化和关联只允许操作本次刚选择的 pending 项目路径，远程 Board 不能传任意本地路径。
 - `read_only` binding 可以接收任务快照，但服务端拒绝上传和任务命令。
 
+## 快速追加本机编码 Agent
+
+已批准关联的项目分支会在项目栏文件夹图标右侧显示 Agent 入口。入口不会再次打开目录选择器，也不会
+修改服务端项目、任务空间或其他设备：
+
+```text
+项目栏 approved association
+  -> invoke("inspect_associated_project_agents", { taskSpaceId })
+  -> Rust 从当前设备 binding 解析 repoPath 并复核 approved
+  -> sidecar inspectProject
+  -> Web 多选尚未初始化的 Agent
+  -> invoke("initialize_associated_project_agents", {
+       taskSpaceId,
+       developerId,
+       agentTools
+     })
+  -> Rust 再次复核 approved 与输入
+  -> sidecar initializeProject(repoPath, developerId, agentTools)
+```
+
+- 远程页面只提交 `taskSpaceId`、developer ID 和 Agent ID，不能提交本地路径。
+- 只读 approved binding 也可使用；初始化只写当前电脑的 Agent 配置，不改任务空间同步权限。
+- 已初始化工具在弹窗中禁用并标记“已初始化”，再次打开会重新探测实际仓库文件。
+- 初始化复用现有增量语义，不自动 commit、push、重启任务同步 sidecar 或修改服务端任务数据。
+- 旧版桌面客户端没有新命令时必须显示失败原因，不能静默假装成功。
+
 ## Tasks-only 同步
 
 已关联、`approved` 的 taskSpace 由 sidecar 启动 `shared/trellis-watcher.js`，监听范围只有
@@ -210,6 +236,8 @@ sidecar 在首次接入、上传、拉取、watcher 上传、pending retry、延
 - `initialize_pending_project`
 - `inspect_local_project`
 - `list_local_associations`
+- `inspect_associated_project_agents`
+- `initialize_associated_project_agents`
 - `desktop_sidecar_status`
 
 Rust 仍会把当前 WebView origin 与本次登录成功的 Board origin 做同源比较。远程页面没有通用文件系统、
@@ -370,6 +398,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File desktop\uninstall.ps1 -Revok
 | 19 | 目标 Agent 在线 | 先出现独立操作项，成功后正式任务或负责人更新 |
 | 20 | 同账号登录第二台设备 | 旧设备立即退出，旧命令取消，新设备重新选择项目 |
 | 21 | 切换到非绑定分支后修改任务 | 不上传、不拉取、不推进 cursor，项目栏显示暂停原因 |
+| 22 | 已批准关联项目打开 Agent 快捷入口 | 不弹目录选择，显示完整 Agent 列表和本机已初始化状态 |
+| 23 | 选择缺失 Agent 并初始化 | 只写当前仓库对应工具文件，成功后关闭；重开显示已初始化 |
+| 24 | 撤销/拒绝关联后打开旧快捷入口 | Rust 在写入前拒绝并显示可理解错误 |
 
 Windows 实机仍需验证 WebView2 Cookie 写入、远程 capability、动态导航、NSIS 安装、固定 Trellis runtime
 和真实双客户端同步。

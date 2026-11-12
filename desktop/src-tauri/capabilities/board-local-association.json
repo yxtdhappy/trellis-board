@@ -17,6 +17,8 @@
     "allow-check-pending-project-push",
     "allow-initialize-pending-project",
     "allow-inspect-local-project",
+    "allow-initialize-associated-project-agents",
+    "allow-inspect-associated-project-agents",
     "allow-list-local-associations",
     "allow-sync-deferred-tasks",
     "allow-desktop-sidecar-status",
