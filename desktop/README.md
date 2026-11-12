@@ -1,7 +1,7 @@
 # Trellis Board Windows 客户端
 
 Tauri v2 外壳 + Node SEA sidecar。客户端冷启动固定显示本地登录页，用户填写服务器地址、登录名和密码；
-登录成功后当前 WebView 进入 Board，后台 sidecar 同步任务空间和 Agent 命令。
+登录成功后保存这三项供下次启动回填，当前 WebView 进入 Board，后台 sidecar 同步任务空间和 Agent 命令。
 
 - 客户端版本：`desktop/package.json`、`desktop/src-tauri/Cargo.toml`
 - Agent 协议：`AGENT_PROTOCOL_VERSION = 3`
@@ -25,10 +25,10 @@ Tauri v2 外壳 + Node SEA sidecar。客户端冷启动固定显示本地登录�
 
 安全边界：
 
-- 密码只经过 `invoke -> Rust -> sidecar stdin -> HTTP/HTTPS`，不进入 argv、环境变量、日志或配置文件。
+- 密码只经过 `invoke -> Rust -> sidecar stdin -> HTTP/HTTPS`，不进入 argv、环境变量或日志；登录成功后与服务器地址、登录名一起保存在 `client.json`，供下次启动回填。
 - 远程 HTTP 不提供传输加密；非可信网络必须使用 HTTPS。
 - Session Cookie 只存在当前 WebView Cookie Store 和 Rust 内存；冷启动后必须重新登录。
-- 设备凭证只由 Windows DPAPI 保存，`client.json` 只保存 `serverUrl`。
+- 设备凭证只由 Windows DPAPI 保存；`client.json` 保存服务器地址、登录名和密码。
 - 同服务器、同账号再次登录会先用已有设备 heartbeat，有效则复用。
 - 一个账号同一时刻只有一个有效 Agent。新设备生效后旧设备凭证立即失效，旧 SSE 关闭，旧命令取消。
 - 换设备不迁移本地仓库绝对路径、project binding、cursor 或 pending batch；新设备必须重新选择项目。
@@ -304,7 +304,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File desktop\uninstall.ps1 -Revok
 | 1 | 全新安装后双击 | 只出现服务器地址、登录名、密码登录页 |
 | 2 | 错误密码 | 停留登录页，密码清空，不创建配置或设备 |
 | 3 | 正确密码 | 当前窗口进入 Board，不弹系统浏览器；DPAPI 凭证存在 |
-| 4 | 检查 `client.json` | 只有服务器地址，无密码、Cookie 或设备凭证 |
+| 4 | 检查 `client.json` | 保存服务器地址、登录名和密码，无 Cookie 或设备凭证 |
 | 5 | 选择没有 `.trellis` 的 Git 项目 | 显示初始化面板，可选择本机 Agent 工具 |
 | 6 | 初始化后未 commit | 显示 waiting_commit，不能接入 |
 | 7 | commit 后未 push | 显示 waiting_push，不能接入 |

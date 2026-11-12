@@ -311,7 +311,7 @@ export function ProjectRail({
         onClick={() => onSelect('all')}
         className={
           current === 'all'
-            ? 'flex h-7.5 items-center gap-2 rounded-lg bg-sidebar-accent px-2 text-left text-xs font-semibold text-sidebar-accent-foreground'
+            ? 'flex h-7.5 items-center gap-2 rounded-lg border border-primary/40 bg-primary/15 px-2 text-left text-xs font-semibold text-foreground'
             : 'flex h-7.5 items-center gap-2 rounded-lg px-2 text-left text-xs font-medium text-foreground hover:bg-sidebar-accent/60'
         }
       >
@@ -333,7 +333,7 @@ export function ProjectRail({
             <div
               className={
                 current === project.id
-                  ? 'flex items-center rounded-lg bg-sidebar-accent text-sidebar-accent-foreground'
+                  ? 'flex items-center rounded-lg border border-primary/40 bg-primary/15 text-foreground'
                   : 'flex items-center rounded-lg hover:bg-sidebar-accent/60'
               }
             >
@@ -402,7 +402,7 @@ export function ProjectRail({
                       onClick={() => onSelectTaskSpace(taskSpace.id)}
                       className={
                         currentTaskSpace === taskSpace.id
-                          ? 'flex items-center gap-1.5 rounded-md bg-sidebar-accent/70 px-2 py-1 text-left text-[10px] font-medium text-foreground'
+                          ? 'flex items-center gap-1.5 rounded-md border border-primary/35 bg-primary/20 px-2 py-1 text-left text-[10px] font-semibold text-foreground'
                           : 'flex items-center gap-1.5 rounded-md px-2 py-1 text-left text-[10px] text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'
                       }
                       title={branchView?.label || taskSpace.branchName}

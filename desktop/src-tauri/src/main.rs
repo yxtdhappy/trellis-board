@@ -35,6 +35,8 @@ struct DesktopAuthState {
 struct AppStatus {
     version: String,
     server_url: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
     config_path: String,
     logs_dir: String,
     sidecar_running: bool,
@@ -260,6 +262,8 @@ async fn app_status(app: AppHandle, window: WebviewWindow) -> Result<AppStatus, 
             .as_ref()
             .map(|value| value.server_url.clone())
             .or_else(initial_server_url),
+        username: config.as_ref().and_then(|value| value.username.clone()),
+        password: config.as_ref().and_then(|value| value.password.clone()),
         config_path: config::config_path().display().to_string(),
         logs_dir: config::logs_dir().display().to_string(),
         sidecar_running: sidecar::is_running(&app),
@@ -276,7 +280,8 @@ async fn desktop_login(
 ) -> Result<DesktopLoginResult, String> {
     ensure_local_caller(&window)?;
     let board = navigation::validate_board_url(&server_url)?;
-    let username = validate_username(&username)?;
+    let remembered_username = username.trim().to_string();
+    let username = validate_username(&remembered_username)?;
     validate_password(&password)?;
     // 登录页出现时旧会话已结束，先停止旧账号 sidecar，成功后再按新配置重启。
     sidecar::stop(&app);
@@ -316,6 +321,8 @@ async fn desktop_login(
     if let Err(error) = config::save(&config::ClientConfig {
         schema_version: config::SCHEMA_VERSION,
         server_url: server_url.clone(),
+        username: Some(remembered_username),
+        password: Some(password),
     }) {
         let _ = delete_session_cookie(&window, &board);
         let _ = sidecar::logout(

@@ -9,6 +9,10 @@ pub const SCHEMA_VERSION: u32 = 2;
 pub struct ClientConfig {
     pub schema_version: u32,
     pub server_url: String,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -96,7 +100,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_round_trips_without_secrets() {
+    fn config_round_trips_with_remembered_credentials() {
         let directory = std::env::temp_dir().join(format!(
             "trellis-desktop-config-test-{}",
             std::process::id()
@@ -105,23 +109,25 @@ mod tests {
         let config = ClientConfig {
             schema_version: SCHEMA_VERSION,
             server_url: "https://board.example.com".to_string(),
+            username: Some("admin".to_string()),
+            password: Some("secret-password".to_string()),
         };
         save(&config).expect("save config");
         let loaded = load().expect("load config").expect("config exists");
         assert_eq!(loaded, config);
         let payload = std::fs::read_to_string(config_path()).unwrap();
         assert!(!payload.contains("credential"));
-        assert!(!payload.contains("password"));
+        assert!(payload.contains("secret-password"));
         assert!(!payload.contains("session"));
         std::fs::write(
             config_path(),
             "\u{feff}{\"schemaVersion\":2,\"serverUrl\":\"https://bom.example.com\"}",
         )
         .expect("write BOM config");
-        assert_eq!(
-            load().expect("load BOM config").expect("BOM config exists").server_url,
-            "https://bom.example.com"
-        );
+        let migrated = load().expect("load BOM config").expect("BOM config exists");
+        assert_eq!(migrated.server_url, "https://bom.example.com");
+        assert_eq!(migrated.username, None);
+        assert_eq!(migrated.password, None);
         std::fs::write(
             config_path(),
             r#"{"schemaVersion":1,"serverUrl":"https://old.example.com"}"#,

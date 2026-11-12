@@ -63,8 +63,15 @@ async function readStatus() {
     versionElement.textContent = `v${app.version}`
     configPathElement.textContent = app.configPath ? `配置：${app.configPath}` : ''
     if (app.serverUrl) serverUrlInput.value = app.serverUrl
-    setStatus('请输入账号密码登录。')
-    ;(serverUrlInput.value ? usernameInput : serverUrlInput).focus()
+    if (app.username) usernameInput.value = app.username
+    if (app.password) passwordInput.value = app.password
+    setStatus(
+      app.serverUrl && app.username && app.password
+        ? '已恢复上次登录信息，请确认后登录。'
+        : '请输入账号密码登录。',
+    )
+    const firstEmpty = [serverUrlInput, usernameInput, passwordInput].find((input) => !input.value)
+    ;(firstEmpty || submitButton).focus()
   } catch (error) {
     setStatus('无法读取本地配置。')
     showError(error)

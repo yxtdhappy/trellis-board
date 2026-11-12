@@ -73,7 +73,7 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 - `DpapiCredentialStore` 不得自行推导默认脚本路径；Agent CLI 和 sidecar 入口必须显式传入。
 - esbuild 不得定义或替换 `import.meta.url`，不得使用 `file:///...` 伪模块 URL。
 - 设备令牌继续只通过 stdin 传递，路径注入值不得来自用户请求或远端输入。
-- 账号密码只通过 sidecar stdin 的 JSON 对象传入；Session Cookie、设备和设备凭证不落盘。
+- 账号密码只通过 sidecar stdin 的 JSON 对象传入 sidecar；Tauri 登录成功后允许将服务器地址、登录名和密码写入 `client.json` 供本地登录页回填。Session Cookie、设备和设备凭证不落盘。
 - 桌面登录服务地址支持 HTTP/HTTPS 根地址；HTTP 不提供传输加密，只适用于可信内网或测试环境。
 - `desktop/sidecar/workspace-init.js` 不属于桌面产品路径；workspace 能力只保留给 Agent CLI。
 - 本地项目关联复用 `agent/git-sync.js` 的 `inspectRepository()`，不另写 Git 身份校验。
