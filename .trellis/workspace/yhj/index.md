@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 37
+- **Total Sessions**: 38
 - **Last Active**: 2026-11-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~890 | Active |
+| `journal-1.md` | ~912 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 38 | 2026-11-12 | 修复桌面同步残留锁与强制恢复 | `86bd1db` | `main` |
 | 37 | 2026-11-12 | 本地 deferred 任务补同步 | `80647fc` | `main` |
 | 36 | 2026-11-12 | 项目接入 Agent 全量列表与搜索 | `3a72ec4`, `8ab6da6` | `main` |
 | 35 | 2026-11-12 | 加固桌面 sidecar 生命周期并完成 Windows 升级验收 | `7bfbf6f`, `cd84ff1` | `codex/harden-desktop-sidecar-lifecycle` |

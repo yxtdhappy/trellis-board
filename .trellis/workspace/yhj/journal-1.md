@@ -888,3 +888,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 38: 修复桌面同步残留锁与强制恢复
+<!-- trellis-session: v=2 fp=b265efdc5f1a16fb -->
+
+**Date**: 2026-11-12
+**Task**: 修复桌面同步残留锁与强制恢复
+**Branch**: `main`
+
+### Summary
+
+修复 Agent hostname/PID 残留锁回收、有限重试、系统弹窗、强制重启与客户端重启兜底，并让托盘按真实状态一键暂停或恢复；Node 全量测试和 Web 构建通过，Rust 与 Windows 真机验收待 CI 补验。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `86bd1db` | fix(desktop): recover locked sidecar sync |
+
+### Status
+
+[OK] **Completed**
