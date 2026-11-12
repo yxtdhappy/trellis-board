@@ -190,11 +190,18 @@ impl AgentRuntime {
             if !server_binding.status.is_empty() {
                 local.sync_status = server_binding.status.clone();
             }
-            if server_binding.error_code.is_some() {
-                local.last_error_code = server_binding.error_code.clone();
-            }
-            if server_binding.error.is_some() {
-                local.last_error = server_binding.error.clone();
+            // 分支守卫类错误由本机决定，心跳不能把它覆盖成服务端的通用错误。
+            let guarded = local
+                .last_error_code
+                .as_deref()
+                .is_some_and(crate::agent::task_sync::is_branch_guard_code);
+            if !guarded {
+                if server_binding.error_code.is_some() {
+                    local.last_error_code = server_binding.error_code.clone();
+                }
+                if server_binding.error.is_some() {
+                    local.last_error = server_binding.error.clone();
+                }
             }
             if let Some(server_branch) = server_binding.branch_name.as_deref() {
                 if !server_branch.is_empty() && local.branch_name != server_branch {
@@ -221,6 +228,7 @@ impl AgentRuntime {
         tauri::async_runtime::spawn(async move {
             let mut shutdown = runtime.shutdown.subscribe();
             let mut delay = RETRY_BASE;
+            let mut reconnect = false;
             loop {
                 if *shutdown.borrow() {
                     break;
@@ -304,6 +312,15 @@ impl AgentRuntime {
                     _ = tokio::time::sleep(delay) => {}
                     _ = shutdown.changed() => break,
                 }
+                if reconnect {
+                    // 事件流曾经断开：重连前按最新绑定重新拉取，补齐断线期间的变更。
+                    if let Ok(Some(config)) = runtime.store.read_config(false).await {
+                        runtime.apply_bindings(config.bindings).await;
+                    } else {
+                        crate::logging::warn("事件流恢复后同步任务空间失败：无法读取 Agent 配置");
+                    }
+                }
+                reconnect = true;
                 delay = (delay * 2).min(RETRY_MAX);
             }
         });

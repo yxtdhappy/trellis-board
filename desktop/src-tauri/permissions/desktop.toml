@@ -11,8 +11,13 @@ description = "仅本地登录页向进程内 Agent 提交账号密码。"
 commands.allow = ["desktop_login"]
 
 [[permission]]
+identifier = "allow-pick-local-project-folder"
+description = "当前 Board origin 只能弹出系统目录选择器并拿到用户选中的本地项目根目录。"
+commands.allow = ["pick_local_project_folder"]
+
+[[permission]]
 identifier = "allow-inspect-local-project"
-description = "当前 Board origin 可选择本地 Git 仓库并执行只读项目预检。"
+description = "当前 Board origin 只能对用户刚选中的本地项目执行只读预检。"
 commands.allow = ["inspect_local_project"]
 
 [[permission]]

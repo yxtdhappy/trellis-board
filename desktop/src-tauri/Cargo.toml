@@ -3,7 +3,7 @@ name = "trellis-board-client"
 version = "0.3.0"
 description = "Trellis Board Windows desktop client"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.79"
 publish = false
 
 [build-dependencies]

@@ -4,7 +4,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use reqwest::header::{ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, USER_AGENT};
 use reqwest::{Method, StatusCode};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::agent::protocol::{self, code, is_path_inside, AgentError, AgentResult, AGENT_VERSION};
 
@@ -263,7 +263,8 @@ fn map_server_error(
         .map(str::to_string)
         .unwrap_or_default();
     let message = payload
-        .get("message")
+        .get("error")
+        .or_else(|| payload.get("message"))
         .and_then(Value::as_str)
         .map(str::to_string)
         .unwrap_or_else(|| format!("服务端返回 HTTP {}", status.as_u16()));
@@ -323,6 +324,7 @@ pub fn ensure_inside(root: &Path, candidate: &Path) -> AgentResult<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn parses_sse_frames() {
@@ -346,5 +348,22 @@ mod tests {
         let error = map_server_error(StatusCode::BAD_GATEWAY, &json!({}), Some(1500));
         assert!(error.retryable);
         assert_eq!(error.retry_after_ms, Some(1500));
+    }
+
+    #[test]
+    fn keeps_team_error_message_and_details() {
+        // 服务端 Team 错误体是 {error, code, details}，消息必须原样保留给用户。
+        let error = map_server_error(
+            StatusCode::CONFLICT,
+            &json!({
+                "error": "clientSequence 必须严格递增",
+                "code": "CONFLICT",
+                "details": { "requiredClientSequence": 1712345678900u64 }
+            }),
+            None,
+        );
+        assert_eq!(error.server_code.as_deref(), Some("CONFLICT"));
+        assert_eq!(error.message, "clientSequence 必须严格递增");
+        assert!(error.details.is_some());
     }
 }

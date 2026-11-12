@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::menu::MenuItem;
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
 
 use crate::agent::association::{associate_desktop_project, AssociateParams};
 use crate::agent::control::ControlHub;
@@ -44,6 +45,7 @@ pub struct AgentService {
     starting: Arc<AtomicBool>,
     focus_suppressed: Arc<AtomicBool>,
     auto_focus_consumed: Arc<AtomicBool>,
+    sync_menu_item: Arc<Mutex<Option<MenuItem<Wry>>>>,
 }
 
 pub fn register(app: &AppHandle) {
@@ -58,7 +60,62 @@ pub fn register(app: &AppHandle) {
         starting: Arc::new(AtomicBool::new(false)),
         focus_suppressed: Arc::new(AtomicBool::new(false)),
         auto_focus_consumed: Arc::new(AtomicBool::new(false)),
+        sync_menu_item: Arc::new(Mutex::new(None)),
     });
+}
+
+/// 托盘「同步」菜单项由 main.rs 创建后交给本模块维护文案与可用状态。
+pub fn set_sync_menu_item(app: &AppHandle, item: MenuItem<Wry>) {
+    let Ok(service) = service(app) else {
+        return;
+    };
+    if let Ok(mut current) = service.sync_menu_item.lock() {
+        *current = Some(item);
+    }
+    refresh_sync_menu(app);
+}
+
+fn sync_menu_label(running: bool) -> (&'static str, bool) {
+    if running {
+        ("暂停同步", true)
+    } else {
+        ("恢复同步", true)
+    }
+}
+
+fn refresh_sync_menu(app: &AppHandle) {
+    let Ok(service) = service(app) else {
+        return;
+    };
+    let (label, enabled) = sync_menu_label(is_running(app));
+    let current = service.sync_menu_item.lock();
+    if let Ok(current) = current {
+        if let Some(item) = current.as_ref() {
+            if let Err(error) = item.set_text(label) {
+                crate::logging::warn(&format!("无法更新同步菜单文案：{error}"));
+            }
+            if let Err(error) = item.set_enabled(enabled) {
+                crate::logging::warn(&format!("无法更新同步菜单状态：{error}"));
+            }
+        }
+    }
+}
+
+/// 对照 JS `handleSyncAction`：运行中则暂停，已停止则恢复。
+pub fn sync_action(app: &AppHandle) {
+    let Ok(service) = service(app) else {
+        return;
+    };
+    if is_running(app) {
+        stop(app);
+        crate::logging::warn("已暂停后台同步");
+    } else {
+        service.paused.store(false, Ordering::SeqCst);
+        service.hub.resume();
+        start(app);
+        crate::logging::warn("已恢复后台同步");
+    }
+    refresh_sync_menu(app);
 }
 
 fn service(app: &AppHandle) -> AgentResult<AgentService> {
@@ -121,6 +178,7 @@ pub fn start(app: &AppHandle) {
         }
         service.starting.store(false, Ordering::SeqCst);
     });
+    refresh_sync_menu(app);
 }
 
 pub fn restart(app: &AppHandle) {
@@ -136,6 +194,7 @@ pub fn stop(app: &AppHandle) {
         return;
     };
     service.stop_runtime();
+    refresh_sync_menu(app);
 }
 
 pub fn toggle_pause(app: &AppHandle) {
@@ -146,6 +205,7 @@ pub fn toggle_pause(app: &AppHandle) {
     service.paused.store(paused, Ordering::SeqCst);
     if paused {
         service.stop_runtime();
+        refresh_sync_menu(app);
         return;
     }
     service.hub.resume();
@@ -395,6 +455,21 @@ pub async fn resolve_initial_sync(
         .map_err(|error| message(&error))
 }
 
+/// 对照 JS `live-sync-deferred` 一次性命令：补传首次同步时暂缓的本地任务目录。
+pub async fn sync_deferred_tasks(app: &AppHandle, task_space_id: &str) -> Result<Value, String> {
+    let service = service(app).map_err(|error| message(&error))?;
+    let (config, api) = service
+        .agent_context()
+        .await
+        .map_err(|error| message(&error))?;
+    let task_sync = TaskSync::new(service.store.clone(), api, Arc::new(|_control: Value| {}));
+    task_sync.set_bindings(config.bindings).await;
+    task_sync
+        .sync_deferred_tasks(task_space_id)
+        .await
+        .map_err(|error| message(&error))
+}
+
 pub async fn login(
     app: &AppHandle,
     server_url: &str,
@@ -477,6 +552,8 @@ pub async fn associate(
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "pending".to_string()),
         live_sync_error: summary.live_sync_error.filter(|value| !value.is_empty()),
+        deferred_count: 0,
+        deferred_task_dirs: Vec::new(),
         last_error_code: None,
         last_error: None,
     })

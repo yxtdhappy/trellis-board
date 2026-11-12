@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "Rust 进程内 Agent 契约：模块划分、控制事件、超时与数据兼容"}
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "main 上分支隔离与游标串行化的规范依据"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量门与测试约定"}
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "进程内运行时与生命周期约束"}

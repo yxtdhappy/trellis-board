@@ -40,11 +40,25 @@
 - 认证被撤销（401 或 `AUTH_REVOKED`）时停止循环、写 `state.json`，不静默重试。
 - 本地改动只经 `TaskSync` 的 notify watcher 上传：监听 `<repo>/.trellis`，只关心 `.trellis/tasks/**`，
   250 ms 静默窗口合并后按任务目录调用 `upload_dirty`；不得新增独立的实时同步通道。
+- 分支守卫：`pull`/`apply_server_groups`/`upload_directories`/`upload_batch`/`decide_conflict`/
+  `resolve_initial_sync` 执行前必须 `assert_binding_branch`（对照 JS `d58b021`）。守卫码
+  `BRANCH_MISMATCH`/`BRANCH_INVALID`/`DETACHED_HEAD`/`GIT_FAILED`/`NOT_GIT_REPOSITORY`/
+  `REPO_NOT_FOUND`/`REPO_PATH_INVALID` 由本机决定，心跳合并时不得被服务端字段覆盖。
+  上传请求必须带 `observedBranchName`；同仓库多绑定时 `select_bindings` 逐个探分支，唯一匹配才启用。
+  同一 `localRepoKey` 的 approved 绑定超过一个时，`ConfigStore` 拒写（`CONFIG_INVALID`，
+  需要并行多分支请用独立 worktree）。
+- 游标串行化：`write_cursor` 必须先拿 `<data>/agent/.live-cursors.lock`（`lock_task_cursors`），
+  再重读磁盘合并写入。批次 409 且 `serverCode == "CONFLICT"`、`details.requiredClientSequence`
+  为正整数时，改写 pending 序号后重试一次（对照 JS `0fd2dc0`）。
+- 本地暂缓任务（`cursor.deferred`）只能由 `sync_deferred_tasks` 显式补传；只读绑定直接拒绝。
+- 托盘同步项只有运行/暂停两种文案（"暂停同步"/"恢复同步"）。外部 sidecar 时代的
+  `force_restart`（进程终止、`agent.lock` 备份、崩溃重启计数）在进程内 Agent 下没有对应物，
+  不得再引入。
 - 命令结果必须 POST 到 `/api/agent/commands/{id}/result`；`waitingIndex` 场景允许 8 次重试，
   其他失败 2 次。
 - 数据兼容：`data/agent/config.json`、`state.json`（schema 2）、`credential.dpapi`（schema 1）、
-  `event-cursors.json`、`live-cursors.json`、`live-suppression.json`、`pending-live/`、
-  `live-backups/` 的路径与字段不得改名。`client.json` schema 3 新增 `node_runtime`、
+  `event-cursors.json`、`live-cursors.json` 的路径与字段不得改名（`live-cursors.json` 现由
+  `TaskSync` 独占，文件名沿用旧值）。`client.json` schema 3 新增 `node_runtime`、
   `trellis_runtime`（snake_case），旧 schema 2 读取时自动迁移。
 - `TRELLIS_AGENT_ROOT` 优先于 `%LOCALAPPDATA%/TrellisBoardAgent`（独立 Agent CLI 场景）。
 

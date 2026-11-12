@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use crate::agent::credential::CredentialStore;
 use crate::agent::http::ApiClient;
 use crate::agent::onboarding::{self, AttachOptions};
-use crate::agent::protocol::{self, code, err, safe_error_message, AgentError, AgentResult};
+use crate::agent::protocol::{self, code, err, AgentError, AgentResult};
 use crate::agent::store::ConfigStore;
 use crate::agent::task_sync::{self, DiffKind, Difference, SnapshotFile, SnapshotGroup};
 

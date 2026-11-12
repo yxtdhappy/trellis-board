@@ -1,8 +1,9 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::io::AsyncWriteExt;
 
 use crate::agent::process::{build_environment, run_process, ProcessOptions};
@@ -24,6 +25,7 @@ pub struct AgentPaths {
     pub events_dir: PathBuf,
     pub logs_dir: PathBuf,
     pub config_lock_file: PathBuf,
+    pub task_cursor_lock_file: PathBuf,
     pub hooks_base_dir: PathBuf,
 }
 
@@ -39,6 +41,7 @@ pub fn create_agent_paths(root: &Path) -> AgentPaths {
         events_dir: root.join("events"),
         logs_dir: root.join("logs"),
         config_lock_file: root.join(".config.lock"),
+        task_cursor_lock_file: root.join(".live-cursors.lock"),
         hooks_base_dir: root.join("hooks"),
     }
 }
@@ -315,6 +318,44 @@ pub fn validate_config(config: &AgentConfig) -> AgentResult<AgentConfig> {
     })
 }
 
+/// 同一本地仓库只允许一个 approved 绑定；升级前已存在的双绑定保持兼容。
+fn assert_repository_bindings_converged(
+    bindings: &[AgentBinding],
+    previous: &[AgentBinding],
+) -> AgentResult<()> {
+    fn active_by_repository(bindings: &[AgentBinding]) -> BTreeMap<&str, Vec<&str>> {
+        let mut groups: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for binding in bindings
+            .iter()
+            .filter(|item| item.sync_status == "approved")
+        {
+            groups
+                .entry(binding.local_repo_key.as_str())
+                .or_default()
+                .push(binding.task_space_id.as_str());
+        }
+        groups
+    }
+
+    let before = active_by_repository(previous);
+    for (local_repo_key, mut after) in active_by_repository(bindings) {
+        if after.len() < 2 {
+            continue;
+        }
+        after.sort_unstable();
+        let mut existing = before.get(local_repo_key).cloned().unwrap_or_default();
+        existing.sort_unstable();
+        if existing == after {
+            continue;
+        }
+        return protocol::err(
+            code::CONFIG_INVALID,
+            "同一本地仓库只能绑定一个任务空间；需要并行同步多个分支时请使用独立 Git worktree",
+        );
+    }
+    Ok(())
+}
+
 pub struct ConfigStore {
     pub paths: AgentPaths,
     secure_directory: bool,
@@ -478,11 +519,22 @@ impl ConfigStore {
 
     pub async fn save_config(&self, config: AgentConfig) -> AgentResult<AgentConfig> {
         let _guard = self.lock_config(Duration::from_secs(5)).await?;
-        self.save_config_unlocked(config).await
+        let previous = self.read_config(true).await.ok().flatten();
+        self.save_config_unlocked(config, previous.as_ref()).await
     }
 
-    async fn save_config_unlocked(&self, config: AgentConfig) -> AgentResult<AgentConfig> {
+    async fn save_config_unlocked(
+        &self,
+        config: AgentConfig,
+        previous: Option<&AgentConfig>,
+    ) -> AgentResult<AgentConfig> {
         let normalized = validate_config(&config)?;
+        assert_repository_bindings_converged(
+            &normalized.bindings,
+            previous
+                .map(|value| value.bindings.as_slice())
+                .unwrap_or(&[]),
+        )?;
         self.write_json(&self.paths.config_file, &normalized)
             .await?;
         Ok(normalized)
@@ -506,46 +558,71 @@ impl ConfigStore {
                     revision: create_config_revision(),
                     ..config
                 };
-                self.save_config_unlocked(config).await.map(Some)
+                self.save_config_unlocked(config, current.as_ref())
+                    .await
+                    .map(Some)
             }
         }
     }
 
     async fn lock_config(&self, timeout: Duration) -> AgentResult<ConfigLock<'_>> {
+        self.lock_file(
+            &self.paths.config_lock_file,
+            timeout,
+            "无法锁定 Agent 配置",
+            "Agent 配置正被另一个进程更新",
+        )
+        .await
+    }
+
+    /// 同步游标文件的跨进程锁（对照 JS `withLiveCursorLock`）。
+    pub async fn lock_task_cursors(&self, timeout: Duration) -> AgentResult<ConfigLock<'_>> {
+        self.lock_file(
+            &self.paths.task_cursor_lock_file,
+            timeout,
+            "无法锁定 Agent 同步游标",
+            "Agent 同步游标正被另一个进程更新",
+        )
+        .await
+    }
+
+    async fn lock_file<'a>(
+        &'a self,
+        path: &'a Path,
+        timeout: Duration,
+        open_message: &str,
+        timeout_message: &str,
+    ) -> AgentResult<ConfigLock<'a>> {
         self.ensure_directories().await?;
         let deadline = std::time::Instant::now() + timeout;
         loop {
             match tokio::fs::OpenOptions::new()
                 .create_new(true)
                 .write(true)
-                .open(&self.paths.config_lock_file)
+                .open(path)
                 .await
             {
-                Ok(_) => {
-                    return Ok(ConfigLock {
-                        path: &self.paths.config_lock_file,
-                    })
-                }
+                Ok(_) => return Ok(ConfigLock { path }),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let stale = tokio::fs::metadata(&self.paths.config_lock_file)
+                    let stale = tokio::fs::metadata(path)
                         .await
                         .ok()
                         .and_then(|metadata| metadata.modified().ok())
                         .and_then(|modified| SystemTime::now().duration_since(modified).ok())
                         .is_some_and(|age| age > Duration::from_secs(30));
                     if stale {
-                        let _ = tokio::fs::remove_file(&self.paths.config_lock_file).await;
+                        let _ = tokio::fs::remove_file(path).await;
                         continue;
                     }
                     if std::time::Instant::now() >= deadline {
-                        return protocol::err(code::LOCKED, "Agent 配置正被另一个进程更新");
+                        return protocol::err(code::LOCKED, timeout_message);
                     }
                     tokio::time::sleep(Duration::from_millis(40)).await;
                 }
                 Err(error) => {
                     return Err(AgentError::new(
                         code::CONFIG_INVALID,
-                        format!("无法锁定 Agent 配置: {error}"),
+                        format!("{open_message}: {error}"),
                     ))
                 }
             }
@@ -586,6 +663,14 @@ impl ConfigStore {
             }
         }
         cursors
+    }
+
+    /// 任务同步游标文件的原始内容（缺失或损坏时返回空对象）。
+    pub async fn read_task_cursors(&self) -> Value {
+        let Ok(text) = tokio::fs::read_to_string(&self.paths.task_cursors_file).await else {
+            return json!({});
+        };
+        serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({}))
     }
 
     pub async fn write_event_cursor(&self, team_id: &str, last_event_id: i64) -> AgentResult<()> {
@@ -651,7 +736,7 @@ impl ConfigStore {
     }
 }
 
-struct ConfigLock<'a> {
+pub(crate) struct ConfigLock<'a> {
     path: &'a Path,
 }
 
@@ -721,5 +806,49 @@ mod tests {
         let paths = create_agent_paths(Path::new("C:/tmp/agent"));
         assert!(paths.config_file.ends_with("config.json"));
         assert!(paths.task_cursors_file.ends_with("live-cursors.json"));
+    }
+
+    fn binding(local_id: &str, task_space_id: &str, read_only: bool) -> AgentBinding {
+        AgentBinding {
+            local_id: local_id.into(),
+            server_binding_id: None,
+            task_space_id: task_space_id.into(),
+            project_id: "project-1".into(),
+            repo_path: "C:/repo".into(),
+            branch_name: "main".into(),
+            team_id: None,
+            remote_identity_key: "remote".into(),
+            local_repo_key: "a".repeat(64),
+            display_name: "Repo".into(),
+            created_at: "2026-11-12T00:00:00.000Z".into(),
+            allow_file_remote: false,
+            read_only,
+            sync_status: "approved".into(),
+            initial_sync_mode: "bootstrap".into(),
+            initial_sync_completed: true,
+            initial_review_pending: false,
+            live_sync_status: "ready".into(),
+            live_sync_error: None,
+            last_synced_at: None,
+            last_head: None,
+            last_error: None,
+            last_error_code: None,
+        }
+    }
+
+    #[test]
+    fn rejects_second_active_binding_for_same_repository() {
+        let first = binding("local-1", "ts-1", false);
+        let second = binding("local-2", "ts-2", false);
+        let error = assert_repository_bindings_converged(&[first.clone(), second], &[])
+            .expect_err("should reject");
+        assert_eq!(error.code, code::CONFIG_INVALID);
+        // 与上一版配置一致时放行，允许历史数据继续运行。
+        let legacy = binding("local-2", "ts-2", false);
+        assert!(assert_repository_bindings_converged(
+            &[first.clone(), legacy.clone()],
+            &[first, legacy]
+        )
+        .is_ok());
     }
 }

@@ -380,6 +380,24 @@ pub async fn current_branch(repo_path: &Path, hooks_dir: &Path) -> AgentResult<S
     Ok(value)
 }
 
+/// 校验仓库当前分支与绑定分支一致；返回实际分支名。
+pub async fn assert_repository_branch(
+    repo_path: &Path,
+    hooks_dir: &Path,
+    branch_name: &str,
+) -> AgentResult<String> {
+    let expected = crate::agent::protocol::validate_branch_name_syntax(branch_name)?;
+    let root = show_toplevel(repo_path, hooks_dir).await?;
+    let current = current_branch(&root, hooks_dir).await?;
+    if current != expected {
+        return Err(AgentError::new(
+            code::BRANCH_MISMATCH,
+            format!("本地当前分支为 {current}，绑定分支为 {expected}"),
+        ));
+    }
+    Ok(current)
+}
+
 /// HEAD 提交；`allow_unborn` 为 true 时未提交的空仓库返回 None。
 pub async fn head_commit(
     repo_path: &Path,
@@ -966,5 +984,63 @@ mod tests {
             classify_merge_failure("fatal: 无法访问 'https://example.com'").code,
             code::MERGE_FAILED
         );
+    }
+
+    fn git_test_repo(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-git-guard-{label}-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create temp dir");
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new(GIT_BINARY)
+                .args(["-C", root.to_str().expect("utf8 path")])
+                .args(args)
+                .output()
+                .expect("run git");
+            assert!(output.status.success(), "git {args:?} failed");
+        };
+        run(&["init", "--initial-branch=main"]);
+        run(&[
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ]);
+        root
+    }
+
+    #[tokio::test]
+    async fn asserts_repository_branch_matches_binding() {
+        let repo = git_test_repo("match");
+        let hooks = repo.join("hooks");
+        std::fs::create_dir_all(&hooks).expect("create hooks");
+        assert_eq!(
+            assert_repository_branch(&repo, &hooks, "main")
+                .await
+                .expect("matching branch"),
+            "main"
+        );
+        let output = std::process::Command::new(GIT_BINARY)
+            .args([
+                "-C",
+                repo.to_str().expect("utf8 path"),
+                "checkout",
+                "-b",
+                "feature",
+            ])
+            .output()
+            .expect("checkout");
+        assert!(output.status.success());
+        let error = assert_repository_branch(&repo, &hooks, "main")
+            .await
+            .expect_err("mismatched branch");
+        assert_eq!(error.code, code::BRANCH_MISMATCH);
+        assert!(error.message.contains("feature"), "{}", error.message);
+        std::fs::remove_dir_all(&repo).expect("cleanup");
     }
 }

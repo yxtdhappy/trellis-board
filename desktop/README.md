@@ -75,7 +75,8 @@ runtime_status
 
 - Agent 与客户端同进程：`AgentRuntime` 每 15 秒心跳，SSE 长连接接收事件，断线按 1s → 60s 指数退避重连。
 - 认证被撤销（401/AUTH_REVOKED）时停止同步并写 `state.json`；暂停同步只停止循环，队列状态保留。
-- 控制事件（首次同步差异、任务文件冲突、实时覆盖确认、改派覆盖）进入内存队列，列表为空时隐藏 `live-control` 窗口。
+- 控制事件（首次同步差异、任务文件冲突、同步错误）进入内存队列，列表为空时隐藏 `live-control` 窗口。
+- 托盘同步项只有两种状态：运行中显示「暂停同步」，暂停后显示「恢复同步」；点击即切换。
 - 项目栏仍每 3 秒读取本地关联，但上一请求未结束时跳过本次 tick，不堆积 IPC 调用。
 - NSIS `PREINSTALL` 和 `PREUNINSTALL` 会先结束运行中的客户端；Windows CI 只对客户端进程做静默升级与卸载冒烟。
 
@@ -85,8 +86,10 @@ runtime_status
 
 ```text
 Board 项目栏
-  -> invoke("inspect_local_project")
-  -> Rust 打开系统目录选择器
+  -> invoke("pick_local_project_folder")
+  -> Rust 打开系统目录选择器，立即返回选中的路径
+  -> 前端先弹出「接入本地 Git 项目」对话框，表单区显示骨架占位
+  -> invoke("inspect_local_project", { path })
   -> 进程内 onboarding::inspect_project
   -> 校验 Git 根、origin、当前分支、.trellis/tasks 和已有 Agent 工具
   -> 缺少 Trellis 时 invoke("initialize_pending_project")
@@ -158,6 +161,10 @@ Board 项目栏
 - 响应丢失时 cursor 保留 pending batch，重试复用原 `batchId`。
 - 服务端应用后的 watcher 事件按 `(absolutePath, sha256)` 抑制；内容已变化时继续上传真实编辑。
 - 已有关联使用本地 cursor 增量拉取，只有首次接入或显式重建执行 full snapshot。
+- “仅同步无冲突项”留下的本地任务记在 `cursor.deferred`，不会自动上传；项目栏显示
+  「N 个本地任务未同步」，用户点补传后调用 `sync_deferred_tasks` 才上传（只读绑定直接拒绝）。
+- 游标读写持有 `.live-cursors.lock`；批次 409 且带 `details.requiredClientSequence` 时，
+  改写 pending 序号并重试一次，不放弃本地批次。
 
 ## 首次差异和冲突
 
@@ -211,7 +218,7 @@ create_task / assign_task
 
 ## 分支门禁
 
-sidecar 在首次接入、上传、拉取、watcher 上传、pending retry、延后补同步和冲突覆盖前读取本地真实
+进程内 Agent 在首次接入、上传、拉取、watcher 上传、pending retry、延后补同步和冲突覆盖前读取本地真实
 分支。真实分支与 binding 不一致时：
 
 - 不写本地任务目录，不上传服务端，不推进 cursor；
@@ -237,6 +244,7 @@ sidecar 在首次接入、上传、拉取、watcher 上传、pending retry、延
 - `associate_pending_project`
 - `check_pending_project_push`
 - `initialize_pending_project`
+- `pick_local_project_folder`
 - `inspect_local_project`
 - `list_local_associations`
 - `desktop_sidecar_status`
@@ -272,8 +280,8 @@ desktop/
     src/navigation.rs             Board URL 白名单和同源导航
     src/config.rs                 client.json schema
     src/agent_service.rs          Agent 生命周期、控制队列与本地命令编排
-    src/agent/                    进程内 Agent（protocol/store/credential/http/process/git）
-    src/agent/                    同步与命令（task_sync/task_command/onboarding）
+    src/agent/                    进程内 Agent（protocol/store/credential/http/process/git/env/
+                                  device/association/onboarding/task_sync/task_command/runtime/control）
     src/runtime_commands.rs       环境门命令（runtime_status/runtime_install）
     src/logging.rs                日志脱敏
     capabilities/                 本地登录、远程项目接入、控制窗口分离

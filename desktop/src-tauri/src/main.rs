@@ -349,10 +349,10 @@ async fn desktop_login(
 }
 
 #[tauri::command]
-async fn inspect_local_project(
+async fn pick_local_project_folder(
     app: AppHandle,
     window: WebviewWindow,
-) -> Result<Option<serde_json::Value>, String> {
+) -> Result<Option<String>, String> {
     ensure_board_caller(&app, &window)?;
     *app.state::<DesktopAuthState>()
         .pending_project_path
@@ -365,13 +365,34 @@ async fn inspect_local_project(
     let path = path
         .into_path()
         .map_err(|error| format!("无法读取所选目录：{error}"))?;
+    if !path.is_dir() {
+        return Err("所选路径不是目录，请重新选择项目根目录".to_string());
+    }
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+async fn inspect_local_project(
+    app: AppHandle,
+    window: WebviewWindow,
+    path: String,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let path = PathBuf::from(path.trim());
+    if !path.is_dir() {
+        return Err("所选路径不是目录，请重新选择项目根目录".to_string());
+    }
+    *app.state::<DesktopAuthState>()
+        .pending_project_path
+        .lock()
+        .map_err(|_| "无法清除旧的待接入项目路径".to_string())? = None;
     let inspected = agent_service::inspect_project(&app, &path.to_string_lossy()).await?;
     let state = app.state::<DesktopAuthState>();
     *state
         .pending_project_path
         .lock()
         .map_err(|_| "无法保存待接入项目路径".to_string())? = Some(path);
-    Ok(Some(inspected))
+    Ok(inspected)
 }
 
 #[tauri::command]
@@ -639,7 +660,6 @@ fn autostart_enabled(app: &AppHandle) -> bool {
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "打开主窗口", true, None::<&str>)?;
     let live_control = MenuItem::with_id(app, "review-live", "处理实时确认", true, None::<&str>)?;
-    let pause = MenuItem::with_id(app, "pause", "暂停同步", true, None::<&str>)?;
     let sync = MenuItem::with_id(app, "sync", "恢复同步", true, None::<&str>)?;
     let logs = MenuItem::with_id(app, "logs", "打开日志目录", true, None::<&str>)?;
     let autostart = CheckMenuItem::with_id(
@@ -695,6 +715,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .build(app)?;
+    agent_service::set_sync_menu_item(app, sync);
     Ok(())
 }
 
@@ -754,6 +775,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_status,
             desktop_login,
+            pick_local_project_folder,
             inspect_local_project,
             initialize_pending_project,
             check_pending_project_push,

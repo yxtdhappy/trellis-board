@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 use crate::agent::credential::CredentialStore;
 use crate::agent::http::ApiClient;
 use crate::agent::protocol::{
-    self, code, err, parse_enroll_response, parse_heartbeat_response, safe_error_message,
-    AgentError, AgentResult, AGENT_PROTOCOL_VERSION, AGENT_VERSION,
+    self, code, err, parse_enroll_response, parse_heartbeat_response, AgentError, AgentResult,
+    AGENT_PROTOCOL_VERSION, AGENT_VERSION,
 };
 use crate::agent::store::{
     create_config_revision, AgentBinding, AgentConfig, AgentTeam, ConfigStore,
@@ -88,6 +88,10 @@ pub struct LocalAssociation {
     #[serde(default = "default_live_sync_status")]
     pub live_sync_status: String,
     pub live_sync_error: Option<String>,
+    #[serde(default)]
+    pub deferred_count: usize,
+    #[serde(default)]
+    pub deferred_task_dirs: Vec<String>,
     pub last_error_code: Option<String>,
     pub last_error: Option<String>,
 }
@@ -830,10 +834,11 @@ pub async fn read_local_associations(store: &ConfigStore) -> AgentResult<Vec<Loc
         .read_config(false)
         .await?
         .ok_or_else(|| AgentError::new(code::CONFIG_MISSING, "Agent 配置不存在"))?;
-    Ok(config
-        .bindings
-        .into_iter()
-        .map(|binding| LocalAssociation {
+    let deferred = store.read_task_cursors().await;
+    let mut associations = Vec::with_capacity(config.bindings.len());
+    for binding in config.bindings {
+        let deferred_task_dirs = deferred_task_dirs(&deferred, &binding.task_space_id);
+        associations.push(LocalAssociation {
             project_id: binding.project_id,
             task_space_id: binding.task_space_id,
             repo_path: binding.repo_path,
@@ -844,10 +849,28 @@ pub async fn read_local_associations(store: &ConfigStore) -> AgentResult<Vec<Loc
             read_only: binding.read_only,
             live_sync_status: binding.live_sync_status,
             live_sync_error: binding.live_sync_error,
+            deferred_count: deferred_task_dirs.len(),
+            deferred_task_dirs,
             last_error_code: binding.last_error_code,
             last_error: binding.last_error,
-        })
-        .collect())
+        });
+    }
+    Ok(associations)
+}
+
+/// 尚未补同步的本地任务目录（只看 `.trellis/tasks/` 前缀，按字典序）。
+fn deferred_task_dirs(cursors: &Value, task_space_id: &str) -> Vec<String> {
+    let mut dirs: Vec<String> = cursors
+        .get("taskSpaces")
+        .and_then(Value::as_object)
+        .and_then(|spaces| spaces.get(task_space_id))
+        .and_then(|space| space.get("deferred"))
+        .and_then(Value::as_object)
+        .map(|deferred| deferred.keys().cloned().collect())
+        .unwrap_or_default();
+    dirs.retain(|dir| dir.starts_with(".trellis/tasks/"));
+    dirs.sort();
+    dirs
 }
 
 #[cfg(test)]
@@ -960,6 +983,11 @@ mod tests {
             read_only: true,
             live_sync_status: "idle".to_string(),
             live_sync_error: None,
+            deferred_count: 2,
+            deferred_task_dirs: vec![
+                ".trellis/tasks/11-12-a".to_string(),
+                ".trellis/tasks/11-12-b".to_string(),
+            ],
             last_error_code: Some("GIT_FAILED".to_string()),
             last_error: None,
         };
@@ -969,6 +997,8 @@ mod tests {
         assert_eq!(value["repoPath"], "C:/repo");
         assert_eq!(value["readOnly"], true);
         assert_eq!(value["liveSyncStatus"], "idle");
+        assert_eq!(value["deferredCount"], 2);
+        assert_eq!(value["deferredTaskDirs"][0], ".trellis/tasks/11-12-a");
         assert_eq!(value["lastErrorCode"], "GIT_FAILED");
 
         let minimal: LocalAssociation = serde_json::from_value(json!({

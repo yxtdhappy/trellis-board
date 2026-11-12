@@ -23,6 +23,47 @@ const RATE_LIMIT_RETRY_MAX_DELAY: Duration = Duration::from_millis(5000);
 const MAX_RATE_LIMIT_RETRIES: u32 = 2;
 const SNAPSHOT_EXTENSIONS: [&str; 6] = [".json", ".jsonl", ".md", ".txt", ".yaml", ".yml"];
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(250);
+/// 分支守卫错误码：这些失败保留本地绑定状态，不覆盖成通用同步错误。
+const BRANCH_GUARD_CODES: [&str; 7] = [
+    code::BRANCH_MISMATCH,
+    code::BRANCH_INVALID,
+    code::DETACHED_HEAD,
+    code::GIT_FAILED,
+    code::NOT_GIT_REPOSITORY,
+    code::REPO_NOT_FOUND,
+    code::REPO_PATH_INVALID,
+];
+
+pub(crate) fn is_branch_guard_code(value: &str) -> bool {
+    BRANCH_GUARD_CODES.contains(&value)
+}
+
+fn is_branch_guard_error(error: &AgentError) -> bool {
+    is_branch_guard_code(&error.code)
+}
+
+fn approved_bindings(bindings: Vec<AgentBinding>) -> HashMap<String, AgentBinding> {
+    let mut map = HashMap::new();
+    for binding in bindings {
+        if binding.sync_status == "approved" && !binding.task_space_id.is_empty() {
+            map.insert(binding.task_space_id.clone(), binding);
+        }
+    }
+    map
+}
+
+/// 服务端 409 会给出可用的最小 clientSequence；只在 CONFLICT 且为正整数时采纳。
+fn required_client_sequence(error: &AgentError) -> Option<u64> {
+    if error.server_code.as_deref() != Some("CONFLICT") {
+        return None;
+    }
+    error
+        .details
+        .as_ref()?
+        .get("requiredClientSequence")?
+        .as_u64()
+        .filter(|value| *value > 0)
+}
 
 pub type ControlSink = Arc<dyn Fn(Value) + Send + Sync>;
 
@@ -643,33 +684,195 @@ impl TaskSync {
     }
 
     pub async fn set_bindings(&self, bindings: Vec<AgentBinding>) {
-        let mut map = HashMap::new();
-        for binding in bindings {
-            if binding.sync_status == "approved" && !binding.task_space_id.is_empty() {
-                map.insert(binding.task_space_id.clone(), binding);
-            }
-        }
-        *self.bindings.lock().await = map;
+        *self.bindings.lock().await = approved_bindings(bindings);
     }
 
     pub async fn update_bindings(self: &Arc<Self>, bindings: Vec<AgentBinding>) {
-        let mut map = HashMap::new();
-        for binding in bindings {
-            if binding.sync_status == "approved" && !binding.task_space_id.is_empty() {
-                map.insert(binding.task_space_id.clone(), binding);
-            }
-        }
-        let watched: Vec<AgentBinding> = map
-            .values()
-            .filter(|binding| !binding.read_only)
-            .cloned()
-            .collect();
+        let selected = self.select_bindings(bindings).await;
+        let map = approved_bindings(selected.clone());
         let task_space_ids: Vec<String> = map.keys().cloned().collect();
         *self.bindings.lock().await = map;
         for task_space_id in task_space_ids {
             self.pull_and_report(&task_space_id).await;
         }
+        let watched: Vec<AgentBinding> = selected
+            .into_iter()
+            .filter(|binding| !binding.read_only)
+            .collect();
         self.rebuild_watchers(watched).await;
+    }
+
+    /// 同一本地仓库多绑定时按真实分支挑唯一可用的绑定（对照 JS `_selectBindingsForRepositories`）。
+    async fn select_bindings(&self, bindings: Vec<AgentBinding>) -> Vec<AgentBinding> {
+        let mut groups: BTreeMap<String, Vec<AgentBinding>> = BTreeMap::new();
+        for binding in bindings.into_iter().filter(|binding| {
+            binding.sync_status == "approved" && !binding.task_space_id.is_empty()
+        }) {
+            groups
+                .entry(binding.local_repo_key.clone())
+                .or_default()
+                .push(binding);
+        }
+        if groups.values().all(|items| items.len() == 1) {
+            return groups.into_values().flatten().collect();
+        }
+        let mut selected = Vec::new();
+        for items in groups.into_values() {
+            if items.len() == 1 {
+                selected.extend(items);
+                continue;
+            }
+            let mut matches = Vec::new();
+            let mut first_error: Option<(AgentBinding, AgentError)> = None;
+            for binding in &items {
+                match self.assert_binding_branch(binding).await {
+                    Ok(_) => matches.push(binding.clone()),
+                    Err(error) => {
+                        if first_error.is_none() {
+                            first_error = Some((binding.clone(), error));
+                        }
+                    }
+                }
+            }
+            if matches.len() == 1 {
+                selected.extend(matches);
+                continue;
+            }
+            if matches.is_empty() {
+                if let Some((binding, error)) = first_error {
+                    (self.emit)(json!({
+                        "type": "task_sync_error",
+                        "taskSpaceId": binding.task_space_id,
+                        "code": error.code,
+                        "message": protocol::safe_error_message(&error.message),
+                    }));
+                }
+                continue;
+            }
+            let error = AgentError::new(
+                code::CONFIG_INVALID,
+                "同一本地仓库存在多个任务空间绑定，已暂停该仓库同步",
+            );
+            for binding in &items {
+                self.persist_binding_sync_error(binding, &error).await;
+            }
+            if let Some(binding) = items.first() {
+                (self.emit)(json!({
+                    "type": "task_sync_error",
+                    "taskSpaceId": binding.task_space_id,
+                    "code": error.code,
+                    "message": error.message,
+                }));
+            }
+        }
+        selected
+    }
+
+    /// 校验仓库当前分支与绑定分支一致；失败时把错误写入绑定状态并保留。
+    async fn assert_binding_branch(&self, binding: &AgentBinding) -> AgentResult<String> {
+        let hooks_dir = self.binding_hooks_dir(binding);
+        match crate::agent::git::assert_repository_branch(
+            Path::new(&binding.repo_path),
+            &hooks_dir,
+            &binding.branch_name,
+        )
+        .await
+        {
+            Ok(branch) => {
+                self.clear_branch_guard_error(binding).await;
+                Ok(branch)
+            }
+            Err(error) => {
+                if is_branch_guard_error(&error) {
+                    self.persist_binding_sync_error(binding, &error).await;
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn binding_hooks_dir(&self, binding: &AgentBinding) -> PathBuf {
+        self.store.paths.hooks_base_dir.join(&binding.local_id)
+    }
+
+    async fn persist_binding_sync_error(&self, binding: &AgentBinding, error: &AgentError) {
+        let message = protocol::safe_error_message(&error.message);
+        let error_code = error.code.clone();
+        let local_id = binding.local_id.clone();
+        let result = self
+            .store
+            .update_config(false, |current| {
+                let Some(config) = current else {
+                    return Ok(None);
+                };
+                let mut next = config.clone();
+                let mut changed = false;
+                for item in next.bindings.iter_mut() {
+                    if item.local_id != local_id {
+                        continue;
+                    }
+                    if item.live_sync_status == "error"
+                        && item.live_sync_error.as_deref() == Some(message.as_str())
+                        && item.last_error_code.as_deref() == Some(error_code.as_str())
+                    {
+                        continue;
+                    }
+                    item.live_sync_status = "error".into();
+                    item.live_sync_error = Some(message.clone());
+                    item.last_error_code = Some(error_code.clone());
+                    item.last_error = Some(message.clone());
+                    changed = true;
+                }
+                Ok(if changed { Some(next) } else { None })
+            })
+            .await;
+        if let Err(error) = result {
+            crate::logging::warn(&format!(
+                "保存任务同步状态失败：{}",
+                protocol::safe_error_message(&error.message)
+            ));
+        }
+    }
+
+    async fn clear_branch_guard_error(&self, binding: &AgentBinding) {
+        let local_id = binding.local_id.clone();
+        let result = self
+            .store
+            .update_config(false, |current| {
+                let Some(config) = current else {
+                    return Ok(None);
+                };
+                let mut next = config.clone();
+                let mut changed = false;
+                for item in next.bindings.iter_mut() {
+                    if item.local_id != local_id {
+                        continue;
+                    }
+                    let Some(previous) = item.last_error_code.clone() else {
+                        continue;
+                    };
+                    if !is_branch_guard_code(&previous) {
+                        continue;
+                    }
+                    item.live_sync_status = if item.initial_sync_completed {
+                        "ready".into()
+                    } else {
+                        "syncing".into()
+                    };
+                    item.live_sync_error = None;
+                    item.last_error_code = None;
+                    item.last_error = None;
+                    changed = true;
+                }
+                Ok(if changed { Some(next) } else { None })
+            })
+            .await;
+        if let Err(error) = result {
+            crate::logging::warn(&format!(
+                "保存分支恢复状态失败：{}",
+                protocol::safe_error_message(&error.message)
+            ));
+        }
     }
 
     /// 拉取并对失败做可观测上报：写日志 + 触发 `task_sync_error` 控制事件。
@@ -770,6 +973,17 @@ impl TaskSync {
             }
             for (task_space_id, paths) in std::mem::take(&mut pending) {
                 let paths: Vec<String> = paths.into_iter().collect();
+                // 首次同步未完成时 watcher 仍在监听，但上传必须等 bootstrap 拉取落地，
+                // 否则会用本地旧内容抢在服务端快照之前写入（对照 JS `_uploadDirty` 的守卫）。
+                let ready = self
+                    .bindings
+                    .lock()
+                    .await
+                    .get(&task_space_id)
+                    .is_some_and(|binding| !binding.read_only && binding.initial_sync_completed);
+                if !ready {
+                    continue;
+                }
                 if let Err(error) = self.upload_dirty(&task_space_id, &paths).await {
                     self.report_error(&task_space_id, &error);
                 }
@@ -830,6 +1044,9 @@ impl TaskSync {
 
     async fn write_cursor(&self, task_space_id: &str, next: CursorPatch) -> AgentResult<()> {
         let _guard = self.cursor_write.lock().await;
+        // 多进程共享同一游标文件：先拿文件锁，再丢弃缓存重新读取，避免覆盖别人的写入。
+        let _file_guard = self.store.lock_task_cursors(Duration::from_secs(5)).await?;
+        *self.cursor_state.lock().await = None;
         let mut state = self.read_cursor_state().await;
         let tasks = state
             .get_mut("taskSpaces")
@@ -887,6 +1104,33 @@ impl TaskSync {
             .await?;
         *self.cursor_state.lock().await = Some(state);
         Ok(())
+    }
+
+    /// 按服务端要求抬高待上传批次的 clientSequence（仅同一批次、且序号确实变大）。
+    async fn update_pending_client_sequence(
+        &self,
+        task_space_id: &str,
+        batch_id: &str,
+        client_sequence: u64,
+    ) -> AgentResult<()> {
+        let cursor = self.read_cursor(task_space_id).await;
+        let Some(pending) = cursor.pending.clone() else {
+            return Ok(());
+        };
+        if pending.batch_id != batch_id || pending.client_sequence >= client_sequence {
+            return Ok(());
+        }
+        self.write_cursor(
+            task_space_id,
+            CursorPatch {
+                pending: Some(Some(PendingBatch {
+                    client_sequence,
+                    ..pending
+                })),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     async fn local_files(
@@ -957,6 +1201,7 @@ impl TaskSync {
     ) -> AgentResult<bool> {
         let mut changed = false;
         for group in groups {
+            self.assert_binding_branch(binding).await?;
             let mut selected = HashSet::new();
             selected.insert(group.task_dir.clone());
             let previous = self.local_files(binding, Some(&selected)).await?;
@@ -1110,11 +1355,21 @@ impl TaskSync {
     }
 
     pub async fn pull_task_space(&self, task_space_id: &str) -> AgentResult<Value> {
-        let binding = self.binding(task_space_id).await?;
+        let binding = match self.binding(task_space_id).await {
+            Ok(binding) => binding,
+            Err(error) if error.code == code::BINDING_UNKNOWN => {
+                return Ok(json!({
+                    "skipped": true,
+                    "reason": "BINDING_INACTIVE",
+                }))
+            }
+            Err(error) => return Err(error),
+        };
         self.pull(&binding).await
     }
 
     async fn pull(&self, binding: &AgentBinding) -> AgentResult<Value> {
+        self.assert_binding_branch(binding).await?;
         let task_space_id = binding.task_space_id.clone();
         let mut cursor = self.read_cursor(&task_space_id).await;
         let initial_sync = !binding.initial_sync_completed;
@@ -1570,6 +1825,46 @@ impl TaskSync {
             .await
     }
 
+    /// 显式补同步首次同步时暂缓的本地任务目录（对照 JS `syncDeferredTasks`）。
+    pub async fn sync_deferred_tasks(&self, task_space_id: &str) -> AgentResult<Value> {
+        let binding = self.binding(task_space_id).await?;
+        if binding.read_only {
+            return protocol::err(code::COMMAND_INVALID, "只读关联不能上传本地任务");
+        }
+        let cursor = self.read_cursor(&binding.task_space_id).await;
+        let mut task_dirs: Vec<String> = cursor.deferred.keys().cloned().collect();
+        if task_dirs.is_empty() {
+            return Ok(json!({
+                "taskSpaceId": binding.task_space_id,
+                "syncedCount": 0,
+                "remainingCount": 0,
+                "remainingTaskDirs": [],
+                "conflict": false,
+                "conflictId": Value::Null,
+            }));
+        }
+        task_dirs.sort_unstable();
+        let uploaded = self
+            .upload_directories(&binding, &task_dirs, true, None)
+            .await?;
+        let next = self.read_cursor(&binding.task_space_id).await;
+        let mut remaining: Vec<String> = next.deferred.keys().cloned().collect();
+        remaining.sort_unstable();
+        let conflict = uploaded.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT");
+        Ok(json!({
+            "taskSpaceId": binding.task_space_id,
+            "syncedCount": if conflict { 0 } else { task_dirs.len().saturating_sub(remaining.len()) },
+            "remainingCount": remaining.len(),
+            "remainingTaskDirs": remaining,
+            "conflict": conflict,
+            "conflictId": if conflict {
+                uploaded.get("conflictId").cloned().unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            },
+        }))
+    }
+
     async fn upload_directories(
         &self,
         binding: &AgentBinding,
@@ -1577,6 +1872,7 @@ impl TaskSync {
         reconcile: bool,
         base_sha: Option<&BTreeMap<String, String>>,
     ) -> AgentResult<Value> {
+        self.assert_binding_branch(binding).await?;
         let task_space_id = binding.task_space_id.clone();
         let mut cursor = self.read_cursor(&task_space_id).await;
         let mut latest_revision = cursor.revision;
@@ -1728,14 +2024,19 @@ impl TaskSync {
         batch: PendingBatch,
     ) -> AgentResult<Value> {
         let task_space_id = binding.task_space_id.clone();
-        let request = json!({
-            "batchId": batch.batch_id,
-            "clientSequence": batch.client_sequence,
-            "files": batch.files,
-        });
+        let mut active_sequence = batch.client_sequence;
+        let mut sequence_recovered = false;
         let mut retry_delay = Duration::ZERO;
         let mut attempt = 0u32;
         let result = loop {
+            // 每次尝试都重新校验分支，并把实际分支名带给服务端。
+            let observed = self.assert_binding_branch(binding).await?;
+            let request = json!({
+                "batchId": batch.batch_id,
+                "clientSequence": active_sequence,
+                "files": batch.files,
+                "observedBranchName": observed,
+            });
             match self
                 .upload_with_slot(&task_space_id, retry_delay, &request)
                 .await
@@ -1763,7 +2064,29 @@ impl TaskSync {
                         })
                         .unwrap_or(RATE_LIMIT_RETRY_DELAY);
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    // 游标落后于服务端时，按服务端给出的最小序号改写待上传批次后重试一次。
+                    let required = required_client_sequence(&error);
+                    match required {
+                        Some(required) if !sequence_recovered && required > active_sequence => {
+                            crate::logging::warn(&format!(
+                                "上传序号落后于服务端，改用 {required} 重试 {}",
+                                batch.batch_id
+                            ));
+                            self.update_pending_client_sequence(
+                                &task_space_id,
+                                &batch.batch_id,
+                                required,
+                            )
+                            .await?;
+                            active_sequence = required;
+                            sequence_recovered = true;
+                            let _ = self.read_cursor(&task_space_id).await;
+                            retry_delay = Duration::ZERO;
+                        }
+                        _ => return Err(error),
+                    }
+                }
             }
         };
 
@@ -1774,7 +2097,7 @@ impl TaskSync {
                 &task_space_id,
                 CursorPatch {
                     revision: Some(cursor.revision),
-                    sequence: Some(batch.client_sequence),
+                    sequence: Some(active_sequence),
                     deferred: Some(clear_deferred_for_files(&cursor.deferred, &files)),
                     pending: Some(None),
                     ..Default::default()
@@ -1798,7 +2121,7 @@ impl TaskSync {
             &task_space_id,
             CursorPatch {
                 revision: Some(revision),
-                sequence: Some(batch.client_sequence),
+                sequence: Some(active_sequence),
                 baselines: Some(baselines),
                 deferred: Some(clear_deferred_for_files(&cursor.deferred, &files)),
                 pending: Some(None),
@@ -1868,6 +2191,7 @@ impl TaskSync {
             return protocol::err(code::COMMAND_INVALID, "首次同步处理方式无效");
         }
         let binding = self.binding(task_space_id).await?;
+        self.assert_binding_branch(&binding).await?;
         let snapshot = self.fetch_snapshot(task_space_id, 0).await?;
         let local_groups = self.local_groups(&binding, None).await?;
         let snapshot_files = parse_snapshot_files(&snapshot)?;
@@ -2112,6 +2436,7 @@ impl TaskSync {
         files: Option<&[String]>,
     ) -> AgentResult<Value> {
         let binding = self.binding(task_space_id).await?;
+        let observed = self.assert_binding_branch(&binding).await?;
         let conflicts = self.fetch_conflicts(task_space_id).await?;
         let conflict = conflicts
             .iter()
@@ -2263,6 +2588,7 @@ impl TaskSync {
                     "batchId": uuid::Uuid::new_v4().to_string(),
                     "clientSequence": next_sequence,
                     "files": values,
+                    "observedBranchName": observed,
                 }),
             )
             .await?;
@@ -2926,6 +3252,31 @@ pub(crate) fn urlencode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn required_sequence_only_reads_conflict_details() {
+        let mut error = AgentError::new(code::HTTP_ERROR, "clientSequence 必须严格递增");
+        error.server_code = Some("CONFLICT".into());
+        error.details = Some(json!({ "requiredClientSequence": 1_712_345_678_900u64 }));
+        assert_eq!(required_client_sequence(&error), Some(1_712_345_678_900));
+        // 非 CONFLICT、缺失或非正数的 details 一律不当作序号恢复信号。
+        assert_eq!(
+            required_client_sequence(&AgentError::new(code::HTTP_ERROR, "x")),
+            None
+        );
+        error.server_code = Some("TASK_FILE_CONFLICT".into());
+        assert_eq!(required_client_sequence(&error), None);
+        error.server_code = Some("CONFLICT".into());
+        error.details = Some(json!({ "requiredClientSequence": 0 }));
+        assert_eq!(required_client_sequence(&error), None);
+    }
+
+    #[test]
+    fn branch_guard_codes_cover_branch_failures() {
+        assert!(is_branch_guard_code(code::BRANCH_MISMATCH));
+        assert!(is_branch_guard_code(code::DETACHED_HEAD));
+        assert!(!is_branch_guard_code(code::LOCAL_DIRTY));
+    }
 
     fn task_group(task_id: &str, task_dir: &str, files: &[(&str, &str)]) -> SnapshotGroup {
         let mut snapshot_files = Vec::new();

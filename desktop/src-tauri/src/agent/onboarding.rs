@@ -547,8 +547,11 @@ pub async fn attach_project(
                 return err(code::CONFIG_MISSING, "Agent 配置不存在");
             };
             let mut next: AgentConfig = config.clone();
-            next.bindings
-                .retain(|item| item.task_space_id != next_binding.task_space_id);
+            // 同一本地仓库只保留一个绑定（对照 JS attachProject 的 localRepoKey 去重）。
+            next.bindings.retain(|item| {
+                item.task_space_id != next_binding.task_space_id
+                    && item.local_repo_key != next_binding.local_repo_key
+            });
             next.bindings.push(next_binding.clone());
             Ok(Some(next))
         })
