@@ -13,6 +13,17 @@ runSidecarMain(argv?: string[], options?: {
   fallbackDpapiScript?: string
 }): Promise<number>
 
+isParentAlive(parentPid: number, kill?: (pid: number, signal: number) => void): boolean
+
+startParentWatchdog(options: {
+  parentPid?: number,
+  intervalMs?: number,
+  isAlive?: (parentPid: number) => boolean,
+  onParentExit: () => void,
+  setIntervalFn?: typeof setInterval,
+  clearIntervalFn?: typeof clearInterval
+}): () => void
+
 new DpapiCredentialStore(store, {
   scriptFile: string,      // 必需，非空
   powerShellPath?: string
@@ -68,6 +79,15 @@ trellis-agent live-initial --task-space <id> --mode safe|review
   `agent/windows/dpapi.ps1`，并通过 `fallbackDpapiScript` 传入。
 - `desktop/sidecar/sea-entry.js` 必须保持无路径推断，只调用 `runSidecarMain()`。
 - `desktop/sidecar/main.js` 导入时不得启动命令、写文件或读取模块路径。
+- `runSidecarMain()` 在命令生命周期内启动父进程看门狗，每秒检查 `process.ppid`；只有父 PID
+  明确不存在时才触发退出，`EPERM` 或其他无法确认的错误按存活处理，命令结束后必须清理定时器。
+- 所有 `app.shell().sidecar()` 命令必须启用 `set_process_group(true)` 与
+  `kill_on_drop(true)`；一次性命令必须有总时长预算，超时、stdin 写入失败或命令错误时主动终止
+  整个进程树。预算为：`associations/logout` 15 秒，`login/inspect-project/live-decide/live-diff`
+  60 秒，`live-initial/live-restore` 120 秒，`check-push/preflight-project` 240 秒，
+  `associate/initialize-project` 600 秒。
+- Tauri 项目栏的 `list_local_associations` 每 3 秒轮询一次；请求在途时必须跳过后续 tick，
+  不得并发堆积 IPC 调用。
 - SEA 内优先通过 `sea.getAsset("dpapi.ps1")` 提取 DPAPI helper；asset 缺失且没有源码回退路径时返回
   `CONFIG_INVALID`。
 - `DpapiCredentialStore` 不得自行推导默认脚本路径；Agent CLI 和 sidecar 入口必须显式传入。
@@ -98,6 +118,8 @@ trellis-agent live-initial --task-space <id> --mode safe|review
   `trellis-agent.exe`、`trellis-runtime/`、版本文件和 SHA256 清单，不得携带本地用户数据。
 - 绿色版只免安装，用户数据继续写 `%LOCALAPPDATA%\TrellisBoard\data`；Evergreen WebView2
   是目标电脑前置条件，不随绿色 ZIP 提供安装器或 Fixed Version Runtime。
+- NSIS `NSIS_HOOK_PREINSTALL` / `NSIS_HOOK_PREUNINSTALL` 必须先结束
+  `trellis-board-client.exe` 与残留的 `trellis-agent.exe`，避免托盘进程锁定时无法覆盖升级文件。
 - `readOnly` 按实际任务写能力投影：项目 `lead`/`member`，以及没有显式项目角色的系统管理员
   为可写；显式 `read_only`，或普通团队成员/团队管理员仅靠团队身份建立关联时必须返回 `true`。
 - “可关联项目”与“可读取任务项目”是两个集合。`/api/team/status` 的 `associationProjects`
@@ -139,6 +161,10 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 | SEA 顶层启动成功执行 `version` | 输出协议版本并以 0 退出 |
 | Pi 初始化命中约定的 `EXDEV` 输出 | 补齐缺失模板后重试一次；补齐或重试失败立即返回错误 |
 | Pi 只存在扩展或 settings 单个标记 | 仍判定 Pi 未完成初始化 |
+| sidecar 父客户端明确退出 | 1 秒级看门狗触发以 IO 退出码结束 |
+| 一次性 sidecar 超过操作预算 | 终止整个进程树并返回中文超时错误 |
+| 关联列表上一请求未完成 | 本轮 3 秒 tick 跳过，不发起第二次调用 |
+| NSIS 升级或卸载时目标进程仍在运行 | 先强制结束客户端与 sidecar，再继续安装或卸载 |
 
 ## 5. Good / Base / Bad Cases
 
@@ -149,8 +175,12 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 ## 6. Tests Required
 
 - `agent/test/windows-dpapi.test.js`：缺少 `scriptFile` 必须失败；DPAPI 加解密不写明文。
+- `tests/desktop-sidecar-lifecycle.test.js`：父进程存活不误退出、父进程消失只触发一次、`EPERM`
+  按存活处理，以及真实父子进程在 3 秒内退出。
 - `tests/desktop-package.test.js`：SEA 入口不得包含 `import.meta`；bundle 不得包含伪模块 URL；源码 CLI
   `version/status` 正常。
+- `tests/desktop-package.test.js`：`tauri.conf.json` 必须引用 `windows/hooks.nsh`，两个 NSIS 钩子必须
+  清理客户端与 sidecar。
 - `tests/desktop-device-auth.test.js`：设备注册必须注入 credential store。
 - `tests/desktop-device-auth.test.js`：账号密码登录、Cookie 严格解析、同账号设备复用和退出登录。
 - `tests/desktop-association.test.js`：本地关联保存服务端 approved/readOnly 状态。
@@ -171,7 +201,9 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 - `tests/desktop-trellis-runtime.test.js`：真实执行 Pi 补齐脚本，覆盖部分 Pi 文件已存在、空扩展
   目录、已有内容不变、无临时文件；模拟 Pi `EXDEV` 断言只执行“补齐 → 重试一次”。
 - `tests/trellis-agent-tools.test.js`：Pi 必须同时存在扩展和 settings 两个完成标记。
-- Windows CI：构建后执行 sidecar `version`，断言退出码 0 和 `protocolVersion === 2`。
+- Windows CI：构建后执行 sidecar `version`，断言退出码 0 和 `protocolVersion === 3`。
+- Windows CI：静默安装后启动客户端与同名的 `trellis-agent.exe` 锁进程，再次静默升级，断言
+  升级退出码 0、旧进程已退出、sidecar 恢复且可执行，最后静默卸载。
 - Windows CI 必须在 `tauri build` 前通过 GitHub CLI/API 填充 `%LOCALAPPDATA%\tauri\NSIS`，校验
   NSIS zip 与 `nsis_tauri_utils.dll` 的固定 SHA1；Tauri 使用的 GitHub Releases 直链可能返回 504。
 - Windows CI 必须在同一次 `tauri build` 后无参数运行 `desktop/package-portable.ps1`，校验绿色

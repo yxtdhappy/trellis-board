@@ -41,6 +41,7 @@
       "nsis": {
         "installMode": "currentUser",
         "displayLanguageSelector": false,
+        "installerHooks": "./windows/hooks.nsh",
         "languages": [
           "SimpChinese",
           "English"

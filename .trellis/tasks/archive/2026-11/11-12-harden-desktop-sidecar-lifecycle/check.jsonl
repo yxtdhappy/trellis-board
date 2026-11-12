@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"检查 sidecar 生命周期、安装钩子与 Windows 产物验证是否闭环"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查超时、进程清理、测试覆盖和真实服务验证"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"检查项目栏轮询不重叠且保持现有状态契约"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查前端格式、构建和浏览器验收"}

@@ -260,6 +260,120 @@ jobs:
             throw "uninstall exit $LASTEXITCODE"
           }
           if (Test-Path $client) { throw "client not removed" }
+      - name: Running sidecar upgrade smoke test
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Get-ChildItem "desktop/src-tauri/target/release/bundle/nsis/*-setup.exe" |
+            Select-Object -First 1
+          if (-not $installer) { throw "缺少 NSIS 安装包" }
+
+          $installDir = Join-Path $env:LOCALAPPDATA "Trellis Board"
+          $client = Join-Path $installDir "trellis-board-client.exe"
+          $sidecar = Join-Path $installDir "trellis-agent.exe"
+          $uninstaller = Join-Path $installDir "uninstall.exe"
+          $clientProcess = $null
+          $lockerProcess = $null
+          $failure = $null
+          $uninstallExitCode = $null
+
+          try {
+            $firstInstall = Start-Process -FilePath $installer.FullName -ArgumentList "/S" `
+              -Wait -PassThru -WindowStyle Hidden
+            if ($firstInstall.ExitCode -ne 0) {
+              throw "首次静默安装退出码 $($firstInstall.ExitCode)"
+            }
+            if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) {
+              throw "安装后的 sidecar 缺失：$sidecar"
+            }
+            $sidecarHash = (Get-FileHash -LiteralPath $sidecar -Algorithm SHA256).Hash
+
+            Copy-Item -LiteralPath (Join-Path $env:SystemRoot "System32\PING.EXE") `
+              -Destination $sidecar -Force
+            $clientProcess = Start-Process -FilePath $client -ArgumentList "--minimized" `
+              -PassThru -WindowStyle Hidden
+            $lockerProcess = Start-Process -FilePath $sidecar `
+              -ArgumentList "-t", "127.0.0.1" -PassThru -WindowStyle Hidden
+            Start-Sleep -Seconds 2
+            if ($clientProcess.HasExited) {
+              throw "升级前客户端已退出"
+            }
+            if ($lockerProcess.HasExited) {
+              throw "升级前 sidecar 锁进程已退出"
+            }
+
+            $upgrade = Start-Process -FilePath $installer.FullName -ArgumentList "/S" `
+              -Wait -PassThru -WindowStyle Hidden
+            if ($upgrade.ExitCode -ne 0) {
+              throw "静默升级退出码 $($upgrade.ExitCode)"
+            }
+            for ($attempt = 0; $attempt -lt 10; $attempt += 1) {
+              $clientProcess.Refresh()
+              $lockerProcess.Refresh()
+              if ($clientProcess.HasExited -and $lockerProcess.HasExited) { break }
+              Start-Sleep -Seconds 1
+            }
+            if (-not ($clientProcess.HasExited)) {
+              throw "运行中的客户端未在 PREINSTALL 阶段终止"
+            }
+            if (-not ($lockerProcess.HasExited)) {
+              throw "运行中的 sidecar 未在 PREINSTALL 阶段终止"
+            }
+
+            $restoredHash = (Get-FileHash -LiteralPath $sidecar -Algorithm SHA256).Hash
+            if ($restoredHash -ne $sidecarHash) {
+              throw "升级后 sidecar 未恢复"
+            }
+            $sidecarOutput = & $sidecar version
+            if ($LASTEXITCODE -ne 0) {
+              throw "升级后的 sidecar version 退出码 $LASTEXITCODE"
+            }
+            $sidecarVersion = ($sidecarOutput -join "`n") | ConvertFrom-Json
+            if ($sidecarVersion.protocolVersion -ne 3) {
+              throw "升级后的 sidecar protocolVersion=$($sidecarVersion.protocolVersion)，期望 3"
+            }
+          } catch {
+            $failure = $_
+          } finally {
+            foreach ($process in @($clientProcess, $lockerProcess)) {
+              if ($null -ne $process) {
+                try {
+                  $process.Refresh()
+                  if (-not ($process.HasExited)) {
+                    Stop-Process -Id $process.Id -Force
+                  }
+                } catch {}
+              }
+            }
+            if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
+              try {
+                $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/S" `
+                  -Wait -PassThru -WindowStyle Hidden
+                $uninstallExitCode = $uninstall.ExitCode
+              } catch {
+                if ($null -eq $failure) { $failure = $_ }
+              }
+            }
+          }
+
+          if ($null -ne $failure) { throw $failure }
+          if ($uninstallExitCode -ne 0) {
+            throw "静默卸载退出码 $uninstallExitCode"
+          }
+          for ($attempt = 0; $attempt -lt 10; $attempt += 1) {
+            if (
+              -not (Test-Path -LiteralPath $client -PathType Leaf) -and
+              -not (Test-Path -LiteralPath $sidecar -PathType Leaf)
+            ) {
+              break
+            }
+            Start-Sleep -Seconds 1
+          }
+          if (Test-Path -LiteralPath $client) {
+            throw "静默卸载后客户端仍存在"
+          }
+          if (Test-Path -LiteralPath $sidecar) {
+            throw "静默卸载后 sidecar 仍存在"
+          }
       - name: Launch smoke test
         continue-on-error: true
         run: |

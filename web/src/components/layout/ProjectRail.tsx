@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { FolderGit2, LockKeyhole, Plus, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -222,12 +222,15 @@ export function ProjectRail({
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [onboardingProject, setOnboardingProject] = useState<unknown>(null)
   const [inspectingProject, setInspectingProject] = useState(false)
+  const associationRequestInFlight = useRef(false)
 
   useEffect(() => {
     if (!invoke) return
     const currentInvoke = invoke
     let cancelled = false
     async function loadAssociations() {
+      if (cancelled || associationRequestInFlight.current) return
+      associationRequestInFlight.current = true
       try {
         const result = await currentInvoke('list_local_associations')
         if (cancelled) return
@@ -241,6 +244,8 @@ export function ProjectRail({
             error instanceof Error ? error.message : String(error || '无法读取本地项目关联'),
           )
         }
+      } finally {
+        associationRequestInFlight.current = false
       }
     }
     void loadAssociations()
