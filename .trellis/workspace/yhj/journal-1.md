@@ -775,3 +775,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 33: 修复桌面端新增项目同步与首次同步
+<!-- trellis-session: v=2 fp=a0b6f9a60302132b -->
+
+**Date**: 2026-11-12
+**Task**: 修复桌面端新增项目同步与首次同步
+**Branch**: `codex/server-gitless-task-sync`
+
+### Summary
+
+统一 live CLI 的 --task-space 参数，重建并安装桌面客户端，在真实 WebView2 中点击“仅同步无冲突项”完成验证；新增项目 final ready，initialSyncCompleted=true，其余四个项目保持 ready。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `62edbe3` | fix(desktop): align live control task-space args |
+| `9709be3` | docs(task): record desktop sync retest |
+
+### Status
+
+[OK] **Completed**
