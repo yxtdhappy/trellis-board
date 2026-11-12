@@ -15,12 +15,12 @@
   "branch": "codex/server-gitless-task-sync",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "f8710d95bb8269b54acce431089185381255be1e",
   "pr_url": null,
   "subtasks": [],
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Windows CI 43165157934 已验证真实构建、绿色 ZIP 打包、NSIS 和启动烟测；真实 Windows 10/GUI 登录验收未执行，用户明确要求按现有证据归档。",
   "meta": {}
 }

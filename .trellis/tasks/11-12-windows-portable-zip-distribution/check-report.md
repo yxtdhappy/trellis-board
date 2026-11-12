@@ -4,8 +4,10 @@
 
 - 代码、CI、文档和长期打包规范已完成。
 - 自动测试、静态检查、PowerShell 脚本烟测通过。
-- 当前机器缺少 Rust/Tauri 构建工具链，无法生成真实客户端 EXE、NSIS 和最终绿色 ZIP。
-- 任务保持 `in_progress`，不能把假产物或仅静态打包结果当作发布验收。
+- 初次检查时当前机器缺少 Rust/Tauri 构建工具链；后续 GitHub Windows CI 已完成真实客户端、
+  NSIS 和绿色 ZIP 构建。
+- 真实 Windows 10/GUI 登录与项目初始化验收仍未执行。用户明确要求在现有证据下归档，以下限制
+  作为后续发布风险保留。
 
 ## 已通过
 
@@ -23,6 +25,20 @@
 - `tauri build`：当前机器没有 `cargo`、`rustup`、`tauri` 或 Rust toolchain。
 - 真实 NSIS 安装 smoke test、真实绿色 ZIP 解压启动和登录/sidecar/项目初始化验收。
 - Windows 11 与公司 Windows 10 镜像的 WebView2、GUI 启动和真实同步验证。
+
+## GitHub Windows CI 补充验证
+
+- Run：<https://github.com/yxtdhappy/trellis-board/actions/runs/43165157934>
+- 提交：`8d8261cf44622739619f95dbb9e3f705a4722ceb`
+- 构建代码提交：`f8710d95bb8269b54acce431089185381255be1e`
+- 结果：`success`
+- 步骤：Build web、Build sidecar、Rust unit tests、Bundle desktop client、Package portable
+  client、Portable package smoke test、Installer smoke test、Running sidecar upgrade smoke test、
+  Launch smoke test、Upload artifacts 均通过。
+- 产物：`trellis-board-desktop-windows`，包含客户端 EXE、NSIS 安装包、绿色 ZIP 和 ZIP 校验文件。
+- CI 已覆盖 ZIP 关键文件、内外 SHA256、含空格/中文路径解压、内置 sidecar 与 Node runtime
+  启动，以及现有 NSIS 安装和升级流程。
+- CI 仍未替代真实 Windows 10、GUI 登录、sidecar 登录后启动及项目初始化的实机验收。
 
 ## 最终验证路径
 

@@ -32,8 +32,8 @@
 
 ## Acceptance Criteria
 
-- [ ] Windows CI 同一次构建产出 NSIS 安装包和带版本号的 Windows x64 绿色 ZIP。
-- [ ] ZIP 解压后至少包含 `trellis-board-client.exe`、`trellis-agent.exe`、
+- [x] Windows CI 同一次构建产出 NSIS 安装包和带版本号的 Windows x64 绿色 ZIP。
+- [x] ZIP 解压后至少包含 `trellis-board-client.exe`、`trellis-agent.exe`、
   `trellis-runtime/node.exe`、`VERSION.txt` 和 `SHA256SUMS.txt`。
 - [ ] 解压到包含空格或中文的目录后双击主程序，无需管理员权限即可进入登录页。
 - [ ] 完成登录后 sidecar 能启动；接入缺少 Trellis 的 Git 项目时可使用绿色包内置 runtime
@@ -43,7 +43,7 @@
 - [ ] 绿色版不会创建快捷方式或开机自启项；卸载方式至少能明确说明如何删除程序和数据。
 - [ ] 登录配置、设备凭证、日志和同步数据仍写入
   `%LOCALAPPDATA%\TrellisBoard\data`，移动到新的解压目录不会改变数据位置。
-- [ ] 现有 NSIS 构建和安装 smoke test 不回归。
+- [x] 现有 NSIS 构建和安装 smoke test 不回归。
 
 ## Out of Scope
 
