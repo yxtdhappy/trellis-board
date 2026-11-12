@@ -3,7 +3,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createHarness, fixtureModule, startHttpServer } from '../../../tests/helpers/plugin-runtime.js'
+import {
+  createHarness,
+  fixtureModule,
+  startHttpServer,
+} from '../../../tests/helpers/plugin-runtime.js'
 import { createTaskRepository } from '../../../tests/helpers/task-repository.js'
 
 const PLUGIN_MODULE = fileURLToPath(new URL('../index.js', import.meta.url))
@@ -84,7 +88,10 @@ test('Agent Card 公开可读', async () => {
       card.skills.map((skill) => skill.id),
       ['create-task', 'manage-repositories', 'query-tasks', 'invoke-capability'],
     )
-    assert.equal(card.skills.some((skill) => skill.id === 'board-control'), false)
+    assert.equal(
+      card.skills.some((skill) => skill.id === 'board-control'),
+      false,
+    )
   } finally {
     await context.cleanup()
   }
@@ -307,7 +314,6 @@ test('缺少 assignee 时返回 -32602 且不建任务', async () => {
     await context.cleanup()
   }
 })
-
 
 test('board/action 通过通用 capability 桥调用其他插件', async () => {
   const context = await setup({}, [

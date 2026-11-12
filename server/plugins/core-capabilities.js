@@ -123,8 +123,7 @@ export function createCoreCapabilities({
       if (name === 'trellis.capabilities' && method === 'call') {
         throw invalidParams('不能通过能力代理递归调用 trellis.capabilities.call')
       }
-      const timeoutMs =
-        params?.timeoutMs === undefined ? undefined : Number(params.timeoutMs)
+      const timeoutMs = params?.timeoutMs === undefined ? undefined : Number(params.timeoutMs)
       if (
         timeoutMs !== undefined &&
         (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 300_000)
@@ -149,7 +148,9 @@ export function createCoreCapabilities({
     async get(params) {
       const id = String(params?.id ?? params?.repositoryId ?? '').trim()
       if (!id) throw invalidParams('projects/get 缺少 id')
-      const project = projectList(repositories, repositoryService).find((item) => item.repositoryId === id)
+      const project = projectList(repositories, repositoryService).find(
+        (item) => item.repositoryId === id,
+      )
       if (!project) throw appError(ERROR_CODES.NOT_FOUND, `项目不存在: ${id}`)
       return { project }
     },
@@ -157,8 +158,10 @@ export function createCoreCapabilities({
       const projects = projectList(repositories, repositoryService)
       const requested = String(params?.repositoryId ?? params?.id ?? '').trim()
       const project = requested
-        ? projects.find((item) => item.repositoryId === requested) ?? null
-        : projects.length === 1 ? projects[0] : null
+        ? (projects.find((item) => item.repositoryId === requested) ?? null)
+        : projects.length === 1
+          ? projects[0]
+          : null
       return { project }
     },
   })
@@ -222,10 +225,7 @@ export function createCoreCapabilities({
         )
       }
       if (meta.permission && !state.manifest.permissions.includes(meta.permission)) {
-        throw appError(
-          ERROR_CODES.PERMISSION_DENIED,
-          `插件未声明权限 ${meta.permission}`,
-        )
+        throw appError(ERROR_CODES.PERMISSION_DENIED, `插件未声明权限 ${meta.permission}`)
       }
       return handlers.get(name)[method](params ?? {}, state)
     },

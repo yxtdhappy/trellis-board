@@ -4,7 +4,13 @@ export default createPlugin({
   name: 'repo-consumer',
   version: '1.0.0',
   apiVersion: 1,
-  permissions: ['capabilities:call', 'repositories:read', 'repositories:write', 'projects:read', 'http:route'],
+  permissions: [
+    'capabilities:call',
+    'repositories:read',
+    'repositories:write',
+    'projects:read',
+    'http:route',
+  ],
 
   async onStart(ctx) {
     ctx.http.route('GET', '/list', async () => {

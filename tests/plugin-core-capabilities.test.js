@@ -20,13 +20,18 @@ async function request(baseUrl, pathname, options = {}) {
 test('宿主 trellis.repositories 能力对声明依赖的插件可用且可写', async () => {
   const harness = await createHarness({
     plugins: [plugin('repo-consumer')],
-    repositories: [{ id: 'demo-repository', name: 'Demo Repository', path: '/tmp/demo-repository' }],
+    repositories: [
+      { id: 'demo-repository', name: 'Demo Repository', path: '/tmp/demo-repository' },
+    ],
   })
   const http = await startHttpServer(harness.runtime)
   try {
     const empty = await request(http.baseUrl, '/api/plugins/repo-consumer/list')
     assert.equal(empty.status, 200, JSON.stringify(empty.json))
-    assert.deepEqual(empty.json.repositories.map((item) => item.id), ['demo-repository'])
+    assert.deepEqual(
+      empty.json.repositories.map((item) => item.id),
+      ['demo-repository'],
+    )
 
     const repositoryPath = path.join(harness.workspace.root, 'added-repository')
     fs.mkdirSync(path.join(repositoryPath, '.trellis'), { recursive: true })

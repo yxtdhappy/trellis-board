@@ -375,7 +375,9 @@ export default createPlugin({
       }
       const username = text(input.username) || config.username
       const password = text(input.password) || config.password
-      const noRun = input.noRun === true || (input.noRun !== false && !username && !password && !config.storageState)
+      const noRun =
+        input.noRun === true ||
+        (input.noRun !== false && !username && !password && !config.storageState)
       const scenarioRoot = resolveRoot()
       const momRoot = path.resolve(scenarioRoot, '../..')
       const workspace = workspaceDir()
@@ -437,7 +439,9 @@ export default createPlugin({
       }
       const reconSnapshots = Array.isArray(input.reconSnapshots)
         ? input.reconSnapshots
-        : Array.isArray(config.reconSnapshots) ? config.reconSnapshots : []
+        : Array.isArray(config.reconSnapshots)
+          ? config.reconSnapshots
+          : []
       if (reconSnapshots.length) args.push('--recon-snapshots', JSON.stringify(reconSnapshots))
       const env = {
         ...process.env,

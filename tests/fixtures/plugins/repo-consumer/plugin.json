@@ -14,18 +14,12 @@
     {
       "name": "trellis.projects",
       "version": "^1.0.0",
-      "methods": [
-        "list",
-        "current"
-      ]
+      "methods": ["list", "current"]
     },
     {
       "name": "trellis.repositories",
       "version": "^1.0.0",
-      "methods": [
-        "list",
-        "add"
-      ]
+      "methods": ["list", "add"]
     }
   ]
 }
