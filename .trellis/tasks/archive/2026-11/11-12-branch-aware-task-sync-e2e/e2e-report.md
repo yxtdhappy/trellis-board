@@ -22,8 +22,13 @@
 页面截图：
 
 - [整个项目汇总](./e2e-project-selected.png)
-- [暂停分支](./e2e-paused-branch-selected-final.png)
-- [正常 main 分支](./e2e-main-normal.png)
+- [暂停分支](./e2e-paused-branch-correct.png)
+- [正常 main 分支](./e2e-main-branch-correct.png)
+
+暂停分支截图中暂停行被选中，项目行显示“分支不一致，已暂停同步”；main 截图中 `main` 行被选中，
+父项目恢复普通“已关联”。本机关联配置同时证明暂停 binding 为
+`BRANCH_MISMATCH`（日志：“本地当前分支为 main，绑定分支为
+codex/server-gitless-task-sync”），main binding 为 `ready` 且无错误码。
 
 三次选择均为前端本地状态切换，服务端、桌面日志和 Agent 日志无新增请求或异常；状态由
 `list_local_associations` 的 3 秒轮询结果驱动，本机关联配置与页面文案一致。
