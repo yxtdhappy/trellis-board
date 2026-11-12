@@ -290,6 +290,45 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   assert.equal(changes.status, 200)
   assert.equal(changes.body.revision, 1)
 
+  const staleSequence = await request(
+    runtime,
+    `/api/agent/task-spaces/${encodeURIComponent(taskSpaceId)}/changes`,
+    {
+      method: 'POST',
+      agentCredential: enrolled.body.credential,
+      body: {
+        batchId: 'batch-stale-sequence',
+        clientSequence: 1,
+        observedBranchName: 'main',
+        files: [
+          {
+            path: '.trellis/tasks/01-stale-sequence/task.json',
+            content: `${JSON.stringify({
+              id: 'stale-sequence',
+              title: '重复序号',
+              status: 'planning',
+              assignee: 'owner',
+              priority: 'P2',
+            })}\n`,
+            baseSha256: null,
+          },
+          {
+            path: '.trellis/tasks/01-stale-sequence/prd.md',
+            content:
+              '# 重复序号\n\n## Requirements\n- 拒绝\n\n## Acceptance Criteria\n- [ ] 校验\n',
+            baseSha256: null,
+          },
+        ],
+      },
+    },
+  )
+  assert.equal(staleSequence.status, 409)
+  assert.equal(staleSequence.body.code, 'CONFLICT')
+  assert.deepEqual(staleSequence.body.details, {
+    previousSequence: 1,
+    requiredClientSequence: 2,
+  })
+
   const beforeExistingPreflight = syncCounts()
   const existingPreflight = await request(runtime, '/api/agent/task-spaces/preflight', {
     method: 'POST',
