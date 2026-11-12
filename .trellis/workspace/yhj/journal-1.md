@@ -1000,3 +1000,25 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 43: 项目栏快速初始化编码 Agent
+<!-- trellis-session: v=2 fp=b52b10ad2b2b75dc -->
+
+**Date**: 2026-11-12
+**Task**: 项目栏快速初始化编码 Agent
+**Branch**: `main`
+
+### Summary
+
+在已关联项目图标旁新增编码 Agent 快速初始化入口，复用接入向导 Agent 状态和 sidecar 初始化；Web 构建及针对性测试通过，Rust/Tauri 编译待具备工具链环境验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `617b09f` | feat(desktop): add quick local agent initialization |
+
+### Status
+
+[OK] **Completed**
