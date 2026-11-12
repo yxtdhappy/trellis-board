@@ -10,6 +10,7 @@ const configPathElement = document.getElementById('config-path')
 
 const invoke = window.__TAURI__?.core?.invoke
 let submitting = false
+let autoLoginAttempted = false
 
 function setStatus(text) {
   statusElement.textContent = text
@@ -65,11 +66,13 @@ async function readStatus() {
     if (app.serverUrl) serverUrlInput.value = app.serverUrl
     if (app.username) usernameInput.value = app.username
     if (app.password) passwordInput.value = app.password
-    setStatus(
-      app.serverUrl && app.username && app.password
-        ? '已恢复上次登录信息，请确认后登录。'
-        : '请输入账号密码登录。',
-    )
+    if (app.serverUrl && app.username && app.password) {
+      setStatus('已恢复上次登录信息，正在自动登录…')
+      autoLoginAttempted = true
+      form.requestSubmit()
+      return
+    }
+    setStatus('请输入账号密码登录。')
     const firstEmpty = [serverUrlInput, usernameInput, passwordInput].find((input) => !input.value)
     ;(firstEmpty || submitButton).focus()
   } catch (error) {
@@ -81,6 +84,8 @@ async function readStatus() {
 form.addEventListener('submit', async (event) => {
   event.preventDefault()
   if (submitting || !invoke) return
+  const automatic = autoLoginAttempted
+  autoLoginAttempted = false
   clearError()
   const validationError = validateInput()
   if (validationError) {
@@ -98,9 +103,8 @@ form.addEventListener('submit', async (event) => {
     passwordInput.value = ''
     setStatus('登录成功，正在打开 Board…')
   } catch (error) {
-    passwordInput.value = ''
     setSubmitting(false)
-    setStatus('登录失败。')
+    setStatus(automatic ? '自动登录失败，请检查后重试。' : '登录失败。')
     showError(error)
     passwordInput.focus()
   }
