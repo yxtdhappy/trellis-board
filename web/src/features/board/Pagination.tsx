@@ -39,7 +39,7 @@ export function Pagination({
         <Button
           variant="outline"
           size="sm"
-          className="h-7 px-2 text-[11px]"
+          className="px-2 text-[11px]"
           onClick={() => onChange(page - 1)}
           disabled={page === 0}
         >
@@ -51,7 +51,7 @@ export function Pagination({
         <Button
           variant="outline"
           size="sm"
-          className="h-7 px-2 text-[11px]"
+          className="px-2 text-[11px]"
           onClick={() => onChange(page + 1)}
           disabled={hasNext === false || page >= pageCount - 1}
         >
@@ -66,7 +66,7 @@ export function Pagination({
       <Button
         variant="outline"
         size="sm"
-        className="h-7 px-2 text-[11px]"
+        className="px-2 text-[11px]"
         onClick={() => onChange(Math.max(0, page - 1))}
         disabled={page === 0}
       >
@@ -78,25 +78,22 @@ export function Pagination({
             …
           </span>
         ) : (
-          <button
+          <Button
             key={item}
-            type="button"
+            size="icon-sm"
+            variant={item === page ? 'default' : 'ghost'}
             onClick={() => onChange(item)}
             aria-current={item === page ? 'page' : undefined}
-            className={
-              item === page
-                ? 'size-7 rounded-md bg-primary text-[11px] font-semibold text-primary-foreground'
-                : 'size-7 rounded-md text-[11px] text-muted-foreground hover:bg-muted'
-            }
+            className="text-[11px]"
           >
             {item + 1}
-          </button>
+          </Button>
         ),
       )}
       <Button
         variant="outline"
         size="sm"
-        className="h-7 px-2 text-[11px]"
+        className="px-2 text-[11px]"
         onClick={() => onChange(Math.min(pageCount - 1, page + 1))}
         disabled={page >= pageCount - 1}
       >

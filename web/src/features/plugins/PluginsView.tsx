@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
 import {
   fetchPluginLogs,
   fetchPlugins,
@@ -199,21 +200,22 @@ export function PluginsView() {
                 ) : null}
 
                 <div className="mt-auto flex gap-2">
-                  <button
+                  <Button
                     type="button"
+                    size="sm"
                     disabled={Boolean(busyId) || !plugin.compatible}
                     onClick={() => void toggle(plugin)}
-                    className="h-7 rounded-md bg-primary px-2.5 text-[11px] font-semibold text-primary-foreground disabled:opacity-50"
                   >
                     {busyId === plugin.id ? '处理中…' : running ? '停止' : '启动'}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => void openLogs(plugin)}
-                    className="h-7 rounded-md border border-border px-2.5 text-[11px] hover:bg-muted"
                   >
                     日志
-                  </button>
+                  </Button>
                 </div>
               </article>
             )

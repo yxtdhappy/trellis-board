@@ -1,5 +1,6 @@
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import { BUILTIN_VIEWS } from '@/lib/execution-filter.js'
 import type { BoardFilters } from '@/hooks/useBoard'
 
@@ -73,13 +74,9 @@ export function ExecutionHeader({
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            onClick={onSaveView}
-            className="h-8 rounded-md border border-border px-2.5 text-[11.5px] hover:bg-muted"
-          >
+          <Button variant="outline" size="sm" onClick={onSaveView}>
             保存组合视图
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -138,7 +135,7 @@ export function ExecutionHeader({
         <label className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
           分支
           <Input
-            className="h-8 w-32 text-[12px]"
+            className="w-32 text-xs"
             value={filters.branch}
             maxLength={200}
             placeholder="模糊匹配"
@@ -196,7 +193,7 @@ function FilterField({ label, value, options, onChange }: FilterFieldProps) {
     <label className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
       {label}
       <Select value={current.id} onValueChange={(next) => onChange(String(next ?? ''))}>
-        <SelectTrigger className="h-8 min-w-28 gap-1.5 rounded-md text-[12px]">
+        <SelectTrigger className="min-w-28 gap-1.5 rounded-md text-xs">
           <span data-slot="select-value" className="flex flex-1 items-center gap-1.5 text-left">
             {current.name}
           </span>

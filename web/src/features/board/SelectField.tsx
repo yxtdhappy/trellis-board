@@ -31,11 +31,7 @@ export function SelectField({
       onValueChange={(next) => onChange(String(next ?? ''))}
       disabled={disabled}
     >
-      <SelectTrigger
-        id={id}
-        aria-label={ariaLabel}
-        className={cn('w-full rounded-md text-[13px]', className)}
-      >
+      <SelectTrigger id={id} aria-label={ariaLabel} className={cn('w-full rounded-md', className)}>
         <span
           data-slot="select-value"
           className={

@@ -295,15 +295,16 @@ export function ProjectRail({
         项目
       </p>
       {invoke ? (
-        <button
-          type="button"
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => void startProjectOnboarding()}
           disabled={inspectingProject}
-          className="mb-1 flex h-7.5 items-center gap-2 rounded-lg border border-dashed border-border px-2 text-left text-[11px] text-muted-foreground hover:border-primary/50 hover:text-foreground disabled:opacity-60"
+          className="mb-1 justify-start border-dashed text-[11px] text-muted-foreground hover:border-primary/50 hover:text-foreground"
         >
           <Plus className={inspectingProject ? 'size-3.5 animate-pulse' : 'size-3.5'} />
           {inspectingProject ? '正在检查本地项目…' : '接入本地项目'}
-        </button>
+        </Button>
       ) : null}
       {invoke && syncingAssociations.length ? (
         <div
@@ -318,8 +319,8 @@ export function ProjectRail({
         onClick={() => onSelect('all')}
         className={
           current === 'all'
-            ? 'flex h-7.5 items-center gap-2 rounded-lg border border-primary/40 bg-primary/15 px-2 text-left text-xs font-semibold text-foreground'
-            : 'flex h-7.5 items-center gap-2 rounded-lg px-2 text-left text-xs font-medium text-foreground hover:bg-sidebar-accent/60'
+            ? 'flex h-8 items-center gap-2 rounded-lg border border-primary/40 bg-primary/15 px-2 text-left text-xs font-semibold text-foreground'
+            : 'flex h-8 items-center gap-2 rounded-lg px-2 text-left text-xs font-medium text-foreground hover:bg-sidebar-accent/60'
         }
       >
         <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
@@ -381,9 +382,10 @@ export function ProjectRail({
                     )}
                   </span>
                 ) : (
-                  <button
-                    type="button"
-                    className="mr-1.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="mr-1.5 shrink-0 text-muted-foreground"
                     aria-label={`${activeAssociation ? '重新关联' : '关联'} ${project.name} ${activeTaskSpace.branchName} 的本地 Git 仓库`}
                     title={activeAssociation ? '重新关联本地 Git 仓库' : '关联本地 Git 仓库'}
                     disabled={inspectingProject}
@@ -393,7 +395,7 @@ export function ProjectRail({
                       className={inspectingProject ? 'size-3.5 animate-pulse' : 'size-3.5'}
                       aria-hidden="true"
                     />
-                  </button>
+                  </Button>
                 )
               ) : null}
             </div>
@@ -438,14 +440,15 @@ export function ProjectRail({
       ) : null}
 
       {!invoke && manageEnabled ? (
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onManage}
-          className="mt-2 flex h-7 items-center gap-1.5 rounded-lg px-2 text-left text-xs text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+          className="mt-2 justify-start gap-1.5 text-muted-foreground"
         >
           <Plus className="size-3.5" />
           管理
-        </button>
+        </Button>
       ) : null}
 
       <div className="mt-auto flex flex-col gap-2 rounded-xl bg-card p-2.5">

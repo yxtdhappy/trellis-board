@@ -95,8 +95,8 @@ function DependencyItem({
         {onResolve ? (
           <Button
             variant="ghost"
-            size="sm"
-            className="ml-auto h-6 text-[10.5px]"
+            size="xs"
+            className="ml-auto"
             disabled={disabled}
             onClick={onResolve}
           >
@@ -449,7 +449,7 @@ export function TaskDetailDialog({
                     <div className="flex flex-col gap-1">
                       <Label className="text-[10px]">截止日期</Label>
                       <Input
-                        className="h-8 text-xs"
+                        className="text-xs"
                         type="date"
                         value={dueDate}
                         onChange={(e) => setDueDate(e.target.value)}
@@ -458,7 +458,7 @@ export function TaskDetailDialog({
                     <div className="flex flex-col gap-1">
                       <Label className="text-[10px]">里程碑</Label>
                       <Input
-                        className="h-8 text-xs"
+                        className="text-xs"
                         value={milestone}
                         onChange={(e) => setMilestone(e.target.value)}
                       />
@@ -466,12 +466,12 @@ export function TaskDetailDialog({
                     <div className="flex flex-col gap-1">
                       <Label className="text-[10px]">标签</Label>
                       <Input
-                        className="h-8 text-xs"
+                        className="text-xs"
                         value={tags}
                         onChange={(e) => setTags(e.target.value)}
                       />
                     </div>
-                    <Button size="sm" className="mt-auto h-8 text-[11px]" onClick={savePlan}>
+                    <Button size="sm" className="mt-auto" onClick={savePlan}>
                       保存计划字段
                     </Button>
                   </div>
@@ -572,7 +572,7 @@ export function TaskDetailDialog({
                     <div className="grid gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_auto]">
                       <SelectField
                         ariaLabel="阻断方任务"
-                        className="h-8 min-w-0 text-xs"
+                        className="min-w-0 text-xs"
                         placeholder="请选择阻断方任务"
                         value={blockerKey}
                         options={dependencyCandidates.map((candidate) => ({
@@ -582,7 +582,7 @@ export function TaskDetailDialog({
                         onChange={setBlockerKey}
                       />
                       <Input
-                        className="h-8 text-xs"
+                        className="text-xs"
                         placeholder="阻断原因（最多 500 字）"
                         maxLength={500}
                         value={reason}
@@ -590,7 +590,6 @@ export function TaskDetailDialog({
                       />
                       <Button
                         size="sm"
-                        className="h-8 text-[11px]"
                         disabled={busy === 'dependency'}
                         onClick={() => void addDependency()}
                       >
@@ -608,11 +607,11 @@ export function TaskDetailDialog({
                 ) : artifacts.length ? (
                   <div className="flex flex-col gap-1">
                     {artifacts.map(({ key, label, hint, artifact: entry }) => (
-                      <button
+                      <Button
                         key={key}
-                        type="button"
+                        variant="ghost"
+                        className="h-auto items-start justify-start gap-2 rounded-lg bg-muted px-2.5 py-2 text-left hover:bg-muted/70"
                         onClick={() => setArtifact({ label, entry })}
-                        className="flex items-center gap-2 rounded-lg bg-muted px-2.5 py-2 text-left hover:bg-muted/70"
                       >
                         <span className="flex size-6 items-center justify-center rounded bg-card text-[9px] font-bold text-muted-foreground">
                           MD
@@ -624,7 +623,7 @@ export function TaskDetailDialog({
                           </small>
                         </span>
                         <span className="ml-auto text-[10px] text-primary">查看</span>
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 ) : (
@@ -639,7 +638,7 @@ export function TaskDetailDialog({
           <DialogFooter className="gap-2 sm:justify-between">
             <div className="flex items-center gap-1.5">
               <SelectField
-                className="h-8 w-40 text-xs"
+                className="w-40 text-xs"
                 placeholder="请选择负责人"
                 value={assignee}
                 options={assignees.map((name) => ({ value: name, label: name }))}
@@ -649,7 +648,6 @@ export function TaskDetailDialog({
               />
               <Button
                 size="sm"
-                className="h-8 text-[11px]"
                 disabled={!canAssign}
                 onClick={async () => {
                   if (!current || !canAssign) return
@@ -664,12 +662,7 @@ export function TaskDetailDialog({
                 更新派发
               </Button>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-[11px]"
-              onClick={() => onOpenChange(false)}
-            >
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
               关闭
             </Button>
           </DialogFooter>

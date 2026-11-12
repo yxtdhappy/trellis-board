@@ -37,6 +37,26 @@
 - 深色模式必须验证：任何写死颜色的类都会在 `.dark` 下失效。
 - 窄屏：管理台两列在 `<1024px` 折叠为单列；看板侧栏在 `<1024px` 隐藏。
 
+### 控件尺度
+
+控件高度由 `components/ui` 的 cva 变体决定，**页面层不要再写 `h-7`/`h-8`/`h-9`/`h-10`/`h-7.5` 覆盖**，需要更小或更大时换 `size` 变体。
+
+| 高度 | 用途 |
+| --- | --- |
+| 36px `h-9` | `Button size="lg"`，仅空状态主 CTA |
+| 32px `h-8` | 默认输入/选择/按钮：`Input`、`SelectTrigger`、`Button`（默认）、`Button size="icon"`、表格行内控件 |
+| 28px `h-7` | 紧凑控件：`Button size="sm"`、`Select size="sm"`、`Button size="icon-sm"` |
+| 24px `h-6` | 徽章/胶囊/密集元信息：`Button size="xs"`、`Button size="icon-xs"` |
+
+- 例外且必须保留的自定义 32px 控件只有 `features/admin/shared.tsx` 的 `controlClass` 与 `features/admin/MultiSelectField.tsx`；新增原生控件优先复用它们而不是再写一套。
+- 控件文字不小于 `text-xs`；`text-[10px]`/`text-[11px]` 只允许出现在徽章、元信息、日志等非控件文本。
+
+### shadcn 优先
+
+- 交互控件一律使用 `components/ui` 的 `Button`/`Input`/`Select`/`Checkbox`/`Switch` 等，禁止自绘带边框的按钮。
+- 唯一允许裸 `<button>` 的场景是「点击命中区/导航行」：卡片遮罩层（`TaskCard` 的 `absolute inset-0`）、看板列任务行、列表/侧栏导航行、分段选项卡容器与胶囊容器。这些位置没有按钮外观，用 `Button` 只会引入多余 padding 与 hover 底色。
+- 图标按钮使用 `Button size="icon*"`，不要手写 `size-*` 尺寸。
+
 ## 测试边界
 
 - 纯逻辑模块（`web/src/lib/*.js`、`shared/slug.js`）的现有断言必须保留；迁移只能改 import 路径。

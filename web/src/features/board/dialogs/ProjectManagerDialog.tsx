@@ -136,8 +136,8 @@ export function ProjectManagerDialog({
                 </div>
                 <Button
                   variant="ghost"
-                  size="icon"
-                  className="ml-auto size-7 text-muted-foreground"
+                  size="icon-sm"
+                  className="ml-auto text-muted-foreground"
                   onClick={() => remove(row)}
                   disabled={busy}
                   aria-label={`移除 ${row.name || row.path}`}
@@ -147,18 +147,13 @@ export function ProjectManagerDialog({
               </div>
             ))
           )}
-          <Button
-            variant="outline"
-            className="h-10 gap-2 text-xs"
-            onClick={addFolders}
-            disabled={busy}
-          >
+          <Button variant="outline" className="gap-2 text-xs" onClick={addFolders} disabled={busy}>
             <FolderPlus className="size-3.5" />
             选择文件夹
           </Button>
           <div className="flex items-center gap-2">
             <Input
-              className="h-9 text-xs"
+              className="text-xs"
               value={manualPath}
               onChange={(event) => setManualPath(event.target.value)}
               onKeyDown={(event) => {
@@ -170,7 +165,7 @@ export function ProjectManagerDialog({
             />
             <Button
               variant="outline"
-              className="h-9 shrink-0 text-xs"
+              className="shrink-0 text-xs"
               onClick={() => void addManualPath()}
               disabled={busy || !manualPath.trim()}
             >

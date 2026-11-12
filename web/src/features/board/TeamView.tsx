@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import { Pagination } from './Pagination'
 import { SelectField } from './SelectField'
 import { dueLabel, initials, type BoardTask } from './task-view'
@@ -104,13 +105,9 @@ export function TeamView({
           <h2 className="text-[13px] font-semibold font-heading">跨项目查询</h2>
           <p className="text-[10.5px] text-muted-foreground">按负责人 / 阶段 / 项目筛选</p>
         </div>
-        <button
-          type="button"
-          onClick={onApply}
-          className="h-8 rounded-md bg-primary text-[11.5px] font-semibold text-primary-foreground hover:opacity-90"
-        >
+        <Button className="w-full" onClick={onApply}>
           应用筛选
-        </button>
+        </Button>
 
         <div className="border-t border-border/60 pt-2">
           <p className="text-[10.5px] font-semibold text-muted-foreground">按负责人统计</p>
@@ -146,7 +143,7 @@ export function TeamView({
         <div className="flex flex-col gap-1.5 border-t border-border/60 pt-2">
           <SelectField
             ariaLabel="项目"
-            className="h-8 text-[11.5px]"
+            className="text-xs"
             value={filters.projectId}
             options={[
               { value: 'all', label: '全部授权项目' },
@@ -157,7 +154,7 @@ export function TeamView({
           <label className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
             分支
             <Input
-              className="h-8 min-w-0 flex-1 text-[11.5px]"
+              className="min-w-0 flex-1 text-xs"
               value={filters.branch}
               maxLength={200}
               placeholder="模糊匹配"
@@ -169,7 +166,7 @@ export function TeamView({
           </label>
           <SelectField
             ariaLabel="负责人"
-            className="h-8 text-[11.5px]"
+            className="text-xs"
             value={filters.assignee || '__all'}
             options={[
               { value: '__all', label: '全部负责人' },
@@ -179,7 +176,7 @@ export function TeamView({
           />
           <SelectField
             ariaLabel="优先级"
-            className="h-8 text-[11.5px]"
+            className="text-xs"
             value={filters.priority || '__all'}
             options={[
               { value: '__all', label: '不限' },
@@ -189,7 +186,7 @@ export function TeamView({
           />
           <SelectField
             ariaLabel="阶段"
-            className="h-8 text-[11.5px]"
+            className="text-xs"
             value={filters.stage || '__all'}
             options={[
               { value: '__all', label: '全部阶段' },
@@ -199,7 +196,7 @@ export function TeamView({
           />
           <SelectField
             ariaLabel="阻断"
-            className="h-8 text-[11.5px]"
+            className="text-xs"
             value={filters.blocked}
             options={BLOCKED_OPTIONS}
             onChange={(next) => onChange({ blocked: next as BoardFilters['blocked'] })}
@@ -221,7 +218,7 @@ export function TeamView({
             </p>
           </div>
           <Input
-            className="ml-auto h-8 w-52 text-xs"
+            className="ml-auto w-52 text-xs"
             placeholder="搜索任务或负责人"
             value={search}
             onChange={(event) => {
@@ -229,13 +226,9 @@ export function TeamView({
               setPage(0)
             }}
           />
-          <button
-            type="button"
-            onClick={onApply}
-            className="h-8 rounded-md border border-border px-2.5 text-[11.5px] hover:bg-muted"
-          >
+          <Button variant="outline" size="sm" onClick={onApply}>
             刷新
-          </button>
+          </Button>
         </div>
 
         {loading ? (

@@ -84,14 +84,14 @@ export function TopBar({
         <div className="relative hidden md:block">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            className="h-8 w-[230px] pl-8 text-xs"
+            className="w-[230px] pl-8 text-xs"
             placeholder="搜索任务、负责人"
             value={search}
             onChange={(event) => onSearch(event.target.value)}
             aria-label="搜索任务"
           />
         </div>
-        <Button size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={onCreate}>
+        <Button className="gap-1.5 px-3 text-xs" onClick={onCreate}>
           <Plus className="size-3.5" />
           创建任务
         </Button>

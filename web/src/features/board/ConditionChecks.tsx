@@ -165,7 +165,7 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-7 text-[10px] text-destructive"
+                className="text-xs text-destructive"
                 aria-expanded={startExpanded}
                 disabled={!startLabels}
                 onClick={() => setStartExpanded((value) => !value)}

@@ -211,8 +211,8 @@ export function TeamsTab() {
                   </span>
                   <Button
                     variant="ghost"
-                    size="sm"
-                    className="h-6 px-1.5 text-[11px]"
+                    size="xs"
+                    className="px-1.5"
                     disabled={busy}
                     onClick={() => removeMember(member)}
                   >

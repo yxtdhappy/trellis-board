@@ -98,7 +98,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
           <div className="flex flex-col gap-1">
             <Label className="text-[10px]">视图名称</Label>
             <Input
-              className="h-8 text-xs"
+              className="text-xs"
               value={name}
               onChange={(event) => setName(event.target.value)}
             />
@@ -108,18 +108,16 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
             <Label className="text-[10px]">优先级</Label>
             <div className="flex flex-wrap gap-1.5">
               {PRIORITIES.map((priority) => (
-                <button
+                <Button
                   key={priority}
                   type="button"
+                  size="xs"
+                  variant={priorities.includes(priority) ? 'default' : 'outline'}
+                  className="rounded-full"
                   onClick={() => setPriorities((current) => toggle(current, priority))}
-                  className={
-                    priorities.includes(priority)
-                      ? 'rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground'
-                      : 'rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground'
-                  }
                 >
                   {priority}
-                </button>
+                </Button>
               ))}
             </div>
           </div>
@@ -128,18 +126,16 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
             <Label className="text-[10px]">阶段</Label>
             <div className="flex flex-wrap gap-1.5">
               {FILTER_STAGES.map((stage) => (
-                <button
+                <Button
                   key={stage.id}
                   type="button"
+                  size="xs"
+                  variant={stages.includes(stage.id) ? 'default' : 'outline'}
+                  className="rounded-full"
                   onClick={() => setStages((current) => toggle(current, stage.id))}
-                  className={
-                    stages.includes(stage.id)
-                      ? 'rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground'
-                      : 'rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground'
-                  }
                 >
                   {stage.label}
-                </button>
+                </Button>
               ))}
             </div>
           </div>
@@ -148,7 +144,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
             <div className="flex flex-col gap-1">
               <Label className="text-[10px]">标签（逗号分隔）</Label>
               <Input
-                className="h-8 text-xs"
+                className="text-xs"
                 value={tags}
                 onChange={(event) => setTags(event.target.value)}
               />
@@ -157,7 +153,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
               <Label className="text-[10px]">阻断状态</Label>
               <SelectField
                 ariaLabel="阻断状态"
-                className="h-8 text-xs"
+                className="text-xs"
                 value={blocked}
                 options={BLOCKED_OPTIONS.map((option) => ({
                   value: option.id,
@@ -169,7 +165,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
             <div className="flex flex-col gap-1">
               <Label className="text-[10px]">截止在 N 天内</Label>
               <Input
-                className="h-8 text-xs"
+                className="text-xs"
                 type="number"
                 min={0}
                 value={dueWithinDays}
@@ -179,7 +175,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
             <div className="flex flex-col gap-1">
               <Label className="text-[10px]">超过 N 天未动</Label>
               <Input
-                className="h-8 text-xs"
+                className="text-xs"
                 type="number"
                 min={0}
                 value={staleDays}
@@ -190,20 +186,10 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
         </DialogBody>
 
         <DialogFooter className="gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 text-[11px]"
-            onClick={() => onOpenChange(false)}
-          >
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button
-            size="sm"
-            className="h-8 text-[11px]"
-            disabled={saving}
-            onClick={() => void submit()}
-          >
+          <Button size="sm" disabled={saving} onClick={() => void submit()}>
             {saving ? '正在保存…' : '保存组合视图'}
           </Button>
         </DialogFooter>

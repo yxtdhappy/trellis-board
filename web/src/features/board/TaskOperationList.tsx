@@ -85,9 +85,9 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
               {operation.status === 'failed' && operation.id ? (
                 <Button
                   type="button"
-                  size="sm"
+                  size="xs"
                   variant="outline"
-                  className="h-6 gap-1 text-[10px]"
+                  className="gap-1"
                   onClick={() => void onRetry(operation.id as string)}
                 >
                   <RotateCcw className="size-3" />
@@ -97,9 +97,9 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
               {active && operation.id ? (
                 <Button
                   type="button"
-                  size="sm"
+                  size="xs"
                   variant="ghost"
-                  className="h-6 gap-1 text-[10px] text-muted-foreground"
+                  className="gap-1 text-muted-foreground"
                   onClick={() => void onCancel(operation.id as string)}
                 >
                   <X className="size-3" />

@@ -90,12 +90,8 @@ export function PublishOperationDialog({
         </DialogBody>
 
         <DialogFooter className="gap-2">
-          {status === 'failed' ? (
-            <Button size="sm" className="h-8 text-[11px]" onClick={onRetry}>
-              重试操作
-            </Button>
-          ) : null}
-          <Button variant="outline" size="sm" className="h-8 text-[11px]" onClick={onClose}>
+          {status === 'failed' ? <Button onClick={onRetry}>重试操作</Button> : null}
+          <Button variant="outline" onClick={onClose}>
             关闭
           </Button>
         </DialogFooter>

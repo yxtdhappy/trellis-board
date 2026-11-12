@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useArchiveTasks } from '@/hooks/useArchiveTasks'
 import { formatArchiveTimestamp, sortArchivedTasks } from '@/lib/archive-sort.js'
@@ -103,22 +104,23 @@ export function ArchiveView({
             working commit → 原子归档 → journal；历史任务只读回看。
           </p>
         </div>
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ml-auto"
           onClick={() => {
             if (teamMode) archive.refresh()
             else onRefresh?.()
           }}
           disabled={teamMode && archive.loading}
-          className="ml-auto h-8 rounded-md px-2.5 text-[11.5px] text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           刷新
-        </button>
+        </Button>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          className="h-8 w-64 text-xs"
+          className="w-64 text-xs"
           placeholder="搜索任务名或证据"
           value={teamMode ? archive.search : search}
           onChange={(event) => {
@@ -128,7 +130,7 @@ export function ArchiveView({
           }}
         />
         <Input
-          className="h-8 w-36 text-xs"
+          className="w-36 text-xs"
           aria-label="分支模糊筛选"
           value={branch}
           maxLength={200}
@@ -140,7 +142,7 @@ export function ArchiveView({
         />
         <SelectField
           ariaLabel="负责人"
-          className="h-8 w-36 text-[11.5px]"
+          className="w-36 text-xs"
           value={(teamMode ? archive.assignee : assignee) || '__all'}
           options={archiveAssigneeOptions(owners, teamMode ? archive.assignee : assignee)}
           onChange={(next) => {

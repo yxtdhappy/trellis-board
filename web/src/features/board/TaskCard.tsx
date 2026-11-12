@@ -1,5 +1,6 @@
 import { Copy } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { copyText } from '@/browser/clipboard.js'
 import { conditionBadges } from '@/lib/condition-checks.js'
 import { toast } from 'sonner'
@@ -127,26 +128,29 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
 
       <div className="relative flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         {onEditPlan ? (
-          <button
+          <Button
             type="button"
-            className="rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
+            variant="outline"
+            size="xs"
             onClick={() => onEditPlan(task)}
             disabled={task.archived}
             title={task.archived ? '归档任务只读' : '编辑计划字段'}
           >
             计划
-          </button>
+          </Button>
         ) : null}
         {showCopy ? (
-          <button
+          <Button
             type="button"
-            className="flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
+            variant="outline"
+            size="xs"
+            className="gap-1"
             onClick={copyName}
             title={`复制任务名：${task.dirName}`}
           >
-            <Copy className="size-2.5" />
+            <Copy />
             复制任务名
-          </button>
+          </Button>
         ) : null}
       </div>
     </article>
