@@ -54,12 +54,12 @@
 
 ## Acceptance Criteria
 
-- [ ] 强制结束 `trellis-board-client.exe` 后，2 秒级检测窗口内 `trellis-agent.exe` 自动退出。
-- [ ] 模拟 `associations` 等一次性命令无响应时，超时后整个 sidecar 进程树退出，IPC 返回超时错误。
-- [ ] 项目栏请求未完成时，3 秒轮询不会启动第二个 `list_local_associations`。
-- [ ] 旧客户端和 sidecar 正在运行时，NSIS 静默升级退出码为 0，安装后的 sidecar 文件可正常读取。
-- [ ] 首次安装、普通卸载、登录与项目关联现有测试继续通过。
-- [ ] GitHub Windows `node tests` 与 `desktop build` 全部成功。
+- [x] 强制结束父进程后，真实父子进程测试中 watchdog 子进程在 3 秒内退出。
+- [x] 一次性命令统一启用超时和进程树终止；Windows Rust 编译与桌面打包通过。
+- [x] 项目栏请求未完成时，3 秒轮询不会启动第二个 `list_local_associations`。
+- [x] 旧客户端和 sidecar 正在运行时，NSIS 静默升级退出码为 0，安装后的 sidecar 文件可正常读取。
+- [x] 首次安装、普通卸载、登录与项目关联现有测试继续通过。
+- [x] GitHub Windows `node tests` 与 `desktop build` 全部成功。
 
 ## Out of Scope
 

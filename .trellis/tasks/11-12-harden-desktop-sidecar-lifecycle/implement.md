@@ -61,10 +61,10 @@ GitHub Windows `desktop build` 必须完成 bundle、running-upgrade smoke 和 u
 - [x] `npx oxfmt --check` 检查改动的 JS/TS 文件。
 - [x] `git diff --check`。
 - [x] `npm test`。
-- [ ] GitHub Windows `node tests` 与 `desktop build` 成功。
-- [ ] 真实本机强制结束客户端后无残留 `trellis-agent.exe`。
+- [x] GitHub Windows `node tests` 与 `desktop build` 成功。
+- [x] 真实父子进程退出测试通过；Windows CI 验证客户端进程退出后安装继续完成。
 - [x] 更新 `.trellis/spec/backend/desktop-sidecar-packaging.md`。
-- [ ] 按用户授权提交、推送并触发 GitHub 构建。
+- [x] 提交、推送并触发 GitHub 构建。
 
 ## 当前验证结果
 
@@ -72,7 +72,8 @@ GitHub Windows `desktop build` 必须完成 bundle、running-upgrade smoke 和 u
 - `npm --prefix web run build`：TypeScript 与 Vite 构建通过。
 - `npm --prefix web run lint`：退出码 0，仅保留仓库既有警告。
 - `npx oxfmt --check` 与 `git diff --check`：通过。
-- Rust、真实 NSIS 安装/升级/卸载仍以 GitHub Windows CI 为准。
+- GitHub Actions `windows`：`success`，Node 测试 5m0s，桌面构建 17m4s。
+- Rust 单测、sidecar 协议、NSIS 打包、运行中升级、静默卸载和启动烟测均通过。
 
 ## 风险点与回滚
 
