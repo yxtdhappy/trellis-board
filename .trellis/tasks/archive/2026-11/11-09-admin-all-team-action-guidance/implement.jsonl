@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "约束管理台团队范围、项目接入探测、写操作刷新与桌面设备入口的状态流"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "约束 React 状态放置、可访问提示、浏览器验收和生产构建"}

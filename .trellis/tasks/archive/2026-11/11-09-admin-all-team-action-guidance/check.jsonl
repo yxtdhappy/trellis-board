@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "检查全部团队范围下的授权边界、项目探测触发条件和设备操作状态"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查类型、样式、可访问性、真实浏览器行为与构建验证"}
