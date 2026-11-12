@@ -843,3 +843,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 36: 项目接入 Agent 全量列表与搜索
+<!-- trellis-session: v=2 fp=7b4bce3cadd8512d -->
+
+**Date**: 2026-11-12
+**Task**: 项目接入 Agent 全量列表与搜索
+**Branch**: `main`
+
+### Summary
+
+项目接入弹窗改为复用共享 Agent 目录，展示全部 22 项并支持名称/ID 搜索；完成 lint、构建、浏览器和真实 Tauri WebView2 验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3a72ec4` | feat(board): add searchable agent catalog to onboarding |
+| `8ab6da6` | docs(task): record Tauri onboarding verification |
+
+### Status
+
+[OK] **Completed**

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 35
+- **Total Sessions**: 36
 - **Last Active**: 2026-11-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~845 | Active |
+| `journal-1.md` | ~868 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 36 | 2026-11-12 | 项目接入 Agent 全量列表与搜索 | `3a72ec4`, `8ab6da6` | `main` |
 | 35 | 2026-11-12 | 加固桌面 sidecar 生命周期并完成 Windows 升级验收 | `7bfbf6f`, `cd84ff1` | `codex/harden-desktop-sidecar-lifecycle` |
 | 34 | 2026-11-12 | 客户端接入项目默认填入登录账号 | `7b360ec` | `codex/server-gitless-task-sync` |
 | 33 | 2026-11-12 | 修复桌面端新增项目同步与首次同步 | `62edbe3`, `9709be3` | `codex/server-gitless-task-sync` |
