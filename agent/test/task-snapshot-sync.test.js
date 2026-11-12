@@ -282,6 +282,11 @@ test('历史双绑定只启用真实分支匹配的 binding，另一个保持暂
     })
     await sync.updateBindings(loaded.bindings)
     assert.deepEqual([...sync.bindings.keys()], ['space-1'])
+    assert.deepEqual(await sync.pullTaskSpace('space-2'), {
+      skipped: true,
+      reason: 'BINDING_INACTIVE',
+      taskSpaceId: 'space-2',
+    })
     const bindings = (await context.store.readConfig()).bindings
     assert.equal(
       bindings.find((binding) => binding.taskSpaceId === 'space-2').lastErrorCode,

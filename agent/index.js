@@ -508,10 +508,13 @@ export class AgentRuntime {
             onOpen: () => {
               attempt = 0
               this.logger.info('Agent 事件流已连接')
-              for (const binding of this.config?.bindings || []) {
-                if (binding.syncStatus === 'approved') {
-                  void this.taskSync.pullTaskSpace(binding.taskSpaceId)
-                }
+              for (const taskSpaceId of this.taskSync.bindings.keys()) {
+                void this.taskSync.pullTaskSpace(taskSpaceId).catch((error) => {
+                  this.logger.warn('事件流恢复后同步任务空间失败', {
+                    taskSpaceId,
+                    error: safeErrorMessage(error),
+                  })
+                })
               }
             },
             onEvent: async (event) => {

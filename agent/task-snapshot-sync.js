@@ -316,7 +316,12 @@ export class AgentTaskSnapshotSync {
       onError: (error) => this.logger.warn('任务目录监听失败', error),
     })
     for (const taskSpaceId of this.bindings.keys()) {
-      void this.pullTaskSpace(taskSpaceId)
+      void this.pullTaskSpace(taskSpaceId).catch((error) => {
+        this.logger.warn('启动后同步任务空间失败', {
+          taskSpaceId,
+          error: safeErrorMessage(error),
+        })
+      })
     }
   }
 
@@ -1058,7 +1063,7 @@ export class AgentTaskSnapshotSync {
   }
 
   async pullTaskSpace(taskSpaceId) {
-    const binding = this._binding(taskSpaceId)
+    const binding = this.bindings.get(String(taskSpaceId || ''))
     if (!binding) {
       return { skipped: true, reason: 'BINDING_INACTIVE', taskSpaceId }
     }

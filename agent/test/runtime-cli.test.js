@@ -374,6 +374,68 @@ test('配置读取兼容历史双绑定，但禁止新增同仓库第二个有�
   }
 })
 
+test('事件流恢复只补拉激活 binding，补拉失败不会冒泡为致命异常', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-agent-event-open-'))
+  const repoPath = path.join(root, 'repo')
+  fs.mkdirSync(repoPath, { recursive: true })
+  const store = new ConfigStore(root, { secureDirectory: false })
+  const config = makeConfig(repoPath)
+  const inactive = {
+    ...config.bindings[0],
+    localId: 'local-2',
+    serverBindingId: 'binding-2',
+    taskSpaceId: 'space-2',
+    branchName: 'feature/x',
+  }
+  fs.writeFileSync(
+    store.paths.configFile,
+    `${JSON.stringify({ ...config, bindings: [config.bindings[0], inactive] }, null, 2)}\n`,
+  )
+  const controller = new AbortController()
+  const pulls = []
+  const warnings = []
+  const runtime = new AgentRuntime({
+    store,
+    credentialStore: { loadCredential: async () => 'c'.repeat(32) },
+    logger: {
+      info() {},
+      warn(message) {
+        warnings.push(message)
+      },
+      error() {},
+    },
+    apiFactory: () => ({
+      streamEvents: async (_input, options) => {
+        options.onOpen?.({ status: 200, headers: {} })
+        await new Promise((resolve) => setImmediate(resolve))
+        controller.abort()
+        return { reason: 'closed' }
+      },
+    }),
+    taskSync: {
+      bindings: new Map([['space-1', config.bindings[0]]]),
+      async start() {},
+      stop() {},
+      updateBindings() {},
+      async pullTaskSpace(taskSpaceId) {
+        pulls.push(taskSpaceId)
+        throw new Error('补拉失败')
+      },
+    },
+    eventReconcileMs: 5,
+    signal: controller.signal,
+  })
+  runtime.pollEnabled = true
+
+  try {
+    await runtime._eventLoop()
+    assert.deepEqual(pulls, ['space-1'])
+    assert.ok(warnings.includes('事件流恢复后同步任务空间失败'))
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('主循环领取白名单命令并上报结果，不发送仓库绝对路径', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-agent-runtime-'))
   const repoPath = path.join(root, 'repo')
@@ -433,6 +495,7 @@ test('主循环领取白名单命令并上报结果，不发送仓库绝对路�
       logger,
       apiFactory: () => api,
       taskSync: {
+        bindings: new Map(),
         async start() {},
         stop() {},
         updateBindings() {},
@@ -486,6 +549,7 @@ test('401 撤销停止主循环且保留本地配置', async () => {
       logger,
       apiFactory: () => api,
       taskSync: {
+        bindings: new Map(),
         async start() {},
         stop() {},
         updateBindings() {},

@@ -179,6 +179,9 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - Agent 在首次同步、增量 pull、上传、watcher 触发、pending retry、延后补同步、服务端目录实际写入
   以及冲突覆盖前都必须重新读取本地真实分支。分支不匹配时失败关闭：不写任务目录、不上传、不推进
   cursor、不补发 pending，并把 `BRANCH_MISMATCH` 投影到项目栏；切回绑定分支后才可恢复。
+- SSE 重连和事件触发的补拉只能遍历运行时激活的 binding。未激活 taskSpace 返回
+  `{ skipped: true, reason: "BINDING_INACTIVE" }`，不能按未知 binding 抛异常；所有
+  fire-and-forget 补拉必须处理 rejection，单个 taskSpace 失败只能记日志，不能终止 Agent 进程。
 - 客户端以完整任务目录为原子单位：先在同卷临时目录写 `next`，把原目录 rename 为 `previous`，
   再 rename `next` 到目标；失败时恢复原目录。
 - 服务端 revision 应用后的 watcher 事件按 `(absolutePath, sha256)` 抑制；只有内容仍匹配才吞掉事件，
@@ -357,7 +360,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   目录移动和 pending batch 重放；还应断言上传请求不重叠、6 批滑动窗口不超过 5 批、429 最多
   重试 2 次且复用原请求、部分 bootstrap 可续传、并发 server-only 会重新进入审查，以及错分支
   上传/拉取/pending/deferred 全部失败关闭并在切回后恢复。
-- `agent/test/runtime-cli.test.js`：心跳不覆盖本地分支错误；配置读取兼容历史双绑定但禁止新增。
+- `agent/test/runtime-cli.test.js`：心跳不覆盖本地分支错误；配置读取兼容历史双绑定但禁止新增；
+  SSE 重连只补拉激活 binding，未激活分支和单个补拉失败不得产生未处理 rejection。
 - `agent/test/git-sync.test.js`：错分支和 detached HEAD 拒绝；同一仓库两个 worktree 生成不同
   `localRepoKey`。
 - `tests/onboarding-associations.test.js`：Windows 仓库路径比较忽略大小写、斜杠方向和末尾分隔符。
