@@ -8,6 +8,8 @@
   "permissions": [
     "core:default",
     "allow-app-status",
+    "allow-runtime-status",
+    "allow-runtime-install",
     "allow-desktop-login"
   ]
 }

@@ -11,7 +11,6 @@
     "allow-live-control-decide",
     "allow-live-control-diff",
     "allow-live-control-initial",
-    "allow-live-control-restore",
     "allow-live-control-dismiss"
   ]
 }

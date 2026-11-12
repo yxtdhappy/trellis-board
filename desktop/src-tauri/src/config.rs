@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
+const LEGACY_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,6 +14,10 @@ pub struct ClientConfig {
     pub username: Option<String>,
     #[serde(default)]
     pub password: Option<String>,
+    #[serde(rename = "node_runtime", alias = "nodeRuntime", default)]
+    pub node_runtime: Option<serde_json::Value>,
+    #[serde(rename = "trellis_runtime", alias = "trellisRuntime", default)]
+    pub trellis_runtime: Option<serde_json::Value>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -56,10 +61,16 @@ pub fn load() -> Result<Option<ClientConfig>, String> {
     let Ok(config) = serde_json::from_str::<ClientConfig>(payload) else {
         return Ok(None);
     };
-    if config.schema_version != SCHEMA_VERSION {
-        return Ok(None);
+    if config.schema_version == SCHEMA_VERSION {
+        return Ok(Some(config));
     }
-    Ok(Some(config))
+    if config.schema_version == LEGACY_SCHEMA_VERSION {
+        let mut migrated = config;
+        migrated.schema_version = SCHEMA_VERSION;
+        let _ = save(&migrated);
+        return Ok(Some(migrated));
+    }
+    Ok(None)
 }
 
 pub fn save(config: &ClientConfig) -> Result<(), String> {
@@ -68,8 +79,7 @@ pub fn save(config: &ClientConfig) -> Result<(), String> {
     let temp = target.with_extension(format!("json.{}.tmp", std::process::id()));
     let payload = serde_json::to_vec_pretty(config)
         .map_err(|error| format!("无法序列化桌面配置: {error}"))?;
-    std::fs::write(&temp, payload)
-        .map_err(|error| format!("无法写入桌面配置: {error}"))?;
+    std::fs::write(&temp, payload).map_err(|error| format!("无法写入桌面配置: {error}"))?;
     std::fs::rename(&temp, &target).map_err(|error| {
         let _ = std::fs::remove_file(&temp);
         format!("无法替换桌面配置 {}: {error}", target.display())
@@ -92,7 +102,9 @@ pub fn server_url_from_args() -> Option<String> {
 }
 
 pub fn minimized_from_args() -> bool {
-    std::env::args().skip(1).any(|argument| argument == "--minimized")
+    std::env::args()
+        .skip(1)
+        .any(|argument| argument == "--minimized")
 }
 
 #[cfg(test)]
@@ -111,6 +123,8 @@ mod tests {
             server_url: "https://board.example.com".to_string(),
             username: Some("admin".to_string()),
             password: Some("secret-password".to_string()),
+            node_runtime: None,
+            trellis_runtime: None,
         };
         save(&config).expect("save config");
         let loaded = load().expect("load config").expect("config exists");

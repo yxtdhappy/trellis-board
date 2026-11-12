@@ -24,12 +24,6 @@ function addDetail(label, value) {
   details.append(term, description)
 }
 
-function taskLabel(taskKey) {
-  const value = String(taskKey || '')
-  const separator = value.indexOf('::')
-  return separator >= 0 ? value.slice(separator + 2) : value
-}
-
 function conflictLabel(conflict) {
   if (typeof conflict === 'string') return conflict
   const details = [String(conflict?.path || '')]
@@ -284,15 +278,6 @@ async function runAction(action) {
           mode: action,
         })
       }
-    } else if (current.type === 'assignment_warning') {
-      await invoke('live_control_decide', {
-        pendingId: current.pendingId,
-        action,
-      })
-    } else if (current.type === 'remote_overwrite') {
-      await invoke('live_control_restore', {
-        backupId: current.backupId,
-      })
     }
     current = null
     busy = false
@@ -359,44 +344,6 @@ function render(event) {
     message.textContent = event.message || '任务空间同步暂时失败，请稍后重试。'
     addDetail('任务空间', event.taskSpaceId)
     button('关闭', 'close', 'primary')
-  } else if (event.type === 'assignment_warning') {
-    const assignee = event.assignee?.displayName || event.assignee?.username || '其他成员'
-    title.textContent = '你正在修改他人负责的任务'
-    message.textContent =
-      `当前责任人是 ${assignee}。建议先沟通，避免多人重复推进同一任务。` +
-      '继续推进会保留原责任人并记录审计；只有接管任务才会显式改派。' +
-      '选择稍后处理后，可从托盘重新打开。'
-    addDetail('任务', event.task?.title || event.task?.taskKey)
-    addDetail('责任人', assignee)
-    if (event.expiresAt) addDetail('确认截止', new Date(event.expiresAt).toLocaleString())
-    button('取消并恢复', 'cancel', 'danger')
-    button('继续推进', 'continue')
-    button('接管任务', 'takeover', 'primary')
-    button('稍后处理', 'close')
-  } else if (event.type === 'remote_overwrite') {
-    const taskKeys = event.taskKeys || []
-    const conflicts = event.conflicts?.length ? event.conflicts : event.files || []
-    const fileCount = event.fileCount ?? conflicts.length
-    title.textContent = '本地文件已被团队最新版本更新'
-    message.textContent =
-      `冲突文件已先备份到工作区外。仅在远端版本不正确时使用一键复原；` +
-      `它会恢复本次全部 ${fileCount} 个冲突文件，形成新的团队版本并广播给其他客户端。`
-    addDetail('影响范围', `${taskKeys.length} 个任务、${fileCount} 个文件`)
-    addDetail('任务', taskKeys.map(taskLabel).join('、'))
-    addDetail('冲突文件', conflicts.map(conflictLabel).join('\n'))
-    addDetail('同步版本', event.revision)
-    addDetail('备份位置', event.backupPath)
-    button('关闭', 'close')
-    button('一键复原', 'restore', 'primary')
-  } else if (event.type === 'assignment_overridden') {
-    title.textContent = '你负责的任务已被其他成员推进'
-    message.textContent =
-      event.action === 'takeover'
-        ? '其他成员已显式接管该任务。请查看任务详情和审计记录后再决定是否继续处理。'
-        : '其他成员选择继续推进该任务，原责任人未变更。建议沟通确认当前进度。'
-    addDetail('任务', event.taskKey)
-    addDetail('团队版本', event.revision)
-    button('知道了', 'close', 'primary')
   }
 }
 

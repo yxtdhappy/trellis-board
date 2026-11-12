@@ -140,12 +140,6 @@ if ($Env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
   Fail 1 "仅支持 Windows x64，当前架构: $Env:PROCESSOR_ARCHITECTURE"
 }
 
-$sourceDirectory = Split-Path -Parent $Source
-$sidecarSource = @(
-  (Join-Path $sourceDirectory 'trellis-agent.exe'),
-  (Join-Path $sourceDirectory 'trellis-agent-x86_64-pc-windows-msvc.exe')
-) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-
 $expectedHash = Get-ExpectedHash -File $Source -Explicit $Checksum
 $actualHash = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actualHash -ne $expectedHash) {
@@ -167,13 +161,9 @@ $stagingDir = Join-Path $InstallDir ('.staging-' + [Guid]::NewGuid().ToString('N
 New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 $stagedExe = Join-Path $stagingDir $ExeName
 $backupExe = Join-Path $stagingDir "$ExeName.previous"
-$stagedSidecar = Join-Path $stagingDir 'trellis-agent.exe'
-$backupSidecar = Join-Path $stagingDir 'trellis-agent.exe.previous'
-$targetSidecar = Join-Path $InstallDir 'trellis-agent.exe'
 $createdShortcuts = New-Object System.Collections.Generic.List[string]
 $wroteRunValue = $false
 $installedNewExe = $false
-$installedNewSidecar = $false
 $stage = 'files'
 
 try {
@@ -186,17 +176,6 @@ try {
   }
   Move-Item -LiteralPath $stagedExe -Destination $targetExe -Force
   $installedNewExe = $true
-
-  if ($sidecarSource) {
-    Copy-Item -LiteralPath $sidecarSource -Destination $stagedSidecar -Force
-    if (Test-Path -LiteralPath $targetSidecar -PathType Leaf) {
-      Copy-Item -LiteralPath $targetSidecar -Destination $backupSidecar -Force
-    }
-    Move-Item -LiteralPath $stagedSidecar -Destination $targetSidecar -Force
-    $installedNewSidecar = $true
-  } else {
-    Write-Warning "未找到 trellis-agent.exe；客户端可启动，但后台同步不可用"
-  }
   $stage = 'shortcuts'
 
   $startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
@@ -230,7 +209,7 @@ try {
   $configPath = Join-Path $dataDir 'client.json'
   if ($boardUrl) {
     $config = [ordered]@{
-      schemaVersion = 2
+      schemaVersion = 3
       serverUrl = $boardUrl
     }
     $config | ConvertTo-Json -Compress | Set-Content -LiteralPath $configPath -Encoding utf8
@@ -258,13 +237,6 @@ try {
   }
   if ($wroteRunValue) {
     Remove-ItemProperty -Path $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
-  }
-  if ($installedNewSidecar) {
-    if (Test-Path -LiteralPath $backupSidecar -PathType Leaf) {
-      Copy-Item -LiteralPath $backupSidecar -Destination $targetSidecar -Force -ErrorAction SilentlyContinue
-    } else {
-      Remove-Item -LiteralPath $targetSidecar -Force -ErrorAction SilentlyContinue
-    }
   }
   if ($installedNewExe) {
     if (Test-Path -LiteralPath $backupExe -PathType Leaf) {

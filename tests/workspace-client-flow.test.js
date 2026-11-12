@@ -1,6 +1,5 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -242,18 +241,4 @@ test('workspace status 只读报告 developer、模板版本和工具目录', as
     }),
     CLI_EXIT_CODE.WORKSPACE_PERMISSION,
   )
-})
-
-test('sidecar 命令在未注册时返回结构化配置错误', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-workspace-sidecar-cli-'))
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
-  const result = spawnSync(process.execPath, ['desktop/sidecar/cli.js', 'associations'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-    env: { ...process.env, TRELLIS_AGENT_ROOT: root },
-  })
-  assert.equal(result.status, 3, result.stderr)
-  const payload = JSON.parse(result.stdout.trim())
-  assert.equal(payload.ok, false)
-  assert.match(payload.error, /尚未配对|配置/)
 })

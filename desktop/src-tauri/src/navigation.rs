@@ -76,8 +76,14 @@ mod tests {
     #[test]
     fn origin_matching_includes_port() {
         let board = parse("https://board.example.com");
-        assert!(same_origin(&parse("https://board.example.com/login.html"), &board));
-        assert!(!same_origin(&parse("https://board.example.com:8443/"), &board));
+        assert!(same_origin(
+            &parse("https://board.example.com/login.html"),
+            &board
+        ));
+        assert!(!same_origin(
+            &parse("https://board.example.com:8443/"),
+            &board
+        ));
         assert!(!same_origin(&parse("https://evil.example.com"), &board));
         assert!(!same_origin(&parse("http://board.example.com"), &board));
     }

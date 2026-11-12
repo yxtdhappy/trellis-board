@@ -2,8 +2,6 @@
   Push $0
   nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM "trellis-board-client.exe"'
   Pop $0
-  nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM "trellis-agent.exe"'
-  Pop $0
   Pop $0
 !macroend
 

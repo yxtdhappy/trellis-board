@@ -6,7 +6,7 @@
 .DESCRIPTION
   停止客户端，删除开始菜单/桌面快捷方式和 HKCU 自启值。
   默认保留 <InstallDir>\data（设备凭证与日志）；-PurgeData 时一并删除。
-  -RevokeDevice 会调用现有设备撤销接口后再删除本地文件。
+  -RevokeDevice 会调用服务端设备撤销接口后再删除本地文件。
 
   退出码：
     0 成功（或本来就没有安装）
@@ -75,20 +75,12 @@ if (-not (Split-Path -Leaf $InstallDir)) {
 }
 
 $targetExe = Join-Path $InstallDir $ExeName
-$targetSidecar = Join-Path $InstallDir 'trellis-agent.exe'
 $dataDir = Join-Path $InstallDir 'data'
 
 Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 300
 
 if ($RevokeDevice -and -not $SkipRevoke) {
-  $agentExe = Join-Path $dataDir 'agent\trellis-agent.exe'
-  if (-not (Test-Path -LiteralPath $agentExe -PathType Leaf)) {
-    $agentExe = Join-Path $InstallDir 'trellis-agent.exe'
-  }
-  if (-not (Test-Path -LiteralPath $agentExe -PathType Leaf)) {
-    Fail 6 "找不到 sidecar，无法撤销设备；可先手动在 Board 撤销，或使用 -SkipRevoke"
-  }
   $token = $env:TRELLIS_BOARD_SESSION
   if (-not $token) {
     $secure = Read-Host -Prompt 'Board 会话 Cookie（trellis_team_session，输入不回显）' -AsSecureString
@@ -110,17 +102,20 @@ if ($RevokeDevice -and -not $SkipRevoke) {
   if (-not $ServerUrl -or -not $AgentId) {
     Fail 6 "撤销设备需要 -ServerUrl 和 -AgentId（或本地 agent 配置）"
   }
-  $Env:TRELLIS_BOARD_SESSION = $token
+  $revokeUrl = $ServerUrl.TrimEnd('/') + '/api/admin/agents/' + $AgentId + '/revoke'
   try {
-    & $agentExe revoke --server $ServerUrl --agent $AgentId
-    if ($LASTEXITCODE -ne 0) {
-      Fail 6 "设备撤销失败（sidecar 退出码 $LASTEXITCODE）"
-    }
-    Write-Info "已撤销设备 $AgentId"
-  } finally {
-    Remove-Item Env:TRELLIS_BOARD_SESSION -ErrorAction SilentlyContinue
+    $response = Invoke-WebRequest -Uri $revokeUrl -Method Post -UseBasicParsing -TimeoutSec 30 `
+      -Headers @{ cookie = "trellis_team_session=$token"; origin = $ServerUrl.TrimEnd('/') } `
+      -ContentType 'application/json' -Body '{}'
+  } catch {
+    Fail 6 "设备撤销失败：$($_.Exception.Message)"
   }
+  if ($response.StatusCode -ne 200) {
+    Fail 6 "设备撤销失败：HTTP $($response.StatusCode)"
+  }
+  Write-Info "已撤销设备 $AgentId"
 }
+
 
 $startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
 $desktopDir = [Environment]::GetFolderPath('Desktop')
@@ -144,10 +139,6 @@ try {
   if (Test-Path -LiteralPath $targetExe -PathType Leaf) {
     Remove-Item -LiteralPath $targetExe -Force
     Write-Info "已删除：$targetExe"
-  }
-  if (Test-Path -LiteralPath $targetSidecar -PathType Leaf) {
-    Remove-Item -LiteralPath $targetSidecar -Force
-    Write-Info "已删除：$targetSidecar"
   }
   if ($PurgeData -and (Test-Path -LiteralPath $dataDir -PathType Container)) {
     Remove-Item -LiteralPath $dataDir -Recurse -Force

@@ -11,7 +11,7 @@
 | [HTTP 与文件边界](./http-and-filesystem.md) | API、输入校验、白名单、原子写和静态文件 |
 | [插件运行时](./plugin-runtime.md) | 子进程协议、清单与版本、生命周期、存储与命名空间、任务写入 |
 | [插件测试](./plugin-testing.md) | 协议契约、插件功能、真实组合的分层测试与覆盖矩阵 |
-| [桌面 sidecar 与 SEA 打包](./desktop-sidecar-packaging.md) | 源码/SEA 入口分离、DPAPI 路径注入和 Windows 构建验证 |
+| [桌面 Agent 运行契约](./desktop-agent-runtime.md) | 进程内 Rust Agent 模块边界、协议/超时/控制事件、数据兼容、环境门与单 EXE 打包 |
 | [桌面任务快照同步](./desktop-realtime-sync.md) | tasks-only 快照、CAS、任务空间、SSE、命令、冲突与备份 |
 | [质量与验证](./quality-guidelines.md) | Node 内置测试、夹具、真实服务验收 |
 

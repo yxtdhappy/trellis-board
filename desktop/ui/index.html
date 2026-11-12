@@ -8,7 +8,34 @@
   </head>
   <body>
     <main class="shell">
-      <section class="card" aria-labelledby="title">
+      <section id="env-panel" class="card" aria-labelledby="env-title" hidden>
+        <div class="brand">
+          <span class="mark" aria-hidden="true">T</span>
+          <div>
+            <p class="eyebrow">TRELLIS DESKTOP</p>
+            <h1 id="env-title">首次启动环境检查</h1>
+          </div>
+        </div>
+        <p id="env-status" class="status" role="status" aria-live="polite">正在检查运行环境…</p>
+        <ol id="env-steps" class="steps">
+          <li data-step="node:check">检查 Node.js</li>
+          <li data-step="trellis:check">检查 Trellis CLI</li>
+          <li data-step="node:download">下载 Node.js</li>
+          <li data-step="trellis:install">安装 Trellis CLI</li>
+          <li data-step="ready">校验运行环境</li>
+        </ol>
+        <p id="env-error" class="error" role="alert" hidden></p>
+        <div class="actions">
+          <button id="env-install" type="button" hidden>安装运行环境</button>
+          <button id="env-retry" type="button" class="secondary" hidden>重新检查</button>
+        </div>
+        <p class="hint">
+          运行环境缺失时客户端会从国内镜像下载便携 Node.js，并把 Trellis CLI
+          安装到客户端私有目录，不改动系统环境。
+        </p>
+      </section>
+
+      <section id="login-panel" class="card" aria-labelledby="title" hidden>
         <div class="brand">
           <span class="mark" aria-hidden="true">T</span>
           <div>

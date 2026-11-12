@@ -31,10 +31,6 @@ fn write(level: &str, message: &str) {
     eprint!("{line}");
 }
 
-pub fn line(message: &str) {
-    write("agent", message);
-}
-
 pub fn warn(message: &str) {
     write("warn", message);
 }
@@ -100,8 +96,17 @@ mod tests {
             redact("authorization: Bearer abc.def.ghi"),
             "authorization: Bearer ***"
         );
-        assert_eq!(redact(r#"{"credential":"secret-value"}"#), r#"{"credential":"***"}"#);
-        assert_eq!(redact(r#"{"pairingCode":"abc123"}"#), r#"{"pairingCode":"***"}"#);
-        assert_eq!(redact(r#"{"sessionToken":"abc123"}"#), r#"{"sessionToken":"***"}"#);
+        assert_eq!(
+            redact(r#"{"credential":"secret-value"}"#),
+            r#"{"credential":"***"}"#
+        );
+        assert_eq!(
+            redact(r#"{"pairingCode":"abc123"}"#),
+            r#"{"pairingCode":"***"}"#
+        );
+        assert_eq!(
+            redact(r#"{"sessionToken":"abc123"}"#),
+            r#"{"sessionToken":"***"}"#
+        );
     }
 }

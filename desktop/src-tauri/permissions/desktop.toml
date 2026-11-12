@@ -2,12 +2,12 @@
 
 [[permission]]
 identifier = "allow-app-status"
-description = "读取本地桌面客户端版本、上次服务端地址和 sidecar 状态。"
+description = "读取本地桌面客户端版本、上次服务端地址和 Agent 运行状态。"
 commands.allow = ["app_status"]
 
 [[permission]]
 identifier = "allow-desktop-login"
-description = "仅本地登录页通过 stdin 向 sidecar 提交账号密码。"
+description = "仅本地登录页向进程内 Agent 提交账号密码。"
 commands.allow = ["desktop_login"]
 
 [[permission]]
@@ -71,11 +71,16 @@ description = "本地实时同步控制窗口处理已经明确接入后的首�
 commands.allow = ["live_control_initial"]
 
 [[permission]]
-identifier = "allow-live-control-restore"
-description = "本地实时同步控制窗口一键恢复备份。"
-commands.allow = ["live_control_restore"]
-
-[[permission]]
 identifier = "allow-live-control-dismiss"
 description = "本地实时同步控制窗口关闭已读通知。"
 commands.allow = ["live_control_dismiss"]
+
+[[permission]]
+identifier = "allow-runtime-status"
+description = "本地登录页可检查 Node.js 与 Trellis CLI 运行环境。"
+commands.allow = ["runtime_status"]
+
+[[permission]]
+identifier = "allow-runtime-install"
+description = "本地登录页可在环境缺失时安装运行环境。"
+commands.allow = ["runtime_install"]

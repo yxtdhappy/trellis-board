@@ -4,8 +4,8 @@
   组装 Trellis Board Windows x64 绿色 ZIP 包。
 
 .DESCRIPTION
-  复用 tauri build 生成的客户端 EXE、sidecar 和固定 Trellis runtime，
-  生成解压后可直接运行的目录、校验文件和使用说明。
+  只打包 `cargo tauri build` 产出的单个客户端 EXE，附加版本文件、SHA256 清单和使用说明。
+  客户端不再携带 Node 运行时或 sidecar 可执行体。
 
   退出码：
     0 成功
@@ -15,18 +15,15 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$ReleaseDirectory = "",
-  [string]$SidecarPath = "",
-  [string]$RuntimeDirectory = "",
-  [string]$VersionFile = "",
-  [string]$OutputDirectory = ""
+  [string]$ReleaseDirectory,
+  [string]$OutputDirectory
 )
 
 $ErrorActionPreference = 'Stop'
 $script:FailureCode = 1
 
 trap {
-  [Console]::Error.WriteLine($_.Exception.Message)
+  Write-Error $_
   exit $script:FailureCode
 }
 
@@ -46,10 +43,7 @@ function Test-PathWithin {
     [string]$Path,
     [string]$Root
   )
-  if ([string]::Equals($Path, $Root, [StringComparison]::OrdinalIgnoreCase)) {
-    return $true
-  }
-  $rootPrefix = $Root + [IO.Path]::DirectorySeparatorChar
+  $rootPrefix = (Get-FullPath $Root) + [IO.Path]::DirectorySeparatorChar
   return $Path.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)
 }
 
@@ -57,15 +51,6 @@ $desktopRoot = $PSScriptRoot
 
 if (-not $ReleaseDirectory) {
   $ReleaseDirectory = Join-Path $desktopRoot 'src-tauri\target\release'
-}
-if (-not $SidecarPath) {
-  $SidecarPath = Join-Path $desktopRoot 'src-tauri\binaries\trellis-agent-x86_64-pc-windows-msvc.exe'
-}
-if (-not $RuntimeDirectory) {
-  $RuntimeDirectory = Join-Path $desktopRoot 'src-tauri\resources\trellis-runtime'
-}
-if (-not $VersionFile) {
-  $VersionFile = Join-Path $desktopRoot 'src-tauri\binaries\VERSION.txt'
 }
 if (-not $OutputDirectory) {
   $OutputDirectory = Join-Path $desktopRoot 'src-tauri\target\release\bundle\portable'
@@ -77,30 +62,12 @@ if (-not (Test-Path -LiteralPath $clientExe -PathType Leaf)) {
   Fail 1 "客户端可执行文件不存在: $clientExe"
 }
 
-$SidecarPath = Get-FullPath $SidecarPath
-if (-not (Test-Path -LiteralPath $SidecarPath -PathType Leaf)) {
-  Fail 1 "sidecar 不存在: $SidecarPath"
+$tauriConfigPath = Join-Path $desktopRoot 'src-tauri\tauri.conf.json'
+if (-not (Test-Path -LiteralPath $tauriConfigPath -PathType Leaf)) {
+  Fail 2 "tauri.conf.json 不存在: $tauriConfigPath"
 }
-
-$RuntimeDirectory = Get-FullPath $RuntimeDirectory
-foreach ($required in @('node.exe', 'node_modules\@mindfoldhq\trellis\bin\trellis.js')) {
-  if (-not (Test-Path -LiteralPath (Join-Path $RuntimeDirectory $required) -PathType Leaf)) {
-    Fail 1 "Trellis runtime 缺少文件: $(Join-Path $RuntimeDirectory $required)"
-  }
-}
-
-$VersionFile = Get-FullPath $VersionFile
-if (-not (Test-Path -LiteralPath $VersionFile -PathType Leaf)) {
-  Fail 2 "版本文件不存在: $VersionFile"
-}
-$versionLine = Get-Content -LiteralPath $VersionFile |
-  Where-Object { $_ -like 'boardVersion=*' } |
-  Select-Object -First 1
-if (-not $versionLine) {
-  Fail 2 "版本文件缺少 boardVersion: $VersionFile"
-}
-$version = $versionLine.Substring('boardVersion='.Length).Trim()
-if ($version -notmatch '^[0-9A-Za-z._-]+$') {
+$version = (Get-Content -LiteralPath $tauriConfigPath -Raw | ConvertFrom-Json).version
+if (-not $version -or $version -notmatch '^[0-9A-Za-z._-]+$') {
   Fail 2 "版本号格式无效: $version"
 }
 
@@ -123,9 +90,8 @@ New-Item -ItemType Directory -Path $stagedPackage -Force | Out-Null
 
 try {
   Copy-Item -LiteralPath $clientExe -Destination (Join-Path $stagedPackage 'trellis-board-client.exe')
-  Copy-Item -LiteralPath $SidecarPath -Destination (Join-Path $stagedPackage 'trellis-agent.exe')
-  Copy-Item -LiteralPath $RuntimeDirectory -Destination (Join-Path $stagedPackage 'trellis-runtime') -Recurse
-  Copy-Item -LiteralPath $VersionFile -Destination (Join-Path $stagedPackage 'VERSION.txt')
+  "boardVersion=$version" |
+    Set-Content -LiteralPath (Join-Path $stagedPackage 'VERSION.txt') -Encoding Ascii
 
   $instructions = @(
     "Trellis Board $version Windows x64 绿色版"
@@ -134,6 +100,7 @@ try {
     '- Windows 10/11 x64。'
     '- 电脑必须已安装 Microsoft Edge WebView2 Evergreen Runtime。Windows 11 默认预装；'
     '- 目标 Windows 10 镜像如缺失该运行时，请先联系 IT 安装。'
+    '- 首次启动需要能访问 npm 镜像下载 Node.js 与 Trellis CLI（仅在缺失时下载）。'
     ''
     '启动'
     '- 解压整个目录后，双击 trellis-board-client.exe。'
@@ -141,8 +108,9 @@ try {
     '- 本绿色版不会创建桌面/开始菜单快捷方式，也不会自动设置开机自启。'
     ''
     '数据和升级'
-    '- 登录配置、设备凭证、日志和同步数据保存在 %LOCALAPPDATA%\TrellisBoard\data。'
-    '- 升级前先退出托盘客户端，确认 trellis-agent.exe 已停止，再用新版解压目录替换程序文件。'
+    '- 登录配置、设备凭证、日志、同步数据和运行时（Node.js/Trellis CLI）'
+    '  保存在 %LOCALAPPDATA%\TrellisBoard\data。'
+    '- 升级前先退出托盘客户端，再用新版解压目录替换程序文件。'
     '- 移动程序目录不会迁移用户数据。'
     ''
     '清理'
@@ -154,12 +122,10 @@ try {
 
   $checksumTargets = @(
     'trellis-board-client.exe',
-    'trellis-agent.exe',
-    'trellis-runtime/node.exe',
     'VERSION.txt'
   )
   $checksumLines = foreach ($relative in $checksumTargets) {
-    $nativePath = Join-Path $stagedPackage ($relative.Replace('/', '\'))
+    $nativePath = Join-Path $stagedPackage $relative
     if (-not (Test-Path -LiteralPath $nativePath -PathType Leaf)) {
       Fail 3 "绿色包缺少文件: $relative"
     }

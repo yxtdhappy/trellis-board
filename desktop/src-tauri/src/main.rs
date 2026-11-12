@@ -1,9 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// AgentError 携带服务端错误细节（code/message/details），按值传递比封箱更清晰；
+// 所有命令层都用 `?` 立即转换，不构成实测热点。
+#![allow(clippy::result_large_err)]
 
+mod agent;
+mod agent_service;
 mod config;
 mod logging;
 mod navigation;
-mod sidecar;
+mod runtime_commands;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
@@ -13,8 +18,7 @@ use serde::Serialize;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{
-    AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
-    WindowEvent,
+    AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_dialog::DialogExt;
@@ -62,10 +66,7 @@ fn ensure_local_caller(window: &WebviewWindow) -> Result<(), String> {
     }
 }
 
-fn ensure_board_caller(
-    app: &AppHandle,
-    window: &WebviewWindow,
-) -> Result<Url, String> {
+fn ensure_board_caller(app: &AppHandle, window: &WebviewWindow) -> Result<Url, String> {
     let current = window
         .url()
         .map_err(|error| format!("无法确认 Board 页面来源：{error}"))?;
@@ -122,8 +123,7 @@ fn validate_project_id(value: String) -> Result<String, String> {
     let project_id = value.trim().to_string();
     let valid = (1..=128).contains(&project_id.len())
         && project_id.bytes().enumerate().all(|(index, byte)| {
-            byte.is_ascii_alphanumeric()
-                || (index > 0 && matches!(byte, b'.' | b'_' | b':' | b'-'))
+            byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'.' | b'_' | b':' | b'-'))
         });
     if valid {
         Ok(project_id)
@@ -161,12 +161,7 @@ fn default_device_name() -> String {
 fn initial_server_url() -> Option<String> {
     config::server_url_from_args()
         .or_else(|| std::env::var("TRELLIS_DESKTOP_SERVER_URL").ok())
-        .or_else(|| {
-            config::load()
-                .ok()
-                .flatten()
-                .map(|value| value.server_url)
-        })
+        .or_else(|| config::load().ok().flatten().map(|value| value.server_url))
 }
 
 fn cookie_for(board: &Url, value: &str) -> Result<Cookie<'static>, String> {
@@ -183,11 +178,7 @@ fn cookie_for(board: &Url, value: &str) -> Result<Cookie<'static>, String> {
         .build())
 }
 
-fn write_session_cookie(
-    window: &WebviewWindow,
-    board: &Url,
-    token: &str,
-) -> Result<(), String> {
+fn write_session_cookie(window: &WebviewWindow, board: &Url, token: &str) -> Result<(), String> {
     if token.is_empty() || !token.bytes().all(|byte| byte.is_ascii_graphic()) {
         return Err("无法校准 Board 会话 Cookie".to_string());
     }
@@ -206,27 +197,15 @@ fn navigate_local_login(app: &AppHandle, state: &DesktopAuthState) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let url = state
-        .local_url
-        .lock()
-        .ok()
-        .and_then(|value| value.clone());
+    let url = state.local_url.lock().ok().and_then(|value| value.clone());
     if let Some(url) = url {
         let _ = window.navigate(url);
     }
 }
 
-async fn clear_desktop_session(
-    app: &AppHandle,
-    state: &DesktopAuthState,
-    revoke_session: bool,
-) {
-    sidecar::stop(app);
-    let board = state
-        .board_url
-        .read()
-        .ok()
-        .and_then(|value| value.clone());
+async fn clear_desktop_session(app: &AppHandle, state: &DesktopAuthState, revoke_session: bool) {
+    agent_service::stop(app);
+    let board = state.board_url.read().ok().and_then(|value| value.clone());
     let token = state
         .session_token
         .lock()
@@ -241,13 +220,7 @@ async fn clear_desktop_session(
     navigate_local_login(app, state);
     if revoke_session {
         if let (Some(board), Some(token)) = (board.as_ref(), token.as_deref()) {
-            let _ = sidecar::logout(
-                app,
-                &server_root(board),
-                token,
-                &config::agent_root(),
-            )
-            .await;
+            let _ = agent_service::logout(app, &server_root(board), token).await;
         }
     }
 }
@@ -266,8 +239,23 @@ async fn app_status(app: AppHandle, window: WebviewWindow) -> Result<AppStatus, 
         password: config.as_ref().and_then(|value| value.password.clone()),
         config_path: config::config_path().display().to_string(),
         logs_dir: config::logs_dir().display().to_string(),
-        sidecar_running: sidecar::is_running(&app),
+        sidecar_running: agent_service::is_running(&app),
     })
+}
+
+#[tauri::command]
+async fn runtime_status(window: WebviewWindow) -> Result<agent::env::RuntimeStatus, String> {
+    ensure_local_caller(&window)?;
+    runtime_commands::runtime_status().await
+}
+
+#[tauri::command]
+async fn runtime_install(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<agent::env::RuntimeInstallResult, String> {
+    ensure_local_caller(&window)?;
+    runtime_commands::runtime_install(app).await
 }
 
 #[tauri::command]
@@ -283,8 +271,8 @@ async fn desktop_login(
     let remembered_username = username.trim().to_string();
     let username = validate_username(&remembered_username)?;
     validate_password(&password)?;
-    // 登录页出现时旧会话已结束，先停止旧账号 sidecar，成功后再按新配置重启。
-    sidecar::stop(&app);
+    // 登录页出现时旧会话已结束，先停止旧账号的后台同步，成功后再按新配置重启。
+    agent_service::stop(&app);
     let server_url = server_root(&board);
     let previous = config::load().unwrap_or(None);
     let force_new = previous
@@ -292,13 +280,12 @@ async fn desktop_login(
         .map(|value| value.server_url != server_url)
         .unwrap_or(true);
     let device_name = default_device_name();
-    let summary = sidecar::login(
+    let summary = agent_service::login(
         &app,
         &server_url,
         &username,
         &password,
         &device_name,
-        &config::agent_root(),
         force_new,
     )
     .await?;
@@ -309,29 +296,24 @@ async fn desktop_login(
             .ok_or_else(|| "登录结果缺少会话令牌".to_string())?,
     )?;
     if let Err(error) = write_session_cookie(&window, &board, &token) {
-        let _ = sidecar::logout(
-            &app,
-            &server_url,
-            &token,
-            &config::agent_root(),
-        )
-        .await;
+        let _ = agent_service::logout(&app, &server_url, &token).await;
         return Err(error);
     }
+    let previous_config = config::load().ok().flatten();
     if let Err(error) = config::save(&config::ClientConfig {
         schema_version: config::SCHEMA_VERSION,
         server_url: server_url.clone(),
         username: Some(remembered_username),
         password: Some(password),
+        node_runtime: previous_config
+            .as_ref()
+            .and_then(|value| value.node_runtime.clone()),
+        trellis_runtime: previous_config
+            .as_ref()
+            .and_then(|value| value.trellis_runtime.clone()),
     }) {
         let _ = delete_session_cookie(&window, &board);
-        let _ = sidecar::logout(
-            &app,
-            &server_url,
-            &token,
-            &config::agent_root(),
-        )
-        .await;
+        let _ = agent_service::logout(&app, &server_url, &token).await;
         return Err(error);
     }
     let state = app.state::<DesktopAuthState>();
@@ -346,9 +328,13 @@ async fn desktop_login(
         .map_err(|_| "无法保存登录会话".to_string())? = Some(token);
     let device_ready = summary.device_ready == Some(true);
     if device_ready {
-        sidecar::restart(&app);
+        agent_service::restart(&app);
     } else {
-        sidecar::stop(&app);
+        logging::warn(&format!(
+            "设备未就绪，跳过后台同步启动（mustChangePassword={}）",
+            summary.must_change_password == Some(true)
+        ));
+        agent_service::stop(&app);
     }
     if let Err(error) = window.navigate(board) {
         clear_desktop_session(&app, &auth, true).await;
@@ -368,8 +354,7 @@ async fn inspect_local_project(
     window: WebviewWindow,
 ) -> Result<Option<serde_json::Value>, String> {
     ensure_board_caller(&app, &window)?;
-    *app
-        .state::<DesktopAuthState>()
+    *app.state::<DesktopAuthState>()
         .pending_project_path
         .lock()
         .map_err(|_| "无法清除旧的待接入项目路径".to_string())? = None;
@@ -380,12 +365,7 @@ async fn inspect_local_project(
     let path = path
         .into_path()
         .map_err(|error| format!("无法读取所选目录：{error}"))?;
-    let inspected = sidecar::inspect_project(
-        &app,
-        &path.to_string_lossy(),
-        &config::agent_root(),
-    )
-    .await?;
+    let inspected = agent_service::inspect_project(&app, &path.to_string_lossy()).await?;
     let state = app.state::<DesktopAuthState>();
     *state
         .pending_project_path
@@ -412,7 +392,9 @@ async fn initialize_pending_project(
     if agent_tools.iter().any(|tool| {
         tool.is_empty()
             || tool.len() > 40
-            || !tool.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            || !tool
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
     }) {
         return Err("编码 Agent 工具列表格式无效".to_string());
     }
@@ -423,14 +405,8 @@ async fn initialize_pending_project(
         .map_err(|_| "无法读取待接入项目路径".to_string())?
         .clone()
         .ok_or_else(|| "请先选择本地 Git 项目目录".to_string())?;
-    sidecar::initialize_project(
-        &app,
-        &path.to_string_lossy(),
-        &developer_id,
-        &agent_tools,
-        &config::agent_root(),
-    )
-    .await
+    agent_service::initialize_project(&app, &path.to_string_lossy(), &developer_id, &agent_tools)
+        .await
 }
 
 #[tauri::command]
@@ -447,13 +423,7 @@ async fn check_pending_project_push(
         .map_err(|_| "无法读取待接入项目路径".to_string())?
         .clone()
         .ok_or_else(|| "请先选择本地 Git 项目目录".to_string())?;
-    sidecar::check_initial_push(
-        &app,
-        &path.to_string_lossy(),
-        branch_name.trim(),
-        &config::agent_root(),
-    )
-    .await
+    agent_service::check_initial_push(&app, &path.to_string_lossy(), branch_name.trim()).await
 }
 
 #[tauri::command]
@@ -477,21 +447,13 @@ async fn preflight_pending_project(
         .map_err(|_| "无法读取待接入项目路径".to_string())?
         .clone()
         .ok_or_else(|| "请先选择本地 Git 项目目录".to_string())?;
-    sidecar::preflight_project(
-        &app,
-        &path.to_string_lossy(),
-        &team_id,
-        require_pushed,
-        &config::agent_root(),
-    )
-    .await
+    agent_service::preflight_project(&app, &path.to_string_lossy(), &team_id, require_pushed).await
 }
 
 #[tauri::command]
 async fn cancel_pending_project(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
     ensure_board_caller(&app, &window)?;
-    *app
-        .state::<DesktopAuthState>()
+    *app.state::<DesktopAuthState>()
         .pending_project_path
         .lock()
         .map_err(|_| "无法清除待接入项目路径".to_string())? = None;
@@ -506,7 +468,7 @@ async fn associate_pending_project(
     developer_id: String,
     require_pushed: bool,
     initial_mode: String,
-) -> Result<sidecar::LocalAssociation, String> {
+) -> Result<agent_service::LocalAssociation, String> {
     ensure_board_caller(&app, &window)?;
     let team_id = validate_project_id(team_id)?;
     let developer_id = developer_id.trim().to_string();
@@ -523,18 +485,13 @@ async fn associate_pending_project(
         .map_err(|_| "无法读取待接入项目路径".to_string())?
         .clone()
         .ok_or_else(|| "请先选择本地 Git 项目目录".to_string())?;
-    let check = sidecar::inspect_project(
-        &app,
-        &inspected.to_string_lossy(),
-        &config::agent_root(),
-    )
-    .await?;
+    let check = agent_service::inspect_project(&app, &inspected.to_string_lossy()).await?;
     let branch_name = check
         .pointer("/project/branchName")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "无法确认本地项目分支".to_string())?
         .to_string();
-    let association = sidecar::associate(
+    let association = agent_service::associate(
         &app,
         &inspected.to_string_lossy(),
         &branch_name,
@@ -542,15 +499,13 @@ async fn associate_pending_project(
         &developer_id,
         require_pushed,
         &initial_mode,
-        &config::agent_root(),
     )
     .await?;
-    *app
-        .state::<DesktopAuthState>()
+    *app.state::<DesktopAuthState>()
         .pending_project_path
         .lock()
         .map_err(|_| "无法清除待接入项目路径".to_string())? = None;
-    sidecar::restart(&app);
+    agent_service::restart(&app);
     Ok(association)
 }
 
@@ -558,18 +513,18 @@ async fn associate_pending_project(
 async fn list_local_associations(
     app: AppHandle,
     window: WebviewWindow,
-) -> Result<Vec<sidecar::LocalAssociation>, String> {
+) -> Result<Vec<agent_service::LocalAssociation>, String> {
     ensure_board_caller(&app, &window)?;
-    sidecar::list_associations(&app, &config::agent_root()).await
+    agent_service::list_associations(&app).await
 }
 
 #[tauri::command]
 async fn desktop_sidecar_status(
     app: AppHandle,
     window: WebviewWindow,
-) -> Result<sidecar::SidecarStatus, String> {
+) -> Result<agent_service::SidecarStatus, String> {
     ensure_board_caller(&app, &window)?;
-    Ok(sidecar::status(&app))
+    Ok(agent_service::status(&app))
 }
 
 #[tauri::command]
@@ -578,7 +533,7 @@ async fn live_control_pending(
     window: WebviewWindow,
 ) -> Result<Option<serde_json::Value>, String> {
     ensure_local_caller(&window)?;
-    Ok(sidecar::pending_control(&app))
+    Ok(agent_service::pending_control(&app))
 }
 
 #[tauri::command]
@@ -598,15 +553,8 @@ async fn live_control_decide(
     ) {
         return Err("实时同步确认动作无效".to_string());
     }
-    sidecar::decide_live_change(
-        &app,
-        &task_space_id,
-        &conflict_id,
-        &action,
-        &config::agent_root(),
-    )
-    .await?;
-    sidecar::clear_control(&app);
+    agent_service::decide_live_change(&app, &task_space_id, &conflict_id, &action).await?;
+    agent_service::clear_control(&app);
     Ok(())
 }
 
@@ -620,13 +568,7 @@ async fn live_control_diff(
     ensure_local_caller(&window)?;
     let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
     let conflict_id = validate_live_id(&conflict_id, "冲突 ID")?;
-    sidecar::live_conflict_details(
-        &app,
-        &task_space_id,
-        &conflict_id,
-        &config::agent_root(),
-    )
-    .await
+    agent_service::live_conflict_details(&app, &task_space_id, &conflict_id).await
 }
 
 #[tauri::command]
@@ -642,38 +584,16 @@ async fn live_control_initial(
     if !matches!(mode.as_str(), "safe" | "review") {
         return Err("首次同步处理方式无效".to_string());
     }
-    let result = sidecar::resolve_initial_sync(
-        &app,
-        &task_space_id,
-        &mode,
-        decisions,
-        &config::agent_root(),
-    )
-    .await?;
-    sidecar::clear_control(&app);
+    let result =
+        agent_service::resolve_initial_sync(&app, &task_space_id, &mode, decisions).await?;
+    agent_service::clear_control(&app);
     Ok(result)
 }
 
 #[tauri::command]
-async fn live_control_restore(
-    app: AppHandle,
-    window: WebviewWindow,
-    backup_id: String,
-) -> Result<(), String> {
+async fn live_control_dismiss(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
     ensure_local_caller(&window)?;
-    let backup_id = validate_live_id(&backup_id, "备份 ID")?;
-    sidecar::restore_live_backup(&app, &backup_id, &config::agent_root()).await?;
-    sidecar::clear_control(&app);
-    Ok(())
-}
-
-#[tauri::command]
-async fn live_control_dismiss(
-    app: AppHandle,
-    window: WebviewWindow,
-) -> Result<(), String> {
-    ensure_local_caller(&window)?;
-    sidecar::dismiss_control(&app)
+    agent_service::dismiss_control(&app)
 }
 
 fn focus_main_window(app: &AppHandle) {
@@ -707,8 +627,7 @@ fn autostart_enabled(app: &AppHandle) -> bool {
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "打开主窗口", true, None::<&str>)?;
-    let live_control =
-        MenuItem::with_id(app, "review-live", "处理实时确认", true, None::<&str>)?;
+    let live_control = MenuItem::with_id(app, "review-live", "处理实时确认", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "暂停同步", true, None::<&str>)?;
     let logs = MenuItem::with_id(app, "logs", "打开日志目录", true, None::<&str>)?;
     let autostart = CheckMenuItem::with_id(
@@ -736,9 +655,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => focus_main_window(app),
             "review-live" => {
-                sidecar::show_pending_control(app);
+                agent_service::show_pending_control(app);
             }
-            "pause" => sidecar::toggle_pause(app),
+            "pause" => agent_service::toggle_pause(app),
             "logs" => {
                 let directory = config::logs_dir();
                 let _ = std::fs::create_dir_all(&directory);
@@ -757,7 +676,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "quit" => {
-                sidecar::shutdown(app);
+                agent_service::shutdown(app);
                 app.exit(0);
             }
             _ => {}
@@ -773,37 +692,30 @@ fn build_main_window(
 ) -> tauri::Result<()> {
     let navigation_auth = auth.clone();
     let shell_app = app.clone();
-    let builder = WebviewWindowBuilder::new(
-        app,
-        "main",
-        WebviewUrl::App(PathBuf::from("index.html")),
-    )
-    .title("Trellis Board")
-    .inner_size(1280.0, 800.0)
-    .min_inner_size(960.0, 640.0)
-    .visible(!minimized)
-    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-    .on_navigation(move |candidate| {
-        let state = shell_app.state::<DesktopAuthState>();
-        let board = state
-            .board_url
-            .read()
-            .ok()
-            .and_then(|value| value.clone());
-        if let Some(board) = board.as_ref() {
-            if navigation::same_origin(candidate, board)
-                && matches!(candidate.path(), "/login" | "/login.html")
-            {
-                let app = shell_app.clone();
-                let auth = state.inner().clone();
-                tauri::async_runtime::spawn(async move {
-                    clear_desktop_session(&app, &auth, true).await;
-                });
-                return false;
-            }
-        }
-        navigation::handle_navigation(&shell_app, candidate, board.as_ref())
-    });
+    let builder =
+        WebviewWindowBuilder::new(app, "main", WebviewUrl::App(PathBuf::from("index.html")))
+            .title("Trellis Board")
+            .inner_size(1280.0, 800.0)
+            .min_inner_size(960.0, 640.0)
+            .visible(!minimized)
+            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+            .on_navigation(move |candidate| {
+                let state = shell_app.state::<DesktopAuthState>();
+                let board = state.board_url.read().ok().and_then(|value| value.clone());
+                if let Some(board) = board.as_ref() {
+                    if navigation::same_origin(candidate, board)
+                        && matches!(candidate.path(), "/login" | "/login.html")
+                    {
+                        let app = shell_app.clone();
+                        let auth = state.inner().clone();
+                        tauri::async_runtime::spawn(async move {
+                            clear_desktop_session(&app, &auth, true).await;
+                        });
+                        return false;
+                    }
+                }
+                navigation::handle_navigation(&shell_app, candidate, board.as_ref())
+            });
     let window = builder.build()?;
     if let Ok(url) = window.url() {
         if let Ok(mut local_url) = navigation_auth.local_url.lock() {
@@ -837,18 +749,19 @@ fn main() {
             associate_pending_project,
             list_local_associations,
             desktop_sidecar_status,
+            runtime_status,
+            runtime_install,
             live_control_pending,
             live_control_decide,
             live_control_diff,
             live_control_initial,
-            live_control_restore,
             live_control_dismiss
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
             let _ = config::ensure_directories();
             logging::init(&config::logs_dir());
-            sidecar::register(&handle);
+            agent_service::register(&handle);
             let auth = DesktopAuthState::default();
             app.manage(auth.clone());
             build_tray(&handle)?;
@@ -858,7 +771,7 @@ fn main() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "live-control" {
-                    sidecar::close_control_window(window.app_handle());
+                    agent_service::close_control_window(window.app_handle());
                 }
                 let _ = window.hide();
                 api.prevent_close();
@@ -868,7 +781,7 @@ fn main() {
         .expect("failed to build Trellis Board desktop client")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                sidecar::shutdown(app);
+                agent_service::shutdown(app);
             }
         });
 }
