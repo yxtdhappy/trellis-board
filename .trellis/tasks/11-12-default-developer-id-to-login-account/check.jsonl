@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端类型、可访问性、测试边界、格式化和最终构建检查要求"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "核对接入弹窗状态重置、手动修改保留和真实交互验证"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查改动没有复制账号规则、没有改变请求字段或引入单次抽象"}

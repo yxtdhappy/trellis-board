@@ -207,6 +207,7 @@ export function BoardPage() {
         <ProjectRail
           projects={projects}
           teams={runtime?.teams || []}
+          defaultDeveloperId={runtime?.user?.username || ''}
           current={filters.projectId}
           teamId={filters.teamId}
           onSelect={(id) => setFilters({ projectId: id, taskSpaceId: 'all' })}

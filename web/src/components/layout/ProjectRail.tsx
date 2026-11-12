@@ -53,6 +53,7 @@ type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<
 type ProjectRailProps = {
   projects: Project[]
   teams: { id: string; name: string }[]
+  defaultDeveloperId: string
   current: string
   teamId: string
   onSelect: (id: string) => void
@@ -201,6 +202,7 @@ function projectAssociationView(association: LocalAssociation | undefined): Proj
 export function ProjectRail({
   projects,
   teams,
+  defaultDeveloperId,
   current,
   teamId,
   onSelect,
@@ -482,6 +484,7 @@ export function ProjectRail({
           inspection={onboardingProject}
           teams={teams}
           defaultTeamId={teamId === 'all' ? '' : teamId}
+          defaultDeveloperId={defaultDeveloperId}
           invoke={invoke}
           onAssociated={(association) => {
             setAssociations((currentMap) => {

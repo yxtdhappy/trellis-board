@@ -86,6 +86,7 @@ type ProjectOnboardingDialogProps = {
   inspection: unknown
   teams: TeamOption[]
   defaultTeamId: string
+  defaultDeveloperId: string
   invoke: TauriInvoke
   onAssociated: (association: Association) => void
 }
@@ -234,6 +235,7 @@ export function ProjectOnboardingDialog({
   inspection: rawInspection,
   teams,
   defaultTeamId,
+  defaultDeveloperId,
   invoke,
   onAssociated,
 }: ProjectOnboardingDialogProps) {
@@ -247,6 +249,7 @@ export function ProjectOnboardingDialog({
   const [busy, setBusy] = useState(false)
   const [requiresInitialPush, setRequiresInitialPush] = useState(false)
   const pushCheckInFlight = useRef(false)
+  const developerIdEdited = useRef(false)
 
   useEffect(() => {
     if (!open) return
@@ -256,7 +259,8 @@ export function ProjectOnboardingDialog({
       ? defaultTeamId
       : teams[0]?.id || ''
     setTeamId(preferredTeam)
-    setDeveloperId('')
+    developerIdEdited.current = false
+    setDeveloperId(defaultDeveloperId.trim())
     setSelectedTools(normalized?.existingAgentTools.filter((id) => id === 'codex') || [])
     setPush(null)
     setPreflight(null)
@@ -264,6 +268,11 @@ export function ProjectOnboardingDialog({
     setBusy(false)
     setRequiresInitialPush(Boolean(normalized?.hasTrellis && !normalized.hasCommittedTrellis))
   }, [open, rawInspection, teams, defaultTeamId])
+
+  useEffect(() => {
+    if (!open || developerIdEdited.current) return
+    setDeveloperId(defaultDeveloperId.trim())
+  }, [open, rawInspection, defaultDeveloperId])
 
   const missingTools = useMemo(
     () =>
@@ -506,6 +515,7 @@ export function ProjectOnboardingDialog({
                     maxLength={120}
                     placeholder="例如 zhangsan"
                     onChange={(event) => {
+                      developerIdEdited.current = true
                       setDeveloperId(event.target.value)
                       setPreflight(null)
                     }}
