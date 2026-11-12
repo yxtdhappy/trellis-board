@@ -20,13 +20,13 @@ async function request(baseUrl, pathname, options = {}) {
 test('宿主 trellis.repositories 能力对声明依赖的插件可用且可写', async () => {
   const harness = await createHarness({
     plugins: [plugin('repo-consumer')],
-    repositories: [],
+    repositories: [{ id: 'demo-repository', name: 'Demo Repository', path: '/tmp/demo-repository' }],
   })
   const http = await startHttpServer(harness.runtime)
   try {
     const empty = await request(http.baseUrl, '/api/plugins/repo-consumer/list')
     assert.equal(empty.status, 200, JSON.stringify(empty.json))
-    assert.deepEqual(empty.json.repositories, [])
+    assert.deepEqual(empty.json.repositories.map((item) => item.id), ['demo-repository'])
 
     const repositoryPath = path.join(harness.workspace.root, 'added-repository')
     fs.mkdirSync(path.join(repositoryPath, '.trellis'), { recursive: true })
@@ -42,8 +42,13 @@ test('宿主 trellis.repositories 能力对声明依赖的插件可用且可写'
     assert.equal(listed.status, 200)
     assert.deepEqual(
       listed.json.repositories.map((repository) => repository.id),
-      ['added-repository'],
+      ['demo-repository', 'added-repository'],
     )
+
+    const project = await request(http.baseUrl, '/api/plugins/repo-consumer/project')
+    assert.equal(project.status, 200, JSON.stringify(project.json))
+    assert.equal(project.json.project.repositoryId, 'demo-repository')
+    assert.equal(project.json.project.name, 'Demo Repository')
 
     const status = await request(http.baseUrl, '/api/plugins')
     const described = status.json.plugins.find((item) => item.id === 'repo-consumer')

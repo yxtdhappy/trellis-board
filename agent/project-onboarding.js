@@ -441,7 +441,10 @@ export async function attachProject({
   await store.updateConfig((config) => ({
     ...config,
     bindings: [
-      ...config.bindings.filter((item) => item.taskSpaceId !== binding.taskSpaceId),
+      ...config.bindings.filter(
+        (item) =>
+          item.taskSpaceId !== binding.taskSpaceId && item.localRepoKey !== binding.localRepoKey,
+      ),
       binding,
     ],
   }))

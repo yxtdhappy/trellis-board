@@ -30,6 +30,7 @@ export function createAgentPaths(root = defaultAgentRoot()) {
     stateFile: path.join(resolvedRoot, 'runtime.json'),
     eventCursorsFile: path.join(resolvedRoot, 'event-cursors.json'),
     liveCursorsFile: path.join(resolvedRoot, 'live-cursors.json'),
+    liveCursorLockFile: path.join(resolvedRoot, '.live-cursors.lock'),
     liveSuppressionFile: path.join(resolvedRoot, 'live-suppression.json'),
     liveBackupsDir: path.join(resolvedRoot, 'live-backups'),
     pendingLiveDir: path.join(resolvedRoot, 'pending-live'),
@@ -190,6 +191,33 @@ export function validateConfig(config) {
   }
 }
 
+function assertRepositoryBindingsConverged(bindings, previousBindings = []) {
+  const activeByRepository = (items) => {
+    const groups = new Map()
+    for (const binding of items) {
+      if (binding.syncStatus !== 'approved') continue
+      const taskSpaceIds = groups.get(binding.localRepoKey) || []
+      taskSpaceIds.push(binding.taskSpaceId)
+      groups.set(binding.localRepoKey, taskSpaceIds)
+    }
+    return groups
+  }
+  const previous = activeByRepository(previousBindings)
+  for (const [localRepoKey, taskSpaceIds] of activeByRepository(bindings)) {
+    if (taskSpaceIds.length < 2) continue
+    const before = (previous.get(localRepoKey) || []).sort()
+    const after = [...taskSpaceIds].sort()
+    if (before.length === after.length && before.every((value, index) => value === after[index])) {
+      // 兼容升级前已存在的双绑定；运行时会按真实分支只启用一个 watcher。
+      continue
+    }
+    throw new AgentError(
+      AGENT_ERROR_CODE.CONFIG_INVALID,
+      '同一本地仓库只能绑定一个任务空间；需要并行同步多个分支时请使用独立 Git worktree',
+    )
+  }
+}
+
 async function pathExists(target) {
   try {
     await fs.access(target)
@@ -330,16 +358,36 @@ export class ConfigStore {
   }
 
   async saveConfig(config) {
-    return this.withConfigLock(() => this._saveConfigUnlocked(config))
+    return this.withConfigLock(async () => {
+      const previous = await this.readConfig().catch(() => null)
+      return this._saveConfigUnlocked(config, previous)
+    })
   }
 
-  async _saveConfigUnlocked(config) {
+  async _saveConfigUnlocked(config, previous = null) {
     const normalized = validateConfig(config)
+    assertRepositoryBindingsConverged(normalized.bindings, previous?.bindings || [])
     await this.writeAtomic(this.paths.configFile, `${JSON.stringify(normalized, null, 2)}\n`)
     return normalized
   }
 
   async withConfigLock(operation, options = {}) {
+    return this._withFileLock(this.paths.configLockFile, operation, {
+      ...options,
+      openMessage: '无法锁定 Agent 配置',
+      timeoutMessage: 'Agent 配置正被另一个进程更新',
+    })
+  }
+
+  async withLiveCursorLock(operation, options = {}) {
+    return this._withFileLock(this.paths.liveCursorLockFile, operation, {
+      ...options,
+      openMessage: '无法锁定 Agent 同步游标',
+      timeoutMessage: 'Agent 同步游标正被另一个进程更新',
+    })
+  }
+
+  async _withFileLock(lockFile, operation, options = {}) {
     const timeoutMs = options.timeoutMs ?? 5_000
     const staleMs = options.staleMs ?? 30_000
     const deadline = Date.now() + timeoutMs
@@ -347,16 +395,16 @@ export class ConfigStore {
     let handle
     while (!handle) {
       try {
-        handle = await fs.open(this.paths.configLockFile, 'wx', 0o600)
+        handle = await fs.open(lockFile, 'wx', 0o600)
       } catch (error) {
         if (error.code !== 'EEXIST') {
-          throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, '无法锁定 Agent 配置', {
+          throw new AgentError(AGENT_ERROR_CODE.CONFIG_INVALID, options.openMessage, {
             cause: error,
           })
         }
         let stale = false
         try {
-          stale = Date.now() - (await fs.stat(this.paths.configLockFile)).mtimeMs > staleMs
+          stale = Date.now() - (await fs.stat(lockFile)).mtimeMs > staleMs
         } catch (statError) {
           if (statError.code === 'ENOENT') {
             continue
@@ -364,11 +412,11 @@ export class ConfigStore {
           throw statError
         }
         if (stale) {
-          await fs.unlink(this.paths.configLockFile).catch(() => {})
+          await fs.unlink(lockFile).catch(() => {})
           continue
         }
         if (Date.now() >= deadline) {
-          throw new AgentError(AGENT_ERROR_CODE.LOCKED, 'Agent 配置正被另一个进程更新')
+          throw new AgentError(AGENT_ERROR_CODE.LOCKED, options.timeoutMessage)
         }
         await new Promise((resolve) => setTimeout(resolve, 40))
       }
@@ -377,7 +425,7 @@ export class ConfigStore {
       return await operation()
     } finally {
       await handle.close().catch(() => {})
-      await fs.unlink(this.paths.configLockFile).catch(() => {})
+      await fs.unlink(lockFile).catch(() => {})
     }
   }
 
@@ -393,10 +441,13 @@ export class ConfigStore {
       if (next == null) {
         throw new AgentError(AGENT_ERROR_CODE.CONFIG_MISSING, 'Agent 尚未配对')
       }
-      return this._saveConfigUnlocked({
-        ...next,
-        revision: createConfigRevision(),
-      })
+      return this._saveConfigUnlocked(
+        {
+          ...next,
+          revision: createConfigRevision(),
+        },
+        current,
+      )
     })
   }
 

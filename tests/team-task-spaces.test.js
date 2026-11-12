@@ -261,7 +261,7 @@ test('同一用户切换未授权团队时不能借用其他团队的访问权�
   }
 })
 
-test('同一仓库不同分支拥有独立 taskSpace 和 revision', () => {
+test('同一 Agent 从仓库 main 切换到其他分支时撤销旧 binding 并保留两个 taskSpace', () => {
   const { db, service } = setup()
   try {
     const main = service.attach('user-a', 'agent-a', {
@@ -282,6 +282,69 @@ test('同一仓库不同分支拥有独立 taskSpace 和 revision', () => {
     })
     assert.notEqual(main.taskSpace.id, feature.taskSpace.id)
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_space').get().count, 2)
+    assert.deepEqual(feature.replacedBindings, [
+      {
+        id: main.binding.id,
+        taskSpaceId: main.taskSpace.id,
+        branchName: 'main',
+        status: 'revoked',
+      },
+    ])
+    const bindings = db
+      .prepare(`
+        SELECT task_space_id, sync_status FROM sync_agent_binding
+        WHERE agent_id = 'agent-a' ORDER BY task_space_id
+      `)
+      .all()
+    assert.deepEqual(
+      bindings.map((binding) => [binding.task_space_id, binding.sync_status]).sort(),
+      [
+        [feature.taskSpace.id, 'approved'],
+        [main.taskSpace.id, 'revoked'],
+      ].sort(),
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('当前 Agent 切换分支不撤销其他设备对旧分支的 binding', () => {
+  const { db, service } = setup()
+  try {
+    const main = service.attach('user-a', 'agent-a', {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'main',
+      displayName: 'Acme',
+      teamId: 'team-a',
+      developerId: 'alice',
+      localRepoKey: 'a'.repeat(64),
+    })
+    service.inviteTeam(service.actorContext('user-a'), main.project.id, 'team-b')
+    service.attach('user-b', 'agent-b', {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'main',
+      displayName: 'Acme',
+      teamId: 'team-b',
+      developerId: 'bob',
+      localRepoKey: 'b'.repeat(64),
+    })
+    service.attach('user-a', 'agent-a', {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'feature/x',
+      displayName: 'Acme',
+      teamId: 'team-a',
+      developerId: 'alice',
+      localRepoKey: 'a'.repeat(64),
+    })
+    assert.equal(
+      db
+        .prepare(`
+          SELECT sync_status FROM sync_agent_binding
+          WHERE agent_id = 'agent-b' AND task_space_id = ?
+        `)
+        .get(main.taskSpace.id).sync_status,
+      'approved',
+    )
   } finally {
     db.close()
   }

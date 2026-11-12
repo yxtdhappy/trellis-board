@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"约束桌面任务快照、分支 binding、SSE 事件和失败关闭行为"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用现有 binding 与错误处理语义，避免新增抽象"}

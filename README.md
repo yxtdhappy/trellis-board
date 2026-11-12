@@ -148,13 +148,15 @@ SQLite 使用 WAL 模式。standalone 主线程和扫描 Worker 各自持有连�
 
 项目身份是规范化 Git 远端，任务空间身份是“远端 + 分支”。同一远端同分支在服务端全局唯一；
 不同分支拥有独立的 `.trellis/tasks` 快照、revision、cursor、索引和命令。
+同一 Agent 的同一本地仓库只能绑定一个分支；切换分支时必须确认替换旧 binding。需要同时同步多个
+分支时，请为每个分支使用独立 Git worktree。
 
 客户端接入流程：
 
 1. 选择 Git 仓库根目录，校验 origin、当前分支和 `.trellis/tasks`。
 2. 缺少 Trellis 时选择本机编码 Agent，由安装包内固定 runtime 初始化；不会自动 commit/push。
 3. 用户手动提交并推送后，客户端比较本地 HEAD 与远端分支，确认首次推送成功。
-4. 选择 owner team 和 Trellis developer ID，建立项目和 Agent binding。
+4. 选择 owner team 和 Trellis developer ID；同一仓库已有其他分支时确认替换，再建立 Agent binding。
 
 Team 同步只覆盖 `.trellis/tasks/**`：
 
@@ -168,8 +170,9 @@ Web 创建带负责人的任务或改派时，服务端只向目标用户唯一�
 `task.py create` 或原子修改 `task.json.assignee`，再走同一 CAS 链上传；正式任务只在快照投影后出现。
 目标 Agent 离线、未绑定、非项目写成员或项目停用时会直接拒绝，不创建临时任务卡。
 
-同步中客户端会提示切换 Git 分支可能导致任务错位或污染，但本次不拦截分支切换，也不自动修复外部切换
-后的任务污染。
+任务同步会在首次接入、上传、拉取、watcher、pending retry 和冲突处理前校验真实 Git 分支。分支与
+binding 不一致时暂停该仓库同步，不写任务目录、不上传、不推进 cursor；切回绑定分支后自动重新校验。
+客户端不会自动 checkout、switch 或修复外部切换造成的任务差异。
 
 ## 插件
 

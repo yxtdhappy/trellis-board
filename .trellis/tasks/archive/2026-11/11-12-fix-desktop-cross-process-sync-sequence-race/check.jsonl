@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Node 测试、真实副作用、并发与 clientSequence 单调验证要求"}
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "验收跨进程游标一致性、pending 重放和严格递增契约"}

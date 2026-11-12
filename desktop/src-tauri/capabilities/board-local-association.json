@@ -18,6 +18,7 @@
     "allow-initialize-pending-project",
     "allow-inspect-local-project",
     "allow-list-local-associations",
+    "allow-sync-deferred-tasks",
     "allow-desktop-sidecar-status",
     "allow-preflight-pending-project"
   ]

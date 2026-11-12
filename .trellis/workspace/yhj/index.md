@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 35
+- **Total Sessions**: 42
 - **Last Active**: 2026-11-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~845 | Active |
+| `journal-1.md` | ~1002 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,13 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 42 | 2026-11-12 | 修复跨分支任务同步串写 | `d58b021`, `878d63b`, `e1b3efe` | `main` |
+| 41 | 2026-11-12 | 修复双分支绑定导致后台同步崩溃循环 | `0caf270f8ef77f981483d77f9c883493236bb495` | `main` |
+| 40 | 2026-11-12 | 修复桌面跨进程同步序号竞态 | `0fd2dc0` | `main` |
+| 39 | 2026-11-12 | 完善项目接入预检门禁与错误透传 | `2e8894b` | `main` |
+| 38 | 2026-11-12 | 修复桌面同步残留锁与强制恢复 | `86bd1db` | `main` |
+| 37 | 2026-11-12 | 本地 deferred 任务补同步 | `80647fc` | `main` |
+| 36 | 2026-11-12 | 项目接入 Agent 全量列表与搜索 | `3a72ec4`, `8ab6da6` | `main` |
 | 35 | 2026-11-12 | 加固桌面 sidecar 生命周期并完成 Windows 升级验收 | `7bfbf6f`, `cd84ff1` | `codex/harden-desktop-sidecar-lifecycle` |
 | 34 | 2026-11-12 | 客户端接入项目默认填入登录账号 | `7b360ec` | `codex/server-gitless-task-sync` |
 | 33 | 2026-11-12 | 修复桌面端新增项目同步与首次同步 | `62edbe3`, `9709be3` | `codex/server-gitless-task-sync` |

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"约束 Agent、sidecar、Tauri 进程生命周期、权限、SEA 入口与 Windows 验收边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"约束 Node 测试方式、错误处理、文件系统夹具和最终验证基线"}
+{"file":".trellis/tasks/11-12-fix-desktop-sidecar-lock-recovery-menu/research/sidecar-lock-recovery-evidence.md","reason":"本次现场日志、源码根因、锁回收与强制恢复方案调研"}
+{"file":".trellis/tasks/archive/2026-11/11-12-harden-desktop-sidecar-lifecycle/design.md","reason":"复用既有 sidecar 父看门狗、进程组、超时和 NSIS 生命周期设计"}

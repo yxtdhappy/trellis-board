@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { TextDecoder } from 'node:util'
+import { TextDecoder, isDeepStrictEqual } from 'node:util'
 import {
   classifyTaskSnapshots,
   groupTaskSnapshotFiles,
@@ -10,6 +10,7 @@ import {
   snapshotSha256,
 } from '../shared/task-snapshot.js'
 import { createTrellisWatcher } from '../shared/trellis-watcher.js'
+import { assertRepositoryBranch } from './git-sync.js'
 import { readLocalTaskSnapshotFiles } from './local-task-snapshot.js'
 import { AgentApiError, AgentError, AGENT_ERROR_CODE, safeErrorMessage } from './protocol.js'
 
@@ -19,8 +20,18 @@ const UPLOAD_MIN_INTERVAL_MS = 260
 const RATE_LIMIT_RETRY_DELAY_MS = 1000
 const RATE_LIMIT_RETRY_MAX_DELAY_MS = 5000
 const MAX_RATE_LIMIT_RETRIES = 2
+const MAX_PENDING_REPLAY_ATTEMPTS = 3
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true })
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
+export const BRANCH_GUARD_ERROR_CODES = new Set([
+  AGENT_ERROR_CODE.BRANCH_MISMATCH,
+  AGENT_ERROR_CODE.BRANCH_INVALID,
+  AGENT_ERROR_CODE.DETACHED_HEAD,
+  AGENT_ERROR_CODE.GIT_FAILED,
+  AGENT_ERROR_CODE.NOT_GIT_REPOSITORY,
+  AGENT_ERROR_CODE.REPO_NOT_FOUND,
+  AGENT_ERROR_CODE.REPO_PATH_INVALID,
+])
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -118,6 +129,12 @@ function taskConflictFromError(error) {
   }
 }
 
+function requiredClientSequenceFromError(error) {
+  if (error?.serverCode !== 'CONFLICT') return null
+  const required = error.details?.requiredClientSequence
+  return Number.isSafeInteger(required) && required > 0 ? required : null
+}
+
 function initialSyncModeFor(binding) {
   if (new Set(['bootstrap', 'safe', 'review']).has(binding.initialSyncMode)) {
     return binding.initialSyncMode
@@ -192,6 +209,24 @@ function normalizeDeferred(value) {
   return deferred
 }
 
+function normalizePending(value) {
+  if (
+    !value ||
+    typeof value.batchId !== 'string' ||
+    !Number.isSafeInteger(Number(value.clientSequence)) ||
+    Number(value.clientSequence) < 1 ||
+    !Array.isArray(value.files) ||
+    !value.files.length
+  ) {
+    return null
+  }
+  return {
+    batchId: value.batchId,
+    clientSequence: Number(value.clientSequence),
+    files: value.files,
+  }
+}
+
 function baselinesForTaskDir(baselines, taskDir) {
   return Object.fromEntries(
     Object.entries(normalizeBaselines(baselines)).filter(
@@ -220,6 +255,7 @@ export class AgentTaskSnapshotSync {
     logger = console,
     emitControl = () => {},
     watch = undefined,
+    assertBranch = assertRepositoryBranch,
     debounceMs = DEBOUNCE_MS,
   }) {
     this.store = store
@@ -227,6 +263,7 @@ export class AgentTaskSnapshotSync {
     this.logger = logger
     this.emitControl = emitControl
     this.watch = watch
+    this.assertBranch = assertBranch
     this.debounceMs = debounceMs
     this.bindings = new Map()
     this.queues = new Map()
@@ -235,7 +272,6 @@ export class AgentTaskSnapshotSync {
     this.watcher = null
     this.stopped = true
     this.suppressed = new Map()
-    this.cursorState = null
     this.cursorWriteQueue = Promise.resolve()
   }
 
@@ -243,7 +279,7 @@ export class AgentTaskSnapshotSync {
     if (!this.stopped) return
     this.stopped = false
     const { config } = await this.loadContext()
-    this._setBindings(config.bindings)
+    await this._setBindings(config.bindings)
   }
 
   stop() {
@@ -252,16 +288,30 @@ export class AgentTaskSnapshotSync {
     this.watcher = null
   }
 
-  updateBindings(bindings) {
-    this._setBindings(bindings)
+  async updateBindings(bindings) {
+    await this._setBindings(bindings)
   }
 
-  _setBindings(bindings = []) {
-    this.bindings = new Map(
-      bindings
-        .filter((binding) => binding.syncStatus === 'approved' && binding.taskSpaceId)
-        .map((binding) => [binding.taskSpaceId, binding]),
+  async _setBindings(bindings = []) {
+    const approved = bindings.filter(
+      (binding) => binding.syncStatus === 'approved' && binding.taskSpaceId,
     )
+    const byRepository = new Map()
+    for (const binding of approved) {
+      const items = byRepository.get(binding.localRepoKey) || []
+      items.push(binding)
+      byRepository.set(binding.localRepoKey, items)
+    }
+    if ([...byRepository.values()].every((items) => items.length === 1)) {
+      this._installBindings(approved)
+      return
+    }
+    const selected = await this._selectBindingsForRepositories(byRepository)
+    this._installBindings(selected)
+  }
+
+  _installBindings(selected) {
+    this.bindings = new Map(selected.map((binding) => [binding.taskSpaceId, binding]))
     if (this.stopped) return
     this.watcher?.close()
     this.watcher = createTrellisWatcher({
@@ -290,7 +340,134 @@ export class AgentTaskSnapshotSync {
       onError: (error) => this.logger.warn('任务目录监听失败', error),
     })
     for (const taskSpaceId of this.bindings.keys()) {
-      void this.pullTaskSpace(taskSpaceId)
+      void this.pullTaskSpace(taskSpaceId).catch((error) => {
+        this.logger.warn('启动后同步任务空间失败', {
+          taskSpaceId,
+          error: safeErrorMessage(error),
+        })
+      })
+    }
+  }
+
+  async _selectBindingsForRepositories(byRepository) {
+    const selected = []
+    for (const items of byRepository.values()) {
+      const matches = []
+      const branchErrors = []
+      for (const binding of items) {
+        try {
+          await this._assertBindingBranch(binding)
+          matches.push(binding)
+        } catch (error) {
+          // 分支不匹配的绑定已记录错误，不再注册 watcher。
+          branchErrors.push({ binding, error })
+        }
+      }
+      if (matches.length === 1) {
+        selected.push(matches[0])
+        continue
+      }
+      if (matches.length === 0) {
+        const { binding, error } = branchErrors[0]
+        this.emitControl({
+          type: 'task_sync_error',
+          taskSpaceId: binding.taskSpaceId,
+          code: error?.code || AGENT_ERROR_CODE.BRANCH_MISMATCH,
+          message: error?.message || '本地仓库当前分支与绑定分支不一致，已暂停同步',
+        })
+        continue
+      }
+      const error = new AgentError(
+        AGENT_ERROR_CODE.CONFIG_INVALID,
+        '同一本地仓库存在多个任务空间绑定，已暂停该仓库同步',
+      )
+      for (const binding of items) {
+        await this._persistBindingSyncState(binding, {
+          liveSyncStatus: 'error',
+          liveSyncError: error.message,
+          lastErrorCode: error.code,
+          lastError: error.message,
+        })
+      }
+      this.emitControl({
+        type: 'task_sync_error',
+        taskSpaceId: items[0].taskSpaceId,
+        code: error.code,
+        message: error.message,
+      })
+    }
+    return selected
+  }
+
+  async _assertBindingBranch(binding) {
+    try {
+      const result = await this.assertBranch({
+        repoPath: binding.repoPath,
+        branchName: binding.branchName,
+        hooksDir: path.join(this.store.paths.hooksBaseDir, binding.localId),
+      })
+      await this._clearBranchGuardError(binding)
+      return result.branchName
+    } catch (error) {
+      if (error instanceof AgentError && BRANCH_GUARD_ERROR_CODES.has(error.code)) {
+        await this._persistBindingSyncState(binding, {
+          liveSyncStatus: 'error',
+          liveSyncError: error.message,
+          lastErrorCode: error.code,
+          lastError: error.message,
+        })
+      }
+      throw error
+    }
+  }
+
+  async _clearBranchGuardError(binding) {
+    try {
+      await this.store.updateConfig((config) => {
+        let changed = false
+        const bindings = config.bindings.map((item) => {
+          if (
+            item.localId !== binding.localId ||
+            !BRANCH_GUARD_ERROR_CODES.has(item.lastErrorCode)
+          ) {
+            return item
+          }
+          changed = true
+          return {
+            ...item,
+            liveSyncStatus: item.initialSyncCompleted === false ? 'syncing' : 'ready',
+            liveSyncError: null,
+            lastErrorCode: null,
+            lastError: null,
+          }
+        })
+        return changed ? { ...config, bindings } : undefined
+      })
+    } catch (error) {
+      this.logger.warn('保存分支恢复状态失败', {
+        taskSpaceId: binding.taskSpaceId,
+        error: safeErrorMessage(error),
+      })
+    }
+  }
+
+  async _persistBindingSyncState(binding, patch) {
+    try {
+      await this.store.updateConfig((config) => {
+        let changed = false
+        const bindings = config.bindings.map((item) => {
+          if (item.localId !== binding.localId) return item
+          if (Object.entries(patch).every(([key, value]) => item[key] === value)) return item
+          changed = true
+          return { ...item, ...patch }
+        })
+        return changed ? { ...config, bindings } : undefined
+      })
+    } catch (error) {
+      this.logger.warn('保存任务同步状态失败', {
+        taskSpaceId: binding.taskSpaceId,
+        error: safeErrorMessage(error),
+      })
     }
   }
 
@@ -315,49 +492,48 @@ export class AgentTaskSnapshotSync {
   }
 
   async _readCursorState() {
-    if (this.cursorState) return this.cursorState
     try {
       const parsed = JSON.parse(await fs.readFile(this.store.paths.liveCursorsFile, 'utf8'))
-      this.cursorState =
-        parsed?.version === CURSOR_VERSION &&
+      return parsed?.version === CURSOR_VERSION &&
         parsed.taskSpaces &&
         typeof parsed.taskSpaces === 'object'
-          ? parsed
-          : { version: CURSOR_VERSION, taskSpaces: {} }
+        ? parsed
+        : { version: CURSOR_VERSION, taskSpaces: {} }
     } catch {
-      this.cursorState = { version: CURSOR_VERSION, taskSpaces: {} }
+      return { version: CURSOR_VERSION, taskSpaces: {} }
     }
-    return this.cursorState
   }
 
   async _readCursor(taskSpaceId) {
     const state = await this._readCursorState()
     const value = state.taskSpaces[taskSpaceId] || {}
-    const pending =
-      value.pending &&
-      typeof value.pending.batchId === 'string' &&
-      Number.isSafeInteger(Number(value.pending.clientSequence)) &&
-      Number(value.pending.clientSequence) > 0 &&
-      Array.isArray(value.pending.files) &&
-      value.pending.files.length
-        ? {
-            batchId: value.pending.batchId,
-            clientSequence: Number(value.pending.clientSequence),
-            files: value.pending.files,
-          }
-        : null
     return {
       revision: Number(value.revision || 0),
       sequence: Number(value.sequence || 0),
-      pending,
+      pending: normalizePending(value.pending),
       baselines: normalizeBaselines(value.baselines),
       deferred: normalizeDeferred(value.deferred),
     }
   }
 
+  async _mutateCursorState(taskSpaceId, mutator) {
+    const operation = this.cursorWriteQueue.then(() =>
+      this.store.withLiveCursorLock(async () => {
+        const state = await this._readCursorState()
+        const result = await mutator(state)
+        await this.store.writeAtomic(
+          this.store.paths.liveCursorsFile,
+          `${JSON.stringify(state, null, 2)}\n`,
+        )
+        return result
+      }),
+    )
+    this.cursorWriteQueue = operation.catch(() => {})
+    return operation
+  }
+
   async _writeCursor(taskSpaceId, next) {
-    const operation = this.cursorWriteQueue.then(async () => {
-      const state = await this._readCursorState()
+    return this._mutateCursorState(taskSpaceId, (state) => {
       const current = state.taskSpaces[taskSpaceId] || {}
       const entry = {
         ...current,
@@ -380,13 +556,7 @@ export class AgentTaskSnapshotSync {
         else delete entry.pending
       }
       state.taskSpaces[taskSpaceId] = entry
-      await this.store.writeAtomic(
-        this.store.paths.liveCursorsFile,
-        `${JSON.stringify(state, null, 2)}\n`,
-      )
     })
-    this.cursorWriteQueue = operation.catch(() => {})
-    return operation
   }
 
   _binding(taskSpaceId) {
@@ -433,6 +603,7 @@ export class AgentTaskSnapshotSync {
   }
 
   async _writeTaskDirectory(binding, taskDir, files) {
+    await this._assertBindingBranch(binding)
     const tasksRoot = path.join(binding.repoPath, '.trellis', 'tasks')
     const target = path.resolve(binding.repoPath, ...taskDir.split('/'))
     if (!isInside(tasksRoot, target) || target === path.resolve(tasksRoot)) {
@@ -487,6 +658,7 @@ export class AgentTaskSnapshotSync {
   }
 
   async _removeTaskDirectory(binding, taskDir) {
+    await this._assertBindingBranch(binding)
     const target = path.resolve(binding.repoPath, ...taskDir.split('/'))
     const tasksRoot = path.join(binding.repoPath, '.trellis', 'tasks')
     if (!isInside(tasksRoot, target) || target === path.resolve(tasksRoot)) return
@@ -581,6 +753,7 @@ export class AgentTaskSnapshotSync {
   ) {
     let changed = false
     for (const group of groups) {
+      await this._assertBindingBranch(binding)
       const previousFiles = await this._localFiles(binding, new Set([group.taskDir]))
       if (group.files.length === 0) {
         if (mode === 'incremental') {
@@ -606,6 +779,7 @@ export class AgentTaskSnapshotSync {
       changed = true
     }
     if (changed && persistCursor) {
+      await this._assertBindingBranch(binding)
       await this._writeCursor(binding.taskSpaceId, { revision })
     }
   }
@@ -728,6 +902,7 @@ export class AgentTaskSnapshotSync {
       completionBaselines = baselinesFromSnapshot(verifiedSnapshot.files)
     }
 
+    await this._assertBindingBranch(binding)
     await this._writeCursor(binding.taskSpaceId, {
       revision: latestRevision,
       baselines: completionBaselines,
@@ -744,6 +919,7 @@ export class AgentTaskSnapshotSync {
   }
 
   async _pull(binding) {
+    await this._assertBindingBranch(binding)
     const { api } = await this.loadContext()
     let cursorBefore = await this._readCursor(binding.taskSpaceId)
     const initialSync = binding.initialSyncCompleted === false
@@ -782,6 +958,7 @@ export class AgentTaskSnapshotSync {
     let baselineFiles = []
     const localSync = await this._localSyncState(binding, cursorBefore)
     if (!sameFileState({ ...cursorBefore.deferred }, { ...localSync.deferred })) {
+      await this._assertBindingBranch(binding)
       await this._writeCursor(binding.taskSpaceId, { deferred: localSync.deferred })
       cursorBefore = await this._readCursor(binding.taskSpaceId)
     }
@@ -893,6 +1070,7 @@ export class AgentTaskSnapshotSync {
         },
       )
     }
+    await this._assertBindingBranch(binding)
     await this._writeCursor(binding.taskSpaceId, {
       revision: latestRevision,
       baselines: mergeSnapshotBaselines(snapshotBaselines, baselineFiles),
@@ -902,7 +1080,10 @@ export class AgentTaskSnapshotSync {
   }
 
   async pullTaskSpace(taskSpaceId) {
-    const binding = this._binding(taskSpaceId)
+    const binding = this.bindings.get(String(taskSpaceId || ''))
+    if (!binding) {
+      return { skipped: true, reason: 'BINDING_INACTIVE', taskSpaceId }
+    }
     return this._enqueue(taskSpaceId, () => this._pull(binding))
   }
 
@@ -953,11 +1134,17 @@ export class AgentTaskSnapshotSync {
       clientSequence: batch.clientSequence,
       files: batch.files,
     }
-    for (let retryCount = 0; ; retryCount += 1) {
+    let activeBatch = { ...batch }
+    let sequenceRecovered = false
+    for (let retryCount = 0; ;) {
       try {
-        result = await this._runUploadWithSlot(binding.taskSpaceId, retryDelayMs, () =>
-          api.uploadTaskSpaceChanges(binding.taskSpaceId, request),
-        )
+        result = await this._runUploadWithSlot(binding.taskSpaceId, retryDelayMs, async () => {
+          const observedBranchName = await this._assertBindingBranch(binding)
+          return api.uploadTaskSpaceChanges(binding.taskSpaceId, {
+            ...request,
+            observedBranchName,
+          })
+        })
         break
       } catch (error) {
         const conflict = taskConflictFromError(error)
@@ -965,18 +1152,29 @@ export class AgentTaskSnapshotSync {
           result = conflict
           break
         }
+        const requiredSequence = requiredClientSequenceFromError(error)
+        if (
+          !sequenceRecovered &&
+          requiredSequence != null &&
+          requiredSequence > request.clientSequence &&
+          (await this._updatePendingClientSequence(
+            binding.taskSpaceId,
+            activeBatch.batchId,
+            requiredSequence,
+          ))
+        ) {
+          request.clientSequence = requiredSequence
+          activeBatch = { ...activeBatch, clientSequence: requiredSequence }
+          sequenceRecovered = true
+          continue
+        }
         if (!isRateLimitError(error) || retryCount >= MAX_RATE_LIMIT_RETRIES) throw error
         retryDelayMs = rateLimitRetryDelay(error)
+        retryCount += 1
       }
     }
-    const cursor = await this._readCursor(binding.taskSpaceId)
     if (result.code === 'TASK_FILE_CONFLICT') {
-      await this._writeCursor(binding.taskSpaceId, {
-        revision: cursor.revision,
-        sequence: batch.clientSequence,
-        deferred: clearDeferredForFiles(cursor.deferred, batch.files),
-        pending: null,
-      })
+      await this._finishBatchCursor(binding.taskSpaceId, activeBatch)
       this.emitControl({
         type: 'task_file_conflict',
         taskSpaceId: binding.taskSpaceId,
@@ -984,38 +1182,112 @@ export class AgentTaskSnapshotSync {
       })
       return { result, conflict: true }
     }
-    const revision = Math.max(cursor.revision, Number(result.revision || 0))
-    const baselines = mergeSnapshotBaselines(cursor.baselines, batch.files)
-    await this._writeCursor(binding.taskSpaceId, {
-      revision,
-      sequence: batch.clientSequence,
-      baselines,
-      deferred: clearDeferredForFiles(cursor.deferred, batch.files),
-      pending: null,
+    const completed = await this._finishBatchCursor(binding.taskSpaceId, activeBatch, {
+      revision: result.revision,
+      mergeBaselines: true,
     })
     return {
       result,
       conflict: false,
-      revision,
-      baselines,
-      baselineFiles: batch.files,
+      revision: completed.revision,
+      baselines: completed.baselines,
+      baselineFiles: activeBatch.files,
     }
   }
 
-  async _uploadPersistedBatch(binding, api, cursor, files) {
-    if (!files.length) return null
-    const batch = {
-      batchId: crypto.randomUUID(),
-      clientSequence: cursor.sequence + 1,
-      files,
-    }
-    // 先持久化原始批次，网络响应丢失时必须复用同一 batchId。
-    await this._writeCursor(binding.taskSpaceId, {
-      revision: cursor.revision,
-      sequence: cursor.sequence,
-      pending: batch,
+  async _reserveBatch(taskSpaceId, files) {
+    return this._mutateCursorState(taskSpaceId, (state) => {
+      const current = state.taskSpaces[taskSpaceId] || {}
+      const pending = normalizePending(current.pending)
+      if (pending) return { pending }
+      const batch = {
+        batchId: crypto.randomUUID(),
+        clientSequence: Math.max(0, Number(current.sequence || 0)) + 1,
+        files,
+      }
+      state.taskSpaces[taskSpaceId] = {
+        ...current,
+        pending: batch,
+        updatedAt: new Date().toISOString(),
+      }
+      return { batch }
     })
-    return this._uploadBatch(binding, api, batch)
+  }
+
+  async _updatePendingClientSequence(taskSpaceId, batchId, clientSequence) {
+    return this._mutateCursorState(taskSpaceId, (state) => {
+      const current = state.taskSpaces[taskSpaceId] || {}
+      const pending = normalizePending(current.pending)
+      if (!pending || pending.batchId !== batchId) {
+        return Number(current.sequence || 0) >= clientSequence
+      }
+      if (pending.clientSequence >= clientSequence) return true
+      state.taskSpaces[taskSpaceId] = {
+        ...current,
+        pending: {
+          ...current.pending,
+          clientSequence,
+        },
+        updatedAt: new Date().toISOString(),
+      }
+      return true
+    })
+  }
+
+  async _finishBatchCursor(
+    taskSpaceId,
+    batch,
+    { revision = 0, mergeBaselines = false, clearPending = true } = {},
+  ) {
+    return this._mutateCursorState(taskSpaceId, (state) => {
+      const current = state.taskSpaces[taskSpaceId] || {}
+      const pending = normalizePending(current.pending)
+      const currentSequence = Number(current.sequence || 0)
+      const batchSequence = Number(batch.clientSequence || 0)
+      const supersededBySameBatch =
+        pending?.batchId === batch.batchId && pending.clientSequence > batchSequence
+      const advancesSequence = batchSequence >= currentSequence && !supersededBySameBatch
+      const entry = {
+        ...current,
+        revision: Math.max(Number(current.revision || 0), Number(revision || 0)),
+        sequence: Math.max(currentSequence, batchSequence),
+        baselines:
+          mergeBaselines && advancesSequence
+            ? mergeSnapshotBaselines(current.baselines, batch.files)
+            : normalizeBaselines(current.baselines),
+        deferred: advancesSequence
+          ? clearDeferredForFiles(current.deferred, batch.files)
+          : normalizeDeferred(current.deferred),
+        updatedAt: new Date().toISOString(),
+      }
+      if (
+        clearPending &&
+        pending?.batchId === batch.batchId &&
+        pending.clientSequence === batchSequence
+      ) {
+        delete entry.pending
+      }
+      state.taskSpaces[taskSpaceId] = entry
+      return {
+        revision: entry.revision,
+        sequence: entry.sequence,
+        baselines: entry.baselines,
+      }
+    })
+  }
+
+  async _uploadPersistedBatch(binding, api, files) {
+    if (!files.length) return null
+    for (let attempt = 0; attempt < MAX_PENDING_REPLAY_ATTEMPTS; attempt += 1) {
+      const reservation = await this._reserveBatch(binding.taskSpaceId, files)
+      if (reservation.batch) {
+        return this._uploadBatch(binding, api, reservation.batch)
+      }
+      const retried = await this._uploadBatch(binding, api, reservation.pending)
+      if (retried?.conflict) return retried
+      if (isDeepStrictEqual(reservation.pending.files, files)) return retried
+    }
+    throw new AgentError(AGENT_ERROR_CODE.LOCKED, '同步批次持续被另一个进程占用')
   }
 
   async _retryPendingBatch(binding, api, cursor) {
@@ -1064,6 +1336,7 @@ export class AgentTaskSnapshotSync {
   }
 
   async _uploadDirectories(binding, taskDirs, { reconcile = true, baseShaByPath = null } = {}) {
+    await this._assertBindingBranch(binding)
     const { api } = await this.loadContext()
     let cursor = await this._readCursor(binding.taskSpaceId)
     let latestRevision = cursor.revision
@@ -1108,7 +1381,7 @@ export class AgentTaskSnapshotSync {
           baseShaByPath ?? cursor.baselines,
         ),
       ]
-      const uploaded = await this._uploadPersistedBatch(binding, api, cursor, files)
+      const uploaded = await this._uploadPersistedBatch(binding, api, files)
       if (!uploaded) continue
       if (uploaded.conflict) return uploaded.result
       handled.add(source.taskDir)
@@ -1126,7 +1399,7 @@ export class AgentTaskSnapshotSync {
         entry.serverFiles,
         baseShaByPath ?? cursor.baselines,
       )
-      const uploaded = await this._uploadPersistedBatch(binding, api, cursor, files)
+      const uploaded = await this._uploadPersistedBatch(binding, api, files)
       if (!uploaded) continue
       if (uploaded.conflict) return uploaded.result
       latestRevision = Math.max(latestRevision, Number(uploaded.revision || 0))
@@ -1145,9 +1418,57 @@ export class AgentTaskSnapshotSync {
 
   async syncTaskDirectories(taskSpaceId, taskDirs, options = {}) {
     const binding = this._binding(taskSpaceId)
+    if (!binding) {
+      throw new AgentError(AGENT_ERROR_CODE.BINDING_UNKNOWN, '任务空间绑定未激活')
+    }
     return this._enqueue(binding.taskSpaceId, () =>
       this._uploadDirectories(binding, taskDirs, options),
     )
+  }
+
+  async syncDeferredTasks(taskSpaceId) {
+    const binding = this._binding(taskSpaceId)
+    if (!binding) {
+      throw new AgentError(AGENT_ERROR_CODE.BINDING_UNKNOWN, '任务空间绑定未激活')
+    }
+    if (binding.readOnly) {
+      throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, '只读关联不能上传本地任务')
+    }
+    let failure = null
+    const result = await this._enqueue(binding.taskSpaceId, async () => {
+      try {
+        const cursor = await this._readCursor(binding.taskSpaceId)
+        const taskDirs = Object.keys(cursor.deferred)
+        if (!taskDirs.length) {
+          return {
+            taskSpaceId: binding.taskSpaceId,
+            syncedCount: 0,
+            remainingCount: 0,
+            remainingTaskDirs: [],
+            conflict: false,
+          }
+        }
+
+        const uploaded = await this._uploadDirectories(binding, taskDirs)
+        const nextCursor = await this._readCursor(binding.taskSpaceId)
+        const remainingTaskDirs = Object.keys(nextCursor.deferred).sort()
+        const conflict = uploaded?.code === 'TASK_FILE_CONFLICT'
+        return {
+          taskSpaceId: binding.taskSpaceId,
+          syncedCount: conflict ? 0 : Math.max(0, taskDirs.length - remainingTaskDirs.length),
+          remainingCount: remainingTaskDirs.length,
+          remainingTaskDirs,
+          conflict,
+          conflictId: conflict ? uploaded.conflictId || null : null,
+        }
+      } catch (error) {
+        // _enqueue 默认吞掉异常并发出控制事件；显式操作仍需把失败返回给 Tauri。
+        failure = error
+        throw error
+      }
+    })
+    if (failure) throw failure
+    return result
   }
 
   async _completeInitialSync(taskSpaceId, mode) {
@@ -1180,7 +1501,7 @@ export class AgentTaskSnapshotSync {
           : item,
       ),
     }))
-    if (!this.stopped) this.updateBindings([...this.bindings.values()])
+    if (!this.stopped) await this.updateBindings([...this.bindings.values()])
   }
 
   async _uploadReviewedLocalTask(binding, localGroup, serverGroup) {
@@ -1203,7 +1524,6 @@ export class AgentTaskSnapshotSync {
     const server = serverDir
       ? await api.fetchTaskDirectory(binding.taskSpaceId, serverDir)
       : { files: [] }
-    const cursor = await this._readCursor(binding.taskSpaceId)
     const files = localGroup.files.map((file) => ({
       path: file.path,
       content: file.content,
@@ -1218,7 +1538,7 @@ export class AgentTaskSnapshotSync {
         baseSha256: file.sha256,
       })
     }
-    const uploaded = await this._uploadPersistedBatch(binding, api, cursor, files)
+    const uploaded = await this._uploadPersistedBatch(binding, api, files)
     return uploaded?.result
   }
 
@@ -1227,6 +1547,10 @@ export class AgentTaskSnapshotSync {
       throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, '首次同步处理方式无效')
     }
     const binding = this._binding(taskSpaceId)
+    if (!binding) {
+      throw new AgentError(AGENT_ERROR_CODE.BINDING_UNKNOWN, '任务空间绑定未激活')
+    }
+    await this._assertBindingBranch(binding)
     const { api } = await this.loadContext()
     const snapshot = await api.fetchTaskSpaceSnapshot(binding.taskSpaceId, {
       afterRevision: 0,
@@ -1253,6 +1577,7 @@ export class AgentTaskSnapshotSync {
         }
         deferred[difference.local.taskDir] = fileStateFromGroup(difference.local)
       }
+      await this._assertBindingBranch(binding)
       await this._writeCursor(binding.taskSpaceId, {
         revision: snapshot.revision,
         baselines: snapshotBaselines,
@@ -1327,6 +1652,7 @@ export class AgentTaskSnapshotSync {
         counts.savedLocal += 1
       }
     }
+    await this._assertBindingBranch(binding)
     await this._writeCursor(binding.taskSpaceId, {
       revision: latestRevision,
       baselines: mergeSnapshotBaselines(snapshotBaselines, baselineFiles),
@@ -1344,6 +1670,10 @@ export class AgentTaskSnapshotSync {
 
   async decideConflict({ taskSpaceId, conflictId, action, files = null }) {
     const binding = this._binding(taskSpaceId)
+    if (!binding) {
+      throw new AgentError(AGENT_ERROR_CODE.BINDING_UNKNOWN, '任务空间绑定未激活')
+    }
+    await this._assertBindingBranch(binding)
     const { api } = await this.loadContext()
     const conflict = (await api.fetchTaskSpaceConflicts(taskSpaceId)).conflicts.find(
       (item) => item.id === conflictId,
@@ -1381,6 +1711,7 @@ export class AgentTaskSnapshotSync {
       )) {
         baselines[pathName] = sha256
       }
+      await this._assertBindingBranch(binding)
       await this._writeCursor(taskSpaceId, {
         revision: Math.max(cursor.revision, Number(snapshot.revision || 0)),
         baselines,
@@ -1422,21 +1753,53 @@ export class AgentTaskSnapshotSync {
     }
     const cursor = await this._readCursor(taskSpaceId)
     const backup = await this._backupDirectory(binding, directories.local)
-    const result = await api.resolveTaskSpaceConflict(taskSpaceId, conflictId, {
+    const request = {
       action,
       batchId: crypto.randomUUID(),
       clientSequence: cursor.sequence + 1,
       files: selected,
-    })
+    }
+    let result
+    let sequenceRecovered = false
+    for (;;) {
+      try {
+        request.observedBranchName = await this._assertBindingBranch(binding)
+        result = await api.resolveTaskSpaceConflict(taskSpaceId, conflictId, request)
+        break
+      } catch (error) {
+        const conflictResult = taskConflictFromError(error)
+        if (conflictResult) {
+          result = conflictResult
+          break
+        }
+        const requiredSequence = requiredClientSequenceFromError(error)
+        if (
+          !sequenceRecovered &&
+          requiredSequence != null &&
+          requiredSequence > request.clientSequence
+        ) {
+          request.clientSequence = requiredSequence
+          sequenceRecovered = true
+          continue
+        }
+        throw error
+      }
+    }
     if (result?.code !== 'TASK_FILE_CONFLICT') {
-      const nextSequence = cursor.sequence + 1
       const nextRevision = Math.max(cursor.revision, Number(result?.revision || 0))
-      await this._writeCursor(taskSpaceId, {
-        revision: nextRevision,
-        sequence: nextSequence,
-        baselines: mergeSnapshotBaselines(cursor.baselines, selected),
-        pending: null,
-      })
+      await this._finishBatchCursor(
+        taskSpaceId,
+        {
+          batchId: request.batchId,
+          clientSequence: request.clientSequence,
+          files: selected,
+        },
+        {
+          revision: nextRevision,
+          mergeBaselines: true,
+          clearPending: false,
+        },
+      )
       await api.writeTaskSpaceCursor(taskSpaceId, { revision: nextRevision })
     }
     return { ...result, backup }

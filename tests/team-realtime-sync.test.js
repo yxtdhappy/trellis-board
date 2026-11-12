@@ -258,6 +258,7 @@ test('两个 Agent 通过 tasks 快照和 SSE 在同一任务空间实时对齐'
   await context.ownerClient.uploadTaskSpaceChanges(context.taskSpaceId, {
     batchId: 'batch-live-1',
     clientSequence: 1,
+    observedBranchName: 'main',
     files: taskFiles('实时任务'),
   })
   await events.next('task.changed')
@@ -276,6 +277,7 @@ test('同一文件旧基线并发写入只有一个成功，另一个得到明�
   await context.ownerClient.uploadTaskSpaceChanges(context.taskSpaceId, {
     batchId: 'batch-base',
     clientSequence: 1,
+    observedBranchName: 'main',
     files: taskFiles('基线任务'),
   })
   await assert.rejects(
@@ -283,6 +285,7 @@ test('同一文件旧基线并发写入只有一个成功，另一个得到明�
       context.memberClient.uploadTaskSpaceChanges(context.taskSpaceId, {
         batchId: 'batch-stale',
         clientSequence: 1,
+        observedBranchName: 'main',
         files: taskFiles('过期写入'),
       }),
     (error) => {
@@ -342,6 +345,7 @@ test('数据库损坏后可恢复最近快照并继续通过原客户端读取�
   await context.ownerClient.uploadTaskSpaceChanges(context.taskSpaceId, {
     batchId: 'batch-backup',
     clientSequence: 1,
+    observedBranchName: 'main',
     files: taskFiles('备份恢复任务'),
   })
   const backup = context.runtime.services.taskSnapshotBackups.backupNow({ force: true })

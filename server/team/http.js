@@ -91,6 +91,13 @@ function securityHeaders() {
   }
 }
 
+function requireObservedBranchName(body) {
+  const value = body?.observedBranchName
+  if (typeof value !== 'string' || !value.trim()) {
+    throw teamError(400, 'BRANCH_OBSERVATION_REQUIRED', '任务快照写入必须上报本地真实 Git 分支')
+  }
+}
+
 function sendJson(response, status, payload, headers = {}) {
   if (response.headersSent) {
     response.destroy()
@@ -742,6 +749,7 @@ function createRequestHandler({
     const changesMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/changes$/)
     if (changesMatch && request.method === 'POST') {
       const body = await readJsonBody(request, MAX_LIVE_BATCH_BYTES)
+      requireObservedBranchName(body)
       const result = taskSnapshots.applyChanges(agent, changesMatch[0], body)
       sendJson(response, result.status || 200, result)
       return true
@@ -765,6 +773,7 @@ function createRequestHandler({
     )
     if (conflictResolveMatch && request.method === 'POST') {
       const body = await readJsonBody(request, MAX_LIVE_BATCH_BYTES)
+      if (body.action === 'overwrite-server') requireObservedBranchName(body)
       sendJson(
         response,
         200,

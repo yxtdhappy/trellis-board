@@ -93,6 +93,8 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 同步空间身份是 `canonicalRemoteIdentity + branchName`，即
   `sync_task_space UNIQUE(project_id, branch_name)`。
 - 同一仓库不同分支拥有独立 project taskSpace、revision、cursor、命令、冲突和索引。
+- 同一 Agent 的同一 `localRepoKey` 只能有一个 approved binding。切换分支必须显式替换旧 binding；
+  旧 taskSpace、任务数据和其他设备 binding 不删除。需要同时同步多个分支时，每个分支使用独立 Git worktree。
 - 服务端信任已认证 Agent 上报的 origin 字符串，不访问 Git 远端证明其存在；Agent 必须先验证
   所选目录是仓库根、origin 可规范化、当前分支合法。
 
@@ -103,6 +105,8 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   再向旧 Agent 发布 `agent.revoked` 并关闭 SSE。
 - 账号级项目权限保留；旧设备本地仓库绝对路径和 binding 不迁移。新设备必须手动选择本地仓库。
 - 只有 active Agent、approved binding、active project/taskSpace 和可写项目成员可上传快照或领取命令。
+- `attach` 在同一事务中撤销当前 Agent 使用相同 `localRepoKey` 的其他 binding，取消其
+  `pending/delivered/running` 命令，并返回 `replacedBindings` 供客户端更新本地状态。
 
 ### 路径与内容
 
@@ -128,6 +132,7 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 {
   "batchId": "uuid",
   "clientSequence": 12,
+  "observedBranchName": "main",
   "files": [
     {
       "path": ".trellis/tasks/example/task.json",
@@ -139,6 +144,12 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 }
 ```
 
+- Agent 必须在每次实际请求发出前读取真实 Git 分支并上报 `observedBranchName`。HTTP 层缺失时返回
+  `400 BRANCH_OBSERVATION_REQUIRED`；服务端还必须校验它同时等于 taskSpace 和 approved binding 的
+  `branchName`，否则返回 `400 BRANCH_TASK_SPACE_MISMATCH`。
+- `observedBranchName` 不进入 `sync_task_space_batch.request_sha256`。升级前持久化的 pending batch
+  重试时可补上该字段，但仍必须复用原 `batchId/clientSequence/files`。
+- 冲突处理 `overwrite-server` 与普通上传使用相同分支上报和校验，不能绕过门禁。
 - `baseSha256=null` 表示客户端认为路径不存在；64 位摘要表示基于的服务端当前内容。
 - 服务端在 `BEGIN IMMEDIATE` 中逐文件比较当前摘要；任一不一致整批拒绝，不写入部分任务。
 - 同一请求的 `batchId + clientSequence + files` 摘要幂等重放返回原 revision；同 `batchId` 不同摘要拒绝。
@@ -160,12 +171,31 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   拉取新 revision，发生冲突时停止应用远端目录。首次接入选择“仅同步无冲突项”或“暂不处理”
   跳过的本地目录作为延后状态持久化，用户再次修改前不得自动上传；延后目录随后被服务端修改时
   重新要求确认，不能覆盖本地。
+- `list_local_associations` 可以把当前 taskSpace 的延后目录只读投影为
+  `deferredCount/deferredTaskDirs`；缺失或损坏的 cursor 按 0 处理，不能阻断关联列表。
+- 延后任务只能通过用户显式触发的补同步命令上传。补同步必须校验 approved、非只读 binding，
+  复用同一 taskSpace 串行队列、限流、pending batch 和文件级 CAS；网络失败必须向调用方抛错，
+  冲突必须进入现有 `task_file_conflict` 确认链路。
+- Agent 在首次同步、增量 pull、上传、watcher 触发、pending retry、延后补同步、服务端目录实际写入
+  以及冲突覆盖前都必须重新读取本地真实分支。分支不匹配时失败关闭：不写任务目录、不上传、不推进
+  cursor、不补发 pending，并把 `BRANCH_MISMATCH` 投影到项目栏；切回绑定分支后才可恢复。
+- SSE 重连和事件触发的补拉只能遍历运行时激活的 binding。未激活 taskSpace 返回
+  `{ skipped: true, reason: "BINDING_INACTIVE" }`，不能按未知 binding 抛异常；所有
+  fire-and-forget 补拉必须处理 rejection，单个 taskSpace 失败只能记日志，不能终止 Agent 进程。
 - 客户端以完整任务目录为原子单位：先在同卷临时目录写 `next`，把原目录 rename 为 `previous`，
   再 rename `next` 到目标；失败时恢复原目录。
 - 服务端 revision 应用后的 watcher 事件按 `(absolutePath, sha256)` 抑制；只有内容仍匹配才吞掉事件，
   真实后续编辑必须重新上传。
 - 同步队列按 taskSpace 串行。网络响应丢失时 cursor 中保留原 pending batch，重试复用原 `batchId`，
   不生成第二个 revision。
+- 常驻 Agent 与控制 Sidecar 是不同进程，`AgentTaskSnapshotSync` 不得永久缓存
+  `live-cursors.json`；每次预占批次和提交游标都必须在 `.live-cursors.lock` 内重新读取并原子写回。
+- 新批次在锁内先持久化 pending，再发网络请求。已有 pending 时优先按原
+  `batchId/clientSequence/files` 重放；迟到响应只有同时匹配 pending 的批次和序号时才能清除它，
+  较旧响应不得覆盖较新文件的基线。
+- 服务端继续拒绝非递增 `clientSequence`，并在 `409 CONFLICT` 的
+  `details` 返回 `previousSequence/requiredClientSequence`。客户端只可按明确返回值自动修正一次
+  pending 序号并复用原批次；第二次冲突或非法提示继续交给正常错误处理。
 - 中断后恢复 `bootstrap` 时，只有服务端已有任务全部为 `same` 且其余差异均为 `local-only`
   才允许继续上传剩余本地任务。上传结束后必须重新获取 full snapshot；只有全部收敛为 `same`
   才能写 cursor 和 `initialSyncCompleted=true`，否则重新进入差异审查。
@@ -279,6 +309,9 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | 条件 | 结果 |
 | --- | --- |
 | Agent 非 active slot、binding 未批准、项目/任务空间停用 | `401/403`，不读写快照 |
+| Agent 未上报 `observedBranchName` | `400 BRANCH_OBSERVATION_REQUIRED`，不写快照 |
+| 上报分支与 taskSpace/binding 不一致 | `400 BRANCH_TASK_SPACE_MISMATCH`，不写快照 |
+| 本地真实分支与 binding 不一致 | Agent 暂停该 binding，不写文件、不上传、不推进 cursor |
 | 目标用户无在线 Agent、无 approved binding、非项目写成员 | 创建操作项前 `409`，返回用户、项目、分支和下一步 |
 | 路径越界、反斜杠、非白名单扩展名、符号链接、非 UTF-8 | 整批拒绝，任务快照不变 |
 | 单文件、单批、文件数超限 | 拒绝，任务快照不变 |
@@ -298,8 +331,10 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - Good：A 修改 `task.json` 并以服务端当前摘要为基线提交；revision+1，B 从 cursor 拉取后原子替换
   完整任务目录，再推进 cursor；Board 收到 `tasks.changed` 后重载 REST 快照。
 - Good：A 把任务从活动目录移动到归档目录，一个批次包含旧目录删除和新目录写入；B 不会恢复旧活动路径。
+- Good：同一仓库为主分支和 feature 分支各建一个 worktree；两个 `localRepoKey` 不同，各自只监听当前分支。
 - Base：本地和服务端任务目录文件集合及摘要相同，不写文件、不增加 revision。
 - Base：同步请求已提交但响应丢失，客户端重启后复用 pending `batchId`，服务端返回原 revision。
+- Bad：同一个 Git 工作目录先绑定 main 又保留 feature binding；watcher 会把一份本地修改双写到两个 taskSpace。
 - Bad：以“后到覆盖先到”写同一任务文件，会静默丢更新；服务端必须使用文件级 CAS。
 - Bad：收到 watcher 后只按路径抑制，不校验新摘要，会吞掉远端应用后紧接发生的真实本地编辑。
 - Bad：服务端在 HTTP 请求栈里 clone/fetch 或扫描项目 Git，会重新引入两套事实源和长时间阻塞。
@@ -313,21 +348,33 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - `tests/task-snapshot.test.js`：路径边界、LF 摘要、任务目录分组、1024/1025 文件、
   64 MiB/64 MiB+1 字节、移动和六类差异。
 - `tests/database-v10.test.js`：新旧表并存、升级备份、旧数据保留和重复启动。
-- `tests/team-task-spaces.test.js`：全局唯一、owner/invite、同远端不同分支隔离。
-- `tests/team-task-snapshot.test.js`：首次写入、CAS 冲突、整批回滚、幂等、删除墓碑、覆盖备份。
+- `tests/team-task-spaces.test.js`：全局唯一、owner/invite、同远端不同分支隔离，以及切换分支只撤销
+  当前 Agent 的旧 binding、保留旧 taskSpace 和其他设备 binding。
+- `tests/team-task-snapshot.test.js`：首次写入、CAS 冲突、整批回滚、幂等、删除墓碑、覆盖备份、
+  非法/不一致 `observedBranchName`，以及升级前 pending batch 补字段重放。
 - `tests/team-task-index-v10.test.js`：tasks-only 物化、归档移动、revision 隔离、不读取 Git/workspace。
 - `tests/team-agent-slot.test.js`：新设备踢下线、旧 SSE 关闭、旧命令取消、新设备重建 binding。
 - `tests/team-task-commands.test.js`：在线目标、命令状态机、租约恢复、索引等待、重试和取消。
 - `tests/team-realtime-sync.test.js`：两个真实 Agent HTTP 快照 + SSE 对齐、CAS 并发和离线拒绝。
 - `tests/team-gitless-http.test.js`：新路由可用，旧 Git/live 路由 404，Team 启动不访问 Git 工作副本。
 - `tests/team-gitless-http.test.js` 还必须断言：超过旧 9 MiB 的合法 Agent 批次可写入；
-  Content-Length 超过 96 MiB 返回 `413 BODY_TOO_LARGE`；普通 JSON 仍为 64 KiB。
+  Content-Length 超过 96 MiB 返回 `413 BODY_TOO_LARGE`；普通 JSON 仍为 64 KiB；缺少
+  `observedBranchName` 返回 `400 BRANCH_OBSERVATION_REQUIRED`。
 - `tests/team-release.test.js`：服务端仓库无工作副本，命令成功前不生成正式任务。
 - `tests/team-events.test.js`：Agent SSE 只包含新事件，旧事件游标和覆盖协议不存在。
-- `agent/test/project-onboarding.test.js`：仓库预检、固定 CLI 初始化、推送状态和已有 `.trellis`。
+- `agent/test/project-onboarding.test.js`：仓库预检、固定 CLI 初始化、推送状态、已有 `.trellis`
+  和同 `localRepoKey` 切换分支时替换旧本地 binding。
 - `agent/test/task-snapshot-sync.test.js`：首次/增量、cursor v3 文件基线、离线并发冲突、延后目录、
   目录移动和 pending batch 重放；还应断言上传请求不重叠、6 批滑动窗口不超过 5 批、429 最多
-  重试 2 次且复用原请求、部分 bootstrap 可续传、并发 server-only 会重新进入审查。
+  重试 2 次且复用原请求、部分 bootstrap 可续传、并发 server-only 会重新进入审查，以及错分支
+  上传/拉取/pending/deferred 全部失败关闭并在切回后恢复。
+- `agent/test/runtime-cli.test.js`：心跳不覆盖本地分支错误；配置读取兼容历史双绑定但禁止新增；
+  SSE 重连只补拉激活 binding，未激活分支和单个补拉失败不得产生未处理 rejection。
+- `agent/test/git-sync.test.js`：错分支和 detached HEAD 拒绝；同一仓库两个 worktree 生成不同
+  `localRepoKey`。
+- `tests/onboarding-associations.test.js`：Windows 仓库路径比较忽略大小写、斜杠方向和末尾分隔符。
+- `tests/task-space-duplicate-cleanup.test.js`：默认 dry-run、只墓碑指定旧 taskSpace、不动归档、
+  `VACUUM INTO` 备份、内容差异和缺少稳定 ID 时拒绝自动清理。
 - `agent/test/task-command.test.js`：真实 `task.py`、负责人写入、路径级 dirty 保护、上传失败不报成功。
 - `tests/desktop-realtime-apply.test.js`：首次冲突、归档移动、备份、batchId 重试。
 - `tests/desktop-package.test.js`：协议 v3、Trellis runtime 资源、窄 Tauri capability 和新控制窗口命令。
@@ -388,3 +435,29 @@ await runUploadWithSlot(taskSpaceId, () =>
 )
 // 请求完整结束后至少等待 260ms；429 仅复用同一 request 做有界重试。
 ```
+
+### Wrong
+
+```js
+await api.uploadTaskSpaceChanges(taskSpaceId, {
+  batchId,
+  clientSequence,
+  files,
+})
+```
+
+没有在真正发出写入前复核真实分支；用户在这期间切到别的分支时，任务会继续写向旧 binding。
+
+### Correct
+
+```js
+const observedBranchName = await assertRepositoryBranch({ repoPath, branchName, hooksDir })
+await api.uploadTaskSpaceChanges(taskSpaceId, {
+  batchId,
+  clientSequence,
+  observedBranchName,
+  files,
+})
+```
+
+每次真正发出写入前都重新读取真实分支；服务端再校验 taskSpace 和 binding，任何不一致都不写快照。

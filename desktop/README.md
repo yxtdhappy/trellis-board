@@ -94,8 +94,9 @@ Board 项目栏
   -> 用户手动 commit/push
   -> invoke("check_pending_project_push")
   -> invoke("preflight_pending_project")
+  -> invoke("list_local_associations") 并核对同仓库旧分支
   -> 服务端只读 manifest 与本地任务比较
-  -> 用户选择暂不接入、仅同步无冲突项或查看并处理差异
+  -> 用户选择暂不接入、仅同步无冲突项或查看并处理差异；替换旧分支时再次确认
   -> invoke("associate_pending_project")
   -> POST /api/agent/task-spaces/attach
   -> binding approved + initialSyncMode
@@ -106,6 +107,9 @@ Board 项目栏
 
 - 客户端只接受 Git 仓库根，不接受普通目录或 Git 子目录。
 - 项目身份由规范化 origin 和当前分支组成；同远端同分支的后接入客户端命中同一 taskSpace。
+- 同一 Agent 的同一本地仓库只能有一个 approved binding。切换分支会替换旧 binding，但不会删除旧
+  taskSpace、任务数据或其他设备 binding。
+- 需要同时同步两个分支时必须使用两个 Git worktree；每个 worktree 只绑定自己的当前分支。
 - `.trellis/tasks` 已存在时跳过初始化；`.trellis` 存在但缺 `tasks` 时仍要求初始化。
 - 编码 Agent 工具只影响当前设备，可后续追加；其他设备无需选择相同工具。
 - 初始化不自动 commit 或 push。用户完成后由客户端比较本地 HEAD 与远端分支。
@@ -205,16 +209,17 @@ create_task / assign_task
 - 存在 merge/rebase/cherry-pick/revert、目标路径 dirty 或 baseline 不同则拒绝。
 - 失败命令允许同幂等键重试；成功或取消后不可重试。
 
-## 分支切换提示
+## 分支门禁
 
-任一本机关联 taskSpace 处于 `syncing` 时，项目栏显示：
+sidecar 在首次接入、上传、拉取、watcher 上传、pending retry、延后补同步和冲突覆盖前读取本地真实
+分支。真实分支与 binding 不一致时：
 
-```text
-正在同步任务，此时切换 Git 分支可能导致任务错位或污染，建议等待同步完成后再切换。
-```
+- 不写本地任务目录，不上传服务端，不推进 cursor；
+- 不自动 checkout、switch 或迁移 pending batch；
+- 项目栏显示实际分支错误和处理提示；
+- 切回绑定分支后重新校验并恢复同步。
 
-本次只提示风险，不拦截菜单、终端或 IDE 的分支切换，也不自动迁移 pending batch。外部切换后如出现
-任务错位，应停止同步并人工核对本地 `.trellis/tasks`、taskSpace 和 pending batch。
+客户端不会拦截用户在菜单、终端或 IDE 中切换分支，但切换后同步会失败关闭，直到回到绑定分支。
 
 ## Tauri 权限
 
@@ -372,7 +377,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File desktop\uninstall.ps1 -Revok
 | 18 | Web 创建/改派且目标 Agent 离线 | 表单保留并显示明确原因 |
 | 19 | 目标 Agent 在线 | 先出现独立操作项，成功后正式任务或负责人更新 |
 | 20 | 同账号登录第二台设备 | 旧设备立即退出，旧命令取消，新设备重新选择项目 |
-| 21 | 同步中切换分支 | 只显示风险提示，不阻断操作 |
+| 21 | 切换到非绑定分支后修改任务 | 不上传、不拉取、不推进 cursor，项目栏显示暂停原因 |
 
 Windows 实机仍需验证 WebView2 Cookie 写入、远程 capability、动态导航、NSIS 安装、环境门下载/校验/
 安装失败分支和真实双客户端同步。

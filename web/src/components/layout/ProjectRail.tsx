@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FolderGit2, LockKeyhole, Plus, RefreshCw } from 'lucide-react'
+import { FolderGit2, LockKeyhole, Plus, RefreshCw, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { ProjectOnboardingDialog } from '@/features/board/dialogs/ProjectOnboardingDialog'
-import { selectProjectAssociation } from '@/lib/project-rail-association.js'
+import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
+import {
+  countProjectPausedBranches,
+  isBranchAssociationPaused,
+  selectProjectAssociation,
+} from '@/lib/project-rail-association.js'
 
 type Project = {
   id: string
@@ -34,6 +39,8 @@ type LocalAssociation = {
   lastError: string | null
   liveSyncStatus: LiveSyncStatus
   liveSyncError: string | null
+  deferredCount: number
+  deferredTaskDirs: string[]
 }
 
 type SidecarStatus = {
@@ -91,6 +98,17 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
   ) {
     return null
   }
+  const deferredTaskDirs = Array.isArray(record.deferredTaskDirs)
+    ? record.deferredTaskDirs.filter(
+        (taskDir): taskDir is string =>
+          typeof taskDir === 'string' && taskDir.startsWith('.trellis/tasks/'),
+      )
+    : []
+  const deferredCount =
+    deferredTaskDirs.length ||
+    (typeof record.deferredCount === 'number' && Number.isSafeInteger(record.deferredCount)
+      ? Math.max(0, record.deferredCount)
+      : 0)
   return {
     projectId: record.projectId,
     taskSpaceId: record.taskSpaceId,
@@ -107,6 +125,8 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
       typeof record.liveSyncError === 'string' && record.liveSyncError.trim()
         ? record.liveSyncError.trim()
         : null,
+    deferredCount,
+    deferredTaskDirs,
   }
 }
 
@@ -130,6 +150,11 @@ function normalizeSidecarStatus(value: unknown): SidecarStatus | null {
 function associationErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
   return message.trim() || '本地项目关联失败，请检查仓库和同步分支后重试。'
+}
+
+function deferredSyncErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  return message.trim() || '本地待同步任务补传失败'
 }
 
 function projectAssociationView(association: LocalAssociation | undefined): ProjectAssociationView {
@@ -167,6 +192,17 @@ function projectAssociationView(association: LocalAssociation | undefined): Proj
       textClassName: 'text-muted-foreground',
     }
   }
+  if (
+    association.lastErrorCode === 'BRANCH_MISMATCH' ||
+    association.lastErrorCode === 'BINDING_BRANCH_MISMATCH'
+  ) {
+    return {
+      label: '已关联 · 分支不一致，已暂停同步',
+      detail: association.liveSyncError || association.lastError || '请切回绑定分支后重试。',
+      dotClassName: 'bg-destructive',
+      textClassName: 'text-destructive',
+    }
+  }
   switch (association.liveSyncStatus) {
     case 'syncing':
       return {
@@ -176,6 +212,16 @@ function projectAssociationView(association: LocalAssociation | undefined): Proj
         textClassName: 'text-muted-foreground',
       }
     case 'ready':
+      if (association.deferredCount > 0) {
+        return {
+          label: `已关联 · ${association.deferredCount} 个本地任务未同步`,
+          detail:
+            association.deferredTaskDirs.map((taskDir) => taskDir.split('/').at(-1)).join('、') ||
+            null,
+          dotClassName: 'bg-warning',
+          textClassName: 'text-warning',
+        }
+      }
       return {
         label: '已关联 · 同步正常',
         detail: null,
@@ -222,6 +268,8 @@ export function ProjectRail({
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [onboardingProject, setOnboardingProject] = useState<unknown>(null)
   const [inspectingProject, setInspectingProject] = useState(false)
+  const [syncingDeferredTaskSpace, setSyncingDeferredTaskSpace] = useState<string | null>(null)
+  const [associationRefreshNonce, setAssociationRefreshNonce] = useState(0)
   const associationRequestInFlight = useRef(false)
 
   useEffect(() => {
@@ -265,7 +313,7 @@ export function ProjectRail({
       window.clearInterval(associationTimer)
       window.clearInterval(timer)
     }
-  }, [invoke])
+  }, [invoke, associationRefreshNonce])
 
   async function startProjectOnboarding() {
     if (!invoke || inspectingProject) return
@@ -285,8 +333,45 @@ export function ProjectRail({
     }
   }
 
+  async function syncDeferredTasks(association: LocalAssociation) {
+    if (!invoke || syncingDeferredTaskSpace || association.deferredCount < 1) return
+    const confirmed = window.confirm(
+      `将把 ${association.deferredCount} 个本地任务上传到 ${association.branchName}，冲突时仍会要求确认。是否继续？`,
+    )
+    if (!confirmed) return
+    setSyncingDeferredTaskSpace(association.taskSpaceId)
+    try {
+      const raw = await invoke('sync_deferred_tasks', {
+        taskSpaceId: association.taskSpaceId,
+      })
+      const result: Record<string, unknown> =
+        raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+      if (result.conflict === true) {
+        toast.error('补同步遇到任务冲突，请在同步确认窗口处理')
+      } else if (typeof result.remainingCount === 'number' && result.remainingCount > 0) {
+        toast.error(`仍有 ${result.remainingCount} 个本地任务待处理，请查看同步确认窗口`)
+      } else {
+        const syncedCount =
+          typeof result.syncedCount === 'number' ? result.syncedCount : association.deferredCount
+        toast.success(`已补传 ${syncedCount} 个本地任务`)
+        void onRefresh()
+      }
+    } catch (error) {
+      const message = deferredSyncErrorMessage(error)
+      setAssociationError(message)
+      toast.error(message)
+    } finally {
+      setSyncingDeferredTaskSpace(null)
+      setAssociationRefreshNonce((value) => value + 1)
+    }
+  }
+
   const syncingAssociations = [...associations.values()].filter(
     (association) => association.status === 'approved' && association.liveSyncStatus === 'syncing',
+  )
+  const taskSpaceCount = projects.reduce(
+    (total, project) => total + (project.taskSpaces?.length || 0),
+    0,
   )
 
   return (
@@ -326,15 +411,37 @@ export function ProjectRail({
         <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
         全部项目
       </button>
+      {current === 'all' && taskSpaceCount > 1 ? (
+        <p className="px-2 pb-1 text-[9.5px] leading-4 text-muted-foreground">
+          全部项目按分支独立统计
+        </p>
+      ) : null}
       {projects.map((project) => {
         const taskSpaces = project.taskSpaces || []
-        const activeTaskSpace =
+        const selectedTaskSpace =
           current === project.id
-            ? taskSpaces.find((taskSpace) => taskSpace.id === currentTaskSpace) || taskSpaces[0]
-            : null
-        const association = selectProjectAssociation(project, associations)
+            ? taskSpaces.find((taskSpace) => taskSpace.id === currentTaskSpace)
+            : undefined
+        const activeTaskSpace = current === project.id ? selectedTaskSpace || taskSpaces[0] : null
         const activeAssociation = activeTaskSpace ? associations.get(activeTaskSpace.id) : undefined
-        const view = invoke ? projectAssociationView(association) : null
+        const projectAssociation = selectProjectAssociation(
+          project,
+          associations,
+          selectedTaskSpace?.id,
+        )
+        const pausedBranchCount = countProjectPausedBranches(project, associations)
+        const showPartialPause =
+          !selectedTaskSpace && taskSpaces.length > 1 && pausedBranchCount > 0
+        const view = invoke
+          ? showPartialPause
+            ? {
+                label: `已关联 · ${pausedBranchCount}/${taskSpaces.length} 个分支已暂停`,
+                detail: '各分支仅按自身状态同步。',
+                dotClassName: 'bg-warning',
+                textClassName: 'text-warning',
+              }
+            : projectAssociationView(projectAssociation)
+          : null
         const activeView = invoke ? projectAssociationView(activeAssociation) : null
         return (
           <div key={project.id} className="flex flex-col">
@@ -404,26 +511,65 @@ export function ProjectRail({
                 {taskSpaces.map((taskSpace) => {
                   const branchAssociation = associations.get(taskSpace.id)
                   const branchView = invoke ? projectAssociationView(branchAssociation) : null
+                  const branchPaused = isBranchAssociationPaused(branchAssociation)
+                  const deferredDetails = branchAssociation?.deferredTaskDirs
+                    .map((taskDir) => taskDir.split('/').at(-1))
+                    .join('、')
                   return (
-                    <button
+                    <div
                       key={taskSpace.id}
-                      type="button"
-                      onClick={() => onSelectTaskSpace(taskSpace.id)}
                       className={
                         currentTaskSpace === taskSpace.id
-                          ? 'flex items-center gap-1.5 rounded-md border border-primary/35 bg-primary/20 px-2 py-1 text-left text-[10px] font-semibold text-foreground'
-                          : 'flex items-center gap-1.5 rounded-md px-2 py-1 text-left text-[10px] text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'
+                          ? 'flex items-center rounded-md border border-primary/35 bg-primary/20 text-[10px] font-semibold text-foreground'
+                          : 'flex items-center rounded-md text-[10px] text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'
                       }
-                      title={branchView?.label || taskSpace.branchName}
                     >
-                      <span
-                        className={`size-1 shrink-0 rounded-full ${branchView?.dotClassName || 'bg-chart-3'}`}
-                        aria-hidden="true"
-                      />
-                      <span className="truncate">{taskSpace.branchName}</span>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => onSelectTaskSpace(taskSpace.id)}
+                        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1 text-left"
+                        title={branchView?.detail || branchView?.label || taskSpace.branchName}
+                      >
+                        <span
+                          className={`size-1 shrink-0 rounded-full ${branchView?.dotClassName || 'bg-chart-3'}`}
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0 flex-1 truncate">{taskSpace.branchName}</span>
+                        {branchPaused ? (
+                          <span className="shrink-0 text-[8.5px] font-medium text-destructive">
+                            已暂停
+                          </span>
+                        ) : null}
+                      </button>
+                      {branchAssociation?.status === 'approved' &&
+                      !branchAssociation.readOnly &&
+                      branchAssociation.deferredCount > 0 ? (
+                        <button
+                          type="button"
+                          className="mr-1 flex size-5 shrink-0 items-center justify-center rounded text-warning hover:bg-background disabled:opacity-60"
+                          aria-label={`上传 ${taskSpace.branchName} 的 ${branchAssociation.deferredCount} 个本地任务`}
+                          title={`上传本地任务${deferredDetails ? `：${deferredDetails}` : ''}`}
+                          disabled={syncingDeferredTaskSpace !== null}
+                          onClick={() => void syncDeferredTasks(branchAssociation)}
+                        >
+                          <Upload
+                            className={
+                              syncingDeferredTaskSpace === taskSpace.id
+                                ? 'size-3 animate-pulse'
+                                : 'size-3'
+                            }
+                            aria-hidden="true"
+                          />
+                        </button>
+                      ) : null}
+                    </div>
                   )
                 })}
+                {currentTaskSpace === 'all' && taskSpaces.length > 1 ? (
+                  <p className="px-2 py-1 text-[9px] leading-4 text-muted-foreground">
+                    按分支独立统计
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -495,9 +641,22 @@ export function ProjectRail({
           defaultDeveloperId={defaultDeveloperId}
           invoke={invoke}
           onAssociated={(association) => {
+            const normalized = normalizeAssociation(association)
+            if (!normalized) {
+              toast.error('项目关联成功，但客户端返回了无效的关联状态')
+              return
+            }
             setAssociations((currentMap) => {
               const next = new Map(currentMap)
-              next.set(association.taskSpaceId, association)
+              for (const [taskSpaceId, existing] of next) {
+                if (
+                  taskSpaceId !== normalized.taskSpaceId &&
+                  sameLocalRepositoryPath(existing.repoPath, normalized.repoPath)
+                ) {
+                  next.delete(taskSpaceId)
+                }
+              }
+              next.set(normalized.taskSpaceId, normalized)
               return next
             })
             toast.success('本地项目已接入团队任务空间，正在同步任务。')

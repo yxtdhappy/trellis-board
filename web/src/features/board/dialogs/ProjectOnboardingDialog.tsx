@@ -11,6 +11,9 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { TRELLIS_AGENT_TOOLS } from '@shared/trellis-agent-tools.js'
+import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
+import { onboardingErrorMessage, preflightBlockReason } from '@/lib/onboarding-probe.js'
 import { SelectField } from '../SelectField'
 
 type TeamOption = {
@@ -90,15 +93,6 @@ type ProjectOnboardingDialogProps = {
   invoke: TauriInvoke
   onAssociated: (association: Association) => void
 }
-
-const AGENT_TOOLS = [
-  { id: 'codex', label: 'Codex' },
-  { id: 'opencode', label: 'OpenCode' },
-  { id: 'pi', label: 'Pi' },
-  { id: 'cursor', label: 'Cursor' },
-  { id: 'claude-code', label: 'Claude Code' },
-  { id: 'copilot', label: 'GitHub Copilot' },
-] as const
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : ''
@@ -243,13 +237,18 @@ export function ProjectOnboardingDialog({
   const [teamId, setTeamId] = useState('')
   const [developerId, setDeveloperId] = useState('')
   const [selectedTools, setSelectedTools] = useState<string[]>([])
+  const [agentSearch, setAgentSearch] = useState('')
   const [push, setPush] = useState<PushState | null>(null)
   const [preflight, setPreflight] = useState<PreflightResult | null>(null)
+  const [localAssociations, setLocalAssociations] = useState<Association[]>([])
+  const [associationsLoaded, setAssociationsLoaded] = useState(false)
+  const [associationLoadError, setAssociationLoadError] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [requiresInitialPush, setRequiresInitialPush] = useState(false)
   const pushCheckInFlight = useRef(false)
   const developerIdEdited = useRef(false)
+  const dialogHeaderRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -262,6 +261,7 @@ export function ProjectOnboardingDialog({
     developerIdEdited.current = false
     setDeveloperId(defaultDeveloperId.trim())
     setSelectedTools(normalized?.existingAgentTools.filter((id) => id === 'codex') || [])
+    setAgentSearch('')
     setPush(null)
     setPreflight(null)
     setMessage('')
@@ -274,19 +274,76 @@ export function ProjectOnboardingDialog({
     setDeveloperId(defaultDeveloperId.trim())
   }, [open, rawInspection, defaultDeveloperId])
 
+  useEffect(() => {
+    if (!open) {
+      setLocalAssociations([])
+      setAssociationsLoaded(false)
+      setAssociationLoadError('')
+      return
+    }
+    let cancelled = false
+    setAssociationsLoaded(false)
+    setAssociationLoadError('')
+    void invoke('list_local_associations')
+      .then((value) => {
+        if (cancelled) return
+        setLocalAssociations(
+          Array.isArray(value)
+            ? value.map(normalizeAssociation).filter((item): item is Association => Boolean(item))
+            : [],
+        )
+        setAssociationsLoaded(true)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        setAssociationLoadError(onboardingErrorMessage(error, '无法读取当前设备的本地项目关联'))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, rawInspection, invoke])
+
   const missingTools = useMemo(
     () =>
       inspection
-        ? AGENT_TOOLS.filter((tool) => !inspection.existingAgentTools.includes(tool.id))
+        ? TRELLIS_AGENT_TOOLS.filter((tool) => !inspection.existingAgentTools.includes(tool.id))
         : [],
     [inspection],
   )
+  const visibleAgentTools = useMemo(() => {
+    const query = agentSearch.trim().toLowerCase()
+    if (!query) return TRELLIS_AGENT_TOOLS
+    return TRELLIS_AGENT_TOOLS.filter(
+      (tool) => tool.label.toLowerCase().includes(query) || tool.id.toLowerCase().includes(query),
+    )
+  }, [agentSearch])
   const needsInitialization =
     !inspection?.hasTrellis ||
     !inspection?.hasTasks ||
     Boolean(inspection && missingTools.some((tool) => selectedTools.includes(tool.id)))
   const requiresPushCheck = requiresInitialPush
   const pushReady = push?.state === 'ready'
+  const preflightBlockedReason = inspection
+    ? preflightBlockReason({
+        hasTrellis: inspection.hasTrellis,
+        hasTasks: inspection.hasTasks,
+        requiresPushCheck,
+        pushState: push?.state,
+      })
+    : ''
+  const replacedAssociations = useMemo(
+    () =>
+      inspection
+        ? localAssociations.filter(
+            (association) =>
+              association.status !== 'revoked' &&
+              association.status !== 'rejected' &&
+              association.branchName !== inspection.branchName &&
+              sameLocalRepositoryPath(association.repoPath, inspection.root),
+          )
+        : [],
+    [inspection, localAssociations],
+  )
 
   function toggleTool(id: string) {
     setPreflight(null)
@@ -328,7 +385,7 @@ export function ProjectOnboardingDialog({
           : '本机编码 Agent 工具初始化完成，不影响当前任务空间接入。',
       )
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Trellis 初始化失败')
+      setMessage(onboardingErrorMessage(error, 'Trellis 初始化失败'))
     } finally {
       setBusy(false)
     }
@@ -355,7 +412,7 @@ export function ProjectOnboardingDialog({
       if (!silent) setMessage(stateLabel(next))
     } catch (error) {
       if (!silent) {
-        setMessage(error instanceof Error ? error.message : '检查推送状态失败')
+        setMessage(onboardingErrorMessage(error, '检查推送状态失败'))
       }
     } finally {
       pushCheckInFlight.current = false
@@ -382,16 +439,16 @@ export function ProjectOnboardingDialog({
 
   function validateBeforePreflight() {
     if (!inspection) return
+    if (preflightBlockedReason) {
+      setMessage(preflightBlockedReason)
+      return false
+    }
     if (!teamId) {
       setMessage('请选择项目归属团队。')
       return false
     }
     if (!developerId.trim()) {
       setMessage('请填写 Trellis developer ID。')
-      return false
-    }
-    if (requiresPushCheck && !pushReady) {
-      setMessage('请先确认初始化文件已经提交并成功推送到远端分支。')
       return false
     }
     return true
@@ -411,7 +468,7 @@ export function ProjectOnboardingDialog({
       if (!next) throw new Error('没有返回有效的任务预检结果')
       setPreflight(next)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '任务预检失败')
+      setMessage(onboardingErrorMessage(error, '任务预检失败'))
     } finally {
       setBusy(false)
     }
@@ -419,6 +476,25 @@ export function ProjectOnboardingDialog({
 
   async function associate(initialMode: InitialSyncMode) {
     if (!inspection || !validateBeforePreflight()) return
+    if (!associationsLoaded) {
+      setMessage('无法确认当前仓库已有本地绑定，为避免重复绑定，暂不能接入。')
+      return
+    }
+    if (
+      replacedAssociations.length &&
+      !window.confirm(
+        [
+          `当前本机已把该仓库绑定到其他分支：${replacedAssociations
+            .map((item) => `${item.branchName}（任务空间 ${item.taskSpaceId}）`)
+            .join('、')}。`,
+          `确认替换为分支 ${inspection.branchName} 吗？`,
+          '替换后本机停止同步旧分支；旧任务空间、旧任务和其他设备的绑定都不会删除。',
+          '需要同时同步两个分支时，请为另一个分支使用独立 Git worktree。',
+        ].join('\n'),
+      )
+    ) {
+      return
+    }
     setBusy(true)
     setMessage('')
     try {
@@ -433,7 +509,7 @@ export function ProjectOnboardingDialog({
       onAssociated(association)
       onOpenChange(false)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '本地项目接入失败')
+      setMessage(onboardingErrorMessage(error, '本地项目接入失败'))
     } finally {
       setBusy(false)
     }
@@ -457,11 +533,12 @@ export function ProjectOnboardingDialog({
     preflight?.differences.filter((difference) => difference.type !== 'same') || []
   const newSnapshot = preflight?.status === 'new' || preflight?.status === 'branch_new'
   const hasDifferences = preflight?.status === 'existing' && actionableDifferences.length > 0
+  const associationCheckPassed = associationsLoaded && !associationLoadError
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[620px]">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[620px]" initialFocus={dialogHeaderRef}>
+        <DialogHeader ref={dialogHeaderRef} tabIndex={-1} className="outline-none">
           <DialogTitle>接入本地 Git 项目</DialogTitle>
           <DialogDescription>
             客户端负责初始化和任务同步，服务端不会读取或操作项目 Git 仓库。
@@ -492,6 +569,37 @@ export function ProjectOnboardingDialog({
                 <dt className="text-muted-foreground">Git 状态</dt>
                 <dd>{inspection.clean ? '相关路径干净' : '存在未提交文件'}</dd>
               </dl>
+
+              {associationLoadError ? (
+                <p className="rounded-lg border border-destructive/40 p-3 text-destructive">
+                  无法读取本地项目关联，已阻止接入，避免产生重复绑定：{associationLoadError}
+                </p>
+              ) : open && !associationsLoaded ? (
+                <p className="rounded-lg border border-dashed border-border p-3 text-muted-foreground">
+                  正在核对当前仓库已有的本地绑定…
+                </p>
+              ) : replacedAssociations.length ? (
+                <div className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+                  <p className="font-medium text-amber-700 dark:text-amber-400">
+                    将替换当前仓库的旧分支绑定
+                  </p>
+                  <p className="text-muted-foreground">
+                    当前目录准备接入 <code>{inspection.branchName}</code>，但本机仍绑定：
+                  </p>
+                  <ul className="flex flex-col gap-1">
+                    {replacedAssociations.map((association) => (
+                      <li key={association.taskSpaceId} className="break-all">
+                        分支 <code>{association.branchName}</code>，任务空间{' '}
+                        <code>{association.taskSpaceId}</code>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-muted-foreground">
+                    接入前会再次确认。替换只会停止本机旧分支同步，不会删除旧任务空间、旧任务或其他设备的绑定。需要同时同步两个分支时，请使用独立
+                    Git worktree。
+                  </p>
+                </div>
+              ) : null}
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
@@ -525,35 +633,51 @@ export function ProjectOnboardingDialog({
 
               {!inspection.hasTrellis || !inspection.hasTasks || missingTools.length ? (
                 <div className="flex flex-col gap-2">
-                  <div>
-                    <p className="font-medium">本机编码 Agent</p>
-                    <p className="text-muted-foreground">
-                      只影响当前电脑；已存在的工具不会重复初始化，其他设备无需选择相同工具。
-                    </p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="font-medium">本机编码 Agent</p>
+                      <p className="text-muted-foreground">
+                        只影响当前电脑；已存在的工具不会重复初始化，其他设备无需选择相同工具。
+                      </p>
+                    </div>
+                    <Input
+                      type="search"
+                      aria-label="搜索 Agent"
+                      className="h-8 w-full sm:w-52"
+                      placeholder="搜索名称或 ID"
+                      value={agentSearch}
+                      onChange={(event) => setAgentSearch(event.target.value)}
+                    />
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {AGENT_TOOLS.map((tool) => {
-                      const existing = inspection.existingAgentTools.includes(tool.id)
-                      return (
-                        <label
-                          key={tool.id}
-                          className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={existing || selectedTools.includes(tool.id)}
-                            disabled={existing || busy}
-                            onChange={() => toggleTool(tool.id)}
-                          />
-                          <span>{tool.label}</span>
-                          {existing ? (
-                            <span className="ml-auto text-[10px] text-muted-foreground">
-                              已存在
-                            </span>
-                          ) : null}
-                        </label>
-                      )
-                    })}
+                  <div className="grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                    {visibleAgentTools.length ? (
+                      visibleAgentTools.map((tool) => {
+                        const existing = inspection.existingAgentTools.includes(tool.id)
+                        return (
+                          <label
+                            key={tool.id}
+                            className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={existing || selectedTools.includes(tool.id)}
+                              disabled={existing || busy}
+                              onChange={() => toggleTool(tool.id)}
+                            />
+                            <span>{tool.label}</span>
+                            {existing ? (
+                              <span className="ml-auto text-[10px] text-muted-foreground">
+                                已存在
+                              </span>
+                            ) : null}
+                          </label>
+                        )
+                      })
+                    ) : (
+                      <p className="rounded-md border border-dashed border-border px-2.5 py-3 text-muted-foreground sm:col-span-2">
+                        没有匹配的 Agent
+                      </p>
+                    )}
                   </div>
                   {needsInitialization ? (
                     <Button
@@ -664,6 +788,11 @@ export function ProjectOnboardingDialog({
               {message}
             </p>
           ) : null}
+          {!preflight && !message && preflightBlockedReason ? (
+            <p id="onboard-preflight-reason" className="text-xs text-amber-700 dark:text-amber-400">
+              {preflightBlockedReason}
+            </p>
+          ) : null}
         </DialogBody>
         <DialogFooter className="flex-wrap gap-2">
           <Button type="button" variant="outline" disabled={busy} onClick={cancelPendingProject}>
@@ -672,7 +801,10 @@ export function ProjectOnboardingDialog({
           {!preflight ? (
             <Button
               type="button"
-              disabled={busy || !inspection || (requiresPushCheck && !pushReady)}
+              disabled={busy || !inspection || Boolean(preflightBlockedReason)}
+              aria-describedby={
+                preflightBlockedReason && !message ? 'onboard-preflight-reason' : undefined
+              }
               onClick={() => void runPreflight()}
             >
               {busy ? '正在检查…' : '检查任务差异'}
@@ -681,7 +813,7 @@ export function ProjectOnboardingDialog({
             preflight.status === 'unavailable' ? null : newSnapshot ? (
             <Button
               type="button"
-              disabled={busy}
+              disabled={busy || !associationCheckPassed}
               onClick={() => void associate(preflight.counts.invalid > 0 ? 'review' : 'bootstrap')}
             >
               {busy
@@ -692,15 +824,27 @@ export function ProjectOnboardingDialog({
             </Button>
           ) : hasDifferences ? (
             <>
-              <Button type="button" disabled={busy} onClick={() => void associate('safe')}>
+              <Button
+                type="button"
+                disabled={busy || !associationCheckPassed}
+                onClick={() => void associate('safe')}
+              >
                 仅同步无冲突项
               </Button>
-              <Button type="button" disabled={busy} onClick={() => void associate('review')}>
+              <Button
+                type="button"
+                disabled={busy || !associationCheckPassed}
+                onClick={() => void associate('review')}
+              >
                 查看并处理差异
               </Button>
             </>
           ) : (
-            <Button type="button" disabled={busy} onClick={() => void associate('safe')}>
+            <Button
+              type="button"
+              disabled={busy || !associationCheckPassed}
+              onClick={() => void associate('safe')}
+            >
               {busy ? '正在接入…' : '接入任务空间'}
             </Button>
           )}

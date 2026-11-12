@@ -421,6 +421,39 @@ test('接入项目只有在调用 attach 后才建立本地 binding', async () =
     assert.equal(config.bindings[0].initialSyncMode, 'review')
     assert.equal(config.bindings[0].initialSyncCompleted, false)
     assert.equal(config.bindings[0].initialReviewPending, true)
+
+    await attachProject({
+      api: {
+        async attachTaskSpace() {
+          return {
+            project: {
+              id: 'project-1',
+              name: '测试项目',
+              ownerTeamId: 'team-1',
+            },
+            taskSpace: {
+              id: 'space-2',
+              branchName: 'main',
+            },
+            binding: {
+              id: 'binding-2',
+              status: 'approved',
+              readOnly: false,
+            },
+          }
+        },
+      },
+      store,
+      repoPath: repo.local,
+      hooksDir: hooksDir(repo.base),
+      teamId: 'team-1',
+      developerId: 'alice',
+      allowFileRemote: true,
+      initialSyncMode: 'safe',
+    })
+    const replaced = await store.readConfig()
+    assert.equal(replaced.bindings.length, 1)
+    assert.equal(replaced.bindings[0].taskSpaceId, 'space-2')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
     fs.rmSync(repo.base, { recursive: true, force: true })

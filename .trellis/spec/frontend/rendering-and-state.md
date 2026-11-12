@@ -48,15 +48,24 @@
 - Tauri 项目行必须常驻展示关联状态：未关联、关联中、等待后台同步、正在同步已有任务、同步正常、
   只读已关联或关联失效；`liveSyncStatus=error` 时显示同步异常并通过可见辅助文本或 `title`
   展示脱敏后的 `liveSyncError`。
-- 项目栏父行状态只能聚合该项目自身 `taskSpaces` 的关联，禁止回退到全局 `currentTaskSpace`；
-  多分支按“关联失效、`error`、`syncing`、`pending`、`ready`”的优先级展示，选中分支只影响
-  展开行和该分支的关联入口。
+- `liveSyncStatus=ready` 但 `deferredCount>0` 时必须显示“N 个本地任务未同步”，不能显示同步正常。
+  可写关联提供显式确认后的补同步入口；只读关联不显示上传动作。补同步失败或冲突不得提示成功。
+- 项目栏父行状态只能读取该项目自身 `taskSpaces` 的关联，禁止回退到其他项目的
+  `currentTaskSpace`。项目展开时父行优先展示当前选中分支的状态，不能被他分支的
+  `error` 或分支不一致覆盖；项目未展开时可按“关联失效、`error`、`syncing`、deferred、
+  `pending`、`ready`”聚合。
+- 项目选中“全部 taskSpace”时，父行按该项目自身分支显示“X/Y 个分支已暂停”，并说明各分支仅按
+  自身状态同步；不得因一个分支暂停而提示整个项目暂停。
+- 多分支项目的展开行必须分别展示各分支状态。`BRANCH_MISMATCH` /
+  `BINDING_BRANCH_MISMATCH` 只在该分支行显示红色“已暂停”，不得把暂停状态投影成整个项目暂停。
 - 点击关联后先进入只读项目检查并禁用重复入口；目录选择取消只结束 loading，不显示成功或失败。
   推送确认完成后先调用预检，不能在预检前 attach。
 - “团队管理”入口只属于普通浏览器管理界面；Tauri 客户端即使账号具备管理权限也不显示该入口，
   浏览器仍使用 `/admin.html`。
 - Team 任务卡和详情必须显示 `taskSpaceId` 对应分支 `branchName`。“全部项目”聚合所有可读 taskSpace，
   具体项目聚合该项目所有可读 taskSpace，具体 taskSpace 只展示该分支。
+- 当前范围包含多个 taskSpace 时，页面必须提示“按分支独立统计”；同一 taskKey 跨分支保留独立实例，
+  不得为了让数量看起来更少而自动合并。
 - 同一 taskKey 出现在不同 taskSpace 时必须按 `taskSpaceId + taskKey` 形成独立业务实例；分组、React key、
   选中任务刷新和归档行身份都必须使用复合 key，禁止跨分支合并。
 - 任务流水线、团队视角和归档视图提供单值“分支”模糊筛选。输入先 trim，再按大小写不敏感的任意子串匹配；
@@ -69,12 +78,21 @@
   Agent 工具；服务端项目列表不再是接入前置条件。
 - 项目接入在“全部团队”范围必须要求选择具体 owner team；developer ID 和本机 Agent 工具只写入当前
   设备 binding，不要求其他设备一致。
+- 接入向导的本机 Agent 列表必须直接读取 `shared/trellis-agent-tools.js` 的完整目录，按名称或 ID
+  做大小写不敏感搜索；过滤只影响可见项，不改变已勾选或已存在状态。
 - 接入向导打开或切换仓库时，developer ID 默认使用当前登录账号的 `runtime.user.username`，不得使用
   显示名；用户手动输入或清空后，迟到的运行时用户数据不得覆盖该值，缺少用户名时保持为空并沿用现有校验。
+- 接入向导必须按规范化本地路径读取现有本地关联。同一仓库已有其他分支 binding 时，展示旧分支、
+  新分支和旧 taskSpace，并明确“不删除旧任务空间”；用户再次确认后才允许替换。Windows 路径比较
+  忽略大小写、斜杠方向和末尾分隔符。需要同时同步多个分支时提示使用独立 Git worktree。
 - 缺少 `.trellis` 或 `tasks` 时显示初始化面板；新建任务树后显示 `waiting_commit`、
   `waiting_push`、`branch_missing`、`remote_ahead`、`diverged`、`unable_to_verify`、`ready`
   的明确状态。已有任务树仅追加本机 Agent 工具时，这些配置不属于共享任务同步内容，不要求先
   commit/push。
+- 接入向导只有在 `.trellis/tasks` 已存在且首次推送门禁已满足时才允许“检查任务差异”；
+  缺少任务树或推送未 `ready` 时按钮必须禁用并显示具体原因，仅缺少可选 Agent 工具不得阻塞预检。
+  初始化、预检和关联的 Tauri `invoke` 拒绝值必须经 `onboardingErrorMessage()` 提取 `Error`、
+  字符串或对象 `message`，空消息才回落到通用文案；禁止直接序列化整个错误对象。
 - 接入向导重新打开时不能只依赖本次打开期间的内存状态判断首次推送门禁；必须使用仓库预检返回的
   `hasCommittedTrellis` 恢复“本地已有 `.trellis`、但尚未进入 HEAD”的等待提交/推送状态。
 - 客户端不得自动 commit/push；用户完成提交和推送后，通过“检查推送状态”比较本地 HEAD 与远端分支。

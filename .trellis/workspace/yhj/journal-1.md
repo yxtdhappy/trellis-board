@@ -843,3 +843,160 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 36: 项目接入 Agent 全量列表与搜索
+<!-- trellis-session: v=2 fp=7b4bce3cadd8512d -->
+
+**Date**: 2026-11-12
+**Task**: 项目接入 Agent 全量列表与搜索
+**Branch**: `main`
+
+### Summary
+
+项目接入弹窗改为复用共享 Agent 目录，展示全部 22 项并支持名称/ID 搜索；完成 lint、构建、浏览器和真实 Tauri WebView2 验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3a72ec4` | feat(board): add searchable agent catalog to onboarding |
+| `8ab6da6` | docs(task): record Tauri onboarding verification |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 37: 本地 deferred 任务补同步
+<!-- trellis-session: v=2 fp=24e1b851ff52f57e -->
+
+**Date**: 2026-11-12
+**Task**: 本地 deferred 任务补同步
+**Branch**: `main`
+
+### Summary
+
+在项目栏暴露 deferred 任务数量并提供用户确认后的补同步入口；复用 CAS、串行队列、限流和冲突处理，补齐只读保护、失败传播、多分支提示及相关测试与规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `80647fc` | fix(desktop): sync deferred local tasks explicitly |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 38: 修复桌面同步残留锁与强制恢复
+<!-- trellis-session: v=2 fp=b265efdc5f1a16fb -->
+
+**Date**: 2026-11-12
+**Task**: 修复桌面同步残留锁与强制恢复
+**Branch**: `main`
+
+### Summary
+
+修复 Agent hostname/PID 残留锁回收、有限重试、系统弹窗、强制重启与客户端重启兜底，并让托盘按真实状态一键暂停或恢复；Node 全量测试和 Web 构建通过，Rust 与 Windows 真机验收待 CI 补验。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `86bd1db` | fix(desktop): recover locked sidecar sync |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 39: 完善项目接入预检门禁与错误透传
+<!-- trellis-session: v=2 fp=f20ee7c395edc1c2 -->
+
+**Date**: 2026-11-12
+**Task**: 完善项目接入预检门禁与错误透传
+**Branch**: `main`
+
+### Summary
+
+接入向导在 Trellis 任务目录缺失或首次推送未就绪时禁用预检，仅缺少可选 Agent 工具不阻塞；统一提取 Error、字符串和对象 message，避免敏感对象外泄。完整测试 490 通过、4 跳过，前端构建通过，并完成六种组件界面场景验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2e8894b` | fix(desktop): gate project preflight and surface sidecar errors |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 40: 修复桌面跨进程同步序号竞态
+<!-- trellis-session: v=2 fp=45f36709491cfdf0 -->
+
+**Date**: 2026-11-12
+**Task**: 修复桌面跨进程同步序号竞态
+**Branch**: `main`
+
+### Summary
+
+定位常驻 Agent 与控制 Sidecar 共享 live-cursors 时的跨进程竞态，新增游标文件锁和原子批次预占，移除永久内存游标缓存，并支持 requiredClientSequence 一次性安全恢复。补齐迟到响应、pending 重放、冲突基线和 HTTP details 测试；相关测试、完整 Agent 套件、前端构建与 Sidecar SEA 打包通过。真实桌面联合 E2E 和 overwrite-server 响应丢失持久化仍待后续验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0fd2dc0` | fix(sync): serialize desktop task cursor updates |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 41: 修复双分支绑定导致后台同步崩溃循环
+<!-- trellis-session: v=2 fp=f5f454dec630b010 -->
+
+**Date**: 2026-11-12
+**Task**: 修复双分支绑定导致后台同步崩溃循环
+**Branch**: `main`
+
+### Summary
+
+SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INACTIVE；后台补拉 rejection 只记日志。全量 Agent 测试 89/89 通过，GitHub Windows 构建与桌面安装包验证成功，提交已推送。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0caf270f8ef77f981483d77f9c883493236bb495` | fix(desktop): prevent inactive binding sync crash |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 42: 修复跨分支任务同步串写
+<!-- trellis-session: v=2 fp=b6770eb815de9456 -->
+
+**Date**: 2026-11-12
+**Task**: 修复跨分支任务同步串写
+**Branch**: `main`
+
+### Summary
+
+按真实 Git 分支隔离任务空间与同步门禁，阻止同仓库跨分支任务重复和串写；补充项目栏分支暂停状态、存量重复任务 dry-run 清理工具及检查报告。代码级质量门禁通过，4317 重启 E2E 与数据库 --apply 尚未执行。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d58b021` | fix(sync): isolate task sync by repository branch |
+| `878d63b` | fix(web): scope project rail sync status by branch |
+| `e1b3efe` | fix(web): summarize paused branches for whole project |
+
+### Status
+
+[OK] **Completed**

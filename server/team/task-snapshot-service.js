@@ -7,6 +7,7 @@ import {
   TASK_SNAPSHOT_LIMIT_ERROR_CODE,
   validateSnapshotFile,
 } from '../../shared/task-snapshot.js'
+import { validateGitBranchName } from '../../shared/remote-identity.js'
 import { ERROR_CODES, teamError } from './errors.js'
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
@@ -54,6 +55,24 @@ function requestId(value, label) {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label}格式无效`)
   }
   return text
+}
+
+function observedBranchName(input, space, binding) {
+  if (input.observedBranchName == null) return null
+  let observed
+  try {
+    observed = validateGitBranchName(input.observedBranchName)
+  } catch {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'observedBranchName 格式无效')
+  }
+  if (observed !== space.branch_name || observed !== binding.branch_name) {
+    throw teamError(
+      400,
+      'BRANCH_TASK_SPACE_MISMATCH',
+      `上报分支 ${observed} 与任务空间分支 ${space.branch_name} 不一致`,
+    )
+  }
+  return observed
 }
 
 function sequence(value) {
@@ -382,7 +401,8 @@ export function createTaskSnapshotService({
   }
 
   function applyChangesInternal(agent, taskSpaceId, input = {}, commitHook = null) {
-    const { space } = bindingContext(agent, taskSpaceId)
+    const { space, binding } = bindingContext(agent, taskSpaceId)
+    observedBranchName(input, space, binding)
     const actor = taskSpaces.actorContext(agent.userId)
     taskSpaces.authorizeTaskSpace(actor, taskSpaceId, 'write')
     const batchId = requestId(input.batchId, '批次 ID')
@@ -390,7 +410,12 @@ export function createTaskSnapshotService({
     const rawFiles = Array.isArray(input.files) ? input.files : []
     const files = requireSnapshotGroups(rawFiles).flatMap((group) => group.files)
     if (!files.length) throw teamError(400, ERROR_CODES.INVALID_INPUT, '同步批次不能为空')
-    const requestSha256 = hashJson({ taskSpaceId, batchId, clientSequence, files })
+    const requestSha256 = hashJson({
+      taskSpaceId,
+      batchId,
+      clientSequence,
+      files,
+    })
     const outcome = withTransaction(db, () => {
       const existingBatch = db
         .prepare(`
@@ -424,7 +449,12 @@ export function createTaskSnapshotService({
           .get(agent.id, taskSpaceId).sequence,
       )
       if (clientSequence <= previousSequence) {
-        throw teamError(409, ERROR_CODES.CONFLICT, 'clientSequence 必须严格递增')
+        throw teamError(409, ERROR_CODES.CONFLICT, 'clientSequence 必须严格递增', {
+          details: {
+            previousSequence,
+            requiredClientSequence: previousSequence + 1,
+          },
+        })
       }
       const complete = validateCompleteTaskGroups(taskSpaceId, files)
       const current = currentPathRows(
@@ -692,6 +722,7 @@ export function createTaskSnapshotService({
         agent,
         conflict.task_space_id,
         {
+          observedBranchName: input.observedBranchName,
           batchId: requestId(input.batchId, '批次 ID'),
           clientSequence: input.clientSequence,
           files: normalizedFiles.map((file) => ({

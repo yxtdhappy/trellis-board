@@ -477,6 +477,24 @@ async function validateBranch(repoPath, branchName, hooksDir) {
   return branch
 }
 
+export async function assertRepositoryBranch({ repoPath, branchName, hooksDir }) {
+  await ensureHooksDirectory(hooksDir)
+  const repo = await validateRepositoryRoot(repoPath, hooksDir)
+  const expectedBranch = await validateBranch(repo.root, branchName, hooksDir)
+  const branchResult = await runGit('current-branch', repo.root, { hooksDir })
+  const currentBranch = branchResult.stdout.trim()
+  if (branchResult.exitCode !== 0 || !currentBranch) {
+    throw new AgentError(AGENT_ERROR_CODE.DETACHED_HEAD, '本地仓库处于 detached HEAD')
+  }
+  if (currentBranch !== expectedBranch) {
+    throw new AgentError(
+      AGENT_ERROR_CODE.BRANCH_MISMATCH,
+      `本地当前分支为 ${currentBranch}，绑定分支为 ${expectedBranch}`,
+    )
+  }
+  return { root: repo.root, branchName: expectedBranch }
+}
+
 async function readRepositoryState(repoPath, hooksDir, { allowUnborn = false } = {}) {
   const statusResult = await runGit('status', repoPath, { hooksDir })
   if (statusResult.exitCode !== 0) {

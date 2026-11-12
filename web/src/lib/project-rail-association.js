@@ -8,13 +8,34 @@ const LIVE_SYNC_PRIORITY = {
 function associationPriority(association) {
   if (!association) return 0
   if (association.status !== 'approved') return 5
-  return LIVE_SYNC_PRIORITY[association.liveSyncStatus] || LIVE_SYNC_PRIORITY.pending
+  const syncPriority = LIVE_SYNC_PRIORITY[association.liveSyncStatus] || LIVE_SYNC_PRIORITY.pending
+  return Math.max(syncPriority, association.deferredCount > 0 ? 2.5 : 0)
 }
 
-export function selectProjectAssociation(project, associations) {
-  const candidates = (Array.isArray(project?.taskSpaces) ? project.taskSpaces : [])
-    .map((taskSpace) => associations.get(taskSpace?.id))
-    .filter(Boolean)
+export function isBranchAssociationPaused(association) {
+  return (
+    association?.status === 'approved' &&
+    (association.lastErrorCode === 'BRANCH_MISMATCH' ||
+      association.lastErrorCode === 'BINDING_BRANCH_MISMATCH')
+  )
+}
+
+export function countProjectPausedBranches(project, associations) {
+  const taskSpaces = Array.isArray(project?.taskSpaces) ? project.taskSpaces : []
+  return taskSpaces.reduce(
+    (count, taskSpace) =>
+      count + (isBranchAssociationPaused(associations.get(taskSpace?.id)) ? 1 : 0),
+    0,
+  )
+}
+
+export function selectProjectAssociation(project, associations, preferredTaskSpaceId) {
+  const taskSpaces = Array.isArray(project?.taskSpaces) ? project.taskSpaces : []
+  const candidates = taskSpaces.map((taskSpace) => associations.get(taskSpace?.id)).filter(Boolean)
+  const hasPreferredTaskSpace = taskSpaces.some(
+    (taskSpace) => taskSpace?.id === preferredTaskSpaceId,
+  )
+  if (hasPreferredTaskSpace) return associations.get(preferredTaskSpaceId)
   return candidates.reduce(
     (selected, candidate) =>
       associationPriority(candidate) > associationPriority(selected) ? candidate : selected,

@@ -5,7 +5,11 @@ import { formatBindingHealth, inspectRepository, syncRepository } from './git-sy
 import { SingleInstanceLock } from './lock.js'
 import { AgentLogger } from './logger.js'
 import { AgentTaskCommandExecutor } from './task-command.js'
-import { AgentTaskSnapshotSync, liveControlLine } from './task-snapshot-sync.js'
+import {
+  AgentTaskSnapshotSync,
+  BRANCH_GUARD_ERROR_CODES,
+  liveControlLine,
+} from './task-snapshot-sync.js'
 import {
   AgentError,
   AGENT_ERROR_CODE,
@@ -213,14 +217,15 @@ export class AgentRuntime {
         if (!remote || remote.localRepoKey !== binding.localRepoKey) {
           return binding
         }
+        const branchGuarded = BRANCH_GUARD_ERROR_CODES.has(binding.lastErrorCode)
         const next = {
           ...binding,
           serverBindingId: remote.id,
           teamId: remote.teamId ?? binding.teamId ?? null,
           readOnly: remote.readOnly === true,
           syncStatus: remote.status,
-          lastErrorCode: remote.errorCode,
-          lastError: remote.error,
+          lastErrorCode: branchGuarded ? binding.lastErrorCode : remote.errorCode,
+          lastError: branchGuarded ? binding.lastError : remote.error,
         }
         if (remote.branchName && remote.branchName !== binding.branchName) {
           next.lastErrorCode = 'BINDING_BRANCH_MISMATCH'
@@ -243,7 +248,7 @@ export class AgentRuntime {
     })
     try {
       this.config = await this.store.readConfig({ allowMissing: false })
-      this.taskSync.updateBindings(this.config.bindings)
+      await this.taskSync.updateBindings(this.config.bindings)
     } catch (error) {
       this.logger.warn('更新本地实时监听绑定失败', error)
     }
@@ -370,13 +375,14 @@ export class AgentRuntime {
         if (item.localId !== binding.localId) {
           return item
         }
+        const branchGuarded = BRANCH_GUARD_ERROR_CODES.has(item.lastErrorCode)
         const next = {
           ...item,
           syncStatus: result ? 'approved' : item.syncStatus,
           lastSyncedAt: result?.syncedAt ?? item.lastSyncedAt,
           lastHead: result?.head ?? item.lastHead,
-          lastErrorCode: health?.errorCode ?? null,
-          lastError: health?.error ?? null,
+          lastErrorCode: branchGuarded ? item.lastErrorCode : (health?.errorCode ?? null),
+          lastError: branchGuarded ? item.lastError : (health?.error ?? null),
         }
         if (
           next.lastSyncedAt !== item.lastSyncedAt ||
@@ -502,10 +508,13 @@ export class AgentRuntime {
             onOpen: () => {
               attempt = 0
               this.logger.info('Agent 事件流已连接')
-              for (const binding of this.config?.bindings || []) {
-                if (binding.syncStatus === 'approved') {
-                  void this.taskSync.pullTaskSpace(binding.taskSpaceId)
-                }
+              for (const taskSpaceId of this.taskSync.bindings.keys()) {
+                void this.taskSync.pullTaskSpace(taskSpaceId).catch((error) => {
+                  this.logger.warn('事件流恢复后同步任务空间失败', {
+                    taskSpaceId,
+                    error: safeErrorMessage(error),
+                  })
+                })
               }
             },
             onEvent: async (event) => {

@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"约束 deferred 上传、CAS、cursor、限流和冲突处理"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"约束项目关联状态、三秒轮询、多分支身份和 UI 交互"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"约束 Node 回归测试和最终验证方式"}

@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"检查双分支 binding、SSE 重连和任务同步回归"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查修复没有引入重复逻辑或无效抽象"}

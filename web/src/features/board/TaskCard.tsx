@@ -1,6 +1,5 @@
 import { Copy } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { copyText } from '@/browser/clipboard.js'
 import { conditionBadges } from '@/lib/condition-checks.js'
 import { toast } from 'sonner'
@@ -21,10 +20,42 @@ type TaskCardProps = {
   task: BoardTask
   onOpen: (task: BoardTask) => void
   onEditPlan?: (task: BoardTask) => void
-  showCopy?: boolean
 }
 
-export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCardProps) {
+type CopyTaskNameButtonProps = {
+  task: BoardTask
+  compact?: boolean
+  className?: string
+}
+
+export function CopyTaskNameButton({
+  task,
+  compact = false,
+  className = '',
+}: CopyTaskNameButtonProps) {
+  async function copyName() {
+    if (await copyText(task.dirName)) {
+      toast.success('已复制')
+    } else {
+      toast.error('复制失败')
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className={`flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted ${className}`}
+      onClick={copyName}
+      title={`复制任务名：${task.dirName}`}
+      aria-label={`复制任务名：${task.dirName}`}
+    >
+      <Copy className="size-2.5" />
+      {compact ? null : '复制任务名'}
+    </button>
+  )
+}
+
+export function TaskCard({ task, onOpen, onEditPlan }: TaskCardProps) {
   const progress = taskProgress(task)
   const next = nextStage(task)
   const tags = taskTags(task)
@@ -37,14 +68,6 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
   ]
     .filter(Boolean)
     .join(' · ')
-
-  async function copyName() {
-    if (await copyText(task.dirName)) {
-      toast.success('已复制')
-    } else {
-      toast.error('复制失败')
-    }
-  }
 
   return (
     <article
@@ -128,30 +151,17 @@ export function TaskCard({ task, onOpen, onEditPlan, showCopy = true }: TaskCard
 
       <div className="relative flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         {onEditPlan ? (
-          <Button
+          <button
             type="button"
-            variant="outline"
-            size="xs"
+            className="rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
             onClick={() => onEditPlan(task)}
             disabled={task.archived}
             title={task.archived ? '归档任务只读' : '编辑计划字段'}
           >
             计划
-          </Button>
+          </button>
         ) : null}
-        {showCopy ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="xs"
-            className="gap-1"
-            onClick={copyName}
-            title={`复制任务名：${task.dirName}`}
-          >
-            <Copy />
-            复制任务名
-          </Button>
-        ) : null}
+        <CopyTaskNameButton task={task} />
       </div>
     </article>
   )
