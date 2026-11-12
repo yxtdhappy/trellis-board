@@ -932,3 +932,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 40: 修复桌面跨进程同步序号竞态
+<!-- trellis-session: v=2 fp=45f36709491cfdf0 -->
+
+**Date**: 2026-11-12
+**Task**: 修复桌面跨进程同步序号竞态
+**Branch**: `main`
+
+### Summary
+
+定位常驻 Agent 与控制 Sidecar 共享 live-cursors 时的跨进程竞态，新增游标文件锁和原子批次预占，移除永久内存游标缓存，并支持 requiredClientSequence 一次性安全恢复。补齐迟到响应、pending 重放、冲突基线和 HTTP details 测试；相关测试、完整 Agent 套件、前端构建与 Sidecar SEA 打包通过。真实桌面联合 E2E 和 overwrite-server 响应丢失持久化仍待后续验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0fd2dc0` | fix(sync): serialize desktop task cursor updates |
+
+### Status
+
+[OK] **Completed**
