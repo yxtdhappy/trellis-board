@@ -954,3 +954,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 41: 修复双分支绑定导致后台同步崩溃循环
+<!-- trellis-session: v=2 fp=f5f454dec630b010 -->
+
+**Date**: 2026-11-12
+**Task**: 修复双分支绑定导致后台同步崩溃循环
+**Branch**: `main`
+
+### Summary
+
+SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INACTIVE；后台补拉 rejection 只记日志。全量 Agent 测试 89/89 通过，GitHub Windows 构建与桌面安装包验证成功，提交已推送。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0caf270f8ef77f981483d77f9c883493236bb495` | fix(desktop): prevent inactive binding sync crash |
+
+### Status
+
+[OK] **Completed**
