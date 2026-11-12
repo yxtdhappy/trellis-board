@@ -1,4 +1,0 @@
-{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"检查 DPAPI、SEA、sidecar CLI 和安装包验证是否完整"}
-{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"检查认证错误、Cookie、CSRF 和服务端输入边界"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查登录页状态、可访问性、安全文案和 Windows UI 验收"}
-{"file":".trellis/tasks/archive/2026-11/11-08-support-multi-team-board/prd.md","reason":"确认登录不选择团队且设备不绑定单一团队"}

@@ -1,6 +1,0 @@
-{"file":".trellis/tasks/11-08-desktop-account-login/research/desktop-login-evidence.md","reason":"桌面端现状、方案取舍、Cookie 与 sidecar 认证边界"}
-{"file":".trellis/tasks/11-08-desktop-account-login/research/board-local-association.md","reason":"Board 项目栏远程 Tauri capability、本地 Git 校验和自动绑定权限"}
-{"file":".trellis/tasks/archive/2026-11/11-08-support-multi-team-board/design.md","reason":"依赖的多团队 Session、设备授权和任务查询契约"}
-{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"SEA 入口、DPAPI 凭据存储和 Windows 打包约束"}
-{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"服务端登录、Host/Origin/JSON 写请求和错误协议"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"桌面静态登录页的可访问性、状态和安全验收"}

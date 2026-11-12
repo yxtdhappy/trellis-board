@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/", "type": "directory", "reason": "后端 API、权限、数据库和子进程边界"}
-{"file": ".trellis/spec/frontend/", "type": "directory", "reason": "前端状态、表单、弹层和验证规范"}
-{"file": ".trellis/tasks/11-08-project-onboarding-remote-info/design.md", "reason": "本任务数据模型、认证注入、接口和前端交互设计"}

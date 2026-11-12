@@ -1,5 +1,0 @@
-{"file":".trellis/tasks/11-08-team-realtime-task-sync/research/realtime-consistency-options.md","reason":"检查所有冲突、覆盖、复原和责任警告验收是否一致"}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查服务端事务、安全、真实服务验收和测试覆盖"}
-{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"检查 Agent 认证、路径越界、大小限制和错误码"}
-{"file":".trellis/spec/backend/desktop-sidecar-packaging.md","reason":"检查 sidecar 控制协议、SEA 和 Windows 打包"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查 Board 刷新、弹窗可访问性和 UI E2E"}
