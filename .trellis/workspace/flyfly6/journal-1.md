@@ -152,3 +152,47 @@ Input/Button/icon 尺寸改为 32/28/24 三档，删除页面层 h-8/h-9/h-10/h-
 ### Next Steps
 
 - Push branch codex/rust-desktop-agent-single-exe and open PR
+
+
+## Session 6: 合并 main 并把 sidecar 同步修复移植到进程内 Rust Agent
+<!-- trellis-session: v=2 fp=a4ff0d354f7c3fa1 -->
+
+**Date**: 2026-11-12
+**Task**: 合并 main 并把 sidecar 同步修复移植到进程内 Rust Agent
+**Branch**: `codex/rust-desktop-agent-single-exe`
+
+### Summary
+
+merge origin/main 后把分支隔离、游标串行化、deferred 补同步、托盘同步项四项 sidecar 修复移植到 Rust，并修复联调中发现的两个缺陷。
+
+### Main Changes
+
+- 合并 origin/main（7 个 modify/delete 全部删除，main.rs 托盘与 sync_deferred_tasks 手工合并）
+- git.rs 新增 assert_repository_branch；store.rs 新增 assert_repository_bindings_converged 与 lock_task_cursors
+- task_sync.rs 增加分支守卫、observedBranchName、BINDING_INACTIVE、409 序号恢复与 sync_deferred_tasks
+- runtime.rs SSE 重连重放绑定、心跳不覆盖守卫错误；agent_service 增加 sync_action 与托盘同步菜单项
+- 修复 watcher 只在初始同步完成后建立导致首次接入不上传，以及 map_server_error 只读 message 导致错误都显示 HTTP 409
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `da03858` | merge: bring main into the rust desktop agent branch |
+| `d542e1b` | feat(desktop): port main sync guards into the in-process agent |
+| `e604bf1` | chore(task): archive 11-12-merge-main-and-port-sync-fixes |
+
+### Testing
+
+- [OK] cargo fmt --check / cargo check --all-targets / cargo clippy --all-targets 均通过（0 error）
+- [OK] cargo test --bins 87 passed
+- [OK] npm test 454 tests / 449 passed / 0 failed / 5 skipped
+- [OK] 本地 Team 服务端联调：分支守卫、deferred 补同步、409 序号恢复、冷启动心跳
+- [OK] cargo build --release 仅产出 trellis-board-client.exe（7,746,560 字节）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 决定 stash@{0}（用户插件格式化改动）是否丢弃

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
+- **Total Sessions**: 6
 - **Last Active**: 2026-11-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~154 | Active |
+| `journal-1.md` | ~198 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-11-12 | 合并 main 并把 sidecar 同步修复移植到进程内 Rust Agent | `da03858`, `d542e1b`, `e604bf1` | `codex/rust-desktop-agent-single-exe` |
 | 5 | 2026-11-12 | desktop agent runs in-process with single-exe build | `fbe97e3`, `3b23b06` | `codex/rust-desktop-agent-single-exe` |
 | 4 | 2026-11-12 | web 控件高度统一到 32/28/24 三档并优先 shadcn | `849c8df`, `669672f` | `codex/rust-desktop-agent-single-exe` |
 | 3 | 2026-11-09 | 统一弹层骨架、下拉宽度与 Markdown 预览改造 | `0981be5`, `f0f84ca`, `4ee7d80` | `codex/team-board` |
