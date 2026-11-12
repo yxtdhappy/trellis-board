@@ -1,0 +1,29 @@
+{
+  "id": "project-onboarding-init-hardening",
+  "name": "project-onboarding-init-hardening",
+  "title": "加固项目初始化的 Pi 兼容与预检体验",
+  "description": "拆分并跟踪 Pi 初始化 EXDEV 兼容、项目接入预检门禁及错误透传两个问题，完成前不混入其他桌面或 Team 改动。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "desktop",
+  "package": null,
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-12",
+  "completedAt": "2026-11-12",
+  "branch": null,
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "11-12-fix-pi-init-exdev",
+    "11-12-fix-project-preflight-guidance"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
