@@ -86,6 +86,7 @@ function createSync(context, api, controls = []) {
     loadContext: async () => ({ config: context.config, api }),
     logger: { warn() {} },
     emitControl: (event) => controls.push(event),
+    assertBranch: async ({ branchName }) => ({ branchName }),
   })
   sync.updateBindings(context.config.bindings)
   return sync

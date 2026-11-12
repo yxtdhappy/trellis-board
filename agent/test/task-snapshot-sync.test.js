@@ -5,7 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { ConfigStore } from '../config-store.js'
 import { AgentTaskSnapshotSync, liveControlLine } from '../task-snapshot-sync.js'
-import { AgentApiError, AGENT_ERROR_CODE } from '../protocol.js'
+import { AgentApiError, AgentError, AGENT_ERROR_CODE } from '../protocol.js'
 import { snapshotSha256 } from '../../shared/task-snapshot.js'
 
 function write(file, content) {
@@ -90,12 +90,18 @@ async function setup(localTasks) {
   return { root, repoPath, store, config }
 }
 
-function createSync(context, api, controls = []) {
+function createSync(
+  context,
+  api,
+  controls = [],
+  assertBranch = async ({ branchName }) => ({ branchName }),
+) {
   const sync = new AgentTaskSnapshotSync({
     store: context.store,
     loadContext: async () => ({ config: context.config, api }),
     logger: { warn() {} },
     emitControl: (event) => controls.push(event),
+    assertBranch,
   })
   sync.updateBindings(context.config.bindings)
   return sync
@@ -138,12 +144,161 @@ test('liveControlLine 使用顶层 control 包装，普通 stdout JSON 不会触
   assert.equal(parseControl(`${JSON.stringify({ ok: true, protocolVersion: 3 })}\n`), undefined)
 })
 
+test('错分支时拉取和上传都失败关闭，不调用 API 也不推进 cursor', async () => {
+  const taskDir = '.trellis/tasks/01-branch-guard'
+  const context = await setup({
+    [taskDir]: {
+      'task.json': `${JSON.stringify({ id: 'branch-guard', title: '分支门禁' })}\n`,
+    },
+  })
+  try {
+    const calls = { fetch: 0, upload: 0, cursor: 0 }
+    const controls = []
+    const api = {
+      async fetchTaskSpaceSnapshot() {
+        calls.fetch += 1
+        return { revision: 0, files: [] }
+      },
+      async uploadTaskSpaceChanges() {
+        calls.upload += 1
+        return { status: 200, revision: 1 }
+      },
+      async writeTaskSpaceCursor() {
+        calls.cursor += 1
+      },
+    }
+    const sync = createSync(context, api, controls, async () => {
+      throw new AgentError(
+        AGENT_ERROR_CODE.BRANCH_MISMATCH,
+        '本地当前分支为 feature/x，绑定分支为 main',
+      )
+    })
+    await sync.pullTaskSpace('space-1')
+    await sync.syncTaskDirectories('space-1', [taskDir])
+    assert.deepEqual(calls, { fetch: 0, upload: 0, cursor: 0 })
+    assert.equal(fs.existsSync(context.store.paths.liveCursorsFile), false)
+    assert.ok(controls.some((event) => event.type === 'task_sync_error'))
+    const binding = (await context.store.readConfig()).bindings[0]
+    assert.equal(binding.lastErrorCode, AGENT_ERROR_CODE.BRANCH_MISMATCH)
+    assert.equal(binding.liveSyncStatus, 'error')
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('错分支时 pending retry 和 deferred sync 不会上传，切回后清除暂停状态', async () => {
+  const taskDir = '.trellis/tasks/01-branch-retry'
+  const taskContent = `${JSON.stringify({ id: 'branch-retry', title: '重试门禁' })}\n`
+  const context = await setup({
+    [taskDir]: {
+      'task.json': taskContent,
+    },
+  })
+  try {
+    let currentBranch = 'feature/x'
+    let uploads = 0
+    const api = {
+      async uploadTaskSpaceChanges() {
+        uploads += 1
+        return { status: 200, revision: 1 }
+      },
+      async writeTaskSpaceCursor() {},
+    }
+    const sync = createSync(context, api, [], async ({ branchName }) => {
+      if (currentBranch !== branchName) {
+        throw new AgentError(
+          AGENT_ERROR_CODE.BRANCH_MISMATCH,
+          `本地当前分支为 ${currentBranch}，绑定分支为 ${branchName}`,
+        )
+      }
+      return { branchName }
+    })
+    await sync._writeCursor('space-1', {
+      revision: 2,
+      sequence: 3,
+      pending: {
+        batchId: 'pending-branch',
+        clientSequence: 3,
+        files: [
+          {
+            path: `${taskDir}/task.json`,
+            content: taskContent,
+            sha256: snapshotSha256(taskContent),
+            baseSha256: null,
+          },
+        ],
+      },
+      deferred: {
+        [taskDir]: { [`${taskDir}/task.json`]: snapshotSha256(taskContent) },
+      },
+    })
+    await sync.pullTaskSpace('space-1')
+    await assert.rejects(
+      () => sync.syncDeferredTasks('space-1'),
+      (error) => error.code === AGENT_ERROR_CODE.BRANCH_MISMATCH,
+    )
+    assert.equal(uploads, 0)
+    const cursor = await sync._readCursor('space-1')
+    assert.equal(cursor.pending.batchId, 'pending-branch')
+    assert.ok(cursor.deferred[taskDir])
+
+    currentBranch = 'main'
+    await sync._assertBindingBranch(context.config.bindings[0])
+    const binding = (await context.store.readConfig()).bindings[0]
+    assert.equal(binding.lastErrorCode, null)
+    assert.equal(binding.liveSyncStatus, 'ready')
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('历史双绑定只启用真实分支匹配的 binding，另一个保持暂停', async () => {
+  const context = await setup()
+  try {
+    const duplicate = {
+      ...context.config.bindings[0],
+      localId: 'local-2',
+      serverBindingId: 'binding-2',
+      taskSpaceId: 'space-2',
+      branchName: 'feature/x',
+    }
+    const legacy = {
+      ...context.config,
+      bindings: [context.config.bindings[0], duplicate],
+    }
+    fs.writeFileSync(context.store.paths.configFile, `${JSON.stringify(legacy, null, 2)}\n`)
+    const loaded = await context.store.readConfig({ allowMissing: false })
+    const sync = new AgentTaskSnapshotSync({
+      store: context.store,
+      loadContext: async () => ({ config: loaded, api: {} }),
+      logger: { warn() {} },
+      assertBranch: async ({ branchName }) => {
+        if (branchName === 'main') return { branchName }
+        throw new AgentError(
+          AGENT_ERROR_CODE.BRANCH_MISMATCH,
+          '本地当前分支为 main，绑定分支为 feature/x',
+        )
+      },
+    })
+    await sync.updateBindings(loaded.bindings)
+    assert.deepEqual([...sync.bindings.keys()], ['space-1'])
+    const bindings = (await context.store.readConfig()).bindings
+    assert.equal(
+      bindings.find((binding) => binding.taskSpaceId === 'space-2').lastErrorCode,
+      AGENT_ERROR_CODE.BRANCH_MISMATCH,
+    )
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
 test('sidecar 启动恢复 binding 时保留已有实时状态，只由新增项目保持 syncing', async () => {
   const binding = (taskSpaceId, liveSyncStatus) => ({
     taskSpaceId,
     projectId: taskSpaceId,
     displayName: taskSpaceId,
     repoPath: path.join(os.tmpdir(), `missing-${taskSpaceId}`),
+    localRepoKey: taskSpaceId,
     syncStatus: 'approved',
     initialSyncCompleted: true,
     liveSyncStatus,
@@ -787,7 +942,10 @@ test('429 最多重试两次，失败后保留原批次供重启继续', async (
     allowsSuccess = true
     const retried = await sync._retryPendingBatch(binding, api, pendingCursor)
     assert.equal(retried.conflict, false)
-    assert.deepEqual(attempts[3].input, pendingCursor.pending)
+    assert.deepEqual(attempts[3].input, {
+      ...pendingCursor.pending,
+      observedBranchName: 'main',
+    })
     assert.equal((await sync._readCursor('space-1')).pending, null)
   } finally {
     fs.rmSync(context.root, { recursive: true, force: true })

@@ -12,6 +12,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { TRELLIS_AGENT_TOOLS } from '@shared/trellis-agent-tools.js'
+import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import { SelectField } from '../SelectField'
 
 type TeamOption = {
@@ -238,6 +239,9 @@ export function ProjectOnboardingDialog({
   const [agentSearch, setAgentSearch] = useState('')
   const [push, setPush] = useState<PushState | null>(null)
   const [preflight, setPreflight] = useState<PreflightResult | null>(null)
+  const [localAssociations, setLocalAssociations] = useState<Association[]>([])
+  const [associationsLoaded, setAssociationsLoaded] = useState(false)
+  const [associationLoadError, setAssociationLoadError] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [requiresInitialPush, setRequiresInitialPush] = useState(false)
@@ -269,6 +273,37 @@ export function ProjectOnboardingDialog({
     setDeveloperId(defaultDeveloperId.trim())
   }, [open, rawInspection, defaultDeveloperId])
 
+  useEffect(() => {
+    if (!open) {
+      setLocalAssociations([])
+      setAssociationsLoaded(false)
+      setAssociationLoadError('')
+      return
+    }
+    let cancelled = false
+    setAssociationsLoaded(false)
+    setAssociationLoadError('')
+    void invoke('list_local_associations')
+      .then((value) => {
+        if (cancelled) return
+        setLocalAssociations(
+          Array.isArray(value)
+            ? value.map(normalizeAssociation).filter((item): item is Association => Boolean(item))
+            : [],
+        )
+        setAssociationsLoaded(true)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        setAssociationLoadError(
+          error instanceof Error ? error.message : '无法读取当前设备的本地项目关联',
+        )
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, rawInspection, invoke])
+
   const missingTools = useMemo(
     () =>
       inspection
@@ -289,6 +324,19 @@ export function ProjectOnboardingDialog({
     Boolean(inspection && missingTools.some((tool) => selectedTools.includes(tool.id)))
   const requiresPushCheck = requiresInitialPush
   const pushReady = push?.state === 'ready'
+  const replacedAssociations = useMemo(
+    () =>
+      inspection
+        ? localAssociations.filter(
+            (association) =>
+              association.status !== 'revoked' &&
+              association.status !== 'rejected' &&
+              association.branchName !== inspection.branchName &&
+              sameLocalRepositoryPath(association.repoPath, inspection.root),
+          )
+        : [],
+    [inspection, localAssociations],
+  )
 
   function toggleTool(id: string) {
     setPreflight(null)
@@ -421,6 +469,25 @@ export function ProjectOnboardingDialog({
 
   async function associate(initialMode: InitialSyncMode) {
     if (!inspection || !validateBeforePreflight()) return
+    if (!associationsLoaded) {
+      setMessage('无法确认当前仓库已有本地绑定，为避免重复绑定，暂不能接入。')
+      return
+    }
+    if (
+      replacedAssociations.length &&
+      !window.confirm(
+        [
+          `当前本机已把该仓库绑定到其他分支：${replacedAssociations
+            .map((item) => `${item.branchName}（任务空间 ${item.taskSpaceId}）`)
+            .join('、')}。`,
+          `确认替换为分支 ${inspection.branchName} 吗？`,
+          '替换后本机停止同步旧分支；旧任务空间、旧任务和其他设备的绑定都不会删除。',
+          '需要同时同步两个分支时，请为另一个分支使用独立 Git worktree。',
+        ].join('\n'),
+      )
+    ) {
+      return
+    }
     setBusy(true)
     setMessage('')
     try {
@@ -459,6 +526,7 @@ export function ProjectOnboardingDialog({
     preflight?.differences.filter((difference) => difference.type !== 'same') || []
   const newSnapshot = preflight?.status === 'new' || preflight?.status === 'branch_new'
   const hasDifferences = preflight?.status === 'existing' && actionableDifferences.length > 0
+  const associationCheckPassed = associationsLoaded && !associationLoadError
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -494,6 +562,37 @@ export function ProjectOnboardingDialog({
                 <dt className="text-muted-foreground">Git 状态</dt>
                 <dd>{inspection.clean ? '相关路径干净' : '存在未提交文件'}</dd>
               </dl>
+
+              {associationLoadError ? (
+                <p className="rounded-lg border border-destructive/40 p-3 text-destructive">
+                  无法读取本地项目关联，已阻止接入，避免产生重复绑定：{associationLoadError}
+                </p>
+              ) : open && !associationsLoaded ? (
+                <p className="rounded-lg border border-dashed border-border p-3 text-muted-foreground">
+                  正在核对当前仓库已有的本地绑定…
+                </p>
+              ) : replacedAssociations.length ? (
+                <div className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+                  <p className="font-medium text-amber-700 dark:text-amber-400">
+                    将替换当前仓库的旧分支绑定
+                  </p>
+                  <p className="text-muted-foreground">
+                    当前目录准备接入 <code>{inspection.branchName}</code>，但本机仍绑定：
+                  </p>
+                  <ul className="flex flex-col gap-1">
+                    {replacedAssociations.map((association) => (
+                      <li key={association.taskSpaceId} className="break-all">
+                        分支 <code>{association.branchName}</code>，任务空间{' '}
+                        <code>{association.taskSpaceId}</code>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-muted-foreground">
+                    接入前会再次确认。替换只会停止本机旧分支同步，不会删除旧任务空间、旧任务或其他设备的绑定。需要同时同步两个分支时，请使用独立
+                    Git worktree。
+                  </p>
+                </div>
+              ) : null}
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
@@ -699,7 +798,7 @@ export function ProjectOnboardingDialog({
             preflight.status === 'unavailable' ? null : newSnapshot ? (
             <Button
               type="button"
-              disabled={busy}
+              disabled={busy || !associationCheckPassed}
               onClick={() => void associate(preflight.counts.invalid > 0 ? 'review' : 'bootstrap')}
             >
               {busy
@@ -710,15 +809,27 @@ export function ProjectOnboardingDialog({
             </Button>
           ) : hasDifferences ? (
             <>
-              <Button type="button" disabled={busy} onClick={() => void associate('safe')}>
+              <Button
+                type="button"
+                disabled={busy || !associationCheckPassed}
+                onClick={() => void associate('safe')}
+              >
                 仅同步无冲突项
               </Button>
-              <Button type="button" disabled={busy} onClick={() => void associate('review')}>
+              <Button
+                type="button"
+                disabled={busy || !associationCheckPassed}
+                onClick={() => void associate('review')}
+              >
                 查看并处理差异
               </Button>
             </>
           ) : (
-            <Button type="button" disabled={busy} onClick={() => void associate('safe')}>
+            <Button
+              type="button"
+              disabled={busy || !associationCheckPassed}
+              onClick={() => void associate('safe')}
+            >
               {busy ? '正在接入…' : '接入任务空间'}
             </Button>
           )}

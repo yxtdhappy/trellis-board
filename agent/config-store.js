@@ -190,6 +190,33 @@ export function validateConfig(config) {
   }
 }
 
+function assertRepositoryBindingsConverged(bindings, previousBindings = []) {
+  const activeByRepository = (items) => {
+    const groups = new Map()
+    for (const binding of items) {
+      if (binding.syncStatus !== 'approved') continue
+      const taskSpaceIds = groups.get(binding.localRepoKey) || []
+      taskSpaceIds.push(binding.taskSpaceId)
+      groups.set(binding.localRepoKey, taskSpaceIds)
+    }
+    return groups
+  }
+  const previous = activeByRepository(previousBindings)
+  for (const [localRepoKey, taskSpaceIds] of activeByRepository(bindings)) {
+    if (taskSpaceIds.length < 2) continue
+    const before = (previous.get(localRepoKey) || []).sort()
+    const after = [...taskSpaceIds].sort()
+    if (before.length === after.length && before.every((value, index) => value === after[index])) {
+      // 兼容升级前已存在的双绑定；运行时会按真实分支只启用一个 watcher。
+      continue
+    }
+    throw new AgentError(
+      AGENT_ERROR_CODE.CONFIG_INVALID,
+      '同一本地仓库只能绑定一个任务空间；需要并行同步多个分支时请使用独立 Git worktree',
+    )
+  }
+}
+
 async function pathExists(target) {
   try {
     await fs.access(target)
@@ -330,11 +357,15 @@ export class ConfigStore {
   }
 
   async saveConfig(config) {
-    return this.withConfigLock(() => this._saveConfigUnlocked(config))
+    return this.withConfigLock(async () => {
+      const previous = await this.readConfig().catch(() => null)
+      return this._saveConfigUnlocked(config, previous)
+    })
   }
 
-  async _saveConfigUnlocked(config) {
+  async _saveConfigUnlocked(config, previous = null) {
     const normalized = validateConfig(config)
+    assertRepositoryBindingsConverged(normalized.bindings, previous?.bindings || [])
     await this.writeAtomic(this.paths.configFile, `${JSON.stringify(normalized, null, 2)}\n`)
     return normalized
   }
@@ -393,10 +424,13 @@ export class ConfigStore {
       if (next == null) {
         throw new AgentError(AGENT_ERROR_CODE.CONFIG_MISSING, 'Agent 尚未配对')
       }
-      return this._saveConfigUnlocked({
-        ...next,
-        revision: createConfigRevision(),
-      })
+      return this._saveConfigUnlocked(
+        {
+          ...next,
+          revision: createConfigRevision(),
+        },
+        current,
+      )
     })
   }
 

@@ -3,6 +3,7 @@ import { FolderGit2, LockKeyhole, Plus, RefreshCw, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { ProjectOnboardingDialog } from '@/features/board/dialogs/ProjectOnboardingDialog'
+import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import { selectProjectAssociation } from '@/lib/project-rail-association.js'
 
 type Project = {
@@ -185,6 +186,17 @@ function projectAssociationView(association: LocalAssociation | undefined): Proj
       detail: null,
       dotClassName: 'bg-muted-foreground',
       textClassName: 'text-muted-foreground',
+    }
+  }
+  if (
+    association.lastErrorCode === 'BRANCH_MISMATCH' ||
+    association.lastErrorCode === 'BINDING_BRANCH_MISMATCH'
+  ) {
+    return {
+      label: '已关联 · 分支不一致，已暂停同步',
+      detail: association.liveSyncError || association.lastError || '请切回绑定分支后重试。',
+      dotClassName: 'bg-destructive',
+      textClassName: 'text-destructive',
     }
   }
   switch (association.liveSyncStatus) {
@@ -606,6 +618,14 @@ export function ProjectRail({
             }
             setAssociations((currentMap) => {
               const next = new Map(currentMap)
+              for (const [taskSpaceId, existing] of next) {
+                if (
+                  taskSpaceId !== normalized.taskSpaceId &&
+                  sameLocalRepositoryPath(existing.repoPath, normalized.repoPath)
+                ) {
+                  next.delete(taskSpaceId)
+                }
+              }
               next.set(normalized.taskSpaceId, normalized)
               return next
             })

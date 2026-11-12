@@ -157,6 +157,65 @@ test('首次上传写入快照并推进 revision', () => {
   }
 })
 
+test('上报分支与任务空间不一致时拒绝写入且不推进 revision', () => {
+  const { db, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'batch-invalid-branch',
+          clientSequence: 1,
+          observedBranchName: 'main..bad',
+          files: batch('branch-invalid', '非法分支'),
+        }),
+      (error) => error.code === 'INVALID_INPUT' && error.status === 400,
+    )
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'batch-branch',
+          clientSequence: 1,
+          observedBranchName: 'feature/x',
+          files: batch('branch', '分支校验'),
+        }),
+      (error) => error.code === 'BRANCH_TASK_SPACE_MISMATCH' && error.status === 400,
+    )
+    assert.equal(
+      db.prepare('SELECT revision FROM sync_task_space WHERE id = ?').get(taskSpaceId).revision,
+      0,
+    )
+    assert.equal(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM sync_task_space_file WHERE task_space_id = ?')
+        .get(taskSpaceId).count,
+      0,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('升级前 pending batch 重试时新增 observedBranchName 不改变幂等摘要', () => {
+  const { db, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    const input = {
+      batchId: 'batch-upgrade-replay',
+      clientSequence: 1,
+      files: batch('upgrade-replay', '升级重放'),
+    }
+    const first = snapshots.applyChanges(agentA, taskSpaceId, input)
+    const replay = snapshots.applyChanges(agentA, taskSpaceId, {
+      ...input,
+      observedBranchName: 'main',
+    })
+    assert.equal(first.revision, 1)
+    assert.equal(replay.replayed, true)
+    assert.equal(replay.revision, 1)
+  } finally {
+    db.close()
+  }
+})
+
 test('250 个文件的单任务批次可以一次写入', () => {
   const { db, snapshots, agentA, taskSpaceId } = setup()
   try {

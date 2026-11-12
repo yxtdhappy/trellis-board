@@ -228,6 +228,28 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   assert.equal(attached.status, 201)
   const taskSpaceId = attached.body.taskSpace.id
 
+  const missingObservedBranch = await request(
+    runtime,
+    `/api/agent/task-spaces/${encodeURIComponent(taskSpaceId)}/changes`,
+    {
+      method: 'POST',
+      agentCredential: enrolled.body.credential,
+      body: {
+        batchId: 'batch-missing-branch',
+        clientSequence: 1,
+        files: [
+          {
+            path: '.trellis/tasks/01-snapshot/task.json',
+            content: '{"id":"task-1"}\n',
+            baseSha256: null,
+          },
+        ],
+      },
+    },
+  )
+  assert.equal(missingObservedBranch.status, 400)
+  assert.equal(missingObservedBranch.body.code, 'BRANCH_OBSERVATION_REQUIRED')
+
   const taskJson = `${JSON.stringify(
     {
       id: 'task-1',
@@ -248,6 +270,7 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
       body: {
         batchId: 'batch-1',
         clientSequence: 1,
+        observedBranchName: 'main',
         files: [
           {
             path: '.trellis/tasks/01-snapshot/task.json',
@@ -296,6 +319,7 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
       body: {
         batchId: 'batch-large-http',
         clientSequence: 2,
+        observedBranchName: 'main',
         files: Array.from({ length: 10 }, (_, index) => ({
           path: `.trellis/tasks/01-snapshot/evidence-${index}.md`,
           content: largeContent,
@@ -341,6 +365,7 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
       body: {
         batchId: 'batch-dev',
         clientSequence: 1,
+        observedBranchName: 'dev',
         files: [
           {
             path: '.trellis/tasks/02-dev/task.json',

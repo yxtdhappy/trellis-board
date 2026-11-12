@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "跨分支任务快照、任务空间绑定、cursor 与 Agent 同步契约"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "修改 Agent、服务端与 Board 状态时必须保持跨层契约"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有 Git 分支检查与同步状态机制，避免新增重复守卫"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "分支不匹配和绑定状态需要投影到桌面项目栏与接入流程"}

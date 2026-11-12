@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "检查错分支上传、拉取、pending 重试、双 worktree 和清理 dry-run"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 Agent 与 Team 边界测试是否覆盖失败关闭和零部分写入"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查桌面 UI 状态、类型、构建和真实页面验收"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "检查项目栏分支状态、错误提示和接入交互"}

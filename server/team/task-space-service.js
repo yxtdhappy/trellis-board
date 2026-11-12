@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { withTransaction } from '../database.js'
+import { appendAuditEvent } from './audit.js'
 import {
   formatGitRemote,
   gitRemoteIdentityKey,
@@ -527,6 +528,31 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
       if (taskSpace.status === 'disabled' || project.status !== 'active') {
         throw teamError(409, ERROR_CODES.PROJECT_NOT_READY, '项目或任务空间已停用')
       }
+      const replacedBindings = db
+        .prepare(`
+          SELECT id, task_space_id, branch_name
+          FROM sync_agent_binding
+          WHERE agent_id = ? AND local_repo_key = ? AND task_space_id <> ?
+            AND sync_status <> 'revoked'
+        `)
+        .all(safeAgentId, localRepoKey, taskSpace.id)
+      if (replacedBindings.length) {
+        const placeholders = replacedBindings.map(() => '?').join(', ')
+        const bindingIds = replacedBindings.map((item) => item.id)
+        db.prepare(`
+          UPDATE sync_agent_binding
+          SET sync_status = 'revoked', last_error = '任务空间绑定已被本机新分支替换', updated_at = ?
+          WHERE id IN (${placeholders})
+        `).run(now, ...bindingIds)
+        db.prepare(`
+          UPDATE sync_task_command
+          SET status = 'cancelled',
+              error_text = '任务空间绑定已被本机新分支替换',
+              updated_at = ?
+          WHERE binding_id IN (${placeholders})
+            AND status IN ('pending', 'delivered', 'running')
+        `).run(now, ...bindingIds)
+      }
       let binding = db
         .prepare('SELECT * FROM sync_agent_binding WHERE agent_id = ? AND task_space_id = ?')
         .get(safeAgentId, taskSpace.id)
@@ -556,6 +582,28 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
         `).run(localRepoKey, displayName, branchName, now, binding.id)
       }
       binding = db.prepare('SELECT * FROM sync_agent_binding WHERE id = ?').get(binding.id)
+      if (replacedBindings.length) {
+        appendAuditEvent(db, {
+          actorUserId: userId,
+          actorAgentId: safeAgentId,
+          teamId: project.owner_team_id,
+          projectId: project.id,
+          action: 'task_space_binding_replaced',
+          targetType: 'agent_binding',
+          targetId: binding.id,
+          detail: {
+            localRepoKey,
+            newBranchName: branchName,
+            newTaskSpaceId: taskSpace.id,
+            replaced: replacedBindings.map((item) => ({
+              bindingId: item.id,
+              taskSpaceId: item.task_space_id,
+              branchName: item.branch_name,
+            })),
+          },
+          occurredAt: now,
+        })
+      }
       const refreshedAccess = accessContext(actor)
       return {
         project: projectPublic(
@@ -579,6 +627,12 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
           status: binding.sync_status,
           readOnly: !['lead', 'member'].includes(member.role),
         },
+        replacedBindings: replacedBindings.map((item) => ({
+          id: item.id,
+          taskSpaceId: item.task_space_id,
+          branchName: item.branch_name,
+          status: 'revoked',
+        })),
       }
     })
   }

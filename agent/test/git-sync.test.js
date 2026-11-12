@@ -6,6 +6,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import {
+  assertRepositoryBranch,
   assertGitOperationAllowed,
   GIT_ARGUMENT_CONTRACT,
   inspectRepository,
@@ -102,6 +103,62 @@ test('Git 操作白名单拒绝危险命令', () => {
   assert.deepEqual(GIT_ARGUMENT_CONTRACT.forbidden.includes('push'), true)
   assert.throws(() => assertGitOperationAllowed('reset'), hasCode(AGENT_ERROR_CODE.GIT_FAILED))
   assert.doesNotThrow(() => assertGitOperationAllowed('fetch'))
+})
+
+test('任务同步分支门禁区分错分支和 detached HEAD', async () => {
+  const repo = initRepository()
+  try {
+    const hooks = hooksDir(repo.base)
+    const current = await assertRepositoryBranch({
+      repoPath: repo.local,
+      branchName: 'main',
+      hooksDir: hooks,
+    })
+    assert.equal(current.branchName, 'main')
+
+    git(repo.local, ['branch', 'feature/x'])
+    const featureWorktree = path.join(repo.base, 'feature-worktree')
+    git(repo.local, ['worktree', 'add', featureWorktree, 'feature/x'])
+    const feature = await assertRepositoryBranch({
+      repoPath: featureWorktree,
+      branchName: 'feature/x',
+      hooksDir: hooks,
+    })
+    const mainRepo = await inspectRepository({
+      repoPath: repo.local,
+      branchName: 'main',
+      hooksDir: hooks,
+      allowFileRemote: true,
+    })
+    const featureRepo = await inspectRepository({
+      repoPath: feature.root,
+      branchName: 'feature/x',
+      hooksDir: hooks,
+      allowFileRemote: true,
+    })
+    assert.notEqual(mainRepo.localRepoKey, featureRepo.localRepoKey)
+    await assert.rejects(
+      () =>
+        assertRepositoryBranch({
+          repoPath: repo.local,
+          branchName: 'feature/x',
+          hooksDir: hooks,
+        }),
+      hasCode(AGENT_ERROR_CODE.BRANCH_MISMATCH),
+    )
+    git(repo.local, ['checkout', '--detach'])
+    await assert.rejects(
+      () =>
+        assertRepositoryBranch({
+          repoPath: repo.local,
+          branchName: 'main',
+          hooksDir: hooks,
+        }),
+      hasCode(AGENT_ERROR_CODE.DETACHED_HEAD),
+    )
+  } finally {
+    fs.rmSync(repo.base, { recursive: true, force: true })
+  }
 })
 
 test('干净仓库完成 fetch 和 ff-only 同步并更新 HEAD', async () => {

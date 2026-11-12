@@ -77,6 +77,9 @@
   做大小写不敏感搜索；过滤只影响可见项，不改变已勾选或已存在状态。
 - 接入向导打开或切换仓库时，developer ID 默认使用当前登录账号的 `runtime.user.username`，不得使用
   显示名；用户手动输入或清空后，迟到的运行时用户数据不得覆盖该值，缺少用户名时保持为空并沿用现有校验。
+- 接入向导必须按规范化本地路径读取现有本地关联。同一仓库已有其他分支 binding 时，展示旧分支、
+  新分支和旧 taskSpace，并明确“不删除旧任务空间”；用户再次确认后才允许替换。Windows 路径比较
+  忽略大小写、斜杠方向和末尾分隔符。需要同时同步多个分支时提示使用独立 Git worktree。
 - 缺少 `.trellis` 或 `tasks` 时显示初始化面板；新建任务树后显示 `waiting_commit`、
   `waiting_push`、`branch_missing`、`remote_ahead`、`diverged`、`unable_to_verify`、`ready`
   的明确状态。已有任务树仅追加本机 Agent 工具时，这些配置不属于共享任务同步内容，不要求先

@@ -286,6 +286,8 @@ test('心跳绑定更新不覆盖本地实时同步状态', async (t) => {
   const config = makeConfig(repoPath)
   config.bindings[0].liveSyncStatus = 'error'
   config.bindings[0].liveSyncError = '实时同步失败：网络不可用'
+  config.bindings[0].lastErrorCode = 'BRANCH_MISMATCH'
+  config.bindings[0].lastError = '本地当前分支为 feature/x，绑定分支为 main'
   await store.saveConfig(config)
   const runtime = new AgentRuntime({
     store,
@@ -311,12 +313,65 @@ test('心跳绑定更新不覆盖本地实时同步状态', async (t) => {
         teamId: 'team-1',
         status: 'approved',
         readOnly: false,
+        branchName: 'main',
+        errorCode: null,
+        error: null,
       },
     ],
   })
   const updated = await store.readConfig({ allowMissing: false })
   assert.equal(updated.bindings[0].liveSyncStatus, 'error')
   assert.equal(updated.bindings[0].liveSyncError, '实时同步失败：网络不可用')
+  assert.equal(updated.bindings[0].lastErrorCode, 'BRANCH_MISMATCH')
+  assert.equal(updated.bindings[0].lastError, '本地当前分支为 feature/x，绑定分支为 main')
+})
+
+test('配置读取兼容历史双绑定，但禁止新增同仓库第二个有效绑定', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-agent-binding-convergence-'))
+  const repoPath = path.join(root, 'repo')
+  fs.mkdirSync(repoPath, { recursive: true })
+  const store = new ConfigStore(root, { secureDirectory: false })
+  try {
+    const config = makeConfig(repoPath)
+    await store.saveConfig(config)
+    const duplicate = {
+      ...config.bindings[0],
+      localId: 'local-2',
+      serverBindingId: 'binding-2',
+      taskSpaceId: 'space-2',
+      branchName: 'feature/x',
+    }
+    await assert.rejects(
+      () =>
+        store.updateConfig((current) => ({
+          ...current,
+          bindings: [...current.bindings, duplicate],
+        })),
+      (error) => error.code === AGENT_ERROR_CODE.CONFIG_INVALID,
+    )
+
+    fs.writeFileSync(
+      store.paths.configFile,
+      `${JSON.stringify(
+        {
+          ...config,
+          bindings: [config.bindings[0], duplicate],
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    const legacy = await store.readConfig({ allowMissing: false })
+    assert.equal(legacy.bindings.length, 2)
+    const updated = await store.updateConfig((current) => ({
+      ...current,
+      deviceName: '兼容状态写入',
+    }))
+    assert.equal(updated.deviceName, '兼容状态写入')
+    assert.equal(updated.bindings.length, 2)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('主循环领取白名单命令并上报结果，不发送仓库绝对路径', async () => {
