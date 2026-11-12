@@ -106,11 +106,16 @@
 
 ## 执行命令
 
+根 `npm test` 只跑宿主测试，默认不包含 `plugins/` 下的插件测试；插件测试必须显式运行。
+
 ```bash
-npm test
-node --test tests/*.test.js plugins/*/test/*.test.js
+npm test                                  # 宿主测试：tests/*.test.js
+npm run test:plugins                      # 插件测试：plugins/*/test/*.test.js
+npm run test:all                          # 宿主 + 插件一起跑
 TRELLIS_REAL_ACP=1 node --test plugins/acp-dispatch/test/real.test.js
 ```
+
+CI（`.github/workflows/windows.yml`）只执行 `npm test`，同样不跑插件测试；插件测试由插件维护者在本地或插件自己的仓库中执行。
 
 ## 新增插件检查清单
 

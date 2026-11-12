@@ -190,7 +190,8 @@ Web 创建带负责人的任务或改派时，服务端只向目标用户唯一�
 
 管理接口：`GET /api/plugins`、`POST /api/plugins/<id>/start|stop`、`GET /api/plugins/<id>/logs|runs|audit`；
 前端入口在左侧导航「插件」。设置 `TRELLIS_PLUGINS_DISABLED=1` 可整体关闭。
-内置插件的功能测试与 fixture 放在 `plugins/<id>/test/`，宿主级协议测试仍在 `tests/`。
+内置插件的功能测试与 fixture 放在 `plugins/<id>/test/`，宿主级协议测试仍在 `tests/`；
+`npm test` 默认只跑宿主测试，插件测试用 `npm run test:plugins`。
 
 插件默认没有沙箱：`acp-dispatch` 默认放行编辑与执行，只应在受信仓库、专用账号下启用。
 
