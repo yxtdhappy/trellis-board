@@ -609,6 +609,42 @@ async fn sync_deferred_tasks(
 }
 
 #[tauri::command]
+async fn list_task_ownership(
+    app: AppHandle,
+    window: WebviewWindow,
+    task_space_id: String,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
+    agent_service::list_task_ownership(&app, &task_space_id).await
+}
+
+#[tauri::command]
+async fn set_task_ownership(
+    app: AppHandle,
+    window: WebviewWindow,
+    task_space_id: String,
+    decisions: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    if window.label() == "live-control" {
+        ensure_local_caller(&window)?;
+    } else {
+        ensure_board_caller(&app, &window)?;
+    }
+    let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
+    let count = decisions
+        .as_array()
+        .map(Vec::len)
+        .ok_or_else(|| "任务归属决定必须是数组".to_string())?;
+    if !(1..=200).contains(&count) {
+        return Err("任务归属决定必须包含 1 到 200 个任务".to_string());
+    }
+    let result = agent_service::set_task_ownership(&app, &task_space_id, decisions).await?;
+    agent_service::clear_control(&app);
+    Ok(result)
+}
+
+#[tauri::command]
 async fn desktop_sidecar_status(
     app: AppHandle,
     window: WebviewWindow,
@@ -846,6 +882,8 @@ fn main() {
             inspect_associated_project_agents,
             initialize_associated_project_agents,
             sync_deferred_tasks,
+            list_task_ownership,
+            set_task_ownership,
             desktop_sidecar_status,
             runtime_status,
             runtime_install,
@@ -904,6 +942,10 @@ mod tests {
             deferred_task_dirs: Vec::new(),
             last_error_code: None,
             last_error: None,
+            ownership_paused_count: 0,
+            ownership_paused_task_dirs: Vec::new(),
+            ownership_pending_count: 0,
+            ownership_pending_task_dirs: Vec::new(),
         }
     }
 

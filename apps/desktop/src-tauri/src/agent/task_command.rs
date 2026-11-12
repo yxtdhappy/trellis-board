@@ -331,7 +331,15 @@ async fn create_task(
                 && task.get("assignee").and_then(Value::as_str) == Some(assignee.as_str())
             {
                 let task_dir = format!(".trellis/tasks/{slug}");
-                let task_id = task_id_of(&task, &task_dir)?;
+                set_task_directory_branch(repo_path, &task_dir, &binding.branch_name).await?;
+                let updated = read_task_json_opt(&existing.join("task.json"))
+                    .await?
+                    .ok_or_else(|| AgentError::new(code::GIT_FAILED, "task.py 未保留任务文件"))?;
+                if updated.get("branch").and_then(Value::as_str) != Some(binding.branch_name.as_str())
+                {
+                    return protocol::err(code::GIT_FAILED, "task.py 未能写入任务的分支归属");
+                }
+                let task_id = task_id_of(&updated, &task_dir)?;
                 return finish_create(context, binding, command, &task_dir, &task_id).await;
             }
             return protocol::err(
@@ -379,9 +387,13 @@ async fn create_task(
         );
     }
     let task_dir = format!(".trellis/tasks/{}", created[0]);
+    set_task_directory_branch(repo_path, &task_dir, &binding.branch_name).await?;
     let task = read_task_json_opt(&tasks_root.join(created[0].as_str()).join("task.json"))
         .await?
         .ok_or_else(|| AgentError::new(code::GIT_FAILED, "task.py 未生成可读取的 task.json"))?;
+    if task.get("branch").and_then(Value::as_str) != Some(binding.branch_name.as_str()) {
+        return protocol::err(code::GIT_FAILED, "task.py 未能写入任务的分支归属");
+    }
     let status = git::status(repo_path, hooks_dir)
         .await
         .map_err(|_| AgentError::new(code::GIT_FAILED, "无法校验命令执行后的 Git 状态"))?;
@@ -752,6 +764,22 @@ async fn run_task_python(repo_path: &Path, args: &[String]) -> AgentResult<()> {
         code::GIT_FAILED,
         "客户端找不到 Python 运行环境，无法执行项目 task.py",
     )
+}
+
+pub(crate) async fn set_task_directory_branch(
+    repo_path: &Path,
+    task_dir: &str,
+    branch_name: &str,
+) -> AgentResult<()> {
+    run_task_python(
+        repo_path,
+        &[
+            "set-branch".to_string(),
+            task_dir.to_string(),
+            branch_name.to_string(),
+        ],
+    )
+    .await
 }
 
 fn is_spawn_failure(error: &AgentError) -> bool {

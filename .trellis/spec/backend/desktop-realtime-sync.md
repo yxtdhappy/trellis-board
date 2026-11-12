@@ -453,3 +453,6 @@ await api.uploadTaskSpaceChanges(taskSpaceId, {
 ```
 
 每次真正发出写入前都重新读取真实分支；服务端再校验 taskSpace 和 binding，任何不一致都不写快照。
+
+任务级分支归属、ownership API、冲突幂等和历史清理约束见
+[任务级分支归属与冲突幂等](./task-ownership-and-conflict-idempotency.md)。

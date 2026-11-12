@@ -29,9 +29,23 @@ type DiffFile = {
   changedBy?: ChangedBy | string
 }
 type DiffResult = { taskId?: string; taskTitle?: string; files?: DiffFile[] }
+type OwnershipChoice = { taskSpaceId?: string; branchName?: string }
+type OwnershipItem = {
+  taskId?: string
+  taskDir: string
+  title?: string
+  branchName?: string | null
+  choices?: OwnershipChoice[]
+}
 type ControlEvent =
   | { type: 'initial_sync_review'; taskSpaceId?: string; differences?: Difference[] }
   | { type: 'task_file_conflict'; taskSpaceId?: string; conflict?: Conflict }
+  | {
+      type: 'task_ownership_review'
+      taskSpaceId?: string
+      branchName?: string
+      items?: OwnershipItem[]
+    }
   | { type: 'task_sync_error'; taskSpaceId?: string; message?: string }
 type ReviewOption = { value: string; label: string }
 type Action = { label: string; action: string; variant?: 'default' | 'destructive' | 'outline' }
@@ -232,6 +246,8 @@ export function ControlApp() {
   const [errorText, setErrorText] = useState<string | null>(null)
   const [diff, setDiff] = useState<DiffResult | null>(null)
   const [choices, setChoices] = useState<Record<string, string>>({})
+  const [ownershipSelected, setOwnershipSelected] = useState<Set<string>>(() => new Set())
+  const [ownershipBranches, setOwnershipBranches] = useState<Record<string, string>>({})
   const signatureRef = useRef('')
 
   async function refresh() {
@@ -246,6 +262,18 @@ export function ControlApp() {
         setExpanded(false)
         setDiff(null)
         setChoices({})
+        if (next?.type === 'task_ownership_review') {
+          const items = next.items ?? []
+          setOwnershipSelected(new Set(items.map((item) => item.taskDir)))
+          setOwnershipBranches(
+            Object.fromEntries(
+              items.map((item) => [item.taskDir, item.branchName || next.branchName || '']),
+            ),
+          )
+        } else {
+          setOwnershipSelected(new Set())
+          setOwnershipBranches({})
+        }
       }
     } catch (error) {
       setErrorText(errorTextOf(error, '读取待确认事件失败'))
@@ -322,6 +350,29 @@ export function ControlApp() {
             mode: action,
           })
         }
+      } else if (event.type === 'task_ownership_review') {
+        const selected = new Set(ownershipSelected)
+        const items = (event.items ?? []).filter((item) => selected.has(item.taskDir))
+        if (!items.length) throw new Error('请至少选择一个任务')
+        const decisions = items.map((item) => {
+          if (action === 'ownership-defer') {
+            return { taskDir: item.taskDir, action: 'defer' }
+          }
+          return {
+            taskDir: item.taskDir,
+            action: 'use-branch',
+            branchName:
+              action === 'ownership-current'
+                ? event.branchName
+                : ownershipBranches[item.taskDir] || event.branchName,
+          }
+        })
+        for (let index = 0; index < decisions.length; index += 200) {
+          await call('set_task_ownership', {
+            taskSpaceId: event.taskSpaceId,
+            decisions: decisions.slice(index, index + 200),
+          })
+        }
       }
       setEvent(null)
       setBusy(false)
@@ -344,6 +395,20 @@ export function ControlApp() {
       : []
   const conflict = event?.type === 'task_file_conflict' ? (event.conflict ?? {}) : null
   const conflictSource = formatSource(conflict?.files?.find((file) => file.changedBy)?.changedBy)
+  const ownershipItems =
+    event?.type === 'task_ownership_review' ? (event.items ?? []) : []
+  const ownershipChoices =
+    event?.type === 'task_ownership_review'
+      ? [...new Map(
+          ownershipItems
+            .flatMap((item) => item.choices ?? [])
+            .filter(
+              (choice): choice is OwnershipChoice & { branchName: string } =>
+                typeof choice.branchName === 'string' && Boolean(choice.branchName),
+            )
+            .map((choice) => [choice.branchName, choice] as const),
+        ).values()]
+      : []
 
   let title = '当前没有待处理事件'
   if (!loaded) title = '正在读取待确认事件…'
@@ -351,6 +416,7 @@ export function ControlApp() {
   else if (event?.type === 'initial_sync_review') title = '任务差异需要确认'
   else if (conflict)
     title = `任务「${conflict.taskTitle || conflict.taskId || '未知任务'}」发生冲突`
+  else if (event?.type === 'task_ownership_review') title = '任务归属需要确认'
   else if (event?.type === 'task_sync_error') title = '任务同步失败'
 
   let message = ''
@@ -362,6 +428,8 @@ export function ControlApp() {
     message = conflictSource
       ? `${conflictSource} 修改了该任务。本次没有覆盖任何文件，请选择保留哪一份。`
       : '任务文件已发生变化。本次没有覆盖任何文件，请选择保留哪一份。'
+  else if (event?.type === 'task_ownership_review')
+    message = '以下任务无法唯一判断属于哪个分支。可批量归属、逐项选择或暂不处理。'
   else if (event?.type === 'task_sync_error')
     message = event.message || '任务空间同步暂时失败，请稍后重试。'
 
@@ -386,6 +454,13 @@ export function ControlApp() {
       { label: '用我的版本覆盖', action: 'overwrite-server', variant: 'destructive' },
       { label: '仅保存本地副本', action: 'save-local-copy' },
       { label: '稍后处理', action: 'close' },
+    ]
+  } else if (event?.type === 'task_ownership_review') {
+    actions = [
+      { label: '归属当前分支', action: 'ownership-current', variant: 'default' },
+      { label: '应用逐项选择', action: 'ownership-apply' },
+      { label: '暂不处理', action: 'ownership-defer' },
+      { label: '关闭窗口', action: 'close' },
     ]
   } else if (event?.type === 'task_sync_error') {
     actions = [{ label: '关闭', action: 'close', variant: 'default' }]
@@ -486,6 +561,56 @@ export function ControlApp() {
                 </>
               ) : null}
             </dl>
+          ) : null}
+
+          {!diff && event?.type === 'task_ownership_review' ? (
+            <div className="flex flex-col gap-2 text-xs">
+              {ownershipItems.map((item) => (
+                <div key={item.taskDir} className="rounded-md bg-muted/50 p-3">
+                  <label className="flex items-start gap-2 font-medium text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={ownershipSelected.has(item.taskDir)}
+                      onChange={(change) =>
+                        setOwnershipSelected((current) => {
+                          const next = new Set(current)
+                          if (change.target.checked) next.add(item.taskDir)
+                          else next.delete(item.taskDir)
+                          return next
+                        })
+                      }
+                    />
+                    <span>{item.title || item.taskId || item.taskDir}</span>
+                  </label>
+                  <p className="mt-1 break-all text-muted-foreground">{item.taskDir}</p>
+                  <p className="mt-1 text-muted-foreground">
+                    {item.branchName ? `当前归属：${item.branchName}` : '当前归属：未确认'}
+                  </p>
+                  <select
+                    className="mt-2 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+                    value={
+                      ownershipBranches[item.taskDir] || event.branchName || ''
+                    }
+                    onChange={(change) =>
+                      setOwnershipBranches((current) => ({
+                        ...current,
+                        [item.taskDir]: change.target.value,
+                      }))
+                    }
+                  >
+                    {ownershipChoices.length ? (
+                      ownershipChoices.map((choice) => (
+                        <option key={choice.branchName} value={choice.branchName}>
+                          {choice.branchName}
+                        </option>
+                      ))
+                    ) : (
+                      <option value={event.branchName || ''}>{event.branchName || '当前分支'}</option>
+                    )}
+                  </select>
+                </div>
+              ))}
+            </div>
           ) : null}
 
           {!diff && event?.type === 'task_sync_error' ? (

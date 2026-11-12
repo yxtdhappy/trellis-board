@@ -110,12 +110,16 @@ export function validateSnapshotFile(file) {
   }
 }
 
-function parseTaskId(content) {
+function parseTaskMetadata(content) {
   try {
     const value = JSON.parse(content)
-    return typeof value?.id === 'string' && value.id.trim() ? value.id.trim() : null
+    return {
+      taskId: typeof value?.id === 'string' && value.id.trim() ? value.id.trim() : null,
+      taskBranch:
+        typeof value?.branch === 'string' && value.branch.trim() ? value.branch.trim() : null,
+    }
   } catch {
-    return null
+    return { taskId: null, taskBranch: null }
   }
 }
 
@@ -142,11 +146,18 @@ export function groupTaskSnapshotFiles(
       archiveMonth: file.archiveMonth,
       files: [],
       taskId: null,
+      taskBranch: null,
     }
     if (current.archived !== file.archived) throw new Error('同一批次不能混合活动与归档任务路径')
     current.files.push(file)
-    if (file.filePath === 'task.json' && !file.deleted && !current.taskId) {
-      current.taskId = parseTaskId(file.content)
+    if (
+      file.filePath === 'task.json' &&
+      !file.deleted &&
+      (!current.taskId || !current.taskBranch)
+    ) {
+      const metadata = parseTaskMetadata(file.content)
+      current.taskId ||= metadata.taskId
+      current.taskBranch ||= metadata.taskBranch
     }
     grouped.set(file.taskDir, current)
   }

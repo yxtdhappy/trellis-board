@@ -5,11 +5,27 @@ const LIVE_SYNC_PRIORITY = {
   ready: 1,
 }
 
+export function associationOwnershipCounts(association) {
+  const count = (value) => (Number.isSafeInteger(value) && value > 0 ? value : 0)
+  const pausedCount = count(association?.ownershipPausedCount)
+  const pendingCount = count(association?.ownershipPendingCount)
+  return {
+    pausedCount,
+    pendingCount,
+    totalCount: pausedCount + pendingCount,
+  }
+}
+
 function associationPriority(association) {
   if (!association) return 0
   if (association.status !== 'approved') return 5
   const syncPriority = LIVE_SYNC_PRIORITY[association.liveSyncStatus] || LIVE_SYNC_PRIORITY.pending
-  return Math.max(syncPriority, association.deferredCount > 0 ? 2.5 : 0)
+  return Math.max(
+    syncPriority,
+    association.deferredCount > 0 || associationOwnershipCounts(association).totalCount > 0
+      ? 2.5
+      : 0,
+  )
 }
 
 export function isBranchAssociationPaused(association) {

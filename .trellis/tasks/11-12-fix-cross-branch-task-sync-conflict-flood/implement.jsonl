@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"任务快照、分支校验、CAS、冲突、游标和桌面控制窗口的核心契约"}
+{"file":".trellis/spec/backend/task-ownership-and-conflict-idempotency.md","reason":"任务级 branch 门禁、ownership API、冲突复用和历史清理契约"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"Team Agent、taskSpace 投影和桌面同步的模块边界与依赖方向"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Node 测试、SQLite 事务、错误处理和后端审查要求"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"ProjectRail、创建任务弹层、Tauri 关联状态和弹层交互规范"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Agent、服务端、Web 和 Tauri 跨层契约与回归检查"}

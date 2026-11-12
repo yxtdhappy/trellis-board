@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchTaskSpaceAssignees, logout, type TaskSpaceAssignee } from '@/api/board'
-import { ProjectRail } from '@/components/layout/ProjectRail'
+import { ProjectRail, type LocalAssociation } from '@/components/layout/ProjectRail'
 import { TopBar, type BoardNavItem } from '@/components/layout/TopBar'
+import { isBranchAssociationPaused } from '@/lib/project-rail-association.js'
 import { useBoard } from '@/hooks/useBoard'
 import { AttentionQueue } from '@/features/board/AttentionQueue'
 import { ArchiveView } from '@/features/board/ArchiveView'
@@ -55,6 +56,7 @@ export function BoardPage() {
   const [projectsOpen, setProjectsOpen] = useState(false)
   const [viewsOpen, setViewsOpen] = useState(false)
   const [taskAssignees, setTaskAssignees] = useState<TaskSpaceAssignee[]>([])
+  const [localAssociations, setLocalAssociations] = useState<LocalAssociation[]>([])
 
   const {
     board,
@@ -114,6 +116,23 @@ export function BoardPage() {
     [panels],
   )
   const activePanel = panels.find((panel) => `panel:${panel.pluginId}:${panel.id}` === view)
+  const createProject =
+    filters.projectId === 'all'
+      ? projects[0]
+      : projects.find((project) => project.id === filters.projectId)
+  const createProjectId = createProject?.id || ''
+  const localTaskSpaceId =
+    createProject?.taskSpaces?.find((taskSpace) =>
+      localAssociations.some(
+        (association) =>
+          association.projectId === createProjectId &&
+          association.taskSpaceId === taskSpace.id &&
+          association.status === 'approved' &&
+          !association.readOnly &&
+          association.liveSyncStatus !== 'error' &&
+          !isBranchAssociationPaused(association),
+      ),
+    )?.id || ''
 
   useEffect(() => {
     setSelected(null)
@@ -219,6 +238,7 @@ export function BoardPage() {
           syncLive={!controller.status?.refreshRunning}
           refreshing={Boolean(controller.status?.refreshRunning) || loading}
           onRefresh={() => void actions.refresh()}
+          onAssociationsChange={setLocalAssociations}
         />
 
         <main className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
@@ -332,6 +352,8 @@ export function BoardPage() {
         onOpenChange={setCreateOpen}
         projects={projects}
         defaultProjectId={filters.projectId}
+        defaultTaskSpaceId={filters.taskSpaceId === 'all' ? '' : filters.taskSpaceId}
+        localTaskSpaceId={localTaskSpaceId}
         onCreate={actions.createTask}
       />
       <AssignmentsDialog

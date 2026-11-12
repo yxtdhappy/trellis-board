@@ -88,6 +88,11 @@ function taskIdFromJson(content) {
   return typeof value?.id === 'string' && value.id.trim() ? value.id.trim() : null
 }
 
+function taskBranchFromJson(content) {
+  const value = parseJson(content, null)
+  return typeof value?.branch === 'string' && value.branch.trim() ? value.branch.trim() : null
+}
+
 function taskTitleFromJson(content) {
   const value = parseJson(content, null)
   return typeof value?.title === 'string' && value.title.trim() ? value.title.trim() : null
@@ -224,6 +229,57 @@ export function createTaskSnapshotService({
     }
   }
 
+  function taskOwnership(agent, taskSpaceId, input = {}) {
+    const { space } = bindingContext(agent, taskSpaceId)
+    if (input.taskIds != null && !Array.isArray(input.taskIds)) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, 'taskIds 必须是数组')
+    }
+    const rawTaskIds = Array.isArray(input.taskIds) ? input.taskIds : []
+    if (rawTaskIds.length > 200) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, '单次最多查询 200 个任务 ID')
+    }
+    const taskIds = [...new Set(rawTaskIds.map((value) => requestId(value, '任务 ID')))].sort()
+    const projectTaskSpaces = taskSpaces
+      .listTaskSpaces(space.project_id, taskSpaces.actorContext(agent.userId))
+      .filter((item) => item.status !== 'disabled')
+      .map((item) => ({
+        taskSpaceId: item.id,
+        branchName: item.branchName,
+      }))
+    if (!taskIds.length) return { projectTaskSpaces, tasks: [] }
+
+    const taskSpacesById = new Map(projectTaskSpaces.map((item) => [item.taskSpaceId, item]))
+    const rows = db
+      .prepare(`
+        SELECT f.task_space_id, f.task_id, f.task_dir, f.relative_path, f.content_text
+        FROM sync_task_space_file f
+        JOIN sync_task_space s ON s.id = f.task_space_id
+        WHERE s.project_id = ? AND s.status != 'disabled' AND f.deleted = 0
+          AND f.task_id IN (${taskIds.map(() => '?').join(', ')})
+        ORDER BY f.task_space_id, f.task_dir
+      `)
+      .all(space.project_id, ...taskIds)
+    const claimsByTaskId = new Map()
+    for (const row of rows) {
+      const projectSpace = taskSpacesById.get(row.task_space_id)
+      if (!projectSpace || row.relative_path !== `${row.task_dir}/task.json`) continue
+      const claims = claimsByTaskId.get(row.task_id) || []
+      claims.push({
+        taskSpaceId: row.task_space_id,
+        branchName: projectSpace.branchName,
+        taskBranch: taskBranchFromJson(row.content_text),
+      })
+      claimsByTaskId.set(row.task_id, claims)
+    }
+    return {
+      projectTaskSpaces,
+      tasks: taskIds.map((taskId) => ({
+        taskId,
+        claims: claimsByTaskId.get(taskId) || [],
+      })),
+    }
+  }
+
   function currentPathRows(taskSpaceId, paths) {
     if (!paths.length) return new Map()
     return new Map(
@@ -255,7 +311,7 @@ export function createTaskSnapshotService({
     return rows
   }
 
-  function validateCompleteTaskGroups(taskSpaceId, files) {
+  function validateCompleteTaskGroups(taskSpaceId, files, expectedBranchName) {
     const taskDirs = [...new Set(files.map((file) => file.taskDir))]
     if (taskDirs.length > 2) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, '单批最多只能涉及一个任务目录或一次归档移动')
@@ -297,6 +353,28 @@ export function createTaskSnapshotService({
       const taskId = taskIdFromJson(taskJson.content_text)
       if (!taskId) {
         throw teamError(409, ERROR_CODES.CONFLICT, 'task.json 缺少稳定任务 ID，整批拒绝')
+      }
+      const taskBranch = taskBranchFromJson(taskJson.content_text)
+      const details = {
+        taskId,
+        taskDir,
+        expectedBranchName,
+        actualBranchName: taskBranch,
+      }
+      if (!taskBranch) {
+        throw teamError(409, 'TASK_OWNERSHIP_REQUIRED', 'task.json 缺少分支归属，整批拒绝', {
+          details,
+        })
+      }
+      if (taskBranch !== expectedBranchName) {
+        throw teamError(
+          409,
+          'TASK_OWNERSHIP_MISMATCH',
+          'task.json 分支与任务空间不一致，整批拒绝',
+          {
+            details,
+          },
+        )
       }
       const previousId = previousIds.get(taskDir)
       if (previousId && previousId !== taskId) {
@@ -350,26 +428,47 @@ export function createTaskSnapshotService({
     clientSequence,
     batchId,
   }) {
-    const id = crypto.randomUUID()
     const timestamp = now().toISOString()
-    db.prepare(`
-      INSERT INTO sync_conflict(
-        id, task_space_id, task_id, task_dir, files_json, server_revision,
-        client_sequence, batch_id, status, created_by_user_id, created_by_agent_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
-    `).run(
-      id,
-      taskSpaceId,
-      taskId,
-      taskDir,
-      JSON.stringify(files),
-      serverRevision,
-      clientSequence,
-      batchId,
-      agent.userId,
-      agent.id,
-      timestamp,
-    )
+    const filesJson = JSON.stringify(files)
+    const existing = db
+      .prepare(`
+        SELECT *
+        FROM sync_conflict
+        WHERE task_space_id = ? AND created_by_agent_id = ?
+          AND (task_id = ? OR (task_id IS NULL AND task_dir = ?))
+          AND status = 'pending'
+        ORDER BY (task_id = ?) DESC, created_at DESC, rowid DESC
+        LIMIT 1
+      `)
+      .get(taskSpaceId, agent.id, taskId, taskDir, taskId)
+    const id = existing?.id || crypto.randomUUID()
+    if (existing) {
+      db.prepare(`
+        UPDATE sync_conflict
+        SET task_id = ?, task_dir = ?, files_json = ?, server_revision = ?,
+            client_sequence = ?, batch_id = ?
+        WHERE id = ?
+      `).run(taskId, taskDir, filesJson, serverRevision, clientSequence, batchId, id)
+    } else {
+      db.prepare(`
+        INSERT INTO sync_conflict(
+          id, task_space_id, task_id, task_dir, files_json, server_revision,
+          client_sequence, batch_id, status, created_by_user_id, created_by_agent_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+      `).run(
+        id,
+        taskSpaceId,
+        taskId,
+        taskDir,
+        filesJson,
+        serverRevision,
+        clientSequence,
+        batchId,
+        agent.userId,
+        agent.id,
+        timestamp,
+      )
+    }
     return {
       status: 409,
       code: 'TASK_FILE_CONFLICT',
@@ -456,7 +555,7 @@ export function createTaskSnapshotService({
           },
         })
       }
-      const complete = validateCompleteTaskGroups(taskSpaceId, files)
+      const complete = validateCompleteTaskGroups(taskSpaceId, files, space.branch_name)
       const current = currentPathRows(
         taskSpaceId,
         files.map((file) => file.path),
@@ -667,10 +766,18 @@ export function createTaskSnapshotService({
     bindingContext(agent, taskSpaceId)
     return db
       .prepare(`
-      SELECT *
-      FROM sync_conflict
-      WHERE task_space_id = ? AND status = 'pending'
-      ORDER BY created_at DESC
+      WITH ranked AS (
+        SELECT c.*, c.rowid AS conflict_rowid,
+               ROW_NUMBER() OVER (
+                 PARTITION BY c.created_by_agent_id, COALESCE(c.task_id, c.task_dir)
+                 ORDER BY c.created_at DESC, c.rowid DESC
+               ) AS conflict_rank
+        FROM sync_conflict c
+        WHERE c.task_space_id = ? AND c.status = 'pending'
+      )
+      SELECT * FROM ranked
+      WHERE conflict_rank = 1
+      ORDER BY created_at DESC, conflict_rowid DESC
     `)
       .all(taskSpaceId)
       .map((row) => ({
@@ -820,6 +927,7 @@ export function createTaskSnapshotService({
     snapshot,
     directorySnapshot,
     preflight,
+    taskOwnership,
     applyChanges,
     writeCursor,
     listConflicts,

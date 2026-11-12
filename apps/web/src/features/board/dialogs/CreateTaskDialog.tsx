@@ -27,6 +27,8 @@ type CreateTaskDialogProps = {
     taskSpaces?: { id: string; branchName: string }[]
   }[]
   defaultProjectId: string
+  defaultTaskSpaceId?: string
+  localTaskSpaceId?: string
   onCreate: (payload: Record<string, unknown>) => Promise<void>
 }
 
@@ -35,6 +37,8 @@ export function CreateTaskDialog({
   onOpenChange,
   projects,
   defaultProjectId,
+  defaultTaskSpaceId = '',
+  localTaskSpaceId = '',
   onCreate,
 }: CreateTaskDialogProps) {
   const [projectId, setProjectId] = useState(
@@ -66,14 +70,22 @@ export function CreateTaskDialog({
   }, [open, projects, defaultProjectId])
 
   const selectedProject = projects.find((project) => project.id === projectId)
-  const taskSpaces = selectedProject?.taskSpaces || []
+  const taskSpaces = useMemo(() => selectedProject?.taskSpaces || [], [selectedProject])
 
   useEffect(() => {
     if (!open) return
-    if (taskSpaces.some((taskSpace) => taskSpace.id === taskSpaceId)) return
-    setTaskSpaceId(taskSpaces[0]?.id || '')
+    if (taskSpaces.some((taskSpace) => taskSpace.id === taskSpaceId)) {
+      if (taskSpaces.length > 1) return
+      setTaskSpaceId(taskSpaces[0].id)
+      return
+    }
+    const preferred =
+      taskSpaces.find((taskSpace) => taskSpace.id === defaultTaskSpaceId) ||
+      taskSpaces.find((taskSpace) => taskSpace.id === localTaskSpaceId) ||
+      taskSpaces[0]
+    setTaskSpaceId(preferred?.id || '')
     setAssigneeUserId('')
-  }, [open, taskSpaceId, taskSpaces])
+  }, [defaultTaskSpaceId, localTaskSpaceId, open, taskSpaceId, taskSpaces])
 
   useEffect(() => {
     if (!open || !taskSpaceId) {
@@ -178,19 +190,27 @@ export function CreateTaskDialog({
                 onChange={setProjectId}
               />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="create-task-space">共享分支任务空间</Label>
-              <SelectField
-                id="create-task-space"
-                value={taskSpaceId}
-                placeholder={taskSpaces.length ? '请选择分支' : '该项目还没有任务空间'}
-                options={taskSpaces.map((taskSpace) => ({
-                  value: taskSpace.id,
-                  label: taskSpace.branchName,
-                }))}
-                onChange={setTaskSpaceId}
-              />
-            </div>
+            {taskSpaces.length > 1 ? (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="create-task-space">共享分支任务空间</Label>
+                <SelectField
+                  id="create-task-space"
+                  value={taskSpaceId}
+                  placeholder="请选择分支"
+                  options={taskSpaces.map((taskSpace) => ({
+                    value: taskSpace.id,
+                    label: taskSpace.branchName,
+                  }))}
+                  onChange={setTaskSpaceId}
+                />
+              </div>
+            ) : taskSpaces.length === 1 ? (
+              <p className="text-xs text-muted-foreground">
+                同步任务空间：{taskSpaces[0].branchName}
+              </p>
+            ) : (
+              <p className="text-xs text-destructive">该项目还没有可用的分支任务空间。</p>
+            )}
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="create-title">任务标题</Label>
               <Input

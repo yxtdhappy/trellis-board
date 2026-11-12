@@ -6,7 +6,17 @@ type ProjectRailAssociation = {
   status: string
   liveSyncStatus: 'pending' | 'syncing' | 'ready' | 'error'
   deferredCount?: number
+  ownershipPausedCount?: number
+  ownershipPendingCount?: number
   lastErrorCode?: string | null
+}
+
+export function associationOwnershipCounts<TAssociation extends ProjectRailAssociation>(
+  association: TAssociation | undefined,
+): {
+  pausedCount: number
+  pendingCount: number
+  totalCount: number
 }
 
 export function isBranchAssociationPaused(association: ProjectRailAssociation | undefined): boolean

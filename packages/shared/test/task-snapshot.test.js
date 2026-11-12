@@ -43,14 +43,35 @@ test('识别活动目录和归档目录', () => {
   )
 })
 
-test('按完整任务目录分组并提取 task.json id', () => {
+test('按完整任务目录分组并提取 task.json 元数据', () => {
   const groups = groupTaskSnapshotFiles([
-    file('.trellis/tasks/11-10-demo/task.json', JSON.stringify({ id: 'demo', title: '示例' })),
+    file(
+      '.trellis/tasks/11-10-demo/task.json',
+      JSON.stringify({ id: 'demo', title: '示例', branch: ' main ' }),
+    ),
     file('.trellis/tasks/11-10-demo/prd.md', '# PRD\n'),
   ])
   assert.equal(groups.length, 1)
   assert.equal(groups[0].taskId, 'demo')
+  assert.equal(groups[0].taskBranch, 'main')
   assert.equal(groups[0].files.length, 2)
+})
+
+test('task.json 分支缺失、非法或非字符串时按未归属处理', () => {
+  const groups = groupTaskSnapshotFiles([
+    file('.trellis/tasks/11-10-empty/task.json', JSON.stringify({ id: 'empty', branch: '  ' })),
+    file('.trellis/tasks/11-10-number/task.json', JSON.stringify({ id: 'number', branch: 1 })),
+    file('.trellis/tasks/11-10-invalid/task.json', '{invalid'),
+    file(
+      '.trellis/tasks/archive/2026-11/11-10-archive/task.json',
+      JSON.stringify({ id: 'archive', branch: 'feature/x' }),
+    ),
+  ])
+  const byDir = new Map(groups.map((group) => [group.taskDir, group]))
+  assert.equal(byDir.get('.trellis/tasks/11-10-empty').taskBranch, null)
+  assert.equal(byDir.get('.trellis/tasks/11-10-number').taskBranch, null)
+  assert.equal(byDir.get('.trellis/tasks/11-10-invalid').taskId, null)
+  assert.equal(byDir.get('.trellis/tasks/archive/2026-11/11-10-archive').taskBranch, 'feature/x')
 })
 
 test('CRLF 与 LF 规范化为同一摘要', () => {

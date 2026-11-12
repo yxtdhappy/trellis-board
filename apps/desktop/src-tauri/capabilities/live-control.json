@@ -11,6 +11,7 @@
     "allow-live-control-decide",
     "allow-live-control-diff",
     "allow-live-control-initial",
-    "allow-live-control-dismiss"
+    "allow-live-control-dismiss",
+    "allow-set-task-ownership"
   ]
 }

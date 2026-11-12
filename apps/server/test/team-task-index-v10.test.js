@@ -91,6 +91,7 @@ function files(taskId, branchText = '') {
         priority: 'P2',
         assignee: 'alice',
         creator: 'alice',
+        branch: 'main',
       }),
       baseSha256: null,
     },
@@ -102,7 +103,7 @@ function files(taskId, branchText = '') {
   ]
 }
 
-function taskFiles(taskDir, taskId, title) {
+function taskFiles(taskDir, taskId, title, branch = 'main') {
   return [
     {
       path: `${taskDir}/task.json`,
@@ -114,6 +115,7 @@ function taskFiles(taskDir, taskId, title) {
         priority: 'P2',
         assignee: 'alice',
         creator: 'alice',
+        branch,
       }),
       baseSha256: null,
     },
@@ -204,12 +206,12 @@ test('全部项目查询覆盖多个项目与分支，并保持权限、筛选�
     ctx.snapshots.applyChanges(ctx.agent, dev.taskSpace.id, {
       batchId: 'batch-all-dev-shared',
       clientSequence: 1,
-      files: taskFiles('.trellis/tasks/11-10-shared', 'shared', '共享任务 dev'),
+      files: taskFiles('.trellis/tasks/11-10-shared', 'shared', '共享任务 dev', 'feature/dev-sync'),
     })
     ctx.snapshots.applyChanges(ctx.agent, dev.taskSpace.id, {
       batchId: 'batch-all-dev-only',
       clientSequence: 2,
-      files: taskFiles('.trellis/tasks/11-10-dev-only', 'dev-only', 'dev 任务'),
+      files: taskFiles('.trellis/tasks/11-10-dev-only', 'dev-only', 'dev 任务', 'feature/dev-sync'),
     })
     ctx.snapshots.applyChanges(ctx.agent, other.taskSpace.id, {
       batchId: 'batch-all-other',
@@ -335,7 +337,12 @@ test('分支筛选使用 Unicode 大小写不敏感匹配', async () => {
     ctx.snapshots.applyChanges(ctx.agent, unicode.taskSpace.id, {
       batchId: 'batch-unicode-branch',
       clientSequence: 1,
-      files: taskFiles('.trellis/tasks/11-10-unicode', 'unicode', 'Unicode 分支任务'),
+      files: taskFiles(
+        '.trellis/tasks/11-10-unicode',
+        'unicode',
+        'Unicode 分支任务',
+        'feature/ÄBC-sync',
+      ),
     })
     await ctx.index.materializeNow(unicode.taskSpace.id)
 

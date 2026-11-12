@@ -746,6 +746,15 @@ function createRequestHandler({
       sendJson(response, 200, taskSnapshots.preflight(agent, preflightMatch[0], body))
       return true
     }
+    const ownershipMatch = routeMatch(
+      pathname,
+      /^\/api\/agent\/task-spaces\/([^/]+)\/task-ownership$/,
+    )
+    if (ownershipMatch && request.method === 'POST') {
+      const body = await readJsonBody(request)
+      sendJson(response, 200, taskSnapshots.taskOwnership(agent, ownershipMatch[0], body))
+      return true
+    }
     const changesMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/changes$/)
     if (changesMatch && request.method === 'POST') {
       const body = await readJsonBody(request, MAX_LIVE_BATCH_BYTES)

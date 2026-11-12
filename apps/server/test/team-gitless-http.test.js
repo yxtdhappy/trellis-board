@@ -257,6 +257,7 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
       status: 'planning',
       assignee: 'owner',
       priority: 'P1',
+      branch: 'main',
     },
     null,
     2,
@@ -309,6 +310,7 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
               status: 'planning',
               assignee: 'owner',
               priority: 'P2',
+              branch: 'main',
             })}\n`,
             baseSha256: null,
           },
@@ -414,6 +416,7 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
               status: 'planning',
               assignee: 'owner',
               priority: 'P2',
+              branch: 'dev',
             })}\n`,
             baseSha256: null,
           },
@@ -429,6 +432,29 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   )
   assert.equal(devChanges.status, 200, JSON.stringify(devChanges.body))
   await runtime.services.taskSpaceIndex.ensureMaterialized(devTaskSpaceId)
+
+  const ownership = await request(
+    runtime,
+    `/api/agent/task-spaces/${encodeURIComponent(taskSpaceId)}/task-ownership`,
+    {
+      method: 'POST',
+      agentCredential: enrolled.body.credential,
+      body: { taskIds: ['task-1', 'task-dev', 'missing'] },
+    },
+  )
+  assert.equal(ownership.status, 200, JSON.stringify(ownership.body))
+  assert.deepEqual(
+    new Set(ownership.body.projectTaskSpaces.map((item) => item.branchName)),
+    new Set(['main', 'dev']),
+  )
+  const ownershipByTask = new Map(ownership.body.tasks.map((item) => [item.taskId, item.claims]))
+  assert.deepEqual(ownershipByTask.get('task-1'), [
+    { taskSpaceId, branchName: 'main', taskBranch: 'main' },
+  ])
+  assert.deepEqual(ownershipByTask.get('task-dev'), [
+    { taskSpaceId: devTaskSpaceId, branchName: 'dev', taskBranch: 'dev' },
+  ])
+  assert.deepEqual(ownershipByTask.get('missing'), [])
 
   const allProjectsQuery = await request(runtime, '/api/tasks/query?limit=20', { cookie: session })
   assert.equal(allProjectsQuery.status, 200, JSON.stringify(allProjectsQuery.body))

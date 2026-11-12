@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  associationOwnershipCounts,
   countProjectPausedBranches,
   isBranchAssociationPaused,
   selectProjectAssociation,
@@ -183,4 +184,27 @@ test('其他项目和未批准关联不计入暂停分支', () => {
   ])
 
   assert.equal(countProjectPausedBranches(project, associations), 0)
+})
+
+test('任务级归属暂停和待确认会计入关联优先级', () => {
+  const project = {
+    taskSpaces: [{ id: 'space-ready' }, { id: 'space-ownership' }],
+  }
+  const associations = new Map([
+    ['space-ready', association('space-ready', 'ready')],
+    [
+      'space-ownership',
+      association('space-ownership', 'ready', {
+        ownershipPausedCount: 2,
+        ownershipPendingCount: 1,
+      }),
+    ],
+  ])
+
+  assert.deepEqual(associationOwnershipCounts(associations.get('space-ownership')), {
+    pausedCount: 2,
+    pendingCount: 1,
+    totalCount: 3,
+  })
+  assert.equal(selectProjectAssociation(project, associations)?.taskSpaceId, 'space-ownership')
 })

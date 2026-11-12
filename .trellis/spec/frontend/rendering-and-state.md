@@ -191,3 +191,136 @@ const tasks = (teamPage?.tasks || []).map(teamRowToBoardTask)
 - 首屏由三个 HTML 入口的内联脚本在 React 挂载前决定 `.dark` 类，避免闪烁。
 - 新增颜色一律使用 shadcn 语义 token；不要直接写 `#hex`、`bg-white`、`text-black`。
 - preset：`b3awTjpuKm`（mira / neutral / violet / indigo / Inter + Geist / radius default）。
+
+## 场景：任务归属确认与单/多分支选择
+
+### 1. Scope / Trigger
+
+- Trigger：修改 ProjectRail 本地关联状态、任务卡/分支选择、Tauri task ownership 命令、
+  批量归属弹层或 control window 的 `task_ownership_review` 时。
+- 目标：单分支不打扰用户；多分支只在归属无法唯一判断时批量确认一次，并让其他分支任务保持暂停，
+  防止 watcher 把残留目录同步到当前 taskSpace。
+
+### 2. Signatures
+
+Tauri：
+
+```text
+list_task_ownership(taskSpaceId)
+set_task_ownership(taskSpaceId, decisions)
+```
+
+`set_task_ownership.decisions`：
+
+```json
+[
+  { "taskDir": ".trellis/tasks/task-a", "action": "use-branch", "branchName": "main" },
+  { "taskDir": ".trellis/tasks/task-b", "action": "defer" }
+]
+```
+
+关联摘要新增：
+
+```text
+ownershipPausedCount
+ownershipPausedTaskDirs
+ownershipPendingCount
+ownershipPendingTaskDirs
+```
+
+control event：
+
+```json
+{
+  "type": "task_ownership_review",
+  "taskSpaceId": "space-main",
+  "branchName": "main",
+  "items": [
+    {
+      "taskId": "task-a",
+      "taskDir": ".trellis/tasks/task-a",
+      "title": "任务 A",
+      "choices": [
+        { "taskSpaceId": "space-main", "branchName": "main" },
+        { "taskSpaceId": "space-feature", "branchName": "codex/feature-a" }
+      ]
+    }
+  ]
+}
+```
+
+### 3. Contracts
+
+- `CreateTaskDialog` 只有 `taskSpaces.length > 1` 才显示分支选择；单分支直接显示只读空间名并自动选中。
+  默认顺序为当前查询 taskSpace、当前可写且未暂停的本地 binding、列表首项。
+- ProjectRail 分支行分别展示“任务因分支不匹配暂停”和“任务待确认归属”；`deferredCount` 继续只表示
+  首次同步延后任务，不能复用为 ownership 状态。
+- 点击 ownership 数量按需调用 `list_task_ownership`，不能在 3 秒关联轮询里读取全部候选，也不能把
+  ownership 状态写入 localStorage。
+- `TaskOwnershipDialog` 默认全选；支持归属当前分支、归属其他可见分支、暂不处理。一次最多提交 200 个，
+  超过时按批提交或分批处理；提交中禁用写操作，失败保留选择。
+- “暂不处理”只保留 cursor 的 `ownershipPending`；关闭 React 弹层不删除待确认状态。
+- control window 收到 `task_ownership_review` 时整批展示；关闭窗口等同 defer，只弹出一次；项目栏仍可再次打开。
+- 关联状态必须来自 `binding` 的 approved、可写、非同步错误、非 binding branch mismatch 状态；
+  不能把只读或旧错误 binding 当成创建任务默认值。
+- 所有远程 Board 可调用的 ownership 命令必须在 `board-local-association` capability 白名单中；
+  local control window 只额外开放 `set_task_ownership`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 项目只有一个 taskSpace | 隐藏选择器，自动显示并选中该分支 |
+| 项目有多个 taskSpace | 显示选择器，默认当前查询/当前 binding/首项 |
+| 本地关联只读、错误、暂停或未批准 | 不作为创建任务默认本地分支 |
+| ownership 候选为空 | 显示“当前没有需要处理归属的任务” |
+| ownership 候选超过 200 | 前端按 200 分批，不能一次调用 Tauri |
+| 未选择任何任务 | 写操作按钮禁用 |
+| 用户选择其他分支 | task.json.branch 写为该有效分支；当前 binding 下不立即上传 |
+| 用户选择当前分支 | 写入后立即同步并刷新 Board/关联摘要 |
+| 用户关闭 control window | 等同 defer，不删除 pending fingerprint |
+| 命令失败或权限失效 | 保留弹层/选择并显示服务端中文原因 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：单分支项目创建任务只看“同步任务空间：main”，没有多余 Select。
+- Good：多分支歧义任务首次打开一个批量弹层，全选后一次归属或暂不处理；重启后除非任务变化不再重复弹窗。
+- Good：ProjectRail 显示“2 个任务因分支不匹配暂停”，点击可重新打开，切回对应 worktree 后自动恢复。
+- Base：没有 layout invocation（普通浏览器）时不显示本地 ownership 状态入口。
+- Base：当前只读关联只显示只读状态，不显示属于写操作的归属按钮。
+- Bad：逐任务弹窗或在 3 秒轮询中每次自动打开，造成重复打扰。
+- Bad：把明确其他分支任务强行改回 main 后上传，重新引入跨分支污染。
+- Bad：ProjectRail 用 `deferredCount` 表示 ownership 暂停，导致文案、优先级和补同步动作混在一起。
+
+### 6. Tests Required
+
+- `project-rail-association.test.js`：ownership paused/pending 的优先级、总数和分支暂停区分。
+- `desktop-association.test.js`：关联摘要字段解析、不可写/错误 binding 不进入默认、pending/paused 目录稳定排序。
+- `desktop-package.test.js`：Tauri 命令、capability、control event 和 CLI `--task-space` 契约。
+- 浏览器验收：单分支隐藏选择器；多分支显示并默认正确；>200 条分批；关闭 control 后不再自动弹窗；
+  浅色/深色和窄屏无横向溢出。
+- Tauri 验收：Board 与 live-control 均可提交 ownership，非法 taskDir/branch 被拒绝，成功后关联摘要刷新。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const taskSpaces = selectedProject.taskSpaces || []
+<SelectField value={taskSpaceId} options={taskSpaces} />
+```
+
+即使项目只有一个分支也强制用户选择；多分支时又没有优先当前本地 binding，容易把任务创建到错误 taskSpace。
+
+#### Correct
+
+```ts
+const preferred =
+  taskSpaces.find((item) => item.id === defaultTaskSpaceId) ||
+  taskSpaces.find((item) => item.id === writableLocalTaskSpaceId) ||
+  taskSpaces[0]
+
+return taskSpaces.length > 1 ? <BranchSelect value={preferred?.id} /> : <CurrentBranchText />
+```
+
+单分支自动处理，多分支才要求选择；ownership 状态和 deferred 状态分别展示、分别执行动作。

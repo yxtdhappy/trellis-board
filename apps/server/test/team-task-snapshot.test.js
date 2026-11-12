@@ -105,14 +105,18 @@ function setup() {
     localRepoKey: 'b'.repeat(64),
   })
   const snapshots = createTaskSnapshotService({ db, taskSpaces })
-  return { db, snapshots, agentA, agentB, taskSpaceId: second.taskSpace.id }
+  return { db, taskSpaces, snapshots, agentA, agentB, taskSpaceId: second.taskSpace.id }
 }
 
 function batch(taskId, title, prd = '# PRD\n') {
+  return batchWithBranch(taskId, title, 'main', prd)
+}
+
+function batchWithBranch(taskId, title, branch, prd = '# PRD\n') {
   return [
     {
       path: `.trellis/tasks/11-10-${taskId}/task.json`,
-      content: JSON.stringify({ id: taskId, title }),
+      content: JSON.stringify({ id: taskId, title, branch }),
       baseSha256: null,
     },
     {
@@ -128,7 +132,7 @@ function directoryBatch(taskId, fileCount) {
   return [
     {
       path: `${taskDir}/task.json`,
-      content: JSON.stringify({ id: taskId, title: '大任务' }),
+      content: JSON.stringify({ id: taskId, title: '大任务', branch: 'main' }),
       baseSha256: null,
     },
     ...Array.from({ length: fileCount - 1 }, (_, index) => ({
@@ -220,6 +224,102 @@ test('上报分支与任务空间不一致时拒绝写入且不推进 revision',
         .prepare('SELECT COUNT(*) AS count FROM sync_task_space_file WHERE task_space_id = ?')
         .get(taskSpaceId).count,
       0,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('完整任务组缺少分支或分支与任务空间不一致时整批拒绝', () => {
+  const { db, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'batch-ownership-required',
+          clientSequence: 1,
+          files: batchWithBranch('ownership-required', '缺少归属', null),
+        }),
+      (error) =>
+        error.status === 409 &&
+        error.code === 'TASK_OWNERSHIP_REQUIRED' &&
+        error.details?.taskId === 'ownership-required' &&
+        error.details?.expectedBranchName === 'main' &&
+        error.details?.actualBranchName === null,
+    )
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'batch-ownership-mismatch',
+          clientSequence: 1,
+          files: batchWithBranch('ownership-mismatch', '错误归属', 'feature/x'),
+        }),
+      (error) =>
+        error.status === 409 &&
+        error.code === 'TASK_OWNERSHIP_MISMATCH' &&
+        error.details?.taskDir === '.trellis/tasks/11-10-ownership-mismatch',
+    )
+    assert.equal(
+      db.prepare('SELECT revision FROM sync_task_space WHERE id = ?').get(taskSpaceId).revision,
+      0,
+    )
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_conflict').get().count, 0)
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_space_batch').get().count, 0)
+  } finally {
+    db.close()
+  }
+})
+
+test('任务归属查询返回同项目有效任务空间和只读分支主张', () => {
+  const { db, taskSpaces, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-ownership-main',
+      clientSequence: 1,
+      files: batch('ownership-main', '主分支任务'),
+    })
+    const feature = taskSpaces.attach('user-a', agentA.id, {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'feature/x',
+      displayName: 'Acme feature',
+      teamId: 'team-1',
+      developerId: 'alice',
+      localRepoKey: 'd'.repeat(64),
+    })
+    snapshots.applyChanges(agentA, feature.taskSpace.id, {
+      batchId: 'batch-ownership-feature',
+      clientSequence: 1,
+      files: batchWithBranch('feature-task', '功能分支任务', 'feature/x'),
+    })
+    const result = snapshots.taskOwnership(agentA, taskSpaceId, {
+      taskIds: ['ownership-main', 'feature-task', 'missing'],
+    })
+    assert.deepEqual(
+      new Set(result.projectTaskSpaces.map((item) => item.branchName)),
+      new Set(['main', 'feature/x']),
+    )
+    const byTask = new Map(result.tasks.map((item) => [item.taskId, item.claims]))
+    assert.deepEqual(byTask.get('ownership-main'), [
+      { taskSpaceId, branchName: 'main', taskBranch: 'main' },
+    ])
+    assert.deepEqual(byTask.get('feature-task'), [
+      {
+        taskSpaceId: feature.taskSpace.id,
+        branchName: 'feature/x',
+        taskBranch: 'feature/x',
+      },
+    ])
+    assert.deepEqual(byTask.get('missing'), [])
+    assert.throws(
+      () => snapshots.taskOwnership(agentA, taskSpaceId, { taskIds: 'task-1' }),
+      (error) => error.status === 400 && error.code === 'INVALID_INPUT',
+    )
+    assert.throws(
+      () =>
+        snapshots.taskOwnership(agentA, taskSpaceId, {
+          taskIds: Array.from({ length: 201 }, (_, index) => `task-${index}`),
+        }),
+      (error) => error.status === 400 && error.code === 'INVALID_INPUT',
     )
   } finally {
     db.close()
@@ -362,7 +462,7 @@ test('CAS 冲突整批拒绝并记录来源', () => {
     const sameBase = [
       {
         path: taskJson.path,
-        content: JSON.stringify({ id: 'demo', title: 'B 修改' }),
+        content: JSON.stringify({ id: 'demo', title: 'B 修改', branch: 'main' }),
         baseSha256: taskJson.sha256,
       },
       {
@@ -377,7 +477,7 @@ test('CAS 冲突整批拒绝并记录来源', () => {
       files: [
         {
           ...sameBase[0],
-          content: JSON.stringify({ id: 'demo', title: 'A 修改' }),
+          content: JSON.stringify({ id: 'demo', title: 'A 修改', branch: 'main' }),
         },
         sameBase[1],
       ],
@@ -398,6 +498,101 @@ test('CAS 冲突整批拒绝并记录来源', () => {
       stored.files.find((file) => file.path.endsWith('/task.json')).content,
     )
     assert.equal(storedTask.title, 'A 修改')
+  } finally {
+    db.close()
+  }
+})
+
+test('同一 Agent 对同一任务的重复冲突复用稳定 ID，列表折叠历史重复项', () => {
+  const { db, snapshots, agentA, agentB, taskSpaceId } = setup()
+  const taskDir = '.trellis/tasks/11-10-demo'
+  try {
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-stable-conflict-initial',
+      clientSequence: 1,
+      files: batch('demo', '初始'),
+    })
+    const original = snapshots.directorySnapshot(agentB, taskSpaceId, taskDir)
+    const originalTask = original.files.find((file) => file.path.endsWith('/task.json'))
+    const originalPrd = original.files.find((file) => file.path.endsWith('/prd.md'))
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-stable-conflict-server',
+      clientSequence: 2,
+      files: [
+        {
+          path: originalTask.path,
+          content: JSON.stringify({ id: 'demo', title: '服务端版本', branch: 'main' }),
+          baseSha256: originalTask.sha256,
+        },
+        { path: originalPrd.path, content: '# 服务端\n', baseSha256: originalPrd.sha256 },
+      ],
+    })
+    const conflictIds = []
+    for (let index = 0; index < 10; index += 1) {
+      const conflict = snapshots.applyChanges(agentB, taskSpaceId, {
+        batchId: `batch-stable-conflict-${index}`,
+        clientSequence: index + 1,
+        files: [
+          {
+            path: originalTask.path,
+            content: JSON.stringify({ id: 'demo', title: `客户端版本 ${index}`, branch: 'main' }),
+            baseSha256: originalTask.sha256,
+          },
+          { path: originalPrd.path, content: '# 客户端\n', baseSha256: originalPrd.sha256 },
+        ],
+      })
+      conflictIds.push(conflict.conflictId)
+    }
+    assert.equal(new Set(conflictIds).size, 1)
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS count FROM sync_conflict WHERE status = 'pending'").get()
+        .count,
+      1,
+    )
+
+    const stored = db.prepare('SELECT * FROM sync_conflict').get()
+    for (let index = 0; index < 50; index += 1) {
+      db.prepare(`
+        INSERT INTO sync_conflict(
+          id, task_space_id, task_id, task_dir, files_json, server_revision,
+          client_sequence, batch_id, status, created_by_user_id, created_by_agent_id,
+          created_at, resolved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, NULL)
+      `).run(
+        `historical-${index}`,
+        stored.task_space_id,
+        stored.task_id,
+        stored.task_dir,
+        stored.files_json,
+        stored.server_revision,
+        stored.client_sequence,
+        stored.batch_id,
+        stored.created_by_user_id,
+        stored.created_by_agent_id,
+        new Date(Date.now() + index + 1).toISOString(),
+      )
+    }
+    const listed = snapshots.listConflicts(agentB, taskSpaceId)
+    assert.equal(listed.length, 1)
+    assert.equal(listed[0].id, 'historical-49')
+
+    db.prepare(
+      "UPDATE sync_conflict SET status = 'resolved', resolved_at = ? WHERE task_space_id = ?",
+    ).run(new Date().toISOString(), taskSpaceId)
+    const next = snapshots.applyChanges(agentB, taskSpaceId, {
+      batchId: 'batch-stable-conflict-next',
+      clientSequence: 20,
+      files: [
+        {
+          path: originalTask.path,
+          content: JSON.stringify({ id: 'demo', title: '新冲突', branch: 'main' }),
+          baseSha256: originalTask.sha256,
+        },
+        { path: originalPrd.path, content: '# 新冲突\n', baseSha256: originalPrd.sha256 },
+      ],
+    })
+    assert.equal(next.code, 'TASK_FILE_CONFLICT')
+    assert.notEqual(next.conflictId, listed[0].id)
   } finally {
     db.close()
   }
@@ -453,7 +648,7 @@ test('同一任务目录的 task.json id 变化会整批拒绝', () => {
           files: [
             {
               path: taskJson.path,
-              content: JSON.stringify({ id: 'other', title: '示例' }),
+              content: JSON.stringify({ id: 'other', title: '示例', branch: 'main' }),
               baseSha256: taskJson.sha256,
             },
             {
@@ -491,7 +686,7 @@ test('覆盖服务端冲突时备份双方内容并与解决状态同一事务�
       files: [
         {
           path: taskJsonBefore.path,
-          content: JSON.stringify({ id: 'demo', title: '服务端版本' }),
+          content: JSON.stringify({ id: 'demo', title: '服务端版本', branch: 'main' }),
           baseSha256: taskJsonBefore.sha256,
         },
         {
@@ -507,7 +702,7 @@ test('覆盖服务端冲突时备份双方内容并与解决状态同一事务�
       files: [
         {
           path: taskJsonBefore.path,
-          content: JSON.stringify({ id: 'demo', title: '客户端版本' }),
+          content: JSON.stringify({ id: 'demo', title: '客户端版本', branch: 'main' }),
           baseSha256: taskJsonBefore.sha256,
         },
         {
@@ -528,7 +723,7 @@ test('覆盖服务端冲突时备份双方内容并与解决状态同一事务�
       files: [
         {
           path: taskJsonCurrent.path,
-          content: JSON.stringify({ id: 'demo', title: '客户端版本' }),
+          content: JSON.stringify({ id: 'demo', title: '客户端版本', branch: 'main' }),
           baseSha256: taskJsonCurrent.sha256,
         },
         {
@@ -550,8 +745,16 @@ test('覆盖服务端冲突时备份双方内容并与解决状态同一事务�
       )
       .all()
     assert.equal(backups.length, 2)
-    assert.ok(backups.some((row) => row.old_content === '{"id":"demo","title":"服务端版本"}'))
-    assert.ok(backups.some((row) => row.new_content === '{"id":"demo","title":"客户端版本"}'))
+    assert.ok(
+      backups.some(
+        (row) => row.old_content === '{"id":"demo","title":"服务端版本","branch":"main"}',
+      ),
+    )
+    assert.ok(
+      backups.some(
+        (row) => row.new_content === '{"id":"demo","title":"客户端版本","branch":"main"}',
+      ),
+    )
   } finally {
     db.close()
   }
@@ -585,7 +788,7 @@ test('250 个文件的单任务目录可通过 preflight 和覆盖冲突处理',
       files: [
         {
           path: taskJson.path,
-          content: JSON.stringify({ id: 'large-conflict', title: '服务端版本' }),
+          content: JSON.stringify({ id: 'large-conflict', title: '服务端版本', branch: 'main' }),
           baseSha256: taskJson.sha256,
         },
       ],
@@ -601,7 +804,7 @@ test('250 个文件的单任务目录可通过 preflight 和覆盖冲突处理',
     const overwriteFiles = current.files.map(({ path, content, sha256 }) => ({
       path,
       content: path.endsWith('/task.json')
-        ? JSON.stringify({ id: 'large-conflict', title: '客户端版本' })
+        ? JSON.stringify({ id: 'large-conflict', title: '客户端版本', branch: 'main' })
         : content,
       baseSha256: sha256,
     }))

@@ -59,6 +59,92 @@ function taskSpaceSummary(taskSpace) {
   }
 }
 
+function optionalText(value) {
+  const text = value == null ? '' : String(value).trim()
+  return text || null
+}
+
+function loadConflictAudit(db, taskSpaces) {
+  const sideById = new Map(taskSpaces.map(({ side, taskSpace }) => [taskSpace.id, side]))
+  const placeholders = taskSpaces.map(() => '?').join(', ')
+  const rows = db
+    .prepare(`
+      SELECT rowid AS conflict_rowid, id, task_space_id, task_id, task_dir,
+             created_by_agent_id, created_at
+      FROM sync_conflict
+      WHERE task_space_id IN (${placeholders}) AND status = 'pending'
+    `)
+    .all(...taskSpaces.map(({ taskSpace }) => taskSpace.id))
+  const grouped = new Map()
+  for (const row of rows) {
+    const agentId = optionalText(row.created_by_agent_id)
+    const taskId = optionalText(row.task_id)
+    const taskDir = optionalText(row.task_dir)
+    const taskIdentity = taskId || taskDir || `conflict:${row.id}`
+    const key = `${row.task_space_id}\0${agentId || ''}\0${taskIdentity}`
+    const group = grouped.get(key) || {
+      side: sideById.get(row.task_space_id),
+      taskSpaceId: row.task_space_id,
+      agentId,
+      taskId,
+      taskDir,
+      rows: [],
+    }
+    group.rows.push(row)
+    grouped.set(key, group)
+  }
+
+  const groups = [...grouped.values()].map((group) => {
+    group.rows.sort(
+      (left, right) =>
+        String(right.created_at).localeCompare(String(left.created_at)) ||
+        Number(right.conflict_rowid) - Number(left.conflict_rowid),
+    )
+    return {
+      side: group.side,
+      taskSpaceId: group.taskSpaceId,
+      agentId: group.agentId,
+      taskId: optionalText(group.rows[0].task_id),
+      taskDir: optionalText(group.rows[0].task_dir),
+      pendingRows: group.rows.length,
+      duplicateRows: group.rows.length - 1,
+      keepConflictId: group.rows[0].id,
+      resolveConflictIds: group.rows.slice(1).map((row) => row.id),
+    }
+  })
+  groups.sort(
+    (left, right) =>
+      left.taskSpaceId.localeCompare(right.taskSpaceId) ||
+      String(left.agentId || '').localeCompare(String(right.agentId || '')) ||
+      String(left.taskId || left.taskDir || '').localeCompare(
+        String(right.taskId || right.taskDir || ''),
+      ),
+  )
+
+  const byTaskSpace = {}
+  for (const { side, taskSpace } of taskSpaces) {
+    const scopedGroups = groups.filter((group) => group.taskSpaceId === taskSpace.id)
+    const pendingConflicts = scopedGroups.reduce((total, group) => total + group.pendingRows, 0)
+    byTaskSpace[side] = {
+      taskSpaceId: taskSpace.id,
+      pendingConflicts,
+      conflictGroups: scopedGroups.length,
+      duplicateConflictGroups: scopedGroups.filter((group) => group.duplicateRows > 0).length,
+      duplicateConflictRows: pendingConflicts - scopedGroups.length,
+    }
+  }
+
+  return {
+    pendingConflicts: rows.length,
+    conflictGroups: groups.length,
+    duplicateConflictGroups: groups.filter((group) => group.duplicateRows > 0).length,
+    duplicateConflictRows: rows.length - groups.length,
+    conflictsToResolve: rows.length - groups.length,
+    byTaskSpace,
+    groups,
+  }
+}
+
 function loadTaskSpace(db, taskSpaceId, projectId, label) {
   const taskSpace = db
     .prepare(`
@@ -110,7 +196,10 @@ function describeGroup(group) {
   }
 }
 
-export function analyzeDuplicateTasks(db, { projectId, removeTaskSpaceId, keepTaskSpaceId }) {
+export function analyzeDuplicateTasks(
+  db,
+  { projectId, removeTaskSpaceId, keepTaskSpaceId, disableRemoveTaskSpace = false },
+) {
   projectId = requiredId(projectId, '项目 ID')
   removeTaskSpaceId = requiredId(removeTaskSpaceId, '待清理任务空间 ID')
   keepTaskSpaceId = requiredId(keepTaskSpaceId, '保留任务空间 ID')
@@ -185,10 +274,23 @@ export function analyzeDuplicateTasks(db, { projectId, removeTaskSpaceId, keepTa
         sha256: row.sha256,
       })),
   )
+  const conflicts = loadConflictAudit(db, [
+    { side: 'remove', taskSpace: removeTaskSpace },
+    { side: 'keep', taskSpace: keepTaskSpace },
+  ])
+  // 未显式停用时保留旧工具将清理空间置为 indexing 的既有行为。
+  const targetStatus = disableRemoveTaskSpace
+    ? 'disabled'
+    : duplicates.length
+      ? 'indexing'
+      : removeTaskSpace.status
 
   return {
     projectId,
-    remove: taskSpaceSummary(removeTaskSpace),
+    remove: {
+      ...taskSpaceSummary(removeTaskSpace),
+      targetStatus,
+    },
     keep: taskSpaceSummary(keepTaskSpace),
     summary: {
       duplicateTasks: duplicates.length,
@@ -196,7 +298,14 @@ export function analyzeDuplicateTasks(db, { projectId, removeTaskSpaceId, keepTa
       identicalTasks: duplicates.filter((duplicate) => duplicate.identical).length,
       contentDifferences: duplicates.filter((duplicate) => !duplicate.identical).length,
       unresolvedTasks: unresolved.length,
+      pendingConflicts: conflicts.pendingConflicts,
+      conflictGroups: conflicts.conflictGroups,
+      duplicateConflictGroups: conflicts.duplicateConflictGroups,
+      duplicateConflictRows: conflicts.duplicateConflictRows,
+      conflictsToResolve: conflicts.conflictsToResolve,
     },
+    targetRemoveStatus: targetStatus,
+    conflicts,
     duplicates,
     unresolved,
     filesToDelete,
@@ -234,9 +343,42 @@ function backupDatabase(db, databaseFile, now) {
   return target
 }
 
-function applyCleanup(db, audit, { now = new Date(), backupFile }) {
+function assertAuditedStateUnchanged(db, audit) {
+  const readTaskSpace = db.prepare(`
+    SELECT s.status, s.revision, p.status AS project_status
+    FROM sync_task_space s
+    JOIN sync_project p ON p.id = s.project_id
+    WHERE s.id = ?
+  `)
+  for (const [label, expected] of [
+    ['待清理任务空间', audit.remove],
+    ['保留任务空间', audit.keep],
+  ]) {
+    const current = readTaskSpace.get(expected.id)
+    if (
+      !current ||
+      current.status !== expected.status ||
+      Number(current.revision) !== expected.revision ||
+      current.project_status !== expected.projectStatus
+    ) {
+      throw new Error(`${label}状态或 revision 已变化，请重新执行 dry-run`)
+    }
+  }
+}
+
+function applyCleanup(
+  db,
+  audit,
+  { now = new Date(), backupFile, cleanupConflicts = false, disableRemoveTaskSpace = false },
+) {
   const timestamp = now.toISOString()
-  const revision = audit.remove.revision + 1
+  const removeMutated = audit.filesToDelete.length > 0 || disableRemoveTaskSpace
+  const revision = removeMutated ? audit.remove.revision + 1 : audit.remove.revision
+  const finalStatus = disableRemoveTaskSpace
+    ? 'disabled'
+    : audit.filesToDelete.length
+      ? 'indexing'
+      : audit.remove.status
   const deleteFile = db.prepare(`
     UPDATE sync_task_space_file
     SET revision = ?, content_text = NULL, deleted = 1,
@@ -250,18 +392,20 @@ function applyCleanup(db, audit, { now = new Date(), backupFile }) {
       new_sha256, revision, source_user_id, source_agent_id, occurred_at
     ) VALUES (?, ?, ?, 'delete', ?, NULL, ?, NULL, NULL, ?)
   `)
+  const updateTaskSpace = db.prepare(`
+    UPDATE sync_task_space
+    SET revision = ?, status = ?, last_error = NULL, updated_at = ?
+    WHERE id = ? AND revision = ? AND status = 'active'
+  `)
+  const resolveConflict = db.prepare(`
+    UPDATE sync_conflict
+    SET status = 'resolved', resolved_at = ?
+    WHERE id = ? AND status = 'pending'
+  `)
 
+  let resolvedConflicts = 0
   withTransaction(db, () => {
-    const taskSpaceUpdate = db
-      .prepare(`
-        UPDATE sync_task_space
-        SET revision = ?, status = 'indexing', last_error = NULL, updated_at = ?
-        WHERE id = ? AND revision = ?
-      `)
-      .run(revision, timestamp, audit.remove.id, audit.remove.revision)
-    if (Number(taskSpaceUpdate.changes) !== 1) {
-      throw new Error('任务空间 revision 已变化，请重新执行 dry-run')
-    }
+    assertAuditedStateUnchanged(db, audit)
     for (const file of audit.filesToDelete) {
       const result = deleteFile.run(revision, timestamp, audit.remove.id, file.path)
       if (Number(result.changes) !== 1) {
@@ -269,13 +413,36 @@ function applyCleanup(db, audit, { now = new Date(), backupFile }) {
       }
       writeAudit.run(audit.remove.id, file.path, file.taskId, file.sha256, revision, timestamp)
     }
-    db.prepare('DELETE FROM sync_task_index_tag WHERE task_space_id = ?').run(audit.remove.id)
-    db.prepare('DELETE FROM sync_task_index WHERE task_space_id = ?').run(audit.remove.id)
-    db.prepare('DELETE FROM sync_task_space_scan_cache WHERE task_space_id = ?').run(
-      audit.remove.id,
-    )
+    if (removeMutated) {
+      db.prepare('DELETE FROM sync_task_index_tag WHERE task_space_id = ?').run(audit.remove.id)
+      db.prepare('DELETE FROM sync_task_index WHERE task_space_id = ?').run(audit.remove.id)
+      db.prepare('DELETE FROM sync_task_space_scan_cache WHERE task_space_id = ?').run(
+        audit.remove.id,
+      )
+      const result = updateTaskSpace.run(
+        revision,
+        finalStatus,
+        timestamp,
+        audit.remove.id,
+        audit.remove.revision,
+      )
+      if (Number(result.changes) !== 1) {
+        throw new Error('任务空间 revision 已变化，请重新执行 dry-run')
+      }
+    }
+    if (cleanupConflicts) {
+      for (const group of audit.conflicts.groups) {
+        for (const conflictId of group.resolveConflictIds) {
+          const result = resolveConflict.run(timestamp, conflictId)
+          if (Number(result.changes) !== 1) {
+            throw new Error(`冲突状态已变化，停止清理：${conflictId}`)
+          }
+          resolvedConflicts += 1
+        }
+      }
+    }
   })
-  return { backupFile, revision, appliedAt: timestamp }
+  return { backupFile, revision, appliedAt: timestamp, finalStatus, resolvedConflicts }
 }
 
 export async function cleanupDuplicateTasks({
@@ -285,6 +452,8 @@ export async function cleanupDuplicateTasks({
   keepTaskSpaceId,
   apply = false,
   allowContentDifferences = false,
+  cleanupConflicts = false,
+  disableRemoveTaskSpace = false,
   now = new Date(),
   checkServiceStopped = assertServiceStopped,
 }) {
@@ -295,10 +464,11 @@ export async function cleanupDuplicateTasks({
   const db = new DatabaseSync(resolvedDatabase, { readOnly: !apply })
   try {
     db.exec('PRAGMA foreign_keys = ON')
-    const audit = analyzeDuplicateTasks(db, {
+    let audit = analyzeDuplicateTasks(db, {
       projectId,
       removeTaskSpaceId,
       keepTaskSpaceId,
+      disableRemoveTaskSpace,
     })
     if (!apply) {
       return {
@@ -318,12 +488,16 @@ export async function cleanupDuplicateTasks({
       throw new Error(`发现 ${audit.unresolved.length} 个缺少稳定任务 ID 的任务目录，拒绝自动清理`)
     }
     if (!audit.duplicates.length) {
-      return {
-        ...audit,
-        mode: 'apply',
-        applied: true,
-        backupFile: null,
-        revision: audit.remove.revision,
+      if (!disableRemoveTaskSpace && (!cleanupConflicts || !audit.conflicts.conflictsToResolve)) {
+        return {
+          ...audit,
+          mode: 'apply',
+          applied: true,
+          backupFile: null,
+          revision: audit.remove.revision,
+          targetRemoveStatus: audit.remove.targetStatus,
+          resolvedConflicts: 0,
+        }
       }
     }
     if (audit.duplicates.some((duplicate) => !duplicate.identical) && !allowContentDifferences) {
@@ -332,10 +506,27 @@ export async function cleanupDuplicateTasks({
       )
     }
     await checkServiceStopped()
+    assertAuditedStateUnchanged(db, audit)
+    audit = analyzeDuplicateTasks(db, {
+      projectId,
+      removeTaskSpaceId,
+      keepTaskSpaceId,
+      disableRemoveTaskSpace,
+    })
     const backupFile = backupDatabase(db, resolvedDatabase, now)
-    const result = applyCleanup(db, audit, { now, backupFile })
+    const result = applyCleanup(db, audit, {
+      now,
+      backupFile,
+      cleanupConflicts,
+      disableRemoveTaskSpace,
+    })
     return {
       ...audit,
+      remove: {
+        ...audit.remove,
+        targetStatus: result.finalStatus,
+      },
+      targetRemoveStatus: result.finalStatus,
       mode: 'apply',
       applied: true,
       ...result,
@@ -352,9 +543,11 @@ function usage() {
     --project <projectId> \\
     --remove-task-space <oldTaskSpaceId> \\
     --keep-task-space <keepTaskSpaceId> \\
-    [--apply] [--allow-content-differences]
+    [--apply] [--allow-content-differences] \\
+    [--cleanup-conflicts] [--disable-remove-task-space]
 
-默认只读审计。--apply 会先要求 4317 服务已停止，并写入数据库备份。`
+默认只读审计。--apply 会先要求 4317 服务已停止，并写入数据库备份。
+--cleanup-conflicts 和 --disable-remove-task-space 仅在显式传入时执行。`
 }
 
 async function main() {
@@ -366,6 +559,8 @@ async function main() {
       'keep-task-space': { type: 'string' },
       apply: { type: 'boolean', default: false },
       'allow-content-differences': { type: 'boolean', default: false },
+      'cleanup-conflicts': { type: 'boolean', default: false },
+      'disable-remove-task-space': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
     allowPositionals: false,
@@ -381,6 +576,8 @@ async function main() {
     keepTaskSpaceId: values['keep-task-space'],
     apply: values.apply,
     allowContentDifferences: values['allow-content-differences'],
+    cleanupConflicts: values['cleanup-conflicts'],
+    disableRemoveTaskSpace: values['disable-remove-task-space'],
   })
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
 }

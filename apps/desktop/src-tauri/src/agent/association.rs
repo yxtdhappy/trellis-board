@@ -305,6 +305,7 @@ fn normalize_server_task_groups(value: Option<&Value>) -> AgentResult<Vec<Snapsh
             archive_month,
             files: snapshot_files,
             task_id,
+            task_branch: None,
         });
     }
     Ok(normalized)
@@ -403,6 +404,7 @@ mod tests {
             archived: parts.archived,
             archive_month: parts.archive_month.clone(),
             task_id: Some(task_id.to_string()),
+            task_branch: None,
             files: vec![SnapshotFile {
                 path: relative.to_string(),
                 task_dir: task_dir.to_string(),

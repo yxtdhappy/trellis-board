@@ -17,6 +17,7 @@ pub const TASK_SNAPSHOT_MAX_FILES: usize = 1024;
 pub const TASK_SNAPSHOT_MAX_FILE_BYTES: usize = 1024 * 1024;
 pub const TASK_SNAPSHOT_MAX_BATCH_BYTES: usize = 64 * 1024 * 1024;
 const CURSOR_VERSION: u64 = 3;
+const TASK_OWNERSHIP_QUERY_LIMIT: usize = 200;
 const UPLOAD_MIN_INTERVAL: Duration = Duration::from_millis(260);
 const RATE_LIMIT_RETRY_DELAY: Duration = Duration::from_millis(1000);
 const RATE_LIMIT_RETRY_MAX_DELAY: Duration = Duration::from_millis(5000);
@@ -87,6 +88,7 @@ pub struct SnapshotGroup {
     pub archive_month: Option<String>,
     pub files: Vec<SnapshotFile>,
     pub task_id: Option<String>,
+    pub task_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,6 +324,7 @@ pub fn group_task_snapshot_files(files: &[Value]) -> AgentResult<Vec<SnapshotGro
                     archive_month: file.archive_month.clone(),
                     files: Vec::new(),
                     task_id: None,
+                    task_branch: None,
                 });
                 index.insert(file.task_dir.clone(), groups.len() - 1);
                 groups.len() - 1
@@ -331,8 +334,14 @@ pub fn group_task_snapshot_files(files: &[Value]) -> AgentResult<Vec<SnapshotGro
         if group.archived != file.archived {
             return protocol::err(code::INVALID_RESPONSE, "同一批次不能混合活动与归档任务路径");
         }
-        if file.file_path == "task.json" && !file.deleted && group.task_id.is_none() {
-            group.task_id = parse_task_id(&file.content);
+        if file.file_path == "task.json"
+            && !file.deleted
+            && (group.task_id.is_none() || group.task_branch.is_none())
+        {
+            let metadata = parse_task_metadata(&file.content);
+            let (task_id, task_branch) = metadata;
+            group.task_id = group.task_id.take().or(task_id);
+            group.task_branch = group.task_branch.take().or(task_branch);
         }
         group.files.push(file);
     }
@@ -345,13 +354,57 @@ pub fn group_task_snapshot_files(files: &[Value]) -> AgentResult<Vec<SnapshotGro
 }
 
 fn parse_task_id(content: &str) -> Option<String> {
+    parse_task_metadata(content).0
+}
+
+fn parse_task_metadata(content: &str) -> (Option<String>, Option<String>) {
+    let Ok(parsed) = serde_json::from_str::<Value>(content) else {
+        return (None, None);
+    };
+    (
+        parsed
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        parsed
+            .get("branch")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+    )
+}
+
+fn task_title(group: &SnapshotGroup) -> Option<String> {
+    let content = group
+        .files
+        .iter()
+        .find(|file| file.file_path == "task.json" && !file.deleted)?
+        .content
+        .as_str();
     let parsed: Value = serde_json::from_str(content).ok()?;
     parsed
-        .get("id")
+        .get("title")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn task_fingerprint(group: &SnapshotGroup) -> String {
+    let mut hasher = Sha256::new();
+    for file in &group.files {
+        if file.deleted {
+            continue;
+        }
+        hasher.update(file.path.as_bytes());
+        hasher.update([0]);
+        hasher.update(file.sha256.as_bytes());
+        hasher.update([b'\n']);
+    }
+    format!("{:x}", hasher.finalize())
 }
 
 fn file_map(group: &SnapshotGroup) -> BTreeMap<String, String> {
@@ -610,6 +663,8 @@ pub struct Cursor {
     pub pending: Option<PendingBatch>,
     pub baselines: BTreeMap<String, String>,
     pub deferred: BTreeMap<String, BTreeMap<String, String>>,
+    pub ownership_pending: BTreeMap<String, String>,
+    pub conflict_blocked: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -617,6 +672,26 @@ pub struct PendingBatch {
     pub batch_id: String,
     pub client_sequence: u64,
     pub files: Vec<Value>,
+}
+
+struct OwnershipReview {
+    group: SnapshotGroup,
+    reason: String,
+}
+
+struct OwnershipDecision {
+    task_dir: String,
+    action: String,
+    branch_name: String,
+}
+
+#[derive(Default)]
+struct OwnershipResolution {
+    syncable: HashMap<String, SnapshotGroup>,
+    paused: Vec<SnapshotGroup>,
+    reviews: Vec<OwnershipReview>,
+    invalid: Vec<String>,
+    project_task_spaces: Vec<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -1039,6 +1114,14 @@ impl TaskSync {
                 .get("deferred")
                 .and_then(parse_deferred)
                 .unwrap_or_default(),
+            ownership_pending: entry
+                .get("ownershipPending")
+                .map(parse_ownership_pending)
+                .unwrap_or_default(),
+            conflict_blocked: entry
+                .get("conflictBlocked")
+                .map(parse_conflict_blocked)
+                .unwrap_or_default(),
         }
     }
 
@@ -1075,6 +1158,12 @@ impl TaskSync {
         }
         if let Some(deferred) = next.deferred {
             entry.insert("deferred".into(), deferred_to_value(&deferred));
+        }
+        if let Some(pending) = next.ownership_pending {
+            entry.insert("ownershipPending".into(), ownership_pending_to_value(&pending));
+        }
+        if let Some(blocked) = next.conflict_blocked {
+            entry.insert("conflictBlocked".into(), conflict_blocked_to_value(&blocked));
         }
         if let Some(pending) = next.pending {
             match pending {
@@ -1150,6 +1239,337 @@ impl TaskSync {
         group_task_snapshot_files(&files)
     }
 
+    async fn fetch_task_ownership(
+        &self,
+        task_space_id: &str,
+        task_ids: &[String],
+    ) -> AgentResult<Value> {
+        self.api
+            .request_json(
+                Method::POST,
+                &format!("/api/agent/task-spaces/{task_space_id}/task-ownership"),
+                Some(&json!({ "taskIds": task_ids })),
+                Duration::from_secs(60),
+            )
+            .await
+    }
+
+    async fn remember_ownership_reviews(
+        &self,
+        task_space_id: &str,
+        reviews: &[OwnershipReview],
+    ) -> AgentResult<Vec<OwnershipReview>> {
+        if reviews.is_empty() {
+            return Ok(Vec::new());
+        }
+        let cursor = self.read_cursor(task_space_id).await;
+        let mut pending = cursor.ownership_pending.clone();
+        let mut fresh = Vec::new();
+        for review in reviews {
+            let fingerprint = task_fingerprint(&review.group);
+            if pending.get(&review.group.task_dir) == Some(&fingerprint) {
+                continue;
+            }
+            pending.insert(review.group.task_dir.clone(), fingerprint);
+            fresh.push(OwnershipReview {
+                group: review.group.clone(),
+                reason: review.reason.clone(),
+            });
+        }
+        if pending != cursor.ownership_pending {
+            self.write_cursor(
+                task_space_id,
+                CursorPatch {
+                    ownership_pending: Some(pending),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        }
+        Ok(fresh)
+    }
+
+    async fn clear_ownership_pending(
+        &self,
+        task_space_id: &str,
+        task_dirs: &[String],
+    ) -> AgentResult<()> {
+        if task_dirs.is_empty() {
+            return Ok(());
+        }
+        let cursor = self.read_cursor(task_space_id).await;
+        let mut pending = cursor.ownership_pending.clone();
+        let before = pending.len();
+        for task_dir in task_dirs {
+            pending.remove(task_dir);
+        }
+        if pending.len() == before {
+            return Ok(());
+        }
+        self.write_cursor(
+            task_space_id,
+            CursorPatch {
+                ownership_pending: Some(pending),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    async fn mark_conflict_blocked(
+        &self,
+        task_space_id: &str,
+        result: &Value,
+        files: &[Value],
+    ) -> AgentResult<()> {
+        let Some(conflict_id) = result.get("conflictId").and_then(Value::as_str) else {
+            return Ok(());
+        };
+        let task_dirs: HashSet<String> = files
+            .iter()
+            .filter_map(|file| {
+                file.get("path")
+                    .and_then(Value::as_str)
+                    .and_then(task_directory_from_relative)
+            })
+            .collect();
+        if task_dirs.is_empty() {
+            return Ok(());
+        }
+        let cursor = self.read_cursor(task_space_id).await;
+        let mut blocked = cursor.conflict_blocked.clone();
+        for task_dir in task_dirs {
+            blocked.insert(task_dir, conflict_id.to_string());
+        }
+        self.write_cursor(
+            task_space_id,
+            CursorPatch {
+                conflict_blocked: Some(blocked),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    async fn clear_conflict_blocked(
+        &self,
+        task_space_id: &str,
+        conflict_id: &str,
+        task_dirs: &[String],
+    ) -> AgentResult<()> {
+        let cursor = self.read_cursor(task_space_id).await;
+        let mut blocked = cursor.conflict_blocked.clone();
+        let before = blocked.len();
+        for task_dir in task_dirs {
+            if blocked.get(task_dir).map(String::as_str) == Some(conflict_id) {
+                blocked.remove(task_dir);
+            }
+        }
+        if blocked.len() == before {
+            return Ok(());
+        }
+        self.write_cursor(
+            task_space_id,
+            CursorPatch {
+                conflict_blocked: Some(blocked),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    fn ownership_event(
+        &self,
+        binding: &AgentBinding,
+        reviews: &[OwnershipReview],
+        project_task_spaces: &[Value],
+    ) {
+        let items: Vec<Value> = reviews
+            .iter()
+            .map(|review| {
+                json!({
+                    "taskId": review.group.task_id,
+                    "taskDir": review.group.task_dir,
+                    "title": task_title(&review.group).or_else(|| review.group.task_id.clone()),
+                    "branchName": review.group.task_branch,
+                    "suggestedBranchName": Value::Null,
+                    "choices": project_task_spaces,
+                })
+            })
+            .collect();
+        if items.is_empty() {
+            return;
+        }
+        (self.emit)(json!({
+            "type": "task_ownership_review",
+            "taskSpaceId": binding.task_space_id,
+            "branchName": binding.branch_name,
+            "items": items,
+        }));
+    }
+
+    async fn resolve_task_ownership(
+        &self,
+        binding: &AgentBinding,
+        groups: &[SnapshotGroup],
+    ) -> AgentResult<OwnershipResolution> {
+        let unresolved_ids: Vec<String> = groups
+            .iter()
+            .filter(|group| group.task_id.is_some() && group.task_branch.is_none())
+            .filter_map(|group| group.task_id.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let mut project_task_spaces = vec![json!({
+            "taskSpaceId": binding.task_space_id,
+            "branchName": binding.branch_name,
+        })];
+        let mut claims_by_task: HashMap<String, Vec<Value>> = HashMap::new();
+        for chunk in unresolved_ids.chunks(TASK_OWNERSHIP_QUERY_LIMIT) {
+            let result = self
+                .fetch_task_ownership(&binding.task_space_id, chunk)
+                .await?;
+            if let Some(items) = result
+                .get("projectTaskSpaces")
+                .and_then(Value::as_array)
+                .filter(|items| !items.is_empty())
+            {
+                project_task_spaces = items.clone();
+            }
+            if let Some(tasks) = result.get("tasks").and_then(Value::as_array) {
+                for task in tasks {
+                    let Some(task_id) = task.get("taskId").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let claims = task
+                        .get("claims")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    claims_by_task.insert(task_id.to_string(), claims);
+                }
+            }
+        }
+
+        let mut resolution = OwnershipResolution {
+            project_task_spaces: project_task_spaces.clone(),
+            ..Default::default()
+        };
+        for group in groups {
+            let Some(task_id) = group.task_id.as_deref() else {
+                resolution.invalid.push(group.task_dir.clone());
+                continue;
+            };
+            if let Some(branch_name) = group.task_branch.as_deref() {
+                if branch_name == binding.branch_name {
+                    resolution
+                        .syncable
+                        .insert(group.task_dir.clone(), group.clone());
+                } else {
+                    resolution.paused.push(group.clone());
+                }
+                continue;
+            }
+            let claims = claims_by_task.get(task_id).cloned().unwrap_or_default();
+            let explicit_branches: HashSet<String> = claims
+                .iter()
+                .filter_map(|claim| claim.get("taskBranch").and_then(Value::as_str))
+                .filter(|branch| !branch.is_empty())
+                .map(str::to_string)
+                .collect();
+            let occurrence_branches: HashSet<String> = claims
+                .iter()
+                .filter_map(|claim| claim.get("branchName").and_then(Value::as_str))
+                .filter(|branch| !branch.is_empty())
+                .map(str::to_string)
+                .collect();
+            let inferred = if explicit_branches.len() > 1 {
+                None
+            } else if explicit_branches.len() == 1 {
+                explicit_branches.iter().next().cloned()
+            } else if claims.len() == 1 {
+                claims[0]
+                    .get("branchName")
+                    .and_then(Value::as_str)
+                    .filter(|branch| !branch.is_empty())
+                    .map(str::to_string)
+            } else if occurrence_branches.len() == 1 {
+                occurrence_branches.iter().next().cloned()
+            } else if claims.is_empty() && project_task_spaces.len() == 1 {
+                project_task_spaces[0]
+                    .get("branchName")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            } else {
+                None
+            };
+            let Some(inferred) = inferred else {
+                resolution.reviews.push(OwnershipReview {
+                    group: group.clone(),
+                    reason: "TASK_OWNERSHIP_REQUIRED".to_string(),
+                });
+                continue;
+            };
+            crate::agent::task_command::set_task_directory_branch(
+                Path::new(&binding.repo_path),
+                &group.task_dir,
+                &inferred,
+            )
+            .await?;
+            let mut selected = HashSet::new();
+            selected.insert(group.task_dir.clone());
+            let refreshed = self
+                .local_groups(binding, Some(&selected))
+                .await?
+                .into_iter()
+                .find(|candidate| candidate.task_dir == group.task_dir)
+                .ok_or_else(|| {
+                    AgentError::new(code::INVALID_RESPONSE, "任务分支归属写入后未能读回")
+                })?;
+            if refreshed.task_branch.as_deref() != Some(inferred.as_str()) {
+                return protocol::err(code::INVALID_RESPONSE, "任务分支归属写入后未能读回");
+            }
+            if let Some(task_json) = refreshed
+                .files
+                .iter()
+                .find(|file| file.file_path == "task.json")
+            {
+                self.suppressed.lock().await.insert(
+                    absolute_task_path(binding, &task_json.path),
+                    Some(task_json.sha256.clone()),
+                );
+            }
+            if inferred == binding.branch_name {
+                resolution
+                    .syncable
+                    .insert(group.task_dir.clone(), refreshed);
+            } else {
+                resolution.paused.push(refreshed);
+            }
+        }
+
+        let fresh = self
+            .remember_ownership_reviews(&binding.task_space_id, &resolution.reviews)
+            .await?;
+        self.clear_ownership_pending(
+            &binding.task_space_id,
+            &resolution
+                .syncable
+                .keys()
+                .cloned()
+                .chain(
+                    resolution
+                        .paused
+                        .iter()
+                        .map(|group| group.task_dir.clone()),
+                )
+                .collect::<Vec<_>>(),
+        )
+        .await?;
+        self.ownership_event(binding, &fresh, &resolution.project_task_spaces);
+        Ok(resolution)
+    }
+
     async fn fetch_snapshot(&self, task_space_id: &str, after_revision: u64) -> AgentResult<Value> {
         self.api
             .request_json_limited(
@@ -1202,6 +1622,13 @@ impl TaskSync {
         let mut changed = false;
         for group in groups {
             self.assert_binding_branch(binding).await?;
+            if group
+                .task_branch
+                .as_deref()
+                .is_some_and(|branch| branch != binding.branch_name)
+            {
+                continue;
+            }
             let mut selected = HashSet::new();
             selected.insert(group.task_dir.clone());
             let previous = self.local_files(binding, Some(&selected)).await?;
@@ -1375,6 +1802,16 @@ impl TaskSync {
         let initial_sync = !binding.initial_sync_completed;
         if let Some(pending) = cursor.pending.clone() {
             if let Some(result) = self.retry_pending_batch(binding, pending).await? {
+                if result.get("skipped").and_then(Value::as_bool) == Some(true) {
+                    return Ok(json!({
+                        "skipped": true,
+                        "reason": result.get("reason").cloned().unwrap_or(Value::Null),
+                        "blocked": result.get("blocked").cloned().unwrap_or(Value::Null),
+                        "conflicts": [],
+                        "revision": cursor.revision,
+                        "pendingReview": true,
+                    }));
+                }
                 if result.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
                     return Ok(json!({
                         "conflicts": [result],
@@ -1402,7 +1839,8 @@ impl TaskSync {
             .filter(|file| file.deleted)
             .map(|file| file.task_dir.clone())
             .collect();
-        let server_groups = groups_from_structs(&server_files)?;
+        let mut server_groups = groups_from_structs(&server_files)?;
+        retain_server_groups_for_binding(binding, &mut server_groups);
         let snapshot_baselines = if after_revision == 0 {
             baselines_from_snapshot(&snapshot_files)
         } else {
@@ -1430,6 +1868,16 @@ impl TaskSync {
             let uploaded = self
                 .upload_directories(binding, &dirty_dirs, false, None)
                 .await?;
+            if uploaded.get("skipped").and_then(Value::as_bool) == Some(true) {
+                return Ok(json!({
+                    "skipped": true,
+                    "reason": uploaded.get("reason").cloned().unwrap_or(Value::Null),
+                    "blocked": uploaded.get("blocked").cloned().unwrap_or(Value::Null),
+                    "conflicts": [],
+                    "revision": cursor.revision,
+                    "pendingReview": true,
+                }));
+            }
             if uploaded.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
                 return Ok(json!({
                     "conflicts": [uploaded],
@@ -1488,6 +1936,16 @@ impl TaskSync {
                 let uploaded = self
                     .upload_directories(binding, &local_only, false, None)
                     .await?;
+                if uploaded.get("skipped").and_then(Value::as_bool) == Some(true) {
+                    return Ok(json!({
+                        "skipped": true,
+                        "reason": uploaded.get("reason").cloned().unwrap_or(Value::Null),
+                        "conflicts": [],
+                        "differences": differences.iter().map(Difference::to_control).collect::<Vec<_>>(),
+                        "revision": snapshot_revision(&snapshot),
+                        "pendingReview": true,
+                    }));
+                }
                 if uploaded.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
                     return Ok(json!({
                         "conflicts": [uploaded],
@@ -1522,9 +1980,14 @@ impl TaskSync {
                         .iter()
                         .find(|file| file.file_path == "task.json" && !file.deleted)
                         .and_then(|file| parse_task_id(&file.content)),
+                    task_branch: files
+                        .iter()
+                        .find(|file| file.file_path == "task.json" && !file.deleted)
+                        .and_then(|file| parse_task_metadata(&file.content).1),
                     files,
                 });
             }
+            retain_server_groups_for_binding(binding, &mut by_dir);
             let protected: HashSet<String> = cursor
                 .deferred
                 .keys()
@@ -1588,7 +2051,8 @@ impl TaskSync {
             .filter(|file| !file.deleted)
             .cloned()
             .collect();
-        let server_groups = groups_from_structs(&server_files)?;
+        let mut server_groups = groups_from_structs(&server_files)?;
+        retain_server_groups_for_binding(binding, &mut server_groups);
         let server_baselines = baselines_from_snapshot(&snapshot_files);
         let differences = classify_task_snapshots(&local_groups, &server_groups);
         let actionable: Vec<&Difference> = differences
@@ -1825,6 +2289,230 @@ impl TaskSync {
             .await
     }
 
+    pub async fn list_task_ownership(&self, task_space_id: &str) -> AgentResult<Value> {
+        let binding = self.binding(task_space_id).await?;
+        self.assert_binding_branch(&binding).await?;
+        let groups = self.local_groups(&binding, None).await?;
+        let local_dirs: HashSet<String> =
+            groups.iter().map(|group| group.task_dir.clone()).collect();
+        let cursor = self.read_cursor(task_space_id).await;
+        self.clear_ownership_pending(
+            task_space_id,
+            &cursor
+                .ownership_pending
+                .keys()
+                .filter(|task_dir| !local_dirs.contains(*task_dir))
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+        .await?;
+        let candidates: Vec<SnapshotGroup> = groups
+            .into_iter()
+            .filter(|group| {
+                group
+                    .task_branch
+                    .as_deref()
+                    .map(|branch| branch != binding.branch_name)
+                    .unwrap_or(false)
+                    || cursor.ownership_pending.contains_key(&group.task_dir)
+            })
+            .collect();
+        let resolution = self.resolve_task_ownership(&binding, &candidates).await?;
+        let mut project_task_spaces = resolution.project_task_spaces.clone();
+        if let Ok(result) = self
+            .fetch_task_ownership(&binding.task_space_id, &[])
+            .await
+        {
+            if let Some(items) = result
+                .get("projectTaskSpaces")
+                .and_then(Value::as_array)
+                .filter(|items| !items.is_empty())
+            {
+                project_task_spaces = items.clone();
+            }
+        }
+        let mut items: Vec<Value> = resolution
+            .paused
+            .iter()
+            .map(|group| {
+                json!({
+                    "taskId": group.task_id,
+                    "taskDir": group.task_dir,
+                    "title": task_title(group).or_else(|| group.task_id.clone()),
+                    "branchName": group.task_branch,
+                    "suggestedBranchName": Value::Null,
+                    "choices": project_task_spaces.clone(),
+                })
+            })
+            .collect();
+        items.extend(resolution.reviews.iter().map(|review| {
+            json!({
+                "taskId": review.group.task_id,
+                "taskDir": review.group.task_dir,
+                "title": task_title(&review.group).or_else(|| review.group.task_id.clone()),
+                "branchName": review.group.task_branch,
+                "suggestedBranchName": Value::Null,
+                "choices": project_task_spaces.clone(),
+            })
+        }));
+        Ok(json!({
+            "taskSpaceId": binding.task_space_id,
+            "branchName": binding.branch_name,
+            "projectTaskSpaces": project_task_spaces,
+            "items": items,
+        }))
+    }
+
+    pub async fn set_task_ownership(
+        &self,
+        task_space_id: &str,
+        decisions: Value,
+    ) -> AgentResult<Value> {
+        let raw = decisions
+            .as_array()
+            .cloned()
+            .ok_or_else(|| AgentError::new(code::CONFIG_INVALID, "任务归属决定必须是数组"))?;
+        if raw.is_empty() || raw.len() > TASK_OWNERSHIP_QUERY_LIMIT {
+            return protocol::err(
+                code::CONFIG_INVALID,
+                "任务归属决定必须包含 1 到 200 个任务",
+            );
+        }
+        let binding = self.binding(task_space_id).await?;
+        self.assert_binding_branch(&binding).await?;
+        let groups = self.local_groups(&binding, None).await?;
+        let groups_by_dir: HashMap<String, SnapshotGroup> = groups
+            .into_iter()
+            .map(|group| (group.task_dir.clone(), group))
+            .collect();
+        let mut normalized = Vec::with_capacity(raw.len());
+        let mut seen = HashSet::new();
+        for item in raw {
+            let task_dir = item
+                .get("taskDir")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
+                != Some(task_dir.as_str())
+                || !groups_by_dir.contains_key(&task_dir)
+            {
+                return protocol::err(code::CONFIG_INVALID, "任务归属决定包含无效的任务目录");
+            }
+            if !seen.insert(task_dir.clone()) {
+                return protocol::err(code::CONFIG_INVALID, "同一任务不能重复提交归属决定");
+            }
+            let action = item
+                .get("action")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if action != "use-branch" && action != "defer" {
+                return protocol::err(code::CONFIG_INVALID, "任务归属动作无效");
+            }
+            let branch_name = item
+                .get("branchName")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if action == "use-branch" && branch_name.is_empty() {
+                return protocol::err(code::CONFIG_INVALID, "归属任务时必须选择有效分支");
+            }
+            normalized.push(OwnershipDecision {
+                task_dir,
+                action,
+                branch_name,
+            });
+        }
+
+        let task_ids: Vec<String> = normalized
+            .iter()
+            .filter_map(|decision| groups_by_dir.get(&decision.task_dir)?.task_id.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let ownership = if normalized
+            .iter()
+            .any(|decision| decision.action == "use-branch")
+        {
+            self.fetch_task_ownership(&binding.task_space_id, &task_ids)
+                .await?
+        } else {
+            json!({ "projectTaskSpaces": [] })
+        };
+        let mut allowed_branches: HashSet<String> = ownership
+            .get("projectTaskSpaces")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|space| space.get("branchName").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect();
+        allowed_branches.insert(binding.branch_name.clone());
+        for decision in &normalized {
+            if decision.action == "use-branch"
+                && !allowed_branches.contains(&decision.branch_name)
+            {
+                return protocol::err(
+                    code::CONFIG_INVALID,
+                    "只能把任务归属到当前项目可见的有效分支",
+                );
+            }
+        }
+
+        let cursor = self.read_cursor(task_space_id).await;
+        let mut pending = cursor.ownership_pending.clone();
+        let mut current_branch = Vec::new();
+        let mut applied = 0usize;
+        let mut deferred = 0usize;
+        for decision in &normalized {
+            if decision.action == "defer" {
+                let group = groups_by_dir
+                    .get(&decision.task_dir)
+                    .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "本地任务不存在"))?;
+                pending.insert(decision.task_dir.clone(), task_fingerprint(group));
+                deferred += 1;
+                continue;
+            }
+            crate::agent::task_command::set_task_directory_branch(
+                Path::new(&binding.repo_path),
+                &decision.task_dir,
+                &decision.branch_name,
+            )
+            .await?;
+            pending.remove(&decision.task_dir);
+            applied += 1;
+            if decision.branch_name == binding.branch_name {
+                current_branch.push(decision.task_dir.clone());
+            }
+        }
+        if pending != cursor.ownership_pending {
+            self.write_cursor(
+                task_space_id,
+                CursorPatch {
+                    ownership_pending: Some(pending),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        }
+        let sync = if current_branch.is_empty() {
+            Value::Null
+        } else {
+            self.sync_task_directories(task_space_id, &current_branch, true)
+                .await?
+        };
+        Ok(json!({
+            "taskSpaceId": binding.task_space_id,
+            "appliedCount": applied,
+            "deferredCount": deferred,
+            "currentBranchCount": current_branch.len(),
+            "sync": sync,
+        }))
+    }
+
     /// 显式补同步首次同步时暂缓的本地任务目录（对照 JS `syncDeferredTasks`）。
     pub async fn sync_deferred_tasks(&self, task_space_id: &str) -> AgentResult<Value> {
         let binding = self.binding(task_space_id).await?;
@@ -1850,12 +2538,15 @@ impl TaskSync {
         let next = self.read_cursor(&binding.task_space_id).await;
         let mut remaining: Vec<String> = next.deferred.keys().cloned().collect();
         remaining.sort_unstable();
+        let skipped = uploaded.get("skipped").and_then(Value::as_bool) == Some(true);
         let conflict = uploaded.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT");
         Ok(json!({
             "taskSpaceId": binding.task_space_id,
-            "syncedCount": if conflict { 0 } else { task_dirs.len().saturating_sub(remaining.len()) },
+            "syncedCount": if conflict || skipped { 0 } else { task_dirs.len().saturating_sub(remaining.len()) },
             "remainingCount": remaining.len(),
             "remainingTaskDirs": remaining,
+            "skipped": skipped,
+            "reason": uploaded.get("reason").cloned().unwrap_or(Value::Null),
             "conflict": conflict,
             "conflictId": if conflict {
                 uploaded.get("conflictId").cloned().unwrap_or(Value::Null)
@@ -1880,6 +2571,9 @@ impl TaskSync {
         if let Some(pending) = cursor.pending.clone() {
             let retry_files = pending.files.clone();
             if let Some(result) = self.retry_pending_batch(binding, pending).await? {
+                if result.get("skipped").and_then(Value::as_bool) == Some(true) {
+                    return Ok(result);
+                }
                 if result.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
                     return Ok(result);
                 }
@@ -1890,13 +2584,48 @@ impl TaskSync {
             }
         }
 
+        let requested: HashSet<String> = task_dirs.iter().cloned().collect();
+        let local_groups = self
+            .local_groups(binding, Some(&requested))
+            .await?;
+        let ownership = self.resolve_task_ownership(binding, &local_groups).await?;
+        let blocked_dirs: HashSet<String> = cursor.conflict_blocked.keys().cloned().collect();
+        let allowed: Vec<String> = requested
+            .iter()
+            .filter(|task_dir| {
+                if blocked_dirs.contains(*task_dir) {
+                    return false;
+                }
+                !local_groups
+                    .iter()
+                    .any(|group| &group.task_dir == *task_dir)
+                    || ownership.syncable.contains_key(*task_dir)
+            })
+            .cloned()
+            .collect();
+        if allowed.is_empty() {
+            let reason = if !ownership.reviews.is_empty() || !ownership.invalid.is_empty() {
+                "TASK_OWNERSHIP_REQUIRED"
+            } else if !ownership.paused.is_empty() {
+                "TASK_BRANCH_OTHER"
+            } else {
+                "TASK_CONFLICT_PENDING"
+            };
+            return Ok(json!({
+                "skipped": true,
+                "reason": reason,
+                "reviews": ownership.reviews.iter().map(|review| review.group.task_dir.clone()).collect::<Vec<_>>(),
+                "paused": ownership.paused.iter().map(|group| group.task_dir.clone()).collect::<Vec<_>>(),
+                "invalid": ownership.invalid,
+            }));
+        }
         let all_local = self.local_groups(binding, None).await?;
         let local_by_dir: HashMap<String, SnapshotGroup> = all_local
             .into_iter()
             .map(|group| (group.task_dir.clone(), group))
             .collect();
         let mut entries: Vec<(String, Option<SnapshotGroup>, Vec<SnapshotFile>)> = Vec::new();
-        let unique: HashSet<String> = task_dirs.iter().cloned().collect();
+        let unique: HashSet<String> = allowed.into_iter().collect();
         for task_dir in unique {
             let server = self.fetch_directory(&task_space_id, &task_dir).await?;
             let server_files = parse_directory_files(&server, &task_dir)?;
@@ -1923,6 +2652,9 @@ impl TaskSync {
             ));
             let value: Vec<Value> = files.iter().map(UploadFile::to_value).collect();
             if let Some(uploaded) = self.upload_persisted_batch(binding, &cursor, value).await? {
+                if uploaded.get("skipped").and_then(Value::as_bool) == Some(true) {
+                    return Ok(uploaded);
+                }
                 if uploaded.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
                     return Ok(uploaded);
                 }
@@ -1951,6 +2683,9 @@ impl TaskSync {
             );
             let value: Vec<Value> = files.iter().map(UploadFile::to_value).collect();
             if let Some(uploaded) = self.upload_persisted_batch(binding, &cursor, value).await? {
+                if uploaded.get("skipped").and_then(Value::as_bool) == Some(true) {
+                    return Ok(uploaded);
+                }
                 if uploaded.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
                     return Ok(uploaded);
                 }
@@ -2024,6 +2759,91 @@ impl TaskSync {
         batch: PendingBatch,
     ) -> AgentResult<Value> {
         let task_space_id = binding.task_space_id.clone();
+        let task_dirs: HashSet<String> = batch
+            .files
+            .iter()
+            .filter_map(|file| {
+                file.get("path")
+                    .and_then(Value::as_str)
+                    .and_then(task_directory_from_relative)
+            })
+            .collect();
+        let cursor = self.read_cursor(&task_space_id).await;
+        let blocked: Vec<Value> = task_dirs
+            .iter()
+            .filter_map(|task_dir| {
+                cursor
+                    .conflict_blocked
+                    .get(task_dir)
+                    .map(|conflict_id| json!({ "taskDir": task_dir, "conflictId": conflict_id }))
+            })
+            .collect();
+        if !blocked.is_empty() {
+            return Ok(json!({
+                "skipped": true,
+                "reason": "TASK_CONFLICT_PENDING",
+                "blocked": blocked,
+            }));
+        }
+        let local_groups = self.local_groups(binding, Some(&task_dirs)).await?;
+        for group in &local_groups {
+            let Some(current_task_json) = group
+                .files
+                .iter()
+                .find(|file| file.file_path == "task.json" && !file.deleted)
+            else {
+                continue;
+            };
+            let Some(pending_task_json) = batch.files.iter().find(|file| {
+                file.get("path").and_then(Value::as_str)
+                    == Some(current_task_json.path.as_str())
+            }) else {
+                return Ok(json!({
+                    "skipped": true,
+                    "reason": "TASK_OWNERSHIP_PENDING_MISMATCH",
+                    "taskDir": group.task_dir,
+                }));
+            };
+            let pending_branch = pending_task_json
+                .get("content")
+                .and_then(Value::as_str)
+                .map(parse_task_metadata)
+                .and_then(|metadata| metadata.1);
+            let current_branch = current_task_json
+                .content
+                .as_str()
+                .map(parse_task_metadata)
+                .and_then(|metadata| metadata.1);
+            if pending_branch != current_branch {
+                return Ok(json!({
+                    "skipped": true,
+                    "reason": "TASK_OWNERSHIP_PENDING_MISMATCH",
+                    "taskDir": group.task_dir,
+                }));
+            }
+        }
+        let ownership = self.resolve_task_ownership(binding, &local_groups).await?;
+        if local_groups.iter().any(|group| {
+            !ownership.syncable.contains_key(&group.task_dir)
+                && !ownership
+                    .paused
+                    .iter()
+                    .any(|paused| paused.task_dir == group.task_dir)
+        }) {
+            return Ok(json!({
+                "skipped": true,
+                "reason": "TASK_OWNERSHIP_REQUIRED",
+                "reviews": ownership.reviews.iter().map(|review| review.group.task_dir.clone()).collect::<Vec<_>>(),
+                "invalid": ownership.invalid,
+            }));
+        }
+        if !ownership.paused.is_empty() {
+            return Ok(json!({
+                "skipped": true,
+                "reason": "TASK_BRANCH_OTHER",
+                "paused": ownership.paused.iter().map(|group| group.task_dir.clone()).collect::<Vec<_>>(),
+            }));
+        }
         let mut active_sequence = batch.client_sequence;
         let mut sequence_recovered = false;
         let mut retry_delay = Duration::ZERO;
@@ -2092,6 +2912,8 @@ impl TaskSync {
 
         let cursor = self.read_cursor(&task_space_id).await;
         if result.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
+            self.mark_conflict_blocked(&task_space_id, &result, &batch.files)
+                .await?;
             let files = parse_snapshot_files_from_values(&batch.files)?;
             self.write_cursor(
                 &task_space_id,
@@ -2200,7 +3022,8 @@ impl TaskSync {
             .filter(|file| !file.deleted)
             .cloned()
             .collect();
-        let server_groups = groups_from_structs(&server_files)?;
+        let mut server_groups = groups_from_structs(&server_files)?;
+        retain_server_groups_for_binding(binding, &mut server_groups);
         let snapshot_baselines = baselines_from_snapshot(&snapshot_files);
         let differences = classify_task_snapshots(&local_groups, &server_groups);
 
@@ -2332,6 +3155,19 @@ impl TaskSync {
                 let result = self
                     .upload_reviewed_local_task(&binding, &local, server.as_ref())
                     .await?;
+                if result.get("skipped").and_then(Value::as_bool) == Some(true) {
+                    return Ok(json!({
+                        "taskSpaceId": task_space_id,
+                        "mode": mode,
+                        "revision": latest_revision,
+                        "downloaded": downloaded,
+                        "uploaded": uploaded,
+                        "savedLocal": saved_local,
+                        "skipped": skipped + 1,
+                        "pendingReview": true,
+                        "reason": result.get("reason").cloned().unwrap_or(Value::Null),
+                    }));
+                }
                 latest_revision = latest_revision
                     .max(result.get("revision").and_then(Value::as_u64).unwrap_or(0));
                 baseline_files.extend(self.last_baseline_files.lock().await.clone());
@@ -2466,6 +3302,11 @@ impl TaskSync {
                     archived: false,
                     archive_month: None,
                     task_id: None,
+                    task_branch: directories
+                        .server_files
+                        .iter()
+                        .find(|file| file.file_path == "task.json" && !file.deleted)
+                        .and_then(|file| parse_task_metadata(&file.content).1),
                     files: directories.server_files.clone(),
                 }],
                 "safe",
@@ -2494,9 +3335,16 @@ impl TaskSync {
                 },
             )
             .await?;
-            return self
+            let resolved = self
                 .resolve_conflict(task_space_id, conflict_id, &json!({ "action": action }))
-                .await;
+                .await?;
+            let task_dirs: Vec<String> = [directories.local.clone(), directories.server.clone()]
+                .into_iter()
+                .flatten()
+                .collect();
+            self.clear_conflict_blocked(task_space_id, conflict_id, &task_dirs)
+                .await?;
+            return Ok(resolved);
         }
         if action == "save-local-copy" {
             let local = directories
@@ -2573,6 +3421,26 @@ impl TaskSync {
                 "baseSha256": file.sha256,
             }));
         }
+        let selected_dirs: HashSet<String> = selected
+            .iter()
+            .filter_map(|file| task_directory_from_relative(&file.path))
+            .collect();
+        let local_groups = self.local_groups(&binding, Some(&selected_dirs)).await?;
+        let ownership = self.resolve_task_ownership(&binding, &local_groups).await?;
+        if local_groups
+            .iter()
+            .any(|group| !ownership.syncable.contains_key(&group.task_dir))
+        {
+            return Ok(json!({
+                "skipped": true,
+                "reason": if ownership.paused.is_empty() { "TASK_OWNERSHIP_REQUIRED" } else { "TASK_BRANCH_OTHER" },
+                "conflictId": conflict_id,
+                "action": action,
+                "resolved": false,
+                "paused": ownership.paused.iter().map(|group| group.task_dir.clone()).collect::<Vec<_>>(),
+                "reviews": ownership.reviews.iter().map(|review| review.group.task_dir.clone()).collect::<Vec<_>>(),
+            }));
+        }
         let cursor = self.read_cursor(task_space_id).await;
         let backup = match &directories.local {
             Some(local_dir) => self.backup_directory(&binding, local_dir).await?,
@@ -2592,7 +3460,10 @@ impl TaskSync {
                 }),
             )
             .await?;
-        if result.get("code").and_then(Value::as_str) != Some("TASK_FILE_CONFLICT") {
+        if result.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
+            self.mark_conflict_blocked(task_space_id, &result, &values)
+                .await?;
+        } else {
             let next_revision = cursor
                 .revision
                 .max(result.get("revision").and_then(Value::as_u64).unwrap_or(0));
@@ -2609,6 +3480,12 @@ impl TaskSync {
             )
             .await?;
             self.write_server_cursor(task_space_id, next_revision)
+                .await?;
+            let task_dirs: Vec<String> = [directories.local.clone(), directories.server.clone()]
+                .into_iter()
+                .flatten()
+                .collect();
+            self.clear_conflict_blocked(task_space_id, conflict_id, &task_dirs)
                 .await?;
         }
         let mut payload = result;
@@ -2797,6 +3674,8 @@ struct CursorPatch {
     pending: Option<Option<PendingBatch>>,
     baselines: Option<BTreeMap<String, String>>,
     deferred: Option<BTreeMap<String, BTreeMap<String, String>>>,
+    ownership_pending: Option<BTreeMap<String, String>>,
+    conflict_blocked: Option<BTreeMap<String, String>>,
 }
 
 fn conflict_task_directories(value: &str) -> (Option<String>, Option<String>) {
@@ -2834,6 +3713,16 @@ fn initial_sync_mode(binding: &AgentBinding) -> String {
     } else {
         "safe".into()
     }
+}
+
+fn retain_server_groups_for_binding(binding: &AgentBinding, groups: &mut Vec<SnapshotGroup>) {
+    groups.retain(|group| {
+        group
+            .task_branch
+            .as_deref()
+            .map(|branch| branch == binding.branch_name)
+            .unwrap_or(true)
+    });
 }
 
 fn snapshot_revision(snapshot: &Value) -> u64 {
@@ -3042,6 +3931,76 @@ fn parse_deferred(value: &Value) -> Option<BTreeMap<String, BTreeMap<String, Str
         }
     }
     Some(deferred)
+}
+
+fn ownership_pending_to_value(pending: &BTreeMap<String, String>) -> Value {
+    Value::Object(
+        pending
+            .iter()
+            .map(|(task_dir, fingerprint)| {
+                (
+                    task_dir.clone(),
+                    json!({
+                        "fingerprint": fingerprint,
+                        "reason": "TASK_OWNERSHIP_REQUIRED",
+                    }),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn conflict_blocked_to_value(blocked: &BTreeMap<String, String>) -> Value {
+    Value::Object(
+        blocked
+            .iter()
+            .map(|(task_dir, conflict_id)| (task_dir.clone(), json!({ "conflictId": conflict_id })))
+            .collect(),
+    )
+}
+
+fn parse_ownership_pending(value: &Value) -> BTreeMap<String, String> {
+    let mut pending = BTreeMap::new();
+    let Some(object) = value.as_object() else {
+        return pending;
+    };
+    for (task_dir, state) in object {
+        if task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
+            != Some(task_dir.as_str())
+        {
+            continue;
+        }
+        let fingerprint = state
+            .get("fingerprint")
+            .and_then(Value::as_str)
+            .filter(|value| is_sha256(value));
+        if let Some(fingerprint) = fingerprint {
+            pending.insert(task_dir.clone(), fingerprint.to_string());
+        }
+    }
+    pending
+}
+
+fn parse_conflict_blocked(value: &Value) -> BTreeMap<String, String> {
+    let mut blocked = BTreeMap::new();
+    let Some(object) = value.as_object() else {
+        return blocked;
+    };
+    for (task_dir, state) in object {
+        if task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
+            != Some(task_dir.as_str())
+        {
+            continue;
+        }
+        let conflict_id = state
+            .as_str()
+            .or_else(|| state.get("conflictId").and_then(Value::as_str))
+            .filter(|value| !value.is_empty() && value.len() <= 128);
+        if let Some(conflict_id) = conflict_id {
+            blocked.insert(task_dir.clone(), conflict_id.to_string());
+        }
+    }
+    blocked
 }
 
 fn parse_pending_batch(value: &Value) -> Option<PendingBatch> {
@@ -3299,6 +4258,7 @@ mod tests {
             archive_month: None,
             files: snapshot_files,
             task_id: Some(task_id.to_string()),
+            task_branch: None,
         }
     }
 

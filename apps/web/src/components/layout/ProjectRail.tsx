@@ -4,8 +4,10 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { AgentQuickInitDialog } from '@/features/board/dialogs/AgentQuickInitDialog'
 import { ProjectOnboardingDialog } from '@/features/board/dialogs/ProjectOnboardingDialog'
+import { TaskOwnershipDialog } from '@/features/board/dialogs/TaskOwnershipDialog'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import {
+  associationOwnershipCounts,
   countProjectPausedBranches,
   isBranchAssociationPaused,
   selectProjectAssociation,
@@ -27,7 +29,7 @@ type Project = {
 
 type LiveSyncStatus = 'pending' | 'syncing' | 'ready' | 'error'
 
-type LocalAssociation = {
+export type LocalAssociation = {
   projectId: string
   taskSpaceId: string
   repoPath: string
@@ -42,6 +44,10 @@ type LocalAssociation = {
   liveSyncError: string | null
   deferredCount: number
   deferredTaskDirs: string[]
+  ownershipPausedCount: number
+  ownershipPausedTaskDirs: string[]
+  ownershipPendingCount: number
+  ownershipPendingTaskDirs: string[]
 }
 
 type SidecarStatus = {
@@ -73,6 +79,7 @@ type ProjectRailProps = {
   syncLive: boolean
   refreshing: boolean
   onRefresh: () => void
+  onAssociationsChange?: (associations: LocalAssociation[]) => void
 }
 
 function tauriInvoke(): TauriInvoke | null {
@@ -110,6 +117,30 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
     (typeof record.deferredCount === 'number' && Number.isSafeInteger(record.deferredCount)
       ? Math.max(0, record.deferredCount)
       : 0)
+  const ownershipPausedTaskDirs = Array.isArray(record.ownershipPausedTaskDirs)
+    ? record.ownershipPausedTaskDirs.filter(
+        (taskDir): taskDir is string =>
+          typeof taskDir === 'string' && taskDir.startsWith('.trellis/tasks/'),
+      )
+    : []
+  const ownershipPendingTaskDirs = Array.isArray(record.ownershipPendingTaskDirs)
+    ? record.ownershipPendingTaskDirs.filter(
+        (taskDir): taskDir is string =>
+          typeof taskDir === 'string' && taskDir.startsWith('.trellis/tasks/'),
+      )
+    : []
+  const ownershipPausedCount =
+    ownershipPausedTaskDirs.length ||
+    (typeof record.ownershipPausedCount === 'number' &&
+    Number.isSafeInteger(record.ownershipPausedCount)
+      ? Math.max(0, record.ownershipPausedCount)
+      : 0)
+  const ownershipPendingCount =
+    ownershipPendingTaskDirs.length ||
+    (typeof record.ownershipPendingCount === 'number' &&
+    Number.isSafeInteger(record.ownershipPendingCount)
+      ? Math.max(0, record.ownershipPendingCount)
+      : 0)
   return {
     projectId: record.projectId,
     taskSpaceId: record.taskSpaceId,
@@ -128,6 +159,10 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
         : null,
     deferredCount,
     deferredTaskDirs,
+    ownershipPausedCount,
+    ownershipPausedTaskDirs,
+    ownershipPendingCount,
+    ownershipPendingTaskDirs,
   }
 }
 
@@ -204,6 +239,26 @@ function projectAssociationView(association: LocalAssociation | undefined): Proj
       textClassName: 'text-destructive',
     }
   }
+  const ownership = associationOwnershipCounts(association)
+  if (association.liveSyncStatus !== 'error' && ownership.totalCount > 0) {
+    const detail = [
+      ownership.pausedCount ? `${ownership.pausedCount} 个因分支不匹配暂停` : null,
+      ownership.pendingCount ? `${ownership.pendingCount} 个待确认归属` : null,
+    ]
+      .filter(Boolean)
+      .join('；')
+    return {
+      label:
+        ownership.pausedCount && ownership.pendingCount
+          ? `已关联 · ${ownership.totalCount} 个任务待处理归属`
+          : ownership.pausedCount
+            ? `已关联 · ${ownership.pausedCount} 个任务因分支不匹配暂停`
+            : `已关联 · ${ownership.pendingCount} 个任务待确认归属`,
+      detail,
+      dotClassName: 'bg-warning',
+      textClassName: 'text-warning',
+    }
+  }
   switch (association.liveSyncStatus) {
     case 'syncing':
       return {
@@ -261,6 +316,7 @@ export function ProjectRail({
   syncLive,
   refreshing,
   onRefresh,
+  onAssociationsChange,
 }: ProjectRailProps) {
   const invoke = useMemo(() => tauriInvoke(), [])
   const [associations, setAssociations] = useState<Map<string, LocalAssociation>>(() => new Map())
@@ -269,10 +325,16 @@ export function ProjectRail({
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [onboardingPath, setOnboardingPath] = useState('')
   const [quickAgentTaskSpaceId, setQuickAgentTaskSpaceId] = useState<string | null>(null)
+  const [ownershipTaskSpaceId, setOwnershipTaskSpaceId] = useState<string | null>(null)
   const [inspectingProject, setInspectingProject] = useState(false)
   const [syncingDeferredTaskSpace, setSyncingDeferredTaskSpace] = useState<string | null>(null)
   const [associationRefreshNonce, setAssociationRefreshNonce] = useState(0)
   const associationRequestInFlight = useRef(false)
+  const onAssociationsChangeRef = useRef(onAssociationsChange)
+
+  useEffect(() => {
+    onAssociationsChangeRef.current = onAssociationsChange
+  }, [onAssociationsChange])
 
   useEffect(() => {
     if (!invoke) return
@@ -284,9 +346,9 @@ export function ProjectRail({
       try {
         const result = await currentInvoke('list_local_associations')
         if (cancelled) return
-        setAssociations(
-          new Map(normalizeAssociations(result).map((item) => [item.taskSpaceId, item])),
-        )
+        const normalized = normalizeAssociations(result)
+        setAssociations(new Map(normalized.map((item) => [item.taskSpaceId, item])))
+        onAssociationsChangeRef.current?.(normalized)
         setAssociationError('')
       } catch (error) {
         if (!cancelled) {
@@ -523,6 +585,7 @@ export function ProjectRail({
                   const branchAssociation = associations.get(taskSpace.id)
                   const branchView = invoke ? projectAssociationView(branchAssociation) : null
                   const branchPaused = isBranchAssociationPaused(branchAssociation)
+                  const ownership = associationOwnershipCounts(branchAssociation)
                   const deferredDetails = branchAssociation?.deferredTaskDirs
                     .map((taskDir) => taskDir.split('/').at(-1))
                     .join('、')
@@ -552,6 +615,20 @@ export function ProjectRail({
                           </span>
                         ) : null}
                       </button>
+                      {branchAssociation?.status === 'approved' &&
+                      !branchAssociation.readOnly &&
+                      !branchPaused &&
+                      ownership.totalCount > 0 ? (
+                        <button
+                          type="button"
+                          className="mr-1 shrink-0 rounded px-1 text-[8.5px] font-medium text-warning hover:bg-background"
+                          aria-label={`处理 ${taskSpace.branchName} 的 ${ownership.totalCount} 个任务归属`}
+                          title={branchView?.detail || branchView?.label}
+                          onClick={() => setOwnershipTaskSpaceId(taskSpace.id)}
+                        >
+                          待处理 {ownership.totalCount}
+                        </button>
+                      ) : null}
                       {branchAssociation?.status === 'approved' &&
                       !branchAssociation.readOnly &&
                       branchAssociation.deferredCount > 0 ? (
@@ -682,6 +759,19 @@ export function ProjectRail({
               return next
             })
             toast.success('本地项目已接入团队任务空间，正在同步任务。')
+            void onRefresh()
+          }}
+        />
+        <TaskOwnershipDialog
+          open={ownershipTaskSpaceId !== null}
+          onOpenChange={(open) => {
+            if (!open) setOwnershipTaskSpaceId(null)
+          }}
+          taskSpaceId={ownershipTaskSpaceId || ''}
+          invoke={invoke}
+          onChanged={() => {
+            toast.success('任务归属已更新，正在同步当前分支任务。')
+            setAssociationRefreshNonce((value) => value + 1)
             void onRefresh()
           }}
         />

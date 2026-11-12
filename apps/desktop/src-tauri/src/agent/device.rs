@@ -20,6 +20,7 @@ use crate::agent::store::{
     create_config_revision, AgentBinding, AgentConfig, AgentTeam, ConfigStore,
     CONFIG_SCHEMA_VERSION,
 };
+use crate::agent::task_sync;
 
 /// Board 的会话 Cookie 名称（对照 JS SESSION_COOKIE）。
 const SESSION_COOKIE: &str = "trellis_team_session";
@@ -84,6 +85,14 @@ pub struct LocalAssociation {
     pub deferred_count: usize,
     #[serde(default)]
     pub deferred_task_dirs: Vec<String>,
+    #[serde(default)]
+    pub ownership_paused_count: usize,
+    #[serde(default)]
+    pub ownership_paused_task_dirs: Vec<String>,
+    #[serde(default)]
+    pub ownership_pending_count: usize,
+    #[serde(default)]
+    pub ownership_pending_task_dirs: Vec<String>,
     pub last_error_code: Option<String>,
     pub last_error: Option<String>,
 }
@@ -830,6 +839,17 @@ pub async fn read_local_associations(store: &ConfigStore) -> AgentResult<Vec<Loc
     let mut associations = Vec::with_capacity(config.bindings.len());
     for binding in config.bindings {
         let deferred_task_dirs = deferred_task_dirs(&deferred, &binding.task_space_id);
+        let (ownership_paused_task_dirs, ownership_pending_task_dirs) =
+            if binding.sync_status == "approved"
+                && !binding.read_only
+                && binding.live_sync_status != "error"
+                && binding.last_error_code.as_deref() != Some(code::BRANCH_MISMATCH)
+                && binding.last_error_code.as_deref() != Some("BINDING_BRANCH_MISMATCH")
+            {
+                local_ownership_dirs(&binding, &deferred).await?
+            } else {
+                (Vec::new(), Vec::new())
+            };
         associations.push(LocalAssociation {
             project_id: binding.project_id,
             task_space_id: binding.task_space_id,
@@ -843,11 +863,55 @@ pub async fn read_local_associations(store: &ConfigStore) -> AgentResult<Vec<Loc
             live_sync_error: binding.live_sync_error,
             deferred_count: deferred_task_dirs.len(),
             deferred_task_dirs,
+            ownership_paused_count: ownership_paused_task_dirs.len(),
+            ownership_paused_task_dirs,
+            ownership_pending_count: ownership_pending_task_dirs.len(),
+            ownership_pending_task_dirs,
             last_error_code: binding.last_error_code,
             last_error: binding.last_error,
         });
     }
     Ok(associations)
+}
+
+async fn local_ownership_dirs(
+    binding: &AgentBinding,
+    cursors: &Value,
+) -> AgentResult<(Vec<String>, Vec<String>)> {
+    let Ok(files) =
+        task_sync::read_local_task_snapshot_files(Path::new(&binding.repo_path), None).await
+    else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let groups = match task_sync::group_task_snapshot_files(&files) {
+        Ok(groups) => groups,
+        Err(_) => return Ok((Vec::new(), Vec::new())),
+    };
+    let mut paused: Vec<String> = groups
+        .iter()
+        .filter(|group| {
+            group
+                .task_branch
+                .as_deref()
+                .map(|branch| branch != binding.branch_name)
+                .unwrap_or(false)
+        })
+        .map(|group| group.task_dir.clone())
+        .collect();
+    paused.sort();
+    let paused_set: std::collections::HashSet<String> = paused.iter().cloned().collect();
+    let local_dirs: std::collections::HashSet<String> =
+        groups.iter().map(|group| group.task_dir.clone()).collect();
+    let mut pending: Vec<String> = cursors
+        .get("taskSpaces")
+        .and_then(|spaces| spaces.get(&binding.task_space_id))
+        .and_then(|space| space.get("ownershipPending"))
+        .and_then(Value::as_object)
+        .map(|items| items.keys().cloned().collect())
+        .unwrap_or_default();
+    pending.retain(|task_dir| local_dirs.contains(task_dir) && !paused_set.contains(task_dir));
+    pending.sort();
+    Ok((paused, pending))
 }
 
 /// 尚未补同步的本地任务目录（只看 `.trellis/tasks/` 前缀，按字典序）。
@@ -980,6 +1044,10 @@ mod tests {
                 ".trellis/tasks/11-12-a".to_string(),
                 ".trellis/tasks/11-12-b".to_string(),
             ],
+            ownership_paused_count: 1,
+            ownership_paused_task_dirs: vec![".trellis/tasks/11-12-a".to_string()],
+            ownership_pending_count: 1,
+            ownership_pending_task_dirs: vec![".trellis/tasks/11-12-b".to_string()],
             last_error_code: Some("GIT_FAILED".to_string()),
             last_error: None,
         };

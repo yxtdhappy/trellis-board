@@ -470,6 +470,41 @@ pub async fn sync_deferred_tasks(app: &AppHandle, task_space_id: &str) -> Result
         .map_err(|error| message(&error))
 }
 
+pub async fn list_task_ownership(
+    app: &AppHandle,
+    task_space_id: &str,
+) -> Result<Value, String> {
+    let service = service(app).map_err(|error| message(&error))?;
+    let (config, api) = service
+        .agent_context()
+        .await
+        .map_err(|error| message(&error))?;
+    let task_sync = TaskSync::new(service.store.clone(), api, Arc::new(|_control: Value| {}));
+    task_sync.set_bindings(config.bindings).await;
+    task_sync
+        .list_task_ownership(task_space_id)
+        .await
+        .map_err(|error| message(&error))
+}
+
+pub async fn set_task_ownership(
+    app: &AppHandle,
+    task_space_id: &str,
+    decisions: Value,
+) -> Result<Value, String> {
+    let service = service(app).map_err(|error| message(&error))?;
+    let (config, api) = service
+        .agent_context()
+        .await
+        .map_err(|error| message(&error))?;
+    let task_sync = TaskSync::new(service.store.clone(), api, Arc::new(|_control: Value| {}));
+    task_sync.set_bindings(config.bindings).await;
+    task_sync
+        .set_task_ownership(task_space_id, decisions)
+        .await
+        .map_err(|error| message(&error))
+}
+
 pub async fn login(
     app: &AppHandle,
     server_url: &str,
@@ -554,6 +589,10 @@ pub async fn associate(
         live_sync_error: summary.live_sync_error.filter(|value| !value.is_empty()),
         deferred_count: 0,
         deferred_task_dirs: Vec::new(),
+        ownership_paused_count: 0,
+        ownership_paused_task_dirs: Vec::new(),
+        ownership_pending_count: 0,
+        ownership_pending_task_dirs: Vec::new(),
         last_error_code: None,
         last_error: None,
     })

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"逐项核对所有上传入口、服务端分支门禁、冲突幂等、游标和清理边界"}
+{"file":".trellis/spec/backend/task-ownership-and-conflict-idempotency.md","reason":"逐项核对任务级归属、稳定 conflict ID、pending 字节不变和历史重复折叠"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核对测试覆盖、事务原子性、错误信息和后端质量门禁"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"核对单/多分支交互、项目栏状态、弹层可访问性和 Tauri 契约"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核对 TypeScript、React 状态、样式、窄屏和浏览器验收要求"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对字段、错误、路径和 UI 状态在所有层之间一致"}
