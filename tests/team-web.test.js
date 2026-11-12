@@ -86,6 +86,17 @@ test('团队查询参数保留服务端筛选并限制页大小', () => {
   assert.equal(allProjects.get('branch'), 'feature/dev')
 })
 
+test('BoardFilters 的单数优先级和阶段映射到服务端查询参数', () => {
+  const query = new URLSearchParams(
+    buildTaskQuery({
+      priority: 'P1',
+      stage: 'implement',
+    }),
+  )
+  assert.equal(query.get('priorities'), 'P1')
+  assert.equal(query.get('stages'), 'implement')
+})
+
 test('归档负责人选择在选项刷新时保持并继续查询该负责人', () => {
   assert.deepEqual(archiveAssigneeOptions(['alice', 'bob'], ''), [
     { value: '__all', label: '全部负责人' },

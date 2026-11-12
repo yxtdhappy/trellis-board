@@ -440,6 +440,10 @@ export function buildTaskQuery(filters = {}, { limit = TEAM_PAGE_LIMIT, cursor =
     if (Array.isArray(value) && value.length) add(key, value.join(','))
     else if (typeof value === 'string' && value.trim()) add(key, value.trim())
   }
+  const priorities = filters.priorities ?? filters.priority
+  const stages = filters.stages ?? filters.stage
+  add('priorities', Array.isArray(priorities) ? priorities.join(',') : priorities?.trim())
+  add('stages', Array.isArray(stages) ? stages.join(',') : stages?.trim())
   add('q', filters.q?.trim())
   add('branch', filters.branch?.trim())
   add('assignee', filters.assignee?.trim())
