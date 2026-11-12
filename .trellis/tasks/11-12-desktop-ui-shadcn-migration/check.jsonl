@@ -2,7 +2,11 @@
 {"file": "web/package.json", "reason": "校验 build:desktop 脚本存在且依赖块未新增"}
 {"file": ".gitignore", "reason": "校验 desktop/ui 已被忽略，产物不入库"}
 {"file": "desktop/src-tauri/tauri.conf.json", "reason": "校验 frontendDist 仍为 ../ui、CSP 未放宽、withGlobalTauri 仍为 true"}
-{"file": "tests/desktop-package.test.js", "reason": "npm test 通过，断言已指向 web/desktop + web/src/desktop"}
+{"file": "tests/desktop-ui-build.test.js", "reason": "新增的构建契约测试通过（npm test 全绿）"}
 {"file": ".github/workflows/windows.yml", "reason": "校验 build:desktop 在 tauri build 之前执行"}
 {"file": "desktop/README.md", "reason": "校验文档写明 desktop/ui 是构建产物与构建顺序"}
-{"file": ".trellis/spec/backend/desktop-sidecar-packaging.md", "reason": "校验打包契约已描述前端产物的新生成方式"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "校验契约描述已改为前端产物的新生成方式"}
+{"file": "web/src/desktop/LoginApp.tsx", "reason": "浏览器逐分支实测：无桥接提示、ready 自动登录一次、needs_setup 缺项文案与步骤映射、failed 文案、五项校验文案与 Error 前缀剥离、Progress 按已完成步骤推进"}
+{"file": "web/src/desktop/ControlApp.tsx", "reason": "浏览器逐分支实测：三类事件的折叠/展开、review 每类差异默认值、应用选择参数、冲突差异视图、overwrite 确认弹窗、busy 禁用除 close 外按钮、750ms 签名轮询"}
+{"file": "desktop/src-tauri/icons/icon.svg", "reason": "与 web 右上角 TrellisLogo 同几何（24 格栅标），并经 tauri icon 生成 icon.png/icon.ico"}
+{"file": "desktop/src-tauri/src/main.rs", "reason": "实机运行：cargo build 后启动客户端，WebView 加载 tauri.localhost 并渲染新登录页（CDP 确认 title 为登录页、版本与配置路径已回填）"}

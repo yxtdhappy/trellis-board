@@ -37,6 +37,8 @@ jobs:
         run: npm ci --prefix web
       - name: Build web
         run: npm run build
+      - name: Build desktop UI
+        run: npm --prefix web run build:desktop
       - name: Server and web tests
         run: npm test
       - name: Agent tests (includes Windows DPAPI)
@@ -73,6 +75,8 @@ jobs:
           npm ci --prefix web
       - name: Build web
         run: npm run build
+      - name: Build desktop UI
+        run: npm --prefix web run build:desktop
       - name: Rust unit tests
         timeout-minutes: 25
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml

@@ -1,22 +1,22 @@
-{"file": "desktop/ui/setup.js", "reason": "环境检查 + 登录的全部行为（runtime_status/runtime-progress/desktop_login/自动登录/校验规则），迁移需逐函数对照"}
-{"file": "desktop/ui/control.js", "reason": "750ms 轮询、四类事件渲染、runAction 全部分支、appendDiff/appendInitialDifference 与 reviewChoices 默认值"}
+{"file": "desktop/ui/setup.js", "reason": "环境检查 + 登录的全部行为（runtime_status/runtime-progress/desktop_login/自动登录/校验规则），迁移需逐函数对照（273 行）"}
+{"file": "desktop/ui/control.js", "reason": "750ms 轮询 + JSON.stringify 签名比较、三类事件（initial_sync_review/task_file_conflict/task_sync_error）渲染、runAction 全部分支、appendDiff/appendInitialDifference 与 reviewChoices 默认值（369 行）"}
 {"file": "desktop/ui/index.html", "reason": "env-panel/login-panel 结构与全部中文文案，迁移后需逐字保留"}
-{"file": "desktop/ui/control.html", "reason": "控制窗结构、空态文案与按钮顺序"}
+{"file": "desktop/ui/control.html", "reason": "控制窗结构、CSP meta、空态文案与按钮顺序"}
 {"file": "desktop/ui/styles.css", "reason": "旧卡片/状态/步骤样式，用于确认新 token 下的等价视觉"}
-{"file": "desktop/ui/control.css", "reason": "diff-grid 双栏与 source 行的排版口径"}
+{"file": "desktop/ui/control.css", "reason": "diff-grid 实为单列堆叠（`minmax(0, 1fr)`）与 source 行排版口径"}
 {"file": "web/src/index.css", "reason": "唯一 token 来源：oklch 色值、--radius、Inter/Geist 字体、@theme inline 映射"}
-{"file": "web/src/components/ui/button.tsx", "reason": "控件三档尺寸（前置任务定稿后的默认值），客户端按钮一律复用"}
+{"file": "web/src/components/ui/button.tsx", "reason": "控件三档尺寸（前置任务定稿：默认 h-8、sm h-7、xs h-6），客户端按钮一律复用"}
 {"file": "web/src/components/ui/input.tsx", "reason": "登录表单输入框高度与内边距唯一来源"}
 {"file": "web/src/components/ui/card.tsx", "reason": "登录/环境卡片外壳，替代旧 .card 类"}
 {"file": "web/src/components/ui/progress.tsx", "reason": "环境安装百分比与步骤进度"}
-{"file": "web/src/components/ui/scroll-area.tsx", "reason": "控制窗 diff 双栏滚动容器"}
-{"file": "web/vite.config.ts", "reason": "新 vite.desktop.config.ts 需与它同构（alias、plugins、defineConfig 形态）"}
+{"file": "web/src/components/ui/scroll-area.tsx", "reason": "控制窗 diff 滚动容器"}
+{"file": "web/vite.config.ts", "reason": "新 vite.desktop.config.ts 需与它同构（alias、plugins、defineConfig 形态、rollupOptions.input）"}
 {"file": "web/package.json", "reason": "新增 build:desktop 脚本，依赖块保持不变"}
-{"file": "web/tsconfig.app.json", "reason": "确认 web/src/desktop/** 被 include 覆盖，避免 tsc -b 漏检"}
-{"file": "desktop/src-tauri/tauri.conf.json", "reason": "frontendDist 保持 ../ui、CSP style-src 'self' 与 withGlobalTauri 约束"}
-{"file": "desktop/src-tauri/src/main.rs", "reason": "窗口打开 index.html 的位置（:787）；仅在布局裁切时改窗口尺寸"}
-{"file": "desktop/src-tauri/src/sidecar.rs", "reason": "控制窗 WebviewUrl::App(\"control.html\")（:326）与窗口尺寸"}
-{"file": "tests/desktop-package.test.js", "reason": "断言需从 desktop/ui 旧文件改指向 web/desktop + web/src/desktop + build:desktop"}
-{"file": ".github/workflows/windows.yml", "reason": "desktop-build job 必须在 tauri build 前执行 build:desktop"}
+{"file": "web/tsconfig.app.json", "reason": "已确认 include=['src'] 覆盖 web/src/desktop/**，tsc -b 不会漏检"}
+{"file": "desktop/src-tauri/tauri.conf.json", "reason": "frontendDist 保持 ../ui、withGlobalTauri、CSP style-src 'self' 约束"}
+{"file": "desktop/src-tauri/src/main.rs", "reason": "主窗 WebviewUrl::App(\"index.html\") 与 1280x800 尺寸（:730）；命令注册表（:775-794）"}
+{"file": "desktop/src-tauri/src/agent_service.rs", "reason": "控制窗 WebviewUrl::App(\"control.html\") 与 560x420 尺寸（:281），assignment_warning 的 dismiss 特判（:386）"}
+{"file": "tests/desktop-ui-build.test.js", "reason": "新增构建契约测试：frontendDist/withGlobalTauri/CSP、build:desktop 脚本、web/desktop 入口、.gitignore、CI 顺序"}
+{"file": ".github/workflows/windows.yml", "reason": "desktop-build job 必须在 tauri build 前执行 build:desktop（:126 tauri build）"}
 {"file": "desktop/README.md", "reason": "构建顺序与 desktop/ui 为产物的说明"}
-{"file": ".trellis/spec/backend/desktop-sidecar-packaging.md", "reason": "打包/前端产物形态变更后需同步契约描述"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "桌面 Agent/Tauri 命令/控制窗契约，desktop/ui 形态变更后需同步描述"}

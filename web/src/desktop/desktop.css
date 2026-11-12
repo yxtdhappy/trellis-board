@@ -1,0 +1,6 @@
+@import '../index.css';
+@source '../../src';
+
+body {
+  min-height: 100dvh;
+}

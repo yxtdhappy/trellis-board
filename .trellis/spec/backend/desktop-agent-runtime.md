@@ -1,7 +1,8 @@
 # 桌面 Agent 运行契约（进程内 Rust）
 
 **何时阅读**：修改 `desktop/src-tauri/src/agent/**`、`agent_service.rs`、`runtime_commands.rs`、
-`desktop/src-tauri/src/main.rs` 的 Tauri 命令、`desktop/ui/**` 环境与登录流程，或 Windows 打包脚本时。
+`desktop/src-tauri/src/main.rs` 的 Tauri 命令、`web/src/desktop/**` 本地登录/环境门/控制窗口 UI，
+或 Windows 打包脚本时。
 
 桌面客户端是单进程 Tauri 应用：Agent（心跳、SSE、任务快照同步、任务命令）全部在
 `trellis-board-client.exe` 内运行。**不得** 引入 sidecar、Node SEA 产物或内置 Node 运行时。
@@ -88,7 +89,24 @@
 - 不阻塞 UI 线程：网络、git、子进程、文件遍历一律在 tokio 任务中执行。
 - 单实例由 `tauri-plugin-single-instance` 保证；重复启动只聚焦已有窗口。
 
-## 6. 打包与验证
+## 6. 本地前端（环境门、登录页、控制窗口）
+
+- 源码是 `web/desktop/{index,control}.html` 与 `web/src/desktop/**`（React 19 + TypeScript +
+  Tailwind v4 + `web/src/components/ui`），由 `web/vite.desktop.config.ts` 输出到 `desktop/ui/`；
+  `desktop/ui/` 被 `.gitignore` 忽略，是构建产物，不得手写页面或脚本。
+- `npm --prefix web run build:desktop` 必须先于 `cargo tauri build`；`cargo tauri build` 只打包
+  `frontendDist = ../ui` 的现有产物，CI 在 `windows.yml` 的 `Build desktop UI` 步骤构建。
+- `control.html` 必须保留 `Content-Security-Policy` meta（`script-src 'self'` / `style-src 'self'`）；
+  构建产物不得包含内联 `<script>`/`style`，Vite 用 `base: './'` 输出相对资源路径。
+- IPC 只通过 `window.__TAURI__`（`app.withGlobalTauri = true`），命令名必须与
+  `capabilities/main.json`、`capabilities/live-control.json` 以及 `main.rs`/`agent_service.rs`
+  注册一致；控制窗口只能调用 `live_control_pending`、`live_control_decide`、`live_control_diff`、
+  `live_control_initial`、`live_control_dismiss`。
+- 事件类型、review 选项和动作字符串以 Rust 侧为准（`use-server`/`overwrite-server`/
+  `save-local-copy`，`mode` 为 `safe`/`review`），前端不得新增动作值。
+- 控制窗口固定 560×420，布局必须单列可用；diff 对照块只在 ≥768px 才切换为双列。
+
+## 7. 打包与验证
 
 - `tauri.conf.json` 不得出现 `bundle.externalBin` 或 `bundle.resources`（trellis-runtime）。
 - `desktop/` 下不得出现 `sidecar/`、`package.json`、`package-lock.json`、`binaries/`、`resources/`。

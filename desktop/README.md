@@ -274,7 +274,7 @@ Shell、进程或 dialog 权限。
 
 ```text
 desktop/
-  ui/                             环境检查页、本地登录页、同步控制窗口
+  ui/                             构建产物：环境检查页、本地登录页、同步控制窗口（勿手改）
   src-tauri/
     src/main.rs                   窗口、登录、Cookie、动态导航、项目预检/初始化/接入
     src/navigation.rs             Board URL 白名单和同源导航
@@ -296,6 +296,7 @@ desktop/
 
 前置：
 
+- Node.js 24（仅用于构建 `desktop\ui`）
 - Windows 10/11 x64
 - Rust stable（MSVC toolchain）
 - Visual Studio Build Tools（C++ 桌面负载）
@@ -303,6 +304,7 @@ desktop/
 - WebView2 Runtime
 
 ```powershell
+npm --prefix web run build:desktop
 cd desktop
 cargo tauri build --no-bundle
 cargo tauri build
@@ -310,7 +312,10 @@ cd ..
 powershell -NoProfile -ExecutionPolicy Bypass -File desktop\package-portable.ps1
 ```
 
-构建不依赖 Node.js，也不需要额外的 sidecar 步骤：`cargo tauri build` 直接产出单个客户端 EXE。
+`desktop\ui` 是 `npm --prefix web run build:desktop` 的产物（源码在 `web/desktop` 与
+`web/src/desktop`，组件复用 `web/src/components/ui`），已在 `.gitignore` 中忽略；`cargo tauri build`
+只打包 `tauri.conf.json` 的 `frontendDist = ../ui`，不会替你构建前端，缺步骤会打出空窗口。
+运行期不需要 Node.js，也没有 sidecar：`cargo tauri build` 直接产出单个客户端 EXE。
 
 产物：
 
