@@ -50,6 +50,20 @@ test('按当前分支 tree 路径识别已有 Agent，排除共享目录和非�
   assert.deepEqual(detectTrellisAgentTools([42, '']), [])
 })
 
+test('Pi 只有在扩展和 settings 两个完成标记都存在时才识别为已安装', () => {
+  assert.deepEqual(detectTrellisAgentTools(['.pi/agents/trellis-implement.md']), [])
+  assert.deepEqual(detectTrellisAgentTools(['.pi/extensions/trellis/index.ts']), [])
+  assert.deepEqual(detectTrellisAgentTools(['.pi/settings.json']), [])
+  assert.deepEqual(
+    detectTrellisAgentTools([
+      '.pi/extensions/trellis/index.ts',
+      '.pi/settings.json',
+      '.pi/agents/trellis-implement.md',
+    ]),
+    ['pi'],
+  )
+})
+
 test('Agent 工具输入保序并拒绝空值、未知值和重复值', () => {
   assert.deepEqual(normalizeTrellisAgentTools(['codex', 'opencode']), ['codex', 'opencode'])
   assert.deepEqual(normalizeTrellisAgentTools([' claude-code ']), ['claude-code'])

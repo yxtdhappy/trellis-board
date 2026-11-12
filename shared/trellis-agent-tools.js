@@ -33,7 +33,13 @@ export const TRELLIS_AGENT_TOOLS = Object.freeze([
   },
   { id: 'droid', flag: '--droid', label: 'Droid', presencePaths: ['.factory'] },
   { id: 'dsh', flag: '--dsh', label: 'DeepSeek Harness', presencePaths: ['.dsh'] },
-  { id: 'pi', flag: '--pi', label: 'Pi', presencePaths: ['.pi'] },
+  {
+    id: 'pi',
+    flag: '--pi',
+    label: 'Pi',
+    presencePaths: ['.pi/extensions/trellis/index.ts', '.pi/settings.json'],
+    presenceMode: 'all',
+  },
   { id: 'reasonix', flag: '--reasonix', label: 'Reasonix', presencePaths: ['.reasonix'] },
   { id: 'zcode', flag: '--zcode', label: 'ZCode', presencePaths: ['.zcode'] },
   { id: 'omp', flag: '--omp', label: 'Oh My Pi', presencePaths: ['.omp'] },
@@ -71,13 +77,14 @@ function normalizeTreePath(value) {
 export function detectTrellisAgentTools(paths) {
   if (!Array.isArray(paths)) return []
   const treePaths = [...new Set(paths.map(normalizeTreePath).filter(Boolean))]
-  return TRELLIS_AGENT_TOOLS.filter((tool) =>
-    tool.presencePaths.some((presencePath) =>
+  return TRELLIS_AGENT_TOOLS.filter((tool) => {
+    const matches = tool.presencePaths.map((presencePath) =>
       treePaths.some(
         (treePath) => treePath === presencePath || treePath.startsWith(`${presencePath}/`),
       ),
-    ),
-  ).map((tool) => tool.id)
+    )
+    return tool.presenceMode === 'all' ? matches.every(Boolean) : matches.some(Boolean)
+  }).map((tool) => tool.id)
 }
 
 export function getTrellisAgentTool(id) {

@@ -76,6 +76,13 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 - 账号密码只通过 sidecar stdin 的 JSON 对象传入 sidecar；Tauri 登录成功后允许将服务器地址、登录名和密码写入 `client.json` 供本地登录页回填。Session Cookie、设备和设备凭证不落盘。
 - 桌面登录服务地址支持 HTTP/HTTPS 根地址；HTTP 不提供传输加密，只适用于可信内网或测试环境。
 - `desktop/sidecar/workspace-init.js` 不属于桌面产品路径；workspace 能力只保留给 Agent CLI。
+- Pi 初始化只有在所选 Agent 包含 `pi`、CLI 非零退出且输出同时包含 `EXDEV` 和
+  `.pi/extensions/trellis` 时才进入补齐；补齐成功后使用原参数重试一次，其他错误不得触发。
+- `desktop/sidecar/trellis-pi-repair.mjs` 必须随固定 runtime 打包，从
+  `collectPlatformTemplates("pi")` 只创建位于仓库根内的缺失文件；目标使用排他创建且不覆盖已有
+  内容，失败时回滚本次创建的文件。
+- Pi 完成检测必须同时要求 `.pi/extensions/trellis/index.ts` 和 `.pi/settings.json`，不能仅凭
+  `.pi` 目录或单个标记判定已安装。
 - 本地项目关联复用 `agent/git-sync.js` 的 `inspectRepository()`，不另写 Git 身份校验。
 - 本地关联 DTO 必须透传 `liveSyncStatus`（`pending|syncing|ready|error`）和
   `liveSyncError`；旧 sidecar 缺少字段时 Tauri/前端按 `pending + null` 兼容。
@@ -126,6 +133,8 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 | 实时同步账号切换 | 清理 live cursor、pending、suppression 和 backup，不跨账号继承 |
 | live CLI 收到未知参数 | 在读取配置前返回 `CONFIG_INVALID`，不得继续同步 |
 | SEA 顶层启动成功执行 `version` | 输出协议版本并以 0 退出 |
+| Pi 初始化命中约定的 `EXDEV` 输出 | 补齐缺失模板后重试一次；补齐或重试失败立即返回错误 |
+| Pi 只存在扩展或 settings 单个标记 | 仍判定 Pi 未完成初始化 |
 
 ## 5. Good / Base / Bad Cases
 
@@ -155,6 +164,9 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 - `tests/desktop-package.test.js`：隔离 `TRELLIS_AGENT_ROOT` 后分别执行 `live-decide`、
   `live-diff`、`live-initial` 的 `--task-space` 参数，必须越过解析并到达 `CONFIG_MISSING`，
   不得返回“未知参数 --task-space”。
+- `tests/desktop-trellis-runtime.test.js`：真实执行 Pi 补齐脚本，覆盖部分 Pi 文件已存在、空扩展
+  目录、已有内容不变、无临时文件；模拟 Pi `EXDEV` 断言只执行“补齐 → 重试一次”。
+- `tests/trellis-agent-tools.test.js`：Pi 必须同时存在扩展和 settings 两个完成标记。
 - Windows CI：构建后执行 sidecar `version`，断言退出码 0 和 `protocolVersion === 2`。
 - Windows CI 必须在 `tauri build` 前通过 GitHub CLI/API 填充 `%LOCALAPPDATA%\tauri\NSIS`，校验
   NSIS zip 与 `nsis_tauri_utils.dll` 的固定 SHA1；Tauri 使用的 GitHub Releases 直链可能返回 504。

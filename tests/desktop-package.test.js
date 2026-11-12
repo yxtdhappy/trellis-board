@@ -405,6 +405,7 @@ test('sidecar 构建脚本引用的入口文件都存在且使用 Node SEA', () 
     'desktop/sidecar/desktop-device.js',
     'desktop/sidecar/desktop-association.js',
     'desktop/sidecar/trellis-runtime.js',
+    'desktop/sidecar/trellis-pi-repair.mjs',
     'desktop/sidecar/bundle.mjs',
     'agent/index.js',
     'agent/api.js',
@@ -422,6 +423,11 @@ test('sidecar 构建脚本引用的入口文件都存在且使用 Node SEA', () 
   assert.match(script, /SHA256SUMS\.txt/)
   assert.match(script, /trellis-agent-\$target\.exe|trellis-agent-x86_64-pc-windows-msvc\.exe/)
   assert.match(script, /trellis-runtime/)
+  assert.match(
+    script,
+    /Copy-Item -LiteralPath \(Join-Path \$sidecarRoot 'trellis-pi-repair\.mjs'\)/,
+  )
+  assert.match(script, /Bundled Pi repair script was not staged/)
   assert.match(script, /@mindfoldhq\\trellis\\bin\\trellis\.js/)
   assert.match(script, /trellisVersion=\$trellisVersion/)
 

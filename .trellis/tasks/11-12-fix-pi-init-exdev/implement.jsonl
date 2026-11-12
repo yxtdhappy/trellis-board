@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/desktop-sidecar-packaging.md", "reason": "固定 Trellis runtime、sidecar 进程调用与桌面打包边界"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "补齐目标路径必须限制在用户选择的仓库根目录内"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Node 内置测试、真实 Windows 构建和错误矩阵验证要求"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 Trellis 模板收集器和现有 runtime 解析，避免复制 51 项目录规则"}

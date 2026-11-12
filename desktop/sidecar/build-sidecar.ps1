@@ -48,6 +48,7 @@ $requiredFiles = @(
   (Join-Path $sidecarRoot 'desktop-device.js'),
   (Join-Path $sidecarRoot 'desktop-association.js'),
   (Join-Path $sidecarRoot 'trellis-runtime.js'),
+  (Join-Path $sidecarRoot 'trellis-pi-repair.mjs'),
   (Join-Path $sidecarRoot 'bundle.mjs'),
   (Join-Path $repoRoot 'agent\index.js'),
   (Join-Path $repoRoot 'agent\task-snapshot-sync.js'),
@@ -167,10 +168,16 @@ try {
 
   New-Item -ItemType Directory -Path $runtimeStage -Force | Out-Null
   Copy-Item -LiteralPath $NodeExecutable -Destination (Join-Path $runtimeStage 'node.exe')
+  Copy-Item -LiteralPath (Join-Path $sidecarRoot 'trellis-pi-repair.mjs') `
+    -Destination (Join-Path $runtimeStage 'trellis-pi-repair.mjs')
   Copy-Item -LiteralPath $rootNodeModules -Destination (Join-Path $runtimeStage 'node_modules') -Recurse
   $stagedCli = Join-Path $runtimeStage 'node_modules\@mindfoldhq\trellis\bin\trellis.js'
   if (-not (Test-Path -LiteralPath $stagedCli -PathType Leaf)) {
     Fail 7 "Bundled Trellis CLI was not staged: $stagedCli"
+  }
+  $stagedRepair = Join-Path $runtimeStage 'trellis-pi-repair.mjs'
+  if (-not (Test-Path -LiteralPath $stagedRepair -PathType Leaf)) {
+    Fail 7 "Bundled Pi repair script was not staged: $stagedRepair"
   }
 
   $protocolVersion = '3'

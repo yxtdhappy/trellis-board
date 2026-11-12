@@ -3,6 +3,7 @@ export type TrellisAgentTool = {
   readonly label: string
   readonly flag: string
   readonly presencePaths: readonly string[]
+  readonly presenceMode?: 'all'
 }
 
 export const TRELLIS_AGENT_TOOLS: readonly TrellisAgentTool[]

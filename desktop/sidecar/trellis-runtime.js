@@ -5,6 +5,22 @@ import { runProcess } from '../../agent/process.js'
 import { trellisAgentToolFlags } from '../../shared/trellis-agent-tools.js'
 
 const INIT_TIMEOUT_MS = 210_000
+const PI_REPAIR_SCRIPT = 'trellis-pi-repair.mjs'
+
+function failedResultMessage(result) {
+  const output = result.stderr || result.stdout || `退出码 ${result.exitCode}`
+  return safeErrorMessage(new Error(output))
+}
+
+function shouldRepairPi(agentTools, result) {
+  const output = `${result.stderr}\n${result.stdout}`
+  return (
+    agentTools.includes('pi') &&
+    result.exitCode !== 0 &&
+    output.includes('EXDEV') &&
+    /\.pi[\\/]extensions[\\/]trellis(?:[\\/]|$)/i.test(output)
+  )
+}
 
 export async function resolveTrellisRuntime({
   resourcesPath,
@@ -40,27 +56,67 @@ export async function initializeTrellis({
   runtime = null,
   resourcesPath,
   applicationDir,
+  processRunner = runProcess,
 }) {
   const resolved = runtime || (await resolveTrellisRuntime({ resourcesPath, applicationDir }))
   const flags = trellisAgentToolFlags(agentTools)
-  const result = await runProcess(
-    resolved.nodeFile,
-    [resolved.cliFile, 'init', '-y', '--skip-existing', '-u', developerId, ...flags],
-    {
-      cwd: repoPath,
-      timeoutMs: INIT_TIMEOUT_MS,
-      maxOutputBytes: 2 * 1024 * 1024,
-    },
-  )
+  const args = [resolved.cliFile, 'init', '-y', '--skip-existing', '-u', developerId, ...flags]
+  const options = {
+    cwd: repoPath,
+    timeoutMs: INIT_TIMEOUT_MS,
+    maxOutputBytes: 2 * 1024 * 1024,
+  }
+  const result = await processRunner(resolved.nodeFile, args, options)
+  let successful = result
   if (result.exitCode !== 0) {
-    throw new AgentError(
-      AGENT_ERROR_CODE.GIT_FAILED,
-      `Trellis 初始化失败：${safeErrorMessage(new Error(result.stderr || result.stdout))}`,
-    )
+    if (!shouldRepairPi(agentTools, result)) {
+      throw new AgentError(
+        AGENT_ERROR_CODE.GIT_FAILED,
+        `Trellis 初始化失败：${failedResultMessage(result)}`,
+      )
+    }
+
+    const repairFile = path.join(resolved.root, PI_REPAIR_SCRIPT)
+    let repairResult
+    try {
+      repairResult = await processRunner(
+        resolved.nodeFile,
+        [repairFile, resolved.root, repoPath],
+        options,
+      )
+    } catch (error) {
+      throw new AgentError(
+        AGENT_ERROR_CODE.GIT_FAILED,
+        `Pi 模板补齐失败：${safeErrorMessage(error)}`,
+        { cause: error },
+      )
+    }
+    if (repairResult.exitCode !== 0) {
+      throw new AgentError(
+        AGENT_ERROR_CODE.GIT_FAILED,
+        `Pi 模板补齐失败：${failedResultMessage(repairResult)}`,
+      )
+    }
+
+    try {
+      successful = await processRunner(resolved.nodeFile, args, options)
+    } catch (error) {
+      throw new AgentError(
+        AGENT_ERROR_CODE.GIT_FAILED,
+        `Pi 模板补齐后 Trellis 初始化重试失败：${safeErrorMessage(error)}`,
+        { cause: error },
+      )
+    }
+    if (successful.exitCode !== 0) {
+      throw new AgentError(
+        AGENT_ERROR_CODE.GIT_FAILED,
+        `Pi 模板补齐后 Trellis 初始化重试失败：${failedResultMessage(successful)}`,
+      )
+    }
   }
   return {
     initialized: true,
     agentTools: agentTools.slice(),
-    stdout: result.stdout.slice(0, 4000),
+    stdout: successful.stdout.slice(0, 4000),
   }
 }
