@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
-- **Last Active**: 2026-11-12
+- **Total Sessions**: 8
+- **Last Active**: 2026-11-13
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~238 | Active |
+| `journal-1.md` | ~279 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-11-13 | 桌面端本地 UI 迁移到 web shadcn 组件 | `793ae58`, `20f2745` | `codex/rust-desktop-agent-single-exe` |
 | 7 | 2026-11-12 | 接入本地项目弹窗即时打开 | `d542e1b`, `d9b7e59`, `7c20866` | `codex/rust-desktop-agent-single-exe` |
 | 6 | 2026-11-12 | 合并 main 并把 sidecar 同步修复移植到进程内 Rust Agent | `da03858`, `d542e1b`, `e604bf1` | `codex/rust-desktop-agent-single-exe` |
 | 5 | 2026-11-12 | desktop agent runs in-process with single-exe build | `fbe97e3`, `3b23b06` | `codex/rust-desktop-agent-single-exe` |

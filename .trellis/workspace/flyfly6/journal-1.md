@@ -236,3 +236,44 @@ merge origin/main 后把分支隔离、游标串行化、deferred 补同步、�
 ### Next Steps
 
 - 任务 A：web/vite.desktop.config.ts 与 web/src/desktop/* 的 shadcn 迁移
+
+
+## Session 8: 桌面端本地 UI 迁移到 web shadcn 组件
+<!-- trellis-session: v=2 fp=210d1ecd708c3126 -->
+
+**Date**: 2026-11-13
+**Task**: 桌面端本地 UI 迁移到 web shadcn 组件
+**Branch**: `codex/rust-desktop-agent-single-exe`
+
+### Summary
+
+把 desktop/ui 的手写页面替换为 web/desktop + web/src/desktop 的 React 入口，产物仍落 desktop/ui；补齐构建脚本、CI、构建契约测试与文档，logo 与安装包图标统一为 TrellisLogo
+
+### Main Changes
+
+- 新增 web/vite.desktop.config.ts 与 web/desktop/{index,control}.html，LoginApp/ControlApp 复刻 setup.js/control.js 全部分支
+- web/package.json 增加 build:desktop，.gitignore 忽略 desktop/ui，删除 6 个手写页面
+- CI 的 node-tests 与 desktop-build 均在测试/打包前构建前端；新增 tests/desktop-ui-build.test.js
+- 页面 logo 与 bundle 图标改为 TrellisLogo 同几何（icons/icon.svg 生成 png/ico）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `793ae58` | feat(desktop): build local ui from web shadcn components |
+| `20f2745` | chore(task): archive 11-12-desktop-ui-shadcn-migration |
+
+### Testing
+
+- [OK] npm --prefix web run build:desktop 通过
+- [OK] npm test：458 tests，453 pass / 5 skip / 0 fail
+- [OK] cargo test：87 passed；cargo build 与 npx @tauri-apps/cli build 通过，产出 NSIS 安装包
+- [OK] 实机运行 release 客户端：WebView 加载 tauri.localhost 并渲染新登录页；浏览器逐分支验证环境门/登录/三类同步事件
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 按需在真实同步事件下复核控制窗口（560×420 单列）
