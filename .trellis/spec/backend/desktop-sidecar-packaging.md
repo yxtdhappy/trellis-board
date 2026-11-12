@@ -81,6 +81,9 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 - `desktop/sidecar/main.js` 导入时不得启动命令、写文件或读取模块路径。
 - `runSidecarMain()` 在命令生命周期内启动父进程看门狗，每秒检查 `process.ppid`；只有父 PID
   明确不存在时才触发退出，`EPERM` 或其他无法确认的错误按存活处理，命令结束后必须清理定时器。
+- Agent 单实例锁是当前用户本地锁：记录中的 PID 明确不存在时必须允许回收，不能因历史 hostname
+  与当前机器名不一致而等待 24 小时；PID 仍存活或检测返回 `EPERM` 时必须保守拒绝接管。
+- 删除死锁前必须重新读取锁并校验 token/mtime，避免删除另一个进程刚创建的新锁。
 - 所有 `app.shell().sidecar()` 命令必须启用 `set_process_group(true)` 与
   `kill_on_drop(true)`；一次性命令必须有总时长预算，超时、stdin 写入失败或命令错误时主动终止
   整个进程树。预算为：`associations/logout` 15 秒，`login/inspect-project/live-decide/live-diff`
@@ -111,6 +114,17 @@ trellis-agent live-initial --task-space <id> --mode safe|review
   `pullTaskSpace` 增量追赶。
 - Tauri 关联命令在服务端批准并持久化本地 binding 后重启一次 sidecar，触发首次 full pull；
   用户取消目录选择时返回空结果且不得重启或显示失败。
+- sidecar 重启必须先结束旧 child，再等待进程和 `agent.lock` 释放，最多等待 5 秒后启动新 child；
+  不允许在旧进程仍持锁时立即拉起新进程。
+- sidecar 自动重启固定最多 5 次退避；超过 5 次仍未成功时必须停止盲目拉起，弹出系统模态框，
+  提供“强制重启同步”按钮。每个失败周期只提示一次。
+- “强制重启同步”必须单飞执行：终止当前 Agent 进程组，Windows 使用
+  `taskkill /F /T /IM trellis-agent.exe` 清理孤儿，等待同名进程退出，将残留
+  `agent.lock` 改名为 `agent.lock.force-restart-<时间>.bak`，再启动并验证新 Agent。
+- Agent 级强制恢复失败时必须调用 sidecar shutdown 和 Tauri `AppHandle::restart()` 重启客户端；
+  普通自动重试不得触发客户端重启。强制恢复只能移动锁文件，不得删除配置、凭证、任务与游标。
+- 托盘同步菜单按 `running/paused/force_restarting` 动态显示“暂停同步”“恢复同步”或
+  “正在强制重启”，使用 `MenuItem::set_text()` 更新；未运行时单击一次即重置退避并启动。
 - 新绑定的 immediate heartbeat 直接使用服务端结果；绝不把 pending 状态当作桌面审批流程。
 - 已存在的绑定再次心跳时，分支或远端身份校验失败必须转为 `rejected` 并停止命令投递；
   修正本地分支或远端后的合法心跳可恢复为 `approved`。
@@ -162,6 +176,12 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 | Pi 初始化命中约定的 `EXDEV` 输出 | 补齐缺失模板后重试一次；补齐或重试失败立即返回错误 |
 | Pi 只存在扩展或 settings 单个标记 | 仍判定 Pi 未完成初始化 |
 | sidecar 父客户端明确退出 | 1 秒级看门狗触发以 IO 退出码结束 |
+| 本地锁 PID 已不存在但 hostname 不一致 | 立即安全回收锁并继续启动 |
+| 本地锁 PID 存活或探测返回 `EPERM` | 拒绝接管；不得删除锁 |
+| 旧 child 退出后仍有 `agent.lock` | 重启最多等待 5 秒，随后由锁判定和有限退避接管 |
+| 自动重启超过 5 次 | 停止盲目拉起，弹出“强制重启同步”系统模态框 |
+| 用户点击强制重启 | 清理 Agent 进程与残留锁后验证新 Agent；失败则重启整个客户端 |
+| 托盘展示同步动作 | 运行中为“暂停同步”，未运行为“恢复同步”，强制恢复中禁用 |
 | 一次性 sidecar 超过操作预算 | 终止整个进程树并返回中文超时错误 |
 | 关联列表上一请求未完成 | 本轮 3 秒 tick 跳过，不发起第二次调用 |
 | NSIS 升级或卸载时目标进程仍在运行 | 先强制结束客户端与 sidecar，再继续安装或卸载 |
@@ -177,6 +197,10 @@ trellis-agent live-initial --task-space <id> --mode safe|review
 - `agent/test/windows-dpapi.test.js`：缺少 `scriptFile` 必须失败；DPAPI 加解密不写明文。
 - `tests/desktop-sidecar-lifecycle.test.js`：父进程存活不误退出、父进程消失只触发一次、`EPERM`
   按存活处理，以及真实父子进程在 3 秒内退出。
+- `agent/test/lock.test.js`：hostname 不一致但 PID 死亡可回收、活 PID/`EPERM` 不回收、删除前
+  token/mtime 变化时不误删新锁。
+- Rust `sidecar` 单测：托盘状态文案、5 次重试阈值、强制恢复锁备份和客户端重启分支的纯逻辑。
+- `tests/desktop-package.test.js`：dialog 插件、强制重启调用、动态托盘和客户端 restart 契约存在。
 - `tests/desktop-package.test.js`：SEA 入口不得包含 `import.meta`；bundle 不得包含伪模块 URL；源码 CLI
   `version/status` 正常。
 - `tests/desktop-package.test.js`：`tauri.conf.json` 必须引用 `windows/hooks.nsh`，两个 NSIS 钩子必须
