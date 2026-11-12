@@ -115,3 +115,40 @@ Input/Button/icon 尺寸改为 32/28/24 三档，删除页面层 h-8/h-9/h-10/h-
 
 - 任务 B：接入本地项目弹窗即时打开并 loading 占位
 - 任务 A：客户端 UI 迁移到 web 的 Vite+React+shadcn 构建（需等 11-12-rust-desktop-agent-single-exe 归档）
+
+
+## Session 5: desktop agent runs in-process with single-exe build
+<!-- trellis-session: v=2 fp=dfd13afc68730ccf -->
+
+**Date**: 2026-11-12
+**Task**: desktop agent runs in-process with single-exe build
+**Branch**: `codex/rust-desktop-agent-single-exe`
+
+### Summary
+
+1. 将 Node SEA sidecar 全量改写为 Rust 进程内 Agent（agent/ 16 个模块 + agent_service + runtime_commands），删除 desktop/sidecar、package.json、binaries、resources 与 SEA 构建链。2. 首次启动环境门：检查 Node/Trellis CLI，缺失时从 npmmirror 下载 Node 并做 sha256 校验、把 CLI 装到客户端私有 npm 前缀，client.json 升到 schema 3。3. 联调本地 Team 服务端修 4 个真实缺陷：clientSequence 需以墙钟为基线、任务快照响应上限提到 32 MiB、环境页 needs_setup 白屏、本地任务改动缺 notify watcher 上传。4. 移除 JS 侧从未装配的 live-sync 死代码。5. 验证：cargo clippy 0 error、cargo test --bins 82 passed、npm test 433 passed、release 产物仅 trellis-board-client.exe。
+
+### Main Changes
+
+- Rust in-process agent replaces the Node SEA sidecar; desktop/sidecar and SEA build chain deleted
+- First-run environment gate installs Node (npmmirror, sha256) and the Trellis CLI into a private npm prefix
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fbe97e3` | feat(desktop): run agent in-process and ship a single exe |
+| `3b23b06` | chore(task): archive 11-12-rust-desktop-agent-single-exe |
+
+### Testing
+
+- [OK] cargo clippy --all-targets (0 errors); cargo test --bins (82 passed); npm test (433 passed, 0 failed)
+- [OK] Local Team server smoke: heartbeat, 408-file initial sync, watcher upload revision 61->62
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Push branch codex/rust-desktop-agent-single-exe and open PR
