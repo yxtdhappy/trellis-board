@@ -196,3 +196,43 @@ merge origin/main 后把分支隔离、游标串行化、deferred 补同步、�
 ### Next Steps
 
 - 决定 stash@{0}（用户插件格式化改动）是否丢弃
+
+
+## Session 7: 接入本地项目弹窗即时打开
+<!-- trellis-session: v=2 fp=4b850e8c80b36fb8 -->
+
+**Date**: 2026-11-12
+**Task**: 接入本地项目弹窗即时打开
+**Branch**: `codex/rust-desktop-agent-single-exe`
+
+### Summary
+
+拆分 pick/inspect 两个 Tauri 命令，弹窗选完目录立刻打开并显示骨架占位，数据回来再渲染表单
+
+### Main Changes
+
+- 新增 pick_local_project_folder，inspect_local_project 改为接收 path 参数
+- 桌面权限拆出 allow-pick-local-project-folder，Board capability 同步授权
+- ProjectOnboardingDialog 改为内部加载：loading 骨架、错误块加重试、加载中可直接关闭并清理 pending
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d542e1b` | feat(desktop): port main sync guards into the in-process agent |
+| `d9b7e59` | feat(web): show onboarding dialog before inspecting the picked repo |
+| `7c20866` | chore(task): archive 11-12-project-onboarding-instant-dialog |
+
+### Testing
+
+- [OK] cargo test --manifest-path desktop/src-tauri/Cargo.toml（87 passed）
+- [OK] npm test（454 tests / 449 pass / 0 fail）
+- [OK] 浏览器探针：604ms 出弹窗、3228ms 出表单、失败重试与加载中取消均通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 任务 A：web/vite.desktop.config.ts 与 web/src/desktop/* 的 shadcn 迁移
