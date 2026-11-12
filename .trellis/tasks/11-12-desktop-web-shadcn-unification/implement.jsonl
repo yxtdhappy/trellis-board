@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端栈与「不手工重写 shadcn、弹层用 components/ui/dialog」的既有契约，三个子任务都受其约束"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "web 目录职责、别名登记、public/ 为构建产物的规则；客户端新增的 web/desktop 与 web/src/desktop 归属需遵循同一结构"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "lint/build/test 与浏览器验收口径；控件三档规范将沉淀在此"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "hooks 唯一数据源、SSE/REST 对齐与弹层安全边界，接入弹窗改造需遵守"}
+{"file": ".trellis/spec/backend/desktop-sidecar-packaging.md", "reason": "桌面客户端打包与前端产物契约，desktop/ui 变为构建产物后需同步"}

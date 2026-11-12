@@ -1,0 +1,30 @@
+{
+  "id": "desktop-web-shadcn-unification",
+  "name": "desktop-web-shadcn-unification",
+  "title": "客户端与 web 视觉统一 + 接入弹窗体验 + 控件规范",
+  "description": "父任务：统一桌面客户端与 web 的 shadcn 视觉与图标、接入本地项目对话框即时 loading、web 各页面控件高度与组件统一。父任务只维护需求集、任务地图与跨子任务验收口径，不直接实现。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "flyfly6",
+  "assignee": "flyfly6",
+  "createdAt": "2026-11-12",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "11-12-desktop-ui-shadcn-migration",
+    "11-12-project-onboarding-instant-dialog",
+    "11-12-web-controls-unification"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

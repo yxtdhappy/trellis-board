@@ -1,0 +1,8 @@
+{"file": "web/src/index.css", "reason": "校验客户端只使用 web 的 oklch token 与 --radius，没有第二套设计变量"}
+{"file": "web/package.json", "reason": "校验 build:desktop 脚本存在且依赖块未新增"}
+{"file": ".gitignore", "reason": "校验 desktop/ui 已被忽略，产物不入库"}
+{"file": "desktop/src-tauri/tauri.conf.json", "reason": "校验 frontendDist 仍为 ../ui、CSP 未放宽、withGlobalTauri 仍为 true"}
+{"file": "tests/desktop-package.test.js", "reason": "npm test 通过，断言已指向 web/desktop + web/src/desktop"}
+{"file": ".github/workflows/windows.yml", "reason": "校验 build:desktop 在 tauri build 之前执行"}
+{"file": "desktop/README.md", "reason": "校验文档写明 desktop/ui 是构建产物与构建顺序"}
+{"file": ".trellis/spec/backend/desktop-sidecar-packaging.md", "reason": "校验打包契约已描述前端产物的新生成方式"}
