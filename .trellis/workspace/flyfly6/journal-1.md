@@ -285,7 +285,7 @@ merge origin/main 后把分支隔离、游标串行化、deferred 补同步、�
 **Date**: 2026-11-13
 **Task**: Monorepo 结构迁移（npm workspaces）
 **Package**: server
-**Branch**: `codex/monorepo-restructure`
+**Branch**: `codex/rust-desktop-agent-single-exe`
 
 ### Summary
 
