@@ -69,6 +69,8 @@
   Agent 工具；服务端项目列表不再是接入前置条件。
 - 项目接入在“全部团队”范围必须要求选择具体 owner team；developer ID 和本机 Agent 工具只写入当前
   设备 binding，不要求其他设备一致。
+- 接入向导的本机 Agent 列表必须直接读取 `shared/trellis-agent-tools.js` 的完整目录，按名称或 ID
+  做大小写不敏感搜索；过滤只影响可见项，不改变已勾选或已存在状态。
 - 接入向导打开或切换仓库时，developer ID 默认使用当前登录账号的 `runtime.user.username`，不得使用
   显示名；用户手动输入或清空后，迟到的运行时用户数据不得覆盖该值，缺少用户名时保持为空并沿用现有校验。
 - 缺少 `.trellis` 或 `tasks` 时显示初始化面板；新建任务树后显示 `waiting_commit`、

@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { TRELLIS_AGENT_TOOLS } from '@shared/trellis-agent-tools.js'
 import { SelectField } from '../SelectField'
 
 type TeamOption = {
@@ -90,15 +91,6 @@ type ProjectOnboardingDialogProps = {
   invoke: TauriInvoke
   onAssociated: (association: Association) => void
 }
-
-const AGENT_TOOLS = [
-  { id: 'codex', label: 'Codex' },
-  { id: 'opencode', label: 'OpenCode' },
-  { id: 'pi', label: 'Pi' },
-  { id: 'cursor', label: 'Cursor' },
-  { id: 'claude-code', label: 'Claude Code' },
-  { id: 'copilot', label: 'GitHub Copilot' },
-] as const
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : ''
@@ -243,6 +235,7 @@ export function ProjectOnboardingDialog({
   const [teamId, setTeamId] = useState('')
   const [developerId, setDeveloperId] = useState('')
   const [selectedTools, setSelectedTools] = useState<string[]>([])
+  const [agentSearch, setAgentSearch] = useState('')
   const [push, setPush] = useState<PushState | null>(null)
   const [preflight, setPreflight] = useState<PreflightResult | null>(null)
   const [message, setMessage] = useState('')
@@ -250,6 +243,7 @@ export function ProjectOnboardingDialog({
   const [requiresInitialPush, setRequiresInitialPush] = useState(false)
   const pushCheckInFlight = useRef(false)
   const developerIdEdited = useRef(false)
+  const dialogHeaderRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -262,6 +256,7 @@ export function ProjectOnboardingDialog({
     developerIdEdited.current = false
     setDeveloperId(defaultDeveloperId.trim())
     setSelectedTools(normalized?.existingAgentTools.filter((id) => id === 'codex') || [])
+    setAgentSearch('')
     setPush(null)
     setPreflight(null)
     setMessage('')
@@ -277,10 +272,17 @@ export function ProjectOnboardingDialog({
   const missingTools = useMemo(
     () =>
       inspection
-        ? AGENT_TOOLS.filter((tool) => !inspection.existingAgentTools.includes(tool.id))
+        ? TRELLIS_AGENT_TOOLS.filter((tool) => !inspection.existingAgentTools.includes(tool.id))
         : [],
     [inspection],
   )
+  const visibleAgentTools = useMemo(() => {
+    const query = agentSearch.trim().toLowerCase()
+    if (!query) return TRELLIS_AGENT_TOOLS
+    return TRELLIS_AGENT_TOOLS.filter(
+      (tool) => tool.label.toLowerCase().includes(query) || tool.id.toLowerCase().includes(query),
+    )
+  }, [agentSearch])
   const needsInitialization =
     !inspection?.hasTrellis ||
     !inspection?.hasTasks ||
@@ -460,8 +462,8 @@ export function ProjectOnboardingDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[620px]">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[620px]" initialFocus={dialogHeaderRef}>
+        <DialogHeader ref={dialogHeaderRef} tabIndex={-1} className="outline-none">
           <DialogTitle>接入本地 Git 项目</DialogTitle>
           <DialogDescription>
             客户端负责初始化和任务同步，服务端不会读取或操作项目 Git 仓库。
@@ -525,35 +527,51 @@ export function ProjectOnboardingDialog({
 
               {!inspection.hasTrellis || !inspection.hasTasks || missingTools.length ? (
                 <div className="flex flex-col gap-2">
-                  <div>
-                    <p className="font-medium">本机编码 Agent</p>
-                    <p className="text-muted-foreground">
-                      只影响当前电脑；已存在的工具不会重复初始化，其他设备无需选择相同工具。
-                    </p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="font-medium">本机编码 Agent</p>
+                      <p className="text-muted-foreground">
+                        只影响当前电脑；已存在的工具不会重复初始化，其他设备无需选择相同工具。
+                      </p>
+                    </div>
+                    <Input
+                      type="search"
+                      aria-label="搜索 Agent"
+                      className="h-8 w-full sm:w-52"
+                      placeholder="搜索名称或 ID"
+                      value={agentSearch}
+                      onChange={(event) => setAgentSearch(event.target.value)}
+                    />
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {AGENT_TOOLS.map((tool) => {
-                      const existing = inspection.existingAgentTools.includes(tool.id)
-                      return (
-                        <label
-                          key={tool.id}
-                          className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={existing || selectedTools.includes(tool.id)}
-                            disabled={existing || busy}
-                            onChange={() => toggleTool(tool.id)}
-                          />
-                          <span>{tool.label}</span>
-                          {existing ? (
-                            <span className="ml-auto text-[10px] text-muted-foreground">
-                              已存在
-                            </span>
-                          ) : null}
-                        </label>
-                      )
-                    })}
+                  <div className="grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                    {visibleAgentTools.length ? (
+                      visibleAgentTools.map((tool) => {
+                        const existing = inspection.existingAgentTools.includes(tool.id)
+                        return (
+                          <label
+                            key={tool.id}
+                            className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={existing || selectedTools.includes(tool.id)}
+                              disabled={existing || busy}
+                              onChange={() => toggleTool(tool.id)}
+                            />
+                            <span>{tool.label}</span>
+                            {existing ? (
+                              <span className="ml-auto text-[10px] text-muted-foreground">
+                                已存在
+                              </span>
+                            ) : null}
+                          </label>
+                        )
+                      })
+                    ) : (
+                      <p className="rounded-md border border-dashed border-border px-2.5 py-3 text-muted-foreground sm:col-span-2">
+                        没有匹配的 Agent
+                      </p>
+                    )}
                   </div>
                   {needsInitialization ? (
                     <Button
