@@ -266,7 +266,7 @@ export function ProjectRail({
   const [associationError, setAssociationError] = useState('')
   const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus | null>(null)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
-  const [onboardingProject, setOnboardingProject] = useState<unknown>(null)
+  const [onboardingPath, setOnboardingPath] = useState('')
   const [inspectingProject, setInspectingProject] = useState(false)
   const [syncingDeferredTaskSpace, setSyncingDeferredTaskSpace] = useState<string | null>(null)
   const [associationRefreshNonce, setAssociationRefreshNonce] = useState(0)
@@ -320,9 +320,9 @@ export function ProjectRail({
     setAssociationError('')
     setInspectingProject(true)
     try {
-      const inspected = await invoke('inspect_local_project')
-      if (inspected == null) return
-      setOnboardingProject(inspected)
+      const picked = await invoke('pick_local_project_folder')
+      if (typeof picked !== 'string' || !picked) return
+      setOnboardingPath(picked)
       setOnboardingOpen(true)
     } catch (error) {
       const message = associationErrorMessage(error)
@@ -387,8 +387,8 @@ export function ProjectRail({
           disabled={inspectingProject}
           className="mb-1 justify-start border-dashed text-[11px] text-muted-foreground hover:border-primary/50 hover:text-foreground"
         >
-          <Plus className={inspectingProject ? 'size-3.5 animate-pulse' : 'size-3.5'} />
-          {inspectingProject ? '正在检查本地项目…' : '接入本地项目'}
+          <Plus className="size-3.5" />
+          接入本地项目
         </Button>
       ) : null}
       {invoke && syncingAssociations.length ? (
@@ -498,10 +498,7 @@ export function ProjectRail({
                     disabled={inspectingProject}
                     onClick={() => void startProjectOnboarding()}
                   >
-                    <FolderGit2
-                      className={inspectingProject ? 'size-3.5 animate-pulse' : 'size-3.5'}
-                      aria-hidden="true"
-                    />
+                    <FolderGit2 className="size-3.5" aria-hidden="true" />
                   </Button>
                 )
               ) : null}
@@ -635,7 +632,7 @@ export function ProjectRail({
         <ProjectOnboardingDialog
           open={onboardingOpen}
           onOpenChange={setOnboardingOpen}
-          inspection={onboardingProject}
+          path={onboardingPath}
           teams={teams}
           defaultTeamId={teamId === 'all' ? '' : teamId}
           defaultDeveloperId={defaultDeveloperId}

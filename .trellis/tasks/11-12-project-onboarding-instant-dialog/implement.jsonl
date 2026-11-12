@@ -1,0 +1,9 @@
+{"file": "desktop/src-tauri/src/main.rs", "reason": "inspect_local_project 拆分为 pick_local_project_folder + 参数化 inspect，并在 generate_handler 注册"}
+{"file": "desktop/src-tauri/src/agent/onboarding.rs", "reason": "inspect_project 为唯一检查实现，返回字段与超时预算保持不变；新命令不改其内部"}
+{"file": "desktop/src-tauri/src/agent_service.rs", "reason": "inspect_project 包装（hooks / allow_file_remote）供命令层调用"}
+{"file": "desktop/src-tauri/permissions/desktop.toml", "reason": "新增 allow-pick-local-project-folder 权限块，allow-inspect-local-project 保持不变"}
+{"file": "desktop/src-tauri/capabilities/board-local-association.json", "reason": "Board origin capability 需授予新权限，否则 invoke 被拒"}
+{"file": "web/src/components/layout/ProjectRail.tsx", "reason": "startProjectOnboarding 改为先 pick 后开窗；状态 onboardingProject → onboardingPath 并传参到 dialog"}
+{"file": "web/src/features/board/dialogs/ProjectOnboardingDialog.tsx", "reason": "改为内部执行 inspect（props.path + loading/loadError 三态），normalizeInspection 与下游 initialize/preflight/associate 逻辑复用"}
+{"file": "web/src/components/ui/dialog.tsx", "reason": "确认 DialogBody 单一滚动壳与 header/footer 结构，skeleton/错误块必须落在 DialogBody 内"}
+{"file": "desktop/README.md", "reason": "命令清单/接入流程说明需补 pick_local_project_folder"}

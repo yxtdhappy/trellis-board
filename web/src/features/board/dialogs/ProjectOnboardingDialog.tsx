@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -86,7 +87,7 @@ type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<
 type ProjectOnboardingDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
-  inspection: unknown
+  path: string
   teams: TeamOption[]
   defaultTeamId: string
   defaultDeveloperId: string
@@ -223,10 +224,31 @@ function stateLabel(push: PushState | null): string {
   }
 }
 
+function OnboardingSkeleton() {
+  return (
+    <div className="flex flex-col gap-3" aria-busy="true" aria-live="polite">
+      <p className="flex items-center gap-2 text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+        正在读取本地仓库信息…
+      </p>
+      <div className="flex flex-col gap-2 rounded-lg bg-muted/40 p-3">
+        <div className="h-3.5 w-3/4 animate-pulse rounded bg-muted-foreground/15" />
+        <div className="h-3.5 w-1/2 animate-pulse rounded bg-muted-foreground/15" />
+        <div className="h-3.5 w-11/12 animate-pulse rounded bg-muted-foreground/15" />
+        <div className="h-3.5 w-2/3 animate-pulse rounded bg-muted-foreground/15" />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="h-14 animate-pulse rounded-md bg-muted" />
+        <div className="h-14 animate-pulse rounded-md bg-muted" />
+      </div>
+    </div>
+  )
+}
+
 export function ProjectOnboardingDialog({
   open,
   onOpenChange,
-  inspection: rawInspection,
+  path,
   teams,
   defaultTeamId,
   defaultDeveloperId,
@@ -234,6 +256,9 @@ export function ProjectOnboardingDialog({
   onAssociated,
 }: ProjectOnboardingDialogProps) {
   const [inspection, setInspection] = useState<ProjectInspection | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState('')
+  const [reloadToken, setReloadToken] = useState(0)
   const [teamId, setTeamId] = useState('')
   const [developerId, setDeveloperId] = useState('')
   const [selectedTools, setSelectedTools] = useState<string[]>([])
@@ -248,31 +273,72 @@ export function ProjectOnboardingDialog({
   const [requiresInitialPush, setRequiresInitialPush] = useState(false)
   const pushCheckInFlight = useRef(false)
   const developerIdEdited = useRef(false)
+  const defaultsKey = useRef('')
   const dialogHeaderRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    if (!open) {
+      defaultsKey.current = ''
+      return
+    }
+    setInspection(null)
+    setSelectedTools([])
+    setAgentSearch('')
+    setPush(null)
+    setPreflight(null)
+    setMessage('')
+    setBusy(false)
+    setRequiresInitialPush(false)
+  }, [open, path])
+
+  useEffect(() => {
     if (!open) return
-    const normalized = normalizeInspection(rawInspection)
-    setInspection(normalized)
+    if (defaultsKey.current === path) return
+    defaultsKey.current = path
     const preferredTeam = teams.some((team) => team.id === defaultTeamId)
       ? defaultTeamId
       : teams[0]?.id || ''
     setTeamId(preferredTeam)
     developerIdEdited.current = false
     setDeveloperId(defaultDeveloperId.trim())
-    setSelectedTools(normalized?.existingAgentTools.filter((id) => id === 'codex') || [])
-    setAgentSearch('')
-    setPush(null)
-    setPreflight(null)
-    setMessage('')
-    setBusy(false)
-    setRequiresInitialPush(Boolean(normalized?.hasTrellis && !normalized.hasCommittedTrellis))
-  }, [open, rawInspection, teams, defaultTeamId])
+  }, [open, path, teams, defaultTeamId, defaultDeveloperId])
+
+  useEffect(() => {
+    if (!open || !path.trim()) return
+    let cancelled = false
+    setLoading(true)
+    setLoadError('')
+    void invoke('inspect_local_project', { path })
+      .then((value) => {
+        if (cancelled) {
+          void invoke('cancel_pending_project').catch(() => {})
+          return
+        }
+        const next = normalizeInspection(value)
+        if (!next) {
+          setLoadError('没有读取到有效的本地 Git 仓库，请重新选择仓库根目录。')
+          setLoading(false)
+          return
+        }
+        setSelectedTools(next.existingAgentTools.filter((id) => id === 'codex'))
+        setRequiresInitialPush(Boolean(next.hasTrellis && !next.hasCommittedTrellis))
+        setInspection(next)
+        setLoading(false)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        setLoadError(onboardingErrorMessage(error, '无法读取本地项目'))
+        setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, path, reloadToken, invoke])
 
   useEffect(() => {
     if (!open || developerIdEdited.current) return
     setDeveloperId(defaultDeveloperId.trim())
-  }, [open, rawInspection, defaultDeveloperId])
+  }, [open, path, defaultDeveloperId])
 
   useEffect(() => {
     if (!open) {
@@ -301,7 +367,7 @@ export function ProjectOnboardingDialog({
     return () => {
       cancelled = true
     }
-  }, [open, rawInspection, invoke])
+  }, [open, path, invoke])
 
   const missingTools = useMemo(
     () =>
@@ -524,6 +590,8 @@ export function ProjectOnboardingDialog({
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen && busy) return
     if (!nextOpen) {
+      setLoading(false)
+      setLoadError('')
       void invoke('cancel_pending_project').catch(() => {})
     }
     onOpenChange(nextOpen)
@@ -545,7 +613,23 @@ export function ProjectOnboardingDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-4">
-          {!inspection ? (
+          {loading ? (
+            <OnboardingSkeleton />
+          ) : loadError ? (
+            <div className="flex flex-col gap-3 rounded-lg border border-destructive/40 p-4">
+              <p className="font-medium text-destructive">无法读取本地项目</p>
+              <p className="break-words text-muted-foreground">{loadError}</p>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setReloadToken((token) => token + 1)}
+                >
+                  重试
+                </Button>
+              </div>
+            </div>
+          ) : !inspection ? (
             <p className="rounded-lg border border-dashed border-border p-4 text-muted-foreground">
               没有读取到有效的本地 Git 仓库，请重新选择仓库根目录。
             </p>
@@ -798,7 +882,7 @@ export function ProjectOnboardingDialog({
           <Button type="button" variant="outline" disabled={busy} onClick={cancelPendingProject}>
             {preflight ? '暂不接入' : '取消'}
           </Button>
-          {!preflight ? (
+          {loading || loadError ? null : !preflight ? (
             <Button
               type="button"
               disabled={busy || !inspection || Boolean(preflightBlockedReason)}
