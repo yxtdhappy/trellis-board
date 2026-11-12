@@ -277,3 +277,45 @@ merge origin/main 后把分支隔离、游标串行化、deferred 补同步、�
 ### Next Steps
 
 - 按需在真实同步事件下复核控制窗口（560×420 单列）
+
+
+## Session 9: Monorepo 结构迁移（npm workspaces）
+<!-- trellis-session: v=2 fp=fe5918dcbbc0d651 -->
+
+**Date**: 2026-11-13
+**Task**: Monorepo 结构迁移（npm workspaces）
+**Package**: server
+**Branch**: `codex/monorepo-restructure`
+
+### Summary
+
+把仓库从平铺结构迁到 apps/{server,web,desktop} + packages/{shared,test-support}，根 package.json 启用 workspaces 与单一锁文件；删除被 Rust 客户端取代的根 agent/，新增边界守卫脚本，同步 CI、文档与 .trellis/spec。
+
+### Main Changes
+
+- 目录迁移：server/web/desktop/shared → apps/*、packages/*；agent/zip.js → packages/shared/zip.js
+- 删除根 agent/ 与 6 个 agent 根测试；根 tests/ 目录删除，测试按包归位
+- 运行时跨包引用改相对路径，web 构建期 @shared → packages/shared
+- 新增 scripts/check-boundaries.mjs 与 npm run check:boundaries
+- CI 单次 npm ci + build + build:desktop + check:boundaries + test:all
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `20f3f25` | refactor(repo): migrate to npm workspaces monorepo |
+
+### Testing
+
+- [OK] npm test：398 tests / 396 pass / 2 skipped / 0 fail
+- [OK] npm run test:plugins：39 / 38 pass / 1 skipped
+- [OK] npm run build、npm run build:desktop、check:boundaries 通过
+- [OK] node apps/server/index.js 与 npm run dev 冒烟通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 外部自建插件如需兼容旧 SDK 路径，可后续补 server/plugins/sdk.js 转发层
