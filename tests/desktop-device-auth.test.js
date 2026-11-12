@@ -770,6 +770,7 @@ test('桌面 capability 配置拆分本地登录与远程项目关联权限', ()
     'allow-inspect-local-project',
     'allow-list-local-associations',
     'allow-preflight-pending-project',
+    'allow-sync-deferred-tasks',
   ])
   assert.deepEqual(remote.remote.urls, ['https://*:*', 'http://*:*'])
 

@@ -226,6 +226,7 @@ test('capability 将本地登录与远程项目关联权限分开', () => {
     'allow-inspect-local-project',
     'allow-list-local-associations',
     'allow-preflight-pending-project',
+    'allow-sync-deferred-tasks',
   ])
   assert.deepEqual(remote.remote.urls, ['https://*:*', 'http://*:*'])
   assert.equal(new URLPattern(remote.remote.urls[0]).test('https://board.example.com:8443/'), true)
@@ -244,6 +245,7 @@ test('capability 将本地登录与远程项目关联权限分开', () => {
   assert.match(custom, /commands\.allow = \["cancel_pending_project"\]/)
   assert.match(custom, /commands\.allow = \["associate_pending_project"\]/)
   assert.match(custom, /commands\.allow = \["list_local_associations"\]/)
+  assert.match(custom, /commands\.allow = \["sync_deferred_tasks"\]/)
   assert.match(custom, /commands\.allow = \["desktop_sidecar_status"\]/)
   assert.match(custom, /commands\.allow = \["live_control_pending"\]/)
   assert.match(custom, /commands\.allow = \["live_control_decide"\]/)
@@ -251,7 +253,7 @@ test('capability 将本地登录与远程项目关联权限分开', () => {
   assert.match(custom, /commands\.allow = \["live_control_initial"\]/)
   assert.match(custom, /commands\.allow = \["live_control_restore"\]/)
   assert.match(custom, /commands\.allow = \["live_control_dismiss"\]/)
-  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 16)
+  assert.equal((custom.match(/\[\[permission\]\]/g) || []).length, 17)
   const control = readJson('desktop/src-tauri/capabilities/live-control.json')
   assert.deepEqual(control.windows, ['live-control'])
   assert.deepEqual(control.permissions.slice().sort(), [
@@ -307,7 +309,7 @@ test('导航、新窗口、托盘与日志边界在 Rust 源中显式实现', ()
   assert.match(main, /"autostart" =>/)
   assert.match(
     main,
-    /generate_handler!\[\s*app_status,[\s\S]*?desktop_login,[\s\S]*?preflight_pending_project,[\s\S]*?cancel_pending_project,[\s\S]*?associate_pending_project,[\s\S]*?list_local_associations,[\s\S]*?desktop_sidecar_status,[\s\S]*?live_control_pending,[\s\S]*?live_control_decide,[\s\S]*?live_control_restore,[\s\S]*?live_control_dismiss\s*\]/,
+    /generate_handler!\[\s*app_status,[\s\S]*?desktop_login,[\s\S]*?preflight_pending_project,[\s\S]*?cancel_pending_project,[\s\S]*?associate_pending_project,[\s\S]*?list_local_associations,[\s\S]*?sync_deferred_tasks,[\s\S]*?desktop_sidecar_status,[\s\S]*?live_control_pending,[\s\S]*?live_control_decide,[\s\S]*?live_control_restore,[\s\S]*?live_control_dismiss\s*\]/,
   )
   assert.match(main, /fn ensure_local_caller\(window: &WebviewWindow\)/)
   assert.match(main, /ensure_board_caller/)
@@ -335,6 +337,7 @@ test('导航、新窗口、托盘与日志边界在 Rust 源中显式实现', ()
   assert.match(sidecar, /expiresAtEpochMs/)
   assert.match(sidecar, /pending-live/)
   assert.match(sidecar, /"live-decide"/)
+  assert.match(sidecar, /"live-sync-deferred"/)
   assert.match(sidecar, /"live-restore"/)
   assert.match(sidecar, /"preflight-project"/)
   assert.match(sidecar, /MessageDialogButtons::OkCustom/)
@@ -517,6 +520,7 @@ test('sidecar live 命令统一接受 --task-space 参数', () => {
     ],
     ['live-diff', '--task-space', 'space-1', '--conflict', 'conflict-1'],
     ['live-initial', '--task-space', 'space-1', '--mode', 'safe'],
+    ['live-sync-deferred', '--task-space', 'space-1'],
   ]
   try {
     for (const args of commands) {

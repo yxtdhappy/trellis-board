@@ -139,6 +139,30 @@ test('桌面接入选择本地 Git 项目并持久化任务空间绑定', async 
   assert.equal(config.bindings[0].initialSyncCompleted, false)
   const associations = await readLocalAssociations(store.paths.root)
   assert.equal(associations[0].taskSpaceId, 'space-1')
+  assert.equal(associations[0].deferredCount, 0)
+  assert.deepEqual(associations[0].deferredTaskDirs, [])
+  fs.writeFileSync(
+    store.paths.liveCursorsFile,
+    `${JSON.stringify({
+      version: 3,
+      taskSpaces: {
+        'space-1': {
+          deferred: {
+            '.trellis/tasks/task-b': {},
+            '.trellis/tasks/task-a': {},
+            'outside/tasks/task-c': {},
+          },
+        },
+      },
+    })}\n`,
+  )
+  const deferred = await readLocalAssociations(store.paths.root)
+  assert.equal(deferred[0].deferredCount, 2)
+  assert.deepEqual(deferred[0].deferredTaskDirs, ['.trellis/tasks/task-a', '.trellis/tasks/task-b'])
+  fs.writeFileSync(store.paths.liveCursorsFile, '{broken')
+  const malformed = await readLocalAssociations(store.paths.root)
+  assert.equal(malformed[0].deferredCount, 0)
+  assert.deepEqual(malformed[0].deferredTaskDirs, [])
   assert.ok(!fs.readFileSync(store.paths.configFile, 'utf8').includes('x'.repeat(43)))
 })
 

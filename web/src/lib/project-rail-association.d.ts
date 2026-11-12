@@ -5,6 +5,7 @@ type ProjectRailTaskSpace = {
 type ProjectRailAssociation = {
   status: string
   liveSyncStatus: 'pending' | 'syncing' | 'ready' | 'error'
+  deferredCount?: number
 }
 
 export function selectProjectAssociation<

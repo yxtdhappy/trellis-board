@@ -46,6 +46,11 @@ description = "当前 Board origin 可读取本地项目关联状态。"
 commands.allow = ["list_local_associations"]
 
 [[permission]]
+identifier = "allow-sync-deferred-tasks"
+description = "当前 Board origin 可为已关联任务空间显式上传本地待同步任务。"
+commands.allow = ["sync_deferred_tasks"]
+
+[[permission]]
 identifier = "allow-desktop-sidecar-status"
 description = "当前 Board origin 可读取客户端后台同步运行状态。"
 commands.allow = ["desktop_sidecar_status"]

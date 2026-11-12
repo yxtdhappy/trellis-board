@@ -376,6 +376,163 @@ test('safe 跳过的本地独有任务只在用户再次修改后上传', async 
   }
 })
 
+test('显式补同步会上传全部 deferred 任务并清理游标', async () => {
+  const taskDir = '.trellis/tasks/01-deferred'
+  const secondTaskDir = '.trellis/tasks/02-deferred'
+  const taskJson = `${JSON.stringify({ id: 'deferred-task', title: '待补传任务' })}\n`
+  const secondTaskJson = `${JSON.stringify({ id: 'second-deferred-task', title: '第二个任务' })}\n`
+  const context = await setup({
+    [taskDir]: {
+      'task.json': taskJson,
+    },
+    [secondTaskDir]: {
+      'task.json': secondTaskJson,
+    },
+  })
+  try {
+    context.config.bindings[0].initialSyncCompleted = false
+    context.config.bindings[0].initialReviewPending = false
+    await context.store.saveConfig(context.config)
+    let revision = 0
+    const uploads = []
+    const api = {
+      async fetchTaskSpaceSnapshot(taskSpaceId) {
+        return { taskSpaceId, revision, files: [] }
+      },
+      async fetchTaskDirectory() {
+        return { files: [] }
+      },
+      async uploadTaskSpaceChanges(taskSpaceId, input) {
+        uploads.push({ taskSpaceId, input })
+        revision += 1
+        return { revision, taskSpaceId }
+      },
+      async writeTaskSpaceCursor() {},
+    }
+    const sync = createSync(context, api)
+    await sync.pullTaskSpace('space-1')
+    assert.ok((await sync._readCursor('space-1')).deferred[taskDir])
+
+    const result = await sync.syncDeferredTasks('space-1')
+    assert.deepEqual(
+      {
+        syncedCount: result.syncedCount,
+        remainingCount: result.remainingCount,
+        conflict: result.conflict,
+      },
+      { syncedCount: 2, remainingCount: 0, conflict: false },
+    )
+    assert.equal(uploads.length, 2)
+    assert.ok(uploads.every((upload) => upload.input.files[0].baseSha256 === null))
+    const cursor = await sync._readCursor('space-1')
+    assert.equal(cursor.deferred[taskDir], undefined)
+    assert.equal(cursor.deferred[secondTaskDir], undefined)
+    assert.equal(cursor.baselines[`${taskDir}/task.json`], snapshotSha256(taskJson))
+    assert.equal(cursor.baselines[`${secondTaskDir}/task.json`], snapshotSha256(secondTaskJson))
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('显式补同步遇到冲突时停止覆盖并进入现有冲突确认链路', async () => {
+  const taskDir = '.trellis/tasks/01-deferred'
+  const localJson = `${JSON.stringify({ id: 'deferred-task', title: '本地版本' })}\n`
+  const serverJson = `${JSON.stringify({ id: 'deferred-task', title: '服务端版本' })}\n`
+  const context = await setup({
+    [taskDir]: {
+      'task.json': localJson,
+    },
+  })
+  try {
+    context.config.bindings[0].initialSyncCompleted = false
+    context.config.bindings[0].initialReviewPending = false
+    await context.store.saveConfig(context.config)
+    const controls = []
+    const api = {
+      async fetchTaskSpaceSnapshot(taskSpaceId) {
+        return { taskSpaceId, revision: 0, files: [] }
+      },
+      async fetchTaskDirectory() {
+        return { files: [serverFile(`${taskDir}/task.json`, serverJson)] }
+      },
+      async uploadTaskSpaceChanges() {
+        throw new AgentApiError(AGENT_ERROR_CODE.HTTP_ERROR, '任务已被其他成员修改', {
+          status: 409,
+          serverCode: 'TASK_FILE_CONFLICT',
+          conflictId: 'deferred-conflict',
+          details: { taskId: 'deferred-task', files: [] },
+        })
+      },
+      async writeTaskSpaceCursor() {},
+    }
+    const sync = createSync(context, api, controls)
+    await sync.pullTaskSpace('space-1')
+
+    const result = await sync.syncDeferredTasks('space-1')
+    assert.equal(result.conflict, true)
+    assert.equal(result.syncedCount, 0)
+    assert.equal(result.conflictId, 'deferred-conflict')
+    assert.equal(
+      fs.readFileSync(path.join(context.repoPath, ...taskDir.split('/'), 'task.json'), 'utf8'),
+      localJson,
+    )
+    assert.equal(controls.at(-1).type, 'task_file_conflict')
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('显式补同步网络失败时向调用方抛出异常并保留 deferred 状态', async () => {
+  const taskDir = '.trellis/tasks/01-deferred'
+  const taskJson = `${JSON.stringify({ id: 'deferred-task', title: '待补传任务' })}\n`
+  const context = await setup({
+    [taskDir]: {
+      'task.json': taskJson,
+    },
+  })
+  try {
+    context.config.bindings[0].initialSyncCompleted = false
+    await context.store.saveConfig(context.config)
+    let failUpload = false
+    const api = {
+      async fetchTaskSpaceSnapshot(taskSpaceId) {
+        return { taskSpaceId, revision: 0, files: [] }
+      },
+      async fetchTaskDirectory() {
+        return { files: [] }
+      },
+      async uploadTaskSpaceChanges() {
+        if (failUpload) {
+          throw new AgentApiError(AGENT_ERROR_CODE.NETWORK_ERROR, '无法连接 Agent 服务')
+        }
+        return { revision: 1 }
+      },
+      async writeTaskSpaceCursor() {},
+    }
+    const sync = createSync(context, api)
+    await sync.pullTaskSpace('space-1')
+    assert.ok((await sync._readCursor('space-1')).deferred[taskDir])
+
+    failUpload = true
+    await assert.rejects(() => sync.syncDeferredTasks('space-1'), /无法连接 Agent 服务/)
+    assert.ok((await sync._readCursor('space-1')).deferred[taskDir])
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
+test('只读关联拒绝显式补同步', async () => {
+  const context = await setup()
+  try {
+    context.config.bindings[0].readOnly = true
+    await context.store.saveConfig(context.config)
+    const sync = createSync(context, {})
+    await assert.rejects(() => sync.syncDeferredTasks('space-1'), /只读关联不能上传本地任务/)
+  } finally {
+    fs.rmSync(context.root, { recursive: true, force: true })
+  }
+})
+
 test('服务端修改延后处理的任务时重新要求确认而不是覆盖本地', async () => {
   const taskDir = '.trellis/tasks/01-deferred'
   const localJson = `${JSON.stringify({ id: 'deferred-task', title: '本地版本' })}\n`

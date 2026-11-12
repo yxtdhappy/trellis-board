@@ -495,10 +495,33 @@ export async function loginDesktop(options = {}) {
   }
 }
 
-export function readLocalAssociations(root) {
+async function readLiveCursorState(liveCursorsFile) {
+  try {
+    const parsed = JSON.parse(await fs.readFile(liveCursorsFile, 'utf8'))
+    return parsed?.taskSpaces && typeof parsed.taskSpaces === 'object' ? parsed.taskSpaces : {}
+  } catch {
+    // 游标可能尚未创建或正在被修复，不影响关联列表读取。
+    return {}
+  }
+}
+
+function deferredTaskDirsFor(taskSpaces, taskSpaceId) {
+  const deferred = taskSpaces?.[taskSpaceId]?.deferred
+  if (!deferred || typeof deferred !== 'object' || Array.isArray(deferred)) return []
+  return Object.keys(deferred)
+    .filter((taskDir) => typeof taskDir === 'string' && taskDir.startsWith('.trellis/tasks/'))
+    .sort()
+}
+
+export async function readLocalAssociations(root) {
   const store = new ConfigStore(root)
-  return store.readConfig({ allowMissing: false }).then((config) =>
-    config.bindings.map((binding) => ({
+  const [config, liveCursorState] = await Promise.all([
+    store.readConfig({ allowMissing: false }),
+    readLiveCursorState(store.paths.liveCursorsFile),
+  ])
+  return config.bindings.map((binding) => {
+    const deferredTaskDirs = deferredTaskDirsFor(liveCursorState, binding.taskSpaceId)
+    return {
       taskSpaceId: binding.taskSpaceId,
       projectId: binding.projectId,
       repoPath: binding.repoPath,
@@ -511,8 +534,10 @@ export function readLocalAssociations(root) {
       liveSyncError: binding.liveSyncError,
       lastErrorCode: binding.lastErrorCode,
       lastError: binding.lastError,
-    })),
-  )
+      deferredCount: deferredTaskDirs.length,
+      deferredTaskDirs,
+    }
+  })
 }
 
 /**

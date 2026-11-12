@@ -564,6 +564,17 @@ async fn list_local_associations(
 }
 
 #[tauri::command]
+async fn sync_deferred_tasks(
+    app: AppHandle,
+    window: WebviewWindow,
+    task_space_id: String,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
+    sidecar::sync_deferred_tasks(&app, &task_space_id, &config::agent_root()).await
+}
+
+#[tauri::command]
 async fn desktop_sidecar_status(
     app: AppHandle,
     window: WebviewWindow,
@@ -837,6 +848,7 @@ fn main() {
             cancel_pending_project,
             associate_pending_project,
             list_local_associations,
+            sync_deferred_tasks,
             desktop_sidecar_status,
             live_control_pending,
             live_control_decide,

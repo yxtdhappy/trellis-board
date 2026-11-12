@@ -179,6 +179,10 @@ pub struct LocalAssociation {
     pub live_sync_error: Option<String>,
     pub last_error_code: Option<String>,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub deferred_count: usize,
+    #[serde(default)]
+    pub deferred_task_dirs: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -563,6 +567,29 @@ pub async fn resolve_initial_sync(
     .await?;
     let line = last_json_line(&output).ok_or_else(|| "sidecar 返回了无效的同步结果".to_string())?;
     serde_json::from_str(line).map_err(|_| "sidecar 返回了无效的同步结果".to_string())
+}
+
+pub async fn sync_deferred_tasks(
+    app: &AppHandle,
+    task_space_id: &str,
+    agent_root: &Path,
+) -> Result<Value, String> {
+    let output = run_json_command(
+        app,
+        vec![
+            "live-sync-deferred".to_string(),
+            "--task-space".to_string(),
+            task_space_id.to_string(),
+        ],
+        None,
+        agent_root,
+        SYNC_COMMAND_TIMEOUT,
+        "同步本地待上传任务失败",
+    )
+    .await?;
+    let line =
+        last_json_line(&output).ok_or_else(|| "sidecar 返回了无效的补同步结果".to_string())?;
+    serde_json::from_str(line).map_err(|_| "sidecar 返回了无效的补同步结果".to_string())
 }
 
 pub async fn restore_live_backup(
@@ -1156,6 +1183,8 @@ pub async fn associate(
         live_sync_error: summary.live_sync_error.filter(|value| !value.is_empty()),
         last_error_code: None,
         last_error: None,
+        deferred_count: 0,
+        deferred_task_dirs: Vec::new(),
     })
 }
 
@@ -1373,6 +1402,8 @@ mod tests {
         .expect("解析旧 sidecar 关联结果");
         assert_eq!(association.live_sync_status, "pending");
         assert_eq!(association.live_sync_error, None);
+        assert_eq!(association.deferred_count, 0);
+        assert!(association.deferred_task_dirs.is_empty());
     }
 
     #[test]

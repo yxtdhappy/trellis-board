@@ -8,7 +8,8 @@ const LIVE_SYNC_PRIORITY = {
 function associationPriority(association) {
   if (!association) return 0
   if (association.status !== 'approved') return 5
-  return LIVE_SYNC_PRIORITY[association.liveSyncStatus] || LIVE_SYNC_PRIORITY.pending
+  const syncPriority = LIVE_SYNC_PRIORITY[association.liveSyncStatus] || LIVE_SYNC_PRIORITY.pending
+  return Math.max(syncPriority, association.deferredCount > 0 ? 2.5 : 0)
 }
 
 export function selectProjectAssociation(project, associations) {

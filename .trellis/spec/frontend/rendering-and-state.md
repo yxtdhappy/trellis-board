@@ -48,15 +48,19 @@
 - Tauri 项目行必须常驻展示关联状态：未关联、关联中、等待后台同步、正在同步已有任务、同步正常、
   只读已关联或关联失效；`liveSyncStatus=error` 时显示同步异常并通过可见辅助文本或 `title`
   展示脱敏后的 `liveSyncError`。
+- `liveSyncStatus=ready` 但 `deferredCount>0` 时必须显示“N 个本地任务未同步”，不能显示同步正常。
+  可写关联提供显式确认后的补同步入口；只读关联不显示上传动作。补同步失败或冲突不得提示成功。
 - 项目栏父行状态只能聚合该项目自身 `taskSpaces` 的关联，禁止回退到全局 `currentTaskSpace`；
-  多分支按“关联失效、`error`、`syncing`、`pending`、`ready`”的优先级展示，选中分支只影响
-  展开行和该分支的关联入口。
+  多分支按“关联失效、`error`、`syncing`、deferred、`pending`、`ready`”的优先级展示，
+  选中分支只影响展开行和该分支的关联入口。
 - 点击关联后先进入只读项目检查并禁用重复入口；目录选择取消只结束 loading，不显示成功或失败。
   推送确认完成后先调用预检，不能在预检前 attach。
 - “团队管理”入口只属于普通浏览器管理界面；Tauri 客户端即使账号具备管理权限也不显示该入口，
   浏览器仍使用 `/admin.html`。
 - Team 任务卡和详情必须显示 `taskSpaceId` 对应分支 `branchName`。“全部项目”聚合所有可读 taskSpace，
   具体项目聚合该项目所有可读 taskSpace，具体 taskSpace 只展示该分支。
+- 当前范围包含多个 taskSpace 时，页面必须提示“按分支独立统计”；同一 taskKey 跨分支保留独立实例，
+  不得为了让数量看起来更少而自动合并。
 - 同一 taskKey 出现在不同 taskSpace 时必须按 `taskSpaceId + taskKey` 形成独立业务实例；分组、React key、
   选中任务刷新和归档行身份都必须使用复合 key，禁止跨分支合并。
 - 任务流水线、团队视角和归档视图提供单值“分支”模糊筛选。输入先 trim，再按大小写不敏感的任意子串匹配；

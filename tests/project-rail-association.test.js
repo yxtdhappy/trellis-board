@@ -30,11 +30,12 @@ test('切换项目后，每个项目只读取自身 taskSpace 的同步状态', 
   assert.equal(selectProjectAssociation(board, associations)?.liveSyncStatus, 'ready')
 })
 
-test('多分支项目按 error、syncing、pending、ready 顺序聚合状态', () => {
+test('多分支项目按 error、syncing、deferred、pending、ready 顺序聚合状态', () => {
   const project = {
     taskSpaces: [
       { id: 'space-ready' },
       { id: 'space-pending' },
+      { id: 'space-deferred' },
       { id: 'space-syncing' },
       { id: 'space-error' },
     ],
@@ -42,14 +43,17 @@ test('多分支项目按 error、syncing、pending、ready 顺序聚合状态', 
   const associations = new Map([
     ['space-ready', association('space-ready', 'ready')],
     ['space-pending', association('space-pending', 'pending')],
-    ['space-syncing', association('space-syncing', 'syncing')],
-    ['space-error', association('space-error', 'error')],
+    ['space-deferred', association('space-deferred', 'ready', { deferredCount: 2 })],
+    ['space-syncing', association('space-syncing', 'syncing', { deferredCount: 1 })],
+    ['space-error', association('space-error', 'error', { deferredCount: 1 })],
   ])
 
   assert.equal(selectProjectAssociation(project, associations)?.liveSyncStatus, 'error')
   associations.delete('space-error')
   assert.equal(selectProjectAssociation(project, associations)?.liveSyncStatus, 'syncing')
   associations.delete('space-syncing')
+  assert.equal(selectProjectAssociation(project, associations)?.taskSpaceId, 'space-deferred')
+  associations.delete('space-deferred')
   assert.equal(selectProjectAssociation(project, associations)?.liveSyncStatus, 'pending')
   associations.delete('space-pending')
   assert.equal(selectProjectAssociation(project, associations)?.liveSyncStatus, 'ready')

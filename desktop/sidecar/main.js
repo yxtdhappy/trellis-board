@@ -444,6 +444,26 @@ async function commandLiveInitial(args, options) {
   return SIDECAR_EXIT_CODE.OK
 }
 
+async function commandLiveSyncDeferred(args, options) {
+  const values = parseOptions(args, { 'task-space': {} })
+  const store = new ConfigStore()
+  const agent = await prepareAgent(store, options.fallbackDpapiScript)
+  const config = await store.readConfig({ allowMissing: false })
+  const credential = await agent.credentialStore.loadCredential()
+  const api = new AgentApiClient({
+    serverUrl: config.serverUrl,
+    credential,
+  })
+  const taskSync = new AgentTaskSnapshotSync({
+    store,
+    loadContext: async () => ({ config, credential, api }),
+  })
+  taskSync.updateBindings(config.bindings)
+  const result = await taskSync.syncDeferredTasks(requireOption(values, 'task-space'))
+  writeJson({ ok: true, ...result })
+  return SIDECAR_EXIT_CODE.OK
+}
+
 async function commandLiveRestore(args, options) {
   const values = parseOptions(args, { backup: {} })
   const store = new ConfigStore()
@@ -472,6 +492,7 @@ function usage() {
     '  live-decide --task-space <任务空间 ID> --conflict <冲突 ID> --action use-server|overwrite-server|save-local-copy',
     '  live-diff --task-space <任务空间 ID> --conflict <冲突 ID>',
     '  live-initial --task-space <任务空间 ID> --mode safe|review',
+    '  live-sync-deferred --task-space <任务空间 ID>',
     '  live-restore --backup <备份 ID>',
     '  revoke --server <URL> --agent <设备 ID> (会话 Cookie 从 TRELLIS_BOARD_SESSION 读取)',
     '  status [--root <Agent 数据目录>]',
@@ -510,6 +531,8 @@ export async function runSidecarMain(argv = process.argv.slice(2), options = {})
         return await commandLiveDiff(args, options)
       case 'live-initial':
         return await commandLiveInitial(args, options)
+      case 'live-sync-deferred':
+        return await commandLiveSyncDeferred(args, options)
       case 'live-restore':
         return await commandLiveRestore(args, options)
       case 'revoke':

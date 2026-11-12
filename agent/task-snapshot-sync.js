@@ -1150,6 +1150,48 @@ export class AgentTaskSnapshotSync {
     )
   }
 
+  async syncDeferredTasks(taskSpaceId) {
+    const binding = this._binding(taskSpaceId)
+    if (binding.readOnly) {
+      throw new AgentError(AGENT_ERROR_CODE.COMMAND_INVALID, '只读关联不能上传本地任务')
+    }
+    let failure = null
+    const result = await this._enqueue(binding.taskSpaceId, async () => {
+      try {
+        const cursor = await this._readCursor(binding.taskSpaceId)
+        const taskDirs = Object.keys(cursor.deferred)
+        if (!taskDirs.length) {
+          return {
+            taskSpaceId: binding.taskSpaceId,
+            syncedCount: 0,
+            remainingCount: 0,
+            remainingTaskDirs: [],
+            conflict: false,
+          }
+        }
+
+        const uploaded = await this._uploadDirectories(binding, taskDirs)
+        const nextCursor = await this._readCursor(binding.taskSpaceId)
+        const remainingTaskDirs = Object.keys(nextCursor.deferred).sort()
+        const conflict = uploaded?.code === 'TASK_FILE_CONFLICT'
+        return {
+          taskSpaceId: binding.taskSpaceId,
+          syncedCount: conflict ? 0 : Math.max(0, taskDirs.length - remainingTaskDirs.length),
+          remainingCount: remainingTaskDirs.length,
+          remainingTaskDirs,
+          conflict,
+          conflictId: conflict ? uploaded.conflictId || null : null,
+        }
+      } catch (error) {
+        // _enqueue 默认吞掉异常并发出控制事件；显式操作仍需把失败返回给 Tauri。
+        failure = error
+        throw error
+      }
+    })
+    if (failure) throw failure
+    return result
+  }
+
   async _completeInitialSync(taskSpaceId, mode) {
     const completedAt = new Date().toISOString()
     const binding = this.bindings.get(taskSpaceId)

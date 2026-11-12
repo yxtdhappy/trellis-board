@@ -160,6 +160,11 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   拉取新 revision，发生冲突时停止应用远端目录。首次接入选择“仅同步无冲突项”或“暂不处理”
   跳过的本地目录作为延后状态持久化，用户再次修改前不得自动上传；延后目录随后被服务端修改时
   重新要求确认，不能覆盖本地。
+- `list_local_associations` 可以把当前 taskSpace 的延后目录只读投影为
+  `deferredCount/deferredTaskDirs`；缺失或损坏的 cursor 按 0 处理，不能阻断关联列表。
+- 延后任务只能通过用户显式触发的补同步命令上传。补同步必须校验 approved、非只读 binding，
+  复用同一 taskSpace 串行队列、限流、pending batch 和文件级 CAS；网络失败必须向调用方抛错，
+  冲突必须进入现有 `task_file_conflict` 确认链路。
 - 客户端以完整任务目录为原子单位：先在同卷临时目录写 `next`，把原目录 rename 为 `previous`，
   再 rename `next` 到目标；失败时恢复原目录。
 - 服务端 revision 应用后的 watcher 事件按 `(absolutePath, sha256)` 抑制；只有内容仍匹配才吞掉事件，
