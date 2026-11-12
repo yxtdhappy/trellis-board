@@ -910,3 +910,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 39: 完善项目接入预检门禁与错误透传
+<!-- trellis-session: v=2 fp=f20ee7c395edc1c2 -->
+
+**Date**: 2026-11-12
+**Task**: 完善项目接入预检门禁与错误透传
+**Branch**: `main`
+
+### Summary
+
+接入向导在 Trellis 任务目录缺失或首次推送未就绪时禁用预检，仅缺少可选 Agent 工具不阻塞；统一提取 Error、字符串和对象 message，避免敏感对象外泄。完整测试 490 通过、4 跳过，前端构建通过，并完成六种组件界面场景验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2e8894b` | fix(desktop): gate project preflight and surface sidecar errors |
+
+### Status
+
+[OK] **Completed**

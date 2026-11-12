@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 38
+- **Total Sessions**: 39
 - **Last Active**: 2026-11-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~912 | Active |
+| `journal-1.md` | ~934 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 39 | 2026-11-12 | 完善项目接入预检门禁与错误透传 | `2e8894b` | `main` |
 | 38 | 2026-11-12 | 修复桌面同步残留锁与强制恢复 | `86bd1db` | `main` |
 | 37 | 2026-11-12 | 本地 deferred 任务补同步 | `80647fc` | `main` |
 | 36 | 2026-11-12 | 项目接入 Agent 全量列表与搜索 | `3a72ec4`, `8ab6da6` | `main` |
