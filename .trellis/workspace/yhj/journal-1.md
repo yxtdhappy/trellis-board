@@ -866,3 +866,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 37: 本地 deferred 任务补同步
+<!-- trellis-session: v=2 fp=24e1b851ff52f57e -->
+
+**Date**: 2026-11-12
+**Task**: 本地 deferred 任务补同步
+**Branch**: `main`
+
+### Summary
+
+在项目栏暴露 deferred 任务数量并提供用户确认后的补同步入口；复用 CAS、串行队列、限流和冲突处理，补齐只读保护、失败传播、多分支提示及相关测试与规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `80647fc` | fix(desktop): sync deferred local tasks explicitly |
+
+### Status
+
+[OK] **Completed**
