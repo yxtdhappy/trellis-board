@@ -283,7 +283,7 @@ fn refresh_sync_menu(app: &AppHandle) {
                 crate::logging::warn(&format!("无法更新同步菜单状态：{error}"));
             }
         }
-    }
+    };
 }
 
 pub fn start(app: &AppHandle) {
@@ -797,7 +797,7 @@ fn force_restart_agent(app: &AppHandle) -> Result<(), String> {
     let mut stable_since = None;
     while Instant::now() < deadline {
         if let Some((token, pid)) = read_lock_owner(&lock_file) {
-            if token != previous_token && agent_process_is_alive(pid)? {
+            if previous_token.as_deref() != Some(token.as_str()) && agent_process_is_alive(pid)? {
                 if matched_token.as_deref() != Some(token.as_str()) {
                     matched_token = Some(token);
                     stable_since = Some(Instant::now());
