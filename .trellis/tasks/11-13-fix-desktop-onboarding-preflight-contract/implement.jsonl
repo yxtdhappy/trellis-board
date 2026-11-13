@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "Tauri 命令契约：返回值形状、错误映射"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "桌面 Agent 运行时与接入预检返回契约"}

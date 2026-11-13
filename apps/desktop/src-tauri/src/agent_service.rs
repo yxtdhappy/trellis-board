@@ -611,7 +611,7 @@ pub async fn preflight_project(
         .agent_context()
         .await
         .map_err(|error| message(&error))?;
-    let result = crate::agent::association::preflight_desktop_project(
+    let mut payload = crate::agent::association::preflight_desktop_project(
         &service.store,
         &api,
         repo_path,
@@ -620,7 +620,10 @@ pub async fn preflight_project(
     )
     .await
     .map_err(|error| message(&error))?;
-    Ok(json!({ "ok": true, "result": result }))
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("ok".to_string(), Value::Bool(true));
+    }
+    Ok(payload)
 }
 
 pub async fn inspect_project(app: &AppHandle, repo_path: &str) -> Result<Value, String> {

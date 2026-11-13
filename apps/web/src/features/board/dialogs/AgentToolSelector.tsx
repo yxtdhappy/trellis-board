@@ -47,7 +47,7 @@ export function AgentToolSelector({
           onChange={(event) => onSearchChange(event.target.value)}
         />
       </div>
-      <div className="grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+      <div className="grid gap-2 sm:grid-cols-2">
         {visibleTools.length ? (
           visibleTools.map((tool) => {
             const existing = existingToolIds.has(tool.id)
