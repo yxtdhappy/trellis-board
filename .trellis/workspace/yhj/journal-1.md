@@ -1141,3 +1141,27 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 49: 优化任务同步路径校验与错误展示
+<!-- trellis-session: v=2 fp=32f730fc840702c1 -->
+
+**Date**: 2026-11-13
+**Task**: 优化任务同步路径校验与错误展示
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+改用相对 taskDir 的安全本机解析，修复 Windows 扩展路径假阳性；同步错误显示项目、分支与诊断 ID，并通过 GitHub Windows 构建。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b01727f` | fix(sync): resolve task paths safely |
+| `37e549e` | chore(task): record sync path validation |
+
+### Status
+
+[OK] **Completed**
