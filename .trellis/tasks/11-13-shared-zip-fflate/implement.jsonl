@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "跨包引用与第三方依赖声明位置的项目约定（workspace 包名 + 根 package.json 提升）"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试与质量门禁要求，决定新增测试的位置与断言风格"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "删除死代码与不新增抽象的取舍原则"}
+{"file": ".trellis/tasks/archive/2026-11/11-13-server-dotenv-root-env/research/dependency-opportunities.md", "reason": "fflate 替换 zip.js 的收益评估与既有结论"}

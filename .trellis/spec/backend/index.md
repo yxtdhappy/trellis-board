@@ -34,6 +34,7 @@
 - Board 状态通过 SQLite 事务和预编译语句写入；任务 `task.json` 仍使用临时文件加 `renameSync()` 原子替换。
 - 扫描在 Worker Thread 中执行，HTTP 主线程负责缓存、排队、API 和静态资源。
 - 人工阶段只写 SQLite `task_stage` 表，不改写 Trellis 的真实 `task.json.status`。
+- 归档解析统一走 `packages/shared/zip.js`（fflate），不恢复手写 ZIP 解析；条目路径校验与限额在解压前生效，模板完整性由 `template-manifest.json` 的 sha256 保证（fflate 不校验 CRC-32）。
 
 ## 相关入口
 
