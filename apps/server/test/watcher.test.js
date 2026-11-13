@@ -3,11 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import {
-  createWatchRuntime,
-  isRelevantTrellisChange,
-  normalizeWatchPath,
-} from '../watcher.js'
+import { createWatchRuntime, isRelevantTrellisChange, normalizeWatchPath } from '../watcher.js'
 import { createTrellisWatcher } from '@trellis-board/shared/trellis-watcher.js'
 
 test('只把 Trellis 任务、工作区与开发者变更视为看板相关事件', () => {
@@ -53,7 +49,7 @@ test('任务文件变更会触发监听回调', async () => {
   timer = setTimeout(() => finish(null, new Error('等待文件变更超时')), 5000)
 
   try {
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    await runtime.ready()
     fs.mkdirSync(path.join(tasksDir, '10-27-live'), { recursive: true })
     fs.writeFileSync(
       path.join(tasksDir, '10-27-live', 'task.json'),
@@ -63,7 +59,7 @@ test('任务文件变更会触发监听回调', async () => {
     assert.equal(event.repositoryId, 'demo')
     assert.match(event.relativePath, /tasks\/10-27-live\/task\.json/)
   } finally {
-    runtime.close()
+    await runtime.close()
     fs.rmSync(root, { recursive: true, force: true })
   }
 })
@@ -71,37 +67,52 @@ test('任务文件变更会触发监听回调', async () => {
 test('共享 watcher 支持防抖批次与动态重建', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-shared-watch-'))
   fs.mkdirSync(path.join(root, '.trellis'), { recursive: true })
-  let callback
+  let emitChange
   let closed = 0
   const batches = []
   const runtime = createTrellisWatcher({
     repositories: [{ id: 'demo', name: 'Demo', path: root }],
     debounceMs: 10,
-    watch: (_root, _options, handler) => {
-      callback = handler
-      return {
-        on() {},
+    watch: () => {
+      const handlers = new Map()
+      const watcher = {
+        on(event, handler) {
+          handlers.set(event, handler)
+          if (event === 'ready') setImmediate(handler)
+          return watcher
+        },
         close() {
           closed += 1
+          return Promise.resolve()
         },
       }
+      emitChange = (eventType, changedPath) => handlers.get('all')(eventType, changedPath)
+      return watcher
     },
     onChange: (events) => batches.push(events),
   })
   try {
-    callback('change', 'tasks/a/task.json')
-    callback('change', 'workspace/dev/journal-1.md')
+    assert.equal(runtime.status().enabled, false)
+    await runtime.ready()
+    assert.equal(runtime.status().enabled, true)
+
+    const trellisRoot = path.join(root, '.trellis')
+    emitChange('change', path.join(trellisRoot, 'tasks', 'a', 'task.json'))
+    emitChange('change', path.join(trellisRoot, 'workspace', 'dev', 'journal-1.md'))
+    emitChange('change', path.join(trellisRoot, 'scripts', 'task.py'))
     await new Promise((resolve) => setTimeout(resolve, 40))
     assert.equal(batches.length, 1)
     assert.equal(batches[0].length, 2)
     assert.equal(batches[0][0].trellisPath, '.trellis/tasks/a/task.json')
+    assert.equal(batches[0][0].eventType, 'change')
 
-    runtime.rebuild([])
+    await runtime.rebuild([])
     assert.equal(closed, 1)
+    assert.equal(runtime.status().enabled, false)
     assert.deepEqual(runtime.status().watchedRepositories, [])
     assert.deepEqual(runtime.status().watchedRoots, ['tasks', 'workspace', '.developer'])
   } finally {
-    runtime.close()
+    await runtime.close()
     fs.rmSync(root, { recursive: true, force: true })
   }
 })

@@ -8,5 +8,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "chokidar": "^6.0.0"
   }
 }

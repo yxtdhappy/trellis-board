@@ -273,7 +273,7 @@ function scheduleWatchRefresh(event) {
   }, WATCH_DEBOUNCE_MS)
 }
 
-function startFileWatcher() {
+async function startFileWatcher() {
   let status
   try {
     watchRuntime = createWatchRuntime({
@@ -281,6 +281,8 @@ function startFileWatcher() {
       onChange: scheduleWatchRefresh,
       onError: (error) => activeLogger.error('Trellis 文件监听失败', error),
     })
+    // chokidar 的初始扫描是异步的，就绪前的 status() 一定是 disabled。
+    await watchRuntime.ready()
     status = watchRuntime.status()
   } catch (error) {
     activeLogger.error('启动 Trellis 文件监听失败', error)
@@ -304,12 +306,10 @@ function startFileWatcher() {
 function restartFileWatcher() {
   const previous = watchRuntime
   watchRuntime = null
-  try {
-    previous?.close()
-  } catch (error) {
+  previous?.close().catch((error) => {
     activeLogger.error('关闭旧 Trellis 文件监听失败', error)
-  }
-  startFileWatcher()
+  })
+  void startFileWatcher()
 }
 
 function pickFoldersFromDesktop() {
@@ -893,7 +893,7 @@ export async function startStandaloneServer({
       refreshQueuedReason: null,
       executionWipLimit: persistence.readExecutionWipLimit(),
     })
-    startFileWatcher()
+    await startFileWatcher()
     await startPluginRuntime()
     refreshBoardFromFiles('startup').catch((error) => {
       activeLogger.error('启动后的后台扫描失败', error)
@@ -927,7 +927,7 @@ export async function stopStandaloneServer() {
   boardEventService = null
   await pluginRuntime?.stop()
   pluginRuntime = null
-  watchRuntime?.close()
+  await watchRuntime?.close()
   watchRuntime = null
   if (watchDebounceTimer) clearTimeout(watchDebounceTimer)
   watchDebounceTimer = null

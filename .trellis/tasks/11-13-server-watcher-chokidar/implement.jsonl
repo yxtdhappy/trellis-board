@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "服务端启动、退出与 watcher 生命周期约定"}
+{"file": ".trellis/spec/backend/scanning-and-persistence.md", "reason": "文件扫描与看板刷新的既有链路"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "异步契约变更后的测试要求"}
+{"file": ".trellis/spec/backend/index.md", "reason": "共享依赖声明位置（根 package.json）"}
