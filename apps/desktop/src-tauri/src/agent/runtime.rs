@@ -82,6 +82,10 @@ impl AgentRuntime {
         self.paused.load(Ordering::SeqCst)
     }
 
+    pub(crate) fn task_sync(&self) -> &TaskSync {
+        &self.task_sync
+    }
+
     pub fn stop(&self) {
         if self.stopped.swap(true, Ordering::SeqCst) {
             return;

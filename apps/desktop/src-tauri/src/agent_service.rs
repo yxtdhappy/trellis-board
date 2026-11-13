@@ -717,9 +717,17 @@ pub async fn check_initial_push(
 
 pub async fn list_associations(app: &AppHandle) -> Result<Vec<LocalAssociation>, String> {
     let service = service(app).map_err(|error| message(&error))?;
-    device::read_local_associations(&service.store)
-        .await
-        .map_err(|error| message(&error))
+    let runtime = service
+        .runtime
+        .lock()
+        .map_err(|_| "无法读取 Agent 运行状态".to_string())?
+        .clone();
+    device::read_local_associations(
+        &service.store,
+        runtime.as_ref().map(|runtime| runtime.task_sync()),
+    )
+    .await
+    .map_err(|error| message(&error))
 }
 
 pub async fn detach_local_association(

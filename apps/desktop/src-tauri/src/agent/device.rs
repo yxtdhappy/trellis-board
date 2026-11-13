@@ -20,7 +20,7 @@ use crate::agent::store::{
     create_config_revision, AgentBinding, AgentConfig, AgentTeam, ConfigStore,
     CONFIG_SCHEMA_VERSION,
 };
-use crate::agent::task_sync;
+use crate::agent::task_sync::{self, TaskSync};
 
 /// Board 的会话 Cookie 名称（对照 JS SESSION_COOKIE）。
 const SESSION_COOKIE: &str = "trellis_team_session";
@@ -833,8 +833,11 @@ pub async fn logout_desktop_session(api: &ApiClient, session_token: &str) -> Age
     Ok(json!({ "loggedOut": true }))
 }
 
-/// 对照 JS readLocalAssociations：直接读本地配置里的绑定，不探测仓库状态。
-pub async fn read_local_associations(store: &ConfigStore) -> AgentResult<Vec<LocalAssociation>> {
+/// 读取本地绑定并复用任务同步缓存投影归属状态。
+pub async fn read_local_associations(
+    store: &ConfigStore,
+    task_sync: Option<&TaskSync>,
+) -> AgentResult<Vec<LocalAssociation>> {
     let config = store
         .read_config(false)
         .await?
@@ -851,7 +854,7 @@ pub async fn read_local_associations(store: &ConfigStore) -> AgentResult<Vec<Loc
                 && binding.last_error_code.as_deref() != Some(code::BRANCH_MISMATCH)
                 && binding.last_error_code.as_deref() != Some("BINDING_BRANCH_MISMATCH")
             {
-                local_ownership_dirs(&binding, &deferred).await?
+                local_ownership_dirs(&binding, &deferred, task_sync).await?
             } else {
                 (Vec::new(), Vec::new())
             };
@@ -883,6 +886,7 @@ pub async fn read_local_associations(store: &ConfigStore) -> AgentResult<Vec<Loc
 async fn local_ownership_dirs(
     binding: &AgentBinding,
     cursors: &Value,
+    task_sync: Option<&TaskSync>,
 ) -> AgentResult<(Vec<String>, Vec<String>)> {
     let Ok(files) =
         task_sync::read_local_task_snapshot_files(Path::new(&binding.repo_path), None).await
@@ -893,17 +897,23 @@ async fn local_ownership_dirs(
         Ok(groups) => groups,
         Err(_) => return Ok((Vec::new(), Vec::new())),
     };
-    let mut paused: Vec<String> = groups
-        .iter()
-        .filter(|group| {
-            group
-                .task_branch
-                .as_deref()
-                .map(|branch| branch != binding.branch_name)
-                .unwrap_or(false)
-        })
-        .map(|group| group.task_dir.clone())
-        .collect();
+    let mut paused: Vec<String> = match task_sync {
+        Some(task_sync) => task_sync
+            .ownership_paused_task_dirs(binding, &groups)
+            .await
+            .into_iter()
+            .collect(),
+        None => groups
+            .iter()
+            .filter(|group| {
+                group
+                    .task_branch
+                    .as_deref()
+                    .is_some_and(|branch| branch != binding.branch_name)
+            })
+            .map(|group| group.task_dir.clone())
+            .collect(),
+    };
     paused.sort();
     let paused_set: std::collections::HashSet<String> = paused.iter().cloned().collect();
     let local_dirs: std::collections::HashSet<String> =
