@@ -659,3 +659,26 @@ tag 推送不再直接构建，由 dispatch-main 作业用 gh api 触发 main �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: 客户端 TopBar 响应式与弹窗/登录页布局
+<!-- trellis-session: v=2 fp=2afed03b5ae91771 -->
+
+**Date**: 2026-11-13
+**Task**: 客户端 TopBar 响应式与弹窗/登录页布局
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+TopBar 改用 em 容器查询（导航不折行、搜索 64em 下收图标、48em 两行），live-control 固定 480 宽并按卡片内容定高（新增 live_control_resize + 权限 + window-state denylist），登录卡 28rem；真实客户端实测窗口 480x301 无滚动条。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e0fb8c4` | feat(client): make topbar responsive and size live control window to content |
+
+### Status
+
+[OK] **Completed**
