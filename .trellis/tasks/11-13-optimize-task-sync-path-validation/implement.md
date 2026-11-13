@@ -2,29 +2,29 @@
 
 ## 1. 路径解析
 
-- [ ] 在 `apps/desktop/src-tauri/src/agent/protocol.rs` 增加 `.trellis/tasks` 相对路径安全解析函数。
-- [ ] 删除 `task_sync.rs` 中只规范根目录的 `dunce_canonical` 用法。
-- [ ] 让目录写入、删除和备份复用同一解析函数，路径无效时失败关闭。
-- [ ] 让 `task_command.rs` 复用同一解析规则，保留原有调用方错误码和文案。
+- [x] 在 `apps/desktop/src-tauri/src/agent/protocol.rs` 增加 `.trellis/tasks` 相对路径安全解析函数。
+- [x] 删除 `task_sync.rs` 中只规范根目录的 `dunce_canonical` 用法。
+- [x] 让目录写入、删除和备份复用同一解析函数，路径无效时失败关闭。
+- [x] 让 `task_command.rs` 复用同一解析规则，保留原有调用方错误码和文案。
 
 ## 2. 控制事件与界面
 
-- [ ] `task_sync_error` 增加 `projectName`、`branchName` 增量字段。
-- [ ] 从 binding 补全事件信息，不把本机 `repoPath` 写入事件或日志。
-- [ ] `ControlApp.tsx` 优先显示 `项目 / 分支`，字段缺失时回退到 `taskSpaceId`。
-- [ ] 路径错误使用具体文案，裸 UUID 仅作为次级诊断。
+- [x] `task_sync_error` 增加 `projectName`、`branchName` 增量字段。
+- [x] 从 binding 补全事件信息，不把本机 `repoPath` 写入事件或日志。
+- [x] `ControlApp.tsx` 优先显示 `项目 / 分支`，字段缺失时回退到 `taskSpaceId`。
+- [x] 路径错误使用具体文案，裸 UUID 仅作为次级诊断。
 
 ## 3. 测试
 
-- [ ] Rust 单测覆盖普通路径根、`\\?\` 扩展路径根、活动任务、归档任务和任务根本身。
-- [ ] Rust 单测覆盖 `..`、`.`、空段、绝对路径、反斜杠、NUL 和盘符替换。
-- [ ] Rust 回归测试覆盖服务端目录写入；无效路径不改变本地目录、不推进 cursor。
-- [ ] 更新桌面静态契约或前端测试，验证控制事件包含项目/分支且 UI 有回退逻辑。
+- [x] Rust 单测覆盖普通路径根、`\\?\` 扩展路径根、活动任务、归档任务和任务根本身。
+- [x] Rust 单测覆盖 `..`、`.`、空段、绝对路径、反斜杠、NUL 和盘符替换。
+- [x] Rust 回归测试覆盖服务端目录写入；无效路径不改变本地目录、不推进 cursor。
+- [x] 更新桌面静态契约或前端测试，验证控制事件包含项目/分支且 UI 有回退逻辑。
 
 ## 4. 验证
 
-- [ ] 开发阶段只运行与改动直接相关的 Rust/Node 测试，不执行构建。
-- [ ] 所有开发完成后统一执行一次相关检查：
+- [x] 开发阶段只运行与改动直接相关的 Rust/Node 测试，不执行构建。
+- [x] 所有开发完成后统一执行一次相关检查：
   - `cargo fmt --check`
   - `cargo clippy --all-targets -- -D warnings`
   - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`
