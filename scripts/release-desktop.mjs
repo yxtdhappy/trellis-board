@@ -1,11 +1,21 @@
-// 发版：按 patch/minor/major 递增（或指定版本）写回三个版本文件，提交、打 tag、推送；
-// CI 按 tag 版本号构建绿色包并发布 Release。
+// 发版：按 patch/minor/major 递增（或指定版本）写回根 package.json、所有 workspace 包、
+// tauri.conf.json 与 Cargo 版本文件，提交、打 tag、推送；CI 按 tag 版本号构建绿色包并发布 Release。
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 
+const JSON_VERSION = /"version"\s*:\s*"[^"]+"/
+const TAURI_CONF = 'apps/desktop/src-tauri/tauri.conf.json'
 const VERSION_FILES = [
-  { path: 'apps/desktop/package.json', pattern: /"version"\s*:\s*"[^"]+"/ },
-  { path: 'apps/desktop/src-tauri/tauri.conf.json', pattern: /"version"\s*:\s*"[^"]+"/ },
+  { path: 'package.json', pattern: JSON_VERSION },
+  ...['apps', 'packages'].flatMap((dir) =>
+    fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => `${dir}/${entry.name}/package.json`)
+      .filter((path) => fs.existsSync(path))
+      .map((path) => ({ path, pattern: JSON_VERSION })),
+  ),
+  { path: TAURI_CONF, pattern: JSON_VERSION },
   { path: 'apps/desktop/src-tauri/Cargo.toml', pattern: /^version = "[^"]+"/m },
   {
     path: 'apps/desktop/src-tauri/Cargo.lock',
@@ -93,9 +103,9 @@ function compare(left, right) {
 }
 
 function readVersion() {
-  const config = JSON.parse(fs.readFileSync(VERSION_FILES[1].path, 'utf8'))
+  const config = JSON.parse(fs.readFileSync(TAURI_CONF, 'utf8'))
   if (!/^\d+\.\d+\.\d+$/.test(config.version)) {
-    throw new Error(`${VERSION_FILES[1].path} 的 version 不是 x.y.z：${config.version}`)
+    throw new Error(`${TAURI_CONF} 的 version 不是 x.y.z：${config.version}`)
   }
   return config.version
 }
