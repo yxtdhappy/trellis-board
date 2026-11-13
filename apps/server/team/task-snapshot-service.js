@@ -8,6 +8,7 @@ import {
   validateSnapshotFile,
 } from '../../../packages/shared/task-snapshot.js'
 import { validateGitBranchName } from '../../../packages/shared/remote-identity.js'
+import { appendAuditEvent } from './audit.js'
 import { ERROR_CODES, teamError } from './errors.js'
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
@@ -96,6 +97,46 @@ function taskBranchFromJson(content) {
 function taskTitleFromJson(content) {
   const value = parseJson(content, null)
   return typeof value?.title === 'string' && value.title.trim() ? value.title.trim() : null
+}
+
+function normalizeMergeEvidence(value) {
+  if (value == null) return null
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'mergeEvidence 格式无效')
+  }
+  if (value.version !== 1 || value.type !== 'tracked-in-head') {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'mergeEvidence 类型或版本无效')
+  }
+  const taskDir = String(value.taskDir || '').trim()
+  if (!taskDir.startsWith('.trellis/tasks/')) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'mergeEvidence 任务目录无效')
+  }
+  const trackedPath = String(value.trackedPath || '').trim()
+  if (trackedPath !== `${taskDir}/task.json`) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'mergeEvidence 受控路径无效')
+  }
+  let sourceBranch
+  let baselineBranch
+  try {
+    sourceBranch = validateGitBranchName(value.sourceBranch)
+    baselineBranch = validateGitBranchName(value.baselineBranch)
+  } catch {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'mergeEvidence 分支格式无效')
+  }
+  const headCommit = String(value.headCommit || '').trim()
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(headCommit)) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'mergeEvidence HEAD 提交格式无效')
+  }
+  return {
+    version: 1,
+    type: 'tracked-in-head',
+    taskId: requestId(value.taskId, 'mergeEvidence 任务 ID'),
+    taskDir,
+    trackedPath,
+    sourceBranch,
+    baselineBranch,
+    headCommit,
+  }
 }
 
 export function createTaskSnapshotService({
@@ -245,6 +286,7 @@ export function createTaskSnapshotService({
       .map((item) => ({
         taskSpaceId: item.id,
         branchName: item.branchName,
+        isBaseline: item.isBaseline,
       }))
     if (!taskIds.length) return { projectTaskSpaces, tasks: [] }
 
@@ -311,6 +353,200 @@ export function createTaskSnapshotService({
     return rows
   }
 
+  function baselineOwnsTask(projectId, taskId) {
+    if (!taskId) return false
+    return Boolean(
+      db
+        .prepare(`
+        SELECT 1
+        FROM sync_project p
+        JOIN sync_task_space s
+          ON s.project_id = p.id AND s.branch_name = p.baseline_branch
+        JOIN sync_task_space_file f
+          ON f.task_space_id = s.id AND f.task_id = ? AND f.deleted = 0
+        WHERE p.id = ? AND f.relative_path = f.task_dir || '/task.json'
+        LIMIT 1
+      `)
+        .get(taskId, projectId),
+    )
+  }
+
+  function mergeEvidenceRow(projectId, taskId) {
+    if (!taskId) return null
+    return (
+      db
+        .prepare('SELECT * FROM sync_task_merge_evidence WHERE project_id = ? AND task_id = ?')
+        .get(projectId, taskId) || null
+    )
+  }
+
+  function validateTaskOwnership({ space, complete, evidence, observedBranch }) {
+    if (!complete.taskId) {
+      throw teamError(409, ERROR_CODES.CONFLICT, '任务目录缺少稳定任务 ID，整批拒绝')
+    }
+    const baselineBranch = space.project?.baseline_branch || ''
+    if (!baselineBranch) {
+      if (complete.taskBranch && complete.taskBranch !== space.branch_name) {
+        throw teamError(
+          409,
+          'TASK_OWNERSHIP_MISMATCH',
+          'task.json 分支与任务空间不一致，整批拒绝',
+          {
+            details: {
+              taskId: complete.taskId,
+              taskDir: complete.taskDir,
+              expectedBranchName: space.branch_name,
+              actualBranchName: complete.taskBranch,
+            },
+          },
+        )
+      }
+      if (evidence) {
+        throw teamError(409, 'TASK_MERGE_EVIDENCE_INVALID', '项目尚未配置基线分支')
+      }
+      return { persistEvidence: false }
+    }
+    const isBaseline = space.branch_name === baselineBranch
+    const ownsTask = baselineOwnsTask(space.project_id, complete.taskId)
+    const priorEvidence = mergeEvidenceRow(space.project_id, complete.taskId)
+    const sameBranch = complete.taskBranch === space.branch_name
+    if (evidence) {
+      if (!isBaseline || observedBranch !== space.branch_name) {
+        throw teamError(409, 'TASK_MERGE_EVIDENCE_INVALID', '只有基线任务空间可以提交合入证据')
+      }
+      const taskJson = filesTaskJson(complete, evidence)
+      if (
+        evidence.taskId !== complete.taskId ||
+        evidence.taskDir !== complete.taskDir ||
+        evidence.sourceBranch !== complete.taskBranch ||
+        evidence.baselineBranch !== baselineBranch ||
+        !taskJson
+      ) {
+        throw teamError(
+          409,
+          'TASK_MERGE_EVIDENCE_INVALID',
+          '合入证据与任务内容或分支不一致，整批拒绝',
+        )
+      }
+    }
+    if (isBaseline) {
+      if (!sameBranch && !ownsTask && !priorEvidence && !evidence) {
+        throw teamError(
+          409,
+          'TASK_MERGE_EVIDENCE_REQUIRED',
+          '任务来源分支与基线不同，缺少合入证据',
+          {
+            details: {
+              taskId: complete.taskId,
+              taskDir: complete.taskDir,
+              sourceBranch: complete.taskBranch,
+              baselineBranch,
+            },
+          },
+        )
+      }
+      return { persistEvidence: Boolean(evidence) }
+    }
+    if (complete.taskBranch && complete.taskBranch !== space.branch_name) {
+      throw teamError(409, 'TASK_OWNERSHIP_MISMATCH', 'task.json 分支与任务空间不一致，整批拒绝', {
+        details: {
+          taskId: complete.taskId,
+          taskDir: complete.taskDir,
+          expectedBranchName: space.branch_name,
+          actualBranchName: complete.taskBranch,
+        },
+      })
+    }
+    if (ownsTask || priorEvidence) {
+      throw teamError(
+        409,
+        'TASK_OWNED_BY_BASELINE',
+        '任务已由基线任务空间接管，来源副本只保留只读快照',
+        {
+          details: {
+            taskId: complete.taskId,
+            taskDir: complete.taskDir,
+            baselineBranch,
+          },
+        },
+      )
+    }
+    return { persistEvidence: false }
+  }
+
+  function filesTaskJson(complete, evidence) {
+    return complete.trackedPath === evidence.trackedPath && complete.taskDir === evidence.taskDir
+  }
+
+  function persistMergeEvidence({ agent, space, complete, evidence, timestamp }) {
+    if (!evidence) return false
+    const existing = mergeEvidenceRow(space.project_id, complete.taskId)
+    if (existing) {
+      if (
+        existing.baseline_task_space_id !== space.id ||
+        existing.source_branch_name !== evidence.sourceBranch ||
+        existing.baseline_branch_name !== evidence.baselineBranch
+      ) {
+        throw teamError(409, 'TASK_MERGE_EVIDENCE_INVALID', '同一任务已有不同的合入证据')
+      }
+      db.prepare(`
+        UPDATE sync_task_merge_evidence
+        SET execution_task_key = ?, task_dir = ?, tracked_path = ?, head_commit = ?,
+            source_agent_id = ?, source_user_id = ?
+        WHERE id = ?
+      `).run(
+        `${space.project_id}::${complete.taskId}`,
+        evidence.taskDir,
+        evidence.trackedPath,
+        evidence.headCommit,
+        agent.id,
+        agent.userId,
+        existing.id,
+      )
+      return false
+    }
+    const evidenceId = crypto.randomUUID()
+    db.prepare(`
+      INSERT INTO sync_task_merge_evidence(
+        id, project_id, task_id, execution_task_key, baseline_task_space_id,
+        task_dir, tracked_path, source_branch_name, baseline_branch_name,
+        evidence_type, head_commit, source_agent_id, source_user_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'tracked-in-head', ?, ?, ?, ?)
+    `).run(
+      evidenceId,
+      space.project_id,
+      complete.taskId,
+      `${space.project_id}::${complete.taskId}`,
+      space.id,
+      evidence.taskDir,
+      evidence.trackedPath,
+      evidence.sourceBranch,
+      evidence.baselineBranch,
+      evidence.headCommit,
+      agent.id,
+      agent.userId,
+      timestamp,
+    )
+    appendAuditEvent(db, {
+      actorUserId: agent.userId,
+      actorAgentId: agent.id,
+      teamId: space.project?.owner_team_id || null,
+      projectId: space.project_id,
+      action: 'task_merge_evidence_accepted',
+      targetType: 'task',
+      targetId: complete.taskId,
+      detail: {
+        taskId: complete.taskId,
+        taskDir: evidence.taskDir,
+        headCommit: evidence.headCommit,
+        sourceBranch: evidence.sourceBranch,
+        baselineTaskSpaceId: space.id,
+      },
+      occurredAt: timestamp,
+    })
+    return true
+  }
+
   function validateCompleteTaskGroups(taskSpaceId, files, expectedBranchName) {
     const taskDirs = [...new Set(files.map((file) => file.taskDir))]
     if (taskDirs.length > 2) {
@@ -330,12 +566,20 @@ export function createTaskSnapshotService({
       }
     }
     const previousIds = new Map()
+    const previousMetadata = new Map()
     for (const taskDir of taskDirs) {
       const taskJson = existing.find(
         (row) => row.task_dir === taskDir && row.relative_path.endsWith('/task.json'),
       )
       const taskId = taskIdFromJson(taskJson?.content_text)
       if (taskId) previousIds.set(taskDir, taskId)
+      if (taskId) {
+        previousMetadata.set(taskDir, {
+          taskId,
+          taskBranch: taskBranchFromJson(taskJson.content_text),
+          trackedPath: taskJson.relative_path,
+        })
+      }
     }
     const groups = new Map()
     for (const row of merged.values()) {
@@ -343,6 +587,7 @@ export function createTaskSnapshotService({
       groups.get(row.task_dir).push(row)
     }
     const currentIds = new Map()
+    const currentMetadata = new Map()
     for (const taskDir of taskDirs) {
       const rows = groups.get(taskDir) || []
       if (!rows.length) continue
@@ -355,32 +600,21 @@ export function createTaskSnapshotService({
         throw teamError(409, ERROR_CODES.CONFLICT, 'task.json 缺少稳定任务 ID，整批拒绝')
       }
       const taskBranch = taskBranchFromJson(taskJson.content_text)
-      const details = {
-        taskId,
-        taskDir,
-        expectedBranchName,
-        actualBranchName: taskBranch,
-      }
       if (!taskBranch) {
         throw teamError(409, 'TASK_OWNERSHIP_REQUIRED', 'task.json 缺少分支归属，整批拒绝', {
-          details,
+          details: { taskId, taskDir, expectedBranchName, actualBranchName: taskBranch },
         })
-      }
-      if (taskBranch !== expectedBranchName) {
-        throw teamError(
-          409,
-          'TASK_OWNERSHIP_MISMATCH',
-          'task.json 分支与任务空间不一致，整批拒绝',
-          {
-            details,
-          },
-        )
       }
       const previousId = previousIds.get(taskDir)
       if (previousId && previousId !== taskId) {
         throw teamError(409, ERROR_CODES.CONFLICT, '同一任务目录的 task.json id 不能变化，整批拒绝')
       }
       currentIds.set(taskDir, taskId)
+      currentMetadata.set(taskDir, {
+        taskId,
+        taskBranch,
+        trackedPath: taskJson.relative_path,
+      })
     }
     if (taskDirs.length === 2 && !files.some((file) => !file.deleted)) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, '任务移动必须同时包含新目录文件')
@@ -393,10 +627,17 @@ export function createTaskSnapshotService({
     ) {
       throw teamError(409, ERROR_CODES.CONFLICT, '任务移动前后的 task.json id 不一致')
     }
-    const taskId = [...currentIds.values()][0] || null
+    const taskId = [...currentIds.values()][0] || [...previousIds.values()][0] || null
+    const selected =
+      [...currentMetadata].find(([, metadata]) => metadata.taskId === taskId) ||
+      [...previousMetadata].find(([, metadata]) => metadata.taskId === taskId) ||
+      null
     return {
       taskDirs,
       taskId,
+      taskDir: selected?.[0] || taskDirs[0] || null,
+      taskBranch: selected?.[1].taskBranch || null,
+      trackedPath: selected?.[1].trackedPath || null,
     }
   }
 
@@ -501,7 +742,8 @@ export function createTaskSnapshotService({
 
   function applyChangesInternal(agent, taskSpaceId, input = {}, commitHook = null) {
     const { space, binding } = bindingContext(agent, taskSpaceId)
-    observedBranchName(input, space, binding)
+    const observedBranch = observedBranchName(input, space, binding)
+    const mergeEvidence = normalizeMergeEvidence(input.mergeEvidence)
     const actor = taskSpaces.actorContext(agent.userId)
     taskSpaces.authorizeTaskSpace(actor, taskSpaceId, 'write')
     const batchId = requestId(input.batchId, '批次 ID')
@@ -509,12 +751,14 @@ export function createTaskSnapshotService({
     const rawFiles = Array.isArray(input.files) ? input.files : []
     const files = requireSnapshotGroups(rawFiles).flatMap((group) => group.files)
     if (!files.length) throw teamError(400, ERROR_CODES.INVALID_INPUT, '同步批次不能为空')
-    const requestSha256 = hashJson({
+    const requestPayload = {
       taskSpaceId,
       batchId,
       clientSequence,
       files,
-    })
+    }
+    if (mergeEvidence) requestPayload.mergeEvidence = mergeEvidence
+    const requestSha256 = hashJson(requestPayload)
     const outcome = withTransaction(db, () => {
       const existingBatch = db
         .prepare(`
@@ -556,6 +800,12 @@ export function createTaskSnapshotService({
         })
       }
       const complete = validateCompleteTaskGroups(taskSpaceId, files, space.branch_name)
+      const ownership = validateTaskOwnership({
+        space,
+        complete,
+        evidence: mergeEvidence,
+        observedBranch,
+      })
       const current = currentPathRows(
         taskSpaceId,
         files.map((file) => file.path),
@@ -599,6 +849,15 @@ export function createTaskSnapshotService({
       const timestamp = now().toISOString()
       const currentRevision = readTaskSpaceRevision(taskSpaceId)
       const revision = currentRevision + 1
+      if (ownership.persistEvidence) {
+        persistMergeEvidence({
+          agent,
+          space,
+          complete,
+          evidence: mergeEvidence,
+          timestamp,
+        })
+      }
       const upsert = db.prepare(`
         INSERT INTO sync_task_space_file(
           task_space_id, relative_path, revision, sha256, content_text, deleted,
@@ -830,6 +1089,7 @@ export function createTaskSnapshotService({
         conflict.task_space_id,
         {
           observedBranchName: input.observedBranchName,
+          mergeEvidence: input.mergeEvidence,
           batchId: requestId(input.batchId, '批次 ID'),
           clientSequence: input.clientSequence,
           files: normalizedFiles.map((file) => ({

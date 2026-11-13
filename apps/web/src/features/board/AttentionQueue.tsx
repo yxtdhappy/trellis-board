@@ -1,6 +1,12 @@
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { priorityTone } from './tone.ts'
-import { attentionReasons, dueLabel, isAttention, type BoardTask } from './task-view.ts'
+import {
+  attentionReasons,
+  branchLabel,
+  dueLabel,
+  isAttention,
+  type BoardTask,
+} from './task-view.ts'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
 
 type AttentionQueueProps = {
@@ -49,11 +55,7 @@ export function AttentionQueue({ tasks, onOpen }: AttentionQueueProps) {
                   </span>
                   <span className="truncate text-[0.71875rem] font-medium">{task.title}</span>
                   <span className="shrink-0 text-[0.625rem] text-muted-foreground">
-                    {[
-                      task.teamName,
-                      task.projectName,
-                      task.branchName ? `分支 ${task.branchName}` : null,
-                    ]
+                    {[task.teamName, task.projectName, branchLabel(task)]
                       .filter(Boolean)
                       .join(' · ')}
                   </span>

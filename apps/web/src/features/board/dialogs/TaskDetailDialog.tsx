@@ -17,6 +17,7 @@ import { ApiError } from '@/api/request'
 import { renderMarkdown } from '@/lib/markdown.js'
 import type { Stage } from '../task-view.ts'
 import {
+  branchLabel,
   dueLabel,
   isAttention,
   attentionReasons,
@@ -232,6 +233,7 @@ export function TaskDetailDialog({
     if (!detail || (task && detail.taskKey !== task.taskKey)) return task
     return {
       ...detail,
+      sourceBranchName: detail.sourceBranchName || task?.sourceBranchName,
       archived: Boolean(detail.archived || task?.archived),
     }
   }, [detail, task])
@@ -362,6 +364,8 @@ export function TaskDetailDialog({
     }
   }
 
+  const ownershipLabel = current ? branchLabel(current) : null
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -370,7 +374,7 @@ export function TaskDetailDialog({
             <DialogTitle className="pr-8 text-base">{current?.title || '任务详情'}</DialogTitle>
             <DialogDescription>
               {current
-                ? `${current.teamName ? `${current.teamName} · ` : ''}${current.projectName}${current.branchName ? ` · 分支 ${current.branchName}` : ''} / ${current.dirName}`
+                ? `${current.teamName ? `${current.teamName} · ` : ''}${current.projectName}${ownershipLabel ? ` · ${ownershipLabel}` : ''} / ${current.dirName}`
                 : '正在读取任务…'}
             </DialogDescription>
           </DialogHeader>

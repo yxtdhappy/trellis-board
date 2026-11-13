@@ -19,6 +19,7 @@ export type RuntimeProject = {
   teamId: string | null
   teamName: string | null
   name: string
+  baselineBranch?: string | null
   syncStatus: string
   syncBranch: string
   role: string | null
@@ -28,6 +29,7 @@ export type RuntimeProject = {
   taskSpaces: {
     id: string
     branchName: string
+    isBaseline?: boolean
     revision: number
     indexedRevision: number
     readOnly: boolean

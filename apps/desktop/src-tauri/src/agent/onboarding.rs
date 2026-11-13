@@ -160,6 +160,8 @@ pub struct AttachedProject {
     pub owner_team_id: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub baseline_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -508,6 +510,11 @@ pub async fn attach_project(
         project_id: attached.project.id.clone(),
         repo_path: inspected.root.clone(),
         branch_name: inspected.branch_name.clone(),
+        baseline_branch: attached
+            .project
+            .baseline_branch
+            .clone()
+            .filter(|value| !value.is_empty()),
         team_id: attached
             .project
             .owner_team_id

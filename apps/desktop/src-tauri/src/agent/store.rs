@@ -66,6 +66,8 @@ pub struct AgentBinding {
     pub repo_path: String,
     pub branch_name: String,
     #[serde(default)]
+    pub baseline_branch: Option<String>,
+    #[serde(default)]
     pub team_id: Option<String>,
     pub remote_identity_key: String,
     pub local_repo_key: String,
@@ -228,6 +230,11 @@ fn validate_binding(binding: &AgentBinding, index: usize) -> AgentResult<AgentBi
             "branchName",
             255,
         )?)?,
+        baseline_branch: binding
+            .baseline_branch
+            .as_deref()
+            .map(protocol::validate_branch_name_syntax)
+            .transpose()?,
         team_id: optional_string(binding.team_id.as_deref(), "teamId", 128)?,
         remote_identity_key: require_hash(Some(&binding.remote_identity_key), "remoteIdentityKey")?,
         local_repo_key: require_hash(Some(&binding.local_repo_key), "localRepoKey")?,
@@ -842,6 +849,7 @@ mod tests {
             project_id: "project-1".into(),
             repo_path: "C:/repo".into(),
             branch_name: "main".into(),
+            baseline_branch: None,
             team_id: None,
             remote_identity_key: "remote".into(),
             local_repo_key: "a".repeat(64),

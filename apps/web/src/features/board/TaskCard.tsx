@@ -5,6 +5,7 @@ import { conditionBadges } from '@/lib/condition-checks.js'
 import { toast } from 'sonner'
 import {
   attentionReasons,
+  branchLabel,
   dueLabel,
   initials,
   isAttention,
@@ -61,11 +62,7 @@ export function TaskCard({ task, onOpen, onEditPlan }: TaskCardProps) {
   const tags = taskTags(task)
   const conditions = conditionBadges(task)
   const attention = attentionReasons(task).slice(0, 3)
-  const projectLabel = [
-    task.teamName,
-    task.projectName,
-    task.branchName ? `分支 ${task.branchName}` : null,
-  ]
+  const projectLabel = [task.teamName, task.projectName, branchLabel(task)]
     .filter(Boolean)
     .join(' · ')
 

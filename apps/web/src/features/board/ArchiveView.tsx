@@ -10,7 +10,7 @@ import { archiveAssigneeOptions } from '@/lib/team-client.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
 import { Pagination } from './Pagination.tsx'
 import { SelectField } from './SelectField.tsx'
-import { initials, type BoardTask } from './task-view.ts'
+import { branchLabel, initials, type BoardTask } from './task-view.ts'
 
 type ArchiveViewProps = {
   tasks: BoardTask[]
@@ -201,11 +201,7 @@ export function ArchiveView({
                     .filter((stage) => stage.complete)
                     .map((stage) => stage.label)
                     .slice(0, 2)
-                  const projectLabel = [
-                    task.teamName,
-                    task.projectName,
-                    task.branchName ? `分支 ${task.branchName}` : null,
-                  ]
+                  const projectLabel = [task.teamName, task.projectName, branchLabel(task)]
                     .filter(Boolean)
                     .join(' · ')
                   return (

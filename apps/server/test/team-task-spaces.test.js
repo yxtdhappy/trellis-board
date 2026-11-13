@@ -335,6 +335,9 @@ test('同一 Agent 从仓库 main 切换到其他分支时撤销旧 binding 并�
       localRepoKey: 'a'.repeat(64),
     })
     assert.notEqual(main.taskSpace.id, feature.taskSpace.id)
+    assert.equal(main.project.baselineBranch, 'main')
+    assert.equal(main.taskSpace.isBaseline, true)
+    assert.equal(feature.taskSpace.isBaseline, false)
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_space').get().count, 2)
     assert.deepEqual(feature.replacedBindings, [
       {

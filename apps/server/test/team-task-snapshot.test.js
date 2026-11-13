@@ -143,6 +143,20 @@ function directoryBatch(taskId, fileCount) {
   ]
 }
 
+function mergeEvidence(taskId, sourceBranch = 'feature/dev1') {
+  const taskDir = `.trellis/tasks/11-10-${taskId}`
+  return {
+    version: 1,
+    type: 'tracked-in-head',
+    taskId,
+    taskDir,
+    trackedPath: `${taskDir}/task.json`,
+    sourceBranch,
+    baselineBranch: 'main',
+    headCommit: 'a'.repeat(40),
+  }
+}
+
 test('首次上传写入快照并推进 revision', () => {
   const { db, snapshots, agentA, taskSpaceId } = setup()
   try {
@@ -230,7 +244,7 @@ test('上报分支与任务空间不一致时拒绝写入且不推进 revision',
   }
 })
 
-test('完整任务组缺少分支或分支与任务空间不一致时整批拒绝', () => {
+test('完整任务组缺少分支或基线缺少合入证据时整批拒绝', () => {
   const { db, snapshots, agentA, taskSpaceId } = setup()
   try {
     assert.throws(
@@ -256,7 +270,7 @@ test('完整任务组缺少分支或分支与任务空间不一致时整批拒�
         }),
       (error) =>
         error.status === 409 &&
-        error.code === 'TASK_OWNERSHIP_MISMATCH' &&
+        error.code === 'TASK_MERGE_EVIDENCE_REQUIRED' &&
         error.details?.taskDir === '.trellis/tasks/11-10-ownership-mismatch',
     )
     assert.equal(
@@ -265,6 +279,200 @@ test('完整任务组缺少分支或分支与任务空间不一致时整批拒�
     )
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_conflict').get().count, 0)
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_space_batch').get().count, 0)
+  } finally {
+    db.close()
+  }
+})
+
+test('基线可凭 tracked-in-head 证据接纳来源分支并拒绝来源副本再写', () => {
+  const { db, taskSpaces, snapshots, agentA, agentB, taskSpaceId } = setup()
+  try {
+    const source = taskSpaces.attach('user-b', agentB.id, {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'feature/dev1',
+      displayName: 'Acme',
+      teamId: 'team-1',
+      developerId: 'bob',
+      localRepoKey: 'c'.repeat(64),
+    })
+    const sourceFiles = batchWithBranch('merged', '已合并', 'feature/dev1')
+    snapshots.applyChanges(agentB, source.taskSpace.id, {
+      batchId: 'source-before-merge',
+      clientSequence: 1,
+      observedBranchName: 'feature/dev1',
+      files: sourceFiles,
+    })
+
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'baseline-missing-evidence',
+          clientSequence: 1,
+          observedBranchName: 'main',
+          files: batchWithBranch('merged', '已合并', 'feature/dev1'),
+        }),
+      (error) => error.code === 'TASK_MERGE_EVIDENCE_REQUIRED',
+    )
+
+    const accepted = snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'baseline-with-evidence',
+      clientSequence: 1,
+      observedBranchName: 'main',
+      mergeEvidence: mergeEvidence('merged'),
+      files: batchWithBranch('merged', '已合并', 'feature/dev1'),
+    })
+    assert.equal(accepted.status, 200)
+    assert.equal(
+      db
+        .prepare("SELECT source_branch_name FROM sync_task_merge_evidence WHERE task_id = 'merged'")
+        .get().source_branch_name,
+      'feature/dev1',
+    )
+    const noopEvidence = {
+      ...mergeEvidence('merged'),
+      headCommit: 'b'.repeat(40),
+    }
+    const currentHashes = new Map(
+      db
+        .prepare(`
+          SELECT relative_path, sha256
+          FROM sync_task_space_file
+          WHERE task_space_id = ? AND task_dir = ? AND deleted = 0
+        `)
+        .all(taskSpaceId, '.trellis/tasks/11-10-merged')
+        .map((row) => [row.relative_path, row.sha256]),
+    )
+    const unchangedFiles = sourceFiles.map((file) => ({
+      ...file,
+      baseSha256: currentHashes.get(file.path) || null,
+    }))
+    const noop = snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'baseline-evidence-noop',
+      clientSequence: 2,
+      observedBranchName: 'main',
+      mergeEvidence: noopEvidence,
+      files: unchangedFiles,
+    })
+    assert.equal(noop.noop, true)
+    assert.equal(noop.revision, accepted.revision)
+    assert.equal(
+      db.prepare("SELECT head_commit FROM sync_task_merge_evidence WHERE task_id = 'merged'").get()
+        .head_commit,
+      'b'.repeat(40),
+    )
+
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentB, source.taskSpace.id, {
+          batchId: 'source-after-merge',
+          clientSequence: 2,
+          observedBranchName: 'feature/dev1',
+          files: batchWithBranch('merged', '来源副本修改', 'feature/dev1'),
+        }),
+      (error) =>
+        error.code === 'TASK_OWNED_BY_BASELINE' && error.details?.baselineBranch === 'main',
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('合入证据必须与任务基线、目录和来源分支一致', () => {
+  const { db, taskSpaces, snapshots, agentA, agentB, taskSpaceId } = setup()
+  try {
+    const source = taskSpaces.attach('user-b', agentB.id, {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'feature/dev1',
+      displayName: 'Acme',
+      teamId: 'team-1',
+      developerId: 'bob',
+      localRepoKey: 'c'.repeat(64),
+    })
+    const files = batchWithBranch('evidence-check', '证据校验', 'feature/dev1')
+    const invalidCases = [
+      { ...mergeEvidence('evidence-check'), taskId: 'other-task' },
+      { ...mergeEvidence('evidence-check'), taskDir: '.trellis/tasks/other-task' },
+      { ...mergeEvidence('evidence-check'), trackedPath: '.trellis/tasks/other-task/task.json' },
+      { ...mergeEvidence('evidence-check'), sourceBranch: 'feature/other' },
+      { ...mergeEvidence('evidence-check'), baselineBranch: 'release' },
+      { ...mergeEvidence('evidence-check'), headCommit: 'A'.repeat(40) },
+    ]
+    for (const [index, mergeEvidenceValue] of invalidCases.entries()) {
+      assert.throws(
+        () =>
+          snapshots.applyChanges(agentA, taskSpaceId, {
+            batchId: `invalid-evidence-${index}`,
+            clientSequence: 1,
+            observedBranchName: 'main',
+            mergeEvidence: mergeEvidenceValue,
+            files,
+          }),
+        (error) => error.status === 409 || (error.status === 400 && error.code === 'INVALID_INPUT'),
+      )
+    }
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentB, source.taskSpace.id, {
+          batchId: 'source-declares-merge',
+          clientSequence: 1,
+          observedBranchName: 'feature/dev1',
+          mergeEvidence: mergeEvidence('evidence-check'),
+          files,
+        }),
+      (error) => error.code === 'TASK_MERGE_EVIDENCE_INVALID',
+    )
+    assert.equal(
+      db.prepare('SELECT COUNT(*) AS count FROM sync_task_merge_evidence').get().count,
+      0,
+    )
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_space_batch').get().count, 0)
+    assert.equal(
+      db.prepare('SELECT revision FROM sync_task_space WHERE id = ?').get(taskSpaceId).revision,
+      0,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('覆盖服务端冲突时沿用 tracked-in-head 合入证据', () => {
+  const { db, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    const evidence = mergeEvidence('merged-conflict')
+    const files = batchWithBranch('merged-conflict', '冲突合入', 'feature/dev1').map((file) => ({
+      ...file,
+      baseSha256: 'f'.repeat(64),
+    }))
+    const conflict = snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'merge-conflict-stale-base',
+      clientSequence: 1,
+      observedBranchName: 'main',
+      mergeEvidence: evidence,
+      files,
+    })
+    assert.equal(conflict.code, 'TASK_FILE_CONFLICT')
+    assert.equal(
+      db.prepare('SELECT COUNT(*) AS count FROM sync_task_merge_evidence').get().count,
+      0,
+    )
+
+    const resolved = snapshots.resolveConflict(agentA, taskSpaceId, conflict.conflictId, {
+      action: 'overwrite-server',
+      batchId: 'merge-conflict-overwrite',
+      clientSequence: 2,
+      observedBranchName: 'main',
+      mergeEvidence: evidence,
+      files,
+    })
+    assert.equal(resolved.action, 'overwrite-server')
+    assert.equal(
+      db
+        .prepare(
+          "SELECT source_branch_name FROM sync_task_merge_evidence WHERE task_id = 'merged-conflict'",
+        )
+        .get().source_branch_name,
+      'feature/dev1',
+    )
   } finally {
     db.close()
   }

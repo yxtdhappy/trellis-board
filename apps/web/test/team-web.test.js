@@ -327,6 +327,8 @@ test('团队查询行统一下划线字段，保留执行键与版本', () => {
     assignment_version: 2,
     project_id: 'p1',
     project_name: '项目一',
+    branch_name: 'dev',
+    source_branch_name: 'dev1',
     relative_dir: '.trellis/tasks/task',
     derived_stage: 'implement',
     assignee_dev_id: 'dev-a',
@@ -334,6 +336,8 @@ test('团队查询行统一下划线字段，保留执行键与版本', () => {
   })
   assert.equal(row.taskKey, 'p1::task')
   assert.equal(row.executionTaskKey, 'exec-1')
+  assert.equal(row.branchName, 'dev')
+  assert.equal(row.sourceBranchName, 'dev1')
   assert.equal(row.taskVersion, 7)
   assert.equal(row.assignmentVersion, 2)
   assert.equal(row.derivedStage, 'implement')

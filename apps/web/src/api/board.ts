@@ -8,6 +8,7 @@ export type Project = {
   teamId?: string
   teamName?: string
   name: string
+  baselineBranch?: string | null
   path: string
   members?: string[]
   workspaceMembers?: string[]
@@ -32,6 +33,7 @@ export type TaskSpace = {
   id: string
   projectId: string
   branchName: string
+  isBaseline?: boolean
   status: string
   revision: number
   indexedRevision: number

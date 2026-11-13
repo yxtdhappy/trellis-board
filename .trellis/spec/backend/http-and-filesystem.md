@@ -416,7 +416,8 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
 - `apps/server/test/team-task-spaces.test.js`：owner/invite、全局唯一、不同分支隔离和访问授权。
 - `apps/server/test/team-gitless-http.test.js`：新路由可真实读写，旧 Git/live 路由 404。
 - `apps/server/test/team-release.test.js`：Team 启动不创建 `data/projects`，也不读取 Git 密钥。
-- `apps/server/test/database-v10.test.js`：v10 -> v11 补监听列和索引，v6-v10 升级保留旧表与数据。
+- `apps/server/test/database-v10.test.js`：v10/v11 -> v12 补监听列、基线、证据表和索引，
+  v6-v10 升级保留旧表与数据。
 
 #### 7. Wrong vs Correct
 

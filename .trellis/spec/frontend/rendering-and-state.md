@@ -62,14 +62,15 @@
   推送确认完成后先调用预检，不能在预检前 attach。
 - “团队管理”入口只属于普通浏览器管理界面；Tauri 客户端即使账号具备管理权限也不显示该入口，
   浏览器仍使用 `/admin.html`。
-- Team 任务卡和详情必须显示 `taskSpaceId` 对应分支 `branchName`。“全部项目”聚合所有可读 taskSpace，
-  具体项目聚合该项目所有可读 taskSpace，具体 taskSpace 只展示该分支。
-- 当前范围包含多个 taskSpace 时，页面必须提示“按分支独立统计”；同一 taskKey 跨分支保留独立实例，
-  不得为了让数量看起来更少而自动合并。
-- 同一 taskKey 出现在不同 taskSpace 时必须按 `taskSpaceId + taskKey` 形成独立业务实例；分组、React key、
-  选中任务刷新和归档行身份都必须使用复合 key，禁止跨分支合并。
+- Team 任务卡和详情必须显示有效归属分支 `branchName`。`sourceBranchName` 与它不同时追加
+  “来源 {sourceBranchName}”，例如“分支 dev · 来源 dev1”；两者相同时不得重复显示来源。
+- 当前范围包含多个 taskSpace 时，页面必须提示“按分支独立统计”。服务端默认查询已按项目稳定任务 ID
+  隐藏基线已接管的来源副本，前端不得自行再把不同 task ID 合并。
+- 默认列表中的每个可见任务仍按 `taskSpaceId + taskKey` 形成渲染实例；分组、React key、选中任务刷新
+  和归档行身份必须使用复合 key，避免显式来源快照或不同稳定 ID 在同名目录时互相覆盖。
 - 任务流水线、团队视角和归档视图提供单值“分支”模糊筛选。输入先 trim，再按大小写不敏感的任意子串匹配；
   团队模式由 `/api/tasks/query?branch=` 服务端过滤，独立模式复用 `branchMatches()`。不做正则、多选或候选下拉。
+  Team 分支筛选匹配有效归属 `branchName`，不是已合入任务的来源分支。
 - 同步中的已关联 taskSpace 在项目栏显示固定风险提示：切换 Git 分支可能造成任务错位或污染，
   建议等待同步完成。该提示不阻断分支切换，也不承诺自动修复。
 - `ASSIGNEE_CONFIRMATION_REQUIRED` 必须复用三态对话框：取消、继续推进、接管任务；继续携带
