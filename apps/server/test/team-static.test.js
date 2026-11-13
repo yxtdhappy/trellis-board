@@ -89,9 +89,13 @@ function get(runtime, pathname) {
 test('团队模式静态资源能提供字体与外部主题脚本', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-static-'))
   const publicDir = path.join(root, 'public')
+  const markerName = `custom-public-${process.pid}-${Date.now()}.txt`
   fs.mkdirSync(path.join(publicDir, 'assets'), { recursive: true })
   fs.writeFileSync(path.join(publicDir, 'index.html'), '<!doctype html><title>board</title>')
+  fs.writeFileSync(path.join(publicDir, 'login.html'), '<!doctype html><title>login</title>')
+  fs.writeFileSync(path.join(publicDir, 'admin.html'), '<!doctype html><title>admin</title>')
   fs.writeFileSync(path.join(publicDir, 'theme-init.js'), 'void 0;\n')
+  fs.writeFileSync(path.join(publicDir, markerName), 'custom-public')
   fs.writeFileSync(
     path.join(publicDir, 'assets', 'inter-latin.woff2'),
     Buffer.from('wOF2', 'ascii'),
@@ -126,8 +130,20 @@ test('团队模式静态资源能提供字体与外部主题脚本', async (t) =
     /connect-src 'self' ipc: http:\/\/ipc\.localhost/,
   )
 
-  assert.equal((await get(runtime, '/assets/missing.woff2')).status, 404)
-  assert.equal((await get(runtime, '/index.html')).status, 200)
+  const marker = await get(runtime, `/${markerName}`)
+  assert.equal(marker.status, 200)
+  assert.equal(marker.body.toString(), 'custom-public')
+
+  for (const pathname of ['/', '/index.html', '/login.html', '/admin.html']) {
+    assert.equal((await get(runtime, pathname)).status, 200)
+  }
+
+  const missing = await get(runtime, '/assets/missing.woff2')
+  assert.equal(missing.status, 404)
+  assert.deepEqual(JSON.parse(missing.body.toString()), {
+    error: '静态资源不存在',
+    code: 'NOT_FOUND',
+  })
 })
 
 test('团队模式默认从 apps/server/public 提供静态资源', async (t) => {

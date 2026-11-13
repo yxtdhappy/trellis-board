@@ -18,7 +18,7 @@ Team 模式默认静态资源目录已与 Web 构建输出统一为 `apps/server
 
 ## 自动化与运行验证
 
-- `node --test apps/server/test/team-static.test.js`：3/3 通过。
+- `node --test apps/server/test/team-static.test.js`：3/3 通过。最终复核补充了默认目录与显式目录的区分断言、`/`、`/index.html`、`/login.html`、`/admin.html` 四个页面入口，以及缺失资源的 `404 NOT_FOUND` JSON 正文断言。
 - `npm run build`：通过，产物写入 `apps/server/public`。
 - 首页引用的 favicon、主题脚本、JS 和 CSS 资源：全部返回 `200`。
 - `/`、`/index.html`、`/login.html`、`/admin.html`：返回 `200`。
@@ -32,13 +32,18 @@ Team 模式默认静态资源目录已与 Web 构建输出统一为 `apps/server
 
 - `npm test`：428 项中 426 通过、1 跳过、1 失败；唯一失败是桌面 UI 产物尚未构建。
 - 执行 `npm run build:desktop` 后，对应 `apps/desktop/test/desktop-ui-build.test.js` 4/4 通过。
-- 未在补齐桌面 UI 产物后重跑耗时约五分钟的全量测试。
+- 最终复核再次启动全量测试，但在约 163 秒时主动中止；中止前 412 项通过、1 项跳过、1 项取消，无新增断言失败。
 - `npm run check:boundaries` 仍有 1 个既有失败：
   `plugins/witops-core/test/witops-plugins.test.js` 引用了旧 `tests/` 路径。
+
+## 规格同步
+
+- 已更新 `.trellis/spec/backend/http-and-filesystem.md`，明确 standalone 与 Team 都以 `apps/server/public/` 为默认静态根目录，并记录 Team 的显式覆盖、404 JSON 和真实路径边界。
 
 ## 未执行与后续
 
 - 已定位安装版客户端 `C:\Users\yuhaojie\AppData\Local\Trellis Board\trellis-board-client.exe`，
   但本轮未启动该 GUI 进程；已用真实 Chrome 验证同一客户端地址的完整静态加载与登录页渲染。
 - 任务空间 `7b8d00fa-f478-4c47-a0ef-615462d5bdb5` 的 1024 文件批次上限问题仍未处理。
-- 未提交、未推送、未归档。
+- 实现和测试已在工作提交 `2b5037c` 中；最终复核补充的测试、规格说明和本报告更新尚待提交。
+- 未推送、未归档。

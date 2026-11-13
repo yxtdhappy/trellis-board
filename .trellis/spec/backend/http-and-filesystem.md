@@ -461,7 +461,9 @@ fs.renameSync(tempFile, targetFile);
 
 ## 静态资源
 
-`public/` 由原生 HTTP 服务托管。`.html` 使用 `no-store`，其他静态文件缓存 `60` 秒。API 之外的未知文件返回 404。当前 `serveStatic()` 没有单独限制 HTTP 方法，并只用 `filePath.startsWith(publicDir)` 做路径前缀检查；修改静态边界时应补真实路径关系判断和越界测试，不要把这个前缀比较当成通用安全守卫。
+`apps/web/vite.config.ts` 将构建产物写入 `apps/server/public/`，它同时是 standalone `apps/server/index.js` 和 Team `createTeamRuntime()` 的默认静态根目录。Team 默认使用 `path.resolve(serverDir, '../public')`，仍允许调用方通过 `publicDir` 显式覆盖；不要把默认目录解析到仓库根 `public/`。
+
+Team 的 `serveStatic()` 只接受 `GET` / `HEAD`，将 `/` 映射为 `index.html`，缺失资源返回 `404 {"error":"静态资源不存在","code":"NOT_FOUND"}`，并用真实路径关系防止目录越界。Standalone 仍由 `apps/server/index.js` 提供：HTML 使用 `no-store`，其他可服务文件缓存 `60` 秒，未知文件返回普通 `404`。修改静态边界时必须按对应入口补测试；Team 回归至少覆盖默认目录、显式覆盖、三个页面入口和 404 JSON。
 
 ## 反模式
 
