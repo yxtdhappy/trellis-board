@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 44
+- **Total Sessions**: 45
 - **Last Active**: 2026-11-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1048 | Active |
+| `journal-1.md` | ~1072 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 45 | 2026-11-13 | 修复 Agent 全量任务扫描 1024 限制 | `9925883`, `05f5f1a` | `main` |
 | 44 | 2026-11-13 | Team 静态资源目录修复复核 | `2b5037c`, `f4e1bb2` | `main` |
 | 43 | 2026-11-12 | 项目栏快速初始化编码 Agent | `617b09f` | `main` |
 | 42 | 2026-11-12 | 修复跨分支任务同步串写 | `d58b021`, `878d63b`, `e1b3efe` | `main` |
