@@ -46,7 +46,14 @@ type ControlEvent =
       branchName?: string
       items?: OwnershipItem[]
     }
-  | { type: 'task_sync_error'; taskSpaceId?: string; message?: string }
+  | {
+      type: 'task_sync_error'
+      taskSpaceId?: string
+      projectName?: string
+      branchName?: string
+      taskDir?: string
+      message?: string
+    }
 type ReviewOption = { value: string; label: string }
 type Action = { label: string; action: string; variant?: 'default' | 'destructive' | 'outline' }
 
@@ -617,7 +624,23 @@ export function ControlApp() {
           {!diff && event?.type === 'task_sync_error' ? (
             <dl className="grid grid-cols-[80px_minmax(0,1fr)] gap-2 rounded-md bg-muted/50 p-3 text-xs">
               <dt className="text-muted-foreground">任务空间</dt>
-              <dd className="break-words">{event.taskSpaceId ?? ''}</dd>
+              <dd className="break-words">
+                {[event.projectName, event.branchName].filter(Boolean).join(' / ') ||
+                  event.taskSpaceId ||
+                  ''}
+              </dd>
+              {event.taskSpaceId ? (
+                <>
+                  <dt className="text-muted-foreground">诊断 ID</dt>
+                  <dd className="break-all text-muted-foreground">{event.taskSpaceId}</dd>
+                </>
+              ) : null}
+              {event.taskDir ? (
+                <>
+                  <dt className="text-muted-foreground">任务目录</dt>
+                  <dd className="break-all text-muted-foreground">{event.taskDir}</dd>
+                </>
+              ) : null}
             </dl>
           ) : null}
 

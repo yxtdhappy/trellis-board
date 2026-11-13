@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/desktop-agent-runtime.md","reason":"检查路径安全、失败关闭、事件契约与测试覆盖"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"检查同步 revision、原子目录应用和兼容性"}
+{"file":".trellis/spec/backend/desktop-task-path-resolution.md","reason":"检查路径边界、失败关闭与可读错误展示"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查路径、错误和前端展示契约是否一致"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查没有引入重复路径逻辑或过度抽象"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"检查控制窗口回退显示和无绝对路径泄露"}

@@ -647,6 +647,36 @@ pub fn is_path_inside(parent: &Path, child: &Path) -> bool {
     child == parent || child.starts_with(&parent)
 }
 
+/// 只把跨端相对 taskDir 映射到当前客户端的任务根，不比较不同来源的绝对路径。
+pub fn resolve_task_dir_under(tasks_root: &Path, task_dir: &str) -> Option<PathBuf> {
+    let relative = task_dir.strip_prefix(".trellis/tasks/")?;
+    if relative.is_empty()
+        || task_dir.contains('\\')
+        || task_dir.contains('\0')
+        || task_dir.starts_with('/')
+    {
+        return None;
+    }
+    let mut target = tasks_root.to_path_buf();
+    for segment in relative.split('/') {
+        if segment.is_empty()
+            || segment == "."
+            || segment == ".."
+            || segment.contains(':')
+            || segment.ends_with(' ')
+            || segment.ends_with('.')
+            || segment.chars().any(char::is_control)
+        {
+            return None;
+        }
+        target.push(segment);
+        if !is_path_inside(tasks_root, &target) {
+            return None;
+        }
+    }
+    (target != tasks_root).then_some(target)
+}
+
 pub fn now_iso8601() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
@@ -682,6 +712,46 @@ mod tests {
         ] {
             assert!(validate_branch_name_syntax(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn resolves_only_normal_task_directory_segments() {
+        let root = Path::new("repo").join(".trellis").join("tasks");
+        assert_eq!(
+            resolve_task_dir_under(&root, ".trellis/tasks/11-12-demo"),
+            Some(root.join("11-12-demo"))
+        );
+        assert_eq!(
+            resolve_task_dir_under(&root, ".trellis/tasks/archive/2026-11/11-12-demo"),
+            Some(root.join("archive").join("2026-11").join("11-12-demo"))
+        );
+        for invalid in [
+            ".trellis/tasks",
+            ".trellis/tasks/",
+            ".trellis/tasks/..",
+            ".trellis/tasks/../evil",
+            ".trellis/tasks/./evil",
+            ".trellis/tasks//evil",
+            ".trellis/tasks/evil\\name",
+            ".trellis/tasks/C:/evil",
+            ".trellis/tasks/evil\0name",
+            ".trellis/tasks/.. /evil",
+            ".trellis/tasks/evil./x",
+            ".trellis/tasks/evil /x",
+            "elsewhere/tasks/evil",
+        ] {
+            assert_eq!(resolve_task_dir_under(&root, invalid), None, "{invalid}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolves_task_directory_for_extended_windows_root() {
+        let root = Path::new(r"\\?\D:\repo\.trellis\tasks");
+        assert_eq!(
+            resolve_task_dir_under(root, ".trellis/tasks/11-12-demo"),
+            Some(root.join("11-12-demo"))
+        );
     }
 
     #[test]

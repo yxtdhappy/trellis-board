@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/desktop-agent-runtime.md","reason":"本地任务写入、路径安全、控制事件和验证基线"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"任务快照、相对 taskDir、原子目录替换和同步错误边界"}
+{"file":".trellis/spec/backend/desktop-task-path-resolution.md","reason":"本机 taskDir 安全解析、Windows 路径兼容和错误事件字段"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"任务身份、路径契约和桌面同步跨层约束"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用现有路径规则，避免新增重复校验实现"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"控制窗口事件展示与可读任务空间信息"}

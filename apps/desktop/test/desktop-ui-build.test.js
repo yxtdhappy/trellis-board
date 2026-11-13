@@ -68,6 +68,23 @@ test('desktop ui output is ignored and hand-written pages are gone', () => {
   }
 })
 
+test('control sync errors show project and branch without repo paths', () => {
+  const taskSync = read('apps/desktop/src-tauri/src/agent/task_sync.rs')
+  const control = read('apps/web/src/desktop/ControlApp.tsx')
+
+  assert.match(taskSync, /event\["projectName"\]/)
+  assert.match(taskSync, /event\["branchName"\]/)
+  assert.match(taskSync, /binding\.display_name/)
+  assert.match(taskSync, /binding\.branch_name/)
+  assert.doesNotMatch(taskSync, /"repoPath":/)
+  assert.doesNotMatch(taskSync, /服务端任务目录越界/)
+  assert.match(control, /projectName\?: string/)
+  assert.match(control, /branchName\?: string/)
+  assert.match(control, /event\.projectName/)
+  assert.match(control, /event\.taskSpaceId/)
+  assert.match(control, /event\.taskDir/)
+})
+
 test('desktop logout uses a board-only command and forgets the saved password', () => {
   const permissions = read('apps/desktop/src-tauri/permissions/desktop.toml')
   const capability = JSON.parse(

@@ -43,6 +43,33 @@ fn is_branch_guard_error(error: &AgentError) -> bool {
     is_branch_guard_code(&error.code)
 }
 
+fn task_sync_error_event(
+    binding: Option<&AgentBinding>,
+    task_space_id: &str,
+    error: &AgentError,
+    message: String,
+) -> Value {
+    let mut event = json!({
+        "type": "task_sync_error",
+        "taskSpaceId": task_space_id,
+        "code": error.code.clone(),
+        "message": message,
+    });
+    if let Some(binding) = binding {
+        event["projectName"] = Value::String(binding.display_name.clone());
+        event["branchName"] = Value::String(binding.branch_name.clone());
+    }
+    if let Some(task_dir) = error
+        .details
+        .as_ref()
+        .and_then(|details| details.get("taskDir"))
+        .and_then(Value::as_str)
+    {
+        event["taskDir"] = Value::String(task_dir.to_string());
+    }
+    event
+}
+
 fn approved_bindings(bindings: Vec<AgentBinding>) -> HashMap<String, AgentBinding> {
     let mut map = HashMap::new();
     for binding in bindings {
@@ -914,24 +941,24 @@ impl TaskSync {
                 self.persist_binding_sync_error(binding, &error).await;
             }
             if let Some(binding) = items.first() {
-                (self.emit)(json!({
-                    "type": "task_sync_error",
-                    "taskSpaceId": binding.task_space_id,
-                    "code": error.code,
-                    "message": error.message,
-                }));
+                (self.emit)(task_sync_error_event(
+                    Some(binding),
+                    &binding.task_space_id,
+                    &error,
+                    error.message.clone(),
+                ));
             }
         }
         selected
     }
 
     fn report_binding_error(&self, binding: &AgentBinding, error: &AgentError) {
-        (self.emit)(json!({
-            "type": "task_sync_error",
-            "taskSpaceId": binding.task_space_id.clone(),
-            "code": error.code.clone(),
-            "message": protocol::safe_error_message(&error.message),
-        }));
+        (self.emit)(task_sync_error_event(
+            Some(binding),
+            &binding.task_space_id,
+            error,
+            protocol::safe_error_message(&error.message),
+        ));
     }
 
     /// 校验仓库当前分支与绑定分支一致；失败时把错误写入绑定状态并保留。
@@ -1079,7 +1106,7 @@ impl TaskSync {
     /// 拉取并对失败做可观测上报：写日志 + 触发 `task_sync_error` 控制事件。
     pub async fn pull_and_report(&self, task_space_id: &str) {
         if let Err(error) = self.pull_task_space(task_space_id).await {
-            self.report_error(task_space_id, &error);
+            self.report_error(task_space_id, &error).await;
         }
     }
 
@@ -1092,20 +1119,22 @@ impl TaskSync {
             .pull_task_space_for_event(task_space_id, event_revision)
             .await
         {
-            self.report_error(task_space_id, &error);
+            self.report_error(task_space_id, &error).await;
         }
     }
 
-    fn report_error(&self, task_space_id: &str, error: &AgentError) {
+    async fn report_error(&self, task_space_id: &str, error: &AgentError) {
+        let binding = self.bindings.lock().await.get(task_space_id).cloned();
         let message = protocol::safe_error_message(&error.to_string());
         crate::logging::warn(&format!(
             "任务空间同步失败 {{\"taskSpaceId\":\"{task_space_id}\",\"error\":\"{message}\"}}"
         ));
-        (self.emit)(json!({
-            "type": "task_sync_error",
-            "taskSpaceId": task_space_id,
-            "message": message,
-        }));
+        (self.emit)(task_sync_error_event(
+            binding.as_ref(),
+            task_space_id,
+            error,
+            message,
+        ));
     }
 
     /// 监听各绑定仓库的 `.trellis`，把本地改动按任务目录合并后上传。
@@ -1199,7 +1228,7 @@ impl TaskSync {
                     continue;
                 }
                 if let Err(error) = self.upload_dirty(&task_space_id, &paths).await {
-                    self.report_error(&task_space_id, &error);
+                    self.report_error(&task_space_id, &error).await;
                 }
             }
         }
@@ -1868,9 +1897,7 @@ impl TaskSync {
         binding: &AgentBinding,
         task_dir: &str,
     ) -> AgentResult<()> {
-        let Some(target) = task_directory_absolute(binding, task_dir) else {
-            return Ok(());
-        };
+        let target = resolve_task_directory(binding, task_dir).await?;
         match tokio::fs::remove_dir_all(&target).await {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -1886,9 +1913,7 @@ impl TaskSync {
         binding: &AgentBinding,
         task_dir: &str,
     ) -> AgentResult<Option<String>> {
-        let Some(source) = task_directory_absolute(binding, task_dir) else {
-            return Ok(None);
-        };
+        let source = resolve_task_directory(binding, task_dir).await?;
         if !source.exists() {
             return Ok(None);
         }
@@ -4284,28 +4309,46 @@ fn absolute_task_path(binding: &AgentBinding, relative_path: &str) -> String {
         .to_string()
 }
 
-fn task_directory_absolute(binding: &AgentBinding, task_dir: &str) -> Option<PathBuf> {
-    let tasks_root = Path::new(&binding.repo_path).join(".trellis").join("tasks");
-    let target =
-        Path::new(&binding.repo_path).join(task_dir.replace('/', std::path::MAIN_SEPARATOR_STR));
-    let resolved_root = dunce_canonical(&tasks_root).unwrap_or_else(|| tasks_root.clone());
-    let resolved_target = target.clone();
-    if !protocol::is_path_inside(&resolved_root, &resolved_target)
-        || resolved_target == resolved_root
-    {
-        return None;
+fn task_directory_error(task_dir: &str, message: impl Into<String>) -> AgentError {
+    let mut error = AgentError::new(code::INVALID_RESPONSE, message);
+    if task_dir.starts_with(".trellis/tasks/") && task_dir.chars().count() <= 500 {
+        error.details = Some(json!({ "taskDir": task_dir }));
     }
-    Some(target)
+    error
 }
 
-fn dunce_canonical(path: &Path) -> Option<PathBuf> {
-    std::fs::canonicalize(path).ok()
+async fn resolve_task_directory(
+    binding: &AgentBinding,
+    task_dir: &str,
+) -> AgentResult<PathBuf> {
+    let trellis_root = Path::new(&binding.repo_path).join(".trellis");
+    let tasks_root = trellis_root.join("tasks");
+    let target = protocol::resolve_task_dir_under(&tasks_root, task_dir)
+        .ok_or_else(|| task_directory_error(task_dir, "任务目录路径校验失败"))?;
+    let relative = target
+        .strip_prefix(&tasks_root)
+        .map_err(|_| task_directory_error(task_dir, "任务目录路径校验失败"))?;
+    let mut current = tasks_root.clone();
+    let mut paths = vec![trellis_root, current.clone()];
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        paths.push(current.clone());
+    }
+    for path in paths {
+        match tokio::fs::symlink_metadata(&path).await {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(task_directory_error(task_dir, "任务目录路径不能经过符号链接"))
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => return Err(io_error(error)),
+        }
+    }
+    Ok(target)
 }
 
 async fn write_task_directory(binding: &AgentBinding, group: &SnapshotGroup) -> AgentResult<()> {
-    let Some(target) = task_directory_absolute(binding, &group.task_dir) else {
-        return protocol::err(code::INVALID_RESPONSE, "服务端任务目录越界");
-    };
+    let target = resolve_task_directory(binding, &group.task_dir).await?;
     let temp_root = Path::new(&binding.repo_path)
         .join(".trellis")
         .join(format!(".agent-sync-{}", uuid::Uuid::new_v4()));
@@ -4517,6 +4560,127 @@ mod tests {
             last_error: None,
             last_error_code: None,
         }
+    }
+
+    async fn test_task_sync_fixture(
+        prefix: &str,
+    ) -> (PathBuf, Arc<ConfigStore>, TaskSync, AgentBinding) {
+        let root = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(ConfigStore::new_unsecured_for_test(root.clone()));
+        store.ensure_directories().await.expect("directories");
+        let api =
+            Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+        let sink: ControlSink = Arc::new(|_| {});
+        let sync = TaskSync::new(store.clone(), api, sink);
+        let mut binding = test_binding("space-1");
+        let repo_path = root.join("repo");
+        tokio::fs::create_dir_all(repo_path.join(".trellis").join("tasks"))
+            .await
+            .expect("task root");
+        binding.repo_path = repo_path.to_string_lossy().to_string();
+        (root, store, sync, binding)
+    }
+
+    #[tokio::test]
+    async fn resolves_active_and_archived_task_directories_under_temp_repo() {
+        let (root, _store, _sync, binding) = test_task_sync_fixture("trellis-task-path").await;
+        let tasks_root = Path::new(&binding.repo_path).join(".trellis").join("tasks");
+
+        assert_eq!(
+            resolve_task_directory(&binding, ".trellis/tasks/active-task")
+                .await
+                .expect("active task"),
+            tasks_root.join("active-task")
+        );
+        assert_eq!(
+            resolve_task_directory(
+                &binding,
+                ".trellis/tasks/archive/2026-11/archived-task",
+            )
+            .await
+            .expect("archived task"),
+            tasks_root
+                .join("archive")
+                .join("2026-11")
+                .join("archived-task")
+        );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn invalid_remove_keeps_existing_task_directory() {
+        let (root, _store, sync, binding) =
+            test_task_sync_fixture("trellis-task-remove").await;
+        let sentinel = Path::new(&binding.repo_path)
+            .join(".trellis")
+            .join("tasks")
+            .join("keep");
+        tokio::fs::create_dir_all(&sentinel)
+            .await
+            .expect("sentinel dir");
+        tokio::fs::write(sentinel.join("prd.md"), "keep")
+            .await
+            .expect("sentinel file");
+
+        let error = sync
+            .remove_task_directory(&binding, ".trellis/tasks/../keep")
+            .await
+            .expect_err("非法目录应失败");
+        assert_eq!(error.code, code::INVALID_RESPONSE);
+        assert!(sentinel.join("prd.md").exists());
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn invalid_backup_does_not_create_live_backup() {
+        let (root, store, sync, binding) =
+            test_task_sync_fixture("trellis-task-backup").await;
+
+        let error = sync
+            .backup_directory(&binding, ".trellis/tasks/../keep")
+            .await
+            .expect_err("非法目录应失败");
+        assert_eq!(error.code, code::INVALID_RESPONSE);
+        assert!(!store
+            .paths
+            .live_backups_dir
+            .join(&binding.task_space_id)
+            .exists());
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn task_directory_resolution_rejects_invalid_relative_path() {
+        let binding = test_binding("space-1");
+        let error = resolve_task_directory(&binding, ".trellis/tasks/../evil")
+            .await
+            .expect_err("目录穿越");
+        assert_eq!(error.code, code::INVALID_RESPONSE);
+        let details = error.details.expect("路径错误详情");
+        assert_eq!(
+            details["taskDir"],
+            json!(".trellis/tasks/../evil")
+        );
+    }
+
+    #[test]
+    fn sync_error_event_contains_readable_scope_without_repo_path() {
+        let binding = test_binding("space-1");
+        let error = task_directory_error(".trellis/tasks/a", "任务目录路径校验失败");
+        let event = task_sync_error_event(
+            Some(&binding),
+            &binding.task_space_id,
+            &error,
+            error.message.clone(),
+        );
+        assert_eq!(event["projectName"], json!("Repo"));
+        assert_eq!(event["branchName"], json!("main"));
+        assert_eq!(event["taskDir"], json!(".trellis/tasks/a"));
+        assert!(event.get("repoPath").is_none());
+        assert!(!event.to_string().contains("C:/repos"));
     }
 
     fn test_config(binding: AgentBinding) -> AgentConfig {

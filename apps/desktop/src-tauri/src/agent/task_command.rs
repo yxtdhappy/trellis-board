@@ -472,7 +472,8 @@ async fn assign_task(
     let assignee = command.requires("assigneeDevId")?.to_string();
     let task_dir = command.payload_str("relativeDir").unwrap_or("").to_string();
     let tasks_root = repo_path.join(".trellis").join("tasks");
-    let target = resolve_task_dir(&tasks_root, &task_dir)?;
+    let target = protocol::resolve_task_dir_under(&tasks_root, &task_dir)
+        .ok_or_else(|| AgentError::new(code::COMMAND_INVALID, "改派任务目录越界"))?;
     let task_json_path = target.join("task.json");
     let content = read_utf8(&task_json_path).await?;
     let mut task: Value = serde_json::from_str(&content)
@@ -626,27 +627,6 @@ async fn task_directories(tasks_root: &Path) -> AgentResult<HashSet<String>> {
         }
     }
     Ok(names)
-}
-
-fn resolve_task_dir(tasks_root: &Path, task_dir: &str) -> AgentResult<PathBuf> {
-    let invalid = || AgentError::new(code::COMMAND_INVALID, "改派任务目录越界");
-    if !task_dir.starts_with(".trellis/tasks/")
-        || task_dir.contains('\\')
-        || task_dir.contains('\0')
-    {
-        return Err(invalid());
-    }
-    let mut target = tasks_root.to_path_buf();
-    for segment in task_dir.split('/').skip(2) {
-        if segment.is_empty() || segment == "." || segment == ".." {
-            return Err(invalid());
-        }
-        target.push(segment);
-    }
-    if !protocol::is_path_inside(tasks_root, &target) || target == tasks_root {
-        return Err(invalid());
-    }
-    Ok(target)
 }
 
 async fn read_task_json_opt(path: &Path) -> AgentResult<Option<Value>> {
@@ -905,10 +885,19 @@ mod tests {
     #[test]
     fn resolve_task_dir_rejects_traversal() {
         let root = Path::new("repo").join(".trellis").join("tasks");
-        assert!(resolve_task_dir(&root, ".trellis/tasks/../evil").is_err());
-        assert!(resolve_task_dir(&root, ".trellis/tasks").is_err());
-        assert!(resolve_task_dir(&root, "elsewhere/tasks/x").is_err());
-        assert!(resolve_task_dir(&root, ".trellis/tasks/11-12-fix").is_ok());
+        assert_eq!(
+            protocol::resolve_task_dir_under(&root, ".trellis/tasks/../evil"),
+            None
+        );
+        assert_eq!(
+            protocol::resolve_task_dir_under(&root, ".trellis/tasks"),
+            None
+        );
+        assert_eq!(
+            protocol::resolve_task_dir_under(&root, "elsewhere/tasks/x"),
+            None
+        );
+        assert!(protocol::resolve_task_dir_under(&root, ".trellis/tasks/11-12-fix").is_some());
     }
 
     #[test]

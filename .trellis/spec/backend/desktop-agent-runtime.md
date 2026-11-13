@@ -99,7 +99,15 @@
 
 ## 4. 文件与路径安全
 
-- 所有写入路径必须先经 `is_path_inside` 校验，任务目录必须位于 `.trellis/tasks` 下且拒绝 `..`。
+- 跨端任务目录身份只使用仓库相对 `taskDir=".trellis/tasks/..."`；本机 `repoPath` 只用于当前客户端映射，
+  不得参与跨客户端身份或写入控制事件。
+- 任务目录必须由 `resolve_task_dir_under(tasks_root, taskDir)` 逐段解析并保持在 `.trellis/tasks` 下；
+  不得只对一个绝对路径做 `canonicalize` 后与另一形态的绝对路径比较。Windows 普通路径与
+  `\\?\` 扩展路径都必须落在同一根下。
+- 根目录、`.`、`..`、空段、反斜杠、NUL、盘符、ADS 和其他异常段必须拒绝。写入、删除、备份共用同一
+  规则，任何路径或符号链接失败都必须失败关闭，不得静默跳过并推进 cursor。
+- `task_sync_error` 应携带 `projectName`、`branchName` 和可选 `taskDir`；控制窗口优先显示
+  `项目 / 分支`，`taskSpaceId` 只作诊断，且不得发送 `repoPath`。
 - 写入使用临时文件 + rename；目录替换先备份再原子换名。
 - 任务文件上限：单文件 1 MiB；实际 HTTP 上传批次最多 1024 文件、64 MiB。全 taskSpace 聚合扫描
   和按任务目录分组可以超过批次上限；服务端快照/目录响应按 32 MiB 收取（整仓累计轻易超过 1 MiB）；
