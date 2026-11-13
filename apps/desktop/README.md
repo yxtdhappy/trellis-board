@@ -8,8 +8,9 @@ Tauri v2 单进程客户端：Agent（心跳、SSE 事件、任务空间同步�
 - Agent 协议：`AGENT_PROTOCOL_VERSION = 3`
 - 本地配置：`%LOCALAPPDATA%\TrellisBoard\data\client.json`（schema 3）
 - Agent 数据：`%LOCALAPPDATA%\TrellisBoard\data\agent`
-- 运行环境：首次启动检查 Node.js 与 Trellis CLI，缺失时安装到
-  `%LOCALAPPDATA%\TrellisBoard\data\runtime\node` 与 `%LOCALAPPDATA%\TrellisBoard\data\npm-global`
+- 运行环境：首次启动检查 Node.js、Trellis CLI 与 Python（≥ 3.9）；Node 与 Trellis CLI 装到
+  `%LOCALAPPDATA%\TrellisBoard\data\runtime\node` 与 `%LOCALAPPDATA%\TrellisBoard\data\npm-global`，
+  Python 缺失时静默安装官方 CPython 3.12.8 到当前用户目录
 - 分发方式：解压即用的 Windows x64 绿色 ZIP（包内只有一个 EXE），不提供安装包
 
 ## 登录与单 Agent
@@ -49,12 +50,13 @@ POST /api/agent/enroll-desktop
 
 ## 运行环境门
 
-首次启动（`client.json` 无 `node_runtime`/`trellis_runtime` 标志，或标志失效）显示环境检查页：
+首次启动（`client.json` 无 `node_runtime`/`trellis_runtime`/`python_runtime` 标志，或标志失效）显示环境检查页：
 
 ```text
 runtime_status
   -> Node.js：标志 -> PATH 与版本管理器（fnm/nvm/Volta）前缀目录 -> 缺失则需安装
   -> Trellis CLI：标志 -> 客户端私有前缀 -> 上述前缀目录的全局包 -> 缺失则需安装
+  -> Python：标志 -> TRELLIS_PYTHON -> PATH 的 python -> py -3（解析出真实 python.exe）-> 缺失则需安装
   -> 探测到即写回标志位 -> 全部满足：显示登录页
   -> 缺失：runtime_install
        node:download  从 npmmirror 下载 node-v24.22.3-win-x64.zip
@@ -63,11 +65,18 @@ runtime_status
        node:validate  执行 node --version
        trellis:install  npm install -g --prefix <data>\npm-global @mindfoldhq/trellis@0.6.17
        trellis:validate 读取包内 package.json 版本
+       python:download  从 python.org 下载 python-3.12.8-amd64.exe（约 27 MB）
+       python:verify    sha256 校验
+       python:install   静默安装：/quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1
+                        InstallLauncherAllUsers=0 Include_test=0 Include_doc=0 Shortcuts=0
+                        （per-user，无 UAC；静默无输出，靠心跳更新进度）
+       python:validate  重新探测 ≥ 3.9 的解释器
        write-flag / ready
   -> runtime-progress 事件驱动前端步骤条
 ```
 
-- 系统已有 Node ≥ 18.17 且 trellis ≥ 0.6.17 时直接跳过安装，只写标志位。
+- 系统已有 Node ≥ 18.17、trellis ≥ 0.6.17 且 Python ≥ 3.9 时直接跳过安装，只写标志位。
+- Python 只被用来执行项目内的 `.trellis/scripts/*.py`（`task.py create` / `set-branch`、同步时的分支推断），客户端其余部分不依赖它；已有低于 3.9 的 Python 不卸载，侧装并存。
 - 安装包内不再携带 Node 与 trellis 依赖树；环境门是项目初始化的前置条件。
 - Node 只用于环境门校验与项目初始化，运行期不再有常驻 `node.exe` 子进程。
 
@@ -411,6 +420,8 @@ apps\desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>_x64
 | --- | --- | --- |
 | 1 | 无 Node 的机器解压绿色包后双击 | 出现环境检查页，安装 Node 与 Trellis CLI 后进入登录页 |
 | 1b | 已有 Node ≥ 18.17 且 trellis ≥ 0.6.17 的机器 | 直接显示登录页，不出现安装入口 |
+| 1c | 无 Python 或 Python < 3.9 的机器 | 环境检查页列出 Python，安装 3.12.8 后重新探测通过才进入登录页 |
+| 1d | 已有 Python ≥ 3.9 的机器 | 跳过 Python 安装；`client.json` 记录 `python_runtime.path` |
 | 2 | 错误密码 | 停留登录页，密码清空，不创建配置或设备 |
 | 3 | 正确密码 | 当前窗口进入 Board，不弹系统浏览器；DPAPI 凭证存在 |
 | 4 | 检查 `client.json` | 保存服务器地址、登录名和密码，无 Cookie 或设备凭证 |

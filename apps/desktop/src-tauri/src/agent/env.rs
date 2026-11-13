@@ -1,4 +1,4 @@
-//! 首次启动环境门：Node.js 与 Trellis CLI 的检查、下载与安装。
+//! 首次启动环境门：Node.js、Trellis CLI 与 Python 的检查、下载与安装。
 //!
 //! 对应设计文档 `design.md` 第 5 节。纯 Rust + serde_json，不引用 tauri 类型。
 
@@ -12,7 +12,7 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-use crate::agent::process::{run_process, ProcessOptions};
+use crate::agent::process::{run_process, ProcessOptions, ProcessOutput};
 use crate::agent::protocol::{self, code, AgentError, AgentResult};
 
 pub const NODE_DOWNLOAD_VERSION: &str = "24.22.3";
@@ -29,6 +29,31 @@ pub const CODE_DOWNLOAD_CORRUPT: &str = "NODE_DOWNLOAD_CORRUPT";
 pub const CODE_EXTRACT_FAILED: &str = "NODE_EXTRACT_FAILED";
 pub const CODE_NODE_INVALID: &str = "NODE_INVALID";
 pub const CODE_TRELLIS_INSTALL_FAILED: &str = "TRELLIS_INSTALL_FAILED";
+
+pub const PYTHON_MIN_VERSION: &str = "3.9.0";
+pub const PYTHON_INSTALL_VERSION: &str = "3.12.8";
+pub const PYTHON_INSTALLER_URL: &str =
+    "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe";
+pub const PYTHON_INSTALLER_SHA256: &str =
+    "71bd44e6b0e91c17558963557e4cdb80b483de9b0a0a9717f06cf896f95ab598";
+pub const PYTHON_INSTALLER_ARGS: &[&str] = &[
+    "/quiet",
+    "InstallAllUsers=0",
+    "PrependPath=1",
+    "Include_launcher=1",
+    "InstallLauncherAllUsers=0",
+    "Include_test=0",
+    "Include_doc=0",
+    "Shortcuts=0",
+];
+pub const PYTHON_INSTALLER_FILE: &str = "python-3.12.8-amd64.exe";
+pub const CODE_PYTHON_INVALID: &str = "PYTHON_INVALID";
+pub const PYTHON_PAGE_URL: &str = "https://www.python.org/downloads/";
+
+const PYTHON_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+const PYTHON_INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
+const PYTHON_INSTALL_HEARTBEAT: Duration = Duration::from_secs(5);
+const PYTHON_EXIT_REBOOT_REQUIRED: i32 = 3010;
 
 const NODE_ZIP_ROOT: &str = "node-v24.22.3-win-x64/";
 const MAX_ZIP_BYTES: u64 = 134_217_728;
@@ -100,6 +125,17 @@ pub struct TrellisStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PythonStatus {
+    pub ok: bool,
+    pub version: Option<String>,
+    pub path: Option<String>,
+    pub source: Option<String>,
+    pub min_version: String,
+    pub found_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DownloadInfo {
     pub version: String,
     pub bytes: Option<u64>,
@@ -111,6 +147,7 @@ pub struct RuntimeStatus {
     pub state: RuntimeState,
     pub node: NodeStatus,
     pub trellis: TrellisStatus,
+    pub python: PythonStatus,
     pub download: DownloadInfo,
 }
 
@@ -119,6 +156,7 @@ pub struct RuntimeStatus {
 pub struct RuntimeInstallResult {
     pub node_version: String,
     pub trellis_version: String,
+    pub python_version: String,
 }
 
 // `client.json` 中的 flag（schema 3，snake_case 字段名）。
@@ -139,15 +177,25 @@ pub struct TrellisRuntimeFlag {
     pub installed_at: String,
 }
 
-/// `client.json` 的最小抽象：只关心两个运行时 flag。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PythonRuntimeFlag {
+    pub version: String,
+    pub path: String,
+    pub source: String,
+    pub installed_at: String,
+}
+
+/// `client.json` 的最小抽象：只关心三个运行时 flag。
 ///
 /// 已为 [`Value`]（整份 client.json 解析结果）实现；tauri 侧的结构体可在
 /// `config.rs` 内实现同一 trait（本模块不允许修改其它文件）。
 pub trait ClientConfigLike {
     fn node_runtime(&self) -> Option<NodeRuntimeFlag>;
     fn trellis_runtime(&self) -> Option<TrellisRuntimeFlag>;
+    fn python_runtime(&self) -> Option<PythonRuntimeFlag>;
     fn set_node_runtime(&mut self, value: Option<NodeRuntimeFlag>);
     fn set_trellis_runtime(&mut self, value: Option<TrellisRuntimeFlag>);
+    fn set_python_runtime(&mut self, value: Option<PythonRuntimeFlag>);
 }
 
 impl ClientConfigLike for Value {
@@ -159,12 +207,20 @@ impl ClientConfigLike for Value {
         serde_json::from_value(self.get("trellis_runtime")?.clone()).ok()
     }
 
+    fn python_runtime(&self) -> Option<PythonRuntimeFlag> {
+        serde_json::from_value(self.get("python_runtime")?.clone()).ok()
+    }
+
     fn set_node_runtime(&mut self, value: Option<NodeRuntimeFlag>) {
         set_flag(self, "node_runtime", value);
     }
 
     fn set_trellis_runtime(&mut self, value: Option<TrellisRuntimeFlag>) {
         set_flag(self, "trellis_runtime", value);
+    }
+
+    fn set_python_runtime(&mut self, value: Option<PythonRuntimeFlag>) {
+        set_flag(self, "python_runtime", value);
     }
 }
 
@@ -204,6 +260,18 @@ pub fn parse_version(value: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
+pub fn parse_python_version(value: &str) -> Option<String> {
+    let line = value.lines().next()?.trim();
+    let trimmed = line.strip_prefix("Python ").unwrap_or(line).trim();
+    // `python --version` 可能输出 `3.12`，补 `.0` 后再走通用解析。
+    let normalized = if trimmed.split('.').count() == 2 {
+        format!("{trimmed}.0")
+    } else {
+        trimmed.to_string()
+    };
+    parse_version(&normalized)
+}
+
 pub fn is_version_at_least(found: &str, minimum: &str) -> bool {
     matches!(
         protocol::compare_versions(found.trim_start_matches(['v', 'V']), minimum,),
@@ -211,14 +279,14 @@ pub fn is_version_at_least(found: &str, minimum: &str) -> bool {
     )
 }
 
-pub fn verify_hash(actual: &str, expected: &str) -> AgentResult<()> {
+pub fn verify_hash(actual: &str, expected: &str, stage: &str) -> AgentResult<()> {
     if actual.eq_ignore_ascii_case(expected) {
         return Ok(());
     }
     Err(AgentError::new(CODE_DOWNLOAD_CORRUPT, "下载文件校验失败")
         .retryable(true)
         .with_details(Some(json!({
-            "stage": "node:verify",
+            "stage": stage,
             "expected": expected,
             "actual": actual,
         }))))
@@ -407,7 +475,8 @@ pub async fn check<C: ClientConfigLike>(
 ) -> AgentResult<RuntimeStatus> {
     let node = resolve_node(config).await;
     let trellis = resolve_trellis(data_dir, config).await;
-    let state = if node.ok && trellis.ok {
+    let python = resolve_python(config).await;
+    let state = if node.ok && trellis.ok && python.ok {
         RuntimeState::Ready
     } else {
         RuntimeState::NeedsSetup
@@ -421,6 +490,7 @@ pub async fn check<C: ClientConfigLike>(
         state,
         node,
         trellis,
+        python,
         download: DownloadInfo {
             version: NODE_DOWNLOAD_VERSION.to_string(),
             bytes,
@@ -565,6 +635,140 @@ async fn resolve_trellis<C: ClientConfigLike>(data_dir: &Path, config: &mut C) -
     })
 }
 
+// ---------------------------------------------------------------- Python
+
+async fn python_version_at(program: &Path, args: &[&str]) -> Option<String> {
+    let mut argv: Vec<&str> = args.to_vec();
+    argv.push("--version");
+    let output = run_process(
+        program,
+        &argv,
+        &ProcessOptions {
+            timeout: Some(PYTHON_PROBE_TIMEOUT),
+            max_output_bytes: 65_536,
+            ..Default::default()
+        },
+    )
+    .await
+    .ok()?;
+    if !output.success() {
+        return None;
+    }
+    // 3.9 及更早写 stderr，3.10 起写 stdout。
+    parse_python_version(&output.stdout).or_else(|| parse_python_version(&output.stderr))
+}
+
+fn python_status(version: &str, path: &Path, source: &str) -> PythonStatus {
+    let ok = is_version_at_least(version, PYTHON_MIN_VERSION);
+    PythonStatus {
+        ok,
+        version: ok.then(|| version.to_string()),
+        path: Some(path.display().to_string()),
+        source: Some(source.to_string()),
+        min_version: PYTHON_MIN_VERSION.to_string(),
+        found_version: if ok { None } else { Some(version.to_string()) },
+    }
+}
+
+/// `py -3` 只代表启动器的默认解释器；解析成真实的 `python.exe`，客户端才能直接调用。
+async fn py_launcher_target() -> Option<(PathBuf, String)> {
+    let output = run_process(
+        Path::new("py"),
+        &[
+            "-3",
+            "-c",
+            "import sys; print(sys.executable); print(sys.version.split()[0])",
+        ],
+        &ProcessOptions {
+            timeout: Some(PYTHON_PROBE_TIMEOUT),
+            max_output_bytes: 65_536,
+            ..Default::default()
+        },
+    )
+    .await
+    .ok()?;
+    if !output.success() {
+        return None;
+    }
+    let mut lines = output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let executable = PathBuf::from(lines.next()?);
+    let version = parse_python_version(lines.next()?)?;
+    Some((executable, version))
+}
+
+async fn resolve_python<C: ClientConfigLike>(config: &mut C) -> PythonStatus {
+    let mut outdated: Option<PythonStatus> = None;
+    if let Some(flag) = config.python_runtime() {
+        let executable = PathBuf::from(&flag.path);
+        if executable.is_file() {
+            match python_version_at(&executable, &[]).await {
+                Some(version) if is_version_at_least(&version, PYTHON_MIN_VERSION) => {
+                    return python_status(&version, &executable, "client");
+                }
+                Some(version) => outdated = Some(python_status(&version, &executable, "client")),
+                None => {}
+            }
+        } else {
+            // flag 失效（文件被删/换机器）→ 清空后重新探测，自愈。
+            config.set_python_runtime(None);
+        }
+    }
+
+    let mut candidates: Vec<(PathBuf, &'static str)> = Vec::new();
+    if let Some(value) = std::env::var_os("TRELLIS_PYTHON") {
+        candidates.push((PathBuf::from(value), "env"));
+    }
+    if let Some(found) = find_in_path(&path_dirs(), "python.exe") {
+        candidates.push((found, "path"));
+    }
+
+    let mut found: Option<(PathBuf, String, &'static str)> = None;
+    for (program, source) in candidates {
+        let Some(version) = python_version_at(&program, &[]).await else {
+            continue;
+        };
+        if is_version_at_least(&version, PYTHON_MIN_VERSION) {
+            found = Some((program, version, source));
+            break;
+        }
+        outdated.get_or_insert(python_status(&version, &program, source));
+    }
+    if found.is_none() {
+        if let Some((executable, version)) = py_launcher_target().await {
+            if is_version_at_least(&version, PYTHON_MIN_VERSION) {
+                found = Some((executable, version, "py-launcher"));
+            } else {
+                outdated.get_or_insert(python_status(&version, &executable, "py-launcher"));
+            }
+        }
+    }
+
+    match found {
+        Some((executable, version, source)) => {
+            // 探测到的解释器写回 flag：客户端执行 task.py 时只认 flag。
+            config.set_python_runtime(Some(PythonRuntimeFlag {
+                version: version.clone(),
+                path: executable.display().to_string(),
+                source: source.to_string(),
+                installed_at: protocol::now_iso8601(),
+            }));
+            python_status(&version, &executable, source)
+        }
+        None => outdated.unwrap_or(PythonStatus {
+            ok: false,
+            version: None,
+            path: None,
+            source: None,
+            min_version: PYTHON_MIN_VERSION.to_string(),
+            found_version: None,
+        }),
+    }
+}
+
 // ---------------------------------------------------------------- install
 
 pub async fn install(
@@ -614,6 +818,14 @@ pub async fn install(
         }
     };
 
+    let (python_path, python_version) = match installed_python().await {
+        Some((path, version)) => {
+            on_progress("python:validate", &format!("Python {version} 已就绪"));
+            (path, version)
+        }
+        None => install_python(data_dir, &mut on_progress).await?,
+    };
+
     on_progress("write-flag", "正在保存运行时配置");
     let installed_at = protocol::now_iso8601();
     write_runtime_flags(
@@ -628,17 +840,24 @@ pub async fn install(
             version: trellis_version.clone(),
             cli_path: cli_path.display().to_string(),
             source: "client-prefix".to_string(),
+            installed_at: installed_at.clone(),
+        },
+        &PythonRuntimeFlag {
+            version: python_version.clone(),
+            path: python_path.display().to_string(),
+            source: "installed".to_string(),
             installed_at,
         },
     )?;
 
     on_progress(
         "ready",
-        &format!("Node.js {node_version} · Trellis CLI {trellis_version} 已就绪"),
+        &format!("Node.js {node_version} · Trellis CLI {trellis_version} · Python {python_version} 已就绪"),
     );
     Ok(RuntimeInstallResult {
         node_version,
         trellis_version,
+        python_version,
     })
 }
 
@@ -694,8 +913,18 @@ async fn install_node(
     Ok(version)
 }
 
-async fn download_node(
+struct DownloadSpec {
+    url: &'static str,
+    sha256: &'static str,
+    file_name: &'static str,
+    label: &'static str,
+    download_stage: &'static str,
+    verify_stage: &'static str,
+}
+
+async fn download_file(
     data_dir: &Path,
+    spec: &DownloadSpec,
     on_progress: &mut (impl FnMut(&str, &str) + Send),
 ) -> AgentResult<PathBuf> {
     let directory = download_dir(data_dir);
@@ -704,9 +933,10 @@ async fn download_node(
         .map_err(|error| {
             AgentError::new(CODE_DOWNLOAD_FAILED, format!("无法创建下载目录: {error}"))
         })?;
-    let zip_path = directory.join("node.zip");
-    let part_path = directory.join("node.zip.part");
+    let target = directory.join(spec.file_name);
+    let part_path = directory.join(format!("{}.part", spec.file_name));
     let _ = tokio::fs::remove_file(&part_path).await;
+    let label = spec.label;
 
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(20))
@@ -717,23 +947,23 @@ async fn download_node(
                 format!("下载客户端初始化失败: {error}"),
             )
         })?;
-    let response = client.get(NODE_ZIP_URL).send().await.map_err(|error| {
-        AgentError::new(CODE_DOWNLOAD_FAILED, format!("下载 Node.js 失败: {error}"))
+    let response = client.get(spec.url).send().await.map_err(|error| {
+        AgentError::new(CODE_DOWNLOAD_FAILED, format!("下载 {label} 失败: {error}"))
             .retryable(true)
             .with_details(Some(
-                json!({ "stage": "node:download", "url": NODE_ZIP_URL }),
+                json!({ "stage": spec.download_stage, "url": spec.url }),
             ))
     })?;
     let status = response.status();
     if !status.is_success() {
         return Err(AgentError::new(
             CODE_DOWNLOAD_FAILED,
-            format!("下载 Node.js 失败: HTTP {}", status.as_u16()),
+            format!("下载 {label} 失败: HTTP {}", status.as_u16()),
         )
         .retryable(true)
         .with_details(Some(json!({
-            "stage": "node:download",
-            "url": NODE_ZIP_URL,
+            "stage": spec.download_stage,
+            "url": spec.url,
             "status": status.as_u16(),
         }))));
     }
@@ -747,14 +977,14 @@ async fn download_node(
     let mut received: u64 = 0;
     let mut last_emit = Instant::now();
     let mut last_percent: i64 = -1;
-    on_progress("node:download", "开始下载 Node.js");
+    on_progress(spec.download_stage, &format!("开始下载 {label}"));
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| {
-            AgentError::new(CODE_DOWNLOAD_FAILED, format!("下载 Node.js 中断: {error}"))
+            AgentError::new(CODE_DOWNLOAD_FAILED, format!("下载 {label} 中断: {error}"))
                 .retryable(true)
                 .with_details(Some(
-                    json!({ "stage": "node:download", "url": NODE_ZIP_URL }),
+                    json!({ "stage": spec.download_stage, "url": spec.url }),
                 ))
         })?;
         hasher.update(&chunk);
@@ -766,7 +996,7 @@ async fn download_node(
             let _ = tokio::fs::remove_file(&part_path).await;
             return Err(AgentError::new(
                 CODE_DOWNLOAD_FAILED,
-                "Node.js 下载超出大小限制",
+                format!("{label} 下载超出大小限制"),
             ));
         }
         let percent = total
@@ -779,12 +1009,12 @@ async fn download_node(
             let megabytes = received as f64 / 1_048_576.0;
             let message = match (percent, total) {
                 (Some(percent), Some(total)) => format!(
-                    "正在下载 Node.js {percent}% ({megabytes:.1} MB / {:.1} MB)",
+                    "正在下载 {label} {percent}% ({megabytes:.1} MB / {:.1} MB)",
                     total as f64 / 1_048_576.0
                 ),
-                _ => format!("正在下载 Node.js {megabytes:.1} MB"),
+                _ => format!("正在下载 {label} {megabytes:.1} MB"),
             };
-            on_progress("node:download", &message);
+            on_progress(spec.download_stage, &message);
         }
     }
 
@@ -793,17 +1023,169 @@ async fn download_node(
     })?;
     drop(file);
 
-    on_progress("node:verify", "正在校验下载文件");
-    verify_hash(&hex(&hasher.finalize()), NODE_ZIP_SHA256).inspect_err(|_| {
+    on_progress(spec.verify_stage, "正在校验下载文件");
+    verify_hash(&hex(&hasher.finalize()), spec.sha256, spec.verify_stage).inspect_err(|_| {
         let _ = std::fs::remove_file(&part_path);
     })?;
-    let _ = std::fs::remove_file(&zip_path);
-    tokio::fs::rename(&part_path, &zip_path)
+    let _ = std::fs::remove_file(&target);
+    tokio::fs::rename(&part_path, &target)
         .await
         .map_err(|error| {
             AgentError::new(CODE_DOWNLOAD_FAILED, format!("保存下载文件失败: {error}"))
         })?;
-    Ok(zip_path)
+    Ok(target)
+}
+
+async fn download_node(
+    data_dir: &Path,
+    on_progress: &mut (impl FnMut(&str, &str) + Send),
+) -> AgentResult<PathBuf> {
+    download_file(
+        data_dir,
+        &DownloadSpec {
+            url: NODE_ZIP_URL,
+            sha256: NODE_ZIP_SHA256,
+            file_name: "node.zip",
+            label: "Node.js",
+            download_stage: "node:download",
+            verify_stage: "node:verify",
+        },
+        &mut *on_progress,
+    )
+    .await
+}
+
+/// 已装好的 >=3.9 解释器：per-user 安装目录 → PATH → `py -3`，取第一个可用者。
+async fn installed_python() -> Option<(PathBuf, String)> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let mut parts = PYTHON_INSTALL_VERSION.split('.');
+    let directory = format!(
+        "Python{}{}",
+        parts.next().unwrap_or("3"),
+        parts.next().unwrap_or("12")
+    );
+    if let Some(local) = env_dir("LOCALAPPDATA") {
+        candidates.push(
+            local
+                .join("Programs")
+                .join("Python")
+                .join(directory)
+                .join("python.exe"),
+        );
+    }
+    if let Some(found) = find_in_path(&path_dirs(), "python.exe") {
+        candidates.push(found);
+    }
+    for program in candidates {
+        let Some(version) = python_version_at(&program, &[]).await else {
+            continue;
+        };
+        if is_version_at_least(&version, PYTHON_MIN_VERSION) {
+            return Some((program, version));
+        }
+    }
+    py_launcher_target()
+        .await
+        .filter(|(_, version)| is_version_at_least(version, PYTHON_MIN_VERSION))
+}
+
+async fn run_with_heartbeat(
+    program: PathBuf,
+    args: Vec<String>,
+    stage: &'static str,
+    message: String,
+    timeout: Duration,
+    on_progress: &mut (impl FnMut(&str, &str) + Send),
+) -> AgentResult<ProcessOutput> {
+    let options = ProcessOptions {
+        timeout: Some(timeout),
+        max_output_bytes: 1_048_576,
+        ..Default::default()
+    };
+    let mut task = tokio::spawn(async move {
+        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_process(&program, &argv, &options).await
+    });
+    let started = Instant::now();
+    loop {
+        tokio::select! {
+            joined = &mut task => {
+                // 安装器静默执行时没有输出，只能靠心跳让前端知道还在装。
+                return joined.map_err(|error| {
+                    AgentError::new(CODE_PYTHON_INVALID, format!("Python 安装任务失败: {error}"))
+                })?;
+            }
+            _ = tokio::time::sleep(PYTHON_INSTALL_HEARTBEAT) => {
+                let seconds = started.elapsed().as_secs();
+                on_progress(stage, &format!("{message}（已用 {seconds} 秒）"));
+            }
+        }
+    }
+}
+
+async fn install_python(
+    data_dir: &Path,
+    on_progress: &mut (impl FnMut(&str, &str) + Send),
+) -> AgentResult<(PathBuf, String)> {
+    let installer = download_file(
+        data_dir,
+        &DownloadSpec {
+            url: PYTHON_INSTALLER_URL,
+            sha256: PYTHON_INSTALLER_SHA256,
+            file_name: PYTHON_INSTALLER_FILE,
+            label: "Python",
+            download_stage: "python:download",
+            verify_stage: "python:verify",
+        },
+        &mut *on_progress,
+    )
+    .await?;
+
+    on_progress(
+        "python:install",
+        &format!("正在静默安装 Python {PYTHON_INSTALL_VERSION}"),
+    );
+    let args: Vec<String> = PYTHON_INSTALLER_ARGS
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
+    let outcome = run_with_heartbeat(
+        installer.clone(),
+        args,
+        "python:install",
+        format!("正在静默安装 Python {PYTHON_INSTALL_VERSION}"),
+        PYTHON_INSTALL_TIMEOUT,
+        &mut *on_progress,
+    )
+    .await;
+    // 成功或失败都删掉安装包；失败文案里给官方下载页。
+    let _ = std::fs::remove_file(&installer);
+    let output = outcome?;
+    let exit_code = output.exit_code;
+    if exit_code != 0 && exit_code != PYTHON_EXIT_REBOOT_REQUIRED {
+        return Err(AgentError::new(
+            CODE_PYTHON_INVALID,
+            format!("Python 安装失败: 退出码 {exit_code}，可从 {PYTHON_PAGE_URL} 手动安装"),
+        )
+        .retryable(true)
+        .with_details(Some(json!({
+            "stage": "python:install",
+            "exitCode": exit_code,
+            "url": PYTHON_PAGE_URL,
+        }))));
+    }
+
+    on_progress("python:validate", "正在校验 Python");
+    installed_python().await.ok_or_else(|| {
+        AgentError::new(
+            CODE_PYTHON_INVALID,
+            format!("Python 安装后未找到 {PYTHON_MIN_VERSION} 及以上的解释器"),
+        )
+        .with_details(Some(json!({
+            "stage": "python:validate",
+            "minVersion": PYTHON_MIN_VERSION,
+        })))
+    })
 }
 
 fn node_entry_allowed(relative: &str) -> bool {
@@ -964,11 +1346,12 @@ async fn install_trellis(
     Ok(())
 }
 
-/// 把两个运行时 flag 合并写入 `<data_dir>/client.json`（schema 3）。
+/// 把三个运行时 flag 合并写入 `<data_dir>/client.json`（schema 3）。
 pub fn write_runtime_flags(
     data_dir: &Path,
     node: &NodeRuntimeFlag,
     trellis: &TrellisRuntimeFlag,
+    python: &PythonRuntimeFlag,
 ) -> AgentResult<()> {
     let path = data_dir.join("client.json");
     let mut document: Map<String, Value> = std::fs::read_to_string(&path)
@@ -989,6 +1372,15 @@ pub fn write_runtime_flags(
     document.insert(
         "trellis_runtime".to_string(),
         serde_json::to_value(trellis).map_err(|error| {
+            AgentError::new(
+                code::CONFIG_INVALID,
+                format!("运行时配置序列化失败: {error}"),
+            )
+        })?,
+    );
+    document.insert(
+        "python_runtime".to_string(),
+        serde_json::to_value(python).map_err(|error| {
             AgentError::new(
                 code::CONFIG_INVALID,
                 format!("运行时配置序列化失败: {error}"),
@@ -1044,11 +1436,29 @@ mod tests {
     }
 
     #[test]
+    fn parses_python_version_output() {
+        assert_eq!(
+            parse_python_version("Python 3.12.8\r\n").as_deref(),
+            Some("3.12.8")
+        );
+        assert_eq!(parse_python_version("3.12").as_deref(), Some("3.12.0"));
+        assert_eq!(
+            parse_python_version("Python 2.7.18").as_deref(),
+            Some("2.7.18")
+        );
+        assert_eq!(parse_python_version("command not found"), None);
+        assert_eq!(parse_python_version(""), None);
+        assert!(!is_version_at_least("3.8.10", PYTHON_MIN_VERSION));
+        assert!(is_version_at_least("3.9.0", PYTHON_MIN_VERSION));
+        assert!(is_version_at_least("3.12.8", PYTHON_MIN_VERSION));
+    }
+
+    #[test]
     fn rejects_corrupt_downloads() {
         let actual = hex(&Sha256::digest(b"not the node archive"));
-        let error = verify_hash(&actual, NODE_ZIP_SHA256).expect_err("hash mismatch");
+        let error = verify_hash(&actual, NODE_ZIP_SHA256, "node:verify").expect_err("hash mismatch");
         assert_eq!(error.code, CODE_DOWNLOAD_CORRUPT);
-        assert!(verify_hash(NODE_ZIP_SHA256, NODE_ZIP_SHA256).is_ok());
+        assert!(verify_hash(NODE_ZIP_SHA256, NODE_ZIP_SHA256, "node:verify").is_ok());
         assert_eq!(
             hex(&Sha256::digest(b"")),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -1174,6 +1584,14 @@ mod tests {
                 version: NODE_DOWNLOAD_VERSION.to_string(),
                 bytes: None,
             },
+            python: PythonStatus {
+                ok: false,
+                version: None,
+                path: None,
+                source: None,
+                min_version: PYTHON_MIN_VERSION.to_string(),
+                found_version: Some("3.8.10".to_string()),
+            },
         };
         let payload = serde_json::to_value(&status).expect("serialize status");
         assert_eq!(payload["state"], json!("needs_setup"));
@@ -1183,6 +1601,8 @@ mod tests {
             payload["trellis"]["requiredVersion"],
             json!(TRELLIS_VERSION)
         );
+        assert_eq!(payload["python"]["minVersion"], json!(PYTHON_MIN_VERSION));
+        assert_eq!(payload["python"]["foundVersion"], json!("3.8.10"));
         assert_eq!(payload["download"]["version"], json!(NODE_DOWNLOAD_VERSION));
     }
 
@@ -1200,8 +1620,21 @@ mod tests {
         let node = config.node_runtime().expect("node flag");
         assert_eq!(node.version, "24.22.3");
         assert!(config.trellis_runtime().is_none());
+        assert!(config.python_runtime().is_none());
+        config.set_python_runtime(Some(PythonRuntimeFlag {
+            version: "3.12.8".to_string(),
+            path: "C:\\Python312\\python.exe".to_string(),
+            source: "installed".to_string(),
+            installed_at: "2026-11-13T08:00:00Z".to_string(),
+        }));
+        assert_eq!(
+            config.python_runtime().expect("python flag").path,
+            "C:\\Python312\\python.exe"
+        );
         config.set_node_runtime(None);
         assert!(config.node_runtime().is_none());
         assert!(config.get("node_runtime").is_none());
+        config.set_python_runtime(None);
+        assert!(config.get("python_runtime").is_none());
     }
 }

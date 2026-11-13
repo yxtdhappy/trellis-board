@@ -114,6 +114,11 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 - `sync_conflict` 只保存待处理冲突摘要；`sync_conflict_backup` 只在覆盖服务端时保存双方正文；
   `sync_file_audit` append-only，不保存完整历史正文。
 - `sync_task_space_scan_cache` 以 taskSpace 和 `indexed_revision` 隔离；旧 revision Board 不得覆盖新 revision。
+- `sync_project_member.trellis_dev_id` 是「只看我的」的唯一依据：查询时用
+  `EXISTS (SELECT 1 FROM sync_project_member mine WHERE mine.project_id = t.project_id AND mine.user_id = ?
+  AND mine.trellis_dev_id IS NOT NULL AND t.assignee_dev_id = mine.trellis_dev_id COLLATE NOCASE)`
+  关联 `sync_task_index.assignee_dev_id`，不得用索引期快照的 `assignee_user_id` 代替——成员 dev id 变更
+  不重建索引。成员映射同时参与 Board 查询的 `etag` 与 `cacheKey` 哈希，否则旧结果命中或错误 304。
 - 每日 `board.sqlite.snapshot.*` 备份由 `VACUUM INTO` 产生，保留 7 份；备份失败记录告警，不回滚业务。
 
 ### 依赖图与风险投影
