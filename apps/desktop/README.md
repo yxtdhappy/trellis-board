@@ -361,6 +361,11 @@ CI（`.github/workflows/windows.yml`）跑完仍上传 `trellis-board-desktop-wi
 发布时版本号不需要手工改：`Resolve release version` 从 tag 取版本，`Stamp version from tag` 在构建前写入
 `apps/desktop/package.json`、`apps/desktop/src-tauri/tauri.conf.json`、`apps/desktop/src-tauri/Cargo.toml`，
 绿色包名与 `VERSION.txt` 随之变化，冒烟测试会校验二者与 tag 一致。本地构建仍用仓库里签入的版本号。
+tag 推送本身不构建：GitHub 的缓存只对「当前 ref 或默认分支」可见，tag run 落在 `refs/tags/<tag>`
+作用域，读不到 `refs/heads/main` 的缓存（实测把默认分支切到 main 后仍报 `No cache found.`）。所以 tag
+推送只跑一个 `dispatch-main` 作业，用 `gh api …/dispatches -f ref=main -f inputs[release_tag]=<tag>` 转发一次
+main 上的 `workflow_dispatch`；那次 run 在 main 的缓存作用域里检出 tag 的代码执行测试、构建与发布，
+`rust-cache` 的 `save-if` 只让 main 的 run 写缓存。
 
 打 tag 用脚本，不要手工 `git tag`。版本号由脚本递增（默认 patch，也可 `minor` / `major` 或直接给 `x.y.z`）：
 

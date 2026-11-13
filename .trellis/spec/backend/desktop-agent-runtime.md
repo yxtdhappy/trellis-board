@@ -35,6 +35,10 @@
 
 - 协议版本固定 `AGENT_PROTOCOL_VERSION = 3`；错误码集合固定在 `apps/desktop/src-tauri/src/agent/protocol.rs`，
   服务端据此判定可重试与终止。
+- Tauri 命令返回前端可直接读取的扁平对象：`check_pending_project_push`、`preflight_pending_project`、
+  `associate_pending_project`、`list_local_associations` 都不允许再套 `{ ok, result }` 中间层；
+  只有 `inspect_project` / `initialize_project` 使用 `{ ok, project }`，由前端
+  `apps/web/src/lib/project-inspection.js` 的 `normalizeProjectInspection` 解包。
 - 控制事件只允许 `{"type": ..., ...}` 结构，类型：`initial_sync_review`、`task_file_conflict`、
   `task_sync_error`。已删除的旧 JS Agent 里 `live-sync.js` 从未装配（其 `fetchLiveFiles`/`preflightLiveChanges` 在 JS 侧
   无任何实现，服务端也无对应路由），属死代码，Rust 不再移植实时文件同步。
@@ -156,6 +160,13 @@
   `apps/desktop/package.json`、`apps/desktop/src-tauri/tauri.conf.json`、`apps/desktop/src-tauri/Cargo.toml`、
   `apps/desktop/src-tauri/Cargo.lock`，提交 `chore(release): <version>`，推 main 后再打注解 tag `v<version>`
   并推送；不得手工改版本、手工 `git tag` 或直接 `gh release create`。CI 的盖章步骤只作兜底。
+- CI 缓存只能被「当前 ref 或默认分支」的 run 复用：tag 推送的 run 落在 `refs/tags/<tag>` 作用域，读不到
+  `refs/heads/main` 的缓存（实测默认分支已是 main 仍报 `No cache found.`）。因此 `windows.yml` 里 tag 推送
+  只跑 `dispatch-main` 作业，用 `gh api …/dispatches -f ref=main -f inputs[release_tag]=<tag>` 转发一次
+  main 上的 `workflow_dispatch`；`node-tests` 与 `desktop-build` 都 `if: github.event_name == 'workflow_dispatch'`，
+  并按 `inputs.release_tag` 检出 `refs/tags/<tag>`，于是构建在 main 的缓存作用域里进行。
+  `Swatinem/rust-cache` 用 `save-if: ${{ github.ref == 'refs/heads/main' }}` 限定只由 main 写缓存，
+  否则每次 tag 构建都会写出永不命中的 880 MB 副本。不得把 tag 推送改回直接构建。
 - 验证：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、
   `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`（crate 只有 bin target，`--lib` 会报
   `no library targets found`）、`npm test`、`cargo tauri build`（`target/release` 只有
