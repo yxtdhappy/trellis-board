@@ -679,7 +679,7 @@ fn baselines_for_task_dir(
         .collect()
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Cursor {
     pub revision: u64,
     pub sequence: u64,
@@ -690,11 +690,35 @@ pub struct Cursor {
     pub conflict_blocked: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingBatch {
     pub batch_id: String,
     pub client_sequence: u64,
     pub files: Vec<Value>,
+}
+
+fn cursor_from_entry(entry: &Value) -> Cursor {
+    Cursor {
+        revision: entry.get("revision").and_then(Value::as_u64).unwrap_or(0),
+        sequence: entry.get("sequence").and_then(Value::as_u64).unwrap_or(0),
+        pending: entry.get("pending").and_then(parse_pending_batch),
+        baselines: entry
+            .get("baselines")
+            .and_then(parse_baselines)
+            .unwrap_or_default(),
+        deferred: entry
+            .get("deferred")
+            .and_then(parse_deferred)
+            .unwrap_or_default(),
+        ownership_pending: entry
+            .get("ownershipPending")
+            .map(parse_ownership_pending)
+            .unwrap_or_default(),
+        conflict_blocked: entry
+            .get("conflictBlocked")
+            .map(parse_conflict_blocked)
+            .unwrap_or_default(),
+    }
 }
 
 struct OwnershipReview {
@@ -1048,6 +1072,19 @@ impl TaskSync {
         }
     }
 
+    pub async fn pull_and_report_for_event(
+        &self,
+        task_space_id: &str,
+        event_revision: Option<u64>,
+    ) {
+        if let Err(error) = self
+            .pull_task_space_for_event(task_space_id, event_revision)
+            .await
+        {
+            self.report_error(task_space_id, &error);
+        }
+    }
+
     fn report_error(&self, task_space_id: &str, error: &AgentError) {
         let message = protocol::safe_error_message(&error.to_string());
         crate::logging::warn(&format!(
@@ -1200,28 +1237,7 @@ impl TaskSync {
         else {
             return Cursor::default();
         };
-        let pending = entry.get("pending").and_then(parse_pending_batch);
-        Cursor {
-            revision: entry.get("revision").and_then(Value::as_u64).unwrap_or(0),
-            sequence: entry.get("sequence").and_then(Value::as_u64).unwrap_or(0),
-            pending,
-            baselines: entry
-                .get("baselines")
-                .and_then(parse_baselines)
-                .unwrap_or_default(),
-            deferred: entry
-                .get("deferred")
-                .and_then(parse_deferred)
-                .unwrap_or_default(),
-            ownership_pending: entry
-                .get("ownershipPending")
-                .map(parse_ownership_pending)
-                .unwrap_or_default(),
-            conflict_blocked: entry
-                .get("conflictBlocked")
-                .map(parse_conflict_blocked)
-                .unwrap_or_default(),
-        }
+        cursor_from_entry(entry)
     }
 
     async fn write_cursor(&self, task_space_id: &str, next: CursorPatch) -> AgentResult<()> {
@@ -1245,31 +1261,33 @@ impl TaskSync {
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
-        let current_revision = entry.get("revision").and_then(Value::as_u64).unwrap_or(0);
-        let current_sequence = entry.get("sequence").and_then(Value::as_u64).unwrap_or(0);
-        entry.insert(
-            "revision".into(),
-            json!(current_revision.max(next.revision.unwrap_or(0))),
-        );
-        entry.insert(
-            "sequence".into(),
-            json!(current_sequence.max(next.sequence.unwrap_or(0))),
-        );
-        entry.insert("updatedAt".into(), Value::String(protocol::now_iso8601()));
-        if let Some(baselines) = next.baselines {
-            entry.insert("baselines".into(), baselines_to_value(&baselines));
+        let mut cursor = cursor_from_entry(&Value::Object(entry.clone()));
+        if !apply_cursor_patch(&mut cursor, &next) {
+            *self.cursor_state.lock().await = Some(state);
+            return Ok(());
         }
-        if let Some(deferred) = next.deferred {
-            entry.insert("deferred".into(), deferred_to_value(&deferred));
+        entry.insert("revision".into(), json!(cursor.revision));
+        entry.insert("sequence".into(), json!(cursor.sequence));
+        if next.baselines.is_some() {
+            entry.insert("baselines".into(), baselines_to_value(&cursor.baselines));
         }
-        if let Some(pending) = next.ownership_pending {
-            entry.insert("ownershipPending".into(), ownership_pending_to_value(&pending));
+        if next.deferred.is_some() {
+            entry.insert("deferred".into(), deferred_to_value(&cursor.deferred));
         }
-        if let Some(blocked) = next.conflict_blocked {
-            entry.insert("conflictBlocked".into(), conflict_blocked_to_value(&blocked));
+        if next.ownership_pending.is_some() {
+            entry.insert(
+                "ownershipPending".into(),
+                ownership_pending_to_value(&cursor.ownership_pending),
+            );
         }
-        if let Some(pending) = next.pending {
-            match pending {
+        if next.conflict_blocked.is_some() {
+            entry.insert(
+                "conflictBlocked".into(),
+                conflict_blocked_to_value(&cursor.conflict_blocked),
+            );
+        }
+        if next.pending.is_some() {
+            match cursor.pending {
                 Some(batch) => {
                     entry.insert(
                         "pending".into(),
@@ -1285,6 +1303,7 @@ impl TaskSync {
                 }
             }
         }
+        entry.insert("updatedAt".into(), Value::String(protocol::now_iso8601()));
         tasks.insert(task_space_id.to_string(), Value::Object(entry));
         state["taskSpaces"] = Value::Object(tasks);
         let text = serde_json::to_string_pretty(&state).unwrap_or_else(|_| "{}".into());
@@ -1924,6 +1943,30 @@ impl TaskSync {
             Err(error) => return Err(error),
         };
         self.pull(&binding).await
+    }
+
+    async fn pull_task_space_for_event(
+        &self,
+        task_space_id: &str,
+        event_revision: Option<u64>,
+    ) -> AgentResult<Value> {
+        if let Ok(binding) = self.binding(task_space_id).await {
+            let cursor = self.read_cursor(task_space_id).await;
+            if !should_pull_for_event(
+                binding.initial_sync_completed,
+                binding.initial_review_pending,
+                cursor.revision,
+                event_revision,
+                cursor.pending.is_some(),
+            ) {
+                return Ok(json!({
+                    "skipped": true,
+                    "reason": "REVISION_CURRENT",
+                    "revision": cursor.revision,
+                }));
+            }
+        }
+        self.pull_task_space(task_space_id).await
     }
 
     async fn pull(&self, binding: &AgentBinding) -> AgentResult<Value> {
@@ -3806,6 +3849,48 @@ struct CursorPatch {
     conflict_blocked: Option<BTreeMap<String, String>>,
 }
 
+fn apply_cursor_patch(cursor: &mut Cursor, next: &CursorPatch) -> bool {
+    let before = cursor.clone();
+    if let Some(revision) = next.revision {
+        cursor.revision = cursor.revision.max(revision);
+    }
+    if let Some(sequence) = next.sequence {
+        cursor.sequence = cursor.sequence.max(sequence);
+    }
+    if let Some(pending) = &next.pending {
+        cursor.pending = pending.clone();
+    }
+    if let Some(baselines) = &next.baselines {
+        cursor.baselines = baselines.clone();
+    }
+    if let Some(deferred) = &next.deferred {
+        cursor.deferred = deferred.clone();
+    }
+    if let Some(ownership_pending) = &next.ownership_pending {
+        cursor.ownership_pending = ownership_pending.clone();
+    }
+    if let Some(conflict_blocked) = &next.conflict_blocked {
+        cursor.conflict_blocked = conflict_blocked.clone();
+    }
+    *cursor != before
+}
+
+fn should_pull_for_event(
+    initial_sync_completed: bool,
+    initial_review_pending: bool,
+    cursor_revision: u64,
+    event_revision: Option<u64>,
+    has_pending_upload: bool,
+) -> bool {
+    let Some(event_revision) = event_revision else {
+        return true;
+    };
+    !initial_sync_completed
+        || initial_review_pending
+        || has_pending_upload
+        || event_revision > cursor_revision
+}
+
 fn conflict_task_directories(value: &str) -> (Option<String>, Option<String>) {
     let parts: Vec<&str> = value
         .split(" -> ")
@@ -4339,6 +4424,7 @@ pub(crate) fn urlencode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::store::AgentConfig;
 
     #[test]
     fn required_sequence_only_reads_conflict_details() {
@@ -4394,6 +4480,116 @@ mod tests {
         }
     }
 
+    fn test_config(binding: AgentBinding) -> AgentConfig {
+        AgentConfig {
+            schema_version: crate::agent::store::CONFIG_SCHEMA_VERSION,
+            revision: "0123456789abcdef0123456789abcdef".to_string(),
+            server_url: "http://localhost:4310".to_string(),
+            ca_file: None,
+            allow_local_git_remotes: false,
+            agent_id: "agent-1".to_string(),
+            device_name: "PC".to_string(),
+            username: Some("dev".to_string()),
+            team_id: None,
+            teams: Vec::new(),
+            protocol_version: 3,
+            agent_version: None,
+            paired_at: None,
+            bindings: vec![binding],
+        }
+    }
+
+    #[test]
+    fn event_revision_only_skips_completed_unchanged_sync() {
+        assert!(!should_pull_for_event(true, false, 10, Some(10), false));
+        assert!(!should_pull_for_event(true, false, 10, Some(9), false));
+        assert!(should_pull_for_event(true, false, 10, Some(11), false));
+        assert!(should_pull_for_event(false, false, 10, Some(10), false));
+        assert!(should_pull_for_event(true, true, 10, Some(10), false));
+        assert!(should_pull_for_event(true, false, 10, Some(10), true));
+        assert!(should_pull_for_event(true, false, 10, None, false));
+    }
+
+    fn assert_cursor_patch_changes_once(
+        cursor: &mut Cursor,
+        make_patch: impl Fn() -> CursorPatch,
+    ) {
+        assert!(apply_cursor_patch(cursor, &make_patch()));
+        assert!(!apply_cursor_patch(cursor, &make_patch()));
+    }
+
+    #[test]
+    fn cursor_patch_only_reports_real_changes() {
+        let mut cursor = Cursor::default();
+        assert_cursor_patch_changes_once(
+            &mut cursor,
+            || CursorPatch {
+                revision: Some(10),
+                sequence: Some(2),
+                ..Default::default()
+            },
+        );
+
+        let baselines = BTreeMap::from([(".trellis/tasks/a/prd.md".to_string(), "a".repeat(64))]);
+        assert_cursor_patch_changes_once(
+            &mut cursor,
+            || CursorPatch {
+                baselines: Some(baselines.clone()),
+                ..Default::default()
+            },
+        );
+
+        let deferred = BTreeMap::from([(
+            ".trellis/tasks/a".to_string(),
+            BTreeMap::from([(".trellis/tasks/a/prd.md".to_string(), "b".repeat(64))]),
+        )]);
+        assert_cursor_patch_changes_once(
+            &mut cursor,
+            || CursorPatch {
+                deferred: Some(deferred.clone()),
+                ..Default::default()
+            },
+        );
+
+        let ownership = BTreeMap::from([(".trellis/tasks/a".to_string(), "fingerprint".to_string())]);
+        assert_cursor_patch_changes_once(
+            &mut cursor,
+            || CursorPatch {
+                ownership_pending: Some(ownership.clone()),
+                ..Default::default()
+            },
+        );
+
+        let blocked = BTreeMap::from([(".trellis/tasks/a".to_string(), "conflict-1".to_string())]);
+        assert_cursor_patch_changes_once(
+            &mut cursor,
+            || CursorPatch {
+                conflict_blocked: Some(blocked.clone()),
+                ..Default::default()
+            },
+        );
+
+        let pending = PendingBatch {
+            batch_id: "batch-1".to_string(),
+            client_sequence: 3,
+            files: vec![json!({ "path": ".trellis/tasks/a/prd.md" })],
+        };
+        assert_cursor_patch_changes_once(
+            &mut cursor,
+            || CursorPatch {
+                pending: Some(Some(pending.clone())),
+                ..Default::default()
+            },
+        );
+        assert!(apply_cursor_patch(
+            &mut cursor,
+            &CursorPatch {
+                pending: Some(None),
+                ..Default::default()
+            }
+        ));
+    }
+
     #[test]
     fn detach_pending_is_excluded_and_selection_identity_is_stable() {
         let selected = test_binding("space-1");
@@ -4431,6 +4627,131 @@ mod tests {
         let state = store.read_task_cursors().await;
         assert!(state["taskSpaces"].get("space-1").is_none());
         assert_eq!(state["taskSpaces"]["space-2"]["revision"], 2);
+    }
+
+    #[tokio::test]
+    async fn write_cursor_skips_unchanged_patch() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-task-cursor-noop-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Arc::new(ConfigStore::new_unsecured_for_test(root));
+        store.ensure_directories().await.expect("directories");
+        let binding = test_binding("space-1");
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        let initial = json!({
+            "version": CURSOR_VERSION,
+            "taskSpaces": {
+                "space-1": {
+                    "revision": 10,
+                    "sequence": 2,
+                    "updatedAt": "2026-11-13T00:00:00.000Z",
+                    "baselines": {
+                        ".trellis/tasks/a/prd.md": "a".repeat(64)
+                    }
+                }
+            }
+        });
+        store
+            .write_json(&store.paths.task_cursors_file, &initial)
+            .await
+            .expect("cursor file");
+        let api =
+            Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+        let sink: ControlSink = Arc::new(|_| {});
+        let sync = TaskSync::new(store.clone(), api, sink);
+        sync.set_bindings(vec![binding]).await;
+
+        let before = tokio::fs::read(&store.paths.task_cursors_file)
+            .await
+            .expect("cursor before");
+        sync.write_cursor(
+            "space-1",
+            CursorPatch {
+                revision: Some(10),
+                sequence: Some(2),
+                baselines: Some(BTreeMap::from([(
+                    ".trellis/tasks/a/prd.md".to_string(),
+                    "a".repeat(64),
+                )])),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("noop cursor");
+        let after = tokio::fs::read(&store.paths.task_cursors_file)
+            .await
+            .expect("cursor after");
+        assert_eq!(after, before);
+
+        sync.write_cursor(
+            "space-1",
+            CursorPatch {
+                revision: Some(11),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("changed cursor");
+        let state = store.read_task_cursors().await;
+        assert_eq!(state["taskSpaces"]["space-1"]["revision"], 11);
+    }
+
+    #[tokio::test]
+    async fn current_event_revision_skips_snapshot_and_local_scan() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-task-event-revision-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Arc::new(ConfigStore::new_unsecured_for_test(root));
+        store.ensure_directories().await.expect("directories");
+        store
+            .write_json(
+                &store.paths.task_cursors_file,
+                &json!({
+                    "version": CURSOR_VERSION,
+                    "taskSpaces": {
+                        "space-1": {
+                            "revision": 10,
+                            "sequence": 2
+                        }
+                    }
+                }),
+            )
+            .await
+            .expect("cursor file");
+        let api =
+            Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+        let reports = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let sink_reports = reports.clone();
+        let sink: ControlSink = Arc::new(move |value| {
+            sink_reports
+                .lock()
+                .expect("reports lock")
+                .push(value);
+        });
+        let before = tokio::fs::read(&store.paths.task_cursors_file)
+            .await
+            .expect("cursor before");
+        let sync = TaskSync::new(store.clone(), api, sink);
+        sync.set_bindings(vec![test_binding("space-1")]).await;
+
+        let result = sync
+            .pull_task_space_for_event("space-1", Some(10))
+            .await
+            .expect("event revision");
+
+        assert_eq!(result["skipped"], true);
+        assert_eq!(result["reason"], "REVISION_CURRENT");
+        assert_eq!(result["revision"], 10);
+        let after = tokio::fs::read(&store.paths.task_cursors_file)
+            .await
+            .expect("cursor after");
+        assert_eq!(after, before);
+        assert!(reports.lock().expect("reports lock").is_empty());
     }
 
     fn task_group(task_id: &str, task_dir: &str, files: &[(&str, &str)]) -> SnapshotGroup {

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"逐项核对重复 revision 短路没有破坏首次同步、重连补偿、pending upload、冲突和分支保护"}
+{"file":".trellis/spec/backend/desktop-agent-runtime.md","reason":"核对 Rust Agent 只跳过无效拉取，不绕过游标串行化、分支守卫或失败重试契约"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核对服务端事件流、Rust 纯判定和游标写入门禁的自动化覆盖"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对 revision 字段从服务端广播到客户端判定的一致性及真实新 revision 回归"}

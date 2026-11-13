@@ -398,7 +398,10 @@ impl AgentRuntime {
             }
             "task.changed" => {
                 if let Some(task_space_id) = data.get("taskSpaceId").and_then(Value::as_str) {
-                    self.task_sync.pull_and_report(task_space_id).await;
+                    let revision = data.get("revision").and_then(Value::as_u64);
+                    self.task_sync
+                        .pull_and_report_for_event(task_space_id, revision)
+                        .await;
                 }
                 Ok(())
             }

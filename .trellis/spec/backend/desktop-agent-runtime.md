@@ -52,8 +52,10 @@
   同一 `localRepoKey` 的 approved 绑定超过一个时，`ConfigStore` 拒写（`CONFIG_INVALID`，
   需要并行多分支请用独立 worktree）。
 - 游标串行化：`write_cursor` 必须先拿 `<data>/agent/.live-cursors.lock`（`lock_task_cursors`），
-  再重读磁盘合并写入。批次 409 且 `serverCode == "CONFLICT"`、`details.requiredClientSequence`
-  为正整数时，改写 pending 序号后重试一次（对照 JS `0fd2dc0`）。
+  再重读磁盘合并写入；patch 没有改变 revision、sequence、baselines、deferred、ownershipPending、
+  conflictBlocked 或 pending 时不得更新时间戳或重写文件。批次 409 且
+  `serverCode == "CONFLICT"`、`details.requiredClientSequence` 为正整数时，改写 pending 序号后
+  重试一次（对照 JS `0fd2dc0`）。
 - 本地暂缓任务（`cursor.deferred`）只能由 `sync_deferred_tasks` 显式补传；只读绑定直接拒绝。
 - 托盘同步项只有运行/暂停两种文案（"暂停同步"/"恢复同步"）。外部 sidecar 时代的
   `force_restart`（进程终止、`agent.lock` 备份、崩溃重启计数）在进程内 Agent 下没有对应物，

@@ -90,6 +90,12 @@ createAgentEventStream({ db, commands, logger })
 Agent SSE 事件为 `command.available`、`agent.revoked`、`task.changed`、`cursor.invalidated`。
 Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快照，不通过 SSE 传输任务正文。
 
+- `task.changed.revision` 必须是非负安全整数。服务端按 taskSpace 在内存中保存最后已广播 revision，
+  相同或更旧 revision 不重复广播；该状态不持久化，服务重启后的客户端重连补偿仍负责一致性。
+- 客户端仅在首次同步已完成、没有 initial review、没有 pending upload，且事件 revision 不新于本地
+  cursor revision 时短路并返回 `{ skipped: true, reason: "REVISION_CURRENT" }`；其余情况必须按
+  原路径拉取。
+
 ## 3. Contracts
 
 ### 项目与任务空间身份
@@ -192,6 +198,9 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 客户端 cursor v3 额外保存每个已同步文件的服务端摘要。增量上传的 `baseSha256` 必须来自
   上次成功应用或上传后的本地基线，不能在提交前临时读取服务端最新摘要来充当基线，否则会
   绕过离线并发冲突。
+- `write_cursor` 只在 revision、sequence、baselines、deferred、ownershipPending、conflictBlocked
+  或 pending 发生实际变化时更新 `updatedAt` 并原子替换文件；缺失 pending upload 的重复 revision、
+  相同 patch 或只刷新时间的调用不得重写 `live-cursors.json`。
 - 每次拉取前先比较本地任务目录与 cursor 基线：本地有未上传变化时先走 CAS 上传；上传成功后再
   拉取新 revision，发生冲突时停止应用远端目录。首次接入选择“仅同步无冲突项”或“暂不处理”
   跳过的本地目录作为延后状态持久化，用户再次修改前不得自动上传；延后目录随后被服务端修改时
@@ -347,6 +356,9 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | 任一 `baseSha256` 不一致 | `409 TASK_FILE_CONFLICT`，同批全部不写 |
 | 任务目录缺 `task.json`、缺稳定 ID、移动前后 ID 不同 | `409`，整批拒绝 |
 | 无变化批次 | `200 noop=true`，revision 不增加 |
+| 服务端重复广播相同或更旧 `task.changed.revision` | 不再广播，不改变 taskSpace 快照 |
+| Agent 已同步且无 pending upload，收到相同或更旧 revision | 短路，不 GET 快照、不扫描任务目录、不写 cursor |
+| Agent cursor patch 与当前 revision/sequence/baselines/deferred/pending 等状态相同 | 不更新 `updatedAt`，不写 `live-cursors.json` |
 | 投影尚未追上成功 revision 或负责人尚未更新 | `409 COMMAND_WAITING_INDEX`，可重试结果 |
 | Agent 租约过期 | 状态恢复 `pending`，可安全重投 |
 | 每日数据库备份失败 | 记录告警，服务继续运行 |
@@ -360,6 +372,7 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - Good：同一仓库为主分支和 feature 分支各建一个 worktree；两个 `localRepoKey` 不同，各自只监听当前分支。
 - Base：本地和服务端任务目录文件集合及摘要相同，不写文件、不增加 revision。
 - Base：同步请求已提交但响应丢失，客户端重启后复用 pending `batchId`，服务端返回原 revision。
+- Base：投影重复上报相同 revision；服务端不重复广播，客户端即使收到也不会重复拉取或写 cursor。
 - Bad：同一个 Git 工作目录先绑定 main 又保留 feature binding；watcher 会把一份本地修改双写到两个 taskSpace。
 - Bad：以“后到覆盖先到”写同一任务文件，会静默丢更新；服务端必须使用文件级 CAS。
 - Bad：收到 watcher 后只按路径抑制，不校验新摘要，会吞掉远端应用后紧接发生的真实本地编辑。
@@ -382,6 +395,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - `apps/server/test/team-agent-slot.test.js`、`team-task-spaces.test.js`：监听快照、空集合、旧客户端、
   超时、五态聚合、监听详情权限和主动解绑幂等；另覆盖新设备踢下线、旧 SSE 关闭和旧命令取消。
 - `apps/server/test/team-task-commands.test.js`：在线目标、命令状态机、租约恢复、索引等待、重试和取消。
+- `apps/server/test/agent-event-stream.test.js`：同一 taskSpace 的 `10, 10, 9, 11` 只广播 10 和 11，
+  不同 taskSpace 独立去重，非法 revision 不广播。
 - 双客户端实时对齐（两个真实 Agent 的 HTTP 快照 + SSE、CAS 并发、离线拒绝）随 Node Agent 删除而
   不再有自动化测试；发布前由 Windows 客户端 E2E 覆盖，服务端行为由 `team-task-snapshot`、
   `team-agent-slot`、`team-gitless-http` 三条测试约束。
@@ -396,7 +411,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - `apps/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、
   DPAPI 往返、SSE 分帧、控制事件去重与过期。
 - `apps/desktop/src-tauri/src/agent/{runtime,task_sync,detach,store}.rs`：真实监听集合、
-  `detachPending` 排除、失败重试和成功后 cursor 清理。
+  `detachPending` 排除、失败重试和成功后 cursor 清理；另覆盖相同/旧 revision 短路、首次同步和
+  pending upload 例外、相同 cursor patch 不落盘。
 - Tauri command、capability 与 permission 的装配由 `cargo test`/桌面构建和真实客户端 E2E 验证，
   不用 Node 测试读取 Rust/TOML 源码做正则断言。
 - `apps/server/test/task-space-duplicate-cleanup.test.js`：默认 dry-run、只墓碑指定旧 taskSpace、不动归档、
@@ -484,6 +500,31 @@ await api.uploadTaskSpaceChanges(taskSpaceId, {
 ```
 
 每次真正发出写入前都重新读取真实分支；服务端再校验 taskSpace 和 binding，任何不一致都不写快照。
+
+### Wrong
+
+```rust
+// 每个 task.changed 都直接进入完整拉取，并让 write_cursor 无条件刷新 updatedAt。
+task_sync.pull_and_report(task_space_id).await;
+entry.insert("updatedAt", now);
+write_atomic(cursor_path, state);
+```
+
+重复投影会把同一 revision 放大成快照 GET、全量任务扫描和整文件重写。
+
+### Correct
+
+```rust
+if !should_pull_for_event(initial_sync_completed, review_pending, cursor_revision, event_revision, has_pending) {
+    return;
+}
+if apply_cursor_patch(&mut cursor, &patch) {
+    entry.insert("updatedAt", now);
+    write_atomic(cursor_path, state);
+}
+```
+
+重复事件直接短路；cursor 只有在业务状态实际变化时才落盘，pending upload 仍按原路径重试。
 
 任务级分支归属、ownership API、冲突幂等和历史清理约束见
 [任务级分支归属与冲突幂等](./task-ownership-and-conflict-idempotency.md)。

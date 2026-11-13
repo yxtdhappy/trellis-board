@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"约束 task.changed、taskSpace revision、cursor、首次同步、SSE 重连、pending retry 和冲突处理行为"}
+{"file":".trellis/spec/backend/desktop-agent-runtime.md","reason":"约束 Rust Agent 的 SSE 事件处理、任务同步职责、游标串行化和分支守卫"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"说明快照提交、索引投影、task.changed 广播和客户端拉取的完整数据流"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"确定 Node/Rust 测试边界、事务与错误处理要求"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对服务端 SSE 与桌面 Agent 消费端之间的字段、时序和重连补偿契约"}

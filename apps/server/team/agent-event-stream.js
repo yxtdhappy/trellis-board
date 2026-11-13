@@ -13,6 +13,8 @@ function frame(response, eventName, data, id = null) {
 
 export function createAgentEventStream({ db, commands, logger = console }) {
   const streams = new Map()
+  // 只省略重复广播；服务重启后的客户端重连仍由现有补偿拉取负责。
+  const lastTaskRevisionByTaskSpace = new Map()
   let closed = false
   let heartbeatTimer = null
 
@@ -58,6 +60,10 @@ export function createAgentEventStream({ db, commands, logger = console }) {
 
   function notifyTaskSpaceChanged(taskSpaceId, revision, sourceAgentId = null) {
     if (closed) return
+    if (!Number.isSafeInteger(revision) || revision < 0) return
+    const lastRevision = lastTaskRevisionByTaskSpace.get(taskSpaceId)
+    if (lastRevision != null && revision <= lastRevision) return
+    lastTaskRevisionByTaskSpace.set(taskSpaceId, revision)
     const bindings = db
       .prepare(`
       SELECT agent_id
@@ -137,6 +143,7 @@ export function createAgentEventStream({ db, commands, logger = console }) {
   function close() {
     if (closed) return
     closed = true
+    lastTaskRevisionByTaskSpace.clear()
     if (heartbeatTimer) clearInterval(heartbeatTimer)
     heartbeatTimer = null
     for (const agentId of [...streams.keys()]) endAgent(agentId)
