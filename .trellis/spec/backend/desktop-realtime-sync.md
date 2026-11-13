@@ -147,6 +147,8 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 允许 `.json/.jsonl/.md/.txt/.yaml/.yml`；单文件不超过 1 MiB，单批正文不超过
   64 MiB / 1024 文件。JSON 请求和 Agent 大响应使用编码后 96 MiB 硬运输上限，运输上限
   不参与业务写入；超过 96 MiB 即使解码后正文不超过 64 MiB 也返回 413。
+- 全 taskSpace 扫描和按任务目录分组不是单个上传批次，聚合结果可以超过 64 MiB / 1024 文件；
+  客户端只在写 pending 或重试 pending 的实际文件数组上校验批次上限。
 - 客户端和服务端都用 `normalizeSnapshotText()` 去除 BOM 并把 CRLF/CR 转为 LF，再用
   `snapshotSha256()` 计算摘要；客户端必须用 fatal UTF-8 解码，服务端必须拒绝
   `sha256` 与规范化内容不一致、`baseSha256` 非法或格式错误的记录。
@@ -407,7 +409,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - `apps/server/test/team-release.test.js`：服务端仓库无工作副本，命令成功前不生成正式任务。
 - `apps/desktop/src-tauri/src/agent/{onboarding,task_sync,task_command,git,protocol}.rs` 的 `mod tests`：
   仓库预检、固定 CLI 初始化、推送状态、已有 `.trellis`、同 `localRepoKey` 换分支、首次/增量同步、
-  cursor 文件基线、离线并发冲突、延后目录、目录移动、pending batch 重放、错分支与 detached HEAD 拒绝。
+  cursor 文件基线、离线并发冲突、延后目录、目录移动、pending batch 重放、全量分组跨目录超过
+  1024 文件、实际批次 1024/1025 与 64 MiB 边界、错分支与 detached HEAD 拒绝。
 - `apps/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、
   DPAPI 往返、SSE 分帧、控制事件去重与过期。
 - `apps/desktop/src-tauri/src/agent/{runtime,task_sync,detach,store}.rs`：真实监听集合、

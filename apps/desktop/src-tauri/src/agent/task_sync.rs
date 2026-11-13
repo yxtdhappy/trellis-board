@@ -319,24 +319,13 @@ pub fn validate_snapshot_file(value: &Value) -> AgentResult<SnapshotFile> {
 }
 
 pub fn group_task_snapshot_files(files: &[Value]) -> AgentResult<Vec<SnapshotGroup>> {
-    if files.len() > TASK_SNAPSHOT_MAX_FILES {
-        return protocol::err(
-            code::INVALID_RESPONSE,
-            format!("单批任务文件不能超过 {TASK_SNAPSHOT_MAX_FILES} 个"),
-        );
-    }
     let mut groups: Vec<SnapshotGroup> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
     let mut seen = HashSet::new();
-    let mut total_bytes = 0usize;
     for value in files {
         let file = validate_snapshot_file(value)?;
         if !seen.insert(file.path.clone()) {
             return protocol::err(code::INVALID_RESPONSE, "任务文件路径不能重复");
-        }
-        total_bytes += file.content.len();
-        if total_bytes > TASK_SNAPSHOT_MAX_BATCH_BYTES {
-            return protocol::err(code::INVALID_RESPONSE, "任务文件批次超过 64 MiB");
         }
         let position = match index.get(&file.task_dir) {
             Some(position) => *position,
@@ -374,6 +363,28 @@ pub fn group_task_snapshot_files(files: &[Value]) -> AgentResult<Vec<SnapshotGro
             .sort_by(|left, right| left.path.cmp(&right.path));
     }
     Ok(groups)
+}
+
+fn validate_upload_batch(files: &[Value]) -> AgentResult<()> {
+    if files.len() > TASK_SNAPSHOT_MAX_FILES {
+        return protocol::err(
+            code::INVALID_RESPONSE,
+            format!("单批任务文件不能超过 {TASK_SNAPSHOT_MAX_FILES} 个"),
+        );
+    }
+    let total_bytes = files
+        .iter()
+        .map(|file| {
+            file.get("content")
+                .and_then(Value::as_str)
+                .map(str::len)
+                .unwrap_or(0)
+        })
+        .fold(0usize, |total, bytes| total.saturating_add(bytes));
+    if total_bytes > TASK_SNAPSHOT_MAX_BATCH_BYTES {
+        return protocol::err(code::INVALID_RESPONSE, "任务文件批次超过 64 MiB");
+    }
+    Ok(())
 }
 
 fn parse_task_id(content: &str) -> Option<String> {
@@ -2901,6 +2912,7 @@ impl TaskSync {
         if files.is_empty() {
             return Ok(None);
         }
+        validate_upload_batch(&files)?;
         let batch = PendingBatch {
             batch_id: uuid::Uuid::new_v4().to_string(),
             client_sequence: next_client_sequence(cursor.sequence),
@@ -2924,6 +2936,7 @@ impl TaskSync {
         binding: &AgentBinding,
         batch: PendingBatch,
     ) -> AgentResult<Option<Value>> {
+        validate_upload_batch(&batch.files)?;
         Ok(Some(self.upload_batch(binding, batch).await?))
     }
 
@@ -4497,6 +4510,134 @@ mod tests {
             paired_at: None,
             bindings: vec![binding],
         }
+    }
+
+    fn snapshot_file_value(path: impl Into<String>, content: impl Into<String>) -> Value {
+        let path: String = path.into();
+        let content: String = content.into();
+        json!({
+            "path": path,
+            "content": content,
+        })
+    }
+
+    fn batch_file_values(count: usize) -> Vec<Value> {
+        (0..count)
+            .map(|index| snapshot_file_value(format!(".trellis/tasks/a/file-{index}.md"), ""))
+            .collect()
+    }
+
+    #[test]
+    fn groups_more_than_batch_limit_across_task_directories() {
+        let files: Vec<Value> = (0..1100)
+            .map(|index| {
+                let task_dir = if index < 550 {
+                    ".trellis/tasks/a"
+                } else {
+                    ".trellis/tasks/b"
+                };
+                snapshot_file_value(format!("{task_dir}/file-{index}.md"), "")
+            })
+            .collect();
+
+        let groups = group_task_snapshot_files(&files).expect("跨目录聚合应允许超过单批上限");
+        assert_eq!(groups.len(), 2);
+        assert!(groups.iter().all(|group| group.files.len() == 550));
+    }
+
+    #[test]
+    fn validates_upload_batch_file_count_boundary() {
+        let mut files = batch_file_values(TASK_SNAPSHOT_MAX_FILES);
+        assert!(validate_upload_batch(&files).is_ok());
+
+        files.push(snapshot_file_value(
+            format!(".trellis/tasks/a/file-{}.md", TASK_SNAPSHOT_MAX_FILES),
+            "",
+        ));
+        let error = validate_upload_batch(&files).expect_err("超过文件数上限应失败");
+        assert!(error.message.contains("1024"));
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_batch_before_pending_write_and_retry() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-upload-limit-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Arc::new(ConfigStore::new_unsecured_for_test(root.clone()));
+        store.ensure_directories().await.expect("directories");
+        let api =
+            Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+        let sink: ControlSink = Arc::new(|_| {});
+        let sync = TaskSync::new(store.clone(), api, sink);
+        let binding = test_binding("space-1");
+        let files = batch_file_values(TASK_SNAPSHOT_MAX_FILES + 1);
+
+        let write_error = sync
+            .upload_persisted_batch(&binding, &Cursor::default(), files.clone())
+            .await
+            .expect_err("新批次应在写入 pending 前拒绝");
+        assert!(write_error.message.contains("1024"));
+        assert!(!store.paths.task_cursors_file.exists(), "超限新批次不得留下 pending");
+
+        let retry_error = sync
+            .retry_pending_batch(
+                &binding,
+                PendingBatch {
+                    batch_id: "oversized-batch".to_string(),
+                    client_sequence: 1,
+                    files,
+                },
+            )
+            .await
+            .expect_err("超限 pending 应在重试前拒绝");
+        assert!(retry_error.message.contains("1024"));
+        assert!(!store.paths.task_cursors_file.exists(), "超限 pending 重试不得产生新写入");
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[test]
+    fn validates_upload_batch_byte_boundary() {
+        let full_file = "x".repeat(TASK_SNAPSHOT_MAX_FILE_BYTES);
+        let file_count = TASK_SNAPSHOT_MAX_BATCH_BYTES / TASK_SNAPSHOT_MAX_FILE_BYTES;
+        let mut files: Vec<Value> = (0..file_count)
+            .map(|index| {
+                snapshot_file_value(
+                    format!(".trellis/tasks/a/file-{index}.md"),
+                    full_file.clone(),
+                )
+            })
+            .collect();
+        assert!(validate_upload_batch(&files).is_ok());
+
+        files.push(snapshot_file_value(".trellis/tasks/a/extra.md", "x"));
+        let error = validate_upload_batch(&files).expect_err("超过字节上限应失败");
+        assert!(error.message.contains("64 MiB"));
+    }
+
+    #[test]
+    fn group_rejects_duplicate_snapshot_paths() {
+        let files = vec![
+            snapshot_file_value(".trellis/tasks/a/prd.md", "one"),
+            snapshot_file_value(".trellis/tasks/a/prd.md", "two"),
+        ];
+
+        let error = group_task_snapshot_files(&files).expect_err("重复路径应失败");
+        assert!(error.message.contains("不能重复"));
+    }
+
+    #[test]
+    fn groups_active_and_archived_task_directories_separately() {
+        let files = vec![
+            snapshot_file_value(".trellis/tasks/a/prd.md", ""),
+            snapshot_file_value(".trellis/tasks/archive/2026-11/b/prd.md", ""),
+        ];
+
+        let groups = group_task_snapshot_files(&files).expect("活动与归档目录应分别分组");
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups.iter().filter(|group| group.archived).count(), 1);
+        assert_eq!(groups.iter().filter(|group| !group.archived).count(), 1);
     }
 
     #[test]
