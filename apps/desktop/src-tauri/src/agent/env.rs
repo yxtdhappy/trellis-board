@@ -33,7 +33,6 @@ pub const CODE_TRELLIS_INSTALL_FAILED: &str = "TRELLIS_INSTALL_FAILED";
 const NODE_ZIP_ROOT: &str = "node-v24.22.3-win-x64/";
 const MAX_ZIP_BYTES: u64 = 134_217_728;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
-const NODE_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const NODE_VALIDATE_TIMEOUT: Duration = Duration::from_secs(10);
 const NPM_INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
 const ERROR_TAIL_CHARS: usize = 2048;
@@ -243,6 +242,72 @@ fn path_dirs() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+fn env_dir(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key).map(PathBuf::from)
+}
+
+fn subdirs(root: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(root)
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// PATH 之外还要找目录：客户端由资源管理器启动时，`PATH` 是机器/用户环境变量，
+/// 不含 fnm、nvm、Volta 这类按 shell 注入的目录，但它们的前缀目录就在用户目录里。
+fn fallback_dirs_in(
+    app_data: Option<&Path>,
+    local_app_data: Option<&Path>,
+    program_files: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(app_data) = app_data {
+        let fnm = app_data.join("fnm");
+        // fnm：`aliases/<别名>` 是该版本的前缀目录（node.exe + node_modules 都在里面），
+        // `node-versions/<版本>/installation` 是未设别名时的兜底。
+        dirs.extend(subdirs(&fnm.join("aliases")));
+        dirs.extend(
+            subdirs(&fnm.join("node-versions"))
+                .into_iter()
+                .map(|dir| dir.join("installation")),
+        );
+        dirs.push(app_data.join("nvm"));
+    }
+    if let Some(local_app_data) = local_app_data {
+        dirs.push(local_app_data.join("Programs").join("nodejs"));
+        dirs.push(local_app_data.join("Volta").join("bin"));
+    }
+    if let Some(program_files) = program_files {
+        dirs.push(program_files.join("nodejs"));
+    }
+    dirs
+}
+
+fn fallback_dirs() -> Vec<PathBuf> {
+    fallback_dirs_in(
+        env_dir("APPDATA").as_deref(),
+        env_dir("LOCALAPPDATA").as_deref(),
+        env_dir("ProgramFiles").as_deref(),
+    )
+}
+
+fn probe_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = path_dirs();
+    dirs.extend(fallback_dirs());
+    let mut unique: Vec<PathBuf> = Vec::new();
+    for dir in dirs {
+        if !dir.as_os_str().is_empty() && !unique.contains(&dir) {
+            unique.push(dir);
+        }
+    }
+    unique
+}
+
 pub fn find_in_path(dirs: &[PathBuf], executable: &str) -> Option<PathBuf> {
     for dir in dirs {
         if dir.as_os_str().is_empty() {
@@ -292,30 +357,18 @@ async fn node_version_at(executable: &Path) -> Option<String> {
     parse_version(&output.stdout)
 }
 
-async fn npm_root_global() -> Option<PathBuf> {
-    let npm = find_in_path(&path_dirs(), "npm.cmd")?;
-    let line = format!("\"{}\" root -g", npm.display());
-    let output = run_process(
-        &shell_exe(),
-        &["/C", line.as_str()],
-        &ProcessOptions {
-            timeout: Some(NODE_PROBE_TIMEOUT),
-            max_output_bytes: 65_536,
-            ..Default::default()
-        },
-    )
-    .await
-    .ok()?;
-    if !output.success() {
-        return None;
+/// 前缀目录里的全局 Trellis CLI：优先全局包，其次 `trellis.cmd` 里的真实路径。
+fn trellis_cli_in(dir: &Path) -> Option<(PathBuf, &'static str)> {
+    let cli = dir
+        .join("node_modules")
+        .join("@mindfoldhq")
+        .join("trellis")
+        .join("bin")
+        .join("trellis.js");
+    if cli.is_file() {
+        return Some((cli, "global"));
     }
-    let line = output
-        .stdout
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())?;
-    let root = PathBuf::from(line);
-    root.is_dir().then_some(root)
+    trellis_from_cmd(&dir.join("trellis.cmd")).map(|cli| (cli, "path"))
 }
 
 fn trellis_from_cmd(cmd: &Path) -> Option<PathBuf> {
@@ -353,7 +406,7 @@ pub async fn check<C: ClientConfigLike>(
     config: &mut C,
 ) -> AgentResult<RuntimeStatus> {
     let node = resolve_node(config).await;
-    let trellis = resolve_trellis(data_dir, config, node.ok).await;
+    let trellis = resolve_trellis(data_dir, config).await;
     let state = if node.ok && trellis.ok {
         RuntimeState::Ready
     } else {
@@ -405,30 +458,45 @@ async fn resolve_node<C: ClientConfigLike>(config: &mut C) -> NodeStatus {
         found_version: None,
     };
 
-    let Some(executable) = find_in_path(&path_dirs(), "node.exe") else {
-        return missing;
-    };
-    let Some(version) = node_version_at(&executable).await else {
-        return missing;
-    };
-    if !is_version_at_least(&version, NODE_MIN_VERSION) {
+    // 逐个候选目录试 `node --version`：有的候选是旧版本或缺依赖，只在全部不合格时
+    // 用第一个找到的报「版本过低」。
+    let mut outdated: Option<NodeStatus> = None;
+    for dir in probe_dirs() {
+        let executable = dir.join("node.exe");
+        if !executable.is_file() {
+            continue;
+        }
+        let Some(version) = node_version_at(&executable).await else {
+            continue;
+        };
+        if !is_version_at_least(&version, NODE_MIN_VERSION) {
+            outdated.get_or_insert(NodeStatus {
+                ok: false,
+                version: None,
+                path: Some(executable.display().to_string()),
+                source: Some("path".to_string()),
+                min_version: NODE_MIN_VERSION.to_string(),
+                found_version: Some(version),
+            });
+            continue;
+        }
+        // 探测到的路径同时写回 flag：Agent 侧只认 flag，不重新探测。
+        config.set_node_runtime(Some(NodeRuntimeFlag {
+            version: version.clone(),
+            path: executable.display().to_string(),
+            source: "path".to_string(),
+            installed_at: protocol::now_iso8601(),
+        }));
         return NodeStatus {
-            ok: false,
-            version: None,
+            ok: true,
+            version: Some(version),
             path: Some(executable.display().to_string()),
             source: Some("path".to_string()),
             min_version: NODE_MIN_VERSION.to_string(),
-            found_version: Some(version),
+            found_version: None,
         };
     }
-    NodeStatus {
-        ok: true,
-        version: Some(version),
-        path: Some(executable.display().to_string()),
-        source: Some("path".to_string()),
-        min_version: NODE_MIN_VERSION.to_string(),
-        found_version: None,
-    }
+    outdated.unwrap_or(missing)
 }
 
 fn trellis_status(cli_path: &Path, source: &str) -> TrellisStatus {
@@ -447,11 +515,7 @@ fn trellis_status(cli_path: &Path, source: &str) -> TrellisStatus {
     }
 }
 
-async fn resolve_trellis<C: ClientConfigLike>(
-    data_dir: &Path,
-    config: &mut C,
-    node_ok: bool,
-) -> TrellisStatus {
+async fn resolve_trellis<C: ClientConfigLike>(data_dir: &Path, config: &mut C) -> TrellisStatus {
     if let Some(flag) = config.trellis_runtime() {
         let cli = PathBuf::from(&flag.cli_path);
         if cli.is_file() {
@@ -470,34 +534,35 @@ async fn resolve_trellis<C: ClientConfigLike>(
         return trellis_status(&client_prefix, "client-prefix");
     }
 
-    if node_ok {
-        if let Some(root) = npm_root_global().await {
-            let cli = root
-                .join("node_modules")
-                .join("@mindfoldhq")
-                .join("trellis")
-                .join("bin")
-                .join("trellis.js");
-            if cli.is_file() {
-                return trellis_status(&cli, "global");
-            }
+    // 全局包就挂在 node.exe 同级（`npm root -g` 的前缀目录），逐个候选目录看一遍；
+    // 不跑 `npm root -g`：npm.cmd 内部的 `node` 同样依赖 PATH，解析不出来时只会更糟。
+    let mut outdated: Option<TrellisStatus> = None;
+    for dir in probe_dirs() {
+        let Some((cli, source)) = trellis_cli_in(&dir) else {
+            continue;
+        };
+        let status = trellis_status(&cli, source);
+        if !status.ok {
+            outdated.get_or_insert(status);
+            continue;
         }
+        config.set_trellis_runtime(Some(TrellisRuntimeFlag {
+            version: status.version.clone().unwrap_or_default(),
+            cli_path: cli.display().to_string(),
+            source: source.to_string(),
+            installed_at: protocol::now_iso8601(),
+        }));
+        return status;
     }
 
-    if let Some(cmd) = find_in_path(&path_dirs(), "trellis.cmd") {
-        if let Some(cli) = trellis_from_cmd(&cmd) {
-            return trellis_status(&cli, "path");
-        }
-    }
-
-    TrellisStatus {
+    outdated.unwrap_or(TrellisStatus {
         ok: false,
         version: None,
         cli_path: None,
         source: None,
         required_version: TRELLIS_VERSION.to_string(),
         found_version: None,
-    }
+    })
 }
 
 // ---------------------------------------------------------------- install
@@ -1003,6 +1068,39 @@ mod tests {
         assert_eq!(find_in_path(&dirs, "npm.cmd"), None);
         assert_eq!(find_in_path(&[], "node.exe"), None);
         let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn fallback_dirs_cover_version_manager_prefixes() {
+        let app_data = temp_dir("fallback");
+        let alias = app_data.join("fnm/aliases/default");
+        std::fs::create_dir_all(&alias).expect("alias dir");
+        let version = app_data.join("fnm/node-versions/v24.12.0/installation");
+        std::fs::create_dir_all(&version).expect("version dir");
+        let dirs = fallback_dirs_in(
+            Some(&app_data),
+            Some(Path::new("C:\\local")),
+            Some(Path::new("C:\\pf")),
+        );
+        assert!(dirs.contains(&alias));
+        assert!(dirs.contains(&version));
+        assert!(dirs.contains(&PathBuf::from("C:\\local\\Programs\\nodejs")));
+        assert!(dirs.contains(&PathBuf::from("C:\\pf\\nodejs")));
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[test]
+    fn finds_global_trellis_cli_in_prefix_dir() {
+        let prefix = temp_dir("prefix");
+        let package = prefix.join("node_modules/@mindfoldhq/trellis");
+        std::fs::create_dir_all(package.join("bin")).expect("bin dir");
+        std::fs::write(package.join("package.json"), r#"{"version":"0.6.17"}"#).expect("pkg");
+        std::fs::write(package.join("bin/trellis.js"), b"").expect("cli");
+        let (cli, source) = trellis_cli_in(&prefix).expect("cli in prefix");
+        assert_eq!(source, "global");
+        assert_eq!(read_package_version(&cli).as_deref(), Some("0.6.17"));
+        assert!(trellis_cli_in(&prefix.join("missing")).is_none());
+        let _ = std::fs::remove_dir_all(&prefix);
     }
 
     #[test]

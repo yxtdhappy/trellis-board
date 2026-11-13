@@ -53,9 +53,9 @@ POST /api/agent/enroll-desktop
 
 ```text
 runtime_status
-  -> Node.js：标志 -> PATH -> 缺失则需安装
-  -> Trellis CLI：标志 -> 客户端私有前缀 -> npm root -g -> PATH
-  -> 全部满足：显示登录页
+  -> Node.js：标志 -> PATH 与版本管理器（fnm/nvm/Volta）前缀目录 -> 缺失则需安装
+  -> Trellis CLI：标志 -> 客户端私有前缀 -> 上述前缀目录的全局包 -> 缺失则需安装
+  -> 探测到即写回标志位 -> 全部满足：显示登录页
   -> 缺失：runtime_install
        node:download  从 npmmirror 下载 node-v24.22.3-win-x64.zip
        node:verify    sha256 校验
