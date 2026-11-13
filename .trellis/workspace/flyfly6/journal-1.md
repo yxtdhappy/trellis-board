@@ -385,3 +385,43 @@ merge origin/main 后把分支隔离、游标串行化、deferred 补同步、�
 ### Next Steps
 
 - 工作区仍有未跟踪的构建产物 desktop/（src-tauri target/gen，约 1.9G）与 public/（web 构建输出），需要时清理并补 .gitignore 规则
+
+
+## Session 12: 客户端只产出绿色包：移除 NSIS 安装包构建
+<!-- trellis-session: v=2 fp=36c462c9c6f8f2e7 -->
+
+**Date**: 2026-11-13
+**Task**: 客户端只产出绿色包：移除 NSIS 安装包构建
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+tauri 构建关闭 bundling，只产出 trellis-board-client.exe 与绿色 ZIP；删除 hooks.nsh/install.ps1/uninstall.ps1；CI 去掉 NSIS 工具缓存、setup.exe 断言与上传、Installer smoke；同步 README 与 desktop spec；顺带修掉两处 clippy -D warnings。
+
+### Main Changes
+
+- tauri.conf.json：bundle -> {active:false, icon:[png,ico]}，删 targets/webviewInstallMode/nsis
+- 删除 apps/desktop/src-tauri/windows/hooks.nsh、apps/desktop/install.ps1、apps/desktop/uninstall.ps1
+- windows.yml：删 Prepare NSIS tool cache、Installer smoke test、setup.exe 检查与上传，新增 bundle/nsis 反向守卫
+- README/spec §8：只分发绿色 ZIP，构建命令改为 build:desktop + cargo tauri build + desktop:package，安装与卸载改为升级与卸载；修正失效的 cargo test --lib
+- store.rs save_config 标 #[cfg(test)]，task_sync.rs 换行哈希改 b"\n"
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b3feff7` | feat(desktop): only produce the portable client build |
+
+### Testing
+
+- [OK] cargo tauri build rc 0，target/release 无 bundle/ 目录；desktop:package 产出 zip 与 sha256 校验通过
+- [OK] cargo clippy --all-targets -- -D warnings rc 0；cargo test 99 passed；npm test 425 passed / 2 skipped
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- cargo fmt --check 仍有 17 处历史格式差异（7 个文件，属他人已提交代码），需要时单独做一次纯格式化提交

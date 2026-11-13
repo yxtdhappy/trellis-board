@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
+- **Total Sessions**: 12
 - **Last Active**: 2026-11-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~387 | Active |
+| `journal-1.md` | ~427 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-11-13 | 客户端只产出绿色包：移除 NSIS 安装包构建 | `b3feff7` | `main` |
 | 11 | 2026-11-13 | 归档父任务：客户端与 web 视觉统一 | - | `main` |
 | 10 | 2026-11-13 | 合并 Rust 单文件客户端分支并迁移快速初始化编码 Agent | `19949c7`, `561eba1` | `main` |
 | 9 | 2026-11-13 | Monorepo 结构迁移（npm workspaces） | `20f3f25` | `codex/rust-desktop-agent-single-exe` |
