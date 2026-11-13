@@ -58,14 +58,14 @@
 
 ## Acceptance Criteria
 
-- [ ] 服务端对同一 taskSpace 连续通知 revision `10, 10, 9, 11` 时，在线 Agent 只收到 revision 10 和 11 两个 `task.changed`。
-- [ ] 客户端在首次同步完成、无 pending upload 且当前 cursor revision 为 10 时，收到 revision 10 或 9 不产生任务空间快照请求、不扫描 `.trellis/tasks`、不修改 `live-cursors.json`。
-- [ ] 同一客户端收到 revision 11 后完成一次正常拉取；重复 revision 11 不再次拉取。
-- [ ] cursor pending upload 存在时，即使事件 revision 不新，也仍执行既有 pending retry。
-- [ ] `write_cursor` 收到与当前状态完全相同的 patch 时不写文件；任一状态字段实际变化时正常写入。
+- [x] 服务端对同一 taskSpace 连续通知 revision `10, 10, 9, 11` 时，在线 Agent 只收到 revision 10 和 11 两个 `task.changed`。
+- [x] 客户端在首次同步完成、无 pending upload 且当前 cursor revision 为 10 时，收到 revision 10 或 9 不产生任务空间快照请求、不扫描 `.trellis/tasks`、不修改 `live-cursors.json`。
+- [x] 同一客户端收到 revision 11 后完成一次正常拉取；重复 revision 11 不再次拉取。
+- [x] cursor pending upload 存在时，即使事件 revision 不新，也仍执行既有 pending retry。
+- [x] `write_cursor` 收到与当前状态完全相同的 patch 时不写文件；任一状态字段实际变化时正常写入。
 - [ ] 首次同步、SSE 重连补偿、真实新 revision、分支不一致、冲突和本地 watcher 上传测试继续通过。
 - [ ] 在相同重复事件压力下，修复后重复 revision 对应的任务空间 GET、全量本地扫描和游标写入均为 0；真实新 revision 仍各执行一次。
-- [ ] 最终在 0.3 Rust Agent 上完成至少 10 分钟真实运行验证，确认无 revision 变化期间不再出现约 0.8 次/秒的游标重写。
+- [x] 最终在 0.3 Rust Agent 上完成至少 10 分钟真实运行验证，确认无 revision 变化期间不再出现约 0.8 次/秒的游标重写。
 
 ## Out Of Scope
 

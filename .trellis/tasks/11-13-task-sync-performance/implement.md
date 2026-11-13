@@ -23,7 +23,7 @@
   - 仅实际字段变化时更新 `updatedAt` 并写文件。
   - 增加 identical patch 和每类字段变化测试。
 - [ ] 6. 回归测试
-  - [x] 运行 `npm test`：428 通过、1 跳过、0 失败。
+  - [x] 运行 `npm test`：最终复核 429 通过、1 跳过、0 失败；并行运行中的两个非本任务失败项单独复跑也已通过。
   - [ ] 运行 `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`：当前机器没有 `cargo` 工具链。
   - 确认首次同步、SSE 重连、pending retry、冲突、分支不一致、真实新 revision 测试通过。
 - [ ] 7. 最终编译
@@ -32,10 +32,10 @@
     - `npm run desktop:build`
   - 不新增 lint、类型检查或无关构建步骤。
 - [ ] 8. 0.3 Rust Agent 性能验证
-  - 在可控重复事件窗口采样 10 分钟。
-  - 记录 Agent CPU、读/写 MB/s、任务空间 GET、`live-cursors.json` mtime 修改次数。
-  - 验证修复后相同 revision 不产生请求、全量扫描或游标写入。
-  - 发送真实新 revision，验证一次成功同步和本地文件更新。
+  - [x] 在无 revision 变化窗口采样 10 分钟。
+  - [x] 记录 Agent CPU、读/写 MB/s、任务空间 GET、`live-cursors.json` mtime 修改次数。
+  - [ ] 持续构造同一 revision 事件压力，验证重复 revision 不产生请求、全量扫描或游标写入。
+  - [x] 发送真实新 revision，验证一次成功同步和本地文件更新。
 - [ ] 9. 质量检查与收尾
   - 运行 Trellis check，更新必要的同步契约文档。
   - 检查工作区差异，只提交本任务文件。

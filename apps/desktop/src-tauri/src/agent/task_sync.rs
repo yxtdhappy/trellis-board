@@ -1222,12 +1222,8 @@ impl TaskSync {
         bindings
     }
 
-    async fn read_cursor_state(&self) -> Value {
-        let mut guard = self.cursor_state.lock().await;
-        if let Some(state) = guard.as_ref() {
-            return state.clone();
-        }
-        let state = tokio::fs::read_to_string(&self.store.paths.task_cursors_file)
+    async fn load_cursor_state(&self) -> Value {
+        tokio::fs::read_to_string(&self.store.paths.task_cursors_file)
             .await
             .ok()
             .and_then(|text| serde_json::from_str::<Value>(&text).ok())
@@ -1235,9 +1231,38 @@ impl TaskSync {
                 value.get("version").and_then(Value::as_u64) == Some(CURSOR_VERSION)
                     && value.get("taskSpaces").is_some_and(Value::is_object)
             })
-            .unwrap_or_else(|| json!({ "version": CURSOR_VERSION, "taskSpaces": {} }));
+            .unwrap_or_else(|| json!({ "version": CURSOR_VERSION, "taskSpaces": {} }))
+    }
+
+    async fn read_cursor_state(&self) -> Value {
+        let mut guard = self.cursor_state.lock().await;
+        if let Some(state) = guard.as_ref() {
+            return state.clone();
+        }
+        let state = self.load_cursor_state().await;
         *guard = Some(state.clone());
         state
+    }
+
+    async fn read_cursor_event_state(&self, task_space_id: &str) -> (u64, bool) {
+        let mut guard = self.cursor_state.lock().await;
+        if guard.is_none() {
+            let state = self.load_cursor_state().await;
+            *guard = Some(state);
+        }
+        let entry = guard
+            .as_ref()
+            .and_then(|state| state.get("taskSpaces"))
+            .and_then(|spaces| spaces.get(task_space_id));
+        let revision = entry
+            .and_then(|entry| entry.get("revision"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let has_pending = entry
+            .and_then(|entry| entry.get("pending"))
+            .and_then(parse_pending_batch)
+            .is_some();
+        (revision, has_pending)
     }
 
     pub async fn read_cursor(&self, task_space_id: &str) -> Cursor {
@@ -1962,18 +1987,19 @@ impl TaskSync {
         event_revision: Option<u64>,
     ) -> AgentResult<Value> {
         if let Ok(binding) = self.binding(task_space_id).await {
-            let cursor = self.read_cursor(task_space_id).await;
+            let (cursor_revision, has_pending_upload) =
+                self.read_cursor_event_state(task_space_id).await;
             if !should_pull_for_event(
                 binding.initial_sync_completed,
                 binding.initial_review_pending,
-                cursor.revision,
+                cursor_revision,
                 event_revision,
-                cursor.pending.is_some(),
+                has_pending_upload,
             ) {
                 return Ok(json!({
                     "skipped": true,
                     "reason": "REVISION_CURRENT",
-                    "revision": cursor.revision,
+                    "revision": cursor_revision,
                 }));
             }
         }
