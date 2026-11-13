@@ -2,3 +2,4 @@
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "桌面 Board、Tauri 命令、权限和本地登录页属于跨层变更，需保持调用边界与兜底契约一致。"}
 {"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有 ensure_board_caller、clear_desktop_session 和 Web 退出回退，避免新增重复清理逻辑。"}
 {"file": ".trellis/tasks/11-13-desktop-manual-logout-login/research/desktop-logout-path.md", "reason": "实现前必须理解现有退出竞态证据、日志限制和推荐方案。"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "约束桌面退出命令的权限、会话清理、密码清除和本地 URL 捕获。"}

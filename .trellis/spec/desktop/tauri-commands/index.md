@@ -1,0 +1,69 @@
+# 桌面 Tauri 命令与导航
+
+## Scenario: Board 手动退出并返回本地登录页
+
+### 1. Scope / Trigger
+
+- 新增或修改远程 Board 可调用的 Tauri command、capability、窗口导航或本地登录页跳转时适用。
+- 本场景覆盖 `desktop_logout`、会话清理、保存密码清除和 `local_url` 生命周期。
+
+### 2. Signatures
+
+- Tauri command：`desktop_logout() -> Result<(), String>`
+- 权限：`allow-desktop-logout`，命令白名单为 `commands.allow = ["desktop_logout"]`
+- 远程调用方：仅 `board-local-association` capability 的当前 Board origin。
+- 本地配置：`ClientConfig { schema_version, server_url, username, password, ... }`
+
+### 3. Contracts
+
+- `desktop_logout` 不接受 server URL 或 token 参数，只读取 `DesktopAuthState` 中的当前 Board 和会话令牌。
+- 命令必须先执行 `ensure_board_caller`，当前窗口 origin 必须与 `board_url` 相同。
+- 退出时停止 Agent、删除当前 Board Cookie、清空内存中的 Board URL 和 token、清除 `ClientConfig.password`、保留 `server_url` 与 `username`，并导航到本地登录页。
+- 本地登录页 URL 必须在 `WebviewWindowBuilder::on_page_load` 的 `PageLoadEvent::Started` 事件中，从 `navigation::is_local_page(payload.url())` 为真的页面捕获。
+- 不得在 `builder.build()` 后立即读取 `window.url()`；此时页面可能尚未加载并返回 `about:blank`。
+- 服务端会话撤销为尽力执行；本地认证状态和保存密码必须先清理。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| 调用窗口不是当前 Board origin | 命令返回错误，不清理会话 |
+| `about:`、远程 Board 或外链页面触发 `on_page_load` | 不覆盖 `local_url` |
+| 配置中没有密码 | 正常返回，不重复写配置 |
+| 密码写回失败 | 记录告警，但继续清理 Cookie、内存会话并打开本地登录页 |
+| 服务端 logout 失败 | 忽略服务端错误；本地会话已经清除 |
+
+### 5. Good/Base/Bad Cases
+
+- Good：用户在桌面 Board 点击退出，窗口打开 `http://tauri.localhost/` 或等价的 `tauri://localhost/` 登录页，密码为空且不自动登录。
+- Base：冷启动已有完整凭据且用户未主动退出时，登录页仍可自动登录。
+- Bad：`local_url` 保存为 `about:blank`；点击退出后窗口空白，主进程仍在运行。
+
+### 6. Tests Required
+
+- 静态契约测试：权限只在远程 Board capability 中，命令已注册，退出代码清除密码，旧 `window.url()` 捕获不存在。
+- Rust 单元/编译测试：`PageLoadEvent` 与 `on_page_load` 闭包通过编译。
+- Windows E2E：登录后退出必须到达本地登录页；密码为空；关闭重启仍不自动登录；修改服务器地址和用户名后可重新登录。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let window = builder.build()?;
+let local_url = window.url()?; // 页面尚未加载时可能是 about:blank
+```
+
+#### Correct
+
+```rust
+builder
+    .on_page_load(move |_, payload| {
+        if payload.event() == PageLoadEvent::Started
+            && navigation::is_local_page(payload.url())
+        {
+            *local_url.lock().unwrap() = Some(payload.url().clone());
+        }
+    })
+    .build()?;
+```
