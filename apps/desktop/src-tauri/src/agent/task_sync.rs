@@ -826,6 +826,15 @@ struct HeadTreeCache {
     validated_at: Instant,
 }
 
+struct OwnershipProjectionCache {
+    branch_name: String,
+    baseline_branch: Option<String>,
+    repo_path: String,
+    paused: Arc<HashSet<String>>,
+    local_dirs: Arc<HashSet<String>>,
+    validated_at: Instant,
+}
+
 pub struct TaskSync {
     store: Arc<ConfigStore>,
     api: Arc<ApiClient>,
@@ -837,6 +846,7 @@ pub struct TaskSync {
     cursor_write: Mutex<()>,
     last_baseline_files: Mutex<Vec<SnapshotFile>>,
     head_tree_cache: Mutex<HashMap<String, HeadTreeCache>>,
+    ownership_projection_cache: Mutex<HashMap<String, OwnershipProjectionCache>>,
     #[cfg(test)]
     head_tree_scans: std::sync::atomic::AtomicUsize,
     baseline_owned: Mutex<HashSet<String>>,
@@ -856,6 +866,7 @@ impl TaskSync {
             cursor_write: Mutex::new(()),
             last_baseline_files: Mutex::new(Vec::new()),
             head_tree_cache: Mutex::new(HashMap::new()),
+            ownership_projection_cache: Mutex::new(HashMap::new()),
             #[cfg(test)]
             head_tree_scans: std::sync::atomic::AtomicUsize::new(0),
             baseline_owned: Mutex::new(HashSet::new()),
@@ -866,6 +877,7 @@ impl TaskSync {
     pub async fn set_bindings(&self, bindings: Vec<AgentBinding>) {
         *self.bindings.lock().await = approved_bindings(bindings);
         self.head_tree_cache.lock().await.clear();
+        self.ownership_projection_cache.lock().await.clear();
         self.baseline_owned.lock().await.clear();
     }
 
@@ -907,6 +919,7 @@ impl TaskSync {
             return;
         }
         self.head_tree_cache.lock().await.clear();
+        self.ownership_projection_cache.lock().await.clear();
         self.baseline_owned.lock().await.clear();
         for task_space_id in pull_task_space_ids {
             self.pull_and_report(&task_space_id).await;
@@ -1060,6 +1073,48 @@ impl TaskSync {
             }
         }
         self.head_tree_paths(binding).await
+    }
+
+    /// ProjectRail 轮询只复用展示投影；真正上传前仍由同步门禁重新校验。
+    pub(crate) async fn ownership_projection(
+        &self,
+        binding: &AgentBinding,
+    ) -> AgentResult<(Arc<HashSet<String>>, Arc<HashSet<String>>)> {
+        {
+            let cache = self.ownership_projection_cache.lock().await;
+            if let Some(entry) = cache.get(&binding.local_id) {
+                if entry.branch_name == binding.branch_name
+                    && entry.baseline_branch == binding.baseline_branch
+                    && entry.repo_path == binding.repo_path
+                    && entry.validated_at.elapsed() < OWNERSHIP_PROJECTION_CACHE_TTL
+                {
+                    return Ok((entry.paused.clone(), entry.local_dirs.clone()));
+                }
+            }
+        }
+
+        let files =
+            read_local_task_snapshot_files(Path::new(&binding.repo_path), None).await?;
+        let groups = group_task_snapshot_files(&files)?;
+        let paused = Arc::new(self.ownership_paused_task_dirs(binding, &groups).await);
+        let local_dirs = Arc::new(
+            groups
+                .iter()
+                .map(|group| group.task_dir.clone())
+                .collect::<HashSet<_>>(),
+        );
+        self.ownership_projection_cache.lock().await.insert(
+            binding.local_id.clone(),
+            OwnershipProjectionCache {
+                branch_name: binding.branch_name.clone(),
+                baseline_branch: binding.baseline_branch.clone(),
+                repo_path: binding.repo_path.clone(),
+                paused: paused.clone(),
+                local_dirs: local_dirs.clone(),
+                validated_at: Instant::now(),
+            },
+        );
+        Ok((paused, local_dirs))
     }
 
     /// 本地关联展示与同步门禁共用同一套基线错分支判定和 HEAD tree 缓存。
@@ -5148,6 +5203,78 @@ mod tests {
             .ownership_paused_task_dirs(&binding, &groups)
             .await;
         assert_eq!(stale_paused.len(), 18);
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn ownership_projection_caches_local_task_scan() {
+        let (root, store, sync, mut binding) =
+            test_task_sync_fixture("trellis-ownership-projection-cache").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        write_task_json(
+            repo,
+            ".trellis/tasks/merged-task",
+            "merged-task",
+            "dev1",
+        )
+        .await;
+        write_task_json(
+            repo,
+            ".trellis/tasks/active-probe",
+            "active-probe",
+            "dev1",
+        )
+        .await;
+        run_git(repo, &["add", ".trellis/tasks/merged-task"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "merge task"]);
+
+        binding.baseline_branch = Some("main".to_string());
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+
+        let (paused, local_dirs) = sync
+            .ownership_projection(&binding)
+            .await
+            .expect("initial projection");
+        assert_eq!(
+            paused.iter().cloned().collect::<Vec<_>>(),
+            vec![".trellis/tasks/active-probe".to_string()]
+        );
+        assert_eq!(local_dirs.len(), 2);
+
+        write_task_json(repo, ".trellis/tasks/new-probe", "new-probe", "dev1").await;
+        let (cached_paused, cached_dirs) = sync
+            .ownership_projection(&binding)
+            .await
+            .expect("cached projection");
+        assert_eq!(cached_paused.len(), 1);
+        assert_eq!(cached_dirs.len(), 2);
+
+        {
+            let mut cache = sync.ownership_projection_cache.lock().await;
+            let entry = cache
+                .get_mut(&binding.local_id)
+                .expect("cached ownership projection");
+            entry.validated_at = Instant::now() - OWNERSHIP_PROJECTION_CACHE_TTL;
+        }
+        let (refreshed_paused, refreshed_dirs) = sync
+            .ownership_projection(&binding)
+            .await
+            .expect("refreshed projection");
+        let mut refreshed = refreshed_paused.iter().cloned().collect::<Vec<_>>();
+        refreshed.sort();
+        assert_eq!(
+            refreshed,
+            vec![
+                ".trellis/tasks/active-probe".to_string(),
+                ".trellis/tasks/new-probe".to_string()
+            ]
+        );
+        assert_eq!(refreshed_dirs.len(), 3);
 
         let _ = tokio::fs::remove_dir_all(root).await;
     }

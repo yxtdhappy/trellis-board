@@ -888,36 +888,41 @@ async fn local_ownership_dirs(
     cursors: &Value,
     task_sync: Option<&TaskSync>,
 ) -> AgentResult<(Vec<String>, Vec<String>)> {
-    let Ok(files) =
-        task_sync::read_local_task_snapshot_files(Path::new(&binding.repo_path), None).await
-    else {
-        return Ok((Vec::new(), Vec::new()));
+    let (paused, local_dirs) = match task_sync {
+        Some(task_sync) => match task_sync.ownership_projection(binding).await {
+            Ok(projection) => projection,
+            Err(_) => return Ok((Vec::new(), Vec::new())),
+        },
+        None => {
+            let Ok(files) =
+                task_sync::read_local_task_snapshot_files(Path::new(&binding.repo_path), None).await
+            else {
+                return Ok((Vec::new(), Vec::new()));
+            };
+            let groups = match task_sync::group_task_snapshot_files(&files) {
+                Ok(groups) => groups,
+                Err(_) => return Ok((Vec::new(), Vec::new())),
+            };
+            let paused = groups
+                .iter()
+                .filter(|group| {
+                    group
+                        .task_branch
+                        .as_deref()
+                        .is_some_and(|branch| branch != binding.branch_name)
+                })
+                .map(|group| group.task_dir.clone())
+                .collect::<std::collections::HashSet<_>>();
+            let local_dirs = groups
+                .iter()
+                .map(|group| group.task_dir.clone())
+                .collect::<std::collections::HashSet<_>>();
+            (std::sync::Arc::new(paused), std::sync::Arc::new(local_dirs))
+        }
     };
-    let groups = match task_sync::group_task_snapshot_files(&files) {
-        Ok(groups) => groups,
-        Err(_) => return Ok((Vec::new(), Vec::new())),
-    };
-    let mut paused: Vec<String> = match task_sync {
-        Some(task_sync) => task_sync
-            .ownership_paused_task_dirs(binding, &groups)
-            .await
-            .into_iter()
-            .collect(),
-        None => groups
-            .iter()
-            .filter(|group| {
-                group
-                    .task_branch
-                    .as_deref()
-                    .is_some_and(|branch| branch != binding.branch_name)
-            })
-            .map(|group| group.task_dir.clone())
-            .collect(),
-    };
+    let mut paused: Vec<String> = paused.iter().cloned().collect();
     paused.sort();
     let paused_set: std::collections::HashSet<String> = paused.iter().cloned().collect();
-    let local_dirs: std::collections::HashSet<String> =
-        groups.iter().map(|group| group.task_dir.clone()).collect();
     let mut pending: Vec<String> = cursors
         .get("taskSpaces")
         .and_then(|spaces| spaces.get(&binding.task_space_id))
