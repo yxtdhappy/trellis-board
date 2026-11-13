@@ -1022,3 +1022,27 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 44: Team 静态资源目录修复复核
+<!-- trellis-session: v=2 fp=ba444c3f889f25dc -->
+
+**Date**: 2026-11-13
+**Task**: Team 静态资源目录修复复核
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+对齐 Team 默认静态目录到 apps/server/public；补强默认与显式目录、页面入口及 404 契约测试；更新后端规格并归档任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2b5037c` | fix(server): serve Team assets from build output |
+| `f4e1bb2` | test(server): strengthen Team static asset coverage |
+
+### Status
+
+[OK] **Completed**
