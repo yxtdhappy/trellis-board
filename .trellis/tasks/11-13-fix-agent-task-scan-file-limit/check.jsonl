@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/11-13-fix-agent-task-scan-file-limit/research/root-cause.md", "reason": "核对原始 1561 文件现场与误用批次上限的代码证据"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "检查快照上限、pending、分支守卫和冲突语义没有退化"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查全量扫描、实际上传批次和服务端限制的边界是否一致"}

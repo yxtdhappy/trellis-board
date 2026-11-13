@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/11-13-fix-agent-task-scan-file-limit/research/root-cause.md", "reason": "现场文件计数、失败调用链和修复边界证据"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "约束任务快照扫描、上传批次、游标和冲突语义"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 Agent 扫描、服务端上传和任务索引之间的契约边界"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有批次常量与分组函数，避免新增并行抽象"}
