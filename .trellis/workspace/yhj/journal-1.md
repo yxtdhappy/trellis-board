@@ -1093,3 +1093,28 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 47: 修复桌面客户端手动退出白屏与自动登录
+<!-- trellis-session: v=2 fp=8ba6533d54ed69d9 -->
+
+**Date**: 2026-11-13
+**Task**: 修复桌面客户端手动退出白屏与自动登录
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+新增 Board-only desktop_logout，退出时清除 Cookie、内存会话和保存密码；修复本地登录页 URL 被捕获为 about:blank，真实 Windows E2E 验证退出、重启不自动登录及修改服务器和账号后重新登录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8921ea2` | fix(desktop): prevent auto-login after manual logout |
+| `9f6484e` | fix(desktop): restore login page after manual logout |
+| `6d39d12` | docs(task): record desktop manual logout verification |
+
+### Status
+
+[OK] **Completed**
