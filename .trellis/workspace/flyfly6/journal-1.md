@@ -636,3 +636,26 @@ tag 推送不再直接构建，由 dispatch-main 作业用 gh api 触发 main �
 ### Next Steps
 
 - 真机打开实时同步控制窗口，确认 control.html 读取设备外观偏好
+
+
+## Session 19: workspace 包名迁移 + server .env(dotenv)
+<!-- trellis-session: v=2 fp=35ad9003df1368b6 -->
+
+**Date**: 2026-11-13
+**Task**: workspace 包名迁移 + server .env(dotenv)
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+跨包 import 统一为 @trellis-board/*，删除 check-boundaries 脚本与相关限制；新增 apps/server/env-file.js + env-bootstrap.js，入口第一条 import 加载仓库根 .env；.env.example、README、7 个测试；仓库根 .env 置 TRELLIS_BOARD_MODE=team，npm start 默认团队模式。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bc98c48` | refactor(workspace): import through workspace package names |
+
+### Status
+
+[OK] **Completed**
