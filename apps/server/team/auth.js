@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { parseCookie, stringifySetCookie } from 'cookie'
 import { withTransaction } from '../database.js'
 import { ERROR_CODES, teamError } from './errors.js'
 import { listActiveTeamMemberships, setUserTeams, validateTeamAssignments } from './teams.js'
@@ -574,45 +575,28 @@ export async function resetUserPassword(db, { userId, actorUserId, password }) {
 }
 
 export function parseCookieHeader(value) {
-  const cookies = new Map()
-  String(value || '')
-    .split(';')
-    .forEach((item) => {
-      const index = item.indexOf('=')
-      if (index < 0) return
-      const key = item.slice(0, index).trim()
-      const raw = item.slice(index + 1).trim()
-      if (!key) return
-      try {
-        cookies.set(key, decodeURIComponent(raw))
-      } catch {
-        // 单个损坏 Cookie 不影响其他项。
-      }
-    })
-  return cookies
+  return new Map(Object.entries(parseCookie(String(value || ''))))
 }
 
 export function sessionCookie(token, config) {
-  return [
-    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
-    'HttpOnly',
-    'SameSite=Strict',
-    'Path=/',
-    config.cookieSecure ? 'Secure' : null,
-  ]
-    .filter(Boolean)
-    .join('; ')
+  return stringifySetCookie({
+    name: SESSION_COOKIE,
+    value: token,
+    httpOnly: true,
+    sameSite: 'strict',
+    path: '/',
+    secure: Boolean(config.cookieSecure),
+  })
 }
 
 export function clearSessionCookie(config) {
-  return [
-    `${SESSION_COOKIE}=`,
-    'HttpOnly',
-    'SameSite=Strict',
-    'Path=/',
-    'Max-Age=0',
-    config.cookieSecure ? 'Secure' : null,
-  ]
-    .filter(Boolean)
-    .join('; ')
+  return stringifySetCookie({
+    name: SESSION_COOKIE,
+    value: '',
+    maxAge: 0,
+    httpOnly: true,
+    sameSite: 'strict',
+    path: '/',
+    secure: Boolean(config.cookieSecure),
+  })
 }

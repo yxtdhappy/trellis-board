@@ -78,6 +78,9 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
   返回 503，taskSpace、关联数据和删除审计均保持不变。成功后的查询 revision 和 Board SSE 必须刷新。
 - Agent 认证和团队 Session 是两条独立鉴权链。Agent 路由要求设备 Bearer，Web 路由要求 Session Cookie
   并对写请求执行同源 Origin 校验。
+- Cookie 头解析与 `Set-Cookie` 拼装只在 `apps/server/team/auth.js` 用 `cookie` 包实现
+  （`parseCookieHeader` 返回 `Map`，`sessionCookie`/`clearSessionCookie` 统一 `HttpOnly; SameSite=Strict; Path=/`
+  并在 HTTPS 时追加 `Secure`），不要另写 split/拼接。
 
 ## JSON 协议
 
