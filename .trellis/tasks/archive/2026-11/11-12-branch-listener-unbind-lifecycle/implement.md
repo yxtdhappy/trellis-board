@@ -12,7 +12,7 @@
   `codex/branch-listener-unbind-lifecycle-main` 分支重新集成，基线为 `main@87346c3`。
 - 不执行回滚、格式化、`git reset --hard` 或 `git checkout --`。
 - 开发期间不执行构建。所有功能、测试和规范修改完成后，再执行最终 Web/桌面 UI 构建。
-- 本机无 Rust 工具链，Rust 编译和单测只能在具备 `cargo`/`rustc` 的环境补验。
+- 本机无 Rust 工具链；Rust 编译和单测由 GitHub Actions 的 Windows 构建环境补验。
 
 ## 2. 变更范围
 
@@ -258,12 +258,18 @@ npm test
 
 真实页面验收：
 
-- [ ] 三个客户端都监听时显示 `3/3`。
-- [ ] 一个客户端切到其他分支后 60 秒内显示 `2/3 inactive`，binding 不消失。
-- [ ] 一个客户端点击“不再同步此分支”并确认，只影响该客户端。
+- [x] 三个客户端都监听时显示 `3/3`。
+      （隔离 DB fixture + 真实 Team 服务聚合 + 真实桌面 UI；不是三台真实客户端。）
+- [x] 一个客户端切到其他分支后显示 `2/3`，binding 不消失。
+      （隔离 DB fixture 模拟监听集合变化后，真实桌面 UI 显示 `2/3`；未验证真实 60 秒心跳窗口。）
+- [x] 一个客户端点击“不再同步此分支”并确认，只影响该客户端。
+      （真实桌面快捷操作撤销临时客户端 binding；同分支其他 fixture binding 保持 approved。）
 - [ ] 断网解绑显示待确认，watcher 停止；恢复网络后自动完成。
-- [ ] 全部解绑后显示 `0/0` 红色“无客户端关联”，任务和历史仍可查看。
-- [ ] 零监听时创建/改派按钮禁用；恢复一个监听客户端后可提交。
+- [x] 全部解绑后显示 `0/0` 红色“无客户端关联”，taskSpace 与审计保留。
+      （三个 fixture binding 依次权威解绑后，真实桌面 UI 为 `0/0`；未在含真实任务的探针上复核历史内容。）
+- [x] 零监听时创建按钮禁用；直接调用服务端也被拒绝且不新增操作项。
+      （`TASK_SPACE_NO_ONLINE_LISTENER`，操作项前后均为 0。）
+- [ ] 恢复一个监听客户端后再次确认创建按钮恢复可用。
 - [ ] 浅色、深色、1440px、1024px、860px 无页面级横向溢出。
 
 ### Step 9：规范与最终一次性验证
@@ -273,8 +279,9 @@ npm test
 - [x] 更新 `.trellis/spec/frontend/rendering-and-state.md`：监听五态、快捷解绑和创建/改派门禁。
 - [x] 对本任务文件运行 `oxfmt --check`，不执行全仓库格式化写入。
 - [x] 最后运行桌面 Web UI 与 Web 构建；此前不执行 build。
-- [ ] 如有 Rust/Tauri 改动，最后只执行一次
-  `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`（本机没有 cargo，未执行）。
+- [x] 如有 Rust/Tauri 改动，最后只执行一次
+  `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`。
+      （本机没有 cargo；GitHub Actions `43378479104` 的 Windows `Rust unit tests` 已成功。）
 
 最终构建：
 

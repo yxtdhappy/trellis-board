@@ -1046,3 +1046,50 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 45: 修复 Agent 全量任务扫描 1024 限制
+<!-- trellis-session: v=2 fp=e2eb55773643ca4a -->
+
+**Date**: 2026-11-13
+**Task**: 修复 Agent 全量任务扫描 1024 限制
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+拆分全量扫描与实际 HTTP 上传批次限额，补充 Rust 单测和规范；真实 0.3.0 客户端完成 1561 文件 taskSpace 同步，服务端 revision/index 一致且无 1024 错误。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9925883` | docs(task): plan agent task scan file limit fix |
+| `05f5f1a` | fix(desktop): separate task scan and upload batch limits |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 46: 分支监听状态与主动解绑生命周期验收
+<!-- trellis-session: v=2 fp=d0907a9481420a01 -->
+
+**Date**: 2026-11-13
+**Task**: 分支监听状态与主动解绑生命周期验收
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成监听五态、权限与零监听门禁验证，真实客户端快捷解绑通过，并清理全部 E2E 数据。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5397a6a` | docs(task): record branch listener lifecycle e2e |
+
+### Status
+
+[OK] **Completed**

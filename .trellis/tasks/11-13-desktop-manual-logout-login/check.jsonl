@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "按项目验证基线检查 Node 测试与跨层契约。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "复核 Board 页面、Tauri 命令、权限 capability、Cookie 和本地登录页之间的完整链路。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查实现是否复用现有会话清理能力并只增加必要权限。"}
+{"file": ".trellis/tasks/11-13-desktop-manual-logout-login/research/desktop-logout-path.md", "reason": "以调研证据验证白屏竞态修复和登录页不自动登录的验收范围。"}

@@ -68,9 +68,27 @@
 - 首轮全量测试曾因桌面 UI 未构建失败；完成构建后第二轮通过。另一次 Windows 临时目录
   `EPERM` 单独重跑通过，最终全量结果无失败。
 
+### 真实 Team/桌面 E2E
+
+- 使用 schema v11 的本地 Team 服务端和最新 Windows 客户端完成核心路径验证。
+- 隔离 fixture + 真实聚合/UI 验证 `3/3`、`2/3`、`0/3 inactive`、`0/1 inactive`、
+  `0/0 unassociated` 和 `unknown_legacy`，状态按 taskSpace 独立展示。
+- 监听详情：项目负责人 HTTP `200` 且字段脱敏；只读成员 HTTP `403`。
+- 零监听创建：UI 按钮禁用；直接 HTTP 调用返回 `409 TASK_SPACE_NO_ONLINE_LISTENER`，
+  `sync_task_command` 前后均为 0。`unknown_legacy` 同样被服务端拒绝。
+- 真实桌面快捷解绑：临时 worktree/binding 从 `approved + listening` 变为
+  `revoked + is_listening=0`，本地 binding 删除，写入 1 条审计；taskSpace 保持 active，
+  真实 `main` binding 未受影响。
+- E2E 数据、临时 worktree/分支和客户端临时配置已清理，测试前数据库备份保留。
+- 详细证据见 [e2e-report.md](./e2e-report.md)。
+
 ## 未完成与限制
 
-- 本机没有 `cargo`、`rustc`、`rustfmt`，Rust 编译、Clippy 和 Rust 单测未执行。
-- 未连接真实三客户端 Team 环境，未执行真实页面、断网重试和 Windows 安装包 E2E。
+- 本机没有 `cargo`、`rustc`、`rustfmt`；Rust unit tests 由 GitHub Actions
+  `43378479104` 的 Windows 构建环境执行并通过，本地仍未跑 Clippy。
+- 未使用三台真实客户端验证切换和 60 秒心跳超时；相关 UI 状态由隔离 fixture 驱动。
+- 未执行断网解绑、恢复网络自动重试和运行中 watcher/upload/pull 停止写入的真机验收。
 - 未执行真实浏览器浅色/深色和窄屏布局验收。
+- 正常“接入本地项目”弹窗当前存在既有预检返回契约问题，本轮为继续验证解绑链路使用了独立
+  临时 binding；该接入问题不属于本任务，未修改。
 - 以上未验证项不得在验收结论中标记为已通过。
