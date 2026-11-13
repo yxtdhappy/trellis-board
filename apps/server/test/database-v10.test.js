@@ -342,6 +342,7 @@ test('v9 升级到 v12 保留旧项目行并创建备份', () => {
     db.exec('DROP TABLE sync_task_index')
     db.exec('DROP TABLE sync_task_space_scan_cache')
     db.exec('DROP TABLE sync_task_space_batch')
+    db.exec('DROP TABLE sync_task_merge_evidence')
     db.exec('DROP TABLE sync_task_space_file')
     db.exec('DROP TABLE sync_task_space')
     db.exec('DROP TABLE sync_project_member')
