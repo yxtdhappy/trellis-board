@@ -238,6 +238,7 @@ mod tests {
             project_id: "project-1".to_string(),
             repo_path: "C:/repo".to_string(),
             branch_name: "main".to_string(),
+            baseline_branch: None,
             team_id: Some("team-1".to_string()),
             remote_identity_key: "a".repeat(64),
             local_repo_key: "b".repeat(64),

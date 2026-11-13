@@ -21,6 +21,7 @@ export type AdminTaskSpace = {
   branchName: string
   status: string
   lifecycleStatus: TaskSpaceLifecycleStatus
+  isBaseline?: boolean
   revision: number
   indexedRevision: number
   readOnly: boolean
@@ -43,6 +44,7 @@ export type RuntimeProject = {
   teamId: string | null
   teamName: string | null
   name: string
+  baselineBranch?: string | null
   syncStatus: string
   syncBranch: string
   role: string | null

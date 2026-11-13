@@ -107,6 +107,7 @@ const EXPECTED_TABLES = [
   'sync_task_command',
   'sync_task_index',
   'sync_task_index_tag',
+  'sync_task_merge_evidence',
   'sync_task_space',
   'sync_task_space_batch',
   'sync_task_space_file',

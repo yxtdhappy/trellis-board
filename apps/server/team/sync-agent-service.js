@@ -415,9 +415,11 @@ export function createSyncAgentService({
       const binding = db
         .prepare(`
         SELECT b.*, s.project_id, s.branch_name AS task_space_branch,
-               s.status AS task_space_status, s.retired_at AS task_space_retired_at
+               s.status AS task_space_status, s.retired_at AS task_space_retired_at,
+               p.baseline_branch
         FROM sync_agent_binding b
         JOIN sync_task_space s ON s.id = b.task_space_id
+        JOIN sync_project p ON p.id = s.project_id
         WHERE b.agent_id = ? AND b.task_space_id = ?
       `)
         .get(agent.id, taskSpaceId)
@@ -457,6 +459,7 @@ export function createSyncAgentService({
         project_id: binding.project_id,
         localRepoKey: binding.local_repo_key,
         branchName: binding.task_space_branch,
+        baselineBranch: binding.baseline_branch || null,
         status: taskSpaceUnavailable ? 'disabled' : binding.sync_status,
         ...(taskSpaceUnavailable
           ? {

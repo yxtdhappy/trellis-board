@@ -121,6 +121,14 @@ export function createPluginRuntime({
     }
   }
 
+  /** 重读 plugins.json + secrets 并按需重启插件；TRELLIS_PLUGINS_DISABLED=1 时直接拒绝。 */
+  async function reload() {
+    if (disabled) {
+      return { ok: false, reason: 'http', error: '插件机制已被 TRELLIS_PLUGINS_DISABLED=1 关闭', changed: [] }
+    }
+    return supervisor.reloadConfig({ reason: 'http' })
+  }
+
   function runs(id, url) {
     return {
       runs: pluginStore.listRuns({
@@ -226,6 +234,12 @@ export function createPluginRuntime({
     }
     if (url.pathname === '/api/events' && request.method === 'GET') {
       return openEventStream({ request, response, url })
+    }
+    // 必须在 pluginAdminMatch 之前：否则 /api/plugins/reload 会被解析成 id=reload 并返回 404。
+    if (url.pathname === '/api/plugins/reload' && request.method === 'POST') {
+      const result = await reload()
+      sendJson(response, result.ok ? 200 : 400, result)
+      return true
     }
 
     const admin = pluginAdminMatch(url.pathname)
@@ -448,6 +462,7 @@ export function createPluginRuntime({
     load,
     start,
     stop,
+    reload,
     list,
     runs,
     audit,

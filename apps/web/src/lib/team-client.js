@@ -223,6 +223,8 @@ export function normalizeTeamTaskRow(row = {}) {
     taskSpaceId: String(row.taskSpaceId ?? row.task_space_id ?? ''),
     projectName: row.projectName ?? row.project_name ?? '',
     branchName: row.branchName ?? row.branch_name ?? '',
+    sourceBranchName:
+      row.sourceBranchName ?? row.source_branch_name ?? row.branchName ?? row.branch_name ?? '',
     taskSpaceRevision: Number(row.taskSpaceRevision ?? row.task_space_revision ?? 0),
     teamId: row.teamId ?? row.team_id ?? null,
     teamName: row.teamName ?? row.team_name ?? null,

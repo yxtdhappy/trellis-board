@@ -68,6 +68,7 @@ ETag、缓存键和游标绑定用户、团队、项目/taskSpace 集合哈希�
 - `sync_task_space`、`sync_task_space_file`、`sync_task_space_batch`
 - `sync_active_agent`、`sync_agent_binding`、`sync_agent_cursor`
 - `sync_task_index`、`sync_task_index_tag`、`sync_task_space_scan_cache`
+- `sync_task_merge_evidence`
 - `sync_task_assignment`
 - `sync_task_command`
 - `sync_conflict`、`sync_conflict_backup`、`sync_file_audit`
@@ -80,6 +81,11 @@ v12 在 `sync_agent_binding` 上增加 `is_listening`、`listener_reported_at`�
 
 `retired_at` 是唯一的弃用标记；历史 `status=disabled` 且 `retired_at IS NULL` 仍表示技术停用，
 不得自动按弃用处理。
+
+v12 在 `sync_project` 上增加 `baseline_branch`，并增加 `sync_task_merge_evidence` 与
+`sync_task_space_file(task_space_id, task_id, deleted)` 索引。新项目首次接入的分支成为基线；
+旧库优先选择最早创建的活动 taskSpace，时间相同按 ID 稳定排序。项目 public 返回
+`baselineBranch`，taskSpace public 返回 `isBaseline`。
 
 ### 服务与 SSE
 
@@ -110,6 +116,9 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 同步空间身份是 `canonicalRemoteIdentity + branchName`，即
   `sync_task_space UNIQUE(project_id, branch_name)`。
 - 同一仓库不同分支拥有独立 project taskSpace、revision、cursor、命令、冲突和索引。
+- 默认任务查询、计数、负责人筛选、分页和 Board 项目计数共用基线去重条件：基线 taskSpace 的
+  `sync_task_index` 已有同一项目稳定 task ID 时，来源 taskSpace 旧副本不返回。显式 taskSpace
+  快照接口仍保留来源数据；查询行用 `sourceBranchName` 暴露证据中的来源分支。
 - 同一 Agent 的同一 `localRepoKey` 只能有一个 approved binding。切换分支必须显式替换旧 binding；
   旧 taskSpace、任务数据和其他设备 binding 不删除。需要同时同步多个分支时，每个分支使用独立 Git worktree。
 - 服务端信任已认证 Agent 上报的 origin 字符串，不访问 Git 远端证明其存在；Agent 必须先验证
@@ -171,6 +180,16 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   "batchId": "uuid",
   "clientSequence": 12,
   "observedBranchName": "main",
+  "mergeEvidence": {
+    "version": 1,
+    "type": "tracked-in-head",
+    "taskId": "task-a",
+    "taskDir": ".trellis/tasks/task-a",
+    "trackedPath": ".trellis/tasks/task-a/task.json",
+    "sourceBranch": "dev1",
+    "baselineBranch": "dev",
+    "headCommit": "<40 或 64 位小写 SHA>"
+  },
   "files": [
     {
       "path": ".trellis/tasks/example/task.json",
@@ -190,7 +209,15 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 冲突处理 `overwrite-server` 与普通上传使用相同分支上报和校验，不能绕过门禁。
 - `baseSha256=null` 表示客户端认为路径不存在；64 位摘要表示基于的服务端当前内容。
 - 服务端在 `BEGIN IMMEDIATE` 中逐文件比较当前摘要；任一不一致整批拒绝，不写入部分任务。
-- 同一请求的 `batchId + clientSequence + files` 摘要幂等重放返回原 revision；同 `batchId` 不同摘要拒绝。
+- `mergeEvidence` 可选；存在时进入请求摘要。同一请求的
+  `batchId + clientSequence + files + mergeEvidence` 摘要幂等重放返回原 revision，同 `batchId`
+  不同摘要拒绝。pending batch 必须持久化原证据并原样重放。
+- 基线 taskSpace 首次接纳 `task.json.branch != baselineBranch` 的任务必须携带
+  `tracked-in-head` 证据。服务端只验证身份、binding、taskSpace、项目基线、任务 ID、目录和分支一致，
+  不运行 Git；证据是受信基线 Agent 的声明。缺少证据返回 `409 TASK_MERGE_EVIDENCE_REQUIRED`，
+  不匹配返回 `409 TASK_MERGE_EVIDENCE_INVALID`。
+- 基线已有同一稳定任务 ID 时不要求重复证据。来源 taskSpace 在基线接管后新增、修改、移动或删除
+  该任务返回 `409 TASK_OWNED_BY_BASELINE`，旧快照和审计保留。
 - `clientSequence` 在同一 Agent/taskSpace 内必须严格递增。
 - 同一批最多涉及一个完整任务目录，或一次同 task ID 的活动目录到归档目录移动；移动前后都必须保留
   `task.json` 和稳定 `id`。
@@ -220,6 +247,13 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - Agent 在首次同步、增量 pull、上传、watcher 触发、pending retry、延后补同步、服务端目录实际写入
   以及冲突覆盖前都必须重新读取本地真实分支。分支不匹配时失败关闭：不写任务目录、不上传、不推进
   cursor、不补发 pending，并把 `BRANCH_MISMATCH` 投影到项目栏；切回绑定分支后才可恢复。
+- 普通同分支任务不得读取 HEAD tree。只有当前 binding 是项目基线且遇到来源分支不同的任务时，才允许
+  一次 `git rev-parse --verify HEAD^{commit}`；同一 HEAD 下执行一次
+  `git ls-tree -r --name-only <HEAD> -- .trellis`，多项任务共享 HashSet。普通 watcher、普通上传、
+  同分支任务和同 HEAD 后续判断都不得重复 `ls-tree`。
+- HEAD tree 缓存只驻留内存，键为 binding、真实分支和完整 HEAD SHA；进程重启后允许重扫一次。
+  只有精确的 `<taskDir>/task.json` 在 HEAD tree 中才生成证据。仅工作区存在、仅从服务端拉取或任务
+  目录未提交均保持暂停。
 - SSE 重连和事件触发的补拉只能遍历运行时激活的 binding。未激活 taskSpace 返回
   `{ skipped: true, reason: "BINDING_INACTIVE" }`，不能按未知 binding 抛异常；所有
   fire-and-forget 补拉必须处理 rejection，单个 taskSpace 失败只能记日志，不能终止 Agent 进程。
@@ -338,7 +372,7 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 
 ### 备份
 
-- v11 -> v12 升级前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v12.*`；v10 及更早版本仍按
+- v10/v11 -> v12 升级前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v12.*`；更早版本按
   原顺序迁移，最终备份名使用当前目标版本。
 - Team runtime 启动时和每 24 小时写入
   `backups/board.sqlite.snapshot.<UTC timestamp>`，保留最近 7 份。
@@ -355,6 +389,9 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | Agent 未上报 `observedBranchName` | `400 BRANCH_OBSERVATION_REQUIRED`，不写快照 |
 | 上报分支与 taskSpace/binding 不一致 | `400 BRANCH_TASK_SPACE_MISMATCH`，不写快照 |
 | 本地真实分支与 binding 不一致 | Agent 暂停该 binding，不写文件、不上传、不推进 cursor |
+| 基线首次收到来源不同任务但无证据 | `409 TASK_MERGE_EVIDENCE_REQUIRED`，不写快照 |
+| 证据版本、类型、HEAD SHA、任务 ID、目录、路径或分支不匹配 | `400/409`，整批不写 |
+| 来源 taskSpace 写入已由基线接管的稳定任务 ID | `409 TASK_OWNED_BY_BASELINE`，旧快照不变 |
 | taskSpace 没有在线监听 | 创建/改派在写 operation 前返回 `409 TASK_SPACE_NO_ONLINE_LISTENER` |
 | 目标用户无在线 Agent、无 approved binding、非项目写成员 | 创建操作项前 `409`，返回用户、项目、分支和下一步 |
 | 路径越界、反斜杠、非白名单扩展名、符号链接、非 UTF-8 | 整批拒绝，任务快照不变 |
@@ -378,11 +415,17 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - Good：A 修改 `task.json` 并以服务端当前摘要为基线提交；revision+1，B 从 cursor 拉取后原子替换
   完整任务目录，再推进 cursor；Board 收到 `tasks.changed` 后重载 REST 快照。
 - Good：A 把任务从活动目录移动到归档目录，一个批次包含旧目录删除和新目录写入；B 不会恢复旧活动路径。
+- Good：dev 基线首次看到 `dev1` 任务且其在 dev HEAD 中，一次 tree 扫描后携带证据写入；来源 dev1
+  旧快照保留但不再出现在默认任务查询。
+- Good：同一 HEAD 下 17 个已合入任务只执行一次 `git ls-tree`，每个任务分别附自己的证据。
 - Good：同一仓库为主分支和 feature 分支各建一个 worktree；两个 `localRepoKey` 不同，各自只监听当前分支。
 - Base：本地和服务端任务目录文件集合及摘要相同，不写文件、不增加 revision。
 - Base：同步请求已提交但响应丢失，客户端重启后复用 pending `batchId`，服务端返回原 revision。
 - Base：投影重复上报相同 revision；服务端不重复广播，客户端即使收到也不会重复拉取或写 cursor。
 - Bad：同一个 Git 工作目录先绑定 main 又保留 feature binding；watcher 会把一份本地修改双写到两个 taskSpace。
+- Bad：普通 watcher 每次都执行 `git ls-tree`，把路径扫描成本放大到每个事件和每个任务。
+- Bad：源分支任务在基线接管后继续写来源 taskSpace，形成两个活跃归属。
+- Bad：服务端为验证证据执行项目 Git/Python 子进程，重新引入工作副本和凭据边界。
 - Bad：以“后到覆盖先到”写同一任务文件，会静默丢更新；服务端必须使用文件级 CAS。
 - Bad：收到 watcher 后只按路径抑制，不校验新摘要，会吞掉远端应用后紧接发生的真实本地编辑。
 - Bad：服务端在 HTTP 请求栈里 clone/fetch 或扫描项目 Git，会重新引入两套事实源和长时间阻塞。
@@ -417,7 +460,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - `apps/desktop/src-tauri/src/agent/{onboarding,task_sync,task_command,git,protocol}.rs` 的 `mod tests`：
   仓库预检、固定 CLI 初始化、推送状态、已有 `.trellis`、同 `localRepoKey` 换分支、首次/增量同步、
   cursor 文件基线、离线并发冲突、延后目录、目录移动、pending batch 重放、全量分组跨目录超过
-  1024 文件、实际批次 1024/1025 与 64 MiB 边界、错分支与 detached HEAD 拒绝。
+  1024 文件、实际批次 1024/1025 与 64 MiB 边界、错分支与 detached HEAD 拒绝、基线 tree 单次扫描
+  与 HEAD 变化刷新、pending evidence 原样重放和 `TASK_OWNED_BY_BASELINE` 后停止主动上传。
 - `apps/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、
   DPAPI 往返、SSE 分帧、控制事件去重与过期。
 - `apps/desktop/src-tauri/src/agent/{runtime,task_sync,detach,store}.rs`：真实监听集合、

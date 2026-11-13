@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "桌面 Agent 运行时、心跳与解绑契约"}
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "实时同步、watcher 与命令投递行为"}

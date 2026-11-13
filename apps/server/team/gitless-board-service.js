@@ -324,6 +324,7 @@ export function createGitlessBoardService({
     const cachedByKey = new Map((projected?.tasks || []).map((task) => [task.taskKey, task]))
     const tasks = page.tasks.map((task) => ({
       ...(cachedByKey.get(task.taskKey) || task),
+      sourceBranchName: task.sourceBranchName || task.branchName || null,
       taskSpaceId,
       branchName: context.taskSpace.branch_name,
     }))
@@ -379,6 +380,17 @@ export function createGitlessBoardService({
       },
     )
     const space = taskSpaces.readTaskSpace(context.taskSpaceId, actor)
+    const taskId = String(context.indexed.execution_task_key || '')
+      .split('::')
+      .slice(1)
+      .join('::')
+    const sourceBranchName = taskId
+      ? db
+          .prepare(
+            'SELECT source_branch_name FROM sync_task_merge_evidence WHERE project_id = ? AND task_id = ?',
+          )
+          .get(space.project.id, taskId)?.source_branch_name || null
+      : null
     return {
       task: {
         ...detail,
@@ -386,6 +398,7 @@ export function createGitlessBoardService({
         projectName: space.project.name,
         taskSpaceId: context.taskSpaceId,
         branchName: space.branch_name,
+        sourceBranchName: sourceBranchName || space.branch_name,
         teamId: space.project.owner_team_id,
         teamName: space.project.owner_team_name || null,
         projectSyncStatus:

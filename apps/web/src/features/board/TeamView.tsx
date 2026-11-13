@@ -3,7 +3,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Pagination } from './Pagination.tsx'
 import { SelectField } from './SelectField.tsx'
-import { dueLabel, initials, type BoardTask } from './task-view.ts'
+import { branchLabel, dueLabel, initials, type BoardTask } from './task-view.ts'
 import { priorityTone, stageTone, statusLabel } from './tone.ts'
 import { branchMatches } from '@/lib/execution-filter.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
@@ -261,11 +261,7 @@ export function TeamView({
                     const stageLabel = task.stages.find(
                       (item) => item.id === task.derivedStage,
                     )?.label
-                    const projectLabel = [
-                      task.teamName,
-                      task.projectName,
-                      task.branchName ? `分支 ${task.branchName}` : null,
-                    ]
+                    const projectLabel = [task.teamName, task.projectName, branchLabel(task)]
                       .filter(Boolean)
                       .join(' · ')
                     return (

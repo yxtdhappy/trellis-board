@@ -66,6 +66,7 @@ export type BoardTask = {
   projectName: string
   taskSpaceId?: string
   branchName?: string
+  sourceBranchName?: string
   taskVersion?: string
   teamId?: string | null
   teamName?: string | null
@@ -94,6 +95,14 @@ export const STAGE_LANES = [
 ] as const
 
 export const TASK_COPY_LABEL = '复制任务名'
+
+export function branchLabel(task: Pick<BoardTask, 'branchName' | 'sourceBranchName'>) {
+  if (!task.branchName) return null
+  if (task.sourceBranchName && task.sourceBranchName !== task.branchName) {
+    return `分支 ${task.branchName} · 来源 ${task.sourceBranchName}`
+  }
+  return `分支 ${task.branchName}`
+}
 
 export function initials(name?: string) {
   return (name || '?').slice(0, 2).toUpperCase()
@@ -145,6 +154,7 @@ export function teamRowToBoardTask(row: Record<string, unknown>): BoardTask {
     archived: Boolean(row.archived),
     taskSpaceId: String(row.taskSpaceId ?? ''),
     branchName: String(row.branchName ?? ''),
+    sourceBranchName: String(row.sourceBranchName || row.branchName || ''),
     assignee: (row.assignee as string | undefined) ?? (row.assigneeDevId as string | undefined),
     execution: {
       ...(row.execution as TaskExecution | undefined),

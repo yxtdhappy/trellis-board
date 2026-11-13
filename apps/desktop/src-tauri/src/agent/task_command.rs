@@ -1183,6 +1183,7 @@ mod tests {
             project_id: "project-1".into(),
             repo_path: "C:/repo".into(),
             branch_name: "main".into(),
+            baseline_branch: None,
             team_id: Some("team-1".into()),
             remote_identity_key: "remote".into(),
             local_repo_key: "local".into(),

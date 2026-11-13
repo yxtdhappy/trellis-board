@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import {
   fetchPluginLogs,
   fetchPlugins,
+  reloadPlugins,
   startPlugin,
   stopPlugin,
   type PluginInfo,
@@ -21,6 +22,7 @@ const STATUS_LABELS: Record<string, string> = {
   disabled: '已禁用',
   crashing: '反复崩溃',
   incompatible: '不兼容',
+  'missing-secret': '缺少配置',
 }
 
 const STATUS_TONES: Record<string, string> = {
@@ -29,6 +31,7 @@ const STATUS_TONES: Record<string, string> = {
   error: 'bg-destructive-soft text-destructive',
   crashing: 'bg-destructive-soft text-destructive',
   incompatible: 'bg-destructive-soft text-destructive',
+  'missing-secret': 'bg-warning-soft text-warning',
   stopped: 'bg-muted text-muted-foreground',
   disabled: 'bg-muted text-muted-foreground',
 }
@@ -44,6 +47,7 @@ export function PluginsView() {
   const [hostVersion, setHostVersion] = useState('')
   const [error, setError] = useState('')
   const [busyId, setBusyId] = useState('')
+  const [reloading, setReloading] = useState(false)
   const [logs, setLogs] = useState<{ id: string; title: string } | null>(null)
   const [logEntries, setLogEntries] = useState<PluginLogEntry[]>([])
   const [logError, setLogError] = useState('')
@@ -88,6 +92,34 @@ export function PluginsView() {
     }
   }
 
+  async function reload() {
+    setReloading(true)
+    try {
+      const result = await reloadPlugins()
+      if (!result.ok) {
+        toast.error(result.error || '重载插件配置失败')
+        return
+      }
+      const parts: string[] = []
+      if (result.added.length) parts.push(`新增 ${result.added.length}`)
+      if (result.removed.length) parts.push(`移除 ${result.removed.length}`)
+      if (result.restarted.length) parts.push(`重启 ${result.restarted.length}`)
+      if (result.started.length) parts.push(`启动 ${result.started.length}`)
+      if (result.stopped.length) parts.push(`停止 ${result.stopped.length}`)
+      toast.success(parts.length ? `配置已重载：${parts.join('，')}` : '配置已重载，没有变化')
+      if (result.failed.length) {
+        toast.error(
+          `${result.failed.length} 个插件重载失败：${result.failed.map((item) => item.id).join('，')}`,
+        )
+      }
+      await load(true)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '重载插件配置失败')
+    } finally {
+      setReloading(false)
+    }
+  }
+
   async function openLogs(plugin: PluginInfo) {
     setLogs({ id: plugin.id, title: `${plugin.name || plugin.id} 日志` })
     setLogEntries([])
@@ -116,11 +148,22 @@ export function PluginsView() {
             版本、兼容性、运行状态与最近日志；启停会立即作用于插件进程。
           </p>
         </div>
-        <span className="text-[0.6875rem] text-muted-foreground">
-          {hostVersion ? `宿主 ${hostVersion}` : ''}
-          {hostVersion ? ' · ' : ''}
-          {plugins.length} 个插件
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[0.6875rem] text-muted-foreground">
+            {hostVersion ? `宿主 ${hostVersion}` : ''}
+            {hostVersion ? ' · ' : ''}
+            {plugins.length} 个插件
+          </span>
+          <button
+            type="button"
+            disabled={disabled || reloading}
+            onClick={() => void reload()}
+            title="重读运行数据目录的 plugins.json 与 plugins.secrets.json，重启受影响的插件"
+            className="h-7 rounded-md border border-border px-2.5 text-[0.6875rem] hover:bg-muted disabled:opacity-50"
+          >
+            {reloading ? '重载中…' : '刷新配置'}
+          </button>
+        </div>
       </div>
 
       {error ? (

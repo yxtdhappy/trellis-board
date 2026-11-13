@@ -33,10 +33,13 @@ import {
 import { createCoreCapabilities } from './core-capabilities.js'
 import {
   defaultSecretsFile,
+  defaultSecretsKeyFile,
+  deleteSecretRef,
   inlineSecretFields,
   loadSecretsFile,
   resolveConfigReferences,
   summarizeSources,
+  writeSecretRef,
 } from './secrets.js'
 
 export const PLUGIN_STATUSES = Object.freeze([
@@ -90,6 +93,20 @@ export function redactConfig(config) {
   return result
 }
 
+/**
+ * 生成与键序无关的配置签名，用于判断 reload 时配置是否真的变了。
+ * 值里可能有 null（缺失的 secret/env 引用），必须与 undefined 区分开。
+ */
+function configSignature(value) {
+  if (value === undefined) return 'undefined'
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(configSignature).join(',')}]`
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${configSignature(value[key])}`)
+    .join(',')}}`
+}
+
 export function loadPluginConfigFile(file, { env = process.env, secretsFile } = {}) {
   if (!fs.existsSync(file)) return { plugins: [], missing: [], warnings: [] }
   let raw
@@ -140,6 +157,7 @@ export function loadPluginConfigFile(file, { env = process.env, secretsFile } = 
       args: Array.isArray(entry.args) ? entry.args.map(String) : null,
       config: config ?? {},
       configSource: summarizeSources(sources),
+      allowMissingSecrets: entry.allowMissingSecrets === true,
     }
   })
   return { plugins, missing, warnings, secretsFile: secrets.file }
@@ -376,6 +394,8 @@ export class PluginSupervisor {
     })
     this.store = store
     this.configFile = configFile
+    this.secretsFile = env.TRELLIS_BOARD_SECRETS_FILE || defaultSecretsFile(configFile)
+    this.secretsKeyFile = defaultSecretsKeyFile(this.secretsFile)
     this.spawnImpl = spawnImpl
     this.env = env
     this.logger = logger
@@ -394,6 +414,7 @@ export class PluginSupervisor {
     this.rootPaths = new Map()
     this.healthTimer = null
     this.stopping = false
+    this.reloading = null
     this.logDir = path.join(dataDir, 'plugins')
   }
 
@@ -414,6 +435,257 @@ export class PluginSupervisor {
     return this.list()
   }
 
+  /**
+   * 重新读取 plugins.json 与 secrets 文件，按 id 增量应用变化。
+   *
+   * - 运行中的插件配置变化：先 plugin/configure 热更新，入口/启动参数变化或热更新失败时重启子进程；
+   * - 之前因缺 secret 没起来、现在补齐了：自动启动；
+   * - 配置文件解析失败（权限不对、半截 JSON、version 缺失）：保留旧配置，只写审计告警。
+   *
+   * 手动 POST /api/plugins/reload 与调用方都走这里；并发调用复用同一个 promise。
+   */
+  async reloadConfig({ reason = 'manual' } = {}) {
+    if (this.stopping) {
+      return { ok: false, reason, error: '插件运行时正在停止', changed: [] }
+    }
+    if (this.reloading) return this.reloading
+    this.reloading = this.applyReload(reason).finally(() => {
+      this.reloading = null
+    })
+    return this.reloading
+  }
+
+  async applyReload(reason) {
+    const result = {
+      ok: true,
+      reason,
+      at: this.now(),
+      secretsFile: null,
+      warnings: [],
+      changed: [],
+      restarted: [],
+      started: [],
+      stopped: [],
+      added: [],
+      removed: [],
+      failed: [],
+    }
+    let config
+    try {
+      config = loadPluginConfigFile(this.configFile, { env: this.env })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.warn?.('插件配置重载失败，保留旧配置', error)
+      for (const state of this.plugins.values()) {
+        this.audit(state, 'config', { ok: false, reason, error: message })
+      }
+      return { ...result, ok: false, error: message }
+    }
+    result.secretsFile = config.secretsFile ?? null
+    result.warnings = config.warnings.map((warning) => ({ ...warning }))
+    for (const warning of config.warnings) {
+      this.logger.warn?.('插件配置警告', warning)
+    }
+
+    const missingById = new Map(config.missing.map((item) => [item.id, item.names]))
+    const nextIds = new Set(config.plugins.map((entry) => entry.id))
+
+    // 1) 配置里已删除的插件：停进程、注销 capability、删状态。
+    for (const id of [...this.plugins.keys()]) {
+      if (nextIds.has(id)) continue
+      const state = this.plugins.get(id)
+      await this.stopForReload(state, `removed:${reason}`)
+      this.plugins.delete(id)
+      result.removed.push(id)
+    }
+
+    // 2) 新增 / 就地更新。不重建 entry，保留进程句柄、日志环与重启计数。
+    const touched = []
+    for (const entry of config.plugins) {
+      const missingSecrets = missingById.get(entry.id) ?? []
+      const state = this.plugins.get(entry.id)
+      if (!state) {
+        const created = this.createEntry(entry, missingSecrets)
+        this.plugins.set(entry.id, created)
+        this.inspectManifest(created)
+        result.added.push(entry.id)
+        touched.push({ state: created, previous: null, entryChanged: true, configChanged: false, spawnChanged: false })
+        continue
+      }
+
+      const nextModulePath = this.resolveModule(entry)
+      const previous = {
+        config: configSignature(state.config),
+        modulePath: state.modulePath,
+        command: state.command,
+        args: configSignature(state.args),
+        missing: state.missingSecrets.join(','),
+        configEnabled: state.configEnabled,
+        manualStopped: state.manualStopped,
+      }
+      const configChanged = previous.config !== configSignature(entry.config)
+      const spawnChanged =
+        previous.modulePath !== nextModulePath ||
+        previous.command !== entry.command ||
+        previous.args !== configSignature(entry.args)
+
+      state.modulePath = nextModulePath
+      state.command = entry.command
+      state.args = entry.args
+      state.pinnedVersion = entry.version
+      state.config = entry.config
+      state.configSource = entry.configSource ?? 'none'
+      state.missingSecrets = missingSecrets
+      state.configEnabled = entry.enabled
+      this.inspectManifest(state)
+
+      if (configChanged || spawnChanged) result.changed.push(entry.id)
+      touched.push({
+        state,
+        previous,
+        entryChanged: configChanged || spawnChanged,
+        configChanged,
+        spawnChanged,
+      })
+    }
+
+    // 3) 重算索引前先清 blocked：否则旧冲突会把插件永久锁死。
+    for (const state of this.plugins.values()) state.blocked = false
+    this.resolveCapabilities()
+    this.resolveRootPaths()
+
+    // 4) 逐个应用：blocked / 不兼容 / 缺配置 / 开关变化 / 配置变化。
+    for (const { state, previous, entryChanged, configChanged, spawnChanged } of touched) {
+      const id = state.id
+      const running = state.status === 'running' || state.status === 'starting'
+
+      if (state.blocked) {
+        if (running) {
+          await this.stopForReload(state, `blocked:${reason}`)
+          state.status = 'error'
+          result.stopped.push(id)
+        }
+        continue
+      }
+
+      if (!state.compatible) {
+        if (running) {
+          await this.stopForReload(state, `incompatible:${reason}`)
+          result.stopped.push(id)
+        }
+        continue
+      }
+
+      if (state.missingSecrets.length && !state.allowMissingSecrets) {
+        if (running) {
+          await this.stopForReload(state, `missing-secret:${reason}`)
+          result.stopped.push(id)
+        }
+        state.status = 'missing-secret'
+        state.lastError = `缺少配置项: ${state.missingSecrets.join(', ')}`
+        continue
+      }
+      if (state.missingSecrets.length) {
+        state.lastWarning = `缺少配置项: ${state.missingSecrets.join(', ')}（已按空值启动）`
+        this.audit(state, 'warn', { warning: state.lastWarning })
+      }
+
+      const enabledChanged = previous ? previous.configEnabled !== state.configEnabled : false
+      if (enabledChanged && !state.configEnabled) {
+        if (running) {
+          await this.stopForReload(state, `disabled:${reason}`)
+          result.stopped.push(id)
+        }
+        state.enabled = false
+        state.manualStopped = true
+        state.status = 'stopped'
+        continue
+      }
+      if (enabledChanged) {
+        state.enabled = true
+        state.manualStopped = false
+      }
+
+      if (running && entryChanged) {
+        // 入口或启动参数变了，热更新没意义，直接重启。
+        if (configChanged && !spawnChanged) await this.configureState(state)
+        await this.restartState(state, reason)
+        result.restarted.push(id)
+        if (state.status !== 'running') {
+          result.failed.push({ id, error: state.lastError || '重启失败' })
+        }
+        continue
+      }
+
+      const missingChanged = previous ? previous.missing !== state.missingSecrets.join(',') : false
+      if (!running && state.enabled && !state.manualStopped && (entryChanged || missingChanged)) {
+        try {
+          await this.startPlugin(id)
+          result.started.push(id)
+        } catch (error) {
+          result.failed.push({
+            id,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      }
+    }
+
+    this.logger.info?.('插件配置已重载', {
+      reason,
+      changed: result.changed.length,
+      restarted: result.restarted.length,
+    })
+    return result
+  }
+
+  /** 尝试把新配置推给运行中的插件；失败不抛错，交给调用方重启。 */
+  async configureState(state) {
+    if (!state.process || state.status !== 'running') return false
+    try {
+      await state.process.request(
+        'plugin/configure',
+        { config: state.config },
+        this.timeoutFor('plugin/configure'),
+      )
+      return true
+    } catch (error) {
+      this.writeLog(state, 'warn', '配置热更新失败，改为重启进程', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return false
+    }
+  }
+
+  /**
+   * 停止插件但保留用户意图（enabled / manualStopped），供 reload 复用。
+   * 必须先置 manualStopped，否则 shutdown 期间的 exit 会被 handleExit 当成崩溃并触发自动重启。
+   */
+  async stopForReload(state, reason) {
+    const wasEnabled = state.enabled
+    const wasManualStopped = state.manualStopped
+    state.manualStopped = true
+    clearTimeout(state.restartTimer)
+    state.restartTimer = null
+    await this.shutdownState(state)
+    this.publishCapabilityState(state, 'unavailable')
+    const interrupted = this.store.failActiveRuns(state.id, '插件配置已更新，run 已中断')
+    state.status = 'stopped'
+    state.enabled = wasEnabled
+    state.manualStopped = wasManualStopped
+    this.audit(state, 'config', { reason, interruptedRuns: interrupted ?? 0 })
+    return interrupted ?? 0
+  }
+
+  async restartState(state, reason) {
+    await this.stopForReload(state, reason)
+    // reload 触发的重启不计入崩溃重启计数，否则改几次配置就会被自动禁用。
+    state.restarts = 0
+    state.healthFailures = 0
+    await this.spawnPlugin(state)
+    return this.describe(state)
+  }
+
   createEntry(entry, missingSecrets) {
     const state = {
       id: entry.id,
@@ -424,7 +696,12 @@ export class PluginSupervisor {
       args: entry.args,
       pinnedVersion: entry.version,
       missingSecrets,
+      allowMissingSecrets: entry.allowMissingSecrets === true,
+      lastWarning: null,
       configSource: entry.configSource ?? 'none',
+      // 配置文件里的 enabled 原值：reload 时用它判断用户是否改了开关，
+      // 而 state.enabled 会被手动启停改写，不能直接对比。
+      configEnabled: entry.enabled,
       manifest: null,
       compatible: false,
       reason: null,
@@ -494,6 +771,7 @@ export class PluginSupervisor {
     state.manifest = validated.manifest
     state.compatible = true
     state.reason = null
+    if (validated.manifest.allowMissingSecrets) state.allowMissingSecrets = true
     return state
   }
 
@@ -603,11 +881,16 @@ export class PluginSupervisor {
     for (const state of this.orderedStates()) {
       if (!state.enabled || state.manualStopped) continue
       if (!state.compatible || state.blocked) continue
-      if (state.missingSecrets.length) {
+      if (state.missingSecrets.length && !state.allowMissingSecrets) {
         state.status = 'missing-secret'
         state.lastError = `缺少配置项: ${state.missingSecrets.join(', ')}`
         this.audit(state, 'error', { error: state.lastError })
         continue
+      }
+      if (state.missingSecrets.length) {
+        state.lastWarning = `缺少配置项: ${state.missingSecrets.join(', ')}（已按空值启动）`
+        this.audit(state, 'warn', { warning: state.lastWarning })
+        this.writeLog(state, 'warn', state.lastWarning)
       }
       if (!fs.existsSync(state.modulePath)) {
         state.status = 'error'
@@ -1119,6 +1402,15 @@ export class PluginSupervisor {
         })
         return stage
       }
+      case 'task/setPlan': {
+        const plan = this.tasks.setPlan(params)
+        this.publish('task.plan.changed', {
+          taskKey: plan.taskKey,
+          dueDate: plan.dueDate,
+          occurredAt: this.now(),
+        })
+        return plan
+      }
       case 'run/start': {
         const taskKey = String(params.taskKey ?? '').trim()
         if (!taskKey) throw invalidParams('run/start 缺少 taskKey')
@@ -1171,6 +1463,27 @@ export class PluginSupervisor {
         return {
           entries: this.store.listState(state.id, String(params.prefix ?? '')),
         }
+      case 'secrets/get': {
+        const key = this.requirePluginSecretKey(state, params)
+        const { refs } = loadSecretsFile(this.secretsFile, { keyFile: this.secretsKeyFile })
+        return { key, value: refs.has(key) ? refs.get(key) : null }
+      }
+      case 'secrets/set': {
+        const key = this.requirePluginSecretKey(state, params)
+        const value = params.value
+        if (typeof value !== 'string' || value === '') {
+          throw invalidParams('secrets/set 需要非空字符串 value')
+        }
+        writeSecretRef(this.secretsFile, key, value, { keyFile: this.secretsKeyFile })
+        this.audit(state, 'secrets', { ok: true, action: 'set', key })
+        return { key, stored: true, encrypted: true }
+      }
+      case 'secrets/delete': {
+        const key = this.requirePluginSecretKey(state, params)
+        const result = deleteSecretRef(this.secretsFile, key)
+        this.audit(state, 'secrets', { ok: true, action: 'delete', key, deleted: result.deleted })
+        return { key, deleted: result.deleted }
+      }
       case 'log/write': {
         const level = String(params.level || 'info')
         this.writeLog(state, level, String(params.message ?? ''), params.fields ?? {})
@@ -1220,8 +1533,19 @@ export class PluginSupervisor {
     this.writeLog(state, 'warn', `未知插件通知: ${message.method}`, {})
   }
 
-  requireRun(state, runId) {
-    const run = this.store.getRun(String(runId))
+  requirePluginSecretKey(state, params) {
+    const key = String(params?.key ?? '').trim()
+    if (!key) throw invalidParams('缺少 secret key')
+    if (!key.startsWith(`${state.id}/`)) {
+      throw appError(
+        ERROR_CODES.PERMISSION_DENIED,
+        `插件只能访问自己的 secret：${state.id}/...`,
+      )
+    }
+    return key
+  }
+
+  requireRun(state, runId) {    const run = this.store.getRun(String(runId))
     if (!run) throw appError(ERROR_CODES.NOT_FOUND, `run 不存在: ${runId}`)
     if (run.pluginId !== state.id) {
       throw appError(ERROR_CODES.PERMISSION_DENIED, '不能更新其它插件的 run')
@@ -1462,6 +1786,8 @@ export class PluginSupervisor {
       pid: state.pid,
       restarts: state.restarts,
       lastError: state.lastError,
+      lastWarning: state.lastWarning,
+      missingSecrets: state.missingSecrets,
       droppedEvents: state.droppedEvents,
       permissions: state.manifest?.permissions ?? [],
       panels: state.manifest?.panels ?? [],

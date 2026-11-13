@@ -538,6 +538,72 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   assert.equal(devBranchQuery.body.tasks.length, 1)
   assert.equal(devBranchQuery.body.tasks[0].branchName, 'dev')
 
+  const mergedTaskDir = '.trellis/tasks/03-merged'
+  const mergedTaskFiles = [
+    {
+      path: `${mergedTaskDir}/task.json`,
+      content: `${JSON.stringify({
+        id: 'task-merged',
+        title: '合入任务',
+        status: 'planning',
+        assignee: 'owner',
+        priority: 'P2',
+        branch: 'feature/dev1',
+      })}\n`,
+      baseSha256: null,
+    },
+    {
+      path: `${mergedTaskDir}/prd.md`,
+      content: '# 合入任务\n',
+      baseSha256: null,
+    },
+  ]
+  const mergedChanges = await request(
+    runtime,
+    `/api/agent/task-spaces/${encodeURIComponent(taskSpaceId)}/changes`,
+    {
+      method: 'POST',
+      agentCredential: enrolled.body.credential,
+      body: {
+        batchId: 'batch-merged-source',
+        clientSequence: 3,
+        observedBranchName: 'main',
+        mergeEvidence: {
+          version: 1,
+          type: 'tracked-in-head',
+          taskId: 'task-merged',
+          taskDir: mergedTaskDir,
+          trackedPath: `${mergedTaskDir}/task.json`,
+          sourceBranch: 'feature/dev1',
+          baselineBranch: 'main',
+          headCommit: 'a'.repeat(40),
+        },
+        files: mergedTaskFiles,
+      },
+    },
+  )
+  assert.equal(mergedChanges.status, 200, JSON.stringify(mergedChanges.body))
+  await runtime.services.taskSpaceIndex.ensureMaterialized(taskSpaceId)
+
+  const board = await request(
+    runtime,
+    `/api/board?taskSpaceId=${encodeURIComponent(taskSpaceId)}`,
+    {
+      cookie: session,
+    },
+  )
+  assert.equal(board.status, 200, JSON.stringify(board.body))
+  const mergedBoardTask = board.body.tasks.find((task) => task.title === '合入任务')
+  assert.equal(mergedBoardTask?.branchName, 'main')
+  assert.equal(mergedBoardTask?.sourceBranchName, 'feature/dev1')
+  const mergedDetail = await request(
+    runtime,
+    `/api/tasks/${encodeURIComponent(mergedBoardTask.executionTaskKey)}?taskSpaceId=${encodeURIComponent(taskSpaceId)}`,
+    { cookie: session },
+  )
+  assert.equal(mergedDetail.status, 200, JSON.stringify(mergedDetail.body))
+  assert.equal(mergedDetail.body.task.sourceBranchName, 'feature/dev1')
+
   const operation = await request(runtime, '/api/tasks', {
     method: 'POST',
     cookie: session,

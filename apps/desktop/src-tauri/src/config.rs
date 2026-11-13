@@ -86,6 +86,13 @@ pub fn save(config: &ClientConfig) -> Result<(), String> {
     })
 }
 
+/// 进程级环境变量在并行测试间共享，改 `TRELLIS_DESKTOP_HOME` 的用例必须先取此锁。
+#[cfg(test)]
+pub fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|error| error.into_inner())
+}
+
 pub fn server_url_from_args() -> Option<String> {
     let mut args = std::env::args().skip(1);
     while let Some(argument) = args.next() {
@@ -113,6 +120,7 @@ mod tests {
 
     #[test]
     fn config_round_trips_with_remembered_credentials() {
+        let _env = test_env_lock();
         let directory = std::env::temp_dir().join(format!(
             "trellis-desktop-config-test-{}",
             std::process::id()

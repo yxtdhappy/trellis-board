@@ -99,6 +99,7 @@ fn binding_entry_unchanged(existing: &AgentBinding, next: &AgentBinding) -> bool
     existing.local_id == next.local_id
         && existing.repo_path == next.repo_path
         && existing.branch_name == next.branch_name
+        && existing.baseline_branch == next.baseline_branch
         && existing.initial_sync_completed == next.initial_sync_completed
         && existing.read_only == next.read_only
 }
@@ -733,6 +734,7 @@ pub struct PendingBatch {
     pub batch_id: String,
     pub client_sequence: u64,
     pub files: Vec<Value>,
+    pub merge_evidence: Option<Value>,
 }
 
 fn cursor_from_entry(entry: &Value) -> Cursor {
@@ -777,6 +779,7 @@ struct OwnershipResolution {
     reviews: Vec<OwnershipReview>,
     invalid: Vec<String>,
     project_task_spaces: Vec<Value>,
+    merge_evidence: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -814,6 +817,12 @@ struct WatchState {
     tx: Option<mpsc::UnboundedSender<WatchEvent>>,
 }
 
+struct HeadTreeCache {
+    branch_name: String,
+    head_commit: String,
+    tracked_paths: Arc<HashSet<String>>,
+}
+
 pub struct TaskSync {
     store: Arc<ConfigStore>,
     api: Arc<ApiClient>,
@@ -824,6 +833,8 @@ pub struct TaskSync {
     cursor_state: Mutex<Option<Value>>,
     cursor_write: Mutex<()>,
     last_baseline_files: Mutex<Vec<SnapshotFile>>,
+    head_tree_cache: Mutex<HashMap<String, HeadTreeCache>>,
+    baseline_owned: Mutex<HashSet<String>>,
     watch: Mutex<WatchState>,
 }
 
@@ -839,12 +850,16 @@ impl TaskSync {
             cursor_state: Mutex::new(None),
             cursor_write: Mutex::new(()),
             last_baseline_files: Mutex::new(Vec::new()),
+            head_tree_cache: Mutex::new(HashMap::new()),
+            baseline_owned: Mutex::new(HashSet::new()),
             watch: Mutex::new(WatchState::default()),
         }
     }
 
     pub async fn set_bindings(&self, bindings: Vec<AgentBinding>) {
         *self.bindings.lock().await = approved_bindings(bindings);
+        self.head_tree_cache.lock().await.clear();
+        self.baseline_owned.lock().await.clear();
     }
 
     pub async fn update_bindings(self: &Arc<Self>, bindings: Vec<AgentBinding>) {
@@ -884,6 +899,8 @@ impl TaskSync {
         if unchanged {
             return;
         }
+        self.head_tree_cache.lock().await.clear();
+        self.baseline_owned.lock().await.clear();
         for task_space_id in pull_task_space_ids {
             self.pull_and_report(&task_space_id).await;
         }
@@ -983,6 +1000,55 @@ impl TaskSync {
                 Err(error)
             }
         }
+    }
+
+    async fn head_tree_paths(
+        &self,
+        binding: &AgentBinding,
+    ) -> AgentResult<(String, Arc<HashSet<String>>)> {
+        let branch = self.assert_binding_branch(binding).await?;
+        let hooks_dir = self.binding_hooks_dir(binding);
+        let repo = Path::new(&binding.repo_path);
+        let head = crate::agent::git::head_commit(repo, &hooks_dir, false)
+            .await?
+            .ok_or_else(|| AgentError::new(code::DETACHED_HEAD, "本地仓库没有可用 HEAD"))?;
+        {
+            let cache = self.head_tree_cache.lock().await;
+            if let Some(entry) = cache.get(&binding.task_space_id) {
+                if entry.branch_name == branch && entry.head_commit == head {
+                    return Ok((entry.head_commit.clone(), entry.tracked_paths.clone()));
+                }
+            }
+        }
+        let paths = crate::agent::git::ls_tree(repo, &hooks_dir, Some(&head)).await?;
+        let tracked_paths = Arc::new(paths.into_iter().collect::<HashSet<_>>());
+        self.head_tree_cache.lock().await.insert(
+            binding.task_space_id.clone(),
+            HeadTreeCache {
+                branch_name: branch,
+                head_commit: head.clone(),
+                tracked_paths: tracked_paths.clone(),
+            },
+        );
+        Ok((head, tracked_paths))
+    }
+
+    fn baseline_owned_key(task_space_id: &str, task_id: &str) -> String {
+        format!("{task_space_id}\0{task_id}")
+    }
+
+    async fn baseline_owned(&self, task_space_id: &str, task_id: &str) -> bool {
+        self.baseline_owned
+            .lock()
+            .await
+            .contains(&Self::baseline_owned_key(task_space_id, task_id))
+    }
+
+    async fn mark_baseline_owned(&self, task_space_id: &str, task_id: &str) {
+        self.baseline_owned
+            .lock()
+            .await
+            .insert(Self::baseline_owned_key(task_space_id, task_id));
     }
 
     async fn assert_binding_active(&self, binding: &AgentBinding) -> AgentResult<()> {
@@ -1360,6 +1426,7 @@ impl TaskSync {
                             "batchId": batch.batch_id,
                             "clientSequence": batch.client_sequence,
                             "files": batch.files,
+                            "mergeEvidence": batch.merge_evidence,
                         }),
                     );
                 }
@@ -1634,6 +1701,7 @@ impl TaskSync {
         let mut project_task_spaces = vec![json!({
             "taskSpaceId": binding.task_space_id,
             "branchName": binding.branch_name,
+            "isBaseline": binding.baseline_branch.as_deref() == Some(binding.branch_name.as_str()),
         })];
         let mut claims_by_task: HashMap<String, Vec<Value>> = HashMap::new();
         for chunk in unresolved_ids.chunks(TASK_OWNERSHIP_QUERY_LIMIT) {
@@ -1666,19 +1734,26 @@ impl TaskSync {
             project_task_spaces: project_task_spaces.clone(),
             ..Default::default()
         };
+        let mut head_tree: Option<(String, Arc<HashSet<String>>)> = None;
         for group in groups {
             let Some(task_id) = group.task_id.as_deref() else {
                 resolution.invalid.push(group.task_dir.clone());
                 continue;
             };
+            if self.baseline_owned(&binding.task_space_id, task_id).await {
+                resolution.paused.push(group.clone());
+                continue;
+            }
             if let Some(branch_name) = group.task_branch.as_deref() {
-                if branch_name == binding.branch_name {
-                    resolution
-                        .syncable
-                        .insert(group.task_dir.clone(), group.clone());
-                } else {
-                    resolution.paused.push(group.clone());
-                }
+                self.resolve_group_ownership(
+                    binding,
+                    group.clone(),
+                    task_id,
+                    branch_name,
+                    &mut head_tree,
+                    &mut resolution,
+                )
+                .await?;
                 continue;
             }
             let claims = claims_by_task.get(task_id).cloned().unwrap_or_default();
@@ -1750,13 +1825,15 @@ impl TaskSync {
                     Some(task_json.sha256.clone()),
                 );
             }
-            if inferred == binding.branch_name {
-                resolution
-                    .syncable
-                    .insert(group.task_dir.clone(), refreshed);
-            } else {
-                resolution.paused.push(refreshed);
-            }
+            self.resolve_group_ownership(
+                binding,
+                refreshed,
+                task_id,
+                &inferred,
+                &mut head_tree,
+                &mut resolution,
+            )
+            .await?;
         }
 
         let fresh = self
@@ -1779,6 +1856,57 @@ impl TaskSync {
         .await?;
         self.ownership_event(binding, &fresh, &resolution.project_task_spaces);
         Ok(resolution)
+    }
+
+    async fn resolve_group_ownership(
+        &self,
+        binding: &AgentBinding,
+        group: SnapshotGroup,
+        task_id: &str,
+        branch_name: &str,
+        head_tree: &mut Option<(String, Arc<HashSet<String>>)>,
+        resolution: &mut OwnershipResolution,
+    ) -> AgentResult<()> {
+        if branch_name == binding.branch_name {
+            resolution
+                .syncable
+                .insert(group.task_dir.clone(), group);
+            return Ok(());
+        }
+        if binding.baseline_branch.as_deref() != Some(binding.branch_name.as_str()) {
+            resolution.paused.push(group);
+            return Ok(());
+        }
+        let (head, paths) = match head_tree.as_ref() {
+            Some(value) => value.clone(),
+            None => {
+                let value = self.head_tree_paths(binding).await?;
+                *head_tree = Some(value.clone());
+                value
+            }
+        };
+        let tracked_path = format!("{}/task.json", group.task_dir);
+        if !paths.contains(&tracked_path) {
+            resolution.paused.push(group);
+            return Ok(());
+        }
+        resolution.merge_evidence.insert(
+            group.task_dir.clone(),
+            json!({
+                "version": 1,
+                "type": "tracked-in-head",
+                "taskId": task_id,
+                "taskDir": group.task_dir,
+                "trackedPath": tracked_path,
+                "sourceBranch": branch_name,
+                "baselineBranch": binding.branch_name,
+                "headCommit": head,
+            }),
+        );
+        resolution
+            .syncable
+            .insert(group.task_dir.clone(), group);
+        Ok(())
     }
 
     async fn fetch_snapshot(&self, task_space_id: &str, after_revision: u64) -> AgentResult<Value> {
@@ -2887,7 +3015,15 @@ impl TaskSync {
                 base_sha.unwrap_or(&cursor.baselines),
             ));
             let value: Vec<Value> = files.iter().map(UploadFile::to_value).collect();
-            if let Some(uploaded) = self.upload_persisted_batch(binding, &cursor, value).await? {
+            let evidence = ownership
+                .merge_evidence
+                .get(&target.0)
+                .or_else(|| ownership.merge_evidence.get(&source.0))
+                .cloned();
+            if let Some(uploaded) = self
+                .upload_persisted_batch(binding, &cursor, value, evidence)
+                .await?
+            {
                 if uploaded.get("skipped").and_then(Value::as_bool) == Some(true) {
                     return Ok(uploaded);
                 }
@@ -2918,7 +3054,11 @@ impl TaskSync {
                 base_sha.unwrap_or(&cursor.baselines),
             );
             let value: Vec<Value> = files.iter().map(UploadFile::to_value).collect();
-            if let Some(uploaded) = self.upload_persisted_batch(binding, &cursor, value).await? {
+            let evidence = ownership.merge_evidence.get(task_dir).cloned();
+            if let Some(uploaded) = self
+                .upload_persisted_batch(binding, &cursor, value, evidence)
+                .await?
+            {
                 if uploaded.get("skipped").and_then(Value::as_bool) == Some(true) {
                     return Ok(uploaded);
                 }
@@ -2959,6 +3099,7 @@ impl TaskSync {
         binding: &AgentBinding,
         cursor: &Cursor,
         files: Vec<Value>,
+        merge_evidence: Option<Value>,
     ) -> AgentResult<Option<Value>> {
         if files.is_empty() {
             return Ok(None);
@@ -2968,6 +3109,7 @@ impl TaskSync {
             batch_id: uuid::Uuid::new_v4().to_string(),
             client_sequence: next_client_sequence(cursor.sequence),
             files,
+            merge_evidence,
         };
         self.write_cursor(
             &binding.task_space_id,
@@ -3085,12 +3227,15 @@ impl TaskSync {
         let result = loop {
             // 每次尝试都重新校验分支，并把实际分支名带给服务端。
             let observed = self.assert_binding_branch(binding).await?;
-            let request = json!({
+            let mut request = json!({
                 "batchId": batch.batch_id,
                 "clientSequence": active_sequence,
                 "files": batch.files,
                 "observedBranchName": observed,
             });
+            if let Some(evidence) = &batch.merge_evidence {
+                request["mergeEvidence"] = evidence.clone();
+            }
             match self
                 .upload_with_slot(&task_space_id, retry_delay, &request)
                 .await
@@ -3101,6 +3246,21 @@ impl TaskSync {
                         "code": "TASK_FILE_CONFLICT",
                         "conflictId": error.conflict_id,
                         "message": error.message,
+                        "details": error.details,
+                    });
+                }
+                Err(error) if error.server_code.as_deref() == Some("TASK_OWNED_BY_BASELINE") => {
+                    if let Some(task_id) = error
+                        .details
+                        .as_ref()
+                        .and_then(|details| details.get("taskId"))
+                        .and_then(Value::as_str)
+                    {
+                        self.mark_baseline_owned(&task_space_id, task_id).await;
+                    }
+                    break json!({
+                        "skipped": true,
+                        "reason": "TASK_OWNED_BY_BASELINE",
                         "details": error.details,
                     });
                 }
@@ -3145,6 +3305,17 @@ impl TaskSync {
         };
 
         let cursor = self.read_cursor(&task_space_id).await;
+        if result.get("reason").and_then(Value::as_str) == Some("TASK_OWNED_BY_BASELINE") {
+            self.write_cursor(
+                &task_space_id,
+                CursorPatch {
+                    pending: Some(None),
+                    ..Default::default()
+                },
+            )
+            .await?;
+            return Ok(result);
+        }
         if result.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
             self.mark_conflict_blocked(&task_space_id, &result, &batch.files)
                 .await?;
@@ -3462,6 +3633,20 @@ impl TaskSync {
                 )
                 .await;
         }
+        let ownership = self
+            .resolve_task_ownership(binding, std::slice::from_ref(local))
+            .await?;
+        if !ownership.syncable.contains_key(&local.task_dir) {
+            return Ok(json!({
+                "skipped": true,
+                "reason": if ownership.paused.is_empty() {
+                    "TASK_OWNERSHIP_REQUIRED"
+                } else {
+                    "TASK_BRANCH_OTHER"
+                },
+                "paused": ownership.paused.iter().map(|group| group.task_dir.clone()).collect::<Vec<_>>(),
+            }));
+        }
         let server_files = match server {
             Some(group) => {
                 let directory = self
@@ -3494,7 +3679,12 @@ impl TaskSync {
         }
         let values: Vec<Value> = files.iter().map(UploadFile::to_value).collect();
         Ok(self
-            .upload_persisted_batch(binding, &cursor, values)
+            .upload_persisted_batch(
+                binding,
+                &cursor,
+                values,
+                ownership.merge_evidence.get(&local.task_dir).cloned(),
+            )
             .await?
             .unwrap_or(Value::Null))
     }
@@ -3676,6 +3866,10 @@ impl TaskSync {
                 "reviews": ownership.reviews.iter().map(|review| review.group.task_dir.clone()).collect::<Vec<_>>(),
             }));
         }
+        let merge_evidence = local_groups
+            .iter()
+            .find_map(|group| ownership.merge_evidence.get(&group.task_dir))
+            .cloned();
         let cursor = self.read_cursor(task_space_id).await;
         let backup = match &directories.local {
             Some(local_dir) => self.backup_directory(&binding, local_dir).await?,
@@ -3692,6 +3886,7 @@ impl TaskSync {
                     "clientSequence": next_sequence,
                     "files": values,
                     "observedBranchName": observed,
+                    "mergeEvidence": merge_evidence,
                 }),
             )
             .await?;
@@ -4294,6 +4489,7 @@ fn parse_pending_batch(value: &Value) -> Option<PendingBatch> {
         batch_id,
         client_sequence,
         files,
+        merge_evidence: value.get("mergeEvidence").cloned(),
     })
 }
 
@@ -4533,6 +4729,36 @@ mod tests {
         assert!(!is_branch_guard_code(code::LOCAL_DIRTY));
     }
 
+    #[test]
+    fn baseline_branch_change_invalidates_binding_cache() {
+        let current = test_binding("space-main");
+        let mut next = current.clone();
+        next.baseline_branch = Some("main".to_string());
+        assert!(!binding_entry_unchanged(&current, &next));
+    }
+
+    #[test]
+    fn pending_batch_preserves_merge_evidence() {
+        let evidence = json!({
+            "version": 1,
+            "type": "tracked-in-head",
+            "taskId": "task-a",
+            "taskDir": ".trellis/tasks/task-a",
+            "trackedPath": ".trellis/tasks/task-a/task.json",
+            "sourceBranch": "dev1",
+            "baselineBranch": "dev",
+            "headCommit": "a".repeat(40),
+        });
+        let pending = parse_pending_batch(&json!({
+            "batchId": "batch-1",
+            "clientSequence": 3,
+            "files": [{ "path": ".trellis/tasks/task-a/task.json" }],
+            "mergeEvidence": evidence.clone(),
+        }))
+        .expect("pending batch");
+        assert_eq!(pending.merge_evidence, Some(evidence));
+    }
+
     fn test_binding(task_space_id: &str) -> AgentBinding {
         AgentBinding {
             local_id: format!("local-{task_space_id}"),
@@ -4541,6 +4767,7 @@ mod tests {
             project_id: "project-1".to_string(),
             repo_path: format!("C:/repos/{task_space_id}"),
             branch_name: "main".to_string(),
+            baseline_branch: None,
             team_id: None,
             remote_identity_key: "a".repeat(64),
             local_repo_key: "b".repeat(64),
@@ -4764,7 +4991,7 @@ mod tests {
         let files = batch_file_values(TASK_SNAPSHOT_MAX_FILES + 1);
 
         let write_error = sync
-            .upload_persisted_batch(&binding, &Cursor::default(), files.clone())
+            .upload_persisted_batch(&binding, &Cursor::default(), files.clone(), None)
             .await
             .expect_err("新批次应在写入 pending 前拒绝");
         assert!(write_error.message.contains("1024"));
@@ -4777,6 +5004,7 @@ mod tests {
                     batch_id: "oversized-batch".to_string(),
                     client_sequence: 1,
                     files,
+                    merge_evidence: None,
                 },
             )
             .await
@@ -4904,6 +5132,7 @@ mod tests {
             batch_id: "batch-1".to_string(),
             client_sequence: 3,
             files: vec![json!({ "path": ".trellis/tasks/a/prd.md" })],
+            merge_evidence: None,
         };
         assert_cursor_patch_changes_once(
             &mut cursor,

@@ -759,6 +759,7 @@ const SCHEMA_V11_SQL = `
     name TEXT NOT NULL,
     remote_url TEXT NOT NULL,
     remote_identity_hash TEXT NOT NULL UNIQUE,
+    baseline_branch TEXT NOT NULL DEFAULT '',
     owner_team_id TEXT NOT NULL REFERENCES team(id),
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
     created_by_user_id TEXT REFERENCES user_account(id),
@@ -845,6 +846,8 @@ const SCHEMA_V11_SQL = `
     ON sync_task_space_file(task_space_id, revision);
   CREATE INDEX IF NOT EXISTS sync_task_space_file_task
     ON sync_task_space_file(task_space_id, task_dir);
+  CREATE INDEX IF NOT EXISTS sync_task_space_file_task_id
+    ON sync_task_space_file(task_space_id, task_id, deleted);
 
   CREATE TABLE IF NOT EXISTS sync_task_space_batch (
     batch_id TEXT NOT NULL,
@@ -860,6 +863,29 @@ const SCHEMA_V11_SQL = `
 
   CREATE INDEX IF NOT EXISTS sync_task_space_batch_time
     ON sync_task_space_batch(task_space_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS sync_task_merge_evidence (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES sync_project(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL,
+    execution_task_key TEXT NOT NULL,
+    baseline_task_space_id TEXT NOT NULL REFERENCES sync_task_space(id) ON DELETE CASCADE,
+    task_dir TEXT NOT NULL,
+    tracked_path TEXT NOT NULL,
+    source_branch_name TEXT NOT NULL,
+    baseline_branch_name TEXT NOT NULL,
+    evidence_type TEXT NOT NULL CHECK (evidence_type = 'tracked-in-head'),
+    head_commit TEXT NOT NULL,
+    source_agent_id TEXT REFERENCES agent_device(id) ON DELETE SET NULL,
+    source_user_id TEXT REFERENCES user_account(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, task_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS sync_task_merge_evidence_space
+    ON sync_task_merge_evidence(baseline_task_space_id, task_id);
+  CREATE INDEX IF NOT EXISTS sync_task_merge_evidence_execution
+    ON sync_task_merge_evidence(project_id, execution_task_key);
 
   CREATE TABLE IF NOT EXISTS sync_active_agent (
     user_id TEXT PRIMARY KEY REFERENCES user_account(id) ON DELETE CASCADE,
@@ -1088,7 +1114,7 @@ function ensureV11Schema(db) {
 }
 
 function ensureV12Schema(db) {
-  const columns = new Set(
+  const taskSpaceColumns = new Set(
     db
       .prepare('PRAGMA table_info(sync_task_space)')
       .all()
@@ -1099,11 +1125,61 @@ function ensureV12Schema(db) {
     ['retired_by_user_id', 'TEXT REFERENCES user_account(id)'],
     ['retired_reason', 'TEXT'],
   ]) {
-    if (!columns.has(name)) db.exec(`ALTER TABLE sync_task_space ADD COLUMN ${name} ${definition}`)
+    if (!taskSpaceColumns.has(name)) {
+      db.exec(`ALTER TABLE sync_task_space ADD COLUMN ${name} ${definition}`)
+    }
+  }
+  const projectColumns = new Set(
+    db
+      .prepare('PRAGMA table_info(sync_project)')
+      .all()
+      .map((column) => column.name),
+  )
+  if (!projectColumns.has('baseline_branch')) {
+    db.exec("ALTER TABLE sync_project ADD COLUMN baseline_branch TEXT NOT NULL DEFAULT ''")
   }
   db.exec(`
     CREATE INDEX IF NOT EXISTS sync_task_space_retired
       ON sync_task_space(project_id, retired_at, status);
+
+    CREATE INDEX IF NOT EXISTS sync_task_space_file_task_id
+      ON sync_task_space_file(task_space_id, task_id, deleted);
+
+    CREATE TABLE IF NOT EXISTS sync_task_merge_evidence (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES sync_project(id) ON DELETE CASCADE,
+      task_id TEXT NOT NULL,
+      execution_task_key TEXT NOT NULL,
+      baseline_task_space_id TEXT NOT NULL REFERENCES sync_task_space(id) ON DELETE CASCADE,
+      task_dir TEXT NOT NULL,
+      tracked_path TEXT NOT NULL,
+      source_branch_name TEXT NOT NULL,
+      baseline_branch_name TEXT NOT NULL,
+      evidence_type TEXT NOT NULL CHECK (evidence_type = 'tracked-in-head'),
+      head_commit TEXT NOT NULL,
+      source_agent_id TEXT REFERENCES agent_device(id) ON DELETE SET NULL,
+      source_user_id TEXT REFERENCES user_account(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(project_id, task_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS sync_task_merge_evidence_space
+      ON sync_task_merge_evidence(baseline_task_space_id, task_id);
+    CREATE INDEX IF NOT EXISTS sync_task_merge_evidence_execution
+      ON sync_task_merge_evidence(project_id, execution_task_key);
+
+    UPDATE sync_project
+    SET baseline_branch = COALESCE((
+      SELECT s.branch_name
+      FROM sync_task_space s
+      WHERE s.project_id = sync_project.id
+      ORDER BY
+        CASE WHEN s.status = 'active' THEN 0 ELSE 1 END,
+        s.created_at,
+        s.id
+      LIMIT 1
+    ), '')
+    WHERE baseline_branch = '';
   `)
 }
 

@@ -95,6 +95,11 @@ Team runtime 的事实链只有客户端任务快照：
   `data/projects/**` 工作副本。
 - 项目身份是 Agent 自报并校验格式的规范化 Git 远端；服务端不访问远端证明仓库存在。
 - 任务空间键是“规范化远端 + 分支”。同一远端不同分支 revision、cursor、命令和索引完全隔离。
+- 项目保存固定 `baseline_branch`。已合入任务的合入事实由绑定基线 taskSpace 的已批准 Agent 读取本地
+  Git `HEAD` 后上报 `tracked-in-head` 证据；服务端只校验声明结构、身份和任务目录，不执行 Git，
+  因而该证据属于受信 Agent 声明而非服务端独立证明。
+- 基线 taskSpace 首次接纳来源不同任务后，来源 taskSpace 的同一稳定任务 ID 转为只读历史副本。
+  默认 Board 查询以基线副本优先并隐藏来源重复项，旧快照、冲突和审计不删除。
 - 服务端只持久化 `.trellis/tasks/**`。`scripts`、`spec`、`config.yaml`、`workflow.md`、`agents`、
   workspace、`.developer` 和本机编码 Agent 目录不属于 Team 同步协议。
 - Team Board 的创建/改派不直接写项目文件。Web 只创建 `sync_task_command`；目标用户唯一在线 Agent
@@ -162,9 +167,10 @@ Team 启动：
 
 ## 配置与常量
 
-- `DATABASE_SCHEMA_VERSION` 当前为 `12`。v11 -> v12 为 `sync_task_space` 幂等补
-  `retired_at`、`retired_by_user_id`、`retired_reason` 和 `sync_task_space_retired` 索引；
-  v10 -> v11 的 binding 监听字段迁移仍按原入口顺序执行，不删除旧表和历史文件。
+- `DATABASE_SCHEMA_VERSION` 当前为 `12`。v10 -> v11 为 `sync_agent_binding` 幂等补监听字段和索引；
+  v11 -> v12 为 `sync_task_space` 补 retired 字段和索引，为 `sync_project` 补 `baseline_branch`，
+  创建 `sync_task_merge_evidence` 和 task ID 索引，并按最早活动 taskSpace 回填基线。
+  迁移不删除旧表和历史文件。
 - `SCAN_SCHEMA_VERSION` 当前为 `11`；Board 输出结构不兼容时同步递增。
 - `AGENT_PROTOCOL_VERSION` 当前为 `3`；命令 payload 和 Agent 事件都按 v3 校验。
 - 在线 Agent 的 `last_seen_at` 窗口固定为 60 秒。

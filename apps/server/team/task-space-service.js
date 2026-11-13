@@ -219,6 +219,7 @@ function taskSpacePublic(row, actor, access, summary = null, stats = null) {
     id: row.id,
     projectId: row.project_id,
     branchName: row.branch_name,
+    isBaseline: Boolean(row.baseline_branch && row.branch_name === row.baseline_branch),
     status: row.status,
     revision: Number(row.revision || 0),
     indexedRevision: Number(row.indexed_revision || 0),
@@ -251,6 +252,7 @@ function projectPublic(row, access) {
     name: row.name,
     remoteUrl: row.remote_url,
     remoteIdentityHash: row.remote_identity_hash,
+    baselineBranch: row.baseline_branch || null,
     ownerTeamId: row.owner_team_id,
     ownerTeamName: team?.name || null,
     teamId: row.owner_team_id,
@@ -386,7 +388,8 @@ export function createTaskSpaceService({
       db
         .prepare(`
         SELECT s.*, p.name AS project_name, p.remote_url, p.remote_identity_hash,
-               p.owner_team_id, p.status AS project_status, team.name AS owner_team_name
+               p.baseline_branch, p.owner_team_id, p.status AS project_status,
+               team.name AS owner_team_name
         FROM sync_task_space s
         JOIN sync_project p ON p.id = s.project_id
         JOIN team ON team.id = p.owner_team_id
@@ -457,7 +460,8 @@ export function createTaskSpaceService({
     const spaces = projectIds.length
       ? db
           .prepare(`
-          SELECT s.*, p.owner_team_id AS team_id, p.status AS project_status
+          SELECT s.*, p.baseline_branch, p.owner_team_id AS team_id,
+                 p.status AS project_status
           FROM sync_task_space s
           JOIN sync_project p ON p.id = s.project_id
           WHERE s.project_id IN (${projectIds.map(() => '?').join(', ')})
@@ -594,7 +598,8 @@ export function createTaskSpaceService({
     }
     const taskSpace = db
       .prepare(`
-        SELECT s.*, p.owner_team_id AS team_id, p.status AS project_status
+        SELECT s.*, p.baseline_branch, p.owner_team_id AS team_id,
+               p.status AS project_status
         FROM sync_task_space s
         JOIN sync_project p ON p.id = s.project_id
         WHERE s.project_id = ? AND s.branch_name = ?
@@ -716,6 +721,7 @@ export function createTaskSpaceService({
           name: displayName,
           remote_url: formatGitRemote(identity),
           remote_identity_hash: identityHash,
+          baseline_branch: branchName,
           owner_team_id: teamId,
           status: 'active',
           created_by_user_id: userId,
@@ -726,14 +732,15 @@ export function createTaskSpaceService({
         db.prepare(`
           INSERT INTO sync_project(
             id, name, remote_url, remote_identity_hash, owner_team_id, status,
-            created_by_user_id, created_by_agent_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+            baseline_branch, created_by_user_id, created_by_agent_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
         `).run(
           project.id,
           project.name,
           project.remote_url,
           project.remote_identity_hash,
           project.owner_team_id,
+          project.baseline_branch,
           userId,
           safeAgentId,
           now,
@@ -744,6 +751,13 @@ export function createTaskSpaceService({
             project_id, team_id, access_role, created_by_user_id, created_at
           ) VALUES (?, ?, 'owner', ?, ?)
         `).run(project.id, teamId, userId, now)
+      } else if (!project.baseline_branch) {
+        db.prepare('UPDATE sync_project SET baseline_branch = ?, updated_at = ? WHERE id = ?').run(
+          branchName,
+          now,
+          project.id,
+        )
+        project.baseline_branch = branchName
       }
 
       const access = accessContext(actor)
@@ -903,6 +917,7 @@ export function createTaskSpaceService({
         taskSpace: taskSpacePublic(
           {
             ...taskSpace,
+            baseline_branch: project.baseline_branch,
             team_id: project.owner_team_id,
             project_status: project.status,
           },
@@ -938,7 +953,8 @@ export function createTaskSpaceService({
     if (!project) throw teamError(404, ERROR_CODES.NOT_FOUND, '项目不存在')
     const rows = db
       .prepare(`
-        SELECT s.*, p.owner_team_id AS team_id, p.status AS project_status
+        SELECT s.*, p.baseline_branch, p.owner_team_id AS team_id,
+               p.status AS project_status
         FROM sync_task_space s
         JOIN sync_project p ON p.id = s.project_id
         WHERE s.project_id = ?
@@ -1216,7 +1232,7 @@ export function createTaskSpaceService({
   ) {
     const taskSpace = db
       .prepare(`
-      SELECT s.*, p.owner_team_id, p.status AS project_status
+      SELECT s.*, p.baseline_branch, p.owner_team_id, p.status AS project_status
       FROM sync_task_space s
       JOIN sync_project p ON p.id = s.project_id
       WHERE s.id = ?

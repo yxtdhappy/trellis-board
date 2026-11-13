@@ -1,0 +1,192 @@
+{
+  "id": "witops-core",
+  "name": "WitOps 核心能力",
+  "description": "提供 WitOps 需求、任务树、工时、状态更新与任务下发到 Trellis 的标准 capability。",
+  "version": "2.0.0",
+  "apiVersion": 1,
+  "allowMissingSecrets": true,
+  "engines": {
+    "board": ">=0.2.0"
+  },
+  "permissions": [
+    "capabilities:provide",
+    "capabilities:call",
+    "tasks:read",
+    "projects:read",
+    "tasks:write",
+    "store",
+    "events",
+    "http:route",
+    "panels",
+    "schedule",
+    "runs:read",
+    "runs:write",
+    "secrets:read",
+    "secrets:write"
+  ],
+  "provides": [
+    {
+      "name": "witops.workitems",
+      "version": "1.0.0",
+      "methods": {
+        "mine": {
+          "access": "read",
+          "timeoutMs": 15000
+        },
+        "requirement.get": {
+          "access": "read",
+          "timeoutMs": 10000
+        },
+        "requirement.query": {
+          "access": "read",
+          "timeoutMs": 30000
+        },
+        "requirement.resolve": {
+          "access": "read",
+          "timeoutMs": 60000
+        },
+        "requirement.tree": {
+          "access": "read",
+          "timeoutMs": 20000
+        },
+        "task.listByRequirement": {
+          "access": "read",
+          "timeoutMs": 30000
+        },
+        "task.get": {
+          "access": "read",
+          "timeoutMs": 10000
+        }
+      }
+    },
+    {
+      "name": "witops.worklogs",
+      "version": "1.0.0",
+      "methods": {
+        "summary": {
+          "access": "read",
+          "timeoutMs": 30000
+        }
+      }
+    },
+    {
+      "name": "witops.actions",
+      "version": "1.0.0",
+      "methods": {
+        "requirement.updateStatus": {
+          "access": "write",
+          "timeoutMs": 10000
+        },
+        "task.updateStatus": {
+          "access": "write",
+          "timeoutMs": 10000
+        },
+        "task.assign": {
+          "access": "write",
+          "timeoutMs": 10000
+        }
+      }
+    },
+    {
+      "name": "witops.dispatch",
+      "version": "1.0.0",
+      "methods": {
+        "preview": {
+          "access": "read",
+          "timeoutMs": 120000
+        },
+        "task.create": {
+          "access": "write",
+          "timeoutMs": 120000
+        },
+        "task.batchCreate": {
+          "access": "write",
+          "timeoutMs": 180000
+        },
+        "task.syncRecent": {
+          "access": "write",
+          "timeoutMs": 180000
+        },
+        "imported.list": {
+          "access": "read",
+          "timeoutMs": 10000
+        },
+        "auth.login": {
+          "access": "write",
+          "timeoutMs": 30000
+        },
+        "auth.logout": {
+          "access": "write",
+          "timeoutMs": 10000
+        },
+        "auth.status": {
+          "access": "read",
+          "timeoutMs": 10000
+        }
+      }
+    }
+  ],
+  "requires": [
+    {
+      "name": "trellis.projects",
+      "version": "^1.0.0",
+      "methods": [
+        "list",
+        "get",
+        "current"
+      ]
+    }
+  ],
+  "panels": [
+    {
+      "id": "witops-core",
+      "title": "WitOps 任务",
+      "entry": "/panel",
+      "placement": "view",
+      "order": 25
+    }
+  ],
+  "config": {
+    "baseUrl": "",
+    "gatewayPrefix": "/appgw",
+    "taskServicePrefix": "/weint-witops-service",
+    "adminServicePrefix": "/system-mng",
+    "webRoot": "weint-witops-web",
+    "platform": "MOM_WEB",
+    "path": "/weint-witops-web/dashboard/mine",
+    "repositoryId": "",
+    "userId": null,
+    "assignedToUserId": null,
+    "assignee": "",
+    "developerMap": {},
+    "skipIfNoAssignee": true,
+    "types": [
+      3,
+      4
+    ],
+    "type": 4,
+    "status": "1,3",
+    "pageSize": 50,
+    "maxItems": 200,
+    "maxPerSync": 50,
+    "cacheTtlMs": 60000,
+    "requestIntervalMs": 200,
+    "retries": 2,
+    "timeoutMs": 20000,
+    "keepRaw": false,
+    "agentId": null,
+    "credentials": {
+      "mode": "password",
+      "account": "",
+      "password": "secret:witops-core/password",
+      "token": ""
+    },
+    "session": {
+      "persist": true
+    },
+    "poll": {
+      "enabled": false,
+      "intervalMs": 1800000
+    }
+  }
+}

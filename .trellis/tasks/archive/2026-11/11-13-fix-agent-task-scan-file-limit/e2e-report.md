@@ -53,3 +53,5 @@
 ## 5. 结论
 
 原始 1024 聚合扫描缺陷在最新打包客户端上未再出现，客户端扫描、上传、服务端批次落库、索引和游标均已闭环。Rust 编译和真实单批边界拒绝仍需在有工具链的 CI 或开发机上补充执行。
+
+> 2026-11-13 补充（任务 `11-13-desktop-manual-acceptance-gaps`）：Rust 编译已由 `cargo check` 与源码自构建客户端覆盖；真实单批边界拒绝已在真机补齐——夹具仓库内 1101 个文件的任务目录在补传时被 `单批任务文件不能超过 1024 个` 明确拒绝（`apps/desktop/src-tauri/src/agent/task_sync.rs:368-374`，上限 `TASK_SNAPSHOT_MAX_FILES = 1024`，`:16`），服务端 `revision`/文件/批次计数无任何变化，删除超限目录后局部游标自动回落到 1 个待同步任务。证据见 `.trellis/tasks/11-13-desktop-manual-acceptance-gaps/e2e-report.md` §3；64 MiB 边界仍由源码单测覆盖。

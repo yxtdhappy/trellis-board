@@ -1,8 +1,12 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
 export const SECRETS_VERSION = 1
 export const SECRETS_FILENAME = 'plugins.secrets.json'
+export const SECRETS_KEY_FILENAME = 'plugins.secrets.key'
+const ENC_PREFIX = 'enc:v1:'
+const KEY_BYTES = 32
 const SECRET_KEY_PATTERN = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
 const SECRET_REF_PATTERN = /^secret:([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)$/
 const ENV_REF_PATTERN = /^env:([A-Za-z_][A-Za-z0-9_]*)$/
@@ -11,6 +15,11 @@ const INLINE_SENSITIVE_PATTERN =
 
 export function defaultSecretsFile(configFile) {
   return path.join(path.dirname(configFile), SECRETS_FILENAME)
+}
+
+/** 加密密钥文件与 secrets 文件同目录；缺失时由写入方生成（0600）。 */
+export function defaultSecretsKeyFile(secretsFile) {
+  return path.join(path.dirname(secretsFile), SECRETS_KEY_FILENAME)
 }
 
 function parseJsonWithoutLeak(text, file) {
@@ -31,9 +40,63 @@ function assertOwnerOnly(file) {
   }
 }
 
-export function loadSecretsFile(file) {
+function readKeyFile(file) {
+  if (!fs.existsSync(file)) return null
+  assertOwnerOnly(file)
+  const key = fs.readFileSync(file)
+  if (key.length !== KEY_BYTES) {
+    throw new Error(`${path.basename(file)} 必须是 ${KEY_BYTES} 字节`)
+  }
+  return key
+}
+
+function ensureKeyFile(file) {
+  const existing = readKeyFile(file)
+  if (existing) return existing
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  try {
+    fs.writeFileSync(file, crypto.randomBytes(KEY_BYTES), { flag: 'wx', mode: 0o600 })
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error
+  }
+  const created = readKeyFile(file)
+  if (!created) throw new Error(`无法创建 ${path.basename(file)}`)
+  return created
+}
+
+/** AES-256-GCM：enc:v1:<iv>:<tag>:<ciphertext>（均为 base64）。 */
+export function encryptSecretValue(plaintext, keyFile) {
+  const key = ensureKeyFile(keyFile)
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
+  const ciphertext = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return `${ENC_PREFIX}${iv.toString('base64')}:${tag.toString('base64')}:${ciphertext.toString('base64')}`
+}
+
+export function decryptSecretValue(value, keyFile) {
+  if (typeof value !== 'string' || !value.startsWith(ENC_PREFIX)) return value
+  const [iv, tag, ciphertext] = value.slice(ENC_PREFIX.length).split(':')
+  if (!iv || !tag || !ciphertext) {
+    throw new Error('加密 secret 格式错误，应为 enc:v1:<iv>:<tag>:<ciphertext>')
+  }
+  const key = readKeyFile(keyFile)
+  if (!key) {
+    throw new Error(`缺少 ${path.basename(keyFile)}，无法解密 secrets 中的加密条目`)
+  }
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'), {
+    authTagLength: 16,
+  })
+  decipher.setAuthTag(Buffer.from(tag, 'base64'))
+  return Buffer.concat([
+    decipher.update(Buffer.from(ciphertext, 'base64')),
+    decipher.final(),
+  ]).toString('utf8')
+}
+
+export function loadSecretsFile(file, { keyFile = null } = {}) {
   if (!file || !fs.existsSync(file)) {
-    return { file, refs: new Map(), warnings: [] }
+    return { file, keyFile: keyFile || defaultSecretsKeyFile(file), refs: new Map(), warnings: [] }
   }
   assertOwnerOnly(file)
   const raw = parseJsonWithoutLeak(fs.readFileSync(file, 'utf8'), file)
@@ -46,13 +109,20 @@ export function loadSecretsFile(file) {
   if (!raw.refs || typeof raw.refs !== 'object' || Array.isArray(raw.refs)) {
     throw new Error(`${path.basename(file)} 缺少 refs 对象`)
   }
+  const resolvedKeyFile = keyFile || defaultSecretsKeyFile(file)
   const refs = new Map()
+  let encrypted = 0
   for (const [key, value] of Object.entries(raw.refs)) {
     if (!SECRET_KEY_PATTERN.test(key)) {
       throw new Error(`${path.basename(file)} 的 refs key 必须形如 scope/key: ${key}`)
     }
     if (typeof value !== 'string' || value === '') {
       throw new Error(`${path.basename(file)} 的 ${key} 必须是非空字符串`)
+    }
+    if (value.startsWith(ENC_PREFIX)) {
+      encrypted += 1
+      refs.set(key, decryptSecretValue(value, resolvedKeyFile))
+      continue
     }
     refs.set(key, value)
   }
@@ -61,7 +131,53 @@ export function loadSecretsFile(file) {
   if (unknown.length) {
     warnings.push({ kind: 'unknown-top-level', keys: unknown })
   }
-  return { file, refs, warnings }
+  return { file, keyFile: resolvedKeyFile, refs, encrypted, warnings }
+}
+
+function readRawSecrets(file) {
+  if (!fs.existsSync(file)) return { version: SECRETS_VERSION, refs: {} }
+  const raw = parseJsonWithoutLeak(fs.readFileSync(file, 'utf8'), file)
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`${path.basename(file)} 顶层必须是对象`)
+  }
+  if (raw.version !== SECRETS_VERSION) {
+    throw new Error(`${path.basename(file)} 缺少 version: ${SECRETS_VERSION}`)
+  }
+  if (!raw.refs || typeof raw.refs !== 'object' || Array.isArray(raw.refs)) {
+    throw new Error(`${path.basename(file)} 缺少 refs 对象`)
+  }
+  return raw
+}
+
+function writeRawSecrets(file, raw) {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const tmp = `${file}.${process.pid}.tmp`
+  fs.writeFileSync(tmp, `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o600 })
+  fs.renameSync(tmp, file)
+  if (process.platform !== 'win32') fs.chmodSync(file, 0o600)
+}
+
+/** 写入一条 secret（AES-256-GCM 加密后落盘，原子写 + 0600）。 */
+export function writeSecretRef(file, key, plaintext, { keyFile = null } = {}) {
+  if (!SECRET_KEY_PATTERN.test(String(key ?? ''))) {
+    throw new Error(`secret key 必须形如 scope/key: ${key}`)
+  }
+  if (typeof plaintext !== 'string' || plaintext === '') {
+    throw new Error('secret 值必须是非空字符串')
+  }
+  const raw = readRawSecrets(file)
+  raw.refs[key] = encryptSecretValue(plaintext, keyFile || defaultSecretsKeyFile(file))
+  writeRawSecrets(file, raw)
+  return { key, encrypted: true }
+}
+
+export function deleteSecretRef(file, key) {
+  if (!fs.existsSync(file)) return { key, deleted: false }
+  const raw = readRawSecrets(file)
+  if (!Object.hasOwn(raw.refs, key)) return { key, deleted: false }
+  delete raw.refs[key]
+  writeRawSecrets(file, raw)
+  return { key, deleted: true }
 }
 
 function isSensitivePath(at) {

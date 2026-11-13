@@ -12,6 +12,7 @@
     "allow-live-control-diff",
     "allow-live-control-initial",
     "allow-live-control-dismiss",
-    "allow-set-task-ownership"
+    "allow-set-task-ownership",
+    "allow-appearance-load"
   ]
 }

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { applyMarkdownTheme } from '@/lib/markdown-theme'
 import {
@@ -40,6 +40,21 @@ function readSystemDark(): boolean {
   return window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
+type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
+
+// 桌面客户端内 localStorage 按 origin 隔离，设备偏好改由客户端主进程落盘。
+function desktopInvoke(): DesktopInvoke | undefined {
+  const invoke = typeof window === 'undefined' ? undefined : window.__TAURI__?.core?.invoke
+  return typeof invoke === 'function' ? invoke : undefined
+}
+
+function readDesktopAppearance(value: unknown): { theme: ThemePreference; fontSize: FontSize } {
+  const record: object = typeof value === 'object' && value !== null ? value : {}
+  const theme = 'theme' in record ? record.theme : undefined
+  const fontSize = 'fontSize' in record ? record.fontSize : undefined
+  return { theme: normalizeTheme(theme), fontSize: normalizeFontSize(fontSize) }
+}
+
 function storePreference(key: string, value: string) {
   try {
     localStorage.setItem(key, value)
@@ -52,6 +67,26 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemePreference>(readInitialTheme)
   const [fontSize, setFontSizeState] = useState<FontSize>(readInitialFontSize)
   const [systemDark, setSystemDark] = useState(readSystemDark)
+  const touched = useRef(false)
+
+  useEffect(() => {
+    const invoke = desktopInvoke()
+    if (!invoke) return
+    let cancelled = false
+    invoke('appearance_load')
+      .then((payload) => {
+        if (cancelled || touched.current) return
+        const loaded = readDesktopAppearance(payload)
+        setThemeState(loaded.theme)
+        setFontSizeState(loaded.fontSize)
+      })
+      .catch(() => {
+        /* 读取设备偏好失败时保持当前外观 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -77,9 +112,26 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     storePreference(FONT_SIZE_STORAGE_KEY, fontSize)
   }, [fontSize])
 
-  const setTheme = useCallback((next: ThemePreference) => setThemeState(normalizeTheme(next)), [])
-  const setFontSize = useCallback((next: FontSize) => setFontSizeState(normalizeFontSize(next)), [])
+  // 只在用户真正改过外观时落盘，挂载时的初始值不回写设备偏好。
+  useEffect(() => {
+    if (!touched.current) return
+    const invoke = desktopInvoke()
+    if (!invoke) return
+    invoke('appearance_save', { theme, fontSize }).catch(() => {
+      /* 导航中或权限变化时保存失败，忽略 */
+    })
+  }, [theme, fontSize])
+
+  const setTheme = useCallback((next: ThemePreference) => {
+    touched.current = true
+    setThemeState(normalizeTheme(next))
+  }, [])
+  const setFontSize = useCallback((next: FontSize) => {
+    touched.current = true
+    setFontSizeState(normalizeFontSize(next))
+  }, [])
   const resetAppearance = useCallback(() => {
+    touched.current = true
     setThemeState(DEFAULT_THEME)
     setFontSizeState(DEFAULT_FONT_SIZE)
   }, [])

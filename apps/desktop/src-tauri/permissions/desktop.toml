@@ -124,3 +124,13 @@ commands.allow = ["runtime_status"]
 identifier = "allow-runtime-install"
 description = "本地登录页可在环境缺失时安装运行环境。"
 commands.allow = ["runtime_install"]
+
+[[permission]]
+identifier = "allow-appearance-load"
+description = "当前页面可读取本机外观偏好（主题与根字号，只读且不含敏感数据）。"
+commands.allow = ["appearance_load"]
+
+[[permission]]
+identifier = "allow-appearance-save"
+description = "当前已登录的 Board origin 可把主题与根字号写入本机外观偏好。"
+commands.allow = ["appearance_save"]

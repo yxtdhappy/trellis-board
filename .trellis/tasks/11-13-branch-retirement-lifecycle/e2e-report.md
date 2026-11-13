@@ -54,7 +54,7 @@
 
 ## 构建与自动测试
 
-- `npm test`：445 项，444 通过、1 跳过、0 失败。
+- 合并 `origin/main` 后 `npm test`：467 项，466 通过、1 跳过、0 失败。
 - `npm run build`：通过。
 - `npm run build:desktop`：通过。
 - 服务端生命周期、权限、heartbeat、迁移、备份失败和级联删除均有自动测试。

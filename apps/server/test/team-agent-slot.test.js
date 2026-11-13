@@ -68,10 +68,10 @@ function insertListenerBindings(db, agentId) {
   const now = new Date().toISOString()
   db.prepare(
     `INSERT INTO sync_project(
-      id, name, remote_url, remote_identity_hash, owner_team_id, status,
+      id, name, remote_url, remote_identity_hash, baseline_branch, owner_team_id, status,
       created_by_user_id, created_by_agent_id, created_at, updated_at
     ) VALUES ('project-listener', '监听项目', 'https://example.com/listener.git', 'listener-hash',
-      'team-1', 'active', 'user-1', ?, ?, ?)`,
+      'main', 'team-1', 'active', 'user-1', ?, ?, ?)`,
   ).run(agentId, now, now)
   const insertSpace = db.prepare(
     `INSERT INTO sync_task_space(
@@ -187,7 +187,18 @@ test('监听协议心跳只把上报集合标记为在线，并为全部 approve
   try {
     const first = register(service, db, '监听设备')
     insertListenerBindings(db, first.agent.id)
-    service.heartbeat(first.agent, heartbeatInput(first.agent, ['space-a']))
+    const input = heartbeatInput(first.agent, ['space-a'])
+    input.bindings = [
+      { taskSpaceId: 'space-a', localRepoKey: 'a'.repeat(64) },
+      { taskSpaceId: 'space-b', localRepoKey: 'b'.repeat(64) },
+    ]
+    const heartbeat = service.heartbeat(first.agent, input)
+    assert.deepEqual(
+      Object.fromEntries(
+        heartbeat.bindings.map((binding) => [binding.taskSpaceId, binding.baselineBranch]),
+      ),
+      { 'space-a': 'main', 'space-b': 'main' },
+    )
     const rows = Object.fromEntries(
       db
         .prepare(`

@@ -127,6 +127,19 @@ function taskFiles(taskDir, taskId, title, branch = 'main') {
   ]
 }
 
+function trackedEvidence(taskDir, taskId, sourceBranch = 'feature/dev-sync') {
+  return {
+    version: 1,
+    type: 'tracked-in-head',
+    taskId,
+    taskDir,
+    trackedPath: `${taskDir}/task.json`,
+    sourceBranch,
+    baselineBranch: 'main',
+    headCommit: 'a'.repeat(40),
+  }
+}
+
 test('快照 Worker 不读取 Git/workspace 也能索引任务', async () => {
   const ctx = setup()
   try {
@@ -182,7 +195,7 @@ test('全部项目查询覆盖多个项目与分支，并保持权限、筛选�
       displayName: 'Acme',
       teamId: 'team-1',
       developerId: 'alice',
-      localRepoKey: 'b'.repeat(64),
+      localRepoKey: 'd'.repeat(64),
     })
     const other = ctx.taskSpaces.attach('user-1', ctx.agent.id, {
       remoteUrl: 'https://example.com/acme/other.git',
@@ -193,16 +206,6 @@ test('全部项目查询覆盖多个项目与分支，并保持权限、筛选�
       localRepoKey: 'c'.repeat(64),
     })
 
-    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
-      batchId: 'batch-all-main-shared',
-      clientSequence: 1,
-      files: taskFiles('.trellis/tasks/11-10-shared', 'shared', '共享任务 main'),
-    })
-    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
-      batchId: 'batch-all-main-only',
-      clientSequence: 2,
-      files: taskFiles('.trellis/tasks/11-10-main-only', 'main-only', 'main 任务'),
-    })
     ctx.snapshots.applyChanges(ctx.agent, dev.taskSpace.id, {
       batchId: 'batch-all-dev-shared',
       clientSequence: 1,
@@ -212,6 +215,23 @@ test('全部项目查询覆盖多个项目与分支，并保持权限、筛选�
       batchId: 'batch-all-dev-only',
       clientSequence: 2,
       files: taskFiles('.trellis/tasks/11-10-dev-only', 'dev-only', 'dev 任务', 'feature/dev-sync'),
+    })
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-all-main-shared',
+      clientSequence: 1,
+      observedBranchName: 'main',
+      mergeEvidence: trackedEvidence('.trellis/tasks/11-10-shared', 'shared'),
+      files: taskFiles(
+        '.trellis/tasks/11-10-shared',
+        'shared',
+        '共享任务 main',
+        'feature/dev-sync',
+      ),
+    })
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-all-main-only',
+      clientSequence: 2,
+      files: taskFiles('.trellis/tasks/11-10-main-only', 'main-only', 'main 任务'),
     })
     ctx.snapshots.applyChanges(ctx.agent, other.taskSpace.id, {
       batchId: 'batch-all-other',
@@ -239,9 +259,13 @@ test('全部项目查询覆盖多个项目与分支，并保持权限、筛选�
       .run(now, now)
     const actor = ctx.taskSpaces.actorContext('user-1')
     const first = ctx.index.queryTasks(actor, { limit: 2 })
-    assert.equal(first.total, 5)
+    assert.equal(first.total, 4)
     assert.equal(first.tasks.length, 2)
     assert.ok(first.tasks.every((task) => task.taskSpaceId && task.branchName))
+    const baselineShared = ctx.index
+      .queryTasks(actor, { q: '共享任务 main' })
+      .tasks.find((task) => task.taskSpaceId === ctx.taskSpaceId)
+    assert.equal(baselineShared?.sourceBranchName, 'feature/dev-sync')
 
     const seen = new Set(first.tasks.map((task) => `${task.taskSpaceId}:${task.taskKey}`))
     let cursor = first.nextCursor
@@ -250,10 +274,10 @@ test('全部项目查询覆盖多个项目与分支，并保持权限、筛选�
       page.tasks.forEach((task) => seen.add(`${task.taskSpaceId}:${task.taskKey}`))
       cursor = page.nextCursor
     }
-    assert.equal(seen.size, 5)
+    assert.equal(seen.size, 4)
 
     const branchFiltered = ctx.index.queryTasks(actor, { branch: ' DEV ' })
-    assert.equal(branchFiltered.total, 2)
+    assert.equal(branchFiltered.total, 1)
     assert.ok(branchFiltered.tasks.every((task) => task.taskSpaceId === dev.taskSpace.id))
     assert.equal(ctx.index.queryTasks(actor, { branch: '%' }).total, 0)
     assert.equal(ctx.index.queryTasks(actor, { branch: '_' }).total, 0)
@@ -263,7 +287,7 @@ test('全部项目查询覆盖多个项目与分支，并保持权限、筛选�
     )
 
     const oneProject = ctx.index.queryTasks(actor, { projectIds: [dev.project.id] })
-    assert.equal(oneProject.total, 4)
+    assert.equal(oneProject.total, 3)
     assert.ok(oneProject.tasks.every((task) => task.projectId === dev.project.id))
     assert.throws(
       () => ctx.index.queryTasks(actor, { projectIds: ['missing-project'] }),
@@ -273,7 +297,7 @@ test('全部项目查询覆盖多个项目与分支，并保持权限、筛选�
     const single = ctx.index.queryTasks(actor, { taskSpaceId: ctx.taskSpaceId })
     assert.equal(single.total, 2)
     assert.ok(single.tasks.every((task) => task.taskSpaceId === ctx.taskSpaceId))
-    assert.equal(ctx.index.queryTasks(actor, { taskSpaceId: 'all' }).total, 5)
+    assert.equal(ctx.index.queryTasks(actor, { taskSpaceId: 'all' }).total, 4)
     assert.throws(
       () =>
         ctx.index.queryTasks(actor, {

@@ -24,6 +24,7 @@ const SYNC_TABLES = [
   'sync_task_space_batch',
   'sync_task_space_file',
   'sync_task_space_scan_cache',
+  'sync_task_merge_evidence',
 ]
 
 function tableNames(db) {
@@ -60,7 +61,7 @@ test('schema v12 新库只新增 sync_* 团队任务表', () => {
   }
 })
 
-test('v10 升级到 v12 补监听与弃用字段并保留已有关联', () => {
+test('v10 升级到 v12 补监听、弃用和基线字段并保留已有关联', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v12-'))
   const databaseFile = path.join(root, 'board.sqlite')
   let reopened = null
@@ -164,6 +165,19 @@ test('v10 升级到 v12 补监听与弃用字段并保留已有关联', () => {
         listener_reported_at: null,
         last_listener_at: null,
       },
+    )
+    assert.equal(
+      reopened.prepare("SELECT baseline_branch FROM sync_project WHERE id = 'project-1'").get()
+        .baseline_branch,
+      'main',
+    )
+    assert.equal(
+      reopened
+        .prepare(
+          "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'sync_task_merge_evidence'",
+        )
+        .get().count,
+      1,
     )
     assert.equal(
       reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
@@ -467,6 +481,7 @@ test('v9 升级到 v12 保留旧项目行并创建备份', () => {
     db.exec('DROP TABLE sync_task_index')
     db.exec('DROP TABLE sync_task_space_scan_cache')
     db.exec('DROP TABLE sync_task_space_batch')
+    db.exec('DROP TABLE sync_task_merge_evidence')
     db.exec('DROP TABLE sync_task_space_file')
     db.exec('DROP TABLE sync_task_space')
     db.exec('DROP TABLE sync_project_member')

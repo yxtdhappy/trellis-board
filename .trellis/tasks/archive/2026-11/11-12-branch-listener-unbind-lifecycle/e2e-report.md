@@ -108,3 +108,18 @@
 ## 8. 结论
 
 核心服务端聚合、权限、零监听门禁和真实桌面快捷解绑链路通过。三真实客户端切换、离线超时、断网重试和运行中写入停止仍属于未完成真机验收，不应标记为完整通过。
+
+> 2026-11-13 真机复核补充：除“三台真实客户端同时在线”外，上述未验证项已在独立夹具环境补齐，见 §9。
+
+## 9. 真机复核（2026-11-13，任务 `11-13-desktop-manual-acceptance-gaps`）
+
+环境：源码自构建的 `trellis-board-client.exe`（PID `19152`）+ 真实 `apps/server`（`http://127.0.0.1:4399`）+ 隔离数据根 `C:\projects\_trellis-board-e2e`；客户端 UI 经服务端 URL 加载，WebView2 CDP 观测。完整命令与截图见 `.trellis/tasks/11-13-desktop-manual-acceptance-gaps/e2e-report.md`。
+
+| §7 未验证项 | 复核结果 |
+| --- | --- |
+| 真实 60 秒超时自动离线 | 通过：杀客户端后第 3s 仍 `online`，第 63s 变 `inactive`，`onlineListenerCount` `1→0`，binding 保持 `approved` |
+| 断网解绑 / `detachPending` / 恢复重试 | 通过：停服务端后解绑，UI 显示 `已关联 · 服务端解绑待确认` 并给出 `无法连接服务端: error sending request for url (http://127.0.0.1:4399/api/agent/task-spaces/<id>/detach)`；恢复后端 30s 内 `sync_status=revoked`、`is_listening=0`，`audit_event` 中 `task_space_binding_detached` 恰 1 条，本地 `bindings: []` 与 `taskSpaces: {}` 已清 |
+| 运行中停止写入 | 通过：解绑前 `sync_task_space_file=2 / batch=1 / agent_command=0`，在线解绑 1.6s 完成，随后本地新增任务并提交 `e318ae6`，20s 后三项计数完全不变 |
+| 浅/深色 × 1440/1024/860px | 通过：三档均无横向溢出，项目栏在 860 隐藏、1024 显示，主区唯一滚动容器 `MAIN…overflow-y-auto`；浅深色各三张截图。附带发现 TopBar 导航在 1024/860 折行重叠（既有缺陷，已记入 gaps 任务） |
+| 正常接入弹窗完成临时项目绑定 | 通过：预检契约修复后，弹窗正常渲染仓库/分支/远端/团队/Agent 列表，“检查任务差异”→“接入并上传本地任务”→“接入任务空间”两轮均成功，全程无“没有返回有效的任务预检结果” |
+| 三台真实客户端同时在线 | 仍阻塞：同机第二实例被 `tauri-plugin-single-instance`（`apps/desktop/src-tauri/Cargo.toml:15`、`src/main.rs:906`）转发后退出，需多台真机补测；`3/3 → 2/2 → 0/0` 聚合继续由原 fixture 证据覆盖 |

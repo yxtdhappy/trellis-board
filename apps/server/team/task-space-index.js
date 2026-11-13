@@ -164,6 +164,10 @@ function bindList(values) {
   return values.map(() => '?').join(', ')
 }
 
+function stableTaskIdSql(alias) {
+  return `substr(${alias}.execution_task_key, instr(${alias}.execution_task_key, '::') + 2)`
+}
+
 function publicRow(row) {
   let attentionReasons = []
   try {
@@ -193,6 +197,7 @@ function publicRow(row) {
     taskSpaceRevision: Number(row.revision),
     taskSpaceIndexedRevision: Number(row.indexed_revision),
     branchName: row.branch_name,
+    sourceBranchName: row.source_branch_name || row.branch_name,
     teamId: row.team_id || null,
     teamName: row.team_name || null,
     relativeDir: row.relative_dir,
@@ -800,7 +805,22 @@ export function createTaskSpaceIndex({
         queryDay: day,
       }
     }
-    const where = [`t.task_space_id IN (${bindList(scope.taskSpaceIds)})`, 't.archived = ?']
+    const where = [
+      `t.task_space_id IN (${bindList(scope.taskSpaceIds)})`,
+      't.archived = ?',
+      `NOT EXISTS (
+        SELECT 1
+        FROM sync_project owner
+        JOIN sync_task_space baseline
+          ON baseline.project_id = owner.id
+         AND baseline.branch_name = owner.baseline_branch
+        JOIN sync_task_index baseline_task
+          ON baseline_task.task_space_id = baseline.id
+         AND baseline_task.execution_task_key = baseline.id || '::' || ${stableTaskIdSql('t')}
+        WHERE owner.id = t.project_id
+          AND baseline.id <> t.task_space_id
+      )`,
+    ]
     const params = [...scope.taskSpaceIds, filters.archived ? 1 : 0]
     if (filters.scope === 'mine') {
       // 成员 dev id 变更不重建索引，按任务所属项目当前配置的 developer id 判定。
@@ -921,11 +941,15 @@ export function createTaskSpaceIndex({
            AND duplicate.execution_task_key = t.execution_task_key) AS execution_identity_count,
         p.name AS project_name, p.owner_team_id AS team_id, team.name AS team_name,
         s.status AS task_space_status, s.revision, s.indexed_revision,
-        s.last_error AS task_space_error
+        s.last_error AS task_space_error,
+        evidence.source_branch_name
       FROM sync_task_index t
       JOIN sync_task_space s ON s.id = t.task_space_id
       JOIN sync_project p ON p.id = t.project_id
       JOIN team ON team.id = p.owner_team_id
+      LEFT JOIN sync_task_merge_evidence evidence
+        ON evidence.project_id = t.project_id
+       AND evidence.task_id = ${stableTaskIdSql('t')}
       WHERE ${pageWhere.join(' AND ')}
       ORDER BY ${orderAnchor} DESC, t.task_space_id DESC, t.task_key DESC
       LIMIT ?

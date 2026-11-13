@@ -638,8 +638,13 @@ fn merge_heartbeat_bindings(
         }
         let next_server_binding_id = Some(remote.id.clone());
         let next_team_id = remote.team_id.clone().or_else(|| binding.team_id.clone());
+        let next_baseline_branch = remote
+            .baseline_branch
+            .clone()
+            .or_else(|| binding.baseline_branch.clone());
         if binding.server_binding_id != next_server_binding_id
             || binding.team_id != next_team_id
+            || binding.baseline_branch != next_baseline_branch
             || binding.read_only != remote.read_only
             || binding.sync_status != remote.status
             || binding.last_error_code != next_error_code
@@ -647,6 +652,7 @@ fn merge_heartbeat_bindings(
         {
             binding.server_binding_id = next_server_binding_id;
             binding.team_id = next_team_id;
+            binding.baseline_branch = next_baseline_branch;
             binding.read_only = remote.read_only;
             binding.sync_status = remote.status.clone();
             binding.last_error_code = next_error_code;
@@ -670,6 +676,7 @@ mod tests {
             project_id: "project-1".to_string(),
             repo_path: format!("C:/repos/{task_space_id}"),
             branch_name: "main".to_string(),
+            baseline_branch: None,
             team_id: Some("team-1".to_string()),
             remote_identity_key: "a".repeat(64),
             local_repo_key: "b".repeat(64),
@@ -759,6 +766,7 @@ mod tests {
                 local_repo_key: "b".repeat(64),
                 status: "approved".to_string(),
                 branch_name: Some("dev".to_string()),
+                baseline_branch: None,
                 error_code: None,
                 error: None,
                 read_only: true,

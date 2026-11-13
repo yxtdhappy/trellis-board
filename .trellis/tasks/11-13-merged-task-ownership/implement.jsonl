@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/task-ownership-and-conflict-idempotency.md","reason":"任务稳定 ID、分支归属门禁、整批原子性和冲突写入前拒错的核心契约"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"Agent 快照、pending 幂等、cursor、基线 taskSpace 和上传协议的跨层约束"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"Team 服务端无项目 Git/Python 子进程、SQLite schema 和任务投影边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Node 测试、SQLite 迁移、事务、审计和错误处理要求"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"分支归属状态、ProjectRail、任务卡和团队/归档视图的展示规范"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"TypeScript 类型、React 状态、可访问性和窄屏验收要求"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"baseline/evidence/sourceBranch 在 SQLite、API、Tauri、Agent 和 Web 间的一致性检查"}

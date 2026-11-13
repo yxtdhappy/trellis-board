@@ -192,6 +192,36 @@ export function startPluginRuntime(
     }
   }
 
+  /**
+   * 读写 secrets（写入由宿主加密落盘）。保留对 process.env 的只读兼容。
+   */
+  function createSecretsApi() {
+    const api = {
+      get: (key) =>
+        call('secrets/get', { key: String(key ?? '') }).then((result) => result?.value ?? null),
+      set: (key, value) =>
+        call('secrets/set', { key: String(key ?? ''), value: String(value ?? '') }).then(
+          (result) => Boolean(result?.stored),
+        ),
+      delete: (key) =>
+        call('secrets/delete', { key: String(key ?? '') }).then(
+          (result) => Boolean(result?.deleted),
+        ),
+    }
+    return new Proxy(api, {
+      get: (target, key) => {
+        if (key in target) return target[key]
+        return typeof key === 'string' ? process.env[key] : undefined
+      },
+      has: (target, key) => key in target || String(key) in process.env,
+      ownKeys: () => [...new Set([...Object.keys(api), ...Object.keys(process.env)])],
+      getOwnPropertyDescriptor: (target, key) =>
+        key in target
+          ? Object.getOwnPropertyDescriptor(target, key)
+          : { enumerable: true, configurable: true },
+    })
+  }
+
   const ctx = {
     plugin: {
       id: plugin.name,
@@ -203,6 +233,7 @@ export function startPluginRuntime(
       create: (params) => call('task/create', params),
       assign: (params) => call('task/assign', params),
       setStage: (params) => call('task/setStage', params),
+      setPlan: (params) => call('task/setPlan', params),
       get: (params) => call('task/get', params),
       list: (params = {}) => call('task/list', params),
     },
@@ -297,15 +328,7 @@ export function startPluginRuntime(
         return dispose()
       }
     },
-    secrets: new Proxy(
-      {},
-      {
-        get: (_, key) => process.env[String(key)],
-        has: (_, key) => String(key) in process.env,
-        ownKeys: () => Object.keys(process.env),
-        getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }),
-      },
-    ),
+    secrets: createSecretsApi(),
     error(code, message, detail) {
       return new PluginError(code, message, detail)
     },

@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/task-ownership-and-conflict-idempotency.md","reason":"逐项检查来源 taskSpace 拒写、稳定任务 ID 去重、证据失败不创建 batch/conflict"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"逐项检查 pending 证据幂等、HEAD 缓存、普通 watcher 零 Git tree 扫描和协议兼容"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"确认服务端没有 Git 子进程或工作副本，schema v12 和迁移备份符合运行时边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核对迁移幂等、事务原子性、审计安全和后端测试覆盖"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"核对有效归属与来源分支展示、默认去重、归档视图和现有创建流程不回退"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核对 TypeScript、lint、响应式布局和用户可理解的来源分支文案"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对 evidence 字段、baseline 字段、错误码和 sourceBranchName 在所有层一致"}

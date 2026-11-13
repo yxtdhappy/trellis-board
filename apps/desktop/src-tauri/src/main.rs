@@ -5,6 +5,7 @@
 
 mod agent;
 mod agent_service;
+mod appearance;
 mod config;
 mod logging;
 mod navigation;
@@ -294,6 +295,23 @@ async fn desktop_logout(app: AppHandle, window: WebviewWindow) -> Result<(), Str
     let auth = app.state::<DesktopAuthState>().inner().clone();
     clear_desktop_session(&app, &auth, true).await;
     Ok(())
+}
+
+/// 只读、无敏感数据：客户端自带页面（登录页/控制窗口）也要跟随设备偏好。
+#[tauri::command]
+fn appearance_load() -> appearance::Appearance {
+    appearance::load()
+}
+
+#[tauri::command]
+fn appearance_save(
+    app: AppHandle,
+    window: WebviewWindow,
+    theme: String,
+    font_size: String,
+) -> Result<(), String> {
+    ensure_board_caller(&app, &window)?;
+    appearance::save(&appearance::Appearance { theme, font_size })
 }
 
 #[tauri::command]
@@ -917,6 +935,8 @@ fn main() {
             app_status,
             desktop_logout,
             desktop_login,
+            appearance_load,
+            appearance_save,
             pick_local_project_folder,
             inspect_local_project,
             initialize_pending_project,
