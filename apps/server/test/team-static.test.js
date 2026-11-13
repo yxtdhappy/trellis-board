@@ -129,3 +129,35 @@ test('团队模式静态资源能提供字体与外部主题脚本', async (t) =
   assert.equal((await get(runtime, '/assets/missing.woff2')).status, 404)
   assert.equal((await get(runtime, '/index.html')).status, 200)
 })
+
+test('团队模式默认从 apps/server/public 提供静态资源', async (t) => {
+  const publicDir = new URL('../public/', import.meta.url)
+  const markerName = `default-public-${process.pid}-${Date.now()}.txt`
+  const markerFile = new URL(markerName, publicDir)
+  const createdPublicDir = !fs.existsSync(publicDir)
+  fs.mkdirSync(publicDir, { recursive: true })
+  fs.writeFileSync(markerFile, 'default-public')
+  t.after(() => {
+    fs.rmSync(markerFile, { force: true })
+    if (createdPublicDir) fs.rmdirSync(publicDir)
+  })
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-team-default-static-'))
+  const runtime = await createTeamRuntime({
+    config: testConfig(),
+    databaseFile: path.join(root, 'data', 'board.sqlite'),
+    dataDir: path.join(root, 'data'),
+    logger: SILENT_LOGGER,
+    requireAdmin: false,
+    enablePolling: false,
+  })
+  await runtime.start()
+  t.after(async () => {
+    await runtime.stop()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  const response = await get(runtime, `/${markerName}`)
+  assert.equal(response.status, 200)
+  assert.equal(response.body.toString(), 'default-public')
+})

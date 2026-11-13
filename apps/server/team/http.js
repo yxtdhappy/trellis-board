@@ -56,8 +56,7 @@ import {
 import { TASK_SNAPSHOT_MAX_TRANSPORT_BYTES } from '../../../packages/shared/task-snapshot.js'
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
-const applicationDir = path.resolve(serverDir, '../..')
-const defaultPublicDir = path.join(applicationDir, 'public')
+const defaultPublicDir = path.resolve(serverDir, '../public')
 const MAX_JSON_BYTES = 64 * 1024
 const MAX_LIVE_BATCH_BYTES = TASK_SNAPSHOT_MAX_TRANSPORT_BYTES
 const EXECUTION_WIP_LIMIT = 2
