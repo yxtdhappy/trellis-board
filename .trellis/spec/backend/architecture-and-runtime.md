@@ -151,9 +151,12 @@ Team 启动：
 ## 日志
 
 - 主入口创建 `createServerLogger({ dataDir })`，standalone 和 team runtime 接收同一个 logger。
-- 文件固定为 `<dataDir>/logs/server.log`；文件格式为 `<ISO-8601> <LEVEL> <message>`。
-- 日志调用不等待磁盘 I/O；使用有界异步批次并在写入前统一脱敏。
-- 当前文件上限 5 MiB，保留当前文件加 4 个历史文件；失败时控制台告警一次并停用文件 sink。
+- 实现是 `pino` + `pino-roll`，写入 `<dataDir>/logs/server.<n>.log`，每行一个 JSON 对象
+  （`level` 数值、`time` ISO-8601、`msg` 已脱敏的自由文本）；文件名序号由 pino-roll 维护，
+  不再有固定的 `server.log`。
+- 日志调用不等待磁盘 I/O；启动探测期与磁盘阻塞期的记录先排队（上限 1000 条）再补写。
+- 单文件上限 5 MiB，`limit.count` 传 `maxFiles - 1`（不含活动文件）；失败时控制台告警一次并停用文件 sink。
+- `close()` 必须等待 SonicBoom 的 `close` 事件，`flush()` 早于文件打开完成不代表落盘。
 - Team 日志不得记录任务正文、Agent 凭证、Cookie、Git 凭据、本地仓库绝对路径或冲突双方完整内容。
 
 ## 子进程与异步边界

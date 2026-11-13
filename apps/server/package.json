@@ -9,7 +9,9 @@
   },
   "dependencies": {
     "@trellis-board/shared": "*",
-    "dotenv": "^17.4.2"
+    "dotenv": "^17.4.2",
+    "pino": "^10.4.0",
+    "pino-roll": "^4.0.0"
   },
   "devDependencies": {
     "@trellis-board/test-support": "*"

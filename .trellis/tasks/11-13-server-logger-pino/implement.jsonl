@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "服务端启动、关闭与日志文件位置的运行时约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试重写与质量门禁要求"}
+{"file": ".trellis/spec/backend/index.md", "reason": "第三方依赖声明位置（根 package.json）"}
+{"file": ".trellis/tasks/archive/2026-11/11-13-server-dotenv-root-env/research/dependency-opportunities.md", "reason": "pino 替换自写日志的收益与代价评估"}
