@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { loadPluginConfigFile } from '../plugins/supervisor.js'
 import { loadSecretsFile } from '../plugins/secrets.js'
-import { createHarness, fixtureModule, startHttpServer } from '../../../packages/test-support/plugin-runtime.js'
+import { createHarness, fixtureModule, startHttpServer } from '@trellis-board/test-support/plugin-runtime.js'
 
 function makeConfig(plugins, secrets) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-secrets-'))

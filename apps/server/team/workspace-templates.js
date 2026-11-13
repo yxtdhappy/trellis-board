@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readZipEntries } from '../../../packages/shared/zip.js'
+import { readZipEntries } from '@trellis-board/shared/zip.js'
 import { ERROR_CODES, teamError } from './errors.js'
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url))

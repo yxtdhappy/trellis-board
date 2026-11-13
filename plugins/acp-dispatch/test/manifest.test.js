@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { createHarness, startHttpServer } from '../../../packages/test-support/plugin-runtime.js'
+import { createHarness, startHttpServer } from '@trellis-board/test-support/plugin-runtime.js'
 
 const ID = 'acp-dispatch'
 const MODULE = fileURLToPath(new URL('../index.js', import.meta.url))

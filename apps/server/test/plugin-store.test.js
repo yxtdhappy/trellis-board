@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { openDatabase, DATABASE_SCHEMA_VERSION } from '../database.js'
 import { createPluginStore } from '../plugins/store.js'
-import { makeWorkspace, openPluginDatabase } from '../../../packages/test-support/plugin-runtime.js'
+import { makeWorkspace, openPluginDatabase } from '@trellis-board/test-support/plugin-runtime.js'
 
 function workspaceDb() {
   const workspace = makeWorkspace()

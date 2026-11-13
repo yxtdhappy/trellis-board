@@ -636,3 +636,49 @@ tag 推送不再直接构建，由 dispatch-main 作业用 gh api 触发 main �
 ### Next Steps
 
 - 真机打开实时同步控制窗口，确认 control.html 读取设备外观偏好
+
+
+## Session 19: workspace 包名迁移 + server .env(dotenv)
+<!-- trellis-session: v=2 fp=35ad9003df1368b6 -->
+
+**Date**: 2026-11-13
+**Task**: workspace 包名迁移 + server .env(dotenv)
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+跨包 import 统一为 @trellis-board/*，删除 check-boundaries 脚本与相关限制；新增 apps/server/env-file.js + env-bootstrap.js，入口第一条 import 加载仓库根 .env；.env.example、README、7 个测试；仓库根 .env 置 TRELLIS_BOARD_MODE=team，npm start 默认团队模式。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bc98c48` | refactor(workspace): import through workspace package names |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 20: 客户端 TopBar 响应式与弹窗/登录页布局
+<!-- trellis-session: v=2 fp=2afed03b5ae91771 -->
+
+**Date**: 2026-11-13
+**Task**: 客户端 TopBar 响应式与弹窗/登录页布局
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+TopBar 改用 em 容器查询（导航不折行、搜索 64em 下收图标、48em 两行），live-control 固定 480 宽并按卡片内容定高（新增 live_control_resize + 权限 + window-state denylist），登录卡 28rem；真实客户端实测窗口 480x301 无滚动条。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e0fb8c4` | feat(client): make topbar responsive and size live control window to content |
+
+### Status
+
+[OK] **Completed**

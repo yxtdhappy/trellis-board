@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { normalizeTrellisAgentTools } from '../../../packages/shared/trellis-agent-tools.js'
+import { normalizeTrellisAgentTools } from '@trellis-board/shared/trellis-agent-tools.js'
 import { withTransaction } from '../database.js'
 import { appendAuditEvent } from './audit.js'
 import { errorSummary } from './error-diagnostics.js'

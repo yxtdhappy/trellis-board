@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::menu::MenuItem;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
+use tauri::{AppHandle, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry};
 
 use crate::agent::association::{associate_desktop_project, AssociateParams};
 use crate::agent::control::ControlHub;
@@ -27,7 +27,30 @@ use crate::agent::trellis_cli::TrellisRuntime;
 
 pub use crate::agent::device::LocalAssociation;
 
-const CONTROL_WINDOW: &str = "live-control";
+pub(crate) const CONTROL_WINDOW: &str = "live-control";
+const CONTROL_WIDTH: f64 = 480.0;
+const CONTROL_MIN_HEIGHT: f64 = 200.0;
+
+pub(crate) fn clamp_control_height(preferred: f64, work_area: f64) -> f64 {
+    if !preferred.is_finite() || preferred < CONTROL_MIN_HEIGHT {
+        return CONTROL_MIN_HEIGHT;
+    }
+    let ceiling = (work_area * 0.9).max(CONTROL_MIN_HEIGHT);
+    preferred.min(ceiling).round()
+}
+
+pub(crate) fn resize_control(window: &WebviewWindow, height: f64) -> Result<(), String> {
+    let work_area = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| monitor.work_area().size.height as f64 / monitor.scale_factor())
+        .unwrap_or(900.0);
+    let height = clamp_control_height(height, work_area);
+    window
+        .set_size(LogicalSize::new(CONTROL_WIDTH, height))
+        .map_err(|error| error.to_string())
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -282,8 +305,9 @@ impl AgentService {
             WebviewUrl::App(PathBuf::from("control.html")),
         )
         .title("Trellis Board 实时同步确认")
-        .inner_size(560.0, 420.0)
-        .min_inner_size(480.0, 360.0)
+        .inner_size(CONTROL_WIDTH, CONTROL_MIN_HEIGHT)
+        .resizable(false)
+        .center()
         .build();
         if let Ok(window) = built {
             let _ = window.show();
@@ -767,3 +791,28 @@ pub async fn detach_local_association(
 
 /// 与 `sidecar.rs` 的 `SidecarStatus` 同形，前端 `ProjectRail` 继续读取。
 pub type SidecarStatus = AgentStatus;
+
+#[cfg(test)]
+mod control_size_tests {
+    use super::{clamp_control_height, CONTROL_MIN_HEIGHT};
+
+    #[test]
+    fn rejects_invalid_or_tiny_heights() {
+        assert_eq!(clamp_control_height(120.0, 900.0), CONTROL_MIN_HEIGHT);
+        assert_eq!(clamp_control_height(-5.0, 900.0), CONTROL_MIN_HEIGHT);
+        assert_eq!(clamp_control_height(f64::NAN, 900.0), CONTROL_MIN_HEIGHT);
+        assert_eq!(clamp_control_height(f64::INFINITY, 900.0), CONTROL_MIN_HEIGHT);
+    }
+
+    #[test]
+    fn caps_at_ninety_percent_of_work_area() {
+        assert_eq!(clamp_control_height(1200.0, 900.0), 810.0);
+        assert_eq!(clamp_control_height(400.0, 300.0), 270.0);
+    }
+
+    #[test]
+    fn keeps_content_height_within_range() {
+        assert_eq!(clamp_control_height(320.0, 900.0), 320.0);
+        assert_eq!(clamp_control_height(320.6, 900.0), 321.0);
+    }
+}

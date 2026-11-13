@@ -15,7 +15,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(webDir, 'src'),
-      '@shared': path.resolve(webDir, '../../packages/shared'),
     },
   },
   build: {

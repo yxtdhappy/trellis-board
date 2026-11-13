@@ -14,7 +14,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { fetchTaskSpaceAssignees, type TaskSpace, type TaskSpaceAssignee } from '@/api/board'
-import { normalizeTaskSlug, slugifyTaskTitle, TASK_SLUG_PATTERN } from '@shared/slug.js'
+import {
+  normalizeTaskSlug,
+  slugifyTaskTitle,
+  TASK_SLUG_PATTERN,
+} from '@trellis-board/shared/slug.js'
 import { createIdempotencyKey, taskCommandState } from '@/lib/team-client.js'
 import { SelectField } from '../SelectField.tsx'
 

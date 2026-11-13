@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { TRELLIS_AGENT_TOOLS } from '@shared/trellis-agent-tools.js'
+import { TRELLIS_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,

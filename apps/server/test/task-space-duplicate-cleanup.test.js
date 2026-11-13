@@ -5,7 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { DatabaseSync } from 'node:sqlite'
 import { openDatabase } from '../database.js'
-import { snapshotSha256 } from '../../../packages/shared/task-snapshot.js'
+import { snapshotSha256 } from '@trellis-board/shared/task-snapshot.js'
 import { cleanupDuplicateTasks } from '../../../scripts/task-space-duplicate-cleanup.js'
 
 const PROJECT_ID = 'project-cleanup'

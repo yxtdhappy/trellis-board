@@ -1,6 +1,6 @@
 import http from "node:http";
 
-export { createTaskRepository } from "../../../../packages/test-support/task-repository.js";
+export { createTaskRepository } from "@trellis-board/test-support/task-repository.js";
 
 function json(response, status, payload) {
   const body = JSON.stringify(payload);

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createHarness, fixtureModule, startHttpServer } from '../../../packages/test-support/plugin-runtime.js'
+import { createHarness, fixtureModule, startHttpServer } from '@trellis-board/test-support/plugin-runtime.js'
 
 function plugin(id, extra = {}) {
   return {

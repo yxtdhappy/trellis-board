@@ -6,7 +6,7 @@ import {
   TRELLIS_AGENT_TOOLS,
   detectTrellisAgentTools,
   getTrellisAgentTool,
-} from '../../../packages/shared/trellis-agent-tools.js'
+} from '@trellis-board/shared/trellis-agent-tools.js'
 import { ERROR_CODES, teamError } from './errors.js'
 import {
   minimalEnvironment,

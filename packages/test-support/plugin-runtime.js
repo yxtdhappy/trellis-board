@@ -3,10 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
 import { fileURLToPath } from 'node:url'
-import { openDatabase } from '../../apps/server/database.js'
-import { createPluginStore } from '../../apps/server/plugins/store.js'
-import { createTaskService } from '../../apps/server/plugins/task-service.js'
-import { createPluginRuntime } from '../../apps/server/plugins/runtime.js'
+import { openDatabase } from '@trellis-board/server/database.js'
+import { createPluginStore } from '@trellis-board/server/plugins/store.js'
+import { createTaskService } from '@trellis-board/server/plugins/task-service.js'
+import { createPluginRuntime } from '@trellis-board/server/plugins/runtime.js'
 
 export const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 

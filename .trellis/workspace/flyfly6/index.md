@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
+- **Total Sessions**: 20
 - **Last Active**: 2026-11-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~638 | Active |
+| `journal-1.md` | ~684 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 20 | 2026-11-13 | 客户端 TopBar 响应式与弹窗/登录页布局 | `e0fb8c4` | `main` |
+| 19 | 2026-11-13 | workspace 包名迁移 + server .env(dotenv) | `bc98c48` | `main` |
 | 18 | 2026-11-13 | 修复桌面客户端外观偏好跨 origin 丢失 | `32bd245`, `02d8314` | `main` |
 | 17 | 2026-11-13 | 补齐桌面真机验收：超时/解绑/停止写入/响应式/接入/1024 边界 | `53df23c` | `main` |
 | 16 | 2026-11-13 | CI: tag 发版转发到 main 构建以复用 Rust 缓存 | `c65682f`, `48791e5` | `main` |

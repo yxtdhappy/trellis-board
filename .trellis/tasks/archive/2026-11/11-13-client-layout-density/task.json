@@ -1,0 +1,28 @@
+{
+  "id": "client-layout-density",
+  "name": "client-layout-density",
+  "title": "client layout: TopBar 折行与控制/登录窗口留白",
+  "description": "修复 1024/860px + 根字号 20px 下 TopBar 导航折行重叠；收紧客户端 live-control 窗口尺寸（不恢复旧窗口状态、按内容定高）与登录页布局，减少四周空白。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "client-ui-layout",
+  "package": "server",
+  "priority": "P2",
+  "creator": "flyfly6",
+  "assignee": "flyfly6",
+  "createdAt": "2026-11-13",
+  "completedAt": "2026-11-13",
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "package": "web"
+  }
+}

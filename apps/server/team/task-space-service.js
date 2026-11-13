@@ -6,7 +6,7 @@ import {
   gitRemoteIdentityKey,
   normalizeGitRemote,
   validateGitBranchName,
-} from '../../../packages/shared/remote-identity.js'
+} from '@trellis-board/shared/remote-identity.js'
 import { ERROR_CODES, teamError } from './errors.js'
 import { listTeamsForActor } from './teams.js'
 

@@ -61,8 +61,6 @@ jobs:
         run: npm run build
       - name: Build desktop UI
         run: npm run build:desktop
-      - name: Check package boundaries
-        run: npm run check:boundaries
       - name: Server and web tests
         run: npm run test:all
 

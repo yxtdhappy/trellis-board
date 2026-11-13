@@ -7,7 +7,7 @@ import {
   fixtureModule,
   startHttpServer,
   waitFor,
-} from '../../../packages/test-support/plugin-runtime.js'
+} from '@trellis-board/test-support/plugin-runtime.js'
 
 function configEchoPlugin(config = {}) {
   return {

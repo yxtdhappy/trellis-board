@@ -22,20 +22,19 @@ packages/
   packages/shared/       服务端、Agent 与前端共用的纯 ESM 模块（含 zip 读取）
   test-support/ 测试 harness、fixture 和插件 fixture
 plugins/        随仓库分发的参考插件，插件 id 与目录名一致
-scripts/        开发启动、容量检查、边界守卫等脚本
+scripts/        开发启动、容量检查、发布等脚本
 docs/           运维与设计文档
 ```
 
-运行时 Node 代码只用仓库相对路径跨包引用（如 `../../packages/shared/slug.js`），不依赖 workspace
-包名解析，因此 `node apps/server/index.js` 在未安装依赖的目录中也能启动。前端构建期通过 Vite alias
-`@shared` 指向 `packages/shared`。
+跨包引用统一使用 workspace 包名（如 `@trellis-board/shared/slug.js`），由 npm workspaces 在根
+`node_modules` 建立符号链接解析；被多个 workspace 共用的第三方依赖提升到根 `package.json` 声明。
 
 常用命令：`npm run dev`、`npm start`、`npm run build`、`npm run build:desktop`、`npm run test:all`、
-`npm run check:boundaries`、`npm run desktop:build`、`npm run desktop:package`。
+`npm run desktop:build`、`npm run desktop:package`。
 
 ## 启动
 
-需要 Node.js 24 或更高版本，持久化使用 Node 内置的 `node:sqlite`，没有第三方运行时依赖。
+需要 Node.js 24 或更高版本，持久化使用 Node 内置的 `node:sqlite`。
 
 ```powershell
 cd D:\workspace\wiki\trellis-board
@@ -46,6 +45,14 @@ node apps/server/index.js
 打开 `http://127.0.0.1:4317`。
 
 也可以运行 `npm start` 或 `npm run board`。
+
+### `.env`
+
+服务端启动时读取仓库根目录的 `.env`，与启动时的当前目录无关；`node apps/server/index.js`
+和 `node apps/server/team/cli.js` 使用同一份文件。文件可选，不存在时静默跳过。已存在的进程环境
+变量优先，`.env` 只补充缺失的键，因此 `PORT=4501 npm start` 始终覆盖文件里的 `PORT`。`.env` 不入库，
+可用键见根目录 `.env.example`。仓库根的默认 `.env` 只设 `TRELLIS_BOARD_MODE=team`，所以 `npm start`
+默认以团队模式启动；删掉它即回到 standalone。团队模式首次使用需先建系统管理员（见下）。
 
 前端开发用 `npm run dev`：并行启动 `node --watch apps/server/index.js`（服务端改动自动重启）和 Vite 开发服务器（页面 HMR），`/api` 由 Vite 代理到 `PORT` 指定的端口，默认 `http://127.0.0.1:4317`；5173 被占用时 Vite 会自动递增端口，以控制台打印的地址为准。
 

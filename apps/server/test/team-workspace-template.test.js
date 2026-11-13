@@ -10,7 +10,7 @@ import { createUser } from '../team/auth.js'
 import { createTeamRuntime } from '../team/http.js'
 import { setUserTeams } from '../team/teams.js'
 import { readWorkspaceTemplate } from '../team/workspace-templates.js'
-import { buildZip } from '../../../packages/test-support/zip-builder.js'
+import { buildZip } from '@trellis-board/test-support/zip-builder.js'
 
 const PUBLIC_ORIGIN = 'http://127.0.0.1:4317'
 const HOST = '127.0.0.1:4317'

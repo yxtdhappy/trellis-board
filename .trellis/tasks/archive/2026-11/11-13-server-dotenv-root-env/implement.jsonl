@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/11-13-server-dotenv-root-env/prd.md", "reason": "需求、约束与验收标准的唯一来源；R8/A8 规定移除零安装约束及三条派生限制，不新增替代限制。"}
+{"file": ".trellis/tasks/11-13-server-dotenv-root-env/design.md", "reason": "方案 A（声明 dotenv 依赖）、env-file.js 签名、两处调用点、约束文案改写清单。"}
+{"file": ".trellis/tasks/11-13-server-dotenv-root-env/research/dependency-opportunities.md", "reason": "零安装约束的全部落点与依赖放宽后的可优化点评估，避免越界重构。"}
+{"file": ".trellis/spec/backend/index.md", "reason": "需删除框架禁令与相对路径限制，并遵守后端模块与入口约定。"}
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "启动入口与模块职责，确定加载发生在配置解析之前。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "node:test 测试写法、真实服务验收与代码风格基线。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "需删除零依赖表述；新增模块放置与复用判断。"}

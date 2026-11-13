@@ -780,6 +780,12 @@ async fn live_control_dismiss(app: AppHandle, window: WebviewWindow) -> Result<(
     agent_service::dismiss_control(&app)
 }
 
+#[tauri::command]
+async fn live_control_resize(window: WebviewWindow, height: f64) -> Result<(), String> {
+    ensure_local_caller(&window)?;
+    agent_service::resize_control(&window, height)
+}
+
 fn focus_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -929,7 +935,11 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_denylist(&[agent_service::CONTROL_WINDOW])
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             app_status,
@@ -958,7 +968,8 @@ fn main() {
             live_control_decide,
             live_control_diff,
             live_control_initial,
-            live_control_dismiss
+            live_control_dismiss,
+            live_control_resize
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

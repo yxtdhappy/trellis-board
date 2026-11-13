@@ -297,7 +297,7 @@ export function LoginApp() {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-4 p-6">
       {phase === 'env' ? (
-        <Card className="w-full max-w-[26.25rem]">
+        <Card className="w-full max-w-[28rem]">
           <CardHeader>
             <div className="flex items-center gap-3">
               <TrellisLogo size={36} />
@@ -369,7 +369,7 @@ export function LoginApp() {
       ) : null}
 
       {phase === 'login' ? (
-        <Card className="w-full max-w-[26.25rem]">
+        <Card className="w-full max-w-[28rem]">
           <CardHeader>
             <div className="flex items-center gap-3">
               <TrellisLogo size={36} />
@@ -454,7 +454,7 @@ export function LoginApp() {
         </Card>
       ) : null}
 
-      <footer className="flex w-full max-w-[26.25rem] flex-col items-center gap-1 text-xs text-muted-foreground">
+      <footer className="flex w-full max-w-[28rem] flex-col items-center gap-1 text-xs text-muted-foreground">
         <span>{version}</span>
         <span>{configPath}</span>
       </footer>

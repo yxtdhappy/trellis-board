@@ -25,9 +25,8 @@
 - `hooks/*` 是唯一的数据源；组件不直接 `fetch`。
 - `apps/web/src/lib/*.js` 与 `packages/shared/slug.js` 必须保持无 DOM 依赖、无 Node 内置依赖，Node 测试可直接 import。
 - `apps/web/src/browser/*.js` 可依赖浏览器全局对象，但不得依赖 React、hooks、api 或 Node 内置模块；Node 测试通过注入全局对象覆盖行为。
-- 跨端增加的纯模块放 `packages/shared/`，并在 `apps/web/vite.config.ts` 的 `@shared` 别名与 `tsconfig.app.json` 的 `paths` 同步登记。
-- `apps/server/` 通过 `../../packages/shared/slug.js` 复用 slug 逻辑；不要让它再依赖 `apps/server/public/`（构建会清空该目录）。
-- 运行时 Node 代码不用 workspace 包名解析跨包模块，只用仓库相对路径；`scripts/check-boundaries.mjs` 会拦截 `@trellis-board/*` 与旧目录名。
+- 跨端增加的纯模块放 `packages/shared/`，以 `@trellis-board/shared/…` 引入；`apps/web/tsconfig.app.json` 的 `paths` 需登记 `@trellis-board/shared/*`。
+- `apps/server/` 通过 `@trellis-board/shared/slug.js` 复用 slug 逻辑；不要让它再依赖 `apps/server/public/`（构建会清空该目录）。
 
 ## 命名
 

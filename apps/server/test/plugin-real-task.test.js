@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createTaskService } from '../plugins/task-service.js'
-import { openPluginDatabase } from '../../../packages/test-support/plugin-runtime.js'
+import { openPluginDatabase } from '@trellis-board/test-support/plugin-runtime.js'
 
 const SOURCE_ROOT = process.cwd()
 
