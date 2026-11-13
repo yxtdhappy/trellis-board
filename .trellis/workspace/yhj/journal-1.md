@@ -1118,3 +1118,26 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 48: 跨分支任务同步冲突收敛与清理
+<!-- trellis-session: v=2 fp=0c29c042944adf58 -->
+
+**Date**: 2026-11-13
+**Task**: 跨分支任务同步冲突收敛与清理
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成错分支隔离、冲突折叠、服务端边界和幂等清理修复；47 项 Node 测试与 Web 构建通过；生产 pending 清理时 449->2、重复组 1->0，备份 quick_check 通过；并行任务后续新增 1 条真实冲突，最终 3 pending、0 重复组。桌面归属弹窗因并行运维停客户端未完成，Rust 工具链缺失。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ed19e36` | fix(sync): converge duplicate conflicts safely |
+
+### Status
+
+[OK] **Completed**
