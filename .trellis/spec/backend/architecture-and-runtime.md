@@ -6,7 +6,7 @@
 | --- | --- |
 | [apps/server/config.js](../../../apps/server/config.js) | 跨平台运行数据根、SQLite 路径、团队监听与公开地址配置 |
 | [apps/server/data-migration.js](../../../apps/server/data-migration.js) | 从旧源码 `data/` 迁移运行数据并重写受管项目路径 |
-| [apps/server/database.js](../../../apps/server/database.js) | `node:sqlite` 连接、PRAGMA、顺序迁移到 schema v10、事务辅助 |
+| [apps/server/database.js](../../../apps/server/database.js) | `node:sqlite` 连接、PRAGMA、顺序迁移到 schema v11、事务辅助 |
 | [apps/server/repositories.js](../../../apps/server/repositories.js) | standalone 白名单增删、ID 生成和路径规范化 |
 | [apps/server/loader.js](../../../apps/server/loader.js) | 扫描任务、读取证据、推导阶段和父子关系 |
 | [apps/server/scan-worker.js](../../../apps/server/scan-worker.js) | standalone Worker Thread 扫描与增量任务刷新 |
@@ -124,14 +124,14 @@ Team 扫描不读取 Git 元数据、workspace 会话、`.developer`、scripts�
 
 Standalone 启动：
 
-1. 准备跨平台运行数据根，打开 `board.sqlite` 并顺序迁移到 schema v10；
+1. 准备跨平台运行数据根，打开 `board.sqlite` 并顺序迁移到 schema v11；
 2. 固定监听 `0.0.0.0:4317`，端口可通过 `PORT` 调整；
 3. 启动白名单仓库 watcher；
 4. 异步触发初始扫描。
 
 Team 启动：
 
-1. 打开同一个 schema v10，但禁止导入本机默认仓库或旧 JSON；
+1. 打开同一个 schema v11，但禁止导入本机默认仓库或旧 JSON；
 2. 装配 `taskSpaces`、`taskSnapshots`、`taskSpaceIndex`、`taskCommands`、`agentService`、
    `agentEvents`、`boardEvents` 和 `taskSnapshotBackups`；
 3. 不装配 `git-manager`、Git 凭据、项目 clone、Git 定时刷新或旧实时覆盖层；
@@ -162,7 +162,8 @@ Team 启动：
 
 ## 配置与常量
 
-- `DATABASE_SCHEMA_VERSION` 当前为 `10`。v10 只新增 `sync_*` 表，不删除旧表和历史文件。
+- `DATABASE_SCHEMA_VERSION` 当前为 `11`。v10 -> v11 为 `sync_agent_binding` 幂等补
+  `is_listening`、`listener_reported_at`、`last_listener_at` 和监听索引，不删除旧表和历史文件。
 - `SCAN_SCHEMA_VERSION` 当前为 `11`；Board 输出结构不兼容时同步递增。
 - `AGENT_PROTOCOL_VERSION` 当前为 `3`；命令 payload 和 Agent 事件都按 v3 校验。
 - 在线 Agent 的 `last_seen_at` 窗口固定为 60 秒。

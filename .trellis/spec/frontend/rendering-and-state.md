@@ -115,6 +115,76 @@
 - Git 凭据、SSH trust、项目 probe、toolchain 批准和 Git operation 入口必须从 Team 管理台移除。
 - 管理台项目访问页只保留团队邀请/移除、项目成员、developer 映射、Agent binding 和审计。
 
+## 分支监听状态与主动解绑
+
+### 1. Scope / Trigger
+
+- Trigger：taskSpace 增加监听聚合、本地 `detachPending`、Rust/Tauri 解绑命令或零监听创建/改派门禁时。
+
+### 2. Signatures
+
+- `TaskSpaceListenerState = online | inactive | unassociated | unknown_legacy | disabled`。
+- `taskCommandState(taskSpace, teamMode) -> { canSubmit, reason }`：
+  `apps/web/src/lib/team-client.js`。
+- `projectListenerView(taskSpace)`：`apps/web/src/lib/project-rail-association.js`。
+- Tauri：`detach_local_association(taskSpaceId)`。
+
+### 3. Contracts
+
+- 每个 taskSpace 独立读取 `onlineListenerCount`、`approvedBindingCount`、`lastListenerAt` 和
+  `listenerState`，不能用单个分支状态覆盖整个项目。
+- 五态文案固定：`online`“在线监听 N / 已关联 M”、`inactive`“当前未激活，关联保留”、
+  `unassociated`“无客户端关联”、`unknown_legacy`“旧客户端，监听状态未知”、`disabled`“已停用”。
+- “全部项目”也要展示逐分支监听摘要；普通浏览器不显示本地解绑操作。
+- 当前客户端 approved 且非 `detachPending` 时显示“不再同步此分支”，必须先二次确认。
+- `detachPending=true` 时禁用按钮并显示“服务端解绑待确认”；有 `lastError` 时显示真实原因，
+  不得继续声称自动重试。
+- Team 模式零在线监听时禁用创建/改派；独立模式不受此门禁影响。监听详情入口仅对 `canManage` 显示。
+- 旧服务端完全不返回监听聚合字段时保持既有创建/改派可用，由服务端旧逻辑最终校验；不能把
+  “字段缺失”伪装成零监听。只要返回了任一监听字段，`onlineListenerCount=0` 仍严格禁用。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| taskSpace 缺少监听聚合 | 不显示服务端五态，不伪造在线 |
+| taskSpace 完全缺少监听字段 | 保持旧服务端命令兼容，由服务端最终校验 |
+| `onlineListenerCount` 非安全整数或小于 1 | 禁用创建/改派并显示绑定提示 |
+| `listenerState=unknown_legacy` | 额外提示升级客户端或服务端 |
+| `listenerState=disabled` | 显示中性“已停用” |
+| 解绑二次确认取消 | 不调用 Tauri |
+| Tauri 返回 pending 或拒绝 | 显示待确认/真实错误，不伪报成功 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：三客户端监听显示 `3/3`；全部切分支后 `0/3 inactive`；全部解绑后 `0/0 unassociated`。
+- Base：旧服务端没有监听字段时保留原有本地关联展示。
+- Bad：把 `disabled` 当作红色无关联，重复制造告警。
+- Bad：`detachPending` 时立即从列表删除，服务端失败后用户看不到待确认状态。
+
+### 6. Tests Required
+
+- `apps/web/test/project-rail-association.test.js`：五态、颜色语义、待确认错误、逐 taskSpace 独立。
+- `apps/web/test/team-web.test.js`：驼峰/下划线归一、零监听门禁和恢复。
+- `apps/desktop/test/*.test.js`：Tauri 命令、capability、`detachPending` 投影。
+
+### 7. Wrong vs Correct
+
+Wrong：
+
+```tsx
+const canSubmit = taskSpace.status === 'active'
+```
+
+项目或设备在线不等于该分支正在被监听。
+
+Correct：
+
+```tsx
+const commandState = taskCommandState(taskSpace, teamMode)
+<Button disabled={!commandState.canSubmit}>{commandState.reason || '创建并派发'}</Button>
+```
+
 ## 创建与改派操作项
 
 - Web 创建带负责人任务或改派返回 `202 operation` 时只更新独立操作列表，不向 `teamPage.tasks`
@@ -124,7 +194,8 @@
 - `failed` 才显示重试；`pending/delivered/running` 显示取消；`succeeded/cancelled` 不显示可执行按钮。
 - 同一 taskSpace 的操作列表是最多 100 条的服务端快照，前端最多展示最近 8 条并保留近期成功项。
 - 创建表单只在请求成功入队后关闭；正式任务出现仍由下一次 Board SSE/REST 对齐决定。
-- Agent 离线、目标成员不可写、binding 缺失等错误必须保留表单输入并显示服务端中文原因。
+- Agent 离线、目标成员不可写、binding 缺失或 `TASK_SPACE_NO_ONLINE_LISTENER` 等错误必须保留
+  表单输入并显示服务端中文原因。
 
 ## 归档分页
 

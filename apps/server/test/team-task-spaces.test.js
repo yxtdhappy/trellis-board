@@ -55,6 +55,60 @@ function setup() {
   return { db, service, now }
 }
 
+function addTeamAMember(db, suffix) {
+  const now = new Date().toISOString()
+  const userId = `user-${suffix}`
+  const agentId = `agent-${suffix}`
+  db.prepare(
+    `INSERT INTO user_account(
+      id, username_key, username, display_name, password_hash, password_params_json,
+      system_admin, status, must_change_password, password_changed_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'x', '{}', 0, 'active', 0, ?, ?, ?)`,
+  ).run(userId, userId, userId, userId, now, now, now)
+  db.prepare(
+    `INSERT INTO team_member(team_id, user_id, role, created_at, updated_at)
+     VALUES ('team-a', ?, 'member', ?, ?)`,
+  ).run(userId, now, now)
+  db.prepare(
+    `INSERT INTO agent_device(
+      id, user_id, device_name, platform, agent_version, protocol_version,
+      credential_hash, status, last_seen_at, created_at
+    ) VALUES (?, ?, ?, 'win32', '0.1.0', 3, ?, 'active', ?, ?)`,
+  ).run(agentId, userId, agentId, `${agentId}-credential`, now, now)
+  db.prepare(
+    `INSERT INTO sync_active_agent(user_id, agent_id, updated_at)
+     VALUES (?, ?, ?)`,
+  ).run(userId, agentId, now)
+  return { userId, agentId }
+}
+
+function markListening(db, bindings) {
+  const now = new Date().toISOString()
+  for (const binding of bindings) {
+    db.prepare(`
+      UPDATE sync_agent_binding
+      SET is_listening = 1, listener_reported_at = ?, last_listener_at = ?
+      WHERE id = ?
+    `).run(now, now, binding.binding.id)
+    db.prepare('UPDATE agent_device SET last_seen_at = ? WHERE id = ?').run(
+      now,
+      binding.binding.agentId,
+    )
+  }
+  return now
+}
+
+function attachClient(service, userId, agentId, keyChar, developerId, teamId = 'team-a') {
+  return service.attach(userId, agentId, {
+    remoteUrl: 'https://example.com/acme/repo.git',
+    branchName: 'main',
+    displayName: 'Acme',
+    teamId,
+    developerId,
+    localRepoKey: keyChar.repeat(64),
+  })
+}
+
 test('相同远端可以通过 HTTPS 或 SSH 命中同一项目和任务空间', () => {
   const { db, service } = setup()
   try {
@@ -394,6 +448,315 @@ test('没有 developer ID 映射的团队管理员仍显示为只读', () => {
       teamId: 'team-b',
     })[0]
     assert.equal(project.taskSpaces[0].readOnly, true)
+  } finally {
+    db.close()
+  }
+})
+
+test('taskSpace status 聚合监听状态：在线、未激活、旧客户端和停用优先', () => {
+  const { db, service } = setup()
+  try {
+    const first = attachClient(service, 'user-a', 'agent-a', 'a', 'alice')
+    const extraUsers = ['c', 'd'].map((suffix) => addTeamAMember(db, suffix))
+    const second = attachClient(service, extraUsers[0].userId, extraUsers[0].agentId, 'c', 'carol')
+    const third = attachClient(service, extraUsers[1].userId, extraUsers[1].agentId, 'd', 'dave')
+    assert.equal(second.taskSpace.id, first.taskSpace.id)
+    assert.equal(third.taskSpace.id, first.taskSpace.id)
+    const actor = service.actorContext('user-a')
+    const space = () =>
+      service
+        .listStatusReadable(actor)
+        .find((project) => project.id === first.project.id)
+        .taskSpaces.find((item) => item.id === first.taskSpace.id)
+
+    markListening(db, [first, second, third])
+    assert.deepEqual(
+      {
+        state: space().listenerState,
+        online: space().onlineListenerCount,
+        approved: space().approvedBindingCount,
+      },
+      { state: 'online', online: 3, approved: 3 },
+    )
+
+    db.prepare('UPDATE sync_agent_binding SET is_listening = 0 WHERE id = ?').run(second.binding.id)
+    assert.equal(space().onlineListenerCount, 2)
+    assert.equal(space().approvedBindingCount, 3)
+    assert.equal(space().listenerState, 'online')
+
+    db.prepare(`
+      UPDATE sync_agent_binding SET is_listening = 0
+      WHERE task_space_id = ?
+    `).run(first.taskSpace.id)
+    assert.equal(space().onlineListenerCount, 0)
+    assert.equal(space().approvedBindingCount, 3)
+    assert.equal(space().listenerReportedBindingCount, 3)
+    assert.equal(space().listenerState, 'inactive')
+    assert.ok(space().lastListenerAt)
+
+    db.prepare("UPDATE sync_task_space SET status = 'disabled' WHERE id = ?").run(
+      first.taskSpace.id,
+    )
+    assert.equal(space().listenerState, 'disabled')
+    assert.equal(service.listenerDetails(actor, first.taskSpace.id).listenerState, 'disabled')
+    db.prepare('UPDATE sync_agent_binding SET is_listening = 1 WHERE task_space_id = ?').run(
+      first.taskSpace.id,
+    )
+    service.disableProject(actor, first.project.id)
+    assert.equal(
+      db
+        .prepare(`
+          SELECT COUNT(*) AS count FROM sync_agent_binding
+          WHERE task_space_id = ? AND is_listening = 0
+        `)
+        .get(first.taskSpace.id).count,
+      3,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('未上报监听协议的旧 binding 显示 unknown_legacy，不伪造在线', () => {
+  const { db, service } = setup()
+  try {
+    const attached = attachClient(service, 'user-a', 'agent-a', 'a', 'alice')
+    const project = service.listReadable(service.actorContext('user-a'), { teamId: 'team-a' })[0]
+    const space = project.taskSpaces.find((item) => item.id === attached.taskSpace.id)
+    assert.equal(space.canManage, true)
+    assert.equal(space.listenerState, 'unknown_legacy')
+    assert.equal(space.approvedBindingCount, 1)
+    assert.equal(space.listenerReportedBindingCount, 0)
+    assert.equal(space.onlineListenerCount, 0)
+    assert.equal(space.lastListenerAt, null)
+  } finally {
+    db.close()
+  }
+})
+
+test('监听详情只向管理者返回脱敏客户端信息并隔离团队权限', () => {
+  const { db, service } = setup()
+  try {
+    const first = attachClient(service, 'user-a', 'agent-a', 'a', 'alice')
+    const extra = addTeamAMember(db, 'c')
+    service.upsertMember(service.actorContext('user-a'), {
+      projectId: first.project.id,
+      userId: extra.userId,
+      role: 'member',
+      trellisDevId: 'carol',
+    })
+    const second = attachClient(service, extra.userId, extra.agentId, 'c', 'carol', 'team-a')
+    markListening(db, [first, second])
+
+    const ownerDetails = service.listenerDetails(service.actorContext('user-a'), first.taskSpace.id)
+    assert.equal(ownerDetails.listenerState, 'online')
+    assert.equal(ownerDetails.approvedBindingCount, 2)
+    assert.equal(ownerDetails.onlineListenerCount, 2)
+    assert.equal(ownerDetails.listeners.length, 2)
+    assert.equal(JSON.stringify(ownerDetails).includes('localRepoKey'), false)
+    assert.equal(JSON.stringify(ownerDetails).includes('a'.repeat(64)), false)
+    assert.throws(
+      () => service.listenerDetails(service.actorContext(extra.userId), first.taskSpace.id),
+      /负责人或团队管理员/,
+    )
+    assert.throws(
+      () => service.listenerDetails(service.actorContext('user-b'), first.taskSpace.id),
+      /任务空间不存在/,
+    )
+
+    db.prepare(
+      "UPDATE team_member SET role = 'admin' WHERE team_id = 'team-b' AND user_id = 'user-b'",
+    ).run()
+    service.inviteTeam(service.actorContext('user-a'), first.project.id, 'team-b')
+    assert.equal(
+      service.listenerDetails(service.actorContext('user-b'), first.taskSpace.id).listeners.length,
+      2,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('Agent 主动解绑原子撤销 binding、取消命令、清理 cursor 并只审计一次', () => {
+  const { db, service } = setup()
+  try {
+    const first = attachClient(service, 'user-a', 'agent-a', 'a', 'alice')
+    const extra = addTeamAMember(db, 'c')
+    const second = attachClient(service, extra.userId, extra.agentId, 'c', 'carol')
+    markListening(db, [first, second])
+    const now = new Date().toISOString()
+    for (const binding of [first, second]) {
+      db.prepare(`
+        INSERT INTO sync_agent_cursor(agent_id, task_space_id, revision, updated_at)
+        VALUES (?, ?, 1, ?)
+      `).run(binding.binding.agentId, first.taskSpace.id, now)
+    }
+    const insertCommand = db.prepare(`
+      INSERT INTO sync_task_command(
+        id, task_space_id, project_id, agent_id, binding_id, command_type,
+        idempotency_key, request_hash, payload_json, status, attempts,
+        created_by_user_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'create_task', ?, 'hash', '{}', 'running', 0, 'user-a', ?, ?)
+    `)
+    insertCommand.run(
+      'detach-command-a',
+      first.taskSpace.id,
+      first.project.id,
+      first.binding.agentId,
+      first.binding.id,
+      'detach-a',
+      now,
+      now,
+    )
+    insertCommand.run(
+      'detach-command-c',
+      first.taskSpace.id,
+      first.project.id,
+      second.binding.agentId,
+      second.binding.id,
+      'detach-c',
+      now,
+      now,
+    )
+    db.prepare(`
+      INSERT INTO sync_task_space_file(
+        task_space_id, relative_path, revision, sha256, content_text, deleted,
+        task_id, task_dir, updated_at
+      ) VALUES (?, '.trellis/tasks/01-demo/task.json', 1, ?, ?, 0, 'task-1',
+        '.trellis/tasks/01-demo', ?)
+    `).run(first.taskSpace.id, 'b'.repeat(64), '{"id":"task-1"}\n', now)
+    db.prepare(`
+      INSERT INTO sync_conflict(
+        id, task_space_id, files_json, server_revision, status,
+        created_by_user_id, created_by_agent_id, created_at
+      ) VALUES ('detach-conflict', ?, '[]', 1, 'pending', 'user-a', ?, ?)
+    `).run(first.taskSpace.id, first.binding.agentId, now)
+
+    assert.throws(
+      () =>
+        service.detachAgent(
+          { id: first.binding.agentId, userId: extra.userId },
+          first.taskSpace.id,
+          { localRepoKey: 'a'.repeat(64) },
+        ),
+      /不是当前账号的有效设备/,
+    )
+    assert.throws(
+      () =>
+        service.detachAgent({ id: 'agent-a', userId: 'user-a' }, first.taskSpace.id, {
+          localRepoKey: 'f'.repeat(64),
+        }),
+      (error) => error.code === 'TASK_SPACE_BINDING_MISMATCH',
+    )
+    const detached = service.detachAgent({ id: 'agent-a', userId: 'user-a' }, first.taskSpace.id, {
+      localRepoKey: 'a'.repeat(64),
+    })
+    assert.deepEqual(detached, {
+      detached: true,
+      alreadyDetached: false,
+      taskSpaceId: first.taskSpace.id,
+      bindingId: first.binding.id,
+    })
+    assert.equal(
+      db.prepare('SELECT sync_status FROM sync_agent_binding WHERE id = ?').get(first.binding.id)
+        .sync_status,
+      'revoked',
+    )
+    assert.equal(
+      db.prepare('SELECT is_listening FROM sync_agent_binding WHERE id = ?').get(first.binding.id)
+        .is_listening,
+      0,
+    )
+    assert.ok(
+      db
+        .prepare('SELECT last_listener_at FROM sync_agent_binding WHERE id = ?')
+        .get(first.binding.id).last_listener_at,
+    )
+    const cancelled = db
+      .prepare("SELECT status, error_text FROM sync_task_command WHERE id = 'detach-command-a'")
+      .get()
+    assert.equal(cancelled.status, 'cancelled')
+    assert.equal(cancelled.error_text, '客户端主动解除任务空间关联')
+    assert.equal(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM sync_agent_cursor WHERE agent_id = ?')
+        .get('agent-a').count,
+      0,
+    )
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_space_file').get().count, 1)
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_conflict').get().count, 1)
+    assert.equal(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM sync_task_space WHERE id = ?')
+        .get(first.taskSpace.id).count,
+      1,
+    )
+    const auditCount = () =>
+      Number(
+        db
+          .prepare(`
+            SELECT COUNT(*) AS count FROM audit_event
+            WHERE action = 'task_space_binding_detached' AND target_id = ?
+          `)
+          .get(first.binding.id).count,
+      )
+    assert.equal(auditCount(), 1)
+    assert.equal(
+      db.prepare('SELECT sync_status FROM sync_agent_binding WHERE id = ?').get(second.binding.id)
+        .sync_status,
+      'approved',
+    )
+
+    const replay = service.detachAgent({ id: 'agent-a', userId: 'user-a' }, first.taskSpace.id, {
+      localRepoKey: 'a'.repeat(64),
+    })
+    assert.equal(replay.alreadyDetached, true)
+    assert.equal(auditCount(), 1)
+
+    db.exec(`
+      CREATE TRIGGER fail_detach_audit
+      BEFORE INSERT ON audit_event
+      WHEN NEW.action = 'task_space_binding_detached'
+      BEGIN
+        SELECT RAISE(ABORT, 'detach audit failed');
+      END;
+    `)
+    assert.throws(
+      () =>
+        service.detachAgent(
+          { id: second.binding.agentId, userId: extra.userId },
+          first.taskSpace.id,
+          { localRepoKey: 'c'.repeat(64) },
+        ),
+      /detach audit failed/,
+    )
+    assert.equal(
+      db.prepare('SELECT sync_status FROM sync_agent_binding WHERE id = ?').get(second.binding.id)
+        .sync_status,
+      'approved',
+    )
+    assert.equal(
+      db.prepare("SELECT status FROM sync_task_command WHERE id = 'detach-command-c'").get().status,
+      'running',
+    )
+    assert.equal(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM sync_agent_cursor WHERE agent_id = ?')
+        .get(second.binding.agentId).count,
+      1,
+    )
+    db.exec('DROP TRIGGER fail_detach_audit')
+
+    service.detachAgent({ id: second.binding.agentId, userId: extra.userId }, first.taskSpace.id, {
+      localRepoKey: 'c'.repeat(64),
+    })
+    const finalSpace = service
+      .listReadable(service.actorContext('user-a'), { teamId: 'team-a' })
+      .flatMap((project) => project.taskSpaces)
+      .find((space) => space.id === first.taskSpace.id)
+    assert.equal(finalSpace.approvedBindingCount, 0)
+    assert.equal(finalSpace.onlineListenerCount, 0)
+    assert.equal(finalSpace.listenerState, 'unassociated')
   } finally {
     db.close()
   }

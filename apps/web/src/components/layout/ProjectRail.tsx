@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bot, FolderGit2, LockKeyhole, Plus, RefreshCw, Upload } from 'lucide-react'
+import { Bot, FolderGit2, LockKeyhole, Plus, RefreshCw, Unlink2, Upload, Users } from 'lucide-react'
 import { toast } from 'sonner'
+import type { TaskSpace } from '@/api/board'
 import { Button } from '@/components/ui/button'
 import { AgentQuickInitDialog } from '@/features/board/dialogs/AgentQuickInitDialog'
+import { BranchListenersDialog } from '@/features/board/dialogs/BranchListenersDialog'
 import { ProjectOnboardingDialog } from '@/features/board/dialogs/ProjectOnboardingDialog'
 import { TaskOwnershipDialog } from '@/features/board/dialogs/TaskOwnershipDialog'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import {
   associationOwnershipCounts,
   countProjectPausedBranches,
+  detachPendingAssociationView,
   isBranchAssociationPaused,
+  projectListenerView,
   selectProjectAssociation,
 } from '@/lib/project-rail-association.js'
 
@@ -19,12 +23,7 @@ type Project = {
   teamId?: string | null
   syncBranch?: string | null
   teamName?: string | null
-  taskSpaces?: {
-    id: string
-    branchName: string
-    readOnly?: boolean
-    status?: string
-  }[]
+  taskSpaces?: TaskSpace[]
 }
 
 type LiveSyncStatus = 'pending' | 'syncing' | 'ready' | 'error'
@@ -48,6 +47,7 @@ export type LocalAssociation = {
   ownershipPausedTaskDirs: string[]
   ownershipPendingCount: number
   ownershipPendingTaskDirs: string[]
+  detachPending: boolean
 }
 
 type SidecarStatus = {
@@ -163,6 +163,7 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
     ownershipPausedTaskDirs,
     ownershipPendingCount,
     ownershipPendingTaskDirs,
+    detachPending: record.detachPending === true,
   }
 }
 
@@ -201,6 +202,9 @@ function projectAssociationView(association: LocalAssociation | undefined): Proj
       dotClassName: 'bg-muted-foreground/40',
       textClassName: 'text-muted-foreground',
     }
+  }
+  if (association.detachPending) {
+    return detachPendingAssociationView(association)
   }
   if (association.status !== 'approved') {
     const error =
@@ -301,6 +305,19 @@ function projectAssociationView(association: LocalAssociation | undefined): Proj
   }
 }
 
+function detachOutcome(value: unknown): 'detached' | 'pending' {
+  if (typeof value === 'string') {
+    return value === 'detached' || value === 'success' ? 'detached' : 'pending'
+  }
+  if (!value || typeof value !== 'object') return 'pending'
+  const record = value as Record<string, unknown>
+  if (record.status === 'pending') return 'pending'
+  if (record.status === 'detached' || record.status === 'success' || record.detached === true) {
+    return 'detached'
+  }
+  return 'pending'
+}
+
 export function ProjectRail({
   projects,
   teams,
@@ -328,6 +345,8 @@ export function ProjectRail({
   const [ownershipTaskSpaceId, setOwnershipTaskSpaceId] = useState<string | null>(null)
   const [inspectingProject, setInspectingProject] = useState(false)
   const [syncingDeferredTaskSpace, setSyncingDeferredTaskSpace] = useState<string | null>(null)
+  const [detachingTaskSpace, setDetachingTaskSpace] = useState<string | null>(null)
+  const [listenerTaskSpace, setListenerTaskSpace] = useState<TaskSpace | null>(null)
   const [associationRefreshNonce, setAssociationRefreshNonce] = useState(0)
   const associationRequestInFlight = useRef(false)
   const onAssociationsChangeRef = useRef(onAssociationsChange)
@@ -379,6 +398,10 @@ export function ProjectRail({
     }
   }, [invoke, associationRefreshNonce])
 
+  useEffect(() => {
+    setListenerTaskSpace(null)
+  }, [current, teamId])
+
   async function startProjectOnboarding() {
     if (!invoke || inspectingProject) return
     setAssociationError('')
@@ -426,6 +449,35 @@ export function ProjectRail({
       toast.error(message)
     } finally {
       setSyncingDeferredTaskSpace(null)
+      setAssociationRefreshNonce((value) => value + 1)
+    }
+  }
+
+  async function detachAssociation(association: LocalAssociation) {
+    if (!invoke || detachingTaskSpace) return
+    const confirmed = window.confirm(
+      `不再同步分支“${association.branchName}”？\n\n` +
+        '仅解除当前客户端与该分支的关联，不影响其他客户端，也不删除服务端任务、冲突或历史。',
+    )
+    if (!confirmed) return
+    setDetachingTaskSpace(association.taskSpaceId)
+    setAssociationError('')
+    try {
+      const result = await invoke('detach_local_association', {
+        taskSpaceId: association.taskSpaceId,
+      })
+      if (detachOutcome(result) === 'detached') {
+        toast.success('当前客户端已不再同步该分支')
+      } else {
+        toast.warning('本地已停止同步，服务端解绑待确认')
+      }
+      void onRefresh()
+    } catch (error) {
+      const message = associationErrorMessage(error)
+      setAssociationError(message)
+      toast.error(`服务端解绑未确认：${message}`)
+    } finally {
+      setDetachingTaskSpace(null)
       setAssociationRefreshNonce((value) => value + 1)
     }
   }
@@ -507,6 +559,7 @@ export function ProjectRail({
             : projectAssociationView(projectAssociation)
           : null
         const activeView = invoke ? projectAssociationView(activeAssociation) : null
+        const hasListenerSummary = taskSpaces.some((taskSpace) => projectListenerView(taskSpace))
         return (
           <div key={project.id} className="flex flex-col">
             <div
@@ -579,16 +632,51 @@ export function ProjectRail({
                 )
               ) : null}
             </div>
+            {current === 'all' && hasListenerSummary ? (
+              <div className="ml-5 flex flex-col border-l border-border/70 pl-1">
+                {taskSpaces.map((taskSpace) => {
+                  const listenerView = projectListenerView(taskSpace)
+                  if (!listenerView) return null
+                  return (
+                    <div
+                      key={taskSpace.id}
+                      className="flex min-w-0 items-center gap-1 px-2 py-0.5 text-[8.5px] text-muted-foreground"
+                      title={`${taskSpace.branchName}：${listenerView.counts} · ${listenerView.label}`}
+                    >
+                      <span
+                        className={`size-1 shrink-0 rounded-full ${listenerView.dotClassName}`}
+                        aria-hidden="true"
+                      />
+                      <span className="max-w-20 shrink-0 truncate font-medium text-foreground">
+                        {taskSpace.branchName}
+                      </span>
+                      <span className={`min-w-0 truncate ${listenerView.textClassName}`}>
+                        {listenerView.counts} · {listenerView.label}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
             {current === project.id ? (
               <div className="ml-5 flex flex-col border-l border-border/70 pl-1">
                 {taskSpaces.map((taskSpace) => {
                   const branchAssociation = associations.get(taskSpace.id)
                   const branchView = invoke ? projectAssociationView(branchAssociation) : null
+                  const listenerView = projectListenerView(taskSpace)
+                  const detachPending = branchAssociation?.detachPending === true
                   const branchPaused = isBranchAssociationPaused(branchAssociation)
                   const ownership = associationOwnershipCounts(branchAssociation)
                   const deferredDetails = branchAssociation?.deferredTaskDirs
                     .map((taskDir) => taskDir.split('/').at(-1))
                     .join('、')
+                  const branchTitle = [
+                    listenerView ? `${listenerView.counts} · ${listenerView.label}` : null,
+                    branchView ? `本地关联：${branchView.label}` : null,
+                    listenerView?.detail,
+                  ]
+                    .filter(Boolean)
+                    .join('；')
                   return (
                     <div
                       key={taskSpace.id}
@@ -601,19 +689,40 @@ export function ProjectRail({
                       <button
                         type="button"
                         onClick={() => onSelectTaskSpace(taskSpace.id)}
-                        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1 text-left"
-                        title={branchView?.detail || branchView?.label || taskSpace.branchName}
+                        className="flex min-w-0 flex-1 items-start gap-1.5 px-2 py-1 text-left"
+                        title={branchTitle || taskSpace.branchName}
                       >
                         <span
-                          className={`size-1 shrink-0 rounded-full ${branchView?.dotClassName || 'bg-chart-3'}`}
+                          className={`mt-1 size-1 shrink-0 rounded-full ${listenerView?.dotClassName || branchView?.dotClassName || 'bg-chart-3'}`}
                           aria-hidden="true"
                         />
-                        <span className="min-w-0 flex-1 truncate">{taskSpace.branchName}</span>
-                        {branchPaused ? (
-                          <span className="shrink-0 text-[8.5px] font-medium text-destructive">
-                            已暂停
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1">
+                            <span className="min-w-0 flex-1 truncate">{taskSpace.branchName}</span>
+                            {branchPaused ? (
+                              <span className="shrink-0 text-[8.5px] font-medium text-destructive">
+                                已暂停
+                              </span>
+                            ) : null}
                           </span>
-                        ) : null}
+                          {listenerView ? (
+                            <>
+                              <span className="block truncate text-[8.5px] leading-3 text-muted-foreground">
+                                {listenerView.counts}
+                              </span>
+                              <span
+                                className={`block truncate text-[8.5px] leading-3 ${listenerView.textClassName}`}
+                              >
+                                {listenerView.label}
+                              </span>
+                            </>
+                          ) : null}
+                          {detachPending ? (
+                            <span className="block truncate text-[8.5px] leading-3 text-warning">
+                              服务端解绑待确认
+                            </span>
+                          ) : null}
+                        </span>
                       </button>
                       {branchAssociation?.status === 'approved' &&
                       !branchAssociation.readOnly &&
@@ -643,6 +752,36 @@ export function ProjectRail({
                           <Upload
                             className={
                               syncingDeferredTaskSpace === taskSpace.id
+                                ? 'size-3 animate-pulse'
+                                : 'size-3'
+                            }
+                            aria-hidden="true"
+                          />
+                        </button>
+                      ) : null}
+                      {taskSpace.canManage ? (
+                        <button
+                          type="button"
+                          className="mr-1 flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground"
+                          aria-label={`查看 ${taskSpace.branchName} 的分支监听详情`}
+                          title="查看分支监听详情"
+                          onClick={() => setListenerTaskSpace(taskSpace)}
+                        >
+                          <Users className="size-3" aria-hidden="true" />
+                        </button>
+                      ) : null}
+                      {branchAssociation?.status === 'approved' ? (
+                        <button
+                          type="button"
+                          className="mr-1 flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-destructive disabled:opacity-50"
+                          aria-label={`不再同步 ${taskSpace.branchName}`}
+                          title={detachPending ? '服务端解绑待确认' : '不再同步此分支'}
+                          disabled={detachPending || detachingTaskSpace !== null}
+                          onClick={() => void detachAssociation(branchAssociation)}
+                        >
+                          <Unlink2
+                            className={
+                              detachingTaskSpace === taskSpace.id
                                 ? 'size-3 animate-pulse'
                                 : 'size-3'
                             }
@@ -731,48 +870,60 @@ export function ProjectRail({
         />
       ) : null}
       {invoke ? (
-        <ProjectOnboardingDialog
-          open={onboardingOpen}
-          onOpenChange={setOnboardingOpen}
-          path={onboardingPath}
-          teams={teams}
-          defaultTeamId={teamId === 'all' ? '' : teamId}
-          defaultDeveloperId={defaultDeveloperId}
-          invoke={invoke}
-          onAssociated={(association) => {
-            const normalized = normalizeAssociation(association)
-            if (!normalized) {
-              toast.error('项目关联成功，但客户端返回了无效的关联状态')
-              return
-            }
-            setAssociations((currentMap) => {
-              const next = new Map(currentMap)
-              for (const [taskSpaceId, existing] of next) {
-                if (
-                  taskSpaceId !== normalized.taskSpaceId &&
-                  sameLocalRepositoryPath(existing.repoPath, normalized.repoPath)
-                ) {
-                  next.delete(taskSpaceId)
-                }
+        <>
+          <ProjectOnboardingDialog
+            open={onboardingOpen}
+            onOpenChange={setOnboardingOpen}
+            path={onboardingPath}
+            teams={teams}
+            defaultTeamId={teamId === 'all' ? '' : teamId}
+            defaultDeveloperId={defaultDeveloperId}
+            invoke={invoke}
+            onAssociated={(association) => {
+              const normalized = normalizeAssociation(association)
+              if (!normalized) {
+                toast.error('项目关联成功，但客户端返回了无效的关联状态')
+                return
               }
-              next.set(normalized.taskSpaceId, normalized)
-              return next
-            })
-            toast.success('本地项目已接入团队任务空间，正在同步任务。')
-            void onRefresh()
-          }}
-        />
-        <TaskOwnershipDialog
-          open={ownershipTaskSpaceId !== null}
+              setAssociations((currentMap) => {
+                const next = new Map(currentMap)
+                for (const [taskSpaceId, existing] of next) {
+                  if (
+                    taskSpaceId !== normalized.taskSpaceId &&
+                    sameLocalRepositoryPath(existing.repoPath, normalized.repoPath)
+                  ) {
+                    next.delete(taskSpaceId)
+                  }
+                }
+                next.set(normalized.taskSpaceId, normalized)
+                return next
+              })
+              toast.success('本地项目已接入团队任务空间，正在同步任务。')
+              void onRefresh()
+            }}
+          />
+          <TaskOwnershipDialog
+            open={ownershipTaskSpaceId !== null}
+            onOpenChange={(open) => {
+              if (!open) setOwnershipTaskSpaceId(null)
+            }}
+            taskSpaceId={ownershipTaskSpaceId || ''}
+            invoke={invoke}
+            onChanged={() => {
+              toast.success('任务归属已更新，正在同步当前分支任务。')
+              setAssociationRefreshNonce((value) => value + 1)
+              void onRefresh()
+            }}
+          />
+        </>
+      ) : null}
+      {listenerTaskSpace ? (
+        <BranchListenersDialog
+          key={listenerTaskSpace.id}
+          taskSpace={listenerTaskSpace}
+          open
           onOpenChange={(open) => {
-            if (!open) setOwnershipTaskSpaceId(null)
-          }}
-          taskSpaceId={ownershipTaskSpaceId || ''}
-          invoke={invoke}
-          onChanged={() => {
-            toast.success('任务归属已更新，正在同步当前分支任务。')
-            setAssociationRefreshNonce((value) => value + 1)
-            void onRefresh()
+            if (!open) setListenerTaskSpace(null)
           }}
         />
       ) : null}

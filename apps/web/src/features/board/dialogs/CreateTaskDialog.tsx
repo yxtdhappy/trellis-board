@@ -13,9 +13,9 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { fetchTaskSpaceAssignees, type TaskSpaceAssignee } from '@/api/board'
+import { fetchTaskSpaceAssignees, type TaskSpace, type TaskSpaceAssignee } from '@/api/board'
 import { normalizeTaskSlug, slugifyTaskTitle, TASK_SLUG_PATTERN } from '@shared/slug.js'
-import { createIdempotencyKey } from '@/lib/team-client.js'
+import { createIdempotencyKey, taskCommandState } from '@/lib/team-client.js'
 import { SelectField } from '../SelectField.tsx'
 
 type CreateTaskDialogProps = {
@@ -24,11 +24,12 @@ type CreateTaskDialogProps = {
   projects: {
     id: string
     name: string
-    taskSpaces?: { id: string; branchName: string }[]
+    taskSpaces?: TaskSpace[]
   }[]
   defaultProjectId: string
   defaultTaskSpaceId?: string
   localTaskSpaceId?: string
+  teamMode?: boolean
   onCreate: (payload: Record<string, unknown>) => Promise<void>
 }
 
@@ -39,6 +40,7 @@ export function CreateTaskDialog({
   defaultProjectId,
   defaultTaskSpaceId = '',
   localTaskSpaceId = '',
+  teamMode = false,
   onCreate,
 }: CreateTaskDialogProps) {
   const [projectId, setProjectId] = useState(
@@ -71,6 +73,8 @@ export function CreateTaskDialog({
 
   const selectedProject = projects.find((project) => project.id === projectId)
   const taskSpaces = useMemo(() => selectedProject?.taskSpaces || [], [selectedProject])
+  const selectedTaskSpace = taskSpaces.find((taskSpace) => taskSpace.id === taskSpaceId)
+  const commandState = taskCommandState(selectedTaskSpace, teamMode)
 
   useEffect(() => {
     if (!open) return
@@ -127,6 +131,10 @@ export function CreateTaskDialog({
     }
     if (!taskSpaceId) {
       setMessage('请选择项目分支任务空间')
+      return
+    }
+    if (!commandState.canSubmit) {
+      setMessage(commandState.reason || '当前分支没有可用的在线监听客户端')
       return
     }
     if (!title.trim()) {
@@ -211,6 +219,11 @@ export function CreateTaskDialog({
             ) : (
               <p className="text-xs text-destructive">该项目还没有可用的分支任务空间。</p>
             )}
+            {taskSpaceId && !commandState.canSubmit ? (
+              <p className="text-[11px] text-warning" role="status">
+                {commandState.reason}
+              </p>
+            ) : null}
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="create-title">任务标题</Label>
               <Input
@@ -278,7 +291,7 @@ export function CreateTaskDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               取消
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting || !commandState.canSubmit}>
               {submitting ? '创建中…' : '创建并派发'}
             </Button>
           </DialogFooter>

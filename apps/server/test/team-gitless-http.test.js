@@ -228,6 +228,64 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   assert.equal(attached.status, 201)
   const taskSpaceId = attached.body.taskSpace.id
 
+  const withoutListener = await request(runtime, '/api/tasks', {
+    method: 'POST',
+    cookie: session,
+    body: {
+      taskSpaceId,
+      assigneeUserId: login.body.user.id,
+      title: '零监听任务',
+      priority: 'P2',
+      slug: 'without-listener',
+      idempotencyKey: 'without-listener',
+    },
+  })
+  assert.equal(withoutListener.status, 409)
+  assert.equal(withoutListener.body.code, 'TASK_SPACE_NO_ONLINE_LISTENER')
+  assert.equal(runtime.db.prepare('SELECT COUNT(*) AS count FROM sync_task_command').get().count, 0)
+
+  const heartbeat = await request(runtime, '/api/agent/heartbeat', {
+    method: 'POST',
+    agentCredential: enrolled.body.credential,
+    body: {
+      protocolVersion: 3,
+      agentId: enrolled.body.agentId,
+      agentVersion: '0.1.0',
+      deviceName: '测试设备',
+      listenerReportVersion: 1,
+      listeningTaskSpaceIds: [taskSpaceId],
+    },
+  })
+  assert.equal(heartbeat.status, 200, JSON.stringify(heartbeat.body))
+
+  const projects = await request(runtime, '/api/team/projects?teamId=team-1', {
+    cookie: session,
+  })
+  const liveSpace = projects.body.projects
+    .flatMap((project) => project.taskSpaces)
+    .find((space) => space.id === taskSpaceId)
+  assert.equal(liveSpace.listenerState, 'online')
+  assert.equal(liveSpace.approvedBindingCount, 1)
+  assert.equal(liveSpace.onlineListenerCount, 1)
+
+  const status = await request(runtime, '/api/team/status', { cookie: session })
+  assert.equal(status.status, 200)
+  const statusProject = status.body.projects.find((project) =>
+    project.taskSpaces.some((space) => space.id === taskSpaceId),
+  )
+  assert.equal(statusProject.agents.approved, 1)
+  assert.equal(statusProject.agents.online, 1)
+
+  const listeners = await request(
+    runtime,
+    `/api/task-spaces/${encodeURIComponent(taskSpaceId)}/listeners`,
+    { cookie: session },
+  )
+  assert.equal(listeners.status, 200)
+  assert.equal(listeners.body.onlineListenerCount, 1)
+  assert.equal(listeners.body.listeners[0].bindingId, attached.body.binding.id)
+  assert.equal(JSON.stringify(listeners.body).includes('localRepoKey'), false)
+
   const missingObservedBranch = await request(
     runtime,
     `/api/agent/task-spaces/${encodeURIComponent(taskSpaceId)}/changes`,
@@ -487,6 +545,29 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   assert.equal(operation.status, 202, JSON.stringify(operation.body))
   assert.equal(operation.body.operation.status, 'pending')
   assert.equal(runtime.services.taskCommands.available(enrolled.body.agentId).length, 1)
+
+  const detached = await request(
+    runtime,
+    `/api/agent/task-spaces/${encodeURIComponent(devTaskSpaceId)}/detach`,
+    {
+      method: 'POST',
+      agentCredential: enrolled.body.credential,
+      body: { localRepoKey: 'b'.repeat(64) },
+    },
+  )
+  assert.equal(detached.status, 200, JSON.stringify(detached.body))
+  assert.equal(detached.body.alreadyDetached, false)
+  const detachedAgain = await request(
+    runtime,
+    `/api/agent/task-spaces/${encodeURIComponent(devTaskSpaceId)}/detach`,
+    {
+      method: 'POST',
+      agentCredential: enrolled.body.credential,
+      body: { localRepoKey: 'b'.repeat(64) },
+    },
+  )
+  assert.equal(detachedAgain.status, 200)
+  assert.equal(detachedAgain.body.alreadyDetached, true)
 
   for (const [legacyPath, method] of [
     ['/api/admin/git-credentials', 'GET'],

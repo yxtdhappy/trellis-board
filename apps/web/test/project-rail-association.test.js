@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import {
   associationOwnershipCounts,
   countProjectPausedBranches,
+  detachPendingAssociationView,
   isBranchAssociationPaused,
+  projectListenerView,
   selectProjectAssociation,
 } from '../src/lib/project-rail-association.js'
 
@@ -78,6 +80,19 @@ test('关联失效优先于正常同步，无本地关联时返回未关联', ()
     selectProjectAssociation({ taskSpaces: [{ id: 'space-missing' }] }, associations),
     undefined,
   )
+})
+
+test('解绑待确认展示服务端不可重试原因', () => {
+  const view = detachPendingAssociationView({
+    status: 'approved',
+    liveSyncStatus: 'error',
+    detachPending: true,
+    lastErrorCode: 'TASK_SPACE_BINDING_MISMATCH',
+    lastError: '本地仓库与当前任务空间关联不一致',
+  })
+  assert.match(view.label, /服务端解绑待确认/)
+  assert.match(view.detail, /本地仓库与当前任务空间关联不一致/)
+  assert.doesNotMatch(view.detail, /自动重试/)
 })
 
 test('当前分支正常时不被他分支的暂停状态覆盖', () => {
@@ -207,4 +222,51 @@ test('任务级归属暂停和待确认会计入关联优先级', () => {
     totalCount: 3,
   })
   assert.equal(selectProjectAssociation(project, associations)?.taskSpaceId, 'space-ownership')
+})
+
+test('项目栏按 taskSpace 展示在线、未激活、无关联、旧客户端和停用状态', () => {
+  const online = projectListenerView({
+    listenerState: 'online',
+    onlineListenerCount: 2,
+    approvedBindingCount: 3,
+  })
+  assert.equal(online.counts, '在线监听 2 / 已关联 3')
+  assert.equal(online.label, '在线监听')
+  assert.equal(online.textClassName, 'text-muted-foreground')
+
+  const inactive = projectListenerView({
+    listenerState: 'inactive',
+    onlineListenerCount: 0,
+    approvedBindingCount: 3,
+  })
+  assert.equal(inactive.label, '当前未激活，关联保留')
+  assert.equal(inactive.textClassName, 'text-warning')
+
+  const unassociated = projectListenerView({
+    listenerState: 'unassociated',
+    onlineListenerCount: 0,
+    approvedBindingCount: 0,
+  })
+  assert.equal(unassociated.label, '无客户端关联')
+  assert.equal(unassociated.textClassName, 'text-destructive')
+
+  const legacy = projectListenerView({
+    listenerState: 'unknown_legacy',
+    onlineListenerCount: 0,
+    approvedBindingCount: 1,
+  })
+  assert.equal(legacy.label, '旧客户端，监听状态未知')
+  assert.equal(legacy.textClassName, 'text-warning')
+
+  const disabled = projectListenerView({
+    listenerState: 'disabled',
+    onlineListenerCount: 0,
+    approvedBindingCount: 0,
+  })
+  assert.equal(disabled.label, '已停用')
+  assert.equal(disabled.textClassName, 'text-muted-foreground')
+})
+
+test('没有监听聚合字段时不伪造服务端分支状态', () => {
+  assert.equal(projectListenerView({ id: 'standalone-space' }), null)
 })

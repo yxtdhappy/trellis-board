@@ -46,11 +46,34 @@ fn is_branch_guard_error(error: &AgentError) -> bool {
 fn approved_bindings(bindings: Vec<AgentBinding>) -> HashMap<String, AgentBinding> {
     let mut map = HashMap::new();
     for binding in bindings {
-        if binding.sync_status == "approved" && !binding.task_space_id.is_empty() {
+        if binding.sync_status == "approved"
+            && !binding.detach_pending
+            && !binding.task_space_id.is_empty()
+        {
             map.insert(binding.task_space_id.clone(), binding);
         }
     }
     map
+}
+
+fn binding_selection_unchanged(
+    current: &HashMap<String, AgentBinding>,
+    next: &HashMap<String, AgentBinding>,
+) -> bool {
+    current.len() == next.len()
+        && next.iter().all(|(task_space_id, binding)| {
+            current
+                .get(task_space_id)
+                .is_some_and(|existing| binding_entry_unchanged(existing, binding))
+        })
+}
+
+fn binding_entry_unchanged(existing: &AgentBinding, next: &AgentBinding) -> bool {
+    existing.local_id == next.local_id
+        && existing.repo_path == next.repo_path
+        && existing.branch_name == next.branch_name
+        && existing.initial_sync_completed == next.initial_sync_completed
+        && existing.read_only == next.read_only
 }
 
 /// 服务端 409 会给出可用的最小 clientSequence；只在 CONFLICT 且为正整数时采纳。
@@ -763,11 +786,43 @@ impl TaskSync {
     }
 
     pub async fn update_bindings(self: &Arc<Self>, bindings: Vec<AgentBinding>) {
-        let selected = self.select_bindings(bindings).await;
-        let map = approved_bindings(selected.clone());
-        let task_space_ids: Vec<String> = map.keys().cloned().collect();
-        *self.bindings.lock().await = map;
-        for task_space_id in task_space_ids {
+        let mut selected = self.select_bindings(bindings).await;
+        let (unchanged, pull_task_space_ids) = {
+            let _lifecycle = self.cursor_write.lock().await;
+            if let Ok(Some(config)) = self.store.read_config(false).await {
+                let active_local_ids: HashSet<String> = config
+                    .bindings
+                    .iter()
+                    .filter(|binding| {
+                        binding.sync_status == "approved" && !binding.detach_pending
+                    })
+                    .map(|binding| binding.local_id.clone())
+                    .collect();
+                selected.retain(|binding| active_local_ids.contains(&binding.local_id));
+            } else {
+                selected.clear();
+            }
+            let map = approved_bindings(selected.clone());
+            let mut current = self.bindings.lock().await;
+            let unchanged = binding_selection_unchanged(&current, &map);
+            let mut pull_task_space_ids = Vec::new();
+            for (task_space_id, binding) in &map {
+                let should_pull = current
+                    .get(task_space_id)
+                    .map(|existing| !binding_entry_unchanged(existing, binding))
+                    .unwrap_or(true);
+                if should_pull {
+                    pull_task_space_ids.push(task_space_id.clone());
+                }
+            }
+            pull_task_space_ids.sort();
+            *current = map.clone();
+            (unchanged, pull_task_space_ids)
+        };
+        if unchanged {
+            return;
+        }
+        for task_space_id in pull_task_space_ids {
             self.pull_and_report(&task_space_id).await;
         }
         let watched: Vec<AgentBinding> = selected
@@ -781,31 +836,31 @@ impl TaskSync {
     async fn select_bindings(&self, bindings: Vec<AgentBinding>) -> Vec<AgentBinding> {
         let mut groups: BTreeMap<String, Vec<AgentBinding>> = BTreeMap::new();
         for binding in bindings.into_iter().filter(|binding| {
-            binding.sync_status == "approved" && !binding.task_space_id.is_empty()
+            binding.sync_status == "approved"
+                && !binding.detach_pending
+                && !binding.task_space_id.is_empty()
         }) {
             groups
                 .entry(binding.local_repo_key.clone())
                 .or_default()
                 .push(binding);
         }
-        if groups.values().all(|items| items.len() == 1) {
-            return groups.into_values().flatten().collect();
-        }
         let mut selected = Vec::new();
         for items in groups.into_values() {
             if items.len() == 1 {
-                selected.extend(items);
+                let binding = items.into_iter().next().expect("single binding");
+                match self.assert_binding_branch(&binding).await {
+                    Ok(_) => selected.push(binding),
+                    Err(error) => self.report_binding_error(&binding, &error),
+                }
                 continue;
             }
             let mut matches = Vec::new();
-            let mut first_error: Option<(AgentBinding, AgentError)> = None;
             for binding in &items {
                 match self.assert_binding_branch(binding).await {
                     Ok(_) => matches.push(binding.clone()),
                     Err(error) => {
-                        if first_error.is_none() {
-                            first_error = Some((binding.clone(), error));
-                        }
+                        self.report_binding_error(binding, &error);
                     }
                 }
             }
@@ -814,14 +869,6 @@ impl TaskSync {
                 continue;
             }
             if matches.is_empty() {
-                if let Some((binding, error)) = first_error {
-                    (self.emit)(json!({
-                        "type": "task_sync_error",
-                        "taskSpaceId": binding.task_space_id,
-                        "code": error.code,
-                        "message": protocol::safe_error_message(&error.message),
-                    }));
-                }
                 continue;
             }
             let error = AgentError::new(
@@ -843,8 +890,18 @@ impl TaskSync {
         selected
     }
 
+    fn report_binding_error(&self, binding: &AgentBinding, error: &AgentError) {
+        (self.emit)(json!({
+            "type": "task_sync_error",
+            "taskSpaceId": binding.task_space_id.clone(),
+            "code": error.code.clone(),
+            "message": protocol::safe_error_message(&error.message),
+        }));
+    }
+
     /// 校验仓库当前分支与绑定分支一致；失败时把错误写入绑定状态并保留。
     async fn assert_binding_branch(&self, binding: &AgentBinding) -> AgentResult<String> {
+        self.assert_binding_active(binding).await?;
         let hooks_dir = self.binding_hooks_dir(binding);
         match crate::agent::git::assert_repository_branch(
             Path::new(&binding.repo_path),
@@ -864,6 +921,40 @@ impl TaskSync {
                 Err(error)
             }
         }
+    }
+
+    async fn assert_binding_active(&self, binding: &AgentBinding) -> AgentResult<()> {
+        let config = self
+            .store
+            .read_config(false)
+            .await?
+            .ok_or_else(|| AgentError::new(code::CONFIG_MISSING, "Agent 配置缺失，请重新登录"))?;
+        let current = config
+            .bindings
+            .iter()
+            .find(|item| item.local_id == binding.local_id);
+        if current.is_some_and(|item| {
+            item.sync_status == "approved" && !item.detach_pending
+        }) {
+            Ok(())
+        } else {
+            protocol::err(code::BINDING_UNKNOWN, "本地任务空间关联已停用或正在解除")
+        }
+    }
+
+    async fn task_space_is_active(&self, task_space_id: &str) -> bool {
+        self.store
+            .read_config(false)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|config| {
+                config.bindings.iter().any(|binding| {
+                    binding.task_space_id == task_space_id
+                        && binding.sync_status == "approved"
+                        && !binding.detach_pending
+                })
+            })
     }
 
     fn binding_hooks_dir(&self, binding: &AgentBinding) -> PathBuf {
@@ -1072,7 +1163,15 @@ impl TaskSync {
             .await
             .get(task_space_id)
             .cloned()
+            .filter(|binding| !binding.detach_pending)
             .ok_or_else(|| AgentError::new(code::BINDING_UNKNOWN, "任务空间尚未关联到本地仓库"))
+    }
+
+    pub async fn active_bindings(&self) -> Vec<AgentBinding> {
+        let mut bindings: Vec<AgentBinding> =
+            self.bindings.lock().await.values().cloned().collect();
+        bindings.sort_by(|left, right| left.task_space_id.cmp(&right.task_space_id));
+        bindings
     }
 
     async fn read_cursor_state(&self) -> Value {
@@ -1127,6 +1226,10 @@ impl TaskSync {
 
     async fn write_cursor(&self, task_space_id: &str, next: CursorPatch) -> AgentResult<()> {
         let _guard = self.cursor_write.lock().await;
+        let known = self.bindings.lock().await.contains_key(task_space_id);
+        if !known || !self.task_space_is_active(task_space_id).await {
+            return Ok(());
+        }
         // 多进程共享同一游标文件：先拿文件锁，再丢弃缓存重新读取，避免覆盖别人的写入。
         let _file_guard = self.store.lock_task_cursors(Duration::from_secs(5)).await?;
         *self.cursor_state.lock().await = None;
@@ -1184,6 +1287,30 @@ impl TaskSync {
         }
         tasks.insert(task_space_id.to_string(), Value::Object(entry));
         state["taskSpaces"] = Value::Object(tasks);
+        let text = serde_json::to_string_pretty(&state).unwrap_or_else(|_| "{}".into());
+        self.store
+            .write_atomic(
+                &self.store.paths.task_cursors_file,
+                format!("{text}\n").as_bytes(),
+            )
+            .await?;
+        *self.cursor_state.lock().await = Some(state);
+        Ok(())
+    }
+
+    pub async fn remove_task_cursor(&self, task_space_id: &str) -> AgentResult<()> {
+        let _guard = self.cursor_write.lock().await;
+        let _file_guard = self.store.lock_task_cursors(Duration::from_secs(5)).await?;
+        *self.cursor_state.lock().await = None;
+        let mut state = self.read_cursor_state().await;
+        let removed = state
+            .get_mut("taskSpaces")
+            .and_then(Value::as_object_mut)
+            .and_then(|spaces| spaces.remove(task_space_id))
+            .is_some();
+        if !removed {
+            return Ok(());
+        }
         let text = serde_json::to_string_pretty(&state).unwrap_or_else(|_| "{}".into());
         self.store
             .write_atomic(
@@ -1600,6 +1727,10 @@ impl TaskSync {
     }
 
     async fn write_server_cursor(&self, task_space_id: &str, revision: u64) -> AgentResult<()> {
+        let known = self.bindings.lock().await.contains_key(task_space_id);
+        if !known || !self.task_space_is_active(task_space_id).await {
+            return Ok(());
+        }
         self.api
             .request_json(
                 Method::PUT,
@@ -4235,6 +4366,74 @@ mod tests {
         assert!(is_branch_guard_code(code::BRANCH_MISMATCH));
         assert!(is_branch_guard_code(code::DETACHED_HEAD));
         assert!(!is_branch_guard_code(code::LOCAL_DIRTY));
+    }
+
+    fn test_binding(task_space_id: &str) -> AgentBinding {
+        AgentBinding {
+            local_id: format!("local-{task_space_id}"),
+            server_binding_id: Some(format!("binding-{task_space_id}")),
+            task_space_id: task_space_id.to_string(),
+            project_id: "project-1".to_string(),
+            repo_path: format!("C:/repos/{task_space_id}"),
+            branch_name: "main".to_string(),
+            team_id: None,
+            remote_identity_key: "a".repeat(64),
+            local_repo_key: "b".repeat(64),
+            display_name: "Repo".to_string(),
+            created_at: "2026-11-12T00:00:00.000Z".to_string(),
+            allow_file_remote: false,
+            read_only: false,
+            sync_status: "approved".to_string(),
+            detach_pending: false,
+            initial_sync_mode: "bootstrap".to_string(),
+            initial_sync_completed: true,
+            initial_review_pending: false,
+            live_sync_status: "ready".to_string(),
+            live_sync_error: None,
+            last_synced_at: None,
+            last_head: None,
+            last_error: None,
+            last_error_code: None,
+        }
+    }
+
+    #[test]
+    fn detach_pending_is_excluded_and_selection_identity_is_stable() {
+        let selected = test_binding("space-1");
+        let mut pending = test_binding("space-2");
+        pending.detach_pending = true;
+        let map = approved_bindings(vec![selected.clone(), pending]);
+        assert_eq!(map.len(), 1);
+        assert!(binding_selection_unchanged(
+            &map,
+            &approved_bindings(vec![selected])
+        ));
+    }
+
+    #[tokio::test]
+    async fn remove_task_cursor_only_deletes_selected_task_space() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-task-cursor-remove-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Arc::new(ConfigStore::new_unsecured_for_test(root));
+        store.ensure_directories().await.expect("directories");
+        store
+            .write_atomic(
+                &store.paths.task_cursors_file,
+                br#"{"version":3,"taskSpaces":{"space-1":{"revision":1},"space-2":{"revision":2}}}"#,
+            )
+            .await
+            .expect("cursor file");
+        let api = Arc::new(
+            ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"),
+        );
+        let sink: ControlSink = Arc::new(|_| {});
+        let sync = TaskSync::new(store.clone(), api, sink);
+        sync.remove_task_cursor("space-1").await.expect("remove");
+        let state = store.read_task_cursors().await;
+        assert!(state["taskSpaces"].get("space-1").is_none());
+        assert_eq!(state["taskSpaces"]["space-2"]["revision"], 2);
     }
 
     fn task_group(task_id: &str, task_dir: &str, files: &[(&str, &str)]) -> SnapshotGroup {

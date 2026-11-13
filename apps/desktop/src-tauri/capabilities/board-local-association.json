@@ -15,6 +15,7 @@
     "allow-associate-pending-project",
     "allow-cancel-pending-project",
     "allow-check-pending-project-push",
+    "allow-detach-local-association",
     "allow-initialize-pending-project",
     "allow-inspect-local-project",
     "allow-initialize-associated-project-agents",

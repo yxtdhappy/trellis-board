@@ -1,6 +1,7 @@
 pub mod association;
 pub mod control;
 pub mod credential;
+pub mod detach;
 pub mod device;
 pub mod env;
 pub mod git;

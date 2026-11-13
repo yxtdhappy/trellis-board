@@ -76,6 +76,8 @@ pub struct AgentBinding {
     #[serde(default)]
     pub read_only: bool,
     pub sync_status: String,
+    #[serde(default)]
+    pub detach_pending: bool,
     pub initial_sync_mode: String,
     pub initial_sync_completed: bool,
     pub initial_review_pending: bool,
@@ -234,6 +236,7 @@ fn validate_binding(binding: &AgentBinding, index: usize) -> AgentResult<AgentBi
         allow_file_remote: binding.allow_file_remote,
         read_only: binding.read_only,
         sync_status: binding.sync_status.clone(),
+        detach_pending: binding.detach_pending,
         initial_sync_mode,
         initial_sync_completed,
         initial_review_pending,
@@ -366,6 +369,14 @@ impl ConfigStore {
         Self {
             paths: create_agent_paths(&root),
             secure_directory: true,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_unsecured_for_test(root: PathBuf) -> Self {
+        Self {
+            paths: create_agent_paths(&root),
+            secure_directory: false,
         }
     }
 
@@ -808,6 +819,20 @@ mod tests {
         assert!(paths.task_cursors_file.ends_with("live-cursors.json"));
     }
 
+    #[test]
+    fn detach_pending_defaults_false_and_round_trips() {
+        let binding = binding("local-1", "ts-1", false);
+        let mut value = serde_json::to_value(&binding).expect("serialize");
+        value.as_object_mut().expect("binding object").remove("detachPending");
+        let parsed: AgentBinding = serde_json::from_value(value).expect("deserialize");
+        assert!(!parsed.detach_pending);
+
+        let mut value = serde_json::to_value(&binding).expect("serialize");
+        value["detachPending"] = serde_json::Value::Bool(true);
+        let pending: AgentBinding = serde_json::from_value(value).expect("deserialize");
+        assert!(pending.detach_pending);
+    }
+
     fn binding(local_id: &str, task_space_id: &str, read_only: bool) -> AgentBinding {
         AgentBinding {
             local_id: local_id.into(),
@@ -824,6 +849,7 @@ mod tests {
             allow_file_remote: false,
             read_only,
             sync_status: "approved".into(),
+            detach_pending: false,
             initial_sync_mode: "bootstrap".into(),
             initial_sync_completed: true,
             initial_review_pending: false,

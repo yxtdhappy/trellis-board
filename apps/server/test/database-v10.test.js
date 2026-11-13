@@ -33,7 +33,7 @@ function tableNames(db) {
     .map((row) => row.name)
 }
 
-test('schema v10 新库只新增 sync_* 团队任务表', () => {
+test('schema v11 新库只新增 sync_* 团队任务表', () => {
   const db = openDatabase({
     databaseFile: ':memory:',
     fallbackRepositories: [],
@@ -41,7 +41,7 @@ test('schema v10 新库只新增 sync_* 团队任务表', () => {
     legacyJsonImport: false,
   })
   try {
-    assert.equal(DATABASE_SCHEMA_VERSION, 10)
+    assert.equal(DATABASE_SCHEMA_VERSION, 11)
     const names = tableNames(db)
     for (const table of SYNC_TABLES) assert.ok(names.includes(table), `缺少 ${table}`)
     assert.ok(names.includes('team_project'))
@@ -52,8 +52,243 @@ test('schema v10 新库只新增 sync_* 团队任务表', () => {
   }
 })
 
-test('v9 升级到 v10 保留旧项目行并创建备份', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v10-'))
+test('v10 升级到 v11 为 binding 补监听字段并保留已有关联', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v11-'))
+  const databaseFile = path.join(root, 'board.sqlite')
+  let reopened = null
+  try {
+    const db = openDatabase({
+      databaseFile,
+      fallbackRepositories: [],
+      importLegacyRepositories: false,
+      legacyJsonImport: false,
+    })
+    const now = new Date().toISOString()
+    db.prepare(
+      `INSERT INTO team(id, name, slug, status, created_at, updated_at)
+       VALUES ('team-1', '团队一', 'team-1', 'active', ?, ?)`,
+    ).run(now, now)
+    db.prepare(
+      `INSERT INTO user_account(
+        id, username_key, username, display_name, password_hash, password_params_json,
+        system_admin, status, must_change_password, password_changed_at, created_at, updated_at
+      ) VALUES ('user-1', 'user-1', 'user-1', '用户一', 'x', '{}', 0, 'active', 0, ?, ?, ?)`,
+    ).run(now, now, now)
+    db.prepare(
+      `INSERT INTO agent_device(
+        id, user_id, device_name, platform, agent_version, protocol_version,
+        credential_hash, status, last_seen_at, created_at
+      ) VALUES ('agent-1', 'user-1', '设备一', 'win32', '0.1.0', 3, 'credential', 'active', ?, ?)`,
+    ).run(now, now)
+    db.prepare(
+      `INSERT INTO sync_project(
+        id, name, remote_url, remote_identity_hash, owner_team_id, status,
+        created_by_user_id, created_by_agent_id, created_at, updated_at
+      ) VALUES ('project-1', '项目一', 'https://example.com/repo.git', 'hash-1', 'team-1',
+        'active', 'user-1', 'agent-1', ?, ?)`,
+    ).run(now, now)
+    db.prepare(
+      `INSERT INTO sync_task_space(
+        id, project_id, branch_name, status, revision, indexed_revision,
+        created_by_user_id, created_by_agent_id, created_at, updated_at
+      ) VALUES ('space-1', 'project-1', 'main', 'active', 0, 0, 'user-1', 'agent-1', ?, ?)`,
+    ).run(now, now)
+    db.prepare(
+      `INSERT INTO sync_agent_binding(
+        id, agent_id, task_space_id, local_repo_key, local_display_name,
+        branch_name, sync_status, created_at, updated_at
+      ) VALUES ('binding-1', 'agent-1', 'space-1', ?, '项目一', 'main', 'approved', ?, ?)`,
+    ).run('a'.repeat(64), now, now)
+    db.exec('DROP INDEX sync_agent_binding_listener')
+    db.exec('ALTER TABLE sync_agent_binding DROP COLUMN last_listener_at')
+    db.exec('ALTER TABLE sync_agent_binding DROP COLUMN listener_reported_at')
+    db.exec('ALTER TABLE sync_agent_binding DROP COLUMN is_listening')
+    db.prepare("UPDATE app_meta SET value = '10' WHERE key = 'schema_version'").run()
+    db.close()
+
+    reopened = openDatabase({
+      databaseFile,
+      fallbackRepositories: [],
+      importLegacyRepositories: false,
+      legacyJsonImport: false,
+    })
+    assert.deepEqual(
+      reopened
+        .prepare('PRAGMA table_info(sync_agent_binding)')
+        .all()
+        .map((column) => column.name),
+      [
+        'id',
+        'agent_id',
+        'task_space_id',
+        'local_repo_key',
+        'local_display_name',
+        'branch_name',
+        'sync_status',
+        'last_synced_at',
+        'last_error',
+        'created_at',
+        'updated_at',
+        'is_listening',
+        'listener_reported_at',
+        'last_listener_at',
+      ],
+    )
+    const binding = reopened
+      .prepare(`
+        SELECT sync_status, is_listening, listener_reported_at, last_listener_at
+        FROM sync_agent_binding WHERE id = 'binding-1'
+      `)
+      .get()
+    assert.deepEqual(
+      { ...binding },
+      {
+        sync_status: 'approved',
+        is_listening: 0,
+        listener_reported_at: null,
+        last_listener_at: null,
+      },
+    )
+    assert.equal(
+      reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+      '11',
+    )
+    const backupName = fs
+      .readdirSync(path.join(root, 'backups'))
+      .find((name) => name.startsWith('board.sqlite.pre-v11.'))
+    assert.ok(backupName)
+    const backup = new DatabaseSync(path.join(root, 'backups', backupName))
+    try {
+      assert.equal(
+        backup.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+        '10',
+      )
+      assert.equal(
+        backup
+          .prepare(
+            "SELECT COUNT(*) AS count FROM pragma_table_info('sync_agent_binding') WHERE name = 'is_listening'",
+          )
+          .get().count,
+        0,
+      )
+    } finally {
+      backup.close()
+    }
+
+    reopened
+      .prepare(`
+        UPDATE sync_agent_binding
+        SET is_listening = 1, listener_reported_at = ?, last_listener_at = ?
+        WHERE id = 'binding-1'
+      `)
+      .run(now, now)
+    reopened.close()
+    reopened = openDatabase({
+      databaseFile,
+      fallbackRepositories: [],
+      importLegacyRepositories: false,
+      legacyJsonImport: false,
+    })
+    assert.deepEqual(
+      {
+        ...reopened
+          .prepare(`
+            SELECT is_listening, listener_reported_at, last_listener_at
+            FROM sync_agent_binding WHERE id = 'binding-1'
+          `)
+          .get(),
+      },
+      {
+        is_listening: 1,
+        listener_reported_at: now,
+        last_listener_at: now,
+      },
+    )
+    assert.equal(
+      fs
+        .readdirSync(path.join(root, 'backups'))
+        .filter((name) => name.startsWith('board.sqlite.pre-v11.')).length,
+      1,
+    )
+    reopened.close()
+    reopened = null
+  } finally {
+    try {
+      reopened?.close()
+    } catch {
+      // 清理失败不掩盖测试断言。
+    }
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('v11 迁移失败时监听列和 schema 版本一起回滚', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v11-rollback-'))
+  const databaseFile = path.join(root, 'board.sqlite')
+  try {
+    const db = openDatabase({
+      databaseFile,
+      fallbackRepositories: [],
+      importLegacyRepositories: false,
+      legacyJsonImport: false,
+    })
+    db.exec('DROP INDEX sync_agent_binding_listener')
+    db.exec('ALTER TABLE sync_agent_binding DROP COLUMN last_listener_at')
+    db.exec('ALTER TABLE sync_agent_binding DROP COLUMN listener_reported_at')
+    db.exec('ALTER TABLE sync_agent_binding DROP COLUMN is_listening')
+    db.prepare("UPDATE app_meta SET value = '10' WHERE key = 'schema_version'").run()
+    db.exec(`
+      CREATE TRIGGER fail_v11_metadata
+      BEFORE UPDATE ON app_meta
+      WHEN NEW.key = 'schema_version' AND NEW.value = '11'
+      BEGIN
+        SELECT RAISE(ABORT, 'v11 metadata blocked');
+      END;
+    `)
+    db.close()
+
+    assert.throws(
+      () =>
+        openDatabase({
+          databaseFile,
+          fallbackRepositories: [],
+          importLegacyRepositories: false,
+          legacyJsonImport: false,
+        }),
+      /v11 metadata blocked/,
+    )
+    const check = new DatabaseSync(databaseFile, { readOnly: true })
+    try {
+      assert.equal(
+        check.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+        '10',
+      )
+      assert.equal(
+        check
+          .prepare(`
+            SELECT COUNT(*) AS count
+            FROM pragma_table_info('sync_agent_binding')
+            WHERE name IN ('is_listening', 'listener_reported_at', 'last_listener_at')
+          `)
+          .get().count,
+        0,
+      )
+    } finally {
+      check.close()
+    }
+    assert.equal(
+      fs
+        .readdirSync(path.join(root, 'backups'))
+        .some((name) => name.startsWith('board.sqlite.pre-v11.')),
+      true,
+    )
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('v9 升级到 v11 保留旧项目行并创建备份', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v11-v9-upgrade-'))
   const databaseFile = path.join(root, 'board.sqlite')
   try {
     fs.mkdirSync(path.join(root, 'projects'), { recursive: true })
@@ -121,12 +356,12 @@ test('v9 升级到 v10 保留旧项目行并创建备份', () => {
     try {
       assert.equal(
         reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-        '10',
+        '11',
       )
       assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM team_project').get().count, 1)
       assert.ok(tableNames(reopened).includes('sync_project'))
       const backups = fs.readdirSync(path.join(root, 'backups'))
-      const backupName = backups.find((name) => name.includes('pre-v10'))
+      const backupName = backups.find((name) => name.includes('pre-v11'))
       assert.ok(backupName)
       const backup = new DatabaseSync(path.join(root, 'backups', backupName))
       try {

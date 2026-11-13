@@ -140,19 +140,24 @@ export function createGitlessBoardService({
         SUM(CASE WHEN b.sync_status = 'approved' THEN 1 ELSE 0 END) AS approved,
         SUM(CASE
           WHEN b.sync_status = 'approved'
+            AND b.is_listening = 1
+            AND b.listener_reported_at >= ?
             AND active.agent_id = a.id
             AND a.status = 'active'
             AND a.last_seen_at >= ?
+            AND s.status = 'active'
+            AND p.status = 'active'
           THEN 1 ELSE 0
         END) AS online
       FROM sync_agent_binding b
       JOIN sync_task_space s ON s.id = b.task_space_id
+      JOIN sync_project p ON p.id = s.project_id
       JOIN agent_device a ON a.id = b.agent_id
       LEFT JOIN sync_active_agent active ON active.user_id = a.user_id
       WHERE s.project_id IN (${placeholders})
       GROUP BY s.project_id
     `)
-      .all(onlineSince, ...projectIds)
+      .all(onlineSince, onlineSince, ...projectIds)
     return new Map(
       rows.map((row) => [
         row.project_id,

@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"约束 Agent 心跳、binding、taskSpace、命令、SSE 和跨端同步协议的正确修改边界"}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"约束 SQLite schema 迁移、备份、事务和旧版本兼容写法"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"约束 Agent HTTP 路由、输入校验、权限和错误响应边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"约束 Node 测试、真实 HTTP 和数据库迁移验证"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"约束项目栏分支状态、Tauri 本地关联和创建改派交互"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"约束 TypeScript、React 状态、可访问性和最终构建验证"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"确保数据库、服务端、Agent、桌面和 Web 的字段与状态消费方一致"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用既有本地关联、心跳和 binding 生命周期，避免复制解绑逻辑"}

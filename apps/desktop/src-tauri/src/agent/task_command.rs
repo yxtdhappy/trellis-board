@@ -111,6 +111,12 @@ fn server_command_binding<'a>(
             "本地任务空间绑定尚未获项目负责人批准",
         );
     }
+    if binding.detach_pending {
+        return protocol::err(
+            code::BINDING_UNKNOWN,
+            "本地任务空间关联正在解除，不再执行任务命令",
+        );
+    }
     Ok(binding)
 }
 
@@ -150,6 +156,12 @@ fn command_binding<'a>(
         })?;
     if binding.sync_status != "approved" {
         return protocol::err(code::BINDING_NOT_APPROVED, "本地任务空间绑定尚未批准");
+    }
+    if binding.detach_pending {
+        return protocol::err(
+            code::BINDING_UNKNOWN,
+            "本地任务空间关联正在解除，不再执行任务命令",
+        );
     }
     if binding.read_only {
         return protocol::err(code::BINDING_NOT_APPROVED, "只读任务空间不能执行任务命令");
@@ -907,6 +919,13 @@ mod tests {
             command_binding(&[binding], &command).unwrap_err().code,
             code::BINDING_NOT_APPROVED
         );
+
+        let mut detaching = sample_binding();
+        detaching.detach_pending = true;
+        assert_eq!(
+            command_binding(&[detaching], &command).unwrap_err().code,
+            code::BINDING_UNKNOWN
+        );
     }
 
     #[test]
@@ -948,6 +967,15 @@ mod tests {
                 .unwrap_err()
                 .code,
             code::BINDING_NOT_APPROVED
+        );
+
+        let mut detaching = sample_binding();
+        detaching.detach_pending = true;
+        assert_eq!(
+            server_command_binding(&[detaching], &matched)
+                .unwrap_err()
+                .code,
+            code::BINDING_UNKNOWN
         );
     }
 
@@ -1155,6 +1183,7 @@ mod tests {
             allow_file_remote: false,
             read_only: false,
             sync_status: "approved".into(),
+            detach_pending: false,
             initial_sync_mode: "review".into(),
             initial_sync_completed: true,
             initial_review_pending: false,

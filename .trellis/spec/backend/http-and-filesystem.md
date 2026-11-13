@@ -42,6 +42,8 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
 | `POST /api/agent/task-spaces/preflight` | 接入前只读读取项目、任务空间和任务文件元数据，不写任何 `sync_*` 表 | 200 |
 | `POST /api/agent/task-spaces/resolve` | 只读解析远端、项目、团队权限和分支 | 200 |
 | `POST /api/agent/task-spaces/attach` | 创建/加入项目并建立 Agent binding | 201 |
+| `POST /api/agent/task-spaces/:id/detach` | 当前 Agent 撤销自身 binding，取消未完成命令并清理 cursor | 200 |
+| `POST /api/agent/heartbeat` | 更新设备心跳与可选的真实监听集合 | 200 |
 | `GET /api/agent/task-spaces/:id/snapshot` | full 或增量 tasks 快照 | 200 |
 | `GET /api/agent/task-spaces/:id/files` | 读取完整任务目录正文 | 200 |
 | `POST /api/agent/task-spaces/:id/preflight` | 已绑定任务的责任人确认和待写摘要预检 | 200 |
@@ -55,6 +57,7 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
 | `GET /api/task-operations?taskSpaceId=` | 创建/改派操作列表 | 200 |
 | `POST /api/task-operations/:id/retry` | 同幂等键重试失败命令 | 200 |
 | `POST /api/task-operations/:id/cancel` | 取消未成功命令 | 200 |
+| `GET /api/task-spaces/:id/listeners` | 项目负责人或团队管理员读取脱敏监听详情 | 200 |
 
 - `POST /api/agent/commands` 旧长轮询固定返回 `410 AGENT_LONG_POLL_REMOVED`。
 - 旧 `/api/agent/live-changes*`、`/api/agent/live-files`、`/api/agent/live-cursor`、
@@ -362,8 +365,11 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
   `{ remoteUrl, branchName, teamId }`，返回 `new|existing|branch_new|access_required`。
 - `POST /api/agent/task-spaces/attach`：
   `{ remoteUrl, branchName, teamId, developerId, displayName, localRepoKey }`。
+- `POST /api/agent/task-spaces/:id/detach`：`{ localRepoKey }`，重复调用返回
+  `alreadyDetached=true`，不物理删除 binding。
 - `GET /api/agent/task-spaces/:id/snapshot?afterRevision=N`。
 - `POST /api/agent/task-spaces/:id/changes`：`{ batchId, clientSequence, files[] }`。
+- `GET /api/task-spaces/:id/listeners`：只对 `canManage` 用户返回脱敏客户端详情。
 - `POST/DELETE /api/projects/:id/team-access`：owner team 邀请或移除其他团队。
 - SQLite：`sync_project(remote_identity_hash UNIQUE)`、
   `sync_task_space UNIQUE(project_id, branch_name)`、`sync_project_member`、
@@ -379,6 +385,8 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
 - Agent 只上传 `.trellis/tasks/**`；初始化 scripts/spec/config/workflow/agents 由客户端 Git 管理。
 - 项目成员写角色和 `trellis_dev_id` 写入 `sync_project_member`，Board 委派不再读取 workspace。
 - binding 不保存客户端绝对路径；`local_repo_key` 只用于服务端幂等绑定，不参与文件夹访问。
+- `detach` 在事务中只撤销当前 Agent 的 binding，取消该 binding 的未完成命令、删除对应 cursor
+  并写一次审计；taskSpace、任务快照、冲突和历史保留。
 
 #### 4. Validation & Error Matrix
 
@@ -390,6 +398,8 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
 | 同远端不同分支 attach | 两个 `sync_task_space`，数据不串流 |
 | 非 owner/admin 邀请团队 | 403，访问关系不变 |
 | 项目或 taskSpace 停用 | 拒绝快照、命令和 Web 写操作 |
+| binding 已撤销或不存在 | detach 幂等成功，不重复写审计 |
+| 普通成员读取 listeners | 403，不返回设备和用户详情 |
 | Team 模式访问旧 Git 凭据/probe/refresh/repair | 404 |
 
 #### 5. Good/Base/Bad Cases
@@ -406,7 +416,7 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
 - `apps/server/test/team-task-spaces.test.js`：owner/invite、全局唯一、不同分支隔离和访问授权。
 - `apps/server/test/team-gitless-http.test.js`：新路由可真实读写，旧 Git/live 路由 404。
 - `apps/server/test/team-release.test.js`：Team 启动不创建 `data/projects`，也不读取 Git 密钥。
-- `apps/server/test/database-v10.test.js`：v9 升级保留旧表，v10 新表可独立使用。
+- `apps/server/test/database-v10.test.js`：v10 -> v11 补监听列和索引，v6-v10 升级保留旧表与数据。
 
 #### 7. Wrong vs Correct
 

@@ -73,6 +73,11 @@ function setup() {
     teamId: 'team-1',
     localRepoKey: 'b'.repeat(64),
   })
+  db.prepare(`
+    UPDATE sync_agent_binding
+    SET is_listening = 1, listener_reported_at = ?, last_listener_at = ?
+    WHERE task_space_id = ?
+  `).run(now, now, first.taskSpace.id)
   const events = []
   const agents = createSyncAgentService({
     db,
@@ -139,6 +144,30 @@ test('目标 Agent 离线时不生成命令，并返回可操作原因', () => {
   }
 })
 
+test('任务空间没有在线监听时返回专用错误且不生成命令', () => {
+  const { db, commands, actor, taskSpaceId } = setup()
+  try {
+    db.prepare(`
+      UPDATE sync_agent_binding
+      SET is_listening = 0, listener_reported_at = NULL, last_listener_at = NULL
+    `).run()
+    assert.throws(
+      () => commands.enqueue(actor, createInput(taskSpaceId)),
+      (error) => {
+        assert.equal(error.status, 409)
+        assert.equal(error.code, 'TASK_SPACE_NO_ONLINE_LISTENER')
+        assert.match(error.message, /没有在线监听/)
+        assert.equal(error.details.taskSpaceId, taskSpaceId)
+        assert.equal(error.details.branchName, 'main')
+        return true
+      },
+    )
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_command').get().count, 0)
+  } finally {
+    db.close()
+  }
+})
+
 test('在线 Agent 收到唯一命令，幂等重放不重复入队', () => {
   const { db, commands, events, actor, taskSpaceId, targetAgentId, targetBindingId } = setup()
   try {
@@ -165,6 +194,45 @@ test('在线 Agent 收到唯一命令，幂等重放不重复入队', () => {
     assert.equal(started.execute, true)
     assert.equal(started.operation.status, 'running')
     assert.equal(commands.start(targetAgentId, first.operation.id).execute, false)
+  } finally {
+    db.close()
+  }
+})
+
+test('命令已入队后监听归零，相同请求仍返回幂等结果', () => {
+  const { db, commands, actor, taskSpaceId } = setup()
+  try {
+    const first = commands.enqueue(actor, createInput(taskSpaceId))
+    db.prepare(`
+      UPDATE sync_agent_binding
+      SET is_listening = 0, listener_reported_at = NULL
+      WHERE task_space_id = ?
+    `).run(taskSpaceId)
+    const replay = commands.enqueue(actor, createInput(taskSpaceId))
+    assert.equal(replay.idempotent, true)
+    assert.equal(replay.operation.id, first.operation.id)
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_command').get().count, 1)
+  } finally {
+    db.close()
+  }
+})
+
+test('分支停止监听后 pending 命令不再投递，恢复监听后重新可见', () => {
+  const { db, commands, actor, taskSpaceId, targetAgentId } = setup()
+  try {
+    const queued = commands.enqueue(actor, createInput(taskSpaceId))
+    assert.equal(commands.available(targetAgentId).length, 1)
+    db.prepare('UPDATE sync_agent_binding SET is_listening = 0 WHERE agent_id = ?').run(
+      targetAgentId,
+    )
+    assert.deepEqual(commands.available(targetAgentId), [])
+    const now = new Date().toISOString()
+    db.prepare(`
+      UPDATE sync_agent_binding
+      SET is_listening = 1, listener_reported_at = ?, last_listener_at = ?
+      WHERE agent_id = ?
+    `).run(now, now, targetAgentId)
+    assert.equal(commands.available(targetAgentId)[0].id, queued.operation.id)
   } finally {
     db.close()
   }
@@ -306,6 +374,12 @@ test('成功结果必须等待索引命中；失败后可重试并重新绑定�
       teamId: 'team-1',
       localRepoKey: 'c'.repeat(64),
     })
+    const listenerAt = new Date().toISOString()
+    db.prepare(`
+      UPDATE sync_agent_binding
+      SET is_listening = 1, listener_reported_at = ?, last_listener_at = ?
+      WHERE id = ?
+    `).run(listenerAt, listenerAt, rebound.binding.id)
     const retried = commands.retry(actor, failed.operation.id)
     assert.equal(retried.operation.status, 'pending')
     assert.equal(retried.operation.agentId, 'agent-b2')

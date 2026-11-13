@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 pub const AGENT_PROTOCOL_VERSION: u32 = 3;
+pub const LISTENER_REPORT_VERSION: u32 = 1;
 pub const AGENT_VERSION: &str = "0.1.0";
 
 pub mod code {

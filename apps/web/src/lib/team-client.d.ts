@@ -48,6 +48,10 @@ export function normalizeAgentBinding(payload: unknown): Record<string, unknown>
 export function normalizeAuditEvent(payload: unknown): Record<string, unknown>
 export function canWriteProject(project: unknown, user: unknown): boolean
 export function canManageProject(project: unknown, user?: unknown): boolean
+export function taskCommandState(
+  taskSpace: unknown,
+  teamMode?: boolean,
+): { canSubmit: boolean; reason: string | null }
 export function assignableProjectMembers(project: unknown): unknown[]
 export function assignmentActionState(
   task: unknown,

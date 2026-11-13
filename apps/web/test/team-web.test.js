@@ -16,12 +16,14 @@ import {
   normalizeOperation,
   normalizeRuntime,
   normalizeTaskPage,
+  normalizeTeamProject,
   normalizeTeamTaskRow,
   normalizeTeamStatus,
   planEditingState,
   redactSensitiveDetail,
   safeReturnTo,
   shouldReloadTasks,
+  taskCommandState,
 } from '../src/lib/team-client.js'
 
 test('幂等键在没有 randomUUID 的 HTTP 页面仍可生成', () => {
@@ -200,6 +202,60 @@ test('项目负责人或可管理任务空间具备项目管理能力', () => {
   assert.equal(canManageProject({ role: 'lead' }), true)
   assert.equal(canManageProject({ role: null, capabilities: { manageMembers: true } }), true)
   assert.equal(canManageProject({ role: null, taskSpaces: [{ canManage: true }] }), true)
+})
+
+test('任务空间监听聚合兼容驼峰和下划线字段', () => {
+  const project = normalizeTeamProject({
+    id: 'p1',
+    taskSpaces: [
+      {
+        id: 'space-a',
+        project_id: 'p1',
+        branch_name: 'feature/listener',
+        online_listener_count: 2,
+        approved_binding_count: '3',
+        listener_reported_binding_count: 3,
+        listener_state: 'online',
+        last_listener_at: '2026-11-13T08:00:00.000Z',
+      },
+    ],
+  })
+  assert.equal(project.taskSpaces[0].onlineListenerCount, 2)
+  assert.equal(project.taskSpaces[0].approvedBindingCount, 3)
+  assert.equal(project.taskSpaces[0].listenerReportedBindingCount, 3)
+  assert.equal(project.taskSpaces[0].listenerState, 'online')
+  assert.equal(project.taskSpaces[0].lastListenerAt, '2026-11-13T08:00:00.000Z')
+})
+
+test('创建和改派门禁只放行存在在线监听的团队任务空间', () => {
+  assert.deepEqual(taskCommandState({}, false), { canSubmit: true, reason: null })
+  assert.deepEqual(taskCommandState({ id: 'legacy-server-space' }, true), {
+    canSubmit: true,
+    reason: null,
+  })
+  assert.deepEqual(taskCommandState({ listenerState: 'online', onlineListenerCount: 1 }, true), {
+    canSubmit: true,
+    reason: null,
+  })
+  for (const listenerState of ['inactive', 'unassociated']) {
+    assert.deepEqual(taskCommandState({ listenerState, onlineListenerCount: 0 }, true), {
+      canSubmit: false,
+      reason: '请先启动并绑定该分支的客户端',
+    })
+  }
+  assert.equal(
+    taskCommandState({ listenerState: 'unknown_legacy', onlineListenerCount: 0 }, true).canSubmit,
+    false,
+  )
+  assert.match(
+    taskCommandState({ listenerState: 'unknown_legacy', onlineListenerCount: 1 }, true).reason,
+    /升级客户端或服务端/,
+  )
+  assert.deepEqual(taskCommandState({ listenerState: 'disabled', onlineListenerCount: 1 }, true), {
+    canSubmit: false,
+    reason: '该分支任务空间已停用',
+  })
+  assert.equal(taskCommandState({ listenerState: 'online' }, true).canSubmit, false)
 })
 
 test('团队负责人候选只包含 active 的 lead/member developer', () => {

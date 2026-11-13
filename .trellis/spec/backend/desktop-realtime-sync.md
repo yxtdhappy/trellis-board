@@ -20,6 +20,7 @@
 POST   /api/agent/task-spaces/preflight
 POST   /api/agent/task-spaces/resolve
 POST   /api/agent/task-spaces/attach
+POST   /api/agent/task-spaces/:taskSpaceId/detach
 GET    /api/agent/task-spaces/:taskSpaceId/snapshot?afterRevision=N
 GET    /api/agent/task-spaces/:taskSpaceId/files?taskDir=...
 POST   /api/agent/task-spaces/:taskSpaceId/preflight
@@ -40,6 +41,7 @@ POST   /api/agent/commands/:commandId/result
 ```text
 GET  /api/tasks/query?[taskSpaceId=...][&projectIds=...][&branch=...]
 GET  /api/task-spaces/:taskSpaceId/assignees
+GET  /api/task-spaces/:taskSpaceId/listeners
 POST /api/tasks
 POST /api/tasks/assign
 GET  /api/task-operations?taskSpaceId=...
@@ -57,7 +59,7 @@ ETag、缓存键和游标绑定用户、团队、项目/taskSpace 集合哈希�
 `branch` 为可选单值子串筛选，trim 后大小写不敏感匹配，`%`、`_` 等字符按字面处理。
 分支匹配使用与前端一致的 Unicode 小写语义，不能直接依赖 SQLite 内置 `lower()`，它只折叠 ASCII。
 
-### SQLite v10
+### SQLite v11
 
 新模式只使用以下表；旧 `project_live_*`、`team_project`、`git_operation`、`git_credential`
 等表保留但不读写：
@@ -69,6 +71,10 @@ ETag、缓存键和游标绑定用户、团队、项目/taskSpace 集合哈希�
 - `sync_task_assignment`
 - `sync_task_command`
 - `sync_conflict`、`sync_conflict_backup`、`sync_file_audit`
+
+v11 在 `sync_agent_binding` 上增加 `is_listening`、`listener_reported_at`、`last_listener_at`；
+在线监听必须同时满足 binding 已批准、最近监听报告和设备心跳未过期、账号当前 active Agent、
+项目与 taskSpace 均 active。旧 v10 binding 缺少监听报告时派生为 `unknown_legacy`，不得伪造在线。
 
 ### 服务与 SSE
 
@@ -107,6 +113,25 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 只有 active Agent、approved binding、active project/taskSpace 和可写项目成员可上传快照或领取命令。
 - `attach` 在同一事务中撤销当前 Agent 使用相同 `localRepoKey` 的其他 binding，取消其
   `pending/delivered/running` 命令，并返回 `replacedBindings` 供客户端更新本地状态。
+
+### 监听与主动解绑
+
+- 新 Agent 心跳保持协议 v3，并可选携带 `listenerReportVersion=1` 与最多 64 个去重后的
+  `listeningTaskSpaceIds`。该数组是当前真实监听集合的完整快照，空数组表示没有监听；
+  未携带字段的旧 Agent 只更新设备心跳，不修改 binding 监听状态。
+- 客户端每次心跳前重新读取配置并校验真实 Git 分支，排除 `detachPending`、非 approved、
+  门禁错误或已撤销 binding；服务端在同一事务更新全部 approved binding 的报告时间，并只对
+  上报集合设置 `is_listening=1`。
+- taskSpace 监听状态固定按 `disabled -> online -> unassociated -> unknown_legacy -> inactive`
+  派生。`unassociated` 表示 approved binding 已为零；`inactive` 表示仍有 approved binding
+  但当前无人监听。
+- `POST /api/agent/task-spaces/:taskSpaceId/detach` 只允许当前 active Agent 撤销自身的
+  `localRepoKey` binding。事务内写 `revoked`、`is_listening=0`，取消该 binding 的
+  `pending/delivered/running` 命令、删除服务端 cursor 并只写一次解绑审计；重复调用幂等，
+  不删除 taskSpace、任务、冲突或历史。
+- 客户端主动解绑必须先原子写 `detachPending=true`，立即停止 watcher、上传、补同步和命令执行；
+  服务端成功后才删除本地 binding 与该 taskSpace 的 cursor 全量状态。网络失败保留待确认状态，
+  后续心跳重试；非重试权限或仓库错误保留真实原因，不得伪报成功。
 
 ### 路径与内容
 
@@ -297,7 +322,7 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 
 ### 备份
 
-- schema 升级前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v10.*`。
+- v10 -> v11 升级前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v11.*`。
 - Team runtime 启动时和每 24 小时写入
   `backups/board.sqlite.snapshot.<UTC timestamp>`，保留最近 7 份。
 - 备份失败只记结构化告警，不阻塞 HTTP、快照提交或 SSE。
@@ -312,6 +337,7 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | Agent 未上报 `observedBranchName` | `400 BRANCH_OBSERVATION_REQUIRED`，不写快照 |
 | 上报分支与 taskSpace/binding 不一致 | `400 BRANCH_TASK_SPACE_MISMATCH`，不写快照 |
 | 本地真实分支与 binding 不一致 | Agent 暂停该 binding，不写文件、不上传、不推进 cursor |
+| taskSpace 没有在线监听 | 创建/改派在写 operation 前返回 `409 TASK_SPACE_NO_ONLINE_LISTENER` |
 | 目标用户无在线 Agent、无 approved binding、非项目写成员 | 创建操作项前 `409`，返回用户、项目、分支和下一步 |
 | 路径越界、反斜杠、非白名单扩展名、符号链接、非 UTF-8 | 整批拒绝，任务快照不变 |
 | 单文件、单批、文件数超限 | 拒绝，任务快照不变 |
@@ -353,7 +379,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - `apps/server/test/team-task-snapshot.test.js`：首次写入、CAS 冲突、整批回滚、幂等、删除墓碑、覆盖备份、
   非法/不一致 `observedBranchName`，以及升级前 pending batch 补字段重放。
 - `apps/server/test/team-task-index-v10.test.js`：tasks-only 物化、归档移动、revision 隔离、不读取 Git/workspace。
-- `apps/server/test/team-agent-slot.test.js`：新设备踢下线、旧 SSE 关闭、旧命令取消、新设备重建 binding。
+- `apps/server/test/team-agent-slot.test.js`、`team-task-spaces.test.js`：监听快照、空集合、旧客户端、
+  超时、五态聚合、监听详情权限和主动解绑幂等；另覆盖新设备踢下线、旧 SSE 关闭和旧命令取消。
 - `apps/server/test/team-task-commands.test.js`：在线目标、命令状态机、租约恢复、索引等待、重试和取消。
 - 双客户端实时对齐（两个真实 Agent 的 HTTP 快照 + SSE、CAS 并发、离线拒绝）随 Node Agent 删除而
   不再有自动化测试；发布前由 Windows 客户端 E2E 覆盖，服务端行为由 `team-task-snapshot`、
@@ -368,6 +395,10 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   cursor 文件基线、离线并发冲突、延后目录、目录移动、pending batch 重放、错分支与 detached HEAD 拒绝。
 - `apps/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、
   DPAPI 往返、SSE 分帧、控制事件去重与过期。
+- `apps/desktop/src-tauri/src/agent/{runtime,task_sync,detach,store}.rs`：真实监听集合、
+  `detachPending` 排除、失败重试和成功后 cursor 清理。
+- Tauri command、capability 与 permission 的装配由 `cargo test`/桌面构建和真实客户端 E2E 验证，
+  不用 Node 测试读取 Rust/TOML 源码做正则断言。
 - `apps/server/test/task-space-duplicate-cleanup.test.js`：默认 dry-run、只墓碑指定旧 taskSpace、不动归档、
   `VACUUM INTO` 备份、内容差异和缺少稳定 ID 时拒绝自动清理。
 

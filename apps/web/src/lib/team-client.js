@@ -1,4 +1,11 @@
 export const TEAM_PAGE_LIMIT = 100
+const TASK_SPACE_LISTENER_STATES = new Set([
+  'online',
+  'inactive',
+  'unassociated',
+  'unknown_legacy',
+  'disabled',
+])
 
 export function createIdempotencyKey(cryptoApi = globalThis.crypto) {
   if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID()
@@ -116,15 +123,46 @@ export function normalizeProjectMembers(project = {}) {
 export function normalizeTeamProject(project = {}) {
   const id = project.id ?? project.repositoryId ?? project.repository_id ?? ''
   const taskSpaces = Array.isArray(project.taskSpaces)
-    ? project.taskSpaces.map((taskSpace) => ({
-        ...taskSpace,
-        id: String(taskSpace?.id ?? ''),
-        projectId: String(taskSpace?.projectId ?? taskSpace?.project_id ?? id),
-        branchName: String(taskSpace?.branchName ?? taskSpace?.branch_name ?? ''),
-        revision: Number(taskSpace?.revision ?? 0),
-        indexedRevision: Number(taskSpace?.indexedRevision ?? taskSpace?.indexed_revision ?? 0),
-        readOnly: taskSpace?.readOnly === true,
-      }))
+    ? project.taskSpaces.map((taskSpace) => {
+        const listenerState = taskSpace?.listenerState ?? taskSpace?.listener_state
+        const onlineListenerCount =
+          taskSpace?.onlineListenerCount ?? taskSpace?.online_listener_count
+        const approvedBindingCount =
+          taskSpace?.approvedBindingCount ?? taskSpace?.approved_binding_count
+        const listenerReportedBindingCount =
+          taskSpace?.listenerReportedBindingCount ?? taskSpace?.listener_reported_binding_count
+        const lastListenerAt = taskSpace?.lastListenerAt ?? taskSpace?.last_listener_at
+        const hasListenerSummary = [
+          listenerState,
+          onlineListenerCount,
+          approvedBindingCount,
+          listenerReportedBindingCount,
+          lastListenerAt,
+        ].some((value) => value != null)
+        return {
+          ...taskSpace,
+          id: String(taskSpace?.id ?? ''),
+          projectId: String(taskSpace?.projectId ?? taskSpace?.project_id ?? id),
+          branchName: String(taskSpace?.branchName ?? taskSpace?.branch_name ?? ''),
+          revision: Number(taskSpace?.revision ?? 0),
+          indexedRevision: Number(taskSpace?.indexedRevision ?? taskSpace?.indexed_revision ?? 0),
+          readOnly: taskSpace?.readOnly === true,
+          approvedBindingCount: hasListenerSummary
+            ? Math.max(0, Number(approvedBindingCount) || 0)
+            : undefined,
+          onlineListenerCount: hasListenerSummary
+            ? Math.max(0, Number(onlineListenerCount) || 0)
+            : undefined,
+          listenerReportedBindingCount: hasListenerSummary
+            ? Math.max(0, Number(listenerReportedBindingCount) || 0)
+            : undefined,
+          lastListenerAt: hasListenerSummary ? (lastListenerAt ?? null) : undefined,
+          listenerState:
+            typeof listenerState === 'string' && TASK_SPACE_LISTENER_STATES.has(listenerState)
+              ? listenerState
+              : undefined,
+        }
+      })
     : []
   return {
     ...project,
@@ -392,6 +430,32 @@ export function canManageProject(project = {}) {
     (Array.isArray(project.taskSpaces) &&
       project.taskSpaces.some((taskSpace) => taskSpace?.canManage === true))
   )
+}
+
+export function taskCommandState(taskSpace = {}, teamMode = false) {
+  if (!teamMode) return { canSubmit: true, reason: null }
+  const hasListenerSummary = [
+    taskSpace?.listenerState,
+    taskSpace?.onlineListenerCount,
+    taskSpace?.approvedBindingCount,
+    taskSpace?.listenerReportedBindingCount,
+    taskSpace?.lastListenerAt,
+  ].some((value) => value != null)
+  if (!hasListenerSummary) return { canSubmit: true, reason: null }
+  if (taskSpace?.listenerState === 'disabled') {
+    return { canSubmit: false, reason: '该分支任务空间已停用' }
+  }
+  if (taskSpace?.listenerState === 'unknown_legacy') {
+    return {
+      canSubmit: false,
+      reason: '请先启动并绑定该分支的客户端；旧客户端未上报监听状态，请升级客户端或服务端后重试',
+    }
+  }
+  const onlineListenerCount = Number(taskSpace?.onlineListenerCount)
+  if (!Number.isSafeInteger(onlineListenerCount) || onlineListenerCount < 1) {
+    return { canSubmit: false, reason: '请先启动并绑定该分支的客户端' }
+  }
+  return { canSubmit: true, reason: null }
 }
 
 export function assignableProjectMembers(project = {}) {

@@ -118,6 +118,17 @@ test('Team 发布边界不再依赖服务端 Git，命令成功前不生成正�
     developerId: 'release-user',
     localRepoKey: 'a'.repeat(64),
   })
+  const authenticated = runtime.services.agentService.authenticate({
+    headers: { authorization: `Bearer ${enrolled.credential}` },
+  })
+  runtime.services.agentService.heartbeat(authenticated, {
+    protocolVersion: 3,
+    agentId: enrolled.agentId,
+    agentVersion: '0.1.0',
+    deviceName: '发布设备',
+    listenerReportVersion: 1,
+    listeningTaskSpaceIds: [attached.taskSpace.id],
+  })
   const operation = runtime.services.taskCommands.enqueue(actor, {
     commandType: 'create_task',
     taskSpaceId: attached.taskSpace.id,

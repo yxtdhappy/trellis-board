@@ -9,6 +9,8 @@ export const MINIMUM_AGENT_VERSION = '0.1.0'
 
 const PAIRING_TTL_MS = 10 * 60 * 1000
 const AGENT_STALE_MS = 60 * 1000
+const LISTENER_REPORT_VERSION = 1
+const MAX_LISTENING_TASK_SPACES = 64
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const LOCAL_REPO_KEY = /^[a-f0-9]{64}$/
 const SEMVER = /^\d+\.\d+\.\d+$/
@@ -51,6 +53,28 @@ function protocolVersion(value) {
   return AGENT_PROTOCOL_VERSION
 }
 
+function listenerReport(input) {
+  if (!Object.hasOwn(input, 'listenerReportVersion')) return null
+  if (Number(input.listenerReportVersion) !== LISTENER_REPORT_VERSION) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, '监听协议版本无效')
+  }
+  if (!Array.isArray(input.listeningTaskSpaceIds)) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, '监听任务空间列表格式无效')
+  }
+  if (input.listeningTaskSpaceIds.length > MAX_LISTENING_TASK_SPACES) {
+    throw teamError(
+      400,
+      ERROR_CODES.INVALID_INPUT,
+      `监听任务空间不能超过 ${MAX_LISTENING_TASK_SPACES} 个`,
+    )
+  }
+  const taskSpaceIds = input.listeningTaskSpaceIds.map((value) => safeId(value, '任务空间 ID'))
+  if (new Set(taskSpaceIds).size !== taskSpaceIds.length) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, '监听任务空间列表不能包含重复项')
+  }
+  return taskSpaceIds
+}
+
 function agentVersion(value) {
   const version = String(value || '').trim()
   if (!SEMVER.test(version)) {
@@ -79,9 +103,12 @@ export function createSyncAgentService({
   config = {},
   events = null,
   now = () => new Date(),
-  staleMs = AGENT_STALE_MS,
+  staleMs = null,
 }) {
   const pairAttempts = new Map()
+  const configuredStaleMs = Number(staleMs ?? config.agentStaleMs ?? AGENT_STALE_MS)
+  const effectiveStaleMs =
+    Number.isFinite(configuredStaleMs) && configuredStaleMs > 0 ? configuredStaleMs : AGENT_STALE_MS
 
   function actorContext(userId, requestedTeamId = null) {
     const user = db
@@ -211,7 +238,7 @@ export function createSyncAgentService({
     `).run(timestamp, userId)
     db.prepare(`
       UPDATE sync_agent_binding
-      SET sync_status = 'revoked', updated_at = ?
+      SET sync_status = 'revoked', is_listening = 0, updated_at = ?
       WHERE agent_id IN (
         SELECT id FROM agent_device WHERE user_id = ? AND status = 'active'
       ) AND sync_status <> 'revoked'
@@ -373,27 +400,16 @@ export function createSyncAgentService({
 
   function heartbeat(agent, input = {}) {
     protocolVersion(input.protocolVersion)
-    agentVersion(input.agentVersion)
+    const version = agentVersion(input.agentVersion)
     safeId(input.agentId || input.deviceId, 'Agent ID')
     if ((input.agentId || input.deviceId) !== agent.id) {
       throw teamError(403, ERROR_CODES.FORBIDDEN, 'Agent 身份不匹配')
     }
+    const listeningTaskSpaceIds = listenerReport(input)
     const name = text(input.deviceName || agent.deviceName, '设备名称', { max: 80 })
     const timestamp = now().toISOString()
-    db.prepare(`
-      UPDATE agent_device
-      SET device_name = ?, agent_version = ?, protocol_version = ?,
-          last_seen_at = ?, last_heartbeat_json = ?
-      WHERE id = ?
-    `).run(
-      name,
-      agentVersion(input.agentVersion),
-      AGENT_PROTOCOL_VERSION,
-      timestamp,
-      JSON.stringify({ taskSpaces: Array.isArray(input.bindings) ? input.bindings.length : 0 }),
-      agent.id,
-    )
     const bindings = []
+    const rejectedTaskSpaceIds = new Set()
     for (const value of Array.isArray(input.bindings) ? input.bindings.slice(0, 64) : []) {
       const taskSpaceId = safeId(value.taskSpaceId, '任务空间 ID')
       const binding = db
@@ -416,6 +432,7 @@ export function createSyncAgentService({
       }
       const localRepoKey = String(value.localRepoKey || '')
       if (!LOCAL_REPO_KEY.test(localRepoKey) || localRepoKey !== binding.local_repo_key) {
+        rejectedTaskSpaceIds.add(taskSpaceId)
         bindings.push({
           id: binding.id,
           taskSpaceId,
@@ -440,6 +457,69 @@ export function createSyncAgentService({
             : binding.sync_status,
       })
     }
+    const acceptedListeningTaskSpaceIds =
+      listeningTaskSpaceIds == null
+        ? null
+        : listeningTaskSpaceIds.filter((taskSpaceId) => !rejectedTaskSpaceIds.has(taskSpaceId))
+    withTransaction(db, () => {
+      db.prepare(`
+        UPDATE agent_device
+        SET device_name = ?, agent_version = ?, protocol_version = ?,
+            last_seen_at = ?, last_heartbeat_json = ?
+        WHERE id = ?
+      `).run(
+        name,
+        version,
+        AGENT_PROTOCOL_VERSION,
+        timestamp,
+        JSON.stringify({
+          taskSpaces: Array.isArray(input.bindings) ? input.bindings.length : 0,
+          ...(listeningTaskSpaceIds == null
+            ? {}
+            : {
+                listenerReportVersion: LISTENER_REPORT_VERSION,
+                listeningTaskSpaceIds,
+              }),
+        }),
+        agent.id,
+      )
+      if (acceptedListeningTaskSpaceIds != null) {
+        const approvedTaskSpaceIds = new Set(
+          db
+            .prepare(`
+              SELECT task_space_id
+              FROM sync_agent_binding
+              WHERE agent_id = ? AND sync_status = 'approved'
+            `)
+            .all(agent.id)
+            .map((row) => row.task_space_id),
+        )
+        const unknownTaskSpaceIds = acceptedListeningTaskSpaceIds.filter(
+          (taskSpaceId) => !approvedTaskSpaceIds.has(taskSpaceId),
+        )
+        if (unknownTaskSpaceIds.length) {
+          throw teamError(
+            400,
+            ERROR_CODES.INVALID_INPUT,
+            '监听任务空间不属于当前 Agent 的已批准关联',
+            { details: { taskSpaceIds: unknownTaskSpaceIds } },
+          )
+        }
+        db.prepare(`
+          UPDATE sync_agent_binding
+          SET listener_reported_at = ?, is_listening = 0, updated_at = ?
+          WHERE agent_id = ? AND sync_status = 'approved'
+        `).run(timestamp, timestamp, agent.id)
+        if (acceptedListeningTaskSpaceIds.length) {
+          db.prepare(`
+            UPDATE sync_agent_binding
+            SET is_listening = 1, last_listener_at = ?, updated_at = ?
+            WHERE agent_id = ? AND sync_status = 'approved'
+              AND task_space_id IN (${acceptedListeningTaskSpaceIds.map(() => '?').join(', ')})
+          `).run(timestamp, timestamp, agent.id, ...acceptedListeningTaskSpaceIds)
+        }
+      }
+    })
     return {
       protocolVersion: AGENT_PROTOCOL_VERSION,
       minimumAgentVersion: MINIMUM_AGENT_VERSION,
@@ -449,7 +529,7 @@ export function createSyncAgentService({
   }
 
   function onlineAgentForTaskSpace(taskSpaceId, userId) {
-    const staleCutoff = new Date(now().getTime() - staleMs).toISOString()
+    const staleCutoff = new Date(now().getTime() - effectiveStaleMs).toISOString()
     return db
       .prepare(`
       SELECT a.*, s.project_id, b.id AS binding_id, b.task_space_id,
@@ -461,11 +541,32 @@ export function createSyncAgentService({
       JOIN sync_project p ON p.id = s.project_id
       WHERE active.user_id = ? AND a.user_id = ? AND a.status = 'active'
         AND b.task_space_id = ? AND b.sync_status = 'approved'
+        AND b.is_listening = 1 AND b.listener_reported_at >= ?
         AND s.status = 'active' AND p.status = 'active'
         AND a.last_seen_at >= ?
       LIMIT 2
     `)
-      .all(userId, userId, taskSpaceId, staleCutoff)
+      .all(userId, userId, taskSpaceId, staleCutoff, staleCutoff)
+  }
+
+  function onlineListenerCount(taskSpaceId) {
+    const staleCutoff = new Date(now().getTime() - effectiveStaleMs).toISOString()
+    return Number(
+      db
+        .prepare(`
+        SELECT COUNT(*) AS count
+        FROM sync_active_agent active
+        JOIN agent_device a ON a.id = active.agent_id
+        JOIN sync_agent_binding b ON b.agent_id = a.id
+        JOIN sync_task_space s ON s.id = b.task_space_id
+        JOIN sync_project p ON p.id = s.project_id
+        WHERE b.task_space_id = ? AND b.sync_status = 'approved'
+          AND b.is_listening = 1 AND b.listener_reported_at >= ?
+          AND a.status = 'active' AND s.status = 'active' AND p.status = 'active'
+          AND a.last_seen_at >= ?
+      `)
+        .get(taskSpaceId, staleCutoff, staleCutoff).count,
+    )
   }
 
   function manageableTeamIds(actor, requestedTeamId) {
@@ -557,7 +658,7 @@ export function createSyncAgentService({
       `).run(timestamp, agentId)
       db.prepare(`
         UPDATE sync_agent_binding
-        SET sync_status = 'revoked', updated_at = ?
+        SET sync_status = 'revoked', is_listening = 0, updated_at = ?
         WHERE agent_id = ? AND sync_status <> 'revoked'
       `).run(timestamp, agentId)
       db.prepare(`
@@ -583,6 +684,7 @@ export function createSyncAgentService({
     authenticate,
     heartbeat,
     onlineAgentForTaskSpace,
+    onlineListenerCount,
     listDevices,
     revokeDevice,
   }

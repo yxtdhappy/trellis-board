@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"检查监听协议、状态聚合、detach 和命令取消是否守住现有实时同步契约"}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"检查 schema v11 迁移、备份、事务、幂等和回滚"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"检查新增 API 的鉴权、输入校验、脱敏和错误矩阵"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查数据库、HTTP 和 Agent 行为都有分层自动测试"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"检查项目栏四态、派生状态、Tauri 边界和表单门禁"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查前端纯函数测试、可访问性、深色模式和最终构建"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查同一字段在生产者、服务端和全部消费者之间无遗漏"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查 Rust 运行时、Tauri 和 Web 没有各自复制解绑规则"}

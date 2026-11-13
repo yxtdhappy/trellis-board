@@ -14,6 +14,7 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
 use crate::agent::association::{associate_desktop_project, AssociateParams};
 use crate::agent::control::ControlHub;
 use crate::agent::credential::CredentialStore;
+use crate::agent::detach;
 use crate::agent::device::{self, DesktopLoginSummary};
 use crate::agent::env;
 use crate::agent::http::ApiClient;
@@ -581,6 +582,7 @@ pub async fn associate(
         branch_name: summary.branch_name.unwrap_or_default(),
         team_id: summary.team_id,
         status: summary.status.unwrap_or_default(),
+        detach_pending: false,
         read_only: summary.read_only.unwrap_or(false),
         live_sync_status: summary
             .live_sync_status
@@ -715,6 +717,41 @@ pub async fn list_associations(app: &AppHandle) -> Result<Vec<LocalAssociation>,
     device::read_local_associations(&service.store)
         .await
         .map_err(|error| message(&error))
+}
+
+pub async fn detach_local_association(
+    app: &AppHandle,
+    task_space_id: &str,
+) -> Result<Value, String> {
+    let service = service(app).map_err(|error| message(&error))?;
+    let runtime = service
+        .runtime
+        .lock()
+        .map_err(|_| "无法读取 Agent 运行状态".to_string())?
+        .clone();
+    let outcome = if let Some(runtime) = runtime {
+        runtime.detach_local_association(task_space_id).await
+    } else {
+        let (_config, api) = service
+            .agent_context()
+            .await
+            .map_err(|error| message(&error))?;
+        let task_sync = Arc::new(TaskSync::new(
+            service.store.clone(),
+            api.clone(),
+            Arc::new(|_control: Value| {}),
+        ));
+        detach::detach_local_association(
+            &service.store,
+            &api,
+            &task_sync,
+            task_space_id,
+            false,
+        )
+        .await
+    }
+    .map_err(|error| message(&error))?;
+    serde_json::to_value(outcome).map_err(|error| format!("无法序列化解绑结果：{error}"))
 }
 
 /// 与 `sidecar.rs` 的 `SidecarStatus` 同形，前端 `ProjectRail` 继续读取。

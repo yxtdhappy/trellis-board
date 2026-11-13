@@ -35,8 +35,10 @@ test('Team runtime 只装配任务空间快照链路，不导入旧 Git 或实�
     assert.equal(http.includes(current), true, current)
   }
   assert.match(http, /task-spaces\/preflight/)
-  assert.doesNotMatch(http, /detachAgent/)
-  assert.doesNotMatch(read('team/task-space-service.js'), /detachAgent/)
+  assert.equal(http.includes('/detach$'), true)
+  assert.equal(http.includes('/listeners$'), true)
+  assert.match(read('team/task-space-service.js'), /function detachAgent/)
+  assert.match(read('team/task-space-service.js'), /function listenerDetails/)
   assert.doesNotMatch(http, /\bspawn\s*\(|\bexecFile\s*\(/)
   assert.doesNotMatch(read('team/task-snapshot-service.js'), /\bgit\b/i)
 })

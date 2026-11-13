@@ -720,6 +720,12 @@ function createRequestHandler({
       sendJson(response, 201, taskSpaces.attach(agent.userId, agent.id, body))
       return true
     }
+    const detachMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/detach$/)
+    if (detachMatch && request.method === 'POST') {
+      const body = await readJsonBody(request)
+      sendJson(response, 200, taskSpaces.detachAgent(agent, detachMatch[0], body))
+      return true
+    }
     const snapshotMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/snapshot$/)
     if (snapshotMatch && request.method === 'GET') {
       sendJson(
@@ -1346,6 +1352,11 @@ function createRequestHandler({
       sendJson(response, 200, {
         assignees: boardService.assigneeCandidates(actor, assigneeMatch[0]),
       })
+      return true
+    }
+    const listenersMatch = routeMatch(pathname, /^\/api\/task-spaces\/([^/]+)\/listeners$/)
+    if (listenersMatch && request.method === 'GET') {
+      sendJson(response, 200, taskSpaces.listenerDetails(actor, listenersMatch[0]))
       return true
     }
     if (pathname === '/api/task-operations' && request.method === 'GET') {

@@ -21,6 +21,13 @@ export type Project = {
   [key: string]: unknown
 }
 
+export type TaskSpaceListenerState =
+  | 'online'
+  | 'inactive'
+  | 'unassociated'
+  | 'unknown_legacy'
+  | 'disabled'
+
 export type TaskSpace = {
   id: string
   projectId: string
@@ -32,6 +39,34 @@ export type TaskSpace = {
   readOnly?: boolean
   canManage?: boolean
   lastError?: string | null
+  approvedBindingCount?: number
+  onlineListenerCount?: number
+  listenerReportedBindingCount?: number
+  lastListenerAt?: string | null
+  listenerState?: TaskSpaceListenerState
+}
+
+export type TaskSpaceListener = {
+  bindingId: string
+  userId: string
+  username: string
+  displayName: string
+  deviceName: string
+  bindingStatus: string
+  online: boolean
+  listenerReportedAt: string | null
+  lastListenerAt: string | null
+  boundAt: string | null
+}
+
+export type TaskSpaceListenerDetails = {
+  taskSpaceId: string
+  branchName: string
+  listenerState: TaskSpaceListenerState
+  approvedBindingCount: number
+  onlineListenerCount: number
+  lastListenerAt: string | null
+  listeners: TaskSpaceListener[]
 }
 
 export type BoardPayload = {
@@ -187,6 +222,9 @@ export const fetchTaskSpaceAssignees = (taskSpaceId: string) =>
   api<{ assignees?: TaskSpaceAssignee[] }>(
     `/api/task-spaces/${encodeURIComponent(taskSpaceId)}/assignees`,
   ).then((payload) => payload?.assignees || [])
+
+export const fetchTaskSpaceListeners = (taskSpaceId: string) =>
+  api<TaskSpaceListenerDetails>(`/api/task-spaces/${encodeURIComponent(taskSpaceId)}/listeners`)
 
 export const changePassword = (payload: { currentPassword: string; newPassword: string }) =>
   api('/api/auth/password', 'POST', payload)

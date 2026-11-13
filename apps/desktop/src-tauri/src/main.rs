@@ -564,6 +564,19 @@ async fn list_local_associations(
 }
 
 #[tauri::command]
+async fn detach_local_association(
+    app: AppHandle,
+    window: WebviewWindow,
+    task_space_id: String,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
+    let associations = agent_service::list_associations(&app).await?;
+    approved_association_for_task_space(&associations, &task_space_id)?;
+    agent_service::detach_local_association(&app, &task_space_id).await
+}
+
+#[tauri::command]
 async fn inspect_associated_project_agents(
     app: AppHandle,
     window: WebviewWindow,
@@ -879,6 +892,7 @@ fn main() {
             cancel_pending_project,
             associate_pending_project,
             list_local_associations,
+            detach_local_association,
             inspect_associated_project_agents,
             initialize_associated_project_agents,
             sync_deferred_tasks,
@@ -935,6 +949,7 @@ mod tests {
             branch_name: "main".to_string(),
             team_id: Some("team-1".to_string()),
             status: status.to_string(),
+            detach_pending: false,
             read_only: false,
             live_sync_status: "idle".to_string(),
             live_sync_error: None,

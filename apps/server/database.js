@@ -11,7 +11,7 @@ import {
   stateFile,
 } from './config.js'
 
-export const DATABASE_SCHEMA_VERSION = 10
+export const DATABASE_SCHEMA_VERSION = 11
 
 const LEGACY_IMPORT_KEY = 'legacy_json_imported_v1'
 const EXECUTION_EVENTS_STARTED_KEY = 'execution_events_started_at'
@@ -753,7 +753,7 @@ function ensureV9Schema(db) {
   `)
 }
 
-const SCHEMA_V10_SQL = `
+const SCHEMA_V11_SQL = `
   CREATE TABLE IF NOT EXISTS sync_project (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -877,6 +877,9 @@ const SCHEMA_V10_SQL = `
     last_error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    is_listening INTEGER NOT NULL DEFAULT 0 CHECK (is_listening IN (0, 1)),
+    listener_reported_at TEXT,
+    last_listener_at TEXT,
     UNIQUE(agent_id, task_space_id)
   );
 
@@ -1056,8 +1059,29 @@ const SCHEMA_V10_SQL = `
     ON sync_file_audit(task_space_id, revision, id);
 `
 
-function ensureV10Schema(db) {
-  db.exec(SCHEMA_V10_SQL)
+function ensureV11Schema(db) {
+  db.exec(SCHEMA_V11_SQL)
+  const columns = new Set(
+    db
+      .prepare('PRAGMA table_info(sync_agent_binding)')
+      .all()
+      .map((column) => column.name),
+  )
+  if (!columns.has('is_listening')) {
+    db.exec(
+      'ALTER TABLE sync_agent_binding ADD COLUMN is_listening INTEGER NOT NULL DEFAULT 0 CHECK (is_listening IN (0, 1))',
+    )
+  }
+  if (!columns.has('listener_reported_at')) {
+    db.exec('ALTER TABLE sync_agent_binding ADD COLUMN listener_reported_at TEXT')
+  }
+  if (!columns.has('last_listener_at')) {
+    db.exec('ALTER TABLE sync_agent_binding ADD COLUMN last_listener_at TEXT')
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS sync_agent_binding_listener
+      ON sync_agent_binding(task_space_id, sync_status, is_listening);
+  `)
 }
 
 function tableExists(db, table) {
@@ -1087,7 +1111,7 @@ function ensureSchema(db, { databaseFile } = {}) {
   const schemaVersion = tableExists(db, 'app_meta') ? readMeta(db, 'schema_version') : null
   const numericVersion = schemaVersion == null ? null : Number(schemaVersion)
 
-  if (numericVersion !== null && ![6, 7, 8, 9, 10].includes(numericVersion)) {
+  if (numericVersion !== null && ![6, 7, 8, 9, 10, 11].includes(numericVersion)) {
     throw new Error(
       `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除当前 board.sqlite 后重建`,
     )
@@ -1106,7 +1130,7 @@ function ensureSchema(db, { databaseFile } = {}) {
     ensureV7Schema(db)
     ensureV8Schema(db)
     ensureV9Schema(db)
-    ensureV10Schema(db)
+    ensureV11Schema(db)
     if (numericVersion == null || numericVersion < DATABASE_SCHEMA_VERSION) {
       writeMeta(db, 'schema_version', DATABASE_SCHEMA_VERSION)
     }

@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { fetchTaskDetail, api } from '@/api/board'
+import { fetchTaskDetail, api, type TaskSpace } from '@/api/board'
 import { ApiError } from '@/api/request'
 import { renderMarkdown } from '@/lib/markdown.js'
 import type { Stage } from '../task-view.ts'
@@ -31,7 +31,7 @@ import { ConditionChecks } from '../ConditionChecks.tsx'
 import { toast } from 'sonner'
 import { SelectField } from '../SelectField.tsx'
 import { priorityTone, stageTone, statusLabel, statusTone } from '../tone.ts'
-import { assignmentActionState, planEditingState } from '@/lib/team-client.js'
+import { assignmentActionState, planEditingState, taskCommandState } from '@/lib/team-client.js'
 import { AssigneeWarningDialog, type AssigneeWarningDetails } from './AssigneeWarningDialog.tsx'
 
 const ARTIFACTS = [
@@ -140,6 +140,8 @@ type TaskDetailDialogProps = {
   onOpenChange: (open: boolean) => void
   onAssign: (task: BoardTask, assignee: string) => Promise<void>
   assignees: string[]
+  taskSpace?: TaskSpace | null
+  teamMode?: boolean
   onPlanSaved: () => void
   tasks: BoardTask[]
   actions: TaskDetailActions
@@ -151,6 +153,8 @@ export function TaskDetailDialog({
   onOpenChange,
   onAssign,
   assignees,
+  taskSpace = null,
+  teamMode = false,
   onPlanSaved,
   tasks,
   actions,
@@ -234,11 +238,14 @@ export function TaskDetailDialog({
   const progress = current ? taskProgress(current) : null
   const stage = current ? nextStage(current) : null
   const artifacts = readArtifacts(current)
-  const { readOnly: assignmentReadOnly, canSubmit: canAssign } = assignmentActionState(
+  const { readOnly: assignmentReadOnly, canSubmit: assignmentCanSubmit } = assignmentActionState(
     current,
     assignee,
     assignees,
   )
+  const commandState = taskCommandState(taskSpace, teamMode)
+  const listenerBlocked = !assignmentReadOnly && !commandState.canSubmit
+  const canAssign = assignmentCanSubmit && commandState.canSubmit
   const { readOnly: planReadOnly, canEdit: canEditPlan } = planEditingState(current)
 
   async function reloadDetail() {
@@ -636,31 +643,38 @@ export function TaskDetailDialog({
           )}
 
           <DialogFooter className="gap-2 sm:justify-between">
-            <div className="flex items-center gap-1.5">
-              <SelectField
-                className="w-40 text-xs"
-                placeholder="请选择负责人"
-                value={assignee}
-                options={assignees.map((name) => ({ value: name, label: name }))}
-                onChange={setAssignee}
-                ariaLabel="负责人"
-                disabled={assignmentReadOnly}
-              />
-              <Button
-                size="sm"
-                disabled={!canAssign}
-                onClick={async () => {
-                  if (!current || !canAssign) return
-                  try {
-                    await onAssign(current, assignee)
-                    toast.success('负责人已更新')
-                  } catch (error) {
-                    toast.error(error instanceof Error ? error.message : '更新失败')
-                  }
-                }}
-              >
-                更新派发
-              </Button>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-1.5">
+                <SelectField
+                  className="w-40 text-xs"
+                  placeholder="请选择负责人"
+                  value={assignee}
+                  options={assignees.map((name) => ({ value: name, label: name }))}
+                  onChange={setAssignee}
+                  ariaLabel="负责人"
+                  disabled={assignmentReadOnly || listenerBlocked}
+                />
+                <Button
+                  size="sm"
+                  disabled={!canAssign}
+                  onClick={async () => {
+                    if (!current || !canAssign) return
+                    try {
+                      await onAssign(current, assignee)
+                      toast.success('负责人已更新')
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : '更新失败')
+                    }
+                  }}
+                >
+                  更新派发
+                </Button>
+              </div>
+              {listenerBlocked ? (
+                <p className="text-[10.5px] text-warning" role="status">
+                  {commandState.reason}
+                </p>
+              ) : null}
             </div>
             <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
               关闭

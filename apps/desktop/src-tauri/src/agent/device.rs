@@ -14,7 +14,7 @@ use crate::agent::credential::CredentialStore;
 use crate::agent::http::ApiClient;
 use crate::agent::protocol::{
     self, code, err, parse_enroll_response, parse_heartbeat_response, AgentError, AgentResult,
-    AGENT_PROTOCOL_VERSION, AGENT_VERSION,
+    AGENT_PROTOCOL_VERSION, AGENT_VERSION, LISTENER_REPORT_VERSION,
 };
 use crate::agent::store::{
     create_config_revision, AgentBinding, AgentConfig, AgentTeam, ConfigStore,
@@ -77,6 +77,8 @@ pub struct LocalAssociation {
     pub branch_name: String,
     pub team_id: Option<String>,
     pub status: String,
+    #[serde(default)]
+    pub detach_pending: bool,
     pub read_only: bool,
     #[serde(default = "default_live_sync_status")]
     pub live_sync_status: String,
@@ -629,6 +631,8 @@ async fn reusable_device(
         "platform": "win32",
         "agentId": existing.agent_id,
         "deviceName": device_name,
+        "listenerReportVersion": LISTENER_REPORT_VERSION,
+        "listeningTaskSpaceIds": [],
         "bindings": bindings,
     });
     match api
@@ -841,6 +845,7 @@ pub async fn read_local_associations(store: &ConfigStore) -> AgentResult<Vec<Loc
         let deferred_task_dirs = deferred_task_dirs(&deferred, &binding.task_space_id);
         let (ownership_paused_task_dirs, ownership_pending_task_dirs) =
             if binding.sync_status == "approved"
+                && !binding.detach_pending
                 && !binding.read_only
                 && binding.live_sync_status != "error"
                 && binding.last_error_code.as_deref() != Some(code::BRANCH_MISMATCH)
@@ -858,6 +863,7 @@ pub async fn read_local_associations(store: &ConfigStore) -> AgentResult<Vec<Loc
             branch_name: binding.branch_name,
             team_id: binding.team_id,
             status: binding.sync_status,
+            detach_pending: binding.detach_pending,
             read_only: binding.read_only,
             live_sync_status: binding.live_sync_status,
             live_sync_error: binding.live_sync_error,
@@ -1036,6 +1042,7 @@ mod tests {
             branch_name: "main".to_string(),
             team_id: Some("team-1".to_string()),
             status: "approved".to_string(),
+            detach_pending: true,
             read_only: true,
             live_sync_status: "idle".to_string(),
             live_sync_error: None,
@@ -1055,6 +1062,7 @@ mod tests {
         assert_eq!(value["projectId"], "project-1");
         assert_eq!(value["taskSpaceId"], "task-space-1");
         assert_eq!(value["repoPath"], "C:/repo");
+        assert_eq!(value["detachPending"], true);
         assert_eq!(value["readOnly"], true);
         assert_eq!(value["liveSyncStatus"], "idle");
         assert_eq!(value["deferredCount"], 2);
@@ -1071,6 +1079,7 @@ mod tests {
         }))
         .expect("deserialize");
         assert_eq!(minimal.task_space_id, "");
+        assert!(!minimal.detach_pending);
         assert_eq!(minimal.live_sync_status, "pending");
     }
 

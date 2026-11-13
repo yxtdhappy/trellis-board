@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { fetchTaskSpaceAssignees, logout, type TaskSpaceAssignee } from '@/api/board'
+import {
+  fetchTaskSpaceAssignees,
+  logout,
+  type TaskSpace,
+  type TaskSpaceAssignee,
+} from '@/api/board'
 import { ProjectRail, type LocalAssociation } from '@/components/layout/ProjectRail'
 import { TopBar, type BoardNavItem } from '@/components/layout/TopBar'
 import { isBranchAssociationPaused } from '@/lib/project-rail-association.js'
@@ -86,6 +91,18 @@ export function BoardPage() {
       filterGroups(tasks, filters, projects, board?.savedViews || [], { scopedByServer: teamMode }),
     [tasks, filters, projects, board?.savedViews, teamMode],
   )
+  const taskSpacesById = useMemo<Map<string, TaskSpace>>(
+    () =>
+      new Map(
+        projects.flatMap((project) =>
+          (project.taskSpaces || []).map((taskSpace) => [taskSpace.id, taskSpace] as const),
+        ),
+      ),
+    [projects],
+  )
+  const selectedTaskSpace = selected?.taskSpaceId
+    ? taskSpacesById.get(selected.taskSpaceId) || null
+    : null
   const assignees = useMemo(
     () => [
       ...new Set(
@@ -354,6 +371,7 @@ export function BoardPage() {
         defaultProjectId={filters.projectId}
         defaultTaskSpaceId={filters.taskSpaceId === 'all' ? '' : filters.taskSpaceId}
         localTaskSpaceId={localTaskSpaceId}
+        teamMode={teamMode}
         onCreate={actions.createTask}
       />
       <AssignmentsDialog
@@ -392,6 +410,8 @@ export function BoardPage() {
         open={Boolean(selected)}
         onOpenChange={(open) => !open && setSelected(null)}
         assignees={detailAssignees}
+        taskSpace={selectedTaskSpace}
+        teamMode={teamMode}
         onAssign={async (task, assignee) => {
           if (teamMode) {
             const version = taskVersion(task)

@@ -51,6 +51,11 @@ description = "当前 Board origin 可读取本地项目关联状态。"
 commands.allow = ["list_local_associations"]
 
 [[permission]]
+identifier = "allow-detach-local-association"
+description = "当前 Board origin 可停止已批准关联的本地同步，并请求服务端权威解绑。"
+commands.allow = ["detach_local_association"]
+
+[[permission]]
 identifier = "allow-inspect-associated-project-agents"
 description = "当前 Board origin 可按已批准的任务空间关联只读检查本机编码 Agent。"
 commands.allow = ["inspect_associated_project_agents"]

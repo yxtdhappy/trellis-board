@@ -93,8 +93,9 @@ export function createTaskCommandService({
   deliveredLeaseMs = 5 * 60 * 1000,
   runningLeaseMs = 30 * 60 * 1000,
 }) {
-  function onlineTarget(actor, taskSpaceId, assigneeUserId) {
+  function commandTarget(actor, taskSpaceId, assigneeUserId) {
     taskSpaces.authorizeTaskSpace(actor, taskSpaceId, 'write')
+    const space = taskSpaces.loadTaskSpaceRow(taskSpaceId)
     const userId = safeId(assigneeUserId, '负责人用户 ID')
     const member = db
       .prepare(`
@@ -112,9 +113,28 @@ export function createTaskCommandService({
         '目标用户不是该项目的可写成员，请先配置 Trellis developer ID',
       )
     }
+    return { space, userId, member }
+  }
+
+  function onlineTarget(actor, taskSpaceId, assigneeUserId, targetContext = null) {
+    const { space, userId, member } =
+      targetContext || commandTarget(actor, taskSpaceId, assigneeUserId)
+    if (agents.onlineListenerCount(taskSpaceId) === 0) {
+      throw teamError(
+        409,
+        'TASK_SPACE_NO_ONLINE_LISTENER',
+        `分支 ${space?.branch_name || ''} 当前没有在线监听的客户端，请先启动并绑定该分支的客户端。`,
+        {
+          details: {
+            taskSpaceId,
+            projectId: space?.project_id || null,
+            branchName: space?.branch_name || null,
+          },
+        },
+      )
+    }
     const candidates = agents.onlineAgentForTaskSpace(taskSpaceId, userId)
     if (candidates.length === 0) {
-      const space = taskSpaces.loadTaskSpaceRow(taskSpaceId)
       throw teamError(
         409,
         'AGENT_OFFLINE',
@@ -142,11 +162,11 @@ export function createTaskCommandService({
       throw teamError(400, ERROR_CODES.INVALID_INPUT, '任务命令类型无效')
     }
     const assigneeUserId = requiredText(input.assigneeUserId, '负责人', 128)
-    const target = onlineTarget(actor, taskSpaceId, assigneeUserId)
     const idempotencyKey = String(input.idempotencyKey || crypto.randomUUID()).trim()
     if (!SAFE_ID.test(idempotencyKey)) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, '幂等键格式无效')
     }
+    const targetContext = commandTarget(actor, taskSpaceId, assigneeUserId)
     let payload
     if (commandType === 'create_task') {
       const priority = String(input.priority || 'P2')
@@ -163,7 +183,7 @@ export function createTaskCommandService({
           ? String(input.slug).toLowerCase()
           : null,
         assigneeUserId,
-        assigneeDevId: target.member.trellis_dev_id,
+        assigneeDevId: targetContext.member.trellis_dev_id,
       }
     } else {
       const executionTaskKey = requiredText(input.executionTaskKey, '任务身份', 500)
@@ -200,7 +220,7 @@ export function createTaskCommandService({
         taskKey: indexed.task_key,
         relativeDir: indexed.relative_dir,
         assigneeUserId,
-        assigneeDevId: target.member.trellis_dev_id,
+        assigneeDevId: targetContext.member.trellis_dev_id,
         baseTaskVersion: indexed.task_version,
         baseTaskSha256: taskJson?.sha256 || null,
       }
@@ -219,6 +239,7 @@ export function createTaskCommandService({
       }
       return { statusCode: 202, operation: operationPublic(existing), idempotent: true }
     }
+    const target = onlineTarget(actor, taskSpaceId, assigneeUserId, targetContext)
     const timestamp = now().toISOString()
     const id = crypto.randomUUID()
     db.prepare(`
@@ -322,11 +343,12 @@ export function createTaskCommandService({
   }
 
   function available(agentId) {
-    return db
+    const rows = db
       .prepare(`
-      SELECT c.*, b.local_repo_key, b.branch_name, s.project_id
+      SELECT c.*, b.local_repo_key, b.branch_name, s.project_id, a.user_id AS agent_user_id
       FROM sync_task_command c
       JOIN sync_agent_binding b ON b.id = c.binding_id
+      JOIN agent_device a ON a.id = c.agent_id
       JOIN sync_active_agent active ON active.agent_id = c.agent_id
       JOIN sync_task_space s ON s.id = c.task_space_id
       WHERE c.agent_id = ? AND c.status = 'pending'
@@ -335,6 +357,12 @@ export function createTaskCommandService({
       LIMIT 20
     `)
       .all(agentId)
+    return rows
+      .filter((row) =>
+        agents
+          .onlineAgentForTaskSpace(row.task_space_id, row.agent_user_id)
+          .some((online) => online.binding_id === row.binding_id),
+      )
       .map((row) => ({
         id: row.id,
         bindingId: row.binding_id,

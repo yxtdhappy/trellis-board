@@ -530,6 +530,7 @@ pub async fn attach_project(
             .status
             .clone()
             .unwrap_or_else(|| "approved".to_string()),
+        detach_pending: false,
         initial_sync_mode: mode.to_string(),
         initial_sync_completed: false,
         initial_review_pending: mode == "review",

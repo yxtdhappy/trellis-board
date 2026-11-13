@@ -13,6 +13,7 @@ import { listTeamsForActor } from './teams.js'
 const PROJECT_ROLES = new Set(['lead', 'member', 'read_only'])
 const LOCAL_REPO_KEY = /^[a-f0-9]{64}$/
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const DEFAULT_LISTENER_STALE_MS = 60 * 1000
 
 function nowIso() {
   return new Date().toISOString()
@@ -47,8 +48,78 @@ function assertLocalRepoKey(value) {
   return key
 }
 
-function taskSpacePublic(row, actor, access) {
-  const role = access.projectMembers.get(row.project_id)?.role || null
+function safeId(value, label) {
+  const id = requiredText(value, label, 128)
+  if (!SAFE_ID.test(id)) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label}格式无效`)
+  }
+  return id
+}
+
+function emptyListenerSummary() {
+  return {
+    approvedBindingCount: 0,
+    onlineListenerCount: 0,
+    listenerReportedBindingCount: 0,
+    lastListenerAt: null,
+  }
+}
+
+function listenerSummaries(db, taskSpaceIds, staleCutoff) {
+  if (!taskSpaceIds.length) return new Map()
+  const rows = db
+    .prepare(`
+    SELECT
+      b.task_space_id,
+      SUM(CASE WHEN b.sync_status = 'approved' THEN 1 ELSE 0 END) AS approved_count,
+      SUM(CASE
+        WHEN b.sync_status = 'approved' AND b.listener_reported_at IS NOT NULL
+        THEN 1 ELSE 0
+      END) AS reported_count,
+      SUM(CASE
+        WHEN b.sync_status = 'approved'
+          AND b.is_listening = 1
+          AND b.listener_reported_at >= ?
+          AND a.status = 'active'
+          AND a.last_seen_at >= ?
+          AND active.agent_id = a.id
+          AND s.status = 'active'
+          AND p.status = 'active'
+        THEN 1 ELSE 0
+      END) AS online_count,
+      MAX(CASE WHEN b.sync_status = 'approved' THEN b.last_listener_at END) AS last_listener_at
+    FROM sync_agent_binding b
+    JOIN sync_task_space s ON s.id = b.task_space_id
+    JOIN sync_project p ON p.id = s.project_id
+    JOIN agent_device a ON a.id = b.agent_id
+    LEFT JOIN sync_active_agent active ON active.user_id = a.user_id
+    WHERE b.task_space_id IN (${taskSpaceIds.map(() => '?').join(', ')})
+    GROUP BY b.task_space_id
+  `)
+    .all(staleCutoff, staleCutoff, ...taskSpaceIds)
+  return new Map(
+    rows.map((row) => [
+      row.task_space_id,
+      {
+        approvedBindingCount: Number(row.approved_count || 0),
+        onlineListenerCount: Number(row.online_count || 0),
+        listenerReportedBindingCount: Number(row.reported_count || 0),
+        lastListenerAt: row.last_listener_at || null,
+      },
+    ]),
+  )
+}
+
+function listenerState(row, summary) {
+  if (row.status === 'disabled' || row.project_status === 'disabled') return 'disabled'
+  if (summary.onlineListenerCount > 0) return 'online'
+  if (summary.approvedBindingCount === 0) return 'unassociated'
+  if (summary.listenerReportedBindingCount === 0) return 'unknown_legacy'
+  return 'inactive'
+}
+
+function taskSpacePublic(row, actor, access, summary = null) {
+  const role = access.projectMembers.get(row.project_id)?.get(actor?.userId)?.role || null
   const systemAdmin = Boolean(actor?.systemAdmin)
   const teamAdmin = [...access.teamRoles.entries()].some(
     ([teamId, teamRole]) =>
@@ -56,6 +127,7 @@ function taskSpacePublic(row, actor, access) {
   )
   // 团队管理员可以管理访问权限，但没有 developer ID 映射时不能写任务。
   const readOnly = !(systemAdmin || role === 'lead' || role === 'member')
+  const listeners = summary || emptyListenerSummary()
   return {
     id: row.id,
     projectId: row.project_id,
@@ -67,6 +139,11 @@ function taskSpacePublic(row, actor, access) {
     role: role || (teamAdmin ? 'team_admin' : systemAdmin ? 'system_admin' : null),
     readOnly,
     canManage: systemAdmin || teamAdmin || role === 'lead',
+    approvedBindingCount: listeners.approvedBindingCount,
+    onlineListenerCount: listeners.onlineListenerCount,
+    listenerReportedBindingCount: listeners.listenerReportedBindingCount,
+    lastListenerAt: listeners.lastListenerAt,
+    listenerState: listenerState(row, listeners),
   }
 }
 
@@ -90,8 +167,24 @@ function projectPublic(row, access) {
   }
 }
 
-export function createTaskSpaceService({ db, config = {}, allowedFileRemote = false }) {
+export function createTaskSpaceService({
+  db,
+  config = {},
+  allowedFileRemote = false,
+  now = () => new Date(),
+  staleMs = null,
+}) {
   const allowFileRemote = allowedFileRemote === true || config?.allowLocalGitRemotes === true
+  const configuredStaleMs = Number(staleMs ?? config.agentStaleMs ?? DEFAULT_LISTENER_STALE_MS)
+  const effectiveStaleMs =
+    Number.isFinite(configuredStaleMs) && configuredStaleMs > 0
+      ? configuredStaleMs
+      : DEFAULT_LISTENER_STALE_MS
+
+  function listenerSummariesFor(taskSpaceIds) {
+    const staleCutoff = new Date(now().getTime() - effectiveStaleMs).toISOString()
+    return listenerSummaries(db, taskSpaceIds, staleCutoff)
+  }
 
   function actorContext(userId, requestedTeamId = null) {
     const user = db
@@ -224,7 +317,7 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
     return { ...row, project, access }
   }
 
-  function listReadable(actor, { teamId = null } = {}) {
+  function listReadable(actor, { teamId = null, includeDisabled = false } = {}) {
     const scope = String(teamId || '').trim()
     if (scope && scope !== 'all') {
       if (!actor.systemAdmin && !(actor.teams || []).some((team) => team.id === scope)) {
@@ -244,18 +337,30 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
       .filter(
         (row) => !scope || scope === 'all' || access.teamAccessByProject.has(`${row.id}\0${scope}`),
       )
+    const projectIds = rows.map((row) => row.id)
+    const spaces = projectIds.length
+      ? db
+          .prepare(`
+          SELECT s.*, p.owner_team_id AS team_id, p.status AS project_status
+          FROM sync_task_space s
+          JOIN sync_project p ON p.id = s.project_id
+          WHERE s.project_id IN (${projectIds.map(() => '?').join(', ')})
+            AND s.status IN (${includeDisabled ? "'active', 'indexing', 'error', 'disabled'" : "'active', 'indexing', 'error'"})
+          ORDER BY s.project_id, s.branch_name COLLATE NOCASE
+        `)
+          .all(...projectIds)
+      : []
+    const spacesByProject = new Map()
+    for (const space of spaces) {
+      if (!spacesByProject.has(space.project_id)) spacesByProject.set(space.project_id, [])
+      spacesByProject.get(space.project_id).push(space)
+    }
+    const summaries = listenerSummariesFor(spaces.map((space) => space.id))
     return rows.map((row) => {
       const project = projectPublic(row, access)
-      const spaces = db
-        .prepare(`
-        SELECT s.*, p.owner_team_id AS team_id
-        FROM sync_task_space s
-        JOIN sync_project p ON p.id = s.project_id
-        WHERE s.project_id = ? AND s.status IN ('active', 'indexing', 'error')
-        ORDER BY s.branch_name COLLATE NOCASE
-      `)
-        .all(row.id)
-      project.taskSpaces = spaces.map((space) => taskSpacePublic(space, actor, access))
+      project.taskSpaces = (spacesByProject.get(row.id) || []).map((space) =>
+        taskSpacePublic(space, actor, access, summaries.get(space.id)),
+      )
       return project
     })
   }
@@ -339,8 +444,14 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
       }
     }
     const taskSpace = db
-      .prepare('SELECT * FROM sync_task_space WHERE project_id = ? AND branch_name = ?')
+      .prepare(`
+        SELECT s.*, p.owner_team_id AS team_id, p.status AS project_status
+        FROM sync_task_space s
+        JOIN sync_project p ON p.id = s.project_id
+        WHERE s.project_id = ? AND s.branch_name = ?
+      `)
       .get(project.id, branchName)
+    const summaries = listenerSummariesFor(taskSpace ? [taskSpace.id] : [])
     return {
       status: taskSpace ? 'existing' : 'branch_new',
       canCreate: !taskSpace,
@@ -348,7 +459,9 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
       remoteIdentityHash: identityHash,
       branchName,
       project: projectPublic(project, access),
-      taskSpace: taskSpace ? taskSpacePublic(taskSpace, actor, access) : null,
+      taskSpace: taskSpace
+        ? taskSpacePublic(taskSpace, actor, access, summaries.get(taskSpace.id))
+        : null,
     }
   }
 
@@ -541,7 +654,8 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
         const bindingIds = replacedBindings.map((item) => item.id)
         db.prepare(`
           UPDATE sync_agent_binding
-          SET sync_status = 'revoked', last_error = '任务空间绑定已被本机新分支替换', updated_at = ?
+          SET sync_status = 'revoked', is_listening = 0,
+              last_error = '任务空间绑定已被本机新分支替换', updated_at = ?
           WHERE id IN (${placeholders})
         `).run(now, ...bindingIds)
         db.prepare(`
@@ -574,12 +688,23 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
           now,
         )
       } else {
+        const resetListener =
+          binding.sync_status !== 'approved' || binding.local_repo_key !== localRepoKey
         db.prepare(`
           UPDATE sync_agent_binding
           SET local_repo_key = ?, local_display_name = ?, branch_name = ?,
-              sync_status = 'approved', last_error = NULL, updated_at = ?
+              sync_status = 'approved', is_listening = ?, listener_reported_at = ?,
+              last_error = NULL, updated_at = ?
           WHERE id = ?
-        `).run(localRepoKey, displayName, branchName, now, binding.id)
+        `).run(
+          localRepoKey,
+          displayName,
+          branchName,
+          resetListener ? 0 : binding.is_listening,
+          resetListener ? null : binding.listener_reported_at,
+          now,
+          binding.id,
+        )
       }
       binding = db.prepare('SELECT * FROM sync_agent_binding WHERE id = ?').get(binding.id)
       if (replacedBindings.length) {
@@ -605,6 +730,7 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
         })
       }
       const refreshedAccess = accessContext(actor)
+      const summaries = listenerSummariesFor([taskSpace.id])
       return {
         project: projectPublic(
           db.prepare('SELECT * FROM sync_project WHERE id = ?').get(project.id),
@@ -614,9 +740,11 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
           {
             ...taskSpace,
             team_id: project.owner_team_id,
+            project_status: project.status,
           },
           actor,
           refreshedAccess,
+          summaries.get(taskSpace.id),
         ),
         binding: {
           id: binding.id,
@@ -640,19 +768,25 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
   function listTaskSpaces(projectId, actor) {
     const project = readProject(projectId, actor)
     if (!project) throw teamError(404, ERROR_CODES.NOT_FOUND, '项目不存在')
-    return db
+    const rows = db
       .prepare(`
-      SELECT s.*, p.owner_team_id AS team_id
-      FROM sync_task_space s
-      JOIN sync_project p ON p.id = s.project_id
-      WHERE s.project_id = ?
-      ORDER BY s.branch_name COLLATE NOCASE
-    `)
+        SELECT s.*, p.owner_team_id AS team_id, p.status AS project_status
+        FROM sync_task_space s
+        JOIN sync_project p ON p.id = s.project_id
+        WHERE s.project_id = ?
+        ORDER BY s.branch_name COLLATE NOCASE
+      `)
       .all(projectId)
-      .map((row) => taskSpacePublic(row, actor, project.access))
+    const summaries = listenerSummariesFor(rows.map((row) => row.id))
+    return rows.map((row) => taskSpacePublic(row, actor, project.access, summaries.get(row.id)))
   }
 
-  function authorizeTaskSpace(actor, taskSpaceId, capability = 'view') {
+  function authorizeTaskSpace(
+    actor,
+    taskSpaceId,
+    capability = 'view',
+    { allowDisabled = false } = {},
+  ) {
     const taskSpace = db
       .prepare(`
       SELECT s.*, p.owner_team_id, p.status AS project_status
@@ -667,7 +801,7 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
     if (!projectAccessible(project, actor, access)) {
       throw teamError(404, ERROR_CODES.NOT_FOUND, '任务空间不存在')
     }
-    if (taskSpace.status === 'disabled' || project.status !== 'active') {
+    if (!allowDisabled && (taskSpace.status === 'disabled' || project.status !== 'active')) {
       throw teamError(409, ERROR_CODES.PROJECT_NOT_READY, '任务空间已停用')
     }
     const member = access.projectMembers.get(project.id)?.get(actor.userId) || null
@@ -695,6 +829,170 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
       access,
       canManage: Boolean(actor.systemAdmin || teamAdmin || member?.role === 'lead'),
     }
+  }
+
+  function listenerDetails(actor, taskSpaceId) {
+    const authorized = authorizeTaskSpace(actor, taskSpaceId, 'view', { allowDisabled: true })
+    if (!authorized.canManage) {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, '只有项目负责人或团队管理员可以查看监听详情')
+    }
+    const summaries = listenerSummariesFor([authorized.taskSpace.id])
+    const summary = summaries.get(authorized.taskSpace.id) || emptyListenerSummary()
+    const taskSpace = taskSpacePublic(authorized.taskSpace, actor, authorized.access, summary)
+    const staleCutoff = new Date(now().getTime() - effectiveStaleMs).toISOString()
+    const listeners = db
+      .prepare(`
+      SELECT
+        b.id AS binding_id,
+        b.agent_id,
+        a.user_id,
+        u.username,
+        u.display_name,
+        a.device_name,
+        b.sync_status,
+        b.listener_reported_at,
+        b.last_listener_at,
+        b.created_at,
+        CASE
+          WHEN b.is_listening = 1
+            AND b.listener_reported_at >= ?
+            AND a.status = 'active'
+            AND a.last_seen_at >= ?
+            AND active.agent_id = a.id
+            AND s.status = 'active'
+            AND p.status = 'active'
+          THEN 1 ELSE 0
+        END AS online
+      FROM sync_agent_binding b
+      JOIN agent_device a ON a.id = b.agent_id
+      JOIN user_account u ON u.id = a.user_id
+      JOIN sync_task_space s ON s.id = b.task_space_id
+      JOIN sync_project p ON p.id = s.project_id
+      LEFT JOIN sync_active_agent active ON active.user_id = a.user_id
+      WHERE b.task_space_id = ? AND b.sync_status = 'approved'
+      ORDER BY online DESC, b.created_at, b.id
+    `)
+      .all(staleCutoff, staleCutoff, authorized.taskSpace.id)
+      .map((row) => ({
+        bindingId: row.binding_id,
+        userId: row.user_id,
+        username: row.username,
+        displayName: row.display_name,
+        deviceName: row.device_name,
+        bindingStatus: row.sync_status,
+        online: Boolean(row.online),
+        listenerReportedAt: row.listener_reported_at || null,
+        lastListenerAt: row.last_listener_at || null,
+        boundAt: row.created_at,
+      }))
+    return {
+      taskSpaceId: taskSpace.id,
+      branchName: taskSpace.branchName,
+      listenerState: taskSpace.listenerState,
+      approvedBindingCount: taskSpace.approvedBindingCount,
+      onlineListenerCount: taskSpace.onlineListenerCount,
+      lastListenerAt: taskSpace.lastListenerAt,
+      listeners,
+    }
+  }
+
+  function detachAgent(agent, taskSpaceId, input = {}) {
+    const agentId = safeId(agent?.id, 'Agent ID')
+    const userId = requiredText(agent?.userId, '用户 ID', 128)
+    const spaceId = safeId(taskSpaceId, '任务空间 ID')
+    const localRepoKey = assertLocalRepoKey(input.localRepoKey)
+    const activeAgent = db
+      .prepare(`
+      SELECT 1
+      FROM agent_device a
+      JOIN sync_active_agent active ON active.user_id = a.user_id AND active.agent_id = a.id
+      WHERE a.id = ? AND a.user_id = ? AND a.status = 'active'
+    `)
+      .get(agentId, userId)
+    if (!activeAgent) {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, 'Agent 设备不是当前账号的有效设备')
+    }
+    const taskSpace = loadTaskSpaceRow(spaceId)
+    if (!taskSpace) throw teamError(404, ERROR_CODES.NOT_FOUND, '任务空间不存在')
+    const actor = actorContext(userId)
+    const access = accessContext(actor)
+    const project = loadProjectRow(taskSpace.project_id)
+    if (!project || !projectAccessible(project, actor, access)) {
+      throw teamError(404, ERROR_CODES.NOT_FOUND, '任务空间不存在')
+    }
+
+    return withTransaction(db, () => {
+      const binding = db
+        .prepare(`
+        SELECT *
+        FROM sync_agent_binding
+        WHERE agent_id = ? AND task_space_id = ?
+      `)
+        .get(agentId, spaceId)
+      if (!binding) {
+        return {
+          detached: true,
+          alreadyDetached: true,
+          taskSpaceId: spaceId,
+          bindingId: null,
+        }
+      }
+      if (binding.local_repo_key !== localRepoKey) {
+        throw teamError(
+          409,
+          'TASK_SPACE_BINDING_MISMATCH',
+          '本地仓库与当前任务空间关联不一致，请刷新本地关联后重试',
+          { details: { taskSpaceId: spaceId, bindingId: binding.id } },
+        )
+      }
+      if (binding.sync_status === 'revoked') {
+        return {
+          detached: true,
+          alreadyDetached: true,
+          taskSpaceId: spaceId,
+          bindingId: binding.id,
+        }
+      }
+      const timestamp = now().toISOString()
+      db.prepare(`
+        UPDATE sync_agent_binding
+        SET sync_status = 'revoked', is_listening = 0, updated_at = ?
+        WHERE id = ? AND sync_status <> 'revoked'
+      `).run(timestamp, binding.id)
+      db.prepare(`
+        UPDATE sync_task_command
+        SET status = 'cancelled',
+            error_text = '客户端主动解除任务空间关联',
+            updated_at = ?
+        WHERE binding_id = ? AND status IN ('pending', 'delivered', 'running')
+      `).run(timestamp, binding.id)
+      db.prepare('DELETE FROM sync_agent_cursor WHERE agent_id = ? AND task_space_id = ?').run(
+        agentId,
+        spaceId,
+      )
+      appendAuditEvent(db, {
+        actorUserId: userId,
+        actorAgentId: agentId,
+        teamId: project.owner_team_id,
+        projectId: project.id,
+        action: 'task_space_binding_detached',
+        targetType: 'agent_binding',
+        targetId: binding.id,
+        detail: {
+          previousStatus: binding.sync_status,
+          branchName: binding.branch_name,
+          taskSpaceId: spaceId,
+          detachedAt: timestamp,
+        },
+        occurredAt: timestamp,
+      })
+      return {
+        detached: true,
+        alreadyDetached: false,
+        taskSpaceId: spaceId,
+        bindingId: binding.id,
+      }
+    })
   }
 
   function inviteTeam(actor, projectId, teamId, accessRole = 'member') {
@@ -848,6 +1146,11 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
         projectId,
       )
       db.prepare(`
+        UPDATE sync_agent_binding
+        SET is_listening = 0, updated_at = ?
+        WHERE task_space_id IN (SELECT id FROM sync_task_space WHERE project_id = ?)
+      `).run(now, projectId)
+      db.prepare(`
         UPDATE sync_task_command
         SET status = 'cancelled', updated_at = ?
         WHERE project_id = ? AND status IN ('pending', 'delivered', 'running')
@@ -861,7 +1164,7 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
   }
 
   function listStatusReadable(actor) {
-    return listReadable(actor)
+    return listReadable(actor, { includeDisabled: true })
   }
 
   return {
@@ -878,6 +1181,8 @@ export function createTaskSpaceService({ db, config = {}, allowedFileRemote = fa
     preflight,
     attach,
     authorizeTaskSpace,
+    listenerDetails,
+    detachAgent,
     inviteTeam,
     listTeamAccess,
     removeTeam,

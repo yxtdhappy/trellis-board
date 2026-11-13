@@ -77,7 +77,7 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 `database.js` 是 schema 和迁移的唯一所有者：
 
-- 当前 schema 为 v10。新库和 v9 升级库都保留旧账号、团队、`team_project`、`project_live_*`、
+- 当前 schema 为 v11。新库和 v10 升级库都保留旧账号、团队、`team_project`、`project_live_*`、
   `git_operation`、`git_credential` 和插件表，并新增 `sync_project`、
   `sync_task_space`、`sync_task_space_file`、`sync_task_space_batch`、`sync_active_agent`、
   `sync_agent_binding`、`sync_agent_cursor`、`sync_task_index`、`sync_task_command`、
@@ -86,8 +86,15 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
   不在启动、扫描、项目接入或命令链路中读取。
 - `sync_task_space_file` 保存 LF 规范化后的当前正文、摘要、删除墓碑、来源 Agent/用户和 revision；
   `sync_task_index` 以 `(task_space_id, task_key)` 和稳定 `execution_task_key` 隔离分支任务。
+- `sync_agent_binding` 保存 `is_listening`、`listener_reported_at` 和 `last_listener_at`。
+  `is_listening` 只是最近报告值，读取在线人数时必须叠加报告时间、设备心跳、active Agent 和
+  project/taskSpace 状态。
 - `task_dependency` 保存稳定 `executionTaskKey` 双方、原因、创建人、创建时间和可空解除时间；活动边 `(blocker_task_key, blocked_task_key)` 唯一，双向查询有索引。解除只写 `resolved_at`，历史行不删除。
 - 启用 WAL、外键、`busy_timeout=5000` 和 `synchronous=NORMAL`。
+- v10 -> v11 迁移必须在 `BEGIN IMMEDIATE` 中通过 `PRAGMA table_info` 幂等补三列，再创建
+  `sync_agent_binding_listener` 索引；新库直接包含最终结构，v6-v10 升级复用同一迁移入口。
+- v10 -> v11 迁移前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v11.*`。补列、索引或
+  schema 版本写入任一步失败时整体回滚；大于 v11 的数据库拒绝打开。
 - v1 -> v2 -> v3 顺序迁移在单一 `BEGIN IMMEDIATE` 事务中完成；迁移前用 `VACUUM INTO` 写入可独立打开的源版本快照，命名为 `board.sqlite.v1-backup` 或 `board.sqlite.v2-backup`。失败时主库保留源版本和原表，备份仍可独立打开。
 - 首次初始化在 `BEGIN IMMEDIATE` 中一次性导入四个旧 JSON，并写入 `legacy_json_imported_v1`。
 - 迁移后不再读写旧 JSON；它们只作为迁移来源和回滚备份。
@@ -156,8 +163,8 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 #### 6. Tests Required
 
-- `database.test.js` / `database-v10.test.js`：新库 v10、v6/v7/v8/v9 升级、源版本备份、
-  旧表保留、归档时间回填、失败回滚和大于 v10 拒绝。
+- `apps/server/test/database.test.js` / `database-v10.test.js`：新库 v11、v10 补列、
+  v6/v7/v8/v9 升级、源版本备份、旧表保留、归档时间回填、失败回滚和大于 v11 拒绝。
 - `execution-store.test.js`：缺失、自引用、重复、原因边界、二/三节点环、创建/解除事件回滚、重开和重新创建。
 - `execution-projection.test.js`：列表不带完整数组；详情同时返回活动与已结束双向历史；解除区间时长使用 `resolvedAt - createdAt`；开工、完成条件不改变阶段完成状态。
 - 真实 HTTP：失败前后依赖与事件计数一致；循环错误含标题闭环。
@@ -367,8 +374,8 @@ withTransaction(db, () => {
 
 ## 修改检查
 
-- [ ] schema v10 只新增 `sync_*` tasks-only 表，旧依赖、归档、团队和 Git 表仍可打开，大于 v10 的版本仍被拒绝。
-- [ ] v6/v7/v8/v9 -> v10 顺序迁移成功；源版本备份可独立打开，旧数据保留和迁移失败回滚正确。
+- [ ] schema v11 只新增 `sync_*` tasks-only 表和监听字段，旧依赖、归档、团队和 Git 表仍可打开，大于 v11 的版本仍被拒绝。
+- [ ] v10 -> v11 幂等补监听列和索引；v6/v7/v8/v9 -> v11 顺序迁移成功；源版本备份可独立打开，旧数据保留和迁移失败回滚正确。
 - [ ] 扫描只把包含 `task.json` 的目录认作任务。
 - [ ] 新证据文件已加入读取和缓存签名范围。
 - [ ] standalone 缓存失效范围覆盖 workspace、关系和 Git 元数据影响；Team 只按 taskSpace revision 失效。
