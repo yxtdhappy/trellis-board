@@ -347,6 +347,26 @@ npm run desktop:package
 - `apps\desktop\src-tauri\target\release\trellis-board-client.exe`
 - `apps\desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>_x64-portable.zip`
 
+CI（`.github/workflows/windows.yml`）跑完仍上传 `trellis-board-desktop-windows` artifact（zip + sha256）；
+推送 `v*` tag 或手动触发时填写 `release_tag` 输入，还会把这两项作为 Release 资产挂到该 tag 的 Release 上。
+发布时版本号不需要手工改：`Resolve release version` 从 tag 取版本，`Stamp version from tag` 在构建前写入
+`apps/desktop/package.json`、`apps/desktop/src-tauri/tauri.conf.json`、`apps/desktop/src-tauri/Cargo.toml`，
+绿色包名与 `VERSION.txt` 随之变化，冒烟测试会校验二者与 tag 一致。本地构建仍用仓库里签入的版本号。
+
+打 tag 用脚本，不要手工 `git tag`。版本号由脚本递增（默认 patch，也可 `minor` / `major` 或直接给 `x.y.z`）：
+
+```powershell
+npm run release:desktop -- --dry-run     # 预演：0.3.0 -> 0.3.1
+npm run release:desktop                  # 0.3.0 -> 0.3.1
+npm run release:desktop -- minor         # 0.3.1 -> 0.4.0
+npm run release:desktop -- 1.0.0         # 指定版本，必须大于当前版本
+```
+
+脚本要求工作区干净、HEAD 与 `origin/main` 一致、tag 不存在，然后把新版本写回上面那三个文件加
+`apps/desktop/src-tauri/Cargo.lock`（锁文件不同步会让本地 `cargo` 把它改脏），提交
+`chore(release): <version>`，推 main，再创建注解 tag `v<version>` 并推送，触发上面那条 tag 流水线。
+CI 里的盖章步骤保留为兜底，版本已一致时不会改动任何文件。
+
 ## 绿色 ZIP（免安装）
 
 客户端只以绿色 ZIP 分发，适用于不允许运行安装器的 Windows x64 电脑。运行条件：

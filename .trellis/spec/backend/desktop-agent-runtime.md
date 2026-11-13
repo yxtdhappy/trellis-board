@@ -134,6 +134,17 @@
 - `package-portable.ps1` 只打包 `trellis-board-client.exe` + `VERSION.txt` + `SHA256SUMS.txt` + 使用说明。
 - 客户端只分发绿色 ZIP：`bundle.active = false`，保留 `bundle.icon`（tauri-build 靠它写 EXE 图标和版本资源），
   不得重新开启 `bundle.targets`、`installerHooks`、`install.ps1`/`uninstall.ps1` 或 NSIS 工具缓存。
+- 分发出口：CI 上传 `trellis-board-desktop-windows` artifact，并在 `v*` tag 或手动触发带 `release_tag` 时
+  把 zip + `.sha256` 作为 Release 资产上传；artifact 永远是外层 zip 包，需要裸文件时走 Release。
+- 版本号以仓库签入值为准（发版脚本写入）；CI 的 `Resolve release version` 取 `v<major>.<minor>.<patch>`，
+  `Stamp version from tag` 在构建前按 tag 兜底盖章 `apps/desktop/package.json`、
+  `apps/desktop/src-tauri/tauri.conf.json`、`apps/desktop/src-tauri/Cargo.toml`（`main.rs` 的
+  `env!("CARGO_PKG_VERSION")` 依赖它），不得手工改版本号。
+- 发版只走 `npm run release:desktop`（参数：空 = patch 递增，或 `patch`/`minor`/`major`/`x.y.z`，可加
+  `--dry-run`）：校验工作区干净、HEAD 等于 `origin/main`、tag 不存在，把新版本写回
+  `apps/desktop/package.json`、`apps/desktop/src-tauri/tauri.conf.json`、`apps/desktop/src-tauri/Cargo.toml`、
+  `apps/desktop/src-tauri/Cargo.lock`，提交 `chore(release): <version>`，推 main 后再打注解 tag `v<version>`
+  并推送；不得手工改版本、手工 `git tag` 或直接 `gh release create`。CI 的盖章步骤只作兜底。
 - 验证：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、
   `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`（crate 只有 bin target，`--lib` 会报
   `no library targets found`）、`npm test`、`cargo tauri build`（`target/release` 只有

@@ -4,6 +4,11 @@ name: windows
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "发布 release 用的 tag，留空则只在 tag 推送时发布"
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -44,10 +49,58 @@ jobs:
     name: desktop build (windows)
     runs-on: windows-latest
     timeout-minutes: 90
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           persist-credentials: false
+      - name: Resolve release version
+        env:
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+        run: |
+          $tag = if ($env:RELEASE_TAG_INPUT) { $env:RELEASE_TAG_INPUT } else { $env:GITHUB_REF_NAME }
+          if (-not ($env:GITHUB_REF -like 'refs/tags/v*' -or $env:RELEASE_TAG_INPUT)) {
+            $tag = ''
+          }
+          if ($tag) {
+            if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+              throw "release tag must look like v1.2.3: $tag"
+            }
+            $version = $tag.Substring(1)
+            "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+            Write-Host "building version $version from tag $tag"
+          } else {
+            Write-Host "no release tag, building the checked-in version"
+          }
+      - name: Stamp version from tag
+        if: env.RELEASE_VERSION != ''
+        run: |
+          $version = $env:RELEASE_VERSION
+          $targets = @(
+            @{ Path = 'apps/desktop/package.json'
+               Pattern = '"version"\s*:\s*"[^"]+"'
+               Replacement = '"version": "' + $version + '"' },
+            @{ Path = 'apps/desktop/src-tauri/tauri.conf.json'
+               Pattern = '"version"\s*:\s*"[^"]+"'
+               Replacement = '"version": "' + $version + '"' },
+            @{ Path = 'apps/desktop/src-tauri/Cargo.toml'
+               Pattern = '(?m)^version = "[^"]+"'
+               Replacement = 'version = "' + $version + '"' }
+          )
+          foreach ($target in $targets) {
+            $text = Get-Content -LiteralPath $target.Path -Raw
+            $updated = [regex]::Replace($text, $target.Pattern, $target.Replacement)
+            $match = [regex]::Match($updated, $target.Pattern)
+            if (-not $match.Success -or $match.Value -notmatch [regex]::Escape($version)) {
+              throw "version not stamped in $($target.Path)"
+            }
+            if ($updated -ne $text) {
+              Set-Content -LiteralPath $target.Path -Value $updated -NoNewline
+            }
+          }
+          git diff --stat
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: 24
@@ -116,6 +169,17 @@ jobs:
           $package = Get-ChildItem -LiteralPath $extractRoot -Directory | Select-Object -First 1
           if (-not $package) { throw "portable package directory missing" }
 
+          if ($env:RELEASE_VERSION) {
+            $expectedZip = "TrellisBoard_$($env:RELEASE_VERSION)_x64-portable.zip"
+            if ($zip.Name -ne $expectedZip) {
+              throw "portable ZIP is $($zip.Name), expected $expectedZip"
+            }
+            $versionLine = (Get-Content -LiteralPath (Join-Path $package.FullName "VERSION.txt") -Raw).Trim()
+            if ($versionLine -ne "boardVersion=$($env:RELEASE_VERSION)") {
+              throw "VERSION.txt is '$versionLine', expected boardVersion=$($env:RELEASE_VERSION)"
+            }
+          }
+
           foreach ($relative in @(
               "trellis-board-client.exe",
               "VERSION.txt",
@@ -166,3 +230,25 @@ jobs:
             apps/desktop/src-tauri/target/release/bundle/portable/*.zip.sha256
           if-no-files-found: error
           retention-days: 14
+      - name: Publish release assets
+        if: env.RELEASE_TAG != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = $env:RELEASE_TAG
+
+          $dir = "apps/desktop/src-tauri/target/release/bundle/portable"
+          $assets = @(Get-ChildItem -LiteralPath $dir -File |
+            Where-Object { $_.Name -match '\.zip(\.sha256)?$' } |
+            ForEach-Object { $_.FullName })
+          if ($assets.Count -ne 2) { throw "expected zip and sha256 in $dir, found $($assets.Count)" }
+
+          gh release view $tag 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --target $env:GITHUB_SHA `
+              --title "Trellis Board $tag" --generate-notes
+            if ($LASTEXITCODE -ne 0) { throw "failed to create release $tag" }
+          }
+          gh release upload $tag @assets --clobber
+          if ($LASTEXITCODE -ne 0) { throw "failed to upload release assets for $tag" }
