@@ -63,6 +63,8 @@ function setup({
   keepPrd = '# PRD\n',
   unresolved = false,
   conflicts = [],
+  removeDuplicate = true,
+  removeStatus = 'active',
 } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-duplicate-cleanup-'))
   const databaseFile = path.join(root, 'board.sqlite')
@@ -87,15 +89,26 @@ function setup({
     INSERT INTO sync_task_space(
       id, project_id, branch_name, status, revision, indexed_revision,
       last_error, created_by_user_id, created_by_agent_id, created_at, updated_at
-    ) VALUES (?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
   `)
-  insertTaskSpace.run(REMOVE_TASK_SPACE, PROJECT_ID, 'codex/old', 7, 7, TIMESTAMP, TIMESTAMP)
-  insertTaskSpace.run(KEEP_TASK_SPACE, PROJECT_ID, 'main', 4, 4, TIMESTAMP, TIMESTAMP)
+  insertTaskSpace.run(
+    REMOVE_TASK_SPACE,
+    PROJECT_ID,
+    'codex/old',
+    removeStatus,
+    7,
+    7,
+    TIMESTAMP,
+    TIMESTAMP,
+  )
+  insertTaskSpace.run(KEEP_TASK_SPACE, PROJECT_ID, 'main', 'active', 4, 4, TIMESTAMP, TIMESTAMP)
 
   const duplicateTask = DUPLICATE_TASK_DIR
   const taskJson = `${JSON.stringify({ id: 'duplicate-task', title: '重复任务' })}\n`
-  insertFile(db, REMOVE_TASK_SPACE, `${duplicateTask}/task.json`, taskJson, 7)
-  insertFile(db, REMOVE_TASK_SPACE, `${duplicateTask}/prd.md`, removePrd, 7)
+  if (removeDuplicate) {
+    insertFile(db, REMOVE_TASK_SPACE, `${duplicateTask}/task.json`, taskJson, 7)
+    insertFile(db, REMOVE_TASK_SPACE, `${duplicateTask}/prd.md`, removePrd, 7)
+  }
   insertFile(db, KEEP_TASK_SPACE, `${duplicateTask}/task.json`, taskJson, 4)
   insertFile(db, KEEP_TASK_SPACE, `${duplicateTask}/prd.md`, keepPrd, 4)
 
@@ -424,6 +437,75 @@ test('显式清理冲突并停用旧任务空间时保留每组最新 pending', 
     } finally {
       backup.close()
     }
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true })
+  }
+})
+
+test('已停用旧任务空间可在没有重复文件时幂等清理冲突', async () => {
+  const fixture = setup({
+    removeDuplicate: false,
+    removeStatus: 'disabled',
+    conflicts: [
+      {
+        taskSpaceId: REMOVE_TASK_SPACE,
+        id: 'remove-conflict-old',
+        createdAt: '2026-11-12T10:01:00.000Z',
+      },
+      {
+        taskSpaceId: REMOVE_TASK_SPACE,
+        id: 'remove-conflict-latest',
+        createdAt: '2026-11-12T10:02:00.000Z',
+      },
+      {
+        taskSpaceId: KEEP_TASK_SPACE,
+        id: 'keep-conflict-old',
+        createdAt: '2026-11-12T10:03:00.000Z',
+      },
+      {
+        taskSpaceId: KEEP_TASK_SPACE,
+        id: 'keep-conflict-latest',
+        createdAt: '2026-11-12T10:04:00.000Z',
+      },
+    ],
+  })
+  try {
+    const result = await cleanupDuplicateTasks({
+      databaseFile: fixture.databaseFile,
+      projectId: PROJECT_ID,
+      removeTaskSpaceId: REMOVE_TASK_SPACE,
+      keepTaskSpaceId: KEEP_TASK_SPACE,
+      apply: true,
+      cleanupConflicts: true,
+      disableRemoveTaskSpace: true,
+      now: new Date(APPLY_TIMESTAMP),
+      checkServiceStopped: async () => {},
+    })
+    assert.equal(result.applied, true)
+    assert.equal(result.summary.duplicateTasks, 0)
+    assert.equal(result.resolvedConflicts, 2)
+    assert.equal(result.revision, 7)
+    assert.deepEqual(
+      { ...taskSpaceState(fixture.databaseFile, REMOVE_TASK_SPACE) },
+      {
+        status: 'disabled',
+        revision: 7,
+      },
+    )
+    assert.equal(
+      fileState(fixture.databaseFile, KEEP_TASK_SPACE, `${DUPLICATE_TASK_DIR}/task.json`).deleted,
+      0,
+    )
+    assert.equal(
+      fileState(fixture.databaseFile, KEEP_TASK_SPACE, `${DUPLICATE_TASK_DIR}/prd.md`).deleted,
+      0,
+    )
+
+    const states = conflictStates(fixture.databaseFile)
+    assert.equal(states['remove-conflict-old'].status, 'resolved')
+    assert.equal(states['remove-conflict-latest'].status, 'pending')
+    assert.equal(states['keep-conflict-old'].status, 'resolved')
+    assert.equal(states['keep-conflict-latest'].status, 'pending')
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true })
   }

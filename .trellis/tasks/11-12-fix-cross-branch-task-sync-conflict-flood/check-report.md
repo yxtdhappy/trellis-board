@@ -34,3 +34,21 @@
 - `git diff --check`：通过。
 - `node --check`：10 个本次改动 JavaScript 文件通过。
 - 规范文件大小：桌面同步规范 27,617 字节，任务归属规范 7,677 字节，均低于 32,768 字节注入上限。
+
+## 真实环境 E2E 补充
+
+2026-11-13 在用户重启服务端和最新便携客户端后完成真实环境验证，详见 `e2e-report.md`。
+
+- 通过：错分支任务不上传、不新增批次和冲突。
+- 通过：`main` 任务正常上传，删除后写入软删除墓碑。
+- 通过：历史 pending 冲突在接口层折叠；清理时 2 条、2,229 字节。并行任务随后新增 1 条真实冲突，最终 3 条、2,878 字节。
+- 通过：服务端拒绝空分支和分支不一致写入，revision 保持 `241`。
+- 通过：目标任务的 Web 页面和详情弹窗正常显示。
+- 通过：生产清理已执行，pending 在清理时 `449 → 2`、resolved `1329 → 1776`，重复冲突组 `1 → 0`；随后并行任务新增 1 条真实冲突。
+- 通过：备份和现库 `PRAGMA quick_check` 均为 `ok`，旧 taskSpace 保持 `disabled`，`main` 文件未误删。
+- 通过：清理工具幂等修复后，`task-space-duplicate-cleanup.test.js` 6 项全通过；任务相关 Node 测试共 47 项全通过。
+- 通过：`npm --prefix apps/web run build` 成功。
+- 未验证：桌面 Tauri 归属批量弹窗因并行运维线程停止客户端而未完成点击验收；独立 feature worktree 正向同步未单独复测。
+- 环境限制：当前机器没有 Rust/Cargo 工具链，Rust/Tauri 测试未执行。
+- 报告写入后客户端正常同步本次任务文档，`main` revision 按批次推进；binding 最终为 `is_listening=1`。
+- 规范已补充清理脚本重复运行契约：旧 taskSpace 已 disabled 时只允许无文件删除的 conflict-only apply。

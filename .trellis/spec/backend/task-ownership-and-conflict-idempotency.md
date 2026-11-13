@@ -85,6 +85,10 @@ cursor 兼容字段：
   `use-server` 或成功 `overwrite-server` 前不得自动重试。`save-local-copy` 不解除 pending。
 - `ownershipPending`/`conflictBlocked` 的清理必须在 cursor 锁内单次读改写；本地已删除或移动的目录
   不能永久残留待确认状态。
+- 清理脚本允许重复运行：remove taskSpace 仍为 `active` 时走原有“墓碑重复目录并停用”路径；
+  remove 已经 `disabled` 时，只有在显式传入 `--cleanup-conflicts`、
+  `--disable-remove-task-space` 且 `filesToDelete=0` 时，才允许 conflict-only apply。
+  不得为了让脚本通过而临时把已停用 taskSpace 重新置为 `active`，remove revision 也不得因此递增。
 
 ## 4. Validation & Error Matrix
 
@@ -123,7 +127,8 @@ cursor 兼容字段：
   全部经过归属门禁；唯一归属自动补齐；歧义只提示一次；其他分支任务不调用上传；pending 字节不变；
   conflictBlocked 在重启后保持、解决后清除。
 - `task-space-duplicate-cleanup.test.js`：默认 dry-run 零写入、VACUUM INTO 备份、只墓碑重复目录、
-  每组只保留最新 pending、显式 disabled、状态/revision 漂移拒绝。
+  每组只保留最新 pending、显式 disabled、状态/revision 漂移拒绝，以及“旧 taskSpace 已 disabled
+  且没有重复文件时仍可幂等清理 conflict”。
 
 ## 7. Wrong vs Correct
 

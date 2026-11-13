@@ -60,24 +60,32 @@
 
 ## Acceptance Criteria
 
-- [ ] AC1 当前检出 `main` 时，`branch` 为其他分支的任务不会触发 `main` taskSpace 上传或新增冲突。
+- [x] AC1 当前检出 `main` 时，`branch` 为其他分支的任务不会触发 `main` taskSpace 上传或新增冲突。
 - [ ] AC2 切到独立 feature worktree 且激活对应 binding 后，该分支任务可以正常同步。
-- [ ] AC3 已有 pending conflict 时，重复 watcher、SSE、拉取和 Agent 重启不会新增同任务冲突记录。
-- [ ] AC4 冲突列表和历史数据清理后，接口响应低于 1 MiB，查看差异和冲突处理可以正常使用。
-- [ ] AC5 清理工具默认 dry-run；执行前生成数据库备份，只停用指定旧 taskSpace，不删除 `main` 数据。
-- [ ] AC6 自动测试覆盖分支归属不匹配、空分支策略、冲突重试抑制、服务端冲突去重和 dry-run 清理拒绝条件。
+- [x] AC3 已有 pending conflict 时，重复 watcher、SSE、拉取和 Agent 重启不会新增同任务冲突记录。
+- [x] AC4 冲突列表和历史数据清理后，接口响应低于 1 MiB，查看差异和冲突处理可以正常使用。清理时 2 条冲突、2,229 字节；并行任务新增真实冲突后为 3 条、2,878 字节，详情可读。
+- [x] AC5 清理工具默认 dry-run；执行前生成数据库备份，只停用指定旧 taskSpace，不删除 `main` 数据。
+- [ ] AC6 自动测试覆盖分支归属不匹配、空分支策略、冲突重试抑制、服务端冲突去重和 dry-run 清理拒绝条件。47 项任务相关 Node 测试通过；当前机器没有 Rust 工具链，Rust/Tauri 测试未执行。
 - [ ] AC7 单分支项目不显示分支归属选择；多分支项目的本地任务只在归属有歧义时首次批量询问。
-- [ ] AC8 明确归入其他分支或选择“暂不处理”的任务不会因 watcher、重试或重启再次自动上传。
-- [ ] AC9 服务端在边界上拒绝 `task.json.branch` 与 taskSpace 分支不一致的写入，不能只依赖客户端过滤。
-- [ ] AC10 旧 `codex/server-gitless-task-sync` taskSpace 最终为 `disabled`，重复冲突标记为
+- [ ] AC8 明确归入其他分支或选择“暂不处理”的任务不会因 watcher、重试或重启再次自动上传。当前已验证“明确其他分支”部分，未验证“暂不处理”。
+- [x] AC9 服务端在边界上拒绝 `task.json.branch` 与 taskSpace 分支不一致的写入，不能只依赖客户端过滤。
+- [x] AC10 旧 `codex/server-gitless-task-sync` taskSpace 最终为 `disabled`，重复冲突标记为
   `resolved`，数据库备份和清理前后审计结果可追溯。
 
 ## Notes
 
 - 2026-11-13：代码实现已完成；按用户要求本轮跳过所有测试用例，未执行 `npm test`、Node 测试、
   Web 构建、Rust/Tauri 编译或真实浏览器验收。
-- 2026-11-13：生产数据库清理工具已实现，但未对远端 `4317` 数据库执行 dry-run 或 apply；
-  正式清理仍需停机、备份和单独执行。
+- 2026-11-13：生产数据库已执行 dry-run、备份和 cleanup apply；pending 从 449 收敛为 2，
+  旧 taskSpace 保持 disabled，备份 `board.sqlite.task-space-cleanup.20261113T072149236Z` 可用。
+- 2026-11-13：真实环境 E2E 已覆盖错分支不上传、main 正向同步、重启不新增冲突、
+  冲突响应体积、详情读取和服务端边界拒绝，详见 `e2e-report.md`。
+- 2026-11-13：清理工具补充了“旧 taskSpace 已 disabled 时幂等清理冲突”的修复和回归测试；
+  47 项 Node 测试与 Web 生产构建通过。
+- 2026-11-13：清理后并行任务 `task-sync-performance` 产生 1 条新的真实持久化冲突；
+  最终 pending 为 3，重复冲突组仍为 0，该新冲突未在本任务中自动处理。
+- 2026-11-13：桌面 Tauri 归属弹窗因并行运维线程停止客户端而未完成鼠标级验收；当前机器缺少 Rust 工具链，
+  Rust/Tauri 测试未执行。
 
 ## Out of Scope
 

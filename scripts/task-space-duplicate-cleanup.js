@@ -372,7 +372,9 @@ function applyCleanup(
   { now = new Date(), backupFile, cleanupConflicts = false, disableRemoveTaskSpace = false },
 ) {
   const timestamp = now.toISOString()
-  const removeMutated = audit.filesToDelete.length > 0 || disableRemoveTaskSpace
+  const removeMutated =
+    audit.filesToDelete.length > 0 ||
+    (disableRemoveTaskSpace && audit.remove.status === 'active')
   const revision = removeMutated ? audit.remove.revision + 1 : audit.remove.revision
   const finalStatus = disableRemoveTaskSpace
     ? 'disabled'
@@ -477,8 +479,13 @@ export async function cleanupDuplicateTasks({
         applied: false,
       }
     }
+    const conflictOnlyCleanup =
+      audit.remove.status === 'disabled' &&
+      disableRemoveTaskSpace &&
+      cleanupConflicts &&
+      audit.filesToDelete.length === 0
     if (
-      audit.remove.status !== 'active' ||
+      (audit.remove.status !== 'active' && !conflictOnlyCleanup) ||
       audit.keep.status !== 'active' ||
       audit.remove.projectStatus !== 'active'
     ) {

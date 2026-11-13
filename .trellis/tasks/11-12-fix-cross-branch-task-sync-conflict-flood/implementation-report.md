@@ -2,7 +2,7 @@
 
 ## 结论
 
-代码实现已覆盖原始事故的三层原因：binding 分支校验通过后仍监听整棵任务目录、服务端重复冲突无上限、历史重复冲突缺少安全清理入口。用户明确要求本轮跳过测试，因此本报告只声明静态实现完成，不声明自动化或真实环境通过。
+代码实现已覆盖原始事故的三层原因：binding 分支校验通过后仍监听整棵任务目录、服务端重复冲突无上限、历史重复冲突缺少安全清理入口。后续已完成真实环境 E2E、47 项 Node 测试、Web 生产构建和生产库清理，详见 `e2e-report.md`。
 
 ## 实施内容
 
@@ -14,6 +14,7 @@
 - `apps/server/team/task-snapshot-service.js` 增加 `/task-ownership` 服务实现，并在 CAS 前验证完整任务目录的 `task.json.branch`；空值和不一致分别返回明确错误。
 - 同一 Agent/taskSpace/task 的 pending conflict 复用稳定 ID，列表读取按身份折叠历史重复行。
 - 清理脚本支持 `--cleanup-conflicts`、`--disable-remove-task-space`，apply 前要求停服、`VACUUM INTO` 备份，并校验状态/revision 未漂移。
+- 清理脚本支持旧 taskSpace 已 `disabled` 时的幂等 conflict-only apply，并补充回归测试。
 - ProjectRail、TaskOwnershipDialog、control window 和 Tauri 进程内 Agent 命令已接通；单分支创建隐藏选择器，多分支按当前空间、本地 binding、首项选择。
 
 ## 文件边界
@@ -24,9 +25,13 @@
 
 - 已做静态源码核对：上传入口、服务端事务边界、Tauri capability、项目栏状态和清理 apply 前置条件。
 - `git diff --check`、`task.py validate` 和 10 个改动 JavaScript 文件的 `node --check`：通过。
-- 已计划执行但未执行：所有 Node 测试、Web 构建、Rust/Tauri 编译、真实浏览器和真实 Agent E2E。
+- 任务相关 Node 测试 47 项：通过。
+- `npm --prefix apps/web run build`：通过。
+- 真实 Agent、Web UI、服务端边界、冲突接口和生产清理：通过，证据见 `e2e-report.md`。
+- Rust/Tauri 测试：当前机器没有 Rust/Cargo 工具链，未执行。
 
 ## 未完成事项
 
-- 真实生产清理尚未执行；不得直接操作 `data/board.sqlite` 或远端 `4317` 数据库。
+- 真实生产清理已执行并生成备份，pending 在清理时从 449 收敛为 2，旧 taskSpace 保持 disabled；随后并行任务产生 1 条新的真实冲突。
+- 桌面归属弹窗和独立 feature worktree 正向同步仍需补充验收。
 - 旧 pending batch 若已持久化空 `task.json.branch`，客户端会继续失败关闭，不能在不改变幂等摘要的前提下原地迁移；需要人工确认后走独立迁移。
