@@ -537,3 +537,39 @@ preflight_pending_project 剥掉 {ok,result} 信封改为扁平 payload，AgentT
 ### Next Steps
 
 - 在 11-13-desktop-manual-acceptance-gaps 中补真机验收（含正常接入弹窗路径）
+
+
+## Session 16: CI: tag 发版转发到 main 构建以复用 Rust 缓存
+<!-- trellis-session: v=2 fp=305d1fe5428363a7 -->
+
+**Date**: 2026-11-13
+**Task**: CI: tag 发版转发到 main 构建以复用 Rust 缓存
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+tag 推送不再直接构建，由 dispatch-main 作业用 gh api 触发 main 上的 workflow_dispatch，使缓存落在 refs/heads/main 作用域；发版 run 实测 17m → 7m33s。
+
+### Main Changes
+
+- .github/workflows/windows.yml; apps/desktop/README.md; .trellis/spec/backend/desktop-agent-runtime.md
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c65682f` | ci(release): build tagged releases on the main cache scope |
+| `48791e5` | chore(task): archive 11-13-ci-rust-cache-warm |
+
+### Testing
+
+- [OK] tag v0.4.1 触发 run 43396551513 仅 dispatch-main 执行(其余 skipped)；转发 run 43396568456 全绿，Cache hit 882MB，Rust unit tests 1m12s、Bundle 3m15s、post 0s 不复写缓存；探针 release/tag 已删除，缓存仅剩 2 条 main 条目
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 无

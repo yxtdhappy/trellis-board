@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-11-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~539 | Active |
+| `journal-1.md` | ~575 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-11-13 | CI: tag 发版转发到 main 构建以复用 Rust 缓存 | `c65682f`, `48791e5` | `main` |
 | 15 | 2026-11-13 | 修复桌面接入预检返回契约与弹窗双滚动条 | `ef2bc96` | `main` |
 | 14 | 2026-11-13 | 偏好设置：主题与根字号缩放 | `7d720e2` | `main` |
 | 13 | 2026-11-13 | 客户端 Python 环境门与只看我的过滤修复 | `3d3352f`, `cc3d7dd` | `main` |
