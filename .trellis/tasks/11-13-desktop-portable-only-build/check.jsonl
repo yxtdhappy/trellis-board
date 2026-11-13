@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "校验构建与打包契约、禁止 externalBin/resources、绿色包内容清单"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量门禁与验证命令约定"}

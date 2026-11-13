@@ -10,7 +10,7 @@ Tauri v2 单进程客户端：Agent（心跳、SSE 事件、任务空间同步�
 - Agent 数据：`%LOCALAPPDATA%\TrellisBoard\data\agent`
 - 运行环境：首次启动检查 Node.js 与 Trellis CLI，缺失时安装到
   `%LOCALAPPDATA%\TrellisBoard\data\runtime\node` 与 `%LOCALAPPDATA%\TrellisBoard\data\npm-global`
-- 分发方式：NSIS 安装包或解压即用的 Windows x64 绿色 ZIP（包内只有一个 EXE）
+- 分发方式：解压即用的 Windows x64 绿色 ZIP（包内只有一个 EXE），不提供安装包
 
 ## 登录与单 Agent
 
@@ -36,7 +36,7 @@ Tauri v2 单进程客户端：Agent（心跳、SSE 事件、任务空间同步�
 - 一个账号同一时刻只有一个有效 Agent。新设备生效后旧设备凭证立即失效，旧 SSE 关闭，旧命令取消。
 - 换设备不迁移本地仓库绝对路径、project binding、cursor 或 pending batch；新设备必须重新选择项目。
 - `mustChangePassword=true` 时只建立 Board 会话，不创建设备；改密后下一次登录再建立设备。
-- NSIS 安装和卸载会在写文件前结束旧版客户端进程，避免托盘常驻进程锁定升级文件。
+- 升级前必须先退出托盘客户端，否则运行中的进程会锁定 `trellis-board-client.exe`，替换文件失败。
 
 设备注册通过一次性的桌面兑换令牌调用：
 
@@ -78,7 +78,7 @@ runtime_status
 - 控制事件（首次同步差异、任务文件冲突、同步错误）进入内存队列，列表为空时隐藏 `live-control` 窗口。
 - 托盘同步项只有两种状态：运行中显示「暂停同步」，暂停后显示「恢复同步」；点击即切换。
 - 项目栏仍每 3 秒读取本地关联，但上一请求未结束时跳过本次 tick，不堆积 IPC 调用。
-- NSIS `PREINSTALL` 和 `PREUNINSTALL` 会先结束运行中的客户端；Windows CI 只对客户端进程做静默升级与卸载冒烟。
+- 托盘「开机自启」由 `tauri-plugin-autostart` 写 HKCU Run 项，指向当前 EXE 绝对路径；绿色包目录移动或改名后需重新勾选一次。
 
 ## 本地项目接入
 
@@ -314,10 +314,7 @@ apps/desktop/
     src/logging.rs                日志脱敏
     capabilities/                 本地登录、远程项目接入、控制窗口分离
     permissions/desktop.toml      显式命令权限
-    windows/hooks.nsh             NSIS 安装/卸载前进程清理
   package-portable.ps1            组装绿色目录、校验文件和 ZIP
-  install.ps1                     按用户安装、SHA256、暂存与回滚
-  uninstall.ps1                   卸载、可选设备撤销和数据处理
 ```
 
 ## 构建
@@ -334,27 +331,25 @@ apps/desktop/
 ```powershell
 npm run build:desktop
 cd apps/desktop
-cargo tauri build --no-bundle
-cargo tauri build
+cargo tauri build        # 未装 cargo-tauri 时用 npx @tauri-apps/cli@^2 build
 cd ../..
-# 或在仓库根直接执行
 npm run desktop:package
 ```
 
 `apps\desktop\ui` 是 `npm run build:desktop` 的产物（源码在 `apps/web/desktop` 与
 `apps/web/src/desktop`，组件复用 `apps/web/src/components/ui`），已在 `.gitignore` 中忽略；`cargo tauri build`
 只打包 `tauri.conf.json` 的 `frontendDist = ../ui`，不会替你构建前端，缺步骤会打出空窗口。
-运行期不需要 Node.js，也没有 sidecar：`cargo tauri build` 直接产出单个客户端 EXE。
+运行期不需要 Node.js，也没有 sidecar：`cargo tauri build` 只产出单个客户端 EXE，`bundle.active = false`
+不做任何打包，不再生成 NSIS 安装器。
 
 产物：
 
 - `apps\desktop\src-tauri\target\release\trellis-board-client.exe`
-- `apps\desktop\src-tauri\target\release\bundle\nsis\Trellis Board_<version>_x64-setup.exe`
 - `apps\desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>_x64-portable.zip`
 
 ## 绿色 ZIP（免安装）
 
-绿色包适用于不允许运行安装器的 Windows x64 电脑。运行条件：
+客户端只以绿色 ZIP 分发，适用于不允许运行安装器的 Windows x64 电脑。运行条件：
 
 - Windows 10/11 x64。
 - 系统已安装 Microsoft Edge WebView2 Evergreen Runtime。Windows 11 默认预装；目标 Windows 10
@@ -371,34 +366,30 @@ apps\desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>_x64
     使用说明.txt
 ```
 
-双击 `trellis-board-client.exe` 即可启动，不需要管理员权限。绿色版不会创建快捷方式或开机自启项。
+双击 `trellis-board-client.exe` 即可启动，不需要管理员权限。绿色版不会创建快捷方式；开机自启由托盘
+「开机自启」勾选控制，写入 HKCU Run 的当前 EXE 绝对路径，程序目录移动或改名后需重新勾选。
 登录配置、设备凭证、日志和同步数据仍保存在 `%LOCALAPPDATA%\TrellisBoard\data`。
 
-升级前先退出托盘客户端，再用新版目录替换程序文件。删除程序目录
-即可移除程序；如不再使用，可额外删除 `%LOCALAPPDATA%\TrellisBoard` 清除本地数据。ZIP 同目录的
-`.sha256` 文件用于校验压缩包完整性。
+升级与卸载见下节。ZIP 同目录的 `.sha256` 文件用于校验压缩包完整性。
 
-## 安装与卸载
+## 升级与卸载
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File apps\desktop\install.ps1 `
-  -Source .\trellis-board-client.exe -ServerUrl https://board.example.com
+客户端不做系统级安装，升级和卸载都是文件操作：
 
-.\TrellisBoard_<version>_x64-setup.exe /S
+1. 从托盘菜单退出客户端，运行中的进程会锁定 `trellis-board-client.exe`。
+2. 用新版本目录替换旧目录；卸载则直接删除程序目录。
+3. 勾过「开机自启」的先取消勾选，残留时删除注册表
+   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 Trellis Board 条目。
+4. 彻底清理本地数据：删除 `%LOCALAPPDATA%\TrellisBoard`。
 
-powershell -NoProfile -ExecutionPolicy Bypass -File apps\desktop\uninstall.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File apps\desktop\uninstall.ps1 -PurgeData
-$env:TRELLIS_BOARD_SESSION = '<trellis_team_session cookie>'
-powershell -NoProfile -ExecutionPolicy Bypass -File apps\desktop\uninstall.ps1 -RevokeDevice
-```
-
-`install.ps1` 不注册 `trellisboard://` 深链。卸载脚本保留旧协议清理，便于升级机器移除历史注册项。
+从旧 NSIS 安装版迁移：先在「设置 → 应用」卸载旧的 Trellis Board，再解压绿色包，避免两份 EXE 与
+两套自启项并存。卸载后若 `%LOCALAPPDATA%\TrellisBoard` 仍在，登录配置和设备绑定可直接复用。
 
 ## 验证清单
 
 | # | 操作 | 预期 |
 | --- | --- | --- |
-| 1 | 无 Node 的机器全新安装后双击 | 出现环境检查页，安装 Node 与 Trellis CLI 后进入登录页 |
+| 1 | 无 Node 的机器解压绿色包后双击 | 出现环境检查页，安装 Node 与 Trellis CLI 后进入登录页 |
 | 1b | 已有 Node ≥ 18.17 且 trellis ≥ 0.6.17 的机器 | 直接显示登录页，不出现安装入口 |
 | 2 | 错误密码 | 停留登录页，密码清空，不创建配置或设备 |
 | 3 | 正确密码 | 当前窗口进入 Board，不弹系统浏览器；DPAPI 凭证存在 |
@@ -424,5 +415,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File apps\desktop\uninstall.ps1 -
 | 23 | 选择缺失 Agent 并初始化 | 只写当前仓库对应工具文件，成功后关闭；重开显示已初始化 |
 | 24 | 撤销/拒绝关联后打开旧快捷入口 | Rust 在写入前拒绝并显示可理解错误 |
 
-Windows 实机仍需验证 WebView2 Cookie 写入、远程 capability、动态导航、NSIS 安装、环境门下载/校验/
-安装失败分支和真实双客户端同步。
+Windows 实机仍需验证 WebView2 Cookie 写入、远程 capability、动态导航、绿色包解压后首次启动、
+环境门下载/校验/安装失败分支和真实双客户端同步。

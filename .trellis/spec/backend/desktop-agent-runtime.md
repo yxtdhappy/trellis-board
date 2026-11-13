@@ -127,6 +127,9 @@
 - `tauri.conf.json` 不得出现 `bundle.externalBin` 或 `bundle.resources`（trellis-runtime）。
 - `apps/desktop/` 下不得出现 `sidecar/`、`package.json`、`package-lock.json`、`binaries/`、`resources/`。
 - `package-portable.ps1` 只打包 `trellis-board-client.exe` + `VERSION.txt` + `SHA256SUMS.txt` + 使用说明。
-- `windows/hooks.nsh` 只结束 `trellis-board-client.exe`（保留旧版 `trellis-agent.exe` 清理）。
-- 验证：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test --lib`、
-  `npm test`、`cargo tauri build`（`target/release` 只有 `trellis-board-client.exe`）。
+- 客户端只分发绿色 ZIP：`bundle.active = false`，保留 `bundle.icon`（tauri-build 靠它写 EXE 图标和版本资源），
+  不得重新开启 `bundle.targets`、`installerHooks`、`install.ps1`/`uninstall.ps1` 或 NSIS 工具缓存。
+- 验证：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、
+  `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`（crate 只有 bin target，`--lib` 会报
+  `no library targets found`）、`npm test`、`cargo tauri build`（`target/release` 只有
+  `trellis-board-client.exe`，无 `bundle/nsis/`）。

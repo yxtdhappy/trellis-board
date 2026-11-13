@@ -528,6 +528,7 @@ impl ConfigStore {
         validate_config(&parsed).map(Some)
     }
 
+    #[cfg(test)]
     pub async fn save_config(&self, config: AgentConfig) -> AgentResult<AgentConfig> {
         let _guard = self.lock_config(Duration::from_secs(5)).await?;
         let previous = self.read_config(true).await.ok().flatten();
