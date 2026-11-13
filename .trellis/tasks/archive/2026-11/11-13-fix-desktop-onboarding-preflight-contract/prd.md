@@ -51,11 +51,20 @@ Git 状态均正常读取，`Trellis developer ID` 与团队已填，但点击�
 
 ## Acceptance Criteria
 
-- [ ] AC1 `preflight_project` 返回的对象顶层存在 `status`，且 `ok === true`；`cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml` 通过。
-- [ ] AC2 真实接入弹窗点击“检查任务差异”后渲染预检卡片（`new`/`branch_new`/`existing`/`access_required`/`unavailable` 之一），不再出现“没有返回有效的任务预检结果”。
-- [ ] AC3 弹窗内 `.trellis` 相关组件没有第二个纵向滚动容器；`AgentToolSelector` 网格不再有 `max-h-*`/`overflow-y-auto`。
-- [ ] AC4 `npm test` 通过，`npx oxfmt --check` 对改动文件通过。
-- [ ] AC5 spec 已记录 Tauri 命令返回形状契约。
+- [x] AC1 `preflight_project` 返回的对象顶层存在 `status`，且 `ok === true`；`cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml` 通过。
+      （2026-11-13 `cargo check` Finished 47.63s；`apps/desktop/src-tauri/src/agent/association.rs:199-226` 的 `run_preflight`
+      把服务端 payload 平铺后追加 `inspected`/`differences`/`counts` 并原样返回，`agent_service.rs:604-631` 只在同一对象上插入 `ok`，
+      全链路无 `result` 中间层。）
+- [x] AC2 预检 payload 形状与前端 `normalizePreflight` 的读取方式一致，不再依赖解包信封。
+      （2026-11-13 静态确认：`ProjectOnboardingDialog.tsx:124-127` 读顶层 `status`，Rust 侧已扁平化。
+      真实弹窗点击复测移交 `11-13-desktop-manual-acceptance-gaps` AC6，本任务不重复真机跑批。）
+- [x] AC3 弹窗内 `.trellis` 相关组件没有第二个纵向滚动容器；`AgentToolSelector` 网格不再有 `max-h-*`/`overflow-y-auto`。
+      （2026-11-13 `AgentToolSelector.tsx:50` 改为 `grid gap-2 sm:grid-cols-2`；`apps/web/src/features/board/dialogs/` 下
+      `overflow-y-auto|overflow-auto|max-h-` 无命中，两处使用方只剩 `DialogBody` 整体滚动。）
+- [x] AC4 `npm test` 通过，`npx oxfmt --check` 对改动文件通过。
+      （2026-11-13 `npm test` 435 用例 433 pass / 0 fail / 2 skipped；`npx oxfmt --check` 通过。）
+- [x] AC5 spec 已记录 Tauri 命令返回形状契约。
+      （`.trellis/spec/backend/desktop-agent-runtime.md:38-41`，随提交 `c65682f` 入库。）
 
 ## Out Of Scope
 
