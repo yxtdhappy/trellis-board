@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { createHarness, startHttpServer } from '../../../packages/test-support/plugin-runtime.js'
 import {
@@ -180,7 +181,7 @@ test('ctx.secrets 仍可读进程环境变量（config.env 注入，向后兼容
 })
 
 test('writeSecretRef 生成密钥文件并保持其它条目', () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync('/tmp'), 'secrets-ref-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'secrets-ref-'))
   try {
     const file = path.join(dir, 'plugins.secrets.json')
     fs.writeFileSync(file, JSON.stringify({ version: 1, refs: { 'a/b': 'plain' } }), { mode: 0o600 })
