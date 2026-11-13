@@ -162,7 +162,6 @@ jobs:
         with:
           name: trellis-board-desktop-windows
           path: |
-            apps/desktop/src-tauri/target/release/trellis-board-client.exe
             apps/desktop/src-tauri/target/release/bundle/portable/*.zip
             apps/desktop/src-tauri/target/release/bundle/portable/*.zip.sha256
           if-no-files-found: error
