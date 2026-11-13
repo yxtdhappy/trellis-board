@@ -2940,11 +2940,7 @@ impl TaskSync {
                 .and_then(Value::as_str)
                 .map(parse_task_metadata)
                 .and_then(|metadata| metadata.1);
-            let current_branch = current_task_json
-                .content
-                .as_str()
-                .map(parse_task_metadata)
-                .and_then(|metadata| metadata.1);
+            let current_branch = parse_task_metadata(&current_task_json.content).1;
             if pending_branch != current_branch {
                 return Ok(json!({
                     "skipped": true,
@@ -3078,6 +3074,7 @@ impl TaskSync {
                 baselines: Some(baselines),
                 deferred: Some(clear_deferred_for_files(&cursor.deferred, &files)),
                 pending: Some(None),
+                ..Default::default()
             },
         )
         .await?;
@@ -3154,7 +3151,7 @@ impl TaskSync {
             .cloned()
             .collect();
         let mut server_groups = groups_from_structs(&server_files)?;
-        retain_server_groups_for_binding(binding, &mut server_groups);
+        retain_server_groups_for_binding(&binding, &mut server_groups);
         let snapshot_baselines = baselines_from_snapshot(&snapshot_files);
         let differences = classify_task_snapshots(&local_groups, &server_groups);
 
