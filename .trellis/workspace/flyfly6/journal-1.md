@@ -355,3 +355,33 @@ merge origin/main 后把分支隔离、游标串行化、deferred 补同步、�
 ### Next Steps
 
 - 观察 CI windows.yml 的 NSIS 安装包与绿色包步骤，确认 opener 插件替换在安装包产物中同样通过。
+
+
+## Session 11: 归档父任务：客户端与 web 视觉统一
+<!-- trellis-session: v=2 fp=ecf9efb66e341708 -->
+
+**Date**: 2026-11-13
+**Task**: 归档父任务：客户端与 web 视觉统一
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+父任务 11-12-desktop-web-shadcn-unification 收尾归档。该任务只维护需求集与跨子任务验收口径，三个子任务（desktop-ui-shadcn-migration、project-onboarding-instant-dialog、web-controls-unification）此前均已 completed 并归档，本次无新增代码改动。
+
+### Main Changes
+
+- 归档 .trellis/tasks/11-12-desktop-web-shadcn-unification（父任务无独立分支，使用 --skip-branch-validation）
+- 确认三个子任务均已归档且其代码已落在 main
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 工作区仍有未跟踪的构建产物 desktop/（src-tauri target/gen，约 1.9G）与 public/（web 构建输出），需要时清理并补 .gitignore 规则
