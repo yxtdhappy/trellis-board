@@ -18,11 +18,11 @@ export function Overview({ active, archived, attention, repositories }: Overview
           key={card.label}
           className="flex flex-col gap-0.5 rounded-xl border border-border bg-card px-3 py-2"
         >
-          <p className="text-[10.5px] text-muted-foreground">{card.label}</p>
-          <p className="text-[20px] leading-6 font-semibold font-heading tabular-nums">
+          <p className="text-[0.65625rem] text-muted-foreground">{card.label}</p>
+          <p className="text-[1.25rem] leading-6 font-semibold font-heading tabular-nums">
             {card.value}
           </p>
-          <p className="truncate text-[10px] text-muted-foreground">{card.caption}</p>
+          <p className="truncate text-[0.625rem] text-muted-foreground">{card.caption}</p>
         </div>
       ))}
     </section>

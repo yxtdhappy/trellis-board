@@ -71,7 +71,7 @@ export function AssignmentsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[640px]">
+      <DialogContent className="sm:max-w-[40rem]">
         <DialogHeader>
           <DialogTitle>待我接受</DialogTitle>
           <DialogDescription>有 {rows.length} 个任务等待你确认派发。</DialogDescription>
@@ -89,18 +89,22 @@ export function AssignmentsDialog({
               >
                 <div className="flex min-w-0 flex-col gap-0.5">
                   <span className="truncate text-xs font-semibold">{row.title || row.taskKey}</span>
-                  <span className="truncate text-[10.5px] text-muted-foreground">
+                  <span className="truncate text-[0.65625rem] text-muted-foreground">
                     {row.projectName || '未知项目'} · {row.priority || 'P2'} · 指派给{' '}
                     {row.assignee || '未派发'}
                   </span>
                 </div>
-                <Button size="sm" className="ml-auto h-7 text-[11px]" onClick={() => accept(row)}>
+                <Button
+                  size="sm"
+                  className="ml-auto h-7 text-[0.6875rem]"
+                  onClick={() => accept(row)}
+                >
                   接受任务
                 </Button>
               </div>
             ))
           )}
-          <p className="rounded-lg border border-border px-3 py-2 text-[10.5px] leading-5 text-muted-foreground">
+          <p className="rounded-lg border border-border px-3 py-2 text-[0.65625rem] leading-5 text-muted-foreground">
             接受后任务进入实现阶段；未接受的任务会保留在待我接受列表，并计入注意力队列。
           </p>
         </DialogBody>

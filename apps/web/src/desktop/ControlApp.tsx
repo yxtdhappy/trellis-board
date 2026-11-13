@@ -221,8 +221,8 @@ function DiffFileView({ file }: { file: DiffFile }) {
           { label: '服务端版本', content: file.serverContent },
         ].map((side) => (
           <section key={side.label}>
-            <strong className="text-[11px] text-muted-foreground">{side.label}</strong>
-            <pre className="mt-1 max-h-[220px] overflow-auto rounded-md bg-background/60 p-2 text-[11px] leading-5 whitespace-pre-wrap break-words">
+            <strong className="text-[0.6875rem] text-muted-foreground">{side.label}</strong>
+            <pre className="mt-1 max-h-[13.75rem] overflow-auto rounded-md bg-background/60 p-2 text-[0.6875rem] leading-5 whitespace-pre-wrap break-words">
               {side.content ?? '该文件在对应版本中不存在'}
             </pre>
           </section>
@@ -395,19 +395,20 @@ export function ControlApp() {
       : []
   const conflict = event?.type === 'task_file_conflict' ? (event.conflict ?? {}) : null
   const conflictSource = formatSource(conflict?.files?.find((file) => file.changedBy)?.changedBy)
-  const ownershipItems =
-    event?.type === 'task_ownership_review' ? (event.items ?? []) : []
+  const ownershipItems = event?.type === 'task_ownership_review' ? (event.items ?? []) : []
   const ownershipChoices =
     event?.type === 'task_ownership_review'
-      ? [...new Map(
-          ownershipItems
-            .flatMap((item) => item.choices ?? [])
-            .filter(
-              (choice): choice is OwnershipChoice & { branchName: string } =>
-                typeof choice.branchName === 'string' && Boolean(choice.branchName),
-            )
-            .map((choice) => [choice.branchName, choice] as const),
-        ).values()]
+      ? [
+          ...new Map(
+            ownershipItems
+              .flatMap((item) => item.choices ?? [])
+              .filter(
+                (choice): choice is OwnershipChoice & { branchName: string } =>
+                  typeof choice.branchName === 'string' && Boolean(choice.branchName),
+              )
+              .map((choice) => [choice.branchName, choice] as const),
+          ).values(),
+        ]
       : []
 
   let title = '当前没有待处理事件'
@@ -468,9 +469,9 @@ export function ControlApp() {
 
   return (
     <main className="grid min-h-dvh place-items-center bg-background p-4">
-      <Card className="w-full max-w-[560px] [--card-spacing:--spacing(6)]">
+      <Card className="w-full max-w-[35rem] [--card-spacing:--spacing(6)]">
         <CardHeader>
-          <p className="text-[10px] font-semibold tracking-[0.2em] text-muted-foreground">
+          <p className="text-[0.625rem] font-semibold tracking-[0.2em] text-muted-foreground">
             团队实时同步
           </p>
           <h1 className="font-heading text-xl font-medium">{title}</h1>
@@ -588,9 +589,7 @@ export function ControlApp() {
                   </p>
                   <select
                     className="mt-2 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
-                    value={
-                      ownershipBranches[item.taskDir] || event.branchName || ''
-                    }
+                    value={ownershipBranches[item.taskDir] || event.branchName || ''}
                     onChange={(change) =>
                       setOwnershipBranches((current) => ({
                         ...current,
@@ -605,7 +604,9 @@ export function ControlApp() {
                         </option>
                       ))
                     ) : (
-                      <option value={event.branchName || ''}>{event.branchName || '当前分支'}</option>
+                      <option value={event.branchName || ''}>
+                        {event.branchName || '当前分支'}
+                      </option>
                     )}
                   </select>
                 </div>

@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
-import { useTheme } from '@/app/theme'
+import { useAppearance } from '@/app/theme'
 import type { AdminView } from '@/api/admin'
 import { useAdminConsole } from '@/hooks/useAdminConsole'
 import { ProjectsTab } from '@/features/admin/ProjectsTab'
@@ -61,7 +61,9 @@ const VIEWS: {
 
 export function AdminPage() {
   const consoleApi = useAdminConsole()
-  const { theme, toggleTheme } = useTheme()
+  const { resolvedTheme, setTheme } = useAppearance()
+  const nextTheme = resolvedTheme === 'dark' ? 'light' : 'dark'
+  const themeLabel = resolvedTheme === 'dark' ? '切换到浅色主题' : '切换到深色主题'
   const {
     phase,
     bootError,
@@ -92,7 +94,7 @@ export function AdminPage() {
             <span className="text-sm font-semibold font-heading">Trellis Board</span>
           </a>
           <a
-            className="rounded-lg bg-muted px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+            className="rounded-lg bg-muted px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:text-foreground"
             href="/"
           >
             返回看板
@@ -109,7 +111,7 @@ export function AdminPage() {
           <DropdownMenu>
             <DropdownMenuTrigger className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Avatar size="sm" className="size-7">
-                <AvatarFallback className="bg-secondary text-[10px] font-semibold text-muted-foreground">
+                <AvatarFallback className="bg-secondary text-[0.625rem] font-semibold text-muted-foreground">
                   {avatarText}
                 </AvatarFallback>
               </Avatar>
@@ -117,7 +119,7 @@ export function AdminPage() {
             <DropdownMenuContent align="end" className="w-48">
               <div className="px-2 py-1.5 text-xs">
                 <div className="font-medium text-foreground">{displayName}</div>
-                <div className="text-[11px] text-muted-foreground">{roleLabel}</div>
+                <div className="text-[0.6875rem] text-muted-foreground">{roleLabel}</div>
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => void consoleApi.logout()} variant="destructive">
@@ -130,19 +132,19 @@ export function AdminPage() {
             variant="ghost"
             size="icon"
             className="size-8"
-            onClick={toggleTheme}
-            aria-label={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}
-            title={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}
+            onClick={() => setTheme(nextTheme)}
+            aria-label={themeLabel}
+            title={themeLabel}
           >
-            {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+            {resolvedTheme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
           </Button>
         </div>
       </header>
 
       <main className="flex flex-col gap-3.5 px-6 py-5">
         <div>
-          <h1 className="text-[22px] font-semibold font-heading">团队管理</h1>
-          <p className="mt-0.5 text-[11.5px] text-muted-foreground">{activeView.subtitle}</p>
+          <h1 className="text-[1.375rem] font-semibold font-heading">团队管理</h1>
+          <p className="mt-0.5 text-[0.71875rem] text-muted-foreground">{activeView.subtitle}</p>
         </div>
 
         {phase === 'loading' ? (
@@ -163,7 +165,7 @@ export function AdminPage() {
         {phase === 'denied' ? (
           <div className="flex flex-col gap-1.5 rounded-xl bg-card p-6">
             <strong className="text-sm text-foreground">当前账号没有管理入口</strong>
-            <span className="text-[11px] leading-relaxed text-muted-foreground">
+            <span className="text-[0.6875rem] leading-relaxed text-muted-foreground">
               系统管理员可管理系统能力；项目负责人可管理自己项目的成员、Agent 绑定和审计。
             </span>
           </div>

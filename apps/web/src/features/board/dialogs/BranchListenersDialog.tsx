@@ -61,7 +61,7 @@ export function BranchListenersDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[720px]">
+      <DialogContent className="sm:max-w-[45rem]">
         <DialogHeader>
           <DialogTitle>分支监听详情</DialogTitle>
           <DialogDescription>
@@ -73,8 +73,8 @@ export function BranchListenersDialog({
           {view ? (
             <div className="rounded-lg border border-border bg-muted/40 px-3 py-2">
               <p className={`text-xs font-medium ${view.textClassName}`}>{view.label}</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">{view.detail}</p>
-              <p className="mt-1 text-[10.5px] text-muted-foreground">
+              <p className="mt-1 text-[0.6875rem] text-muted-foreground">{view.detail}</p>
+              <p className="mt-1 text-[0.65625rem] text-muted-foreground">
                 最后监听：{timeLabel(details?.lastListenerAt ?? taskSpace.lastListenerAt)}
               </p>
             </div>
@@ -103,12 +103,12 @@ export function BranchListenersDialog({
                       {listener.displayName || listener.username || '未知用户'}
                     </strong>
                     {listener.username ? (
-                      <span className="text-[10.5px] text-muted-foreground">
+                      <span className="text-[0.65625rem] text-muted-foreground">
                         @{listener.username}
                       </span>
                     ) : null}
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[9.5px] font-medium ${
+                      className={`rounded-full px-2 py-0.5 text-[0.59375rem] font-medium ${
                         listener.online
                           ? 'bg-primary/10 text-primary'
                           : 'bg-muted text-muted-foreground'
@@ -116,15 +116,15 @@ export function BranchListenersDialog({
                     >
                       {listener.online ? '在线监听' : '未监听'}
                     </span>
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[9.5px] text-muted-foreground">
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[0.59375rem] text-muted-foreground">
                       绑定状态：
                       {listener.bindingStatus === 'approved' ? '已批准' : listener.bindingStatus}
                     </span>
                   </div>
-                  <p className="mt-1 text-[11px] text-foreground">
+                  <p className="mt-1 text-[0.6875rem] text-foreground">
                     设备：{listener.deviceName || '未命名设备'}
                   </p>
-                  <p className="mt-0.5 text-[10.5px] text-muted-foreground">
+                  <p className="mt-0.5 text-[0.65625rem] text-muted-foreground">
                     最后上报：{timeLabel(listener.listenerReportedAt)} · 最后监听：
                     {timeLabel(listener.lastListenerAt)} · 绑定：
                     {timeLabel(listener.boundAt)}

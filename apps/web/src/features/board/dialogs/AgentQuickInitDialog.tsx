@@ -152,7 +152,7 @@ export function AgentQuickInitDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[580px]" initialFocus={dialogHeaderRef}>
+      <DialogContent className="sm:max-w-[36.25rem]" initialFocus={dialogHeaderRef}>
         <form
           className="flex min-h-0 flex-1 flex-col gap-4"
           onSubmit={(event) => {

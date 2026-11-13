@@ -30,28 +30,28 @@ export function Pagination({
   hasNext,
 }: PaginationProps) {
   if (pageCount <= 1) {
-    return label ? <span className="text-[11px] text-muted-foreground">{label}</span> : null
+    return label ? <span className="text-[0.6875rem] text-muted-foreground">{label}</span> : null
   }
   if (!numbered) {
     return (
       <div className="flex items-center gap-2">
-        {label ? <span className="text-[11px] text-muted-foreground">{label}</span> : null}
+        {label ? <span className="text-[0.6875rem] text-muted-foreground">{label}</span> : null}
         <Button
           variant="outline"
           size="sm"
-          className="px-2 text-[11px]"
+          className="px-2 text-[0.6875rem]"
           onClick={() => onChange(page - 1)}
           disabled={page === 0}
         >
           上一页
         </Button>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-[0.6875rem] text-muted-foreground">
           第 {page + 1} / {pageCount} 页
         </span>
         <Button
           variant="outline"
           size="sm"
-          className="px-2 text-[11px]"
+          className="px-2 text-[0.6875rem]"
           onClick={() => onChange(page + 1)}
           disabled={hasNext === false || page >= pageCount - 1}
         >
@@ -62,11 +62,11 @@ export function Pagination({
   }
   return (
     <div className="flex items-center gap-1">
-      {label ? <span className="mr-1 text-[11px] text-muted-foreground">{label}</span> : null}
+      {label ? <span className="mr-1 text-[0.6875rem] text-muted-foreground">{label}</span> : null}
       <Button
         variant="outline"
         size="sm"
-        className="px-2 text-[11px]"
+        className="px-2 text-[0.6875rem]"
         onClick={() => onChange(Math.max(0, page - 1))}
         disabled={page === 0}
       >
@@ -74,7 +74,7 @@ export function Pagination({
       </Button>
       {pageItems(page, pageCount).map((item, index) =>
         item === 'gap' ? (
-          <span key={`gap-${index}`} className="px-1 text-[11px] text-muted-foreground">
+          <span key={`gap-${index}`} className="px-1 text-[0.6875rem] text-muted-foreground">
             …
           </span>
         ) : (
@@ -84,7 +84,7 @@ export function Pagination({
             variant={item === page ? 'default' : 'ghost'}
             onClick={() => onChange(item)}
             aria-current={item === page ? 'page' : undefined}
-            className="text-[11px]"
+            className="text-[0.6875rem]"
           >
             {item + 1}
           </Button>
@@ -93,7 +93,7 @@ export function Pagination({
       <Button
         variant="outline"
         size="sm"
-        className="px-2 text-[11px]"
+        className="px-2 text-[0.6875rem]"
         onClick={() => onChange(Math.min(pageCount - 1, page + 1))}
         disabled={page >= pageCount - 1}
       >

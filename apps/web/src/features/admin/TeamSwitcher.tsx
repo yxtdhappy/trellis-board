@@ -25,7 +25,7 @@ export function TeamSwitcher({
   if (!teams.length || (!includeAll && teams.length === 1)) return null
 
   return (
-    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+    <label className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
       <span className="hidden sm:inline">团队</span>
       <select
         aria-label={ariaLabel}

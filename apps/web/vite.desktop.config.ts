@@ -10,6 +10,7 @@ const desktopDir = path.resolve(webDir, 'desktop')
 export default defineConfig({
   root: desktopDir,
   base: './',
+  publicDir: path.resolve(webDir, 'public'),
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

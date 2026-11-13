@@ -179,7 +179,7 @@ export function CreateTaskDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:max-w-[37.5rem]">
         <DialogHeader>
           <DialogTitle>创建任务并派发</DialogTitle>
           <DialogDescription>任务会进入规划阶段，并派发给所选负责人。</DialogDescription>
@@ -220,7 +220,7 @@ export function CreateTaskDialog({
               <p className="text-xs text-destructive">该项目还没有可用的分支任务空间。</p>
             )}
             {taskSpaceId && !commandState.canSubmit ? (
-              <p className="text-[11px] text-warning" role="status">
+              <p className="text-[0.6875rem] text-warning" role="status">
                 {commandState.reason}
               </p>
             ) : null}

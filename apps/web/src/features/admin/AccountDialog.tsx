@@ -82,9 +82,9 @@ export function AccountForm({ user, teams, submitLabel, onSubmit, onCancel }: Ac
         系统管理员
       </label>
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] font-medium text-muted-foreground">所属团队</span>
+        <span className="text-[0.6875rem] font-medium text-muted-foreground">所属团队</span>
         {teams.length === 0 ? (
-          <p className="text-[11px] text-muted-foreground">暂无团队，可创建团队后再分配。</p>
+          <p className="text-[0.6875rem] text-muted-foreground">暂无团队，可创建团队后再分配。</p>
         ) : (
           <div className="flex flex-col gap-1.5 rounded-lg border border-border p-2">
             {teams.map((team) => (
@@ -135,7 +135,7 @@ export function AccountDialog({
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader className="gap-1">
-          <p className="text-[10px] font-semibold tracking-[0.2em] text-muted-foreground">
+          <p className="text-[0.625rem] font-semibold tracking-[0.2em] text-muted-foreground">
             ACCOUNT / UPDATE
           </p>
           <DialogTitle>编辑账号</DialogTitle>
