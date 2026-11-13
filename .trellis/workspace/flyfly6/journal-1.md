@@ -682,3 +682,118 @@ TopBar 改用 em 容器查询（导航不折行、搜索 64em 下收图标、48e
 ### Status
 
 [OK] **Completed**
+
+
+## Session 21: shared zip 换 fflate
+<!-- trellis-session: v=2 fp=72206bfb299e2471 -->
+
+**Date**: 2026-11-13
+**Task**: shared zip 换 fflate
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+packages/shared/zip.js 278→约140行，改用 fflate unzipSync；filter 内做限额/路径/重名校验；删除 extractZipEntries 与 mode；新增 7 个 zip 测试；npm test 479 pass。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cc89140` | refactor(shared): parse zip archives with fflate |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 22: server 共用 HTTP 工具
+<!-- trellis-session: v=2 fp=f3ddef1d786de5b6 -->
+
+**Date**: 2026-11-13
+**Task**: server 共用 HTTP 工具
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+新增 apps/server/http-common.js（sendJson/readJsonBody/serveStatic/securityHeaders/STATIC_TYPES），standalone 与 team 改薄包装；净删 130 行，standalone 获得 realpath 越界校验与 405/HEAD。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fdc4988` | refactor(server): share one HTTP helper set between modes |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 23: server 日志换 pino
+<!-- trellis-session: v=2 fp=bdf362165f7f9476 -->
+
+**Date**: 2026-11-13
+**Task**: server 日志换 pino
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+logger.js 187→约150行，改用 pino + pino-roll；日志行变 JSON，文件名 server.<n>.log；close 等 SonicBoom close 事件确保落盘；测试重写 7 例，npm test 478 pass。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `26bdded` | refactor(server): write logs through pino and pino-roll |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 24: watcher 换 chokidar
+<!-- trellis-session: v=2 fp=b8677ac0c6887da2 -->
+
+**Date**: 2026-11-13
+**Task**: watcher 换 chokidar
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+trellis-watcher.js 改用 chokidar；rebuild/close 异步化并新增 ready()；startFileWatcher await ready 后再写 watcherEnabled；实测改 task.json 触发看板刷新。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f10e5d4` | refactor(shared): watch .trellis with chokidar |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 25: team cookie 换 cookie 包
+<!-- trellis-session: v=2 fp=4188604561bd9d55 -->
+
+**Date**: 2026-11-13
+**Task**: team cookie 换 cookie 包
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+team/auth.js 三个 cookie 辅助函数改用 cookie@2；parseCookieHeader 仍返回 Map；新增 team-cookie.test.js 6 例；team 模式实测登录/登出 set-cookie 正确。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1a593ad` | refactor(server): parse and build session cookies with cookie |
+
+### Status
+
+[OK] **Completed**

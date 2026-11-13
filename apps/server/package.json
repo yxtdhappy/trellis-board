@@ -1,6 +1,6 @@
 {
   "name": "@trellis-board/server",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,10 @@
   },
   "dependencies": {
     "@trellis-board/shared": "*",
-    "dotenv": "^17.4.2"
+    "cookie": "^2.0.2",
+    "dotenv": "^17.4.2",
+    "pino": "^10.4.0",
+    "pino-roll": "^4.0.0"
   },
   "devDependencies": {
     "@trellis-board/test-support": "*"

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "核对静态资源安全校验与响应头是否符合规范"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对测试覆盖与回归风险"}

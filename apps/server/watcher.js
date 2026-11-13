@@ -21,6 +21,8 @@ export function createWatchRuntime(options = {}) {
     get watchedRepositories() {
       return runtime.watchedRepositories
     },
+    ready: runtime.ready,
+    rebuild: runtime.rebuild,
     status() {
       return {
         ...runtime.status(),

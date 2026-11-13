@@ -78,11 +78,14 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
   返回 503，taskSpace、关联数据和删除审计均保持不变。成功后的查询 revision 和 Board SSE 必须刷新。
 - Agent 认证和团队 Session 是两条独立鉴权链。Agent 路由要求设备 Bearer，Web 路由要求 Session Cookie
   并对写请求执行同源 Origin 校验。
+- Cookie 头解析与 `Set-Cookie` 拼装只在 `apps/server/team/auth.js` 用 `cookie` 包实现
+  （`parseCookieHeader` 返回 `Map`，`sessionCookie`/`clearSessionCookie` 统一 `HttpOnly; SameSite=Strict; Path=/`
+  并在 HTTPS 时追加 `Secure`），不要另写 split/拼接。
 
 ## JSON 协议
 
 - `sendJson()` 统一返回 `application/json; charset=utf-8` 和 `cache-control: no-store`。
-- `readJsonBody()` 默认上限为 `64 KiB`。无请求体视为 `{}`；超限返回“请求体过大”；非法 JSON 返回“请求体不是合法 JSON”。
+- `readJsonBody()` 默认上限为 `64 KiB`。无请求体视为 `{}`；超限返回“请求体过大”；非法 JSON 返回“请求体不是合法 JSON”。实现只在 [apps/server/http-common.js](../../../apps/server/http-common.js)，两个入口通过薄包装注入各自的错误形状，不要再写第二份。
 - Agent 大批次接口显式传入 96 MiB 运输上限。业务正文 64 MiB 是正常文本任务目标；反斜杠
   或控制字符的 JSON 转义若使编码体超过 96 MiB，必须按运输边界返回
   `413 BODY_TOO_LARGE`，不得通过提高到数百 MiB 放宽内存和拒绝服务边界。
@@ -472,7 +475,7 @@ fs.renameSync(tempFile, targetFile);
 
 `apps/web/vite.config.ts` 将构建产物写入 `apps/server/public/`，它同时是 standalone `apps/server/index.js` 和 Team `createTeamRuntime()` 的默认静态根目录。Team 默认使用 `path.resolve(serverDir, '../public')`，仍允许调用方通过 `publicDir` 显式覆盖；不要把默认目录解析到仓库根 `public/`。
 
-Team 的 `serveStatic()` 只接受 `GET` / `HEAD`，将 `/` 映射为 `index.html`，缺失资源返回 `404 {"error":"静态资源不存在","code":"NOT_FOUND"}`，并用真实路径关系防止目录越界。Standalone 仍由 `apps/server/index.js` 提供：HTML 使用 `no-store`，其他可服务文件缓存 `60` 秒，未知文件返回普通 `404`。修改静态边界时必须按对应入口补测试；Team 回归至少覆盖默认目录、显式覆盖、三个页面入口和 404 JSON。
+静态资源由 [apps/server/http-common.js](../../../apps/server/http-common.js) 的 `serveStatic()` 统一实现：只接受 `GET` / `HEAD`，将 `/` 映射为 `index.html`，用 `path.sep` 边界加 `realpathSync` 防目录越界，只服务 `STATIC_TYPES` 白名单内的扩展名，并发送 `content-length`。两个入口只注入响应形状：Team 返回 `404 {"error":"静态资源不存在","code":"NOT_FOUND"}` 且一律 `no-store`，Standalone 返回纯文本 `404` 且 HTML `no-store`、其他文件缓存 `60` 秒。修改静态边界时必须按对应入口补测试；Team 回归至少覆盖默认目录、显式覆盖、三个页面入口和 404 JSON。
 
 ## 反模式
 

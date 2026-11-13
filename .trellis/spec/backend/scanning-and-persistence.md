@@ -6,6 +6,7 @@
 - 单机 `apps/server/watcher.js` 只做兼容包装；桌面 sidecar 直接使用共享模块。
 - 团队服务端不得启动该 watcher 监听自己的项目工作副本。
 - 事件保留兼容字段 `relativePath`（相对 `.trellis`）和 `trellisPath`（相对仓库，含 `.trellis/`）。
+- 实现基于 `chokidar`（`ignoreInitial: true`、`depth: 20`）：`rebuild()`/`close()` 返回 Promise，`ready()` 在所有 watcher 首次扫描后 resolve；`status().enabled` 在 ready 之前恒为 `false`，启动流程必须 `await ready()` 再读取。
 
 ## 扫描输入
 
@@ -369,7 +370,7 @@ withTransaction(db, () => {
 - `.trellis/workspace`
 - `.trellis/.developer`
 
-路径统一为 `/`。当前使用递归 `fs.watch`，主要面向 Windows/macOS 本机；Linux 或网络盘不支持递归监听时保留手动刷新回退。
+路径统一为 `/`。监听由 `chokidar` 承担（内部仍是平台原生事件，默认不轮询）；网络盘或原生事件不可靠时仍保留手动刷新回退。
 
 事件进入 [apps/server/index.js](../../../apps/server/index.js) 后经过：
 

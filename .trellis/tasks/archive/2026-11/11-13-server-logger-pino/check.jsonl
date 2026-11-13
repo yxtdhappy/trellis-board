@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对测试是否覆盖脱敏、轮转与关闭落盘"}
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "核对日志路径文档与运行时行为一致"}

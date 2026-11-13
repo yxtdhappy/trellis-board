@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "HTTP 响应、静态资源与文件系统访问的既有约定"}
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "standalone 与 team 两种运行模式的路由与模块加载边界"}
+{"file": ".trellis/spec/backend/index.md", "reason": "跨包引用与模块组织约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试要求与质量门禁"}
+{"file": ".trellis/tasks/archive/2026-11/11-13-server-dotenv-root-env/research/dependency-opportunities.md", "reason": "HTTP 小工具去重的收益评估与差异对照"}

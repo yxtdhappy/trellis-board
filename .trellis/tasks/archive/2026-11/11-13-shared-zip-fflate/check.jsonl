@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对测试覆盖与断言质量"}
+{"file": ".trellis/spec/backend/index.md", "reason": "核对依赖声明位置与跨包引用方式"}

@@ -6,6 +6,11 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import { parseTeamConfig, dataDir } from './config.js'
+import {
+  readJsonBody as readJsonBodyCommon,
+  sendJson as sendJsonCommon,
+  serveStatic as serveStaticCommon,
+} from './http-common.js'
 import { migrateLegacyRuntimeData } from './data-migration.js'
 import { getDefaultDatabase } from './database.js'
 import { createTeamRuntime } from './team/http.js'
@@ -64,26 +69,16 @@ function initializeStandaloneState(
 }
 
 function sendJson(response, status, payload) {
-  const body = JSON.stringify(payload)
-  response.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-  })
-  response.end(body)
+  sendJsonCommon(response, status, payload)
 }
 
-async function readJsonBody(request) {
-  let body = ''
-  for await (const chunk of request) {
-    body += chunk
-    if (body.length > 1024 * 1024) throw new Error('请求体过大')
-  }
-  if (!body) return {}
-  try {
-    return JSON.parse(body)
-  } catch {
-    throw new Error('请求体不是合法 JSON')
-  }
+function readJsonBody(request) {
+  return readJsonBodyCommon(request, {
+    errors: {
+      tooLarge: () => new Error('请求体过大'),
+      invalidJson: () => new Error('请求体不是合法 JSON'),
+    },
+  })
 }
 
 function rejectPendingScans(error) {
@@ -278,7 +273,7 @@ function scheduleWatchRefresh(event) {
   }, WATCH_DEBOUNCE_MS)
 }
 
-function startFileWatcher() {
+async function startFileWatcher() {
   let status
   try {
     watchRuntime = createWatchRuntime({
@@ -286,6 +281,8 @@ function startFileWatcher() {
       onChange: scheduleWatchRefresh,
       onError: (error) => activeLogger.error('Trellis 文件监听失败', error),
     })
+    // chokidar 的初始扫描是异步的，就绪前的 status() 一定是 disabled。
+    await watchRuntime.ready()
     status = watchRuntime.status()
   } catch (error) {
     activeLogger.error('启动 Trellis 文件监听失败', error)
@@ -309,12 +306,10 @@ function startFileWatcher() {
 function restartFileWatcher() {
   const previous = watchRuntime
   watchRuntime = null
-  try {
-    previous?.close()
-  } catch (error) {
+  previous?.close().catch((error) => {
     activeLogger.error('关闭旧 Trellis 文件监听失败', error)
-  }
-  startFileWatcher()
+  })
+  void startFileWatcher()
 }
 
 function pickFoldersFromDesktop() {
@@ -837,32 +832,21 @@ async function handleApi(request, response, url) {
   sendJson(response, 404, { error: '接口不存在' })
 }
 
-function serveStatic(response, url) {
-  const requested = url.pathname === '/' ? '/index.html' : url.pathname
-  const filePath = path.resolve(publicDir, `.${requested}`)
-  if (!filePath.startsWith(publicDir)) {
-    response.writeHead(403)
-    response.end('Forbidden')
-    return
+function serveStatic(request, response, url) {
+  const text = (status, body, headers = {}) => {
+    response.writeHead(status, headers)
+    response.end(body)
   }
-  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-    response.writeHead(404)
-    response.end('Not found')
-    return
-  }
-  const ext = path.extname(filePath)
-  const contentTypes = {
-    '.html': 'text/html; charset=utf-8',
-    '.css': 'text/css; charset=utf-8',
-    '.js': 'text/javascript; charset=utf-8',
-    '.svg': 'image/svg+xml',
-    '.png': 'image/png',
-  }
-  response.writeHead(200, {
-    'content-type': contentTypes[ext] || 'application/octet-stream',
-    'cache-control': ext === '.html' ? 'no-store' : 'public, max-age=60',
+  serveStaticCommon({
+    request,
+    response,
+    pathname: url.pathname,
+    publicDir,
+    invalidPath: () => text(400, 'Bad request'),
+    methodNotAllowed: () => text(405, 'Method not allowed', { allow: 'GET, HEAD' }),
+    forbidden: () => text(403, 'Forbidden'),
+    notFound: () => text(404, 'Not found'),
   })
-  fs.createReadStream(filePath).pipe(response)
 }
 
 const server = http.createServer(async (request, response) => {
@@ -870,7 +854,7 @@ const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`)
     if (url.pathname.startsWith('/api/')) await handleApi(request, response, url)
     else if (!(await handlePluginRequest(request, response, url))) {
-      serveStatic(response, url)
+      serveStatic(request, response, url)
     }
   } catch (error) {
     activeLogger.error(error)
@@ -909,7 +893,7 @@ export async function startStandaloneServer({
       refreshQueuedReason: null,
       executionWipLimit: persistence.readExecutionWipLimit(),
     })
-    startFileWatcher()
+    await startFileWatcher()
     await startPluginRuntime()
     refreshBoardFromFiles('startup').catch((error) => {
       activeLogger.error('启动后的后台扫描失败', error)
@@ -943,7 +927,7 @@ export async function stopStandaloneServer() {
   boardEventService = null
   await pluginRuntime?.stop()
   pluginRuntime = null
-  watchRuntime?.close()
+  await watchRuntime?.close()
   watchRuntime = null
   if (watchDebounceTimer) clearTimeout(watchDebounceTimer)
   watchDebounceTimer = null

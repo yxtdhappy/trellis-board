@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { createServerLogger, redactServerLogText, serverLogFile } from '../logger.js'
+import { createServerLogger, redactServerLogText, serverLogDir } from '../logger.js'
 
 function makeWorkspace() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-server-logger-'))
@@ -21,31 +21,55 @@ function quietConsole() {
   }
 }
 
-test('服务端日志固定写入运行数据目录的 logs/server.log', () => {
+function readLogRecords(dataDir) {
+  const dir = serverLogDir(dataDir)
+  if (!fs.existsSync(dir)) return []
+  return fs
+    .readdirSync(dir)
+    .filter((name) => name.endsWith('.log'))
+    .flatMap((name) =>
+      fs
+        .readFileSync(path.join(dir, name), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line)),
+    )
+}
+
+async function waitFor(predicate, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return true
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  return false
+}
+
+test('服务端日志固定写入运行数据目录的 logs 子目录', () => {
   assert.equal(
-    serverLogFile(path.join('somewhere', 'TrellisBoard')),
-    path.join('somewhere', 'TrellisBoard', 'logs', 'server.log'),
+    serverLogDir(path.join('somewhere', 'TrellisBoard')),
+    path.join('somewhere', 'TrellisBoard', 'logs'),
   )
 })
 
-test('日志调用立即返回且 close 会写入完整记录', async () => {
+test('日志调用立即返回且 close 会写入 JSON 记录', async () => {
   const workspace = makeWorkspace()
   const consoleWriter = quietConsole()
   const logger = createServerLogger({ dataDir: workspace.dataDir, console: consoleWriter })
   try {
-    const returned = logger.info('启动完成')
-    assert.equal(returned, undefined)
-    assert.equal(fs.existsSync(serverLogFile(workspace.dataDir)), false)
-
+    assert.equal(logger.info('启动完成'), undefined)
     await logger.close()
-    const contents = fs.readFileSync(serverLogFile(workspace.dataDir), 'utf8')
-    assert.match(contents, / INFO 启动完成\n$/)
+    const records = readLogRecords(workspace.dataDir)
+    assert.equal(records.length, 1)
+    assert.equal(records[0].msg, '启动完成')
+    assert.equal(records[0].level, 30)
+    assert.match(records[0].time, /^\d{4}-\d{2}-\d{2}T/)
   } finally {
     fs.rmSync(workspace.root, { recursive: true, force: true })
   }
 })
 
-test('控制台收到原始参数，文件记录四个日志级别', async () => {
+test('控制台收到原始参数，文件记录四个级别并脱敏', async () => {
   const workspace = makeWorkspace()
   const consoleWriter = quietConsole()
   const detail = { password: 'console-secret' }
@@ -61,11 +85,16 @@ test('控制台收到原始参数，文件记录四个日志级别', async () =>
     assert.equal(consoleWriter.calls.error[0][0], 'error')
 
     await logger.close()
-    const contents = fs.readFileSync(serverLogFile(workspace.dataDir), 'utf8')
-    for (const level of ['LOG', 'INFO', 'WARN', 'ERROR']) {
-      assert.match(contents, new RegExp(` ${level} `))
-    }
-    assert.doesNotMatch(contents, /console-secret/)
+    const records = readLogRecords(workspace.dataDir)
+    assert.deepEqual(
+      records.map((record) => record.msg),
+      ['log value { password: [REDACTED] }', 'info', 'warn', 'error'],
+    )
+    assert.deepEqual(
+      records.map((record) => record.level),
+      [30, 30, 40, 50],
+    )
+    assert.equal(JSON.stringify(records).includes('console-secret'), false)
   } finally {
     fs.rmSync(workspace.root, { recursive: true, force: true })
   }
@@ -114,22 +143,32 @@ test('小容量配置执行轮转并淘汰最旧历史', async () => {
   const logger = createServerLogger({
     dataDir: workspace.dataDir,
     console: consoleWriter,
-    maxBytes: 120,
+    maxBytes: 400,
     maxFiles: 3,
-    flushBytes: 1,
   })
   try {
-    for (let index = 0; index < 8; index += 1) {
+    // pino-roll 在 drain 之后才切换文件，逐条 flush 才能稳定触发轮转。
+    for (let index = 0; index < 20; index += 1) {
       logger.info(`message-${index}-${'x'.repeat(40)}`)
+      await logger.flush()
+      await new Promise((resolve) => setTimeout(resolve, 20))
     }
     await logger.close()
 
-    const file = serverLogFile(workspace.dataDir)
-    const files = [file, `${file}.1`, `${file}.2`].filter((candidate) => fs.existsSync(candidate))
-    const contents = files.map((candidate) => fs.readFileSync(candidate, 'utf8')).join('')
-    assert.equal(files.length, 3)
-    assert.doesNotMatch(contents, /message-0-/)
-    assert.match(contents, /message-7-/)
+    const dir = serverLogDir(workspace.dataDir)
+    const logFiles = () => fs.readdirSync(dir).filter((name) => name.endsWith('.log'))
+    assert.ok(logFiles().length > 1)
+    await waitFor(() => logFiles().length <= 3)
+    assert.ok(logFiles().length <= 3)
+    const messages = readLogRecords(workspace.dataDir).map((record) => record.msg)
+    assert.equal(
+      messages.some((message) => message.startsWith('message-19-')),
+      true,
+    )
+    assert.equal(
+      messages.some((message) => message.startsWith('message-0-')),
+      false,
+    )
   } finally {
     fs.rmSync(workspace.root, { recursive: true, force: true })
   }
@@ -144,6 +183,7 @@ test('日志目录不可用时只降级一次且 close 不抛错', async () => {
   try {
     logger.info('first')
     logger.warn('second')
+    await waitFor(() => consoleWriter.calls.error.length > 0)
     await logger.close()
     assert.equal(consoleWriter.calls.error.length, 1)
     assert.match(consoleWriter.calls.error[0][0], /已降级为仅控制台输出/)
@@ -152,42 +192,15 @@ test('日志目录不可用时只降级一次且 close 不抛错', async () => {
   }
 })
 
-test('内存缓冲达到上限后丢弃新增文件日志，服务调用不等待磁盘', async () => {
+test('close 等待已排队的写入', async () => {
   const workspace = makeWorkspace()
   const consoleWriter = quietConsole()
-  const logger = createServerLogger({
-    dataDir: workspace.dataDir,
-    console: consoleWriter,
-    maxBufferBytes: 50,
-    flushDelayMs: 10_000,
-    flushBytes: 10_000,
-  })
-  try {
-    logger.info('kept')
-    logger.info('x'.repeat(200))
-    assert.doesNotThrow(() => logger.info('also-dropped'))
-    await logger.close()
-
-    const contents = fs.readFileSync(serverLogFile(workspace.dataDir), 'utf8')
-    assert.match(contents, /kept/)
-    assert.doesNotMatch(contents, /x{200}|also-dropped/)
-  } finally {
-    fs.rmSync(workspace.root, { recursive: true, force: true })
-  }
-})
-
-test('close 等待已排队的异步 flush', async () => {
-  const workspace = makeWorkspace()
-  const consoleWriter = quietConsole()
-  const logger = createServerLogger({
-    dataDir: workspace.dataDir,
-    console: consoleWriter,
-    flushBytes: 1,
-  })
+  const logger = createServerLogger({ dataDir: workspace.dataDir, console: consoleWriter })
   try {
     logger.info('queued-before-close')
     await logger.close()
-    assert.match(fs.readFileSync(serverLogFile(workspace.dataDir), 'utf8'), /queued-before-close/)
+    const messages = readLogRecords(workspace.dataDir).map((record) => record.msg)
+    assert.deepEqual(messages, ['queued-before-close'])
   } finally {
     fs.rmSync(workspace.root, { recursive: true, force: true })
   }
