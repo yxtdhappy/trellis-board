@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
+- **Total Sessions**: 24
 - **Last Active**: 2026-11-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~753 | Active |
+| `journal-1.md` | ~776 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-11-13 | watcher 换 chokidar | `f10e5d4` | `main` |
 | 23 | 2026-11-13 | server 日志换 pino | `26bdded` | `main` |
 | 22 | 2026-11-13 | server 共用 HTTP 工具 | `fdc4988` | `main` |
 | 21 | 2026-11-13 | shared zip 换 fflate | `cc89140` | `main` |

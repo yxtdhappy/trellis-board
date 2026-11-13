@@ -751,3 +751,26 @@ logger.js 187→约150行，改用 pino + pino-roll；日志行变 JSON，文件
 ### Status
 
 [OK] **Completed**
+
+
+## Session 24: watcher 换 chokidar
+<!-- trellis-session: v=2 fp=b8677ac0c6887da2 -->
+
+**Date**: 2026-11-13
+**Task**: watcher 换 chokidar
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+trellis-watcher.js 改用 chokidar；rebuild/close 异步化并新增 ready()；startFileWatcher await ready 后再写 watcherEnabled；实测改 task.json 触发看板刷新。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f10e5d4` | refactor(shared): watch .trellis with chokidar |
+
+### Status
+
+[OK] **Completed**
