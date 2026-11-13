@@ -33,10 +33,13 @@ import {
 import { createCoreCapabilities } from './core-capabilities.js'
 import {
   defaultSecretsFile,
+  defaultSecretsKeyFile,
+  deleteSecretRef,
   inlineSecretFields,
   loadSecretsFile,
   resolveConfigReferences,
   summarizeSources,
+  writeSecretRef,
 } from './secrets.js'
 
 export const PLUGIN_STATUSES = Object.freeze([
@@ -154,6 +157,7 @@ export function loadPluginConfigFile(file, { env = process.env, secretsFile } = 
       args: Array.isArray(entry.args) ? entry.args.map(String) : null,
       config: config ?? {},
       configSource: summarizeSources(sources),
+      allowMissingSecrets: entry.allowMissingSecrets === true,
     }
   })
   return { plugins, missing, warnings, secretsFile: secrets.file }
@@ -390,6 +394,8 @@ export class PluginSupervisor {
     })
     this.store = store
     this.configFile = configFile
+    this.secretsFile = env.TRELLIS_BOARD_SECRETS_FILE || defaultSecretsFile(configFile)
+    this.secretsKeyFile = defaultSecretsKeyFile(this.secretsFile)
     this.spawnImpl = spawnImpl
     this.env = env
     this.logger = logger
@@ -570,7 +576,7 @@ export class PluginSupervisor {
         continue
       }
 
-      if (state.missingSecrets.length) {
+      if (state.missingSecrets.length && !state.allowMissingSecrets) {
         if (running) {
           await this.stopForReload(state, `missing-secret:${reason}`)
           result.stopped.push(id)
@@ -578,6 +584,10 @@ export class PluginSupervisor {
         state.status = 'missing-secret'
         state.lastError = `缺少配置项: ${state.missingSecrets.join(', ')}`
         continue
+      }
+      if (state.missingSecrets.length) {
+        state.lastWarning = `缺少配置项: ${state.missingSecrets.join(', ')}（已按空值启动）`
+        this.audit(state, 'warn', { warning: state.lastWarning })
       }
 
       const enabledChanged = previous ? previous.configEnabled !== state.configEnabled : false
@@ -686,6 +696,8 @@ export class PluginSupervisor {
       args: entry.args,
       pinnedVersion: entry.version,
       missingSecrets,
+      allowMissingSecrets: entry.allowMissingSecrets === true,
+      lastWarning: null,
       configSource: entry.configSource ?? 'none',
       // 配置文件里的 enabled 原值：reload 时用它判断用户是否改了开关，
       // 而 state.enabled 会被手动启停改写，不能直接对比。
@@ -759,6 +771,7 @@ export class PluginSupervisor {
     state.manifest = validated.manifest
     state.compatible = true
     state.reason = null
+    if (validated.manifest.allowMissingSecrets) state.allowMissingSecrets = true
     return state
   }
 
@@ -868,11 +881,16 @@ export class PluginSupervisor {
     for (const state of this.orderedStates()) {
       if (!state.enabled || state.manualStopped) continue
       if (!state.compatible || state.blocked) continue
-      if (state.missingSecrets.length) {
+      if (state.missingSecrets.length && !state.allowMissingSecrets) {
         state.status = 'missing-secret'
         state.lastError = `缺少配置项: ${state.missingSecrets.join(', ')}`
         this.audit(state, 'error', { error: state.lastError })
         continue
+      }
+      if (state.missingSecrets.length) {
+        state.lastWarning = `缺少配置项: ${state.missingSecrets.join(', ')}（已按空值启动）`
+        this.audit(state, 'warn', { warning: state.lastWarning })
+        this.writeLog(state, 'warn', state.lastWarning)
       }
       if (!fs.existsSync(state.modulePath)) {
         state.status = 'error'
@@ -1384,6 +1402,15 @@ export class PluginSupervisor {
         })
         return stage
       }
+      case 'task/setPlan': {
+        const plan = this.tasks.setPlan(params)
+        this.publish('task.plan.changed', {
+          taskKey: plan.taskKey,
+          dueDate: plan.dueDate,
+          occurredAt: this.now(),
+        })
+        return plan
+      }
       case 'run/start': {
         const taskKey = String(params.taskKey ?? '').trim()
         if (!taskKey) throw invalidParams('run/start 缺少 taskKey')
@@ -1436,6 +1463,27 @@ export class PluginSupervisor {
         return {
           entries: this.store.listState(state.id, String(params.prefix ?? '')),
         }
+      case 'secrets/get': {
+        const key = this.requirePluginSecretKey(state, params)
+        const { refs } = loadSecretsFile(this.secretsFile, { keyFile: this.secretsKeyFile })
+        return { key, value: refs.has(key) ? refs.get(key) : null }
+      }
+      case 'secrets/set': {
+        const key = this.requirePluginSecretKey(state, params)
+        const value = params.value
+        if (typeof value !== 'string' || value === '') {
+          throw invalidParams('secrets/set 需要非空字符串 value')
+        }
+        writeSecretRef(this.secretsFile, key, value, { keyFile: this.secretsKeyFile })
+        this.audit(state, 'secrets', { ok: true, action: 'set', key })
+        return { key, stored: true, encrypted: true }
+      }
+      case 'secrets/delete': {
+        const key = this.requirePluginSecretKey(state, params)
+        const result = deleteSecretRef(this.secretsFile, key)
+        this.audit(state, 'secrets', { ok: true, action: 'delete', key, deleted: result.deleted })
+        return { key, deleted: result.deleted }
+      }
       case 'log/write': {
         const level = String(params.level || 'info')
         this.writeLog(state, level, String(params.message ?? ''), params.fields ?? {})
@@ -1485,8 +1533,19 @@ export class PluginSupervisor {
     this.writeLog(state, 'warn', `未知插件通知: ${message.method}`, {})
   }
 
-  requireRun(state, runId) {
-    const run = this.store.getRun(String(runId))
+  requirePluginSecretKey(state, params) {
+    const key = String(params?.key ?? '').trim()
+    if (!key) throw invalidParams('缺少 secret key')
+    if (!key.startsWith(`${state.id}/`)) {
+      throw appError(
+        ERROR_CODES.PERMISSION_DENIED,
+        `插件只能访问自己的 secret：${state.id}/...`,
+      )
+    }
+    return key
+  }
+
+  requireRun(state, runId) {    const run = this.store.getRun(String(runId))
     if (!run) throw appError(ERROR_CODES.NOT_FOUND, `run 不存在: ${runId}`)
     if (run.pluginId !== state.id) {
       throw appError(ERROR_CODES.PERMISSION_DENIED, '不能更新其它插件的 run')
@@ -1727,6 +1786,8 @@ export class PluginSupervisor {
       pid: state.pid,
       restarts: state.restarts,
       lastError: state.lastError,
+      lastWarning: state.lastWarning,
+      missingSecrets: state.missingSecrets,
       droppedEvents: state.droppedEvents,
       permissions: state.manifest?.permissions ?? [],
       panels: state.manifest?.panels ?? [],
