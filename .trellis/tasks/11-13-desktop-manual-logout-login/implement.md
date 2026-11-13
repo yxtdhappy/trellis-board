@@ -7,7 +7,8 @@
 3. 在 `clear_desktop_session` 中清除本地配置密码，保留服务器地址和登录名；保存失败仅告警。
 4. 将 `desktop_logout` 注册到 Tauri invoke handler。
 5. 修改 `BoardPage.handleLogout`：Tauri 环境优先调用 `desktop_logout`；非 Tauri 环境保持现有 `logout()` 后跳转 `/login.html`。
-6. 为命令权限、前端调用和密码清除行为补充最小自动化检查。
+6. 在窗口 `on_page_load` 的本地页面 `Started` 事件中记录 `local_url`，不得在 `build()` 后立即读取 `window.url()`。
+7. 为命令权限、前端调用、密码清除和本地 URL 捕获行为补充最小自动化检查。
 
 ## 验证
 

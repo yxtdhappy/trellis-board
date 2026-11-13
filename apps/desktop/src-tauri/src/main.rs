@@ -18,7 +18,8 @@ use serde::Serialize;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{
-    AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    webview::PageLoadEvent, AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_dialog::DialogExt;
@@ -884,13 +885,18 @@ fn build_main_window(
                     }
                 }
                 navigation::handle_navigation(&shell_app, candidate, board.as_ref())
+            })
+            .on_page_load(move |_, payload| {
+                if payload.event() == PageLoadEvent::Started
+                    && payload.url().scheme() != "about"
+                    && navigation::is_local_page(payload.url())
+                {
+                    if let Ok(mut local_url) = navigation_auth.local_url.lock() {
+                        *local_url = Some(payload.url().clone());
+                    }
+                }
             });
-    let window = builder.build()?;
-    if let Ok(url) = window.url() {
-        if let Ok(mut local_url) = navigation_auth.local_url.lock() {
-            *local_url = Some(url);
-        }
-    }
+    builder.build()?;
     Ok(())
 }
 

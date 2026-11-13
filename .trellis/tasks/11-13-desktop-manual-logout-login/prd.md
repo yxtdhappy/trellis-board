@@ -6,9 +6,9 @@
 
 ## Background
 
-- 远端 Board 的退出按钮当前先请求 `/api/auth/logout`，随后执行 `window.location.assign('/login.html')`，见 `apps/web/src/pages/board/BoardPage.tsx:215`。
-- 桌面端在导航回调中拦截同源 `/login`、`/login.html`，取消导航后异步清理会话并跳转本地登录页，见 `apps/desktop/src-tauri/src/main.rs:849`。
-- 上述两条导航链路并存，存在 WebView 停留在空白页的竞态风险；现有日志未记录明确错误，因此白屏根因是源码推断，需通过桌面端实际退出验证。
+- 远端 Board 的退出按钮原先先请求 `/api/auth/logout`，随后执行 `window.location.assign('/login.html')`，见 `apps/web/src/pages/board/BoardPage.tsx:217`。
+- 桌面端在导航回调中拦截同源 `/login`、`/login.html`，取消导航后异步清理会话并跳转本地登录页，见 `apps/desktop/src-tauri/src/main.rs:872`。
+- 真实 Windows 便携包 E2E 已确认：窗口构建后立即读取 `window.url()` 会得到 `about:blank`，退出时跳转到该地址导致白屏；修复改为在 `on_page_load` 的本地页面 `Started` 事件中记录本地登录页 URL。
 - 本地登录页只要读到服务器地址、登录名和密码就会自动登录，见 `apps/web/src/desktop/LoginApp.tsx:201`。
 - 桌面端已有远程 Board capability 白名单，Board 页面只能调用明确授权的 Tauri 命令，见 `apps/desktop/src-tauri/permissions/desktop.toml` 和 `apps/desktop/src-tauri/capabilities/board-local-association.json`。
 
