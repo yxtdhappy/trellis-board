@@ -834,6 +834,8 @@ pub struct TaskSync {
     cursor_write: Mutex<()>,
     last_baseline_files: Mutex<Vec<SnapshotFile>>,
     head_tree_cache: Mutex<HashMap<String, HeadTreeCache>>,
+    #[cfg(test)]
+    head_tree_scans: std::sync::atomic::AtomicUsize,
     baseline_owned: Mutex<HashSet<String>>,
     watch: Mutex<WatchState>,
 }
@@ -851,6 +853,8 @@ impl TaskSync {
             cursor_write: Mutex::new(()),
             last_baseline_files: Mutex::new(Vec::new()),
             head_tree_cache: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            head_tree_scans: std::sync::atomic::AtomicUsize::new(0),
             baseline_owned: Mutex::new(HashSet::new()),
             watch: Mutex::new(WatchState::default()),
         }
@@ -1020,6 +1024,9 @@ impl TaskSync {
                 }
             }
         }
+        #[cfg(test)]
+        self.head_tree_scans
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let paths = crate::agent::git::ls_tree(repo, &hooks_dir, Some(&head)).await?;
         let tracked_paths = Arc::new(paths.into_iter().collect::<HashSet<_>>());
         self.head_tree_cache.lock().await.insert(
@@ -1031,6 +1038,33 @@ impl TaskSync {
             },
         );
         Ok((head, tracked_paths))
+    }
+
+    /// 本地关联展示与同步门禁共用同一套基线错分支判定和 HEAD tree 缓存。
+    pub(crate) async fn ownership_paused_task_dirs(
+        &self,
+        binding: &AgentBinding,
+        groups: &[SnapshotGroup],
+    ) -> HashSet<String> {
+        let mut paused: HashSet<String> = groups
+            .iter()
+            .filter(|group| {
+                group
+                    .task_branch
+                    .as_deref()
+                    .is_some_and(|branch| branch != binding.branch_name)
+            })
+            .map(|group| group.task_dir.clone())
+            .collect();
+        if paused.is_empty()
+            || binding.baseline_branch.as_deref() != Some(binding.branch_name.as_str())
+        {
+            return paused;
+        }
+        if let Ok((_, tracked_paths)) = self.head_tree_paths(binding).await {
+            paused.retain(|task_dir| !tracked_paths.contains(&format!("{task_dir}/task.json")));
+        }
+        paused
     }
 
     fn baseline_owned_key(task_space_id: &str, task_id: &str) -> String {
@@ -1169,10 +1203,16 @@ impl TaskSync {
         }
     }
 
-    /// 拉取并对失败做可观测上报：写日志 + 触发 `task_sync_error` 控制事件。
+    /// 拉取、补收敛基线任务，并对失败写日志和 `task_sync_error` 控制事件。
     pub async fn pull_and_report(&self, task_space_id: &str) {
-        if let Err(error) = self.pull_task_space(task_space_id).await {
-            self.report_error(task_space_id, &error).await;
+        match self.pull_task_space(task_space_id).await {
+            Ok(result) if result.get("pendingReview").and_then(Value::as_bool) != Some(true) => {
+                if let Err(error) = self.reconcile_baseline_tasks(task_space_id).await {
+                    self.report_error(task_space_id, &error).await;
+                }
+            }
+            Ok(_) => {}
+            Err(error) => self.report_error(task_space_id, &error).await,
         }
     }
 
@@ -2629,6 +2669,56 @@ impl TaskSync {
         }
         let dirs: Vec<String> = task_dirs.into_iter().collect();
         self.upload_directories(&binding, &dirs, true, None).await
+    }
+
+    /// 启动或绑定更新后，为已经存在于基线 HEAD 的错分支任务补一次合入证据。
+    async fn reconcile_baseline_tasks(&self, task_space_id: &str) -> AgentResult<Value> {
+        let config = self
+            .store
+            .read_config(false)
+            .await?
+            .ok_or_else(|| AgentError::new(code::CONFIG_MISSING, "Agent 配置不存在"))?;
+        let Some(binding) = config.bindings.into_iter().find(|binding| {
+            binding.task_space_id == task_space_id
+                && binding.sync_status == "approved"
+                && !binding.detach_pending
+        }) else {
+            return Ok(json!({
+                "skipped": true,
+                "reason": "BINDING_INACTIVE",
+            }));
+        };
+        if binding.read_only
+            || !binding.initial_sync_completed
+            || binding.baseline_branch.as_deref() != Some(binding.branch_name.as_str())
+        {
+            return Ok(json!({
+                "skipped": true,
+                "reason": "BASELINE_RECONCILIATION_NOT_REQUIRED",
+            }));
+        }
+        let groups = self.local_groups(&binding, None).await?;
+        let cursor = self.read_cursor(task_space_id).await;
+        let mut task_dirs: Vec<String> = groups
+            .iter()
+            .filter(|group| {
+                !cursor.deferred.contains_key(&group.task_dir)
+                    && group
+                        .task_branch
+                        .as_deref()
+                        .is_some_and(|branch| branch != binding.branch_name)
+            })
+            .map(|group| group.task_dir.clone())
+            .collect();
+        task_dirs.sort_unstable();
+        if task_dirs.is_empty() {
+            return Ok(json!({
+                "skipped": true,
+                "reason": "BASELINE_RECONCILIATION_NOT_REQUIRED",
+            }));
+        }
+        self.upload_directories(&binding, &task_dirs, false, None)
+            .await
     }
 
     pub async fn sync_task_directories(
@@ -4703,6 +4793,7 @@ pub(crate) fn urlencode(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::agent::store::AgentConfig;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn required_sequence_only_reads_conflict_details() {
@@ -4789,6 +4880,125 @@ mod tests {
         }
     }
 
+    fn run_git(repo: &Path, args: &[&str]) {
+        let output = std::process::Command::new(crate::agent::git::GIT_BINARY)
+            .args(["-C", repo.to_str().expect("utf8 path")])
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn init_git_repo(repo: &Path) {
+        run_git(repo, &["init", "--initial-branch=main"]);
+        run_git(repo, &["config", "user.email", "test@example.com"]);
+        run_git(repo, &["config", "user.name", "Test"]);
+        run_git(repo, &["config", "commit.gpgsign", "false"]);
+    }
+
+    async fn write_task_json(repo: &Path, task_dir: &str, task_id: &str, branch: &str) {
+        let directory = repo.join(task_dir);
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("task directory");
+        tokio::fs::write(
+            directory.join("task.json"),
+            format!("{{\"id\":\"{task_id}\",\"branch\":\"{branch}\"}}\n"),
+        )
+        .await
+        .expect("task json");
+    }
+
+    async fn mock_api_server() -> (
+        String,
+        Arc<Mutex<Vec<Value>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock server");
+        let address = listener.local_addr().expect("mock address");
+        let changes = Arc::new(Mutex::new(Vec::new()));
+        let captured_changes = changes.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let changes = captured_changes.clone();
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    let header_end = loop {
+                        if let Some(index) = request
+                            .windows(4)
+                            .position(|window| window == b"\r\n\r\n")
+                        {
+                            break index;
+                        }
+                        let read = socket.read(&mut chunk).await.unwrap_or(0);
+                        if read == 0 {
+                            return;
+                        }
+                        request.extend_from_slice(&chunk[..read]);
+                    };
+                    let header = String::from_utf8_lossy(&request[..header_end]).to_string();
+                    let content_length = header
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            if name.eq_ignore_ascii_case("content-length") {
+                                value.trim().parse::<usize>().ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(0);
+                    while request.len() < header_end + 4 + content_length {
+                        let read = socket.read(&mut chunk).await.unwrap_or(0);
+                        if read == 0 {
+                            return;
+                        }
+                        request.extend_from_slice(&chunk[..read]);
+                    }
+                    let body_start = header_end + 4;
+                    let body = serde_json::from_slice::<Value>(
+                        &request[body_start..body_start + content_length],
+                    )
+                    .unwrap_or(Value::Null);
+                    let request_line = header.lines().next().unwrap_or_default();
+                    let mut parts = request_line.split_whitespace();
+                    let method = parts.next().unwrap_or_default();
+                    let path = parts.next().unwrap_or_default();
+                    let (status, payload) = if path.contains("/snapshot?") {
+                        ("200 OK", json!({ "revision": 1, "files": [] }))
+                    } else if path.contains("/files?") {
+                        ("200 OK", json!({ "files": [] }))
+                    } else if method == "PUT" && path.ends_with("/cursor") {
+                        ("200 OK", json!({}))
+                    } else if method == "POST" && path.ends_with("/changes") {
+                        changes.lock().await.push(body);
+                        ("200 OK", json!({ "revision": 2 }))
+                    } else {
+                        ("404 Not Found", json!({ "error": "unexpected request" }))
+                    };
+                    let payload = serde_json::to_vec(&payload).expect("response json");
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        payload.len()
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.write_all(&payload).await;
+                });
+            }
+        });
+        (format!("http://{address}"), changes, task)
+    }
+
     async fn test_task_sync_fixture(
         prefix: &str,
     ) -> (PathBuf, Arc<ConfigStore>, TaskSync, AgentBinding) {
@@ -4806,6 +5016,166 @@ mod tests {
             .expect("task root");
         binding.repo_path = repo_path.to_string_lossy().to_string();
         (root, store, sync, binding)
+    }
+
+    #[tokio::test]
+    async fn baseline_ownership_ignores_tracked_source_branches_and_reuses_head_tree() {
+        let (root, store, sync, mut binding) =
+            test_task_sync_fixture("trellis-baseline-ownership").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        for index in 0..17 {
+            write_task_json(
+                repo,
+                &format!(".trellis/tasks/archive/2026-11/tracked-{index}"),
+                &format!("tracked-{index}"),
+                "dev1",
+            )
+            .await;
+        }
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(
+            repo,
+            &["commit", "--no-verify", "-m", "track merged tasks"],
+        );
+        write_task_json(
+            repo,
+            ".trellis/tasks/active-probe",
+            "active-probe",
+            "dev1",
+        )
+        .await;
+        let groups = sync.local_groups(&binding, None).await.expect("local groups");
+        assert_eq!(groups.len(), 18);
+
+        binding.baseline_branch = Some("main".to_string());
+        binding.branch_name = "dev1".to_string();
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        assert!(sync
+            .ownership_paused_task_dirs(&binding, &groups)
+            .await
+            .is_empty());
+        assert!(sync.head_tree_cache.lock().await.is_empty());
+        assert_eq!(
+            sync.head_tree_scans
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+
+        binding.branch_name = "main".to_string();
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        let paused = sync
+            .ownership_paused_task_dirs(&binding, &groups)
+            .await;
+        assert_eq!(
+            paused.into_iter().collect::<Vec<_>>(),
+            vec![".trellis/tasks/active-probe".to_string()]
+        );
+        assert_eq!(
+            sync.head_tree_scans
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        let associations =
+            crate::agent::device::read_local_associations(&store, Some(&sync))
+                .await
+                .expect("local associations");
+        assert_eq!(associations[0].ownership_paused_count, 1);
+        assert_eq!(
+            associations[0].ownership_paused_task_dirs,
+            vec![".trellis/tasks/active-probe".to_string()]
+        );
+        let (_, first_paths) = sync.head_tree_paths(&binding).await.expect("head tree");
+        let (_, second_paths) = sync.head_tree_paths(&binding).await.expect("cached head tree");
+        assert_eq!(first_paths.len(), 17);
+        assert!(Arc::ptr_eq(&first_paths, &second_paths));
+        assert_eq!(
+            sync.head_tree_scans
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn binding_update_reconciles_existing_tracked_baseline_task() {
+        let (root, store, _sync, mut binding) =
+            test_task_sync_fixture("trellis-baseline-reconcile").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        let task_dir = ".trellis/tasks/merged-task";
+        let task_json = format!("{task_dir}/task.json");
+        let deferred_dir = ".trellis/tasks/deferred-task";
+        let deferred_task_json = format!("{deferred_dir}/task.json");
+        write_task_json(repo, task_dir, "merged-task", "dev1").await;
+        write_task_json(repo, deferred_dir, "deferred-task", "dev1").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "merge task"]);
+
+        binding.baseline_branch = Some("main".to_string());
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        store
+            .write_json(
+                &store.paths.task_cursors_file,
+                &json!({
+                    "version": CURSOR_VERSION,
+                    "taskSpaces": {
+                        "space-1": {
+                            "revision": 1,
+                            "sequence": 1,
+                            "baselines": {
+                                (task_json.clone()): snapshot_sha256(
+                                    "{\"id\":\"merged-task\",\"branch\":\"dev1\"}\n"
+                                )
+                            },
+                            "deferred": {
+                                (deferred_dir): {
+                                    (deferred_task_json): snapshot_sha256(
+                                        "{\"id\":\"deferred-task\",\"branch\":\"dev1\"}\n"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }),
+            )
+            .await
+            .expect("cursor");
+        let (server_url, changes, server_task) = mock_api_server().await;
+        let api = Arc::new(
+            ApiClient::new(&server_url, None, None).expect("mock api client"),
+        );
+        let sink: ControlSink = Arc::new(|_| {});
+        let sync = Arc::new(TaskSync::new(store.clone(), api, sink));
+
+        sync.update_bindings(vec![binding]).await;
+
+        let changes = changes.lock().await;
+        assert_eq!(changes.len(), 1, "启动时应自动补交一次任务快照");
+        assert_eq!(changes[0]["mergeEvidence"]["taskId"], "merged-task");
+        assert_eq!(changes[0]["mergeEvidence"]["taskDir"], task_dir);
+        assert_eq!(changes[0]["mergeEvidence"]["sourceBranch"], "dev1");
+        assert_eq!(changes[0]["mergeEvidence"]["baselineBranch"], "main");
+        assert_eq!(changes[0]["files"][0]["path"], task_json);
+        assert_eq!(changes[0]["observedBranchName"], "main");
+        assert!(sync
+            .read_cursor("space-1")
+            .await
+            .pending
+            .is_none());
+        server_task.abort();
+
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 
     #[tokio::test]
