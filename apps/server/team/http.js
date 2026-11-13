@@ -1,10 +1,14 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { gzip } from 'node:zlib'
 import { databaseFile as defaultDatabaseFile, dataDir as defaultDataDir } from '../config.js'
+import {
+  readJsonBody as readJsonBodyCommon,
+  securityHeaders,
+  sendJson as sendJsonCommon,
+  serveStatic as serveStaticCommon,
+} from '../http-common.js'
 import { createBoardEventService } from '../board-events.js'
 import { openDatabase } from '../database.js'
 import { STAGE_IDS } from '../metadata.js'
@@ -62,34 +66,6 @@ const MAX_LIVE_BATCH_BYTES = TASK_SNAPSHOT_MAX_TRANSPORT_BYTES
 const EXECUTION_WIP_LIMIT = 2
 const DEFAULT_REFRESH_CONCURRENCY = 4
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
-const STATIC_TYPES = new Map([
-  ['.html', 'text/html; charset=utf-8'],
-  ['.css', 'text/css; charset=utf-8'],
-  ['.js', 'text/javascript; charset=utf-8'],
-  ['.svg', 'image/svg+xml'],
-  ['.png', 'image/png'],
-  ['.woff2', 'font/woff2'],
-  ['.woff', 'font/woff'],
-  ['.ttf', 'font/ttf'],
-  ['.ico', 'image/x-icon'],
-  ['.webmanifest', 'application/manifest+json'],
-  ['.map', 'application/json'],
-  ['.txt', 'text/plain; charset=utf-8'],
-])
-
-function securityHeaders() {
-  return {
-    'content-security-policy':
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-      "connect-src 'self' ipc: http://ipc.localhost; " +
-      "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-    'x-content-type-options': 'nosniff',
-    'x-frame-options': 'DENY',
-    'referrer-policy': 'no-referrer',
-    'cache-control': 'no-store',
-  }
-}
-
 function requireObservedBranchName(body) {
   const value = body?.observedBranchName
   if (typeof value !== 'string' || !value.trim()) {
@@ -98,44 +74,7 @@ function requireObservedBranchName(body) {
 }
 
 function sendJson(response, status, payload, headers = {}) {
-  if (response.headersSent) {
-    response.destroy()
-    return
-  }
-  const source = payload == null ? '' : JSON.stringify(payload)
-  const compressed =
-    source.length >= 1024 &&
-    /\bgzip\b/.test(String(response.req?.headers?.['accept-encoding'] || ''))
-  const write = (body) => {
-    response.writeHead(status, {
-      ...securityHeaders(),
-      'content-type': 'application/json; charset=utf-8',
-      'content-length': body.length,
-      ...(compressed
-        ? {
-            'content-encoding': 'gzip',
-            vary: 'accept-encoding',
-          }
-        : {}),
-      ...headers,
-    })
-    response.end(body)
-  }
-  if (!compressed) {
-    write(Buffer.from(source))
-    return
-  }
-  gzip(source, (error, body) => {
-    if (error || response.destroyed) {
-      response.destroy()
-      return
-    }
-    try {
-      write(body)
-    } catch {
-      response.destroy()
-    }
-  })
+  sendJsonCommon(response, status, payload, { headers, gzip: true, security: true })
 }
 
 function sendNotModified(response, etag) {
@@ -229,39 +168,20 @@ function assertJsonWrite(request) {
   }
 }
 
-async function readJsonBody(request, maxBytes = MAX_JSON_BYTES) {
-  const declared = Number(request.headers['content-length'])
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    throw teamError(
-      413,
-      ERROR_CODES.BODY_TOO_LARGE,
-      `请求体超过 ${Math.floor(maxBytes / 1024)} KiB 限制`,
-    )
-  }
-  const chunks = []
-  let size = 0
-  for await (const chunk of request) {
-    size += chunk.length
-    if (size > maxBytes) {
-      throw teamError(
-        413,
-        ERROR_CODES.BODY_TOO_LARGE,
-        `请求体超过 ${Math.floor(maxBytes / 1024)} KiB 限制`,
-      )
-    }
-    chunks.push(chunk)
-  }
-  if (!size) return {}
-  let value
-  try {
-    value = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-  } catch {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, '请求体不是合法 JSON')
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, '请求体必须是 JSON 对象')
-  }
-  return value
+function readJsonBody(request, maxBytes = MAX_JSON_BYTES) {
+  return readJsonBodyCommon(request, {
+    maxBytes,
+    errors: {
+      tooLarge: (limit) =>
+        teamError(
+          413,
+          ERROR_CODES.BODY_TOO_LARGE,
+          `请求体超过 ${Math.floor(limit / 1024)} KiB 限制`,
+        ),
+      invalidJson: () => teamError(400, ERROR_CODES.INVALID_INPUT, '请求体不是合法 JSON'),
+      notObject: () => teamError(400, ERROR_CODES.INVALID_INPUT, '请求体必须是 JSON 对象'),
+    },
+  })
 }
 
 function parseInteger(value, label, fallback = null) {
@@ -409,71 +329,37 @@ function teamAssignmentsFromBody(db, userId, body) {
   })
 }
 
-function safeStaticPath(publicDir, pathname) {
-  let requested
-  try {
-    requested = decodeURIComponent(pathname === '/' ? '/index.html' : pathname)
-  } catch {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, '静态资源路径无效')
-  }
-  const root = path.resolve(publicDir)
-  const filePath = path.resolve(root, `.${requested}`)
-  if (filePath !== root && !filePath.startsWith(`${root}${path.sep}`)) {
-    throw teamError(403, ERROR_CODES.FORBIDDEN, '静态资源路径越界')
-  }
-  if (!STATIC_TYPES.has(path.extname(filePath).toLowerCase())) {
-    throw teamError(404, ERROR_CODES.NOT_FOUND, '静态资源不存在')
-  }
-  return { filePath, root }
-}
-
 function serveStatic(request, response, url, publicDir) {
-  if (!new Set(['GET', 'HEAD']).has(request.method)) {
-    sendJson(
-      response,
-      405,
-      {
-        error: '静态资源只支持 GET 或 HEAD',
+  serveStaticCommon({
+    request,
+    response,
+    pathname: url.pathname,
+    publicDir,
+    security: true,
+    cacheControl: () => 'no-store',
+    invalidPath: () =>
+      sendJson(response, 400, {
+        error: '静态资源路径无效',
         code: ERROR_CODES.INVALID_INPUT,
-      },
-      { allow: 'GET, HEAD' },
-    )
-    return
-  }
-  const { filePath, root } = safeStaticPath(publicDir, url.pathname)
-  let stat
-  let realPath
-  let realRoot
-  try {
-    realRoot = fs.realpathSync(root)
-    realPath = fs.realpathSync(filePath)
-    stat = fs.statSync(realPath)
-  } catch {
-    stat = null
-  }
-  if (realPath && realPath !== realRoot && !realPath.startsWith(`${realRoot}${path.sep}`)) {
-    throw teamError(403, ERROR_CODES.FORBIDDEN, '静态资源路径越界')
-  }
-  if (!stat?.isFile()) {
-    sendJson(response, 404, {
-      error: '静态资源不存在',
-      code: ERROR_CODES.NOT_FOUND,
-    })
-    return
-  }
-  const contentType = STATIC_TYPES.get(path.extname(realPath).toLowerCase())
-  response.writeHead(200, {
-    ...securityHeaders(),
-    'content-type': contentType,
-    'content-length': stat.size,
+      }),
+    methodNotAllowed: () =>
+      sendJson(
+        response,
+        405,
+        { error: '静态资源只支持 GET 或 HEAD', code: ERROR_CODES.INVALID_INPUT },
+        { allow: 'GET, HEAD' },
+      ),
+    forbidden: () =>
+      sendJson(response, 403, {
+        error: '静态资源路径越界',
+        code: ERROR_CODES.FORBIDDEN,
+      }),
+    notFound: () =>
+      sendJson(response, 404, {
+        error: '静态资源不存在',
+        code: ERROR_CODES.NOT_FOUND,
+      }),
   })
-  if (request.method === 'HEAD') {
-    response.end()
-    return
-  }
-  fs.createReadStream(realPath)
-    .on('error', () => response.destroy())
-    .pipe(response)
 }
 
 function runtimeProject(project, actor) {

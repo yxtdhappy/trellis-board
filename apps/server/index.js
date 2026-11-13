@@ -6,6 +6,11 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import { parseTeamConfig, dataDir } from './config.js'
+import {
+  readJsonBody as readJsonBodyCommon,
+  sendJson as sendJsonCommon,
+  serveStatic as serveStaticCommon,
+} from './http-common.js'
 import { migrateLegacyRuntimeData } from './data-migration.js'
 import { getDefaultDatabase } from './database.js'
 import { createTeamRuntime } from './team/http.js'
@@ -64,26 +69,16 @@ function initializeStandaloneState(
 }
 
 function sendJson(response, status, payload) {
-  const body = JSON.stringify(payload)
-  response.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-  })
-  response.end(body)
+  sendJsonCommon(response, status, payload)
 }
 
-async function readJsonBody(request) {
-  let body = ''
-  for await (const chunk of request) {
-    body += chunk
-    if (body.length > 1024 * 1024) throw new Error('请求体过大')
-  }
-  if (!body) return {}
-  try {
-    return JSON.parse(body)
-  } catch {
-    throw new Error('请求体不是合法 JSON')
-  }
+function readJsonBody(request) {
+  return readJsonBodyCommon(request, {
+    errors: {
+      tooLarge: () => new Error('请求体过大'),
+      invalidJson: () => new Error('请求体不是合法 JSON'),
+    },
+  })
 }
 
 function rejectPendingScans(error) {
@@ -837,32 +832,21 @@ async function handleApi(request, response, url) {
   sendJson(response, 404, { error: '接口不存在' })
 }
 
-function serveStatic(response, url) {
-  const requested = url.pathname === '/' ? '/index.html' : url.pathname
-  const filePath = path.resolve(publicDir, `.${requested}`)
-  if (!filePath.startsWith(publicDir)) {
-    response.writeHead(403)
-    response.end('Forbidden')
-    return
+function serveStatic(request, response, url) {
+  const text = (status, body, headers = {}) => {
+    response.writeHead(status, headers)
+    response.end(body)
   }
-  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-    response.writeHead(404)
-    response.end('Not found')
-    return
-  }
-  const ext = path.extname(filePath)
-  const contentTypes = {
-    '.html': 'text/html; charset=utf-8',
-    '.css': 'text/css; charset=utf-8',
-    '.js': 'text/javascript; charset=utf-8',
-    '.svg': 'image/svg+xml',
-    '.png': 'image/png',
-  }
-  response.writeHead(200, {
-    'content-type': contentTypes[ext] || 'application/octet-stream',
-    'cache-control': ext === '.html' ? 'no-store' : 'public, max-age=60',
+  serveStaticCommon({
+    request,
+    response,
+    pathname: url.pathname,
+    publicDir,
+    invalidPath: () => text(400, 'Bad request'),
+    methodNotAllowed: () => text(405, 'Method not allowed', { allow: 'GET, HEAD' }),
+    forbidden: () => text(403, 'Forbidden'),
+    notFound: () => text(404, 'Not found'),
   })
-  fs.createReadStream(filePath).pipe(response)
 }
 
 const server = http.createServer(async (request, response) => {
@@ -870,7 +854,7 @@ const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`)
     if (url.pathname.startsWith('/api/')) await handleApi(request, response, url)
     else if (!(await handlePluginRequest(request, response, url))) {
-      serveStatic(response, url)
+      serveStatic(request, response, url)
     }
   } catch (error) {
     activeLogger.error(error)
