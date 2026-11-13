@@ -419,6 +419,18 @@ export function createTaskSpaceIndex({
     )
   }
 
+  function mineMemberSignature(userId) {
+    return db
+      .prepare(`
+        SELECT project_id, trellis_dev_id
+        FROM sync_project_member
+        WHERE user_id = ? AND trellis_dev_id IS NOT NULL
+      `)
+      .all(userId)
+      .map((row) => `${row.project_id}:${String(row.trellis_dev_id).toLowerCase()}`)
+      .sort()
+  }
+
   function buildBoard(scan, taskSpace) {
     const manualRecords = getManualRecords(db)
     const versions = new Map(scan.tasks.map((task) => [task.relativeDir, task.taskVersion]))
@@ -744,6 +756,7 @@ export function createTaskSpaceIndex({
     const scope = resolveQueryScope(actor, input)
     const scopeHash = hashValue(scope)
     const filterHash = hashValue(filters)
+    const mineMembers = filters.scope === 'mine' ? mineMemberSignature(actor.userId) : null
     const revision = queryRevision()
     const day = shanghaiDay()
     const etag = `"${hashValue({
@@ -751,6 +764,7 @@ export function createTaskSpaceIndex({
       team: teamScope,
       scope,
       filterHash,
+      members: mineMembers,
       revision,
       day,
     })}"`
@@ -767,6 +781,7 @@ export function createTaskSpaceIndex({
       team: teamScope,
       scopeHash,
       filterHash,
+      members: mineMembers,
       cursor: input.cursor || null,
       revision,
       day,
@@ -785,7 +800,14 @@ export function createTaskSpaceIndex({
     const where = [`t.task_space_id IN (${bindList(scope.taskSpaceIds)})`, 't.archived = ?']
     const params = [...scope.taskSpaceIds, filters.archived ? 1 : 0]
     if (filters.scope === 'mine') {
-      where.push('t.assignee_user_id = ?')
+      // 成员 dev id 变更不重建索引，按任务所属项目当前配置的 developer id 判定。
+      where.push(`EXISTS (
+        SELECT 1 FROM sync_project_member mine
+        WHERE mine.project_id = t.project_id
+          AND mine.user_id = ?
+          AND mine.trellis_dev_id IS NOT NULL
+          AND t.assignee_dev_id = mine.trellis_dev_id COLLATE NOCASE
+      )`)
       params.push(actor.userId)
     }
     if (filters.q) {

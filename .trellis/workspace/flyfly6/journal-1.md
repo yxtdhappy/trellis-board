@@ -425,3 +425,42 @@ tauri 构建关闭 bundling，只产出 trellis-board-client.exe 与绿色 ZIP�
 ### Next Steps
 
 - cargo fmt --check 仍有 17 处历史格式差异（7 个文件，属他人已提交代码），需要时单独做一次纯格式化提交
+
+
+## Session 13: 客户端 Python 环境门与只看我的过滤修复
+<!-- trellis-session: v=2 fp=7587530a2fe92b82 -->
+
+**Date**: 2026-11-13
+**Task**: 客户端 Python 环境门与只看我的过滤修复
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+环境门新增 Python>=3.9 探测与官方安装包静默安装；只看我的改按项目当前 trellis developer id 过滤并纳入查询哈希；删除 legacy task-index.js
+
+### Main Changes
+
+- env.rs 新增 Python 探测/下载/静默安装与 run_with_heartbeat
+- task_command 使用 client.json 记录的解释器，spawn 失败逐个回退
+- LoginApp 加 python 步骤并以 runtime_status 决定是否进登录页
+- task-space-index mine 条件改 EXISTS 关联 sync_project_member.trellis_dev_id
+- 成员映射进入 etag/cacheKey 哈希
+- 删除 legacy apps/server/team/task-index.js 与其测试
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3d3352f` | feat(desktop): check Python in runtime gate and scope mine by project dev id |
+| `cc3d7dd` | chore(server): drop legacy git task index |
+
+### Testing
+
+- [OK] node --test 全量 435 pass / 0 fail
+- [OK] cargo check + cargo test agent::env:: 10 passed
+- [OK] npx tsc -b 与 oxfmt --check 通过
+
+### Status
+
+[OK] **Completed**

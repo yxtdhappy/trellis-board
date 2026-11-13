@@ -707,6 +707,23 @@ async fn atomic_write_json(target: &Path, value: &Value) -> AgentResult<()> {
     Ok(())
 }
 
+fn script_invocation(script: &str, args: &[String]) -> Vec<String> {
+    std::iter::once(script.to_string())
+        .chain(args.iter().cloned())
+        .collect()
+}
+
+/// 环境门记录在 `client.json` 的解释器；文件已被删除时跳过该候选。
+fn recorded_python() -> Option<String> {
+    use crate::agent::env::ClientConfigLike;
+
+    let data_dir = crate::config::data_dir();
+    let text = std::fs::read_to_string(data_dir.join("client.json")).ok()?;
+    let document: Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
+    let flag = document.python_runtime()?;
+    Path::new(&flag.path).is_file().then_some(flag.path)
+}
+
 async fn run_task_python(repo_path: &Path, args: &[String]) -> AgentResult<()> {
     let script = repo_path.join(".trellis").join("scripts").join("task.py");
     if tokio::fs::metadata(&script).await.is_err() {
@@ -725,18 +742,20 @@ async fn run_task_python(repo_path: &Path, args: &[String]) -> AgentResult<()> {
         timeout: Some(PYTHON_TIMEOUT),
         max_output_bytes: PYTHON_MAX_OUTPUT_BYTES,
     };
-    let python = std::env::var("TRELLIS_PYTHON").unwrap_or_else(|_| "python".to_string());
-    let mut candidates: Vec<(String, Vec<String>)> = vec![(
-        python,
-        std::iter::once(script_text.clone())
-            .chain(args.iter().cloned())
-            .collect(),
-    )];
+    let mut candidates: Vec<(String, Vec<String>)> = Vec::new();
+    if let Ok(python) = std::env::var("TRELLIS_PYTHON") {
+        if !python.trim().is_empty() {
+            candidates.push((python, script_invocation(&script_text, args)));
+        }
+    }
+    if let Some(python) = recorded_python() {
+        candidates.push((python, script_invocation(&script_text, args)));
+    }
+    candidates.push(("python".to_string(), script_invocation(&script_text, args)));
     candidates.push((
         "py".to_string(),
         std::iter::once("-3".to_string())
-            .chain(std::iter::once(script_text))
-            .chain(args.iter().cloned())
+            .chain(script_invocation(&script_text, args))
             .collect(),
     ));
     let mut last_error: Option<AgentError> = None;

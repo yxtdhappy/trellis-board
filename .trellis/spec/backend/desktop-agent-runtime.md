@@ -70,17 +70,28 @@
 
 ## 3. 环境门
 
-- 首次启动先 `runtime_status`：Node ≥ 18.17.0，Trellis CLI ≥ 0.6.17（读包内 `package.json.version`）。
+- 首次启动先 `runtime_status`：Node ≥ 18.17.0，Trellis CLI ≥ 0.6.17（读包内 `package.json.version`），
+  Python ≥ 3.9.0。
 - 查找顺序 Node：flag → PATH 与版本管理器/常见安装前缀（fnm `aliases/*`、`node-versions/*/installation`、
   nvm、Volta、`%ProgramFiles%\nodejs`）；Trellis：flag → `<data>/npm-global` → 同一批前缀目录下的全局包
-  （不跑 `npm root -g`，npm.cmd 内部同样依赖 PATH）。探测成功后写回两个 flag，Agent 只认 flag。
+  （不跑 `npm root -g`，npm.cmd 内部同样依赖 PATH）；Python：flag → `TRELLIS_PYTHON` → PATH 的
+  `python.exe` → `py -3`（用 `py -3 -c "import sys; print(sys.executable)"` 解析出真实解释器）。
+  探测成功后写回 flag，Agent 只认 flag。
 - 缺失时 `runtime_install`：npmmirror 下载 `node-v24.22.3-win-x64.zip` 并校验 sha256
   （`e612af99f626ab415ea225af6bce5c971feb448cb5cae250bb1c3fa50c5f7d9f`），只解出 `node.exe`
   与 npm，然后 `npm install -g --prefix <data>/npm-global @mindfoldhq/trellis@0.6.17`。
+- Python 缺失或低于 3.9 时安装官方安装器 `python-3.12.8-amd64.exe`
+  （sha256 `71bd44e6b0e91c17558963557e4cdb80b483de9b0a0a9717f06cf896f95ab598`），参数
+  `/quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 InstallLauncherAllUsers=0 Include_test=0 Include_doc=0 Shortcuts=0`；
+  per-user、无 UAC，退出码 0 与 3010 都算成功，失败抛 `PYTHON_INVALID`。已有低版本不卸载，侧装并存。
 - 进度通过 `runtime-progress` 事件推送，阶段名固定为 `node:download`、`node:verify`、
-  `node:extract`、`node:validate`、`trellis:install`、`trellis:validate`、`write-flag`、`ready`。
+  `node:extract`、`node:validate`、`trellis:install`、`trellis:validate`、`python:download`、
+  `python:verify`、`python:install`、`python:validate`、`write-flag`、`ready`。静默安装器无输出，
+  `python:install` 靠 5 秒心跳续期进度。
 - 初始化项目必须使用环境门确定的 `node.exe` 与 `cli.js`，不得回退到任意系统 `node`。
-- 运行期除环境门校验与项目初始化外不得产生 `node.exe` 子进程。
+- 运行期只有 `task.py create` 与 `task.py set-branch`（含同步时的分支推断/冲突决策）需要 Python；
+  候选顺序是 `TRELLIS_PYTHON` → `client.json` 的 `python_runtime.path` → `python` → `py -3`，
+  只有 spawn 失败才继续下一个候选。
 
 ## 4. 文件与路径安全
 

@@ -8,21 +8,32 @@ import { TrellisLogo } from '@/components/layout/TrellisLogo'
 import { Progress } from '@/components/ui/progress'
 import { errorMessage, invoke, listen } from './tauri.ts'
 
-type StepId = 'node:check' | 'trellis:check' | 'node:download' | 'trellis:install' | 'ready'
+type StepId =
+  | 'node:check'
+  | 'trellis:check'
+  | 'python:check'
+  | 'node:download'
+  | 'trellis:install'
+  | 'python:download'
+  | 'ready'
 
 const STEP_ORDER: StepId[] = [
   'node:check',
   'trellis:check',
+  'python:check',
   'node:download',
   'trellis:install',
+  'python:download',
   'ready',
 ]
 
 const STEP_LABELS: Record<StepId, string> = {
   'node:check': '检查 Node.js',
   'trellis:check': '检查 Trellis CLI',
+  'python:check': '检查 Python',
   'node:download': '下载 Node.js',
   'trellis:install': '安装 Trellis CLI',
+  'python:download': '安装 Python',
   ready: '校验运行环境',
 }
 
@@ -33,6 +44,10 @@ const PROGRESS_STEP: Record<string, StepId> = {
   'node:validate': 'node:download',
   'trellis:install': 'trellis:install',
   'trellis:validate': 'trellis:install',
+  'python:download': 'python:download',
+  'python:verify': 'python:download',
+  'python:install': 'python:download',
+  'python:validate': 'python:download',
   'write-flag': 'ready',
   ready: 'ready',
 }
@@ -41,6 +56,7 @@ type RuntimeStatus = {
   state?: 'checking' | 'ready' | 'needs_setup' | 'installing' | 'failed'
   node?: { ok?: boolean; version?: string }
   trellis?: { ok?: boolean; version?: string }
+  python?: { ok?: boolean; version?: string; foundVersion?: string }
   error?: string
 }
 
@@ -101,10 +117,13 @@ export function LoginApp() {
     const state = status?.state ?? 'checking'
     const node = status?.node ?? {}
     const trellis = status?.trellis ?? {}
+    const python = status?.python ?? {}
     if (state !== 'ready') setPhase('env')
     if (state === 'ready') {
       setSteps({ active: null, done: [...STEP_ORDER] })
-      setEnvStatus(`运行环境就绪：Node.js ${node.version ?? ''} / Trellis ${trellis.version ?? ''}`)
+      setEnvStatus(
+        `运行环境就绪：Node.js ${node.version ?? ''} / Trellis ${trellis.version ?? ''} / Python ${python.version ?? ''}`,
+      )
       showLogin()
       return
     }
@@ -115,11 +134,20 @@ export function LoginApp() {
       return
     }
     if (state === 'needs_setup') {
-      setSteps({ active: null, done: ['node:check', 'trellis:check'] })
+      setSteps({ active: null, done: ['node:check', 'trellis:check', 'python:check'] })
       const missing: string[] = []
       if (!node.ok) missing.push('Node.js')
       if (!trellis.ok) missing.push('Trellis CLI')
-      setEnvStatus(`缺少${missing.join('与')}，请先安装运行环境。`)
+      if (!python.ok) {
+        missing.push(
+          python.foundVersion ? `Python（当前 ${python.foundVersion}，需 ≥ 3.9）` : 'Python',
+        )
+      }
+      setEnvStatus(
+        missing.length
+          ? `${missing.join('、')} 缺失或版本过低，请先安装运行环境。`
+          : '请先安装运行环境。',
+      )
       setInstallVisible(true)
       setRetryVisible(false)
       return
@@ -168,14 +196,16 @@ export function LoginApp() {
     setSteps({ active: 'node:download', done: [] })
     setEnvStatus('正在准备运行环境…')
     try {
-      const result = await invoke<{ nodeVersion?: string; trellisVersion?: string }>(
-        'runtime_install',
-      )
+      const result = await invoke<{
+        nodeVersion?: string
+        trellisVersion?: string
+        pythonVersion?: string
+      }>('runtime_install')
       setEnvStatus(
-        `运行环境安装完成：Node.js ${result?.nodeVersion ?? ''} / Trellis ${result?.trellisVersion ?? ''}`,
+        `运行环境安装完成：Node.js ${result?.nodeVersion ?? ''} / Trellis ${result?.trellisVersion ?? ''} / Python ${result?.pythonVersion ?? ''}`,
       )
-      setSteps({ active: null, done: [...STEP_ORDER] })
-      showLogin()
+      // 安装结束不等于环境就绪（例如 Python 安装器被拦截）：交给 runtime_status 决定下一步。
+      await refreshRuntime()
     } catch (error) {
       setEnvStatus('运行环境安装失败。')
       setEnvError(errorMessage(error, ''))
@@ -267,12 +297,12 @@ export function LoginApp() {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-4 p-6">
       {phase === 'env' ? (
-        <Card className="w-full max-w-[420px]">
+        <Card className="w-full max-w-[26.25rem]">
           <CardHeader>
             <div className="flex items-center gap-3">
               <TrellisLogo size={36} />
               <div>
-                <p className="text-[10px] font-semibold tracking-[0.2em] text-muted-foreground">
+                <p className="text-[0.625rem] font-semibold tracking-[0.2em] text-muted-foreground">
                   TRELLIS DESKTOP
                 </p>
                 <h1 className="font-heading text-xl font-medium">首次启动环境检查</h1>
@@ -331,19 +361,20 @@ export function LoginApp() {
             </div>
             <p className="border-t border-border pt-4 text-xs leading-6 text-muted-foreground">
               运行环境缺失时客户端会从国内镜像下载便携 Node.js，并把 Trellis CLI
-              安装到客户端私有目录，不改动系统环境。
+              安装到客户端私有目录，不改动系统环境；Python 缺失或低于 3.9 时下载官方安装包静默安装
+              Python 3.12.8（仅当前用户，无需管理员权限）。
             </p>
           </CardContent>
         </Card>
       ) : null}
 
       {phase === 'login' ? (
-        <Card className="w-full max-w-[420px]">
+        <Card className="w-full max-w-[26.25rem]">
           <CardHeader>
             <div className="flex items-center gap-3">
               <TrellisLogo size={36} />
               <div>
-                <p className="text-[10px] font-semibold tracking-[0.2em] text-muted-foreground">
+                <p className="text-[0.625rem] font-semibold tracking-[0.2em] text-muted-foreground">
                   TRELLIS DESKTOP
                 </p>
                 <h1 className="font-heading text-xl font-medium">登录团队看板</h1>
@@ -423,7 +454,7 @@ export function LoginApp() {
         </Card>
       ) : null}
 
-      <footer className="flex w-full max-w-[420px] flex-col items-center gap-1 text-xs text-muted-foreground">
+      <footer className="flex w-full max-w-[26.25rem] flex-col items-center gap-1 text-xs text-muted-foreground">
         <span>{version}</span>
         <span>{configPath}</span>
       </footer>
