@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
+- **Total Sessions**: 21
 - **Last Active**: 2026-11-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~684 | Active |
+| `journal-1.md` | ~707 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-11-13 | shared zip 换 fflate | `cc89140` | `main` |
 | 20 | 2026-11-13 | 客户端 TopBar 响应式与弹窗/登录页布局 | `e0fb8c4` | `main` |
 | 19 | 2026-11-13 | workspace 包名迁移 + server .env(dotenv) | `bc98c48` | `main` |
 | 18 | 2026-11-13 | 修复桌面客户端外观偏好跨 origin 丢失 | `32bd245`, `02d8314` | `main` |

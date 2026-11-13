@@ -682,3 +682,26 @@ TopBar 改用 em 容器查询（导航不折行、搜索 64em 下收图标、48e
 ### Status
 
 [OK] **Completed**
+
+
+## Session 21: shared zip 换 fflate
+<!-- trellis-session: v=2 fp=72206bfb299e2471 -->
+
+**Date**: 2026-11-13
+**Task**: shared zip 换 fflate
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+packages/shared/zip.js 278→约140行，改用 fflate unzipSync；filter 内做限额/路径/重名校验；删除 extractZipEntries 与 mode；新增 7 个 zip 测试；npm test 479 pass。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cc89140` | refactor(shared): parse zip archives with fflate |
+
+### Status
+
+[OK] **Completed**
