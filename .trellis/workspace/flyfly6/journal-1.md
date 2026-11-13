@@ -774,3 +774,26 @@ trellis-watcher.js 改用 chokidar；rebuild/close 异步化并新增 ready()；
 ### Status
 
 [OK] **Completed**
+
+
+## Session 25: team cookie 换 cookie 包
+<!-- trellis-session: v=2 fp=4188604561bd9d55 -->
+
+**Date**: 2026-11-13
+**Task**: team cookie 换 cookie 包
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+team/auth.js 三个 cookie 辅助函数改用 cookie@2；parseCookieHeader 仍返回 Map；新增 team-cookie.test.js 6 例；team 模式实测登录/登出 set-cookie 正确。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1a593ad` | refactor(server): parse and build session cookies with cookie |
+
+### Status
+
+[OK] **Completed**
