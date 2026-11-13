@@ -71,7 +71,9 @@
 ## 3. 环境门
 
 - 首次启动先 `runtime_status`：Node ≥ 18.17.0，Trellis CLI ≥ 0.6.17（读包内 `package.json.version`）。
-- 查找顺序 Node：flag → PATH；Trellis：flag → `<data>/npm-global` → `npm root -g` → PATH。
+- 查找顺序 Node：flag → PATH 与版本管理器/常见安装前缀（fnm `aliases/*`、`node-versions/*/installation`、
+  nvm、Volta、`%ProgramFiles%\nodejs`）；Trellis：flag → `<data>/npm-global` → 同一批前缀目录下的全局包
+  （不跑 `npm root -g`，npm.cmd 内部同样依赖 PATH）。探测成功后写回两个 flag，Agent 只认 flag。
 - 缺失时 `runtime_install`：npmmirror 下载 `node-v24.22.3-win-x64.zip` 并校验 sha256
   （`e612af99f626ab415ea225af6bce5c971feb448cb5cae250bb1c3fa50c5f7d9f`），只解出 `node.exe`
   与 npm，然后 `npm install -g --prefix <data>/npm-global @mindfoldhq/trellis@0.6.17`。
