@@ -728,3 +728,26 @@ packages/shared/zip.js 278→约140行，改用 fflate unzipSync；filter 内做
 ### Status
 
 [OK] **Completed**
+
+
+## Session 23: server 日志换 pino
+<!-- trellis-session: v=2 fp=bdf362165f7f9476 -->
+
+**Date**: 2026-11-13
+**Task**: server 日志换 pino
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+logger.js 187→约150行，改用 pino + pino-roll；日志行变 JSON，文件名 server.<n>.log；close 等 SonicBoom close 事件确保落盘；测试重写 7 例，npm test 478 pass。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `26bdded` | refactor(server): write logs through pino and pino-roll |
+
+### Status
+
+[OK] **Completed**
