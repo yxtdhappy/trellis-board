@@ -12,7 +12,7 @@
   "assignee": "flyfly6",
   "createdAt": "2026-11-12",
   "completedAt": "2026-11-13",
-  "branch": null,
+  "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
   "commit": null,
