@@ -464,3 +464,38 @@ tauri 构建关闭 bundling，只产出 trellis-board-client.exe 与绿色 ZIP�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 14: 偏好设置：主题与根字号缩放
+<!-- trellis-session: v=2 fp=238e599be8c0f737 -->
+
+**Date**: 2026-11-13
+**Task**: 偏好设置：主题与根字号缩放
+**Package**: web
+**Branch**: `main`
+
+### Summary
+
+新增外观偏好设置（浅色/深色/跟随系统 + 四档根字号 14/16/18/20px），px 类名全量转 rem，桌面壳接入 theme-init。
+
+### Main Changes
+
+- apps/web/src/lib/appearance.js 新增主题/字号模型；apps/web/src/app/theme.tsx 改为 AppearanceProvider；apps/web/src/features/settings/PreferencesDialog.tsx 提供设置界面；TopBar 头像菜单新增偏好设置入口；48 个文件 335 处 px 类名转为 rem。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7d720e2` | feat(web): add appearance preferences for theme and root font size |
+
+### Testing
+
+- [OK] oxlint/tsc -b/vite build/vite build --config vite.desktop.config.ts 全通过；node --test apps/web/test/*.test.js 73/73；浏览器实测四档根字号、三主题、刷新持久化、恢复默认均正确，20px 档对话框无裁切溢出。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 观察桌面壳深色/字号在真实 GUI 下的表现。

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { PluginPanel as PluginPanelInfo } from '@/api/panels'
-import { useTheme } from '@/app/theme'
+import { useAppearance } from '@/app/theme'
 
 type BridgeMessage = {
   type?: string
@@ -30,7 +30,7 @@ export function PluginPanel({
   projectName?: string
 }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
-  const { theme } = useTheme()
+  const { resolvedTheme: theme } = useAppearance()
 
   useEffect(() => {
     const frame = frameRef.current

@@ -46,7 +46,7 @@ export function PublishOperationDialog({
 
   return (
     <Dialog open={Boolean(operation)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[620px]">
+      <DialogContent className="sm:max-w-[38.75rem]">
         <DialogHeader>
           <DialogTitle className="text-base">
             {operation?.commandType === 'assign_task'
@@ -58,7 +58,7 @@ export function PublishOperationDialog({
           <DialogDescription>{EXPLANATIONS[status] || '正在跟踪任务操作…'}</DialogDescription>
         </DialogHeader>
 
-        <DialogBody className="flex flex-col gap-2 text-[11px]">
+        <DialogBody className="flex flex-col gap-2 text-[0.6875rem]">
           <div className="flex items-center gap-2">
             <span
               className={
@@ -82,7 +82,7 @@ export function PublishOperationDialog({
             </p>
           ) : null}
           {status === 'failed' && retryable ? (
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-[0.625rem] text-muted-foreground">
               每 {Math.round(operationPollDelay(1) / 1000)}{' '}
               秒刷新一次状态；目标客户端完成执行并同步任务后才算成功。
             </p>

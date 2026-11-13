@@ -136,7 +136,7 @@ export function TeamsTab() {
             >
               <span className="min-w-0">
                 <span className="block truncate font-medium">{team.name}</span>
-                <span className="block text-[10.5px] text-muted-foreground">
+                <span className="block text-[0.65625rem] text-muted-foreground">
                   {team.memberCount} 名成员 · {team.projectCount} 个项目
                 </span>
               </span>
@@ -205,7 +205,7 @@ export function TeamsTab() {
                 >
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{member.displayName}</span>
-                    <span className="block text-[10.5px] text-muted-foreground">
+                    <span className="block text-[0.65625rem] text-muted-foreground">
                       {member.username} · {member.role === 'admin' ? '团队管理员' : '成员'}
                     </span>
                   </span>

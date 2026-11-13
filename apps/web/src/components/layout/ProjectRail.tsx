@@ -491,8 +491,8 @@ export function ProjectRail({
   )
 
   return (
-    <aside className="hidden w-[230px] shrink-0 flex-col gap-1 border-r border-border bg-sidebar px-2.5 py-3.5 lg:flex">
-      <p className="px-2 pb-1 text-[10px] font-semibold tracking-[0.12em] text-muted-foreground">
+    <aside className="hidden w-[14.375rem] shrink-0 flex-col gap-1 border-r border-border bg-sidebar px-2.5 py-3.5 lg:flex">
+      <p className="px-2 pb-1 text-[0.625rem] font-semibold tracking-[0.12em] text-muted-foreground">
         项目
       </p>
       {invoke ? (
@@ -501,7 +501,7 @@ export function ProjectRail({
           size="sm"
           onClick={() => void startProjectOnboarding()}
           disabled={inspectingProject}
-          className="mb-1 justify-start border-dashed text-[11px] text-muted-foreground hover:border-primary/50 hover:text-foreground"
+          className="mb-1 justify-start border-dashed text-[0.6875rem] text-muted-foreground hover:border-primary/50 hover:text-foreground"
         >
           <Plus className="size-3.5" />
           接入本地项目
@@ -510,7 +510,7 @@ export function ProjectRail({
       {invoke && syncingAssociations.length ? (
         <div
           role="status"
-          className="mb-1 rounded-lg border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[10px] leading-4 text-amber-800 dark:text-amber-300"
+          className="mb-1 rounded-lg border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[0.625rem] leading-4 text-amber-800 dark:text-amber-300"
         >
           正在同步任务，此时切换 Git 分支可能导致任务错位或污染，建议等待同步完成后再切换。
         </div>
@@ -528,7 +528,7 @@ export function ProjectRail({
         全部项目
       </button>
       {current === 'all' && taskSpaceCount > 1 ? (
-        <p className="px-2 pb-1 text-[9.5px] leading-4 text-muted-foreground">
+        <p className="px-2 pb-1 text-[0.59375rem] leading-4 text-muted-foreground">
           全部项目按分支独立统计
         </p>
       ) : null}
@@ -583,7 +583,7 @@ export function ProjectRail({
                   <span className="block truncate text-xs font-medium">{project.name}</span>
                   {view ? (
                     <span
-                      className={`block truncate text-[9.5px] ${view.textClassName}`}
+                      className={`block truncate text-[0.59375rem] ${view.textClassName}`}
                       title={view.detail || view.label}
                       aria-live="polite"
                     >
@@ -640,7 +640,7 @@ export function ProjectRail({
                   return (
                     <div
                       key={taskSpace.id}
-                      className="flex min-w-0 items-center gap-1 px-2 py-0.5 text-[8.5px] text-muted-foreground"
+                      className="flex min-w-0 items-center gap-1 px-2 py-0.5 text-[0.53125rem] text-muted-foreground"
                       title={`${taskSpace.branchName}：${listenerView.counts} · ${listenerView.label}`}
                     >
                       <span
@@ -682,8 +682,8 @@ export function ProjectRail({
                       key={taskSpace.id}
                       className={
                         currentTaskSpace === taskSpace.id
-                          ? 'flex items-center rounded-md border border-primary/35 bg-primary/20 text-[10px] font-semibold text-foreground'
-                          : 'flex items-center rounded-md text-[10px] text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'
+                          ? 'flex items-center rounded-md border border-primary/35 bg-primary/20 text-[0.625rem] font-semibold text-foreground'
+                          : 'flex items-center rounded-md text-[0.625rem] text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'
                       }
                     >
                       <button
@@ -700,25 +700,25 @@ export function ProjectRail({
                           <span className="flex items-center gap-1">
                             <span className="min-w-0 flex-1 truncate">{taskSpace.branchName}</span>
                             {branchPaused ? (
-                              <span className="shrink-0 text-[8.5px] font-medium text-destructive">
+                              <span className="shrink-0 text-[0.53125rem] font-medium text-destructive">
                                 已暂停
                               </span>
                             ) : null}
                           </span>
                           {listenerView ? (
                             <>
-                              <span className="block truncate text-[8.5px] leading-3 text-muted-foreground">
+                              <span className="block truncate text-[0.53125rem] leading-3 text-muted-foreground">
                                 {listenerView.counts}
                               </span>
                               <span
-                                className={`block truncate text-[8.5px] leading-3 ${listenerView.textClassName}`}
+                                className={`block truncate text-[0.53125rem] leading-3 ${listenerView.textClassName}`}
                               >
                                 {listenerView.label}
                               </span>
                             </>
                           ) : null}
                           {detachPending ? (
-                            <span className="block truncate text-[8.5px] leading-3 text-warning">
+                            <span className="block truncate text-[0.53125rem] leading-3 text-warning">
                               服务端解绑待确认
                             </span>
                           ) : null}
@@ -730,7 +730,7 @@ export function ProjectRail({
                       ownership.totalCount > 0 ? (
                         <button
                           type="button"
-                          className="mr-1 shrink-0 rounded px-1 text-[8.5px] font-medium text-warning hover:bg-background"
+                          className="mr-1 shrink-0 rounded px-1 text-[0.53125rem] font-medium text-warning hover:bg-background"
                           aria-label={`处理 ${taskSpace.branchName} 的 ${ownership.totalCount} 个任务归属`}
                           title={branchView?.detail || branchView?.label}
                           onClick={() => setOwnershipTaskSpaceId(taskSpace.id)}
@@ -793,7 +793,7 @@ export function ProjectRail({
                   )
                 })}
                 {currentTaskSpace === 'all' && taskSpaces.length > 1 ? (
-                  <p className="px-2 py-1 text-[9px] leading-4 text-muted-foreground">
+                  <p className="px-2 py-1 text-[0.5625rem] leading-4 text-muted-foreground">
                     按分支独立统计
                   </p>
                 ) : null}
@@ -806,7 +806,7 @@ export function ProjectRail({
       {associationError ? (
         <p
           role="alert"
-          className="mx-1 mt-1 rounded-md bg-destructive/10 px-2 py-1.5 text-[10px] leading-4 text-destructive"
+          className="mx-1 mt-1 rounded-md bg-destructive/10 px-2 py-1.5 text-[0.625rem] leading-4 text-destructive"
         >
           {associationError}
         </p>
@@ -838,11 +838,11 @@ export function ProjectRail({
             }
             aria-hidden="true"
           />
-          <span className="text-[11px] font-semibold text-foreground">同步状态</span>
+          <span className="text-[0.6875rem] font-semibold text-foreground">同步状态</span>
         </div>
-        <p className="text-[10.5px] leading-4 text-muted-foreground">{syncLabel}</p>
+        <p className="text-[0.65625rem] leading-4 text-muted-foreground">{syncLabel}</p>
         {invoke ? (
-          <p className="text-[10.5px] leading-4 text-muted-foreground">
+          <p className="text-[0.65625rem] leading-4 text-muted-foreground">
             客户端后台：
             {sidecarStatus?.running ? '运行中' : sidecarStatus?.paused ? '已暂停' : '未运行'}
           </p>
@@ -850,7 +850,7 @@ export function ProjectRail({
         <Button
           variant="outline"
           size="sm"
-          className="h-7 gap-1.5 text-[11px]"
+          className="h-7 gap-1.5 text-[0.6875rem]"
           onClick={onRefresh}
           disabled={refreshing}
         >

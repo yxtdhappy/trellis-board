@@ -32,7 +32,7 @@ function ConditionTable({ rows, kind }: ConditionTableProps) {
 
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-card">
-      <div className="hidden grid-cols-[92px_minmax(220px,1.2fr)_minmax(220px,1fr)_132px] gap-3 border-b border-border/70 bg-muted/50 px-3 py-2 text-[9px] font-semibold text-muted-foreground lg:grid">
+      <div className="hidden grid-cols-[92px_minmax(220px,1.2fr)_minmax(220px,1fr)_132px] gap-3 border-b border-border/70 bg-muted/50 px-3 py-2 text-[0.5625rem] font-semibold text-muted-foreground lg:grid">
         <span>对应阶段</span>
         <span>缺失项</span>
         <span>当前证据</span>
@@ -41,14 +41,16 @@ function ConditionTable({ rows, kind }: ConditionTableProps) {
       {rows.map((row) => (
         <div
           key={`${kind}:${row.label}`}
-          className="grid gap-1.5 border-b border-border/60 p-3 text-[10px] last:border-b-0 lg:grid-cols-[92px_minmax(220px,1.2fr)_minmax(220px,1fr)_132px] lg:items-center lg:gap-3 lg:py-2"
+          className="grid gap-1.5 border-b border-border/60 p-3 text-[0.625rem] last:border-b-0 lg:grid-cols-[92px_minmax(220px,1.2fr)_minmax(220px,1fr)_132px] lg:items-center lg:gap-3 lg:py-2"
         >
-          <span className={`w-fit rounded-full px-2 py-0.5 text-[9.5px] font-semibold ${tone}`}>
+          <span
+            className={`w-fit rounded-full px-2 py-0.5 text-[0.59375rem] font-semibold ${tone}`}
+          >
             {row.stageLabel}
           </span>
           <span className="font-semibold text-foreground">{row.label}</span>
           <span className="min-w-0">
-            <span className="mb-0.5 block text-[9px] text-muted-foreground lg:hidden">
+            <span className="mb-0.5 block text-[0.5625rem] text-muted-foreground lg:hidden">
               当前证据
             </span>
             <span className="line-clamp-2 text-muted-foreground" title={row.evidence}>
@@ -56,7 +58,7 @@ function ConditionTable({ rows, kind }: ConditionTableProps) {
             </span>
           </span>
           <span
-            className={`flex items-center gap-1 text-[9.5px] font-semibold ${kind === 'start' ? 'text-destructive' : 'text-warning'}`}
+            className={`flex items-center gap-1 text-[0.59375rem] font-semibold ${kind === 'start' ? 'text-destructive' : 'text-warning'}`}
           >
             <span className="mr-1 text-muted-foreground lg:hidden">下一步</span>
             {row.nextAction}
@@ -70,7 +72,7 @@ function ConditionTable({ rows, kind }: ConditionTableProps) {
 
 function SuccessSummary({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-success/20 bg-success-soft px-3 py-2 text-[10.5px] font-semibold text-success">
+    <div className="flex items-center gap-2 rounded-lg border border-success/20 bg-success-soft px-3 py-2 text-[0.65625rem] font-semibold text-success">
       <CircleCheckIcon className="size-3.5" aria-hidden="true" />
       {label}
     </div>
@@ -79,7 +81,7 @@ function SuccessSummary({ label }: { label: string }) {
 
 function PendingDetails({ loading }: { loading: boolean }) {
   return (
-    <p className="rounded-lg border border-border/70 bg-muted/40 px-3 py-2 text-[10px] text-muted-foreground">
+    <p className="rounded-lg border border-border/70 bg-muted/40 px-3 py-2 text-[0.625rem] text-muted-foreground">
       {loading ? '条件明细正在读取…' : '条件明细暂不可用，请稍后重新打开任务详情。'}
     </p>
   )
@@ -119,8 +121,10 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
   return (
     <section className="flex flex-col gap-2">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <h3 className="text-[11px] font-semibold text-muted-foreground">条件检查</h3>
-        <span className="text-[10px] text-muted-foreground">先确认能否开工，再确认是否完成</span>
+        <h3 className="text-[0.6875rem] font-semibold text-muted-foreground">条件检查</h3>
+        <span className="text-[0.625rem] text-muted-foreground">
+          先确认能否开工，再确认是否完成
+        </span>
       </div>
 
       {mode === 'archived' ? null : (
@@ -144,8 +148,8 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
               )}
             </span>
             <div className="min-w-0">
-              <h4 className="text-[12px] font-semibold text-foreground">开工条件</h4>
-              <p className="text-[9.5px] text-muted-foreground">
+              <h4 className="text-[0.75rem] font-semibold text-foreground">开工条件</h4>
+              <p className="text-[0.59375rem] text-muted-foreground">
                 {!startKnown
                   ? '正在读取开工条件状态。'
                   : startCount
@@ -156,7 +160,7 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
               </p>
             </div>
             {startKnown && startCount ? (
-              <span className="ml-auto rounded-full bg-destructive-soft px-2 py-0.5 text-[9.5px] font-semibold text-destructive">
+              <span className="ml-auto rounded-full bg-destructive-soft px-2 py-0.5 text-[0.59375rem] font-semibold text-destructive">
                 缺 {startCount} 项
               </span>
             ) : null}
@@ -197,12 +201,12 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
             <ListChecksIcon className="size-4" aria-hidden="true" />
           </span>
           <div className="min-w-0">
-            <h4 className="text-[11.5px] font-semibold text-foreground">完成条件</h4>
-            <p className="text-[9.5px] text-muted-foreground">
+            <h4 className="text-[0.71875rem] font-semibold text-foreground">完成条件</h4>
+            <p className="text-[0.59375rem] text-muted-foreground">
               进入实现后开始检查，规划阶段暂不适用。
             </p>
           </div>
-          <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[9.5px] font-semibold text-muted-foreground">
+          <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[0.59375rem] font-semibold text-muted-foreground">
             暂不适用
           </span>
         </div>
@@ -227,8 +231,8 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
               )}
             </span>
             <div className="min-w-0">
-              <h4 className="text-[12px] font-semibold text-foreground">完成条件</h4>
-              <p className="text-[9.5px] text-muted-foreground">
+              <h4 className="text-[0.75rem] font-semibold text-foreground">完成条件</h4>
+              <p className="text-[0.59375rem] text-muted-foreground">
                 {!completionKnown
                   ? '正在读取完成条件状态。'
                   : completionCount
@@ -237,7 +241,7 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
               </p>
             </div>
             {completionKnown && completionCount ? (
-              <span className="ml-auto rounded-full bg-warning-soft px-2 py-0.5 text-[9.5px] font-semibold text-warning">
+              <span className="ml-auto rounded-full bg-warning-soft px-2 py-0.5 text-[0.59375rem] font-semibold text-warning">
                 缺 {completionCount} 项
               </span>
             ) : null}

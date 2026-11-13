@@ -1,50 +1,107 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { applyMarkdownTheme } from '@/lib/markdown-theme'
+import {
+  DEFAULT_FONT_SIZE,
+  DEFAULT_THEME,
+  FONT_SIZE_STORAGE_KEY,
+  THEME_STORAGE_KEY,
+  fontPixels,
+  normalizeFontSize,
+  normalizeTheme,
+  resolveTheme,
+} from '@/lib/appearance.js'
+import type { FontSize, ThemePreference } from '@/lib/appearance.js'
 
-type Theme = 'light' | 'dark'
-
-type ThemeContextValue = {
-  theme: Theme
-  toggleTheme: () => void
-  setTheme: (theme: Theme) => void
+type AppearanceContextValue = {
+  theme: ThemePreference
+  resolvedTheme: 'light' | 'dark'
+  fontSize: FontSize
+  fontPixels: number
+  setTheme: (theme: ThemePreference) => void
+  setFontSize: (fontSize: FontSize) => void
+  resetAppearance: () => void
 }
 
-const ThemeContext = createContext<ThemeContextValue | null>(null)
-const STORAGE_KEY = 'trellis-theme'
+const AppearanceContext = createContext<AppearanceContextValue | null>(null)
 
-function readInitialTheme(): Theme {
-  if (typeof document === 'undefined') return 'light'
-  return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+function readInitialTheme(): ThemePreference {
+  if (typeof document === 'undefined') return DEFAULT_THEME
+  return normalizeTheme(document.documentElement.dataset.theme)
 }
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(readInitialTheme)
+function readInitialFontSize(): FontSize {
+  if (typeof document === 'undefined') return DEFAULT_FONT_SIZE
+  return normalizeFontSize(document.documentElement.dataset.fontSize)
+}
+
+function readSystemDark(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
+function storePreference(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* 隐私模式下忽略写入失败 */
+  }
+}
+
+export function AppearanceProvider({ children }: { children: ReactNode }) {
+  const [theme, setThemeState] = useState<ThemePreference>(readInitialTheme)
+  const [fontSize, setFontSizeState] = useState<FontSize>(readInitialFontSize)
+  const [systemDark, setSystemDark] = useState(readSystemDark)
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches)
+    setSystemDark(media.matches)
+    media.addEventListener('change', onChange)
+    return () => media.removeEventListener('change', onChange)
+  }, [])
+
+  const resolvedTheme = resolveTheme(theme, systemDark)
 
   useEffect(() => {
     const root = document.documentElement
-    root.classList.toggle('dark', theme === 'dark')
-    root.style.colorScheme = theme
-    applyMarkdownTheme(theme)
-    try {
-      localStorage.setItem(STORAGE_KEY, theme)
-    } catch {
-      /* 隐私模式下忽略写入失败 */
-    }
-  }, [theme])
+    root.classList.toggle('dark', resolvedTheme === 'dark')
+    root.style.colorScheme = resolvedTheme
+    root.dataset.theme = theme
+    applyMarkdownTheme(resolvedTheme)
+    storePreference(THEME_STORAGE_KEY, theme)
+  }, [theme, resolvedTheme])
 
-  const setTheme = useCallback((next: Theme) => setThemeState(next), [])
-  const toggleTheme = useCallback(() => {
-    setThemeState((current) => (current === 'dark' ? 'light' : 'dark'))
+  useEffect(() => {
+    document.documentElement.dataset.fontSize = fontSize
+    storePreference(FONT_SIZE_STORAGE_KEY, fontSize)
+  }, [fontSize])
+
+  const setTheme = useCallback((next: ThemePreference) => setThemeState(normalizeTheme(next)), [])
+  const setFontSize = useCallback((next: FontSize) => setFontSizeState(normalizeFontSize(next)), [])
+  const resetAppearance = useCallback(() => {
+    setThemeState(DEFAULT_THEME)
+    setFontSizeState(DEFAULT_FONT_SIZE)
   }, [])
 
-  const value = useMemo(() => ({ theme, toggleTheme, setTheme }), [theme, toggleTheme, setTheme])
+  const value = useMemo(
+    () => ({
+      theme,
+      resolvedTheme,
+      fontSize,
+      fontPixels: fontPixels(fontSize),
+      setTheme,
+      setFontSize,
+      resetAppearance,
+    }),
+    [theme, resolvedTheme, fontSize, setTheme, setFontSize, resetAppearance],
+  )
 
-  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
+  return <AppearanceContext.Provider value={value}>{children}</AppearanceContext.Provider>
 }
 
-export function useTheme() {
-  const context = useContext(ThemeContext)
-  if (!context) throw new Error('useTheme 必须在 ThemeProvider 内使用')
+export function useAppearance() {
+  const context = useContext(AppearanceContext)
+  if (!context) throw new Error('useAppearance 必须在 AppearanceProvider 内使用')
   return context
 }

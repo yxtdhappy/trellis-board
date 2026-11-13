@@ -554,7 +554,7 @@ export function ProjectOnboardingDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[620px]" initialFocus={dialogHeaderRef}>
+      <DialogContent className="sm:max-w-[38.75rem]" initialFocus={dialogHeaderRef}>
         <DialogHeader ref={dialogHeaderRef} tabIndex={-1} className="outline-none">
           <DialogTitle>接入本地 Git 项目</DialogTitle>
           <DialogDescription>
@@ -694,7 +694,7 @@ export function ProjectOnboardingDialog({
                     请先检查生成的 `.trellis` 文件，然后手动提交并推送到 `{inspection.branchName}
                     `。客户端不会自动 commit 或 push。
                   </p>
-                  <code className="rounded bg-muted px-2 py-1 text-[11px]">
+                  <code className="rounded bg-muted px-2 py-1 text-[0.6875rem]">
                     git add .trellis && git commit && git push
                   </code>
                   <Button

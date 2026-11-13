@@ -1,4 +1,14 @@
-import { KeyRound, LogOut, Moon, Plus, Search, Settings2, Sun } from 'lucide-react'
+import { useState } from 'react'
+import {
+  KeyRound,
+  LogOut,
+  Moon,
+  Plus,
+  Search,
+  Settings2,
+  SlidersHorizontal,
+  Sun,
+} from 'lucide-react'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -9,8 +19,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
-import { useTheme } from '@/app/theme'
+import { useAppearance } from '@/app/theme'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
+import { PreferencesDialog } from '@/features/settings/PreferencesDialog'
 import { initials } from '@/features/board/task-view'
 import { TeamSwitcher } from '@/features/admin/TeamSwitcher'
 
@@ -50,7 +61,10 @@ export function TopBar({
   onLogout,
   adminHref,
 }: TopBarProps) {
-  const { theme, toggleTheme } = useTheme()
+  const { resolvedTheme, setTheme } = useAppearance()
+  const [preferencesOpen, setPreferencesOpen] = useState(false)
+  const nextTheme = resolvedTheme === 'dark' ? 'light' : 'dark'
+  const themeLabel = resolvedTheme === 'dark' ? '切换到浅色主题' : '切换到深色主题'
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-4">
@@ -67,8 +81,8 @@ export function TopBar({
             onClick={() => onNavigate(item.id)}
             className={
               item.id === activeNav
-                ? 'rounded-lg bg-secondary px-2.5 py-1.5 text-[12.5px] font-semibold text-foreground'
-                : 'rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground'
+                ? 'rounded-lg bg-secondary px-2.5 py-1.5 text-[0.78125rem] font-semibold text-foreground'
+                : 'rounded-lg px-2.5 py-1.5 text-[0.78125rem] font-medium text-muted-foreground hover:bg-muted hover:text-foreground'
             }
             aria-current={item.id === activeNav ? 'page' : undefined}
           >
@@ -84,7 +98,7 @@ export function TopBar({
         <div className="relative hidden md:block">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            className="w-[230px] pl-8 text-xs"
+            className="w-[14.375rem] pl-8 text-xs"
             placeholder="搜索任务、负责人"
             value={search}
             onChange={(event) => onSearch(event.target.value)}
@@ -98,7 +112,7 @@ export function TopBar({
         <DropdownMenu>
           <DropdownMenuTrigger className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <Avatar className="size-7">
-              <AvatarFallback className="bg-secondary text-[10px] font-semibold text-muted-foreground">
+              <AvatarFallback className="bg-secondary text-[0.625rem] font-semibold text-muted-foreground">
                 {initials(displayName)}
               </AvatarFallback>
             </Avatar>
@@ -115,6 +129,10 @@ export function TopBar({
             <DropdownMenuItem onSelect={onOpenPassword}>
               <KeyRound className="size-3.5" />
               修改密码
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setPreferencesOpen(true)}>
+              <SlidersHorizontal className="size-3.5" />
+              偏好设置
             </DropdownMenuItem>
             {adminHref ? (
               <DropdownMenuItem onSelect={() => window.location.assign(adminHref)}>
@@ -133,13 +151,14 @@ export function TopBar({
           variant="ghost"
           size="icon"
           className="size-8"
-          onClick={toggleTheme}
-          aria-label={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}
-          title={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}
+          onClick={() => setTheme(nextTheme)}
+          aria-label={themeLabel}
+          title={themeLabel}
         >
-          {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+          {resolvedTheme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
         </Button>
       </div>
+      <PreferencesDialog open={preferencesOpen} onOpenChange={setPreferencesOpen} />
     </header>
   )
 }

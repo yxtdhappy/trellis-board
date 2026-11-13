@@ -27,9 +27,11 @@ export function Panel({ kicker, title, description, action, className, children 
     <section className={cn('flex flex-col gap-2.5 rounded-xl bg-card p-4', className)}>
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          {title ? <h2 className="text-[13.5px] font-semibold text-foreground">{title}</h2> : null}
+          {title ? (
+            <h2 className="text-[0.84375rem] font-semibold text-foreground">{title}</h2>
+          ) : null}
           {kicker || description ? (
-            <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+            <p className="mt-0.5 text-[0.6875rem] leading-relaxed text-muted-foreground">
               {kicker ? <span className="font-semibold tracking-[0.14em]">{kicker}</span> : null}
               {kicker && description ? ' · ' : null}
               {description}
@@ -47,7 +49,7 @@ export function StatusPill({ value }: { value: string | null | undefined }) {
   return (
     <span
       className={cn(
-        'rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap',
+        'rounded-full px-2 py-0.5 text-[0.625rem] font-semibold whitespace-nowrap',
         TONE_CLASS[statusTone(value)],
       )}
     >
@@ -58,7 +60,7 @@ export function StatusPill({ value }: { value: string | null | undefined }) {
 
 export function EmptyRow({ children }: { children: ReactNode }) {
   return (
-    <p className="rounded-lg bg-muted/50 px-3 py-4 text-center text-[11px] text-muted-foreground">
+    <p className="rounded-lg bg-muted/50 px-3 py-4 text-center text-[0.6875rem] text-muted-foreground">
       {children}
     </p>
   )
@@ -75,9 +77,9 @@ export function Field({
 }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[11px] font-medium text-muted-foreground">{label}</span>
+      <span className="text-[0.6875rem] font-medium text-muted-foreground">{label}</span>
       {children}
-      {hint ? <span className="text-[10px] text-muted-foreground">{hint}</span> : null}
+      {hint ? <span className="text-[0.625rem] text-muted-foreground">{hint}</span> : null}
     </label>
   )
 }
@@ -120,8 +122,8 @@ function auditSummary(event: AuditEvent) {
 export function AuditItem({ event }: { event: AuditEvent }) {
   const actor = event.actorUserId || event.actorAgentId || 'system'
   return (
-    <article className="flex items-center gap-3 border-b border-border/60 py-2 text-[11.5px] last:border-b-0">
-      <span className="w-11 shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
+    <article className="flex items-center gap-3 border-b border-border/60 py-2 text-[0.71875rem] last:border-b-0">
+      <span className="w-11 shrink-0 text-[0.65625rem] tabular-nums text-muted-foreground">
         {auditClock(event.occurredAt)}
       </span>
       <span className="w-16 shrink-0 truncate font-medium">{actor}</span>

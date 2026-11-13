@@ -57,7 +57,7 @@ export function AssigneeWarningDialog({
 
   return (
     <Dialog open={Boolean(warning)} onOpenChange={(open) => !open && !busy && onCancel()}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[31.25rem]">
         <DialogHeader>
           <DialogTitle>你正在修改他人负责的任务</DialogTitle>
           <DialogDescription>

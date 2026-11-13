@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
+- **Total Sessions**: 14
 - **Last Active**: 2026-11-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~466 | Active |
+| `journal-1.md` | ~501 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-11-13 | 偏好设置：主题与根字号缩放 | `7d720e2` | `main` |
 | 13 | 2026-11-13 | 客户端 Python 环境门与只看我的过滤修复 | `3d3352f`, `cc3d7dd` | `main` |
 | 12 | 2026-11-13 | 客户端只产出绿色包：移除 NSIS 安装包构建 | `b3feff7` | `main` |
 | 11 | 2026-11-13 | 归档父任务：客户端与 web 视觉统一 | - | `main` |

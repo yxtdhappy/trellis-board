@@ -56,7 +56,7 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
       <div className="mb-2 flex items-center justify-between gap-2">
         <div>
           <h2 className="text-xs font-semibold">创建与改派操作</h2>
-          <p className="text-[10.5px] text-muted-foreground">
+          <p className="text-[0.65625rem] text-muted-foreground">
             这些是独立操作项；成功前不会插入正式任务卡，也不会提前改变负责人。
           </p>
         </div>
@@ -68,7 +68,7 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
           return (
             <div
               key={operation.id || `${operation.commandType}-${operation.taskKey}`}
-              className="flex flex-wrap items-center gap-2 py-2 text-[11px]"
+              className="flex flex-wrap items-center gap-2 py-2 text-[0.6875rem]"
             >
               {active ? (
                 <LoaderCircle className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
@@ -78,7 +78,7 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
               </strong>
               <span className={status.tone}>{status.label}</span>
               {operation.error ? (
-                <span className="basis-full break-words text-[10.5px] text-destructive">
+                <span className="basis-full break-words text-[0.65625rem] text-destructive">
                   {operation.error}
                 </span>
               ) : null}

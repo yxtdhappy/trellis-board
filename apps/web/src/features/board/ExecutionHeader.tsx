@@ -45,11 +45,13 @@ export function ExecutionHeader({
     <div className="flex flex-col gap-2.5">
       <div className="flex flex-wrap items-center gap-3">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold tracking-[0.08em] text-muted-foreground">
+          <p className="text-[0.625rem] font-semibold tracking-[0.08em] text-muted-foreground">
             PERSONAL / CURRENT REPOSITORY
           </p>
-          <h1 className="text-[19px] leading-6 font-semibold font-heading">把每个任务放回流程里</h1>
-          <p className="text-[11.5px] text-muted-foreground">
+          <h1 className="text-[1.1875rem] leading-6 font-semibold font-heading">
+            把每个任务放回流程里
+          </h1>
+          <p className="text-[0.71875rem] text-muted-foreground">
             全部授权项目 · 13 阶段证据 · {total} 个进行中任务
           </p>
         </div>
@@ -66,8 +68,8 @@ export function ExecutionHeader({
                 onClick={() => onChange({ scope: item.id === 'mine' ? 'mine' : 'all' })}
                 className={
                   (item.id === 'mine') === (filters.scope === 'mine')
-                    ? 'rounded-md bg-card px-2.5 py-1 text-[11.5px] font-semibold'
-                    : 'rounded-md px-2.5 py-1 text-[11.5px] text-muted-foreground hover:text-foreground'
+                    ? 'rounded-md bg-card px-2.5 py-1 text-[0.71875rem] font-semibold'
+                    : 'rounded-md px-2.5 py-1 text-[0.71875rem] text-muted-foreground hover:text-foreground'
                 }
               >
                 {item.label}
@@ -86,8 +88,8 @@ export function ExecutionHeader({
             key={view.id}
             className={
               filters.executionView === view.id
-                ? 'flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground'
-                : 'flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground'
+                ? 'flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[0.6875rem] font-semibold text-primary-foreground'
+                : 'flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1 text-[0.6875rem] text-muted-foreground hover:text-foreground'
             }
           >
             <button type="button" onClick={() => onChange({ executionView: view.id })}>
@@ -110,14 +112,14 @@ export function ExecutionHeader({
             onClick={() => onChange({ executionView: view.id })}
             className={
               filters.executionView === view.id
-                ? 'rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground'
-                : 'rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground'
+                ? 'rounded-full bg-primary px-2.5 py-1 text-[0.6875rem] font-semibold text-primary-foreground'
+                : 'rounded-full border border-border bg-card px-2.5 py-1 text-[0.6875rem] text-muted-foreground hover:text-foreground'
             }
           >
             {view.name}
           </button>
         ))}
-        <span className="ml-auto text-[11px] text-muted-foreground">
+        <span className="ml-auto text-[0.6875rem] text-muted-foreground">
           {currentViewLabel} · {today}
         </span>
       </div>
@@ -132,7 +134,7 @@ export function ExecutionHeader({
           ]}
           onChange={(value) => onChange({ projectId: value })}
         />
-        <label className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
+        <label className="flex items-center gap-1.5 text-[0.71875rem] text-muted-foreground">
           分支
           <Input
             className="w-32 text-xs"
@@ -190,7 +192,7 @@ type FilterFieldProps = {
 function FilterField({ label, value, options, onChange }: FilterFieldProps) {
   const current = options.find((option) => option.id === value) || options[0]
   return (
-    <label className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
+    <label className="flex items-center gap-1.5 text-[0.71875rem] text-muted-foreground">
       {label}
       <Select value={current.id} onValueChange={(next) => onChange(String(next ?? ''))}>
         <SelectTrigger className="min-w-28 gap-1.5 rounded-md text-xs">

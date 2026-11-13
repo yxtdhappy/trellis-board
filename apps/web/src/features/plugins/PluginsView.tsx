@@ -106,17 +106,17 @@ export function PluginsView() {
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold tracking-[0.08em] text-muted-foreground">
+          <p className="text-[0.625rem] font-semibold tracking-[0.08em] text-muted-foreground">
             PLUGINS / RUNTIME
           </p>
-          <h1 className="text-[19px] leading-6 font-semibold font-heading">
+          <h1 className="text-[1.1875rem] leading-6 font-semibold font-heading">
             插件在做什么，一眼看清
           </h1>
-          <p className="text-[11.5px] text-muted-foreground">
+          <p className="text-[0.71875rem] text-muted-foreground">
             版本、兼容性、运行状态与最近日志；启停会立即作用于插件进程。
           </p>
         </div>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-[0.6875rem] text-muted-foreground">
           {hostVersion ? `宿主 ${hostVersion}` : ''}
           {hostVersion ? ' · ' : ''}
           {plugins.length} 个插件
@@ -152,15 +152,15 @@ export function PluginsView() {
               >
                 <header className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <h2 className="truncate text-[15px] font-semibold font-heading">
+                    <h2 className="truncate text-[0.9375rem] font-semibold font-heading">
                       {plugin.name || plugin.id}
                     </h2>
-                    <p className="truncate font-mono text-[11px] text-muted-foreground">
+                    <p className="truncate font-mono text-[0.6875rem] text-muted-foreground">
                       {plugin.id}
                     </p>
                   </div>
                   <span
-                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusTone(plugin)}`}
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[0.625rem] font-semibold ${statusTone(plugin)}`}
                   >
                     {plugin.status === 'error' && plugin.lastError
                       ? '错误'
@@ -168,7 +168,7 @@ export function PluginsView() {
                   </span>
                 </header>
 
-                <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
+                <div className="flex flex-wrap gap-1.5 text-[0.625rem] text-muted-foreground">
                   <span className="rounded-full border border-border px-2 py-0.5">
                     v{plugin.version ?? '?'}
                   </span>
@@ -191,12 +191,12 @@ export function PluginsView() {
                 </div>
 
                 {plugin.rootPaths?.length ? (
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-[0.6875rem] text-muted-foreground">
                     启动后占用：{plugin.rootPaths.join('，')}
                   </p>
                 ) : null}
                 {plugin.lastError ? (
-                  <p className="text-[11px] text-destructive">{plugin.lastError}</p>
+                  <p className="text-[0.6875rem] text-destructive">{plugin.lastError}</p>
                 ) : null}
 
                 <div className="mt-auto flex gap-2">

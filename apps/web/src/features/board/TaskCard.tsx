@@ -44,7 +44,7 @@ export function CopyTaskNameButton({
   return (
     <button
       type="button"
-      className={`flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted ${className}`}
+      className={`flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[0.625rem] text-muted-foreground hover:bg-muted ${className}`}
       onClick={copyName}
       title={`复制任务名：${task.dirName}`}
       aria-label={`复制任务名：${task.dirName}`}
@@ -84,41 +84,41 @@ export function TaskCard({ task, onOpen, onEditPlan }: TaskCardProps) {
         onClick={() => onOpen(task)}
       />
       <div className="flex items-start gap-2">
-        <span className="truncate text-[10.5px] text-muted-foreground">{projectLabel}</span>
+        <span className="truncate text-[0.65625rem] text-muted-foreground">{projectLabel}</span>
         <div className="ml-auto flex items-center gap-1">
           {task.groupRelationsValid === false ? (
             <Badge
               variant="outline"
-              className="h-4 rounded-full px-1.5 text-[9px] text-destructive"
+              className="h-4 rounded-full px-1.5 text-[0.5625rem] text-destructive"
             >
               关系异常
             </Badge>
           ) : null}
           <span
-            className={`rounded-full px-1.5 py-px text-[9px] font-semibold ${priorityTone(task.priority)}`}
+            className={`rounded-full px-1.5 py-px text-[0.5625rem] font-semibold ${priorityTone(task.priority)}`}
           >
             {task.priority || 'P2'}
           </span>
         </div>
       </div>
 
-      <h4 className="line-clamp-2 text-[12px] leading-4 font-semibold text-foreground">
+      <h4 className="line-clamp-2 text-[0.75rem] leading-4 font-semibold text-foreground">
         {task.title}
       </h4>
-      <p className="break-all text-[10px] leading-3.5 text-muted-foreground">{task.dirName}</p>
+      <p className="break-all text-[0.625rem] leading-3.5 text-muted-foreground">{task.dirName}</p>
 
-      <div className="flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-1 text-[0.625rem] text-muted-foreground">
         <span>{dueLabel(task.execution?.dueDate)}</span>
         {task.execution?.milestone ? (
           <span className="text-foreground/70">{task.execution.milestone}</span>
         ) : null}
         {tags.slice(0, 2).map((tag) => (
-          <span key={tag} className="rounded-sm bg-muted px-1 py-px text-[9.5px]">
+          <span key={tag} className="rounded-sm bg-muted px-1 py-px text-[0.59375rem]">
             {tag}
           </span>
         ))}
         {conditions.map((condition) => (
-          <span key={condition.kind} className="rounded-sm bg-muted px-1 py-px text-[9.5px]">
+          <span key={condition.kind} className="rounded-sm bg-muted px-1 py-px text-[0.59375rem]">
             {condition.label}
           </span>
         ))}
@@ -131,7 +131,7 @@ export function TaskCard({ task, onOpen, onEditPlan }: TaskCardProps) {
           {attention.map((reason) => (
             <span
               key={reason.id}
-              className="rounded-full bg-destructive/10 px-1.5 py-px text-[9.5px] font-medium text-destructive"
+              className="rounded-full bg-destructive/10 px-1.5 py-px text-[0.59375rem] font-medium text-destructive"
             >
               {reason.label}
             </span>
@@ -139,8 +139,8 @@ export function TaskCard({ task, onOpen, onEditPlan }: TaskCardProps) {
         </div>
       ) : null}
 
-      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-        <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-[8px] font-semibold">
+      <div className="flex items-center gap-1.5 text-[0.625rem] text-muted-foreground">
+        <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-[0.5rem] font-semibold">
           {initials(task.assignee)}
         </span>
         <span className="truncate">{task.assignee || '未派发'}</span>
@@ -153,7 +153,7 @@ export function TaskCard({ task, onOpen, onEditPlan }: TaskCardProps) {
         {onEditPlan ? (
           <button
             type="button"
-            className="rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
+            className="rounded-md border border-border px-1.5 py-0.5 text-[0.625rem] text-muted-foreground hover:bg-muted"
             onClick={() => onEditPlan(task)}
             disabled={task.archived}
             title={task.archived ? '归档任务只读' : '编辑计划字段'}
