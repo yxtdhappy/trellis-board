@@ -54,6 +54,8 @@ plugins/*
 !plugins/acp-dispatch/**
 !plugins/scenario-copilot/
 !plugins/scenario-copilot/**
+!plugins/witops-core/
+!plugins/witops-core/**
 
 # Desktop client build output
 apps/desktop/src-tauri/target/
