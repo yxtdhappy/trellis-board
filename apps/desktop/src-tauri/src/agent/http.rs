@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::path::Path;
 use std::time::Duration;
 
@@ -16,6 +17,34 @@ const MAX_SSE_FRAME_BYTES: usize = 1_048_576;
 const SSE_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_RETRY_AFTER_MS: u64 = 300_000;
 
+/// 本机和局域网服务不能被用户级 HTTP_PROXY 截走；公网地址仍沿用代理。
+pub(crate) fn bypass_proxy_for_server(server_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(server_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") {
+        return true;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        Ok(IpAddr::V6(ip)) => {
+            let first = ip.segments()[0];
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || first & 0xfe00 == 0xfc00
+                || first & 0xffc0 == 0xfe80
+        }
+        Err(_) => false,
+    }
+}
+
 pub struct ApiClient {
     base_url: String,
     credential: Option<String>,
@@ -32,6 +61,9 @@ impl ApiClient {
         let mut builder = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(15))
             .redirect(reqwest::redirect::Policy::none());
+        if bypass_proxy_for_server(&base_url) {
+            builder = builder.no_proxy();
+        }
         if let Some(path) = ca_file.filter(|path| !path.as_os_str().is_empty()) {
             let pem = load_ca_file(path)?;
             for certificate in reqwest::Certificate::from_pem_bundle(&pem).map_err(|error| {
@@ -346,5 +378,31 @@ mod tests {
         assert_eq!(error.server_code.as_deref(), Some("CONFLICT"));
         assert_eq!(error.message, "clientSequence 必须严格递增");
         assert!(error.details.is_some());
+    }
+
+    #[test]
+    fn bypasses_proxy_only_for_local_and_private_servers() {
+        for url in [
+            "http://localhost:4317",
+            "http://agent.local:4317",
+            "http://127.0.0.1:4317",
+            "http://10.1.2.3:4317",
+            "http://172.16.0.1:4317",
+            "http://172.31.255.254:4317",
+            "http://192.168.65.27:4317",
+            "http://169.254.1.1:4317",
+            "http://[::1]:4317",
+            "http://[fd00::1]:4317",
+            "http://[fe80::1]:4317",
+        ] {
+            assert!(bypass_proxy_for_server(url), "{url}");
+        }
+        for url in [
+            "http://172.32.0.1:4317",
+            "https://board.example.com",
+            "http://8.8.8.8:4317",
+        ] {
+            assert!(!bypass_proxy_for_server(url), "{url}");
+        }
     }
 }

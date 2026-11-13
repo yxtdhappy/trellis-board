@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::agent::credential::CredentialStore;
-use crate::agent::http::ApiClient;
+use crate::agent::http::{bypass_proxy_for_server, ApiClient};
 use crate::agent::protocol::{
     self, code, err, parse_enroll_response, parse_heartbeat_response, AgentError, AgentResult,
     AGENT_PROTOCOL_VERSION, AGENT_VERSION, LISTENER_REPORT_VERSION,
@@ -140,13 +140,15 @@ struct SessionClient {
 impl SessionClient {
     fn new(server_url: &str) -> AgentResult<Self> {
         let server_url = protocol::normalize_server_url(server_url)?;
-        let http = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(15))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| {
-                AgentError::new(code::HTTP_ERROR, format!("HTTP 客户端初始化失败：{error}"))
-            })?;
+            .redirect(reqwest::redirect::Policy::none());
+        if bypass_proxy_for_server(&server_url) {
+            builder = builder.no_proxy();
+        }
+        let http = builder.build().map_err(|error| {
+            AgentError::new(code::HTTP_ERROR, format!("HTTP 客户端初始化失败：{error}"))
+        })?;
         Ok(Self { server_url, http })
     }
 
