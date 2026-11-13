@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { TRELLIS_AGENT_TOOLS } from '@shared/trellis-agent-tools.js'
+import { TRELLIS_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import { normalizeProjectInspection, type ProjectInspection } from '@/lib/project-inspection.js'
 import { onboardingErrorMessage, preflightBlockReason } from '@/lib/onboarding-probe.js'

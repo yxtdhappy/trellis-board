@@ -5,7 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { DatabaseSync } from 'node:sqlite'
-import { withTransaction } from '../apps/server/database.js'
+import { withTransaction } from '@trellis-board/server/database.js'
 
 const DEFAULT_PORT = 4317
 

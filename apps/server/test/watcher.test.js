@@ -8,7 +8,7 @@ import {
   isRelevantTrellisChange,
   normalizeWatchPath,
 } from '../watcher.js'
-import { createTrellisWatcher } from '../../../packages/shared/trellis-watcher.js'
+import { createTrellisWatcher } from '@trellis-board/shared/trellis-watcher.js'
 
 test('只把 Trellis 任务、工作区与开发者变更视为看板相关事件', () => {
   assert.equal(isRelevantTrellisChange('tasks/10-27-demo/task.json'), true)

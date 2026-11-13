@@ -11,7 +11,7 @@ import {
   MAX_LIVE_BATCH_BYTES,
   readJsonBody,
 } from '../team/http.js'
-import { TASK_SNAPSHOT_MAX_TRANSPORT_BYTES } from '../../../packages/shared/task-snapshot.js'
+import { TASK_SNAPSHOT_MAX_TRANSPORT_BYTES } from '@trellis-board/shared/task-snapshot.js'
 
 const PUBLIC_ORIGIN = 'http://127.0.0.1:4317'
 const HOST = '127.0.0.1:4317'

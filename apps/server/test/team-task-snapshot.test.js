@@ -12,7 +12,7 @@ import {
   TASK_SNAPSHOT_MAX_BATCH_BYTES,
   TASK_SNAPSHOT_MAX_FILE_BYTES,
   TASK_SNAPSHOT_MAX_FILES,
-} from '../../../packages/shared/task-snapshot.js'
+} from '@trellis-board/shared/task-snapshot.js'
 
 test('任务快照数据库每日备份保留最近七份', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-task-backup-'))

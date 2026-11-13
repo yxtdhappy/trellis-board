@@ -18,7 +18,6 @@
     "desktop:package": "pwsh -File apps/desktop/package-portable.ps1",
     "release:desktop": "node scripts/release-desktop.mjs",
     "capacity": "node scripts/team-capacity-check.js",
-    "check:boundaries": "node scripts/check-boundaries.mjs",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "test": "node --test \"apps/*/test/*.test.js\" \"packages/*/test/*.test.js\"",

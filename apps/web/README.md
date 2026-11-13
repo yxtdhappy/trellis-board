@@ -29,7 +29,7 @@ npm run web:dev        # Vite dev server，/api 代理到 127.0.0.1:4317
 ## 约束
 
 - 纯模块与共享代码：`src/lib/*` 不得依赖 DOM/Node 内置；跨端模块放 `packages/shared/`，通过
-  `@shared` 别名（`vite.config.ts` / `vite.desktop.config.ts` / `tsconfig.app.json` 三处）引用。
+  `@trellis-board/shared/…` 引入（`tsconfig.app.json` 的 `paths` 登记）。
 - 组件不直接 `fetch`，数据请求只走 `src/hooks/`。
 - 构建产物 `apps/server/public/` 与 `apps/desktop/ui/` 都是生成目录，不手改。
 - 规范细节见 `.trellis/spec/frontend/`。

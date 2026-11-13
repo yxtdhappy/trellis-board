@@ -53,7 +53,7 @@ import {
   publicWorkspaceTemplateManifest,
   readWorkspaceTemplate,
 } from './workspace-templates.js'
-import { TASK_SNAPSHOT_MAX_TRANSPORT_BYTES } from '../../../packages/shared/task-snapshot.js'
+import { TASK_SNAPSHOT_MAX_TRANSPORT_BYTES } from '@trellis-board/shared/task-snapshot.js'
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
 const defaultPublicDir = path.resolve(serverDir, '../public')
@@ -1700,7 +1700,7 @@ export async function createTeamRuntime({
       throw teamError(
         503,
         ERROR_CODES.AUTH_REQUIRED,
-        '团队模式尚无系统管理员，请先在本机运行 server/team/cli.js init-admin',
+        '团队模式尚无系统管理员，请先在本机运行 node apps/server/team/cli.js init-admin',
       )
     }
     const boardEvents = createBoardEventService(boardEventOptions)

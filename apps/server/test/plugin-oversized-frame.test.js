@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createHarness, waitFor } from '../../../packages/test-support/plugin-runtime.js'
+import { createHarness, waitFor } from '@trellis-board/test-support/plugin-runtime.js'
 
 test('单帧超过 1 MiB 时宿主断开插件并写 frame-too-large 审计', async () => {
   const harness = await createHarness({

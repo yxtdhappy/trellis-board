@@ -3,10 +3,10 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createHarness, startHttpServer, waitFor } from '../../../packages/test-support/plugin-runtime.js'
+import { createHarness, startHttpServer, waitFor } from '@trellis-board/test-support/plugin-runtime.js'
 import { createWatchRuntime } from '../../../apps/server/watcher.js'
 import { clearScanCaches, scanRepository } from '../../../apps/server/loader.js'
-import { createTaskRepository } from '../../../packages/test-support/task-repository.js'
+import { createTaskRepository } from '@trellis-board/test-support/task-repository.js'
 
 const PLUGIN_MODULE = fileURLToPath(new URL('../index.js', import.meta.url))
 const FAKE_AGENT = fileURLToPath(new URL('./fixtures/fake-agent.js', import.meta.url))

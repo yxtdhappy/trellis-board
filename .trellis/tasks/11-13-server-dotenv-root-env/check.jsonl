@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/11-13-server-dotenv-root-env/prd.md", "reason": "逐条核对 A1-A8 验收标准是否满足。"}
+{"file": ".trellis/tasks/11-13-server-dotenv-root-env/design.md", "reason": "核对实现与设计契约一致（签名、静默 ENOENT、中文错误、调用顺序、命令行优先）。"}
+{"file": ".trellis/tasks/11-13-server-dotenv-root-env/research/dependency-opportunities.md", "reason": "确认文档落点全部改写且未越界引入其他重构。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "审查测试覆盖、真机验证与代码风格。"}
+{"file": ".trellis/spec/backend/index.md", "reason": "复核三处限制已删除且无替代限制，check:boundaries 仍通过。"}

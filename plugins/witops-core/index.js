@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createPlugin } from "../../apps/server/plugins/sdk.js";
+import { createPlugin } from "@trellis-board/server/plugins/sdk.js";
 import { createWitopsClient } from "./witops-client.js";
 import { createSession, resolveAuthMode } from "./auth.js";
 import { createLinkIndex } from "./links.js";

@@ -6,8 +6,8 @@ import {
   snapshotSha256,
   TASK_SNAPSHOT_LIMIT_ERROR_CODE,
   validateSnapshotFile,
-} from '../../../packages/shared/task-snapshot.js'
-import { validateGitBranchName } from '../../../packages/shared/remote-identity.js'
+} from '@trellis-board/shared/task-snapshot.js'
+import { validateGitBranchName } from '@trellis-board/shared/remote-identity.js'
 import { appendAuditEvent } from './audit.js'
 import { ERROR_CODES, teamError } from './errors.js'
 

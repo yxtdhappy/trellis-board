@@ -11,7 +11,7 @@ import {
   TASK_SNAPSHOT_MAX_BATCH_BYTES,
   TASK_SNAPSHOT_MAX_FILE_BYTES,
   TASK_SNAPSHOT_MAX_FILES,
-} from '../../../packages/shared/task-snapshot.js'
+} from '@trellis-board/shared/task-snapshot.js'
 
 const RATE_WINDOW_MS = 1000
 const RATE_LIMIT = 5

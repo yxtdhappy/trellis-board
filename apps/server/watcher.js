@@ -2,7 +2,7 @@ import {
   createTrellisWatcher,
   isRelevantTrellisChange,
   normalizeWatchPath,
-} from '../../packages/shared/trellis-watcher.js'
+} from '@trellis-board/shared/trellis-watcher.js'
 
 export { isRelevantTrellisChange, normalizeWatchPath }
 

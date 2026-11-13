@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Input } from '@/components/ui/input'
-import { TRELLIS_AGENT_TOOLS } from '@shared/trellis-agent-tools.js'
+import { TRELLIS_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
 
 type AgentToolSelectorProps = {
   existingTools: readonly string[]

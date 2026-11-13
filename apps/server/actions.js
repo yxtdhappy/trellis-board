@@ -3,7 +3,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { pythonCommandCandidates } from './python.js'
 import { getRepositories } from './repositories.js'
-import { slugifyTaskTitle, TASK_SLUG_PATTERN } from '../../packages/shared/slug.js'
+import { slugifyTaskTitle, TASK_SLUG_PATTERN } from '@trellis-board/shared/slug.js'
 
 const ALLOWED_PRIORITIES = new Set(['P0', 'P1', 'P2', 'P3'])
 

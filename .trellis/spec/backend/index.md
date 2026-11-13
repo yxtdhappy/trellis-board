@@ -1,6 +1,6 @@
 # 后端开发规范
 
-适用范围：`apps/server/`。后端是 Node.js 原生 HTTP 服务，不依赖 Web 框架或数据库驱动包；外部固定版本 Trellis CLI 只作为受限子进程使用。任务事实来自白名单 Trellis 仓库的文件系统，Board 自身状态来自跨平台运行数据目录中的 `board.sqlite`。
+适用范围：`apps/server/`。后端是 Node.js HTTP 服务，外部固定版本 Trellis CLI 只作为受限子进程使用。任务事实来自白名单 Trellis 仓库的文件系统，Board 自身状态来自跨平台运行数据目录中的 `board.sqlite`。
 
 ## 规范索引
 
@@ -23,7 +23,7 @@
 - 服务默认监听 `0.0.0.0`、端口 `4317`；可用环境变量显式收窄到 `127.0.0.1`。
 - 服务端无构建步骤，启动命令直接执行 `node apps/server/index.js`；前端静态资源由根目录 `npm run build` 写入 `apps/server/public/`。
 - 运行数据只写 `TRELLIS_BOARD_DATA_DIR`（默认是系统用户数据目录）；用户要求的任务操作只写白名单仓库 `.trellis/` 内允许的文件。
-- 跨包引用只用仓库相对路径（如 `../../packages/shared/slug.js`），不写 workspace 包名；`npm run check:boundaries` 会拦截违规导入。
+- 跨包引用使用 workspace 包名（`@trellis-board/shared/…`、`@trellis-board/test-support/…`）；被多个 workspace 共用的第三方依赖在根 `package.json` 声明，仅单包使用的留在该包。
 - `standalone` 是无账号鉴权、只适合可信网络的本机/局域网模式；`team` 才有账号、团队、审计和
   Agent 权限。Team 仍使用单实例 SQLite 和内存 SSE，不能描述成共享数据库或多实例高可用。
 
