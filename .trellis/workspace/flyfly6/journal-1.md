@@ -596,3 +596,43 @@ tag 推送不再直接构建，由 dispatch-main 作业用 gh api 触发 main �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 18: 修复桌面客户端外观偏好跨 origin 丢失
+<!-- trellis-session: v=2 fp=6afb63870e69078d -->
+
+**Date**: 2026-11-13
+**Task**: 修复桌面客户端外观偏好跨 origin 丢失
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+偏好从 origin 绑定的 localStorage 迁到设备级 appearance.json + Tauri IPC：任意 Board 地址、登录页与控制窗口都读同一份设备偏好
+
+### Main Changes
+
+- 新增 appearance.rs：Appearance{theme,fontSize} 归一化、BOM 容忍、tmp+rename 原子写、损坏回落 system/md
+- main.rs 新增 appearance_load（只读）/appearance_save（ensure_board_caller），权限 load 给 main/live-control/board，save 仅 board
+- theme.tsx 挂载时用 appearance_load 校正，touched 门控避免挂载回写；登录页与 control 入口包 AppearanceProvider
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `32bd245` | fix(desktop): persist appearance prefs in client data dir |
+| `02d8314` | chore(task): archive 11-13-desktop-appearance-prefs |
+
+### Testing
+
+- [OK] npm test：436 tests / 434 pass / 0 fail / 2 skipped
+- [OK] cargo test：113 passed（含 appearance_normalises_and_round_trips）
+- [OK] 隔离 e2e（4461/9341）：127.0.0.1 与 localhost 互换重启后 dark/xl/20px 保持；登录页 tauri.localhost 跟随设备偏好且 save 被拒（尚未登录 Board）；损坏文件回落 system/md
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 真机打开实时同步控制窗口，确认 control.html 读取设备外观偏好
