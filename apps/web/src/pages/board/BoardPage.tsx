@@ -50,6 +50,8 @@ const NAV: BoardNavItem[] = [
   { id: 'plugins', label: '插件' },
 ]
 
+type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
+
 export function BoardPage() {
   const controller = useBoard()
   const [view, setView] = useState('pipeline')
@@ -77,9 +79,9 @@ export function BoardPage() {
     error,
   } = controller
 
-  const isTauri = Boolean(
-    (window as Window & { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__?.core?.invoke,
-  )
+  const desktopInvoke = (window as Window & { __TAURI__?: { core?: { invoke?: DesktopInvoke } } })
+    .__TAURI__?.core?.invoke
+  const isTauri = Boolean(desktopInvoke)
   const canManageAdmin =
     Boolean(runtime?.systemAdmin) ||
     Boolean(runtime?.teams?.some((team) => team.role === 'admin')) ||
@@ -213,6 +215,14 @@ export function BoardPage() {
       : `文件监听中 · ${projects.length} 个仓库`
 
   async function handleLogout() {
+    if (desktopInvoke) {
+      try {
+        await desktopInvoke('desktop_logout')
+        return
+      } catch {
+        /* 旧客户端没有桌面退出命令时回退到网页退出流程 */
+      }
+    }
     try {
       await logout()
     } finally {

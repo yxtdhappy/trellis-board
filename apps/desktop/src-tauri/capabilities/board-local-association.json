@@ -12,6 +12,7 @@
     ]
   },
   "permissions": [
+    "allow-desktop-logout",
     "allow-associate-pending-project",
     "allow-cancel-pending-project",
     "allow-check-pending-project-push",

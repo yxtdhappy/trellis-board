@@ -247,6 +247,23 @@ fn navigate_local_login(app: &AppHandle, state: &DesktopAuthState) {
     }
 }
 
+fn forget_saved_password() {
+    let mut config = match config::load() {
+        Ok(Some(config)) => config,
+        Ok(None) => return,
+        Err(error) => {
+            logging::warn(&format!("退出登录时读取本地配置失败：{error}"));
+            return;
+        }
+    };
+    if config.password.take().is_none() {
+        return;
+    }
+    if let Err(error) = config::save(&config) {
+        logging::warn(&format!("退出登录时清除已保存密码失败：{error}"));
+    }
+}
+
 async fn clear_desktop_session(app: &AppHandle, state: &DesktopAuthState, revoke_session: bool) {
     agent_service::stop(app);
     let board = state.board_url.read().ok().and_then(|value| value.clone());
@@ -261,12 +278,21 @@ async fn clear_desktop_session(app: &AppHandle, state: &DesktopAuthState, revoke
     if let Ok(mut value) = state.board_url.write() {
         *value = None;
     }
+    forget_saved_password();
     navigate_local_login(app, state);
     if revoke_session {
         if let (Some(board), Some(token)) = (board.as_ref(), token.as_deref()) {
             let _ = agent_service::logout(app, &server_root(board), token).await;
         }
     }
+}
+
+#[tauri::command]
+async fn desktop_logout(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    ensure_board_caller(&app, &window)?;
+    let auth = app.state::<DesktopAuthState>().inner().clone();
+    clear_desktop_session(&app, &auth, true).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -883,6 +909,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             app_status,
+            desktop_logout,
             desktop_login,
             pick_local_project_folder,
             inspect_local_project,

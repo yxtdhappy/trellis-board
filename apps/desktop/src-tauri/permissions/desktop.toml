@@ -11,6 +11,11 @@ description = "仅本地登录页向进程内 Agent 提交账号密码。"
 commands.allow = ["desktop_login"]
 
 [[permission]]
+identifier = "allow-desktop-logout"
+description = "当前 Board origin 可退出桌面登录并返回本地登录页。"
+commands.allow = ["desktop_logout"]
+
+[[permission]]
 identifier = "allow-pick-local-project-folder"
 description = "当前 Board origin 只能弹出系统目录选择器并拿到用户选中的本地项目根目录。"
 commands.allow = ["pick_local_project_folder"]

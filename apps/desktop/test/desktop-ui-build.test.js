@@ -68,6 +68,29 @@ test('desktop ui output is ignored and hand-written pages are gone', () => {
   }
 })
 
+test('desktop logout uses a board-only command and forgets the saved password', () => {
+  const permissions = read('apps/desktop/src-tauri/permissions/desktop.toml')
+  const capability = JSON.parse(
+    read('apps/desktop/src-tauri/capabilities/board-local-association.json'),
+  )
+  const main = read('apps/desktop/src-tauri/src/main.rs')
+  const boardPage = read('apps/web/src/pages/board/BoardPage.tsx')
+  const loginApp = read('apps/web/src/desktop/LoginApp.tsx')
+
+  assert.match(permissions, /identifier = "allow-desktop-logout"/)
+  assert.match(permissions, /commands\.allow = \["desktop_logout"\]/)
+  assert.ok(capability.permissions.includes('allow-desktop-logout'))
+  assert.match(main, /async fn desktop_logout\(/)
+  assert.match(main, /ensure_board_caller\(&app, &window\)\?/)
+  assert.match(main, /clear_desktop_session\(&app, &auth, true\)\.await/)
+  assert.match(main, /forget_saved_password\(\);/)
+  assert.match(main, /config\.password\.take\(\)\.is_none\(\)/)
+  assert.match(main, /desktop_logout,\s+desktop_login,/)
+  assert.match(boardPage, /await desktopInvoke\('desktop_logout'\)/)
+  assert.match(boardPage, /await logout\(\)/)
+  assert.match(loginApp, /app\.serverUrl && app\.username && app\.password/)
+})
+
 test('windows workflows build the desktop ui before the client is bundled or tested', () => {
   const workflow = read('.github/workflows/windows.yml')
   const jobs = workflow.split(/\n {2}(?=\w[\w-]*:\n)/)
