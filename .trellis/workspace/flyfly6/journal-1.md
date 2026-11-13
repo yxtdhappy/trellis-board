@@ -705,3 +705,26 @@ packages/shared/zip.js 278→约140行，改用 fflate unzipSync；filter 内做
 ### Status
 
 [OK] **Completed**
+
+
+## Session 22: server 共用 HTTP 工具
+<!-- trellis-session: v=2 fp=f3ddef1d786de5b6 -->
+
+**Date**: 2026-11-13
+**Task**: server 共用 HTTP 工具
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+新增 apps/server/http-common.js（sendJson/readJsonBody/serveStatic/securityHeaders/STATIC_TYPES），standalone 与 team 改薄包装；净删 130 行，standalone 获得 realpath 越界校验与 405/HEAD。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fdc4988` | refactor(server): share one HTTP helper set between modes |
+
+### Status
+
+[OK] **Completed**
