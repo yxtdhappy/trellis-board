@@ -100,6 +100,9 @@ const ACTION_LABELS: Record<string, string> = {
   'evidence.verify': '阶段证据校验通过',
   'task.assign': '调整负责人',
   'project.member.save': '保存成员',
+  task_space_retired: '弃用分支',
+  task_space_restored: '恢复分支',
+  task_space_purged: '移除分支',
 }
 
 function auditClock(value: string | null | undefined) {
@@ -115,6 +118,8 @@ function auditSummary(event: AuditEvent) {
   const to = typeof detail.to === 'string' ? detail.to : ''
   if (from && to) return `${base} ${from} → ${to}`
   if (event.action === 'task.create' && event.targetId) return `${base} ${event.targetId}`
+  const branchName = typeof detail.branchName === 'string' ? detail.branchName : ''
+  if (event.action.startsWith('task_space_') && branchName) return `${base} ${branchName}`
   const title = typeof detail.title === 'string' ? detail.title : ''
   return title ? `${base} ${title}` : base
 }

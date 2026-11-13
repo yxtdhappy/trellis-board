@@ -65,6 +65,84 @@ function emptyListenerSummary() {
   }
 }
 
+function emptyTaskSpaceStats() {
+  return {
+    taskCount: 0,
+    fileCount: 0,
+    activeTaskCount: 0,
+    archivedTaskCount: 0,
+    lastActivityAt: null,
+    unarchivedTaskTitles: [],
+  }
+}
+
+function taskSpaceStats(db, taskSpaceIds, { includeTaskTitles = false } = {}) {
+  if (!taskSpaceIds.length) return new Map()
+  const placeholders = taskSpaceIds.map(() => '?').join(', ')
+  const files = db
+    .prepare(`
+      SELECT task_space_id, COUNT(DISTINCT task_dir) AS task_count,
+             COUNT(*) AS file_count, MAX(updated_at) AS last_activity_at
+      FROM sync_task_space_file
+      WHERE task_space_id IN (${placeholders}) AND deleted = 0
+      GROUP BY task_space_id
+    `)
+    .all(...taskSpaceIds)
+  const indexes = db
+    .prepare(`
+      SELECT task_space_id,
+             SUM(CASE WHEN archived = 0 THEN 1 ELSE 0 END) AS active_task_count,
+             SUM(CASE WHEN archived = 1 THEN 1 ELSE 0 END) AS archived_task_count,
+             MAX(updated_at) AS last_activity_at
+      FROM sync_task_index
+      WHERE task_space_id IN (${placeholders})
+      GROUP BY task_space_id
+    `)
+    .all(...taskSpaceIds)
+  const result = new Map()
+  for (const row of files) {
+    result.set(row.task_space_id, {
+      ...emptyTaskSpaceStats(),
+      taskCount: Number(row.task_count || 0),
+      fileCount: Number(row.file_count || 0),
+      lastActivityAt: row.last_activity_at || null,
+    })
+  }
+  for (const row of indexes) {
+    const current = result.get(row.task_space_id) || emptyTaskSpaceStats()
+    result.set(row.task_space_id, {
+      ...current,
+      activeTaskCount: Number(row.active_task_count || 0),
+      archivedTaskCount: Number(row.archived_task_count || 0),
+      lastActivityAt: current.lastActivityAt || row.last_activity_at || null,
+    })
+  }
+  if (includeTaskTitles) {
+    const titles = db
+      .prepare(`
+        SELECT task_space_id, title
+        FROM (
+          SELECT task_space_id, title,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY task_space_id
+                   ORDER BY updated_at DESC, task_key
+                 ) AS row_number
+          FROM sync_task_index
+          WHERE task_space_id IN (${placeholders}) AND archived = 0
+        )
+        WHERE row_number <= 5
+        ORDER BY task_space_id, row_number
+      `)
+      .all(...taskSpaceIds)
+    for (const row of titles) {
+      const current = result.get(row.task_space_id) || emptyTaskSpaceStats()
+      current.unarchivedTaskTitles.push(row.title)
+      result.set(row.task_space_id, current)
+    }
+  }
+  return result
+}
+
 function listenerSummaries(db, taskSpaceIds, staleCutoff) {
   if (!taskSpaceIds.length) return new Map()
   const rows = db
@@ -84,6 +162,7 @@ function listenerSummaries(db, taskSpaceIds, staleCutoff) {
           AND a.last_seen_at >= ?
           AND active.agent_id = a.id
           AND s.status = 'active'
+          AND s.retired_at IS NULL
           AND p.status = 'active'
         THEN 1 ELSE 0
       END) AS online_count,
@@ -111,14 +190,16 @@ function listenerSummaries(db, taskSpaceIds, staleCutoff) {
 }
 
 function listenerState(row, summary) {
-  if (row.status === 'disabled' || row.project_status === 'disabled') return 'disabled'
+  if (row.retired_at || row.status === 'disabled' || row.project_status === 'disabled') {
+    return 'disabled'
+  }
   if (summary.onlineListenerCount > 0) return 'online'
   if (summary.approvedBindingCount === 0) return 'unassociated'
   if (summary.listenerReportedBindingCount === 0) return 'unknown_legacy'
   return 'inactive'
 }
 
-function taskSpacePublic(row, actor, access, summary = null) {
+function taskSpacePublic(row, actor, access, summary = null, stats = null) {
   const role = access.projectMembers.get(row.project_id)?.get(actor?.userId)?.role || null
   const systemAdmin = Boolean(actor?.systemAdmin)
   const teamAdmin = [...access.teamRoles.entries()].some(
@@ -128,6 +209,12 @@ function taskSpacePublic(row, actor, access, summary = null) {
   // 团队管理员可以管理访问权限，但没有 developer ID 映射时不能写任务。
   const readOnly = !(systemAdmin || role === 'lead' || role === 'member')
   const listeners = summary || emptyListenerSummary()
+  const counts = stats || emptyTaskSpaceStats()
+  const lifecycleStatus = row.retired_at
+    ? 'retired'
+    : row.status === 'disabled'
+      ? 'disabled'
+      : 'active'
   return {
     id: row.id,
     projectId: row.project_id,
@@ -139,6 +226,16 @@ function taskSpacePublic(row, actor, access, summary = null) {
     role: role || (teamAdmin ? 'team_admin' : systemAdmin ? 'system_admin' : null),
     readOnly,
     canManage: systemAdmin || teamAdmin || role === 'lead',
+    lifecycleStatus,
+    retiredAt: row.retired_at || null,
+    retiredByUserId: row.retired_by_user_id || null,
+    retiredReason: row.retired_reason || null,
+    taskCount: counts.taskCount,
+    fileCount: counts.fileCount,
+    activeTaskCount: counts.activeTaskCount,
+    archivedTaskCount: counts.archivedTaskCount,
+    lastActivityAt: counts.lastActivityAt,
+    unarchivedTaskTitles: counts.unarchivedTaskTitles,
     approvedBindingCount: listeners.approvedBindingCount,
     onlineListenerCount: listeners.onlineListenerCount,
     listenerReportedBindingCount: listeners.listenerReportedBindingCount,
@@ -173,6 +270,7 @@ export function createTaskSpaceService({
   allowedFileRemote = false,
   now = () => new Date(),
   staleMs = null,
+  backupService = null,
 }) {
   const allowFileRemote = allowedFileRemote === true || config?.allowLocalGitRemotes === true
   const configuredStaleMs = Number(staleMs ?? config.agentStaleMs ?? DEFAULT_LISTENER_STALE_MS)
@@ -317,6 +415,24 @@ export function createTaskSpaceService({
     return { ...row, project, access }
   }
 
+  function manageContext(actor, projectId) {
+    const project = loadProjectRow(projectId)
+    if (!project) throw teamError(404, ERROR_CODES.NOT_FOUND, '项目不存在')
+    const access = accessContext(actor)
+    if (!projectAccessible(project, actor, access)) {
+      throw teamError(404, ERROR_CODES.NOT_FOUND, '项目不存在')
+    }
+    const member = access.projectMembers.get(project.id)?.get(actor.userId) || null
+    const teamAdmin = (actor.teams || []).some(
+      (team) =>
+        access.teamAccessByProject.has(`${project.id}\0${team.id}`) && team.role === 'admin',
+    )
+    if (!actor.systemAdmin && !teamAdmin && member?.role !== 'lead') {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, '无权管理项目分支')
+    }
+    return { project, access, member }
+  }
+
   function listReadable(actor, { teamId = null, includeDisabled = false } = {}) {
     const scope = String(teamId || '').trim()
     if (scope && scope !== 'all') {
@@ -346,6 +462,7 @@ export function createTaskSpaceService({
           JOIN sync_project p ON p.id = s.project_id
           WHERE s.project_id IN (${projectIds.map(() => '?').join(', ')})
             AND s.status IN (${includeDisabled ? "'active', 'indexing', 'error', 'disabled'" : "'active', 'indexing', 'error'"})
+            AND s.retired_at IS NULL
           ORDER BY s.project_id, s.branch_name COLLATE NOCASE
         `)
           .all(...projectIds)
@@ -356,10 +473,14 @@ export function createTaskSpaceService({
       spacesByProject.get(space.project_id).push(space)
     }
     const summaries = listenerSummariesFor(spaces.map((space) => space.id))
+    const stats = taskSpaceStats(
+      db,
+      spaces.map((space) => space.id),
+    )
     return rows.map((row) => {
       const project = projectPublic(row, access)
       project.taskSpaces = (spacesByProject.get(row.id) || []).map((space) =>
-        taskSpacePublic(space, actor, access, summaries.get(space.id)),
+        taskSpacePublic(space, actor, access, summaries.get(space.id), stats.get(space.id)),
       )
       return project
     })
@@ -404,7 +525,35 @@ export function createTaskSpaceService({
               (team) => team.project_id === row.id && manageableTeamIds.has(team.team_id),
             ),
           )
-    return scopedRows.map((row) => projectPublic(row, access))
+    const projectIds = scopedRows.map((row) => row.id)
+    const spaces = projectIds.length
+      ? db
+          .prepare(`
+            SELECT s.*, p.owner_team_id AS team_id, p.status AS project_status
+            FROM sync_task_space s
+            JOIN sync_project p ON p.id = s.project_id
+            WHERE s.project_id IN (${projectIds.map(() => '?').join(', ')})
+            ORDER BY s.project_id, s.branch_name COLLATE NOCASE
+          `)
+          .all(...projectIds)
+      : []
+    const summaries = listenerSummariesFor(spaces.map((space) => space.id))
+    const stats = taskSpaceStats(
+      db,
+      spaces.map((space) => space.id),
+    )
+    const spacesByProject = new Map()
+    for (const space of spaces) {
+      if (!spacesByProject.has(space.project_id)) spacesByProject.set(space.project_id, [])
+      spacesByProject.get(space.project_id).push(space)
+    }
+    return scopedRows.map((row) => {
+      const project = projectPublic(row, access)
+      project.taskSpaces = (spacesByProject.get(row.id) || []).map((space) =>
+        taskSpacePublic(space, actor, access, summaries.get(space.id), stats.get(space.id)),
+      )
+      return project
+    })
   }
 
   function resolve(userId, input = {}) {
@@ -451,6 +600,17 @@ export function createTaskSpaceService({
         WHERE s.project_id = ? AND s.branch_name = ?
       `)
       .get(project.id, branchName)
+    if (taskSpace?.retired_at) {
+      return {
+        status: 'unavailable',
+        canCreate: false,
+        remoteUrl: project.remote_url,
+        remoteIdentityHash: identityHash,
+        branchName,
+        project: projectPublic(project, access),
+        taskSpace: null,
+      }
+    }
     const summaries = listenerSummariesFor(taskSpace ? [taskSpace.id] : [])
     return {
       status: taskSpace ? 'existing' : 'branch_new',
@@ -474,7 +634,11 @@ export function createTaskSpaceService({
         tasks: [],
       }
     }
-    if (resolved.project?.status !== 'active' || resolved.taskSpace.status === 'disabled') {
+    if (
+      resolved.project?.status !== 'active' ||
+      resolved.taskSpace.status === 'disabled' ||
+      resolved.taskSpace.retiredAt
+    ) {
       return {
         ...resolved,
         status: 'unavailable',
@@ -638,7 +802,7 @@ export function createTaskSpaceService({
           ) VALUES (?, ?, ?, 'active', 0, 0, ?, ?, ?, ?)
         `).run(taskSpace.id, project.id, branchName, userId, safeAgentId, now, now)
       }
-      if (taskSpace.status === 'disabled' || project.status !== 'active') {
+      if (taskSpace.status === 'disabled' || taskSpace.retired_at || project.status !== 'active') {
         throw teamError(409, ERROR_CODES.PROJECT_NOT_READY, '项目或任务空间已停用')
       }
       const replacedBindings = db
@@ -765,7 +929,11 @@ export function createTaskSpaceService({
     })
   }
 
-  function listTaskSpaces(projectId, actor) {
+  function listTaskSpaces(
+    projectId,
+    actor,
+    { includeRetired = false, includeTaskTitles = false } = {},
+  ) {
     const project = readProject(projectId, actor)
     if (!project) throw teamError(404, ERROR_CODES.NOT_FOUND, '项目不存在')
     const rows = db
@@ -774,11 +942,270 @@ export function createTaskSpaceService({
         FROM sync_task_space s
         JOIN sync_project p ON p.id = s.project_id
         WHERE s.project_id = ?
+          ${includeRetired ? '' : 'AND s.retired_at IS NULL'}
         ORDER BY s.branch_name COLLATE NOCASE
       `)
       .all(projectId)
     const summaries = listenerSummariesFor(rows.map((row) => row.id))
-    return rows.map((row) => taskSpacePublic(row, actor, project.access, summaries.get(row.id)))
+    const stats = taskSpaceStats(
+      db,
+      rows.map((row) => row.id),
+      { includeTaskTitles },
+    )
+    return rows.map((row) =>
+      taskSpacePublic(row, actor, project.access, summaries.get(row.id), stats.get(row.id)),
+    )
+  }
+
+  function listAdminTaskSpaces(actor, projectId) {
+    manageContext(actor, projectId)
+    return listTaskSpaces(projectId, actor, {
+      includeRetired: true,
+      includeTaskTitles: true,
+    })
+  }
+
+  function loadManagedTaskSpace(actor, projectId, taskSpaceId) {
+    const context = manageContext(actor, projectId)
+    const taskSpace = loadTaskSpaceRow(taskSpaceId)
+    if (!taskSpace || taskSpace.project_id !== context.project.id) {
+      throw teamError(404, ERROR_CODES.NOT_FOUND, '任务空间不存在')
+    }
+    return { ...context, taskSpace }
+  }
+
+  function taskSpaceAdminView(taskSpace, actor, access) {
+    const summaries = listenerSummariesFor([taskSpace.id])
+    const stats = taskSpaceStats(db, [taskSpace.id], { includeTaskTitles: true })
+    return taskSpacePublic(
+      taskSpace,
+      actor,
+      access,
+      summaries.get(taskSpace.id),
+      stats.get(taskSpace.id),
+    )
+  }
+
+  function backupLabel(file) {
+    return (
+      String(file || '')
+        .split(/[\\/]/)
+        .pop() || null
+    )
+  }
+
+  function retireTaskSpace(actor, projectId, taskSpaceId, input = {}) {
+    const { project, access, taskSpace } = loadManagedTaskSpace(actor, projectId, taskSpaceId)
+    const rawReason = String(input.reason || '').trim()
+    if (rawReason.length > 500) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, '弃用原因不能超过 500 个字符')
+    }
+    if (taskSpace.retired_at) {
+      return {
+        ...taskSpaceAdminView(taskSpace, actor, access),
+        alreadyRetired: true,
+        affectedBindingCount: 0,
+      }
+    }
+    const timestamp = now().toISOString()
+    let affectedBindingCount = 0
+    withTransaction(db, () => {
+      affectedBindingCount = Number(
+        db
+          .prepare(`
+            SELECT COUNT(*) AS count
+            FROM sync_agent_binding
+            WHERE task_space_id = ? AND sync_status = 'approved'
+          `)
+          .get(taskSpace.id).count || 0,
+      )
+      db.prepare(`
+        UPDATE sync_task_space
+        SET status = 'disabled', retired_at = ?, retired_by_user_id = ?,
+            retired_reason = ?, updated_at = ?
+        WHERE id = ? AND project_id = ?
+      `).run(timestamp, actor.userId, rawReason || null, timestamp, taskSpace.id, project.id)
+      db.prepare(`
+        UPDATE sync_agent_binding
+        SET is_listening = 0, updated_at = ?
+        WHERE task_space_id = ? AND sync_status = 'approved'
+      `).run(timestamp, taskSpace.id)
+      db.prepare(`
+        UPDATE sync_task_command
+        SET status = 'cancelled',
+            error_text = '任务空间已弃用，操作已取消',
+            updated_at = ?
+        WHERE task_space_id = ? AND status IN ('pending', 'delivered', 'running')
+      `).run(timestamp, taskSpace.id)
+      appendAuditEvent(db, {
+        actorUserId: actor.userId,
+        teamId: project.owner_team_id,
+        projectId: project.id,
+        action: 'task_space_retired',
+        targetType: 'task_space',
+        targetId: taskSpace.id,
+        detail: {
+          branchName: taskSpace.branch_name,
+          previousStatus: taskSpace.status,
+          reason: rawReason || null,
+          affectedBindingCount,
+        },
+        occurredAt: timestamp,
+      })
+    })
+    const updated = {
+      ...taskSpace,
+      status: 'disabled',
+      retired_at: timestamp,
+      retired_by_user_id: actor.userId,
+      retired_reason: rawReason || null,
+      updated_at: timestamp,
+    }
+    return {
+      ...taskSpaceAdminView(updated, actor, access),
+      alreadyRetired: false,
+      affectedBindingCount,
+    }
+  }
+
+  function restoreTaskSpace(actor, projectId, taskSpaceId) {
+    const { project, access, taskSpace } = loadManagedTaskSpace(actor, projectId, taskSpaceId)
+    if (!taskSpace.retired_at) {
+      throw teamError(409, ERROR_CODES.CONFLICT, '任务空间不是已弃用状态')
+    }
+    const timestamp = now().toISOString()
+    withTransaction(db, () => {
+      db.prepare(`
+        UPDATE sync_task_space
+        SET status = 'active', retired_at = NULL, retired_by_user_id = NULL,
+            retired_reason = NULL, updated_at = ?
+        WHERE id = ? AND project_id = ?
+      `).run(timestamp, taskSpace.id, project.id)
+      db.prepare(`
+        UPDATE sync_agent_binding
+        SET is_listening = 0, updated_at = ?
+        WHERE task_space_id = ? AND sync_status = 'approved'
+      `).run(timestamp, taskSpace.id)
+      appendAuditEvent(db, {
+        actorUserId: actor.userId,
+        teamId: project.owner_team_id,
+        projectId: project.id,
+        action: 'task_space_restored',
+        targetType: 'task_space',
+        targetId: taskSpace.id,
+        detail: {
+          branchName: taskSpace.branch_name,
+          previousRetiredAt: taskSpace.retired_at,
+        },
+        occurredAt: timestamp,
+      })
+    })
+    const updated = {
+      ...taskSpace,
+      status: 'active',
+      retired_at: null,
+      retired_by_user_id: null,
+      retired_reason: null,
+      updated_at: timestamp,
+    }
+    return taskSpaceAdminView(updated, actor, access)
+  }
+
+  function purgeTaskSpace(actor, projectId, taskSpaceId, input = {}) {
+    const { project, access, taskSpace } = loadManagedTaskSpace(actor, projectId, taskSpaceId)
+    const confirmation = typeof input.confirmation === 'string' ? input.confirmation : ''
+    if (!confirmation || confirmation !== taskSpace.branch_name) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, '分支确认名称不匹配')
+    }
+    if (!backupService?.backupNowOrThrow) {
+      throw teamError(503, 'DATABASE_BACKUP_UNAVAILABLE', '数据库备份服务不可用，已取消移除分支')
+    }
+    const summary = taskSpaceAdminView(taskSpace, actor, access)
+    const unarchivedTasks = db
+      .prepare(`
+        SELECT title
+        FROM sync_task_index
+        WHERE task_space_id = ? AND archived = 0
+        ORDER BY updated_at DESC, task_key
+        LIMIT 100
+      `)
+      .all(taskSpace.id)
+      .map((row) => row.title)
+    const affectedAgentIds = db
+      .prepare('SELECT DISTINCT agent_id FROM sync_agent_binding WHERE task_space_id = ?')
+      .all(taskSpace.id)
+      .map((row) => row.agent_id)
+    const pendingConflictCount = Number(
+      db
+        .prepare(`
+          SELECT COUNT(*) AS count FROM sync_conflict
+          WHERE task_space_id = ? AND status = 'pending'
+        `)
+        .get(taskSpace.id).count || 0,
+    )
+    const activeCommandCount = Number(
+      db
+        .prepare(`
+          SELECT COUNT(*) AS count FROM sync_task_command
+          WHERE task_space_id = ? AND status IN ('pending', 'delivered', 'running')
+        `)
+        .get(taskSpace.id).count || 0,
+    )
+    let backupFile
+    try {
+      backupFile = backupService.backupNowOrThrow({ force: true })
+    } catch {
+      throw teamError(503, 'DATABASE_BACKUP_FAILED', '数据库备份失败，已取消移除分支')
+    }
+    if (!backupFile) {
+      throw teamError(503, 'DATABASE_BACKUP_FAILED', '数据库备份失败，已取消移除分支')
+    }
+    const detail = {
+      branchName: taskSpace.branch_name,
+      taskCount: summary.taskCount,
+      fileCount: summary.fileCount,
+      activeTaskCount: summary.activeTaskCount,
+      archivedTaskCount: summary.archivedTaskCount,
+      unarchivedTasks,
+      approvedBindingCount: summary.approvedBindingCount,
+      onlineListenerCount: summary.onlineListenerCount,
+      affectedAgentIds,
+      pendingConflictCount,
+      activeCommandCount,
+      backupName: backupLabel(backupFile),
+    }
+    withTransaction(db, () => {
+      const current = db
+        .prepare('SELECT id, branch_name FROM sync_task_space WHERE id = ? AND project_id = ?')
+        .get(taskSpace.id, project.id)
+      if (!current) throw teamError(404, ERROR_CODES.NOT_FOUND, '任务空间不存在')
+      if (current.branch_name !== confirmation) {
+        throw teamError(409, ERROR_CODES.CONFLICT, '任务空间分支已变化，请刷新后重试')
+      }
+      appendAuditEvent(db, {
+        actorUserId: actor.userId,
+        teamId: project.owner_team_id,
+        projectId: project.id,
+        action: 'task_space_purged',
+        targetType: 'task_space',
+        targetId: taskSpace.id,
+        detail,
+        occurredAt: now().toISOString(),
+      })
+      const result = db
+        .prepare('DELETE FROM sync_task_space WHERE id = ? AND project_id = ?')
+        .run(taskSpace.id, project.id)
+      if (Number(result.changes) !== 1) {
+        throw teamError(409, ERROR_CODES.CONFLICT, '任务空间状态已变化，请刷新后重试')
+      }
+    })
+    return {
+      purged: true,
+      taskSpaceId: taskSpace.id,
+      branchName: taskSpace.branch_name,
+      backupName: backupLabel(backupFile),
+      summary: detail,
+    }
   }
 
   function authorizeTaskSpace(
@@ -801,7 +1228,10 @@ export function createTaskSpaceService({
     if (!projectAccessible(project, actor, access)) {
       throw teamError(404, ERROR_CODES.NOT_FOUND, '任务空间不存在')
     }
-    if (!allowDisabled && (taskSpace.status === 'disabled' || project.status !== 'active')) {
+    if (
+      !allowDisabled &&
+      (taskSpace.status === 'disabled' || taskSpace.retired_at || project.status !== 'active')
+    ) {
       throw teamError(409, ERROR_CODES.PROJECT_NOT_READY, '任务空间已停用')
     }
     const member = access.projectMembers.get(project.id)?.get(actor.userId) || null
@@ -1177,6 +1607,10 @@ export function createTaskSpaceService({
     listAssociationCandidates,
     listAll,
     listTaskSpaces,
+    listAdminTaskSpaces,
+    retireTaskSpace,
+    restoreTaskSpace,
+    purgeTaskSpace,
     resolve,
     preflight,
     attach,

@@ -77,7 +77,7 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 `database.js` 是 schema 和迁移的唯一所有者：
 
-- 当前 schema 为 v11。新库和 v10 升级库都保留旧账号、团队、`team_project`、`project_live_*`、
+- 当前 schema 为 v12。新库和 v11 升级库都保留旧账号、团队、`team_project`、`project_live_*`、
   `git_operation`、`git_credential` 和插件表，并新增 `sync_project`、
   `sync_task_space`、`sync_task_space_file`、`sync_task_space_batch`、`sync_active_agent`、
   `sync_agent_binding`、`sync_agent_cursor`、`sync_task_index`、`sync_task_command`、
@@ -89,12 +89,15 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 - `sync_agent_binding` 保存 `is_listening`、`listener_reported_at` 和 `last_listener_at`。
   `is_listening` 只是最近报告值，读取在线人数时必须叠加报告时间、设备心跳、active Agent 和
   project/taskSpace 状态。
+- `sync_task_space` 保存 `retired_at`、`retired_by_user_id` 和 `retired_reason`。只有
+  `retired_at IS NOT NULL` 是弃用；历史 `status=disabled` 不能被迁移或查询隐式转成 retired。
 - `task_dependency` 保存稳定 `executionTaskKey` 双方、原因、创建人、创建时间和可空解除时间；活动边 `(blocker_task_key, blocked_task_key)` 唯一，双向查询有索引。解除只写 `resolved_at`，历史行不删除。
 - 启用 WAL、外键、`busy_timeout=5000` 和 `synchronous=NORMAL`。
-- v10 -> v11 迁移必须在 `BEGIN IMMEDIATE` 中通过 `PRAGMA table_info` 幂等补三列，再创建
-  `sync_agent_binding_listener` 索引；新库直接包含最终结构，v6-v10 升级复用同一迁移入口。
-- v10 -> v11 迁移前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v11.*`。补列、索引或
-  schema 版本写入任一步失败时整体回滚；大于 v11 的数据库拒绝打开。
+- v10 -> v11 迁移必须在 `BEGIN IMMEDIATE` 中通过 `PRAGMA table_info` 幂等补监听三列，再创建
+  `sync_agent_binding_listener` 索引；v11 -> v12 再幂等补 `retired_at`、`retired_by_user_id`、
+  `retired_reason` 和 `sync_task_space_retired` 索引。新库直接包含最终结构，v6-v11 升级复用同一入口。
+- 迁移前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v12.*`。补列、索引或 schema 版本写入
+  任一步失败时整体回滚；大于 v12 的数据库拒绝打开。
 - v1 -> v2 -> v3 顺序迁移在单一 `BEGIN IMMEDIATE` 事务中完成；迁移前用 `VACUUM INTO` 写入可独立打开的源版本快照，命名为 `board.sqlite.v1-backup` 或 `board.sqlite.v2-backup`。失败时主库保留源版本和原表，备份仍可独立打开。
 - 首次初始化在 `BEGIN IMMEDIATE` 中一次性导入四个旧 JSON，并写入 `legacy_json_imported_v1`。
 - 迁移后不再读写旧 JSON；它们只作为迁移来源和回滚备份。
@@ -114,6 +117,10 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 - `sync_conflict` 只保存待处理冲突摘要；`sync_conflict_backup` 只在覆盖服务端时保存双方正文；
   `sync_file_audit` append-only，不保存完整历史正文。
 - `sync_task_space_scan_cache` 以 taskSpace 和 `indexed_revision` 隔离；旧 revision Board 不得覆盖新 revision。
+- `sync_task_space` 物理删除只能由 `purgeTaskSpace()` 的显式管理员流程执行；删除前严格
+  `VACUUM INTO` 备份失败必须中止。删除事务写 `task_space_purged` 后再删除聚合根，子表依赖外键级联。
+- `retireTaskSpace()` 保留任务、冲突、文件和审计，只设置 retired 元数据、停用状态、清监听并取消
+  未完成命令；索引 Worker 不得把 retired/disabled taskSpace 重新写回 `active`。
 - `sync_project_member.trellis_dev_id` 是「只看我的」的唯一依据：查询时用
   `EXISTS (SELECT 1 FROM sync_project_member mine WHERE mine.project_id = t.project_id AND mine.user_id = ?
   AND mine.trellis_dev_id IS NOT NULL AND t.assignee_dev_id = mine.trellis_dev_id COLLATE NOCASE)`
@@ -168,8 +175,8 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 #### 6. Tests Required
 
-- `apps/server/test/database.test.js` / `database-v10.test.js`：新库 v11、v10 补列、
-  v6/v7/v8/v9 升级、源版本备份、旧表保留、归档时间回填、失败回滚和大于 v11 拒绝。
+- `apps/server/test/database.test.js` / `database-v10.test.js`：新库 v12、v10 监听补列、v11 retired
+  补列、v6-v11 升级、源版本备份、旧表保留、归档时间回填、失败回滚和大于 v12 拒绝。
 - `execution-store.test.js`：缺失、自引用、重复、原因边界、二/三节点环、创建/解除事件回滚、重开和重新创建。
 - `execution-projection.test.js`：列表不带完整数组；详情同时返回活动与已结束双向历史；解除区间时长使用 `resolvedAt - createdAt`；开工、完成条件不改变阶段完成状态。
 - 真实 HTTP：失败前后依赖与事件计数一致；循环错误含标题闭环。
@@ -379,8 +386,8 @@ withTransaction(db, () => {
 
 ## 修改检查
 
-- [ ] schema v11 只新增 `sync_*` tasks-only 表和监听字段，旧依赖、归档、团队和 Git 表仍可打开，大于 v11 的版本仍被拒绝。
-- [ ] v10 -> v11 幂等补监听列和索引；v6/v7/v8/v9 -> v11 顺序迁移成功；源版本备份可独立打开，旧数据保留和迁移失败回滚正确。
+- [ ] schema v12 只新增 `sync_*` tasks-only 表、监听字段和 retired 字段，旧依赖、归档、团队和 Git 表仍可打开，大于 v12 的版本仍被拒绝。
+- [ ] v10 -> v11 幂等补监听列，v11 -> v12 幂等补 retired 列和索引；v6-v11 顺序迁移成功；源版本备份可独立打开，旧数据保留和迁移失败回滚正确。
 - [ ] 扫描只把包含 `task.json` 的目录认作任务。
 - [ ] 新证据文件已加入读取和缓存签名范围。
 - [ ] standalone 缓存失效范围覆盖 workspace、关系和 Git 元数据影响；Team 只按 taskSpace revision 失效。

@@ -552,7 +552,7 @@ export function createTaskSpaceIndex({
     db.prepare(`
       UPDATE sync_task_space
       SET status = 'active', indexed_revision = ?, last_error = NULL, updated_at = ?
-      WHERE id = ? AND revision = ?
+      WHERE id = ? AND revision = ? AND retired_at IS NULL AND status != 'disabled'
     `).run(taskSpace.revision, timestamp, taskSpace.id, taskSpace.revision)
   }
 
@@ -595,6 +595,9 @@ export function createTaskSpaceIndex({
     )
     const latest = taskSpaceRow(taskSpaceId)
     if (!latest || Number(latest.revision) !== Number(message.revision)) {
+      return { superseded: true, revision: Number(message.revision) }
+    }
+    if (latest.retired_at) {
       return { superseded: true, revision: Number(message.revision) }
     }
     const scan = message.scan
@@ -656,7 +659,7 @@ export function createTaskSpaceIndex({
           db.prepare(`
             UPDATE sync_task_space
             SET status = 'error', last_error = ?, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND retired_at IS NULL AND status != 'disabled'
           `).run(message.slice(0, 1000), new Date().toISOString(), id)
           const delay = RETRY_DELAYS[Math.min(entry.attempts, RETRY_DELAYS.length - 1)]
           entry.attempts += 1

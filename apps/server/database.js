@@ -11,7 +11,7 @@ import {
   stateFile,
 } from './config.js'
 
-export const DATABASE_SCHEMA_VERSION = 11
+export const DATABASE_SCHEMA_VERSION = 12
 
 const LEGACY_IMPORT_KEY = 'legacy_json_imported_v1'
 const EXECUTION_EVENTS_STARTED_KEY = 'execution_events_started_at'
@@ -812,6 +812,9 @@ const SCHEMA_V11_SQL = `
     revision INTEGER NOT NULL DEFAULT 0,
     indexed_revision INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
+    retired_at TEXT,
+    retired_by_user_id TEXT REFERENCES user_account(id),
+    retired_reason TEXT,
     created_by_user_id TEXT REFERENCES user_account(id),
     created_by_agent_id TEXT REFERENCES agent_device(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL,
@@ -1084,6 +1087,26 @@ function ensureV11Schema(db) {
   `)
 }
 
+function ensureV12Schema(db) {
+  const columns = new Set(
+    db
+      .prepare('PRAGMA table_info(sync_task_space)')
+      .all()
+      .map((column) => column.name),
+  )
+  for (const [name, definition] of [
+    ['retired_at', 'TEXT'],
+    ['retired_by_user_id', 'TEXT REFERENCES user_account(id)'],
+    ['retired_reason', 'TEXT'],
+  ]) {
+    if (!columns.has(name)) db.exec(`ALTER TABLE sync_task_space ADD COLUMN ${name} ${definition}`)
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS sync_task_space_retired
+      ON sync_task_space(project_id, retired_at, status);
+  `)
+}
+
 function tableExists(db, table) {
   return Boolean(
     db
@@ -1111,7 +1134,7 @@ function ensureSchema(db, { databaseFile } = {}) {
   const schemaVersion = tableExists(db, 'app_meta') ? readMeta(db, 'schema_version') : null
   const numericVersion = schemaVersion == null ? null : Number(schemaVersion)
 
-  if (numericVersion !== null && ![6, 7, 8, 9, 10, 11].includes(numericVersion)) {
+  if (numericVersion !== null && ![6, 7, 8, 9, 10, 11, 12].includes(numericVersion)) {
     throw new Error(
       `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除当前 board.sqlite 后重建`,
     )
@@ -1131,6 +1154,7 @@ function ensureSchema(db, { databaseFile } = {}) {
     ensureV8Schema(db)
     ensureV9Schema(db)
     ensureV11Schema(db)
+    ensureV12Schema(db)
     if (numericVersion == null || numericVersion < DATABASE_SCHEMA_VERSION) {
       writeMeta(db, 'schema_version', DATABASE_SCHEMA_VERSION)
     }

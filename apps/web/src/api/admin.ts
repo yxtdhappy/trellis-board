@@ -14,6 +14,30 @@ export type SessionUser = {
   mustChangePassword: boolean
 }
 
+export type TaskSpaceLifecycleStatus = 'active' | 'disabled' | 'retired'
+
+export type AdminTaskSpace = {
+  id: string
+  branchName: string
+  status: string
+  lifecycleStatus: TaskSpaceLifecycleStatus
+  revision: number
+  indexedRevision: number
+  readOnly: boolean
+  retiredAt: string | null
+  retiredByUserId: string | null
+  retiredReason: string | null
+  taskCount: number
+  fileCount: number
+  activeTaskCount: number
+  archivedTaskCount: number
+  lastActivityAt: string | null
+  unarchivedTaskTitles: string[]
+  approvedBindingCount: number
+  onlineListenerCount: number
+  lastListenerAt: string | null
+}
+
 export type RuntimeProject = {
   id: string
   teamId: string | null
@@ -25,13 +49,7 @@ export type RuntimeProject = {
   stale: boolean
   lastError: string | null
   capabilities: Record<string, unknown>
-  taskSpaces: {
-    id: string
-    branchName: string
-    revision: number
-    indexedRevision: number
-    readOnly: boolean
-  }[]
+  taskSpaces: AdminTaskSpace[]
 }
 
 export type ProjectMember = {
@@ -225,6 +243,49 @@ function readTeamMember(input: unknown): TeamMember {
   }
 }
 
+function readTaskSpaceLifecycleStatus(
+  value: unknown,
+  status: string,
+  retiredAt: string | null,
+): TaskSpaceLifecycleStatus {
+  if (value === 'active' || value === 'disabled' || value === 'retired') return value
+  if (retiredAt) return 'retired'
+  return status === 'disabled' ? 'disabled' : 'active'
+}
+
+export function readTaskSpace(input: unknown): AdminTaskSpace {
+  const row = record(input)
+  const status = text(row.status, 'unknown')
+  const retiredAt = optionalText(row.retiredAt ?? row.retired_at)
+  return {
+    id: text(row.id),
+    branchName: text(row.branchName ?? row.branch_name),
+    status,
+    lifecycleStatus: readTaskSpaceLifecycleStatus(
+      row.lifecycleStatus ?? row.lifecycle_status,
+      status,
+      retiredAt,
+    ),
+    revision: Number(row.revision ?? 0),
+    indexedRevision: Number(row.indexedRevision ?? row.indexed_revision ?? 0),
+    readOnly: flag(row.readOnly ?? row.read_only),
+    retiredAt,
+    retiredByUserId: optionalText(row.retiredByUserId ?? row.retired_by_user_id),
+    retiredReason: optionalText(row.retiredReason ?? row.retired_reason),
+    taskCount: Number(row.taskCount ?? row.task_count ?? 0) || 0,
+    fileCount: Number(row.fileCount ?? row.file_count ?? 0) || 0,
+    activeTaskCount: Number(row.activeTaskCount ?? row.active_task_count ?? 0) || 0,
+    archivedTaskCount: Number(row.archivedTaskCount ?? row.archived_task_count ?? 0) || 0,
+    lastActivityAt: optionalText(row.lastActivityAt ?? row.last_activity_at),
+    unarchivedTaskTitles: rows(row.unarchivedTaskTitles ?? row.unarchived_task_titles)
+      .map((title) => text(title))
+      .filter(Boolean),
+    approvedBindingCount: Number(row.approvedBindingCount ?? row.approved_binding_count ?? 0) || 0,
+    onlineListenerCount: Number(row.onlineListenerCount ?? row.online_listener_count ?? 0) || 0,
+    lastListenerAt: optionalText(row.lastListenerAt ?? row.last_listener_at),
+  }
+}
+
 function readRuntimeProject(input: unknown): RuntimeProject {
   const row = record(input)
   const syncStatus = text(row.syncStatus ?? row.sync_status, 'unknown')
@@ -239,16 +300,7 @@ function readRuntimeProject(input: unknown): RuntimeProject {
     stale: flag(row.stale) || ['stale', 'needs_repair'].includes(syncStatus),
     lastError: optionalText(row.lastError ?? row.last_error),
     capabilities: record(row.capabilities ?? row.permissions),
-    taskSpaces: rows(row.taskSpaces).map((item) => {
-      const taskSpace = record(item)
-      return {
-        id: text(taskSpace.id),
-        branchName: text(taskSpace.branchName ?? taskSpace.branch_name),
-        revision: Number(taskSpace.revision ?? 0),
-        indexedRevision: Number(taskSpace.indexedRevision ?? taskSpace.indexed_revision ?? 0),
-        readOnly: flag(taskSpace.readOnly ?? taskSpace.read_only),
-      }
-    }),
+    taskSpaces: rows(row.taskSpaces).map(readTaskSpace),
   }
 }
 
@@ -543,6 +595,74 @@ export async function fetchBindings(projectId: string): Promise<AgentBinding[]> 
     `/api/projects/${encodeURIComponent(projectId)}/agents`,
   )
   return collection(data, 'agents', readAgentBinding)
+}
+
+export async function fetchProjectTaskSpaces(projectId: string): Promise<AdminTaskSpace[]> {
+  const { data } = await requestJson<unknown>(
+    `/api/projects/${encodeURIComponent(projectId)}/task-spaces`,
+  )
+  return collection(data, 'taskSpaces', readTaskSpace)
+}
+
+export type TaskSpaceLifecycleMutation = {
+  taskSpace: AdminTaskSpace
+  affectedBindingCount: number
+}
+
+export async function retireProjectTaskSpace(
+  projectId: string,
+  taskSpaceId: string,
+  reason = '',
+): Promise<TaskSpaceLifecycleMutation> {
+  const { data } = await requestJson<unknown>(
+    `/api/projects/${encodeURIComponent(projectId)}/task-spaces/${encodeURIComponent(taskSpaceId)}/retire`,
+    { method: 'POST', body: { reason: reason.trim() || undefined } },
+  )
+  const row = record(record(data).taskSpace ?? data)
+  return {
+    taskSpace: readTaskSpace(record(row)),
+    affectedBindingCount: Number(row.affectedBindingCount ?? row.affected_binding_count ?? 0) || 0,
+  }
+}
+
+export async function restoreProjectTaskSpace(
+  projectId: string,
+  taskSpaceId: string,
+): Promise<TaskSpaceLifecycleMutation> {
+  const { data } = await requestJson<unknown>(
+    `/api/projects/${encodeURIComponent(projectId)}/task-spaces/${encodeURIComponent(taskSpaceId)}/restore`,
+    { method: 'POST', body: {} },
+  )
+  return {
+    taskSpace: readTaskSpace(record(record(data).taskSpace ?? data)),
+    affectedBindingCount: 0,
+  }
+}
+
+export type PurgeTaskSpaceResult = {
+  taskSpaceId: string
+  branchName: string
+  backupName: string
+  summary: Record<string, unknown>
+}
+
+export async function purgeProjectTaskSpace(
+  projectId: string,
+  taskSpaceId: string,
+  confirmation: string,
+): Promise<PurgeTaskSpaceResult> {
+  const { data } = await requestJson<unknown>(
+    `/api/projects/${encodeURIComponent(projectId)}/task-spaces/${encodeURIComponent(taskSpaceId)}`,
+    { method: 'DELETE', body: { confirmation } },
+  )
+  const row = record(data)
+  const summary = record(row.summary)
+  return {
+    taskSpaceId: text(row.taskSpaceId ?? row.task_space_id ?? taskSpaceId),
+    branchName: text(row.branchName ?? row.branch_name ?? confirmation),
+    backupName: text(row.backupName ?? row.backup_name),
+    summary,
+  }
 }
 
 export async function fetchProjectTeams(projectId: string): Promise<ProjectTeamAccess[]> {

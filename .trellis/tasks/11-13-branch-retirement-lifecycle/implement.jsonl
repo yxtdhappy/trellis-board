@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "taskSpace 生命周期、heartbeat 状态传播、SSE 和同步边界的实现依据"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "项目级管理 API、JSON 请求校验和 Team 路由边界"}
+{"file": ".trellis/spec/backend/scanning-and-persistence.md", "reason": "SQLite 事务、schema 迁移、备份和 taskSpace 持久化规则"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "管理台项目页的数据流、确认弹层和刷新约束"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Web 侧类型检查、构建和浏览器验收要求"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "API、服务端状态和 Board 可见性跨层契约"}

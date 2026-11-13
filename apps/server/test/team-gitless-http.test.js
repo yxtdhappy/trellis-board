@@ -72,6 +72,15 @@ function cookie(response) {
   return String((response.headers['set-cookie'] || [])[0] || '').split(';')[0]
 }
 
+async function waitFor(check, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (check()) return
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  assert.fail('等待条件超时')
+}
+
 test('Agent 大批次运输体超过 96 MiB 时返回 413', async () => {
   assert.equal(MAX_LIVE_BATCH_BYTES, TASK_SNAPSHOT_MAX_TRANSPORT_BYTES)
   await assert.rejects(
@@ -546,6 +555,102 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   assert.equal(operation.body.operation.status, 'pending')
   assert.equal(runtime.services.taskCommands.available(enrolled.body.agentId).length, 1)
 
+  const projectId = attached.body.project.id
+  const taskSpacesResponse = await request(
+    runtime,
+    `/api/projects/${encodeURIComponent(projectId)}/task-spaces`,
+    { cookie: session },
+  )
+  assert.equal(taskSpacesResponse.status, 200)
+  assert.deepEqual(
+    new Set(taskSpacesResponse.body.taskSpaces.map((taskSpace) => taskSpace.branchName)),
+    new Set(['main', 'dev']),
+  )
+
+  const invalidPurge = await request(
+    runtime,
+    `/api/projects/${encodeURIComponent(projectId)}/task-spaces/${encodeURIComponent(devTaskSpaceId)}`,
+    {
+      method: 'DELETE',
+      cookie: session,
+      body: { confirmation: 'wrong-branch' },
+    },
+  )
+  assert.equal(invalidPurge.status, 400)
+  assert.match(invalidPurge.body.error, /确认名称/)
+
+  const retiredMain = await request(
+    runtime,
+    `/api/projects/${encodeURIComponent(projectId)}/task-spaces/${encodeURIComponent(taskSpaceId)}/retire`,
+    {
+      method: 'POST',
+      cookie: session,
+      body: { reason: '测试弃用' },
+    },
+  )
+  assert.equal(retiredMain.status, 200)
+  assert.equal(retiredMain.body.taskSpace.lifecycleStatus, 'retired')
+  const afterRetire = await request(runtime, '/api/team/projects?teamId=team-1', {
+    cookie: session,
+  })
+  assert.equal(
+    afterRetire.body.projects
+      .flatMap((project) => project.taskSpaces)
+      .some((space) => space.id === taskSpaceId),
+    false,
+  )
+
+  const retiredAdmin = await request(
+    runtime,
+    `/api/projects/${encodeURIComponent(projectId)}/task-spaces`,
+    { cookie: session },
+  )
+  const retiredSpace = retiredAdmin.body.taskSpaces.find((space) => space.id === taskSpaceId)
+  assert.equal(retiredSpace.lifecycleStatus, 'retired')
+  assert.equal(retiredSpace.retiredReason, '测试弃用')
+
+  runtime.db
+    .prepare('UPDATE sync_task_space SET revision = revision + 1 WHERE id = ?')
+    .run(taskSpaceId)
+  const restoredMain = await request(
+    runtime,
+    `/api/projects/${encodeURIComponent(projectId)}/task-spaces/${encodeURIComponent(taskSpaceId)}/restore`,
+    { method: 'POST', cookie: session, body: {} },
+  )
+  assert.equal(restoredMain.status, 200)
+  assert.equal(restoredMain.body.taskSpace.lifecycleStatus, 'active')
+  await waitFor(() => {
+    const space = runtime.db
+      .prepare('SELECT revision, indexed_revision FROM sync_task_space WHERE id = ?')
+      .get(taskSpaceId)
+    return Number(space.indexed_revision) === Number(space.revision)
+  })
+
+  const viewer = await createUser(runtime.db, {
+    username: 'viewer',
+    displayName: '普通成员',
+    password: 'Viewer-Password-123',
+    systemAdmin: false,
+    mustChangePassword: false,
+  })
+  runtime.db
+    .prepare(`
+      INSERT INTO team_member(team_id, user_id, role, created_at, updated_at)
+      VALUES ('team-1', ?, 'member', ?, ?)
+    `)
+    .run(viewer.id, now, now)
+  const viewerLogin = await request(runtime, '/api/auth/login', {
+    method: 'POST',
+    body: { username: 'viewer', password: 'Viewer-Password-123' },
+  })
+  assert.equal(viewerLogin.status, 200)
+  const viewerTaskSpaces = await request(
+    runtime,
+    `/api/projects/${encodeURIComponent(projectId)}/task-spaces`,
+    { cookie: cookie(viewerLogin) },
+  )
+  assert.equal(viewerTaskSpaces.status, 403)
+
   const detached = await request(
     runtime,
     `/api/agent/task-spaces/${encodeURIComponent(devTaskSpaceId)}/detach`,
@@ -568,6 +673,41 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   )
   assert.equal(detachedAgain.status, 200)
   assert.equal(detachedAgain.body.alreadyDetached, true)
+
+  const purgedDev = await request(
+    runtime,
+    `/api/projects/${encodeURIComponent(projectId)}/task-spaces/${encodeURIComponent(devTaskSpaceId)}`,
+    {
+      method: 'DELETE',
+      cookie: session,
+      body: { confirmation: 'dev' },
+    },
+  )
+  assert.equal(purgedDev.status, 200, JSON.stringify(purgedDev.body))
+  assert.equal(purgedDev.body.purged, true)
+  assert.equal(
+    (
+      await request(runtime, `/api/projects/${encodeURIComponent(projectId)}/task-spaces`, {
+        cookie: session,
+      })
+    ).body.taskSpaces.some((space) => space.id === devTaskSpaceId),
+    false,
+  )
+  const removedHeartbeat = await request(runtime, '/api/agent/heartbeat', {
+    method: 'POST',
+    agentCredential: enrolled.body.credential,
+    body: {
+      protocolVersion: 3,
+      agentId: enrolled.body.agentId,
+      agentVersion: '0.1.0',
+      deviceName: '测试设备',
+      listenerReportVersion: 1,
+      listeningTaskSpaceIds: [devTaskSpaceId],
+      bindings: [{ taskSpaceId: devTaskSpaceId, localRepoKey: 'b'.repeat(64) }],
+    },
+  })
+  assert.equal(removedHeartbeat.status, 200, JSON.stringify(removedHeartbeat.body))
+  assert.equal(removedHeartbeat.body.bindings[0].errorCode, 'BINDING_UNKNOWN')
 
   for (const [legacyPath, method] of [
     ['/api/admin/git-credentials', 'GET'],

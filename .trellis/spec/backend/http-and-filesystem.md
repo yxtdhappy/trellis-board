@@ -58,6 +58,10 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
 | `POST /api/task-operations/:id/retry` | 同幂等键重试失败命令 | 200 |
 | `POST /api/task-operations/:id/cancel` | 取消未成功命令 | 200 |
 | `GET /api/task-spaces/:id/listeners` | 项目负责人或团队管理员读取脱敏监听详情 | 200 |
+| `GET /api/projects/:projectId/task-spaces` | 有项目管理权限者读取活跃、技术停用和 retired 分支摘要 | 200 |
+| `POST /api/projects/:projectId/task-spaces/:id/retire` | 弃用分支并保留数据 | 200 |
+| `POST /api/projects/:projectId/task-spaces/:id/restore` | 恢复 retired 分支，不自动恢复监听 | 200 |
+| `DELETE /api/projects/:projectId/task-spaces/:id` | 命名确认后创建备份并物理清除 taskSpace | 200 |
 
 - `POST /api/agent/commands` 旧长轮询固定返回 `410 AGENT_LONG_POLL_REMOVED`。
 - 旧 `/api/agent/live-changes*`、`/api/agent/live-files`、`/api/agent/live-cursor`、
@@ -68,6 +72,10 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
   JSON 的硬运输上限：超过时返回 413，即使解码后的正文不超过 64 MiB。
 - 新接入预检只返回路径、摘要和稳定 task ID，不返回任务正文；调用前后
   `sync_project`、`sync_task_space`、`sync_agent_binding` 和 `sync_agent_cursor` 行数必须不变。
+- 生命周期路由只允许项目负责人、项目所属团队管理员和系统管理员。普通成员读取管理列表和写操作
+  均返回 403；taskSpace 必须属于 URL 中的 projectId，否则统一返回 404。
+- `DELETE` 请求体为 `{ "confirmation": "<branchName>" }`。名称不匹配返回 400；数据库严格备份失败
+  返回 503，taskSpace、关联数据和删除审计均保持不变。成功后的查询 revision 和 Board SSE 必须刷新。
 - Agent 认证和团队 Session 是两条独立鉴权链。Agent 路由要求设备 Bearer，Web 路由要求 Session Cookie
   并对写请求执行同源 Origin 校验。
 
@@ -416,7 +424,8 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
 - `apps/server/test/team-task-spaces.test.js`：owner/invite、全局唯一、不同分支隔离和访问授权。
 - `apps/server/test/team-gitless-http.test.js`：新路由可真实读写，旧 Git/live 路由 404。
 - `apps/server/test/team-release.test.js`：Team 启动不创建 `data/projects`，也不读取 Git 密钥。
-- `apps/server/test/database-v10.test.js`：v10 -> v11 补监听列和索引，v6-v10 升级保留旧表与数据。
+- `apps/server/test/database-v10.test.js`：v10 -> v11 补监听列，v11 -> v12 补弃用列和索引，
+  v6-v11 升级保留旧表与数据。
 
 #### 7. Wrong vs Correct
 

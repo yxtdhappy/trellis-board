@@ -41,7 +41,7 @@ export function createTaskSnapshotBackupService({
     return now().getTime() - fs.statSync(path.join(backupDir, latest)).mtimeMs
   }
 
-  function backupNow({ force = false } = {}) {
+  function createBackup({ force = false } = {}) {
     if (!databaseFile || databaseFile === ':memory:' || databaseFile.startsWith('file:')) {
       return null
     }
@@ -56,7 +56,7 @@ export function createTaskSnapshotBackupService({
 
   function safeBackup(options = {}) {
     try {
-      return backupNow(options)
+      return createBackup(options)
     } catch (error) {
       logger.warn('任务快照数据库备份失败', {
         error: error instanceof Error ? error.message : String(error),
@@ -82,6 +82,7 @@ export function createTaskSnapshotBackupService({
     start,
     stop,
     backupNow: safeBackup,
+    backupNowOrThrow: createBackup,
     snapshots,
   }
 }

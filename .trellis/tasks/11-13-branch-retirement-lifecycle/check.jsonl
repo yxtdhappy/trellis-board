@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "检查 heartbeat、SSE、taskSpace 查询和客户端停止同步的契约"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "检查管理接口鉴权、确认字段和错误矩阵"}
+{"file": ".trellis/spec/backend/scanning-and-persistence.md", "reason": "检查 schema v12、迁移、事务、备份和级联删除边界"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查管理台类型、构建、可访问性和真实页面验收"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "检查服务端快照刷新、确认弹层和 no-local-fake-delete"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查服务端、管理台、Board 项目栏和 Agent 状态传播是否一致"}

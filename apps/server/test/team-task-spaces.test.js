@@ -3,7 +3,7 @@ import test from 'node:test'
 import { openDatabase } from '../database.js'
 import { createTaskSpaceService } from '../team/task-space-service.js'
 
-function setup() {
+function setup({ backupService = null } = {}) {
   const db = openDatabase({
     databaseFile: ':memory:',
     fallbackRepositories: [],
@@ -51,7 +51,7 @@ function setup() {
       VALUES (?, ?, ?)
     `).run(userId, id, now)
   }
-  const service = createTaskSpaceService({ db })
+  const service = createTaskSpaceService({ db, backupService })
   return { db, service, now }
 }
 
@@ -107,6 +107,77 @@ function attachClient(service, userId, agentId, keyChar, developerId, teamId = '
     developerId,
     localRepoKey: keyChar.repeat(64),
   })
+}
+
+function addTaskSnapshot(db, taskSpace, { title = '示例任务', archived = false } = {}) {
+  const now = new Date().toISOString()
+  const taskDir = `.trellis/tasks/${archived ? 'archive/2026-11/' : ''}01-example`
+  const taskKey = `${taskSpace.projectId}::${taskDir}`
+  db.prepare(`
+    INSERT INTO sync_task_space_file(
+      task_space_id, relative_path, revision, sha256, content_text, deleted,
+      task_id, task_dir, updated_at
+    ) VALUES (?, ?, 1, ?, ?, 0, 'task-example', ?, ?)
+  `).run(
+    taskSpace.id,
+    `${taskDir}/task.json`,
+    'b'.repeat(64),
+    '{"id":"task-example"}\n',
+    taskDir,
+    now,
+  )
+  db.prepare(`
+    INSERT INTO sync_task_index(
+      task_space_id, project_id, task_key, execution_task_key, relative_dir, branch_name,
+      title, search_text, archived, archived_at, priority, derived_stage, assignee_dev_id,
+      assignee_user_id, due_date, last_activity_at, is_blocked, is_unblocked_ready,
+      attention_flags_json, group_key, group_role, task_version, board_version, updated_at
+    ) VALUES (?, ?, ?, 'task-example', ?, ?, ?, ?, ?, ?, 'P2', 'planning', 'alice',
+      NULL, NULL, ?, 0, 0, '[]', 'task-example', 'parent', 'v1', 'b1', ?)
+  `).run(
+    taskSpace.id,
+    taskSpace.projectId,
+    taskKey,
+    taskDir,
+    taskSpace.branchName,
+    title,
+    title,
+    archived ? 1 : 0,
+    archived ? now : null,
+    now,
+    now,
+  )
+}
+
+function addLifecycleArtifacts(db, taskSpace, agentId, bindingId = null) {
+  const now = new Date().toISOString()
+  db.prepare(`
+    INSERT INTO sync_agent_cursor(agent_id, task_space_id, revision, updated_at)
+    VALUES (?, ?, 1, ?)
+  `).run(agentId, taskSpace.id, now)
+  db.prepare(`
+    INSERT INTO sync_task_command(
+      id, task_space_id, project_id, agent_id, binding_id, command_type,
+      idempotency_key, request_hash, payload_json, status, attempts,
+      created_by_user_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'create_task', ?, 'hash', '{}', 'running', 0,
+      'user-a', ?, ?)
+  `).run(
+    `command-${taskSpace.id}`,
+    taskSpace.id,
+    taskSpace.projectId,
+    agentId,
+    bindingId,
+    `idem-${taskSpace.id}`,
+    now,
+    now,
+  )
+  db.prepare(`
+    INSERT INTO sync_conflict(
+      id, task_space_id, files_json, server_revision, status,
+      created_by_user_id, created_by_agent_id, created_at
+    ) VALUES (?, ?, '[]', 1, 'pending', 'user-a', ?, ?)
+  `).run(`conflict-${taskSpace.id}`, taskSpace.id, agentId, now)
 }
 
 test('相同远端可以通过 HTTPS 或 SSH 命中同一项目和任务空间', () => {
@@ -757,6 +828,297 @@ test('Agent 主动解绑原子撤销 binding、取消命令、清理 cursor 并�
     assert.equal(finalSpace.approvedBindingCount, 0)
     assert.equal(finalSpace.onlineListenerCount, 0)
     assert.equal(finalSpace.listenerState, 'unassociated')
+  } finally {
+    db.close()
+  }
+})
+
+test('项目负责人可弃用和恢复分支，普通列表隐藏而管理列表保留数据摘要', () => {
+  const { db, service } = setup()
+  try {
+    const attached = attachClient(service, 'user-a', 'agent-a', 'a', 'alice')
+    addTaskSnapshot(db, attached.taskSpace, { title: '待保留任务' })
+    addLifecycleArtifacts(db, attached.taskSpace, attached.binding.agentId, attached.binding.id)
+    markListening(db, [attached])
+    const actor = service.actorContext('user-a')
+
+    const retired = service.retireTaskSpace(actor, attached.project.id, attached.taskSpace.id, {
+      reason: '历史功能已经结束',
+    })
+    assert.equal(retired.lifecycleStatus, 'retired')
+    assert.equal(retired.retiredReason, '历史功能已经结束')
+    assert.deepEqual(retired.unarchivedTaskTitles, ['待保留任务'])
+    assert.equal(
+      db
+        .prepare('SELECT is_listening FROM sync_agent_binding WHERE id = ?')
+        .get(attached.binding.id).is_listening,
+      0,
+    )
+    assert.equal(
+      db
+        .prepare('SELECT status FROM sync_task_command WHERE task_space_id = ?')
+        .get(attached.taskSpace.id).status,
+      'cancelled',
+    )
+    assert.equal(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM sync_task_space_file WHERE task_space_id = ?')
+        .get(attached.taskSpace.id).count,
+      1,
+    )
+    assert.deepEqual(
+      service
+        .listReadable(actor, { teamId: 'team-a' })
+        .find((project) => project.id === attached.project.id).taskSpaces,
+      [],
+    )
+    assert.deepEqual(
+      service.listStatusReadable(actor).find((project) => project.id === attached.project.id)
+        .taskSpaces,
+      [],
+    )
+    const retiredResolve = service.resolve('user-a', {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'main',
+      teamId: 'team-a',
+    })
+    assert.equal(retiredResolve.status, 'unavailable')
+    assert.equal(retiredResolve.canCreate, false)
+    assert.equal(retiredResolve.taskSpace, null)
+    const retiredAdmin = service
+      .listAdminTaskSpaces(actor, attached.project.id)
+      .find((item) => item.id === attached.taskSpace.id)
+    assert.equal(retiredAdmin.lifecycleStatus, 'retired')
+    assert.deepEqual(retiredAdmin.unarchivedTaskTitles, ['待保留任务'])
+
+    const replay = service.retireTaskSpace(actor, attached.project.id, attached.taskSpace.id)
+    assert.equal(replay.alreadyRetired, true)
+    assert.equal(
+      db
+        .prepare(`
+          SELECT COUNT(*) AS count FROM audit_event
+          WHERE action = 'task_space_retired' AND target_id = ?
+        `)
+        .get(attached.taskSpace.id).count,
+      1,
+    )
+
+    const restored = service.restoreTaskSpace(actor, attached.project.id, attached.taskSpace.id)
+    assert.equal(restored.lifecycleStatus, 'active')
+    assert.equal(restored.retiredAt, null)
+    assert.equal(
+      db
+        .prepare('SELECT is_listening FROM sync_agent_binding WHERE id = ?')
+        .get(attached.binding.id).is_listening,
+      0,
+    )
+    assert.equal(
+      service
+        .listReadable(actor, { teamId: 'team-a' })
+        .flatMap((project) => project.taskSpaces)
+        .some((item) => item.id === attached.taskSpace.id),
+      true,
+    )
+    assert.throws(
+      () => service.restoreTaskSpace(actor, attached.project.id, attached.taskSpace.id),
+      /不是已弃用状态/,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('普通项目成员不能弃用分支，团队管理员和系统管理员可以管理', () => {
+  const { db, service } = setup()
+  try {
+    const attached = attachClient(service, 'user-a', 'agent-a', 'a', 'alice')
+    const ordinary = addTeamAMember(db, 'ordinary')
+    service.upsertMember(service.actorContext('user-a'), {
+      projectId: attached.project.id,
+      userId: ordinary.userId,
+      role: 'member',
+      trellisDevId: 'ordinary',
+    })
+    assert.throws(
+      () =>
+        service.retireTaskSpace(
+          service.actorContext(ordinary.userId),
+          attached.project.id,
+          attached.taskSpace.id,
+        ),
+      /无权管理项目分支/,
+    )
+
+    db.prepare(
+      "UPDATE team_member SET role = 'admin' WHERE team_id = 'team-b' AND user_id = 'user-b'",
+    ).run()
+    service.inviteTeam(service.actorContext('user-a'), attached.project.id, 'team-b')
+    const teamAdminRetired = service.retireTaskSpace(
+      service.actorContext('user-b'),
+      attached.project.id,
+      attached.taskSpace.id,
+    )
+    assert.equal(teamAdminRetired.lifecycleStatus, 'retired')
+    service.restoreTaskSpace(
+      service.actorContext('user-b'),
+      attached.project.id,
+      attached.taskSpace.id,
+    )
+
+    db.prepare("UPDATE user_account SET system_admin = 1 WHERE id = 'user-b'").run()
+    const systemAdminRetired = service.retireTaskSpace(
+      service.actorContext('user-b'),
+      attached.project.id,
+      attached.taskSpace.id,
+    )
+    assert.equal(systemAdminRetired.lifecycleStatus, 'retired')
+  } finally {
+    db.close()
+  }
+})
+
+test('移除分支直接删除 active taskSpace 的级联数据并保留其他分支', () => {
+  let backupCalls = 0
+  const { db, service } = setup({
+    backupService: {
+      backupNowOrThrow(options) {
+        backupCalls += 1
+        assert.equal(options.force, true)
+        return 'D:\\data\\backups\\board.sqlite.snapshot.test'
+      },
+    },
+  })
+  try {
+    const main = attachClient(service, 'user-a', 'agent-a', 'a', 'alice')
+    const featureSpace = service.attach('user-a', 'agent-a', {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'feature/cleanup',
+      displayName: 'Acme',
+      teamId: 'team-a',
+      developerId: 'alice',
+      localRepoKey: 'a'.repeat(64),
+    })
+    assert.notEqual(featureSpace.taskSpace.id, main.taskSpace.id)
+    addTaskSnapshot(db, featureSpace.taskSpace, { title: '清理任务' })
+    addLifecycleArtifacts(
+      db,
+      featureSpace.taskSpace,
+      featureSpace.binding.agentId,
+      featureSpace.binding.id,
+    )
+    const actor = service.actorContext('user-a')
+    for (const confirmation of [' feature/cleanup ', 123]) {
+      assert.throws(
+        () =>
+          service.purgeTaskSpace(actor, featureSpace.project.id, featureSpace.taskSpace.id, {
+            confirmation,
+          }),
+        /确认名称/,
+      )
+    }
+    assert.equal(backupCalls, 0)
+
+    const result = service.purgeTaskSpace(
+      actor,
+      featureSpace.project.id,
+      featureSpace.taskSpace.id,
+      { confirmation: 'feature/cleanup' },
+    )
+    assert.equal(result.purged, true)
+    assert.equal(result.backupName, 'board.sqlite.snapshot.test')
+    assert.equal('backupFile' in result, false)
+    assert.deepEqual(result.summary.unarchivedTasks, ['清理任务'])
+    assert.equal(backupCalls, 1)
+    assert.equal(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM sync_task_space WHERE id = ?')
+        .get(featureSpace.taskSpace.id).count,
+      0,
+    )
+    for (const table of [
+      'sync_agent_binding',
+      'sync_agent_cursor',
+      'sync_task_space_file',
+      'sync_task_index',
+      'sync_task_command',
+      'sync_conflict',
+    ]) {
+      assert.equal(
+        db
+          .prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE task_space_id = ?`)
+          .get(featureSpace.taskSpace.id).count,
+        0,
+        table,
+      )
+    }
+    assert.equal(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM sync_task_space WHERE id = ?')
+        .get(main.taskSpace.id).count,
+      1,
+    )
+    assert.equal(
+      db
+        .prepare(`
+          SELECT COUNT(*) AS count FROM audit_event
+          WHERE action = 'task_space_purged' AND target_id = ?
+        `)
+        .get(featureSpace.taskSpace.id).count,
+      1,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('移除分支在备份失败时不删除 taskSpace，跨项目操作被拒绝', () => {
+  const { db, service } = setup({
+    backupService: {
+      backupNowOrThrow() {
+        throw new Error('disk full')
+      },
+    },
+  })
+  try {
+    const first = attachClient(service, 'user-a', 'agent-a', 'a', 'alice')
+    const second = service.attach('user-a', 'agent-a', {
+      remoteUrl: 'https://example.com/other/repo.git',
+      branchName: 'main',
+      displayName: 'Other',
+      teamId: 'team-a',
+      developerId: 'alice',
+      localRepoKey: 'c'.repeat(64),
+    })
+    const actor = service.actorContext('user-a')
+    assert.throws(
+      () =>
+        service.purgeTaskSpace(actor, first.project.id, second.taskSpace.id, {
+          confirmation: 'main',
+        }),
+      /任务空间不存在/,
+    )
+    assert.throws(
+      () =>
+        service.purgeTaskSpace(actor, first.project.id, first.taskSpace.id, {
+          confirmation: 'main',
+        }),
+      (error) => error.code === 'DATABASE_BACKUP_FAILED',
+    )
+    assert.equal(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM sync_task_space WHERE id = ?')
+        .get(first.taskSpace.id).count,
+      1,
+    )
+    assert.equal(
+      db
+        .prepare(`
+          SELECT COUNT(*) AS count FROM audit_event
+          WHERE action = 'task_space_purged' AND target_id = ?
+        `)
+        .get(first.taskSpace.id).count,
+      0,
+    )
   } finally {
     db.close()
   }

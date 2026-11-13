@@ -115,6 +115,20 @@
 - Git 凭据、SSH trust、项目 probe、toolchain 批准和 Git operation 入口必须从 Team 管理台移除。
 - 管理台项目访问页只保留团队邀请/移除、项目成员、developer 映射、Agent binding 和审计。
 
+## 管理台分支生命周期
+
+- 分支管理只在服务端 `/admin.html` 的项目页提供；桌面客户端不显示弃用、恢复或移除入口。
+- `useAdminProjects` 在切换项目时并行请求 taskspaces、成员、绑定、团队访问和审计；状态只来自
+  `GET /api/projects/:projectId/task-spaces`，操作成功后重新调用 `selectProject()`，不能本地伪造删除。
+- 分支按 `lifecycleStatus=active|disabled|retired` 分组。每行展示任务数、文件数、在线/已关联监听数、
+  最后活动时间和 retired 原因；普通项目栏和任务选择器只消费服务端已过滤的列表。
+- 弃用弹层展示任务、文件、监听和最后活动摘要，可填写原因；提交中禁用按钮，失败保留弹层并显示
+  `ApiError` 文本。
+- 移除分支必须两阶段确认：第一步展示影响摘要并提示会删除服务端任务、绑定、游标、命令、冲突和索引；
+  第二步要求输入完整分支名，值不完全匹配时禁止提交。服务端仍会再次校验，前端不能只依赖按钮状态。
+- 移除成功后关闭弹层并刷新管理数据；备份失败、权限变化或 taskSpace 状态变化时保留弹层和输入，
+  显示服务端原因。删除不表示真实 Git 分支或客户端本地 `.trellis/tasks` 被清理。
+
 ## 分支监听状态与主动解绑
 
 ### 1. Scope / Trigger

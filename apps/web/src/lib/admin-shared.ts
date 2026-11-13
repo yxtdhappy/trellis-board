@@ -18,6 +18,7 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   stale: 'warning',
   pending: 'warning',
   warning: 'warning',
+  retired: 'warning',
   needs_repair: 'danger',
   failed: 'danger',
   error: 'danger',

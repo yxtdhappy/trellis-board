@@ -691,11 +691,16 @@ export function createTaskSnapshotService({
         clientSequence,
         timestamp,
       )
-      db.prepare(`
+      const taskSpaceUpdate = db
+        .prepare(`
         UPDATE sync_task_space
         SET revision = ?, status = 'indexing', updated_at = ?
-        WHERE id = ?
-      `).run(revision, timestamp, taskSpaceId)
+        WHERE id = ? AND status != 'disabled' AND retired_at IS NULL
+      `)
+        .run(revision, timestamp, taskSpaceId)
+      if (Number(taskSpaceUpdate.changes) !== 1) {
+        throw teamError(409, ERROR_CODES.PROJECT_NOT_READY, '任务空间已停用')
+      }
       return {
         kind: 'changed',
         revision,

@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import * as admin from '@/api/admin'
 import type {
   AgentBinding,
+  AdminTaskSpace,
   AuditEvent,
   MemberInput,
   ProjectMember,
@@ -20,6 +21,7 @@ export type AdminProjects = {
   refreshAccess: () => void
   members: ProjectMember[]
   bindings: AgentBinding[]
+  taskSpaces: AdminTaskSpace[]
   projectTeams: ProjectTeamAccess[]
   projectAudit: AuditEvent[]
   projectAuditHasMore: boolean
@@ -29,6 +31,18 @@ export type AdminProjects = {
   inviteProjectTeam: (teamId: string, accessRole?: string) => Promise<void>
   removeProjectTeam: (access: ProjectTeamAccess) => Promise<void>
   bindingAction: (binding: AgentBinding, action: admin.BindingAction) => Promise<void>
+  retireTaskSpace: (taskSpace: AdminTaskSpace, reason?: string) => Promise<TaskSpaceActionOutcome>
+  restoreTaskSpace: (taskSpace: AdminTaskSpace) => Promise<TaskSpaceActionOutcome>
+  purgeTaskSpace: (
+    taskSpace: AdminTaskSpace,
+    confirmation: string,
+  ) => Promise<TaskSpaceActionOutcome>
+}
+
+export type TaskSpaceActionOutcome = {
+  ok: boolean
+  error?: string
+  purge?: admin.PurgeTaskSpaceResult
 }
 
 type AdminProjectsOptions = {
@@ -48,6 +62,7 @@ export function useAdminProjects({
   const [accessProjectId, setAccessProjectId] = useState('')
   const [members, setMembers] = useState<ProjectMember[]>([])
   const [bindings, setBindings] = useState<AgentBinding[]>([])
+  const [taskSpaces, setTaskSpaces] = useState<AdminTaskSpace[]>([])
   const [projectTeams, setProjectTeams] = useState<ProjectTeamAccess[]>([])
   const [projectAudit, setProjectAudit] = useState<AuditEvent[]>([])
   const [projectAuditHasMore, setProjectAuditHasMore] = useState(false)
@@ -94,21 +109,26 @@ export function useAdminProjects({
       setAccessProjectId(projectId)
       setMembers([])
       setBindings([])
+      setTaskSpaces([])
       setProjectTeams([])
       setProjectAudit([])
       setProjectAuditHasMore(false)
       if (!projectId) return
-      const [membersResult, bindingsResult, teamsResult, auditResult] = await Promise.allSettled([
-        admin.fetchMembers(projectId),
-        admin.fetchBindings(projectId),
-        admin.fetchProjectTeams(projectId),
-        admin.fetchProjectAudit(projectId, null),
-      ])
+      const [membersResult, bindingsResult, taskSpacesResult, teamsResult, auditResult] =
+        await Promise.allSettled([
+          admin.fetchMembers(projectId),
+          admin.fetchBindings(projectId),
+          admin.fetchProjectTaskSpaces(projectId),
+          admin.fetchProjectTeams(projectId),
+          admin.fetchProjectAudit(projectId, null),
+        ])
       if (requestRef.current !== token) return
       if (membersResult.status === 'fulfilled') setMembers(membersResult.value)
       else report(membersResult.reason)
       if (bindingsResult.status === 'fulfilled') setBindings(bindingsResult.value)
       else report(bindingsResult.reason)
+      if (taskSpacesResult.status === 'fulfilled') setTaskSpaces(taskSpacesResult.value)
+      else report(taskSpacesResult.reason)
       if (teamsResult.status === 'fulfilled') setProjectTeams(teamsResult.value)
       else report(teamsResult.reason)
       if (auditResult.status === 'fulfilled') {
@@ -131,6 +151,7 @@ export function useAdminProjects({
     setAccessProjectId('')
     setMembers([])
     setBindings([])
+    setTaskSpaces([])
     setProjectTeams([])
     setProjectAudit([])
     setProjectAuditHasMore(false)
@@ -264,6 +285,57 @@ export function useAdminProjects({
     [report, selectProject],
   )
 
+  const retireTaskSpace = useCallback(
+    async (taskSpace: AdminTaskSpace, reason = '') => {
+      const projectId = accessProjectRef.current
+      if (!projectId) return { ok: false, error: '先选择项目。' }
+      try {
+        await admin.retireProjectTaskSpace(projectId, taskSpace.id, reason)
+        await selectProject(projectId)
+        toast.success(`分支 ${taskSpace.branchName} 已弃用。`)
+        return { ok: true }
+      } catch (error) {
+        report(error)
+        return { ok: false, error: admin.formatError(error) }
+      }
+    },
+    [report, selectProject],
+  )
+
+  const restoreTaskSpace = useCallback(
+    async (taskSpace: AdminTaskSpace) => {
+      const projectId = accessProjectRef.current
+      if (!projectId) return { ok: false, error: '先选择项目。' }
+      try {
+        await admin.restoreProjectTaskSpace(projectId, taskSpace.id)
+        await selectProject(projectId)
+        toast.success(`分支 ${taskSpace.branchName} 已恢复。`)
+        return { ok: true }
+      } catch (error) {
+        report(error)
+        return { ok: false, error: admin.formatError(error) }
+      }
+    },
+    [report, selectProject],
+  )
+
+  const purgeTaskSpace = useCallback(
+    async (taskSpace: AdminTaskSpace, confirmation: string) => {
+      const projectId = accessProjectRef.current
+      if (!projectId) return { ok: false, error: '先选择项目。' }
+      try {
+        const result = await admin.purgeProjectTaskSpace(projectId, taskSpace.id, confirmation)
+        await selectProject(projectId)
+        toast.success(`分支 ${taskSpace.branchName} 已移除。`)
+        return { ok: true, purge: result }
+      } catch (error) {
+        report(error)
+        return { ok: false, error: admin.formatError(error) }
+      }
+    },
+    [report, selectProject],
+  )
+
   return {
     projects,
     reloadProjects,
@@ -273,6 +345,7 @@ export function useAdminProjects({
     refreshAccess,
     members,
     bindings,
+    taskSpaces,
     projectTeams,
     projectAudit,
     projectAuditHasMore,
@@ -282,5 +355,8 @@ export function useAdminProjects({
     inviteProjectTeam,
     removeProjectTeam,
     bindingAction,
+    retireTaskSpace,
+    restoreTaskSpace,
+    purgeTaskSpace,
   }
 }

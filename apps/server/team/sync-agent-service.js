@@ -414,13 +414,15 @@ export function createSyncAgentService({
       const taskSpaceId = safeId(value.taskSpaceId, '任务空间 ID')
       const binding = db
         .prepare(`
-        SELECT b.*, s.project_id, s.branch_name AS task_space_branch, s.status AS task_space_status
+        SELECT b.*, s.project_id, s.branch_name AS task_space_branch,
+               s.status AS task_space_status, s.retired_at AS task_space_retired_at
         FROM sync_agent_binding b
         JOIN sync_task_space s ON s.id = b.task_space_id
         WHERE b.agent_id = ? AND b.task_space_id = ?
       `)
         .get(agent.id, taskSpaceId)
       if (!binding) {
+        rejectedTaskSpaceIds.add(taskSpaceId)
         bindings.push({
           taskSpaceId,
           taskSpace_id: taskSpaceId,
@@ -443,6 +445,10 @@ export function createSyncAgentService({
         })
         continue
       }
+      const taskSpaceUnavailable =
+        binding.sync_status === 'approved' &&
+        (binding.task_space_status === 'disabled' || binding.task_space_retired_at)
+      if (taskSpaceUnavailable) rejectedTaskSpaceIds.add(taskSpaceId)
       bindings.push({
         id: binding.id,
         taskSpaceId,
@@ -451,13 +457,18 @@ export function createSyncAgentService({
         project_id: binding.project_id,
         localRepoKey: binding.local_repo_key,
         branchName: binding.task_space_branch,
-        status:
-          binding.sync_status === 'approved' && binding.task_space_status === 'active'
-            ? 'approved'
-            : binding.sync_status,
+        status: taskSpaceUnavailable ? 'disabled' : binding.sync_status,
+        ...(taskSpaceUnavailable
+          ? {
+              errorCode: binding.task_space_retired_at
+                ? 'TASK_SPACE_RETIRED'
+                : 'TASK_SPACE_DISABLED',
+              error: binding.task_space_retired_at ? '任务空间已弃用' : '任务空间已停用',
+            }
+          : {}),
       })
     }
-    const acceptedListeningTaskSpaceIds =
+    let acceptedListeningTaskSpaceIds =
       listeningTaskSpaceIds == null
         ? null
         : listeningTaskSpaceIds.filter((taskSpaceId) => !rejectedTaskSpaceIds.has(taskSpaceId))
@@ -484,25 +495,49 @@ export function createSyncAgentService({
         agent.id,
       )
       if (acceptedListeningTaskSpaceIds != null) {
-        const approvedTaskSpaceIds = new Set(
-          db
-            .prepare(`
-              SELECT task_space_id
-              FROM sync_agent_binding
-              WHERE agent_id = ? AND sync_status = 'approved'
-            `)
-            .all(agent.id)
-            .map((row) => row.task_space_id),
+        const approvedRows = db
+          .prepare(`
+            SELECT b.task_space_id, s.status AS task_space_status, s.retired_at
+            FROM sync_agent_binding b
+            JOIN sync_task_space s ON s.id = b.task_space_id
+            WHERE b.agent_id = ? AND b.sync_status = 'approved'
+          `)
+          .all(agent.id)
+        const approvedTaskSpaceIds = new Set(approvedRows.map((row) => row.task_space_id))
+        for (const row of approvedRows) {
+          if (row.task_space_status === 'disabled' || row.retired_at) {
+            rejectedTaskSpaceIds.add(row.task_space_id)
+          }
+        }
+        acceptedListeningTaskSpaceIds = acceptedListeningTaskSpaceIds.filter(
+          (taskSpaceId) => !rejectedTaskSpaceIds.has(taskSpaceId),
         )
         const unknownTaskSpaceIds = acceptedListeningTaskSpaceIds.filter(
           (taskSpaceId) => !approvedTaskSpaceIds.has(taskSpaceId),
         )
         if (unknownTaskSpaceIds.length) {
-          throw teamError(
-            400,
-            ERROR_CODES.INVALID_INPUT,
-            '监听任务空间不属于当前 Agent 的已批准关联',
-            { details: { taskSpaceIds: unknownTaskSpaceIds } },
+          const existingTaskSpaceIds = new Set(
+            db
+              .prepare(`
+                SELECT id FROM sync_task_space
+                WHERE id IN (${unknownTaskSpaceIds.map(() => '?').join(', ')})
+              `)
+              .all(...unknownTaskSpaceIds)
+              .map((row) => row.id),
+          )
+          const unapprovedTaskSpaceIds = unknownTaskSpaceIds.filter((taskSpaceId) =>
+            existingTaskSpaceIds.has(taskSpaceId),
+          )
+          if (unapprovedTaskSpaceIds.length) {
+            throw teamError(
+              400,
+              ERROR_CODES.INVALID_INPUT,
+              '监听任务空间不属于当前 Agent 的已批准关联',
+              { details: { taskSpaceIds: unapprovedTaskSpaceIds } },
+            )
+          }
+          acceptedListeningTaskSpaceIds = acceptedListeningTaskSpaceIds.filter((taskSpaceId) =>
+            approvedTaskSpaceIds.has(taskSpaceId),
           )
         }
         db.prepare(`
@@ -542,7 +577,7 @@ export function createSyncAgentService({
       WHERE active.user_id = ? AND a.user_id = ? AND a.status = 'active'
         AND b.task_space_id = ? AND b.sync_status = 'approved'
         AND b.is_listening = 1 AND b.listener_reported_at >= ?
-        AND s.status = 'active' AND p.status = 'active'
+        AND s.status = 'active' AND s.retired_at IS NULL AND p.status = 'active'
         AND a.last_seen_at >= ?
       LIMIT 2
     `)
@@ -562,7 +597,8 @@ export function createSyncAgentService({
         JOIN sync_project p ON p.id = s.project_id
         WHERE b.task_space_id = ? AND b.sync_status = 'approved'
           AND b.is_listening = 1 AND b.listener_reported_at >= ?
-          AND a.status = 'active' AND s.status = 'active' AND p.status = 'active'
+          AND a.status = 'active' AND s.status = 'active' AND s.retired_at IS NULL
+          AND p.status = 'active'
           AND a.last_seen_at >= ?
       `)
         .get(taskSpaceId, staleCutoff, staleCutoff).count,

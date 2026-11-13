@@ -1173,6 +1173,40 @@ function createRequestHandler({
       })
       return true
     }
+    const taskSpacesMatch = routeMatch(pathname, /^\/api\/projects\/([^/]+)\/task-spaces$/)
+    if (taskSpacesMatch && request.method === 'GET') {
+      sendJson(response, 200, {
+        taskSpaces: taskSpaces.listAdminTaskSpaces(actor, taskSpacesMatch[0]),
+      })
+      return true
+    }
+    const taskSpaceActionMatch = routeMatch(
+      pathname,
+      /^\/api\/projects\/([^/]+)\/task-spaces\/([^/]+)\/(retire|restore)$/,
+    )
+    if (taskSpaceActionMatch && request.method === 'POST') {
+      const [projectId, taskSpaceId, action] = taskSpaceActionMatch
+      const body = await readJsonBody(request)
+      const result =
+        action === 'retire'
+          ? taskSpaces.retireTaskSpace(actor, projectId, taskSpaceId, body)
+          : taskSpaces.restoreTaskSpace(actor, projectId, taskSpaceId)
+      taskSpaceIndex.incrementQueryRevision()
+      if (action === 'restore' && result.indexedRevision < result.revision) {
+        void taskSpaceIndex.enqueue(result.id)
+      }
+      sendJson(response, 200, { taskSpace: result })
+      return true
+    }
+    const taskSpaceMatch = routeMatch(pathname, /^\/api\/projects\/([^/]+)\/task-spaces\/([^/]+)$/)
+    if (taskSpaceMatch && request.method === 'DELETE') {
+      const [projectId, taskSpaceId] = taskSpaceMatch
+      const body = await readJsonBody(request)
+      const result = taskSpaces.purgeTaskSpace(actor, projectId, taskSpaceId, body)
+      taskSpaceIndex.incrementQueryRevision()
+      sendJson(response, 200, result)
+      return true
+    }
     const teamAccessMatch = routeMatch(pathname, /^\/api\/projects\/([^/]+)\/team-access$/)
     if (teamAccessMatch && request.method === 'GET') {
       sendJson(response, 200, {
@@ -1689,6 +1723,7 @@ export async function createTeamRuntime({
     const taskSpaces = createTaskSpaceService({
       db,
       config,
+      backupService: taskSnapshotBackups,
     })
     taskCommands = createTaskCommandService({
       db,

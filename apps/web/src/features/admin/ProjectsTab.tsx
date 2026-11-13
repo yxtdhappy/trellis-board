@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import type { ProjectMember } from '@/api/admin'
 import { formatTime } from '@/lib/admin-shared'
+import { BranchManagementPanel } from './BranchManagementPanel'
 import { AuditItem, EmptyRow, Field, Panel, Row, StatusPill, controlClass } from './shared.tsx'
 import { SelectField } from '@/features/board/SelectField'
 
@@ -17,6 +18,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
     refreshAccess,
     members,
     bindings,
+    taskSpaces,
     projectTeams,
     teams,
     projectAudit,
@@ -26,6 +28,9 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
     removeMember,
     inviteProjectTeam,
     removeProjectTeam,
+    retireTaskSpace,
+    restoreTaskSpace,
+    purgeTaskSpace,
     createPairingCode,
   } = consoleApi
 
@@ -197,6 +202,14 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
       </div>
 
       <div className="flex flex-col gap-3.5">
+        <BranchManagementPanel
+          projectSelected={Boolean(accessProjectId)}
+          taskSpaces={taskSpaces}
+          onRetire={retireTaskSpace}
+          onRestore={restoreTaskSpace}
+          onPurge={purgeTaskSpace}
+        />
+
         <Panel
           kicker="TEAM ACCESS"
           title="跨团队访问"

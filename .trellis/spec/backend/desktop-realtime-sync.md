@@ -59,7 +59,7 @@ ETag、缓存键和游标绑定用户、团队、项目/taskSpace 集合哈希�
 `branch` 为可选单值子串筛选，trim 后大小写不敏感匹配，`%`、`_` 等字符按字面处理。
 分支匹配使用与前端一致的 Unicode 小写语义，不能直接依赖 SQLite 内置 `lower()`，它只折叠 ASCII。
 
-### SQLite v11
+### SQLite v12
 
 新模式只使用以下表；旧 `project_live_*`、`team_project`、`git_operation`、`git_credential`
 等表保留但不读写：
@@ -72,14 +72,19 @@ ETag、缓存键和游标绑定用户、团队、项目/taskSpace 集合哈希�
 - `sync_task_command`
 - `sync_conflict`、`sync_conflict_backup`、`sync_file_audit`
 
-v11 在 `sync_agent_binding` 上增加 `is_listening`、`listener_reported_at`、`last_listener_at`；
-在线监听必须同时满足 binding 已批准、最近监听报告和设备心跳未过期、账号当前 active Agent、
-项目与 taskSpace 均 active。旧 v10 binding 缺少监听报告时派生为 `unknown_legacy`，不得伪造在线。
+v12 在 `sync_agent_binding` 上增加 `is_listening`、`listener_reported_at`、`last_listener_at`，
+并在 `sync_task_space` 上增加 `retired_at`、`retired_by_user_id`、`retired_reason` 和
+`sync_task_space_retired(project_id, retired_at, status)` 索引。在线监听必须同时满足 binding 已批准、
+最近监听报告和设备心跳未过期、账号当前 active Agent、项目与 taskSpace 均 active 且
+`retired_at IS NULL`。旧 v10 binding 缺少监听报告时派生为 `unknown_legacy`，不得伪造在线。
+
+`retired_at` 是唯一的弃用标记；历史 `status=disabled` 且 `retired_at IS NULL` 仍表示技术停用，
+不得自动按弃用处理。
 
 ### 服务与 SSE
 
 ```text
-createTaskSpaceService({ db, config })
+createTaskSpaceService({ db, config, backupService })
 createTaskSnapshotService({ db, taskSpaces, onRevisionCommitted })
 createTaskCommandService({ db, taskSpaces, agents, events })
 createSyncAgentService({ db, config, events })
@@ -333,10 +338,12 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 
 ### 备份
 
-- v10 -> v11 升级前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v11.*`。
+- v11 -> v12 升级前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v12.*`；v10 及更早版本仍按
+  原顺序迁移，最终备份名使用当前目标版本。
 - Team runtime 启动时和每 24 小时写入
   `backups/board.sqlite.snapshot.<UTC timestamp>`，保留最近 7 份。
-- 备份失败只记结构化告警，不阻塞 HTTP、快照提交或 SSE。
+- 每日容错备份失败只记结构化告警，不阻塞 HTTP、快照提交或 SSE；管理员移除分支使用的严格备份
+  失败必须中止删除，不写删除审计。
 - 客户端冲突备份位于
   `%LOCALAPPDATA%\TrellisBoard\data\agent\live-backups\<taskSpaceId>\<backupId>`。
 

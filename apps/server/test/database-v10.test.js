@@ -33,7 +33,7 @@ function tableNames(db) {
     .map((row) => row.name)
 }
 
-test('schema v11 新库只新增 sync_* 团队任务表', () => {
+test('schema v12 新库只新增 sync_* 团队任务表', () => {
   const db = openDatabase({
     databaseFile: ':memory:',
     fallbackRepositories: [],
@@ -41,19 +41,27 @@ test('schema v11 新库只新增 sync_* 团队任务表', () => {
     legacyJsonImport: false,
   })
   try {
-    assert.equal(DATABASE_SCHEMA_VERSION, 11)
+    assert.equal(DATABASE_SCHEMA_VERSION, 12)
     const names = tableNames(db)
     for (const table of SYNC_TABLES) assert.ok(names.includes(table), `缺少 ${table}`)
     assert.ok(names.includes('team_project'))
     assert.ok(names.includes('project_live_file'))
     assert.ok(names.includes('git_operation'))
+    assert.ok(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM pragma_table_info('sync_task_space') WHERE name IN ('retired_at', 'retired_by_user_id', 'retired_reason')",
+        )
+        .get().count,
+      3,
+    )
   } finally {
     db.close()
   }
 })
 
-test('v10 升级到 v11 为 binding 补监听字段并保留已有关联', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v11-'))
+test('v10 升级到 v12 补监听与弃用字段并保留已有关联', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v12-'))
   const databaseFile = path.join(root, 'board.sqlite')
   let reopened = null
   try {
@@ -134,6 +142,14 @@ test('v10 升级到 v11 为 binding 补监听字段并保留已有关联', () =>
         'last_listener_at',
       ],
     )
+    assert.deepEqual(
+      reopened
+        .prepare('PRAGMA table_info(sync_task_space)')
+        .all()
+        .map((column) => column.name)
+        .filter((name) => name.startsWith('retired_')),
+      ['retired_at', 'retired_by_user_id', 'retired_reason'],
+    )
     const binding = reopened
       .prepare(`
         SELECT sync_status, is_listening, listener_reported_at, last_listener_at
@@ -151,11 +167,11 @@ test('v10 升级到 v11 为 binding 补监听字段并保留已有关联', () =>
     )
     assert.equal(
       reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '11',
+      '12',
     )
     const backupName = fs
       .readdirSync(path.join(root, 'backups'))
-      .find((name) => name.startsWith('board.sqlite.pre-v11.'))
+      .find((name) => name.startsWith('board.sqlite.pre-v12.'))
     assert.ok(backupName)
     const backup = new DatabaseSync(path.join(root, 'backups', backupName))
     try {
@@ -207,7 +223,7 @@ test('v10 升级到 v11 为 binding 补监听字段并保留已有关联', () =>
     assert.equal(
       fs
         .readdirSync(path.join(root, 'backups'))
-        .filter((name) => name.startsWith('board.sqlite.pre-v11.')).length,
+        .filter((name) => name.startsWith('board.sqlite.pre-v12.')).length,
       1,
     )
     reopened.close()
@@ -222,8 +238,117 @@ test('v10 升级到 v11 为 binding 补监听字段并保留已有关联', () =>
   }
 })
 
-test('v11 迁移失败时监听列和 schema 版本一起回滚', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v11-rollback-'))
+test('v11 升级到 v12 只补弃用字段，历史 disabled 不自动变成 retired', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v12-v11-upgrade-'))
+  const databaseFile = path.join(root, 'board.sqlite')
+  let reopened = null
+  try {
+    const db = openDatabase({
+      databaseFile,
+      fallbackRepositories: [],
+      importLegacyRepositories: false,
+      legacyJsonImport: false,
+    })
+    const now = new Date().toISOString()
+    db.prepare(
+      `INSERT INTO team(id, name, slug, status, created_at, updated_at)
+       VALUES ('team-1', '团队一', 'team-1', 'active', ?, ?)`,
+    ).run(now, now)
+    db.prepare(
+      `INSERT INTO user_account(
+        id, username_key, username, display_name, password_hash, password_params_json,
+        system_admin, status, must_change_password, password_changed_at, created_at, updated_at
+      ) VALUES ('user-1', 'user-1', 'user-1', '用户一', 'x', '{}', 0, 'active', 0, ?, ?, ?)`,
+    ).run(now, now, now)
+    db.prepare(
+      `INSERT INTO agent_device(
+        id, user_id, device_name, platform, agent_version, protocol_version,
+        credential_hash, status, last_seen_at, created_at
+      ) VALUES ('agent-1', 'user-1', '设备一', 'win32', '0.1.0', 3, 'credential', 'active', ?, ?)`,
+    ).run(now, now)
+    db.prepare(
+      `INSERT INTO sync_project(
+        id, name, remote_url, remote_identity_hash, owner_team_id, status,
+        created_by_user_id, created_by_agent_id, created_at, updated_at
+      ) VALUES ('project-1', '项目一', 'https://example.com/repo.git', 'hash-1', 'team-1',
+        'active', 'user-1', 'agent-1', ?, ?)`,
+    ).run(now, now)
+    db.prepare(
+      `INSERT INTO sync_task_space(
+        id, project_id, branch_name, status, revision, indexed_revision,
+        created_by_user_id, created_by_agent_id, created_at, updated_at
+      ) VALUES ('space-disabled', 'project-1', 'old-branch', 'disabled', 7, 6,
+        'user-1', 'agent-1', ?, ?)`,
+    ).run(now, now)
+    db.exec('DROP INDEX sync_task_space_retired')
+    db.exec('ALTER TABLE sync_task_space DROP COLUMN retired_reason')
+    db.exec('ALTER TABLE sync_task_space DROP COLUMN retired_by_user_id')
+    db.exec('ALTER TABLE sync_task_space DROP COLUMN retired_at')
+    db.prepare("UPDATE app_meta SET value = '11' WHERE key = 'schema_version'").run()
+    db.close()
+
+    reopened = openDatabase({
+      databaseFile,
+      fallbackRepositories: [],
+      importLegacyRepositories: false,
+      legacyJsonImport: false,
+    })
+    assert.equal(
+      reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+      '12',
+    )
+    const row = reopened
+      .prepare(`
+        SELECT status, retired_at, retired_by_user_id, retired_reason
+        FROM sync_task_space WHERE id = 'space-disabled'
+      `)
+      .get()
+    assert.deepEqual(
+      { ...row },
+      {
+        status: 'disabled',
+        retired_at: null,
+        retired_by_user_id: null,
+        retired_reason: null,
+      },
+    )
+    const backupName = fs
+      .readdirSync(path.join(root, 'backups'))
+      .find((name) => name.startsWith('board.sqlite.pre-v12.'))
+    assert.ok(backupName)
+    const backup = new DatabaseSync(path.join(root, 'backups', backupName))
+    try {
+      assert.equal(
+        backup.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+        '11',
+      )
+      assert.equal(
+        backup
+          .prepare(`
+            SELECT COUNT(*) AS count
+            FROM pragma_table_info('sync_task_space')
+            WHERE name IN ('retired_at', 'retired_by_user_id', 'retired_reason')
+          `)
+          .get().count,
+        0,
+      )
+    } finally {
+      backup.close()
+    }
+    reopened.close()
+    reopened = null
+  } finally {
+    try {
+      reopened?.close()
+    } catch {
+      // 清理失败不掩盖测试断言。
+    }
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v12-rollback-'))
   const databaseFile = path.join(root, 'board.sqlite')
   try {
     const db = openDatabase({
@@ -236,13 +361,17 @@ test('v11 迁移失败时监听列和 schema 版本一起回滚', () => {
     db.exec('ALTER TABLE sync_agent_binding DROP COLUMN last_listener_at')
     db.exec('ALTER TABLE sync_agent_binding DROP COLUMN listener_reported_at')
     db.exec('ALTER TABLE sync_agent_binding DROP COLUMN is_listening')
+    db.exec('DROP INDEX sync_task_space_retired')
+    db.exec('ALTER TABLE sync_task_space DROP COLUMN retired_reason')
+    db.exec('ALTER TABLE sync_task_space DROP COLUMN retired_by_user_id')
+    db.exec('ALTER TABLE sync_task_space DROP COLUMN retired_at')
     db.prepare("UPDATE app_meta SET value = '10' WHERE key = 'schema_version'").run()
     db.exec(`
-      CREATE TRIGGER fail_v11_metadata
+      CREATE TRIGGER fail_v12_metadata
       BEFORE UPDATE ON app_meta
-      WHEN NEW.key = 'schema_version' AND NEW.value = '11'
+      WHEN NEW.key = 'schema_version' AND NEW.value = '12'
       BEGIN
-        SELECT RAISE(ABORT, 'v11 metadata blocked');
+        SELECT RAISE(ABORT, 'v12 metadata blocked');
       END;
     `)
     db.close()
@@ -255,7 +384,7 @@ test('v11 迁移失败时监听列和 schema 版本一起回滚', () => {
           importLegacyRepositories: false,
           legacyJsonImport: false,
         }),
-      /v11 metadata blocked/,
+      /v12 metadata blocked/,
     )
     const check = new DatabaseSync(databaseFile, { readOnly: true })
     try {
@@ -273,13 +402,23 @@ test('v11 迁移失败时监听列和 schema 版本一起回滚', () => {
           .get().count,
         0,
       )
+      assert.equal(
+        check
+          .prepare(`
+            SELECT COUNT(*) AS count
+            FROM pragma_table_info('sync_task_space')
+            WHERE name IN ('retired_at', 'retired_by_user_id', 'retired_reason')
+          `)
+          .get().count,
+        0,
+      )
     } finally {
       check.close()
     }
     assert.equal(
       fs
         .readdirSync(path.join(root, 'backups'))
-        .some((name) => name.startsWith('board.sqlite.pre-v11.')),
+        .some((name) => name.startsWith('board.sqlite.pre-v12.')),
       true,
     )
   } finally {
@@ -287,8 +426,8 @@ test('v11 迁移失败时监听列和 schema 版本一起回滚', () => {
   }
 })
 
-test('v9 升级到 v11 保留旧项目行并创建备份', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v11-v9-upgrade-'))
+test('v9 升级到 v12 保留旧项目行并创建备份', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v12-v9-upgrade-'))
   const databaseFile = path.join(root, 'board.sqlite')
   try {
     fs.mkdirSync(path.join(root, 'projects'), { recursive: true })
@@ -356,12 +495,12 @@ test('v9 升级到 v11 保留旧项目行并创建备份', () => {
     try {
       assert.equal(
         reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-        '11',
+        '12',
       )
       assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM team_project').get().count, 1)
       assert.ok(tableNames(reopened).includes('sync_project'))
       const backups = fs.readdirSync(path.join(root, 'backups'))
-      const backupName = backups.find((name) => name.includes('pre-v11'))
+      const backupName = backups.find((name) => name.includes('pre-v12'))
       assert.ok(backupName)
       const backup = new DatabaseSync(path.join(root, 'backups', backupName))
       try {

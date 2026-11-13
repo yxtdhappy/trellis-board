@@ -309,11 +309,99 @@ test('监听报告或设备心跳超过统一阈值后不再算在线', () => {
   }
 })
 
+test('心跳把 retired taskSpace 标为不可同步，删除后的 binding 返回 BINDING_UNKNOWN', () => {
+  const { db, service } = setup()
+  try {
+    const first = register(service, db, '监听设备')
+    insertListenerBindings(db, first.agent.id)
+    const now = new Date().toISOString()
+    db.prepare(`
+      UPDATE sync_task_space
+      SET status = 'disabled', retired_at = ?
+      WHERE id = 'space-a'
+    `).run(now)
+
+    const retired = service.heartbeat(first.agent, {
+      ...heartbeatInput(first.agent, ['space-a', 'space-b']),
+      bindings: [{ taskSpaceId: 'space-a', localRepoKey: 'a'.repeat(64) }],
+    })
+    assert.equal(retired.bindings[0].status, 'disabled')
+    assert.equal(retired.bindings[0].errorCode, 'TASK_SPACE_RETIRED')
+    assert.equal(
+      db.prepare('SELECT is_listening FROM sync_agent_binding WHERE id = ?').get('binding-a')
+        .is_listening,
+      0,
+    )
+
+    db.prepare('DELETE FROM sync_task_space WHERE id = ?').run('space-a')
+    const removed = service.heartbeat(first.agent, {
+      ...heartbeatInput(first.agent, ['space-a']),
+      bindings: [{ taskSpaceId: 'space-a', localRepoKey: 'a'.repeat(64) }],
+    })
+    assert.equal(removed.bindings[0].status, 'rejected')
+    assert.equal(removed.bindings[0].errorCode, 'BINDING_UNKNOWN')
+  } finally {
+    db.close()
+  }
+})
+
+test('心跳不会把索引中或投影失败的任务空间误标为停用', () => {
+  const { db, service } = setup()
+  try {
+    const first = register(service, db, '监听设备')
+    insertListenerBindings(db, first.agent.id)
+    for (const status of ['indexing', 'error']) {
+      db.prepare("UPDATE sync_task_space SET status = ? WHERE id = 'space-a'").run(status)
+      const heartbeat = service.heartbeat(first.agent, {
+        ...heartbeatInput(first.agent, ['space-a']),
+        bindings: [{ taskSpaceId: 'space-a', localRepoKey: 'a'.repeat(64) }],
+      })
+      assert.equal(heartbeat.bindings[0].status, 'approved')
+      assert.equal(heartbeat.bindings[0].errorCode, undefined)
+      assert.equal(
+        db.prepare('SELECT is_listening FROM sync_agent_binding WHERE id = ?').get('binding-a')
+          .is_listening,
+        1,
+      )
+    }
+  } finally {
+    db.close()
+  }
+})
+
+test('心跳忽略已物理删除任务空间的监听 ID，不拒绝其他已批准关联', () => {
+  const { db, service } = setup()
+  try {
+    const first = register(service, db, '监听设备')
+    insertListenerBindings(db, first.agent.id)
+    const heartbeat = service.heartbeat(first.agent, {
+      ...heartbeatInput(first.agent, ['missing-space', 'space-a']),
+      bindings: [{ taskSpaceId: 'space-a', localRepoKey: 'a'.repeat(64) }],
+    })
+    assert.equal(heartbeat.bindings[0].status, 'approved')
+    assert.equal(
+      db.prepare('SELECT is_listening FROM sync_agent_binding WHERE id = ?').get('binding-a')
+        .is_listening,
+      1,
+    )
+  } finally {
+    db.close()
+  }
+})
+
 test('非法监听集合整次拒绝，不更新设备心跳或部分 binding', () => {
   const { db, service } = setup()
   try {
     const first = register(service, db, '监听设备')
     insertListenerBindings(db, first.agent.id)
+    const now = new Date().toISOString()
+    db.prepare(`
+      INSERT INTO sync_task_space(
+        id, project_id, branch_name, status, revision, indexed_revision,
+        created_by_user_id, created_by_agent_id, created_at, updated_at
+      ) VALUES ('space-unapproved', 'project-listener', 'unapproved', 'active', 0, 0,
+        'user-1', ?, ?, ?)
+    `).run(first.agent.id, now, now)
     const oldTime = '2026-11-12T00:00:00.000Z'
     db.prepare(`
       UPDATE sync_agent_binding
@@ -323,7 +411,7 @@ test('非法监听集合整次拒绝，不更新设备心跳或部分 binding', 
     db.prepare('UPDATE agent_device SET last_seen_at = ? WHERE id = ?').run(oldTime, first.agent.id)
     for (const ids of [
       ['space-a', 'space-a'],
-      ['space-a', 'missing-space'],
+      ['space-a', 'space-unapproved'],
       Array.from({ length: 65 }, (_, index) => `space-${index}`),
     ]) {
       assert.throws(
