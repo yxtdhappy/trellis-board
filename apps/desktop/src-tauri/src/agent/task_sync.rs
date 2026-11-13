@@ -24,6 +24,8 @@ const RATE_LIMIT_RETRY_MAX_DELAY: Duration = Duration::from_millis(5000);
 const MAX_RATE_LIMIT_RETRIES: u32 = 2;
 const SNAPSHOT_EXTENSIONS: [&str; 6] = [".json", ".jsonl", ".md", ".txt", ".yaml", ".yml"];
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(250);
+/// ProjectRail 每 3 秒轮询一次；关联展示允许短时复用，同步门禁仍逐次精确校验。
+const OWNERSHIP_PROJECTION_CACHE_TTL: Duration = Duration::from_secs(15);
 /// 分支守卫错误码：这些失败保留本地绑定状态，不覆盖成通用同步错误。
 const BRANCH_GUARD_CODES: [&str; 7] = [
     code::BRANCH_MISMATCH,
@@ -821,6 +823,7 @@ struct HeadTreeCache {
     branch_name: String,
     head_commit: String,
     tracked_paths: Arc<HashSet<String>>,
+    validated_at: Instant,
 }
 
 pub struct TaskSync {
@@ -1017,9 +1020,10 @@ impl TaskSync {
             .await?
             .ok_or_else(|| AgentError::new(code::DETACHED_HEAD, "本地仓库没有可用 HEAD"))?;
         {
-            let cache = self.head_tree_cache.lock().await;
-            if let Some(entry) = cache.get(&binding.task_space_id) {
+            let mut cache = self.head_tree_cache.lock().await;
+            if let Some(entry) = cache.get_mut(&binding.task_space_id) {
                 if entry.branch_name == branch && entry.head_commit == head {
+                    entry.validated_at = Instant::now();
                     return Ok((entry.head_commit.clone(), entry.tracked_paths.clone()));
                 }
             }
@@ -1035,9 +1039,27 @@ impl TaskSync {
                 branch_name: branch,
                 head_commit: head.clone(),
                 tracked_paths: tracked_paths.clone(),
+                validated_at: Instant::now(),
             },
         );
         Ok((head, tracked_paths))
+    }
+
+    async fn projected_head_tree_paths(
+        &self,
+        binding: &AgentBinding,
+    ) -> AgentResult<(String, Arc<HashSet<String>>)> {
+        {
+            let cache = self.head_tree_cache.lock().await;
+            if let Some(entry) = cache.get(&binding.task_space_id) {
+                if entry.branch_name == binding.branch_name
+                    && entry.validated_at.elapsed() < OWNERSHIP_PROJECTION_CACHE_TTL
+                {
+                    return Ok((entry.head_commit.clone(), entry.tracked_paths.clone()));
+                }
+            }
+        }
+        self.head_tree_paths(binding).await
     }
 
     /// 本地关联展示与同步门禁共用同一套基线错分支判定和 HEAD tree 缓存。
@@ -1061,7 +1083,7 @@ impl TaskSync {
         {
             return paused;
         }
-        if let Ok((_, tracked_paths)) = self.head_tree_paths(binding).await {
+        if let Ok((_, tracked_paths)) = self.projected_head_tree_paths(binding).await {
             paused.retain(|task_dir| !tracked_paths.contains(&format!("{task_dir}/task.json")));
         }
         paused
@@ -5100,6 +5122,32 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst),
             1
         );
+
+        run_git(repo, &["checkout", "--quiet", "-b", "dev1"]);
+        let cached_paused = sync
+            .ownership_paused_task_dirs(&binding, &groups)
+            .await;
+        assert_eq!(
+            cached_paused.into_iter().collect::<Vec<_>>(),
+            vec![".trellis/tasks/active-probe".to_string()]
+        );
+        assert_eq!(
+            sync.head_tree_scans
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+
+        {
+            let mut cache = sync.head_tree_cache.lock().await;
+            let entry = cache
+                .get_mut(&binding.task_space_id)
+                .expect("cached head tree");
+            entry.validated_at = Instant::now() - OWNERSHIP_PROJECTION_CACHE_TTL;
+        }
+        let stale_paused = sync
+            .ownership_paused_task_dirs(&binding, &groups)
+            .await;
+        assert_eq!(stale_paused.len(), 18);
 
         let _ = tokio::fs::remove_dir_all(root).await;
     }
