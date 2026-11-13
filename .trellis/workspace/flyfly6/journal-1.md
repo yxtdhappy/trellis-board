@@ -499,3 +499,41 @@ tauri 构建关闭 bundling，只产出 trellis-board-client.exe 与绿色 ZIP�
 ### Next Steps
 
 - 观察桌面壳深色/字号在真实 GUI 下的表现。
+
+
+## Session 15: 修复桌面接入预检返回契约与弹窗双滚动条
+<!-- trellis-session: v=2 fp=4ce8eb4e2c8f4083 -->
+
+**Date**: 2026-11-13
+**Task**: 修复桌面接入预检返回契约与弹窗双滚动条
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+preflight_pending_project 剥掉 {ok,result} 信封改为扁平 payload，AgentToolSelector 去掉内层滚动容器，契约写入 desktop-agent-runtime spec
+
+### Main Changes
+
+- agent_service.rs: preflight_project 返回扁平预检 payload 并保留 ok:true
+- AgentToolSelector.tsx: 移除 max-h-64 overflow-y-auto，接入弹窗只保留 DialogBody 单层滚动
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ef2bc96` | fix(desktop): unwrap preflight payload and drop nested scroll in onboarding dialog |
+
+### Testing
+
+- [OK] cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml 通过（47.63s）
+- [OK] npm test: 435 用例 433 pass / 0 fail / 2 skipped
+- [OK] npx oxfmt --check 通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 在 11-13-desktop-manual-acceptance-gaps 中补真机验收（含正常接入弹窗路径）
