@@ -94,7 +94,7 @@ Board 运行数据不再写入源码目录。默认根目录为：
 `/var/lib/trellis-board`。服务端主进程同时把日志写入
 `<运行数据目录>/logs/` 下的 JSON 行文件；默认即 Windows 的
 `%LOCALAPPDATA%\TrellisBoard\server\logs\server.1.log`。文件名带轮转序号，
-单文件上限 `5 MiB`、最多保留 3 个文件；正常退出会等待缓冲区落盘。
+单文件上限 `5 MiB`、最多保留 5 个文件（含正在写入的那个，序号随轮转递增）；正常退出会等待缓冲区落盘。
 强制终止、断电或系统崩溃时，尚未刷新的尾部日志可能丢失。
 
 Board 自身可变状态统一保存在该目录下的 `board.sqlite`：
