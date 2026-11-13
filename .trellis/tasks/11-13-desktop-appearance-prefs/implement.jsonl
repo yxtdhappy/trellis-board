@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "新增远程 Board 可调用的 Tauri command + capability，必须遵守 ensure_board_caller 与权限分离契约"}
+{"file": ".trellis/spec/guides/index.md", "reason": "跨 Rust/Web 改动的通用思考指南"}
