@@ -573,3 +573,26 @@ tag 推送不再直接构建，由 dispatch-main 作业用 gh api 触发 main �
 ### Next Steps
 
 - 无
+
+
+## Session 17: 补齐桌面真机验收：超时/解绑/停止写入/响应式/接入/1024 边界
+<!-- trellis-session: v=2 fp=d105b91c3891c6d8 -->
+
+**Date**: 2026-11-13
+**Task**: 补齐桌面真机验收：超时/解绑/停止写入/响应式/接入/1024 边界
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+用真实便携客户端+真实团队服务+WebView2 CDP 补齐 gaps 任务 AC2-AC8：60s 超时 63s 翻转、断网解绑重试、解绑后零写入、浅深色三档响应式、接入弹窗端到端、1101 文件被 1024 上限拒绝；AC1 因单实例插件阻塞，需三台真机。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `53df23c` | docs(task): record desktop manual acceptance evidence |
+
+### Status
+
+[OK] **Completed**
