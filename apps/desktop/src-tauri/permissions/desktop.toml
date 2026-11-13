@@ -116,6 +116,11 @@ description = "本地实时同步控制窗口关闭已读通知。"
 commands.allow = ["live_control_dismiss"]
 
 [[permission]]
+identifier = "allow-live-control-resize"
+description = "本地实时同步控制窗口按内容高度调整自身尺寸。"
+commands.allow = ["live_control_resize"]
+
+[[permission]]
 identifier = "allow-runtime-status"
 description = "本地登录页可检查 Node.js 与 Trellis CLI 运行环境。"
 commands.allow = ["runtime_status"]

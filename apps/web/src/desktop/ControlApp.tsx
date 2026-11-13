@@ -256,6 +256,7 @@ export function ControlApp() {
   const [ownershipSelected, setOwnershipSelected] = useState<Set<string>>(() => new Set())
   const [ownershipBranches, setOwnershipBranches] = useState<Record<string, string>>({})
   const signatureRef = useRef('')
+  const cardRef = useRef<HTMLDivElement>(null)
 
   async function refresh() {
     try {
@@ -396,6 +397,27 @@ export function ControlApp() {
     return () => window.clearInterval(timer)
   }, [])
 
+  useEffect(() => {
+    const element = cardRef.current
+    const send = invoke
+    if (!element || !send) return
+    let frame = 0
+    const report = () => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        const rect = element.getBoundingClientRect()
+        void send('live_control_resize', { height: Math.ceil(rect.bottom + 12) }).catch(() => {})
+      })
+    }
+    report()
+    const observer = new ResizeObserver(report)
+    observer.observe(element)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+  }, [])
+
   const differences =
     event?.type === 'initial_sync_review'
       ? (event.differences ?? []).filter((item) => item.type !== 'same')
@@ -475,8 +497,8 @@ export function ControlApp() {
   }
 
   return (
-    <main className="grid min-h-dvh place-items-center bg-background p-4">
-      <Card className="w-full max-w-[35rem] [--card-spacing:--spacing(6)]">
+    <main className="bg-background p-3">
+      <Card ref={cardRef} className="w-full [--card-spacing:--spacing(5)]">
         <CardHeader>
           <p className="text-[0.625rem] font-semibold tracking-[0.2em] text-muted-foreground">
             团队实时同步

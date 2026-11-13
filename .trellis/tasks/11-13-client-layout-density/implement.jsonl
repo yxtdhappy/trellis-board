@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "样式/token/格式化与测试边界"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "控制窗口与弹层契约"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "Tauri 命令、capability 与窗口契约"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨 web/Rust 改动前确认消费者"}
