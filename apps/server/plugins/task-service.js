@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createTask, assignTask } from '../actions.js'
+import { createExecutionStore } from '../execution-store.js'
 import { getManualRecord, setManualStage } from '../metadata.js'
 import { appError, invalidParams, ERROR_CODES } from './protocol.js'
 
@@ -265,6 +266,29 @@ export function createTaskService({
     })
   }
 
+  function setPlan(params = {}) {
+    const split = params.taskKey ? splitTaskKey(params.taskKey) : null
+    const project = findRepository(params.repositoryId || split?.projectId)
+    const relativeDir = params.relativeDir || split?.relativeDir
+    if (!relativeDir) throw invalidParams('setPlan 缺少 relativeDir 或 taskKey')
+    const { task } = readTask(project, relativeDir)
+    const executionId = String(task.id || '').trim() || path.basename(relativeDir)
+    const executionTaskKey = `${project.id}::${executionId}`
+    const store = createExecutionStore({ db })
+    const result = store.updatePlan(
+      executionTaskKey,
+      { dueDate: params.dueDate },
+      params.actor ?? null,
+    )
+    return {
+      taskKey: normalizeTaskKey(project.id, relativeDir),
+      executionTaskKey,
+      changed: result.changed,
+      dueDate: result.plan?.dueDate ?? null,
+      plan: result.plan ?? null,
+    }
+  }
+
   function taskDirectories(tasksRoot, includeArchived) {
     const directories = []
     const walk = (root, prefix, depth) => {
@@ -336,6 +360,7 @@ export function createTaskService({
 
   return {
     create,
+    setPlan,
     assign,
     setStage,
     get,

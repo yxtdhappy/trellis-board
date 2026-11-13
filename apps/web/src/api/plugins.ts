@@ -1,4 +1,4 @@
-import { requestJson } from './request.ts'
+import { ApiError, requestJson } from './request.ts'
 
 export type PluginInfo = {
   id: string
@@ -55,4 +55,54 @@ export async function fetchPluginLogs(id: string, tail = 200): Promise<PluginLog
     `/api/plugins/${encodeURIComponent(id)}/logs?tail=${tail}`,
   )
   return data?.entries ?? []
+}
+
+export type PluginReloadResult = {
+  ok: boolean
+  reason?: string
+  error?: string
+  secretsFile?: string | null
+  changed: string[]
+  restarted: string[]
+  started: string[]
+  stopped: string[]
+  added: string[]
+  removed: string[]
+  failed: { id: string; error: string }[]
+  warnings?: Array<Record<string, unknown>>
+}
+
+function normalizeReloadResult(payload: Partial<PluginReloadResult> | null): PluginReloadResult {
+  return {
+    ok: Boolean(payload?.ok),
+    reason: payload?.reason,
+    error: payload?.error,
+    secretsFile: payload?.secretsFile ?? null,
+    changed: payload?.changed ?? [],
+    restarted: payload?.restarted ?? [],
+    started: payload?.started ?? [],
+    stopped: payload?.stopped ?? [],
+    added: payload?.added ?? [],
+    removed: payload?.removed ?? [],
+    failed: payload?.failed ?? [],
+    warnings: payload?.warnings ?? [],
+  }
+}
+
+/**
+ * 重读运行数据目录的 plugins.json + secrets 并重启受影响的插件。
+ * 解析失败时宿主返回 400 + 完整结果，这里统一按结果对象返回，调用方只看 ok。
+ */
+export async function reloadPlugins(): Promise<PluginReloadResult> {
+  try {
+    const { data } = await requestJson<PluginReloadResult>('/api/plugins/reload', {
+      method: 'POST',
+    })
+    return normalizeReloadResult(data)
+  } catch (error) {
+    if (error instanceof ApiError && error.payload) {
+      return normalizeReloadResult(error.payload as Partial<PluginReloadResult>)
+    }
+    throw error
+  }
 }

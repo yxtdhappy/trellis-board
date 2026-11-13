@@ -73,6 +73,29 @@ test('缺失 secret 让插件停在 missing-secret，不启动进程', async () 
   }
 })
 
+test('allowMissingSecrets 让插件带空值启动并只告警', async () => {
+  const harness = await createHarness({
+    plugins: [
+      {
+        id: 'echo',
+        module: fixtureModule('echo'),
+        enabled: true,
+        allowMissingSecrets: true,
+        config: { token: 'secret:echo/token' },
+      },
+    ],
+    secrets: { version: 1, refs: {} },
+  })
+  try {
+    const state = harness.supervisor.plugins.get('echo')
+    assert.notEqual(state.status, 'missing-secret')
+    assert.equal(state.config.token, null)
+    assert.match(state.lastWarning, /secret:echo\/token/)
+  } finally {
+    await harness.cleanup()
+  }
+})
+
 test('明文敏感值允许加载但产生告警', () => {
   const workspace = makeConfig([
     {

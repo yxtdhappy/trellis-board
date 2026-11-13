@@ -365,6 +365,7 @@ export function validateManifest(
       provides: provided.provides,
       requires: required.requires,
       entry: raw.entry,
+      allowMissingSecrets: raw.allowMissingSecrets === true,
     },
   }
 }
