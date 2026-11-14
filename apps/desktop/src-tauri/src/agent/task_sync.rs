@@ -1055,6 +1055,7 @@ impl TaskSync {
         if unchanged {
             return;
         }
+        drop(_lifecycle);
 
         let selected = self.select_bindings(filtered).await;
         let (unchanged, state_changed, pull_task_space_ids) = {
