@@ -1165,3 +1165,31 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 50: 完成合并任务归属、代理与 CPU 回归修复并发布 0.4.7
+<!-- trellis-session: v=2 fp=8f7c663e4d258908 -->
+
+**Date**: 2026-11-14
+**Task**: 完成合并任务归属、代理与 CPU 回归修复并发布 0.4.7
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成基线合入证据、未合入任务暂停、默认去重和来源分支展示；真实客户端验证 17 个历史任务、dev1 探针、API 与归档 UI。修复私网代理绕过和 ProjectRail 全量扫描，CPU 从约 25%/100% 尖峰降至约 4%–7% 平均、无周期尖峰，但仍有 3 秒状态轮询且未达到 <2%。最终 CI 与正式 Release 构建通过，v0.4.7 已发布。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `094f10e` | fix(desktop): bypass proxy for local servers |
+| `d8775b7` | perf(desktop): avoid full scans in ownership projection |
+| `b96bfcf` | perf(desktop): reuse ownership projection for unchanged head |
+| `8ddea09` | test(desktop): fix ownership projection arc assertion |
+| `2bd2e88` | docs(task): finalize merged ownership e2e |
+| `175be76` | docs(task): record v0.4.7 release evidence |
+
+### Status
+
+[OK] **Completed**

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 49
-- **Last Active**: 2026-11-13
+- **Total Sessions**: 50
+- **Last Active**: 2026-11-14
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1167 | Active |
+| `journal-1.md` | ~1195 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 50 | 2026-11-14 | 完成合并任务归属、代理与 CPU 回归修复并发布 0.4.7 | `094f10e`, `d8775b7`, `b96bfcf`, `8ddea09`, `2bd2e88`, `175be76` | `main` |
 | 49 | 2026-11-13 | 优化任务同步路径校验与错误展示 | `b01727f`, `37e549e` | `main` |
 | 48 | 2026-11-13 | 跨分支任务同步冲突收敛与清理 | `ed19e36` | `main` |
 | 47 | 2026-11-13 | 修复桌面客户端手动退出白屏与自动登录 | `8921ea2`, `9f6484e`, `6d39d12` | `main` |
