@@ -720,6 +720,61 @@ fn baselines_for_task_dir(
         .collect()
 }
 
+fn local_sync_state_from_groups(
+    cursor: &Cursor,
+    local_groups: &[SnapshotGroup],
+    server_baselines: &BTreeMap<String, String>,
+) -> (
+    Vec<String>,
+    BTreeMap<String, BTreeMap<String, String>>,
+    HashSet<String>,
+) {
+    let by_dir: HashMap<&str, &SnapshotGroup> = local_groups
+        .iter()
+        .map(|group| (group.task_dir.as_str(), group))
+        .collect();
+    let mut next_deferred = cursor.deferred.clone();
+    let mut task_dirs: HashSet<String> = by_dir
+        .keys()
+        .map(|task_dir| (*task_dir).to_string())
+        .collect();
+    task_dirs.extend(cursor.deferred.keys().cloned());
+    for baselines in [&cursor.baselines, server_baselines] {
+        let normalized = normalize_baselines(baselines);
+        for path_name in normalized.keys() {
+            if let Some(task_dir) = task_directory_from_relative(path_name) {
+                task_dirs.insert(task_dir);
+            }
+        }
+    }
+    let mut dirty = Vec::new();
+    let mut reconciled_deferred = HashSet::new();
+    for task_dir in task_dirs {
+        let local_state = by_dir
+            .get(task_dir.as_str())
+            .map(file_state_from_group)
+            .unwrap_or_default();
+        // cursor 基线只判 dirty；只有合并服务端基线完全一致时才记录为精确收敛。
+        if let Some(deferred_state) = cursor.deferred.get(&task_dir) {
+            if local_state.is_empty() {
+                continue;
+            }
+            if deferred_state == &local_state {
+                if baselines_for_task_dir(server_baselines, &task_dir) == local_state {
+                    next_deferred.remove(&task_dir);
+                    reconciled_deferred.insert(task_dir.clone());
+                }
+                continue;
+            }
+            next_deferred.remove(&task_dir);
+        }
+        if baselines_for_task_dir(&cursor.baselines, &task_dir) != local_state {
+            dirty.push(task_dir);
+        }
+    }
+    (dirty, next_deferred, reconciled_deferred)
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Cursor {
     pub revision: u64,
@@ -1380,9 +1435,16 @@ impl TaskSync {
 
     /// 拉取、补收敛基线任务，并对失败写日志和 `task_sync_error` 控制事件。
     pub async fn pull_and_report(&self, task_space_id: &str) {
-        match self.pull_task_space(task_space_id).await {
+        let mut reconciled_deferred = HashSet::new();
+        match self
+            .pull_task_space_tracking(task_space_id, &mut reconciled_deferred)
+            .await
+        {
             Ok(result) if result.get("pendingReview").and_then(Value::as_bool) != Some(true) => {
-                if let Err(error) = self.reconcile_baseline_tasks(task_space_id).await {
+                if let Err(error) = self
+                    .reconcile_baseline_tasks(task_space_id, &reconciled_deferred)
+                    .await
+                {
                     self.report_error(task_space_id, &error).await;
                 }
             }
@@ -2303,40 +2365,31 @@ impl TaskSync {
         &self,
         binding: &AgentBinding,
         cursor: &Cursor,
-    ) -> AgentResult<(Vec<String>, BTreeMap<String, BTreeMap<String, String>>)> {
+        server_baselines: &BTreeMap<String, String>,
+    ) -> AgentResult<(
+        Vec<String>,
+        BTreeMap<String, BTreeMap<String, String>>,
+        HashSet<String>,
+    )> {
         let groups = self.local_groups(binding, None).await?;
-        let by_dir: HashMap<String, SnapshotGroup> = groups
-            .into_iter()
-            .map(|group| (group.task_dir.clone(), group))
-            .collect();
-        let mut next_deferred = cursor.deferred.clone();
-        let mut task_dirs: HashSet<String> = by_dir.keys().cloned().collect();
-        task_dirs.extend(cursor.deferred.keys().cloned());
-        for path_name in normalize_baselines(&cursor.baselines).keys() {
-            if let Some(task_dir) = task_directory_from_relative(path_name) {
-                task_dirs.insert(task_dir);
-            }
-        }
-        let mut dirty = Vec::new();
-        for task_dir in task_dirs {
-            let local_state = by_dir
-                .get(&task_dir)
-                .map(file_state_from_group)
-                .unwrap_or_default();
-            if let Some(deferred_state) = cursor.deferred.get(&task_dir) {
-                if deferred_state == &local_state {
-                    continue;
-                }
-                next_deferred.remove(&task_dir);
-            }
-            if baselines_for_task_dir(&cursor.baselines, &task_dir) != local_state {
-                dirty.push(task_dir);
-            }
-        }
-        Ok((dirty, next_deferred))
+        Ok(local_sync_state_from_groups(
+            cursor,
+            &groups,
+            server_baselines,
+        ))
     }
 
     pub async fn pull_task_space(&self, task_space_id: &str) -> AgentResult<Value> {
+        let mut reconciled_deferred = HashSet::new();
+        self.pull_task_space_tracking(task_space_id, &mut reconciled_deferred)
+            .await
+    }
+
+    async fn pull_task_space_tracking(
+        &self,
+        task_space_id: &str,
+        reconciled_deferred: &mut HashSet<String>,
+    ) -> AgentResult<Value> {
         let binding = match self.binding(task_space_id).await {
             Ok(binding) => binding,
             Err(error) if error.code == code::BINDING_UNKNOWN => {
@@ -2347,7 +2400,7 @@ impl TaskSync {
             }
             Err(error) => return Err(error),
         };
-        self.pull(&binding).await
+        self.pull_tracking(&binding, reconciled_deferred).await
     }
 
     async fn pull_task_space_for_event(
@@ -2376,6 +2429,16 @@ impl TaskSync {
     }
 
     async fn pull(&self, binding: &AgentBinding) -> AgentResult<Value> {
+        let mut reconciled_deferred = HashSet::new();
+        self.pull_tracking(binding, &mut reconciled_deferred)
+            .await
+    }
+
+    async fn pull_tracking(
+        &self,
+        binding: &AgentBinding,
+        reconciled_deferred: &mut HashSet<String>,
+    ) -> AgentResult<Value> {
         self.assert_binding_branch(binding).await?;
         let task_space_id = binding.task_space_id.clone();
         let mut cursor = self.read_cursor(&task_space_id).await;
@@ -2432,7 +2495,10 @@ impl TaskSync {
             .unwrap_or(0);
         let mut baseline_files: Vec<SnapshotFile> = Vec::new();
 
-        let (dirty_dirs, deferred) = self.local_sync_state(binding, &cursor).await?;
+        let (dirty_dirs, deferred, exact_reconciled) = self
+            .local_sync_state(binding, &cursor, &snapshot_baselines)
+            .await?;
+        reconciled_deferred.extend(exact_reconciled);
         if deferred != cursor.deferred {
             self.write_cursor(
                 &task_space_id,
@@ -2465,7 +2531,7 @@ impl TaskSync {
                     "pendingReview": true,
                 }));
             }
-            return Box::pin(self.pull(binding)).await;
+            return Box::pin(self.pull_tracking(binding, reconciled_deferred)).await;
         }
 
         if after_revision == 0 {
@@ -2848,7 +2914,11 @@ impl TaskSync {
     }
 
     /// 启动或绑定更新后，为已经存在于基线 HEAD 的错分支任务补一次合入证据。
-    async fn reconcile_baseline_tasks(&self, task_space_id: &str) -> AgentResult<Value> {
+    async fn reconcile_baseline_tasks(
+        &self,
+        task_space_id: &str,
+        reconciled_deferred_dirs: &HashSet<String>,
+    ) -> AgentResult<Value> {
         let config = self
             .store
             .read_config(false)
@@ -2879,6 +2949,7 @@ impl TaskSync {
             .iter()
             .filter(|group| {
                 !cursor.deferred.contains_key(&group.task_dir)
+                    && !reconciled_deferred_dirs.contains(&group.task_dir)
                     && group
                         .task_branch
                         .as_deref()
@@ -5149,9 +5220,12 @@ mod tests {
         .expect("task json");
     }
 
-    async fn mock_api_server() -> (
+    async fn mock_api_server(
+        snapshot_payload: Value,
+    ) -> (
         String,
         Arc<Mutex<Vec<Value>>>,
+        Arc<Mutex<Vec<String>>>,
         tokio::task::JoinHandle<()>,
     ) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -5159,13 +5233,19 @@ mod tests {
             .expect("bind mock server");
         let address = listener.local_addr().expect("mock address");
         let changes = Arc::new(Mutex::new(Vec::new()));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let snapshot_payload = Arc::new(snapshot_payload);
         let captured_changes = changes.clone();
+        let captured_requests = requests.clone();
+        let captured_snapshot_payload = snapshot_payload.clone();
         let task = tokio::spawn(async move {
             loop {
                 let Ok((mut socket, _)) = listener.accept().await else {
                     return;
                 };
                 let changes = captured_changes.clone();
+                let requests = captured_requests.clone();
+                let snapshot_payload = captured_snapshot_payload.clone();
                 tokio::spawn(async move {
                     let mut request = Vec::new();
                     let mut chunk = [0u8; 4096];
@@ -5210,10 +5290,22 @@ mod tests {
                     let mut parts = request_line.split_whitespace();
                     let method = parts.next().unwrap_or_default();
                     let path = parts.next().unwrap_or_default();
+                    requests
+                        .lock()
+                        .await
+                        .push(format!("{method} {path}"));
                     let (status, payload) = if path.contains("/snapshot?") {
-                        ("200 OK", json!({ "revision": 1, "files": [] }))
+                        ("200 OK", snapshot_payload.as_ref().clone())
                     } else if path.contains("/files?") {
-                        ("200 OK", json!({ "files": [] }))
+                        (
+                            "200 OK",
+                            json!({
+                                "files": snapshot_payload
+                                    .get("files")
+                                    .cloned()
+                                    .unwrap_or_else(|| Value::Array(Vec::new()))
+                            }),
+                        )
                     } else if method == "PUT" && path.ends_with("/cursor") {
                         ("200 OK", json!({}))
                     } else if method == "POST" && path.ends_with("/changes") {
@@ -5232,7 +5324,7 @@ mod tests {
                 });
             }
         });
-        (format!("http://{address}"), changes, task)
+        (format!("http://{address}"), changes, requests, task)
     }
 
     async fn test_task_sync_fixture(
@@ -5252,6 +5344,58 @@ mod tests {
             .expect("task root");
         binding.repo_path = repo_path.to_string_lossy().to_string();
         (root, store, sync, binding)
+    }
+
+    async fn exact_deferred_fixture(
+        prefix: &str,
+    ) -> (PathBuf, Arc<ConfigStore>, AgentBinding, String) {
+        let (root, store, _sync, mut binding) = test_task_sync_fixture(prefix).await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        let task_dir = ".trellis/tasks/task-a".to_string();
+        write_task_json(repo, &task_dir, "task-a", "main").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "task"]);
+        binding.initial_sync_completed = true;
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        let task_hash = snapshot_sha256("{\"id\":\"task-a\",\"branch\":\"main\"}\n");
+        write_deferred_cursor(&store, &task_dir, &task_hash, &task_hash).await;
+        (root, store, binding, task_dir)
+    }
+
+    async fn write_deferred_cursor(
+        store: &ConfigStore,
+        task_dir: &str,
+        baseline_hash: &str,
+        deferred_hash: &str,
+    ) {
+        let task_json = format!("{task_dir}/task.json");
+        store
+            .write_json(
+                &store.paths.task_cursors_file,
+                &json!({
+                    "version": CURSOR_VERSION,
+                    "taskSpaces": {
+                        "space-1": {
+                            "revision": 1,
+                            "sequence": 1,
+                            "baselines": {
+                                (task_json.clone()): baseline_hash
+                            },
+                            "deferred": {
+                                (task_dir): {
+                                    (task_json): deferred_hash
+                                }
+                            }
+                        }
+                    }
+                }),
+            )
+            .await
+            .expect("cursor");
     }
 
     #[tokio::test]
@@ -5661,7 +5805,11 @@ mod tests {
             )
             .await
             .expect("cursor");
-        let (server_url, changes, server_task) = mock_api_server().await;
+        let (server_url, changes, _requests, server_task) = mock_api_server(json!({
+            "revision": 1,
+            "files": []
+        }))
+        .await;
         let api = Arc::new(
             ApiClient::new(&server_url, None, None).expect("mock api client"),
         );
@@ -5685,6 +5833,178 @@ mod tests {
             .is_none());
         server_task.abort();
 
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn startup_pull_reconciles_exact_deferred_once_at_same_revision() {
+        let (root, store, binding, task_dir) =
+            exact_deferred_fixture("trellis-deferred-startup").await;
+        let (server_url, changes, requests, server_task) = mock_api_server(json!({
+            "revision": 1,
+            "files": []
+        }))
+        .await;
+        let api =
+            Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+        let sink: ControlSink = Arc::new(|_| {});
+        let sync = Arc::new(TaskSync::new(store.clone(), api, sink));
+
+        sync.update_bindings(vec![binding.clone()]).await;
+
+        let cursor = sync.read_cursor("space-1").await;
+        assert!(!cursor.deferred.contains_key(&task_dir));
+        assert!(cursor.pending.is_none());
+        assert!(changes.lock().await.is_empty());
+        let snapshot_requests = requests
+            .lock()
+            .await
+            .iter()
+            .filter(|request| request.contains("/snapshot?"))
+            .count();
+        assert_eq!(snapshot_requests, 1);
+
+        sync.update_bindings(vec![binding]).await;
+        let repeated_snapshot_requests = requests
+            .lock()
+            .await
+            .iter()
+            .filter(|request| request.contains("/snapshot?"))
+            .count();
+        assert_eq!(repeated_snapshot_requests, 1);
+
+        server_task.abort();
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn startup_deferred_reconcile_does_not_trigger_baseline_upload() {
+        let (root, store, mut binding, task_dir) =
+            exact_deferred_fixture("trellis-deferred-no-upload").await;
+        let repo = Path::new(&binding.repo_path);
+        write_task_json(repo, &task_dir, "task-a", "dev1").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "source task"]);
+        binding.baseline_branch = Some("main".to_string());
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        let task_hash =
+            snapshot_sha256("{\"id\":\"task-a\",\"branch\":\"dev1\"}\n");
+        write_deferred_cursor(&store, &task_dir, &task_hash, &task_hash).await;
+        let (server_url, changes, requests, server_task) = mock_api_server(json!({
+            "revision": 1,
+            "files": []
+        }))
+        .await;
+        let api =
+            Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+        let sink: ControlSink = Arc::new(|_| {});
+        let sync = Arc::new(TaskSync::new(store.clone(), api, sink));
+
+        sync.update_bindings(vec![binding]).await;
+
+        let cursor = sync.read_cursor("space-1").await;
+        assert!(!cursor.deferred.contains_key(&task_dir));
+        assert!(cursor.pending.is_none());
+        assert!(changes.lock().await.is_empty());
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| !request.ends_with("/changes")));
+
+        server_task.abort();
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn startup_local_deferred_change_still_allows_baseline_reconcile() {
+        let (root, store, mut binding, task_dir) =
+            exact_deferred_fixture("trellis-deferred-local-change").await;
+        let repo = Path::new(&binding.repo_path);
+        let old_hash =
+            snapshot_sha256("{\"id\":\"task-a\",\"branch\":\"main\"}\n");
+        write_task_json(repo, &task_dir, "task-a", "dev1").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "source task"]);
+        binding.baseline_branch = Some("main".to_string());
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        let changed_hash =
+            snapshot_sha256("{\"id\":\"task-a\",\"branch\":\"dev1\"}\n");
+        write_deferred_cursor(&store, &task_dir, &changed_hash, &old_hash).await;
+        let (server_url, changes, _requests, server_task) = mock_api_server(json!({
+            "revision": 1,
+            "files": []
+        }))
+        .await;
+        let api =
+            Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+        let sink: ControlSink = Arc::new(|_| {});
+        let sync = Arc::new(TaskSync::new(store.clone(), api, sink));
+
+        sync.update_bindings(vec![binding]).await;
+
+        let cursor = sync.read_cursor("space-1").await;
+        assert!(!cursor.deferred.contains_key(&task_dir));
+        let changes = changes.lock().await;
+        assert_eq!(changes.len(), 1, "本地状态变化后仍应保留基线补交行为");
+        assert_eq!(changes[0]["mergeEvidence"]["taskId"], "task-a");
+
+        server_task.abort();
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn normal_pull_reconciles_exact_deferred_without_dirty_upload() {
+        let (root, store, binding, task_dir) =
+            exact_deferred_fixture("trellis-deferred-pull").await;
+        let task_json = format!("{task_dir}/task.json");
+        let repo_path = Path::new(&binding.repo_path).to_path_buf();
+        let content = "{\"id\":\"task-a\",\"branch\":\"main\"}\n";
+        let task_hash = snapshot_sha256(content);
+        let stale_hash = "0".repeat(64);
+        write_deferred_cursor(&store, &task_dir, &stale_hash, &task_hash).await;
+        let (server_url, changes, _requests, server_task) = mock_api_server(json!({
+            "revision": 2,
+            "files": [{
+                "path": task_json.clone(),
+                "content": content,
+                "sha256": task_hash.clone(),
+                "deleted": false
+            }]
+        }))
+        .await;
+        let api =
+            Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+        let sink: ControlSink = Arc::new(|_| {});
+        let sync = TaskSync::new(store.clone(), api, sink);
+        sync.set_bindings(vec![binding]).await;
+
+        let result = sync
+            .pull_task_space("space-1")
+            .await
+            .expect("pull exact deferred");
+
+        assert_eq!(result["revision"], 2);
+        assert_eq!(result["conflicts"].as_array().map(Vec::len), Some(0));
+        let cursor = sync.read_cursor("space-1").await;
+        assert!(!cursor.deferred.contains_key(&task_dir));
+        assert!(cursor.pending.is_none());
+        assert!(changes.lock().await.is_empty());
+        assert_eq!(cursor.baselines.get(&task_json), Some(&task_hash));
+        assert_eq!(
+            tokio::fs::read_to_string(repo_path.join(&task_json))
+                .await
+                .expect("local task"),
+            content
+        );
+
+        server_task.abort();
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 
@@ -6031,6 +6351,175 @@ mod tests {
     }
 
     #[test]
+    fn exact_deferred_state_reconciles_without_dirty_upload() {
+        let task_dir = ".trellis/tasks/task-a";
+        let group = task_group(
+            "task-a",
+            task_dir,
+            &[("task.json", "{\"id\":\"task-a\"}\n")],
+        );
+        let local_state = file_state_from_group(&group);
+        let task_json = format!("{task_dir}/task.json");
+        let cursor = Cursor {
+            baselines: BTreeMap::from([(task_json.clone(), "0".repeat(64))]),
+            deferred: BTreeMap::from([(task_dir.to_string(), local_state.clone())]),
+            ..Default::default()
+        };
+
+        let (dirty, deferred, reconciled) =
+            local_sync_state_from_groups(&cursor, &[group], &local_state);
+
+        assert!(dirty.is_empty());
+        assert!(deferred.is_empty());
+        assert_eq!(reconciled.len(), 1);
+        assert!(reconciled.contains(task_dir));
+    }
+
+    #[test]
+    fn hash_mismatch_keeps_deferred_protected() {
+        let task_dir = ".trellis/tasks/task-a";
+        let group = task_group(
+            "task-a",
+            task_dir,
+            &[("task.json", "{\"id\":\"task-a\"}\n")],
+        );
+        let local_state = file_state_from_group(&group);
+        let task_json = format!("{task_dir}/task.json");
+        let cursor = Cursor {
+            deferred: BTreeMap::from([(task_dir.to_string(), local_state.clone())]),
+            ..Default::default()
+        };
+        let server = BTreeMap::from([(task_json, "0".repeat(64))]);
+
+        let (dirty, deferred, _) = local_sync_state_from_groups(&cursor, &[group], &server);
+
+        assert!(dirty.is_empty());
+        assert_eq!(deferred, cursor.deferred);
+    }
+
+    #[test]
+    fn server_missing_file_keeps_deferred_protected() {
+        let task_dir = ".trellis/tasks/task-a";
+        let group = task_group(
+            "task-a",
+            task_dir,
+            &[
+                ("task.json", "{\"id\":\"task-a\"}\n"),
+                ("prd.md", "# task\n"),
+            ],
+        );
+        let local_state = file_state_from_group(&group);
+        let task_json = format!("{task_dir}/task.json");
+        let cursor = Cursor {
+            deferred: BTreeMap::from([(task_dir.to_string(), local_state.clone())]),
+            ..Default::default()
+        };
+        let server = BTreeMap::from([(
+            task_json,
+            local_state[".trellis/tasks/task-a/task.json"].clone(),
+        )]);
+
+        let (dirty, deferred, _) = local_sync_state_from_groups(&cursor, &[group], &server);
+
+        assert!(dirty.is_empty());
+        assert_eq!(deferred, cursor.deferred);
+    }
+
+    #[test]
+    fn local_extra_file_keeps_deferred_protected() {
+        let task_dir = ".trellis/tasks/task-a";
+        let group = task_group(
+            "task-a",
+            task_dir,
+            &[
+                ("task.json", "{\"id\":\"task-a\"}\n"),
+                ("prd.md", "# task\n"),
+            ],
+        );
+        let local_state = file_state_from_group(&group);
+        let server = BTreeMap::from([(
+            format!("{task_dir}/task.json"),
+            local_state[".trellis/tasks/task-a/task.json"].clone(),
+        )]);
+        let cursor = Cursor {
+            deferred: BTreeMap::from([(task_dir.to_string(), local_state)]),
+            ..Default::default()
+        };
+
+        let (dirty, deferred, _) = local_sync_state_from_groups(&cursor, &[group], &server);
+
+        assert!(dirty.is_empty());
+        assert_eq!(deferred, cursor.deferred);
+    }
+
+    #[test]
+    fn empty_server_baseline_keeps_deferred_protected() {
+        let task_dir = ".trellis/tasks/task-a";
+        let group = task_group(
+            "task-a",
+            task_dir,
+            &[("task.json", "{\"id\":\"task-a\"}\n")],
+        );
+        let local_state = file_state_from_group(&group);
+        let cursor = Cursor {
+            deferred: BTreeMap::from([(task_dir.to_string(), local_state)]),
+            ..Default::default()
+        };
+
+        let (dirty, deferred, _) =
+            local_sync_state_from_groups(&cursor, &[group], &BTreeMap::new());
+
+        assert!(dirty.is_empty());
+        assert_eq!(deferred, cursor.deferred);
+    }
+
+    #[test]
+    fn missing_local_directory_keeps_deferred_protected() {
+        let task_dir = ".trellis/tasks/task-a";
+        let task_json = format!("{task_dir}/task.json");
+        let deferred_state = BTreeMap::from([(
+            task_json,
+            snapshot_sha256("{\"id\":\"task-a\"}\n"),
+        )]);
+        let cursor = Cursor {
+            baselines: deferred_state.clone(),
+            deferred: BTreeMap::from([(task_dir.to_string(), deferred_state.clone())]),
+            ..Default::default()
+        };
+
+        let (dirty, deferred, _) =
+            local_sync_state_from_groups(&cursor, &[], &deferred_state);
+
+        assert!(dirty.is_empty());
+        assert_eq!(deferred, cursor.deferred);
+    }
+
+    #[test]
+    fn changed_deferred_state_still_uses_cursor_baseline_for_dirty() {
+        let task_dir = ".trellis/tasks/task-a";
+        let task_json = format!("{task_dir}/task.json");
+        let group = task_group(
+            "task-a",
+            task_dir,
+            &[("task.json", "{\"id\":\"task-a\",\"title\":\"changed\"}\n")],
+        );
+        let old_state =
+            BTreeMap::from([(task_json.clone(), snapshot_sha256("{\"id\":\"task-a\"}\n"))]);
+        let cursor = Cursor {
+            baselines: old_state.clone(),
+            deferred: BTreeMap::from([(task_dir.to_string(), old_state.clone())]),
+            ..Default::default()
+        };
+
+        let (dirty, deferred, reconciled) =
+            local_sync_state_from_groups(&cursor, &[group], &old_state);
+
+        assert_eq!(dirty, vec![task_dir.to_string()]);
+        assert!(deferred.is_empty());
+        assert!(reconciled.is_empty());
+    }
+
+    #[test]
     fn detach_pending_is_excluded_and_selection_identity_is_stable() {
         let selected = test_binding("space-1");
         let mut pending = test_binding("space-2");
@@ -6091,6 +6580,11 @@ mod tests {
                     "updatedAt": "2026-11-13T00:00:00.000Z",
                     "baselines": {
                         ".trellis/tasks/a/prd.md": "a".repeat(64)
+                    },
+                    "deferred": {
+                        ".trellis/tasks/a": {
+                            ".trellis/tasks/a/prd.md": "b".repeat(64)
+                        }
                     }
                 }
             }
@@ -6116,6 +6610,13 @@ mod tests {
                 baselines: Some(BTreeMap::from([(
                     ".trellis/tasks/a/prd.md".to_string(),
                     "a".repeat(64),
+                )])),
+                deferred: Some(BTreeMap::from([(
+                    ".trellis/tasks/a".to_string(),
+                    BTreeMap::from([(
+                        ".trellis/tasks/a/prd.md".to_string(),
+                        "b".repeat(64),
+                    )]),
                 )])),
                 ..Default::default()
             },

@@ -239,11 +239,23 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   拉取新 revision，发生冲突时停止应用远端目录。首次接入选择“仅同步无冲突项”或“暂不处理”
   跳过的本地目录作为延后状态持久化，用户再次修改前不得自动上传；延后目录随后被服务端修改时
   重新要求确认，不能覆盖本地。
+- 正常 pull 使用 cursor 基线与本次增量合并后的 `snapshot_baselines`：只有延后指纹仍等于本地
+  完整任务状态、本地文件非空，且该任务目录的服务端基线在路径集合和每个 SHA256 上完全一致时，
+  才删除 deferred 并跳过 dirty 上传。服务端基线与延后指纹仍一致但本地已变化时，沿用原逻辑删除
+  旧 deferred 并按 cursor 基线判断 dirty；本地任务目录缺失或为空、服务端缺文件、摘要不同或
+  基线不完整时保留 deferred，进入现有受保护审查路径。
+- 进程启动或 binding 首次进入运行集合时复用现有 pull，即使服务端 revision 未变化、快照文件
+  为空也执行一次上述比较；同一进程后续 heartbeat 使用原有绑定集合短路，不重复扫描任务正文。
+  `list_local_associations` 的 3 秒展示轮询不得承担收敛扫描。
+- 只有因本地、deferred 指纹和合并服务端基线完全一致而收敛的任务，才不得在同一次
+  `pull_and_report` 的基线任务补交中自动上传；本地状态变化导致的 deferred 移除仍走原有
+  基线补交逻辑，其他既有候选也保留原行为。
 - `list_local_associations` 可以把当前 taskSpace 的延后目录只读投影为
   `deferredCount/deferredTaskDirs`；缺失或损坏的 cursor 按 0 处理，不能阻断关联列表。
-- 延后任务只能通过用户显式触发的补同步命令上传。补同步必须校验 approved、非只读 binding，
-  复用同一 taskSpace 串行队列、限流、pending batch 和文件级 CAS；网络失败必须向调用方抛错，
-  冲突必须进入现有 `task_file_conflict` 确认链路。
+- 延后任务的实际内容只能通过用户显式触发的补同步命令上传；与服务端已知基线完全一致时的
+  deferred 自动清除不算上传，不写 pending、不推进 revision。补同步必须校验 approved、
+  非只读 binding，复用同一 taskSpace 串行队列、限流、pending batch 和文件级 CAS；网络失败
+  必须向调用方抛错，冲突必须进入现有 `task_file_conflict` 确认链路。
 - Agent 在首次同步、增量 pull、上传、watcher 触发、pending retry、延后补同步、服务端目录实际写入
   以及冲突覆盖前都必须重新读取本地真实分支。分支不匹配时失败关闭：不写任务目录、不上传、不推进
   cursor、不补发 pending，并把 `BRANCH_MISMATCH` 投影到项目栏；切回绑定分支后才可恢复。
@@ -417,6 +429,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | 服务端重复广播相同或更旧 `task.changed.revision` | 不再广播，不改变 taskSpace 快照 |
 | Agent 已同步且无 pending upload，收到相同或更旧 revision | 短路，不 GET 快照、不扫描任务目录、不写 cursor |
 | Agent cursor patch 与当前 revision/sequence/baselines/deferred/pending 等状态相同 | 不更新 `updatedAt`，不写 `live-cursors.json` |
+| 延后目录指纹、本地完整任务和合并后的服务端基线完全一致且本地非空 | 仅收敛 deferred，不进入 dirty、不上传、不推进服务端 revision |
+| 延后目录与本地一致但本地任务目录缺失/为空，或服务端缺文件、摘要不同、基线不完整 | 保留 deferred，继续受保护审查 |
 | 投影尚未追上成功 revision 或负责人尚未更新 | `409 COMMAND_WAITING_INDEX`，可重试结果 |
 | Agent 租约过期 | 状态恢复 `pending`，可安全重投 |
 | 每日数据库备份失败 | 记录告警，服务继续运行 |
@@ -432,6 +446,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - Good：同一 HEAD 下 17 个已合入任务只执行一次 `git ls-tree`，每个任务分别附自己的证据。
 - Good：5 个关联的 ProjectRail 在 3 秒刷新时复用 15 秒归属投影；过期后只扫描任务元数据和
   `task.json.branch`，不读取约 6000 个任务正文文件。
+- Good：首次接入时延后的本地任务后来已由其他 Agent 按相同文件集合和摘要写入服务端；客户端
+  在启动或下一次真实 pull 中只清除 deferred，ProjectRail 恢复同步正常，不上传本地任务。
 - Good：同一仓库为主分支和 feature 分支各建一个 worktree；两个 `localRepoKey` 不同，各自只监听当前分支。
 - Base：本地和服务端任务目录文件集合及摘要相同，不写文件、不增加 revision。
 - Base：同步请求已提交但响应丢失，客户端重启后复用 pending `batchId`，服务端返回原 revision。
@@ -480,6 +496,9 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   cursor 文件基线、离线并发冲突、延后目录、目录移动、pending batch 重放、全量分组跨目录超过
   1024 文件、实际批次 1024/1025 与 64 MiB 边界、错分支与 detached HEAD 拒绝、基线 tree 单次扫描
   与 HEAD 变化刷新、pending evidence 原样重放和 `TASK_OWNED_BY_BASELINE` 后停止主动上传。
+  延后目录还必须覆盖本地与服务端完全一致、摘要不同、服务端缺文件、本地多文件、任务目录缺失、
+  空基线、同 revision 启动收敛且不触发基线补交上传、正常 pull 不产生 dirty 上传，以及重复
+  heartbeat 不重复任务扫描；还要覆盖本地状态变化导致的 deferred 移除仍保留原有基线补交上传。
   必须断言归属展示投影不会解码普通任务正文，并覆盖 15 秒缓存命中、same-HEAD 只续期不重扫、
   显式失效、失效与旧计算交错时禁止回写、HEAD 变化刷新和无变化时只执行一次 `ls-tree`。
 - `apps/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、

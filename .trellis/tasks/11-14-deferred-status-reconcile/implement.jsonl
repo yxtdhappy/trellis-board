@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"约束 cursor baselines、deferred、启动 pull、CAS 上传和 cursor 原子写入边界"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"约束 ProjectRail 对 deferredCount 的展示语义以及与 ownership 状态分离"}
+{"file":".trellis/spec/guides/index.md","reason":"定位跨层同步契约和代码复用检查入口，避免把 deferred 收敛扩散到 Web 或服务端"}

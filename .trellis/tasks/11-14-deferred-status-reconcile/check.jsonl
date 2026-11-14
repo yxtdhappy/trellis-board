@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"核验自动收敛没有放宽上传、冲突、revision 和 cursor 持久化契约"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"核验本地未同步、分支暂停和待确认归属仍按独立状态展示"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核验 Rust 同步改动的测试覆盖、错误处理和既有运行基线"}
+{"file":".trellis/spec/guides/index.md","reason":"核验跨层影响范围、代码复用和最小验证闭环"}

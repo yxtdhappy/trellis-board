@@ -1,0 +1,29 @@
+{
+  "id": "deferred-status-reconcile",
+  "name": "deferred-status-reconcile",
+  "title": "修复已一致任务的本地未同步误报",
+  "description": "当 deferred 任务的文件已在服务端存在且本地与服务端 SHA256 完全一致时，自动清除 deferred 标记，避免 ProjectRail 继续显示本地任务未同步。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": "desktop",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-14",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "apps/desktop/src-tauri/src/agent/task_sync.rs",
+    ".trellis/spec/backend/desktop-realtime-sync.md"
+  ],
+  "notes": "",
+  "meta": {}
+}
