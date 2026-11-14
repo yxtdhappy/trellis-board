@@ -6,7 +6,8 @@
 读取一次 HEAD tree，并为已进入 HEAD 的任务生成 `tracked-in-head` 证据；服务端在不访问 Git 的
 前提下接纳基线首份来源任务、拒绝来源 taskSpace 后续写入，并默认隐藏基线已接管的来源重复副本。
 
-尚未执行生产构建、Rust 编译测试、真实客户端 E2E、提交、推送或任务归档。
+实现已通过 Web 生产构建、Rust 单测、Windows portable 构建、真实服务 API 和真实客户端 E2E。
+`8ddea09` 对应 CI run `43535564677` 全部门禁成功；正式发布由 `v0.4.7` tag 触发。
 
 ## 已实现
 
@@ -72,7 +73,7 @@ Team 扫描现有 `execution_task_key` 实际仍是 `<taskSpaceId>::<taskId>`，
 
 ## 验证结果
 
-最后聚焦回归通过：
+聚焦回归通过：
 
 ```powershell
 node --test apps/server/test/team-task-snapshot.test.js apps/server/test/team-task-index-v10.test.js apps/server/test/team-task-spaces.test.js apps/server/test/team-gitless-http.test.js apps/web/test/team-web.test.js
@@ -90,17 +91,28 @@ node --test apps/server/test/team-task-snapshot.test.js apps/server/test/team-ta
 - `apps/server/test/team-task-index-v10.test.js`：4/4（最终聚焦回归）
 - `apps/server/test/team-agent-slot.test.js`：8/8（最终聚焦回归）
 
-## 未验证与残留风险
+## 真实环境与 CI
 
-- 未运行 `npm test` 全仓、Web 生产构建、`cargo test`、`cargo clippy` 或 Tauri 构建。
-- 未使用真实 `mdp-backend-web` 数据副本和真实 Windows 客户端执行 17 个历史任务 E2E。
+- `npm run build` 通过，只有既有大 chunk 警告。
+- GitHub Actions run `43535564677` 的 Node/Web 测试、Desktop bundle、Rust 单测、
+  Windows portable 打包、SHA256、portable smoke test 和 launch smoke test 全部成功。
+- 真实 Team 服务 schema 为 `12`，`integrity=ok`；5 个正式 binding 均在线监听。
+- `mdp-backend-web` 的 17 个历史任务已生成 `tracked-in-head` 证据，来源分支保留。
+- 未合入 `dev1` 探针没有上传，也没有生成证据；清理后关联恢复 ready。
+- `/api/tasks/query` 对 `dev` 与 `feat/trellis-board` 的 95 个重叠稳定 ID 只返回基线副本。
+- 真实归档页面显示“分支 dev · 来源 feat/trellis-board”。
+
+## 残留风险
+
 - `node --test apps/server/test/database-v10.test.js` 的迁移断言均通过，但在本机 Node `24.21.0`
   / Windows 上，v9 用例结束时 SQLite 的 `board.sqlite-wal` 句柄未在进程内立即释放，测试清理
   `fs.rmSync` 报 `EBUSY`。该问题发生在断言完成后的临时目录删除阶段，未影响迁移结果；Node
-  `24.22.0` 才提供 `StatementSync.close()`，当前未通过修改产品代码或测试断言规避。
+  `24.22.0` 才提供 `StatementSync.close()`，CI 全量门禁已通过。
 - 真实数据中若 v11 项目最早活动 taskSpace 不是实际开发基线，迁移会选错；本任务不提供基线切换 UI。
 - 基线 Agent 的 `tracked-in-head` 仍属于受信声明，不能防住被攻破或恶意的已批准 Agent。
 - 已合入任务从基线快照删除后的归属回退语义不在本次范围内。
+- ProjectRail 的全量任务扫描已消除，但 Team 状态、本地关联和 sidecar 仍有 3 秒状态轮询。
+  真实客户端复测约 `5.99%`–`6.72%` 单核平均，未出现旧版约 `100%` 尖峰，但尚未达到 `<2%`。
 
 ## 文件变更
 

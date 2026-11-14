@@ -8,7 +8,7 @@
 - 客户端：Windows 10/11 x64；安装包包含固定 Node runtime 和 Trellis CLI，本机执行任务命令时仍需
   Git 和 Python。
 - 运行数据：由 `TRELLIS_BOARD_DATA_DIR` 指定，Ubuntu 建议 `/var/lib/trellis-board`。
-- 数据库：运行数据目录中的 `board.sqlite`，当前 schema v10。
+- 数据库：运行数据目录中的 `board.sqlite`，当前 schema v12。
 - Team 服务端不保存项目 Git 凭据，不创建 `data/projects/**` 工作副本，也不 clone、fetch、commit 或 push。
 - 项目源码和共享 `.trellis` 配置仍由客户端 Git 管理；Team Board 只持久化和广播
   `.trellis/tasks/**`。
@@ -243,8 +243,8 @@ if (Test-Path (Join-Path $dataDir 'board.sqlite-wal')) { Copy-Item (Join-Path $d
 if (Test-Path (Join-Path $dataDir 'board.sqlite-shm')) { Copy-Item (Join-Path $dataDir 'board.sqlite-shm') (Join-Path $backup 'board.sqlite-shm') }
 ```
 
-本版本支持 v6、v7、v8、v9 升级到 v10。启动时先写
-`backups/board.sqlite.pre-v10.<timestamp>`，再创建缺失的 `sync_*` 表。旧账号、团队、项目、审计、
+本版本支持 v6 至 v11 升级到 v12。启动时先写
+`backups/board.sqlite.pre-v12.<timestamp>`，再创建缺失的 `sync_*` 表。旧账号、团队、项目、审计、
 旧实时表和 Git 凭据表不会自动删除，但 Team 运行链路不再读取它们。
 
 升级步骤：
@@ -259,7 +259,7 @@ $env:PORT = '4317'
 node apps/server/team/cli.js status
 ```
 
-结果应显示 `schemaVersion=10`、`journalMode=wal` 和 `integrity=ok`。
+结果应显示 `schemaVersion=12`、`journalMode=wal` 和 `integrity=ok`。
 
 4. 检查登录、团队、`sync_project`、taskSpace、Agent active slot 和 Board SSE。
 5. 旧项目不会自动成为新任务空间；用户需要在客户端重新选择并接入项目。
@@ -268,9 +268,9 @@ node apps/server/team/cli.js status
 
 1. 停止新版服务并再次备份当前数据库。
 2. 切回旧二进制版本。
-3. 旧二进制只接受 schema 6-9，必须恢复 `backups/board.sqlite.pre-v10.*` 备份以及对应的
-   WAL 和 SHM；不能直接把 schema v10 数据库交给旧二进制。
-4. 恢复后升级阶段产生的 `sync_*` 数据不会保留在旧数据库中；需要保留时先另存当前 v10 数据库。
+3. 若旧二进制不能接受 schema v12，必须恢复 `backups/board.sqlite.pre-v12.*` 备份以及对应的
+   WAL 和 SHM；不能直接把 schema v12 数据库交给不兼容的旧二进制。
+4. 恢复后升级阶段产生的 `sync_*` 数据不会保留在旧数据库中；需要保留时先另存当前 v12 数据库。
 5. 不删除 `data/projects/**`、旧 `git-credentials.key` 和旧数据库表；它们只作为人工回滚材料保留。
 
 ## 8. 备份与恢复
@@ -308,7 +308,7 @@ Team 服务意外访问 Git：这是架构回归。检查 `createTeamRuntime()` 
 ## 10. 发布检查单
 
 - `npm test` 全部通过，`npm run format:check` 通过。
-- Team 空库和 v6/v7/v8/v9 升级库均能打开 schema v10。
+- Team 空库和 v6 至 v11 升级库均能打开 schema v12。
 - Team 启动不创建 `data/projects/**`，旧 Git/live 路由返回 404。
 - 服务端只接受 `.trellis/tasks/**`，单批 CAS、删除墓碑、归档移动和冲突回滚通过。
 - 同远端不同分支 taskSpace、revision、cursor 和 Board 完全隔离。
