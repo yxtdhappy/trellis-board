@@ -5527,7 +5527,7 @@ mod tests {
             .await
             .expect("initial projection");
         assert_eq!(
-            paused.into_iter().collect::<Vec<_>>(),
+            paused.iter().cloned().collect::<Vec<_>>(),
             vec![".trellis/tasks/merged-later".to_string()]
         );
         assert_eq!(local_dirs.len(), 2);
