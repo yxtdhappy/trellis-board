@@ -752,7 +752,7 @@ fn local_sync_state_from_groups(
     for task_dir in task_dirs {
         let local_state = by_dir
             .get(task_dir.as_str())
-            .map(file_state_from_group)
+            .map(|group| file_state_from_group(group))
             .unwrap_or_default();
         // cursor 基线只判 dirty；只有合并服务端基线完全一致时才记录为精确收敛。
         if let Some(deferred_state) = cursor.deferred.get(&task_dir) {
