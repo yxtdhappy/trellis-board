@@ -1218,3 +1218,29 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 52: deferred 已一致任务收敛
+<!-- trellis-session: v=2 fp=ff5997fe7fc555cc -->
+
+**Date**: 2026-11-14
+**Task**: deferred 已一致任务收敛
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+修复已与服务端文件集合和 SHA256 完全一致的 deferred 任务误报；GitHub v0.4.9 Windows 构建通过，真实客户端验证五组关联全部同步正常，差异探针保持 deferred 且未自动上传。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `576e3d0` | fix(desktop): reconcile exact deferred tasks |
+| `488afa2` | fix(desktop): correct deferred state closure |
+| `7784423` | docs(task): record deferred reconcile e2e |
+| `a900b76` | docs(task): tidy deferred e2e reports |
+
+### Status
+
+[OK] **Completed**
