@@ -258,6 +258,10 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   投影只枚举 `.trellis/tasks/**` 的目录和文件元数据，并读取各任务根部的 `task.json` 取得
   `branch`；不得读取、UTF-8 解码、规范化或哈希 `prd.md`、报告、JSONL 等其他任务正文。
   真实上传、冲突覆盖、延后补同步和 HEAD 证据生成仍必须执行完整文件读取、摘要与精确校验。
+- 投影 TTL 到期时只复核真实分支和完整 HEAD；HEAD 未变化时刷新 TTL 并复用现有目录/暂停集合，
+  不得重新枚举任务目录或执行 `ls-tree`。watcher 收到该 taskSpace 的 tasks 事件、binding 变化或
+  HEAD 变化时才失效；失效必须递增代际，旧代际的慢速计算结果不得回写缓存，避免失效后重新出现
+  15 秒陈旧状态。
 - 桌面 HTTP 客户端访问回环、RFC1918 私网、链路本地地址、IPv6 ULA/link-local 或 `.local`
   主机时必须绕过系统代理。公网域名继续遵循系统代理；内网业务域名即使解析到私网 IP，当前也不会
   根据 DNS 结果自动绕过，部署时必须显式配置 `NO_PROXY`，后续可增加
@@ -476,7 +480,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   cursor 文件基线、离线并发冲突、延后目录、目录移动、pending batch 重放、全量分组跨目录超过
   1024 文件、实际批次 1024/1025 与 64 MiB 边界、错分支与 detached HEAD 拒绝、基线 tree 单次扫描
   与 HEAD 变化刷新、pending evidence 原样重放和 `TASK_OWNED_BY_BASELINE` 后停止主动上传。
-  必须断言归属展示投影不会解码普通任务正文，并覆盖 15 秒缓存命中/过期和 HEAD 变化刷新。
+  必须断言归属展示投影不会解码普通任务正文，并覆盖 15 秒缓存命中、same-HEAD 只续期不重扫、
+  显式失效、失效与旧计算交错时禁止回写、HEAD 变化刷新和无变化时只执行一次 `ls-tree`。
 - `apps/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、
   DPAPI 往返、SSE 分帧、控制事件去重与过期；代理绕过需覆盖回环、私网、链路本地、IPv6
   ULA/link-local、`.local` 和公网域名。

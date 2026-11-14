@@ -827,12 +827,24 @@ struct HeadTreeCache {
 }
 
 struct OwnershipProjectionCache {
+    local_id: String,
     branch_name: String,
     baseline_branch: Option<String>,
     repo_path: String,
+    head_commit: String,
     paused: Arc<HashSet<String>>,
     local_dirs: Arc<HashSet<String>>,
     validated_at: Instant,
+}
+
+fn ownership_projection_cache_matches(
+    entry: &OwnershipProjectionCache,
+    binding: &AgentBinding,
+) -> bool {
+    entry.local_id == binding.local_id
+        && entry.branch_name == binding.branch_name
+        && entry.baseline_branch == binding.baseline_branch
+        && entry.repo_path == binding.repo_path
 }
 
 pub struct TaskSync {
@@ -847,6 +859,7 @@ pub struct TaskSync {
     last_baseline_files: Mutex<Vec<SnapshotFile>>,
     head_tree_cache: Mutex<HashMap<String, HeadTreeCache>>,
     ownership_projection_cache: Mutex<HashMap<String, OwnershipProjectionCache>>,
+    ownership_projection_epoch: std::sync::atomic::AtomicU64,
     #[cfg(test)]
     head_tree_scans: std::sync::atomic::AtomicUsize,
     baseline_owned: Mutex<HashSet<String>>,
@@ -867,6 +880,7 @@ impl TaskSync {
             last_baseline_files: Mutex::new(Vec::new()),
             head_tree_cache: Mutex::new(HashMap::new()),
             ownership_projection_cache: Mutex::new(HashMap::new()),
+            ownership_projection_epoch: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             head_tree_scans: std::sync::atomic::AtomicUsize::new(0),
             baseline_owned: Mutex::new(HashSet::new()),
@@ -876,6 +890,10 @@ impl TaskSync {
 
     pub async fn set_bindings(&self, bindings: Vec<AgentBinding>) {
         *self.bindings.lock().await = approved_bindings(bindings);
+        self.ownership_projection_epoch.fetch_add(
+            1,
+            std::sync::atomic::Ordering::SeqCst,
+        );
         self.head_tree_cache.lock().await.clear();
         self.ownership_projection_cache.lock().await.clear();
         self.baseline_owned.lock().await.clear();
@@ -918,6 +936,10 @@ impl TaskSync {
         if unchanged {
             return;
         }
+        self.ownership_projection_epoch.fetch_add(
+            1,
+            std::sync::atomic::Ordering::SeqCst,
+        );
         self.head_tree_cache.lock().await.clear();
         self.ownership_projection_cache.lock().await.clear();
         self.baseline_owned.lock().await.clear();
@@ -1022,16 +1044,22 @@ impl TaskSync {
         }
     }
 
+    async fn binding_head(&self, binding: &AgentBinding) -> AgentResult<(String, String)> {
+        let branch = self.assert_binding_branch(binding).await?;
+        let hooks_dir = self.binding_hooks_dir(binding);
+        let head = crate::agent::git::head_commit(Path::new(&binding.repo_path), &hooks_dir, false)
+            .await?
+            .ok_or_else(|| AgentError::new(code::DETACHED_HEAD, "本地仓库没有可用 HEAD"))?;
+        Ok((branch, head))
+    }
+
     async fn head_tree_paths(
         &self,
         binding: &AgentBinding,
     ) -> AgentResult<(String, Arc<HashSet<String>>)> {
-        let branch = self.assert_binding_branch(binding).await?;
+        let (branch, head) = self.binding_head(binding).await?;
         let hooks_dir = self.binding_hooks_dir(binding);
         let repo = Path::new(&binding.repo_path);
-        let head = crate::agent::git::head_commit(repo, &hooks_dir, false)
-            .await?
-            .ok_or_else(|| AgentError::new(code::DETACHED_HEAD, "本地仓库没有可用 HEAD"))?;
         {
             let mut cache = self.head_tree_cache.lock().await;
             if let Some(entry) = cache.get_mut(&binding.task_space_id) {
@@ -1075,20 +1103,88 @@ impl TaskSync {
         self.head_tree_paths(binding).await
     }
 
+    async fn invalidate_ownership_projection(&self, task_space_id: &str) {
+        self.ownership_projection_epoch.fetch_add(
+            1,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        self.ownership_projection_cache
+            .lock()
+            .await
+            .remove(task_space_id);
+    }
+
+    async fn cache_ownership_projection(
+        &self,
+        task_space_id: String,
+        projection_epoch: u64,
+        entry: OwnershipProjectionCache,
+    ) {
+        let mut cache = self.ownership_projection_cache.lock().await;
+        if self
+            .ownership_projection_epoch
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == projection_epoch
+        {
+            cache.insert(task_space_id, entry);
+        }
+    }
+
     /// ProjectRail 轮询只复用展示投影；真正上传前仍由同步门禁重新校验。
     pub(crate) async fn ownership_projection(
         &self,
         binding: &AgentBinding,
     ) -> AgentResult<(Arc<HashSet<String>>, Arc<HashSet<String>>)> {
-        {
+        let projection_epoch = self
+            .ownership_projection_epoch
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let cached = {
             let cache = self.ownership_projection_cache.lock().await;
-            if let Some(entry) = cache.get(&binding.local_id) {
-                if entry.branch_name == binding.branch_name
-                    && entry.baseline_branch == binding.baseline_branch
-                    && entry.repo_path == binding.repo_path
-                    && entry.validated_at.elapsed() < OWNERSHIP_PROJECTION_CACHE_TTL
-                {
-                    return Ok((entry.paused.clone(), entry.local_dirs.clone()));
+            cache
+                .get(&binding.task_space_id)
+                .filter(|entry| ownership_projection_cache_matches(entry, binding))
+                .map(|entry| {
+                    (
+                        entry.head_commit.clone(),
+                        entry.paused.clone(),
+                        entry.local_dirs.clone(),
+                        entry.validated_at,
+                    )
+                })
+        };
+        if let Some((_, paused, local_dirs, validated_at)) = &cached {
+            if validated_at.elapsed() < OWNERSHIP_PROJECTION_CACHE_TTL {
+                return Ok((paused.clone(), local_dirs.clone()));
+            }
+        }
+
+        // TTL 到期后先确认完整 HEAD；同一 HEAD 下只续期，不重新枚举任务目录。
+        let (branch_name, head_commit) = self.binding_head(binding).await?;
+        {
+            let mut cache = self.head_tree_cache.lock().await;
+            if cache
+                .get(&binding.task_space_id)
+                .is_some_and(|entry| {
+                    entry.branch_name != branch_name || entry.head_commit != head_commit
+                })
+            {
+                cache.remove(&binding.task_space_id);
+            }
+        }
+        if let Some((cached_head, _, _, _)) = &cached {
+            if cached_head == &head_commit {
+                let mut cache = self.ownership_projection_cache.lock().await;
+                if let Some(entry) = cache.get_mut(&binding.task_space_id) {
+                    if self
+                        .ownership_projection_epoch
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                        == projection_epoch
+                        && ownership_projection_cache_matches(entry, binding)
+                        && entry.head_commit == head_commit
+                    {
+                        entry.validated_at = Instant::now();
+                        return Ok((entry.paused.clone(), entry.local_dirs.clone()));
+                    }
                 }
             }
         }
@@ -1101,17 +1197,21 @@ impl TaskSync {
                 .map(|group| group.task_dir.clone())
                 .collect::<HashSet<_>>(),
         );
-        self.ownership_projection_cache.lock().await.insert(
-            binding.local_id.clone(),
+        self.cache_ownership_projection(
+            binding.task_space_id.clone(),
+            projection_epoch,
             OwnershipProjectionCache {
-                branch_name: binding.branch_name.clone(),
+                local_id: binding.local_id.clone(),
+                branch_name,
                 baseline_branch: binding.baseline_branch.clone(),
                 repo_path: binding.repo_path.clone(),
+                head_commit,
                 paused: paused.clone(),
                 local_dirs: local_dirs.clone(),
                 validated_at: Instant::now(),
             },
-        );
+        )
+        .await;
         Ok((paused, local_dirs))
     }
 
@@ -1396,6 +1496,7 @@ impl TaskSync {
                 }
             }
             for (task_space_id, paths) in std::mem::take(&mut pending) {
+                self.invalidate_ownership_projection(&task_space_id).await;
                 let paths: Vec<String> = paths.into_iter().collect();
                 // 首次同步未完成时 watcher 仍在监听，但上传必须等 bootstrap 拉取落地，
                 // 否则会用本地旧内容抢在服务端快照之前写入（对照 JS `_uploadDirty` 的守卫）。
@@ -5303,6 +5404,11 @@ mod tests {
             vec![".trellis/tasks/active-probe".to_string()]
         );
         assert_eq!(local_dirs.len(), 2);
+        assert_eq!(
+            sync.head_tree_scans
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
 
         write_task_json(repo, ".trellis/tasks/new-probe", "new-probe", "dev1").await;
         let (cached_paused, cached_dirs) = sync
@@ -5312,17 +5418,40 @@ mod tests {
         assert_eq!(cached_paused.len(), 1);
         assert_eq!(cached_dirs.len(), 2);
 
+        let stale_at = Instant::now() - OWNERSHIP_PROJECTION_CACHE_TTL;
         {
             let mut cache = sync.ownership_projection_cache.lock().await;
             let entry = cache
-                .get_mut(&binding.local_id)
-                .expect("cached ownership projection");
-            entry.validated_at = Instant::now() - OWNERSHIP_PROJECTION_CACHE_TTL;
+                .get_mut(&binding.task_space_id)
+                .expect("stale ownership projection");
+            entry.validated_at = stale_at;
         }
+        let (unchanged_paused, unchanged_dirs) = sync
+            .ownership_projection(&binding)
+            .await
+            .expect("same-head projection");
+        assert_eq!(unchanged_paused.len(), 1);
+        assert_eq!(unchanged_dirs.len(), 2);
+        assert_eq!(
+            sync.head_tree_scans
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        {
+            let cache = sync.ownership_projection_cache.lock().await;
+            let entry = cache
+                .get(&binding.task_space_id)
+                .expect("refreshed ownership projection");
+            assert!(entry.validated_at > stale_at);
+            assert!(entry.validated_at.elapsed() < OWNERSHIP_PROJECTION_CACHE_TTL);
+        }
+
+        sync.invalidate_ownership_projection(&binding.task_space_id)
+            .await;
         let (refreshed_paused, refreshed_dirs) = sync
             .ownership_projection(&binding)
             .await
-            .expect("refreshed projection");
+            .expect("invalidated projection");
         let mut refreshed = refreshed_paused.iter().cloned().collect::<Vec<_>>();
         refreshed.sort();
         assert_eq!(
@@ -5338,10 +5467,107 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ownership_projection_does_not_decode_other_task_files() {
+    async fn ownership_projection_does_not_write_back_after_invalidation() {
         let (root, _store, sync, binding) =
+            test_task_sync_fixture("trellis-ownership-projection-race").await;
+        let projection_epoch = sync
+            .ownership_projection_epoch
+            .load(std::sync::atomic::Ordering::SeqCst);
+
+        sync.invalidate_ownership_projection(&binding.task_space_id)
+            .await;
+        sync.cache_ownership_projection(
+            binding.task_space_id.clone(),
+            projection_epoch,
+            OwnershipProjectionCache {
+                local_id: binding.local_id.clone(),
+                branch_name: binding.branch_name.clone(),
+                baseline_branch: binding.baseline_branch.clone(),
+                repo_path: binding.repo_path.clone(),
+                head_commit: "stale-head".to_string(),
+                paused: Arc::new(HashSet::new()),
+                local_dirs: Arc::new(HashSet::new()),
+                validated_at: Instant::now(),
+            },
+        )
+        .await;
+
+        assert!(!sync
+            .ownership_projection_cache
+            .lock()
+            .await
+            .contains_key(&binding.task_space_id));
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn ownership_projection_refreshes_paused_after_head_change() {
+        let (root, store, sync, mut binding) =
+            test_task_sync_fixture("trellis-ownership-projection-head").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        write_task_json(repo, ".trellis/tasks/baseline-task", "baseline-task", "main").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "baseline task"]);
+        write_task_json(
+            repo,
+            ".trellis/tasks/merged-later",
+            "merged-later",
+            "dev1",
+        )
+        .await;
+
+        binding.baseline_branch = Some("main".to_string());
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        let (paused, local_dirs) = sync
+            .ownership_projection(&binding)
+            .await
+            .expect("initial projection");
+        assert_eq!(
+            paused.into_iter().collect::<Vec<_>>(),
+            vec![".trellis/tasks/merged-later".to_string()]
+        );
+        assert_eq!(local_dirs.len(), 2);
+        assert_eq!(
+            sync.head_tree_scans
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+
+        {
+            let mut cache = sync.ownership_projection_cache.lock().await;
+            let entry = cache
+                .get_mut(&binding.task_space_id)
+                .expect("cached ownership projection");
+            entry.validated_at = Instant::now() - OWNERSHIP_PROJECTION_CACHE_TTL;
+        }
+        run_git(repo, &["add", ".trellis/tasks/merged-later"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "merge task"]);
+
+        let (refreshed_paused, refreshed_dirs) = sync
+            .ownership_projection(&binding)
+            .await
+            .expect("projection after head change");
+        assert!(refreshed_paused.is_empty());
+        assert_eq!(refreshed_dirs.len(), 2);
+        assert_eq!(
+            sync.head_tree_scans
+                .load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn ownership_projection_does_not_decode_other_task_files() {
+        let (root, store, sync, binding) =
             test_task_sync_fixture("trellis-ownership-projection-content").await;
         let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
         write_task_json(repo, ".trellis/tasks/task-a", "task-a", "main").await;
         tokio::fs::write(
             repo.join(".trellis/tasks/task-a").join("prd.md"),
@@ -5363,6 +5589,12 @@ mod tests {
         tokio::fs::write(ignored.join("image.bin"), [0xff_u8, 0xfe])
             .await
             .expect("unsupported file");
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "task files"]);
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
 
         let (paused, local_dirs) = sync
             .ownership_projection(&binding)
