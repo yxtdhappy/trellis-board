@@ -744,6 +744,7 @@ fn git_environment() -> BTreeMap<String, String> {
     extra.insert("GCM_INTERACTIVE".to_string(), "Never".to_string());
     extra.insert("GIT_ASKPASS".to_string(), String::new());
     extra.insert("GIT_SSH_COMMAND".to_string(), FIXED_SSH_COMMAND.to_string());
+    extra.insert("GIT_OPTIONAL_LOCKS".to_string(), "0".to_string());
     build_environment(Some(&extra))
 }
 

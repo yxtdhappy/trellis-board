@@ -915,6 +915,7 @@ struct OwnershipProjectionCache {
     baseline_branch: Option<String>,
     repo_path: String,
     head_commit: String,
+    head_fingerprint: String,
     paused: Arc<HashSet<String>>,
     local_dirs: Arc<HashSet<String>>,
     validated_at: Instant,
@@ -946,6 +947,8 @@ pub struct TaskSync {
     ownership_projection_epoch: std::sync::atomic::AtomicU64,
     #[cfg(test)]
     head_tree_scans: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    branch_validations: std::sync::atomic::AtomicUsize,
     baseline_owned: Mutex<HashSet<String>>,
     watch: Mutex<WatchState>,
 }
@@ -968,6 +971,8 @@ impl TaskSync {
             ownership_projection_epoch: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             head_tree_scans: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            branch_validations: std::sync::atomic::AtomicUsize::new(0),
             baseline_owned: Mutex::new(HashSet::new()),
             watch: Mutex::new(WatchState::default()),
         }
@@ -1009,22 +1014,50 @@ impl TaskSync {
     }
 
     pub async fn update_bindings(self: &Arc<Self>, bindings: Vec<AgentBinding>) {
-        let mut selected = self.select_bindings(bindings).await;
-        let (unchanged, state_changed, pull_task_space_ids) = {
-            let _lifecycle = self.cursor_write.lock().await;
-            if let Ok(Some(config)) = self.store.read_config(false).await {
-                let active_local_ids: HashSet<String> = config
-                    .bindings
-                    .iter()
-                    .filter(|binding| {
-                        binding.sync_status == "approved" && !binding.detach_pending
-                    })
-                    .map(|binding| binding.local_id.clone())
-                    .collect();
-                selected.retain(|binding| active_local_ids.contains(&binding.local_id));
-            } else {
-                selected.clear();
+        let _lifecycle = self.cursor_write.lock().await;
+        let filtered = if let Ok(Some(config)) = self.store.read_config(false).await {
+            let active_local_ids: HashSet<String> = config
+                .bindings
+                .iter()
+                .filter(|binding| binding.sync_status == "approved" && !binding.detach_pending)
+                .map(|binding| binding.local_id.clone())
+                .collect();
+            bindings
+                .into_iter()
+                .filter(|binding| active_local_ids.contains(&binding.local_id))
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let candidate = approved_bindings(filtered.clone());
+        let mut branch_state_matches = true;
+        for binding in candidate.values() {
+            if !matches!(
+                git_head_branch_name(Path::new(&binding.repo_path)).await,
+                Some(Some(branch)) if branch == binding.branch_name
+            ) {
+                branch_state_matches = false;
+                break;
             }
+        }
+        let (unchanged, state_changed) = {
+            let mut current = self.bindings.lock().await;
+            let unchanged = binding_selection_unchanged(&current, &candidate);
+            let state_changed = !association_map_unchanged(&current, &candidate);
+            if unchanged && branch_state_matches {
+                *current = candidate;
+            }
+            (unchanged && branch_state_matches, state_changed)
+        };
+        if state_changed {
+            self.notify_state_changed();
+        }
+        if unchanged {
+            return;
+        }
+
+        let selected = self.select_bindings(filtered).await;
+        let (unchanged, state_changed, pull_task_space_ids) = {
             let map = approved_bindings(selected.clone());
             let mut current = self.bindings.lock().await;
             let unchanged = binding_selection_unchanged(&current, &map);
@@ -1131,6 +1164,9 @@ impl TaskSync {
 
     /// 校验仓库当前分支与绑定分支一致；失败时把错误写入绑定状态并保留。
     async fn assert_binding_branch(&self, binding: &AgentBinding) -> AgentResult<String> {
+        #[cfg(test)]
+        self.branch_validations
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.assert_binding_active(binding).await?;
         let hooks_dir = self.binding_hooks_dir(binding);
         match crate::agent::git::assert_repository_branch(
@@ -1247,6 +1283,8 @@ impl TaskSync {
         let projection_epoch = self
             .ownership_projection_epoch
             .load(std::sync::atomic::Ordering::SeqCst);
+        let current_head_fingerprint =
+            git_head_fingerprint(Path::new(&binding.repo_path)).await;
         let cached = {
             let cache = self.ownership_projection_cache.lock().await;
             cache
@@ -1258,30 +1296,16 @@ impl TaskSync {
                         entry.paused.clone(),
                         entry.local_dirs.clone(),
                         entry.validated_at,
+                        entry.head_fingerprint.clone(),
                     )
                 })
         };
-        if let Some((_, paused, local_dirs, validated_at)) = &cached {
-            if validated_at.elapsed() < OWNERSHIP_PROJECTION_CACHE_TTL {
-                return Ok((paused.clone(), local_dirs.clone()));
-            }
-        }
-
-        // TTL 到期后先确认完整 HEAD；同一 HEAD 下只续期，不重新枚举任务目录。
-        let (branch_name, head_commit) = self.binding_head(binding).await?;
-        {
-            let mut cache = self.head_tree_cache.lock().await;
-            if cache
-                .get(&binding.task_space_id)
-                .is_some_and(|entry| {
-                    entry.branch_name != branch_name || entry.head_commit != head_commit
-                })
-            {
-                cache.remove(&binding.task_space_id);
-            }
-        }
-        if let Some((cached_head, _, _, _)) = &cached {
-            if cached_head == &head_commit {
+        if let Some((_, paused, local_dirs, validated_at, cached_fingerprint)) = &cached {
+            let fingerprint_unchanged =
+                current_head_fingerprint.as_ref() == Some(cached_fingerprint);
+            let fallback_ttl_valid = current_head_fingerprint.is_none()
+                && validated_at.elapsed() < OWNERSHIP_PROJECTION_CACHE_TTL;
+            if fingerprint_unchanged || fallback_ttl_valid {
                 let mut cache = self.ownership_projection_cache.lock().await;
                 if let Some(entry) = cache.get_mut(&binding.task_space_id) {
                     if self
@@ -1289,15 +1313,66 @@ impl TaskSync {
                         .load(std::sync::atomic::Ordering::SeqCst)
                         == projection_epoch
                         && ownership_projection_cache_matches(entry, binding)
-                        && entry.head_commit == head_commit
                     {
                         entry.validated_at = Instant::now();
-                        return Ok((entry.paused.clone(), entry.local_dirs.clone()));
+                        return Ok((paused.clone(), local_dirs.clone()));
                     }
                 }
             }
         }
 
+        // HEAD 指纹变化或无法读取时才启动 Git 精确校验。
+        let (branch_name, head_commit) = self.binding_head(binding).await?;
+        let mut cache = self.head_tree_cache.lock().await;
+        if cache
+            .get(&binding.task_space_id)
+            .is_some_and(|entry| {
+                entry.branch_name != branch_name || entry.head_commit != head_commit
+            })
+        {
+            cache.remove(&binding.task_space_id);
+        }
+        drop(cache);
+        if cached
+            .as_ref()
+            .is_some_and(|(cached_head, _, _, _, _)| cached_head == &head_commit)
+        {
+            let mut cache = self.ownership_projection_cache.lock().await;
+            if let Some(entry) = cache.get_mut(&binding.task_space_id) {
+                if self
+                    .ownership_projection_epoch
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    == projection_epoch
+                    && ownership_projection_cache_matches(entry, binding)
+                    && entry.head_commit == head_commit
+                {
+                    entry.validated_at = Instant::now();
+                    if let Some(fingerprint) = current_head_fingerprint.clone() {
+                        entry.head_fingerprint = fingerprint;
+                    }
+                    return Ok((entry.paused.clone(), entry.local_dirs.clone()));
+                }
+            }
+        }
+
+        self.rebuild_ownership_projection(
+            binding,
+            projection_epoch,
+            branch_name,
+            head_commit,
+            current_head_fingerprint,
+        )
+        .await
+    }
+
+    async fn rebuild_ownership_projection(
+        &self,
+        binding: &AgentBinding,
+        projection_epoch: u64,
+        branch_name: String,
+        head_commit: String,
+        head_fingerprint: Option<String>,
+    ) -> AgentResult<(Arc<HashSet<String>>, Arc<HashSet<String>>)> {
         let groups = read_local_task_ownership_groups(Path::new(&binding.repo_path)).await?;
         let paused = Arc::new(self.ownership_paused_task_dirs(binding, &groups).await);
         let local_dirs = Arc::new(
@@ -1315,6 +1390,7 @@ impl TaskSync {
                 baseline_branch: binding.baseline_branch.clone(),
                 repo_path: binding.repo_path.clone(),
                 head_commit,
+                head_fingerprint: head_fingerprint.unwrap_or_default(),
                 paused: paused.clone(),
                 local_dirs: local_dirs.clone(),
                 validated_at: Instant::now(),
@@ -1590,6 +1666,9 @@ impl TaskSync {
                         let Ok(event) = result else {
                             return;
                         };
+                        if !is_relevant_watch_event(&event) {
+                            return;
+                        }
                         for path in event.paths {
                             let Ok(relative) = path.strip_prefix(&watch_root) else {
                                 continue;
@@ -1626,7 +1705,7 @@ impl TaskSync {
             let sender = tx.clone();
             let mut watcher =
                 match notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-                    if result.is_ok() {
+                    if result.is_ok_and(|event| is_relevant_watch_event(&event)) {
                         let _ = sender.send(WatchEvent::GitChanged {
                             task_space_id: task_space_id.clone(),
                         });
@@ -1697,6 +1776,15 @@ impl TaskSync {
                 }
             }
             for task_space_id in std::mem::take(&mut git_changed) {
+                if let Some(binding) = self
+                    .bindings
+                    .lock()
+                    .await
+                    .get(&task_space_id)
+                    .cloned()
+                {
+                    let _ = self.assert_binding_branch(&binding).await;
+                }
                 self.invalidate_ownership_projection(&task_space_id).await;
                 self.notify_state_changed();
             }
@@ -4982,6 +5070,73 @@ fn is_watched_trellis_path(relative: &str) -> bool {
     relative == "tasks" || relative.starts_with("tasks/")
 }
 
+fn is_relevant_watch_event(event: &notify::Event) -> bool {
+    !event.kind.is_access()
+}
+
+async fn git_head_branch_name(repo_path: &Path) -> Option<Option<String>> {
+    let git_dir = resolve_git_dir(repo_path).await?;
+    let head = tokio::fs::read_to_string(git_dir.join("HEAD")).await.ok()?;
+    Some(
+        head.trim()
+            .strip_prefix("ref: refs/heads/")
+            .map(str::to_string),
+    )
+}
+
+/// 只读取 HEAD 指向的引用；ownership 投影未变化时无需启动 Git 子进程。
+async fn git_head_fingerprint(repo_path: &Path) -> Option<String> {
+    let git_dir = resolve_git_dir(repo_path).await?;
+    let common_dir = tokio::fs::read_to_string(git_dir.join("commondir"))
+        .await
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                path
+            } else {
+                git_dir.join(path)
+            }
+        })
+        .unwrap_or_else(|| git_dir.clone());
+    let head = tokio::fs::read_to_string(git_dir.join("HEAD")).await.ok()?;
+    let head = head.trim().to_string();
+    let value = if let Some(reference) = head.strip_prefix("ref: ") {
+        if !reference.starts_with("refs/")
+            || reference
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
+        {
+            return None;
+        }
+        let loose = tokio::fs::read_to_string(common_dir.join(reference))
+            .await
+            .ok()
+            .map(|value| value.trim().to_string());
+        if let Some(value) = loose {
+            value
+        } else {
+            tokio::fs::read_to_string(common_dir.join("packed-refs"))
+                .await
+                .ok()
+                .and_then(|packed| {
+                    packed.lines().find_map(|line| {
+                        line.strip_suffix(reference)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string)
+                    })
+                })
+                .unwrap_or_else(|| "<missing>".to_string())
+        }
+    } else {
+        head.clone()
+    };
+    Some(format!("{head}\n{value}"))
+}
+
 async fn git_watch_paths(repo_path: &Path) -> Vec<(PathBuf, RecursiveMode)> {
     let Some(git_dir) = resolve_git_dir(repo_path).await else {
         return Vec::new();
@@ -5841,6 +5996,7 @@ mod tests {
                 baseline_branch: binding.baseline_branch.clone(),
                 repo_path: binding.repo_path.clone(),
                 head_commit: "stale-head".to_string(),
+                head_fingerprint: "stale-fingerprint".to_string(),
                 paused: Arc::new(HashSet::new()),
                 local_dirs: Arc::new(HashSet::new()),
                 validated_at: Instant::now(),
@@ -6775,6 +6931,84 @@ mod tests {
         changed.live_sync_status = "error".to_string();
         sync.set_bindings(vec![changed]).await;
         assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_metadata_reuses_selected_bindings_without_git_validation() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-task-binding-heartbeat-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Arc::new(ConfigStore::new_unsecured_for_test(root.clone()));
+        let repo = root.join("repo");
+        tokio::fs::create_dir_all(&repo)
+            .await
+            .expect("repository directory");
+        init_git_repo(&repo);
+        let mut binding = test_binding("space-1");
+        binding.repo_path = repo.to_string_lossy().to_string();
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        let api =
+            Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+        let sync = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
+        sync.set_bindings(vec![binding.clone()]).await;
+        sync.branch_validations
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+
+        let mut heartbeat_metadata = binding.clone();
+        heartbeat_metadata.last_synced_at = Some("2026-11-14T00:00:00.000Z".to_string());
+        heartbeat_metadata.last_head = Some("abc123".to_string());
+        sync.update_bindings(vec![heartbeat_metadata]).await;
+
+        assert_eq!(
+            sync.branch_validations
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+
+        run_git(&repo, &["checkout", "-b", "feature"]);
+        sync.branch_validations
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        sync.update_bindings(vec![binding]).await;
+        assert_eq!(
+            sync.branch_validations
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[test]
+    fn ignores_access_only_watch_events() {
+        let access = notify::Event::new(notify::event::EventKind::Access(
+            notify::event::AccessKind::Open(notify::event::AccessMode::Read),
+        ));
+        let modify =
+            notify::Event::new(notify::event::EventKind::Modify(notify::event::ModifyKind::Any));
+
+        assert!(!is_relevant_watch_event(&access));
+        assert!(is_relevant_watch_event(&modify));
+    }
+
+    #[tokio::test]
+    async fn head_fingerprint_changes_with_current_branch_commit() {
+        let (root, _store, _sync, binding) =
+            test_task_sync_fixture("trellis-head-fingerprint").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        let before = git_head_fingerprint(repo).await.expect("unborn HEAD");
+        tokio::fs::write(repo.join("README.md"), "one\n")
+            .await
+            .expect("readme");
+        run_git(repo, &["add", "README.md"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "first"]);
+        let after = git_head_fingerprint(repo).await.expect("committed HEAD");
+
+        assert_ne!(before, after);
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 
     #[tokio::test]
