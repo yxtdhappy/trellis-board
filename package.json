@@ -1,6 +1,6 @@
 {
   "name": "trellis-board",
-  "version": "0.4.6",
+  "version": "0.4.12",
   "private": true,
   "workspaces": [
     "apps/*",
