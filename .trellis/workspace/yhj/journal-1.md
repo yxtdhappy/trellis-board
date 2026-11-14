@@ -1193,3 +1193,28 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 51: 分支弃用生命周期与安全移除
+<!-- trellis-session: v=2 fp=ae9127cf75e2297c -->
+
+**Date**: 2026-11-14
+**Task**: 分支弃用生命周期与安全移除
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+实现分支弃用、恢复与安全物理移除；补齐权限、二次确认、事务级联清理、审计备份和在线监听处理；使用 Chrome DevTools MCP 在真实 4317 Team 服务完成 E2E，并清理全部 E2E 数据。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f1361ec` | feat(team): add branch retirement lifecycle |
+| `71a1a19` | merge: integrate origin/main into branch retirement lifecycle |
+| `536328f` | docs(task): record branch retirement real e2e |
+
+### Status
+
+[OK] **Completed**
