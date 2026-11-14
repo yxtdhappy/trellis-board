@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/archive/2026-11/11-13-task-sync-performance/check-report.md","reason":"核对历史 CPU 测量口径、已修复的重复扫描和仍需验证的运行时边界"}
+{"file":".trellis/tasks/archive/2026-11/11-14-deferred-status-reconcile/design.md","reason":"检查前置 deferred 收敛任务已完成，且本任务没有覆盖其 write_cursor 语义"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"检查事件驱动刷新、focus/visibility/reconnect 对齐、ETag 和重复渲染约束"}
+{"file":".trellis/spec/backend/desktop-agent-runtime.md","reason":"检查 Agent 状态通知、Tauri 命令、暂停恢复和同步生命周期"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查跨层回归、测试范围和任务同步稳定性门禁"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 Web、Tauri、Rust Agent 和 Board SSE 的数据流是否完整闭合"}

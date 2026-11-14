@@ -11,6 +11,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use crate::agent::http::{ApiClient, MAX_SNAPSHOT_RESPONSE_BYTES};
 use crate::agent::protocol::{self, code, AgentError, AgentResult};
+use crate::agent::state_events::StateSink;
 use crate::agent::store::{AgentBinding, ConfigStore};
 
 pub const TASK_SNAPSHOT_MAX_FILES: usize = 1024;
@@ -24,7 +25,7 @@ const RATE_LIMIT_RETRY_MAX_DELAY: Duration = Duration::from_millis(5000);
 const MAX_RATE_LIMIT_RETRIES: u32 = 2;
 const SNAPSHOT_EXTENSIONS: [&str; 6] = [".json", ".jsonl", ".md", ".txt", ".yaml", ".yml"];
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(250);
-/// ProjectRail 每 3 秒轮询一次；关联展示允许短时复用，同步门禁仍逐次精确校验。
+/// ProjectRail 按事件刷新并保留 10 秒可见兜底；关联展示允许短时复用，同步门禁仍逐次精确校验。
 const OWNERSHIP_PROJECTION_CACHE_TTL: Duration = Duration::from_secs(15);
 /// 分支守卫错误码：这些失败保留本地绑定状态，不覆盖成通用同步错误。
 const BRANCH_GUARD_CODES: [&str; 7] = [
@@ -863,9 +864,14 @@ impl UploadFile {
     }
 }
 
-struct WatchEvent {
-    task_space_id: String,
-    relative_path: String,
+enum WatchEvent {
+    TaskPath {
+        task_space_id: String,
+        relative_path: String,
+    },
+    GitChanged {
+        task_space_id: String,
+    },
 }
 
 #[derive(Default)]
@@ -906,6 +912,7 @@ pub struct TaskSync {
     store: Arc<ConfigStore>,
     api: Arc<ApiClient>,
     emit: ControlSink,
+    state_sink: Option<StateSink>,
     bindings: Mutex<HashMap<String, AgentBinding>>,
     suppressed: Mutex<HashMap<String, Option<String>>>,
     upload_gate: Mutex<HashMap<String, Instant>>,
@@ -927,6 +934,7 @@ impl TaskSync {
             store,
             api,
             emit,
+            state_sink: None,
             bindings: Mutex::new(HashMap::new()),
             suppressed: Mutex::new(HashMap::new()),
             upload_gate: Mutex::new(HashMap::new()),
@@ -943,8 +951,32 @@ impl TaskSync {
         }
     }
 
+    pub fn with_state_sink(mut self, sink: StateSink) -> Self {
+        self.state_sink = Some(sink);
+        self
+    }
+
+    fn notify_state_changed(&self) {
+        if let Some(sink) = &self.state_sink {
+            sink();
+        }
+    }
+
+    pub(crate) fn notify_bindings_changed(&self) {
+        self.notify_state_changed();
+    }
+
     pub async fn set_bindings(&self, bindings: Vec<AgentBinding>) {
-        *self.bindings.lock().await = approved_bindings(bindings);
+        let next = approved_bindings(bindings);
+        let changed = {
+            let mut current = self.bindings.lock().await;
+            let changed = &*current != &next;
+            *current = next;
+            changed
+        };
+        if changed {
+            self.notify_state_changed();
+        }
         self.ownership_projection_epoch.fetch_add(
             1,
             std::sync::atomic::Ordering::SeqCst,
@@ -956,7 +988,7 @@ impl TaskSync {
 
     pub async fn update_bindings(self: &Arc<Self>, bindings: Vec<AgentBinding>) {
         let mut selected = self.select_bindings(bindings).await;
-        let (unchanged, pull_task_space_ids) = {
+        let (unchanged, state_changed, pull_task_space_ids) = {
             let _lifecycle = self.cursor_write.lock().await;
             if let Ok(Some(config)) = self.store.read_config(false).await {
                 let active_local_ids: HashSet<String> = config
@@ -974,6 +1006,7 @@ impl TaskSync {
             let map = approved_bindings(selected.clone());
             let mut current = self.bindings.lock().await;
             let unchanged = binding_selection_unchanged(&current, &map);
+            let state_changed = &*current != &map;
             let mut pull_task_space_ids = Vec::new();
             for (task_space_id, binding) in &map {
                 let should_pull = current
@@ -986,8 +1019,11 @@ impl TaskSync {
             }
             pull_task_space_ids.sort();
             *current = map.clone();
-            (unchanged, pull_task_space_ids)
+            (unchanged, state_changed, pull_task_space_ids)
         };
+        if state_changed {
+            self.notify_state_changed();
+        }
         if unchanged {
             return;
         }
@@ -1001,11 +1037,7 @@ impl TaskSync {
         for task_space_id in pull_task_space_ids {
             self.pull_and_report(&task_space_id).await;
         }
-        let watched: Vec<AgentBinding> = selected
-            .into_iter()
-            .filter(|binding| !binding.read_only)
-            .collect();
-        self.rebuild_watchers(watched).await;
+        self.rebuild_watchers(selected).await;
     }
 
     /// 同一本地仓库多绑定时按真实分支挑唯一可用的绑定（对照 JS `_selectBindingsForRepositories`）。
@@ -1384,11 +1416,15 @@ impl TaskSync {
                 Ok(if changed { Some(next) } else { None })
             })
             .await;
-        if let Err(error) = result {
-            crate::logging::warn(&format!(
-                "保存任务同步状态失败：{}",
-                protocol::safe_error_message(&error.message)
-            ));
+        match result {
+            Ok(Some(_)) => self.notify_state_changed(),
+            Ok(None) => {}
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "保存任务同步状态失败：{}",
+                    protocol::safe_error_message(&error.message)
+                ));
+            }
         }
     }
 
@@ -1425,11 +1461,15 @@ impl TaskSync {
                 Ok(if changed { Some(next) } else { None })
             })
             .await;
-        if let Err(error) = result {
-            crate::logging::warn(&format!(
-                "保存分支恢复状态失败：{}",
-                protocol::safe_error_message(&error.message)
-            ));
+        match result {
+            Ok(Some(_)) => self.notify_state_changed(),
+            Ok(None) => {}
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "保存分支恢复状态失败：{}",
+                    protocol::safe_error_message(&error.message)
+                ));
+            }
         }
     }
 
@@ -1482,6 +1522,11 @@ impl TaskSync {
 
     /// 监听各绑定仓库的 `.trellis`，把本地改动按任务目录合并后上传。
     async fn rebuild_watchers(self: &Arc<Self>, bindings: Vec<AgentBinding>) {
+        let mut prepared = Vec::with_capacity(bindings.len());
+        for binding in bindings {
+            let git_paths = git_watch_paths(Path::new(&binding.repo_path)).await;
+            prepared.push((binding, git_paths));
+        }
         let mut state = self.watch.lock().await;
         state.watchers.clear();
         let tx = match state.tx.clone() {
@@ -1494,71 +1539,130 @@ impl TaskSync {
                 tx
             }
         };
-        for binding in bindings {
+        for (binding, git_paths) in prepared {
             let root = Path::new(&binding.repo_path).join(".trellis");
-            if !root.is_dir() {
+            if !binding.read_only && root.is_dir() {
+                let task_space_id = binding.task_space_id.clone();
+                let watch_root = root.clone();
+                let sender = tx.clone();
+                let watcher = notify::recommended_watcher(
+                    move |result: notify::Result<notify::Event>| {
+                        let Ok(event) = result else {
+                            return;
+                        };
+                        for path in event.paths {
+                            let Ok(relative) = path.strip_prefix(&watch_root) else {
+                                continue;
+                            };
+                            let relative = relative.to_string_lossy().replace('\\', "/");
+                            if !is_watched_trellis_path(&relative) {
+                                continue;
+                            }
+                            let _ = sender.send(WatchEvent::TaskPath {
+                                task_space_id: task_space_id.clone(),
+                                relative_path: format!(".trellis/{relative}"),
+                            });
+                        }
+                    },
+                );
+                match watcher {
+                    Ok(mut watcher) => {
+                        if let Err(error) = watcher.watch(&root, RecursiveMode::Recursive) {
+                            crate::logging::warn(&format!("任务目录监听失败：{error}"));
+                        } else {
+                            state.watchers.push(watcher);
+                        }
+                    }
+                    Err(error) => {
+                        crate::logging::warn(&format!("任务目录监听失败：{error}"));
+                    }
+                }
+            }
+
+            if git_paths.is_empty() {
                 continue;
             }
-            let task_space_id = binding.task_space_id.clone();
-            let watch_root = root.clone();
+            let task_space_id = binding.task_space_id;
             let sender = tx.clone();
             let mut watcher =
                 match notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-                    let Ok(event) = result else {
-                        return;
-                    };
-                    for path in event.paths {
-                        let Ok(relative) = path.strip_prefix(&watch_root) else {
-                            continue;
-                        };
-                        let relative = relative.to_string_lossy().replace('\\', "/");
-                        if !is_watched_trellis_path(&relative) {
-                            continue;
-                        }
-                        let _ = sender.send(WatchEvent {
+                    if result.is_ok() {
+                        let _ = sender.send(WatchEvent::GitChanged {
                             task_space_id: task_space_id.clone(),
-                            relative_path: format!(".trellis/{relative}"),
                         });
                     }
                 }) {
                     Ok(watcher) => watcher,
                     Err(error) => {
-                        crate::logging::warn(&format!("任务目录监听失败：{error}"));
+                        crate::logging::warn(&format!("本地 Git 监听失败：{error}"));
                         continue;
                     }
                 };
-            if let Err(error) = watcher.watch(&root, RecursiveMode::Recursive) {
-                crate::logging::warn(&format!("任务目录监听失败：{error}"));
-                continue;
+            let mut watched = false;
+            for (path, mode) in git_paths {
+                if let Err(error) = watcher.watch(&path, mode) {
+                    let error = protocol::safe_error_message(&error.to_string());
+                    crate::logging::warn(&format!("本地 Git 元数据监听失败：{error}"));
+                    continue;
+                }
+                watched = true;
             }
-            state.watchers.push(watcher);
+            if watched {
+                state.watchers.push(watcher);
+            }
         }
     }
 
     async fn watch_loop(self: Arc<Self>, mut receiver: mpsc::UnboundedReceiver<WatchEvent>) {
         let mut pending: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut git_changed: HashSet<String> = HashSet::new();
         loop {
             let Some(first) = receiver.recv().await else {
                 break;
             };
-            pending
-                .entry(first.task_space_id)
-                .or_default()
-                .insert(first.relative_path);
+            match first {
+                WatchEvent::TaskPath {
+                    task_space_id,
+                    relative_path,
+                } => {
+                    pending
+                        .entry(task_space_id)
+                        .or_default()
+                        .insert(relative_path);
+                }
+                WatchEvent::GitChanged { task_space_id } => {
+                    git_changed.insert(task_space_id);
+                }
+            }
             loop {
                 match tokio::time::timeout(WATCH_DEBOUNCE, receiver.recv()).await {
                     Ok(Some(event)) => {
-                        pending
-                            .entry(event.task_space_id)
-                            .or_default()
-                            .insert(event.relative_path);
+                        match event {
+                            WatchEvent::TaskPath {
+                                task_space_id,
+                                relative_path,
+                            } => {
+                                pending
+                                    .entry(task_space_id)
+                                    .or_default()
+                                    .insert(relative_path);
+                            }
+                            WatchEvent::GitChanged { task_space_id } => {
+                                git_changed.insert(task_space_id);
+                            }
+                        }
                     }
                     Ok(None) => return,
                     Err(_) => break,
                 }
             }
+            for task_space_id in std::mem::take(&mut git_changed) {
+                self.invalidate_ownership_projection(&task_space_id).await;
+                self.notify_state_changed();
+            }
             for (task_space_id, paths) in std::mem::take(&mut pending) {
                 self.invalidate_ownership_projection(&task_space_id).await;
+                self.notify_state_changed();
                 let paths: Vec<String> = paths.into_iter().collect();
                 // 首次同步未完成时 watcher 仍在监听，但上传必须等 bootstrap 拉取落地，
                 // 否则会用本地旧内容抢在服务端快照之前写入（对照 JS `_uploadDirty` 的守卫）。
@@ -1724,6 +1828,7 @@ impl TaskSync {
             )
             .await?;
         *self.cursor_state.lock().await = Some(state);
+        self.notify_state_changed();
         Ok(())
     }
 
@@ -1748,6 +1853,7 @@ impl TaskSync {
             )
             .await?;
         *self.cursor_state.lock().await = Some(state);
+        self.notify_state_changed();
         Ok(())
     }
 
@@ -2887,6 +2993,7 @@ impl TaskSync {
                 Ok(Some(next))
             })
             .await?;
+        self.notify_state_changed();
         Ok(())
     }
 
@@ -4835,6 +4942,71 @@ fn is_watched_trellis_path(relative: &str) -> bool {
     relative == "tasks" || relative.starts_with("tasks/")
 }
 
+async fn git_watch_paths(repo_path: &Path) -> Vec<(PathBuf, RecursiveMode)> {
+    let Some(git_dir) = resolve_git_dir(repo_path).await else {
+        return Vec::new();
+    };
+    let common_dir = tokio::fs::read_to_string(git_dir.join("commondir"))
+        .await
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                path
+            } else {
+                git_dir.join(path)
+            }
+        })
+        .unwrap_or_else(|| git_dir.clone());
+    let candidates = [
+        (git_dir.join("HEAD"), RecursiveMode::NonRecursive),
+        (git_dir.join("index"), RecursiveMode::NonRecursive),
+        (
+            common_dir.join("packed-refs"),
+            RecursiveMode::NonRecursive,
+        ),
+        (common_dir.join("refs"), RecursiveMode::Recursive),
+    ];
+    let mut seen = HashSet::new();
+    let mut paths = Vec::new();
+    for (path, mode) in candidates {
+        if !seen.insert(path.clone()) || tokio::fs::metadata(&path).await.is_err() {
+            continue;
+        }
+        paths.push((path, mode));
+    }
+    paths
+}
+
+async fn resolve_git_dir(repo_path: &Path) -> Option<PathBuf> {
+    let dot_git = repo_path.join(".git");
+    if tokio::fs::metadata(&dot_git)
+        .await
+        .ok()
+        .is_some_and(|metadata| metadata.is_dir())
+    {
+        return Some(dot_git);
+    }
+    let text = tokio::fs::read_to_string(&dot_git).await.ok()?;
+    let value = text
+        .lines()
+        .next()?
+        .strip_prefix("gitdir:")?
+        .trim();
+    if value.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(value);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        repo_path.join(path)
+    };
+    tokio::fs::canonicalize(&path).await.ok().or(Some(path))
+}
+
 fn absolute_task_path(binding: &AgentBinding, relative_path: &str) -> String {
     Path::new(&binding.repo_path)
         .join(relative_path.replace('/', std::path::MAIN_SEPARATOR_STR))
@@ -6533,6 +6705,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bindings_notify_only_after_actual_change() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-task-binding-events-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Arc::new(ConfigStore::new_unsecured_for_test(root));
+        let api =
+            Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+        let changes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let changes_sink = changes.clone();
+        let state_sink: StateSink = Arc::new(move || {
+            changes_sink.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+        let sync = TaskSync::new(store, api, Arc::new(|_| {})).with_state_sink(state_sink);
+        let binding = test_binding("space-1");
+
+        sync.set_bindings(vec![binding.clone()]).await;
+        sync.set_bindings(vec![binding.clone()]).await;
+        assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let mut changed = binding;
+        changed.live_sync_status = "error".to_string();
+        sync.set_bindings(vec![changed]).await;
+        assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
     async fn remove_task_cursor_only_deletes_selected_task_space() {
         let root = std::env::temp_dir().join(format!(
             "trellis-task-cursor-remove-{}",
@@ -6551,11 +6750,20 @@ mod tests {
             ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"),
         );
         let sink: ControlSink = Arc::new(|_| {});
-        let sync = TaskSync::new(store.clone(), api, sink);
+        let changes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let changes_sink = changes.clone();
+        let state_sink: StateSink = Arc::new(move || {
+            changes_sink.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+        let sync = TaskSync::new(store.clone(), api, sink).with_state_sink(state_sink);
         sync.remove_task_cursor("space-1").await.expect("remove");
         let state = store.read_task_cursors().await;
         assert!(state["taskSpaces"].get("space-1").is_none());
         assert_eq!(state["taskSpaces"]["space-2"]["revision"], 2);
+        assert_eq!(
+            changes.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     #[tokio::test]
@@ -6596,8 +6804,14 @@ mod tests {
         let api =
             Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
         let sink: ControlSink = Arc::new(|_| {});
-        let sync = TaskSync::new(store.clone(), api, sink);
+        let state_changes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let state_changes_sink = state_changes.clone();
+        let state_sink: StateSink = Arc::new(move || {
+            state_changes_sink.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+        let sync = TaskSync::new(store.clone(), api, sink).with_state_sink(state_sink);
         sync.set_bindings(vec![binding]).await;
+        state_changes.store(0, std::sync::atomic::Ordering::SeqCst);
 
         let before = tokio::fs::read(&store.paths.task_cursors_file)
             .await
@@ -6627,6 +6841,10 @@ mod tests {
             .await
             .expect("cursor after");
         assert_eq!(after, before);
+        assert_eq!(
+            state_changes.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
 
         sync.write_cursor(
             "space-1",
@@ -6639,6 +6857,10 @@ mod tests {
         .expect("changed cursor");
         let state = store.read_task_cursors().await;
         assert_eq!(state["taskSpaces"]["space-1"]["revision"], 11);
+        assert_eq!(
+            state_changes.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     #[tokio::test]
@@ -6743,6 +6965,34 @@ mod tests {
             task_directory_from_relative(".trellis/workspace/a.md"),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn git_watcher_tracks_head_index_and_refs() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-git-watch-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let git_dir = root.join(".git");
+        tokio::fs::create_dir_all(git_dir.join("refs/heads"))
+            .await
+            .expect("git dirs");
+        tokio::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n")
+            .await
+            .expect("head");
+        tokio::fs::write(git_dir.join("index"), b"")
+            .await
+            .expect("index");
+        tokio::fs::write(git_dir.join("packed-refs"), "")
+            .await
+            .expect("packed refs");
+
+        let paths = git_watch_paths(&root).await;
+        assert!(paths.iter().any(|(path, _)| path.ends_with("HEAD")));
+        assert!(paths.iter().any(|(path, _)| path.ends_with("index")));
+        assert!(paths.iter().any(|(path, _)| path.ends_with("packed-refs")));
+        assert!(paths.iter().any(|(path, _)| path.ends_with("refs")));
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 
     #[test]

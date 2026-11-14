@@ -23,8 +23,14 @@
   `/api/team/status` 和当前 taskSpace 的操作列表。
 - `tasks.changed` 只携带轻量 revision；任务正文、conflict、command result 和 cursor 均通过 REST 获取。
 - 团队模式 `/api/tasks/query` 使用 `if-none-match` 复用 ETag，304 时跳过状态更新。
-  `/api/team/status`、本地项目关联和 `/api/task-operations?taskSpaceId=` 可使用 3 秒状态刷新；
-  它们不替代 Board SSE 的 revision 对齐。
+  `/api/team/status` 同样使用 `if-none-match`；页面可见时最多每 10 秒条件请求一次，隐藏时停止，
+  focus、页面恢复可见和 Board SSE 建立/重连时立即对齐一次。304 不调用 `setTeamStatus`。
+- Tauri 本地关联和 sidecar 先注册 `desktop-state-changed` 再执行首次权威读取；事件只触发重新读取
+  `list_local_associations` / `desktop_sidecar_status`，不作为业务状态本身。页面可见时保留 10 秒
+  兜底，隐藏时停止；focus、恢复可见和监听恢复时立即对齐。
+- `/api/task-operations?taskSpaceId=` 只在选中具体 taskSpace 时创建 3 秒刷新；结果稳定签名相同
+  时保留原数组。单条创建/改派进度只对 `pending/delivered/running` 继续退避查询，进入
+  `failed/succeeded/cancelled` 后停止，用户显式重试失败项后重新开始。
 - `/api/tasks/query` 的 200 响应必须先经过 `normalizeTaskPage` 再写入 `teamPage`。团队接口可能只返回
   `relativeDir`，而任务卡使用 `dirName`；304 响应没有 body，保持 ETag 分支不规范化。
 - EventSource 只随 runtime 生命周期创建，筛选和 teamId 变化不能反复断开重连；刷新回调通过 ref
@@ -32,6 +38,8 @@
 - taskSpace 切换必须清空旧分页 cursor、ETag、操作列表、冲突详情和负责人候选；请求序号阻止旧响应覆盖。
 - 任务操作状态使用 `normalizeOperation()` 统一驼峰/下划线字段。`failed` 显示重试，`pending/delivered/running`
   显示“创建中/改派中”和取消；`succeeded` 后才重载正式任务和负责人。
+- 本地关联、sidecar、Team 状态和控制窗口的刷新均使用单一在途请求加一次 pending refresh；
+  相同归一化结果必须复用原引用，不能因定时兜底重复创建 Map、数组或 React 状态。
 
 ## 多团队状态
 
@@ -43,8 +51,9 @@
 - 团队项目栏合并 `/api/team/status` 的 `projects` 与 `associationProjects` 并按项目 ID 去重。
   `associationProjects` 只表示该团队成员有本地关联资格，不表示已有任务读取权限；不得据此放宽
   任务查询或让前端自行授予项目角色。
-- Tauri 桌面端每 3 秒调用只读 `desktop_sidecar_status`，按 `{ running, paused }` 显示真实后台同步
-  状态。普通浏览器没有 `window.__TAURI__`，不显示本地关联和 sidecar 状态入口。
+- Tauri 桌面端通过 `desktop-state-changed` 的 `sidecar` 主题刷新只读 `desktop_sidecar_status`，
+  按 `{ running, paused }` 显示真实后台同步状态；可见页面保留 10 秒兜底。普通浏览器没有
+  `window.__TAURI__`，不显示本地关联和 sidecar 状态入口。
 - Tauri 项目行必须常驻展示关联状态：未关联、关联中、等待后台同步、正在同步已有任务、同步正常、
   只读已关联或关联失效；`liveSyncStatus=error` 时显示同步异常并通过可见辅助文本或 `title`
   展示脱敏后的 `liveSyncError`。

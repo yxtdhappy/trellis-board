@@ -573,6 +573,10 @@ export function isRetryableOperation(operation) {
   return ['pending', 'delivered', 'running', 'failed'].includes(operation?.status)
 }
 
+export function isActiveOperation(operation) {
+  return ['pending', 'delivered', 'running'].includes(operation?.status)
+}
+
 export function isCompleteOperation(operation) {
   return ['succeeded', 'cancelled'].includes(operation?.status)
 }

@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::menu::MenuItem;
-use tauri::{AppHandle, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry,
+};
 
 use crate::agent::association::{associate_desktop_project, AssociateParams};
 use crate::agent::control::ControlHub;
@@ -21,7 +23,8 @@ use crate::agent::http::ApiClient;
 use crate::agent::onboarding;
 use crate::agent::protocol::{self, code, AgentError, AgentResult};
 use crate::agent::runtime::AgentRuntime;
-use crate::agent::store::{AgentConfig, ConfigStore};
+use crate::agent::state_events::{DesktopStateEvents, StateSink};
+use crate::agent::store::{AgentBinding, AgentConfig, ConfigStore};
 use crate::agent::task_sync::{ControlSink, TaskSync};
 use crate::agent::trellis_cli::TrellisRuntime;
 
@@ -64,6 +67,7 @@ pub struct AgentService {
     app: AppHandle,
     store: Arc<ConfigStore>,
     hub: Arc<ControlHub>,
+    state_events: Arc<DesktopStateEvents>,
     paused: Arc<AtomicBool>,
     runtime: Arc<Mutex<Option<Arc<AgentRuntime>>>>,
     starting: Arc<AtomicBool>,
@@ -75,10 +79,19 @@ pub struct AgentService {
 pub fn register(app: &AppHandle) {
     let store = ConfigStore::new(crate::config::agent_root());
     let hub = ControlHub::new();
+    let state_events = DesktopStateEvents::new(Arc::new({
+        let app = app.clone();
+        move |topics| {
+            let _ = app.emit("desktop-state-changed", json!({ "topics": topics }));
+        }
+    }));
+    let state_runner = state_events.clone();
+    tauri::async_runtime::spawn(async move { state_runner.run().await });
     app.manage(AgentService {
         app: app.clone(),
         store: Arc::new(store),
         hub: Arc::new(hub),
+        state_events,
         paused: Arc::new(AtomicBool::new(false)),
         runtime: Arc::new(Mutex::new(None)),
         starting: Arc::new(AtomicBool::new(false)),
@@ -134,8 +147,13 @@ pub fn sync_action(app: &AppHandle) {
         stop(app);
         crate::logging::warn("已暂停后台同步");
     } else {
-        service.paused.store(false, Ordering::SeqCst);
-        service.hub.resume();
+        let was_paused = service.paused.swap(false, Ordering::SeqCst);
+        if was_paused {
+            service.notify_sidecar();
+        }
+        if service.hub.resume() {
+            service.notify_live_control();
+        }
         start(app);
         crate::logging::warn("已恢复后台同步");
     }
@@ -227,12 +245,15 @@ pub fn toggle_pause(app: &AppHandle) {
     };
     let paused = !service.paused.load(Ordering::SeqCst);
     service.paused.store(paused, Ordering::SeqCst);
+    service.notify_sidecar();
     if paused {
         service.stop_runtime();
         refresh_sync_menu(app);
         return;
     }
-    service.hub.resume();
+    if service.hub.resume() {
+        service.notify_live_control();
+    }
     start(app);
 }
 
@@ -244,6 +265,24 @@ impl AgentService {
     fn sink(&self) -> ControlSink {
         let service = self.clone();
         Arc::new(move |control: Value| service.publish_control(control))
+    }
+
+    fn state_sink(&self) -> StateSink {
+        self.state_events.associations_sink()
+    }
+
+    async fn task_sync(&self, api: Arc<ApiClient>, bindings: Vec<AgentBinding>) -> TaskSync {
+        let task_sync = TaskSync::new(self.store.clone(), api, Arc::new(|_control: Value| {}));
+        task_sync.set_bindings(bindings).await;
+        task_sync.with_state_sink(self.state_sink())
+    }
+
+    fn notify_live_control(&self) {
+        let _ = self.app.emit("live-control-changed", ());
+    }
+
+    fn notify_sidecar(&self) {
+        self.state_events.notify_sidecar();
     }
 
     async fn start_runtime(&self) -> AgentResult<()> {
@@ -264,6 +303,7 @@ impl AgentService {
         let runtime = AgentRuntime::start(
             self.store.clone(),
             self.sink(),
+            self.state_sink(),
             self.paused.clone(),
             &self.hub,
         )
@@ -271,6 +311,7 @@ impl AgentService {
         if let Ok(mut guard) = self.runtime.lock() {
             *guard = Some(runtime);
         }
+        self.notify_sidecar();
         Ok(())
     }
 
@@ -278,11 +319,16 @@ impl AgentService {
         let taken = self.runtime.lock().ok().and_then(|mut guard| guard.take());
         if let Some(runtime) = taken {
             runtime.stop();
+            self.notify_sidecar();
         }
     }
 
     fn publish_control(&self, control: Value) {
-        if !self.hub.push(control) {
+        let (became_front, changed) = self.hub.push_with_change(control);
+        if changed {
+            self.notify_live_control();
+        }
+        if !became_front {
             return;
         }
         let first = !self.focus_suppressed.load(Ordering::SeqCst)
@@ -396,7 +442,9 @@ pub fn close_control_window(app: &AppHandle) {
 
 pub fn clear_control(app: &AppHandle) {
     if let Ok(service) = service(app) {
-        let _ = service.hub.dismiss();
+        if service.hub.dismiss_with_change().unwrap_or(false) {
+            service.notify_live_control();
+        }
         if service.hub.is_empty() {
             service.hide_control();
         }
@@ -412,7 +460,11 @@ pub fn dismiss_control(app: &AppHandle) -> Result<(), String> {
         service.suppress_and_hide();
         return Ok(());
     }
-    service.hub.dismiss().map_err(|error| message(&error))?;
+    service
+        .hub
+        .dismiss_with_change()
+        .map_err(|error| message(&error))?;
+    service.notify_live_control();
     if service.hub.is_empty() {
         service.hide_control();
     }
@@ -430,8 +482,7 @@ pub async fn decide_live_change(
         .agent_context()
         .await
         .map_err(|error| message(&error))?;
-    let task_sync = TaskSync::new(service.store.clone(), api, Arc::new(|_control: Value| {}));
-    task_sync.set_bindings(config.bindings).await;
+    let task_sync = service.task_sync(api, config.bindings).await;
     task_sync
         .decide_conflict(task_space_id, conflict_id, action, None)
         .await
@@ -449,8 +500,7 @@ pub async fn live_conflict_details(
         .agent_context()
         .await
         .map_err(|error| message(&error))?;
-    let task_sync = TaskSync::new(service.store.clone(), api, Arc::new(|_control: Value| {}));
-    task_sync.set_bindings(config.bindings).await;
+    let task_sync = service.task_sync(api, config.bindings).await;
     task_sync
         .conflict_details(task_space_id, conflict_id)
         .await
@@ -468,8 +518,7 @@ pub async fn resolve_initial_sync(
         .agent_context()
         .await
         .map_err(|error| message(&error))?;
-    let task_sync = TaskSync::new(service.store.clone(), api, Arc::new(|_control: Value| {}));
-    task_sync.set_bindings(config.bindings).await;
+    let task_sync = service.task_sync(api, config.bindings).await;
     let decisions: Vec<Value> = match decisions {
         Some(Value::Array(items)) => items,
         _ => Vec::new(),
@@ -487,8 +536,7 @@ pub async fn sync_deferred_tasks(app: &AppHandle, task_space_id: &str) -> Result
         .agent_context()
         .await
         .map_err(|error| message(&error))?;
-    let task_sync = TaskSync::new(service.store.clone(), api, Arc::new(|_control: Value| {}));
-    task_sync.set_bindings(config.bindings).await;
+    let task_sync = service.task_sync(api, config.bindings).await;
     task_sync
         .sync_deferred_tasks(task_space_id)
         .await
@@ -504,8 +552,7 @@ pub async fn list_task_ownership(
         .agent_context()
         .await
         .map_err(|error| message(&error))?;
-    let task_sync = TaskSync::new(service.store.clone(), api, Arc::new(|_control: Value| {}));
-    task_sync.set_bindings(config.bindings).await;
+    let task_sync = service.task_sync(api, config.bindings).await;
     task_sync
         .list_task_ownership(task_space_id)
         .await
@@ -522,8 +569,7 @@ pub async fn set_task_ownership(
         .agent_context()
         .await
         .map_err(|error| message(&error))?;
-    let task_sync = TaskSync::new(service.store.clone(), api, Arc::new(|_control: Value| {}));
-    task_sync.set_bindings(config.bindings).await;
+    let task_sync = service.task_sync(api, config.bindings).await;
     task_sync
         .set_task_ownership(task_space_id, decisions)
         .await
@@ -598,6 +644,7 @@ pub async fn associate(
     )
     .await
     .map_err(|error| message(&error))?;
+    service.state_events.notify_associations();
     Ok(LocalAssociation {
         project_id: summary.project_id.unwrap_or_default(),
         task_space_id: summary.task_space_id.unwrap_or_default(),
@@ -767,15 +814,11 @@ pub async fn detach_local_association(
     let outcome = if let Some(runtime) = runtime {
         runtime.detach_local_association(task_space_id).await
     } else {
-        let (_config, api) = service
+        let (config, api) = service
             .agent_context()
             .await
             .map_err(|error| message(&error))?;
-        let task_sync = Arc::new(TaskSync::new(
-            service.store.clone(),
-            api.clone(),
-            Arc::new(|_control: Value| {}),
-        ));
+        let task_sync = Arc::new(service.task_sync(api.clone(), config.bindings).await);
         detach::detach_local_association(
             &service.store,
             &api,
@@ -786,6 +829,7 @@ pub async fn detach_local_association(
         .await
     }
     .map_err(|error| message(&error))?;
+    service.state_events.notify_associations();
     serde_json::to_value(outcome).map_err(|error| format!("无法序列化解绑结果：{error}"))
 }
 

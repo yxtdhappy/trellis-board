@@ -71,23 +71,29 @@ impl ControlHub {
 
     /// 入队并去重（同 key 覆盖旧值），返回是否成为队首。
     pub fn push(&self, control: Value) -> bool {
+        self.push_with_change(control).0
+    }
+
+    /// 返回（是否成为队首，队列内容是否实际变化）。
+    pub fn push_with_change(&self, control: Value) -> (bool, bool) {
         let Ok(mut inner) = self.inner.lock() else {
-            return false;
+            return (false, false);
         };
         if inner.suppressed {
-            return false;
+            return (false, false);
         }
         let key = control_key(&control);
         if let Some(existing) = inner.queue.iter_mut().find(|item| control_key(item) == key) {
+            let changed = *existing != control;
             *existing = control;
-            return false;
+            return (false, changed);
         }
         if inner.queue.len() >= MAX_PENDING_CONTROLS {
             inner.queue.pop_front();
         }
         let was_empty = inner.queue.is_empty();
         inner.queue.push_back(control);
-        was_empty
+        (was_empty, true)
     }
 
     pub fn pending(&self) -> Option<Value> {
@@ -109,6 +115,10 @@ impl ControlHub {
     }
 
     pub fn dismiss(&self) -> AgentResult<()> {
+        self.dismiss_with_change().map(|_| ())
+    }
+
+    pub fn dismiss_with_change(&self) -> AgentResult<bool> {
         let Ok(mut inner) = self.inner.lock() else {
             return Err(AgentError::new(code::LOCKED, "无法访问控制事件队列"));
         };
@@ -118,7 +128,7 @@ impl ControlHub {
                 "没有待处理的实时确认",
             ));
         }
-        Ok(())
+        Ok(true)
     }
 
     #[cfg(test)]
@@ -128,10 +138,13 @@ impl ControlHub {
         }
     }
 
-    pub fn resume(&self) {
+    pub fn resume(&self) -> bool {
         if let Ok(mut inner) = self.inner.lock() {
+            let changed = inner.suppressed;
             inner.suppressed = false;
+            return changed;
         }
+        false
     }
 
     pub fn len(&self) -> usize {
@@ -167,11 +180,20 @@ mod tests {
     #[test]
     fn dedupes_by_key_and_keeps_latest() {
         let hub = hub();
-        assert!(hub.push(review(3, "first")));
-        assert!(!hub.push(review(3, "second")));
+        assert_eq!(hub.push_with_change(review(3, "first")), (true, true));
+        assert_eq!(hub.push_with_change(review(3, "second")), (false, true));
+        assert_eq!(hub.push_with_change(review(3, "second")), (false, false));
         assert_eq!(hub.len(), 1);
         let front = hub.pending().expect("pending");
         assert_eq!(front["message"], json!("second"));
+    }
+
+    #[test]
+    fn reports_actual_queue_changes() {
+        let hub = hub();
+        assert!(hub.dismiss_with_change().is_err());
+        hub.push(review(1, "one"));
+        assert!(hub.dismiss_with_change().expect("dismiss"));
     }
 
     #[test]
@@ -214,7 +236,8 @@ mod tests {
         hub.suppress();
         hub.push(review(1, "blocked"));
         assert!(hub.is_empty());
-        hub.resume();
+        assert!(hub.resume());
+        assert!(!hub.resume());
         hub.push(review(2, "allowed"));
         assert_eq!(hub.len(), 1);
     }

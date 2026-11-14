@@ -12,6 +12,8 @@
     ]
   },
   "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "allow-desktop-logout",
     "allow-associate-pending-project",
     "allow-cancel-pending-project",

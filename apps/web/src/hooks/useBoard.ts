@@ -45,10 +45,11 @@ import {
   buildTaskQuery,
   createIdempotencyKey,
   normalizeOperation,
-  isRetryableOperation,
+  isActiveOperation,
   isCompleteOperation,
   operationPollDelay,
 } from '@/lib/team-client.js'
+import { createRefreshCoordinator } from '@/lib/refresh-coordinator.js'
 
 const BUILTIN_VIEW_IDS = ['all', 'p0p1', 'due', 'stale', 'implementing', 'blocked'] as const
 
@@ -79,12 +80,35 @@ export function useBoard(): BoardController {
 
   const operationAttempt = useRef(0)
   const boardEtag = useRef<string | null>(null)
+  const teamStatusEtag = useRef<string | null>(null)
+  const teamStatusSignature = useRef('')
   const teamCursors = useRef<(string | null)[]>([null])
   const teamPageIndex = useRef(0)
   const teamPageRequest = useRef(0)
+  const operationsRequest = useRef(0)
+  const operationsSignature = useRef('[]')
   const teamPreferenceRequest = useRef(0)
+  const teamStatusRefresh = useMemo(
+    () =>
+      createRefreshCoordinator(async () => {
+        try {
+          const result = await fetchTeamStatus(teamStatusEtag.current)
+          if (result.notModified || !result.status) return
+          teamStatusEtag.current = result.etag
+          const signature = JSON.stringify(result.status)
+          if (signature === teamStatusSignature.current) return
+          teamStatusSignature.current = signature
+          setTeamStatus(result.status)
+        } catch {
+          /* 状态刷新失败不打断主流程 */
+        }
+      }),
+    [],
+  )
 
   const teamMode = runtime?.team === true || runtime?.mode === 'team'
+
+  useEffect(() => () => teamStatusRefresh.dispose(), [teamStatusRefresh])
 
   const loadBoard = useCallback(async (_force = false, quiet = false) => {
     if (!quiet) setLoading(true)
@@ -159,28 +183,34 @@ export function useBoard(): BoardController {
     }))
   }, [filters.teamId])
 
-  const loadTeamStatus = useCallback(async () => {
-    try {
-      setTeamStatus(await fetchTeamStatus())
-    } catch {
-      /* 状态轮询失败不打断主流程 */
-    }
+  const loadTeamStatus = useCallback(() => teamStatusRefresh.request(), [teamStatusRefresh])
+
+  const replaceOperations = useCallback((next: PublishOperation[]) => {
+    const signature = JSON.stringify(next)
+    if (signature === operationsSignature.current) return
+    operationsSignature.current = signature
+    setOperations(next)
   }, [])
+
+  const clearOperations = useCallback(() => replaceOperations([]), [replaceOperations])
 
   const loadOperations = useCallback(async () => {
     if (!teamMode || filters.taskSpaceId === 'all') {
-      setOperations([])
+      operationsRequest.current += 1
+      clearOperations()
       return
     }
+    const request = ++operationsRequest.current
     try {
       const result = await fetchTaskOperations(filters.taskSpaceId)
-      setOperations(
-        (result?.operations || []).map((item) => normalizeOperation(item) as PublishOperation),
-      )
+      if (request !== operationsRequest.current) return
+      const next =
+        (result?.operations || []).map((item) => normalizeOperation(item) as PublishOperation)
+      replaceOperations(next)
     } catch {
       // 操作列表失败不覆盖正式任务查询结果。
     }
-  }, [teamMode, filters.taskSpaceId])
+  }, [teamMode, filters.taskSpaceId, clearOperations, replaceOperations])
 
   const loadAssignments = useCallback(async () => {
     try {
@@ -210,15 +240,11 @@ export function useBoard(): BoardController {
     if (!runtime) return
     if (teamMode) {
       void loadTeamPage(true)
-      void loadTeamStatus()
       void loadAssignments()
-      const timer = window.setInterval(() => {
-        void loadTeamStatus()
-      }, 3000)
-      return () => window.clearInterval(timer)
+      return
     }
     void loadBoard()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 初始化一次并按运行模式起停团队状态轮询
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 初始化一次并按运行模式加载权威快照
   }, [runtime, teamMode])
 
   const alignBoard = useCallback(async () => {
@@ -263,6 +289,29 @@ export function useBoard(): BoardController {
   }, [runtime])
 
   useEffect(() => {
+    if (!teamMode) return
+    let timer = 0
+    const schedule = () => {
+      if (timer) window.clearTimeout(timer)
+      timer = 0
+      if (document.visibilityState === 'visible') {
+        timer = window.setTimeout(() => {
+          void loadTeamStatus()
+          schedule()
+        }, 10_000)
+      }
+    }
+    const onVisibilityChange = () => schedule()
+    void loadTeamStatus()
+    schedule()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      if (timer) window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [teamMode, loadTeamStatus])
+
+  useEffect(() => {
     if (teamMode) void loadTeamPage(true)
   }, [filters, teamMode, loadTeamPage])
 
@@ -274,14 +323,17 @@ export function useBoard(): BoardController {
   }, [teamMode, loadTeamPreferences])
 
   useEffect(() => {
-    if (!teamMode) {
-      setOperations([])
+    if (!teamMode || filters.taskSpaceId === 'all') {
+      clearOperations()
       return
     }
     void loadOperations()
     const timer = window.setInterval(() => void loadOperations(), 3_000)
-    return () => window.clearInterval(timer)
-  }, [teamMode, loadOperations])
+    return () => {
+      operationsRequest.current += 1
+      window.clearInterval(timer)
+    }
+  }, [teamMode, filters.taskSpaceId, loadOperations, clearOperations])
 
   const reloadCurrentSource = useCallback(async () => {
     if (teamMode) {
@@ -304,7 +356,7 @@ export function useBoard(): BoardController {
   )
 
   useEffect(() => {
-    if (!operation?.id || !isRetryableOperation(operation)) return
+    if (!operation?.id || !isActiveOperation(operation)) return
     let cancelled = false
     const attempt = operationAttempt.current
     operationAttempt.current += 1
@@ -353,12 +405,20 @@ export function useBoard(): BoardController {
     teamCursors.current = [null]
     boardEtag.current = null
     teamPageRequest.current += 1
+    if (
+      patch.taskSpaceId !== undefined ||
+      patch.projectId !== undefined ||
+      patch.teamId !== undefined
+    ) {
+      operationsRequest.current += 1
+      clearOperations()
+    }
     if (patch.teamId !== undefined) {
       teamPreferenceRequest.current += 1
       setTeamPage(null)
       setBoard((current) => (current ? { ...current, savedViews: [], settings: {} } : current))
     }
-  }, [])
+  }, [clearOperations])
 
   const actions = useMemo(
     () => ({
@@ -437,6 +497,7 @@ export function useBoard(): BoardController {
       retryOperation: async (id?: string) => {
         const operationId = id || operation?.id
         if (!operationId) return
+        operationAttempt.current = 0
         setOperation(
           normalizeOperation(await retryTaskOperation(String(operationId))) as PublishOperation,
         )

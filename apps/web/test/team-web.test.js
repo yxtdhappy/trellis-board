@@ -24,6 +24,7 @@ import {
   safeReturnTo,
   shouldReloadTasks,
   taskCommandState,
+  isActiveOperation,
 } from '../src/lib/team-client.js'
 
 test('幂等键在没有 randomUUID 的 HTTP 页面仍可生成', () => {
@@ -404,6 +405,15 @@ test('任务操作保留命令类型和任务空间', () => {
   })
   assert.equal(operation.commandType, 'assign_task')
   assert.equal(operation.taskSpaceId, 'space-1')
+})
+
+test('只有执行中的任务操作继续自动查询', () => {
+  assert.equal(isActiveOperation({ status: 'pending' }), true)
+  assert.equal(isActiveOperation({ status: 'delivered' }), true)
+  assert.equal(isActiveOperation({ status: 'running' }), true)
+  assert.equal(isActiveOperation({ status: 'failed' }), false)
+  assert.equal(isActiveOperation({ status: 'succeeded' }), false)
+  assert.equal(isActiveOperation({ status: 'cancelled' }), false)
 })
 
 test('登录回跳只接受同源相对路径', () => {

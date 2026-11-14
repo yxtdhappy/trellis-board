@@ -185,7 +185,23 @@ export async function queryTeamTasks(query: string, etag: string | null) {
   }
 }
 
-export const fetchTeamStatus = () => api<Record<string, unknown>>('/api/team/status')
+export async function fetchTeamStatus(etag: string | null) {
+  const result = await apiRequest('/api/team/status', 'GET', undefined, {
+    headers: etag ? { 'if-none-match': etag } : {},
+  })
+  if (result.status === 304) {
+    return {
+      notModified: true as const,
+      status: null,
+      etag: result.etag,
+    }
+  }
+  return {
+    notModified: false as const,
+    status: result.data as Record<string, unknown>,
+    etag: result.etag,
+  }
+}
 
 export const fetchAssignments = () =>
   api<{ assignments?: unknown[] }>('/api/assignments?state=pending')

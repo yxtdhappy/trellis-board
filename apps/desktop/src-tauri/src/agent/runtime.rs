@@ -14,6 +14,7 @@ use crate::agent::protocol::{
     self, code, safe_error_message, AgentCommand, AgentError, AgentResult, HeartbeatResponse,
     ServerBinding, AGENT_PROTOCOL_VERSION, AGENT_VERSION, LISTENER_REPORT_VERSION,
 };
+use crate::agent::state_events::StateSink;
 use crate::agent::store::{AgentBinding, AgentConfig, ConfigStore};
 use crate::agent::task_sync::{ControlSink, TaskSync};
 
@@ -38,6 +39,7 @@ impl AgentRuntime {
     pub async fn start(
         store: Arc<ConfigStore>,
         emit: ControlSink,
+        state_sink: StateSink,
         paused: Arc<AtomicBool>,
         hub: &ControlHub,
     ) -> AgentResult<Arc<Self>> {
@@ -58,7 +60,9 @@ impl AgentRuntime {
             Some(credential),
             ca_file.as_deref(),
         )?);
-        let task_sync = Arc::new(TaskSync::new(store.clone(), api.clone(), emit.clone()));
+        let task_sync = Arc::new(
+            TaskSync::new(store.clone(), api.clone(), emit.clone()).with_state_sink(state_sink),
+        );
         let (shutdown, _) = watch::channel(false);
         let runtime = Arc::new(Self {
             store,

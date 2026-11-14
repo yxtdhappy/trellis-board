@@ -277,7 +277,7 @@ async fn update_binding_result(
         .and_then(Value::as_str)
         .map(str::to_string);
     let local_id = local_id.to_string();
-    context
+    let updated = context
         .store
         .update_config(true, move |config| {
             let Some(current) = config else {
@@ -309,6 +309,9 @@ async fn update_binding_result(
             Ok(Some(next))
         })
         .await?;
+    if updated.is_some() {
+        context.task_sync.notify_bindings_changed();
+    }
     Ok(())
 }
 

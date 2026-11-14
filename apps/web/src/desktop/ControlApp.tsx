@@ -1,9 +1,10 @@
 import { AlertCircle } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
-import { invoke } from './tauri.ts'
+import { invoke, listen } from './tauri.ts'
+import { createRefreshCoordinator } from '@/lib/refresh-coordinator.js'
 
 type ChangedBy = { displayName?: string; deviceName?: string; occurredAt?: string }
 type ConflictFile = { path?: string; revision?: number; changeType?: string; changedBy?: ChangedBy }
@@ -255,38 +256,41 @@ export function ControlApp() {
   const [choices, setChoices] = useState<Record<string, string>>({})
   const [ownershipSelected, setOwnershipSelected] = useState<Set<string>>(() => new Set())
   const [ownershipBranches, setOwnershipBranches] = useState<Record<string, string>>({})
-  const signatureRef = useRef('')
   const cardRef = useRef<HTMLDivElement>(null)
 
-  async function refresh() {
-    try {
-      const next = await call<ControlEvent | null>('live_control_pending')
-      const nextSignature = JSON.stringify(next)
-      if (nextSignature !== signatureRef.current) {
-        signatureRef.current = nextSignature
-        setEvent(next)
-        setLoaded(true)
-        setBusy(false)
-        setExpanded(false)
-        setDiff(null)
-        setChoices({})
-        if (next?.type === 'task_ownership_review') {
-          const items = next.items ?? []
-          setOwnershipSelected(new Set(items.map((item) => item.taskDir)))
-          setOwnershipBranches(
-            Object.fromEntries(
-              items.map((item) => [item.taskDir, item.branchName || next.branchName || '']),
-            ),
-          )
-        } else {
-          setOwnershipSelected(new Set())
-          setOwnershipBranches({})
+  const [refreshCoordinator] = useState(() => {
+    let signature = ''
+    return createRefreshCoordinator(async () => {
+      try {
+        const next = await call<ControlEvent | null>('live_control_pending')
+        const nextSignature = JSON.stringify(next)
+        if (nextSignature !== signature) {
+          signature = nextSignature
+          setEvent(next)
+          setLoaded(true)
+          setBusy(false)
+          setExpanded(false)
+          setDiff(null)
+          setChoices({})
+          if (next?.type === 'task_ownership_review') {
+            const items = next.items ?? []
+            setOwnershipSelected(new Set(items.map((item) => item.taskDir)))
+            setOwnershipBranches(
+              Object.fromEntries(
+                items.map((item) => [item.taskDir, item.branchName || next.branchName || '']),
+              ),
+            )
+          } else {
+            setOwnershipSelected(new Set())
+            setOwnershipBranches({})
+          }
         }
+      } catch (error) {
+        setErrorText(errorTextOf(error, '读取待确认事件失败'))
       }
-    } catch (error) {
-      setErrorText(errorTextOf(error, '读取待确认事件失败'))
-    }
-  }
+    })
+  })
+  const refresh = useCallback(() => refreshCoordinator.request(), [refreshCoordinator])
 
   async function runAction(action: string) {
     if (!event) return
@@ -392,10 +396,60 @@ export function ControlApp() {
   }
 
   useEffect(() => {
-    void refresh()
-    const timer = window.setInterval(() => void refresh(), 750)
-    return () => window.clearInterval(timer)
-  }, [])
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+    let timer = 0
+
+    const clearFallback = () => {
+      if (timer) window.clearTimeout(timer)
+      timer = 0
+    }
+    const scheduleFallback = () => {
+      clearFallback()
+      if (document.visibilityState === 'visible') {
+        timer = window.setTimeout(() => {
+          void refresh().finally(scheduleFallback)
+        }, 10_000)
+      }
+    }
+    const refreshVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      void refresh()
+      scheduleFallback()
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshVisible()
+      else clearFallback()
+    }
+
+    async function setup() {
+      if (listen) {
+        try {
+          unlisten = await listen('live-control-changed', refreshVisible)
+        } catch {
+          unlisten = undefined
+        }
+      }
+      if (cancelled) {
+        unlisten?.()
+        return
+      }
+      window.addEventListener('focus', refreshVisible)
+      document.addEventListener('visibilitychange', onVisibilityChange)
+      await refresh()
+      if (!cancelled) scheduleFallback()
+    }
+    void setup()
+
+    return () => {
+      cancelled = true
+      unlisten?.()
+      clearFallback()
+      window.removeEventListener('focus', refreshVisible)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      refreshCoordinator.dispose()
+    }
+  }, [refresh, refreshCoordinator])
 
   useEffect(() => {
     const element = cardRef.current

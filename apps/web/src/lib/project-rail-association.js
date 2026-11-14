@@ -13,6 +13,23 @@ const LISTENER_STATES = new Set([
   'disabled',
 ])
 
+export function desktopStateTopics(payload) {
+  const topics = Array.isArray(payload?.topics) ? payload.topics : []
+  return new Set(
+    topics.filter(
+      (topic) => topic === 'associations' || topic === 'sidecar',
+    ),
+  )
+}
+
+export function associationSignature(associations) {
+  const rows = Array.isArray(associations) ? [...associations] : []
+  rows.sort((left, right) =>
+    String(left?.taskSpaceId || '').localeCompare(String(right?.taskSpaceId || '')),
+  )
+  return JSON.stringify(rows)
+}
+
 export function associationOwnershipCounts(association) {
   const count = (value) => (Number.isSafeInteger(value) && value > 0 ? value : 0)
   const pausedCount = count(association?.ownershipPausedCount)

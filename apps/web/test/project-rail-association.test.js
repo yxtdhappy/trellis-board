@@ -1,8 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  associationSignature,
   associationOwnershipCounts,
   countProjectPausedBranches,
+  desktopStateTopics,
   detachPendingAssociationView,
   isBranchAssociationPaused,
   projectListenerView,
@@ -269,4 +271,22 @@ test('项目栏按 taskSpace 展示在线、未激活、无关联、旧客户端
 
 test('没有监听聚合字段时不伪造服务端分支状态', () => {
   assert.equal(projectListenerView({ id: 'standalone-space' }), null)
+})
+
+test('桌面状态事件只接受关联和后台主题', () => {
+  assert.deepEqual(
+    [...desktopStateTopics({ topics: ['sidecar', 'unknown', 'associations'] })],
+    ['sidecar', 'associations'],
+  )
+  assert.equal(desktopStateTopics({ topics: 'associations' }).size, 0)
+})
+
+test('关联签名忽略返回顺序但识别内容变化', () => {
+  const first = association('space-a', 'ready')
+  const second = association('space-b', 'syncing')
+  assert.equal(associationSignature([first, second]), associationSignature([second, first]))
+  assert.notEqual(
+    associationSignature([first, second]),
+    associationSignature([first, { ...second, liveSyncStatus: 'ready' }]),
+  )
 })

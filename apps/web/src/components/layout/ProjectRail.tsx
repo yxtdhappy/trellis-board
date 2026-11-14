@@ -3,19 +3,23 @@ import { Bot, FolderGit2, LockKeyhole, Plus, RefreshCw, Unlink2, Upload, Users }
 import { toast } from 'sonner'
 import type { TaskSpace } from '@/api/board'
 import { Button } from '@/components/ui/button'
+import { listen } from '@/desktop/tauri'
 import { AgentQuickInitDialog } from '@/features/board/dialogs/AgentQuickInitDialog'
 import { BranchListenersDialog } from '@/features/board/dialogs/BranchListenersDialog'
 import { ProjectOnboardingDialog } from '@/features/board/dialogs/ProjectOnboardingDialog'
 import { TaskOwnershipDialog } from '@/features/board/dialogs/TaskOwnershipDialog'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import {
+  associationSignature,
   associationOwnershipCounts,
   countProjectPausedBranches,
+  desktopStateTopics,
   detachPendingAssociationView,
   isBranchAssociationPaused,
   projectListenerView,
   selectProjectAssociation,
 } from '@/lib/project-rail-association.js'
+import { createRefreshCoordinator } from '@/lib/refresh-coordinator.js'
 
 type Project = {
   id: string
@@ -347,8 +351,8 @@ export function ProjectRail({
   const [syncingDeferredTaskSpace, setSyncingDeferredTaskSpace] = useState<string | null>(null)
   const [detachingTaskSpace, setDetachingTaskSpace] = useState<string | null>(null)
   const [listenerTaskSpace, setListenerTaskSpace] = useState<TaskSpace | null>(null)
-  const [associationRefreshNonce, setAssociationRefreshNonce] = useState(0)
-  const associationRequestInFlight = useRef(false)
+  const associationSignatureRef = useRef('')
+  const refreshProjectStateRef = useRef<() => Promise<void>>(async () => {})
   const onAssociationsChangeRef = useRef(onAssociationsChange)
 
   useEffect(() => {
@@ -358,16 +362,22 @@ export function ProjectRail({
   useEffect(() => {
     if (!invoke) return
     const currentInvoke = invoke
+    const currentListen = listen
     let cancelled = false
+    let unlisten: (() => void) | undefined
+    let fallbackTimer = 0
+
     async function loadAssociations() {
-      if (cancelled || associationRequestInFlight.current) return
-      associationRequestInFlight.current = true
       try {
         const result = await currentInvoke('list_local_associations')
         if (cancelled) return
         const normalized = normalizeAssociations(result)
-        setAssociations(new Map(normalized.map((item) => [item.taskSpaceId, item])))
-        onAssociationsChangeRef.current?.(normalized)
+        const signature = associationSignature(normalized)
+        if (signature !== associationSignatureRef.current) {
+          associationSignatureRef.current = signature
+          setAssociations(new Map(normalized.map((item) => [item.taskSpaceId, item])))
+          onAssociationsChangeRef.current?.(normalized)
+        }
         setAssociationError('')
       } catch (error) {
         if (!cancelled) {
@@ -375,28 +385,90 @@ export function ProjectRail({
             error instanceof Error ? error.message : String(error || '无法读取本地项目关联'),
           )
         }
-      } finally {
-        associationRequestInFlight.current = false
       }
     }
-    void loadAssociations()
-    const associationTimer = window.setInterval(() => void loadAssociations(), 3_000)
+
     async function loadSidecarStatus() {
       try {
         const result = await currentInvoke('desktop_sidecar_status')
-        if (!cancelled) setSidecarStatus(normalizeSidecarStatus(result))
+        if (cancelled) return
+        const next = normalizeSidecarStatus(result)
+        setSidecarStatus((current) =>
+          current?.running === next?.running && current?.paused === next?.paused
+            ? current
+            : next,
+        )
       } catch {
         if (!cancelled) setSidecarStatus(null)
       }
     }
-    void loadSidecarStatus()
-    const timer = window.setInterval(() => void loadSidecarStatus(), 3_000)
+
+    const associationRefresh = createRefreshCoordinator(loadAssociations)
+    const sidecarRefresh = createRefreshCoordinator(loadSidecarStatus)
+    const refreshAll = async () => {
+      await Promise.all([associationRefresh.request(), sidecarRefresh.request()])
+    }
+    refreshProjectStateRef.current = refreshAll
+
+    const clearFallback = () => {
+      if (fallbackTimer) window.clearTimeout(fallbackTimer)
+      fallbackTimer = 0
+    }
+    const scheduleFallback = () => {
+      clearFallback()
+      if (document.visibilityState === 'visible') {
+        fallbackTimer = window.setTimeout(() => {
+          void refreshAll().finally(scheduleFallback)
+        }, 10_000)
+      }
+    }
+    const refreshVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      void refreshAll()
+      scheduleFallback()
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshVisible()
+      else clearFallback()
+    }
+    const onStateChanged = (event: { payload: unknown }) => {
+      if (document.visibilityState !== 'visible') return
+      const topics = desktopStateTopics(event.payload)
+      if (!topics.size) return
+      if (topics.has('associations')) void associationRefresh.request()
+      if (topics.has('sidecar')) void sidecarRefresh.request()
+    }
+
+    async function setup() {
+      if (currentListen) {
+        try {
+          unlisten = await currentListen('desktop-state-changed', onStateChanged)
+        } catch {
+          unlisten = undefined
+        }
+      }
+      if (cancelled) {
+        unlisten?.()
+        return
+      }
+      window.addEventListener('focus', refreshVisible)
+      document.addEventListener('visibilitychange', onVisibilityChange)
+      await refreshAll()
+      if (!cancelled) scheduleFallback()
+    }
+    void setup()
+
     return () => {
       cancelled = true
-      window.clearInterval(associationTimer)
-      window.clearInterval(timer)
+      unlisten?.()
+      associationRefresh.dispose()
+      sidecarRefresh.dispose()
+      clearFallback()
+      window.removeEventListener('focus', refreshVisible)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      refreshProjectStateRef.current = async () => {}
     }
-  }, [invoke, associationRefreshNonce])
+  }, [invoke])
 
   useEffect(() => {
     setListenerTaskSpace(null)
@@ -449,7 +521,7 @@ export function ProjectRail({
       toast.error(message)
     } finally {
       setSyncingDeferredTaskSpace(null)
-      setAssociationRefreshNonce((value) => value + 1)
+      void refreshProjectStateRef.current()
     }
   }
 
@@ -478,7 +550,7 @@ export function ProjectRail({
       toast.error(`服务端解绑未确认：${message}`)
     } finally {
       setDetachingTaskSpace(null)
-      setAssociationRefreshNonce((value) => value + 1)
+      void refreshProjectStateRef.current()
     }
   }
 
@@ -911,7 +983,7 @@ export function ProjectRail({
             invoke={invoke}
             onChanged={() => {
               toast.success('任务归属已更新，正在同步当前分支任务。')
-              setAssociationRefreshNonce((value) => value + 1)
+              void refreshProjectStateRef.current()
               void onRefresh()
             }}
           />

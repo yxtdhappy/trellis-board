@@ -1,5 +1,40 @@
 # 桌面 Tauri 命令与导航
 
+## Scenario: 远程 Board 监听本地状态事件
+
+### 1. Scope / Trigger
+
+- 修改 `desktop-state-changed`、`live-control-changed`、远程 Board event listen/unlisten 或状态兜底时适用。
+
+### 2. Signatures
+
+- `desktop-state-changed` payload：`{ topics: ["associations", "sidecar"] }`。
+- `live-control-changed` payload：空事件。
+- Board capability：`core:event:allow-listen`、`core:event:allow-unlisten`。
+
+### 3. Contracts
+
+- 事件只是失效通知；ProjectRail 收到后仍调用 `list_local_associations` /
+  `desktop_sidecar_status`，ControlApp 仍调用 `live_control_pending`。
+- 前端必须先注册监听，再执行首次读取；可见时保留 10 秒兜底，隐藏时停止。
+- Rust 只在 cursor、binding、ownership、Git 投影、sidecar 或控制队列实际变化后发射。
+- 请求在途时只保留一次后续刷新，相同归一化结果复用原引用。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| Board capability 缺少 listen/unlisten | 远程 Board 收不到状态事件 |
+| 事件 payload 主题为空或未知 | 前端忽略；恢复仍由首次读取、focus、可见性和 10 秒兜底完成 |
+| 监听注册失败 | 不阻断首次读取和可见兜底 |
+| 页面或窗口隐藏 | 清除兜底 timer；恢复可见时立即读取一次 |
+
+### 5. Tests Required
+
+- capability 静态断言包含 listen/unlisten。
+- 刷新合并纯逻辑测试覆盖在途请求和一次 pending refresh。
+- Rust 测试覆盖无变化不通知、实际变化通知和主题合并。
+
 ## Scenario: Board 手动退出并返回本地登录页
 
 ### 1. Scope / Trigger

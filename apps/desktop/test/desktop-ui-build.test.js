@@ -85,6 +85,34 @@ test('control sync errors show project and branch without repo paths', () => {
   assert.match(control, /event\.taskDir/)
 })
 
+test('desktop state refresh uses events, ETag and visible fallbacks', () => {
+  const capability = JSON.parse(
+    read('apps/desktop/src-tauri/capabilities/board-local-association.json'),
+  )
+  const projectRail = read('apps/web/src/components/layout/ProjectRail.tsx')
+  const control = read('apps/web/src/desktop/ControlApp.tsx')
+  const useBoard = read('apps/web/src/hooks/useBoard.ts')
+  const boardApi = read('apps/web/src/api/board.ts')
+  const taskSync = read('apps/desktop/src-tauri/src/agent/task_sync.rs')
+  const agentService = read('apps/desktop/src-tauri/src/agent_service.rs')
+
+  assert.ok(capability.permissions.includes('core:event:allow-listen'))
+  assert.ok(capability.permissions.includes('core:event:allow-unlisten'))
+  assert.match(projectRail, /desktop-state-changed/)
+  assert.match(projectRail, /10_000/)
+  assert.doesNotMatch(projectRail, /setInterval\([^)]*3_000/)
+  assert.match(control, /live-control-changed/)
+  assert.match(control, /10_000/)
+  assert.doesNotMatch(control, /setInterval\([^)]*750/)
+  assert.match(boardApi, /if-none-match/)
+  assert.match(boardApi, /notModified: true/)
+  assert.match(useBoard, /teamStatusEtag/)
+  assert.match(useBoard, /filters\.taskSpaceId === 'all'/)
+  assert.match(taskSync, /desktop-state-changed|notify_state_changed/)
+  assert.match(agentService, /desktop-state-changed/)
+  assert.match(agentService, /live-control-changed/)
+})
+
 test('desktop logout uses a board-only command and forgets the saved password', () => {
   const permissions = read('apps/desktop/src-tauri/permissions/desktop.toml')
   const capability = JSON.parse(

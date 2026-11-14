@@ -10,6 +10,7 @@ pub mod onboarding;
 pub mod process;
 pub mod protocol;
 pub mod runtime;
+pub mod state_events;
 pub mod store;
 pub mod task_command;
 pub mod task_sync;

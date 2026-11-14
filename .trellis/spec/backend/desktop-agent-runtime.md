@@ -48,6 +48,9 @@
 - 认证被撤销（401 或 `AUTH_REVOKED`）时停止循环、写 `state.json`，不静默重试。
 - 本地改动只经 `TaskSync` 的 notify watcher 上传：监听 `<repo>/.trellis`，只关心 `.trellis/tasks/**`，
   250 ms 静默窗口合并后按任务目录调用 `upload_dirty`；不得新增独立的实时同步通道。
+- `TaskSync` 在 cursor、binding、ownership 或本地 Git 投影实际变化后通过统一 state sink 通知；
+  `write_cursor` / `remove_task_cursor` 必须在落盘成功且 patch 确已改变状态后才通知，无变化不得发射。
+  Git watcher 只监听 HEAD、index、packed-refs 和 refs，用于失效 ownership 投影，不触发任务正文上传。
 - 分支守卫：`pull`/`apply_server_groups`/`upload_directories`/`upload_batch`/`decide_conflict`/
   `resolve_initial_sync` 执行前必须 `assert_binding_branch`（对照 JS `d58b021`）。守卫码
   `BRANCH_MISMATCH`/`BRANCH_INVALID`/`DETACHED_HEAD`/`GIT_FAILED`/`NOT_GIT_REPOSITORY`/
@@ -148,6 +151,11 @@
   `live_control_initial`、`live_control_dismiss`。
 - 事件类型、review 选项和动作字符串以 Rust 侧为准（`use-server`/`overwrite-server`/
   `save-local-copy`，`mode` 为 `safe`/`review`），前端不得新增动作值。
+- 桌面本地状态统一使用 `desktop-state-changed`，payload 为
+  `{ "topics": ["associations" | "sidecar"] }`，短窗口内合并发射。Board 远程窗口 capability 必须
+  显式允许 `core:event:allow-listen` 与 `core:event:allow-unlisten`。
+- 控制队列内容实际变化后发射 `live-control-changed`；控制窗口先注册监听再读取
+  `live_control_pending`，可见时保留 10 秒兜底，隐藏时停止，focus/恢复可见时立即读取。
 - 控制窗口固定 560×420，布局必须单列可用；diff 对照块只在 ≥768px 才切换为双列。
 
 ## 8. 打包与验证

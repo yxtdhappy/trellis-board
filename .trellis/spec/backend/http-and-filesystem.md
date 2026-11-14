@@ -101,6 +101,8 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
 - 事件名固定为 `tasks.changed`，数据只含单调版本和生成时间；不携带项目、任务或文件正文。
 - 服务端短时间内的多次变更合并广播；客户端收到事件后重新请求现有 REST 快照，权限、筛选、分页和
   ETag 仍由原接口负责。
+- Team 状态当前不新增 Board SSE 事件；客户端使用 `/api/team/status` 的 ETag 条件请求、可见页面
+  10 秒兜底和 focus/visibility/SSE 重连对齐。没有逐路径测量证据时不得增加 `team.status.changed`。
 - 服务关闭时先结束全部 SSE 响应，再关闭 HTTP server，避免活动连接拖住关闭流程。
 
 ## 仓库白名单

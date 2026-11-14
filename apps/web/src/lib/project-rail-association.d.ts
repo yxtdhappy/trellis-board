@@ -27,6 +27,10 @@ export type ProjectListenerView = {
   textClassName: string
 }
 
+export function desktopStateTopics(payload: unknown): Set<'associations' | 'sidecar'>
+
+export function associationSignature(associations: unknown[]): string
+
 export function associationOwnershipCounts<TAssociation extends ProjectRailAssociation>(
   association: TAssociation | undefined,
 ): {

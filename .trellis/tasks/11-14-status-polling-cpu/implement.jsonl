@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/archive/2026-11/11-13-task-sync-performance/check-report.md","reason":"复用真实 CPU、I/O、cursor 写入和 revision 去重的历史基线，避免重复优化已修问题"}
+{"file":".trellis/tasks/archive/2026-11/11-14-deferred-status-reconcile/design.md","reason":"前置任务会修改 TaskSync 的 deferred 收敛和 write_cursor 实际变化语义，本任务必须在其后接入通知"}
+{"file":".trellis/spec/frontend/rendering-and-state.md","reason":"约束 useBoard、ProjectRail、SSE、ETag、Tauri 状态和请求竞态的前端行为"}
+{"file":".trellis/spec/backend/desktop-agent-runtime.md","reason":"约束 Rust 进程内 Agent、Tauri 命令和本地同步状态的生命周期"}
+{"file":".trellis/spec/backend/http-and-filesystem.md","reason":"约束 Board SSE、Team 状态 ETag 和任务操作接口的兼容边界"}
+{"file":".trellis/spec/desktop/tauri-commands/index.md","reason":"约束 Board Webview 可调用命令、capability 和本地窗口安全边界"}

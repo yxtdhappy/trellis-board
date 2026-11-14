@@ -71,6 +71,7 @@ export function shouldReloadTasks(status: unknown, previous: unknown): boolean
 export function assignmentVersion(assignment: unknown): string
 export function taskVersion(task: unknown): string
 export function isRetryableOperation(operation: unknown): boolean
+export function isActiveOperation(operation: unknown): boolean
 export function isCompleteOperation(operation: unknown): boolean
 export function operationPollDelay(attempt: number): number
 export function safeReturnTo(value: unknown): string
