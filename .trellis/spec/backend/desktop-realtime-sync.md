@@ -254,6 +254,14 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - HEAD tree 缓存只驻留内存，键为 binding、真实分支和完整 HEAD SHA；进程重启后允许重扫一次。
   只有精确的 `<taskDir>/task.json` 在 HEAD tree 中才生成证据。仅工作区存在、仅从服务端拉取或任务
   目录未提交均保持暂停。
+- ProjectRail 的归属展示投影允许按 binding 缓存 15 秒，但缓存只能避免重复计算，不能放宽上传门禁。
+  投影只枚举 `.trellis/tasks/**` 的目录和文件元数据，并读取各任务根部的 `task.json` 取得
+  `branch`；不得读取、UTF-8 解码、规范化或哈希 `prd.md`、报告、JSONL 等其他任务正文。
+  真实上传、冲突覆盖、延后补同步和 HEAD 证据生成仍必须执行完整文件读取、摘要与精确校验。
+- 桌面 HTTP 客户端访问回环、RFC1918 私网、链路本地地址、IPv6 ULA/link-local 或 `.local`
+  主机时必须绕过系统代理。公网域名继续遵循系统代理；内网业务域名即使解析到私网 IP，当前也不会
+  根据 DNS 结果自动绕过，部署时必须显式配置 `NO_PROXY`，后续可增加
+  `proxyMode=auto|system|direct` 的显式配置。
 - SSE 重连和事件触发的补拉只能遍历运行时激活的 binding。未激活 taskSpace 返回
   `{ skipped: true, reason: "BINDING_INACTIVE" }`，不能按未知 binding 抛异常；所有
   fire-and-forget 补拉必须处理 rejection，单个 taskSpace 失败只能记日志，不能终止 Agent 进程。
@@ -418,12 +426,18 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - Good：dev 基线首次看到 `dev1` 任务且其在 dev HEAD 中，一次 tree 扫描后携带证据写入；来源 dev1
   旧快照保留但不再出现在默认任务查询。
 - Good：同一 HEAD 下 17 个已合入任务只执行一次 `git ls-tree`，每个任务分别附自己的证据。
+- Good：5 个关联的 ProjectRail 在 3 秒刷新时复用 15 秒归属投影；过期后只扫描任务元数据和
+  `task.json.branch`，不读取约 6000 个任务正文文件。
 - Good：同一仓库为主分支和 feature 分支各建一个 worktree；两个 `localRepoKey` 不同，各自只监听当前分支。
 - Base：本地和服务端任务目录文件集合及摘要相同，不写文件、不增加 revision。
 - Base：同步请求已提交但响应丢失，客户端重启后复用 pending `batchId`，服务端返回原 revision。
 - Base：投影重复上报相同 revision；服务端不重复广播，客户端即使收到也不会重复拉取或写 cursor。
 - Bad：同一个 Git 工作目录先绑定 main 又保留 feature binding；watcher 会把一份本地修改双写到两个 taskSpace。
 - Bad：普通 watcher 每次都执行 `git ls-tree`，把路径扫描成本放大到每个事件和每个任务。
+- Bad：ProjectRail 每 3 秒或每次投影缓存过期都调用完整任务快照读取，对全部 Markdown/JSONL
+  正文做 UTF-8 解码和 SHA-256；任务历史增大后会造成周期性 CPU 尖峰。
+- Bad：把 `192.168.x.x` 等局域网服务器交给 `127.0.0.1:7897` 用户级代理；客户端会持续建立错误连接，
+  表现为高 CPU、频繁重连和“同步像是没生效”。局域网 IP 必须直连。
 - Bad：源分支任务在基线接管后继续写来源 taskSpace，形成两个活跃归属。
 - Bad：服务端为验证证据执行项目 Git/Python 子进程，重新引入工作副本和凭据边界。
 - Bad：以“后到覆盖先到”写同一任务文件，会静默丢更新；服务端必须使用文件级 CAS。
@@ -462,8 +476,10 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   cursor 文件基线、离线并发冲突、延后目录、目录移动、pending batch 重放、全量分组跨目录超过
   1024 文件、实际批次 1024/1025 与 64 MiB 边界、错分支与 detached HEAD 拒绝、基线 tree 单次扫描
   与 HEAD 变化刷新、pending evidence 原样重放和 `TASK_OWNED_BY_BASELINE` 后停止主动上传。
+  必须断言归属展示投影不会解码普通任务正文，并覆盖 15 秒缓存命中/过期和 HEAD 变化刷新。
 - `apps/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、
-  DPAPI 往返、SSE 分帧、控制事件去重与过期。
+  DPAPI 往返、SSE 分帧、控制事件去重与过期；代理绕过需覆盖回环、私网、链路本地、IPv6
+  ULA/link-local、`.local` 和公网域名。
 - `apps/desktop/src-tauri/src/agent/{runtime,task_sync,detach,store}.rs`：真实监听集合、
   `detachPending` 排除、失败重试和成功后 cursor 清理；另覆盖相同/旧 revision 短路、首次同步和
   pending upload 例外、相同 cursor patch 不落盘。
@@ -579,6 +595,43 @@ if apply_cursor_patch(&mut cursor, &patch) {
 ```
 
 重复事件直接短路；cursor 只有在业务状态实际变化时才落盘，pending upload 仍按原路径重试。
+
+### Wrong
+
+```rust
+let files = read_local_task_snapshot_files(repo_path, None).await?;
+let groups = group_task_snapshot_files(&files)?;
+```
+
+ProjectRail 只需要任务目录和 `task.json.branch`；读取并哈希所有任务正文会把页面轮询放大成周期性
+全仓任务扫描。
+
+### Correct
+
+```rust
+let groups = read_local_task_ownership_groups(repo_path).await?;
+// 普通文件只取 metadata；仅 task.json 读取内容并解析 branch。
+```
+
+展示投影可复用短 TTL 缓存；实际上传仍调用完整快照读取和精确 CAS 校验。
+
+### Wrong
+
+```text
+HTTP_PROXY=http://127.0.0.1:7897
+NO_PROXY=localhost,127.0.0.1,::1
+serverUrl=http://192.168.65.27:4317
+```
+
+局域网任务服务会被错误送进用户级代理。
+
+### Correct
+
+```text
+回环/私网/链路本地/.local -> 自动 no_proxy
+公网域名 -> 系统代理
+内网域名 -> 显式加入 NO_PROXY，或未来使用 proxyMode=direct
+```
 
 任务级分支归属、ownership API、冲突幂等和历史清理约束见
 [任务级分支归属与冲突幂等](./task-ownership-and-conflict-idempotency.md)。

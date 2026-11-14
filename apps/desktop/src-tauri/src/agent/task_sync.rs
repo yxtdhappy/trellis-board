@@ -1093,9 +1093,7 @@ impl TaskSync {
             }
         }
 
-        let files =
-            read_local_task_snapshot_files(Path::new(&binding.repo_path), None).await?;
-        let groups = group_task_snapshot_files(&files)?;
+        let groups = read_local_task_ownership_groups(Path::new(&binding.repo_path)).await?;
         let paused = Arc::new(self.ownership_paused_task_dirs(binding, &groups).await);
         let local_dirs = Arc::new(
             groups
@@ -4792,6 +4790,66 @@ fn previous_values_paths(values: &[Value]) -> Vec<String> {
         .collect()
 }
 
+/// ProjectRail 投影只依赖任务目录和 task.json.branch，不读取其他任务文件内容。
+async fn read_local_task_ownership_groups(repo_path: &Path) -> AgentResult<Vec<SnapshotGroup>> {
+    let tasks_root = repo_path.join(".trellis").join("tasks");
+    let Ok(metadata) = tokio::fs::symlink_metadata(&tasks_root).await else {
+        return Ok(Vec::new());
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return protocol::err(code::MISSING_TRELLIS, ".trellis/tasks 必须是真实目录");
+    }
+    let mut groups: HashMap<String, SnapshotGroup> = HashMap::new();
+    let mut stack = vec![tasks_root.clone()];
+    while let Some(directory) = stack.pop() {
+        let mut entries = tokio::fs::read_dir(&directory).await.map_err(io_error)?;
+        while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
+            let path = entry.path();
+            let metadata = entry.metadata().await.map_err(io_error)?;
+            if metadata.file_type().is_symlink() {
+                return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接");
+            }
+            if metadata.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !metadata.is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if !SNAPSHOT_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(repo_path)
+                .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件路径越界"))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let Ok(parts) = task_directory_from_path(&relative) else {
+                continue;
+            };
+            let group = groups
+                .entry(parts.task_dir.clone())
+                .or_insert_with(|| SnapshotGroup {
+                    task_dir: parts.task_dir.clone(),
+                    archived: parts.archived,
+                    archive_month: parts.archive_month.clone(),
+                    files: Vec::new(),
+                    task_id: None,
+                    task_branch: None,
+                });
+            if parts.file_path == "task.json" {
+                let bytes = tokio::fs::read(&path).await.map_err(io_error)?;
+                let text = String::from_utf8(bytes).map_err(|_| {
+                    AgentError::new(code::INVALID_RESPONSE, "任务文件不是有效的 UTF-8 文本")
+                })?;
+                group.task_branch = parse_task_metadata(&normalize_snapshot_text(&text)).1;
+            }
+        }
+    }
+    Ok(groups.into_values().collect())
+}
+
 pub async fn read_local_task_snapshot_files(
     repo_path: &Path,
     task_dirs: Option<&HashSet<String>>,
@@ -5275,6 +5333,51 @@ mod tests {
             ]
         );
         assert_eq!(refreshed_dirs.len(), 3);
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn ownership_projection_does_not_decode_other_task_files() {
+        let (root, _store, sync, binding) =
+            test_task_sync_fixture("trellis-ownership-projection-content").await;
+        let repo = Path::new(&binding.repo_path);
+        write_task_json(repo, ".trellis/tasks/task-a", "task-a", "main").await;
+        tokio::fs::write(
+            repo.join(".trellis/tasks/task-a").join("prd.md"),
+            [0xff_u8, 0xfe],
+        )
+        .await
+        .expect("invalid utf8 prd");
+        let text_only = repo.join(".trellis/tasks/text-only");
+        tokio::fs::create_dir_all(&text_only)
+            .await
+            .expect("text-only directory");
+        tokio::fs::write(text_only.join("prd.md"), [0xff_u8, 0xfe])
+            .await
+            .expect("invalid utf8 text-only prd");
+        let ignored = repo.join(".trellis/tasks/ignored");
+        tokio::fs::create_dir_all(&ignored)
+            .await
+            .expect("ignored directory");
+        tokio::fs::write(ignored.join("image.bin"), [0xff_u8, 0xfe])
+            .await
+            .expect("unsupported file");
+
+        let (paused, local_dirs) = sync
+            .ownership_projection(&binding)
+            .await
+            .expect("projection ignores non-task content");
+        assert!(paused.is_empty());
+        let mut dirs: Vec<String> = local_dirs.iter().cloned().collect();
+        dirs.sort();
+        assert_eq!(
+            dirs,
+            vec![
+                ".trellis/tasks/task-a".to_string(),
+                ".trellis/tasks/text-only".to_string()
+            ]
+        );
 
         let _ = tokio::fs::remove_dir_all(root).await;
     }
