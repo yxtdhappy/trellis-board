@@ -34,4 +34,3 @@
 
 - 真实 Windows 客户端验收见 `e2e-report.md`。
 - ProjectRail 由 Tauri 事件驱动的更新属于后续 `11-14-status-polling-cpu` 任务，不在本任务中完成。
-

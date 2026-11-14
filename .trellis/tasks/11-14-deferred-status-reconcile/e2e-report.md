@@ -120,4 +120,3 @@
 - 手动构造 deferred 时触发过一次历史合入任务的本地 pending baseline evidence 候选，尚未发送到
   服务端即被清理。该路径不来自常规 deferred 收敛，但说明“手工改 cursor”不是受支持的生产操作。
 - GitHub Release 的 `v0.4.8` 构建失败，最终验收只使用成功的 `v0.4.9`。
-
