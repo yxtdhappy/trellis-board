@@ -143,5 +143,21 @@ run `43535564677` 全部成功：
 
 ## 发布
 
-本报告确认的是 `v0.4.7` 发布前的最终预构建。功能验收通过后由 annotated tag
-`v0.4.7` 触发正式 Windows Release 构建；`v0.4.6` 固定在 `71b62f1`，不得覆盖。
+annotated tag `v0.4.7` 指向 `2bd2e88`，tag push run `43538744681` 成功转发构建。
+
+正式 Windows 构建 run `43538753452` 全部成功：
+
+- Node/Web 全量测试：成功。
+- Rust 单测：成功。
+- Desktop bundle、portable 打包、SHA256、smoke test、launch smoke test：成功。
+- Release 草稿创建、两个资产上传和公开发布：成功。
+
+Release：
+
+- 地址：`https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.7`
+- `TrellisBoard_0.4.7_x64-portable.zip`：`3839625` bytes
+- ZIP SHA256：
+  `d1ed484138dfc333586816a0f6bd9611affd96d6933400eed25fbf18dfedc4e1`
+- `TrellisBoard_0.4.7_x64-portable.zip.sha256`：`103` bytes
+
+`v0.4.6` 继续固定在 `71b62f1`，没有被覆盖。
