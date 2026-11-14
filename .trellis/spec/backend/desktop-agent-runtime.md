@@ -51,6 +51,14 @@
 - `TaskSync` 在 cursor、binding、ownership 或本地 Git 投影实际变化后通过统一 state sink 通知；
   `write_cursor` / `remove_task_cursor` 必须在落盘成功且 patch 确已改变状态后才通知，无变化不得发射。
   Git watcher 只监听 HEAD、index、packed-refs 和 refs，用于失效 ownership 投影，不触发任务正文上传。
+- ownership 投影缓存按 `task_space_id` 隔离失效：单个任务空间或 Git watcher 事件只能推进该
+  taskSpace 的 local epoch；`set_bindings` / `update_bindings` 的绑定全集变化才推进 global epoch。
+  `cache_ownership_projection` 回写前必须同时校验 global/local epoch 和 binding 身份，防止无关仓库
+  的失效阻断当前仓库缓存。回归点：`unrelated_projection_invalidation_does_not_block_cache_write`。
+- 稳定态 `ownership_projection` 先直接读取 `.git/HEAD` 和 loose/packed ref 指纹；指纹未变时复用
+  `OwnershipProjectionCache`，不得启动 `git.exe`。只有指纹变化或指纹读取失败时才调用
+  `binding_head` / `assert_binding_branch` 做精确 Git 门禁。缓存兜底 TTL 为 15 秒，watcher 覆盖
+  `HEAD`、`index`、`packed-refs` 和 `refs`；稳定态 `git.exe = 0` 是预期结果，不代表停止监听或同步。
 - 分支守卫：`pull`/`apply_server_groups`/`upload_directories`/`upload_batch`/`decide_conflict`/
   `resolve_initial_sync` 执行前必须 `assert_binding_branch`（对照 JS `d58b021`）。守卫码
   `BRANCH_MISMATCH`/`BRANCH_INVALID`/`DETACHED_HEAD`/`GIT_FAILED`/`NOT_GIT_REPOSITORY`/
