@@ -107,6 +107,28 @@ fn binding_entry_unchanged(existing: &AgentBinding, next: &AgentBinding) -> bool
         && existing.read_only == next.read_only
 }
 
+fn association_state_unchanged(existing: &AgentBinding, next: &AgentBinding) -> bool {
+    let mut existing = existing.clone();
+    let mut next = next.clone();
+    existing.last_synced_at = None;
+    next.last_synced_at = None;
+    existing.last_head = None;
+    next.last_head = None;
+    existing == next
+}
+
+fn association_map_unchanged(
+    current: &HashMap<String, AgentBinding>,
+    next: &HashMap<String, AgentBinding>,
+) -> bool {
+    current.len() == next.len()
+        && next.iter().all(|(task_space_id, binding)| {
+            current
+                .get(task_space_id)
+                .is_some_and(|existing| association_state_unchanged(existing, binding))
+        })
+}
+
 /// 服务端 409 会给出可用的最小 clientSequence；只在 CONFLICT 且为正整数时采纳。
 fn required_client_sequence(error: &AgentError) -> Option<u64> {
     if error.server_code.as_deref() != Some("CONFLICT") {
@@ -970,7 +992,7 @@ impl TaskSync {
         let next = approved_bindings(bindings);
         let changed = {
             let mut current = self.bindings.lock().await;
-            let changed = &*current != &next;
+            let changed = !association_map_unchanged(&current, &next);
             *current = next;
             changed
         };
@@ -1006,7 +1028,7 @@ impl TaskSync {
             let map = approved_bindings(selected.clone());
             let mut current = self.bindings.lock().await;
             let unchanged = binding_selection_unchanged(&current, &map);
-            let state_changed = &*current != &map;
+            let state_changed = !association_map_unchanged(&current, &map);
             let mut pull_task_space_ids = Vec::new();
             for (task_space_id, binding) in &map {
                 let should_pull = current
@@ -1389,9 +1411,11 @@ impl TaskSync {
         let message = protocol::safe_error_message(&error.message);
         let error_code = error.code.clone();
         let local_id = binding.local_id.clone();
+        let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let changed_in_update = changed.clone();
         let result = self
             .store
-            .update_config(false, |current| {
+            .update_config(false, move |current| {
                 let Some(config) = current else {
                     return Ok(None);
                 };
@@ -1413,12 +1437,19 @@ impl TaskSync {
                     item.last_error = Some(message.clone());
                     changed = true;
                 }
-                Ok(if changed { Some(next) } else { None })
+                if changed {
+                    changed_in_update.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(Some(next))
+                } else {
+                    Ok(None)
+                }
             })
             .await;
         match result {
-            Ok(Some(_)) => self.notify_state_changed(),
-            Ok(None) => {}
+            Ok(_) if changed.load(std::sync::atomic::Ordering::SeqCst) => {
+                self.notify_state_changed()
+            }
+            Ok(_) => {}
             Err(error) => {
                 crate::logging::warn(&format!(
                     "保存任务同步状态失败：{}",
@@ -1430,9 +1461,11 @@ impl TaskSync {
 
     async fn clear_branch_guard_error(&self, binding: &AgentBinding) {
         let local_id = binding.local_id.clone();
+        let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let changed_in_update = changed.clone();
         let result = self
             .store
-            .update_config(false, |current| {
+            .update_config(false, move |current| {
                 let Some(config) = current else {
                     return Ok(None);
                 };
@@ -1458,12 +1491,19 @@ impl TaskSync {
                     item.last_error = None;
                     changed = true;
                 }
-                Ok(if changed { Some(next) } else { None })
+                if changed {
+                    changed_in_update.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(Some(next))
+                } else {
+                    Ok(None)
+                }
             })
             .await;
         match result {
-            Ok(Some(_)) => self.notify_state_changed(),
-            Ok(None) => {}
+            Ok(_) if changed.load(std::sync::atomic::Ordering::SeqCst) => {
+                self.notify_state_changed()
+            }
+            Ok(_) => {}
             Err(error) => {
                 crate::logging::warn(&format!(
                     "保存分支恢复状态失败：{}",
@@ -6725,10 +6765,46 @@ mod tests {
         sync.set_bindings(vec![binding.clone()]).await;
         assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 1);
 
+        let mut heartbeat_metadata = binding.clone();
+        heartbeat_metadata.last_synced_at = Some("2026-11-14T00:00:00.000Z".to_string());
+        heartbeat_metadata.last_head = Some("abc123".to_string());
+        sync.set_bindings(vec![heartbeat_metadata]).await;
+        assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 1);
+
         let mut changed = binding;
         changed.live_sync_status = "error".to_string();
         sync.set_bindings(vec![changed]).await;
         assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn repeated_binding_error_notifies_only_once() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-task-binding-error-events-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Arc::new(ConfigStore::new_unsecured_for_test(root));
+        let binding = test_binding("space-1");
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        let api =
+            Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+        let changes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let changes_sink = changes.clone();
+        let state_sink: StateSink = Arc::new(move || {
+            changes_sink.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+        let sync = TaskSync::new(store, api, Arc::new(|_| {})).with_state_sink(state_sink);
+        sync.set_bindings(vec![binding.clone()]).await;
+        changes.store(0, std::sync::atomic::Ordering::SeqCst);
+        let error = AgentError::new(code::HTTP_ERROR, "同步失败");
+
+        sync.persist_binding_sync_error(&binding, &error).await;
+        sync.persist_binding_sync_error(&binding, &error).await;
+
+        assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

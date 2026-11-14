@@ -209,7 +209,7 @@ export function BoardPage() {
   }, [view])
 
   const syncLabel = teamMode
-    ? `${projects.length} 个授权项目 · 每 3 秒检查同步状态`
+    ? `${projects.length} 个授权项目 · 事件驱动 · 10 秒可见兜底`
     : controller.status?.refreshRunning
       ? '正在更新 · 当前显示缓存'
       : `文件监听中 · ${projects.length} 个仓库`

@@ -277,42 +277,80 @@ async fn update_binding_result(
         .and_then(Value::as_str)
         .map(str::to_string);
     let local_id = local_id.to_string();
-    let updated = context
+    let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let changed_in_update = changed.clone();
+    context
         .store
         .update_config(true, move |config| {
             let Some(current) = config else {
                 return Ok(None);
             };
             let mut next = current.clone();
+            let mut binding_changed = false;
             for item in next.bindings.iter_mut() {
                 if item.local_id != local_id {
                     continue;
                 }
-                item.sync_status = "approved".to_string();
-                if let Some(value) = &synced_at {
-                    item.last_synced_at = Some(value.clone());
-                }
-                if let Some(value) = &head {
-                    item.last_head = Some(value.clone());
-                }
-                match &health {
-                    Some((error_code, message)) => {
-                        item.last_error_code = Some(error_code.clone());
-                        item.last_error = Some(message.clone());
-                    }
-                    None => {
-                        item.last_error_code = None;
-                        item.last_error = None;
-                    }
+                if apply_binding_result(item, synced_at.as_deref(), head.as_deref(), &health) {
+                    binding_changed = true;
                 }
             }
-            Ok(Some(next))
+            if binding_changed {
+                changed_in_update.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(Some(next))
+            } else {
+                Ok(None)
+            }
         })
         .await?;
-    if updated.is_some() {
+    if changed.load(std::sync::atomic::Ordering::SeqCst) {
         context.task_sync.notify_bindings_changed();
     }
     Ok(())
+}
+
+fn apply_binding_result(
+    binding: &mut AgentBinding,
+    synced_at: Option<&str>,
+    head: Option<&str>,
+    health: &Option<(String, String)>,
+) -> bool {
+    let mut changed = false;
+    if binding.sync_status != "approved" {
+        binding.sync_status = "approved".to_string();
+        changed = true;
+    }
+    if let Some(value) = synced_at {
+        if binding.last_synced_at.as_deref() != Some(value) {
+            binding.last_synced_at = Some(value.to_string());
+            changed = true;
+        }
+    }
+    if let Some(value) = head {
+        if binding.last_head.as_deref() != Some(value) {
+            binding.last_head = Some(value.to_string());
+            changed = true;
+        }
+    }
+    match health {
+        Some((error_code, message)) => {
+            if binding.last_error_code.as_deref() != Some(error_code)
+                || binding.last_error.as_deref() != Some(message)
+            {
+                binding.last_error_code = Some(error_code.clone());
+                binding.last_error = Some(message.clone());
+                changed = true;
+            }
+        }
+        None => {
+            if binding.last_error_code.is_some() || binding.last_error.is_some() {
+                binding.last_error_code = None;
+                binding.last_error = None;
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 async fn create_task(
@@ -1060,6 +1098,30 @@ mod tests {
             "{\n  \"assignee\": \"dev\",\n  \"id\": \"task-1\"\n}\n"
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn identical_binding_result_does_not_emit_again() {
+        let mut binding = sample_binding();
+        binding.sync_status = "approved".to_string();
+        binding.last_synced_at = None;
+        binding.last_head = None;
+        binding.last_error = None;
+        binding.last_error_code = None;
+        let health = None;
+
+        assert!(apply_binding_result(
+            &mut binding,
+            Some("2026-11-14T00:00:00.000Z"),
+            Some("abc123"),
+            &health
+        ));
+        assert!(!apply_binding_result(
+            &mut binding,
+            Some("2026-11-14T00:00:00.000Z"),
+            Some("abc123"),
+            &health
+        ));
     }
 
     fn test_context(root: &Path) -> (Arc<ConfigStore>, Arc<TaskSync>) {
