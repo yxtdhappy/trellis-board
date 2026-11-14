@@ -60,17 +60,17 @@
 
 ## Acceptance Criteria
 
-- [ ] 启动客户端时，若 deferred 与本地任务及 cursor 中已知服务端基线完全一致，自动删除该 deferred。
-- [ ] 当前 `trellis-board` 65 个、`mdp-backend-service` 8 个、`mdp-report-service` 10 个、
+- [x] 启动客户端时，若 deferred 与本地任务及 cursor 中已知服务端基线完全一致，自动删除该 deferred。
+- [x] 当前 `trellis-board` 65 个、`mdp-backend-service` 8 个、`mdp-report-service` 10 个、
   `mdp-management-web` 6 个已一致 deferred 在新客户端启动后不再显示为“本地任务未同步”。
-- [ ] 服务端没有新 revision 时也能完成上述收敛。
-- [ ] 正常增量 pull 收到服务端快照后，同样能清理已经全部一致的 deferred。
-- [ ] 本地多文件、服务端缺文件、文件被删除、SHA256 不同、cursor 基线为空或不完整时，deferred 保留。
-- [ ] 自动清理不产生上传请求、不修改任务正文、不推进服务端 revision、不生成冲突。
-- [ ] 3 秒 `list_local_associations` 展示轮询不重新读取任务文件正文，修复后 CPU 行为不能回退为旧版全量扫描。
-- [ ] deferred 未变化时不重写 `live-cursors.json`。
-- [ ] Rust 单测覆盖 exact、hash mismatch、server missing、local extra、empty baseline 和只清理一次。
-- [ ] 先验证 cursor 中 `deferredCount` 收敛为 0，并确认真实 Windows 客户端最终从
+- [x] 服务端没有新 revision 时也能完成上述收敛。
+- [x] 正常增量 pull 收到服务端快照后，同样能清理已经全部一致的 deferred。
+- [x] 本地多文件、服务端缺文件、文件被删除、SHA256 不同、cursor 基线为空或不完整时，deferred 保留。
+- [x] 自动清理不产生上传请求、不修改任务正文、不推进服务端 revision、不生成冲突。
+- [x] 3 秒 `list_local_associations` 展示轮询不重新读取任务文件正文，修复后 CPU 行为不能回退为旧版全量扫描。
+- [x] deferred 未变化时不重写 `live-cursors.json`。
+- [x] Rust 单测覆盖 exact、hash mismatch、server missing、local extra、empty baseline 和只清理一次。
+- [x] 先验证 cursor 中 `deferredCount` 收敛为 0，并确认真实 Windows 客户端最终从
   “65 个本地任务未同步”更新为“同步正常”。本任务不要求先完成 association 事件化。
 - [ ] 与后续状态性能优化任务联调时，再验证 ProjectRail 不依赖本地关联轮询即可由 Tauri 事件完成
   同一更新。
