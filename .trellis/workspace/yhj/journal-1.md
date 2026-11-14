@@ -1244,3 +1244,31 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 53: 状态刷新与空闲 CPU 优化
+<!-- trellis-session: v=2 fp=72c0b517f2d7c39b -->
+
+**Date**: 2026-11-14
+**Task**: 状态刷新与空闲 CPU 优化
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+高成本状态刷新改为事件驱动和 10 秒可见兜底，ownership 投影按 taskSpace 独立失效；v0.4.15 真实客户端稳定态 Board 2.16%、归档 3.31%，Git 子进程 0，页面与分支门禁 E2E 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1672fac` | fix(desktop): event-drive high-cost status refresh |
+| `341d058` | fix(desktop): suppress unchanged state events |
+| `88d30b1` | fix(desktop): avoid redundant git scans |
+| `4f89349` | fix(desktop): release binding lifecycle lock before sync |
+| `0bb105f` | fix(desktop): scope ownership cache invalidation |
+| `419ec67` | docs(task): record status polling CPU e2e |
+
+### Status
+
+[OK] **Completed**
