@@ -38,6 +38,7 @@
 | `check:boundaries` | 通过 |
 | `git diff --check` | 通过 |
 | 本次触达文件格式检查 | 通过 |
+| 真实 `4317` Team 服务 E2E | Chrome DevTools MCP 完成弃用、隐藏、恢复、错误确认、在线 `1/1` 移除、级联与 `BINDING_UNKNOWN` 验证；详见 `e2e-report.md` |
 
 ## 风险与限制
 
