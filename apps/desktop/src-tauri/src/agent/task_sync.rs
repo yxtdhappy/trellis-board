@@ -921,6 +921,12 @@ struct OwnershipProjectionCache {
     validated_at: Instant,
 }
 
+#[derive(Clone, Copy)]
+struct ProjectionEpoch {
+    global: u64,
+    local: u64,
+}
+
 fn ownership_projection_cache_matches(
     entry: &OwnershipProjectionCache,
     binding: &AgentBinding,
@@ -945,6 +951,7 @@ pub struct TaskSync {
     head_tree_cache: Mutex<HashMap<String, HeadTreeCache>>,
     ownership_projection_cache: Mutex<HashMap<String, OwnershipProjectionCache>>,
     ownership_projection_epoch: std::sync::atomic::AtomicU64,
+    ownership_projection_local_epoch: Mutex<HashMap<String, u64>>,
     #[cfg(test)]
     head_tree_scans: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -969,6 +976,7 @@ impl TaskSync {
             head_tree_cache: Mutex::new(HashMap::new()),
             ownership_projection_cache: Mutex::new(HashMap::new()),
             ownership_projection_epoch: std::sync::atomic::AtomicU64::new(0),
+            ownership_projection_local_epoch: Mutex::new(HashMap::new()),
             #[cfg(test)]
             head_tree_scans: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
@@ -1250,27 +1258,55 @@ impl TaskSync {
     }
 
     async fn invalidate_ownership_projection(&self, task_space_id: &str) {
-        self.ownership_projection_epoch.fetch_add(
-            1,
-            std::sync::atomic::Ordering::SeqCst,
-        );
-        self.ownership_projection_cache
-            .lock()
-            .await
-            .remove(task_space_id);
+        let mut cache = self.ownership_projection_cache.lock().await;
+        let mut epochs = self.ownership_projection_local_epoch.lock().await;
+        *epochs.entry(task_space_id.to_string()).or_default() += 1;
+        cache.remove(task_space_id);
+    }
+
+    async fn projection_epoch(&self, task_space_id: &str) -> ProjectionEpoch {
+        ProjectionEpoch {
+            global: self
+                .ownership_projection_epoch
+                .load(std::sync::atomic::Ordering::SeqCst),
+            local: self
+                .ownership_projection_local_epoch
+                .lock()
+                .await
+                .get(task_space_id)
+                .copied()
+                .unwrap_or_default(),
+        }
+    }
+
+    async fn projection_epoch_matches(
+        &self,
+        task_space_id: &str,
+        projection_epoch: ProjectionEpoch,
+    ) -> bool {
+        self.ownership_projection_epoch
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == projection_epoch.global
+            && self
+                .ownership_projection_local_epoch
+                .lock()
+                .await
+                .get(task_space_id)
+                .copied()
+                .unwrap_or_default()
+                == projection_epoch.local
     }
 
     async fn cache_ownership_projection(
         &self,
         task_space_id: String,
-        projection_epoch: u64,
+        projection_epoch: ProjectionEpoch,
         entry: OwnershipProjectionCache,
     ) {
         let mut cache = self.ownership_projection_cache.lock().await;
         if self
-            .ownership_projection_epoch
-            .load(std::sync::atomic::Ordering::SeqCst)
-            == projection_epoch
+            .projection_epoch_matches(&task_space_id, projection_epoch)
+            .await
         {
             cache.insert(task_space_id, entry);
         }
@@ -1281,9 +1317,7 @@ impl TaskSync {
         &self,
         binding: &AgentBinding,
     ) -> AgentResult<(Arc<HashSet<String>>, Arc<HashSet<String>>)> {
-        let projection_epoch = self
-            .ownership_projection_epoch
-            .load(std::sync::atomic::Ordering::SeqCst);
+        let projection_epoch = self.projection_epoch(&binding.task_space_id).await;
         let current_head_fingerprint =
             git_head_fingerprint(Path::new(&binding.repo_path)).await;
         let cached = {
@@ -1310,9 +1344,8 @@ impl TaskSync {
                 let mut cache = self.ownership_projection_cache.lock().await;
                 if let Some(entry) = cache.get_mut(&binding.task_space_id) {
                     if self
-                        .ownership_projection_epoch
-                        .load(std::sync::atomic::Ordering::SeqCst)
-                        == projection_epoch
+                        .projection_epoch_matches(&binding.task_space_id, projection_epoch)
+                        .await
                         && ownership_projection_cache_matches(entry, binding)
                     {
                         entry.validated_at = Instant::now();
@@ -1341,9 +1374,8 @@ impl TaskSync {
             let mut cache = self.ownership_projection_cache.lock().await;
             if let Some(entry) = cache.get_mut(&binding.task_space_id) {
                 if self
-                    .ownership_projection_epoch
-                    .load(std::sync::atomic::Ordering::SeqCst)
-                    == projection_epoch
+                    .projection_epoch_matches(&binding.task_space_id, projection_epoch)
+                    .await
                     && ownership_projection_cache_matches(entry, binding)
                     && entry.head_commit == head_commit
                 {
@@ -1369,7 +1401,7 @@ impl TaskSync {
     async fn rebuild_ownership_projection(
         &self,
         binding: &AgentBinding,
-        projection_epoch: u64,
+        projection_epoch: ProjectionEpoch,
         branch_name: String,
         head_commit: String,
         head_fingerprint: Option<String>,
@@ -5982,9 +6014,7 @@ mod tests {
     async fn ownership_projection_does_not_write_back_after_invalidation() {
         let (root, _store, sync, binding) =
             test_task_sync_fixture("trellis-ownership-projection-race").await;
-        let projection_epoch = sync
-            .ownership_projection_epoch
-            .load(std::sync::atomic::Ordering::SeqCst);
+        let projection_epoch = sync.projection_epoch(&binding.task_space_id).await;
 
         sync.invalidate_ownership_projection(&binding.task_space_id)
             .await;
@@ -6006,6 +6036,39 @@ mod tests {
         .await;
 
         assert!(!sync
+            .ownership_projection_cache
+            .lock()
+            .await
+            .contains_key(&binding.task_space_id));
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn unrelated_projection_invalidation_does_not_block_cache_write() {
+        let (root, _store, sync, binding) =
+            test_task_sync_fixture("trellis-ownership-projection-local-epoch").await;
+        let projection_epoch = sync.projection_epoch(&binding.task_space_id).await;
+
+        sync.invalidate_ownership_projection("another-task-space")
+            .await;
+        sync.cache_ownership_projection(
+            binding.task_space_id.clone(),
+            projection_epoch,
+            OwnershipProjectionCache {
+                local_id: binding.local_id.clone(),
+                branch_name: binding.branch_name.clone(),
+                baseline_branch: binding.baseline_branch.clone(),
+                repo_path: binding.repo_path.clone(),
+                head_commit: "head".to_string(),
+                head_fingerprint: "fingerprint".to_string(),
+                paused: Arc::new(HashSet::new()),
+                local_dirs: Arc::new(HashSet::new()),
+                validated_at: Instant::now(),
+            },
+        )
+        .await;
+
+        assert!(sync
             .ownership_projection_cache
             .lock()
             .await
