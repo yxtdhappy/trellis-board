@@ -1472,8 +1472,10 @@ impl TaskSync {
         if task_space_ids.is_empty() {
             return;
         }
+        let trace = std::env::var_os("TRELLIS_DESKTOP_HTTP_TRACE").is_some();
         let _serial = self.binding_sync_lock.lock().await;
         for task_space_id in task_space_ids {
+            let started = Instant::now();
             if !self.bindings.lock().await.contains_key(&task_space_id) {
                 self.finish_binding_sync(&task_space_id).await;
                 continue;
@@ -1483,6 +1485,13 @@ impl TaskSync {
             self.invalidate_ownership_projection(&task_space_id).await;
             self.validate_ownership_binding(&task_space_id).await;
             self.finish_binding_sync(&task_space_id).await;
+            if trace {
+                crate::logging::warn(&format!(
+                    "启动同步完成 taskSpaceId={} elapsedMs={}",
+                    task_space_id,
+                    started.elapsed().as_millis()
+                ));
+            }
         }
     }
 

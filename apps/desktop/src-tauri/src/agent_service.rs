@@ -787,18 +787,28 @@ pub async fn check_initial_push(
 }
 
 pub async fn list_associations(app: &AppHandle) -> Result<Vec<LocalAssociation>, String> {
+    let trace = std::env::var_os("TRELLIS_DESKTOP_HTTP_TRACE").is_some();
+    let started = std::time::Instant::now();
     let service = service(app).map_err(|error| message(&error))?;
     let runtime = service
         .runtime
         .lock()
         .map_err(|_| "无法读取 Agent 运行状态".to_string())?
         .clone();
-    device::read_local_associations(
+    let associations = device::read_local_associations(
         &service.store,
         runtime.as_ref().map(|runtime| runtime.task_sync()),
     )
     .await
-    .map_err(|error| message(&error))
+    .map_err(|error| message(&error))?;
+    if trace {
+        crate::logging::warn(&format!(
+            "本地关联查询 count={} elapsedMs={}",
+            associations.len(),
+            started.elapsed().as_millis()
+        ));
+    }
+    Ok(associations)
 }
 
 pub async fn detach_local_association(

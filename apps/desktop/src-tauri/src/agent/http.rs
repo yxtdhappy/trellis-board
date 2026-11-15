@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use reqwest::header::{ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, USER_AGENT};
@@ -105,6 +105,8 @@ impl ApiClient {
         timeout: Duration,
         max_bytes: usize,
     ) -> AgentResult<Value> {
+        let trace = std::env::var_os("TRELLIS_DESKTOP_HTTP_TRACE").is_some();
+        let started = Instant::now();
         let url = format!("{}{}", self.base_url, path);
         let mut request = self
             .http
@@ -115,17 +117,32 @@ impl ApiClient {
         if let Some(credential) = &self.credential {
             request = request.header(AUTHORIZATION, format!("Bearer {credential}"));
         }
-        if let Some(body) = body {
-            request = request.header(CONTENT_TYPE, "application/json").body(
-                serde_json::to_vec(body).map_err(|error| {
-                    AgentError::new(code::INVALID_RESPONSE, format!("请求体序列化失败: {error}"))
-                })?,
-            );
+        let body_bytes = body
+            .map(serde_json::to_vec)
+            .transpose()
+            .map_err(|error| {
+                AgentError::new(code::INVALID_RESPONSE, format!("请求体序列化失败: {error}"))
+            })?;
+        if let Some(request_body) = body_bytes.clone() {
+            request = request
+                .header(CONTENT_TYPE, "application/json")
+                .body(request_body);
         }
         let response = request.send().await.map_err(network_error)?;
         let status = response.status();
         let retry_after_ms = parse_retry_after(response.headers().get("retry-after"));
         let bytes = read_limited(response, max_bytes).await?;
+        if trace {
+            crate::logging::warn(&format!(
+                "HTTP 请求 {} {} status={} requestBytes={} responseBytes={} elapsedMs={}",
+                method,
+                path,
+                status.as_u16(),
+                body_bytes.as_ref().map_or(0, Vec::len),
+                bytes.len(),
+                started.elapsed().as_millis()
+            ));
+        }
         let payload: Value = if bytes.is_empty() {
             Value::Null
         } else {
@@ -172,6 +189,9 @@ impl ApiClient {
             return Err(map_server_error(status, &payload, retry_after_ms));
         }
 
+        if std::env::var_os("TRELLIS_DESKTOP_HTTP_TRACE").is_some() {
+            crate::logging::warn("SSE 已连接 /api/agent/events");
+        }
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         loop {
