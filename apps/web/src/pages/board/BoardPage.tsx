@@ -357,15 +357,12 @@ export function BoardPage() {
 
           {view === 'archive' ? (
             <ArchiveView
-              key={`${filters.projectId}:${filters.taskSpaceId}`}
               tasks={archived}
-              projects={projects}
-              projectId={filters.projectId}
-              taskSpaceId={filters.taskSpaceId}
+              projects={runtime?.projects || projects}
+              teams={runtime?.teams || []}
               branch={filters.branch}
               onBranchChange={(branch) => setFilters({ branch })}
               teamMode={teamMode}
-              teamId={filters.teamId}
               queryRevision={archiveRevision}
               onOpen={(task) => setSelected(task)}
               onRefresh={() => void actions.refresh()}
