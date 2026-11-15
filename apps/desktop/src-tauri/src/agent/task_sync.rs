@@ -1225,7 +1225,7 @@ impl TaskSync {
         }
     }
 
-    pub fn with_ownership_index_writer(mut self) -> Self {
+    pub fn with_ownership_index_writer(self) -> Self {
         self.ownership_index_writer
             .store(true, std::sync::atomic::Ordering::SeqCst);
         self
@@ -1552,7 +1552,7 @@ impl TaskSync {
             .collect();
         {
             let mut syncing = self.syncing_task_spaces.lock().await;
-            syncing.retain(|task_space_id| selected_task_space_ids.contains(task_space_id));
+            syncing.retain(|task_space_id, _| selected_task_space_ids.contains(task_space_id));
             for task_space_id in &pull_task_space_ids {
                 *syncing.entry(task_space_id.clone()).or_default() += 1;
             }
@@ -2082,8 +2082,8 @@ impl TaskSync {
             git_calls,
             started.elapsed().as_millis()
         ));
-        let paused = Arc::new(paused.into_iter().collect());
-        let local_dirs = Arc::new(local_dirs.into_iter().collect());
+        let paused: Arc<HashSet<String>> = Arc::new(paused.into_iter().collect());
+        let local_dirs: Arc<HashSet<String>> = Arc::new(local_dirs.into_iter().collect());
         self.cache_ownership_projection(
             binding.task_space_id.clone(),
             projection_epoch,
@@ -7140,7 +7140,7 @@ mod tests {
 
     #[tokio::test]
     async fn persistent_ownership_index_reparses_only_changed_task_json() {
-        let (root, store, sync, mut binding) =
+        let (root, store, sync, binding) =
             test_task_sync_fixture("trellis-ownership-index-incremental").await;
         let repo = Path::new(&binding.repo_path);
         init_git_repo(repo);
