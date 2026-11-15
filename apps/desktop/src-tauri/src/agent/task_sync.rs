@@ -1491,10 +1491,10 @@ impl TaskSync {
                 self.finish_binding_sync(&task_space_id).await;
                 continue;
             }
-            self.validate_ownership_binding(&task_space_id).await;
-            self.pull_and_report(&task_space_id).await;
-            self.invalidate_ownership_projection(&task_space_id).await;
-            self.validate_ownership_binding(&task_space_id).await;
+            if self.pull_and_report(&task_space_id).await {
+                self.invalidate_ownership_projection(&task_space_id).await;
+                self.validate_ownership_binding(&task_space_id).await;
+            }
             self.finish_binding_sync(&task_space_id).await;
             if trace {
                 crate::logging::warn(&format!(
@@ -2818,9 +2818,10 @@ impl TaskSync {
     }
 
     /// 拉取、补收敛基线任务，并对失败写日志和 `task_sync_error` 控制事件。
-    pub async fn pull_and_report(&self, task_space_id: &str) {
+    pub async fn pull_and_report(&self, task_space_id: &str) -> bool {
+        let revision_before = self.read_cursor(task_space_id).await.revision;
         let mut reconciled_deferred = HashSet::new();
-        match self
+        let revalidate = match self
             .pull_task_space_tracking(task_space_id, &mut reconciled_deferred)
             .await
         {
@@ -2831,10 +2832,15 @@ impl TaskSync {
                 {
                     self.report_error(task_space_id, &error).await;
                 }
+                false
             }
-            Ok(_) => {}
-            Err(error) => self.report_error(task_space_id, &error).await,
-        }
+            Ok(_) => true,
+            Err(error) => {
+                self.report_error(task_space_id, &error).await;
+                true
+            }
+        };
+        revalidate || self.read_cursor(task_space_id).await.revision != revision_before
     }
 
     pub async fn pull_and_report_for_event(
@@ -8250,6 +8256,26 @@ mod tests {
             .filter(|request| request.contains("/snapshot?"))
             .count();
         assert_eq!(repeated_snapshot_requests, 1);
+
+        server_task.abort();
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn unchanged_startup_pull_skips_second_ownership_validation() {
+        let (root, store, binding, _) =
+            exact_deferred_fixture("trellis-startup-single-validation").await;
+        let (server_url, _changes, _requests, server_task) = mock_api_server(json!({
+            "revision": 1,
+            "files": []
+        }))
+        .await;
+        let api =
+            Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+        let sync = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
+        sync.set_bindings(vec![binding]).await;
+
+        assert!(!sync.pull_and_report("space-1").await);
 
         server_task.abort();
         let _ = tokio::fs::remove_dir_all(root).await;
