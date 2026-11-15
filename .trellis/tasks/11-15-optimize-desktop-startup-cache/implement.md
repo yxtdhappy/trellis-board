@@ -27,7 +27,7 @@
 ## 2. 索引 schema 与安全路径
 
 - 在 `AgentPaths` 增加 `ownership_index_file`。
-- 在 `task_sync.rs` 增加 `OWNERSHIP_INDEX_VERSION = 2`、索引序列化和反序列化结构。
+- 在 `task_sync.rs` 增加 `OWNERSHIP_INDEX_VERSION = 3`、索引序列化和反序列化结构。
 - 复用 `ConfigStore::write_atomic` 原子写。
 - 加载时做尺寸、数量、schema、binding、路径安全校验；无效条目丢弃。
 - 暂不修改 cursor、config 或服务端协议。
@@ -59,7 +59,8 @@
 - 每个 binding 记录 in-flight 状态和 `ProjectionEpoch`，禁止重复 worker。
 - 后台校验：
   - 比较 binding；
-  - 枚举 taskDir 和受支持文件元数据；
+  - 用一次受限 `git status` 取得当前脏任务目录；
+  - 只枚举当前脏目录与上次脏目录的并集；
   - 未变化文件复用 SHA256，未变化 `task.json` 复用 branch/taskId；
   - 计算当前 owned/paused/localDirs；
   - HEAD 指纹未变时复用 trackedPaths；

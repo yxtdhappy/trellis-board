@@ -18,7 +18,7 @@ use crate::agent::store::{AgentBinding, ConfigStore};
 pub const TASK_SNAPSHOT_MAX_FILES: usize = 1024;
 pub const TASK_SNAPSHOT_MAX_FILE_BYTES: usize = 1024 * 1024;
 pub const TASK_SNAPSHOT_MAX_BATCH_BYTES: usize = 64 * 1024 * 1024;
-pub const OWNERSHIP_INDEX_VERSION: u32 = 2;
+pub const OWNERSHIP_INDEX_VERSION: u32 = 3;
 const OWNERSHIP_INDEX_MAX_BYTES: u64 = 16 * 1024 * 1024;
 const OWNERSHIP_INDEX_MAX_BINDINGS: usize = 64;
 const OWNERSHIP_INDEX_MAX_TASKS: usize = 20_000;
@@ -949,6 +949,10 @@ pub(crate) struct OwnershipIndexBinding {
     #[serde(default)]
     pub files: BTreeMap<String, OwnershipFileIndex>,
     #[serde(default)]
+    pub files_complete: bool,
+    #[serde(default)]
+    pub dirty_task_dirs: Vec<String>,
+    #[serde(default)]
     pub paused: Vec<String>,
     #[serde(default)]
     pub local_dirs: Vec<String>,
@@ -1037,6 +1041,11 @@ fn normalize_index(mut index: OwnershipIndex) -> Option<OwnershipIndex> {
             .files
             .retain(|path, file| valid_cached_snapshot_path(path) && is_sha256(&file.sha256));
         if binding.files.len() > OWNERSHIP_INDEX_MAX_FILES {
+            return None;
+        }
+        binding.dirty_task_dirs =
+            normalize_cached_dirs(std::mem::take(&mut binding.dirty_task_dirs));
+        if binding.dirty_task_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS {
             return None;
         }
         binding.local_dirs = normalize_cached_dirs(std::mem::take(&mut binding.local_dirs));
@@ -1268,6 +1277,8 @@ pub struct TaskSync {
     task_json_reads: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     task_file_reads: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    task_entries_examined: std::sync::atomic::AtomicUsize,
     baseline_owned: Mutex<HashSet<String>>,
     watch: Mutex<WatchState>,
 }
@@ -1308,6 +1319,8 @@ impl TaskSync {
             task_json_reads: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             task_file_reads: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            task_entries_examined: std::sync::atomic::AtomicUsize::new(0),
             baseline_owned: Mutex::new(HashSet::new()),
             watch: Mutex::new(WatchState::default()),
         }
@@ -1350,6 +1363,7 @@ impl TaskSync {
                 .any(|binding| {
                     binding.tasks.len() > OWNERSHIP_INDEX_MAX_TASKS
                         || binding.files.len() > OWNERSHIP_INDEX_MAX_FILES
+                        || binding.dirty_task_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS
                         || binding.local_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS
                         || binding.tracked_paths.len() > OWNERSHIP_INDEX_MAX_TRACKED_PATHS
                 })
@@ -1903,11 +1917,52 @@ impl TaskSync {
         }
     }
 
+    async fn task_worktree_dirty_dirs(
+        &self,
+        binding: &AgentBinding,
+    ) -> AgentResult<Option<HashSet<String>>> {
+        let paths = [".trellis/tasks".to_string()];
+        let entries = match crate::agent::git::status_paths(
+            Path::new(&binding.repo_path),
+            &self.binding_hooks_dir(binding),
+            &paths,
+        )
+        .await
+        {
+            Ok(entries) => entries,
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "读取任务工作区状态失败，回退全量扫描：{}",
+                    protocol::safe_error_message(&error.message)
+                ));
+                return Ok(None);
+            }
+        };
+        let mut dirty = HashSet::new();
+        for entry in entries {
+            let status = entry.status.as_bytes();
+            if status.len() < 2
+                || status[0] == b'R'
+                || status[1] == b'R'
+                || status[0] == b'C'
+                || status[1] == b'C'
+            {
+                return Ok(None);
+            }
+            let Some(task_dir) = task_directory_from_relative(&entry.path) else {
+                return Ok(None);
+            };
+            dirty.insert(task_dir);
+        }
+        Ok(Some(dirty))
+    }
+
     async fn scan_ownership_index_files(
         &self,
         repo_path: &Path,
         previous_tasks: &BTreeMap<String, OwnershipTaskIndex>,
         previous_files: &BTreeMap<String, OwnershipFileIndex>,
+        scan_task_dirs: Option<&HashSet<String>>,
         hash_all_files: bool,
     ) -> AgentResult<(
         BTreeMap<String, OwnershipTaskIndex>,
@@ -1945,8 +2000,31 @@ impl TaskSync {
         let mut local_dirs = HashSet::new();
         let mut parsed = 0;
         let mut hashed = 0;
-        let mut stack = vec![tasks_root];
+        let mut stack: Vec<PathBuf> = match scan_task_dirs {
+            Some(task_dirs) => task_dirs
+                .iter()
+                .filter_map(|task_dir| {
+                    protocol::resolve_task_dir_under(Path::new(".trellis/tasks"), task_dir)
+                        .map(|path| repo_path.join(path))
+                })
+                .collect(),
+            None => vec![tasks_root],
+        };
         while let Some(directory) = stack.pop() {
+            match tokio::fs::symlink_metadata(&directory).await {
+                Ok(metadata)
+                    if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+                Err(error)
+                    if scan_task_dirs.is_some()
+                        && error.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    continue
+                }
+                Ok(_) => {
+                    return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接")
+                }
+                Err(error) => return Err(io_error(error)),
+            }
             let mut entries = tokio::fs::read_dir(&directory).await.map_err(io_error)?;
             while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
                 let path = entry.path();
@@ -1961,6 +2039,9 @@ impl TaskSync {
                 if !metadata.is_file() {
                     continue;
                 }
+                #[cfg(test)]
+                self.task_entries_examined
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let name = entry.file_name().to_string_lossy().to_lowercase();
                 if !SNAPSHOT_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
                     continue;
@@ -2103,15 +2184,14 @@ impl TaskSync {
                 .filter(|entry| current_head_fingerprint.as_ref() == Some(&entry.head_fingerprint))
                 .map(|entry| (entry.paused.clone(), entry.local_dirs.clone()))
         };
-        if !force_file_scan {
-            if let Some((paused, local_dirs)) = already_cached {
-                if self
-                    .projection_epoch_matches(&binding.task_space_id, projection_epoch)
-                    .await
-                {
-                    return Ok((paused, local_dirs));
-                }
-            }
+        let files_complete = previous.as_ref().is_some_and(|entry| entry.files_complete);
+        if !force_file_scan
+            && let Some((paused, local_dirs)) = already_cached
+            && self
+                .projection_epoch_matches(&binding.task_space_id, projection_epoch)
+                .await
+        {
+            return Ok((paused, local_dirs));
         }
         let head_cache_matches = previous.as_ref().is_some_and(|entry| {
             !entry.head_commit.is_empty()
@@ -2132,32 +2212,102 @@ impl TaskSync {
             (head_commit, HashSet::new(), false)
         };
 
-        let previous_tasks = previous
-            .as_ref()
-            .map(|entry| entry.tasks.clone())
-            .unwrap_or_default();
-        let previous_files = previous
-            .as_ref()
-            .map(|entry| entry.files.clone())
-            .unwrap_or_default();
-        let (tasks, scanned_files, local_dirs, hashed, parsed) = self
-            .scan_ownership_index_files(
-                Path::new(&binding.repo_path),
-                &previous_tasks,
-                &previous_files,
-                force_file_scan,
-            )
-            .await?;
-        let files = if force_file_scan {
-            scanned_files
+        let mut git_calls = if head_cache_matches { 0 } else { 3 };
+        git_calls += 1;
+        let worktree_dirty = self.task_worktree_dirty_dirs(binding).await?;
+        let reuse_incremental = head_cache_matches
+            && worktree_dirty.is_some()
+            && previous.is_some()
+            && !(force_file_scan && !files_complete);
+        let (
+            tasks,
+            files,
+            local_dirs,
+            files_complete,
+            hashed,
+            parsed,
+            scan_mode,
+        ) = if reuse_incremental {
+            let entry = previous.as_ref().ok_or_else(|| {
+                AgentError::new(code::INVALID_RESPONSE, "ownership 索引状态无效")
+            })?;
+            let current_dirty = worktree_dirty.clone().unwrap_or_default();
+            let mut scan_dirs = current_dirty;
+            scan_dirs.extend(entry.dirty_task_dirs.iter().cloned());
+            if scan_dirs.is_empty() {
+                (
+                    entry.tasks.clone(),
+                    entry.files.clone(),
+                    entry.local_dirs.clone(),
+                    entry.files_complete,
+                    0,
+                    0,
+                    "reused",
+                )
+            } else {
+                let (scanned_tasks, scanned_files, scanned_dirs, hashed, parsed) = self
+                    .scan_ownership_index_files(
+                        Path::new(&binding.repo_path),
+                        &entry.tasks,
+                        &entry.files,
+                        Some(&scan_dirs),
+                        entry.files_complete,
+                    )
+                    .await?;
+                let mut tasks = entry.tasks.clone();
+                tasks.retain(|task_dir, _| !scan_dirs.contains(task_dir));
+                tasks.extend(scanned_tasks);
+                let mut files = entry.files.clone();
+                files.retain(|path, _| {
+                    task_directory_from_path(path)
+                        .ok()
+                        .map_or(true, |parts| !scan_dirs.contains(&parts.task_dir))
+                });
+                files.extend(scanned_files);
+                let mut local_dirs: HashSet<String> =
+                    entry.local_dirs.iter().cloned().collect();
+                local_dirs.retain(|task_dir| !scan_dirs.contains(task_dir));
+                local_dirs.extend(scanned_dirs);
+                let mut local_dirs: Vec<String> = local_dirs.into_iter().collect();
+                local_dirs.sort();
+                (
+                    tasks,
+                    files,
+                    local_dirs,
+                    entry.files_complete,
+                    hashed,
+                    parsed,
+                    "incremental",
+                )
+            }
         } else {
-            let mut files = previous_files;
-            files.retain(|path, _| {
-                task_directory_from_path(path)
-                    .is_ok_and(|parts| parts.file_path != "task.json")
-            });
-            files.extend(scanned_files);
-            files
+            let previous_tasks = previous
+                .as_ref()
+                .map(|entry| entry.tasks.clone())
+                .unwrap_or_default();
+            let previous_files = previous
+                .as_ref()
+                .map(|entry| entry.files.clone())
+                .unwrap_or_default();
+            let hash_all_files = force_file_scan || files_complete;
+            let (tasks, files, local_dirs, hashed, parsed) = self
+                .scan_ownership_index_files(
+                    Path::new(&binding.repo_path),
+                    &previous_tasks,
+                    &previous_files,
+                    None,
+                    hash_all_files,
+                )
+                .await?;
+            (
+                tasks,
+                files,
+                local_dirs,
+                hash_all_files,
+                hashed,
+                parsed,
+                "full",
+            )
         };
         let mut paused: HashSet<String> = tasks
             .iter()
@@ -2170,7 +2320,6 @@ impl TaskSync {
             .collect();
         let need_head_tree =
             !paused.is_empty() && binding.baseline_branch.as_deref() == Some(&binding.branch_name);
-        let mut git_calls = if head_cache_matches { 0 } else { 3 };
         let (tracked_paths, tracked_paths_loaded) = if need_head_tree {
             if head_cache_matches && previous_tracked_loaded {
                 (previous_tracked_paths, true)
@@ -2207,6 +2356,10 @@ impl TaskSync {
         }
         let task_json_reused = tasks.len().saturating_sub(parsed);
         let head_fingerprint = current_head_fingerprint.clone().unwrap_or_default();
+        let dirty_task_dir_count = worktree_dirty.as_ref().map(HashSet::len).unwrap_or(0);
+        let mut dirty_task_dirs: Vec<String> =
+            worktree_dirty.unwrap_or_default().into_iter().collect();
+        dirty_task_dirs.sort();
         let entry = OwnershipIndexBinding {
             task_space_id: binding.task_space_id.clone(),
             repo_path: binding.repo_path.clone(),
@@ -2219,6 +2372,8 @@ impl TaskSync {
             tracked_paths_loaded,
             tasks,
             files,
+            files_complete,
+            dirty_task_dirs,
             paused: paused.clone(),
             local_dirs: local_dirs.clone(),
         };
@@ -2246,10 +2401,11 @@ impl TaskSync {
             "none"
         };
         crate::logging::warn(&format!(
-            "ownership 索引校验 {{\"taskSpaceId\":\"{}\",\"cacheHit\":{},\"invalidateReason\":\"{invalidate_reason}\",\"taskDirs\":{},\"taskJsonReused\":{},\"taskJsonParsed\":{},\"taskFilesHashed\":{},\"headCacheHit\":{},\"gitCalls\":{},\"elapsedMs\":{}}}",
+            "ownership 索引校验 {{\"taskSpaceId\":\"{}\",\"cacheHit\":{},\"invalidateReason\":\"{invalidate_reason}\",\"scanMode\":\"{scan_mode}\",\"taskDirs\":{},\"dirtyTaskDirs\":{},\"taskJsonReused\":{},\"taskJsonParsed\":{},\"taskFilesHashed\":{},\"headCacheHit\":{},\"gitCalls\":{},\"elapsedMs\":{}}}",
             binding.task_space_id,
             previous.is_some(),
             local_dirs.len(),
+            dirty_task_dir_count,
             task_json_reused,
             parsed,
             hashed,
@@ -3739,6 +3895,9 @@ impl TaskSync {
             .ok_or_else(|| {
                 AgentError::new(code::INVALID_RESPONSE, "本地任务文件索引缺少当前绑定")
             })?;
+        if !entry.files_complete {
+            return protocol::err(code::INVALID_RESPONSE, "本地任务文件索引尚未完整");
+        }
         indexed_local_groups(entry)
     }
 
@@ -7307,6 +7466,12 @@ mod tests {
         );
         assert_eq!(
             restarted
+                .task_entries_examined
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert_eq!(
+            restarted
                 .branch_validations
                 .load(std::sync::atomic::Ordering::SeqCst),
             0
@@ -7444,6 +7609,12 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst),
             0
         );
+        assert_eq!(
+            restarted
+                .task_entries_examined
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
 
         let _ = tokio::fs::remove_dir_all(root).await;
     }
@@ -7496,6 +7667,12 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst),
             0
         );
+        assert_eq!(
+            restarted
+                .task_entries_examined
+                .load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
 
         let files = read_local_task_snapshot_files(repo, None)
             .await
@@ -7503,6 +7680,71 @@ mod tests {
         let groups = group_task_snapshot_files(&files).expect("full local groups");
         let full = local_sync_state_from_groups(&cursor, &groups, &server_baselines);
         assert_eq!(indexed, full);
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn forced_local_sync_detects_change_after_projection_warmup() {
+        let (root, store, sync, binding) =
+            test_task_sync_fixture("trellis-local-sync-force-after-warmup").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        let task_dir = ".trellis/tasks/task-a";
+        write_task_json(repo, task_dir, "task-a", "main").await;
+        let prd = repo.join(task_dir).join("prd.md");
+        tokio::fs::write(&prd, "# 原内容\n").await.expect("prd");
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "tasks"]);
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+
+        let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
+        let sync = TaskSync::new(store, api, Arc::new(|_| {})).with_ownership_index_writer();
+        let cursor = Cursor::default();
+        let server_baselines = BTreeMap::new();
+        sync.local_sync_state(&binding, &cursor, &server_baselines)
+            .await
+            .expect("initial local sync");
+
+        tokio::fs::write(&prd, "# 原内容已修改\n")
+            .await
+            .expect("changed prd");
+        let reads_before = sync
+            .task_file_reads
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let json_reads_before = sync
+            .task_json_reads
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let entries_before = sync
+            .task_entries_examined
+            .load(std::sync::atomic::Ordering::SeqCst);
+
+        let (dirty, _, _) = sync
+            .local_sync_state(&binding, &cursor, &server_baselines)
+            .await
+            .expect("forced local sync");
+        assert_eq!(dirty, vec![task_dir.to_string()]);
+        assert_eq!(
+            sync.task_file_reads
+                .load(std::sync::atomic::Ordering::SeqCst)
+                - reads_before,
+            1
+        );
+        assert_eq!(
+            sync.task_json_reads
+                .load(std::sync::atomic::Ordering::SeqCst)
+                - json_reads_before,
+            0
+        );
+        assert_eq!(
+            sync.task_entries_examined
+                .load(std::sync::atomic::Ordering::SeqCst)
+                - entries_before,
+            2
+        );
 
         let _ = tokio::fs::remove_dir_all(root).await;
     }
@@ -7697,7 +7939,7 @@ mod tests {
         bindings.insert("local".into(), Value::Object(binding));
         tokio::fs::write(
             &path,
-            serde_json::to_vec(&json!({"version": 2, "bindings": bindings}))
+            serde_json::to_vec(&json!({"version": 3, "bindings": bindings}))
                 .expect("encode invalid paths"),
         )
         .await
@@ -7730,6 +7972,8 @@ mod tests {
             tracked_paths_loaded: true,
             tasks: BTreeMap::new(),
             files: BTreeMap::new(),
+            files_complete: false,
+            dirty_task_dirs: Vec::new(),
             paused: Vec::new(),
             local_dirs: Vec::new(),
         };

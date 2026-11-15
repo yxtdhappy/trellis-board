@@ -55,11 +55,11 @@
   taskSpace 的 local epoch；`set_bindings` / `update_bindings` 的绑定全集变化才推进 global epoch。
   `cache_ownership_projection` 回写前必须同时校验 global/local epoch 和 binding 身份，防止无关仓库
   的失效阻断当前仓库缓存。回归点：`unrelated_projection_invalidation_does_not_block_cache_write`。
-- ownership 派生索引持久化到 `<agent data>/ownership-index.json`，schema 版本固定为 `2`。运行中的
+- ownership 派生索引持久化到 `<agent data>/ownership-index.json`，schema 版本固定为 `3`。运行中的
   Agent `TaskSync` 是唯一写者；登录、接入、命令等临时 `TaskSync` 只能读取，不得回写。索引只保存
   binding 身份、HEAD/ref 与 Git index 指纹、HEAD tracked paths，以及 `task.json` 的 size/mtime/摘要/
-  `id`/`branch` 和支持任务文件的 size/mtime/摘要，不得保存任务正文或凭据。文件损坏、超限、
-  schema/binding 不匹配或路径非法时必须丢弃对应内容并回退权威校验。
+  `id`/`branch`、支持任务文件的 size/mtime/摘要、文件缓存是否完整和当前脏任务目录，不得保存任务
+  正文或凭据。文件损坏、超限、schema/binding 不匹配或路径非法时必须丢弃对应内容并回退权威校验。
 - 稳定启动允许先用持久索引返回 ProjectRail 的只读 ownership 投影，再在后台做增量校验；这不能放宽
   上传、pull、merge、冲突覆盖和 ownership 写操作门禁。启动期 ownership 校验与 pull 必须串行，
   避免单仓库同时发生任务元数据扫描和完整快照扫描。

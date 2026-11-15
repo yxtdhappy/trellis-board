@@ -206,6 +206,7 @@ pub fn git_args(
         }
         GitOperation::StatusPaths => {
             args.extend([
+                "--no-optional-locks".to_string(),
                 "status".to_string(),
                 "--porcelain=v1".to_string(),
                 "--untracked-files=all".to_string(),
