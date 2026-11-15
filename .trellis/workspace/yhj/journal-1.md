@@ -1296,3 +1296,30 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 55: 优化桌面客户端启动缓存与稳定性验证
+<!-- trellis-session: v=2 fp=144bde8dd72c12de -->
+
+**Date**: 2026-11-15
+**Task**: 优化桌面客户端启动缓存与稳定性验证
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成桌面启动持久索引与增量校验优化，v0.4.24 GitHub tag 与 workflow 构建通过。真实 E2E 确认未变化 task.json 不解析、文件不哈希、HEAD 不变不执行 ls-tree，5 个绑定最终一致且无 pending/deferred。10 分钟监测 106 次进程采样全部存活，18 次监听核对均 5/5 在线，错误日志为 0；进程树平均 CPU 3.51%，偶发约 33 秒安全扫描峰值后恢复 1.25%。启动 19 秒单核热点定位为奇安信天擎 LHShield64.dll 注入线程，Trellis 自身约 1%，已记录环境限制。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `356c9bd` | fix(desktop): skip baseline reconciliation before task scan |
+| `1467613` | perf(desktop): group sync baselines by task |
+| `6e303ef` | perf(desktop): avoid duplicate startup ownership scans |
+| `c44ae3e` | docs(desktop): record v0.4.24 startup E2E attribution |
+| `f2d5bb6` | docs(desktop): record ten-minute startup stability run |
+
+### Status
+
+[OK] **Completed**
