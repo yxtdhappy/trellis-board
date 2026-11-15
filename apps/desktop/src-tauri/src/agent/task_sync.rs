@@ -809,6 +809,7 @@ fn local_sync_state_from_groups(
 pub struct Cursor {
     pub revision: u64,
     pub sequence: u64,
+    pub baseline_reconciled_head: String,
     pub pending: Option<PendingBatch>,
     pub baselines: BTreeMap<String, String>,
     pub deferred: BTreeMap<String, BTreeMap<String, String>>,
@@ -828,6 +829,11 @@ fn cursor_from_entry(entry: &Value) -> Cursor {
     Cursor {
         revision: entry.get("revision").and_then(Value::as_u64).unwrap_or(0),
         sequence: entry.get("sequence").and_then(Value::as_u64).unwrap_or(0),
+        baseline_reconciled_head: entry
+            .get("baselineReconciledHead")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         pending: entry.get("pending").and_then(parse_pending_batch),
         baselines: entry
             .get("baselines")
@@ -3175,6 +3181,12 @@ impl TaskSync {
         }
         entry.insert("revision".into(), json!(cursor.revision));
         entry.insert("sequence".into(), json!(cursor.sequence));
+        if next.baseline_reconciled_head.is_some() {
+            entry.insert(
+                "baselineReconciledHead".into(),
+                json!(cursor.baseline_reconciled_head),
+            );
+        }
         if next.baselines.is_some() {
             entry.insert("baselines".into(), baselines_to_value(&cursor.baselines));
         }
@@ -4498,8 +4510,73 @@ impl TaskSync {
                 "reason": "BASELINE_RECONCILIATION_NOT_REQUIRED",
             }));
         }
-        self.upload_directories(&binding, &task_dirs, false, None)
+        let indexed_head = {
+            self.ensure_ownership_index_loaded().await;
+            let index = self.ownership_index.lock().await;
+            index
+                .bindings
+                .get(&binding.local_id)
+                .filter(|entry| {
+                    entry.task_space_id == binding.task_space_id
+                        && entry.repo_path == binding.repo_path
+                        && entry.branch_name == binding.branch_name
+                        && entry.baseline_branch == binding.baseline_branch
+                })
+                .map(|entry| (entry.head_commit.clone(), entry.head_fingerprint.clone()))
+        };
+        if let Some((head_commit, head_fingerprint)) = &indexed_head {
+            if !head_commit.is_empty()
+                && !head_fingerprint.is_empty()
+                && &cursor.baseline_reconciled_head == head_commit
+            {
+                if std::env::var_os("TRELLIS_DESKTOP_HTTP_TRACE").is_some() {
+                    crate::logging::warn(&format!(
+                        "基线任务补交跳过 taskSpaceId={} candidates={}",
+                        binding.task_space_id,
+                        task_dirs.len()
+                    ));
+                }
+                return Ok(json!({
+                    "skipped": true,
+                    "reason": "BASELINE_RECONCILIATION_CURRENT",
+                    "candidateCount": task_dirs.len(),
+                }));
+            }
+        }
+        let result = self
+            .upload_directories(&binding, &task_dirs, false, None)
+            .await?;
+        if result.get("skipped").and_then(Value::as_bool) == Some(true)
+            || result.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT")
+        {
+            return Ok(result);
+        }
+        let Some((head_commit, expected_fingerprint)) = indexed_head else {
+            return Ok(result);
+        };
+        if git_head_fingerprint(Path::new(&binding.repo_path))
             .await
+            .as_deref()
+            != Some(expected_fingerprint.as_str())
+        {
+            return Ok(result);
+        }
+        self.write_cursor(
+            task_space_id,
+            CursorPatch {
+                baseline_reconciled_head: Some(head_commit),
+                ..Default::default()
+            },
+        )
+        .await?;
+        if std::env::var_os("TRELLIS_DESKTOP_HTTP_TRACE").is_some() {
+            crate::logging::warn(&format!(
+                "基线任务补交完成 taskSpaceId={} candidates={}",
+                binding.task_space_id,
+                task_dirs.len()
+            ));
+        }
+        Ok(result)
     }
 
     pub async fn sync_task_directories(
@@ -5978,6 +6055,7 @@ struct ConflictDirectories {
 struct CursorPatch {
     revision: Option<u64>,
     sequence: Option<u64>,
+    baseline_reconciled_head: Option<String>,
     pending: Option<Option<PendingBatch>>,
     baselines: Option<BTreeMap<String, String>>,
     deferred: Option<BTreeMap<String, BTreeMap<String, String>>>,
@@ -5992,6 +6070,9 @@ fn apply_cursor_patch(cursor: &mut Cursor, next: &CursorPatch) -> bool {
     }
     if let Some(sequence) = next.sequence {
         cursor.sequence = cursor.sequence.max(sequence);
+    }
+    if let Some(head) = &next.baseline_reconciled_head {
+        cursor.baseline_reconciled_head = head.clone();
     }
     if let Some(pending) = &next.pending {
         cursor.pending = pending.clone();
@@ -8071,23 +8152,60 @@ mod tests {
             ApiClient::new(&server_url, None, None).expect("mock api client"),
         );
         let sink: ControlSink = Arc::new(|_| {});
-        let sync = Arc::new(TaskSync::new(store.clone(), api, sink));
+        let api_for_restart = api.clone();
+        let sync = Arc::new(
+            TaskSync::new(store.clone(), api, sink).with_ownership_index_writer(),
+        );
 
-        sync.update_bindings(vec![binding]).await;
+        sync.update_bindings(vec![binding.clone()]).await;
 
-        let changes = changes.lock().await;
-        assert_eq!(changes.len(), 1, "启动时应自动补交一次任务快照");
-        assert_eq!(changes[0]["mergeEvidence"]["taskId"], "merged-task");
-        assert_eq!(changes[0]["mergeEvidence"]["taskDir"], task_dir);
-        assert_eq!(changes[0]["mergeEvidence"]["sourceBranch"], "dev1");
-        assert_eq!(changes[0]["mergeEvidence"]["baselineBranch"], "main");
-        assert_eq!(changes[0]["files"][0]["path"], task_json);
-        assert_eq!(changes[0]["observedBranchName"], "main");
+        {
+            let changes = changes.lock().await;
+            assert_eq!(changes.len(), 1, "启动时应自动补交一次任务快照");
+            assert_eq!(changes[0]["mergeEvidence"]["taskId"], "merged-task");
+            assert_eq!(changes[0]["mergeEvidence"]["taskDir"], task_dir);
+            assert_eq!(changes[0]["mergeEvidence"]["sourceBranch"], "dev1");
+            assert_eq!(changes[0]["mergeEvidence"]["baselineBranch"], "main");
+            assert_eq!(changes[0]["files"][0]["path"], task_json);
+            assert_eq!(changes[0]["observedBranchName"], "main");
+        }
         assert!(sync
             .read_cursor("space-1")
             .await
             .pending
             .is_none());
+        drop(sync);
+
+        let restarted = Arc::new(
+            TaskSync::new(
+                store.clone(),
+                api_for_restart.clone(),
+                Arc::new(|_| {}),
+            )
+            .with_ownership_index_writer(),
+        );
+        restarted.update_bindings(vec![binding.clone()]).await;
+        assert_eq!(
+            changes.lock().await.len(),
+            1,
+            "同一 HEAD 已完成基线补交后，正常重启不得再次上传"
+        );
+        drop(restarted);
+
+        run_git(
+            repo,
+            &["commit", "--allow-empty", "--no-verify", "-m", "advance"],
+        );
+        let advanced = Arc::new(
+            TaskSync::new(store.clone(), api_for_restart, Arc::new(|_| {}))
+                .with_ownership_index_writer(),
+        );
+        advanced.update_bindings(vec![binding]).await;
+        assert_eq!(
+            changes.lock().await.len(),
+            2,
+            "HEAD 变化后必须重新补交一次合入证据"
+        );
         server_task.abort();
 
         let _ = tokio::fs::remove_dir_all(root).await;
