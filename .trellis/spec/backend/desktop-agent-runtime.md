@@ -55,6 +55,17 @@
   taskSpace 的 local epoch；`set_bindings` / `update_bindings` 的绑定全集变化才推进 global epoch。
   `cache_ownership_projection` 回写前必须同时校验 global/local epoch 和 binding 身份，防止无关仓库
   的失效阻断当前仓库缓存。回归点：`unrelated_projection_invalidation_does_not_block_cache_write`。
+- ownership 派生索引持久化到 `<agent data>/ownership-index.json`，schema 版本固定为 `1`。运行中的
+  Agent `TaskSync` 是唯一写者；登录、接入、命令等临时 `TaskSync` 只能读取，不得回写。索引只保存
+  binding 身份、HEAD/ref 与 Git index 指纹、HEAD tracked paths，以及 `task.json` 的 size/mtime/摘要/
+  `id`/`branch`，不得保存任务正文或凭据。文件损坏、超限、schema/binding 不匹配或路径非法时必须
+  丢弃对应内容并回退权威校验。
+- 稳定启动允许先用持久索引返回 ProjectRail 的只读 ownership 投影，再在后台做增量校验；这不能放宽
+  上传、pull、merge、冲突覆盖和 ownership 写操作门禁。启动期 ownership 校验与 pull 必须串行，
+  避免单仓库同时发生任务元数据扫描和完整快照扫描。
+- 启动同步未完成时 heartbeat 仍按 15 秒发送以保活设备，但 `syncing` binding 不得进入
+  `listeningTaskSpaceIds`；SSE 命令必须等待该串行链完成，避免新命令与初始 pull 并发。watcher 可提前
+  安装，但 task 事件只能暂存，必须在 pull 与二次 ownership 校验后的同一串行链中补传，不能丢事件。
 - 稳定态 `ownership_projection` 先直接读取 `.git/HEAD` 和 loose/packed ref 指纹；指纹未变时复用
   `OwnershipProjectionCache`，不得启动 `git.exe`。只有指纹变化或指纹读取失败时才调用
   `binding_head` / `assert_binding_branch` 做精确 Git 门禁。缓存兜底 TTL 为 15 秒，watcher 覆盖

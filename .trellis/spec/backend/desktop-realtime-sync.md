@@ -263,17 +263,28 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   一次 `git rev-parse --verify HEAD^{commit}`；同一 HEAD 下执行一次
   `git ls-tree -r --name-only <HEAD> -- .trellis`，多项任务共享 HashSet。普通 watcher、普通上传、
   同分支任务和同 HEAD 后续判断都不得重复 `ls-tree`。
-- HEAD tree 缓存只驻留内存，键为 binding、真实分支和完整 HEAD SHA；进程重启后允许重扫一次。
-  只有精确的 `<taskDir>/task.json` 在 HEAD tree 中才生成证据。仅工作区存在、仅从服务端拉取或任务
-  目录未提交均保持暂停。
+- 进程内 HEAD tree 缓存键为 binding、真实分支和完整 HEAD SHA；跨进程复用只允许读取
+  `ownership-index.json` 中 HEAD/ref 指纹未变的 tracked paths。指纹变化或直接读取失败时必须按上述
+  规则重新精确校验。只有精确的 `<taskDir>/task.json` 在 HEAD tree 中才生成证据。仅工作区存在、
+  仅从服务端拉取或任务目录未提交均保持暂停。
 - ProjectRail 的归属展示投影允许按 binding 缓存 15 秒，但缓存只能避免重复计算，不能放宽上传门禁。
   投影只枚举 `.trellis/tasks/**` 的目录和文件元数据，并读取各任务根部的 `task.json` 取得
   `branch`；不得读取、UTF-8 解码、规范化或哈希 `prd.md`、报告、JSONL 等其他任务正文。
   真实上传、冲突覆盖、延后补同步和 HEAD 证据生成仍必须执行完整文件读取、摘要与精确校验。
+- ProjectRail 可跨进程复用 `<agent data>/ownership-index.json`。索引 schema 为 `1`，按 `localId`
+  保存 taskSpace/repo/branch/baseline 身份、HEAD/ref 与 Git index 指纹、当前 HEAD 的
+  `task.json` tracked paths、任务目录及 `task.json` 的 size/mtime/摘要/`id`/`branch`、paused 和
+  localDirs；不得保存任务正文。索引命中时允许先返回只读投影，后台再增量校验；runtime 未 ready 时
+  也只读该文件，不回退到全任务正文扫描。
+- 运行中的 Agent `TaskSync` 是索引唯一写者，临时 `TaskSync` 只读。`task.json` 的 size/mtime 均未
+  变化时不得重新读取或解析；HEAD/ref 指纹未变时不得执行 `git ls-tree`，指纹变化时每仓库最多一次。
+  启动期 ownership 增量校验与 pull 必须由同一后台链串行执行，不能让 ownership worker 与完整快照
+  扫描同时运行。写盘使用原子替换，schema/binding/路径/符号链接/大小或条目上限校验失败时回退现有
+  权威扫描；任何上传、pull、merge、冲突覆盖和 ownership 写操作都不得使用该展示缓存短路。
 - 投影 TTL 到期时只复核真实分支和完整 HEAD；HEAD 未变化时刷新 TTL 并复用现有目录/暂停集合，
-  不得重新枚举任务目录或执行 `ls-tree`。watcher 收到该 taskSpace 的 tasks 事件、binding 变化或
-  HEAD 变化时才失效；失效必须递增代际，旧代际的慢速计算结果不得回写缓存，避免失效后重新出现
-  15 秒陈旧状态。
+  不得重新枚举任务目录或执行 `ls-tree`。watcher 收到该 taskSpace 的 tasks 事件、binding 变化、
+  HEAD 变化，或实际 `task.changed` pull 写入本地任务目录后才失效；失效必须递增代际，旧代际的
+  慢速计算结果不得回写缓存，避免失效后重新出现 15 秒陈旧状态。
 - 桌面 HTTP 客户端访问回环、RFC1918 私网、链路本地地址、IPv6 ULA/link-local 或 `.local`
   主机时必须绕过系统代理。公网域名继续遵循系统代理；内网业务域名即使解析到私网 IP，当前也不会
   根据 DNS 结果自动绕过，部署时必须显式配置 `NO_PROXY`，后续可增加
@@ -413,6 +424,10 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | Agent 未上报 `observedBranchName` | `400 BRANCH_OBSERVATION_REQUIRED`，不写快照 |
 | 上报分支与 taskSpace/binding 不一致 | `400 BRANCH_TASK_SPACE_MISMATCH`，不写快照 |
 | 本地真实分支与 binding 不一致 | Agent 暂停该 binding，不写文件、不上传、不推进 cursor |
+| ownership 索引 schema/binding/路径/符号链接/大小/条目数无效 | 拒绝该索引，回退权威冷扫描，不沿用旧 ownership |
+| HEAD/ref 指纹与持久索引一致 | 复用 tracked paths，不执行 `git ls-tree` |
+| `task.json` size/mtime 与持久索引一致 | 不读取、不解析该文件；写操作仍实时读取真实内容 |
+| 启动同步尚未完成 | heartbeat 保活但该 binding 不进入监听集合；命令等待，watcher 事件暂存到串行链收尾 |
 | 基线首次收到来源不同任务但无证据 | `409 TASK_MERGE_EVIDENCE_REQUIRED`，不写快照 |
 | 证据版本、类型、HEAD SHA、任务 ID、目录、路径或分支不匹配 | `400/409`，整批不写 |
 | 来源 taskSpace 写入已由基线接管的稳定任务 ID | `409 TASK_OWNED_BY_BASELINE`，旧快照不变 |
@@ -446,6 +461,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - Good：同一 HEAD 下 17 个已合入任务只执行一次 `git ls-tree`，每个任务分别附自己的证据。
 - Good：5 个关联的 ProjectRail 在 3 秒刷新时复用 15 秒归属投影；过期后只扫描任务元数据和
   `task.json.branch`，不读取约 6000 个任务正文文件。
+- Good：正常重启命中 `ownership-index.json`，ProjectRail 先恢复 5 个关联；后台只枚举文件元数据，
+  未变化任务不解析 `task.json`，未变化 HEAD 不启动 `git ls-tree`。
 - Good：首次接入时延后的本地任务后来已由其他 Agent 按相同文件集合和摘要写入服务端；客户端
   在启动或下一次真实 pull 中只清除 deferred，ProjectRail 恢复同步正常，不上传本地任务。
 - Good：同一仓库为主分支和 feature 分支各建一个 worktree；两个 `localRepoKey` 不同，各自只监听当前分支。
@@ -456,6 +473,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - Bad：普通 watcher 每次都执行 `git ls-tree`，把路径扫描成本放大到每个事件和每个任务。
 - Bad：ProjectRail 每 3 秒或每次投影缓存过期都调用完整任务快照读取，对全部 Markdown/JSONL
   正文做 UTF-8 解码和 SHA-256；任务历史增大后会造成周期性 CPU 尖峰。
+- Bad：启动 pull 与 ownership worker 同时扫描同一仓库，或 watcher 在 pull 期间直接上传；会形成
+  并发 Git/文件扫描、冲突和 CPU 尖峰。watcher 事件必须暂存并由同一串行链收尾。
 - Bad：把 `192.168.x.x` 等局域网服务器交给 `127.0.0.1:7897` 用户级代理；客户端会持续建立错误连接，
   表现为高 CPU、频繁重连和“同步像是没生效”。局域网 IP 必须直连。
 - Bad：源分支任务在基线接管后继续写来源 taskSpace，形成两个活跃归属。
@@ -501,6 +520,9 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   heartbeat 不重复任务扫描；还要覆盖本地状态变化导致的 deferred 移除仍保留原有基线补交上传。
   必须断言归属展示投影不会解码普通任务正文，并覆盖 15 秒缓存命中、same-HEAD 只续期不重扫、
   显式失效、失效与旧计算交错时禁止回写、HEAD 变化刷新和无变化时只执行一次 `ls-tree`。
+  持久索引还必须覆盖：正常重启不读未变化 `task.json`、HEAD 不变不执行 Git、单文件变化只解析
+  目标项、schema/路径/超限/符号链接回退、临时 `TaskSync` 不写盘、启动 watcher 事件延后上传、
+  `Notify` 多等待者不丢唤醒，以及展示缓存不能绕过真实分支门禁。
 - `apps/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、
   DPAPI 往返、SSE 分帧、控制事件去重与过期；代理绕过需覆盖回环、私网、链路本地、IPv6
   ULA/link-local、`.local` 和公网域名。
@@ -623,21 +645,25 @@ if apply_cursor_patch(&mut cursor, &patch) {
 ### Wrong
 
 ```rust
-let files = read_local_task_snapshot_files(repo_path, None).await?;
-let groups = group_task_snapshot_files(&files)?;
+if task_sync.is_none() {
+    let files = read_local_task_snapshot_files(repo_path, None).await?;
+    let groups = group_task_snapshot_files(&files)?;
+}
 ```
 
-ProjectRail 只需要任务目录和 `task.json.branch`；读取并哈希所有任务正文会把页面轮询放大成周期性
-全仓任务扫描。
+runtime 未 ready 不等于没有持久索引。每次回退完整任务正文读取会把页面启动窗口放大成重复全仓扫描。
 
 ### Correct
 
 ```rust
-let groups = read_local_task_ownership_groups(repo_path).await?;
-// 普通文件只取 metadata；仅 task.json 读取内容并解析 branch。
+if let Some(index) = load_ownership_index(&store.paths.ownership_index_file).await {
+    let projection = indexed_ownership_projection(&index, binding);
+    // 先返回只读 paused/localDirs，后台再按文件元数据和 HEAD 指纹增量校验。
+}
+// 写操作始终走 assert_binding_branch + 完整文件读取/CAS，不读取该展示投影。
 ```
 
-展示投影可复用短 TTL 缓存；实际上传仍调用完整快照读取和精确 CAS 校验。
+持久投影可跨进程服务 ProjectRail；实际上传仍调用完整快照读取和精确 CAS 校验。
 
 ### Wrong
 

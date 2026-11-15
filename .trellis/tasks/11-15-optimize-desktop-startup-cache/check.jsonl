@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "检查缓存持久化、进程生命周期和稳定态零 Git 子进程契约"}
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "检查 ownership、HEAD tree、同步门禁和回归测试覆盖"}

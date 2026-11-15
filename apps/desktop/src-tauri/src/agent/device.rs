@@ -569,6 +569,12 @@ async fn clear_agent_transient_state(store: &ConfigStore) -> AgentResult<()> {
     ] {
         remove_file_if_exists(file).await?;
     }
+    if let Err(error) = remove_file_if_exists(&paths.ownership_index_file).await {
+        crate::logging::warn(&format!(
+            "清理 ownership 索引失败：{}",
+            protocol::safe_error_message(&error.message)
+        ));
+    }
     for dir in [&paths.events_dir, &paths.live_backups_dir] {
         remove_dir_if_exists(dir).await?;
     }
@@ -845,21 +851,26 @@ pub async fn read_local_associations(
         .await?
         .ok_or_else(|| AgentError::new(code::CONFIG_MISSING, "Agent 配置不存在"))?;
     let deferred = store.read_task_cursors().await;
+    let ownership_index = if task_sync.is_none() {
+        task_sync::load_ownership_index(&store.paths.ownership_index_file).await
+    } else {
+        None
+    };
     let mut associations = Vec::with_capacity(config.bindings.len());
     for binding in config.bindings {
         let deferred_task_dirs = deferred_task_dirs(&deferred, &binding.task_space_id);
-        let (ownership_paused_task_dirs, ownership_pending_task_dirs) =
-            if binding.sync_status == "approved"
-                && !binding.detach_pending
-                && !binding.read_only
-                && binding.live_sync_status != "error"
-                && binding.last_error_code.as_deref() != Some(code::BRANCH_MISMATCH)
-                && binding.last_error_code.as_deref() != Some("BINDING_BRANCH_MISMATCH")
-            {
-                local_ownership_dirs(&binding, &deferred, task_sync).await?
-            } else {
-                (Vec::new(), Vec::new())
-            };
+        let (ownership_paused_task_dirs, ownership_pending_task_dirs) = if binding.sync_status
+            == "approved"
+            && !binding.detach_pending
+            && !binding.read_only
+            && binding.live_sync_status != "error"
+            && binding.last_error_code.as_deref() != Some(code::BRANCH_MISMATCH)
+            && binding.last_error_code.as_deref() != Some("BINDING_BRANCH_MISMATCH")
+        {
+            local_ownership_dirs(&binding, &deferred, task_sync, ownership_index.as_ref()).await?
+        } else {
+            (Vec::new(), Vec::new())
+        };
         associations.push(LocalAssociation {
             project_id: binding.project_id,
             task_space_id: binding.task_space_id,
@@ -889,6 +900,7 @@ async fn local_ownership_dirs(
     binding: &AgentBinding,
     cursors: &Value,
     task_sync: Option<&TaskSync>,
+    ownership_index: Option<&task_sync::OwnershipIndex>,
 ) -> AgentResult<(Vec<String>, Vec<String>)> {
     let (paused, local_dirs) = match task_sync {
         Some(task_sync) => match task_sync.ownership_projection(binding).await {
@@ -896,30 +908,40 @@ async fn local_ownership_dirs(
             Err(_) => return Ok((Vec::new(), Vec::new())),
         },
         None => {
-            let Ok(files) =
-                task_sync::read_local_task_snapshot_files(Path::new(&binding.repo_path), None).await
-            else {
-                return Ok((Vec::new(), Vec::new()));
-            };
-            let groups = match task_sync::group_task_snapshot_files(&files) {
-                Ok(groups) => groups,
-                Err(_) => return Ok((Vec::new(), Vec::new())),
-            };
-            let paused = groups
-                .iter()
-                .filter(|group| {
-                    group
-                        .task_branch
-                        .as_deref()
-                        .is_some_and(|branch| branch != binding.branch_name)
-                })
-                .map(|group| group.task_dir.clone())
-                .collect::<std::collections::HashSet<_>>();
-            let local_dirs = groups
-                .iter()
-                .map(|group| group.task_dir.clone())
-                .collect::<std::collections::HashSet<_>>();
-            (std::sync::Arc::new(paused), std::sync::Arc::new(local_dirs))
+            let tasks_root_safe =
+                task_sync::ownership_tasks_root_is_safe(Path::new(&binding.repo_path)).await;
+            if let Some((paused, local_dirs, _, _)) = ownership_index
+                .filter(|_| tasks_root_safe)
+                .and_then(|index| task_sync::indexed_ownership_projection(index, binding))
+            {
+                (paused, local_dirs)
+            } else {
+                let Ok(files) =
+                    task_sync::read_local_task_snapshot_files(Path::new(&binding.repo_path), None)
+                        .await
+                else {
+                    return Ok((Vec::new(), Vec::new()));
+                };
+                let groups = match task_sync::group_task_snapshot_files(&files) {
+                    Ok(groups) => groups,
+                    Err(_) => return Ok((Vec::new(), Vec::new())),
+                };
+                let paused = groups
+                    .iter()
+                    .filter(|group| {
+                        group
+                            .task_branch
+                            .as_deref()
+                            .is_some_and(|branch| branch != binding.branch_name)
+                    })
+                    .map(|group| group.task_dir.clone())
+                    .collect::<std::collections::HashSet<_>>();
+                let local_dirs = groups
+                    .iter()
+                    .map(|group| group.task_dir.clone())
+                    .collect::<std::collections::HashSet<_>>();
+                (std::sync::Arc::new(paused), std::sync::Arc::new(local_dirs))
+            }
         }
     };
     let mut paused: Vec<String> = paused.iter().cloned().collect();
@@ -955,6 +977,26 @@ fn deferred_task_dirs(cursors: &Value, task_space_id: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn clears_ownership_index_with_agent_transient_state() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-device-transient-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = ConfigStore::new_unsecured_for_test(root.clone());
+        store.ensure_directories().await.expect("directories");
+        tokio::fs::write(&store.paths.ownership_index_file, b"{}\n")
+            .await
+            .expect("ownership index");
+
+        clear_agent_transient_state(&store)
+            .await
+            .expect("clear transient state");
+
+        assert!(!store.paths.ownership_index_file.exists());
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
 
     #[test]
     fn device_name_validation_boundaries() {

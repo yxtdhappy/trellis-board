@@ -61,8 +61,11 @@ impl AgentRuntime {
             ca_file.as_deref(),
         )?);
         let task_sync = Arc::new(
-            TaskSync::new(store.clone(), api.clone(), emit.clone()).with_state_sink(state_sink),
+            TaskSync::new(store.clone(), api.clone(), emit.clone())
+                .with_state_sink(state_sink)
+                .with_ownership_index_writer(),
         );
+        task_sync.ensure_ownership_validation_worker();
         let (shutdown, _) = watch::channel(false);
         let runtime = Arc::new(Self {
             store,
@@ -75,7 +78,21 @@ impl AgentRuntime {
             detach_lock: AsyncMutex::new(()),
         });
         runtime.write_state("running", None, None).await;
-        runtime.apply_bindings(config.bindings.clone()).await;
+        let startup_task_space_ids = runtime
+            .task_sync
+            .prepare_startup_bindings(config.bindings.clone())
+            .await;
+        let startup = runtime.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut shutdown = startup.shutdown.subscribe();
+            if *shutdown.borrow() {
+                return;
+            }
+            tokio::select! {
+                _ = startup.task_sync.sync_task_spaces(startup_task_space_ids) => {}
+                _ = shutdown.changed() => {}
+            }
+        });
         runtime.spawn_event_loop();
         runtime.spawn_heartbeat_loop();
         hub.resume();
@@ -439,6 +456,17 @@ impl AgentRuntime {
     }
 
     async fn run_command(self: &Arc<Self>, command: AgentCommand) {
+        let mut shutdown = self.shutdown.subscribe();
+        if *shutdown.borrow() {
+            return;
+        }
+        tokio::select! {
+            _ = self.task_sync.wait_for_binding_sync() => {}
+            _ = shutdown.changed() => return,
+        }
+        if *shutdown.borrow() {
+            return;
+        }
         if !self.command_is_active(&command).await {
             return;
         }

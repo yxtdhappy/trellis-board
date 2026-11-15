@@ -5,9 +5,10 @@ use std::time::{Duration, Instant};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use reqwest::Method;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, Notify, OnceCell};
 
 use crate::agent::http::{ApiClient, MAX_SNAPSHOT_RESPONSE_BYTES};
 use crate::agent::protocol::{self, code, AgentError, AgentResult};
@@ -17,6 +18,11 @@ use crate::agent::store::{AgentBinding, ConfigStore};
 pub const TASK_SNAPSHOT_MAX_FILES: usize = 1024;
 pub const TASK_SNAPSHOT_MAX_FILE_BYTES: usize = 1024 * 1024;
 pub const TASK_SNAPSHOT_MAX_BATCH_BYTES: usize = 64 * 1024 * 1024;
+pub const OWNERSHIP_INDEX_VERSION: u32 = 1;
+const OWNERSHIP_INDEX_MAX_BYTES: u64 = 16 * 1024 * 1024;
+const OWNERSHIP_INDEX_MAX_BINDINGS: usize = 64;
+const OWNERSHIP_INDEX_MAX_TASKS: usize = 20_000;
+const OWNERSHIP_INDEX_MAX_TRACKED_PATHS: usize = 50_000;
 const CURSOR_VERSION: u64 = 3;
 const TASK_OWNERSHIP_QUERY_LIMIT: usize = 200;
 const UPLOAD_MIN_INTERVAL: Duration = Duration::from_millis(260);
@@ -902,6 +908,207 @@ struct WatchState {
     tx: Option<mpsc::UnboundedSender<WatchEvent>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OwnershipIndex {
+    pub version: u32,
+    #[serde(default)]
+    pub bindings: BTreeMap<String, OwnershipIndexBinding>,
+}
+
+impl OwnershipIndex {
+    fn empty() -> Self {
+        Self {
+            version: OWNERSHIP_INDEX_VERSION,
+            bindings: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OwnershipIndexBinding {
+    pub task_space_id: String,
+    pub repo_path: String,
+    pub branch_name: String,
+    #[serde(default)]
+    pub baseline_branch: Option<String>,
+    #[serde(default)]
+    pub head_commit: String,
+    #[serde(default)]
+    pub head_fingerprint: String,
+    #[serde(default)]
+    pub git_index_fingerprint: String,
+    #[serde(default)]
+    pub tracked_paths: Vec<String>,
+    #[serde(default)]
+    pub tracked_paths_loaded: bool,
+    #[serde(default)]
+    pub tasks: BTreeMap<String, OwnershipTaskIndex>,
+    #[serde(default)]
+    pub paused: Vec<String>,
+    #[serde(default)]
+    pub local_dirs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OwnershipTaskIndex {
+    pub task_json_size: u64,
+    #[serde(default)]
+    pub task_json_modified_ns: Option<u64>,
+    pub task_json_sha256: String,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
+fn valid_cached_task_dir(task_dir: &str) -> bool {
+    task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref() == Some(task_dir)
+        && protocol::resolve_task_dir_under(Path::new(".trellis/tasks"), task_dir).is_some()
+}
+
+fn normalize_cached_dirs(values: Vec<String>) -> Vec<String> {
+    let mut values = values
+        .into_iter()
+        .filter(|task_dir| valid_cached_task_dir(task_dir))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    values.sort();
+    values
+}
+
+pub(crate) async fn ownership_tasks_root_is_safe(repo_path: &Path) -> bool {
+    for path in [
+        repo_path.join(".trellis"),
+        repo_path.join(".trellis").join("tasks"),
+    ] {
+        let Ok(metadata) = tokio::fs::symlink_metadata(path).await else {
+            return false;
+        };
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return false;
+        }
+    }
+    true
+}
+
+fn normalize_index(mut index: OwnershipIndex) -> Option<OwnershipIndex> {
+    if index.version != OWNERSHIP_INDEX_VERSION
+        || index.bindings.len() > OWNERSHIP_INDEX_MAX_BINDINGS
+    {
+        return None;
+    }
+    for binding in index.bindings.values_mut() {
+        let tracked_paths = binding
+            .tracked_paths
+            .drain(..)
+            .filter(|path| {
+                task_directory_from_path(path).is_ok_and(|parts| parts.file_path == "task.json")
+            })
+            .collect::<HashSet<_>>();
+        if tracked_paths.len() > OWNERSHIP_INDEX_MAX_TRACKED_PATHS {
+            return None;
+        }
+        binding.tracked_paths = tracked_paths.into_iter().collect();
+        binding.tracked_paths.sort();
+        binding.tasks.retain(|task_dir, task| {
+            valid_cached_task_dir(task_dir) && is_sha256(&task.task_json_sha256)
+        });
+        if binding.tasks.len() > OWNERSHIP_INDEX_MAX_TASKS {
+            return None;
+        }
+        binding.paused = normalize_cached_dirs(std::mem::take(&mut binding.paused));
+        binding.local_dirs = normalize_cached_dirs(std::mem::take(&mut binding.local_dirs));
+        if binding.local_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS {
+            return None;
+        }
+        let local_dirs: HashSet<String> = binding.local_dirs.iter().cloned().collect();
+        if binding
+            .tasks
+            .keys()
+            .any(|task_dir| !local_dirs.contains(task_dir))
+        {
+            return None;
+        }
+        binding
+            .paused
+            .retain(|task_dir| local_dirs.contains(task_dir));
+        let mut expected_paused: Vec<String> = binding
+            .tasks
+            .iter()
+            .filter(|(_, task)| {
+                task.branch
+                    .as_deref()
+                    .is_some_and(|branch| branch != binding.branch_name)
+            })
+            .map(|(task_dir, _)| task_dir.clone())
+            .collect();
+        if !expected_paused.is_empty() {
+            if binding.baseline_branch.as_deref() == Some(binding.branch_name.as_str()) {
+                if !binding.tracked_paths_loaded {
+                    return None;
+                }
+                let tracked_paths: HashSet<&str> =
+                    binding.tracked_paths.iter().map(String::as_str).collect();
+                expected_paused.retain(|task_dir| {
+                    !tracked_paths.contains(format!("{task_dir}/task.json").as_str())
+                });
+            } else if binding.tracked_paths_loaded {
+                return None;
+            }
+        }
+        expected_paused.sort();
+        if binding.paused != expected_paused {
+            return None;
+        }
+    }
+    Some(index)
+}
+
+pub(crate) async fn load_ownership_index(path: &Path) -> Option<OwnershipIndex> {
+    let metadata = tokio::fs::symlink_metadata(path).await.ok()?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > OWNERSHIP_INDEX_MAX_BYTES
+    {
+        return None;
+    }
+    let text = tokio::fs::read_to_string(path).await.ok()?;
+    if text.len() as u64 > OWNERSHIP_INDEX_MAX_BYTES {
+        return None;
+    }
+    let index = serde_json::from_str::<OwnershipIndex>(&text).ok()?;
+    normalize_index(index)
+}
+
+pub(crate) fn indexed_ownership_projection(
+    index: &OwnershipIndex,
+    binding: &AgentBinding,
+) -> Option<(
+    Arc<HashSet<String>>,
+    Arc<HashSet<String>>,
+    String,
+    String,
+)> {
+    let entry = index.bindings.get(&binding.local_id)?;
+    if entry.task_space_id != binding.task_space_id
+        || entry.repo_path != binding.repo_path
+        || entry.branch_name != binding.branch_name
+        || entry.baseline_branch != binding.baseline_branch
+    {
+        return None;
+    }
+    Some((
+        Arc::new(entry.paused.iter().cloned().collect()),
+        Arc::new(entry.local_dirs.iter().cloned().collect()),
+        entry.head_commit.clone(),
+        entry.head_fingerprint.clone(),
+    ))
+}
+
 struct HeadTreeCache {
     branch_name: String,
     head_commit: String,
@@ -925,6 +1132,12 @@ struct OwnershipProjectionCache {
 struct ProjectionEpoch {
     global: u64,
     local: u64,
+}
+
+#[derive(Default)]
+struct OwnershipValidationState {
+    pending: Mutex<HashSet<String>>,
+    notify: Notify,
 }
 
 fn ownership_projection_cache_matches(
@@ -952,10 +1165,23 @@ pub struct TaskSync {
     ownership_projection_cache: Mutex<HashMap<String, OwnershipProjectionCache>>,
     ownership_projection_epoch: std::sync::atomic::AtomicU64,
     ownership_projection_local_epoch: Mutex<HashMap<String, u64>>,
+    ownership_index: Mutex<OwnershipIndex>,
+    ownership_index_loaded: OnceCell<()>,
+    ownership_index_writer: std::sync::atomic::AtomicBool,
+    ownership_validation_state: Arc<OwnershipValidationState>,
+    ownership_validation_started: std::sync::atomic::AtomicBool,
+    ownership_refresh_lock: Mutex<()>,
+    binding_selection_lock: Mutex<()>,
+    binding_sync_lock: Mutex<()>,
+    syncing_task_spaces: Mutex<HashMap<String, usize>>,
+    binding_sync_idle: Notify,
+    deferred_uploads: Mutex<HashMap<String, HashSet<String>>>,
     #[cfg(test)]
     head_tree_scans: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     branch_validations: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    task_json_reads: std::sync::atomic::AtomicUsize,
     baseline_owned: Mutex<HashSet<String>>,
     watch: Mutex<WatchState>,
 }
@@ -977,18 +1203,124 @@ impl TaskSync {
             ownership_projection_cache: Mutex::new(HashMap::new()),
             ownership_projection_epoch: std::sync::atomic::AtomicU64::new(0),
             ownership_projection_local_epoch: Mutex::new(HashMap::new()),
+            ownership_index: Mutex::new(OwnershipIndex::empty()),
+            ownership_index_loaded: OnceCell::new(),
+            ownership_index_writer: std::sync::atomic::AtomicBool::new(false),
+            ownership_validation_state: Arc::new(OwnershipValidationState::default()),
+            ownership_validation_started: std::sync::atomic::AtomicBool::new(false),
+            ownership_refresh_lock: Mutex::new(()),
+            binding_selection_lock: Mutex::new(()),
+            binding_sync_lock: Mutex::new(()),
+            syncing_task_spaces: Mutex::new(HashMap::new()),
+            binding_sync_idle: Notify::new(),
+            deferred_uploads: Mutex::new(HashMap::new()),
             #[cfg(test)]
             head_tree_scans: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             branch_validations: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            task_json_reads: std::sync::atomic::AtomicUsize::new(0),
             baseline_owned: Mutex::new(HashSet::new()),
             watch: Mutex::new(WatchState::default()),
         }
     }
 
+    pub fn with_ownership_index_writer(mut self) -> Self {
+        self.ownership_index_writer
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self
+    }
+
     pub fn with_state_sink(mut self, sink: StateSink) -> Self {
         self.state_sink = Some(sink);
         self
+    }
+
+    async fn ensure_ownership_index_loaded(&self) {
+        self.ownership_index_loaded
+            .get_or_init(|| async {
+                let loaded = load_ownership_index(&self.store.paths.ownership_index_file)
+                    .await
+                    .unwrap_or_else(OwnershipIndex::empty);
+                *self.ownership_index.lock().await = loaded;
+            })
+            .await;
+    }
+
+    async fn persist_ownership_index(&self) -> AgentResult<()> {
+        if !self
+            .ownership_index_writer
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Ok(());
+        }
+        let index = self.ownership_index.lock().await.clone();
+        if index.bindings.len() > OWNERSHIP_INDEX_MAX_BINDINGS
+            || index
+                .bindings
+                .values()
+                .any(|binding| {
+                    binding.tasks.len() > OWNERSHIP_INDEX_MAX_TASKS
+                        || binding.local_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS
+                        || binding.tracked_paths.len() > OWNERSHIP_INDEX_MAX_TRACKED_PATHS
+                })
+        {
+            return protocol::err(code::CONFIG_INVALID, "ownership 索引超过条目上限");
+        }
+        let mut bytes = serde_json::to_vec_pretty(&index).map_err(|error| {
+            AgentError::new(
+                code::CONFIG_INVALID,
+                format!("ownership 索引序列化失败: {error}"),
+            )
+        })?;
+        bytes.push(b'\n');
+        if bytes.len() as u64 > OWNERSHIP_INDEX_MAX_BYTES {
+            return protocol::err(code::CONFIG_INVALID, "ownership 索引超过大小上限");
+        }
+        self.store
+            .write_atomic(&self.store.paths.ownership_index_file, &bytes)
+            .await
+    }
+
+    async fn retain_ownership_index_bindings(&self, active_local_ids: &HashSet<String>) {
+        let _refresh = self.ownership_refresh_lock.lock().await;
+        self.ensure_ownership_index_loaded().await;
+        let changed = {
+            let mut index = self.ownership_index.lock().await;
+            let before = index.bindings.len();
+            index
+                .bindings
+                .retain(|local_id, _| active_local_ids.contains(local_id));
+            before != index.bindings.len()
+        };
+        if changed {
+            if let Err(error) = self.persist_ownership_index().await {
+                crate::logging::warn(&format!(
+                    "清理 ownership 索引失败：{}",
+                    protocol::safe_error_message(&error.message)
+                ));
+            }
+        }
+    }
+
+    async fn discard_ownership_index_binding(&self, local_id: &str) {
+        let _refresh = self.ownership_refresh_lock.lock().await;
+        self.ensure_ownership_index_loaded().await;
+        let removed = self
+            .ownership_index
+            .lock()
+            .await
+            .bindings
+            .remove(local_id)
+            .is_some();
+        if removed {
+            if let Err(error) = self.persist_ownership_index().await {
+                crate::logging::warn(&format!(
+                    "删除无效 ownership 索引失败：{}",
+                    protocol::safe_error_message(&error.message)
+                ));
+            }
+        }
     }
 
     fn notify_state_changed(&self) {
@@ -1022,21 +1354,137 @@ impl TaskSync {
     }
 
     pub async fn update_bindings(self: &Arc<Self>, bindings: Vec<AgentBinding>) {
+        let task_space_ids = self.prepare_bindings(bindings).await;
+        self.sync_task_spaces(task_space_ids).await;
+    }
+
+    pub(crate) async fn prepare_startup_bindings(
+        self: &Arc<Self>,
+        bindings: Vec<AgentBinding>,
+    ) -> Vec<String> {
+        self.prepare_bindings(bindings).await
+    }
+
+    pub(crate) async fn sync_task_spaces(self: &Arc<Self>, task_space_ids: Vec<String>) {
+        if task_space_ids.is_empty() {
+            return;
+        }
+        let _serial = self.binding_sync_lock.lock().await;
+        for task_space_id in task_space_ids {
+            if !self.bindings.lock().await.contains_key(&task_space_id) {
+                self.finish_binding_sync(&task_space_id).await;
+                continue;
+            }
+            self.validate_ownership_binding(&task_space_id).await;
+            self.pull_and_report(&task_space_id).await;
+            self.invalidate_ownership_projection(&task_space_id).await;
+            self.validate_ownership_binding(&task_space_id).await;
+            self.finish_binding_sync(&task_space_id).await;
+        }
+    }
+
+    pub(crate) async fn wait_for_binding_sync(&self) {
+        loop {
+            let notified = self.binding_sync_idle.notified();
+            tokio::pin!(notified);
+            let _ = notified.as_mut().enable();
+            if self.syncing_task_spaces.lock().await.is_empty() {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    async fn finish_binding_sync(self: &Arc<Self>, task_space_id: &str) {
+        {
+            let mut syncing = self.syncing_task_spaces.lock().await;
+            let Some(count) = syncing.get_mut(task_space_id) else {
+                self.deferred_uploads.lock().await.remove(task_space_id);
+                drop(syncing);
+                self.binding_sync_idle.notify_waiters();
+                return;
+            };
+            if *count > 1 {
+                *count -= 1;
+                return;
+            }
+        }
+
+        let mut had_deferred_event = false;
+        loop {
+            let binding = self.bindings.lock().await.get(task_space_id).cloned();
+            let step = {
+                let mut syncing = self.syncing_task_spaces.lock().await;
+                if !syncing.contains_key(task_space_id) {
+                    self.deferred_uploads.lock().await.remove(task_space_id);
+                    break;
+                }
+                let mut deferred = self.deferred_uploads.lock().await;
+                if let Some(paths) = deferred.get_mut(task_space_id) {
+                    had_deferred_event = true;
+                    let paths = std::mem::take(paths);
+                    deferred.remove(task_space_id);
+                    Some((paths, false))
+                } else if had_deferred_event {
+                    had_deferred_event = false;
+                    Some((HashSet::new(), true))
+                } else {
+                    let count = syncing.get(task_space_id).copied().unwrap_or_default();
+                    if count <= 1 {
+                        syncing.remove(task_space_id);
+                    } else if let Some(count) = syncing.get_mut(task_space_id) {
+                        *count -= 1;
+                    }
+                    break;
+                }
+            };
+            let Some((paths, validate_after_deferred)) = step else {
+                break;
+            };
+            if validate_after_deferred {
+                self.invalidate_ownership_projection(task_space_id).await;
+                self.validate_ownership_binding(task_space_id).await;
+                continue;
+            }
+            if binding
+                .as_ref()
+                .is_some_and(|binding| !binding.read_only && binding.initial_sync_completed)
+            {
+                let mut paths: Vec<String> = paths.into_iter().collect();
+                paths.sort();
+                if let Err(error) = self.upload_dirty(task_space_id, &paths).await {
+                    self.report_error(task_space_id, &error).await;
+                }
+            }
+        }
+        self.binding_sync_idle.notify_waiters();
+    }
+
+    async fn prepare_bindings(self: &Arc<Self>, bindings: Vec<AgentBinding>) -> Vec<String> {
+        let _selection = self.binding_selection_lock.lock().await;
         let _lifecycle = self.cursor_write.lock().await;
-        let filtered = if let Ok(Some(config)) = self.store.read_config(false).await {
-            let active_local_ids: HashSet<String> = config
-                .bindings
-                .iter()
-                .filter(|binding| binding.sync_status == "approved" && !binding.detach_pending)
-                .map(|binding| binding.local_id.clone())
-                .collect();
-            bindings
-                .into_iter()
-                .filter(|binding| active_local_ids.contains(&binding.local_id))
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
+        let active_local_ids: Option<HashSet<String>> = match self.store.read_config(false).await {
+            Ok(Some(config)) => Some(
+                config
+                    .bindings
+                    .iter()
+                    .filter(|binding| binding.sync_status == "approved" && !binding.detach_pending)
+                    .map(|binding| binding.local_id.clone())
+                    .collect(),
+            ),
+            _ => None,
         };
+        if let Some(active_local_ids) = &active_local_ids {
+            self.retain_ownership_index_bindings(active_local_ids).await;
+        }
+        let filtered = bindings
+            .into_iter()
+            .filter(|binding| {
+                active_local_ids
+                    .as_ref()
+                    .is_some_and(|ids| ids.contains(&binding.local_id))
+            })
+            .collect::<Vec<_>>();
         let candidate = approved_bindings(filtered.clone());
         let mut branch_state_matches = true;
         for binding in candidate.values() {
@@ -1061,7 +1509,7 @@ impl TaskSync {
             self.notify_state_changed();
         }
         if unchanged {
-            return;
+            return Vec::new();
         }
         drop(_lifecycle);
 
@@ -1089,7 +1537,7 @@ impl TaskSync {
             self.notify_state_changed();
         }
         if unchanged {
-            return;
+            return Vec::new();
         }
         self.ownership_projection_epoch.fetch_add(
             1,
@@ -1098,10 +1546,24 @@ impl TaskSync {
         self.head_tree_cache.lock().await.clear();
         self.ownership_projection_cache.lock().await.clear();
         self.baseline_owned.lock().await.clear();
-        for task_space_id in pull_task_space_ids {
-            self.pull_and_report(&task_space_id).await;
+        let selected_task_space_ids: HashSet<String> = selected
+            .iter()
+            .map(|binding| binding.task_space_id.clone())
+            .collect();
+        {
+            let mut syncing = self.syncing_task_spaces.lock().await;
+            syncing.retain(|task_space_id| selected_task_space_ids.contains(task_space_id));
+            for task_space_id in &pull_task_space_ids {
+                *syncing.entry(task_space_id.clone()).or_default() += 1;
+            }
+            self.deferred_uploads
+                .lock()
+                .await
+                .retain(|task_space_id, _| selected_task_space_ids.contains(task_space_id));
         }
+        self.binding_sync_idle.notify_waiters();
         self.rebuild_watchers(selected).await;
+        pull_task_space_ids
     }
 
     /// 同一本地仓库多绑定时按真实分支挑唯一可用的绑定（对照 JS `_selectBindingsForRepositories`）。
@@ -1121,18 +1583,46 @@ impl TaskSync {
         for items in groups.into_values() {
             if items.len() == 1 {
                 let binding = items.into_iter().next().expect("single binding");
-                match self.assert_binding_branch(&binding).await {
-                    Ok(_) => selected.push(binding),
-                    Err(error) => self.report_binding_error(&binding, &error),
+                if matches!(
+                    git_head_branch_name(Path::new(&binding.repo_path)).await,
+                    Some(Some(branch)) if branch == binding.branch_name
+                ) {
+                    if binding
+                        .last_error_code
+                        .as_deref()
+                        .is_some_and(is_branch_guard_code)
+                    {
+                        self.clear_branch_guard_error(&binding).await;
+                    }
+                    selected.push(binding);
+                } else {
+                    match self.assert_binding_branch(&binding).await {
+                        Ok(_) => selected.push(binding),
+                        Err(error) => self.report_binding_error(&binding, &error),
+                    }
                 }
                 continue;
             }
             let mut matches = Vec::new();
             for binding in &items {
-                match self.assert_binding_branch(binding).await {
-                    Ok(_) => matches.push(binding.clone()),
-                    Err(error) => {
-                        self.report_binding_error(binding, &error);
+                if matches!(
+                    git_head_branch_name(Path::new(&binding.repo_path)).await,
+                    Some(Some(branch)) if branch == binding.branch_name
+                ) {
+                    if binding
+                        .last_error_code
+                        .as_deref()
+                        .is_some_and(is_branch_guard_code)
+                    {
+                        self.clear_branch_guard_error(binding).await;
+                    }
+                    matches.push(binding.clone());
+                } else {
+                    match self.assert_binding_branch(binding).await {
+                        Ok(_) => matches.push(binding.clone()),
+                        Err(error) => {
+                            self.report_binding_error(binding, &error);
+                        }
                     }
                 }
             }
@@ -1212,6 +1702,18 @@ impl TaskSync {
         binding: &AgentBinding,
     ) -> AgentResult<(String, Arc<HashSet<String>>)> {
         let (branch, head) = self.binding_head(binding).await?;
+        let tracked_paths = self
+            .head_tree_paths_for_commit(binding, &branch, &head)
+            .await?;
+        Ok((head, tracked_paths))
+    }
+
+    async fn head_tree_paths_for_commit(
+        &self,
+        binding: &AgentBinding,
+        branch: &str,
+        head: &str,
+    ) -> AgentResult<Arc<HashSet<String>>> {
         let hooks_dir = self.binding_hooks_dir(binding);
         let repo = Path::new(&binding.repo_path);
         {
@@ -1219,7 +1721,7 @@ impl TaskSync {
             if let Some(entry) = cache.get_mut(&binding.task_space_id) {
                 if entry.branch_name == branch && entry.head_commit == head {
                     entry.validated_at = Instant::now();
-                    return Ok((entry.head_commit.clone(), entry.tracked_paths.clone()));
+                    return Ok(entry.tracked_paths.clone());
                 }
             }
         }
@@ -1231,13 +1733,13 @@ impl TaskSync {
         self.head_tree_cache.lock().await.insert(
             binding.task_space_id.clone(),
             HeadTreeCache {
-                branch_name: branch,
-                head_commit: head.clone(),
+                branch_name: branch.to_string(),
+                head_commit: head.to_string(),
                 tracked_paths: tracked_paths.clone(),
                 validated_at: Instant::now(),
             },
         );
-        Ok((head, tracked_paths))
+        Ok(tracked_paths)
     }
 
     async fn projected_head_tree_paths(
@@ -1312,14 +1814,388 @@ impl TaskSync {
         }
     }
 
+    async fn scan_ownership_index_tasks(
+        &self,
+        repo_path: &Path,
+        previous: &BTreeMap<String, OwnershipTaskIndex>,
+    ) -> AgentResult<(BTreeMap<String, OwnershipTaskIndex>, Vec<String>, usize)> {
+        let trellis_root = repo_path.join(".trellis");
+        let tasks_root = trellis_root.join("tasks");
+        for (path, label) in [(&trellis_root, ".trellis"), (&tasks_root, ".trellis/tasks")] {
+            match tokio::fs::symlink_metadata(path).await {
+                Ok(metadata)
+                    if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+                Ok(_) => {
+                    return protocol::err(
+                        code::MISSING_TRELLIS,
+                        format!("{label} 必须是真实目录"),
+                    )
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok((BTreeMap::new(), Vec::new(), 0))
+                }
+                Err(error) => return Err(io_error(error)),
+            }
+        }
+        let mut tasks = BTreeMap::new();
+        let mut local_dirs = HashSet::new();
+        let mut parsed = 0;
+        let mut stack = vec![tasks_root];
+        while let Some(directory) = stack.pop() {
+            let mut entries = tokio::fs::read_dir(&directory).await.map_err(io_error)?;
+            while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
+                let path = entry.path();
+                let metadata = tokio::fs::symlink_metadata(&path).await.map_err(io_error)?;
+                if metadata.file_type().is_symlink() {
+                    return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接");
+                }
+                if metadata.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if !metadata.is_file() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if !SNAPSHOT_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
+                    continue;
+                }
+                let relative = path
+                    .strip_prefix(repo_path)
+                    .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件路径越界"))?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let Ok(parts) = task_directory_from_path(&relative) else {
+                    continue;
+                };
+                local_dirs.insert(parts.task_dir.clone());
+                if local_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS {
+                    return protocol::err(code::INVALID_RESPONSE, "本地任务目录数量超过索引上限");
+                }
+                if parts.file_path != "task.json" {
+                    continue;
+                }
+                let modified_ns = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+                    .and_then(|value| u64::try_from(value.as_nanos()).ok());
+                let reusable = previous.get(&parts.task_dir).filter(|cached| {
+                    cached.task_json_size == metadata.len()
+                        && cached.task_json_modified_ns.is_some()
+                        && cached.task_json_modified_ns == modified_ns
+                });
+                if let Some(cached) = reusable {
+                    tasks.insert(parts.task_dir, cached.clone());
+                    continue;
+                }
+                #[cfg(test)]
+                self.task_json_reads
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                parsed += 1;
+                let bytes = tokio::fs::read(&path).await.map_err(io_error)?;
+                let text = String::from_utf8(bytes).map_err(|_| {
+                    AgentError::new(code::INVALID_RESPONSE, "任务文件不是有效的 UTF-8 文本")
+                })?;
+                let content = normalize_snapshot_text(&text);
+                let (task_id, branch) = parse_task_metadata(&content);
+                tasks.insert(
+                    parts.task_dir,
+                    OwnershipTaskIndex {
+                        task_json_size: metadata.len(),
+                        task_json_modified_ns: modified_ns,
+                        task_json_sha256: snapshot_sha256(&content),
+                        task_id,
+                        branch,
+                    },
+                );
+                if tasks.len() > OWNERSHIP_INDEX_MAX_TASKS {
+                    return protocol::err(code::INVALID_RESPONSE, "本地任务数量超过索引上限");
+                }
+            }
+        }
+        let mut local_dirs: Vec<String> = local_dirs.into_iter().collect();
+        local_dirs.sort();
+        Ok((tasks, local_dirs, parsed))
+    }
+
+    async fn refresh_ownership_index_binding(
+        &self,
+        binding: &AgentBinding,
+        projection_epoch: ProjectionEpoch,
+    ) -> AgentResult<(Arc<HashSet<String>>, Arc<HashSet<String>>)> {
+        let started = Instant::now();
+        let _refresh = self.ownership_refresh_lock.lock().await;
+        self.ensure_ownership_index_loaded().await;
+        self.assert_binding_active(binding).await?;
+        let previous = self
+            .ownership_index
+            .lock()
+            .await
+            .bindings
+            .get(&binding.local_id)
+            .filter(|entry| {
+                entry.task_space_id == binding.task_space_id
+                    && entry.repo_path == binding.repo_path
+                    && entry.branch_name == binding.branch_name
+                    && entry.baseline_branch == binding.baseline_branch
+            })
+            .cloned();
+        let current_head_fingerprint = git_head_fingerprint(Path::new(&binding.repo_path)).await;
+        let current_git_index_fingerprint =
+            git_index_fingerprint(Path::new(&binding.repo_path)).await;
+        let already_cached = {
+            let cache = self.ownership_projection_cache.lock().await;
+            cache
+                .get(&binding.task_space_id)
+                .filter(|entry| ownership_projection_cache_matches(entry, binding))
+                .filter(|entry| current_head_fingerprint.as_ref() == Some(&entry.head_fingerprint))
+                .map(|entry| (entry.paused.clone(), entry.local_dirs.clone()))
+        };
+        if let Some((paused, local_dirs)) = already_cached {
+            if self
+                .projection_epoch_matches(&binding.task_space_id, projection_epoch)
+                .await
+            {
+                return Ok((paused, local_dirs));
+            }
+        }
+        let head_cache_matches = previous.as_ref().is_some_and(|entry| {
+            !entry.head_commit.is_empty()
+                && !entry.head_fingerprint.is_empty()
+                && current_head_fingerprint.as_ref() == Some(&entry.head_fingerprint)
+        });
+        let (head_commit, previous_tracked_paths, previous_tracked_loaded) = if head_cache_matches {
+            let entry = previous
+                .as_ref()
+                .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "ownership 索引状态无效"))?;
+            (
+                entry.head_commit.clone(),
+                entry.tracked_paths.iter().cloned().collect::<HashSet<_>>(),
+                entry.tracked_paths_loaded,
+            )
+        } else {
+            let (_, head_commit) = self.binding_head(binding).await?;
+            (head_commit, HashSet::new(), false)
+        };
+
+        let previous_tasks = previous
+            .as_ref()
+            .map(|entry| entry.tasks.clone())
+            .unwrap_or_default();
+        let (tasks, local_dirs, parsed) = self
+            .scan_ownership_index_tasks(Path::new(&binding.repo_path), &previous_tasks)
+            .await?;
+        let mut paused: HashSet<String> = tasks
+            .iter()
+            .filter(|(_, task)| {
+                task.branch
+                    .as_deref()
+                    .is_some_and(|branch| branch != binding.branch_name)
+            })
+            .map(|(task_dir, _)| task_dir.clone())
+            .collect();
+        let need_head_tree =
+            !paused.is_empty() && binding.baseline_branch.as_deref() == Some(&binding.branch_name);
+        let mut git_calls = if head_cache_matches { 0 } else { 3 };
+        let (tracked_paths, tracked_paths_loaded) = if need_head_tree {
+            if head_cache_matches && previous_tracked_loaded {
+                (previous_tracked_paths, true)
+            } else {
+                git_calls += 1;
+                let paths = self
+                    .head_tree_paths_for_commit(binding, &binding.branch_name, &head_commit)
+                    .await?;
+                (paths.as_ref().clone(), true)
+            }
+        } else if head_cache_matches {
+            (previous_tracked_paths, previous_tracked_loaded)
+        } else {
+            (HashSet::new(), false)
+        };
+        if !paused.is_empty() {
+            paused.retain(|task_dir| !tracked_paths.contains(&format!("{task_dir}/task.json")));
+        }
+
+        let mut tracked_paths: Vec<String> = tracked_paths
+            .into_iter()
+            .filter(|path| {
+                task_directory_from_path(path).is_ok_and(|parts| parts.file_path == "task.json")
+            })
+            .collect();
+        tracked_paths.sort();
+        let mut paused: Vec<String> = paused.into_iter().collect();
+        paused.sort();
+        if !self
+            .projection_epoch_matches(&binding.task_space_id, projection_epoch)
+            .await
+        {
+            return protocol::err(code::BINDING_UNKNOWN, "ownership 校验已失效");
+        }
+        let task_json_reused = tasks.len().saturating_sub(parsed);
+        let head_fingerprint = current_head_fingerprint.clone().unwrap_or_default();
+        let entry = OwnershipIndexBinding {
+            task_space_id: binding.task_space_id.clone(),
+            repo_path: binding.repo_path.clone(),
+            branch_name: binding.branch_name.clone(),
+            baseline_branch: binding.baseline_branch.clone(),
+            head_commit: head_commit.clone(),
+            head_fingerprint: head_fingerprint.clone(),
+            git_index_fingerprint: current_git_index_fingerprint.unwrap_or_default(),
+            tracked_paths,
+            tracked_paths_loaded,
+            tasks,
+            paused: paused.clone(),
+            local_dirs: local_dirs.clone(),
+        };
+        let index_changed = previous.as_ref() != Some(&entry);
+        self.ownership_index
+            .lock()
+            .await
+            .bindings
+            .insert(binding.local_id.clone(), entry);
+        if index_changed {
+            if let Err(error) = self.persist_ownership_index().await {
+                crate::logging::warn(&format!(
+                    "保存 ownership 索引失败：{}",
+                    protocol::safe_error_message(&error.message)
+                ));
+            }
+        }
+        let invalidate_reason = if previous.is_none() {
+            "binding-cache-miss"
+        } else if !head_cache_matches {
+            "head-or-ref-changed"
+        } else if parsed > 0 {
+            "task-metadata-changed"
+        } else {
+            "none"
+        };
+        crate::logging::warn(&format!(
+            "ownership 索引校验 {{\"taskSpaceId\":\"{}\",\"cacheHit\":{},\"invalidateReason\":\"{invalidate_reason}\",\"taskDirs\":{},\"taskJsonReused\":{},\"taskJsonParsed\":{},\"headCacheHit\":{},\"gitCalls\":{},\"elapsedMs\":{}}}",
+            binding.task_space_id,
+            previous.is_some(),
+            local_dirs.len(),
+            task_json_reused,
+            parsed,
+            head_cache_matches,
+            git_calls,
+            started.elapsed().as_millis()
+        ));
+        let paused = Arc::new(paused.into_iter().collect());
+        let local_dirs = Arc::new(local_dirs.into_iter().collect());
+        self.cache_ownership_projection(
+            binding.task_space_id.clone(),
+            projection_epoch,
+            OwnershipProjectionCache {
+                local_id: binding.local_id.clone(),
+                branch_name: binding.branch_name.clone(),
+                baseline_branch: binding.baseline_branch.clone(),
+                repo_path: binding.repo_path.clone(),
+                head_commit,
+                head_fingerprint,
+                paused: paused.clone(),
+                local_dirs: local_dirs.clone(),
+                validated_at: Instant::now(),
+            },
+        )
+        .await;
+        Ok((paused, local_dirs))
+    }
+
+    async fn validate_ownership_binding(self: &Arc<Self>, task_space_id: &str) {
+        let binding = self.bindings.lock().await.get(task_space_id).cloned();
+        let Some(binding) = binding else {
+            return;
+        };
+        self.ensure_ownership_index_loaded().await;
+        let before = self
+            .ownership_index
+            .lock()
+            .await
+            .bindings
+            .get(&binding.local_id)
+            .map(|entry| (entry.paused.clone(), entry.local_dirs.clone()));
+        let projection_epoch = self.projection_epoch(task_space_id).await;
+        match self
+            .refresh_ownership_index_binding(&binding, projection_epoch)
+            .await
+        {
+            Ok((paused, local_dirs)) => {
+                let mut paused: Vec<String> = paused.iter().cloned().collect();
+                let mut local_dirs: Vec<String> = local_dirs.iter().cloned().collect();
+                paused.sort();
+                local_dirs.sort();
+                if before != Some((paused, local_dirs)) {
+                    self.notify_state_changed();
+                }
+            }
+            Err(error) => {
+                if error.code != code::BINDING_UNKNOWN {
+                    self.discard_ownership_index_binding(&binding.local_id)
+                        .await;
+                    self.invalidate_ownership_projection(task_space_id).await;
+                    self.notify_state_changed();
+                }
+                crate::logging::warn(&format!(
+                    "ownership 增量校验失败：{}",
+                    protocol::safe_error_message(&error.to_string())
+                ))
+            }
+        }
+    }
+
+    async fn enqueue_ownership_validation(&self, task_space_id: &str) {
+        self.ownership_validation_state
+            .pending
+            .lock()
+            .await
+            .insert(task_space_id.to_string());
+        self.ownership_validation_state.notify.notify_one();
+    }
+
+    pub(crate) fn ensure_ownership_validation_worker(self: &Arc<Self>) {
+        if self
+            .ownership_validation_started
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        let this = Arc::downgrade(self);
+        let state = self.ownership_validation_state.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                state.notify.notified().await;
+                let Some(sync) = this.upgrade() else {
+                    return;
+                };
+                loop {
+                    let pending = {
+                        let mut pending = state.pending.lock().await;
+                        if pending.is_empty() {
+                            break;
+                        }
+                        std::mem::take(&mut *pending)
+                    };
+                    let mut pending: Vec<String> = pending.into_iter().collect();
+                    pending.sort();
+                    for task_space_id in pending {
+                        let _serial = sync.binding_sync_lock.lock().await;
+                        sync.validate_ownership_binding(&task_space_id).await;
+                    }
+                }
+                drop(sync);
+            }
+        });
+    }
+
     /// ProjectRail 轮询只复用展示投影；真正上传前仍由同步门禁重新校验。
     pub(crate) async fn ownership_projection(
         &self,
         binding: &AgentBinding,
     ) -> AgentResult<(Arc<HashSet<String>>, Arc<HashSet<String>>)> {
         let projection_epoch = self.projection_epoch(&binding.task_space_id).await;
-        let current_head_fingerprint =
-            git_head_fingerprint(Path::new(&binding.repo_path)).await;
+        let current_head_fingerprint = git_head_fingerprint(Path::new(&binding.repo_path)).await;
         let cached = {
             let cache = self.ownership_projection_cache.lock().await;
             cache
@@ -1355,82 +2231,48 @@ impl TaskSync {
             }
         }
 
-        // HEAD 指纹变化或无法读取时才启动 Git 精确校验。
-        let (branch_name, head_commit) = self.binding_head(binding).await?;
-        let mut cache = self.head_tree_cache.lock().await;
-        if cache
-            .get(&binding.task_space_id)
-            .is_some_and(|entry| {
-                entry.branch_name != branch_name || entry.head_commit != head_commit
-            })
+        let tasks_root_safe =
+            ownership_tasks_root_is_safe(Path::new(&binding.repo_path)).await;
+        if tasks_root_safe
+            && self
+                .ownership_validation_started
+                .load(std::sync::atomic::Ordering::SeqCst)
         {
-            cache.remove(&binding.task_space_id);
-        }
-        drop(cache);
-        if cached
-            .as_ref()
-            .is_some_and(|(cached_head, _, _, _, _)| cached_head == &head_commit)
-        {
-            let mut cache = self.ownership_projection_cache.lock().await;
-            if let Some(entry) = cache.get_mut(&binding.task_space_id) {
-                if self
-                    .projection_epoch_matches(&binding.task_space_id, projection_epoch)
-                    .await
-                    && ownership_projection_cache_matches(entry, binding)
-                    && entry.head_commit == head_commit
-                {
-                    entry.validated_at = Instant::now();
-                    if let Some(fingerprint) = current_head_fingerprint.clone() {
-                        entry.head_fingerprint = fingerprint;
-                    }
-                    return Ok((entry.paused.clone(), entry.local_dirs.clone()));
-                }
+            self.ensure_ownership_index_loaded().await;
+            let indexed =
+                indexed_ownership_projection(&*self.ownership_index.lock().await, binding);
+            if let Some((paused, local_dirs, head_commit, head_fingerprint)) = indexed {
+                self.cache_ownership_projection(
+                    binding.task_space_id.clone(),
+                    projection_epoch,
+                    OwnershipProjectionCache {
+                        local_id: binding.local_id.clone(),
+                        branch_name: binding.branch_name.clone(),
+                        baseline_branch: binding.baseline_branch.clone(),
+                        repo_path: binding.repo_path.clone(),
+                        head_commit,
+                        head_fingerprint,
+                        paused: paused.clone(),
+                        local_dirs: local_dirs.clone(),
+                        validated_at: Instant::now(),
+                    },
+                )
+                .await;
+                return Ok((paused, local_dirs));
             }
         }
 
-        self.rebuild_ownership_projection(
-            binding,
-            projection_epoch,
-            branch_name,
-            head_commit,
-            current_head_fingerprint,
-        )
-        .await
-    }
-
-    async fn rebuild_ownership_projection(
-        &self,
-        binding: &AgentBinding,
-        projection_epoch: ProjectionEpoch,
-        branch_name: String,
-        head_commit: String,
-        head_fingerprint: Option<String>,
-    ) -> AgentResult<(Arc<HashSet<String>>, Arc<HashSet<String>>)> {
-        let groups = read_local_task_ownership_groups(Path::new(&binding.repo_path)).await?;
-        let paused = Arc::new(self.ownership_paused_task_dirs(binding, &groups).await);
-        let local_dirs = Arc::new(
-            groups
-                .iter()
-                .map(|group| group.task_dir.clone())
-                .collect::<HashSet<_>>(),
-        );
-        self.cache_ownership_projection(
-            binding.task_space_id.clone(),
-            projection_epoch,
-            OwnershipProjectionCache {
-                local_id: binding.local_id.clone(),
-                branch_name,
-                baseline_branch: binding.baseline_branch.clone(),
-                repo_path: binding.repo_path.clone(),
-                head_commit,
-                head_fingerprint: head_fingerprint.unwrap_or_default(),
-                paused: paused.clone(),
-                local_dirs: local_dirs.clone(),
-                validated_at: Instant::now(),
-            },
-        )
-        .await;
-        Ok((paused, local_dirs))
+        let result = self
+            .refresh_ownership_index_binding(binding, projection_epoch)
+            .await;
+        if result
+            .as_ref()
+            .is_err_and(|error| error.code != code::BINDING_UNKNOWN)
+        {
+            self.discard_ownership_index_binding(&binding.local_id)
+                .await;
+        }
+        result
     }
 
     /// 本地关联展示与同步门禁共用同一套基线错分支判定和 HEAD tree 缓存。
@@ -1643,15 +2485,23 @@ impl TaskSync {
     }
 
     pub async fn pull_and_report_for_event(
-        &self,
+        self: &Arc<Self>,
         task_space_id: &str,
         event_revision: Option<u64>,
     ) {
-        if let Err(error) = self
+        let _serial = self.binding_sync_lock.lock().await;
+        match self
             .pull_task_space_for_event(task_space_id, event_revision)
             .await
         {
-            self.report_error(task_space_id, &error).await;
+            Ok(result) => {
+                if result.get("skipped").and_then(Value::as_bool) != Some(true) {
+                    self.invalidate_ownership_projection(task_space_id).await;
+                    self.ensure_ownership_validation_worker();
+                    self.enqueue_ownership_validation(task_space_id).await;
+                }
+            }
+            Err(error) => self.report_error(task_space_id, &error).await,
         }
     }
 
@@ -1809,20 +2659,56 @@ impl TaskSync {
                 }
             }
             for task_space_id in std::mem::take(&mut git_changed) {
-                if let Some(binding) = self
+                if !self
                     .bindings
                     .lock()
                     .await
-                    .get(&task_space_id)
-                    .cloned()
+                    .contains_key(&task_space_id)
                 {
-                    let _ = self.assert_binding_branch(&binding).await;
+                    continue;
+                }
+                let syncing = {
+                    let syncing = self.syncing_task_spaces.lock().await;
+                    if syncing.contains_key(&task_space_id) {
+                        self.deferred_uploads
+                            .lock()
+                            .await
+                            .entry(task_space_id.clone())
+                            .or_default();
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if syncing {
+                    continue;
                 }
                 self.invalidate_ownership_projection(&task_space_id).await;
+                self.ensure_ownership_validation_worker();
+                self.enqueue_ownership_validation(&task_space_id).await;
                 self.notify_state_changed();
             }
             for (task_space_id, paths) in std::mem::take(&mut pending) {
+                let syncing = {
+                    let syncing = self.syncing_task_spaces.lock().await;
+                    if syncing.contains_key(&task_space_id) {
+                        self.deferred_uploads
+                            .lock()
+                            .await
+                            .entry(task_space_id.clone())
+                            .or_default()
+                            .extend(paths.iter().cloned());
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if syncing {
+                    continue;
+                }
                 self.invalidate_ownership_projection(&task_space_id).await;
+                self.ensure_ownership_validation_worker();
+                self.enqueue_ownership_validation(&task_space_id).await;
                 self.notify_state_changed();
                 let paths: Vec<String> = paths.into_iter().collect();
                 // 首次同步未完成时 watcher 仍在监听，但上传必须等 bootstrap 拉取落地，
@@ -1836,6 +2722,7 @@ impl TaskSync {
                 if !ready {
                     continue;
                 }
+                let _serial = self.binding_sync_lock.lock().await;
                 if let Err(error) = self.upload_dirty(&task_space_id, &paths).await {
                     self.report_error(&task_space_id, &error).await;
                 }
@@ -1854,8 +2741,12 @@ impl TaskSync {
     }
 
     pub async fn active_bindings(&self) -> Vec<AgentBinding> {
-        let mut bindings: Vec<AgentBinding> =
-            self.bindings.lock().await.values().cloned().collect();
+        let mut bindings: Vec<AgentBinding> = {
+            let bindings = self.bindings.lock().await;
+            bindings.values().cloned().collect()
+        };
+        let syncing = self.syncing_task_spaces.lock().await;
+        bindings.retain(|binding| !syncing.contains_key(&binding.task_space_id));
         bindings.sort_by(|left, right| left.task_space_id.cmp(&right.task_space_id));
         bindings
     }
@@ -4696,6 +5587,12 @@ impl TaskSync {
     }
 }
 
+impl Drop for TaskSync {
+    fn drop(&mut self) {
+        self.ownership_validation_state.notify.notify_one();
+    }
+}
+
 struct ConflictDirectories {
     local: Option<String>,
     server: Option<String>,
@@ -5170,6 +6067,21 @@ async fn git_head_fingerprint(repo_path: &Path) -> Option<String> {
     Some(format!("{head}\n{value}"))
 }
 
+async fn git_index_fingerprint(repo_path: &Path) -> Option<String> {
+    let git_dir = resolve_git_dir(repo_path).await?;
+    let path = git_dir.join("index");
+    let Ok(metadata) = tokio::fs::metadata(path).await else {
+        return Some("<missing>".to_string());
+    };
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|value| u64::try_from(value.as_nanos()).ok())
+        .unwrap_or_default();
+    Some(format!("{}:{modified_ns}", metadata.len()))
+}
+
 async fn git_watch_paths(repo_path: &Path) -> Vec<(PathBuf, RecursiveMode)> {
     let Some(git_dir) = resolve_git_dir(repo_path).await else {
         return Vec::new();
@@ -5362,76 +6274,24 @@ fn previous_values_paths(values: &[Value]) -> Vec<String> {
         .collect()
 }
 
-/// ProjectRail 投影只依赖任务目录和 task.json.branch，不读取其他任务文件内容。
-async fn read_local_task_ownership_groups(repo_path: &Path) -> AgentResult<Vec<SnapshotGroup>> {
-    let tasks_root = repo_path.join(".trellis").join("tasks");
-    let Ok(metadata) = tokio::fs::symlink_metadata(&tasks_root).await else {
-        return Ok(Vec::new());
-    };
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return protocol::err(code::MISSING_TRELLIS, ".trellis/tasks 必须是真实目录");
-    }
-    let mut groups: HashMap<String, SnapshotGroup> = HashMap::new();
-    let mut stack = vec![tasks_root.clone()];
-    while let Some(directory) = stack.pop() {
-        let mut entries = tokio::fs::read_dir(&directory).await.map_err(io_error)?;
-        while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
-            let path = entry.path();
-            let metadata = entry.metadata().await.map_err(io_error)?;
-            if metadata.file_type().is_symlink() {
-                return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接");
-            }
-            if metadata.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if !metadata.is_file() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().to_lowercase();
-            if !SNAPSHOT_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
-                continue;
-            }
-            let relative = path
-                .strip_prefix(repo_path)
-                .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件路径越界"))?
-                .to_string_lossy()
-                .replace('\\', "/");
-            let Ok(parts) = task_directory_from_path(&relative) else {
-                continue;
-            };
-            let group = groups
-                .entry(parts.task_dir.clone())
-                .or_insert_with(|| SnapshotGroup {
-                    task_dir: parts.task_dir.clone(),
-                    archived: parts.archived,
-                    archive_month: parts.archive_month.clone(),
-                    files: Vec::new(),
-                    task_id: None,
-                    task_branch: None,
-                });
-            if parts.file_path == "task.json" {
-                let bytes = tokio::fs::read(&path).await.map_err(io_error)?;
-                let text = String::from_utf8(bytes).map_err(|_| {
-                    AgentError::new(code::INVALID_RESPONSE, "任务文件不是有效的 UTF-8 文本")
-                })?;
-                group.task_branch = parse_task_metadata(&normalize_snapshot_text(&text)).1;
-            }
-        }
-    }
-    Ok(groups.into_values().collect())
-}
-
 pub async fn read_local_task_snapshot_files(
     repo_path: &Path,
     task_dirs: Option<&HashSet<String>>,
 ) -> AgentResult<Vec<Value>> {
-    let tasks_root = repo_path.join(".trellis").join("tasks");
-    let Ok(metadata) = tokio::fs::symlink_metadata(&tasks_root).await else {
-        return Ok(Vec::new());
-    };
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return protocol::err(code::MISSING_TRELLIS, ".trellis/tasks 必须是真实目录");
+    let trellis_root = repo_path.join(".trellis");
+    let tasks_root = trellis_root.join("tasks");
+    for (path, label) in [(&trellis_root, ".trellis"), (&tasks_root, ".trellis/tasks")] {
+        match tokio::fs::symlink_metadata(path).await {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => {
+                return protocol::err(
+                    code::MISSING_TRELLIS,
+                    format!("{label} 必须是真实目录"),
+                )
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(io_error(error)),
+        }
     }
     let mut files = Vec::new();
     let mut stack = vec![tasks_root.clone()];
@@ -5439,7 +6299,7 @@ pub async fn read_local_task_snapshot_files(
         let mut entries = tokio::fs::read_dir(&directory).await.map_err(io_error)?;
         while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
             let path = entry.path();
-            let metadata = entry.metadata().await.map_err(io_error)?;
+            let metadata = tokio::fs::symlink_metadata(&path).await.map_err(io_error)?;
             if metadata.file_type().is_symlink() {
                 return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接");
             }
@@ -6186,6 +7046,390 @@ mod tests {
                 ".trellis/tasks/text-only".to_string()
             ]
         );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn persistent_ownership_index_reuses_tasks_without_git() {
+        let (root, store, sync, mut binding) =
+            test_task_sync_fixture("trellis-ownership-index-hit").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        write_task_json(repo, ".trellis/tasks/task-a", "task-a", "main").await;
+        write_task_json(repo, ".trellis/tasks/task-b", "task-b", "dev1").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "tasks"]);
+        binding.baseline_branch = Some("main".to_string());
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        let sync = sync.with_ownership_index_writer();
+        let (paused, local_dirs) = sync
+            .ownership_projection(&binding)
+            .await
+            .expect("initial persistent projection");
+        assert!(paused.is_empty());
+        assert_eq!(local_dirs.len(), 2);
+        assert!(store.paths.ownership_index_file.exists());
+
+        let reads = sync
+            .task_json_reads
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let scans = sync
+            .head_tree_scans
+            .load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(reads, 2);
+        assert_eq!(scans, 1);
+        let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
+        let restarted =
+            TaskSync::new(store.clone(), api, Arc::new(|_| {})).with_ownership_index_writer();
+        restarted
+            .ownership_validation_started
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let (paused, local_dirs) = restarted
+            .ownership_projection(&binding)
+            .await
+            .expect("persistent projection after restart");
+        assert!(paused.is_empty());
+        assert_eq!(local_dirs.len(), 2);
+        assert_eq!(
+            restarted
+                .task_json_reads
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert_eq!(
+            restarted
+                .branch_validations
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert_eq!(
+            restarted
+                .head_tree_scans
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn temporary_task_sync_never_writes_ownership_index() {
+        let (root, store, sync, mut binding) =
+            test_task_sync_fixture("trellis-ownership-index-read-only").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        write_task_json(repo, ".trellis/tasks/task-a", "task-a", "main").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "task"]);
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        binding.live_sync_status = "ready".to_string();
+        sync.set_bindings(vec![binding.clone()]).await;
+        sync.ownership_projection(&binding)
+            .await
+            .expect("temporary projection");
+        assert!(!store.paths.ownership_index_file.exists());
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn persistent_ownership_index_reparses_only_changed_task_json() {
+        let (root, store, sync, mut binding) =
+            test_task_sync_fixture("trellis-ownership-index-incremental").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        write_task_json(repo, ".trellis/tasks/task-a", "task-a", "main").await;
+        write_task_json(repo, ".trellis/tasks/task-b", "task-b", "main").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "tasks"]);
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        let sync = sync.with_ownership_index_writer();
+        sync.ownership_projection(&binding)
+            .await
+            .expect("initial projection");
+
+        let target = repo.join(".trellis/tasks/task-b/task.json");
+        tokio::fs::write(
+            &target,
+            b"{\"id\":\"task-b\",\"branch\":\"dev1\",\"title\":\"changed\"}\n",
+        )
+        .await
+        .expect("change task json");
+        let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
+        let restarted = TaskSync::new(store, api, Arc::new(|_| {})).with_ownership_index_writer();
+        let projection_epoch = restarted.projection_epoch("space-1").await;
+        restarted
+            .refresh_ownership_index_binding(&binding, projection_epoch)
+            .await
+            .expect("incremental projection");
+        assert_eq!(
+            restarted
+                .task_json_reads
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            restarted
+                .branch_validations
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn persistent_projection_does_not_bypass_branch_guard() {
+        let (root, store, sync, mut binding) =
+            test_task_sync_fixture("trellis-ownership-index-branch-guard").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        write_task_json(repo, ".trellis/tasks/task-a", "task-a", "main").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "task"]);
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        sync.with_ownership_index_writer()
+            .ownership_projection(&binding)
+            .await
+            .expect("cached projection");
+        run_git(repo, &["checkout", "--quiet", "-b", "feature"]);
+
+        binding.live_sync_status = "ready".to_string();
+        let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
+        let restarted = TaskSync::new(store, api, Arc::new(|_| {}));
+        let error = restarted
+            .assert_binding_branch(&binding)
+            .await
+            .expect_err("stale ownership cache must not bypass branch guard");
+        assert_eq!(error.code, code::BRANCH_MISMATCH);
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn associations_read_persistent_index_before_runtime_starts() {
+        let (root, store, sync, mut binding) =
+            test_task_sync_fixture("trellis-ownership-index-device").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        write_task_json(repo, ".trellis/tasks/task-a", "task-a", "main").await;
+        write_task_json(repo, ".trellis/tasks/task-b", "task-b", "dev1").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "tasks"]);
+        binding.baseline_branch = Some("main".to_string());
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        sync.with_ownership_index_writer()
+            .ownership_projection(&binding)
+            .await
+            .expect("projection");
+        tokio::fs::remove_dir_all(repo.join(".trellis/tasks/task-a"))
+            .await
+            .expect("remove task-a");
+        tokio::fs::remove_dir_all(repo.join(".trellis/tasks/task-b"))
+            .await
+            .expect("remove task-b");
+
+        let associations = crate::agent::device::read_local_associations(&store, None)
+            .await
+            .expect("indexed associations");
+        assert_eq!(associations.len(), 1);
+        assert_eq!(associations[0].ownership_paused_count, 0);
+        assert_eq!(associations[0].deferred_count, 0);
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn startup_bindings_activate_before_background_pull() {
+        let (root, store, binding, task_dir) =
+            exact_deferred_fixture("trellis-startup-activate").await;
+        let (server_url, _changes, requests, server_task) = mock_api_server(json!({
+            "revision": 1,
+            "files": []
+        }))
+        .await;
+        let api = Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+        let sync = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
+
+        let task_space_ids = sync
+            .prepare_startup_bindings(vec![binding])
+            .await;
+
+        assert_eq!(task_space_ids, vec!["space-1".to_string()]);
+        assert!(sync.active_bindings().await.is_empty());
+        assert!(requests.lock().await.is_empty());
+        let (events, receiver) = mpsc::unbounded_channel();
+        let watcher_sync = sync.clone();
+        let watch_task = tokio::spawn(async move { watcher_sync.watch_loop(receiver).await });
+        events
+            .send(WatchEvent::TaskPath {
+                task_space_id: "space-1".to_string(),
+                relative_path: format!("{task_dir}/task.json"),
+            })
+            .expect("watch event");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if sync.deferred_uploads.lock().await.contains_key("space-1") {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("deferred watch event");
+        let waiter = {
+            let sync = sync.clone();
+            tokio::spawn(async move { sync.wait_for_binding_sync().await })
+        };
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        sync.sync_task_spaces(task_space_ids).await;
+        waiter.await.expect("sync waiter");
+        assert_eq!(sync.active_bindings().await.len(), 1);
+        assert!(sync.deferred_uploads.lock().await.is_empty());
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .any(|request| request.contains("/snapshot?")));
+        drop(events);
+        watch_task.await.expect("watch loop");
+
+        server_task.abort();
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn binding_sync_waiters_wake_after_last_job() {
+        let (root, store, binding, _) =
+            exact_deferred_fixture("trellis-binding-sync-waiters").await;
+        let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
+        let sync = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
+        sync.prepare_startup_bindings(vec![binding]).await;
+
+        let first = {
+            let sync = sync.clone();
+            tokio::spawn(async move { sync.wait_for_binding_sync().await })
+        };
+        let second = {
+            let sync = sync.clone();
+            tokio::spawn(async move { sync.wait_for_binding_sync().await })
+        };
+        tokio::task::yield_now().await;
+        sync.finish_binding_sync("space-1").await;
+
+        tokio::time::timeout(Duration::from_secs(1), first)
+            .await
+            .expect("first waiter")
+            .expect("first task");
+        tokio::time::timeout(Duration::from_secs(1), second)
+            .await
+            .expect("second waiter")
+            .expect("second task");
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn ownership_index_rejects_schema_and_invalid_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-ownership-index-schema-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let path = root.join("ownership-index.json");
+        tokio::fs::create_dir_all(&root).await.expect("root");
+        tokio::fs::write(&path, br#"{"version":999,"bindings":{}}"#)
+            .await
+            .expect("schema");
+        assert!(load_ownership_index(&path).await.is_none());
+
+        let mut binding = serde_json::Map::new();
+        binding.insert("taskSpaceId".into(), json!("space"));
+        binding.insert("repoPath".into(), json!("C:/repo"));
+        binding.insert("branchName".into(), json!("main"));
+        binding.insert(
+            "tasks".into(),
+            json!({"../escape":{"taskJsonSize":1,"taskJsonSha256":"x"}}),
+        );
+        binding.insert("paused".into(), json!(["../escape"]));
+        binding.insert("localDirs".into(), json!(["../escape"]));
+        let mut bindings = serde_json::Map::new();
+        bindings.insert("local".into(), Value::Object(binding));
+        tokio::fs::write(
+            &path,
+            serde_json::to_vec(&json!({"version": 1, "bindings": bindings}))
+                .expect("encode invalid paths"),
+        )
+        .await
+        .expect("invalid paths");
+        let index = load_ownership_index(&path)
+            .await
+            .expect("index remains readable");
+        assert!(index.bindings["local"].tasks.is_empty());
+        assert!(index.bindings["local"].paused.is_empty());
+        assert!(index.bindings["local"].local_dirs.is_empty());
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[test]
+    fn ownership_index_rejects_oversized_tracked_paths() {
+        let tracked_paths = (0..=OWNERSHIP_INDEX_MAX_TRACKED_PATHS)
+            .map(|index| format!(".trellis/tasks/task-{index}/task.json"))
+            .collect();
+        let entry = OwnershipIndexBinding {
+            task_space_id: "space".to_string(),
+            repo_path: "C:/repo".to_string(),
+            branch_name: "main".to_string(),
+            baseline_branch: Some("main".to_string()),
+            head_commit: "a".repeat(40),
+            head_fingerprint: "fingerprint".to_string(),
+            git_index_fingerprint: "index".to_string(),
+            tracked_paths,
+            tracked_paths_loaded: true,
+            tasks: BTreeMap::new(),
+            paused: Vec::new(),
+            local_dirs: Vec::new(),
+        };
+        let index = OwnershipIndex {
+            version: OWNERSHIP_INDEX_VERSION,
+            bindings: BTreeMap::from([("local".to_string(), entry)]),
+        };
+
+        assert!(normalize_index(index).is_none());
+    }
+
+    #[tokio::test]
+    async fn local_task_scan_rejects_non_directory_trellis_root() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-local-scan-root-{}",
+            uuid::Uuid::new_v4()
+        ));
+        tokio::fs::create_dir_all(&root).await.expect("root");
+        tokio::fs::write(root.join(".trellis"), b"not a directory")
+            .await
+            .expect("trellis file");
+
+        let error = read_local_task_snapshot_files(&root, None)
+            .await
+            .expect_err("invalid trellis root");
+        assert_eq!(error.code, code::MISSING_TRELLIS);
 
         let _ = tokio::fs::remove_dir_all(root).await;
     }
