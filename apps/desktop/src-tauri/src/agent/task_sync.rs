@@ -2185,13 +2185,15 @@ impl TaskSync {
                 .map(|entry| (entry.paused.clone(), entry.local_dirs.clone()))
         };
         let files_complete = previous.as_ref().is_some_and(|entry| entry.files_complete);
-        if !force_file_scan
-            && let Some((paused, local_dirs)) = already_cached
-            && self
-                .projection_epoch_matches(&binding.task_space_id, projection_epoch)
-                .await
-        {
-            return Ok((paused, local_dirs));
+        if !force_file_scan {
+            if let Some((paused, local_dirs)) = already_cached {
+                if self
+                    .projection_epoch_matches(&binding.task_space_id, projection_epoch)
+                    .await
+                {
+                    return Ok((paused, local_dirs));
+                }
+            }
         }
         let head_cache_matches = previous.as_ref().is_some_and(|entry| {
             !entry.head_commit.is_empty()
@@ -7686,7 +7688,7 @@ mod tests {
 
     #[tokio::test]
     async fn forced_local_sync_detects_change_after_projection_warmup() {
-        let (root, store, sync, binding) =
+        let (root, store, _sync, binding) =
             test_task_sync_fixture("trellis-local-sync-force-after-warmup").await;
         let repo = Path::new(&binding.repo_path);
         init_git_repo(repo);
