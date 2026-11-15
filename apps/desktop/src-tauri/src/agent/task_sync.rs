@@ -18,10 +18,11 @@ use crate::agent::store::{AgentBinding, ConfigStore};
 pub const TASK_SNAPSHOT_MAX_FILES: usize = 1024;
 pub const TASK_SNAPSHOT_MAX_FILE_BYTES: usize = 1024 * 1024;
 pub const TASK_SNAPSHOT_MAX_BATCH_BYTES: usize = 64 * 1024 * 1024;
-pub const OWNERSHIP_INDEX_VERSION: u32 = 1;
+pub const OWNERSHIP_INDEX_VERSION: u32 = 2;
 const OWNERSHIP_INDEX_MAX_BYTES: u64 = 16 * 1024 * 1024;
 const OWNERSHIP_INDEX_MAX_BINDINGS: usize = 64;
 const OWNERSHIP_INDEX_MAX_TASKS: usize = 20_000;
+const OWNERSHIP_INDEX_MAX_FILES: usize = 100_000;
 const OWNERSHIP_INDEX_MAX_TRACKED_PATHS: usize = 50_000;
 const CURSOR_VERSION: u64 = 3;
 const TASK_OWNERSHIP_QUERY_LIMIT: usize = 200;
@@ -946,6 +947,8 @@ pub(crate) struct OwnershipIndexBinding {
     #[serde(default)]
     pub tasks: BTreeMap<String, OwnershipTaskIndex>,
     #[serde(default)]
+    pub files: BTreeMap<String, OwnershipFileIndex>,
+    #[serde(default)]
     pub paused: Vec<String>,
     #[serde(default)]
     pub local_dirs: Vec<String>,
@@ -964,9 +967,25 @@ pub(crate) struct OwnershipTaskIndex {
     pub branch: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OwnershipFileIndex {
+    pub size: u64,
+    #[serde(default)]
+    pub modified_ns: Option<u64>,
+    pub sha256: String,
+}
+
 fn valid_cached_task_dir(task_dir: &str) -> bool {
     task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref() == Some(task_dir)
         && protocol::resolve_task_dir_under(Path::new(".trellis/tasks"), task_dir).is_some()
+}
+
+fn valid_cached_snapshot_path(path: &str) -> bool {
+    task_directory_from_path(path).is_ok()
+        && SNAPSHOT_EXTENSIONS
+            .iter()
+            .any(|extension| path.to_lowercase().ends_with(extension))
 }
 
 fn normalize_cached_dirs(values: Vec<String>) -> Vec<String> {
@@ -1014,14 +1033,45 @@ fn normalize_index(mut index: OwnershipIndex) -> Option<OwnershipIndex> {
         }
         binding.tracked_paths = tracked_paths.into_iter().collect();
         binding.tracked_paths.sort();
+        binding
+            .files
+            .retain(|path, file| valid_cached_snapshot_path(path) && is_sha256(&file.sha256));
+        if binding.files.len() > OWNERSHIP_INDEX_MAX_FILES {
+            return None;
+        }
+        binding.local_dirs = normalize_cached_dirs(std::mem::take(&mut binding.local_dirs));
         binding.tasks.retain(|task_dir, task| {
             valid_cached_task_dir(task_dir) && is_sha256(&task.task_json_sha256)
         });
         if binding.tasks.len() > OWNERSHIP_INDEX_MAX_TASKS {
             return None;
         }
+        for (task_dir, task) in &binding.tasks {
+            let Some(file) = binding.files.get(&format!("{task_dir}/task.json")) else {
+                return None;
+            };
+            if file.size != task.task_json_size
+                || file.modified_ns != task.task_json_modified_ns
+                || file.sha256 != task.task_json_sha256
+            {
+                return None;
+            }
+        }
+        let task_file_dirs = binding
+            .files
+            .keys()
+            .filter_map(|path| task_directory_from_path(path).ok())
+            .filter(|parts| parts.file_path == "task.json")
+            .map(|parts| parts.task_dir)
+            .collect::<HashSet<_>>();
+        if task_file_dirs.len() != binding.tasks.len()
+            || task_file_dirs
+                .iter()
+                .any(|task_dir| !binding.tasks.contains_key(task_dir))
+        {
+            return None;
+        }
         binding.paused = normalize_cached_dirs(std::mem::take(&mut binding.paused));
-        binding.local_dirs = normalize_cached_dirs(std::mem::take(&mut binding.local_dirs));
         if binding.local_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS {
             return None;
         }
@@ -1109,6 +1159,40 @@ pub(crate) fn indexed_ownership_projection(
     ))
 }
 
+fn indexed_local_groups(entry: &OwnershipIndexBinding) -> AgentResult<Vec<SnapshotGroup>> {
+    let mut groups = BTreeMap::<String, SnapshotGroup>::new();
+    for (path, file) in &entry.files {
+        let parts = task_directory_from_path(path)?;
+        let task = entry.tasks.get(&parts.task_dir);
+        let group = groups
+            .entry(parts.task_dir.clone())
+            .or_insert_with(|| SnapshotGroup {
+                task_dir: parts.task_dir.clone(),
+                archived: parts.archived,
+                archive_month: parts.archive_month.clone(),
+                files: Vec::new(),
+                task_id: task.and_then(|task| task.task_id.clone()),
+                task_branch: task.and_then(|task| task.branch.clone()),
+            });
+        group.files.push(SnapshotFile {
+            path: path.clone(),
+            task_dir: parts.task_dir,
+            file_path: parts.file_path,
+            archived: parts.archived,
+            archive_month: parts.archive_month,
+            content: String::new(),
+            sha256: file.sha256.clone(),
+            deleted: false,
+            base_sha256: None,
+        });
+    }
+    let mut groups = groups.into_values().collect::<Vec<_>>();
+    for group in &mut groups {
+        group.files.sort_by(|left, right| left.path.cmp(&right.path));
+    }
+    Ok(groups)
+}
+
 struct HeadTreeCache {
     branch_name: String,
     head_commit: String,
@@ -1182,6 +1266,8 @@ pub struct TaskSync {
     branch_validations: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     task_json_reads: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    task_file_reads: std::sync::atomic::AtomicUsize,
     baseline_owned: Mutex<HashSet<String>>,
     watch: Mutex<WatchState>,
 }
@@ -1220,6 +1306,8 @@ impl TaskSync {
             branch_validations: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             task_json_reads: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            task_file_reads: std::sync::atomic::AtomicUsize::new(0),
             baseline_owned: Mutex::new(HashSet::new()),
             watch: Mutex::new(WatchState::default()),
         }
@@ -1261,6 +1349,7 @@ impl TaskSync {
                 .values()
                 .any(|binding| {
                     binding.tasks.len() > OWNERSHIP_INDEX_MAX_TASKS
+                        || binding.files.len() > OWNERSHIP_INDEX_MAX_FILES
                         || binding.local_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS
                         || binding.tracked_paths.len() > OWNERSHIP_INDEX_MAX_TRACKED_PATHS
                 })
@@ -1814,11 +1903,19 @@ impl TaskSync {
         }
     }
 
-    async fn scan_ownership_index_tasks(
+    async fn scan_ownership_index_files(
         &self,
         repo_path: &Path,
-        previous: &BTreeMap<String, OwnershipTaskIndex>,
-    ) -> AgentResult<(BTreeMap<String, OwnershipTaskIndex>, Vec<String>, usize)> {
+        previous_tasks: &BTreeMap<String, OwnershipTaskIndex>,
+        previous_files: &BTreeMap<String, OwnershipFileIndex>,
+        hash_all_files: bool,
+    ) -> AgentResult<(
+        BTreeMap<String, OwnershipTaskIndex>,
+        BTreeMap<String, OwnershipFileIndex>,
+        Vec<String>,
+        usize,
+        usize,
+    )> {
         let trellis_root = repo_path.join(".trellis");
         let tasks_root = trellis_root.join("tasks");
         for (path, label) in [(&trellis_root, ".trellis"), (&tasks_root, ".trellis/tasks")] {
@@ -1832,14 +1929,22 @@ impl TaskSync {
                     )
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return Ok((BTreeMap::new(), Vec::new(), 0))
+                    return Ok((
+                        BTreeMap::new(),
+                        BTreeMap::new(),
+                        Vec::new(),
+                        0,
+                        0,
+                    ))
                 }
                 Err(error) => return Err(io_error(error)),
             }
         }
         let mut tasks = BTreeMap::new();
+        let mut files = BTreeMap::new();
         let mut local_dirs = HashSet::new();
         let mut parsed = 0;
+        let mut hashed = 0;
         let mut stack = vec![tasks_root];
         while let Some(directory) = stack.pop() {
             let mut entries = tokio::fs::read_dir(&directory).await.map_err(io_error)?;
@@ -1869,10 +1974,7 @@ impl TaskSync {
                     continue;
                 };
                 local_dirs.insert(parts.task_dir.clone());
-                if local_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS {
-                    return protocol::err(code::INVALID_RESPONSE, "本地任务目录数量超过索引上限");
-                }
-                if parts.file_path != "task.json" {
+                if !hash_all_files && parts.file_path != "task.json" {
                     continue;
                 }
                 let modified_ns = metadata
@@ -1880,49 +1982,98 @@ impl TaskSync {
                     .ok()
                     .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
                     .and_then(|value| u64::try_from(value.as_nanos()).ok());
-                let reusable = previous.get(&parts.task_dir).filter(|cached| {
-                    cached.task_json_size == metadata.len()
-                        && cached.task_json_modified_ns.is_some()
-                        && cached.task_json_modified_ns == modified_ns
+                let reusable_file = previous_files.get(&relative).filter(|cached| {
+                    cached.size == metadata.len()
+                        && cached.modified_ns.is_some()
+                        && cached.modified_ns == modified_ns
                 });
-                if let Some(cached) = reusable {
-                    tasks.insert(parts.task_dir, cached.clone());
+                let task_metadata_cached =
+                    parts.file_path != "task.json" || previous_tasks.contains_key(&parts.task_dir);
+                if let Some(cached) = reusable_file.filter(|_| task_metadata_cached) {
+                    files.insert(relative.clone(), cached.clone());
+                    if parts.file_path == "task.json" {
+                        let task = previous_tasks
+                            .get(&parts.task_dir)
+                            .ok_or_else(|| {
+                                AgentError::new(
+                                    code::INVALID_RESPONSE,
+                                    "ownership 文件缓存缺少 task.json 元数据",
+                                )
+                            })?;
+                        tasks.insert(parts.task_dir.clone(), task.clone());
+                    }
                     continue;
                 }
+                if metadata.len() > TASK_SNAPSHOT_MAX_FILE_BYTES as u64 {
+                    return protocol::err(code::INVALID_RESPONSE, "单个任务文件超过 1 MiB");
+                }
                 #[cfg(test)]
-                self.task_json_reads
+                self.task_file_reads
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                parsed += 1;
+                #[cfg(test)]
+                if parts.file_path == "task.json" {
+                    self.task_json_reads
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                hashed += 1;
                 let bytes = tokio::fs::read(&path).await.map_err(io_error)?;
                 let text = String::from_utf8(bytes).map_err(|_| {
                     AgentError::new(code::INVALID_RESPONSE, "任务文件不是有效的 UTF-8 文本")
                 })?;
                 let content = normalize_snapshot_text(&text);
-                let (task_id, branch) = parse_task_metadata(&content);
-                tasks.insert(
-                    parts.task_dir,
-                    OwnershipTaskIndex {
-                        task_json_size: metadata.len(),
-                        task_json_modified_ns: modified_ns,
-                        task_json_sha256: snapshot_sha256(&content),
-                        task_id,
-                        branch,
+                let sha256 = snapshot_sha256(&content);
+                files.insert(
+                    relative,
+                    OwnershipFileIndex {
+                        size: metadata.len(),
+                        modified_ns,
+                        sha256: sha256.clone(),
                     },
                 );
+                if parts.file_path == "task.json" {
+                    let (task_id, branch) = parse_task_metadata(&content);
+                    parsed += 1;
+                    tasks.insert(
+                        parts.task_dir,
+                        OwnershipTaskIndex {
+                            task_json_size: metadata.len(),
+                            task_json_modified_ns: modified_ns,
+                            task_json_sha256: sha256,
+                            task_id,
+                            branch,
+                        },
+                    );
+                }
                 if tasks.len() > OWNERSHIP_INDEX_MAX_TASKS {
                     return protocol::err(code::INVALID_RESPONSE, "本地任务数量超过索引上限");
+                }
+                if files.len() > OWNERSHIP_INDEX_MAX_FILES {
+                    return protocol::err(code::INVALID_RESPONSE, "本地任务文件数量超过索引上限");
                 }
             }
         }
         let mut local_dirs: Vec<String> = local_dirs.into_iter().collect();
+        if local_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS {
+            return protocol::err(code::INVALID_RESPONSE, "本地任务目录数量超过索引上限");
+        }
         local_dirs.sort();
-        Ok((tasks, local_dirs, parsed))
+        Ok((tasks, files, local_dirs, hashed, parsed))
     }
 
     async fn refresh_ownership_index_binding(
         &self,
         binding: &AgentBinding,
         projection_epoch: ProjectionEpoch,
+    ) -> AgentResult<(Arc<HashSet<String>>, Arc<HashSet<String>>)> {
+        self.refresh_ownership_index_binding_with_scan(binding, projection_epoch, false)
+            .await
+    }
+
+    async fn refresh_ownership_index_binding_with_scan(
+        &self,
+        binding: &AgentBinding,
+        projection_epoch: ProjectionEpoch,
+        force_file_scan: bool,
     ) -> AgentResult<(Arc<HashSet<String>>, Arc<HashSet<String>>)> {
         let started = Instant::now();
         let _refresh = self.ownership_refresh_lock.lock().await;
@@ -1952,12 +2103,14 @@ impl TaskSync {
                 .filter(|entry| current_head_fingerprint.as_ref() == Some(&entry.head_fingerprint))
                 .map(|entry| (entry.paused.clone(), entry.local_dirs.clone()))
         };
-        if let Some((paused, local_dirs)) = already_cached {
-            if self
-                .projection_epoch_matches(&binding.task_space_id, projection_epoch)
-                .await
-            {
-                return Ok((paused, local_dirs));
+        if !force_file_scan {
+            if let Some((paused, local_dirs)) = already_cached {
+                if self
+                    .projection_epoch_matches(&binding.task_space_id, projection_epoch)
+                    .await
+                {
+                    return Ok((paused, local_dirs));
+                }
             }
         }
         let head_cache_matches = previous.as_ref().is_some_and(|entry| {
@@ -1983,9 +2136,29 @@ impl TaskSync {
             .as_ref()
             .map(|entry| entry.tasks.clone())
             .unwrap_or_default();
-        let (tasks, local_dirs, parsed) = self
-            .scan_ownership_index_tasks(Path::new(&binding.repo_path), &previous_tasks)
+        let previous_files = previous
+            .as_ref()
+            .map(|entry| entry.files.clone())
+            .unwrap_or_default();
+        let (tasks, scanned_files, local_dirs, hashed, parsed) = self
+            .scan_ownership_index_files(
+                Path::new(&binding.repo_path),
+                &previous_tasks,
+                &previous_files,
+                force_file_scan,
+            )
             .await?;
+        let files = if force_file_scan {
+            scanned_files
+        } else {
+            let mut files = previous_files;
+            files.retain(|path, _| {
+                task_directory_from_path(path)
+                    .is_ok_and(|parts| parts.file_path != "task.json")
+            });
+            files.extend(scanned_files);
+            files
+        };
         let mut paused: HashSet<String> = tasks
             .iter()
             .filter(|(_, task)| {
@@ -2045,6 +2218,7 @@ impl TaskSync {
             tracked_paths,
             tracked_paths_loaded,
             tasks,
+            files,
             paused: paused.clone(),
             local_dirs: local_dirs.clone(),
         };
@@ -2066,18 +2240,19 @@ impl TaskSync {
             "binding-cache-miss"
         } else if !head_cache_matches {
             "head-or-ref-changed"
-        } else if parsed > 0 {
-            "task-metadata-changed"
+        } else if hashed > 0 {
+            "task-file-metadata-changed"
         } else {
             "none"
         };
         crate::logging::warn(&format!(
-            "ownership 索引校验 {{\"taskSpaceId\":\"{}\",\"cacheHit\":{},\"invalidateReason\":\"{invalidate_reason}\",\"taskDirs\":{},\"taskJsonReused\":{},\"taskJsonParsed\":{},\"headCacheHit\":{},\"gitCalls\":{},\"elapsedMs\":{}}}",
+            "ownership 索引校验 {{\"taskSpaceId\":\"{}\",\"cacheHit\":{},\"invalidateReason\":\"{invalidate_reason}\",\"taskDirs\":{},\"taskJsonReused\":{},\"taskJsonParsed\":{},\"taskFilesHashed\":{},\"headCacheHit\":{},\"gitCalls\":{},\"elapsedMs\":{}}}",
             binding.task_space_id,
             previous.is_some(),
             local_dirs.len(),
             task_json_reused,
             parsed,
+            hashed,
             head_cache_matches,
             git_calls,
             started.elapsed().as_millis()
@@ -3529,12 +3704,42 @@ impl TaskSync {
         BTreeMap<String, BTreeMap<String, String>>,
         HashSet<String>,
     )> {
-        let groups = self.local_groups(binding, None).await?;
+        let groups = self.local_metadata_groups(binding).await?;
         Ok(local_sync_state_from_groups(
             cursor,
             &groups,
             server_baselines,
         ))
+    }
+
+    async fn local_metadata_groups(
+        &self,
+        binding: &AgentBinding,
+    ) -> AgentResult<Vec<SnapshotGroup>> {
+        let projection_epoch = self.projection_epoch(&binding.task_space_id).await;
+        self.refresh_ownership_index_binding_with_scan(binding, projection_epoch, true)
+            .await?;
+        if !self
+            .projection_epoch_matches(&binding.task_space_id, projection_epoch)
+            .await
+        {
+            return protocol::err(code::BINDING_UNKNOWN, "本地任务文件索引已失效");
+        }
+        self.ensure_ownership_index_loaded().await;
+        let index = self.ownership_index.lock().await;
+        let entry = index
+            .bindings
+            .get(&binding.local_id)
+            .filter(|entry| {
+                entry.task_space_id == binding.task_space_id
+                    && entry.repo_path == binding.repo_path
+                    && entry.branch_name == binding.branch_name
+                    && entry.baseline_branch == binding.baseline_branch
+            })
+            .ok_or_else(|| {
+                AgentError::new(code::INVALID_RESPONSE, "本地任务文件索引缺少当前绑定")
+            })?;
+        indexed_local_groups(entry)
     }
 
     pub async fn pull_task_space(&self, task_space_id: &str) -> AgentResult<Value> {
@@ -7188,6 +7393,121 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn warm_local_sync_reuses_all_task_file_hashes_without_reads() {
+        let (root, store, sync, binding) =
+            test_task_sync_fixture("trellis-local-sync-index-hit").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        let task_dir = ".trellis/tasks/task-a";
+        write_task_json(repo, task_dir, "task-a", "main").await;
+        tokio::fs::write(repo.join(task_dir).join("prd.md"), "# 任务\n")
+            .await
+            .expect("prd");
+        tokio::fs::write(repo.join(task_dir).join("implement.jsonl"), "{}\n")
+            .await
+            .expect("jsonl");
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "tasks"]);
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+
+        let warmup = sync.with_ownership_index_writer();
+        let projection_epoch = warmup.projection_epoch("space-1").await;
+        warmup
+            .refresh_ownership_index_binding_with_scan(&binding, projection_epoch, true)
+            .await
+            .expect("warm ownership file index");
+        assert_eq!(
+            warmup.task_file_reads.load(std::sync::atomic::Ordering::SeqCst),
+            3
+        );
+
+        let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
+        let restarted =
+            TaskSync::new(store, api, Arc::new(|_| {})).with_ownership_index_writer();
+        let (dirty, _, _) = restarted
+            .local_sync_state(&binding, &Cursor::default(), &BTreeMap::new())
+            .await
+            .expect("warm local sync");
+        assert_eq!(dirty, vec![task_dir.to_string()]);
+        assert_eq!(
+            restarted
+                .task_file_reads
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert_eq!(
+            restarted
+                .task_json_reads
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn local_sync_rehashes_only_changed_file_and_matches_full_scan() {
+        let (root, store, sync, binding) =
+            test_task_sync_fixture("trellis-local-sync-index-incremental").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        let task_dir = ".trellis/tasks/task-a";
+        write_task_json(repo, task_dir, "task-a", "main").await;
+        let prd = repo.join(task_dir).join("prd.md");
+        tokio::fs::write(&prd, "# 原内容\n").await.expect("prd");
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "tasks"]);
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+
+        let warmup = sync.with_ownership_index_writer();
+        let projection_epoch = warmup.projection_epoch("space-1").await;
+        warmup
+            .refresh_ownership_index_binding_with_scan(&binding, projection_epoch, true)
+            .await
+            .expect("warm ownership file index");
+        tokio::fs::write(&prd, "# 原内容已修改\n")
+            .await
+            .expect("changed prd");
+
+        let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
+        let restarted =
+            TaskSync::new(store, api, Arc::new(|_| {})).with_ownership_index_writer();
+        let cursor = Cursor::default();
+        let server_baselines = BTreeMap::new();
+        let indexed = restarted
+            .local_sync_state(&binding, &cursor, &server_baselines)
+            .await
+            .expect("incremental local sync");
+        assert_eq!(
+            restarted
+                .task_file_reads
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            restarted
+                .task_json_reads
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+
+        let files = read_local_task_snapshot_files(repo, None)
+            .await
+            .expect("full local scan");
+        let groups = group_task_snapshot_files(&files).expect("full local groups");
+        let full = local_sync_state_from_groups(&cursor, &groups, &server_baselines);
+        assert_eq!(indexed, full);
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
     async fn persistent_projection_does_not_bypass_branch_guard() {
         let (root, store, sync, mut binding) =
             test_task_sync_fixture("trellis-ownership-index-branch-guard").await;
@@ -7367,13 +7687,17 @@ mod tests {
             "tasks".into(),
             json!({"../escape":{"taskJsonSize":1,"taskJsonSha256":"x"}}),
         );
+        binding.insert(
+            "files".into(),
+            json!({"../escape":{"size":1,"sha256":"x"}}),
+        );
         binding.insert("paused".into(), json!(["../escape"]));
         binding.insert("localDirs".into(), json!(["../escape"]));
         let mut bindings = serde_json::Map::new();
         bindings.insert("local".into(), Value::Object(binding));
         tokio::fs::write(
             &path,
-            serde_json::to_vec(&json!({"version": 1, "bindings": bindings}))
+            serde_json::to_vec(&json!({"version": 2, "bindings": bindings}))
                 .expect("encode invalid paths"),
         )
         .await
@@ -7382,6 +7706,7 @@ mod tests {
             .await
             .expect("index remains readable");
         assert!(index.bindings["local"].tasks.is_empty());
+        assert!(index.bindings["local"].files.is_empty());
         assert!(index.bindings["local"].paused.is_empty());
         assert!(index.bindings["local"].local_dirs.is_empty());
 
@@ -7404,6 +7729,7 @@ mod tests {
             tracked_paths,
             tracked_paths_loaded: true,
             tasks: BTreeMap::new(),
+            files: BTreeMap::new(),
             paused: Vec::new(),
             local_dirs: Vec::new(),
         };

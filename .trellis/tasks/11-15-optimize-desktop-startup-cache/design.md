@@ -37,11 +37,11 @@ ownership 写操作仍使用实时绑定、真实分支、完整文件摘要和 
 
 `AgentPaths` 增加 `ownership_index_file`。文件只在本地读取，不上传、不写日志、不进入控制事件。
 
-文件使用内部 schema 版本 `OWNERSHIP_INDEX_VERSION = 1`，结构：
+文件使用内部 schema 版本 `OWNERSHIP_INDEX_VERSION = 2`，结构：
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "bindings": {
     "<localId>": {
       "taskSpaceId": "...",
@@ -60,6 +60,18 @@ ownership 写操作仍使用实时绑定、真实分支、完整文件摘要和 
           "taskJsonSha256": "...",
           "taskId": "a",
           "branch": "dev1"
+        }
+      },
+      "files": {
+        ".trellis/tasks/a/task.json": {
+          "size": 123,
+          "modifiedNs": 0,
+          "sha256": "..."
+        },
+        ".trellis/tasks/a/prd.md": {
+          "size": 456,
+          "modifiedNs": 0,
+          "sha256": "..."
         }
       },
       "paused": [".trellis/tasks/a"],
@@ -122,15 +134,16 @@ baselineBranch
 
 ### 5.2 任务文件校验
 
-每次启动枚举 `.trellis/tasks/**` 的受支持文件，形成当前 taskDir 集合：
+每次启动 pull 枚举 `.trellis/tasks/**` 的受支持文件，形成当前 taskDir 集合：
 
 - 目录不存在：删除对应缓存项。
 - 新目录或新 `task.json`：读取、UTF-8 校验、解析 branch/taskId、计算摘要。
-- `task.json` 大小和修改时间均相同：复用缓存 branch/taskId，不读取内容。
-- 大小或修改时间变化：重新读取并计算摘要；若 branch 变化则更新 paused。
+- 任意文件大小和修改时间均相同：复用缓存 SHA256，不读取正文。
+- 大小或修改时间变化：只重新读取并计算该文件摘要；若 `task.json` 的 branch 变化则更新 paused。
 - `task.json` 已删除：保留该目录作为本地任务目录，但 branch/taskId 为空。
 
-修改时间只用于快速筛选。写操作不信任该结果，仍读取真实文件并计算摘要。
+修改时间只用于快速筛选。快速投影只保存摘要而不保存正文；上传、CAS、冲突覆盖仍读取真实文件并
+重新计算摘要。
 
 ### 5.3 Git 指纹
 
@@ -186,6 +199,7 @@ invalidateReason
 taskDirs
 taskJsonReused
 taskJsonParsed
+taskFilesHashed
 headCacheHit
 gitCalls
 elapsedMs
@@ -204,9 +218,10 @@ elapsedMs
 
 ## 10. 测试设计
 
-- 持久索引命中：第二次 `TaskSync` 不读取未变化 `task.json`，不执行 Git，paused/localDirs 相同。
+- 持久索引命中：第二次 `TaskSync` 不读取任何未变化任务文件正文，不执行 Git，paused/localDirs 相同。
 - runtime 未就绪：`list_associations` 从索引返回，不调用完整 snapshot 文件读取。
-- 单任务变化：只重读目标 `task.json`。
+- 单任务变化：只重读发生变化的文件；`task.json` 外的正文变化也能被 dirty 检测发现。
+- 缓存 dirty 检测与完整文件扫描结果一致。
 - task.json 删除、任务目录删除：缓存项和本地目录集合正确更新。
 - HEAD 不变：`head_tree_scans` 不增加。
 - HEAD 变化：每个仓库只增加一次 `ls-tree`。

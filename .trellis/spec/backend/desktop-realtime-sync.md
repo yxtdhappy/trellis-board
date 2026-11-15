@@ -271,13 +271,14 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   投影只枚举 `.trellis/tasks/**` 的目录和文件元数据，并读取各任务根部的 `task.json` 取得
   `branch`；不得读取、UTF-8 解码、规范化或哈希 `prd.md`、报告、JSONL 等其他任务正文。
   真实上传、冲突覆盖、延后补同步和 HEAD 证据生成仍必须执行完整文件读取、摘要与精确校验。
-- ProjectRail 可跨进程复用 `<agent data>/ownership-index.json`。索引 schema 为 `1`，按 `localId`
+- ProjectRail 可跨进程复用 `<agent data>/ownership-index.json`。索引 schema 为 `2`，按 `localId`
   保存 taskSpace/repo/branch/baseline 身份、HEAD/ref 与 Git index 指纹、当前 HEAD 的
   `task.json` tracked paths、任务目录及 `task.json` 的 size/mtime/摘要/`id`/`branch`、paused 和
-  localDirs；不得保存任务正文。索引命中时允许先返回只读投影，后台再增量校验；runtime 未 ready 时
-  也只读该文件，不回退到全任务正文扫描。
-- 运行中的 Agent `TaskSync` 是索引唯一写者，临时 `TaskSync` 只读。`task.json` 的 size/mtime 均未
-  变化时不得重新读取或解析；HEAD/ref 指纹未变时不得执行 `git ls-tree`，指纹变化时每仓库最多一次。
+  localDirs，以及每个支持任务文件的相对路径、size/mtime/摘要；不得保存任务正文。索引命中时允许
+  先返回只读投影，后台再增量校验；runtime 未 ready 时也只读该文件，不回退到全任务正文扫描。
+- 运行中的 Agent `TaskSync` 是索引唯一写者，临时 `TaskSync` 只读。任意任务文件的 size/mtime 均未
+  变化时，启动 pull 不得重新读取正文或计算摘要；`task.json` 同时复用 `id/branch`。HEAD/ref 指纹
+  未变时不得执行 `git ls-tree`，指纹变化时每仓库最多一次。
   启动期 ownership 增量校验与 pull 必须由同一后台链串行执行，不能让 ownership worker 与完整快照
   扫描同时运行。写盘使用原子替换，schema/binding/路径/符号链接/大小或条目上限校验失败时回退现有
   权威扫描；任何上传、pull、merge、冲突覆盖和 ownership 写操作都不得使用该展示缓存短路。
@@ -426,7 +427,7 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | 本地真实分支与 binding 不一致 | Agent 暂停该 binding，不写文件、不上传、不推进 cursor |
 | ownership 索引 schema/binding/路径/符号链接/大小/条目数无效 | 拒绝该索引，回退权威冷扫描，不沿用旧 ownership |
 | HEAD/ref 指纹与持久索引一致 | 复用 tracked paths，不执行 `git ls-tree` |
-| `task.json` size/mtime 与持久索引一致 | 不读取、不解析该文件；写操作仍实时读取真实内容 |
+| 任一任务文件 size/mtime 与持久索引一致 | 启动 dirty 检测复用摘要、不读取正文；写操作仍实时读取真实内容 |
 | 启动同步尚未完成 | heartbeat 保活但该 binding 不进入监听集合；命令等待，watcher 事件暂存到串行链收尾 |
 | 基线首次收到来源不同任务但无证据 | `409 TASK_MERGE_EVIDENCE_REQUIRED`，不写快照 |
 | 证据版本、类型、HEAD SHA、任务 ID、目录、路径或分支不匹配 | `400/409`，整批不写 |
@@ -462,7 +463,7 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - Good：5 个关联的 ProjectRail 在 3 秒刷新时复用 15 秒归属投影；过期后只扫描任务元数据和
   `task.json.branch`，不读取约 6000 个任务正文文件。
 - Good：正常重启命中 `ownership-index.json`，ProjectRail 先恢复 5 个关联；后台只枚举文件元数据，
-  未变化任务不解析 `task.json`，未变化 HEAD 不启动 `git ls-tree`。
+  未变化任务文件不读取正文，未变化 `task.json` 不解析，未变化 HEAD 不启动 `git ls-tree`。
 - Good：首次接入时延后的本地任务后来已由其他 Agent 按相同文件集合和摘要写入服务端；客户端
   在启动或下一次真实 pull 中只清除 deferred，ProjectRail 恢复同步正常，不上传本地任务。
 - Good：同一仓库为主分支和 feature 分支各建一个 worktree；两个 `localRepoKey` 不同，各自只监听当前分支。

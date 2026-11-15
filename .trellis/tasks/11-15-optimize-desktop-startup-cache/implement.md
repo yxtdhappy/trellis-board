@@ -27,7 +27,7 @@
 ## 2. 索引 schema 与安全路径
 
 - 在 `AgentPaths` 增加 `ownership_index_file`。
-- 在 `task_sync.rs` 增加 `OWNERSHIP_INDEX_VERSION = 1`、索引序列化和反序列化结构。
+- 在 `task_sync.rs` 增加 `OWNERSHIP_INDEX_VERSION = 2`、索引序列化和反序列化结构。
 - 复用 `ConfigStore::write_atomic` 原子写。
 - 加载时做尺寸、数量、schema、binding、路径安全校验；无效条目丢弃。
 - 暂不修改 cursor、config 或服务端协议。
@@ -60,7 +60,7 @@
 - 后台校验：
   - 比较 binding；
   - 枚举 taskDir 和受支持文件元数据；
-  - 未变化 `task.json` 复用 branch/taskId；
+  - 未变化文件复用 SHA256，未变化 `task.json` 复用 branch/taskId；
   - 计算当前 owned/paused/localDirs；
   - HEAD 指纹未变时复用 trackedPaths；
   - HEAD 变化时调用现有 `head_tree_paths`；
@@ -70,8 +70,9 @@
 测试：
 
 - 第二次 TaskSync 命中持久索引。
-- 未变化任务不读取内容，`head_tree_scans` 不增长。
-- 单任务变化只解析该任务。
+- 未变化任务不读取任何正文，`head_tree_scans` 不增长。
+- 单文件变化只读取并哈希该文件。
+- 元数据缓存 dirty 检测与完整文件扫描一致。
 - HEAD 变化每仓库一次 `ls-tree`。
 - 校验中 invalidation/binding 变化不回写旧结果。
 
