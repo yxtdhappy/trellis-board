@@ -738,16 +738,19 @@ fn file_state_from_group(group: &SnapshotGroup) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn baselines_for_task_dir(
+fn baselines_by_task_dir(
     baselines: &BTreeMap<String, String>,
-    task_dir: &str,
-) -> BTreeMap<String, String> {
-    normalize_baselines(baselines)
-        .into_iter()
-        .filter(|(path_name, _)| {
-            task_directory_from_relative(path_name).as_deref() == Some(task_dir)
-        })
-        .collect()
+) -> BTreeMap<String, BTreeMap<String, String>> {
+    let mut grouped = BTreeMap::new();
+    for (path_name, sha256) in normalize_baselines(baselines) {
+        if let Some(task_dir) = task_directory_from_relative(&path_name) {
+            grouped
+                .entry(task_dir)
+                .or_insert_with(BTreeMap::new)
+                .insert(path_name, sha256);
+        }
+    }
+    grouped
 }
 
 fn local_sync_state_from_groups(
@@ -768,15 +771,11 @@ fn local_sync_state_from_groups(
         .keys()
         .map(|task_dir| (*task_dir).to_string())
         .collect();
+    let cursor_baselines = baselines_by_task_dir(&cursor.baselines);
+    let server_baselines = baselines_by_task_dir(server_baselines);
     task_dirs.extend(cursor.deferred.keys().cloned());
-    for baselines in [&cursor.baselines, server_baselines] {
-        let normalized = normalize_baselines(baselines);
-        for path_name in normalized.keys() {
-            if let Some(task_dir) = task_directory_from_relative(path_name) {
-                task_dirs.insert(task_dir);
-            }
-        }
-    }
+    task_dirs.extend(cursor_baselines.keys().cloned());
+    task_dirs.extend(server_baselines.keys().cloned());
     let mut dirty = Vec::new();
     let mut reconciled_deferred = HashSet::new();
     for task_dir in task_dirs {
@@ -790,7 +789,10 @@ fn local_sync_state_from_groups(
                 continue;
             }
             if deferred_state == &local_state {
-                if baselines_for_task_dir(server_baselines, &task_dir) == local_state {
+                if server_baselines
+                    .get(task_dir.as_str())
+                    .is_some_and(|baseline| baseline == &local_state)
+                {
                     next_deferred.remove(&task_dir);
                     reconciled_deferred.insert(task_dir.clone());
                 }
@@ -798,7 +800,10 @@ fn local_sync_state_from_groups(
             }
             next_deferred.remove(&task_dir);
         }
-        if baselines_for_task_dir(&cursor.baselines, &task_dir) != local_state {
+        let cursor_matches = cursor_baselines
+            .get(task_dir.as_str())
+            .map_or(local_state.is_empty(), |baseline| baseline == &local_state);
+        if !cursor_matches {
             dirty.push(task_dir);
         }
     }
@@ -8746,6 +8751,37 @@ mod tests {
         assert!(deferred.is_empty());
         assert_eq!(reconciled.len(), 1);
         assert!(reconciled.contains(task_dir));
+    }
+
+    #[test]
+    fn grouped_baselines_keep_task_scope() {
+        let task_a_dir = ".trellis/tasks/task-a";
+        let task_b_dir = ".trellis/tasks/task-b";
+        let task_a = task_group(
+            "task-a",
+            task_a_dir,
+            &[("task.json", "{\"id\":\"task-a\"}\n")],
+        );
+        let task_b = task_group(
+            "task-b",
+            task_b_dir,
+            &[("task.json", "{\"id\":\"task-b\"}\n")],
+        );
+        let task_a_state = file_state_from_group(&task_a);
+        let task_b_state = file_state_from_group(&task_b);
+        let cursor = Cursor {
+            baselines: task_a_state.clone(),
+            deferred: BTreeMap::from([(task_b_dir.to_string(), task_b_state)]),
+            ..Default::default()
+        };
+        let server_baselines = task_a_state;
+
+        let (dirty, deferred, reconciled) =
+            local_sync_state_from_groups(&cursor, &[task_a, task_b], &server_baselines);
+
+        assert!(dirty.is_empty());
+        assert_eq!(deferred, cursor.deferred);
+        assert!(reconciled.is_empty());
     }
 
     #[test]
