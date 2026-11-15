@@ -104,6 +104,7 @@ export type TeamRuntime = {
   } | null
   systemAdmin?: boolean
   teams?: RuntimeTeam[]
+  projects?: Project[]
 }
 
 export type RuntimeTeam = {

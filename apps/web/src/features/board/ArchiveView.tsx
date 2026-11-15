@@ -9,18 +9,17 @@ import { branchMatches } from '@/lib/execution-filter.js'
 import { archiveAssigneeOptions } from '@/lib/team-client.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
 import { Pagination } from './Pagination.tsx'
+import { SearchableSelect } from './SearchableSelect'
 import { SelectField } from './SelectField.tsx'
 import { branchLabel, initials, type BoardTask } from './task-view.ts'
 
 type ArchiveViewProps = {
   tasks: BoardTask[]
-  projects: { id: string; name: string }[]
-  projectId: string
-  taskSpaceId: string
+  projects: { id: string; name: string; teamId?: string | null }[]
+  teams: { id: string; name: string }[]
   branch: string
   onBranchChange: (branch: string) => void
   teamMode: boolean
-  teamId: string
   queryRevision?: number | string | null
   onOpen: (task: BoardTask) => void
   onRefresh?: () => void
@@ -31,12 +30,10 @@ const PAGE_SIZE = 20
 export function ArchiveView({
   tasks,
   projects,
-  projectId,
-  taskSpaceId,
+  teams,
   branch,
   onBranchChange,
   teamMode,
-  teamId,
   queryRevision,
   onOpen,
   onRefresh,
@@ -44,11 +41,39 @@ export function ArchiveView({
   const [assignee, setAssignee] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
+  const [archiveTeamId, setArchiveTeamId] = useState('all')
+  const [archiveProjectId, setArchiveProjectId] = useState('all')
+  const teamOptions = useMemo(
+    () => [
+      { value: 'all', label: '全部团队' },
+      ...teams.map((team) => ({ value: team.id, label: team.name })),
+    ],
+    [teams],
+  )
+  const availableProjects = useMemo(
+    () =>
+      projects.filter(
+        (project) => archiveTeamId === 'all' || project.teamId === archiveTeamId,
+      ),
+    [archiveTeamId, projects],
+  )
+  const projectOptions = useMemo(
+    () => [
+      { value: 'all', label: '全部项目' },
+      ...availableProjects.map((project) => ({ value: project.id, label: project.name })),
+    ],
+    [availableProjects],
+  )
+  const effectiveProjectId =
+    archiveProjectId !== 'all' &&
+    !availableProjects.some((project) => project.id === archiveProjectId)
+      ? 'all'
+      : archiveProjectId
   const archive = useArchiveTasks({
     enabled: teamMode,
-    teamId,
-    projectId,
-    taskSpaceId,
+    teamId: archiveTeamId,
+    projectId: effectiveProjectId,
+    taskSpaceId: 'all',
     branch,
     revision: queryRevision,
   })
@@ -71,7 +96,9 @@ export function ArchiveView({
     if (teamMode) return archive.tasks
     const keyword = search.trim().toLowerCase()
     const filtered = tasks
-      .filter((task) => projectId === 'all' || task.projectId === projectId)
+      .filter(
+        (task) => effectiveProjectId === 'all' || task.projectId === effectiveProjectId,
+      )
       .filter((task) => branchMatches(task.branchName, branch))
       .filter((task) => !assignee || task.assignee === assignee)
       .filter(
@@ -82,16 +109,12 @@ export function ArchiveView({
             .some((value) => value.includes(keyword)),
       )
     return sortArchivedTasks(filtered)
-  }, [archive.tasks, tasks, projectId, branch, assignee, search, teamMode])
+  }, [archive.tasks, effectiveProjectId, tasks, branch, assignee, search, teamMode])
 
   const pageCount = teamMode ? archive.pageCount : Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
   const current = teamMode ? archive.pageIndex : Math.min(page, pageCount - 1)
   const visible = teamMode ? rows : rows.slice(current * PAGE_SIZE, current * PAGE_SIZE + PAGE_SIZE)
   const total = teamMode ? archive.total : rows.length
-  const projectName =
-    projectId === 'all'
-      ? '全部项目'
-      : (projects.find((item) => item.id === projectId)?.name ?? '全部项目')
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -152,7 +175,51 @@ export function ArchiveView({
             setPage(0)
           }}
         />
-        <span className="ml-auto text-[0.6875rem] text-muted-foreground">{projectName}</span>
+        {teamMode ? (
+          <>
+            <SearchableSelect
+              ariaLabel="团队"
+              className="ml-auto w-40"
+              value={archiveTeamId}
+              options={teamOptions}
+              onChange={(next) => {
+                setArchiveTeamId(next)
+                if (
+                  effectiveProjectId !== 'all' &&
+                  !projects.some(
+                    (project) =>
+                      project.id === effectiveProjectId &&
+                      (next === 'all' || project.teamId === next),
+                  )
+                ) {
+                  setArchiveProjectId('all')
+                }
+                setPage(0)
+              }}
+            />
+            <SearchableSelect
+              ariaLabel="项目"
+              className="w-52"
+              value={effectiveProjectId}
+              options={projectOptions}
+              onChange={(next) => {
+                setArchiveProjectId(next)
+                setPage(0)
+              }}
+            />
+          </>
+        ) : (
+          <SearchableSelect
+            ariaLabel="项目"
+            className="ml-auto w-52"
+            value={effectiveProjectId}
+            options={projectOptions}
+            onChange={(next) => {
+              setArchiveProjectId(next)
+              setPage(0)
+            }}
+          />
+        )}
       </div>
 
       {teamMode && archive.error ? (
