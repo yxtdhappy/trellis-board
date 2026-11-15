@@ -1272,3 +1272,27 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 54: 归档索引团队项目筛选
+<!-- trellis-session: v=2 fp=4e9e7553e5badb65 -->
+
+**Date**: 2026-11-15
+**Task**: 归档索引团队项目筛选
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+归档索引新增页面内团队和项目搜索筛选，复用现有查询契约；完成构建、Web 测试和登录态 E2E，并修复下拉空状态占位空白。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `de3b1c5` | feat(web): add archive team and project filters |
+| `8be5249` | fix(web): hide empty archive filter placeholder |
+
+### Status
+
+[OK] **Completed**
