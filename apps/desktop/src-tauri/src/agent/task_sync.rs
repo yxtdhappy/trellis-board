@@ -4489,27 +4489,7 @@ impl TaskSync {
                 "reason": "BASELINE_RECONCILIATION_NOT_REQUIRED",
             }));
         }
-        let groups = self.local_groups(&binding, None).await?;
         let cursor = self.read_cursor(task_space_id).await;
-        let mut task_dirs: Vec<String> = groups
-            .iter()
-            .filter(|group| {
-                !cursor.deferred.contains_key(&group.task_dir)
-                    && !reconciled_deferred_dirs.contains(&group.task_dir)
-                    && group
-                        .task_branch
-                        .as_deref()
-                        .is_some_and(|branch| branch != binding.branch_name)
-            })
-            .map(|group| group.task_dir.clone())
-            .collect();
-        task_dirs.sort_unstable();
-        if task_dirs.is_empty() {
-            return Ok(json!({
-                "skipped": true,
-                "reason": "BASELINE_RECONCILIATION_NOT_REQUIRED",
-            }));
-        }
         let indexed_head = {
             self.ensure_ownership_index_loaded().await;
             let index = self.ownership_index.lock().await;
@@ -4531,17 +4511,35 @@ impl TaskSync {
             {
                 if std::env::var_os("TRELLIS_DESKTOP_HTTP_TRACE").is_some() {
                     crate::logging::warn(&format!(
-                        "基线任务补交跳过 taskSpaceId={} candidates={}",
-                        binding.task_space_id,
-                        task_dirs.len()
+                        "基线任务补交跳过 taskSpaceId={}",
+                        binding.task_space_id
                     ));
                 }
                 return Ok(json!({
                     "skipped": true,
                     "reason": "BASELINE_RECONCILIATION_CURRENT",
-                    "candidateCount": task_dirs.len(),
                 }));
             }
+        }
+        let groups = self.local_groups(&binding, None).await?;
+        let mut task_dirs: Vec<String> = groups
+            .iter()
+            .filter(|group| {
+                !cursor.deferred.contains_key(&group.task_dir)
+                    && !reconciled_deferred_dirs.contains(&group.task_dir)
+                    && group
+                        .task_branch
+                        .as_deref()
+                        .is_some_and(|branch| branch != binding.branch_name)
+            })
+            .map(|group| group.task_dir.clone())
+            .collect();
+        task_dirs.sort_unstable();
+        if task_dirs.is_empty() {
+            return Ok(json!({
+                "skipped": true,
+                "reason": "BASELINE_RECONCILIATION_NOT_REQUIRED",
+            }));
         }
         let result = self
             .upload_directories(&binding, &task_dirs, false, None)
