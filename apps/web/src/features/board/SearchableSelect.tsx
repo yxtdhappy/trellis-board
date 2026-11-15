@@ -61,7 +61,7 @@ export function SearchableSelect({
       <Combobox.Portal>
         <Combobox.Positioner sideOffset={4} className="isolate z-50">
           <Combobox.Popup className="max-h-(--available-height) w-(--anchor-width) max-w-(--available-width) overflow-hidden rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10">
-            <Combobox.Empty className="px-3 py-6 text-center text-xs text-muted-foreground">
+            <Combobox.Empty className="empty:hidden px-3 py-6 text-center text-xs text-muted-foreground">
               {emptyLabel}
             </Combobox.Empty>
             <Combobox.List className="max-h-64 overflow-y-auto overscroll-contain p-1 outline-none data-empty:p-0">
