@@ -543,29 +543,32 @@ test("5xx 按退避重试后成功", async () => {
 });
 
 test("请求之间保持最小间隔", async () => {
-  const fixture = await createWitopsFixture();
-  try {
-    const client = createWitopsClient({
-      baseUrl: fixture.baseUrl,
+  const timestamps = [];
+  const client = createWitopsClient(
+    {
+      baseUrl: "http://fixture",
       gatewayPrefix: "/gateway",
       taskServicePrefix: "/task-service",
       adminServicePrefix: "/admin-service",
       requestIntervalMs: 60,
       retries: 0
-    });
-    for (const type of ["taskStatus", "taskCategory", "priority"]) {
-      await client.dictionary({ type, status: 1, size: 100 }, { token: "fixture-token" });
+    },
+    {
+      fetchImpl: async () => {
+        timestamps.push(Date.now());
+        return new Response(JSON.stringify({ code: 20000, data: [] }), { status: 200 });
+      }
     }
-    const timestamps = fixture.state.requests.map((item) => item.at);
-    assert.equal(timestamps.length, 3);
-    for (let index = 1; index < timestamps.length; index += 1) {
-      assert.ok(
-        timestamps[index] - timestamps[index - 1] >= 50,
-        `间隔过小: ${timestamps[index] - timestamps[index - 1]}ms`
-      );
-    }
-  } finally {
-    await fixture.close();
+  );
+  for (const type of ["taskStatus", "taskCategory", "priority"]) {
+    await client.dictionary({ type, status: 1, size: 100 }, { token: "fixture-token" });
+  }
+  assert.equal(timestamps.length, 3);
+  for (let index = 1; index < timestamps.length; index += 1) {
+    assert.ok(
+      timestamps[index] - timestamps[index - 1] >= 50,
+      `间隔过小: ${timestamps[index] - timestamps[index - 1]}ms`
+    );
   }
 });
 
