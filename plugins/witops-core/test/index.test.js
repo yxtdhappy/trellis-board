@@ -35,7 +35,7 @@ async function setup({ fixtureOptions, config: configOverrides, secrets = null }
     repo,
     harness,
     http,
-    secretsFile: path.join(harness.workspace.dataDir, "plugins.secrets.json"),
+    secretsFile: harness.workspace.secretsFile,
     async cleanup() {
       await http.close();
       await harness.cleanup();

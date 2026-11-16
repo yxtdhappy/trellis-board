@@ -13,7 +13,9 @@ export const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 export function makeWorkspace({ withRepository = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-plugin-'))
   const dataDir = path.join(root, 'data')
+  const pluginsDir = path.join(root, 'plugins')
   fs.mkdirSync(dataDir, { recursive: true })
+  fs.mkdirSync(pluginsDir, { recursive: true })
   const repositoryPath = path.join(root, 'repo')
   const repositories = []
   if (withRepository) {
@@ -29,10 +31,13 @@ export function makeWorkspace({ withRepository = false } = {}) {
   return {
     root,
     dataDir,
+    pluginsDir,
     repositoryPath,
     repositories,
     databaseFile: path.join(dataDir, 'board.sqlite'),
-    configFile: path.join(dataDir, 'plugins.json'),
+    configFile: path.join(pluginsDir, 'plugins.json'),
+    secretsFile: path.join(pluginsDir, 'plugins.secrets.json'),
+    logsDir: path.join(pluginsDir, 'logs'),
     legacyFiles: {
       repositoriesFile: path.join(dataDir, 'repos.json'),
       metadataFile: path.join(dataDir, 'task-metadata.json'),
@@ -53,6 +58,7 @@ export function openPluginDatabase(workspace) {
 }
 
 export function writePluginConfig(workspace, plugins) {
+  fs.mkdirSync(workspace.pluginsDir, { recursive: true })
   fs.writeFileSync(workspace.configFile, JSON.stringify({ plugins }, null, 2))
 }
 
@@ -77,7 +83,8 @@ export async function createHarness({
   if (repositories) workspace.repositories = repositories
   writePluginConfig(workspace, plugins)
   if (secrets) {
-    const secretsFile = path.join(workspace.dataDir, 'plugins.secrets.json')
+    const secretsFile = workspace.secretsFile
+    fs.mkdirSync(workspace.pluginsDir, { recursive: true })
     fs.writeFileSync(secretsFile, JSON.stringify(secrets, null, 2), { mode: 0o600 })
     if (process.platform !== 'win32') fs.chmodSync(secretsFile, 0o600)
   }
@@ -92,6 +99,7 @@ export async function createHarness({
     db,
     appDir,
     dataDir: workspace.dataDir,
+    pluginsDir: workspace.pluginsDir,
     hostVersion,
     repositories: workspace.repositories,
     boardProvider: () => null,

@@ -158,7 +158,7 @@ export function PluginsView() {
             type="button"
             disabled={disabled || reloading}
             onClick={() => void reload()}
-            title="重读运行数据目录的 plugins.json 与 plugins.secrets.json，重启受影响的插件"
+            title="重读插件配置目录（TrellisBoard/plugins）的 plugins.json 与 plugins.secrets.json，重启受影响的插件"
             className="h-7 rounded-md border border-border px-2.5 text-[0.6875rem] hover:bg-muted disabled:opacity-50"
           >
             {reloading ? '重载中…' : '刷新配置'}
@@ -181,8 +181,8 @@ export function PluginsView() {
         </p>
       ) : plugins.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
-          还没有加载任何插件。把插件目录放到 plugins/&lt;id&gt;/ 并写入运行数据目录中的 plugins.json
-          后刷新。
+          还没有加载任何插件。把插件目录放到 &lt;TrellisBoard&gt;/plugins/&lt;id&gt;/ 或安装目录的
+          plugins/&lt;id&gt;/， 并在 &lt;TrellisBoard&gt;/plugins/plugins.json 登记后刷新。
         </p>
       ) : (
         <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">

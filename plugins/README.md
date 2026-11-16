@@ -6,7 +6,10 @@
 - 需要独立发布时，npm 包名可以用 `trellis-board-plugin-<id>`，manifest `id` 仍保持短名，避免破坏已有配置与路由。
 - 面板 id 默认与插件 id 相同；一个插件有多个面板时使用 `<id>-<surface>`。
 
-命名之外，插件仓库内不提交任何真实环境信息：本地绝对路径、账号、目标 URL、外部项目大纲/知识库都通过 `config` 注入。
+- 插件入口按 `./plugins/<id>/<sub>` 解析：先找 `<TrellisBoard>/plugins/<id>/<sub>`（用户目录，
+  默认 `%LOCALAPPDATA%\TrellisBoard\plugins`），不存在再回落安装目录的 `plugins/<id>/<sub>`。
+  用户目录可以只放 `index.js` + `plugin.json` 覆盖安装目录，也可以在 `plugins.json` 登记全新插件。
+- 命名之外，插件仓库内不提交任何真实环境信息：本地绝对路径、账号、目标 URL、外部项目大纲/知识库都通过 `config` 注入。
 
 ## 测试
 

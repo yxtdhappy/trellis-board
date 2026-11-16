@@ -1,7 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import path from 'node:path'
 import {
   createHarness,
   fixtureModule,
@@ -19,7 +18,7 @@ function configEchoPlugin(config = {}) {
 }
 
 function secretsFile(workspace) {
-  return path.join(workspace.dataDir, 'plugins.secrets.json')
+  return workspace.secretsFile
 }
 
 function writeSecrets(workspace, refs, { mode = 0o600 } = {}) {

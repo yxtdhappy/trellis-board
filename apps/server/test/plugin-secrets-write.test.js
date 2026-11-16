@@ -21,8 +21,8 @@ async function setup({ secrets = null } = {}) {
     hostVersion: '0.2.0',
   })
   const http = await startHttpServer(harness.runtime)
-  const secretsFile = path.join(harness.workspace.dataDir, 'plugins.secrets.json')
-  const keyFile = path.join(harness.workspace.dataDir, SECRETS_KEY_FILENAME)
+  const secretsFile = harness.workspace.secretsFile
+  const keyFile = path.join(harness.workspace.pluginsDir, SECRETS_KEY_FILENAME)
   return {
     harness,
     http,

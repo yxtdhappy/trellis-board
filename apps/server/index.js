@@ -5,7 +5,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
-import { parseTeamConfig, dataDir } from './config.js'
+import { parseTeamConfig, dataDir, pluginsDir } from './config.js'
 import {
   readJsonBody as readJsonBodyCommon,
   sendJson as sendJsonCommon,
@@ -524,6 +524,7 @@ async function startPluginRuntime() {
     db: database,
     appDir,
     dataDir,
+    pluginsDir,
     hostVersion,
     repositories: getRepositories(),
     repositoryService,

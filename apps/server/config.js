@@ -6,6 +6,29 @@ const serverDir = path.dirname(fileURLToPath(import.meta.url))
 export const appDir = path.resolve(serverDir, '../..')
 export const legacyDataDir = path.join(appDir, 'data')
 
+/**
+ * 用户级 TrellisBoard 根目录（不含 server/plugins 子目录）。
+ * 显式数据目录不参与这里：它由调用方自己决定能否共享同一个根。
+ */
+export function resolveBoardRootDir({
+  platform = process.platform,
+  env = process.env,
+  homeDir = os.homedir(),
+} = {}) {
+  const platformPath = platform === 'win32' ? path.win32 : path.posix
+  if (platform === 'win32') {
+    const base =
+      String(env.LOCALAPPDATA || '').trim() || platformPath.join(homeDir, 'AppData', 'Local')
+    return platformPath.join(base, 'TrellisBoard')
+  }
+  if (platform === 'darwin') {
+    return platformPath.join(homeDir, 'Library', 'Application Support', 'TrellisBoard')
+  }
+  const base =
+    String(env.XDG_DATA_HOME || '').trim() || platformPath.join(homeDir, '.local', 'share')
+  return platformPath.join(base, 'TrellisBoard')
+}
+
 export function resolveBoardDataDir({
   platform = process.platform,
   env = process.env,
@@ -14,20 +37,32 @@ export function resolveBoardDataDir({
   const platformPath = platform === 'win32' ? path.win32 : path.posix
   const override = String(env.TRELLIS_BOARD_DATA_DIR || '').trim()
   if (override) return platformPath.resolve(override)
-  if (platform === 'win32') {
-    const base =
-      String(env.LOCALAPPDATA || '').trim() || platformPath.join(homeDir, 'AppData', 'Local')
-    return platformPath.join(base, 'TrellisBoard', 'server')
-  }
-  if (platform === 'darwin') {
-    return platformPath.join(homeDir, 'Library', 'Application Support', 'TrellisBoard', 'server')
-  }
-  const base =
-    String(env.XDG_DATA_HOME || '').trim() || platformPath.join(homeDir, '.local', 'share')
-  return platformPath.join(base, 'TrellisBoard', 'server')
+  return platformPath.join(resolveBoardRootDir({ platform, env, homeDir }), 'server')
+}
+
+/**
+ * 插件配置根目录：<TrellisBoard>/plugins，与 <TrellisBoard>/server 平级。
+ *
+ * - `TRELLIS_BOARD_PLUGINS_DIR` 优先；
+ * - 设置 `TRELLIS_BOARD_DATA_DIR` 的部署环境没有共享根，退化为 `<数据目录>/plugins`，
+ *   避免把插件配置写到数据目录之外的未知位置；
+ * - 其余场景与 `resolveBoardRootDir()` 约定一致。
+ */
+export function resolvePluginsDir({
+  platform = process.platform,
+  env = process.env,
+  homeDir = os.homedir(),
+} = {}) {
+  const platformPath = platform === 'win32' ? path.win32 : path.posix
+  const override = String(env.TRELLIS_BOARD_PLUGINS_DIR || '').trim()
+  if (override) return platformPath.resolve(override)
+  const dataOverride = String(env.TRELLIS_BOARD_DATA_DIR || '').trim()
+  if (dataOverride) return platformPath.join(platformPath.resolve(dataOverride), 'plugins')
+  return platformPath.join(resolveBoardRootDir({ platform, env, homeDir }), 'plugins')
 }
 
 export const dataDir = resolveBoardDataDir()
+export const pluginsDir = resolvePluginsDir()
 export const databaseFile = path.join(dataDir, 'board.sqlite')
 export const metadataFile = path.join(dataDir, 'task-metadata.json')
 export const scanCacheFile = path.join(dataDir, 'scan-cache.json')

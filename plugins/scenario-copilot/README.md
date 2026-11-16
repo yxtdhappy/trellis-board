@@ -16,7 +16,7 @@
 <scenarioRoot>/dist/bin/scenario-copilot.js
 ```
 
-2. 在 `data/plugins.json` 启用：
+2. 在插件配置目录的 `plugins.json`（默认 `<TrellisBoard>/plugins/plugins.json`）启用：
 
 ```json
 {

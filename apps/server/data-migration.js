@@ -14,9 +14,6 @@ const RUNTIME_ENTRIES = [
   'task-metadata.json',
   'scan-cache.json',
   'board-state.json',
-  'plugins.json',
-  'plugins.secrets.json',
-  'plugins',
   'backups',
   'projects',
 ]

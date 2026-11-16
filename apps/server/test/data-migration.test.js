@@ -16,8 +16,8 @@ function seedLegacyData(root) {
   const sourceDir = path.join(root, 'repo', 'data')
   const projectPath = path.join(sourceDir, 'projects', 'workspace-1')
   fs.mkdirSync(path.join(projectPath, '.trellis'), { recursive: true })
-  fs.mkdirSync(path.join(sourceDir, 'plugins'), { recursive: true })
-  fs.writeFileSync(path.join(sourceDir, 'plugins', 'demo.json'), '{}')
+  fs.mkdirSync(path.join(sourceDir, 'backups'), { recursive: true })
+  fs.writeFileSync(path.join(sourceDir, 'backups', 'demo.json'), '{}')
   fs.mkdirSync(path.join(sourceDir, '.git-auth', 'run-stale'), { recursive: true })
   fs.writeFileSync(path.join(sourceDir, '.git-auth', 'run-stale', 'identity'), 'stale')
   fs.mkdirSync(path.join(sourceDir, '.empty-git-hooks'), { recursive: true })
@@ -111,11 +111,11 @@ test('只迁移运行数据并重写受管项目路径', () => {
       fs.readdirSync(path.join(targetDir, 'backups')).some((name) => name.startsWith('layout-v1-')),
       true,
     )
-    assert.equal(fs.existsSync(path.join(targetDir, 'plugins', 'demo.json')), true)
+    assert.equal(fs.existsSync(path.join(targetDir, 'backups', 'demo.json')), true)
     assert.equal(fs.existsSync(path.join(targetDir, 'unknown.txt')), false)
     assert.equal(fs.existsSync(path.join(targetDir, 'plugins.example.json')), false)
     assert.equal(fs.existsSync(path.join(sourceDir, 'board.sqlite')), false)
-    assert.equal(fs.existsSync(path.join(sourceDir, 'plugins')), false)
+    assert.equal(fs.existsSync(path.join(sourceDir, 'backups')), false)
     assert.equal(fs.existsSync(path.join(sourceDir, 'projects')), false)
     assert.equal(fs.existsSync(path.join(sourceDir, '.git-auth')), false)
     assert.equal(fs.existsSync(path.join(sourceDir, '.empty-git-hooks')), false)
@@ -148,7 +148,7 @@ test('拒绝把运行数据目录放回源码工作树', () => {
   try {
     const sourceDir = path.join(root, 'repo', 'data')
     fs.mkdirSync(sourceDir, { recursive: true })
-    fs.writeFileSync(path.join(sourceDir, 'plugins.json'), '{}')
+    fs.writeFileSync(path.join(sourceDir, 'repos.json'), '[]')
     assert.throws(
       () =>
         migrateLegacyRuntimeData({
@@ -170,13 +170,13 @@ test('目标已有数据库时拒绝自动合并旧数据', () => {
     const sourceDir = path.join(root, 'repo', 'data')
     const targetDir = path.join(root, 'appdata')
     fs.mkdirSync(sourceDir, { recursive: true })
-    fs.writeFileSync(path.join(sourceDir, 'plugins.json'), '{}')
+    fs.writeFileSync(path.join(sourceDir, 'repos.json'), '[]')
     fs.mkdirSync(targetDir, { recursive: true })
     fs.writeFileSync(path.join(targetDir, 'board.sqlite'), 'existing')
     assert.throws(() => migrateLegacyRuntimeData({ sourceDir, targetDir }), /旧运行数据未自动合并/)
     assert.equal(fs.readFileSync(path.join(targetDir, 'board.sqlite'), 'utf8'), 'existing')
-    assert.equal(fs.existsSync(path.join(targetDir, 'plugins.json')), false)
-    assert.equal(fs.existsSync(path.join(sourceDir, 'plugins.json')), true)
+    assert.equal(fs.existsSync(path.join(targetDir, 'repos.json')), false)
+    assert.equal(fs.existsSync(path.join(sourceDir, 'repos.json')), true)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
@@ -189,16 +189,16 @@ test('目标目录只有布局标记时可以迁移后续出现的旧运行数�
     const targetDir = path.join(root, 'appdata')
     fs.mkdirSync(sourceDir, { recursive: true })
     fs.mkdirSync(targetDir, { recursive: true })
-    fs.writeFileSync(path.join(sourceDir, 'plugins.json'), '{"plugins":[]}')
+    fs.writeFileSync(path.join(sourceDir, 'repos.json'), '[]')
     fs.writeFileSync(path.join(targetDir, '.layout-v1'), 'initialized\n')
 
     const result = migrateLegacyRuntimeData({ sourceDir, targetDir })
 
     assert.equal(result.migrated, true)
-    assert.deepEqual(result.entries, ['plugins.json'])
-    assert.equal(fs.readFileSync(path.join(targetDir, 'plugins.json'), 'utf8'), '{"plugins":[]}')
+    assert.deepEqual(result.entries, ['repos.json'])
+    assert.equal(fs.readFileSync(path.join(targetDir, 'repos.json'), 'utf8'), '[]')
     assert.equal(fs.existsSync(path.join(targetDir, '.layout-v1')), true)
-    assert.equal(fs.existsSync(path.join(sourceDir, 'plugins.json')), false)
+    assert.equal(fs.existsSync(path.join(sourceDir, 'repos.json')), false)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
@@ -226,13 +226,13 @@ test('迁移失败时保留源运行数据并清理 staging', () => {
     const sourceDir = path.join(root, 'repo', 'data')
     const targetDir = path.join(root, 'appdata')
     fs.mkdirSync(sourceDir, { recursive: true })
-    fs.writeFileSync(path.join(sourceDir, 'plugins.json'), '{"plugins":[]}')
+    fs.writeFileSync(path.join(sourceDir, 'repos.json'), '[]')
     fs.writeFileSync(targetDir, 'not-a-directory')
     assert.throws(
       () => migrateLegacyRuntimeData({ sourceDir, targetDir, logger: { warn() {} } }),
       /目标数据路径不是目录/,
     )
-    assert.equal(fs.existsSync(path.join(sourceDir, 'plugins.json')), true)
+    assert.equal(fs.existsSync(path.join(sourceDir, 'repos.json')), true)
     assert.deepEqual(
       fs.readdirSync(root).filter((name) => name.startsWith('.trellis-board-data-')),
       [],

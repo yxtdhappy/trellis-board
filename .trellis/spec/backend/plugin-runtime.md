@@ -67,8 +67,14 @@
 
 ## 6. 配置与敏感信息
 
-- 运行数据目录中的 `plugins.json` 只放路径、开关与运行参数；敏感值优先用 `secret:scope/key` 引用
+- 插件配置目录中的 `plugins.json` 只放路径、开关与运行参数；敏感值优先用 `secret:scope/key` 引用
   同目录的 `plugins.secrets.json`，也支持 `env:NAME`。
+- 插件配置目录默认是 `<TrellisBoard>/plugins`（Linux `${XDG_DATA_HOME:-~/.local/share}/TrellisBoard/plugins`、
+  macOS `~/Library/Application Support/TrellisBoard/plugins`、Windows `%LOCALAPPDATA%\TrellisBoard\plugins`），
+  可用 `TRELLIS_BOARD_PLUGINS_DIR` 覆盖；带 `TRELLIS_BOARD_DATA_DIR` 时退化为 `<数据目录>/plugins`。
+  目录内固定为 `plugins.json`、`plugins.secrets.json`、`plugins.secrets.key` 与 `logs/<id>.log`。
+- 插件入口解析：绝对路径原样使用；约定路径 `./plugins/<id>/<sub>` 先找 `<pluginsDir>/<id>/<sub>`，
+  不存在再回退到安装目录 `appDir`，用于在不改安装目录的前提下覆盖或新增私有插件。
 - secrets 文件默认与 `plugins.json` 同目录，可用 `TRELLIS_BOARD_SECRETS_FILE` 覆盖；格式为
   `{"version": 1, "refs": {"scope/key": "value"}}`，refs key 必须是 `scope/key`，值必须是非空字符串。
 - POSIX 下 secrets 文件必须是 `0600`；group/other 可读时直接拒绝加载，错误只报文件名与权限，不回显内容。

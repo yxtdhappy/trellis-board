@@ -243,6 +243,10 @@ if (Test-Path (Join-Path $dataDir 'board.sqlite-wal')) { Copy-Item (Join-Path $d
 if (Test-Path (Join-Path $dataDir 'board.sqlite-shm')) { Copy-Item (Join-Path $dataDir 'board.sqlite-shm') (Join-Path $backup 'board.sqlite-shm') }
 ```
 
+插件配置、secrets 与插件日志默认在 `<TrellisBoard>/plugins`：用 `TRELLIS_BOARD_DATA_DIR` 部署时为
+`<数据目录>/plugins`，随数据目录一起备份；用默认用户目录时为 `TrellisBoard/server` 的同级目录，
+需要单独归档 `plugins/`。
+
 本版本支持 v6 至 v11 升级到 v12。启动时先写
 `backups/board.sqlite.pre-v12.<timestamp>`，再创建缺失的 `sync_*` 表。旧账号、团队、项目、审计、
 旧实时表和 Git 凭据表不会自动删除，但 Team 运行链路不再读取它们。

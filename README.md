@@ -91,7 +91,15 @@ Board 运行数据不再写入源码目录。默认根目录为：
 - Linux：`${XDG_DATA_HOME:-~/.local/share}/TrellisBoard/server`
 
 部署环境应通过 `TRELLIS_BOARD_DATA_DIR` 指向独立持久化目录；Ubuntu 服务建议使用
-`/var/lib/trellis-board`。服务端主进程同时把日志写入
+`/var/lib/trellis-board`。插件配置与日志放在独立的 `plugins` 目录（默认与 `server` 平级）：
+
+- Windows：`%LOCALAPPDATA%\TrellisBoard\plugins`
+- macOS：`~/Library/Application Support/TrellisBoard/plugins`
+- Linux：`${XDG_DATA_HOME:-~/.local/share}/TrellisBoard/plugins`
+
+可用 `TRELLIS_BOARD_PLUGINS_DIR` 覆盖；设置了 `TRELLIS_BOARD_DATA_DIR` 的部署环境退化为
+`<运行数据目录>/plugins`。目录内固定为 `plugins.json`、`plugins.secrets.json`、`plugins.secrets.key`
+与 `logs/<id>.log`。服务端主进程同时把日志写入
 `<运行数据目录>/logs/` 下的 JSON 行文件；默认即 Windows 的
 `%LOCALAPPDATA%\TrellisBoard\server\logs\server.1.log`。文件名带轮转序号，
 单文件上限 `5 MiB`、最多保留 5 个文件（含正在写入的那个，序号随轮转递增）；正常退出会等待缓冲区落盘。
@@ -134,7 +142,8 @@ SQLite 使用 WAL 模式。standalone 主线程和扫描 Worker 各自持有连�
 都使用事务和条件更新。Team 服务端不需要 `git-credentials.key`。热备份前应先停止服务，并同时处理
 可能存在的 `board.sqlite-wal` 与 `board.sqlite-shm`。
 
-回滚到旧版 Board 时，先停止服务并归档当前运行数据目录，再切换到旧代码和旧库备份。旧版不解释
+回滚到旧版 Board 时，先停止服务并归档当前运行数据目录（插件配置与日志在
+`<TrellisBoard>/plugins`，默认配置下与 `server` 平级，需要一并归档），再切换到旧代码和旧库备份。旧版不解释
 `sync_*` 数据；Team 已提交的任务快照不会自动写回客户端 Git。详细步骤见
 [团队版运维手册](./docs/team-operations.md)。
 
@@ -211,12 +220,15 @@ binding 不一致时暂停该仓库同步，不写任务目录、不上传、不
 插件运行在独立子进程里，通过 NDJSON / JSON-RPC 与宿主通信；宿主不把插件代码加载进主进程。
 仓库内置 `a2a-intake` 与 `acp-dispatch` 两个参考插件；业务插件建议放在本地，不随仓库分发。
 
-1. 复制 `config/examples/plugins.json` 为运行数据目录中的 `plugins.json`。
+1. 复制 `config/examples/plugins.json` 为插件配置目录中的 `plugins.json`（默认
+   `<用户数据根>/plugins/plugins.json`，见「本地持久化」）。
 2. 插件目录固定为 `plugins/<id>/`，必须有 `plugin.json`（`id`、`version`、`apiVersion`、`engines.board`）。
-3. 敏感值推荐放在运行数据目录中的 `plugins.secrets.json`（复制 `config/examples/plugins.secrets.json`，
+   入口按 `./plugins/<id>/<sub>` 解析：先找 `<插件配置目录>/<id>/<sub>`，不存在再回落安装目录，
+   因此私有插件可以只放在用户目录，不改安装目录。
+3. 敏感值推荐放在同一插件配置目录中的 `plugins.secrets.json`（复制 `config/examples/plugins.secrets.json`，
    并执行 `chmod 600`），配置里用 `secret:scope/key` 引用；也支持 `env:NAME`。
 4. 明文敏感值仍会加载，但启动时告警；`/api/plugins` 只回显 `***`。secrets 文件不提供写入 API，
-   手动编辑后重启生效；备份运行数据目录时注意其中包含密钥。
+   手动编辑后重启生效；备份插件配置目录时注意其中包含密钥。
 
 | 插件 | 作用 |
 | --- | --- |

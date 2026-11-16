@@ -90,7 +90,7 @@ function normalizeReloadResult(payload: Partial<PluginReloadResult> | null): Plu
 }
 
 /**
- * 重读运行数据目录的 plugins.json + secrets 并重启受影响的插件。
+ * 重读插件配置目录（默认 `<TrellisBoard>/plugins`）的 plugins.json + secrets 并重启受影响的插件。
  * 解析失败时宿主返回 400 + 完整结果，这里统一按结果对象返回，调用方只看 ok。
  */
 export async function reloadPlugins(): Promise<PluginReloadResult> {

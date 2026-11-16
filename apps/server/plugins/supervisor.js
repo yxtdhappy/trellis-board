@@ -363,6 +363,7 @@ export class PluginSupervisor {
     db,
     appDir,
     dataDir,
+    pluginsDir,
     hostVersion,
     repositories = [],
     tasks,
@@ -383,6 +384,7 @@ export class PluginSupervisor {
     this.db = db
     this.appDir = appDir
     this.dataDir = dataDir
+    this.pluginsDir = pluginsDir ? path.resolve(pluginsDir) : path.dirname(configFile)
     this.hostVersion = hostVersion
     this.repositories = repositories
     this.tasks = tasks
@@ -415,7 +417,8 @@ export class PluginSupervisor {
     this.healthTimer = null
     this.stopping = false
     this.reloading = null
-    this.logDir = path.join(dataDir, 'plugins')
+    // 插件配置、密钥与日志都在 <pluginsDir> 下，不再与 board.sqlite 混放。
+    this.logDir = path.join(this.pluginsDir, 'logs')
   }
 
   async load() {
@@ -731,9 +734,30 @@ export class PluginSupervisor {
     return this.timeoutOverrides[method] ?? HOST_TO_PLUGIN_TIMEOUTS[method]
   }
 
+  /**
+   * 解析插件入口：绝对路径原样使用；相对路径先找 `<pluginsDir>/<id>/`（用户目录优先），
+   * 再回退到安装目录 `appDir`。
+   *
+   * 约定 `module` 写成 `./plugins/<id>/index.js` 时，用户在
+   * `<pluginsDir>/<id>/index.js` 放一份同名入口即可覆盖安装目录里的实现。
+   */
   resolveModule(entry) {
     const value = entry.module || `./plugins/${entry.id}/index.js`
-    return path.isAbsolute(value) ? value : path.resolve(this.appDir, value)
+    if (path.isAbsolute(value)) return value
+    const normalized = String(value).replaceAll('\\', '/').replace(/^\.\//, '')
+    const conventional = `plugins/${entry.id}/`
+    const relative = normalized.startsWith(conventional)
+      ? normalized.slice(conventional.length)
+      : normalized
+    const userModule = path.resolve(this.pluginsDir, entry.id, relative)
+    const insideUserDir = path.relative(path.resolve(this.pluginsDir, entry.id), userModule)
+    if (!insideUserDir.startsWith('..') && !path.isAbsolute(insideUserDir)) {
+      // 宿主把 plugin.json 当作加载依据：用户目录只有入口、没有 manifest 时回退安装目录，
+      // 避免一个残留的 index.js 把本来正常的插件变成 incompatible。
+      const manifestFile = path.join(path.dirname(userModule), 'plugin.json')
+      if (fs.existsSync(userModule) && fs.existsSync(manifestFile)) return userModule
+    }
+    return path.resolve(this.appDir, value)
   }
 
   inspectManifest(state) {
