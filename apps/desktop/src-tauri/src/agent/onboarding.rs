@@ -139,6 +139,27 @@ pub struct InitializeOptions<'a> {
     pub allow_file_remote: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InitializationMode {
+    FullInit,
+    AgentsOnly,
+    None,
+}
+
+fn initialization_mode(
+    has_trellis: bool,
+    has_tasks: bool,
+    tools_missing: bool,
+) -> InitializationMode {
+    if !has_trellis || !has_tasks {
+        InitializationMode::FullInit
+    } else if tools_missing {
+        InitializationMode::AgentsOnly
+    } else {
+        InitializationMode::None
+    }
+}
+
 pub struct AttachOptions<'a> {
     pub repo_path: &'a Path,
     pub hooks_dir: &'a Path,
@@ -262,7 +283,7 @@ pub async fn inspect_project_with(
     })
 }
 
-/// 对照 JS initializeProject：缺 trellis/tasks 或所选工具缺失时才调用 trellis init。
+/// 缺 trellis/tasks 时完整初始化；已有任务树且缺 Agent 时只补平台配置。
 pub async fn initialize_project(options: &InitializeOptions<'_>) -> AgentResult<ProjectInspection> {
     let inspected = inspect_project(
         options.repo_path,
@@ -274,14 +295,29 @@ pub async fn initialize_project(options: &InitializeOptions<'_>) -> AgentResult<
     let tools_missing = selected_tools
         .iter()
         .any(|id| !inspected.existing_agent_tools.contains(id));
-    if !inspected.has_trellis || !inspected.has_tasks || tools_missing {
-        trellis_cli::initialize_trellis(
-            options.runtime,
-            Path::new(&inspected.root),
-            options.developer_id,
-            &selected_tools,
-        )
-        .await?;
+    match initialization_mode(
+        inspected.has_trellis,
+        inspected.has_tasks,
+        tools_missing,
+    ) {
+        InitializationMode::FullInit => {
+            trellis_cli::initialize_trellis(
+                options.runtime,
+                Path::new(&inspected.root),
+                options.developer_id,
+                &selected_tools,
+            )
+            .await?;
+        }
+        InitializationMode::AgentsOnly => {
+            trellis_cli::initialize_agents(
+                options.runtime,
+                Path::new(&inspected.root),
+                &selected_tools,
+            )
+            .await?;
+        }
+        InitializationMode::None => {}
     }
     inspect_project(
         Path::new(&inspected.root),
@@ -1269,6 +1305,26 @@ mod tests {
                 .expect_err("invalid mode")
                 .code,
             code::COMMAND_INVALID
+        );
+    }
+
+    #[test]
+    fn selects_initialization_mode() {
+        assert_eq!(
+            initialization_mode(false, false, false),
+            InitializationMode::FullInit
+        );
+        assert_eq!(
+            initialization_mode(true, false, true),
+            InitializationMode::FullInit
+        );
+        assert_eq!(
+            initialization_mode(true, true, true),
+            InitializationMode::AgentsOnly
+        );
+        assert_eq!(
+            initialization_mode(true, true, false),
+            InitializationMode::None
         );
     }
 }
