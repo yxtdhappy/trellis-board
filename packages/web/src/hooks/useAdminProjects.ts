@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import * as admin from '@/api/admin'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import type {
   AgentBinding,
   AdminTaskSpace,
@@ -58,6 +59,7 @@ export function useAdminProjects({
   teamId,
   runtimeProjects,
 }: AdminProjectsOptions): AdminProjects {
+  const confirm = useConfirm()
   const [projects, setProjects] = useState<TeamProject[]>([])
   const [accessProjectId, setAccessProjectId] = useState('')
   const [members, setMembers] = useState<ProjectMember[]>([])
@@ -224,7 +226,12 @@ export function useAdminProjects({
         toast.error('成员缺少用户 ID，无法移除。')
         return
       }
-      if (!window.confirm(`从项目移除 ${member.displayName || member.username}？`)) return
+      const confirmed = await confirm({
+        title: `从项目移除 ${member.displayName || member.username}？`,
+        confirmText: '移除',
+        tone: 'danger',
+      })
+      if (!confirmed) return
       try {
         setMembers(await admin.removeMember(projectId, member.userId))
         toast.success('项目成员已移除。')
@@ -232,7 +239,7 @@ export function useAdminProjects({
         report(error)
       }
     },
-    [report],
+    [confirm, report],
   )
 
   const inviteProjectTeam = useCallback(
@@ -257,7 +264,12 @@ export function useAdminProjects({
     async (access: ProjectTeamAccess) => {
       const projectId = accessProjectRef.current
       if (!projectId || !access.teamId) return
-      if (!window.confirm(`移除团队 ${access.teamName} 对该项目的访问权限？`)) return
+      const confirmed = await confirm({
+        title: `移除团队 ${access.teamName} 对该项目的访问权限？`,
+        confirmText: '移除',
+        tone: 'danger',
+      })
+      if (!confirmed) return
       try {
         await admin.removeProjectTeam(projectId, access.teamId)
         setProjectTeams(await admin.fetchProjectTeams(projectId))
@@ -266,14 +278,21 @@ export function useAdminProjects({
         report(error)
       }
     },
-    [report],
+    [confirm, report],
   )
 
   const bindingAction = useCallback(
     async (binding: AgentBinding, action: admin.BindingAction) => {
       const projectId = accessProjectRef.current
       if (!projectId) return
-      if (action !== 'approve' && !window.confirm(`确认对 Agent 绑定执行“${action}”？`)) return
+      if (action !== 'approve') {
+        const confirmed = await confirm({
+          title: `确认对 Agent 绑定执行“${action}”？`,
+          confirmText: '执行',
+          tone: 'danger',
+        })
+        if (!confirmed) return
+      }
       try {
         const result = await admin.runBindingAction(projectId, binding.id, action)
         await selectProject(projectId)
@@ -282,7 +301,7 @@ export function useAdminProjects({
         report(error)
       }
     },
-    [report, selectProject],
+    [confirm, report, selectProject],
   )
 
   const retireTaskSpace = useCallback(

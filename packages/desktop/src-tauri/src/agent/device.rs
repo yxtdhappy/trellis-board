@@ -79,6 +79,8 @@ pub struct LocalAssociation {
     pub status: String,
     #[serde(default)]
     pub detach_pending: bool,
+    #[serde(default)]
+    pub initial_review_pending: bool,
     pub read_only: bool,
     #[serde(default = "default_live_sync_status")]
     pub live_sync_status: String,
@@ -880,6 +882,7 @@ pub async fn read_local_associations(
             team_id: binding.team_id,
             status: binding.sync_status,
             detach_pending: binding.detach_pending,
+            initial_review_pending: binding.initial_review_pending,
             read_only: binding.read_only,
             live_sync_status: binding.live_sync_status,
             live_sync_error: binding.live_sync_error,
@@ -1102,6 +1105,7 @@ mod tests {
             team_id: Some("team-1".to_string()),
             status: "approved".to_string(),
             detach_pending: true,
+            initial_review_pending: false,
             read_only: true,
             live_sync_status: "idle".to_string(),
             live_sync_error: None,

@@ -170,6 +170,18 @@
   `live_control_initial`、`live_control_dismiss`。
 - 事件类型、review 选项和动作字符串以 Rust 侧为准（`use-server`/`overwrite-server`/
   `save-local-copy`，`mode` 为 `safe`/`review`），前端不得新增动作值。
+- 主窗口手动唤起待处理控制事件只能调 `live_control_show`（`capabilities/board-local-association.json`），
+  它只 `show` 已存在的队列项，无待处理返回 `false`；控制窗口自身不得调用该命令。
+- dev 模式：根 `yarn desktop:dev` 运行 `scripts/desktop-dev.mjs`，并发启动三件事：`node --watch
+  packages/server/index.js`（4317 本地服务端）、`packages/web` 根目录的 Vite（默认 5200，看板 UI + HMR +
+  `/api` 代理，端口可用 `TRELLIS_BOARD_DEV_PORT` 覆盖）、`cargo tauri dev`（自身 `beforeDevCommand` 再起
+  `vite.desktop.config.ts` 的 5199 登录壳）。登录页服务器地址必须填 `http://localhost:5200`（或
+  `127.0.0.1:5200`），它才是看板来源；5199 只服务 `desktop/index.html`，手填会得到空白页。
+  `navigation::is_dev_page` 仅在 `debug_assertions` 下按 `devUrl` 同源放行导航与 `ensure_local_caller`，
+  release 构建必须仍只认本地页面。dev 下 `stripDevCsp` 插件移除 `control.html` 的 CSP meta
+  （`style-src 'self'` 会挡掉 Vite 注入的内联样式），release 构建必须保留该 meta。
+- `packages/web/vite.config.ts` 的 `/api` 代理必须 `changeOrigin: false`：服务端 CSRF 校验要求请求
+  `Origin` 与 `Host` 同源，改写 Host 会让所有写请求 403 `CSRF_REJECTED`。
 - 桌面本地状态统一使用 `desktop-state-changed`，payload 为
   `{ "topics": ["associations" | "sidecar"] }`，短窗口内合并发射。Board 远程窗口 capability 必须
   显式允许 `core:event:allow-listen` 与 `core:event:allow-unlisten`。

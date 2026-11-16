@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import {
   Dialog,
   DialogBody,
@@ -75,6 +76,7 @@ export function BranchManagementPanel({
   onRestore,
   onPurge,
 }: BranchManagementPanelProps) {
+  const confirm = useConfirm()
   const [retireTarget, setRetireTarget] = useState<AdminTaskSpace | null>(null)
   const [retireReason, setRetireReason] = useState('')
   const [retireBusy, setRetireBusy] = useState(false)
@@ -122,9 +124,12 @@ export function BranchManagementPanel({
 
   async function restore(taskSpace: AdminTaskSpace) {
     if (restoreId) return
-    if (!window.confirm(`恢复分支 ${taskSpace.branchName}？恢复后旧客户端监听不会自动恢复。`)) {
-      return
-    }
+    const confirmed = await confirm({
+      title: `恢复分支 ${taskSpace.branchName}？`,
+      description: '恢复后旧客户端监听不会自动恢复。',
+      confirmText: '恢复',
+    })
+    if (!confirmed) return
     setRestoreId(taskSpace.id)
     const outcome = await onRestore(taskSpace)
     setRestoreId('')

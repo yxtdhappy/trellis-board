@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import {
   Dialog,
   DialogBody,
@@ -211,6 +212,7 @@ export function ProjectOnboardingDialog({
   invoke,
   onAssociated,
 }: ProjectOnboardingDialogProps) {
+  const confirm = useConfirm()
   const [inspection, setInspection] = useState<ProjectInspection | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
@@ -495,20 +497,20 @@ export function ProjectOnboardingDialog({
       setMessage('无法确认当前仓库已有本地绑定，为避免重复绑定，暂不能接入。')
       return
     }
-    if (
-      replacedAssociations.length &&
-      !window.confirm(
-        [
+    if (replacedAssociations.length) {
+      const confirmed = await confirm({
+        title: `替换为分支 ${inspection.branchName}？`,
+        description: [
           `当前本机已把该仓库绑定到其他分支：${replacedAssociations
             .map((item) => `${item.branchName}（任务空间 ${item.taskSpaceId}）`)
             .join('、')}。`,
-          `确认替换为分支 ${inspection.branchName} 吗？`,
           '替换后本机停止同步旧分支；旧任务空间、旧任务和其他设备的绑定都不会删除。',
           '需要同时同步两个分支时，请为另一个分支使用独立 Git worktree。',
         ].join('\n'),
-      )
-    ) {
-      return
+        confirmText: '替换',
+        tone: 'danger',
+      })
+      if (!confirmed) return
     }
     setBusy(true)
     setMessage('')

@@ -4254,7 +4254,7 @@ impl TaskSync {
             .cloned()
             .collect();
         let mut server_groups = groups_from_structs(&server_files)?;
-        retain_server_groups_for_binding(binding, &mut server_groups);
+        retain_server_groups_for_initial_sync(binding, &local_groups, &mut server_groups);
         let server_baselines = baselines_from_snapshot(&snapshot_files);
         let differences = classify_task_snapshots(&local_groups, &server_groups);
         let actionable: Vec<&Difference> = differences
@@ -5386,7 +5386,7 @@ impl TaskSync {
             .cloned()
             .collect();
         let mut server_groups = groups_from_structs(&server_files)?;
-        retain_server_groups_for_binding(&binding, &mut server_groups);
+        retain_server_groups_for_initial_sync(&binding, &local_groups, &mut server_groups);
         let snapshot_baselines = baselines_from_snapshot(&snapshot_files);
         let differences = classify_task_snapshots(&local_groups, &server_groups);
 
@@ -6161,6 +6161,26 @@ fn retain_server_groups_for_binding(binding: &AgentBinding, groups: &mut Vec<Sna
             .as_deref()
             .map(|branch| branch == binding.branch_name)
             .unwrap_or(true)
+    });
+}
+
+/// 首次同步的差异分类：`task.json` 记录的 `branch` 是任务当时的开发分支，归档任务常与当前
+/// 分支不同；只要本地存在同一任务目录，它就是本分支工作区里的任务，不能当作「仅本地存在」。
+/// 只有本地没有的跨分支任务组才丢弃，避免把别的分支的任务写进工作区。
+fn retain_server_groups_for_initial_sync(
+    binding: &AgentBinding,
+    local_groups: &[SnapshotGroup],
+    groups: &mut Vec<SnapshotGroup>,
+) {
+    groups.retain(|group| {
+        group
+            .task_branch
+            .as_deref()
+            .map(|branch| branch == binding.branch_name)
+            .unwrap_or(true)
+            || local_groups
+                .iter()
+                .any(|local| local.task_dir == group.task_dir)
     });
 }
 
@@ -9317,6 +9337,25 @@ mod tests {
             task_id: Some(task_id.to_string()),
             task_branch: None,
         }
+    }
+
+    #[test]
+    fn initial_sync_keeps_cross_branch_groups_present_locally() {
+        let binding = test_binding("space-1");
+        let files = [("task.json", r#"{"id":"demo","branch":"codex/demo"}"#)];
+        let archived = ".trellis/tasks/archive/2026-11/11-12-demo";
+        let local = vec![task_group("demo", archived, &files)];
+
+        let mut present = vec![task_group("demo", archived, &files)];
+        present[0].task_branch = Some("codex/demo".to_string());
+        retain_server_groups_for_initial_sync(&binding, &local, &mut present);
+        assert_eq!(present.len(), 1, "本地存在的跨分支任务必须保留");
+
+        let other_dir = ".trellis/tasks/archive/2026-11/11-12-other";
+        let mut absent = vec![task_group("other", other_dir, &files)];
+        absent[0].task_branch = Some("codex/demo".to_string());
+        retain_server_groups_for_initial_sync(&binding, &local, &mut absent);
+        assert!(absent.is_empty(), "本地不存在的跨分支任务必须丢弃");
     }
 
     #[test]

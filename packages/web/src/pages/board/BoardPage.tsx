@@ -6,6 +6,7 @@ import {
   type TaskSpaceAssignee,
 } from '@/api/board'
 import { ProjectRail, type LocalAssociation } from '@/components/layout/ProjectRail'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { TopBar, type BoardNavItem } from '@/components/layout/TopBar'
 import { isBranchAssociationPaused } from '@/lib/project-rail-association.js'
 import { useBoard } from '@/hooks/useBoard'
@@ -53,6 +54,7 @@ const NAV: BoardNavItem[] = [
 type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 export function BoardPage() {
+  const confirm = useConfirm()
   const controller = useBoard()
   const [view, setView] = useState('pipeline')
   const [panels, setPanels] = useState<PluginPanelInfo[]>([])
@@ -300,8 +302,14 @@ export function BoardPage() {
                 onDeleteView={(id) => {
                   const view = savedViews.find((item) => item.id === id)
                   if (!view) return
-                  if (!window.confirm(`删除组合视图“${view.name}”？内置视图不会被修改。`)) return
-                  void actions.deleteView(id)
+                  void confirm({
+                    title: `删除组合视图“${view.name}”？`,
+                    description: '内置视图不会被修改。',
+                    confirmText: '删除',
+                    tone: 'danger',
+                  }).then((confirmed) => {
+                    if (confirmed) void actions.deleteView(id)
+                  })
                 }}
               />
               <FlowSignals

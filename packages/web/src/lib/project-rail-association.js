@@ -47,6 +47,7 @@ function associationPriority(association) {
   const syncPriority = LIVE_SYNC_PRIORITY[association.liveSyncStatus] || LIVE_SYNC_PRIORITY.pending
   return Math.max(
     syncPriority,
+    association.initialReviewPending ? 3.5 : 0,
     association.deferredCount > 0 || associationOwnershipCounts(association).totalCount > 0
       ? 2.5
       : 0,

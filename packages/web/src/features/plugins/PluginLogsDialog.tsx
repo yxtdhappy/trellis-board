@@ -53,7 +53,7 @@ export function PluginLogsDialog({
           <DialogTitle>插件日志</DialogTitle>
           <DialogDescription>{title}</DialogDescription>
         </DialogHeader>
-        <DialogBody className="rounded-lg bg-muted px-3 py-2.5">
+        <DialogBody className="mx-4 rounded-lg bg-muted px-3 py-2.5">
           <pre className="font-mono text-[0.71875rem] leading-relaxed break-words whitespace-pre-wrap">
             {body}
           </pre>

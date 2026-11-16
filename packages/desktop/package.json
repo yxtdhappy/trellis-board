@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "cargo tauri dev",
     "build": "cargo tauri build",
     "test": "cargo test"
   }

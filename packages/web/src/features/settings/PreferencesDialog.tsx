@@ -84,7 +84,7 @@ export function PreferencesDialog({
           </Button>
         </DialogHeader>
 
-        <DialogBody className="flex flex-col gap-[1.375rem] px-5 pt-[1.125rem] pb-5">
+        <DialogBody className="mx-0 flex flex-col gap-[1.375rem] px-5 pt-[1.125rem] pb-5">
           <section className="flex flex-col gap-2.5">
             <span className="text-xs font-semibold text-foreground">主题</span>
             <div role="radiogroup" aria-label="主题" className="grid grid-cols-3 gap-2.5">

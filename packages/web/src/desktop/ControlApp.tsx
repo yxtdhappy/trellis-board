@@ -1,6 +1,7 @@
 import { AlertCircle } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { invoke, listen } from './tauri.ts'
@@ -247,6 +248,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 }
 
 export function ControlApp() {
+  const confirm = useConfirm()
   const [event, setEvent] = useState<ControlEvent | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -331,12 +333,17 @@ export function ControlApp() {
           setDiff(result)
           return
         }
-        if (
-          action === 'overwrite-server' &&
-          !window.confirm('这会用本地任务目录覆盖服务端当前版本，双方内容都会先备份。确认继续？')
-        ) {
-          setBusy(false)
-          return
+        if (action === 'overwrite-server') {
+          const confirmed = await confirm({
+            title: '用本地任务覆盖服务端？',
+            description: '这会用本地任务目录覆盖服务端当前版本，双方内容都会先备份。',
+            confirmText: '覆盖服务端',
+            tone: 'danger',
+          })
+          if (!confirmed) {
+            setBusy(false)
+            return
+          }
         }
         await call('live_control_decide', {
           taskSpaceId: event.taskSpaceId,

@@ -4,7 +4,9 @@
   "version": "0.4.24",
   "identifier": "com.trellisboard.client",
   "build": {
-    "frontendDist": "../ui"
+    "frontendDist": "../ui",
+    "devUrl": "http://localhost:5199",
+    "beforeDevCommand": "yarn workspace @trellis-board/web dev:desktop"
   },
   "app": {
     "withGlobalTauri": true,

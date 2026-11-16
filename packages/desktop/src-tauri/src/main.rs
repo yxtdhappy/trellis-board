@@ -63,7 +63,7 @@ fn ensure_local_caller(window: &WebviewWindow) -> Result<(), String> {
     let url = window
         .url()
         .map_err(|error| format!("无法确认调用页面来源：{error}"))?;
-    if navigation::is_local_page(&url) {
+    if navigation::is_local_page(&url) || navigation::is_dev_page(window.app_handle(), &url) {
         Ok(())
     } else {
         Err("该命令仅允许本地登录页调用".to_string())
@@ -721,6 +721,12 @@ async fn live_control_pending(
 }
 
 #[tauri::command]
+async fn live_control_show(app: AppHandle, window: WebviewWindow) -> Result<bool, String> {
+    ensure_local_caller(&window)?;
+    Ok(agent_service::show_pending_control(&app))
+}
+
+#[tauri::command]
 async fn live_control_decide(
     app: AppHandle,
     window: WebviewWindow,
@@ -886,6 +892,7 @@ fn build_main_window(
 ) -> tauri::Result<()> {
     let navigation_auth = auth.clone();
     let shell_app = app.clone();
+    let load_app = app.clone();
     let builder =
         WebviewWindowBuilder::new(app, "main", WebviewUrl::App(PathBuf::from("index.html")))
             .title("Trellis Board")
@@ -913,7 +920,8 @@ fn build_main_window(
             .on_page_load(move |_, payload| {
                 if payload.event() == PageLoadEvent::Started
                     && payload.url().scheme() != "about"
-                    && navigation::is_local_page(payload.url())
+                    && (navigation::is_local_page(payload.url())
+                        || navigation::is_dev_page(&load_app, payload.url()))
                 {
                     if let Ok(mut local_url) = navigation_auth.local_url.lock() {
                         *local_url = Some(payload.url().clone());
@@ -965,6 +973,7 @@ fn main() {
             runtime_status,
             runtime_install,
             live_control_pending,
+            live_control_show,
             live_control_decide,
             live_control_diff,
             live_control_initial,
@@ -1014,6 +1023,7 @@ mod tests {
             team_id: Some("team-1".to_string()),
             status: status.to_string(),
             detach_pending: false,
+            initial_review_pending: false,
             read_only: false,
             live_sync_status: "idle".to_string(),
             live_sync_error: None,

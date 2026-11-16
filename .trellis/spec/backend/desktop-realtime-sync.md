@@ -363,6 +363,17 @@ taskSpace、binding 或 cursor，也不返回任务正文。返回结果按稳�
 - 双方一致时直接完成，不显示空审查窗口；
 - 完成后写 `initialSyncCompleted=true`，再启动 tasks watcher 和正常增量同步。
 
+`initial_sync_review` 事件每次内容变化都必须强制弹出控制窗口，不受“每进程只自动聚焦一次”与
+手动关闭后的 `focusSuppressed` 影响；否则审查未确认时 binding 永远停留在 `syncing`，主界面只剩
+“正在同步已有任务”。主窗口通过 `live_control_show`（`agent_service::show_pending_control`）手动
+唤起待处理事件，无待处理返回 `false`；`list_local_associations` 把
+`binding.initialReviewPending` 投影为 `initialReviewPending`，供项目栏展示“等待确认任务差异”。
+
+首次同步的差异分类必须按任务目录配对：`task.json` 的 `branch` 是任务当时的开发分支，归档任务
+常与当前分支不同，同一目录绝不能因此被判成 `local-only`。业务分支过滤只允许丢弃“本地不存在”
+的跨分支服务端任务，避免把别的分支的任务写进工作区（`retain_server_groups_for_initial_sync`）；
+`bootstrap` 二次校验不带过滤，两侧口径必须一致。
+
 不得在 attach 后通过删除 binding 来实现“暂不接入”。服务端不提供该补偿接口。
 
 ### 冲突

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ApiError, redirectToLogin } from '@/api/request'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import * as admin from '@/api/admin'
 import type {
   AdminUser,
@@ -69,6 +70,7 @@ function redirectIfUnauthorized(error: unknown): boolean {
 }
 
 export function useAdminConsole(): AdminConsole {
+  const confirm = useConfirm()
   const [phase, setPhase] = useState<AdminPhase>('loading')
   const [bootError, setBootError] = useState('')
   const [user, setUser] = useState<SessionUser | null>(null)
@@ -250,14 +252,18 @@ export function useAdminConsole(): AdminConsole {
   const toggleUser = useCallback(
     async (target: AdminUser) => {
       const status = target.status === 'active' ? 'disabled' : 'active'
-      if (!window.confirm(`${status === 'disabled' ? '停用' : '启用'}账号 ${target.username}？`))
-        return
+      const confirmed = await confirm({
+        title: `${status === 'disabled' ? '停用' : '启用'}账号 ${target.username}？`,
+        confirmText: status === 'disabled' ? '停用' : '启用',
+        tone: status === 'disabled' ? 'danger' : 'default',
+      })
+      if (!confirmed) return
       const updated = await updateUser(target, { status })
       if (updated) {
         toast.success(`账号 ${updated.username} 已${status === 'active' ? '启用' : '停用'}。`)
       }
     },
-    [updateUser],
+    [confirm, updateUser],
   )
 
   const resetPassword = useCallback(
@@ -281,8 +287,13 @@ export function useAdminConsole(): AdminConsole {
         toast.error('请先在顶部选择一个具体团队，再撤销该团队的设备绑定。')
         return
       }
-      if (!window.confirm(`撤销 Agent 设备 ${device.deviceName}？相关绑定和待执行命令会失效。`))
-        return
+      const confirmed = await confirm({
+        title: `撤销 Agent 设备 ${device.deviceName}？`,
+        description: '相关绑定和待执行命令会失效。',
+        confirmText: '撤销',
+        tone: 'danger',
+      })
+      if (!confirmed) return
       try {
         await admin.revokeDevice(device.id, adminTeamId)
         toast.success('Agent 设备已撤销。')
@@ -291,7 +302,7 @@ export function useAdminConsole(): AdminConsole {
         report(error)
       }
     },
-    [adminTeamId, reloadDevices, report],
+    [adminTeamId, confirm, reloadDevices, report],
   )
 
   const createPairingCode = useCallback(

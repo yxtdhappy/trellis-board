@@ -290,3 +290,16 @@ test('关联签名忽略返回顺序但识别内容变化', () => {
     associationSignature([first, { ...second, liveSyncStatus: 'ready' }]),
   )
 })
+
+test('等待确认任务差异的分支优先于同步中，但仍低于 error', () => {
+  const project = { taskSpaces: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] }
+  const associations = new Map([
+    ['a', association('a', 'ready')],
+    ['b', association('b', 'syncing')],
+    ['c', association('c', 'syncing', { initialReviewPending: true })],
+  ])
+
+  assert.equal(selectProjectAssociation(project, associations)?.taskSpaceId, 'c')
+  associations.set('a', association('a', 'error'))
+  assert.equal(selectProjectAssociation(project, associations)?.taskSpaceId, 'a')
+})

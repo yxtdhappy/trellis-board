@@ -6,6 +6,7 @@ type ProjectRailAssociation = {
   status: string
   liveSyncStatus: 'pending' | 'syncing' | 'ready' | 'error'
   deferredCount?: number
+  initialReviewPending?: boolean
   ownershipPausedCount?: number
   ownershipPendingCount?: number
   lastErrorCode?: string | null

@@ -324,9 +324,18 @@ impl AgentService {
     }
 
     fn publish_control(&self, control: Value) {
+        let review = control.get("type").and_then(Value::as_str) == Some("initial_sync_review");
         let (became_front, changed) = self.hub.push_with_change(control);
         if changed {
             self.notify_live_control();
+        }
+        if review {
+            // 差异审查是首次接入的必经步骤：被关闭过、或每进程只自动聚焦一次已消费，也要重新露出。
+            if changed {
+                self.focus_suppressed.store(false, Ordering::SeqCst);
+                self.show_control();
+            }
+            return;
         }
         if !became_front {
             return;
@@ -654,6 +663,7 @@ pub async fn associate(
         team_id: summary.team_id,
         status: summary.status.unwrap_or_default(),
         detach_pending: false,
+        initial_review_pending: summary.initial_review_pending.unwrap_or(false),
         read_only: summary.read_only.unwrap_or(false),
         live_sync_status: summary
             .live_sync_status

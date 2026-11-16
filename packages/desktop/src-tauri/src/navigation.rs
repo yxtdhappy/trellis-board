@@ -32,9 +32,25 @@ pub fn is_local_page(candidate: &Url) -> bool {
         || candidate.host_str() == Some(LOCAL_HOST)
 }
 
+/// dev 模式下窗口加载的是 vite dev server（tauri.conf.json 的 devUrl），必须放行，否则会被交给系统浏览器。
+pub fn is_dev_page(app: &AppHandle, candidate: &Url) -> bool {
+    #[cfg(debug_assertions)]
+    {
+        match app.config().build.dev_url.as_ref() {
+            Some(dev) => same_origin(candidate, dev),
+            None => false,
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (app, candidate);
+        false
+    }
+}
+
 /// 允许同源导航；外链交给系统浏览器，绝不把远程 URL 交给 webview。
 pub fn handle_navigation(app: &AppHandle, candidate: &Url, board: Option<&Url>) -> bool {
-    if is_local_page(candidate) {
+    if is_local_page(candidate) || is_dev_page(app, candidate) {
         return true;
     }
     if let Some(board) = board {

@@ -96,6 +96,11 @@ description = "本地实时同步控制窗口读取当前待处理事件。"
 commands.allow = ["live_control_pending"]
 
 [[permission]]
+identifier = "allow-live-control-show"
+description = "本地 Board 窗口唤起待处理的实时同步确认窗口。"
+commands.allow = ["live_control_show"]
+
+[[permission]]
 identifier = "allow-live-control-decide"
 description = "本地实时同步控制窗口提交任务冲突处理动作。"
 commands.allow = ["live_control_decide"]

@@ -42,6 +42,8 @@ pub struct AssociationSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_sync_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_review_pending: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
@@ -131,6 +133,7 @@ pub async fn associate_desktop_project(
         read_only: Some(binding.read_only),
         live_sync_status: Some(binding.live_sync_status.clone()),
         live_sync_error: None,
+        initial_review_pending: Some(binding.initial_review_pending),
         error: None,
         code: None,
     })
@@ -550,6 +553,7 @@ mod tests {
             read_only: Some(false),
             live_sync_status: Some("syncing".to_string()),
             live_sync_error: None,
+            initial_review_pending: None,
             error: None,
             code: None,
         };

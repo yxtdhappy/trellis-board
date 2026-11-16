@@ -3,6 +3,7 @@ import { Bot, FolderGit2, LockKeyhole, Plus, RefreshCw, Unlink2, Upload, Users }
 import { toast } from 'sonner'
 import type { TaskSpace } from '@/api/board'
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { listen } from '@/desktop/tauri'
 import { AgentQuickInitDialog } from '@/features/board/dialogs/AgentQuickInitDialog'
 import { BranchListenersDialog } from '@/features/board/dialogs/BranchListenersDialog'
@@ -52,6 +53,7 @@ export type LocalAssociation = {
   ownershipPendingCount: number
   ownershipPendingTaskDirs: string[]
   detachPending: boolean
+  initialReviewPending: boolean
 }
 
 type SidecarStatus = {
@@ -168,6 +170,7 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
     ownershipPendingCount,
     ownershipPendingTaskDirs,
     detachPending: record.detachPending === true,
+    initialReviewPending: record.initialReviewPending === true,
   }
 }
 
@@ -267,6 +270,14 @@ function projectAssociationView(association: LocalAssociation | undefined): Proj
       textClassName: 'text-warning',
     }
   }
+  if (association.initialReviewPending && association.liveSyncStatus !== 'error') {
+    return {
+      label: '已关联 · 等待确认任务差异',
+      detail: '首次同步发现差异，确认处理方式后才会继续同步任务。',
+      dotClassName: 'bg-warning',
+      textClassName: 'text-warning',
+    }
+  }
   switch (association.liveSyncStatus) {
     case 'syncing':
       return {
@@ -340,6 +351,7 @@ export function ProjectRail({
   onAssociationsChange,
 }: ProjectRailProps) {
   const invoke = useMemo(() => tauriInvoke(), [])
+  const confirm = useConfirm()
   const [associations, setAssociations] = useState<Map<string, LocalAssociation>>(() => new Map())
   const [associationError, setAssociationError] = useState('')
   const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus | null>(null)
@@ -494,9 +506,11 @@ export function ProjectRail({
 
   async function syncDeferredTasks(association: LocalAssociation) {
     if (!invoke || syncingDeferredTaskSpace || association.deferredCount < 1) return
-    const confirmed = window.confirm(
-      `将把 ${association.deferredCount} 个本地任务上传到 ${association.branchName}，冲突时仍会要求确认。是否继续？`,
-    )
+    const confirmed = await confirm({
+      title: '上传本地任务？',
+      description: `将把 ${association.deferredCount} 个本地任务上传到 ${association.branchName}，冲突时仍会要求确认。`,
+      confirmText: '上传',
+    })
     if (!confirmed) return
     setSyncingDeferredTaskSpace(association.taskSpaceId)
     try {
@@ -527,10 +541,13 @@ export function ProjectRail({
 
   async function detachAssociation(association: LocalAssociation) {
     if (!invoke || detachingTaskSpace) return
-    const confirmed = window.confirm(
-      `不再同步分支“${association.branchName}”？\n\n` +
+    const confirmed = await confirm({
+      title: `不再同步分支“${association.branchName}”？`,
+      description:
         '仅解除当前客户端与该分支的关联，不影响其他客户端，也不删除服务端任务、冲突或历史。',
-    )
+      confirmText: '不再同步',
+      tone: 'danger',
+    })
     if (!confirmed) return
     setDetachingTaskSpace(association.taskSpaceId)
     setAssociationError('')
@@ -554,8 +571,24 @@ export function ProjectRail({
     }
   }
 
+  async function openInitialReview() {
+    if (!invoke) return
+    try {
+      const shown = await invoke('live_control_show')
+      if (shown !== true) toast.info('没有等待确认的任务差异')
+    } catch (error) {
+      toast.error(associationErrorMessage(error))
+    }
+  }
+
   const syncingAssociations = [...associations.values()].filter(
-    (association) => association.status === 'approved' && association.liveSyncStatus === 'syncing',
+    (association) =>
+      association.status === 'approved' &&
+      association.liveSyncStatus === 'syncing' &&
+      !association.initialReviewPending,
+  )
+  const reviewAssociations = [...associations.values()].filter(
+    (association) => association.status === 'approved' && association.initialReviewPending,
   )
   const taskSpaceCount = projects.reduce(
     (total, project) => total + (project.taskSpaces?.length || 0),
@@ -585,6 +618,14 @@ export function ProjectRail({
           className="mb-1 rounded-lg border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[0.625rem] leading-4 text-amber-800 dark:text-amber-300"
         >
           正在同步任务，此时切换 Git 分支可能导致任务错位或污染，建议等待同步完成后再切换。
+        </div>
+      ) : null}
+      {invoke && reviewAssociations.length ? (
+        <div
+          role="status"
+          className="mb-1 rounded-lg border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[0.625rem] leading-4 text-amber-800 dark:text-amber-300"
+        >
+          有分支等待确认任务差异，确认处理方式后才会同步任务。
         </div>
       ) : null}
       <button
@@ -808,6 +849,18 @@ export function ProjectRail({
                           onClick={() => setOwnershipTaskSpaceId(taskSpace.id)}
                         >
                           待处理 {ownership.totalCount}
+                        </button>
+                      ) : null}
+                      {branchAssociation?.status === 'approved' &&
+                      branchAssociation.initialReviewPending ? (
+                        <button
+                          type="button"
+                          className="mr-1 shrink-0 rounded px-1 text-[0.53125rem] font-medium text-warning hover:bg-background"
+                          aria-label={`处理 ${taskSpace.branchName} 的任务差异`}
+                          title={branchView?.detail || branchView?.label}
+                          onClick={() => void openInitialReview()}
+                        >
+                          确认差异
                         </button>
                       ) : null}
                       {branchAssociation?.status === 'approved' &&
