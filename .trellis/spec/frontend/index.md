@@ -1,6 +1,6 @@
 # 前端开发规范
 
-适用范围：`apps/web/`（源码）与 `apps/server/public/`、`apps/desktop/ui/`（构建产物）。前端是 **React 19 + Vite 8 + TypeScript + Tailwind v4 + shadcn/ui** 的多页应用，构建产物由 `apps/server/index.js` 直接静态托管。
+适用范围：`packages/web/`（源码）与 `packages/server/public/`、`packages/desktop/ui/`（构建产物）。前端是 **React 19 + Vite 8 + TypeScript + Tailwind v4 + shadcn/ui** 的多页应用，构建产物由 `packages/server/index.js` 直接静态托管。
 
 ## 规范索引
 
@@ -12,16 +12,16 @@
 
 ## 页面入口
 
-- `apps/web/index.html` → `src/main-board.tsx` → [BoardPage](../../../apps/web/src/pages/board/BoardPage.tsx)：任务流水线 / 团队视角 / 归档索引。
-- `apps/web/admin.html` → `src/main-admin.tsx` → [AdminPage](../../../apps/web/src/pages/admin/AdminPage.tsx)：团队管理七个 tab。
-- `apps/web/login.html` → `src/main-login.tsx` → [LoginPage](../../../apps/web/src/pages/login/LoginPage.tsx)：登录与首登改密跳转。
-- 构建：根目录 `npm run build`（执行 `apps/web` 的 `tsc -b && vite build`），产物写入 `apps/server/public/`；桌面 UI 用 `npm run build:desktop` 写入 `apps/desktop/ui/`。
-- 本地联调：`npm run web:dev`，Vite 把 `/api` 代理到 `http://127.0.0.1:4317`。
+- `packages/web/index.html` → `src/main-board.tsx` → [BoardPage](../../../packages/web/src/pages/board/BoardPage.tsx)：任务流水线 / 团队视角 / 归档索引。
+- `packages/web/admin.html` → `src/main-admin.tsx` → [AdminPage](../../../packages/web/src/pages/admin/AdminPage.tsx)：团队管理七个 tab。
+- `packages/web/login.html` → `src/main-login.tsx` → [LoginPage](../../../packages/web/src/pages/login/LoginPage.tsx)：登录与首登改密跳转。
+- 构建：根目录 `yarn build`（执行 `packages/web` 的 `tsc -b && vite build`），产物写入 `packages/server/public/`；桌面 UI 用 `yarn build:desktop` 写入 `packages/desktop/ui/`。
+- 本地联调：`yarn web:dev`，Vite 把 `/api` 代理到 `http://127.0.0.1:4317`。
 
 ## 必须记住的契约
 
-- 只调用 `apps/server/` 暴露的现有 `/api/*`；请求方法、路径、字段名保持与迁移前一致。
-- 纯逻辑模块 `dom/markdown/execution-filter/archive-sort/team-client` 位于 `apps/web/src/lib/`，`slug` 位于 `packages/shared/`；它们被 `packages/test-support/` 直接 import，**不得改写其导出行为**。
+- 只调用 `packages/server/` 暴露的现有 `/api/*`；请求方法、路径、字段名保持与迁移前一致。
+- 纯逻辑模块 `dom/markdown/execution-filter/archive-sort/team-client` 位于 `packages/web/src/lib/`，`slug` 位于 `packages/shared/`；它们被 `packages/test-support/` 直接 import，**不得改写其导出行为**。
 - 列表先读 `/api/board` 的轻量任务，打开详情才请求 `/api/task`。
 - 服务端文本由 React 默认转义；只有 Markdown 预览允许 `dangerouslySetInnerHTML`，且必须走 `renderMarkdown()`。
 - 弹层统一使用 `components/ui/dialog`，Esc 关闭由该组件的栈式监听处理。

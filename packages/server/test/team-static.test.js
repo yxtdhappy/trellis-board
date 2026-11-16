@@ -146,7 +146,7 @@ test('团队模式静态资源能提供字体与外部主题脚本', async (t) =
   })
 })
 
-test('团队模式默认从 apps/server/public 提供静态资源', async (t) => {
+test('团队模式默认从 packages/server/public 提供静态资源', async (t) => {
   const publicDir = new URL('../public/', import.meta.url)
   const markerName = `default-public-${process.pid}-${Date.now()}.txt`
   const markerFile = new URL(markerName, publicDir)

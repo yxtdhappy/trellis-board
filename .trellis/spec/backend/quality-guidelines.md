@@ -2,7 +2,7 @@
 
 ## 团队模式密码策略
 
-- 管理员建号、管理员重置密码、用户自助改密共用 `apps/server/team/auth.js` 的 `validatePassword()`：最少 6 个字符、最多 1024 个 UTF-8 字节，不做大小写/数字/符号复杂度校验。
+- 管理员建号、管理员重置密码、用户自助改密共用 `packages/server/team/auth.js` 的 `validatePassword()`：最少 6 个字符、最多 1024 个 UTF-8 字节，不做大小写/数字/符号复杂度校验。
 - 这是明确的产品决策，6 位下限不能按缺陷回退为 12 位；旧账号的 scrypt 哈希继续有效，策略变化不影响登录。
 - 管理员直接填写初始密码，不生成、不返回临时密码；`must_change_password` 仅保留字段兼容，新流程写 `0`。
 
@@ -19,10 +19,10 @@
 ## 运行基线
 
 - Node `>=24`，SQLite 使用内置 `node:sqlite`；当前开发机验证版本为 Node `24.21.0`。
-- CI 运行 `npm test` 前必须先在仓库根目录执行 `npm ci`，真实 Trellis CLI 测试依赖根目录固定版本依赖。
-- 自动测试：`npm test`（只跑 `packages/test-support/*.test.js`，不含 `plugins/` 下的插件测试）。
-- 插件测试：`npm run test:plugins`（`plugins/*/test/*.test.js`）；需要宿主与插件一起验证时用 `npm run test:all`。
-- 启动：`node apps/server/index.js` 或 `npm start`。
+- CI 运行 `yarn test` 前必须先在仓库根目录执行 `yarn install --immutable`，真实 Trellis CLI 测试依赖根目录固定版本依赖。
+- 自动测试：`yarn test`（只跑 `packages/test-support/*.test.js`，不含 `plugins/` 下的插件测试）。
+- 插件测试：`yarn test:plugins`（`plugins/*/test/*.test.js`）；需要宿主与插件一起验证时用 `yarn test:all`。
+- 启动：`node packages/server/index.js` 或 `yarn start`。
 - 项目没有 lint、类型检查或构建步骤，不能把不存在的检查写成通过项。
 
 ## 测试框架
@@ -40,21 +40,21 @@ import assert from "node:assert/strict";
 
 | 模块 | 测试重点 |
 | --- | --- |
-| [apps/server/loader.js](../../../apps/server/loader.js) | 嵌套归档、阶段证据、缓存复用、workspace 变化、Git、元数据、E2E 语义、父子继承、冲突和循环 |
-| [apps/server/database.js](../../../apps/server/database.js) | schema、旧 JSON 迁移幂等、损坏输入和版本拒绝 |
-| [apps/server/team/git-credentials.js](../../../apps/server/team/git-credentials.js) | Git 凭据密文、团队/主机隔离、引用删除、SSH 主机信任 |
-| [apps/server/team/git-manager.js](../../../apps/server/team/git-manager.js) | Git HTTPS/SSH 认证、分支 tree 与模板清单探测、名称和默认分支解析、Agent 增量初始化与稀疏收敛 |
-| [apps/server/repositories.js](../../../apps/server/repositories.js) | SQLite 规范化、ID、重复路径、未初始化目录、批量事务回滚、只移除配置 |
-| [apps/server/metadata.js](../../../apps/server/metadata.js) | 人工阶段合法 ID 与 SQLite upsert |
-| [apps/server/persistence.js](../../../apps/server/persistence.js) | 缓存 schema 失效、看板状态保留 `null` 和多字段更新 |
-| [apps/server/actions.js](../../../apps/server/actions.js) | 无效输入在调用 `task.py` 前失败 |
-| [apps/server/watcher.js](../../../apps/server/watcher.js) | 路径过滤、真实文件事件、超时和关闭 |
-| [apps/server/execution-store.js](../../../apps/server/execution-store.js) | 计划字段校验、标签原子替换、保存视图、依赖创建/解除、循环和事务回滚、扫描事件 |
-| [apps/server/execution-projection.js](../../../apps/server/execution-projection.js) | 截止/停滞/阻断注意力、身份冲突隐藏、DoR/DoD、WIP 和 Board 批量投影 |
-| [apps/server/task-location.js](../../../apps/server/task-location.js) | 白名单、任务根、真实路径和身份冲突定位 |
+| [packages/server/loader.js](../../../packages/server/loader.js) | 嵌套归档、阶段证据、缓存复用、workspace 变化、Git、元数据、E2E 语义、父子继承、冲突和循环 |
+| [packages/server/database.js](../../../packages/server/database.js) | schema、旧 JSON 迁移幂等、损坏输入和版本拒绝 |
+| [packages/server/team/git-credentials.js](../../../packages/server/team/git-credentials.js) | Git 凭据密文、团队/主机隔离、引用删除、SSH 主机信任 |
+| [packages/server/team/git-manager.js](../../../packages/server/team/git-manager.js) | Git HTTPS/SSH 认证、分支 tree 与模板清单探测、名称和默认分支解析、Agent 增量初始化与稀疏收敛 |
+| [packages/server/repositories.js](../../../packages/server/repositories.js) | SQLite 规范化、ID、重复路径、未初始化目录、批量事务回滚、只移除配置 |
+| [packages/server/metadata.js](../../../packages/server/metadata.js) | 人工阶段合法 ID 与 SQLite upsert |
+| [packages/server/persistence.js](../../../packages/server/persistence.js) | 缓存 schema 失效、看板状态保留 `null` 和多字段更新 |
+| [packages/server/actions.js](../../../packages/server/actions.js) | 无效输入在调用 `task.py` 前失败 |
+| [packages/server/watcher.js](../../../packages/server/watcher.js) | 路径过滤、真实文件事件、超时和关闭 |
+| [packages/server/execution-store.js](../../../packages/server/execution-store.js) | 计划字段校验、标签原子替换、保存视图、依赖创建/解除、循环和事务回滚、扫描事件 |
+| [packages/server/execution-projection.js](../../../packages/server/execution-projection.js) | 截止/停滞/阻断注意力、身份冲突隐藏、DoR/DoD、WIP 和 Board 批量投影 |
+| [packages/server/task-location.js](../../../packages/server/task-location.js) | 白名单、任务根、真实路径和身份冲突定位 |
 | 前端纯模块 | Markdown 安全、slug、归档排序、组合筛选 |
 
-`apps/server/index.js` 的 HTTP 路由没有独立自动测试套件。修改 API、静态资源、刷新队列或 Worker 协议时，除 `npm test` 外还要启动真实服务并用实际 HTTP 请求和页面操作验证。
+`packages/server/index.js` 的 HTTP 路由没有独立自动测试套件。修改 API、静态资源、刷新队列或 Worker 协议时，除 `yarn test` 外还要启动真实服务并用实际 HTTP 请求和页面操作验证。
 
 ## 测试设计
 

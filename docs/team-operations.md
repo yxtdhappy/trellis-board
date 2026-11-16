@@ -39,7 +39,7 @@ Windows PowerShell 前台启动：
 $env:TRELLIS_BOARD_MODE = 'team'
 $env:PORT = '4317'
 $env:TRELLIS_BOARD_DATA_DIR = Join-Path $env:LOCALAPPDATA 'TrellisBoard\server'
-node apps/server/index.js
+node packages/server/index.js
 ```
 
 团队需要本地 Git 远端时，在启动前额外设置：
@@ -56,7 +56,7 @@ Ubuntu 前台启动：
 export TRELLIS_BOARD_MODE=team
 export PORT=4317
 export TRELLIS_BOARD_DATA_DIR=/var/lib/trellis-board
-node apps/server/index.js
+node packages/server/index.js
 ```
 
 服务账号必须能读写 `TRELLIS_BOARD_DATA_DIR` 和 SQLite 文件。Team 服务端不需要安装项目 Git 或
@@ -70,7 +70,7 @@ node apps/server/index.js
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
 $env:PORT = '4317'
-node apps/server/team/cli.js init-admin --username admin --display-name '系统管理员'
+node packages/server/team/cli.js init-admin --username admin --display-name '系统管理员'
 ```
 
 3. 启动服务并打开 `http://<服务端IP>:4317/login.html`；使用 HTTPS 时打开对应域名。
@@ -260,7 +260,7 @@ if (Test-Path (Join-Path $dataDir 'board.sqlite-shm')) { Copy-Item (Join-Path $d
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
 $env:PORT = '4317'
-node apps/server/team/cli.js status
+node packages/server/team/cli.js status
 ```
 
 结果应显示 `schemaVersion=12`、`journalMode=wal` 和 `integrity=ok`。
@@ -311,7 +311,7 @@ Team 服务意外访问 Git：这是架构回归。检查 `createTeamRuntime()` 
 
 ## 10. 发布检查单
 
-- `npm test` 全部通过，`npm run format:check` 通过。
+- `yarn test` 全部通过，`yarn format:check` 通过。
 - Team 空库和 v6 至 v11 升级库均能打开 schema v12。
 - Team 启动不创建 `data/projects/**`，旧 Git/live 路由返回 404。
 - 服务端只接受 `.trellis/tasks/**`，单批 CAS、删除墓碑、归档移动和冲突回滚通过。

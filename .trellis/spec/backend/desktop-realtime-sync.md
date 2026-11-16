@@ -3,9 +3,9 @@
 ## 1. Scope / Trigger
 
 - 修改 `packages/shared/task-snapshot.js`、`packages/shared/remote-identity.js`、
-  `apps/desktop/src-tauri/src/agent/{task_sync,task_command,onboarding}.rs`、`apps/server/team/task-space-*.js`、
-  `apps/server/team/task-snapshot-service.js`、`apps/server/team/task-command-service.js`、
-  `apps/server/team/sync-agent-service.js`、团队同步 API/SSE、`sync_*` schema 或桌面控制窗口时必须遵循本文。
+  `packages/desktop/src-tauri/src/agent/{task_sync,task_command,onboarding}.rs`、`packages/server/team/task-space-*.js`、
+  `packages/server/team/task-snapshot-service.js`、`packages/server/team/task-command-service.js`、
+  `packages/server/team/sync-agent-service.js`、团队同步 API/SSE、`sync_*` schema 或桌面控制窗口时必须遵循本文。
 - 单机 watcher 与团队客户端 watcher 继续复用 `packages/shared/trellis-watcher.js` 的事件归一化；团队客户端
   只监听 `.trellis/tasks/**`。
 - Team 服务端不 clone、fetch、commit 或 push 项目 Git，不创建项目工作副本，也不读取 Git 凭据。
@@ -497,26 +497,26 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - `packages/shared/test/shared-remote-identity.test.js`：HTTPS/SSH/scp 归一、端口、非法协议和分支。
 - `packages/shared/test/task-snapshot.test.js`：路径边界、LF 摘要、任务目录分组、1024/1025 文件、
   64 MiB/64 MiB+1 字节、移动和六类差异。
-- `apps/server/test/database-v10.test.js`：新旧表并存、升级备份、旧数据保留和重复启动。
-- `apps/server/test/team-task-spaces.test.js`：全局唯一、owner/invite、同远端不同分支隔离，以及切换分支只撤销
+- `packages/server/test/database-v10.test.js`：新旧表并存、升级备份、旧数据保留和重复启动。
+- `packages/server/test/team-task-spaces.test.js`：全局唯一、owner/invite、同远端不同分支隔离，以及切换分支只撤销
   当前 Agent 的旧 binding、保留旧 taskSpace 和其他设备 binding。
-- `apps/server/test/team-task-snapshot.test.js`：首次写入、CAS 冲突、整批回滚、幂等、删除墓碑、覆盖备份、
+- `packages/server/test/team-task-snapshot.test.js`：首次写入、CAS 冲突、整批回滚、幂等、删除墓碑、覆盖备份、
   非法/不一致 `observedBranchName`，以及升级前 pending batch 补字段重放。
-- `apps/server/test/team-task-index-v10.test.js`：tasks-only 物化、归档移动、revision 隔离、不读取 Git/workspace。
-- `apps/server/test/team-agent-slot.test.js`、`team-task-spaces.test.js`：监听快照、空集合、旧客户端、
+- `packages/server/test/team-task-index-v10.test.js`：tasks-only 物化、归档移动、revision 隔离、不读取 Git/workspace。
+- `packages/server/test/team-agent-slot.test.js`、`team-task-spaces.test.js`：监听快照、空集合、旧客户端、
   超时、五态聚合、监听详情权限和主动解绑幂等；另覆盖新设备踢下线、旧 SSE 关闭和旧命令取消。
-- `apps/server/test/team-task-commands.test.js`：在线目标、命令状态机、租约恢复、索引等待、重试和取消。
-- `apps/server/test/agent-event-stream.test.js`：同一 taskSpace 的 `10, 10, 9, 11` 只广播 10 和 11，
+- `packages/server/test/team-task-commands.test.js`：在线目标、命令状态机、租约恢复、索引等待、重试和取消。
+- `packages/server/test/agent-event-stream.test.js`：同一 taskSpace 的 `10, 10, 9, 11` 只广播 10 和 11，
   不同 taskSpace 独立去重，非法 revision 不广播。
 - 双客户端实时对齐（两个真实 Agent 的 HTTP 快照 + SSE、CAS 并发、离线拒绝）随 Node Agent 删除而
   不再有自动化测试；发布前由 Windows 客户端 E2E 覆盖，服务端行为由 `team-task-snapshot`、
   `team-agent-slot`、`team-gitless-http` 三条测试约束。
-- `apps/server/test/team-gitless-http.test.js`：新路由可用，旧 Git/live 路由 404，Team 启动不访问 Git 工作副本。
-- `apps/server/test/team-gitless-http.test.js` 还必须断言：超过旧 9 MiB 的合法 Agent 批次可写入；
+- `packages/server/test/team-gitless-http.test.js`：新路由可用，旧 Git/live 路由 404，Team 启动不访问 Git 工作副本。
+- `packages/server/test/team-gitless-http.test.js` 还必须断言：超过旧 9 MiB 的合法 Agent 批次可写入；
   Content-Length 超过 96 MiB 返回 `413 BODY_TOO_LARGE`；普通 JSON 仍为 64 KiB；缺少
   `observedBranchName` 返回 `400 BRANCH_OBSERVATION_REQUIRED`。
-- `apps/server/test/team-release.test.js`：服务端仓库无工作副本，命令成功前不生成正式任务。
-- `apps/desktop/src-tauri/src/agent/{onboarding,task_sync,task_command,git,protocol}.rs` 的 `mod tests`：
+- `packages/server/test/team-release.test.js`：服务端仓库无工作副本，命令成功前不生成正式任务。
+- `packages/desktop/src-tauri/src/agent/{onboarding,task_sync,task_command,git,protocol}.rs` 的 `mod tests`：
   仓库预检、固定 CLI 初始化、推送状态、已有 `.trellis`、同 `localRepoKey` 换分支、首次/增量同步、
   cursor 文件基线、离线并发冲突、延后目录、目录移动、pending batch 重放、全量分组跨目录超过
   1024 文件、实际批次 1024/1025 与 64 MiB 边界、错分支与 detached HEAD 拒绝、基线 tree 单次扫描
@@ -529,15 +529,15 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   持久索引还必须覆盖：正常重启不读未变化 `task.json`、HEAD 不变不执行 Git、单文件变化只解析
   目标项、schema/路径/超限/符号链接回退、临时 `TaskSync` 不写盘、启动 watcher 事件延后上传、
   `Notify` 多等待者不丢唤醒，以及展示缓存不能绕过真实分支门禁。
-- `apps/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、
+- `packages/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、
   DPAPI 往返、SSE 分帧、控制事件去重与过期；代理绕过需覆盖回环、私网、链路本地、IPv6
   ULA/link-local、`.local` 和公网域名。
-- `apps/desktop/src-tauri/src/agent/{runtime,task_sync,detach,store}.rs`：真实监听集合、
+- `packages/desktop/src-tauri/src/agent/{runtime,task_sync,detach,store}.rs`：真实监听集合、
   `detachPending` 排除、失败重试和成功后 cursor 清理；另覆盖相同/旧 revision 短路、首次同步和
   pending upload 例外、相同 cursor patch 不落盘。
 - Tauri command、capability 与 permission 的装配由 `cargo test`/桌面构建和真实客户端 E2E 验证，
   不用 Node 测试读取 Rust/TOML 源码做正则断言。
-- `apps/server/test/task-space-duplicate-cleanup.test.js`：默认 dry-run、只墓碑指定旧 taskSpace、不动归档、
+- `packages/server/test/task-space-duplicate-cleanup.test.js`：默认 dry-run、只墓碑指定旧 taskSpace、不动归档、
   `VACUUM INTO` 备份、内容差异和缺少稳定 ID 时拒绝自动清理。
 
 Windows 发布前仍需两个真实安装客户端完成登录、本地项目初始化、首次推送、任务同步、并发冲突、

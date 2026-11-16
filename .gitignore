@@ -6,9 +6,15 @@
 node_modules/
 .omp/
 *.log
+
+# Yarn 3 local state
+.yarn/cache/
+.yarn/install-state.gz
+.pnp.*
+
 # No trailing slash: worktrees link public/ in as a symlink, and a
 # dir-only rule (`/public/`) would leave that symlink untracked-but-visible.
-/apps/server/public/
+/packages/server/public/
 
 # Build and test output
 coverage/
@@ -30,8 +36,8 @@ logs/
 tmp/
 
 # Environment and secrets
-.env
 .env.*
+!.env
 !.env.example
 *.pem
 *.key
@@ -60,6 +66,6 @@ plugins/*
 !plugins/witops-core/**
 
 # Desktop client build output
-apps/desktop/src-tauri/target/
-apps/desktop/src-tauri/gen/
-apps/desktop/ui/
+packages/desktop/src-tauri/target/
+packages/desktop/src-tauri/gen/
+packages/desktop/ui/

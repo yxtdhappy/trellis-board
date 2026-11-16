@@ -4,10 +4,10 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 
 const JSON_VERSION = /"version"\s*:\s*"[^"]+"/
-const TAURI_CONF = 'apps/desktop/src-tauri/tauri.conf.json'
+const TAURI_CONF = 'packages/desktop/src-tauri/tauri.conf.json'
 const VERSION_FILES = [
   { path: 'package.json', pattern: JSON_VERSION },
-  ...['apps', 'packages'].flatMap((dir) =>
+  ...['packages'].flatMap((dir) =>
     fs
       .readdirSync(dir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
@@ -16,9 +16,9 @@ const VERSION_FILES = [
       .map((path) => ({ path, pattern: JSON_VERSION })),
   ),
   { path: TAURI_CONF, pattern: JSON_VERSION },
-  { path: 'apps/desktop/src-tauri/Cargo.toml', pattern: /^version = "[^"]+"/m },
+  { path: 'packages/desktop/src-tauri/Cargo.toml', pattern: /^version = "[^"]+"/m },
   {
-    path: 'apps/desktop/src-tauri/Cargo.lock',
+    path: 'packages/desktop/src-tauri/Cargo.lock',
     pattern: /name = "trellis-board-client"\r?\nversion = "[^"]+"/,
   },
 ]

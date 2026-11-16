@@ -11,26 +11,27 @@ Trellis Board 提供两种运行模式：
 
 ## 仓库结构
 
-项目是 npm workspaces monorepo：应用放在 `apps/`，可复用包放在 `packages/`，插件和脚本保留在根。
+项目是 yarn 3.5 workspaces monorepo：所有 workspace 包都在 `packages/` 下，插件和脚本保留在根。
 
 ```text
-apps/
-  apps/server/       Node HTTP/SSE 服务、SQLite、任务扫描与 Team 快照（含 plugins 宿主与 SDK）
-  apps/web/          React + Vite 前端，构建产物写入 apps/server/public 与 apps/desktop/ui
-  apps/desktop/      Tauri v2 桌面客户端（Rust + 前端产物）
 packages/
-  packages/shared/       服务端、Agent 与前端共用的纯 ESM 模块（含 zip 读取）
-  test-support/ 测试 harness、fixture 和插件 fixture
-plugins/        随仓库分发的参考插件，插件 id 与目录名一致
-scripts/        开发启动、容量检查、发布等脚本
-docs/           运维与设计文档
+  server/         Node HTTP/SSE 服务、SQLite、任务扫描与 Team 快照（含 plugins 宿主与 SDK）
+  web/            React + Vite 前端，构建产物写入 packages/server/public 与 packages/desktop/ui
+  desktop/        Tauri v2 桌面客户端（Rust + 前端产物）
+  shared/         服务端、Agent 与前端共用的纯 ESM 模块（含 zip 读取）
+  test-support/   测试 harness、fixture 和插件 fixture
+plugins/          随仓库分发的参考插件，插件 id 与目录名一致
+scripts/          开发启动、容量检查、发布等脚本
+docs/             运维与设计文档
 ```
 
-跨包引用统一使用 workspace 包名（如 `@trellis-board/shared/slug.js`），由 npm workspaces 在根
-`node_modules` 建立符号链接解析；被多个 workspace 共用的第三方依赖提升到根 `package.json` 声明。
+依赖用 yarn 3.5 管理（`packageManager: yarn@3.5.0`，固定版本在 `.yarn/releases/yarn-3.5.0.cjs`），
+只保留根 `yarn.lock`；`.yarn/cache/` 不入库。跨包引用统一使用 workspace 包名
+（如 `@trellis-board/shared/slug.js`），由 yarn 在根 `node_modules` 建立符号链接解析；
+被多个 workspace 共用的第三方依赖提升到根 `package.json` 声明。
 
-常用命令：`npm run dev`、`npm start`、`npm run build`、`npm run build:desktop`、`npm run test:all`、
-`npm run desktop:build`、`npm run desktop:package`。
+常用命令：`yarn dev`、`yarn start`、`yarn build`、`yarn build:desktop`、`yarn test:all`、
+`yarn desktop:build`、`yarn desktop:package`。
 
 ## 启动
 
@@ -38,23 +39,31 @@ docs/           运维与设计文档
 
 ```powershell
 cd D:\workspace\wiki\trellis-board
-npm install
-node apps/server/index.js
+yarn install
+yarn start
 ```
 
-打开 `http://127.0.0.1:4317`。
-
-也可以运行 `npm start` 或 `npm run board`。
+打开 `http://127.0.0.1:4317`。也可以直接运行 `node packages/server/index.js`。
 
 ### `.env`
 
-服务端启动时读取仓库根目录的 `.env`，与启动时的当前目录无关；`node apps/server/index.js`
-和 `node apps/server/team/cli.js` 使用同一份文件。文件可选，不存在时静默跳过。已存在的进程环境
-变量优先，`.env` 只补充缺失的键，因此 `PORT=4501 npm start` 始终覆盖文件里的 `PORT`。`.env` 不入库，
-可用键见根目录 `.env.example`。仓库根的默认 `.env` 只设 `TRELLIS_BOARD_MODE=team`，所以 `npm start`
-默认以团队模式启动；删掉它即回到 standalone。团队模式首次使用需先建系统管理员（见下）。
+服务端启动时读取仓库根目录的 `.env`，与启动时的当前目录无关；`node packages/server/index.js`
+和 `node packages/server/team/cli.js` 使用同一份文件。文件可选，不存在时静默跳过。已存在的进程环境
+变量优先，`.env` 只补充缺失的键，因此 `PORT=4501 yarn start` 始终覆盖文件里的 `PORT`。
 
-前端开发用 `npm run dev`：并行启动 `node --watch apps/server/index.js`（服务端改动自动重启）和 Vite 开发服务器（页面 HMR），`/api` 由 Vite 代理到 `PORT` 指定的端口，默认 `http://127.0.0.1:4317`；5173 被占用时 Vite 会自动递增端口，以控制台打印的地址为准。
+仓库根的 `.env` 已入库：首行 `node_version=24` 供 Jenkins 流水线读取并切换 Node 版本，其余键是团队版
+运行默认值（`PORT=4317`、`TRELLIS_BOARD_MODE=team`、`TRELLIS_BOARD_DATA_DIR=`、
+`TRELLIS_WATCH_DEBOUNCE_MS=400`），所以 `yarn start` 默认以团队模式启动。删掉或把
+`TRELLIS_BOARD_MODE` 改成 `standalone` 即回到无鉴权模式；可用键见根目录 `.env.example`。
+团队模式首次使用需先建系统管理员（见下）。
+
+### Jenkins 部署
+
+Jenkins 部署脚本读取 `.env` 的 `node_version` 切 Node，然后 `yarn install --immutable`、`yarn build`，
+再用它自己的 Dockerfile 构建镜像并以 `yarn start` 启动容器；仓库不维护 Dockerfile。`yarn build` 产出
+`packages/server/public`，运行数据由 `TRELLIS_BOARD_DATA_DIR` 指向的卷持久化，监听容器映射的 `PORT`。
+
+前端开发用 `yarn dev`：并行启动 `node --watch packages/server/index.js`（服务端改动自动重启）和 Vite 开发服务器（页面 HMR），`/api` 由 Vite 代理到 `PORT` 指定的端口，默认 `http://127.0.0.1:4317`；5173 被占用时 Vite 会自动递增端口，以控制台打印的地址为准。
 
 standalone 模式监听所有网络接口 `0.0.0.0`，且没有账号鉴权，只能用于可信网络。团队模式同样
 监听所有接口，HTTP 和 HTTPS 均可使用。
@@ -175,7 +184,7 @@ SQLite 使用 WAL 模式。standalone 主线程和扫描 Worker 各自持有连�
 
 接口只允许操作 SQLite `repositories` 表中的白名单仓库；不提供任意路径读取。
 
-主要源码入口：[apps/server/index.js](./apps/server/index.js)、[apps/server/database.js](./apps/server/database.js)、[apps/server/repositories.js](./apps/server/repositories.js)、[apps/server/persistence.js](./apps/server/persistence.js)、[apps/server/watcher.js](./apps/server/watcher.js)、[apps/server/loader.js](./apps/server/loader.js)、[apps/server/scan-worker.js](./apps/server/scan-worker.js)、[apps/server/actions.js](./apps/server/actions.js)、[apps/web/src/main.tsx](./apps/web/src/main.tsx)。
+主要源码入口：[packages/server/index.js](./packages/server/index.js)、[packages/server/database.js](./packages/server/database.js)、[packages/server/repositories.js](./packages/server/repositories.js)、[packages/server/persistence.js](./packages/server/persistence.js)、[packages/server/watcher.js](./packages/server/watcher.js)、[packages/server/loader.js](./packages/server/loader.js)、[packages/server/scan-worker.js](./packages/server/scan-worker.js)、[packages/server/actions.js](./packages/server/actions.js)、[packages/web/src/main.tsx](./packages/web/src/main.tsx)。
 
 ## 团队模式
 
@@ -183,7 +192,7 @@ SQLite 使用 WAL 模式。standalone 主线程和扫描 Worker 各自持有连�
 
 1. 准备 Node.js 24 和独立运行数据目录；Team 服务端不需要项目 Git、Git 凭据或 Python。
 2. 设置 `TRELLIS_BOARD_MODE=team`、`TRELLIS_BOARD_DATA_DIR`，需要时设置 `PORT` 和本地 Git 远端开关。
-3. 运行 `node apps/server/team/cli.js init-admin --username admin` 创建首个管理员。
+3. 运行 `node packages/server/team/cli.js init-admin --username admin` 创建首个管理员。
 4. 启动服务，在 `/admin.html` 创建团队和用户。
 5. 安装 Windows 客户端，用服务器地址、账号和密码登录；项目由客户端选择本地 Git 仓库后接入。
 
@@ -237,8 +246,8 @@ binding 不一致时暂停该仓库同步，不写任务目录、不上传、不
 
 管理接口：`GET /api/plugins`、`POST /api/plugins/<id>/start|stop`、`GET /api/plugins/<id>/logs|runs|audit`；
 前端入口在左侧导航「插件」。设置 `TRELLIS_PLUGINS_DISABLED=1` 可整体关闭。
-内置插件的功能测试与 fixture 放在 `plugins/<id>/test/`，宿主级协议测试在 `apps/server/test/`；
-`npm test` 默认只跑 workspace 测试，插件测试用 `npm run test:plugins`。
+内置插件的功能测试与 fixture 放在 `plugins/<id>/test/`，宿主级协议测试在 `packages/server/test/`；
+`yarn test` 默认只跑 workspace 测试，插件测试用 `yarn test:plugins`。
 
 插件默认没有沙箱：`acp-dispatch` 默认放行编辑与执行，只应在受信仓库、专用账号下启用。
 

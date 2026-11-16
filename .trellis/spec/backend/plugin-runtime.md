@@ -1,4 +1,4 @@
-# 插件运行时（`apps/server/plugins/`）
+# 插件运行时（`packages/server/plugins/`）
 
 适用：所有插件宿主代码与 `plugins/<id>/` 下的插件实现。设计依据见
 [.trellis/tasks/11-04-plugin-architecture/prd.md](../../../.trellis/tasks/11-04-plugin-architecture/prd.md)。
@@ -45,7 +45,7 @@
 - 崩溃重启指数退避：1s、2s、4s、8s、16s，上限 60s；10 分钟内 5 次则自动 `disabled`。
 - 健康检查 30s 一次，连续 3 次失败按崩溃处理；手动 `start` 清空重启计数并允许恢复。
 - 根路径冲突或占用核心前缀（`/`、`/api`）的插件直接 `blocked`，不 spawn。
-- 停插件顺序：`shutdown` → 3s 等待 → `terminateTree`（`apps/server/team/process.js`）。
+- 停插件顺序：`shutdown` → 3s 等待 → `terminateTree`（`packages/server/team/process.js`）。
 
 ## 4. 存储与命名空间
 
@@ -60,7 +60,7 @@
 
 ## 5. 任务写入
 
-- 插件写任务只能走 `ctx.tasks.create/assign/setStage`；宿主复用 `apps/server/actions.js` 与 `apps/server/metadata.js`。
+- 插件写任务只能走 `ctx.tasks.create/assign/setStage`；宿主复用 `packages/server/actions.js` 与 `packages/server/metadata.js`。
 - `taskKey` 固定为 `<repositoryId>::<relativeDir>`；`relativeDir` 形如 `11-04-<slug>`。
 - 文件写入必须走原子替换；`task/create` 的 `extraFiles` 只允许任务目录内的相对路径。
 - 事件：宿主发布 `scan.completed`、`task.assigned`、`task.stage.changed`；`event/emit` 会回送到所有订阅者。
@@ -88,8 +88,8 @@
 
 - 宿主侧测试用 `packages/test-support/plugin-runtime.js` 建临时 workspace + 真实 SQLite，不 mock store。
 - 插件协议用 `packages/test-support/fixtures/plugins/*` 的假插件；ACP 用 `plugins/acp-dispatch/test/fixtures/fake-agent.js`。
-- `apps/server/test/plugin-real-task.test.js` 跑真实 `.trellis/scripts/task.py`，验证宿主任务 façade 与脚本参数兼容。
-- 插件任务的宿主调用依赖 `python`；`apps/server/actions.js` 已回退到 `python3`，测试不需要注入 PATH shim。
+- `packages/server/test/plugin-real-task.test.js` 跑真实 `.trellis/scripts/task.py`，验证宿主任务 façade 与脚本参数兼容。
+- 插件任务的宿主调用依赖 `python`；`packages/server/actions.js` 已回退到 `python3`，测试不需要注入 PATH shim。
 - 断言插件状态要等“终态”，不要只等 `status`（重启期间状态可能仍是 `running`）。
 
 ### 5.1 命名边界
@@ -116,7 +116,7 @@
 | 清理 | `ctx.effect(dispose)` | 无 | 插件停止或崩溃时逆序执行 |
 | 敏感信息 | `ctx.secrets` | 无 | 只读环境变量；不提供写入 API |
 
-宿主能力是插件唯一稳定接口。插件不得直接读运行数据目录、`apps/server/` 或宿主数据库；需要新能力时先扩展本清单和 SDK，而不是在插件里绕过。
+宿主能力是插件唯一稳定接口。插件不得直接读运行数据目录、`packages/server/` 或宿主数据库；需要新能力时先扩展本清单和 SDK，而不是在插件里绕过。
 
 宿主核心 capability 与插件 capability 共用 `provides` / `requires` 模型。`trellis.repositories` 管理工作区；
 `trellis.projects` 提供项目上下文（`list` / `get` / `current`，权限 `projects:read`），供插件按左侧选中的项目

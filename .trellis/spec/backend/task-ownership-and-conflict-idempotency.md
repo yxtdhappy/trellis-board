@@ -169,7 +169,7 @@ cursor 兼容字段：
 - `team-task-snapshot.test.js`：ownership API 身份隔离、空/错误 branch 整批拒绝、稳定 conflict ID、
   历史重复列表折叠、不同 Agent 隔离、基线证据接纳、no-op 证据、证据字段拒绝和来源写入门禁。
 - `team-gitless-http.test.js`：新 ownership 路由鉴权、200 ID 上限和不泄漏任务正文。
-- `apps/desktop/src-tauri/src/agent/task_sync.rs` 内单元测试：watcher/pull/pending/bootstrap/deferred/command/overwrite
+- `packages/desktop/src-tauri/src/agent/task_sync.rs` 内单元测试：watcher/pull/pending/bootstrap/deferred/command/overwrite
   全部经过归属门禁；唯一归属自动补齐；歧义只提示一次；其他分支任务不调用上传；pending 字节不变；
   conflictBlocked 在重启后保持、解决后清除；HEAD 未变不重扫、pending 证据原样重放、
   `TASK_OWNED_BY_BASELINE` 后本进程停止主动上传。

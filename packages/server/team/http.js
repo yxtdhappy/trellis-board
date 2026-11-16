@@ -1586,7 +1586,7 @@ export async function createTeamRuntime({
       throw teamError(
         503,
         ERROR_CODES.AUTH_REQUIRED,
-        '团队模式尚无系统管理员，请先在本机运行 node apps/server/team/cli.js init-admin',
+        '团队模式尚无系统管理员，请先在本机运行 node packages/server/team/cli.js init-admin',
       )
     }
     const boardEvents = createBoardEventService(boardEventOptions)

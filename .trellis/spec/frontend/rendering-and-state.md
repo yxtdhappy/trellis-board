@@ -149,8 +149,8 @@
 
 - `TaskSpaceListenerState = online | inactive | unassociated | unknown_legacy | disabled`。
 - `taskCommandState(taskSpace, teamMode) -> { canSubmit, reason }`：
-  `apps/web/src/lib/team-client.js`。
-- `projectListenerView(taskSpace)`：`apps/web/src/lib/project-rail-association.js`。
+  `packages/web/src/lib/team-client.js`。
+- `projectListenerView(taskSpace)`：`packages/web/src/lib/project-rail-association.js`。
 - Tauri：`detach_local_association(taskSpaceId)`。
 
 ### 3. Contracts
@@ -188,9 +188,9 @@
 
 ### 6. Tests Required
 
-- `apps/web/test/project-rail-association.test.js`：五态、颜色语义、待确认错误、逐 taskSpace 独立。
-- `apps/web/test/team-web.test.js`：驼峰/下划线归一、零监听门禁和恢复。
-- `apps/desktop/test/*.test.js`：Tauri 命令、capability、`detachPending` 投影。
+- `packages/web/test/project-rail-association.test.js`：五态、颜色语义、待确认错误、逐 taskSpace 独立。
+- `packages/web/test/team-web.test.js`：驼峰/下划线归一、零监听门禁和恢复。
+- `packages/desktop/test/*.test.js`：Tauri 命令、capability、`detachPending` 投影。
 
 ### 7. Wrong vs Correct
 
@@ -282,7 +282,7 @@ const tasks = (teamPage?.tasks || []).map(teamRowToBoardTask)
 
 ## 主题
 
-- token 在 `apps/web/src/index.css`：`:root` 浅色、`.dark` 深色、`@theme inline` 暴露 utility。
+- token 在 `packages/web/src/index.css`：`:root` 浅色、`.dark` 深色、`@theme inline` 暴露 utility。
 - 首屏由三个 HTML 入口的内联脚本在 React 挂载前决定 `.dark` 类，避免闪烁。
 - 新增颜色一律使用 shadcn 语义 token；不要直接写 `#hex`、`bg-white`、`text-black`。
 - preset：`b3awTjpuKm`（mira / neutral / violet / indigo / Inter + Geist / radius default）。

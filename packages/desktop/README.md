@@ -4,7 +4,7 @@ Tauri v2 单进程客户端：Agent（心跳、SSE 事件、任务空间同步�
 `trellis-board-client.exe` 内以 Rust 实现，没有任何 sidecar 或内置 Node 运行时。客户端冷启动先做
 运行环境检查，再显示本地登录页；登录成功后当前 WebView 进入 Board。
 
-- 客户端版本：`apps/desktop/src-tauri/Cargo.toml`、`apps/desktop/src-tauri/tauri.conf.json`
+- 客户端版本：`packages/desktop/src-tauri/Cargo.toml`、`packages/desktop/src-tauri/tauri.conf.json`
 - Agent 协议：`AGENT_PROTOCOL_VERSION = 3`
 - 本地配置：`%LOCALAPPDATA%\TrellisBoard\data\client.json`（schema 3）
 - Agent 数据：`%LOCALAPPDATA%\TrellisBoard\data\agent`
@@ -310,7 +310,7 @@ Shell、进程或 dialog 权限。
 ## 目录
 
 ```text
-apps/desktop/
+packages/desktop/
   ui/                             构建产物：环境检查页、本地登录页、同步控制窗口（勿手改）
   src-tauri/
     src/main.rs                   窗口、登录、Cookie、动态导航、项目预检/初始化/接入
@@ -330,7 +330,7 @@ apps/desktop/
 
 前置：
 
-- Node.js 24（仅用于构建 `apps\desktop\ui`）
+- Node.js 24（仅用于构建 `packages\desktop\ui`）
 - Windows 10/11 x64
 - Rust stable（MSVC toolchain）
 - Visual Studio Build Tools（C++ 桌面负载）
@@ -338,28 +338,28 @@ apps/desktop/
 - WebView2 Runtime
 
 ```powershell
-npm run build:desktop
-cd apps/desktop
+yarn build:desktop
+cd packages/desktop
 cargo tauri build        # 未装 cargo-tauri 时用 npx @tauri-apps/cli@^2 build
 cd ../..
-npm run desktop:package
+yarn desktop:package
 ```
 
-`apps\desktop\ui` 是 `npm run build:desktop` 的产物（源码在 `apps/web/desktop` 与
-`apps/web/src/desktop`，组件复用 `apps/web/src/components/ui`），已在 `.gitignore` 中忽略；`cargo tauri build`
+`packages\desktop\ui` 是 `yarn build:desktop` 的产物（源码在 `packages/web/desktop` 与
+`packages/web/src/desktop`，组件复用 `packages/web/src/components/ui`），已在 `.gitignore` 中忽略；`cargo tauri build`
 只打包 `tauri.conf.json` 的 `frontendDist = ../ui`，不会替你构建前端，缺步骤会打出空窗口。
 运行期不需要 Node.js，也没有 sidecar：`cargo tauri build` 只产出单个客户端 EXE，`bundle.active = false`
 不做任何打包，不再生成 NSIS 安装器。
 
 产物：
 
-- `apps\desktop\src-tauri\target\release\trellis-board-client.exe`
-- `apps\desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>_x64-portable.zip`
+- `packages\desktop\src-tauri\target\release\trellis-board-client.exe`
+- `packages\desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>_x64-portable.zip`
 
 CI（`.github/workflows/windows.yml`）跑完仍上传 `trellis-board-desktop-windows` artifact（zip + sha256）；
 推送 `v*` tag 或手动触发时填写 `release_tag` 输入，还会把这两项作为 Release 资产挂到该 tag 的 Release 上。
 发布时版本号不需要手工改：`Resolve release version` 从 tag 取版本，`Stamp version from tag` 在构建前写入
-`apps/desktop/package.json`、`apps/desktop/src-tauri/tauri.conf.json`、`apps/desktop/src-tauri/Cargo.toml`，
+`packages/desktop/package.json`、`packages/desktop/src-tauri/tauri.conf.json`、`packages/desktop/src-tauri/Cargo.toml`，
 绿色包名与 `VERSION.txt` 随之变化，冒烟测试会校验二者与 tag 一致。本地构建仍用仓库里签入的版本号。
 tag 推送本身不构建：GitHub 的缓存只对「当前 ref 或默认分支」可见，tag run 落在 `refs/tags/<tag>`
 作用域，读不到 `refs/heads/main` 的缓存（实测把默认分支切到 main 后仍报 `No cache found.`）。所以 tag
@@ -370,14 +370,14 @@ main 上的 `workflow_dispatch`；那次 run 在 main 的缓存作用域里检�
 打 tag 用脚本，不要手工 `git tag`。版本号由脚本递增（默认 patch，也可 `minor` / `major` 或直接给 `x.y.z`）：
 
 ```powershell
-npm run release:desktop -- --dry-run     # 预演：0.3.0 -> 0.3.1
-npm run release:desktop                  # 0.3.0 -> 0.3.1
-npm run release:desktop -- minor         # 0.3.1 -> 0.4.0
-npm run release:desktop -- 1.0.0         # 指定版本，必须大于当前版本
+yarn release:desktop -- --dry-run     # 预演：0.3.0 -> 0.3.1
+yarn release:desktop                  # 0.3.0 -> 0.3.1
+yarn release:desktop -- minor         # 0.3.1 -> 0.4.0
+yarn release:desktop -- 1.0.0         # 指定版本，必须大于当前版本
 ```
 
 脚本要求工作区干净、HEAD 与 `origin/main` 一致、tag 不存在，然后把新版本写回上面那三个文件加
-`apps/desktop/src-tauri/Cargo.lock`（锁文件不同步会让本地 `cargo` 把它改脏），提交
+`packages/desktop/src-tauri/Cargo.lock`（锁文件不同步会让本地 `cargo` 把它改脏），提交
 `chore(release): <version>`，推 main，再创建注解 tag `v<version>` 并推送，触发上面那条 tag 流水线。
 CI 里的盖章步骤保留为兜底，版本已一致时不会改动任何文件。
 
@@ -392,7 +392,7 @@ CI 里的盖章步骤保留为兜底，版本已一致时不会改动任何文�
 执行构建命令后，解压并运行：
 
 ```text
-apps\desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>_x64-portable.zip
+packages\desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>_x64-portable.zip
   TrellisBoard_<version>_x64-portable\
     trellis-board-client.exe
     VERSION.txt

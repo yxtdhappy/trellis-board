@@ -13,6 +13,6 @@
 
 ## 测试
 
-从仓库根目录运行 `npm run test:plugins`（等价于 `node --test plugins/*/test/*.test.js`）。
-根 `npm test` 默认只跑 `apps/*/test` 与 `packages/*/test`，不包含这里的插件测试；
-插件通过 `../../apps/server/plugins/sdk.js` 引用宿主 SDK。
+从仓库根目录运行 `yarn test:plugins`（等价于 `node --test plugins/*/test/*.test.js`）。
+根 `yarn test` 默认只跑 `packages/*/test` 与 `packages/*/test`，不包含这里的插件测试；
+插件通过 `../../packages/server/plugins/sdk.js` 引用宿主 SDK。

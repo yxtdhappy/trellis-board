@@ -149,8 +149,8 @@ function usage() {
   process.stdout.write(
     [
       '用法:',
-      '  node apps/server/team/cli.js init-admin --username <登录名> [--display-name <显示名>]',
-      '  node apps/server/team/cli.js status',
+      '  node packages/server/team/cli.js init-admin --username <登录名> [--display-name <显示名>]',
+      '  node packages/server/team/cli.js status',
       '',
       '环境变量:',
       '  TRELLIS_BOARD_DATA_DIR=<运行数据目录>',

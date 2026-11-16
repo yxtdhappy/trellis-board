@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHarness, startHttpServer } from "@trellis-board/test-support/plugin-runtime.js";
-import { readExecutionMap } from "../../../apps/server/execution-store.js";
+import { readExecutionMap } from "../../../packages/server/execution-store.js";
 import { createTaskRepository, createWitopsFixture, pluginConfig, SAMPLE_DETAIL } from "./fixtures/witops-fixture.js";
 import { htmlToMarkdown, safeHtmlToMarkdown, validateMarkdown } from "../html-to-markdown.js";
 import { buildTaskDraft, resolveAssignee } from "../mapper.js";

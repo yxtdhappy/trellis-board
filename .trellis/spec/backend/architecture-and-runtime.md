@@ -4,39 +4,39 @@
 
 | 模块 | 职责 |
 | --- | --- |
-| [apps/server/config.js](../../../apps/server/config.js) | 跨平台运行数据根、SQLite 路径、团队监听与公开地址配置 |
-| [apps/server/data-migration.js](../../../apps/server/data-migration.js) | 从旧源码 `data/` 迁移运行数据并重写受管项目路径 |
-| [apps/server/database.js](../../../apps/server/database.js) | `node:sqlite` 连接、PRAGMA、顺序迁移到 schema v12、事务辅助 |
-| [apps/server/repositories.js](../../../apps/server/repositories.js) | standalone 白名单增删、ID 生成和路径规范化 |
-| [apps/server/loader.js](../../../apps/server/loader.js) | 扫描任务、读取证据、推导阶段和父子关系 |
-| [apps/server/scan-worker.js](../../../apps/server/scan-worker.js) | standalone Worker Thread 扫描与增量任务刷新 |
-| [apps/server/watcher.js](../../../apps/server/watcher.js) | standalone 仓库 watcher；团队服务端不使用 |
+| [packages/server/config.js](../../../packages/server/config.js) | 跨平台运行数据根、SQLite 路径、团队监听与公开地址配置 |
+| [packages/server/data-migration.js](../../../packages/server/data-migration.js) | 从旧源码 `data/` 迁移运行数据并重写受管项目路径 |
+| [packages/server/database.js](../../../packages/server/database.js) | `node:sqlite` 连接、PRAGMA、顺序迁移到 schema v12、事务辅助 |
+| [packages/server/repositories.js](../../../packages/server/repositories.js) | standalone 白名单增删、ID 生成和路径规范化 |
+| [packages/server/loader.js](../../../packages/server/loader.js) | 扫描任务、读取证据、推导阶段和父子关系 |
+| [packages/server/scan-worker.js](../../../packages/server/scan-worker.js) | standalone Worker Thread 扫描与增量任务刷新 |
+| [packages/server/watcher.js](../../../packages/server/watcher.js) | standalone 仓库 watcher；团队服务端不使用 |
 | [packages/shared/trellis-watcher.js](../../../packages/shared/trellis-watcher.js) | 单机与桌面客户端共用的任务/workspace 监听见 |
 | [packages/shared/task-snapshot.js](../../../packages/shared/task-snapshot.js) | tasks-only 路径、LF 摘要、任务目录分组和首次差异分类 |
 | [packages/shared/remote-identity.js](../../../packages/shared/remote-identity.js) | Git 远端规范化和任务空间身份输入 |
-| [apps/server/team/task-space-service.js](../../../apps/server/team/task-space-service.js) | 全局项目、分支任务空间、团队访问、成员和 Agent binding |
-| [apps/server/team/task-snapshot-service.js](../../../apps/server/team/task-snapshot-service.js) | tasks 快照、文件级 CAS、revision、游标、冲突和审计 |
-| [apps/server/team/task-space-index.js](../../../apps/server/team/task-space-index.js) | 从持久化快照物化临时任务目录并生成 taskSpace 索引 |
-| [apps/server/team/task-command-service.js](../../../apps/server/team/task-command-service.js) | Web 创建/改派命令、在线 Agent 检查、租约、重试和完成门禁 |
-| [apps/server/team/sync-agent-service.js](../../../apps/server/team/sync-agent-service.js) | Agent 注册/鉴权、单账号活动槽和设备替换 |
-| [apps/server/team/agent-event-stream.js](../../../apps/server/team/agent-event-stream.js) | Agent SSE 命令与撤销通知 |
-| [apps/server/team/task-snapshot-backup.js](../../../apps/server/team/task-snapshot-backup.js) | 每日 SQLite `VACUUM INTO` 快照和 7 份保留策略 |
-| [apps/server/team/gitless-board-service.js](../../../apps/server/team/gitless-board-service.js) | Team Board 查询、任务详情、计划写入和权限投影 |
-| [apps/server/team/http.js](../../../apps/server/team/http.js) | Team HTTP 装配、路由、生命周期和 Session/Agent 鉴权 |
+| [packages/server/team/task-space-service.js](../../../packages/server/team/task-space-service.js) | 全局项目、分支任务空间、团队访问、成员和 Agent binding |
+| [packages/server/team/task-snapshot-service.js](../../../packages/server/team/task-snapshot-service.js) | tasks 快照、文件级 CAS、revision、游标、冲突和审计 |
+| [packages/server/team/task-space-index.js](../../../packages/server/team/task-space-index.js) | 从持久化快照物化临时任务目录并生成 taskSpace 索引 |
+| [packages/server/team/task-command-service.js](../../../packages/server/team/task-command-service.js) | Web 创建/改派命令、在线 Agent 检查、租约、重试和完成门禁 |
+| [packages/server/team/sync-agent-service.js](../../../packages/server/team/sync-agent-service.js) | Agent 注册/鉴权、单账号活动槽和设备替换 |
+| [packages/server/team/agent-event-stream.js](../../../packages/server/team/agent-event-stream.js) | Agent SSE 命令与撤销通知 |
+| [packages/server/team/task-snapshot-backup.js](../../../packages/server/team/task-snapshot-backup.js) | 每日 SQLite `VACUUM INTO` 快照和 7 份保留策略 |
+| [packages/server/team/gitless-board-service.js](../../../packages/server/team/gitless-board-service.js) | Team Board 查询、任务详情、计划写入和权限投影 |
+| [packages/server/team/http.js](../../../packages/server/team/http.js) | Team HTTP 装配、路由、生命周期和 Session/Agent 鉴权 |
 
 ## 依赖方向
 
 ```text
 standalone:
-apps/server/index.js
+packages/server/index.js
   -> database / loader / persistence / actions / repositories / watcher
   -> execution-store / execution-projection
 
-apps/server/scan-worker.js
+packages/server/scan-worker.js
   -> database / loader / metadata / repositories
 
 team:
-apps/server/team/http.js
+packages/server/team/http.js
   -> task-space-service
   -> task-snapshot-service
   -> task-space-index -> loader + sync_task_space_file
@@ -44,7 +44,7 @@ apps/server/team/http.js
   -> gitless-board-service -> task-space-index + execution stores
   -> agent-event-stream / board-events
 
-desktop Agent（apps/desktop/src-tauri/src/agent/）:
+desktop Agent（packages/desktop/src-tauri/src/agent/）:
 task_sync.rs
   -> packages/shared/task-snapshot.js + packages/shared/trellis-watcher.js + http.rs
 task_command.rs
@@ -63,8 +63,8 @@ onboarding.rs
 
 ```text
 .trellis/tasks + workspace + task.json evidence
-  -> apps/server/scan-worker.js
-  -> apps/server/loader.js
+  -> packages/server/scan-worker.js
+  -> packages/server/loader.js
   -> scan_cache + execution tables
   -> /api/board + /api/task
 ```
@@ -109,7 +109,7 @@ Team runtime 的事实链只有客户端任务快照：
 
 ## Team 快照投影
 
-[apps/server/team/task-space-index.js](../../../apps/server/team/task-space-index.js) 对每个 taskSpace 串行投影：
+[packages/server/team/task-space-index.js](../../../packages/server/team/task-space-index.js) 对每个 taskSpace 串行投影：
 
 1. 在系统临时目录创建空根，所有业务 Git 工作区之外；
 2. 从 `sync_task_space_file` 读取当前 revision 的非删除文件；
@@ -146,7 +146,7 @@ Team 启动：
 最后关闭 SQLite 连接。`SIGINT`/`SIGTERM` 还必须在 runtime 停止后等待 logger `close()`。
 
 测试导入 `loader`、`task-space-service` 等模块时不能意外监听端口；端口生命周期只在
-`apps/server/index.js`、`createTeamRuntime()` 或 CLI 顶层触发。
+`packages/server/index.js`、`createTeamRuntime()` 或 CLI 顶层触发。
 
 ## 日志
 
