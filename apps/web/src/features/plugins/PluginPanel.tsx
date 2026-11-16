@@ -12,6 +12,35 @@ type BridgeMessage = {
 
 type BridgeRequest = BridgeMessage & { type: 'trellis:request'; id: string; path: string }
 
+// 下发给面板的设计令牌（/plugin-ui/v1/tokens.css 的 --tb-* 来源）。
+// 只发白名单里的值，避免把宿主所有 CSS 变量都泄漏给插件面板。
+const PANEL_TOKEN_NAMES = [
+  'background',
+  'foreground',
+  'card',
+  'card-foreground',
+  'border',
+  'primary',
+  'primary-foreground',
+  'muted',
+  'muted-foreground',
+  'destructive',
+  'destructive-foreground',
+  'success',
+  'warning',
+  'radius',
+] as const
+
+function readPanelTokens(): Record<string, string> {
+  const style = getComputedStyle(document.documentElement)
+  const tokens: Record<string, string> = {}
+  for (const name of PANEL_TOKEN_NAMES) {
+    const value = style.getPropertyValue(`--${name}`).trim()
+    if (value) tokens[name] = value
+  }
+  return tokens
+}
+
 function isBridgeRequest(message: BridgeMessage): message is BridgeRequest {
   return (
     message.type === 'trellis:request' &&
@@ -57,6 +86,7 @@ export function PluginPanel({
       post({
         type: 'trellis:init',
         theme,
+        tokens: readPanelTokens(),
         panel: { id: panel.id, pluginId: panel.pluginId, title: panel.title },
         context: { repositoryId: projectId, projectName },
       })

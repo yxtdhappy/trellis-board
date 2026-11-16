@@ -22,6 +22,13 @@ function readRawBody(request) {
   })
 }
 
+/** 读 JSON 请求体；空体按 {} 处理，解析失败由调用方返回 400。 */
+async function readJsonBody(request) {
+  const raw = await readRawBody(request)
+  if (!raw.trim()) return {}
+  return JSON.parse(raw)
+}
+
 function toResponse(error) {
   if (error instanceof RpcError) {
     const status =
@@ -126,7 +133,12 @@ export function createPluginRuntime({
   /** 重读 plugins.json + secrets 并按需重启插件；TRELLIS_PLUGINS_DISABLED=1 时直接拒绝。 */
   async function reload() {
     if (disabled) {
-      return { ok: false, reason: 'http', error: '插件机制已被 TRELLIS_PLUGINS_DISABLED=1 关闭', changed: [] }
+      return {
+        ok: false,
+        reason: 'http',
+        error: '插件机制已被 TRELLIS_PLUGINS_DISABLED=1 关闭',
+        changed: [],
+      }
     }
     return supervisor.reloadConfig({ reason: 'http' })
   }
@@ -150,7 +162,7 @@ export function createPluginRuntime({
   }
 
   function pluginAdminMatch(pathname) {
-    const match = /^\/api\/plugins\/([^/]+)(?:\/(start|stop|logs|runs|audit))?$/.exec(pathname)
+    const match = /^\/api\/plugins\/([^/]+)(?:\/(start|stop|logs|runs|audit|sort))?$/.exec(pathname)
     if (!match) return null
     return { id: decodeURIComponent(match[1]), action: match[2] || null }
   }
@@ -159,9 +171,12 @@ export function createPluginRuntime({
     const result = []
     for (const state of supervisor.plugins.values()) {
       if (state.status !== 'running') continue
+      const pluginSort = state.sort ?? null
       for (const panel of state.manifest?.panels ?? []) {
         result.push({
           ...panel,
+          // 插件级 sort 优先于清单里的 order；没设置时按清单顺序。
+          sort: pluginSort ?? panel.order,
           pluginId: state.id,
           pluginName: state.manifest?.name ?? state.id,
           src: `/api/plugins/${encodeURIComponent(state.id)}${panel.entry}`,
@@ -170,7 +185,10 @@ export function createPluginRuntime({
     }
     return {
       panels: result.sort(
-        (left, right) => left.order - right.order || left.title.localeCompare(right.title, 'zh'),
+        (left, right) =>
+          left.sort - right.sort ||
+          left.order - right.order ||
+          left.title.localeCompare(right.title, 'zh'),
       ),
     }
   }
@@ -237,6 +255,22 @@ export function createPluginRuntime({
     if (url.pathname === '/api/events' && request.method === 'GET') {
       return openEventStream({ request, response, url })
     }
+    if (url.pathname === '/api/plugins/order' && request.method === 'POST') {
+      let payload
+      try {
+        payload = await readJsonBody(request)
+      } catch {
+        sendJson(response, 400, { error: '请求体不是合法 JSON' })
+        return true
+      }
+      try {
+        const plugins = supervisor.setOrder(payload?.ids)
+        sendJson(response, 200, { ok: true, plugins })
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : '排序失败' })
+      }
+      return true
+    }
     // 必须在 pluginAdminMatch 之前：否则 /api/plugins/reload 会被解析成 id=reload 并返回 404。
     if (url.pathname === '/api/plugins/reload' && request.method === 'POST') {
       const result = await reload()
@@ -260,6 +294,25 @@ export function createPluginRuntime({
         if (admin.action === 'stop' && request.method === 'POST') {
           await supervisor.stopPlugin(admin.id)
           sendJson(response, 200, { message: '插件已停止', plugin: supervisor.describe(state) })
+          return true
+        }
+        if (admin.action === 'sort' && request.method === 'POST') {
+          let payload
+          try {
+            payload = await readJsonBody(request)
+          } catch {
+            sendJson(response, 400, { error: '请求体不是合法 JSON' })
+            return true
+          }
+          const rawSort = payload?.sort
+          const sort =
+            rawSort === null || rawSort === undefined || rawSort === '' ? null : Number(rawSort)
+          if (sort !== null && !Number.isFinite(sort)) {
+            sendJson(response, 400, { error: 'sort 必须是数字，留空表示按清单默认顺序' })
+            return true
+          }
+          const plugin = supervisor.setSort(admin.id, sort)
+          sendJson(response, 200, { message: '面板排序已更新', plugin })
           return true
         }
         if (admin.action === 'logs' && request.method === 'GET') {

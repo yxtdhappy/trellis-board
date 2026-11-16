@@ -128,13 +128,14 @@
   ],
   "requires": [
     {
+      "name": "accounts.credentials",
+      "version": "^1.0.0",
+      "methods": ["credential.resolve"]
+    },
+    {
       "name": "trellis.projects",
       "version": "^1.0.0",
-      "methods": [
-        "list",
-        "get",
-        "current"
-      ]
+      "methods": ["list", "get", "current"]
     }
   ],
   "panels": [
@@ -160,10 +161,7 @@
     "assignee": "",
     "developerMap": {},
     "skipIfNoAssignee": true,
-    "types": [
-      3,
-      4
-    ],
+    "types": [3, 4],
     "type": 4,
     "status": "1,3",
     "pageSize": 50,
@@ -175,6 +173,8 @@
     "timeoutMs": 20000,
     "keepRaw": false,
     "agentId": null,
+    "credentialSource": "auto",
+    "accountSystemId": "witops",
     "credentials": {
       "mode": "password",
       "account": "",

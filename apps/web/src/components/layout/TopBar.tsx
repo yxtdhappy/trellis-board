@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   KeyRound,
   LogOut,
@@ -62,10 +62,25 @@ export function TopBar({
   adminHref,
 }: TopBarProps) {
   const { resolvedTheme, setTheme } = useAppearance()
+  const navRef = useRef<HTMLElement>(null)
   const [preferencesOpen, setPreferencesOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const nextTheme = resolvedTheme === 'dark' ? 'light' : 'dark'
   const themeLabel = resolvedTheme === 'dark' ? '切换到浅色主题' : '切换到深色主题'
+
+  // 插件多到需要横向滚动时，切到视口外的面板要把它滚进来
+  useEffect(() => {
+    const nav = navRef.current
+    const active = nav?.querySelector<HTMLElement>('[aria-current="page"]')
+    if (!nav || !active) return
+    const navRect = nav.getBoundingClientRect()
+    const itemRect = active.getBoundingClientRect()
+    if (itemRect.left < navRect.left) {
+      nav.scrollBy({ left: itemRect.left - navRect.left - 8, behavior: 'smooth' })
+    } else if (itemRect.right > navRect.right) {
+      nav.scrollBy({ left: itemRect.right - navRect.right + 8, behavior: 'smooth' })
+    }
+  }, [activeNav, nav.length])
 
   useEffect(() => {
     if (!searchOpen) return
@@ -111,7 +126,8 @@ export function TopBar({
           </div>
         ) : (
           <nav
-            className="ml-3 flex h-14 min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)] [scrollbar-width:none] @max-[48em]:order-last @max-[48em]:ml-0 @max-[48em]:h-10 @max-[48em]:w-full @max-[48em]:flex-none @max-[48em]:border-t @max-[48em]:border-border"
+            ref={navRef}
+            className="topbar-nav ml-3 flex h-14 min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overscroll-x-contain @max-[48em]:order-last @max-[48em]:ml-0 @max-[48em]:h-10 @max-[48em]:w-full @max-[48em]:flex-none @max-[48em]:border-t @max-[48em]:border-border"
             aria-label="看板视图"
           >
             {nav.map((item) => (

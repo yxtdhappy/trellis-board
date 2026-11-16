@@ -15,9 +15,8 @@ const state = {
   pollTimer: null,
 }
 
-const pending = new Map()
-let sequence = 0
-let initialized = false
+const bridge = window.TrellisBridge.create()
+const { toast: uiToast } = window.TrellisUI
 
 function byId(id) {
   return document.getElementById(id)
@@ -46,44 +45,15 @@ function clear(node, ...children) {
   node.replaceChildren(...children.filter(Boolean))
 }
 
-function rpc(method, path, body) {
-  const id = `r${++sequence}`
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject })
-    window.parent.postMessage({ type: 'trellis:request', id, method, path, body }, '*')
-  })
-}
-
-window.addEventListener('message', (event) => {
-  const message = event.data
-  if (!message || typeof message !== 'object') return
-  if (message.type === 'trellis:init') {
-    state.theme = message.theme || 'light'
-    document.documentElement.dataset.theme = state.theme
-    if (!initialized) {
-      initialized = true
-      void load()
-    }
-    return
-  }
-  if (message.type === 'trellis:response') {
-    const entry = pending.get(message.id)
-    if (!entry) return
-    pending.delete(message.id)
-    if (message.ok) entry.resolve(message.data)
-    else entry.reject(new Error(message.data?.error || `请求失败（${message.status}）`))
-  }
+bridge.onInit(() => {
+  if (state.initialized) return
+  state.initialized = true
+  void load()
 })
 
 function toast(message, kind = 'info') {
-  const node = byId('toast')
-  node.textContent = message
-  node.dataset.kind = kind
-  node.hidden = false
-  clearTimeout(node.hideTimer)
-  node.hideTimer = setTimeout(() => {
-    node.hidden = true
-  }, 4000)
+  const map = { ok: 'ok', bad: 'danger', warn: 'warn', info: 'info' }
+  uiToast(message, map[kind] || 'info')
 }
 
 function timeAgo(timestamp) {
@@ -141,7 +111,7 @@ async function load() {
 
 async function loadStatus() {
   try {
-    state.status = await rpc('GET', '/status')
+    state.status = await bridge.get('/status')
     renderConnection()
   } catch (error) {
     renderConnection(error.message)
@@ -151,10 +121,10 @@ async function loadStatus() {
 function renderConnection(error) {
   const node = byId('conn')
   const status = state.status
-  node.classList.remove('ok', 'warn', 'bad')
+  node.classList.remove('tb-chip-ok', 'tb-chip-warn', 'tb-chip-danger')
   if (error || status?.error) {
     node.textContent = '连接异常'
-    node.classList.add('bad')
+    node.classList.add('tb-chip-danger')
     node.title = error || status.error
     return
   }
@@ -166,13 +136,13 @@ function renderConnection(error) {
   node.textContent = status.connection?.jenkinsVersion
     ? `Jenkins ${status.connection.jenkinsVersion}`
     : '已配置'
-  node.classList.add('ok')
+  node.classList.add('tb-chip-ok')
   node.title = `${status.baseUrl}（${status.username || '匿名'}）`
 }
 
 async function loadJobs() {
   try {
-    const data = await rpc('GET', '/jobs')
+    const data = await bridge.get('/jobs')
     state.jobs = data.jobs || []
     renderJobs()
   } catch (error) {
@@ -228,11 +198,11 @@ async function selectJob(name) {
   renderJobs()
   stopPolling()
   try {
-    state.job = await rpc('GET', `/job?name=${encodeURIComponent(name)}`)
+    state.job = await bridge.get(`/job?name=${encodeURIComponent(name)}`)
     renderJob()
     schedulePollIfBuilding()
   } catch (error) {
-    clear(byId('job-body'), el('div', { class: 'empty bad', text: error.message }))
+    clear(byId('job-body'), el('div', { class: 'tb-empty', text: error.message }))
   }
 }
 
@@ -248,169 +218,13 @@ async function loadParameterOptions(definition, combo) {
       `name=${encodeURIComponent(definition.name)}`,
       `class=${encodeURIComponent(definition.className || '')}`,
     ].join('&')
-    const data = await rpc('GET', `/param-values?${query}`)
+    const data = await bridge.get(`/param-values?${query}`)
     const values = (Array.isArray(data.values) ? data.values : []).map((value) => String(value))
     combo.setValues(values)
   } catch (error) {
     combo.setError(error.message)
   }
 }
-
-let openCombo = null
-
-/**
- * 可搜索下拉框。datalist 在部分浏览器里只在聚焦时才露出箭头，且无法键盘高亮，
- * 这里用 input + 浮层自绘，行为一致。
- */
-function createCombo({ id, name, value, placeholder }) {
-  const input = el('input', {
-    id,
-    name,
-    type: 'text',
-    class: 'combo-input',
-    value: value === undefined || value === null ? '' : String(value),
-    placeholder,
-    autocomplete: 'off',
-    spellcheck: 'false',
-  })
-  const toggle = el('button', {
-    type: 'button',
-    class: 'combo-toggle',
-    'aria-label': '展开可选值',
-    text: '▾',
-  })
-  const menu = el('div', { class: 'combo-menu', role: 'listbox' })
-  menu.hidden = true
-  const hint = el('span', { class: 'param-hint muted' })
-  const root = el('div', { class: 'combo' }, [input, toggle, menu])
-
-  let values = []
-  let visible = []
-  let active = -1
-
-  const items = () => [...menu.children].filter((node) => node.classList.contains('combo-item'))
-  const isOpen = () => !menu.hidden
-  const close = () => {
-    menu.hidden = true
-    root.classList.remove('is-open')
-    active = -1
-    if (openCombo === self) openCombo = null
-  }
-  const setActive = (index) => {
-    const nodes = items()
-    if (!nodes.length) return
-    active = (index + nodes.length) % nodes.length
-    nodes.forEach((node, i) => node.classList.toggle('is-active', i === active))
-    nodes[active].scrollIntoView({ block: 'nearest' })
-  }
-  const pick = (candidate) => {
-    input.value = candidate
-    close()
-    input.dispatchEvent(new Event('change', { bubbles: true }))
-  }
-  const render = (keywordOverride) => {
-    // 打开下拉时要展示全部候选，不能拿输入框当前值当过滤词
-    const raw = keywordOverride === undefined ? input.value : keywordOverride
-    const keyword = String(raw).trim().toLowerCase()
-    visible = keyword ? values.filter((v) => v.toLowerCase().includes(keyword)) : values
-    menu.replaceChildren(
-      ...(visible.length
-        ? visible.map((v) => {
-            const current = v === input.value
-            return el(
-              'div',
-              {
-                class: current ? 'combo-item is-current' : 'combo-item',
-                role: 'option',
-                'aria-selected': current ? 'true' : 'false',
-                onmousedown: (event) => {
-                  event.preventDefault()
-                  pick(v)
-                },
-              },
-              [
-                el('span', { text: v }),
-                current ? el('span', { class: 'combo-check', text: '✓' }) : undefined,
-              ],
-            )
-          })
-        : [
-            el('div', {
-              class: 'combo-empty muted',
-              text: values.length ? '没有匹配的值' : '没有可选值',
-            }),
-          ]),
-    )
-    active = -1
-  }
-  const open = () => {
-    if (openCombo && openCombo !== self) openCombo.close()
-    render('')
-    menu.hidden = false
-    root.classList.add('is-open')
-    openCombo = self
-    const current = values.indexOf(input.value)
-    setActive(current >= 0 ? current : 0)
-  }
-
-  const self = { root, hint, close }
-
-  toggle.addEventListener('click', (event) => {
-    event.preventDefault()
-    if (isOpen()) close()
-    else open()
-  })
-  input.addEventListener('focus', () => {
-    if (!isOpen()) open()
-  })
-  input.addEventListener('input', () => {
-    if (!values.length) return
-    render()
-    menu.hidden = false
-    root.classList.add('is-open')
-    openCombo = self
-    setActive(0)
-  })
-  input.addEventListener('keydown', (event) => {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      if (!isOpen()) open()
-      else setActive(active + 1)
-      return
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      if (!isOpen()) open()
-      else setActive(active - 1)
-      return
-    }
-    if (event.key === 'Enter' && isOpen() && active >= 0 && visible[active] !== undefined) {
-      event.preventDefault()
-      pick(visible[active])
-      return
-    }
-    if (event.key === 'Escape') close()
-  })
-
-  self.setValues = (list) => {
-    values = list
-    hint.textContent = list.length ? `共 ${list.length} 个可选值，输入可过滤` : '没有可选值'
-    if (isOpen()) render()
-  }
-  self.setError = (message) => {
-    hint.textContent = message
-  }
-
-  return self
-}
-
-document.addEventListener(
-  'mousedown',
-  (event) => {
-    if (openCombo && !openCombo.root.contains(event.target)) openCombo.close()
-  },
-  true,
-)
 
 function parameterNode(definition) {
   const id = `param-${definition.name}`
@@ -419,13 +233,13 @@ function parameterNode(definition) {
   if (definition.type === 'BooleanParameterDefinition') {
     const checked = definition.defaultValue === true || definition.defaultValue === 'true'
     return el('div', { class: 'field inline' }, [
-      el('input', { id, name: definition.name, type: 'checkbox', checked }),
+      el('input', { id, name: definition.name, class: 'tb-check', type: 'checkbox', checked }),
       el('label', { for: id, text: `${definition.name}${description}` }),
     ])
   }
   // 动态参数（例如 List Git Branches 的 Branch）：可搜索的下拉框
   if (definition.dynamicChoices) {
-    const combo = createCombo({
+    const combo = TrellisCombo.create({
       id,
       name: definition.name,
       value: definition.defaultValue,
@@ -439,7 +253,7 @@ function parameterNode(definition) {
   if (definition.type === 'ChoiceParameterDefinition' && definition.choices?.length) {
     const select = el(
       'select',
-      { id, name: definition.name },
+      { id, name: definition.name, class: 'tb-input' },
       definition.choices.map((choice) =>
         el('option', {
           value: String(choice),
@@ -455,6 +269,7 @@ function parameterNode(definition) {
     el('input', {
       id,
       name: definition.name,
+      class: 'tb-input',
       type: 'text',
       value: definition.defaultValue == null ? '' : String(definition.defaultValue),
     }),
@@ -488,7 +303,7 @@ function renderJob() {
     el('div', { class: 'card' }, [
       el('span', { class: 'label', text: '最近构建' }),
       el('span', { class: 'value', text: lastValue }),
-      el('span', { class: 'muted', text: lastMeta }),
+      el('span', { class: 'tb-muted tb-small', text: lastMeta }),
     ]),
     el('div', { class: 'card' }, [
       el('span', { class: 'label', text: '下次构建号' }),
@@ -505,14 +320,15 @@ function renderJob() {
       ]),
     )
   } else {
-    nodes.push(el('p', { class: 'muted', text: '该 job 没有构建参数。' }))
+    nodes.push(el('p', { class: 'tb-muted tb-small', text: '该 job 没有构建参数。' }))
   }
 
-  const result = el('div', { id: 'build-result', class: 'result muted' })
+  const result = el('div', { id: 'build-result', class: 'tb-muted tb-small result' })
   nodes.push(
     el('div', { class: 'actions' }, [
       el('button', {
         id: 'do-build',
+        class: 'tb-btn',
         type: 'button',
         text: '开始构建',
         onclick: () => {
@@ -521,7 +337,7 @@ function renderJob() {
       }),
       el('button', {
         id: 'do-stop',
-        class: 'ghost danger',
+        class: 'tb-btn tb-btn-danger tb-btn-sm',
         type: 'button',
         text: '中止最近构建',
         disabled: !last,
@@ -531,7 +347,7 @@ function renderJob() {
       }),
       el('button', {
         id: 'do-log',
-        class: 'ghost',
+        class: 'tb-btn tb-btn-ghost tb-btn-sm',
         type: 'button',
         text: '控制台日志',
         disabled: !last,
@@ -541,7 +357,7 @@ function renderJob() {
       }),
       el('button', {
         id: 'do-artifacts',
-        class: 'ghost',
+        class: 'tb-btn tb-btn-ghost tb-btn-sm',
         type: 'button',
         text: '产物',
         disabled: !last,
@@ -575,7 +391,7 @@ async function triggerBuild() {
   button.disabled = true
   output.textContent = '正在触发构建…'
   try {
-    const result = await rpc('POST', '/build', {
+    const result = await bridge.post('/build', {
       job: state.job.name,
       parameters: collectParameters(),
       wait: true,
@@ -597,7 +413,7 @@ async function stopBuild() {
   const last = state.job?.lastBuild
   if (!last) return
   try {
-    await rpc('POST', '/build/stop', { job: state.job.name, number: last.number })
+    await bridge.post('/build/stop', { job: state.job.name, number: last.number })
     toast(`已请求中止 #${last.number}`, 'ok')
     await selectJob(state.job.name)
   } catch (error) {
@@ -612,8 +428,7 @@ async function showLog(number) {
   byId('log-hint').textContent = ''
   dialog.showModal()
   try {
-    const data = await rpc(
-      'GET',
+    const data = await bridge.get(
       `/log?job=${encodeURIComponent(state.job.name)}&number=${encodeURIComponent(number)}&tail=500`,
     )
     byId('log-body').textContent = data.text || '(没有输出)'
@@ -634,8 +449,7 @@ async function showArtifacts(number) {
   container.textContent = '加载中…'
   dialog.showModal()
   try {
-    const data = await rpc(
-      'GET',
+    const data = await bridge.get(
       `/artifacts?job=${encodeURIComponent(state.job.name)}&number=${encodeURIComponent(number)}`,
     )
     if (!data.artifacts?.length) {
@@ -653,7 +467,7 @@ async function showArtifacts(number) {
             text: artifact.displayPath || artifact.fileName,
           }),
           el('button', {
-            class: 'ghost',
+            class: 'tb-btn tb-btn-ghost tb-btn-sm',
             type: 'button',
             text: '复制链接',
             onclick: () => {
@@ -677,7 +491,7 @@ async function showQueue() {
   container.textContent = '加载中…'
   dialog.showModal()
   try {
-    const data = await rpc('GET', '/queue')
+    const data = await bridge.get('/queue')
     if (!data.items?.length) {
       container.textContent = '队列为空。'
       return
@@ -689,18 +503,18 @@ async function showQueue() {
           el('div', {}, [
             el('strong', { text: item.job || `队列项 ${item.id}` }),
             el('div', {
-              class: 'muted',
+              class: 'tb-muted tb-small',
               text: `${item.why || '等待执行'}${item.stuck ? ' · 卡住' : ''}`,
             }),
           ]),
           el('button', {
-            class: 'ghost danger',
+            class: 'tb-btn tb-btn-danger tb-btn-sm',
             type: 'button',
             text: '取消',
             disabled: item.cancelable === false,
             onclick: async () => {
               try {
-                await rpc('POST', '/queue/cancel', { id: item.id })
+                await bridge.post('/queue/cancel', { id: item.id })
                 toast('已取消', 'ok')
                 await showQueue()
               } catch (error) {
@@ -734,7 +548,7 @@ async function saveSettings() {
   const hint = byId('settings-hint')
   hint.textContent = '保存中…'
   try {
-    await rpc('POST', '/settings', {
+    await bridge.post('/settings', {
       baseUrl: byId('set-base-url').value.trim(),
       username: byId('set-username').value.trim(),
       verifyTls: byId('set-verify-tls').checked,
@@ -742,11 +556,12 @@ async function saveSettings() {
       views: byId('set-views').value,
     })
     const password = byId('set-password').value.trim()
-    if (password) await rpc('POST', '/password', { password })
+    if (password) await bridge.post('/password', { password })
     byId('settings-dialog').close()
     toast('设置已保存', 'ok')
     await load()
     if (state.selected) await selectJob(state.selected)
+    await credentialsWidget?.refresh()
   } catch (error) {
     hint.textContent = error.message
     toast(error.message, 'bad')
@@ -755,10 +570,11 @@ async function saveSettings() {
 
 async function clearPassword() {
   try {
-    await rpc('POST', '/password/clear')
+    await bridge.post('/password/clear')
     byId('set-password').value = ''
     byId('settings-hint').textContent = '密码已清除。'
     await loadStatus()
+    await credentialsWidget?.refresh()
   } catch (error) {
     toast(error.message, 'bad')
   }
@@ -775,7 +591,7 @@ function schedulePollIfBuilding() {
   state.pollTimer = setTimeout(async () => {
     if (!state.selected) return
     try {
-      state.job = await rpc('GET', `/job?name=${encodeURIComponent(state.selected)}`)
+      state.job = await bridge.get(`/job?name=${encodeURIComponent(state.selected)}`)
       renderJob()
     } catch {
       // 轮询失败不打断界面。
@@ -810,4 +626,17 @@ function bindStatic() {
 }
 
 bindStatic()
+
+let credentialsWidget = null
+function mountCredentials() {
+  const root = byId('credentials')
+  if (!root || !window.TrellisCredentialsWidget) return
+  credentialsWidget = window.TrellisCredentialsWidget.mount({
+    root,
+    request: rpc,
+    systemId: 'jenkins',
+  })
+}
+
+mountCredentials()
 window.parent.postMessage({ type: 'trellis:ready' }, '*')

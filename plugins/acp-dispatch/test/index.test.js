@@ -3,7 +3,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createHarness, startHttpServer, waitFor } from '@trellis-board/test-support/plugin-runtime.js'
+import {
+  createHarness,
+  startHttpServer,
+  waitFor,
+} from '@trellis-board/test-support/plugin-runtime.js'
 import { createWatchRuntime } from '../../../apps/server/watcher.js'
 import { clearScanCaches, scanRepository } from '../../../apps/server/loader.js'
 import { createTaskRepository } from '@trellis-board/test-support/task-repository.js'
@@ -511,11 +515,11 @@ test('面板路由提供资源、会话与运行结果', async () => {
     const css = await fetch(`${context.http.baseUrl}/api/plugins/acp-dispatch/panel/app.css`).then(
       (response) => response.text(),
     )
-    assert.match(css, /--accent/)
+    assert.match(css, /--tb-border/)
     const script = await fetch(
       `${context.http.baseUrl}/api/plugins/acp-dispatch/panel/app.js`,
     ).then((response) => response.text())
-    assert.match(script, /trellis:ready/)
+    assert.match(script, /TrellisBridge/)
 
     const data = await fetch(`${context.http.baseUrl}/api/plugins/acp-dispatch/panel/data`).then(
       (response) => response.json(),
