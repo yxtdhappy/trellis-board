@@ -1,0 +1,89 @@
+{
+  "id": "jenkins-ops",
+  "name": "Jenkins 构建",
+  "description": "触发、中止、查询 Jenkins 构建，读取控制台日志与构建产物，并以 jenkins.ops capability 供其他插件与 agent 调用。",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "allowMissingSecrets": true,
+  "engines": {
+    "board": ">=0.4.0"
+  },
+  "permissions": [
+    "http:route",
+    "panels",
+    "store",
+    "secrets:read",
+    "secrets:write",
+    "capabilities:provide"
+  ],
+  "provides": [
+    {
+      "name": "jenkins.ops",
+      "version": "1.0.0",
+      "description": "Jenkins 作业、构建、队列与产物操作",
+      "methods": {
+        "jobs.list": {
+          "access": "read",
+          "timeoutMs": 30000
+        },
+        "job.get": {
+          "access": "read",
+          "timeoutMs": 20000
+        },
+        "build.trigger": {
+          "access": "write",
+          "timeoutMs": 120000
+        },
+        "build.status": {
+          "access": "read",
+          "timeoutMs": 20000
+        },
+        "build.log": {
+          "access": "read",
+          "timeoutMs": 60000
+        },
+        "build.stop": {
+          "access": "write",
+          "timeoutMs": 30000
+        },
+        "queue.list": {
+          "access": "read",
+          "timeoutMs": 20000
+        },
+        "queue.cancel": {
+          "access": "write",
+          "timeoutMs": 30000
+        },
+        "artifacts.list": {
+          "access": "read",
+          "timeoutMs": 30000
+        },
+        "artifact.fetch": {
+          "access": "read",
+          "timeoutMs": 60000
+        }
+      }
+    }
+  ],
+  "panels": [
+    {
+      "id": "jenkins-ops",
+      "title": "Jenkins 构建",
+      "entry": "/panel",
+      "placement": "view",
+      "order": 35
+    }
+  ],
+  "config": {
+    "baseUrl": "",
+    "username": "",
+    "jobFilter": [],
+    "views": [],
+    "verifyTls": true,
+    "crumb": "auto",
+    "timeoutMs": 20000,
+    "retries": 1,
+    "maxLogLines": 2000,
+    "repositoryId": ""
+  }
+}

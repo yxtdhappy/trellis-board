@@ -1,0 +1,14 @@
+{
+  "id": "jenkins-caller",
+  "name": "jenkins capability consumer fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "permissions": ["capabilities:call", "http:route"],
+  "requires": [
+    {
+      "name": "jenkins.ops",
+      "version": "^1.0.0",
+      "methods": ["jobs.list", "build.trigger", "build.status"]
+    }
+  ]
+}
