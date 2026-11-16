@@ -107,7 +107,7 @@ curl -b /tmp/jk http://ci.example.com/api/json          # 200 还是 403
 - 顶部连接状态（Jenkins 版本 / 未配置 / 连接异常，悬停看原因）
 - 选中 job 后：状态、最近构建、下次构建号、参数表单（字符串 / 布尔 / 下拉）；
   动态参数（如 List Git Branches 的 `Branch`）用统一账号面板提供的可搜索下拉框
-  `TrellisCombo`（`/api/plugins/accounts-core/panel/widget/combo.js`）
+  `TrellisCombo`（`/plugin-ui/combo.js`）
 - 操作：开始构建、中止最近构建、控制台日志（最后 500 行）、产物列表（复制下载链接）
 - 队列：查看排队项、取消
 - 构建中每 4 秒自动刷新一次

@@ -122,13 +122,20 @@
 - 所有请求走 postMessage 桥：`{ type: 'trellis:request', id, method, path, body }` →
   `fetch('/api/plugins/<pluginId>' + path)`，插件面板只能访问自己的命名空间。
 
-### 7.2 面板通用组件
+### 7.2 面板通用组件（宿主提供）
 
 原生 `datalist` 在面板里体验很差（只在聚焦时露箭头、不能键盘高亮、无法标注状态），
 `<dialog>` 又自带 `overflow: auto` 会裁掉绝对定位的浮层。可搜索下拉框统一用
-`plugins/accounts-core/panel/widget/combo.js`（`TrellisCombo.create`，样式自带、浮层
-`position: fixed`），`accounts-core` 的系统 id 与 `jenkins-ops` 的动态参数都用它，
-不要在每个面板里再复制一份。
+宿主提供的 `TrellisCombo`（`apps/server/plugin-ui/combo.js|css`，浮层 `position: fixed`）：
+
+```html
+<script src="/plugin-ui/combo.js"></script>
+```
+
+`/plugin-ui/*` 由 `apps/server/index.js` 的 `servePluginUi` 映射到 `apps/server/plugin-ui/`，
+**不属于任何插件**：插件被禁用或没安装都不影响面板加载。`accounts-core` 的系统 id 与
+`jenkins-ops` 的动态参数都用它，不要在每个面板里再复制一份，也不要把通用 UI 放进某个插件的
+`panel/widget/` 目录（那样会形成隐式跨插件依赖，`plugins/<id>` 目录只管插件自己的东西）。
 
 ### 5.1 命名边界
 

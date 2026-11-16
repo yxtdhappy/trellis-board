@@ -426,12 +426,6 @@ export default createPlugin({
     ctx.http.route('GET', '/panel/widget/credentials-widget.js', () =>
       asset('widget/credentials-widget.js', 'text/javascript; charset=utf-8'),
     )
-    ctx.http.route('GET', '/panel/widget/combo.js', () =>
-      asset('widget/combo.js', 'text/javascript; charset=utf-8'),
-    )
-    ctx.http.route('GET', '/panel/widget/combo.css', () =>
-      asset('widget/combo.css', 'text/css; charset=utf-8'),
-    )
     ctx.http.route('GET', '/panel/widget/credentials-widget.css', () =>
       asset('widget/credentials-widget.css', 'text/css; charset=utf-8'),
     )

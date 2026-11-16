@@ -86,7 +86,7 @@ const { username, password, baseUrl } = await ctx.capabilities.call('accounts.cr
 同一个目录里还有一个通用的可搜索下拉框，`jenkins-ops` 的分支参数也用它：
 
 ```html
-<script src="/api/plugins/accounts-core/panel/widget/combo.js"></script>
+<script src="/plugin-ui/combo.js"></script>
 <script>
   const combo = TrellisCombo.create({
     id: 'system-id',

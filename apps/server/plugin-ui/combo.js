@@ -1,9 +1,11 @@
 /**
- * 可搜索下拉框，插件面板共用的 UI 组件。
+ * 可搜索下拉框，宿主提供给所有插件面板的 UI 组件（不在任何插件里）。
  *
  * 原生 datalist 只在聚焦时露出箭头、不能键盘高亮、没法标出「已绑定」这类状态，
  * 所以这里用 input + 浮层自绘。jenkins-ops 的动态参数（如 List Git Branches 的 Branch）
  * 和统一账号的系统 id 都用它，避免每个面板各写一份。
+ *
+ * 加载：<script src="/plugin-ui/combo.js"></script>（宿主路由，与插件开关无关）
  *
  * 用法（面板里）：
  *   const combo = TrellisCombo.create({
@@ -15,7 +17,7 @@
  *   combo.setOptions(list) / combo.setValue(v) / combo.value / combo.setReadOnly(b)
  */
 ;(function (global) {
-  const CSS_HREF = '/api/plugins/accounts-core/panel/widget/combo.css'
+  const CSS_HREF = '/plugin-ui/combo.css'
   let openCombo = null
 
   function ensureStyle() {
