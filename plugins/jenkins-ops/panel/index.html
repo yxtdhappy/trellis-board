@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Jenkins 构建</title>
+    <link rel="stylesheet" href="/plugin-ui/v1/tokens.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/base.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/ui.css" />
     <link rel="stylesheet" href="/api/plugins/jenkins-ops/panel/app.css" />
   </head>
   <body>
@@ -11,14 +14,27 @@
       <aside class="sidebar">
         <div class="sidebar-head">
           <strong>Jenkins</strong>
-          <span id="conn" class="badge">未配置</span>
+          <span id="conn" class="tb-chip">未配置</span>
         </div>
         <div class="search-row">
-          <input id="search" type="search" placeholder="过滤 job，支持 * 通配" autocomplete="off" />
-          <button id="refresh-jobs" class="ghost" type="button" title="刷新列表">↻</button>
+          <input
+            id="search"
+            class="tb-input"
+            type="search"
+            placeholder="过滤 job，支持 * 通配"
+            autocomplete="off"
+          />
+          <button
+            id="refresh-jobs"
+            class="tb-btn tb-btn-ghost tb-btn-sm"
+            type="button"
+            title="刷新列表"
+          >
+            ↻
+          </button>
         </div>
         <ul id="jobs" class="job-list"></ul>
-        <div id="jobs-empty" class="empty muted" hidden></div>
+        <div id="jobs-empty" class="tb-empty" hidden></div>
         <div id="credentials" class="credential-slot"></div>
       </aside>
 
@@ -26,34 +42,50 @@
         <header class="detail-head">
           <div class="head-title">
             <h1 id="job-title">选择一个 job</h1>
-            <p id="job-meta" class="muted"></p>
+            <p id="job-meta" class="tb-muted tb-small"></p>
           </div>
           <div class="head-actions">
-            <button id="show-queue" class="ghost" type="button">队列</button>
-            <button id="show-settings" class="ghost" type="button">设置</button>
+            <button id="show-queue" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">
+              队列
+            </button>
+            <button id="show-settings" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">
+              设置
+            </button>
           </div>
         </header>
         <div id="job-body" class="job-body">
-          <div class="empty muted">左侧选择 job，可触发构建、查看状态、读取日志与产物。</div>
+          <div class="tb-empty">左侧选择 job，可触发构建、查看状态、读取日志与产物。</div>
         </div>
       </section>
     </div>
 
-    <dialog id="settings-dialog" class="dialog">
+    <dialog id="settings-dialog" class="tb-dialog">
       <form method="dialog" class="dialog-body">
         <h2>连接设置</h2>
         <label>
           Jenkins 地址
-          <input id="set-base-url" type="url" placeholder="https://jenkins.example.com" />
+          <input
+            id="set-base-url"
+            class="tb-input"
+            type="url"
+            placeholder="https://jenkins.example.com"
+          />
         </label>
         <label>
           用户名
-          <input id="set-username" type="text" placeholder="bot" autocomplete="off" />
+          <input
+            id="set-username"
+            class="tb-input"
+            type="text"
+            placeholder="bot"
+            autocomplete="off"
+          />
         </label>
         <label>
           密码
           <input
             id="set-password"
+            class="tb-input"
             type="password"
             placeholder="留空表示不修改"
             autocomplete="off"
@@ -65,46 +97,61 @@
         </label>
         <label>
           默认 job 过滤（逗号分隔，可留空）
-          <input id="set-filter" type="text" placeholder="deploy-*,release/*" />
+          <input id="set-filter" class="tb-input" type="text" placeholder="deploy-*,release/*" />
         </label>
         <label>
           只列这些视图（逗号分隔，留空表示全部 job）
-          <input id="set-views" type="text" placeholder="标品MOM3-DEV, 标品MOM3-FAT" />
+          <input
+            id="set-views"
+            class="tb-input"
+            type="text"
+            placeholder="标品MOM3-DEV, 标品MOM3-FAT"
+          />
         </label>
-        <p id="settings-hint" class="muted"></p>
+        <p id="settings-hint" class="tb-muted tb-small"></p>
         <div class="dialog-actions">
-          <button id="clear-password" class="ghost danger" type="button">清除密码</button>
+          <button id="clear-password" class="tb-btn tb-btn-danger tb-btn-sm" type="button">
+            清除密码
+          </button>
           <span class="grow"></span>
-          <button class="ghost" value="cancel" type="submit" formmethod="dialog">取消</button>
-          <button id="save-settings" type="button">保存</button>
+          <button
+            class="tb-btn tb-btn-ghost tb-btn-sm"
+            value="cancel"
+            type="submit"
+            formmethod="dialog"
+          >
+            取消
+          </button>
+          <button id="save-settings" class="tb-btn" type="button">保存</button>
         </div>
       </form>
     </dialog>
 
-    <dialog id="log-dialog" class="dialog wide">
+    <dialog id="log-dialog" class="tb-dialog wide">
       <div class="dialog-body">
         <h2 id="log-title">控制台输出</h2>
         <pre id="log-body" class="log"></pre>
         <div class="dialog-actions">
-          <span id="log-hint" class="muted grow"></span>
-          <button class="ghost" type="button" data-close>关闭</button>
+          <span id="log-hint" class="tb-muted tb-small grow"></span>
+          <button class="tb-btn tb-btn-ghost tb-btn-sm" type="button" data-close>关闭</button>
         </div>
       </div>
     </dialog>
 
-    <dialog id="queue-dialog" class="dialog wide">
+    <dialog id="queue-dialog" class="tb-dialog wide">
       <div class="dialog-body">
         <h2>构建队列</h2>
         <div id="queue-body" class="queue"></div>
         <div class="dialog-actions">
           <span class="grow"></span>
-          <button class="ghost" type="button" data-close>关闭</button>
+          <button class="tb-btn tb-btn-ghost tb-btn-sm" type="button" data-close>关闭</button>
         </div>
       </div>
     </dialog>
 
-    <div id="toast" class="toast" hidden></div>
+    <script src="/plugin-ui/v1/bridge.js"></script>
     <script src="/plugin-ui/v1/combo.js"></script>
+    <script src="/plugin-ui/v1/ui.js"></script>
     <script src="/api/plugins/accounts-core/panel/widget/credentials-widget.js"></script>
     <script src="/api/plugins/jenkins-ops/panel/app.js"></script>
   </body>

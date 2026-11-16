@@ -167,8 +167,9 @@ rows.render(await bridge.get('/accounts').then((p) => p.accounts))
 - `TrellisUI.el()` 的属性处理与 `combo.js` 一致（`class/text/dataset/on*`），没有 `innerHTML` 入口。
 - `/plugin-ui/*` 由 `apps/server/index.js` 的 `servePluginUi` 映射到 `apps/server/plugin-ui/`；
   不要把通用 UI 放进某个插件的 `panel/widget/`（会形成隐式跨插件依赖，插件目录只管自己的东西）。
-- 存量面板（jenkins-ops / witops-core / scenario-copilot）迁移按需进行：至少把 `/plugin-ui/combo.js`
-  改成 `/plugin-ui/v1/combo.js`；其余样式可以逐步换成 `--tb-*` 与 `ui.css` 的类。
+- 仓库内面板（accounts-core / acp-dispatch / jenkins-ops / scenario-copilot / witops-core）已统一用 v1：
+  页面只引 `tokens/base/ui/combo` 与 `bridge/ui/combo` 脚本，`panel/app.css` 只保留本面板布局，
+  不再定义颜色变量、按钮、表格、对话框、提示条这些通用样式。新面板照此写，不要回退成自带一份。
 
 ### 5.1 命名边界
 

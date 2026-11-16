@@ -1,351 +1,168 @@
-:root {
-  color-scheme: light;
-  --bg: #ffffff;
-  --card: #f7f7f8;
-  --border: #e4e4e7;
-  --fg: #18181b;
-  --muted: #71717a;
-  --accent: #2563eb;
-  --danger: #dc2626;
-  --ok: #16a34a;
-  --warn: #d97706;
-}
-
-:root[data-theme='dark'] {
-  color-scheme: dark;
-  --bg: #0b0b0d;
-  --card: #17171a;
-  --border: #2a2a2f;
-  --fg: #f4f4f5;
-  --muted: #a1a1aa;
-  --accent: #60a5fa;
-  --danger: #f87171;
-  --ok: #4ade80;
-  --warn: #fbbf24;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  font:
-    13px/1.5 -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    'PingFang SC',
-    sans-serif;
-  color: var(--fg);
-  background: var(--bg);
-}
-
-button {
-  font: inherit;
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #fff;
-  border-radius: 8px;
-  padding: 6px 12px;
-  cursor: pointer;
-}
-
-button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-button.ghost {
-  background: transparent;
-  color: var(--fg);
-  border-color: var(--border);
-}
-
-button.ghost:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-button.danger {
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
-button.danger:not(.ghost) {
-  background: var(--danger);
-  color: #fff;
-}
-
-input,
-select {
-  font: inherit;
-  color: var(--fg);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 10px;
-  width: 100%;
-}
-
-input[type='checkbox'] {
-  width: auto;
-}
-
-input:focus,
-select:focus {
-  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
-  outline-offset: 1px;
-}
-
-h1 {
-  font-size: 16px;
-  margin: 0;
-}
-
-h2 {
-  font-size: 13px;
-  margin: 18px 0 8px;
-}
-
-.muted {
-  color: var(--muted);
-}
-
-.bad {
-  color: var(--danger);
-}
-
+/**
+ * Jenkins 面板的业务布局。颜色/按钮/输入/标签/对话框/提示来自宿主 /plugin-ui/v1/。
+ */
 .layout {
-  display: flex;
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr);
   height: 100vh;
-  min-height: 0;
 }
 
 .sidebar {
-  width: 400px;
-  flex: 0 0 400px;
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   min-height: 0;
-}
-
-/* 面板在窄 iframe 里时收窄，避免把右侧详情挤没 */
-@media (max-width: 640px) {
-  .sidebar {
-    width: 260px;
-    flex-basis: 260px;
-  }
+  border-right: 1px solid var(--tb-border);
 }
 
 .sidebar-head {
   display: flex;
+  gap: 8px;
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--muted);
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.badge.ok {
-  color: var(--ok);
-  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
-}
-
-.badge.warn {
-  color: var(--warn);
-  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
-}
-
-.badge.bad {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  border-bottom: 1px solid var(--tb-border);
 }
 
 .search-row {
   display: flex;
   gap: 6px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
 }
 
-.search-row button {
-  flex: 0 0 auto;
-  padding: 4px 8px;
+.search-row .tb-input {
+  min-width: 0;
 }
 
 .job-list {
-  list-style: none;
-  margin: 0;
-  padding: 6px;
-  overflow: auto;
   flex: 1;
-  min-height: 0;
+  margin: 0;
+  padding: 4px 6px 8px;
+  overflow: auto;
+  list-style: none;
 }
 
 .job {
   display: flex;
+  gap: 6px;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
   padding: 6px 8px;
-  border-radius: 8px;
+  border-radius: var(--tb-radius-sm);
   cursor: pointer;
 }
 
 .job:hover {
-  background: var(--card);
+  background: var(--tb-muted);
 }
 
 .job.active {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: var(--tb-muted);
+  outline: 1px solid var(--tb-border);
 }
 
 .job-name {
-  flex: 1 1 auto;
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .view-tag {
-  margin-left: auto;
   flex: 0 0 auto;
+  padding: 0 5px;
+  border: 1px solid var(--tb-border);
+  border-radius: 4px;
+  color: var(--tb-muted-fg);
   font-size: 10px;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0 6px;
-  max-width: 88px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .dot {
-  width: 8px;
-  height: 8px;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  flex: 0 0 auto;
-  background: var(--muted);
+  background: var(--tb-muted-fg);
 }
 
 .dot.status-success {
-  background: var(--ok);
+  background: var(--tb-ok);
 }
 
-.dot.status-failed,
 .dot.status-aborted {
-  background: var(--danger);
+  background: var(--tb-muted-fg);
 }
 
 .dot.status-unstable {
-  background: var(--warn);
+  background: var(--tb-warn);
 }
 
 .dot.status-building {
-  background: var(--accent);
-  animation: pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.25;
-  }
-}
-
-.empty {
-  padding: 16px;
-  font-size: 12px;
+  background: var(--tb-accent);
 }
 
 .detail {
-  flex: 1;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  gap: 12px;
   min-height: 0;
+  padding: 14px 16px;
+  overflow: auto;
 }
 
 .detail-head {
   display: flex;
+  gap: 12px;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
 }
 
-.head-title {
-  min-width: 0;
-}
-
-.head-title h1,
-#job-meta {
-  overflow-wrap: anywhere;
-}
-
-#job-meta {
-  margin: 4px 0 0;
-  font-size: 12px;
+.head-title h1 {
+  font-size: 15px;
 }
 
 .head-actions {
   display: flex;
   gap: 8px;
-  flex: 0 0 auto;
 }
 
 .job-body {
-  padding: 16px 18px 32px;
-  overflow: auto;
-  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 10px;
 }
 
 .card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: grid;
+  gap: 3px;
   padding: 10px 12px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius);
+  background: var(--tb-card);
 }
 
 .card .label {
+  color: var(--tb-muted-fg);
   font-size: 11px;
-  color: var(--muted);
 }
 
 .card .value {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   font-weight: 600;
+  word-break: break-word;
 }
 
 .params {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: 520px;
+  padding: 12px;
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius);
+  background: var(--tb-card);
 }
 
 .field {
@@ -354,94 +171,95 @@ h2 {
   gap: 4px;
 }
 
-.param-hint {
-  font-size: 11px;
+.field label {
+  color: var(--tb-muted-fg);
+  font-size: 12px;
 }
 
 .field.inline {
   flex-direction: row;
-  align-items: center;
   gap: 8px;
+  align-items: center;
 }
 
-.field label {
-  font-size: 12px;
+.param-hint {
+  color: var(--tb-muted-fg);
+  font-size: 11px;
 }
 
 .actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 18px;
 }
 
 .result {
-  margin-top: 12px;
-  font-size: 12px;
-  min-height: 18px;
-}
-
-.dialog {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 0;
-  background: var(--bg);
-  color: var(--fg);
-  width: min(440px, 92vw);
-}
-
-.dialog.wide {
-  width: min(760px, 94vw);
-}
-
-.dialog::backdrop {
-  background: rgba(0, 0, 0, 0.45);
+  min-height: 16px;
 }
 
 .dialog-body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 18px;
+  padding: 16px 18px;
+}
+
+.tb-dialog.wide {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.dialog-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--tb-muted-fg);
+  font-size: 12px;
+}
+
+.dialog-body label.inline {
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+}
+
+.dialog-body h2 {
   margin: 0;
+  font-size: 15px;
 }
 
 .dialog-actions {
   display: flex;
-  align-items: center;
   gap: 8px;
-  margin-top: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 4px;
 }
 
 .grow {
-  flex: 1;
+  flex: 1 1 auto;
 }
 
 .log {
+  max-height: 55vh;
   margin: 0;
   padding: 10px;
-  max-height: 55vh;
   overflow: auto;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font:
-    12px/1.5 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
-  white-space: pre-wrap;
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-sm);
+  background: var(--tb-muted);
+  font: 12px/1.5 var(--tb-mono);
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .artifact,
 .queue-item {
   display: flex;
+  gap: 10px;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
   padding: 8px 4px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--tb-border);
 }
 
 .artifact-name {
@@ -453,30 +271,6 @@ h2 {
   flex-direction: column;
   max-height: 55vh;
   overflow: auto;
-}
-
-.toast {
-  position: fixed;
-  left: 50%;
-  bottom: 20px;
-  transform: translateX(-50%);
-  padding: 8px 14px;
-  border-radius: 8px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-  font-size: 12px;
-  max-width: 80vw;
-}
-
-.toast[data-kind='ok'] {
-  border-color: color-mix(in srgb, var(--ok) 50%, transparent);
-  color: var(--ok);
-}
-
-.toast[data-kind='bad'] {
-  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
-  color: var(--danger);
 }
 
 .credential-slot {

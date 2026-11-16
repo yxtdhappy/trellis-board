@@ -4,73 +4,80 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>场景自动化测试</title>
-    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/tokens.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/base.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/ui.css" />
+    <link rel="stylesheet" href="/api/plugins/scenario-copilot/app.css" />
   </head>
   <body>
     <div class="shell">
       <header class="topbar">
         <div>
           <h1>场景自动化测试</h1>
-          <p class="subtitle">scenario-copilot · Trellis 任务验收</p>
+          <p class="subtitle tb-muted tb-small">scenario-copilot · Trellis 任务验收</p>
         </div>
-        <span id="status-pill" class="pill">未连接</span>
+        <span id="status-pill" class="tb-chip">未连接</span>
       </header>
       <main class="layout">
         <section class="card form-card">
           <h2>发起测试</h2>
           <label class="field">
             <span>Trellis 任务</span>
-            <select id="task"></select>
+            <select id="task" class="tb-input"></select>
           </label>
           <label class="field">
             <span>测试大纲</span>
-            <select id="outline"></select>
+            <select id="outline" class="tb-input"></select>
           </label>
           <label class="field">
             <span>测试地址</span>
-            <input id="target" type="url" spellcheck="false" />
+            <input id="target" class="tb-input" type="url" spellcheck="false" />
           </label>
           <div class="grid-two">
             <label class="field">
               <span>账号</span>
-              <input id="username" autocomplete="off" spellcheck="false" />
+              <input id="username" class="tb-input" autocomplete="off" spellcheck="false" />
             </label>
             <label class="field">
               <span>密码</span>
-              <input id="password" type="password" autocomplete="off" />
+              <input id="password" class="tb-input" type="password" autocomplete="off" />
             </label>
           </div>
           <label class="field">
             <span>组织</span>
-            <input id="org" spellcheck="false" />
+            <input id="org" class="tb-input" spellcheck="false" />
           </label>
           <label class="check">
             <input id="no-run" type="checkbox" />
             <span>仅生成与覆盖率校验，不执行浏览器用例</span>
           </label>
-          <button id="start" class="primary">开始测试</button>
+          <button id="start" class="tb-btn" type="button">开始测试</button>
           <p id="hint" class="hint"></p>
-          <p class="hint muted">
+          <p class="hint tb-muted tb-small">
             未填写账号密码时自动跳过浏览器执行；执行需要可用的目标环境登录凭据。
           </p>
         </section>
         <section class="card runs-card">
           <div class="section-head">
             <h2>运行记录</h2>
-            <button id="refresh" class="ghost">刷新</button>
+            <button id="refresh" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">刷新</button>
           </div>
           <ul id="runs" class="runs"></ul>
         </section>
         <section class="card detail-card">
           <div class="section-head">
             <h2 id="detail-title">运行详情</h2>
-            <button id="cancel" class="ghost" hidden>取消</button>
+            <button id="cancel" class="tb-btn tb-btn-ghost tb-btn-sm" type="button" hidden>
+              取消
+            </button>
           </div>
           <div id="detail-meta" class="meta"></div>
           <pre id="logs" class="logs"></pre>
         </section>
       </main>
     </div>
-    <script src="app.js"></script>
+    <script src="/plugin-ui/v1/bridge.js"></script>
+    <script src="/plugin-ui/v1/ui.js"></script>
+    <script src="/api/plugins/scenario-copilot/app.js"></script>
   </body>
 </html>
