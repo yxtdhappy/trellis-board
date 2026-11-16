@@ -12,6 +12,7 @@
     ".claude",
     ".codex",
     "node_modules",
+    ".yarn",
     ".github",
     "packages/desktop/src-tauri",
     "**/*.md",

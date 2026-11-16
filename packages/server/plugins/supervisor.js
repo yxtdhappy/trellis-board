@@ -512,7 +512,13 @@ export class PluginSupervisor {
         this.plugins.set(entry.id, created)
         this.inspectManifest(created)
         result.added.push(entry.id)
-        touched.push({ state: created, previous: null, entryChanged: true, configChanged: false, spawnChanged: false })
+        touched.push({
+          state: created,
+          previous: null,
+          entryChanged: true,
+          configChanged: false,
+          spawnChanged: false,
+        })
         continue
       }
 
@@ -1561,15 +1567,13 @@ export class PluginSupervisor {
     const key = String(params?.key ?? '').trim()
     if (!key) throw invalidParams('缺少 secret key')
     if (!key.startsWith(`${state.id}/`)) {
-      throw appError(
-        ERROR_CODES.PERMISSION_DENIED,
-        `插件只能访问自己的 secret：${state.id}/...`,
-      )
+      throw appError(ERROR_CODES.PERMISSION_DENIED, `插件只能访问自己的 secret：${state.id}/...`)
     }
     return key
   }
 
-  requireRun(state, runId) {    const run = this.store.getRun(String(runId))
+  requireRun(state, runId) {
+    const run = this.store.getRun(String(runId))
     if (!run) throw appError(ERROR_CODES.NOT_FOUND, `run 不存在: ${runId}`)
     if (run.pluginId !== state.id) {
       throw appError(ERROR_CODES.PERMISSION_DENIED, '不能更新其它插件的 run')

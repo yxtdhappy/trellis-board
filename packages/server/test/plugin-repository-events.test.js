@@ -2,7 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createHarness, makeWorkspace, startHttpServer, waitFor } from '@trellis-board/test-support/plugin-runtime.js'
+import {
+  createHarness,
+  makeWorkspace,
+  startHttpServer,
+  waitFor,
+} from '@trellis-board/test-support/plugin-runtime.js'
 import { createTaskRepository } from '@trellis-board/test-support/task-repository.js'
 import { publishRepositoryChange } from '../plugins/repository-events.js'
 

@@ -4,11 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { openDatabase } from '../database.js'
-import {
-  diagnosticError,
-  errorSummary,
-  sanitizeDiagnosticText,
-} from '../team/error-diagnostics.js'
+import { diagnosticError, errorSummary, sanitizeDiagnosticText } from '../team/error-diagnostics.js'
 import { ERROR_CODES, TeamError } from '../team/errors.js'
 import { createRefreshScheduler } from '../team/http.js'
 import { createProjectService } from '../team/projects.js'

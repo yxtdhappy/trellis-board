@@ -2,7 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createHarness, fixtureModule, startHttpServer } from '@trellis-board/test-support/plugin-runtime.js'
+import {
+  createHarness,
+  fixtureModule,
+  startHttpServer,
+} from '@trellis-board/test-support/plugin-runtime.js'
 
 function plugin(id) {
   return { id, module: fixtureModule(id), enabled: true }

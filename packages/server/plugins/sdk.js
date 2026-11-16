@@ -200,12 +200,12 @@ export function startPluginRuntime(
       get: (key) =>
         call('secrets/get', { key: String(key ?? '') }).then((result) => result?.value ?? null),
       set: (key, value) =>
-        call('secrets/set', { key: String(key ?? ''), value: String(value ?? '') }).then(
-          (result) => Boolean(result?.stored),
+        call('secrets/set', { key: String(key ?? ''), value: String(value ?? '') }).then((result) =>
+          Boolean(result?.stored),
         ),
       delete: (key) =>
-        call('secrets/delete', { key: String(key ?? '') }).then(
-          (result) => Boolean(result?.deleted),
+        call('secrets/delete', { key: String(key ?? '') }).then((result) =>
+          Boolean(result?.deleted),
         ),
     }
     return new Proxy(api, {

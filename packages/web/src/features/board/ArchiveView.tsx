@@ -51,10 +51,7 @@ export function ArchiveView({
     [teams],
   )
   const availableProjects = useMemo(
-    () =>
-      projects.filter(
-        (project) => archiveTeamId === 'all' || project.teamId === archiveTeamId,
-      ),
+    () => projects.filter((project) => archiveTeamId === 'all' || project.teamId === archiveTeamId),
     [archiveTeamId, projects],
   )
   const projectOptions = useMemo(
@@ -96,9 +93,7 @@ export function ArchiveView({
     if (teamMode) return archive.tasks
     const keyword = search.trim().toLowerCase()
     const filtered = tasks
-      .filter(
-        (task) => effectiveProjectId === 'all' || task.projectId === effectiveProjectId,
-      )
+      .filter((task) => effectiveProjectId === 'all' || task.projectId === effectiveProjectId)
       .filter((task) => branchMatches(task.branchName, branch))
       .filter((task) => !assignee || task.assignee === assignee)
       .filter(

@@ -71,7 +71,10 @@ test('ctx.secrets.set 加密落盘：密文写入、密钥 0600、可回读', as
     }
     assert.equal(fs.statSync(context.keyFile).size, 32)
 
-    const read = await call(context.http, `/api/plugins/${PLUGIN_ID}/secret?key=${PLUGIN_ID}/password`)
+    const read = await call(
+      context.http,
+      `/api/plugins/${PLUGIN_ID}/secret?key=${PLUGIN_ID}/password`,
+    )
     assert.equal(read.json.value, 's3cret-pass')
 
     const loaded = loadSecretsFile(context.secretsFile)
@@ -107,7 +110,10 @@ test('明文 refs 继续可读，写入后统一加密', async () => {
     },
   })
   try {
-    const legacy = await call(context.http, `/api/plugins/${PLUGIN_ID}/secret?key=${PLUGIN_ID}/token`)
+    const legacy = await call(
+      context.http,
+      `/api/plugins/${PLUGIN_ID}/secret?key=${PLUGIN_ID}/token`,
+    )
     assert.equal(legacy.json.value, 'legacy-plain')
 
     await call(context.http, `/api/plugins/${PLUGIN_ID}/secret`, {
@@ -184,7 +190,9 @@ test('writeSecretRef 生成密钥文件并保持其它条目', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'secrets-ref-'))
   try {
     const file = path.join(dir, 'plugins.secrets.json')
-    fs.writeFileSync(file, JSON.stringify({ version: 1, refs: { 'a/b': 'plain' } }), { mode: 0o600 })
+    fs.writeFileSync(file, JSON.stringify({ version: 1, refs: { 'a/b': 'plain' } }), {
+      mode: 0o600,
+    })
     writeSecretRef(file, 'a/c', 'v1')
     writeSecretRef(file, 'a/c', 'v2')
     const loaded = loadSecretsFile(file)

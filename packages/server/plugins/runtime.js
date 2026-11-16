@@ -126,7 +126,12 @@ export function createPluginRuntime({
   /** 重读 plugins.json + secrets 并按需重启插件；TRELLIS_PLUGINS_DISABLED=1 时直接拒绝。 */
   async function reload() {
     if (disabled) {
-      return { ok: false, reason: 'http', error: '插件机制已被 TRELLIS_PLUGINS_DISABLED=1 关闭', changed: [] }
+      return {
+        ok: false,
+        reason: 'http',
+        error: '插件机制已被 TRELLIS_PLUGINS_DISABLED=1 关闭',
+        changed: [],
+      }
     }
     return supervisor.reloadConfig({ reason: 'http' })
   }

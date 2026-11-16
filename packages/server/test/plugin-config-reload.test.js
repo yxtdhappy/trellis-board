@@ -62,9 +62,7 @@ test('secret 变化后 reload 重启插件并注入新值', async () => {
     })
     assert.equal(echoed.status, 200)
     assert.equal(echoed.body.boot.credentials.token, 'token-v2')
-    assert.ok(
-      harness.store.listAudit('config-echo').some((entry) => entry.kind === 'config'),
-    )
+    assert.ok(harness.store.listAudit('config-echo').some((entry) => entry.kind === 'config'))
   } finally {
     await harness.cleanup()
   }
@@ -156,17 +154,16 @@ test('secrets 文件权限过宽时保留旧配置且不打断插件', async () 
 
 test('配置里删除插件后 capability 提供者被注销', async () => {
   const harness = await createHarness({
-    plugins: [{ id: 'cap-provider', module: fixtureModule('cap-provider'), enabled: true, config: {} }],
+    plugins: [
+      { id: 'cap-provider', module: fixtureModule('cap-provider'), enabled: true, config: {} },
+    ],
   })
   try {
     assert.equal(harness.supervisor.capabilities.get('demo.echo'), 'cap-provider')
     const state = harness.supervisor.plugins.get('cap-provider')
     assert.equal(state.status, 'running')
 
-    fs.writeFileSync(
-      harness.workspace.configFile,
-      JSON.stringify({ plugins: [] }, null, 2),
-    )
+    fs.writeFileSync(harness.workspace.configFile, JSON.stringify({ plugins: [] }, null, 2))
     const result = await harness.runtime.reload()
 
     assert.deepEqual(result.removed, ['cap-provider'])

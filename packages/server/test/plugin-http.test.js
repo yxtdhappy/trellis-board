@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createHarness, fixtureModule, startHttpServer, waitFor } from '@trellis-board/test-support/plugin-runtime.js'
+import {
+  createHarness,
+  fixtureModule,
+  startHttpServer,
+  waitFor,
+} from '@trellis-board/test-support/plugin-runtime.js'
 
 async function request(baseUrl, pathname, { method = 'GET', body, headers = {} } = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {

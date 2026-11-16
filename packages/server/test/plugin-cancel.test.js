@@ -3,7 +3,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { createHarness, startHttpServer, waitFor } from '@trellis-board/test-support/plugin-runtime.js'
+import {
+  createHarness,
+  startHttpServer,
+  waitFor,
+} from '@trellis-board/test-support/plugin-runtime.js'
 
 test('宿主请求超时发送 request/cancel，插件中止处理', async () => {
   const trace = path.join(os.tmpdir(), `trellis-cancel-${process.pid}-${Date.now()}.txt`)
