@@ -1871,8 +1871,69 @@ export class PluginSupervisor {
     }
   }
 
+  /**
+   * 展示顺序：设置过 sort 的按 sort 升序在前，没设置的保持 plugins.json 里的顺序排在后面。
+   * 启动顺序由 orderedStates() 按能力依赖决定，两者互不影响。
+   */
+  sortedStates() {
+    return [...this.plugins.values()]
+      .map((state, index) => ({ state, index }))
+      .sort((left, right) => {
+        const a = typeof left.state.sort === 'number' ? left.state.sort : Number.POSITIVE_INFINITY
+        const b = typeof right.state.sort === 'number' ? right.state.sort : Number.POSITIVE_INFINITY
+        return a - b || left.index - right.index
+      })
+      .map((entry) => entry.state)
+  }
+
   list() {
-    return [...this.plugins.values()].map((state) => this.describe(state))
+    return this.sortedStates().map((state) => this.describe(state))
+  }
+
+  /**
+   * 按给定 id 顺序重排插件：把 plugins.json 的 plugins 数组也按这个顺序落盘，
+   * 并依次写入 sort = 10/20/30…，顺带让面板顺序一致。不重启插件。
+   */
+  setOrder(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new Error('ids 必须是非空数组')
+    }
+    const ordered = ids.map((id) => String(id).trim())
+    if (ordered.some((id) => !id)) throw new Error('ids 里不能有空值')
+    if (new Set(ordered).size !== ordered.length) throw new Error('ids 里有重复的插件')
+    const unknown = ordered.filter((id) => !this.plugins.has(id))
+    if (unknown.length) throw new Error(`未知插件: ${unknown.join(', ')}`)
+    const missing = [...this.plugins.keys()].filter((id) => !ordered.includes(id))
+    if (missing.length) throw new Error(`顺序里缺少插件: ${missing.join(', ')}`)
+
+    const sorts = new Map(ordered.map((id, index) => [id, (index + 1) * 10]))
+    if (fs.existsSync(this.configFile)) {
+      let raw
+      try {
+        raw = JSON.parse(fs.readFileSync(this.configFile, 'utf8'))
+      } catch {
+        throw new Error('plugins.json 不是合法 JSON')
+      }
+      if (!raw || typeof raw !== 'object' || !Array.isArray(raw.plugins)) {
+        throw new Error('plugins.json 必须包含 plugins 数组')
+      }
+      const byId = new Map()
+      for (const entry of raw.plugins) {
+        if (entry && typeof entry === 'object') byId.set(String(entry.id || '').trim(), entry)
+      }
+      const head = ordered.map((id) => byId.get(id)).filter(Boolean)
+      const rest = raw.plugins.filter((entry) => !head.includes(entry))
+      for (const entry of head) {
+        entry.sort = sorts.get(String(entry.id || '').trim())
+      }
+      raw.plugins = [...head, ...rest]
+      const temp = `${this.configFile}.tmp`
+      fs.writeFileSync(temp, `${JSON.stringify(raw, null, 2)}\n`, 'utf8')
+      fs.renameSync(temp, this.configFile)
+    }
+    for (const [id, sort] of sorts) this.plugins.get(id).sort = sort
+    this.logger.info?.('插件顺序已更新', { ids: ordered })
+    return this.list()
   }
 
   /**

@@ -22,6 +22,13 @@ function readRawBody(request) {
   })
 }
 
+/** 读 JSON 请求体；空体按 {} 处理，解析失败由调用方返回 400。 */
+async function readJsonBody(request) {
+  const raw = await readRawBody(request)
+  if (!raw.trim()) return {}
+  return JSON.parse(raw)
+}
+
 function toResponse(error) {
   if (error instanceof RpcError) {
     const status =
@@ -248,6 +255,22 @@ export function createPluginRuntime({
     if (url.pathname === '/api/events' && request.method === 'GET') {
       return openEventStream({ request, response, url })
     }
+    if (url.pathname === '/api/plugins/order' && request.method === 'POST') {
+      let payload
+      try {
+        payload = await readJsonBody(request)
+      } catch {
+        sendJson(response, 400, { error: '请求体不是合法 JSON' })
+        return true
+      }
+      try {
+        const plugins = supervisor.setOrder(payload?.ids)
+        sendJson(response, 200, { ok: true, plugins })
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : '排序失败' })
+      }
+      return true
+    }
     // 必须在 pluginAdminMatch 之前：否则 /api/plugins/reload 会被解析成 id=reload 并返回 404。
     if (url.pathname === '/api/plugins/reload' && request.method === 'POST') {
       const result = await reload()
@@ -274,15 +297,12 @@ export function createPluginRuntime({
           return true
         }
         if (admin.action === 'sort' && request.method === 'POST') {
-          const raw = await readRawBody(request)
-          let payload = {}
-          if (raw.trim()) {
-            try {
-              payload = JSON.parse(raw)
-            } catch {
-              sendJson(response, 400, { error: '请求体不是合法 JSON' })
-              return true
-            }
+          let payload
+          try {
+            payload = await readJsonBody(request)
+          } catch {
+            sendJson(response, 400, { error: '请求体不是合法 JSON' })
+            return true
           }
           const rawSort = payload?.sort
           const sort =

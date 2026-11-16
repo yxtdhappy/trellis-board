@@ -53,15 +53,11 @@ export async function stopPlugin(id: string): Promise<void> {
 }
 
 /**
- * 设置插件级面板排序：数字小的面板靠前，null 清掉设置、回到插件清单里的 order。
- * 只写 plugins.json 的 sort 字段，不重启插件。
+ * 按给定 id 顺序重排插件：服务端把 plugins.json 的条目顺序与 sort（10/20/…）一起写回，
+ * 面板顺序随之更新，插件不重启。
  */
-export async function setPluginSort(id: string, sort: number | null): Promise<void> {
-  // requestJson 会自己 JSON.stringify，这里必须给对象，别先 stringify 一次。
-  await requestJson(`/api/plugins/${encodeURIComponent(id)}/sort`, {
-    method: 'POST',
-    body: { sort },
-  })
+export async function reorderPlugins(ids: string[]): Promise<void> {
+  await requestJson('/api/plugins/order', { method: 'POST', body: { ids } })
 }
 
 export async function fetchPluginLogs(id: string, tail = 200): Promise<PluginLogEntry[]> {

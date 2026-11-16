@@ -5,7 +5,7 @@ import {
   fetchPluginLogs,
   fetchPlugins,
   reloadPlugins,
-  setPluginSort,
+  reorderPlugins,
   startPlugin,
   stopPlugin,
   type PluginInfo,
@@ -40,74 +40,6 @@ const STATUS_TONES: Record<string, string> = {
 function statusTone(plugin: PluginInfo) {
   if (plugin.status === 'error' && plugin.lastError) return STATUS_TONES.error
   return STATUS_TONES[plugin.status] || 'bg-secondary text-secondary-foreground'
-}
-
-/**
- * 插件级面板排序：数字小的面板靠前，留空回退到插件清单里的 panels[].order。
- * 失焦或回车提交，Esc 还原；保存成功后通知看板重排导航。
- */
-function SortInput({ plugin, onSaved }: { plugin: PluginInfo; onSaved: () => Promise<void> }) {
-  const current = plugin.sort == null ? '' : String(plugin.sort)
-  const [draft, setDraft] = useState(current)
-  const [saving, setSaving] = useState(false)
-  const focused = useRef(false)
-
-  useEffect(() => {
-    if (!focused.current) setDraft(current)
-  }, [current])
-
-  async function commit() {
-    const text = draft.trim()
-    const next = text === '' ? null : Number(text)
-    if (next !== null && !Number.isFinite(next)) {
-      toast.error('排序必须是数字，留空表示默认顺序')
-      setDraft(current)
-      return
-    }
-    if (next === (plugin.sort ?? null)) return
-    setSaving(true)
-    try {
-      await setPluginSort(plugin.id, next)
-      toast.success(next === null ? `${plugin.id} 恢复默认顺序` : `${plugin.id} 排序设为 ${next}`)
-      await onSaved()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '保存排序失败')
-      setDraft(current)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <label className="ml-auto flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
-      排序
-      <input
-        type="number"
-        step="1"
-        inputMode="numeric"
-        value={draft}
-        placeholder="默认"
-        disabled={saving}
-        title="面板顺序：数字小的靠前；留空按插件清单里的顺序。保存后立即生效，不重启插件。"
-        className="h-7 w-14 rounded-md border border-border bg-background px-1.5 text-center font-mono text-xs disabled:opacity-50"
-        onFocus={() => {
-          focused.current = true
-        }}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => {
-          focused.current = false
-          void commit()
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') event.currentTarget.blur()
-          if (event.key === 'Escape') {
-            setDraft(current)
-            event.currentTarget.blur()
-          }
-        }}
-      />
-    </label>
-  )
 }
 
 export function PluginsView() {
@@ -161,11 +93,41 @@ export function PluginsView() {
     }
   }
 
-  const savedSort = useCallback(async () => {
-    await load(true)
-    // 面板顺序在 /api/panels 里，让看板重排左侧导航。
-    window.dispatchEvent(new CustomEvent('trellis:panels-changed'))
-  }, [load])
+  const [draggingId, setDraggingId] = useState('')
+  const [dragOverId, setDragOverId] = useState('')
+  const [savingOrder, setSavingOrder] = useState(false)
+
+  /** 拖放结束后提交新顺序：服务端重写 plugins.json 的条目顺序与 sort。 */
+  const commitOrder = useCallback(
+    async (next: PluginInfo[]) => {
+      setSavingOrder(true)
+      setPlugins(next)
+      try {
+        await reorderPlugins(next.map((plugin) => plugin.id))
+        await load(true)
+        // 面板顺序在 /api/panels 里，让看板重排左侧导航。
+        window.dispatchEvent(new CustomEvent('trellis:panels-changed'))
+        toast.success('顺序已更新')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '保存顺序失败')
+        await load(true)
+      } finally {
+        setSavingOrder(false)
+      }
+    },
+    [load],
+  )
+
+  function movePlugin(id: string, targetIndex: number) {
+    const index = plugins.findIndex((plugin) => plugin.id === id)
+    if (index < 0 || targetIndex < 0 || targetIndex >= plugins.length || targetIndex === index) {
+      return
+    }
+    const next = [...plugins]
+    const [item] = next.splice(index, 1)
+    next.splice(targetIndex, 0, item)
+    void commitOrder(next)
+  }
 
   async function reload() {
     setReloading(true)
@@ -228,6 +190,7 @@ export function PluginsView() {
             {hostVersion ? `宿主 ${hostVersion}` : ''}
             {hostVersion ? ' · ' : ''}
             {plugins.length} 个插件
+            {plugins.length > 1 ? ' · 拖动卡片调整插件与面板顺序' : ''}
           </span>
           <button
             type="button"
@@ -261,15 +224,58 @@ export function PluginsView() {
         </p>
       ) : (
         <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-          {plugins.map((plugin) => {
+          {plugins.map((plugin, index) => {
             const running = plugin.status === 'running' || plugin.status === 'starting'
+            const dragging = draggingId === plugin.id
+            const dropTarget = dragOverId === plugin.id && !dragging
             return (
               <article
                 key={plugin.id}
-                className="flex flex-col gap-2.5 rounded-xl border border-border bg-card p-3.5"
+                draggable={!disabled && !savingOrder}
+                onDragStart={(event) => {
+                  setDraggingId(plugin.id)
+                  event.dataTransfer.effectAllowed = 'move'
+                  event.dataTransfer.setData('text/plain', plugin.id)
+                }}
+                onDragEnd={() => {
+                  setDraggingId('')
+                  setDragOverId('')
+                }}
+                onDragOver={(event) => {
+                  if (!draggingId) return
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  if (dragOverId !== plugin.id) setDragOverId(plugin.id)
+                }}
+                onDragLeave={() => {
+                  setDragOverId((current) => (current === plugin.id ? '' : current))
+                }}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  const id = draggingId || event.dataTransfer.getData('text/plain')
+                  if (id) movePlugin(id, index)
+                  setDraggingId('')
+                  setDragOverId('')
+                }}
+                className={`flex flex-col gap-2.5 rounded-xl border bg-card p-3.5 transition ${
+                  dragging ? 'border-dashed border-border opacity-40' : 'border-border'
+                } ${dropTarget ? 'border-primary ring-2 ring-primary/25' : ''}`}
               >
-                <header className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
+                <header className="flex items-start gap-2">
+                  <button
+                    type="button"
+                    aria-label={`拖动调整 ${plugin.name || plugin.id} 的顺序`}
+                    title="按住拖动调整顺序；聚焦后可用 ↑ ↓"
+                    className="mt-0.5 shrink-0 cursor-grab rounded px-1 text-sm leading-none text-muted-foreground/60 hover:bg-muted hover:text-foreground active:cursor-grabbing"
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+                      event.preventDefault()
+                      movePlugin(plugin.id, event.key === 'ArrowUp' ? index - 1 : index + 1)
+                    }}
+                  >
+                    ⠿
+                  </button>
+                  <div className="min-w-0 flex-1">
                     <h2 className="truncate text-[0.9375rem] font-semibold font-heading">
                       {plugin.name || plugin.id}
                     </h2>
@@ -334,7 +340,6 @@ export function PluginsView() {
                   >
                     日志
                   </Button>
-                  <SortInput plugin={plugin} onSaved={savedSort} />
                 </div>
               </article>
             )

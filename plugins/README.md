@@ -13,10 +13,12 @@
 
 ## 面板排序
 
-- `plugins.json` 的插件条目可以写 `"sort": 10`（数字，可省略）。数字小的面板排在前面，
-  优先于 `plugin.json` 里的 `panels[].order`；不写就按清单顺序。
-- 插件页每个插件的「排序」输入框对应 `POST /api/plugins/<id>/sort`：保存时只改 `plugins.json` 的这一行，
-  不重启插件，看板左侧导航立即重排；清空输入框表示删掉该字段、回到清单顺序。
+- `plugins.json` 的插件条目可以写 `"sort": 10`（数字，可省略）。数字小的插件排在前面，同时决定
+  `/api/plugins` 的卡片顺序与 `/api/panels` 的面板顺序，优先于 `plugin.json` 里的 `panels[].order`；
+  没写的插件保持文件顺序排在后面。
+- 插件页直接拖动卡片排序（卡片左上角的 ⠿ 是把手，聚焦后也能用 ↑ ↓）。服务端收到
+  `POST /api/plugins/order`（`{"ids": [...]}`）后把 `plugins.json` 的 `plugins` 数组按新顺序重排，
+  并依次写入 `sort = 10/20/30…`，插件不重启，看板左侧导航立即重排。
 
 ## 跨插件凭据
 

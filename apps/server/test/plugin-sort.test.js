@@ -167,3 +167,93 @@ test('同一 sort 时按清单 order、再按标题排序', async () => {
     await cleanup()
   }
 })
+
+test('/api/plugins 列表同样按 sort 排序', async () => {
+  const { api, cleanup } = await setup()
+  try {
+    const { data: before } = await api('GET', '/api/plugins')
+    assert.deepEqual(
+      before.plugins.map((plugin) => plugin.id),
+      ['panel-alpha', 'panel-beta'],
+    )
+
+    await api('POST', '/api/plugins/panel-beta/sort', { sort: 1 })
+    const { data: after } = await api('GET', '/api/plugins')
+    assert.deepEqual(
+      after.plugins.map((plugin) => plugin.id),
+      ['panel-beta', 'panel-alpha'],
+    )
+  } finally {
+    await cleanup()
+  }
+})
+
+test('拖动排序：POST /api/plugins/order 重排文件与列表', async () => {
+  const { api, cleanup, config, harness } = await setup()
+  try {
+    const { status, data } = await api('POST', '/api/plugins/order', {
+      ids: ['panel-beta', 'panel-alpha'],
+    })
+    assert.equal(status, 200)
+    assert.equal(data.ok, true)
+    assert.deepEqual(
+      data.plugins.map((plugin) => [plugin.id, plugin.sort]),
+      [
+        ['panel-beta', 10],
+        ['panel-alpha', 20],
+      ],
+    )
+
+    const raw = await config()
+    assert.deepEqual(
+      raw.plugins.map((entry) => [entry.id, entry.sort]),
+      [
+        ['panel-beta', 10],
+        ['panel-alpha', 20],
+      ],
+    )
+    assert.deepEqual(harness.supervisor.plugins.get('panel-beta').sort, 10)
+
+    const { data: panels } = await api('GET', '/api/panels')
+    assert.deepEqual(
+      panels.panels.map((panel) => [panel.pluginId, panel.sort]),
+      [
+        ['panel-beta', 10],
+        ['panel-alpha', 20],
+      ],
+    )
+  } finally {
+    await cleanup()
+  }
+})
+
+test('order 参数不完整或非法时 400', async () => {
+  const { api, cleanup, config } = await setup()
+  try {
+    const missing = await api('POST', '/api/plugins/order', { ids: ['panel-alpha'] })
+    assert.equal(missing.status, 400)
+    assert.match(missing.data.error, /缺少插件/)
+
+    const unknown = await api('POST', '/api/plugins/order', {
+      ids: ['panel-alpha', 'panel-beta', 'nope'],
+    })
+    assert.equal(unknown.status, 400)
+    assert.match(unknown.data.error, /未知插件/)
+
+    const duplicates = await api('POST', '/api/plugins/order', {
+      ids: ['panel-alpha', 'panel-alpha'],
+    })
+    assert.equal(duplicates.status, 400)
+
+    const empty = await api('POST', '/api/plugins/order', { ids: [] })
+    assert.equal(empty.status, 400)
+
+    const raw = await config()
+    assert.deepEqual(
+      raw.plugins.map((entry) => entry.id),
+      ['panel-alpha', 'panel-beta'],
+    )
+  } finally {
+    await cleanup()
+  }
+})
