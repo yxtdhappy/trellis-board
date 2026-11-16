@@ -21,6 +21,7 @@
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/status` | 账号/系统数量、缺少密码的账号 |
+| GET | `/presets` | 面板输入提词：插件 `config.systemPresets` 的 `{ id, name, bound }` |
 | GET | `/accounts` | 账号列表（含 `hasPassword`，不含密码） |
 | POST | `/accounts` | 新建（可不带 id）或按 id 更新；body `{ id?, username, note? }` |
 | DELETE | `/accounts` | 删除，body `{ id }`；被引用时 409 |
@@ -33,6 +34,9 @@
 
 数据保存位置：账号与系统在插件 store；密码在插件 secret `accounts-core/account-<id>`（宿主 AES-256-GCM 加密，
 密钥文件 `<pluginsDir>/plugins.secrets.key`）。
+
+系统 id 不是自动发现的：面板用插件 `config.systemPresets` 给下拉提词（默认 `witops`、`jenkins`），
+实际 id 仍要跟消费方的 `accountSystemId` 一致。改预设只需改 `plugins.json` 里本插件的 `config.systemPresets`，无需改代码。
 
 ## Capability `accounts.credentials` v1.0.0
 

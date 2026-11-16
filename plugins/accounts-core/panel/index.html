@@ -86,8 +86,16 @@
       <form id="system-form" method="dialog">
         <h2 id="system-dialog-title">新建系统</h2>
         <label
-          >系统 id<input id="system-id" type="text" placeholder="jenkins / witops" required
+          >系统 id<input
+            id="system-id"
+            type="text"
+            list="system-presets"
+            placeholder="jenkins / witops"
+            autocomplete="off"
+            required
         /></label>
+        <p id="system-preset-hint" class="muted small">id 需与插件配置的 accountSystemId 一致。</p>
+        <datalist id="system-presets"></datalist>
         <label>显示名<input id="system-name" type="text" placeholder="Jenkins" /></label>
         <label
           >baseUrl<input id="system-baseurl" type="url" placeholder="https://jenkins.example.com"

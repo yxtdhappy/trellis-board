@@ -5,6 +5,7 @@
 const state = {
   accounts: [],
   systems: [],
+  presets: [],
   tab: 'accounts',
   theme: 'light',
   initialized: false,
@@ -90,15 +91,34 @@ function timeText(timestamp) {
 
 async function load() {
   try {
-    const [accountsPayload, systemsPayload] = await Promise.all([
+    const [accountsPayload, systemsPayload, presetsPayload] = await Promise.all([
       rpc('GET', '/accounts'),
       rpc('GET', '/systems'),
+      rpc('GET', '/presets'),
     ])
     state.accounts = accountsPayload.accounts ?? []
     state.systems = systemsPayload.systems ?? []
+    state.presets = presetsPayload.presets ?? []
+    renderPresets()
     render()
   } catch (error) {
     toast(error.message, 'error')
+  }
+}
+
+// 预设来自插件 config.systemPresets：只管输入提词，实际 id 仍可自由填写。
+function renderPresets() {
+  const list = byId('system-presets')
+  if (!list) return
+  clear(list, ...state.presets.map((preset) => el('option', { value: preset.id }, preset.name)))
+  const hint = byId('system-preset-hint')
+  if (hint) {
+    const labels = state.presets.map((preset) =>
+      preset.bound ? `${preset.id}（已绑定）` : preset.id,
+    )
+    hint.textContent = labels.length
+      ? `可选：${labels.join('、')}；需与插件配置的 accountSystemId 一致。`
+      : 'id 需与插件配置的 accountSystemId 一致。'
   }
 }
 
@@ -312,3 +332,10 @@ byId('account-cancel').addEventListener('click', () => byId('account-dialog').cl
 byId('system-cancel').addEventListener('click', () => byId('system-dialog').close())
 byId('account-form').addEventListener('submit', saveAccount)
 byId('system-form').addEventListener('submit', saveSystem)
+
+// 选中预设 id 时补显示名（仅在显示名为空时），用户仍可改。
+byId('system-id').addEventListener('input', (event) => {
+  const preset = state.presets.find((item) => item.id === event.target.value.trim())
+  const nameInput = byId('system-name')
+  if (preset && !nameInput.value.trim()) nameInput.value = preset.name
+})

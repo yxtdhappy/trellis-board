@@ -18,6 +18,11 @@ const ACCOUNTS_KEY = 'accounts'
 const SYSTEMS_KEY = 'systems'
 const SYSTEM_ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/
 const ACCOUNT_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
+// 面板输入提词；插件配置里的 config.systemPresets 会整包覆盖它。
+const DEFAULT_PRESETS = [
+  { id: 'witops', name: 'WitOps 平台' },
+  { id: 'jenkins', name: 'Jenkins' },
+]
 
 function text(value) {
   if (value === null || value === undefined) return ''
@@ -30,9 +35,9 @@ function respond(status, body) {
 
 function toHttpError(error) {
   const code = error?.code
-  const status =
-    code === -32602 ? 400 : code === 1003 ? 504 : code === 1004 ? 404 : code === 1005 ? 429 : 502
-  return respond(status >= 400 && status < 600 ? status : 502, {
+  const byCode = { '-32602': 400, 1003: 504, 1004: 404, 1005: 429 }
+  const status = byCode[code] ?? 502
+  return respond(status, {
     error: error?.message || '账号操作失败',
     code: Number.isInteger(code) ? code : null,
   })
@@ -80,6 +85,14 @@ function normalizeSystemList(value) {
     .filter((item) => item.id)
 }
 
+function normalizePresets(value) {
+  const source = Array.isArray(value) ? value : DEFAULT_PRESETS
+  return source
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => ({ id: text(item.id), name: text(item.name) || text(item.id) }))
+    .filter((item) => item.id && SYSTEM_ID_PATTERN.test(item.id))
+}
+
 export default createPlugin({
   name: PLUGIN_ID,
   version: PLUGIN_VERSION,
@@ -96,6 +109,8 @@ export default createPlugin({
   async onStart(ctx) {
     let accounts = normalizeAccountList(await ctx.store.get(ACCOUNTS_KEY))
     let systems = normalizeSystemList(await ctx.store.get(SYSTEMS_KEY))
+    // 预设只是面板输入提示，不影响解析；消费方插件的 accountSystemId 仍以 id 为准。
+    const presets = normalizePresets(ctx.config?.systemPresets)
 
     function persistAccounts() {
       return ctx.store.set(ACCOUNTS_KEY, accounts)
@@ -175,6 +190,20 @@ export default createPlugin({
       if (!system) throw ctx.error(1004, `系统不存在: ${systemId}`)
       return system
     }
+
+    ctx.http.route(
+      'GET',
+      '/presets',
+      guard(async () => {
+        const known = new Set(systems.map((system) => system.id))
+        return respond(200, {
+          presets: presets.map((preset) => ({
+            ...preset,
+            bound: known.has(preset.id),
+          })),
+        })
+      }),
+    )
 
     ctx.http.route(
       'GET',

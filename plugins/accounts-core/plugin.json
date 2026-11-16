@@ -47,5 +47,10 @@
       "order": 30
     }
   ],
-  "config": {}
+  "config": {
+    "systemPresets": [
+      { "id": "witops", "name": "WitOps 平台" },
+      { "id": "jenkins", "name": "Jenkins" }
+    ]
+  }
 }

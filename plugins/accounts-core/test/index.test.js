@@ -8,10 +8,10 @@ const ID = 'accounts-core'
 const MODULE = fileURLToPath(new URL('../index.js', import.meta.url))
 const CALLER_MODULE = fileURLToPath(new URL('./fixtures/accounts-caller/index.js', import.meta.url))
 
-async function setup() {
+async function setup({ presets = [] } = {}) {
   const harness = await createHarness({
     plugins: [
-      { id: ID, module: MODULE, enabled: true, config: {} },
+      { id: ID, module: MODULE, enabled: true, config: { systemPresets: presets } },
       { id: 'accounts-caller', module: CALLER_MODULE, enabled: true, config: {} },
     ],
     hostVersion: '0.4.24',
@@ -168,6 +168,33 @@ test('凭据来源与连接状态可观测', async () => {
     const resolved = await t.caller('/resolve?system=witops')
     assert.equal(resolved.status, 200)
     assert.equal(resolved.body.result.username, 'local-user')
+  } finally {
+    await t.cleanup()
+  }
+})
+
+test('预设系统 id 来自 config，并标记是否已绑定', async () => {
+  const t = await setup({
+    presets: [
+      { id: 'witops', name: 'WitOps 平台' },
+      { id: 'jenkins', name: 'Jenkins' },
+      { id: 'Bad Id', name: '非法' },
+    ],
+  })
+  try {
+    const empty = await t.api('/presets')
+    assert.equal(empty.status, 200)
+    assert.deepEqual(
+      empty.body.presets.map((item) => [item.id, item.name, item.bound]),
+      [
+        ['witops', 'WitOps 平台', false],
+        ['jenkins', 'Jenkins', false],
+      ],
+    )
+
+    await t.json('POST', '/systems', { id: 'jenkins', name: 'Jenkins' })
+    const bound = await t.api('/presets')
+    assert.equal(bound.body.presets.find((item) => item.id === 'jenkins').bound, true)
   } finally {
     await t.cleanup()
   }
