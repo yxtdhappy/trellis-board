@@ -56,6 +56,8 @@ jobs:
       - name: Enable yarn 3.5
         run: corepack enable
       - name: Install dependencies
+        env:
+          YARN_NPM_REGISTRY_SERVER: https://registry.npmjs.org
         run: yarn install --immutable
       - name: Build web
         run: yarn build
@@ -137,6 +139,8 @@ jobs:
       - name: Enable yarn 3.5
         run: corepack enable
       - name: Install build dependencies
+        env:
+          YARN_NPM_REGISTRY_SERVER: https://registry.npmjs.org
         run: yarn install --immutable
       - name: Build web
         run: yarn build
