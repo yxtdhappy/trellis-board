@@ -110,6 +110,18 @@
 - 插件任务的宿主调用依赖 `python`；`apps/server/actions.js` 已回退到 `python3`，测试不需要注入 PATH shim。
 - 断言插件状态要等“终态”，不要只等 `status`（重启期间状态可能仍是 `running`）。
 
+### 7.1 面板在 sandbox iframe 里
+
+面板由 `apps/web/src/features/plugins/PluginPanel.tsx` 以 `sandbox="allow-scripts allow-forms"` 嵌入，
+没有 `allow-same-origin`、`allow-modals`：
+
+- 面板脚本里 `window.confirm()` / `alert()` / `prompt()` 被浏览器静默忽略，`confirm()` 直接返回 `false`。
+  需要二次确认时用面板自己的 `<dialog>`（参考 `plugins/accounts-core/panel/app.js` 的 `confirmAction`）。
+- 宿主不能 `iframe.contentDocument` 读面板 DOM；面板也不能读宿主 `window.parent.document`。
+  面板里做 E2E 断言要靠无障碍快照/截图，不能 `page.evaluate` 进去。
+- 所有请求走 postMessage 桥：`{ type: 'trellis:request', id, method, path, body }` →
+  `fetch('/api/plugins/<pluginId>' + path)`，插件面板只能访问自己的命名空间。
+
 ### 5.1 命名边界
 
 - 插件提交 `slug` 候选；宿主负责 trim、保留大小写、`TASK_SLUG_PATTERN` 校验、`MM-DD-` 日期前缀、目录冲突检查和 `taskKey` 生成。

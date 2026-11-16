@@ -253,8 +253,24 @@ async function saveAccount(event) {
   }
 }
 
+// 面板在 sandbox iframe 里，window.confirm 会被浏览器静默忽略（返回 false），
+// 所以删除确认用面板自己的 dialog。
+function confirmAction(message) {
+  const dialog = byId('confirm-dialog')
+  byId('confirm-message').textContent = message
+  dialog.returnValue = ''
+  return new Promise((resolve) => {
+    const done = () => {
+      dialog.removeEventListener('close', done)
+      resolve(dialog.returnValue === 'ok')
+    }
+    dialog.addEventListener('close', done)
+    dialog.showModal()
+  })
+}
+
 async function removeAccount(account) {
-  if (!window.confirm(`删除账号「${account.username}」？`)) return
+  if (!(await confirmAction(`删除账号「${account.username}」？（已绑定的系统会失去凭据）`))) return
   try {
     await rpc('DELETE', '/accounts', { id: account.id })
     toast('账号已删除', 'ok')
@@ -313,7 +329,7 @@ async function saveSystem(event) {
 }
 
 async function removeSystem(system) {
-  if (!window.confirm(`删除系统「${system.name}」的绑定？`)) return
+  if (!(await confirmAction(`删除系统「${system.name}」的绑定？`))) return
   try {
     await rpc('DELETE', '/systems', { id: system.id })
     toast('系统绑定已删除', 'ok')

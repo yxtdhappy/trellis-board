@@ -110,6 +110,18 @@
       </form>
     </dialog>
 
+    <!-- 面板跑在 sandbox iframe 里，window.confirm 会被静默吞掉，删除确认走自己的 dialog。 -->
+    <dialog id="confirm-dialog">
+      <form method="dialog">
+        <h2>请确认</h2>
+        <p id="confirm-message"></p>
+        <div class="dialog-actions">
+          <button id="confirm-cancel" class="ghost" value="cancel">取消</button>
+          <button id="confirm-ok" class="danger" value="ok">确认删除</button>
+        </div>
+      </form>
+    </dialog>
+
     <div id="toast" class="toast" hidden></div>
     <script src="/api/plugins/accounts-core/panel/app.js"></script>
   </body>
