@@ -1323,3 +1323,26 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 56: 修复 Agent-only 初始化副作用
+<!-- trellis-session: v=2 fp=9f7796b1f4bebe18 -->
+
+**Date**: 2026-11-16
+**Task**: 修复 Agent-only 初始化副作用
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+已有 Trellis 任务树补 Agent 改走 Agent-only helper，避免完整 init 生成 backend spec；Windows CI v0.4.25 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cbbd150` | fix(desktop): add agent-only initialization path |
+
+### Status
+
+[OK] **Completed**

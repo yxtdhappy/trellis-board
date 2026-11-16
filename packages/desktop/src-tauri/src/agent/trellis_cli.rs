@@ -1,4 +1,4 @@
-//! 固定 Trellis 运行环境的 CLI 执行层：只负责调用 `<node.exe> <trellis.js> init ...`，
+//! 固定 Trellis 运行环境的 CLI 执行层：负责完整 `init` 和已有任务树的 Agent-only 配置，
 //! 不负责安装运行环境（见 env.rs），也不下载模板。
 //! 工具映射对照 shared/trellis-agent-tools.js；行为对照 desktop/sidecar/trellis-runtime.js。
 
@@ -13,6 +13,7 @@ use crate::agent::protocol::{code, AgentError, AgentResult};
 const INIT_TIMEOUT: Duration = Duration::from_secs(210);
 const INIT_MAX_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 const ERROR_TAIL_CHARS: usize = 2 * 1024;
+const AGENT_ONLY_INIT_HELPER: &str = include_str!("agent_only_init.mjs");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrellisRuntime {
@@ -201,6 +202,22 @@ fn init_args(cli_path: &Path, developer_id: &str, agent_tools: &[String]) -> Vec
     args
 }
 
+fn agent_only_args(cli_path: &Path, repo_path: &Path, agent_tools: &[String]) -> Vec<String> {
+    let mut args = vec![
+        "--input-type=module".to_string(),
+        "-".to_string(),
+        cli_path.to_string_lossy().into_owned(),
+        repo_path.to_string_lossy().into_owned(),
+    ];
+    args.extend(
+        agent_tools
+            .iter()
+            .map(|tool| tool.trim().to_string())
+            .filter(|tool| !tool.is_empty()),
+    );
+    args
+}
+
 /// 仓库内已存在的 Agent 工具痕迹（对照 JS 的 detectTrellisAgentTools，按目录/文件存在性判断）。
 pub async fn detect_agent_tools(repo_path: &Path) -> Vec<String> {
     AGENT_TOOLS
@@ -239,12 +256,49 @@ pub async fn initialize_trellis(
     if output.success() {
         return Ok(());
     }
-    Err(init_failure(repo_path, agent_tools, &output))
+    Err(trellis_failure(
+        repo_path,
+        agent_tools,
+        &output,
+        "Trellis 初始化失败",
+    ))
+}
+
+/// 已有 Trellis 任务树时只通过 stdin 执行内嵌 helper，复用 Trellis 包的平台配置器和模板哈希。
+pub async fn initialize_agents(
+    runtime: &TrellisRuntime,
+    repo_path: &Path,
+    agent_tools: &[String],
+) -> AgentResult<()> {
+    let args = agent_only_args(&runtime.cli_path, repo_path, agent_tools);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let options = ProcessOptions {
+        cwd: Some(repo_path.to_path_buf()),
+        stdin: Some(AGENT_ONLY_INIT_HELPER.as_bytes().to_vec()),
+        timeout: Some(INIT_TIMEOUT),
+        max_output_bytes: INIT_MAX_OUTPUT_BYTES,
+        ..ProcessOptions::default()
+    };
+    let output = run_process(&runtime.node_exe, &args, &options).await?;
+    if output.success() {
+        return Ok(());
+    }
+    Err(trellis_failure(
+        repo_path,
+        agent_tools,
+        &output,
+        "Trellis Agent 配置失败",
+    ))
 }
 
 /// JS 侧的 Pi 修复依赖打包的 trellis-pi-repair.mjs，Rust 运行环境没有该脚本，
 /// 因此不伪造修复成功：保留原始 init 错误并附带 stderr 末 2 KiB，交由界面提示重装/重试。
-fn init_failure(repo_path: &Path, agent_tools: &[String], output: &ProcessOutput) -> AgentError {
+fn trellis_failure(
+    repo_path: &Path,
+    agent_tools: &[String],
+    output: &ProcessOutput,
+    fallback_prefix: &str,
+) -> AgentError {
     let combined = format!("{}\n{}", output.stderr, output.stdout);
     let pi_repair_required = agent_tools.iter().any(|tool| tool.trim() == "pi")
         && combined.contains("EXDEV")
@@ -256,7 +310,7 @@ fn init_failure(repo_path: &Path, agent_tools: &[String], output: &ProcessOutput
     let message = if pi_repair_required {
         format!("Pi 模板补齐失败：{}", error_tail(output))
     } else {
-        format!("Trellis 初始化失败：{}", error_tail(output))
+        format!("{fallback_prefix}：{}", error_tail(output))
     };
     AgentError::new(code::GIT_FAILED, message).with_details(Some(json!({
         "exitCode": output.exit_code,
@@ -324,6 +378,77 @@ mod tests {
                 "--snow".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn builds_agent_only_helper_arguments() {
+        let tools = vec!["codex".to_string(), "snow".to_string()];
+        assert_eq!(
+            agent_only_args(
+                Path::new(r"C:\runtime\trellis.js"),
+                Path::new(r"C:\repo"),
+                &tools
+            ),
+            vec![
+                "--input-type=module".to_string(),
+                "-".to_string(),
+                r"C:\runtime\trellis.js".to_string(),
+                r"C:\repo".to_string(),
+                "codex".to_string(),
+                "snow".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn agent_only_helper_uses_trellis_configurators() {
+        assert!(AGENT_ONLY_INIT_HELPER.contains("resolveSupportedPython"));
+        assert!(AGENT_ONLY_INIT_HELPER.contains("PLATFORM_IDS"));
+        assert!(AGENT_ONLY_INIT_HELPER.contains("configurePlatform"));
+        assert!(AGENT_ONLY_INIT_HELPER.contains("setWriteMode(\"skip\")"));
+        assert!(AGENT_ONLY_INIT_HELPER.contains("initializeHashes"));
+        assert!(!AGENT_ONLY_INIT_HELPER.contains(".trellis/spec"));
+    }
+
+    #[test]
+    fn maps_agent_only_pi_exdev_failure() {
+        let root =
+            std::env::temp_dir().join(format!("trellis-cli-failure-{}", uuid::Uuid::new_v4()));
+        let output = ProcessOutput {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: "configure failed".to_string(),
+        };
+        let error = trellis_failure(
+            &root,
+            &["codex".to_string()],
+            &output,
+            "Trellis Agent 配置失败",
+        );
+        assert!(error.message.starts_with("Trellis Agent 配置失败："));
+
+        std::fs::create_dir_all(root.join(".pi").join("extensions").join("trellis")).unwrap();
+        let output = ProcessOutput {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: "EXDEV: cross-device link not permitted".to_string(),
+        };
+        let error = trellis_failure(
+            &root,
+            &["pi".to_string()],
+            &output,
+            "Trellis Agent 配置失败",
+        );
+        assert!(error.message.starts_with("Pi 模板补齐失败："));
+        assert_eq!(
+            error
+                .details
+                .as_ref()
+                .and_then(|details| details.get("piRepairRequired"))
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[tokio::test]

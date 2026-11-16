@@ -1,0 +1,97 @@
+/**
+ * 面板基础样式（v1）：只做 reset、排版和焦点环，不给裸元素上组件外观，
+ * 避免覆盖插件自己的样式。组件样式在 ui.css / combo.css。
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--tb-bg);
+  color: var(--tb-fg);
+  font: 13px/1.55 var(--tb-font);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+}
+
+h1 {
+  font-size: 16px;
+}
+
+h2 {
+  font-size: 14px;
+}
+
+h3 {
+  font-size: 13px;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--tb-accent);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--tb-accent) 55%, transparent);
+  outline-offset: 1px;
+}
+
+code,
+pre,
+.tb-mono {
+  font-family: var(--tb-mono);
+  font-size: 12px;
+}
+
+.tb-muted {
+  color: var(--tb-muted-fg);
+}
+
+.tb-small {
+  font-size: 11px;
+}
+
+.tb-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tb-grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--tb-muted-fg) 35%, transparent);
+  background-clip: padding-box;
+}

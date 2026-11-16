@@ -515,11 +515,11 @@ test('面板路由提供资源、会话与运行结果', async () => {
     const css = await fetch(`${context.http.baseUrl}/api/plugins/acp-dispatch/panel/app.css`).then(
       (response) => response.text(),
     )
-    assert.match(css, /--accent/)
+    assert.match(css, /--tb-border/)
     const script = await fetch(
       `${context.http.baseUrl}/api/plugins/acp-dispatch/panel/app.js`,
     ).then((response) => response.text())
-    assert.match(script, /trellis:ready/)
+    assert.match(script, /TrellisBridge/)
 
     const data = await fetch(`${context.http.baseUrl}/api/plugins/acp-dispatch/panel/data`).then(
       (response) => response.json(),

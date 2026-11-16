@@ -12,8 +12,8 @@ const state = {
   repositoryId: '',
   pending: [],
 }
-const pending = new Map()
-let sequence = 0
+const bridge = window.TrellisBridge.create()
+const { chip } = window.TrellisUI
 
 function byId(id) {
   return document.getElementById(id)
@@ -28,29 +28,20 @@ function on(id, type, handler) {
   node.addEventListener(type, handler)
 }
 
-function rpc(method, path, body) {
-  const id = `r${++sequence}`
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject })
-    window.parent.postMessage({ type: 'trellis:request', id, method, path, body }, '*')
+let credentialsWidget = null
+function mountCredentials() {
+  const root = byId('credentials')
+  if (!root || !window.TrellisCredentialsWidget) return
+  credentialsWidget = window.TrellisCredentialsWidget.mount({
+    root,
+    request: bridge.request,
+    systemId: 'witops',
   })
 }
 
-window.addEventListener('message', (event) => {
-  const message = event.data
-  if (!message || typeof message !== 'object') return
-  if (message.type === 'trellis:init') {
-    document.documentElement.dataset.theme = message.theme || 'light'
-    void load(false)
-    return
-  }
-  if (message.type === 'trellis:response') {
-    const entry = pending.get(message.id)
-    if (!entry) return
-    pending.delete(message.id)
-    if (message.ok) entry.resolve(message.data)
-    else entry.reject(new Error(message.data?.error || `请求失败（${message.status}）`))
-  }
+bridge.onInit(() => {
+  void load(false)
+  mountCredentials()
 })
 
 function span(className, text) {
@@ -222,7 +213,7 @@ function render() {
       for (const task of item.trellisTasks) {
         const dir = task.taskKey.split('::')[1] || task.taskKey
         const short = dir.replace(/^\d{2}-\d{2}-/, '')
-        const badge = span('badge', `${short} · ${task.status || 'unknown'}`)
+        const badge = chip(`${short} · ${task.status || 'unknown'}`)
         badge.title = `${dir} · ${task.status || 'unknown'}`
         wrap.append(badge)
       }
@@ -230,7 +221,7 @@ function render() {
     } else if (item.kind === 'task') {
       const button = document.createElement('button')
       button.type = 'button'
-      button.className = 'small'
+      button.className = 'tb-btn tb-btn-ghost tb-btn-sm'
       button.textContent = state.busy ? '创建中…' : '创建任务'
       button.disabled = state.busy
       button.addEventListener('click', () => openDispatchDialog([item]))
@@ -263,7 +254,7 @@ function render() {
 
 async function loadProjects() {
   try {
-    const data = await rpc('GET', '/projects')
+    const data = await bridge.get('/projects')
     state.projects = Array.isArray(data?.projects) ? data.projects : []
     state.repositoryId =
       state.repositoryId || data?.defaultRepositoryId || state.projects[0]?.repositoryId || ''
@@ -296,11 +287,11 @@ function openDispatchDialog(items) {
       : `将批量创建 ${items.length} 个任务`
   renderProjects()
   byId('dialog-due').value = items.length === 1 ? items[0].dueDate || '' : ''
-  byId('dialog').hidden = false
+  byId('dispatch-dialog').showModal()
 }
 
 function closeDispatchDialog() {
-  byId('dialog').hidden = true
+  byId('dispatch-dialog').close()
   state.pending = []
 }
 
@@ -310,9 +301,9 @@ async function load(force) {
   state.error = ''
   render()
   try {
-    state.auth = await rpc('GET', '/auth')
-    if (force) await rpc('POST', '/refresh', {})
-    const data = await rpc('GET', force ? '/mine?refresh=1' : '/mine')
+    state.auth = await bridge.get('/auth')
+    if (force) await bridge.post('/refresh', {})
+    const data = await bridge.get(force ? '/mine?refresh=1' : '/mine')
     state.items = Array.isArray(data?.items) ? data.items : []
     state.userId = data?.userId ?? null
     state.fetchedAt = data?.fetchedAt ?? null
@@ -342,7 +333,7 @@ async function dispatchItems(items, options = {}) {
       repositoryId: options.repositoryId || state.repositoryId || undefined,
       dueDate: options.dueDate || undefined,
     }))
-    const result = await rpc('POST', '/dispatch', { items: payload })
+    const result = await bridge.post('/dispatch', { items: payload })
     const outcome = summarizeOutcome(result, '创建完成')
     notice = outcome.notice
     errorText = outcome.error
@@ -363,7 +354,7 @@ on('show-requirements', 'change', render)
 on('show-tasks', 'change', render)
 on('logout', 'click', async () => {
   try {
-    state.auth = (await rpc('POST', '/logout', {}))?.auth ?? null
+    state.auth = (await bridge.post('/logout', {}))?.auth ?? null
     state.notice = '已退出登录'
   } catch (error) {
     state.error = error.message || '退出失败'
@@ -384,12 +375,7 @@ on('dispatch-selected', 'click', () => {
   )
   openDispatchDialog(items)
 })
-on('dialog-cancel', 'click', closeDispatchDialog)
-on('dialog', 'click', (event) => {
-  if (event.target === byId('dialog')) closeDispatchDialog()
-})
-on('dialog-form', 'submit', (event) => {
-  event.preventDefault()
+byId('dispatch-dialog').addEventListener('ok', () => {
   const items = state.pending.slice()
   const repositoryId = byId('dialog-project').value
   const dueDate = byId('dialog-due').value.trim()
@@ -412,7 +398,7 @@ on('sync', 'click', async () => {
   let notice = ''
   let errorText = ''
   try {
-    const result = await rpc('POST', '/sync', { size: 20 })
+    const result = await bridge.post('/sync', { size: 20 })
     const outcome = summarizeOutcome(result, '同步完成')
     notice = outcome.notice
     errorText = outcome.error
@@ -434,7 +420,7 @@ on('login', 'submit', async (event) => {
   state.notice = ''
   render()
   try {
-    const result = await rpc('POST', '/login', {
+    const result = await bridge.post('/login', {
       account: byId('account').value.trim(),
       password: byId('password').value,
       remember: byId('remember').checked,
@@ -442,6 +428,7 @@ on('login', 'submit', async (event) => {
     state.auth = result?.auth ?? null
     byId('password').value = ''
     state.notice = '登录成功'
+    await credentialsWidget?.refresh()
   } catch (error) {
     state.error = error.message || '登录失败'
   } finally {

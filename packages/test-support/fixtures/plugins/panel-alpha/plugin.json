@@ -1,0 +1,11 @@
+{
+  "id": "panel-alpha",
+  "name": "panel alpha",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "engines": { "board": ">=0.1.0" },
+  "permissions": ["panels"],
+  "panels": [
+    { "id": "alpha", "title": "Alpha 面板", "entry": "/panel", "placement": "view", "order": 10 }
+  ]
+}

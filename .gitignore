@@ -56,6 +56,8 @@ plugins/*
 !plugins/README.md
 !plugins/a2a-intake/
 !plugins/a2a-intake/**
+!plugins/accounts-core/
+!plugins/accounts-core/**
 !plugins/acp-dispatch/
 !plugins/acp-dispatch/**
 !plugins/jenkins-ops/

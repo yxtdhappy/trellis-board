@@ -18,7 +18,7 @@
 | `agent/process.rs` | `agent/process.js` | 受控子进程、环境白名单、超时、进程树结束 |
 | `agent/git.rs` | `agent/git-sync.js` | git 参数白名单、status 解析、状态标记检测 |
 | `agent/onboarding.rs` | `agent/project-onboarding.js` | inspect / initialize / checkPush / preflight / attach |
-| `agent/trellis_cli.rs` | `packages/desktop/sidecar/trellis-runtime.js` | 执行 `node <cli.js> init ...`，不含安装逻辑 |
+| `agent/trellis_cli.rs` | `packages/desktop/sidecar/trellis-runtime.js` | 执行完整 `init` 或 stdin Agent-only 配置，不含安装逻辑 |
 | `agent/env.rs` | 新增 | 环境门：Node/Trellis 检查、npmmirror 下载、npm 私有前缀安装 |
 | `agent/device.rs` | `packages/desktop/sidecar/desktop-device.js` | 登录、登出、入网、撤销、本地关联读取 |
 | `agent/association.rs` | `packages/desktop/sidecar/desktop-association.js` | associate / preflight 编排与错误文案 |
@@ -43,7 +43,7 @@
   `task_sync_error`。已删除的旧 JS Agent 里 `live-sync.js` 从未装配（其 `fetchLiveFiles`/`preflightLiveChanges` 在 JS 侧
   无任何实现，服务端也无对应路由），属死代码，Rust 不再移植实时文件同步。
 - 超时预算：登录/登出/关联列表 15s；inspect-project / 实时决策 60s；首次同步与备份恢复 120s；
-  check-push / preflight 240s；associate / initialize-project 600s；`trellis init` 210s；
+  check-push / preflight 240s；associate / initialize-project 600s；`trellis init` 与 Agent-only 配置 210s；
   `task.py` 150s；npm 安装 300s。
 - 认证被撤销（401 或 `AUTH_REVOKED`）时停止循环、写 `state.json`，不静默重试。
 - 本地改动只经 `TaskSync` 的 notify watcher 上传：监听 `<repo>/.trellis`，只关心 `.trellis/tasks/**`，
@@ -154,6 +154,10 @@
   每项 trim 后 1..=40 字节且只含 `[a-z0-9-]`，超出上限返回错误而不是截断。
 - 复用 `agent_service::inspect_project` / `initialize_project` 的增量语义：不新增 CLI 入口、
   不重启进程内同步、不 commit/push、不修改服务端项目或任务数据；只读 approved 绑定同样可用。
+- 已有 `.trellis/tasks` 且只缺所选 Agent 时必须走内嵌 Agent-only helper；只有缺少 `.trellis` 或
+  `.trellis/tasks` 才执行完整 `trellis init`。helper 通过 stdin 复用包的 `configurePlatform`、
+  `setWriteMode("skip")` 和 `initializeHashes(..., { merge: true })`，不得写 spec、workflow、任务或根文件；
+  模块缺失、未知平台、Python 检测或平台配置失败必须失败关闭，不得退回完整初始化。
 
 ## 7. 本地前端（环境门、登录页、控制窗口）
 

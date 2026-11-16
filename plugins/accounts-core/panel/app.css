@@ -1,0 +1,77 @@
+/**
+ * 统一账号面板的业务布局样式。
+ * 颜色/按钮/表格/对话框来自宿主 /plugin-ui/v1/（tokens.css、base.css、ui.css），
+ * 这里只保留页头、页签、表单间距这类本面板独有的部分。
+ */
+.head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--tb-border);
+  background: var(--tb-bg);
+}
+
+.head h1 {
+  margin-bottom: 2px;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px 24px;
+}
+
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-sm);
+  background: var(--tb-muted);
+}
+
+.tab {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: calc(var(--tb-radius-sm) - 1px);
+  background: transparent;
+  color: var(--tb-muted-fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--tb-fg);
+}
+
+.tab.is-active {
+  background: var(--tb-card);
+  color: var(--tb-fg);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.check {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--tb-muted-fg);
+  font-size: 12px;
+}

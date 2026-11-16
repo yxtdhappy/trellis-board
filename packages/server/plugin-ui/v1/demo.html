@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>面板组件库 v1</title>
+    <link rel="stylesheet" href="/plugin-ui/v1/tokens.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/base.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/ui.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/combo.css" />
+    <style>
+      body {
+        padding: 20px;
+      }
+      main {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        max-width: 860px;
+      }
+      section {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+      }
+      .swatches {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .swatch {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px 10px;
+        border: 1px solid var(--tb-border);
+        border-radius: var(--tb-radius-sm);
+        background: var(--tb-card);
+        font-size: 11px;
+      }
+      .swatch i {
+        display: block;
+        width: 100%;
+        height: 18px;
+        border-radius: 4px;
+        background: var(--swatch);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="tb-row">
+        <div class="tb-grow">
+          <h1>面板组件库 v1</h1>
+          <p class="tb-muted tb-small">
+            宿主 <code>/plugin-ui/v1/</code> 提供。插件面板只需引用样式与脚本，不必复制组件。
+          </p>
+        </div>
+        <button class="tb-btn tb-btn-ghost tb-btn-sm" id="theme-toggle">切换主题</button>
+      </header>
+
+      <section>
+        <h2>设计令牌</h2>
+        <div class="swatches" id="swatches"></div>
+      </section>
+
+      <section>
+        <h2>按钮</h2>
+        <div class="tb-toolbar" id="buttons"></div>
+      </section>
+
+      <section>
+        <h2>字段与下拉框</h2>
+        <div class="grid">
+          <div id="field-name"></div>
+          <div id="field-system"></div>
+          <div id="field-dialog-combo"></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>表格</h2>
+        <div class="tb-toolbar" id="table-toolbar"></div>
+        <div id="table"></div>
+      </section>
+
+      <section>
+        <h2>标签、空状态、提示</h2>
+        <div class="tb-row" id="chips"></div>
+        <div id="empty"></div>
+        <div class="tb-toolbar" id="toasts"></div>
+      </section>
+
+      <section>
+        <h2>对话框</h2>
+        <div class="tb-toolbar">
+          <button class="tb-btn tb-btn-ghost" id="confirm-demo">命令式 confirm</button>
+          <button class="tb-btn tb-btn-ghost" id="dialog-demo">声明式 &lt;tb-dialog&gt;</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="/plugin-ui/v1/bridge.js"></script>
+    <script src="/plugin-ui/v1/combo.js"></script>
+    <script src="/plugin-ui/v1/ui.js"></script>
+    <script>
+      const UI = window.TrellisUI
+      const { el, button, field, table, chip, empty, toast, confirm } = UI
+
+      // 演示页不在 sandbox iframe 里：不建 bridge，只借用它的主题应用逻辑。
+      const bridge = window.parent !== window ? window.TrellisBridge.create() : null
+
+      document.getElementById('theme-toggle').addEventListener('click', () => {
+        const root = document.documentElement
+        root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark'
+      })
+
+      const TOKENS = [
+        ['--tb-bg', 'background'],
+        ['--tb-card', 'card'],
+        ['--tb-fg', 'foreground'],
+        ['--tb-muted', 'muted'],
+        ['--tb-border', 'border'],
+        ['--tb-accent', 'primary'],
+        ['--tb-danger', 'destructive'],
+        ['--tb-ok', 'success'],
+        ['--tb-warn', 'warning'],
+      ]
+      const swatches = document.getElementById('swatches')
+      for (const [name] of TOKENS) {
+        swatches.append(
+          el('div', { class: 'swatch' }, [
+            el('i', { style: { '--swatch': `var(${name})` } }),
+            el('span', { text: name }),
+          ]),
+        )
+      }
+
+      document
+        .getElementById('buttons')
+        .append(
+          button({ label: '主要操作' }),
+          button({ label: '次要操作', variant: 'ghost' }),
+          button({ label: '危险操作', variant: 'danger' }),
+          button({ label: '小号', variant: 'ghost', size: 'sm' }),
+          button({ label: '禁用', disabled: true }),
+        )
+
+      const nameInput = el('input', { class: 'tb-input', placeholder: '显示名，例如 张三' })
+      document
+        .getElementById('field-name')
+        .append(field({ label: '账号名称', control: nameInput }).root)
+
+      const systemCombo = window.TrellisCombo.create({
+        id: 'system-id',
+        name: 'system-id',
+        placeholder: 'jenkins / witops',
+        options: [
+          'jenkins',
+          { value: 'witops', label: 'witops · WitOps 平台' },
+          { value: 'gitlab', label: 'gitlab · GitLab' },
+        ],
+        onChange: (value) => toast(`选择了 ${value}`),
+      })
+      const systemField = field({
+        label: '系统 id',
+        control: systemCombo.root,
+        htmlFor: 'system-id',
+      })
+      systemField.setHint('预设取自插件配置，也可手填')
+      document.getElementById('field-system').append(systemField.root, systemCombo.hint)
+
+      document.getElementById('field-dialog-combo').append(
+        field({
+          label: '声明式 <tb-combo>',
+          control: el('tb-combo', {
+            id: 'inline-combo',
+            placeholder: '选择操作',
+            options: 'build,deploy,rollback',
+          }),
+        }).root,
+      )
+
+      const rows = [
+        { id: 'acc-1', username: 'Z0328', displayName: '张三', systems: ['jenkins', 'witops'] },
+        { id: 'acc-2', username: 'Z0481', displayName: '李四', systems: [] },
+      ]
+      const grid = table({
+        columns: [
+          { key: 'username', title: '账号' },
+          { key: 'displayName', title: '名称' },
+          {
+            key: 'systems',
+            title: '绑定系统',
+            render: (row) =>
+              row.systems.length ? row.systems.map((id) => chip(id, 'ok')) : chip('未绑定', 'warn'),
+          },
+          {
+            title: '',
+            className: 'tb-table-actions',
+            render: (row) =>
+              button({
+                label: '移除',
+                variant: 'ghost',
+                size: 'sm',
+                onClick: () => toast(`移除 ${row.username}`, 'warn'),
+              }),
+          },
+        ],
+        rows,
+      })
+      document.getElementById('table-toolbar').append(
+        button({ label: '新增', size: 'sm', onClick: () => toast('新增账号') }),
+        button({
+          label: '切换空状态',
+          variant: 'ghost',
+          size: 'sm',
+          onClick: () => grid.render(grid.rows.length ? [] : rows),
+        }),
+        button({
+          label: '模拟加载',
+          variant: 'ghost',
+          size: 'sm',
+          onClick: () => {
+            grid.setLoading(true)
+            setTimeout(() => grid.setLoading(false), 1200)
+          },
+        }),
+      )
+      document.getElementById('table').append(grid.root)
+
+      document
+        .getElementById('chips')
+        .append(chip('默认'), chip('已生效', 'ok'), chip('待绑定', 'warn'), chip('失败', 'danger'))
+      document.getElementById('empty').append(empty('还没有数据，先新建一条吧'))
+
+      document.getElementById('toasts').append(
+        button({ label: '普通提示', variant: 'ghost', onClick: () => toast('已保存') }),
+        button({ label: '成功提示', variant: 'ghost', onClick: () => toast('已生效', 'ok') }),
+        button({
+          label: '失败提示',
+          variant: 'ghost',
+          onClick: () => toast('保存失败', 'error'),
+        }),
+      )
+
+      document.getElementById('confirm-demo').addEventListener('click', async () => {
+        const ok = await confirm({
+          title: '删除账号',
+          message: '删除后绑定该账号的系统会失去凭据。',
+          okText: '删除',
+          danger: true,
+        })
+        toast(ok ? '已删除' : '已取消')
+      })
+
+      document.getElementById('dialog-demo').addEventListener('click', () => {
+        const dialog = el('tb-dialog', { title: '编辑账号', 'ok-text': '保存' })
+        const input = el('input', { class: 'tb-input', id: 'dialog-name', placeholder: '名称' })
+        dialog.append(field({ label: '名称', control: input, htmlFor: 'dialog-name' }).root)
+        dialog.addEventListener('ok', () => {
+          toast(`保存 ${input.value || '(空)'}`)
+          dialog.close()
+        })
+        dialog.addEventListener('close', () => dialog.remove())
+        document.body.append(dialog)
+        dialog.showModal()
+      })
+
+      if (bridge) bridge.onInit(({ theme }) => toast(`宿主主题：${theme}`, 'ok'))
+    </script>
+  </body>
+</html>

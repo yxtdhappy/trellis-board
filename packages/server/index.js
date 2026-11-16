@@ -31,6 +31,8 @@ import { createServerLogger } from './logger.js'
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
 const appDir = path.resolve(serverDir, '../..')
 const publicDir = path.join(serverDir, 'public')
+// 宿主提供给插件面板的通用 UI 资源（combo 等），与插件开关无关
+const pluginUiDir = path.join(serverDir, 'plugin-ui')
 const workerFile = path.join(serverDir, 'scan-worker.js')
 const folderPickerFile = path.join(serverDir, 'pick-folders.ps1')
 const SCAN_SCHEMA_VERSION = 11
@@ -834,6 +836,17 @@ async function handleApi(request, response, url) {
 }
 
 function serveStatic(request, response, url) {
+  respondWithStatic(request, response, { pathname: url.pathname, publicDir })
+}
+
+// 插件面板共用资源：/plugin-ui/<file> → packages/server/plugin-ui/<file>。
+// 这些资源属于宿主，不依赖某个插件是否启用。
+function servePluginUi(request, response, url) {
+  const pathname = url.pathname.slice('/plugin-ui'.length) || '/'
+  respondWithStatic(request, response, { pathname, publicDir: pluginUiDir })
+}
+
+function respondWithStatic(request, response, { pathname, publicDir }) {
   const text = (status, body, headers = {}) => {
     response.writeHead(status, headers)
     response.end(body)
@@ -841,7 +854,7 @@ function serveStatic(request, response, url) {
   serveStaticCommon({
     request,
     response,
-    pathname: url.pathname,
+    pathname,
     publicDir,
     invalidPath: () => text(400, 'Bad request'),
     methodNotAllowed: () => text(405, 'Method not allowed', { allow: 'GET, HEAD' }),
@@ -854,6 +867,7 @@ const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`)
     if (url.pathname.startsWith('/api/')) await handleApi(request, response, url)
+    else if (url.pathname.startsWith('/plugin-ui/')) servePluginUi(request, response, url)
     else if (!(await handlePluginRequest(request, response, url))) {
       serveStatic(request, response, url)
     }

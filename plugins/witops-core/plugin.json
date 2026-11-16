@@ -128,6 +128,11 @@
   ],
   "requires": [
     {
+      "name": "accounts.credentials",
+      "version": "^1.0.0",
+      "methods": ["credential.resolve"]
+    },
+    {
       "name": "trellis.projects",
       "version": "^1.0.0",
       "methods": ["list", "get", "current"]
@@ -168,6 +173,8 @@
     "timeoutMs": 20000,
     "keepRaw": false,
     "agentId": null,
+    "credentialSource": "auto",
+    "accountSystemId": "witops",
     "credentials": {
       "mode": "password",
       "account": "",

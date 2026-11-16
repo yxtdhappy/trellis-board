@@ -1,0 +1,14 @@
+{
+  "id": "accounts-caller",
+  "name": "accounts capability consumer fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "permissions": ["capabilities:call", "http:route"],
+  "requires": [
+    {
+      "name": "accounts.credentials",
+      "version": "^1.0.0",
+      "methods": ["accounts.list", "systems.list", "credential.resolve"]
+    }
+  ]
+}

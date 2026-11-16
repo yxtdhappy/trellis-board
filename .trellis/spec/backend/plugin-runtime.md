@@ -53,7 +53,7 @@
 - 宿主表：`plugin_state`、`plugin_run`、`plugin_audit`。
 - 运行记录只能通过 `ctx.runs.start/progress/finish/list` 写；`runId` 固定为 `<pluginId>:<taskKey>:<attempt>`，
   同一插件同一任务最多一条活动 run（部分唯一索引 `plugin_run_active_task`）。
-- 插件 HTTP 命名空间是 `/api/plugins/<id>/*`；`/api/plugins/<id>/{start,stop,logs,runs,audit}` 属于宿主，
+- 插件 HTTP 命名空间是 `/api/plugins/<id>/*`；`/api/plugins/<id>/{start,stop,logs,runs,audit,sort}` 属于宿主，
   插件不得注册同名路由（例如运行历史用 `/executions`）。
 - `http.rootPaths` 走宿主根路径转发，默认要求 `Authorization: Bearer <plugin.config.token>`；
   缺少 token 返回 `401`，token 不符返回 `403`。`http.openPaths` 中的路径免 token（只放只读发现类接口）。
@@ -75,6 +75,13 @@
   目录内固定为 `plugins.json`、`plugins.secrets.json`、`plugins.secrets.key` 与 `logs/<id>.log`。
 - 插件入口解析：绝对路径原样使用；约定路径 `./plugins/<id>/<sub>` 先找 `<pluginsDir>/<id>/<sub>`，
   不存在再回退到安装目录 `appDir`，用于在不改安装目录的前提下覆盖或新增私有插件。
+- `plugins.json` 的每个插件条目额外支持 `sort`（数字，可省略）：它同时决定 `/api/plugins` 里插件的顺序
+  与 `/api/panels` 里面板的位置，优先于清单的 `panels[].order`；没设置 `sort` 的插件保持文件顺序排在后面，
+  面板按清单顺序。同 `sort` 值再按 `panels[].order`、标题排序。
+- 插件页用拖动排序，服务端 `POST /api/plugins/order`（`{"ids": [...]}`，必须覆盖全部插件）把
+  `plugins.json` 的 `plugins` 数组按新顺序重排，并依次写入 `sort = 10/20/30…`；单条改值仍可用
+  `POST /api/plugins/<id>/sort`（`{"sort": 5}` / `{"sort": null}` 清除）。两者都只改配置文件的对应行、
+  原子替换，不重启插件。
 - secrets 文件默认与 `plugins.json` 同目录，可用 `TRELLIS_BOARD_SECRETS_FILE` 覆盖；格式为
   `{"version": 1, "refs": {"scope/key": "value"}}`，refs key 必须是 `scope/key`，值必须是非空字符串。
 - POSIX 下 secrets 文件必须是 `0600`；group/other 可读时直接拒绝加载，错误只报文件名与权限，不回显内容。
@@ -84,13 +91,96 @@
 - 不提供 secrets 写入 API/CLI/UI；手动编辑后重启生效。热重载与 OS keychain 暂不做。
 - 同 UID 的进程仍可读该文件，文件权限只防其他用户；备份运行数据目录会包含密钥。
 
+### 6.1 跨插件凭据共享
+
+- 宿主 secret 按插件隔离（`requirePluginSecretKey` 只允许 `<pluginId>/...`），所以「多个插件共用同一套内网账号」
+  不能靠共享 secret，只能靠 capability。
+- 标准做法：`accounts-core` 持有账号与密码，提供 capability `accounts.credentials`
+  （`accounts.list` / `systems.list` / `credential.resolve`）；消费方在 manifest 声明
+  `"permissions": ["capabilities:call"]` 与 `requires: [{ "name": "accounts.credentials" }]`。
+- 消费方配置统一用 `credentialSource`（`auto` / `accounts` / `local`）与 `accountSystemId`；
+  解析失败时 `auto` 静默回退到插件本地配置（`config` + 插件自己的 secret），失败原因通过状态接口暴露。
+- 面板复用 `accounts-core/panel/widget/credentials-widget.js`，只调用宿主插件自己的 `GET /credentials`，
+  密码永不出现在任何 HTTP 响应里；`credential.resolve` 是唯一明文出口，且只走插件进程间 RPC。
+- 变更通知：`accounts-core` 每次变更发布公开事件 `accounts-core/changed`（需 `events:publish`），
+  消费方声明 `events` 权限后 `ctx.events.on('accounts-core/changed', ...)` 重算凭据，
+  不需要重启插件；重算时先算完再一次性提交，避免事件回包期间状态短暂变空。
+- 凭据有效性由消费方验证（登录目标系统时才知道对错），账号簿不做校验。
+
 ## 7. 测试约定
 
 - 宿主侧测试用 `packages/test-support/plugin-runtime.js` 建临时 workspace + 真实 SQLite，不 mock store。
 - 插件协议用 `packages/test-support/fixtures/plugins/*` 的假插件；ACP 用 `plugins/acp-dispatch/test/fixtures/fake-agent.js`。
+- 跨插件 capability 的消费方用插件目录内的 `test/fixtures/<name>-caller/` 假插件（如
+  `plugins/accounts-core/test/fixtures/accounts-caller/`、`plugins/jenkins-ops/test/fixtures/jenkins-caller/`）。
 - `packages/server/test/plugin-real-task.test.js` 跑真实 `.trellis/scripts/task.py`，验证宿主任务 façade 与脚本参数兼容。
 - 插件任务的宿主调用依赖 `python`；`packages/server/actions.js` 已回退到 `python3`，测试不需要注入 PATH shim。
 - 断言插件状态要等“终态”，不要只等 `status`（重启期间状态可能仍是 `running`）。
+
+### 7.1 面板在 sandbox iframe 里
+
+面板由 `packages/web/src/features/plugins/PluginPanel.tsx` 以 `sandbox="allow-scripts allow-forms"` 嵌入，
+没有 `allow-same-origin`、`allow-modals`：
+
+- 面板脚本里 `window.confirm()` / `alert()` / `prompt()` 被浏览器静默忽略，`confirm()` 直接返回 `false`。
+  需要二次确认时用 `TrellisUI.confirm()`（宿主提供），或面板内自己的 `<dialog>`。
+- 宿主不能 `iframe.contentDocument` 读面板 DOM；面板也不能读宿主 `window.parent.document`。
+  面板里做 E2E 断言要靠无障碍快照/截图，不能 `page.evaluate` 进去。
+- 所有请求走 postMessage 桥：`{ type: 'trellis:request', id, method, path, body }` →
+  `fetch('/api/plugins/<pluginId>' + path)`，插件面板只能访问自己的命名空间。
+
+### 7.2 面板 UI 组件库（宿主 `/plugin-ui/v1/`）
+
+面板跑在 `sandbox` iframe 里，不能读宿主 DOM、不能用宿主 React 组件，之前每个面板各写一套按钮/表格/下拉框，
+配色也有 3 套色板。现在由宿主统一提供 v1 组件库，**不属于任何插件**（插件禁用/目录重构都不影响）：
+
+| 文件 | 作用 |
+| --- | --- |
+| `packages/server/plugin-ui/v1/tokens.css` | 设计令牌 `--tb-*`，兜底值与宿主 `packages/web/src/index.css` 一致 |
+| `packages/server/plugin-ui/v1/base.css` | reset、字体、焦点环、`.tb-muted/.tb-small/.tb-row/.tb-grow` |
+| `packages/server/plugin-ui/v1/ui.css` | `.tb-btn/.tb-input/.tb-table/.tb-field/.tb-chip/.tb-dialog/.tb-toast` 等类 |
+| `packages/server/plugin-ui/v1/bridge.js` | postMessage 桥：`TrellisBridge.create()` → `get/post/delete/request`、`onEvent`、`ready` |
+| `packages/server/plugin-ui/v1/ui.js` | 组件工厂：`button/toolbar/field/chip/empty/toast/confirm/table`、`el()`、`<tb-dialog>` |
+| `packages/server/plugin-ui/v1/combo.js\|css` | 可搜索下拉框 `TrellisCombo.create()` + `<tb-combo>` 元素 |
+| `packages/server/plugin-ui/v1/demo.html` | 全组件的可视展柜（含明暗主题切换），改组件后先看这里 |
+
+面板标准引法：
+
+```html
+<link rel="stylesheet" href="/plugin-ui/v1/tokens.css" />
+<link rel="stylesheet" href="/plugin-ui/v1/base.css" />
+<link rel="stylesheet" href="/plugin-ui/v1/ui.css" />
+<link rel="stylesheet" href="/plugin-ui/v1/combo.css" />
+<script src="/plugin-ui/v1/bridge.js"></script>
+<script src="/plugin-ui/v1/combo.js"></script>
+<script src="/plugin-ui/v1/ui.js"></script>
+```
+
+```js
+const bridge = window.TrellisBridge.create()
+const { button, table, field, chip, confirm, toast, el } = window.TrellisUI
+const rows = table({ columns: [{ title: '账号', key: 'username' }] })
+rows.render(await bridge.get('/accounts').then((p) => p.accounts))
+```
+
+约定：
+
+- **颜色只用令牌**：面板 CSS 不写十六进制/`oklch`，一律 `var(--tb-bg|card|fg|border|accent|muted|danger|ok|warn|radius)`。
+  宿主在 `trellis:init` 里下发白名单计算值（`PluginPanel.tsx` 的 `PANEL_TOKEN_NAMES`），`bridge.js` 写到 `:root`，
+  所以宿主换主题/配色面板自动跟随。**不要**自己定义 `--bg/--fg/--accent` 那一套。
+- **形态按数据流选**：`table/field/button/toolbar/chip/toast/confirm` 用工厂函数（light DOM，要拿节点/合事件）；
+  `combo`/`dialog` 用 custom element（打开状态、焦点、浮层属于组件内部）。
+- **v1 只增不改**：破坏性改动开 `v2`，面板按需切版本；不要改已发布行为。
+- `TrellisUI.el()` 的属性处理与 `combo.js` 一致（`class/text/dataset/on*`），没有 `innerHTML` 入口。
+  子节点传数组会递归展开（`table` 的操作列常这样返回多个按钮），不要把按钮数组直接拼成字符串。
+- **组合控件只画一圈边框**：`combo` 的输入框与展开按钮都不带自己的 border/圆角，边框和
+  `:focus-within` 的焦点环由外层 `.combo` 承担（`border-color: accent` + `box-shadow: 0 0 0 2px` 22% 透明，
+  与 `.tb-input:focus` 一致）。这样组合内外圆角统一，也不会出现「边框 + 1px 空隙 + 焦点环」的双层边。
+- `/plugin-ui/*` 由 `packages/server/index.js` 的 `servePluginUi` 映射到 `packages/server/plugin-ui/`；
+  不要把通用 UI 放进某个插件的 `panel/widget/`（会形成隐式跨插件依赖，插件目录只管自己的东西）。
+- 仓库内面板（accounts-core / acp-dispatch / jenkins-ops / scenario-copilot / witops-core）已统一用 v1：
+  页面只引 `tokens/base/ui/combo` 与 `bridge/ui/combo` 脚本，`panel/app.css` 只保留本面板布局，
+  不再定义颜色变量、按钮、表格、对话框、提示条这些通用样式。新面板照此写，不要回退成自带一份。
 
 ### 5.1 命名边界
 

@@ -210,6 +210,19 @@ export function BoardPage() {
       })
   }, [view])
 
+  // 插件页改排序后立即重排导航，不用切走再回来。
+  useEffect(() => {
+    const refresh = () => {
+      fetchPanels()
+        .then(setPanels)
+        .catch(() => {
+          /* 后端暂时不可用时保留已有面板 */
+        })
+    }
+    window.addEventListener('trellis:panels-changed', refresh)
+    return () => window.removeEventListener('trellis:panels-changed', refresh)
+  }, [])
+
   const syncLabel = teamMode
     ? `${projects.length} 个授权项目 · 事件驱动 · 10 秒可见兜底`
     : controller.status?.refreshRunning
