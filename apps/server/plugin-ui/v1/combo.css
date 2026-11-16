@@ -40,19 +40,32 @@
 }
 
 .combo .combo-toggle {
+  display: flex;
   flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
   width: 30px;
   padding: 0;
   background: transparent;
   border: none;
   border-left: 1px solid var(--tb-border);
   border-radius: 0 var(--tb-radius-sm) var(--tb-radius-sm) 0;
-  color: var(--tb-muted);
-  font-size: 12px;
-  line-height: 1;
+  color: var(--tb-muted-fg);
   transition:
     background-color 0.15s ease,
     color 0.15s ease;
+}
+
+/* 下箭头用两条边画：1.5px 描边比字体里的 ▾ 清楚，也不受字体/字号影响 */
+.combo .combo-toggle::before {
+  content: '';
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.15s ease;
 }
 
 .combo .combo-toggle:focus {
@@ -74,6 +87,10 @@
   background: var(--tb-accent);
   border-left-color: var(--tb-accent);
   color: var(--tb-bg);
+}
+
+.combo.is-open .combo-toggle::before {
+  transform: translateY(1px) rotate(225deg);
 }
 
 .combo-menu {

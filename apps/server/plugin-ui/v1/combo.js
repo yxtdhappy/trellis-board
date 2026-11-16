@@ -91,7 +91,7 @@
       'aria-label': '展开可选值',
       tabindex: '-1',
     })
-    toggle.textContent = '▾'
+    // 图标由 combo.css 的 ::before 画（比字体三角形清晰，且不依赖字体）
     const menu = el('div', { class: 'combo-menu', role: 'listbox' })
     menu.hidden = true
     const hint = el('span', { class: 'combo-hint muted' })
