@@ -108,9 +108,12 @@ async function load() {
 
 // 预设来自插件 config.systemPresets：只管输入提词，实际 id 仍可自由填写。
 function renderPresets() {
-  const list = byId('system-presets')
-  if (!list) return
-  clear(list, ...state.presets.map((preset) => el('option', { value: preset.id }, preset.name)))
+  systemIdCombo?.setOptions(
+    state.presets.map((preset) => ({
+      value: preset.id,
+      label: preset.name ? `${preset.id} · ${preset.name}` : preset.id,
+    })),
+  )
   const hint = byId('system-preset-hint')
   if (hint) {
     const labels = state.presets.map((preset) =>
@@ -296,21 +299,21 @@ function fillAccountOptions(selectedId) {
 function openSystem(system) {
   const editing = Boolean(system)
   byId('system-dialog-title').textContent = editing ? '编辑系统' : '新建系统'
-  byId('system-id').value = editing ? system.id : ''
-  byId('system-id').readOnly = editing
+  systemIdCombo.setValue(editing ? system.id : '')
+  systemIdCombo.setReadOnly(editing)
   byId('system-name').value = editing ? system.name : ''
   byId('system-baseurl').value = editing ? system.baseUrl : ''
   byId('system-note').value = editing ? system.note : ''
   byId('system-enabled').checked = editing ? system.enabled : true
   fillAccountOptions(editing ? system.accountId : '')
   byId('system-dialog').showModal()
-  byId('system-id').focus()
+  systemIdCombo.focus()
 }
 
 async function saveSystem(event) {
   event.preventDefault()
   const payload = {
-    id: byId('system-id').value.trim(),
+    id: systemIdCombo.value.trim(),
     name: byId('system-name').value.trim(),
     baseUrl: byId('system-baseurl').value.trim(),
     accountId: byId('system-account').value,
@@ -349,9 +352,16 @@ byId('system-cancel').addEventListener('click', () => byId('system-dialog').clos
 byId('account-form').addEventListener('submit', saveAccount)
 byId('system-form').addEventListener('submit', saveSystem)
 
-// 选中预设 id 时补显示名（仅在显示名为空时），用户仍可改。
-byId('system-id').addEventListener('input', (event) => {
-  const preset = state.presets.find((item) => item.id === event.target.value.trim())
-  const nameInput = byId('system-name')
-  if (preset && !nameInput.value.trim()) nameInput.value = preset.name
+// 系统 id 用可搜索下拉框（与 jenkins-ops 动态参数同一个组件）
+const systemIdCombo = window.TrellisCombo.create({
+  id: 'system-id',
+  name: 'system-id',
+  placeholder: 'jenkins / witops',
+  onChange: (value) => {
+    // 选中预设时补显示名（仅在显示名为空时），用户仍可改。
+    const preset = state.presets.find((item) => item.id === value)
+    const nameInput = byId('system-name')
+    if (preset?.name && !nameInput.value.trim()) nameInput.value = preset.name
+  },
 })
+byId('system-id-combo').append(systemIdCombo.root)

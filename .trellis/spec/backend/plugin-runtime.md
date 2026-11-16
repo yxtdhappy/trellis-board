@@ -122,6 +122,14 @@
 - 所有请求走 postMessage 桥：`{ type: 'trellis:request', id, method, path, body }` →
   `fetch('/api/plugins/<pluginId>' + path)`，插件面板只能访问自己的命名空间。
 
+### 7.2 面板通用组件
+
+原生 `datalist` 在面板里体验很差（只在聚焦时露箭头、不能键盘高亮、无法标注状态），
+`<dialog>` 又自带 `overflow: auto` 会裁掉绝对定位的浮层。可搜索下拉框统一用
+`plugins/accounts-core/panel/widget/combo.js`（`TrellisCombo.create`，样式自带、浮层
+`position: fixed`），`accounts-core` 的系统 id 与 `jenkins-ops` 的动态参数都用它，
+不要在每个面板里再复制一份。
+
 ### 5.1 命名边界
 
 - 插件提交 `slug` 候选；宿主负责 trim、保留大小写、`TASK_SLUG_PATTERN` 校验、`MM-DD-` 日期前缀、目录冲突检查和 `taskKey` 生成。

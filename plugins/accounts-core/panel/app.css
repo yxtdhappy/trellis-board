@@ -129,12 +129,34 @@ button.ghost:hover {
 }
 
 button.danger {
-  color: var(--danger);
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
 }
 
 button.danger:hover {
-  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 85%, #000);
+  border-color: color-mix(in srgb, var(--danger) 85%, #000);
+  color: #fff;
+}
+
+/* 表格里的行内删除按钮保持弱样式：透明底 + 红字 */
+button.ghost.danger {
+  background: transparent;
   color: var(--danger);
+  border-color: var(--border);
+}
+
+button.ghost.danger:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
+  color: var(--danger);
+}
+
+/* 深色主题里 --danger 是浅红，实心底用浅红时文字要压深，否则白字读不清 */
+:root[data-theme='dark'] button.danger,
+:root[data-theme='dark'] button.danger:hover {
+  color: #1c1917;
 }
 
 button:disabled {

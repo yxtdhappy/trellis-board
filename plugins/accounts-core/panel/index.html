@@ -85,17 +85,13 @@
     <dialog id="system-dialog">
       <form id="system-form" method="dialog">
         <h2 id="system-dialog-title">新建系统</h2>
-        <label
-          >系统 id<input
-            id="system-id"
-            type="text"
-            list="system-presets"
-            placeholder="jenkins / witops"
-            autocomplete="off"
-            required
-        /></label>
-        <p id="system-preset-hint" class="muted small">id 需与插件配置的 accountSystemId 一致。</p>
-        <datalist id="system-presets"></datalist>
+        <div class="field">
+          <label for="system-id">系统 id</label>
+          <div id="system-id-combo"></div>
+          <p id="system-preset-hint" class="muted small">
+            id 需与插件配置的 accountSystemId 一致。
+          </p>
+        </div>
         <label>显示名<input id="system-name" type="text" placeholder="Jenkins" /></label>
         <label
           >baseUrl<input id="system-baseurl" type="url" placeholder="https://jenkins.example.com"
@@ -123,6 +119,7 @@
     </dialog>
 
     <div id="toast" class="toast" hidden></div>
+    <script src="/api/plugins/accounts-core/panel/widget/combo.js"></script>
     <script src="/api/plugins/accounts-core/panel/app.js"></script>
   </body>
 </html>

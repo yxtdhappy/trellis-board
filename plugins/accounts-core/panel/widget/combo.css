@@ -1,0 +1,127 @@
+/**
+ * 插件面板共用下拉框（TrellisCombo）。样式自带，面板不需要再复制一份。
+ * 宿主插件通过 /api/plugins/<id>/panel/widget/combo.css 提供。
+ */
+.combo {
+  position: relative;
+  display: flex;
+  margin-top: 4px;
+}
+
+.combo .combo-input {
+  flex: 1 1 auto;
+  width: 100%;
+  margin-top: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: var(--card);
+  color: var(--fg);
+  font: inherit;
+}
+
+/* 焦点由整个组合一起承担，避免只有输入框半边发光 */
+.combo .combo-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.combo:focus-within {
+  border-radius: 8px;
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
+.combo .combo-toggle {
+  flex: 0 0 auto;
+  width: 30px;
+  padding: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0 8px 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.combo:focus-within .combo-toggle {
+  border-color: var(--accent);
+}
+
+.combo .combo-toggle:hover:not(:disabled) {
+  background: var(--border);
+  color: var(--fg);
+}
+
+.combo .combo-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 展开时按钮常亮，明确表示当前处于打开状态 */
+.combo.is-open .combo-toggle {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.combo-menu {
+  position: fixed;
+  z-index: 40;
+  top: 0;
+  left: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.combo-item {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  overflow: hidden;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.combo-item > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 键盘/悬停高亮：实心底色，文字用底色反色，明暗主题都对得上 */
+.combo-item:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.combo-item.is-active {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.combo-item.is-current .combo-check {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.combo-empty {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.combo-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+}

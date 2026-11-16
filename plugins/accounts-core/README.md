@@ -83,6 +83,24 @@ const { username, password, baseUrl } = await ctx.capabilities.call('accounts.cr
 因此 widget 不需要 `capabilities:call`，也不接触密码。小组件默认每 15 秒（`pollMs` 可改）
 重读一次，页面重新可见时也立即刷新，所以在「统一账号」里改完无需重开面板。
 
+同一个目录里还有一个通用的可搜索下拉框，`jenkins-ops` 的分支参数也用它：
+
+```html
+<script src="/api/plugins/accounts-core/panel/widget/combo.js"></script>
+<script>
+  const combo = TrellisCombo.create({
+    id: 'system-id',
+    name: 'system-id',
+    options: ['jenkins', { value: 'witops', label: 'witops · WitOps 平台' }],
+  })
+  container.append(combo.root, combo.hint)
+  combo.setOptions(next) // 重新给候选；combo.value 是输入框当前文本
+</script>
+```
+
+样式自带（`combo.css` 自动注入），浮层用 `position: fixed` 定位，不会被
+`<dialog>` 默认的 `overflow: auto` 裁掉。
+
 ## 变更事件
 
 每次账号/系统/密码变更都会发布公开事件 `accounts-core/changed`
