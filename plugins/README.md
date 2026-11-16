@@ -11,6 +11,13 @@
   用户目录可以只放 `index.js` + `plugin.json` 覆盖安装目录，也可以在 `plugins.json` 登记全新插件。
 - 命名之外，插件仓库内不提交任何真实环境信息：本地绝对路径、账号、目标 URL、外部项目大纲/知识库都通过 `config` 注入。
 
+## 面板排序
+
+- `plugins.json` 的插件条目可以写 `"sort": 10`（数字，可省略）。数字小的面板排在前面，
+  优先于 `plugin.json` 里的 `panels[].order`；不写就按清单顺序。
+- 插件页每个插件的「排序」输入框对应 `POST /api/plugins/<id>/sort`：保存时只改 `plugins.json` 的这一行，
+  不重启插件，看板左侧导航立即重排；清空输入框表示删掉该字段、回到清单顺序。
+
 ## 跨插件凭据
 
 - 宿主 secret 按插件隔离（`<pluginId>/<key>`），需要共用同一套账号密码时走 capability 而不是共享 secret。

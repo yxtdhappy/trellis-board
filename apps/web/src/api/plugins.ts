@@ -8,6 +8,8 @@ export type PluginInfo = {
   compatible: boolean
   reason: string | null
   enabled: boolean
+  /** 插件级面板排序；null 表示按清单 panels[].order */
+  sort?: number | null
   status: string
   pid: number | null
   restarts: number
@@ -48,6 +50,18 @@ export async function startPlugin(id: string): Promise<void> {
 
 export async function stopPlugin(id: string): Promise<void> {
   await requestJson(`/api/plugins/${encodeURIComponent(id)}/stop`, { method: 'POST' })
+}
+
+/**
+ * 设置插件级面板排序：数字小的面板靠前，null 清掉设置、回到插件清单里的 order。
+ * 只写 plugins.json 的 sort 字段，不重启插件。
+ */
+export async function setPluginSort(id: string, sort: number | null): Promise<void> {
+  // requestJson 会自己 JSON.stringify，这里必须给对象，别先 stringify 一次。
+  await requestJson(`/api/plugins/${encodeURIComponent(id)}/sort`, {
+    method: 'POST',
+    body: { sort },
+  })
 }
 
 export async function fetchPluginLogs(id: string, tail = 200): Promise<PluginLogEntry[]> {

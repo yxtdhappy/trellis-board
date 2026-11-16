@@ -148,10 +148,15 @@ export function loadPluginConfigFile(file, { env = process.env, secretsFile } = 
       id,
       names: entryMissing.filter((name, at) => entryMissing.indexOf(name) === at),
     })
+    const sortValue = entry.sort === undefined || entry.sort === null ? null : Number(entry.sort)
+    if (sortValue !== null && !Number.isFinite(sortValue)) {
+      throw new Error(`插件 ${id} 的 sort 必须是数字`)
+    }
     return {
       id,
       module: String(entry.module || '').trim(),
       enabled: entry.enabled !== false,
+      sort: sortValue,
       version: entry.version == null ? undefined : String(entry.version),
       command: entry.command ? String(entry.command) : null,
       args: Array.isArray(entry.args) ? entry.args.map(String) : null,
@@ -512,7 +517,13 @@ export class PluginSupervisor {
         this.plugins.set(entry.id, created)
         this.inspectManifest(created)
         result.added.push(entry.id)
-        touched.push({ state: created, previous: null, entryChanged: true, configChanged: false, spawnChanged: false })
+        touched.push({
+          state: created,
+          previous: null,
+          entryChanged: true,
+          configChanged: false,
+          spawnChanged: false,
+        })
         continue
       }
 
@@ -536,6 +547,7 @@ export class PluginSupervisor {
       state.command = entry.command
       state.args = entry.args
       state.pinnedVersion = entry.version
+      state.sort = entry.sort ?? null
       state.config = entry.config
       state.configSource = entry.configSource ?? 'none'
       state.missingSecrets = missingSecrets
@@ -694,6 +706,7 @@ export class PluginSupervisor {
       id: entry.id,
       modulePath: this.resolveModule(entry),
       enabled: entry.enabled,
+      sort: entry.sort ?? null,
       config: entry.config,
       command: entry.command,
       args: entry.args,
@@ -1561,15 +1574,13 @@ export class PluginSupervisor {
     const key = String(params?.key ?? '').trim()
     if (!key) throw invalidParams('缺少 secret key')
     if (!key.startsWith(`${state.id}/`)) {
-      throw appError(
-        ERROR_CODES.PERMISSION_DENIED,
-        `插件只能访问自己的 secret：${state.id}/...`,
-      )
+      throw appError(ERROR_CODES.PERMISSION_DENIED, `插件只能访问自己的 secret：${state.id}/...`)
     }
     return key
   }
 
-  requireRun(state, runId) {    const run = this.store.getRun(String(runId))
+  requireRun(state, runId) {
+    const run = this.store.getRun(String(runId))
     if (!run) throw appError(ERROR_CODES.NOT_FOUND, `run 不存在: ${runId}`)
     if (run.pluginId !== state.id) {
       throw appError(ERROR_CODES.PERMISSION_DENIED, '不能更新其它插件的 run')
@@ -1806,6 +1817,7 @@ export class PluginSupervisor {
       compatible: state.compatible,
       reason: state.reason,
       enabled: state.enabled && !state.manualStopped,
+      sort: state.sort ?? null,
       status: state.status,
       pid: state.pid,
       restarts: state.restarts,
@@ -1861,6 +1873,40 @@ export class PluginSupervisor {
 
   list() {
     return [...this.plugins.values()].map((state) => this.describe(state))
+  }
+
+  /**
+   * 设置插件级排序（面板顺序用）：写回 plugins.json 并立即生效，不重启插件。
+   * sort 为 null 表示清掉该字段，面板回到清单里的 panels[].order。
+   */
+  setSort(id, sort) {
+    const state = this.plugins.get(id)
+    if (!state) throw new Error(`未知插件: ${id}`)
+    const value = sort === null || sort === undefined ? null : Number(sort)
+    if (value !== null && !Number.isFinite(value)) {
+      throw new Error('sort 必须是数字，留空表示按清单默认顺序')
+    }
+    if (fs.existsSync(this.configFile)) {
+      let raw
+      try {
+        raw = JSON.parse(fs.readFileSync(this.configFile, 'utf8'))
+      } catch {
+        throw new Error('plugins.json 不是合法 JSON')
+      }
+      if (!raw || typeof raw !== 'object' || !Array.isArray(raw.plugins)) {
+        throw new Error('plugins.json 必须包含 plugins 数组')
+      }
+      const entry = raw.plugins.find((item) => item && String(item.id || '').trim() === id)
+      if (!entry) throw new Error(`plugins.json 里没有插件 ${id}`)
+      if (value === null) delete entry.sort
+      else entry.sort = value
+      const temp = `${this.configFile}.tmp`
+      fs.writeFileSync(temp, `${JSON.stringify(raw, null, 2)}\n`, 'utf8')
+      fs.renameSync(temp, this.configFile)
+    }
+    state.sort = value
+    this.logger.info?.('插件排序已更新', { id, sort: value })
+    return this.describe(state)
   }
 
   findRootPlugin(pathname) {

@@ -5,6 +5,7 @@ import {
   fetchPluginLogs,
   fetchPlugins,
   reloadPlugins,
+  setPluginSort,
   startPlugin,
   stopPlugin,
   type PluginInfo,
@@ -39,6 +40,74 @@ const STATUS_TONES: Record<string, string> = {
 function statusTone(plugin: PluginInfo) {
   if (plugin.status === 'error' && plugin.lastError) return STATUS_TONES.error
   return STATUS_TONES[plugin.status] || 'bg-secondary text-secondary-foreground'
+}
+
+/**
+ * 插件级面板排序：数字小的面板靠前，留空回退到插件清单里的 panels[].order。
+ * 失焦或回车提交，Esc 还原；保存成功后通知看板重排导航。
+ */
+function SortInput({ plugin, onSaved }: { plugin: PluginInfo; onSaved: () => Promise<void> }) {
+  const current = plugin.sort == null ? '' : String(plugin.sort)
+  const [draft, setDraft] = useState(current)
+  const [saving, setSaving] = useState(false)
+  const focused = useRef(false)
+
+  useEffect(() => {
+    if (!focused.current) setDraft(current)
+  }, [current])
+
+  async function commit() {
+    const text = draft.trim()
+    const next = text === '' ? null : Number(text)
+    if (next !== null && !Number.isFinite(next)) {
+      toast.error('排序必须是数字，留空表示默认顺序')
+      setDraft(current)
+      return
+    }
+    if (next === (plugin.sort ?? null)) return
+    setSaving(true)
+    try {
+      await setPluginSort(plugin.id, next)
+      toast.success(next === null ? `${plugin.id} 恢复默认顺序` : `${plugin.id} 排序设为 ${next}`)
+      await onSaved()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '保存排序失败')
+      setDraft(current)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <label className="ml-auto flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
+      排序
+      <input
+        type="number"
+        step="1"
+        inputMode="numeric"
+        value={draft}
+        placeholder="默认"
+        disabled={saving}
+        title="面板顺序：数字小的靠前；留空按插件清单里的顺序。保存后立即生效，不重启插件。"
+        className="h-7 w-14 rounded-md border border-border bg-background px-1.5 text-center font-mono text-xs disabled:opacity-50"
+        onFocus={() => {
+          focused.current = true
+        }}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          focused.current = false
+          void commit()
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur()
+          if (event.key === 'Escape') {
+            setDraft(current)
+            event.currentTarget.blur()
+          }
+        }}
+      />
+    </label>
+  )
 }
 
 export function PluginsView() {
@@ -91,6 +160,12 @@ export function PluginsView() {
       setBusyId('')
     }
   }
+
+  const savedSort = useCallback(async () => {
+    await load(true)
+    // 面板顺序在 /api/panels 里，让看板重排左侧导航。
+    window.dispatchEvent(new CustomEvent('trellis:panels-changed'))
+  }, [load])
 
   async function reload() {
     setReloading(true)
@@ -242,7 +317,7 @@ export function PluginsView() {
                   <p className="text-[0.6875rem] text-destructive">{plugin.lastError}</p>
                 ) : null}
 
-                <div className="mt-auto flex gap-2">
+                <div className="mt-auto flex items-center gap-2">
                   <Button
                     type="button"
                     size="sm"
@@ -259,6 +334,7 @@ export function PluginsView() {
                   >
                     日志
                   </Button>
+                  <SortInput plugin={plugin} onSaved={savedSort} />
                 </div>
               </article>
             )

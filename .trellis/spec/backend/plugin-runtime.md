@@ -53,7 +53,7 @@
 - 宿主表：`plugin_state`、`plugin_run`、`plugin_audit`。
 - 运行记录只能通过 `ctx.runs.start/progress/finish/list` 写；`runId` 固定为 `<pluginId>:<taskKey>:<attempt>`，
   同一插件同一任务最多一条活动 run（部分唯一索引 `plugin_run_active_task`）。
-- 插件 HTTP 命名空间是 `/api/plugins/<id>/*`；`/api/plugins/<id>/{start,stop,logs,runs,audit}` 属于宿主，
+- 插件 HTTP 命名空间是 `/api/plugins/<id>/*`；`/api/plugins/<id>/{start,stop,logs,runs,audit,sort}` 属于宿主，
   插件不得注册同名路由（例如运行历史用 `/executions`）。
 - `http.rootPaths` 走宿主根路径转发，默认要求 `Authorization: Bearer <plugin.config.token>`；
   缺少 token 返回 `401`，token 不符返回 `403`。`http.openPaths` 中的路径免 token（只放只读发现类接口）。
@@ -75,6 +75,10 @@
   目录内固定为 `plugins.json`、`plugins.secrets.json`、`plugins.secrets.key` 与 `logs/<id>.log`。
 - 插件入口解析：绝对路径原样使用；约定路径 `./plugins/<id>/<sub>` 先找 `<pluginsDir>/<id>/<sub>`，
   不存在再回退到安装目录 `appDir`，用于在不改安装目录的前提下覆盖或新增私有插件。
+- `plugins.json` 的每个插件条目额外支持 `sort`（数字，可省略）：它决定 `/api/panels` 里该插件面板的位置，
+  优先于清单的 `panels[].order`，留空则按清单顺序。面板页的「排序」输入框走
+  `POST /api/plugins/<id>/sort`（`{"sort": 5}` / `{"sort": null}` 清除），只改这一行并原子写回配置文件，
+  不重启插件；同 `sort` 值再按 `panels[].order`、标题排序。
 - secrets 文件默认与 `plugins.json` 同目录，可用 `TRELLIS_BOARD_SECRETS_FILE` 覆盖；格式为
   `{"version": 1, "refs": {"scope/key": "value"}}`，refs key 必须是 `scope/key`，值必须是非空字符串。
 - POSIX 下 secrets 文件必须是 `0600`；group/other 可读时直接拒绝加载，错误只报文件名与权限，不回显内容。
