@@ -4,122 +4,76 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>统一账号</title>
+    <link rel="stylesheet" href="/plugin-ui/v1/tokens.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/base.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/ui.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/combo.css" />
     <link rel="stylesheet" href="/api/plugins/accounts-core/panel/app.css" />
   </head>
   <body>
     <header class="head">
       <div class="head-title">
         <h1>统一账号</h1>
-        <p id="meta" class="muted">加载中…</p>
+        <p id="meta" class="tb-muted">加载中…</p>
       </div>
-      <div class="actions">
+      <div class="tb-row">
         <div class="tabs" role="tablist">
-          <button id="tab-accounts" class="tab active" role="tab" type="button">账号</button>
+          <button id="tab-accounts" class="tab is-active" role="tab" type="button">账号</button>
           <button id="tab-systems" class="tab" role="tab" type="button">系统</button>
         </div>
-        <button id="refresh" class="ghost" type="button" title="刷新">↻</button>
+        <button id="refresh" class="tb-btn tb-btn-ghost tb-btn-sm" type="button" title="刷新">
+          ↻
+        </button>
       </div>
     </header>
 
     <main>
       <section id="view-accounts" class="view">
-        <div class="toolbar">
-          <span id="accounts-hint" class="muted">AD 统一账号，改一次密码对绑定的系统都生效。</span>
-          <button id="new-account" type="button">新建账号</button>
+        <div class="tb-toolbar">
+          <span class="tb-muted tb-small tb-grow">
+            AD 统一账号，改一次密码对绑定的系统都生效。
+          </span>
+          <button id="new-account" class="tb-btn" type="button">新建账号</button>
         </div>
-        <table class="table">
-          <thead>
-            <tr>
-              <th>账号</th>
-              <th>备注</th>
-              <th>密码</th>
-              <th>更新时间</th>
-              <th class="col-actions"></th>
-            </tr>
-          </thead>
-          <tbody id="accounts-body"></tbody>
-        </table>
-        <div id="accounts-empty" class="empty muted" hidden>还没有账号，点「新建账号」开始。</div>
+        <div id="accounts-table"></div>
       </section>
 
       <section id="view-systems" class="view" hidden>
-        <div class="toolbar">
-          <span class="muted">系统通过 accountId 引用账号；其他插件按系统 id 解析凭据。</span>
-          <button id="new-system" type="button">新建系统</button>
+        <div class="tb-toolbar">
+          <span class="tb-muted tb-small tb-grow">
+            系统 id 要与插件配置的 accountSystemId 一致。
+          </span>
+          <button id="new-system" class="tb-btn" type="button">新建系统</button>
         </div>
-        <table class="table">
-          <thead>
-            <tr>
-              <th>系统</th>
-              <th>baseUrl</th>
-              <th>账号</th>
-              <th>状态</th>
-              <th class="col-actions"></th>
-            </tr>
-          </thead>
-          <tbody id="systems-body"></tbody>
-        </table>
-        <div id="systems-empty" class="empty muted" hidden>还没有系统绑定。</div>
+        <div id="systems-table"></div>
       </section>
     </main>
 
-    <dialog id="account-dialog">
-      <form id="account-form" method="dialog">
-        <h2 id="account-dialog-title">新建账号</h2>
-        <input id="account-id" type="hidden" />
-        <label
-          >账号<input id="account-username" type="text" autocomplete="username" required
-        /></label>
-        <label>备注<input id="account-note" type="text" placeholder="可选" /></label>
-        <label id="account-password-row"
-          >密码<input id="account-password" type="password" autocomplete="new-password"
-        /></label>
-        <p class="muted small">密码只写入宿主加密 secrets，不会出现在接口返回里。</p>
-        <div class="dialog-actions">
-          <button id="account-cancel" class="ghost" type="button">取消</button>
-          <button id="account-save" type="submit">保存</button>
-        </div>
-      </form>
-    </dialog>
+    <tb-dialog id="account-dialog" title="新建账号" ok-text="保存">
+      <div class="form">
+        <div id="field-username"></div>
+        <div id="field-note"></div>
+        <div id="field-password"></div>
+      </div>
+    </tb-dialog>
 
-    <dialog id="system-dialog">
-      <form id="system-form" method="dialog">
-        <h2 id="system-dialog-title">新建系统</h2>
-        <div class="field">
-          <label for="system-id">系统 id</label>
-          <div id="system-id-combo"></div>
-          <p id="system-preset-hint" class="muted small">
-            id 需与插件配置的 accountSystemId 一致。
-          </p>
-        </div>
-        <label>显示名<input id="system-name" type="text" placeholder="Jenkins" /></label>
-        <label
-          >baseUrl<input id="system-baseurl" type="url" placeholder="https://jenkins.example.com"
-        /></label>
-        <label>绑定账号<select id="system-account"></select></label>
-        <label>备注<input id="system-note" type="text" placeholder="可选" /></label>
-        <label class="toggle"><input id="system-enabled" type="checkbox" checked /> 启用</label>
-        <div class="dialog-actions">
-          <button id="system-cancel" class="ghost" type="button">取消</button>
-          <button id="system-save" type="submit">保存</button>
-        </div>
-      </form>
-    </dialog>
+    <tb-dialog id="system-dialog" title="新建系统" ok-text="保存">
+      <div class="form">
+        <div id="field-system-id"></div>
+        <div id="field-system-name"></div>
+        <div id="field-system-baseurl"></div>
+        <div id="field-system-account"></div>
+        <div id="field-system-note"></div>
+        <label class="check">
+          <input id="system-enabled" type="checkbox" />
+          启用该系统
+        </label>
+      </div>
+    </tb-dialog>
 
-    <!-- 面板跑在 sandbox iframe 里，window.confirm 会被静默吞掉，删除确认走自己的 dialog。 -->
-    <dialog id="confirm-dialog">
-      <form method="dialog">
-        <h2>请确认</h2>
-        <p id="confirm-message"></p>
-        <div class="dialog-actions">
-          <button id="confirm-cancel" class="ghost" value="cancel">取消</button>
-          <button id="confirm-ok" class="danger" value="ok">确认删除</button>
-        </div>
-      </form>
-    </dialog>
-
-    <div id="toast" class="toast" hidden></div>
-    <script src="/plugin-ui/combo.js"></script>
+    <script src="/plugin-ui/v1/bridge.js"></script>
+    <script src="/plugin-ui/v1/combo.js"></script>
+    <script src="/plugin-ui/v1/ui.js"></script>
     <script src="/api/plugins/accounts-core/panel/app.js"></script>
   </body>
 </html>

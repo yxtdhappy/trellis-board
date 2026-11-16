@@ -86,7 +86,7 @@ const { username, password, baseUrl } = await ctx.capabilities.call('accounts.cr
 同一个目录里还有一个通用的可搜索下拉框，`jenkins-ops` 的分支参数也用它：
 
 ```html
-<script src="/plugin-ui/combo.js"></script>
+<script src="/plugin-ui/v1/combo.js"></script>
 <script>
   const combo = TrellisCombo.create({
     id: 'system-id',
@@ -97,6 +97,9 @@ const { username, password, baseUrl } = await ctx.capabilities.call('accounts.cr
   combo.setOptions(next) // 重新给候选；combo.value 是输入框当前文本
 </script>
 ```
+
+面板的按钮、表格、字段、对话框、提示条由宿主 `/plugin-ui/v1/` 统一提供，见
+`.trellis/spec/backend/plugin-runtime.md` 7.2；本面板只保留业务布局（`panel/app.css`）。
 
 样式自带（`combo.css` 自动注入），浮层用 `position: fixed` 定位，不会被
 `<dialog>` 默认的 `overflow: auto` 裁掉。

@@ -20,6 +20,13 @@
 - 面板复用 `accounts-core/panel/widget/credentials-widget.js`，只调自己的 `GET /credentials`；密码不进任何 HTTP 响应。
   详见 `plugins/accounts-core/README.md`。
 
+## 面板 UI
+
+- 按钮、输入、表格、字段、标签、对话框、提示条、可搜索下拉框由宿主 `/plugin-ui/v1/` 提供，
+  **不要**在插件里复制一份，也不要把通用组件放进 `panel/widget/`（那是给跨插件复用的小组件用的）。
+- 颜色只用 `--tb-*` 设计令牌；宿主会把当前主题的计算值下发到面板，换主题/配色无需改插件。
+- 引法与 API 见 `.trellis/spec/backend/plugin-runtime.md` 7.2，可视展柜是 `/plugin-ui/v1/demo.html`。
+
 ## 测试
 
 从仓库根目录运行 `npm run test:plugins`（等价于 `node --test plugins/*/test/*.test.js`）。

@@ -1,0 +1,334 @@
+/**
+ * 面板组件样式（v1）。配合 tokens.css 使用，颜色一律走 --tb-*。
+ * 覆盖：按钮、输入、表格、字段、工具栏、标签、空状态、对话框、提示条。
+ */
+/* ---------- 按钮 ---------- */
+.tb-btn {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 5px 12px;
+  border: 1px solid var(--tb-accent);
+  border-radius: var(--tb-radius-sm);
+  background: var(--tb-accent);
+  color: var(--tb-accent-fg);
+  font: inherit;
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.tb-btn:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--tb-accent) 86%, black);
+}
+
+.tb-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.tb-btn-ghost {
+  background: var(--tb-card);
+  border-color: var(--tb-border);
+  color: var(--tb-fg);
+}
+
+.tb-btn-ghost:hover:not(:disabled) {
+  background: var(--tb-muted);
+}
+
+.tb-btn-danger {
+  background: var(--tb-danger);
+  border-color: var(--tb-danger);
+  color: var(--tb-danger-fg);
+}
+
+.tb-btn-danger:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--tb-danger) 85%, black);
+}
+
+.tb-btn-sm {
+  min-height: 25px;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+/* ---------- 输入 ---------- */
+.tb-input,
+.tb-input:where(input, textarea, select) {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-sm);
+  background: var(--tb-card);
+  color: var(--tb-fg);
+  font: inherit;
+}
+
+input.tb-input,
+textarea.tb-input,
+select.tb-input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-sm);
+  background: var(--tb-card);
+  color: var(--tb-fg);
+  font: inherit;
+}
+
+input.tb-input:focus,
+textarea.tb-input:focus,
+select.tb-input:focus {
+  outline: none;
+  border-color: var(--tb-accent);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--tb-accent) 22%, transparent);
+}
+
+input.tb-input::placeholder,
+textarea.tb-input::placeholder {
+  color: color-mix(in oklch, var(--tb-muted-fg) 80%, transparent);
+}
+
+textarea.tb-input {
+  min-height: 64px;
+  resize: vertical;
+}
+
+/* ---------- 字段 ---------- */
+.tb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tb-field > label,
+.tb-field-label {
+  color: var(--tb-muted-fg);
+  font-size: 11px;
+  letter-spacing: 0.01em;
+}
+
+.tb-field-hint {
+  color: var(--tb-muted-fg);
+  font-size: 11px;
+}
+
+.tb-field-error .tb-field-hint {
+  color: var(--tb-danger);
+}
+
+/* ---------- 工具栏 ---------- */
+.tb-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.tb-toolbar-end {
+  margin-left: auto;
+}
+
+/* ---------- 表格 ---------- */
+.tb-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius);
+  background: var(--tb-card);
+}
+
+.tb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.tb-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--tb-border);
+  background: var(--tb-muted);
+  color: var(--tb-muted-fg);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tb-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid color-mix(in oklch, var(--tb-border) 70%, transparent);
+  vertical-align: middle;
+}
+
+.tb-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.tb-table tbody tr:hover td {
+  background: color-mix(in oklch, var(--tb-muted) 55%, transparent);
+}
+
+.tb-table .tb-table-actions {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.tb-table .tb-table-actions .tb-btn + .tb-btn {
+  margin-left: 6px;
+}
+
+.tb-table-empty td {
+  padding: 18px 10px;
+  color: var(--tb-muted-fg);
+  text-align: center;
+}
+
+.tb-table.is-loading tbody {
+  opacity: 0.55;
+}
+
+/* ---------- 标签 / 状态点 ---------- */
+.tb-chip {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 1px 7px;
+  border: 1px solid var(--tb-border);
+  border-radius: 999px;
+  background: var(--tb-muted);
+  color: var(--tb-muted-fg);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.tb-chip-ok {
+  border-color: color-mix(in oklch, var(--tb-ok) 40%, transparent);
+  background: color-mix(in oklch, var(--tb-ok) 14%, transparent);
+  color: var(--tb-ok);
+}
+
+.tb-chip-warn {
+  border-color: color-mix(in oklch, var(--tb-warn) 40%, transparent);
+  background: color-mix(in oklch, var(--tb-warn) 16%, transparent);
+  color: var(--tb-warn);
+}
+
+.tb-chip-danger {
+  border-color: color-mix(in oklch, var(--tb-danger) 40%, transparent);
+  background: color-mix(in oklch, var(--tb-danger) 14%, transparent);
+  color: var(--tb-danger);
+}
+
+/* ---------- 空状态 ---------- */
+.tb-empty {
+  padding: 24px 16px;
+  border: 1px dashed var(--tb-border);
+  border-radius: var(--tb-radius);
+  color: var(--tb-muted-fg);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ---------- 对话框 ---------- */
+.tb-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius);
+  background: var(--tb-card);
+  color: var(--tb-card-fg);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 28%);
+}
+
+.tb-dialog::backdrop {
+  background: rgb(0 0 0 / 42%);
+}
+
+.tb-dialog-body {
+  padding: 16px 18px 12px;
+}
+
+.tb-dialog-title {
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tb-dialog-message {
+  color: var(--tb-muted-fg);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.tb-dialog-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 10px 18px 14px;
+}
+
+/* ---------- 提示条 ---------- */
+.tb-toasts {
+  position: fixed;
+  z-index: 60;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+.tb-toast {
+  max-width: 320px;
+  padding: 8px 12px;
+  border: 1px solid var(--tb-border);
+  border-left: 3px solid var(--tb-accent);
+  border-radius: var(--tb-radius-sm);
+  background: var(--tb-card);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 22%);
+  color: var(--tb-fg);
+  font-size: 12px;
+  animation: tb-toast-in 0.16s ease-out;
+}
+
+.tb-toast-ok {
+  border-left-color: var(--tb-ok);
+}
+
+.tb-toast-error {
+  border-left-color: var(--tb-danger);
+}
+
+.tb-toast-warn {
+  border-left-color: var(--tb-warn);
+}
+
+@keyframes tb-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tb-toast {
+    animation: none;
+  }
+}

@@ -116,26 +116,59 @@
 没有 `allow-same-origin`、`allow-modals`：
 
 - 面板脚本里 `window.confirm()` / `alert()` / `prompt()` 被浏览器静默忽略，`confirm()` 直接返回 `false`。
-  需要二次确认时用面板自己的 `<dialog>`（参考 `plugins/accounts-core/panel/app.js` 的 `confirmAction`）。
+  需要二次确认时用 `TrellisUI.confirm()`（宿主提供），或面板内自己的 `<dialog>`。
 - 宿主不能 `iframe.contentDocument` 读面板 DOM；面板也不能读宿主 `window.parent.document`。
   面板里做 E2E 断言要靠无障碍快照/截图，不能 `page.evaluate` 进去。
 - 所有请求走 postMessage 桥：`{ type: 'trellis:request', id, method, path, body }` →
   `fetch('/api/plugins/<pluginId>' + path)`，插件面板只能访问自己的命名空间。
 
-### 7.2 面板通用组件（宿主提供）
+### 7.2 面板 UI 组件库（宿主 `/plugin-ui/v1/`）
 
-原生 `datalist` 在面板里体验很差（只在聚焦时露箭头、不能键盘高亮、无法标注状态），
-`<dialog>` 又自带 `overflow: auto` 会裁掉绝对定位的浮层。可搜索下拉框统一用
-宿主提供的 `TrellisCombo`（`apps/server/plugin-ui/combo.js|css`，浮层 `position: fixed`）：
+面板跑在 `sandbox` iframe 里，不能读宿主 DOM、不能用宿主 React 组件，之前每个面板各写一套按钮/表格/下拉框，
+配色也有 3 套色板。现在由宿主统一提供 v1 组件库，**不属于任何插件**（插件禁用/目录重构都不影响）：
+
+| 文件 | 作用 |
+| --- | --- |
+| `apps/server/plugin-ui/v1/tokens.css` | 设计令牌 `--tb-*`，兜底值与宿主 `apps/web/src/index.css` 一致 |
+| `apps/server/plugin-ui/v1/base.css` | reset、字体、焦点环、`.tb-muted/.tb-small/.tb-row/.tb-grow` |
+| `apps/server/plugin-ui/v1/ui.css` | `.tb-btn/.tb-input/.tb-table/.tb-field/.tb-chip/.tb-dialog/.tb-toast` 等类 |
+| `apps/server/plugin-ui/v1/bridge.js` | postMessage 桥：`TrellisBridge.create()` → `get/post/delete/request`、`onEvent`、`ready` |
+| `apps/server/plugin-ui/v1/ui.js` | 组件工厂：`button/toolbar/field/chip/empty/toast/confirm/table`、`el()`、`<tb-dialog>` |
+| `apps/server/plugin-ui/v1/combo.js\|css` | 可搜索下拉框 `TrellisCombo.create()` + `<tb-combo>` 元素 |
+| `apps/server/plugin-ui/v1/demo.html` | 全组件的可视展柜（含明暗主题切换），改组件后先看这里 |
+
+面板标准引法：
 
 ```html
-<script src="/plugin-ui/combo.js"></script>
+<link rel="stylesheet" href="/plugin-ui/v1/tokens.css" />
+<link rel="stylesheet" href="/plugin-ui/v1/base.css" />
+<link rel="stylesheet" href="/plugin-ui/v1/ui.css" />
+<link rel="stylesheet" href="/plugin-ui/v1/combo.css" />
+<script src="/plugin-ui/v1/bridge.js"></script>
+<script src="/plugin-ui/v1/combo.js"></script>
+<script src="/plugin-ui/v1/ui.js"></script>
 ```
 
-`/plugin-ui/*` 由 `apps/server/index.js` 的 `servePluginUi` 映射到 `apps/server/plugin-ui/`，
-**不属于任何插件**：插件被禁用或没安装都不影响面板加载。`accounts-core` 的系统 id 与
-`jenkins-ops` 的动态参数都用它，不要在每个面板里再复制一份，也不要把通用 UI 放进某个插件的
-`panel/widget/` 目录（那样会形成隐式跨插件依赖，`plugins/<id>` 目录只管插件自己的东西）。
+```js
+const bridge = window.TrellisBridge.create()
+const { button, table, field, chip, confirm, toast, el } = window.TrellisUI
+const rows = table({ columns: [{ title: '账号', key: 'username' }] })
+rows.render(await bridge.get('/accounts').then((p) => p.accounts))
+```
+
+约定：
+
+- **颜色只用令牌**：面板 CSS 不写十六进制/`oklch`，一律 `var(--tb-bg|card|fg|border|accent|muted|danger|ok|warn|radius)`。
+  宿主在 `trellis:init` 里下发白名单计算值（`PluginPanel.tsx` 的 `PANEL_TOKEN_NAMES`），`bridge.js` 写到 `:root`，
+  所以宿主换主题/配色面板自动跟随。**不要**自己定义 `--bg/--fg/--accent` 那一套。
+- **形态按数据流选**：`table/field/button/toolbar/chip/toast/confirm` 用工厂函数（light DOM，要拿节点/合事件）；
+  `combo`/`dialog` 用 custom element（打开状态、焦点、浮层属于组件内部）。
+- **v1 只增不改**：破坏性改动开 `v2`，面板按需切版本；不要改已发布行为。
+- `TrellisUI.el()` 的属性处理与 `combo.js` 一致（`class/text/dataset/on*`），没有 `innerHTML` 入口。
+- `/plugin-ui/*` 由 `apps/server/index.js` 的 `servePluginUi` 映射到 `apps/server/plugin-ui/`；
+  不要把通用 UI 放进某个插件的 `panel/widget/`（会形成隐式跨插件依赖，插件目录只管自己的东西）。
+- 存量面板（jenkins-ops / witops-core / scenario-copilot）迁移按需进行：至少把 `/plugin-ui/combo.js`
+  改成 `/plugin-ui/v1/combo.js`；其余样式可以逐步换成 `--tb-*` 与 `ui.css` 的类。
 
 ### 5.1 命名边界
 

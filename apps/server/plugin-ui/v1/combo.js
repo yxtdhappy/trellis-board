@@ -5,9 +5,9 @@
  * 所以这里用 input + 浮层自绘。jenkins-ops 的动态参数（如 List Git Branches 的 Branch）
  * 和统一账号的系统 id 都用它，避免每个面板各写一份。
  *
- * 加载：<script src="/plugin-ui/combo.js"></script>（宿主路由，与插件开关无关）
+ * 加载：<script src="/plugin-ui/v1/combo.js"></script>（宿主路由，与插件开关无关）
  *
- * 用法（面板里）：
+ * 用法（面板里，命令式）：
  *   const combo = TrellisCombo.create({
  *     id: 'system-id', name: 'system-id', placeholder: 'jenkins / witops',
  *     options: ['jenkins', { value: 'witops', label: 'witops · WitOps 平台' }],
@@ -15,9 +15,15 @@
  *   })
  *   container.append(combo.root)   // combo.hint 是可选的一行提示
  *   combo.setOptions(list) / combo.setValue(v) / combo.value / combo.setReadOnly(b)
+ *
+ * 用法（声明式）：
+ *   <tb-combo id="system-id" name="system-id" placeholder="jenkins / witops"
+ *             options="jenkins,witops"></tb-combo>
+ *   元素属性：value / placeholder / readonly / options（JSON 数组或逗号分隔）
+ *   元素事件：change（detail.value）
  */
 ;(function (global) {
-  const CSS_HREF = '/plugin-ui/combo.css'
+  const CSS_HREF = '/plugin-ui/v1/combo.css'
   let openCombo = null
 
   function ensureStyle() {
@@ -241,6 +247,7 @@
     }
     // 兼容旧名字，jenkins-ops 之前用的是 setValues
     self.setValues = self.setOptions
+    Object.defineProperty(self, 'options', { get: () => values.slice() })
     self.setHint = (text) => {
       hint.textContent = text
     }
@@ -273,5 +280,106 @@
     true,
   )
 
-  global.TrellisCombo = { create }
+  function parseOptions(value) {
+    if (!value) return []
+    const text = String(value).trim()
+    if (!text) return []
+    if (text.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(text)
+        return Array.isArray(parsed) ? parsed : []
+      } catch {
+        return []
+      }
+    }
+    return text
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+
+  class TrellisComboElement extends global.HTMLElement {
+    static get observedAttributes() {
+      return ['value', 'placeholder', 'readonly']
+    }
+
+    connectedCallback() {
+      if (this.combo) return
+      const combo = create({
+        id: this.getAttribute('id') || undefined,
+        name: this.getAttribute('name') || undefined,
+        value: this.getAttribute('value') || '',
+        placeholder: this.getAttribute('placeholder') || '',
+        options: parseOptions(this.getAttribute('options')),
+        onChange: (value) => {
+          this.dispatchEvent(new CustomEvent('change', { detail: { value }, bubbles: true }))
+        },
+      })
+      this.combo = combo
+      this.replaceChildren(combo.root, combo.hint)
+      if (this.hasAttribute('readonly')) combo.setReadOnly(true)
+      if (this.pendingOptions) {
+        combo.setOptions(this.pendingOptions)
+        this.pendingOptions = null
+      }
+    }
+
+    attributeChangedCallback(name, _oldValue, value) {
+      if (!this.combo) return
+      if (name === 'placeholder') {
+        const input = this.combo.root.querySelector('.combo-input')
+        if (input) input.setAttribute('placeholder', value || '')
+      } else if (name === 'readonly') {
+        this.combo.setReadOnly(value !== null)
+      } else if (name === 'value' && this.combo.value !== (value || '')) {
+        this.combo.setValue(value || '')
+      }
+    }
+
+    get options() {
+      return this.combo ? this.combo.options : (this.pendingOptions ?? [])
+    }
+
+    set options(list) {
+      if (this.combo) this.combo.setOptions(list)
+      else this.pendingOptions = list
+    }
+
+    get value() {
+      return this.combo ? this.combo.value : this.getAttribute('value') || ''
+    }
+
+    set value(next) {
+      if (this.combo) this.combo.setValue(next)
+      else this.setAttribute('value', next === undefined || next === null ? '' : String(next))
+    }
+
+    setOptions(list) {
+      if (this.combo) this.combo.setOptions(list)
+      else this.pendingOptions = list
+    }
+
+    setValue(next) {
+      this.value = next
+    }
+
+    setHint(text) {
+      this.combo?.setHint(text)
+    }
+
+    setReadOnly(readOnly) {
+      this.toggleAttribute('readonly', Boolean(readOnly))
+      this.combo?.setReadOnly(Boolean(readOnly))
+    }
+
+    focus() {
+      this.combo?.focus()
+    }
+  }
+
+  if (!global.customElements.get('tb-combo')) {
+    global.customElements.define('tb-combo', TrellisComboElement)
+  }
+
+  global.TrellisCombo = { create, parseOptions }
 })(window)
