@@ -1,6 +1,6 @@
 [package]
 name = "trellis-board-client"
-version = "0.4.26"
+version = "0.4.27"
 description = "Trellis Board Windows desktop client"
 edition = "2021"
 rust-version = "1.79"
