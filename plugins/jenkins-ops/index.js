@@ -164,6 +164,7 @@ export default createPlugin({
     'secrets:read',
     'secrets:write',
     'capabilities:provide',
+    'events',
   ],
 
   async onStart(ctx) {
@@ -176,29 +177,46 @@ export default createPlugin({
     let accountsError = ''
 
     // 解析统一账号；失败只记录原因，auto 模式静默回退到本地配置。
-    async function refreshAccounts() {
-      accountCredential = null
-      accountsError = ''
-      if (config.credentialSource === 'local') return
+    // 先算出结果再一次性提交，避免事件回包期间状态短暂变空。
+    let refreshSeq = 0
+    async function refreshAccounts({ reason = 'startup' } = {}) {
+      const seq = ++refreshSeq
+      if (config.credentialSource === 'local') {
+        if (seq === refreshSeq) {
+          accountCredential = null
+          accountsError = ''
+        }
+        return
+      }
+      let next = null
+      let error = ''
       try {
         const result = await ctx.capabilities.call('accounts.credentials', 'credential.resolve', {
           system: config.accountSystemId,
         })
-        accountCredential = {
+        next = {
           accountId: text(result?.accountId),
           username: text(result?.username),
           password: text(result?.password),
           baseUrl: text(result?.baseUrl),
         }
+      } catch (caught) {
+        error = caught?.message || String(caught)
+      }
+      if (seq !== refreshSeq) return
+      accountCredential = next
+      accountsError = error
+      if (next) {
         ctx.log.info('统一账号凭据已生效', {
           system: config.accountSystemId,
-          account: accountCredential.accountId,
+          account: next.accountId,
+          reason,
         })
-      } catch (error) {
-        accountsError = error?.message || String(error)
+      } else {
         ctx.log.info('统一账号不可用，按配置回退', {
           source: config.credentialSource,
-          error: accountsError,
+          error,
+          reason,
         })
       }
     }
@@ -590,6 +608,14 @@ export default createPlugin({
 
     await refreshAccounts()
     rebuild()
+
+    // 统一账号变更后立即重算凭据，面板下次拉 /credentials 就能看到新来源。
+    ctx.events.on('accounts-core/changed', async () => {
+      await refreshAccounts({ reason: 'accounts-changed' })
+      client = null
+      clientError = null
+      void statusPayload().catch(() => {})
+    })
     ctx.log.info('jenkins-ops 已启动', {
       baseUrl: currentSettings().baseUrl || '(未配置)',
       username: currentSettings().username || '(未配置)',

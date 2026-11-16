@@ -67,9 +67,13 @@
       <form id="account-form" method="dialog">
         <h2 id="account-dialog-title">新建账号</h2>
         <input id="account-id" type="hidden" />
-        <label>账号<input id="account-username" type="text" autocomplete="username" required /></label>
+        <label
+          >账号<input id="account-username" type="text" autocomplete="username" required
+        /></label>
         <label>备注<input id="account-note" type="text" placeholder="可选" /></label>
-        <label id="account-password-row">密码<input id="account-password" type="password" autocomplete="new-password" /></label>
+        <label id="account-password-row"
+          >密码<input id="account-password" type="password" autocomplete="new-password"
+        /></label>
         <p class="muted small">密码只写入宿主加密 secrets，不会出现在接口返回里。</p>
         <div class="dialog-actions">
           <button id="account-cancel" class="ghost" type="button">取消</button>
@@ -81,9 +85,13 @@
     <dialog id="system-dialog">
       <form id="system-form" method="dialog">
         <h2 id="system-dialog-title">新建系统</h2>
-        <label>系统 id<input id="system-id" type="text" placeholder="jenkins / witops" required /></label>
+        <label
+          >系统 id<input id="system-id" type="text" placeholder="jenkins / witops" required
+        /></label>
         <label>显示名<input id="system-name" type="text" placeholder="Jenkins" /></label>
-        <label>baseUrl<input id="system-baseurl" type="url" placeholder="https://jenkins.example.com" /></label>
+        <label
+          >baseUrl<input id="system-baseurl" type="url" placeholder="https://jenkins.example.com"
+        /></label>
         <label>绑定账号<select id="system-account"></select></label>
         <label>备注<input id="system-note" type="text" placeholder="可选" /></label>
         <label class="toggle"><input id="system-enabled" type="checkbox" checked /> 启用</label>

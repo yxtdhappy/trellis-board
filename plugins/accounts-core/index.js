@@ -105,6 +105,13 @@ export default createPlugin({
       return ctx.store.set(SYSTEMS_KEY, systems)
     }
 
+    // 其他插件订阅 `accounts-core/changed` 后重新解析凭据，无需重启。
+    function notifyChanged(kind, id) {
+      ctx.events
+        .publish('accounts-core/changed', { kind, id: text(id), at: Date.now() })
+        .catch((error) => ctx.log.warn('变更事件发布失败', { kind, message: error.message }))
+    }
+
     async function readPasswords() {
       const entries = await Promise.all(
         accounts.map(async (account) => {
@@ -198,7 +205,8 @@ export default createPlugin({
         const username = text(body.username)
         if (!username) return respond(400, { error: 'username 不能为空' })
         const id = text(body.id)
-        if (id && !ACCOUNT_ID_PATTERN.test(id)) return respond(400, { error: `账号 id 不合法: ${id}` })
+        if (id && !ACCOUNT_ID_PATTERN.test(id))
+          return respond(400, { error: `账号 id 不合法: ${id}` })
         const now = Date.now()
         const existing = id ? accountById(id) : null
         if (existing) {
@@ -214,6 +222,7 @@ export default createPlugin({
         await persistAccounts()
         const created = id ? accountById(id) : accounts[accounts.length - 1]
         ctx.log.info('账号已保存', { id: created.id })
+        notifyChanged('account', created.id)
         const view = (await accountViews()).find((account) => account.id === created.id)
         return respond(200, { ok: true, account: view, created: !existing })
       }),
@@ -237,6 +246,7 @@ export default createPlugin({
           /* 密码本就不存在时忽略 */
         }
         ctx.log.info('账号已删除', { id: account.id })
+        notifyChanged('account', account.id)
         return respond(200, { ok: true })
       }),
     )
@@ -251,6 +261,7 @@ export default createPlugin({
         if (!password) return respond(400, { error: 'password 不能为空' })
         await ctx.secrets.set(passwordKey(account.id), password)
         ctx.log.info('账号密码已更新', { id: account.id })
+        notifyChanged('account', account.id)
         return respond(200, { ok: true })
       }),
     )
@@ -263,11 +274,16 @@ export default createPlugin({
         const account = requireAccount(body.id)
         await ctx.secrets.delete(passwordKey(account.id))
         ctx.log.info('账号密码已清除', { id: account.id })
+        notifyChanged('account', account.id)
         return respond(200, { ok: true })
       }),
     )
 
-    ctx.http.route('GET', '/systems', guard(async () => respond(200, { systems: await systemViews() })))
+    ctx.http.route(
+      'GET',
+      '/systems',
+      guard(async () => respond(200, { systems: await systemViews() })),
+    )
 
     ctx.http.route(
       'POST',
@@ -300,6 +316,7 @@ export default createPlugin({
         else systems = [...systems, next]
         await persistSystems()
         ctx.log.info('系统绑定已保存', { id, accountId })
+        notifyChanged('system', id)
         const view = (await systemViews()).find((system) => system.id === id)
         return respond(200, { ok: true, system: view })
       }),
@@ -314,6 +331,7 @@ export default createPlugin({
         systems = systems.filter((item) => item.id !== system.id)
         await persistSystems()
         ctx.log.info('系统绑定已删除', { id: system.id })
+        notifyChanged('system', system.id)
         return respond(200, { ok: true })
       }),
     )

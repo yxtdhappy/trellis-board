@@ -76,7 +76,24 @@ const { username, password, baseUrl } = await ctx.capabilities.call('accounts.cr
 ```
 
 小组件只调用宿主插件自己的 `GET /credentials`（由宿主插件代理 `credential.resolve`），
-因此 widget 不需要 `capabilities:call`，也不接触密码。
+因此 widget 不需要 `capabilities:call`，也不接触密码。小组件默认每 15 秒（`pollMs` 可改）
+重读一次，页面重新可见时也立即刷新，所以在「统一账号」里改完无需重开面板。
+
+## 变更事件
+
+每次账号/系统/密码变更都会发布公开事件 `accounts-core/changed`
+（payload：`{ kind: 'account' | 'system', id, at }`，需要 `events:publish` 权限）。
+`jenkins-ops`、`witops-core` 订阅后立即重算凭据并丢弃缓存，因此运行中新增账号或系统也能马上生效。
+
+```json
+{ "permissions": ["events"], "config": {} }
+```
+
+```js
+ctx.events.on('accounts-core/changed', async () => {
+  await refreshAccounts({ reason: 'accounts-changed' })
+})
+```
 
 ## 测试
 

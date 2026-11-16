@@ -94,35 +94,49 @@ export default createPlugin({
     let accountsError = "";
 
     // 统一账号优先：成功则覆盖 config.credentials，失败按 credentialSource 回退本地。
-    async function refreshAccounts() {
-      accountCredential = null;
-      accountsError = "";
-      if (config.credentialSource === "local") return;
-      try {
-        const result = await ctx.capabilities.call("accounts.credentials", "credential.resolve", {
-          system: config.accountSystemId
-        });
-        accountCredential = {
-          accountId: text(result?.accountId),
-          account: text(result?.username),
-          password: text(result?.password),
-          baseUrl: text(result?.baseUrl)
-        };
-        config.credentials.account = accountCredential.account;
-        config.credentials.password = accountCredential.password;
-        config.credentials.mode = "password";
-        if (accountCredential.baseUrl) config.baseUrl = accountCredential.baseUrl;
-        ctx.log.info("统一账号凭据已生效", {
-          system: config.accountSystemId,
-          account: accountCredential.accountId
-        });
-      } catch (error) {
-        accountsError = error?.message || String(error);
-        ctx.log.info("统一账号不可用，按配置回退", {
-          source: config.credentialSource,
-          error: accountsError
-        });
+    // 先算结果再一次性提交，避免事件回包期间状态短暂变空。
+    let refreshSeq = 0;
+    async function refreshAccounts({ reason = "startup" } = {}) {
+      const seq = ++refreshSeq;
+      let next = null;
+      let error = "";
+      if (config.credentialSource !== "local") {
+        try {
+          const result = await ctx.capabilities.call("accounts.credentials", "credential.resolve", {
+            system: config.accountSystemId
+          });
+          next = {
+            accountId: text(result?.accountId),
+            account: text(result?.username),
+            password: text(result?.password),
+            baseUrl: text(result?.baseUrl)
+          };
+        } catch (caught) {
+          error = caught?.message || String(caught);
+        }
       }
+      if (seq !== refreshSeq) return;
+      accountCredential = next;
+      accountsError = error;
+      if (!next) {
+        if (error) {
+          ctx.log.info("统一账号不可用，按配置回退", {
+            source: config.credentialSource,
+            error,
+            reason
+          });
+        }
+        return;
+      }
+      config.credentials.account = next.account;
+      config.credentials.password = next.password;
+      config.credentials.mode = "password";
+      if (next.baseUrl) config.baseUrl = next.baseUrl;
+      ctx.log.info("统一账号凭据已生效", {
+        system: config.accountSystemId,
+        account: next.accountId,
+        reason
+      });
     }
 
     await refreshAccounts();
@@ -133,6 +147,12 @@ export default createPlugin({
     let dispatch = null;
     let storyIndexCache = null;
     let storyIndexPromise = null;
+
+    // 统一账号变更后重算凭据（下次 ensureToken 用新密码登录），并丢掉旧缓存。
+    ctx.events.on("accounts-core/changed", async () => {
+      await refreshAccounts({ reason: "accounts-changed" });
+      readCache.clear();
+    });
 
     function cached(key) {
       const entry = readCache.get(key);

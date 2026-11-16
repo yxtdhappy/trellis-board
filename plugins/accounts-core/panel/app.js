@@ -128,8 +128,16 @@ function renderAccounts() {
       ]),
       el('td', { class: 'muted' }, timeText(account.updatedAt)),
       el('td', { class: 'col-actions' }, [
-        el('button', { class: 'ghost', type: 'button', onclick: () => openAccount(account) }, '编辑'),
-        el('button', { class: 'ghost', type: 'button', onclick: () => openPassword(account) }, '设密码'),
+        el(
+          'button',
+          { class: 'ghost', type: 'button', onclick: () => openAccount(account) },
+          '编辑',
+        ),
+        el(
+          'button',
+          { class: 'ghost', type: 'button', onclick: () => openPassword(account) },
+          '设密码',
+        ),
         el(
           'button',
           {
@@ -150,10 +158,7 @@ function renderSystems() {
   const body = byId('systems-body')
   const rows = state.systems.map((system) =>
     el('tr', {}, [
-      el('td', {}, [
-        el('strong', {}, system.name),
-        el('div', { class: 'muted small' }, system.id),
-      ]),
+      el('td', {}, [el('strong', {}, system.name), el('div', { class: 'muted small' }, system.id)]),
       el('td', { class: 'muted' }, system.baseUrl || '—'),
       el('td', {}, accountName(system.accountId)),
       el('td', {}, [

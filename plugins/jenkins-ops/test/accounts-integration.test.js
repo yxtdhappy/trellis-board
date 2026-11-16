@@ -143,3 +143,64 @@ test('accounts 模式但账号缺密码时回退本地并暴露原因', async ()
     await t.cleanup()
   }
 })
+
+async function waitFor(check, { timeoutMs = 3000, intervalMs = 50 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  let last = null
+  while (Date.now() < deadline) {
+    last = await check()
+    if (last?.ok) return last
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+  return last
+}
+
+test('运行中新建账号与系统后无需重启即切换到统一账号', async () => {
+  const t = await setup({ credentialSource: 'accounts' })
+  try {
+    const before = await t.json(JENKINS_ID, 'GET', '/credentials')
+    assert.equal(before.body.source, 'local', '未绑定时应回退本地配置')
+    assert.match(before.body.error, /系统不存在/)
+
+    await t.seedAccount()
+    await t.json(ACCOUNTS_ID, 'POST', '/accounts/password', {
+      id: 'jenkins-ad',
+      password: 'secret',
+    })
+
+    const switched = await waitFor(async () => {
+      const response = await t.json(JENKINS_ID, 'GET', '/credentials')
+      return { ok: response.body.source === 'accounts', body: response.body }
+    })
+    assert.equal(switched.body.source, 'accounts', '变更事件未触发凭据重算')
+    assert.equal(switched.body.username, 'Z0328')
+
+    const status = await t.json(JENKINS_ID, 'GET', '/status')
+    assert.equal(status.body.credentialSource, 'accounts')
+    assert.ok(status.body.connection?.ok, `连接失败: ${status.body.error}`)
+  } finally {
+    await t.cleanup()
+  }
+})
+
+test('运行中解绑系统后回退本地配置', async () => {
+  const t = await setup({ credentialSource: 'auto' })
+  try {
+    await t.seedAccount()
+    const bound = await waitFor(async () => {
+      const response = await t.json(JENKINS_ID, 'GET', '/credentials')
+      return { ok: response.body.source === 'accounts', body: response.body }
+    })
+    assert.equal(bound.body.source, 'accounts')
+
+    await t.json(ACCOUNTS_ID, 'DELETE', '/systems', { id: 'jenkins' })
+    const reverted = await waitFor(async () => {
+      const response = await t.json(JENKINS_ID, 'GET', '/credentials')
+      return { ok: response.body.source === 'local', body: response.body }
+    })
+    assert.equal(reverted.body.source, 'local')
+    assert.match(reverted.body.error, /系统不存在/)
+  } finally {
+    await t.cleanup()
+  }
+})

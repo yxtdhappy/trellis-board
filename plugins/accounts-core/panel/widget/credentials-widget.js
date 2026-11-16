@@ -11,7 +11,7 @@
  * 数据由宿主插件的代理路由返回（插件内部再调 accounts.credentials capability），
  * 因此 widget 不直接访问 accounts-core 的接口，也不接触密码。
  */
-(function (global) {
+;(function (global) {
   const CSS_HREF = '/api/plugins/accounts-core/panel/widget/credentials-widget.css'
   const SOURCE_LABEL = { accounts: '统一账号', local: '本地账号', mixed: '混合', none: '未配置' }
 
@@ -66,11 +66,17 @@
       )
     }
     if (view.source === 'accounts' && view.hasPassword === false) {
-      lines.push(el('p', { class: 'tw-hint tw-warn' }, '统一账号未设置密码，请到「统一账号」面板补齐。'))
+      lines.push(
+        el('p', { class: 'tw-hint tw-warn' }, '统一账号未设置密码，请到「统一账号」面板补齐。'),
+      )
     }
     if (view.source === 'local') {
       lines.push(
-        el('p', { class: 'tw-hint' }, '正在使用本地配置；在「统一账号」面板绑定该系统的账号后会自动切换。'),
+        el(
+          'p',
+          { class: 'tw-hint' },
+          '正在使用本地配置；在「统一账号」面板绑定该系统的账号后会自动切换。',
+        ),
       )
     }
     if (view.source === 'none') {
@@ -90,7 +96,7 @@
     root.replaceChildren(el('div', { class: 'tw-card' }, lines))
   }
 
-  function mount({ root, request, systemId } = {}) {
+  function mount({ root, request, systemId, pollMs = 15_000 } = {}) {
     if (!root || typeof request !== 'function') return { refresh: async () => {} }
     ensureStyle()
     root.replaceChildren(el('div', { class: 'tw-card tw-loading' }, '读取账号来源…'))
@@ -119,7 +125,30 @@
     }
 
     void refresh()
-    return { refresh }
+
+    // 面板拿不到 push：统一账号改完后按固定间隔重读，页面隐藏时暂停。
+    let timer = null
+    function startPolling() {
+      if (timer || !(pollMs > 0)) return
+      timer = setInterval(() => {
+        if (document.visibilityState === 'visible') void refresh()
+      }, pollMs)
+      timer.unref?.()
+    }
+    function onVisible() {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    startPolling()
+
+    return {
+      refresh,
+      stop() {
+        if (timer) clearInterval(timer)
+        timer = null
+        document.removeEventListener('visibilitychange', onVisible)
+      },
+    }
   }
 
   global.TrellisCredentialsWidget = { mount }

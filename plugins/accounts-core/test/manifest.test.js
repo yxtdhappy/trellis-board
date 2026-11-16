@@ -44,7 +44,10 @@ test('accounts-core 通过真实清单启动并出现在插件列表', async () 
     assert.equal(plugin.status, 'running')
 
     const panels = await fetch(`${http.baseUrl}/api/panels`).then((response) => response.json())
-    assert.ok(panels.panels.some((item) => item.pluginId === ID), '面板未注册')
+    assert.ok(
+      panels.panels.some((item) => item.pluginId === ID),
+      '面板未注册',
+    )
 
     const page = await fetch(`${http.baseUrl}/api/plugins/${ID}/panel`)
     assert.equal(page.status, 200)

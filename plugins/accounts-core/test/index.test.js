@@ -115,13 +115,15 @@ test('系统绑定账号，调用方通过 capability 解析凭据', async () =>
     assert.equal(unknown.status, 503)
     assert.match(unknown.body.message, /系统不存在/)
 
-    await t.json('POST', '/systems', {
-      id: 'missing-ref',
-      name: '错误绑定',
-      accountId: 'nobody',
-    }).then((result) => {
-      assert.equal(result.status, 400)
-    })
+    await t
+      .json('POST', '/systems', {
+        id: 'missing-ref',
+        name: '错误绑定',
+        accountId: 'nobody',
+      })
+      .then((result) => {
+        assert.equal(result.status, 400)
+      })
   } finally {
     await t.cleanup()
   }

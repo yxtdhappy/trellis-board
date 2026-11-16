@@ -128,6 +128,40 @@ test('未绑定系统时回退本地，登录提示仍然可用', async () => {
   }
 })
 
+async function waitFor(check, { timeoutMs = 3000, intervalMs = 50 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  let last = null
+  while (Date.now() < deadline) {
+    last = await check()
+    if (last?.ok) return last
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+  return last
+}
+
+test('运行中新建账号与系统后无需重启即免登录', async () => {
+  const context = await setup()
+  try {
+    const before = await context.json(PLUGIN_ID, 'GET', '/credentials')
+    assert.equal(before.body.source, 'local')
+    assert.match(before.body.error, /系统不存在/)
+
+    await context.seedAccount()
+    const switched = await waitFor(async () => {
+      const response = await context.json(PLUGIN_ID, 'GET', '/credentials')
+      return { ok: response.body.source === 'accounts', body: response.body }
+    })
+    assert.equal(switched.body.source, 'accounts', '变更事件未触发凭据重算')
+    assert.equal(switched.body.username, 'alice')
+
+    const mine = await context.json(PLUGIN_ID, 'GET', '/mine')
+    assert.equal(mine.status, 200)
+    assert.equal(context.fixture.state.logins, 1)
+  } finally {
+    await context.cleanup()
+  }
+})
+
 test('credentialSource=local 时忽略统一账号', async () => {
   const context = await setup({ credentialSource: 'local' })
   try {

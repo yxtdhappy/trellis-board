@@ -95,6 +95,9 @@
   解析失败时 `auto` 静默回退到插件本地配置（`config` + 插件自己的 secret），失败原因通过状态接口暴露。
 - 面板复用 `accounts-core/panel/widget/credentials-widget.js`，只调用宿主插件自己的 `GET /credentials`，
   密码永不出现在任何 HTTP 响应里；`credential.resolve` 是唯一明文出口，且只走插件进程间 RPC。
+- 变更通知：`accounts-core` 每次变更发布公开事件 `accounts-core/changed`（需 `events:publish`），
+  消费方声明 `events` 权限后 `ctx.events.on('accounts-core/changed', ...)` 重算凭据，
+  不需要重启插件；重算时先算完再一次性提交，避免事件回包期间状态短暂变空。
 - 凭据有效性由消费方验证（登录目标系统时才知道对错），账号簿不做校验。
 
 ## 7. 测试约定

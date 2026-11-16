@@ -14,7 +14,8 @@
     "store",
     "secrets:read",
     "secrets:write",
-    "capabilities:provide"
+    "capabilities:provide",
+    "events:publish"
   ],
   "provides": [
     {
