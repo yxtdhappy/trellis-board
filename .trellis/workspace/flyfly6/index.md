@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 26
+- **Total Sessions**: 27
 - **Last Active**: 2026-11-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~820 | Active |
+| `journal-1.md` | ~866 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 27 | 2026-11-16 | 修复桌面端接入流程四个缺陷与应用内确认，发布 0.4.27 | `abb0b3d`, `8457c35`, `8510f02`, `ba20483`, `aed3bb4` | `main` |
 | 26 | 2026-11-16 | 迁移 yarn 3.5 与 packages 目录并适配 Jenkins 部署 | - | `main` |
 | 25 | 2026-11-13 | team cookie 换 cookie 包 | `1a593ad` | `main` |
 | 24 | 2026-11-13 | watcher 换 chokidar | `f10e5d4` | `main` |

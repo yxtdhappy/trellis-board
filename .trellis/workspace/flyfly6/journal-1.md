@@ -818,3 +818,49 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 27: 修复桌面端接入流程四个缺陷与应用内确认，发布 0.4.27
+<!-- trellis-session: v=2 fp=1b3fface3c7e8cfb -->
+
+**Date**: 2026-11-16
+**Task**: 修复桌面端接入流程四个缺陷与应用内确认，发布 0.4.27
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+首次接入差异审查不再被吞、项目栏新增等待确认差异状态与手动入口、11 处 window.confirm 换成应用内弹窗、DialogBody 滚动条贴边且左右对称；desktop:dev 支持看板 HMR；合并 origin/main 并保持 packages/ 布局，修好 CI 依赖安装后发布 0.4.27
+
+### Main Changes
+
+- packages/desktop/src-tauri/src/agent_service.rs：initial_sync_review 每次进队都重新露出控制窗口，并新增 live_control_show 命令
+- packages/desktop/src-tauri/src/agent/task_sync.rs：首次接入按 task_dir 配对服务端任务组，跨分支归档任务不再误判为仅本地存在
+- packages/web/src/components/ui/confirm-dialog.tsx：新增 ConfirmDialogProvider/useConfirm，替换全仓 11 处 window.confirm
+- packages/web/src/components/layout/ProjectRail.tsx：新增「已关联 · 等待确认任务差异」状态与「确认差异」入口
+- packages/web/src/components/ui/dialog.tsx：DialogBody 用 -mx-4 px-4 + scrollbar-gutter:stable both-edges
+- scripts/desktop-dev.mjs：三进程编排（服务端/看板 vite/客户端），看板 UI 支持 HMR
+- .github/workflows/windows.yml：安装依赖改用公共 npm registry，修复 CI
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `abb0b3d` | fix(desktop): 修复首次接入差异审查与确认弹窗，并让 desktop:dev 支持看板 HMR |
+| `8457c35` | merge: origin/main（含 release 0.4.25）并保留 packages/ 目录布局 |
+| `8510f02` | fix(ci): 安装依赖时改用公共 npm registry |
+| `ba20483` | chore(release): 0.4.27 |
+| `aed3bb4` | chore(task): archive 11-16-fix-desktop-onboarding-confirm |
+
+### Testing
+
+- [OK] node --test packages/web/test/*.test.js 79 passed
+- [OK] node --test packages/server/test/*.test.js 393 passed / 2 skipped
+- [OK] node --test packages/desktop/test/*.test.js 7 passed
+- [OK] cargo check + cargo test --bin trellis-board-client 170 passed
+- [OK] 真实客户端 E2E（本地 4317 + CDP 9222）：接入 review 弹窗、确认后 ready、解绑二次确认、滚动条对称
+- [OK] CI windows.yml：node tests + desktop build 均通过，发布 v0.4.27
+
+### Status
+
+[OK] **Completed**
