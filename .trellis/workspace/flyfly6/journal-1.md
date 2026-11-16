@@ -797,3 +797,24 @@ team/auth.js 三个 cookie 辅助函数改用 cookie@2；parseCookieHeader 仍�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 26: 迁移 yarn 3.5 与 packages 目录并适配 Jenkins 部署
+<!-- trellis-session: v=2 fp=254ae2fb1d944d7b -->
+
+**Date**: 2026-11-16
+**Task**: 迁移 yarn 3.5 与 packages 目录并适配 Jenkins 部署
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 25
-- **Last Active**: 2026-11-13
+- **Total Sessions**: 26
+- **Last Active**: 2026-11-16
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~799 | Active |
+| `journal-1.md` | ~820 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 26 | 2026-11-16 | 迁移 yarn 3.5 与 packages 目录并适配 Jenkins 部署 | - | `main` |
 | 25 | 2026-11-13 | team cookie 换 cookie 包 | `1a593ad` | `main` |
 | 24 | 2026-11-13 | watcher 换 chokidar | `f10e5d4` | `main` |
 | 23 | 2026-11-13 | server 日志换 pino | `26bdded` | `main` |
