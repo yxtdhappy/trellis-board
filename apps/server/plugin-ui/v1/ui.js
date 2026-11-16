@@ -41,11 +41,14 @@
   }
 
   function appendChildren(node, children) {
-    const list = Array.isArray(children) ? children : [children]
-    for (const child of list) {
-      if (child === undefined || child === null || child === false) continue
-      node.append(child instanceof Node ? child : document.createTextNode(String(child)))
+    if (children === undefined || children === null || children === false) return
+    const isList =
+      Array.isArray(children) || children instanceof NodeList || children instanceof HTMLCollection
+    if (isList) {
+      for (const child of Array.from(children)) appendChildren(node, child)
+      return
     }
+    node.append(children instanceof Node ? children : document.createTextNode(String(children)))
   }
 
   const VARIANTS = {

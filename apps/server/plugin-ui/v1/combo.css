@@ -6,47 +6,57 @@
   position: relative;
   display: flex;
   margin-top: 4px;
+  background: var(--tb-card);
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-sm);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
+/* 输入框和按钮都不再自带边框，整组共用外面那一圈，圆角才不会互相错开 */
 .combo .combo-input {
   flex: 1 1 auto;
   width: 100%;
+  min-width: 0;
   margin-top: 0;
   padding: 6px 10px;
-  border: 1px solid var(--tb-border);
-  border-right: none;
+  background: transparent;
+  border: none;
   border-radius: var(--tb-radius-sm) 0 0 var(--tb-radius-sm);
-  background: var(--tb-card);
   color: var(--tb-fg);
   font: inherit;
 }
 
-/* 焦点由整个组合一起承担，避免只有输入框半边发光 */
 .combo .combo-input:focus {
   outline: none;
-  border-color: var(--tb-accent);
+  box-shadow: none;
 }
 
+/* 焦点由整个组合一起承担，避免只有输入框半边发光 */
 .combo:focus-within {
-  border-radius: var(--tb-radius);
-  outline: 2px solid color-mix(in oklch, var(--tb-accent) 55%, transparent);
-  outline-offset: 1px;
+  border-color: var(--tb-accent);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--tb-accent) 22%, transparent);
 }
 
 .combo .combo-toggle {
   flex: 0 0 auto;
   width: 30px;
   padding: 0;
-  background: var(--tb-card);
-  border: 1px solid var(--tb-border);
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--tb-border);
   border-radius: 0 var(--tb-radius-sm) var(--tb-radius-sm) 0;
   color: var(--tb-muted);
   font-size: 12px;
   line-height: 1;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
-.combo:focus-within .combo-toggle {
-  border-color: var(--tb-accent);
+.combo .combo-toggle:focus {
+  outline: none;
 }
 
 .combo .combo-toggle:hover:not(:disabled) {
@@ -62,7 +72,7 @@
 /* 展开时按钮常亮，明确表示当前处于打开状态 */
 .combo.is-open .combo-toggle {
   background: var(--tb-accent);
-  border-color: var(--tb-accent);
+  border-left-color: var(--tb-accent);
   color: var(--tb-bg);
 }
 

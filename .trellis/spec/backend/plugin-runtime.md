@@ -165,6 +165,10 @@ rows.render(await bridge.get('/accounts').then((p) => p.accounts))
   `combo`/`dialog` 用 custom element（打开状态、焦点、浮层属于组件内部）。
 - **v1 只增不改**：破坏性改动开 `v2`，面板按需切版本；不要改已发布行为。
 - `TrellisUI.el()` 的属性处理与 `combo.js` 一致（`class/text/dataset/on*`），没有 `innerHTML` 入口。
+  子节点传数组会递归展开（`table` 的操作列常这样返回多个按钮），不要把按钮数组直接拼成字符串。
+- **组合控件只画一圈边框**：`combo` 的输入框与展开按钮都不带自己的 border/圆角，边框和
+  `:focus-within` 的焦点环由外层 `.combo` 承担（`border-color: accent` + `box-shadow: 0 0 0 2px` 22% 透明，
+  与 `.tb-input:focus` 一致）。这样组合内外圆角统一，也不会出现「边框 + 1px 空隙 + 焦点环」的双层边。
 - `/plugin-ui/*` 由 `apps/server/index.js` 的 `servePluginUi` 映射到 `apps/server/plugin-ui/`；
   不要把通用 UI 放进某个插件的 `panel/widget/`（会形成隐式跨插件依赖，插件目录只管自己的东西）。
 - 仓库内面板（accounts-core / acp-dispatch / jenkins-ops / scenario-copilot / witops-core）已统一用 v1：
