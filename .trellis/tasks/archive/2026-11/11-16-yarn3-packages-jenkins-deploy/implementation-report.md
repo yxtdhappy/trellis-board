@@ -31,18 +31,20 @@
 - 残留 `apps/` 扫描（排除 `.trellis/tasks/**`、`.trellis/workspace/**`、`design/`、`.agents/`、构建输出）：
   仅 `.agents/skills/trellis-meta/references/customize-local/change-spec-structure.md:64,66`（PRD 明确排除的 trellis-meta 文档）。
 
+## 补充实测（密文问题解除后，2026-11-16 15:3x）
+
+- `yarn build`（`tsc -b && vite build`）整体通过：tsc 无报错，vite 2.14s 产出 `packages/server/public`
+  （`main-CGaMqURv.js` 1.26MB）。此前 `TS1127` 是 DLP 密文+TypeScript 7 原生二进制所致，非迁移问题。
+- team 模式启动通过：默认数据目录（`%LOCALAPPDATA%/TrellisBoard/server`，`activeAdmin: true`、`users: 1`）下
+  `yarn start` 正常监听，`GET /` → 200（SPA），`GET /api/board/status`、`GET /api/session` → 401
+  `{"code":"AUTH_REQUIRED"}`（团队模式未登录的正确行为）；日志 `team 模式不加载插件 { reason: 'v1 只支持 standalone；插件路由返回空列表' }`。
+- `yarn format:check` 仍有 34 个文件报未格式化，但 `origin/main`（`bfad734`）在独立 worktree 上跑同一 oxfmt 得 35 个
+  （迁移后文件集合是其子集，仅少了 `packages/web/package.json`），即全部为迁移前既有漂移；本次新增的
+  `.yarn/releases/yarn-3.5.0.cjs` 已通过 `.oxfmtrc.json` 的 `ignorePatterns` 加入 `.yarn` 排除，根 `package.json`
+  经 oxfmt 重新排序（`packageManager` 落到末尾）后不再报错。
+
 ## 未实测项与原因
 
-- `yarn build` 的 `tsc -b` 阶段：`TS1127 Invalid character`，`src/api/{admin,board}.ts`、`src/hooks/{useAdminProjects,useBoard}.ts`、
-  `src/lib/{admin-shared.ts,project-rail-association.d.ts,refresh-coordinator.d.ts,team-client.d.ts}`、`vite.config.ts`、
-  `vite.desktop.config.ts` 在磁盘为 DLP 密文（Python 读到 `\xe0\xa8\x91...`，node 读到明文），TypeScript 7 是原生二进制
-  （`node_modules/typescript/lib/getExePath.js` 解析出平台可执行文件），绕过 node 白名单。迁移前的同一份源码同样失败，
-  与本次改动无关；用 node 侧 `vite build` 证明产物路径与构建流程正确。
-- `yarn format:check`：37 个文件报未格式化，其中 `plugins/witops-core/util.js` 等文件在 `git status` 中未修改
-  （内容等于 HEAD），`git show HEAD:plugins/witops-core/util.js` 单独跑 `oxfmt --check` 同样失败 ⇒ 该门禁在本机早已不通过。
-  且 `yarn format` 会把加密文件按密文回写造成损坏，故不执行。
-- team 模式启动：`node packages/server/team/cli.js init-admin` 需要两次交互式密码（非 TTY 时第二次读 stdin 因流已结束而挂起），
-  无人环境无法完成首管理员初始化，按既有运维前置处理；启动链路已用 standalone 模式验证。
 - Jenkins 镜像构建、`cargo`/`tauri` 打包：本机无 Docker/Rust 工具链，未跑。
 
 ## 风险与后续

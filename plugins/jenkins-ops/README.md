@@ -137,7 +137,7 @@ curl -b /tmp/jk http://ci.example.com/api/json          # 200 还是 403
 | GET | `/artifact?job=&number=&path=` | 产物内容（base64） |
 
 > **保留路径陷阱**：宿主把 `/api/plugins/<id>/(start|stop|logs|runs|audit)` 当作插件管理端点
-> （见 `apps/server/plugins/runtime.js` 的 `pluginAdminMatch`）。插件自己的 `POST /stop`
+> （见 `packages/server/plugins/runtime.js` 的 `pluginAdminMatch`）。插件自己的 `POST /stop`
 > 会被静默解释成「停止插件并返回 200」。所以中止构建的路径是 `/build/stop`，
 > 同理不要占用 `start`、`logs`、`runs`、`audit`。
 
