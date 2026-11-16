@@ -1,0 +1,50 @@
+{
+  "id": "accounts-core",
+  "name": "统一账号",
+  "description": "集中维护内网 AD 统一账号与各系统绑定，通过 accounts.credentials capability 供其他插件解析凭据。",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "allowMissingSecrets": true,
+  "engines": {
+    "board": ">=0.4.0"
+  },
+  "permissions": [
+    "http:route",
+    "panels",
+    "store",
+    "secrets:read",
+    "secrets:write",
+    "capabilities:provide"
+  ],
+  "provides": [
+    {
+      "name": "accounts.credentials",
+      "version": "1.0.0",
+      "description": "统一账号与系统绑定：列表、解析凭据",
+      "methods": {
+        "accounts.list": {
+          "access": "read",
+          "timeoutMs": 5000
+        },
+        "systems.list": {
+          "access": "read",
+          "timeoutMs": 5000
+        },
+        "credential.resolve": {
+          "access": "read",
+          "timeoutMs": 5000
+        }
+      }
+    }
+  ],
+  "panels": [
+    {
+      "id": "accounts-core",
+      "title": "统一账号",
+      "entry": "/panel",
+      "placement": "view",
+      "order": 30
+    }
+  ],
+  "config": {}
+}

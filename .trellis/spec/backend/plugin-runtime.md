@@ -84,10 +84,25 @@
 - 不提供 secrets 写入 API/CLI/UI；手动编辑后重启生效。热重载与 OS keychain 暂不做。
 - 同 UID 的进程仍可读该文件，文件权限只防其他用户；备份运行数据目录会包含密钥。
 
+### 6.1 跨插件凭据共享
+
+- 宿主 secret 按插件隔离（`requirePluginSecretKey` 只允许 `<pluginId>/...`），所以「多个插件共用同一套内网账号」
+  不能靠共享 secret，只能靠 capability。
+- 标准做法：`accounts-core` 持有账号与密码，提供 capability `accounts.credentials`
+  （`accounts.list` / `systems.list` / `credential.resolve`）；消费方在 manifest 声明
+  `"permissions": ["capabilities:call"]` 与 `requires: [{ "name": "accounts.credentials" }]`。
+- 消费方配置统一用 `credentialSource`（`auto` / `accounts` / `local`）与 `accountSystemId`；
+  解析失败时 `auto` 静默回退到插件本地配置（`config` + 插件自己的 secret），失败原因通过状态接口暴露。
+- 面板复用 `accounts-core/panel/widget/credentials-widget.js`，只调用宿主插件自己的 `GET /credentials`，
+  密码永不出现在任何 HTTP 响应里；`credential.resolve` 是唯一明文出口，且只走插件进程间 RPC。
+- 凭据有效性由消费方验证（登录目标系统时才知道对错），账号簿不做校验。
+
 ## 7. 测试约定
 
 - 宿主侧测试用 `packages/test-support/plugin-runtime.js` 建临时 workspace + 真实 SQLite，不 mock store。
 - 插件协议用 `packages/test-support/fixtures/plugins/*` 的假插件；ACP 用 `plugins/acp-dispatch/test/fixtures/fake-agent.js`。
+- 跨插件 capability 的消费方用插件目录内的 `test/fixtures/<name>-caller/` 假插件（如
+  `plugins/accounts-core/test/fixtures/accounts-caller/`、`plugins/jenkins-ops/test/fixtures/jenkins-caller/`）。
 - `apps/server/test/plugin-real-task.test.js` 跑真实 `.trellis/scripts/task.py`，验证宿主任务 façade 与脚本参数兼容。
 - 插件任务的宿主调用依赖 `python`；`apps/server/actions.js` 已回退到 `python3`，测试不需要注入 PATH shim。
 - 断言插件状态要等“终态”，不要只等 `status`（重启期间状态可能仍是 `running`）。

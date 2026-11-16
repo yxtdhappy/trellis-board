@@ -36,12 +36,24 @@ function rpc(method, path, body) {
   });
 }
 
+let credentialsWidget = null;
+function mountCredentials() {
+  const root = byId('credentials');
+  if (!root || !window.TrellisCredentialsWidget) return;
+  credentialsWidget = window.TrellisCredentialsWidget.mount({
+    root,
+    request: rpc,
+    systemId: 'witops',
+  });
+}
+
 window.addEventListener('message', (event) => {
   const message = event.data;
   if (!message || typeof message !== 'object') return;
   if (message.type === 'trellis:init') {
     document.documentElement.dataset.theme = message.theme || 'light';
     void load(false);
+    mountCredentials();
     return;
   }
   if (message.type === 'trellis:response') {
@@ -428,6 +440,7 @@ on('login', 'submit', async (event) => {
     state.auth = result?.auth ?? null;
     byId('password').value = '';
     state.notice = '登录成功';
+    await credentialsWidget?.refresh();
   } catch (error) {
     state.error = error.message || '登录失败';
   } finally {

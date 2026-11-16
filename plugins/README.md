@@ -11,6 +11,15 @@
   用户目录可以只放 `index.js` + `plugin.json` 覆盖安装目录，也可以在 `plugins.json` 登记全新插件。
 - 命名之外，插件仓库内不提交任何真实环境信息：本地绝对路径、账号、目标 URL、外部项目大纲/知识库都通过 `config` 注入。
 
+## 跨插件凭据
+
+- 宿主 secret 按插件隔离（`<pluginId>/<key>`），需要共用同一套账号密码时走 capability 而不是共享 secret。
+- `plugins/accounts-core` 是统一账号源，提供 `accounts.credentials`（`accounts.list`、`systems.list`、`credential.resolve`）。
+  消费方声明 `"permissions": ["capabilities:call"]` 与 `requires: [{ "name": "accounts.credentials" }]`，
+  并用 `credentialSource`（`auto`/`accounts`/`local`）+ `accountSystemId` 控制优先级，解析失败时回退本地配置。
+- 面板复用 `accounts-core/panel/widget/credentials-widget.js`，只调自己的 `GET /credentials`；密码不进任何 HTTP 响应。
+  详见 `plugins/accounts-core/README.md`。
+
 ## 测试
 
 从仓库根目录运行 `npm run test:plugins`（等价于 `node --test plugins/*/test/*.test.js`）。

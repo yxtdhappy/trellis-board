@@ -22,10 +22,14 @@
       </div>
     </header>
 
+    <div id="credentials" class="credential-slot"></div>
+
     <form id="login" class="login" hidden>
       <div class="login-title">登录 WitOps 平台</div>
       <label>账号<input id="account" type="text" autocomplete="username" required /></label>
-      <label>密码<input id="password" type="password" autocomplete="current-password" required /></label>
+      <label
+        >密码<input id="password" type="password" autocomplete="current-password" required
+      /></label>
       <label class="toggle"><input id="remember" type="checkbox" /> 记住密码</label>
       <button id="login-submit" type="submit">登录</button>
       <span id="login-hint" class="muted">密码默认不落盘；勾选记住密码后用宿主密钥加密保存。</span>
@@ -68,7 +72,14 @@
         </label>
         <label class="field">
           <span>截止日期</span>
-          <input id="dialog-due" type="text" placeholder="YYYY-MM-DD" maxlength="10" autocomplete="off" inputmode="numeric" />
+          <input
+            id="dialog-due"
+            type="text"
+            placeholder="YYYY-MM-DD"
+            maxlength="10"
+            autocomplete="off"
+            inputmode="numeric"
+          />
         </label>
         <div class="dialog-actions">
           <button id="dialog-cancel" type="button" class="ghost">取消</button>
@@ -76,6 +87,7 @@
         </div>
       </form>
     </div>
+    <script src="/api/plugins/accounts-core/panel/widget/credentials-widget.js"></script>
     <script src="/api/plugins/witops-core/panel/app.js"></script>
   </body>
 </html>

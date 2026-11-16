@@ -747,6 +747,7 @@ async function saveSettings() {
     toast('设置已保存', 'ok')
     await load()
     if (state.selected) await selectJob(state.selected)
+    await credentialsWidget?.refresh()
   } catch (error) {
     hint.textContent = error.message
     toast(error.message, 'bad')
@@ -759,6 +760,7 @@ async function clearPassword() {
     byId('set-password').value = ''
     byId('settings-hint').textContent = '密码已清除。'
     await loadStatus()
+    await credentialsWidget?.refresh()
   } catch (error) {
     toast(error.message, 'bad')
   }
@@ -810,4 +812,17 @@ function bindStatic() {
 }
 
 bindStatic()
+
+let credentialsWidget = null
+function mountCredentials() {
+  const root = byId('credentials')
+  if (!root || !window.TrellisCredentialsWidget) return
+  credentialsWidget = window.TrellisCredentialsWidget.mount({
+    root,
+    request: rpc,
+    systemId: 'jenkins',
+  })
+}
+
+mountCredentials()
 window.parent.postMessage({ type: 'trellis:ready' }, '*')

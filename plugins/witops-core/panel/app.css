@@ -160,3 +160,7 @@ button.small {
   border-radius: 4px;
 }
 th.pick, td.pick { width: 32px; text-align: center; }
+
+.credential-slot {
+  padding: 10px 16px 0;
+}

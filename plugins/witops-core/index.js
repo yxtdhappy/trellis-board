@@ -48,6 +48,8 @@ const DEFAULTS = {
   timeoutMs: 20_000,
   keepRaw: false,
   agentId: null,
+  credentialSource: "auto",
+  accountSystemId: "witops",
   credentials: { mode: "password", account: "", password: "", token: "" },
   session: { persist: true },
   poll: { enabled: false, intervalMs: 1_800_000 }
@@ -82,11 +84,48 @@ export default createPlugin({
     "runs:read",
     "runs:write",
     "secrets:read",
-    "secrets:write"
+    "secrets:write",
+    "capabilities:call"
   ],
 
   async onStart(ctx, rawConfig) {
     const config = normalizeConfig({ ...rawConfig, ...(ctx.config ?? {}) });
+    let accountCredential = null;
+    let accountsError = "";
+
+    // 统一账号优先：成功则覆盖 config.credentials，失败按 credentialSource 回退本地。
+    async function refreshAccounts() {
+      accountCredential = null;
+      accountsError = "";
+      if (config.credentialSource === "local") return;
+      try {
+        const result = await ctx.capabilities.call("accounts.credentials", "credential.resolve", {
+          system: config.accountSystemId
+        });
+        accountCredential = {
+          accountId: text(result?.accountId),
+          account: text(result?.username),
+          password: text(result?.password),
+          baseUrl: text(result?.baseUrl)
+        };
+        config.credentials.account = accountCredential.account;
+        config.credentials.password = accountCredential.password;
+        config.credentials.mode = "password";
+        if (accountCredential.baseUrl) config.baseUrl = accountCredential.baseUrl;
+        ctx.log.info("统一账号凭据已生效", {
+          system: config.accountSystemId,
+          account: accountCredential.accountId
+        });
+      } catch (error) {
+        accountsError = error?.message || String(error);
+        ctx.log.info("统一账号不可用，按配置回退", {
+          source: config.credentialSource,
+          error: accountsError
+        });
+      }
+    }
+
+    await refreshAccounts();
     const client = createWitopsClient(config);
     const session = createSession({ ctx, config, client });
     const links = createLinkIndex({ ctx, config });
@@ -488,7 +527,13 @@ export default createPlugin({
     }
 
     async function authStatus() {
-      return { ...session.status(), hasStoredPassword: await session.hasStoredPassword() };
+      return {
+        ...session.status(),
+        hasStoredPassword: await session.hasStoredPassword(),
+        credentialSource: accountCredential ? "accounts" : "local",
+        accountSystemId: config.accountSystemId,
+        accountsError: accountsError || null
+      };
     }
 
     ctx.capabilities.register("witops.workitems", {
@@ -593,6 +638,19 @@ export default createPlugin({
 
     ctx.http.route("GET", "/auth", async () => respond(200, await authStatus()));
 
+    // 供统一账号小组件使用：只暴露凭据来源与账号名，不暴露密码。
+    ctx.http.route("GET", "/credentials", async () =>
+      respond(200, {
+        source: accountCredential ? "accounts" : "local",
+        systemId: config.accountSystemId,
+        accountId: accountCredential?.accountId ?? "",
+        username: text(config.credentials.account),
+        hasPassword:
+          Boolean(text(config.credentials.password)) || Boolean(await session.hasStoredPassword()),
+        error: accountsError || ""
+      })
+    );
+
     ctx.http.route("POST", "/login", async (request) => {
       const body = request.json() ?? {};
       if (!text(body.account) || !text(body.password)) {
@@ -685,6 +743,8 @@ export default createPlugin({
       return respond(200, {
         configured: Boolean(config.baseUrl),
         authMode: session.mode,
+        credentialSource: accountCredential ? "accounts" : "local",
+        accountsError: accountsError || null,
         userId: auth.userId,
         cacheTtlMs: config.cacheTtlMs,
         repositoryId: config.repositoryId || null,
