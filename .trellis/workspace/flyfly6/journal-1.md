@@ -902,3 +902,47 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 29: 归档项目联动、监听状态实时上报与项目级 dev id
+<!-- trellis-session: v=2 fp=f733ff77e4a5f628 -->
+
+**Date**: 2026-11-17
+**Task**: 归档项目联动、监听状态实时上报与项目级 dev id
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+修复归档索引项目筛选未继承左侧项目栏、客户端监听集合恒空导致「在线监听」永不收敛、项目级 Trellis developer ID 未展示/未用于默认值、成员 dev id 写错使「只看我的」恒空，以及 StrictMode 下团队状态轮询失效。
+
+### Main Changes
+
+- 归档索引改为受控 projectId，与左侧项目栏双向同步
+- 桌面端绑定变化/首次同步完成立即心跳，服务端仅监听集合变化时广播看板事件
+- active_bindings 只按首次同步完成判定，长同步不再让在线客户端永久离线
+- 项目条目与 listeners 返回 trellisDevId，监听详情仅在 devId≠username 时展示
+- attach 在显式提交不同 dev id 时更新已存在成员，只看我的随即恢复
+- refresh coordinator 增加 activate，修复 StrictMode 下 /api/team/status 永不轮询
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8f948d1` | fix: 修复归档项目联动与监听状态实时上报 |
+| `d60500f` | chore(task): archive 11-17-fix-archive-filter-listener-dev-id |
+
+### Testing
+
+- [OK] web 四个测试文件 33/33 通过；server team-agent-slot 12/12、team-task-mine-scope 6/6、team-gitless-http 2/2
+- [OK] cargo check 通过；cargo test listening/startup_bindings_activate/heartbeat_wake 各 1 passed
+- [OK] 真实桌面端 CDP 验证：is_listening=1、心跳 529B、左栏「在线监听 1/已关联 1」；归档联动与 listeners 展示已实机通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 两个弹窗默认 dev id 仍只有单测与代码审查，未做 GUI 点选验证
+- cargo fmt --check 全仓库存在既存格式偏差，未纳入本次
