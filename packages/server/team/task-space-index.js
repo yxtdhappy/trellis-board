@@ -14,6 +14,7 @@ const CURSOR_TTL_MS = 10 * 60 * 1000
 const DEFAULT_LIMIT = 100
 const MAX_LIMIT = 200
 const RETRY_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000]
+const PROJECTION_STATE_SCHEMA_VERSION = 1
 
 function text(value, fallback = '') {
   return typeof value === 'string' ? value : fallback
@@ -24,6 +25,73 @@ function parseJson(value, fallback) {
     return JSON.parse(value)
   } catch {
     return fallback
+  }
+}
+
+function serializeProjectionState({
+  project,
+  tasks,
+  dirFingerprints,
+  projectError,
+  manualStageFingerprint,
+  detailTasks,
+  stats,
+}) {
+  try {
+    return JSON.stringify(
+      {
+        schemaVersion: PROJECTION_STATE_SCHEMA_VERSION,
+        project,
+        tasks: [...tasks.entries()],
+        dirFingerprints: [...dirFingerprints.entries()],
+        projectError: projectError || null,
+        manualStageFingerprint,
+        detailTasks,
+        stats,
+      },
+      (key, value) => (key === 'repoPath' ? 'trellis-task-space-cache' : value),
+    )
+  } catch {
+    return null
+  }
+}
+
+function parseProjectionState(value) {
+  const state = parseJson(value, null)
+  if (
+    !state ||
+    state.schemaVersion !== PROJECTION_STATE_SCHEMA_VERSION ||
+    !state.project ||
+    typeof state.project !== 'object' ||
+    !Array.isArray(state.tasks) ||
+    !Array.isArray(state.dirFingerprints) ||
+    !Array.isArray(state.detailTasks) ||
+    typeof state.manualStageFingerprint !== 'string'
+  ) {
+    return null
+  }
+  try {
+    const tasks = new Map(state.tasks)
+    const dirFingerprints = new Map(state.dirFingerprints)
+    if (
+      tasks.size !== state.tasks.length ||
+      dirFingerprints.size !== state.dirFingerprints.length ||
+      [...tasks.values()].some((task) => !task || typeof task !== 'object') ||
+      [...dirFingerprints.values()].some((fingerprint) => typeof fingerprint !== 'string')
+    ) {
+      return null
+    }
+    return {
+      project: state.project,
+      rawTasksByDir: tasks,
+      dirFingerprints,
+      projectError: state.projectError || null,
+      manualStageFingerprint: state.manualStageFingerprint,
+      detailTasks: state.detailTasks,
+      stats: state.stats && typeof state.stats === 'object' ? state.stats : null,
+    }
+  } catch {
+    return null
   }
 }
 
@@ -50,11 +118,13 @@ function taskDirFingerprints(rows) {
     const taskDir = String(row.task_dir || '')
     if (!taskDir) continue
     if (!grouped.has(taskDir)) grouped.set(taskDir, [])
-    grouped.get(taskDir).push([
-      String(row.relative_path || ''),
-      row.deleted ? 1 : 0,
-      row.deleted ? null : String(row.sha256 || ''),
-    ])
+    grouped
+      .get(taskDir)
+      .push([
+        String(row.relative_path || ''),
+        row.deleted ? 1 : 0,
+        row.deleted ? null : String(row.sha256 || ''),
+      ])
   }
   return new Map(
     [...grouped.entries()].map(([taskDir, entries]) => [
@@ -216,7 +286,9 @@ function publicRow(row) {
     // 损坏的关注摘要不影响任务主体。
   }
   const syncStatus =
-    row.task_space_status === 'active' && Number(row.indexed_revision) === Number(row.revision)
+    row.task_space_status === 'active' &&
+    Number(row.indexed_revision) === Number(row.revision) &&
+    Number(row.archive_indexed_revision) === Number(row.archive_revision)
       ? 'current'
       : row.task_space_status === 'error'
         ? 'needs_repair'
@@ -359,6 +431,7 @@ export function createTaskSpaceIndex({
   executionWipLimit = 2,
   onQueryRevisionChanged = null,
   onProjected = null,
+  onProjectionFailed = null,
   logger = console,
 }) {
   let worker = null
@@ -547,49 +620,69 @@ export function createTaskSpaceIndex({
   function readFileMetadata(taskSpaceId) {
     return db
       .prepare(`
-      SELECT relative_path, sha256, deleted, task_dir, revision
-      FROM sync_task_space_file
-      WHERE task_space_id = ?
-      ORDER BY task_dir, relative_path
-    `)
-      .all(taskSpaceId)
+        SELECT relative_path, sha256, deleted, task_dir, revision, 'active' AS source
+        FROM sync_task_space_file
+        WHERE task_space_id = ?
+        UNION ALL
+        SELECT f.relative_path, f.sha256, 0 AS deleted, f.task_dir,
+               s.archive_revision AS revision, 'archive' AS source
+        FROM sync_archive_file f
+        JOIN sync_task_space s ON s.id = f.task_space_id
+        WHERE f.task_space_id = ?
+        ORDER BY task_dir, relative_path
+      `)
+      .all(taskSpaceId, taskSpaceId)
   }
 
-  function readActiveRows(taskSpaceId, taskDirs = null) {
-    const params = [taskSpaceId]
-    let filter = ''
+  function readContentRows(taskSpaceId, taskDirs = null) {
+    if (Array.isArray(taskDirs) && !taskDirs.length) return []
+    const activeParams = [taskSpaceId]
+    const archiveParams = [taskSpaceId]
+    let activeFilter = ''
+    let archiveFilter = ''
     if (Array.isArray(taskDirs)) {
-      if (!taskDirs.length) return []
-      filter = ` AND task_dir IN (${bindList(taskDirs)})`
-      params.push(...taskDirs)
+      const placeholders = bindList(taskDirs)
+      activeFilter = ` AND task_dir IN (${placeholders})`
+      archiveFilter = ` AND f.task_dir IN (${placeholders})`
+      activeParams.push(...taskDirs)
+      archiveParams.push(...taskDirs)
     }
-    return db
+    const active = db
       .prepare(`
-      SELECT relative_path, content_text, sha256, deleted, task_dir, updated_at
-      FROM sync_task_space_file
-      WHERE task_space_id = ? AND deleted = 0${filter}
-      ORDER BY relative_path
-    `)
-      .all(...params)
+        SELECT relative_path, content_text, sha256, deleted, task_dir, updated_at,
+               'active' AS source, NULL AS source_head
+        FROM sync_task_space_file
+        WHERE task_space_id = ? AND deleted = 0${activeFilter}
+      `)
+      .all(...activeParams)
+    const archived = db
+      .prepare(`
+        SELECT f.relative_path, f.content_text, f.sha256, 0 AS deleted,
+               f.task_dir, f.updated_at, 'archive' AS source, f.source_head
+        FROM sync_archive_file f
+        WHERE f.task_space_id = ?${archiveFilter}
+      `)
+      .all(...archiveParams)
+    return [...active, ...archived].sort((left, right) =>
+      String(left.relative_path).localeCompare(String(right.relative_path), 'en'),
+    )
   }
 
   function canUseProjectionState(state, taskSpace) {
     return Boolean(
       state &&
-        state.rawTasksByDir instanceof Map &&
-        state.dirFingerprints instanceof Map &&
-        state.project &&
-        Object.prototype.hasOwnProperty.call(state, 'manualStageFingerprint') &&
-        Number(state.revision) === Number(taskSpace.indexed_revision),
+      state.rawTasksByDir instanceof Map &&
+      state.dirFingerprints instanceof Map &&
+      state.project &&
+      Object.prototype.hasOwnProperty.call(state, 'manualStageFingerprint') &&
+      Number(state.revision) === Number(taskSpace.indexed_revision) &&
+      Number(state.archiveRevision) === Number(taskSpace.archive_indexed_revision),
     )
   }
 
   function changedTaskDirs(state, metadata) {
     const currentFingerprints = taskDirFingerprints(metadata)
     const changed = new Set()
-    for (const row of metadata) {
-      if (Number(row.revision) > Number(state.revision)) changed.add(row.task_dir)
-    }
     for (const [taskDir, fingerprint] of currentFingerprints) {
       if (
         !state.dirFingerprints.has(taskDir) ||
@@ -609,16 +702,39 @@ export function createTaskSpaceIndex({
 
   function withSnapshotFileMetadata(tasks, rows) {
     // 临时目录文件的 mtime 每次扫描都会变化，归档时间必须取稳定的快照写入时间。
-    const taskJsonUpdatedAt = new Map(
+    const taskJsonMetadata = new Map(
       rows
         .filter((row) => row.relative_path === `${row.task_dir}/task.json`)
-        .map((row) => [row.task_dir, row.updated_at]),
+        .map((row) => [
+          row.task_dir,
+          {
+            updatedAt: row.updated_at,
+            source: row.source,
+            sourceHead: row.source_head || null,
+          },
+        ]),
+    )
+    const archivedMonth = new Map(
+      rows
+        .filter((row) => row.source === 'archive')
+        .map((row) => {
+          const match = /^\.trellis\/tasks\/archive\/(\d{4}-\d{2})\//.exec(row.task_dir)
+          return [row.task_dir, match?.[1] || null]
+        }),
     )
     return tasks.map((task) => {
       if (!task.archived) return { ...task, archivedAt: null }
+      const month = archivedMonth.get(task.relativeDir)
+      const metadata = taskJsonMetadata.get(task.relativeDir)
       return {
         ...task,
-        archivedAt: taskJsonUpdatedAt.get(task.relativeDir) || task.archivedAt || null,
+        archivedAt:
+          (metadata?.source === 'archive' && metadata.sourceHead && month
+            ? `${month}-01T00:00:00.000Z`
+            : metadata?.updatedAt) ||
+          (month ? `${month}-01T00:00:00.000Z` : null) ||
+          task.archivedAt ||
+          null,
       }
     })
   }
@@ -704,10 +820,7 @@ export function createTaskSpaceIndex({
   }
 
   function sameTags(left, right) {
-    return (
-      left.length === right.length &&
-      left.every((value, index) => value === right[index])
-    )
+    return left.length === right.length && left.every((value, index) => value === right[index])
   }
 
   function replaceIndexInTransaction({
@@ -715,6 +828,8 @@ export function createTaskSpaceIndex({
     board,
     boardVersion,
     targetRevision,
+    targetArchiveRevision,
+    projectionStateJson,
     expectedManualFingerprint,
   }) {
     return withTransaction(db, () => {
@@ -722,6 +837,7 @@ export function createTaskSpaceIndex({
       if (
         !latest ||
         Number(latest.revision) !== Number(targetRevision) ||
+        Number(latest.archive_revision) !== Number(targetArchiveRevision) ||
         latest.retired_at ||
         latest.status === 'disabled'
       ) {
@@ -757,9 +873,7 @@ export function createTaskSpaceIndex({
         desired.set(row.task_key, row)
         desiredTags.set(
           row.task_key,
-          [
-            ...new Set((task.execution?.tags || []).map((tag) => String(tag).toLowerCase())),
-          ].sort(),
+          [...new Set((task.execution?.tags || []).map((tag) => String(tag).toLowerCase()))].sort(),
         )
       }
 
@@ -826,19 +940,42 @@ export function createTaskSpaceIndex({
       }
 
       db.prepare(`
-        INSERT INTO sync_task_space_scan_cache(task_space_id, indexed_revision, board_json, saved_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO sync_task_space_scan_cache(
+          task_space_id, indexed_revision, indexed_archive_revision,
+          projection_state_json, board_json, saved_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_space_id) DO UPDATE SET
           indexed_revision = excluded.indexed_revision,
+          indexed_archive_revision = excluded.indexed_archive_revision,
+          projection_state_json = excluded.projection_state_json,
           board_json = excluded.board_json,
           saved_at = excluded.saved_at
-      `).run(taskSpace.id, targetRevision, JSON.stringify(board), timestamp)
+      `).run(
+        taskSpace.id,
+        targetRevision,
+        targetArchiveRevision,
+        projectionStateJson,
+        JSON.stringify(board),
+        timestamp,
+      )
       syncAssignments(db, taskSpace.id, latest.project_id, board)
-      const updated = db.prepare(`
+      const updated = db
+        .prepare(`
         UPDATE sync_task_space
-        SET status = 'active', indexed_revision = ?, last_error = NULL, updated_at = ?
-        WHERE id = ? AND revision = ? AND retired_at IS NULL AND status != 'disabled'
-      `).run(targetRevision, timestamp, taskSpace.id, targetRevision)
+        SET status = 'active', indexed_revision = ?, archive_indexed_revision = ?,
+            last_error = NULL, updated_at = ?
+        WHERE id = ? AND revision = ? AND archive_revision = ?
+          AND retired_at IS NULL AND status != 'disabled'
+      `)
+        .run(
+          targetRevision,
+          targetArchiveRevision,
+          timestamp,
+          taskSpace.id,
+          targetRevision,
+          targetArchiveRevision,
+        )
       if (Number(updated.changes) !== 1) throw new ProjectionSuperseded(targetRevision)
       return {
         queryRevision: incrementQueryRevision({ publish: false }),
@@ -852,14 +989,30 @@ export function createTaskSpaceIndex({
     const taskSpace = taskSpaceRow(taskSpaceId)
     if (!taskSpace) throw new Error('任务空间不存在')
     const targetRevision = Number(taskSpace.revision)
-    const state = materialized.get(taskSpaceId)
+    const targetArchiveRevision = Number(taskSpace.archive_revision)
+    let state = materialized.get(taskSpaceId)
+    if (!state) {
+      const cached = readTaskSpaceCache(taskSpaceId)
+      if (cached?.board && cached.projection) {
+        state = {
+          ...cached.projection,
+          revision: cached.revision,
+          archiveRevision: cached.archiveRevision,
+          board: cached.board,
+          savedAt: cached.savedAt,
+        }
+        materialized.set(taskSpaceId, state)
+      }
+    }
     const currentManualRecords = getManualRecords(db)
     const currentManualFingerprint = manualStageFingerprint(taskSpace.id, currentManualRecords)
     const canIncremental = canUseProjectionState(state, taskSpace)
     const stats = {
       mode: canIncremental ? 'incremental' : 'full',
       baseRevision: canIncremental ? Number(state.revision) : null,
+      baseArchiveRevision: canIncremental ? Number(state.archiveRevision) : null,
       targetRevision,
+      targetArchiveRevision,
       queueWaitMs: Number(options.queueWaitMs || 0),
       changedTaskCount: 0,
       scannedTaskCount: 0,
@@ -872,12 +1025,18 @@ export function createTaskSpaceIndex({
       result: 'committed',
     }
 
-    if (canIncremental && targetRevision === Number(state.revision) && currentManualFingerprint === state.manualStageFingerprint) {
+    if (
+      canIncremental &&
+      targetRevision === Number(state.revision) &&
+      targetArchiveRevision === Number(state.archiveRevision) &&
+      currentManualFingerprint === state.manualStageFingerprint
+    ) {
       const lastStats = state.stats || stats
       return {
         superseded: false,
         noop: true,
         revision: targetRevision,
+        archiveRevision: targetArchiveRevision,
         board: state.board,
         stats: {
           ...lastStats,
@@ -892,18 +1051,22 @@ export function createTaskSpaceIndex({
       ? changedTaskDirs(state, metadata)
       : { currentFingerprints: taskDirFingerprints(metadata), changed: [] }
     const changedSet = new Set(changeState.changed)
-    const changedRows = canIncremental ? readActiveRows(taskSpaceId, changeState.changed) : []
+    const changedRows = canIncremental ? readContentRows(taskSpaceId, changeState.changed) : []
     const manualOnly =
-      canIncremental && !changeState.changed.length && currentManualFingerprint !== state.manualStageFingerprint
+      canIncremental &&
+      !changeState.changed.length &&
+      currentManualFingerprint !== state.manualStageFingerprint
     if (manualOnly) stats.mode = 'manual-reproject'
     stats.changedTaskCount = changeState.changed.length
-    stats.contentRowsRead = canIncremental ? changedRows.length : metadata.filter((row) => !row.deleted).length
+    stats.contentRowsRead = canIncremental
+      ? changedRows.length
+      : metadata.filter((row) => !row.deleted).length
 
     let scan = null
     let project = canIncremental ? state.project : null
     let projectError = canIncremental ? state.projectError || null : null
     if (!canIncremental) {
-      const rows = readActiveRows(taskSpaceId)
+      const rows = readContentRows(taskSpaceId)
       stats.contentRowsRead = rows.length
       const workerStartedAt = Date.now()
       const rawScan = (
@@ -973,7 +1136,11 @@ export function createTaskSpaceIndex({
     }
 
     const latest = taskSpaceRow(taskSpaceId)
-    if (!latest || Number(latest.revision) !== targetRevision) {
+    if (
+      !latest ||
+      Number(latest.revision) !== targetRevision ||
+      Number(latest.archive_revision) !== targetArchiveRevision
+    ) {
       stats.totalMs = Date.now() - startedAt
       stats.result = 'superseded'
       return { superseded: true, revision: targetRevision, stats }
@@ -1014,10 +1181,20 @@ export function createTaskSpaceIndex({
     const boardVersion = hashValue({
       taskSpaceId,
       revision: targetRevision,
+      archiveRevision: targetArchiveRevision,
       manualStageFingerprint: materializedBoard.manualStageFingerprint,
       tasks: [...nextRawTasks.entries()]
         .sort(([left], [right]) => left.localeCompare(right, 'en'))
         .map(([taskDir, task]) => [taskDir, task.taskVersion || null]),
+    })
+    const projectionStateJson = serializeProjectionState({
+      project,
+      tasks: nextRawTasks,
+      dirFingerprints: changeState.currentFingerprints,
+      projectError,
+      manualStageFingerprint: materializedBoard.manualStageFingerprint,
+      detailTasks: materializedBoard.detailTasks,
+      stats,
     })
 
     let result
@@ -1028,6 +1205,8 @@ export function createTaskSpaceIndex({
         board,
         boardVersion,
         targetRevision,
+        targetArchiveRevision,
+        projectionStateJson,
         expectedManualFingerprint: materializedBoard.manualStageFingerprint,
       })
     } catch (error) {
@@ -1045,10 +1224,19 @@ export function createTaskSpaceIndex({
       taskSpaceId,
       projectId: latest.project_id,
       revision: targetRevision,
+      archiveRevision: targetArchiveRevision,
+      source: options.source || 'agent',
+      activeAdvanced:
+        (options.source || 'agent') === 'agent' ||
+        Boolean(state && targetRevision > Number(state.revision)),
+      archiveAdvanced: state
+        ? targetArchiveRevision > Number(state.archiveRevision)
+        : targetArchiveRevision > 0,
       board,
     })
     const nextState = {
       revision: targetRevision,
+      archiveRevision: targetArchiveRevision,
       board,
       detailTasks: materializedBoard.detailTasks,
       rawTasksByDir: nextRawTasks,
@@ -1067,6 +1255,7 @@ export function createTaskSpaceIndex({
     return {
       superseded: false,
       revision: targetRevision,
+      archiveRevision: targetArchiveRevision,
       boardVersion,
       board,
       queryRevision: result.queryRevision,
@@ -1082,7 +1271,8 @@ export function createTaskSpaceIndex({
         !latest ||
         latest.retired_at ||
         latest.status === 'disabled' ||
-        Number(latest.indexed_revision) >= Number(latest.revision)
+        (Number(latest.indexed_revision) >= Number(latest.revision) &&
+          Number(latest.archive_indexed_revision) >= Number(latest.archive_revision))
       ) {
         return result
       }
@@ -1101,12 +1291,14 @@ export function createTaskSpaceIndex({
     return promise
   }
 
-  function enqueue(taskSpaceId) {
+  function enqueue(taskSpaceId, options = {}) {
     const id = String(taskSpaceId || '')
+    const source = String(options.source || 'agent')
     const current = queues.get(id)
     if (current) {
       current.requested = true
       current.queuedAt = Date.now()
+      current.sources.add(source)
       return current.promise
     }
     const entry = {
@@ -1116,17 +1308,34 @@ export function createTaskSpaceIndex({
       timer: null,
       promise: null,
       queuedAt: Date.now(),
+      sources: new Set([source]),
     }
     async function drain() {
+      let lastResult = null
       while (!stopped && entry.requested) {
         entry.requested = false
+        const currentSources = new Set(entry.sources)
+        entry.sources.clear()
         try {
           const queueWaitMs = entry.queuedAt ? Date.now() - entry.queuedAt : 0
-          const result = await materializeNow(id, { queueWaitMs })
+          const source = currentSources.has('agent')
+            ? 'agent'
+            : currentSources.has('archive')
+              ? 'archive'
+              : 'warmup'
+          const result = await materializeNow(id, {
+            queueWaitMs,
+            source,
+          })
+          lastResult = result
           entry.attempts = 0
           if (result?.superseded) {
             const latest = taskSpaceRow(id)
-            if (latest && Number(latest.revision) > Number(latest.indexed_revision)) {
+            if (
+              latest &&
+              (Number(latest.revision) > Number(latest.indexed_revision) ||
+                Number(latest.archive_revision) > Number(latest.archive_indexed_revision))
+            ) {
               entry.requested = true
               entry.queuedAt = Date.now()
             }
@@ -1134,11 +1343,18 @@ export function createTaskSpaceIndex({
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           logger.warn('任务空间投影失败', { taskSpaceId: id, error: message })
-          db.prepare(`
-            UPDATE sync_task_space
-            SET status = 'error', last_error = ?, updated_at = ?
-            WHERE id = ? AND retired_at IS NULL AND status != 'disabled'
-          `).run(message.slice(0, 1000), new Date().toISOString(), id)
+          const latest = taskSpaceRow(id)
+          const activeBehind = Boolean(
+            latest && Number(latest.revision) > Number(latest.indexed_revision),
+          )
+          if (activeBehind || currentSources.has('agent')) {
+            db.prepare(`
+              UPDATE sync_task_space
+              SET status = 'error', last_error = ?, updated_at = ?
+              WHERE id = ? AND retired_at IS NULL AND status != 'disabled'
+            `).run(message.slice(0, 1000), new Date().toISOString(), id)
+          }
+          onProjectionFailed?.({ taskSpaceId: id, error, sources: [...currentSources] })
           const delay = RETRY_DELAYS[Math.min(entry.attempts, RETRY_DELAYS.length - 1)]
           entry.attempts += 1
           await new Promise((resolve) => {
@@ -1150,6 +1366,7 @@ export function createTaskSpaceIndex({
       }
       entry.running = false
       queues.delete(id)
+      return lastResult
     }
     entry.promise = drain()
     queues.set(id, entry)
@@ -1164,6 +1381,8 @@ export function createTaskSpaceIndex({
     return {
       board: parseJson(row.board_json, null),
       revision: Number(row.indexed_revision),
+      archiveRevision: Number(row.indexed_archive_revision || 0),
+      projection: parseProjectionState(row.projection_state_json),
       savedAt: row.saved_at,
     }
   }
@@ -1172,13 +1391,11 @@ export function createTaskSpaceIndex({
     for (;;) {
       const taskSpace = taskSpaceRow(taskSpaceId)
       if (!taskSpace) return null
-      const currentManualFingerprint = manualStageFingerprint(
-        taskSpaceId,
-        getManualRecords(db),
-      )
+      const currentManualFingerprint = manualStageFingerprint(taskSpaceId, getManualRecords(db))
       const cached = materialized.get(taskSpaceId)
       if (
         cached?.revision === Number(taskSpace.revision) &&
+        cached?.archiveRevision === Number(taskSpace.archive_revision) &&
         cached.manualStageFingerprint === currentManualFingerprint
       ) {
         return cached
@@ -1187,12 +1404,38 @@ export function createTaskSpaceIndex({
       const next = materialized.get(taskSpaceId)
       if (
         next?.revision === Number(taskSpace.revision) &&
+        next?.archiveRevision === Number(taskSpace.archive_revision) &&
         next.manualStageFingerprint === currentManualFingerprint
       ) {
         return next
       }
       if (!result?.superseded) return next
     }
+  }
+
+  function warmActive() {
+    const taskSpaces = db
+      .prepare(`
+        SELECT s.id
+        FROM sync_task_space s
+        JOIN sync_project p ON p.id = s.project_id
+        WHERE s.status IN ('active', 'indexing', 'error')
+          AND s.retired_at IS NULL
+          AND p.status = 'active'
+        ORDER BY s.created_at, s.id
+      `)
+      .all()
+    return Promise.all(
+      taskSpaces.map(async (taskSpace) => {
+        try {
+          return await enqueue(taskSpace.id, { source: 'warmup' })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          logger.warn?.('任务空间预热失败', { taskSpaceId: taskSpace.id, error: message })
+          return null
+        }
+      }),
+    )
   }
 
   function resolveQueryScope(actor, input) {
@@ -1430,6 +1673,7 @@ export function createTaskSpaceIndex({
            AND duplicate.execution_task_key = t.execution_task_key) AS execution_identity_count,
         p.name AS project_name, p.owner_team_id AS team_id, team.name AS team_name,
         s.status AS task_space_status, s.revision, s.indexed_revision,
+        s.archive_revision, s.archive_indexed_revision,
         s.last_error AS task_space_error,
         evidence.source_branch_name
       FROM sync_task_index t
@@ -1497,6 +1741,7 @@ export function createTaskSpaceIndex({
     enqueue,
     readTaskSpaceCache,
     ensureMaterialized,
+    warmActive,
     queryTasks,
     queryRevision,
     incrementQueryRevision,

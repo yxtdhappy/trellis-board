@@ -371,7 +371,8 @@ const projectIds = readableProjectIds(actor).filter((id) => (
 #### 1. Scope / Trigger
 
 项目接入、分支任务空间、tasks-only 快照、团队邀请和 Agent binding 跨桌面客户端、Agent API、
-SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保存 Git 凭据。
+SQLite、Board 查询与 SSE。Team 活动任务链路不再 clone/fetch 项目，也不再保存客户端 Git 凭据；
+归档同步使用独立的只读 Git 凭据和后台任务。
 
 #### 2. Signatures
 
@@ -390,9 +391,11 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
   `sync_project_member.trellis_dev_id`；未提交或相同则保留原值，禁止用用户名默认值覆盖。
   `scope=mine` 按该映射在查询时判定，不重建索引。
 - `POST/DELETE /api/projects/:id/team-access`：owner team 邀请或移除其他团队。
+- `GET/PATCH /api/admin/archive-sync*`：仅系统管理员读取状态、保存周期、维护按
+  `scheme + host + port` 隔离的只读凭据、立即同步和查看失败日志。
 - SQLite：`sync_project(remote_identity_hash UNIQUE)`、
   `sync_task_space UNIQUE(project_id, branch_name)`、`sync_project_member`、
-  `sync_agent_binding`。
+  `sync_agent_binding`、`sync_archive_file`、`sync_archive_sync_config/state/log`。
 
 #### 3. Contracts
 
@@ -401,7 +404,10 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
 - 首次接入团队成为 `sync_project_team_access.owner`；owner team active 成员默认可读。
 - 其他团队未邀请时只返回 `access_required`，不泄漏任务正文、revision 或成员。
 - 同远端不同分支各自创建 taskSpace，revision、cursor、command 和 index 独立。
-- Agent 只上传 `.trellis/tasks/**`；初始化 scripts/spec/config/workflow/agents 由客户端 Git 管理。
+- Agent 只上传活动 `.trellis/tasks/<task-dir>/**`；`.trellis/tasks/archive/**` 返回
+  `409 ARCHIVE_SYNC_SERVER_MANAGED`。初始化 scripts/spec/config/workflow/agents 由客户端 Git 管理。
+- 归档 Git 只读取活动分支的 `.trellis/tasks/archive/**`，不 checkout、commit 或 push；凭据 API
+  只返回来源、类型、配置状态、指纹和时间，不返回私钥或 Token。
 - 项目成员写角色和 `trellis_dev_id` 写入 `sync_project_member`，Board 委派不再读取 workspace。
 - binding 不保存客户端绝对路径；`local_repo_key` 只用于服务端幂等绑定，不参与文件夹访问。
 - `detach` 在事务中只撤销当前 Agent 的 binding，取消该 binding 的未完成命令、删除对应 cursor
@@ -420,6 +426,9 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
 | binding 已撤销或不存在 | detach 幂等成功，不重复写审计 |
 | 普通成员读取 listeners | 403，不返回设备和用户详情 |
 | Team 模式访问旧 Git 凭据/probe/refresh/repair | 404 |
+| Agent 写入归档路径 | `409 ARCHIVE_SYNC_SERVER_MANAGED`，整批不写 |
+| 非系统管理员访问 archive-sync 管理接口 | 403，不返回配置或日志 |
+| 归档 Git 凭据 host/port 不匹配 | 该来源失败，不能复用其他来源凭据 |
 
 #### 5. Good/Base/Bad Cases
 
@@ -427,16 +436,21 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
   团队 B 得到 `access_required`，邀请后加入同一 taskSpace。
 - Base：本地已有 `.trellis/tasks` 的项目跳过初始化，直接执行首次快照预检。
 - Bad：按团队复制项目和任务，会导致同仓库同分支出现两套 revision。
-- Bad：服务端 clone 后把 Git 任务当基线，又与客户端快照合并，会重新形成两个事实源。
+- Bad：服务端 clone 后把活动 Git 任务当基线，又与客户端快照合并，会重新形成两个事实源；
+  归档导入只能读取 archive 路径并写入独立 `sync_archive_file`。
 
 #### 6. Tests Required
 
 - `packages/shared/test/shared-remote-identity.test.js`：协议、默认端口、userinfo、`.git` 和非法输入。
 - `packages/server/test/team-task-spaces.test.js`：owner/invite、全局唯一、不同分支隔离和访问授权。
-- `packages/server/test/team-gitless-http.test.js`：新路由可真实读写，旧 Git/live 路由 404。
-- `packages/server/test/team-release.test.js`：Team 启动不创建 `data/projects`，也不读取 Git 密钥。
+- `packages/server/test/team-gitless-http.test.js`：活动任务 API 可真实读写，旧 Git/live 路由 404，
+  归档管理 API 仅系统管理员可用且不回显凭据。
+- `packages/server/test/archive-git-credentials.test.js`、`archive-git-store.test.js`、
+  `archive-git-sync.test.js`：来源隔离、加密、只读 archive 对象、失败保留和阶段日志。
+- `packages/server/test/team-release.test.js`：Team 启动不创建 `data/projects` 工作副本；没有归档任务
+  或凭据时 scheduler 不启动 Git 子进程。
 - `packages/server/test/database-v10.test.js`：v10 -> v11 补监听列，v11 -> v12 补弃用列、基线、
-  证据表和索引；v6-v11 顺序升级保留旧表与数据。
+  证据表和索引，v13 -> v14 隔离归档并增加双 revision；顺序升级保留旧表与数据。
 
 #### 7. Wrong vs Correct
 

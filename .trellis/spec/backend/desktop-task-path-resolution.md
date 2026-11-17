@@ -30,6 +30,8 @@ pub fn resolve_task_dir_under(tasks_root: &Path, task_dir: &str) -> Option<PathB
 ### 3. Contracts
 
 - `taskDir` 固定使用 `/`，以 `.trellis/tasks/` 开头；它跨客户端稳定，不包含本机绝对路径。
+  `resolve_task_dir_under` 可以用于只读 UI 路径解析，但 TaskSync 的扫描、上传、拉取、冲突和命令
+  入口在调用它之前必须先拒绝 `.trellis/tasks/archive/**`。
 - `resolve_task_dir_under` 只做词法校验和同源逐段构造，不调用 `canonicalize` 比较两个来源的绝对路径。
 - 合法根必须同时支持普通 `C:\repo\.trellis\tasks` 和 `\\?\C:\repo\.trellis\tasks`。
 - TaskSync 写入、删除、备份必须先解析路径，再检查 `.trellis`、`tasks` 和所有已存在目标组件都不是
@@ -42,7 +44,8 @@ pub fn resolve_task_dir_under(tasks_root: &Path, task_dir: &str) -> Option<PathB
 
 | 条件 | 结果 |
 | --- | --- |
-| 合法的活动或归档相对目录 | 映射到当前 binding 的 `.trellis/tasks/...` |
+| 合法的活动相对目录 | 映射到当前 binding 的 `.trellis/tasks/...` |
+| 合法的归档相对目录 | 只允许协议/只读 UI 解析；TaskSync 同步入口返回 `INVALID_RESPONSE`，不访问文件 |
 | 普通 Windows 根或 `\\?\` 扩展根 | 两种形式都成功，且目标保持在根内 |
 | 根本身、`..`、`.`、空段、反斜杠、NUL、盘符、ADS | `INVALID_RESPONSE`，失败关闭 |
 | 根、父目录或目标经过符号链接 | `INVALID_RESPONSE`，不写、不删、不建备份 |
@@ -51,7 +54,8 @@ pub fn resolve_task_dir_under(tasks_root: &Path, task_dir: &str) -> Option<PathB
 
 ### 5. Good / Base / Bad Cases
 
-- Good：`C:\repo` 和 `\\?\C:\repo` 两种 binding 根都能解析 `.trellis/tasks/archive/2026-11/task-a`。
+- Good：`C:\repo` 和 `\\?\C:\repo` 两种 binding 根都能解析活动任务路径；归档路径只在只读 UI
+  解析层可用，TaskSync 同步入口拒绝。
 - Good：错误弹窗显示 `project-name / main`，下方仅用 UUID 和相对 taskDir 做诊断。
 - Base：目标目录不存在但路径合法，允许后续从服务端完整目录原子创建。
 - Bad：只规范 `tasks_root`，目标仍为普通绝对路径，导致同一目录被误判越界。
@@ -60,7 +64,7 @@ pub fn resolve_task_dir_under(tasks_root: &Path, task_dir: &str) -> Option<PathB
 
 ### 6. Tests Required
 
-- `agent/protocol.rs`：活动/归档合法路径；普通与 `\\?\` 根；根、`.`、`..`、空段、反斜杠、NUL、
+- `agent/protocol.rs`：活动路径合法、归档路径可识别；普通与 `\\?\` 根；根、`.`、`..`、空段、反斜杠、NUL、
   盘符、ADS、尾部空格/句点拒绝。
 - `agent/task_sync.rs`：临时仓库合法解析；非法删除保留哨兵目录；非法备份不创建 taskSpace 备份目录；
   错误事件包含项目/分支/taskDir 且不含 `repoPath`。

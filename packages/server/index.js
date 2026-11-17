@@ -969,7 +969,9 @@ export async function startApplication(config = parseTeamConfig(), logger = cons
   migrateLegacyRuntimeData()
   if (config.mode === 'team') {
     const runtime = await createTeamRuntime({ config, logger })
-    return runtime.start()
+    const started = await runtime.start()
+    void started.services.taskSpaceIndex.warmActive()
+    return started
   }
   return startStandaloneServer({
     standalonePort: config.port,

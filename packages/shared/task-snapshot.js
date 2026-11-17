@@ -5,6 +5,7 @@ export const TASK_SNAPSHOT_MAX_FILE_BYTES = 1024 * 1024
 export const TASK_SNAPSHOT_MAX_BATCH_BYTES = 64 * 1024 * 1024
 export const TASK_SNAPSHOT_MAX_TRANSPORT_BYTES = 96 * 1024 * 1024
 export const TASK_SNAPSHOT_LIMIT_ERROR_CODE = 'TASK_SNAPSHOT_LIMIT'
+export const ARCHIVE_SYNC_SERVER_MANAGED = 'ARCHIVE_SYNC_SERVER_MANAGED'
 export const TASK_SNAPSHOT_EXTENSIONS = Object.freeze([
   '.json',
   '.jsonl',
@@ -56,7 +57,7 @@ export function taskDirectoryFromPath(value) {
   const relativePath = normalizeSnapshotPath(value)
   const parts = relativePath.split('/')
   if (parts[2] === 'archive') {
-    if (parts.length < 6 || !/^\d{4}-\d{2}$/.test(parts[3])) {
+    if (parts.length < 6 || !/^\d{4}-(0[1-9]|1[0-2])$/.test(parts[3])) {
       throw new Error('归档任务目录格式无效')
     }
     return {
@@ -75,6 +76,57 @@ export function taskDirectoryFromPath(value) {
     archived: false,
     archiveMonth: null,
   }
+}
+
+export function isArchiveTaskDirectory(value) {
+  const normalized = String(value || '').trim()
+  if (
+    !normalized ||
+    normalized.includes('\0') ||
+    normalized.includes('\\') ||
+    normalized.startsWith('/')
+  ) {
+    return false
+  }
+  const parts = normalized.split('/')
+  return (
+    parts.length === 5 &&
+    parts[0] === '.trellis' &&
+    parts[1] === 'tasks' &&
+    parts[2] === 'archive' &&
+    /^\d{4}-(0[1-9]|1[0-2])$/.test(parts[3]) &&
+    Boolean(parts[4]) &&
+    !parts.some((part) => part === '.' || part === '..')
+  )
+}
+
+export function isArchiveTaskPath(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return false
+  try {
+    return taskDirectoryFromPath(raw).archived
+  } catch {
+    return raw.startsWith('.trellis/tasks/archive/')
+  }
+}
+
+export function assertActiveTaskDirectory(value) {
+  if (isArchiveTaskDirectory(value)) {
+    const error = new Error('归档任务由服务端 Git 索引管理，不能通过 Agent 同步')
+    error.code = ARCHIVE_SYNC_SERVER_MANAGED
+    throw error
+  }
+  return String(value || '').trim()
+}
+
+export function assertActiveTaskPath(value) {
+  const relativePath = normalizeSnapshotPath(value)
+  if (isArchiveTaskPath(relativePath)) {
+    const error = new Error('归档任务由服务端 Git 索引管理，不能通过 Agent 同步')
+    error.code = ARCHIVE_SYNC_SERVER_MANAGED
+    throw error
+  }
+  return relativePath
 }
 
 export function validateSnapshotFile(file) {

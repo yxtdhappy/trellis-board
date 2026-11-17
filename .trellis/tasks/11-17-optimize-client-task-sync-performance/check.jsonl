@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 schema 迁移、事务、API、子进程和测试质量"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对客户端、服务端、数据库、索引和页面跨层契约"}
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "检查活动同步、CAS、cursor、SSE 和归档隔离回归"}
+{"file": ".trellis/spec/backend/task-ownership-and-conflict-idempotency.md", "reason": "检查旧 pending、活动归档移动、冲突和来源分支行为"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "检查 system admin API、凭据不泄漏、CSRF 和错误响应"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "检查管理页状态归一化、敏感字段只写不读和归档页只读"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查管理页可访问性、类型检查、构建和浏览器 E2E"}
+{"file": ".trellis/tasks/11-17-optimize-client-task-sync-performance/research/client-performance-baseline.md", "reason": "按原性能门槛核对 P50/P95 和阶段日志证据"}
+{"file": ".trellis/tasks/11-17-optimize-client-task-sync-performance/research/archive-sync-options.md", "reason": "核对双事实源、数据一致性和已确认归档范围"}
+{"file": ".trellis/tasks/11-17-optimize-client-task-sync-performance/research/server-git-archive-import.md", "reason": "核对 bare Git、按 scheme/host/port 凭据隔离和失败保留"}

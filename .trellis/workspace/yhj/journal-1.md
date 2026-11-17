@@ -1369,3 +1369,27 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 58: 客户端品牌与版本号显示
+<!-- trellis-session: v=2 fp=bf3d8d48d856257b -->
+
+**Date**: 2026-11-17
+**Task**: 客户端品牌与版本号显示
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成桌面客户端左上角可配置品牌名与 v0.4.29 版本号展示，新增 Board-only client_identity 只读命令及权限测试，补充 Tauri 规范和客户端说明。修复 DPAPI 测试凭证长度导致 CI 失败，发布 v0.4.29。通过 dlp-watchdog 解密本地密文源码并重建 packages/server/public，确认生产 bundle 包含 client_identity，客户端刷新后已显示版本号。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c8318dd` | feat(desktop): show configurable client brand and version |
+| `2e0f270` | fix(desktop): restore valid DPAPI test credential |
+
+### Status
+
+[OK] **Completed**

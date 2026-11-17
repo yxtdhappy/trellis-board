@@ -20,6 +20,7 @@ import { PluginsTab } from '@/features/admin/PluginsTab'
 import { TeamSwitcher } from '@/features/admin/TeamSwitcher'
 import { DevicesTab } from '@/features/admin/DevicesTab'
 import { AuditTab } from '@/features/admin/AuditTab'
+import { ArchiveSyncTab } from '@/features/admin/ArchiveSyncTab'
 import { OneTimeCredentialDialog } from '@/features/admin/OneTimeCredentialDialog'
 
 const VIEWS: {
@@ -38,6 +39,12 @@ const VIEWS: {
     id: 'users',
     label: '用户账号',
     subtitle: '创建账号、配置所属团队并重置密码。',
+    adminOnly: true,
+  },
+  {
+    id: 'archive-sync',
+    label: '归档同步',
+    subtitle: '配置只读 Git 凭据，查看服务端归档索引和失败日志。',
     adminOnly: true,
   },
   {
@@ -87,7 +94,9 @@ export function AdminPage() {
   } = consoleApi
   const activeView = VIEWS.find((item) => item.id === view) ?? VIEWS[0]
   const visibleViews = VIEWS.filter((item) => {
-    if (item.id === 'users' || item.id === 'teams') return systemAdmin
+    if (item.id === 'users' || item.id === 'teams' || item.id === 'archive-sync') {
+      return systemAdmin
+    }
     if (item.adminOnly) return isAdmin
     return true
   })
@@ -201,6 +210,7 @@ export function AdminPage() {
 
             <div>
               {view === 'project-access' ? <ProjectsTab console={consoleApi} /> : null}
+              {view === 'archive-sync' ? <ArchiveSyncTab /> : null}
               {view === 'users' ? <UsersTab console={consoleApi} /> : null}
               {view === 'teams' ? <TeamsTab /> : null}
               {view === 'plugins' ? <PluginsTab console={consoleApi} /> : null}

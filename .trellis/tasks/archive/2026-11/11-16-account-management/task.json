@@ -3,7 +3,7 @@
   "name": "account-management",
   "title": "账号管理插件（内网 AD 统一账号）",
   "description": "新增账号管理插件：集中维护内网系统（witops/jenkins 等）的 AD 统一账号，供面板查看与插件复用",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": "server",
@@ -11,7 +11,7 @@
   "creator": "kyf",
   "assignee": "kyf",
   "createdAt": "2026-11-16",
-  "completedAt": null,
+  "completedAt": "2026-11-17",
   "branch": "codex/trellis-board-dev",
   "base_branch": "team-board",
   "worktree_path": null,
@@ -20,7 +20,18 @@
   "subtasks": [],
   "children": [],
   "parent": null,
-  "relatedFiles": [],
+  "relatedFiles": [
+    "plugins/accounts-core/plugin.json",
+    "plugins/accounts-core/index.js",
+    "plugins/accounts-core/README.md",
+    "plugins/accounts-core/test/index.test.js",
+    "plugins/accounts-core/test/manifest.test.js",
+    "plugins/accounts-core/panel/index.html",
+    "plugins/accounts-core/panel/app.js",
+    "plugins/accounts-core/panel/widget/credentials-widget.js",
+    "plugins/README.md",
+    ".trellis/spec/backend/plugin-runtime.md"
+  ],
   "notes": "",
   "meta": {
     "commit": "6bb91db"

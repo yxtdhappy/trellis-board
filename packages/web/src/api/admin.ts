@@ -3,7 +3,14 @@ import { redactSensitiveDetail } from '@/lib/team-client.js'
 
 export const AUDIT_PAGE_LIMIT = 100
 
-export type AdminView = 'project-access' | 'users' | 'teams' | 'plugins' | 'agents' | 'audit'
+export type AdminView =
+  | 'project-access'
+  | 'archive-sync'
+  | 'users'
+  | 'teams'
+  | 'plugins'
+  | 'agents'
+  | 'audit'
 
 export type SessionUser = {
   id: string
@@ -149,6 +156,71 @@ export type AuditEvent = {
   correlationId: string
   detail: unknown
   occurredAt: string | null
+}
+
+export type ArchiveSyncConfig = {
+  enabled: boolean
+  intervalSeconds: number
+  updatedAt: string | null
+}
+
+export type ArchiveGitCredential = {
+  id: string
+  name: string
+  scheme: 'ssh' | 'https'
+  host: string
+  port: number
+  origin: string
+  authType: 'ssh_key' | 'https_token'
+  username: string | null
+  configured: boolean
+  publicKeyFingerprint: string | null
+  knownHostsConfigured: boolean
+  knownHostsFingerprints: { algorithm: string; fingerprint: string }[]
+  secretVersion: number
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export type ArchiveTaskSpaceSync = {
+  taskSpaceId: string
+  projectId: string
+  projectName: string
+  remoteUrl: string
+  origin: string | null
+  branchName: string
+  credentialState: string
+  credential: ArchiveGitCredential | null
+  status: string
+  lastAttemptAt: string | null
+  lastSuccessAt: string | null
+  lastIndexedAt: string | null
+  lastError: string | null
+  remoteHead: string | null
+  fileCount: number
+  byteCount: number
+  archiveRevision: number
+  archiveIndexedRevision: number
+  failureCount: number
+  nextAttemptAt: string | null
+}
+
+export type ArchiveSyncOverview = {
+  config: ArchiveSyncConfig
+  credentials: ArchiveGitCredential[]
+  taskSpaces: ArchiveTaskSpaceSync[]
+}
+
+export type ArchiveSyncLog = {
+  id: number
+  taskSpaceId: string
+  attemptId: string
+  phase: string
+  level: string
+  errorCode: string
+  message: string
+  detail: Record<string, unknown>
+  createdAt: string | null
 }
 
 export type Runtime = {
@@ -435,6 +507,96 @@ function readAuditEvent(input: unknown): AuditEvent {
     correlationId: text(row.correlationId ?? row.correlation_id),
     detail: redactSensitiveDetail(row.detail ?? {}),
     occurredAt: optionalText(row.occurredAt ?? row.occurred_at),
+  }
+}
+
+function readArchiveSyncConfig(input: unknown): ArchiveSyncConfig {
+  const row = record(input)
+  return {
+    enabled: flag(row.enabled),
+    intervalSeconds: Number(row.intervalSeconds ?? row.interval_seconds ?? 300) || 300,
+    updatedAt: optionalText(row.updatedAt ?? row.updated_at),
+  }
+}
+
+export function readArchiveGitCredential(input: unknown): ArchiveGitCredential {
+  const row = record(input)
+  const scheme = text(row.scheme) === 'ssh' ? 'ssh' : 'https'
+  return {
+    id: text(row.id),
+    name: text(row.name, text(row.origin)),
+    scheme,
+    host: text(row.host),
+    port: Number(row.port ?? (scheme === 'ssh' ? 22 : 443)) || 443,
+    origin: text(row.origin),
+    authType: scheme === 'ssh' ? 'ssh_key' : 'https_token',
+    username: optionalText(row.username),
+    configured: flag(row.configured ?? true),
+    publicKeyFingerprint: optionalText(row.publicKeyFingerprint ?? row.public_key_fingerprint),
+    knownHostsConfigured: flag(row.knownHostsConfigured ?? row.known_hosts_configured),
+    knownHostsFingerprints: rows(row.knownHostsFingerprints ?? row.known_hosts_fingerprints).map(
+      (value) => {
+        const item = record(value)
+        return {
+          algorithm: text(item.algorithm),
+          fingerprint: text(item.fingerprint),
+        }
+      },
+    ),
+    secretVersion: Number(row.secretVersion ?? row.secret_version ?? 0) || 0,
+    createdAt: optionalText(row.createdAt ?? row.created_at),
+    updatedAt: optionalText(row.updatedAt ?? row.updated_at),
+  }
+}
+
+function readArchiveTaskSpaceSync(input: unknown): ArchiveTaskSpaceSync {
+  const row = record(input)
+  return {
+    taskSpaceId: text(row.taskSpaceId ?? row.task_space_id),
+    projectId: text(row.projectId ?? row.project_id),
+    projectName: text(row.projectName ?? row.project_name),
+    remoteUrl: text(row.remoteUrl ?? row.remote_url),
+    origin: optionalText(row.origin),
+    branchName: text(row.branchName ?? row.branch_name),
+    credentialState: text(row.credentialState ?? row.credential_state, 'missing'),
+    credential: row.credential ? readArchiveGitCredential(row.credential) : null,
+    status: text(row.status, 'idle'),
+    lastAttemptAt: optionalText(row.lastAttemptAt ?? row.last_attempt_at),
+    lastSuccessAt: optionalText(row.lastSuccessAt ?? row.last_success_at),
+    lastIndexedAt: optionalText(row.lastIndexedAt ?? row.last_indexed_at),
+    lastError: optionalText(row.lastError ?? row.last_error),
+    remoteHead: optionalText(row.remoteHead ?? row.remote_head),
+    fileCount: Number(row.fileCount ?? row.file_count ?? 0) || 0,
+    byteCount: Number(row.byteCount ?? row.byte_count ?? 0) || 0,
+    archiveRevision: Number(row.archiveRevision ?? row.archive_revision ?? 0) || 0,
+    archiveIndexedRevision:
+      Number(row.archiveIndexedRevision ?? row.archive_indexed_revision ?? 0) || 0,
+    failureCount: Number(row.failureCount ?? row.failure_count ?? 0) || 0,
+    nextAttemptAt: optionalText(row.nextAttemptAt ?? row.next_attempt_at),
+  }
+}
+
+export function readArchiveSyncOverview(input: unknown): ArchiveSyncOverview {
+  const row = record(input)
+  return {
+    config: readArchiveSyncConfig(row.config),
+    credentials: rows(row.credentials).map(readArchiveGitCredential),
+    taskSpaces: rows(row.taskSpaces ?? row.task_spaces).map(readArchiveTaskSpaceSync),
+  }
+}
+
+function readArchiveSyncLog(input: unknown): ArchiveSyncLog {
+  const row = record(input)
+  return {
+    id: Number(row.id ?? 0) || 0,
+    taskSpaceId: text(row.taskSpaceId ?? row.task_space_id),
+    attemptId: text(row.attemptId ?? row.attempt_id),
+    phase: text(row.phase),
+    level: text(row.level, 'error'),
+    errorCode: text(row.errorCode ?? row.error_code),
+    message: text(row.message),
+    detail: record(row.detail),
+    createdAt: optionalText(row.createdAt ?? row.created_at),
   }
 }
 
@@ -772,6 +934,102 @@ export async function revokeDevice(deviceId: string, teamId?: string | null): Pr
     method: 'POST',
     body: { teamId: teamId?.trim() || undefined },
   })
+}
+
+export async function fetchArchiveSync(): Promise<ArchiveSyncOverview> {
+  const { data } = await requestJson<unknown>('/api/admin/archive-sync')
+  return readArchiveSyncOverview(data)
+}
+
+export async function updateArchiveSyncConfig(input: {
+  enabled?: boolean
+  intervalSeconds?: number
+}): Promise<ArchiveSyncConfig> {
+  const { data } = await requestJson<unknown>('/api/admin/archive-sync/config', {
+    method: 'PATCH',
+    body: input,
+  })
+  return readArchiveSyncConfig(record(data).config ?? data)
+}
+
+export type ArchiveCredentialInput = {
+  name: string
+  scheme: 'ssh' | 'https'
+  host: string
+  port: number
+  username?: string
+  token?: string
+  privateKey?: string
+  knownHostsText?: string
+}
+
+export async function createArchiveSyncCredential(
+  input: ArchiveCredentialInput,
+): Promise<ArchiveGitCredential> {
+  const { data } = await requestJson<unknown>('/api/admin/archive-sync/credentials', {
+    method: 'POST',
+    body: { ...input, authType: input.scheme === 'ssh' ? 'ssh_key' : 'https_token' },
+  })
+  return readArchiveGitCredential(record(data).credential ?? data)
+}
+
+export async function updateArchiveSyncCredential(
+  credentialId: string,
+  input: Partial<ArchiveCredentialInput>,
+): Promise<ArchiveGitCredential> {
+  const { data } = await requestJson<unknown>(
+    `/api/admin/archive-sync/credentials/${encodeURIComponent(credentialId)}`,
+    { method: 'PATCH', body: input },
+  )
+  return readArchiveGitCredential(record(data).credential ?? data)
+}
+
+export async function deleteArchiveSyncCredential(credentialId: string): Promise<void> {
+  await requestJson(`/api/admin/archive-sync/credentials/${encodeURIComponent(credentialId)}`, {
+    method: 'DELETE',
+    body: {},
+  })
+}
+
+export async function testArchiveSyncCredential(credentialId: string): Promise<{
+  branchFound: boolean
+  branchName: string
+  taskSpaceId: string
+}> {
+  const { data } = await requestJson<unknown>(
+    `/api/admin/archive-sync/credentials/${encodeURIComponent(credentialId)}/test`,
+    { method: 'POST', body: {} },
+  )
+  const row = record(data)
+  return {
+    branchFound: flag(row.branchFound ?? row.branch_found),
+    branchName: text(row.branchName ?? row.branch_name),
+    taskSpaceId: text(row.taskSpaceId ?? row.task_space_id),
+  }
+}
+
+export async function runArchiveSync(taskSpaceId?: string | null): Promise<number> {
+  const { data } = await requestJson<unknown>('/api/admin/archive-sync/run', {
+    method: 'POST',
+    body: { taskSpaceId: taskSpaceId?.trim() || undefined },
+  })
+  return Number(record(data).queued ?? 0) || 0
+}
+
+export async function fetchArchiveSyncLogs(
+  taskSpaceId: string,
+  beforeId: number | null,
+): Promise<{ logs: ArchiveSyncLog[]; nextBeforeId: number | null }> {
+  const query = new URLSearchParams({ limit: '20' })
+  if (beforeId) query.set('beforeId', String(beforeId))
+  const { data } = await requestJson<unknown>(
+    `/api/admin/archive-sync/task-spaces/${encodeURIComponent(taskSpaceId)}/logs?${query}`,
+  )
+  const row = record(data)
+  return {
+    logs: rows(row.logs).map(readArchiveSyncLog),
+    nextBeforeId: row.nextBeforeId == null ? null : Number(row.nextBeforeId) || null,
+  }
 }
 
 export async function logout(): Promise<void> {

@@ -11,7 +11,7 @@ import {
   stateFile,
 } from './config.js'
 
-export const DATABASE_SCHEMA_VERSION = 13
+export const DATABASE_SCHEMA_VERSION = 14
 
 const LEGACY_IMPORT_KEY = 'legacy_json_imported_v1'
 const EXECUTION_EVENTS_STARTED_KEY = 'execution_events_started_at'
@@ -983,6 +983,7 @@ const SCHEMA_V11_SQL = `
   CREATE TABLE IF NOT EXISTS sync_task_space_scan_cache (
     task_space_id TEXT PRIMARY KEY REFERENCES sync_task_space(id) ON DELETE CASCADE,
     indexed_revision INTEGER NOT NULL,
+    projection_state_json TEXT,
     board_json TEXT NOT NULL,
     saved_at TEXT NOT NULL
   );
@@ -1266,6 +1267,148 @@ function ensureV13Schema(db) {
   `)
 }
 
+const SCHEMA_V14_SQL = `
+  CREATE TABLE IF NOT EXISTS sync_archive_file (
+    task_space_id TEXT NOT NULL REFERENCES sync_task_space(id) ON DELETE CASCADE,
+    relative_path TEXT NOT NULL,
+    blob_oid TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    content_text TEXT NOT NULL,
+    task_id TEXT,
+    task_dir TEXT NOT NULL,
+    source_head TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (task_space_id, relative_path)
+  );
+
+  CREATE INDEX IF NOT EXISTS sync_archive_file_task
+    ON sync_archive_file(task_space_id, task_dir);
+  CREATE INDEX IF NOT EXISTS sync_archive_file_task_id
+    ON sync_archive_file(task_space_id, task_id);
+
+  CREATE TABLE IF NOT EXISTS sync_archive_git_credential (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    scheme TEXT NOT NULL CHECK (scheme IN ('ssh', 'https')),
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL CHECK (port >= 1 AND port <= 65535),
+    auth_type TEXT NOT NULL CHECK (auth_type IN ('ssh_key', 'https_token')),
+    username TEXT,
+    secret_version INTEGER NOT NULL,
+    secret_iv TEXT NOT NULL,
+    secret_tag TEXT NOT NULL,
+    secret_ciphertext TEXT NOT NULL,
+    public_key_fingerprint TEXT,
+    known_hosts_text TEXT,
+    created_by_user_id TEXT REFERENCES user_account(id) ON DELETE SET NULL,
+    updated_by_user_id TEXT REFERENCES user_account(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(scheme, host, port),
+    CHECK (
+      (scheme = 'ssh' AND auth_type = 'ssh_key') OR
+      (scheme = 'https' AND auth_type = 'https_token')
+    )
+  );
+
+  CREATE TABLE IF NOT EXISTS sync_archive_sync_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    interval_seconds INTEGER NOT NULL DEFAULT 300
+      CHECK (interval_seconds >= 60 AND interval_seconds <= 86400),
+    updated_by_user_id TEXT REFERENCES user_account(id) ON DELETE SET NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS sync_archive_sync_state (
+    task_space_id TEXT PRIMARY KEY REFERENCES sync_task_space(id) ON DELETE CASCADE,
+    ref_name TEXT,
+    remote_head TEXT,
+    status TEXT NOT NULL DEFAULT 'idle' CHECK (
+      status IN ('idle', 'syncing', 'importing', 'indexing', 'current', 'stale', 'error', 'index_error')
+    ),
+    last_attempt_at TEXT,
+    last_success_at TEXT,
+    last_indexed_at TEXT,
+    last_error TEXT,
+    file_count INTEGER NOT NULL DEFAULT 0,
+    byte_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS sync_archive_sync_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_space_id TEXT NOT NULL REFERENCES sync_task_space(id) ON DELETE CASCADE,
+    attempt_id TEXT NOT NULL,
+    phase TEXT NOT NULL CHECK (phase IN ('fetch', 'import', 'index')),
+    level TEXT NOT NULL DEFAULT 'error' CHECK (level = 'error'),
+    error_code TEXT NOT NULL,
+    message TEXT NOT NULL,
+    detail_json TEXT,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS sync_archive_sync_log_task_space
+    ON sync_archive_sync_log(task_space_id, created_at DESC, id DESC);
+`
+
+function ensureV14Schema(db) {
+  db.exec(SCHEMA_V14_SQL)
+  for (const [name, definition] of [
+    ['archive_revision', 'INTEGER NOT NULL DEFAULT 0'],
+    ['archive_indexed_revision', 'INTEGER NOT NULL DEFAULT 0'],
+  ]) {
+    if (!hasColumn(db, 'sync_task_space', name)) {
+      db.exec(`ALTER TABLE sync_task_space ADD COLUMN ${name} ${definition}`)
+    }
+  }
+  if (!hasColumn(db, 'sync_task_space_scan_cache', 'indexed_archive_revision')) {
+    db.exec(`
+      ALTER TABLE sync_task_space_scan_cache
+      ADD COLUMN indexed_archive_revision INTEGER NOT NULL DEFAULT 0
+    `)
+  }
+  if (!hasColumn(db, 'sync_task_space_scan_cache', 'projection_state_json')) {
+    db.exec(`
+      ALTER TABLE sync_task_space_scan_cache
+      ADD COLUMN projection_state_json TEXT
+    `)
+  }
+
+  const now = new Date().toISOString()
+  db.prepare(`
+    INSERT OR IGNORE INTO sync_archive_sync_config(
+      id, enabled, interval_seconds, updated_by_user_id, updated_at
+    ) VALUES (1, 1, 300, NULL, ?)
+  `).run(now)
+
+  db.prepare(`
+    INSERT OR IGNORE INTO sync_archive_file(
+      task_space_id, relative_path, blob_oid, sha256, content_text,
+      task_id, task_dir, source_head, updated_at
+    )
+    SELECT
+      task_space_id, relative_path, 'legacy', sha256, COALESCE(content_text, ''),
+      task_id, task_dir, NULL, updated_at
+    FROM sync_task_space_file
+    WHERE deleted = 0 AND task_dir LIKE '.trellis/tasks/archive/%'
+  `).run()
+
+  db.exec(`
+    DELETE FROM sync_task_space_file
+    WHERE task_dir LIKE '.trellis/tasks/archive/%'
+      OR relative_path LIKE '.trellis/tasks/archive/%';
+
+    UPDATE sync_conflict
+    SET status = 'resolved', resolved_at = COALESCE(resolved_at, '${now}')
+    WHERE status = 'pending'
+      AND (
+        task_dir LIKE '.trellis/tasks/archive/%'
+        OR files_json LIKE '%.trellis/tasks/archive/%'
+      );
+  `)
+}
+
 function tableExists(db, table) {
   return Boolean(
     db
@@ -1293,7 +1436,7 @@ function ensureSchema(db, { databaseFile } = {}) {
   const schemaVersion = tableExists(db, 'app_meta') ? readMeta(db, 'schema_version') : null
   const numericVersion = schemaVersion == null ? null : Number(schemaVersion)
 
-  if (numericVersion !== null && ![6, 7, 8, 9, 10, 11, 12, 13].includes(numericVersion)) {
+  if (numericVersion !== null && ![6, 7, 8, 9, 10, 11, 12, 13, 14].includes(numericVersion)) {
     throw new Error(
       `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除当前 board.sqlite 后重建`,
     )
@@ -1315,6 +1458,7 @@ function ensureSchema(db, { databaseFile } = {}) {
     ensureV11Schema(db)
     ensureV12Schema(db)
     ensureV13Schema(db)
+    ensureV14Schema(db)
     if (numericVersion == null || numericVersion < DATABASE_SCHEMA_VERSION) {
       writeMeta(db, 'schema_version', DATABASE_SCHEMA_VERSION)
     }

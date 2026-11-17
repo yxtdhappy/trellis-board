@@ -100,9 +100,14 @@ export function runProcess(
     allowFailure = false,
     maxOutputBytes = OUTPUT_LIMIT,
     redact = [],
+    signal = null,
   } = {},
 ) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error(`${command} 已取消`))
+      return
+    }
     const child = spawn(command, args, {
       cwd,
       env,
@@ -118,15 +123,29 @@ export function runProcess(
     let stderrStored = 0
     let truncated = false
     let settled = false
-    const timer = setTimeout(() => {
+    let abortListener = null
+    let timer = null
+    const cleanup = () => {
+      if (timer) clearTimeout(timer)
+      if (signal && abortListener) signal.removeEventListener('abort', abortListener)
+    }
+    const terminateAndReject = (error) => {
       if (settled) return
       settled = true
-      const timeoutError = new Error(`${command} 执行超过 ${timeoutMs}ms，已终止`)
+      cleanup()
       void terminateTree(child).then(
-        () => reject(timeoutError),
-        () => reject(timeoutError),
+        () => reject(error),
+        () => reject(error),
       )
+    }
+    timer = setTimeout(() => {
+      terminateAndReject(new Error(`${command} 执行超过 ${timeoutMs}ms，已终止`))
     }, timeoutMs)
+    if (signal) {
+      abortListener = () => terminateAndReject(new Error(`${command} 已取消`))
+      signal.addEventListener('abort', abortListener, { once: true })
+      if (signal.aborted) abortListener()
+    }
 
     child.stdout.on('data', (chunk) => {
       stdoutBytes += chunk.length
@@ -151,7 +170,7 @@ export function runProcess(
     child.once('error', (error) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
+      cleanup()
       const candidates = command === 'python' ? pythonCommandCandidates(env) : []
       const next = candidates[candidates.indexOf('python') + 1]
       if (error.code === 'ENOENT' && next) {
@@ -162,6 +181,7 @@ export function runProcess(
           allowFailure,
           maxOutputBytes,
           redact,
+          signal,
         }).then(resolve, reject)
         return
       }
@@ -170,7 +190,7 @@ export function runProcess(
     child.once('close', (code, signal) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
+      cleanup()
       const result = {
         code,
         signal,

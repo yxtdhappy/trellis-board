@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { snapshotSha256 } from '@trellis-board/shared/task-snapshot.js'
 import { openDatabase } from '../database.js'
 import { STAGE_IDS, setManualStage } from '../metadata.js'
 import { createTaskSnapshotService } from '../team/task-snapshot-service.js'
@@ -49,6 +50,8 @@ function setup({ autoIndex = true } = {}) {
   })
   let revision = 0
   let projected = null
+  const projectionEvents = []
+  const projectionFailures = []
   let index = null
   const snapshots = createTaskSnapshotService({
     db,
@@ -66,7 +69,9 @@ function setup({ autoIndex = true } = {}) {
     taskSpaces,
     onProjected: (payload) => {
       projected = payload
+      projectionEvents.push(payload)
     },
+    onProjectionFailed: (payload) => projectionFailures.push(payload),
     logger: { warn() {} },
   })
   return {
@@ -78,6 +83,8 @@ function setup({ autoIndex = true } = {}) {
     taskSpaceId: attached.taskSpace.id,
     getRevision: () => revision,
     getProjected: () => projected,
+    getProjectionEvents: () => projectionEvents,
+    getProjectionFailures: () => projectionFailures,
   }
 }
 
@@ -234,6 +241,106 @@ test('warm revision 只扫描变化任务并复用未变化任务', async () => 
   }
 })
 
+test('归档 revision 独立推进并只投影归档任务', async () => {
+  const ctx = setup()
+  const archiveDir = '.trellis/tasks/archive/2026-11/11-16-old'
+  try {
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-archive-active',
+      clientSequence: 1,
+      files: files('active'),
+    })
+    await ctx.index.materializeNow(ctx.taskSpaceId)
+    const activeRevision = Number(
+      ctx.db.prepare('SELECT revision FROM sync_task_space WHERE id = ?').get(ctx.taskSpaceId)
+        .revision,
+    )
+    const taskJson = JSON.stringify({
+      id: 'old',
+      title: '归档任务',
+      description: '',
+      status: 'completed',
+      priority: 'P2',
+      assignee: 'alice',
+      creator: 'alice',
+      branch: 'main',
+    })
+    const prd = '# 旧任务\n\n## Requirements\n\n- 已完成\n\n## Acceptance Criteria\n\n- [x] 完成\n'
+    const insert = ctx.db.prepare(`
+      INSERT INTO sync_archive_file(
+        task_space_id, relative_path, blob_oid, sha256, content_text,
+        task_id, task_dir, source_head, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    const timestamp = new Date().toISOString()
+    insert.run(
+      ctx.taskSpaceId,
+      `${archiveDir}/task.json`,
+      'b'.repeat(40),
+      snapshotSha256(taskJson),
+      taskJson,
+      'old',
+      archiveDir,
+      'c'.repeat(40),
+      timestamp,
+    )
+    insert.run(
+      ctx.taskSpaceId,
+      `${archiveDir}/prd.md`,
+      'd'.repeat(40),
+      snapshotSha256(prd),
+      prd,
+      null,
+      archiveDir,
+      'c'.repeat(40),
+      timestamp,
+    )
+    ctx.db
+      .prepare('UPDATE sync_task_space SET archive_revision = 1, updated_at = ? WHERE id = ?')
+      .run(timestamp, ctx.taskSpaceId)
+
+    const projected = await ctx.index.materializeNow(ctx.taskSpaceId, { source: 'archive' })
+    assert.equal(projected.superseded, false)
+    assert.equal(projected.stats.mode, 'incremental')
+    assert.equal(projected.stats.changedTaskCount, 1)
+    const taskSpace = ctx.db
+      .prepare(`
+        SELECT revision, indexed_revision, archive_revision, archive_indexed_revision
+        FROM sync_task_space WHERE id = ?
+      `)
+      .get(ctx.taskSpaceId)
+    assert.deepEqual(
+      { ...taskSpace },
+      {
+        revision: activeRevision,
+        indexed_revision: activeRevision,
+        archive_revision: 1,
+        archive_indexed_revision: 1,
+      },
+    )
+    const actor = ctx.taskSpaces.actorContext('user-1')
+    assert.equal(ctx.index.queryTasks(actor, { taskSpaceId: ctx.taskSpaceId }).total, 1)
+    const archived = ctx.index.queryTasks(actor, {
+      taskSpaceId: ctx.taskSpaceId,
+      archived: true,
+    })
+    assert.equal(archived.total, 1)
+    assert.equal(archived.tasks[0].title, '归档任务')
+    assert.equal(archived.tasks[0].projectSyncStatus, 'current')
+    assert.equal(archived.tasks[0].archivedAt, '2026-11-01T00:00:00.000Z')
+    const event = ctx.getProjectionEvents().at(-1)
+    assert.equal(event.source, 'archive')
+    assert.equal(event.activeAdvanced, false)
+    assert.equal(event.archiveAdvanced, true)
+    assert.equal(event.revision, activeRevision)
+    assert.equal(event.archiveRevision, 1)
+    assert.equal(ctx.getProjectionFailures().length, 0)
+  } finally {
+    await ctx.index.close()
+    ctx.db.close()
+  }
+})
+
 test('索引提交失败时索引、缓存和 indexed_revision 整体回滚', async () => {
   const ctx = setup({ autoIndex: false })
   const firstDir = '.trellis/tasks/11-10-rollback-a'
@@ -262,7 +369,9 @@ test('索引提交失败时索引、缓存和 indexed_revision 整体回滚', as
       ),
       cacheRevision: Number(
         ctx.db
-          .prepare('SELECT indexed_revision FROM sync_task_space_scan_cache WHERE task_space_id = ?')
+          .prepare(
+            'SELECT indexed_revision FROM sync_task_space_scan_cache WHERE task_space_id = ?',
+          )
           .get(ctx.taskSpaceId).indexed_revision,
       ),
     }
@@ -309,7 +418,9 @@ test('索引提交失败时索引、缓存和 indexed_revision 整体回滚', as
     assert.equal(
       Number(
         ctx.db
-          .prepare('SELECT indexed_revision FROM sync_task_space_scan_cache WHERE task_space_id = ?')
+          .prepare(
+            'SELECT indexed_revision FROM sync_task_space_scan_cache WHERE task_space_id = ?',
+          )
           .get(ctx.taskSpaceId).indexed_revision,
       ),
       before.cacheRevision,
@@ -463,7 +574,10 @@ test('增量删除任务不会留下旧索引', async () => {
     assert.equal(result.stats.changedTaskCount, 1)
     assert.equal(result.stats.scannedTaskCount, 0)
     const tasks = ctx.index.readTaskSpaceCache(ctx.taskSpaceId).board.tasks
-    assert.deepEqual(tasks.map((task) => task.title), ['保留任务'])
+    assert.deepEqual(
+      tasks.map((task) => task.title),
+      ['保留任务'],
+    )
     assert.equal(
       Number(
         ctx.db
@@ -478,7 +592,7 @@ test('增量删除任务不会留下旧索引', async () => {
   }
 })
 
-test('活动任务移动到归档目录后由增量投影替换旧路径', async () => {
+test('活动任务归档后先删除 Agent 路径，再由归档 revision 导入', async () => {
   const ctx = setup({ autoIndex: false })
   const activeDir = '.trellis/tasks/11-10-move'
   const archivedDir = '.trellis/tasks/archive/2026-11/11-10-move'
@@ -494,19 +608,43 @@ test('活动任务移动到归档目录后由增量投影替换旧路径', async
     ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
       batchId: 'batch-move-2',
       clientSequence: 2,
-      files: [
-        ...current.files.map((file) => ({
-          path: file.path,
-          content: '',
-          baseSha256: file.sha256,
-          deleted: true,
-        })),
-        ...taskFiles(archivedDir, 'move', '移动任务'),
-      ],
+      files: current.files.map((file) => ({
+        path: file.path,
+        content: '',
+        baseSha256: file.sha256,
+        deleted: true,
+      })),
     })
-    const result = await ctx.index.materializeNow(ctx.taskSpaceId)
+    await ctx.index.materializeNow(ctx.taskSpaceId)
+    assert.equal(ctx.index.readTaskSpaceCache(ctx.taskSpaceId).board.tasks.length, 0)
+
+    const archivedFiles = taskFiles(archivedDir, 'move', '移动任务')
+    const insert = ctx.db.prepare(`
+      INSERT INTO sync_archive_file(
+        task_space_id, relative_path, blob_oid, sha256, content_text,
+        task_id, task_dir, source_head, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    const timestamp = new Date().toISOString()
+    for (const file of archivedFiles) {
+      insert.run(
+        ctx.taskSpaceId,
+        file.path,
+        file.path.endsWith('/task.json') ? 'a'.repeat(40) : 'b'.repeat(40),
+        snapshotSha256(file.content),
+        file.content,
+        file.path.endsWith('/task.json') ? 'move' : null,
+        archivedDir,
+        'c'.repeat(40),
+        timestamp,
+      )
+    }
+    ctx.db
+      .prepare('UPDATE sync_task_space SET archive_revision = 1, updated_at = ? WHERE id = ?')
+      .run(timestamp, ctx.taskSpaceId)
+    const result = await ctx.index.materializeNow(ctx.taskSpaceId, { source: 'archive' })
     assert.equal(result.stats.mode, 'incremental')
-    assert.equal(result.stats.changedTaskCount, 2)
+    assert.equal(result.stats.changedTaskCount, 1)
     assert.equal(result.stats.scannedTaskCount, 1)
     const tasks = ctx.index.readTaskSpaceCache(ctx.taskSpaceId).board.tasks
     assert.equal(tasks.length, 1)
@@ -556,8 +694,8 @@ test('同一 revision 下人工阶段变化会重投影而不重新扫描任务'
   }
 })
 
-test('新 index 实例模拟服务重启时安全回退全量重建', async () => {
-  const ctx = setup()
+test('新 index 实例从持久化投影状态继续增量重建', async () => {
+  const ctx = setup({ autoIndex: false })
   let restarted = null
   try {
     ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
@@ -566,7 +704,77 @@ test('新 index 实例模拟服务重启时安全回退全量重建', async () =
       files: files('restart'),
     })
     await ctx.index.materializeNow(ctx.taskSpaceId)
+    const initialCache = ctx.db
+      .prepare('SELECT projection_state_json FROM sync_task_space_scan_cache WHERE task_space_id = ?')
+      .get(ctx.taskSpaceId)
+    assert.ok(initialCache.projection_state_json)
+    const initialState = JSON.parse(initialCache.projection_state_json)
+    assert.equal(initialState.schemaVersion, 1)
+    assert.equal(typeof initialState.manualStageFingerprint, 'string')
+    assert.ok(Array.isArray(initialState.tasks))
+    assert.ok(Array.isArray(initialState.dirFingerprints))
+    assert.ok(Array.isArray(initialState.detailTasks))
+    assert.ok(initialState.tasks.every((entry) => Array.isArray(entry) && entry.length === 2))
+    assert.ok(initialState.tasks.every(([, task]) => task && typeof task === 'object'))
+    assert.ok(
+      initialState.dirFingerprints.every(
+        (entry) =>
+          Array.isArray(entry) && entry.length === 2 && typeof entry[1] === 'string',
+      ),
+    )
     await ctx.index.close()
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-restart-next',
+      clientSequence: 2,
+      files: files('restart-next'),
+    })
+    restarted = createTaskSpaceIndex({
+      db: ctx.db,
+      stageIds: STAGE_IDS,
+      taskSpaces: ctx.taskSpaces,
+      logger: { warn() {}, info() {} },
+    })
+    const result = await restarted.materializeNow(ctx.taskSpaceId)
+    assert.equal(result.stats.mode, 'incremental')
+    assert.equal(result.stats.changedTaskCount, 1)
+    assert.equal(result.stats.scannedTaskCount, 1)
+    assert.equal(result.stats.reusedTaskCount, 1)
+    assert.equal(result.stats.contentRowsRead, 2)
+    assert.equal(
+      ctx.db
+        .prepare('SELECT COUNT(*) AS count FROM sync_task_index WHERE task_space_id = ?')
+        .get(ctx.taskSpaceId).count,
+      2,
+    )
+    const cached = ctx.db
+      .prepare('SELECT projection_state_json FROM sync_task_space_scan_cache WHERE task_space_id = ?')
+      .get(ctx.taskSpaceId)
+    assert.ok(cached.projection_state_json)
+    assert.equal(cached.projection_state_json.includes('trellis-task-space-snapshot'), false)
+    assert.equal(cached.projection_state_json.includes('trellis-task-space-cache'), true)
+  } finally {
+    await restarted?.close()
+    await ctx.index.close()
+    ctx.db.close()
+  }
+})
+
+test('持久化投影状态损坏时安全回退全量重建', async () => {
+  const ctx = setup({ autoIndex: false })
+  let restarted = null
+  try {
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-restart-corrupt',
+      clientSequence: 1,
+      files: files('restart-corrupt'),
+    })
+    await ctx.index.materializeNow(ctx.taskSpaceId)
+    await ctx.index.close()
+    ctx.db
+      .prepare(
+        'UPDATE sync_task_space_scan_cache SET projection_state_json = ? WHERE task_space_id = ?',
+      )
+      .run('{broken', ctx.taskSpaceId)
     restarted = createTaskSpaceIndex({
       db: ctx.db,
       stageIds: STAGE_IDS,
@@ -589,6 +797,55 @@ test('新 index 实例模拟服务重启时安全回退全量重建', async () =
   }
 })
 
+test('服务启动预热复用持久化状态且只扫描变化任务', async () => {
+  const ctx = setup({ autoIndex: false })
+  let restarted = null
+  const warnings = []
+  try {
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-warmup-first',
+      clientSequence: 1,
+      files: files('warmup-first'),
+    })
+    await ctx.index.materializeNow(ctx.taskSpaceId)
+    await ctx.index.close()
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-warmup-next',
+      clientSequence: 2,
+      files: files('warmup-next'),
+    })
+    restarted = createTaskSpaceIndex({
+      db: ctx.db,
+      stageIds: STAGE_IDS,
+      taskSpaces: ctx.taskSpaces,
+      logger: {
+        warn(message, details) {
+          warnings.push({ message, ...details })
+        },
+        info() {},
+      },
+    })
+    assert.notEqual(
+      ctx.db
+        .prepare('SELECT status FROM sync_task_space WHERE id = ?')
+        .get(ctx.taskSpaceId).status,
+      'disabled',
+    )
+    const results = await restarted.warmActive()
+    assert.equal(results.length, 1)
+    const result = results.find(Boolean)
+    assert.ok(result, JSON.stringify(warnings))
+    assert.equal(result.stats.mode, 'incremental')
+    assert.equal(result.stats.changedTaskCount, 1)
+    assert.equal(result.stats.scannedTaskCount, 1)
+    assert.equal(result.stats.reusedTaskCount, 1)
+  } finally {
+    await restarted?.close()
+    await ctx.index.close()
+    ctx.db.close()
+  }
+})
+
 test('增量任务参与者变化后的项目成员与全量重建一致', async () => {
   const ctx = setup({ autoIndex: false })
   const firstDir = '.trellis/tasks/11-10-member-a'
@@ -601,10 +858,9 @@ test('增量任务参与者变化后的项目成员与全量重建一致', async
       files: taskFiles(firstDir, 'member-a', '成员任务 A'),
     })
     await ctx.index.materializeNow(ctx.taskSpaceId)
-    assert.deepEqual(
-      ctx.index.readTaskSpaceCache(ctx.taskSpaceId).board.projects[0].members,
-      ['alice'],
-    )
+    assert.deepEqual(ctx.index.readTaskSpaceCache(ctx.taskSpaceId).board.projects[0].members, [
+      'alice',
+    ])
 
     ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
       batchId: 'batch-member-2',
@@ -616,10 +872,15 @@ test('增量任务参与者变化后的项目成员与全量重建一致', async
     })
     const incremental = await ctx.index.materializeNow(ctx.taskSpaceId)
     assert.equal(incremental.stats.mode, 'incremental')
-    const incrementalMembers =
-      ctx.index.readTaskSpaceCache(ctx.taskSpaceId).board.projects[0].members
+    const incrementalMembers = ctx.index.readTaskSpaceCache(ctx.taskSpaceId).board.projects[0]
+      .members
     assert.deepEqual(incrementalMembers, ['alice', 'bob'])
 
+    ctx.db
+      .prepare(
+        'UPDATE sync_task_space_scan_cache SET projection_state_json = NULL WHERE task_space_id = ?',
+      )
+      .run(ctx.taskSpaceId)
     rebuilt = createTaskSpaceIndex({
       db: ctx.db,
       stageIds: STAGE_IDS,
@@ -648,8 +909,8 @@ test('增量任务参与者变化后的项目成员与全量重建一致', async
     })
     const removed = await ctx.index.materializeNow(ctx.taskSpaceId)
     assert.equal(removed.stats.mode, 'incremental')
-    const membersAfterDelete =
-      ctx.index.readTaskSpaceCache(ctx.taskSpaceId).board.projects[0].members
+    const membersAfterDelete = ctx.index.readTaskSpaceCache(ctx.taskSpaceId).board.projects[0]
+      .members
     assert.deepEqual(membersAfterDelete, ['alice'])
 
     rebuilt = createTaskSpaceIndex({

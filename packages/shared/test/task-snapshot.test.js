@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  ARCHIVE_SYNC_SERVER_MANAGED,
+  assertActiveTaskDirectory,
+  assertActiveTaskPath,
   classifyTaskSnapshots,
   groupTaskSnapshotFiles,
+  isArchiveTaskDirectory,
+  isArchiveTaskPath,
   normalizeSnapshotPath,
   snapshotSha256,
   TASK_SNAPSHOT_MAX_BATCH_BYTES,
@@ -40,6 +45,24 @@ test('识别活动目录和归档目录', () => {
   assert.equal(
     taskDirectoryFromPath('.trellis/tasks/archive/2026-11/11-10-demo/task.json').archived,
     true,
+  )
+  assert.equal(isArchiveTaskDirectory('.trellis/tasks/archive/2026-11/11-10-demo'), true)
+  assert.equal(isArchiveTaskDirectory('.trellis/tasks/archive/2026-13/11-10-demo'), false)
+  assert.equal(isArchiveTaskDirectory('.trellis/tasks/11-10-demo'), false)
+  assert.equal(isArchiveTaskPath('.trellis/tasks/archive/2026-11/11-10-demo/prd.md'), true)
+  assert.equal(isArchiveTaskPath('.trellis/tasks/11-10-demo/prd.md'), false)
+  assert.throws(() => taskDirectoryFromPath('.trellis/tasks/archive/2026-13/demo/prd.md'))
+  assert.throws(
+    () => assertActiveTaskDirectory('.trellis/tasks/archive/2026-11/11-10-demo'),
+    (error) => error.code === ARCHIVE_SYNC_SERVER_MANAGED,
+  )
+  assert.throws(
+    () => assertActiveTaskPath('.trellis/tasks/archive/2026-11/11-10-demo/prd.md'),
+    (error) => error.code === ARCHIVE_SYNC_SERVER_MANAGED,
+  )
+  assert.equal(
+    assertActiveTaskPath('.trellis/tasks/11-10-demo/prd.md'),
+    '.trellis/tasks/11-10-demo/prd.md',
   )
 })
 

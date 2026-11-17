@@ -198,7 +198,7 @@ export function createTeamPluginRoutes({ host, logger = console }) {
       if (typeof body.enabled !== 'boolean') {
         throw teamError(400, ERROR_CODES.INVALID_INPUT, 'enabled 必须是布尔值')
       }
-      await host.setEnabled(pluginId, body.enabled)
+      await host.setEnabled(pluginId, body.enabled, { actorUserId: actor.userId })
       const updated = host.list().find((item) => item.id === pluginId)
       sendJson(response, 200, { plugin: updated })
       return true
@@ -207,9 +207,9 @@ export function createTeamPluginRoutes({ host, logger = console }) {
     if (method === 'POST' && (tail === '/start' || tail === '/stop')) {
       policy.assertSystemAdmin(actor)
       if (tail === '/start') {
-        await host.setEnabled(pluginId, true)
+        await host.setEnabled(pluginId, true, { actorUserId: actor.userId })
       } else {
-        await host.setEnabled(pluginId, false)
+        await host.setEnabled(pluginId, false, { actorUserId: actor.userId })
       }
       const detail = host.list().find((item) => item.id === pluginId)
       sendJson(response, 200, { plugin: detail })
@@ -221,6 +221,19 @@ export function createTeamPluginRoutes({ host, logger = console }) {
       const { state } = host.find(pluginId)
       sendJson(response, 200, {
         logs: state ? host.supervisor.getLogs(state.id, 200).entries : [],
+      })
+      return true
+    }
+
+    if (method === 'GET' && tail === '/audit') {
+      const teamId = url.searchParams.get('teamId')
+      if (!actor.systemAdmin) policy.assertTeamAdmin(actor, resolveTeamId(actor, teamId))
+      const limit = Number(url.searchParams.get('limit') ?? 100)
+      sendJson(response, 200, {
+        audit: host.listAudit(pluginId, {
+          teamId: teamId ? resolveTeamId(actor, teamId) : null,
+          limit,
+        }),
       })
       return true
     }
@@ -268,6 +281,13 @@ export function createTeamPluginRoutes({ host, logger = console }) {
           config: body.config ?? {},
           actorUserId: actor.userId,
         })
+        host.audit({
+          pluginId,
+          kind: saved.enabled ? 'team-setting.enable' : 'team-setting.disable',
+          detail: { teamId, configKeys: Object.keys(saved.config ?? {}) },
+          userId: actor.userId,
+          teamId,
+        })
         sendJson(response, 200, { setting: saved })
         return true
       }
@@ -291,6 +311,18 @@ export function createTeamPluginRoutes({ host, logger = console }) {
           externalProjectName: body.externalProjectName,
           actorUserId: actor.userId,
         })
+        host.audit({
+          pluginId,
+          kind: 'binding.create',
+          detail: {
+            bindingId: binding.id,
+            projectId: binding.projectId,
+            externalProjectId: binding.externalProjectId,
+            externalProjectName: binding.externalProjectName,
+          },
+          userId: actor.userId,
+          teamId,
+        })
         sendJson(response, 200, { binding })
         return true
       }
@@ -301,6 +333,18 @@ export function createTeamPluginRoutes({ host, logger = console }) {
         if (!binding) throw teamError(404, ERROR_CODES.NOT_FOUND, '绑定不存在')
         policy.assertCanBindProject(actor, { teamId, projectId: binding.projectId })
         host.bindings.remove({ teamId, pluginId, bindingId })
+        host.audit({
+          pluginId,
+          kind: 'binding.remove',
+          detail: {
+            bindingId,
+            projectId: binding.projectId,
+            externalProjectId: binding.externalProjectId,
+            externalProjectName: binding.externalProjectName,
+          },
+          userId: actor.userId,
+          teamId,
+        })
         sendJson(response, 200, { removed: true })
         return true
       }
