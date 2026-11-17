@@ -236,7 +236,7 @@ export function createTeamPluginHost({
     return { plugin, state }
   }
 
-  async function setEnabled(pluginId, enabled) {
+  async function setEnabled(pluginId, enabled, { actorUserId = null, teamId = null } = {}) {
     const { plugin } = find(pluginId)
     if (!plugin) return null
     const updated = setRegistryEnabled(db, pluginId, enabled)
@@ -245,7 +245,66 @@ export function createTeamPluginHost({
     } else {
       await supervisor.stopPlugin(pluginId, { reason: 'admin' })
     }
+    audit({
+      pluginId,
+      kind: enabled ? 'plugin.enable' : 'plugin.disable',
+      detail: { enabled },
+      userId: actorUserId,
+      teamId,
+    })
     return updated
+  }
+
+  /**
+   * 插件审计：与 standalone 的 `store.audit` 共用 plugin_audit 表，但把操作人与团队落到
+   * user_id / team_id 两列（schema v13 加的列，见 design.md §2.5），团队管理员才能按团队回放。
+   */
+  function audit({ pluginId, kind, detail = null, userId = null, teamId = null }) {
+    try {
+      db.prepare(`
+        INSERT INTO plugin_audit(plugin_id, kind, detail, created_at, user_id, team_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        pluginId,
+        kind,
+        detail == null ? null : JSON.stringify(detail),
+        new Date().toISOString(),
+        userId,
+        teamId,
+      )
+    } catch (error) {
+      logger.warn?.('插件审计写入失败', { pluginId, kind, error: error.message })
+    }
+  }
+
+  /** 传给 `teamId` 时只回放该团队的动作；不传则回放所有团队（系统管理员视角）。 */
+  function listAudit(pluginId, { teamId = null, limit = 100 } = {}) {
+    const rows = db
+      .prepare(`
+      SELECT id, plugin_id, kind, detail, created_at, user_id, team_id
+      FROM plugin_audit
+      WHERE plugin_id = ? AND (? IS NULL OR team_id = ?)
+      ORDER BY id DESC
+      LIMIT ?
+    `)
+      .all(pluginId, teamId, teamId, Math.max(1, Math.min(500, Number(limit) || 100)))
+    return rows.map((row) => {
+      let detail = null
+      try {
+        detail = row.detail == null ? null : JSON.parse(row.detail)
+      } catch {
+        detail = row.detail
+      }
+      return {
+        id: row.id,
+        pluginId: row.plugin_id,
+        kind: row.kind,
+        detail,
+        createdAt: row.created_at,
+        userId: row.user_id ?? null,
+        teamId: row.team_id ?? null,
+      }
+    })
   }
 
   return {
@@ -265,6 +324,8 @@ export function createTeamPluginHost({
     list,
     find,
     setEnabled,
+    audit,
+    listAudit,
     forwardHttp: (...args) => supervisor.forwardHttp(...args),
   }
 }

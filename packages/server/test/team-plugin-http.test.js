@@ -409,3 +409,67 @@ test('项目绑定：lead 能绑定自己的项目，成员不能', async () => 
     assert.equal(admin.systemAdmin, true)
   })
 })
+
+test('绑定与启停写 plugin_audit，团队管理员按团队回放', async () => {
+  await withRoutes(async ({ routes, host, db, admin, lead }) => {
+    enableForTeam(host)
+    const bound = await invoke(routes, {
+      method: 'POST',
+      path: `/api/plugins/${PLUGIN}/bindings?teamId=team-a`,
+      actor: lead,
+      body: {
+        projectId: 'project-a',
+        externalProjectId: 'witops-p1',
+        externalProjectName: '项目一',
+      },
+    })
+    assert.equal(bound.status, 200)
+    const removed = await invoke(routes, {
+      method: 'DELETE',
+      path: `/api/plugins/${PLUGIN}/bindings?teamId=team-a&bindingId=${bound.json.binding.id}`,
+      actor: lead,
+    })
+    assert.equal(removed.status, 200)
+    const disabled = await invoke(routes, {
+      method: 'PUT',
+      path: `/api/plugins/${PLUGIN}/enabled`,
+      actor: admin,
+      body: { enabled: false },
+    })
+    assert.equal(disabled.status, 200)
+
+    // supervisor 自己也会写 audit（例如 stopped），这里只看带操作人的团队动作.
+    const rows = db
+      .prepare(
+        'SELECT kind, user_id, team_id FROM plugin_audit WHERE plugin_id = ? AND user_id IS NOT NULL ORDER BY id',
+      )
+      .all(PLUGIN)
+    assert.deepEqual(
+      rows.map((row) => row.kind),
+      ['binding.create', 'binding.remove', 'plugin.disable'],
+    )
+    // 操作人与团队都要落库：团队管理员只能回放本团队.
+    assert.equal(rows[0].user_id, lead.userId)
+    assert.equal(rows[0].team_id, 'team-a')
+    assert.equal(rows[2].user_id, admin.userId)
+    assert.equal(rows[2].team_id, null)
+
+    const audit = await invoke(routes, {
+      path: `/api/plugins/${PLUGIN}/audit?teamId=team-a`,
+      actor: admin,
+    })
+    assert.equal(audit.status, 200)
+    assert.deepEqual(
+      audit.json.audit.map((row) => row.kind),
+      ['binding.remove', 'binding.create'],
+    )
+    assert.equal(audit.json.audit[1].detail.externalProjectId, 'witops-p1')
+
+    // lead 只是项目负责人，不是团队管理员，不能看审计.
+    const denied = await invoke(routes, {
+      path: `/api/plugins/${PLUGIN}/audit?teamId=team-a`,
+      actor: lead,
+    })
+    assert.equal(denied.status, 403)
+  })
+})
