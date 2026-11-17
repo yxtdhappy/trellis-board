@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "心跳协议 v3、listenerReportVersion=1 监听快照语义、五态派生顺序与 Board SSE 只发 tasks.changed 的契约"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "桌面 Agent 心跳 15s、启动同步未完成时的保活语义与 runtime.rs 模块职责"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "归档分页游标清理、事件驱动刷新与派生集合 useMemo 约束"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Node 内置测试基线、Team/Agent 测试覆盖要求与真实请求验收要求"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "web 端 typecheck/oxfmt 与禁止 any 的验证基线"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本次同时改 web/server/desktop 与心跳契约，需先搜全部消费者再改接口"}
+{"file": ".trellis/tasks/11-17-fix-archive-filter-listener-dev-id/design.md", "reason": "三段改动机制、唤醒通道与事件发布的具体落点"}
