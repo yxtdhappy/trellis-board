@@ -10,6 +10,7 @@
  * 避免第三方依赖打印日志破坏协议。
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   HOST_API_VERSION,
   encodeFrame,
@@ -69,6 +70,13 @@ function matchesEvent(pattern, name) {
   if (pattern.endsWith('.*')) return name.startsWith(pattern.slice(0, -1))
   return false
 }
+
+/**
+ * team 模式下每次插件调用都要带上"当前是谁"。
+ * 用 AsyncLocalStorage 而不是给每个 handler 加参数：既有代码不用改，
+ * 也不会因为漏传上下文把 A 用户的 token 用成 B 用户的。
+ */
+const requestScope = new AsyncLocalStorage()
 
 export function createPlugin({
   name,
@@ -229,6 +237,9 @@ export function startPluginRuntime(
       apiVersion: plugin.apiVersion,
       hostVersion: null,
     },
+    mode: 'standalone',
+    currentActor: () => requestScope.getStore()?.actor ?? null,
+    currentCredential: () => requestScope.getStore()?.credential ?? null,
     tasks: {
       create: (params) => call('task/create', params),
       assign: (params) => call('task/assign', params),
@@ -371,6 +382,7 @@ export function startPluginRuntime(
     const params = message.params ?? {}
     config = params.config ?? {}
     ctx.plugin.hostVersion = params.hostVersion ?? null
+    ctx.mode = params.mode === 'team' ? 'team' : 'standalone'
     if (Number.isInteger(params.apiVersion) && params.apiVersion <= plugin.apiVersion) {
       timeoutMs = 30_000
     }
@@ -405,6 +417,8 @@ export function startPluginRuntime(
       query: Object.fromEntries(new URLSearchParams(search)),
       headers: params.headers ?? {},
       body: params.body ?? '',
+      actor: params.actor ?? null,
+      credential: params.credential ?? null,
       signal,
       json() {
         try {
@@ -414,7 +428,10 @@ export function startPluginRuntime(
         }
       },
     }
-    const result = await route.handler(request)
+    const result = await requestScope.run(
+      { actor: request.actor, credential: request.credential },
+      () => route.handler(request),
+    )
     if (result === undefined || result === null) return { status: 204, body: '' }
     if (
       typeof result === 'object' &&

@@ -16,6 +16,7 @@ import { useAdminConsole } from '@/hooks/useAdminConsole'
 import { ProjectsTab } from '@/features/admin/ProjectsTab'
 import { UsersTab } from '@/features/admin/UsersTab'
 import { TeamsTab } from '@/features/admin/TeamsTab'
+import { PluginsTab } from '@/features/admin/PluginsTab'
 import { TeamSwitcher } from '@/features/admin/TeamSwitcher'
 import { DevicesTab } from '@/features/admin/DevicesTab'
 import { AuditTab } from '@/features/admin/AuditTab'
@@ -44,6 +45,12 @@ const VIEWS: {
     label: '团队',
     subtitle: '创建团队、启停团队并分配团队成员。',
     adminOnly: true,
+  },
+  {
+    id: 'plugins',
+    label: '插件',
+    subtitle: '启用插件、查看进程状态，并把项目对到插件里的项目。',
+    adminOnly: false,
   },
   {
     id: 'agents',
@@ -196,6 +203,7 @@ export function AdminPage() {
               {view === 'project-access' ? <ProjectsTab console={consoleApi} /> : null}
               {view === 'users' ? <UsersTab console={consoleApi} /> : null}
               {view === 'teams' ? <TeamsTab /> : null}
+              {view === 'plugins' ? <PluginsTab console={consoleApi} /> : null}
               {view === 'agents' ? <DevicesTab console={consoleApi} /> : null}
               {view === 'audit' ? <AuditTab console={consoleApi} /> : null}
             </div>

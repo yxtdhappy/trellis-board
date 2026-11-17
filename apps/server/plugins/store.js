@@ -119,12 +119,25 @@ export function createPluginStore({ db, now = () => new Date().toISOString() }) 
     status = 'queued',
     request = null,
     startedAt = now(),
+    userId = null,
+    teamId = null,
   }) {
     db.prepare(`
       INSERT INTO plugin_run(
-        run_id, plugin_id, plugin_version, task_key, status, request, result, started_at, finished_at
-      ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL)
-    `).run(runId, pluginId, pluginVersion, taskKey, status, encode(request), startedAt)
+        run_id, plugin_id, plugin_version, task_key, status, request, result,
+        started_at, finished_at, user_id, team_id
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?)
+    `).run(
+      runId,
+      pluginId,
+      pluginVersion,
+      taskKey,
+      status,
+      encode(request),
+      startedAt,
+      userId == null ? null : String(userId),
+      teamId == null ? null : String(teamId),
+    )
     return getRun(runId)
   }
 
@@ -134,6 +147,8 @@ export function createPluginStore({ db, now = () => new Date().toISOString() }) 
     taskKey,
     request = null,
     status = 'running',
+    userId = null,
+    teamId = null,
   }) {
     if (!pluginId) throw new Error('startRun 缺少 pluginId')
     if (!taskKey) throw new Error('startRun 缺少 taskKey')
@@ -142,7 +157,16 @@ export function createPluginStore({ db, now = () => new Date().toISOString() }) 
       if (active) return { run: active, started: false }
       const attempt = nextAttempt(pluginId, taskKey)
       const runId = `${pluginId}:${taskKey}:${attempt}`
-      const run = createRun({ runId, pluginId, pluginVersion, taskKey, status, request })
+      const run = createRun({
+        runId,
+        pluginId,
+        pluginVersion,
+        taskKey,
+        status,
+        request,
+        userId,
+        teamId,
+      })
       return { run, started: true }
     })
   }

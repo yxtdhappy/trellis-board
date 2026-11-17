@@ -3,7 +3,7 @@ import { redactSensitiveDetail } from '@/lib/team-client.js'
 
 export const AUDIT_PAGE_LIMIT = 100
 
-export type AdminView = 'project-access' | 'users' | 'teams' | 'agents' | 'audit'
+export type AdminView = 'project-access' | 'users' | 'teams' | 'plugins' | 'agents' | 'audit'
 
 export type SessionUser = {
   id: string

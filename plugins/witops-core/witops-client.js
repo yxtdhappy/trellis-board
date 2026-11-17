@@ -12,7 +12,12 @@ const DEFAULT_PATHS = {
   workHourList: "/workHourExamine/taskWorkHourList",
   dictionary: "/api/sysDicConfig/getListByKey",
   storyUpdate: "/story/update",
-  taskUpdate: "/task/update"
+  taskUpdate: "/task/update",
+  projectByMaster: "/project/findByMaster",
+  projectByParticipant: "/project/findByParticipant",
+  projectUserRole: "/projectUserRole/userRole",
+  projectTaskPage: "/task/task/page",
+  statusBulletin: "/bulletin/statusBulletin"
 };
 
 export class ApiError extends Error {
@@ -53,7 +58,16 @@ export function resolvePaths(config = {}) {
     workHourList: joinPath(gateway, taskService, paths.workHourList ?? DEFAULT_PATHS.workHourList),
     dictionary: joinPath(gateway, adminService, paths.dictionary ?? DEFAULT_PATHS.dictionary),
     storyUpdate: joinPath(gateway, taskService, paths.storyUpdate ?? DEFAULT_PATHS.storyUpdate),
-    taskUpdate: joinPath(gateway, taskService, paths.taskUpdate ?? DEFAULT_PATHS.taskUpdate)
+    taskUpdate: joinPath(gateway, taskService, paths.taskUpdate ?? DEFAULT_PATHS.taskUpdate),
+    projectByMaster: joinPath(gateway, taskService, paths.projectByMaster ?? DEFAULT_PATHS.projectByMaster),
+    projectByParticipant: joinPath(
+      gateway,
+      taskService,
+      paths.projectByParticipant ?? DEFAULT_PATHS.projectByParticipant
+    ),
+    projectUserRole: joinPath(gateway, taskService, paths.projectUserRole ?? DEFAULT_PATHS.projectUserRole),
+    projectTaskPage: joinPath(gateway, taskService, paths.projectTaskPage ?? DEFAULT_PATHS.projectTaskPage),
+    statusBulletin: joinPath(gateway, taskService, paths.statusBulletin ?? DEFAULT_PATHS.statusBulletin)
   };
 }
 
@@ -154,6 +168,17 @@ export function createWitopsClient(config = {}, {
     workHours: (params, options) => request(paths.workHourList, { ...options, method: "POST", body: params }),
     dictionary: (params, options) => request(paths.dictionary, { ...options, method: "POST", body: params }),
     storyUpdate: (params, options) => request(paths.storyUpdate, { ...options, method: "POST", body: params }),
-    taskUpdate: (params, options) => request(paths.taskUpdate, { ...options, method: "POST", body: params })
+    taskUpdate: (params, options) => request(paths.taskUpdate, { ...options, method: "POST", body: params }),
+    projectByMaster: (params, options) =>
+      request(paths.projectByMaster, { ...options, method: "POST", body: params }),
+    projectByParticipant: (params, options) =>
+      request(paths.projectByParticipant, { ...options, method: "POST", body: params }),
+    projectUserRole: (params, options) =>
+      request(paths.projectUserRole, { ...options, method: "POST", body: params }),
+    projectTaskPage: (params, options) =>
+      request(paths.projectTaskPage, { ...options, method: "POST", body: params }),
+    // 任务看板：一次返回按状态分组的全部任务（前端 statusDashboard/4 用的就是这个）。
+    statusBulletin: (params, options) =>
+      request(paths.statusBulletin, { ...options, method: "POST", body: params })
   };
 }

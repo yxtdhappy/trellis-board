@@ -2,8 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPlugin } from "@trellis-board/server/plugins/sdk.js";
-import { createWitopsClient } from "./witops-client.js";
+import { ApiError, createWitopsClient } from "./witops-client.js";
 import { createSession, resolveAuthMode } from "./auth.js";
+import { createTeamSession } from "./team-auth.js";
 import { createLinkIndex } from "./links.js";
 import { createDispatch } from "./dispatch.js";
 import { resolveRequirement } from "./mapper.js";
@@ -88,7 +89,12 @@ export default createPlugin({
   async onStart(ctx, rawConfig) {
     const config = normalizeConfig({ ...rawConfig, ...(ctx.config ?? {}) });
     const client = createWitopsClient(config);
-    const session = createSession({ ctx, config, client });
+    const teamMode = ctx.mode === "team";
+    // team 下 token 由宿主按用户保管，插件通过 ctx.currentCredential() 读取；
+    // standalone 仍走原来的账号密码/session 持久化逻辑。
+    const session = teamMode
+      ? createTeamSession({ ctx, client })
+      : createSession({ ctx, config, client });
     const links = createLinkIndex({ ctx, config });
     const readCache = new Map();
     let dispatch = null;
@@ -118,6 +124,75 @@ export default createPlugin({
       links,
       onChanged: () => readCache.clear()
     });
+
+    const PROJECT_TASK_STATUS = {
+      0: "草稿",
+      1: "待处理",
+      2: "已完成",
+      3: "进行中",
+      4: "已取消",
+      97: "待提交",
+      99: "已关闭"
+    };
+
+    function rowsOf(payload) {
+      if (Array.isArray(payload)) return payload;
+      const rows = pick(payload, "records", "list", "rows", "data", "items");
+      return Array.isArray(rows) ? rows : [];
+    }
+
+    function normalizeProjectList(payload) {
+      return rowsOf(payload)
+        .map((row) => ({
+          id: text(pick(row, "id", "projectId", "businessId")),
+          name: text(pick(row, "name", "projectName", "title")),
+          code: text(pick(row, "code", "projectCode")),
+          status: text(pick(row, "statusName", "status"))
+        }))
+        .filter((row) => row.id && row.name);
+    }
+
+    // 任务看板返回按状态分好的列： [{ status, statusName, taskResps: [...] }]
+    function isStatusBoard(payload) {
+      const columns = Array.isArray(payload) ? payload : rowsOf(payload);
+      return columns.some((column) => Array.isArray(column?.taskResps));
+    }
+
+    function flattenStatusBoard(payload) {
+      const columns = Array.isArray(payload) ? payload : rowsOf(payload);
+      const rows = [];
+      for (const column of columns) {
+        const tasks = Array.isArray(column?.taskResps) ? column.taskResps : [];
+        for (const task of tasks) {
+          rows.push({ ...task, __columnStatus: column?.status, __columnName: column?.statusName });
+        }
+      }
+      return rows;
+    }
+
+    function normalizeProjectTasks(payload) {
+      const source = isStatusBoard(payload) ? flattenStatusBoard(payload) : rowsOf(payload);
+      return source.map((row) => {
+        const statusCode = numberOrNull(
+          pick(row, "tasksStatus", "status", "taskStatus", "__columnStatus")
+        );
+        return {
+          id: text(pick(row, "id", "taskId", "businessId")),
+          code: text(pick(row, "code", "taskCode", "businessCode")),
+          name: text(pick(row, "name", "title", "taskName")),
+          status: statusCode,
+          statusLabel:
+            text(pick(row, "tasksStatusName", "statusName", "__columnName")) ||
+            PROJECT_TASK_STATUS[statusCode] ||
+            "",
+          priority: text(pick(row, "priorityDicConfigCode", "priorityName", "priority")),
+          assignee: text(pick(row, "assignedToUserName", "assigneeName", "assignee")),
+          dueDate: calendarDate(
+            pick(row, "expectCompleteTime", "expectFinishTime", "deadline", "planEndTime")
+          )
+        };
+      });
+    }
 
     function itemLink(type, id) {
       const webRoot = text(config.webRoot).replace(/^\/+|\/+$/g, "");
@@ -545,7 +620,9 @@ export default createPlugin({
       let status = fallbackStatus;
       if (error?.code === 1001) status = 401;
       else if (error?.code === 1002) status = 400;
-      return respond(status, { error: error.message, code: error.code ?? null, detail: error.data ?? null });
+      // PluginError 把细节放在 detail 上；宿主靠 detail.reason 区分"密码错"和"连接断开"。
+      const detail = error?.detail ?? error?.data ?? null;
+      return respond(status, { error: error.message, code: error.code ?? null, detail });
     }
 
     function asset(name, type) {
@@ -556,9 +633,99 @@ export default createPlugin({
       }
     }
 
-    ctx.http.route("GET", "/panel", () => asset("index.html", "text/html; charset=utf-8"));
+    ctx.http.route("GET", "/panel", () =>
+      asset(teamMode ? "team.html" : "index.html", "text/html; charset=utf-8")
+    );
     ctx.http.route("GET", "/panel/app.js", () => asset("app.js", "text/javascript; charset=utf-8"));
     ctx.http.route("GET", "/panel/app.css", () => asset("app.css", "text/css; charset=utf-8"));
+    if (teamMode) {
+      ctx.http.route("GET", "/panel/team.js", () =>
+        asset("team.js", "text/javascript; charset=utf-8")
+      );
+    }
+
+    if (teamMode) {
+      // 宿主调用：账号密码只在这一个路由里出现，换完 token 立即丢弃。
+      ctx.http.route("POST", "/session/open", async (request) => {
+        const body = request.json() ?? {};
+        try {
+          return respond(200, await session.login({ account: body.account, password: body.password }));
+        } catch (error) {
+          return failure(error);
+        }
+      });
+
+      // 面板：我管理的 + 我参与的
+      ctx.http.route("GET", "/project-space", async () => {
+        try {
+          const data = await session.authorized(async (token) => {
+            const [managed, joined] = await Promise.all([
+              client.projectByMaster({}, { token }).catch((error) => {
+                if (error instanceof ApiError) throw error;
+                return null;
+              }),
+              client.projectByParticipant({}, { token })
+            ]);
+            return {
+              managed: normalizeProjectList(managed),
+              joined: normalizeProjectList(joined)
+            };
+          });
+          return respond(200, data);
+        } catch (error) {
+          return failure(error);
+        }
+      });
+
+      // 面板：某个项目下的全部任务
+      ctx.http.route("GET", "/project-tasks", async (request) => {
+        try {
+          const projectId = text(request.query.projectId);
+          if (!projectId) return respond(400, { error: "缺少 projectId" });
+          const page = Math.max(1, asPositiveInt(request.query.page, 1));
+          const size = Math.min(100, Math.max(1, asPositiveInt(request.query.size, 20)));
+          // 任务看板接口：{projectId, type:"4"}，返回按状态分组的全部任务（不分页）。
+          const data = await session.authorized((token) =>
+            client.statusBulletin(
+              {
+                projectId,
+                type: "4",
+                ...(text(request.query.productId) ? { productId: text(request.query.productId) } : {}),
+                ...(text(request.query.projectModuleId)
+                  ? { projectModuleId: text(request.query.projectModuleId) }
+                  : {}),
+                ...(text(request.query.code) ? { code: text(request.query.code) } : {})
+              },
+              { token }
+            )
+          );
+          const statuses = text(request.query.tasksStatus)
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean);
+          const priority = text(request.query.priority);
+          const keyword = text(request.query.name).toLowerCase();
+          const items = normalizeProjectTasks(data).filter((row) => {
+            if (statuses.length && !statuses.includes(String(row.status ?? ""))) return false;
+            if (priority && row.priority !== priority) return false;
+            if (keyword) {
+              const haystack = `${row.code} ${row.name}`.toLowerCase();
+              if (!haystack.includes(keyword)) return false;
+            }
+            return true;
+          });
+          const start = (page - 1) * size;
+          return respond(200, {
+            page,
+            size,
+            total: items.length,
+            items: items.slice(start, start + size)
+          });
+        } catch (error) {
+          return failure(error);
+        }
+      });
+    }
 
     ctx.http.route("GET", "/mine", async (request) => {
       try {

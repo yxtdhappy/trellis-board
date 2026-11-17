@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "插件子进程协议、manifest、生命周期、store/HTTP 边界"}
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "team 与 standalone 的运行时边界"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "新增 /api/plugins 路由的输入校验与错误结构"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证命令与测试基线"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "改 schema/API 时需同步的跨层契约"}
+{"file": ".trellis/tasks/11-16-team-plugin-core/research/weint-witops-project-space.md", "reason": "参考项目空间的接口映射与任务筛选参数"}
+{"file": ".trellis/tasks/11-16-team-plugin-core/design.md", "reason": "表结构、actor 协议、权限矩阵与分阶段方案"}

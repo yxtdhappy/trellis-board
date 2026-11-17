@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WitOps 任务</title>
+    <link rel="stylesheet" href="/api/plugins/witops-core/app/panel/app.css" />
+  </head>
+  <body class="team-panel">
+    <header class="head">
+      <div>
+        <h1>WitOps 任务</h1>
+        <p id="meta" class="muted">加载中…</p>
+      </div>
+      <div class="actions">
+        <span id="auth-chip" class="chip">未登录</span>
+        <button id="logout" class="ghost" type="button" hidden>退出</button>
+      </div>
+    </header>
+
+    <form id="login" class="login" hidden>
+      <div class="login-title">先登录 WitOps 账号</div>
+      <label>账号<input id="account" type="text" autocomplete="username" required /></label>
+      <label
+        >密码<input id="password" type="password" autocomplete="current-password" required
+      /></label>
+      <button id="login-submit" type="submit">登录</button>
+      <span id="login-hint" class="muted">账号密码只用于换取这次访问，不会保存。</span>
+    </form>
+
+    <div id="banner" class="error" hidden></div>
+
+    <section id="workspace" class="team-workspace" hidden>
+      <div class="team-toolbar">
+        <div class="combo" id="project-combo">
+          <span id="project-label" class="combo-label">项目</span>
+          <div class="combo-control">
+            <input
+              id="project-input"
+              type="text"
+              role="combobox"
+              autocomplete="off"
+              spellcheck="false"
+              aria-labelledby="project-label"
+              aria-autocomplete="list"
+              aria-expanded="false"
+              aria-controls="project-list"
+              placeholder="搜索项目"
+            />
+            <ul
+              id="project-list"
+              class="combo-list"
+              role="listbox"
+              aria-labelledby="project-label"
+              hidden
+            ></ul>
+          </div>
+        </div>
+        <button id="reload" class="ghost" type="button">刷新</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>编号</th>
+              <th>标题</th>
+              <th>状态</th>
+              <th>优先级</th>
+              <th>负责人</th>
+              <th>截止日期</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <p id="empty" class="empty" hidden>这个项目暂时没有任务</p>
+      </div>
+      <div class="team-pager">
+        <button id="prev" class="ghost" type="button" disabled>上一页</button>
+        <span id="page-label" class="muted"></span>
+        <button id="next" class="ghost" type="button" disabled>下一页</button>
+      </div>
+    </section>
+
+    <script src="/api/plugins/witops-core/app/panel/team.js"></script>
+  </body>
+</html>

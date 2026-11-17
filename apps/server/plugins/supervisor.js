@@ -380,6 +380,10 @@ export class PluginSupervisor {
     autoDisableLimit = AUTO_DISABLE_LIMIT,
     timeoutOverrides = {},
     now = nowIso,
+    mode = 'standalone',
+    actorContext = null,
+    userConfigProvider = null,
+    sessionResolver = null,
   }) {
     this.db = db
     this.appDir = appDir
@@ -408,6 +412,10 @@ export class PluginSupervisor {
     this.autoDisableLimit = autoDisableLimit
     this.timeoutOverrides = timeoutOverrides
     this.now = now
+    this.mode = mode === 'team' ? 'team' : 'standalone'
+    this.actorContext = actorContext
+    this.userConfigProvider = userConfigProvider
+    this.sessionResolver = sessionResolver
     this.plugins = new Map()
     this.capabilities = new Map()
     this.eventSequence = 0
@@ -439,6 +447,23 @@ export class PluginSupervisor {
   }
 
   /**
+   * team 模式的装载入口：条目来自 `plugin_registry`，不读 plugins.json。
+   * 与 load() 共用后面的 manifest 检查与 capability 解析，保证两套模式的插件视图一致。
+   */
+  async loadFromEntries(entries) {
+    this.plugins.clear()
+    for (const entry of entries) {
+      this.plugins.set(entry.id, this.createEntry(entry, []))
+    }
+    for (const state of this.plugins.values()) {
+      this.inspectManifest(state)
+    }
+    this.resolveCapabilities()
+    this.resolveRootPaths()
+    return this.list()
+  }
+
+  /**
    * 重新读取 plugins.json 与 secrets 文件，按 id 增量应用变化。
    *
    * - 运行中的插件配置变化：先 plugin/configure 热更新，入口/启动参数变化或热更新失败时重启子进程；
@@ -448,6 +473,14 @@ export class PluginSupervisor {
    * 手动 POST /api/plugins/reload 与调用方都走这里；并发调用复用同一个 promise。
    */
   async reloadConfig({ reason = 'manual' } = {}) {
+    if (this.mode === 'team') {
+      const error = appError(
+        ERROR_CODES.RELOAD_REQUIRES_RESTART,
+        '团队版不支持热重载插件，请重启服务',
+      )
+      error.httpStatus = 409
+      throw error
+    }
     if (this.stopping) {
       return { ok: false, reason, error: '插件运行时正在停止', changed: [] }
     }
@@ -512,7 +545,13 @@ export class PluginSupervisor {
         this.plugins.set(entry.id, created)
         this.inspectManifest(created)
         result.added.push(entry.id)
-        touched.push({ state: created, previous: null, entryChanged: true, configChanged: false, spawnChanged: false })
+        touched.push({
+          state: created,
+          previous: null,
+          entryChanged: true,
+          configChanged: false,
+          spawnChanged: false,
+        })
         continue
       }
 
@@ -1017,6 +1056,7 @@ export class PluginSupervisor {
           apiVersion: HOST_API_VERSION,
           hostVersion: this.hostVersion,
           pluginId: state.id,
+          mode: this.mode,
           config: state.config,
           permissions: state.manifest.permissions,
           dataDir: this.dataDir,
@@ -1438,12 +1478,15 @@ export class PluginSupervisor {
       case 'run/start': {
         const taskKey = String(params.taskKey ?? '').trim()
         if (!taskKey) throw invalidParams('run/start 缺少 taskKey')
+        const actor = this.mode === 'team' ? this.requireActor(state, params) : null
         const started = this.store.startRun({
           pluginId: state.id,
           pluginVersion: state.manifest?.version ?? null,
           taskKey,
           request: params.request ?? null,
           status: 'running',
+          userId: actor?.userId ?? null,
+          teamId: actor?.activeTeamId ?? null,
         })
         if (started.started) {
           this.publish('run.started', {
@@ -1473,26 +1516,46 @@ export class PluginSupervisor {
         return this.emitPluginEvent(state, params)
       case 'event/publish':
         return this.emitPluginEvent(state, params)
-      case 'store/get':
-        return {
-          value: this.store.getState(state.id, String(params.key ?? '')),
-        }
+      case 'store/get': {
+        const scope = this.storeScope(state, params)
+        return { value: this.store.getState(state.id, scope.key(String(params.key ?? ''))) }
+      }
       case 'store/set': {
-        const value = this.store.setState(state.id, String(params.key ?? ''), params.value ?? null)
+        const scope = this.storeScope(state, params)
+        const value = this.store.setState(
+          state.id,
+          scope.key(String(params.key ?? '')),
+          params.value ?? null,
+        )
         return { value }
       }
-      case 'store/delete':
-        return { deleted: this.store.deleteState(state.id, String(params.key ?? '')) }
-      case 'store/list':
-        return {
-          entries: this.store.listState(state.id, String(params.prefix ?? '')),
+      case 'store/delete': {
+        const scope = this.storeScope(state, params)
+        return { deleted: this.store.deleteState(state.id, scope.key(String(params.key ?? ''))) }
+      }
+      case 'store/list': {
+        const scope = this.storeScope(state, params)
+        return { entries: this.store.listState(state.id, scope.key(String(params.prefix ?? ''))) }
+      }
+      case 'userConfig/get': {
+        if (this.mode !== 'team') {
+          throw appError(ERROR_CODES.NOT_FOUND, 'standalone 模式不支持用户级插件配置')
         }
+        const actor = this.requireActor(state, params)
+        return { config: this.userConfigProvider?.(actor.userId, state.id) ?? {} }
+      }
       case 'secrets/get': {
+        if (this.mode === 'team') {
+          throw appError(ERROR_CODES.NOT_FOUND, '团队版不向插件下发密钥')
+        }
         const key = this.requirePluginSecretKey(state, params)
         const { refs } = loadSecretsFile(this.secretsFile, { keyFile: this.secretsKeyFile })
         return { key, value: refs.has(key) ? refs.get(key) : null }
       }
       case 'secrets/set': {
+        if (this.mode === 'team') {
+          throw appError(ERROR_CODES.NOT_FOUND, '团队版不向插件下发密钥')
+        }
         const key = this.requirePluginSecretKey(state, params)
         const value = params.value
         if (typeof value !== 'string' || value === '') {
@@ -1503,6 +1566,9 @@ export class PluginSupervisor {
         return { key, stored: true, encrypted: true }
       }
       case 'secrets/delete': {
+        if (this.mode === 'team') {
+          throw appError(ERROR_CODES.NOT_FOUND, '团队版不向插件下发密钥')
+        }
         const key = this.requirePluginSecretKey(state, params)
         const result = deleteSecretRef(this.secretsFile, key)
         this.audit(state, 'secrets', { ok: true, action: 'delete', key, deleted: result.deleted })
@@ -1561,15 +1627,13 @@ export class PluginSupervisor {
     const key = String(params?.key ?? '').trim()
     if (!key) throw invalidParams('缺少 secret key')
     if (!key.startsWith(`${state.id}/`)) {
-      throw appError(
-        ERROR_CODES.PERMISSION_DENIED,
-        `插件只能访问自己的 secret：${state.id}/...`,
-      )
+      throw appError(ERROR_CODES.PERMISSION_DENIED, `插件只能访问自己的 secret：${state.id}/...`)
     }
     return key
   }
 
-  requireRun(state, runId) {    const run = this.store.getRun(String(runId))
+  requireRun(state, runId) {
+    const run = this.store.getRun(String(runId))
     if (!run) throw appError(ERROR_CODES.NOT_FOUND, `run 不存在: ${runId}`)
     if (run.pluginId !== state.id) {
       throw appError(ERROR_CODES.PERMISSION_DENIED, '不能更新其它插件的 run')
@@ -1868,9 +1932,42 @@ export class PluginSupervisor {
     return id ? (this.plugins.get(id) ?? null) : null
   }
 
+  /**
+   * team 模式下插件端回调必须带 actorRef；standalone 返回 null。
+   * 抛错即拒绝，绝不"退回默认身份"，否则多用户隔离会静默失效。
+   */
+  requireActor(state, params) {
+    if (this.mode !== 'team') return null
+    if (!this.actorContext) {
+      throw appError(ERROR_CODES.PERMISSION_DENIED, 'team 插件运行时缺少 actor 上下文')
+    }
+    return this.actorContext.resolve({ ref: params.actorRef, pluginId: state.id })
+  }
+
+  /**
+   * team 下 store 按用户分区：`user:<userId>:<key>`。
+   * standalone 保持原样，避免破坏既有插件数据。
+   */
+  storeScope(state, params) {
+    if (this.mode !== 'team') return { key: (key) => key }
+    const actor = this.requireActor(state, params)
+    const prefix = `user:${actor.userId}:`
+    return { key: (key) => `${prefix}${key}` }
+  }
+
   async forwardHttp(
     state,
-    { method, path: requestPath, headers = {}, body = '', public: isPublic = false },
+    {
+      method,
+      path: requestPath,
+      headers = {},
+      body = '',
+      public: isPublic = false,
+      actorRef = null,
+      // 面板静态资源（HTML/JS/CSS）本身不含用户数据，但要能被没有 Cookie 的 iframe 取到：
+      // sandbox 没有 allow-same-origin，子资源请求是跨源无凭据的。
+      anonymous = false,
+    },
   ) {
     if (state.status !== 'running' || !state.process) {
       throw appError(ERROR_CODES.DISABLED, `插件未运行: ${state.id}`)
@@ -1892,16 +1989,36 @@ export class PluginSupervisor {
         throw error
       }
     }
-    return state.process.request(
-      'http/request',
-      {
-        method,
-        path: requestPath,
-        headers,
-        body,
-      },
-      this.timeoutFor('http/request'),
-    )
+    const payload = {
+      method,
+      path: requestPath,
+      headers,
+      body,
+    }
+    if (this.mode === 'team') {
+      if (!actorRef && !anonymous) {
+        const error = appError(ERROR_CODES.PERMISSION_DENIED, 'team 模式请求缺少 actor 上下文')
+        error.httpStatus = 401
+        throw error
+      }
+      if (!actorRef) {
+        return state.process.request('http/request', payload, this.timeoutFor('http/request'))
+      }
+      payload.actorRef = actorRef
+      const actor = this.actorContext?.resolve({ ref: actorRef, pluginId: state.id })
+      if (actor) {
+        payload.actor = actor
+        const credential = this.sessionResolver?.(actor.userId, state.id) ?? null
+        payload.credential = credential
+          ? {
+              token: credential.token,
+              account: credential.account ?? null,
+              expiresAt: new Date(credential.expiresAt).toISOString(),
+            }
+          : null
+      }
+    }
+    return state.process.request('http/request', payload, this.timeoutFor('http/request'))
   }
 
   publicToken(state) {

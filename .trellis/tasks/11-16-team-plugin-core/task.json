@@ -1,0 +1,51 @@
+{
+  "id": "team-plugin-core",
+  "name": "team-plugin-core",
+  "title": "团队版插件机制 team-plugin-core",
+  "description": "让 team 模式支持插件：插件信息与每用户配置落库、随服务启动一次性加载、按用户注入 actor 上下文与凭据，先打通 witops-core 读路径（按管理员的 witops 账号查询项目下全部任务）。",
+  "status": "in_progress",
+  "dev_type": "feature",
+  "scope": "server",
+  "package": "server",
+  "priority": "P1",
+  "creator": "kyf",
+  "assignee": "kyf",
+  "createdAt": "2026-11-16",
+  "completedAt": null,
+  "branch": "codex/trellis-board-team",
+  "base_branch": "main",
+  "worktree_path": "/opt/app/work/github/trellis-board/.worktree/trellis-board-team",
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "apps/server/database.js",
+    "apps/server/plugins/supervisor.js",
+    "apps/server/plugins/sdk.js",
+    "apps/server/plugins/store.js",
+    "apps/server/team/http.js",
+    "apps/server/team/permissions.js",
+    "apps/server/team/plugins/registry.js",
+    "apps/server/team/plugins/settings.js",
+    "apps/server/team/plugins/policy.js",
+    "apps/server/team/plugins/actors.js",
+    "apps/server/team/plugins/host.js",
+    "apps/server/team/plugins/http.js",
+    "plugins/witops-core/index.js",
+    "plugins/witops-core/auth.js",
+    "plugins/witops-core/witops-client.js",
+    "plugins/witops-core/panel/app.js",
+    "apps/web/src/pages/admin"
+  ],
+  "notes": "参考项目空间：tmp/project/weint-witops-web（findByMaster / findByParticipant / projectUserRole / task/task/page）。本期只做读路径，写入留 P3。",
+  "meta": {
+    "phases": [
+      "P0 基础设施",
+      "P1 witops-core 读路径",
+      "P2 绑定与管理",
+      "P3 写入"
+    ]
+  }
+}

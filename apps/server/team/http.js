@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -34,6 +35,8 @@ import {
 import { ERROR_CODES, errorPayload, teamError } from './errors.js'
 import { createGitlessBoardService } from './gitless-board-service.js'
 import { CAPABILITIES, roleCanWrite } from './permissions.js'
+import { createTeamPluginHost } from './plugins/host.js'
+import { createTeamPluginRoutes } from './plugins/http.js'
 import { createSyncAgentService } from './sync-agent-service.js'
 import { createTaskCommandService } from './task-command-service.js'
 import { createTaskSnapshotBackupService } from './task-snapshot-backup.js'
@@ -60,10 +63,22 @@ import {
 import { TASK_SNAPSHOT_MAX_TRANSPORT_BYTES } from '@trellis-board/shared/task-snapshot.js'
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
+const appRoot = path.resolve(serverDir, '../../..')
+
+function readHostVersion() {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'))
+    return String(manifest.version || '0.0.0')
+  } catch {
+    return '0.0.0'
+  }
+}
 const defaultPublicDir = path.resolve(serverDir, '../public')
 const MAX_JSON_BYTES = 64 * 1024
 const MAX_LIVE_BATCH_BYTES = TASK_SNAPSHOT_MAX_TRANSPORT_BYTES
 const EXECUTION_WIP_LIMIT = 2
+const TEAM_PLUGIN_ALLOWLIST = ['witops-core']
+
 const DEFAULT_REFRESH_CONCURRENCY = 4
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 function requireObservedBranchName(body) {
@@ -151,8 +166,14 @@ function assertHost(request) {
 }
 
 function assertJsonWrite(request) {
+  // DELETE 常常不带 body（例如退出登录），此时没有 content-type 是合法的；
+  // 只有真的带了 body 才要求 JSON。
+  const hasBody =
+    Number(request.headers['content-length'] || 0) > 0 ||
+    Boolean(request.headers['transfer-encoding'])
+  const requiresJson = request.method !== 'DELETE' || hasBody
   const contentType = String(request.headers['content-type'] || '').toLowerCase()
-  if (!/^application\/json\s*(?:;|$)/.test(contentType)) {
+  if (requiresJson && !/^application\/json\s*(?:;|$)/.test(contentType)) {
     throw teamError(415, ERROR_CODES.JSON_REQUIRED, '写请求必须使用 application/json')
   }
   const origin = requestOrigin(request)
@@ -416,6 +437,7 @@ function createRequestHandler({
   agentEvents,
   boardEvents,
   desktopAuth,
+  pluginRoutes,
   publicDir,
   logger,
   isClosing,
@@ -1404,6 +1426,15 @@ function createRequestHandler({
     if (url.pathname === '/api/auth/register') {
       throw teamError(404, ERROR_CODES.NOT_FOUND, '接口不存在')
     }
+    // 面板静态资源必须先于登录校验：sandbox iframe 没有 same-origin，
+    // 它自己去取 HTML/JS/CSS 时不带 Cookie，带鉴权就永远是 401。
+    if (
+      request.method === 'GET' &&
+      url.pathname.startsWith('/api/plugins/') &&
+      url.pathname.includes('/app/panel')
+    ) {
+      if (await pluginRoutes(request, response, url, null)) return
+    }
     if (WRITE_METHODS.has(request.method)) assertJsonWrite(request)
     if (await handleAuth(request, response, url)) return
     if (await handleWorkspaceTemplate(request, response, url)) return
@@ -1419,13 +1450,14 @@ function createRequestHandler({
         '首次登录或密码重置后必须先修改密码',
       )
     }
-    // v1 只支持 standalone：team 模式不加载插件，管理端点保持可探测但为空。
-    if (url.pathname === '/api/plugins' || url.pathname.startsWith('/api/plugins/')) {
-      if (request.method === 'GET' && url.pathname === '/api/plugins') {
-        sendJson(response, 200, { disabled: true, plugins: [], mode: 'team' })
-        return
-      }
-      throw teamError(404, ERROR_CODES.NOT_FOUND, 'team 模式不加载插件')
+    if (
+      url.pathname === '/api/plugins' ||
+      url.pathname.startsWith('/api/plugins/') ||
+      url.pathname === '/api/panels' ||
+      url.pathname === '/api/events'
+    ) {
+      if (await pluginRoutes(request, response, url, actor)) return
+      throw teamError(404, ERROR_CODES.NOT_FOUND, '接口不存在')
     }
     if (await handleAdmin(request, response, url)) return
     if (await handleDesktop(request, response, url, actor)) return
@@ -1644,6 +1676,21 @@ export async function createTeamRuntime({
       agents: agentService,
       executionWipLimit: EXECUTION_WIP_LIMIT,
     })
+    const pluginHost = createTeamPluginHost({
+      db,
+      appDir: appRoot,
+      dataDir,
+      pluginsDir: path.join(dataDir, 'plugins'),
+      bundledPluginsDir: path.join(appRoot, 'plugins'),
+      // 团队版目前只开放 witops-core：其他插件是 standalone 的运维工具，
+      // 放进团队实例只会让管理页出现一堆永远用不上的开关。
+      pluginAllowlist: TEAM_PLUGIN_ALLOWLIST,
+      hostVersion: readHostVersion(),
+      repositoriesProvider: () =>
+        db.prepare('SELECT id, name, path FROM repositories ORDER BY position, name').all(),
+      logger,
+    })
+    const pluginRoutes = createTeamPluginRoutes({ host: pluginHost, logger })
     const requestHandler = createRequestHandler({
       config,
       db,
@@ -1656,6 +1703,7 @@ export async function createTeamRuntime({
       agentEvents,
       boardEvents,
       desktopAuth: desktopAuthService,
+      pluginRoutes,
       publicDir,
       logger,
       isClosing: () => closing,
@@ -1682,10 +1730,14 @@ export async function createTeamRuntime({
         const port = address && typeof address === 'object' ? address.port : config.port
         taskSnapshotBackups.start()
         requestHandler.setStartedAt(new Date().toISOString())
-        logger.warn('team 模式不加载插件', {
-          reason: 'v1 只支持 standalone；插件路由返回空列表',
-          url: `http://${config.bindHost || '0.0.0.0'}:${port}`,
-        })
+        try {
+          const pluginState = await pluginHost.start()
+          logger.info('team 插件已装载', {
+            plugins: pluginState.plugins.map((plugin) => `${plugin.id}:${plugin.status}`),
+          })
+        } catch (error) {
+          logger.error('team 插件装载失败', { error: error.message })
+        }
         logger.info('Trellis Team Board 已启动', {
           url: `http://${config.bindHost || '0.0.0.0'}:${port}`,
           bindHost: config.bindHost || '0.0.0.0',
@@ -1699,6 +1751,7 @@ export async function createTeamRuntime({
         agentEvents.close()
         taskSnapshotBackups.stop()
         await closeServer(server)
+        await pluginHost.stop().catch(() => {})
         await taskSpaceIndex.close().catch(() => {})
         db.close()
         throw error
@@ -1713,6 +1766,7 @@ export async function createTeamRuntime({
       agentEvents.close()
       taskSnapshotBackups.stop()
       await closeServer(server)
+      await pluginHost.stop().catch(() => {})
       await taskSpaceIndex.close()
       db.close()
     }
