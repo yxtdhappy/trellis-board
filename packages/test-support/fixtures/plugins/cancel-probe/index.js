@@ -1,5 +1,5 @@
 import fs from 'node:fs'
-import { createPlugin } from '../../../../../apps/server/plugins/sdk.js'
+import { createPlugin } from '../../../../../packages/server/plugins/sdk.js'
 
 export default createPlugin({
   name: 'cancel-probe',

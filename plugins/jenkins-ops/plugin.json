@@ -14,7 +14,15 @@
     "store",
     "secrets:read",
     "secrets:write",
-    "capabilities:provide"
+    "capabilities:provide",
+    "capabilities:call"
+  ],
+  "requires": [
+    {
+      "name": "accounts.credentials",
+      "version": "^1.0.0",
+      "methods": ["credential.resolve"]
+    }
   ],
   "provides": [
     {
@@ -84,6 +92,8 @@
     "timeoutMs": 20000,
     "retries": 1,
     "maxLogLines": 2000,
-    "repositoryId": ""
+    "repositoryId": "",
+    "credentialSource": "auto",
+    "accountSystemId": "jenkins"
   }
 }

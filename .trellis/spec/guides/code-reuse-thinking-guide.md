@@ -17,25 +17,25 @@ rg -n "TASK_SLUG_PATTERN|normalizeTaskSlug|slugifyTaskTitle" server public tests
 
 | 逻辑 | 当前所有者 | 使用方式 |
 | --- | --- | --- |
-| 任务 slug 规则 | [public/slug.js](../../../public/slug.js) | 前端和后端都从该模块导入；[apps/server/actions.js](../../../apps/server/actions.js) 用同一规则做最终校验 |
+| 任务 slug 规则 | [public/slug.js](../../../public/slug.js) | 前端和后端都从该模块导入；[packages/server/actions.js](../../../packages/server/actions.js) 用同一规则做最终校验 |
 | Markdown 渲染与 HTML 转义 | [public/markdown.js](../../../public/markdown.js) | 页面通过 `renderMarkdown()` 渲染产物；不要再复制一套 Markdown 解析或链接白名单 |
 | 归档排序与时间格式 | [public/archive-sort.js](../../../public/archive-sort.js) | 归档视图直接调用，不在 `app.js` 重写比较器 |
-| 应用路径常量 | [apps/server/config.js](../../../apps/server/config.js) | 其他后端模块导入 `dataDir`、数据库和旧 JSON 路径常量 |
-| SQLite 连接与事务 | [apps/server/database.js](../../../apps/server/database.js) | 业务模块使用 `getDefaultDatabase()` 和 `withTransaction()`，不跨 Worker 传连接 |
-| 仓库白名单存储 | [apps/server/repositories.js](../../../apps/server/repositories.js) | 项目增删统一走 `createRepositoryStore()`，不要在路由里直接写表 |
-| 扫描缓存与看板状态 | [apps/server/persistence.js](../../../apps/server/persistence.js) | HTTP 层通过 facade 读写，不在路由里重复拼 SQL |
-| 任务扫描与阶段推导 | [apps/server/loader.js](../../../apps/server/loader.js) | Worker、详情接口和测试都调用同一扫描实现 |
-| 人工阶段持久化 | [apps/server/metadata.js](../../../apps/server/metadata.js) | 只通过 `getManualRecord()`、`setManualStage()` 读写 |
-| 任务定位与路径校验 | [apps/server/task-location.js](../../../apps/server/task-location.js) | 详情和所有任务写接口复用 `resolveTaskLocation()` |
-| 计划字段、标签、保存视图和事件 | [apps/server/execution-store.js](../../../apps/server/execution-store.js) | 通过 execution store 事务写入，不在路由中拼 SQL |
-| 执行摘要与注意力投影 | [apps/server/execution-projection.js](../../../apps/server/execution-projection.js) | Board 一次批量读取，详情复用同一投影语义 |
+| 应用路径常量 | [packages/server/config.js](../../../packages/server/config.js) | 其他后端模块导入 `dataDir`、数据库和旧 JSON 路径常量 |
+| SQLite 连接与事务 | [packages/server/database.js](../../../packages/server/database.js) | 业务模块使用 `getDefaultDatabase()` 和 `withTransaction()`，不跨 Worker 传连接 |
+| 仓库白名单存储 | [packages/server/repositories.js](../../../packages/server/repositories.js) | 项目增删统一走 `createRepositoryStore()`，不要在路由里直接写表 |
+| 扫描缓存与看板状态 | [packages/server/persistence.js](../../../packages/server/persistence.js) | HTTP 层通过 facade 读写，不在路由里重复拼 SQL |
+| 任务扫描与阶段推导 | [packages/server/loader.js](../../../packages/server/loader.js) | Worker、详情接口和测试都调用同一扫描实现 |
+| 人工阶段持久化 | [packages/server/metadata.js](../../../packages/server/metadata.js) | 只通过 `getManualRecord()`、`setManualStage()` 读写 |
+| 任务定位与路径校验 | [packages/server/task-location.js](../../../packages/server/task-location.js) | 详情和所有任务写接口复用 `resolveTaskLocation()` |
+| 计划字段、标签、保存视图和事件 | [packages/server/execution-store.js](../../../packages/server/execution-store.js) | 通过 execution store 事务写入，不在路由中拼 SQL |
+| 执行摘要与注意力投影 | [packages/server/execution-projection.js](../../../packages/server/execution-projection.js) | Board 一次批量读取，详情复用同一投影语义 |
 | 组合筛选与标签输入 | [public/execution-filter.js](../../../public/execution-filter.js) | 页面与 Node 测试共用，不在渲染函数中复制匹配规则 |
 
 ## 哪些内容目前重复
 
 阶段定义同时存在于后端模块、Worker 和前端 lane 映射中。它属于已知技术债，不是鼓励继续复制的模式。当前修改阶段时必须把这些消费者作为一个变更单元。
 
-Board 的人工阶段、仓库、执行扩展数据和缓存状态已统一交给 SQLite。目标仓库 `task.json` 的原子文件写仍由 [apps/server/actions.js](../../../apps/server/actions.js) 负责；不要把数据库事务误用于跨文件系统提交。
+Board 的人工阶段、仓库、执行扩展数据和缓存状态已统一交给 SQLite。目标仓库 `task.json` 的原子文件写仍由 [packages/server/actions.js](../../../packages/server/actions.js) 负责；不要把数据库事务误用于跨文件系统提交。
 
 ## 复用判断
 

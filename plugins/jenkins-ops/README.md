@@ -105,7 +105,9 @@ curl -b /tmp/jk http://ci.example.com/api/json          # 200 还是 403
 
 - 左侧 job 列表（按 `jobFilter` 过滤，支持文件夹里嵌套的 job）
 - 顶部连接状态（Jenkins 版本 / 未配置 / 连接异常，悬停看原因）
-- 选中 job 后：状态、最近构建、下次构建号、参数表单（字符串 / 布尔 / 下拉）
+- 选中 job 后：状态、最近构建、下次构建号、参数表单（字符串 / 布尔 / 下拉）；
+  动态参数（如 List Git Branches 的 `Branch`）用统一账号面板提供的可搜索下拉框
+  `TrellisCombo`（`/plugin-ui/v1/combo.js`）
 - 操作：开始构建、中止最近构建、控制台日志（最后 500 行）、产物列表（复制下载链接）
 - 队列：查看排队项、取消
 - 构建中每 4 秒自动刷新一次
@@ -137,7 +139,7 @@ curl -b /tmp/jk http://ci.example.com/api/json          # 200 还是 403
 | GET | `/artifact?job=&number=&path=` | 产物内容（base64） |
 
 > **保留路径陷阱**：宿主把 `/api/plugins/<id>/(start|stop|logs|runs|audit)` 当作插件管理端点
-> （见 `apps/server/plugins/runtime.js` 的 `pluginAdminMatch`）。插件自己的 `POST /stop`
+> （见 `packages/server/plugins/runtime.js` 的 `pluginAdminMatch`）。插件自己的 `POST /stop`
 > 会被静默解释成「停止插件并返回 200」。所以中止构建的路径是 `/build/stop`，
 > 同理不要占用 `start`、`logs`、`runs`、`audit`。
 

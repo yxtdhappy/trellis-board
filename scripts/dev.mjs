@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import path from 'node:path'
 
 const rootDir = path.resolve(import.meta.dirname, '..')
-const webDir = path.join(rootDir, 'apps', 'web')
+const webDir = path.join(rootDir, 'packages', 'web')
 const children = []
 let stopping = false
 
@@ -29,5 +29,5 @@ function run(args, cwd) {
 process.on('SIGINT', () => stop(0))
 process.on('SIGTERM', () => stop(0))
 
-run(['--watch', path.join('apps', 'server', 'index.js')], rootDir)
+run(['--watch', path.join('packages', 'server', 'index.js')], rootDir)
 run([path.join(rootDir, 'node_modules', 'vite', 'bin', 'vite.js')], webDir)

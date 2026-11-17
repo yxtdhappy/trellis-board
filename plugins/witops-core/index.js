@@ -49,6 +49,8 @@ const DEFAULTS = {
   timeoutMs: 20_000,
   keepRaw: false,
   agentId: null,
+  credentialSource: "auto",
+  accountSystemId: "witops",
   credentials: { mode: "password", account: "", password: "", token: "" },
   session: { persist: true },
   poll: { enabled: false, intervalMs: 1_800_000 }
@@ -83,11 +85,62 @@ export default createPlugin({
     "runs:read",
     "runs:write",
     "secrets:read",
-    "secrets:write"
+    "secrets:write",
+    "capabilities:call"
   ],
 
   async onStart(ctx, rawConfig) {
     const config = normalizeConfig({ ...rawConfig, ...(ctx.config ?? {}) });
+    let accountCredential = null;
+    let accountsError = "";
+
+    // 统一账号优先：成功则覆盖 config.credentials，失败按 credentialSource 回退本地。
+    // 先算结果再一次性提交，避免事件回包期间状态短暂变空。
+    let refreshSeq = 0;
+    async function refreshAccounts({ reason = "startup" } = {}) {
+      const seq = ++refreshSeq;
+      let next = null;
+      let error = "";
+      if (config.credentialSource !== "local") {
+        try {
+          const result = await ctx.capabilities.call("accounts.credentials", "credential.resolve", {
+            system: config.accountSystemId
+          });
+          next = {
+            accountId: text(result?.accountId),
+            account: text(result?.username),
+            password: text(result?.password),
+            baseUrl: text(result?.baseUrl)
+          };
+        } catch (caught) {
+          error = caught?.message || String(caught);
+        }
+      }
+      if (seq !== refreshSeq) return;
+      accountCredential = next;
+      accountsError = error;
+      if (!next) {
+        if (error) {
+          ctx.log.info("统一账号不可用，按配置回退", {
+            source: config.credentialSource,
+            error,
+            reason
+          });
+        }
+        return;
+      }
+      config.credentials.account = next.account;
+      config.credentials.password = next.password;
+      config.credentials.mode = "password";
+      if (next.baseUrl) config.baseUrl = next.baseUrl;
+      ctx.log.info("统一账号凭据已生效", {
+        system: config.accountSystemId,
+        account: next.accountId,
+        reason
+      });
+    }
+
+    await refreshAccounts();
     const client = createWitopsClient(config);
     const teamMode = ctx.mode === "team";
     // team 下 token 由宿主按用户保管，插件通过 ctx.currentCredential() 读取；
@@ -100,6 +153,12 @@ export default createPlugin({
     let dispatch = null;
     let storyIndexCache = null;
     let storyIndexPromise = null;
+
+    // 统一账号变更后重算凭据（下次 ensureToken 用新密码登录），并丢掉旧缓存。
+    ctx.events.on("accounts-core/changed", async () => {
+      await refreshAccounts({ reason: "accounts-changed" });
+      readCache.clear();
+    });
 
     function cached(key) {
       const entry = readCache.get(key);
@@ -563,7 +622,13 @@ export default createPlugin({
     }
 
     async function authStatus() {
-      return { ...session.status(), hasStoredPassword: await session.hasStoredPassword() };
+      return {
+        ...session.status(),
+        hasStoredPassword: await session.hasStoredPassword(),
+        credentialSource: accountCredential ? "accounts" : "local",
+        accountSystemId: config.accountSystemId,
+        accountsError: accountsError || null
+      };
     }
 
     ctx.capabilities.register("witops.workitems", {
@@ -760,6 +825,19 @@ export default createPlugin({
 
     ctx.http.route("GET", "/auth", async () => respond(200, await authStatus()));
 
+    // 供统一账号小组件使用：只暴露凭据来源与账号名，不暴露密码。
+    ctx.http.route("GET", "/credentials", async () =>
+      respond(200, {
+        source: accountCredential ? "accounts" : "local",
+        systemId: config.accountSystemId,
+        accountId: accountCredential?.accountId ?? "",
+        username: text(config.credentials.account),
+        hasPassword:
+          Boolean(text(config.credentials.password)) || Boolean(await session.hasStoredPassword()),
+        error: accountsError || ""
+      })
+    );
+
     ctx.http.route("POST", "/login", async (request) => {
       const body = request.json() ?? {};
       if (!text(body.account) || !text(body.password)) {
@@ -852,6 +930,8 @@ export default createPlugin({
       return respond(200, {
         configured: Boolean(config.baseUrl),
         authMode: session.mode,
+        credentialSource: accountCredential ? "accounts" : "local",
+        accountsError: accountsError || null,
         userId: auth.userId,
         cacheTtlMs: config.cacheTtlMs,
         repositoryId: config.repositoryId || null,

@@ -941,29 +941,29 @@ Trellis Board 当前产品基线满足以下条件时视为可用：
 | --- | --- |
 | [README](../README.md) | 产品定位、standalone/team、数据来源、当前范围、限制和非目标 |
 | [团队版运维手册](./team-operations.md) | 部署边界、容量、项目接入、同步、冲突、分支、备份与故障处置 |
-| [Web 说明](../apps/web/README.md) | 页面入口、前端职责和交互数据边界 |
-| [Windows 客户端说明](../apps/desktop/README.md) | 单 EXE、环境门、本地项目接入、单 Agent、Tasks-only 同步、分支门禁、权限和分发 |
-| [BoardPage.tsx](../apps/web/src/pages/board/BoardPage.tsx) | 主导航、项目栏、流水线、团队视角、归档、插件和任务操作区域 |
-| [ExecutionHeader.tsx](../apps/web/src/features/board/ExecutionHeader.tsx) | 个人执行视图、团队范围、搜索和组合筛选 |
-| [FlowSignals.tsx](../apps/web/src/features/board/FlowSignals.tsx) | WIP、阻断、条件缺口和焦点建议 |
-| [AttentionQueue.tsx](../apps/web/src/features/board/AttentionQueue.tsx) | 注意力队列和排序 |
-| [TaskCard.tsx](../apps/web/src/features/board/TaskCard.tsx) | 任务卡、阶段条、关注信号和复制任务名 |
-| [TaskDetailDialog.tsx](../apps/web/src/features/board/dialogs/TaskDetailDialog.tsx) | 阶段证据、条件、计划字段、依赖、产物和派发 |
-| [CreateTaskDialog.tsx](../apps/web/src/features/board/dialogs/CreateTaskDialog.tsx) | 创建并派发任务 |
-| [TaskOperationList.tsx](../apps/web/src/features/board/TaskOperationList.tsx) | 创建/改派操作项 |
-| [ProjectRail.tsx](../apps/web/src/components/layout/ProjectRail.tsx) | 项目/分支导航、关联、监听、补同步、归属和解绑 |
-| [ProjectOnboardingDialog.tsx](../apps/web/src/features/board/dialogs/ProjectOnboardingDialog.tsx) | 首次接入、初始化、推送确认、预检和差异 |
-| [ControlApp.tsx](../apps/web/src/desktop/ControlApp.tsx) | 首次差异、文件冲突、归属和同步错误 |
-| [AdminPage.tsx](../apps/web/src/pages/admin/AdminPage.tsx) | 项目管理、账号、团队、设备和系统审计入口 |
-| [LoginPage.tsx](../apps/web/src/pages/login/LoginPage.tsx) | Team 登录、首登改密和无公开注册的产品表达 |
-| [PluginsView.tsx](../apps/web/src/features/plugins/PluginsView.tsx) | 插件状态、启停和日志 |
-| [permissions.js](../apps/server/team/permissions.js) | 系统管理员、团队管理员、项目角色和能力校验 |
-| [task-space-service.js](../apps/server/team/task-space-service.js) | 团队访问、项目成员、任务空间授权和 Agent 绑定可见性 |
-| [gitless-board-service.js](../apps/server/team/gitless-board-service.js) | 当前 Board 查询、任务编辑、接受任务和团队范围偏好 |
-| [task-space-index.js](../apps/server/team/task-space-index.js) | Team 同步状态、分支查询和任务空间索引 |
-| [team/http.js](../apps/server/team/http.js) | Team 路由和插件禁用边界 |
-| [execution-filter.js](../apps/web/src/lib/execution-filter.js) | 13 阶段和 9 个内置执行视图 |
-| [task-view.ts](../apps/web/src/features/board/task-view.ts) | 泳道、推荐、进度、关注原因和任务显示模型 |
+| [Web 说明](../packages/web/README.md) | 页面入口、前端职责和交互数据边界 |
+| [Windows 客户端说明](../packages/desktop/README.md) | 单 EXE、环境门、本地项目接入、单 Agent、Tasks-only 同步、分支门禁、权限和分发 |
+| [BoardPage.tsx](../packages/web/src/pages/board/BoardPage.tsx) | 主导航、项目栏、流水线、团队视角、归档、插件和任务操作区域 |
+| [ExecutionHeader.tsx](../packages/web/src/features/board/ExecutionHeader.tsx) | 个人执行视图、团队范围、搜索和组合筛选 |
+| [FlowSignals.tsx](../packages/web/src/features/board/FlowSignals.tsx) | WIP、阻断、条件缺口和焦点建议 |
+| [AttentionQueue.tsx](../packages/web/src/features/board/AttentionQueue.tsx) | 注意力队列和排序 |
+| [TaskCard.tsx](../packages/web/src/features/board/TaskCard.tsx) | 任务卡、阶段条、关注信号和复制任务名 |
+| [TaskDetailDialog.tsx](../packages/web/src/features/board/dialogs/TaskDetailDialog.tsx) | 阶段证据、条件、计划字段、依赖、产物和派发 |
+| [CreateTaskDialog.tsx](../packages/web/src/features/board/dialogs/CreateTaskDialog.tsx) | 创建并派发任务 |
+| [TaskOperationList.tsx](../packages/web/src/features/board/TaskOperationList.tsx) | 创建/改派操作项 |
+| [ProjectRail.tsx](../packages/web/src/components/layout/ProjectRail.tsx) | 项目/分支导航、关联、监听、补同步、归属和解绑 |
+| [ProjectOnboardingDialog.tsx](../packages/web/src/features/board/dialogs/ProjectOnboardingDialog.tsx) | 首次接入、初始化、推送确认、预检和差异 |
+| [ControlApp.tsx](../packages/web/src/desktop/ControlApp.tsx) | 首次差异、文件冲突、归属和同步错误 |
+| [AdminPage.tsx](../packages/web/src/pages/admin/AdminPage.tsx) | 项目管理、账号、团队、设备和系统审计入口 |
+| [LoginPage.tsx](../packages/web/src/pages/login/LoginPage.tsx) | Team 登录、首登改密和无公开注册的产品表达 |
+| [PluginsView.tsx](../packages/web/src/features/plugins/PluginsView.tsx) | 插件状态、启停和日志 |
+| [permissions.js](../packages/server/team/permissions.js) | 系统管理员、团队管理员、项目角色和能力校验 |
+| [task-space-service.js](../packages/server/team/task-space-service.js) | 团队访问、项目成员、任务空间授权和 Agent 绑定可见性 |
+| [gitless-board-service.js](../packages/server/team/gitless-board-service.js) | 当前 Board 查询、任务编辑、接受任务和团队范围偏好 |
+| [task-space-index.js](../packages/server/team/task-space-index.js) | Team 同步状态、分支查询和任务空间索引 |
+| [team/http.js](../packages/server/team/http.js) | Team 路由和插件禁用边界 |
+| [execution-filter.js](../packages/web/src/lib/execution-filter.js) | 13 阶段和 9 个内置执行视图 |
+| [task-view.ts](../packages/web/src/features/board/task-view.ts) | 泳道、推荐、进度、关注原因和任务显示模型 |
 | [trellis-agent-tools.js](../packages/shared/trellis-agent-tools.js) | 当前支持的编码 Agent 探测规则 |
 | [desktop-realtime-sync.md](../.trellis/spec/backend/desktop-realtime-sync.md) | Tasks-only 快照、CAS、SSE、命令、冲突和分支边界 |
 | [task-ownership-and-conflict-idempotency.md](../.trellis/spec/backend/task-ownership-and-conflict-idempotency.md) | 任务级归属、pending conflict 和幂等边界 |

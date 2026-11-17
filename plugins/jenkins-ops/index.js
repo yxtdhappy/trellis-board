@@ -31,6 +31,8 @@ const DEFAULTS = {
   retries: 1,
   maxLogLines: 2_000,
   repositoryId: '',
+  credentialSource: 'auto',
+  accountSystemId: 'jenkins',
 }
 
 function text(value) {
@@ -79,6 +81,10 @@ function normalizeConfig(raw = {}) {
     retries: Math.max(0, Number(config.retries ?? DEFAULTS.retries) || 0),
     maxLogLines: positiveInt(config.maxLogLines, DEFAULTS.maxLogLines),
     repositoryId: text(config.repositoryId),
+    credentialSource: ['auto', 'accounts', 'local'].includes(config.credentialSource)
+      ? config.credentialSource
+      : DEFAULTS.credentialSource,
+    accountSystemId: text(config.accountSystemId) || DEFAULTS.accountSystemId,
   }
 }
 
@@ -158,6 +164,7 @@ export default createPlugin({
     'secrets:read',
     'secrets:write',
     'capabilities:provide',
+    'events',
   ],
 
   async onStart(ctx) {
@@ -166,11 +173,62 @@ export default createPlugin({
     let password = await resolvePassword(ctx, config)
     let client = null
     let clientError = null
+    let accountCredential = null
+    let accountsError = ''
+
+    // 解析统一账号；失败只记录原因，auto 模式静默回退到本地配置。
+    // 先算出结果再一次性提交，避免事件回包期间状态短暂变空。
+    let refreshSeq = 0
+    async function refreshAccounts({ reason = 'startup' } = {}) {
+      const seq = ++refreshSeq
+      if (config.credentialSource === 'local') {
+        if (seq === refreshSeq) {
+          accountCredential = null
+          accountsError = ''
+        }
+        return
+      }
+      let next = null
+      let error = ''
+      try {
+        const result = await ctx.capabilities.call('accounts.credentials', 'credential.resolve', {
+          system: config.accountSystemId,
+        })
+        next = {
+          accountId: text(result?.accountId),
+          username: text(result?.username),
+          password: text(result?.password),
+          baseUrl: text(result?.baseUrl),
+        }
+      } catch (caught) {
+        error = caught?.message || String(caught)
+      }
+      if (seq !== refreshSeq) return
+      accountCredential = next
+      accountsError = error
+      if (next) {
+        ctx.log.info('统一账号凭据已生效', {
+          system: config.accountSystemId,
+          account: next.accountId,
+          reason,
+        })
+      } else {
+        ctx.log.info('统一账号不可用，按配置回退', {
+          source: config.credentialSource,
+          error,
+          reason,
+        })
+      }
+    }
+
+    function effectivePassword() {
+      return accountCredential?.password || password
+    }
 
     function currentSettings() {
       return {
-        baseUrl: text(stored.baseUrl ?? config.baseUrl),
-        username: text(stored.username ?? config.username),
+        baseUrl: text(accountCredential?.baseUrl || (stored.baseUrl ?? config.baseUrl)),
+        username: text(accountCredential?.username || (stored.username ?? config.username)),
         verifyTls: stored.verifyTls === undefined ? config.verifyTls : stored.verifyTls !== false,
         jobFilter: Array.isArray(stored.jobFilter)
           ? normalizeJobFilter(stored.jobFilter)
@@ -195,7 +253,11 @@ export default createPlugin({
         return null
       }
       try {
-        client = createJenkinsClient({ ...settings, password, logger: ctx.log })
+        client = createJenkinsClient({
+          ...settings,
+          password: effectivePassword(),
+          logger: ctx.log,
+        })
         return client
       } catch (error) {
         clientError = error
@@ -212,14 +274,19 @@ export default createPlugin({
 
     async function statusPayload() {
       const settings = currentSettings()
+      const activePassword = effectivePassword()
       const payload = {
         plugin: PLUGIN_ID,
         version: PLUGIN_VERSION,
         configured: Boolean(settings.baseUrl),
         baseUrl: settings.baseUrl,
         username: settings.username,
-        hasPassword: Boolean(password),
-        authMode: password ? 'password' : 'none',
+        hasPassword: Boolean(activePassword),
+        authMode: activePassword ? 'password' : 'none',
+        credentialSource: accountCredential ? 'accounts' : activePassword ? 'local' : 'none',
+        accountSystemId: config.accountSystemId,
+        accountId: accountCredential?.accountId ?? '',
+        accountsError: accountsError || null,
         verifyTls: settings.verifyTls,
         jobFilter: settings.jobFilter,
         views: settings.views,
@@ -264,6 +331,23 @@ export default createPlugin({
       guard(async () => respond(200, await statusPayload())),
     )
 
+    // 供统一账号小组件使用：只暴露来源与账号名，不暴露密码。
+    ctx.http.route(
+      'GET',
+      '/credentials',
+      guard(async () => {
+        const activePassword = effectivePassword()
+        return respond(200, {
+          source: accountCredential ? 'accounts' : activePassword ? 'local' : 'none',
+          systemId: config.accountSystemId,
+          accountId: accountCredential?.accountId ?? '',
+          username: currentSettings().username,
+          hasPassword: Boolean(activePassword),
+          error: accountsError || '',
+        })
+      }),
+    )
+
     ctx.http.route(
       'POST',
       '/settings',
@@ -283,6 +367,7 @@ export default createPlugin({
         if (body.views !== undefined) next.views = normalizeList(body.views)
         stored = next
         await ctx.store.set(SETTINGS_STORE_KEY, stored)
+        await refreshAccounts()
         client = null
         ctx.log.info('Jenkins 设置已更新', {
           baseUrl: text(next.baseUrl ?? config.baseUrl),
@@ -305,6 +390,7 @@ export default createPlugin({
         }
         await ctx.secrets.set(SECRET_PASSWORD_KEY, value)
         password = value
+        await refreshAccounts()
         client = null
         ctx.log.info('Jenkins 账号密码已更新（表单登录模式）')
         return respond(200, { ok: true, status: await statusPayload() })
@@ -317,6 +403,7 @@ export default createPlugin({
       guard(async () => {
         await ctx.secrets.delete(SECRET_PASSWORD_KEY)
         password = ''
+        await refreshAccounts()
         client = null
         return respond(200, { ok: true, status: await statusPayload() })
       }),
@@ -519,11 +606,20 @@ export default createPlugin({
         ),
     })
 
+    await refreshAccounts()
     rebuild()
+
+    // 统一账号变更后立即重算凭据，面板下次拉 /credentials 就能看到新来源。
+    ctx.events.on('accounts-core/changed', async () => {
+      await refreshAccounts({ reason: 'accounts-changed' })
+      client = null
+      clientError = null
+      void statusPayload().catch(() => {})
+    })
     ctx.log.info('jenkins-ops 已启动', {
       baseUrl: currentSettings().baseUrl || '(未配置)',
       username: currentSettings().username || '(未配置)',
-      hasPassword: Boolean(password),
+      hasPassword: Boolean(effectivePassword()),
       jobFilter: currentSettings().jobFilter,
       views: currentSettings().views,
     })

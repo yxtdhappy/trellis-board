@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "插件清单/permissions/capability/store/secrets/http 路由与面板约定"}
+{"file": ".trellis/spec/backend/plugin-testing.md", "reason": "L3 插件测试必须走 createHarness 真实入口"}

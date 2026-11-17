@@ -1,0 +1,50 @@
+/**
+ * 面板设计令牌（v1）。
+ *
+ * 这里的值是兜底：与宿主 packages/web/src/index.css 的 shadcn 变量保持一致。
+ * 宿主在 trellis:init / 主题切换时会把真实的计算值下发，bridge.js 会写到 :root 的
+ * 同名 --tb-* 上，所以宿主换主题或配色，面板自动跟随，不需要改插件。
+ *
+ * 约定：面板只用 --tb-*，不要在自己的 CSS 里重复定义颜色。
+ */
+:root {
+  color-scheme: light;
+
+  --tb-bg: oklch(1 0 0);
+  --tb-fg: oklch(0.145 0 0);
+  --tb-card: oklch(1 0 0);
+  --tb-card-fg: oklch(0.145 0 0);
+  --tb-border: oklch(0.922 0 0);
+  --tb-accent: oklch(0.491 0.27 292.581);
+  --tb-accent-fg: oklch(0.969 0.016 293.756);
+  --tb-muted: oklch(0.97 0 0);
+  --tb-muted-fg: oklch(0.556 0 0);
+  --tb-danger: oklch(0.577 0.245 27.325);
+  --tb-danger-fg: oklch(0.985 0 0);
+  --tb-ok: #15803d;
+  --tb-warn: #b45309;
+
+  --tb-radius: 0.625rem;
+  --tb-radius-sm: 0.375rem;
+  --tb-font:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --tb-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --tb-bg: oklch(0.145 0 0);
+  --tb-fg: oklch(0.985 0 0);
+  --tb-card: oklch(0.205 0 0);
+  --tb-card-fg: oklch(0.985 0 0);
+  --tb-border: oklch(1 0 0 / 12%);
+  --tb-accent: oklch(0.62 0.24 292.7);
+  --tb-accent-fg: oklch(0.985 0 0);
+  --tb-muted: oklch(0.269 0 0);
+  --tb-muted-fg: oklch(0.708 0 0);
+  --tb-danger: oklch(0.704 0.191 22.216);
+  --tb-danger-fg: oklch(0.145 0 0);
+  --tb-ok: #4ade80;
+  --tb-warn: #fbbf24;
+}

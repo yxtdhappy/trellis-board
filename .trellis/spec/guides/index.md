@@ -12,7 +12,7 @@
 | 修改路径规范化、`taskKey`、白名单仓库或写操作 | [跨层契约](./cross-layer-thinking-guide.md) |
 | 修改桌面 Tauri 命令、远程 capability、窗口导航或本地登录页跳转 | [桌面 Tauri 命令与导航](../desktop/tauri-commands/index.md) |
 | 新增常量、解析函数、校验函数或前端工具模块 | [代码复用指南](./code-reuse-thinking-guide.md) |
-| 同时修改 `apps/server/`、`public/`、`packages/test-support/` | 两份指南都读 |
+| 同时修改 `packages/server/`、`public/`、`packages/test-support/` | 两份指南都读 |
 
 ## 快速触发条件
 
@@ -22,12 +22,12 @@
 - 改 `taskKey`、`projectId`、`relativeDir`、`repoPath` 的含义或格式。
 - 改 `/api/board`、`/api/task`、`/api/tasks/stage` 的字段或错误结构。
 - 改 SQLite schema、旧 JSON 迁移、扫描缓存结构或 `SCAN_SCHEMA_VERSION`。
-- 在 `public/` 新增一个纯函数模块，同时准备让 `apps/server/` 复用。
+- 在 `public/` 新增一个纯函数模块，同时准备让 `packages/server/` 复用。
 
 ## 验证基线
 
 ```powershell
-npm test
+yarn test
 rg -n "STAGE_ORDER|STAGE_IDS|STAGE_LANES|SCAN_SCHEMA_VERSION|taskKey" server public tests
 rg -n "DatabaseSync|withTransaction|getRepositories|readScanCache|runTaskPython" server tests
 ```

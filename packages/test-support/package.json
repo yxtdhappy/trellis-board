@@ -1,6 +1,6 @@
 {
   "name": "@trellis-board/test-support",
-  "version": "0.4.24",
+  "version": "0.4.27",
   "private": true,
   "type": "module",
   "exports": {

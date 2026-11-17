@@ -1,4 +1,4 @@
-import { createPlugin } from '../../../../../apps/server/plugins/sdk.js'
+import { createPlugin } from '../../../../../packages/server/plugins/sdk.js'
 
 export default createPlugin({
   name: 'cap-consumer',

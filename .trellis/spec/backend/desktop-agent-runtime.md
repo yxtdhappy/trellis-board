@@ -1,7 +1,7 @@
 # 桌面 Agent 运行契约（进程内 Rust）
 
-**何时阅读**：修改 `apps/desktop/src-tauri/src/agent/**`、`agent_service.rs`、`runtime_commands.rs`、
-`apps/desktop/src-tauri/src/main.rs` 的 Tauri 命令、`apps/web/src/desktop/**` 本地登录/环境门/控制窗口 UI，
+**何时阅读**：修改 `packages/desktop/src-tauri/src/agent/**`、`agent_service.rs`、`runtime_commands.rs`、
+`packages/desktop/src-tauri/src/main.rs` 的 Tauri 命令、`packages/web/src/desktop/**` 本地登录/环境门/控制窗口 UI，
 或 Windows 打包脚本时。
 
 桌面客户端是单进程 Tauri 应用：Agent（心跳、SSE、任务快照同步、任务命令）全部在
@@ -18,32 +18,32 @@
 | `agent/process.rs` | `agent/process.js` | 受控子进程、环境白名单、超时、进程树结束 |
 | `agent/git.rs` | `agent/git-sync.js` | git 参数白名单、status 解析、状态标记检测 |
 | `agent/onboarding.rs` | `agent/project-onboarding.js` | inspect / initialize / checkPush / preflight / attach |
-| `agent/trellis_cli.rs` | `apps/desktop/sidecar/trellis-runtime.js` | 执行 `node <cli.js> init ...`，不含安装逻辑 |
+| `agent/trellis_cli.rs` | `packages/desktop/sidecar/trellis-runtime.js` | 执行完整 `init` 或 stdin Agent-only 配置，不含安装逻辑 |
 | `agent/env.rs` | 新增 | 环境门：Node/Trellis 检查、npmmirror 下载、npm 私有前缀安装 |
-| `agent/device.rs` | `apps/desktop/sidecar/desktop-device.js` | 登录、登出、入网、撤销、本地关联读取 |
-| `agent/association.rs` | `apps/desktop/sidecar/desktop-association.js` | associate / preflight 编排与错误文案 |
+| `agent/device.rs` | `packages/desktop/sidecar/desktop-device.js` | 登录、登出、入网、撤销、本地关联读取 |
+| `agent/association.rs` | `packages/desktop/sidecar/desktop-association.js` | associate / preflight 编排与错误文案 |
 | `agent/task_sync.rs` | `agent/task-snapshot-sync.js` | 任务快照 cursor、上传/拉取、冲突与首次同步 |
 | `agent/task_command.rs` | `agent/task-command.js` | create_task / assign_task / sync_branch / refresh_status |
 | `agent/runtime.rs` | `agent/index.js` | 心跳 15s、SSE 事件循环、命令重试、state.json 状态机 |
 | `agent/control.rs` | — | 控制事件队列（上限 32、按 key 去重、过期与 suppression） |
-| `agent_service.rs` | `apps/desktop/sidecar/main.js` | 进程内生命周期、Tauri 命令实现、控制窗口显隐 |
+| `agent_service.rs` | `packages/desktop/sidecar/main.js` | 进程内生命周期、Tauri 命令实现、控制窗口显隐 |
 
-根目录 `agent/`（Node CLI）与 `apps/desktop/sidecar/` 都已删除；右列只用于追溯协议版本、错误码和数据
+根目录 `agent/`（Node CLI）与 `packages/desktop/sidecar/` 都已删除；右列只用于追溯协议版本、错误码和数据
 格式的来源，不是可修改的代码路径。行为以 Rust 模块和 `cargo test` 为准。
 
 ## 2. 必须保持的契约
 
-- 协议版本固定 `AGENT_PROTOCOL_VERSION = 3`；错误码集合固定在 `apps/desktop/src-tauri/src/agent/protocol.rs`，
+- 协议版本固定 `AGENT_PROTOCOL_VERSION = 3`；错误码集合固定在 `packages/desktop/src-tauri/src/agent/protocol.rs`，
   服务端据此判定可重试与终止。
 - Tauri 命令返回前端可直接读取的扁平对象：`check_pending_project_push`、`preflight_pending_project`、
   `associate_pending_project`、`list_local_associations` 都不允许再套 `{ ok, result }` 中间层；
   只有 `inspect_project` / `initialize_project` 使用 `{ ok, project }`，由前端
-  `apps/web/src/lib/project-inspection.js` 的 `normalizeProjectInspection` 解包。
+  `packages/web/src/lib/project-inspection.js` 的 `normalizeProjectInspection` 解包。
 - 控制事件只允许 `{"type": ..., ...}` 结构，类型：`initial_sync_review`、`task_file_conflict`、
   `task_sync_error`。已删除的旧 JS Agent 里 `live-sync.js` 从未装配（其 `fetchLiveFiles`/`preflightLiveChanges` 在 JS 侧
   无任何实现，服务端也无对应路由），属死代码，Rust 不再移植实时文件同步。
 - 超时预算：登录/登出/关联列表 15s；inspect-project / 实时决策 60s；首次同步与备份恢复 120s；
-  check-push / preflight 240s；associate / initialize-project 600s；`trellis init` 210s；
+  check-push / preflight 240s；associate / initialize-project 600s；`trellis init` 与 Agent-only 配置 210s；
   `task.py` 150s；npm 安装 300s。
 - 认证被撤销（401 或 `AUTH_REVOKED`）时停止循环、写 `state.json`，不静默重试。
 - 本地改动只经 `TaskSync` 的 notify watcher 上传：监听 `<repo>/.trellis`，只关心 `.trellis/tasks/**`，
@@ -154,13 +154,17 @@
   每项 trim 后 1..=40 字节且只含 `[a-z0-9-]`，超出上限返回错误而不是截断。
 - 复用 `agent_service::inspect_project` / `initialize_project` 的增量语义：不新增 CLI 入口、
   不重启进程内同步、不 commit/push、不修改服务端项目或任务数据；只读 approved 绑定同样可用。
+- 已有 `.trellis/tasks` 且只缺所选 Agent 时必须走内嵌 Agent-only helper；只有缺少 `.trellis` 或
+  `.trellis/tasks` 才执行完整 `trellis init`。helper 通过 stdin 复用包的 `configurePlatform`、
+  `setWriteMode("skip")` 和 `initializeHashes(..., { merge: true })`，不得写 spec、workflow、任务或根文件；
+  模块缺失、未知平台、Python 检测或平台配置失败必须失败关闭，不得退回完整初始化。
 
 ## 7. 本地前端（环境门、登录页、控制窗口）
 
-- 源码是 `apps/web/desktop/{index,control}.html` 与 `apps/web/src/desktop/**`（React 19 + TypeScript +
-  Tailwind v4 + `apps/web/src/components/ui`），由 `apps/web/vite.desktop.config.ts` 输出到 `apps/desktop/ui/`；
-  `apps/desktop/ui/` 被 `.gitignore` 忽略，是构建产物，不得手写页面或脚本。
-- `npm run build:desktop` 必须先于 `cargo tauri build`；`cargo tauri build` 只打包
+- 源码是 `packages/web/desktop/{index,control}.html` 与 `packages/web/src/desktop/**`（React 19 + TypeScript +
+  Tailwind v4 + `packages/web/src/components/ui`），由 `packages/web/vite.desktop.config.ts` 输出到 `packages/desktop/ui/`；
+  `packages/desktop/ui/` 被 `.gitignore` 忽略，是构建产物，不得手写页面或脚本。
+- `yarn build:desktop` 必须先于 `cargo tauri build`；`cargo tauri build` 只打包
   `frontendDist = ../ui` 的现有产物，CI 在 `windows.yml` 的 `Build desktop UI` 步骤构建。
 - `control.html` 必须保留 `Content-Security-Policy` meta（`script-src 'self'` / `style-src 'self'`）；
   构建产物不得包含内联 `<script>`/`style`，Vite 用 `base: './'` 输出相对资源路径。
@@ -170,6 +174,18 @@
   `live_control_initial`、`live_control_dismiss`。
 - 事件类型、review 选项和动作字符串以 Rust 侧为准（`use-server`/`overwrite-server`/
   `save-local-copy`，`mode` 为 `safe`/`review`），前端不得新增动作值。
+- 主窗口手动唤起待处理控制事件只能调 `live_control_show`（`capabilities/board-local-association.json`），
+  它只 `show` 已存在的队列项，无待处理返回 `false`；控制窗口自身不得调用该命令。
+- dev 模式：根 `yarn desktop:dev` 运行 `scripts/desktop-dev.mjs`，并发启动三件事：`node --watch
+  packages/server/index.js`（4317 本地服务端）、`packages/web` 根目录的 Vite（默认 5200，看板 UI + HMR +
+  `/api` 代理，端口可用 `TRELLIS_BOARD_DEV_PORT` 覆盖）、`cargo tauri dev`（自身 `beforeDevCommand` 再起
+  `vite.desktop.config.ts` 的 5199 登录壳）。登录页服务器地址必须填 `http://localhost:5200`（或
+  `127.0.0.1:5200`），它才是看板来源；5199 只服务 `desktop/index.html`，手填会得到空白页。
+  `navigation::is_dev_page` 仅在 `debug_assertions` 下按 `devUrl` 同源放行导航与 `ensure_local_caller`，
+  release 构建必须仍只认本地页面。dev 下 `stripDevCsp` 插件移除 `control.html` 的 CSP meta
+  （`style-src 'self'` 会挡掉 Vite 注入的内联样式），release 构建必须保留该 meta。
+- `packages/web/vite.config.ts` 的 `/api` 代理必须 `changeOrigin: false`：服务端 CSRF 校验要求请求
+  `Origin` 与 `Host` 同源，改写 Host 会让所有写请求 403 `CSRF_REJECTED`。
 - 桌面本地状态统一使用 `desktop-state-changed`，payload 为
   `{ "topics": ["associations" | "sidecar"] }`，短窗口内合并发射。Board 远程窗口 capability 必须
   显式允许 `core:event:allow-listen` 与 `core:event:allow-unlisten`。
@@ -180,20 +196,20 @@
 ## 8. 打包与验证
 
 - `tauri.conf.json` 不得出现 `bundle.externalBin` 或 `bundle.resources`（trellis-runtime）。
-- `apps/desktop/` 下不得出现 `sidecar/`、`package.json`、`package-lock.json`、`binaries/`、`resources/`。
+- `packages/desktop/` 下不得出现 `sidecar/`、`package.json`、`package-lock.json`、`binaries/`、`resources/`。
 - `package-portable.ps1` 只打包 `trellis-board-client.exe` + `VERSION.txt` + `SHA256SUMS.txt` + 使用说明。
 - 客户端只分发绿色 ZIP：`bundle.active = false`，保留 `bundle.icon`（tauri-build 靠它写 EXE 图标和版本资源），
   不得重新开启 `bundle.targets`、`installerHooks`、`install.ps1`/`uninstall.ps1` 或 NSIS 工具缓存。
 - 分发出口：CI 上传 `trellis-board-desktop-windows` artifact，并在 `v*` tag 或手动触发带 `release_tag` 时
   把 zip + `.sha256` 作为 Release 资产上传；artifact 永远是外层 zip 包，需要裸文件时走 Release。
 - 版本号以仓库签入值为准（发版脚本写入）；CI 的 `Resolve release version` 取 `v<major>.<minor>.<patch>`，
-  `Stamp version from tag` 在构建前按 tag 兜底盖章 `apps/desktop/package.json`、
-  `apps/desktop/src-tauri/tauri.conf.json`、`apps/desktop/src-tauri/Cargo.toml`（`main.rs` 的
+  `Stamp version from tag` 在构建前按 tag 兜底盖章 `packages/desktop/package.json`、
+  `packages/desktop/src-tauri/tauri.conf.json`、`packages/desktop/src-tauri/Cargo.toml`（`main.rs` 的
   `env!("CARGO_PKG_VERSION")` 依赖它），不得手工改版本号。
-- 发版只走 `npm run release:desktop`（参数：空 = patch 递增，或 `patch`/`minor`/`major`/`x.y.z`，可加
+- 发版只走 `yarn release:desktop`（参数：空 = patch 递增，或 `patch`/`minor`/`major`/`x.y.z`，可加
   `--dry-run`）：校验工作区干净、HEAD 等于 `origin/main`、tag 不存在，把新版本写回
-  `apps/desktop/package.json`、`apps/desktop/src-tauri/tauri.conf.json`、`apps/desktop/src-tauri/Cargo.toml`、
-  `apps/desktop/src-tauri/Cargo.lock`，提交 `chore(release): <version>`，推 main 后再打注解 tag `v<version>`
+  `packages/desktop/package.json`、`packages/desktop/src-tauri/tauri.conf.json`、`packages/desktop/src-tauri/Cargo.toml`、
+  `packages/desktop/src-tauri/Cargo.lock`，提交 `chore(release): <version>`，推 main 后再打注解 tag `v<version>`
   并推送；不得手工改版本、手工 `git tag` 或直接 `gh release create`。CI 的盖章步骤只作兜底。
 - CI 缓存只能被「当前 ref 或默认分支」的 run 复用：tag 推送的 run 落在 `refs/tags/<tag>` 作用域，读不到
   `refs/heads/main` 的缓存（实测默认分支已是 main 仍报 `No cache found.`）。因此 `windows.yml` 里 tag 推送
@@ -203,6 +219,6 @@
   `Swatinem/rust-cache` 用 `save-if: ${{ github.ref == 'refs/heads/main' }}` 限定只由 main 写缓存，
   否则每次 tag 构建都会写出永不命中的 880 MB 副本。不得把 tag 推送改回直接构建。
 - 验证：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、
-  `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`（crate 只有 bin target，`--lib` 会报
-  `no library targets found`）、`npm test`、`cargo tauri build`（`target/release` 只有
+  `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`（crate 只有 bin target，`--lib` 会报
+  `no library targets found`）、`yarn test`、`cargo tauri build`（`target/release` 只有
   `trellis-board-client.exe`，无 `bundle/nsis/`）。

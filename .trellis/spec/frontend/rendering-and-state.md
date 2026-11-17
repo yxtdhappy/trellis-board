@@ -54,9 +54,12 @@
 - Tauri 桌面端通过 `desktop-state-changed` 的 `sidecar` 主题刷新只读 `desktop_sidecar_status`，
   按 `{ running, paused }` 显示真实后台同步状态；可见页面保留 10 秒兜底。普通浏览器没有
   `window.__TAURI__`，不显示本地关联和 sidecar 状态入口。
-- Tauri 项目行必须常驻展示关联状态：未关联、关联中、等待后台同步、正在同步已有任务、同步正常、
-  只读已关联或关联失效；`liveSyncStatus=error` 时显示同步异常并通过可见辅助文本或 `title`
+- Tauri 项目行必须常驻展示关联状态：未关联、关联中、等待后台同步、正在同步已有任务、等待确认任务差异、
+  同步正常、只读已关联或关联失效；`liveSyncStatus=error` 时显示同步异常并通过可见辅助文本或 `title`
   展示脱敏后的 `liveSyncError`。
+- `initialReviewPending=true` 时分支行显示“已关联 · 等待确认任务差异”并提供“确认差异”入口，点击调用
+  `live_control_show` 唤起控制窗口；此类分支不计入“正在同步任务”提示，改由独立提示说明确认后才会同步。
+  该状态在聚合优先级中介于 `error` 与 `syncing` 之间。
 - `liveSyncStatus=ready` 但 `deferredCount>0` 时必须显示“N 个本地任务未同步”，不能显示同步正常。
   可写关联提供显式确认后的补同步入口；只读关联不显示上传动作。补同步失败或冲突不得提示成功。
 - 项目栏父行状态只能读取该项目自身 `taskSpaces` 的关联，禁止回退到其他项目的
@@ -149,8 +152,8 @@
 
 - `TaskSpaceListenerState = online | inactive | unassociated | unknown_legacy | disabled`。
 - `taskCommandState(taskSpace, teamMode) -> { canSubmit, reason }`：
-  `apps/web/src/lib/team-client.js`。
-- `projectListenerView(taskSpace)`：`apps/web/src/lib/project-rail-association.js`。
+  `packages/web/src/lib/team-client.js`。
+- `projectListenerView(taskSpace)`：`packages/web/src/lib/project-rail-association.js`。
 - Tauri：`detach_local_association(taskSpaceId)`。
 
 ### 3. Contracts
@@ -161,6 +164,17 @@
   `unassociated`“无客户端关联”、`unknown_legacy`“旧客户端，监听状态未知”、`disabled`“已停用”。
 - “全部项目”也要展示逐分支监听摘要；普通浏览器不显示本地解绑操作。
 - 当前客户端 approved 且非 `detachPending` 时显示“不再同步此分支”，必须先二次确认。
+- 所有破坏性操作的二次确认统一走 `packages/web/src/components/ui/confirm-dialog.tsx` 的
+  `useConfirm()`（`ConfirmDialogProvider` 已在 `app/providers.tsx` 与控制窗口入口挂载）。
+  Tauri 客户端禁止 `window.confirm` / `window.alert`：`tauri-plugin-dialog` 覆盖后它们返回被拒绝的
+  Promise，条件判断恒为真值，用户从未看到确认却被直接执行。
+- 滚动条统一由 `packages/web/src/index.css` base 层的 `scrollbar-width: thin` +
+  `scrollbar-color: var(--border) transparent` 控制，不再逐组件迁移 `ScrollArea`。
+- `DialogBody` 用 `-mx-4 px-4 [scrollbar-gutter:stable_both-edges]`：负 margin 吃掉 `DialogContent`
+  的 `p-4` 把滚动条顶到卡片右边框，`px-4` 补偿内容内边距，双侧 `scrollbar-gutter` 保证内容左右留白
+  始终对称（有无滚动条都不跳动），与官方 scrollable content 示例同构。`DialogContent` 若自己改过
+  padding（如 `p-0`）或 `DialogBody` 自身是带背景的块（如插件日志），必须在调用处用 `mx-0` / `mx-4`
+  抵消负 margin，否则内容会被卡片裁掉或背景左右不对称。
 - `detachPending=true` 时禁用按钮并显示“服务端解绑待确认”；有 `lastError` 时显示真实原因，
   不得继续声称自动重试。
 - Team 模式零在线监听时禁用创建/改派；独立模式不受此门禁影响。监听详情入口仅对 `canManage` 显示。
@@ -188,9 +202,9 @@
 
 ### 6. Tests Required
 
-- `apps/web/test/project-rail-association.test.js`：五态、颜色语义、待确认错误、逐 taskSpace 独立。
-- `apps/web/test/team-web.test.js`：驼峰/下划线归一、零监听门禁和恢复。
-- `apps/desktop/test/*.test.js`：Tauri 命令、capability、`detachPending` 投影。
+- `packages/web/test/project-rail-association.test.js`：五态、颜色语义、待确认错误、逐 taskSpace 独立。
+- `packages/web/test/team-web.test.js`：驼峰/下划线归一、零监听门禁和恢复。
+- `packages/desktop/test/*.test.js`：Tauri 命令、capability、`detachPending` 投影。
 
 ### 7. Wrong vs Correct
 
@@ -282,7 +296,7 @@ const tasks = (teamPage?.tasks || []).map(teamRowToBoardTask)
 
 ## 主题
 
-- token 在 `apps/web/src/index.css`：`:root` 浅色、`.dark` 深色、`@theme inline` 暴露 utility。
+- token 在 `packages/web/src/index.css`：`:root` 浅色、`.dark` 深色、`@theme inline` 暴露 utility。
 - 首屏由三个 HTML 入口的内联脚本在 React 挂载前决定 `.dark` 类，避免闪烁。
 - 新增颜色一律使用 shadcn 语义 token；不要直接写 `#hex`、`bg-white`、`text-black`。
 - preset：`b3awTjpuKm`（mira / neutral / violet / indigo / Inter + Geist / radius default）。

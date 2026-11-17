@@ -5,7 +5,7 @@
 ### 1. Scope / Trigger
 
 - Trigger：修改 `agent/protocol.rs`、`agent/task_sync.rs`、`agent/task_command.rs` 的任务目录映射，
-  或修改 `task_sync_error` 控制事件和 `apps/web/src/desktop/ControlApp.tsx`。
+  或修改 `task_sync_error` 控制事件和 `packages/web/src/desktop/ControlApp.tsx`。
 - 目标：跨端只传相对任务目录，本机安全映射；不允许 Windows canonical 路径与普通绝对路径混用，
   也不允许控制窗口只显示裸 UUID。
 
@@ -64,7 +64,7 @@ pub fn resolve_task_dir_under(tasks_root: &Path, task_dir: &str) -> Option<PathB
   盘符、ADS、尾部空格/句点拒绝。
 - `agent/task_sync.rs`：临时仓库合法解析；非法删除保留哨兵目录；非法备份不创建 taskSpace 备份目录；
   错误事件包含项目/分支/taskDir 且不含 `repoPath`。
-- `apps/desktop/test/desktop-ui-build.test.js`：控制窗口使用项目/分支并保留 taskSpaceId 回退，
+- `packages/desktop/test/desktop-ui-build.test.js`：控制窗口使用项目/分支并保留 taskSpaceId 回退，
   源码契约不得重新引入 `"repoPath":` 或旧越界文案。
 
 ### 7. Wrong vs Correct

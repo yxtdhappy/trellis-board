@@ -2,50 +2,28 @@ const state = {
   data: null,
   taskKey: null,
   sending: false,
-  theme: 'light',
 }
 
-const pending = new Map()
-let sequence = 0
+const bridge = window.TrellisBridge.create()
+const { chip } = window.TrellisUI
 
 function byId(id) {
   return document.getElementById(id)
 }
 
-function rpc(method, path, body) {
-  const id = `r${++sequence}`
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject })
-    window.parent.postMessage({ type: 'trellis:request', id, method, path, body }, '*')
-  })
-}
-
-window.addEventListener('message', (event) => {
-  const message = event.data
-  if (!message || typeof message !== 'object') return
-  if (message.type === 'trellis:init') {
-    state.theme = message.theme || 'light'
-    document.documentElement.dataset.theme = state.theme
-    void load()
-    return
-  }
-  if (message.type === 'trellis:event') {
-    const name = message.event?.name || ''
-    if (name.startsWith('acp-dispatch/session.')) {
-      if (name === 'acp-dispatch/session.started') setStatus('运行中…')
-      if (name === 'acp-dispatch/session.finished') setStatus('已完成')
-      void load()
-    }
-    return
-  }
-  if (message.type === 'trellis:response') {
-    const entry = pending.get(message.id)
-    if (!entry) return
-    pending.delete(message.id)
-    if (message.ok) entry.resolve(message.data)
-    else entry.reject(new Error(message.data?.error || `请求失败（${message.status}）`))
-  }
+bridge.onInit(() => {
+  void load()
 })
+
+bridge.onEvent((event) => {
+  const name = event?.name || ''
+  if (!name.startsWith('acp-dispatch/session.')) return
+  if (name === 'acp-dispatch/session.started') setStatus('运行中…')
+  if (name === 'acp-dispatch/session.finished') setStatus('已完成')
+  void load()
+})
+
+const CHIP_KIND = { succeeded: 'ok', failed: 'danger', timeout: 'danger', running: 'warn' }
 
 function setStatus(text) {
   byId('prompt-status').textContent = text || ''
@@ -93,7 +71,8 @@ function renderList() {
     const row = document.createElement('div')
     row.className = 'row'
     const title = span('title', taskLabel(taskKey))
-    const statusNode = span(`muted status-${status}`, status)
+    const statusKind = CHIP_KIND[status]
+    const statusNode = statusKind ? chip(status, statusKind) : span('tb-muted tb-small', status)
     row.append(title, statusNode)
     const sessionNode = span(
       'muted',
@@ -170,7 +149,7 @@ function renderDetail() {
 
 async function load() {
   try {
-    state.data = await rpc('GET', '/panel/data')
+    state.data = await bridge.get('/panel/data')
     byId('agent-label').textContent = state.data.configured ? state.data.agent || 'agent' : '未配置'
     if (!state.taskKey) {
       const first = (state.data.runs || [])[0]?.taskKey || (state.data.sessions || [])[0]?.taskKey
@@ -195,7 +174,7 @@ async function send() {
   setStatus('已发送，等待 agent…')
   renderDetail()
   try {
-    await rpc('POST', '/panel/prompt', { taskKey: state.taskKey, text })
+    await bridge.post('/panel/prompt', { taskKey: state.taskKey, text })
     input.value = ''
     setStatus('已完成')
   } catch (error) {
@@ -210,7 +189,7 @@ async function cancel() {
   if (!state.taskKey) return
   setStatus('取消中…')
   try {
-    await rpc('POST', '/panel/cancel', { taskKey: state.taskKey })
+    await bridge.post('/panel/cancel', { taskKey: state.taskKey })
     setStatus('已请求取消')
   } catch (error) {
     setStatus(error.message)
@@ -220,4 +199,3 @@ async function cancel() {
 byId('send').addEventListener('click', () => void send())
 byId('cancel').addEventListener('click', () => void cancel())
 byId('refresh').addEventListener('click', () => void load())
-window.parent.postMessage({ type: 'trellis:ready' }, '*')

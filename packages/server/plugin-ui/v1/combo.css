@@ -1,0 +1,154 @@
+/**
+ * 插件面板共用下拉框（TrellisCombo / <tb-combo>），由宿主 /plugin-ui/v1/ 提供。
+ * 只依赖 tokens.css 的 --tb-* 设计令牌。
+ */
+.combo {
+  position: relative;
+  display: flex;
+  margin-top: 4px;
+  background: var(--tb-card);
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-sm);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+/* 输入框和按钮都不再自带边框，整组共用外面那一圈，圆角才不会互相错开 */
+.combo .combo-input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  margin-top: 0;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--tb-radius-sm) 0 0 var(--tb-radius-sm);
+  color: var(--tb-fg);
+  font: inherit;
+}
+
+.combo .combo-input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* 焦点由整个组合一起承担，避免只有输入框半边发光 */
+.combo:focus-within {
+  border-color: var(--tb-accent);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--tb-accent) 22%, transparent);
+}
+
+.combo .combo-toggle {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--tb-border);
+  border-radius: 0 var(--tb-radius-sm) var(--tb-radius-sm) 0;
+  color: var(--tb-muted-fg);
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+/* 下箭头用两条边画：1.5px 描边比字体里的 ▾ 清楚，也不受字体/字号影响 */
+.combo .combo-toggle::before {
+  content: '';
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.15s ease;
+}
+
+.combo .combo-toggle:focus {
+  outline: none;
+}
+
+.combo .combo-toggle:hover:not(:disabled) {
+  background: var(--tb-border);
+  color: var(--tb-fg);
+}
+
+.combo .combo-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 展开时按钮常亮，明确表示当前处于打开状态 */
+.combo.is-open .combo-toggle {
+  background: var(--tb-accent);
+  border-left-color: var(--tb-accent);
+  color: var(--tb-bg);
+}
+
+.combo.is-open .combo-toggle::before {
+  transform: translateY(1px) rotate(225deg);
+}
+
+.combo-menu {
+  position: fixed;
+  z-index: 40;
+  top: 0;
+  left: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--tb-bg);
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.combo-item {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  overflow: hidden;
+  padding: 6px 8px;
+  border-radius: var(--tb-radius-sm);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.combo-item > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 键盘/悬停高亮：实心底色，文字用底色反色，明暗主题都对得上 */
+.combo-item:hover {
+  background: color-mix(in oklch, var(--tb-accent) 16%, transparent);
+  color: var(--tb-accent);
+}
+
+.combo-item.is-active {
+  background: var(--tb-accent);
+  color: var(--tb-bg);
+}
+
+.combo-item.is-current .combo-check {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.combo-empty {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.combo-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+}

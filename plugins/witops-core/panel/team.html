@@ -4,28 +4,40 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>WitOps 任务</title>
+    <link rel="stylesheet" href="/plugin-ui/v1/tokens.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/base.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/ui.css" />
     <link rel="stylesheet" href="/api/plugins/witops-core/app/panel/app.css" />
   </head>
   <body class="team-panel">
     <header class="head">
       <div>
         <h1>WitOps 任务</h1>
-        <p id="meta" class="muted">加载中…</p>
+        <p id="meta" class="tb-muted tb-small">加载中…</p>
       </div>
       <div class="actions">
-        <span id="auth-chip" class="chip">未登录</span>
-        <button id="logout" class="ghost" type="button" hidden>退出</button>
+        <span id="auth-chip" class="tb-chip">未登录</span>
+        <button id="logout" class="tb-btn tb-btn-ghost tb-btn-sm" type="button" hidden>退出</button>
       </div>
     </header>
 
     <form id="login" class="login" hidden>
       <div class="login-title">先登录 WitOps 账号</div>
-      <label>账号<input id="account" type="text" autocomplete="username" required /></label>
       <label
-        >密码<input id="password" type="password" autocomplete="current-password" required
+        >账号<input id="account" class="tb-input" type="text" autocomplete="username" required
       /></label>
-      <button id="login-submit" type="submit">登录</button>
-      <span id="login-hint" class="muted">账号密码只用于换取这次访问，不会保存。</span>
+      <label
+        >密码<input
+          id="password"
+          class="tb-input"
+          type="password"
+          autocomplete="current-password"
+          required
+      /></label>
+      <button id="login-submit" class="tb-btn" type="submit">登录</button>
+      <span id="login-hint" class="tb-muted tb-small">
+        账号密码只用于换取这次访问，不会保存。
+      </span>
     </form>
 
     <div id="banner" class="error" hidden></div>
@@ -37,6 +49,7 @@
           <div class="combo-control">
             <input
               id="project-input"
+              class="tb-input"
               type="text"
               role="combobox"
               autocomplete="off"
@@ -56,10 +69,10 @@
             ></ul>
           </div>
         </div>
-        <button id="reload" class="ghost" type="button">刷新</button>
+        <button id="reload" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">刷新</button>
       </div>
-      <div class="table-wrap">
-        <table>
+      <div class="tb-table-wrap table-wrap">
+        <table class="tb-table">
           <thead>
             <tr>
               <th>编号</th>
@@ -72,15 +85,20 @@
           </thead>
           <tbody id="rows"></tbody>
         </table>
-        <p id="empty" class="empty" hidden>这个项目暂时没有任务</p>
+        <p id="empty" class="tb-muted tb-small empty" hidden>这个项目暂时没有任务</p>
       </div>
       <div class="team-pager">
-        <button id="prev" class="ghost" type="button" disabled>上一页</button>
-        <span id="page-label" class="muted"></span>
-        <button id="next" class="ghost" type="button" disabled>下一页</button>
+        <button id="prev" class="tb-btn tb-btn-ghost tb-btn-sm" type="button" disabled>
+          上一页
+        </button>
+        <span id="page-label" class="tb-muted tb-small"></span>
+        <button id="next" class="tb-btn tb-btn-ghost tb-btn-sm" type="button" disabled>
+          下一页
+        </button>
       </div>
     </section>
 
+    <script src="/plugin-ui/v1/bridge.js"></script>
     <script src="/api/plugins/witops-core/app/panel/team.js"></script>
   </body>
 </html>

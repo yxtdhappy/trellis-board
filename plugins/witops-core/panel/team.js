@@ -15,8 +15,7 @@ const state = {
   error: '',
 }
 
-const pending = new Map()
-let sequence = 0
+const bridge = TrellisBridge.create()
 
 function byId(id) {
   return document.getElementById(id)
@@ -25,35 +24,22 @@ function byId(id) {
 const projectInputNode = byId('project-input')
 const projectList = byId('project-list')
 
-function rpc(method, path, body) {
-  const id = `t${++sequence}`
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject })
-    window.parent.postMessage({ type: 'trellis:request', id, method, path, body }, '*')
-  })
+// 统一走宿主桥（/plugin-ui/v1/bridge.js）：iframe 没有 same-origin，不能直接 fetch。
+async function rpc(method, path, body) {
+  const verb = String(method).toUpperCase()
+  try {
+    if (verb === 'DELETE') return await bridge.delete(path, body)
+    if (verb === 'POST') return await bridge.post(path, body)
+    if (verb === 'PUT') return await bridge.put(path, body)
+    return await bridge.get(path)
+  } catch (error) {
+    // 宿主把 { error, code } 放在 error.data 里，面板按 code 决定下一步。
+    error.code = error.code ?? error.data?.code ?? null
+    throw error
+  }
 }
 
-window.addEventListener('message', (event) => {
-  const message = event.data
-  if (!message || typeof message !== 'object') return
-  if (message.type === 'trellis:init') {
-    document.documentElement.dataset.theme = message.theme || 'light'
-    void boot()
-    return
-  }
-  if (message.type !== 'trellis:response') return
-  const entry = pending.get(message.id)
-  if (!entry) return
-  pending.delete(message.id)
-  if (message.ok) {
-    entry.resolve(message.data)
-    return
-  }
-  const error = new Error(message.data?.error || '请求失败')
-  error.code = message.data?.code ?? null
-  error.status = message.status ?? null
-  entry.reject(error)
-})
+bridge.ready.then(() => boot()).catch((error) => setBanner(error.message || '加载失败'))
 
 function setBanner(text) {
   const node = byId('banner')
@@ -65,7 +51,7 @@ function renderAuth() {
   const auth = state.auth
   const online = auth?.online === true
   byId('auth-chip').textContent = online ? `${auth.account} · 已登录` : '未登录'
-  byId('auth-chip').dataset.state = online ? 'authenticated' : 'anonymous'
+  byId('auth-chip').className = online ? 'tb-chip tb-chip-ok' : 'tb-chip'
   byId('login').hidden = online
   byId('logout').hidden = !online
   byId('workspace').hidden = !online

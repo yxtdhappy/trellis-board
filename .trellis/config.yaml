@@ -60,11 +60,11 @@ max_journal_lines: 2000
 #
 packages:
   server:
-    path: apps/server
+    path: packages/server
   web:
-    path: apps/web
+    path: packages/web
   desktop:
-    path: apps/desktop
+    path: packages/desktop
   shared:
     path: packages/shared
   test-support:

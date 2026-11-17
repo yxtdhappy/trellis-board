@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "首次接入三模式、review 事件与 cursor/binding 契约"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "项目栏状态文案、解绑二次确认矩阵"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "新增 Tauri 命令需同步 permissions 与 capability"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量门与格式化要求"}

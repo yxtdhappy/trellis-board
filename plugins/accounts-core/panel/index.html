@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>统一账号</title>
+    <link rel="stylesheet" href="/plugin-ui/v1/tokens.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/base.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/ui.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/combo.css" />
+    <link rel="stylesheet" href="/api/plugins/accounts-core/panel/app.css" />
+  </head>
+  <body>
+    <header class="head">
+      <div class="head-title">
+        <h1>统一账号</h1>
+        <p id="meta" class="tb-muted">加载中…</p>
+      </div>
+      <div class="tb-row">
+        <div class="tabs" role="tablist">
+          <button id="tab-accounts" class="tab is-active" role="tab" type="button">账号</button>
+          <button id="tab-systems" class="tab" role="tab" type="button">系统</button>
+        </div>
+        <button id="refresh" class="tb-btn tb-btn-ghost tb-btn-sm" type="button" title="刷新">
+          ↻
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section id="view-accounts" class="view">
+        <div class="tb-toolbar">
+          <span class="tb-muted tb-small tb-grow">
+            AD 统一账号，改一次密码对绑定的系统都生效。
+          </span>
+          <button id="new-account" class="tb-btn" type="button">新建账号</button>
+        </div>
+        <div id="accounts-table"></div>
+      </section>
+
+      <section id="view-systems" class="view" hidden>
+        <div class="tb-toolbar">
+          <span class="tb-muted tb-small tb-grow">
+            系统 id 要与插件配置的 accountSystemId 一致。
+          </span>
+          <button id="new-system" class="tb-btn" type="button">新建系统</button>
+        </div>
+        <div id="systems-table"></div>
+      </section>
+    </main>
+
+    <tb-dialog id="account-dialog" title="新建账号" ok-text="保存">
+      <div class="form">
+        <div id="field-username"></div>
+        <div id="field-note"></div>
+        <div id="field-password"></div>
+      </div>
+    </tb-dialog>
+
+    <tb-dialog id="system-dialog" title="新建系统" ok-text="保存">
+      <div class="form">
+        <div id="field-system-id"></div>
+        <div id="field-system-name"></div>
+        <div id="field-system-baseurl"></div>
+        <div id="field-system-account"></div>
+        <div id="field-system-note"></div>
+        <label class="check">
+          <input id="system-enabled" type="checkbox" />
+          启用该系统
+        </label>
+      </div>
+    </tb-dialog>
+
+    <script src="/plugin-ui/v1/bridge.js"></script>
+    <script src="/plugin-ui/v1/combo.js"></script>
+    <script src="/plugin-ui/v1/ui.js"></script>
+    <script src="/api/plugins/accounts-core/panel/app.js"></script>
+  </body>
+</html>

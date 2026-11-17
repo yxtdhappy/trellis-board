@@ -8,49 +8,21 @@ const state = {
   theme: 'light',
 }
 
-let seq = 0
-const pending = new Map()
+const bridge = window.TrellisBridge.create()
 
-function post(message) {
-  window.parent.postMessage(message, '*')
-}
-
-function rpc(path, method = 'GET', body) {
-  const id = `r${++seq}`
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject })
-    post({ type: 'trellis:request', id, method, path, body })
-  })
-}
-
-window.addEventListener('message', (event) => {
-  const message = event.data
-  if (!message || typeof message !== 'object') return
-  if (message.type === 'trellis:init') {
-    state.theme = message.theme === 'dark' ? 'dark' : 'light'
-    document.documentElement.dataset.theme = state.theme
-    if (!state.init) {
-      state.init = true
-      void boot()
-    }
-  }
-  if (message.type === 'trellis:response') {
-    const entry = pending.get(message.id)
-    if (!entry) return
-    pending.delete(message.id)
-    if (message.ok) entry.resolve(message.data)
-    else entry.reject(new Error(message.data?.error || `HTTP ${message.status}`))
-  }
-  if (message.type === 'trellis:event') {
-    const name = message.event?.name
-    if (name === 'scenario-copilot/run.finished' || name === 'scenario-copilot/run.started') {
-      void loadRuns()
-      if (state.selected) void loadRun(state.selected)
-    }
-  }
+bridge.onInit(() => {
+  if (state.init) return
+  state.init = true
+  void boot()
 })
 
-post({ type: 'trellis:ready' })
+bridge.onEvent((event) => {
+  const name = event?.name
+  if (name === 'scenario-copilot/run.finished' || name === 'scenario-copilot/run.started') {
+    void loadRuns()
+    if (state.selected) void loadRun(state.selected)
+  }
+})
 
 const $ = (id) => document.getElementById(id)
 
@@ -82,19 +54,25 @@ function formatDuration(ms) {
 function setHint(message, tone = 'warn') {
   const hint = $('hint')
   hint.textContent = message || ''
-  hint.style.color = tone === 'muted' ? 'var(--muted)' : ''
+  hint.style.color = tone === 'muted' ? 'var(--tb-muted-fg)' : ''
+}
+
+const STATUS_CHIP = {
+  running: 'tb-chip tb-chip-warn',
+  succeeded: 'tb-chip tb-chip-ok',
+  failed: 'tb-chip tb-chip-danger',
 }
 
 function statusClass(status) {
-  return ['running', 'succeeded', 'failed'].includes(status) ? status : ''
+  return STATUS_CHIP[status] || 'tb-chip'
 }
 
 async function boot() {
   try {
     const [defaults, tasks, runs] = await Promise.all([
-      rpc('/defaults'),
-      rpc('/tasks'),
-      rpc('/history'),
+      bridge.get('/defaults'),
+      bridge.get('/tasks'),
+      bridge.get('/history'),
     ])
     state.defaults = defaults
     state.tasks = tasks.tasks || []
@@ -182,7 +160,7 @@ function renderRuns() {
       [
         el('div', { className: 'run-title', textContent: run.outline }),
         el('div', { className: 'run-meta' }, [
-          el('span', { className: `pill ${statusClass(run.status)}`, textContent: run.status }),
+          el('span', { className: statusClass(run.status), textContent: run.status }),
           el('span', {
             textContent: `${formatTime(run.startedAt)} · ${formatDuration(run.durationMs)}`,
           }),
@@ -198,7 +176,7 @@ function renderRuns() {
 }
 
 async function loadRuns() {
-  const data = await rpc('/history')
+  const data = await bridge.get('/history')
   state.runs = data.runs || []
   renderRuns()
 }
@@ -212,11 +190,11 @@ async function selectRun(id) {
 
 async function loadRun(id) {
   try {
-    const data = await rpc(`/run?id=${encodeURIComponent(id)}`)
+    const data = await bridge.get(`/run?id=${encodeURIComponent(id)}`)
     const run = data.run
     renderDetail(run)
     $('status-pill').textContent = run.status
-    $('status-pill').className = `pill ${statusClass(run.status)}`
+    $('status-pill').className = statusClass(run.status)
   } catch (error) {
     setHint(error.message)
   }
@@ -272,7 +250,7 @@ $('start').addEventListener('click', async () => {
   button.disabled = true
   setHint('正在启动 scenario-copilot…', 'muted')
   try {
-    const result = await rpc('/runs', 'POST', {
+    const result = await bridge.post('/runs', {
       taskKey: $('task').value,
       outline: $('outline').value,
       targetUrl: $('target').value,
@@ -303,7 +281,7 @@ $('task').addEventListener('change', () => applyTask($('task').value))
 $('cancel').addEventListener('click', async () => {
   if (!state.selected) return
   try {
-    await rpc('/cancel', 'POST', { id: state.selected })
+    await bridge.post('/cancel', { id: state.selected })
     await loadRun(state.selected)
   } catch (error) {
     setHint(error.message)

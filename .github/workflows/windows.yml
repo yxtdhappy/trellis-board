@@ -53,16 +53,18 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: package-lock.json
+      - name: Enable yarn 3.5
+        run: corepack enable
       - name: Install dependencies
-        run: npm ci
+        env:
+          YARN_NPM_REGISTRY_SERVER: https://registry.npmjs.org
+        run: yarn install --immutable
       - name: Build web
-        run: npm run build
+        run: yarn build
       - name: Build desktop UI
-        run: npm run build:desktop
+        run: yarn build:desktop
       - name: Server and web tests
-        run: npm run test:all
+        run: yarn test:all
 
   desktop-build:
     name: desktop build (windows)
@@ -97,13 +99,13 @@ jobs:
         run: |
           $version = $env:RELEASE_VERSION
           $targets = @(
-            @{ Path = 'apps/desktop/package.json'
+            @{ Path = 'packages/desktop/package.json'
                Pattern = '"version"\s*:\s*"[^"]+"'
                Replacement = '"version": "' + $version + '"' },
-            @{ Path = 'apps/desktop/src-tauri/tauri.conf.json'
+            @{ Path = 'packages/desktop/src-tauri/tauri.conf.json'
                Pattern = '"version"\s*:\s*"[^"]+"'
                Replacement = '"version": "' + $version + '"' },
-            @{ Path = 'apps/desktop/src-tauri/Cargo.toml'
+            @{ Path = 'packages/desktop/src-tauri/Cargo.toml'
                Pattern = '(?m)^version = "[^"]+"'
                Replacement = 'version = "' + $version + '"' }
           )
@@ -122,35 +124,37 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: package-lock.json
       - name: Install rust stable
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
       - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a  # v2.8.2
         with:
-          workspaces: apps/desktop/src-tauri
+          workspaces: packages/desktop/src-tauri
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install tauri cli
         run: |
           npm install --prefix "$env:RUNNER_TEMP\tauri-cli" "@tauri-apps/cli@^2"
           "$env:RUNNER_TEMP\tauri-cli\node_modules\.bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Enable yarn 3.5
+        run: corepack enable
       - name: Install build dependencies
-        run: npm ci
+        env:
+          YARN_NPM_REGISTRY_SERVER: https://registry.npmjs.org
+        run: yarn install --immutable
       - name: Build web
-        run: npm run build
+        run: yarn build
       - name: Build desktop UI
-        run: npm run build:desktop
+        run: yarn build:desktop
       - name: Rust unit tests
         timeout-minutes: 25
-        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+        run: cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml
       - name: Bundle desktop client
-        working-directory: apps/desktop
+        working-directory: packages/desktop
         run: tauri build
       - name: Check artifacts
         run: |
-          $release = "apps/desktop/src-tauri/target/release"
+          $release = "packages/desktop/src-tauri/target/release"
           $exe = Join-Path $release "trellis-board-client.exe"
           if (-not (Test-Path $exe)) { throw "missing $exe" }
           if (Test-Path (Join-Path $release "bundle/nsis")) {
@@ -160,14 +164,14 @@ jobs:
       - name: Package portable client
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass `
-            -File apps/desktop/package-portable.ps1
+            -File packages/desktop/package-portable.ps1
           if ($LASTEXITCODE -ne 0) {
             throw "portable packaging exited with $LASTEXITCODE"
           }
       - name: Portable package smoke test
         run: |
           $ErrorActionPreference = "Stop"
-          $portableRoot = "apps/desktop/src-tauri/target/release/bundle/portable"
+          $portableRoot = "packages/desktop/src-tauri/target/release/bundle/portable"
           $zip = Get-ChildItem (Join-Path $portableRoot "*.zip") | Select-Object -First 1
           if (-not $zip) { throw "missing portable ZIP" }
           $zipChecksum = Get-ChildItem (Join-Path $portableRoot "*.zip.sha256") |
@@ -229,7 +233,7 @@ jobs:
       - name: Launch smoke test
         continue-on-error: true
         run: |
-          $exe = "apps/desktop/src-tauri/target/release/trellis-board-client.exe"
+          $exe = "packages/desktop/src-tauri/target/release/trellis-board-client.exe"
           $env:TRELLIS_DESKTOP_HOME = Join-Path $env:TEMP "tb-smoke"
           $proc = Start-Process -FilePath $exe `
             -ArgumentList "--minimized" -PassThru
@@ -245,8 +249,8 @@ jobs:
         with:
           name: trellis-board-desktop-windows
           path: |
-            apps/desktop/src-tauri/target/release/bundle/portable/*.zip
-            apps/desktop/src-tauri/target/release/bundle/portable/*.zip.sha256
+            packages/desktop/src-tauri/target/release/bundle/portable/*.zip
+            packages/desktop/src-tauri/target/release/bundle/portable/*.zip.sha256
           if-no-files-found: error
           retention-days: 14
       - name: Publish release assets
@@ -257,7 +261,7 @@ jobs:
         run: |
           $tag = $env:RELEASE_TAG
 
-          $dir = "apps/desktop/src-tauri/target/release/bundle/portable"
+          $dir = "packages/desktop/src-tauri/target/release/bundle/portable"
           $assets = @(Get-ChildItem -LiteralPath $dir -File |
             Where-Object { $_.Name -match '\.zip(\.sha256)?$' } |
             ForEach-Object { $_.FullName })

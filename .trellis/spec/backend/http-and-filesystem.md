@@ -2,7 +2,7 @@
 
 ## API 路由
 
-[apps/server/index.js](../../../apps/server/index.js) 当前路由：
+[packages/server/index.js](../../../packages/server/index.js) 当前路由：
 
 | 方法与路径 | 用途 | 成功状态 |
 | --- | --- | --- |
@@ -78,14 +78,14 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
   返回 503，taskSpace、关联数据和删除审计均保持不变。成功后的查询 revision 和 Board SSE 必须刷新。
 - Agent 认证和团队 Session 是两条独立鉴权链。Agent 路由要求设备 Bearer，Web 路由要求 Session Cookie
   并对写请求执行同源 Origin 校验。
-- Cookie 头解析与 `Set-Cookie` 拼装只在 `apps/server/team/auth.js` 用 `cookie` 包实现
+- Cookie 头解析与 `Set-Cookie` 拼装只在 `packages/server/team/auth.js` 用 `cookie` 包实现
   （`parseCookieHeader` 返回 `Map`，`sessionCookie`/`clearSessionCookie` 统一 `HttpOnly; SameSite=Strict; Path=/`
   并在 HTTPS 时追加 `Secure`），不要另写 split/拼接。
 
 ## JSON 协议
 
 - `sendJson()` 统一返回 `application/json; charset=utf-8` 和 `cache-control: no-store`。
-- `readJsonBody()` 默认上限为 `64 KiB`。无请求体视为 `{}`；超限返回“请求体过大”；非法 JSON 返回“请求体不是合法 JSON”。实现只在 [apps/server/http-common.js](../../../apps/server/http-common.js)，两个入口通过薄包装注入各自的错误形状，不要再写第二份。
+- `readJsonBody()` 默认上限为 `64 KiB`。无请求体视为 `{}`；超限返回“请求体过大”；非法 JSON 返回“请求体不是合法 JSON”。实现只在 [packages/server/http-common.js](../../../packages/server/http-common.js)，两个入口通过薄包装注入各自的错误形状，不要再写第二份。
 - Agent 大批次接口显式传入 96 MiB 运输上限。业务正文 64 MiB 是正常文本任务目标；反斜杠
   或控制字符的 JSON 转义若使编码体超过 96 MiB，必须按运输边界返回
   `413 BODY_TOO_LARGE`，不得通过提高到数百 MiB 放宽内存和拒绝服务边界。
@@ -107,9 +107,9 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
 
 ## 仓库白名单
 
-白名单存放在 SQLite `repositories` 表。首次建库且运行数据目录中的 `repos.json` 不存在时，使用 [apps/server/config.js](../../../apps/server/config.js) 的默认仓库一次性导入。API 返回每项 `id`、`name`、`path`，路径使用 `/`。
+白名单存放在 SQLite `repositories` 表。首次建库且运行数据目录中的 `repos.json` 不存在时，使用 [packages/server/config.js](../../../packages/server/config.js) 的默认仓库一次性导入。API 返回每项 `id`、`name`、`path`，路径使用 `/`。
 
-[apps/server/repositories.js](../../../apps/server/repositories.js) 的规则：
+[packages/server/repositories.js](../../../packages/server/repositories.js) 的规则：
 
 - 同一路径去重；Windows 路径比较不区分大小写。
 - ID 从目录名派生，冲突追加 `-2`、`-3`。
@@ -250,7 +250,7 @@ const assignees = await fetchTaskSpaceAssignees(taskSpace.id)
 
 ### 创建任务
 
-[apps/server/actions.js](../../../apps/server/actions.js) 先校验：
+[packages/server/actions.js](../../../packages/server/actions.js) 先校验：
 
 - 标题、描述、负责人和最大长度。
 - 优先级仅允许 `P0`、`P1`、`P2`、`P3`。
@@ -426,10 +426,10 @@ SQLite、Board 查询与 SSE。Team 服务端不再 clone 项目，也不再保�
 #### 6. Tests Required
 
 - `packages/shared/test/shared-remote-identity.test.js`：协议、默认端口、userinfo、`.git` 和非法输入。
-- `apps/server/test/team-task-spaces.test.js`：owner/invite、全局唯一、不同分支隔离和访问授权。
-- `apps/server/test/team-gitless-http.test.js`：新路由可真实读写，旧 Git/live 路由 404。
-- `apps/server/test/team-release.test.js`：Team 启动不创建 `data/projects`，也不读取 Git 密钥。
-- `apps/server/test/database-v10.test.js`：v10 -> v11 补监听列，v11 -> v12 补弃用列、基线、
+- `packages/server/test/team-task-spaces.test.js`：owner/invite、全局唯一、不同分支隔离和访问授权。
+- `packages/server/test/team-gitless-http.test.js`：新路由可真实读写，旧 Git/live 路由 404。
+- `packages/server/test/team-release.test.js`：Team 启动不创建 `data/projects`，也不读取 Git 密钥。
+- `packages/server/test/database-v10.test.js`：v10 -> v11 补监听列，v11 -> v12 补弃用列、基线、
   证据表和索引；v6-v11 顺序升级保留旧表与数据。
 
 #### 7. Wrong vs Correct
@@ -475,9 +475,9 @@ fs.renameSync(tempFile, targetFile);
 
 ## 静态资源
 
-`apps/web/vite.config.ts` 将构建产物写入 `apps/server/public/`，它同时是 standalone `apps/server/index.js` 和 Team `createTeamRuntime()` 的默认静态根目录。Team 默认使用 `path.resolve(serverDir, '../public')`，仍允许调用方通过 `publicDir` 显式覆盖；不要把默认目录解析到仓库根 `public/`。
+`packages/web/vite.config.ts` 将构建产物写入 `packages/server/public/`，它同时是 standalone `packages/server/index.js` 和 Team `createTeamRuntime()` 的默认静态根目录。Team 默认使用 `path.resolve(serverDir, '../public')`，仍允许调用方通过 `publicDir` 显式覆盖；不要把默认目录解析到仓库根 `public/`。
 
-静态资源由 [apps/server/http-common.js](../../../apps/server/http-common.js) 的 `serveStatic()` 统一实现：只接受 `GET` / `HEAD`，将 `/` 映射为 `index.html`，用 `path.sep` 边界加 `realpathSync` 防目录越界，只服务 `STATIC_TYPES` 白名单内的扩展名，并发送 `content-length`。两个入口只注入响应形状：Team 返回 `404 {"error":"静态资源不存在","code":"NOT_FOUND"}` 且一律 `no-store`，Standalone 返回纯文本 `404` 且 HTML `no-store`、其他文件缓存 `60` 秒。修改静态边界时必须按对应入口补测试；Team 回归至少覆盖默认目录、显式覆盖、三个页面入口和 404 JSON。
+静态资源由 [packages/server/http-common.js](../../../packages/server/http-common.js) 的 `serveStatic()` 统一实现：只接受 `GET` / `HEAD`，将 `/` 映射为 `index.html`，用 `path.sep` 边界加 `realpathSync` 防目录越界，只服务 `STATIC_TYPES` 白名单内的扩展名，并发送 `content-length`。两个入口只注入响应形状：Team 返回 `404 {"error":"静态资源不存在","code":"NOT_FOUND"}` 且一律 `no-store`，Standalone 返回纯文本 `404` 且 HTML `no-store`、其他文件缓存 `60` 秒。修改静态边界时必须按对应入口补测试；Team 回归至少覆盖默认目录、显式覆盖、三个页面入口和 404 JSON。
 
 ## 反模式
 

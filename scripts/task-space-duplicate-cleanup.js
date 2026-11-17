@@ -373,8 +373,7 @@ function applyCleanup(
 ) {
   const timestamp = now.toISOString()
   const removeMutated =
-    audit.filesToDelete.length > 0 ||
-    (disableRemoveTaskSpace && audit.remove.status === 'active')
+    audit.filesToDelete.length > 0 || (disableRemoveTaskSpace && audit.remove.status === 'active')
   const revision = removeMutated ? audit.remove.revision + 1 : audit.remove.revision
   const finalStatus = disableRemoveTaskSpace
     ? 'disabled'
