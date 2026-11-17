@@ -1,10 +1,19 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
+import { toast } from 'sonner'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import type { ProjectMember } from '@/api/admin'
+import {
+  addBinding,
+  listBindings,
+  listTeamPlugins,
+  removeBinding,
+  type PluginBindingView,
+  type TeamPluginView,
+} from '@/api/team-plugins'
 import { formatTime } from '@/lib/admin-shared'
 import { BranchManagementPanel } from './BranchManagementPanel'
 import { AuditItem, EmptyRow, Field, Panel, Row, StatusPill, controlClass } from './shared.tsx'
@@ -41,6 +50,60 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
   const [accessRole, setAccessRole] = useState('member')
   const readOnly = role === 'read_only'
   const selectedTeamId = projectOptions.find((project) => project.id === accessProjectId)?.teamId
+
+  /**
+   * 插件项目绑定（design.md §7.4）：项目设置页的快捷入口，只处理当前项目，
+   * 绑定关系本身仍存在 `/api/plugins/<id>/bindings`，与 admin 插件页是同一份数据。
+   */
+  const [pluginChoices, setPluginChoices] = useState<TeamPluginView[]>([])
+  const [pluginId, setPluginId] = useState('')
+  const [pluginBindings, setPluginBindings] = useState<PluginBindingView[]>([])
+  const [pluginBusy, setPluginBusy] = useState(false)
+  const [pluginForm, setPluginForm] = useState({ externalProjectId: '', externalProjectName: '' })
+
+  useEffect(() => {
+    if (!selectedTeamId) {
+      setPluginChoices([])
+      setPluginId('')
+      return
+    }
+    void listTeamPlugins(selectedTeamId)
+      .then((rows) => {
+        const available = rows.filter((row) => row.teamEnabled || row.enabled)
+        setPluginChoices(available)
+        setPluginId((current) =>
+          available.some((row) => row.id === current) ? current : (available[0]?.id ?? ''),
+        )
+      })
+      .catch(() => setPluginChoices([]))
+  }, [selectedTeamId])
+
+  const reloadPluginBindings = useCallback(async () => {
+    if (!selectedTeamId || !pluginId || !accessProjectId) {
+      setPluginBindings([])
+      return
+    }
+    const rows = await listBindings(pluginId, selectedTeamId)
+    setPluginBindings(rows.filter((row) => row.projectId === accessProjectId))
+  }, [accessProjectId, pluginId, selectedTeamId])
+
+  useEffect(() => {
+    void reloadPluginBindings().catch(() => setPluginBindings([]))
+  }, [reloadPluginBindings])
+
+  async function runPluginBinding(action: () => Promise<void>, message: string) {
+    if (pluginBusy) return
+    setPluginBusy(true)
+    try {
+      await action()
+      toast.success(message)
+      await reloadPluginBindings()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '操作失败')
+    } finally {
+      setPluginBusy(false)
+    }
+  }
 
   async function handleSaveMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -335,6 +398,103 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
               ))
             )}
           </div>
+        </Panel>
+
+        <Panel
+          kicker="PLUGIN BINDINGS"
+          title="插件项目绑定"
+          description="把当前项目和插件里的项目对上，成员在插件面板里选项目时不用再猜。只影响绑定关系，不影响任务数据。"
+        >
+          {!accessProjectId ? (
+            <EmptyRow>先选择项目。</EmptyRow>
+          ) : !selectedTeamId || pluginChoices.length === 0 ? (
+            <EmptyRow>这个团队还没有为项目启用插件，先去「插件」页启用。</EmptyRow>
+          ) : (
+            <>
+              {pluginChoices.length > 1 ? (
+                <Field label="插件">
+                  <SelectField
+                    ariaLabel="插件"
+                    className={controlClass}
+                    value={pluginId}
+                    options={pluginChoices.map((row) => ({ value: row.id, label: row.name }))}
+                    onChange={setPluginId}
+                  />
+                </Field>
+              ) : null}
+              <div className="flex flex-col">
+                {pluginBindings.length === 0 ? (
+                  <EmptyRow>当前项目还没有绑定插件侧项目。</EmptyRow>
+                ) : (
+                  pluginBindings.map((binding) => (
+                    <Row
+                      key={binding.id}
+                      actions={
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          className="text-destructive"
+                          disabled={pluginBusy}
+                          onClick={() =>
+                            void runPluginBinding(
+                              () => removeBinding(binding.pluginId, binding.teamId, binding.id),
+                              '已解除绑定',
+                            )
+                          }
+                        >
+                          解除
+                        </Button>
+                      }
+                    >
+                      <p className="text-xs font-semibold text-foreground">
+                        插件项目：{binding.externalProjectName || binding.externalProjectId}
+                      </p>
+                      <p className="text-[0.625rem] text-muted-foreground">
+                        {binding.externalProjectId} · 绑定于 {formatTime(binding.createdAt)}
+                      </p>
+                    </Row>
+                  ))
+                )}
+              </div>
+              <div className="mt-1 flex flex-col gap-1.5 rounded-lg bg-muted/40 p-2.5">
+                <Input
+                  maxLength={200}
+                  placeholder="插件侧项目 ID"
+                  value={pluginForm.externalProjectId}
+                  onChange={(event) =>
+                    setPluginForm((prev) => ({ ...prev, externalProjectId: event.target.value }))
+                  }
+                />
+                <Input
+                  maxLength={200}
+                  placeholder="插件侧项目名称（可选）"
+                  value={pluginForm.externalProjectName}
+                  onChange={(event) =>
+                    setPluginForm((prev) => ({ ...prev, externalProjectName: event.target.value }))
+                  }
+                />
+                <Button
+                  size="sm"
+                  type="button"
+                  className="self-start"
+                  disabled={pluginBusy || !pluginId || !pluginForm.externalProjectId.trim()}
+                  onClick={() =>
+                    void runPluginBinding(async () => {
+                      await addBinding(pluginId, selectedTeamId, {
+                        projectId: accessProjectId,
+                        externalProjectId: pluginForm.externalProjectId.trim(),
+                        externalProjectName: pluginForm.externalProjectName.trim(),
+                      })
+                      setPluginForm({ externalProjectId: '', externalProjectName: '' })
+                    }, '已绑定插件项目')
+                  }
+                >
+                  添加绑定
+                </Button>
+              </div>
+            </>
+          )}
         </Panel>
 
         <Panel

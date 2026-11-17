@@ -278,8 +278,12 @@ GET  /api/plugins/witops-core/app/project-space  → 401 {"code":1001}
       registry 列表 + 进程状态 + 在线人数、全局启用/停用、启动/停止进程、团队启用开关、项目绑定增删；
       **没有"替用户填账号密码"的入口**；
 - [x] 团队没选中时禁用团队级操作并提示「先在右上角选择团队」；
-- [ ] 项目设置页里的「绑定 witops 项目」快捷入口（现在只在 admin 插件页里做）
-- [ ] 绑定/启用动作写 `plugin_audit`（会话的 open/close/conflict 已写，绑定还没写）
+- [x] 项目设置页里的「绑定 witops 项目」快捷入口：`packages/web/src/features/admin/ProjectsTab.tsx`
+      新增「插件项目绑定」面板（按当前项目过滤，走同一份 `/api/plugins/<id>/bindings`）；
+- [x] 绑定/启用动作写 `plugin_audit`（会话的 open/close/conflict 已写）：
+      `host.audit()` 落 `user_id` / `team_id`，kinds 为 `binding.create`、`binding.remove`、
+      `plugin.enable`、`plugin.disable`、`team-setting.enable`、`team-setting.disable`；
+      `GET /api/plugins/<id>/audit?teamId=&limit=` 回放（系统管理员看全部，团队管理员只看本团队）。
 
 ## P3 写入（后续任务）
 
