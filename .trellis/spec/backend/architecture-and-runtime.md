@@ -109,18 +109,32 @@ Team runtime 的事实链只有客户端任务快照：
 
 ## Team 快照投影
 
-[packages/server/team/task-space-index.js](../../../packages/server/team/task-space-index.js) 对每个 taskSpace 串行投影：
+[packages/server/team/task-space-index.js](../../../packages/server/team/task-space-index.js) 对每个 taskSpace
+串行投影，并在进程内保存可丢弃的 `ProjectionState`：上次成功 revision、未变化任务完整事实、目录
+指纹、稳定 project/workspace 成员、Board/详情投影、人工阶段指纹和最近一次指标。内存状态不是业务
+事实源；服务重启后第一次投影允许全量扫描重建。
 
-1. 在系统临时目录创建空根，所有业务 Git 工作区之外；
-2. 从 `sync_task_space_file` 读取当前 revision 的非删除文件；
-3. 只写 `.trellis/tasks/**`；
-4. 以 taskSpace 的 branch、project member developer ID 和显式 workspace-unavailable 上下文调用
-   `scanRepository()`；
-5. 原子替换 `sync_task_index`、标签和 `sync_task_space_scan_cache`；
-6. 更新 `indexed_revision`，再发布 Board `tasks.changed` 和 Agent `task.changed`。
+每次成功 revision 的投影流程：
 
-同 taskSpace 最多一个物化在途。期间新 revision 合并为下一轮最新快照，旧结果不得覆盖新 revision。
-投影失败保留已提交快照和上一份一致 Board，按指数退避重试；恢复成功后 Board 自动对齐。
+1. 读取 `sync_task_space_file` 的轻量元数据，不读取 `content_text`；按完整任务目录计算稳定指纹。
+2. 没有可信基线、`indexed_revision` 未对齐或缓存不完整时执行 full：读取全部活动正文，在系统临时
+   目录只写 `.trellis/tasks/**` 并调用 `scanRepository()`。
+3. 有可信 warm 基线时执行 incremental：只读取和扫描新增、修改、删除或移动的任务目录，其余任务
+   直接复用内存事实。归档时间取快照文件行的 `updated_at`，不能取临时物化文件 mtime。
+4. 无论 full 还是 incremental，都用当前全部任务重新计算父子关系、身份冲突、人工阶段、风险、
+   WIP 和执行投影；`project.members` 必须由稳定 `workspaceMembers` 加当前全部任务参与者重算。
+5. 在单个 `BEGIN IMMEDIATE` 中重新读取 taskSpace，校验目标 revision、retired/status 和人工阶段
+   指纹；只对新增或字段变化的 `sync_task_index` 行 UPSERT，删除消失行，并只重建受影响任务的标签。
+   Board cache、assignment 投影和 `indexed_revision` 与索引写入同事务提交。
+6. 提交成功后发布 query revision、Board `tasks.changed` 和 Agent `task.changed`，再替换内存状态。
+
+同一 taskSpace 的 `enqueue()` 与 `ensureMaterialized()` 共用 single-flight。扫描期间出现新 revision
+时，旧候选整体 superseded，不写索引、缓存或 `indexed_revision`；下一轮直接收敛到最新 revision。
+同 revision 的人工阶段变化只重做全任务关系和执行投影，不重新读取任务正文。投影失败保留最后一份
+一致 Board，按指数退避重试；恢复成功后 Board 自动对齐。
+
+冷启动仍需要一次 full 扫描，成本随任务空间规模增长；正常单任务 warm 更新只承担全量轻量元数据
+读取、一个任务目录解析和必要的全局关系重算。
 
 Team 扫描不读取 Git 元数据、workspace 会话、`.developer`、scripts、spec、config 或 workflow。
 `workspace` 显示“服务端不判定”，不能伪造 journal 完成状态。

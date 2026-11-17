@@ -1346,3 +1346,26 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 57: Team 任务索引增量物化性能优化
+<!-- trellis-session: v=2 fp=eef97bcda03a216f -->
+
+**Date**: 2026-11-17
+**Task**: Team 任务索引增量物化性能优化
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+实现服务端 warm 增量物化、全任务关系重算、事务内 revision 复核、索引差异写入和 single-flight；补测试、规范与 E2E 报告，warm 单任务投影约 139ms。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ed6acf1` | perf(server): 增量物化团队任务索引 |
+
+### Status
+
+[OK] **Completed**

@@ -1,0 +1,9 @@
+{"file":".trellis/tasks/11-16-optimize-task-index-incremental-materialization/prd.md","reason":"逐项核对增量、完整性、并发、回退、可观测性和性能验收"}
+{"file":".trellis/tasks/11-16-optimize-task-index-incremental-materialization/design.md","reason":"检查实现是否遵守 single-flight、事务 revision 复核和全局关系重算设计"}
+{"file":".trellis/tasks/11-16-optimize-task-index-incremental-materialization/implement.md","reason":"确认实施步骤、最终测试和回滚验证没有遗漏"}
+{"file":".trellis/tasks/11-16-optimize-task-index-incremental-materialization/research/server-index-baseline.md","reason":"复核性能测量口径和当前现象与实际源码热点"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"检查 HTTP 主线程、Worker、SQLite 和 SSE 边界未被破坏"}
+{"file":".trellis/spec/backend/scanning-and-persistence.md","reason":"检查 indexed_revision、index/cache、删除墓碑、归档和任务身份一致性"}
+{"file":".trellis/spec/backend/desktop-realtime-sync.md","reason":"检查并发 revision、CAS、冲突、task.changed 和重启恢复契约"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查测试覆盖、错误处理和真实服务验证要求"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查索引投影和 Board/详情/SSE 消费端的跨层一致性"}
