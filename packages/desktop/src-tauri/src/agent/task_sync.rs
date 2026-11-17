@@ -201,6 +201,11 @@ impl Difference {
     }
 
     fn to_control(&self) -> Value {
+        let title = self
+            .local
+            .as_ref()
+            .and_then(task_title)
+            .or_else(|| self.server.as_ref().and_then(task_title));
         json!({
             "type": match self.kind {
                 DiffKind::Same => "same",
@@ -212,13 +217,16 @@ impl Difference {
             },
             "taskId": self.task_id,
             "taskDir": self.task_dir,
+            "title": title,
             "local": self.local.as_ref().map(|group| json!({
                 "taskId": group.task_id,
                 "taskDir": group.task_dir,
+                "title": task_title(group),
             })),
             "server": self.server.as_ref().map(|group| json!({
                 "taskId": group.task_id,
                 "taskDir": group.task_dir,
+                "title": task_title(group),
             })),
         })
     }
@@ -9337,6 +9345,79 @@ mod tests {
             task_id: Some(task_id.to_string()),
             task_branch: None,
         }
+    }
+
+    #[test]
+    fn task_title_reads_trimmed_title_or_none() {
+        let titled = task_group(
+            "demo",
+            ".trellis/tasks/11-12-demo",
+            &[("task.json", r#"{"id":"demo","title":"  修复登录  "}"#)],
+        );
+        assert_eq!(task_title(&titled).as_deref(), Some("修复登录"));
+
+        let untitled = task_group(
+            "demo",
+            ".trellis/tasks/11-12-demo",
+            &[("task.json", r#"{"id":"demo","title":"   "}"#)],
+        );
+        assert_eq!(task_title(&untitled), None);
+
+        let broken = task_group(
+            "demo",
+            ".trellis/tasks/11-12-demo",
+            &[("task.json", "{not json")],
+        );
+        assert_eq!(task_title(&broken), None);
+    }
+
+    #[test]
+    fn difference_control_carries_both_task_titles() {
+        let task_dir = ".trellis/tasks/11-12-demo";
+        let local = task_group(
+            "demo",
+            task_dir,
+            &[("task.json", r#"{"id":"demo","title":"本地标题"}"#)],
+        );
+        let server = task_group(
+            "demo",
+            task_dir,
+            &[("task.json", r#"{"id":"demo","title":"服务端标题"}"#)],
+        );
+        let difference = Difference {
+            kind: DiffKind::ContentConflict,
+            task_id: Some("demo".to_string()),
+            task_dir: task_dir.to_string(),
+            local: Some(local),
+            server: Some(server),
+        };
+        let control = difference.to_control();
+        assert_eq!(control["title"], "本地标题");
+        assert_eq!(control["local"]["title"], "本地标题");
+        assert_eq!(control["server"]["title"], "服务端标题");
+
+        let fallback = Difference {
+            kind: DiffKind::ServerOnly,
+            task_id: Some("demo".to_string()),
+            task_dir: task_dir.to_string(),
+            local: None,
+            server: Some(task_group(
+                "demo",
+                task_dir,
+                &[("task.json", r#"{"id":"demo","title":"服务端标题"}"#)],
+            )),
+        };
+        assert_eq!(fallback.to_control()["title"], "服务端标题");
+        assert!(fallback.to_control()["local"].is_null());
+
+        let untitled = Difference {
+            kind: DiffKind::LocalOnly,
+            task_id: None,
+            task_dir: task_dir.to_string(),
+            local: Some(task_group("demo", task_dir, &[("task.json", "{}")])),
+            server: None,
+        };
+        assert!(untitled.to_control()["title"].is_null());
     }
 
     #[test]

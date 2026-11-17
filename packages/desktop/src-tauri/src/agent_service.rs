@@ -9,9 +9,7 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::menu::MenuItem;
-use tauri::{
-    AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry,
-};
+use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::agent::association::{associate_desktop_project, AssociateParams};
 use crate::agent::control::ControlHub;
@@ -30,31 +28,6 @@ use crate::agent::trellis_cli::TrellisRuntime;
 
 pub use crate::agent::device::LocalAssociation;
 
-pub(crate) const CONTROL_WINDOW: &str = "live-control";
-const CONTROL_WIDTH: f64 = 480.0;
-const CONTROL_MIN_HEIGHT: f64 = 200.0;
-
-pub(crate) fn clamp_control_height(preferred: f64, work_area: f64) -> f64 {
-    if !preferred.is_finite() || preferred < CONTROL_MIN_HEIGHT {
-        return CONTROL_MIN_HEIGHT;
-    }
-    let ceiling = (work_area * 0.9).max(CONTROL_MIN_HEIGHT);
-    preferred.min(ceiling).round()
-}
-
-pub(crate) fn resize_control(window: &WebviewWindow, height: f64) -> Result<(), String> {
-    let work_area = window
-        .current_monitor()
-        .ok()
-        .flatten()
-        .map(|monitor| monitor.work_area().size.height as f64 / monitor.scale_factor())
-        .unwrap_or(900.0);
-    let height = clamp_control_height(height, work_area);
-    window
-        .set_size(LogicalSize::new(CONTROL_WIDTH, height))
-        .map_err(|error| error.to_string())
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentStatus {
@@ -71,7 +44,6 @@ pub struct AgentService {
     paused: Arc<AtomicBool>,
     runtime: Arc<Mutex<Option<Arc<AgentRuntime>>>>,
     starting: Arc<AtomicBool>,
-    focus_suppressed: Arc<AtomicBool>,
     auto_focus_consumed: Arc<AtomicBool>,
     sync_menu_item: Arc<Mutex<Option<MenuItem<Wry>>>>,
 }
@@ -95,7 +67,6 @@ pub fn register(app: &AppHandle) {
         paused: Arc::new(AtomicBool::new(false)),
         runtime: Arc::new(Mutex::new(None)),
         starting: Arc::new(AtomicBool::new(false)),
-        focus_suppressed: Arc::new(AtomicBool::new(false)),
         auto_focus_consumed: Arc::new(AtomicBool::new(false)),
         sync_menu_item: Arc::new(Mutex::new(None)),
     });
@@ -332,61 +303,20 @@ impl AgentService {
         if review {
             // 差异审查是首次接入的必经步骤：被关闭过、或每进程只自动聚焦一次已消费，也要重新露出。
             if changed {
-                self.focus_suppressed.store(false, Ordering::SeqCst);
-                self.show_control();
+                crate::focus_main_window(&self.app);
             }
             return;
         }
         if !became_front {
             return;
         }
-        let first = !self.focus_suppressed.load(Ordering::SeqCst)
-            && !self.auto_focus_consumed.swap(true, Ordering::SeqCst);
-        if first {
-            self.show_control();
-        }
-    }
-
-    fn show_control(&self) {
-        if let Some(window) = self.app.get_webview_window(CONTROL_WINDOW) {
-            let _ = window.show();
-            let _ = window.unminimize();
-            let _ = window.set_focus();
-            return;
-        }
-        let built = WebviewWindowBuilder::new(
-            &self.app,
-            CONTROL_WINDOW,
-            WebviewUrl::App(PathBuf::from("control.html")),
-        )
-        .title("Trellis Board 实时同步确认")
-        .inner_size(CONTROL_WIDTH, CONTROL_MIN_HEIGHT)
-        .resizable(false)
-        .center()
-        .build();
-        if let Ok(window) = built {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
-    }
-
-    fn hide_control(&self) {
-        if let Some(window) = self.app.get_webview_window(CONTROL_WINDOW) {
-            let _ = window.hide();
+        if !self.auto_focus_consumed.swap(true, Ordering::SeqCst) {
+            crate::focus_main_window(&self.app);
         }
     }
 
     fn pending_control(&self) -> Option<Value> {
-        let next = self.hub.pending();
-        if next.is_none() {
-            self.hide_control();
-        }
-        next
-    }
-
-    fn suppress_and_hide(&self) {
-        self.focus_suppressed.store(true, Ordering::SeqCst);
-        self.hide_control();
+        self.hub.pending()
     }
 
     async fn agent_context(&self) -> AgentResult<(AgentConfig, Arc<ApiClient>)> {
@@ -438,15 +368,9 @@ pub fn show_pending_control(app: &AppHandle) -> bool {
     if service.pending_control().is_none() {
         return false;
     }
-    service.focus_suppressed.store(false, Ordering::SeqCst);
-    service.show_control();
+    crate::focus_main_window(app);
+    service.notify_live_control();
     true
-}
-
-pub fn close_control_window(app: &AppHandle) {
-    if let Ok(service) = service(app) {
-        service.suppress_and_hide();
-    }
 }
 
 pub fn clear_control(app: &AppHandle) {
@@ -454,29 +378,19 @@ pub fn clear_control(app: &AppHandle) {
         if service.hub.dismiss_with_change().unwrap_or(false) {
             service.notify_live_control();
         }
-        if service.hub.is_empty() {
-            service.hide_control();
-        }
     }
 }
 
 pub fn dismiss_control(app: &AppHandle) -> Result<(), String> {
     let service = service(app).map_err(|error| message(&error))?;
-    let Some(control) = service.pending_control() else {
+    if service.pending_control().is_none() {
         return Err("当前没有待处理事件".to_string());
-    };
-    if control.get("type").and_then(Value::as_str) == Some("assignment_warning") {
-        service.suppress_and_hide();
-        return Ok(());
     }
     service
         .hub
         .dismiss_with_change()
         .map_err(|error| message(&error))?;
     service.notify_live_control();
-    if service.hub.is_empty() {
-        service.hide_control();
-    }
     Ok(())
 }
 
@@ -672,6 +586,7 @@ pub async fn associate(
         live_sync_error: summary.live_sync_error.filter(|value| !value.is_empty()),
         deferred_count: 0,
         deferred_task_dirs: Vec::new(),
+        deferred_tasks: Vec::new(),
         ownership_paused_count: 0,
         ownership_paused_task_dirs: Vec::new(),
         ownership_pending_count: 0,
@@ -856,27 +771,3 @@ pub async fn detach_local_association(
 /// 与 `sidecar.rs` 的 `SidecarStatus` 同形，前端 `ProjectRail` 继续读取。
 pub type SidecarStatus = AgentStatus;
 
-#[cfg(test)]
-mod control_size_tests {
-    use super::{clamp_control_height, CONTROL_MIN_HEIGHT};
-
-    #[test]
-    fn rejects_invalid_or_tiny_heights() {
-        assert_eq!(clamp_control_height(120.0, 900.0), CONTROL_MIN_HEIGHT);
-        assert_eq!(clamp_control_height(-5.0, 900.0), CONTROL_MIN_HEIGHT);
-        assert_eq!(clamp_control_height(f64::NAN, 900.0), CONTROL_MIN_HEIGHT);
-        assert_eq!(clamp_control_height(f64::INFINITY, 900.0), CONTROL_MIN_HEIGHT);
-    }
-
-    #[test]
-    fn caps_at_ninety_percent_of_work_area() {
-        assert_eq!(clamp_control_height(1200.0, 900.0), 810.0);
-        assert_eq!(clamp_control_height(400.0, 300.0), 270.0);
-    }
-
-    #[test]
-    fn keeps_content_height_within_range() {
-        assert_eq!(clamp_control_height(320.0, 900.0), 320.0);
-        assert_eq!(clamp_control_height(320.6, 900.0), 321.0);
-    }
-}

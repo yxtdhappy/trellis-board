@@ -48,6 +48,7 @@ export type LocalAssociation = {
   liveSyncError: string | null
   deferredCount: number
   deferredTaskDirs: string[]
+  deferredTasks?: Array<{ taskDir: string; title?: string | null }>
   ownershipPausedCount: number
   ownershipPausedTaskDirs: string[]
   ownershipPendingCount: number
@@ -118,6 +119,17 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
           typeof taskDir === 'string' && taskDir.startsWith('.trellis/tasks/'),
       )
     : []
+  const deferredTasks = Array.isArray(record.deferredTasks)
+    ? record.deferredTasks.flatMap((item) => {
+        if (!item || typeof item !== 'object') return []
+        const task = item as Record<string, unknown>
+        if (typeof task.taskDir !== 'string' || !task.taskDir.startsWith('.trellis/tasks/')) {
+          return []
+        }
+        const title = typeof task.title === 'string' && task.title.trim() ? task.title.trim() : null
+        return [{ taskDir: task.taskDir, title }]
+      })
+    : []
   const deferredCount =
     deferredTaskDirs.length ||
     (typeof record.deferredCount === 'number' && Number.isSafeInteger(record.deferredCount)
@@ -165,6 +177,7 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
         : null,
     deferredCount,
     deferredTaskDirs,
+    deferredTasks,
     ownershipPausedCount,
     ownershipPausedTaskDirs,
     ownershipPendingCount,
@@ -506,9 +519,27 @@ export function ProjectRail({
 
   async function syncDeferredTasks(association: LocalAssociation) {
     if (!invoke || syncingDeferredTaskSpace || association.deferredCount < 1) return
+    const deferredTasks = association.deferredTasks?.length
+      ? association.deferredTasks
+      : association.deferredTaskDirs.map((taskDir) => ({ taskDir, title: null }))
     const confirmed = await confirm({
       title: '上传本地任务？',
-      description: `将把 ${association.deferredCount} 个本地任务上传到 ${association.branchName}，冲突时仍会要求确认。`,
+      description: (
+        <div className="flex max-h-56 flex-col gap-1 overflow-auto">
+          {deferredTasks.map((task) => (
+            <div key={task.taskDir}>
+              <p className="break-words text-foreground">
+                {task.title || task.taskDir.split('/').at(-1) || task.taskDir}
+              </p>
+              <p className="break-all">{task.taskDir}</p>
+            </div>
+          ))}
+          <p className={deferredTasks.length ? 'mt-1' : undefined}>
+            将把 {association.deferredCount} 个本地任务上传到 {association.branchName}
+            ，冲突时仍会要求确认。
+          </p>
+        </div>
+      ),
       confirmText: '上传',
     })
     if (!confirmed) return

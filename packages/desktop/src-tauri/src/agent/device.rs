@@ -65,6 +65,14 @@ pub struct EnrollmentSummary {
     pub teams: Vec<AgentTeam>,
 }
 
+/// 待上传本地任务（目录 + 本地 task.json 标题）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeferredTaskInfo {
+    pub task_dir: String,
+    pub title: Option<String>,
+}
+
 /// 本地关联列表项；字段与 `sidecar.rs` 的 LocalAssociation 一致（camelCase）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,6 +97,8 @@ pub struct LocalAssociation {
     pub deferred_count: usize,
     #[serde(default)]
     pub deferred_task_dirs: Vec<String>,
+    #[serde(default)]
+    pub deferred_tasks: Vec<DeferredTaskInfo>,
     #[serde(default)]
     pub ownership_paused_count: usize,
     #[serde(default)]
@@ -861,6 +871,8 @@ pub async fn read_local_associations(
     let mut associations = Vec::with_capacity(config.bindings.len());
     for binding in config.bindings {
         let deferred_task_dirs = deferred_task_dirs(&deferred, &binding.task_space_id);
+        let deferred_tasks =
+            deferred_task_infos(Path::new(&binding.repo_path), &deferred_task_dirs);
         let (ownership_paused_task_dirs, ownership_pending_task_dirs) = if binding.sync_status
             == "approved"
             && !binding.detach_pending
@@ -888,6 +900,7 @@ pub async fn read_local_associations(
             live_sync_error: binding.live_sync_error,
             deferred_count: deferred_task_dirs.len(),
             deferred_task_dirs,
+            deferred_tasks,
             ownership_paused_count: ownership_paused_task_dirs.len(),
             ownership_paused_task_dirs,
             ownership_pending_count: ownership_pending_task_dirs.len(),
@@ -975,6 +988,28 @@ fn deferred_task_dirs(cursors: &Value, task_space_id: &str) -> Vec<String> {
     dirs.retain(|dir| dir.starts_with(".trellis/tasks/"));
     dirs.sort();
     dirs
+}
+
+/// 逐目录读取本地 task.json 标题；读取失败或标题缺失降级为 None。
+fn deferred_task_infos(repo_path: &Path, task_dirs: &[String]) -> Vec<DeferredTaskInfo> {
+    task_dirs
+        .iter()
+        .map(|task_dir| DeferredTaskInfo {
+            task_dir: task_dir.clone(),
+            title: deferred_task_title(repo_path, task_dir),
+        })
+        .collect()
+}
+
+fn deferred_task_title(repo_path: &Path, task_dir: &str) -> Option<String> {
+    let content = std::fs::read_to_string(repo_path.join(task_dir).join("task.json")).ok()?;
+    let parsed: Value = serde_json::from_str(&content).ok()?;
+    parsed
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -1114,6 +1149,16 @@ mod tests {
                 ".trellis/tasks/11-12-a".to_string(),
                 ".trellis/tasks/11-12-b".to_string(),
             ],
+            deferred_tasks: vec![
+                DeferredTaskInfo {
+                    task_dir: ".trellis/tasks/11-12-a".to_string(),
+                    title: Some("修复登录".to_string()),
+                },
+                DeferredTaskInfo {
+                    task_dir: ".trellis/tasks/11-12-b".to_string(),
+                    title: None,
+                },
+            ],
             ownership_paused_count: 1,
             ownership_paused_task_dirs: vec![".trellis/tasks/11-12-a".to_string()],
             ownership_pending_count: 1,
@@ -1130,6 +1175,12 @@ mod tests {
         assert_eq!(value["liveSyncStatus"], "idle");
         assert_eq!(value["deferredCount"], 2);
         assert_eq!(value["deferredTaskDirs"][0], ".trellis/tasks/11-12-a");
+        assert_eq!(
+            value["deferredTasks"][0]["taskDir"],
+            ".trellis/tasks/11-12-a"
+        );
+        assert_eq!(value["deferredTasks"][0]["title"], "修复登录");
+        assert!(value["deferredTasks"][1]["title"].is_null());
         assert_eq!(value["lastErrorCode"], "GIT_FAILED");
 
         let minimal: LocalAssociation = serde_json::from_value(json!({
@@ -1144,6 +1195,37 @@ mod tests {
         assert_eq!(minimal.task_space_id, "");
         assert!(!minimal.detach_pending);
         assert_eq!(minimal.live_sync_status, "pending");
+        assert!(minimal.deferred_tasks.is_empty());
+    }
+
+    #[test]
+    fn deferred_task_infos_extract_titles_or_none() {
+        let root =
+            std::env::temp_dir().join(format!("trellis-device-titles-{}", uuid::Uuid::new_v4()));
+        let titled = root.join(".trellis/tasks/11-12-titled");
+        let untitled = root.join(".trellis/tasks/11-12-untitled");
+        let broken = root.join(".trellis/tasks/11-12-broken");
+        for dir in [&titled, &untitled, &broken] {
+            std::fs::create_dir_all(dir).expect("task dir");
+        }
+        std::fs::write(titled.join("task.json"), r#"{"title":"  修复登录  "}"#).expect("titled");
+        std::fs::write(untitled.join("task.json"), r#"{"id":"demo"}"#).expect("untitled");
+        std::fs::write(broken.join("task.json"), "{not json").expect("broken");
+
+        let dirs = vec![
+            ".trellis/tasks/11-12-titled".to_string(),
+            ".trellis/tasks/11-12-untitled".to_string(),
+            ".trellis/tasks/11-12-broken".to_string(),
+            ".trellis/tasks/11-12-missing".to_string(),
+        ];
+        let infos = deferred_task_infos(&root, &dirs);
+        assert_eq!(infos.len(), 4);
+        assert_eq!(infos[0].task_dir, ".trellis/tasks/11-12-titled");
+        assert_eq!(infos[0].title.as_deref(), Some("修复登录"));
+        assert_eq!(infos[1].title, None);
+        assert_eq!(infos[2].title, None);
+        assert_eq!(infos[3].title, None);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

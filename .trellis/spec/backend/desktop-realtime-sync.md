@@ -5,7 +5,8 @@
 - 修改 `packages/shared/task-snapshot.js`、`packages/shared/remote-identity.js`、
   `packages/desktop/src-tauri/src/agent/{task_sync,task_command,onboarding}.rs`、`packages/server/team/task-space-*.js`、
   `packages/server/team/task-snapshot-service.js`、`packages/server/team/task-command-service.js`、
-  `packages/server/team/sync-agent-service.js`、团队同步 API/SSE、`sync_*` schema 或桌面控制窗口时必须遵循本文。
+  `packages/server/team/sync-agent-service.js`、团队同步 API/SSE、`sync_*` schema 或看板内同步确认弹窗
+  （`packages/web/src/desktop/LiveSyncControlDialog.tsx`）时必须遵循本文。
 - 单机 watcher 与团队客户端 watcher 继续复用 `packages/shared/trellis-watcher.js` 的事件归一化；团队客户端
   只监听 `.trellis/tasks/**`。
 - Team 服务端不 clone、fetch、commit 或 push 项目 Git，不创建项目工作副本，也不读取 Git 凭据。
@@ -368,8 +369,9 @@ taskSpace、binding 或 cursor，也不返回任务正文。返回结果按稳�
 - 双方一致时直接完成，不显示空审查窗口；
 - 完成后写 `initialSyncCompleted=true`，再启动 tasks watcher 和正常增量同步。
 
-`initial_sync_review` 事件每次内容变化都必须强制弹出控制窗口，不受“每进程只自动聚焦一次”与
-手动关闭后的 `focusSuppressed` 影响；否则审查未确认时 binding 永远停留在 `syncing`，主界面只剩
+`initial_sync_review` 事件每次内容变化都必须唤起主窗口并弹出同步确认弹窗
+（`agent_service::publish_control` → `focus_main_window`），
+不受“每进程只自动聚焦一次”限制；否则审查未确认时 binding 永远停留在 `syncing`，主界面只剩
 “正在同步已有任务”。主窗口通过 `live_control_show`（`agent_service::show_pending_control`）手动
 唤起待处理事件，无待处理返回 `false`；`list_local_associations` 把
 `binding.initialReviewPending` 投影为 `initialReviewPending`，供项目栏展示“等待确认任务差异”。

@@ -38,7 +38,7 @@
 - taskSpace 切换必须清空旧分页 cursor、ETag、操作列表、冲突详情和负责人候选；请求序号阻止旧响应覆盖。
 - 任务操作状态使用 `normalizeOperation()` 统一驼峰/下划线字段。`failed` 显示重试，`pending/delivered/running`
   显示“创建中/改派中”和取消；`succeeded` 后才重载正式任务和负责人。
-- 本地关联、sidecar、Team 状态和控制窗口的刷新均使用单一在途请求加一次 pending refresh；
+- 本地关联、sidecar、Team 状态和同步确认弹窗的刷新均使用单一在途请求加一次 pending refresh；
   相同归一化结果必须复用原引用，不能因定时兜底重复创建 Map、数组或 React 状态。
 
 ## 多团队状态
@@ -58,10 +58,13 @@
   同步正常、只读已关联或关联失效；`liveSyncStatus=error` 时显示同步异常并通过可见辅助文本或 `title`
   展示脱敏后的 `liveSyncError`。
 - `initialReviewPending=true` 时分支行显示“已关联 · 等待确认任务差异”并提供“确认差异”入口，点击调用
-  `live_control_show` 唤起控制窗口；此类分支不计入“正在同步任务”提示，改由独立提示说明确认后才会同步。
+  `live_control_show` 聚焦主窗口并弹出同步确认弹窗；此类分支不计入“正在同步任务”提示，改由独立提示说明确认后才会同步。
   该状态在聚合优先级中介于 `error` 与 `syncing` 之间。
 - `liveSyncStatus=ready` 但 `deferredCount>0` 时必须显示“N 个本地任务未同步”，不能显示同步正常。
   可写关联提供显式确认后的补同步入口；只读关联不显示上传动作。补同步失败或冲突不得提示成功。
+- 上传本地任务的确认弹窗必须逐条列出待上传任务的标题与 `taskDir`（标题缺失回退目录名），
+  并说明“冲突时仍会要求确认”；`ConfirmDialog` 的 `description` 必须是块级容器，不能渲染进 `<p>`。
+  同步确认弹窗内的“上传本地任务”决策与分支行入口共用同一份任务清单。
 - 项目栏父行状态只能读取该项目自身 `taskSpaces` 的关联，禁止回退到其他项目的
   `currentTaskSpace`。项目展开时父行优先展示当前选中分支的状态，不能被他分支的
   `error` 或分支不一致覆盖；项目未展开时可按“关联失效、`error`、`syncing`、deferred、
@@ -120,7 +123,7 @@
 - 服务端没有该分支快照时明确显示“服务端暂无任务快照”；用户确认后才以 `bootstrap` 模式 attach，
   并将当前本地任务作为初始快照上传。双方一致时直接安全接入，不显示空差异窗口。
 - 用户明确选择后才创建 binding，并持久化 `initialSyncMode` 和 `initialSyncCompleted`。已进入
-  review 后的“稍后处理”只关闭控制窗口，不能通过删除服务端 binding 实现取消。
+  review 后的“稍后处理”只关闭同步确认弹窗，不能通过删除服务端 binding 实现取消。
 - CAS 冲突显示任务名、文件、最后修改人、设备、时间、建议和 `conflictId`；技术 SHA 只能放在
   次级详情。动作区提供查看差异、使用服务端版本、用我的版本覆盖、仅保存本地副本。
 - 覆盖服务端必须二次确认并说明会先备份双方；保存副本不改变服务端，使用服务端版本不得推进服务端
@@ -165,7 +168,7 @@
 - “全部项目”也要展示逐分支监听摘要；普通浏览器不显示本地解绑操作。
 - 当前客户端 approved 且非 `detachPending` 时显示“不再同步此分支”，必须先二次确认。
 - 所有破坏性操作的二次确认统一走 `packages/web/src/components/ui/confirm-dialog.tsx` 的
-  `useConfirm()`（`ConfirmDialogProvider` 已在 `app/providers.tsx` 与控制窗口入口挂载）。
+  `useConfirm()`（`ConfirmDialogProvider` 只在 `app/providers.tsx` 挂载；本地登录壳不弹确认）。
   Tauri 客户端禁止 `window.confirm` / `window.alert`：`tauri-plugin-dialog` 覆盖后它们返回被拒绝的
   Promise，条件判断恒为真值，用户从未看到确认却被直接执行。
 - 滚动条统一由 `packages/web/src/index.css` base 层的 `scrollbar-width: thin` +
@@ -406,9 +409,9 @@ control event：
 - `project-rail-association.test.js`：ownership paused/pending 的优先级、总数和分支暂停区分。
 - `desktop-association.test.js`：关联摘要字段解析、不可写/错误 binding 不进入默认、pending/paused 目录稳定排序。
 - `desktop-package.test.js`：Tauri 命令、capability、control event 和 CLI `--task-space` 契约。
-- 浏览器验收：单分支隐藏选择器；多分支显示并默认正确；>200 条分批；关闭 control 后不再自动弹窗；
+- 浏览器验收：单分支隐藏选择器；多分支显示并默认正确；>200 条分批；“稍后处理”后弹窗关闭、不再自动弹出；
   浅色/深色和窄屏无横向溢出。
-- Tauri 验收：Board 与 live-control 均可提交 ownership，非法 taskDir/branch 被拒绝，成功后关联摘要刷新。
+- Tauri 验收：Board 窗口（capability `set_task_ownership`）可提交 ownership，非法 taskDir/branch 被拒绝，成功后关联摘要刷新。
 
 ### 7. Wrong vs Correct
 
