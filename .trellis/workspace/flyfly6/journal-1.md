@@ -864,3 +864,41 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 28: 同步确认内嵌化：删除 live-control 独立窗口，Board 内弹窗 + Monaco 左右 diff + 上传任务清单
+<!-- trellis-session: v=2 fp=4b5f8002eb332e5a -->
+
+**Date**: 2026-11-17
+**Task**: 同步确认内嵌化：删除 live-control 独立窗口，Board 内弹窗 + Monaco 左右 diff + 上传任务清单
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+把实时同步确认从独立 480px 控制窗口改为 Board 页面内 Dialog；7 个 live_control_* 命令与 set_task_ownership 改由 ensure_board_caller 校验并授权给 board-local-association；冲突差异改 Monaco 左右分栏只读 diff；上传本地任务确认弹窗列出标题+目录。
+
+### Main Changes
+
+- 删除 CONTROL_WINDOW/show_control/hide_control/suppress_and_hide/close_control_window/live_control_resize 与 focus_suppressed，publish_control 改为 focus_main_window
+- 新增 packages/web/src/desktop/LiveSyncControlDialog.tsx（Board 内弹窗，含 10s 兜底刷新与 DiffLoadBoundary 回退）与 MonacoDiff.tsx
+- Difference::to_control 增加 title（顶层与双侧），LocalAssociation 增加 deferredTasks[{taskDir,title}]
+- confirm-dialog description 由 <p> 改 <div>，ProjectRail 上传确认弹窗渲染任务标题与目录
+- 删除 capabilities/live-control.json、control.html、ControlApp.tsx、main-control.tsx，vite.desktop 仅保留 index 入口
+- 同步更新 6 个 spec、desktop/web README 与 product-prd 中的控制窗口表述
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3ef736d` | feat(desktop): move live sync confirmation into the board dialog |
+
+### Testing
+
+- [OK] cargo test agent:: → 163 passed，仅此前已存在的 credential round_trips_credential 失败（未修改该文件）
+- [OK] yarn test → 576 tests，574 pass / 2 skipped
+- [OK] web build + build:desktop 通过；真机验收：主窗口内冲突弹窗、Monaco 左右 diff、最小化自动还原、Board 页面可直接 invoke live_control_*
+
+### Status
+
+[OK] **Completed**
