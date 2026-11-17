@@ -6,6 +6,11 @@ description = "读取本地桌面客户端版本、上次服务端地址和 Agen
 commands.allow = ["app_status"]
 
 [[permission]]
+identifier = "allow-client-identity"
+description = "当前已登录 Board 可读取桌面客户端的只读品牌名和版本号。"
+commands.allow = ["client_identity"]
+
+[[permission]]
 identifier = "allow-desktop-login"
 description = "仅本地登录页向进程内 Agent 提交账号密码。"
 commands.allow = ["desktop_login"]

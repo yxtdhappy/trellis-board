@@ -5,6 +5,8 @@ Tauri v2 单进程客户端：Agent（心跳、SSE 事件、任务空间同步�
 运行环境检查，再显示本地登录页；登录成功后当前 WebView 进入 Board。
 
 - 客户端版本：`packages/desktop/src-tauri/Cargo.toml`、`packages/desktop/src-tauri/tauri.conf.json`
+- Board 左上角品牌名：`packages/desktop/src-tauri/tauri.conf.json` 的 `productName`，空白时默认
+  `Trellis Board`；其下方显示当前客户端版本
 - Agent 协议：`AGENT_PROTOCOL_VERSION = 3`
 - 本地配置：`%LOCALAPPDATA%\TrellisBoard\data\client.json`（schema 3）
 - Agent 数据：`%LOCALAPPDATA%\TrellisBoard\data\agent`

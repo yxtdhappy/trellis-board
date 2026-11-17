@@ -52,6 +52,13 @@ struct AppStatus {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ClientIdentity {
+    name: String,
+    version: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DesktopLoginResult {
     server_url: String,
     username: String,
@@ -204,6 +211,14 @@ fn default_device_name() -> String {
         .unwrap_or_else(|| "Windows 桌面".to_string())
 }
 
+fn client_brand_name(value: Option<&str>) -> String {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Trellis Board")
+        .to_string()
+}
+
 fn initial_server_url() -> Option<String> {
     config::server_url_from_args()
         .or_else(|| std::env::var("TRELLIS_DESKTOP_SERVER_URL").ok())
@@ -329,6 +344,15 @@ async fn app_status(app: AppHandle, window: WebviewWindow) -> Result<AppStatus, 
         config_path: config::config_path().display().to_string(),
         logs_dir: config::logs_dir().display().to_string(),
         sidecar_running: agent_service::is_running(&app),
+    })
+}
+
+#[tauri::command]
+fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdentity, String> {
+    ensure_board_caller(&app, &window)?;
+    Ok(ClientIdentity {
+        name: client_brand_name(app.config().product_name.as_deref()),
+        version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
 
@@ -951,6 +975,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             app_status,
+            client_identity,
             desktop_logout,
             desktop_login,
             appearance_load,
@@ -1072,5 +1097,12 @@ mod tests {
         assert!(validate_agent_tools(&too_many).is_err());
         assert!(validate_agent_tools(&[]).is_err());
         assert!(validate_agent_tools(&["Claude Code".to_string()]).is_err());
+    }
+
+    #[test]
+    fn client_brand_name_uses_configured_name_or_default() {
+        assert_eq!(client_brand_name(Some("Acme Board")), "Acme Board");
+        assert_eq!(client_brand_name(Some("  ")), "Trellis Board");
+        assert_eq!(client_brand_name(None), "Trellis Board");
     }
 }

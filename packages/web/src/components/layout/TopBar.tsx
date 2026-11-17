@@ -29,6 +29,8 @@ export type BoardNavItem = { id: string; label: string }
 type TeamOption = { id: string; name: string }
 
 type TopBarProps = {
+  brandName: string
+  version?: string
   nav: BoardNavItem[]
   activeNav: string
   onNavigate: (id: string) => void
@@ -46,6 +48,8 @@ type TopBarProps = {
 }
 
 export function TopBar({
+  brandName,
+  version,
   nav,
   activeNav,
   onNavigate,
@@ -97,10 +101,19 @@ export function TopBar({
         <a
           className="flex h-14 shrink-0 items-center gap-2"
           href="/"
-          aria-label="Trellis Board 首页"
+          aria-label={`${brandName} 首页`}
         >
           <TrellisLogo size={24} />
-          <span className="text-sm font-semibold @max-[64em]:hidden">Trellis Board</span>
+          <span className="flex min-w-0 flex-col justify-center leading-none @max-[64em]:hidden">
+            <span className="max-w-40 truncate text-sm font-semibold" title={brandName}>
+              {brandName}
+            </span>
+            {version ? (
+              <span className="mt-1 text-[0.625rem] font-medium text-muted-foreground">
+                v{version}
+              </span>
+            ) : null}
+          </span>
         </a>
 
         {searchOpen ? (

@@ -52,6 +52,7 @@ const NAV: BoardNavItem[] = [
 ]
 
 type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
+type DesktopClientIdentity = { name?: string; version?: string }
 
 export function BoardPage() {
   const confirm = useConfirm()
@@ -66,6 +67,8 @@ export function BoardPage() {
   const [viewsOpen, setViewsOpen] = useState(false)
   const [taskAssignees, setTaskAssignees] = useState<TaskSpaceAssignee[]>([])
   const [localAssociations, setLocalAssociations] = useState<LocalAssociation[]>([])
+  const [brandName, setBrandName] = useState('Trellis Board')
+  const [clientVersion, setClientVersion] = useState('')
 
   const {
     board,
@@ -188,6 +191,28 @@ export function BoardPage() {
   }, [runtime?.user?.mustChangePassword])
 
   useEffect(() => {
+    if (!desktopInvoke) return
+    let active = true
+    desktopInvoke('client_identity')
+      .then((value) => {
+        if (!active || !value || typeof value !== 'object') return
+        const identity = value as DesktopClientIdentity
+        if (typeof identity.name === 'string' && identity.name.trim()) {
+          setBrandName(identity.name.trim())
+        }
+        if (typeof identity.version === 'string' && identity.version.trim()) {
+          setClientVersion(identity.version.trim())
+        }
+      })
+      .catch(() => {
+        /* 旧客户端没有身份命令时继续使用默认品牌 */
+      })
+    return () => {
+      active = false
+    }
+  }, [desktopInvoke])
+
+  useEffect(() => {
     let cancelled = false
     fetchPanels()
       .then((list) => {
@@ -248,6 +273,8 @@ export function BoardPage() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
       <TopBar
+        brandName={brandName}
+        version={clientVersion || undefined}
         nav={navItems}
         activeNav={view}
         onNavigate={(id) => setView(id)}
