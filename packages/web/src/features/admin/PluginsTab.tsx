@@ -190,14 +190,12 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
                 >
                   <Puzzle className="size-3.5 text-muted-foreground" aria-hidden="true" />
                   <span className="text-xs font-semibold text-foreground">{row.name}</span>
-                  <span className="text-[0.6875rem] text-muted-foreground">v{row.version}</span>
+                  <span className="text-xs text-muted-foreground">v{row.version}</span>
                   {row.sessions > 0 ? (
-                    <span className="text-[0.625rem] text-muted-foreground">
-                      {row.sessions} 人已登录
-                    </span>
+                    <span className="text-2xs text-muted-foreground">{row.sessions} 人已登录</span>
                   ) : null}
                 </button>
-                <p className="mt-0.5 text-[0.6875rem] text-muted-foreground">
+                <p className="mt-0.5 text-xs text-muted-foreground">
                   {row.lastError || row.description || row.id}
                 </p>
               </Row>
@@ -243,7 +241,7 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
                 <p className="text-xs font-semibold text-foreground">
                   {row.projectName || row.projectId}
                 </p>
-                <p className="text-[0.6875rem] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   插件项目：{row.externalProjectName || row.externalProjectId}
                 </p>
               </Row>
@@ -253,7 +251,7 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
 
         <div className="mt-2 flex flex-col gap-1.5 rounded-lg bg-muted/40 p-2.5">
           <select
-            className="h-7 rounded-md border border-border bg-card px-2 text-[0.6875rem]"
+            className="h-7 rounded-md border border-border bg-card px-2 text-xs"
             value={form.projectId}
             onChange={(event) => setForm((prev) => ({ ...prev, projectId: event.target.value }))}
           >
@@ -265,7 +263,7 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
             ))}
           </select>
           <input
-            className="h-7 rounded-md border border-border bg-card px-2 text-[0.6875rem]"
+            className="h-7 rounded-md border border-border bg-card px-2 text-xs"
             placeholder="插件侧项目 ID"
             value={form.externalProjectId}
             onChange={(event) =>
@@ -273,7 +271,7 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
             }
           />
           <input
-            className="h-7 rounded-md border border-border bg-card px-2 text-[0.6875rem]"
+            className="h-7 rounded-md border border-border bg-card px-2 text-xs"
             placeholder="插件侧项目名称（可选）"
             value={form.externalProjectName}
             onChange={(event) =>
@@ -296,7 +294,7 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
         </div>
 
         {plugin ? (
-          <p className="text-[0.625rem] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             当前插件：{plugin.name} · {plugin.running ? '进程运行中' : '进程未运行'}
           </p>
         ) : null}

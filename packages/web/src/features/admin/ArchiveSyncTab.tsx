@@ -35,16 +35,56 @@ const STATUS_LABELS: Record<string, string> = {
   index_error: '索引失败',
 }
 
+const PROJECT_PREVIEW_LIMIT = 5
+
 function statusLabel(value: string) {
   return STATUS_LABELS[value] || value
 }
 
 function credentialStateLabel(value: string) {
-  if (value === 'configured') return '凭据已配置'
+  if (value === 'configured') return '已匹配 · 未验证'
   if (value === 'anonymous') return '公开 HTTPS 匿名'
   if (value === 'missing') return '缺少 SSH 凭据'
   if (value === 'unsupported') return '远端协议不支持'
-  return value
+  return value ? `未知凭据状态（${value}）` : '凭据状态未知'
+}
+
+function displayText(value: string | null | undefined, fallback: string) {
+  return value?.trim() || fallback
+}
+
+type AffectedProject = {
+  key: string
+  name: string
+  branches: string[]
+}
+
+function credentialProjects(taskSpaces: ArchiveTaskSpaceSync[], credentialId: string) {
+  if (!credentialId) return []
+  const projects = new Map<string, AffectedProject>()
+  taskSpaces.forEach((taskSpace, index) => {
+    if (taskSpace.credential?.id !== credentialId) return
+    const key = taskSpace.projectId || taskSpace.taskSpaceId || `project-${index}`
+    const project = projects.get(key) ?? {
+      key,
+      name: displayText(taskSpace.projectName, '项目名称缺失'),
+      branches: [],
+    }
+    const branchName = displayText(taskSpace.branchName, '分支名称缺失')
+    if (!project.branches.includes(branchName)) project.branches.push(branchName)
+    projects.set(key, project)
+  })
+  return [...projects.values()]
+}
+
+function taskSpaceText(taskSpace: ArchiveTaskSpaceSync) {
+  const projectName = displayText(taskSpace.projectName, '项目名称缺失')
+  const branchName = displayText(taskSpace.branchName, '分支名称缺失')
+  return `${projectName} · ${branchName}`
+}
+
+function affectedProjectText(project: AffectedProject) {
+  return `${project.name} · ${project.branches.join(' / ')}`
 }
 
 function shortHead(value: string | null) {
@@ -80,6 +120,7 @@ export function ArchiveSyncTab() {
   const [intervalSeconds, setIntervalSeconds] = useState('300')
   const [editing, setEditing] = useState<ArchiveGitCredential | null>(null)
   const [draft, setDraft] = useState<CredentialDraft>(EMPTY_CREDENTIAL)
+  const [expandedCredentialKey, setExpandedCredentialKey] = useState<string | null>(null)
   const configVersionRef = useRef('')
 
   useEffect(() => {
@@ -138,9 +179,46 @@ export function ArchiveSyncTab() {
   }
 
   async function deleteCredential(credential: ArchiveGitCredential) {
+    const affected = credentialProjects(sync.overview?.taskSpaces ?? [], credential.id)
+    const visibleProjects = affected.slice(0, PROJECT_PREVIEW_LIMIT)
+    const remainingProjects = affected.length - visibleProjects.length
+    const credentialName = displayText(credential.name, '未命名凭据')
     const accepted = await confirm({
-      title: `删除 ${credential.origin} 的归档凭据？`,
-      description: '删除后，该来源的 SSH 归档同步会立即失败；HTTPS 会退回匿名访问。',
+      title: `删除 ${displayText(credential.origin, '该来源')} 的归档凭据？`,
+      description: (
+        <div className="flex flex-col gap-2">
+          <p>删除后，该来源的 SSH 归档同步会立即失败；HTTPS 会退回匿名访问。</p>
+          <p>
+            将影响 <strong className="text-foreground">{affected.length}</strong> 个自动匹配项目。
+          </p>
+          {affected.length === 0 ? (
+            <p>当前没有项目使用凭据“{credentialName}”。</p>
+          ) : (
+            <>
+              <ul
+                aria-label={`凭据 ${credentialName} 的受影响项目`}
+                className="flex max-h-40 flex-col gap-1 overflow-y-auto rounded-md border border-border bg-muted/30 p-2"
+              >
+                {visibleProjects.map((project) => (
+                  <li
+                    key={project.key}
+                    className="min-w-0 break-words"
+                    title={affectedProjectText(project)}
+                  >
+                    {affectedProjectText(project)}
+                  </li>
+                ))}
+              </ul>
+              {remainingProjects > 0 ? (
+                <p>
+                  另有 {remainingProjects} 个项目同样受影响，此处仅列出前 {visibleProjects.length}{' '}
+                  个。
+                </p>
+              ) : null}
+            </>
+          )}
+        </div>
+      ),
       confirmText: '删除凭据',
       tone: 'danger',
     })
@@ -193,9 +271,7 @@ export function ArchiveSyncTab() {
               <label className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2">
                 <span>
                   <strong className="block text-xs font-medium">启用后台同步</strong>
-                  <span className="text-[0.6875rem] text-muted-foreground">
-                    关闭后仍可手动立即同步。
-                  </span>
+                  <span className="text-xs text-muted-foreground">关闭后仍可手动立即同步。</span>
                 </span>
                 <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="启用归档同步" />
               </label>
@@ -209,7 +285,7 @@ export function ArchiveSyncTab() {
                   onChange={(event) => setIntervalSeconds(event.target.value)}
                 />
               </Field>
-              <p className="text-[0.6875rem] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 最近保存 {formatTime(overview.config.updatedAt)}
               </p>
               <Button size="sm" type="submit" className="self-start" disabled={sync.busy}>
@@ -220,7 +296,7 @@ export function ArchiveSyncTab() {
 
           <Panel
             kicker="ARCHIVE / CREDENTIALS"
-            title={editing ? `编辑 ${editing.origin}` : '新增来源凭据'}
+            title={editing ? `编辑 ${displayText(editing.origin, '来源地址缺失')}` : '新增来源凭据'}
             description="凭据严格按 scheme + host + port 隔离，不会跨域名或端口复用。"
           >
             <form className="flex flex-col gap-2.5" onSubmit={saveCredential}>
@@ -311,7 +387,7 @@ export function ArchiveSyncTab() {
                     hint="只用于精确匹配的 SSH 来源。"
                   >
                     <Textarea
-                      className="min-h-28 font-mono text-[0.6875rem]"
+                      className="min-h-28 font-mono text-xs"
                       autoComplete="off"
                       required={!editing}
                       value={draft.privateKey}
@@ -325,7 +401,7 @@ export function ArchiveSyncTab() {
                     hint="必须包含该主机和端口对应的完整 known_hosts 行。"
                   >
                     <Textarea
-                      className="min-h-24 font-mono text-[0.6875rem]"
+                      className="min-h-24 font-mono text-xs"
                       required={!editing}
                       value={draft.knownHostsText}
                       onChange={(event) =>
@@ -357,7 +433,7 @@ export function ArchiveSyncTab() {
             kicker="ARCHIVE / ORIGINS"
             title="远端来源凭据"
             action={
-              <span className="text-[0.6875rem] font-semibold text-muted-foreground">
+              <span className="text-xs font-semibold text-muted-foreground">
                 {overview.credentials.length}
               </span>
             }
@@ -366,58 +442,115 @@ export function ArchiveSyncTab() {
               {overview.credentials.length === 0 ? (
                 <EmptyRow>尚未配置归档 Git 凭据。公开 HTTPS 可直接匿名读取。</EmptyRow>
               ) : (
-                overview.credentials.map((credential) => (
-                  <Row
-                    key={credential.id}
-                    actions={
-                      <>
-                        <Button
-                          size="sm"
-                          type="button"
-                          variant="outline"
-                          disabled={sync.busy}
-                          onClick={() => void sync.testCredential(credential)}
-                        >
-                          测试
-                        </Button>
-                        <Button
-                          size="sm"
-                          type="button"
-                          variant="ghost"
-                          onClick={() => editCredential(credential)}
-                        >
-                          编辑
-                        </Button>
-                        <Button
-                          size="sm"
-                          type="button"
-                          variant="ghost"
-                          className="text-destructive"
-                          disabled={sync.busy}
-                          onClick={() => void deleteCredential(credential)}
-                        >
-                          删除
-                        </Button>
-                      </>
-                    }
-                  >
-                    <div className="flex min-w-0 flex-col gap-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <strong className="truncate text-xs font-medium">{credential.name}</strong>
-                        <StatusPill value={credential.scheme.toUpperCase()} />
-                        <StatusPill value="已配置" />
-                      </div>
-                      <p className="truncate text-[0.6875rem] text-muted-foreground">
-                        <code>{credential.origin}</code> · 更新 {formatTime(credential.updatedAt)}
-                      </p>
-                      {credential.knownHostsFingerprints.length ? (
-                        <p className="truncate text-[0.625rem] text-muted-foreground">
-                          主机指纹 {credential.knownHostsFingerprints[0].fingerprint}
+                overview.credentials.map((credential, index) => {
+                  const credentialKey = credential.id || `credential-${index}`
+                  const credentialName = displayText(credential.name, '未命名凭据')
+                  const affected = credentialProjects(overview.taskSpaces, credential.id)
+                  const expanded = expandedCredentialKey === credentialKey
+                  const projectListId = `archive-credential-${index}-projects`
+                  return (
+                    <Row
+                      key={credentialKey}
+                      actions={
+                        <>
+                          <Button
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                            disabled={sync.busy}
+                            onClick={() => void sync.testCredential(credential)}
+                          >
+                            测试
+                          </Button>
+                          <Button
+                            size="sm"
+                            type="button"
+                            variant="ghost"
+                            onClick={() => editCredential(credential)}
+                          >
+                            编辑
+                          </Button>
+                          <Button
+                            size="sm"
+                            type="button"
+                            variant="ghost"
+                            className="text-destructive"
+                            disabled={sync.busy}
+                            onClick={() => void deleteCredential(credential)}
+                          >
+                            删除
+                          </Button>
+                        </>
+                      }
+                    >
+                      <div className="flex min-w-0 flex-col gap-0.5">
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <strong
+                            className="min-w-0 truncate text-xs font-medium"
+                            title={credentialName}
+                          >
+                            {credentialName}
+                          </strong>
+                          <StatusPill value={credential.scheme.toUpperCase()} />
+                          <StatusPill value="已配置" />
+                        </div>
+                        <p className="truncate text-xs text-muted-foreground">
+                          <code>{displayText(credential.origin, '来源地址缺失')}</code> · 更新{' '}
+                          {formatTime(credential.updatedAt)}
                         </p>
-                      ) : null}
-                    </div>
-                  </Row>
-                ))
+                        {credential.knownHostsFingerprints.length ? (
+                          <p className="truncate text-2xs text-muted-foreground">
+                            主机指纹{' '}
+                            {displayText(
+                              credential.knownHostsFingerprints[0].fingerprint,
+                              '指纹信息缺失',
+                            )}
+                          </p>
+                        ) : null}
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          <span>自动适用 {affected.length} 个项目</span>
+                          {affected.length > 0 ? (
+                            <Button
+                              size="xs"
+                              type="button"
+                              variant="ghost"
+                              aria-label={`${expanded ? '收起' : '查看'}凭据 ${credentialName} 的适用项目`}
+                              aria-expanded={expanded}
+                              aria-controls={projectListId}
+                              onClick={() =>
+                                setExpandedCredentialKey((current) =>
+                                  current === credentialKey ? null : credentialKey,
+                                )
+                              }
+                            >
+                              {expanded ? '收起项目' : '查看项目'}
+                            </Button>
+                          ) : (
+                            <span>当前没有项目使用此来源</span>
+                          )}
+                        </div>
+                        {expanded && affected.length > 0 ? (
+                          <ul
+                            id={projectListId}
+                            tabIndex={0}
+                            aria-label={`凭据 ${credentialName} 自动适用的项目`}
+                            className="mt-1 flex max-h-40 flex-col gap-1 overflow-y-auto overscroll-contain rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                          >
+                            {affected.map((project) => (
+                              <li
+                                key={project.key}
+                                className="min-w-0 break-words"
+                                title={affectedProjectText(project)}
+                              >
+                                {affectedProjectText(project)}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    </Row>
+                  )
+                })
               )}
             </div>
           </Panel>
@@ -463,7 +596,7 @@ export function ArchiveSyncTab() {
             <DialogTitle>归档同步失败日志</DialogTitle>
             <DialogDescription>
               {sync.logsTaskSpace
-                ? `${sync.logsTaskSpace.projectName} · ${sync.logsTaskSpace.branchName}，按时间倒序展示最近 100 条失败。`
+                ? `${taskSpaceText(sync.logsTaskSpace)}，按时间倒序展示最近 100 条失败。`
                 : ''}
             </DialogDescription>
           </DialogHeader>
@@ -485,8 +618,8 @@ export function ArchiveSyncTab() {
                 >
                   <div className="flex flex-wrap items-center gap-1.5">
                     <StatusPill value={log.phase} />
-                    <code className="text-[0.6875rem] text-destructive">{log.errorCode}</code>
-                    <span className="ml-auto text-[0.625rem] text-muted-foreground">
+                    <code className="text-xs text-destructive">{log.errorCode}</code>
+                    <span className="ml-auto text-2xs text-muted-foreground">
                       {formatTime(log.createdAt)}
                     </span>
                   </div>
@@ -495,9 +628,7 @@ export function ArchiveSyncTab() {
               ))
             )}
             {sync.logsLoading ? (
-              <p className="py-2 text-center text-[0.6875rem] text-muted-foreground">
-                正在读取日志…
-              </p>
+              <p className="py-2 text-center text-xs text-muted-foreground">正在读取日志…</p>
             ) : null}
           </DialogBody>
           <DialogFooter>
@@ -551,14 +682,16 @@ function TaskSpaceRow({
     >
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-1.5">
-          <strong className="truncate text-xs font-medium">{taskSpace.projectName}</strong>
-          <StatusPill value={taskSpace.branchName} />
+          <strong className="truncate text-xs font-medium">
+            {displayText(taskSpace.projectName, '项目名称缺失')}
+          </strong>
+          <StatusPill value={displayText(taskSpace.branchName, '分支名称缺失')} />
           <StatusPill value={statusLabel(taskSpace.status)} />
-          <span className="text-[0.625rem] text-muted-foreground">
+          <span className="text-2xs text-muted-foreground">
             {credentialStateLabel(taskSpace.credentialState)}
           </span>
         </div>
-        <div className="grid gap-x-4 gap-y-0.5 text-[0.6875rem] text-muted-foreground sm:grid-cols-2">
+        <div className="grid gap-x-4 gap-y-0.5 text-xs text-muted-foreground sm:grid-cols-2">
           <span>
             最近更新：{taskSpace.lastIndexedAt ? formatTime(taskSpace.lastIndexedAt) : '尚未更新'}
           </span>
@@ -571,21 +704,25 @@ function TaskSpaceRow({
           <span>
             Commit <code>{shortHead(taskSpace.remoteHead)}</code>
           </span>
+          {taskSpace.credentialState === 'configured' ? (
+            <span
+              className="truncate"
+              title={`使用凭据：${displayText(taskSpace.credential?.name, '凭据名称缺失')}`}
+            >
+              使用凭据：{displayText(taskSpace.credential?.name, '凭据名称缺失')}
+            </span>
+          ) : null}
           <span className="truncate" title={taskSpace.origin || taskSpace.remoteUrl}>
-            来源 <code>{taskSpace.origin || taskSpace.remoteUrl}</code>
+            来源 <code>{displayText(taskSpace.origin || taskSpace.remoteUrl, '来源地址缺失')}</code>
           </span>
         </div>
         {taskSpace.nextAttemptAt ? (
-          <p className="text-[0.625rem] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             下次自动尝试：{formatTime(taskSpace.nextAttemptAt)}
           </p>
         ) : null}
         {taskSpace.lastError ? (
-          <p
-            className={
-              failed ? 'text-[0.625rem] text-destructive' : 'text-[0.625rem] text-muted-foreground'
-            }
-          >
+          <p className={failed ? 'text-2xs text-destructive' : 'text-2xs text-muted-foreground'}>
             {taskSpace.lastError}
           </p>
         ) : null}

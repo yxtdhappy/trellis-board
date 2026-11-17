@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
 import { ApiError, requestJson } from '@/api/request'
 import { normalizeRuntime, normalizeUser, safeReturnTo } from '@/lib/team-client.js'
@@ -84,17 +85,17 @@ export function LoginPage() {
           <TrellisLogo size={36} variant="inverted" />
           <span className="flex flex-col leading-tight">
             <span className="text-base font-semibold">Trellis Board</span>
-            <span className="text-[0.6875rem] tracking-[0.18em] text-primary-foreground/70">
+            <span className="text-xs tracking-[0.18em] text-primary-foreground/70">
               TEAM / BOARD
             </span>
           </span>
         </a>
 
         <div className="flex max-w-lg flex-col gap-5">
-          <p className="text-[0.6875rem] font-semibold tracking-[0.22em] text-primary-foreground/70">
+          <p className="text-xs font-semibold tracking-[0.22em] text-primary-foreground/70">
             AUTHORIZED WORKSPACE
           </p>
-          <h1 className="text-[2rem] leading-[1.3] font-semibold font-heading">
+          <h1 className="text-3xl leading-tight font-semibold font-heading">
             让每个任务都有清楚的负责人和发布结果。
           </h1>
           <p className="text-sm leading-7 text-primary-foreground/80">
@@ -108,7 +109,7 @@ export function LoginPage() {
               '项目权限、Agent 绑定与系统审计',
             ].map((item) => (
               <li key={item} className="flex items-center gap-3 text-sm text-primary-foreground/90">
-                <span className="flex size-5 items-center justify-center rounded-full bg-primary-foreground text-[0.625rem] font-bold text-primary">
+                <span className="flex size-5 items-center justify-center rounded-full bg-primary-foreground text-2xs font-bold text-primary">
                   ✓
                 </span>
                 {item}
@@ -134,9 +135,9 @@ export function LoginPage() {
       </section>
 
       <section className="flex items-center justify-center px-6 py-16">
-        <Card className="w-full max-w-[25rem] shadow-sm">
+        <Card className="w-full max-w-100 shadow-sm">
           <CardHeader className="gap-2">
-            <p className="text-[0.625rem] font-semibold tracking-[0.2em] text-muted-foreground">
+            <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
               TEAM ACCESS
             </p>
             <CardTitle className="text-xl font-heading">登录团队看板</CardTitle>
@@ -188,7 +189,8 @@ export function LoginPage() {
                 {state === 'checking' ? '正在检查会话…' : submitting ? '正在登录…' : '登录'}
               </Button>
             </form>
-            <p className="mt-6 border-t border-border pt-4 text-xs leading-6 text-muted-foreground">
+            <Separator className="mt-6" />
+            <p className="pt-4 text-xs leading-6 text-muted-foreground">
               账号由系统管理员创建。忘记密码请联系管理员重置，重置会使其他会话立即失效。
             </p>
           </CardContent>

@@ -7,7 +7,7 @@ import { defineConfig, type Plugin } from 'vite'
 const webDir = path.dirname(fileURLToPath(import.meta.url))
 const desktopDir = path.resolve(webDir, 'desktop')
 
-// dev 下 vite 用内联 style/script 注入 HMR，页面里的 CSP meta 会把它们全部拦掉（control.html 样式丢失）。
+// dev 下 vite 用内联 style/script 注入 HMR，页面里的 CSP meta 会把它们全部拦掉（index.html 样式丢失）。
 function stripDevCsp(): Plugin {
   return {
     name: 'strip-dev-csp',
@@ -35,7 +35,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: path.resolve(desktopDir, 'index.html'),
-        control: path.resolve(desktopDir, 'control.html'),
       },
     },
   },

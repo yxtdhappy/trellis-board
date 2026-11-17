@@ -103,6 +103,7 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
   ETag 仍由原接口负责。
 - Team 状态当前不新增 Board SSE 事件；客户端使用 `/api/team/status` 的 ETag 条件请求、可见页面
   10 秒兜底和 focus/visibility/SSE 重连对齐。没有逐路径测量证据时不得增加 `team.status.changed`。
+  代理心跳导致监听集合变化时沿用既有 `tasks.changed` 广播，客户端据此重取团队快照。
 - 服务关闭时先结束全部 SSE 响应，再关闭 HTTP server，避免活动连接拖住关闭流程。
 
 ## 仓库白名单
@@ -384,6 +385,11 @@ SQLite、Board 查询与 SSE。Team 活动任务链路不再 clone/fetch 项目�
 - `GET /api/agent/task-spaces/:id/snapshot?afterRevision=N`。
 - `POST /api/agent/task-spaces/:id/changes`：`{ batchId, clientSequence, files[] }`。
 - `GET /api/task-spaces/:id/listeners`：只对 `canManage` 用户返回脱敏客户端详情。
+- 项目级 dev id：`/api/team/status` 的每个项目返回调用者自己的 `trellisDevId`（取
+  `sync_project_member`，无映射为 `null`），`listeners` 每条返回该绑定用户的 `trellisDevId`。
+- `attach` 只在客户端显式提交非空 `developerId` 且与已有成员映射不同时更新
+  `sync_project_member.trellis_dev_id`；未提交或相同则保留原值，禁止用用户名默认值覆盖。
+  `scope=mine` 按该映射在查询时判定，不重建索引。
 - `POST/DELETE /api/projects/:id/team-access`：owner team 邀请或移除其他团队。
 - `GET/PATCH /api/admin/archive-sync*`：仅系统管理员读取状态、保存周期、维护按
   `scheme + host + port` 隔离的只读凭据、立即同步和查看失败日志。

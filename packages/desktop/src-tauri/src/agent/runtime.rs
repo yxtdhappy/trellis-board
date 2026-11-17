@@ -29,6 +29,7 @@ pub struct AgentRuntime {
     api: Arc<ApiClient>,
     paused: Arc<AtomicBool>,
     task_sync: Arc<TaskSync>,
+    heartbeat_wake: Arc<Notify>,
     shutdown: watch::Sender<bool>,
     stopped: AtomicBool,
     agent_id: String,
@@ -60,9 +61,11 @@ impl AgentRuntime {
             Some(credential),
             ca_file.as_deref(),
         )?);
+        let heartbeat_wake = Arc::new(Notify::new());
         let task_sync = Arc::new(
             TaskSync::new(store.clone(), api.clone(), emit.clone())
                 .with_state_sink(state_sink)
+                .with_heartbeat_wake(heartbeat_wake.clone())
                 .with_ownership_index_writer(),
         );
         task_sync.ensure_ownership_validation_worker();
@@ -72,6 +75,7 @@ impl AgentRuntime {
             api,
             paused,
             task_sync,
+            heartbeat_wake,
             shutdown,
             stopped: AtomicBool::new(false),
             agent_id: config.agent_id.clone(),
@@ -128,6 +132,7 @@ impl AgentRuntime {
                             break;
                         }
                     }
+                    _ = runtime.heartbeat_wake.notified() => {}
                     _ = tokio::time::sleep(next_delay) => {}
                 }
                 if runtime.is_paused() {
@@ -189,7 +194,7 @@ impl AgentRuntime {
             .into_iter()
             .map(|binding| binding.task_space_id)
             .collect();
-        let body = heartbeat_payload(&config, &listening_task_space_ids);
+         let body = heartbeat_payload(&config, &listening_task_space_ids);
         let response = self
             .api
             .request_json(

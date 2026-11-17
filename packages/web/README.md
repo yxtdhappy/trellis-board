@@ -1,7 +1,7 @@
 # @trellis-board/web
 
 Trellis Board 前端：React 19 + Vite 8 + TypeScript + Tailwind v4 + shadcn/ui，多页入口（board / admin / login）
-加一个 Tauri 桌面控制窗口入口。
+加一个 Tauri 桌面登录窗口入口。
 
 ## 构建与开发
 
@@ -20,11 +20,11 @@ yarn web:dev        # Vite dev server，/api 代理到 127.0.0.1:4317
 | 路径 | 职责 |
 | --- | --- |
 | `index.html` · `admin.html` · `login.html` | Board 多页入口 |
-| `desktop/{index,control}.html` | Tauri 桌面窗口入口 |
+| `desktop/index.html` | Tauri 桌面登录窗口入口 |
 | `src/pages/` · `src/features/` | 页面组合与领域组件 |
 | `src/hooks/` · `src/api/` | 唯一数据源与 fetch 封装 |
 | `src/lib/` | 浏览器/Node 共用纯逻辑（`.js` + `.d.ts`），被 Node 测试直接 import |
-| `src/desktop/` | 桌面登录、环境门与控制窗口 UI |
+| `src/desktop/` | 桌面登录、环境门与看板内同步确认弹窗 UI |
 
 ## 约束
 

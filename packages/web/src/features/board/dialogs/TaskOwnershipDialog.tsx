@@ -215,7 +215,7 @@ export function TaskOwnershipDialog({
     if (!group.length) return null
     return (
       <section className="flex flex-col gap-2">
-        <h3 className="text-[0.6875rem] font-semibold text-muted-foreground">
+        <h3 className="text-xs font-semibold text-muted-foreground">
           {label}（{group.length}）
         </h3>
         {group.map((item) => (
@@ -230,10 +230,10 @@ export function TaskOwnershipDialog({
             />
             <span className="min-w-0 flex-1">
               <span className="block text-xs font-medium text-foreground">{item.title}</span>
-              <span className="mt-0.5 block break-all text-[0.625rem] text-muted-foreground">
+              <span className="mt-0.5 block break-all text-2xs text-muted-foreground">
                 {item.taskDir}
               </span>
-              <span className="mt-1 block text-[0.625rem] text-muted-foreground">
+              <span className="mt-1 block text-2xs text-muted-foreground">
                 {item.branchName ? `当前归属：${item.branchName}` : '当前归属：未确认'}
                 {item.suggestedBranchName ? ` · 建议：${item.suggestedBranchName}` : ''}
               </span>
@@ -246,7 +246,7 @@ export function TaskOwnershipDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[47.5rem]" initialFocus={dialogHeaderRef}>
+      <DialogContent className="sm:max-w-190" initialFocus={dialogHeaderRef}>
         <DialogHeader ref={dialogHeaderRef} tabIndex={-1} className="outline-none">
           <DialogTitle>确认任务归属分支</DialogTitle>
           <DialogDescription>
@@ -269,7 +269,7 @@ export function TaskOwnershipDialog({
                   />
                   全选
                 </label>
-                <span className="text-[0.6875rem] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   已选 {selectedDirs.length}/{items.length}
                 </span>
                 <Button

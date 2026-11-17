@@ -312,7 +312,7 @@ async fn desktop_logout(app: AppHandle, window: WebviewWindow) -> Result<(), Str
     Ok(())
 }
 
-/// 只读、无敏感数据：客户端自带页面（登录页/控制窗口）也要跟随设备偏好。
+/// 只读、无敏感数据：客户端自带页面（登录页/主窗口）也要跟随设备偏好。
 #[tauri::command]
 fn appearance_load() -> appearance::Appearance {
     appearance::load()
@@ -708,11 +708,7 @@ async fn set_task_ownership(
     task_space_id: String,
     decisions: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    if window.label() == "live-control" {
-        ensure_local_caller(&window)?;
-    } else {
-        ensure_board_caller(&app, &window)?;
-    }
+    ensure_board_caller(&app, &window)?;
     let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
     let count = decisions
         .as_array()
@@ -740,13 +736,13 @@ async fn live_control_pending(
     app: AppHandle,
     window: WebviewWindow,
 ) -> Result<Option<serde_json::Value>, String> {
-    ensure_local_caller(&window)?;
+    ensure_board_caller(&app, &window)?;
     Ok(agent_service::pending_control(&app))
 }
 
 #[tauri::command]
 async fn live_control_show(app: AppHandle, window: WebviewWindow) -> Result<bool, String> {
-    ensure_local_caller(&window)?;
+    ensure_board_caller(&app, &window)?;
     Ok(agent_service::show_pending_control(&app))
 }
 
@@ -758,7 +754,7 @@ async fn live_control_decide(
     conflict_id: String,
     action: String,
 ) -> Result<(), String> {
-    ensure_local_caller(&window)?;
+    ensure_board_caller(&app, &window)?;
     let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
     let conflict_id = validate_live_id(&conflict_id, "冲突 ID")?;
     if !matches!(
@@ -779,7 +775,7 @@ async fn live_control_diff(
     task_space_id: String,
     conflict_id: String,
 ) -> Result<serde_json::Value, String> {
-    ensure_local_caller(&window)?;
+    ensure_board_caller(&app, &window)?;
     let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
     let conflict_id = validate_live_id(&conflict_id, "冲突 ID")?;
     agent_service::live_conflict_details(&app, &task_space_id, &conflict_id).await
@@ -793,7 +789,7 @@ async fn live_control_initial(
     mode: String,
     decisions: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
-    ensure_local_caller(&window)?;
+    ensure_board_caller(&app, &window)?;
     let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
     if !matches!(mode.as_str(), "safe" | "review") {
         return Err("首次同步处理方式无效".to_string());
@@ -806,14 +802,8 @@ async fn live_control_initial(
 
 #[tauri::command]
 async fn live_control_dismiss(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
-    ensure_local_caller(&window)?;
+    ensure_board_caller(&app, &window)?;
     agent_service::dismiss_control(&app)
-}
-
-#[tauri::command]
-async fn live_control_resize(window: WebviewWindow, height: f64) -> Result<(), String> {
-    ensure_local_caller(&window)?;
-    agent_service::resize_control(&window, height)
 }
 
 fn focus_main_window(app: &AppHandle) {
@@ -967,11 +957,7 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                .with_denylist(&[agent_service::CONTROL_WINDOW])
-                .build(),
-        )
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             app_status,
@@ -1002,8 +988,7 @@ fn main() {
             live_control_decide,
             live_control_diff,
             live_control_initial,
-            live_control_dismiss,
-            live_control_resize
+            live_control_dismiss
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -1018,9 +1003,6 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "live-control" {
-                    agent_service::close_control_window(window.app_handle());
-                }
                 let _ = window.hide();
                 api.prevent_close();
             }
@@ -1054,6 +1036,7 @@ mod tests {
             live_sync_error: None,
             deferred_count: 0,
             deferred_task_dirs: Vec::new(),
+            deferred_tasks: Vec::new(),
             last_error_code: None,
             last_error: None,
             ownership_paused_count: 0,

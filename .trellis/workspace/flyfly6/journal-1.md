@@ -864,3 +864,169 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 28: 同步确认内嵌化：删除 live-control 独立窗口，Board 内弹窗 + Monaco 左右 diff + 上传任务清单
+<!-- trellis-session: v=2 fp=4b5f8002eb332e5a -->
+
+**Date**: 2026-11-17
+**Task**: 同步确认内嵌化：删除 live-control 独立窗口，Board 内弹窗 + Monaco 左右 diff + 上传任务清单
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+把实时同步确认从独立 480px 控制窗口改为 Board 页面内 Dialog；7 个 live_control_* 命令与 set_task_ownership 改由 ensure_board_caller 校验并授权给 board-local-association；冲突差异改 Monaco 左右分栏只读 diff；上传本地任务确认弹窗列出标题+目录。
+
+### Main Changes
+
+- 删除 CONTROL_WINDOW/show_control/hide_control/suppress_and_hide/close_control_window/live_control_resize 与 focus_suppressed，publish_control 改为 focus_main_window
+- 新增 packages/web/src/desktop/LiveSyncControlDialog.tsx（Board 内弹窗，含 10s 兜底刷新与 DiffLoadBoundary 回退）与 MonacoDiff.tsx
+- Difference::to_control 增加 title（顶层与双侧），LocalAssociation 增加 deferredTasks[{taskDir,title}]
+- confirm-dialog description 由 <p> 改 <div>，ProjectRail 上传确认弹窗渲染任务标题与目录
+- 删除 capabilities/live-control.json、control.html、ControlApp.tsx、main-control.tsx，vite.desktop 仅保留 index 入口
+- 同步更新 6 个 spec、desktop/web README 与 product-prd 中的控制窗口表述
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3ef736d` | feat(desktop): move live sync confirmation into the board dialog |
+
+### Testing
+
+- [OK] cargo test agent:: → 163 passed，仅此前已存在的 credential round_trips_credential 失败（未修改该文件）
+- [OK] yarn test → 576 tests，574 pass / 2 skipped
+- [OK] web build + build:desktop 通过；真机验收：主窗口内冲突弹窗、Monaco 左右 diff、最小化自动还原、Board 页面可直接 invoke live_control_*
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 29: 归档项目联动、监听状态实时上报与项目级 dev id
+<!-- trellis-session: v=2 fp=f733ff77e4a5f628 -->
+
+**Date**: 2026-11-17
+**Task**: 归档项目联动、监听状态实时上报与项目级 dev id
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+修复归档索引项目筛选未继承左侧项目栏、客户端监听集合恒空导致「在线监听」永不收敛、项目级 Trellis developer ID 未展示/未用于默认值、成员 dev id 写错使「只看我的」恒空，以及 StrictMode 下团队状态轮询失效。
+
+### Main Changes
+
+- 归档索引改为受控 projectId，与左侧项目栏双向同步
+- 桌面端绑定变化/首次同步完成立即心跳，服务端仅监听集合变化时广播看板事件
+- active_bindings 只按首次同步完成判定，长同步不再让在线客户端永久离线
+- 项目条目与 listeners 返回 trellisDevId，监听详情仅在 devId≠username 时展示
+- attach 在显式提交不同 dev id 时更新已存在成员，只看我的随即恢复
+- refresh coordinator 增加 activate，修复 StrictMode 下 /api/team/status 永不轮询
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8f948d1` | fix: 修复归档项目联动与监听状态实时上报 |
+| `d60500f` | chore(task): archive 11-17-fix-archive-filter-listener-dev-id |
+
+### Testing
+
+- [OK] web 四个测试文件 33/33 通过；server team-agent-slot 12/12、team-task-mine-scope 6/6、team-gitless-http 2/2
+- [OK] cargo check 通过；cargo test listening/startup_bindings_activate/heartbeat_wake 各 1 passed
+- [OK] 真实桌面端 CDP 验证：is_listening=1、心跳 529B、左栏「在线监听 1/已关联 1」；归档联动与 listeners 展示已实机通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 两个弹窗默认 dev id 仍只有单测与代码审查，未做 GUI 点选验证
+- cargo fmt --check 全仓库存在既存格式偏差，未纳入本次
+
+
+## Session 30: 归档页改用归档域版本刷新，避免同步期间反复重拉
+<!-- trellis-session: v=2 fp=c1c2c1bbcb7e958f -->
+
+**Date**: 2026-11-17
+**Task**: 归档页改用归档域版本刷新，避免同步期间反复重拉
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+为归档索引单独维护 app_meta.archiveQueryRevision，只有归档行变化才推进；归档查询的 etag/缓存键/游标改用该版本，status 暴露 archiveRevision 并纳入 statusEtag，客户端归档页优先用它失效。真实服务 + 浏览器 E2E 验证活跃同步期间归档页 0 次清空重拉，归档新增时仍刷新一次。
+
+### Main Changes
+
+- task-space-index 新增 archiveQueryRevision 与增量逻辑，replaceIndexInTransaction 只对归档行变化标脏
+- queryTasks 归档查询改用归档版本驱动 etag、cacheKey、游标与 409 校验
+- board/gitless status 增加 archiveRevision，statusEtag 纳入哈希
+- BoardPage 归档页失效版本优先 teamStatus.archiveRevision，回退 queryRevision
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `38c6e24` | fix(board): 归档页按归档版本刷新，避免同步期间反复重拉 |
+| `b028777` | chore(task): archive 11-17-decouple-archive-refresh-revision |
+
+### Testing
+
+- [OK] node --test packages/server/test/team-task-index-v10.test.js：17/17 通过（含新增解耦用例）
+- [OK] node --test packages/server/test/team-gitless-http.test.js：3/3 通过
+- [OK] yarn format / web build / web lint 通过；全量测试仅 team-plugin-host 单例在并行下 EPERM 抖动，单跑通过
+- [OK] 真实服务 E2E：活跃同步 8 秒内 queryRevision 49→90、归档版本不变、归档页 0 次占位符；归档导入后归档版本 +1 且列表刷新一次
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 如需合并分区，可把同样的域版本思路用到活动看板游标（同步期间 409 会把用户踢回第一页）
+
+
+## Session 31: 统一 Web 端字号与尺寸刻度，清理 shadcn 规范违规
+<!-- trellis-session: v=2 fp=d6efb1d872845453 -->
+
+**Date**: 2026-11-17
+**Task**: 统一 Web 端字号与尺寸刻度，清理 shadcn 规范违规
+**Package**: web
+**Branch**: `main`
+
+### Summary
+
+把 packages/web/src 中 380 处任意 rem 值收敛到 Tailwind 主题刻度并清理 shadcn 规范违规
+
+### Main Changes
+
+- 新增 --text-2xs: 0.625rem，338 处任意 rem 字号改为 text-2xs/xs/sm/base/lg/xl/3xl
+- 任意 rem/px 尺寸改为刻度类（max-w-md/xl/160、w-58/67、gap-0.75、pt-4.5、rounded-xs/lg）
+- 40 处模板字符串 className 改为 cn()，emerald/amber 改为 success/warning 语义 token
+- 新增 components/ui/skeleton.tsx，6 处扫描骨架改用 Skeleton；7 处 border-t 分隔改用 Separator
+- components/ui 原语 8 行同口径清理，控件高度零漂移（仅 switch 16.6→16px）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2a8bf36` | style(web): 字号与尺寸统一到 Tailwind 刻度 token |
+
+### Testing
+
+- [OK] npx tsc -b（packages/web）通过
+- [OK] npx vite build 通过，CSS 产物含 .text-2xs/.w-58/.h-6/.h-8，无 .text-[..rem]
+- [OK] npx oxlint 0 error（49 既有 warning）；npx oxfmt --check 全过
+- [OK] tabbit 视觉核对 14 屏（看板/团队/归档/插件/详情/创建/改密/偏好/管理六个 tab/两套登录/深浅主题）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 拉取 origin/main 后推送 2 个提交（origin/main 已领先 4 个提交）

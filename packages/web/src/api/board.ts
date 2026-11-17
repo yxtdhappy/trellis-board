@@ -10,6 +10,8 @@ export type Project = {
   name: string
   baselineBranch?: string | null
   path: string
+  remoteIdentityHash?: string | null
+  trellisDevId?: string | null
   members?: string[]
   workspaceMembers?: string[]
   developer?: string | null
@@ -59,6 +61,7 @@ export type TaskSpaceListener = {
   listenerReportedAt: string | null
   lastListenerAt: string | null
   boundAt: string | null
+  trellisDevId?: string | null
 }
 
 export type TaskSpaceListenerDetails = {

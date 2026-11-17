@@ -11,6 +11,7 @@ import {
   type PluginInfo,
   type PluginLogEntry,
 } from '@/api/plugins'
+import { cn } from '@/lib/utils'
 import { PluginLogsDialog } from './PluginLogsDialog.tsx'
 
 const POLL_INTERVAL_MS = 5000
@@ -175,18 +176,16 @@ export function PluginsView() {
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[0.625rem] font-semibold tracking-[0.08em] text-muted-foreground">
+          <p className="text-2xs font-semibold tracking-[0.08em] text-muted-foreground">
             PLUGINS / RUNTIME
           </p>
-          <h1 className="text-[1.1875rem] leading-6 font-semibold font-heading">
-            插件在做什么，一眼看清
-          </h1>
-          <p className="text-[0.71875rem] text-muted-foreground">
+          <h1 className="text-lg leading-6 font-semibold font-heading">插件在做什么，一眼看清</h1>
+          <p className="text-xs text-muted-foreground">
             版本、兼容性、运行状态与最近日志；启停会立即作用于插件进程。
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[0.6875rem] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {hostVersion ? `宿主 ${hostVersion}` : ''}
             {hostVersion ? ' · ' : ''}
             {plugins.length} 个插件
@@ -197,7 +196,7 @@ export function PluginsView() {
             disabled={disabled || reloading}
             onClick={() => void reload()}
             title="重读插件配置目录（TrellisBoard/plugins）的 plugins.json 与 plugins.secrets.json，重启受影响的插件"
-            className="h-7 rounded-md border border-border px-2.5 text-[0.6875rem] hover:bg-muted disabled:opacity-50"
+            className="h-7 rounded-md border border-border px-2.5 text-xs hover:bg-muted disabled:opacity-50"
           >
             {reloading ? '重载中…' : '刷新配置'}
           </button>
@@ -257,9 +256,11 @@ export function PluginsView() {
                   setDraggingId('')
                   setDragOverId('')
                 }}
-                className={`flex flex-col gap-2.5 rounded-xl border bg-card p-3.5 transition ${
-                  dragging ? 'border-dashed border-border opacity-40' : 'border-border'
-                } ${dropTarget ? 'border-primary ring-2 ring-primary/25' : ''}`}
+                className={cn(
+                  'flex flex-col gap-2.5 rounded-xl border bg-card p-3.5 transition',
+                  dragging ? 'border-dashed border-border opacity-40' : 'border-border',
+                  dropTarget && 'border-primary ring-2 ring-primary/25',
+                )}
               >
                 <header className="flex items-start gap-2">
                   <button
@@ -276,15 +277,16 @@ export function PluginsView() {
                     ⠿
                   </button>
                   <div className="min-w-0 flex-1">
-                    <h2 className="truncate text-[0.9375rem] font-semibold font-heading">
+                    <h2 className="truncate text-sm font-semibold font-heading">
                       {plugin.name || plugin.id}
                     </h2>
-                    <p className="truncate font-mono text-[0.6875rem] text-muted-foreground">
-                      {plugin.id}
-                    </p>
+                    <p className="truncate font-mono text-xs text-muted-foreground">{plugin.id}</p>
                   </div>
                   <span
-                    className={`shrink-0 rounded-full px-2 py-0.5 text-[0.625rem] font-semibold ${statusTone(plugin)}`}
+                    className={cn(
+                      'shrink-0 rounded-full px-2 py-0.5 text-2xs font-semibold',
+                      statusTone(plugin),
+                    )}
                   >
                     {plugin.status === 'error' && plugin.lastError
                       ? '错误'
@@ -292,7 +294,7 @@ export function PluginsView() {
                   </span>
                 </header>
 
-                <div className="flex flex-wrap gap-1.5 text-[0.625rem] text-muted-foreground">
+                <div className="flex flex-wrap gap-1.5 text-2xs text-muted-foreground">
                   <span className="rounded-full border border-border px-2 py-0.5">
                     v{plugin.version ?? '?'}
                   </span>
@@ -315,12 +317,12 @@ export function PluginsView() {
                 </div>
 
                 {plugin.rootPaths?.length ? (
-                  <p className="text-[0.6875rem] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     启动后占用：{plugin.rootPaths.join('，')}
                   </p>
                 ) : null}
                 {plugin.lastError ? (
-                  <p className="text-[0.6875rem] text-destructive">{plugin.lastError}</p>
+                  <p className="text-xs text-destructive">{plugin.lastError}</p>
                 ) : null}
 
                 <div className="mt-auto flex items-center gap-2">

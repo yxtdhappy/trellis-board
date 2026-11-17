@@ -35,6 +35,39 @@ test('只接受 tasks 下的文本任务文件', () => {
   }
 })
 
+test('允许规范化普通附件路径但不放宽路径安全校验', () => {
+  assert.equal(
+    normalizeSnapshotPath('.trellis/tasks/archive/2026-11/demo/screenshot.png', {
+      allowUnsupportedExtension: true,
+    }),
+    '.trellis/tasks/archive/2026-11/demo/screenshot.png',
+  )
+  assert.equal(
+    taskDirectoryFromPath('.trellis/tasks/archive/2026-11/demo/screenshot.png', {
+      allowUnsupportedExtension: true,
+    }).archived,
+    true,
+  )
+  assert.throws(() =>
+    taskDirectoryFromPath('.trellis/tasks/archive/2026-13/demo/screenshot.png', {
+      allowUnsupportedExtension: true,
+    }),
+  )
+  for (const value of [
+    '.trellis/tasks/archive/2026-11/demo/../secret.png',
+    '.trellis/tasks/archive/2026-11/demo\\screenshot.png',
+    '/.trellis/tasks/archive/2026-11/demo/screenshot.png',
+    '.trellis/tasks/archive/2026-11/demo/\0screenshot.png',
+    '.trellis/workspace/demo/screenshot.png',
+  ]) {
+    assert.throws(() =>
+      normalizeSnapshotPath(value, {
+        allowUnsupportedExtension: true,
+      }),
+    )
+  }
+})
+
 test('识别活动目录和归档目录', () => {
   assert.deepEqual(taskDirectoryFromPath('.trellis/tasks/11-10-demo/prd.md'), {
     taskDir: '.trellis/tasks/11-10-demo',

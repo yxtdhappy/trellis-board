@@ -152,7 +152,7 @@ export function AgentQuickInitDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[36.25rem]" initialFocus={dialogHeaderRef}>
+      <DialogContent className="sm:max-w-145" initialFocus={dialogHeaderRef}>
         <form
           className="flex min-h-0 flex-1 flex-col gap-4"
           onSubmit={(event) => {
@@ -197,7 +197,7 @@ export function AgentQuickInitDialog({
                   onToggleTool={toggleTool}
                 />
                 {allInitialized ? (
-                  <p className="rounded-lg border border-emerald-500/35 bg-emerald-500/5 p-3 text-emerald-700 dark:text-emerald-400">
+                  <p className="rounded-lg border border-success/35 bg-success-soft p-3 text-success">
                     当前仓库的编码 Agent 均已初始化，无需重复操作。
                   </p>
                 ) : null}

@@ -45,16 +45,16 @@ export function PluginLogsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[47.5rem]">
+      <DialogContent className="sm:max-w-190">
         <DialogHeader>
-          <p className="text-[0.625rem] font-semibold tracking-[0.14em] text-muted-foreground">
+          <p className="text-2xs font-semibold tracking-[0.14em] text-muted-foreground">
             PLUGIN LOGS
           </p>
           <DialogTitle>插件日志</DialogTitle>
           <DialogDescription>{title}</DialogDescription>
         </DialogHeader>
         <DialogBody className="mx-4 rounded-lg bg-muted px-3 py-2.5">
-          <pre className="font-mono text-[0.71875rem] leading-relaxed break-words whitespace-pre-wrap">
+          <pre className="font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
             {body}
           </pre>
         </DialogBody>

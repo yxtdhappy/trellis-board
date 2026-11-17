@@ -35,10 +35,14 @@
   `relativeDir`，而任务卡使用 `dirName`；304 响应没有 body，保持 ETag 分支不规范化。
 - EventSource 只随 runtime 生命周期创建，筛选和 teamId 变化不能反复断开重连；刷新回调通过 ref
   取最新版本。组件卸载时必须关闭 EventSource、清空合并计时器和所有状态轮询。
+- 需要「单次在途 + 合并后续请求」的轮询走 `packages/web/src/lib/refresh-coordinator.js`。该协调器
+  由 `useMemo` 持有、生命周期跨 StrictMode 的 cleanup→remount，因此 effect 必须在 body 里调用
+  `activate()`、cleanup 里 `dispose()`：只写 `useEffect(() => () => coordinator.dispose())`
+  会在 dev 双调用后永久关闭协调器（现象是 `/api/team/status` 永不发起、项目栏为空，生产构建正常）。
 - taskSpace 切换必须清空旧分页 cursor、ETag、操作列表、冲突详情和负责人候选；请求序号阻止旧响应覆盖。
 - 任务操作状态使用 `normalizeOperation()` 统一驼峰/下划线字段。`failed` 显示重试，`pending/delivered/running`
   显示“创建中/改派中”和取消；`succeeded` 后才重载正式任务和负责人。
-- 本地关联、sidecar、Team 状态和控制窗口的刷新均使用单一在途请求加一次 pending refresh；
+- 本地关联、sidecar、Team 状态和同步确认弹窗的刷新均使用单一在途请求加一次 pending refresh；
   相同归一化结果必须复用原引用，不能因定时兜底重复创建 Map、数组或 React 状态。
 
 ## 多团队状态
@@ -58,10 +62,13 @@
   同步正常、只读已关联或关联失效；`liveSyncStatus=error` 时显示同步异常并通过可见辅助文本或 `title`
   展示脱敏后的 `liveSyncError`。
 - `initialReviewPending=true` 时分支行显示“已关联 · 等待确认任务差异”并提供“确认差异”入口，点击调用
-  `live_control_show` 唤起控制窗口；此类分支不计入“正在同步任务”提示，改由独立提示说明确认后才会同步。
+  `live_control_show` 聚焦主窗口并弹出同步确认弹窗；此类分支不计入“正在同步任务”提示，改由独立提示说明确认后才会同步。
   该状态在聚合优先级中介于 `error` 与 `syncing` 之间。
 - `liveSyncStatus=ready` 但 `deferredCount>0` 时必须显示“N 个本地任务未同步”，不能显示同步正常。
   可写关联提供显式确认后的补同步入口；只读关联不显示上传动作。补同步失败或冲突不得提示成功。
+- 上传本地任务的确认弹窗必须逐条列出待上传任务的标题与 `taskDir`（标题缺失回退目录名），
+  并说明“冲突时仍会要求确认”；`ConfirmDialog` 的 `description` 必须是块级容器，不能渲染进 `<p>`。
+  同步确认弹窗内的“上传本地任务”决策与分支行入口共用同一份任务清单。
 - 项目栏父行状态只能读取该项目自身 `taskSpaces` 的关联，禁止回退到其他项目的
   `currentTaskSpace`。项目展开时父行优先展示当前选中分支的状态，不能被他分支的
   `error` 或分支不一致覆盖；项目未展开时可按“关联失效、`error`、`syncing`、deferred、
@@ -120,7 +127,7 @@
 - 服务端没有该分支快照时明确显示“服务端暂无任务快照”；用户确认后才以 `bootstrap` 模式 attach，
   并将当前本地任务作为初始快照上传。双方一致时直接安全接入，不显示空差异窗口。
 - 用户明确选择后才创建 binding，并持久化 `initialSyncMode` 和 `initialSyncCompleted`。已进入
-  review 后的“稍后处理”只关闭控制窗口，不能通过删除服务端 binding 实现取消。
+  review 后的“稍后处理”只关闭同步确认弹窗，不能通过删除服务端 binding 实现取消。
 - CAS 冲突显示任务名、文件、最后修改人、设备、时间、建议和 `conflictId`；技术 SHA 只能放在
   次级详情。动作区提供查看差异、使用服务端版本、用我的版本覆盖、仅保存本地副本。
 - 覆盖服务端必须二次确认并说明会先备份双方；保存副本不改变服务端，使用服务端版本不得推进服务端
@@ -141,6 +148,17 @@
   第二步要求输入完整分支名，值不完全匹配时禁止提交。服务端仍会再次校验，前端不能只依赖按钮状态。
 - 移除成功后关闭弹层并刷新管理数据；备份失败、权限变化或 taskSpace 状态变化时保留弹层和输入，
   显示服务端原因。删除不表示真实 Git 分支或客户端本地 `.trellis/tasks` 被清理。
+
+## 归档同步凭据关联
+
+- `/api/admin/archive-sync` 返回的 `taskSpace.credential` 是该任务空间的实际匹配结果；凭据卡片和项目行
+  必须直接消费它，不得在前端按 origin、host 或 port 重新猜测匹配关系。
+- 凭据卡片按 `credential.id` 关联任务空间，再按 `projectId` 聚合；数量表示项目数，同一项目的多个分支
+  合并展示为“项目 · 分支1 / 分支2”，不能把一个项目重复计成多个项目。
+- `configured` 显示实际凭据名称和“已匹配 · 未验证”；`anonymous`、`missing`、`unsupported`
+  不显示凭据名称，也不能暗示认证已成功。
+- 删除确认必须显示受影响项目总数，并列出项目及其分支；超过展示上限时保留“另有 N 个项目”提示。
+  确认内容使用块级 ReactNode，空关联显示明确空状态，且始终不展示私钥、Token 或其他秘密。
 
 ## 分支监听状态与主动解绑
 
@@ -163,9 +181,14 @@
 - 五态文案固定：`online`“在线监听 N / 已关联 M”、`inactive`“当前未激活，关联保留”、
   `unassociated`“无客户端关联”、`unknown_legacy`“旧客户端，监听状态未知”、`disabled`“已停用”。
 - “全部项目”也要展示逐分支监听摘要；普通浏览器不显示本地解绑操作。
+- 监听详情里的 `Trellis ID：<devId>` 只在项目 dev id 存在且与账号用户名不同时显示，账号本身仍显示
+  `@username`；dev id 相等时不重复展示。
+- 接入/快速初始化弹窗的 Trellis developer ID 默认取该项目的 `trellisDevId`（按
+  `remoteIdentityKey === remoteIdentityHash` 匹配项目），无映射回落到用户名；用户手改后不得覆盖。
+  已接入项目重新关联并显式提交不同 dev id 时，服务端才会修正成员映射。
 - 当前客户端 approved 且非 `detachPending` 时显示“不再同步此分支”，必须先二次确认。
 - 所有破坏性操作的二次确认统一走 `packages/web/src/components/ui/confirm-dialog.tsx` 的
-  `useConfirm()`（`ConfirmDialogProvider` 已在 `app/providers.tsx` 与控制窗口入口挂载）。
+  `useConfirm()`（`ConfirmDialogProvider` 只在 `app/providers.tsx` 挂载；本地登录壳不弹确认）。
   Tauri 客户端禁止 `window.confirm` / `window.alert`：`tauri-plugin-dialog` 覆盖后它们返回被拒绝的
   Promise，条件判断恒为真值，用户从未看到确认却被直接执行。
 - 滚动条统一由 `packages/web/src/index.css` base 层的 `scrollbar-width: thin` +
@@ -237,10 +260,16 @@ const commandState = taskCommandState(taskSpace, teamMode)
 
 ## 归档分页
 
+- 归档视图的项目筛选以页面 `filters.projectId` 为唯一来源，受控接收 `projectId`/`onProjectChange`，
+  不得在归档内部另存一份项目状态；团队切换只在当前项目不属于新团队时写回 `'all'`，
+  项目变化必须回到第一页。
 - 团队归档索引使用独立查询状态，不读取活动任务 `teamPage`，也不复用其游标。
 - 归档查询固定携带 `archived=true` 和 `limit=20`；上一页读取本地游标栈，下一页写入服务端 `nextCursor`。
-- 团队、项目、分支、搜索、负责人或 `queryRevision` 变化时清空游标并从第一页重载；
+- 团队、项目、分支、搜索、负责人或归档版本变化时清空游标并从第一页重载；
   `CURSOR_INVALID` 同样回到第一页。
+- 归档页失效版本取 `/api/team/status` 的 `archiveRevision`（缺失时回退 `queryRevision`），
+  不得直接用全局 `queryRevision`：活跃任务同步会推进全局版本，但归档版本只在归档行变化时推进，
+  混用会让归档列表在同步期间反复清空重拉并把用户踢回第一页。
 - 归档搜索做短延迟合并，请求序号必须阻止旧响应覆盖新筛选结果。
 - 负责人选项来自服务端归档聚合，不得只使用当前页任务。
 - 切换负责人时加载态会暂时清空当前页聚合；选项刷新期间必须把当前选中值保留在
@@ -406,9 +435,9 @@ control event：
 - `project-rail-association.test.js`：ownership paused/pending 的优先级、总数和分支暂停区分。
 - `desktop-association.test.js`：关联摘要字段解析、不可写/错误 binding 不进入默认、pending/paused 目录稳定排序。
 - `desktop-package.test.js`：Tauri 命令、capability、control event 和 CLI `--task-space` 契约。
-- 浏览器验收：单分支隐藏选择器；多分支显示并默认正确；>200 条分批；关闭 control 后不再自动弹窗；
+- 浏览器验收：单分支隐藏选择器；多分支显示并默认正确；>200 条分批；“稍后处理”后弹窗关闭、不再自动弹出；
   浅色/深色和窄屏无横向溢出。
-- Tauri 验收：Board 与 live-control 均可提交 ownership，非法 taskDir/branch 被拒绝，成功后关联摘要刷新。
+- Tauri 验收：Board 窗口（capability `set_task_ownership`）可提交 ownership，非法 taskDir/branch 被拒绝，成功后关联摘要刷新。
 
 ### 7. Wrong vs Correct
 

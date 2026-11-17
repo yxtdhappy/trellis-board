@@ -5,7 +5,8 @@
 - 修改 `packages/shared/task-snapshot.js`、`packages/shared/remote-identity.js`、
   `packages/desktop/src-tauri/src/agent/{task_sync,task_command,onboarding}.rs`、`packages/server/team/task-space-*.js`、
   `packages/server/team/task-snapshot-service.js`、`packages/server/team/task-command-service.js`、
-  `packages/server/team/sync-agent-service.js`、团队同步 API/SSE、`sync_*` schema 或桌面控制窗口时必须遵循本文。
+  `packages/server/team/sync-agent-service.js`、团队同步 API/SSE、`sync_*` schema 或看板内同步确认弹窗
+  （`packages/web/src/desktop/LiveSyncControlDialog.tsx`）时必须遵循本文。
 - 单机 watcher 与团队客户端 watcher 继续复用 `packages/shared/trellis-watcher.js` 的事件归一化；团队客户端
   只监听 `.trellis/tasks/**`。
 - Team Agent 链路只同步活动任务；`.trellis/tasks/archive/**` 不进入客户端扫描、watcher、cursor、
@@ -61,6 +62,10 @@ ETag、缓存键和游标绑定用户、团队、项目/taskSpace 集合哈希�
 分页以 `last_activity_at/archived_at + taskSpaceId + taskKey` 稳定排序。
 `branch` 为可选单值子串筛选，trim 后大小写不敏感匹配，`%`、`_` 等字符按字面处理。
 分支匹配使用与前端一致的 Unicode 小写语义，不能直接依赖 SQLite 内置 `lower()`，它只折叠 ASCII。
+归档查询（`archived=true`）不使用全局 query revision，而是绑定独立归档域版本
+`app_meta.archiveQueryRevision`：只有索引里归档行新增、修改、删除或归档标记翻转才推进，活跃任务同步不再
+改变归档查询的 ETag、缓存键和游标。`/api/team/status` 同时返回 `queryRevision` 与 `archiveRevision`，
+`statusEtag` 覆盖两者；不新增 SSE 事件名。
 
 ### SQLite v14
 
@@ -157,6 +162,10 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 客户端每次心跳前重新读取配置并校验真实 Git 分支，排除 `detachPending`、非 approved、
   门禁错误或已撤销 binding；服务端在同一事务更新全部 approved binding 的报告时间，并只对
   上报集合设置 `is_listening=1`。
+- 客户端本地绑定集合真实变化或一次任务同步结束（`finish_binding_sync`）后必须唤醒心跳循环
+  立即上报，不得等 15s 周期；唤醒只提前下一次心跳，成功仍重置周期，失败保持指数退避。
+- 服务端同一事务前后比较 approved 且 `is_listening=1` 的 taskSpace 集合，只有集合不同才发布
+  看板变更事件；重复心跳和旧客户端心跳不得重复发布。
 - taskSpace 监听状态固定按 `disabled -> online -> unassociated -> unknown_legacy -> inactive`
   派生。`unassociated` 表示 approved binding 已为零；`inactive` 表示仍有 approved binding
   但当前无人监听。
@@ -385,8 +394,9 @@ taskSpace、binding 或 cursor，也不返回任务正文。返回结果按稳�
 - 双方一致时直接完成，不显示空审查窗口；
 - 完成后写 `initialSyncCompleted=true`，再启动 tasks watcher 和正常增量同步。
 
-`initial_sync_review` 事件每次内容变化都必须强制弹出控制窗口，不受“每进程只自动聚焦一次”与
-手动关闭后的 `focusSuppressed` 影响；否则审查未确认时 binding 永远停留在 `syncing`，主界面只剩
+`initial_sync_review` 事件每次内容变化都必须唤起主窗口并弹出同步确认弹窗
+（`agent_service::publish_control` → `focus_main_window`），
+不受“每进程只自动聚焦一次”限制；否则审查未确认时 binding 永远停留在 `syncing`，主界面只剩
 “正在同步已有任务”。主窗口通过 `live_control_show`（`agent_service::show_pending_control`）手动
 唤起待处理事件，无待处理返回 `false`；`list_local_associations` 把
 `binding.initialReviewPending` 投影为 `initialReviewPending`，供项目栏展示“等待确认任务差异”。
@@ -464,7 +474,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | HEAD/ref 指纹与持久索引一致 | 复用 tracked paths，不执行 `git ls-tree` |
 | 任务目录不在 Git 脏目录并集中 | 不递归枚举该目录，直接复用持久摘要；写操作仍实时读取真实内容 |
 | 任务目录在 Git 脏目录并集中 | 只重扫该目录，按 size/mtime 精确复用或重算文件摘要 |
-| 启动同步尚未完成 | heartbeat 保活但该 binding 不进入监听集合；命令等待，watcher 事件暂存到串行链收尾 |
+| 启动同步尚未完成（`initial_sync_completed == false`）或 `detachPending` | heartbeat 保活但该 binding 不进入监听集合；命令等待，watcher 事件暂存到串行链收尾 |
+| 首次同步已完成、但其后有增量拉取/补拉/被取消的启动同步仍在进行 | 仍算在线监听；`active_bindings()` 只按 `initial_sync_completed && !detach_pending` 判定，`syncing_task_spaces` 不参与 |
 | 基线首次收到来源不同任务但无证据 | `409 TASK_MERGE_EVIDENCE_REQUIRED`，不写快照 |
 | 证据版本、类型、HEAD SHA、任务 ID、目录、路径或分支不匹配 | `400/409`，整批不写 |
 | 来源 taskSpace 写入已由基线接管的稳定任务 ID | `409 TASK_OWNED_BY_BASELINE`，旧快照不变 |

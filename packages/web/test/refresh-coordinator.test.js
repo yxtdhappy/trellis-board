@@ -25,6 +25,19 @@ test('请求在途时只保留一次后续刷新', async () => {
   coordinator.dispose()
 })
 
+test('StrictMode 重新挂载后恢复调度', async () => {
+  let runs = 0
+  const coordinator = createRefreshCoordinator(async () => {
+    runs += 1
+  })
+  const first = coordinator.request()
+  coordinator.dispose()
+  await first
+  coordinator.activate()
+  await coordinator.request()
+  assert.equal(runs, 2)
+})
+
 test('dispose 后不再安排刷新', async () => {
   let runs = 0
   const coordinator = createRefreshCoordinator(async () => {

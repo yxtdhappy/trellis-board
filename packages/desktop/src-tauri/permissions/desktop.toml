@@ -97,38 +97,33 @@ commands.allow = ["desktop_sidecar_status"]
 
 [[permission]]
 identifier = "allow-live-control-get"
-description = "本地实时同步控制窗口读取当前待处理事件。"
+description = "当前 Board origin 读取当前待处理事件。"
 commands.allow = ["live_control_pending"]
 
 [[permission]]
 identifier = "allow-live-control-show"
-description = "本地 Board 窗口唤起待处理的实时同步确认窗口。"
+description = "当前 Board origin 唤起待处理的实时同步确认弹窗。"
 commands.allow = ["live_control_show"]
 
 [[permission]]
 identifier = "allow-live-control-decide"
-description = "本地实时同步控制窗口提交任务冲突处理动作。"
+description = "当前 Board origin 提交任务冲突处理动作。"
 commands.allow = ["live_control_decide"]
 
 [[permission]]
 identifier = "allow-live-control-diff"
-description = "本地实时同步控制窗口读取冲突任务的本地与服务端内容。"
+description = "当前 Board origin 读取冲突任务的本地与服务端内容。"
 commands.allow = ["live_control_diff"]
 
 [[permission]]
 identifier = "allow-live-control-initial"
-description = "本地实时同步控制窗口处理已经明确接入后的首次同步差异。"
+description = "当前 Board origin 处理已经明确接入后的首次同步差异。"
 commands.allow = ["live_control_initial"]
 
 [[permission]]
 identifier = "allow-live-control-dismiss"
-description = "本地实时同步控制窗口关闭已读通知。"
+description = "当前 Board origin 关闭已读通知。"
 commands.allow = ["live_control_dismiss"]
-
-[[permission]]
-identifier = "allow-live-control-resize"
-description = "本地实时同步控制窗口按内容高度调整自身尺寸。"
-commands.allow = ["live_control_resize"]
 
 [[permission]]
 identifier = "allow-runtime-status"

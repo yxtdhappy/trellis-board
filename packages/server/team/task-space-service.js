@@ -245,8 +245,9 @@ function taskSpacePublic(row, actor, access, summary = null, stats = null) {
   }
 }
 
-function projectPublic(row, access) {
+function projectPublic(row, access, actor = null) {
   const team = access.teamsById.get(row.owner_team_id) || null
+  const requester = actor ? access.projectMembers.get(row.id)?.get(actor.userId) : null
   return {
     id: row.id,
     name: row.name,
@@ -259,6 +260,7 @@ function projectPublic(row, access) {
     teamName: team?.name || null,
     status: row.status,
     taskSpaces: [],
+    trellisDevId: requester?.trellisDevId || null,
     members: access.projectMembers.get(row.id)?.role ? [access.projectMembers.get(row.id)] : [],
     workspaceMembers: access.workspaceMembers.get(row.id) || [],
     syncStatus: row.status === 'active' ? 'current' : 'disabled',
@@ -482,7 +484,7 @@ export function createTaskSpaceService({
       spaces.map((space) => space.id),
     )
     return rows.map((row) => {
-      const project = projectPublic(row, access)
+      const project = projectPublic(row, access, actor)
       project.taskSpaces = (spacesByProject.get(row.id) || []).map((space) =>
         taskSpacePublic(space, actor, access, summaries.get(space.id), stats.get(space.id)),
       )
@@ -790,6 +792,13 @@ export function createTaskSpaceService({
         member = db
           .prepare('SELECT * FROM sync_project_member WHERE project_id = ? AND user_id = ?')
           .get(project.id, userId)
+      } else if (developerId && developerId !== member.trellis_dev_id) {
+        db.prepare(`
+          UPDATE sync_project_member
+          SET trellis_dev_id = ?, updated_at = ?
+          WHERE project_id = ? AND user_id = ?
+        `).run(developerId, now, project.id, userId)
+        member = { ...member, trellis_dev_id: developerId, updated_at: now }
       }
 
       let taskSpace = db
@@ -1294,6 +1303,7 @@ export function createTaskSpaceService({
         a.user_id,
         u.username,
         u.display_name,
+        m.trellis_dev_id,
         a.device_name,
         b.sync_status,
         b.listener_reported_at,
@@ -1314,6 +1324,7 @@ export function createTaskSpaceService({
       JOIN user_account u ON u.id = a.user_id
       JOIN sync_task_space s ON s.id = b.task_space_id
       JOIN sync_project p ON p.id = s.project_id
+      LEFT JOIN sync_project_member m ON m.project_id = s.project_id AND m.user_id = a.user_id
       LEFT JOIN sync_active_agent active ON active.user_id = a.user_id
       WHERE b.task_space_id = ? AND b.sync_status = 'approved'
       ORDER BY online DESC, b.created_at, b.id
@@ -1324,6 +1335,7 @@ export function createTaskSpaceService({
         userId: row.user_id,
         username: row.username,
         displayName: row.display_name,
+        trellisDevId: row.trellis_dev_id || null,
         deviceName: row.device_name,
         bindingStatus: row.sync_status,
         online: Boolean(row.online),

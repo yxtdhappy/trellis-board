@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { useAppearance } from '@/app/theme'
 import type { FontSize, ThemePreference } from '@/lib/appearance.js'
+import { cn } from '@/lib/utils'
 
 const THEME_CHOICES: { value: ThemePreference; label: string }[] = [
   { value: 'light', label: '浅色' },
@@ -43,13 +44,16 @@ function ThemePreview({ mode }: { mode: ThemePreference }) {
   const dark = mode === 'dark'
   return (
     <div
-      className={`h-11 w-full rounded-md border border-border p-1 ${dark ? 'bg-neutral-900' : 'bg-white'}`}
+      className={cn(
+        'h-11 w-full rounded-md border border-border p-1',
+        dark ? 'bg-neutral-900' : 'bg-white',
+      )}
     >
-      <div className={`h-1 w-full rounded-full ${dark ? 'bg-neutral-700' : 'bg-neutral-300'}`} />
+      <div className={cn('h-1 w-full rounded-full', dark ? 'bg-neutral-700' : 'bg-neutral-300')} />
       <div className="mt-1 flex gap-1">
-        <div className={`h-2 flex-1 rounded-sm ${dark ? 'bg-neutral-700' : 'bg-neutral-200'}`} />
-        <div className={`h-2 flex-1 rounded-sm ${dark ? 'bg-neutral-700' : 'bg-neutral-200'}`} />
-        <div className={`h-2 flex-1 rounded-sm ${dark ? 'bg-neutral-700' : 'bg-neutral-200'}`} />
+        <div className={cn('h-2 flex-1 rounded-sm', dark ? 'bg-neutral-700' : 'bg-neutral-200')} />
+        <div className={cn('h-2 flex-1 rounded-sm', dark ? 'bg-neutral-700' : 'bg-neutral-200')} />
+        <div className={cn('h-2 flex-1 rounded-sm', dark ? 'bg-neutral-700' : 'bg-neutral-200')} />
       </div>
     </div>
   )
@@ -66,10 +70,10 @@ export function PreferencesDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent showCloseButton={false} className="gap-0 p-0 sm:max-w-[32.5rem]">
-        <DialogHeader className="flex-row items-start justify-between gap-3 border-b border-border px-5 pt-[1.125rem] pb-3.5">
+      <DialogContent showCloseButton={false} className="gap-0 p-0 sm:max-w-130">
+        <DialogHeader className="flex-row items-start justify-between gap-3 border-b border-border px-5 pt-4.5 pb-3.5">
           <div className="flex flex-col gap-1">
-            <DialogTitle className="text-[0.9375rem] font-semibold">偏好设置</DialogTitle>
+            <DialogTitle className="text-sm font-semibold">偏好设置</DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
               外观设置保存在本机，随时可以更改。
             </DialogDescription>
@@ -84,7 +88,7 @@ export function PreferencesDialog({
           </Button>
         </DialogHeader>
 
-        <DialogBody className="mx-0 flex flex-col gap-[1.375rem] px-5 pt-[1.125rem] pb-5">
+        <DialogBody className="mx-0 flex flex-col gap-5.5 px-5 pt-4.5 pb-5">
           <section className="flex flex-col gap-2.5">
             <span className="text-xs font-semibold text-foreground">主题</span>
             <div role="radiogroup" aria-label="主题" className="grid grid-cols-3 gap-2.5">
@@ -97,15 +101,17 @@ export function PreferencesDialog({
                     role="radio"
                     aria-checked={active}
                     onClick={() => setTheme(value)}
-                    className={`flex flex-col gap-2 rounded-[0.5625rem] p-2 text-left transition-colors ${
-                      active
-                        ? 'border-[0.09375rem] border-primary'
-                        : 'border border-border hover:border-foreground/20'
-                    }`}
+                    className={cn(
+                      'flex flex-col gap-2 rounded-lg border p-2 text-left transition-colors',
+                      active ? 'border-primary' : 'border-border hover:border-foreground/20',
+                    )}
                   >
                     <ThemePreview mode={value} />
                     <span
-                      className={`text-[0.6875rem] ${active ? 'font-semibold text-primary' : 'text-muted-foreground'}`}
+                      className={cn(
+                        'text-xs',
+                        active ? 'font-semibold text-primary' : 'text-muted-foreground',
+                      )}
                     >
                       {label}
                     </span>
@@ -118,12 +124,12 @@ export function PreferencesDialog({
           <section className="flex flex-col gap-2.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-foreground">字体大小</span>
-              <span className="text-[0.65625rem] text-muted-foreground">当前 {fontPixels}px</span>
+              <span className="text-2xs text-muted-foreground">当前 {fontPixels}px</span>
             </div>
             <div
               role="radiogroup"
               aria-label="字体大小"
-              className="flex gap-[0.1875rem] rounded-lg bg-muted p-[0.1875rem]"
+              className="flex h-8 items-center gap-0.75 rounded-lg bg-muted p-0.75"
             >
               {FONT_CHOICES.map(({ value, label }) => {
                 const active = fontSize === value
@@ -134,11 +140,12 @@ export function PreferencesDialog({
                     role="radio"
                     aria-checked={active}
                     onClick={() => setFontSize(value)}
-                    className={`h-[1.625rem] flex-1 rounded-md text-[0.6875rem] transition-colors ${
+                    className={cn(
+                      'h-6 flex-1 rounded-md text-xs transition-colors',
                       active
                         ? 'bg-primary font-semibold text-primary-foreground'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
                   >
                     {label}
                   </button>
@@ -147,12 +154,12 @@ export function PreferencesDialog({
             </div>
             <div className="flex flex-col gap-1.5 rounded-lg bg-muted p-3">
               <div className="flex items-center gap-2">
-                <span className="text-[0.8125rem] font-semibold text-foreground">任务流水线</span>
-                <span className="rounded-full bg-success-soft px-1.5 py-0.5 text-[0.59375rem] font-medium text-success">
+                <span className="text-sm font-semibold text-foreground">任务流水线</span>
+                <span className="rounded-full bg-success-soft px-1.5 py-0.5 text-2xs font-medium text-success">
                   进行中
                 </span>
               </div>
-              <p className="text-[0.71875rem] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 调整后文字与间距一起等比缩放，界面整体随之放大。
               </p>
             </div>

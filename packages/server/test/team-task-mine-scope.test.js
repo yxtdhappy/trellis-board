@@ -227,6 +227,25 @@ test('scope=mine 按项目当前配置的 trellis developer id 过滤', async (t
       cookie: aliceSession,
       body: { userId: alice.id, role: 'lead', trellisDevId },
     })
+  const attachAgain = (extra) =>
+    request(runtime, '/api/agent/task-spaces/attach', {
+      method: 'POST',
+      agentCredential: enrolled.body.credential,
+      body: {
+        remoteUrl: 'https://example.com/team/repo.git',
+        branchName: 'main',
+        teamId: 'team-1',
+        displayName: '示例项目',
+        localRepoKey: 'a'.repeat(64),
+        ...extra,
+      },
+    })
+  const memberDevId = () =>
+    runtime.db
+      .prepare(
+        'SELECT trellis_dev_id FROM sync_project_member WHERE project_id = ? AND user_id = ?',
+      )
+      .get(projectId, alice.id).trellis_dev_id
 
   await t.test('成员 dev id 在索引前配置时命中', async () => {
     const { keys } = await mineKeys()
@@ -260,5 +279,28 @@ test('scope=mine 按项目当前配置的 trellis developer id 过滤', async (t
       keys.map((key) => key.split('/').pop()),
       ['01-a'],
     )
+  })
+
+  await t.test('attach 显式提交 dev id 时更新已存在成员并立即生效', async () => {
+    const reattached = await attachAgain({ developerId: 'other-dev' })
+    assert.equal(reattached.status, 201, JSON.stringify(reattached.body))
+    assert.equal(memberDevId(), 'other-dev')
+
+    const { keys } = await mineKeys()
+    assert.deepEqual(
+      keys.map((key) => key.split('/').pop()),
+      ['01-b'],
+    )
+
+    const status = await request(runtime, '/api/team/status', { cookie: aliceSession })
+    assert.equal(status.status, 200, JSON.stringify(status.body))
+    const project = (status.body.projects || []).find((item) => item.id === projectId)
+    assert.equal(project.trellisDevId, 'other-dev')
+  })
+
+  await t.test('attach 未提交 dev id 时保留已配置值', async () => {
+    const reattached = await attachAgain({})
+    assert.equal(reattached.status, 201, JSON.stringify(reattached.body))
+    assert.equal(memberDevId(), 'other-dev')
   })
 })

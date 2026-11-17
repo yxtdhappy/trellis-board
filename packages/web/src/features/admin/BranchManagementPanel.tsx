@@ -41,7 +41,7 @@ function lifecycleLabel(taskSpace: AdminTaskSpace) {
 function ImpactSummary({ taskSpace }: { taskSpace: AdminTaskSpace }) {
   const taskTitles = taskSpace.unarchivedTaskTitles || []
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/35 p-3 text-[0.6875rem]">
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/35 p-3 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         <strong className="font-medium text-foreground">{taskSpace.branchName}</strong>
         <StatusPill value={lifecycleLabel(taskSpace)} />
@@ -218,9 +218,7 @@ export function BranchManagementPanel({
       title="分支管理"
       description="弃用会隐藏分支并停止同步，保留数据可恢复；移除会删除服务端分支数据，但不删除真实 Git 分支。"
       action={
-        <span className="text-[0.6875rem] font-semibold text-muted-foreground">
-          {taskSpaces.length}
-        </span>
+        <span className="text-xs font-semibold text-muted-foreground">{taskSpaces.length}</span>
       }
     >
       {!projectSelected ? (
@@ -234,7 +232,7 @@ export function BranchManagementPanel({
             if (!rows.length) return null
             return (
               <section key={group} className="flex flex-col">
-                <h3 className="mb-1 flex items-center gap-2 px-1 text-[0.6875rem] font-semibold text-muted-foreground">
+                <h3 className="mb-1 flex items-center gap-2 px-1 text-xs font-semibold text-muted-foreground">
                   {GROUP_TITLES[group]}
                   <span className="rounded-full bg-muted px-1.5 py-0.5">{rows.length}</span>
                 </h3>
@@ -250,13 +248,13 @@ export function BranchManagementPanel({
                           <StatusPill value={taskSpace.status} />
                         ) : null}
                       </div>
-                      <p className="truncate text-[0.625rem] text-muted-foreground">
+                      <p className="truncate text-2xs text-muted-foreground">
                         任务 {taskSpace.taskCount} · 文件 {taskSpace.fileCount} · 监听{' '}
                         {taskSpace.onlineListenerCount}/{taskSpace.approvedBindingCount} · 最后活动{' '}
                         {formatTime(taskSpace.lastActivityAt)}
                       </p>
                       {taskSpace.retiredReason ? (
-                        <p className="truncate text-[0.625rem] text-muted-foreground">
+                        <p className="truncate text-2xs text-muted-foreground">
                           弃用原因：{taskSpace.retiredReason}
                         </p>
                       ) : null}
@@ -275,7 +273,7 @@ export function BranchManagementPanel({
           if (!open) closeRetire()
         }}
       >
-        <DialogContent className="sm:max-w-[34rem]">
+        <DialogContent className="sm:max-w-136">
           <DialogHeader className="gap-1">
             <DialogTitle>弃用分支</DialogTitle>
             <DialogDescription>
@@ -297,7 +295,7 @@ export function BranchManagementPanel({
                   />
                 </Field>
                 {retireError ? (
-                  <p role="alert" className="text-[0.6875rem] text-destructive">
+                  <p role="alert" className="text-xs text-destructive">
                     {retireError}
                   </p>
                 ) : null}
@@ -327,7 +325,7 @@ export function BranchManagementPanel({
           if (!open) closePurge()
         }}
       >
-        <DialogContent className="sm:max-w-[36rem]">
+        <DialogContent className="sm:max-w-xl">
           <DialogHeader className="gap-1">
             <DialogTitle>移除分支</DialogTitle>
             <DialogDescription>
@@ -341,7 +339,7 @@ export function BranchManagementPanel({
               <DialogBody className="flex flex-col gap-2.5">
                 <ImpactSummary taskSpace={purgeTarget} />
                 {purgeStep === 1 ? (
-                  <p className="rounded-lg bg-destructive/10 px-3 py-2 text-[0.6875rem] leading-5 text-destructive">
+                  <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
                     将删除该分支的任务快照、绑定、游标、命令、冲突和索引；服务端会先创建数据库备份。
                     真实 Git 分支和客户端本地 <code>.trellis/tasks</code> 不会删除。
                   </p>
@@ -358,7 +356,7 @@ export function BranchManagementPanel({
                   </Field>
                 )}
                 {purgeError ? (
-                  <p role="alert" className="text-[0.6875rem] text-destructive">
+                  <p role="alert" className="text-xs text-destructive">
                     {purgeError}
                   </p>
                 ) : null}

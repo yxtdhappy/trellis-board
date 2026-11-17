@@ -120,6 +120,16 @@ export function normalizeProjectMembers(project = {}) {
     })
 }
 
+export function pickProjectTrellisDevId(projects, remoteIdentityKey, fallback) {
+  const key = typeof remoteIdentityKey === 'string' ? remoteIdentityKey.trim() : ''
+  const match = key
+    ? (Array.isArray(projects) ? projects : []).find(
+        (project) => project?.remoteIdentityHash === key,
+      )
+    : null
+  return (match?.trellisDevId || '').trim() || fallback
+}
+
 export function normalizeTeamProject(project = {}) {
   const id = project.id ?? project.repositoryId ?? project.repository_id ?? ''
   const taskSpaces = Array.isArray(project.taskSpaces)

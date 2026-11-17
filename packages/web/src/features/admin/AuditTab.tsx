@@ -56,7 +56,7 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
       <Panel kicker="SYSTEM / AUDIT TRAIL" title="筛选">
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex min-w-40 flex-1 flex-col gap-1">
-            <span className="text-[0.6875rem] font-medium text-muted-foreground">动作</span>
+            <span className="text-xs font-medium text-muted-foreground">动作</span>
             <SelectField
               className={controlClass}
               value={action}
@@ -68,7 +68,7 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
             />
           </label>
           <label className="flex min-w-40 flex-1 flex-col gap-1">
-            <span className="text-[0.6875rem] font-medium text-muted-foreground">操作人</span>
+            <span className="text-xs font-medium text-muted-foreground">操作人</span>
             <SelectField
               className={controlClass}
               value={actor}
@@ -80,7 +80,7 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
             />
           </label>
           <label className="flex min-w-32 flex-col gap-1">
-            <span className="text-[0.6875rem] font-medium text-muted-foreground">时间范围</span>
+            <span className="text-xs font-medium text-muted-foreground">时间范围</span>
             <SelectField
               className={controlClass}
               value={range}
@@ -108,7 +108,7 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
         description="审计详情在服务端脱敏后，浏览器渲染前再次隐藏 password、token、credential 等敏感键。"
         action={
           <div className="flex items-center gap-2">
-            <span className="text-[0.6875rem] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               已加载 {systemAudit.length} / 显示 {filtered.length}
             </span>
             {systemAuditHasMore ? (
@@ -170,7 +170,7 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
                     {detail !== '{}' ? (
                       <TableRow>
                         <TableCell colSpan={5} className="bg-muted/40">
-                          <pre className="max-h-40 overflow-auto text-[0.625rem] text-muted-foreground">
+                          <pre className="max-h-40 overflow-auto text-2xs text-muted-foreground">
                             {detail}
                           </pre>
                         </TableCell>

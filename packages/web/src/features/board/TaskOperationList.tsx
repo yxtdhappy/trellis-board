@@ -13,11 +13,11 @@ function statusView(operation: PublishOperation): { label: string; tone: string 
     case 'pending':
       return { label: '等待投递', tone: 'text-muted-foreground' }
     case 'delivered':
-      return { label: '等待 Agent 执行', tone: 'text-amber-700 dark:text-amber-400' }
+      return { label: '等待 Agent 执行', tone: 'text-warning' }
     case 'running':
       return { label: 'Agent 正在执行', tone: 'text-primary' }
     case 'succeeded':
-      return { label: '已完成，正式任务已同步', tone: 'text-emerald-700 dark:text-emerald-400' }
+      return { label: '已完成，正式任务已同步', tone: 'text-success' }
     case 'failed':
       return { label: '执行失败', tone: 'text-destructive' }
     case 'cancelled':
@@ -56,7 +56,7 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
       <div className="mb-2 flex items-center justify-between gap-2">
         <div>
           <h2 className="text-xs font-semibold">创建与改派操作</h2>
-          <p className="text-[0.65625rem] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             这些是独立操作项；成功前不会插入正式任务卡，也不会提前改变负责人。
           </p>
         </div>
@@ -68,7 +68,7 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
           return (
             <div
               key={operation.id || `${operation.commandType}-${operation.taskKey}`}
-              className="flex flex-wrap items-center gap-2 py-2 text-[0.6875rem]"
+              className="flex flex-wrap items-center gap-2 py-2 text-xs"
             >
               {active ? (
                 <LoaderCircle className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
@@ -78,7 +78,7 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
               </strong>
               <span className={status.tone}>{status.label}</span>
               {operation.error ? (
-                <span className="basis-full break-words text-[0.65625rem] text-destructive">
+                <span className="basis-full break-words text-2xs text-destructive">
                   {operation.error}
                 </span>
               ) : null}

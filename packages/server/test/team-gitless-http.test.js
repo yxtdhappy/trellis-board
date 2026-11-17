@@ -279,6 +279,7 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
 
   const status = await request(runtime, '/api/team/status', { cookie: session })
   assert.equal(status.status, 200)
+  assert.equal(status.body.archiveRevision, 0)
   const statusProject = status.body.projects.find((project) =>
     project.taskSpaces.some((space) => space.id === taskSpaceId),
   )
@@ -293,6 +294,7 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   assert.equal(listeners.status, 200)
   assert.equal(listeners.body.onlineListenerCount, 1)
   assert.equal(listeners.body.listeners[0].bindingId, attached.body.binding.id)
+  assert.equal(listeners.body.listeners[0].trellisDevId, 'owner')
   assert.equal(JSON.stringify(listeners.body).includes('localRepoKey'), false)
 
   const missingObservedBranch = await request(

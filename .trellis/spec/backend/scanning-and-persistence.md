@@ -22,6 +22,8 @@ standalone 每个仓库的扫描根为 `.trellis/tasks`。只有包含 `task.jso
 - Team taskSpace 的活动扫描只物化 `sync_task_space_file`；归档扫描只物化 `sync_archive_file`。
   两者都不读取 Git、workspace、`.developer`、scripts、spec、config 或 workflow；归档正文由
   服务端只读 Git importer 写入 `sync_archive_file`。
+- 当前文本归档只导入 `.json/.jsonl/.md/.txt/.yaml/.yml`。归档中的其他普通文件作为附件跳过，
+  不能让单个 `.png/.ps1/.xlsx` 等附件阻断整个分支；非法归档路径仍必须失败，不能借附件过滤绕过安全校验。
 
 任务证据主要来自：
 

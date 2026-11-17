@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -21,7 +21,7 @@ function writeFile(root, relativePath, content) {
   fs.writeFileSync(filePath, content, 'utf8')
 }
 
-test('服务端只读取 Git 归档目录且不创建工作副本', async () => {
+test('服务端只读取 Git 归档白名单文件并跳过附件', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-archive-git-store-'))
   const repo = path.join(root, 'repo')
   const remote = path.join(root, 'remote.git')
@@ -41,6 +41,12 @@ test('服务端只读取 Git 归档目录且不创建工作副本', async () => 
     writeFile(repo, '.trellis/tasks/archive/2026-11/11-16-old/prd.md', '# 完成\n')
     writeFile(
       repo,
+      '.trellis/tasks/archive/2026-11/11-16-old/screenshot.png',
+      Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    )
+    writeFile(repo, '.trellis/tasks/archive/2026-11/11-16-old/helper.ps1', 'Write-Output 1\n')
+    writeFile(
+      repo,
       '.trellis/tasks/11-17-active/task.json',
       JSON.stringify({ id: 'active', title: '活动任务', branch: 'main' }),
     )
@@ -52,7 +58,12 @@ test('服务端只读取 Git 归档目录且不创建工作副本', async () => 
     git(remote, 'config', 'uploadpack.allowAnySHA1InWant', 'true')
     git(repo, 'remote', 'add', 'origin', remoteUrl)
     git(repo, 'push', 'origin', 'main')
+    const expectedFetchOids = [
+      git(repo, 'rev-parse', 'HEAD:.trellis/tasks/archive/2026-11/11-16-old/task.json'),
+      git(repo, 'rev-parse', 'HEAD:.trellis/tasks/archive/2026-11/11-16-old/prd.md'),
+    ].sort()
 
+    const spawnCalls = []
     const store = createArchiveGitStore({
       dataDir,
       config: { allowLocalGitRemotes: true },
@@ -67,6 +78,24 @@ test('服务端只读取 Git 归档目录且不创建工作副本', async () => 
         async withAuth(_credential, callback) {
           return callback(null)
         },
+      },
+      spawnImpl(command, args, options) {
+        const call = {
+          command,
+          args: [...args],
+          env: { ...options.env },
+          stdin: '',
+        }
+        spawnCalls.push(call)
+        const child = spawn(command, args, options)
+        if (args.includes('fetch') && args.includes('--stdin')) {
+          const end = child.stdin.end.bind(child.stdin)
+          child.stdin.end = (chunk, ...rest) => {
+            call.stdin += String(chunk || '')
+            return end(chunk, ...rest)
+          }
+        }
+        return child
       },
       logger: { info() {}, warn() {} },
     })
@@ -84,13 +113,50 @@ test('服务端只读取 Git 归档目录且不创建工作副本', async () => 
       snapshot.files.find((file) => file.relativePath.endsWith('/task.json')).taskId,
       'old',
     )
+    const fetchCalls = spawnCalls.filter(
+      (call) =>
+        call.command === 'git' && call.args.includes('fetch') && call.args.includes('--stdin'),
+    )
+    assert.equal(fetchCalls.length, 1)
+    assert.ok(fetchCalls[0].args.includes('fetch.negotiationAlgorithm=noop'))
+    const fetchIndex = fetchCalls[0].args.indexOf('fetch')
+    assert.equal(fetchCalls[0].args[fetchIndex + 1], 'origin')
+    assert.equal(fetchCalls[0].args.includes('fetch-pack'), false)
+    assert.equal(fetchCalls[0].args.includes(remoteUrl), false)
+    assert.equal(fetchCalls[0].env.GIT_NO_LAZY_FETCH, '1')
+    assert.deepEqual(
+      fetchCalls[0].stdin.trim().split(/\r?\n/).filter(Boolean).sort(),
+      expectedFetchOids,
+    )
+    const readCalls = spawnCalls.filter(
+      (call) => call.command === 'git' && call.args.includes('cat-file'),
+    )
+    assert.ok(readCalls.length > 0)
+    assert.ok(readCalls.every((call) => call.env.GIT_NO_LAZY_FETCH === '1'))
     const cache = path.join(dataDir, 'archive-git', 'space-1.git')
     assert.equal(fs.existsSync(path.join(cache, 'HEAD')), true)
     assert.equal(fs.existsSync(path.join(cache, '.git')), false)
-    const cachedObjects = git(cache, 'cat-file', '--batch-all-objects', '--batch-check=%(objectname)')
+    const cachedObjects = git(
+      cache,
+      'cat-file',
+      '--batch-all-objects',
+      '--batch-check=%(objectname)',
+    )
     assert.equal(cachedObjects.includes(git(repo, 'rev-parse', 'HEAD:src/app.js')), false)
     assert.equal(
       cachedObjects.includes(git(repo, 'rev-parse', 'HEAD:.trellis/tasks/11-17-active/task.json')),
+      false,
+    )
+    assert.equal(
+      cachedObjects.includes(
+        git(repo, 'rev-parse', 'HEAD:.trellis/tasks/archive/2026-11/11-16-old/screenshot.png'),
+      ),
+      false,
+    )
+    assert.equal(
+      cachedObjects.includes(
+        git(repo, 'rev-parse', 'HEAD:.trellis/tasks/archive/2026-11/11-16-old/helper.ps1'),
+      ),
       false,
     )
 
@@ -118,6 +184,23 @@ test('服务端只读取 Git 归档目录且不创建工作副本', async () => 
         taskSpace: { branch_name: 'main' },
       }),
       (error) => error?.code === 'ARCHIVE_FILE_TOO_LARGE',
+    )
+
+    writeFile(
+      repo,
+      '.trellis/tasks/archive/2026-13/invalid-month/screenshot.png',
+      Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    )
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-m', 'invalid archive path')
+    git(repo, 'push', 'origin', 'main')
+    await assert.rejects(
+      store.readSnapshot({
+        taskSpaceId: 'space-1',
+        project: { remote_url: remoteUrl },
+        taskSpace: { branch_name: 'main' },
+      }),
+      /归档任务目录格式无效/,
     )
   } finally {
     fs.rmSync(root, { recursive: true, force: true })

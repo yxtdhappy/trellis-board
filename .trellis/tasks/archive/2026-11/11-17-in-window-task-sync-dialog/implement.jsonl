@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "控制事件、Board capability 与 ensure_board_caller 的命令契约、拒绝矩阵与静态测试要求"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Board 弹层统一用 components/ui/dialog、禁止第二状态库、只用主题 token"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "typecheck/build/oxfmt 验证基线，禁 any，禁止新增源码文本断言"}
+{"file": ".trellis/spec/guides/index.md", "reason": "跨层契约触发条件：改 Tauri 命令/远程 capability 时必须先搜全部消费者"}
+{"file": ".trellis/tasks/11-17-in-window-task-sync-dialog/research/live-control-inventory.md", "reason": "现状锚点：控制窗创建、队列、命令校验、差异数据与待上传目录来源"}

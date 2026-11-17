@@ -88,7 +88,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[60rem]">
+      <DialogContent className="sm:max-w-240">
         <DialogHeader>
           <DialogTitle className="text-base">保存组合视图</DialogTitle>
           <DialogDescription>把当前勾选的筛选条件保存成一条可复用的执行视图。</DialogDescription>
@@ -96,7 +96,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
 
         <DialogBody className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
-            <Label className="text-[0.625rem]">视图名称</Label>
+            <Label className="text-2xs">视图名称</Label>
             <Input
               className="text-xs"
               value={name}
@@ -105,7 +105,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
           </div>
 
           <div className="flex flex-col gap-1">
-            <Label className="text-[0.625rem]">优先级</Label>
+            <Label className="text-2xs">优先级</Label>
             <div className="flex flex-wrap gap-1.5">
               {PRIORITIES.map((priority) => (
                 <Button
@@ -123,7 +123,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
           </div>
 
           <div className="flex flex-col gap-1">
-            <Label className="text-[0.625rem]">阶段</Label>
+            <Label className="text-2xs">阶段</Label>
             <div className="flex flex-wrap gap-1.5">
               {FILTER_STAGES.map((stage) => (
                 <Button
@@ -142,7 +142,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
 
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
-              <Label className="text-[0.625rem]">标签（逗号分隔）</Label>
+              <Label className="text-2xs">标签（逗号分隔）</Label>
               <Input
                 className="text-xs"
                 value={tags}
@@ -150,7 +150,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
               />
             </div>
             <div className="flex flex-col gap-1">
-              <Label className="text-[0.625rem]">阻断状态</Label>
+              <Label className="text-2xs">阻断状态</Label>
               <SelectField
                 ariaLabel="阻断状态"
                 className="text-xs"
@@ -163,7 +163,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
               />
             </div>
             <div className="flex flex-col gap-1">
-              <Label className="text-[0.625rem]">截止在 N 天内</Label>
+              <Label className="text-2xs">截止在 N 天内</Label>
               <Input
                 className="text-xs"
                 type="number"
@@ -173,7 +173,7 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
               />
             </div>
             <div className="flex flex-col gap-1">
-              <Label className="text-[0.625rem]">超过 N 天未动</Label>
+              <Label className="text-2xs">超过 N 天未动</Label>
               <Input
                 className="text-xs"
                 type="number"

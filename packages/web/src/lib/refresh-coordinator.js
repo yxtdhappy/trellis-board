@@ -21,6 +21,11 @@ export function createRefreshCoordinator(run) {
   }
 
   return {
+    activate() {
+      disposed = false
+      pending = false
+      inFlight = null
+    },
     request() {
       if (disposed) return Promise.resolve()
       pending = true

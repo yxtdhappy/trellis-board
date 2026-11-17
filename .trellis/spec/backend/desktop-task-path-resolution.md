@@ -5,9 +5,9 @@
 ### 1. Scope / Trigger
 
 - Trigger：修改 `agent/protocol.rs`、`agent/task_sync.rs`、`agent/task_command.rs` 的任务目录映射，
-  或修改 `task_sync_error` 控制事件和 `packages/web/src/desktop/ControlApp.tsx`。
+  或修改 `task_sync_error` 控制事件和 `packages/web/src/desktop/LiveSyncControlDialog.tsx`。
 - 目标：跨端只传相对任务目录，本机安全映射；不允许 Windows canonical 路径与普通绝对路径混用，
-  也不允许控制窗口只显示裸 UUID。
+  也不允许同步确认弹窗只显示裸 UUID。
 
 ### 2. Signatures
 
@@ -38,7 +38,7 @@ pub fn resolve_task_dir_under(tasks_root: &Path, task_dir: &str) -> Option<PathB
   符号链接；失败返回错误，不写文件、不删文件、不建备份、不推进 cursor。
 - `projectName` 来自当前 binding 的 `display_name`，`branchName` 来自 `branch_name`;
   `repoPath` 不得进入事件、日志或用户错误文案。
-- 旧事件缺少 `projectName/branchName/taskDir` 时，控制窗口必须回退到 `taskSpaceId`。
+- 旧事件缺少 `projectName/branchName/taskDir` 时，同步确认弹窗必须回退到 `taskSpaceId`。
 
 ### 4. Validation & Error Matrix
 
@@ -50,7 +50,7 @@ pub fn resolve_task_dir_under(tasks_root: &Path, task_dir: &str) -> Option<PathB
 | 根本身、`..`、`.`、空段、反斜杠、NUL、盘符、ADS | `INVALID_RESPONSE`，失败关闭 |
 | 根、父目录或目标经过符号链接 | `INVALID_RESPONSE`，不写、不删、不建备份 |
 | 合法目录但目标不存在 | 允许作为待写入目标，后续按原子目录流程创建 |
-| 旧 `task_sync_error` 缺可读字段 | 控制窗口显示 `taskSpaceId` |
+| 旧 `task_sync_error` 缺可读字段 | 同步确认弹窗显示 `taskSpaceId` |
 
 ### 5. Good / Base / Bad Cases
 
@@ -68,8 +68,8 @@ pub fn resolve_task_dir_under(tasks_root: &Path, task_dir: &str) -> Option<PathB
   盘符、ADS、尾部空格/句点拒绝。
 - `agent/task_sync.rs`：临时仓库合法解析；非法删除保留哨兵目录；非法备份不创建 taskSpace 备份目录；
   错误事件包含项目/分支/taskDir 且不含 `repoPath`。
-- `packages/desktop/test/desktop-ui-build.test.js`：控制窗口使用项目/分支并保留 taskSpaceId 回退，
-  源码契约不得重新引入 `"repoPath":` 或旧越界文案。
+- `packages/desktop/test/desktop-ui-build.test.js`：同步确认弹窗（`LiveSyncControlDialog`）使用项目/分支并保留
+  taskSpaceId 回退，源码契约不得重新引入 `"repoPath":` 或旧越界文案。
 
 ### 7. Wrong vs Correct
 

@@ -28,6 +28,7 @@ import { PublishOperationDialog } from '@/features/board/dialogs/PublishOperatio
 import { SavedViewsDialog } from '@/features/board/dialogs/SavedViewsDialog'
 import { TaskDetailDialog } from '@/features/board/dialogs/TaskDetailDialog'
 import { TaskOperationList } from '@/features/board/TaskOperationList'
+import { LiveSyncControlDialog } from '@/desktop/LiveSyncControlDialog'
 import { isAttention, type BoardTask } from '@/features/board/task-view'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
@@ -124,10 +125,11 @@ export function BoardPage() {
   const displayName = runtime?.user?.displayName || runtime?.user?.username || '看板用户'
   const savedViews = useMemo(() => normalizeViews(board?.savedViews), [board?.savedViews])
   const archived = useMemo(() => tasks.filter((task) => task.archived), [tasks])
+  const archiveRevisionValue =
+    controller.teamStatus?.archiveRevision ?? controller.teamStatus?.queryRevision
   const archiveRevision =
-    typeof controller.teamStatus?.queryRevision === 'number' ||
-    typeof controller.teamStatus?.queryRevision === 'string'
-      ? controller.teamStatus.queryRevision
+    typeof archiveRevisionValue === 'number' || typeof archiveRevisionValue === 'string'
+      ? archiveRevisionValue
       : null
   const activeCount = tasks.filter((task) => !task.archived).length
   const navItems = useMemo<BoardNavItem[]>(
@@ -382,7 +384,7 @@ export function BoardPage() {
               stages={FILTER_STAGES}
               filters={filters}
               onChange={setFilters}
-              onApply={() => void actions.refresh()}
+              onRefresh={() => void actions.refresh()}
               onOpen={(task) => setSelected(task)}
               loading={loading}
               summary={
@@ -408,6 +410,8 @@ export function BoardPage() {
               tasks={archived}
               projects={runtime?.projects || projects}
               teams={runtime?.teams || []}
+              projectId={filters.projectId || 'all'}
+              onProjectChange={(projectId) => setFilters({ projectId, taskSpaceId: 'all' })}
               branch={filters.branch}
               onBranchChange={(branch) => setFilters({ branch })}
               teamMode={teamMode}
@@ -460,6 +464,7 @@ export function BoardPage() {
           return id
         }}
       />
+      <LiveSyncControlDialog />
       <TaskDetailDialog
         task={selected}
         open={Boolean(selected)}

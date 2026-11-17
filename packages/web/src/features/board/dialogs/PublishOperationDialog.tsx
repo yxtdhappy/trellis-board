@@ -46,7 +46,7 @@ export function PublishOperationDialog({
 
   return (
     <Dialog open={Boolean(operation)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[38.75rem]">
+      <DialogContent className="sm:max-w-155">
         <DialogHeader>
           <DialogTitle className="text-base">
             {operation?.commandType === 'assign_task'
@@ -58,14 +58,14 @@ export function PublishOperationDialog({
           <DialogDescription>{EXPLANATIONS[status] || '正在跟踪任务操作…'}</DialogDescription>
         </DialogHeader>
 
-        <DialogBody className="flex flex-col gap-2 text-[0.6875rem]">
+        <DialogBody className="flex flex-col gap-2 text-xs">
           <div className="flex items-center gap-2">
             <span
               className={
                 status === 'failed'
                   ? 'rounded-full bg-destructive/10 px-2 py-0.5 font-semibold text-destructive'
                   : complete
-                    ? 'rounded-full bg-emerald-500/10 px-2 py-0.5 font-semibold text-emerald-600'
+                    ? 'rounded-full bg-success-soft px-2 py-0.5 font-semibold text-success'
                     : 'rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary'
               }
             >
@@ -82,7 +82,7 @@ export function PublishOperationDialog({
             </p>
           ) : null}
           {status === 'failed' && retryable ? (
-            <p className="text-[0.625rem] text-muted-foreground">
+            <p className="text-2xs text-muted-foreground">
               操作已停止自动刷新；确认目标客户端可用后可手动重试。
             </p>
           ) : null}

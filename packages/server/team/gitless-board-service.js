@@ -203,6 +203,7 @@ export function createGitlessBoardService({
     )
     return {
       queryRevision: taskSpaceIndex.queryRevision(),
+      archiveRevision: taskSpaceIndex.archiveQueryRevision(),
       queryDay: shanghaiDay(),
       assignments: { pending: pendingAssignments },
       boardVersions: Object.fromEntries(

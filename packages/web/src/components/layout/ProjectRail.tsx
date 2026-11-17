@@ -21,6 +21,7 @@ import {
   selectProjectAssociation,
 } from '@/lib/project-rail-association.js'
 import { createRefreshCoordinator } from '@/lib/refresh-coordinator.js'
+import { cn } from '@/lib/utils'
 
 type Project = {
   id: string
@@ -29,6 +30,7 @@ type Project = {
   syncBranch?: string | null
   teamName?: string | null
   taskSpaces?: TaskSpace[]
+  trellisDevId?: string | null
 }
 
 type LiveSyncStatus = 'pending' | 'syncing' | 'ready' | 'error'
@@ -48,6 +50,7 @@ export type LocalAssociation = {
   liveSyncError: string | null
   deferredCount: number
   deferredTaskDirs: string[]
+  deferredTasks?: Array<{ taskDir: string; title?: string | null }>
   ownershipPausedCount: number
   ownershipPausedTaskDirs: string[]
   ownershipPendingCount: number
@@ -118,6 +121,17 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
           typeof taskDir === 'string' && taskDir.startsWith('.trellis/tasks/'),
       )
     : []
+  const deferredTasks = Array.isArray(record.deferredTasks)
+    ? record.deferredTasks.flatMap((item) => {
+        if (!item || typeof item !== 'object') return []
+        const task = item as Record<string, unknown>
+        if (typeof task.taskDir !== 'string' || !task.taskDir.startsWith('.trellis/tasks/')) {
+          return []
+        }
+        const title = typeof task.title === 'string' && task.title.trim() ? task.title.trim() : null
+        return [{ taskDir: task.taskDir, title }]
+      })
+    : []
   const deferredCount =
     deferredTaskDirs.length ||
     (typeof record.deferredCount === 'number' && Number.isSafeInteger(record.deferredCount)
@@ -165,6 +179,7 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
         : null,
     deferredCount,
     deferredTaskDirs,
+    deferredTasks,
     ownershipPausedCount,
     ownershipPausedTaskDirs,
     ownershipPendingCount,
@@ -406,9 +421,7 @@ export function ProjectRail({
         if (cancelled) return
         const next = normalizeSidecarStatus(result)
         setSidecarStatus((current) =>
-          current?.running === next?.running && current?.paused === next?.paused
-            ? current
-            : next,
+          current?.running === next?.running && current?.paused === next?.paused ? current : next,
         )
       } catch {
         if (!cancelled) setSidecarStatus(null)
@@ -506,9 +519,27 @@ export function ProjectRail({
 
   async function syncDeferredTasks(association: LocalAssociation) {
     if (!invoke || syncingDeferredTaskSpace || association.deferredCount < 1) return
+    const deferredTasks = association.deferredTasks?.length
+      ? association.deferredTasks
+      : association.deferredTaskDirs.map((taskDir) => ({ taskDir, title: null }))
     const confirmed = await confirm({
       title: '上传本地任务？',
-      description: `将把 ${association.deferredCount} 个本地任务上传到 ${association.branchName}，冲突时仍会要求确认。`,
+      description: (
+        <div className="flex max-h-56 flex-col gap-1 overflow-auto">
+          {deferredTasks.map((task) => (
+            <div key={task.taskDir}>
+              <p className="break-words text-foreground">
+                {task.title || task.taskDir.split('/').at(-1) || task.taskDir}
+              </p>
+              <p className="break-all">{task.taskDir}</p>
+            </div>
+          ))}
+          <p className={deferredTasks.length ? 'mt-1' : undefined}>
+            将把 {association.deferredCount} 个本地任务上传到 {association.branchName}
+            ，冲突时仍会要求确认。
+          </p>
+        </div>
+      ),
       confirmText: '上传',
     })
     if (!confirmed) return
@@ -596,8 +627,8 @@ export function ProjectRail({
   )
 
   return (
-    <aside className="hidden w-[14.375rem] shrink-0 flex-col gap-1 border-r border-border bg-sidebar px-2.5 py-3.5 lg:flex">
-      <p className="px-2 pb-1 text-[0.625rem] font-semibold tracking-[0.12em] text-muted-foreground">
+    <aside className="hidden w-58 shrink-0 flex-col gap-1 border-r border-border bg-sidebar px-2.5 py-3.5 lg:flex">
+      <p className="px-2 pb-1 text-2xs font-semibold tracking-[0.12em] text-muted-foreground">
         项目
       </p>
       {invoke ? (
@@ -606,7 +637,7 @@ export function ProjectRail({
           size="sm"
           onClick={() => void startProjectOnboarding()}
           disabled={inspectingProject}
-          className="mb-1 justify-start border-dashed text-[0.6875rem] text-muted-foreground hover:border-primary/50 hover:text-foreground"
+          className="mb-1 justify-start border-dashed text-xs text-muted-foreground hover:border-primary/50 hover:text-foreground"
         >
           <Plus className="size-3.5" />
           接入本地项目
@@ -615,7 +646,7 @@ export function ProjectRail({
       {invoke && syncingAssociations.length ? (
         <div
           role="status"
-          className="mb-1 rounded-lg border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[0.625rem] leading-4 text-amber-800 dark:text-amber-300"
+          className="mb-1 rounded-lg border border-warning/35 bg-warning-soft px-2 py-1.5 text-2xs leading-4 text-warning"
         >
           正在同步任务，此时切换 Git 分支可能导致任务错位或污染，建议等待同步完成后再切换。
         </div>
@@ -623,7 +654,7 @@ export function ProjectRail({
       {invoke && reviewAssociations.length ? (
         <div
           role="status"
-          className="mb-1 rounded-lg border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[0.625rem] leading-4 text-amber-800 dark:text-amber-300"
+          className="mb-1 rounded-lg border border-warning/35 bg-warning-soft px-2 py-1.5 text-2xs leading-4 text-warning"
         >
           有分支等待确认任务差异，确认处理方式后才会同步任务。
         </div>
@@ -641,9 +672,7 @@ export function ProjectRail({
         全部项目
       </button>
       {current === 'all' && taskSpaceCount > 1 ? (
-        <p className="px-2 pb-1 text-[0.59375rem] leading-4 text-muted-foreground">
-          全部项目按分支独立统计
-        </p>
+        <p className="px-2 pb-1 text-2xs leading-4 text-muted-foreground">全部项目按分支独立统计</p>
       ) : null}
       {projects.map((project) => {
         const taskSpaces = project.taskSpaces || []
@@ -689,14 +718,17 @@ export function ProjectRail({
                 title={project.name}
               >
                 <span
-                  className={`size-1.5 shrink-0 rounded-full ${view?.dotClassName || 'bg-chart-3'}`}
+                  className={cn(
+                    'size-1.5 shrink-0 rounded-full',
+                    view?.dotClassName || 'bg-chart-3',
+                  )}
                   aria-hidden="true"
                 />
                 <span className="min-w-0">
                   <span className="block truncate text-xs font-medium">{project.name}</span>
                   {view ? (
                     <span
-                      className={`block truncate text-[0.59375rem] ${view.textClassName}`}
+                      className={cn('block truncate text-2xs', view.textClassName)}
                       title={view.detail || view.label}
                       aria-live="polite"
                     >
@@ -753,17 +785,17 @@ export function ProjectRail({
                   return (
                     <div
                       key={taskSpace.id}
-                      className="flex min-w-0 items-center gap-1 px-2 py-0.5 text-[0.53125rem] text-muted-foreground"
+                      className="flex min-w-0 items-center gap-1 px-2 py-0.5 text-2xs text-muted-foreground"
                       title={`${taskSpace.branchName}：${listenerView.counts} · ${listenerView.label}`}
                     >
                       <span
-                        className={`size-1 shrink-0 rounded-full ${listenerView.dotClassName}`}
+                        className={cn('size-1 shrink-0 rounded-full', listenerView.dotClassName)}
                         aria-hidden="true"
                       />
                       <span className="max-w-20 shrink-0 truncate font-medium text-foreground">
                         {taskSpace.branchName}
                       </span>
-                      <span className={`min-w-0 truncate ${listenerView.textClassName}`}>
+                      <span className={cn('min-w-0 truncate', listenerView.textClassName)}>
                         {listenerView.counts} · {listenerView.label}
                       </span>
                     </div>
@@ -795,8 +827,8 @@ export function ProjectRail({
                       key={taskSpace.id}
                       className={
                         currentTaskSpace === taskSpace.id
-                          ? 'flex items-center rounded-md border border-primary/35 bg-primary/20 text-[0.625rem] font-semibold text-foreground'
-                          : 'flex items-center rounded-md text-[0.625rem] text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'
+                          ? 'flex items-center rounded-md border border-primary/35 bg-primary/20 text-2xs font-semibold text-foreground'
+                          : 'flex items-center rounded-md text-2xs text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'
                       }
                     >
                       <button
@@ -806,32 +838,38 @@ export function ProjectRail({
                         title={branchTitle || taskSpace.branchName}
                       >
                         <span
-                          className={`mt-1 size-1 shrink-0 rounded-full ${listenerView?.dotClassName || branchView?.dotClassName || 'bg-chart-3'}`}
+                          className={cn(
+                            'mt-1 size-1 shrink-0 rounded-full',
+                            listenerView?.dotClassName || branchView?.dotClassName || 'bg-chart-3',
+                          )}
                           aria-hidden="true"
                         />
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-1">
                             <span className="min-w-0 flex-1 truncate">{taskSpace.branchName}</span>
                             {branchPaused ? (
-                              <span className="shrink-0 text-[0.53125rem] font-medium text-destructive">
+                              <span className="shrink-0 text-2xs font-medium text-destructive">
                                 已暂停
                               </span>
                             ) : null}
                           </span>
                           {listenerView ? (
                             <>
-                              <span className="block truncate text-[0.53125rem] leading-3 text-muted-foreground">
+                              <span className="block truncate text-2xs leading-3 text-muted-foreground">
                                 {listenerView.counts}
                               </span>
                               <span
-                                className={`block truncate text-[0.53125rem] leading-3 ${listenerView.textClassName}`}
+                                className={cn(
+                                  'block truncate text-2xs leading-3',
+                                  listenerView.textClassName,
+                                )}
                               >
                                 {listenerView.label}
                               </span>
                             </>
                           ) : null}
                           {detachPending ? (
-                            <span className="block truncate text-[0.53125rem] leading-3 text-warning">
+                            <span className="block truncate text-2xs leading-3 text-warning">
                               服务端解绑待确认
                             </span>
                           ) : null}
@@ -843,7 +881,7 @@ export function ProjectRail({
                       ownership.totalCount > 0 ? (
                         <button
                           type="button"
-                          className="mr-1 shrink-0 rounded px-1 text-[0.53125rem] font-medium text-warning hover:bg-background"
+                          className="mr-1 shrink-0 rounded px-1 text-2xs font-medium text-warning hover:bg-background"
                           aria-label={`处理 ${taskSpace.branchName} 的 ${ownership.totalCount} 个任务归属`}
                           title={branchView?.detail || branchView?.label}
                           onClick={() => setOwnershipTaskSpaceId(taskSpace.id)}
@@ -855,7 +893,7 @@ export function ProjectRail({
                       branchAssociation.initialReviewPending ? (
                         <button
                           type="button"
-                          className="mr-1 shrink-0 rounded px-1 text-[0.53125rem] font-medium text-warning hover:bg-background"
+                          className="mr-1 shrink-0 rounded px-1 text-2xs font-medium text-warning hover:bg-background"
                           aria-label={`处理 ${taskSpace.branchName} 的任务差异`}
                           title={branchView?.detail || branchView?.label}
                           onClick={() => void openInitialReview()}
@@ -918,7 +956,7 @@ export function ProjectRail({
                   )
                 })}
                 {currentTaskSpace === 'all' && taskSpaces.length > 1 ? (
-                  <p className="px-2 py-1 text-[0.5625rem] leading-4 text-muted-foreground">
+                  <p className="px-2 py-1 text-2xs leading-4 text-muted-foreground">
                     按分支独立统计
                   </p>
                 ) : null}
@@ -931,7 +969,7 @@ export function ProjectRail({
       {associationError ? (
         <p
           role="alert"
-          className="mx-1 mt-1 rounded-md bg-destructive/10 px-2 py-1.5 text-[0.625rem] leading-4 text-destructive"
+          className="mx-1 mt-1 rounded-md bg-destructive/10 px-2 py-1.5 text-2xs leading-4 text-destructive"
         >
           {associationError}
         </p>
@@ -963,11 +1001,11 @@ export function ProjectRail({
             }
             aria-hidden="true"
           />
-          <span className="text-[0.6875rem] font-semibold text-foreground">同步状态</span>
+          <span className="text-xs font-semibold text-foreground">同步状态</span>
         </div>
-        <p className="text-[0.65625rem] leading-4 text-muted-foreground">{syncLabel}</p>
+        <p className="text-2xs leading-4 text-muted-foreground">{syncLabel}</p>
         {invoke ? (
-          <p className="text-[0.65625rem] leading-4 text-muted-foreground">
+          <p className="text-2xs leading-4 text-muted-foreground">
             客户端后台：
             {sidecarStatus?.running ? '运行中' : sidecarStatus?.paused ? '已暂停' : '未运行'}
           </p>
@@ -975,7 +1013,7 @@ export function ProjectRail({
         <Button
           variant="outline"
           size="sm"
-          className="h-7 gap-1.5 text-[0.6875rem]"
+          className="h-7 gap-1.5 text-xs"
           onClick={onRefresh}
           disabled={refreshing}
         >
@@ -990,7 +1028,13 @@ export function ProjectRail({
             if (!open) setQuickAgentTaskSpaceId(null)
           }}
           taskSpaceId={quickAgentTaskSpaceId ?? ''}
-          defaultDeveloperId={defaultDeveloperId}
+          defaultDeveloperId={
+            projects
+              .find((project) =>
+                (project.taskSpaces || []).some((space) => space.id === quickAgentTaskSpaceId),
+              )
+              ?.trellisDevId?.trim() || defaultDeveloperId
+          }
           invoke={invoke}
         />
       ) : null}
@@ -1000,6 +1044,7 @@ export function ProjectRail({
             open={onboardingOpen}
             onOpenChange={setOnboardingOpen}
             path={onboardingPath}
+            projects={projects}
             teams={teams}
             defaultTeamId={teamId === 'all' ? '' : teamId}
             defaultDeveloperId={defaultDeveloperId}

@@ -1393,3 +1393,49 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 59: 归档 Git HTTPS 批量导入与附件兼容修复
+<!-- trellis-session: v=2 fp=008be944bef7b01c -->
+
+**Date**: 2026-11-17
+**Task**: 归档 Git HTTPS 批量导入与附件兼容修复
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+修复 Windows GitHub HTTPS 归档 blob 批量获取、跳过非白名单附件并保持归档路径安全校验；完成服务端重启、管理页、归档查询与详情读取验证，聚焦测试 31/31 通过，按用户要求在发布前跳过全量测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2cdad8e` | fix(archive): 修复 HTTPS 批量导入与附件跳过 |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 60: 归档凭据项目关联展示
+<!-- trellis-session: v=2 fp=fd9961b8bf0efaf7 -->
+
+**Date**: 2026-11-17
+**Task**: 归档凭据项目关联展示
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+归档同步页按接口凭据关联聚合项目与分支，展示实际凭据及未验证状态，删除前列出影响项目；补充前端规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7ed2e69` | feat(web): 展示归档凭据关联与删除影响 |
+
+### Status
+
+[OK] **Completed**

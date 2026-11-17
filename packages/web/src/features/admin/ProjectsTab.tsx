@@ -160,9 +160,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           kicker="MEMBERS"
           title="项目成员"
           action={
-            <span className="text-[0.6875rem] font-semibold text-muted-foreground">
-              {members.length}
-            </span>
+            <span className="text-xs font-semibold text-muted-foreground">{members.length}</span>
           }
         >
           <form className="flex flex-col gap-2" onSubmit={handleSaveMember}>
@@ -203,7 +201,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
               保存成员
             </Button>
           </form>
-          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             负责人和成员必须映射 developer ID；停用账号或最后一名负责人保护由服务端校验。
           </p>
           <div className="flex flex-col">
@@ -251,7 +249,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                         <StatusPill value={member.role} />
                         <StatusPill value={member.status} />
                       </div>
-                      <p className="truncate text-[0.625rem] text-muted-foreground">
+                      <p className="truncate text-2xs text-muted-foreground">
                         用户 <code>{member.userId || '未知'}</code> · developer{' '}
                         <code>{member.trellisDevId || '未配置'}</code>
                       </p>
@@ -322,7 +320,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                   key={access.teamId}
                   actions={
                     access.accessRole === 'owner' ? (
-                      <span className="px-2 text-[0.625rem] text-muted-foreground">所有者团队</span>
+                      <span className="px-2 text-2xs text-muted-foreground">所有者团队</span>
                     ) : (
                       <Button
                         variant="ghost"
@@ -362,7 +360,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
             </Button>
           }
         >
-          <p className="text-[0.6875rem] text-muted-foreground">配对码只在响应中显示一次。</p>
+          <p className="text-xs text-muted-foreground">配对码只在响应中显示一次。</p>
           <div className="flex flex-col">
             {!accessProjectId ? (
               <EmptyRow>先选择项目。</EmptyRow>
@@ -379,19 +377,19 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                       <StatusPill value={binding.status} />
                       {binding.agentStatus ? <StatusPill value={binding.agentStatus} /> : null}
                     </div>
-                    <p className="truncate text-[0.625rem] text-muted-foreground">
+                    <p className="truncate text-2xs text-muted-foreground">
                       所有者 {binding.ownerDisplayName || binding.ownerUsername || '未知'} · 分支{' '}
                       <code>{binding.branchName || '未返回'}</code>
                     </p>
-                    <p className="truncate text-[0.625rem] text-muted-foreground">
+                    <p className="truncate text-2xs text-muted-foreground">
                       仓库 <code>{binding.displayName || binding.localRepoKey || '未返回'}</code>
                     </p>
-                    <p className="truncate text-[0.625rem] text-muted-foreground">
+                    <p className="truncate text-2xs text-muted-foreground">
                       最近心跳 {formatTime(binding.lastSeenAt)} · 同步{' '}
                       {formatTime(binding.lastSyncedAt)}
                     </p>
                     {binding.lastError ? (
-                      <p className="text-[0.625rem] text-destructive">{binding.lastError}</p>
+                      <p className="text-2xs text-destructive">{binding.lastError}</p>
                     ) : null}
                   </div>
                 </Row>
@@ -450,7 +448,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                       <p className="text-xs font-semibold text-foreground">
                         插件项目：{binding.externalProjectName || binding.externalProjectId}
                       </p>
-                      <p className="text-[0.625rem] text-muted-foreground">
+                      <p className="text-2xs text-muted-foreground">
                         {binding.externalProjectId} · 绑定于 {formatTime(binding.createdAt)}
                       </p>
                     </Row>

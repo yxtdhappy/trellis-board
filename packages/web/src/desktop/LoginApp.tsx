@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
 import { Progress } from '@/components/ui/progress'
 import { errorMessage, invoke, listen } from './tauri.ts'
@@ -297,12 +298,12 @@ export function LoginApp() {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-4 p-6">
       {phase === 'env' ? (
-        <Card className="w-full max-w-[28rem]">
+        <Card className="w-full max-w-md">
           <CardHeader>
             <div className="flex items-center gap-3">
               <TrellisLogo size={36} />
               <div>
-                <p className="text-[0.625rem] font-semibold tracking-[0.2em] text-muted-foreground">
+                <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
                   TRELLIS DESKTOP
                 </p>
                 <h1 className="font-heading text-xl font-medium">首次启动环境检查</h1>
@@ -359,7 +360,8 @@ export function LoginApp() {
                 </Button>
               ) : null}
             </div>
-            <p className="border-t border-border pt-4 text-xs leading-6 text-muted-foreground">
+            <Separator />
+            <p className="pt-4 text-xs leading-6 text-muted-foreground">
               运行环境缺失时客户端会从国内镜像下载便携 Node.js，并把 Trellis CLI
               安装到客户端私有目录，不改动系统环境；Python 缺失或低于 3.9 时下载官方安装包静默安装
               Python 3.12.8（仅当前用户，无需管理员权限）。
@@ -369,12 +371,12 @@ export function LoginApp() {
       ) : null}
 
       {phase === 'login' ? (
-        <Card className="w-full max-w-[28rem]">
+        <Card className="w-full max-w-md">
           <CardHeader>
             <div className="flex items-center gap-3">
               <TrellisLogo size={36} />
               <div>
-                <p className="text-[0.625rem] font-semibold tracking-[0.2em] text-muted-foreground">
+                <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
                   TRELLIS DESKTOP
                 </p>
                 <h1 className="font-heading text-xl font-medium">登录团队看板</h1>
@@ -447,14 +449,15 @@ export function LoginApp() {
                 {submitting ? '正在登录…' : '登录'}
               </Button>
             </form>
-            <p className="mt-6 border-t border-border pt-4 text-xs leading-6 text-muted-foreground">
+            <Separator className="mt-6" />
+            <p className="pt-4 text-xs leading-6 text-muted-foreground">
               登录成功后会记住服务器地址、登录名和密码，下次打开可直接登录；密码不会写入日志。
             </p>
           </CardContent>
         </Card>
       ) : null}
 
-      <footer className="flex w-full max-w-[28rem] flex-col items-center gap-1 text-xs text-muted-foreground">
+      <footer className="flex w-full max-w-md flex-col items-center gap-1 text-xs text-muted-foreground">
         <span>{version}</span>
         <span>{configPath}</span>
       </footer>

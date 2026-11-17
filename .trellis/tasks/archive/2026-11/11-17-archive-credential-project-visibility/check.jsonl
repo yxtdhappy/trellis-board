@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "类型检查、构建、可访问性、响应式和浏览器验收基线"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "确认改动位于管理台领域组件且未越过前端模块边界"}

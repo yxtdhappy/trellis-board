@@ -64,9 +64,9 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
               <DialogTitle>{options.title}</DialogTitle>
             </DialogHeader>
             {options.description && (
-              <p className="whitespace-pre-line text-xs/relaxed text-muted-foreground">
+              <div className="whitespace-pre-line text-xs/relaxed text-muted-foreground">
                 {options.description}
-              </p>
+              </div>
             )}
             <DialogFooter>
               <Button variant="outline" onClick={() => settle(false)}>
