@@ -4,9 +4,9 @@
 
 ## 0. 前置
 
-- [ ] 读 `.trellis/spec/backend/plugin-runtime.md`、`.trellis/spec/backend/plugin-testing.md`
-- [ ] 确认 dev worktree 依赖在：`cd .worktree/trellis-board-dev && [ -d node_modules ] || TRELLIS_BOARD_SKIP_PREPARE=1 npm install`
-- [ ] 验证前启动服务：`cd .worktree && ./dev.sh start`
+- [x] 读 `.trellis/spec/backend/plugin-runtime.md`、`.trellis/spec/backend/plugin-testing.md`
+- [x] 确认 dev worktree 依赖在（`node_modules` 已就绪；仓库 2026-11-17 起是 yarn 3，命令用 `yarn install`）
+- [x] 验证前启动服务：`cd .worktree && ./dev.sh start`
 
 ## 1. accounts-core 骨架（store + secrets + capability）
 
@@ -115,11 +115,12 @@ curl -s http://127.0.0.1:4401/api/panels                     # 出现「统一�
 
 ## 7. 收尾
 
-- [ ] `plugins/README.md` 增加 accounts-core 条目（5 行内）
-- [ ] `.trellis/spec/backend/plugin-runtime.md` 补 capability 复用凭据的约定（任务完成后按 update-spec 流程）
-- [ ] dev 的 `plugins/witops-core/` 是 gitignore 副本：合并回 main 前
-      `rsync -a plugins/witops-core/ /opt/app/work/github/trellis-board/plugins/witops-core/`
-- [ ] `npm test` 与 `npm run test:plugins` 全绿；`git status` 无 secrets/数据文件
+- [x] `plugins/README.md` 增加 accounts-core 条目（5 行内）—— `plugins/README.md:26-30`
+- [x] `.trellis/spec/backend/plugin-runtime.md` 补 capability 复用凭据的约定 —— 该文件 `:98-115`
+- [x] dev 的 `plugins/witops-core/` 是 gitignore 副本：合并回 main 前已同步
+      （2026-11-17 校验 `diff -rq plugins/witops-core .worktree/trellis-board-dev/plugins/witops-core` 无差异）
+- [x] 测试全绿（2026-11-17 复核：`yarn test` 575 pass / 1 既有失败 `packages/desktop/test/desktop-ui-build.test.js`；
+      `yarn test:plugins` 106 pass / 1 skip）；`git status` 无 secrets/数据文件
 
 ## 风险检查
 
