@@ -15,11 +15,7 @@ const LISTENER_STATES = new Set([
 
 export function desktopStateTopics(payload) {
   const topics = Array.isArray(payload?.topics) ? payload.topics : []
-  return new Set(
-    topics.filter(
-      (topic) => topic === 'associations' || topic === 'sidecar',
-    ),
-  )
+  return new Set(topics.filter((topic) => topic === 'associations' || topic === 'sidecar'))
 }
 
 export function associationSignature(associations) {
@@ -41,14 +37,28 @@ export function associationOwnershipCounts(association) {
   }
 }
 
+export function associationTaskStateCounts(association) {
+  const count = (value) => (Number.isSafeInteger(value) && value > 0 ? value : 0)
+  return {
+    conflictCount: count(association?.conflictPendingCount),
+    rejectedCount: count(association?.pendingRejectedCount),
+    pendingUploadCount: count(association?.pendingUploadCount),
+  }
+}
+
 function associationPriority(association) {
   if (!association) return 0
   if (association.status !== 'approved') return 5
   const syncPriority = LIVE_SYNC_PRIORITY[association.liveSyncStatus] || LIVE_SYNC_PRIORITY.pending
+  const taskState = associationTaskStateCounts(association)
   return Math.max(
     syncPriority,
+    taskState.conflictCount ? 3.8 : 0,
+    taskState.rejectedCount ? 3.6 : 0,
     association.initialReviewPending ? 3.5 : 0,
-    association.deferredCount > 0 || associationOwnershipCounts(association).totalCount > 0
+    association.deferredCount > 0 ||
+      taskState.pendingUploadCount > 0 ||
+      associationOwnershipCounts(association).totalCount > 0
       ? 2.5
       : 0,
   )

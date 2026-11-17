@@ -1,3 +1,5 @@
+import { normalizeOwnershipInboxCount } from './ownership-inbox.js'
+
 export const TEAM_PAGE_LIMIT = 100
 const TASK_SPACE_LISTENER_STATES = new Set([
   'online',
@@ -195,6 +197,9 @@ export function normalizeTeamProject(project = {}) {
       ['stale', 'needs_repair'].includes(project.syncStatus ?? project.sync_status),
     lastError:
       project.lastError ?? project.last_error ?? project.syncError ?? project.sync_error ?? null,
+    ownershipInboxCount: normalizeOwnershipInboxCount(
+      project.ownershipInboxCount ?? project.ownership_inbox_count,
+    ),
     members: normalizeProjectMembers(project),
     taskSpaces,
   }

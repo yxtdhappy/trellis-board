@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/11-17-fix-cross-branch-pending-blocking/prd.md","reason":"逐项核对目标、需求、验收、范围和用户已确认的双层入口"}
+{"file":".trellis/tasks/11-17-fix-cross-branch-pending-blocking/design.md","reason":"核对 pending/revision/guard/inbox/UI 的实现边界和失败矩阵"}
+{"file":".trellis/spec/backend/task-ownership-and-conflict-idempotency.md","reason":"核对待归属任务不进入 taskSpace、不参与 ownership/CAS/merge evidence"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核对 schema v17、任务控制面边界、事务原子性、错误脱敏、测试覆盖和真实 HTTP 验证"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核对 React 状态、可访问性、空状态、窄屏和浏览器验收"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对项目、任务、分支、来源、计数和清理在所有层保持同一契约"}

@@ -462,3 +462,39 @@ return taskSpaces.length > 1 ? <BranchSelect value={preferred?.id} /> : <Current
 ```
 
 单分支自动处理，多分支才要求选择；ownership 状态和 deferred 状态分别展示、分别执行动作。
+
+## 场景：项目级待归属入口与同步状态
+
+### 1. Scope / Trigger
+
+- Trigger：修改 ProjectRail 项目/分支状态、Board 顶部警示条、`ownershipInboxCount` 或 inbox 分页时。
+
+### 2. Signatures
+
+- 项目级：`project.ownershipInboxCount`
+- 本地分支级：`LocalAssociation.ownershipPendingCount`
+- Agent 状态投影：`pendingUploadCount`、`pendingRejectedCount`、`conflictPendingCount`
+- API：`/api/ownership-inbox`，独立于普通任务分页游标。
+
+### 3. Contracts
+
+- 项目级 `ownershipInboxCount` 与本地分支级 `ownershipPendingCount` 必须分开计算和展示，不能相互回写。
+- 选中具体项目时，项目名下方、分支列表上方固定显示“待归属任务 N”；N>0 用 warning，
+  N=0 灰显保留。全部项目只在 N>0 的项目行显示数量徽标。
+- 主内容警示条放在筛选栏之后、流程指标和看板之前；任务搜索、阶段、负责人、分支或 taskSpace
+  筛选不能隐藏它。左侧入口和警示条共享同一展开状态。
+- 展开列表显示标题、任务目录、原因、来源分支、来源客户端和最近发现时间；支持独立下一页游标。
+- teamId/projectId 切换清空 inbox 数据与游标；请求序号阻止迟到响应覆盖新范围。`tasks.changed`
+  刷新团队状态，面板已展开时同时刷新 inbox。
+- 分支关联显示优先级为：错误/绑定失效 > 冲突 > 服务端拒绝 > 待确认归属 > 上传重试 > 正常。
+  有这些状态时不得继续显示“同步正常”。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| ownershipInboxCount=0 | 左侧入口灰显 0，主内容警示条隐藏 |
+| 搜索/筛选后普通任务为空 | 项目级警示条和数量仍保留 |
+| inbox 请求失败 | 保留计数并显示可重试错误 |
+| 切换项目时旧请求返回 | 丢弃，不覆盖当前范围 |
+| pending/rejected/conflict 状态存在 | 分支行显示对应 warning/error 文案 |

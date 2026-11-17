@@ -31,6 +31,11 @@ const OWNERSHIP_INDEX_MAX_TASKS: usize = 20_000;
 const OWNERSHIP_INDEX_MAX_FILES: usize = 100_000;
 const OWNERSHIP_INDEX_MAX_TRACKED_PATHS: usize = 50_000;
 const CURSOR_VERSION: u64 = 3;
+const REVISION_GUARD_VERSION: u64 = 1;
+const REVISION_GUARD_SYNC_MODE: &str = "revision-guard";
+const CONFLICT_SYNC_MODE: &str = "conflict-use-server";
+const PENDING_REJECTED_LIMIT: usize = 50;
+const OWNERSHIP_INBOX_MAX_CHANGES: usize = 200;
 const TASK_OWNERSHIP_QUERY_LIMIT: usize = 200;
 const HANDOFF_MAX_FILES: u64 = 100_000;
 const HANDOFF_MAX_BYTES: u64 = 64 * 1024 * 1024;
@@ -158,6 +163,25 @@ fn required_client_sequence(error: &AgentError) -> Option<u64> {
         .get("requiredClientSequence")?
         .as_u64()
         .filter(|value| *value > 0)
+}
+
+fn is_explicit_pending_rejection(value: &str) -> bool {
+    matches!(
+        value,
+        "TASK_OWNERSHIP_REQUIRED"
+            | "TASK_OWNERSHIP_MISMATCH"
+            | "TASK_MERGE_EVIDENCE_REQUIRED"
+            | "TASK_MERGE_EVIDENCE_INVALID"
+            | "TASK_OWNED_BY_BASELINE"
+    )
+}
+
+fn skipped_for_explicit_pending_rejection(uploaded: &Value) -> bool {
+    uploaded.get("skipped").and_then(Value::as_bool) == Some(true)
+        && uploaded
+            .get("reason")
+            .and_then(Value::as_str)
+            .is_some_and(is_explicit_pending_rejection)
 }
 
 pub type ControlSink = Arc<dyn Fn(Value) + Send + Sync>;
@@ -423,7 +447,7 @@ fn active_task_directory_from_relative(path: &str) -> Option<String> {
     (!is_archive_task_dir(&task_dir)).then_some(task_dir)
 }
 
-fn active_task_directory_from_path(path: &str) -> Option<String> {
+pub(crate) fn active_task_directory_from_path(path: &str) -> Option<String> {
     let task_dir = task_directory_from_path(path).ok()?.task_dir;
     (!is_archive_task_dir(&task_dir)).then_some(task_dir)
 }
@@ -1035,9 +1059,11 @@ fn local_sync_state_from_groups(
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Cursor {
     pub revision: u64,
+    pub revision_guard_version: u64,
     pub sequence: u64,
     pub baseline_reconciled_head: String,
     pub pending: Option<PendingBatch>,
+    pub pending_rejected: BTreeMap<String, PendingRejection>,
     pub baselines: BTreeMap<String, String>,
     pub deferred: BTreeMap<String, BTreeMap<String, String>>,
     pub ownership_pending: BTreeMap<String, String>,
@@ -1050,11 +1076,25 @@ pub struct PendingBatch {
     pub client_sequence: u64,
     pub files: Vec<Value>,
     pub merge_evidence: Option<Value>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingRejection {
+    pub batch_id: String,
+    pub client_sequence: u64,
+    pub reason: String,
+    pub created_at: String,
+    pub blocked_at: String,
 }
 
 fn cursor_from_entry(entry: &Value) -> Cursor {
     let mut cursor = Cursor {
         revision: entry.get("revision").and_then(Value::as_u64).unwrap_or(0),
+        revision_guard_version: entry
+            .get("revisionGuardVersion")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
         sequence: entry.get("sequence").and_then(Value::as_u64).unwrap_or(0),
         baseline_reconciled_head: entry
             .get("baselineReconciledHead")
@@ -1062,6 +1102,10 @@ fn cursor_from_entry(entry: &Value) -> Cursor {
             .unwrap_or_default()
             .to_string(),
         pending: entry.get("pending").and_then(parse_pending_batch),
+        pending_rejected: entry
+            .get("pendingRejected")
+            .map(parse_pending_rejected)
+            .unwrap_or_default(),
         baselines: entry
             .get("baselines")
             .and_then(parse_baselines)
@@ -1092,6 +1136,10 @@ fn cursor_from_entry(entry: &Value) -> Cursor {
     cursor
         .conflict_blocked
         .retain(|task_dir, _| !is_archive_task_dir(task_dir));
+    cursor
+        .pending_rejected
+        .retain(|task_dir, _| !is_archive_task_dir(task_dir));
+    trim_pending_rejections(&mut cursor.pending_rejected);
     cursor.pending = cursor
         .pending
         .and_then(|batch| migrate_archive_pending_batch(batch, cursor.sequence));
@@ -1126,6 +1174,7 @@ fn migrate_archive_pending_batch(batch: PendingBatch, cursor_sequence: u64) -> O
         client_sequence: next_client_sequence(cursor_sequence),
         files: kept,
         merge_evidence: None,
+        created_at: batch.created_at,
     })
 }
 
@@ -1156,12 +1205,14 @@ fn cursor_entry_needs_archive_migration(entry: &Value) -> bool {
                         })
                 })
             })
-        || ["ownershipPending", "conflictBlocked"].iter().any(|field| {
+        || ["ownershipPending", "conflictBlocked", "pendingRejected"]
+            .iter()
+            .any(|field| {
             entry
                 .get(*field)
                 .and_then(Value::as_object)
                 .is_some_and(|values| values.keys().any(|task_dir| is_archive_task_dir(task_dir)))
-        })
+            })
 }
 
 struct OwnershipReview {
@@ -1192,6 +1243,13 @@ pub struct UploadFile {
     pub sha256: String,
     pub deleted: bool,
     pub base_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UploadMode {
+    New,
+    Preclassified,
+    Replay,
 }
 
 impl UploadFile {
@@ -1604,6 +1662,7 @@ pub struct TaskSync {
     ownership_validation_state: Arc<OwnershipValidationState>,
     ownership_validation_started: std::sync::atomic::AtomicBool,
     ownership_refresh_lock: Mutex<()>,
+    ownership_inbox_unavailable: std::sync::atomic::AtomicBool,
     binding_selection_lock: Mutex<()>,
     binding_sync_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     syncing_task_spaces: Mutex<HashMap<String, usize>>,
@@ -1650,6 +1709,7 @@ impl TaskSync {
             ownership_validation_state: Arc::new(OwnershipValidationState::default()),
             ownership_validation_started: std::sync::atomic::AtomicBool::new(false),
             ownership_refresh_lock: Mutex::new(()),
+            ownership_inbox_unavailable: std::sync::atomic::AtomicBool::new(false),
             binding_selection_lock: Mutex::new(()),
             binding_sync_locks: Mutex::new(HashMap::new()),
             syncing_task_spaces: Mutex::new(HashMap::new()),
@@ -2451,6 +2511,12 @@ impl TaskSync {
             .filter(|(task_dir, _)| task_dir.as_str() != handoff.relative_dir)
             .map(|(task_dir, reason)| (task_dir.clone(), reason.clone()))
             .collect();
+        let pending_rejected = cursor
+            .pending_rejected
+            .iter()
+            .filter(|(task_dir, _)| task_dir.as_str() != handoff.relative_dir)
+            .map(|(task_dir, item)| (task_dir.clone(), item.clone()))
+            .collect();
         let conflict_blocked = cursor
             .conflict_blocked
             .iter()
@@ -2464,6 +2530,7 @@ impl TaskSync {
                     baselines: Some(baselines),
                     deferred: Some(deferred),
                     ownership_pending: Some(ownership_pending),
+                    pending_rejected: Some(pending_rejected),
                     conflict_blocked: Some(conflict_blocked),
                     ..Default::default()
                 },
@@ -4756,13 +4823,14 @@ impl TaskSync {
             .await
         {
             Ok(result) if result.get("pendingReview").and_then(Value::as_bool) != Some(true) => {
+                let repaired = result.get("repaired").and_then(Value::as_bool) == Some(true);
                 if let Err(error) = self
                     .reconcile_baseline_tasks(task_space_id, &reconciled_deferred)
                     .await
                 {
                     self.report_error(task_space_id, &error).await;
                 }
-                false
+                repaired
             }
             Ok(_) => true,
             Err(error) => {
@@ -5164,6 +5232,10 @@ impl TaskSync {
             return Ok(());
         }
         entry.insert("revision".into(), json!(cursor.revision));
+        entry.insert(
+            "revisionGuardVersion".into(),
+            json!(cursor.revision_guard_version),
+        );
         entry.insert("sequence".into(), json!(cursor.sequence));
         if next.baseline_reconciled_head.is_some() {
             entry.insert(
@@ -5181,6 +5253,10 @@ impl TaskSync {
             "conflictBlocked".into(),
             conflict_blocked_to_value(&cursor.conflict_blocked),
         );
+        entry.insert(
+            "pendingRejected".into(),
+            pending_rejected_to_value(&cursor.pending_rejected),
+        );
         match cursor.pending {
             Some(batch) => {
                 entry.insert(
@@ -5190,6 +5266,7 @@ impl TaskSync {
                         "clientSequence": batch.client_sequence,
                         "files": batch.files,
                         "mergeEvidence": batch.merge_evidence,
+                        "createdAt": batch.created_at,
                     }),
                 );
             }
@@ -5362,6 +5439,103 @@ impl TaskSync {
         .await
     }
 
+    async fn settle_rejected_pending(
+        &self,
+        binding: &AgentBinding,
+        pending: &PendingBatch,
+        reason: &str,
+    ) -> AgentResult<()> {
+        let task_dirs = pending_task_dirs(&pending.files);
+        if task_dirs.is_empty() {
+            return Ok(());
+        }
+        let groups = group_task_snapshot_files(&pending.files).unwrap_or_default();
+        let groups_by_dir: HashMap<String, SnapshotGroup> = groups
+            .into_iter()
+            .map(|group| (group.task_dir.clone(), group))
+            .collect();
+        let cursor = self.read_cursor(&binding.task_space_id).await;
+        let mut rejected = cursor.pending_rejected.clone();
+        let mut ownership = cursor.ownership_pending.clone();
+        let blocked_at = protocol::now_iso8601();
+        let created_at = if pending.created_at.is_empty() {
+            blocked_at.clone()
+        } else {
+            pending.created_at.clone()
+        };
+        for task_dir in &task_dirs {
+            rejected.insert(
+                task_dir.clone(),
+                PendingRejection {
+                    batch_id: pending.batch_id.clone(),
+                    client_sequence: pending.client_sequence,
+                    reason: reason.to_string(),
+                    created_at: created_at.clone(),
+                    blocked_at: blocked_at.clone(),
+                },
+            );
+        }
+        if reason == "TASK_OWNERSHIP_REQUIRED" {
+            for task_dir in &task_dirs {
+                if let Some(group) = groups_by_dir.get(task_dir) {
+                    if group.task_id.is_some() {
+                        ownership.insert(task_dir.clone(), task_fingerprint(group));
+                    }
+                }
+            }
+        } else {
+            for task_dir in &task_dirs {
+                ownership.remove(task_dir);
+            }
+        }
+        trim_pending_rejections(&mut rejected);
+        self.write_cursor(
+            &binding.task_space_id,
+            CursorPatch {
+                pending: Some(None),
+                pending_rejected: Some(rejected),
+                ownership_pending: Some(ownership),
+                ..Default::default()
+            },
+        )
+        .await?;
+        let groups: Vec<SnapshotGroup> = groups_by_dir.into_values().collect();
+        self.sync_ownership_inbox(
+            binding,
+            &cursor.ownership_pending,
+            &groups,
+        )
+        .await;
+        Ok(())
+    }
+
+    async fn clear_pending_rejections(
+        &self,
+        task_space_id: &str,
+        task_dirs: &[String],
+    ) -> AgentResult<()> {
+        if task_dirs.is_empty() {
+            return Ok(());
+        }
+        let cursor = self.read_cursor(task_space_id).await;
+        let mut rejected = cursor.pending_rejected.clone();
+        let before = rejected.len();
+        for task_dir in task_dirs {
+            rejected.remove(task_dir);
+        }
+        if rejected.len() == before {
+            return Ok(());
+        }
+        self.write_cursor(
+            task_space_id,
+            CursorPatch {
+                pending_rejected: Some(rejected),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
     async fn mark_conflict_blocked(
         &self,
         task_space_id: &str,
@@ -5452,6 +5626,180 @@ impl TaskSync {
             "branchName": binding.branch_name,
             "items": items,
         }));
+    }
+
+    async fn sync_ownership_inbox(
+        &self,
+        binding: &AgentBinding,
+        previous_pending: &BTreeMap<String, String>,
+        groups: &[SnapshotGroup],
+    ) {
+        if binding.read_only {
+            return;
+        }
+        if self
+            .ownership_inbox_unavailable
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        let current = self
+            .read_cursor(&binding.task_space_id)
+            .await
+            .ownership_pending;
+        let mut groups_by_dir: HashMap<String, SnapshotGroup> = groups
+            .iter()
+            .cloned()
+            .map(|group| (group.task_dir.clone(), group))
+            .collect();
+        let missing: HashSet<String> = current
+            .keys()
+            .filter(|task_dir| !groups_by_dir.contains_key(*task_dir))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            if let Ok(extra) = self.local_groups(binding, Some(&missing)).await {
+                for group in extra {
+                    groups_by_dir.insert(group.task_dir.clone(), group);
+                }
+            }
+        }
+
+        let mut upserts = Vec::new();
+        for (task_dir, fingerprint) in &current {
+            let Some(group) = groups_by_dir.get(task_dir) else {
+                continue;
+            };
+            let Some(task_id) = group
+                .task_id
+                .as_deref()
+                .filter(|value| !value.is_empty() && value.len() <= 128)
+            else {
+                continue;
+            };
+            if !is_sha256(fingerprint) {
+                continue;
+            }
+            let title: String = task_title(group)
+                .or_else(|| Some(task_id.to_string()))
+                .unwrap_or_default()
+                .chars()
+                .take(300)
+                .collect();
+            upserts.push(json!({
+                "taskId": task_id,
+                "taskDir": task_dir,
+                "title": title,
+                "reason": "TASK_OWNERSHIP_REQUIRED",
+                "fingerprint": fingerprint,
+            }));
+        }
+
+        let mut deletes = Vec::new();
+        for task_dir in previous_pending
+            .keys()
+            .filter(|task_dir| !current.contains_key(*task_dir))
+        {
+            let task_id = match groups_by_dir
+                .get(task_dir)
+                .and_then(|group| group.task_id.clone())
+            {
+                Some(task_id) => task_id,
+                None => match self
+                    .read_ownership_inbox_task_id(binding, task_dir)
+                    .await
+                {
+                    Some(task_id) => task_id,
+                    None => task_dir.rsplit('/').next().unwrap_or_default().to_string(),
+                },
+            };
+            if task_id.is_empty() || task_id.len() > 128 {
+                continue;
+            }
+            deletes.push(json!({
+                "taskId": task_id,
+                "taskDir": task_dir,
+            }));
+        }
+
+        for chunk in upserts.chunks(OWNERSHIP_INBOX_MAX_CHANGES) {
+            if !self
+                .put_ownership_inbox(binding, chunk, &[])
+                .await
+            {
+                return;
+            }
+        }
+        for chunk in deletes.chunks(OWNERSHIP_INBOX_MAX_CHANGES) {
+            if !self
+                .put_ownership_inbox(binding, &[], chunk)
+                .await
+            {
+                return;
+            }
+        }
+    }
+
+    async fn read_ownership_inbox_task_id(
+        &self,
+        binding: &AgentBinding,
+        task_dir: &str,
+    ) -> Option<String> {
+        let path = Path::new(&binding.repo_path).join(task_dir).join("task.json");
+        let content = tokio::fs::read_to_string(path).await.ok()?;
+        parse_task_metadata(&content).0
+    }
+
+    async fn put_ownership_inbox(
+        &self,
+        binding: &AgentBinding,
+        upserts: &[Value],
+        deletes: &[Value],
+    ) -> bool {
+        if upserts.is_empty() && deletes.is_empty() {
+            return true;
+        }
+        let observed = match self.assert_binding_branch(binding).await {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        let result = self
+            .api
+            .request_json(
+                Method::PUT,
+                &format!(
+                    "/api/agent/task-spaces/{}/ownership-inbox",
+                    binding.task_space_id
+                ),
+                Some(&json!({
+                    "observedBranchName": observed,
+                    "upserts": upserts,
+                    "deletes": deletes,
+                })),
+                Duration::from_secs(60),
+            )
+            .await;
+        match result {
+            Ok(_) => true,
+            Err(error) if matches!(error.status, Some(404) | Some(405)) => {
+                if !self
+                    .ownership_inbox_unavailable
+                    .swap(true, std::sync::atomic::Ordering::SeqCst)
+                {
+                    crate::logging::warn(
+                        "服务端不支持待归属摘要接口，继续使用普通任务同步",
+                    );
+                }
+                false
+            }
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "待归属摘要同步失败：{}",
+                    protocol::safe_error_message(&error.message)
+                ));
+                false
+            }
+        }
     }
 
     async fn resolve_task_ownership(
@@ -5622,6 +5970,17 @@ impl TaskSync {
                 .collect::<Vec<_>>(),
         )
         .await?;
+        self.clear_pending_rejections(
+            &binding.task_space_id,
+            &resolution.syncable.keys().cloned().collect::<Vec<_>>(),
+        )
+        .await?;
+        let current_ownership_pending = self
+            .read_cursor(&binding.task_space_id)
+            .await
+            .ownership_pending;
+        self.sync_ownership_inbox(binding, &current_ownership_pending, groups)
+            .await;
         self.ownership_event(binding, &fresh, &resolution.project_task_spaces);
         Ok(resolution)
     }
@@ -5747,10 +6106,12 @@ impl TaskSync {
                 continue;
             }
             self.assert_binding_branch(binding).await?;
-            if group
-                .task_branch
-                .as_deref()
-                .is_some_and(|branch| branch != binding.branch_name)
+            let allow_cross_branch = allows_cross_source_server_group(binding, mode);
+            if !allow_cross_branch
+                && group
+                    .task_branch
+                    .as_deref()
+                    .is_some_and(|branch| branch != binding.branch_name)
             {
                 continue;
             }
@@ -5972,13 +6333,21 @@ impl TaskSync {
         if let Ok(binding) = self.binding(task_space_id).await {
             let (cursor_revision, has_pending_upload) =
                 self.read_cursor_event_state(task_space_id).await;
-            if !should_pull_for_event(
+            let guard_due = binding.initial_sync_completed
+                && self
+                    .read_cursor(task_space_id)
+                    .await
+                    .revision_guard_version
+                    < REVISION_GUARD_VERSION;
+            if !guard_due
+                && !should_pull_for_event(
                 binding.initial_sync_completed,
                 binding.initial_review_pending,
                 cursor_revision,
                 event_revision,
                 has_pending_upload,
-            ) {
+            )
+            {
                 self.retry_pending_handoff_acks(&binding).await?;
                 return Ok(json!({
                     "skipped": true,
@@ -6020,7 +6389,10 @@ impl TaskSync {
         let initial_sync = !binding.initial_sync_completed;
         if let Some(pending) = cursor.pending.clone() {
             if let Some(result) = self.retry_pending_batch(binding, pending).await? {
-                if result.get("skipped").and_then(Value::as_bool) == Some(true) {
+                let pending_after = self.read_cursor(&task_space_id).await.pending;
+                if pending_after.is_some()
+                    && result.get("skipped").and_then(Value::as_bool) == Some(true)
+                {
                     return Ok(json!({
                         "skipped": true,
                         "reason": result.get("reason").cloned().unwrap_or(Value::Null),
@@ -6039,6 +6411,9 @@ impl TaskSync {
                 }
             }
             cursor = self.read_cursor(&task_space_id).await;
+        }
+        if !initial_sync && cursor.revision_guard_version < REVISION_GUARD_VERSION {
+            return Box::pin(self.repair_revision_guard(binding)).await;
         }
         let after_revision = if initial_sync { 0 } else { cursor.revision };
         let http_started = Instant::now();
@@ -6223,12 +6598,6 @@ impl TaskSync {
                         "pendingReview": true,
                     }));
                 }
-                latest_revision = latest_revision.max(
-                    uploaded
-                        .get("revision")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0),
-                );
                 baseline_files.extend(self.last_baseline_files.lock().await.clone());
             }
         } else {
@@ -6322,6 +6691,245 @@ impl TaskSync {
         Ok(json!({ "conflicts": [], "revision": latest_revision }))
     }
 
+    async fn repair_revision_guard(&self, binding: &AgentBinding) -> AgentResult<Value> {
+        let task_space_id = binding.task_space_id.clone();
+        let cursor = self.read_cursor(&task_space_id).await;
+        if cursor.revision_guard_version >= REVISION_GUARD_VERSION {
+            return Ok(json!({
+                "skipped": true,
+                "reason": "REVISION_GUARD_CURRENT",
+                "revision": cursor.revision,
+            }));
+        }
+
+        let snapshot = self.fetch_snapshot(&task_space_id, 0).await?;
+        let controls = parse_snapshot_controls(&snapshot)?;
+        if let Some(controls) = &controls {
+            self.merge_task_controls(binding, controls).await?;
+            self.release_inactive_task_leases(Some(controls)).await;
+            self.process_handoff_controls(binding, controls).await?;
+        }
+        let local_groups = self.local_groups(binding, None).await?;
+        let snapshot_files = parse_snapshot_files(&snapshot)?;
+        let server_files: Vec<SnapshotFile> = snapshot_files
+            .iter()
+            .filter(|file| !file.deleted)
+            .cloned()
+            .collect();
+        let mut server_groups = groups_from_structs(&server_files)?;
+        retain_server_groups_for_revision_guard(binding, &mut server_groups);
+        self.prepare_controlled_server_groups(
+            binding,
+            controls.as_deref(),
+            &mut server_groups,
+        )
+        .await?;
+        let differences = hide_control_tombstone_local_only(
+            classify_task_snapshots(&local_groups, &server_groups),
+            controls.as_deref(),
+        );
+        let server_only: Vec<SnapshotGroup> = differences
+            .iter()
+            .filter(|item| item.kind == DiffKind::ServerOnly)
+            .filter_map(|item| item.server.clone())
+            .collect();
+        self.apply_server_groups(
+            binding,
+            snapshot_revision(&snapshot),
+            &server_only,
+            REVISION_GUARD_SYNC_MODE,
+            false,
+        )
+        .await?;
+
+        let inactive_dirs = inactive_control_dirs(controls.as_deref());
+        let mut deferred = cursor.deferred.clone();
+        let mut conflicts = Vec::new();
+        let mut local_only = Vec::new();
+        for difference in &differences {
+            match difference.kind {
+                DiffKind::Same | DiffKind::ServerOnly => {}
+                DiffKind::LocalOnly => {
+                    if let Some(local) = difference.local.clone() {
+                        if !inactive_dirs.contains(&local.task_dir) {
+                            local_only.push(local);
+                        }
+                    }
+                }
+                DiffKind::ContentConflict
+                | DiffKind::MoveDeleteConflict
+                | DiffKind::Invalid => {
+                    conflicts.push(difference.to_control());
+                    let task_dir = difference
+                        .local
+                        .as_ref()
+                        .map(|group| group.task_dir.clone())
+                        .or_else(|| {
+                            difference
+                                .server
+                                .as_ref()
+                                .map(|group| group.task_dir.clone())
+                        })
+                        .unwrap_or_else(|| difference.task_dir.clone());
+                    let state = difference
+                        .local
+                        .as_ref()
+                        .map(file_state_from_group)
+                        .or_else(|| {
+                            difference
+                                .server
+                                .as_ref()
+                                .map(file_state_from_group)
+                        })
+                        .unwrap_or_default();
+                    deferred.insert(task_dir, state);
+                }
+            }
+        }
+
+        let ownership = if local_only.is_empty() {
+            OwnershipResolution::default()
+        } else {
+            self.resolve_task_ownership(binding, &local_only).await?
+        };
+        for local in &local_only {
+            let Some(syncable) = ownership.syncable.get(&local.task_dir) else {
+                deferred.insert(local.task_dir.clone(), file_state_from_group(local));
+                continue;
+            };
+            let files: Vec<Value> = syncable
+                .files
+                .iter()
+                .map(|file| {
+                    json!({
+                        "path": file.path,
+                        "content": file.content,
+                        "sha256": file.sha256,
+                        "baseSha256": Value::Null,
+                    })
+                })
+                .collect();
+            let current = self.read_cursor(&task_space_id).await;
+            let uploaded = self
+                .upload_preclassified_batch(
+                    binding,
+                    &current,
+                    files,
+                    ownership.merge_evidence.get(&local.task_dir).cloned(),
+                )
+                .await?;
+            if uploaded.is_none()
+                || uploaded.as_ref().is_some_and(|value| {
+                    value.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT")
+                        || value.get("skipped").and_then(Value::as_bool) == Some(true)
+                })
+            {
+                deferred.insert(local.task_dir.clone(), file_state_from_group(local));
+            }
+        }
+
+        let verified = self.fetch_snapshot(&task_space_id, 0).await?;
+        let verified_controls = parse_snapshot_controls(&verified)?;
+        if let Some(controls) = &verified_controls {
+            self.merge_task_controls(binding, controls).await?;
+            self.release_inactive_task_leases(Some(controls)).await;
+            self.process_handoff_controls(binding, controls).await?;
+        }
+        let verified_files = parse_snapshot_files(&verified)?;
+        let verified_server_files: Vec<SnapshotFile> = verified_files
+            .iter()
+            .filter(|file| !file.deleted)
+            .cloned()
+            .collect();
+        let mut verified_server = groups_from_structs(&verified_server_files)?;
+        retain_server_groups_for_revision_guard(binding, &mut verified_server);
+        self.prepare_controlled_server_groups(
+            binding,
+            verified_controls.as_deref(),
+            &mut verified_server,
+        )
+        .await?;
+        let verified_local = self.local_groups(binding, None).await?;
+        let verified_differences = hide_control_tombstone_local_only(
+            classify_task_snapshots(&verified_local, &verified_server),
+            verified_controls.as_deref(),
+        );
+        let unresolved: Vec<&Difference> = verified_differences
+            .iter()
+            .filter(|item| item.kind != DiffKind::Same)
+            .filter(|item| {
+                !deferred.contains_key(&item.task_dir)
+                    && !item
+                        .local
+                        .as_ref()
+                        .is_some_and(|local| deferred.contains_key(&local.task_dir))
+                    && !item
+                        .server
+                        .as_ref()
+                        .is_some_and(|server| deferred.contains_key(&server.task_dir))
+            })
+            .collect();
+        if !unresolved.is_empty() {
+            return protocol::err(
+                code::INVALID_RESPONSE,
+                "revision guard 全量对账未收敛，保留本地任务并等待下次重试",
+            );
+        }
+
+        let mut baselines = baselines_from_snapshot(&verified_files);
+        for task_dir in deferred.keys() {
+            let prefix = format!("{task_dir}/");
+            baselines.retain(|path_name, _| !path_name.starts_with(&prefix));
+            for (path_name, sha256) in &cursor.baselines {
+                if path_name.starts_with(&prefix) {
+                    baselines.insert(path_name.clone(), sha256.clone());
+                }
+            }
+        }
+        let verified_revision = snapshot_revision(&verified);
+        self.write_cursor(
+            &task_space_id,
+            CursorPatch {
+                revision: Some(verified_revision),
+                revision_guard_version: Some(REVISION_GUARD_VERSION),
+                baselines: Some(baselines),
+                deferred: Some(deferred.clone()),
+                ..Default::default()
+            },
+        )
+        .await?;
+        self.write_server_cursor(&task_space_id, verified_revision)
+            .await?;
+        let ownership_pending = self
+            .read_cursor(&task_space_id)
+            .await
+            .ownership_pending;
+        self.sync_ownership_inbox(binding, &ownership_pending, &verified_local)
+            .await;
+        if !conflicts.is_empty() {
+            let conflict_differences: Vec<Difference> = verified_differences
+                .iter()
+                .filter(|item| {
+                    deferred.contains_key(&item.task_dir)
+                        || item
+                            .local
+                            .as_ref()
+                            .is_some_and(|local| deferred.contains_key(&local.task_dir))
+                })
+                .cloned()
+                .collect();
+            self.emit_differences(binding, verified_revision, &conflict_differences);
+        }
+        Ok(json!({
+            "repaired": true,
+            "revision": verified_revision,
+            "downloaded": server_only.len(),
+            "deferred": deferred.keys().cloned().collect::<Vec<_>>(),
+            "conflicts": conflicts,
+            "pendingReview": !conflicts.is_empty(),
+        }))
+    }
+
     async fn pull_initial_sync(
         &self,
         binding: &AgentBinding,
@@ -6410,12 +7018,6 @@ impl TaskSync {
                         "pendingReview": true,
                     }));
                 }
-                latest_revision = latest_revision.max(
-                    uploaded
-                        .get("revision")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0),
-                );
                 completion_baselines = merge_baselines(
                     &completion_baselines,
                     &self.last_baseline_files.lock().await.clone(),
@@ -6522,6 +7124,14 @@ impl TaskSync {
     }
 
     async fn complete_initial_sync(&self, task_space_id: &str, mode: &str) -> AgentResult<()> {
+        self.write_cursor(
+            task_space_id,
+            CursorPatch {
+                revision_guard_version: Some(REVISION_GUARD_VERSION),
+                ..Default::default()
+            },
+        )
+        .await?;
         let completed_at = protocol::now_iso8601();
         {
             let mut bindings = self.bindings.lock().await;
@@ -6762,6 +7372,12 @@ impl TaskSync {
                 .collect::<Vec<_>>(),
         )
         .await?;
+        self.sync_ownership_inbox(
+            &binding,
+            &cursor.ownership_pending,
+            &groups,
+        )
+        .await;
         let candidates: Vec<SnapshotGroup> = groups
             .into_iter()
             .filter(|group| {
@@ -6954,6 +7570,22 @@ impl TaskSync {
             )
             .await?;
         }
+        self.clear_pending_rejections(
+            task_space_id,
+            &normalized
+                .iter()
+                .map(|decision| decision.task_dir.clone())
+                .collect::<Vec<_>>(),
+        )
+        .await?;
+        let ownership_groups: Vec<SnapshotGroup> =
+            groups_by_dir.values().cloned().collect();
+        self.sync_ownership_inbox(
+            &binding,
+            &cursor.ownership_pending,
+            &ownership_groups,
+        )
+        .await;
         let sync = if current_branch.is_empty() {
             Value::Null
         } else {
@@ -7035,22 +7667,41 @@ impl TaskSync {
                 "hasPending": cursor.pending.is_some(),
             }),
         );
-        let mut latest_revision = cursor.revision;
+        let mut applied_revision = cursor.revision;
+        let mut committed_revision = 0u64;
         let mut baseline_files: Vec<SnapshotFile> = Vec::new();
+        let mut prehandled_dirs = HashSet::new();
+        let mut pending_outcome = None;
+        let mut last_nonblocking_skip = None;
+        let mut uploaded_any = false;
         if let Some(pending) = cursor.pending.clone() {
             let retry_files = pending.files.clone();
+            let retry_dirs = pending_task_dirs(&retry_files);
             if let Some(result) = self.retry_pending_batch(binding, pending).await? {
-                if result.get("skipped").and_then(Value::as_bool) == Some(true) {
+                let pending_after = self.read_cursor(&task_space_id).await.pending;
+                if pending_after.is_some()
+                    || result.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT")
+                {
                     return Ok(result);
                 }
-                if result.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
-                    return Ok(result);
+                if result.get("skipped").and_then(Value::as_bool) != Some(true) {
+                    committed_revision = committed_revision.max(
+                        result
+                            .get("revision")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0),
+                    );
+                    baseline_files.extend(parse_snapshot_files_from_values(&retry_files)?);
                 }
-                latest_revision = latest_revision
-                    .max(result.get("revision").and_then(Value::as_u64).unwrap_or(0));
-                baseline_files.extend(parse_snapshot_files_from_values(&retry_files)?);
+                prehandled_dirs.extend(retry_dirs);
+                pending_outcome = Some(result);
                 cursor = self.read_cursor(&task_space_id).await;
             }
+        }
+        if cursor.revision_guard_version < REVISION_GUARD_VERSION
+            && binding.initial_sync_completed
+        {
+            return Box::pin(self.repair_revision_guard(binding)).await;
         }
 
         self.ensure_task_control_loaded().await;
@@ -7066,9 +7717,13 @@ impl TaskSync {
             .iter()
             .filter(|task_dir| !is_archive_task_dir(task_dir))
             .filter(|task_dir| !inactive_control_dirs.contains(*task_dir))
+            .filter(|task_dir| !prehandled_dirs.contains(*task_dir))
             .cloned()
             .collect();
         if requested.is_empty() {
+            if let Some(result) = pending_outcome {
+                return Ok(result);
+            }
             return Ok(json!({
                 "skipped": true,
                 "reason": if task_dirs.iter().all(|task_dir| {
@@ -7188,15 +7843,24 @@ impl TaskSync {
                 .upload_persisted_batch(binding, &cursor, value, evidence)
                 .await?
             {
+                if skipped_for_explicit_pending_rejection(&uploaded) {
+                    if self.read_cursor(&task_space_id).await.pending.is_none() {
+                        handled.insert(source.0.clone());
+                        handled.insert(target.0.clone());
+                        last_nonblocking_skip = Some(uploaded);
+                        continue;
+                    }
+                }
                 if uploaded.get("skipped").and_then(Value::as_bool) == Some(true) {
                     return Ok(uploaded);
                 }
                 if uploaded.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
                     return Ok(uploaded);
                 }
+                uploaded_any = true;
                 handled.insert(source.0.clone());
                 handled.insert(target.0.clone());
-                latest_revision = latest_revision.max(
+                committed_revision = committed_revision.max(
                     uploaded
                         .get("revision")
                         .and_then(Value::as_u64)
@@ -7223,13 +7887,20 @@ impl TaskSync {
                 .upload_persisted_batch(binding, &cursor, value, evidence)
                 .await?
             {
+                if skipped_for_explicit_pending_rejection(&uploaded) {
+                    if self.read_cursor(&task_space_id).await.pending.is_none() {
+                        last_nonblocking_skip = Some(uploaded);
+                        continue;
+                    }
+                }
                 if uploaded.get("skipped").and_then(Value::as_bool) == Some(true) {
                     return Ok(uploaded);
                 }
                 if uploaded.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
                     return Ok(uploaded);
                 }
-                latest_revision = latest_revision.max(
+                uploaded_any = true;
+                committed_revision = committed_revision.max(
                     uploaded
                         .get("revision")
                         .and_then(Value::as_u64)
@@ -7252,12 +7923,19 @@ impl TaskSync {
                 "trigger": "upload",
                 "targetDirs": requested.len(),
                 "baselineFiles": baseline_files.len(),
-                "revision": latest_revision,
+                "revision": applied_revision,
+                "committedRevision": committed_revision,
             }),
         );
 
         if reconcile {
             Box::pin(self.pull(binding)).await?;
+            applied_revision = self.read_cursor(&task_space_id).await.revision;
+        }
+        if !uploaded_any {
+            if let Some(result) = last_nonblocking_skip {
+                return Ok(result);
+            }
         }
         sync_trace(
             &task_space_id,
@@ -7267,11 +7945,13 @@ impl TaskSync {
                 "trigger": "upload",
                 "targetDirs": requested.len(),
                 "reconcile": reconcile,
-                "revision": latest_revision,
+                "revision": applied_revision,
+                "committedRevision": committed_revision,
             }),
         );
         Ok(json!({
-            "revision": latest_revision,
+            "revision": applied_revision,
+            "committedRevision": committed_revision,
             "sequence": cursor.sequence,
             "baselineFiles": baseline_files.iter().map(|file| json!({
                 "path": file.path,
@@ -7296,6 +7976,7 @@ impl TaskSync {
             client_sequence: next_client_sequence(cursor.sequence),
             files,
             merge_evidence,
+            created_at: protocol::now_iso8601(),
         };
         self.write_cursor(
             &binding.task_space_id,
@@ -7307,7 +7988,41 @@ impl TaskSync {
             },
         )
         .await?;
-        Ok(Some(self.upload_batch(binding, batch).await?))
+        Ok(Some(
+            self.upload_batch(binding, batch, UploadMode::New).await?,
+        ))
+    }
+
+    async fn upload_preclassified_batch(
+        &self,
+        binding: &AgentBinding,
+        cursor: &Cursor,
+        files: Vec<Value>,
+        merge_evidence: Option<Value>,
+    ) -> AgentResult<Option<Value>> {
+        if files.is_empty() {
+            return Ok(None);
+        }
+        validate_upload_batch(&files)?;
+        let batch = PendingBatch {
+            batch_id: uuid::Uuid::new_v4().to_string(),
+            client_sequence: next_client_sequence(cursor.sequence),
+            files,
+            merge_evidence,
+            created_at: protocol::now_iso8601(),
+        };
+        self.write_cursor(
+            &binding.task_space_id,
+            CursorPatch {
+                pending: Some(Some(batch.clone())),
+                ..Default::default()
+            },
+        )
+        .await?;
+        Ok(Some(
+            self.upload_batch(binding, batch, UploadMode::Preclassified)
+                .await?,
+        ))
     }
 
     async fn retry_pending_batch(
@@ -7316,13 +8031,17 @@ impl TaskSync {
         batch: PendingBatch,
     ) -> AgentResult<Option<Value>> {
         validate_upload_batch(&batch.files)?;
-        Ok(Some(self.upload_batch(binding, batch).await?))
+        Ok(Some(
+            self.upload_batch(binding, batch, UploadMode::Replay)
+                .await?,
+        ))
     }
 
     async fn upload_batch(
         &self,
         binding: &AgentBinding,
         batch: PendingBatch,
+        mode: UploadMode,
     ) -> AgentResult<Value> {
         let task_space_id = binding.task_space_id.clone();
         let mut execution_task_keys =
@@ -7451,15 +8170,7 @@ impl TaskSync {
                 }));
             }
         }
-        let task_dirs: HashSet<String> = batch
-            .files
-            .iter()
-            .filter_map(|file| {
-                file.get("path")
-                    .and_then(Value::as_str)
-                    .and_then(active_task_directory_from_relative)
-            })
-            .collect();
+        let task_dirs = pending_task_dirs(&batch.files);
         let cursor = self.read_cursor(&task_space_id).await;
         let blocked: Vec<Value> = task_dirs
             .iter()
@@ -7477,60 +8188,62 @@ impl TaskSync {
                 "blocked": blocked,
             }));
         }
-        let local_groups = self.local_groups(binding, Some(&task_dirs)).await?;
-        for group in &local_groups {
-            let Some(current_task_json) = group
-                .files
-                .iter()
-                .find(|file| file.file_path == "task.json" && !file.deleted)
-            else {
-                continue;
-            };
-            let Some(pending_task_json) = batch.files.iter().find(|file| {
-                file.get("path").and_then(Value::as_str)
-                    == Some(current_task_json.path.as_str())
-            }) else {
+        if mode == UploadMode::New {
+            let local_groups = self.local_groups(binding, Some(&task_dirs)).await?;
+            for group in &local_groups {
+                let Some(current_task_json) = group
+                    .files
+                    .iter()
+                    .find(|file| file.file_path == "task.json" && !file.deleted)
+                else {
+                    continue;
+                };
+                let Some(pending_task_json) = batch.files.iter().find(|file| {
+                    file.get("path").and_then(Value::as_str)
+                        == Some(current_task_json.path.as_str())
+                }) else {
+                    return Ok(json!({
+                        "skipped": true,
+                        "reason": "TASK_OWNERSHIP_PENDING_MISMATCH",
+                        "taskDir": group.task_dir,
+                    }));
+                };
+                let pending_branch = pending_task_json
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .map(parse_task_metadata)
+                    .and_then(|metadata| metadata.1);
+                let current_branch = parse_task_metadata(&current_task_json.content).1;
+                if pending_branch != current_branch {
+                    return Ok(json!({
+                        "skipped": true,
+                        "reason": "TASK_OWNERSHIP_PENDING_MISMATCH",
+                        "taskDir": group.task_dir,
+                    }));
+                }
+            }
+            let ownership = self.resolve_task_ownership(binding, &local_groups).await?;
+            if local_groups.iter().any(|group| {
+                !ownership.syncable.contains_key(&group.task_dir)
+                    && !ownership
+                        .paused
+                        .iter()
+                        .any(|paused| paused.task_dir == group.task_dir)
+            }) {
                 return Ok(json!({
                     "skipped": true,
-                    "reason": "TASK_OWNERSHIP_PENDING_MISMATCH",
-                    "taskDir": group.task_dir,
-                }));
-            };
-            let pending_branch = pending_task_json
-                .get("content")
-                .and_then(Value::as_str)
-                .map(parse_task_metadata)
-                .and_then(|metadata| metadata.1);
-            let current_branch = parse_task_metadata(&current_task_json.content).1;
-            if pending_branch != current_branch {
-                return Ok(json!({
-                    "skipped": true,
-                    "reason": "TASK_OWNERSHIP_PENDING_MISMATCH",
-                    "taskDir": group.task_dir,
+                    "reason": "TASK_OWNERSHIP_REQUIRED",
+                    "reviews": ownership.reviews.iter().map(|review| review.group.task_dir.clone()).collect::<Vec<_>>(),
+                    "invalid": ownership.invalid,
                 }));
             }
-        }
-        let ownership = self.resolve_task_ownership(binding, &local_groups).await?;
-        if local_groups.iter().any(|group| {
-            !ownership.syncable.contains_key(&group.task_dir)
-                && !ownership
-                    .paused
-                    .iter()
-                    .any(|paused| paused.task_dir == group.task_dir)
-        }) {
-            return Ok(json!({
-                "skipped": true,
-                "reason": "TASK_OWNERSHIP_REQUIRED",
-                "reviews": ownership.reviews.iter().map(|review| review.group.task_dir.clone()).collect::<Vec<_>>(),
-                "invalid": ownership.invalid,
-            }));
-        }
-        if !ownership.paused.is_empty() {
-            return Ok(json!({
-                "skipped": true,
-                "reason": "TASK_BRANCH_OTHER",
-                "paused": ownership.paused.iter().map(|group| group.task_dir.clone()).collect::<Vec<_>>(),
-            }));
+            if !ownership.paused.is_empty() {
+                return Ok(json!({
+                    "skipped": true,
+                    "reason": "TASK_BRANCH_OTHER",
+                    "paused": ownership.paused.iter().map(|group| group.task_dir.clone()).collect::<Vec<_>>(),
+                }));
+            }
         }
         let mut active_sequence = batch.client_sequence;
         let mut sequence_recovered = false;
@@ -7566,6 +8279,20 @@ impl TaskSync {
                     break json!({
                         "skipped": true,
                         "reason": "TASK_OWNED_BY_BASELINE",
+                        "details": error.details,
+                    });
+                }
+                Err(error)
+                    if error
+                        .server_code
+                        .as_deref()
+                        .is_some_and(is_explicit_pending_rejection) =>
+                {
+                    break json!({
+                        "skipped": true,
+                        "rejected": true,
+                        "reason": error.server_code,
+                        "message": error.message,
                         "details": error.details,
                     });
                 }
@@ -7632,15 +8359,17 @@ impl TaskSync {
             }
         }
         let cursor = self.read_cursor(&task_space_id).await;
-        if result.get("reason").and_then(Value::as_str) == Some("TASK_OWNED_BY_BASELINE") {
-            self.write_cursor(
-                &task_space_id,
-                CursorPatch {
-                    pending: Some(None),
-                    ..Default::default()
-                },
-            )
-            .await?;
+        if let Some(reason) = result
+            .get("reason")
+            .and_then(Value::as_str)
+            .filter(|value| is_explicit_pending_rejection(value))
+        {
+            let rejected_batch = PendingBatch {
+                client_sequence: active_sequence,
+                ..batch.clone()
+            };
+            self.settle_rejected_pending(binding, &rejected_batch, reason)
+                .await?;
             return Ok(result);
         }
         if result.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
@@ -7680,18 +8409,23 @@ impl TaskSync {
                 );
             }
         }
-        let revision = cursor
-            .revision
-            .max(result.get("revision").and_then(Value::as_u64).unwrap_or(0));
         let baselines = merge_baselines(&cursor.baselines, &files);
+        let mut ownership_pending = cursor.ownership_pending.clone();
+        let mut pending_rejected = cursor.pending_rejected.clone();
+        for task_dir in &task_dirs {
+            ownership_pending.remove(task_dir);
+            pending_rejected.remove(task_dir);
+        }
         self.write_cursor(
             &task_space_id,
             CursorPatch {
-                revision: Some(revision),
+                revision: Some(cursor.revision),
                 sequence: Some(active_sequence),
                 baselines: Some(baselines),
                 deferred: Some(clear_deferred_for_files(&cursor.deferred, &files)),
                 pending: Some(None),
+                pending_rejected: Some(pending_rejected),
+                ownership_pending: Some(ownership_pending),
                 ..Default::default()
             },
         )
@@ -7925,8 +8659,6 @@ impl TaskSync {
                         "reason": result.get("reason").cloned().unwrap_or(Value::Null),
                     }));
                 }
-                latest_revision = latest_revision
-                    .max(result.get("revision").and_then(Value::as_u64).unwrap_or(0));
                 baseline_files.extend(self.last_baseline_files.lock().await.clone());
                 uploaded += 1;
                 continue;
@@ -8085,7 +8817,7 @@ impl TaskSync {
                         .and_then(|file| parse_task_metadata(&file.content).1),
                     files: directories.server_files.clone(),
                 }],
-                "safe",
+                CONFLICT_SYNC_MODE,
                 true,
             )
             .await?;
@@ -8245,14 +8977,11 @@ impl TaskSync {
             self.mark_conflict_blocked(task_space_id, &result, &values)
                 .await?;
         } else {
-            let next_revision = cursor
-                .revision
-                .max(result.get("revision").and_then(Value::as_u64).unwrap_or(0));
             let uploaded_files = parse_snapshot_files_from_values(&values)?;
             self.write_cursor(
                 task_space_id,
                 CursorPatch {
-                    revision: Some(next_revision),
+                    revision: Some(cursor.revision),
                     sequence: Some(next_sequence),
                     baselines: Some(merge_baselines(&cursor.baselines, &uploaded_files)),
                     pending: Some(None),
@@ -8260,8 +8989,6 @@ impl TaskSync {
                 },
             )
             .await?;
-            self.write_server_cursor(task_space_id, next_revision)
-                .await?;
             let task_dirs: Vec<String> = [directories.local.clone(), directories.server.clone()]
                 .into_iter()
                 .flatten()
@@ -8464,9 +9191,11 @@ struct ConflictDirectories {
 #[derive(Default)]
 struct CursorPatch {
     revision: Option<u64>,
+    revision_guard_version: Option<u64>,
     sequence: Option<u64>,
     baseline_reconciled_head: Option<String>,
     pending: Option<Option<PendingBatch>>,
+    pending_rejected: Option<BTreeMap<String, PendingRejection>>,
     baselines: Option<BTreeMap<String, String>>,
     deferred: Option<BTreeMap<String, BTreeMap<String, String>>>,
     ownership_pending: Option<BTreeMap<String, String>>,
@@ -8478,6 +9207,10 @@ fn apply_cursor_patch(cursor: &mut Cursor, next: &CursorPatch) -> bool {
     if let Some(revision) = next.revision {
         cursor.revision = cursor.revision.max(revision);
     }
+    if let Some(revision_guard_version) = next.revision_guard_version {
+        cursor.revision_guard_version =
+            cursor.revision_guard_version.max(revision_guard_version);
+    }
     if let Some(sequence) = next.sequence {
         cursor.sequence = cursor.sequence.max(sequence);
     }
@@ -8486,6 +9219,9 @@ fn apply_cursor_patch(cursor: &mut Cursor, next: &CursorPatch) -> bool {
     }
     if let Some(pending) = &next.pending {
         cursor.pending = pending.clone();
+    }
+    if let Some(pending_rejected) = &next.pending_rejected {
+        cursor.pending_rejected = pending_rejected.clone();
     }
     if let Some(baselines) = &next.baselines {
         cursor.baselines = baselines.clone();
@@ -8594,6 +9330,34 @@ fn retain_server_groups_for_binding(binding: &AgentBinding, groups: &mut Vec<Sna
                 .as_deref()
                 .map(|branch| branch == binding.branch_name)
                 .unwrap_or(true)
+    });
+}
+
+fn binding_is_baseline(binding: &AgentBinding) -> bool {
+    binding.baseline_branch.as_deref() == Some(binding.branch_name.as_str())
+}
+
+fn allows_cross_source_server_group(binding: &AgentBinding, mode: &str) -> bool {
+    binding_is_baseline(binding)
+        && (mode == REVISION_GUARD_SYNC_MODE || mode == CONFLICT_SYNC_MODE)
+}
+
+/// 一次性全量对账必须保住基线任务空间里已由服务端接纳的跨来源任务；
+/// 普通增量同步仍按当前绑定分支过滤。
+fn retain_server_groups_for_revision_guard(
+    binding: &AgentBinding,
+    groups: &mut Vec<SnapshotGroup>,
+) {
+    let allow_cross_branch = binding_is_baseline(binding);
+    groups.retain(|group| {
+        !group.archived
+            && !is_archive_task_dir(&group.task_dir)
+            && (allow_cross_branch
+                || group
+                    .task_branch
+                    .as_deref()
+                    .map(|branch| branch == binding.branch_name)
+                    .unwrap_or(true))
     });
 }
 
@@ -8755,6 +9519,17 @@ fn build_upload_request(
         fence.apply(&mut request);
     }
     request
+}
+
+fn pending_task_dirs(files: &[Value]) -> HashSet<String> {
+    files
+        .iter()
+        .filter_map(|file| {
+            file.get("path")
+                .and_then(Value::as_str)
+                .and_then(active_task_directory_from_relative)
+        })
+        .collect()
 }
 
 fn parse_snapshot_files_from_values(values: &[Value]) -> AgentResult<Vec<SnapshotFile>> {
@@ -8988,6 +9763,103 @@ fn conflict_blocked_to_value(blocked: &BTreeMap<String, String>) -> Value {
     )
 }
 
+fn pending_rejected_to_value(rejected: &BTreeMap<String, PendingRejection>) -> Value {
+    Value::Object(
+        rejected
+            .iter()
+            .map(|(task_dir, item)| {
+                (
+                    task_dir.clone(),
+                    json!({
+                        "batchId": item.batch_id,
+                        "clientSequence": item.client_sequence,
+                        "reason": item.reason,
+                        "createdAt": item.created_at,
+                        "blockedAt": item.blocked_at,
+                    }),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn parse_pending_rejected(value: &Value) -> BTreeMap<String, PendingRejection> {
+    let mut rejected = BTreeMap::new();
+    let Some(object) = value.as_object() else {
+        return rejected;
+    };
+    for (task_dir, state) in object {
+        if is_archive_task_dir(task_dir)
+            || task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
+                != Some(task_dir.as_str())
+        {
+            continue;
+        }
+        let Some(batch_id) = state
+            .get("batchId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let Some(client_sequence) = state
+            .get("clientSequence")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+        else {
+            continue;
+        };
+        let Some(reason) = state
+            .get("reason")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let Some(blocked_at) = state
+            .get("blockedAt")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let created_at = state
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(blocked_at);
+        rejected.insert(
+            task_dir.clone(),
+            PendingRejection {
+                batch_id: batch_id.to_string(),
+                client_sequence,
+                reason: reason.to_string(),
+                created_at: created_at.to_string(),
+                blocked_at: blocked_at.to_string(),
+            },
+        );
+    }
+    trim_pending_rejections(&mut rejected);
+    rejected
+}
+
+fn trim_pending_rejections(rejected: &mut BTreeMap<String, PendingRejection>) {
+    if rejected.len() <= PENDING_REJECTED_LIMIT {
+        return;
+    }
+    let mut entries: Vec<(String, String)> = rejected
+        .iter()
+        .map(|(task_dir, item)| (task_dir.clone(), item.blocked_at.clone()))
+        .collect();
+    entries.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.0.cmp(&left.0)));
+    let keep: HashSet<String> = entries
+        .into_iter()
+        .take(PENDING_REJECTED_LIMIT)
+        .map(|(task_dir, _)| task_dir)
+        .collect();
+    rejected.retain(|task_dir, _| keep.contains(task_dir));
+}
+
 fn parse_ownership_pending(value: &Value) -> BTreeMap<String, String> {
     let mut pending = BTreeMap::new();
     let Some(object) = value.as_object() else {
@@ -9053,6 +9925,11 @@ fn parse_pending_batch(value: &Value) -> Option<PendingBatch> {
         client_sequence,
         files,
         merge_evidence: value.get("mergeEvidence").cloned(),
+        created_at: value
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
@@ -9689,6 +10566,94 @@ mod tests {
         assert_eq!(pending.merge_evidence, Some(evidence));
     }
 
+    #[test]
+    fn cursor_defaults_new_guard_fields_and_bounds_rejected_summaries() {
+        let legacy = cursor_from_entry(&json!({
+            "revision": 12,
+            "sequence": 9,
+            "pendingRejected": {
+                ".trellis/tasks/task-a": {
+                    "batchId": "batch-a",
+                    "clientSequence": 8,
+                    "reason": "TASK_MERGE_EVIDENCE_REQUIRED",
+                    "blockedAt": "2026-11-18T00:00:00.000Z"
+                }
+            }
+        }));
+        assert_eq!(legacy.revision_guard_version, 0);
+        let rejected = legacy
+            .pending_rejected
+            .get(".trellis/tasks/task-a")
+            .expect("rejected summary");
+        assert_eq!(rejected.reason, "TASK_MERGE_EVIDENCE_REQUIRED");
+        assert_eq!(rejected.created_at, rejected.blocked_at);
+
+        let mut summaries = BTreeMap::new();
+        for index in 0..55 {
+            summaries.insert(
+                format!(".trellis/tasks/task-{index}"),
+                PendingRejection {
+                    batch_id: format!("batch-{index}"),
+                    client_sequence: index as u64 + 1,
+                    reason: "TASK_OWNERSHIP_REQUIRED".to_string(),
+                    created_at: format!("2026-11-18T00:00:{index:02}.000Z"),
+                    blocked_at: format!("2026-11-18T00:00:{index:02}.000Z"),
+                },
+            );
+        }
+        trim_pending_rejections(&mut summaries);
+        assert_eq!(summaries.len(), PENDING_REJECTED_LIMIT);
+        assert!(!summaries.contains_key(".trellis/tasks/task-0"));
+        assert!(summaries.contains_key(".trellis/tasks/task-54"));
+    }
+
+    #[test]
+    fn pending_rejection_classifier_is_explicit_only() {
+        for value in [
+            "TASK_OWNERSHIP_REQUIRED",
+            "TASK_OWNERSHIP_MISMATCH",
+            "TASK_MERGE_EVIDENCE_REQUIRED",
+            "TASK_MERGE_EVIDENCE_INVALID",
+            "TASK_OWNED_BY_BASELINE",
+        ] {
+            assert!(is_explicit_pending_rejection(value), "{value}");
+        }
+        for value in ["NETWORK_ERROR", "HTTP_ERROR", "TASK_FILE_CONFLICT", "CONFLICT"] {
+            assert!(!is_explicit_pending_rejection(value), "{value}");
+        }
+    }
+
+    #[test]
+    fn pending_skip_continues_only_for_explicit_rejection() {
+        assert!(skipped_for_explicit_pending_rejection(&json!({
+            "skipped": true,
+            "reason": "TASK_OWNERSHIP_REQUIRED"
+        })));
+        assert!(skipped_for_explicit_pending_rejection(&json!({
+            "skipped": true,
+            "reason": "TASK_OWNED_BY_BASELINE"
+        })));
+        for reason in [
+            "TASK_CONTROL_INACTIVE",
+            "TASK_CONTROL_MISSING",
+            "TASK_ARCHIVED",
+            "TASK_WRITE_FORBIDDEN",
+            "TASK_FILE_CONFLICT",
+        ] {
+            assert!(
+                !skipped_for_explicit_pending_rejection(&json!({
+                    "skipped": true,
+                    "reason": reason
+                })),
+                "{reason}"
+            );
+        }
+        assert!(!skipped_for_explicit_pending_rejection(&json!({
+            "skipped": false,
+            "reason": "TASK_OWNERSHIP_REQUIRED"
+        })));
+    }
+
     fn test_binding(task_space_id: &str) -> AgentBinding {
         AgentBinding {
             local_id: format!("local-{task_space_id}"),
@@ -9766,9 +10731,11 @@ mod tests {
         let address = listener.local_addr().expect("mock address");
         let changes = Arc::new(Mutex::new(Vec::new()));
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let write_response_index = Arc::new(Mutex::new(0usize));
         let snapshot_payload = Arc::new(snapshot_payload);
         let captured_changes = changes.clone();
         let captured_requests = requests.clone();
+        let captured_write_response_index = write_response_index.clone();
         let captured_snapshot_payload = snapshot_payload.clone();
         let task = tokio::spawn(async move {
             loop {
@@ -9777,6 +10744,7 @@ mod tests {
                 };
                 let changes = captured_changes.clone();
                 let requests = captured_requests.clone();
+                let write_response_index = captured_write_response_index.clone();
                 let snapshot_payload = captured_snapshot_payload.clone();
                 tokio::spawn(async move {
                     let mut request = Vec::new();
@@ -9826,6 +10794,18 @@ mod tests {
                         .lock()
                         .await
                         .push(format!("{method} {path}"));
+                    let write_response = if method == "POST" && path.ends_with("/changes") {
+                        let mut index = write_response_index.lock().await;
+                        let current = *index;
+                        *index += 1;
+                        snapshot_payload
+                            .get("writeResponses")
+                            .and_then(Value::as_array)
+                            .and_then(|responses| responses.get(current))
+                            .cloned()
+                    } else {
+                        None
+                    };
                     let (status, payload) = if path.contains("/snapshot?") {
                         ("200 OK", snapshot_payload.as_ref().clone())
                     } else if path.contains("/files?") {
@@ -9840,9 +10820,42 @@ mod tests {
                         )
                     } else if method == "PUT" && path.ends_with("/cursor") {
                         ("200 OK", json!({}))
+                    } else if method == "PUT" && path.ends_with("/ownership-inbox") {
+                        ("200 OK", json!({ "ok": true }))
                     } else if method == "POST" && path.ends_with("/changes") {
                         changes.lock().await.push(body);
-                        ("200 OK", json!({ "revision": 2 }))
+                        match write_response
+                            .or_else(|| snapshot_payload.get("writeResponse").cloned())
+                        {
+                            Some(response) => {
+                                let status = response
+                                    .get("status")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(200);
+                                let status_line = match status {
+                                    400 => "400 Bad Request",
+                                    404 => "404 Not Found",
+                                    405 => "405 Method Not Allowed",
+                                    409 => "409 Conflict",
+                                    429 => "429 Too Many Requests",
+                                    500 => "500 Internal Server Error",
+                                    _ => "200 OK",
+                                };
+                                (
+                                    status_line,
+                                    response.get("payload").cloned().unwrap_or(Value::Null),
+                                )
+                            }
+                            None => (
+                                "200 OK",
+                                json!({
+                                    "revision": snapshot_payload
+                                        .get("writeRevision")
+                                        .and_then(Value::as_u64)
+                                        .unwrap_or(2)
+                                }),
+                            ),
+                        }
                     } else if method == "GET" && path.starts_with("/api/agent/tasks/") {
                         let key = decode_mock_task_key(path.trim_start_matches("/api/agent/tasks/"));
                         let control = snapshot_payload
@@ -9971,13 +10984,556 @@ mod tests {
         task
     }
 
+    struct ReplayFixture {
+        root: PathBuf,
+        store: Arc<ConfigStore>,
+        sync: Arc<TaskSync>,
+        binding: AgentBinding,
+        changes: Arc<Mutex<Vec<Value>>>,
+        requests: Arc<Mutex<Vec<String>>>,
+        server_task: tokio::task::JoinHandle<()>,
+        old_files: Vec<Value>,
+        evidence: Value,
+    }
+
+    async fn replay_fixture(prefix: &str, write_response: Option<Value>) -> ReplayFixture {
+        let (root, store, _sync, mut binding) =
+            test_task_sync_fixture(prefix).await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        let task_dir = ".trellis/tasks/task-a";
+        write_task_json(repo, task_dir, "task-a", "main").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "task"]);
+        binding.initial_sync_completed = true;
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+
+        let old_content = "{\"id\":\"task-a\",\"branch\":null}\n";
+        let old_files = vec![json!({
+            "path": ".trellis/tasks/task-a/task.json",
+            "content": old_content,
+            "sha256": snapshot_sha256(old_content),
+        })];
+        let evidence = json!({
+            "version": 1,
+            "type": "tracked-in-head",
+            "taskId": "task-a",
+            "taskDir": task_dir,
+            "trackedPath": ".trellis/tasks/task-a/task.json",
+            "sourceBranch": "main",
+            "baselineBranch": "team-board",
+            "headCommit": "a".repeat(40),
+        });
+        store
+            .write_json(
+                &store.paths.task_cursors_file,
+                &json!({
+                    "version": CURSOR_VERSION,
+                    "taskSpaces": {
+                        "space-1": {
+                            "revision": 10,
+                            "revisionGuardVersion": 1,
+                            "sequence": 7,
+                            "baselines": {
+                                ".trellis/tasks/task-a/task.json": snapshot_sha256(old_content)
+                            },
+                            "pending": {
+                                "batchId": "pending-batch",
+                                "clientSequence": 7,
+                                "files": old_files.clone(),
+                                "mergeEvidence": evidence.clone(),
+                                "createdAt": "2026-11-17T08:52:29.033Z"
+                            }
+                        }
+                    }
+                }),
+            )
+            .await
+            .expect("cursor");
+
+        let mut snapshot = json!({
+            "revision": 10,
+            "files": [],
+            "writeRevision": 20
+        });
+        if let Some(response) = write_response {
+            snapshot["writeResponse"] = response;
+        }
+        let (server_url, changes, requests, server_task) = mock_api_server(snapshot).await;
+        let api =
+            Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+        let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
+        sync.set_bindings(vec![binding.clone()]).await;
+        ReplayFixture {
+            root,
+            store,
+            sync,
+            binding,
+            changes,
+            requests,
+            server_task,
+            old_files,
+            evidence,
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_replay_reuses_snapshot_and_does_not_advance_applied_revision() {
+        let fixture = replay_fixture("trellis-pending-replay", None).await;
+        let pending = fixture
+            .sync
+            .read_cursor("space-1")
+            .await
+            .pending
+            .expect("pending");
+        let result = fixture
+            .sync
+            .retry_pending_batch(&fixture.binding, pending)
+            .await
+            .expect("replay");
+        assert_eq!(result["revision"], 20);
+        let sent = fixture
+            .changes
+            .lock()
+            .await
+            .first()
+            .cloned()
+            .expect("upload request");
+        assert_eq!(sent["batchId"], "pending-batch");
+        assert_eq!(sent["clientSequence"], 7);
+        assert_eq!(sent["observedBranchName"], "main");
+        assert_eq!(sent["files"], json!(fixture.old_files));
+        assert_eq!(sent["mergeEvidence"], fixture.evidence);
+
+        let cursor = fixture.store.read_task_cursors().await;
+        assert_eq!(cursor["taskSpaces"]["space-1"]["revision"], 10);
+        assert!(cursor["taskSpaces"]["space-1"].get("pending").is_none());
+
+        fixture.server_task.abort();
+        let _ = tokio::fs::remove_dir_all(fixture.root).await;
+    }
+
+    #[tokio::test]
+    async fn explicit_pending_rejection_clears_body_and_records_bounded_summary() {
+        let fixture = replay_fixture(
+            "trellis-pending-rejected",
+            Some(json!({
+                "status": 409,
+                "payload": {
+                    "error": "任务分支尚未确定",
+                    "code": "TASK_OWNERSHIP_REQUIRED",
+                    "details": { "taskDir": ".trellis/tasks/task-a" }
+                }
+            })),
+        )
+        .await;
+        let pending = fixture
+            .sync
+            .read_cursor("space-1")
+            .await
+            .pending
+            .expect("pending");
+        let result = fixture
+            .sync
+            .retry_pending_batch(&fixture.binding, pending)
+            .await
+            .expect("rejected result");
+        assert_eq!(result["skipped"], true);
+        assert_eq!(result["reason"], "TASK_OWNERSHIP_REQUIRED");
+
+        let cursor = fixture.store.read_task_cursors().await;
+        let space = &cursor["taskSpaces"]["space-1"];
+        assert!(space.get("pending").is_none());
+        assert_eq!(
+            space["pendingRejected"][".trellis/tasks/task-a"]["reason"],
+            "TASK_OWNERSHIP_REQUIRED"
+        );
+        assert!(
+            space["pendingRejected"][".trellis/tasks/task-a"]
+                .get("files")
+                .is_none()
+        );
+        assert_eq!(
+            space["ownershipPending"][".trellis/tasks/task-a"]["reason"],
+            "TASK_OWNERSHIP_REQUIRED"
+        );
+        assert!(fixture
+            .requests
+            .lock()
+            .await
+            .iter()
+            .any(|request| request.ends_with("/ownership-inbox")));
+
+        fixture.server_task.abort();
+        let _ = tokio::fs::remove_dir_all(fixture.root).await;
+    }
+
+    #[tokio::test]
+    async fn explicit_pending_rejection_does_not_block_following_task_upload() {
+        let (root, store, _sync, mut binding) =
+            test_task_sync_fixture("trellis-pending-rejected-following-task").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        let blocked_dir = ".trellis/tasks/task-a";
+        let next_dir = ".trellis/tasks/task-b";
+        let next_task_json = format!("{next_dir}/task.json");
+        write_task_json(repo, blocked_dir, "task-a", "main").await;
+        write_task_json(repo, next_dir, "task-b", "main").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "tasks"]);
+        binding.initial_sync_completed = true;
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+
+        let pending_content = "{\"id\":\"task-a\",\"branch\":null}\n";
+        let pending_files = vec![json!({
+            "path": format!("{blocked_dir}/task.json"),
+            "content": pending_content,
+            "sha256": snapshot_sha256(pending_content),
+        })];
+        store
+            .write_json(
+                &store.paths.task_cursors_file,
+                &json!({
+                    "version": CURSOR_VERSION,
+                    "taskSpaces": {
+                        "space-1": {
+                            "revision": 10,
+                            "revisionGuardVersion": 1,
+                            "sequence": 7,
+                            "pending": {
+                                "batchId": "pending-batch",
+                                "clientSequence": 7,
+                                "files": pending_files
+                            }
+                        }
+                    }
+                }),
+            )
+            .await
+            .expect("cursor");
+
+        let (server_url, changes, _requests, server_task) = mock_api_server(json!({
+            "revision": 10,
+            "files": [],
+            "writeResponses": [
+                {
+                    "status": 409,
+                    "payload": {
+                        "error": "任务分支尚未确定",
+                        "code": "TASK_OWNERSHIP_REQUIRED"
+                    }
+                },
+                {
+                    "status": 200,
+                    "payload": { "revision": 21 }
+                }
+            ]
+        }))
+        .await;
+        let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+        let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
+        sync.set_bindings(vec![binding.clone()]).await;
+
+        let result = sync
+            .upload_directories(
+                &binding,
+                &[blocked_dir.to_string(), next_dir.to_string()],
+                false,
+                None,
+            )
+            .await
+            .expect("upload");
+        assert_eq!(result["committedRevision"], 21);
+
+        let sent = changes.lock().await.clone();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0]["batchId"], "pending-batch");
+        assert_eq!(sent[0]["files"][0]["content"], pending_content);
+        assert_eq!(sent[1]["files"][0]["path"], next_task_json);
+
+        let cursor = store.read_task_cursors().await;
+        let space = &cursor["taskSpaces"]["space-1"];
+        assert!(space.get("pending").is_none());
+        assert_eq!(
+            space["pendingRejected"][blocked_dir]["reason"],
+            "TASK_OWNERSHIP_REQUIRED"
+        );
+        assert!(space["baselines"].get(next_task_json.as_str()).is_some());
+        assert_eq!(space["revision"], 10);
+
+        server_task.abort();
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn revision_guard_repairs_once_without_overwriting_conflicted_local_task() {
+        let (root, store, _sync, mut binding) =
+            test_task_sync_fixture("trellis-revision-guard").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        let task_dir = ".trellis/tasks/task-a";
+        let task_path = repo.join(task_dir).join("task.json");
+        let local_content =
+            "{\"id\":\"task-a\",\"branch\":\"main\",\"title\":\"本地版本\"}\n";
+        tokio::fs::create_dir_all(task_path.parent().expect("parent"))
+            .await
+            .expect("task dir");
+        tokio::fs::write(&task_path, local_content)
+            .await
+            .expect("local task");
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "task"]);
+        binding.initial_sync_completed = true;
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        let previous_baseline = "b".repeat(64);
+        store
+            .write_json(
+                &store.paths.task_cursors_file,
+                &json!({
+                    "version": CURSOR_VERSION,
+                    "taskSpaces": {
+                        "space-1": {
+                            "revision": 1,
+                            "revisionGuardVersion": 0,
+                            "sequence": 1,
+                            "baselines": {
+                                ".trellis/tasks/task-a/task.json": previous_baseline.clone()
+                            }
+                        }
+                    }
+                }),
+            )
+            .await
+            .expect("cursor");
+        let remote_content =
+            "{\"id\":\"task-a\",\"branch\":\"main\",\"title\":\"服务端版本\"}\n";
+        let (server_url, _changes, requests, server_task) = mock_api_server(json!({
+            "revision": 1,
+            "files": [
+                snapshot_file_value(".trellis/tasks/task-a/task.json", remote_content)
+            ]
+        }))
+        .await;
+        let api =
+            Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+        let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
+        sync.set_bindings(vec![binding.clone()]).await;
+
+        let result = sync
+            .repair_revision_guard(&binding)
+            .await
+            .expect("repair");
+        assert_eq!(result["repaired"], true);
+        assert_eq!(
+            tokio::fs::read_to_string(&task_path)
+                .await
+                .expect("local content"),
+            local_content
+        );
+        let cursor = store.read_task_cursors().await;
+        assert_eq!(
+            cursor["taskSpaces"]["space-1"]["revisionGuardVersion"],
+            REVISION_GUARD_VERSION
+        );
+        assert_eq!(cursor["taskSpaces"]["space-1"]["revision"], 1);
+        assert!(cursor["taskSpaces"]["space-1"]["deferred"]
+            .get(task_dir)
+            .is_some());
+        assert_eq!(
+            cursor["taskSpaces"]["space-1"]["baselines"][".trellis/tasks/task-a/task.json"],
+            previous_baseline
+        );
+
+        let snapshot_requests = requests
+            .lock()
+            .await
+            .iter()
+            .filter(|request| request.contains("/snapshot?"))
+            .count();
+        let second = sync
+            .repair_revision_guard(&binding)
+            .await
+            .expect("guard current");
+        assert_eq!(second["reason"], "REVISION_GUARD_CURRENT");
+        assert_eq!(
+            requests
+                .lock()
+                .await
+                .iter()
+                .filter(|request| request.contains("/snapshot?"))
+                .count(),
+            snapshot_requests
+        );
+
+        server_task.abort();
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn revision_guard_downloads_baseline_cross_source_server_only_task() {
+        let (root, store, _sync, mut binding) =
+            test_task_sync_fixture("trellis-revision-guard-cross-source").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        tokio::fs::write(repo.join("README.md"), "repo\n")
+            .await
+            .expect("readme");
+        run_git(repo, &["add", "README.md"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "init"]);
+
+        binding.baseline_branch = Some("main".to_string());
+        binding.initial_sync_completed = true;
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        store
+            .write_json(
+                &store.paths.task_cursors_file,
+                &json!({
+                    "version": CURSOR_VERSION,
+                    "taskSpaces": {
+                        "space-1": {
+                            "revision": 1,
+                            "revisionGuardVersion": 0,
+                            "sequence": 1
+                        }
+                    }
+                }),
+            )
+            .await
+            .expect("cursor");
+
+        let task_dir = ".trellis/tasks/task-source";
+        let task_json = "{\"id\":\"task-source\",\"branch\":\"feature/source\"}\n";
+        let task_json_path = format!("{task_dir}/task.json");
+        let prd_path = format!("{task_dir}/prd.md");
+        let (server_url, changes, _requests, server_task) = mock_api_server(json!({
+            "revision": 3,
+            "files": [
+                snapshot_file_value(task_json_path.as_str(), task_json),
+                snapshot_file_value(prd_path.as_str(), "# 来源任务\n")
+            ]
+        }))
+        .await;
+        let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+        let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
+        sync.set_bindings(vec![binding.clone()]).await;
+
+        let result = sync
+            .repair_revision_guard(&binding)
+            .await
+            .expect("repair");
+        assert_eq!(result["repaired"], true);
+        assert_eq!(result["downloaded"], 1);
+        assert_eq!(
+            tokio::fs::read_to_string(repo.join(task_json_path.as_str()))
+                .await
+                .expect("downloaded task json"),
+            task_json
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(repo.join(prd_path.as_str()))
+                .await
+                .expect("downloaded prd"),
+            "# 来源任务\n"
+        );
+        let cursor = store.read_task_cursors().await;
+        assert_eq!(
+            cursor["taskSpaces"]["space-1"]["revisionGuardVersion"],
+            REVISION_GUARD_VERSION
+        );
+        assert_eq!(cursor["taskSpaces"]["space-1"]["revision"], 3);
+        assert_eq!(
+            cursor["taskSpaces"]["space-1"]["baselines"][task_json_path.as_str()],
+            snapshot_sha256(task_json)
+        );
+        assert!(changes.lock().await.is_empty());
+
+        server_task.abort();
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[test]
+    fn revision_guard_keeps_cross_source_tasks_only_for_baseline_binding() {
+        let group = SnapshotGroup {
+            task_dir: ".trellis/tasks/task-source".to_string(),
+            archived: false,
+            archive_month: None,
+            files: Vec::new(),
+            task_id: Some("task-source".to_string()),
+            task_branch: Some("feature/source".to_string()),
+        };
+        let mut binding = test_binding("space-1");
+        binding.baseline_branch = Some("team-board".to_string());
+        let mut groups = vec![group.clone()];
+        retain_server_groups_for_revision_guard(&binding, &mut groups);
+        assert!(groups.is_empty());
+
+        binding.baseline_branch = Some("main".to_string());
+        groups.push(group);
+        retain_server_groups_for_revision_guard(&binding, &mut groups);
+        assert_eq!(groups.len(), 1);
+    }
+
+    #[test]
+    fn cross_source_server_apply_requires_baseline_guard_or_conflict_mode() {
+        let mut binding = test_binding("space-1");
+        binding.baseline_branch = Some("main".to_string());
+        assert!(allows_cross_source_server_group(
+            &binding,
+            REVISION_GUARD_SYNC_MODE
+        ));
+        assert!(allows_cross_source_server_group(
+            &binding,
+            CONFLICT_SYNC_MODE
+        ));
+        assert!(!allows_cross_source_server_group(&binding, "safe"));
+        assert!(!allows_cross_source_server_group(&binding, "incremental"));
+
+        binding.baseline_branch = Some("team-board".to_string());
+        assert!(!allows_cross_source_server_group(
+            &binding,
+            REVISION_GUARD_SYNC_MODE
+        ));
+        assert!(!allows_cross_source_server_group(
+            &binding,
+            CONFLICT_SYNC_MODE
+        ));
+    }
+
     #[test]
     fn upload_request_carries_persisted_fencing_fields() {
+        let files = vec![json!({
+            "path": ".trellis/tasks/task-a/task.json",
+            "content": "{\"id\":\"task-a\",\"branch\":null}\n",
+            "sha256": snapshot_sha256("{\"id\":\"task-a\",\"branch\":null}\n"),
+        })];
+        let evidence = json!({
+            "version": 1,
+            "type": "tracked-in-head",
+            "taskId": "task-a",
+            "taskDir": ".trellis/tasks/task-a",
+            "trackedPath": ".trellis/tasks/task-a/task.json",
+            "sourceBranch": "main",
+            "baselineBranch": "team-board",
+            "headCommit": "a".repeat(40),
+        });
         let batch = PendingBatch {
             batch_id: "batch-1".to_string(),
             client_sequence: 7,
-            files: vec![json!({ "path": ".trellis/tasks/task-a/task.json" })],
-            merge_evidence: None,
+            files: files.clone(),
+            merge_evidence: Some(evidence.clone()),
+            created_at: "2026-11-18T00:00:00.000Z".to_string(),
         };
         let request = build_upload_request(
             &batch,
@@ -9991,6 +11547,10 @@ mod tests {
         assert_eq!(request["taskVersion"], 4);
         assert_eq!(request["leaseToken"], "lease-token");
         assert_eq!(request["files"][0]["path"], ".trellis/tasks/task-a/task.json");
+        assert_eq!(request["files"], json!(files));
+        assert_eq!(request["mergeEvidence"], evidence);
+        assert_eq!(request["batchId"], "batch-1");
+        assert_eq!(request["clientSequence"], 8);
         assert_eq!(request["observedBranchName"], "main");
     }
 
@@ -10224,6 +11784,7 @@ mod tests {
                     "taskSpaces": {
                         "space-1": {
                             "revision": 1,
+                            "revisionGuardVersion": 1,
                             "sequence": 1,
                             "baselines": {
                                 (task_json.clone()): baseline_hash
@@ -11272,6 +12833,7 @@ mod tests {
                     "taskSpaces": {
                         "space-1": {
                             "revision": 1,
+                            "revisionGuardVersion": 1,
                             "sequence": 1,
                             "baselines": {
                                 (task_json.clone()): snapshot_sha256(
@@ -11743,6 +13305,7 @@ mod tests {
                     client_sequence: 1,
                     files,
                     merge_evidence: None,
+                    created_at: "2026-11-18T00:00:00.000Z".to_string(),
                 },
             )
             .await
@@ -11803,6 +13366,7 @@ mod tests {
                 "old",
             )],
             merge_evidence: None,
+            created_at: "2026-11-18T00:00:00.000Z".to_string(),
         };
         assert!(migrate_archive_pending_batch(archive_only, 10).is_none());
 
@@ -11818,6 +13382,7 @@ mod tests {
             merge_evidence: Some(json!({
                 "taskDir": ".trellis/tasks/archive/2026-11/a"
             })),
+            created_at: "2026-11-18T00:00:00.000Z".to_string(),
         };
         let migrated = migrate_archive_pending_batch(mixed, 10).expect("active deletion");
         assert_ne!(migrated.batch_id, "batch.archive-mixed");
@@ -11834,6 +13399,7 @@ mod tests {
     fn cursor_sanitizes_archive_paths() {
         let entry = json!({
             "revision": 8,
+            "revisionGuardVersion": 1,
             "sequence": 9,
             "baselines": {
                 ".trellis/tasks/a/prd.md": "a".repeat(64),
@@ -11853,9 +13419,18 @@ mod tests {
                 ".trellis/tasks/archive/2026-11/b": {
                     "conflictId": "conflict-1"
                 }
+            },
+            "pendingRejected": {
+                ".trellis/tasks/archive/2026-11/b": {
+                    "batchId": "batch-1",
+                    "clientSequence": 9,
+                    "reason": "TASK_OWNERSHIP_REQUIRED",
+                    "blockedAt": "2026-11-18T00:00:00.000Z"
+                }
             }
         });
         let cursor = cursor_from_entry(&entry);
+        assert_eq!(cursor.revision_guard_version, 1);
         assert!(cursor.baselines.contains_key(".trellis/tasks/a/prd.md"));
         assert!(!cursor
             .baselines
@@ -11863,6 +13438,7 @@ mod tests {
         assert!(cursor.deferred.is_empty());
         assert!(cursor.ownership_pending.is_empty());
         assert!(cursor.conflict_blocked.is_empty());
+        assert!(cursor.pending_rejected.is_empty());
     }
 
     #[test]
@@ -11931,6 +13507,7 @@ mod tests {
             &mut cursor,
             || CursorPatch {
                 revision: Some(10),
+                revision_guard_version: Some(REVISION_GUARD_VERSION),
                 sequence: Some(2),
                 ..Default::default()
             },
@@ -11975,11 +13552,30 @@ mod tests {
             },
         );
 
+        let rejected = BTreeMap::from([(
+            ".trellis/tasks/a".to_string(),
+            PendingRejection {
+                batch_id: "batch-rejected".to_string(),
+                client_sequence: 3,
+                reason: "TASK_OWNERSHIP_REQUIRED".to_string(),
+                created_at: "2026-11-18T00:00:00.000Z".to_string(),
+                blocked_at: "2026-11-18T00:01:00.000Z".to_string(),
+            },
+        )]);
+        assert_cursor_patch_changes_once(
+            &mut cursor,
+            || CursorPatch {
+                pending_rejected: Some(rejected.clone()),
+                ..Default::default()
+            },
+        );
+
         let pending = PendingBatch {
             batch_id: "batch-1".to_string(),
             client_sequence: 3,
             files: vec![json!({ "path": ".trellis/tasks/a/prd.md" })],
             merge_evidence: None,
+            created_at: "2026-11-18T00:00:00.000Z".to_string(),
         };
         assert_cursor_patch_changes_once(
             &mut cursor,
@@ -12670,6 +14266,7 @@ mod tests {
                     "taskSpaces": {
                         "space-1": {
                             "revision": 10,
+                            "revisionGuardVersion": 1,
                             "sequence": 2
                         }
                     }

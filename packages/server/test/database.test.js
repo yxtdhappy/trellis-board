@@ -121,6 +121,7 @@ const EXPECTED_TABLES = [
   'sync_task_index_tag',
   'sync_task_lease',
   'sync_task_merge_evidence',
+  'sync_task_ownership_inbox',
   'sync_task_space',
   'sync_task_space_batch',
   'sync_task_space_file',
@@ -141,12 +142,12 @@ const EXPECTED_TABLES = [
   'user_session',
 ]
 
-test('新库一次创建 schema v16，同时保留旧 Git 凭据表和任务空间表', () => {
+test('新库一次创建 schema v17，同时保留旧 Git 凭据表和任务空间表', () => {
   const workspace = makeWorkspace()
   let db
   try {
     db = openTestDatabase(workspace)
-    assert.equal(DATABASE_SCHEMA_VERSION, 16)
+    assert.equal(DATABASE_SCHEMA_VERSION, 17)
     assert.deepEqual(tableNames(db), EXPECTED_TABLES)
     const meta = Object.fromEntries(
       db
@@ -154,7 +155,7 @@ test('新库一次创建 schema v16，同时保留旧 Git 凭据表和任务空�
         .all()
         .map((row) => [row.key, row.value]),
     )
-    assert.equal(meta.schema_version, '16')
+    assert.equal(meta.schema_version, '17')
     assert.equal(meta.legacy_json_imported_v1, '1')
     assert.equal(Number.isNaN(Date.parse(meta.execution_events_started_at)), false)
 
@@ -206,6 +207,22 @@ test('新库一次创建 schema v16，同时保留旧 Git 凭据表和任务空�
     assert.ok(columnNames(db, 'sync_task_space').includes('archive_indexed_revision'))
     assert.ok(columnNames(db, 'sync_task_space_scan_cache').includes('indexed_archive_revision'))
     assert.ok(columnNames(db, 'sync_task_space_scan_cache').includes('projection_state_json'))
+    assert.deepEqual(columnNames(db, 'sync_task_ownership_inbox'), [
+      'id',
+      'project_id',
+      'source_task_space_id',
+      'source_agent_id',
+      'source_user_id',
+      'task_id',
+      'task_dir',
+      'title',
+      'reason',
+      'source_branch_name',
+      'fingerprint',
+      'first_seen_at',
+      'last_seen_at',
+      'updated_at',
+    ])
     for (const column of [
       'id',
       'snapshot_id',
@@ -307,7 +324,7 @@ test('新库一次创建 schema v16，同时保留旧 Git 凭据表和任务空�
   }
 })
 
-test('schema v16 重复打开保持幂等', () => {
+test('schema v17 重复打开保持幂等', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -370,11 +387,22 @@ test('schema v16 重复打开保持幂等', () => {
           archive_candidate_snapshot_id = 'snapshot-candidate'
       WHERE id = 's1'
     `).run()
+    db.prepare(`
+      INSERT INTO sync_task_ownership_inbox(
+        id, project_id, source_task_space_id, source_agent_id, source_user_id,
+        task_id, task_dir, title, reason, source_branch_name, fingerprint,
+        first_seen_at, last_seen_at, updated_at
+      ) VALUES (
+        'inbox-1', 'p1', 's1', 'a1', 'u1', 'task-1',
+        '.trellis/tasks/11-18-task-1', '待归属任务', 'TASK_OWNERSHIP_REQUIRED',
+        'main', ?, ?, ?, ?
+      )
+    `).run('a'.repeat(64), now, now, now)
     db.close()
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '16',
+      '17',
     )
     assert.deepEqual(columnNames(db, 'team_project'), firstColumns)
     assert.deepEqual(tableNames(db), EXPECTED_TABLES)
@@ -408,13 +436,100 @@ test('schema v16 重复打开保持幂等', () => {
         archive_candidate_snapshot_id: 'snapshot-candidate',
       },
     )
+    assert.equal(
+      db.prepare("SELECT title FROM sync_task_ownership_inbox WHERE id = 'inbox-1'").get().title,
+      '待归属任务',
+    )
   } finally {
     closeQuietly(db)
     fs.rmSync(workspace.root, { recursive: true, force: true })
   }
 })
 
-test('v13 升级到 v16 隔离旧归档文件并保留只读内容', () => {
+test('v16 升级到 v17 创建待归属摘要表且保留任务控制面', () => {
+  const workspace = makeWorkspace()
+  let db
+  try {
+    db = openTestDatabase(workspace)
+    const now = new Date().toISOString()
+    db.prepare(
+      "INSERT INTO team(id, name, slug, status, created_at, updated_at) VALUES ('t1','团队一','t1','active',?,?)",
+    ).run(now, now)
+    db.prepare(`
+      INSERT INTO user_account(
+        id, username_key, username, display_name, password_hash, password_params_json,
+        system_admin, status, must_change_password, password_changed_at, created_at, updated_at
+      ) VALUES ('u1', 'u1', 'u1', '用户一', 'x', '{}', 0, 'active', 0, ?, ?, ?)
+    `).run(now, now, now)
+    db.prepare(`
+      INSERT INTO agent_device(
+        id, user_id, device_name, platform, agent_version, protocol_version,
+        credential_hash, status, last_seen_at, created_at
+      ) VALUES ('a1', 'u1', '设备一', 'win32', '0.1.0', 3, 'credential', 'active', ?, ?)
+    `).run(now, now)
+    db.prepare(`
+      INSERT INTO sync_project(
+        id, name, remote_url, remote_identity_hash, baseline_branch, owner_team_id,
+        status, created_by_user_id, created_by_agent_id, created_at, updated_at
+      ) VALUES ('p1', '项目一', 'https://example.com/repo.git', 'hash-1', 'main',
+        't1', 'active', 'u1', 'a1', ?, ?)
+    `).run(now, now)
+    db.prepare(`
+      INSERT INTO sync_task_space(
+        id, project_id, branch_name, status, revision, indexed_revision,
+        created_by_user_id, created_by_agent_id, created_at, updated_at
+      ) VALUES ('s1', 'p1', 'main', 'active', 1, 1, 'u1', 'a1', ?, ?)
+    `).run(now, now)
+    db.prepare(`
+      INSERT INTO sync_task(
+        execution_task_key, task_key, task_space_id, project_id, task_id,
+        relative_dir, title, priority, stage, created_at, updated_at
+      ) VALUES (
+        's1::task-1', 's1::.trellis/tasks/11-18-task-1', 's1', 'p1', 'task-1',
+        '.trellis/tasks/11-18-task-1', '任务一', 'P2', 'planning', ?, ?
+      )
+    `).run(now, now)
+    db.exec(`
+      DROP INDEX IF EXISTS sync_task_ownership_inbox_project_task;
+      DROP INDEX IF EXISTS sync_task_ownership_inbox_source;
+      DROP TABLE sync_task_ownership_inbox;
+      UPDATE app_meta SET value = '16' WHERE key = 'schema_version';
+    `)
+    db.close()
+    db = null
+
+    db = openTestDatabase(workspace)
+    assert.equal(DATABASE_SCHEMA_VERSION, 17)
+    assert.equal(
+      db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
+      '17',
+    )
+    assert.ok(tableNames(db).includes('sync_task_ownership_inbox'))
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task').get().count, 1)
+    assert.deepEqual(
+      db
+        .prepare(`
+          SELECT name FROM sqlite_master
+          WHERE type = 'index' AND tbl_name = 'sync_task_ownership_inbox'
+            AND name NOT LIKE 'sqlite_autoindex_%'
+          ORDER BY name
+        `)
+        .all()
+        .map((row) => row.name),
+      ['sync_task_ownership_inbox_project_task', 'sync_task_ownership_inbox_source'],
+    )
+    assert.ok(
+      fs
+        .readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
+        .some((name) => name.startsWith('board.sqlite.pre-v17.')),
+    )
+  } finally {
+    closeQuietly(db)
+    fs.rmSync(workspace.root, { recursive: true, force: true })
+  }
+})
+
+test('v13 升级到 v17 隔离旧归档文件并保留只读内容', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -509,7 +624,7 @@ test('v13 升级到 v16 隔离旧归档文件并保留只读内容', () => {
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '16',
+      '17',
     )
     assert.deepEqual(
       db
@@ -549,7 +664,7 @@ test('v13 升级到 v16 隔离旧归档文件并保留只读内容', () => {
     assert.ok(
       fs
         .readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
-        .some((name) => name.startsWith('board.sqlite.pre-v16.')),
+        .some((name) => name.startsWith('board.sqlite.pre-v17.')),
     )
 
     db.close()
@@ -562,7 +677,7 @@ test('v13 升级到 v16 隔离旧归档文件并保留只读内容', () => {
   }
 })
 
-test('v14 升级到 v16 新增本地快照元数据并保留 legacy 正文', () => {
+test('v14 升级到 v17 新增本地快照元数据并保留 legacy 正文', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -634,7 +749,7 @@ test('v14 升级到 v16 新增本地快照元数据并保留 legacy 正文', () 
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '16',
+      '17',
     )
     const migrated = db
       .prepare(`
@@ -652,7 +767,7 @@ test('v14 升级到 v16 新增本地快照元数据并保留 legacy 正文', () 
     assert.ok(
       fs
         .readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
-        .some((name) => name.startsWith('board.sqlite.pre-v16.')),
+        .some((name) => name.startsWith('board.sqlite.pre-v17.')),
     )
 
     db.close()
@@ -664,7 +779,7 @@ test('v14 升级到 v16 新增本地快照元数据并保留 legacy 正文', () 
   }
 })
 
-test('schema v6 升级到 v16 前备份并补齐旧字段与任务空间表', () => {
+test('schema v6 升级到 v17 前备份并补齐旧字段与任务空间表', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -705,7 +820,7 @@ test('schema v6 升级到 v16 前备份并补齐旧字段与任务空间表', ()
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '16',
+      '17',
     )
     assert.ok(tableNames(db).includes('project_live_revision'))
     assert.ok(tableNames(db).includes('project_live_file'))
@@ -725,7 +840,7 @@ test('schema v6 升级到 v16 前备份并补齐旧字段与任务空间表', ()
     )
     const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
     assert.equal(
-      backups.some((name) => name.startsWith('board.sqlite.pre-v16.')),
+      backups.some((name) => name.startsWith('board.sqlite.pre-v17.')),
       true,
     )
   } finally {
@@ -734,7 +849,7 @@ test('schema v6 升级到 v16 前备份并补齐旧字段与任务空间表', ()
   }
 })
 
-test('schema v7 升级到 v16 前备份并补齐接入字段默认值', () => {
+test('schema v7 升级到 v17 前备份并补齐接入字段默认值', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -765,7 +880,7 @@ test('schema v7 升级到 v16 前备份并补齐接入字段默认值', () => {
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '16',
+      '17',
     )
     const migrated = db
       .prepare(`
@@ -779,7 +894,7 @@ test('schema v7 升级到 v16 前备份并补齐接入字段默认值', () => {
     assert.equal(migrated.bootstrap_lead_trellis_dev_id, null)
     const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
     assert.equal(
-      backups.some((name) => name.startsWith('board.sqlite.pre-v16.')),
+      backups.some((name) => name.startsWith('board.sqlite.pre-v17.')),
       true,
     )
   } finally {
@@ -788,7 +903,7 @@ test('schema v7 升级到 v16 前备份并补齐接入字段默认值', () => {
   }
 })
 
-test('schema v8 升级到 v16 回填归档时间并建立归档排序索引', () => {
+test('schema v8 升级到 v17 回填归档时间并建立归档排序索引', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -848,7 +963,7 @@ test('schema v8 升级到 v16 回填归档时间并建立归档排序索引', ()
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '16',
+      '17',
     )
     assert.equal(
       db
@@ -870,7 +985,7 @@ test('schema v8 升级到 v16 回填归档时间并建立归档排序索引', ()
     )
     const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
     assert.equal(
-      backups.some((name) => name.startsWith('board.sqlite.pre-v16.')),
+      backups.some((name) => name.startsWith('board.sqlite.pre-v17.')),
       true,
     )
   } finally {

@@ -16,6 +16,7 @@ import { ExecutionHeader } from '@/features/board/ExecutionHeader'
 import { FlowSignals } from '@/features/board/FlowSignals'
 import { Kanban } from '@/features/board/Kanban'
 import { Overview } from '@/features/board/Overview'
+import { OwnershipInboxPanel } from '@/features/board/OwnershipInboxPanel'
 import { PluginsView } from '@/features/plugins/PluginsView'
 import { PluginPanel } from '@/features/plugins/PluginPanel'
 import { TeamView } from '@/features/board/TeamView'
@@ -82,6 +83,7 @@ export function BoardPage() {
     teamMode,
     runtime,
     teamPage,
+    ownershipInbox,
     loading,
     error,
   } = controller
@@ -304,6 +306,8 @@ export function BoardPage() {
           onSelect={(id) => setFilters({ projectId: id, taskSpaceId: 'all' })}
           currentTaskSpace={filters.taskSpaceId}
           onSelectTaskSpace={(taskSpaceId) => setFilters({ taskSpaceId })}
+          ownershipInboxOpen={ownershipInbox.open}
+          onSelectOwnershipInbox={ownershipInbox.toggle}
           onManage={() => setProjectsOpen(true)}
           manageEnabled={!teamMode}
           syncLabel={syncLabel}
@@ -354,6 +358,21 @@ export function BoardPage() {
                     if (confirmed) void actions.deleteView(id)
                   })
                 }}
+              />
+              <OwnershipInboxPanel
+                count={ownershipInbox.count}
+                projectGroups={ownershipInbox.projectGroups}
+                projectId={filters.projectId}
+                open={ownershipInbox.open}
+                items={ownershipInbox.items}
+                total={ownershipInbox.total}
+                nextCursor={ownershipInbox.nextCursor}
+                loading={ownershipInbox.loading}
+                loadingMore={ownershipInbox.loadingMore}
+                error={ownershipInbox.error}
+                onToggle={() => ownershipInbox.toggle(filters.projectId)}
+                onRetry={() => void ownershipInbox.reload()}
+                onLoadMore={() => void ownershipInbox.loadMore()}
               />
               <FlowSignals
                 tasks={tasks.filter((task) => !task.archived)}

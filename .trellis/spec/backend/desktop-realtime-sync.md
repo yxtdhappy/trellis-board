@@ -850,3 +850,44 @@ serverUrl=http://192.168.65.27:4317
 
 任务级分支归属、ownership API、冲突幂等和历史清理约束见
 [任务级分支归属与冲突幂等](./task-ownership-and-conflict-idempotency.md)。
+
+## 场景：Pending 原样重放与已应用 revision
+
+### 1. Scope / Trigger
+
+- Trigger：修改 `task_sync.rs` 的 cursor、pending retry、上传应答、SSE 拉取或一次性 revision 修复时。
+
+### 2. Signatures
+
+```text
+Cursor.revision        = 本地已经完整应用的最高服务端 revision
+Cursor.pending         = 不可变的上传请求快照
+Cursor.revisionGuardVersion = 1
+Cursor.pendingRejected = taskDir -> 有界拒绝摘要
+```
+
+### 3. Contracts
+
+- `pending` 重放必须原样发送 `batchId/clientSequence/files/mergeEvidence`。只有
+  `observedBranchName` 和按服务端要求抬高一次 `clientSequence` 可以变化；不得用当前本地
+  `task.json.branch` 在发请求前阻断旧批次。
+- 明确 ownership、merge evidence 或 baseline-owned 拒绝后，清除该 pending，写
+  `pendingRejected` 或现有 ownership/baseline 状态，并继续同一轮其他任务。
+- 网络失败、超时、429 重试耗尽和未知失败必须保留 pending 并停止该 taskSpace，不能猜测服务端未提交。
+- 上传成功只推进 `sequence`、baselines 和 pending 状态，不把响应 revision 写入
+  `cursor.revision`；只有完整 pull/apply 成功后才能推进已应用 revision。
+- cursor 缺少 `revisionGuardVersion` 时按 0 读取。首次运行先重放 pending，再用 full snapshot
+  做一次安全对账；下载 server-only、保留并重传 local-only、内容冲突进入 deferred。
+- 修复只有在完整快照验证收敛后才写 `revisionGuardVersion=1`；失败保持 0，重启继续修复。
+  不得为了修复删除本地活动任务或用服务端摘要覆盖冲突目录。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| pending 内容与当前本地文件不同 | 仍先原样重放 |
+| 明确 ownership/evidence 拒绝 | 清 pending，写有界摘要，继续其他任务 |
+| 网络错误或 5xx | 保留 pending，停止该 taskSpace |
+| 上传返回 revision 已越过他人变更 | `cursor.revision` 不变，下一次 pull 补齐 |
+| guard<1 且 full snapshot 未收敛 | guard 保持 0，不删除本地任务 |
+| guard 修复成功 | 写 verified revision 和 guard=1 |

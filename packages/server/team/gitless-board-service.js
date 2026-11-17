@@ -68,6 +68,7 @@ export function createGitlessBoardService({
   taskSpaceIndex,
   archiveSnapshots = null,
   agents = null,
+  ownershipInbox = null,
   executionWipLimit = EXECUTION_WIP_LIMIT,
 }) {
   const executionStore = createExecutionStore({ db, stageIds: STAGE_IDS })
@@ -174,13 +175,19 @@ export function createGitlessBoardService({
 
   function status(actor, { staleMs = 60_000 } = {}) {
     const projects = listStatusReadable(actor)
+    const ownershipInboxCounts =
+      ownershipInbox?.countByProject(projects.map((project) => project.id)) || new Map()
+    const decoratedProjects = projects.map((project) => ({
+      ...project,
+      ownershipInboxCount: ownershipInboxCounts.get(project.id) || 0,
+    }))
     const onlineSince = new Date(Math.floor((Date.now() - staleMs) / 1000) * 1000).toISOString()
     const summaries = projectAgentSummaries(
-      projects.map((project) => project.id),
+      decoratedProjects.map((project) => project.id),
       onlineSince,
     )
     const taskSpaceIds = new Set(
-      projects.flatMap((project) => (project.taskSpaces || []).map((space) => space.id)),
+      decoratedProjects.flatMap((project) => (project.taskSpaces || []).map((space) => space.id)),
     )
     const pendingAssignments = Number(
       db
@@ -215,7 +222,7 @@ export function createGitlessBoardService({
           ]),
         ),
       ),
-      projects: projects.map((project) => ({
+      projects: decoratedProjects.map((project) => ({
         ...project,
         agents: summaries.get(project.id) || {
           total: 0,
@@ -233,7 +240,7 @@ export function createGitlessBoardService({
         error: row.error_text || null,
         updatedAt: row.updated_at,
       })),
-      associationProjects: projects,
+      associationProjects: decoratedProjects,
       serverTime: new Date().toISOString(),
     }
   }

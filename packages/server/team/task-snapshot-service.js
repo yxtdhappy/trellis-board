@@ -13,6 +13,7 @@ import {
 import { validateGitBranchName } from '@trellis-board/shared/remote-identity.js'
 import { appendAuditEvent } from './audit.js'
 import { ERROR_CODES, teamError } from './errors.js'
+import { deleteTaskOwnershipInboxRows } from './task-ownership-inbox.js'
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const MAX_RATE_BATCHES_PER_SECOND = 5
@@ -165,6 +166,7 @@ export function createTaskSnapshotService({
   taskSpaces,
   taskControl = null,
   onRevisionCommitted = null,
+  onOwnershipInboxCleared = null,
   now = () => new Date(),
 }) {
   function bindingContext(agent, taskSpaceId) {
@@ -967,6 +969,11 @@ export function createTaskSnapshotService({
         revision: changed ? revision : currentRevision,
         contentChanged: changed,
       })
+      const ownershipInboxRowsCleared = deleteTaskOwnershipInboxRows(
+        db,
+        space.project_id,
+        complete.taskId,
+      )
       const hook = {
         agent,
         taskSpaceId,
@@ -984,6 +991,7 @@ export function createTaskSnapshotService({
           revision: currentRevision,
           taskId: complete.taskId,
           control,
+          ownershipInboxRowsCleared,
           hookResult: commitHook ? commitHook(hook) : null,
         }
       }
@@ -1017,6 +1025,7 @@ export function createTaskSnapshotService({
         revision,
         taskId: complete.taskId,
         control,
+        ownershipInboxRowsCleared,
         hookResult: commitHook ? commitHook(hook) : null,
       }
     })
@@ -1032,6 +1041,17 @@ export function createTaskSnapshotService({
         })
       } catch {
         // 投影失败由索引服务的退避重试处理，不回滚已提交快照。
+      }
+    }
+    if (outcome.ownershipInboxRowsCleared > 0) {
+      try {
+        onOwnershipInboxCleared?.({
+          taskSpaceId,
+          projectId: space.project_id,
+          taskId: outcome.taskId,
+        })
+      } catch {
+        // 摘要已随快照事务提交；通知失败不能反向破坏已接受的正式任务。
       }
     }
     return {
@@ -1282,6 +1302,7 @@ export function createTaskSnapshotService({
     writeCursor,
     listConflicts,
     resolveConflict,
+    bindingContext,
     // 仅供服务端内部读取；不经过 Agent binding 校验。
     manifestForDirectory,
   }

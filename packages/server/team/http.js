@@ -42,6 +42,7 @@ import { createTeamPluginRoutes } from './plugins/http.js'
 import { createSyncAgentService } from './sync-agent-service.js'
 import { createTaskCommandService } from './task-command-service.js'
 import { createTaskControlService } from './task-control-service.js'
+import { createTaskOwnershipInboxService } from './task-ownership-inbox.js'
 import { createTaskSnapshotBackupService } from './task-snapshot-backup.js'
 import { createTaskSnapshotService } from './task-snapshot-service.js'
 import { createTaskSpaceIndex } from './task-space-index.js'
@@ -79,6 +80,7 @@ function readHostVersion() {
 const defaultPublicDir = path.resolve(serverDir, '../public')
 const MAX_JSON_BYTES = 64 * 1024
 const MAX_LIVE_BATCH_BYTES = TASK_SNAPSHOT_MAX_TRANSPORT_BYTES
+const MAX_OWNERSHIP_INBOX_BYTES = 512 * 1024
 const MAX_ARCHIVE_CREDENTIAL_BYTES = 160 * 1024
 const EXECUTION_WIP_LIMIT = 2
 const TEAM_PLUGIN_ALLOWLIST = ['witops-core']
@@ -479,6 +481,7 @@ function createRequestHandler({
   boardService,
   taskSpaces,
   taskSnapshots,
+  ownershipInbox,
   taskSpaceIndex,
   taskCommands,
   taskControl,
@@ -730,6 +733,18 @@ function createRequestHandler({
       requireObservedBranchName(body)
       const result = taskSnapshots.applyChanges(agent, changesMatch[0], body)
       sendJson(response, result.status || 200, result)
+      return true
+    }
+    const ownershipInboxMatch = routeMatch(
+      pathname,
+      /^\/api\/agent\/task-spaces\/([^/]+)\/ownership-inbox$/,
+    )
+    if (ownershipInboxMatch && request.method === 'PUT') {
+      const body = await readJsonBody(request, MAX_OWNERSHIP_INBOX_BYTES)
+      requireObservedBranchName(body)
+      const result = ownershipInbox.apply(agent, ownershipInboxMatch[0], body)
+      if (result.changed) boardEvents.publish({})
+      sendJson(response, 200, result)
       return true
     }
     const cursorMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/cursor$/)
@@ -1564,6 +1579,19 @@ function createRequestHandler({
       sendJson(response, 200, status, { etag })
       return true
     }
+    if (pathname === '/api/ownership-inbox' && request.method === 'GET') {
+      sendJson(
+        response,
+        200,
+        ownershipInbox.list(actor, {
+          teamId: url.searchParams.get('teamId'),
+          projectIds: url.searchParams.getAll('projectIds'),
+          limit: url.searchParams.get('limit'),
+          cursor: url.searchParams.get('cursor'),
+        }),
+      )
+      return true
+    }
     if (pathname === '/api/teams' && request.method === 'GET') {
       sendJson(response, 200, {
         teams: listTeamsForActor(db, actor, { activeOnly: true }),
@@ -1911,6 +1939,12 @@ export async function createTeamRuntime({
       onRevisionCommitted: ({ taskSpaceId }) => {
         void taskSpaceIndex.enqueue(taskSpaceId)
       },
+      onOwnershipInboxCleared: () => boardEvents.publish({}),
+    })
+    const ownershipInbox = createTaskOwnershipInboxService({
+      db,
+      taskSpaces,
+      taskSnapshots,
     })
     archiveGitSync = createArchiveGitSyncService({
       db,
@@ -1928,6 +1962,7 @@ export async function createTeamRuntime({
       taskSpaceIndex,
       archiveSnapshots,
       agents: agentService,
+      ownershipInbox,
       executionWipLimit: EXECUTION_WIP_LIMIT,
     })
     const pluginHost = createTeamPluginHost({
@@ -1951,6 +1986,7 @@ export async function createTeamRuntime({
       boardService,
       taskSpaces,
       taskSnapshots,
+      ownershipInbox,
       taskSpaceIndex,
       taskCommands,
       taskControl,
@@ -2038,6 +2074,7 @@ export async function createTeamRuntime({
       services: {
         taskSpaces,
         taskSnapshots,
+        ownershipInbox,
         taskSpaceIndex,
         taskCommands,
         taskControl,

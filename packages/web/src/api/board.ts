@@ -1,6 +1,7 @@
 import { ApiError, requestJson, redirectToLogin } from './request.ts'
 import type { ArchiveFileMetadata, BoardTask } from '@/features/board/task-view'
 import { normalizeTaskPage, taskContentMaterialized } from '@/lib/team-client.js'
+import { buildOwnershipInboxQuery, normalizeOwnershipInboxPage } from '@/lib/ownership-inbox.js'
 
 export type Project = {
   id: string
@@ -21,6 +22,7 @@ export type Project = {
   scanStatus?: string
   lastScanAt?: string | null
   taskCount?: number
+  ownershipInboxCount?: number
   [key: string]: unknown
 }
 
@@ -241,6 +243,22 @@ export async function fetchTeamStatus(etag: string | null) {
     status: result.data as Record<string, unknown>,
     etag: result.etag,
   }
+}
+
+export async function fetchOwnershipInbox({
+  teamId,
+  projectId,
+  limit = 50,
+  cursor = null,
+}: {
+  teamId: string
+  projectId: string
+  limit?: number
+  cursor?: string | null
+}) {
+  const query = buildOwnershipInboxQuery({ teamId, projectId, limit, cursor })
+  const result = await apiRequest(`/api/ownership-inbox?${query}`)
+  return normalizeOwnershipInboxPage(result.data)
 }
 
 export const fetchAssignments = () =>

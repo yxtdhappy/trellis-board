@@ -212,3 +212,42 @@ await api.uploadTaskSpaceChanges(taskSpaceId, {
 服务端再对完整 task 目录、目标 taskSpace、项目基线和证据做统一归属门禁。只有基线首次接纳来源
 不同任务时才允许 `task.json.branch != taskSpace.branchName`，且必须有匹配的 `tracked-in-head`
 证据；来源 taskSpace 在基线接管后只保留只读旧快照。
+
+## 场景：项目级待归属摘要收件箱
+
+### 1. Scope / Trigger
+
+- Trigger：修改空分支任务展示、Agent ownership inbox、项目 Board 计数或正常任务摘要清理时。
+
+### 2. Signatures
+
+- Agent：`PUT /api/agent/task-spaces/:taskSpaceId/ownership-inbox`
+- Web：`GET /api/ownership-inbox?teamId=&projectIds=&limit=&cursor=`
+- 项目 DTO：`ownershipInboxCount`
+- 表：`sync_task_ownership_inbox`
+
+### 3. Contracts
+
+- 摘要收件箱只保存任务 ID、目录、标题、原因、来源 taskSpace/Agent、来源分支、fingerprint 和时间；
+  不保存正文、附件、绝对路径或秘密。
+- 摘要不属于任何 taskSpace，不写入 `sync_task`，不创建 assignment、lease、command，也不参与
+  ownership、merge evidence、CAS 或普通分支统计。
+- Agent 写入复用 active Agent、approved 非只读 binding、项目和 taskSpace 读权限，并校验
+  `observedBranchName` 与服务端 taskSpace/binding 一致。
+- 单次 upsert + delete 最多 200 项并整体校验；upsert/delete 必须幂等，同一稳定任务的多来源行按
+  项目 + taskId 聚合展示。
+- 正常任务快照被接纳时，必须在同一 `BEGIN IMMEDIATE` 事务删除该 `projectId + taskId` 的全部摘要；
+  摘要删除失败时任务快照整体回滚。
+- inbox 变化只发布轻量 `tasks.changed`，不推进 taskSpace revision。`status.ownershipInboxCount`
+  按项目聚合稳定的 taskId 数，并进入 status ETag。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 同一来源重复 upsert | 更新摘要，保留 firstSeenAt |
+| delete 目标不存在 | 成功且幂等 |
+| 单批超过 200 项 | 400，整批不写 |
+| projectIds 越权 | 403 |
+| 正常任务写入和摘要清理任一失败 | 两者整体回滚 |
+| 旧服务端无 inbox API | Agent 标记可选能力缺失，普通同步继续 |

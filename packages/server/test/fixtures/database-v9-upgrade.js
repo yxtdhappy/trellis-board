@@ -32,6 +32,13 @@ db.prepare(`
   ) VALUES ('repo-1', 'team-1', 'old', 'https://example.com/old.git', 'old-hash',
     'main', 'current', ?, ?)
 `).run(now, now)
+const existingTables = new Set(
+  db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+    .all()
+    .map((row) => row.name),
+)
+db.exec('PRAGMA foreign_keys = OFF')
 for (const table of [
   'sync_active_agent',
   'sync_agent_binding',
@@ -54,7 +61,7 @@ for (const table of [
   'sync_project_team_access',
   'sync_project',
 ]) {
-  db.exec(`DROP TABLE ${table}`)
+  if (existingTables.has(table)) db.exec(`DROP TABLE IF EXISTS ${table}`)
 }
 db.prepare("UPDATE app_meta SET value = '9' WHERE key = 'schema_version'").run()
 db.close()
@@ -81,7 +88,7 @@ const tables = reopened
   .map((row) => row.name)
 const backupName = fs
   .readdirSync(path.join(root, 'backups'))
-  .find((name) => name.includes('pre-v16'))
+  .find((name) => name.includes('pre-v17'))
 let backupResult = null
 if (backupName) {
   const backup = new DatabaseSync(path.join(root, 'backups', backupName))

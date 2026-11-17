@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   associationSignature,
   associationOwnershipCounts,
+  associationTaskStateCounts,
   countProjectPausedBranches,
   desktopStateTopics,
   detachPendingAssociationView,
@@ -224,6 +225,52 @@ test('任务级归属暂停和待确认会计入关联优先级', () => {
     totalCount: 3,
   })
   assert.equal(selectProjectAssociation(project, associations)?.taskSpaceId, 'space-ownership')
+})
+
+test('上传重试、服务端拒绝和冲突待处理计入关联优先级', () => {
+  const project = {
+    taskSpaces: [
+      { id: 'space-ready' },
+      { id: 'space-upload' },
+      { id: 'space-rejected' },
+      { id: 'space-conflict' },
+    ],
+  }
+  const associations = new Map([
+    ['space-ready', association('space-ready', 'ready')],
+    [
+      'space-upload',
+      association('space-upload', 'ready', {
+        pendingUploadCount: 1,
+        pendingUploadTaskDirs: ['.trellis/tasks/upload'],
+      }),
+    ],
+    [
+      'space-rejected',
+      association('space-rejected', 'ready', {
+        pendingRejectedCount: 1,
+        pendingRejectedTaskDirs: ['.trellis/tasks/rejected'],
+      }),
+    ],
+    [
+      'space-conflict',
+      association('space-conflict', 'ready', {
+        conflictPendingCount: 1,
+        conflictPendingTaskDirs: ['.trellis/tasks/conflict'],
+      }),
+    ],
+  ])
+
+  assert.deepEqual(associationTaskStateCounts(associations.get('space-upload')), {
+    conflictCount: 0,
+    rejectedCount: 0,
+    pendingUploadCount: 1,
+  })
+  assert.equal(selectProjectAssociation(project, associations)?.taskSpaceId, 'space-conflict')
+  associations.delete('space-conflict')
+  assert.equal(selectProjectAssociation(project, associations)?.taskSpaceId, 'space-rejected')
+  associations.delete('space-rejected')
+  assert.equal(selectProjectAssociation(project, associations)?.taskSpaceId, 'space-upload')
 })
 
 test('项目栏按 taskSpace 展示在线、未激活、无关联、旧客户端和停用状态', () => {

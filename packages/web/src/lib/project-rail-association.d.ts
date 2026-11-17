@@ -9,6 +9,9 @@ type ProjectRailAssociation = {
   initialReviewPending?: boolean
   ownershipPausedCount?: number
   ownershipPendingCount?: number
+  pendingUploadCount?: number
+  pendingRejectedCount?: number
+  conflictPendingCount?: number
   lastErrorCode?: string | null
   lastError?: string | null
 }
@@ -38,6 +41,12 @@ export function associationOwnershipCounts<TAssociation extends ProjectRailAssoc
   pausedCount: number
   pendingCount: number
   totalCount: number
+}
+
+export function associationTaskStateCounts(association: ProjectRailAssociation | undefined): {
+  conflictCount: number
+  rejectedCount: number
+  pendingUploadCount: number
 }
 
 export function isBranchAssociationPaused(association: ProjectRailAssociation | undefined): boolean

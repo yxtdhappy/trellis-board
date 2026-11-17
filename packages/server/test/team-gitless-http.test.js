@@ -354,6 +354,111 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   )
   assert.equal(statusProject.agents.approved, 1)
   assert.equal(statusProject.agents.online, 1)
+  assert.equal(statusProject.ownershipInboxCount, 0)
+  assert.equal('ownershipPendingCount' in statusProject, false)
+
+  const initialStatusEtag = status.headers.etag
+  const initialQueryRevision = runtime.services.taskSpaceIndex.queryRevision()
+  const ownershipInboxPath = `/api/agent/task-spaces/${encodeURIComponent(
+    taskSpaceId,
+  )}/ownership-inbox`
+  const ownershipInboxItem = {
+    taskId: 'inbox-task-1',
+    taskDir: '.trellis/tasks/11-18-inbox-task-1',
+    title: '<script>待归属</script>',
+    reason: 'TASK_OWNERSHIP_REQUIRED',
+    fingerprint: 'a'.repeat(64),
+    content: 'SECRET-INBOX-BODY',
+    attachments: ['C:\\secret\\prd.md'],
+  }
+  const ownershipUpsert = await request(runtime, ownershipInboxPath, {
+    method: 'PUT',
+    agentCredential: enrolled.body.credential,
+    body: {
+      observedBranchName: 'main',
+      upserts: [ownershipInboxItem],
+      deletes: [],
+    },
+  })
+  assert.equal(ownershipUpsert.status, 200)
+  assert.equal(JSON.stringify(ownershipUpsert.body).includes('SECRET-INBOX-BODY'), false)
+  assert.equal(
+    runtime.db.prepare('SELECT COUNT(*) AS count FROM sync_task_ownership_inbox').get().count,
+    1,
+  )
+  const repeatedUpsert = await request(runtime, ownershipInboxPath, {
+    method: 'PUT',
+    agentCredential: enrolled.body.credential,
+    body: {
+      observedBranchName: 'main',
+      upserts: [ownershipInboxItem],
+      deletes: [],
+    },
+  })
+  assert.equal(repeatedUpsert.status, 200)
+  assert.equal(
+    runtime.db.prepare('SELECT COUNT(*) AS count FROM sync_task_ownership_inbox').get().count,
+    1,
+  )
+
+  const inboxQuery = await request(
+    runtime,
+    `/api/ownership-inbox?teamId=team-1&projectIds=${encodeURIComponent(statusProject.id)}`,
+    { cookie: session },
+  )
+  assert.equal(inboxQuery.status, 200)
+  assert.equal(inboxQuery.body.total, 1)
+  assert.equal(inboxQuery.body.items[0].taskId, 'inbox-task-1')
+  assert.deepEqual(inboxQuery.body.items[0].sourceBranches, ['main'])
+  assert.deepEqual(inboxQuery.body.items[0].sourceClients, [
+    { displayName: '测试设备', username: 'owner' },
+  ])
+  assert.equal(JSON.stringify(inboxQuery.body).includes('SECRET-INBOX-BODY'), false)
+  assert.equal(JSON.stringify(inboxQuery.body).includes('attachments'), false)
+
+  const statusWithInbox = await request(runtime, '/api/team/status', { cookie: session })
+  const projectWithInbox = statusWithInbox.body.projects.find(
+    (project) => project.id === statusProject.id,
+  )
+  assert.equal(projectWithInbox.ownershipInboxCount, 1)
+  assert.notEqual(statusWithInbox.headers.etag, initialStatusEtag)
+
+  const deletedInbox = await request(runtime, ownershipInboxPath, {
+    method: 'PUT',
+    agentCredential: enrolled.body.credential,
+    body: {
+      observedBranchName: 'main',
+      upserts: [],
+      deletes: [
+        {
+          taskId: ownershipInboxItem.taskId,
+          taskDir: ownershipInboxItem.taskDir,
+        },
+      ],
+    },
+  })
+  assert.equal(deletedInbox.status, 200)
+  const repeatedDelete = await request(runtime, ownershipInboxPath, {
+    method: 'PUT',
+    agentCredential: enrolled.body.credential,
+    body: {
+      observedBranchName: 'main',
+      upserts: [],
+      deletes: [
+        {
+          taskId: ownershipInboxItem.taskId,
+          taskDir: ownershipInboxItem.taskDir,
+        },
+      ],
+    },
+  })
+  assert.equal(repeatedDelete.status, 200)
+  const statusWithoutInbox = await request(runtime, '/api/team/status', { cookie: session })
+  const projectWithoutInbox = statusWithoutInbox.body.projects.find(
+    (project) => project.id === statusProject.id,
+  )
+  assert.equal(projectWithoutInbox.ownershipInboxCount, 0)
+  assert.equal(runtime.services.taskSpaceIndex.queryRevision(), initialQueryRevision)
 
   const listeners = await request(
     runtime,

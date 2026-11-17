@@ -11,7 +11,7 @@ import {
   stateFile,
 } from './config.js'
 
-export const DATABASE_SCHEMA_VERSION = 16
+export const DATABASE_SCHEMA_VERSION = 17
 
 const LEGACY_IMPORT_KEY = 'legacy_json_imported_v1'
 const EXECUTION_EVENTS_STARTED_KEY = 'execution_events_started_at'
@@ -1627,6 +1627,47 @@ const SCHEMA_V16_SQL = `
     ON sync_task_lease(execution_task_key, created_at DESC);
 `
 
+const SCHEMA_V17_SQL = `
+  CREATE TABLE IF NOT EXISTS sync_task_ownership_inbox (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES sync_project(id) ON DELETE CASCADE,
+    source_task_space_id TEXT NOT NULL REFERENCES sync_task_space(id) ON DELETE CASCADE,
+    source_agent_id TEXT NOT NULL REFERENCES agent_device(id) ON DELETE CASCADE,
+    source_user_id TEXT NOT NULL REFERENCES user_account(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL CHECK (
+      length(task_id) BETWEEN 1 AND 128 AND task_id NOT LIKE '%/%'
+    ),
+    task_dir TEXT NOT NULL CHECK (
+      length(task_dir) BETWEEN 1 AND 512
+      AND task_dir GLOB '.trellis/tasks/*'
+      AND task_dir NOT LIKE '.trellis/tasks/archive/%'
+    ),
+    title TEXT NOT NULL CHECK (
+      length(trim(title)) BETWEEN 1 AND 300
+    ),
+    reason TEXT NOT NULL CHECK (
+      length(reason) BETWEEN 1 AND 128
+    ),
+    source_branch_name TEXT NOT NULL CHECK (
+      length(source_branch_name) BETWEEN 1 AND 512
+    ),
+    fingerprint TEXT NOT NULL CHECK (
+      length(fingerprint) = 64
+      AND fingerprint GLOB '[0-9a-f]*'
+      AND fingerprint NOT GLOB '*[^0-9a-f]*'
+    ),
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(source_task_space_id, source_agent_id, task_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS sync_task_ownership_inbox_project_task
+    ON sync_task_ownership_inbox(project_id, task_id, last_seen_at DESC);
+  CREATE INDEX IF NOT EXISTS sync_task_ownership_inbox_source
+    ON sync_task_ownership_inbox(source_task_space_id, source_agent_id);
+`
+
 function rebuildTaskCommandTableForV16(db) {
   const columns = db.prepare('PRAGMA table_info(sync_task_command)').all()
   const byName = new Map(columns.map((column) => [column.name, column]))
@@ -1766,6 +1807,10 @@ function ensureV16Schema(db) {
   `)
 }
 
+function ensureV17Schema(db) {
+  db.exec(SCHEMA_V17_SQL)
+}
+
 function tableExists(db, table) {
   return Boolean(
     db
@@ -1795,7 +1840,7 @@ function ensureSchema(db, { databaseFile } = {}) {
 
   if (
     numericVersion !== null &&
-    ![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].includes(numericVersion)
+    ![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17].includes(numericVersion)
   ) {
     throw new Error(
       `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除当前 board.sqlite 后重建`,
@@ -1821,6 +1866,7 @@ function ensureSchema(db, { databaseFile } = {}) {
     ensureV14Schema(db)
     ensureV15Schema(db)
     ensureV16Schema(db)
+    ensureV17Schema(db)
     if (numericVersion == null || numericVersion < DATABASE_SCHEMA_VERSION) {
       writeMeta(db, 'schema_version', DATABASE_SCHEMA_VERSION)
     }

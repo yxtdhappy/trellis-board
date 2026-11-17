@@ -107,6 +107,18 @@ pub struct LocalAssociation {
     pub ownership_pending_count: usize,
     #[serde(default)]
     pub ownership_pending_task_dirs: Vec<String>,
+    #[serde(default)]
+    pub pending_upload_count: usize,
+    #[serde(default)]
+    pub pending_upload_task_dirs: Vec<String>,
+    #[serde(default)]
+    pub pending_rejected_count: usize,
+    #[serde(default)]
+    pub pending_rejected_task_dirs: Vec<String>,
+    #[serde(default)]
+    pub conflict_pending_count: usize,
+    #[serde(default)]
+    pub conflict_pending_task_dirs: Vec<String>,
     pub last_error_code: Option<String>,
     pub last_error: Option<String>,
 }
@@ -872,6 +884,12 @@ pub async fn read_local_associations(
     let mut associations = Vec::with_capacity(config.bindings.len());
     for binding in config.bindings {
         let deferred_task_dirs = deferred_task_dirs(&deferred, &binding.task_space_id);
+        let pending_upload_task_dirs =
+            pending_upload_task_dirs(&deferred, &binding.task_space_id);
+        let pending_rejected_task_dirs =
+            cursor_task_dirs(&deferred, &binding.task_space_id, "pendingRejected");
+        let conflict_pending_task_dirs =
+            cursor_task_dirs(&deferred, &binding.task_space_id, "conflictBlocked");
         let deferred_tasks =
             deferred_task_infos(Path::new(&binding.repo_path), &deferred_task_dirs);
         let (ownership_paused_task_dirs, ownership_pending_task_dirs) = if binding.sync_status
@@ -906,6 +924,12 @@ pub async fn read_local_associations(
             ownership_paused_task_dirs,
             ownership_pending_count: ownership_pending_task_dirs.len(),
             ownership_pending_task_dirs,
+            pending_upload_count: pending_upload_task_dirs.len(),
+            pending_upload_task_dirs,
+            pending_rejected_count: pending_rejected_task_dirs.len(),
+            pending_rejected_task_dirs,
+            conflict_pending_count: conflict_pending_task_dirs.len(),
+            conflict_pending_task_dirs,
             last_error_code: binding.last_error_code,
             last_error: binding.last_error,
         });
@@ -988,6 +1012,49 @@ fn deferred_task_dirs(cursors: &Value, task_space_id: &str) -> Vec<String> {
         .unwrap_or_default();
     dirs.retain(|dir| dir.starts_with(".trellis/tasks/"));
     dirs.sort();
+    dirs
+}
+
+fn pending_upload_task_dirs(cursors: &Value, task_space_id: &str) -> Vec<String> {
+    let mut dirs: Vec<String> = cursors
+        .get("taskSpaces")
+        .and_then(Value::as_object)
+        .and_then(|spaces| spaces.get(task_space_id))
+        .and_then(|space| space.get("pending"))
+        .and_then(|pending| pending.get("files"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|file| file.get("path").and_then(Value::as_str))
+        .filter_map(task_sync::active_task_directory_from_path)
+        .collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+fn cursor_task_dirs(cursors: &Value, task_space_id: &str, field: &str) -> Vec<String> {
+    let mut dirs: Vec<String> = cursors
+        .get("taskSpaces")
+        .and_then(Value::as_object)
+        .and_then(|spaces| spaces.get(task_space_id))
+        .and_then(|space| space.get(field))
+        .and_then(Value::as_object)
+        .map(|items| {
+            items
+                .keys()
+                .filter(|task_dir| {
+                    task_sync::task_directory_from_relative(&format!("{task_dir}/task.json"))
+                        .as_deref()
+                        == Some(task_dir.as_str())
+                })
+                .filter(|task_dir| task_dir.starts_with(".trellis/tasks/"))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    dirs.sort();
+    dirs.dedup();
     dirs
 }
 
@@ -1166,6 +1233,12 @@ mod tests {
             ownership_paused_task_dirs: vec![".trellis/tasks/11-12-a".to_string()],
             ownership_pending_count: 1,
             ownership_pending_task_dirs: vec![".trellis/tasks/11-12-b".to_string()],
+            pending_upload_count: 1,
+            pending_upload_task_dirs: vec![".trellis/tasks/11-12-c".to_string()],
+            pending_rejected_count: 1,
+            pending_rejected_task_dirs: vec![".trellis/tasks/11-12-d".to_string()],
+            conflict_pending_count: 1,
+            conflict_pending_task_dirs: vec![".trellis/tasks/11-12-e".to_string()],
             last_error_code: Some("GIT_FAILED".to_string()),
             last_error: None,
         };
@@ -1184,6 +1257,15 @@ mod tests {
         );
         assert_eq!(value["deferredTasks"][0]["title"], "修复登录");
         assert!(value["deferredTasks"][1]["title"].is_null());
+        assert_eq!(value["pendingUploadCount"], 1);
+        assert_eq!(
+            value["pendingRejectedTaskDirs"][0],
+            ".trellis/tasks/11-12-d"
+        );
+        assert_eq!(
+            value["conflictPendingTaskDirs"][0],
+            ".trellis/tasks/11-12-e"
+        );
         assert_eq!(value["lastErrorCode"], "GIT_FAILED");
 
         let minimal: LocalAssociation = serde_json::from_value(json!({
@@ -1199,6 +1281,9 @@ mod tests {
         assert!(!minimal.detach_pending);
         assert_eq!(minimal.live_sync_status, "pending");
         assert!(minimal.deferred_tasks.is_empty());
+        assert_eq!(minimal.pending_upload_count, 0);
+        assert_eq!(minimal.pending_rejected_count, 0);
+        assert_eq!(minimal.conflict_pending_count, 0);
     }
 
     #[test]
@@ -1229,6 +1314,40 @@ mod tests {
         assert_eq!(infos[2].title, None);
         assert_eq!(infos[3].title, None);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn association_cursor_status_dirs_are_read_only_projections() {
+        let cursors = json!({
+            "taskSpaces": {
+                "space-1": {
+                    "pending": {
+                        "files": [
+                            { "path": ".trellis/tasks/pending/task.json" },
+                            { "path": ".trellis/tasks/pending/prd.md" }
+                        ]
+                    },
+                    "pendingRejected": {
+                        ".trellis/tasks/rejected": { "reason": "TASK_OWNERSHIP_REQUIRED" }
+                    },
+                    "conflictBlocked": {
+                        ".trellis/tasks/conflict": { "conflictId": "conflict-1" }
+                    }
+                }
+            }
+        });
+        assert_eq!(
+            pending_upload_task_dirs(&cursors, "space-1"),
+            vec![".trellis/tasks/pending".to_string()]
+        );
+        assert_eq!(
+            cursor_task_dirs(&cursors, "space-1", "pendingRejected"),
+            vec![".trellis/tasks/rejected".to_string()]
+        );
+        assert_eq!(
+            cursor_task_dirs(&cursors, "space-1", "conflictBlocked"),
+            vec![".trellis/tasks/conflict".to_string()]
+        );
     }
 
     #[test]

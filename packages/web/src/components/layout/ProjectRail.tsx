@@ -13,6 +13,7 @@ import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import {
   associationSignature,
   associationOwnershipCounts,
+  associationTaskStateCounts,
   countProjectPausedBranches,
   desktopStateTopics,
   detachPendingAssociationView,
@@ -31,6 +32,7 @@ type Project = {
   teamName?: string | null
   taskSpaces?: TaskSpace[]
   trellisDevId?: string | null
+  ownershipInboxCount?: number
 }
 
 type LiveSyncStatus = 'pending' | 'syncing' | 'ready' | 'error'
@@ -55,6 +57,12 @@ export type LocalAssociation = {
   ownershipPausedTaskDirs: string[]
   ownershipPendingCount: number
   ownershipPendingTaskDirs: string[]
+  pendingUploadCount: number
+  pendingUploadTaskDirs: string[]
+  pendingRejectedCount: number
+  pendingRejectedTaskDirs: string[]
+  conflictPendingCount: number
+  conflictPendingTaskDirs: string[]
   detachPending: boolean
   initialReviewPending: boolean
 }
@@ -82,6 +90,8 @@ type ProjectRailProps = {
   onSelect: (id: string) => void
   currentTaskSpace: string
   onSelectTaskSpace: (taskSpaceId: string) => void
+  ownershipInboxOpen: boolean
+  onSelectOwnershipInbox: (projectId: string) => void
   onManage: () => void
   manageEnabled?: boolean
   syncLabel: string
@@ -132,23 +142,23 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
         return [{ taskDir: task.taskDir, title }]
       })
     : []
+  const taskDirs = (value: unknown) =>
+    Array.isArray(value)
+      ? value.filter(
+          (taskDir): taskDir is string =>
+            typeof taskDir === 'string' && taskDir.startsWith('.trellis/tasks/'),
+        )
+      : []
   const deferredCount =
     deferredTaskDirs.length ||
     (typeof record.deferredCount === 'number' && Number.isSafeInteger(record.deferredCount)
       ? Math.max(0, record.deferredCount)
       : 0)
-  const ownershipPausedTaskDirs = Array.isArray(record.ownershipPausedTaskDirs)
-    ? record.ownershipPausedTaskDirs.filter(
-        (taskDir): taskDir is string =>
-          typeof taskDir === 'string' && taskDir.startsWith('.trellis/tasks/'),
-      )
-    : []
-  const ownershipPendingTaskDirs = Array.isArray(record.ownershipPendingTaskDirs)
-    ? record.ownershipPendingTaskDirs.filter(
-        (taskDir): taskDir is string =>
-          typeof taskDir === 'string' && taskDir.startsWith('.trellis/tasks/'),
-      )
-    : []
+  const ownershipPausedTaskDirs = taskDirs(record.ownershipPausedTaskDirs)
+  const ownershipPendingTaskDirs = taskDirs(record.ownershipPendingTaskDirs)
+  const pendingUploadTaskDirs = taskDirs(record.pendingUploadTaskDirs)
+  const pendingRejectedTaskDirs = taskDirs(record.pendingRejectedTaskDirs)
+  const conflictPendingTaskDirs = taskDirs(record.conflictPendingTaskDirs)
   const ownershipPausedCount =
     ownershipPausedTaskDirs.length ||
     (typeof record.ownershipPausedCount === 'number' &&
@@ -160,6 +170,24 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
     (typeof record.ownershipPendingCount === 'number' &&
     Number.isSafeInteger(record.ownershipPendingCount)
       ? Math.max(0, record.ownershipPendingCount)
+      : 0)
+  const pendingUploadCount =
+    pendingUploadTaskDirs.length ||
+    (typeof record.pendingUploadCount === 'number' &&
+    Number.isSafeInteger(record.pendingUploadCount)
+      ? Math.max(0, record.pendingUploadCount)
+      : 0)
+  const pendingRejectedCount =
+    pendingRejectedTaskDirs.length ||
+    (typeof record.pendingRejectedCount === 'number' &&
+    Number.isSafeInteger(record.pendingRejectedCount)
+      ? Math.max(0, record.pendingRejectedCount)
+      : 0)
+  const conflictPendingCount =
+    conflictPendingTaskDirs.length ||
+    (typeof record.conflictPendingCount === 'number' &&
+    Number.isSafeInteger(record.conflictPendingCount)
+      ? Math.max(0, record.conflictPendingCount)
       : 0)
   return {
     projectId: record.projectId,
@@ -184,6 +212,12 @@ function normalizeAssociation(value: unknown): LocalAssociation | null {
     ownershipPausedTaskDirs,
     ownershipPendingCount,
     ownershipPendingTaskDirs,
+    pendingUploadCount,
+    pendingUploadTaskDirs,
+    pendingRejectedCount,
+    pendingRejectedTaskDirs,
+    conflictPendingCount,
+    conflictPendingTaskDirs,
     detachPending: record.detachPending === true,
     initialReviewPending: record.initialReviewPending === true,
   }
@@ -266,6 +300,29 @@ function projectAssociationView(association: LocalAssociation | undefined): Proj
     }
   }
   const ownership = associationOwnershipCounts(association)
+  const taskState = associationTaskStateCounts(association)
+  if (association.liveSyncStatus !== 'error' && taskState.conflictCount > 0) {
+    return {
+      label: `已关联 · ${taskState.conflictCount} 个冲突待处理`,
+      detail:
+        association.conflictPendingTaskDirs
+          .map((taskDir) => taskDir.split('/').at(-1))
+          .join('、') || null,
+      dotClassName: 'bg-destructive',
+      textClassName: 'text-destructive',
+    }
+  }
+  if (association.liveSyncStatus !== 'error' && taskState.rejectedCount > 0) {
+    return {
+      label: `已关联 · ${taskState.rejectedCount} 个任务服务端拒绝待处理`,
+      detail:
+        association.pendingRejectedTaskDirs
+          .map((taskDir) => taskDir.split('/').at(-1))
+          .join('、') || null,
+      dotClassName: 'bg-warning',
+      textClassName: 'text-warning',
+    }
+  }
   if (association.liveSyncStatus !== 'error' && ownership.totalCount > 0) {
     const detail = [
       ownership.pausedCount ? `${ownership.pausedCount} 个因分支不匹配暂停` : null,
@@ -289,6 +346,16 @@ function projectAssociationView(association: LocalAssociation | undefined): Proj
     return {
       label: '已关联 · 等待确认任务差异',
       detail: '首次同步发现差异，确认处理方式后才会继续同步任务。',
+      dotClassName: 'bg-warning',
+      textClassName: 'text-warning',
+    }
+  }
+  if (association.liveSyncStatus !== 'error' && taskState.pendingUploadCount > 0) {
+    return {
+      label: `已关联 · ${taskState.pendingUploadCount} 个任务等待重试上传`,
+      detail:
+        association.pendingUploadTaskDirs.map((taskDir) => taskDir.split('/').at(-1)).join('、') ||
+        null,
       dotClassName: 'bg-warning',
       textClassName: 'text-warning',
     }
@@ -357,6 +424,8 @@ export function ProjectRail({
   onSelect,
   currentTaskSpace,
   onSelectTaskSpace,
+  ownershipInboxOpen,
+  onSelectOwnershipInbox,
   onManage,
   manageEnabled = true,
   syncLabel,
@@ -676,6 +745,7 @@ export function ProjectRail({
       ) : null}
       {projects.map((project) => {
         const taskSpaces = project.taskSpaces || []
+        const projectInboxCount = Math.max(0, project.ownershipInboxCount || 0)
         const selectedTaskSpace =
           current === project.id
             ? taskSpaces.find((taskSpace) => taskSpace.id === currentTaskSpace)
@@ -738,6 +808,15 @@ export function ProjectRail({
                   ) : null}
                 </span>
               </button>
+              {current === 'all' && projectInboxCount > 0 ? (
+                <span
+                  className="mr-1 shrink-0 rounded-full border border-warning/35 bg-warning-soft px-1.5 py-0.5 text-2xs font-semibold text-warning"
+                  aria-label={`待归属任务 ${projectInboxCount}`}
+                  title={`待归属任务 ${projectInboxCount}`}
+                >
+                  待归属任务 {projectInboxCount}
+                </span>
+              ) : null}
               {invoke && activeTaskSpace ? (
                 activeAssociation?.status === 'approved' ? (
                   <>
@@ -777,6 +856,46 @@ export function ProjectRail({
                 )
               ) : null}
             </div>
+            {current === project.id ? (
+              <button
+                type="button"
+                className={cn(
+                  'ml-5 mt-0.5 flex min-w-0 items-center gap-1.5 rounded-md border px-2 py-1 text-left text-2xs',
+                  projectInboxCount > 0
+                    ? 'border-warning/35 bg-warning-soft text-warning hover:bg-warning/10'
+                    : 'border-border/70 bg-muted/30 text-muted-foreground hover:bg-muted/60',
+                )}
+                aria-expanded={projectInboxCount > 0 && ownershipInboxOpen}
+                aria-controls={projectInboxCount > 0 ? 'ownership-inbox-list' : undefined}
+                aria-label={`待归属任务 ${projectInboxCount}`}
+                disabled={projectInboxCount === 0}
+                title={
+                  projectInboxCount > 0
+                    ? `${project.name} 有 ${projectInboxCount} 个项目级待归属任务`
+                    : `${project.name} 当前没有项目级待归属任务`
+                }
+                onClick={() => onSelectOwnershipInbox(project.id)}
+              >
+                <span
+                  className={cn(
+                    'size-1.5 shrink-0 rounded-full',
+                    projectInboxCount > 0 ? 'bg-warning' : 'bg-muted-foreground/40',
+                  )}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1 truncate">待归属任务 {projectInboxCount}</span>
+                <span
+                  className={cn(
+                    'shrink-0 rounded-full px-1.5 py-0.5 font-semibold',
+                    projectInboxCount > 0
+                      ? 'bg-warning/15 text-warning'
+                      : 'bg-muted text-muted-foreground',
+                  )}
+                >
+                  {projectInboxCount}
+                </span>
+              </button>
+            ) : null}
             {current === 'all' && hasListenerSummary ? (
               <div className="ml-5 flex flex-col border-l border-border/70 pl-1">
                 {taskSpaces.map((taskSpace) => {
