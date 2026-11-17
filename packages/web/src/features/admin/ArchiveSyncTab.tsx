@@ -1,0 +1,595 @@
+import { useEffect, useRef, useState } from 'react'
+import type { FormEvent } from 'react'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
+import { useConfirm } from '@/components/ui/confirm-dialog'
+import type {
+  ArchiveCredentialInput,
+  ArchiveGitCredential,
+  ArchiveTaskSpaceSync,
+} from '@/api/admin'
+import { formatTime } from '@/lib/admin-shared'
+import { useArchiveSync } from '@/hooks/useArchiveSync'
+import { SelectField } from '@/features/board/SelectField'
+import { EmptyRow, Field, Panel, Row, StatusPill, controlClass } from './shared.tsx'
+
+const STATUS_LABELS: Record<string, string> = {
+  idle: '等待同步',
+  syncing: '正在拉取',
+  importing: '正在导入',
+  indexing: '正在更新索引',
+  current: '已更新',
+  stale: '索引落后',
+  error: '同步失败',
+  index_error: '索引失败',
+}
+
+function statusLabel(value: string) {
+  return STATUS_LABELS[value] || value
+}
+
+function credentialStateLabel(value: string) {
+  if (value === 'configured') return '凭据已配置'
+  if (value === 'anonymous') return '公开 HTTPS 匿名'
+  if (value === 'missing') return '缺少 SSH 凭据'
+  if (value === 'unsupported') return '远端协议不支持'
+  return value
+}
+
+function shortHead(value: string | null) {
+  return value ? value.slice(0, 10) : '—'
+}
+
+type CredentialDraft = {
+  name: string
+  scheme: 'ssh' | 'https'
+  host: string
+  port: string
+  username: string
+  token: string
+  privateKey: string
+  knownHostsText: string
+}
+
+const EMPTY_CREDENTIAL: CredentialDraft = {
+  name: '',
+  scheme: 'ssh',
+  host: '',
+  port: '22',
+  username: 'x-access-token',
+  token: '',
+  privateKey: '',
+  knownHostsText: '',
+}
+
+export function ArchiveSyncTab() {
+  const sync = useArchiveSync()
+  const confirm = useConfirm()
+  const [enabled, setEnabled] = useState(true)
+  const [intervalSeconds, setIntervalSeconds] = useState('300')
+  const [editing, setEditing] = useState<ArchiveGitCredential | null>(null)
+  const [draft, setDraft] = useState<CredentialDraft>(EMPTY_CREDENTIAL)
+  const configVersionRef = useRef('')
+
+  useEffect(() => {
+    if (!sync.overview) {
+      configVersionRef.current = ''
+      return
+    }
+    const version = sync.overview.config.updatedAt || 'initial'
+    if (configVersionRef.current === version) return
+    configVersionRef.current = version
+    setEnabled(sync.overview.config.enabled)
+    setIntervalSeconds(String(sync.overview.config.intervalSeconds))
+  }, [sync.overview])
+
+  function editCredential(credential: ArchiveGitCredential) {
+    setEditing(credential)
+    setDraft({
+      name: credential.name,
+      scheme: credential.scheme,
+      host: credential.host,
+      port: String(credential.port),
+      username: credential.username || 'x-access-token',
+      token: '',
+      privateKey: '',
+      knownHostsText: '',
+    })
+  }
+
+  function resetCredential() {
+    setEditing(null)
+    setDraft(EMPTY_CREDENTIAL)
+  }
+
+  async function saveConfig(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    await sync.saveConfig({
+      enabled,
+      intervalSeconds: Number(intervalSeconds),
+    })
+  }
+
+  async function saveCredential(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const input: ArchiveCredentialInput = {
+      name: draft.name.trim(),
+      scheme: draft.scheme,
+      host: draft.host.trim(),
+      port: Number(draft.port),
+      username: draft.scheme === 'https' ? draft.username.trim() : undefined,
+      token: draft.scheme === 'https' ? draft.token : undefined,
+      privateKey: draft.scheme === 'ssh' ? draft.privateKey : undefined,
+      knownHostsText: draft.scheme === 'ssh' ? draft.knownHostsText : undefined,
+    }
+    const saved = await sync.saveCredential(input, editing?.id)
+    if (saved) resetCredential()
+  }
+
+  async function deleteCredential(credential: ArchiveGitCredential) {
+    const accepted = await confirm({
+      title: `删除 ${credential.origin} 的归档凭据？`,
+      description: '删除后，该来源的 SSH 归档同步会立即失败；HTTPS 会退回匿名访问。',
+      confirmText: '删除凭据',
+      tone: 'danger',
+    })
+    if (accepted) await sync.removeCredential(credential)
+  }
+
+  if (sync.loading && !sync.overview) {
+    return (
+      <p className="rounded-xl bg-card px-4 py-6 text-xs text-muted-foreground">
+        正在读取归档同步状态…
+      </p>
+    )
+  }
+
+  if (sync.error && !sync.overview) {
+    return (
+      <div className="flex flex-col gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-4">
+        <strong className="text-xs text-destructive">{sync.error}</strong>
+        <Button size="sm" variant="outline" type="button" onClick={() => void sync.reload()}>
+          重新读取
+        </Button>
+      </div>
+    )
+  }
+
+  const overview = sync.overview
+  if (!overview) return null
+
+  return (
+    <>
+      <div className="grid gap-3.5 xl:grid-cols-[380px_minmax(0,1fr)]">
+        <div className="flex flex-col gap-3.5">
+          <Panel
+            kicker="ARCHIVE / SCHEDULE"
+            title="定时同步"
+            description="服务端只读取各项目分支的 .trellis/tasks/archive，不经过 Agent 上传。"
+            action={
+              <Button
+                size="sm"
+                type="button"
+                variant="outline"
+                disabled={sync.busy}
+                onClick={() => void sync.run()}
+              >
+                全部立即同步
+              </Button>
+            }
+          >
+            <form className="flex flex-col gap-3" onSubmit={saveConfig}>
+              <label className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2">
+                <span>
+                  <strong className="block text-xs font-medium">启用后台同步</strong>
+                  <span className="text-[0.6875rem] text-muted-foreground">
+                    关闭后仍可手动立即同步。
+                  </span>
+                </span>
+                <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="启用归档同步" />
+              </label>
+              <Field label="同步周期（秒）" hint="允许 60 到 86400 秒。">
+                <Input
+                  type="number"
+                  min={60}
+                  max={86400}
+                  required
+                  value={intervalSeconds}
+                  onChange={(event) => setIntervalSeconds(event.target.value)}
+                />
+              </Field>
+              <p className="text-[0.6875rem] text-muted-foreground">
+                最近保存 {formatTime(overview.config.updatedAt)}
+              </p>
+              <Button size="sm" type="submit" className="self-start" disabled={sync.busy}>
+                保存同步配置
+              </Button>
+            </form>
+          </Panel>
+
+          <Panel
+            kicker="ARCHIVE / CREDENTIALS"
+            title={editing ? `编辑 ${editing.origin}` : '新增来源凭据'}
+            description="凭据严格按 scheme + host + port 隔离，不会跨域名或端口复用。"
+          >
+            <form className="flex flex-col gap-2.5" onSubmit={saveCredential}>
+              <div className="grid grid-cols-[1fr_100px] gap-2">
+                <Field label="远端协议">
+                  <SelectField
+                    className={controlClass}
+                    value={draft.scheme}
+                    disabled={Boolean(editing)}
+                    options={[
+                      { value: 'ssh', label: 'SSH 私钥' },
+                      { value: 'https', label: 'HTTPS Token / 匿名' },
+                    ]}
+                    onChange={(scheme) =>
+                      setDraft((current) => ({
+                        ...current,
+                        scheme: scheme as 'ssh' | 'https',
+                        port: scheme === 'ssh' ? '22' : '443',
+                      }))
+                    }
+                  />
+                </Field>
+                <Field label="端口">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    required
+                    disabled={Boolean(editing)}
+                    value={draft.port}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, port: event.target.value }))
+                    }
+                  />
+                </Field>
+              </div>
+              <Field label="主机">
+                <Input
+                  required
+                  disabled={Boolean(editing)}
+                  placeholder="git.weintdata.cn"
+                  value={draft.host}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, host: event.target.value }))
+                  }
+                />
+              </Field>
+              <Field label="名称">
+                <Input
+                  maxLength={100}
+                  value={draft.name}
+                  placeholder="例如：公司 Git 只读凭据"
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, name: event.target.value }))
+                  }
+                />
+              </Field>
+              {draft.scheme === 'https' ? (
+                <>
+                  <Field label="HTTPS 用户名">
+                    <Input
+                      maxLength={200}
+                      value={draft.username}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, username: event.target.value }))
+                      }
+                    />
+                  </Field>
+                  <Field
+                    label={editing ? '轮换 Token（留空则保留）' : '访问 Token'}
+                    hint="公开仓库也可以不创建 HTTPS 凭据。"
+                  >
+                    <Input
+                      type="password"
+                      autoComplete="new-password"
+                      required={!editing}
+                      value={draft.token}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, token: event.target.value }))
+                      }
+                    />
+                  </Field>
+                </>
+              ) : (
+                <>
+                  <Field
+                    label={editing ? '轮换 SSH 私钥（留空则保留）' : 'SSH 私钥'}
+                    hint="只用于精确匹配的 SSH 来源。"
+                  >
+                    <Textarea
+                      className="min-h-28 font-mono text-[0.6875rem]"
+                      autoComplete="off"
+                      required={!editing}
+                      value={draft.privateKey}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, privateKey: event.target.value }))
+                      }
+                    />
+                  </Field>
+                  <Field
+                    label={editing ? '更新 known_hosts（留空则保留）' : 'known_hosts'}
+                    hint="必须包含该主机和端口对应的完整 known_hosts 行。"
+                  >
+                    <Textarea
+                      className="min-h-24 font-mono text-[0.6875rem]"
+                      required={!editing}
+                      value={draft.knownHostsText}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          knownHostsText: event.target.value,
+                        }))
+                      }
+                    />
+                  </Field>
+                </>
+              )}
+              <div className="flex gap-2">
+                <Button size="sm" type="submit" disabled={sync.busy}>
+                  {editing ? '保存凭据' : '创建凭据'}
+                </Button>
+                {editing ? (
+                  <Button size="sm" type="button" variant="outline" onClick={resetCredential}>
+                    取消编辑
+                  </Button>
+                ) : null}
+              </div>
+            </form>
+          </Panel>
+        </div>
+
+        <div className="flex flex-col gap-3.5">
+          <Panel
+            kicker="ARCHIVE / ORIGINS"
+            title="远端来源凭据"
+            action={
+              <span className="text-[0.6875rem] font-semibold text-muted-foreground">
+                {overview.credentials.length}
+              </span>
+            }
+          >
+            <div className="flex flex-col">
+              {overview.credentials.length === 0 ? (
+                <EmptyRow>尚未配置归档 Git 凭据。公开 HTTPS 可直接匿名读取。</EmptyRow>
+              ) : (
+                overview.credentials.map((credential) => (
+                  <Row
+                    key={credential.id}
+                    actions={
+                      <>
+                        <Button
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                          disabled={sync.busy}
+                          onClick={() => void sync.testCredential(credential)}
+                        >
+                          测试
+                        </Button>
+                        <Button
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                          onClick={() => editCredential(credential)}
+                        >
+                          编辑
+                        </Button>
+                        <Button
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                          className="text-destructive"
+                          disabled={sync.busy}
+                          onClick={() => void deleteCredential(credential)}
+                        >
+                          删除
+                        </Button>
+                      </>
+                    }
+                  >
+                    <div className="flex min-w-0 flex-col gap-0.5">
+                      <div className="flex items-center gap-1.5">
+                        <strong className="truncate text-xs font-medium">{credential.name}</strong>
+                        <StatusPill value={credential.scheme.toUpperCase()} />
+                        <StatusPill value="已配置" />
+                      </div>
+                      <p className="truncate text-[0.6875rem] text-muted-foreground">
+                        <code>{credential.origin}</code> · 更新 {formatTime(credential.updatedAt)}
+                      </p>
+                      {credential.knownHostsFingerprints.length ? (
+                        <p className="truncate text-[0.625rem] text-muted-foreground">
+                          主机指纹 {credential.knownHostsFingerprints[0].fingerprint}
+                        </p>
+                      ) : null}
+                    </div>
+                  </Row>
+                ))
+              )}
+            </div>
+          </Panel>
+
+          <Panel
+            kicker="ARCHIVE / TASK SPACES"
+            title="项目与分支"
+            description="最近更新时间是归档文件成功进入任务索引的时间，不是最近尝试时间。"
+            action={
+              <Button
+                size="sm"
+                type="button"
+                variant="outline"
+                disabled={sync.busy}
+                onClick={() => void sync.reload(true)}
+              >
+                刷新状态
+              </Button>
+            }
+          >
+            <div className="flex flex-col">
+              {overview.taskSpaces.length === 0 ? (
+                <EmptyRow>暂无活动的项目分支。</EmptyRow>
+              ) : (
+                overview.taskSpaces.map((taskSpace) => (
+                  <TaskSpaceRow
+                    key={taskSpace.taskSpaceId}
+                    taskSpace={taskSpace}
+                    busy={sync.busy}
+                    onRun={() => void sync.run(taskSpace.taskSpaceId)}
+                    onLogs={() => void sync.openLogs(taskSpace)}
+                  />
+                ))
+              )}
+            </div>
+          </Panel>
+        </div>
+      </div>
+
+      <Dialog open={Boolean(sync.logsTaskSpace)} onOpenChange={(open) => !open && sync.closeLogs()}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>归档同步失败日志</DialogTitle>
+            <DialogDescription>
+              {sync.logsTaskSpace
+                ? `${sync.logsTaskSpace.projectName} · ${sync.logsTaskSpace.branchName}，按时间倒序展示最近 100 条失败。`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="flex flex-col gap-2">
+            {sync.logsError ? (
+              <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+                {sync.logsError}
+              </p>
+            ) : null}
+            {sync.logs.length === 0 && !sync.logsLoading ? (
+              sync.logsError ? null : (
+                <EmptyRow>该分支没有失败日志。</EmptyRow>
+              )
+            ) : (
+              sync.logs.map((log) => (
+                <article
+                  key={log.id}
+                  className="rounded-lg border border-border bg-background/60 p-3"
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <StatusPill value={log.phase} />
+                    <code className="text-[0.6875rem] text-destructive">{log.errorCode}</code>
+                    <span className="ml-auto text-[0.625rem] text-muted-foreground">
+                      {formatTime(log.createdAt)}
+                    </span>
+                  </div>
+                  <p className="mt-1 break-words text-xs text-foreground">{log.message}</p>
+                </article>
+              ))
+            )}
+            {sync.logsLoading ? (
+              <p className="py-2 text-center text-[0.6875rem] text-muted-foreground">
+                正在读取日志…
+              </p>
+            ) : null}
+          </DialogBody>
+          <DialogFooter>
+            {sync.logsHasMore ? (
+              <Button
+                size="sm"
+                type="button"
+                variant="outline"
+                disabled={sync.logsLoading}
+                onClick={() => void sync.loadMoreLogs()}
+              >
+                加载更多
+              </Button>
+            ) : null}
+            <Button size="sm" type="button" variant="outline" onClick={sync.closeLogs}>
+              关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+function TaskSpaceRow({
+  taskSpace,
+  busy,
+  onRun,
+  onLogs,
+}: {
+  taskSpace: ArchiveTaskSpaceSync
+  busy: boolean
+  onRun: () => void
+  onLogs: () => void
+}) {
+  const failed = taskSpace.status === 'error' || taskSpace.status === 'index_error'
+  return (
+    <Row
+      actions={
+        <>
+          <Button size="sm" type="button" variant="outline" disabled={busy} onClick={onRun}>
+            立即同步
+          </Button>
+          {taskSpace.failureCount > 0 ? (
+            <Button size="sm" type="button" variant="ghost" onClick={onLogs}>
+              失败日志
+            </Button>
+          ) : null}
+        </>
+      }
+    >
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <strong className="truncate text-xs font-medium">{taskSpace.projectName}</strong>
+          <StatusPill value={taskSpace.branchName} />
+          <StatusPill value={statusLabel(taskSpace.status)} />
+          <span className="text-[0.625rem] text-muted-foreground">
+            {credentialStateLabel(taskSpace.credentialState)}
+          </span>
+        </div>
+        <div className="grid gap-x-4 gap-y-0.5 text-[0.6875rem] text-muted-foreground sm:grid-cols-2">
+          <span>
+            最近更新：{taskSpace.lastIndexedAt ? formatTime(taskSpace.lastIndexedAt) : '尚未更新'}
+          </span>
+          <span>最近尝试：{formatTime(taskSpace.lastAttemptAt)}</span>
+          <span>最近成功：{formatTime(taskSpace.lastSuccessAt)}</span>
+          <span>
+            文件 {taskSpace.fileCount} · 归档 revision {taskSpace.archiveIndexedRevision}/
+            {taskSpace.archiveRevision}
+          </span>
+          <span>
+            Commit <code>{shortHead(taskSpace.remoteHead)}</code>
+          </span>
+          <span className="truncate" title={taskSpace.origin || taskSpace.remoteUrl}>
+            来源 <code>{taskSpace.origin || taskSpace.remoteUrl}</code>
+          </span>
+        </div>
+        {taskSpace.nextAttemptAt ? (
+          <p className="text-[0.625rem] text-muted-foreground">
+            下次自动尝试：{formatTime(taskSpace.nextAttemptAt)}
+          </p>
+        ) : null}
+        {taskSpace.lastError ? (
+          <p
+            className={
+              failed ? 'text-[0.625rem] text-destructive' : 'text-[0.625rem] text-muted-foreground'
+            }
+          >
+            {taskSpace.lastError}
+          </p>
+        ) : null}
+      </div>
+    </Row>
+  )
+}

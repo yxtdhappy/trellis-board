@@ -357,7 +357,7 @@ async fn create_task(
     context: &CommandContext<'_>,
     command: &AgentCommand,
     binding: &AgentBinding,
-    hooks_dir: &Path,
+    _hooks_dir: &Path,
     repo_path: &Path,
 ) -> AgentResult<Value> {
     let title = command.requires("title")?.to_string();
@@ -373,6 +373,12 @@ async fn create_task(
         return protocol::err(
             code::COMMAND_INVALID,
             "任务标题没有可用英文标识，请使用包含英文或数字的标题",
+        );
+    }
+    if slug == "archive" {
+        return protocol::err(
+            code::COMMAND_INVALID,
+            "archive 是保留的归档目录，不能用作任务标识",
         );
     }
     let tasks_root = repo_path.join(".trellis").join("tasks");
@@ -408,9 +414,6 @@ async fn create_task(
         }
         None => {}
     }
-    let before_status = git::status(repo_path, hooks_dir)
-        .await
-        .map_err(|_| AgentError::new(code::GIT_FAILED, "无法记录命令执行前的 Git 状态"))?;
     run_task_python(
         repo_path,
         &[
@@ -447,34 +450,6 @@ async fn create_task(
     if task.get("branch").and_then(Value::as_str) != Some(binding.branch_name.as_str()) {
         return protocol::err(code::GIT_FAILED, "task.py 未能写入任务的分支归属");
     }
-    let status = git::status(repo_path, hooks_dir)
-        .await
-        .map_err(|_| AgentError::new(code::GIT_FAILED, "无法校验命令执行后的 Git 状态"))?;
-    let before_paths: HashSet<&str> = before_status
-        .iter()
-        .map(|entry| entry.path.as_str())
-        .collect();
-    let unexpected: Vec<&str> = status
-        .iter()
-        .map(|entry| entry.path.as_str())
-        .filter(|path| {
-            !before_paths.contains(path)
-                && *path != task_dir
-                && !path.starts_with(&format!("{task_dir}/"))
-        })
-        .collect();
-    if !unexpected.is_empty() {
-        return protocol::err(
-            code::LOCAL_DIRTY,
-            format!(
-                "task.py 修改了新任务目录之外的文件：{}",
-                unexpected.join("、")
-            ),
-        );
-    }
-    git::status_paths(repo_path, hooks_dir, std::slice::from_ref(&task_dir))
-        .await
-        .map_err(|_| AgentError::new(code::GIT_FAILED, "无法校验新任务目录状态"))?;
     let task_id = task_id_of(&task, &task_dir)?;
     finish_create(context, binding, command, &task_dir, &task_id).await
 }
@@ -512,6 +487,12 @@ async fn assign_task(
 ) -> AgentResult<Value> {
     let assignee = command.requires("assigneeDevId")?.to_string();
     let task_dir = command.payload_str("relativeDir").unwrap_or("").to_string();
+    if task_sync::is_archive_task_dir(&task_dir) {
+        return protocol::err(
+            code::COMMAND_INVALID,
+            "归档任务由服务端 Git 管理，客户端不能改派归档任务",
+        );
+    }
     let tasks_root = repo_path.join(".trellis").join("tasks");
     let target = protocol::resolve_task_dir_under(&tasks_root, &task_dir)
         .ok_or_else(|| AgentError::new(code::COMMAND_INVALID, "改派任务目录越界"))?;
@@ -664,7 +645,10 @@ async fn task_directories(tasks_root: &Path) -> AgentResult<HashSet<String>> {
             .map(|kind| kind.is_dir())
             .unwrap_or(false);
         if is_dir {
-            names.insert(entry.file_name().to_string_lossy().to_string());
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name != "archive" {
+                names.insert(name);
+            }
         }
     }
     Ok(names)
@@ -1167,6 +1151,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_task_rejects_reserved_archive_slug() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-task-command-reserved-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let (store, task_sync) = test_context(&root);
+        let context = CommandContext {
+            store: &store,
+            task_sync: &task_sync,
+        };
+        let command = AgentCommand {
+            payload: json!({
+                "taskSpaceId": "space-1",
+                "title": "archive",
+                "assigneeDevId": "dev"
+            }),
+            ..sample_command()
+        };
+        let error = create_task(
+            &context,
+            &command,
+            &sample_binding(),
+            Path::new("hooks"),
+            Path::new("repo"),
+        )
+        .await
+        .expect_err("归档目录是保留标识");
+        assert_eq!(error.code, code::COMMAND_INVALID);
+        assert!(error.message.contains("保留"));
+    }
+
+    #[tokio::test]
     async fn assign_task_rejects_directory_escape() {
         let root = std::env::temp_dir().join(format!(
             "trellis-task-command-escape-{}",
@@ -1196,6 +1212,38 @@ mod tests {
         .expect_err("目录越界");
         assert_eq!(error.code, code::COMMAND_INVALID);
         assert_eq!(error.message, "改派任务目录越界");
+    }
+
+    #[tokio::test]
+    async fn assign_task_rejects_archived_target() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-task-command-archive-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let (store, task_sync) = test_context(&root);
+        let context = CommandContext {
+            store: &store,
+            task_sync: &task_sync,
+        };
+        let command = AgentCommand {
+            payload: json!({
+                "taskSpaceId": "space-1",
+                "assigneeDevId": "dev",
+                "relativeDir": ".trellis/tasks/archive/2026-11/old"
+            }),
+            ..sample_command()
+        };
+        let error = assign_task(
+            &context,
+            &command,
+            &sample_binding(),
+            Path::new("hooks"),
+            Path::new("repo"),
+        )
+        .await
+        .expect_err("归档任务不能改派");
+        assert_eq!(error.code, code::COMMAND_INVALID);
+        assert!(error.message.contains("服务端 Git"));
     }
 
     #[tokio::test]

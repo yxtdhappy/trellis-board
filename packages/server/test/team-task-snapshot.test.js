@@ -8,6 +8,7 @@ import { createTaskSnapshotBackupService } from '../team/task-snapshot-backup.js
 import { createTaskSnapshotService } from '../team/task-snapshot-service.js'
 import { createTaskSpaceService } from '../team/task-space-service.js'
 import {
+  ARCHIVE_SYNC_SERVER_MANAGED,
   snapshotSha256,
   TASK_SNAPSHOT_MAX_BATCH_BYTES,
   TASK_SNAPSHOT_MAX_FILE_BYTES,
@@ -170,6 +171,82 @@ test('首次上传写入快照并推进 revision', () => {
     assert.equal(payload.revision, 1)
     assert.equal(payload.files.length, 2)
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_file_audit').get().count, 2)
+  } finally {
+    db.close()
+  }
+})
+
+test('Agent 快照与写入边界统一拒绝归档任务', () => {
+  const { db, snapshots, agentA, taskSpaceId } = setup()
+  const archiveDir = '.trellis/tasks/archive/2026-11/11-16-old'
+  const archiveFiles = [
+    {
+      path: `${archiveDir}/task.json`,
+      content: JSON.stringify({ id: 'old', title: '归档任务', branch: 'main' }),
+      baseSha256: null,
+    },
+    {
+      path: `${archiveDir}/prd.md`,
+      content: '# 旧任务\n',
+      baseSha256: null,
+    },
+  ]
+  try {
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-archive-boundary-active',
+      clientSequence: 1,
+      files: batch('active', '活动任务'),
+    })
+    const now = new Date().toISOString()
+    db.prepare(`
+      INSERT INTO sync_task_space_file(
+        task_space_id, relative_path, revision, sha256, content_text, deleted,
+        task_id, task_dir, updated_at
+      ) VALUES (?, ?, 2, ?, ?, 0, 'old', ?, ?)
+    `).run(
+      taskSpaceId,
+      `${archiveDir}/task.json`,
+      snapshotSha256(archiveFiles[0].content),
+      archiveFiles[0].content,
+      archiveDir,
+      now,
+    )
+    assert.deepEqual(
+      snapshots.snapshot(agentA, taskSpaceId).files.map((file) => file.taskDir),
+      ['.trellis/tasks/11-10-active', '.trellis/tasks/11-10-active'],
+    )
+    assert.throws(
+      () => snapshots.directorySnapshot(agentA, taskSpaceId, archiveDir),
+      (error) => error.status === 409 && error.code === ARCHIVE_SYNC_SERVER_MANAGED,
+    )
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'batch-archive-boundary-reject',
+          clientSequence: 2,
+          files: archiveFiles,
+        }),
+      (error) => error.status === 409 && error.code === ARCHIVE_SYNC_SERVER_MANAGED,
+    )
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'batch-archive-boundary-mixed',
+          clientSequence: 2,
+          files: [...batch('mixed', '混合批次'), ...archiveFiles],
+        }),
+      (error) => error.status === 409 && error.code === ARCHIVE_SYNC_SERVER_MANAGED,
+    )
+    const preflight = snapshots.preflight(agentA, taskSpaceId, {
+      files: [...batch('active', '活动任务'), ...archiveFiles],
+    })
+    assert.equal(preflight.tasks.length, 1)
+    assert.equal(preflight.tasks[0].taskDir, '.trellis/tasks/11-10-active')
+    assert.equal(
+      db.prepare('SELECT revision FROM sync_task_space WHERE id = ?').get(taskSpaceId).revision,
+      1,
+    )
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_space_batch').get().count, 1)
   } finally {
     db.close()
   }

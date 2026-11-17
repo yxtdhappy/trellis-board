@@ -30,8 +30,8 @@ const NETWORK_TIMEOUT: Duration = Duration::from_secs(180);
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
 const ERROR_TAIL_CHARS: usize = 1024;
 
-/// 允许执行的操作，与 JS 的 ALLOWED_GIT_OPERATIONS 一一对应。
-#[allow(dead_code)] // 契约枚举：白名单条目与 JS 保持一一对应，部分操作当前未被调用。
+/// 允许执行的操作；`DiffTree` 是桌面端受限增量扫描扩展，其余条目与 JS 操作白名单一致。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitOperation {
     CheckRef,
@@ -45,6 +45,7 @@ pub enum GitOperation {
     RemoteUrl,
     LsRemote,
     LsTree,
+    DiffTree,
     Fetch,
     RevList,
     Merge,
@@ -52,7 +53,7 @@ pub enum GitOperation {
 
 #[allow(dead_code)]
 impl GitOperation {
-    pub const ALL: [GitOperation; 14] = [
+    pub const ALL: [GitOperation; 15] = [
         GitOperation::CheckRef,
         GitOperation::ConfigSparse,
         GitOperation::ShowToplevel,
@@ -64,6 +65,7 @@ impl GitOperation {
         GitOperation::RemoteUrl,
         GitOperation::LsRemote,
         GitOperation::LsTree,
+        GitOperation::DiffTree,
         GitOperation::Fetch,
         GitOperation::RevList,
         GitOperation::Merge,
@@ -83,6 +85,7 @@ impl GitOperation {
             GitOperation::RemoteUrl => "remote-url",
             GitOperation::LsRemote => "ls-remote",
             GitOperation::LsTree => "ls-tree",
+            GitOperation::DiffTree => "diff-tree",
             GitOperation::Fetch => "fetch",
             GitOperation::RevList => "rev-list",
             GitOperation::Merge => "merge",
@@ -97,6 +100,8 @@ pub struct GitStatusEntry {
     pub status: String,
     /// 工作区相对路径；rename/copy 行取新路径。
     pub path: String,
+    /// rename/copy 行的旧路径；普通状态为空。
+    pub original_path: Option<String>,
 }
 
 impl GitStatusEntry {
@@ -148,6 +153,7 @@ pub fn git_args(
             | GitOperation::GitPath
             | GitOperation::Status
             | GitOperation::StatusPaths
+            | GitOperation::DiffTree
             | GitOperation::RevList
             | GitOperation::Merge
     ) {
@@ -240,6 +246,27 @@ pub fn git_args(
                 params.revision.unwrap_or("HEAD").to_string(),
                 "--".to_string(),
                 ".trellis".to_string(),
+            ]);
+        }
+        GitOperation::DiffTree => {
+            let previous = params
+                .marker
+                .ok_or_else(|| AgentError::new(code::GIT_FAILED, "Git 差量基线缺失"))?;
+            let revision = params
+                .revision
+                .ok_or_else(|| AgentError::new(code::GIT_FAILED, "Git 差量目标缺失"))?;
+            args.extend([
+                "diff-tree".to_string(),
+                "--no-commit-id".to_string(),
+                "--name-status".to_string(),
+                "--no-renames".to_string(),
+                "-r".to_string(),
+                "-z".to_string(),
+                previous.to_string(),
+                revision.to_string(),
+                "--".to_string(),
+                ".trellis/tasks".to_string(),
+                ":(exclude).trellis/tasks/archive".to_string(),
             ]);
         }
         GitOperation::Fetch => {
@@ -538,6 +565,41 @@ pub async fn ls_tree(
         .collect())
 }
 
+/// 比较两个提交在 `.trellis/tasks` 下的变化路径。
+///
+/// 使用 `--no-renames -z`，让移动文件稳定表现为“旧路径删除 + 新路径新增”，
+/// 同时避免文件名中的空格、中文或特殊字符影响解析。
+pub async fn diff_tree(
+    repo_path: &Path,
+    hooks_dir: &Path,
+    previous: &str,
+    revision: &str,
+) -> AgentResult<Vec<String>> {
+    ensure_hooks_dir(hooks_dir).await?;
+    if !is_full_git_oid(previous) || !is_full_git_oid(revision) {
+        return Err(AgentError::new(code::GIT_FAILED, "Git 差量提交无效"));
+    }
+    let params = GitParams {
+        marker: Some(previous),
+        revision: Some(revision),
+        ..Default::default()
+    };
+    let output = run_git(
+        GitOperation::DiffTree,
+        repo_path,
+        hooks_dir,
+        &params,
+        LOCAL_TIMEOUT,
+    )
+    .await?;
+    let value = require_success(&output, "无法读取任务目录提交差量")?;
+    parse_diff_tree_paths(&value)
+}
+
+fn is_full_git_oid(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 pub async fn fetch(repo_path: &Path, hooks_dir: &Path, branch: &str) -> AgentResult<()> {
     ensure_hooks_dir(hooks_dir).await?;
     let params = GitParams {
@@ -810,10 +872,15 @@ fn parse_status_line(line: &str) -> Option<GitStatusEntry> {
         return None;
     }
     let rest = line.get(separator_index + 1..)?;
-    let path = if first == 'R' || first == 'C' || second == 'R' || second == 'C' {
-        rest.rsplit_once(" -> ").map_or(rest, |(_, new)| new)
+    let (original_path, path) = if first == 'R' || first == 'C' || second == 'R' || second == 'C' {
+        match rest.rsplit_once(" -> ") {
+            Some((old, new)) if !old.is_empty() && !new.is_empty() => {
+                (Some(old.to_string()), new)
+            }
+            _ => (None, rest),
+        }
     } else {
-        rest
+        (None, rest)
     };
     if path.is_empty() {
         return None;
@@ -821,7 +888,41 @@ fn parse_status_line(line: &str) -> Option<GitStatusEntry> {
     Some(GitStatusEntry {
         status: format!("{first}{second}"),
         path: path.to_string(),
+        original_path,
     })
+}
+
+fn parse_diff_tree_paths(value: &str) -> AgentResult<Vec<String>> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let tokens: Vec<&str> = value.split('\0').collect();
+    let mut tokens = tokens.into_iter().filter(|token| !token.is_empty());
+    let mut paths = Vec::new();
+    while let Some(status) = tokens.next() {
+        let path = tokens
+            .next()
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "Git 差量输出缺少路径"))?;
+        if status.is_empty()
+            || status.len() > 2
+            || !status
+                .bytes()
+                .all(|byte| matches!(byte, b'A' | b'C' | b'D' | b'M' | b'R' | b'T' | b'U' | b'X' | b'B'))
+        {
+            return Err(AgentError::new(
+                code::INVALID_RESPONSE,
+                "Git 差量输出包含未知状态",
+            ));
+        }
+        if path.contains('\n') || path.contains('\r') || path.contains('\u{fffd}') {
+            return Err(AgentError::new(
+                code::INVALID_RESPONSE,
+                "Git 差量输出包含无效路径",
+            ));
+        }
+        paths.push(path.to_string());
+    }
+    Ok(paths)
 }
 
 fn resolve_git_dir(repo_path: &Path) -> Option<PathBuf> {
@@ -939,12 +1040,32 @@ mod tests {
         assert_eq!(entries[0].path, "src/lib.rs");
         assert_eq!(entries[1].status, "R ");
         assert_eq!(entries[1].path, ".trellis/tasks/new");
+        assert_eq!(
+            entries[1].original_path.as_deref(),
+            Some(".trellis/tasks/old")
+        );
         assert_eq!(entries[2].status, "??");
         assert_eq!(entries[2].path, "docs/新文件.md");
         assert_eq!(entries[3].status, "A ");
         assert_eq!(entries[3].path, "added.txt");
         assert!(parse_status("").is_empty());
         assert!(parse_status("\n").is_empty());
+    }
+
+    #[test]
+    fn parses_nul_separated_diff_tree_paths() {
+        let paths = parse_diff_tree_paths(
+            "D\u{0}.trellis/tasks/old/prd.md\u{0}A\u{0}.trellis/tasks/new/prd.md\u{0}",
+        )
+        .expect("diff paths");
+        assert_eq!(
+            paths,
+            vec![
+                ".trellis/tasks/old/prd.md",
+                ".trellis/tasks/new/prd.md"
+            ]
+        );
+        assert!(parse_diff_tree_paths("Z\u{0}.trellis/tasks/a.md\u{0}").is_err());
     }
 
     #[test]

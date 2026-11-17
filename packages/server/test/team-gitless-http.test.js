@@ -790,3 +790,120 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
     assert.equal(legacy.status, 404, legacyPath)
   }
 })
+
+test('归档同步管理 API 仅允许系统管理员且不回显凭据', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-archive-sync-http-'))
+  const dataDir = path.join(root, 'data')
+  const runtime = await createTeamRuntime({
+    config: {
+      mode: 'team',
+      bindHost: '127.0.0.1',
+      port: 0,
+      publicUrl: new URL(PUBLIC_ORIGIN),
+      publicOrigin: PUBLIC_ORIGIN,
+      sessionTtlMs: 12 * 60 * 60 * 1000,
+      agentStaleMs: 60_000,
+      cookieSecure: false,
+      trustProxy: false,
+      allowLocalGitRemotes: false,
+    },
+    databaseFile: path.join(dataDir, 'board.sqlite'),
+    dataDir,
+    logger: LOGGER,
+    requireAdmin: false,
+  })
+  await runtime.start()
+  t.after(async () => {
+    await runtime.stop()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  const now = new Date().toISOString()
+  runtime.db
+    .prepare(`
+      INSERT INTO team(id, name, slug, status, created_at, updated_at)
+      VALUES ('team-1', '团队一', 'team-1', 'active', ?, ?)
+    `)
+    .run(now, now)
+  for (const user of [
+    { username: 'root', displayName: '系统管理员', systemAdmin: true },
+    { username: 'member', displayName: '普通成员', systemAdmin: false },
+  ]) {
+    await createUser(runtime.db, {
+      ...user,
+      password: 'Archive-Password-123',
+      mustChangePassword: false,
+    })
+    runtime.db
+      .prepare(`
+        INSERT INTO team_member(team_id, user_id, role, created_at, updated_at)
+        SELECT 'team-1', id, 'member', ?, ? FROM user_account WHERE username = ?
+      `)
+      .run(now, now, user.username)
+  }
+  const login = async (username) => {
+    const response = await request(runtime, '/api/auth/login', {
+      method: 'POST',
+      body: { username, password: 'Archive-Password-123' },
+    })
+    assert.equal(response.status, 200)
+    return cookie(response)
+  }
+  const adminCookie = await login('root')
+  const memberCookie = await login('member')
+
+  const overview = await request(runtime, '/api/admin/archive-sync', { cookie: adminCookie })
+  assert.equal(overview.status, 200)
+  assert.equal(overview.body.config.intervalSeconds, 300)
+  assert.deepEqual(overview.body.credentials, [])
+  assert.equal(
+    (await request(runtime, '/api/admin/archive-sync', { cookie: memberCookie })).status,
+    403,
+  )
+
+  const configured = await request(runtime, '/api/admin/archive-sync/config', {
+    method: 'PATCH',
+    cookie: adminCookie,
+    body: { enabled: false, intervalSeconds: 600 },
+  })
+  assert.equal(configured.status, 200)
+  assert.deepEqual(
+    {
+      enabled: configured.body.config.enabled,
+      intervalSeconds: configured.body.config.intervalSeconds,
+    },
+    { enabled: false, intervalSeconds: 600 },
+  )
+
+  const credential = await request(runtime, '/api/admin/archive-sync/credentials', {
+    method: 'POST',
+    cookie: adminCookie,
+    body: {
+      name: 'GitHub 只读',
+      scheme: 'https',
+      host: 'github.com',
+      port: 443,
+      username: 'x-access-token',
+      token: 'ghp_archiveHttpTestToken123456789',
+    },
+  })
+  assert.equal(credential.status, 201, JSON.stringify(credential.body))
+  assert.equal(credential.body.credential.origin, 'https://github.com:443')
+  assert.equal(Object.hasOwn(credential.body.credential, 'token'), false)
+  assert.equal(Object.hasOwn(credential.body.credential, 'secretCiphertext'), false)
+  assert.equal(
+    (
+      await request(runtime, '/api/admin/archive-sync/credentials', {
+        method: 'POST',
+        cookie: memberCookie,
+        body: {
+          scheme: 'https',
+          host: 'example.com',
+          port: 443,
+          token: 'not-allowed',
+        },
+      })
+    ).status,
+    403,
+  )
+})

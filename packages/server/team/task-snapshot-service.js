@@ -1,8 +1,11 @@
 import crypto from 'node:crypto'
 import { withTransaction } from '../database.js'
 import {
+  ARCHIVE_SYNC_SERVER_MANAGED,
   classifyTaskSnapshots,
   groupTaskSnapshotFiles,
+  isArchiveTaskDirectory,
+  isArchiveTaskPath,
   snapshotSha256,
   TASK_SNAPSHOT_LIMIT_ERROR_CODE,
   validateSnapshotFile,
@@ -23,6 +26,17 @@ function requireSnapshotGroups(files, options) {
     }
     throw error
   }
+}
+
+function rejectArchiveGroups(groups) {
+  if ((groups || []).some((group) => group.archived)) {
+    throw teamError(
+      409,
+      ARCHIVE_SYNC_SERVER_MANAGED,
+      '归档任务由服务端 Git 索引管理，Agent 批次已整批拒绝',
+    )
+  }
+  return groups
 }
 
 function stableValue(value) {
@@ -111,6 +125,13 @@ function normalizeMergeEvidence(value) {
   if (!taskDir.startsWith('.trellis/tasks/')) {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, 'mergeEvidence 任务目录无效')
   }
+  if (isArchiveTaskDirectory(taskDir) || taskDir.startsWith('.trellis/tasks/archive/')) {
+    throw teamError(
+      409,
+      ARCHIVE_SYNC_SERVER_MANAGED,
+      '归档任务由服务端 Git 索引管理，不能提交合入证据',
+    )
+  }
   const trackedPath = String(value.trackedPath || '').trim()
   if (trackedPath !== `${taskDir}/task.json`) {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, 'mergeEvidence 受控路径无效')
@@ -182,6 +203,8 @@ export function createTaskSnapshotService({
       LEFT JOIN user_account u ON u.id = f.source_user_id
       LEFT JOIN agent_device a ON a.id = f.source_agent_id
       WHERE f.task_space_id = ? AND f.revision > ?
+        AND f.task_dir NOT LIKE '.trellis/tasks/archive/%'
+        AND f.relative_path NOT LIKE '.trellis/tasks/archive/%'
       ORDER BY f.revision, f.relative_path
     `)
       .all(taskSpaceId, afterRevision)
@@ -225,6 +248,13 @@ export function createTaskSnapshotService({
   function directorySnapshot(agent, taskSpaceId, taskDir) {
     bindingContext(agent, taskSpaceId)
     const normalized = String(taskDir || '').trim()
+    if (isArchiveTaskDirectory(normalized) || normalized.startsWith('.trellis/tasks/archive/')) {
+      throw teamError(
+        409,
+        ARCHIVE_SYNC_SERVER_MANAGED,
+        '归档任务目录由服务端 Git 索引管理，Agent 不能读取归档快照',
+      )
+    }
     if (!normalized.startsWith('.trellis/tasks/')) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, '任务目录无效')
     }
@@ -247,13 +277,17 @@ export function createTaskSnapshotService({
   function preflight(agent, taskSpaceId, input = {}) {
     bindingContext(agent, taskSpaceId)
     const allFileGroups = { maxFiles: Number.POSITIVE_INFINITY, maxBytes: Number.POSITIVE_INFINITY }
-    const localGroups = requireSnapshotGroups(input.files || [], allFileGroups)
+    const localGroups = requireSnapshotGroups(input.files || [], allFileGroups).filter(
+      (group) => !group.archived,
+    )
     const serverGroups = requireSnapshotGroups(
       db
         .prepare(`
         SELECT relative_path AS path, content_text AS content, sha256
         FROM sync_task_space_file
         WHERE task_space_id = ? AND deleted = 0
+          AND task_dir NOT LIKE '.trellis/tasks/archive/%'
+          AND relative_path NOT LIKE '.trellis/tasks/archive/%'
       `)
         .all(taskSpaceId)
         .map((row) => ({
@@ -749,7 +783,8 @@ export function createTaskSnapshotService({
     const batchId = requestId(input.batchId, '批次 ID')
     const clientSequence = sequence(input.clientSequence)
     const rawFiles = Array.isArray(input.files) ? input.files : []
-    const files = requireSnapshotGroups(rawFiles).flatMap((group) => group.files)
+    const groups = rejectArchiveGroups(requireSnapshotGroups(rawFiles))
+    const files = groups.flatMap((group) => group.files)
     if (!files.length) throw teamError(400, ERROR_CODES.INVALID_INPUT, '同步批次不能为空')
     const requestPayload = {
       taskSpaceId,
@@ -1077,7 +1112,7 @@ export function createTaskSnapshotService({
     }
     if (action === 'overwrite-server') {
       const files = Array.isArray(input.files) ? input.files : []
-      const groupedFiles = requireSnapshotGroups(files)
+      const groupedFiles = rejectArchiveGroups(requireSnapshotGroups(files))
       const normalizedFiles = groupedFiles.flatMap((group) => group.files)
       const taskDirs = [...new Set(normalizedFiles.map((file) => file.taskDir))]
       const currentRows = affectedDirectoryRows(conflict.task_space_id, taskDirs)
@@ -1172,6 +1207,34 @@ export function createTaskSnapshotService({
     if (!normalized.startsWith('.trellis/tasks/')) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, '任务目录无效')
     }
+    const archived = isArchiveTaskPath(normalized) || isArchiveTaskDirectory(normalized)
+    if (archived) {
+      const revision = Number(
+        db.prepare('SELECT archive_revision FROM sync_task_space WHERE id = ?').get(taskSpaceId)
+          ?.archive_revision || 0,
+      )
+      const rows = db
+        .prepare(`
+          SELECT *
+          FROM sync_archive_file
+          WHERE task_space_id = ? AND task_dir = ?
+          ORDER BY relative_path
+        `)
+        .all(taskSpaceId, normalized)
+      return {
+        taskSpaceId,
+        taskDir: normalized,
+        revision,
+        source: 'archive',
+        files: rows.map((row) =>
+          publicFile({
+            ...row,
+            revision,
+            deleted: 0,
+          }),
+        ),
+      }
+    }
     const rows = db
       .prepare(`
       SELECT *
@@ -1184,6 +1247,7 @@ export function createTaskSnapshotService({
       taskSpaceId,
       taskDir: normalized,
       revision: readTaskSpaceRevision(taskSpaceId),
+      source: 'active',
       files: rows.map((row) => publicFile(row)),
     }
   }

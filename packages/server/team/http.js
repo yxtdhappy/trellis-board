@@ -14,6 +14,7 @@ import { createBoardEventService } from '../board-events.js'
 import { openDatabase } from '../database.js'
 import { STAGE_IDS } from '../metadata.js'
 import { createAgentEventStream } from './agent-event-stream.js'
+import { createArchiveGitSyncService } from './archive-git-sync.js'
 import { appendAuditEvent, listAuditEvents } from './audit.js'
 import { createDesktopAuthService } from './desktop-auth.js'
 import { diagnosticError } from './error-diagnostics.js'
@@ -76,6 +77,7 @@ function readHostVersion() {
 const defaultPublicDir = path.resolve(serverDir, '../public')
 const MAX_JSON_BYTES = 64 * 1024
 const MAX_LIVE_BATCH_BYTES = TASK_SNAPSHOT_MAX_TRANSPORT_BYTES
+const MAX_ARCHIVE_CREDENTIAL_BYTES = 160 * 1024
 const EXECUTION_WIP_LIMIT = 2
 const TEAM_PLUGIN_ALLOWLIST = ['witops-core']
 
@@ -451,6 +453,7 @@ function createRequestHandler({
   taskSnapshots,
   taskSpaceIndex,
   taskCommands,
+  archiveGitSync,
   agentService,
   agentEvents,
   boardEvents,
@@ -833,6 +836,86 @@ function createRequestHandler({
   async function handleAdmin(request, response, url) {
     const { pathname } = url
     const actor = requireActor(request)
+
+    if (pathname === '/api/admin/archive-sync' && request.method === 'GET') {
+      requireAdmin(actor)
+      sendJson(response, 200, archiveGitSync.overview())
+      return true
+    }
+    if (pathname === '/api/admin/archive-sync/config' && request.method === 'PATCH') {
+      requireAdmin(actor)
+      sendJson(response, 200, {
+        config: archiveGitSync.updateConfig(actor, await readJsonBody(request)),
+      })
+      return true
+    }
+    if (pathname === '/api/admin/archive-sync/credentials' && request.method === 'POST') {
+      requireAdmin(actor)
+      sendJson(response, 201, {
+        credential: archiveGitSync.credentials.create(
+          actor,
+          await readJsonBody(request, MAX_ARCHIVE_CREDENTIAL_BYTES),
+        ),
+      })
+      return true
+    }
+    const archiveCredentialMatch = routeMatch(
+      pathname,
+      /^\/api\/admin\/archive-sync\/credentials\/([^/]+)$/,
+    )
+    if (archiveCredentialMatch && request.method === 'PATCH') {
+      requireAdmin(actor)
+      sendJson(response, 200, {
+        credential: archiveGitSync.credentials.update(
+          actor,
+          archiveCredentialMatch[0],
+          await readJsonBody(request, MAX_ARCHIVE_CREDENTIAL_BYTES),
+        ),
+      })
+      return true
+    }
+    if (archiveCredentialMatch && request.method === 'DELETE') {
+      requireAdmin(actor)
+      await readJsonBody(request)
+      sendJson(response, 200, archiveGitSync.credentials.remove(actor, archiveCredentialMatch[0]))
+      return true
+    }
+    const archiveCredentialTestMatch = routeMatch(
+      pathname,
+      /^\/api\/admin\/archive-sync\/credentials\/([^/]+)\/test$/,
+    )
+    if (archiveCredentialTestMatch && request.method === 'POST') {
+      requireAdmin(actor)
+      await readJsonBody(request)
+      sendJson(
+        response,
+        200,
+        await archiveGitSync.testCredential(actor, archiveCredentialTestMatch[0]),
+      )
+      return true
+    }
+    if (pathname === '/api/admin/archive-sync/run' && request.method === 'POST') {
+      requireAdmin(actor)
+      const body = await readJsonBody(request)
+      sendJson(response, 202, await archiveGitSync.runNow(body.taskSpaceId))
+      return true
+    }
+    const archiveLogsMatch = routeMatch(
+      pathname,
+      /^\/api\/admin\/archive-sync\/task-spaces\/([^/]+)\/logs$/,
+    )
+    if (archiveLogsMatch && request.method === 'GET') {
+      requireAdmin(actor)
+      sendJson(
+        response,
+        200,
+        archiveGitSync.listLogs(archiveLogsMatch[0], {
+          beforeId: url.searchParams.get('beforeId'),
+          limit: url.searchParams.get('limit'),
+        }),
+      )
+      return true
+    }
 
     if (pathname === '/api/admin/users' && request.method === 'GET') {
       const scope = requireTeamAdmin(db, actor, url.searchParams.get('teamId'))
@@ -1618,6 +1701,7 @@ export async function createTeamRuntime({
   trellisRunner = undefined,
   desktopAuth = {},
   boardEventOptions = {},
+  archiveGitRunProcessImpl = undefined,
 }) {
   if (config?.mode !== 'team') {
     throw new Error('createTeamRuntime 只接受 team 配置')
@@ -1673,16 +1757,21 @@ export async function createTeamRuntime({
       agents: agentService,
       events: agentEvents,
     })
+    let archiveGitSync = null
     const taskSpaceIndex = createTaskSpaceIndex({
       db,
       stageIds: STAGE_IDS,
       taskSpaces,
       executionWipLimit: EXECUTION_WIP_LIMIT,
       onQueryRevisionChanged: (revision) => boardEvents.publish({ revision }),
-      onProjected: ({ taskSpaceId, revision }) => {
-        boardEvents.publish({ revision })
-        agentEvents.notifyTaskSpaceChanged(taskSpaceId, revision)
+      onProjected: (projection) => {
+        boardEvents.publish({ revision: projection.revision })
+        if (projection.activeAdvanced) {
+          agentEvents.notifyTaskSpaceChanged(projection.taskSpaceId, projection.revision)
+        }
+        archiveGitSync?.onIndexProjected(projection)
       },
+      onProjectionFailed: (failure) => archiveGitSync?.onIndexProjectionFailed(failure),
       logger,
     })
     const taskSnapshots = createTaskSnapshotService({
@@ -1691,6 +1780,14 @@ export async function createTeamRuntime({
       onRevisionCommitted: ({ taskSpaceId }) => {
         void taskSpaceIndex.enqueue(taskSpaceId)
       },
+    })
+    archiveGitSync = createArchiveGitSyncService({
+      db,
+      config,
+      dataDir,
+      taskSpaceIndex,
+      logger,
+      runProcessImpl: archiveGitRunProcessImpl,
     })
     const desktopAuthService = createDesktopAuthService({ db, ...desktopAuth })
     const boardService = createGitlessBoardService({
@@ -1723,6 +1820,7 @@ export async function createTeamRuntime({
       taskSnapshots,
       taskSpaceIndex,
       taskCommands,
+      archiveGitSync,
       agentService,
       agentEvents,
       boardEvents,
@@ -1753,6 +1851,7 @@ export async function createTeamRuntime({
         const address = server.address()
         const port = address && typeof address === 'object' ? address.port : config.port
         taskSnapshotBackups.start()
+        archiveGitSync.start()
         requestHandler.setStartedAt(new Date().toISOString())
         try {
           const pluginState = await pluginHost.start()
@@ -1774,6 +1873,7 @@ export async function createTeamRuntime({
         boardEvents.close()
         agentEvents.close()
         taskSnapshotBackups.stop()
+        await archiveGitSync.stop()
         await closeServer(server)
         await pluginHost.stop().catch(() => {})
         await taskSpaceIndex.close().catch(() => {})
@@ -1789,6 +1889,7 @@ export async function createTeamRuntime({
       boardEvents.close()
       agentEvents.close()
       taskSnapshotBackups.stop()
+      await archiveGitSync.stop()
       await closeServer(server)
       await pluginHost.stop().catch(() => {})
       await taskSpaceIndex.close()
@@ -1805,6 +1906,7 @@ export async function createTeamRuntime({
         taskSnapshots,
         taskSpaceIndex,
         taskCommands,
+        archiveGitSync,
         agentService,
         agentEvents,
         boardEvents,
