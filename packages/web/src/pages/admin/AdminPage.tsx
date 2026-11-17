@@ -110,7 +110,7 @@ export function AdminPage() {
             <span className="text-sm font-semibold font-heading">Trellis Board</span>
           </a>
           <a
-            className="rounded-lg bg-muted px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:text-foreground"
+            className="rounded-lg bg-muted px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
             href="/"
           >
             返回看板
@@ -127,7 +127,7 @@ export function AdminPage() {
           <DropdownMenu>
             <DropdownMenuTrigger className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Avatar size="sm" className="size-7">
-                <AvatarFallback className="bg-secondary text-[0.625rem] font-semibold text-muted-foreground">
+                <AvatarFallback className="bg-secondary text-2xs font-semibold text-muted-foreground">
                   {avatarText}
                 </AvatarFallback>
               </Avatar>
@@ -135,7 +135,7 @@ export function AdminPage() {
             <DropdownMenuContent align="end" className="w-48">
               <div className="px-2 py-1.5 text-xs">
                 <div className="font-medium text-foreground">{displayName}</div>
-                <div className="text-[0.6875rem] text-muted-foreground">{roleLabel}</div>
+                <div className="text-xs text-muted-foreground">{roleLabel}</div>
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => void consoleApi.logout()} variant="destructive">
@@ -159,8 +159,8 @@ export function AdminPage() {
 
       <main className="flex flex-col gap-3.5 px-6 py-5">
         <div>
-          <h1 className="text-[1.375rem] font-semibold font-heading">团队管理</h1>
-          <p className="mt-0.5 text-[0.71875rem] text-muted-foreground">{activeView.subtitle}</p>
+          <h1 className="text-lg font-semibold font-heading">团队管理</h1>
+          <p className="mt-0.5 text-xs text-muted-foreground">{activeView.subtitle}</p>
         </div>
 
         {phase === 'loading' ? (
@@ -181,7 +181,7 @@ export function AdminPage() {
         {phase === 'denied' ? (
           <div className="flex flex-col gap-1.5 rounded-xl bg-card p-6">
             <strong className="text-sm text-foreground">当前账号没有管理入口</strong>
-            <span className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+            <span className="text-xs leading-relaxed text-muted-foreground">
               系统管理员可管理系统能力；项目负责人可管理自己项目的成员、Agent 绑定和审计。
             </span>
           </div>

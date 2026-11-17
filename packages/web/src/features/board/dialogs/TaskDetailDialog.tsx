@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label'
 import { fetchTaskDetail, api, type TaskSpace } from '@/api/board'
 import { ApiError } from '@/api/request'
 import { renderMarkdown } from '@/lib/markdown.js'
+import { cn } from '@/lib/utils'
 import type { Stage } from '../task-view.ts'
 import {
   branchLabel,
@@ -77,20 +78,20 @@ function DependencyItem({
   onResolve?: () => void
 }) {
   return (
-    <article className="flex flex-col gap-1 rounded-lg bg-muted px-2.5 py-2 text-[0.6875rem]">
+    <article className="flex flex-col gap-1 rounded-lg bg-muted px-2.5 py-2 text-xs">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="rounded-full bg-background px-1.5 py-0.5 text-[0.5625rem] font-semibold text-muted-foreground">
+        <span className="rounded-full bg-background px-1.5 py-0.5 text-2xs font-semibold text-muted-foreground">
           {relation === 'blocked' ? '阻断我' : '我阻断'}
         </span>
-        <strong className="text-[0.71875rem] font-semibold">{item.title || '未命名任务'}</strong>
-        <small className="text-[0.625rem] text-muted-foreground">
+        <strong className="text-xs font-semibold">{item.title || '未命名任务'}</strong>
+        <small className="text-2xs text-muted-foreground">
           {item.projectName || ''}
           {item.createdBy ? ` · ${item.createdBy}` : ''}
         </small>
       </div>
-      <p className="text-[0.65625rem] text-muted-foreground">{item.reason || '未记录原因'}</p>
+      <p className="text-2xs text-muted-foreground">{item.reason || '未记录原因'}</p>
       <div className="flex items-center gap-2">
-        <time className="text-[0.625rem] text-muted-foreground" dateTime={item.createdAt}>
+        <time className="text-2xs text-muted-foreground" dateTime={item.createdAt}>
           {item.createdAt ? new Date(item.createdAt).toLocaleString('zh-CN') : '时间未知'}
         </time>
         {onResolve ? (
@@ -369,7 +370,7 @@ export function TaskDetailDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[77.5rem]">
+        <DialogContent className="sm:max-w-310">
           <DialogHeader>
             <DialogTitle className="pr-8 text-base">{current?.title || '任务详情'}</DialogTitle>
             <DialogDescription>
@@ -393,15 +394,16 @@ export function TaskDetailDialog({
                   ['状态', statusLabel(current.status) || '规划'],
                 ].map(([label, value]) => (
                   <div key={label} className="flex flex-col gap-1 rounded-lg bg-muted px-2.5 py-2">
-                    <span className="text-[0.625rem] text-muted-foreground">{label}</span>
+                    <span className="text-2xs text-muted-foreground">{label}</span>
                     <span
-                      className={`w-fit rounded-full px-1.5 py-px text-[0.6875rem] font-semibold ${
+                      className={cn(
+                        'w-fit rounded-full px-1.5 py-px text-xs font-semibold',
                         label === '优先级'
                           ? priorityTone(value)
                           : label === '状态'
                             ? statusTone(value)
-                            : 'bg-transparent p-0 text-xs text-foreground'
-                      }`}
+                            : 'bg-transparent p-0 text-xs text-foreground',
+                      )}
                     >
                       {value}
                     </span>
@@ -410,24 +412,22 @@ export function TaskDetailDialog({
               </div>
 
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[0.6875rem] font-semibold text-muted-foreground">
-                  关注信号
-                </span>
+                <span className="text-xs font-semibold text-muted-foreground">关注信号</span>
                 {isAttention(current) ? (
                   attentionReasons(current).map((reason) => (
                     <span
                       key={reason.id}
-                      className="rounded-full bg-destructive-soft px-2 py-0.5 text-[0.625rem] font-semibold text-destructive"
+                      className="rounded-full bg-destructive-soft px-2 py-0.5 text-2xs font-semibold text-destructive"
                     >
                       {reason.label}
                     </span>
                   ))
                 ) : (
-                  <span className="rounded-full bg-secondary px-2 py-0.5 text-[0.625rem] font-semibold text-secondary-foreground">
+                  <span className="rounded-full bg-secondary px-2 py-0.5 text-2xs font-semibold text-secondary-foreground">
                     无风险信号
                   </span>
                 )}
-                <span className="ml-auto text-[0.65625rem] text-muted-foreground">
+                <span className="ml-auto text-2xs text-muted-foreground">
                   {stage?.label} · {progress?.percent}% · {progress?.done}/{progress?.total}{' '}
                   必需阶段
                 </span>
@@ -441,11 +441,11 @@ export function TaskDetailDialog({
 
               <section className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-[0.6875rem] font-semibold text-muted-foreground">阶段证据</h3>
+                  <h3 className="text-xs font-semibold text-muted-foreground">阶段证据</h3>
                   {canEditPlan ? (
                     <Button
                       size="sm"
-                      className="ml-auto h-7 px-3 text-[0.6875rem] font-semibold"
+                      className="ml-auto h-7 px-3 text-xs font-semibold"
                       onClick={() => {
                         setEditingPlan((value) => !value)
                         setDueDate(current.execution?.dueDate || '')
@@ -460,7 +460,7 @@ export function TaskDetailDialog({
                 {editingPlan && canEditPlan ? (
                   <div className="grid gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_1fr_auto]">
                     <div className="flex flex-col gap-1">
-                      <Label className="text-[0.625rem]">截止日期</Label>
+                      <Label className="text-2xs">截止日期</Label>
                       <Input
                         className="text-xs"
                         type="date"
@@ -469,7 +469,7 @@ export function TaskDetailDialog({
                       />
                     </div>
                     <div className="flex flex-col gap-1">
-                      <Label className="text-[0.625rem]">里程碑</Label>
+                      <Label className="text-2xs">里程碑</Label>
                       <Input
                         className="text-xs"
                         value={milestone}
@@ -477,7 +477,7 @@ export function TaskDetailDialog({
                       />
                     </div>
                     <div className="flex flex-col gap-1">
-                      <Label className="text-[0.625rem]">标签</Label>
+                      <Label className="text-2xs">标签</Label>
                       <Input
                         className="text-xs"
                         value={tags}
@@ -492,20 +492,21 @@ export function TaskDetailDialog({
                 <ul className="flex flex-col divide-y divide-border/60 rounded-lg border border-border">
                   {current.stages.map((item: Stage) => (
                     <li key={item.id}>
-                      <div className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[0.6875rem]">
-                        <span className="w-4 text-[0.625rem] text-muted-foreground">
-                          {item.index}
-                        </span>
+                      <div className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs">
+                        <span className="w-4 text-2xs text-muted-foreground">{item.index}</span>
                         <span
-                          className={`rounded-full px-1.5 py-px text-[0.625rem] font-medium ${stageTone(item.label)}`}
+                          className={cn(
+                            'rounded-full px-1.5 py-px text-2xs font-medium',
+                            stageTone(item.label),
+                          )}
                         >
                           {item.label}
                         </span>
-                        <span className="ml-auto text-[0.625rem] text-muted-foreground">
+                        <span className="ml-auto text-2xs text-muted-foreground">
                           {stageSourceLabel(item)}
                         </span>
                         <span
-                          className="max-w-[45%] truncate text-[0.625rem] text-muted-foreground"
+                          className="max-w-[45%] truncate text-2xs text-muted-foreground"
                           title={item.evidence}
                         >
                           {item.evidence || '等待执行'}
@@ -519,16 +520,14 @@ export function TaskDetailDialog({
               {current.execution?.blockedBy ? (
                 <section className="flex flex-col gap-1.5">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-[0.6875rem] font-semibold text-muted-foreground">
-                      风险与依赖
-                    </h3>
-                    <span className="text-[0.625rem] text-muted-foreground">
+                    <h3 className="text-xs font-semibold text-muted-foreground">风险与依赖</h3>
+                    <span className="text-2xs text-muted-foreground">
                       {dependencyStateText(current)}
                     </span>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div className="flex flex-col gap-1">
-                      <h4 className="text-[0.625rem] font-semibold text-muted-foreground">
+                      <h4 className="text-2xs font-semibold text-muted-foreground">
                         Blocked by / 被谁阻断
                       </h4>
                       {(current.execution.blockedBy || []).length ? (
@@ -548,13 +547,11 @@ export function TaskDetailDialog({
                           />
                         ))
                       ) : (
-                        <p className="text-[0.65625rem] text-muted-foreground">
-                          当前没有活动阻断。
-                        </p>
+                        <p className="text-2xs text-muted-foreground">当前没有活动阻断。</p>
                       )}
                     </div>
                     <div className="flex flex-col gap-1">
-                      <h4 className="text-[0.625rem] font-semibold text-muted-foreground">
+                      <h4 className="text-2xs font-semibold text-muted-foreground">
                         Blocks / 阻断了谁
                       </h4>
                       {(current.execution.blocks || []).length ? (
@@ -562,7 +559,7 @@ export function TaskDetailDialog({
                           <DependencyItem key={item.id} item={item} relation="blocks" disabled />
                         ))
                       ) : (
-                        <p className="text-[0.65625rem] text-muted-foreground">
+                        <p className="text-2xs text-muted-foreground">
                           这个任务目前没有阻断其他任务。
                         </p>
                       )}
@@ -570,7 +567,7 @@ export function TaskDetailDialog({
                   </div>
                   {(current.execution.resolvedBlockedBy || []).length ||
                   (current.execution.resolvedBlocks || []).length ? (
-                    <details className="rounded-lg border border-border px-2.5 py-1.5 text-[0.65625rem] text-muted-foreground">
+                    <details className="rounded-lg border border-border px-2.5 py-1.5 text-2xs text-muted-foreground">
                       <summary className="cursor-pointer">
                         已解除依赖：曾被阻断 {(current.execution.resolvedBlockedBy || []).length} 项
                         · 曾阻断其他任务 {(current.execution.resolvedBlocks || []).length} 项
@@ -620,9 +617,9 @@ export function TaskDetailDialog({
               ) : null}
 
               <section className="flex flex-col gap-1.5">
-                <h3 className="text-[0.6875rem] font-semibold text-muted-foreground">任务产物</h3>
+                <h3 className="text-xs font-semibold text-muted-foreground">任务产物</h3>
                 {loading && !artifacts.length ? (
-                  <p className="text-[0.6875rem] text-muted-foreground">任务产物正在读取…</p>
+                  <p className="text-xs text-muted-foreground">任务产物正在读取…</p>
                 ) : artifacts.length ? (
                   <div className="flex flex-col gap-1">
                     {artifacts.map(({ key, label, hint, artifact: entry }) => (
@@ -632,21 +629,21 @@ export function TaskDetailDialog({
                         className="h-auto items-start justify-start gap-2 rounded-lg bg-muted px-2.5 py-2 text-left hover:bg-muted/70"
                         onClick={() => setArtifact({ label, entry })}
                       >
-                        <span className="flex size-6 items-center justify-center rounded bg-card text-[0.5625rem] font-bold text-muted-foreground">
+                        <span className="flex size-6 items-center justify-center rounded bg-card text-2xs font-bold text-muted-foreground">
                           MD
                         </span>
                         <span className="flex min-w-0 flex-col">
-                          <b className="text-[0.71875rem] font-semibold">{label}</b>
-                          <small className="truncate text-[0.625rem] text-muted-foreground">
+                          <b className="text-xs font-semibold">{label}</b>
+                          <small className="truncate text-2xs text-muted-foreground">
                             {hint} · {entry?.path?.split('/').pop()}
                           </small>
                         </span>
-                        <span className="ml-auto text-[0.625rem] text-primary">查看</span>
+                        <span className="ml-auto text-2xs text-primary">查看</span>
                       </Button>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-[0.6875rem] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     这个任务没有可读取的 Markdown 产物。
                   </p>
                 )}
@@ -683,7 +680,7 @@ export function TaskDetailDialog({
                 </Button>
               </div>
               {listenerBlocked ? (
-                <p className="text-[0.65625rem] text-warning" role="status">
+                <p className="text-2xs text-warning" role="status">
                   {commandState.reason}
                 </p>
               ) : null}
@@ -696,7 +693,7 @@ export function TaskDetailDialog({
       </Dialog>
 
       <Dialog open={Boolean(artifact)} onOpenChange={(value) => !value && setArtifact(null)}>
-        <DialogContent className="sm:max-w-[51.25rem]" initialFocus={artifactHeaderRef}>
+        <DialogContent className="sm:max-w-205" initialFocus={artifactHeaderRef}>
           <DialogHeader ref={artifactHeaderRef} tabIndex={-1} className="outline-none">
             <DialogTitle className="text-base">工件查看 · {artifact?.label}</DialogTitle>
             <DialogDescription>{artifact?.entry?.path}</DialogDescription>

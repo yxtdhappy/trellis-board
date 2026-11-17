@@ -193,9 +193,7 @@ export function ArchiveSyncTab() {
               <label className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2">
                 <span>
                   <strong className="block text-xs font-medium">启用后台同步</strong>
-                  <span className="text-[0.6875rem] text-muted-foreground">
-                    关闭后仍可手动立即同步。
-                  </span>
+                  <span className="text-xs text-muted-foreground">关闭后仍可手动立即同步。</span>
                 </span>
                 <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="启用归档同步" />
               </label>
@@ -209,7 +207,7 @@ export function ArchiveSyncTab() {
                   onChange={(event) => setIntervalSeconds(event.target.value)}
                 />
               </Field>
-              <p className="text-[0.6875rem] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 最近保存 {formatTime(overview.config.updatedAt)}
               </p>
               <Button size="sm" type="submit" className="self-start" disabled={sync.busy}>
@@ -311,7 +309,7 @@ export function ArchiveSyncTab() {
                     hint="只用于精确匹配的 SSH 来源。"
                   >
                     <Textarea
-                      className="min-h-28 font-mono text-[0.6875rem]"
+                      className="min-h-28 font-mono text-xs"
                       autoComplete="off"
                       required={!editing}
                       value={draft.privateKey}
@@ -325,7 +323,7 @@ export function ArchiveSyncTab() {
                     hint="必须包含该主机和端口对应的完整 known_hosts 行。"
                   >
                     <Textarea
-                      className="min-h-24 font-mono text-[0.6875rem]"
+                      className="min-h-24 font-mono text-xs"
                       required={!editing}
                       value={draft.knownHostsText}
                       onChange={(event) =>
@@ -357,7 +355,7 @@ export function ArchiveSyncTab() {
             kicker="ARCHIVE / ORIGINS"
             title="远端来源凭据"
             action={
-              <span className="text-[0.6875rem] font-semibold text-muted-foreground">
+              <span className="text-xs font-semibold text-muted-foreground">
                 {overview.credentials.length}
               </span>
             }
@@ -407,11 +405,11 @@ export function ArchiveSyncTab() {
                         <StatusPill value={credential.scheme.toUpperCase()} />
                         <StatusPill value="已配置" />
                       </div>
-                      <p className="truncate text-[0.6875rem] text-muted-foreground">
+                      <p className="truncate text-xs text-muted-foreground">
                         <code>{credential.origin}</code> · 更新 {formatTime(credential.updatedAt)}
                       </p>
                       {credential.knownHostsFingerprints.length ? (
-                        <p className="truncate text-[0.625rem] text-muted-foreground">
+                        <p className="truncate text-2xs text-muted-foreground">
                           主机指纹 {credential.knownHostsFingerprints[0].fingerprint}
                         </p>
                       ) : null}
@@ -485,8 +483,8 @@ export function ArchiveSyncTab() {
                 >
                   <div className="flex flex-wrap items-center gap-1.5">
                     <StatusPill value={log.phase} />
-                    <code className="text-[0.6875rem] text-destructive">{log.errorCode}</code>
-                    <span className="ml-auto text-[0.625rem] text-muted-foreground">
+                    <code className="text-xs text-destructive">{log.errorCode}</code>
+                    <span className="ml-auto text-2xs text-muted-foreground">
                       {formatTime(log.createdAt)}
                     </span>
                   </div>
@@ -495,9 +493,7 @@ export function ArchiveSyncTab() {
               ))
             )}
             {sync.logsLoading ? (
-              <p className="py-2 text-center text-[0.6875rem] text-muted-foreground">
-                正在读取日志…
-              </p>
+              <p className="py-2 text-center text-xs text-muted-foreground">正在读取日志…</p>
             ) : null}
           </DialogBody>
           <DialogFooter>
@@ -554,11 +550,11 @@ function TaskSpaceRow({
           <strong className="truncate text-xs font-medium">{taskSpace.projectName}</strong>
           <StatusPill value={taskSpace.branchName} />
           <StatusPill value={statusLabel(taskSpace.status)} />
-          <span className="text-[0.625rem] text-muted-foreground">
+          <span className="text-2xs text-muted-foreground">
             {credentialStateLabel(taskSpace.credentialState)}
           </span>
         </div>
-        <div className="grid gap-x-4 gap-y-0.5 text-[0.6875rem] text-muted-foreground sm:grid-cols-2">
+        <div className="grid gap-x-4 gap-y-0.5 text-xs text-muted-foreground sm:grid-cols-2">
           <span>
             最近更新：{taskSpace.lastIndexedAt ? formatTime(taskSpace.lastIndexedAt) : '尚未更新'}
           </span>
@@ -576,16 +572,12 @@ function TaskSpaceRow({
           </span>
         </div>
         {taskSpace.nextAttemptAt ? (
-          <p className="text-[0.625rem] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             下次自动尝试：{formatTime(taskSpace.nextAttemptAt)}
           </p>
         ) : null}
         {taskSpace.lastError ? (
-          <p
-            className={
-              failed ? 'text-[0.625rem] text-destructive' : 'text-[0.625rem] text-muted-foreground'
-            }
-          >
+          <p className={failed ? 'text-2xs text-destructive' : 'text-2xs text-muted-foreground'}>
             {taskSpace.lastError}
           </p>
         ) : null}

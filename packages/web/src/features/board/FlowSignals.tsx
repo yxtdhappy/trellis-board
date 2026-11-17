@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import type { BoardTask } from './task-view.ts'
 import { recommendedTask } from './task-view.ts'
+import { cn } from '@/lib/utils'
 
 type FlowSignalsProps = {
   tasks: BoardTask[]
@@ -52,13 +53,13 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
     <section className="flex flex-col gap-2.5 rounded-xl border border-border bg-card p-3">
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0">
-          <p className="text-[0.625rem] font-semibold tracking-[0.08em] text-muted-foreground">
+          <p className="text-2xs font-semibold tracking-[0.08em] text-muted-foreground">
             FLOW / 个人承载
           </p>
-          <h2 className="text-[0.90625rem] leading-5 font-semibold font-heading">流动信号</h2>
+          <h2 className="text-sm leading-5 font-semibold font-heading">流动信号</h2>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
-          <label className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             WIP 软上限
             <Input
               className="h-7 w-14 text-xs"
@@ -71,7 +72,7 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
           <Button
             variant="outline"
             size="sm"
-            className="h-7 text-[0.6875rem]"
+            className="h-7 text-xs"
             onClick={save}
             disabled={saving}
           >
@@ -108,7 +109,7 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
         />
       </div>
 
-      <p className="text-[0.6875rem] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         焦点建议 ·{' '}
         {nextUp ? (
           <b className="font-medium text-foreground">{nextUp.title}</b>
@@ -139,14 +140,14 @@ type SignalProps = {
 function Signal({ label, value, suffix, caption, tone }: SignalProps) {
   return (
     <div className="rounded-lg border border-border/70 bg-muted/40 px-2.5 py-2">
-      <p className="text-[0.65625rem] text-muted-foreground">{label}</p>
-      <p className={`text-[1.1875rem] leading-6 font-semibold font-heading ${TONES[tone]}`}>
+      <p className="text-2xs text-muted-foreground">{label}</p>
+      <p className={cn('text-xl leading-6 font-semibold font-heading', TONES[tone])}>
         {value}
         {suffix ? (
-          <span className="text-[0.6875rem] font-normal text-muted-foreground">{suffix}</span>
+          <span className="text-xs font-normal text-muted-foreground">{suffix}</span>
         ) : null}
       </p>
-      <p className="text-[0.625rem] text-muted-foreground">{caption}</p>
+      <p className="text-2xs text-muted-foreground">{caption}</p>
     </div>
   )
 }

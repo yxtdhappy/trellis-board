@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { Separator } from '@/components/ui/separator'
 import { Pagination } from './Pagination.tsx'
 import { SelectField } from './SelectField.tsx'
 import { branchLabel, dueLabel, initials, type BoardTask } from './task-view.ts'
 import { priorityTone, stageTone, statusLabel } from './tone.ts'
 import { branchMatches } from '@/lib/execution-filter.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
+import { cn } from '@/lib/utils'
 import type { BoardFilters } from '@/hooks/useBoard'
 
 type TeamViewProps = {
@@ -100,25 +102,26 @@ export function TeamView({
 
   return (
     <div className="flex min-h-0 flex-1 gap-3">
-      <aside className="flex w-[16.75rem] shrink-0 flex-col gap-2.5 overflow-y-auto rounded-xl border border-border bg-card p-3">
+      <aside className="flex w-67 shrink-0 flex-col gap-2.5 overflow-y-auto rounded-xl border border-border bg-card p-3">
         <div className="flex flex-col gap-1">
-          <h2 className="text-[0.8125rem] font-semibold font-heading">跨项目查询</h2>
-          <p className="text-[0.65625rem] text-muted-foreground">筛选条件即时生效</p>
+          <h2 className="text-sm font-semibold font-heading">跨项目查询</h2>
+          <p className="text-2xs text-muted-foreground">筛选条件即时生效</p>
         </div>
 
-        <div className="border-t border-border/60 pt-2">
-          <p className="text-[0.65625rem] font-semibold text-muted-foreground">按负责人统计</p>
+        <Separator className="mb-2" />
+        <div className="pt-2">
+          <p className="text-2xs font-semibold text-muted-foreground">按负责人统计</p>
           <ul className="mt-1.5 flex flex-col gap-1.5">
             {owners.length === 0 ? (
-              <li className="text-[0.65625rem] text-muted-foreground">暂无任务</li>
+              <li className="text-2xs text-muted-foreground">暂无任务</li>
             ) : (
               owners.map(([owner, count]) => (
                 <li key={owner} className="flex items-center gap-2">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-secondary text-[0.5rem] font-semibold text-muted-foreground">
+                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-secondary text-2xs font-semibold text-muted-foreground">
                     {initials(owner)}
                   </span>
-                  <span className="truncate text-[0.6875rem]">{owner}</span>
-                  <span className="ml-auto flex w-[5.25rem] shrink-0 items-center justify-end gap-1">
+                  <span className="truncate text-xs">{owner}</span>
+                  <span className="ml-auto flex w-21 shrink-0 items-center justify-end gap-1">
                     <span className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
                       <span
                         className="block h-full rounded-full bg-primary"
@@ -127,7 +130,7 @@ export function TeamView({
                         }}
                       />
                     </span>
-                    <span className="w-4 shrink-0 text-right text-[0.65625rem] tabular-nums text-muted-foreground">
+                    <span className="w-4 shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
                       {count}
                     </span>
                   </span>
@@ -137,7 +140,8 @@ export function TeamView({
           </ul>
         </div>
 
-        <div className="flex flex-col gap-1.5 border-t border-border/60 pt-2">
+        <Separator className="mb-2" />
+        <div className="flex flex-col gap-1.5 pt-2">
           <SelectField
             ariaLabel="项目"
             className="text-xs"
@@ -148,7 +152,7 @@ export function TeamView({
             ]}
             onChange={(next) => onChange({ projectId: next })}
           />
-          <label className="flex items-center gap-1.5 text-[0.71875rem] text-muted-foreground">
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             分支
             <Input
               className="min-w-0 flex-1 text-xs"
@@ -204,13 +208,11 @@ export function TeamView({
       <section className="flex min-h-0 flex-1 flex-col gap-2 rounded-xl border border-border bg-card p-3">
         <div className="flex flex-wrap items-center gap-2">
           <div className="min-w-0">
-            <p className="text-[0.625rem] font-semibold tracking-[0.08em] text-muted-foreground">
+            <p className="text-2xs font-semibold tracking-[0.08em] text-muted-foreground">
               TEAM CAPACITY
             </p>
-            <h1 className="text-[1.0625rem] leading-6 font-semibold font-heading">
-              谁在推进，谁需要帮助
-            </h1>
-            <p className="text-[0.6875rem] text-muted-foreground">
+            <h1 className="text-lg leading-6 font-semibold font-heading">谁在推进，谁需要帮助</h1>
+            <p className="text-xs text-muted-foreground">
               {summary || '任务按负责人归集；阶段与风险来自任务产物和人工检查点。'}
             </p>
           </div>
@@ -233,7 +235,7 @@ export function TeamView({
         ) : (
           <div className="min-h-0 flex-1 overflow-auto">
             <table className="w-full border-collapse text-left">
-              <thead className="sticky top-0 bg-muted text-[0.65625rem] text-muted-foreground">
+              <thead className="sticky top-0 bg-muted text-2xs text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 font-semibold">任务</th>
                   <th className="px-3 py-2 font-semibold">负责人</th>
@@ -248,7 +250,7 @@ export function TeamView({
                   <tr>
                     <td
                       colSpan={6}
-                      className="px-3 py-10 text-center text-[0.71875rem] text-muted-foreground"
+                      className="px-3 py-10 text-center text-xs text-muted-foreground"
                     >
                       团队视图没有可展示的任务
                     </td>
@@ -264,41 +266,45 @@ export function TeamView({
                     return (
                       <tr
                         key={taskInstanceKey(task)}
-                        className="cursor-pointer border-b border-border/60 text-[0.71875rem] hover:bg-muted/40"
+                        className="cursor-pointer border-b border-border/60 text-xs hover:bg-muted/40"
                         onClick={() => onOpen(task)}
                       >
                         <td className="px-3 py-2">
                           <span className="block font-medium">{task.title}</span>
-                          <small className="text-[0.625rem] text-muted-foreground">
+                          <small className="text-2xs text-muted-foreground">
                             #{task.dirName} · {projectLabel}
                           </small>
                         </td>
                         <td className="px-3 py-2">
                           <span className="flex items-center gap-1.5">
-                            <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-[0.5rem] font-semibold">
+                            <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-2xs font-semibold">
                               {initials(task.assignee)}
                             </span>
                             {task.assignee || '未派发'}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-[0.6875rem] text-muted-foreground">
-                          {projectLabel}
-                        </td>
+                        <td className="px-3 py-2 text-xs text-muted-foreground">{projectLabel}</td>
                         <td className="px-3 py-2 whitespace-nowrap">
                           <span
-                            className={`rounded-full px-1.5 py-px text-[0.625rem] font-medium ${stageTone(stageLabel)}`}
+                            className={cn(
+                              'rounded-full px-1.5 py-px text-2xs font-medium',
+                              stageTone(stageLabel),
+                            )}
                           >
                             {stageLabel || statusLabel(task.stage || task.status) || '未开始'}
                           </span>
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">
                           <span
-                            className={`rounded-full px-1.5 py-px text-[0.625rem] font-semibold ${priorityTone(task.priority)}`}
+                            className={cn(
+                              'rounded-full px-1.5 py-px text-2xs font-semibold',
+                              priorityTone(task.priority),
+                            )}
                           >
                             {task.priority || 'P2'}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-right text-[0.65625rem] whitespace-nowrap text-muted-foreground">
+                        <td className="px-3 py-2 text-right text-2xs whitespace-nowrap text-muted-foreground">
                           {dueLabel(task.execution?.dueDate)}
                         </td>
                       </tr>

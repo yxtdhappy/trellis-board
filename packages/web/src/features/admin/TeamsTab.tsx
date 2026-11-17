@@ -4,6 +4,7 @@ import * as admin from '@/api/admin'
 import type { AdminUser, Team, TeamMember } from '@/api/admin'
 import { Button } from '@/components/ui/button'
 import { EmptyRow, Panel, StatusPill, controlClass } from '@/features/admin/shared'
+import { cn } from '@/lib/utils'
 
 export function TeamsTab() {
   const [teams, setTeams] = useState<Team[]>([])
@@ -129,14 +130,15 @@ export function TeamsTab() {
             <button
               key={team.id}
               type="button"
-              className={`flex items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs ${
-                team.id === selectedId ? 'bg-secondary text-foreground' : 'hover:bg-muted'
-              }`}
+              className={cn(
+                'flex items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs',
+                team.id === selectedId ? 'bg-secondary text-foreground' : 'hover:bg-muted',
+              )}
               onClick={() => setSelectedId(team.id)}
             >
               <span className="min-w-0">
                 <span className="block truncate font-medium">{team.name}</span>
-                <span className="block text-[0.65625rem] text-muted-foreground">
+                <span className="block text-2xs text-muted-foreground">
                   {team.memberCount} 名成员 · {team.projectCount} 个项目
                 </span>
               </span>
@@ -168,7 +170,7 @@ export function TeamsTab() {
             <div className="flex flex-wrap items-center gap-1.5">
               <select
                 aria-label="选择用户"
-                className={`${controlClass} max-w-52`}
+                className={cn(controlClass, 'max-w-52')}
                 value={userId}
                 onChange={(event) => setUserId(event.target.value)}
               >
@@ -181,7 +183,7 @@ export function TeamsTab() {
               </select>
               <select
                 aria-label="团队角色"
-                className={`${controlClass} w-28`}
+                className={cn(controlClass, 'w-28')}
                 value={role}
                 onChange={(event) => setRole(event.target.value)}
               >
@@ -205,7 +207,7 @@ export function TeamsTab() {
                 >
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{member.displayName}</span>
-                    <span className="block text-[0.65625rem] text-muted-foreground">
+                    <span className="block text-2xs text-muted-foreground">
                       {member.username} · {member.role === 'admin' ? '团队管理员' : '成员'}
                     </span>
                   </span>

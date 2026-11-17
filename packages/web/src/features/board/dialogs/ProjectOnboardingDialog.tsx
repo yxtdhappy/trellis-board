@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Skeleton } from '@/components/ui/skeleton'
 import { TRELLIS_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import { pickProjectTrellisDevId } from '@/lib/team-client.js'
@@ -197,14 +198,14 @@ function OnboardingSkeleton() {
         正在读取本地仓库信息…
       </p>
       <div className="flex flex-col gap-2 rounded-lg bg-muted/40 p-3">
-        <div className="h-3.5 w-3/4 animate-pulse rounded bg-muted-foreground/15" />
-        <div className="h-3.5 w-1/2 animate-pulse rounded bg-muted-foreground/15" />
-        <div className="h-3.5 w-11/12 animate-pulse rounded bg-muted-foreground/15" />
-        <div className="h-3.5 w-2/3 animate-pulse rounded bg-muted-foreground/15" />
+        <Skeleton className="h-3.5 w-3/4" />
+        <Skeleton className="h-3.5 w-1/2" />
+        <Skeleton className="h-3.5 w-11/12" />
+        <Skeleton className="h-3.5 w-2/3" />
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="h-14 animate-pulse rounded-md bg-muted" />
-        <div className="h-14 animate-pulse rounded-md bg-muted" />
+        <Skeleton className="h-14" />
+        <Skeleton className="h-14" />
       </div>
     </div>
   )
@@ -571,7 +572,7 @@ export function ProjectOnboardingDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[38.75rem]" initialFocus={dialogHeaderRef}>
+      <DialogContent className="sm:max-w-155" initialFocus={dialogHeaderRef}>
         <DialogHeader ref={dialogHeaderRef} tabIndex={-1} className="outline-none">
           <DialogTitle>接入本地 Git 项目</DialogTitle>
           <DialogDescription>
@@ -629,10 +630,8 @@ export function ProjectOnboardingDialog({
                   正在核对当前仓库已有的本地绑定…
                 </p>
               ) : replacedAssociations.length ? (
-                <div className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
-                  <p className="font-medium text-amber-700 dark:text-amber-400">
-                    将替换当前仓库的旧分支绑定
-                  </p>
+                <div className="flex flex-col gap-2 rounded-lg border border-warning/35 bg-warning-soft p-3">
+                  <p className="font-medium text-warning">将替换当前仓库的旧分支绑定</p>
                   <p className="text-muted-foreground">
                     当前目录准备接入 <code>{inspection.branchName}</code>，但本机仍绑定：
                   </p>
@@ -711,7 +710,7 @@ export function ProjectOnboardingDialog({
                     请先检查生成的 `.trellis` 文件，然后手动提交并推送到 `{inspection.branchName}
                     `。客户端不会自动 commit 或 push。
                   </p>
-                  <code className="rounded bg-muted px-2 py-1 text-[0.6875rem]">
+                  <code className="rounded bg-muted px-2 py-1 text-xs">
                     git add .trellis && git commit && git push
                   </code>
                   <Button
@@ -724,13 +723,7 @@ export function ProjectOnboardingDialog({
                     {busy ? '正在检查…' : '检查推送状态'}
                   </Button>
                   {push ? (
-                    <p
-                      className={
-                        pushReady
-                          ? 'text-emerald-700 dark:text-emerald-400'
-                          : 'text-amber-700 dark:text-amber-400'
-                      }
-                    >
+                    <p className={pushReady ? 'text-success' : 'text-warning'}>
                       {stateLabel(push)}
                       {push.dirtySummary ? (
                         <span className="mt-1 block break-words">{push.dirtySummary}</span>
@@ -769,9 +762,7 @@ export function ProjectOnboardingDialog({
                     </>
                   ) : hasDifferences ? (
                     <>
-                      <p className="font-medium text-amber-700 dark:text-amber-400">
-                        本地与服务端的任务需要确认
-                      </p>
+                      <p className="font-medium text-warning">本地与服务端的任务需要确认</p>
                       <p className="text-muted-foreground">
                         服务端独有 {preflight.counts.serverOnly} 个，本地独有{' '}
                         {preflight.counts.localOnly} 个，内容冲突 {preflight.counts.conflicts} 个
@@ -783,9 +774,7 @@ export function ProjectOnboardingDialog({
                     </>
                   ) : (
                     <>
-                      <p className="font-medium text-emerald-700 dark:text-emerald-400">
-                        双方任务一致，可以安全接入
-                      </p>
+                      <p className="font-medium text-success">双方任务一致，可以安全接入</p>
                       <p className="text-muted-foreground">
                         服务端版本 {preflight.revision}，没有需要额外处理的差异。
                       </p>
@@ -801,7 +790,7 @@ export function ProjectOnboardingDialog({
             </p>
           ) : null}
           {!preflight && !message && preflightBlockedReason ? (
-            <p id="onboard-preflight-reason" className="text-xs text-amber-700 dark:text-amber-400">
+            <p id="onboard-preflight-reason" className="text-xs text-warning">
               {preflightBlockedReason}
             </p>
           ) : null}

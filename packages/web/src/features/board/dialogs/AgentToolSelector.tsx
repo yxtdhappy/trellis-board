@@ -68,7 +68,7 @@ export function AgentToolSelector({
                 />
                 <span>{tool.label}</span>
                 {existing ? (
-                  <span className="ml-auto text-[0.625rem] text-muted-foreground">已初始化</span>
+                  <span className="ml-auto text-2xs text-muted-foreground">已初始化</span>
                 ) : null}
               </label>
             )

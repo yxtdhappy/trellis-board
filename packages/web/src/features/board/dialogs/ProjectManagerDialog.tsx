@@ -113,13 +113,13 @@ export function ProjectManagerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[40rem]">
+      <DialogContent className="sm:max-w-160">
         <DialogHeader>
           <DialogTitle>管理看板项目</DialogTitle>
           <DialogDescription>选择文件夹纳入看板，项目名称自动使用文件夹名称。</DialogDescription>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-2">
-          <p className="text-[0.6875rem] font-semibold text-muted-foreground">已纳入看板</p>
+          <p className="text-xs font-semibold text-muted-foreground">已纳入看板</p>
           {rows.length === 0 ? (
             <p className="rounded-lg bg-muted px-3 py-6 text-center text-xs text-muted-foreground">
               还没有项目
@@ -132,7 +132,7 @@ export function ProjectManagerDialog({
               >
                 <div className="flex min-w-0 flex-col gap-0.5">
                   <span className="truncate text-xs font-semibold">{row.name || row.id}</span>
-                  <span className="truncate text-[0.625rem] text-muted-foreground">{row.path}</span>
+                  <span className="truncate text-2xs text-muted-foreground">{row.path}</span>
                 </div>
                 <Button
                   variant="ghost"
@@ -172,7 +172,7 @@ export function ProjectManagerDialog({
               添加路径
             </Button>
           </div>
-          <p className="text-[0.65625rem] leading-5 text-muted-foreground">
+          <p className="text-2xs leading-5 text-muted-foreground">
             只读取仓库元数据与 Trellis 配置，不会修改项目文件。文件夹选择器依赖 Windows 桌面，
             其他环境可直接填写绝对路径。
           </p>

@@ -1,4 +1,5 @@
 import { controlClass } from '@/features/admin/shared'
+import { cn } from '@/lib/utils'
 
 type TeamOption = {
   id: string
@@ -25,11 +26,11 @@ export function TeamSwitcher({
   if (!teams.length || (!includeAll && teams.length === 1)) return null
 
   return (
-    <label className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
+    <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
       <span className="hidden sm:inline">团队</span>
       <select
         aria-label={ariaLabel}
-        className={`${controlClass} w-auto min-w-28`}
+        className={cn(controlClass, 'w-auto min-w-28')}
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}

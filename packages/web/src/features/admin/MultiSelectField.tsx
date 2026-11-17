@@ -87,7 +87,7 @@ export function MultiSelectField({
               <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
                 <span className="truncate">{option.label}</span>
                 {lockedValues.includes(option.value) ? (
-                  <span className="shrink-0 text-[0.625rem] text-muted-foreground">已接入</span>
+                  <span className="shrink-0 text-2xs text-muted-foreground">已接入</span>
                 ) : null}
               </span>
             </DropdownMenuCheckboxItem>

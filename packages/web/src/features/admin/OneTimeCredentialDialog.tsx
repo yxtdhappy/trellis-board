@@ -42,9 +42,9 @@ export function OneTimeCredentialDialog({
         if (!open) close()
       }}
     >
-      <DialogContent className="sm:max-w-[35rem]">
+      <DialogContent className="sm:max-w-140">
         <DialogHeader className="gap-1">
-          <p className="text-[0.625rem] font-semibold tracking-[0.2em] text-muted-foreground">
+          <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
             SHOWN ONCE
           </p>
           <DialogTitle>{credential?.title || '一次性凭证'}</DialogTitle>
@@ -54,7 +54,7 @@ export function OneTimeCredentialDialog({
           <code className="block overflow-x-auto rounded-lg bg-muted px-3 py-3 text-sm font-semibold break-all text-foreground">
             {credential?.value}
           </code>
-          <p className="text-[0.625rem] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             页面不会写入 localStorage、sessionStorage 或 URL。
           </p>
         </DialogBody>

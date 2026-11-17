@@ -15,6 +15,7 @@ import {
 import { errorMessage, invoke, listen } from '@/desktop/tauri'
 import { SelectField } from '@/features/board/SelectField'
 import { createRefreshCoordinator } from '@/lib/refresh-coordinator.js'
+import { cn } from '@/lib/utils'
 
 const MonacoDiff = lazy(() => import('./MonacoDiff.tsx'))
 
@@ -210,8 +211,8 @@ function DiffFileFallback({ file }: { file: DiffFile }) {
           { label: '服务端版本', content: file.serverContent },
         ].map((side) => (
           <section key={side.label}>
-            <strong className="text-[0.6875rem] text-muted-foreground">{side.label}</strong>
-            <pre className="mt-1 max-h-[13.75rem] overflow-auto rounded-md bg-background/60 p-2 text-[0.6875rem] leading-5 whitespace-pre-wrap break-words">
+            <strong className="text-xs text-muted-foreground">{side.label}</strong>
+            <pre className="mt-1 max-h-55 overflow-auto rounded-md bg-background/60 p-2 text-xs leading-5 whitespace-pre-wrap break-words">
               {side.content ?? '该文件在对应版本中不存在'}
             </pre>
           </section>
@@ -260,15 +261,16 @@ function DiffViewer({ files }: { files: DiffFile[] }) {
               key={`${item.path ?? 'file'}:${position}`}
               type="button"
               aria-pressed={position === index}
-              className={`flex min-w-0 flex-col rounded-md px-2 py-1.5 text-left text-xs ${
+              className={cn(
+                'flex min-w-0 flex-col rounded-md px-2 py-1.5 text-left text-xs',
                 position === index
                   ? 'bg-muted text-foreground'
-                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-              }`}
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+              )}
               onClick={() => setActiveIndex(position)}
             >
               <span className="truncate font-medium">{item.path ?? '未知文件'}</span>
-              {itemSource ? <span className="truncate text-[0.6875rem]">{itemSource}</span> : null}
+              {itemSource ? <span className="truncate text-xs">{itemSource}</span> : null}
             </button>
           )
         })}
@@ -630,7 +632,7 @@ export function LiveSyncControlDialog() {
     >
       <DialogContent className="max-h-[85vh] sm:max-w-[min(72rem,92vw)]">
         <DialogHeader>
-          <p className="text-[0.625rem] font-semibold tracking-[0.2em] text-muted-foreground">
+          <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
             团队实时同步
           </p>
           <DialogTitle>{title}</DialogTitle>

@@ -64,7 +64,7 @@ export function ResetPasswordDialog({
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader className="gap-1">
-          <p className="text-[0.625rem] font-semibold tracking-[0.2em] text-muted-foreground">
+          <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
             ACCOUNT / PASSWORD
           </p>
           <DialogTitle>重置密码</DialogTitle>
@@ -97,7 +97,7 @@ export function ResetPasswordDialog({
               />
             </Field>
             {error ? (
-              <p role="alert" className="text-[0.6875rem] text-destructive">
+              <p role="alert" className="text-xs text-destructive">
                 {error}
               </p>
             ) : null}

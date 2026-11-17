@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "样式只用 Tailwind token 类、components/ui 是 shadcn 原语不手工改的约束来源"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "对话框壳层（单 DialogBody 滚动 + fixed header/footer）、Select 弹层宽度、滚动条细化的既有契约"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "web 端 typecheck/oxfmt/oxlint 验证基线与禁止 any"}
+{"file": ".trellis/tasks/11-17-unify-web-type-scale/design.md", "reason": "字号/尺寸映射机制、行高取舍、切片划分与风险清单"}

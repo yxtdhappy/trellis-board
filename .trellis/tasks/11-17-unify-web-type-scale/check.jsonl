@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "核对样式是否只落在 token 类、ui 原语未被修改"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "核对对话框结构、Select 弹层与滚动行为未被样式改动破坏"}
+{"file": ".trellis/tasks/11-17-unify-web-type-scale/prd.md", "reason": "逐条核对 R1–R8 与验收标准"}

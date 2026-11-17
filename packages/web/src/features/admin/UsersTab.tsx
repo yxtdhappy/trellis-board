@@ -126,11 +126,9 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                 />
               </Field>
               <div className="flex flex-col gap-1.5">
-                <span className="text-[0.6875rem] font-medium text-muted-foreground">所属团队</span>
+                <span className="text-xs font-medium text-muted-foreground">所属团队</span>
                 {teams.length === 0 ? (
-                  <p className="text-[0.6875rem] text-muted-foreground">
-                    暂无团队，可先建号后补配。
-                  </p>
+                  <p className="text-xs text-muted-foreground">暂无团队，可先建号后补配。</p>
                 ) : (
                   <div className="flex flex-col gap-1.5 rounded-lg border border-border p-2">
                     {teams.map((team) => (
@@ -187,9 +185,7 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
           kicker="TEAM ACCOUNTS"
           title="团队账号"
           action={
-            <span className="text-[0.6875rem] font-semibold text-muted-foreground">
-              {users.length}
-            </span>
+            <span className="text-xs font-semibold text-muted-foreground">{users.length}</span>
           }
         >
           <div className="flex flex-col">
@@ -245,21 +241,21 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                         </strong>
                         <StatusPill value={user.status} />
                         {user.systemAdmin ? (
-                          <span className="text-[0.625rem] font-semibold text-muted-foreground">
+                          <span className="text-2xs font-semibold text-muted-foreground">
                             系统管理员
                           </span>
                         ) : null}
                       </div>
-                      <p className="truncate text-[0.625rem] text-muted-foreground">
+                      <p className="truncate text-2xs text-muted-foreground">
                         <code>{user.username}</code> · ID <code>{user.id}</code>
                       </p>
-                      <p className="truncate text-[0.625rem] text-muted-foreground">
+                      <p className="truncate text-2xs text-muted-foreground">
                         团队{' '}
                         {user.teams.length
                           ? user.teams.map((team) => team.name).join('、')
                           : '未分配'}
                       </p>
-                      <p className="truncate text-[0.625rem] text-muted-foreground">
+                      <p className="truncate text-2xs text-muted-foreground">
                         最近改密 {formatTime(user.passwordChangedAt)} · 创建{' '}
                         {formatTime(user.createdAt)}
                       </p>

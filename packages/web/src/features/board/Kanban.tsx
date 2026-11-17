@@ -4,6 +4,7 @@ import type { BoardTask } from './task-view.ts'
 import { laneForTask, nextStage, STAGE_LANES, taskProgress } from './task-view.ts'
 import { CopyTaskNameButton, TaskCard } from './TaskCard.tsx'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
+import { cn } from '@/lib/utils'
 
 type KanbanProps = {
   groups: { key: string; parent: BoardTask; members: BoardTask[] }[]
@@ -15,11 +16,11 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-baseline gap-2">
-        <p className="text-[0.625rem] font-semibold tracking-[0.08em] text-muted-foreground">
+        <p className="text-2xs font-semibold tracking-[0.08em] text-muted-foreground">
           FLOW / 四个决策槽位
         </p>
-        <h2 className="text-[0.90625rem] leading-5 font-semibold font-heading">轻量 Kanban</h2>
-        <span className="ml-auto text-[0.65625rem] text-muted-foreground">
+        <h2 className="text-sm leading-5 font-semibold font-heading">轻量 Kanban</h2>
+        <span className="ml-auto text-2xs text-muted-foreground">
           列只表达决策状态，不表达进度百分比 · 共 {groups.length} 组任务
         </span>
       </div>
@@ -33,17 +34,20 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
             >
               <header className="flex items-center gap-1.5">
                 <span
-                  className={`size-1.5 rounded-full ${laneTone(lane.id).split(' ')[0]}`}
+                  className={cn('size-1.5 rounded-full', laneTone(lane.id).split(' ')[0])}
                   aria-hidden="true"
                 />
-                <h3 className="text-[0.78125rem] font-semibold">
-                  <span className="mr-1 text-[0.625rem] text-muted-foreground">
+                <h3 className="text-xs font-semibold">
+                  <span className="mr-1 text-2xs text-muted-foreground">
                     {String(laneIndex + 1).padStart(2, '0')}
                   </span>
                   {lane.label}
                 </h3>
                 <span
-                  className={`rounded-full px-1.5 py-px text-[0.625rem] font-semibold ${laneTone(lane.id)}`}
+                  className={cn(
+                    'rounded-full px-1.5 py-px text-2xs font-semibold',
+                    laneTone(lane.id),
+                  )}
                 >
                   {laneGroups.length}
                 </span>
@@ -52,7 +56,7 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
               <ScrollArea className="min-h-0 flex-1">
                 <div className="flex flex-col gap-2 pr-1">
                   {laneGroups.length === 0 ? (
-                    <p className="rounded-lg border border-dashed border-border/70 px-2 py-3 text-[0.65625rem] text-muted-foreground">
+                    <p className="rounded-lg border border-dashed border-border/70 px-2 py-3 text-2xs text-muted-foreground">
                       {lane.hint} · 当前无任务
                     </p>
                   ) : (
@@ -75,7 +79,7 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
                           key={group.key}
                           className="flex flex-col gap-1.5 rounded-lg bg-background/40 p-1.5"
                         >
-                          <div className="flex items-center justify-between px-1 text-[0.59375rem] text-muted-foreground">
+                          <div className="flex items-center justify-between px-1 text-2xs text-muted-foreground">
                             <span className="truncate">
                               父任务 ·{' '}
                               {group.parent.teamName
@@ -87,7 +91,7 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
                           <TaskCard task={group.parent} onOpen={onOpen} onEditPlan={onEditPlan} />
                           {children.length ? (
                             <div className="flex flex-col gap-0.5 pl-1">
-                              <p className="px-1 text-[0.59375rem] text-muted-foreground">子任务</p>
+                              <p className="px-1 text-2xs text-muted-foreground">子任务</p>
                               {children.map((child) => {
                                 const progress = taskProgress(child)
                                 return (
@@ -98,7 +102,7 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
                                     <button
                                       type="button"
                                       onClick={() => onOpen(child)}
-                                      className="flex min-w-0 flex-1 items-center gap-2 py-1 pr-1 pl-1.5 text-left text-[0.65625rem]"
+                                      className="flex min-w-0 flex-1 items-center gap-2 py-1 pr-1 pl-1.5 text-left text-2xs"
                                     >
                                       <span
                                         className="size-1 rounded-full bg-border"
@@ -106,14 +110,14 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
                                       />
                                       <span className="flex min-w-0 flex-col">
                                         <b className="truncate font-medium">{child.title}</b>
-                                        <small className="truncate text-[0.59375rem] text-muted-foreground">
+                                        <small className="truncate text-2xs text-muted-foreground">
                                           {child.teamName
                                             ? `${child.teamName} · ${child.projectName}`
                                             : child.projectName}{' '}
                                           · {child.status}
                                         </small>
                                       </span>
-                                      <span className="ml-auto whitespace-nowrap text-[0.59375rem] text-muted-foreground">
+                                      <span className="ml-auto whitespace-nowrap text-2xs text-muted-foreground">
                                         {nextStage(child)?.label} · {progress.percent}%
                                       </span>
                                     </button>

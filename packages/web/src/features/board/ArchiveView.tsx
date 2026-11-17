@@ -125,10 +125,10 @@ export function ArchiveView({
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0">
-          <h1 className="text-[1.1875rem] leading-6 font-semibold font-heading">
+          <h1 className="text-lg leading-6 font-semibold font-heading">
             归档后离开当前队列，只保留历史证据
           </h1>
-          <p className="text-[0.71875rem] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             working commit → 原子归档 → journal；历史任务只读回看。
           </p>
         </div>
@@ -235,7 +235,7 @@ export function ArchiveView({
       >
         <ScrollArea className="h-full">
           <table className="w-full border-collapse text-left">
-            <thead className="sticky top-0 bg-muted text-[0.65625rem] text-muted-foreground">
+            <thead className="sticky top-0 bg-muted text-2xs text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-semibold">任务</th>
                 <th className="px-3 py-2 font-semibold">负责人</th>
@@ -247,19 +247,13 @@ export function ArchiveView({
             <tbody>
               {teamMode && archive.loading && visible.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={5}
-                    className="px-3 py-10 text-center text-[0.71875rem] text-muted-foreground"
-                  >
+                  <td colSpan={5} className="px-3 py-10 text-center text-xs text-muted-foreground">
                     正在加载归档任务
                   </td>
                 </tr>
               ) : visible.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={5}
-                    className="px-3 py-10 text-center text-[0.71875rem] text-muted-foreground"
-                  >
+                  <td colSpan={5} className="px-3 py-10 text-center text-xs text-muted-foreground">
                     没有符合条件的归档任务
                   </td>
                 </tr>
@@ -275,18 +269,18 @@ export function ArchiveView({
                   return (
                     <tr
                       key={taskInstanceKey(task)}
-                      className="cursor-pointer border-b border-border/60 text-[0.71875rem] hover:bg-muted/40"
+                      className="cursor-pointer border-b border-border/60 text-xs hover:bg-muted/40"
                       onClick={() => onOpen(task)}
                     >
                       <td className="px-3 py-2.5">
                         <span className="block font-medium">{task.title}</span>
-                        <small className="text-[0.625rem] text-muted-foreground">
+                        <small className="text-2xs text-muted-foreground">
                           #{task.dirName} · {projectLabel} · 已归档
                         </small>
                       </td>
                       <td className="px-3 py-2.5">
                         <span className="flex items-center gap-1.5">
-                          <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-[0.5rem] font-semibold">
+                          <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-2xs font-semibold">
                             {initials(task.assignee)}
                           </span>
                           {task.assignee || '未派发'}
@@ -298,19 +292,17 @@ export function ArchiveView({
                             {evidence.map((label) => (
                               <span
                                 key={label}
-                                className="rounded-sm border border-border px-1.5 py-px text-[0.625rem] text-muted-foreground"
+                                className="rounded-sm border border-border px-1.5 py-px text-2xs text-muted-foreground"
                               >
                                 {label}
                               </span>
                             ))}
                           </span>
                         ) : (
-                          <span className="text-[0.65625rem] text-muted-foreground">
-                            无完成证据
-                          </span>
+                          <span className="text-2xs text-muted-foreground">无完成证据</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-right text-[0.65625rem] text-muted-foreground">
+                      <td className="px-3 py-2.5 text-right text-2xs text-muted-foreground">
                         {formatArchiveTimestamp(task)}
                       </td>
                       <td className="px-3 py-2.5 text-right">
@@ -336,7 +328,7 @@ export function ArchiveView({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[0.6875rem] text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           显示 {visible.length ? current * PAGE_SIZE + 1 : 0}-{current * PAGE_SIZE + visible.length}{' '}
           / 共 {total} 条
         </span>

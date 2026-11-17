@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { projectListenerView } from '@/lib/project-rail-association.js'
+import { cn } from '@/lib/utils'
 
 type BranchListenersDialogProps = {
   taskSpace: TaskSpace | null
@@ -61,7 +62,7 @@ export function BranchListenersDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[45rem]">
+      <DialogContent className="sm:max-w-180">
         <DialogHeader>
           <DialogTitle>分支监听详情</DialogTitle>
           <DialogDescription>
@@ -72,9 +73,9 @@ export function BranchListenersDialog({
         <DialogBody className="flex flex-col gap-3">
           {view ? (
             <div className="rounded-lg border border-border bg-muted/40 px-3 py-2">
-              <p className={`text-xs font-medium ${view.textClassName}`}>{view.label}</p>
-              <p className="mt-1 text-[0.6875rem] text-muted-foreground">{view.detail}</p>
-              <p className="mt-1 text-[0.65625rem] text-muted-foreground">
+              <p className={cn('text-xs font-medium', view.textClassName)}>{view.label}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{view.detail}</p>
+              <p className="mt-1 text-2xs text-muted-foreground">
                 最后监听：{timeLabel(details?.lastListenerAt ?? taskSpace.lastListenerAt)}
               </p>
             </div>
@@ -103,33 +104,32 @@ export function BranchListenersDialog({
                       {listener.displayName || listener.username || '未知用户'}
                     </strong>
                     {listener.username ? (
-                      <span className="text-[0.65625rem] text-muted-foreground">
-                        @{listener.username}
-                      </span>
+                      <span className="text-2xs text-muted-foreground">@{listener.username}</span>
                     ) : null}
                     {listener.trellisDevId && listener.trellisDevId !== listener.username ? (
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-[0.59375rem] text-muted-foreground">
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
                         Trellis ID：{listener.trellisDevId}
                       </span>
                     ) : null}
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[0.59375rem] font-medium ${
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-2xs font-medium',
                         listener.online
                           ? 'bg-primary/10 text-primary'
-                          : 'bg-muted text-muted-foreground'
-                      }`}
+                          : 'bg-muted text-muted-foreground',
+                      )}
                     >
                       {listener.online ? '在线监听' : '未监听'}
                     </span>
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[0.59375rem] text-muted-foreground">
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
                       绑定状态：
                       {listener.bindingStatus === 'approved' ? '已批准' : listener.bindingStatus}
                     </span>
                   </div>
-                  <p className="mt-1 text-[0.6875rem] text-foreground">
+                  <p className="mt-1 text-xs text-foreground">
                     设备：{listener.deviceName || '未命名设备'}
                   </p>
-                  <p className="mt-0.5 text-[0.65625rem] text-muted-foreground">
+                  <p className="mt-0.5 text-2xs text-muted-foreground">
                     最后上报：{timeLabel(listener.listenerReportedAt)} · 最后监听：
                     {timeLabel(listener.lastListenerAt)} · 绑定：
                     {timeLabel(listener.boundAt)}

@@ -109,9 +109,7 @@ export function TopBar({
               {brandName}
             </span>
             {version ? (
-              <span className="mt-1 text-[0.625rem] font-medium text-muted-foreground">
-                v{version}
-              </span>
+              <span className="mt-1 text-2xs font-medium text-muted-foreground">v{version}</span>
             ) : null}
           </span>
         </a>
@@ -150,8 +148,8 @@ export function TopBar({
                 onClick={() => onNavigate(item.id)}
                 className={
                   item.id === activeNav
-                    ? 'shrink-0 rounded-lg bg-secondary px-2.5 py-1.5 text-[0.78125rem] font-semibold whitespace-nowrap text-foreground'
-                    : 'shrink-0 rounded-lg px-2.5 py-1.5 text-[0.78125rem] font-medium whitespace-nowrap text-muted-foreground hover:bg-muted hover:text-foreground'
+                    ? 'shrink-0 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold whitespace-nowrap text-foreground'
+                    : 'shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium whitespace-nowrap text-muted-foreground hover:bg-muted hover:text-foreground'
                 }
                 aria-current={item.id === activeNav ? 'page' : undefined}
               >
@@ -192,7 +190,7 @@ export function TopBar({
           <DropdownMenu>
             <DropdownMenuTrigger className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Avatar className="size-7">
-                <AvatarFallback className="bg-secondary text-[0.625rem] font-semibold text-muted-foreground">
+                <AvatarFallback className="bg-secondary text-2xs font-semibold text-muted-foreground">
                   {initials(displayName)}
                 </AvatarFallback>
               </Avatar>

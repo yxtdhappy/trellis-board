@@ -47,7 +47,7 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
                 key={device.id}
                 actions={
                   device.status === 'revoked' ? (
-                    <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[0.625rem] font-semibold text-destructive">
+                    <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-2xs font-semibold text-destructive">
                       已撤销 {formatTime(device.revokedAt)}
                     </span>
                   ) : (
@@ -70,14 +70,14 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
                       <strong className="truncate text-xs font-medium">{device.deviceName}</strong>
                       <StatusPill value={device.status} />
                     </div>
-                    <p className="truncate text-[0.625rem] text-muted-foreground">
+                    <p className="truncate text-2xs text-muted-foreground">
                       所有者 {device.displayName || device.username || '未知'} ·{' '}
                       {device.platform || '平台未知'} · 最近在线 {formatTime(device.lastSeenAt)}
                     </p>
-                    <p className="truncate text-[0.625rem] text-muted-foreground">
+                    <p className="truncate text-2xs text-muted-foreground">
                       Agent {device.agentVersion || '未知版本'} · 协议 v{device.protocolVersion}
                     </p>
-                    <p className="truncate text-[0.625rem] text-muted-foreground">
+                    <p className="truncate text-2xs text-muted-foreground">
                       设备 ID <code>{device.id}</code> · 创建 {formatTime(device.createdAt)}
                     </p>
                   </div>
@@ -97,17 +97,15 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
           {desktopToken ? (
             <div className="flex flex-col gap-2">
               <label className="flex flex-col gap-1">
-                <span className="text-[0.6875rem] font-medium text-muted-foreground">
-                  一次性设备令牌
-                </span>
+                <span className="text-xs font-medium text-muted-foreground">一次性设备令牌</span>
                 <input
                   readOnly
                   value={desktopToken.token}
                   onFocus={(event) => event.currentTarget.select()}
-                  className="w-full rounded-lg border border-border bg-transparent px-2.5 py-2 font-mono text-[0.6875rem]"
+                  className="w-full rounded-lg border border-border bg-transparent px-2.5 py-2 font-mono text-xs"
                 />
               </label>
-              <p className="text-[0.6875rem] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {desktopToken.expiresAt
                   ? `有效期至 ${formatTime(desktopToken.expiresAt)}，使用后立即失效。`
                   : '仅显示一次，使用后立即失效。'}
@@ -152,7 +150,7 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
               <code className="text-2xl font-semibold tracking-[0.18em] break-all text-primary">
                 {pairingCode.code}
               </code>
-              <p className="text-[0.6875rem] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {pairingCode.expiresAt
                   ? `有效期至 ${formatTime(pairingCode.expiresAt)}`
                   : '仅显示一次，请立即完成 Agent 配对。'}
@@ -170,10 +168,8 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
             生成我的配对码
           </Button>
           <div className="flex flex-col gap-1">
-            <span className="text-[0.6875rem] font-medium text-muted-foreground">
-              在 Agent 本机执行
-            </span>
-            <pre className="overflow-x-auto rounded-lg bg-muted px-2.5 py-2 text-[0.6875rem] text-muted-foreground">
+            <span className="text-xs font-medium text-muted-foreground">在 Agent 本机执行</span>
+            <pre className="overflow-x-auto rounded-lg bg-muted px-2.5 py-2 text-xs text-muted-foreground">
               {`.\\trellis-agent.cmd pair --server ${window.location.origin} --name $env:COMPUTERNAME`}
             </pre>
           </div>
