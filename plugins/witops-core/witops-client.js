@@ -133,16 +133,15 @@ export function createWitopsClient(
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       await throttle()
       try {
+        const requestHeaders = { accept: 'application/json' }
+        if (body !== undefined) requestHeaders['content-type'] = 'application/json'
+        if (token) requestHeaders['Weareint-Token'] = token
+        if (platform) requestHeaders['Weareint-Platform'] = platform
+        if (platformPath) requestHeaders['Weareint-Path'] = platformPath
+        Object.assign(requestHeaders, headers)
         const response = await fetchImpl(url, {
           method,
-          headers: {
-            accept: 'application/json',
-            ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-            ...(token ? { 'Weareint-Token': token } : {}),
-            ...(platform ? { 'Weareint-Platform': platform } : {}),
-            ...(platformPath ? { 'Weareint-Path': platformPath } : {}),
-            ...headers,
-          },
+          headers: requestHeaders,
           body: body === undefined ? undefined : JSON.stringify(body ?? {}),
           signal: AbortSignal.timeout(timeoutMs),
         })
