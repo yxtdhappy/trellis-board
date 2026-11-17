@@ -383,7 +383,7 @@ export function BoardPage() {
               stages={FILTER_STAGES}
               filters={filters}
               onChange={setFilters}
-              onApply={() => void actions.refresh()}
+              onRefresh={() => void actions.refresh()}
               onOpen={(task) => setSelected(task)}
               loading={loading}
               summary={

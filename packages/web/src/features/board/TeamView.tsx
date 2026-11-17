@@ -15,7 +15,7 @@ type TeamViewProps = {
   stages: { id: string; label: string }[]
   filters: BoardFilters
   onChange: (patch: Partial<BoardFilters>) => void
-  onApply: () => void
+  onRefresh: () => void
   onOpen: (task: BoardTask) => void
   loading: boolean
   summary: string
@@ -35,7 +35,7 @@ export function TeamView({
   stages,
   filters,
   onChange,
-  onApply,
+  onRefresh,
   onOpen,
   loading,
   summary,
@@ -103,11 +103,8 @@ export function TeamView({
       <aside className="flex w-[16.75rem] shrink-0 flex-col gap-2.5 overflow-y-auto rounded-xl border border-border bg-card p-3">
         <div className="flex flex-col gap-1">
           <h2 className="text-[0.8125rem] font-semibold font-heading">跨项目查询</h2>
-          <p className="text-[0.65625rem] text-muted-foreground">按负责人 / 阶段 / 项目筛选</p>
+          <p className="text-[0.65625rem] text-muted-foreground">筛选条件即时生效</p>
         </div>
-        <Button className="w-full" onClick={onApply}>
-          应用筛选
-        </Button>
 
         <div className="border-t border-border/60 pt-2">
           <p className="text-[0.65625rem] font-semibold text-muted-foreground">按负责人统计</p>
@@ -226,7 +223,7 @@ export function TeamView({
               setPage(0)
             }}
           />
-          <Button variant="outline" size="sm" onClick={onApply}>
+          <Button variant="outline" size="sm" onClick={onRefresh}>
             刷新
           </Button>
         </div>
@@ -241,9 +238,9 @@ export function TeamView({
                   <th className="px-3 py-2 font-semibold">任务</th>
                   <th className="px-3 py-2 font-semibold">负责人</th>
                   <th className="px-3 py-2 font-semibold">项目</th>
-                  <th className="px-3 py-2 font-semibold">阶段</th>
-                  <th className="px-3 py-2 font-semibold">优先级</th>
-                  <th className="px-3 py-2 text-right font-semibold">更新</th>
+                  <th className="px-3 py-2 font-semibold whitespace-nowrap">阶段</th>
+                  <th className="px-3 py-2 font-semibold whitespace-nowrap">优先级</th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">更新</th>
                 </tr>
               </thead>
               <tbody>
@@ -287,21 +284,21 @@ export function TeamView({
                         <td className="px-3 py-2 text-[0.6875rem] text-muted-foreground">
                           {projectLabel}
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 whitespace-nowrap">
                           <span
                             className={`rounded-full px-1.5 py-px text-[0.625rem] font-medium ${stageTone(stageLabel)}`}
                           >
                             {stageLabel || statusLabel(task.stage || task.status) || '未开始'}
                           </span>
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 whitespace-nowrap">
                           <span
                             className={`rounded-full px-1.5 py-px text-[0.625rem] font-semibold ${priorityTone(task.priority)}`}
                           >
                             {task.priority || 'P2'}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-right text-[0.65625rem] text-muted-foreground">
+                        <td className="px-3 py-2 text-right text-[0.65625rem] whitespace-nowrap text-muted-foreground">
                           {dueLabel(task.execution?.dueDate)}
                         </td>
                       </tr>
