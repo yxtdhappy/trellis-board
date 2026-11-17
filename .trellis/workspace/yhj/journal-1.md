@@ -1416,3 +1416,26 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 60: 归档凭据项目关联展示
+<!-- trellis-session: v=2 fp=fd9961b8bf0efaf7 -->
+
+**Date**: 2026-11-17
+**Task**: 归档凭据项目关联展示
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+归档同步页按接口凭据关联聚合项目与分支，展示实际凭据及未验证状态，删除前列出影响项目；补充前端规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7ed2e69` | feat(web): 展示归档凭据关联与删除影响 |
+
+### Status
+
+[OK] **Completed**
