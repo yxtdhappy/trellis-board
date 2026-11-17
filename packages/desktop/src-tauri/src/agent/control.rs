@@ -70,6 +70,7 @@ impl ControlHub {
     }
 
     /// 入队并去重（同 key 覆盖旧值），返回是否成为队首。
+    #[cfg(test)]
     pub fn push(&self, control: Value) -> bool {
         self.push_with_change(control).0
     }
@@ -114,6 +115,7 @@ impl ControlHub {
         None
     }
 
+    #[cfg(test)]
     pub fn dismiss(&self) -> AgentResult<()> {
         self.dismiss_with_change().map(|_| ())
     }
@@ -147,6 +149,7 @@ impl ControlHub {
         false
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.inner
             .lock()
@@ -154,6 +157,7 @@ impl ControlHub {
             .unwrap_or(0)
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

@@ -2077,6 +2077,7 @@ impl TaskSync {
         Ok(tracked_paths)
     }
 
+    #[cfg(test)]
     async fn projected_head_tree_paths(
         &self,
         binding: &AgentBinding,
@@ -2919,6 +2920,7 @@ impl TaskSync {
     }
 
     /// 本地关联展示与同步门禁共用同一套基线错分支判定和 HEAD tree 缓存。
+    #[cfg(test)]
     pub(crate) async fn ownership_paused_task_dirs(
         &self,
         binding: &AgentBinding,
