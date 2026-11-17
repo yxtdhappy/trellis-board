@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨 Web UI 与桌面 Tauri 边界时核对契约和全量消费者"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有 TopBar、Tauri 全局 API 和版本来源，避免新增重复常量或配置层"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "核对 Tauri command、capability、Board origin 权限和导航契约"}

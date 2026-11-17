@@ -145,6 +145,31 @@ test('desktop logout uses a board-only command and forgets the saved password', 
   assert.match(loginApp, /app\.serverUrl && app\.username && app\.password/)
 })
 
+test('desktop board shows the product name and version from a board-only command', () => {
+  const permissions = read('packages/desktop/src-tauri/permissions/desktop.toml')
+  const capability = JSON.parse(
+    read('packages/desktop/src-tauri/capabilities/board-local-association.json'),
+  )
+  const localCapability = JSON.parse(read('packages/desktop/src-tauri/capabilities/main.json'))
+  const main = read('packages/desktop/src-tauri/src/main.rs')
+  const boardPage = read('packages/web/src/pages/board/BoardPage.tsx')
+  const topBar = read('packages/web/src/components/layout/TopBar.tsx')
+
+  assert.match(permissions, /identifier = "allow-client-identity"/)
+  assert.match(permissions, /commands\.allow = \["client_identity"\]/)
+  assert.ok(capability.permissions.includes('allow-client-identity'))
+  assert.ok(!localCapability.permissions.includes('allow-client-identity'))
+  assert.match(main, /fn client_identity\(/)
+  assert.match(main, /ensure_board_caller\(&app, &window\)\?;/)
+  assert.match(main, /app\.config\(\)\.product_name/)
+  assert.match(main, /env!\("CARGO_PKG_VERSION"\)/)
+  assert.match(main, /app_status,\s+client_identity,\s+desktop_logout,/)
+  assert.match(boardPage, /desktopInvoke\('client_identity'\)/)
+  assert.match(boardPage, /useState\('Trellis Board'\)/)
+  assert.match(topBar, /aria-label=\{`\$\{brandName\} 首页`\}/)
+  assert.match(topBar, /v\{version\}/)
+})
+
 test('windows workflows build the desktop ui before the client is bundled or tested', () => {
   const workflow = read('.github/workflows/windows.yml')
   const jobs = workflow.split(/\n {2}(?=\w[\w-]*:\n)/)

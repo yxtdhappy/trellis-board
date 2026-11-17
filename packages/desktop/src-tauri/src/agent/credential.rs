@@ -193,7 +193,7 @@ mod tests {
         let store = ConfigStore::new(root.clone());
         let credentials = CredentialStore::new(&store);
         credentials.self_test().expect("dpapi round trip");
-        let secret = "unit-test-fixture";
+        let secret = "unit-test-fixture-0123456789abcdef";
         credentials.save_credential(secret).await.expect("save");
         assert_eq!(credentials.load_credential().await.expect("load"), secret);
         let _ = tokio::fs::remove_dir_all(root).await;
