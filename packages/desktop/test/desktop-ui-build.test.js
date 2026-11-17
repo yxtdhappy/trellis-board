@@ -21,39 +21,38 @@ test('desktop webviews are built from packages/web/desktop into packages/desktop
   assert.equal(pkg.scripts['build:desktop'], 'tsc -b && vite build --config vite.desktop.config.ts')
   assert.match(read('packages/web/tsconfig.node.json'), /vite\.desktop\.config\.ts/)
 
-  for (const page of ['index', 'control']) {
-    const html = read(`packages/web/desktop/${page}.html`)
-    assert.match(html, new RegExp(`src="\\.\\./src/desktop/main-${page}\\.tsx"`))
-    assert.match(html, /<div id="root"><\/div>/)
-  }
-  assert.match(read('packages/web/desktop/control.html'), /Content-Security-Policy/)
+  const html = read('packages/web/desktop/index.html')
+  assert.match(html, /src="\.\.\/src\/desktop\/main-index\.tsx"/)
+  assert.match(html, /<div id="root"><\/div>/)
+
+  assert.deepEqual(tauri.app.security.capabilities, ['main', 'board-local-association'])
+  assert.equal(
+    fs.existsSync(path.join(root, 'packages/desktop/src-tauri/capabilities/live-control.json')),
+    false,
+    'live-control capability must stay deleted: 确认弹窗在主窗口内渲染',
+  )
 })
 
 test('built desktop pages load only relative assets and stay CSP-safe', () => {
-  for (const page of ['index', 'control']) {
-    const built = path.join(root, `packages/desktop/ui/${page}.html`)
-    assert.ok(
-      fs.existsSync(built),
-      `packages/desktop/ui/${page}.html missing: run yarn build:desktop`,
-    )
-    const html = fs.readFileSync(built, 'utf8')
-    assert.match(
-      html,
-      /src="\.\/assets\//,
-      `${page}.html must use relative asset URLs (vite base './')`,
-    )
-    assert.match(html, /href="\.\/assets\//, `${page}.html must use relative stylesheet URLs`)
-    assert.doesNotMatch(
-      html,
-      /(?:src|href)="\/assets\//,
-      `${page}.html must not use root-absolute asset URLs`,
-    )
-    assert.doesNotMatch(
-      html,
-      /<script(?![^>]*\ssrc=)[^>]*>/i,
-      `${page}.html must not inline scripts (CSP)`,
-    )
-  }
+  const built = path.join(root, 'packages/desktop/ui/index.html')
+  assert.ok(fs.existsSync(built), 'packages/desktop/ui/index.html missing: run yarn build:desktop')
+  const html = fs.readFileSync(built, 'utf8')
+  assert.match(
+    html,
+    /src="\.\/assets\//,
+    'index.html must use relative asset URLs (vite base "./")',
+  )
+  assert.match(html, /href="\.\/assets\//, 'index.html must use relative stylesheet URLs')
+  assert.doesNotMatch(
+    html,
+    /(?:src|href)="\/assets\//,
+    'index.html must not use root-absolute asset URLs',
+  )
+  assert.doesNotMatch(
+    html,
+    /<script(?![^>]*\ssrc=)[^>]*>/i,
+    'index.html must not inline scripts (CSP)',
+  )
 })
 
 test('desktop ui output is ignored and hand-written pages are gone', () => {
@@ -70,7 +69,7 @@ test('desktop ui output is ignored and hand-written pages are gone', () => {
 
 test('control sync errors show project and branch without repo paths', () => {
   const taskSync = read('packages/desktop/src-tauri/src/agent/task_sync.rs')
-  const control = read('packages/web/src/desktop/ControlApp.tsx')
+  const control = read('packages/web/src/desktop/LiveSyncControlDialog.tsx')
 
   assert.match(taskSync, /event\["projectName"\]/)
   assert.match(taskSync, /event\["branchName"\]/)
@@ -90,7 +89,7 @@ test('desktop state refresh uses events, ETag and visible fallbacks', () => {
     read('packages/desktop/src-tauri/capabilities/board-local-association.json'),
   )
   const projectRail = read('packages/web/src/components/layout/ProjectRail.tsx')
-  const control = read('packages/web/src/desktop/ControlApp.tsx')
+  const control = read('packages/web/src/desktop/LiveSyncControlDialog.tsx')
   const useBoard = read('packages/web/src/hooks/useBoard.ts')
   const boardApi = read('packages/web/src/api/board.ts')
   const taskSync = read('packages/desktop/src-tauri/src/agent/task_sync.rs')

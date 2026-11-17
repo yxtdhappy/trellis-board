@@ -23,6 +23,7 @@
     "lucide-react": "^1.68.0",
     "markdown-it": "^15.0.3",
     "markdown-it-highlightjs": "^4.3.0",
+    "monaco-editor": "^0.57.0",
     "next-themes": "^0.4.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

@@ -1,7 +1,7 @@
 # 桌面 Agent 运行契约（进程内 Rust）
 
 **何时阅读**：修改 `packages/desktop/src-tauri/src/agent/**`、`agent_service.rs`、`runtime_commands.rs`、
-`packages/desktop/src-tauri/src/main.rs` 的 Tauri 命令、`packages/web/src/desktop/**` 本地登录/环境门/控制窗口 UI，
+`packages/desktop/src-tauri/src/main.rs` 的 Tauri 命令、`packages/web/src/desktop/**` 本地登录/环境门与看板内同步确认弹窗 UI，
 或 Windows 打包脚本时。
 
 桌面客户端是单进程 Tauri 应用：Agent（心跳、SSE、任务快照同步、任务命令）全部在
@@ -26,7 +26,7 @@
 | `agent/task_command.rs` | `agent/task-command.js` | create_task / assign_task / sync_branch / refresh_status |
 | `agent/runtime.rs` | `agent/index.js` | 心跳 15s、SSE 事件循环、命令重试、state.json 状态机 |
 | `agent/control.rs` | — | 控制事件队列（上限 32、按 key 去重、过期与 suppression） |
-| `agent_service.rs` | `packages/desktop/sidecar/main.js` | 进程内生命周期、Tauri 命令实现、控制窗口显隐 |
+| `agent_service.rs` | `packages/desktop/sidecar/main.js` | 进程内生命周期、Tauri 命令实现、控制队列事件发射与主窗口唤起 |
 
 根目录 `agent/`（Node CLI）与 `packages/desktop/sidecar/` 都已删除；右列只用于追溯协议版本、错误码和数据
 格式的来源，不是可修改的代码路径。行为以 Rust 模块和 `cargo test` 为准。
@@ -128,7 +128,7 @@
   `\\?\` 扩展路径都必须落在同一根下。
 - 根目录、`.`、`..`、空段、反斜杠、NUL、盘符、ADS 和其他异常段必须拒绝。写入、删除、备份共用同一
   规则，任何路径或符号链接失败都必须失败关闭，不得静默跳过并推进 cursor。
-- `task_sync_error` 应携带 `projectName`、`branchName` 和可选 `taskDir`；控制窗口优先显示
+- `task_sync_error` 应携带 `projectName`、`branchName` 和可选 `taskDir`；同步确认弹窗优先显示
   `项目 / 分支`，`taskSpaceId` 只作诊断，且不得发送 `repoPath`。
 - 写入使用临时文件 + rename；目录替换先备份再原子换名。
 - 任务文件上限：单文件 1 MiB；实际 HTTP 上传批次最多 1024 文件、64 MiB。全 taskSpace 聚合扫描
@@ -159,39 +159,51 @@
   `setWriteMode("skip")` 和 `initializeHashes(..., { merge: true })`，不得写 spec、workflow、任务或根文件；
   模块缺失、未知平台、Python 检测或平台配置失败必须失败关闭，不得退回完整初始化。
 
-## 7. 本地前端（环境门、登录页、控制窗口）
+## 7. 本地前端（环境门、登录页）与看板内同步确认弹窗
 
-- 源码是 `packages/web/desktop/{index,control}.html` 与 `packages/web/src/desktop/**`（React 19 + TypeScript +
-  Tailwind v4 + `packages/web/src/components/ui`），由 `packages/web/vite.desktop.config.ts` 输出到 `packages/desktop/ui/`；
+- 桌面本地页面只剩 `packages/web/desktop/index.html`（登录/环境门）与 `packages/web/src/desktop/**` 登录壳
+  （React 19 + TypeScript + Tailwind v4 + `packages/web/src/components/ui`），由
+  `packages/web/vite.desktop.config.ts` 输出到 `packages/desktop/ui/`；登录后主窗口直接导航到远程 Board，
+  实时同步确认没有独立窗口，而是 Board 页面内的 `packages/web/src/desktop/LiveSyncControlDialog.tsx`；
   `packages/desktop/ui/` 被 `.gitignore` 忽略，是构建产物，不得手写页面或脚本。
 - `yarn build:desktop` 必须先于 `cargo tauri build`；`cargo tauri build` 只打包
   `frontendDist = ../ui` 的现有产物，CI 在 `windows.yml` 的 `Build desktop UI` 步骤构建。
-- `control.html` 必须保留 `Content-Security-Policy` meta（`script-src 'self'` / `style-src 'self'`）；
-  构建产物不得包含内联 `<script>`/`style`，Vite 用 `base: './'` 输出相对资源路径。
-- IPC 只通过 `window.__TAURI__`（`app.withGlobalTauri = true`），命令名必须与
-  `capabilities/main.json`、`capabilities/live-control.json` 以及 `main.rs`/`agent_service.rs`
-  注册一致；控制窗口只能调用 `live_control_pending`、`live_control_decide`、`live_control_diff`、
-  `live_control_initial`、`live_control_dismiss`。
+- `index.html` 必须保留 `Content-Security-Policy` meta（`script-src 'self'` / `style-src 'self'`）；
+  构建产物不得包含内联 `<script>`/`style`，Vite 用 `base: './'` 输出相对资源路径。Board 页面由服务端提供，
+  不受该 meta 约束，因此 Monaco 与其 Worker 只能在 Board 侧加载。
+- IPC 只通过 `window.__TAURI__`（`app.withGlobalTauri = true`），命令名必须与 `capabilities/main.json`、
+  `capabilities/board-local-association.json` 以及 `main.rs`/`agent_service.rs` 注册一致。
+  `live_control_pending`、`live_control_decide`、`live_control_diff`、`live_control_initial`、
+  `live_control_dismiss`、`set_task_ownership` 由 Board 页面在 `board-local-association` 窗口调用，
+  全部经 `ensure_board_caller` 校验（`tauri://` 本地页面或 `board_url` 同源）；
+  `capabilities/live-control.json` 已随独立窗口删除，不得恢复。
 - 事件类型、review 选项和动作字符串以 Rust 侧为准（`use-server`/`overwrite-server`/
   `save-local-copy`，`mode` 为 `safe`/`review`），前端不得新增动作值。
-- 主窗口手动唤起待处理控制事件只能调 `live_control_show`（`capabilities/board-local-association.json`），
-  它只 `show` 已存在的队列项，无待处理返回 `false`；控制窗口自身不得调用该命令。
+- 手动唤起待处理控制事件只能调 `live_control_show`（capability `allow-live-control-show`）：
+  它只聚焦/显示主窗口并发射 `live-control-changed`，无待处理返回 `false`；不得为确认弹窗另建窗口。
 - dev 模式：根 `yarn desktop:dev` 运行 `scripts/desktop-dev.mjs`，并发启动三件事：`node --watch
   packages/server/index.js`（4317 本地服务端）、`packages/web` 根目录的 Vite（默认 5200，看板 UI + HMR +
   `/api` 代理，端口可用 `TRELLIS_BOARD_DEV_PORT` 覆盖）、`cargo tauri dev`（自身 `beforeDevCommand` 再起
   `vite.desktop.config.ts` 的 5199 登录壳）。登录页服务器地址必须填 `http://localhost:5200`（或
   `127.0.0.1:5200`），它才是看板来源；5199 只服务 `desktop/index.html`，手填会得到空白页。
   `navigation::is_dev_page` 仅在 `debug_assertions` 下按 `devUrl` 同源放行导航与 `ensure_local_caller`，
-  release 构建必须仍只认本地页面。dev 下 `stripDevCsp` 插件移除 `control.html` 的 CSP meta
+  release 构建必须仍只认本地页面。dev 下 `stripDevCsp` 插件移除 `index.html` 的 CSP meta
   （`style-src 'self'` 会挡掉 Vite 注入的内联样式），release 构建必须保留该 meta。
 - `packages/web/vite.config.ts` 的 `/api` 代理必须 `changeOrigin: false`：服务端 CSRF 校验要求请求
   `Origin` 与 `Host` 同源，改写 Host 会让所有写请求 403 `CSRF_REJECTED`。
 - 桌面本地状态统一使用 `desktop-state-changed`，payload 为
   `{ "topics": ["associations" | "sidecar"] }`，短窗口内合并发射。Board 远程窗口 capability 必须
   显式允许 `core:event:allow-listen` 与 `core:event:allow-unlisten`。
-- 控制队列内容实际变化后发射 `live-control-changed`；控制窗口先注册监听再读取
-  `live_control_pending`，可见时保留 10 秒兜底，隐藏时停止，focus/恢复可见时立即读取。
-- 控制窗口固定 560×420，布局必须单列可用；diff 对照块只在 ≥768px 才切换为双列。
+- 控制队列内容实际变化后发射 `live-control-changed`；`LiveSyncControlDialog` 先注册监听再读取
+  `live_control_pending`，页面可见时保留 10 秒兜底，隐藏时停止，focus/恢复可见时立即读取。
+  `initial_sync_review` 每次内容变化都由 Rust 侧 `focus_main_window` 唤起主窗口，
+  其余事件每进程只自动聚焦一次。
+- 弹窗使用 `components/ui/dialog.tsx` 的固定头/脚 + 单一 `DialogBody` 滚动壳，
+  `sm:max-w-[min(72rem,92vw)]` / `max-h-[85vh]`；窄屏单列可用，宽屏冲突差异用 Monaco 左右分栏只读 diff。
+- 冲突差异必须走 `packages/web/src/desktop/MonacoDiff.tsx`（懒加载 chunk，加载失败回退双 `<pre>`）。
+  monaco 0.57 的导入路径是 `monaco-editor/editor/editor.api` 与
+  `monaco-editor/editor/editor.worker?worker`：package `exports` 已把 `./*` 映射到 `./esm/vs/*.js`，
+  再写 `esm/vs/` 前缀会双重拼接而失败。
 
 ## 8. 打包与验证
 

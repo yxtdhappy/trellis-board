@@ -15,7 +15,9 @@
 ### 3. Contracts
 
 - 事件只是失效通知；ProjectRail 收到后仍调用 `list_local_associations` /
-  `desktop_sidecar_status`，ControlApp 仍调用 `live_control_pending`。
+  `desktop_sidecar_status`，Board 页面的 `LiveSyncControlDialog` 仍调用 `live_control_pending`。
+- `live_control_*` 与 `set_task_ownership` 只对 `board-local-association` 窗口放行，且必须经
+  `ensure_board_caller`；不存在独立 `live-control` 窗口，也没有 `live_control_resize`。
 - 前端必须先注册监听，再执行首次读取；可见时保留 10 秒兜底，隐藏时停止。
 - Rust 只在 cursor、binding、ownership、Git 投影、sidecar 或控制队列实际变化后发射。
 - 请求在途时只保留一次后续刷新，相同归一化结果复用原引用。

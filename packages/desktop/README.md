@@ -86,7 +86,7 @@ runtime_status
 
 - Agent 与客户端同进程：`AgentRuntime` 每 15 秒心跳，SSE 长连接接收事件，断线按 1s → 60s 指数退避重连。
 - 认证被撤销（401/AUTH_REVOKED）时停止同步并写 `state.json`；暂停同步只停止循环，队列状态保留。
-- 控制事件（首次同步差异、任务文件冲突、同步错误）进入内存队列，列表为空时隐藏 `live-control` 窗口。
+- 控制事件（首次同步差异、任务文件冲突、同步错误）进入内存队列；队列变化时唤起主窗口并发射 `live-control-changed`，由 Board 页面的同步确认弹窗渲染。
 - 托盘同步项只有两种状态：运行中显示「暂停同步」，暂停后显示「恢复同步」；点击即切换。
 - 项目栏仍每 3 秒读取本地关联，但上一请求未结束时跳过本次 tick，不堆积 IPC 调用。
 - 托盘「开机自启」由 `tauri-plugin-autostart` 写 HKCU Run 项，指向当前 EXE 绝对路径；绿色包目录移动或改名后需重新勾选一次。
@@ -291,15 +291,18 @@ create_task / assign_task
 Rust 仍会把当前 WebView origin 与本次登录成功的 Board origin 做同源比较。远程页面没有通用文件系统、
 Shell、进程或 dialog 权限。
 
-`capabilities/live-control.json` 只绑定本地 `live-control` 窗口：
+`capabilities/board-local-association.json` 另外放行同步确认弹窗需要的命令：
 
 - `live_control_pending`
 - `live_control_decide`
 - `live_control_diff`
 - `live_control_initial`
 - `live_control_dismiss`
+- `set_task_ownership`
 
-控制窗口只处理当前首次同步或任务冲突，不拥有 Board 页面权限。
+这些命令与 `live_control_show` 一样经 `ensure_board_caller` 校验：只接受本地页面或与本次登录成功的
+Board origin 同源的调用。已不存在独立 `live-control` 窗口，也没有 `live_control_resize`；
+确认弹窗由 Board 页面内的组件渲染。
 
 ## 导航与退出
 
@@ -313,7 +316,7 @@ Shell、进程或 dialog 权限。
 
 ```text
 packages/desktop/
-  ui/                             构建产物：环境检查页、本地登录页、同步控制窗口（勿手改）
+  ui/                             构建产物：环境检查页、本地登录页（勿手改）
   src-tauri/
     src/main.rs                   窗口、登录、Cookie、动态导航、项目预检/初始化/接入
     src/navigation.rs             Board URL 白名单和同源导航
@@ -323,7 +326,7 @@ packages/desktop/
                                   device/association/onboarding/task_sync/task_command/runtime/control）
     src/runtime_commands.rs       环境门命令（runtime_status/runtime_install）
     src/logging.rs                日志脱敏
-    capabilities/                 本地登录、远程项目接入、控制窗口分离
+    capabilities/                 本地登录、远程项目接入
     permissions/desktop.toml      显式命令权限
   package-portable.ps1            组装绿色目录、校验文件和 ZIP
 ```
