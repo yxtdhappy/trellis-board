@@ -7801,8 +7801,11 @@ impl TaskSync {
         let unique: HashSet<String> = allowed.into_iter().collect();
         let http_started = Instant::now();
         for task_dir in unique {
-            let server = self.fetch_directory(&task_space_id, &task_dir).await?;
-            let server_files = parse_directory_files(&server, &task_dir)?;
+            let server_files = match self.fetch_directory(&task_space_id, &task_dir).await {
+                Ok(server) => parse_directory_files(&server, &task_dir)?,
+                Err(error) if error.status == Some(404) => Vec::new(),
+                Err(error) => return Err(error),
+            };
             entries.push((
                 task_dir.clone(),
                 local_by_dir.get(&task_dir).cloned(),
@@ -10827,15 +10830,23 @@ mod tests {
                     } else if path.contains("/snapshot?") {
                         ("200 OK", snapshot_payload.as_ref().clone())
                     } else if path.contains("/files?") {
-                        (
-                            "200 OK",
-                            json!({
-                                "files": snapshot_payload
-                                    .get("files")
-                                    .cloned()
-                                    .unwrap_or_else(|| Value::Array(Vec::new()))
-                            }),
-                        )
+                        let status = snapshot_payload
+                            .get("directoryStatus")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(200);
+                        if status == 404 {
+                            ("404 Not Found", json!({ "code": "TASK_NOT_FOUND" }))
+                        } else {
+                            (
+                                "200 OK",
+                                json!({
+                                    "files": snapshot_payload
+                                        .get("files")
+                                        .cloned()
+                                        .unwrap_or_else(|| Value::Array(Vec::new()))
+                                }),
+                            )
+                        }
                     } else if method == "PUT" && path.ends_with("/cursor") {
                         ("200 OK", json!({}))
                     } else if method == "PUT" && path.ends_with("/ownership-inbox") {
@@ -11133,6 +11144,55 @@ mod tests {
 
         fixture.server_task.abort();
         let _ = tokio::fs::remove_dir_all(fixture.root).await;
+    }
+
+    #[tokio::test]
+    async fn local_only_task_upload_treats_missing_directory_as_first_snapshot() {
+        let (root, store, _sync, mut binding) =
+            test_task_sync_fixture("trellis-local-only-first-upload").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        let task_dir = ".trellis/tasks/task-local";
+        let task_json = format!("{task_dir}/task.json");
+        write_task_json(repo, task_dir, "task-local", "main").await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "local task"]);
+        binding.initial_sync_completed = true;
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+
+        let (server_url, changes, requests, server_task) = mock_api_server(json!({
+            "revision": 10,
+            "directoryStatus": 404,
+            "writeRevision": 11
+        }))
+        .await;
+        let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+        let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
+        sync.set_bindings(vec![binding.clone()]).await;
+
+        let result = sync
+            .upload_directories(&binding, &[task_dir.to_string()], false, None)
+            .await
+            .expect("first upload");
+        assert_eq!(result["committedRevision"], 11);
+
+        let sent = changes.lock().await.clone();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["files"][0]["path"], task_json);
+
+        let requests = requests.lock().await.clone();
+        assert!(requests
+            .iter()
+            .any(|request| request.contains("/files?taskDir=")));
+        assert!(requests.iter().any(|request| {
+            request == "POST /api/agent/task-spaces/space-1/changes"
+        }));
+
+        server_task.abort();
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 
     #[tokio::test]
