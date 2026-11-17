@@ -33,6 +33,7 @@ const DEFAULTS = {
   timeoutMs: 15 * 60_000,
   maxRuns: 20,
   maxHealingRetries: 1,
+  outlineTimeoutMs: 5 * 60_000,
 }
 
 const ASSETS = new Map([
@@ -51,6 +52,9 @@ function normalizeConfig(raw = {}) {
     maxRuns: Number.isFinite(Number(raw.maxRuns))
       ? Math.max(1, Math.min(100, Number(raw.maxRuns)))
       : DEFAULTS.maxRuns,
+    outlineTimeoutMs: Number.isFinite(Number(raw.outlineTimeoutMs))
+      ? Math.max(30_000, Math.min(15 * 60_000, Number(raw.outlineTimeoutMs)))
+      : DEFAULTS.outlineTimeoutMs,
   }
 }
 
@@ -131,8 +135,15 @@ function summaryOf(run) {
     testVersion: run.testVersion,
     stateKey: run.stateKey,
     stage: run.stage,
+    paused: Boolean(run.paused),
+    coveragePassed: run.coveragePassed !== false,
+    nextStage: run.nextStage || '',
+    resumed: Boolean(run.resumed),
+    failedTests: run.failedTests || [],
+    statePath: run.statePath || '',
     targetUrl: run.targetUrl,
     noRun: run.noRun,
+    input: run.input || null,
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     durationMs: run.durationMs,
@@ -144,7 +155,7 @@ function summaryOf(run) {
 
 export default createPlugin({
   name: PLUGIN_ID,
-  version: '0.2.0',
+  version: '0.4.0',
   apiVersion: 1,
   permissions: [
     'capabilities:provide',
@@ -166,7 +177,23 @@ export default createPlugin({
     const storedRuns = await ctx.store.get('runs').catch(() => null)
     if (Array.isArray(storedRuns)) {
       for (const item of storedRuns) {
-        if (item?.id) runs.set(item.id, { ...item, logs: '' })
+        if (!item?.id) continue
+        // 进程重启后内存里的运行已经不存在，持久化的 running 状态要收尾成中断，
+        // 否则面板会一直显示"运行中"，也无法重跑。
+        const interrupted = item.status === 'running'
+        runs.set(item.id, {
+          ...item,
+          logs: '',
+          ...(interrupted
+            ? {
+                status: 'failed',
+                paused: false,
+                nextStage: '',
+                error: '实例重启，运行已中断（可重新生成或重新发起）',
+                finishedAt: item.finishedAt || new Date().toISOString(),
+              }
+            : {}),
+        })
       }
     }
     const storedGroups = await ctx.store.get('regressions').catch(() => null)
@@ -241,8 +268,40 @@ export default createPlugin({
       run.logs = tail(run.logs + String(chunk ?? ''))
     }
 
+    const NEXT_STAGE = { recon: 'generate', generate: 'verify', verify: 'execute', execute: '' }
+
+    function parseResultLine(logs) {
+      const match = /\[scenario-copilot\] result: (\{[^\n]*\})/.exec(String(logs || ''))
+      if (!match) return null
+      try {
+        return JSON.parse(match[1])
+      } catch {
+        return null
+      }
+    }
+
+    // CLI 在每个运行的末尾打印一条结果行，插件据此知道停在了哪个阶段、失败用例和状态文件。
+    function applyResult(run) {
+      const result = parseResultLine(run.logs)
+      if (!result) return
+      const stoppedAfter = text(result.stoppedAfter) || 'execute'
+      run.resumed = Boolean(result.resumed)
+      run.failedTests = Array.isArray(result.failedTests) ? result.failedTests : []
+      run.statePath = text(result.statePath)
+      if (text(result.scriptPath)) run.scriptPath = text(result.scriptPath)
+      run.coveragePassed = result.coveragePassed === true
+      run.paused = Boolean(stoppedAfter) && stoppedAfter !== 'execute'
+      run.nextStage = run.paused ? NEXT_STAGE[stoppedAfter] || '' : ''
+    }
+
     function finish(run, status, exitCode, error) {
       if (run.status !== 'running') return
+      applyResult(run)
+      // 主动停在中间阶段不是失败：覆盖率/生成问题会随 paused 状态一起展示，便于继续下一阶段
+      if (run.paused && status === 'failed') {
+        status = 'paused'
+        error = null
+      }
       run.status = status
       run.exitCode = exitCode
       run.finishedAt = new Date().toISOString()
@@ -412,37 +471,25 @@ export default createPlugin({
         targetUrl,
         '--workspace',
         workspace,
-        '--output-root',
-        outputRoot(),
         '--spec-dir',
         specDir,
         '--output',
         scriptPath,
-        '--test-version',
-        testVersion,
         '--state-key',
         stateKey,
         '--stop-after',
         stage,
       ]
-      if (knowledgePath && fs.existsSync(knowledgePath)) args.push('--knowledge', knowledgePath)
+      // app-contract 是 scenario-copilot 认识的组件契约 JSON；普通 markdown 知识文件不传
+      if (knowledgePath && fs.existsSync(knowledgePath) && /\.json$/i.test(knowledgePath)) {
+        args.push('--app-contract', knowledgePath)
+      }
       args.push('--max-healing', String(Number(config.maxHealingRetries ?? 1)))
       if (input.resume === true) args.push('--resume')
       if (input.regenerate === true) args.push('--regenerate')
       if (input.onlyFailed === true) args.push('--only-failed')
       if (text(input.grep)) args.push('--grep', text(input.grep))
       if (noRun && stage === 'execute') args.push('--no-run')
-      if (Array.isArray(input.reconActions)) {
-        for (const action of input.reconActions) {
-          if (text(action)) args.push('--recon-click', text(action))
-        }
-      }
-      const reconSnapshots = Array.isArray(input.reconSnapshots)
-        ? input.reconSnapshots
-        : Array.isArray(config.reconSnapshots)
-          ? config.reconSnapshots
-          : []
-      if (reconSnapshots.length) args.push('--recon-snapshots', JSON.stringify(reconSnapshots))
       const env = {
         ...process.env,
         MOM_TARGET_URL: targetUrl,
@@ -480,6 +527,20 @@ export default createPlugin({
         testGeneration: generation,
         stateKey,
         stage,
+        paused: false,
+        nextStage: '',
+        resumed: false,
+        failedTests: [],
+        statePath: '',
+        input: {
+          taskKey: subject.kind === 'trellis' ? subject.taskKey : '',
+          requirementId: subject.kind === 'requirement' ? subject.requirementId : '',
+          requirementCode: subject.kind === 'requirement' ? subject.requirementCode : '',
+          outline: outlineName,
+          targetUrl,
+          orgName: text(input.orgName) || config.orgName,
+          noRun,
+        },
         targetUrl,
         noRun,
         startedAt: new Date().toISOString(),
@@ -562,6 +623,7 @@ export default createPlugin({
         workspace: workspaceDir(),
         outputRoot: outputRoot(),
         outlines: listOutlines(config),
+        canGenerateOutline: Boolean(cliEntry()),
       }
     }
 
@@ -681,6 +743,173 @@ export default createPlugin({
       return { cancelled: true, status: run.status }
     }
 
+    function cliEntry() {
+      const configured = text(config.scenarioRoot)
+      if (!configured) return ''
+      const candidates = [
+        path.resolve(configured),
+        path.resolve(configured, 'packages', 'scenario-copilot'),
+      ]
+      const root = candidates.find((candidate) =>
+        fs.existsSync(path.join(candidate, 'dist', 'bin', 'scenario-copilot.js')),
+      )
+      return root ? path.join(root, 'dist', 'bin', 'scenario-copilot.js') : ''
+    }
+
+    function outlineEnv() {
+      const env = { ...process.env }
+      if (config.llmApiKey) env.MOM_LLM_API_KEY = config.llmApiKey
+      if (config.llmBaseUrl) env.MOM_LLM_BASE_URL = config.llmBaseUrl
+      if (config.llmModel) env.MOM_LLM_MODEL = config.llmModel
+      if (config.maxTokens) env.MOM_LLM_MAX_TOKENS = String(config.maxTokens)
+      if (config.effort) env.MOM_LLM_EFFORT = config.effort
+      if (config.effortField) env.MOM_LLM_EFFORT_FIELD = config.effortField
+      env.MOM_LLM_TIMEOUT = String(Math.round(config.outlineTimeoutMs / 1000))
+      return env
+    }
+
+    // 生成大纲只读 stdout：CLI 的日志一律走 stderr，--json 输出才是协议。
+    function runCliJson(args, timeoutMs) {
+      return new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, args, {
+          // CLI 以包根目录为 cwd，和 pipeline 运行的约定保持一致
+          cwd: path.dirname(path.dirname(path.dirname(args[0]))),
+          env: outlineEnv(),
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+        let stdout = ''
+        let stderr = ''
+        const timer = setTimeout(() => {
+          child.kill('SIGTERM')
+        }, timeoutMs)
+        timer.unref?.()
+        child.stdout.on('data', (chunk) => {
+          stdout += chunk
+        })
+        child.stderr.on('data', (chunk) => {
+          stderr += chunk
+        })
+        child.on('error', (error) => {
+          clearTimeout(timer)
+          reject(error)
+        })
+        child.on('close', (code, signal) => {
+          clearTimeout(timer)
+          if (code !== 0) {
+            reject(new Error(text(stderr) || `scenario-copilot 退出码 ${code ?? signal}`))
+            return
+          }
+          resolve(stdout)
+        })
+      })
+    }
+
+    async function generateOutline(input = {}) {
+      const cliPath = cliEntry()
+      if (!cliPath) {
+        throw ctx.error(2005, '未找到 scenario-copilot CLI，请检查配置 scenarioRoot 并先构建 dist')
+      }
+      const args = [cliPath, 'outline', '--json']
+      let tempDir = ''
+      try {
+        const requirementText = String(input.requirementText ?? '').trim()
+        if (requirementText) {
+          tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenario-outline-'))
+          const tempFile = path.join(tempDir, 'requirement.md')
+          fs.writeFileSync(tempFile, requirementText, 'utf8')
+          args.push('--input', tempFile)
+        }
+        if (text(input.title)) args.push('--title', text(input.title).slice(0, 120))
+        if (text(input.notes)) args.push('--text', text(input.notes).slice(0, 12_000))
+        if (text(input.requirementId)) args.push('--requirement-id', text(input.requirementId))
+        if (text(input.targetRoute)) args.push('--route', text(input.targetRoute))
+        const knowledge = text(config.knowledgePath)
+        if (knowledge && fs.existsSync(knowledge)) args.push('--knowledge', knowledge)
+        const caseCount = Number(input.caseCount)
+        if (Number.isFinite(caseCount) && caseCount > 0) {
+          args.push('--cases', String(Math.min(8, Math.round(caseCount))))
+        }
+        const stdout = await runCliJson(args, config.outlineTimeoutMs)
+        const start = stdout.indexOf('{')
+        if (start < 0) throw new Error('scenario-copilot 未返回 JSON')
+        const parsed = JSON.parse(stdout.slice(start))
+        return {
+          title: text(parsed.title),
+          content: String(parsed.content ?? ''),
+          cases: Number(parsed.cases) || 0,
+          steps: Number(parsed.steps) || 0,
+          warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+        }
+      } catch (error) {
+        // CLI 的 stderr 已经带「大纲生成失败：」前缀，这里去掉避免重复
+        const message = String(error.message || '').replace(/^大纲生成失败[:：]\s*/, '')
+        throw ctx.error(2006, `大纲生成失败: ${message}`)
+      } finally {
+        if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true })
+      }
+    }
+
+    function saveOutline(input = {}) {
+      const configured = text(config.outlinesDir)
+      if (!configured) throw ctx.error(2002, '未配置 outlinesDir（测试大纲目录）')
+      const directory = path.resolve(configured)
+      fs.mkdirSync(directory, { recursive: true })
+      const content = String(input.content ?? '')
+        .replace(/\r\n/g, '\n')
+        .trim()
+      if (!content) throw ctx.error(2007, '大纲内容为空')
+      const heading = /^#\s+(.+)$/m.exec(content)
+      if (!heading) throw ctx.error(2008, '大纲缺少一级标题（# 标题）')
+      const title = heading[1].trim()
+      let name =
+        path.basename(text(input.name) || `${slugify(title)}.md`).replace(/[\\/:*?"<>|]+/g, '-').trim() ||
+        `${slugify(title)}.md`
+      if (!/\.(md|txt)$/i.test(name)) name = `${name}.md`
+      const full = path.join(directory, name)
+      if (!full.startsWith(directory + path.sep)) throw ctx.error(2010, '文件名不合法')
+      if (fs.existsSync(full) && input.overwrite === false) {
+        throw ctx.error(2009, `大纲已存在: ${name}`)
+      }
+      fs.writeFileSync(full, content.endsWith('\n') ? content : `${content}\n`, 'utf8')
+      return {
+        name,
+        title: name.replace(/\.(md|txt)$/i, ''),
+        size: fs.statSync(full).size,
+        outlines: listOutlines(config),
+      }
+    }
+
+    async function resumeRun(input = {}) {
+      const run = runs.get(text(input.id))
+      if (!run) throw ctx.error(2004, '运行记录不存在')
+      if (run.status === 'running') throw ctx.error(2011, '运行尚未结束，不能续跑')
+      if (!run.input?.taskKey && !run.input?.requirementId) {
+        throw ctx.error(2014, '该运行缺少原始任务信息（插件升级前创建），请重新发起测试')
+      }
+      const action = ['next', 'only-failed', 'regenerate'].includes(text(input.action))
+        ? text(input.action)
+        : 'next'
+      if (action === 'next' && !run.paused) throw ctx.error(2012, '该运行没有待继续的阶段')
+      if (action === 'only-failed' && !(run.failedTests || []).length) {
+        throw ctx.error(2013, '上一次运行没有失败用例')
+      }
+      const stage = action === 'next' ? run.nextStage : run.stage || 'execute'
+      if (!stage) throw ctx.error(2012, '没有可继续的阶段')
+      const base = run.input && typeof run.input === 'object' ? run.input : {}
+      const next = await startRun({
+        ...base,
+        // 续跑时允许表单重新提供凭据；不落库，只透传给本次进程
+        username: text(input.username),
+        password: text(input.password),
+        orgName: text(input.orgName) || base.orgName,
+        stage,
+        resume: action !== 'regenerate',
+        regenerate: action === 'regenerate',
+        onlyFailed: action === 'only-failed',
+      })
+      return summaryOf(next)
+    }
+
     ctx.http.route('GET', '/panel', async () => {
       const [file, type] = ASSETS.get('/panel')
       return {
@@ -699,6 +928,12 @@ export default createPlugin({
     }
 
     ctx.http.route('GET', '/defaults', async () => defaultsResult())
+
+    ctx.http.route('GET', '/outlines', async () => ({ outlines: listOutlines(config) }))
+
+    ctx.http.route('POST', '/outlines/generate', async (request) => generateOutline(request.json()))
+
+    ctx.http.route('POST', '/outlines/save', async (request) => saveOutline(request.json()))
 
     ctx.http.route('GET', '/tasks', async () => {
       const tasks = await ctx.tasks.list({ includeArchived: true })
@@ -734,6 +969,10 @@ export default createPlugin({
 
     ctx.http.route('POST', '/cancel', async (request) => cancelRun(request.json().id))
 
+    ctx.http.route('POST', '/runs/resume', async (request) => ({
+      run: await resumeRun(request.json()),
+    }))
+
     ctx.http.route('GET', '/regressions', async (request) => {
       if (request.query?.id) return { group: await getRegression(request.query.id) }
       return {
@@ -763,9 +1002,13 @@ export default createPlugin({
       },
       'runs.start': async (params) => summaryOf(await startRun(params)),
       'runs.cancel': async (params) => cancelRun(params?.id),
+      'runs.resume': async (params) => resumeRun(params),
       'regressions.start': async (params) => startRegression(params),
       'regressions.get': async (params) => getRegression(params?.id),
       'regressions.cancel': async (params) => cancelRegression(params?.id),
+      'outlines.list': async () => ({ outlines: listOutlines(config) }),
+      'outlines.generate': async (params) => generateOutline(params),
+      'outlines.save': async (params) => saveOutline(params),
     })
 
     ctx.effect(() => {

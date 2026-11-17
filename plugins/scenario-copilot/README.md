@@ -1,6 +1,6 @@
 # scenario-copilot
 
-把 `@mom-cli/scenario-copilot` 接入 Trellis Board 的客户端插件：按 Trellis 任务或需求级测试对象，用测试大纲生成并执行 Playwright 场景，支持单次运行与批量回归，结果通过「自动化测试」面板查看。
+把 `@mom-cli/scenario-copilot` 接入 Trellis Board 的客户端插件：按 Trellis 任务或需求级测试对象，用测试大纲生成并执行 Playwright 场景，支持单次运行与批量回归，结果通过「自动化测试」面板查看。面板也能把需求描述直接交给 LLM 生成结构化大纲并保存到 `outlinesDir`。
 
 ## 命名
 
@@ -52,35 +52,64 @@
 | `targetUrl` | 未在任务/需求或 binding 上配置目标地址时的兜底地址 |
 | `knowledgePath` | 可选的领域知识文件；为空则不注入 |
 | `orgName` / `username` / `password` | 目标环境登录信息 |
-| `llmBaseUrl` / `llmApiKey` / `llmModel` | 生成场景使用的 LLM；由部署配置注入，仓库不提供默认值 |
+| `llmBaseUrl` / `llmApiKey` / `llmModel` | 生成场景与大纲使用的 LLM；由部署配置注入，仓库不提供默认值 |
+| `outlineTimeoutMs` | 单次大纲生成的超时，默认 5 分钟（30s–15min） |
 | `timeoutMs` | 单次 pipeline 超时，默认 15 分钟 |
 | `maxRuns` | 内存中保留的运行记录数 |
 | `maxHealingRetries` | 生成脚本时的自愈重试次数，默认 1 |
 
 ## 能力
 
-manifest `provides` 发布 `scenario.copilot` v1.0.0：
+manifest `provides` 发布 `scenario.copilot` v1.1.0：
 
 - `defaults.get` / `bindings.get`
 - `runs.list` / `runs.get` / `runs.start` / `runs.cancel`
 - `regressions.start` / `regressions.get` / `regressions.cancel`
+- `outlines.list` / `outlines.generate` / `outlines.save`
+- `runs.resume`（`action: next | only-failed | regenerate`）
 
 `witops-workbench` 通过宿主能力桥调用这些方法，不直接依赖 HTTP 路由。
+
+## 生成大纲
+
+`outlines.generate` 走 CLI 的 `outline` 命令（`<scenarioRoot>/dist/bin/scenario-copilot.js outline --json`），把页面粘贴的需求描述 / 测试要点转成 `OutlineParser` 能消费的 Markdown：`# 标题`、`## 前置条件`、`## 用例 N：名称`、编号步骤。CLI 侧提示词会要求不写登录步骤与 URL，返回后会做结构校验并把问题放进 `warnings`。
+
+- 路由：`POST /outlines/generate`（`{title, requirementText, notes, requirementId, targetRoute, caseCount}`）、`POST /outlines/save`（`{content, name, overwrite}`）、`GET /outlines`
+- 面板入口：测试大纲行右侧「生成大纲」，生成后可预览、命名并保存，保存后自动选中
+- 依赖：CLI 已构建出 `dist/bin/scenario-copilot.js`，且 `llmBaseUrl` / `llmApiKey` / `llmModel` 可用；CLI 缺失时面板隐藏该按钮（`defaults.canGenerateOutline`）
+
+## 分阶段与续跑
+
+CLI 的 `pipeline` 支持断点与阶段控制，插件把这些能力开放到面板：
+
+| 机制 | CLI 参数 | 面板入口 |
+| --- | --- | --- |
+| 只跑前几个阶段 | `--stop-after recon\|generate\|verify\|execute` | 表单「执行阶段」下拉 |
+| 复用上次脚本 | `--resume` | 「继续下一阶段」「仅重跑失败用例」自动带上 |
+| 只重跑失败用例 | `--only-failed` + `--resume` | 运行详情的「仅重跑失败用例」 |
+| 强制重新生成 | `--regenerate` | 运行详情的「重新生成」 |
+| 状态隔离 | `--state-key <subject>::<outline>` | 自动生成，避免同一大纲被多任务互相覆盖 |
+
+- 状态文件在 `<workspaceDir>/runs/<key>.json`，记录阶段、脚本/快照哈希、覆盖率与 `lastExecution.failedTests`
+- 主动停在中间阶段的运行状态是 `paused`（不是 failed），详情里显示「停在 <阶段>」，可直接继续下一阶段
+- 续跑复用的前提是大纲、UI 契约版本与页面快照哈希都没变；任一变化会自动重新生成
+- 每次运行结束时 CLI 打印一条 `[scenario-copilot] result: {...}`，插件据此回填 `stage/paused/nextStage/resumed/failedTests/statePath/scriptPath/coveragePassed`
 
 ## 使用
 
 在客户端「自动化测试」面板，或由 `witops-workbench` 下发：
 
 1. 选择 Trellis 任务（支持归档任务）或需求级测试对象。
-2. 第一次填写目标页面地址；地址会写入该 subject 的 binding，下次自动带出。
-3. 选择 `outlinesDir` 中的测试大纲后下发，生成版本化 spec，例如：
+2. 需要新大纲时点「生成大纲」，粘贴需求后生成并保存到 `outlinesDir`。
+3. 第一次填写目标页面地址；地址会写入该 subject 的 binding，下次自动带出。
+4. 选择 `outlinesDir` 中的测试大纲后下发，生成版本化 spec，例如：
 
 ```text
 <witops>-<trellis>-<timestamp>-v1.spec.ts
 ```
 
-4. 需求级 subject 使用 `requirement:<requirementId>`，Trellis 任务使用 `trellis:<taskKey>`；回归任务按 subject 串行执行，单个失败不会中断后续对象。
-5. 打开运行记录查看阶段日志、生成的 spec 和最终结果；可继续下发命令或取消运行。
+5. 需求级 subject 使用 `requirement:<requirementId>`，Trellis 任务使用 `trellis:<taskKey>`；回归任务按 subject 串行执行，单个失败不会中断后续对象。
+6. 打开运行记录查看阶段日志、生成的 spec 和最终结果；可继续下发命令或取消运行。
 
 ## 权限
 

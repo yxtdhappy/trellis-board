@@ -27,7 +27,21 @@
           </label>
           <label class="field">
             <span>测试大纲</span>
-            <select id="outline" class="tb-input"></select>
+            <div class="outline-row">
+              <select id="outline" class="tb-input"></select>
+              <button id="generate-outline" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">
+                生成大纲
+              </button>
+            </div>
+          </label>
+          <label class="field">
+            <span>执行阶段</span>
+            <select id="stage" class="tb-input">
+              <option value="execute">完整执行（生成 + 执行）</option>
+              <option value="verify">生成 + 覆盖率校验（不执行）</option>
+              <option value="generate">只生成脚本</option>
+              <option value="recon">只抓取页面快照</option>
+            </select>
           </label>
           <label class="field">
             <span>测试地址</span>
@@ -67,15 +81,54 @@
         <section class="card detail-card">
           <div class="section-head">
             <h2 id="detail-title">运行详情</h2>
-            <button id="cancel" class="tb-btn tb-btn-ghost tb-btn-sm" type="button" hidden>
-              取消
-            </button>
+            <div class="detail-actions">
+              <button id="resume-next" class="tb-btn tb-btn-sm" type="button" hidden>
+                继续下一阶段
+              </button>
+              <button id="retry-failed" class="tb-btn tb-btn-ghost tb-btn-sm" type="button" hidden>
+                仅重跑失败用例
+              </button>
+              <button id="regenerate" class="tb-btn tb-btn-ghost tb-btn-sm" type="button" hidden>
+                重新生成
+              </button>
+              <button id="cancel" class="tb-btn tb-btn-ghost tb-btn-sm" type="button" hidden>
+                取消
+              </button>
+            </div>
           </div>
           <div id="detail-meta" class="meta"></div>
+          <div id="failed-tests" class="failed-tests" hidden></div>
           <pre id="logs" class="logs"></pre>
         </section>
       </main>
     </div>
+    <dialog id="outline-dialog" class="outline-dialog">
+      <div class="dialog-shell">
+        <h2>生成测试大纲</h2>
+        <p class="hint tb-muted tb-small">
+          粘贴需求描述或测试要点，由 LLM 生成结构化大纲；生成后可保存到 outlines 目录并直接选用。
+        </p>
+        <label class="field">
+          <span>标题</span>
+          <input id="gen-title" class="tb-input" spellcheck="false" />
+        </label>
+        <label class="field">
+          <span>需求 / 测试要点</span>
+          <textarea id="gen-notes" class="tb-input" rows="6"></textarea>
+        </label>
+        <label class="field">
+          <span>保存文件名</span>
+          <input id="gen-name" class="tb-input" placeholder="留空则按标题生成" spellcheck="false" />
+        </label>
+        <p id="gen-hint" class="hint"></p>
+        <pre id="gen-preview" class="gen-preview" hidden></pre>
+        <footer class="dialog-actions">
+          <button id="gen-run" class="tb-btn" type="button">生成</button>
+          <button id="gen-save" class="tb-btn tb-btn-ghost" type="button" disabled>保存并选用</button>
+          <button id="gen-close" class="tb-btn tb-btn-ghost" type="button">关闭</button>
+        </footer>
+      </div>
+    </dialog>
     <script src="/plugin-ui/v1/bridge.js"></script>
     <script src="/plugin-ui/v1/ui.js"></script>
     <script src="/api/plugins/scenario-copilot/app.js"></script>
