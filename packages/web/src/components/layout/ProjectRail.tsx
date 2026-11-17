@@ -420,9 +420,7 @@ export function ProjectRail({
         if (cancelled) return
         const next = normalizeSidecarStatus(result)
         setSidecarStatus((current) =>
-          current?.running === next?.running && current?.paused === next?.paused
-            ? current
-            : next,
+          current?.running === next?.running && current?.paused === next?.paused ? current : next,
         )
       } catch {
         if (!cancelled) setSidecarStatus(null)

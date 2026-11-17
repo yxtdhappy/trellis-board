@@ -466,10 +466,7 @@ pub async fn sync_deferred_tasks(app: &AppHandle, task_space_id: &str) -> Result
         .map_err(|error| message(&error))
 }
 
-pub async fn list_task_ownership(
-    app: &AppHandle,
-    task_space_id: &str,
-) -> Result<Value, String> {
+pub async fn list_task_ownership(app: &AppHandle, task_space_id: &str) -> Result<Value, String> {
     let service = service(app).map_err(|error| message(&error))?;
     let (config, api) = service
         .agent_context()
@@ -754,14 +751,8 @@ pub async fn detach_local_association(
             .await
             .map_err(|error| message(&error))?;
         let task_sync = Arc::new(service.task_sync(api.clone(), config.bindings).await);
-        detach::detach_local_association(
-            &service.store,
-            &api,
-            &task_sync,
-            task_space_id,
-            false,
-        )
-        .await
+        detach::detach_local_association(&service.store, &api, &task_sync, task_space_id, false)
+            .await
     }
     .map_err(|error| message(&error))?;
     service.state_events.notify_associations();
@@ -770,4 +761,3 @@ pub async fn detach_local_association(
 
 /// 与 `sidecar.rs` 的 `SidecarStatus` 同形，前端 `ProjectRail` 继续读取。
 pub type SidecarStatus = AgentStatus;
-

@@ -1018,10 +1018,8 @@ mod tests {
 
     #[tokio::test]
     async fn clears_ownership_index_with_agent_transient_state() {
-        let root = std::env::temp_dir().join(format!(
-            "trellis-device-transient-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("trellis-device-transient-{}", uuid::Uuid::new_v4()));
         let store = ConfigStore::new_unsecured_for_test(root.clone());
         store.ensure_directories().await.expect("directories");
         tokio::fs::write(&store.paths.ownership_index_file, b"{}\n")
