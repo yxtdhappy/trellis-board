@@ -114,6 +114,9 @@ impl ApiClient {
             .header(ACCEPT, "application/json")
             .header(USER_AGENT, format!("trellis-board-agent/{AGENT_VERSION}"))
             .timeout(timeout);
+        if method != Method::GET && method != Method::HEAD {
+            request = request.header(CONTENT_TYPE, "application/json");
+        }
         if let Some(credential) = &self.credential {
             request = request.header(AUTHORIZATION, format!("Bearer {credential}"));
         }
@@ -124,9 +127,7 @@ impl ApiClient {
                 AgentError::new(code::INVALID_RESPONSE, format!("请求体序列化失败: {error}"))
             })?;
         if let Some(request_body) = body_bytes.clone() {
-            request = request
-                .header(CONTENT_TYPE, "application/json")
-                .body(request_body);
+            request = request.body(request_body);
         }
         let response = request.send().await.map_err(network_error)?;
         let status = response.status();

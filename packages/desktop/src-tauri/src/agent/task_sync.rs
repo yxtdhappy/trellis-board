@@ -10763,6 +10763,16 @@ mod tests {
                         request.extend_from_slice(&chunk[..read]);
                     };
                     let header = String::from_utf8_lossy(&request[..header_end]).to_string();
+                    let has_json_content_type = header.lines().any(|line| {
+                        let Some((name, value)) = line.split_once(':') else {
+                            return false;
+                        };
+                        name.eq_ignore_ascii_case("content-type")
+                            && value
+                                .trim()
+                                .to_ascii_lowercase()
+                                .starts_with("application/json")
+                    });
                     let content_length = header
                         .lines()
                         .find_map(|line| {
@@ -10806,7 +10816,15 @@ mod tests {
                     } else {
                         None
                     };
-                    let (status, payload) = if path.contains("/snapshot?") {
+                    let (status, payload) = if method != "GET"
+                        && method != "HEAD"
+                        && !has_json_content_type
+                    {
+                        (
+                            "415 Unsupported Media Type",
+                            json!({ "code": "JSON_REQUIRED" }),
+                        )
+                    } else if path.contains("/snapshot?") {
                         ("200 OK", snapshot_payload.as_ref().clone())
                     } else if path.contains("/files?") {
                         (
