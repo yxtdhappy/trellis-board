@@ -988,3 +988,45 @@ Session summary was not supplied.
 ### Next Steps
 
 - 如需合并分区，可把同样的域版本思路用到活动看板游标（同步期间 409 会把用户踢回第一页）
+
+
+## Session 31: 统一 Web 端字号与尺寸刻度，清理 shadcn 规范违规
+<!-- trellis-session: v=2 fp=d6efb1d872845453 -->
+
+**Date**: 2026-11-17
+**Task**: 统一 Web 端字号与尺寸刻度，清理 shadcn 规范违规
+**Package**: web
+**Branch**: `main`
+
+### Summary
+
+把 packages/web/src 中 380 处任意 rem 值收敛到 Tailwind 主题刻度并清理 shadcn 规范违规
+
+### Main Changes
+
+- 新增 --text-2xs: 0.625rem，338 处任意 rem 字号改为 text-2xs/xs/sm/base/lg/xl/3xl
+- 任意 rem/px 尺寸改为刻度类（max-w-md/xl/160、w-58/67、gap-0.75、pt-4.5、rounded-xs/lg）
+- 40 处模板字符串 className 改为 cn()，emerald/amber 改为 success/warning 语义 token
+- 新增 components/ui/skeleton.tsx，6 处扫描骨架改用 Skeleton；7 处 border-t 分隔改用 Separator
+- components/ui 原语 8 行同口径清理，控件高度零漂移（仅 switch 16.6→16px）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2a8bf36` | style(web): 字号与尺寸统一到 Tailwind 刻度 token |
+
+### Testing
+
+- [OK] npx tsc -b（packages/web）通过
+- [OK] npx vite build 通过，CSS 产物含 .text-2xs/.w-58/.h-6/.h-8，无 .text-[..rem]
+- [OK] npx oxlint 0 error（49 既有 warning）；npx oxfmt --check 全过
+- [OK] tabbit 视觉核对 14 屏（看板/团队/归档/插件/详情/创建/改密/偏好/管理六个 tab/两套登录/深浅主题）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 拉取 origin/main 后推送 2 个提交（origin/main 已领先 4 个提交）
