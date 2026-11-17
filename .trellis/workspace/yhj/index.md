@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 57
+- **Total Sessions**: 58
 - **Last Active**: 2026-11-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1371 | Active |
+| `journal-1.md` | ~1395 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 58 | 2026-11-17 | 客户端品牌与版本号显示 | `c8318dd`, `2e0f270` | `main` |
 | 57 | 2026-11-17 | Team 任务索引增量物化性能优化 | `ed6acf1` | `main` |
 | 56 | 2026-11-16 | 修复 Agent-only 初始化副作用 | `cbbd150` | `main` |
 | 55 | 2026-11-15 | 优化桌面客户端启动缓存与稳定性验证 | `356c9bd`, `1467613`, `6e303ef`, `c44ae3e`, `f2d5bb6` | `main` |
