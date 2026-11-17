@@ -1,8 +1,8 @@
+use chrono::{SecondsFormat, Utc};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
 
@@ -14,15 +14,21 @@ pub fn init(directory: &Path) {
     let _ = LOG_FILE.set(directory.join("desktop.log"));
 }
 
-fn timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
+fn timestamp() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+fn format_line(level: &str, message: &str) -> String {
+    format!(
+        "{} {} {}\n",
+        timestamp(),
+        level.to_ascii_uppercase(),
+        redact(message.trim_end())
+    )
 }
 
 fn write(level: &str, message: &str) {
-    let line = format!("{} [{level}] {}\n", timestamp(), redact(message.trim_end()));
+    let line = format_line(level, message);
     if let Some(path) = LOG_FILE.get() {
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
             let _ = file.write_all(line.as_bytes());
@@ -89,6 +95,18 @@ pub fn redact(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_lines_with_iso_timestamp_and_uppercase_level() {
+        let line = format_line("warn", "同步失败\n");
+        let stamp = line.split(' ').next().unwrap();
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(stamp).is_ok(),
+            "{line}"
+        );
+        assert!(stamp.ends_with('Z'), "{line}");
+        assert!(line.ends_with(" WARN 同步失败\n"), "{line}");
+    }
 
     #[test]
     fn redacts_tokens_and_secret_fields() {
