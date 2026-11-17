@@ -8,9 +8,12 @@
   `packages/server/team/sync-agent-service.js`、团队同步 API/SSE、`sync_*` schema 或桌面控制窗口时必须遵循本文。
 - 单机 watcher 与团队客户端 watcher 继续复用 `packages/shared/trellis-watcher.js` 的事件归一化；团队客户端
   只监听 `.trellis/tasks/**`。
-- Team 服务端不 clone、fetch、commit 或 push 项目 Git，不创建项目工作副本，也不读取 Git 凭据。
-- 项目 Git 只由客户端使用，负责源码、`.trellis/scripts`、`spec`、`config.yaml`、`workflow.md`、
-  `agents`、workspace 和本机编码 Agent 目录的一致性；Team Board 只同步任务目录。
+- Team Agent 链路只同步活动任务；`.trellis/tasks/archive/**` 不进入客户端扫描、watcher、cursor、
+  pending、冲突或上传。
+- Team 服务端只对归档执行按 taskSpace 隔离的只读 Git 导入；不 checkout、不 commit、不 push，
+  只读取目标分支的 `.trellis/tasks/archive/**`，不创建项目工作副本。
+- 项目源码、`.trellis/scripts`、`spec`、`config.yaml`、`workflow.md`、`agents`、workspace 和本机
+  编码 Agent 目录仍只由客户端使用。
 
 ## 2. Signatures
 
@@ -59,7 +62,7 @@ ETag、缓存键和游标绑定用户、团队、项目/taskSpace 集合哈希�
 `branch` 为可选单值子串筛选，trim 后大小写不敏感匹配，`%`、`_` 等字符按字面处理。
 分支匹配使用与前端一致的 Unicode 小写语义，不能直接依赖 SQLite 内置 `lower()`，它只折叠 ASCII。
 
-### SQLite v12
+### SQLite v14
 
 新模式只使用以下表；旧 `project_live_*`、`team_project`、`git_operation`、`git_credential`
 等表保留但不读写：
@@ -72,6 +75,8 @@ ETag、缓存键和游标绑定用户、团队、项目/taskSpace 集合哈希�
 - `sync_task_assignment`
 - `sync_task_command`
 - `sync_conflict`、`sync_conflict_backup`、`sync_file_audit`
+- `sync_archive_file`、`sync_archive_git_credential`
+- `sync_archive_sync_config`、`sync_archive_sync_state`、`sync_archive_sync_log`
 
 v12 在 `sync_agent_binding` 上增加 `is_listening`、`listener_reported_at`、`last_listener_at`，
 并在 `sync_task_space` 上增加 `retired_at`、`retired_by_user_id`、`retired_reason` 和
@@ -87,6 +92,14 @@ v12 在 `sync_project` 上增加 `baseline_branch`，并增加 `sync_task_merge_
 旧库优先选择最早创建的活动 taskSpace，时间相同按 ID 稳定排序。项目 public 返回
 `baselineBranch`，taskSpace public 返回 `isBaseline`。
 
+v14 增加独立归档事实源和双 revision。`sync_task_space_file` 只保存活动任务；归档正文进入
+`sync_archive_file`，由服务端按分支 HEAD 导入。`sync_task_space.revision/indexed_revision`
+只表示活动 Agent 数据，`archive_revision/archive_indexed_revision` 只表示 Git 归档；
+`sync_task_space_scan_cache.indexed_archive_revision` 参与 Board cache current 判定。
+v13 -> v14 在 `VACUUM INTO` 备份后把旧归档行复制为 `blob_oid='legacy'` 的只读缓存，并从
+Agent 文件表、pending conflict 和客户端 cursor 迁移路径中移除归档。首次 Git 成功导入前旧归档
+仍可读，成功后由 Git 快照替换。
+
 ### 服务与 SSE
 
 ```text
@@ -96,6 +109,7 @@ createTaskCommandService({ db, taskSpaces, agents, events })
 createSyncAgentService({ db, config, events })
 createTaskSnapshotBackupService({ db, databaseFile, logger })
 createAgentEventStream({ db, commands, logger })
+createArchiveGitSyncService({ db, config, dataDir, taskSpaceIndex, logger })
 ```
 
 Agent SSE 事件为 `command.available`、`agent.revoked`、`task.changed`、`cursor.invalidated`。
@@ -121,8 +135,9 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   快照接口仍保留来源数据；查询行用 `sourceBranchName` 暴露证据中的来源分支。
 - 同一 Agent 的同一 `localRepoKey` 只能有一个 approved binding。切换分支必须显式替换旧 binding；
   旧 taskSpace、任务数据和其他设备 binding 不删除。需要同时同步多个分支时，每个分支使用独立 Git worktree。
-- 服务端信任已认证 Agent 上报的 origin 字符串，不访问 Git 远端证明其存在；Agent 必须先验证
-  所选目录是仓库根、origin 可规范化、当前分支合法。
+- 活动任务同步信任已认证 Agent 上报的 origin 字符串，不访问 Git 远端证明其存在；Agent 必须先验证
+  所选目录是仓库根、origin 可规范化、当前分支合法。归档同步例外：服务端使用管理页按
+  `scheme + host + port` 配置的只读凭据，只 fetch 对应 taskSpace 分支的归档对象。
 
 ### 单账号单 Agent
 
@@ -155,8 +170,10 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 
 ### 路径与内容
 
-- 只接受 `.trellis/tasks/<task-dir>/<file>` 和
-  `.trellis/tasks/archive/<YYYY-MM>/<task-dir>/<file>`。
+- Agent HTTP 只接受 `.trellis/tasks/<task-dir>/<file>`；任何
+  `.trellis/tasks/archive/**` 路径返回 `409 ARCHIVE_SYNC_SERVER_MANAGED`，不做部分写入。
+- 服务端 Git 导入器只接受
+  `.trellis/tasks/archive/<YYYY-MM>/<task-dir>/<file>`，月份必须是 `01` 到 `12`。
 - 拒绝绝对路径、反斜杠、NUL、`.`/`..`、符号链接、非白名单扩展名和非 UTF-8 内容。
 - 允许 `.json/.jsonl/.md/.txt/.yaml/.yml`；单文件不超过 1 MiB，单批正文不超过
   64 MiB / 1024 文件。JSON 请求和 Agent 大响应使用编码后 96 MiB 硬运输上限，运输上限
@@ -219,8 +236,8 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 基线已有同一稳定任务 ID 时不要求重复证据。来源 taskSpace 在基线接管后新增、修改、移动或删除
   该任务返回 `409 TASK_OWNED_BY_BASELINE`，旧快照和审计保留。
 - `clientSequence` 在同一 Agent/taskSpace 内必须严格递增。
-- 同一批最多涉及一个完整任务目录，或一次同 task ID 的活动目录到归档目录移动；移动前后都必须保留
-  `task.json` 和稳定 `id`。
+- 同一批最多涉及一个完整活动任务目录。活动目录移动到归档目录时，Agent 只提交旧活动路径的删除
+  墓碑；不得提交新归档路径，归档正文由下一次服务端 Git 导入产生。
 - 成功且有变化的批次只增加 taskSpace revision 一次，并写 `sync_file_audit`；无变化批次不增加 revision。
 - 删除保留 `deleted=1` 墓碑供增量拉取；full snapshot 不返回墓碑。
 - 服务端索引使用进程内 warm 基线做目录级增量物化；同一 taskSpace 的 enqueue 与详情兜底共享
@@ -374,10 +391,9 @@ taskSpace、binding 或 cursor，也不返回任务正文。返回结果按稳�
 唤起待处理事件，无待处理返回 `false`；`list_local_associations` 把
 `binding.initialReviewPending` 投影为 `initialReviewPending`，供项目栏展示“等待确认任务差异”。
 
-首次同步的差异分类必须按任务目录配对：`task.json` 的 `branch` 是任务当时的开发分支，归档任务
-常与当前分支不同，同一目录绝不能因此被判成 `local-only`。业务分支过滤只允许丢弃“本地不存在”
-的跨分支服务端任务，避免把别的分支的任务写进工作区（`retain_server_groups_for_initial_sync`）；
-`bootstrap` 二次校验不带过滤，两侧口径必须一致。
+首次同步的差异分类只处理活动任务。服务端 snapshot、preflight 和目录读取均过滤归档；客户端
+在分组和读取正文前过滤归档。归档不出现在 initial review、业务分支过滤或 bootstrap 二次校验中，
+由 Board 查询读取服务端 Git 导入索引。
 
 不得在 attach 后通过删除 binding 来实现“暂不接入”。服务端不提供该补偿接口。
 
@@ -427,7 +443,7 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 
 ### 备份
 
-- v10/v11 -> v12 升级前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v12.*`；更早版本按
+- v13 -> v14 升级前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v14.*`；更早版本按
   原顺序迁移，最终备份名使用当前目标版本。
 - Team runtime 启动时和每 24 小时写入
   `backups/board.sqlite.snapshot.<UTC timestamp>`，保留最近 7 份。
@@ -455,6 +471,9 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | taskSpace 没有在线监听 | 创建/改派在写 operation 前返回 `409 TASK_SPACE_NO_ONLINE_LISTENER` |
 | 目标用户无在线 Agent、无 approved binding、非项目写成员 | 创建操作项前 `409`，返回用户、项目、分支和下一步 |
 | 路径越界、反斜杠、非白名单扩展名、符号链接、非 UTF-8 | 整批拒绝，任务快照不变 |
+| Agent 批次包含 `.trellis/tasks/archive/**` | `409 ARCHIVE_SYNC_SERVER_MANAGED`，整批拒绝 |
+| 归档 Git 凭据来源不匹配或无 SSH 凭据 | 该来源失败并写脱敏日志，不复用其他 host/port 凭据 |
+| Git 归档导入、索引投影失败 | 保留上次成功归档和 Board cache，更新尝试时间并写对应阶段日志 |
 | 单文件、单批、文件数超限 | 拒绝，任务快照不变 |
 | JSON 编码请求或大响应超过 96 MiB | `413 BODY_TOO_LARGE`，不读取为业务批次、不写快照 |
 | 同一 `batchId` 不同请求摘要 | `409` |
@@ -476,7 +495,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 
 - Good：A 修改 `task.json` 并以服务端当前摘要为基线提交；revision+1，B 从 cursor 拉取后原子替换
   完整任务目录，再推进 cursor；Board 收到 `tasks.changed` 后重载 REST 快照。
-- Good：A 把任务从活动目录移动到归档目录，一个批次包含旧目录删除和新目录写入；B 不会恢复旧活动路径。
+- Good：A 把任务从活动目录移动到归档目录，Agent 只提交旧活动路径删除；服务端活动卡片消失，
+  下一次 Git 归档导入后以 `archived=1` 出现在归档页。
 - Good：dev 基线首次看到 `dev1` 任务且其在 dev HEAD 中，一次 tree 扫描后携带证据写入；来源 dev1
   旧快照保留但不再出现在默认任务查询。
 - Good：同一 HEAD 下 17 个已合入任务只执行一次 `git ls-tree`，每个任务分别附自己的证据。
@@ -500,10 +520,11 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - Bad：把 `192.168.x.x` 等局域网服务器交给 `127.0.0.1:7897` 用户级代理；客户端会持续建立错误连接，
   表现为高 CPU、频繁重连和“同步像是没生效”。局域网 IP 必须直连。
 - Bad：源分支任务在基线接管后继续写来源 taskSpace，形成两个活跃归属。
-- Bad：服务端为验证证据执行项目 Git/Python 子进程，重新引入工作副本和凭据边界。
+- Bad：服务端为活动任务同步或合入证据执行项目 Git/Python 子进程，重新引入工作副本和双写者。
 - Bad：以“后到覆盖先到”写同一任务文件，会静默丢更新；服务端必须使用文件级 CAS。
 - Bad：收到 watcher 后只按路径抑制，不校验新摘要，会吞掉远端应用后紧接发生的真实本地编辑。
-- Bad：服务端在 HTTP 请求栈里 clone/fetch 或扫描项目 Git，会重新引入两套事实源和长时间阻塞。
+- Bad：服务端在 HTTP 请求栈里 clone/fetch 或扫描项目 Git，会长时间阻塞；归档 Git 只能在后台
+  scheduler 中读取 archive 路径，不能成为活动任务第二写者。
 - Bad：命令失败时提前插入正式任务卡或修改负责人，会让 Board 显示未实际落盘的状态。
 - Bad：为了覆盖任意 JSON 转义最坏膨胀，把 96 MiB 运输硬上限提高到数百 MiB；这会放大单请求
   内存占用和拒绝服务风险。64 MiB 是正常文本任务目标，运输表示仍必须受 96 MiB 约束。
@@ -518,7 +539,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   当前 Agent 的旧 binding、保留旧 taskSpace 和其他设备 binding。
 - `packages/server/test/team-task-snapshot.test.js`：首次写入、CAS 冲突、整批回滚、幂等、删除墓碑、覆盖备份、
   非法/不一致 `observedBranchName`，以及升级前 pending batch 补字段重放。
-- `packages/server/test/team-task-index-v10.test.js`：tasks-only 物化、归档移动、revision 隔离、不读取 Git/workspace。
+- `packages/server/test/team-task-index-v10.test.js`：tasks-only 物化、活动/归档双 revision、
+  archive-only Board 投影、不读取 Git/workspace。
 - `packages/server/test/team-task-index-v10.test.js` 还必须覆盖：单任务 warm 只扫描一个目录、未变化
   索引行不更新、增量与 full Board 一致、增量参与者变化后的 `project.members`、增量重复任务 ID
   身份冲突、人工阶段同 revision 重投影、失败事务四项状态回滚及 superseded 后收敛。
@@ -530,7 +552,10 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - 双客户端实时对齐（两个真实 Agent 的 HTTP 快照 + SSE、CAS 并发、离线拒绝）随 Node Agent 删除而
   不再有自动化测试；发布前由 Windows 客户端 E2E 覆盖，服务端行为由 `team-task-snapshot`、
   `team-agent-slot`、`team-gitless-http` 三条测试约束。
-- `packages/server/test/team-gitless-http.test.js`：新路由可用，旧 Git/live 路由 404，Team 启动不访问 Git 工作副本。
+- `packages/server/test/team-gitless-http.test.js`：活动 Agent 路由可用，旧 Git/live 路由 404，
+  归档管理 API 仅系统管理员可用且不回显密钥。
+- `packages/server/test/archive-git-{credentials,store,sync}.test.js`：凭据隔离和加密、bare 缓存、
+  只读 archive 对象、失败保留、失败阶段日志、索引时间和每 taskSpace 100 条日志上限。
 - `packages/server/test/team-gitless-http.test.js` 还必须断言：超过旧 9 MiB 的合法 Agent 批次可写入；
   Content-Length 超过 96 MiB 返回 `413 BODY_TOO_LARGE`；普通 JSON 仍为 64 KiB；缺少
   `observedBranchName` 返回 `400 BRANCH_OBSERVATION_REQUIRED`。

@@ -4,19 +4,24 @@
 
 - `packages/shared/trellis-watcher.js` 是目录过滤、递归监听、事件字段和 close/rebuild 的唯一实现。
 - 单机 `packages/server/watcher.js` 只做兼容包装；桌面 sidecar 直接使用共享模块。
-- 团队服务端不得启动该 watcher 监听自己的项目工作副本。
+- 团队任务监听只接受活动任务路径，`tasks/archive/**` 事件必须在进入 debounce、ownership 或上传前
+  丢弃；团队服务端不得启动该 watcher 监听自己的项目工作副本。
 - 事件保留兼容字段 `relativePath`（相对 `.trellis`）和 `trellisPath`（相对仓库，含 `.trellis/`）。
 - 实现基于 `chokidar`（`ignoreInitial: true`、`depth: 20`）：`rebuild()`/`close()` 返回 Promise，`ready()` 在所有 watcher 首次扫描后 resolve；`status().enabled` 在 ready 之前恒为 `false`，启动流程必须 `await ready()` 再读取。
 
 ## 扫描输入
 
-每个仓库的扫描根为 `.trellis/tasks`。只有包含 `task.json` 的任务目录成为任务；`archive/` 下任意嵌套层级的任务仍会被发现并标记为归档。
+standalone 每个仓库的扫描根为 `.trellis/tasks`。只有包含 `task.json` 的任务目录成为任务；
+`archive/` 下任意嵌套层级的任务仍会被发现并标记为归档。Team 的活动任务扫描根只包含
+`.trellis/tasks/<task-dir>`，`archive/` 在客户端和 Agent 快照进入索引前即被排除；Team 归档来自
+服务端后台 Git 导入的 `sync_archive_file`，两条事实源在 taskSpace 索引中合并。
 
 这里有两类扫描输入：
 
 - standalone 直接扫描 SQLite 白名单中的本机仓库，可读取 workspace 和 Git 元数据。
-- Team taskSpace 只扫描 `sync_task_space_file` 物化到系统临时目录的 `.trellis/tasks/**`，不读取
-  Git、workspace、`.developer`、scripts、spec、config 或 workflow。
+- Team taskSpace 的活动扫描只物化 `sync_task_space_file`；归档扫描只物化 `sync_archive_file`。
+  两者都不读取 Git、workspace、`.developer`、scripts、spec、config 或 workflow；归档正文由
+  服务端只读 Git importer 写入 `sync_archive_file`。
 
 任务证据主要来自：
 
@@ -78,14 +83,17 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 `database.js` 是 schema 和迁移的唯一所有者：
 
-- 当前 schema 为 v12。新库和旧库升级都保留旧账号、团队、`team_project`、`project_live_*`、
+- 当前 schema 为 v14。新库和旧库升级都保留旧账号、团队、`team_project`、`project_live_*`、
   `git_operation`、`git_credential` 和插件表，并新增 `sync_project`、
   `sync_task_space`、`sync_task_space_file`、`sync_task_space_batch`、`sync_active_agent`、
   `sync_agent_binding`、`sync_agent_cursor`、`sync_task_index`、`sync_task_command`、
-  `sync_task_merge_evidence`、`sync_conflict` 和 `sync_file_audit` 等 tasks-only 表。
+  `sync_task_merge_evidence`、`sync_conflict`、`sync_file_audit`、`sync_archive_file`、
+  `sync_archive_git_credential`、`sync_archive_sync_config/state/log` 等表。
 - Team runtime 只读写 `sync_*`、账号、团队、审计和执行扩展表；旧 Git 和实时覆盖表只作为人工回滚材料，
   不在启动、扫描、项目接入或命令链路中读取。
-- `sync_task_space_file` 保存 LF 规范化后的当前正文、摘要、删除墓碑、来源 Agent/用户和 revision；
+- `sync_task_space_file` 保存 LF 规范化后的活动正文、摘要、删除墓碑、来源 Agent/用户和 revision；
+  `sync_archive_file` 保存服务端 Git 导入的归档正文；活动路径不得写入归档表，archive 路径不得写入
+  Agent 文件表；
   `sync_task_index` 以 `(task_space_id, task_key)` 隔离路径实例；跨 taskSpace 判定同一稳定任务时
   使用 `execution_task_key` 的 `::<task.json.id>` 后缀。默认查询在基线索引已有同一稳定任务 ID 时
   隐藏来源旧副本。
@@ -99,28 +107,35 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 - v10 -> v11 迁移必须在 `BEGIN IMMEDIATE` 中通过 `PRAGMA table_info` 幂等补三列，再创建
   `sync_agent_binding_listener` 索引。v11 -> v12 幂等补 retired 三列和索引、`sync_project.baseline_branch`，
   创建 `sync_task_merge_evidence`、task ID 索引并回填基线；已有项目优先选择最早创建的活动
-  taskSpace，时间相同按 ID 排序。新库直接包含最终结构，v6-v11 升级复用同一入口。
-- 迁移前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v12.*`。补列、表、索引、数据回填或
-  schema 版本写入任一步失败时整体回滚；大于 v12 的数据库拒绝打开。
+  taskSpace，时间相同按 ID 排序。v13 -> v14 创建归档表、凭据表、同步状态/日志表，增加活动/归档
+  双 revision 和 `sync_task_space_scan_cache.projection_state_json`，并把旧 archive 文件复制为只读
+  legacy 缓存后从 Agent 文件表移除。新库直接包含最终结构，v6-v13 升级复用同一入口。
+- 迁移前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v14.*`。补列、表、索引、数据回填或
+  schema 版本写入任一步失败时整体回滚；大于 v14 的数据库拒绝打开。
 - v1 -> v2 -> v3 顺序迁移在单一 `BEGIN IMMEDIATE` 事务中完成；迁移前用 `VACUUM INTO` 写入可独立打开的源版本快照，命名为 `board.sqlite.v1-backup` 或 `board.sqlite.v2-backup`。失败时主库保留源版本和原表，备份仍可独立打开。
 - 首次初始化在 `BEGIN IMMEDIATE` 中一次性导入四个旧 JSON，并写入 `legacy_json_imported_v1`。
 - 迁移后不再读写旧 JSON；它们只作为迁移来源和回滚备份。
 - 损坏的旧 JSON 记录警告并跳过，不阻止服务启动。
 - 项目批量新增、删除及重排、看板状态多字段更新、依赖创建/解除必须在事务中完成。移除项目时，同一事务按 `projectId::` 前缀清理其执行数据，并删除任一侧属于该项目的依赖行。
 
-### Team tasks-only 持久化契约
+### Team 双事实源持久化契约
 
-- `sync_task_space.revision` 只由成功的非 no-op 快照批次递增；`indexed_revision` 只由成功投影推进。
-- Team 任务索引的 warm 基线只驻留进程内，不新增持久化 schema。基线包含 `indexed_revision`、按任务
-  目录保存的完整 loader 事实、覆盖活动行和删除墓碑的目录指纹、稳定 project/workspace 成员、人工
-  阶段指纹及最后成功 Board；进程重启、基线缺失或 `indexed_revision` 未对齐时自动 full 重建。
-- warm revision 先读取全部 `sync_task_space_file` 的 `relative_path/sha256/deleted/task_dir/revision`
-  轻量元数据，只对新增、修改、删除或移动的目录读取正文并调用 snapshot Worker。未变化任务不得重读
-  正文或重新解析；合并后仍对全部任务重算父子关系、身份冲突、人工阶段、风险和 Board 执行投影。
+- `sync_task_space.revision` 只由成功的非 no-op 活动快照批次递增；`indexed_revision` 只由成功投影推进。
+  `archive_revision` 只由成功 Git 归档导入递增；`archive_indexed_revision` 只由归档索引投影推进。
+- Team 任务索引的 warm 基线包含活动/归档两个 revision、按任务目录保存的完整 loader 事实、覆盖活动行
+  和删除墓碑的目录指纹、稳定 project/workspace 成员、任务详情、人工阶段指纹和最近指标。基线与
+  Board cache、两份 indexed revision 在同一事务写入 `sync_task_space_scan_cache.projection_state_json`；
+  进程重启后优先复用该状态继续增量投影。状态版本不兼容、JSON 损坏、字段校验失败或任一 revision
+  未对齐时才 full 重建。
+- Team 服务启动后在后台预热所有未停用的活动 project/taskSpace。预热与正常写入共用 single-flight；
+  warm 基线可用时只收敛落后 revision，缓存缺失时才执行首次 full 扫描。
+- warm revision 先读取活动表和归档表的轻量元数据，只对新增、修改、删除或移动的任务目录读取正文并
+  调用 snapshot Worker。未变化任务不得重读正文或重新解析；合并后仍对全部任务重算父子关系、身份冲突、
+  人工阶段、风险和 Board 执行投影。
 - 增量 Board 与前缀任务索引必须与同快照 full 重建一致，包括 `project.members`。稳定项目成员使用
   `workspaceMembers`，并与当前全部任务 `assignee/creator` 去重排序后生成 `members`，不能复用旧
   Board 中的参与者集合。
-- 每个候选投影在 `BEGIN IMMEDIATE` 中重新校验 `sync_task_space.revision`、retired/status 和人工阶段
+- 每个候选投影在 `BEGIN IMMEDIATE` 中重新校验活动 revision、archive revision、retired/status 和人工阶段
   指纹。扫描或等待期间出现新 revision 时，旧候选整体 superseded，不写 `sync_task_index`、
   `sync_task_index_tag`、Board cache、assignment 或 `indexed_revision`；下一轮收敛最新快照。
 - 索引写入按 `(task_space_id, task_key)` 做差异 UPSERT/DELETE，未变化行的 `board_version` 和
@@ -141,7 +156,9 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
   使用条件更新；过期 `delivered/running` 租约恢复 `pending`，不能并发执行同一命令。
 - `sync_conflict` 只保存待处理冲突摘要；`sync_conflict_backup` 只在覆盖服务端时保存双方正文；
   `sync_file_audit` append-only，不保存完整历史正文。
-- `sync_task_space_scan_cache` 以 taskSpace 和 `indexed_revision` 隔离；旧 revision Board 不得覆盖新 revision。
+- `sync_task_space_scan_cache` 以 taskSpace、`indexed_revision` 和 `indexed_archive_revision` 隔离，
+  `projection_state_json` 保存可校验、可丢弃的 warm 事实，`board_json` 保存最后一份一致 Board；
+  只有两份 revision 都已投影时才返回 current Board，旧 revision 不得覆盖新 revision。
 - `sync_task_space` 物理删除只能由 `purgeTaskSpace()` 的显式管理员流程执行；删除前严格
   `VACUUM INTO` 备份失败必须中止。删除事务写 `task_space_purged` 后再删除聚合根，子表依赖外键级联。
 - `retireTaskSpace()` 保留任务、冲突、文件和审计，只设置 retired 元数据、停用状态、清监听并取消
@@ -200,9 +217,9 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 #### 6. Tests Required
 
-- `packages/server/test/database.test.js` / `database-v10.test.js`：新库 v12、v10 监听补列、
-  v11 retired/基线/证据结构、v6-v11 顺序升级、源版本备份、旧表保留、归档时间回填、失败回滚和
-  大于 v12 拒绝。
+- `packages/server/test/database.test.js` / `database-v10.test.js`：新库 v14、v10 监听补列、
+  v11 retired/基线/证据结构、v13 -> v14 归档隔离与双 revision、v6-v13 顺序升级、源版本备份、
+  旧表保留、归档时间回填、失败回滚和大于 v14 拒绝。
 - `execution-store.test.js`：缺失、自引用、重复、原因边界、二/三节点环、创建/解除事件回滚、重开和重新创建。
 - `execution-projection.test.js`：列表不带完整数组；详情同时返回活动与已结束双向历史；解除区间时长使用 `resolvedAt - createdAt`；开工、完成条件不改变阶段完成状态。
 - 真实 HTTP：失败前后依赖与事件计数一致；循环错误含标题闭环。
@@ -412,8 +429,8 @@ withTransaction(db, () => {
 
 ## 修改检查
 
-- [ ] schema v12 新增监听、retired、基线、合入证据和 task ID 索引，旧依赖、归档、团队和 Git 表仍可打开，大于 v12 的版本仍被拒绝。
-- [ ] v10 -> v11 幂等补监听列，v11 -> v12 幂等补 retired、基线、证据表和索引；v6-v11 顺序迁移成功；源版本备份可独立打开，旧数据保留和迁移失败回滚正确。
+- [ ] schema v14 新增归档文件、凭据、同步状态/日志、活动和归档双 revision，旧依赖、归档、团队和 Git 表仍可打开，大于 v14 的版本仍被拒绝。
+- [ ] v10 -> v11 幂等补监听列，v11 -> v12 幂等补 retired、基线、证据表和索引，v13 -> v14 幂等迁移归档；v6-v13 顺序迁移成功；源版本备份可独立打开，旧数据保留和迁移失败回滚正确。
 - [ ] 基线 taskSpace 已有同一稳定任务 ID 时，默认任务查询、计数、筛选和分页只返回基线副本；来源快照仍可显式读取。
 - [ ] 扫描只把包含 `task.json` 的目录认作任务。
 - [ ] 新证据文件已加入读取和缓存签名范围。
@@ -427,5 +444,8 @@ withTransaction(db, () => {
 - [ ] 身份冲突清除后不会从冲突快照补写虚假阶段变化。
 - [ ] 删除或重命名任务后缓存能清理旧项。
 - [ ] 移除项目时同一事务清理对应 `task_stage` 和执行扩展数据，且不会误删相似项目 ID 的记录。
-- [ ] Team 快照投影只读取 `.trellis/tasks/**`，不依赖 `data/projects/**`、Git 子进程或 workspace。
+- [ ] Team 活动快照只读取活动 `.trellis/tasks/<task-dir>/**`；归档只读取 `sync_archive_file`，
+      不依赖 `data/projects/**`、workspace 或 HTTP 请求栈中的 Git 子进程。
+- [ ] 归档 Git 导入只接受 `.trellis/tasks/archive/<YYYY-MM>/<task-dir>/<file>`，失败保留上一份
+      `sync_archive_file` 和 Board cache，`last_indexed_at` 只在索引成功后推进。
 - [ ] Team 每日数据库快照使用 `VACUUM INTO`，保留最近 7 份且备份失败不阻塞服务。

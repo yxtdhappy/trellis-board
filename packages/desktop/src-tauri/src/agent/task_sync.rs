@@ -18,7 +18,9 @@ use crate::agent::store::{AgentBinding, ConfigStore};
 pub const TASK_SNAPSHOT_MAX_FILES: usize = 1024;
 pub const TASK_SNAPSHOT_MAX_FILE_BYTES: usize = 1024 * 1024;
 pub const TASK_SNAPSHOT_MAX_BATCH_BYTES: usize = 64 * 1024 * 1024;
-pub const OWNERSHIP_INDEX_VERSION: u32 = 3;
+pub const OWNERSHIP_INDEX_VERSION: u32 = 4;
+const ACTIVE_TASKS_ROOT: &str = ".trellis/tasks";
+const ARCHIVE_TASKS_ROOT: &str = ".trellis/tasks/archive";
 const OWNERSHIP_INDEX_MAX_BYTES: u64 = 16 * 1024 * 1024;
 const OWNERSHIP_INDEX_MAX_BINDINGS: usize = 64;
 const OWNERSHIP_INDEX_MAX_TASKS: usize = 20_000;
@@ -32,6 +34,7 @@ const RATE_LIMIT_RETRY_MAX_DELAY: Duration = Duration::from_millis(5000);
 const MAX_RATE_LIMIT_RETRIES: u32 = 2;
 const SNAPSHOT_EXTENSIONS: [&str; 6] = [".json", ".jsonl", ".md", ".txt", ".yaml", ".yml"];
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(250);
+const SYNC_TRACE_ENV: &str = "TRELLIS_DESKTOP_SYNC_TRACE";
 /// ProjectRail 按事件刷新并保留 10 秒可见兜底；关联展示允许短时复用，同步门禁仍逐次精确校验。
 const OWNERSHIP_PROJECTION_CACHE_TTL: Duration = Duration::from_secs(15);
 /// 分支守卫错误码：这些失败保留本地绑定状态，不覆盖成通用同步错误。
@@ -242,6 +245,46 @@ fn is_sha256(value: &str) -> bool {
             .all(|ch| ch.is_ascii_hexdigit() && !ch.is_uppercase())
 }
 
+pub(crate) fn is_archive_task_dir(task_dir: &str) -> bool {
+    task_dir == ARCHIVE_TASKS_ROOT
+        || task_dir
+            .strip_prefix(ARCHIVE_TASKS_ROOT)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn is_archive_snapshot_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    normalized == ARCHIVE_TASKS_ROOT
+        || normalized
+            .strip_prefix(ARCHIVE_TASKS_ROOT)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn active_task_directory_from_relative(path: &str) -> Option<String> {
+    let task_dir = task_directory_from_relative(path)?;
+    (!is_archive_task_dir(&task_dir)).then_some(task_dir)
+}
+
+fn active_task_directory_from_path(path: &str) -> Option<String> {
+    let task_dir = task_directory_from_path(path).ok()?.task_dir;
+    (!is_archive_task_dir(&task_dir)).then_some(task_dir)
+}
+
+fn sync_trace(task_space_id: &str, phase: &str, started: Instant, details: Value) {
+    if std::env::var_os(SYNC_TRACE_ENV).is_none()
+        && std::env::var_os("TRELLIS_DESKTOP_HTTP_TRACE").is_none()
+    {
+        return;
+    }
+    crate::logging::warn(&format!(
+        "任务同步阶段 {{\"taskSpaceId\":\"{}\",\"phase\":\"{}\",\"elapsedMs\":{},\"details\":{}}}",
+        task_space_id,
+        phase,
+        started.elapsed().as_millis(),
+        details
+    ));
+}
+
 pub fn normalize_snapshot_path(value: &str) -> AgentResult<String> {
     let raw = value.trim();
     if raw.is_empty() || raw.contains('\0') || raw.contains('\\') || raw.starts_with('/') {
@@ -383,6 +426,13 @@ pub fn group_task_snapshot_files(files: &[Value]) -> AgentResult<Vec<SnapshotGro
     let mut index: HashMap<String, usize> = HashMap::new();
     let mut seen = HashSet::new();
     for value in files {
+        let archived = value
+            .get("path")
+            .and_then(Value::as_str)
+            .is_some_and(is_archive_snapshot_path);
+        if archived {
+            continue;
+        }
         let file = validate_snapshot_file(value)?;
         if !seen.insert(file.path.clone()) {
             return protocol::err(code::INVALID_RESPONSE, "任务文件路径不能重复");
@@ -426,6 +476,16 @@ pub fn group_task_snapshot_files(files: &[Value]) -> AgentResult<Vec<SnapshotGro
 }
 
 fn validate_upload_batch(files: &[Value]) -> AgentResult<()> {
+    if files.iter().any(|file| {
+        file.get("path")
+            .and_then(Value::as_str)
+            .is_some_and(is_archive_snapshot_path)
+    }) {
+        return protocol::err(
+            code::INVALID_RESPONSE,
+            "归档任务由服务端 Git 管理，客户端不能上传归档路径",
+        );
+    }
     if files.len() > TASK_SNAPSHOT_MAX_FILES {
         return protocol::err(
             code::INVALID_RESPONSE,
@@ -699,7 +759,9 @@ pub fn classify_task_snapshots(
 fn baselines_from_snapshot(files: &[SnapshotFile]) -> BTreeMap<String, String> {
     files
         .iter()
-        .filter(|file| !file.deleted && is_sha256(&file.sha256))
+        .filter(|file| {
+            !file.deleted && !file.archived && is_sha256(&file.sha256)
+        })
         .map(|file| (file.path.clone(), file.sha256.clone()))
         .collect()
 }
@@ -723,7 +785,9 @@ fn normalize_baselines(value: &BTreeMap<String, String>) -> BTreeMap<String, Str
     value
         .iter()
         .filter(|(path_name, sha256)| {
-            is_sha256(sha256) && normalize_snapshot_path(path_name).is_ok()
+            is_sha256(sha256)
+                && normalize_snapshot_path(path_name).is_ok()
+                && active_task_directory_from_path(path_name).is_some()
         })
         .map(|(path_name, sha256)| (path_name.clone(), sha256.clone()))
         .collect()
@@ -733,7 +797,7 @@ fn file_state_from_group(group: &SnapshotGroup) -> BTreeMap<String, String> {
     group
         .files
         .iter()
-        .filter(|file| !file.deleted)
+        .filter(|file| !file.deleted && !file.archived)
         .map(|file| (file.path.clone(), file.sha256.clone()))
         .collect()
 }
@@ -743,7 +807,7 @@ fn baselines_by_task_dir(
 ) -> BTreeMap<String, BTreeMap<String, String>> {
     let mut grouped = BTreeMap::new();
     for (path_name, sha256) in normalize_baselines(baselines) {
-        if let Some(task_dir) = task_directory_from_relative(&path_name) {
+        if let Some(task_dir) = active_task_directory_from_relative(&path_name) {
             grouped
                 .entry(task_dir)
                 .or_insert_with(BTreeMap::new)
@@ -831,7 +895,7 @@ pub struct PendingBatch {
 }
 
 fn cursor_from_entry(entry: &Value) -> Cursor {
-    Cursor {
+    let mut cursor = Cursor {
         revision: entry.get("revision").and_then(Value::as_u64).unwrap_or(0),
         sequence: entry.get("sequence").and_then(Value::as_u64).unwrap_or(0),
         baseline_reconciled_head: entry
@@ -856,7 +920,90 @@ fn cursor_from_entry(entry: &Value) -> Cursor {
             .get("conflictBlocked")
             .map(parse_conflict_blocked)
             .unwrap_or_default(),
+    };
+    cursor.baselines = normalize_baselines(&cursor.baselines);
+    cursor.deferred.retain(|task_dir, files| {
+        !is_archive_task_dir(task_dir)
+            && files
+                .keys()
+                .all(|path| active_task_directory_from_path(path).is_some())
+    });
+    cursor
+        .ownership_pending
+        .retain(|task_dir, _| !is_archive_task_dir(task_dir));
+    cursor
+        .conflict_blocked
+        .retain(|task_dir, _| !is_archive_task_dir(task_dir));
+    cursor.pending = cursor
+        .pending
+        .and_then(|batch| migrate_archive_pending_batch(batch, cursor.sequence));
+    cursor
+}
+
+fn migrate_archive_pending_batch(batch: PendingBatch, cursor_sequence: u64) -> Option<PendingBatch> {
+    let mut kept = Vec::with_capacity(batch.files.len());
+    let mut changed = false;
+    for file in &batch.files {
+        let Some(path) = file.get("path").and_then(Value::as_str) else {
+            kept.push(file.clone());
+            continue;
+        };
+        if is_archive_snapshot_path(path) {
+            changed = true;
+            continue;
+        }
+        kept.push(file.clone());
     }
+    if kept.is_empty() {
+        return None;
+    }
+    if !changed {
+        return Some(batch);
+    }
+    const SUFFIX: &str = ".archive-filtered.v1";
+    let prefix_len = 127usize.saturating_sub(SUFFIX.len());
+    let prefix: String = batch.batch_id.chars().take(prefix_len).collect();
+    Some(PendingBatch {
+        batch_id: format!("{prefix}{SUFFIX}"),
+        client_sequence: next_client_sequence(cursor_sequence),
+        files: kept,
+        merge_evidence: None,
+    })
+}
+
+fn cursor_entry_needs_archive_migration(entry: &Value) -> bool {
+    entry
+        .get("pending")
+        .and_then(|pending| pending.get("files"))
+        .and_then(Value::as_array)
+        .is_some_and(|files| {
+            files.iter().any(|file| {
+                file.get("path")
+                    .and_then(Value::as_str)
+                    .is_some_and(is_archive_snapshot_path)
+            })
+        })
+        || entry
+            .get("baselines")
+            .and_then(Value::as_object)
+            .is_some_and(|values| values.keys().any(|path| is_archive_snapshot_path(path)))
+        || entry
+            .get("deferred")
+            .and_then(Value::as_object)
+            .is_some_and(|values| {
+                values.iter().any(|(task_dir, files)| {
+                    is_archive_task_dir(task_dir)
+                        || files.as_object().is_some_and(|values| {
+                            values.keys().any(|path| is_archive_snapshot_path(path))
+                        })
+                })
+            })
+        || ["ownershipPending", "conflictBlocked"].iter().any(|field| {
+            entry
+                .get(*field)
+                .and_then(Value::as_object)
+                .is_some_and(|values| values.keys().any(|task_dir| is_archive_task_dir(task_dir)))
+        })
 }
 
 struct OwnershipReview {
@@ -993,11 +1140,13 @@ pub(crate) struct OwnershipFileIndex {
 
 fn valid_cached_task_dir(task_dir: &str) -> bool {
     task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref() == Some(task_dir)
+        && !is_archive_task_dir(task_dir)
         && protocol::resolve_task_dir_under(Path::new(".trellis/tasks"), task_dir).is_some()
 }
 
 fn valid_cached_snapshot_path(path: &str) -> bool {
     task_directory_from_path(path).is_ok()
+        && active_task_directory_from_path(path).is_some()
         && SNAPSHOT_EXTENSIONS
             .iter()
             .any(|extension| path.to_lowercase().ends_with(extension))
@@ -1040,7 +1189,9 @@ fn normalize_index(mut index: OwnershipIndex) -> Option<OwnershipIndex> {
             .tracked_paths
             .drain(..)
             .filter(|path| {
-                task_directory_from_path(path).is_ok_and(|parts| parts.file_path == "task.json")
+                task_directory_from_path(path).is_ok_and(|parts| {
+                    !parts.archived && parts.file_path == "task.json"
+                })
             })
             .collect::<HashSet<_>>();
         if tracked_paths.len() > OWNERSHIP_INDEX_MAX_TRACKED_PATHS {
@@ -1183,6 +1334,9 @@ fn indexed_local_groups(entry: &OwnershipIndexBinding) -> AgentResult<Vec<Snapsh
     let mut groups = BTreeMap::<String, SnapshotGroup>::new();
     for (path, file) in &entry.files {
         let parts = task_directory_from_path(path)?;
+        if parts.archived {
+            continue;
+        }
         let task = entry.tasks.get(&parts.task_dir);
         let group = groups
             .entry(parts.task_dir.clone())
@@ -1276,7 +1430,7 @@ pub struct TaskSync {
     ownership_validation_started: std::sync::atomic::AtomicBool,
     ownership_refresh_lock: Mutex<()>,
     binding_selection_lock: Mutex<()>,
-    binding_sync_lock: Mutex<()>,
+    binding_sync_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     syncing_task_spaces: Mutex<HashMap<String, usize>>,
     binding_sync_idle: Notify,
     deferred_uploads: Mutex<HashMap<String, HashSet<String>>>,
@@ -1318,7 +1472,7 @@ impl TaskSync {
             ownership_validation_started: std::sync::atomic::AtomicBool::new(false),
             ownership_refresh_lock: Mutex::new(()),
             binding_selection_lock: Mutex::new(()),
-            binding_sync_lock: Mutex::new(()),
+            binding_sync_locks: Mutex::new(HashMap::new()),
             syncing_task_spaces: Mutex::new(HashMap::new()),
             binding_sync_idle: Notify::new(),
             deferred_uploads: Mutex::new(HashMap::new()),
@@ -1346,6 +1500,15 @@ impl TaskSync {
     pub fn with_state_sink(mut self, sink: StateSink) -> Self {
         self.state_sink = Some(sink);
         self
+    }
+
+    async fn task_space_sync_lock(&self, task_space_id: &str) -> Arc<Mutex<()>> {
+        self.binding_sync_locks
+            .lock()
+            .await
+            .entry(task_space_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
     async fn ensure_ownership_index_loaded(&self) {
@@ -1449,6 +1612,7 @@ impl TaskSync {
 
     pub async fn set_bindings(&self, bindings: Vec<AgentBinding>) {
         let next = approved_bindings(bindings);
+        let active_ids: HashSet<String> = next.keys().cloned().collect();
         let changed = {
             let mut current = self.bindings.lock().await;
             let changed = !association_map_unchanged(&current, &next);
@@ -1465,6 +1629,10 @@ impl TaskSync {
         self.head_tree_cache.lock().await.clear();
         self.ownership_projection_cache.lock().await.clear();
         self.baseline_owned.lock().await.clear();
+        self.binding_sync_locks
+            .lock()
+            .await
+            .retain(|task_space_id, _| active_ids.contains(task_space_id));
     }
 
     pub async fn update_bindings(self: &Arc<Self>, bindings: Vec<AgentBinding>) {
@@ -1484,24 +1652,40 @@ impl TaskSync {
             return;
         }
         let trace = std::env::var_os("TRELLIS_DESKTOP_HTTP_TRACE").is_some();
-        let _serial = self.binding_sync_lock.lock().await;
+        let mut jobs = tokio::task::JoinSet::new();
         for task_space_id in task_space_ids {
-            let started = Instant::now();
-            if !self.bindings.lock().await.contains_key(&task_space_id) {
-                self.finish_binding_sync(&task_space_id).await;
-                continue;
-            }
-            if self.pull_and_report(&task_space_id).await {
-                self.invalidate_ownership_projection(&task_space_id).await;
-                self.validate_ownership_binding(&task_space_id).await;
-            }
-            self.finish_binding_sync(&task_space_id).await;
-            if trace {
-                crate::logging::warn(&format!(
-                    "启动同步完成 taskSpaceId={} elapsedMs={}",
-                    task_space_id,
-                    started.elapsed().as_millis()
-                ));
+            let this = self.clone();
+            jobs.spawn(async move {
+                let started = Instant::now();
+                if !this.bindings.lock().await.contains_key(&task_space_id) {
+                    this.finish_binding_sync(&task_space_id).await;
+                    return;
+                }
+                let serial = this.task_space_sync_lock(&task_space_id).await;
+                let _serial = serial.lock().await;
+                if this.pull_and_report(&task_space_id).await {
+                    this.invalidate_ownership_projection(&task_space_id).await;
+                    this.validate_ownership_binding(&task_space_id).await;
+                }
+                this.finish_binding_sync(&task_space_id).await;
+                if trace {
+                    crate::logging::warn(&format!(
+                        "启动同步完成 taskSpaceId={} elapsedMs={}",
+                        task_space_id,
+                        started.elapsed().as_millis()
+                    ));
+                }
+                sync_trace(
+                    &task_space_id,
+                    "startup-total",
+                    started,
+                    json!({ "trigger": "startup" }),
+                );
+            });
+        }
+        while let Some(result) = jobs.join_next().await {
+            if let Err(error) = result {
+                crate::logging::warn(&format!("任务空间同步任务异常退出：{error}"));
             }
         }
     }
@@ -1673,6 +1857,10 @@ impl TaskSync {
             .iter()
             .map(|binding| binding.task_space_id.clone())
             .collect();
+        self.binding_sync_locks
+            .lock()
+            .await
+            .retain(|task_space_id, _| selected_task_space_ids.contains(task_space_id));
         {
             let mut syncing = self.syncing_task_spaces.lock().await;
             syncing.retain(|task_space_id, _| selected_task_space_ids.contains(task_space_id));
@@ -1941,7 +2129,10 @@ impl TaskSync {
         &self,
         binding: &AgentBinding,
     ) -> AgentResult<Option<HashSet<String>>> {
-        let paths = [".trellis/tasks".to_string()];
+        let paths = [
+            ".trellis/tasks".to_string(),
+            ":(exclude).trellis/tasks/archive".to_string(),
+        ];
         let entries = match crate::agent::git::status_paths(
             Path::new(&binding.repo_path),
             &self.binding_hooks_dir(binding),
@@ -1960,21 +2151,60 @@ impl TaskSync {
         };
         let mut dirty = HashSet::new();
         for entry in entries {
-            let status = entry.status.as_bytes();
-            if status.len() < 2
-                || status[0] == b'R'
-                || status[1] == b'R'
-                || status[0] == b'C'
-                || status[1] == b'C'
-            {
-                return Ok(None);
+            for path in std::iter::once(&entry.path).chain(entry.original_path.as_ref()) {
+                if is_archive_snapshot_path(path) {
+                    continue;
+                }
+                let Some(task_dir) = active_task_directory_from_relative(path) else {
+                    return Ok(None);
+                };
+                dirty.insert(task_dir);
             }
-            let Some(task_dir) = task_directory_from_relative(&entry.path) else {
-                return Ok(None);
-            };
-            dirty.insert(task_dir);
         }
         Ok(Some(dirty))
+    }
+
+    async fn task_head_changed_dirs(
+        &self,
+        binding: &AgentBinding,
+        previous_head: &str,
+        current_head: &str,
+    ) -> Option<HashSet<String>> {
+        if previous_head.is_empty() || current_head.is_empty() || previous_head == current_head {
+            return Some(HashSet::new());
+        }
+        match crate::agent::git::diff_tree(
+            Path::new(&binding.repo_path),
+            &self.binding_hooks_dir(binding),
+            previous_head,
+            current_head,
+        )
+        .await
+        {
+            Ok(paths) => {
+                let mut dirty = HashSet::new();
+                for path in paths {
+                    if is_archive_snapshot_path(&path) {
+                        continue;
+                    }
+                    let Ok(parts) = task_directory_from_path(&path) else {
+                        return None;
+                    };
+                    if parts.archived {
+                        continue;
+                    }
+                    dirty.insert(parts.task_dir);
+                }
+                Some(dirty)
+            }
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "读取任务 HEAD 差量失败，回退全量扫描：{}",
+                    protocol::safe_error_message(&error.message)
+                ));
+                None
+            }
+        }
     }
 
     async fn scan_ownership_index_files(
@@ -2023,6 +2253,7 @@ impl TaskSync {
         let mut stack: Vec<PathBuf> = match scan_task_dirs {
             Some(task_dirs) => task_dirs
                 .iter()
+                .filter(|task_dir| !is_archive_task_dir(task_dir))
                 .filter_map(|task_dir| {
                     protocol::resolve_task_dir_under(Path::new(".trellis/tasks"), task_dir)
                         .map(|path| repo_path.join(path))
@@ -2048,6 +2279,14 @@ impl TaskSync {
             let mut entries = tokio::fs::read_dir(&directory).await.map_err(io_error)?;
             while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
                 let path = entry.path();
+                let relative = path
+                    .strip_prefix(repo_path)
+                    .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件路径越界"))?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if is_archive_snapshot_path(&relative) {
+                    continue;
+                }
                 let metadata = tokio::fs::symlink_metadata(&path).await.map_err(io_error)?;
                 if metadata.file_type().is_symlink() {
                     return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接");
@@ -2066,14 +2305,12 @@ impl TaskSync {
                 if !SNAPSHOT_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
                     continue;
                 }
-                let relative = path
-                    .strip_prefix(repo_path)
-                    .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件路径越界"))?
-                    .to_string_lossy()
-                    .replace('\\', "/");
                 let Ok(parts) = task_directory_from_path(&relative) else {
                     continue;
                 };
+                if parts.archived {
+                    continue;
+                }
                 local_dirs.insert(parts.task_dir.clone());
                 if !hash_all_files && parts.file_path != "task.json" {
                     continue;
@@ -2220,24 +2457,39 @@ impl TaskSync {
                 && !entry.head_fingerprint.is_empty()
                 && current_head_fingerprint.as_ref() == Some(&entry.head_fingerprint)
         });
-        let (head_commit, previous_tracked_paths, previous_tracked_loaded) = if head_cache_matches {
+        let previous_head_commit = previous
+            .as_ref()
+            .filter(|entry| entry.files_complete && !entry.head_commit.is_empty())
+            .map(|entry| entry.head_commit.clone());
+        let (head_commit, head_changed_dirs, previous_tracked_paths, previous_tracked_loaded) = if head_cache_matches {
             let entry = previous
                 .as_ref()
                 .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "ownership 索引状态无效"))?;
             (
                 entry.head_commit.clone(),
+                Some(HashSet::new()),
                 entry.tracked_paths.iter().cloned().collect::<HashSet<_>>(),
                 entry.tracked_paths_loaded,
             )
         } else {
             let (_, head_commit) = self.binding_head(binding).await?;
-            (head_commit, HashSet::new(), false)
+            let head_changed_dirs = match previous_head_commit.as_deref() {
+                Some(previous_head) => {
+                    self.task_head_changed_dirs(binding, previous_head, &head_commit)
+                        .await
+                }
+                None => None,
+            };
+            (head_commit, head_changed_dirs, HashSet::new(), false)
         };
 
         let mut git_calls = if head_cache_matches { 0 } else { 3 };
         git_calls += 1;
+        if !head_cache_matches && head_changed_dirs.is_some() {
+            git_calls += 1;
+        }
         let worktree_dirty = self.task_worktree_dirty_dirs(binding).await?;
-        let reuse_incremental = head_cache_matches
+        let reuse_incremental = (head_cache_matches || head_changed_dirs.is_some())
             && worktree_dirty.is_some()
             && previous.is_some()
             && !(force_file_scan && !files_complete);
@@ -2256,6 +2508,7 @@ impl TaskSync {
             let current_dirty = worktree_dirty.clone().unwrap_or_default();
             let mut scan_dirs = current_dirty;
             scan_dirs.extend(entry.dirty_task_dirs.iter().cloned());
+            scan_dirs.extend(head_changed_dirs.unwrap_or_default());
             if scan_dirs.is_empty() {
                 (
                     entry.tasks.clone(),
@@ -2299,7 +2552,11 @@ impl TaskSync {
                     entry.files_complete,
                     hashed,
                     parsed,
-                    "incremental",
+                    if head_cache_matches {
+                        "incremental"
+                    } else {
+                        "head-incremental"
+                    },
                 )
             }
         } else {
@@ -2364,7 +2621,8 @@ impl TaskSync {
         let mut tracked_paths: Vec<String> = tracked_paths
             .into_iter()
             .filter(|path| {
-                task_directory_from_path(path).is_ok_and(|parts| parts.file_path == "task.json")
+                task_directory_from_path(path)
+                    .is_ok_and(|parts| !parts.archived && parts.file_path == "task.json")
             })
             .collect();
         tracked_paths.sort();
@@ -2457,6 +2715,7 @@ impl TaskSync {
     }
 
     async fn validate_ownership_binding(self: &Arc<Self>, task_space_id: &str) {
+        let started = Instant::now();
         let binding = self.bindings.lock().await.get(task_space_id).cloned();
         let Some(binding) = binding else {
             return;
@@ -2496,6 +2755,12 @@ impl TaskSync {
                 ))
             }
         }
+        sync_trace(
+            task_space_id,
+            "ownership-validation",
+            started,
+            json!({ "trigger": "ownership" }),
+        );
     }
 
     async fn enqueue_ownership_validation(&self, task_space_id: &str) {
@@ -2533,7 +2798,8 @@ impl TaskSync {
                     let mut pending: Vec<String> = pending.into_iter().collect();
                     pending.sort();
                     for task_space_id in pending {
-                        let _serial = sync.binding_sync_lock.lock().await;
+                        let serial = sync.task_space_sync_lock(&task_space_id).await;
+                        let _serial = serial.lock().await;
                         sync.validate_ownership_binding(&task_space_id).await;
                     }
                 }
@@ -2848,7 +3114,8 @@ impl TaskSync {
         task_space_id: &str,
         event_revision: Option<u64>,
     ) {
-        let _serial = self.binding_sync_lock.lock().await;
+        let serial = self.task_space_sync_lock(task_space_id).await;
+        let _serial = serial.lock().await;
         match self
             .pull_task_space_for_event(task_space_id, event_revision)
             .await
@@ -2911,6 +3178,8 @@ impl TaskSync {
                         if !is_relevant_watch_event(&event) {
                             return;
                         }
+                        let is_remove =
+                            matches!(&event.kind, notify::event::EventKind::Remove(_));
                         for path in event.paths {
                             let Ok(relative) = path.strip_prefix(&watch_root) else {
                                 continue;
@@ -2919,9 +3188,25 @@ impl TaskSync {
                             if !is_watched_trellis_path(&relative) {
                                 continue;
                             }
+                            let full_relative = format!(".trellis/{relative}");
+                            let file_changed = SNAPSHOT_EXTENSIONS
+                                .iter()
+                                .any(|extension| full_relative.to_lowercase().ends_with(extension));
+                            let removed_task_dir = !is_remove
+                                && !path.exists()
+                                && active_task_directory_from_relative(&full_relative).is_some();
+                            if !file_changed
+                                && !is_remove
+                                && !removed_task_dir
+                            {
+                                continue;
+                            }
+                            if active_task_directory_from_relative(&full_relative).is_none() {
+                                continue;
+                            }
                             let _ = sender.send(WatchEvent::TaskPath {
                                 task_space_id: task_space_id.clone(),
-                                relative_path: format!(".trellis/{relative}"),
+                                relative_path: full_relative,
                             });
                         }
                     },
@@ -2986,6 +3271,9 @@ impl TaskSync {
                     task_space_id,
                     relative_path,
                 } => {
+                    if active_task_directory_from_relative(&relative_path).is_none() {
+                        continue;
+                    }
                     pending
                         .entry(task_space_id)
                         .or_default()
@@ -3003,6 +3291,9 @@ impl TaskSync {
                                 task_space_id,
                                 relative_path,
                             } => {
+                                if active_task_directory_from_relative(&relative_path).is_none() {
+                                    continue;
+                                }
                                 pending
                                     .entry(task_space_id)
                                     .or_default()
@@ -3016,6 +3307,62 @@ impl TaskSync {
                     Ok(None) => return,
                     Err(_) => break,
                 }
+            }
+            for (task_space_id, paths) in std::mem::take(&mut pending) {
+                let started = Instant::now();
+                let syncing = {
+                    let syncing = self.syncing_task_spaces.lock().await;
+                    if syncing.contains_key(&task_space_id) {
+                        self.deferred_uploads
+                            .lock()
+                            .await
+                            .entry(task_space_id.clone())
+                            .or_default()
+                            .extend(paths.iter().cloned());
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if syncing {
+                    continue;
+                }
+                let mut paths: Vec<String> = paths.into_iter().collect();
+                paths.sort();
+                let target_count = paths
+                    .iter()
+                    .filter_map(|path| active_task_directory_from_relative(path))
+                    .collect::<HashSet<_>>()
+                    .len();
+                // 首次同步未完成时 watcher 仍在监听，但上传必须等 bootstrap 拉取落地，
+                // 否则会用本地旧内容抢在服务端快照之前写入（对照 JS `_uploadDirty` 的守卫）。
+                let ready = self
+                    .bindings
+                    .lock()
+                    .await
+                    .get(&task_space_id)
+                    .is_some_and(|binding| !binding.read_only && binding.initial_sync_completed);
+                if ready {
+                    let serial = self.task_space_sync_lock(&task_space_id).await;
+                    let _serial = serial.lock().await;
+                    if let Err(error) = self.upload_dirty(&task_space_id, &paths).await {
+                        self.report_error(&task_space_id, &error).await;
+                    }
+                }
+                self.invalidate_ownership_projection(&task_space_id).await;
+                self.ensure_ownership_validation_worker();
+                self.enqueue_ownership_validation(&task_space_id).await;
+                self.notify_state_changed();
+                sync_trace(
+                    &task_space_id,
+                    "watcher-total",
+                    started,
+                    json!({
+                        "trigger": "watcher",
+                        "targetDirs": target_count,
+                        "pathCount": paths.len(),
+                    }),
+                );
             }
             for task_space_id in std::mem::take(&mut git_changed) {
                 if !self
@@ -3046,45 +3393,6 @@ impl TaskSync {
                 self.ensure_ownership_validation_worker();
                 self.enqueue_ownership_validation(&task_space_id).await;
                 self.notify_state_changed();
-            }
-            for (task_space_id, paths) in std::mem::take(&mut pending) {
-                let syncing = {
-                    let syncing = self.syncing_task_spaces.lock().await;
-                    if syncing.contains_key(&task_space_id) {
-                        self.deferred_uploads
-                            .lock()
-                            .await
-                            .entry(task_space_id.clone())
-                            .or_default()
-                            .extend(paths.iter().cloned());
-                        true
-                    } else {
-                        false
-                    }
-                };
-                if syncing {
-                    continue;
-                }
-                self.invalidate_ownership_projection(&task_space_id).await;
-                self.ensure_ownership_validation_worker();
-                self.enqueue_ownership_validation(&task_space_id).await;
-                self.notify_state_changed();
-                let paths: Vec<String> = paths.into_iter().collect();
-                // 首次同步未完成时 watcher 仍在监听，但上传必须等 bootstrap 拉取落地，
-                // 否则会用本地旧内容抢在服务端快照之前写入（对照 JS `_uploadDirty` 的守卫）。
-                let ready = self
-                    .bindings
-                    .lock()
-                    .await
-                    .get(&task_space_id)
-                    .is_some_and(|binding| !binding.read_only && binding.initial_sync_completed);
-                if !ready {
-                    continue;
-                }
-                let _serial = self.binding_sync_lock.lock().await;
-                if let Err(error) = self.upload_dirty(&task_space_id, &paths).await {
-                    self.report_error(&task_space_id, &error).await;
-                }
             }
         }
     }
@@ -3147,9 +3455,8 @@ impl TaskSync {
             .and_then(Value::as_u64)
             .unwrap_or(0);
         let has_pending = entry
-            .and_then(|entry| entry.get("pending"))
-            .and_then(parse_pending_batch)
-            .is_some();
+            .cloned()
+            .is_some_and(|entry| cursor_from_entry(&entry).pending.is_some());
         (revision, has_pending)
     }
 
@@ -3186,7 +3493,9 @@ impl TaskSync {
             .cloned()
             .unwrap_or_default();
         let mut cursor = cursor_from_entry(&Value::Object(entry.clone()));
-        if !apply_cursor_patch(&mut cursor, &next) {
+        let patch_changed = apply_cursor_patch(&mut cursor, &next);
+        let archive_migration = cursor_entry_needs_archive_migration(&Value::Object(entry.clone()));
+        if !patch_changed && !archive_migration {
             *self.cursor_state.lock().await = Some(state);
             return Ok(());
         }
@@ -3198,40 +3507,30 @@ impl TaskSync {
                 json!(cursor.baseline_reconciled_head),
             );
         }
-        if next.baselines.is_some() {
-            entry.insert("baselines".into(), baselines_to_value(&cursor.baselines));
-        }
-        if next.deferred.is_some() {
-            entry.insert("deferred".into(), deferred_to_value(&cursor.deferred));
-        }
-        if next.ownership_pending.is_some() {
-            entry.insert(
-                "ownershipPending".into(),
-                ownership_pending_to_value(&cursor.ownership_pending),
-            );
-        }
-        if next.conflict_blocked.is_some() {
-            entry.insert(
-                "conflictBlocked".into(),
-                conflict_blocked_to_value(&cursor.conflict_blocked),
-            );
-        }
-        if next.pending.is_some() {
-            match cursor.pending {
-                Some(batch) => {
-                    entry.insert(
-                        "pending".into(),
-                        json!({
-                            "batchId": batch.batch_id,
-                            "clientSequence": batch.client_sequence,
-                            "files": batch.files,
-                            "mergeEvidence": batch.merge_evidence,
-                        }),
-                    );
-                }
-                None => {
-                    entry.remove("pending");
-                }
+        entry.insert("baselines".into(), baselines_to_value(&cursor.baselines));
+        entry.insert("deferred".into(), deferred_to_value(&cursor.deferred));
+        entry.insert(
+            "ownershipPending".into(),
+            ownership_pending_to_value(&cursor.ownership_pending),
+        );
+        entry.insert(
+            "conflictBlocked".into(),
+            conflict_blocked_to_value(&cursor.conflict_blocked),
+        );
+        match cursor.pending {
+            Some(batch) => {
+                entry.insert(
+                    "pending".into(),
+                    json!({
+                        "batchId": batch.batch_id,
+                        "clientSequence": batch.client_sequence,
+                        "files": batch.files,
+                        "mergeEvidence": batch.merge_evidence,
+                    }),
+                );
+            }
+            None => {
+                entry.remove("pending");
             }
         }
         entry.insert("updatedAt".into(), Value::String(protocol::now_iso8601()));
@@ -3247,6 +3546,10 @@ impl TaskSync {
         *self.cursor_state.lock().await = Some(state);
         self.notify_state_changed();
         Ok(())
+    }
+
+    async fn migrate_cursor_archive_state(&self, task_space_id: &str) -> AgentResult<()> {
+        self.write_cursor(task_space_id, CursorPatch::default()).await
     }
 
     pub async fn remove_task_cursor(&self, task_space_id: &str) -> AgentResult<()> {
@@ -3409,7 +3712,7 @@ impl TaskSync {
             .filter_map(|file| {
                 file.get("path")
                     .and_then(Value::as_str)
-                    .and_then(task_directory_from_relative)
+                    .and_then(active_task_directory_from_relative)
             })
             .collect();
         if task_dirs.is_empty() {
@@ -3727,6 +4030,14 @@ impl TaskSync {
         task_space_id: &str,
         task_dir: &str,
     ) -> AgentResult<Value> {
+        if active_task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
+            != Some(task_dir)
+        {
+            return protocol::err(
+                code::INVALID_RESPONSE,
+                "任务目录无效或已由服务端 Git 归档",
+            );
+        }
         let encoded = urlencode(task_dir);
         self.api
             .request_json_limited(
@@ -3765,6 +4076,12 @@ impl TaskSync {
     ) -> AgentResult<bool> {
         let mut changed = false;
         for group in groups {
+            if group.archived
+                || is_archive_task_dir(&group.task_dir)
+                || group.files.iter().any(|file| file.archived)
+            {
+                continue;
+            }
             self.assert_binding_branch(binding).await?;
             if group
                 .task_branch
@@ -3826,6 +4143,12 @@ impl TaskSync {
         binding: &AgentBinding,
         task_dir: &str,
     ) -> AgentResult<()> {
+        if is_archive_task_dir(task_dir) {
+            return protocol::err(
+                code::INVALID_RESPONSE,
+                "客户端不能修改服务端 Git 管理的归档目录",
+            );
+        }
         let target = resolve_task_directory(binding, task_dir).await?;
         match tokio::fs::remove_dir_all(&target).await {
             Ok(()) => Ok(()),
@@ -3842,6 +4165,12 @@ impl TaskSync {
         binding: &AgentBinding,
         task_dir: &str,
     ) -> AgentResult<Option<String>> {
+        if is_archive_task_dir(task_dir) {
+            return protocol::err(
+                code::INVALID_RESPONSE,
+                "客户端不能修改服务端 Git 管理的归档目录",
+            );
+        }
         let source = resolve_task_directory(binding, task_dir).await?;
         if !source.exists() {
             return Ok(None);
@@ -3995,9 +4324,22 @@ impl TaskSync {
         binding: &AgentBinding,
         reconciled_deferred: &mut HashSet<String>,
     ) -> AgentResult<Value> {
+        let started = Instant::now();
         self.assert_binding_branch(binding).await?;
         let task_space_id = binding.task_space_id.clone();
+        let cursor_started = Instant::now();
+        self.migrate_cursor_archive_state(&task_space_id).await?;
         let mut cursor = self.read_cursor(&task_space_id).await;
+        sync_trace(
+            &task_space_id,
+            "pull-cursor",
+            cursor_started,
+            json!({
+                "trigger": "pull",
+                "revision": cursor.revision,
+                "hasPending": cursor.pending.is_some(),
+            }),
+        );
         let initial_sync = !binding.initial_sync_completed;
         if let Some(pending) = cursor.pending.clone() {
             if let Some(result) = self.retry_pending_batch(binding, pending).await? {
@@ -4022,7 +4364,17 @@ impl TaskSync {
             cursor = self.read_cursor(&task_space_id).await;
         }
         let after_revision = if initial_sync { 0 } else { cursor.revision };
+        let http_started = Instant::now();
         let snapshot = self.fetch_snapshot(&task_space_id, after_revision).await?;
+        sync_trace(
+            &task_space_id,
+            "pull-http",
+            http_started,
+            json!({
+                "trigger": "pull",
+                "afterRevision": after_revision,
+            }),
+        );
         if initial_sync {
             return self.pull_initial_sync(binding, &snapshot).await;
         }
@@ -4051,9 +4403,20 @@ impl TaskSync {
             .unwrap_or(0);
         let mut baseline_files: Vec<SnapshotFile> = Vec::new();
 
+        let local_started = Instant::now();
         let (dirty_dirs, deferred, exact_reconciled) = self
             .local_sync_state(binding, &cursor, &snapshot_baselines)
             .await?;
+        sync_trace(
+            &task_space_id,
+            "pull-local",
+            local_started,
+            json!({
+                "trigger": "pull",
+                "dirtyDirs": dirty_dirs.len(),
+                "deferredDirs": deferred.len(),
+            }),
+        );
         reconciled_deferred.extend(exact_reconciled);
         if deferred != cursor.deferred {
             self.write_cursor(
@@ -4237,6 +4600,15 @@ impl TaskSync {
         .await?;
         self.write_server_cursor(&task_space_id, latest_revision)
             .await?;
+        sync_trace(
+            &task_space_id,
+            "pull-total",
+            started,
+            json!({
+                "trigger": "pull",
+                "revision": latest_revision,
+            }),
+        );
         Ok(json!({ "conflicts": [], "revision": latest_revision }))
     }
 
@@ -4455,7 +4827,7 @@ impl TaskSync {
         let binding = self.binding(task_space_id).await?;
         let mut task_dirs: HashSet<String> = HashSet::new();
         for dirty_path in dirty_paths {
-            let Some(task_dir) = task_directory_from_relative(dirty_path) else {
+            let Some(task_dir) = active_task_directory_from_relative(dirty_path) else {
                 continue;
             };
             if self.suppressed_event(&binding, dirty_path).await {
@@ -4595,6 +4967,8 @@ impl TaskSync {
         reconcile: bool,
     ) -> AgentResult<Value> {
         let binding = self.binding(task_space_id).await?;
+        let serial = self.task_space_sync_lock(task_space_id).await;
+        let _serial = serial.lock().await;
         self.upload_directories(&binding, task_dirs, reconcile, None)
             .await
     }
@@ -4606,6 +4980,8 @@ impl TaskSync {
         base_sha: Option<&BTreeMap<String, String>>,
     ) -> AgentResult<Value> {
         let binding = self.binding(task_space_id).await?;
+        let serial = self.task_space_sync_lock(task_space_id).await;
+        let _serial = serial.lock().await;
         self.upload_directories(&binding, task_dirs, false, base_sha)
             .await
     }
@@ -4715,7 +5091,7 @@ impl TaskSync {
                 .unwrap_or("")
                 .trim()
                 .to_string();
-            if task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
+            if active_task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
                 != Some(task_dir.as_str())
                 || !groups_by_dir.contains_key(&task_dir)
             {
@@ -4884,9 +5260,22 @@ impl TaskSync {
         reconcile: bool,
         base_sha: Option<&BTreeMap<String, String>>,
     ) -> AgentResult<Value> {
+        let started = Instant::now();
         self.assert_binding_branch(binding).await?;
         let task_space_id = binding.task_space_id.clone();
+        let cursor_started = Instant::now();
+        self.migrate_cursor_archive_state(&task_space_id).await?;
         let mut cursor = self.read_cursor(&task_space_id).await;
+        sync_trace(
+            &task_space_id,
+            "upload-cursor",
+            cursor_started,
+            json!({
+                "trigger": "upload",
+                "revision": cursor.revision,
+                "hasPending": cursor.pending.is_some(),
+            }),
+        );
         let mut latest_revision = cursor.revision;
         let mut baseline_files: Vec<SnapshotFile> = Vec::new();
         if let Some(pending) = cursor.pending.clone() {
@@ -4905,11 +5294,44 @@ impl TaskSync {
             }
         }
 
-        let requested: HashSet<String> = task_dirs.iter().cloned().collect();
+        let requested: HashSet<String> = task_dirs
+            .iter()
+            .filter(|task_dir| !is_archive_task_dir(task_dir))
+            .cloned()
+            .collect();
+        if requested.is_empty() {
+            return Ok(json!({
+                "skipped": true,
+                "reason": "ARCHIVE_SYNC_SERVER_MANAGED",
+            }));
+        }
+        let local_started = Instant::now();
         let local_groups = self
             .local_groups(binding, Some(&requested))
             .await?;
+        sync_trace(
+            &task_space_id,
+            "upload-local",
+            local_started,
+            json!({
+                "trigger": "upload",
+                "targetDirs": requested.len(),
+                "localGroups": local_groups.len(),
+            }),
+        );
+        let ownership_started = Instant::now();
         let ownership = self.resolve_task_ownership(binding, &local_groups).await?;
+        sync_trace(
+            &task_space_id,
+            "upload-ownership",
+            ownership_started,
+            json!({
+                "trigger": "upload",
+                "syncable": ownership.syncable.len(),
+                "paused": ownership.paused.len(),
+                "reviews": ownership.reviews.len(),
+            }),
+        );
         let blocked_dirs: HashSet<String> = cursor.conflict_blocked.keys().cloned().collect();
         let allowed: Vec<String> = requested
             .iter()
@@ -4940,13 +5362,14 @@ impl TaskSync {
                 "invalid": ownership.invalid,
             }));
         }
-        let all_local = self.local_groups(binding, None).await?;
-        let local_by_dir: HashMap<String, SnapshotGroup> = all_local
-            .into_iter()
+        let local_by_dir: HashMap<String, SnapshotGroup> = local_groups
+            .iter()
+            .cloned()
             .map(|group| (group.task_dir.clone(), group))
             .collect();
         let mut entries: Vec<(String, Option<SnapshotGroup>, Vec<SnapshotFile>)> = Vec::new();
         let unique: HashSet<String> = allowed.into_iter().collect();
+        let http_started = Instant::now();
         for task_dir in unique {
             let server = self.fetch_directory(&task_space_id, &task_dir).await?;
             let server_files = parse_directory_files(&server, &task_dir)?;
@@ -4956,6 +5379,15 @@ impl TaskSync {
                 server_files,
             ));
         }
+        sync_trace(
+            &task_space_id,
+            "upload-http",
+            http_started,
+            json!({
+                "trigger": "upload",
+                "directories": entries.len(),
+            }),
+        );
 
         let mut handled: HashSet<String> = HashSet::new();
         for (source, target) in move_pairs(&entries) {
@@ -5037,10 +5469,32 @@ impl TaskSync {
             .lock()
             .await
             .clone_from(&baseline_files);
+        sync_trace(
+            &task_space_id,
+            "upload",
+            started,
+            json!({
+                "trigger": "upload",
+                "targetDirs": requested.len(),
+                "baselineFiles": baseline_files.len(),
+                "revision": latest_revision,
+            }),
+        );
 
         if reconcile {
             Box::pin(self.pull(binding)).await?;
         }
+        sync_trace(
+            &task_space_id,
+            "upload-total",
+            started,
+            json!({
+                "trigger": "upload",
+                "targetDirs": requested.len(),
+                "reconcile": reconcile,
+                "revision": latest_revision,
+            }),
+        );
         Ok(json!({
             "revision": latest_revision,
             "sequence": cursor.sequence,
@@ -5102,7 +5556,7 @@ impl TaskSync {
             .filter_map(|file| {
                 file.get("path")
                     .and_then(Value::as_str)
-                    .and_then(task_directory_from_relative)
+                    .and_then(active_task_directory_from_relative)
             })
             .collect();
         let cursor = self.read_cursor(&task_space_id).await;
@@ -5297,6 +5751,19 @@ impl TaskSync {
         }
 
         let files = parse_snapshot_files_from_values(&batch.files)?;
+        {
+            let mut suppressed = self.suppressed.lock().await;
+            for file in &files {
+                suppressed.insert(
+                    absolute_task_path(binding, &file.path),
+                    if file.deleted {
+                        None
+                    } else {
+                        Some(file.sha256.clone())
+                    },
+                );
+            }
+        }
         let revision = cursor
             .revision
             .max(result.get("revision").and_then(Value::as_u64).unwrap_or(0));
@@ -5805,7 +6272,7 @@ impl TaskSync {
         }
         let selected_dirs: HashSet<String> = selected
             .iter()
-            .filter_map(|file| task_directory_from_relative(&file.path))
+            .filter_map(|file| active_task_directory_from_relative(&file.path))
             .collect();
         let local_groups = self.local_groups(&binding, Some(&selected_dirs)).await?;
         let ownership = self.resolve_task_ownership(&binding, &local_groups).await?;
@@ -5916,7 +6383,9 @@ impl TaskSync {
         if let Some(items) = conflict.get("files").and_then(Value::as_array) {
             for item in items {
                 if let Some(path_name) = item.get("path").and_then(Value::as_str) {
-                    paths.insert(path_name.to_string());
+                    if !is_archive_snapshot_path(path_name) {
+                        paths.insert(path_name.to_string());
+                    }
                 }
             }
         }
@@ -5973,7 +6442,10 @@ impl TaskSync {
             .get("conflicts")
             .and_then(Value::as_array)
             .cloned()
-            .unwrap_or_default())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|conflict| !conflict_is_archive_only(conflict))
+            .collect())
     }
 
     async fn resolve_conflict(
@@ -6002,16 +6474,18 @@ impl TaskSync {
             .and_then(Value::as_str)
             .unwrap_or("");
         let (mut local, mut server) = conflict_task_directories(task_dir);
+        local = local.filter(|task_dir| !is_archive_task_dir(task_dir));
+        server = server.filter(|task_dir| !is_archive_task_dir(task_dir));
         let mut candidates: Vec<String> = Vec::new();
         for candidate in [local.clone(), server.clone()].into_iter().flatten() {
-            if !candidates.contains(&candidate) {
+            if !is_archive_task_dir(&candidate) && !candidates.contains(&candidate) {
                 candidates.push(candidate);
             }
         }
         if let Some(items) = conflict.get("files").and_then(Value::as_array) {
             for item in items {
                 if let Some(path_name) = item.get("path").and_then(Value::as_str) {
-                    if let Some(candidate) = task_directory_from_relative(path_name) {
+                    if let Some(candidate) = active_task_directory_from_relative(path_name) {
                         if !candidates.contains(&candidate) {
                             candidates.push(candidate);
                         }
@@ -6128,6 +6602,36 @@ fn conflict_task_directories(value: &str) -> (Option<String>, Option<String>) {
     (local, server)
 }
 
+fn conflict_is_archive_only(conflict: &Value) -> bool {
+    let (local, server) = conflict
+        .get("taskDir")
+        .and_then(Value::as_str)
+        .map(conflict_task_directories)
+        .unwrap_or((None, None));
+    let mut recognized = false;
+    for task_dir in [local, server].into_iter().flatten() {
+        recognized = true;
+        if !is_archive_task_dir(&task_dir) {
+            return false;
+        }
+    }
+    if let Some(files) = conflict.get("files").and_then(Value::as_array) {
+        for file in files {
+            if let Some(task_dir) = file
+                .get("path")
+                .and_then(Value::as_str)
+                .and_then(task_directory_from_relative)
+            {
+                recognized = true;
+                if !is_archive_task_dir(&task_dir) {
+                    return false;
+                }
+            }
+        }
+    }
+    recognized
+}
+
 fn conflict_summary(result: &Value) -> Value {
     let details = result.get("details").cloned().unwrap_or(Value::Null);
     json!({
@@ -6156,31 +6660,34 @@ fn initial_sync_mode(binding: &AgentBinding) -> String {
 
 fn retain_server_groups_for_binding(binding: &AgentBinding, groups: &mut Vec<SnapshotGroup>) {
     groups.retain(|group| {
-        group
-            .task_branch
-            .as_deref()
-            .map(|branch| branch == binding.branch_name)
-            .unwrap_or(true)
+        !group.archived
+            && !is_archive_task_dir(&group.task_dir)
+            && group
+                .task_branch
+                .as_deref()
+                .map(|branch| branch == binding.branch_name)
+                .unwrap_or(true)
     });
 }
 
-/// 首次同步的差异分类：`task.json` 记录的 `branch` 是任务当时的开发分支，归档任务常与当前
-/// 分支不同；只要本地存在同一任务目录，它就是本分支工作区里的任务，不能当作「仅本地存在」。
-/// 只有本地没有的跨分支任务组才丢弃，避免把别的分支的任务写进工作区。
+/// 首次同步的差异分类：`task.json` 记录的 `branch` 是任务当时的开发分支；
+/// 归档任务已退出客户端同步，只有本地存在的同目录活动任务才保留跨分支组。
 fn retain_server_groups_for_initial_sync(
     binding: &AgentBinding,
     local_groups: &[SnapshotGroup],
     groups: &mut Vec<SnapshotGroup>,
 ) {
     groups.retain(|group| {
-        group
-            .task_branch
-            .as_deref()
-            .map(|branch| branch == binding.branch_name)
-            .unwrap_or(true)
-            || local_groups
-                .iter()
-                .any(|local| local.task_dir == group.task_dir)
+        !group.archived
+            && !is_archive_task_dir(&group.task_dir)
+            && (group
+                .task_branch
+                .as_deref()
+                .map(|branch| branch == binding.branch_name)
+                .unwrap_or(true)
+                || local_groups
+                    .iter()
+                    .any(|local| local.task_dir == group.task_dir))
     });
 }
 
@@ -6212,13 +6719,30 @@ fn parse_snapshot_files(snapshot: &Value) -> AgentResult<Vec<SnapshotFile>> {
 }
 
 fn parse_snapshot_files_from_values(values: &[Value]) -> AgentResult<Vec<SnapshotFile>> {
-    values.iter().map(validate_snapshot_file).collect()
+    values
+        .iter()
+        .filter(|value| {
+            !value
+                .get("path")
+                .and_then(Value::as_str)
+                .is_some_and(is_archive_snapshot_path)
+        })
+        .map(validate_snapshot_file)
+        .collect()
 }
 
 pub(crate) fn parse_directory_files(
     directory: &Value,
     task_dir: &str,
 ) -> AgentResult<Vec<SnapshotFile>> {
+    if active_task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
+        != Some(task_dir)
+    {
+        return protocol::err(
+            code::INVALID_RESPONSE,
+            "任务目录无效或已由服务端 Git 归档",
+        );
+    }
     let values = directory
         .get("files")
         .and_then(Value::as_array)
@@ -6276,7 +6800,8 @@ fn build_directory_files(
         if local_paths.contains(&path_name) {
             continue;
         }
-        let belongs = task_directory_from_relative(&path_name).as_deref() == Some(task_dir);
+        let belongs =
+            active_task_directory_from_relative(&path_name).as_deref() == Some(task_dir);
         if !belongs {
             continue;
         }
@@ -6334,7 +6859,7 @@ fn clear_deferred_for_files(
 ) -> BTreeMap<String, BTreeMap<String, String>> {
     let mut next = deferred.clone();
     for file in files {
-        if let Some(task_dir) = task_directory_from_relative(&file.path) {
+        if let Some(task_dir) = active_task_directory_from_relative(&file.path) {
             next.remove(&task_dir);
         }
     }
@@ -6366,7 +6891,10 @@ fn parse_baselines(value: &Value) -> Option<BTreeMap<String, String>> {
         let Some(sha256) = sha256.as_str() else {
             continue;
         };
-        if is_sha256(sha256) && normalize_snapshot_path(path_name).is_ok() {
+        if is_sha256(sha256)
+            && normalize_snapshot_path(path_name).is_ok()
+            && active_task_directory_from_path(path_name).is_some()
+        {
             baselines.insert(path_name.clone(), sha256.to_string());
         }
     }
@@ -6383,9 +6911,12 @@ fn parse_deferred(value: &Value) -> Option<BTreeMap<String, BTreeMap<String, Str
         if files.is_empty() {
             continue;
         }
-        if files.keys().all(|path_name| {
-            task_directory_from_relative(path_name).as_deref() == Some(task_dir.as_str())
-        }) {
+        if !is_archive_task_dir(task_dir)
+            && files.keys().all(|path_name| {
+                active_task_directory_from_relative(path_name).as_deref()
+                    == Some(task_dir.as_str())
+            })
+        {
             deferred.insert(task_dir.clone(), files);
         }
     }
@@ -6424,6 +6955,9 @@ fn parse_ownership_pending(value: &Value) -> BTreeMap<String, String> {
         return pending;
     };
     for (task_dir, state) in object {
+        if is_archive_task_dir(task_dir) {
+            continue;
+        }
         if task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
             != Some(task_dir.as_str())
         {
@@ -6446,6 +6980,9 @@ fn parse_conflict_blocked(value: &Value) -> BTreeMap<String, String> {
         return blocked;
     };
     for (task_dir, state) in object {
+        if is_archive_task_dir(task_dir) {
+            continue;
+        }
         if task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
             != Some(task_dir.as_str())
         {
@@ -6482,7 +7019,10 @@ fn parse_pending_batch(value: &Value) -> Option<PendingBatch> {
 
 /// 只关心任务目录：`upload_dirty` 对其它路径无能为力，少转发少唤醒。
 fn is_watched_trellis_path(relative: &str) -> bool {
-    relative == "tasks" || relative.starts_with("tasks/")
+    relative == "tasks"
+        || (relative.starts_with("tasks/")
+            && relative != "tasks/archive"
+            && !relative.starts_with("tasks/archive/"))
 }
 
 fn is_relevant_watch_event(event: &notify::Event) -> bool {
@@ -6651,6 +7191,12 @@ async fn resolve_task_directory(
     binding: &AgentBinding,
     task_dir: &str,
 ) -> AgentResult<PathBuf> {
+    if is_archive_task_dir(task_dir) {
+        return Err(task_directory_error(
+            task_dir,
+            "客户端不能访问服务端 Git 管理的归档目录",
+        ));
+    }
     let trellis_root = Path::new(&binding.repo_path).join(".trellis");
     let tasks_root = trellis_root.join("tasks");
     let target = protocol::resolve_task_dir_under(&tasks_root, task_dir)
@@ -6678,6 +7224,15 @@ async fn resolve_task_directory(
 }
 
 async fn write_task_directory(binding: &AgentBinding, group: &SnapshotGroup) -> AgentResult<()> {
+    if group.archived
+        || is_archive_task_dir(&group.task_dir)
+        || group.files.iter().any(|file| file.archived)
+    {
+        return protocol::err(
+            code::INVALID_RESPONSE,
+            "客户端不能写入服务端 Git 管理的归档目录",
+        );
+    }
     let target = resolve_task_directory(binding, &group.task_dir).await?;
     let temp_root = Path::new(&binding.repo_path)
         .join(".trellis")
@@ -6755,6 +7310,7 @@ fn previous_values_paths(values: &[Value]) -> Vec<String> {
     values
         .iter()
         .filter_map(|value| value.get("path").and_then(Value::as_str))
+        .filter(|path| !is_archive_snapshot_path(path))
         .map(str::to_string)
         .collect()
 }
@@ -6779,11 +7335,41 @@ pub async fn read_local_task_snapshot_files(
         }
     }
     let mut files = Vec::new();
-    let mut stack = vec![tasks_root.clone()];
+    let mut stack: Vec<PathBuf> = match task_dirs {
+        Some(selected) => selected
+            .iter()
+            .filter(|task_dir| !is_archive_task_dir(task_dir))
+            .filter_map(|task_dir| {
+                protocol::resolve_task_dir_under(Path::new(ACTIVE_TASKS_ROOT), task_dir)
+                    .map(|path| repo_path.join(path))
+            })
+            .collect(),
+        None => vec![tasks_root.clone()],
+    };
     while let Some(directory) = stack.pop() {
+        match tokio::fs::symlink_metadata(&directory).await {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Err(error)
+                if task_dirs.is_some() && error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                continue
+            }
+            Ok(_) => {
+                return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接")
+            }
+            Err(error) => return Err(io_error(error)),
+        }
         let mut entries = tokio::fs::read_dir(&directory).await.map_err(io_error)?;
         while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
             let path = entry.path();
+            let relative = path
+                .strip_prefix(repo_path)
+                .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件路径越界"))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if is_archive_snapshot_path(&relative) {
+                continue;
+            }
             let metadata = tokio::fs::symlink_metadata(&path).await.map_err(io_error)?;
             if metadata.file_type().is_symlink() {
                 return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接");
@@ -6799,12 +7385,7 @@ pub async fn read_local_task_snapshot_files(
             if !SNAPSHOT_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
                 continue;
             }
-            let relative = path
-                .strip_prefix(repo_path)
-                .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件路径越界"))?
-                .to_string_lossy()
-                .replace('\\', "/");
-            let task_dir = match task_directory_from_relative(&relative) {
+            let task_dir = match active_task_directory_from_relative(&relative) {
                 Some(task_dir) => task_dir,
                 None => continue,
             };
@@ -8433,7 +9014,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolves_active_and_archived_task_directories_under_temp_repo() {
+    async fn rejects_archived_task_directory_under_temp_repo() {
         let (root, _store, _sync, binding) = test_task_sync_fixture("trellis-task-path").await;
         let tasks_root = Path::new(&binding.repo_path).join(".trellis").join("tasks");
 
@@ -8443,18 +9024,13 @@ mod tests {
                 .expect("active task"),
             tasks_root.join("active-task")
         );
-        assert_eq!(
-            resolve_task_directory(
-                &binding,
-                ".trellis/tasks/archive/2026-11/archived-task",
-            )
-            .await
-            .expect("archived task"),
-            tasks_root
-                .join("archive")
-                .join("2026-11")
-                .join("archived-task")
-        );
+        let error = resolve_task_directory(
+            &binding,
+            ".trellis/tasks/archive/2026-11/archived-task",
+        )
+        .await
+        .expect_err("归档目录必须由服务端 Git 管理");
+        assert_eq!(error.code, code::INVALID_RESPONSE);
 
         let _ = tokio::fs::remove_dir_all(root).await;
     }
@@ -8659,6 +9235,16 @@ mod tests {
     }
 
     #[test]
+    fn upload_batch_rejects_archive_paths() {
+        let files = vec![snapshot_file_value(
+            ".trellis/tasks/archive/2026-11/a/prd.md",
+            "old",
+        )];
+        let error = validate_upload_batch(&files).expect_err("归档路径必须拒绝");
+        assert!(error.message.contains("服务端 Git"));
+    }
+
+    #[test]
     fn group_rejects_duplicate_snapshot_paths() {
         let files = vec![
             snapshot_file_value(".trellis/tasks/a/prd.md", "one"),
@@ -8670,15 +9256,114 @@ mod tests {
     }
 
     #[test]
-    fn groups_active_and_archived_task_directories_separately() {
+    fn archive_pending_batch_is_migrated_without_reusing_batch_id() {
+        let archive_only = PendingBatch {
+            batch_id: "batch.archive-only".into(),
+            client_sequence: 10,
+            files: vec![snapshot_file_value(
+                ".trellis/tasks/archive/2026-11/a/prd.md",
+                "old",
+            )],
+            merge_evidence: None,
+        };
+        assert!(migrate_archive_pending_batch(archive_only, 10).is_none());
+
+        let mut deletion = snapshot_file_value(".trellis/tasks/a/prd.md", "");
+        deletion["deleted"] = json!(true);
+        let mixed = PendingBatch {
+            batch_id: "batch.archive-mixed".into(),
+            client_sequence: 10,
+            files: vec![
+                deletion,
+                snapshot_file_value(".trellis/tasks/archive/2026-11/a/prd.md", "old"),
+            ],
+            merge_evidence: Some(json!({
+                "taskDir": ".trellis/tasks/archive/2026-11/a"
+            })),
+        };
+        let migrated = migrate_archive_pending_batch(mixed, 10).expect("active deletion");
+        assert_ne!(migrated.batch_id, "batch.archive-mixed");
+        assert!(migrated.client_sequence > 10);
+        assert_eq!(migrated.files.len(), 1);
+        assert!(migrated.merge_evidence.is_none());
+        assert_eq!(
+            migrated.files[0]["path"],
+            json!(".trellis/tasks/a/prd.md")
+        );
+    }
+
+    #[test]
+    fn cursor_sanitizes_archive_paths() {
+        let entry = json!({
+            "revision": 8,
+            "sequence": 9,
+            "baselines": {
+                ".trellis/tasks/a/prd.md": "a".repeat(64),
+                ".trellis/tasks/archive/2026-11/b/prd.md": "b".repeat(64)
+            },
+            "deferred": {
+                ".trellis/tasks/archive/2026-11/b": {
+                    ".trellis/tasks/archive/2026-11/b/prd.md": "b".repeat(64)
+                }
+            },
+            "ownershipPending": {
+                ".trellis/tasks/archive/2026-11/b": {
+                    "fingerprint": "c".repeat(64)
+                }
+            },
+            "conflictBlocked": {
+                ".trellis/tasks/archive/2026-11/b": {
+                    "conflictId": "conflict-1"
+                }
+            }
+        });
+        let cursor = cursor_from_entry(&entry);
+        assert!(cursor.baselines.contains_key(".trellis/tasks/a/prd.md"));
+        assert!(!cursor
+            .baselines
+            .contains_key(".trellis/tasks/archive/2026-11/b/prd.md"));
+        assert!(cursor.deferred.is_empty());
+        assert!(cursor.ownership_pending.is_empty());
+        assert!(cursor.conflict_blocked.is_empty());
+    }
+
+    #[test]
+    fn server_snapshot_parser_ignores_archive_files() {
+        let snapshot = json!({
+            "files": [
+                snapshot_file_value(".trellis/tasks/a/prd.md", "active"),
+                snapshot_file_value(".trellis/tasks/archive/2026-11/a/prd.md", "archived"),
+                {
+                    "path": ".trellis/tasks/archive/2026-11/a/screenshot.png",
+                    "content": "ignored"
+                }
+            ]
+        });
+        let files = parse_snapshot_files(&snapshot).expect("snapshot");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, ".trellis/tasks/a/prd.md");
+    }
+
+    #[test]
+    fn directory_parser_rejects_archive_targets() {
+        let error = parse_directory_files(
+            &json!({ "files": [] }),
+            ".trellis/tasks/archive/2026-11/a",
+        )
+        .expect_err("归档目录不能走 Agent 快照");
+        assert_eq!(error.code, code::INVALID_RESPONSE);
+    }
+
+    #[test]
+    fn groups_ignore_archived_task_directories() {
         let files = vec![
             snapshot_file_value(".trellis/tasks/a/prd.md", ""),
             snapshot_file_value(".trellis/tasks/archive/2026-11/b/prd.md", ""),
         ];
 
-        let groups = group_task_snapshot_files(&files).expect("活动与归档目录应分别分组");
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups.iter().filter(|group| group.archived).count(), 1);
+        let groups = group_task_snapshot_files(&files).expect("归档路径应被忽略");
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups.iter().filter(|group| group.archived).count(), 0);
         assert_eq!(groups.iter().filter(|group| !group.archived).count(), 1);
     }
 
@@ -9099,6 +9784,105 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn head_diff_only_scans_changed_active_task_directories() {
+        let (root, _store, sync, binding) =
+            test_task_sync_fixture("trellis-head-diff").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
+        write_task_json(repo, ".trellis/tasks/live", "live", "main").await;
+        run_git(repo, &["add", "."]);
+        run_git(repo, &["commit", "--no-verify", "-m", "first"]);
+        let first = crate::agent::git::head_commit(
+            repo,
+            &sync.binding_hooks_dir(&binding),
+            false,
+        )
+        .await
+        .expect("first head")
+        .expect("first commit");
+
+        write_task_json(repo, ".trellis/tasks/live", "live", "main").await;
+        tokio::fs::write(
+            repo.join(".trellis/tasks/live/prd.md"),
+            "# changed\n",
+        )
+        .await
+        .expect("changed file");
+        run_git(repo, &["add", "."]);
+        run_git(repo, &["commit", "--no-verify", "-m", "second"]);
+        let second = crate::agent::git::head_commit(
+            repo,
+            &sync.binding_hooks_dir(&binding),
+            false,
+        )
+        .await
+        .expect("second head")
+        .expect("second commit");
+        let changed = sync
+            .task_head_changed_dirs(&binding, &first, &second)
+            .await
+            .expect("head diff");
+        assert_eq!(
+            changed,
+            HashSet::from([".trellis/tasks/live".to_string()])
+        );
+
+        let archive = repo
+            .join(".trellis")
+            .join("tasks")
+            .join("archive")
+            .join("2026-11");
+        tokio::fs::create_dir_all(&archive)
+            .await
+            .expect("archive month");
+        tokio::fs::rename(
+            repo.join(".trellis/tasks/live"),
+            archive.join("live"),
+        )
+        .await
+        .expect("archive move");
+        tokio::fs::write(archive.join("live").join("screenshot.png"), [0xff, 0xfe])
+            .await
+            .expect("archive binary");
+        run_git(repo, &["add", "-A", "."]);
+        run_git(repo, &["commit", "--no-verify", "-m", "archive"]);
+        let third = crate::agent::git::head_commit(
+            repo,
+            &sync.binding_hooks_dir(&binding),
+            false,
+        )
+        .await
+        .expect("third head")
+        .expect("third commit");
+        let archived = sync
+            .task_head_changed_dirs(&binding, &second, &third)
+            .await
+            .expect("archive diff");
+        assert_eq!(
+            archived,
+            HashSet::from([".trellis/tasks/live".to_string()])
+        );
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn task_space_sync_locks_are_shared_per_space_only() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-task-space-lock-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Arc::new(ConfigStore::new_unsecured_for_test(root));
+        let api =
+            Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+        let sync = TaskSync::new(store, api, Arc::new(|_| {}));
+        let first = sync.task_space_sync_lock("space-1").await;
+        let same = sync.task_space_sync_lock("space-1").await;
+        let other = sync.task_space_sync_lock("space-2").await;
+        assert!(Arc::ptr_eq(&first, &same));
+        assert!(!Arc::ptr_eq(&first, &other));
+    }
+
+    #[tokio::test]
     async fn repeated_binding_error_notifies_only_once() {
         let root = std::env::temp_dir().join(format!(
             "trellis-task-binding-error-events-{}",
@@ -9261,6 +10045,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn archive_pending_migration_is_persisted_once() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-task-cursor-archive-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Arc::new(ConfigStore::new_unsecured_for_test(root));
+        store.ensure_directories().await.expect("directories");
+        let binding = test_binding("space-1");
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        store
+            .write_json(
+                &store.paths.task_cursors_file,
+                &json!({
+                    "version": CURSOR_VERSION,
+                    "taskSpaces": {
+                        "space-1": {
+                            "revision": 1,
+                            "sequence": 5,
+                            "baselines": {
+                                ".trellis/tasks/archive/2026-11/a/prd.md": "a".repeat(64)
+                            },
+                            "pending": {
+                                "batchId": "batch-archive-mixed",
+                                "clientSequence": 5,
+                                "files": [
+                                    {
+                                        "path": ".trellis/tasks/a/prd.md",
+                                        "content": "",
+                                        "sha256": snapshot_sha256(""),
+                                        "deleted": true
+                                    },
+                                    {
+                                        "path": ".trellis/tasks/archive/2026-11/a/prd.md",
+                                        "content": "old",
+                                        "sha256": snapshot_sha256("old")
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }),
+            )
+            .await
+            .expect("cursor");
+        let api =
+            Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+        let sync = TaskSync::new(store.clone(), api, Arc::new(|_| {}));
+        sync.set_bindings(vec![binding.clone()]).await;
+
+        sync.migrate_cursor_archive_state(&binding.task_space_id)
+            .await
+            .expect("migrate");
+        let state = store.read_task_cursors().await;
+        let entry = &state["taskSpaces"]["space-1"];
+        assert!(entry["baselines"]
+            .as_object()
+            .is_some_and(|values| values.is_empty()));
+        assert_eq!(
+            entry["pending"]["files"].as_array().map(Vec::len),
+            Some(1)
+        );
+        assert_ne!(entry["pending"]["batchId"], json!("batch-archive-mixed"));
+        assert_eq!(
+            entry["pending"]["files"][0]["path"],
+            json!(".trellis/tasks/a/prd.md")
+        );
+    }
+
+    #[tokio::test]
     async fn current_event_revision_skips_snapshot_and_local_scan() {
         let root = std::env::temp_dir().join(format!(
             "trellis-task-event-revision-{}",
@@ -9343,15 +10199,15 @@ mod tests {
     fn initial_sync_keeps_cross_branch_groups_present_locally() {
         let binding = test_binding("space-1");
         let files = [("task.json", r#"{"id":"demo","branch":"codex/demo"}"#)];
-        let archived = ".trellis/tasks/archive/2026-11/11-12-demo";
-        let local = vec![task_group("demo", archived, &files)];
+        let task_dir = ".trellis/tasks/11-12-demo";
+        let local = vec![task_group("demo", task_dir, &files)];
 
-        let mut present = vec![task_group("demo", archived, &files)];
+        let mut present = vec![task_group("demo", task_dir, &files)];
         present[0].task_branch = Some("codex/demo".to_string());
         retain_server_groups_for_initial_sync(&binding, &local, &mut present);
         assert_eq!(present.len(), 1, "本地存在的跨分支任务必须保留");
 
-        let other_dir = ".trellis/tasks/archive/2026-11/11-12-other";
+        let other_dir = ".trellis/tasks/11-12-other";
         let mut absent = vec![task_group("other", other_dir, &files)];
         absent[0].task_branch = Some("codex/demo".to_string());
         retain_server_groups_for_initial_sync(&binding, &local, &mut absent);
@@ -9362,7 +10218,7 @@ mod tests {
     fn watcher_only_tracks_task_paths() {
         assert!(is_watched_trellis_path("tasks"));
         assert!(is_watched_trellis_path("tasks/11-12-demo/task.json"));
-        assert!(is_watched_trellis_path(
+        assert!(!is_watched_trellis_path(
             "tasks/archive/2026-11/11-12-demo/prd.md"
         ));
         assert!(!is_watched_trellis_path(".developer"));
@@ -9376,6 +10232,12 @@ mod tests {
             task_directory_from_relative(".trellis/tasks/archive/2026-11/11-12-demo/prd.md")
                 .as_deref(),
             Some(".trellis/tasks/archive/2026-11/11-12-demo")
+        );
+        assert_eq!(
+            active_task_directory_from_relative(
+                ".trellis/tasks/archive/2026-11/11-12-demo/prd.md"
+            ),
+            None
         );
         assert_eq!(
             task_directory_from_relative(".trellis/workspace/a.md"),
@@ -9532,11 +10394,85 @@ mod tests {
         tokio::fs::write(task_dir.join("prd.md"), "# hi\r\n")
             .await
             .expect("write");
+        let archive_dir = root
+            .join(".trellis")
+            .join("tasks")
+            .join("archive")
+            .join("2026-11")
+            .join("old");
+        tokio::fs::create_dir_all(&archive_dir)
+            .await
+            .expect("archive mkdir");
+        tokio::fs::write(archive_dir.join("prd.md"), [0xff, 0xfe])
+            .await
+            .expect("archive write");
         let files = read_local_task_snapshot_files(&root, None)
             .await
             .expect("read");
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["content"], "# hi\n");
+        let selected = HashSet::from([".trellis/tasks/01-x".to_string()]);
+        let targeted = read_local_task_snapshot_files(&root, Some(&selected))
+            .await
+            .expect("targeted read");
+        assert_eq!(targeted.len(), 1);
+        assert_eq!(targeted[0]["path"], ".trellis/tasks/01-x/prd.md");
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn targeted_local_read_does_not_decode_sibling_task_bodies() {
+        let root = std::env::temp_dir().join(format!(
+            "trellis-targeted-scan-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let selected = root.join(".trellis").join("tasks").join("selected");
+        let sibling = root.join(".trellis").join("tasks").join("sibling");
+        tokio::fs::create_dir_all(&selected).await.expect("selected");
+        tokio::fs::create_dir_all(&sibling).await.expect("sibling");
+        tokio::fs::write(selected.join("prd.md"), "ok")
+            .await
+            .expect("selected file");
+        tokio::fs::write(sibling.join("prd.md"), [0xff, 0xfe])
+            .await
+            .expect("invalid sibling");
+
+        let task_dirs = HashSet::from([".trellis/tasks/selected".to_string()]);
+        let files = read_local_task_snapshot_files(&root, Some(&task_dirs))
+            .await
+            .expect("targeted scan");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["path"], ".trellis/tasks/selected/prd.md");
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn suppression_requires_matching_content_and_consumes_once() {
+        let (root, _store, sync, binding) =
+            test_task_sync_fixture("trellis-watch-suppression").await;
+        let relative = ".trellis/tasks/a/prd.md";
+        let path = Path::new(&binding.repo_path).join(".trellis/tasks/a/prd.md");
+        tokio::fs::create_dir_all(path.parent().expect("parent"))
+            .await
+            .expect("task dir");
+        tokio::fs::write(&path, "expected")
+            .await
+            .expect("task file");
+        sync.suppressed.lock().await.insert(
+            absolute_task_path(&binding, relative),
+            Some(snapshot_sha256("expected")),
+        );
+        assert!(sync.suppressed_event(&binding, relative).await);
+        assert!(!sync.suppressed_event(&binding, relative).await);
+
+        sync.suppressed.lock().await.insert(
+            absolute_task_path(&binding, relative),
+            Some(snapshot_sha256("expected")),
+        );
+        tokio::fs::write(&path, "changed")
+            .await
+            .expect("changed file");
+        assert!(!sync.suppressed_event(&binding, relative).await);
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 }

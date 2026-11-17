@@ -10,6 +10,11 @@ const SYNC_TABLES = [
   'sync_active_agent',
   'sync_agent_binding',
   'sync_agent_cursor',
+  'sync_archive_file',
+  'sync_archive_git_credential',
+  'sync_archive_sync_config',
+  'sync_archive_sync_log',
+  'sync_archive_sync_state',
   'sync_conflict',
   'sync_conflict_backup',
   'sync_file_audit',
@@ -34,7 +39,7 @@ function tableNames(db) {
     .map((row) => row.name)
 }
 
-test('schema v12 新库只新增 sync_* 团队任务表', () => {
+test('schema v14 新库包含团队任务和归档同步表', () => {
   const db = openDatabase({
     databaseFile: ':memory:',
     fallbackRepositories: [],
@@ -42,7 +47,7 @@ test('schema v12 新库只新增 sync_* 团队任务表', () => {
     legacyJsonImport: false,
   })
   try {
-    assert.equal(DATABASE_SCHEMA_VERSION, 13)
+    assert.equal(DATABASE_SCHEMA_VERSION, 14)
     const names = tableNames(db)
     for (const table of SYNC_TABLES) assert.ok(names.includes(table), `缺少 ${table}`)
     assert.ok(names.includes('team_project'))
@@ -181,11 +186,11 @@ test('v10 升级到 v12 补监听、弃用和基线字段并保留已有关联',
     )
     assert.equal(
       reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '13',
+      '14',
     )
     const backupName = fs
       .readdirSync(path.join(root, 'backups'))
-      .find((name) => name.startsWith('board.sqlite.pre-v13.'))
+      .find((name) => name.startsWith('board.sqlite.pre-v14.'))
     assert.ok(backupName)
     const backup = new DatabaseSync(path.join(root, 'backups', backupName))
     try {
@@ -237,7 +242,7 @@ test('v10 升级到 v12 补监听、弃用和基线字段并保留已有关联',
     assert.equal(
       fs
         .readdirSync(path.join(root, 'backups'))
-        .filter((name) => name.startsWith('board.sqlite.pre-v13.')).length,
+        .filter((name) => name.startsWith('board.sqlite.pre-v14.')).length,
       1,
     )
     reopened.close()
@@ -309,7 +314,7 @@ test('v11 升级到 v12 只补弃用字段，历史 disabled 不自动变成 ret
     })
     assert.equal(
       reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '13',
+      '14',
     )
     const row = reopened
       .prepare(`
@@ -328,7 +333,7 @@ test('v11 升级到 v12 只补弃用字段，历史 disabled 不自动变成 ret
     )
     const backupName = fs
       .readdirSync(path.join(root, 'backups'))
-      .find((name) => name.startsWith('board.sqlite.pre-v13.'))
+      .find((name) => name.startsWith('board.sqlite.pre-v14.'))
     assert.ok(backupName)
     const backup = new DatabaseSync(path.join(root, 'backups', backupName))
     try {
@@ -383,9 +388,9 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
     db.exec(`
       CREATE TRIGGER fail_v12_metadata
       BEFORE UPDATE ON app_meta
-      WHEN NEW.key = 'schema_version' AND NEW.value = '13'
+      WHEN NEW.key = 'schema_version' AND NEW.value = '14'
       BEGIN
-        SELECT RAISE(ABORT, 'v13 metadata blocked');
+        SELECT RAISE(ABORT, 'v14 metadata blocked');
       END;
     `)
     db.close()
@@ -398,7 +403,7 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
           importLegacyRepositories: false,
           legacyJsonImport: false,
         }),
-      /v13 metadata blocked/,
+      /v14 metadata blocked/,
     )
     const check = new DatabaseSync(databaseFile, { readOnly: true })
     try {
@@ -432,7 +437,7 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
     assert.equal(
       fs
         .readdirSync(path.join(root, 'backups'))
-        .some((name) => name.startsWith('board.sqlite.pre-v13.')),
+        .some((name) => name.startsWith('board.sqlite.pre-v14.')),
       true,
     )
   } finally {
@@ -510,12 +515,12 @@ test('v9 升级到 v12 保留旧项目行并创建备份', () => {
     try {
       assert.equal(
         reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-        '13',
+        '14',
       )
       assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM team_project').get().count, 1)
       assert.ok(tableNames(reopened).includes('sync_project'))
       const backups = fs.readdirSync(path.join(root, 'backups'))
-      const backupName = backups.find((name) => name.includes('pre-v13'))
+      const backupName = backups.find((name) => name.includes('pre-v14'))
       assert.ok(backupName)
       const backup = new DatabaseSync(path.join(root, 'backups', backupName))
       try {

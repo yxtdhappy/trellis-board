@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "服务端、桌面 Agent 和跨层修改的总入口与依赖边界"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "新增管理 API、system admin 权限、CSRF、输入校验和敏感信息边界"}
+{"file": ".trellis/spec/backend/scanning-and-persistence.md", "reason": "SQLite schema、迁移、事务、索引与后台任务约束"}
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "活动任务 snapshot/CAS/cursor/SSE 契约以及本次归档同步边界变更"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "Rust Agent watcher、扫描、pending、锁和本地文件安全"}
+{"file": ".trellis/spec/backend/task-ownership-and-conflict-idempotency.md", "reason": "活动任务归属、pending、冲突和旧批次迁移约束"}
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "现有敏感信息加密、文件权限和脱敏模式的参考实现"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "管理页 API 归一化、状态刷新、SSE/REST 和归档只读行为"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "管理页验证、可访问性和真实浏览器验收要求"}
+{"file": ".trellis/tasks/11-17-optimize-client-task-sync-performance/research/client-performance-baseline.md", "reason": "客户端性能基线、热路径放大和验收门槛"}
+{"file": ".trellis/tasks/11-17-optimize-client-task-sync-performance/research/archive-sync-options.md", "reason": "归档双事实源方案、当前数据规模和已确认产品决策"}
+{"file": ".trellis/tasks/11-17-optimize-client-task-sync-performance/research/server-git-archive-import.md", "reason": "服务端 bare Git、按来源凭据、archive-only 对象读取和安全约束"}

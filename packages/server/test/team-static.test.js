@@ -40,7 +40,9 @@ test('Team runtime 只装配任务空间快照链路，不导入旧 Git 或实�
   assert.match(read('team/task-space-service.js'), /function detachAgent/)
   assert.match(read('team/task-space-service.js'), /function listenerDetails/)
   assert.doesNotMatch(http, /\bspawn\s*\(|\bexecFile\s*\(/)
-  assert.doesNotMatch(read('team/task-snapshot-service.js'), /\bgit\b/i)
+  const snapshotService = read('team/task-snapshot-service.js')
+  assert.doesNotMatch(snapshotService, /from ['"]node:child_process['"]/)
+  assert.doesNotMatch(snapshotService, /['"]\.\/(?:git-manager|git-credentials|live-sync)\.js['"]/)
 })
 
 function testConfig() {
