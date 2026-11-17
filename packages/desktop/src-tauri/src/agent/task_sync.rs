@@ -13070,8 +13070,13 @@ mod tests {
 
     #[tokio::test]
     async fn handoff_source_fails_closed_on_baseline_or_git_uncertainty() {
-        let (root, _store, sync, binding) =
+        let (root, store, sync, binding) =
             test_task_sync_fixture("trellis-handoff-source").await;
+        store
+            .save_config(test_config(binding.clone()))
+            .await
+            .expect("config");
+        sync.set_bindings(vec![binding.clone()]).await;
         let repo = Path::new(&binding.repo_path);
         init_git_repo(repo);
         let task_dir = ".trellis/tasks/task-a";
