@@ -1439,3 +1439,26 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 61: 归档附件本地快照与只读访问
+<!-- trellis-session: v=2 fp=8c315ba14132360e -->
+
+**Date**: 2026-11-17
+**Task**: 归档附件本地快照与只读访问
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成归档附件不可变本地快照、原子发布与只读下载；补齐 schema v15 迁移、授权下载、TaskSpace 生命周期和失败回滚。验证通过 609 项后端测试、107 项插件测试、Web lint/TypeScript/build，以及真实 TaskSpace 全量一致性和断网只读 E2E；用户重启现网后确认 5 个 TaskSpace 均为 current 且本地附件可下载。并行任务改动未纳入本次归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `98b3e81` | feat(archive): 增加归档附件本地快照与只读下载 |
+
+### Status
+
+[OK] **Completed**
