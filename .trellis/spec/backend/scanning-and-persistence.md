@@ -111,6 +111,23 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 ### Team tasks-only 持久化契约
 
 - `sync_task_space.revision` 只由成功的非 no-op 快照批次递增；`indexed_revision` 只由成功投影推进。
+- Team 任务索引的 warm 基线只驻留进程内，不新增持久化 schema。基线包含 `indexed_revision`、按任务
+  目录保存的完整 loader 事实、覆盖活动行和删除墓碑的目录指纹、稳定 project/workspace 成员、人工
+  阶段指纹及最后成功 Board；进程重启、基线缺失或 `indexed_revision` 未对齐时自动 full 重建。
+- warm revision 先读取全部 `sync_task_space_file` 的 `relative_path/sha256/deleted/task_dir/revision`
+  轻量元数据，只对新增、修改、删除或移动的目录读取正文并调用 snapshot Worker。未变化任务不得重读
+  正文或重新解析；合并后仍对全部任务重算父子关系、身份冲突、人工阶段、风险和 Board 执行投影。
+- 增量 Board 与前缀任务索引必须与同快照 full 重建一致，包括 `project.members`。稳定项目成员使用
+  `workspaceMembers`，并与当前全部任务 `assignee/creator` 去重排序后生成 `members`，不能复用旧
+  Board 中的参与者集合。
+- 每个候选投影在 `BEGIN IMMEDIATE` 中重新校验 `sync_task_space.revision`、retired/status 和人工阶段
+  指纹。扫描或等待期间出现新 revision 时，旧候选整体 superseded，不写 `sync_task_index`、
+  `sync_task_index_tag`、Board cache、assignment 或 `indexed_revision`；下一轮收敛最新快照。
+- 索引写入按 `(task_space_id, task_key)` 做差异 UPSERT/DELETE，未变化行的 `board_version` 和
+  `updated_at` 保持不变；只对新增、字段变化或标签变化的任务重建标签。禁止在正常 warm 路径固定
+  全删全插。
+- Board cache、索引、标签、assignment 投影和 `indexed_revision` 必须在同一事务成功或回滚。成功
+  提交后才发布 query revision、SSE 和替换进程内 warm 状态；失败继续保留上一份一致 Board。
 - `sync_task_space_file` 的主键是 `(task_space_id, relative_path)`；删除写墓碑而不是物理删除，供增量
   cursor 获取最后一次删除。
 - `sync_task_space_batch` 的主键是 `(agent_id, task_space_id, batch_id)`；请求摘要不同时拒绝相同 batchId。

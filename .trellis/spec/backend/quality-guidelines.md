@@ -76,6 +76,9 @@ import assert from "node:assert/strict";
   客户端目标路径 dirty 保护、pending batch 重放和摘要级 watcher 自触发抑制。
 - Team 静态边界必须断言运行时不 import Git manager/live overlay，不访问 `data/projects/**`，
   旧 Git/live 路由返回 404，扫描 Worker 不读取 workspace、scripts、spec、config 或 workflow。
+- Team 任务索引的性能测试必须覆盖可信 warm 基线下的目录级增量：单任务变化只扫描一个目录，
+  未变化索引行和 `updated_at` 不改，增量 Board 与同快照 full 重建的任务、关系、成员和风险投影一致；
+  同时覆盖扫描期间新 revision 的 superseded 收敛、事务内复核失败回滚和同 revision 人工阶段重投影。
 - 错误诊断测试至少覆盖 TeamError 结构化字段、非 TeamError 的 stack/cause、递归对象与循环引用、
   Authorization/Cookie/JWT/复合 token 键脱敏、绝对路径脱敏、`last_error` 的 `code: message`
   格式以及 1000 字符上限；结构化详情还必须验证总长度预算，并断言

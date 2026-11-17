@@ -44,6 +44,45 @@ function hashValue(value) {
     .digest('hex')
 }
 
+function taskDirFingerprints(rows) {
+  const grouped = new Map()
+  for (const row of rows) {
+    const taskDir = String(row.task_dir || '')
+    if (!taskDir) continue
+    if (!grouped.has(taskDir)) grouped.set(taskDir, [])
+    grouped.get(taskDir).push([
+      String(row.relative_path || ''),
+      row.deleted ? 1 : 0,
+      row.deleted ? null : String(row.sha256 || ''),
+    ])
+  }
+  return new Map(
+    [...grouped.entries()].map(([taskDir, entries]) => [
+      taskDir,
+      hashValue(entries.sort((left, right) => left[0].localeCompare(right[0], 'en'))),
+    ]),
+  )
+}
+
+function manualStageFingerprint(taskSpaceId, records) {
+  return hashValue(
+    Object.entries(records)
+      .filter(([key]) => key.startsWith(`${taskSpaceId}/`))
+      .sort(([left], [right]) => left.localeCompare(right, 'en')),
+  )
+}
+
+function rawTaskMap(tasks) {
+  return new Map(tasks.map((task) => [task.relativeDir, task]))
+}
+
+class ProjectionSuperseded extends Error {
+  constructor(revision) {
+    super(`任务空间 revision ${revision} 已被更新`)
+    this.revision = revision
+  }
+}
+
 function encryptCursor(payload) {
   const iv = crypto.randomBytes(12)
   const cipher = crypto.createCipheriv('aes-256-gcm', CURSOR_KEY, iv)
@@ -328,6 +367,7 @@ export function createTaskSpaceIndex({
   const queues = new Map()
   const queryCache = new Map()
   const materialized = new Map()
+  const inflight = new Map()
   let stopped = false
 
   function ensureWorker() {
@@ -438,6 +478,22 @@ export function createTaskSpaceIndex({
 
   function buildBoard(scan, taskSpace) {
     const manualRecords = getManualRecords(db)
+    const manualFingerprint = manualStageFingerprint(taskSpace.id, manualRecords)
+    const workspaceMembers = Array.isArray(scan.project.workspaceMembers)
+      ? scan.project.workspaceMembers
+      : Array.isArray(scan.project.members)
+        ? scan.project.members
+        : []
+    const project = {
+      ...scan.project,
+      workspaceMembers,
+      members: [
+        ...new Set([
+          ...workspaceMembers,
+          ...scan.tasks.map((task) => task.assignee || task.creator).filter(Boolean),
+        ]),
+      ].sort((left, right) => left.localeCompare(right, 'zh-CN')),
+    }
     const versions = new Map(scan.tasks.map((task) => [task.relativeDir, task.taskVersion]))
     const linkedTasks = linkTaskGroups([
       {
@@ -461,7 +517,7 @@ export function createTaskSpaceIndex({
       generatedAt: new Date().toISOString(),
       projects: [
         {
-          ...scan.project,
+          ...project,
           id: taskSpace.id,
           projectId: taskSpace.project_id,
           name: taskSpace.project_name,
@@ -484,158 +540,565 @@ export function createTaskSpaceIndex({
         branchName: taskSpace.branch_name,
         taskVersion: versions.get(task.relativeDir) || null,
       })),
+      manualStageFingerprint: manualFingerprint,
     }
   }
 
-  function replaceIndexInTransaction({ taskSpace, board, boardVersion }) {
-    db.prepare('DELETE FROM sync_task_index_tag WHERE task_space_id = ?').run(taskSpace.id)
-    db.prepare('DELETE FROM sync_task_index WHERE task_space_id = ?').run(taskSpace.id)
-    const users = assigneeUserMap(taskSpace.project_id)
-    const insert = db.prepare(`
-      INSERT INTO sync_task_index(
-        task_space_id, project_id, task_key, execution_task_key, relative_dir,
-        branch_name, title, search_text, archived, archived_at, priority,
-        derived_stage, assignee_dev_id, assignee_user_id, due_date,
-        last_activity_at, is_blocked, is_unblocked_ready, attention_flags_json,
-        group_key, group_role, task_version, board_version, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    const insertTag = db.prepare(`
-      INSERT OR IGNORE INTO sync_task_index_tag(task_space_id, task_key, tag_key)
-      VALUES (?, ?, ?)
-    `)
-    const timestamp = new Date().toISOString()
-    for (const task of board.tasks || []) {
-      if (!task.taskVersion) continue
-      const assigneeDevId = task.assignee || null
-      const assigneeUserId = assigneeDevId
-        ? users.get(String(assigneeDevId).toLowerCase()) || null
-        : null
-      insert.run(
-        taskSpace.id,
-        taskSpace.project_id,
-        task.taskKey,
-        task.executionTaskKey || task.taskKey,
-        task.relativeDir,
-        taskSpace.branch_name,
-        String(task.title || ''),
-        searchText({
-          ...task,
-          projectName: taskSpace.project_name,
-          branchName: taskSpace.branch_name,
-        }),
-        task.archived ? 1 : 0,
-        task.archivedAt || null,
-        String(task.priority || '').trim(),
-        String(task.derivedStage || '').trim(),
-        assigneeDevId,
-        assigneeUserId,
-        task.execution?.dueDate || null,
-        task.execution?.lastActivityAt || null,
-        task.execution?.isBlocked ? 1 : 0,
-        task.execution?.isUnblockedReady ? 1 : 0,
-        JSON.stringify(task.execution?.attentionReasons || []),
-        task.groupKey || task.taskKey,
-        task.groupRole || 'parent',
-        task.taskVersion,
-        boardVersion,
-        timestamp,
-      )
-      for (const tag of task.execution?.tags || []) {
-        insertTag.run(taskSpace.id, task.taskKey, String(tag).toLowerCase())
-      }
-    }
-    db.prepare(`
-      INSERT INTO sync_task_space_scan_cache(task_space_id, indexed_revision, board_json, saved_at)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(task_space_id) DO UPDATE SET
-        indexed_revision = excluded.indexed_revision,
-        board_json = excluded.board_json,
-        saved_at = excluded.saved_at
-    `).run(taskSpace.id, taskSpace.revision, JSON.stringify(board), timestamp)
-    syncAssignments(db, taskSpace.id, taskSpace.project_id, board)
-    db.prepare(`
-      UPDATE sync_task_space
-      SET status = 'active', indexed_revision = ?, last_error = NULL, updated_at = ?
-      WHERE id = ? AND revision = ? AND retired_at IS NULL AND status != 'disabled'
-    `).run(taskSpace.revision, timestamp, taskSpace.id, taskSpace.revision)
-  }
-
-  async function materializeNow(taskSpaceId) {
-    const taskSpace = taskSpaceRow(taskSpaceId)
-    if (!taskSpace) throw new Error('任务空间不存在')
-    const rows = db
+  function readFileMetadata(taskSpaceId) {
+    return db
       .prepare(`
-      SELECT relative_path, content_text, sha256, deleted
+      SELECT relative_path, sha256, deleted, task_dir, revision
       FROM sync_task_space_file
-      WHERE task_space_id = ? AND deleted = 0
-      ORDER BY relative_path
+      WHERE task_space_id = ?
+      ORDER BY task_dir, relative_path
     `)
       .all(taskSpaceId)
-    const members = db
+  }
+
+  function readActiveRows(taskSpaceId, taskDirs = null) {
+    const params = [taskSpaceId]
+    let filter = ''
+    if (Array.isArray(taskDirs)) {
+      if (!taskDirs.length) return []
+      filter = ` AND task_dir IN (${bindList(taskDirs)})`
+      params.push(...taskDirs)
+    }
+    return db
       .prepare(`
-      SELECT trellis_dev_id
-      FROM sync_project_member
-      WHERE project_id = ? AND trellis_dev_id IS NOT NULL
-      ORDER BY trellis_dev_id
+      SELECT relative_path, content_text, sha256, deleted, task_dir, updated_at
+      FROM sync_task_space_file
+      WHERE task_space_id = ? AND deleted = 0${filter}
+      ORDER BY relative_path
     `)
-      .all(taskSpace.project_id)
-      .map((row) => row.trellis_dev_id)
-    const message = await requestWorker(
-      'snapshot-materialize',
-      {
-        project: {
-          id: taskSpace.id,
-          projectId: taskSpace.project_id,
-          name: taskSpace.project_name,
-          teamId: taskSpace.owner_team_id,
-          teamName: taskSpace.team_name,
-          branchName: taskSpace.branch_name,
-          members,
-        },
-        rows,
-        revision: Number(taskSpace.revision),
-      },
-      'snapshot-materialize-result',
+      .all(...params)
+  }
+
+  function canUseProjectionState(state, taskSpace) {
+    return Boolean(
+      state &&
+        state.rawTasksByDir instanceof Map &&
+        state.dirFingerprints instanceof Map &&
+        state.project &&
+        Object.prototype.hasOwnProperty.call(state, 'manualStageFingerprint') &&
+        Number(state.revision) === Number(taskSpace.indexed_revision),
     )
+  }
+
+  function changedTaskDirs(state, metadata) {
+    const currentFingerprints = taskDirFingerprints(metadata)
+    const changed = new Set()
+    for (const row of metadata) {
+      if (Number(row.revision) > Number(state.revision)) changed.add(row.task_dir)
+    }
+    for (const [taskDir, fingerprint] of currentFingerprints) {
+      if (
+        !state.dirFingerprints.has(taskDir) ||
+        state.dirFingerprints.get(taskDir) !== fingerprint
+      ) {
+        changed.add(taskDir)
+      }
+    }
+    for (const taskDir of state.dirFingerprints.keys()) {
+      if (!currentFingerprints.has(taskDir)) changed.add(taskDir)
+    }
+    return {
+      currentFingerprints,
+      changed: [...changed].filter(Boolean),
+    }
+  }
+
+  function withSnapshotFileMetadata(tasks, rows) {
+    // 临时目录文件的 mtime 每次扫描都会变化，归档时间必须取稳定的快照写入时间。
+    const taskJsonUpdatedAt = new Map(
+      rows
+        .filter((row) => row.relative_path === `${row.task_dir}/task.json`)
+        .map((row) => [row.task_dir, row.updated_at]),
+    )
+    return tasks.map((task) => {
+      if (!task.archived) return { ...task, archivedAt: null }
+      return {
+        ...task,
+        archivedAt: taskJsonUpdatedAt.get(task.relativeDir) || task.archivedAt || null,
+      }
+    })
+  }
+
+  function projectForTaskSpace(taskSpace, source = null) {
+    return {
+      ...(source || {}),
+      id: taskSpace.id,
+      projectId: taskSpace.project_id,
+      name: taskSpace.project_name,
+      teamId: taskSpace.owner_team_id,
+      teamName: taskSpace.team_name,
+      branchName: taskSpace.branch_name,
+      branch: taskSpace.branch_name,
+      branches: [taskSpace.branch_name],
+      head: null,
+    }
+  }
+
+  function indexRowForTask(task, taskSpace, users, boardVersion, timestamp) {
+    const assigneeDevId = task.assignee || null
+    return {
+      task_space_id: taskSpace.id,
+      project_id: taskSpace.project_id,
+      task_key: task.taskKey,
+      execution_task_key: task.executionTaskKey || task.taskKey,
+      relative_dir: task.relativeDir,
+      branch_name: taskSpace.branch_name,
+      title: String(task.title || ''),
+      search_text: searchText({
+        ...task,
+        projectName: taskSpace.project_name,
+        branchName: taskSpace.branch_name,
+      }),
+      archived: task.archived ? 1 : 0,
+      archived_at: task.archivedAt || null,
+      priority: String(task.priority || '').trim(),
+      derived_stage: String(task.derivedStage || '').trim(),
+      assignee_dev_id: assigneeDevId,
+      assignee_user_id: assigneeDevId
+        ? users.get(String(assigneeDevId).toLowerCase()) || null
+        : null,
+      due_date: task.execution?.dueDate || null,
+      last_activity_at: task.execution?.lastActivityAt || null,
+      is_blocked: task.execution?.isBlocked ? 1 : 0,
+      is_unblocked_ready: task.execution?.isUnblockedReady ? 1 : 0,
+      attention_flags_json: JSON.stringify(task.execution?.attentionReasons || []),
+      group_key: task.groupKey || task.taskKey,
+      group_role: task.groupRole || 'parent',
+      task_version: task.taskVersion,
+      board_version: boardVersion,
+      updated_at: timestamp,
+    }
+  }
+
+  const INDEX_FIELDS = [
+    'task_space_id',
+    'project_id',
+    'task_key',
+    'execution_task_key',
+    'relative_dir',
+    'branch_name',
+    'title',
+    'search_text',
+    'archived',
+    'archived_at',
+    'priority',
+    'derived_stage',
+    'assignee_dev_id',
+    'assignee_user_id',
+    'due_date',
+    'last_activity_at',
+    'is_blocked',
+    'is_unblocked_ready',
+    'attention_flags_json',
+    'group_key',
+    'group_role',
+    'task_version',
+  ]
+
+  function sameIndexValues(left, right) {
+    return INDEX_FIELDS.every((field) => left[field] === right[field])
+  }
+
+  function sameTags(left, right) {
+    return (
+      left.length === right.length &&
+      left.every((value, index) => value === right[index])
+    )
+  }
+
+  function replaceIndexInTransaction({
+    taskSpace,
+    board,
+    boardVersion,
+    targetRevision,
+    expectedManualFingerprint,
+  }) {
+    return withTransaction(db, () => {
+      const latest = taskSpaceRow(taskSpace.id)
+      if (
+        !latest ||
+        Number(latest.revision) !== Number(targetRevision) ||
+        latest.retired_at ||
+        latest.status === 'disabled'
+      ) {
+        throw new ProjectionSuperseded(targetRevision)
+      }
+      const manualRecords = getManualRecords(db)
+      if (manualStageFingerprint(taskSpace.id, manualRecords) !== expectedManualFingerprint) {
+        throw new ProjectionSuperseded(targetRevision)
+      }
+
+      const users = assigneeUserMap(latest.project_id)
+      const timestamp = new Date().toISOString()
+      const existingRows = db
+        .prepare('SELECT * FROM sync_task_index WHERE task_space_id = ?')
+        .all(taskSpace.id)
+      const existingByKey = new Map(existingRows.map((row) => [row.task_key, row]))
+      const existingTags = new Map()
+      for (const row of db
+        .prepare(
+          `SELECT task_key, tag_key FROM sync_task_index_tag
+           WHERE task_space_id = ? ORDER BY task_key, tag_key`,
+        )
+        .all(taskSpace.id)) {
+        if (!existingTags.has(row.task_key)) existingTags.set(row.task_key, [])
+        existingTags.get(row.task_key).push(row.tag_key)
+      }
+
+      const desired = new Map()
+      const desiredTags = new Map()
+      for (const task of board.tasks || []) {
+        if (!task.taskVersion) continue
+        const row = indexRowForTask(task, latest, users, boardVersion, timestamp)
+        desired.set(row.task_key, row)
+        desiredTags.set(
+          row.task_key,
+          [
+            ...new Set((task.execution?.tags || []).map((tag) => String(tag).toLowerCase())),
+          ].sort(),
+        )
+      }
+
+      const upsert = db.prepare(`
+        INSERT INTO sync_task_index(
+          task_space_id, project_id, task_key, execution_task_key, relative_dir,
+          branch_name, title, search_text, archived, archived_at, priority,
+          derived_stage, assignee_dev_id, assignee_user_id, due_date,
+          last_activity_at, is_blocked, is_unblocked_ready, attention_flags_json,
+          group_key, group_role, task_version, board_version, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(task_space_id, task_key) DO UPDATE SET
+          project_id = excluded.project_id,
+          execution_task_key = excluded.execution_task_key,
+          relative_dir = excluded.relative_dir,
+          branch_name = excluded.branch_name,
+          title = excluded.title,
+          search_text = excluded.search_text,
+          archived = excluded.archived,
+          archived_at = excluded.archived_at,
+          priority = excluded.priority,
+          derived_stage = excluded.derived_stage,
+          assignee_dev_id = excluded.assignee_dev_id,
+          assignee_user_id = excluded.assignee_user_id,
+          due_date = excluded.due_date,
+          last_activity_at = excluded.last_activity_at,
+          is_blocked = excluded.is_blocked,
+          is_unblocked_ready = excluded.is_unblocked_ready,
+          attention_flags_json = excluded.attention_flags_json,
+          group_key = excluded.group_key,
+          group_role = excluded.group_role,
+          task_version = excluded.task_version,
+          board_version = excluded.board_version,
+          updated_at = excluded.updated_at
+      `)
+      const insertTag = db.prepare(`
+        INSERT OR IGNORE INTO sync_task_index_tag(task_space_id, task_key, tag_key)
+        VALUES (?, ?, ?)
+      `)
+      const deleteTag = db.prepare(
+        'DELETE FROM sync_task_index_tag WHERE task_space_id = ? AND task_key = ?',
+      )
+      const deleteIndex = db.prepare(
+        'DELETE FROM sync_task_index WHERE task_space_id = ? AND task_key = ?',
+      )
+      const changedKeys = new Set()
+
+      for (const [taskKey, row] of desired) {
+        const previous = existingByKey.get(taskKey)
+        const tagsChanged = !sameTags(existingTags.get(taskKey) || [], desiredTags.get(taskKey))
+        if (!previous || !sameIndexValues(previous, row) || tagsChanged) {
+          upsert.run(...INDEX_FIELDS.map((field) => row[field]), row.board_version, row.updated_at)
+          if (tagsChanged || !previous) {
+            deleteTag.run(taskSpace.id, taskKey)
+            for (const tag of desiredTags.get(taskKey)) insertTag.run(taskSpace.id, taskKey, tag)
+          }
+          changedKeys.add(taskKey)
+        }
+      }
+      for (const taskKey of existingByKey.keys()) {
+        if (desired.has(taskKey)) continue
+        deleteIndex.run(taskSpace.id, taskKey)
+        changedKeys.add(taskKey)
+      }
+
+      db.prepare(`
+        INSERT INTO sync_task_space_scan_cache(task_space_id, indexed_revision, board_json, saved_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(task_space_id) DO UPDATE SET
+          indexed_revision = excluded.indexed_revision,
+          board_json = excluded.board_json,
+          saved_at = excluded.saved_at
+      `).run(taskSpace.id, targetRevision, JSON.stringify(board), timestamp)
+      syncAssignments(db, taskSpace.id, latest.project_id, board)
+      const updated = db.prepare(`
+        UPDATE sync_task_space
+        SET status = 'active', indexed_revision = ?, last_error = NULL, updated_at = ?
+        WHERE id = ? AND revision = ? AND retired_at IS NULL AND status != 'disabled'
+      `).run(targetRevision, timestamp, taskSpace.id, targetRevision)
+      if (Number(updated.changes) !== 1) throw new ProjectionSuperseded(targetRevision)
+      return {
+        queryRevision: incrementQueryRevision({ publish: false }),
+        changedIndexCount: changedKeys.size,
+      }
+    })
+  }
+
+  async function materializeOnce(taskSpaceId, options = {}) {
+    const startedAt = Date.now()
+    const taskSpace = taskSpaceRow(taskSpaceId)
+    if (!taskSpace) throw new Error('任务空间不存在')
+    const targetRevision = Number(taskSpace.revision)
+    const state = materialized.get(taskSpaceId)
+    const currentManualRecords = getManualRecords(db)
+    const currentManualFingerprint = manualStageFingerprint(taskSpace.id, currentManualRecords)
+    const canIncremental = canUseProjectionState(state, taskSpace)
+    const stats = {
+      mode: canIncremental ? 'incremental' : 'full',
+      baseRevision: canIncremental ? Number(state.revision) : null,
+      targetRevision,
+      queueWaitMs: Number(options.queueWaitMs || 0),
+      changedTaskCount: 0,
+      scannedTaskCount: 0,
+      reusedTaskCount: 0,
+      contentRowsRead: 0,
+      workerMs: 0,
+      relationshipMs: 0,
+      databaseMs: 0,
+      totalMs: 0,
+      result: 'committed',
+    }
+
+    if (canIncremental && targetRevision === Number(state.revision) && currentManualFingerprint === state.manualStageFingerprint) {
+      const lastStats = state.stats || stats
+      return {
+        superseded: false,
+        noop: true,
+        revision: targetRevision,
+        board: state.board,
+        stats: {
+          ...lastStats,
+          result: 'noop',
+          totalMs: Date.now() - startedAt,
+        },
+      }
+    }
+
+    const metadata = readFileMetadata(taskSpaceId)
+    const changeState = canIncremental
+      ? changedTaskDirs(state, metadata)
+      : { currentFingerprints: taskDirFingerprints(metadata), changed: [] }
+    const changedSet = new Set(changeState.changed)
+    const changedRows = canIncremental ? readActiveRows(taskSpaceId, changeState.changed) : []
+    const manualOnly =
+      canIncremental && !changeState.changed.length && currentManualFingerprint !== state.manualStageFingerprint
+    if (manualOnly) stats.mode = 'manual-reproject'
+    stats.changedTaskCount = changeState.changed.length
+    stats.contentRowsRead = canIncremental ? changedRows.length : metadata.filter((row) => !row.deleted).length
+
+    let scan = null
+    let project = canIncremental ? state.project : null
+    let projectError = canIncremental ? state.projectError || null : null
+    if (!canIncremental) {
+      const rows = readActiveRows(taskSpaceId)
+      stats.contentRowsRead = rows.length
+      const workerStartedAt = Date.now()
+      const rawScan = (
+        await requestWorker(
+          'snapshot-materialize',
+          {
+            project: {
+              id: taskSpace.id,
+              projectId: taskSpace.project_id,
+              name: taskSpace.project_name,
+              teamId: taskSpace.owner_team_id,
+              teamName: taskSpace.team_name,
+              branchName: taskSpace.branch_name,
+              members: db
+                .prepare(`
+                SELECT trellis_dev_id
+                FROM sync_project_member
+                WHERE project_id = ? AND trellis_dev_id IS NOT NULL
+                ORDER BY trellis_dev_id
+              `)
+                .all(taskSpace.project_id)
+                .map((row) => row.trellis_dev_id),
+            },
+            rows,
+            revision: targetRevision,
+          },
+          'snapshot-materialize-result',
+        )
+      ).scan
+      scan = {
+        ...rawScan,
+        tasks: withSnapshotFileMetadata(rawScan.tasks, rows),
+      }
+      stats.workerMs = Date.now() - workerStartedAt
+      project = projectForTaskSpace(taskSpace, scan.project)
+      projectError = scan.error || null
+      stats.scannedTaskCount = scan.tasks.length
+    } else if (changedRows.length) {
+      const workerStartedAt = Date.now()
+      const rawScan = (
+        await requestWorker(
+          'snapshot-materialize',
+          {
+            project: {
+              ...state.project,
+              id: taskSpace.id,
+              projectId: taskSpace.project_id,
+              name: taskSpace.project_name,
+              teamId: taskSpace.owner_team_id,
+              teamName: taskSpace.team_name,
+              branchName: taskSpace.branch_name,
+            },
+            rows: changedRows,
+            revision: targetRevision,
+          },
+          'snapshot-materialize-result',
+        )
+      ).scan
+      scan = {
+        ...rawScan,
+        tasks: withSnapshotFileMetadata(rawScan.tasks, changedRows),
+      }
+      stats.workerMs = Date.now() - workerStartedAt
+      if (scan.error) throw new Error(`增量任务扫描失败：${scan.error}`)
+      projectError = metadata.some((row) => !row.deleted) ? null : state.projectError || null
+      stats.scannedTaskCount = scan.tasks.length
+    }
+
     const latest = taskSpaceRow(taskSpaceId)
-    if (!latest || Number(latest.revision) !== Number(message.revision)) {
-      return { superseded: true, revision: Number(message.revision) }
+    if (!latest || Number(latest.revision) !== targetRevision) {
+      stats.totalMs = Date.now() - startedAt
+      stats.result = 'superseded'
+      return { superseded: true, revision: targetRevision, stats }
     }
-    if (latest.retired_at) {
-      return { superseded: true, revision: Number(message.revision) }
+    if (latest.retired_at || latest.status === 'disabled') {
+      stats.totalMs = Date.now() - startedAt
+      stats.result = 'superseded'
+      return { superseded: true, revision: targetRevision, stats }
     }
-    const scan = message.scan
-    const materializedBoard = buildBoard(scan, latest)
+
+    const nextRawTasks = canIncremental
+      ? new Map(state.rawTasksByDir)
+      : rawTaskMap(scan?.tasks || [])
+    if (canIncremental) {
+      for (const taskDir of changeState.changed) nextRawTasks.delete(taskDir)
+      for (const task of scan?.tasks || []) {
+        if (!changedSet.has(task.relativeDir)) {
+          throw new Error('增量扫描返回了未请求的任务目录')
+        }
+        nextRawTasks.set(task.relativeDir, task)
+      }
+    }
+    stats.reusedTaskCount = canIncremental
+      ? [...nextRawTasks.keys()].filter((taskDir) => !changedSet.has(taskDir)).length
+      : 0
+
+    const relationshipStartedAt = Date.now()
+    const materializedBoard = buildBoard(
+      {
+        project,
+        tasks: [...nextRawTasks.values()],
+        error: projectError,
+      },
+      latest,
+    )
+    stats.relationshipMs = Date.now() - relationshipStartedAt
     const board = materializedBoard.board
     const boardVersion = hashValue({
       taskSpaceId,
-      revision: latest.revision,
-      files: rows.map((row) => [row.relative_path, row.sha256]),
+      revision: targetRevision,
+      manualStageFingerprint: materializedBoard.manualStageFingerprint,
+      tasks: [...nextRawTasks.entries()]
+        .sort(([left], [right]) => left.localeCompare(right, 'en'))
+        .map(([taskDir, task]) => [taskDir, task.taskVersion || null]),
     })
-    const result = withTransaction(db, () => {
-      replaceIndexInTransaction({ taskSpace: latest, board, boardVersion })
-      return { queryRevision: incrementQueryRevision({ publish: false }) }
-    })
+
+    let result
+    const databaseStartedAt = Date.now()
+    try {
+      result = replaceIndexInTransaction({
+        taskSpace: latest,
+        board,
+        boardVersion,
+        targetRevision,
+        expectedManualFingerprint: materializedBoard.manualStageFingerprint,
+      })
+    } catch (error) {
+      if (error instanceof ProjectionSuperseded) {
+        stats.totalMs = Date.now() - startedAt
+        stats.result = 'superseded'
+        return { superseded: true, revision: targetRevision, stats }
+      }
+      throw error
+    }
+    stats.databaseMs = Date.now() - databaseStartedAt
+    stats.totalMs = Date.now() - startedAt
     onQueryRevisionChanged?.(result.queryRevision)
     onProjected?.({
       taskSpaceId,
       projectId: latest.project_id,
-      revision: Number(latest.revision),
+      revision: targetRevision,
       board,
     })
-    materialized.set(taskSpaceId, {
-      revision: Number(latest.revision),
+    const nextState = {
+      revision: targetRevision,
       board,
       detailTasks: materializedBoard.detailTasks,
+      rawTasksByDir: nextRawTasks,
+      dirFingerprints: changeState.currentFingerprints,
+      project,
+      projectError,
+      manualStageFingerprint: materializedBoard.manualStageFingerprint,
+      stats: { ...stats },
+    }
+    materialized.set(taskSpaceId, nextState)
+    logger.info?.('任务空间投影完成', {
+      ...stats,
+      taskCount: nextRawTasks.size,
+      changedIndexCount: result.changedIndexCount,
     })
     return {
       superseded: false,
-      revision: Number(latest.revision),
+      revision: targetRevision,
       boardVersion,
       board,
       queryRevision: result.queryRevision,
+      stats,
     }
+  }
+
+  async function materializeUntilCurrent(taskSpaceId, options) {
+    for (;;) {
+      const result = await materializeOnce(taskSpaceId, options)
+      const latest = taskSpaceRow(taskSpaceId)
+      if (
+        !latest ||
+        latest.retired_at ||
+        latest.status === 'disabled' ||
+        Number(latest.indexed_revision) >= Number(latest.revision)
+      ) {
+        return result
+      }
+      options = { ...options, queueWaitMs: 0 }
+    }
+  }
+
+  function materializeNow(taskSpaceId, options = {}) {
+    const id = String(taskSpaceId || '')
+    const current = inflight.get(id)
+    if (current) return current
+    const promise = materializeUntilCurrent(id, options).finally(() => {
+      if (inflight.get(id) === promise) inflight.delete(id)
+    })
+    inflight.set(id, promise)
+    return promise
   }
 
   function enqueue(taskSpaceId) {
@@ -643,6 +1106,7 @@ export function createTaskSpaceIndex({
     const current = queues.get(id)
     if (current) {
       current.requested = true
+      current.queuedAt = Date.now()
       return current.promise
     }
     const entry = {
@@ -651,13 +1115,22 @@ export function createTaskSpaceIndex({
       attempts: 0,
       timer: null,
       promise: null,
+      queuedAt: Date.now(),
     }
     async function drain() {
       while (!stopped && entry.requested) {
         entry.requested = false
         try {
-          await materializeNow(id)
+          const queueWaitMs = entry.queuedAt ? Date.now() - entry.queuedAt : 0
+          const result = await materializeNow(id, { queueWaitMs })
           entry.attempts = 0
+          if (result?.superseded) {
+            const latest = taskSpaceRow(id)
+            if (latest && Number(latest.revision) > Number(latest.indexed_revision)) {
+              entry.requested = true
+              entry.queuedAt = Date.now()
+            }
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           logger.warn('任务空间投影失败', { taskSpaceId: id, error: message })
@@ -696,14 +1169,30 @@ export function createTaskSpaceIndex({
   }
 
   async function ensureMaterialized(taskSpaceId) {
-    const revision = Number(
-      db.prepare('SELECT revision FROM sync_task_space WHERE id = ?').get(taskSpaceId)?.revision ||
-        0,
-    )
-    const cached = materialized.get(taskSpaceId)
-    if (cached?.revision === revision) return cached
-    await materializeNow(taskSpaceId)
-    return materialized.get(taskSpaceId) || null
+    for (;;) {
+      const taskSpace = taskSpaceRow(taskSpaceId)
+      if (!taskSpace) return null
+      const currentManualFingerprint = manualStageFingerprint(
+        taskSpaceId,
+        getManualRecords(db),
+      )
+      const cached = materialized.get(taskSpaceId)
+      if (
+        cached?.revision === Number(taskSpace.revision) &&
+        cached.manualStageFingerprint === currentManualFingerprint
+      ) {
+        return cached
+      }
+      const result = await materializeNow(taskSpaceId)
+      const next = materialized.get(taskSpaceId)
+      if (
+        next?.revision === Number(taskSpace.revision) &&
+        next.manualStageFingerprint === currentManualFingerprint
+      ) {
+        return next
+      }
+      if (!result?.superseded) return next
+    }
   }
 
   function resolveQueryScope(actor, input) {
@@ -994,6 +1483,7 @@ export function createTaskSpaceIndex({
       if (entry.timer) clearTimeout(entry.timer)
     }
     queues.clear()
+    inflight.clear()
     materialized.clear()
     if (!worker) return
     const current = worker

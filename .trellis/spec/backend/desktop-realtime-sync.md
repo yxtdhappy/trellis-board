@@ -223,6 +223,11 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   `task.json` 和稳定 `id`。
 - 成功且有变化的批次只增加 taskSpace revision 一次，并写 `sync_file_audit`；无变化批次不增加 revision。
 - 删除保留 `deleted=1` 墓碑供增量拉取；full snapshot 不返回墓碑。
+- 服务端索引使用进程内 warm 基线做目录级增量物化；同一 taskSpace 的 enqueue 与详情兜底共享
+  single-flight。扫描期间出现新 revision 时只丢弃旧派生候选，已提交文件和审计不回滚；最终
+  `indexed_revision` 必须通过事务内 revision 复核追到最新快照。
+- 服务重启没有 warm 基线时允许一次 full 重建，期间保留上一份一致 Board cache。只退出并重开桌面
+  客户端不会重启服务端，因此不得触发服务端第二次全量任务扫描。
 
 ### revision、cursor 与本地应用
 
@@ -514,6 +519,9 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 - `packages/server/test/team-task-snapshot.test.js`：首次写入、CAS 冲突、整批回滚、幂等、删除墓碑、覆盖备份、
   非法/不一致 `observedBranchName`，以及升级前 pending batch 补字段重放。
 - `packages/server/test/team-task-index-v10.test.js`：tasks-only 物化、归档移动、revision 隔离、不读取 Git/workspace。
+- `packages/server/test/team-task-index-v10.test.js` 还必须覆盖：单任务 warm 只扫描一个目录、未变化
+  索引行不更新、增量与 full Board 一致、增量参与者变化后的 `project.members`、增量重复任务 ID
+  身份冲突、人工阶段同 revision 重投影、失败事务四项状态回滚及 superseded 后收敛。
 - `packages/server/test/team-agent-slot.test.js`、`team-task-spaces.test.js`：监听快照、空集合、旧客户端、
   超时、五态聚合、监听详情权限和主动解绑幂等；另覆盖新设备踢下线、旧 SSE 关闭和旧命令取消。
 - `packages/server/test/team-task-commands.test.js`：在线目标、命令状态机、租约恢复、索引等待、重试和取消。
