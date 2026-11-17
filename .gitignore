@@ -71,3 +71,4 @@ plugins/*
 packages/desktop/src-tauri/target/
 packages/desktop/src-tauri/gen/
 packages/desktop/ui/
+.codex
