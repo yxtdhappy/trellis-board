@@ -4,98 +4,93 @@
 
 - 日期：2026-11-17，Windows，运行数据目录
   `C:\Users\yuhaojie\AppData\Local\TrellisBoard`。
-- 当前 Team 服务：PID `1616`，监听 `0.0.0.0:4317`，启动时间
-  `2026-11-17 13:39:31 +08:00`。
-- 最新 Web 静态产物生成时间：`2026-11-17 12:38:04 +08:00`。
-- SQLite schema：v14；服务日志：
-  `C:\Users\yuhaojie\AppData\Local\TrellisBoard\server\logs\server.1.log`。
-- 本轮使用 `wit-e2e-testing` 闭环；当前会话没有 Chrome DevTools MCP，因此 UI 验证降级为
-  `ego-browser`，接口、数据库和日志仍分别核对。
+- Team 服务：PID `44796`，启动时间 `2026-11-17 15:34:07 +08:00`，
+  监听 `0.0.0.0:4317`。
+- Web 构建产物：`2026-11-17 16:14:10 +08:00`；desktop UI 产物：
+  `2026-11-17 16:14:30 +08:00`。
+- SQLite 数据库：`C:\Users\yuhaojie\AppData\Local\TrellisBoard\server\board.sqlite`，
+  schema v14。
+- 服务日志：`C:\Users\yuhaojie\AppData\Local\TrellisBoard\server\logs\server.1.log`。
+- 当前会话没有 Chrome DevTools MCP，UI 验证使用 `ego-browser`；接口、SQLite 和日志分别核对。
 
-## 2. 代码级验证
+## 2. 重启后的数据库终检
 
-- `node --test packages/server/test/team-task-index-v10.test.js`：16/16 通过。
-- `node --test packages/server/test/database.test.js ...` 聚焦服务端测试：50/50 通过。
-- `yarn test`：586 个测试，585 passed、0 failed、1 skipped，耗时约 537 秒。
-- Web 与 desktop UI 构建在本轮前序已通过；本次新增改动只涉及服务端索引持久化与测试，没有再次修改
-  Web 构建产物。
-- Rust 客户端无法构建：本机 `cargo`、`rustc`、`rustup` 均不存在，未把旧客户端冒充最新客户端。
+发布前只读复核数据库中的最终 `current` 状态。
 
-## 3. 首次启动预热
+| 项目 | 分支 | 状态 | 活动 revision | 归档 revision | 归档文件 | 归档索引 |
+| --- | --- | --- | --- | --- | ---: | ---: |
+| mdp-backend-service | dev | current | 149/149 | 1/1 | 1584 | 141 |
+| mdp-backend-web | dev | current | 109/109 | 2/2 | 646 | 104 |
+| mdp-management-web | release/3.0.0/dev | current | 510/510 | 1/1 | 1609 | 329 |
+| mdp-report-service | release/3.0.0/dev | current | 63/63 | 1/1 | 265 | 40 |
+| trellis-board | main | current | 520/520 | 2/2 | 777 | 116 |
 
-部署新索引逻辑后，服务 PID `40788 -> 38332`。首次启动时 5 个 taskSpace 没有
-`projection_state_json`，后台按设计执行 5 次 full 预热：
+汇总断言：
 
-| taskSpace | full 投影总耗时 |
-| --- | ---: |
-| mdp-management-web | 50.442s |
-| trellis-board | 57.825s |
-| mdp-backend-web | 27.642s |
-| mdp-report-service | 30.414s |
-| mdp-backend-service | 20.636s |
+- 活动 taskSpace：5 个，全部 `current`。
+- 活动与归档 revision：不一致数 0。
+- `sync_archive_file`：4881 行；`sync_task_index.archived=1`：730 行。
+- 非法归档路径：0。
+- 不支持扩展名进入归档表：0。
+- 重启后新增归档同步失败日志：0。
+- 历史失败日志仍保留 183 条；失败记录按 taskSpace 有界保留，不表示当前同步失败。
 
-这些 full 扫描全部在 HTTP 监听成功之后由后台预热触发，没有阻塞端口启动。预热完成后
-`sync_task_space_scan_cache` 的 5 行均写入 warm 状态，合计 `19,266,270` bytes。
+## 3. GitHub 归档真实导入
 
-## 4. 重启复用与活动任务性能
+- taskSpace：`trellis-board`，分支 `main`。
+- 服务端同步的远端 HEAD：`a39a622108d814045754ec49021d78f5b1d8e90a`。
+- Git archive tree：808 个文件。
+- 白名单文本文件：777 个。
+- 跳过的非白名单附件：31 个，不再阻断整个分支。
+- 数据库归档文件：777 行；字节数 `2,532,553`。
+- `archive_revision/archive_indexed_revision`：`2/2`。
+- 最近一次成功同步为 `15:51:10`，索引同为 `15:51:10`；后续 `16:13:33`
+  的同步尝试命中相同远端 HEAD，保持 `current`。
+- 本地对同一归档树独立校验同样得到 `808 / 777 / 31`。
 
-再次重启后服务 PID `38332 -> 1616`。从启动到创建探针期间，日志没有再出现新的 full 投影，说明
-重启已复用持久化 warm 状态。
+## 4. 管理页 UI
 
-通过当前已配对 Agent 的 DPAPI 凭证直接调用活动任务 changes API，凭证只在进程内解密，未输出或
-写入报告。5 个样本均为活动-only 任务，均先完成 HTTP 写入，再由服务端异步增量投影：
+- 打开 `http://192.168.65.27:4317/admin.html` 的“归档同步”页。
+- `/api/admin/archive-sync` 返回 HTTP 200。
+- 五个项目均显示“已更新”；凭据状态为四个“凭据已配置”和一个“公开 HTTPS 匿名”。
+- 五个 taskSpace 的 `lastError` 均为 `null`。
+- 最近更新时间、最近尝试时间、最近成功时间、文件数和归档 revision 均正常展示。
+- `15:43` 构建后重新加载页面复验，结果相同；`16:14` 最终构建只完成构建门禁，
+  未再次重做浏览器 UI 验收。
+- 截图：
+  `C:\Users\yuhaojie\AppData\Local\Temp\trellis-board-admin-archive-sync-after-build.png`。
 
-| 样本 | HTTP 写入 | 投影 committed | 模式 | 扫描任务 | 复用任务 | 读取正文行 | revision |
-| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: |
-| 重启后首次 | 141ms | 464ms | incremental | 1 | 115 | 2 | 492 -> 493 |
-| timing-2 | 120ms | 197ms | incremental | 1 | 116 | 2 | 493 -> 494 |
-| timing-3 | 36ms | 195ms | incremental | 1 | 117 | 2 | 494 -> 495 |
-| timing-4 | 47ms | 236ms | incremental | 1 | 118 | 2 | 495 -> 496 |
-| timing-5 | 52ms | 282ms | incremental | 1 | 119 | 2 | 496 -> 497 |
+## 5. 归档读取链路
 
-按 5 个样本的 nearest-rank P95：
+对 `trellis-board` 执行一次归档查询和首条详情读取：
 
-- HTTP 写入 P95：`141ms`。
-- 服务端投影 committed P95：`464ms`。
-- P50：HTTP `47ms`，投影 `236ms`。
+- 归档查询采样：HTTP 200，当时总数 115，首屏返回 20，耗时 35ms；当前数据库归档索引
+  已增长到 116，本次发布门禁未重复该 HTTP 采样。
+- 首条任务：“客户端显示可配置品牌名与版本号”。
+- 任务详情：HTTP 200，耗时 32ms，标题和归档路径一致。
+- 两次操作期间没有新增“归档 Git”日志，也没有启动新的 `git.exe`
+  进程。服务端已有进程中的旧 Git 进程启动于 08:55 至 10:34，与本次读取无关。
 
-Board UI 搜索 `E2E_SERVER_TIMING_5` 可见；最近三次 `/api/tasks/query` 耗时为 `126ms`、`78ms`、
-`42ms`。因此“HTTP 写入 + 投影 + Board 查询”的服务端链路已低于 `2s/5s` 门槛。该数据不是最新桌面
-客户端 watcher 到 UI 的端到端 P95，原因见限制项。
+这验证详情读取使用服务端已有归档文件/索引，不会为每次打开详情重新访问远端。
 
-## 5. Agent 归档写入边界
+## 6. 测试与构建
 
-对 `.trellis/tasks/archive/2026-11/e2e-archive-reject/task.json` 发起真实 Agent 批次：
+- 发布前聚焦门禁：31/31 通过。
+  - `archive-git-store.test.js` + `task-snapshot.test.js`：13/13。
+  - `archive-git-sync.test.js`：1/1。
+  - `team-task-index-v10.test.js`：17/17。
+- `yarn build`：通过，3636 个模块，耗时 4.92s。
+- `yarn build:desktop`：通过，2226 个模块，耗时 1.97s。
+- 树中已有大 chunk 警告（`main` 和 `MonacoDiff`），以及 desktop 入口的非模块
+  `theme-init.js` 提示，属于本轮范围外的既有打包问题。
+- 前序完整 `yarn test`：595 项中 593 passed、1 skipped、1 failed；
+  唯一失败为无关的 `plugin-cancel.test.js`，单独复跑 1 passed。
 
-- HTTP 状态：`409`。
-- 错误码：`ARCHIVE_SYNC_SERVER_MANAGED`。
-- 响应：`归档任务由服务端 Git 索引管理，Agent 批次已整批拒绝`。
-- 请求前后活动 revision 均为 `488`，归档表均为 `745` 行，未产生部分写入。
+## 7. 限制与未覆盖项
 
-## 6. 归档索引与管理页
-
-- 归档索引页显示 `723` 条归档任务、37 页，页面按归档时间倒序展示。
-- 管理页“归档同步”加载 `/api/admin/archive-sync` 耗时 `100ms`。
-- 页面展示“最近更新”“最近尝试”“最近成功”、失败状态和“失败日志”入口。
-- 打开失败日志可看到阶段、错误码、时间与脱敏摘要；重复轮询间隔稳定在约 5 秒。
-- 当前 4 个 SSH taskSpace 因未配置只读凭据显示 `ARCHIVE_CREDENTIAL_MISSING`；trellis-board
-  公开 HTTPS 可匿名访问，但仓库内存在快照白名单不支持的文件类型，任务空间显示同步失败并保留旧归档。
-- 失败后旧归档仍可读：迁移后的 `sync_archive_file` 共 `4,834` 行，归档索引共 `723` 行，没有被失败
-  同步清空。
-
-## 7. 数据清理
-
-- 活动探针目录均为 `11-17-e2e-*`，已通过删除墓碑分批清理。
-- 清理后活动探针索引行 `0`、活动探针正文行 `0`，本地探针任务目录全部不存在。
-- 清理投影均走 incremental，耗时 `158ms` 到 `259ms`。
-- 最终 taskSpace revision 为 `502`，`revision = indexed_revision`。
-- 未使用 `git add .`，未提交、未推送、未回滚其他任务或用户改动。
-
-## 8. 限制与未覆盖项
-
-- 本机没有 Rust/Cargo 工具链，无法构建并退出重开最新桌面客户端；客户端 archive 过滤、watcher、
-  pending 迁移和真实客户端到 Board 的 P95 仍需在具备工具链的机器上复测。
-- 没有配置公司 Git 只读凭据，因此真实 SSH 归档 fetch 成功路径未验证；GitHub 公开远端也因历史归档
-  含不支持文件类型而按设计失败关闭。
-- `git fetch-pack` 读取 promisor/unadvertised archive blob 的行为只由测试仓库验证，尚未在真实
-  企业 GitLab/GitHub 远端完成成功导入。
+- 本机没有 Rust/Cargo 工具链，无法重新构建最新桌面客户端，因此“退出客户端并重开最新
+  Rust 客户端”的真实 E2E 仍未验证。
+- 本轮完成了服务端重启、管理页、Git 归档导入、归档查询和详情读取的真实验证；不是最新客户端的
+  完整端到端 P95 报告。
+- 构建是当前完整工作区级别，包含并行未提交 UI 改动；该并行改动的正确性不属于本任务门禁。
+- 当前改动未提交、未推送、未归档。
