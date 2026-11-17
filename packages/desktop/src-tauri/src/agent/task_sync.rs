@@ -2666,13 +2666,6 @@ impl TaskSync {
         binding: &AgentBinding,
         handoff: &StoredTaskHandoff,
     ) -> AgentResult<HandoffSourceState> {
-        let branch_matches = matches!(
-            git_head_branch_name(Path::new(&binding.repo_path)).await,
-            Some(Some(branch)) if branch == binding.branch_name
-        );
-        if !branch_matches {
-            return Ok(HandoffSourceState::Conflict("branch_mismatch"));
-        }
         let source = resolve_task_directory(binding, &handoff.relative_dir).await?;
         match tokio::fs::symlink_metadata(&source).await {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
@@ -2735,6 +2728,13 @@ impl TaskSync {
             .collect();
         if baseline.is_empty() || baseline != local {
             return Ok(HandoffSourceState::Conflict("baseline_mismatch"));
+        }
+        let branch_matches = matches!(
+            git_head_branch_name(Path::new(&binding.repo_path)).await,
+            Some(Some(branch)) if branch == binding.branch_name
+        );
+        if !branch_matches {
+            return Ok(HandoffSourceState::Conflict("branch_mismatch"));
         }
         let git_entries = match crate::agent::git::status_paths(
             Path::new(&binding.repo_path),
@@ -13072,8 +13072,10 @@ mod tests {
     async fn handoff_source_fails_closed_on_baseline_or_git_uncertainty() {
         let (root, _store, sync, binding) =
             test_task_sync_fixture("trellis-handoff-source").await;
+        let repo = Path::new(&binding.repo_path);
+        init_git_repo(repo);
         let task_dir = ".trellis/tasks/task-a";
-        let directory = Path::new(&binding.repo_path).join(task_dir);
+        let directory = repo.join(task_dir);
         tokio::fs::create_dir_all(&directory)
             .await
             .expect("task directory");
@@ -13137,6 +13139,9 @@ mod tests {
         )
         .await
         .expect("cursor");
+        tokio::fs::write(repo.join(".git").join("index"), b"broken")
+            .await
+            .expect("corrupt git index");
         assert!(matches!(
             sync.handoff_source_state(&binding, &handoff)
                 .await

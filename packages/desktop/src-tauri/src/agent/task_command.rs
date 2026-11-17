@@ -522,6 +522,9 @@ async fn assign_task(
             "归档任务由服务端 Git 管理，客户端不能改派归档任务",
         );
     }
+    let tasks_root = repo_path.join(".trellis").join("tasks");
+    let target = protocol::resolve_task_dir_under(&tasks_root, &task_dir)
+        .ok_or_else(|| AgentError::new(code::COMMAND_INVALID, "改派任务目录越界"))?;
     let execution_task_key = command
         .payload_str("executionTaskKey")
         .filter(|value| !value.is_empty())
@@ -530,9 +533,6 @@ async fn assign_task(
         .task_sync
         .claim_execution_task(&binding.task_space_id, execution_task_key)
         .await?;
-    let tasks_root = repo_path.join(".trellis").join("tasks");
-    let target = protocol::resolve_task_dir_under(&tasks_root, &task_dir)
-        .ok_or_else(|| AgentError::new(code::COMMAND_INVALID, "改派任务目录越界"))?;
     let task_json_path = target.join("task.json");
     let content = read_utf8(&task_json_path).await?;
     let mut task: Value = serde_json::from_str(&content)
