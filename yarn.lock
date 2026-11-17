@@ -1350,7 +1350,6 @@ __metadata:
     highlight.js: ^11.12.0
     lucide-react: ^1.68.0
     markdown-it: ^15.0.3
-    markdown-it-highlightjs: ^4.3.0
     monaco-editor: ^0.57.0
     next-themes: ^0.4.6
     oxlint: ^1.89.0
@@ -2441,7 +2440,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"highlight.js@npm:^11.12.0, highlight.js@npm:^11.9.0":
+"highlight.js@npm:^11.12.0":
   version: 11.12.0
   resolution: "highlight.js@npm:11.12.0"
   checksum: ee53ad7a20f78e2904d809caf01b6f6c52a5cc99acf36d29788ce65d22ae4a7f59d4c8c275a5c52bf6ef65096a6a43b44b68101c730b8561a75e3eb39de5cc56
@@ -2963,15 +2962,6 @@ __metadata:
   dependencies:
     "@jridgewell/sourcemap-codec": ^1.6.0
   checksum: a6b11c0961f13232192895d3d909626e14c7f5836b3c89d6ac86715293368bfede76da3778dbcdc6a31c81a71bd4716497365a063d52fdbd771462234c9fa875
-  languageName: node
-  linkType: hard
-
-"markdown-it-highlightjs@npm:^4.3.0":
-  version: 4.3.0
-  resolution: "markdown-it-highlightjs@npm:4.3.0"
-  dependencies:
-    highlight.js: ^11.9.0
-  checksum: 7263a6a7d8f4bdb7c5b9f8498a8198f49b287e54148a48550e4d54a1b640883bcbf0451e2853a01d768ff66129803c561bfa6df9509252e910ebdf23ecf60e75
   languageName: node
   linkType: hard
 
