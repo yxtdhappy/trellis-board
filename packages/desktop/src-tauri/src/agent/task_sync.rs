@@ -13139,9 +13139,11 @@ mod tests {
         )
         .await
         .expect("cursor");
-        tokio::fs::write(repo.join(".git").join("index"), b"broken")
+        let git_index = repo.join(".git").join("index");
+        tokio::fs::remove_file(&git_index).await.ok();
+        tokio::fs::create_dir(&git_index)
             .await
-            .expect("corrupt git index");
+            .expect("invalid git index directory");
         assert!(matches!(
             sync.handoff_source_state(&binding, &handoff)
                 .await
