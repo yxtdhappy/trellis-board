@@ -11093,7 +11093,8 @@ mod tests {
             .sync
             .retry_pending_batch(&fixture.binding, pending)
             .await
-            .expect("replay");
+            .expect("replay")
+            .expect("replay result");
         assert_eq!(result["revision"], 20);
         let sent = fixture
             .changes
@@ -11140,7 +11141,8 @@ mod tests {
             .sync
             .retry_pending_batch(&fixture.binding, pending)
             .await
-            .expect("rejected result");
+            .expect("rejected result")
+            .expect("rejected response");
         assert_eq!(result["skipped"], true);
         assert_eq!(result["reason"], "TASK_OWNERSHIP_REQUIRED");
 

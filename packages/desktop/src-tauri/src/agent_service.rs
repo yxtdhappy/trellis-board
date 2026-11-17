@@ -608,6 +608,12 @@ pub async fn associate(
         ownership_paused_task_dirs: Vec::new(),
         ownership_pending_count: 0,
         ownership_pending_task_dirs: Vec::new(),
+        pending_upload_count: 0,
+        pending_upload_task_dirs: Vec::new(),
+        pending_rejected_count: 0,
+        pending_rejected_task_dirs: Vec::new(),
+        conflict_pending_count: 0,
+        conflict_pending_task_dirs: Vec::new(),
         last_error_code: None,
         last_error: None,
     })
