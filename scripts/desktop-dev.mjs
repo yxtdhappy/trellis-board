@@ -1,6 +1,13 @@
 import { spawn, spawnSync } from 'node:child_process'
 import net from 'node:net'
 import path from 'node:path'
+import { resolveBoardRootDir } from '../packages/server/config.js'
+
+// dev 数据根与生产用户目录隔离；显式设置同名环境变量可指回生产数据。
+const devRootDir = `${resolveBoardRootDir()}-dev`
+process.env.TRELLIS_BOARD_DATA_DIR ||= path.join(devRootDir, 'server')
+process.env.TRELLIS_BOARD_PLUGINS_DIR ||= path.join(devRootDir, 'plugins')
+process.env.TRELLIS_DESKTOP_HOME ||= path.join(devRootDir, 'data')
 
 const rootDir = path.resolve(import.meta.dirname, '..')
 const webDir = path.join(rootDir, 'packages', 'web')
@@ -50,15 +57,27 @@ function run(command, args, cwd, env) {
 process.on('SIGINT', () => stop(0))
 process.on('SIGTERM', () => stop(0))
 
-console.log(`[desktop:dev] Board UI  http://localhost:${boardPort}（登录页服务器地址填这个，支持 HMR）`)
+console.log(
+  `[desktop:dev] Board UI  http://localhost:${boardPort}（登录页服务器地址填这个，支持 HMR）`,
+)
+console.log(
+  `[desktop:dev] dev 数据 ${process.env.TRELLIS_BOARD_DATA_DIR} / 客户端 ${process.env.TRELLIS_DESKTOP_HOME}`,
+)
 if (await listening(serverPort)) {
-  console.log(`[desktop:dev] 复用已有服务端 http://127.0.0.1:${serverPort}`)
+  console.log(
+    `[desktop:dev] 复用已有服务端 http://127.0.0.1:${serverPort}（数据目录由该进程决定，可能不是 dev 数据根）`,
+  )
 } else {
   run(process.execPath, ['--watch', path.join('packages', 'server', 'index.js')], rootDir)
 }
 run(
   process.execPath,
-  [path.join(rootDir, 'node_modules', 'vite', 'bin', 'vite.js'), '--port', boardPort, '--strictPort'],
+  [
+    path.join(rootDir, 'node_modules', 'vite', 'bin', 'vite.js'),
+    '--port',
+    boardPort,
+    '--strictPort',
+  ],
   webDir,
   { ...process.env, VITE_CACHE_DIR: 'node_modules/.vite-board' },
 )
