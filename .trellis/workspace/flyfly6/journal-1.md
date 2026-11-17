@@ -946,3 +946,45 @@ Session summary was not supplied.
 
 - 两个弹窗默认 dev id 仍只有单测与代码审查，未做 GUI 点选验证
 - cargo fmt --check 全仓库存在既存格式偏差，未纳入本次
+
+
+## Session 30: 归档页改用归档域版本刷新，避免同步期间反复重拉
+<!-- trellis-session: v=2 fp=c1c2c1bbcb7e958f -->
+
+**Date**: 2026-11-17
+**Task**: 归档页改用归档域版本刷新，避免同步期间反复重拉
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+为归档索引单独维护 app_meta.archiveQueryRevision，只有归档行变化才推进；归档查询的 etag/缓存键/游标改用该版本，status 暴露 archiveRevision 并纳入 statusEtag，客户端归档页优先用它失效。真实服务 + 浏览器 E2E 验证活跃同步期间归档页 0 次清空重拉，归档新增时仍刷新一次。
+
+### Main Changes
+
+- task-space-index 新增 archiveQueryRevision 与增量逻辑，replaceIndexInTransaction 只对归档行变化标脏
+- queryTasks 归档查询改用归档版本驱动 etag、cacheKey、游标与 409 校验
+- board/gitless status 增加 archiveRevision，statusEtag 纳入哈希
+- BoardPage 归档页失效版本优先 teamStatus.archiveRevision，回退 queryRevision
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `38c6e24` | fix(board): 归档页按归档版本刷新，避免同步期间反复重拉 |
+| `b028777` | chore(task): archive 11-17-decouple-archive-refresh-revision |
+
+### Testing
+
+- [OK] node --test packages/server/test/team-task-index-v10.test.js：17/17 通过（含新增解耦用例）
+- [OK] node --test packages/server/test/team-gitless-http.test.js：3/3 通过
+- [OK] yarn format / web build / web lint 通过；全量测试仅 team-plugin-host 单例在并行下 EPERM 抖动，单跑通过
+- [OK] 真实服务 E2E：活跃同步 8 秒内 queryRevision 49→90、归档版本不变、归档页 0 次占位符；归档导入后归档版本 +1 且列表刷新一次
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 如需合并分区，可把同样的域版本思路用到活动看板游标（同步期间 409 会把用户踢回第一页）

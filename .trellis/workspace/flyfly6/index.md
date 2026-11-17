@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 29
+- **Total Sessions**: 30
 - **Last Active**: 2026-11-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~948 | Active |
+| `journal-1.md` | ~990 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 30 | 2026-11-17 | 归档页改用归档域版本刷新，避免同步期间反复重拉 | `38c6e24`, `b028777` | `main` |
 | 29 | 2026-11-17 | 归档项目联动、监听状态实时上报与项目级 dev id | `8f948d1`, `d60500f` | `main` |
 | 28 | 2026-11-17 | 同步确认内嵌化：删除 live-control 独立窗口，Board 内弹窗 + Monaco 左右 diff + 上传任务清单 | `3ef736d` | `main` |
 | 27 | 2026-11-16 | 修复桌面端接入流程四个缺陷与应用内确认，发布 0.4.27 | `abb0b3d`, `8457c35`, `8510f02`, `ba20483`, `aed3bb4` | `main` |
