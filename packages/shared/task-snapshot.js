@@ -35,7 +35,7 @@ export function snapshotSha256(value) {
   return crypto.createHash('sha256').update(normalizeSnapshotText(value), 'utf8').digest('hex')
 }
 
-export function normalizeSnapshotPath(value) {
+export function normalizeSnapshotPath(value, { allowUnsupportedExtension = false } = {}) {
   const raw = String(value || '').trim()
   if (!raw || raw.includes('\0') || raw.includes('\\') || raw.startsWith('/')) {
     throw new Error('任务文件路径无效')
@@ -49,12 +49,12 @@ export function normalizeSnapshotPath(value) {
     throw new Error('任务文件必须位于 .trellis/tasks 内')
   }
   const extension = TASK_SNAPSHOT_EXTENSIONS.find((item) => normalized.toLowerCase().endsWith(item))
-  if (!extension) throw new Error('任务文件类型不受支持')
+  if (!extension && !allowUnsupportedExtension) throw new Error('任务文件类型不受支持')
   return normalized
 }
 
-export function taskDirectoryFromPath(value) {
-  const relativePath = normalizeSnapshotPath(value)
+export function taskDirectoryFromPath(value, { allowUnsupportedExtension = false } = {}) {
+  const relativePath = normalizeSnapshotPath(value, { allowUnsupportedExtension })
   const parts = relativePath.split('/')
   if (parts[2] === 'archive') {
     if (parts.length < 6 || !/^\d{4}-(0[1-9]|1[0-2])$/.test(parts[3])) {

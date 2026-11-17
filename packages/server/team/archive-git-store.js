@@ -7,6 +7,7 @@ import {
   normalizeSnapshotText,
   snapshotSha256,
   TASK_SNAPSHOT_MAX_FILE_BYTES,
+  TASK_SNAPSHOT_EXTENSIONS,
   taskDirectoryFromPath,
 } from '@trellis-board/shared/task-snapshot.js'
 import { validateGitBranchName } from '@trellis-board/shared/remote-identity.js'
@@ -136,6 +137,7 @@ export function createArchiveGitStore({
   config,
   credentials,
   runProcessImpl = runProcess,
+  spawnImpl = spawn,
   logger = console,
 }) {
   const gitRoot = path.join(dataDir, 'archive-git')
@@ -292,16 +294,13 @@ export function createArchiveGitStore({
   }
 
   async function listTree(cwd, head, auth, signal) {
-    const result = await runGit(
-      ['ls-tree', '-r', '-z', head, '--', '.trellis/tasks/archive'],
-      {
-        cwd,
-        timeoutMs: OBJECT_TIMEOUT_MS,
-        auth,
-        signal,
-        maxOutputBytes: 16 * 1024 * 1024,
-      },
-    )
+    const result = await runGit(['ls-tree', '-r', '-z', head, '--', '.trellis/tasks/archive'], {
+      cwd,
+      timeoutMs: OBJECT_TIMEOUT_MS,
+      auth,
+      signal,
+      maxOutputBytes: 16 * 1024 * 1024,
+    })
     if (result.truncated) {
       throw teamError(409, 'ARCHIVE_TREE_TOO_LARGE', '归档目录清单超过 16 MiB')
     }
@@ -321,10 +320,19 @@ export function createArchiveGitStore({
           `归档目录包含不支持的 Git 条目: ${relativePath}`,
         )
       }
-      const normalized = normalizeSnapshotPath(relativePath)
-      const directory = taskDirectoryFromPath(normalized)
+      const normalized = normalizeSnapshotPath(relativePath, {
+        allowUnsupportedExtension: true,
+      })
+      const directory = taskDirectoryFromPath(normalized, {
+        allowUnsupportedExtension: true,
+      })
       if (!directory.archived) {
         throw teamError(409, 'ARCHIVE_PATH_INVALID', 'Git 归档导入出现了非归档任务路径')
+      }
+      if (
+        !TASK_SNAPSHOT_EXTENSIONS.some((extension) => normalized.toLowerCase().endsWith(extension))
+      ) {
+        continue
       }
       if (!/^[a-f0-9]{40,64}$/i.test(oid)) throw new Error('Git 归档对象 ID 无效')
       if (seen.has(normalized)) throw new Error('Git 归档路径重复')
@@ -339,7 +347,7 @@ export function createArchiveGitStore({
 
   async function readBlobBatch(cwd, requestedOids, maxBytes, auth, signal) {
     return new Promise((resolve, reject) => {
-      const child = spawn('git', [...baseConfig(), 'cat-file', '--batch'], {
+      const child = spawnImpl('git', [...baseConfig(), 'cat-file', '--batch'], {
         cwd,
         env: environment(auth),
         shell: false,
@@ -371,6 +379,7 @@ export function createArchiveGitStore({
         signal.addEventListener('abort', abortListener, { once: true })
         if (signal.aborted) abortListener()
       }
+      child.stdin.on('error', () => {})
       child.stdout.on('data', (chunk) => {
         stdoutBytes += chunk.length
         if (stdoutBytes > maxBytes + 64 * 1024) {
@@ -403,18 +412,23 @@ export function createArchiveGitStore({
     })
   }
 
-  async function prefetchBlobs(cwd, remoteUrl, oids, auth, signal) {
+  async function prefetchBlobs(cwd, oids, auth, signal) {
     const requested = [...new Set(oids)]
     if (!requested.length) return
     await new Promise((resolve, reject) => {
-      const child = spawn(
+      const child = spawnImpl(
         'git',
         [
           ...baseConfig(),
-          'fetch-pack',
+          '-c',
+          'fetch.negotiationAlgorithm=noop',
+          'fetch',
+          'origin',
+          '--no-tags',
+          '--no-write-fetch-head',
+          '--recurse-submodules=no',
+          '--filter=blob:none',
           '--stdin',
-          '--no-progress',
-          remoteUrl,
         ],
         {
           cwd,
@@ -487,10 +501,9 @@ export function createArchiveGitStore({
     })
   }
 
-  async function readObjects(cwd, remoteUrl, entries, auth, signal, onBlob) {
+  async function readObjects(cwd, entries, auth, signal, onBlob) {
     await prefetchBlobs(
       cwd,
-      remoteUrl,
       entries.map((entry) => entry.oid),
       auth,
       signal,
@@ -530,7 +543,7 @@ export function createArchiveGitStore({
       let cwd
       let head
       try {
-        ({ cwd, head } = await fetchBranch({
+        ;({ cwd, head } = await fetchBranch({
           taskSpaceId,
           remoteUrl: resolved.remote.url,
           branchName,
@@ -600,14 +613,7 @@ export function createArchiveGitStore({
         })
       }
       try {
-        await readObjects(
-          cwd,
-          resolved.remote.url,
-          tree,
-          auth,
-          signal,
-          collectBlob,
-        )
+        await readObjects(cwd, tree, auth, signal, collectBlob)
       } catch (error) {
         if (error && typeof error === 'object') error.archivePhase = 'import'
         throw error

@@ -7784,7 +7784,7 @@ mod tests {
         for index in 0..17 {
             write_task_json(
                 repo,
-                &format!(".trellis/tasks/archive/2026-11/tracked-{index}"),
+                &format!(".trellis/tasks/tracked-{index}"),
                 &format!("tracked-{index}"),
                 "dev1",
             )
@@ -8713,7 +8713,7 @@ mod tests {
         bindings.insert("local".into(), Value::Object(binding));
         tokio::fs::write(
             &path,
-            serde_json::to_vec(&json!({"version": 3, "bindings": bindings}))
+            serde_json::to_vec(&json!({"version": OWNERSHIP_INDEX_VERSION, "bindings": bindings}))
                 .expect("encode invalid paths"),
         )
         .await

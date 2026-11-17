@@ -152,6 +152,91 @@ Team runtime 的事实链拆成两条：
 Team 扫描不读取 Git 元数据、workspace 会话、`.developer`、scripts、spec、config 或 workflow。
 `workspace` 显示“服务端不判定”，不能伪造 journal 完成状态。
 
+## Scenario: 归档 Git 导入的路径与传输边界
+
+### 1. Scope / Trigger
+
+- Trigger：服务端归档只读 Git 导入涉及远端 transport、批量对象读取、任务路径安全和 Agent/Board 读取隔离。
+- 目标：同步阶段允许远端 Git；同步结束后所有产品读取只使用 SQLite/已导入数据，不得隐式回源远端。
+
+### 2. Signatures
+
+- 批量对象预取：
+
+```text
+git -c fetch.negotiationAlgorithm=noop fetch origin \
+  --no-tags --no-write-fetch-head --recurse-submodules=no \
+  --filter=blob:none --stdin
+```
+
+- stdin：每行一个缺失 blob OID。
+- 本地对象读取：`git cat-file --batch`，且环境固定 `GIT_NO_LAZY_FETCH=1`。
+- 路径规范化：
+
+```js
+normalizeSnapshotPath(value, { allowUnsupportedExtension = false })
+taskDirectoryFromPath(value, { allowUnsupportedExtension = false })
+```
+
+### 3. Contracts
+
+- 禁止使用 `git fetch-pack --stdin <https-url>`：Windows Git 的 `fetch-pack` 不为 HTTPS URL 选择 `remote-https`，会报 `protocol 'https' is not supported`。
+- 必须先在 bare cache 中配置 `remote.origin.url`，再执行高层 `git fetch origin ... --stdin`；该命令支持 HTTP/HTTPS、SSH 和 file transport，并能把多个 OID 合并进一个 pack。
+- prefetch 和 `cat-file` 都保持 `GIT_NO_LAZY_FETCH=1`。网络对象只允许由同步阶段的显式批量 fetch 获取，`cat-file` 不得触发逐对象懒加载。
+- `allowUnsupportedExtension` 只允许合法归档路径跳过扩展名白名单；NUL、反斜杠、绝对路径、`.`/`..`、空段和越出 `.trellis/tasks` 的路径仍必须拒绝。
+- 必须先校验归档目录结构，再按扩展名跳过附件；不能因为文件是 `.png/.ps1` 等附件就绕过月份、任务目录和归档根路径校验。
+- 当前文本归档只导入 `.json/.jsonl/.md/.txt/.yaml/.yml`。其他普通文件是附件，跳过单个文件，不使整个 taskSpace 失败；完整附件本地快照由独立后续任务定义。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| HTTPS/SSH/file 远端批量获取缺失 blob | 使用高层 `git fetch origin --stdin`，一次请求可包含多个 OID |
+| 调用 `fetch-pack <https-url>` | 视为实现错误，不得进入发布 |
+| `cat-file` 遇到本地缺失对象 | `GIT_NO_LAZY_FETCH=1` 使其失败，不能请求远端 |
+| 合法路径扩展名不在白名单 | 跳过该附件，继续读取其他支持文件 |
+| 非法路径即使扩展名不在白名单 | 拒绝并记录失败，不能靠跳过绕过路径校验 |
+| 符号链接/子模块/非普通 blob | 返回不支持的 Git 条目错误 |
+| 单文件或总大小超限 | 整次归档发布失败，保留上一份成功归档 |
+
+### 5. Good/Base/Bad Cases
+
+- Good：GitHub HTTPS 归档一次 `fetch origin --stdin` 拉取全部缺失 OID，随后本地 `cat-file` 读取；Board 查询不启动 Git。
+- Base：归档同时含 `task.json`、`prd.md`、`screenshot.png`；前两者导入，PNG 跳过，任务空间成功。
+- Bad：每个 blob 单独执行 `cat-file` 触发 promisor fetch，导致数百次 HTTPS 请求。
+- Bad：为了跳过 PNG 而先跳过路径安全检查，导致 `../secret.png` 也被忽略而非报错。
+
+### 6. Tests Required
+
+- `archive-git-store.test.js` 断言 fetch 参数包含 `fetch origin` 和 `--stdin`，不包含 `fetch-pack` 或远端 URL。
+- 断言 fetch 与 cat-file 子进程环境都有 `GIT_NO_LAZY_FETCH=1`。
+- 一次 stdin 包含多个 OID，并验证附件 blob 未进入 cache。
+- shared 路径测试覆盖合法 PNG 与带 PNG 扩展名的 `..`、反斜杠、绝对路径、NUL 和越界路径。
+- 服务端测试覆盖月份非法的附件路径，确认扩展名过滤不能让非法归档路径静默通过。
+- 真实 E2E 至少覆盖一个 HTTPS 和一个 SSH 来源，确认 HTTPS 成功且同步后读取阶段没有新远端连接。
+
+### 7. Wrong vs Correct
+
+Wrong：
+
+```js
+spawn('git', ['fetch-pack', '--stdin', remoteUrl])
+```
+
+Correct：
+
+```js
+spawn('git', [
+  'fetch',
+  'origin',
+  '--no-tags',
+  '--no-write-fetch-head',
+  '--recurse-submodules=no',
+  '--filter=blob:none',
+  '--stdin',
+])
+```
+
 ## 启动与关闭
 
 Standalone 启动：
