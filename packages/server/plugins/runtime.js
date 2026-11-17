@@ -26,7 +26,11 @@ function readRawBody(request) {
 async function readJsonBody(request) {
   const raw = await readRawBody(request)
   if (!raw.trim()) return {}
-  return JSON.parse(raw)
+  try {
+    return JSON.parse(raw)
+  } catch {
+    throw new SyntaxError('请求体不是合法 JSON')
+  }
 }
 
 function toResponse(error) {

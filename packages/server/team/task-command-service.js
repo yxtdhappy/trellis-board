@@ -52,6 +52,14 @@ function safeId(value, label) {
   return text
 }
 
+function parseJsonOr(value, fallback = {}) {
+  try {
+    return JSON.parse(String(value ?? ''))
+  } catch {
+    return fallback
+  }
+}
+
 function operationPublic(row) {
   return {
     id: row.id,
@@ -61,22 +69,8 @@ function operationPublic(row) {
     bindingId: row.binding_id,
     commandType: row.command_type,
     status: row.status,
-    payload: (() => {
-      try {
-        return JSON.parse(row.payload_json)
-      } catch {
-        return {}
-      }
-    })(),
-    result: row.result_json
-      ? (() => {
-          try {
-            return JSON.parse(row.result_json)
-          } catch {
-            return null
-          }
-        })()
-      : null,
+    payload: parseJsonOr(row.payload_json),
+    result: row.result_json ? parseJsonOr(row.result_json, null) : null,
     error: row.error_text || null,
     attempts: Number(row.attempts || 0),
     createdAt: row.created_at,
@@ -371,7 +365,7 @@ export function createTaskCommandService({
           taskSpaceId: row.task_space_id,
           projectId: row.project_id,
           branchName: row.branch_name,
-          ...JSON.parse(row.payload_json),
+          ...parseJsonOr(row.payload_json),
         },
       }))
   }

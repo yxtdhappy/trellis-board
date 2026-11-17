@@ -128,7 +128,7 @@ fn dpapi_protect(plaintext: &[u8]) -> AgentResult<Vec<u8>> {
         )
         .map_err(|_| AgentError::new(code::DPAPI_FAILED, "Windows DPAPI 加密失败"))?;
     }
-    let bytes = unsafe { copy_blob_and_free(&output) };
+    let bytes = copy_blob_and_free(&output);
     Ok(bytes)
 }
 
@@ -155,19 +155,21 @@ fn dpapi_unprotect(ciphertext: &[u8]) -> AgentResult<Vec<u8>> {
         )
         .map_err(|_| AgentError::new(code::DPAPI_FAILED, "Windows DPAPI 解密失败"))?;
     }
-    let bytes = unsafe { copy_blob_and_free(&output) };
+    let bytes = copy_blob_and_free(&output);
     Ok(bytes)
 }
 
 #[cfg(windows)]
-unsafe fn copy_blob_and_free(
+fn copy_blob_and_free(
     blob: &windows::Win32::Security::Cryptography::CRYPT_INTEGER_BLOB,
 ) -> Vec<u8> {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
-    let slice = std::slice::from_raw_parts(blob.pbData, blob.cbData as usize);
-    let bytes = slice.to_vec();
-    let _ = LocalFree(HLOCAL(blob.pbData as *mut core::ffi::c_void));
-    bytes
+    unsafe {
+        let slice = std::slice::from_raw_parts(blob.pbData, blob.cbData as usize);
+        let bytes = slice.to_vec();
+        let _ = LocalFree(HLOCAL(blob.pbData as *mut core::ffi::c_void));
+        bytes
+    }
 }
 
 #[cfg(not(windows))]
@@ -191,7 +193,7 @@ mod tests {
         let store = ConfigStore::new(root.clone());
         let credentials = CredentialStore::new(&store);
         credentials.self_test().expect("dpapi round trip");
-        let secret = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let secret = "unit-test-fixture";
         credentials.save_credential(secret).await.expect("save");
         assert_eq!(credentials.load_credential().await.expect("load"), secret);
         let _ = tokio::fs::remove_dir_all(root).await;
