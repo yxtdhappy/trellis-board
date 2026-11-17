@@ -70,6 +70,17 @@ const md = new MarkdownIt({
   },
 })
 
+// highlight.js 主题依赖 .hljs 容器类，markdown-it 默认只输出 language-*。
+const defaultFence = md.renderer.rules.fence
+md.renderer.rules.fence = (tokens, index, options, env, self) => {
+  const html = defaultFence(tokens, index, options, env, self)
+  const language = String(tokens[index].info || '')
+    .trim()
+    .split(/\s+/)[0]
+  if (!language || !hljs.getLanguage(language)) return html
+  return html.replace('<pre><code class="language-', '<pre><code class="hljs language-')
+}
+
 // 外链统一新窗口打开，并切断 opener
 md.renderer.rules.link_open = (tokens, index, options, _env, self) => {
   tokens[index].attrSet('target', '_blank')

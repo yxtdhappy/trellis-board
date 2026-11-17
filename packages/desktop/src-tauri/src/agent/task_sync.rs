@@ -2603,16 +2603,16 @@ impl TaskSync {
                                     }
                                     continue;
                                 }
-                                HandoffSourceState::Ready(source)
+                                Ok(HandoffSourceState::Ready(source))
                                     if handoff.manifest_sha256.as_deref()
                                         == Some(source.manifest_sha256.as_str()) =>
                                 {
                                     (None, Some(source.files))
                                 }
-                                HandoffSourceState::Ready(_) => {
+                                Ok(HandoffSourceState::Ready(_)) => {
                                     (Some("baseline_mismatch"), None)
                                 }
-                                HandoffSourceState::Conflict(reason) => (Some(reason), None),
+                                Ok(HandoffSourceState::Conflict(reason)) => (Some(reason), None),
                             }
                         } else {
                             (Some("branch_mismatch"), None)

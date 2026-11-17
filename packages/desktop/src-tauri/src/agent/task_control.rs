@@ -408,7 +408,7 @@ impl TaskControlStateFile {
         if self.schema_version != TASK_CONTROL_STATE_VERSION {
             *self = Self::empty();
         }
-        let mut stored = StoredTaskControl::from_control(local_id, control)?;
+        let stored = StoredTaskControl::from_control(local_id, control)?;
         if let Some(previous) = self.controls.get(&control.execution_task_key) {
             if stored.task_version < previous.task_version {
                 return Ok(false);
