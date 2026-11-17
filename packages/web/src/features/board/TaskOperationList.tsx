@@ -11,13 +11,13 @@ type TaskOperationListProps = {
 function statusView(operation: PublishOperation): { label: string; tone: string } {
   switch (operation.status) {
     case 'pending':
-      return { label: '等待投递', tone: 'text-muted-foreground' }
+      return { label: '等待客户端接管', tone: 'text-warning' }
     case 'delivered':
       return { label: '等待 Agent 执行', tone: 'text-warning' }
     case 'running':
       return { label: 'Agent 正在执行', tone: 'text-primary' }
     case 'succeeded':
-      return { label: '已完成，正式任务已同步', tone: 'text-success' }
+      return { label: '客户端已完成接管', tone: 'text-success' }
     case 'failed':
       return { label: '执行失败', tone: 'text-destructive' }
     case 'cancelled':
@@ -57,7 +57,7 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
         <div>
           <h2 className="text-xs font-semibold">创建与改派操作</h2>
           <p className="text-2xs text-muted-foreground">
-            这些是独立操作项；成功前不会插入正式任务卡，也不会提前改变负责人。
+            任务会先以待交付控制状态进入看板；目标客户端上线后接管、落地正文并完成 operation。
           </p>
         </div>
       </div>

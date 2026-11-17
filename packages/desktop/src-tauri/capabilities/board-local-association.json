@@ -30,6 +30,7 @@
     "allow-set-task-ownership",
     "allow-sync-deferred-tasks",
     "allow-live-control-get",
+    "allow-handoff-notice-pending",
     "allow-live-control-show",
     "allow-live-control-decide",
     "allow-live-control-diff",

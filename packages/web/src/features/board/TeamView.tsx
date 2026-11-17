@@ -4,12 +4,13 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Pagination } from './Pagination.tsx'
 import { SelectField } from './SelectField.tsx'
-import { branchLabel, dueLabel, initials, type BoardTask } from './task-view.ts'
+import { branchLabel, controlToneClass, dueLabel, initials, type BoardTask } from './task-view.ts'
 import { priorityTone, stageTone, statusLabel } from './tone.ts'
 import { branchMatches } from '@/lib/execution-filter.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
 import { cn } from '@/lib/utils'
 import type { BoardFilters } from '@/hooks/useBoard'
+import { taskControlView } from '@/lib/team-client.js'
 
 type TeamViewProps = {
   tasks: BoardTask[]
@@ -263,6 +264,7 @@ export function TeamView({
                     const projectLabel = [task.teamName, task.projectName, branchLabel(task)]
                       .filter(Boolean)
                       .join(' · ')
+                    const control = taskControlView(task)
                     return (
                       <tr
                         key={taskInstanceKey(task)}
@@ -274,6 +276,17 @@ export function TeamView({
                           <small className="text-2xs text-muted-foreground">
                             #{task.dirName} · {projectLabel}
                           </small>
+                          {control.available ? (
+                            <span
+                              className={cn(
+                                'mt-1 w-fit rounded-full px-1.5 py-px text-2xs font-medium',
+                                controlToneClass(control.tone),
+                              )}
+                              title={control.description}
+                            >
+                              {control.label}
+                            </span>
+                          ) : null}
                         </td>
                         <td className="px-3 py-2">
                           <span className="flex items-center gap-1.5">

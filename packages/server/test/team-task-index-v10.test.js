@@ -3,11 +3,12 @@ import test from 'node:test'
 import { snapshotSha256 } from '@trellis-board/shared/task-snapshot.js'
 import { openDatabase } from '../database.js'
 import { STAGE_IDS, setManualStage } from '../metadata.js'
+import { createTaskControlService } from '../team/task-control-service.js'
 import { createTaskSnapshotService } from '../team/task-snapshot-service.js'
 import { createTaskSpaceIndex } from '../team/task-space-index.js'
 import { createTaskSpaceService } from '../team/task-space-service.js'
 
-function setup({ autoIndex = true } = {}) {
+function setup({ autoIndex = true, withTaskControl = false } = {}) {
   const db = openDatabase({
     databaseFile: ':memory:',
     fallbackRepositories: [],
@@ -53,9 +54,11 @@ function setup({ autoIndex = true } = {}) {
   const projectionEvents = []
   const projectionFailures = []
   let index = null
+  const taskControl = withTaskControl ? createTaskControlService({ db }) : null
   const snapshots = createTaskSnapshotService({
     db,
     taskSpaces,
+    taskControl,
     onRevisionCommitted: autoIndex
       ? ({ taskSpaceId, revision: nextRevision }) => {
           revision = nextRevision
@@ -67,6 +70,7 @@ function setup({ autoIndex = true } = {}) {
     db,
     stageIds: STAGE_IDS,
     taskSpaces,
+    taskControl,
     onProjected: (payload) => {
       projected = payload
       projectionEvents.push(payload)
@@ -79,6 +83,7 @@ function setup({ autoIndex = true } = {}) {
     taskSpaces,
     snapshots,
     index,
+    taskControl,
     agent,
     taskSpaceId: attached.taskSpace.id,
     getRevision: () => revision,
@@ -248,7 +253,7 @@ test('归档 revision 独立推进并只投影归档任务', async () => {
     ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
       batchId: 'batch-archive-active',
       clientSequence: 1,
-      files: files('active'),
+      files: files('old'),
     })
     await ctx.index.materializeNow(ctx.taskSpaceId)
     const activeRevision = Number(
@@ -319,13 +324,19 @@ test('归档 revision 独立推进并只投影归档任务', async () => {
       },
     )
     const actor = ctx.taskSpaces.actorContext('user-1')
-    assert.equal(ctx.index.queryTasks(actor, { taskSpaceId: ctx.taskSpaceId }).total, 1)
+    assert.equal(ctx.index.queryTasks(actor, { taskSpaceId: ctx.taskSpaceId }).total, 0)
     const archived = ctx.index.queryTasks(actor, {
       taskSpaceId: ctx.taskSpaceId,
       archived: true,
     })
     assert.equal(archived.total, 1)
     assert.equal(archived.tasks[0].title, '归档任务')
+    assert.equal(
+      ctx.db
+        .prepare('SELECT COUNT(*) AS count FROM sync_task_index WHERE task_space_id = ?')
+        .get(ctx.taskSpaceId).count,
+      1,
+    )
     assert.equal(archived.tasks[0].projectSyncStatus, 'current')
     assert.equal(archived.tasks[0].archivedAt, '2026-11-01T00:00:00.000Z')
     const event = ctx.getProjectionEvents().at(-1)
@@ -1090,6 +1101,100 @@ test('增量新增重复 task.json.id 仍在全任务范围标记身份冲突', 
     assert.ok(
       queryResult.tasks.every((task) => task.attentionReasons.includes('identity_conflict')),
     )
+  } finally {
+    await ctx.index.close()
+    ctx.db.close()
+  }
+})
+
+test('权威归档状态覆盖活动索引并把 task_key 收敛到归档路径', async () => {
+  const ctx = setup({ autoIndex: false, withTaskControl: true })
+  try {
+    const taskDir = '.trellis/tasks/11-10-archive-authority'
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-archive-authority-1',
+      clientSequence: 1,
+      files: taskFiles(taskDir, 'archive-authority', '待归档任务'),
+    })
+    await ctx.index.materializeNow(ctx.taskSpaceId)
+
+    const task = ctx.db
+      .prepare('SELECT * FROM sync_task WHERE execution_task_key = ?')
+      .get(`${ctx.taskSpaceId}::archive-authority`)
+    const archiveDir = '.trellis/tasks/archive/2026-11/11-10-archive-authority'
+    ctx.taskControl.reconcileProjection({
+      taskSpaceId: ctx.taskSpaceId,
+      projectId: task.project_id,
+      tasks: [
+        {
+          taskKey: `${ctx.taskSpaceId}::${archiveDir}`,
+          executionTaskKey: task.execution_task_key,
+          relativeDir: archiveDir,
+          title: task.title,
+          priority: task.priority,
+          derivedStage: 'archive',
+          archived: true,
+          archivedAt: new Date().toISOString(),
+        },
+      ],
+    })
+    ctx.db
+      .prepare('UPDATE sync_task_space SET revision = revision + 1 WHERE id = ?')
+      .run(ctx.taskSpaceId)
+    await ctx.index.materializeNow(ctx.taskSpaceId)
+
+    const actor = ctx.taskSpaces.actorContext('user-1')
+    assert.equal(ctx.index.queryTasks(actor, { taskSpaceId: ctx.taskSpaceId }).tasks.length, 0)
+    const archived = ctx.index.queryTasks(actor, {
+      taskSpaceId: ctx.taskSpaceId,
+      archived: true,
+    })
+    assert.equal(archived.tasks.length, 1)
+    assert.equal(archived.tasks[0].taskKey, `${ctx.taskSpaceId}::${archiveDir}`)
+    assert.equal(archived.tasks[0].relativeDir, archiveDir)
+    assert.equal(archived.tasks[0].archived, true)
+  } finally {
+    await ctx.index.close()
+    ctx.db.close()
+  }
+})
+
+test('租约过期清理 lease_id 后 Board 仍能从最新租约投影过期状态', async () => {
+  const ctx = setup({ autoIndex: false, withTaskControl: true })
+  try {
+    const task = ctx.taskControl.createPendingTask('user-1', {
+      taskSpaceId: ctx.taskSpaceId,
+      assigneeUserId: 'user-1',
+      title: '租约过期任务',
+      priority: 'P2',
+      slug: 'lease-expired',
+      idempotencyKey: 'lease-expired',
+    })
+    await ctx.index.materializeNow(ctx.taskSpaceId)
+
+    const claimed = ctx.taskControl.claim(ctx.agent, ctx.taskSpaceId, task.executionTaskKey)
+    ctx.db
+      .prepare(`
+        UPDATE sync_task_lease
+        SET expires_at = '2000-01-01T00:00:00.000Z'
+        WHERE id = ?
+      `)
+      .run(claimed.lease.id)
+    ctx.taskControl.expireLeases(new Date().toISOString())
+    assert.equal(
+      ctx.db
+        .prepare('SELECT lease_id FROM sync_task WHERE execution_task_key = ?')
+        .get(task.executionTaskKey).lease_id,
+      null,
+    )
+
+    const result = ctx.index.queryTasks(ctx.taskSpaces.actorContext('user-1'), {
+      taskSpaceId: ctx.taskSpaceId,
+    })
+    assert.equal(result.tasks.length, 1)
+    assert.equal(result.tasks[0].materializationState, 'claimed')
+    assert.equal(result.tasks[0].leaseStatus, 'expired')
+    assert.equal(result.tasks[0].leaseExpiresAt, '2000-01-01T00:00:00.000Z')
   } finally {
     await ctx.index.close()
     ctx.db.close()

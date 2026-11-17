@@ -160,6 +160,19 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
       SELECT 'team-1', id, 'member', ?, ? FROM user_account WHERE username = 'owner'
     `)
     .run(now, now)
+  await createUser(runtime.db, {
+    username: 'handoff-owner',
+    displayName: 'Handoff 接收人',
+    password: 'Handoff-Password-123',
+    systemAdmin: false,
+    mustChangePassword: false,
+  })
+  runtime.db
+    .prepare(`
+      INSERT INTO team_member(team_id, user_id, role, created_at, updated_at)
+      SELECT 'team-1', id, 'member', ?, ? FROM user_account WHERE username = 'handoff-owner'
+    `)
+    .run(now, now)
 
   const login = await request(runtime, '/api/auth/login', {
     method: 'POST',
@@ -256,9 +269,47 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
       idempotencyKey: 'without-listener',
     },
   })
-  assert.equal(withoutListener.status, 409)
-  assert.equal(withoutListener.body.code, 'TASK_SPACE_NO_ONLINE_LISTENER')
-  assert.equal(runtime.db.prepare('SELECT COUNT(*) AS count FROM sync_task_command').get().count, 0)
+  assert.equal(withoutListener.status, 202)
+  assert.equal(withoutListener.body.operation.status, 'pending')
+  assert.equal(withoutListener.body.operation.targetUserId, login.body.user.id)
+  assert.equal(runtime.db.prepare('SELECT COUNT(*) AS count FROM sync_task_command').get().count, 1)
+  assert.equal(
+    runtime.db
+      .prepare("SELECT materialization_state FROM sync_task WHERE task_id = 'without-listener'")
+      .get().materialization_state,
+    'pending',
+  )
+  await runtime.services.taskSpaceIndex.ensureMaterialized(taskSpaceId)
+  const pendingQuery = await request(
+    runtime,
+    `/api/tasks/query?taskSpaceId=${encodeURIComponent(taskSpaceId)}&limit=20`,
+    { cookie: session },
+  )
+  assert.equal(pendingQuery.status, 200)
+  assert.equal(pendingQuery.body.tasks.length, 1)
+  assert.equal(pendingQuery.body.tasks[0].materializationState, 'pending')
+  assert.equal(pendingQuery.body.tasks[0].controlTaskVersion, 1)
+  const beforeClaimRevision = runtime.services.taskSpaceIndex.queryRevision()
+  const pendingExecutionTaskKey = pendingQuery.body.tasks[0].executionTaskKey
+  const offlineClaim = await request(
+    runtime,
+    `/api/agent/tasks/${encodeURIComponent(pendingExecutionTaskKey)}/claim`,
+    {
+      method: 'POST',
+      agentCredential: enrolled.body.credential,
+      body: {},
+    },
+  )
+  assert.equal(offlineClaim.status, 200, JSON.stringify(offlineClaim.body))
+  assert.equal(offlineClaim.body.task.materializationState, 'claimed')
+  assert.ok(runtime.services.taskSpaceIndex.queryRevision() > beforeClaimRevision)
+  const claimedQuery = await request(
+    runtime,
+    `/api/tasks/query?taskSpaceId=${encodeURIComponent(taskSpaceId)}&limit=20`,
+    { cookie: session },
+  )
+  assert.equal(claimedQuery.body.tasks[0].materializationState, 'claimed')
+  assert.equal(claimedQuery.body.tasks[0].leaseStatus, 'active')
 
   const heartbeat = await request(runtime, '/api/agent/heartbeat', {
     method: 'POST',
@@ -273,6 +324,17 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
     },
   })
   assert.equal(heartbeat.status, 200, JSON.stringify(heartbeat.body))
+  const canceledWithoutListener = await request(
+    runtime,
+    `/api/task-operations/${encodeURIComponent(withoutListener.body.operation.id)}/cancel`,
+    { method: 'POST', cookie: session, body: {} },
+  )
+  assert.equal(canceledWithoutListener.status, 200)
+  runtime.db
+    .prepare('DELETE FROM sync_task_command WHERE id = ?')
+    .run(withoutListener.body.operation.id)
+  runtime.db.prepare("DELETE FROM sync_task WHERE task_id = 'without-listener'").run()
+  await runtime.services.taskSpaceIndex.enqueue(taskSpaceId)
 
   const projects = await request(runtime, '/api/team/projects?teamId=team-1', {
     cookie: session,
@@ -366,6 +428,160 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   )
   assert.equal(changes.status, 200)
   assert.equal(changes.body.revision, 1)
+  const executionTaskKey = changes.body.control.task.executionTaskKey
+  const controlledBinding = runtime.db
+    .prepare(`
+      SELECT binding.id, binding.sync_status, device.status AS device_status,
+             active.agent_id, space.status AS space_status, space.retired_at,
+             project.status AS project_status
+      FROM sync_agent_binding binding
+      JOIN agent_device device ON device.id = binding.agent_id
+      LEFT JOIN sync_active_agent active
+        ON active.user_id = device.user_id AND active.agent_id = device.id
+      JOIN sync_task_space space ON space.id = binding.task_space_id
+      JOIN sync_project project ON project.id = space.project_id
+      WHERE binding.agent_id = ? AND binding.task_space_id = ?
+    `)
+    .get(enrolled.body.agentId, taskSpaceId)
+  assert.equal(controlledBinding.id, attached.body.binding.id)
+  assert.equal(controlledBinding.sync_status, 'approved')
+  assert.equal(controlledBinding.device_status, 'active')
+  assert.equal(controlledBinding.agent_id, enrolled.body.agentId)
+  assert.notEqual(controlledBinding.space_status, 'disabled')
+  assert.equal(controlledBinding.retired_at, null)
+  assert.equal(controlledBinding.project_status, 'active')
+  const controlledPath = `/api/agent/tasks/${encodeURIComponent(executionTaskKey)}`
+  const controlledTask = await request(runtime, controlledPath, {
+    agentCredential: enrolled.body.credential,
+  })
+  assert.equal(
+    controlledTask.status,
+    200,
+    `${controlledPath} ${JSON.stringify(controlledTask.body)}`,
+  )
+  assert.equal(controlledTask.body.contentAvailable, true)
+  const controlledHeartbeat = await request(runtime, `${controlledPath}/heartbeat`, {
+    method: 'POST',
+    agentCredential: enrolled.body.credential,
+    body: { leaseToken: changes.body.control.lease.token },
+  })
+  assert.equal(controlledHeartbeat.status, 200)
+  assert.equal(controlledHeartbeat.body.lease.executionTaskKey, executionTaskKey)
+  const controlledRelease = await request(runtime, `${controlledPath}/release`, {
+    method: 'POST',
+    agentCredential: enrolled.body.credential,
+    body: { leaseToken: changes.body.control.lease.token },
+  })
+  assert.equal(controlledRelease.status, 200)
+  assert.equal(controlledRelease.body.released, true)
+  assert.equal(
+    (
+      await request(runtime, controlledPath, {
+        agentCredential: enrolled.body.credential,
+      })
+    ).body.contentAvailable,
+    false,
+  )
+  const controlledClaim = await request(runtime, `${controlledPath}/claim`, {
+    method: 'POST',
+    agentCredential: enrolled.body.credential,
+    body: {},
+  })
+  assert.equal(controlledClaim.status, 200)
+  assert.equal(controlledClaim.body.task.taskId, 'task-1')
+  assert.equal(controlledClaim.body.lease.status, 'active')
+
+  const handoffExecutionTaskKey = `${taskSpaceId}::handoff-route`
+  const handoffTaskDir = '.trellis/tasks/01-handoff-route'
+  const handoffProjectId = runtime.db
+    .prepare('SELECT project_id FROM sync_task_space WHERE id = ?')
+    .get(taskSpaceId).project_id
+  const handoffAssigneeId = runtime.db
+    .prepare("SELECT id FROM user_account WHERE username = 'handoff-owner'")
+    .get().id
+  runtime.db
+    .prepare(`
+      INSERT INTO sync_task(
+        execution_task_key, task_key, task_space_id, project_id, task_id,
+        relative_dir, title, description, priority, created_by_user_id,
+        assignee_user_id, assignee_dev_id, stage,
+        materialization_state, task_version, content_revision, previous_assignee_user_id,
+        handoff_state, materialized_revision, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, ?, 'handoff-route', ?, 'Handoff 路由任务', '', 'P2', ?,
+        ?, 'handoff-owner', 'planning', 'materialized', 1, 1, ?,
+        'source_cleanup_pending', 1, ?, ?
+      )
+    `)
+    .run(
+      handoffExecutionTaskKey,
+      `${taskSpaceId}::${handoffTaskDir}`,
+      taskSpaceId,
+      handoffProjectId,
+      handoffTaskDir,
+      login.body.user.id,
+      handoffAssigneeId,
+      login.body.user.id,
+      now,
+      now,
+    )
+  const handoffSnapshot = await request(
+    runtime,
+    `/api/agent/task-spaces/${encodeURIComponent(taskSpaceId)}/snapshot?afterRevision=0`,
+    { agentCredential: enrolled.body.credential },
+  )
+  assert.equal(handoffSnapshot.status, 200)
+  const handoffControl = handoffSnapshot.body.controls.find(
+    (control) => control.executionTaskKey === handoffExecutionTaskKey,
+  )
+  assert.equal(handoffControl.state, 'handoff_materialized')
+  assert.equal(handoffControl.handoffState, 'source_cleanup_pending')
+  assert.equal(handoffControl.leaseHeldByOtherUser, false)
+
+  const handoffAckPath = `/api/agent/tasks/${encodeURIComponent(handoffExecutionTaskKey)}/handoff-ack`
+  const missingHandoffBackup = await request(runtime, handoffAckPath, {
+    method: 'POST',
+    agentCredential: enrolled.body.credential,
+    body: { outcome: 'cleaned', fileCount: 2, totalBytes: 128 },
+  })
+  assert.equal(missingHandoffBackup.status, 400)
+  const handoffAck = await request(runtime, handoffAckPath, {
+    method: 'POST',
+    agentCredential: enrolled.body.credential,
+    body: {
+      outcome: 'cleaned',
+      backupId: 'handoff-0123456789abcdef',
+      manifestSha256: 'a'.repeat(64),
+      fileCount: 2,
+      totalBytes: 128,
+    },
+  })
+  assert.equal(handoffAck.status, 200, JSON.stringify(handoffAck.body))
+  assert.equal(handoffAck.body.handoffState, 'completed')
+  assert.equal(handoffAck.body.idempotent, false)
+  const replayedHandoffAck = await request(runtime, handoffAckPath, {
+    method: 'POST',
+    agentCredential: enrolled.body.credential,
+    body: {
+      outcome: 'cleaned',
+      backupId: 'handoff-0123456789abcdef',
+      manifestSha256: 'a'.repeat(64),
+      fileCount: 2,
+      totalBytes: 128,
+    },
+  })
+  assert.equal(replayedHandoffAck.status, 200)
+  assert.equal(replayedHandoffAck.body.idempotent, true)
+  runtime.db
+    .prepare("UPDATE sync_task SET handoff_state = 'none' WHERE execution_task_key = ?")
+    .run(handoffExecutionTaskKey)
+  const prematureHandoffConflict = await request(runtime, handoffAckPath, {
+    method: 'POST',
+    agentCredential: enrolled.body.credential,
+    body: { outcome: 'conflict', reason: 'git_tracked' },
+  })
+  assert.equal(prematureHandoffConflict.status, 409)
+  assert.equal(prematureHandoffConflict.body.code, 'HANDOFF_NOT_READY')
 
   const staleSequence = await request(
     runtime,
@@ -437,6 +653,8 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
         batchId: 'batch-large-http',
         clientSequence: 2,
         observedBranchName: 'main',
+        taskVersion: 1,
+        leaseToken: controlledClaim.body.lease.token,
         files: Array.from({ length: 10 }, (_, index) => ({
           path: `.trellis/tasks/01-snapshot/evidence-${index}.md`,
           content: largeContent,

@@ -68,6 +68,10 @@ export function AssigneeWarningDialog({
           <div className="rounded-lg bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground">
             <p>任务：{warning?.task?.title || warning?.task?.taskKey || '当前任务'}</p>
             <p>继续推进会保留原责任人并记录审计；只有接管任务才会显式改派。</p>
+            <p>
+              改派后原负责人的本地副本可能保留、进入受保护清理，或因被 Git
+              跟踪而需要手工处理；目标客户端上线后再接管并落地。
+            </p>
           </div>
           {error ? (
             <p role="alert" className="text-xs text-destructive">

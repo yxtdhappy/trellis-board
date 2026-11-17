@@ -381,6 +381,12 @@ async fn create_task(
             "archive 是保留的归档目录，不能用作任务标识",
         );
     }
+    if let Some(execution_task_key) = create_execution_task_key(command, binding) {
+        context
+            .task_sync
+            .claim_execution_task(&binding.task_space_id, &execution_task_key)
+            .await?;
+    }
     let tasks_root = repo_path.join(".trellis").join("tasks");
     let before = task_directories(&tasks_root).await?;
     let existing = tasks_root.join(&slug);
@@ -454,6 +460,29 @@ async fn create_task(
     finish_create(context, binding, command, &task_dir, &task_id).await
 }
 
+/// create_task 的新服务端会在 payload 中带 executionTaskKey；兼容只带
+/// taskId/taskVersion 的控制面响应，避免命令刚进入客户端就绕过 claim。
+fn create_execution_task_key(command: &AgentCommand, binding: &AgentBinding) -> Option<String> {
+    if let Some(value) = command
+        .payload_str("executionTaskKey")
+        .filter(|value| !value.is_empty())
+    {
+        return Some(value.to_string());
+    }
+    if command
+        .payload
+        .get("taskVersion")
+        .and_then(Value::as_u64)
+        .is_none()
+    {
+        return None;
+    }
+    command
+        .payload_str("taskId")
+        .filter(|value| !value.is_empty())
+        .map(|task_id| format!("{}::{task_id}", binding.task_space_id))
+}
+
 async fn finish_create(
     context: &CommandContext<'_>,
     binding: &AgentBinding,
@@ -493,6 +522,14 @@ async fn assign_task(
             "归档任务由服务端 Git 管理，客户端不能改派归档任务",
         );
     }
+    let execution_task_key = command
+        .payload_str("executionTaskKey")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AgentError::new(code::COMMAND_INVALID, "改派命令缺少任务执行身份"))?;
+    context
+        .task_sync
+        .claim_execution_task(&binding.task_space_id, execution_task_key)
+        .await?;
     let tasks_root = repo_path.join(".trellis").join("tasks");
     let target = protocol::resolve_task_dir_under(&tasks_root, &task_dir)
         .ok_or_else(|| AgentError::new(code::COMMAND_INVALID, "改派任务目录越界"))?;
@@ -905,6 +942,18 @@ mod tests {
         assert_eq!(normalize_task_slug(" Fix-Desk "), "fix-desk");
         assert_eq!(normalize_task_slug("Fix Desk"), "fix desk");
         assert!(!is_task_slug(&normalize_task_slug("Fix Desk")));
+    }
+
+    #[test]
+    fn create_execution_key_derives_from_task_control_payload() {
+        let command = AgentCommand {
+            payload: json!({ "taskId": "task-a", "taskVersion": 1 }),
+            ..sample_command()
+        };
+        assert_eq!(
+            create_execution_task_key(&command, &sample_binding()).as_deref(),
+            Some("space-1::task-a")
+        );
     }
 
     #[test]

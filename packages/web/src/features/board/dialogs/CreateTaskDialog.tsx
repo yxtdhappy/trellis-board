@@ -138,7 +138,7 @@ export function CreateTaskDialog({
       return
     }
     if (!commandState.canSubmit) {
-      setMessage(commandState.reason || '当前分支没有可用的在线监听客户端')
+      setMessage(commandState.reason || '当前分支任务空间不可写')
       return
     }
     if (!title.trim()) {
@@ -173,7 +173,7 @@ export function CreateTaskDialog({
       setTitle('')
       setSlug('')
       setDescription('')
-      setMessage('创建命令已发送，目标客户端执行并同步成功后会出现在任务列表。')
+      setMessage('任务已创建并等待目标客户端接管；可先在看板查看待交付状态。')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '创建失败')
     } finally {
@@ -186,7 +186,9 @@ export function CreateTaskDialog({
       <DialogContent className="sm:max-w-150">
         <DialogHeader>
           <DialogTitle>创建任务并派发</DialogTitle>
-          <DialogDescription>任务会进入规划阶段，并派发给所选负责人。</DialogDescription>
+          <DialogDescription>
+            提交后任务立即进入看板；目标客户端离线时会保持待交付，稍后上线再接管。
+          </DialogDescription>
         </DialogHeader>
         <form className="flex min-h-0 flex-1 flex-col gap-3" onSubmit={submit}>
           <DialogBody className="flex flex-col gap-3">

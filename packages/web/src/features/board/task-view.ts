@@ -77,9 +77,21 @@ export type BoardTask = {
   branchName?: string
   sourceBranchName?: string
   taskVersion?: string
+  controlTaskVersion?: number | string | null
   teamId?: string | null
   teamName?: string | null
   archived?: boolean
+  archivedAt?: string | null
+  controlState?: string | null
+  materializationState?: string | null
+  handoffState?: string | null
+  leaseStatus?: string | null
+  leaseExpiresAt?: string | null
+  leaseExpired?: boolean | null
+  previousAssigneeUserId?: string | null
+  executionIdentityConflict?: boolean
+  taskSpaceRevision?: number
+  taskSpaceIndexedRevision?: number
   derivedStage: string
   manualStage?: string | null
   parentTaskKey?: string | null
@@ -112,6 +124,21 @@ export function branchLabel(task: Pick<BoardTask, 'branchName' | 'sourceBranchNa
     return `分支 ${task.branchName} · 来源 ${task.sourceBranchName}`
   }
   return `分支 ${task.branchName}`
+}
+
+export function controlToneClass(tone?: string) {
+  switch (tone) {
+    case 'success':
+      return 'bg-success-soft text-success'
+    case 'warning':
+      return 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+    case 'danger':
+      return 'bg-destructive/10 text-destructive'
+    case 'info':
+      return 'bg-primary/10 text-primary'
+    default:
+      return 'bg-muted text-muted-foreground'
+  }
 }
 
 export function initials(name?: string) {

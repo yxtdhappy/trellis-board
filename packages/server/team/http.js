@@ -41,6 +41,7 @@ import { createTeamPluginHost } from './plugins/host.js'
 import { createTeamPluginRoutes } from './plugins/http.js'
 import { createSyncAgentService } from './sync-agent-service.js'
 import { createTaskCommandService } from './task-command-service.js'
+import { createTaskControlService } from './task-control-service.js'
 import { createTaskSnapshotBackupService } from './task-snapshot-backup.js'
 import { createTaskSnapshotService } from './task-snapshot-service.js'
 import { createTaskSpaceIndex } from './task-space-index.js'
@@ -458,7 +459,7 @@ function routeMatch(pathname, pattern) {
   const match = pattern.exec(pathname)
   if (!match) return null
   try {
-    return match.slice(1).map((item) => decodeURIComponent(item))
+    return match.slice(1).map((item) => (item == null ? undefined : decodeURIComponent(item)))
   } catch {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, '请求路径编码无效')
   }
@@ -480,6 +481,7 @@ function createRequestHandler({
   taskSnapshots,
   taskSpaceIndex,
   taskCommands,
+  taskControl,
   archiveGitSync,
   agentService,
   agentEvents,
@@ -630,6 +632,12 @@ function createRequestHandler({
     return true
   }
 
+  function publishTaskControlChanged() {
+    if (!taskSpaceIndex) return
+    const revision = taskSpaceIndex.incrementQueryRevision({ publish: false })
+    boardEvents.publish({ revision })
+  }
+
   async function handleAgent(request, response, url) {
     const { pathname } = url
     if (pathname === '/api/agent/enroll' && request.method === 'POST') {
@@ -755,6 +763,46 @@ function createRequestHandler({
         ),
       )
       return true
+    }
+    const controlledTaskMatch = routeMatch(
+      pathname,
+      /^\/api\/agent\/tasks\/([^/]+)(?:\/(claim|heartbeat|release|handoff-ack))?$/,
+    )
+    if (controlledTaskMatch) {
+      const [executionTaskKey, action = ''] = controlledTaskMatch
+      const taskSpaceId = executionTaskKey.slice(0, executionTaskKey.indexOf('::'))
+      if (!taskSpaceId) {
+        throw teamError(400, ERROR_CODES.INVALID_INPUT, '任务身份格式无效')
+      }
+      if (!action && request.method === 'GET') {
+        sendJson(response, 200, taskControl.getTask(agent, taskSpaceId, executionTaskKey))
+        return true
+      }
+      if (request.method === 'POST' && action === 'claim') {
+        const result = taskControl.claim(agent, taskSpaceId, executionTaskKey)
+        publishTaskControlChanged()
+        sendJson(response, 200, result)
+        return true
+      }
+      if (request.method === 'POST' && action === 'heartbeat') {
+        const body = await readJsonBody(request)
+        sendJson(response, 200, taskControl.heartbeat(agent, taskSpaceId, executionTaskKey, body))
+        return true
+      }
+      if (request.method === 'POST' && action === 'release') {
+        const body = await readJsonBody(request)
+        const result = taskControl.release(agent, taskSpaceId, executionTaskKey, body)
+        publishTaskControlChanged()
+        sendJson(response, 200, result)
+        return true
+      }
+      if (request.method === 'POST' && action === 'handoff-ack') {
+        const body = await readJsonBody(request)
+        const result = taskControl.ackHandoff(agent, taskSpaceId, executionTaskKey, body)
+        publishTaskControlChanged()
+        sendJson(response, 200, result)
+        return true
+      }
     }
     if (pathname === '/api/agent/events' && request.method === 'GET') {
       agentEvents.open({
@@ -1823,18 +1871,27 @@ export async function createTeamRuntime({
         }
       },
     })
+    const taskControl = createTaskControlService({ db })
+    let taskSpaceIndex = null
     taskCommands = createTaskCommandService({
       db,
       taskSpaces,
       agents: agentService,
+      taskControl,
       events: agentEvents,
+      onTaskControlChanged: ({ taskSpaceId }) => {
+        const revision = taskSpaceIndex?.incrementQueryRevision({ publish: false }) || 0
+        boardEvents.publish({ revision })
+        void taskSpaceIndex?.enqueue(taskSpaceId)
+      },
     })
     let archiveGitSync = null
-    const taskSpaceIndex = createTaskSpaceIndex({
+    taskSpaceIndex = createTaskSpaceIndex({
       db,
       stageIds: STAGE_IDS,
       taskSpaces,
       archiveSnapshots,
+      taskControl,
       executionWipLimit: EXECUTION_WIP_LIMIT,
       onQueryRevisionChanged: (revision) => boardEvents.publish({ revision }),
       onProjected: (projection) => {
@@ -1850,6 +1907,7 @@ export async function createTeamRuntime({
     const taskSnapshots = createTaskSnapshotService({
       db,
       taskSpaces,
+      taskControl,
       onRevisionCommitted: ({ taskSpaceId }) => {
         void taskSpaceIndex.enqueue(taskSpaceId)
       },
@@ -1895,6 +1953,7 @@ export async function createTeamRuntime({
       taskSnapshots,
       taskSpaceIndex,
       taskCommands,
+      taskControl,
       archiveGitSync,
       agentService,
       agentEvents,
@@ -1981,6 +2040,7 @@ export async function createTeamRuntime({
         taskSnapshots,
         taskSpaceIndex,
         taskCommands,
+        taskControl,
         archiveGitSync,
         agentService,
         agentEvents,

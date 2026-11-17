@@ -3,7 +3,7 @@
 ## 1. Scope / Trigger
 
 - 修改 `packages/shared/task-snapshot.js`、`packages/shared/remote-identity.js`、
-  `packages/desktop/src-tauri/src/agent/{task_sync,task_command,onboarding}.rs`、`packages/server/team/task-space-*.js`、
+  `packages/desktop/src-tauri/src/agent/{task_sync,task_command,task_control,onboarding}.rs`、`packages/server/team/task-space-*.js`、
   `packages/server/team/task-snapshot-service.js`、`packages/server/team/task-command-service.js`、
   `packages/server/team/sync-agent-service.js`、团队同步 API/SSE、`sync_*` schema 或看板内同步确认弹窗
   （`packages/web/src/desktop/LiveSyncControlDialog.tsx`）时必须遵循本文。
@@ -32,6 +32,11 @@ POST   /api/agent/task-spaces/:taskSpaceId/changes
 PUT    /api/agent/task-spaces/:taskSpaceId/cursor
 GET    /api/agent/task-spaces/:taskSpaceId/conflicts
 POST   /api/agent/task-spaces/:taskSpaceId/conflicts/:conflictId/resolve
+GET    /api/agent/tasks/:executionTaskKey
+POST   /api/agent/tasks/:executionTaskKey/claim
+POST   /api/agent/tasks/:executionTaskKey/heartbeat
+POST   /api/agent/tasks/:executionTaskKey/release
+POST   /api/agent/tasks/:executionTaskKey/handoff-ack
 GET    /api/agent/events
 POST   /api/agent/commands/:commandId/start
 POST   /api/agent/commands/:commandId/result
@@ -54,7 +59,20 @@ POST /api/task-operations/:id/retry
 POST /api/task-operations/:id/cancel
 ```
 
-创建和改派成功入队返回 `202 + operation`。目标 Agent 离线或未绑定时在创建操作项前拒绝。
+创建和改派成功先持久化任务、归属或待交付记录并返回 `202 + operation`，目标 Agent 离线时也允许排队；
+目标用户上线并建立目标 taskSpace binding 后再领取命令。
+
+Team Board 查询行必须携带 `materializationState`、`controlTaskVersion`、`handoffState`、
+`leaseStatus`、`leaseExpiresAt`、`previousAssigneeUserId` 和身份冲突标记。`leaseStatus/leaseExpiresAt`
+取该任务最新租约，不能只依赖 `sync_task.lease_id`，因为租约过期或释放时该指针会被清空。
+`claim`、`lease release` 和 `handoff-ack` 改变控制面后必须推进查询版本并发布 `tasks.changed`；
+Board 仍通过普通 REST 查询刷新，不从 SSE 接收任务正文。
+
+Web 端 Team 模式创建/改派不要求当前 taskSpace 有在线监听，只在任务空间停用或账号只读时提前阻止；
+最终写权限仍由服务端校验。`pending_delivery`、`claimed`、`lease_expired`、`version_stale`、
+`migration_conflict`、改派和 handoff 状态必须显示为可读控制状态。正文尚未 materialize 时，
+任务详情只展示服务端元数据和控制状态，禁止请求 `/api/task`、渲染产物或依赖分析；standalone
+或没有控制字段的旧 Team 数据保持正文可用兼容。
 
 `taskSpaceId` 可选：指定时查询单分支；缺省或 `all` 时按当前 `teamId` 和可选 `projectIds` 查询所有可读
 taskSpace。服务端使用 `taskSpaces.listReadable()` 生成项目/任务空间集合并校验显式 projectIds。
@@ -112,6 +130,11 @@ active 标记、存储根、文件数、字节数和 manifest 摘要；`sync_tas
 `storage_key` 和文本摘要投影，不再写入正文；`sync_archive_file_history` 保存被替换但仍需供
 旧 Board fileId 访问的不可变映射。导入不得退役 active，候选只在索引事务成功时原子激活。
 v14 legacy `content_text` 保留为只读回退。
+
+v16 增加 `sync_task` 权威任务与 `sync_task_lease` 写租约；`sync_task` 同时保存 materialization、
+handoff 来源清理状态、目标 materialization revision 和 manifest 摘要。已有任务的普通上传必须携带
+`taskVersion`、`leaseToken` 和 `observedBranchName`；未知本地任务的首次上传仍可由认证用户建立
+权威记录并返回一次性 lease。归档、改派、非负责人、版本落后和租约无效均失败关闭。
 
 ### 服务与 SSE
 
@@ -214,6 +237,8 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   "batchId": "uuid",
   "clientSequence": 12,
   "observedBranchName": "main",
+  "taskVersion": 3,
+  "leaseToken": "<claim 返回的 token>",
   "mergeEvidence": {
     "version": 1,
     "type": "tracked-in-head",
@@ -240,6 +265,11 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   `branchName`，否则返回 `400 BRANCH_TASK_SPACE_MISMATCH`。
 - `observedBranchName` 不进入 `sync_task_space_batch.request_sha256`。升级前持久化的 pending batch
   重试时可补上该字段，但仍必须复用原 `batchId/clientSequence/files`。
+- 服务端已存在权威任务时，`taskVersion` 与 `leaseToken` 是必填 fencing 字段；pending 重试可重新
+  claim/heartbeat 获取新 token，但不能改变原 `batchId/clientSequence/files/mergeEvidence`。
+- 客户端把 claim 响应中的 taskVersion、lease token/expiry 保存到
+  `%LOCALAPPDATA%\TrellisBoard\data\agent\task-control-state.json`。重启后 pending batch 先从该状态
+  恢复租约并 heartbeat；租约失效再重新 claim。
 - 冲突处理 `overwrite-server` 与普通上传使用相同分支上报和校验，不能绕过门禁。
 - `baseSha256=null` 表示客户端认为路径不存在；64 位摘要表示基于的服务端当前内容。
 - 服务端在 `BEGIN IMMEDIATE` 中逐文件比较当前摘要；任一不一致整批拒绝，不写入部分任务。
@@ -352,6 +382,35 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 中断后恢复 `bootstrap` 时，只有服务端已有任务全部为 `same` 且其余差异均为 `local-only`
   才允许继续上传剩余本地任务。上传结束后必须重新获取 full snapshot；只有全部收敛为 `same`
   才能写 cursor 和 `initialSyncCompleted=true`，否则重新进入差异审查。
+- snapshot 缺少 `controls` 时按旧服务端兼容路径处理；字段存在时，即使为空也是权威控制面。
+  客户端只落地 `materialized/claimed/pending_delivery`，且落盘前必须 claim。creator 的
+  `handoff_materialized` 以及 `archived/reassigned` 不得触发服务端正文写入。
+- `archived/reassigned` 只保留本地数据、释放已知失效 lease、记录控制状态并停止 watcher 上传；
+  归档正文仍由服务端只读 Git 导入收敛。
+- `handoff_materialized + source_cleanup_pending` 只进入 creator 本地清理通道。客户端先验证真实目录、
+  服务端执行身份、cursor baseline、完整文件集合摘要和 Git `??` 状态；超过 100,000 文件或 64 MiB
+  规范化文本时 ACK `conflict/backup_too_large`。符合条件时把完整目录复制到
+  `live-backups/<taskSpaceId>/handoff-<manifestSha256前16位小写hex>`。备份包含
+  `handoff-manifest.json`、来源 taskSpace、materialized revision、文件数、字节数和创建时间；
+  写入后必须回读验证 manifest 摘要、完整文件集合、逐文件摘要和规范化大小；复制失败必须删除本次新建的
+  不完整目标。`cleaned` ACK 必须先持久化为 pending，删除成功后再发送。
+- 任一内容、归属或 Git 状态不一致时不得删除正文，ACK `conflict`。dirty/tracked 副本保留；ACK
+  网络失败和进程重启只保留持久 pending，由后续控制同步或事件短路路径继续重试。控制面
+  `leaseHeldByOtherUser=true` 时 ACK `conflict/lease_active`，服务端也可能返回
+  `409 HANDOFF_LEASE_HELD`。重试 `cleaned` 前必须重新验证完整备份，缺失时改为 `conflict/missing`，
+  本地检查异常时改为 `conflict/unknown`。删除前再次校验来源摘要和真实分支，并通过
+  `.trellis/.agent-handoff-cleanup-<uuid>` 原子改名后再清理；遗留暂存目录由后续同步收敛。
+- `task_handoff` 不进入 `ControlHub`，不聚焦或激活窗口。Board 通过独立
+  `handoff-control-changed` 事件和 `handoff_notice_pending` 命令读取状态。通知去重键由
+  `executionTaskKey + handoffState + outcome` 组成，同一任务进入 conflict、cleaned 等不同阶段时仍可
+  各提示一次。Board 可见时使用 Sonner；隐藏或最小化时仅在 WebView 暴露 Web Notification API 且权限
+  已授予时尝试系统通知，API、权限或安全上下文不可用时降级为持久页内状态并在恢复可见后补提示。
+  冲突状态持续显示非模态页内提示；固定页内状态只展示冲突和处理中项。
+
+服务端 `POST /api/agent/tasks/:executionTaskKey/handoff-ack` 的 `cleaned` 必须包含合法
+`backupId`、64 位 manifest SHA-256、正文件数和正总字节数；冲突 reason 只接受固定白名单。
+已完成终态的重复 ACK 只有在全部审计元数据一致时才幂等成功，否则返回
+`409 HANDOFF_ACK_MISMATCH`。租约字段只暴露布尔值，不返回租约令牌或其他客户端标识。
 
 ### 首次接入预检
 
@@ -433,7 +492,9 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 
 ### 创建与改派命令
 
-- `create_task` 和 `assign_task` 只允许投递给目标用户唯一在线 Agent。
+- `create_task` 和 `assign_task` 先按 `target_user_id` 写入 pending 命令，不要求目标 Agent 在线。
+  只有目标用户存在唯一在线 Agent 且 approved binding 指向当前 taskSpace 时才投递；离线期间命令
+  和权威任务/改派状态继续保留。
 - Agent 收到 `command.available` 后先 `POST /commands/:id/start` 获取 `running` 租约；同一命令状态为
   `running` 时不并发执行。
 - `delivered` 租约默认 5 分钟，`running` 租约默认 30 分钟；过期后恢复 `pending`。
@@ -482,17 +543,29 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | Agent 未上报 `observedBranchName` | `400 BRANCH_OBSERVATION_REQUIRED`，不写快照 |
 | 上报分支与 taskSpace/binding 不一致 | `400 BRANCH_TASK_SPACE_MISMATCH`，不写快照 |
 | 本地真实分支与 binding 不一致 | Agent 暂停该 binding，不写文件、不上传、不推进 cursor |
+| 已有权威任务上传缺少 `taskVersion` | `409 TASK_VERSION_REQUIRED`，不写快照 |
+| 已有权威任务上传缺少或使用错误 lease | `409 TASK_LEASE_REQUIRED/TASK_LEASE_INVALID`，不写快照 |
+| 本地 taskVersion 落后或负责人已改派/任务已归档 | `409 TASK_VERSION_STALE/TASK_WRITE_FORBIDDEN/TASK_ARCHIVED`，本地副本保留 |
 | ownership 索引 schema/binding/路径/符号链接/大小/条目数无效 | 拒绝该索引，回退权威冷扫描，不沿用旧 ownership |
 | HEAD/ref 指纹与持久索引一致 | 复用 tracked paths，不执行 `git ls-tree` |
 | 任务目录不在 Git 脏目录并集中 | 不递归枚举该目录，直接复用持久摘要；写操作仍实时读取真实内容 |
 | 任务目录在 Git 脏目录并集中 | 只重扫该目录，按 size/mtime 精确复用或重算文件摘要 |
+| handoff 本地目录干净、Agent 管理且全部为 Git `??` | 先写完整备份和 manifest，再持久化 cleaned ACK 并删除活动目录 |
+| handoff 目录 dirty、Git tracked、baseline/Git 状态不确定 | 不删除本地正文，ACK `conflict` 并保留页内状态 |
+| handoff 文件数超过 100,000 或规范化文本超过 64 MiB | ACK `conflict/backup_too_large`，保留本地正文 |
+| 其他客户端仍持有有效任务租约 | 控制面 `leaseHeldByOtherUser=true`，ACK `conflict/lease_active`；服务端拒绝 cleaned 时返回 `409 HANDOFF_LEASE_HELD` |
+| cleaned ACK 重试时备份缺失、非目录、身份或摘要不一致 | 改为 `conflict/missing`，不得报告 cleaned |
+| handoff 本地目录包含符号链接、特殊文件或读取失败 | 不删除正文，收敛为 `conflict/unknown`，不中断其他任务同步 |
+| 已完成 handoff 的重复 ACK 元数据不一致 | `409 HANDOFF_ACK_MISMATCH`，不改写首次审计 |
+| handoff ACK 网络失败 | 本地 ACK 状态保持 pending；后续同步或重启重试，不阻塞 Board |
 | 启动同步尚未完成（`initial_sync_completed == false`）或 `detachPending` | heartbeat 保活但该 binding 不进入监听集合；命令等待，watcher 事件暂存到串行链收尾 |
 | 首次同步已完成、但其后有增量拉取/补拉/被取消的启动同步仍在进行 | 仍算在线监听；`active_bindings()` 只按 `initial_sync_completed && !detach_pending` 判定，`syncing_task_spaces` 不参与 |
 | 基线首次收到来源不同任务但无证据 | `409 TASK_MERGE_EVIDENCE_REQUIRED`，不写快照 |
 | 证据版本、类型、HEAD SHA、任务 ID、目录、路径或分支不匹配 | `400/409`，整批不写 |
 | 来源 taskSpace 写入已由基线接管的稳定任务 ID | `409 TASK_OWNED_BY_BASELINE`，旧快照不变 |
-| taskSpace 没有在线监听 | 创建/改派在写 operation 前返回 `409 TASK_SPACE_NO_ONLINE_LISTENER` |
-| 目标用户无在线 Agent、无 approved binding、非项目写成员 | 创建操作项前 `409`，返回用户、项目、分支和下一步 |
+| taskSpace 没有在线监听 | 创建/改派仍返回 `202 + operation`，任务或改派先显示待交付 |
+| 目标用户可写但无在线 Agent 或 approved binding | 创建操作项并保留 pending 命令，客户端上线后再投递 |
+| 目标用户不是项目 lead/member 或没有 developer ID | `ASSIGNEE_NOT_WRITABLE`，不生成任务或命令 |
 | 路径越界、反斜杠、非白名单扩展名、符号链接、非 UTF-8 | 整批拒绝，任务快照不变 |
 | Agent 批次包含 `.trellis/tasks/archive/**` | `409 ARCHIVE_SYNC_SERVER_MANAGED`，整批拒绝 |
 | 归档 Git 凭据来源不匹配或无 SSH 凭据 | 该来源失败并写脱敏日志，不复用其他 host/port 凭据 |
@@ -566,7 +639,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   archive-only Board 投影、不读取 Git/workspace。
 - `packages/server/test/team-task-index-v10.test.js` 还必须覆盖：单任务 warm 只扫描一个目录、未变化
   索引行不更新、增量与 full Board 一致、增量参与者变化后的 `project.members`、增量重复任务 ID
-  身份冲突、人工阶段同 revision 重投影、失败事务四项状态回滚及 superseded 后收敛。
+  身份冲突、人工阶段同 revision 重投影、失败事务四项状态回滚及 superseded 后收敛；另覆盖
+  `lease_id` 清空后仍从最新租约投影 `expired` 状态。
 - `packages/server/test/team-agent-slot.test.js`、`team-task-spaces.test.js`：监听快照、空集合、旧客户端、
   超时、五态聚合、监听详情权限和主动解绑幂等；另覆盖新设备踢下线、旧 SSE 关闭和旧命令取消。
 - `packages/server/test/team-task-commands.test.js`：在线目标、命令状态机、租约恢复、索引等待、重试和取消。
@@ -581,7 +655,10 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   只读 archive 对象、失败保留、失败阶段日志、索引时间和每 taskSpace 100 条日志上限。
 - `packages/server/test/team-gitless-http.test.js` 还必须断言：超过旧 9 MiB 的合法 Agent 批次可写入；
   Content-Length 超过 96 MiB 返回 `413 BODY_TOO_LARGE`；普通 JSON 仍为 64 KiB；缺少
-  `observedBranchName` 返回 `400 BRANCH_OBSERVATION_REQUIRED`。
+  `observedBranchName` 返回 `400 BRANCH_OBSERVATION_REQUIRED`；离线创建的 pending 行可查询，
+  claim 后 Board 行更新为 claimed 且查询版本推进。
+- `packages/web/test/team-web.test.js` 覆盖离线创建/改派、pending/claimed/lease expired、
+  版本落后、迁移冲突、改派、handoff、materialized、未知状态兜底和未 materialize 正文不可用。
 - `packages/server/test/team-release.test.js`：服务端仓库无工作副本，命令成功前不生成正式任务。
 - `packages/desktop/src-tauri/src/agent/{onboarding,task_sync,task_command,git,protocol}.rs` 的 `mod tests`：
   仓库预检、固定 CLI 初始化、推送状态、已有 `.trellis`、同 `localRepoKey` 换分支、首次/增量同步、
@@ -596,6 +673,13 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   持久索引还必须覆盖：正常重启不读未变化 `task.json`、HEAD 不变不执行 Git、单文件变化只解析
   目标项、schema/路径/超限/符号链接回退、临时 `TaskSync` 不写盘、启动 watcher 事件延后上传、
   `Notify` 多等待者不丢唤醒，以及展示缓存不能绕过真实分支门禁。
+- `packages/desktop/src-tauri/src/agent/{task_sync,task_control}.rs` 还必须覆盖 controls
+  缺失兼容、普通本人任务选择、claim/heartbeat/release 请求、lease/taskVersion 重启恢复、
+  upload 请求 fencing，以及 archived/reassigned 不落盘、不上传、不删除本地数据。
+- handoff 还必须覆盖 manifest 稳定性、ACK 元数据脱敏、干净未跟踪副本备份后删除、dirty/tracked/
+  baseline/branch/Git 不确定时失败关闭、100,000 文件与 64 MiB 边界、完整备份回读校验、cleaned ACK
+  重启重试、备份缺失转 conflict、重复 ACK 元数据冲突、他人租约保护和通知去重不抢焦点。Board
+  静态契约覆盖 `handoff_notice_pending`、capability 和页内提示入口。
 - `packages/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、
   DPAPI 往返、SSE 分帧、控制事件去重与过期；代理绕过需覆盖回环、私网、链路本地、IPv6
   ULA/link-local、`.local` 和公网域名。

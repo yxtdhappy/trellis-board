@@ -3,6 +3,7 @@ import test from 'node:test'
 import { openDatabase } from '../database.js'
 import { createSyncAgentService } from '../team/sync-agent-service.js'
 import { createTaskCommandService } from '../team/task-command-service.js'
+import { createTaskControlService } from '../team/task-control-service.js'
 import { createTaskSpaceService } from '../team/task-space-service.js'
 
 function insertUser(db, id, displayName) {
@@ -84,10 +85,12 @@ function setup() {
     config: { agentStaleMs: 60_000 },
     events: { publishAgentRevoked() {} },
   })
+  const taskControl = createTaskControlService({ db })
   const commands = createTaskCommandService({
     db,
     taskSpaces,
     agents,
+    taskControl,
     events: {
       notifyCommandAvailable(agentId) {
         events.push(agentId)
@@ -98,12 +101,43 @@ function setup() {
     db,
     taskSpaces,
     commands,
+    taskControl,
     events,
     actor: taskSpaces.actorContext('user-a'),
     taskSpaceId: second.taskSpace.id,
     targetAgentId: 'agent-b',
     targetBindingId: second.binding.id,
   }
+}
+
+function insertIndexedTask(db, taskSpaceId, payload, revision = 1) {
+  const timestamp = new Date().toISOString()
+  db.prepare(`
+    UPDATE sync_task_space
+    SET revision = ?, indexed_revision = ?
+    WHERE id = ?
+  `).run(revision, revision, taskSpaceId)
+  db.prepare(`
+    INSERT INTO sync_task_index(
+      task_space_id, project_id, task_key, execution_task_key, relative_dir,
+      branch_name, title, search_text, archived, priority, derived_stage,
+      assignee_dev_id, assignee_user_id, attention_flags_json, group_key,
+      group_role, task_version, board_version, updated_at
+    ) VALUES (?, (SELECT project_id FROM sync_task_space WHERE id = ?), ?, ?, ?,
+      'main', ?, ?, 0, 'P2', 'planning',
+      'bob', 'user-b', '[]', ?, 'single', ?, 'v1', ?)
+  `).run(
+    taskSpaceId,
+    taskSpaceId,
+    payload.taskKey,
+    payload.executionTaskKey,
+    payload.relativeDir,
+    `任务 ${payload.taskId}`,
+    `任务 ${payload.taskId}`,
+    payload.taskKey,
+    String(payload.taskVersion || 1),
+    timestamp,
+  )
 }
 
 function createInput(taskSpaceId, overrides = {}) {
@@ -120,49 +154,47 @@ function createInput(taskSpaceId, overrides = {}) {
   }
 }
 
-test('目标 Agent 离线时不生成命令，并返回可操作原因', () => {
+test('目标 Agent 离线时仍生成命令和待交付任务', () => {
   const { db, commands, actor, taskSpaceId } = setup()
   try {
     db.prepare(
       "UPDATE agent_device SET last_seen_at = '2000-01-01T00:00:00.000Z' WHERE id = 'agent-b'",
     ).run()
-    assert.throws(
-      () => commands.enqueue(actor, createInput(taskSpaceId)),
-      (error) => {
-        assert.equal(error.status, 409)
-        assert.equal(error.code, 'AGENT_OFFLINE')
-        assert.match(error.message, /执行人|user-b/)
-        assert.match(error.message, /打开客户端/)
-        assert.equal(error.details.taskSpaceId, taskSpaceId)
-        assert.equal(error.details.branchName, 'main')
-        return true
-      },
+    const queued = commands.enqueue(actor, createInput(taskSpaceId))
+    assert.equal(queued.statusCode, 202)
+    assert.equal(queued.operation.status, 'pending')
+    assert.equal(queued.operation.targetUserId, 'user-b')
+    assert.equal(queued.operation.agentId, null)
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_command').get().count, 1)
+    assert.equal(
+      db
+        .prepare('SELECT materialization_state FROM sync_task WHERE task_id = ?')
+        .get('client-created').materialization_state,
+      'pending',
     )
-    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_command').get().count, 0)
   } finally {
     db.close()
   }
 })
 
-test('任务空间没有在线监听时返回专用错误且不生成命令', () => {
+test('任务空间没有在线监听时仍排队，恢复监听后绑定目标 Agent', () => {
   const { db, commands, actor, taskSpaceId } = setup()
   try {
     db.prepare(`
       UPDATE sync_agent_binding
       SET is_listening = 0, listener_reported_at = NULL, last_listener_at = NULL
     `).run()
-    assert.throws(
-      () => commands.enqueue(actor, createInput(taskSpaceId)),
-      (error) => {
-        assert.equal(error.status, 409)
-        assert.equal(error.code, 'TASK_SPACE_NO_ONLINE_LISTENER')
-        assert.match(error.message, /没有在线监听/)
-        assert.equal(error.details.taskSpaceId, taskSpaceId)
-        assert.equal(error.details.branchName, 'main')
-        return true
-      },
-    )
-    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_command').get().count, 0)
+    const queued = commands.enqueue(actor, createInput(taskSpaceId))
+    assert.equal(queued.statusCode, 202)
+    assert.equal(queued.operation.agentId, null)
+    assert.deepEqual(commands.available('agent-b'), [])
+    const now = new Date().toISOString()
+    db.prepare(`
+      UPDATE sync_agent_binding
+      SET is_listening = 1, listener_reported_at = ?, last_listener_at = ?
+      WHERE task_space_id = ?
+    `).run(now, now, taskSpaceId)
+    assert.equal(commands.available('agent-b')[0].id, queued.operation.id)
   } finally {
     db.close()
   }
@@ -180,6 +212,18 @@ test('在线 Agent 收到唯一命令，幂等重放不重复入队', () => {
     assert.equal(replay.idempotent, true)
     assert.equal(replay.operation.id, first.operation.id)
     assert.deepEqual(events, [targetAgentId])
+    assert.throws(
+      () =>
+        commands.enqueue(
+          actor,
+          createInput(taskSpaceId, {
+            title: '重复任务',
+            idempotencyKey: 'create-other',
+          }),
+        ),
+      (error) => error.status === 409 && error.code === 'TASK_EXISTS',
+    )
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_command').get().count, 1)
 
     const available = commands.available(targetAgentId)
     assert.equal(available.length, 1)
@@ -187,6 +231,8 @@ test('在线 Agent 收到唯一命令，幂等重放不重复入队', () => {
     assert.equal(available[0].type, 'create_task')
     assert.equal(available[0].payload.taskSpaceId, taskSpaceId)
     assert.equal(available[0].payload.assigneeDevId, 'bob')
+    assert.equal(available[0].payload.executionTaskKey, first.operation.payload.executionTaskKey)
+    assert.equal(available[0].payload.taskVersion, 1)
 
     commands.markDelivered(targetAgentId, first.operation.id)
     assert.equal(commands.get(actor, first.operation.id).operation.status, 'delivered')
@@ -238,6 +284,54 @@ test('分支停止监听后 pending 命令不再投递，恢复监听后重新�
   }
 })
 
+test('监听报告已过期时 pending 命令不会误投递', () => {
+  const { db, commands, actor, taskSpaceId, targetAgentId } = setup()
+  try {
+    commands.enqueue(actor, createInput(taskSpaceId))
+    db.prepare(`
+      UPDATE sync_agent_binding
+      SET is_listening = 1, listener_reported_at = '2000-01-01T00:00:00.000Z'
+      WHERE agent_id = ?
+    `).run(targetAgentId)
+    assert.deepEqual(commands.available(targetAgentId), [])
+    const now = new Date().toISOString()
+    db.prepare(`
+      UPDATE sync_agent_binding
+      SET listener_reported_at = ?
+      WHERE agent_id = ?
+    `).run(now, targetAgentId)
+    assert.equal(commands.available(targetAgentId).length, 1)
+  } finally {
+    db.close()
+  }
+})
+
+test('创建命令拒绝路径穿越和归档目录', () => {
+  const { db, commands, actor, taskSpaceId } = setup()
+  try {
+    for (const input of [
+      createInput(taskSpaceId, { slug: '../escape', idempotencyKey: 'invalid-slug' }),
+      createInput(taskSpaceId, {
+        relativeDir: '.trellis/tasks/archive/2026-11/escape',
+        idempotencyKey: 'invalid-archive',
+      }),
+      createInput(taskSpaceId, {
+        relativeDir: '.trellis/tasks/..\\escape',
+        idempotencyKey: 'invalid-backslash',
+      }),
+    ]) {
+      assert.throws(
+        () => commands.enqueue(actor, input),
+        (error) => error.status === 400 && error.code === 'INVALID_INPUT',
+      )
+    }
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task_command').get().count, 0)
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sync_task').get().count, 0)
+  } finally {
+    db.close()
+  }
+})
+
 test('投递和执行租约过期后回到待投递，运行中的命令不会并发重复执行', () => {
   const { db, commands, actor, taskSpaceId, targetAgentId } = setup()
   try {
@@ -251,6 +345,7 @@ test('投递和执行租约过期后回到待投递，运行中的命令不会�
     commands.staleLeases(targetAgentId)
     assert.equal(commands.get(actor, queued.operation.id).operation.status, 'pending')
 
+    assert.equal(commands.available(targetAgentId).length, 1)
     commands.markDelivered(targetAgentId, queued.operation.id)
     assert.equal(commands.start(targetAgentId, queued.operation.id).execute, true)
     db.prepare(`
@@ -292,6 +387,7 @@ test('成功结果必须等待索引命中；失败后可重试并重新绑定�
   const { db, taskSpaces, commands, actor, taskSpaceId } = setup()
   try {
     const queued = commands.enqueue(actor, createInput(taskSpaceId))
+    const payload = queued.operation.payload
     commands.markDelivered('agent-b', queued.operation.id)
     assert.equal(commands.start('agent-b', queued.operation.id).execute, true)
 
@@ -305,48 +401,49 @@ test('成功结果必须等待索引命中；失败后可重试并重新绑定�
         commands.complete({ id: 'agent-b', userId: 'user-b' }, queued.operation.id, {
           status: 'succeeded',
           result: {
-            taskId: 'task-1',
-            taskKey: `${taskSpaceId}::.trellis/tasks/11-10-task-1`,
-            executionTaskKey: `${taskSpaceId}::task-1`,
-            relativeDir: '.trellis/tasks/11-10-task-1',
+            taskId: payload.taskId,
+            taskKey: payload.taskKey,
+            executionTaskKey: payload.executionTaskKey,
+            relativeDir: payload.relativeDir,
             revision: 1,
           },
         }),
       /尚未完成索引/,
     )
-
-    const timestamp = new Date().toISOString()
-    db.prepare(`
-      INSERT INTO sync_task_index(
-        task_space_id, project_id, task_key, execution_task_key, relative_dir,
-        branch_name, title, search_text, archived, priority, derived_stage,
-        assignee_dev_id, assignee_user_id, attention_flags_json, group_key,
-        group_role, task_version, board_version, updated_at
-      ) VALUES (?, (SELECT project_id FROM sync_task_space WHERE id = ?), ?, ?, ?,
-        'main', '客户端创建任务', '客户端创建任务', 0, 'P2', 'planning',
-        'bob', 'user-b', '[]', ?, 'single', 'v1', 'v1', ?)
-    `).run(
-      taskSpaceId,
-      taskSpaceId,
-      `${taskSpaceId}::.trellis/tasks/11-10-task-1`,
-      `${taskSpaceId}::task-1`,
-      '.trellis/tasks/11-10-task-1',
-      `${taskSpaceId}::.trellis/tasks/11-10-task-1`,
-      timestamp,
+    insertIndexedTask(db, taskSpaceId, payload)
+    assert.throws(
+      () =>
+        commands.complete({ id: 'agent-b', userId: 'user-b' }, queued.operation.id, {
+          status: 'succeeded',
+          result: {
+            taskId: 'other-task',
+            taskKey: payload.taskKey,
+            executionTaskKey: payload.executionTaskKey,
+            relativeDir: payload.relativeDir,
+            revision: 1,
+          },
+        }),
+      (error) => error.status === 409 && error.code === 'CONFLICT',
     )
-    db.prepare('UPDATE sync_task_space SET indexed_revision = 1 WHERE id = ?').run(taskSpaceId)
 
     const completed = commands.complete({ id: 'agent-b', userId: 'user-b' }, queued.operation.id, {
       status: 'succeeded',
       result: {
-        taskId: 'task-1',
-        taskKey: `${taskSpaceId}::.trellis/tasks/11-10-task-1`,
-        executionTaskKey: `${taskSpaceId}::task-1`,
-        relativeDir: '.trellis/tasks/11-10-task-1',
+        taskId: payload.taskId,
+        taskKey: payload.taskKey,
+        executionTaskKey: payload.executionTaskKey,
+        relativeDir: payload.relativeDir,
         revision: 1,
       },
     })
     assert.equal(completed.operation.status, 'succeeded')
+    assert.equal(completed.task.materializationState, 'materialized')
+    assert.equal(
+      db
+        .prepare('SELECT materialization_state FROM sync_task WHERE execution_task_key = ?')
+        .get(payload.executionTaskKey).materialization_state,
+      'materialized',
+    )
 
     const failed = commands.enqueue(
       actor,
@@ -384,6 +481,51 @@ test('成功结果必须等待索引命中；失败后可重试并重新绑定�
     assert.equal(retried.operation.status, 'pending')
     assert.equal(retried.operation.agentId, 'agent-b2')
     assert.equal(retried.operation.bindingId, rebound.binding.id)
+  } finally {
+    db.close()
+  }
+})
+
+test('命令成功状态与权威任务 materialization 在同一事务提交', () => {
+  const { db, commands, taskControl, actor, taskSpaceId } = setup()
+  try {
+    const queued = commands.enqueue(actor, createInput(taskSpaceId))
+    const payload = queued.operation.payload
+    commands.markDelivered('agent-b', queued.operation.id)
+    assert.equal(commands.start('agent-b', queued.operation.id).execute, true)
+    insertIndexedTask(db, taskSpaceId, payload)
+
+    const originalCompleteCommand = taskControl.completeCommand
+    taskControl.completeCommand = () => {
+      throw new Error('authoritative task update failed')
+    }
+    assert.throws(
+      () =>
+        commands.complete({ id: 'agent-b', userId: 'user-b' }, queued.operation.id, {
+          status: 'succeeded',
+          result: {
+            taskId: payload.taskId,
+            taskKey: payload.taskKey,
+            executionTaskKey: payload.executionTaskKey,
+            relativeDir: payload.relativeDir,
+            revision: 1,
+          },
+        }),
+      /authoritative task update failed/,
+    )
+    taskControl.completeCommand = originalCompleteCommand
+
+    assert.equal(
+      db.prepare('SELECT status FROM sync_task_command WHERE id = ?').get(queued.operation.id)
+        .status,
+      'running',
+    )
+    assert.equal(
+      db
+        .prepare('SELECT materialization_state FROM sync_task WHERE execution_task_key = ?')
+        .get(payload.executionTaskKey).materialization_state,
+      'pending',
+    )
   } finally {
     db.close()
   }

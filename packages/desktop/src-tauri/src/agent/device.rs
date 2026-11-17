@@ -577,6 +577,7 @@ async fn clear_agent_transient_state(store: &ConfigStore) -> AgentResult<()> {
     for file in [
         &paths.event_cursors_file,
         &paths.task_cursors_file,
+        &paths.task_control_file,
         &paths.state_file,
     ] {
         remove_file_if_exists(file).await?;
@@ -1025,12 +1026,16 @@ mod tests {
         tokio::fs::write(&store.paths.ownership_index_file, b"{}\n")
             .await
             .expect("ownership index");
+        tokio::fs::write(&store.paths.task_control_file, b"{}\n")
+            .await
+            .expect("task control state");
 
         clear_agent_transient_state(&store)
             .await
             .expect("clear transient state");
 
         assert!(!store.paths.ownership_index_file.exists());
+        assert!(!store.paths.task_control_file.exists());
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 

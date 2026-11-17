@@ -86,13 +86,14 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 `database.js` 是 schema 和迁移的唯一所有者：
 
-- 当前 schema 为 v15。新库和旧库升级都保留旧账号、团队、`team_project`、`project_live_*`、
+- 当前 schema 为 v16。新库和旧库升级都保留旧账号、团队、`team_project`、`project_live_*`、
   `git_operation`、`git_credential` 和插件表，并新增 `sync_project`、
   `sync_task_space`、`sync_task_space_file`、`sync_task_space_batch`、`sync_active_agent`、
   `sync_agent_binding`、`sync_agent_cursor`、`sync_task_index`、`sync_task_command`、
   `sync_task_merge_evidence`、`sync_conflict`、`sync_file_audit`、`sync_archive_snapshot`、
   `sync_archive_file`、
-  `sync_archive_git_credential`、`sync_archive_sync_config/state/log` 等表。
+  `sync_archive_git_credential`、`sync_archive_sync_config/state/log`、`sync_task` 和
+  `sync_task_lease` 等表。
 - Team runtime 只读写 `sync_*`、账号、团队、审计和执行扩展表；旧 Git 和实时覆盖表只作为人工回滚材料，
   不在启动、扫描、项目接入或命令链路中读取。
 - `sync_task_space_file` 保存 LF 规范化后的活动正文、摘要、删除墓碑、来源 Agent/用户和 revision；
@@ -453,7 +454,7 @@ withTransaction(db, () => {
 
 ## 修改检查
 
-- [ ] schema v15 新增完整本地快照元数据、归档文件大小/MIME/存储键、活动和归档双 revision，旧依赖、归档、团队和 Git 表仍可打开，大于 v15 的版本仍被拒绝。
+- [ ] schema v16 新增权威任务/租约和按目标用户排队的命令，同时保留 v15 的完整本地快照元数据、归档文件大小/MIME/存储键、活动和归档双 revision；旧依赖、归档、团队和 Git 表仍可打开，大于 v16 的版本仍被拒绝。
 - [ ] v10 -> v11 幂等补监听列，v11 -> v12 幂等补 retired、基线、证据表和索引，v13 -> v14 隔离归档，v14 -> v15 补快照元数据；v6-v14 顺序迁移成功；源版本备份可独立打开，旧数据保留和迁移失败回滚正确。
 - [ ] 基线 taskSpace 已有同一稳定任务 ID 时，默认任务查询、计数、筛选和分页只返回基线副本；来源快照仍可显式读取。
 - [ ] 扫描只把包含 `task.json` 的目录认作任务。

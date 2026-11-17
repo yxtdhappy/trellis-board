@@ -25,6 +25,8 @@ import {
   safeReturnTo,
   shouldReloadTasks,
   taskCommandState,
+  taskContentMaterialized,
+  taskControlView,
   isActiveOperation,
 } from '../src/lib/team-client.js'
 
@@ -241,35 +243,104 @@ test('任务空间监听聚合兼容驼峰和下划线字段', () => {
   assert.equal(project.taskSpaces[0].lastListenerAt, '2026-11-13T08:00:00.000Z')
 })
 
-test('创建和改派门禁只放行存在在线监听的团队任务空间', () => {
+test('创建和改派允许目标客户端离线，只拒绝停用或只读任务空间', () => {
   assert.deepEqual(taskCommandState({}, false), { canSubmit: true, reason: null })
   assert.deepEqual(taskCommandState({ id: 'legacy-server-space' }, true), {
     canSubmit: true,
     reason: null,
   })
-  assert.deepEqual(taskCommandState({ listenerState: 'online', onlineListenerCount: 1 }, true), {
+  assert.deepEqual(taskCommandState({ listenerState: 'online', onlineListenerCount: 0 }, true), {
     canSubmit: true,
     reason: null,
   })
   for (const listenerState of ['inactive', 'unassociated']) {
     assert.deepEqual(taskCommandState({ listenerState, onlineListenerCount: 0 }, true), {
-      canSubmit: false,
-      reason: '请先启动并绑定该分支的客户端',
+      canSubmit: true,
+      reason: null,
     })
   }
-  assert.equal(
-    taskCommandState({ listenerState: 'unknown_legacy', onlineListenerCount: 0 }, true).canSubmit,
-    false,
-  )
-  assert.match(
-    taskCommandState({ listenerState: 'unknown_legacy', onlineListenerCount: 1 }, true).reason,
-    /升级客户端或服务端/,
+  assert.deepEqual(
+    taskCommandState({ listenerState: 'unknown_legacy', onlineListenerCount: 0 }, true),
+    { canSubmit: true, reason: null },
   )
   assert.deepEqual(taskCommandState({ listenerState: 'disabled', onlineListenerCount: 1 }, true), {
     canSubmit: false,
     reason: '该分支任务空间已停用',
   })
-  assert.equal(taskCommandState({ listenerState: 'online' }, true).canSubmit, false)
+  assert.deepEqual(taskCommandState({ status: 'active', readOnly: true }, true), {
+    canSubmit: false,
+    reason: '当前账号对该分支只有只读权限',
+  })
+  assert.equal(taskCommandState({ role: 'read_only' }, true).canSubmit, false)
+})
+
+test('任务控制状态覆盖待交付、租约、版本、迁移和 handoff', () => {
+  const pending = taskControlView({
+    materializationState: 'pending',
+    taskVersion: 2,
+    controlTaskVersion: 2,
+  })
+  assert.equal(pending.label, '等待客户端接管')
+  assert.equal(pending.contentMaterialized, false)
+
+  const claimed = taskControlView({
+    materializationState: 'claimed',
+    leaseStatus: 'expired',
+    leaseExpiresAt: '2020-01-01T00:00:00.000Z',
+  })
+  assert.equal(claimed.state, 'lease_expired')
+  assert.equal(claimed.label, '写入租约已过期')
+  assert.equal(taskContentMaterialized({ materializationState: 'claimed' }), false)
+
+  assert.equal(
+    taskControlView({
+      materializationState: 'materialized',
+      taskVersion: 3,
+      controlTaskVersion: 4,
+    }).state,
+    'version_stale',
+  )
+  assert.equal(
+    taskControlView({
+      materializationState: 'materialized',
+      executionIdentityConflict: true,
+    }).state,
+    'migration_conflict',
+  )
+  assert.equal(
+    taskControlView({
+      materializationState: 'materialized',
+      handoffState: 'source_cleanup_pending',
+    }).label,
+    '等待来源副本清理',
+  )
+  assert.equal(
+    taskControlView({
+      materializationState: 'materialized',
+      handoffState: 'completed',
+    }).label,
+    '认领与清理已完成',
+  )
+  assert.equal(
+    taskControlView({
+      materializationState: 'pending',
+      previousAssigneeUserId: 'user-old',
+    }).state,
+    'reassigned',
+  )
+  assert.equal(taskContentMaterialized({ materializationState: 'materialized' }), true)
+})
+
+test('未知控制状态保留可读兜底且不宣称正文已 materialize', () => {
+  const view = taskControlView({
+    controlState: 'future_state',
+    materializationState: 'materialized',
+  })
+  assert.equal(view.state, 'future_state')
+  assert.equal(view.label, '状态未知')
+  assert.match(view.description, /future_state/)
+  assert.equal(view.contentMaterialized, false)
+  assert.equal(taskControlView({}).available, false)
 })
 
 test('团队负责人候选只包含 active 的 lead/member developer', () => {
@@ -343,9 +414,18 @@ test('团队查询行统一下划线字段，保留执行键与版本', () => {
     project_name: '项目一',
     branch_name: 'dev',
     source_branch_name: 'dev1',
+    task_space_indexed_revision: 6,
     relative_dir: '.trellis/tasks/task',
     derived_stage: 'implement',
     assignee_dev_id: 'dev-a',
+    previous_assignee_user_id: 'user-old',
+    control_state: 'claimed',
+    materialization_state: 'claimed',
+    control_task_version: 8,
+    handoff_state: 'target_materializing',
+    lease_status: 'active',
+    lease_expires_at: '2030-01-01T00:00:00.000Z',
+    lease_expired: false,
     attention_reasons: ['overdue'],
   })
   assert.equal(row.taskKey, 'p1::task')
@@ -354,8 +434,17 @@ test('团队查询行统一下划线字段，保留执行键与版本', () => {
   assert.equal(row.sourceBranchName, 'dev1')
   assert.equal(row.taskVersion, 7)
   assert.equal(row.assignmentVersion, 2)
+  assert.equal(row.taskSpaceIndexedRevision, 6)
   assert.equal(row.derivedStage, 'implement')
   assert.equal(row.assignee, 'dev-a')
+  assert.equal(row.previousAssigneeUserId, 'user-old')
+  assert.equal(row.controlState, 'claimed')
+  assert.equal(row.materializationState, 'claimed')
+  assert.equal(row.controlTaskVersion, 8)
+  assert.equal(row.handoffState, 'target_materializing')
+  assert.equal(row.leaseStatus, 'active')
+  assert.equal(row.leaseExpiresAt, '2030-01-01T00:00:00.000Z')
+  assert.equal(row.leaseExpired, false)
   assert.equal(row.dirName, 'task')
 })
 

@@ -23,6 +23,7 @@
 | `agent/device.rs` | `packages/desktop/sidecar/desktop-device.js` | 登录、登出、入网、撤销、本地关联读取 |
 | `agent/association.rs` | `packages/desktop/sidecar/desktop-association.js` | associate / preflight 编排与错误文案 |
 | `agent/task_sync.rs` | `agent/task-snapshot-sync.js` | 任务快照 cursor、上传/拉取、冲突与首次同步 |
+| `agent/task_control.rs` | 新增 | snapshot controls、taskVersion、lease 与 tombstone 状态机 |
 | `agent/task_command.rs` | `agent/task-command.js` | create_task / assign_task / sync_branch / refresh_status |
 | `agent/runtime.rs` | `agent/index.js` | 心跳 15s、SSE 事件循环、命令重试、state.json 状态机 |
 | `agent/control.rs` | — | 控制事件队列（上限 32、按 key 去重、过期与 suppression） |
@@ -39,15 +40,48 @@
   `associate_pending_project`、`list_local_associations` 都不允许再套 `{ ok, result }` 中间层；
   只有 `inspect_project` / `initialize_project` 使用 `{ ok, project }`，由前端
   `packages/web/src/lib/project-inspection.js` 的 `normalizeProjectInspection` 解包。
-- 控制事件只允许 `{"type": ..., ...}` 结构，类型：`initial_sync_review`、`task_file_conflict`、
-  `task_sync_error`。已删除的旧 JS Agent 里 `live-sync.js` 从未装配（其 `fetchLiveFiles`/`preflightLiveChanges` 在 JS 侧
-  无任何实现，服务端也无对应路由），属死代码，Rust 不再移植实时文件同步。
+- `ControlHub` 只接收 `initial_sync_review`、`task_file_conflict`、`task_sync_error` 三类模态控制事件。
+  `task_handoff` 是独立非阻塞事件，不得进入 `ControlHub`、不得调用 `focus_main_window`。已删除的旧
+  JS Agent 里 `live-sync.js` 从未装配（其 `fetchLiveFiles`/`preflightLiveChanges` 在 JS 侧无任何实现，
+  服务端也无对应路由），属死代码，Rust 不再移植实时文件同步。
 - 超时预算：登录/登出/关联列表 15s；inspect-project / 实时决策 60s；首次同步与备份恢复 120s；
   check-push / preflight 240s；associate / initialize-project 600s；`trellis init` 与 Agent-only 配置 210s；
   `task.py` 150s；npm 安装 300s。
 - 认证被撤销（401 或 `AUTH_REVOKED`）时停止循环、写 `state.json`，不静默重试。
 - 本地改动只经 `TaskSync` 的 notify watcher 上传：监听 `<repo>/.trellis`，只关心 `.trellis/tasks/**`，
   250 ms 静默窗口合并后按任务目录调用 `upload_dirty`；不得新增独立的实时同步通道。
+- snapshot 带 `controls` 时只允许落地 `materialized/claimed/pending_delivery`，且先 claim；
+  `archived/reassigned/handoff_materialized` 不得继续自动上传。`archived/reassigned` 只保留本地数据、
+  释放已知失效 lease、记录控制状态并停止自动上传。
+- taskVersion 与 claim/heartbeat lease 持久化到 `<agent data>/task-control-state.json`；注销、
+  换账号和重新注册必须随 cursor/ownership 一起清理。`live-cursors.json` 路径和字段保持兼容，
+  pending batch 重试可复用持久 lease，失效后再 claim。
+- 控制面 `create_task` payload 包含 `taskId`、`taskVersion` 和 `executionTaskKey`；协议白名单
+  必须接收这些字段，客户端在本地写任务前用显式 executionTaskKey claim，缺失时才允许按
+  taskSpace/taskId 从受控 payload 派生，不能因字段过滤而绕过 claim。
+- creator 收到 `handoff_materialized + source_cleanup_pending` 后走独立清理通道：
+  - 任务目录必须是真实目录且不与服务端控制身份冲突；
+  - cursor baseline 必须覆盖且只覆盖本地完整文件集合，`task.json.id`、目录摘要与该基线一致；
+  - `git status` 中该任务文件必须非空且全部为 `??`；
+  - 备份上限为 100,000 文件和 64 MiB 规范化文本；`backupId` 固定为
+    `handoff-<manifestSha256前16位小写hex>`；
+  - 满足条件时先复制完整目录到 `live-backups/<taskSpaceId>/<backupId>`，写入
+    `handoff-manifest.json` 和 `handoff-meta.json`，再把 `cleaned` ACK 持久化为 pending，最后删除目录；
+  - 备份写入后必须回读校验 manifest 摘要、完整文件集合、逐文件摘要与规范化字节数、总字节数，以及
+    taskSpace、executionTaskKey、taskId、taskDir 和 materialized revision；复制或元数据验证失败时
+    清理本次新建的不完整目录；
+  - dirty、Git tracked、Git 状态不确定、文件集合或摘要不一致时保留本地目录并 ACK `conflict`；
+  - ACK 网络失败保持 pending，后续控制同步、事件触发和重启后重试。重试 `cleaned` 前必须重新验证完整
+    备份；缺失、非目录、身份或摘要不一致时改为 `conflict/missing`，本地检查异常改为
+    `conflict/unknown`，不能发送虚假 cleaned；
+  - 控制面 `leaseHeldByOtherUser=true` 时不得自动删除，ACK `conflict/lease_active`；服务端返回
+    `HANDOFF_LEASE_HELD` 时同样收敛为冲突；
+  - 删除前重新校验来源 manifest 与真实分支。删除时先把活动目录原子重命名到
+    `.trellis/.agent-handoff-cleanup-<uuid>`，验证为真实目录后再递归清理；后续每次控制同步清理遗留
+    暂存目录，失败不得删除源目录。
+- 服务端 handoff ACK 的 `cleaned` 必须携带合法 `backupId`、64 位小写 manifest SHA-256、
+  `fileCount >= 1` 和 `totalBytes >= 1`；已完成终态重复 ACK 只有在 outcome、reason、backupId、
+  manifest、文件数和总字节数完全一致时才幂等返回，否则返回 `HANDOFF_ACK_MISMATCH`。
 - `TaskSync` 在 cursor、binding、ownership 或本地 Git 投影实际变化后通过统一 state sink 通知；
   `write_cursor` / `remove_task_cursor` 必须在落盘成功且 patch 确已改变状态后才通知，无变化不得发射。
   Git watcher 只监听 HEAD、index、packed-refs 和 refs，用于失效 ownership 投影，不触发任务正文上传。
@@ -91,7 +125,9 @@
 - 数据兼容：`data/agent/config.json`、`state.json`（schema 2）、`credential.dpapi`（schema 1）、
   `event-cursors.json`、`live-cursors.json` 的路径与字段不得改名（`live-cursors.json` 现由
   `TaskSync` 独占，文件名沿用旧值）。`client.json` schema 3 新增 `node_runtime`、
-  `trellis_runtime`（snake_case），旧 schema 2 读取时自动迁移。
+  `trellis_runtime`（snake_case），旧 schema 2 读取时自动迁移。新增
+  `task-control-state.json` 保存控制状态、lease fencing 和 handoff ACK/通知去重状态，不保存任务正文
+  或本机绝对仓库路径。
 - `TRELLIS_AGENT_ROOT` 优先于 `%LOCALAPPDATA%/TrellisBoardAgent`（独立 Agent CLI 场景）。
 
 ## 3. 环境门
@@ -198,6 +234,12 @@
   `live_control_pending`，页面可见时保留 10 秒兜底，隐藏时停止，focus/恢复可见时立即读取。
   `initial_sync_review` 每次内容变化都由 Rust 侧 `focus_main_window` 唤起主窗口，
   其余事件每进程只自动聚焦一次。
+- handoff 状态使用独立 `handoff-control-changed` 失效事件和 `handoff_notice_pending` Tauri 命令。
+  Board 可见时 `HandoffNotice` 使用 Sonner 页内提示。隐藏或最小化时仅在 WebView 提供 Web
+  Notification API 且权限已授予时尝试系统通知；API、权限或安全上下文不可用时仍以持久页内状态
+  在恢复可见后补提示。通知按 `executionTaskKey + handoffState + outcome` 去重，同一任务的不同
+  handoff 阶段仍可各提示一次。冲突状态提供持续的非模态页内状态，cleaned ACK 完成后页内固定状态
+  不长期占位。该通道不得弹出确认框、切换页面、聚焦或激活主窗口，也不得阻塞清理 ACK。
 - 弹窗使用 `components/ui/dialog.tsx` 的固定头/脚 + 单一 `DialogBody` 滚动壳，
   `sm:max-w-[min(72rem,92vw)]` / `max-h-[85vh]`；窄屏单列可用，宽屏冲突差异用 Monaco 左右分栏只读 diff。
 - 冲突差异必须走 `packages/web/src/desktop/MonacoDiff.tsx`（懒加载 chunk，加载失败回退双 `<pre>`）。

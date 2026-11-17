@@ -23,6 +23,7 @@ use crate::agent::protocol::{self, code, AgentError, AgentResult};
 use crate::agent::runtime::AgentRuntime;
 use crate::agent::state_events::{DesktopStateEvents, StateSink};
 use crate::agent::store::{AgentBinding, AgentConfig, ConfigStore};
+use crate::agent::task_control::{parse_state_file, HandoffNotice};
 use crate::agent::task_sync::{ControlSink, TaskSync};
 use crate::agent::trellis_cli::TrellisRuntime;
 
@@ -295,6 +296,11 @@ impl AgentService {
     }
 
     fn publish_control(&self, control: Value) {
+        if control.get("type").and_then(Value::as_str) == Some("task_handoff") {
+            let _ = self.app.emit("handoff-control-changed", control);
+            self.notify_live_control();
+            return;
+        }
         let review = control.get("type").and_then(Value::as_str) == Some("initial_sync_review");
         let (became_front, changed) = self.hub.push_with_change(control);
         if changed {
@@ -317,6 +323,20 @@ impl AgentService {
 
     fn pending_control(&self) -> Option<Value> {
         self.hub.pending()
+    }
+
+    async fn pending_handoff_notices(&self) -> AgentResult<Vec<HandoffNotice>> {
+        let raw = match tokio::fs::read_to_string(&self.store.paths.task_control_file).await {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return protocol::err(
+                    code::CONFIG_INVALID,
+                    format!("读取 handoff 状态失败: {error}"),
+                )
+            }
+        };
+        Ok(parse_state_file(&raw).pending_handoff_notices())
     }
 
     async fn agent_context(&self) -> AgentResult<(AgentConfig, Arc<ApiClient>)> {
@@ -731,6 +751,14 @@ pub async fn list_associations(app: &AppHandle) -> Result<Vec<LocalAssociation>,
         ));
     }
     Ok(associations)
+}
+
+pub async fn pending_handoff_notices(app: &AppHandle) -> Result<Vec<HandoffNotice>, String> {
+    let service = service(app).map_err(|error| message(&error))?;
+    service
+        .pending_handoff_notices()
+        .await
+        .map_err(|error| message(&error))
 }
 
 pub async fn detach_local_association(

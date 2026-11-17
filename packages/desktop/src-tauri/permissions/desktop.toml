@@ -101,6 +101,11 @@ description = "当前 Board origin 读取当前待处理事件。"
 commands.allow = ["live_control_pending"]
 
 [[permission]]
+identifier = "allow-handoff-notice-pending"
+description = "当前 Board origin 读取本人任务认领后的非阻塞清理状态。"
+commands.allow = ["handoff_notice_pending"]
+
+[[permission]]
 identifier = "allow-live-control-show"
 description = "当前 Board origin 唤起待处理的实时同步确认弹窗。"
 commands.allow = ["live_control_show"]

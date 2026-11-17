@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import type { Stage } from '../task-view.ts'
 import {
   branchLabel,
+  controlToneClass,
   dueLabel,
   isAttention,
   attentionReasons,
@@ -33,7 +34,13 @@ import { ConditionChecks } from '../ConditionChecks.tsx'
 import { toast } from 'sonner'
 import { SelectField } from '../SelectField.tsx'
 import { priorityTone, stageTone, statusLabel, statusTone } from '../tone.ts'
-import { assignmentActionState, planEditingState, taskCommandState } from '@/lib/team-client.js'
+import {
+  assignmentActionState,
+  planEditingState,
+  taskCommandState,
+  taskContentMaterialized,
+  taskControlView,
+} from '@/lib/team-client.js'
 import { AssigneeWarningDialog, type AssigneeWarningDetails } from './AssigneeWarningDialog.tsx'
 
 const ARTIFACTS = [
@@ -46,6 +53,14 @@ const ARTIFACTS = [
 ] as const
 
 type ArtifactEntry = { path?: string; content?: string; truncated?: boolean }
+
+function authoritativeTaskField<K extends keyof BoardTask>(
+  task: BoardTask | null,
+  detail: BoardTask,
+  key: K,
+): BoardTask[K] {
+  return task && Object.hasOwn(task, key) ? task[key] : detail[key]
+}
 
 function fileSizeLabel(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -214,6 +229,11 @@ export function TaskDetailDialog({
       setBlockerKey('')
       setReason('')
     }
+    if (!taskContentMaterialized(task)) {
+      setDetail(null)
+      setLoading(false)
+      return
+    }
     let cancelled = false
     setLoading(true)
     fetchTaskDetail(task)
@@ -238,15 +258,33 @@ export function TaskDetailDialog({
   }, [editingPlan, open, task])
 
   const current = useMemo<BoardTask | null>(() => {
-    if (!detail || (task && detail.taskKey !== task.taskKey)) return task
+    if (!detail) return task
+    if (task && detail.taskKey !== task.taskKey) return task
+    if (!task) return detail
     return {
       ...detail,
-      sourceBranchName: detail.sourceBranchName || task?.sourceBranchName,
-      archived: Boolean(detail.archived || task?.archived),
+      sourceBranchName: task.sourceBranchName || detail.sourceBranchName,
+      archived: Boolean(task.archived || detail.archived),
+      executionTaskKey: authoritativeTaskField(task, detail, 'executionTaskKey'),
+      executionIdentityValid: authoritativeTaskField(task, detail, 'executionIdentityValid'),
+      executionIdentityConflict: authoritativeTaskField(task, detail, 'executionIdentityConflict'),
+      taskVersion: authoritativeTaskField(task, detail, 'taskVersion'),
+      taskSpaceRevision: authoritativeTaskField(task, detail, 'taskSpaceRevision'),
+      taskSpaceIndexedRevision: authoritativeTaskField(task, detail, 'taskSpaceIndexedRevision'),
+      controlTaskVersion: authoritativeTaskField(task, detail, 'controlTaskVersion'),
+      controlState: authoritativeTaskField(task, detail, 'controlState'),
+      materializationState: authoritativeTaskField(task, detail, 'materializationState'),
+      handoffState: authoritativeTaskField(task, detail, 'handoffState'),
+      leaseStatus: authoritativeTaskField(task, detail, 'leaseStatus'),
+      leaseExpiresAt: authoritativeTaskField(task, detail, 'leaseExpiresAt'),
+      leaseExpired: authoritativeTaskField(task, detail, 'leaseExpired'),
+      previousAssigneeUserId: authoritativeTaskField(task, detail, 'previousAssigneeUserId'),
     }
   }, [detail, task])
   const progress = current ? taskProgress(current) : null
   const stage = current ? nextStage(current) : null
+  const control = current ? taskControlView(current) : null
+  const contentMaterialized = current ? taskContentMaterialized(current) : false
   const artifacts = readArtifacts(current)
   const archiveFiles = Array.isArray(current?.files) ? current.files : []
   const { readOnly: assignmentReadOnly, canSubmit: assignmentCanSubmit } = assignmentActionState(
@@ -255,7 +293,7 @@ export function TaskDetailDialog({
     assignees,
   )
   const commandState = taskCommandState(taskSpace, teamMode)
-  const listenerBlocked = !assignmentReadOnly && !commandState.canSubmit
+  const commandBlocked = !assignmentReadOnly && !commandState.canSubmit
   const canAssign = assignmentCanSubmit && commandState.canSubmit
   const { readOnly: planReadOnly, canEdit: canEditPlan } = planEditingState(current)
 
@@ -392,7 +430,9 @@ export function TaskDetailDialog({
             <p className="py-10 text-center text-xs text-muted-foreground">正在读取任务详情…</p>
           ) : (
             <DialogBody className="flex flex-col gap-4">
-              <StageTape stages={current.stages} current={current.derivedStage} />
+              {contentMaterialized ? (
+                <StageTape stages={current.stages} current={current.derivedStage} />
+              ) : null}
 
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {[
@@ -419,6 +459,29 @@ export function TaskDetailDialog({
                 ))}
               </div>
 
+              {control?.available ? (
+                <section className="rounded-lg border border-border bg-muted/60 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-2xs font-semibold tracking-[0.08em] text-muted-foreground">
+                      服务端控制状态
+                    </span>
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-2xs font-semibold',
+                        controlToneClass(control.tone),
+                      )}
+                    >
+                      {control.label}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    {control.description}
+                  </p>
+                </section>
+              ) : null}
+
+              {contentMaterialized ? (
+                <>
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-xs font-semibold text-muted-foreground">关注信号</span>
                 {isAttention(current) ? (
@@ -667,6 +730,10 @@ export function TaskDetailDialog({
                       {archiveFiles.length} 个本地快照文件
                     </span>
                   </div>
+                  <p className="rounded-lg border border-border px-2.5 py-2 text-2xs leading-5 text-muted-foreground">
+                    归档后，本地活动副本可能保留、进入受保护清理，或因已修改、被 Git
+                    跟踪而需要按 Git 流程处理。
+                  </p>
                   {loading && !archiveFiles.length ? (
                     <p className="text-[0.6875rem] text-muted-foreground">归档附件正在读取…</p>
                   ) : archiveFiles.length ? (
@@ -717,6 +784,16 @@ export function TaskDetailDialog({
                   )}
                 </section>
               ) : null}
+                </>
+              ) : (
+                <section className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-3">
+                  <h3 className="text-xs font-semibold">等待客户端接管</h3>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    当前只展示服务端元数据，不请求或渲染尚不存在的任务正文，也不会写入本地工作区。
+                    目标客户端上线并完成 materialization 后，详情会自动刷新为可读取内容。
+                  </p>
+                </section>
+              )}
             </DialogBody>
           )}
 
@@ -730,7 +807,7 @@ export function TaskDetailDialog({
                   options={assignees.map((name) => ({ value: name, label: name }))}
                   onChange={setAssignee}
                   ariaLabel="负责人"
-                  disabled={assignmentReadOnly || listenerBlocked}
+                  disabled={assignmentReadOnly || commandBlocked}
                 />
                 <Button
                   size="sm"
@@ -748,9 +825,15 @@ export function TaskDetailDialog({
                   更新派发
                 </Button>
               </div>
-              {listenerBlocked ? (
+              {commandBlocked ? (
                 <p className="text-2xs text-warning" role="status">
                   {commandState.reason}
+                </p>
+              ) : null}
+              {teamMode && !assignmentReadOnly ? (
+                <p className="max-w-72 text-2xs leading-4 text-muted-foreground">
+                  目标客户端离线时也可以先排队；接管后旧负责人本地副本可能保留、进入受保护清理，
+                  或被 Git 跟踪而需要手工处理。
                 </p>
               ) : null}
             </div>

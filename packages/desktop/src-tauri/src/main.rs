@@ -741,6 +741,15 @@ async fn live_control_pending(
 }
 
 #[tauri::command]
+async fn handoff_notice_pending(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<Vec<agent::task_control::HandoffNotice>, String> {
+    ensure_board_caller(&app, &window)?;
+    agent_service::pending_handoff_notices(&app).await
+}
+
+#[tauri::command]
 async fn live_control_show(app: AppHandle, window: WebviewWindow) -> Result<bool, String> {
     ensure_board_caller(&app, &window)?;
     Ok(agent_service::show_pending_control(&app))
@@ -984,6 +993,7 @@ fn main() {
             runtime_status,
             runtime_install,
             live_control_pending,
+            handoff_notice_pending,
             live_control_show,
             live_control_decide,
             live_control_diff,

@@ -467,10 +467,11 @@ pub const COMMAND_TYPES: [&str; 4] = [
 pub const COMMAND_RESULT_SUCCEEDED: &str = "succeeded";
 pub const COMMAND_RESULT_FAILED: &str = "failed";
 
-const ALLOWED_PAYLOAD_KEYS: [&str; 16] = [
+const ALLOWED_PAYLOAD_KEYS: [&str; 18] = [
     "taskSpaceId",
     "projectId",
     "branchName",
+    "taskId",
     "title",
     "description",
     "priority",
@@ -482,6 +483,7 @@ const ALLOWED_PAYLOAD_KEYS: [&str; 16] = [
     "relativeDir",
     "baseTaskVersion",
     "baseTaskSha256",
+    "taskVersion",
     "protocolVersion",
     "reason",
 ];
@@ -780,6 +782,26 @@ mod tests {
             "payload": { "taskSpaceId": "ts-1" }
         });
         assert_eq!(validate_command(&ok).unwrap().kind, COMMAND_SYNC_BRANCH);
+    }
+
+    #[test]
+    fn accepts_control_fields_added_to_task_commands() {
+        let command = json!({
+            "id": "cmd-1",
+            "bindingId": "bind-1",
+            "type": "create_task",
+            "payload": {
+                "taskSpaceId": "space-1",
+                "assigneeUserId": "user-b",
+                "title": "Fix it",
+                "taskId": "task-a",
+                "taskVersion": 1,
+                "executionTaskKey": "space-1::task-a"
+            }
+        });
+        let parsed = validate_command(&command).expect("控制面任务命令");
+        assert_eq!(parsed.payload["taskId"], "task-a");
+        assert_eq!(parsed.payload["taskVersion"], 1);
     }
 
     #[test]

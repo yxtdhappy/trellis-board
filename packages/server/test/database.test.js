@@ -114,10 +114,12 @@ const EXPECTED_TABLES = [
   'sync_project',
   'sync_project_member',
   'sync_project_team_access',
+  'sync_task',
   'sync_task_assignment',
   'sync_task_command',
   'sync_task_index',
   'sync_task_index_tag',
+  'sync_task_lease',
   'sync_task_merge_evidence',
   'sync_task_space',
   'sync_task_space_batch',
@@ -139,12 +141,12 @@ const EXPECTED_TABLES = [
   'user_session',
 ]
 
-test('新库一次创建 schema v15，同时保留旧 Git 凭据表和任务空间表', () => {
+test('新库一次创建 schema v16，同时保留旧 Git 凭据表和任务空间表', () => {
   const workspace = makeWorkspace()
   let db
   try {
     db = openTestDatabase(workspace)
-    assert.equal(DATABASE_SCHEMA_VERSION, 15)
+    assert.equal(DATABASE_SCHEMA_VERSION, 16)
     assert.deepEqual(tableNames(db), EXPECTED_TABLES)
     const meta = Object.fromEntries(
       db
@@ -152,7 +154,7 @@ test('新库一次创建 schema v15，同时保留旧 Git 凭据表和任务空�
         .all()
         .map((row) => [row.key, row.value]),
     )
-    assert.equal(meta.schema_version, '15')
+    assert.equal(meta.schema_version, '16')
     assert.equal(meta.legacy_json_imported_v1, '1')
     assert.equal(Number.isNaN(Date.parse(meta.execution_events_started_at)), false)
 
@@ -305,7 +307,7 @@ test('新库一次创建 schema v15，同时保留旧 Git 凭据表和任务空�
   }
 })
 
-test('schema v15 重复打开保持幂等', () => {
+test('schema v16 重复打开保持幂等', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -372,7 +374,7 @@ test('schema v15 重复打开保持幂等', () => {
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '15',
+      '16',
     )
     assert.deepEqual(columnNames(db, 'team_project'), firstColumns)
     assert.deepEqual(tableNames(db), EXPECTED_TABLES)
@@ -412,7 +414,7 @@ test('schema v15 重复打开保持幂等', () => {
   }
 })
 
-test('v13 升级到 v15 隔离旧归档文件并保留只读内容', () => {
+test('v13 升级到 v16 隔离旧归档文件并保留只读内容', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -507,7 +509,7 @@ test('v13 升级到 v15 隔离旧归档文件并保留只读内容', () => {
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '15',
+      '16',
     )
     assert.deepEqual(
       db
@@ -547,7 +549,7 @@ test('v13 升级到 v15 隔离旧归档文件并保留只读内容', () => {
     assert.ok(
       fs
         .readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
-        .some((name) => name.startsWith('board.sqlite.pre-v15.')),
+        .some((name) => name.startsWith('board.sqlite.pre-v16.')),
     )
 
     db.close()
@@ -560,7 +562,7 @@ test('v13 升级到 v15 隔离旧归档文件并保留只读内容', () => {
   }
 })
 
-test('v14 升级到 v15 新增本地快照元数据并保留 legacy 正文', () => {
+test('v14 升级到 v16 新增本地快照元数据并保留 legacy 正文', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -632,7 +634,7 @@ test('v14 升级到 v15 新增本地快照元数据并保留 legacy 正文', () 
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '15',
+      '16',
     )
     const migrated = db
       .prepare(`
@@ -650,7 +652,7 @@ test('v14 升级到 v15 新增本地快照元数据并保留 legacy 正文', () 
     assert.ok(
       fs
         .readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
-        .some((name) => name.startsWith('board.sqlite.pre-v15.')),
+        .some((name) => name.startsWith('board.sqlite.pre-v16.')),
     )
 
     db.close()
@@ -662,7 +664,7 @@ test('v14 升级到 v15 新增本地快照元数据并保留 legacy 正文', () 
   }
 })
 
-test('schema v6 升级到 v15 前备份并补齐旧字段与任务空间表', () => {
+test('schema v6 升级到 v16 前备份并补齐旧字段与任务空间表', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -703,7 +705,7 @@ test('schema v6 升级到 v15 前备份并补齐旧字段与任务空间表', ()
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '15',
+      '16',
     )
     assert.ok(tableNames(db).includes('project_live_revision'))
     assert.ok(tableNames(db).includes('project_live_file'))
@@ -723,7 +725,7 @@ test('schema v6 升级到 v15 前备份并补齐旧字段与任务空间表', ()
     )
     const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
     assert.equal(
-      backups.some((name) => name.startsWith('board.sqlite.pre-v15.')),
+      backups.some((name) => name.startsWith('board.sqlite.pre-v16.')),
       true,
     )
   } finally {
@@ -732,7 +734,7 @@ test('schema v6 升级到 v15 前备份并补齐旧字段与任务空间表', ()
   }
 })
 
-test('schema v7 升级到 v15 前备份并补齐接入字段默认值', () => {
+test('schema v7 升级到 v16 前备份并补齐接入字段默认值', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -763,7 +765,7 @@ test('schema v7 升级到 v15 前备份并补齐接入字段默认值', () => {
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '15',
+      '16',
     )
     const migrated = db
       .prepare(`
@@ -777,7 +779,7 @@ test('schema v7 升级到 v15 前备份并补齐接入字段默认值', () => {
     assert.equal(migrated.bootstrap_lead_trellis_dev_id, null)
     const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
     assert.equal(
-      backups.some((name) => name.startsWith('board.sqlite.pre-v15.')),
+      backups.some((name) => name.startsWith('board.sqlite.pre-v16.')),
       true,
     )
   } finally {
@@ -786,7 +788,7 @@ test('schema v7 升级到 v15 前备份并补齐接入字段默认值', () => {
   }
 })
 
-test('schema v8 升级到 v15 回填归档时间并建立归档排序索引', () => {
+test('schema v8 升级到 v16 回填归档时间并建立归档排序索引', () => {
   const workspace = makeWorkspace()
   let db
   try {
@@ -846,7 +848,7 @@ test('schema v8 升级到 v15 回填归档时间并建立归档排序索引', ()
     db = openTestDatabase(workspace)
     assert.equal(
       db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '15',
+      '16',
     )
     assert.equal(
       db
@@ -868,7 +870,7 @@ test('schema v8 升级到 v15 回填归档时间并建立归档排序索引', ()
     )
     const backups = fs.readdirSync(path.join(path.dirname(workspace.databaseFile), 'backups'))
     assert.equal(
-      backups.some((name) => name.startsWith('board.sqlite.pre-v15.')),
+      backups.some((name) => name.startsWith('board.sqlite.pre-v16.')),
       true,
     )
   } finally {

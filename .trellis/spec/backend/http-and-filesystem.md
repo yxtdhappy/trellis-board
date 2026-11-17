@@ -51,6 +51,11 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
 | `PUT /api/agent/task-spaces/:id/cursor` | 推进 Agent 已应用游标 | 200 |
 | `GET /api/agent/task-spaces/:id/conflicts` | 当前待处理冲突 | 200 |
 | `POST /api/agent/task-spaces/:id/conflicts/:conflictId/resolve` | 使用服务端、覆盖或保存副本 | 200 |
+| `GET /api/agent/tasks/:executionTaskKey` | 读取本人任务控制信息，持有有效租约时才返回正文可用标记 | 200 |
+| `POST /api/agent/tasks/:executionTaskKey/claim` | 申请任务写租约并推进待交付任务到 claimed | 200 |
+| `POST /api/agent/tasks/:executionTaskKey/heartbeat` | 续期任务写租约 | 200 |
+| `POST /api/agent/tasks/:executionTaskKey/release` | 释放任务写租约 | 200 |
+| `POST /api/agent/tasks/:executionTaskKey/handoff-ack` | 回写创建者来源副本清理结果 | 200 |
 | `GET /api/agent/events` | Agent 命令/撤销 SSE | 200 |
 | `POST /api/agent/commands/:id/start` | 领取 running 租约 | 200 |
 | `POST /api/agent/commands/:id/result` | 回写失败或成功结果 | 200 |
@@ -198,7 +203,11 @@ workspace，项目写成员和可委派人员只能来自 `sync_project_member` 
 - standalone 前端按 `task.projectId` 选择项目，委派下拉优先使用 `project.workspaceMembers`。
 - Team 前端按 `task.taskSpaceId` 请求候选人；候选必须 active、属于项目写角色且有
   `trellis_dev_id`。
-- Team 创建/改派命令还要求目标用户唯一活动 Agent 在线并绑定该 taskSpace。
+- Team 创建/改派只要求目标用户属于项目可写成员。目标客户端离线时先按 `target_user_id`
+  排队并返回 `202 + operation`，上线并绑定目标 taskSpace 后再领取命令。
+- Board 查询行返回 `materializationState`、`controlTaskVersion`、`handoffState`、
+  `leaseStatus`、`leaseExpiresAt`、`previousAssigneeUserId` 和身份冲突标记；最新租约状态不能
+  依赖会被过期清理的 `sync_task.lease_id`。
 - Team 项目成员变化写 `sync_project_member`，不依赖 `.trellis/workspace` 扫描。
 - 旧 standalone 缓存缺少 `workspaceMembers` 时可回退 `project.members`；Team 不用该回退伪造成员。
 
@@ -209,7 +218,7 @@ workspace，项目写成员和可委派人员只能来自 `sync_project_member` 
 | standalone 候选人属于任务项目 workspace | 后端允许更新负责人 |
 | standalone 候选人来自其他项目 workspace | 前端不展示；直接提交时后端拒绝 |
 | Team 候选人不是 lead/member 或没有 developer ID | `ASSIGNEE_NOT_WRITABLE`，不生成命令 |
-| Team 候选人没有在线唯一 Agent 或未绑定 taskSpace | `AGENT_OFFLINE` / `AGENT_NOT_UNIQUE`，不生成命令 |
+| Team 候选人可写但目标客户端离线或未绑定 taskSpace | 返回 `202 + operation`，命令保留为目标用户的 pending 控制项 |
 | Team 目标文件版本与命令 baseline 不同 | Agent 拒绝改派并提示重新同步 |
 
 #### 5. Good/Base/Bad Cases

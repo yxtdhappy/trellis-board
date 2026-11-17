@@ -6,7 +6,7 @@
 | --- | --- |
 | [packages/server/config.js](../../../packages/server/config.js) | 跨平台运行数据根、SQLite 路径、团队监听与公开地址配置 |
 | [packages/server/data-migration.js](../../../packages/server/data-migration.js) | 从旧源码 `data/` 迁移运行数据并重写受管项目路径 |
-| [packages/server/database.js](../../../packages/server/database.js) | `node:sqlite` 连接、PRAGMA、顺序迁移到 schema v15、事务辅助 |
+| [packages/server/database.js](../../../packages/server/database.js) | `node:sqlite` 连接、PRAGMA、顺序迁移到 schema v16、事务辅助 |
 | [packages/server/repositories.js](../../../packages/server/repositories.js) | standalone 白名单增删、ID 生成和路径规范化 |
 | [packages/server/loader.js](../../../packages/server/loader.js) | 扫描任务、读取证据、推导阶段和父子关系 |
 | [packages/server/scan-worker.js](../../../packages/server/scan-worker.js) | standalone Worker Thread 扫描与增量任务刷新 |
@@ -19,7 +19,7 @@
 | [packages/server/team/task-space-index.js](../../../packages/server/team/task-space-index.js) | 从持久化快照物化临时任务目录并生成 taskSpace 索引 |
 | [packages/server/team/archive-local-snapshot.js](../../../packages/server/team/archive-local-snapshot.js) | 归档完整文件的内容寻址本地快照、原子发布、下载校验和清理 |
 | [packages/server/team/archive-git-{store,sync,credentials}.js](../../../packages/server/team/archive-git-sync.js) | 服务端只读归档 Git 导入、按来源凭据隔离和失败日志 |
-| [packages/server/team/task-command-service.js](../../../packages/server/team/task-command-service.js) | Web 创建/改派命令、在线 Agent 检查、租约、重试和完成门禁 |
+| [packages/server/team/task-command-service.js](../../../packages/server/team/task-command-service.js) | Web 创建/改派命令、目标用户 pending 队列、在线投递、租约、重试和完成门禁 |
 | [packages/server/team/sync-agent-service.js](../../../packages/server/team/sync-agent-service.js) | Agent 注册/鉴权、单账号活动槽和设备替换 |
 | [packages/server/team/agent-event-stream.js](../../../packages/server/team/agent-event-stream.js) | Agent SSE 命令与撤销通知 |
 | [packages/server/team/task-snapshot-backup.js](../../../packages/server/team/task-snapshot-backup.js) | 每日 SQLite `VACUUM INTO` 快照和 7 份保留策略 |
@@ -117,8 +117,9 @@ Team runtime 的事实链拆成两条：
   `.trellis/tasks/archive/**` 中的全部普通文件到本地内容寻址快照，SQLite 只保存元数据和
   文本搜索投影，不读取源码、scripts、spec、config、workflow、agents、workspace、
   `.developer` 或本机编码 Agent 目录。
-- Team Board 的创建/改派不直接写项目文件。Web 只创建 `sync_task_command`；目标用户唯一在线 Agent
-  在本地执行 `task.py create` 或原子修改 `task.json.assignee`，再通过同一 CAS 链上传。
+- Team Board 的创建/改派不直接写项目文件。Web 先创建权威任务/改派状态和按 `target_user_id`
+  保存的 `sync_task_command`；目标用户离线时保持 pending，唯一在线 Agent 出现后在本地执行
+  `task.py create` 或原子修改 `task.json.assignee`，再通过同一 CAS 链上传。
 - `sync_active_agent` 保证一个账号同一时刻只有一个有效 Agent。新设备生效会撤销旧设备 binding、
   取消旧命令并关闭旧 SSE。
 
@@ -259,14 +260,14 @@ spawn('git', [
 
 Standalone 启动：
 
-1. 准备跨平台运行数据根，打开 `board.sqlite` 并顺序迁移到 schema v15；
+1. 准备跨平台运行数据根，打开 `board.sqlite` 并顺序迁移到 schema v16；
 2. 固定监听 `0.0.0.0:4317`，端口可通过 `PORT` 调整；
 3. 启动白名单仓库 watcher；
 4. 异步触发初始扫描。
 
 Team 启动：
 
-1. 打开同一个 schema v15，但禁止导入本机默认仓库或旧 JSON；
+1. 打开同一个 schema v16，但禁止导入本机默认仓库或旧 JSON；
 2. 装配 `taskSpaces`、`taskSnapshots`、`taskSpaceIndex`、`taskCommands`、`agentService`、
    `agentEvents`、`boardEvents`、`taskSnapshotBackups` 和 `archiveGitSync`；
 3. 不装配旧 `git-manager`、工作副本、项目 clone、Git commit/push 或旧实时覆盖层；只启动归档
@@ -304,10 +305,11 @@ Team 启动：
 
 ## 配置与常量
 
-- `DATABASE_SCHEMA_VERSION` 当前为 `15`。v13 -> v14 增加归档文件、凭据、同步配置/状态/失败日志表，
+- `DATABASE_SCHEMA_VERSION` 当前为 `16`。v13 -> v14 增加归档文件、凭据、同步配置/状态/失败日志表，
   增加活动/归档双 revision；v14 -> v15 增加 `sync_archive_snapshot`、
   `sync_archive_file_history`、active/candidate 指针和归档文件元数据列，
-  `content_text` 保留为 legacy 只读回退。迁移不删除旧表和历史文件。
+  `content_text` 保留为 legacy 只读回退；v15 -> v16 增加 `sync_task`、`sync_task_lease`，
+  重建支持 `target_user_id` 的 `sync_task_command`。迁移不删除旧表和历史文件。
 - `SCAN_SCHEMA_VERSION` 当前为 `11`；Board 输出结构不兼容时同步递增。
 - `AGENT_PROTOCOL_VERSION` 当前为 `3`；命令 payload 和 Agent 事件都按 v3 校验。
 - 在线 Agent 的 `last_seen_at` 窗口固定为 60 秒。

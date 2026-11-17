@@ -3,6 +3,8 @@ import { withTransaction } from '../database.js'
 import { ERROR_CODES, teamError } from './errors.js'
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const TASK_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+const ACTIVE_TASK_DIR = /^\.trellis\/tasks\/[a-z0-9][a-z0-9._-]{0,127}$/i
 const PRIORITIES = new Set(['P0', 'P1', 'P2', 'P3'])
 
 function stableValue(value) {
@@ -52,6 +54,45 @@ function safeId(value, label) {
   return text
 }
 
+function slugifyTitle(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+function taskSlug(value) {
+  const slug = String(value || '')
+    .trim()
+    .toLowerCase()
+  if (!TASK_SLUG.test(slug)) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, '任务 slug 格式无效')
+  }
+  return slug
+}
+
+function activeTaskRelativeDir(value) {
+  const relativeDir = String(value || '').trim()
+  if (
+    !ACTIVE_TASK_DIR.test(relativeDir) ||
+    relativeDir.slice('.trellis/tasks/'.length) === 'archive'
+  ) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, '任务目录必须位于活动任务根下')
+  }
+  return relativeDir
+}
+
+function taskDatePrefix(now) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now)
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.month}-${values.day}`
+}
+
 function parseJsonOr(value, fallback = {}) {
   try {
     return JSON.parse(String(value ?? ''))
@@ -65,6 +106,7 @@ function operationPublic(row) {
     id: row.id,
     taskSpaceId: row.task_space_id,
     projectId: row.project_id,
+    targetUserId: row.target_user_id,
     agentId: row.agent_id,
     bindingId: row.binding_id,
     commandType: row.command_type,
@@ -82,7 +124,9 @@ export function createTaskCommandService({
   db,
   taskSpaces,
   agents,
+  taskControl = null,
   events = null,
+  onTaskControlChanged = null,
   now = () => new Date(),
   deliveredLeaseMs = 5 * 60 * 1000,
   runningLeaseMs = 30 * 60 * 1000,
@@ -110,43 +154,10 @@ export function createTaskCommandService({
     return { space, userId, member }
   }
 
-  function onlineTarget(actor, taskSpaceId, assigneeUserId, targetContext = null) {
-    const { space, userId, member } =
-      targetContext || commandTarget(actor, taskSpaceId, assigneeUserId)
-    if (agents.onlineListenerCount(taskSpaceId) === 0) {
-      throw teamError(
-        409,
-        'TASK_SPACE_NO_ONLINE_LISTENER',
-        `分支 ${space?.branch_name || ''} 当前没有在线监听的客户端，请先启动并绑定该分支的客户端。`,
-        {
-          details: {
-            taskSpaceId,
-            projectId: space?.project_id || null,
-            branchName: space?.branch_name || null,
-          },
-        },
-      )
-    }
-    const candidates = agents.onlineAgentForTaskSpace(taskSpaceId, userId)
-    if (candidates.length === 0) {
-      throw teamError(
-        409,
-        'AGENT_OFFLINE',
-        `目标用户「${member.display_name || member.username}」当前没有在线 Agent，无法接收分支 ${space?.branch_name || ''} 的任务命令。请让对方打开客户端并关联该项目后重试。`,
-        {
-          details: {
-            userId,
-            taskSpaceId,
-            projectId: space?.project_id || null,
-            branchName: space?.branch_name || null,
-          },
-        },
-      )
-    }
-    if (candidates.length !== 1) {
-      throw teamError(409, 'AGENT_NOT_UNIQUE', '目标用户存在多个有效 Agent，请刷新连接后重试')
-    }
-    return { agent: candidates[0], member }
+  function uniqueOnlineTarget(taskSpaceId, assigneeUserId) {
+    if (agents.onlineListenerCount(taskSpaceId) === 0) return null
+    const candidates = agents.onlineAgentForTaskSpace(taskSpaceId, assigneeUserId)
+    return candidates.length === 1 ? candidates[0] : null
   }
 
   function enqueue(actor, input = {}) {
@@ -162,6 +173,7 @@ export function createTaskCommandService({
     }
     const targetContext = commandTarget(actor, taskSpaceId, assigneeUserId)
     let payload
+    let plannedTask = null
     if (commandType === 'create_task') {
       const priority = String(input.priority || 'P2')
         .trim()
@@ -169,32 +181,40 @@ export function createTaskCommandService({
       if (!PRIORITIES.has(priority)) {
         throw teamError(400, ERROR_CODES.INVALID_INPUT, '优先级必须是 P0、P1、P2 或 P3')
       }
+      const title = requiredText(input.title, '任务标题', 200)
+      const requestedSlug = String(input.slug || '').trim()
+      const requestedRelativeDir = String(input.relativeDir || '').trim()
+      const taskId = requestedSlug
+        ? taskSlug(requestedSlug)
+        : slugifyTitle(title) || `board-${hashJson({ title, idempotencyKey }).slice(0, 12)}`
+      const relativeDir =
+        (requestedRelativeDir && activeTaskRelativeDir(requestedRelativeDir)) ||
+        `.trellis/tasks/${taskDatePrefix(now())}-${taskId}`
       payload = {
-        title: requiredText(input.title, '任务标题', 200),
+        title,
         description: optionalText(input.description, 4000),
         priority,
-        slug: /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(String(input.slug || ''))
-          ? String(input.slug).toLowerCase()
-          : null,
+        slug: taskId,
+        taskId,
+        relativeDir,
         assigneeUserId,
         assigneeDevId: targetContext.member.trellis_dev_id,
       }
     } else {
       const executionTaskKey = requiredText(input.executionTaskKey, '任务身份', 500)
-      const indexedRows = db
-        .prepare(`
-        SELECT *
-        FROM sync_task_index
-        WHERE task_space_id = ? AND execution_task_key = ?
-      `)
-        .all(taskSpaceId, executionTaskKey)
-      if (indexedRows.length === 0) {
-        throw teamError(404, ERROR_CODES.NOT_FOUND, '目标任务不存在')
-      }
-      if (indexedRows.length > 1) {
-        throw teamError(409, ERROR_CODES.CONFLICT, '任务执行身份冲突，不能改派')
-      }
-      const indexed = indexedRows[0]
+      const authoritative = taskControl
+        ? taskControl.authoritativeTasks(taskSpaceId).get(executionTaskKey)
+        : null
+      const indexed =
+        authoritative ||
+        db
+          .prepare(`
+          SELECT * FROM sync_task_index
+          WHERE task_space_id = ? AND execution_task_key = ?
+          LIMIT 1
+        `)
+          .get(taskSpaceId, executionTaskKey)
+      if (!indexed) throw teamError(404, ERROR_CODES.NOT_FOUND, '目标任务不存在')
       const taskJson = db
         .prepare(`
         SELECT sha256, content_text
@@ -205,13 +225,16 @@ export function createTaskCommandService({
         LIMIT 1
       `)
         .get(taskSpaceId, indexed.relative_dir)
-      const taskId = taskIdFromContent(taskJson?.content_text)
+      const taskId =
+        taskIdFromContent(taskJson?.content_text) ||
+        indexed.task_id ||
+        String(executionTaskKey).slice(String(executionTaskKey).indexOf('::') + 2)
       if (!taskId || `${taskSpaceId}::${taskId}` !== executionTaskKey) {
         throw teamError(409, ERROR_CODES.CONFLICT, '任务执行身份不稳定，不能改派')
       }
       payload = {
         executionTaskKey,
-        taskKey: indexed.task_key,
+        taskKey: indexed.task_key || indexed.taskKey,
         relativeDir: indexed.relative_dir,
         assigneeUserId,
         assigneeDevId: targetContext.member.trellis_dev_id,
@@ -233,31 +256,57 @@ export function createTaskCommandService({
       }
       return { statusCode: 202, operation: operationPublic(existing), idempotent: true }
     }
-    const target = onlineTarget(actor, taskSpaceId, assigneeUserId, targetContext)
-    const timestamp = now().toISOString()
-    const id = crypto.randomUUID()
-    db.prepare(`
-      INSERT INTO sync_task_command(
-        id, task_space_id, project_id, agent_id, binding_id, command_type,
-        idempotency_key, request_hash, payload_json, status,
-        attempts, created_by_user_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
-    `).run(
-      id,
-      taskSpaceId,
-      target.agent.project_id,
-      target.agent.id,
-      target.agent.binding_id,
-      commandType,
-      idempotencyKey,
-      requestHash,
-      JSON.stringify(payload),
-      actor.userId,
-      timestamp,
-      timestamp,
-    )
+    const target = uniqueOnlineTarget(taskSpaceId, assigneeUserId)
+    const id = withTransaction(db, () => {
+      if (taskControl && commandType === 'create_task') {
+        plannedTask = taskControl.createPendingTask(actor.userId, {
+          ...payload,
+          taskSpaceId,
+          idempotencyKey,
+        })
+        payload.executionTaskKey = plannedTask.executionTaskKey
+        payload.taskKey = plannedTask.taskKey
+        payload.relativeDir = plannedTask.relativeDir
+        payload.taskVersion = plannedTask.taskVersion
+      }
+      if (taskControl && commandType === 'assign_task') {
+        plannedTask = taskControl.assignPendingTask(payload)
+        payload.taskKey = plannedTask.taskKey
+        payload.relativeDir = plannedTask.relativeDir
+        payload.baseTaskVersion = plannedTask.taskVersion
+      }
+      const timestamp = now().toISOString()
+      const commandId = crypto.randomUUID()
+      db.prepare(`
+        INSERT INTO sync_task_command(
+          id, task_space_id, project_id, target_user_id, agent_id, binding_id,
+          command_type, idempotency_key, request_hash, payload_json, status,
+          attempts, created_by_user_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+      `).run(
+        commandId,
+        taskSpaceId,
+        targetContext.space.project_id,
+        assigneeUserId,
+        target?.id || null,
+        target?.binding_id || null,
+        commandType,
+        idempotencyKey,
+        requestHash,
+        JSON.stringify(payload),
+        actor.userId,
+        timestamp,
+        timestamp,
+      )
+      return commandId
+    })
     const row = db.prepare('SELECT * FROM sync_task_command WHERE id = ?').get(id)
-    events?.notifyCommandAvailable(target.agent.id)
+    if (target) events?.notifyCommandAvailable(target.id)
+    onTaskControlChanged?.({
+      taskSpaceId,
+      executionTaskKey: plannedTask?.executionTaskKey || null,
+      reason: commandType,
+    })
     return { statusCode: 202, operation: operationPublic(row), idempotent: false }
   }
 
@@ -297,16 +346,22 @@ export function createTaskCommandService({
       throw teamError(409, ERROR_CODES.CONFLICT, '只有失败的任务操作可以重试')
     }
     const payload = operationPublic(row).payload
-    const target = onlineTarget(actor, row.task_space_id, payload.assigneeUserId)
+    const target = uniqueOnlineTarget(row.task_space_id, payload.assigneeUserId)
     const timestamp = now().toISOString()
     db.prepare(`
       UPDATE sync_task_command
-      SET agent_id = ?, binding_id = ?, project_id = ?, status = 'pending',
+      SET target_user_id = ?, agent_id = ?, binding_id = ?, status = 'pending',
           attempts = 0, error_text = NULL, result_json = NULL,
           lease_expires_at = NULL, updated_at = ?
       WHERE id = ?
-    `).run(target.agent.id, target.agent.binding_id, target.agent.project_id, timestamp, row.id)
-    events?.notifyCommandAvailable(target.agent.id)
+    `).run(
+      payload.assigneeUserId,
+      target?.id || null,
+      target?.binding_id || null,
+      timestamp,
+      row.id,
+    )
+    if (target) events?.notifyCommandAvailable(target.id)
     return {
       operation: operationPublic(
         db.prepare('SELECT * FROM sync_task_command WHERE id = ?').get(row.id),
@@ -337,27 +392,63 @@ export function createTaskCommandService({
   }
 
   function available(agentId) {
-    const rows = db
+    const agent = db
       .prepare(`
-      SELECT c.*, b.local_repo_key, b.branch_name, s.project_id, a.user_id AS agent_user_id
-      FROM sync_task_command c
-      JOIN sync_agent_binding b ON b.id = c.binding_id
-      JOIN agent_device a ON a.id = c.agent_id
-      JOIN sync_active_agent active ON active.agent_id = c.agent_id
-      JOIN sync_task_space s ON s.id = c.task_space_id
-      WHERE c.agent_id = ? AND c.status = 'pending'
-        AND b.sync_status = 'approved'
-      ORDER BY c.created_at, c.id
-      LIMIT 20
+      SELECT device.id, device.user_id
+      FROM agent_device device
+      JOIN sync_active_agent active
+        ON active.user_id = device.user_id AND active.agent_id = device.id
+      WHERE device.id = ? AND device.status = 'active'
     `)
-      .all(agentId)
-    return rows
-      .filter((row) =>
-        agents
-          .onlineAgentForTaskSpace(row.task_space_id, row.agent_user_id)
-          .some((online) => online.binding_id === row.binding_id),
-      )
-      .map((row) => ({
+      .get(agentId)
+    if (!agent) return []
+    return withTransaction(db, () => {
+      const rows = db
+        .prepare(`
+        SELECT c.*, s.branch_name
+        FROM sync_task_command c
+        JOIN sync_task_space s ON s.id = c.task_space_id
+        JOIN sync_agent_binding binding
+          ON binding.task_space_id = c.task_space_id
+         AND binding.agent_id = ?
+         AND binding.sync_status = 'approved'
+        WHERE c.target_user_id = ? AND c.status = 'pending'
+          AND (c.agent_id IS NULL OR c.agent_id = ?)
+        ORDER BY c.created_at, c.id
+        LIMIT 20
+      `)
+        .all(agentId, agent.user_id, agentId)
+      const availableRows = []
+      for (const row of rows) {
+        const online = agents.onlineAgentForTaskSpace(row.task_space_id, agent.user_id)
+        if (online.length !== 1) continue
+        const binding = online[0]
+        if (row.binding_id && row.binding_id !== binding.binding_id) continue
+        const updated = db
+          .prepare(`
+          UPDATE sync_task_command
+          SET agent_id = ?, binding_id = ?, project_id = ?, updated_at = ?
+          WHERE id = ? AND status = 'pending'
+            AND (agent_id IS NULL OR agent_id = ?)
+        `)
+          .run(
+            agentId,
+            binding.binding_id,
+            binding.project_id,
+            now().toISOString(),
+            row.id,
+            agentId,
+          )
+        if (Number(updated.changes) !== 1) continue
+        availableRows.push({
+          ...row,
+          agent_id: agentId,
+          binding_id: binding.binding_id,
+          project_id: binding.project_id,
+          local_repo_key: binding.local_repo_key,
+        })
+      }
+      return availableRows.map((row) => ({
         id: row.id,
         bindingId: row.binding_id,
         type: row.command_type,
@@ -368,6 +459,7 @@ export function createTaskCommandService({
           ...parseJsonOr(row.payload_json),
         },
       }))
+    })
   }
 
   function markDelivered(agentId, commandId) {
@@ -466,20 +558,36 @@ export function createTaskCommandService({
         { recoverable: true },
       )
     }
-    const taskId = requiredText(result.taskId, '任务 ID', 200)
+    const payload = operationPublic(row).payload
+    const resultTaskId = requiredText(result.taskId, '任务 ID', 200)
+    const payloadTaskId =
+      payload.taskId ||
+      String(payload.executionTaskKey || '').slice(
+        String(payload.executionTaskKey || '').indexOf('::') + 2,
+      )
+    const expectedTaskId = payloadTaskId || resultTaskId
+    const expectedExecutionTaskKey =
+      payload.executionTaskKey || `${row.task_space_id}::${expectedTaskId}`
+    const expectedTaskKey = payload.taskKey || ''
+    const expectedRelativeDir = payload.relativeDir || ''
+    if (
+      !expectedTaskId ||
+      resultTaskId !== expectedTaskId ||
+      (result.executionTaskKey && result.executionTaskKey !== expectedExecutionTaskKey) ||
+      (result.taskKey && expectedTaskKey && result.taskKey !== expectedTaskKey) ||
+      (result.relativeDir && expectedRelativeDir && result.relativeDir !== expectedRelativeDir)
+    ) {
+      throw teamError(409, ERROR_CODES.CONFLICT, '命令结果与目标任务身份不一致')
+    }
     const indexedRows = db
       .prepare(`
       SELECT *
       FROM sync_task_index
-      WHERE task_space_id = ? AND (task_key = ? OR execution_task_key = ? OR relative_dir = ?)
+      WHERE task_space_id = ?
+        AND (task_key = ? OR execution_task_key = ? OR relative_dir = ?)
       LIMIT 2
     `)
-      .all(
-        row.task_space_id,
-        result.taskKey || '',
-        result.executionTaskKey || '',
-        result.relativeDir || '',
-      )
+      .all(row.task_space_id, expectedTaskKey, expectedExecutionTaskKey, expectedRelativeDir)
     if (indexedRows.length === 0) {
       throw teamError(
         409,
@@ -492,10 +600,9 @@ export function createTaskCommandService({
       throw teamError(409, ERROR_CODES.CONFLICT, '任务执行身份冲突，不能确认命令结果')
     }
     const indexed = indexedRows[0]
-    const expectedExecutionTaskKey = `${row.task_space_id}::${taskId}`
     if (
       indexed.execution_task_key !== expectedExecutionTaskKey ||
-      (result.relativeDir && indexed.relative_dir !== result.relativeDir)
+      (expectedRelativeDir && indexed.relative_dir !== expectedRelativeDir)
     ) {
       throw teamError(
         409,
@@ -504,12 +611,7 @@ export function createTaskCommandService({
         { recoverable: true },
       )
     }
-    const payload = operationPublic(row).payload
-    if (
-      row.command_type === 'assign_task' &&
-      payload.assigneeUserId &&
-      indexed.assignee_user_id !== payload.assigneeUserId
-    ) {
+    if (payload.assigneeUserId && indexed.assignee_user_id !== payload.assigneeUserId) {
       throw teamError(
         409,
         'COMMAND_WAITING_INDEX',
@@ -517,16 +619,46 @@ export function createTaskCommandService({
         { recoverable: true },
       )
     }
-    const timestamp = now().toISOString()
-    db.prepare(`
-      UPDATE sync_task_command
-      SET status = 'succeeded', result_json = ?, error_text = NULL, updated_at = ?
-      WHERE id = ?
-    `).run(JSON.stringify({ ...result, taskId }), timestamp, row.id)
+    const controlledTask = withTransaction(db, () => {
+      const timestamp = now().toISOString()
+      const update = db
+        .prepare(`
+        UPDATE sync_task_command
+        SET status = 'succeeded', result_json = ?, error_text = NULL, updated_at = ?
+        WHERE id = ? AND status = 'running'
+      `)
+        .run(
+          JSON.stringify({
+            ...result,
+            taskId: expectedTaskId,
+            executionTaskKey: expectedExecutionTaskKey,
+          }),
+          timestamp,
+          row.id,
+        )
+      if (Number(update.changes) !== 1) {
+        throw teamError(409, ERROR_CODES.CONFLICT, '任务命令状态已变化，请刷新后重试')
+      }
+      if (!taskControl || !new Set(['create_task', 'assign_task']).has(row.command_type)) {
+        return null
+      }
+      const task = taskControl.completeCommand(agent, row.task_space_id, {
+        ...result,
+        taskId: expectedTaskId,
+        executionTaskKey: expectedExecutionTaskKey,
+      })
+      if (!task) {
+        throw teamError(409, 'COMMAND_WAITING_INDEX', '权威任务尚未建立，请稍后重试', {
+          recoverable: true,
+        })
+      }
+      return task
+    })
     return {
       operation: operationPublic(
         db.prepare('SELECT * FROM sync_task_command WHERE id = ?').get(row.id),
       ),
+      ...(controlledTask ? { task: controlledTask } : {}),
       idempotent: false,
     }
   }
@@ -535,7 +667,8 @@ export function createTaskCommandService({
     const timestamp = now().toISOString()
     db.prepare(`
       UPDATE sync_task_command
-      SET status = 'pending', lease_expires_at = NULL, updated_at = ?
+      SET status = 'pending', agent_id = NULL, binding_id = NULL,
+          lease_expires_at = NULL, updated_at = ?
       WHERE agent_id = ?
         AND status IN ('delivered', 'running')
         AND lease_expires_at IS NOT NULL

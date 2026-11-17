@@ -21,6 +21,7 @@ pub struct AgentPaths {
     pub state_file: PathBuf,
     pub event_cursors_file: PathBuf,
     pub task_cursors_file: PathBuf,
+    pub task_control_file: PathBuf,
     pub ownership_index_file: PathBuf,
     pub live_backups_dir: PathBuf,
     pub events_dir: PathBuf,
@@ -38,6 +39,7 @@ pub fn create_agent_paths(root: &Path) -> AgentPaths {
         state_file: root.join("runtime.json"),
         event_cursors_file: root.join("event-cursors.json"),
         task_cursors_file: root.join("live-cursors.json"),
+        task_control_file: root.join("task-control-state.json"),
         ownership_index_file: root.join("ownership-index.json"),
         live_backups_dir: root.join("live-backups"),
         events_dir: root.join("events"),
@@ -827,6 +829,7 @@ mod tests {
         let paths = create_agent_paths(Path::new("C:/tmp/agent"));
         assert!(paths.config_file.ends_with("config.json"));
         assert!(paths.task_cursors_file.ends_with("live-cursors.json"));
+        assert!(paths.task_control_file.ends_with("task-control-state.json"));
         assert!(paths.ownership_index_file.ends_with("ownership-index.json"));
     }
 

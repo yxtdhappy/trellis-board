@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "核对 Team 服务端模块边界、运行时装配和归档链路边"}
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "核对活动任务快照、Agent 命令、SSE、cursor 和归档边界"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "核对桌面 Agent 协议、命令租约、重连和运行数据兼容"}
+{"file": ".trellis/spec/backend/scanning-and-persistence.md", "reason": "核对任务身份、索引投影、schema 迁移和活动/归档事实源"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "核对创建/改派 API、输入校验、权限和事务写入"}
+{"file": ".trellis/spec/backend/task-ownership-and-conflict-idempotency.md", "reason": "复用任务级所有权、CAS、冲突和幂等规则"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "核对 Board 控制面事件、命令调用边界和远程 Board 权限"}
+{"file": ".trellis/tasks/11-17-multi-client-task-sync-control-plane/research/current-sync-architecture.md", "reason": "读取当前多客户端下发、未跟踪副本、离线命令和归档双索引证据"}

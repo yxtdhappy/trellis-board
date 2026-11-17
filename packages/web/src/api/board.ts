@@ -1,6 +1,6 @@
 import { ApiError, requestJson, redirectToLogin } from './request.ts'
 import type { ArchiveFileMetadata, BoardTask } from '@/features/board/task-view'
-import { normalizeTaskPage } from '@/lib/team-client.js'
+import { normalizeTaskPage, taskContentMaterialized } from '@/lib/team-client.js'
 
 export type Project = {
   id: string
@@ -161,12 +161,14 @@ export const fetchSavedViews = (teamId: string) =>
     (payload) => payload?.views || [],
   )
 
-export const fetchTaskDetail = (task: BoardTask) =>
-  api<{ task?: BoardTask }>('/api/task', 'POST', {
+export const fetchTaskDetail = (task: BoardTask) => {
+  if (!taskContentMaterialized(task)) return Promise.resolve(task)
+  return api<{ task?: BoardTask }>('/api/task', 'POST', {
     taskSpaceId: task.taskSpaceId,
     projectId: task.projectId,
     taskPath: task.relativeDir,
   }).then((payload) => payload?.task || (payload as BoardTask | null))
+}
 
 export async function downloadArchiveFile(file: ArchiveFileMetadata) {
   let response: Response

@@ -163,6 +163,7 @@ function normalizeMergeEvidence(value) {
 export function createTaskSnapshotService({
   db,
   taskSpaces,
+  taskControl = null,
   onRevisionCommitted = null,
   now = () => new Date(),
 }) {
@@ -194,7 +195,8 @@ export function createTaskSnapshotService({
     )
   }
 
-  function fileRows(taskSpaceId, afterRevision = 0) {
+  function fileRows(agent, taskSpaceId, afterRevision = 0) {
+    const visibleTaskIds = taskControl?.visibleTaskIds(agent, taskSpaceId) || null
     return db
       .prepare(`
       SELECT f.*, u.username AS source_username, u.display_name AS source_display_name,
@@ -208,6 +210,7 @@ export function createTaskSnapshotService({
       ORDER BY f.revision, f.relative_path
     `)
       .all(taskSpaceId, afterRevision)
+      .filter((row) => !visibleTaskIds || visibleTaskIds.has(row.task_id))
   }
 
   function publicFile(row, includeContent = true) {
@@ -234,7 +237,7 @@ export function createTaskSnapshotService({
     if (!Number.isSafeInteger(afterRevision) || afterRevision < 0) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, 'afterRevision 必须是非负整数')
     }
-    const rows = fileRows(taskSpaceId, afterRevision)
+    const rows = fileRows(agent, taskSpaceId, afterRevision)
     return {
       taskSpaceId,
       projectId: space.project_id,
@@ -242,6 +245,7 @@ export function createTaskSnapshotService({
       revision: readTaskSpaceRevision(taskSpaceId),
       afterRevision,
       files: rows.filter((row) => afterRevision > 0 || !row.deleted).map((row) => publicFile(row)),
+      controls: taskControl?.controlsForAgent(agent, taskSpaceId) || [],
     }
   }
 
@@ -258,6 +262,7 @@ export function createTaskSnapshotService({
     if (!normalized.startsWith('.trellis/tasks/')) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, '任务目录无效')
     }
+    taskControl?.assertReadable(agent, taskSpaceId, normalized)
     const rows = db
       .prepare(`
       SELECT *
@@ -280,16 +285,18 @@ export function createTaskSnapshotService({
     const localGroups = requireSnapshotGroups(input.files || [], allFileGroups).filter(
       (group) => !group.archived,
     )
+    const visibleTaskIds = taskControl?.visibleTaskIds(agent, taskSpaceId) || null
     const serverGroups = requireSnapshotGroups(
       db
         .prepare(`
-        SELECT relative_path AS path, content_text AS content, sha256
+        SELECT relative_path AS path, content_text AS content, sha256, task_id
         FROM sync_task_space_file
         WHERE task_space_id = ? AND deleted = 0
           AND task_dir NOT LIKE '.trellis/tasks/archive/%'
           AND relative_path NOT LIKE '.trellis/tasks/archive/%'
       `)
         .all(taskSpaceId)
+        .filter((row) => !visibleTaskIds || visibleTaskIds.has(row.task_id))
         .map((row) => ({
           path: row.path,
           content: row.content,
@@ -841,6 +848,7 @@ export function createTaskSnapshotService({
         evidence: mergeEvidence,
         observedBranch,
       })
+      taskControl?.assertUploadAllowed(agent, taskSpaceId, complete, input)
       const current = currentPathRows(
         taskSpaceId,
         files.map((file) => file.path),
@@ -951,6 +959,14 @@ export function createTaskSnapshotService({
           timestamp,
         )
       }
+      const control = taskControl?.commitUpload({
+        agent,
+        space,
+        complete,
+        files,
+        revision: changed ? revision : currentRevision,
+        contentChanged: changed,
+      })
       const hook = {
         agent,
         taskSpaceId,
@@ -967,6 +983,7 @@ export function createTaskSnapshotService({
           kind: 'noop',
           revision: currentRevision,
           taskId: complete.taskId,
+          control,
           hookResult: commitHook ? commitHook(hook) : null,
         }
       }
@@ -999,6 +1016,7 @@ export function createTaskSnapshotService({
         kind: 'changed',
         revision,
         taskId: complete.taskId,
+        control,
         hookResult: commitHook ? commitHook(hook) : null,
       }
     })
@@ -1024,6 +1042,9 @@ export function createTaskSnapshotService({
         taskSpaceId,
         revision: outcome.revision,
         taskId: outcome.taskId,
+        control: outcome.control || null,
+        taskVersion: outcome.control?.task?.taskVersion || null,
+        lease: outcome.control?.lease || null,
       },
       internal: outcome.hookResult,
     }

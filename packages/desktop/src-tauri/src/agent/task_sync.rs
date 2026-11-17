@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,6 +14,10 @@ use crate::agent::http::{ApiClient, MAX_SNAPSHOT_RESPONSE_BYTES};
 use crate::agent::protocol::{self, code, AgentError, AgentResult};
 use crate::agent::state_events::StateSink;
 use crate::agent::store::{AgentBinding, ConfigStore};
+use crate::agent::task_control::{
+    handoff_state_key, parse_state_file, selected_server_task_ids, StoredTaskHandoff,
+    StoredTaskLease, TaskControl, TaskControlStateFile, UploadFence,
+};
 
 pub const TASK_SNAPSHOT_MAX_FILES: usize = 1024;
 pub const TASK_SNAPSHOT_MAX_FILE_BYTES: usize = 1024 * 1024;
@@ -28,6 +32,10 @@ const OWNERSHIP_INDEX_MAX_FILES: usize = 100_000;
 const OWNERSHIP_INDEX_MAX_TRACKED_PATHS: usize = 50_000;
 const CURSOR_VERSION: u64 = 3;
 const TASK_OWNERSHIP_QUERY_LIMIT: usize = 200;
+const HANDOFF_MAX_FILES: u64 = 100_000;
+const HANDOFF_MAX_BYTES: u64 = 64 * 1024 * 1024;
+const HANDOFF_MANIFEST_FILE: &str = "handoff-manifest.json";
+const HANDOFF_META_FILE: &str = "handoff-meta.json";
 const UPLOAD_MIN_INTERVAL: Duration = Duration::from_millis(260);
 const RATE_LIMIT_RETRY_DELAY: Duration = Duration::from_millis(1000);
 const RATE_LIMIT_RETRY_MAX_DELAY: Duration = Duration::from_millis(5000);
@@ -251,6 +259,148 @@ fn is_sha256(value: &str) -> bool {
         && value
             .chars()
             .all(|ch| ch.is_ascii_hexdigit() && !ch.is_uppercase())
+}
+
+fn is_handoff_backup_id(value: &str) -> bool {
+    value.len() == 24
+        && value
+            .strip_prefix("handoff-")
+            .is_some_and(|suffix| suffix.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
+}
+
+fn sha256_bytes(value: &[u8]) -> String {
+    Sha256::digest(value)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn handoff_manifest(
+    files: &[Value],
+    task_dir: &str,
+) -> AgentResult<(String, u64, u64, Value)> {
+    let prefix = format!("{task_dir}/");
+    let mut entries = Vec::with_capacity(files.len());
+    let mut total_bytes = 0u64;
+    for file in files {
+        let path = file
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "任务文件缺少路径"))?;
+        let relative = path.strip_prefix(&prefix).ok_or_else(|| {
+            AgentError::new(code::INVALID_RESPONSE, "任务文件不属于 handoff 目录")
+        })?;
+        let content = file
+            .get("content")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "任务文件缺少正文"))?;
+        let sha256 = file
+            .get("sha256")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "任务文件缺少摘要"))?;
+        if !is_sha256(sha256) || sha256 != snapshot_sha256(content) {
+            return protocol::err(code::INVALID_RESPONSE, "任务文件摘要不一致");
+        }
+        let size = u64::try_from(normalize_snapshot_text(content).as_bytes().len())
+            .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件大小超出范围"))?;
+        total_bytes = total_bytes
+            .checked_add(size)
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "任务文件总大小溢出"))?;
+        entries.push(json!({
+            "path": relative,
+            "sha256": sha256,
+            "sizeBytes": size,
+        }));
+    }
+    entries.sort_by(|left, right| {
+        left.get("path")
+            .and_then(Value::as_str)
+            .cmp(&right.get("path").and_then(Value::as_str))
+    });
+    let manifest = json!({
+        "version": 1,
+        "taskDir": task_dir,
+        "files": entries,
+    });
+    let bytes = serde_json::to_vec(&manifest).map_err(|error| {
+        AgentError::new(
+            code::INVALID_RESPONSE,
+            format!("handoff manifest 序列化失败: {error}"),
+        )
+    })?;
+    let manifest_sha256 = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Ok((
+        manifest_sha256,
+        files.len() as u64,
+        total_bytes,
+        manifest,
+    ))
+}
+
+fn handoff_ack_request(handoff: &StoredTaskHandoff) -> AgentResult<Value> {
+    let mut request = json!({
+        "outcome": handoff.outcome,
+        "fileCount": handoff.file_count,
+        "totalBytes": handoff.total_bytes,
+    });
+    match handoff.outcome.as_str() {
+        "cleaned" => {
+            let backup_id = handoff
+                .backup_id
+                .as_deref()
+                .filter(|value| is_handoff_backup_id(value))
+                .ok_or_else(|| {
+                    AgentError::new(code::INVALID_RESPONSE, "handoff 清理状态缺少备份 ID")
+                })?;
+            let manifest = handoff
+                .manifest_sha256
+                .as_deref()
+                .filter(|value| is_sha256(value))
+                .ok_or_else(|| {
+                    AgentError::new(code::INVALID_RESPONSE, "handoff 清理状态缺少 manifest 摘要")
+                })?;
+            request["backupId"] = Value::String(backup_id.to_string());
+            request["manifestSha256"] = Value::String(manifest.to_string());
+        }
+        "conflict" => {
+            let reason = handoff
+                .reason
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .unwrap_or("unknown");
+            request["reason"] = Value::String(reason.to_string());
+        }
+        _ => {
+            return protocol::err(code::INVALID_RESPONSE, "handoff ACK 结果尚未确定");
+        }
+    }
+    Ok(request)
+}
+
+fn handoff_notice(binding: &AgentBinding, handoff: &StoredTaskHandoff) -> Value {
+    let handoff_state = if handoff.outcome == "conflict" {
+        "source_cleanup_conflict"
+    } else {
+        handoff.server_handoff_state.as_str()
+    };
+    json!({
+        "type": "task_handoff",
+        "taskSpaceId": binding.task_space_id,
+        "executionTaskKey": handoff.execution_task_key,
+        "taskId": handoff.task_id,
+        "taskDir": handoff.relative_dir,
+        "handoffState": handoff_state,
+        "outcome": handoff.outcome,
+        "reason": handoff.reason,
+        "backupId": handoff.backup_id,
+    })
+}
+
+fn git_entries_all_untracked(entries: &[crate::agent::git::GitStatusEntry]) -> bool {
+    !entries.is_empty() && entries.iter().all(|entry| entry.status == "??")
 }
 
 pub(crate) fn is_archive_task_dir(task_dir: &str) -> bool {
@@ -1416,6 +1566,20 @@ fn ownership_projection_cache_matches(
         && entry.repo_path == binding.repo_path
 }
 
+struct HandoffSource {
+    files: Vec<Value>,
+    backup_id: String,
+    manifest_sha256: String,
+    manifest: Value,
+    file_count: u64,
+    total_bytes: u64,
+}
+
+enum HandoffSourceState {
+    Ready(HandoffSource),
+    Conflict(&'static str),
+}
+
 pub struct TaskSync {
     store: Arc<ConfigStore>,
     api: Arc<ApiClient>,
@@ -1426,6 +1590,9 @@ pub struct TaskSync {
     upload_gate: Mutex<HashMap<String, Instant>>,
     cursor_state: Mutex<Option<Value>>,
     cursor_write: Mutex<()>,
+    task_control_state: Mutex<TaskControlStateFile>,
+    task_control_loaded: OnceCell<()>,
+    task_control_write: Mutex<()>,
     last_baseline_files: Mutex<Vec<SnapshotFile>>,
     head_tree_cache: Mutex<HashMap<String, HeadTreeCache>>,
     ownership_projection_cache: Mutex<HashMap<String, OwnershipProjectionCache>>,
@@ -1469,6 +1636,9 @@ impl TaskSync {
             upload_gate: Mutex::new(HashMap::new()),
             cursor_state: Mutex::new(None),
             cursor_write: Mutex::new(()),
+            task_control_state: Mutex::new(TaskControlStateFile::empty()),
+            task_control_loaded: OnceCell::new(),
+            task_control_write: Mutex::new(()),
             last_baseline_files: Mutex::new(Vec::new()),
             head_tree_cache: Mutex::new(HashMap::new()),
             ownership_projection_cache: Mutex::new(HashMap::new()),
@@ -1541,6 +1711,1474 @@ impl TaskSync {
                 *self.ownership_index.lock().await = loaded;
             })
             .await;
+    }
+
+    async fn ensure_task_control_loaded(&self) {
+        self.task_control_loaded
+            .get_or_init(|| async {
+                let state =
+                    match tokio::fs::read_to_string(&self.store.paths.task_control_file).await {
+                        Ok(raw) => parse_state_file(&raw),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            TaskControlStateFile::empty()
+                        }
+                        Err(error) => {
+                            crate::logging::warn(&format!(
+                                "读取任务控制状态失败，按空状态继续：{error}"
+                            ));
+                            TaskControlStateFile::empty()
+                        }
+                    };
+                *self.task_control_state.lock().await = state;
+            })
+            .await;
+    }
+
+    async fn merge_task_controls(
+        &self,
+        binding: &AgentBinding,
+        controls: &[TaskControl],
+    ) -> AgentResult<()> {
+        self.ensure_task_control_loaded().await;
+        let _write = self.task_control_write.lock().await;
+        let next = {
+            let mut state = self.task_control_state.lock().await;
+            let changed = state.merge_binding_controls(
+                &binding.local_id,
+                &binding.task_space_id,
+                controls,
+            )?;
+            changed.then(|| state.clone())
+        };
+        if let Some(next) = next {
+            self.store
+                .write_json(&self.store.paths.task_control_file, &next)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn upsert_task_control(
+        &self,
+        binding: &AgentBinding,
+        control: &TaskControl,
+    ) -> AgentResult<()> {
+        self.ensure_task_control_loaded().await;
+        let _write = self.task_control_write.lock().await;
+        let next = {
+            let mut state = self.task_control_state.lock().await;
+            state
+                .upsert_control(&binding.local_id, control)?
+                .then(|| state.clone())
+        };
+        if let Some(next) = next {
+            self.store
+                .write_json(&self.store.paths.task_control_file, &next)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn upsert_task_handoff_control(
+        &self,
+        binding: &AgentBinding,
+        control: &TaskControl,
+    ) -> AgentResult<String> {
+        self.ensure_task_control_loaded().await;
+        let _write = self.task_control_write.lock().await;
+        let key = handoff_state_key(&binding.local_id, &control.execution_task_key);
+        let next = {
+            let mut state = self.task_control_state.lock().await;
+            state
+                .upsert_handoff_control(&binding.local_id, control)?
+                .then(|| state.clone())
+        };
+        if let Some(next) = next {
+            self.store
+                .write_json(&self.store.paths.task_control_file, &next)
+                .await?;
+        }
+        Ok(key)
+    }
+
+    async fn stored_task_handoff(&self, key: &str) -> Option<StoredTaskHandoff> {
+        self.ensure_task_control_loaded().await;
+        self.task_control_state
+            .lock()
+            .await
+            .handoff(key)
+            .cloned()
+    }
+
+    async fn mark_handoff_ack_pending(
+        &self,
+        key: &str,
+        outcome: &str,
+        reason: Option<&str>,
+        backup_id: Option<&str>,
+        manifest_sha256: Option<&str>,
+        file_count: u64,
+        total_bytes: u64,
+    ) -> AgentResult<()> {
+        let updated_at = protocol::now_iso8601();
+        self.persist_task_control_change(|state| {
+            state.mark_handoff_ack_pending(
+                key,
+                outcome,
+                reason.map(str::to_string),
+                backup_id.map(str::to_string),
+                manifest_sha256.map(str::to_string),
+                file_count,
+                total_bytes,
+                &updated_at,
+            )
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn mark_handoff_ack_done(&self, key: &str) -> AgentResult<()> {
+        let updated_at = protocol::now_iso8601();
+        self.persist_task_control_change(|state| state.mark_handoff_ack_done(key, &updated_at))
+            .await?;
+        Ok(())
+    }
+
+    async fn emit_handoff_notice(
+        &self,
+        binding: &AgentBinding,
+        key: &str,
+        handoff: &StoredTaskHandoff,
+    ) -> AgentResult<()> {
+        let state = if handoff.outcome == "conflict" {
+            "source_cleanup_conflict"
+        } else {
+            handoff.server_handoff_state.as_str()
+        };
+        if handoff.notified_state == state {
+            return Ok(());
+        }
+        (self.emit)(handoff_notice(binding, handoff));
+        self.persist_task_control_change(|controls| {
+            controls.mark_handoff_notified(key, state)
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn persist_task_control_change<F>(&self, mutator: F) -> AgentResult<bool>
+    where
+        F: FnOnce(&mut TaskControlStateFile) -> bool,
+    {
+        self.ensure_task_control_loaded().await;
+        let _write = self.task_control_write.lock().await;
+        let next = {
+            let mut state = self.task_control_state.lock().await;
+            if mutator(&mut state) {
+                Some(state.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(next) = next {
+            self.store
+                .write_json(&self.store.paths.task_control_file, &next)
+                .await?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    async fn save_task_lease(
+        &self,
+        execution_task_key: &str,
+        lease: Value,
+    ) -> AgentResult<()> {
+        let token = lease
+            .get("token")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "租约响应缺少 token"))?;
+        let expires_at = lease
+            .get("expiresAt")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let stored = StoredTaskLease {
+            token: token.to_string(),
+            expires_at: expires_at.to_string(),
+            lease_id: lease
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            updated_at: protocol::now_iso8601(),
+        };
+        self.persist_task_control_change(|state| {
+            state.set_lease(execution_task_key, stored)
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn stored_task_lease(&self, execution_task_key: &str) -> Option<StoredTaskLease> {
+        self.ensure_task_control_loaded().await;
+        self.task_control_state
+            .lock()
+            .await
+            .leases
+            .get(execution_task_key)
+            .cloned()
+    }
+
+    async fn has_persisted_task_control(&self, execution_task_key: &str) -> bool {
+        self.ensure_task_control_loaded().await;
+        self.task_control_state
+            .lock()
+            .await
+            .controls
+            .contains_key(execution_task_key)
+    }
+
+    async fn remove_task_lease(&self, execution_task_key: &str) -> AgentResult<()> {
+        self.persist_task_control_change(|state| state.remove_lease(execution_task_key))
+            .await?;
+        Ok(())
+    }
+
+    async fn update_control_task_version(
+        &self,
+        execution_task_key: &str,
+        task_version: u64,
+    ) -> AgentResult<()> {
+        self.persist_task_control_change(|state| {
+            state.update_task_version(execution_task_key, task_version)
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn claim_remote_task(
+        &self,
+        binding: &AgentBinding,
+        execution_task_key: &str,
+    ) -> AgentResult<(TaskControl, String)> {
+        let encoded = urlencode(execution_task_key);
+        let response = self
+            .api
+            .request_json(
+                Method::POST,
+                &format!("/api/agent/tasks/{encoded}/claim"),
+                None,
+                Duration::from_secs(60),
+            )
+            .await?;
+        let task = response.get("task").ok_or_else(|| {
+            AgentError::new(code::INVALID_RESPONSE, "任务认领响应缺少 task")
+        })?;
+        let control = TaskControl::from_task_value(task)?;
+        let lease = response
+            .get("lease")
+            .filter(|lease| !lease.is_null())
+            .ok_or_else(|| {
+                AgentError::new(code::INVALID_RESPONSE, "任务认领响应缺少 lease")
+            })?;
+        let lease_token = lease
+            .get("token")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .ok_or_else(|| {
+                AgentError::new(code::INVALID_RESPONSE, "任务认领响应缺少 lease.token")
+            })?
+            .to_string();
+        self.upsert_task_control(binding, &control).await?;
+        self.save_task_lease(&control.execution_task_key, lease.clone())
+            .await?;
+        Ok((control, lease_token))
+    }
+
+    async fn heartbeat_remote_task(
+        &self,
+        binding: &AgentBinding,
+        execution_task_key: &str,
+        lease_token: &str,
+    ) -> AgentResult<(TaskControl, String)> {
+        let encoded = urlencode(execution_task_key);
+        let response = self
+            .api
+            .request_json(
+                Method::POST,
+                &format!("/api/agent/tasks/{encoded}/heartbeat"),
+                Some(&json!({ "leaseToken": lease_token })),
+                Duration::from_secs(60),
+            )
+            .await?;
+        let task = response.get("task").ok_or_else(|| {
+            AgentError::new(code::INVALID_RESPONSE, "任务心跳响应缺少 task")
+        })?;
+        let control = TaskControl::from_task_value(task)?;
+        let lease = response.get("lease").filter(|lease| !lease.is_null()).ok_or_else(
+            || AgentError::new(code::INVALID_RESPONSE, "任务心跳响应缺少 lease"),
+        )?;
+        let next_token = lease
+            .get("token")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .ok_or_else(|| {
+                AgentError::new(code::INVALID_RESPONSE, "任务心跳响应缺少 lease.token")
+            })?
+            .to_string();
+        self.upsert_task_control(binding, &control).await?;
+        self.save_task_lease(&control.execution_task_key, lease.clone())
+            .await?;
+        Ok((control, next_token))
+    }
+
+    async fn release_remote_task(
+        &self,
+        execution_task_key: &str,
+        lease_token: &str,
+    ) -> AgentResult<Value> {
+        let encoded = urlencode(execution_task_key);
+        self.api
+            .request_json(
+                Method::POST,
+                &format!("/api/agent/tasks/{encoded}/release"),
+                Some(&json!({ "leaseToken": lease_token })),
+                Duration::from_secs(60),
+            )
+            .await
+    }
+
+    async fn ack_remote_handoff(&self, handoff: &StoredTaskHandoff) -> AgentResult<Value> {
+        let encoded = urlencode(&handoff.execution_task_key);
+        let body = handoff_ack_request(handoff)?;
+        self.api
+            .request_json(
+                Method::POST,
+                &format!("/api/agent/tasks/{encoded}/handoff-ack"),
+                Some(&body),
+                Duration::from_secs(60),
+            )
+            .await
+    }
+
+    async fn attempt_handoff_ack(&self, key: &str) -> AgentResult<bool> {
+        let Some(handoff) = self.stored_task_handoff(key).await else {
+            return Ok(false);
+        };
+        if handoff.ack_state != "pending" || handoff.outcome.is_empty() {
+            return Ok(false);
+        }
+        match self.ack_remote_handoff(&handoff).await {
+            Ok(_) => {
+                self.mark_handoff_ack_done(key).await?;
+                Ok(true)
+            }
+            Err(error) if error.server_code.as_deref() == Some("HANDOFF_LEASE_HELD") => {
+                self.mark_handoff_ack_pending(
+                    key,
+                    "conflict",
+                    Some("lease_active"),
+                    handoff.backup_id.as_deref(),
+                    handoff.manifest_sha256.as_deref(),
+                    handoff.file_count,
+                    handoff.total_bytes,
+                )
+                .await?;
+                crate::logging::warn(&format!(
+                    "handoff ACK 被有效租约阻止 {}：{}",
+                    handoff.task_id,
+                    protocol::safe_error_message(&error.message)
+                ));
+                Ok(false)
+            }
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "handoff ACK 暂未送达 {}：{}",
+                    handoff.task_id,
+                    protocol::safe_error_message(&error.message)
+                ));
+                Ok(false)
+            }
+        }
+    }
+
+    async fn handoff_task_directory_exists(
+        &self,
+        binding: &AgentBinding,
+        task_dir: &str,
+    ) -> AgentResult<bool> {
+        let source = resolve_task_directory(binding, task_dir).await?;
+        match tokio::fs::symlink_metadata(&source).await {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Ok(true),
+            Ok(_) => protocol::err(code::INVALID_RESPONSE, "handoff 任务目录不是真实目录"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(io_error(error)),
+        }
+    }
+
+    async fn handoff_backup_target(
+        &self,
+        binding: &AgentBinding,
+        backup_id: &str,
+    ) -> AgentResult<PathBuf> {
+        if !is_handoff_backup_id(backup_id) {
+            return protocol::err(code::INVALID_RESPONSE, "handoff 备份 ID 格式无效");
+        }
+        let task_space_id =
+            protocol::assert_safe_id_default(Some(&binding.task_space_id), "任务空间 ID")?;
+        self.store.ensure_directories().await?;
+        let metadata = tokio::fs::symlink_metadata(&self.store.paths.live_backups_dir)
+            .await
+            .map_err(io_error)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return protocol::err(code::INVALID_RESPONSE, "handoff 备份根目录必须是真实目录");
+        }
+        let root = self
+            .store
+            .paths
+            .live_backups_dir
+            .join(task_space_id);
+        match tokio::fs::symlink_metadata(&root).await {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => {
+                return protocol::err(code::INVALID_RESPONSE, "handoff 任务空间备份目录无效")
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tokio::fs::create_dir(&root).await.map_err(io_error)?;
+            }
+            Err(error) => return Err(io_error(error)),
+        }
+        let target = root.join(backup_id);
+        if !protocol::is_path_inside(&root, &target) {
+            return protocol::err(code::INVALID_RESPONSE, "handoff 备份目录越界");
+        }
+        Ok(target)
+    }
+
+    async fn handoff_backup_is_valid(
+        &self,
+        binding: &AgentBinding,
+        handoff: &StoredTaskHandoff,
+    ) -> AgentResult<bool> {
+        let (Some(backup_id), Some(expected_manifest_sha256)) =
+            (handoff.backup_id.as_deref(), handoff.manifest_sha256.as_deref())
+        else {
+            return Ok(false);
+        };
+        if !is_sha256(expected_manifest_sha256) {
+            return Ok(false);
+        }
+        let target = match self.handoff_backup_target(binding, backup_id).await {
+            Ok(target) => target,
+            Err(_) => return Ok(false),
+        };
+        match tokio::fs::symlink_metadata(&target).await {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(io_error(error)),
+        }
+        cleanup_handoff_backup_temps(&target).await?;
+        let canonical_root = tokio::fs::canonicalize(target.parent().unwrap_or(&target))
+            .await
+            .map_err(io_error)?;
+        let canonical_target = tokio::fs::canonicalize(&target).await.map_err(io_error)?;
+        if !protocol::is_path_inside(&canonical_root, &canonical_target) {
+            return Ok(false);
+        }
+        let manifest_bytes = match tokio::fs::read(target.join(HANDOFF_MANIFEST_FILE)).await {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(io_error(error)),
+        };
+        if sha256_bytes(&manifest_bytes) != expected_manifest_sha256 {
+            return Ok(false);
+        }
+        let manifest: Value = match serde_json::from_slice(&manifest_bytes) {
+            Ok(value) => value,
+            Err(_) => return Ok(false),
+        };
+        if manifest.get("version").and_then(Value::as_u64) != Some(1)
+            || manifest.get("taskDir").and_then(Value::as_str) != Some(handoff.relative_dir.as_str())
+            || !handoff_manifest_files_match(
+                &target,
+                &manifest,
+                handoff.file_count,
+                handoff.total_bytes,
+            )
+            .await?
+        {
+            return Ok(false);
+        }
+        let meta_bytes = match tokio::fs::read(target.join(HANDOFF_META_FILE)).await {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(io_error(error)),
+        };
+        let meta: Value = match serde_json::from_slice(&meta_bytes) {
+            Ok(value) => value,
+            Err(_) => return Ok(false),
+        };
+        Ok(
+            meta.get("version").and_then(Value::as_u64) == Some(1)
+                && meta.get("backupId").and_then(Value::as_str) == Some(backup_id)
+                && meta.get("taskSpaceId").and_then(Value::as_str)
+                    == Some(binding.task_space_id.as_str())
+                && meta.get("executionTaskKey").and_then(Value::as_str)
+                    == Some(handoff.execution_task_key.as_str())
+                && meta.get("taskId").and_then(Value::as_str) == Some(handoff.task_id.as_str())
+                && meta.get("taskDir").and_then(Value::as_str)
+                    == Some(handoff.relative_dir.as_str())
+                && meta.get("manifestSha256").and_then(Value::as_str)
+                    == Some(expected_manifest_sha256)
+                && meta.get("fileCount").and_then(Value::as_u64) == Some(handoff.file_count)
+                && meta.get("totalBytes").and_then(Value::as_u64) == Some(handoff.total_bytes),
+        )
+    }
+
+    async fn write_handoff_backup_metadata(
+        &self,
+        binding: &AgentBinding,
+        target: &Path,
+        handoff: &StoredTaskHandoff,
+        control: &TaskControl,
+        source: &HandoffSource,
+    ) -> AgentResult<()> {
+        let manifest_bytes = serde_json::to_vec(&source.manifest).map_err(|error| {
+            AgentError::new(
+                code::INVALID_RESPONSE,
+                format!("handoff manifest 序列化失败: {error}"),
+            )
+        })?;
+        if sha256_bytes(&manifest_bytes) != source.manifest_sha256 {
+            return protocol::err(code::INVALID_RESPONSE, "handoff manifest 摘要不稳定");
+        }
+        self.store
+            .write_atomic(&target.join(HANDOFF_MANIFEST_FILE), &manifest_bytes)
+            .await?;
+        let meta = json!({
+            "version": 1,
+            "backupId": source.backup_id,
+            "taskSpaceId": binding.task_space_id,
+            "executionTaskKey": handoff.execution_task_key,
+            "taskId": handoff.task_id,
+            "taskDir": handoff.relative_dir,
+            "materializedRevision": control.materialized_revision,
+            "manifestSha256": source.manifest_sha256,
+            "fileCount": source.file_count,
+            "totalBytes": source.total_bytes,
+            "createdAt": protocol::now_iso8601(),
+        });
+        let meta_bytes = serde_json::to_vec_pretty(&meta).map_err(|error| {
+            AgentError::new(
+                code::INVALID_RESPONSE,
+                format!("handoff 元数据序列化失败: {error}"),
+            )
+        })?;
+        self.store
+            .write_atomic(&target.join(HANDOFF_META_FILE), &meta_bytes)
+            .await?;
+        let mut expected = handoff.clone();
+        expected.backup_id = Some(source.backup_id.clone());
+        expected.manifest_sha256 = Some(source.manifest_sha256.clone());
+        expected.file_count = source.file_count;
+        expected.total_bytes = source.total_bytes;
+        if !self.handoff_backup_is_valid(binding, &expected).await? {
+            return protocol::err(code::INVALID_RESPONSE, "handoff 备份内容校验失败");
+        }
+        Ok(())
+    }
+
+    async fn ensure_handoff_backup(
+        &self,
+        binding: &AgentBinding,
+        handoff: &StoredTaskHandoff,
+        control: &TaskControl,
+        source: &HandoffSource,
+    ) -> AgentResult<bool> {
+        let mut expected = handoff.clone();
+        expected.backup_id = Some(source.backup_id.clone());
+        expected.manifest_sha256 = Some(source.manifest_sha256.clone());
+        expected.file_count = source.file_count;
+        expected.total_bytes = source.total_bytes;
+        if self.handoff_backup_is_valid(binding, &expected).await? {
+            return Ok(true);
+        }
+        let target = self
+            .handoff_backup_target(binding, &source.backup_id)
+            .await?;
+        let mut created_target = false;
+        match tokio::fs::symlink_metadata(&target).await {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                cleanup_handoff_backup_temps(&target).await?;
+                if !handoff_manifest_files_match(
+                    &target,
+                    &source.manifest,
+                    source.file_count,
+                    source.total_bytes,
+                )
+                .await?
+                {
+                    return protocol::err(code::INVALID_RESPONSE, "已有 handoff 备份内容不一致");
+                }
+            }
+            Ok(_) => {
+                return protocol::err(code::INVALID_RESPONSE, "handoff 备份目标不是真实目录")
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let source_dir = resolve_task_directory(binding, &handoff.relative_dir).await?;
+                copy_directory(&source_dir, &target).await?;
+                created_target = true;
+            }
+            Err(error) => return Err(io_error(error)),
+        }
+        if let Err(error) = self
+            .write_handoff_backup_metadata(binding, &target, handoff, control, source)
+            .await
+        {
+            if created_target {
+                if let Err(cleanup_error) = tokio::fs::remove_dir_all(&target).await {
+                    crate::logging::warn(&format!(
+                        "handoff 无效备份清理失败：{}",
+                        protocol::safe_error_message(&cleanup_error.to_string())
+                    ));
+                }
+            }
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    async fn cleanup_handoff_trash(&self, binding: &AgentBinding) {
+        let trash_root = Path::new(&binding.repo_path).join(".trellis");
+        let Ok(mut entries) = tokio::fs::read_dir(&trash_root).await else {
+            return;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name();
+            if !name
+                .to_string_lossy()
+                .starts_with(".agent-handoff-cleanup-")
+            {
+                continue;
+            }
+            let Ok(metadata) = tokio::fs::symlink_metadata(entry.path()).await else {
+                continue;
+            };
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                continue;
+            }
+            if let Err(error) = tokio::fs::remove_dir_all(entry.path()).await {
+                crate::logging::warn(&format!(
+                    "handoff 遗留暂存目录清理失败：{}",
+                    protocol::safe_error_message(&error.to_string())
+                ));
+            }
+        }
+    }
+
+    async fn remove_handoff_source(
+        &self,
+        binding: &AgentBinding,
+        handoff: &StoredTaskHandoff,
+        files: &[Value],
+    ) -> AgentResult<()> {
+        {
+            let mut suppressed = self.suppressed.lock().await;
+            for file in files {
+                if let Some(path) = file.get("path").and_then(Value::as_str) {
+                    suppressed.insert(absolute_task_path(binding, path), None);
+                }
+            }
+        }
+        let source = resolve_task_directory(binding, &handoff.relative_dir).await?;
+        match tokio::fs::symlink_metadata(&source).await {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => return protocol::err(code::INVALID_RESPONSE, "handoff 任务源不是真实目录"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(io_error(error)),
+        }
+        let branch_matches = matches!(
+            git_head_branch_name(Path::new(&binding.repo_path)).await,
+            Some(Some(branch)) if branch == binding.branch_name
+        );
+        if !branch_matches {
+            return protocol::err(code::INVALID_RESPONSE, "当前分支已变化，拒绝清理 handoff");
+        }
+        let trash = Path::new(&binding.repo_path)
+            .join(".trellis")
+            .join(format!(".agent-handoff-cleanup-{}", uuid::Uuid::new_v4()));
+        match tokio::fs::rename(&source, &trash).await {
+            Ok(()) => {
+                match tokio::fs::symlink_metadata(&trash).await {
+                    Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+                    _ => {
+                        let _ = tokio::fs::rename(&trash, &source).await;
+                        return protocol::err(code::INVALID_RESPONSE, "handoff 清理目标不是真实目录");
+                    }
+                }
+                if let Err(error) = tokio::fs::remove_dir_all(&trash).await {
+                    crate::logging::warn(&format!(
+                        "handoff 暂存目录清理失败 {}：{}",
+                        handoff.task_id,
+                        protocol::safe_error_message(&error.to_string())
+                    ));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(io_error(error)),
+        }
+        let cursor = self.read_cursor(&binding.task_space_id).await;
+        let prefix = format!("{}/", handoff.relative_dir);
+        let baselines = cursor
+            .baselines
+            .iter()
+            .filter(|(path, _)| !path.starts_with(&prefix))
+            .map(|(path, sha256)| (path.clone(), sha256.clone()))
+            .collect();
+        let deferred = cursor
+            .deferred
+            .iter()
+            .filter(|(task_dir, _)| task_dir.as_str() != handoff.relative_dir)
+            .map(|(task_dir, files)| (task_dir.clone(), files.clone()))
+            .collect();
+        let ownership_pending = cursor
+            .ownership_pending
+            .iter()
+            .filter(|(task_dir, _)| task_dir.as_str() != handoff.relative_dir)
+            .map(|(task_dir, reason)| (task_dir.clone(), reason.clone()))
+            .collect();
+        let conflict_blocked = cursor
+            .conflict_blocked
+            .iter()
+            .filter(|(task_dir, _)| task_dir.as_str() != handoff.relative_dir)
+            .map(|(task_dir, conflict_id)| (task_dir.clone(), conflict_id.clone()))
+            .collect();
+        if let Err(error) = self
+            .write_cursor(
+                &binding.task_space_id,
+                CursorPatch {
+                    baselines: Some(baselines),
+                    deferred: Some(deferred),
+                    ownership_pending: Some(ownership_pending),
+                    conflict_blocked: Some(conflict_blocked),
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            crate::logging::warn(&format!(
+                "handoff 后清理本地 cursor 失败 {}：{}",
+                handoff.task_id,
+                protocol::safe_error_message(&error.message)
+            ));
+        }
+        self.invalidate_ownership_projection(&binding.task_space_id)
+            .await;
+        Ok(())
+    }
+
+    async fn retry_pending_handoff_acks(&self, binding: &AgentBinding) -> AgentResult<()> {
+        self.ensure_task_control_loaded().await;
+        let pending = {
+            let state = self.task_control_state.lock().await;
+            state.pending_handoff_acks(&binding.local_id)
+        };
+        for (key, mut handoff) in pending {
+            if handoff.lease_held_by_other_user {
+                self.mark_handoff_ack_pending(
+                    &key,
+                    "conflict",
+                    Some("lease_active"),
+                    handoff.backup_id.as_deref(),
+                    handoff.manifest_sha256.as_deref(),
+                    handoff.file_count,
+                    handoff.total_bytes,
+                )
+                .await?;
+                handoff = self.stored_task_handoff(&key).await.unwrap_or(handoff);
+                let _ = self.attempt_handoff_ack(&key).await?;
+                if let Some(current) = self.stored_task_handoff(&key).await {
+                    self.emit_handoff_notice(binding, &key, &current).await?;
+                }
+                continue;
+            }
+            if handoff.outcome == "cleaned" {
+                let backup_valid = match self.handoff_backup_is_valid(binding, &handoff).await {
+                    Ok(valid) => valid,
+                    Err(error) => {
+                        crate::logging::warn(&format!(
+                            "handoff 备份复核失败 {}：{}",
+                            handoff.task_id,
+                            protocol::safe_error_message(&error.message)
+                        ));
+                        self.mark_handoff_ack_pending(
+                            &key,
+                            "conflict",
+                            Some("unknown"),
+                            handoff.backup_id.as_deref(),
+                            handoff.manifest_sha256.as_deref(),
+                            handoff.file_count,
+                            handoff.total_bytes,
+                        )
+                        .await?;
+                        let _ = self.attempt_handoff_ack(&key).await?;
+                        if let Some(current) = self.stored_task_handoff(&key).await {
+                            self.emit_handoff_notice(binding, &key, &current).await?;
+                        }
+                        continue;
+                    }
+                };
+                if !backup_valid {
+                    self.mark_handoff_ack_pending(
+                        &key,
+                        "conflict",
+                        Some("missing"),
+                        handoff.backup_id.as_deref(),
+                        handoff.manifest_sha256.as_deref(),
+                        handoff.file_count,
+                        handoff.total_bytes,
+                    )
+                    .await?;
+                    handoff = self.stored_task_handoff(&key).await.unwrap_or(handoff);
+                } else {
+                    let exists =
+                        match self
+                            .handoff_task_directory_exists(binding, &handoff.relative_dir)
+                            .await
+                        {
+                            Ok(exists) => exists,
+                            Err(error) => {
+                                crate::logging::warn(&format!(
+                                    "handoff 本地目录复核失败 {}：{}",
+                                    handoff.task_id,
+                                    protocol::safe_error_message(&error.message)
+                                ));
+                                self.mark_handoff_ack_pending(
+                                    &key,
+                                    "conflict",
+                                    Some("unknown"),
+                                    handoff.backup_id.as_deref(),
+                                    handoff.manifest_sha256.as_deref(),
+                                    handoff.file_count,
+                                    handoff.total_bytes,
+                                )
+                                .await?;
+                                let _ = self.attempt_handoff_ack(&key).await?;
+                                if let Some(current) = self.stored_task_handoff(&key).await {
+                                    self.emit_handoff_notice(binding, &key, &current).await?;
+                                }
+                                continue;
+                            }
+                        };
+                    if exists {
+                        let branch_matches = matches!(
+                            git_head_branch_name(Path::new(&binding.repo_path)).await,
+                            Some(Some(branch)) if branch == binding.branch_name
+                        );
+                        let (reason, files) = if branch_matches {
+                            match self.handoff_source_state(binding, &handoff).await {
+                                Err(error) => {
+                                    crate::logging::warn(&format!(
+                                        "handoff 恢复清理状态检查失败 {}：{}",
+                                        handoff.task_id,
+                                        protocol::safe_error_message(&error.message)
+                                    ));
+                                    self.mark_handoff_ack_pending(
+                                        &key,
+                                        "conflict",
+                                        Some("unknown"),
+                                        handoff.backup_id.as_deref(),
+                                        handoff.manifest_sha256.as_deref(),
+                                        handoff.file_count,
+                                        handoff.total_bytes,
+                                    )
+                                    .await?;
+                                    let _ = self.attempt_handoff_ack(&key).await?;
+                                    if let Some(current) = self.stored_task_handoff(&key).await {
+                                        self.emit_handoff_notice(binding, &key, &current).await?;
+                                    }
+                                    continue;
+                                }
+                                HandoffSourceState::Ready(source)
+                                    if handoff.manifest_sha256.as_deref()
+                                        == Some(source.manifest_sha256.as_str()) =>
+                                {
+                                    (None, Some(source.files))
+                                }
+                                HandoffSourceState::Ready(_) => {
+                                    (Some("baseline_mismatch"), None)
+                                }
+                                HandoffSourceState::Conflict(reason) => (Some(reason), None),
+                            }
+                        } else {
+                            (Some("branch_mismatch"), None)
+                        };
+                        let cleanup_failed = if let Some(files) = files {
+                            match self.remove_handoff_source(binding, &handoff, &files).await {
+                                Ok(()) => false,
+                                Err(error) => {
+                                    crate::logging::warn(&format!(
+                                        "handoff 恢复清理本地目录失败 {}：{}",
+                                        handoff.task_id,
+                                        protocol::safe_error_message(&error.message)
+                                    ));
+                                    true
+                                }
+                            }
+                        } else {
+                            false
+                        };
+                        let conflict_reason = if cleanup_failed {
+                            Some("cleanup_failed")
+                        } else {
+                            reason
+                        };
+                        if let Some(reason) = conflict_reason {
+                            self.mark_handoff_ack_pending(
+                                &key,
+                                "conflict",
+                                Some(reason),
+                                handoff.backup_id.as_deref(),
+                                handoff.manifest_sha256.as_deref(),
+                                handoff.file_count,
+                                handoff.total_bytes,
+                            )
+                            .await?;
+                        }
+                        handoff = self.stored_task_handoff(&key).await.unwrap_or(handoff);
+                    }
+                }
+            }
+            let _ = self.attempt_handoff_ack(&key).await?;
+            if let Some(current) = self.stored_task_handoff(&key).await {
+                self.emit_handoff_notice(binding, &key, &current).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn handoff_source_state(
+        &self,
+        binding: &AgentBinding,
+        handoff: &StoredTaskHandoff,
+    ) -> AgentResult<HandoffSourceState> {
+        let branch_matches = matches!(
+            git_head_branch_name(Path::new(&binding.repo_path)).await,
+            Some(Some(branch)) if branch == binding.branch_name
+        );
+        if !branch_matches {
+            return Ok(HandoffSourceState::Conflict("branch_mismatch"));
+        }
+        let source = resolve_task_directory(binding, &handoff.relative_dir).await?;
+        match tokio::fs::symlink_metadata(&source).await {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => return Ok(HandoffSourceState::Conflict("git_modified")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(HandoffSourceState::Conflict("missing"))
+            }
+            Err(error) => return Err(io_error(error)),
+        }
+        let selected = HashSet::from([handoff.relative_dir.clone()]);
+        let files = self.local_files(binding, Some(&selected)).await?;
+        if files.is_empty() {
+            return Ok(HandoffSourceState::Conflict("no_files"));
+        }
+        let task_json_path = format!("{}/task.json", handoff.relative_dir);
+        let task_id_matches = files.iter().any(|file| {
+            file.get("path").and_then(Value::as_str) == Some(task_json_path.as_str())
+                && file
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .and_then(parse_task_id)
+                    .as_deref()
+                    == Some(handoff.task_id.as_str())
+        });
+        if !task_id_matches {
+            return Ok(HandoffSourceState::Conflict("baseline_mismatch"));
+        }
+        let directory_paths = task_directory_file_paths(&source).await?;
+        let canonical_paths: BTreeSet<String> = files
+            .iter()
+            .filter_map(|file| file.get("path").and_then(Value::as_str))
+            .filter_map(|path| {
+                path.strip_prefix(&format!("{}/", handoff.relative_dir))
+                    .map(str::to_string)
+            })
+            .collect();
+        if directory_paths != canonical_paths {
+            return Ok(HandoffSourceState::Conflict("baseline_mismatch"));
+        }
+        let cursor = self.read_cursor(&binding.task_space_id).await;
+        let baseline: BTreeMap<String, String> = cursor
+            .baselines
+            .iter()
+            .filter_map(|(path, sha256)| {
+                path.strip_prefix(&format!("{}/", handoff.relative_dir))
+                    .map(|relative| (relative.to_string(), sha256.clone()))
+            })
+            .collect();
+        let local: BTreeMap<String, String> = files
+            .iter()
+            .filter_map(|file| {
+                Some((
+                    file.get("path")?
+                        .as_str()?
+                        .strip_prefix(&format!("{}/", handoff.relative_dir))?
+                        .to_string(),
+                    file.get("sha256")?.as_str()?.to_string(),
+                ))
+            })
+            .collect();
+        if baseline.is_empty() || baseline != local {
+            return Ok(HandoffSourceState::Conflict("baseline_mismatch"));
+        }
+        let git_entries = match crate::agent::git::status_paths(
+            Path::new(&binding.repo_path),
+            &self.binding_hooks_dir(binding),
+            &[handoff.relative_dir.clone()],
+        )
+        .await
+        {
+            Ok(entries) => entries,
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "handoff 前检查 Git 状态失败 {}：{}",
+                    handoff.task_id,
+                    protocol::safe_error_message(&error.message)
+                ));
+                return Ok(HandoffSourceState::Conflict("git_modified"));
+            }
+        };
+        if git_entries.is_empty() {
+            return Ok(HandoffSourceState::Conflict("git_tracked"));
+        }
+        if !git_entries_all_untracked(&git_entries) {
+            return Ok(HandoffSourceState::Conflict("git_modified"));
+        }
+        let (manifest_sha256, file_count, total_bytes, manifest) =
+            handoff_manifest(&files, &handoff.relative_dir)?;
+        if file_count > HANDOFF_MAX_FILES || total_bytes > HANDOFF_MAX_BYTES {
+            return Ok(HandoffSourceState::Conflict("backup_too_large"));
+        }
+        let backup_id = format!("handoff-{}", &manifest_sha256[..16]);
+        Ok(HandoffSourceState::Ready(HandoffSource {
+            files,
+            backup_id,
+            manifest_sha256,
+            manifest,
+            file_count,
+            total_bytes,
+        }))
+    }
+
+    async fn process_handoff_control(
+        &self,
+        binding: &AgentBinding,
+        control: &TaskControl,
+    ) -> AgentResult<()> {
+        let key = self
+            .upsert_task_handoff_control(binding, control)
+            .await?;
+        let Some(handoff) = self.stored_task_handoff(&key).await else {
+            return Ok(());
+        };
+        if handoff.lease_held_by_other_user && handoff.ack_state != "done" {
+            self.mark_handoff_ack_pending(
+                &key,
+                "conflict",
+                Some("lease_active"),
+                handoff.backup_id.as_deref(),
+                handoff.manifest_sha256.as_deref(),
+                handoff.file_count,
+                handoff.total_bytes,
+            )
+            .await?;
+            let _ = self.attempt_handoff_ack(&key).await?;
+            if let Some(current) = self.stored_task_handoff(&key).await {
+                self.emit_handoff_notice(binding, &key, &current).await?;
+            }
+            return Ok(());
+        }
+        if control.handoff_state == "source_cleanup_conflict" || !handoff.outcome.is_empty() {
+            if handoff.ack_state == "pending" {
+                let _ = self.attempt_handoff_ack(&key).await?;
+            }
+            if let Some(current) = self.stored_task_handoff(&key).await {
+                self.emit_handoff_notice(binding, &key, &current).await?;
+            }
+            return Ok(());
+        }
+
+        let source_state = match self.handoff_source_state(binding, &handoff).await {
+            Ok(state) => state,
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "handoff 本地状态检查失败 {}：{}",
+                    handoff.task_id,
+                    protocol::safe_error_message(&error.message)
+                ));
+                self.mark_handoff_ack_pending(
+                    &key,
+                    "conflict",
+                    Some("unknown"),
+                    None,
+                    None,
+                    0,
+                    0,
+                )
+                .await?;
+                let _ = self.attempt_handoff_ack(&key).await?;
+                if let Some(current) = self.stored_task_handoff(&key).await {
+                    self.emit_handoff_notice(binding, &key, &current).await?;
+                }
+                return Ok(());
+            }
+        };
+        match source_state {
+            HandoffSourceState::Conflict(reason) => {
+                self.mark_handoff_ack_pending(
+                    &key,
+                    "conflict",
+                    Some(reason),
+                    None,
+                    None,
+                    0,
+                    0,
+                )
+                .await?;
+                let _ = self.attempt_handoff_ack(&key).await?;
+                if let Some(current) = self.stored_task_handoff(&key).await {
+                    self.emit_handoff_notice(binding, &key, &current).await?;
+                }
+            }
+            HandoffSourceState::Ready(source) => {
+                let backed_up = self
+                    .ensure_handoff_backup(binding, &handoff, control, &source)
+                    .await;
+                if !matches!(&backed_up, Ok(true)) {
+                    if let Err(error) = backed_up {
+                        crate::logging::warn(&format!(
+                            "handoff 备份失败 {}：{}",
+                            handoff.task_id,
+                            protocol::safe_error_message(&error.message)
+                        ));
+                    }
+                    self.mark_handoff_ack_pending(
+                        &key,
+                        "conflict",
+                        Some("backup_failed"),
+                        None,
+                        None,
+                        source.file_count,
+                        source.total_bytes,
+                    )
+                    .await?;
+                    let _ = self.attempt_handoff_ack(&key).await?;
+                    return Ok(());
+                }
+                self.mark_handoff_ack_pending(
+                    &key,
+                    "cleaned",
+                    None,
+                    Some(&source.backup_id),
+                    Some(&source.manifest_sha256),
+                    source.file_count,
+                    source.total_bytes,
+                )
+                .await?;
+                let latest_state = match self.handoff_source_state(binding, &handoff).await {
+                    Ok(state) => state,
+                    Err(error) => {
+                        crate::logging::warn(&format!(
+                            "handoff 删除前复核失败 {}：{}",
+                            handoff.task_id,
+                            protocol::safe_error_message(&error.message)
+                        ));
+                        self.mark_handoff_ack_pending(
+                            &key,
+                            "conflict",
+                            Some("unknown"),
+                            Some(&source.backup_id),
+                            Some(&source.manifest_sha256),
+                            source.file_count,
+                            source.total_bytes,
+                        )
+                        .await?;
+                        let _ = self.attempt_handoff_ack(&key).await?;
+                        return Ok(());
+                    }
+                };
+                match latest_state {
+                    HandoffSourceState::Ready(latest)
+                        if latest.manifest_sha256.as_str() == source.manifest_sha256.as_str() => {}
+                    HandoffSourceState::Ready(_) => {
+                        self.mark_handoff_ack_pending(
+                            &key,
+                            "conflict",
+                            Some("baseline_mismatch"),
+                            Some(&source.backup_id),
+                            Some(&source.manifest_sha256),
+                            source.file_count,
+                            source.total_bytes,
+                        )
+                        .await?;
+                        let _ = self.attempt_handoff_ack(&key).await?;
+                        return Ok(());
+                    }
+                    HandoffSourceState::Conflict(reason) => {
+                        self.mark_handoff_ack_pending(
+                            &key,
+                            "conflict",
+                            Some(reason),
+                            Some(&source.backup_id),
+                            Some(&source.manifest_sha256),
+                            source.file_count,
+                            source.total_bytes,
+                        )
+                        .await?;
+                        let _ = self.attempt_handoff_ack(&key).await?;
+                        return Ok(());
+                    }
+                }
+                if let Err(error) = self
+                    .remove_handoff_source(binding, &handoff, &source.files)
+                    .await
+                {
+                    crate::logging::warn(&format!(
+                        "handoff 清理本地目录失败 {}：{}",
+                        handoff.task_id,
+                        protocol::safe_error_message(&error.message)
+                    ));
+                    self.mark_handoff_ack_pending(
+                        &key,
+                        "conflict",
+                        Some("cleanup_failed"),
+                        Some(&source.backup_id),
+                        Some(&source.manifest_sha256),
+                        source.file_count,
+                        source.total_bytes,
+                    )
+                    .await?;
+                    let _ = self.attempt_handoff_ack(&key).await?;
+                    return Ok(());
+                }
+                let _ = self.attempt_handoff_ack(&key).await?;
+                if let Some(current) = self.stored_task_handoff(&key).await {
+                    self.emit_handoff_notice(binding, &key, &current).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn process_handoff_controls(
+        &self,
+        binding: &AgentBinding,
+        controls: &[TaskControl],
+    ) -> AgentResult<()> {
+        self.cleanup_handoff_trash(binding).await;
+        self.retry_pending_handoff_acks(binding).await?;
+        for control in controls.iter().filter(|control| {
+            control.state == "handoff_materialized"
+                && matches!(
+                    control.handoff_state.as_str(),
+                    "source_cleanup_pending" | "source_cleanup_conflict"
+                )
+        }) {
+            self.process_handoff_control(binding, control).await?;
+        }
+        Ok(())
+    }
+
+    async fn remote_task_control(
+        &self,
+        _binding: &AgentBinding,
+        execution_task_key: &str,
+    ) -> AgentResult<Option<TaskControl>> {
+        let encoded = urlencode(execution_task_key);
+        match self
+            .api
+            .request_json(
+                Method::GET,
+                &format!("/api/agent/tasks/{encoded}"),
+                None,
+                Duration::from_secs(60),
+            )
+            .await
+        {
+            Ok(response) => {
+                let task = response.get("task").ok_or_else(|| {
+                    AgentError::new(code::INVALID_RESPONSE, "任务控制响应缺少 task")
+                })?;
+                let control = TaskControl::from_task_value(task)?;
+                self.update_control_task_version(
+                    &control.execution_task_key,
+                    control.task_version,
+                )
+                    .await?;
+                Ok(Some(control))
+            }
+            Err(error)
+                if error.status == Some(404)
+                    || error.server_code.as_deref() == Some("NOT_FOUND") =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn prepare_controlled_server_groups(
+        &self,
+        binding: &AgentBinding,
+        controls: Option<&[TaskControl]>,
+        groups: &mut Vec<SnapshotGroup>,
+    ) -> AgentResult<()> {
+        let Some(controls) = controls else {
+            return Ok(());
+        };
+        let selected = selected_server_task_ids(Some(controls)).unwrap_or_default();
+        groups.retain(|group| {
+            group
+                .task_id
+                .as_ref()
+                .is_some_and(|task_id| selected.contains(task_id))
+        });
+        let mut allowed = Vec::with_capacity(groups.len());
+        for group in groups.drain(..) {
+            let Some(task_id) = group.task_id.as_deref() else {
+                continue;
+            };
+            let Some(control) = controls.iter().find(|control| control.task_id == task_id) else {
+                continue;
+            };
+            if !control.is_writable_local() {
+                continue;
+            }
+            match self
+                .claim_remote_task(binding, &control.execution_task_key)
+                .await
+            {
+                Ok(_) => allowed.push(group),
+                Err(error)
+                    if matches!(
+                        error.server_code.as_deref(),
+                        Some("TASK_ARCHIVED")
+                            | Some("TASK_WRITE_FORBIDDEN")
+                            | Some("TASK_LEASE_HELD")
+                            | Some("TASK_LEASE_INVALID")
+                            | Some("FORBIDDEN")
+                    ) =>
+                {
+                    crate::logging::warn(&format!(
+                        "跳过不可落地任务 {}：{}",
+                        control.task_id,
+                        protocol::safe_error_message(&error.message)
+                    ));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        *groups = allowed;
+        Ok(())
+    }
+
+    async fn release_inactive_task_leases(
+        &self,
+        controls: Option<&[TaskControl]>,
+    ) {
+        let Some(controls) = controls else {
+            return;
+        };
+        for control in controls
+            .iter()
+            .filter(|control| !control.is_writable_local())
+        {
+            crate::logging::warn(&format!(
+                "任务进入 {:?} 控制状态，本地数据保留并停止写回：{}",
+                control.control_state(),
+                control.relative_dir
+            ));
+            let Some(lease) = self
+                .stored_task_lease(&control.execution_task_key)
+                .await
+            else {
+                continue;
+            };
+            match self
+                .release_remote_task(&control.execution_task_key, &lease.token)
+                .await
+            {
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.server_code.as_deref(),
+                        Some("TASK_LEASE_INVALID")
+                            | Some("TASK_LEASE_REQUIRED")
+                            | Some("NOT_FOUND")
+                    ) => {}
+                Err(error) => {
+                    crate::logging::warn(&format!(
+                        "释放失效任务租约失败 {}：{}",
+                        control.task_id,
+                        protocol::safe_error_message(&error.message)
+                    ));
+                }
+            }
+            if let Err(error) = self
+                .remove_task_lease(&control.execution_task_key)
+                .await
+            {
+                crate::logging::warn(&format!(
+                    "删除本地失效任务租约失败 {}：{}",
+                    control.task_id,
+                    protocol::safe_error_message(&error.message)
+                ));
+            }
+        }
+    }
+
+    async fn persisted_control_key_for_upload(
+        &self,
+        binding: &AgentBinding,
+        files: &[Value],
+    ) -> AgentResult<Option<String>> {
+        let task_dirs: BTreeSet<String> = files
+            .iter()
+            .filter_map(|file| {
+                file.get("path")
+                    .and_then(Value::as_str)
+                    .and_then(active_task_directory_from_relative)
+            })
+            .collect();
+        if task_dirs.is_empty() {
+            return Ok(None);
+        }
+        self.ensure_task_control_loaded().await;
+        let state = self.task_control_state.lock().await;
+        let execution_task_keys: BTreeSet<String> = task_dirs
+            .iter()
+            .filter_map(|task_dir| {
+                state
+                    .execution_task_key_for_dir(
+                        &binding.local_id,
+                        &binding.task_space_id,
+                        task_dir,
+                    )
+                    .cloned()
+            })
+            .collect();
+        if execution_task_keys.len() > 1 {
+            return protocol::err(
+                code::INVALID_RESPONSE,
+                "单个上传批次匹配到多个持久化任务控制",
+            );
+        }
+        Ok(execution_task_keys.into_iter().next())
     }
 
     async fn persist_ownership_index(&self) -> AgentResult<()> {
@@ -4191,6 +5829,19 @@ impl TaskSync {
         binding: &AgentBinding,
         task_dir: &str,
     ) -> AgentResult<Option<String>> {
+        let backup_id = uuid::Uuid::new_v4().to_string();
+        Ok(self
+            .backup_directory_with_id(binding, task_dir, &backup_id)
+            .await?
+            .then_some(backup_id))
+    }
+
+    async fn backup_directory_with_id(
+        &self,
+        binding: &AgentBinding,
+        task_dir: &str,
+        backup_id: &str,
+    ) -> AgentResult<bool> {
         if is_archive_task_dir(task_dir) {
             return protocol::err(
                 code::INVALID_RESPONSE,
@@ -4199,22 +5850,21 @@ impl TaskSync {
         }
         let source = resolve_task_directory(binding, task_dir).await?;
         if !source.exists() {
-            return Ok(None);
+            return Ok(false);
         }
-        let backup_id = uuid::Uuid::new_v4().to_string();
         let target = self
             .store
             .paths
             .live_backups_dir
             .join(&binding.task_space_id)
-            .join(&backup_id);
+            .join(backup_id);
         if let Some(parent) = target.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|error| {
                 AgentError::new(code::INVALID_RESPONSE, format!("无法创建备份目录: {error}"))
             })?;
         }
         copy_directory(&source, &target).await?;
-        Ok(Some(backup_id))
+        Ok(true)
     }
 
     async fn suppressed_event(&self, binding: &AgentBinding, relative_path: &str) -> bool {
@@ -4329,6 +5979,7 @@ impl TaskSync {
                 event_revision,
                 has_pending_upload,
             ) {
+                self.retry_pending_handoff_acks(&binding).await?;
                 return Ok(json!({
                     "skipped": true,
                     "reason": "REVISION_CURRENT",
@@ -4401,8 +6052,16 @@ impl TaskSync {
                 "afterRevision": after_revision,
             }),
         );
+        let snapshot_controls = parse_snapshot_controls(&snapshot)?;
         if initial_sync {
-            return self.pull_initial_sync(binding, &snapshot).await;
+            return self
+                .pull_initial_sync(binding, &snapshot, snapshot_controls.as_deref())
+                .await;
+        }
+        if let Some(controls) = &snapshot_controls {
+            self.merge_task_controls(binding, controls).await?;
+            self.release_inactive_task_leases(Some(controls)).await;
+            self.process_handoff_controls(binding, controls).await?;
         }
 
         let snapshot_files = parse_snapshot_files(&snapshot)?;
@@ -4418,6 +6077,12 @@ impl TaskSync {
             .collect();
         let mut server_groups = groups_from_structs(&server_files)?;
         retain_server_groups_for_binding(binding, &mut server_groups);
+        self.prepare_controlled_server_groups(
+            binding,
+            snapshot_controls.as_deref(),
+            &mut server_groups,
+        )
+        .await?;
         let snapshot_baselines = if after_revision == 0 {
             baselines_from_snapshot(&snapshot_files)
         } else {
@@ -4433,6 +6098,15 @@ impl TaskSync {
         let (dirty_dirs, deferred, exact_reconciled) = self
             .local_sync_state(binding, &cursor, &snapshot_baselines)
             .await?;
+        let inactive_dirs = inactive_control_dirs(snapshot_controls.as_deref());
+        let dirty_dirs: Vec<String> = dirty_dirs
+            .into_iter()
+            .filter(|task_dir| !inactive_dirs.contains(task_dir))
+            .collect();
+        let deferred: BTreeMap<String, BTreeMap<String, String>> = deferred
+            .into_iter()
+            .filter(|(task_dir, _)| !inactive_dirs.contains(task_dir))
+            .collect();
         sync_trace(
             &task_space_id,
             "pull-local",
@@ -4481,7 +6155,10 @@ impl TaskSync {
 
         if after_revision == 0 {
             let local_groups = self.local_groups(binding, None).await?;
-            let differences = classify_task_snapshots(&local_groups, &server_groups);
+            let differences = hide_control_tombstone_local_only(
+                classify_task_snapshots(&local_groups, &server_groups),
+                snapshot_controls.as_deref(),
+            );
             let conflict_kinds = [
                 DiffKind::ContentConflict,
                 DiffKind::MoveDeleteConflict,
@@ -4522,6 +6199,7 @@ impl TaskSync {
                 .filter(|item| item.kind == DiffKind::LocalOnly)
                 .filter_map(|item| item.local.as_ref().map(|group| group.task_dir.clone()))
                 .filter(|task_dir| !deferred.contains_key(task_dir))
+                .filter(|task_dir| !inactive_dirs.contains(task_dir))
                 .collect();
             if !local_only.is_empty() {
                 let uploaded = self
@@ -4579,6 +6257,12 @@ impl TaskSync {
                 });
             }
             retain_server_groups_for_binding(binding, &mut by_dir);
+            self.prepare_controlled_server_groups(
+                binding,
+                snapshot_controls.as_deref(),
+                &mut by_dir,
+            )
+            .await?;
             let protected: HashSet<String> = cursor
                 .deferred
                 .keys()
@@ -4642,8 +6326,14 @@ impl TaskSync {
         &self,
         binding: &AgentBinding,
         snapshot: &Value,
+        controls: Option<&[TaskControl]>,
     ) -> AgentResult<Value> {
         let task_space_id = binding.task_space_id.clone();
+        if let Some(controls) = controls {
+            self.merge_task_controls(binding, controls).await?;
+            self.release_inactive_task_leases(Some(controls)).await;
+            self.process_handoff_controls(binding, controls).await?;
+        }
         let local_groups = self.local_groups(binding, None).await?;
         let snapshot_files = parse_snapshot_files(snapshot)?;
         let server_files: Vec<SnapshotFile> = snapshot_files
@@ -4653,8 +6343,13 @@ impl TaskSync {
             .collect();
         let mut server_groups = groups_from_structs(&server_files)?;
         retain_server_groups_for_initial_sync(binding, &local_groups, &mut server_groups);
+        self.prepare_controlled_server_groups(binding, controls, &mut server_groups)
+            .await?;
         let server_baselines = baselines_from_snapshot(&snapshot_files);
-        let differences = classify_task_snapshots(&local_groups, &server_groups);
+        let differences = hide_control_tombstone_local_only(
+            classify_task_snapshots(&local_groups, &server_groups),
+            controls,
+        );
         let actionable: Vec<&Difference> = differences
             .iter()
             .filter(|item| item.kind != DiffKind::Same)
@@ -4696,10 +6391,12 @@ impl TaskSync {
                     "pendingReview": true,
                 }));
             }
+            let inactive_dirs = inactive_control_dirs(controls);
             let local_only: Vec<String> = differences
                 .iter()
                 .filter(|item| item.kind == DiffKind::LocalOnly)
                 .filter_map(|item| item.local.as_ref().map(|group| group.task_dir.clone()))
+                .filter(|task_dir| !inactive_dirs.contains(task_dir))
                 .collect();
             if !local_only.is_empty() {
                 let uploaded = self
@@ -4750,6 +6447,12 @@ impl TaskSync {
 
         if mode == "bootstrap" {
             let verified = self.fetch_snapshot(&task_space_id, 0).await?;
+            let verified_controls = parse_snapshot_controls(&verified)?;
+            if let Some(controls) = &verified_controls {
+                self.merge_task_controls(binding, controls).await?;
+                self.release_inactive_task_leases(Some(controls)).await;
+                self.process_handoff_controls(binding, controls).await?;
+            }
             let verified_local = self.local_groups(binding, None).await?;
             let verified_files = parse_snapshot_files(&verified)?;
             let verified_server_files: Vec<SnapshotFile> = verified_files
@@ -4757,8 +6460,17 @@ impl TaskSync {
                 .filter(|file| !file.deleted)
                 .cloned()
                 .collect();
-            let verified_server = groups_from_structs(&verified_server_files)?;
-            let verified_differences = classify_task_snapshots(&verified_local, &verified_server);
+            let mut verified_server = groups_from_structs(&verified_server_files)?;
+            self.prepare_controlled_server_groups(
+                binding,
+                verified_controls.as_deref(),
+                &mut verified_server,
+            )
+            .await?;
+            let verified_differences = hide_control_tombstone_local_only(
+                classify_task_snapshots(&verified_local, &verified_server),
+                verified_controls.as_deref(),
+            );
             let unresolved = verified_differences
                 .iter()
                 .filter(|item| item.kind != DiffKind::Same)
@@ -4984,6 +6696,27 @@ impl TaskSync {
             ));
         }
         Ok(result)
+    }
+
+    pub(crate) async fn claim_execution_task(
+        &self,
+        task_space_id: &str,
+        execution_task_key: &str,
+    ) -> AgentResult<Value> {
+        if !execution_task_key.starts_with(&format!("{task_space_id}::")) {
+            return protocol::err(code::COMMAND_INVALID, "任务执行身份与当前任务空间不一致");
+        }
+        let binding = self.binding(task_space_id).await?;
+        let (control, _) = self
+            .claim_remote_task(&binding, execution_task_key)
+            .await?;
+        Ok(json!({
+            "executionTaskKey": control.execution_task_key,
+            "taskId": control.task_id,
+            "taskVersion": control.task_version,
+            "state": control.state,
+            "handoffState": control.handoff_state,
+        }))
     }
 
     pub async fn sync_task_directories(
@@ -5320,15 +7053,31 @@ impl TaskSync {
             }
         }
 
+        self.ensure_task_control_loaded().await;
+        let inactive_control_dirs: HashSet<String> = {
+            let state = self.task_control_state.lock().await;
+            state
+                .controls_for_binding(&binding.local_id, &binding.task_space_id)
+                .filter(|(_, control)| !control.control_state().is_writable_local())
+                .map(|(_, control)| control.relative_dir.clone())
+                .collect()
+        };
         let requested: HashSet<String> = task_dirs
             .iter()
             .filter(|task_dir| !is_archive_task_dir(task_dir))
+            .filter(|task_dir| !inactive_control_dirs.contains(*task_dir))
             .cloned()
             .collect();
         if requested.is_empty() {
             return Ok(json!({
                 "skipped": true,
-                "reason": "ARCHIVE_SYNC_SERVER_MANAGED",
+                "reason": if task_dirs.iter().all(|task_dir| {
+                    is_archive_task_dir(task_dir) || inactive_control_dirs.contains(task_dir)
+                }) {
+                    "TASK_CONTROL_INACTIVE"
+                } else {
+                    "ARCHIVE_SYNC_SERVER_MANAGED"
+                },
             }));
         }
         let local_started = Instant::now();
@@ -5576,6 +7325,132 @@ impl TaskSync {
         batch: PendingBatch,
     ) -> AgentResult<Value> {
         let task_space_id = binding.task_space_id.clone();
+        let mut execution_task_keys =
+            execution_task_keys_from_upload(&task_space_id, &batch.files)?;
+        if execution_task_keys.is_empty() {
+            if let Some(execution_task_key) = self
+                .persisted_control_key_for_upload(binding, &batch.files)
+                .await?
+            {
+                execution_task_keys.insert(execution_task_key);
+            }
+        }
+        if execution_task_keys.len() > 1 {
+            return protocol::err(
+                code::INVALID_RESPONSE,
+                "单个上传批次不能包含多个执行任务身份",
+            );
+        }
+        let upload_execution_task_key = execution_task_keys.iter().next().cloned();
+        let mut fence = None;
+        if let Some(execution_task_key) = upload_execution_task_key.as_ref() {
+            if let Some(control) = self
+                .remote_task_control(binding, execution_task_key)
+                .await?
+            {
+                if !control.is_writable_local() {
+                    self.write_cursor(
+                        &task_space_id,
+                        CursorPatch {
+                            pending: Some(None),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                    return Ok(json!({
+                        "skipped": true,
+                        "reason": "TASK_CONTROL_INACTIVE",
+                        "controlState": control.state,
+                    }));
+                }
+                let fenced = if let Some(stored_lease) = self
+                    .stored_task_lease(execution_task_key)
+                    .await
+                {
+                    match self
+                        .heartbeat_remote_task(
+                            binding,
+                            execution_task_key,
+                            &stored_lease.token,
+                        )
+                        .await
+                    {
+                        Ok(value) => Ok(value),
+                        Err(error)
+                            if matches!(
+                                error.server_code.as_deref(),
+                                Some("TASK_LEASE_INVALID")
+                                    | Some("TASK_LEASE_REQUIRED")
+                            ) =>
+                        {
+                            self.claim_remote_task(binding, execution_task_key)
+                                .await
+                        }
+                        Err(error) => Err(error),
+                    }
+                } else {
+                    self.claim_remote_task(binding, execution_task_key)
+                        .await
+                };
+                match fenced {
+                    Ok((claimed, lease_token)) => {
+                        fence = Some(UploadFence {
+                            task_version: claimed.task_version,
+                            lease_token,
+                        });
+                    }
+                    Err(error)
+                        if matches!(
+                            error.server_code.as_deref(),
+                            Some("TASK_ARCHIVED")
+                                | Some("TASK_WRITE_FORBIDDEN")
+                                | Some("FORBIDDEN")
+                        ) =>
+                    {
+                        self.write_cursor(
+                            &task_space_id,
+                            CursorPatch {
+                                pending: Some(None),
+                                ..Default::default()
+                            },
+                        )
+                        .await?;
+                        return Ok(json!({
+                            "skipped": true,
+                            "reason": error.server_code,
+                            "message": error.message,
+                        }));
+                    }
+                    Err(error)
+                        if matches!(
+                            error.server_code.as_deref(),
+                            Some("TASK_LEASE_HELD") | Some("TASK_LEASE_INVALID")
+                        ) =>
+                    {
+                        return Ok(json!({
+                            "skipped": true,
+                            "reason": error.server_code,
+                            "message": error.message,
+                        }));
+                    }
+                    Err(error) => return Err(error),
+                }
+            } else if self.has_persisted_task_control(execution_task_key).await {
+                self.write_cursor(
+                    &task_space_id,
+                    CursorPatch {
+                        pending: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+                return Ok(json!({
+                    "skipped": true,
+                    "reason": "TASK_CONTROL_MISSING",
+                    "message": "服务端已没有该任务控制记录，本地任务保留并停止自动上传",
+                }));
+            }
+        }
         let task_dirs: HashSet<String> = batch
             .files
             .iter()
@@ -5664,15 +7539,8 @@ impl TaskSync {
         let result = loop {
             // 每次尝试都重新校验分支，并把实际分支名带给服务端。
             let observed = self.assert_binding_branch(binding).await?;
-            let mut request = json!({
-                "batchId": batch.batch_id,
-                "clientSequence": active_sequence,
-                "files": batch.files,
-                "observedBranchName": observed,
-            });
-            if let Some(evidence) = &batch.merge_evidence {
-                request["mergeEvidence"] = evidence.clone();
-            }
+            let request =
+                build_upload_request(&batch, active_sequence, &observed, fence.as_ref());
             match self
                 .upload_with_slot(&task_space_id, retry_delay, &request)
                 .await
@@ -5741,6 +7609,28 @@ impl TaskSync {
             }
         };
 
+        let mut persisted_execution_task_key = upload_execution_task_key.clone();
+        if let Some(task) = result
+            .get("control")
+            .and_then(|control| control.get("task"))
+            .filter(|task| !task.is_null())
+        {
+            let control = TaskControl::from_task_value(task)?;
+            persisted_execution_task_key = Some(response_control_execution_task_key(
+                upload_execution_task_key.as_deref(),
+                &control,
+            )?);
+            self.upsert_task_control(binding, &control).await?;
+        }
+        if let Some(execution_task_key) = persisted_execution_task_key.as_deref() {
+            if let Some(lease) = result.get("lease").filter(|lease| !lease.is_null()) {
+                self.save_task_lease(execution_task_key, lease.clone()).await?;
+            }
+            if let Some(task_version) = result.get("taskVersion").and_then(Value::as_u64) {
+                self.update_control_task_version(execution_task_key, task_version)
+                    .await?;
+            }
+        }
         let cursor = self.read_cursor(&task_space_id).await;
         if result.get("reason").and_then(Value::as_str) == Some("TASK_OWNED_BY_BASELINE") {
             self.write_cursor(
@@ -5871,6 +7761,12 @@ impl TaskSync {
         let binding = self.binding(task_space_id).await?;
         self.assert_binding_branch(&binding).await?;
         let snapshot = self.fetch_snapshot(task_space_id, 0).await?;
+        let controls = parse_snapshot_controls(&snapshot)?;
+        if let Some(controls) = &controls {
+            self.merge_task_controls(&binding, controls).await?;
+            self.release_inactive_task_leases(Some(controls)).await;
+            self.process_handoff_controls(&binding, controls).await?;
+        }
         let local_groups = self.local_groups(&binding, None).await?;
         let snapshot_files = parse_snapshot_files(&snapshot)?;
         let server_files: Vec<SnapshotFile> = snapshot_files
@@ -5880,8 +7776,13 @@ impl TaskSync {
             .collect();
         let mut server_groups = groups_from_structs(&server_files)?;
         retain_server_groups_for_initial_sync(&binding, &local_groups, &mut server_groups);
+        self.prepare_controlled_server_groups(&binding, controls.as_deref(), &mut server_groups)
+            .await?;
         let snapshot_baselines = baselines_from_snapshot(&snapshot_files);
-        let differences = classify_task_snapshots(&local_groups, &server_groups);
+        let differences = hide_control_tombstone_local_only(
+            classify_task_snapshots(&local_groups, &server_groups),
+            controls.as_deref(),
+        );
 
         if mode == "safe" {
             let server_only: Vec<SnapshotGroup> = differences
@@ -6717,6 +8618,39 @@ fn retain_server_groups_for_initial_sync(
     });
 }
 
+fn hide_control_tombstone_local_only(
+    differences: Vec<Difference>,
+    controls: Option<&[TaskControl]>,
+) -> Vec<Difference> {
+    let Some(controls) = controls else {
+        return differences;
+    };
+    let blocked: HashSet<&str> = controls
+        .iter()
+        .filter(|control| !control.is_writable_local())
+        .map(|control| control.relative_dir.as_str())
+        .collect();
+    differences
+        .into_iter()
+        .filter(|difference| {
+            !(difference.kind == DiffKind::LocalOnly
+                && difference
+                    .local
+                    .as_ref()
+                    .is_some_and(|group| blocked.contains(group.task_dir.as_str())))
+        })
+        .collect()
+}
+
+fn inactive_control_dirs(controls: Option<&[TaskControl]>) -> HashSet<String> {
+    controls
+        .unwrap_or_default()
+        .iter()
+        .filter(|control| !control.is_writable_local())
+        .map(|control| control.relative_dir.clone())
+        .collect()
+}
+
 fn snapshot_revision(snapshot: &Value) -> u64 {
     snapshot
         .get("revision")
@@ -6742,6 +8676,85 @@ fn parse_snapshot_files(snapshot: &Value) -> AgentResult<Vec<SnapshotFile>> {
         .cloned()
         .unwrap_or_default();
     parse_snapshot_files_from_values(&values)
+}
+
+fn parse_snapshot_controls(snapshot: &Value) -> AgentResult<Option<Vec<TaskControl>>> {
+    let Some(values) = snapshot.get("controls") else {
+        return Ok(None);
+    };
+    let values = values.as_array().ok_or_else(|| {
+        AgentError::new(code::INVALID_RESPONSE, "快照 controls 必须是数组")
+    })?;
+    values
+        .iter()
+        .map(TaskControl::from_control_value)
+        .collect::<AgentResult<Vec<_>>>()
+        .map(Some)
+}
+
+fn execution_task_keys_from_upload(
+    task_space_id: &str,
+    files: &[Value],
+) -> AgentResult<BTreeSet<String>> {
+    let mut task_ids = BTreeSet::new();
+    for file in files {
+        let Some(path) = file.get("path").and_then(Value::as_str) else {
+            continue;
+        };
+        if file.get("deleted").and_then(Value::as_bool) == Some(true)
+            || !path.ends_with("/task.json")
+        {
+            continue;
+        }
+        let Some(content) = file.get("content").and_then(Value::as_str) else {
+            continue;
+        };
+        let document: Value = serde_json::from_str(content).map_err(|_| {
+            AgentError::new(code::INVALID_RESPONSE, "task.json 不是合法 JSON")
+        })?;
+        let task_id = document
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "task.json 缺少 id"))?;
+        task_ids.insert(format!("{task_space_id}::{task_id}"));
+    }
+    Ok(task_ids)
+}
+
+fn response_control_execution_task_key(
+    requested: Option<&str>,
+    control: &TaskControl,
+) -> AgentResult<String> {
+    if let Some(requested) = requested {
+        if requested != control.execution_task_key {
+            return protocol::err(code::INVALID_RESPONSE, "任务上传响应的执行身份不一致");
+        }
+        return Ok(requested.to_string());
+    }
+    Ok(control.execution_task_key.clone())
+}
+
+fn build_upload_request(
+    batch: &PendingBatch,
+    client_sequence: u64,
+    observed_branch_name: &str,
+    fence: Option<&UploadFence>,
+) -> Value {
+    let mut request = json!({
+        "batchId": batch.batch_id,
+        "clientSequence": client_sequence,
+        "files": batch.files,
+        "observedBranchName": observed_branch_name,
+    });
+    if let Some(evidence) = &batch.merge_evidence {
+        request["mergeEvidence"] = evidence.clone();
+    }
+    if let Some(fence) = fence {
+        fence.apply(&mut request);
+    }
+    request
 }
 
 fn parse_snapshot_files_from_values(values: &[Value]) -> AgentResult<Vec<SnapshotFile>> {
@@ -7305,31 +9318,198 @@ fn io_error(error: std::io::Error) -> AgentError {
 }
 
 async fn copy_directory(source: &Path, target: &Path) -> AgentResult<()> {
-    tokio::fs::create_dir_all(target).await.map_err(io_error)?;
+    let source_metadata = tokio::fs::symlink_metadata(source).await.map_err(io_error)?;
+    if !source_metadata.is_dir() || source_metadata.file_type().is_symlink() {
+        return protocol::err(code::INVALID_RESPONSE, "备份源必须是真实目录");
+    }
+    if let Some(parent) = target.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(io_error)?;
+    }
+    match tokio::fs::create_dir(target).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return protocol::err(code::INVALID_RESPONSE, "备份目标已存在，拒绝覆盖")
+        }
+        Err(error) => return Err(io_error(error)),
+    }
+    let copy_result: AgentResult<()> = async {
+        let mut stack = vec![source.to_path_buf()];
+        while let Some(directory) = stack.pop() {
+            let mut entries = tokio::fs::read_dir(&directory).await.map_err(io_error)?;
+            while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
+                let path = entry.path();
+                if !protocol::is_path_inside(source, &path) {
+                    return protocol::err(code::INVALID_RESPONSE, "备份源文件路径越界");
+                }
+                let relative = path
+                    .strip_prefix(source)
+                    .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "备份源文件路径越界"))?
+                    .to_path_buf();
+                let destination = target.join(&relative);
+                if !protocol::is_path_inside(target, &destination) {
+                    return protocol::err(code::INVALID_RESPONSE, "备份目标文件路径越界");
+                }
+                let metadata = tokio::fs::symlink_metadata(&path).await.map_err(io_error)?;
+                if metadata.file_type().is_symlink() {
+                    return protocol::err(code::INVALID_RESPONSE, "备份源不允许符号链接");
+                }
+                if metadata.is_dir() {
+                    tokio::fs::create_dir(&destination).await.map_err(io_error)?;
+                    stack.push(path);
+                } else if metadata.is_file() {
+                    if let Some(parent) = destination.parent() {
+                        tokio::fs::create_dir_all(parent).await.map_err(io_error)?;
+                    }
+                    tokio::fs::copy(&path, &destination)
+                        .await
+                        .map_err(io_error)?;
+                } else {
+                    return protocol::err(code::INVALID_RESPONSE, "备份源包含不支持的文件类型");
+                }
+            }
+        }
+        Ok(())
+    }
+    .await;
+    if copy_result.is_err() {
+        if let Err(error) = tokio::fs::remove_dir_all(target).await {
+            crate::logging::warn(&format!(
+                "handoff 不完整备份清理失败：{}",
+                protocol::safe_error_message(&error.to_string())
+            ));
+        }
+    }
+    copy_result
+}
+
+async fn task_directory_file_paths(source: &Path) -> AgentResult<BTreeSet<String>> {
+    let metadata = tokio::fs::symlink_metadata(source).await.map_err(io_error)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return protocol::err(code::INVALID_RESPONSE, "任务目录必须是真实目录");
+    }
+    let mut paths = BTreeSet::new();
     let mut stack = vec![source.to_path_buf()];
     while let Some(directory) = stack.pop() {
         let mut entries = tokio::fs::read_dir(&directory).await.map_err(io_error)?;
         while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
             let path = entry.path();
-            let relative = path.strip_prefix(source).unwrap_or(&path).to_path_buf();
-            let destination = target.join(&relative);
-            let metadata = entry.metadata().await.map_err(io_error)?;
-            if metadata.is_dir() {
-                tokio::fs::create_dir_all(&destination)
-                    .await
-                    .map_err(io_error)?;
-                stack.push(path);
-            } else if metadata.is_file() {
-                if let Some(parent) = destination.parent() {
-                    tokio::fs::create_dir_all(parent).await.map_err(io_error)?;
-                }
-                tokio::fs::copy(&path, &destination)
-                    .await
-                    .map_err(io_error)?;
+            let metadata = tokio::fs::symlink_metadata(&path).await.map_err(io_error)?;
+            if metadata.file_type().is_symlink() {
+                return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接");
             }
+            if metadata.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !metadata.is_file() {
+                return protocol::err(code::INVALID_RESPONSE, "任务目录包含不支持的文件类型");
+            }
+            let relative = path
+                .strip_prefix(source)
+                .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件路径越界"))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            paths.insert(relative);
         }
     }
+    Ok(paths)
+}
+
+fn safe_handoff_relative_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains('\\')
+        && !path.contains('\0')
+        && !path.contains(':')
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+fn is_handoff_metadata_temp(name: &str) -> bool {
+    name.ends_with(".tmp")
+        && (name.starts_with(&format!(".{HANDOFF_MANIFEST_FILE}."))
+            || name.starts_with(&format!(".{HANDOFF_META_FILE}.")))
+}
+
+async fn cleanup_handoff_backup_temps(target: &Path) -> AgentResult<()> {
+    let mut entries = tokio::fs::read_dir(target).await.map_err(io_error)?;
+    while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
+        if !is_handoff_metadata_temp(&entry.file_name().to_string_lossy()) {
+            continue;
+        }
+        let metadata = tokio::fs::symlink_metadata(entry.path())
+            .await
+            .map_err(io_error)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return protocol::err(code::INVALID_RESPONSE, "handoff 元数据临时文件状态异常");
+        }
+        tokio::fs::remove_file(entry.path()).await.map_err(io_error)?;
+    }
     Ok(())
+}
+
+async fn handoff_manifest_files_match(
+    target: &Path,
+    manifest: &Value,
+    expected_count: u64,
+    expected_total_bytes: u64,
+) -> AgentResult<bool> {
+    let Some(entries) = manifest.get("files").and_then(Value::as_array) else {
+        return Ok(false);
+    };
+    if entries.len() as u64 != expected_count {
+        return Ok(false);
+    }
+    let mut expected = BTreeMap::new();
+    for entry in entries {
+        let Some(path) = entry.get("path").and_then(Value::as_str) else {
+            return Ok(false);
+        };
+        let Some(sha256) = entry.get("sha256").and_then(Value::as_str) else {
+            return Ok(false);
+        };
+        let Some(size) = entry.get("sizeBytes").and_then(Value::as_u64) else {
+            return Ok(false);
+        };
+        if !safe_handoff_relative_path(path) || !is_sha256(sha256) {
+            return Ok(false);
+        }
+        if expected.insert(path.to_string(), (sha256.to_string(), size)).is_some() {
+            return Ok(false);
+        }
+    }
+    let mut actual_paths = task_directory_file_paths(target).await?;
+    actual_paths.remove(HANDOFF_MANIFEST_FILE);
+    actual_paths.remove(HANDOFF_META_FILE);
+    let expected_paths: BTreeSet<String> = expected.keys().cloned().collect();
+    if actual_paths != expected_paths {
+        return Ok(false);
+    }
+    let mut actual_total_bytes = 0u64;
+    for (path, (expected_sha256, expected_size)) in expected {
+        let absolute = target.join(&path);
+        if !protocol::is_path_inside(target, &absolute) {
+            return Ok(false);
+        }
+        let bytes = match tokio::fs::read(&absolute).await {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(io_error(error)),
+        };
+        let Ok(content) = String::from_utf8(bytes) else {
+            return Ok(false);
+        };
+        let normalized = normalize_snapshot_text(&content);
+        let size = u64::try_from(normalized.as_bytes().len())
+            .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "备份文件大小超出范围"))?;
+        if size != expected_size || snapshot_sha256(&content) != expected_sha256 {
+            return Ok(false);
+        }
+        actual_total_bytes = actual_total_bytes
+            .checked_add(size)
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "备份文件大小溢出"))?;
+    }
+    Ok(actual_total_bytes == expected_total_bytes)
 }
 
 fn previous_values_paths(values: &[Value]) -> Vec<String> {
@@ -7663,6 +9843,83 @@ mod tests {
                     } else if method == "POST" && path.ends_with("/changes") {
                         changes.lock().await.push(body);
                         ("200 OK", json!({ "revision": 2 }))
+                    } else if method == "GET" && path.starts_with("/api/agent/tasks/") {
+                        let key = decode_mock_task_key(path.trim_start_matches("/api/agent/tasks/"));
+                        let control = snapshot_payload
+                            .get("controls")
+                            .and_then(Value::as_array)
+                            .and_then(|controls| {
+                                controls.iter().find(|control| {
+                                    control.get("executionTaskKey").and_then(Value::as_str)
+                                        == Some(key.as_str())
+                                })
+                            });
+                        match control {
+                            Some(control) => (
+                                "200 OK",
+                                json!({
+                                    "task": remote_task_from_control(control),
+                                    "contentAvailable": false,
+                                }),
+                            ),
+                            None => ("404 Not Found", json!({ "code": "NOT_FOUND" })),
+                        }
+                    } else if method == "POST" && path.ends_with("/claim") {
+                        let encoded = path
+                            .trim_start_matches("/api/agent/tasks/")
+                            .trim_end_matches("/claim");
+                        let key = decode_mock_task_key(encoded);
+                        let control = snapshot_payload
+                            .get("controls")
+                            .and_then(Value::as_array)
+                            .and_then(|controls| {
+                                controls.iter().find(|control| {
+                                    control.get("executionTaskKey").and_then(Value::as_str)
+                                        == Some(key.as_str())
+                                })
+                            });
+                        match control {
+                            Some(control) => (
+                                "200 OK",
+                                json!({
+                                    "task": remote_task_from_control(control),
+                                    "lease": {
+                                        "token": "lease-token",
+                                        "expiresAt": "2099-01-01T00:00:00.000Z"
+                                    }
+                                }),
+                            ),
+                            None => ("404 Not Found", json!({ "code": "NOT_FOUND" })),
+                        }
+                    } else if method == "POST" && path.ends_with("/heartbeat") {
+                        let encoded = path
+                            .trim_start_matches("/api/agent/tasks/")
+                            .trim_end_matches("/heartbeat");
+                        let key = decode_mock_task_key(encoded);
+                        let control = snapshot_payload
+                            .get("controls")
+                            .and_then(Value::as_array)
+                            .and_then(|controls| {
+                                controls.iter().find(|control| {
+                                    control.get("executionTaskKey").and_then(Value::as_str)
+                                        == Some(key.as_str())
+                                })
+                            });
+                        match control {
+                            Some(control) => (
+                                "200 OK",
+                                json!({
+                                    "task": remote_task_from_control(control),
+                                    "lease": {
+                                        "token": body.get("leaseToken").and_then(Value::as_str).unwrap_or("lease-token"),
+                                        "expiresAt": "2099-01-01T00:00:00.000Z"
+                                    }
+                                }),
+                            ),
+                            None => ("404 Not Found", json!({ "code": "NOT_FOUND" })),
+                        }
+                    } else if method == "POST" && path.ends_with("/release") {
+                        ("200 OK", json!({ "released": true, "idempotent": false }))
                     } else {
                         ("404 Not Found", json!({ "error": "unexpected request" }))
                     };
@@ -7677,6 +9934,213 @@ mod tests {
             }
         });
         (format!("http://{address}"), changes, requests, task)
+    }
+
+    fn decode_mock_task_key(value: &str) -> String {
+        let mut bytes = Vec::with_capacity(value.len());
+        let raw = value.as_bytes();
+        let mut index = 0;
+        while index < raw.len() {
+            if raw[index] == b'%' && index + 2 < raw.len() {
+                let hex = &value[index + 1..index + 3];
+                if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                    bytes.push(byte);
+                    index += 3;
+                    continue;
+                }
+            }
+            bytes.push(raw[index]);
+            index += 1;
+        }
+        String::from_utf8(bytes).unwrap_or_else(|_| value.to_string())
+    }
+
+    fn remote_task_from_control(control: &Value) -> Value {
+        let state = control
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("claimed");
+        let materialization_state = match state {
+            "pending_delivery" => "pending",
+            "materialized" | "handoff_materialized" | "reassigned" | "archived" => "materialized",
+            _ => "claimed",
+        };
+        let mut task = control.clone();
+        task["archived"] = Value::Bool(state == "archived");
+        task["materializationState"] = Value::String(materialization_state.to_string());
+        task
+    }
+
+    #[test]
+    fn upload_request_carries_persisted_fencing_fields() {
+        let batch = PendingBatch {
+            batch_id: "batch-1".to_string(),
+            client_sequence: 7,
+            files: vec![json!({ "path": ".trellis/tasks/task-a/task.json" })],
+            merge_evidence: None,
+        };
+        let request = build_upload_request(
+            &batch,
+            8,
+            "main",
+            Some(&UploadFence {
+                task_version: 4,
+                lease_token: "lease-token".to_string(),
+            }),
+        );
+        assert_eq!(request["taskVersion"], 4);
+        assert_eq!(request["leaseToken"], "lease-token");
+        assert_eq!(request["files"][0]["path"], ".trellis/tasks/task-a/task.json");
+        assert_eq!(request["observedBranchName"], "main");
+    }
+
+    #[test]
+    fn first_upload_response_control_supplies_persisted_execution_key() {
+        let control = TaskControl::from_control_value(&json!({
+            "executionTaskKey": "space-1::task-a",
+            "taskId": "task-a",
+            "relativeDir": ".trellis/tasks/task-a",
+            "title": "任务 A",
+            "state": "materialized",
+            "taskVersion": 1
+        }))
+        .expect("control");
+        assert_eq!(
+            response_control_execution_task_key(None, &control)
+                .expect("response key")
+                .as_str(),
+            "space-1::task-a"
+        );
+        assert!(response_control_execution_task_key(Some("space-1::other"), &control).is_err());
+    }
+
+    #[test]
+    fn snapshot_controls_distinguish_legacy_and_authoritative_empty() {
+        assert!(parse_snapshot_controls(&json!({ "files": [] }))
+            .expect("legacy snapshot")
+            .is_none());
+        assert_eq!(
+            parse_snapshot_controls(&json!({ "files": [], "controls": [] }))
+                .expect("authoritative snapshot")
+                .expect("controls")
+                .len(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn deletion_only_upload_recovers_persisted_control_identity() {
+        let (root, store, sync, binding) =
+            test_task_sync_fixture("trellis-control-delete").await;
+        let mut state = TaskControlStateFile::empty();
+        state
+            .upsert_control(
+                &binding.local_id,
+                &TaskControl {
+                    execution_task_key: "space-1::task-a".to_string(),
+                    task_id: "task-a".to_string(),
+                    relative_dir: ".trellis/tasks/task-a".to_string(),
+                    title: "任务 A".to_string(),
+                    state: "materialized".to_string(),
+                    task_version: 3,
+                    assignee_user_id: Some("user-b".to_string()),
+                    handoff_state: "none".to_string(),
+                    materialized_revision: None,
+                    materialized_at: None,
+                    lease_held_by_other_user: false,
+                    updated_at: "2026-11-17T00:00:00.000Z".to_string(),
+                },
+            )
+            .expect("persist control");
+        store
+            .write_json(&store.paths.task_control_file, &state)
+            .await
+            .expect("write control state");
+
+        let files = vec![
+            json!({
+                "path": ".trellis/tasks/task-a/task.json",
+                "deleted": true,
+            }),
+            json!({
+                "path": ".trellis/tasks/task-a/prd.md",
+                "deleted": true,
+            }),
+        ];
+        assert_eq!(
+            sync.persisted_control_key_for_upload(&binding, &files)
+                .await
+                .expect("recover control key"),
+            Some("space-1::task-a".to_string())
+        );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn claim_persists_lease_for_restart_recovery() {
+        let (root, store, _sync, binding) =
+            test_task_sync_fixture("trellis-control-lease").await;
+        let controls = json!([{
+            "executionTaskKey": "space-1::task-a",
+            "taskId": "task-a",
+            "relativeDir": ".trellis/tasks/task-a",
+            "title": "任务 A",
+            "state": "materialized",
+            "taskVersion": 3,
+            "assigneeUserId": "user-b",
+            "handoffState": "none",
+            "updatedAt": "2026-11-17T00:00:00.000Z"
+        }]);
+        let (server_url, _changes, _requests, server_task) = mock_api_server(json!({
+            "revision": 1,
+            "files": [],
+            "controls": controls,
+        }))
+        .await;
+        let api =
+            Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+        let sink: ControlSink = Arc::new(|_| {});
+        let sync = TaskSync::new(store.clone(), api.clone(), sink);
+        sync.set_bindings(vec![binding.clone()]).await;
+        let (control, token) = sync
+            .claim_remote_task(&binding, "space-1::task-a")
+            .await
+            .expect("claim");
+        assert_eq!(control.task_version, 3);
+        assert_eq!(token, "lease-token");
+        let (heartbeat_control, heartbeat_token) = sync
+            .heartbeat_remote_task(&binding, "space-1::task-a", &token)
+            .await
+            .expect("heartbeat");
+        assert_eq!(heartbeat_control.task_version, 3);
+        assert_eq!(heartbeat_token, "lease-token");
+        drop(sync);
+
+        let restarted_sink: ControlSink = Arc::new(|_| {});
+        let restarted = TaskSync::new(store.clone(), api, restarted_sink);
+        let restored = restarted
+            .stored_task_lease("space-1::task-a")
+            .await
+            .expect("restored lease");
+        assert_eq!(restored.token, "lease-token");
+        assert_eq!(restored.expires_at, "2099-01-01T00:00:00.000Z");
+        let released = restarted
+            .release_remote_task("space-1::task-a", &restored.token)
+            .await
+            .expect("release");
+        assert_eq!(released["released"], true);
+        restarted
+            .remove_task_lease("space-1::task-a")
+            .await
+            .expect("remove lease");
+        assert!(restarted
+            .stored_task_lease("space-1::task-a")
+            .await
+            .is_none());
+
+        server_task.abort();
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 
     async fn test_task_sync_fixture(
@@ -10531,6 +12995,269 @@ mod tests {
             deleted.base_sha256.as_deref(),
             Some(snapshot_sha256("old").as_str())
         );
+    }
+
+    #[test]
+    fn handoff_manifest_is_stable_and_ack_contains_only_cleanup_metadata() {
+        let task_dir = ".trellis/tasks/a";
+        let files = vec![
+            json!({
+                "path": ".trellis/tasks/a/task.json",
+                "content": "{\"id\":\"a\"}\n",
+                "sha256": snapshot_sha256("{\"id\":\"a\"}\n"),
+            }),
+            json!({
+                "path": ".trellis/tasks/a/prd.md",
+                "content": "# a\n",
+                "sha256": snapshot_sha256("# a\n"),
+            }),
+        ];
+        let (manifest_sha256, file_count, total_bytes, manifest) =
+            handoff_manifest(&files, task_dir).expect("manifest");
+        assert_eq!(file_count, 2);
+        assert_eq!(total_bytes, 15);
+        assert!(is_sha256(&manifest_sha256));
+        assert_eq!(manifest["files"][0]["path"], "prd.md");
+
+        let handoff = StoredTaskHandoff {
+            local_id: "local-1".to_string(),
+            task_space_id: "space-1".to_string(),
+            execution_task_key: "space-1::a".to_string(),
+            task_id: "a".to_string(),
+            relative_dir: task_dir.to_string(),
+            server_handoff_state: "source_cleanup_pending".to_string(),
+            ack_state: "pending".to_string(),
+            outcome: "cleaned".to_string(),
+            reason: None,
+            backup_id: Some("handoff-0123456789abcdef".to_string()),
+            manifest_sha256: Some(manifest_sha256.clone()),
+            file_count,
+            total_bytes,
+            lease_held_by_other_user: false,
+            notified_state: String::new(),
+            updated_at: "2026-11-17T00:00:00.000Z".to_string(),
+        };
+        let request = handoff_ack_request(&handoff).expect("ack request");
+        assert_eq!(request["outcome"], "cleaned");
+        assert_eq!(request["backupId"], "handoff-0123456789abcdef");
+        assert_eq!(request["manifestSha256"], manifest_sha256);
+        assert!(request.get("content").is_none());
+        assert!(request.get("path").is_none());
+    }
+
+    #[test]
+    fn handoff_git_gate_accepts_only_fully_untracked_directories() {
+        use crate::agent::git::GitStatusEntry;
+
+        let untracked = vec![
+            GitStatusEntry {
+                status: "??".to_string(),
+                path: ".trellis/tasks/a/task.json".to_string(),
+                original_path: None,
+            },
+            GitStatusEntry {
+                status: "??".to_string(),
+                path: ".trellis/tasks/a/prd.md".to_string(),
+                original_path: None,
+            },
+        ];
+        assert!(git_entries_all_untracked(&untracked));
+        let mut tracked = untracked.clone();
+        tracked[0].status = "A ".to_string();
+        assert!(!git_entries_all_untracked(&tracked));
+        assert!(!git_entries_all_untracked(&[]));
+    }
+
+    #[tokio::test]
+    async fn handoff_source_fails_closed_on_baseline_or_git_uncertainty() {
+        let (root, _store, sync, binding) =
+            test_task_sync_fixture("trellis-handoff-source").await;
+        let task_dir = ".trellis/tasks/task-a";
+        let directory = Path::new(&binding.repo_path).join(task_dir);
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("task directory");
+        let task_json = "{\"id\":\"task-a\",\"branch\":\"main\"}\n";
+        let prd = "# task-a\n";
+        tokio::fs::write(directory.join("task.json"), task_json)
+            .await
+            .expect("task json");
+        tokio::fs::write(directory.join("prd.md"), prd)
+            .await
+            .expect("prd");
+        let handoff = StoredTaskHandoff {
+            local_id: binding.local_id.clone(),
+            task_space_id: binding.task_space_id.clone(),
+            execution_task_key: "space-1::task-a".to_string(),
+            task_id: "task-a".to_string(),
+            relative_dir: task_dir.to_string(),
+            server_handoff_state: "source_cleanup_pending".to_string(),
+            ack_state: "pending".to_string(),
+            outcome: String::new(),
+            reason: None,
+            backup_id: None,
+            manifest_sha256: None,
+            file_count: 0,
+            total_bytes: 0,
+            lease_held_by_other_user: false,
+            notified_state: String::new(),
+            updated_at: "2026-11-17T00:00:00.000Z".to_string(),
+        };
+        sync.write_cursor(
+            &binding.task_space_id,
+            CursorPatch {
+                baselines: Some(BTreeMap::from([(
+                    format!("{task_dir}/task.json"),
+                    snapshot_sha256(task_json),
+                )])),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("cursor");
+        assert!(matches!(
+            sync.handoff_source_state(&binding, &handoff)
+                .await
+                .expect("baseline state"),
+            HandoffSourceState::Conflict("baseline_mismatch")
+        ));
+
+        sync.write_cursor(
+            &binding.task_space_id,
+            CursorPatch {
+                baselines: Some(BTreeMap::from([
+                    (
+                        format!("{task_dir}/task.json"),
+                        snapshot_sha256(task_json),
+                    ),
+                    (format!("{task_dir}/prd.md"), snapshot_sha256(prd)),
+                ])),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("cursor");
+        assert!(matches!(
+            sync.handoff_source_state(&binding, &handoff)
+                .await
+                .expect("git gate state"),
+            HandoffSourceState::Conflict("git_modified")
+        ));
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn handoff_retry_requires_complete_and_verifiable_backup() {
+        let (root, store, sync, binding) =
+            test_task_sync_fixture("trellis-handoff-backup-check").await;
+        let task_dir = ".trellis/tasks/task-backup";
+        let source_dir = Path::new(&binding.repo_path).join(task_dir);
+        tokio::fs::create_dir_all(&source_dir)
+            .await
+            .expect("source directory");
+        let task_json = "{\"id\":\"task-backup\"}\n";
+        let prd = "# task-backup\n";
+        tokio::fs::write(source_dir.join("task.json"), task_json)
+            .await
+            .expect("task json");
+        tokio::fs::write(source_dir.join("prd.md"), prd)
+            .await
+            .expect("prd");
+        let files = vec![
+            json!({
+                "path": format!("{task_dir}/task.json"),
+                "content": task_json,
+                "sha256": snapshot_sha256(task_json),
+            }),
+            json!({
+                "path": format!("{task_dir}/prd.md"),
+                "content": prd,
+                "sha256": snapshot_sha256(prd),
+            }),
+        ];
+        let (manifest_sha256, file_count, total_bytes, manifest) =
+            handoff_manifest(&files, task_dir).expect("manifest");
+        let backup_id = format!("handoff-{}", &manifest_sha256[..16]);
+        let source = HandoffSource {
+            files,
+            backup_id: backup_id.clone(),
+            manifest_sha256: manifest_sha256.clone(),
+            manifest,
+            file_count,
+            total_bytes,
+        };
+        let handoff = StoredTaskHandoff {
+            local_id: binding.local_id.clone(),
+            task_space_id: binding.task_space_id.clone(),
+            execution_task_key: "space-1::task-backup".to_string(),
+            task_id: "task-backup".to_string(),
+            relative_dir: task_dir.to_string(),
+            server_handoff_state: "source_cleanup_pending".to_string(),
+            ack_state: "pending".to_string(),
+            outcome: "cleaned".to_string(),
+            reason: None,
+            backup_id: None,
+            manifest_sha256: None,
+            file_count: 0,
+            total_bytes: 0,
+            lease_held_by_other_user: false,
+            notified_state: String::new(),
+            updated_at: "2026-11-17T00:00:00.000Z".to_string(),
+        };
+        let control = TaskControl {
+            execution_task_key: handoff.execution_task_key.clone(),
+            task_id: handoff.task_id.clone(),
+            relative_dir: handoff.relative_dir.clone(),
+            title: "备份任务".to_string(),
+            state: "handoff_materialized".to_string(),
+            task_version: 2,
+            assignee_user_id: Some("user-b".to_string()),
+            handoff_state: "source_cleanup_pending".to_string(),
+            materialized_revision: Some(1),
+            materialized_at: None,
+            lease_held_by_other_user: false,
+            updated_at: String::new(),
+        };
+        assert!(sync
+            .ensure_handoff_backup(&binding, &handoff, &control, &source)
+            .await
+            .expect("create backup"));
+        let mut expected = handoff.clone();
+        expected.backup_id = Some(backup_id.clone());
+        expected.manifest_sha256 = Some(manifest_sha256);
+        expected.file_count = file_count;
+        expected.total_bytes = total_bytes;
+        assert!(sync
+            .handoff_backup_is_valid(&binding, &expected)
+            .await
+            .expect("valid backup"));
+
+        let mut missing = expected.clone();
+        missing.backup_id = Some("handoff-fedcba9876543210".to_string());
+        assert!(!sync
+            .handoff_backup_is_valid(&binding, &missing)
+            .await
+            .expect("missing backup"));
+        let mut invalid = expected.clone();
+        invalid.backup_id = Some("../escape".to_string());
+        assert!(!sync
+            .handoff_backup_is_valid(&binding, &invalid)
+            .await
+            .expect("invalid backup"));
+
+        let backup = store
+            .paths
+            .live_backups_dir
+            .join(&binding.task_space_id)
+            .join(&backup_id);
+        tokio::fs::write(backup.join("unexpected.tmp"), "x")
+            .await
+            .expect("unexpected backup file");
+        assert!(!sync
+            .handoff_backup_is_valid(&binding, &expected)
+            .await
+            .expect("unexpected file invalidates backup"));
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 
     #[tokio::test]

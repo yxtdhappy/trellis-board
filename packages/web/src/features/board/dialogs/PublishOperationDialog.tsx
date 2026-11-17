@@ -21,7 +21,7 @@ const OPERATION_LABELS: Record<string, string> = {
 }
 
 const EXPLANATIONS: Record<string, string> = {
-  pending: '操作等待目标用户唯一在线 Agent 接收。',
+  pending: '任务或改派记录已保存，等待目标用户在客户端上线后接管；Board 会先显示服务端控制状态。',
   delivered: '命令已投递给目标客户端，等待本地执行。',
   running: '目标客户端正在本地调用 task.py 或修改负责人。',
   succeeded: '任务文件已同步并由服务端索引成功。',
@@ -83,7 +83,7 @@ export function PublishOperationDialog({
           ) : null}
           {status === 'failed' && retryable ? (
             <p className="text-2xs text-muted-foreground">
-              操作已停止自动刷新；确认目标客户端可用后可手动重试。
+              操作已停止自动刷新；确认目标成员权限和任务状态后可手动重试。
             </p>
           ) : null}
         </DialogBody>

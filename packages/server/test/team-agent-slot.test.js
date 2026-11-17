@@ -158,10 +158,10 @@ test('新设备撤销旧设备时取消旧待执行命令和绑定', () => {
     ).run(first.agent.id, 'a'.repeat(64), now, now)
     db.prepare(
       `INSERT INTO sync_task_command(
-        id, task_space_id, project_id, agent_id, binding_id, command_type,
+        id, task_space_id, project_id, target_user_id, agent_id, binding_id, command_type,
         idempotency_key, request_hash, payload_json, status,
         attempts, created_by_user_id, created_at, updated_at
-      ) VALUES ('command-1', 'space-1', 'project-1', ?, 'binding-1', 'create_task',
+      ) VALUES ('command-1', 'space-1', 'project-1', 'user-1', ?, 'binding-1', 'create_task',
         'idem-1', 'hash', '{}', 'pending', 0, 'user-1', ?, ?)`,
     ).run(first.agent.id, now, now)
     db.prepare(

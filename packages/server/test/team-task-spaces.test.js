@@ -157,10 +157,10 @@ function addLifecycleArtifacts(db, taskSpace, agentId, bindingId = null) {
   `).run(agentId, taskSpace.id, now)
   db.prepare(`
     INSERT INTO sync_task_command(
-      id, task_space_id, project_id, agent_id, binding_id, command_type,
+      id, task_space_id, project_id, target_user_id, agent_id, binding_id, command_type,
       idempotency_key, request_hash, payload_json, status, attempts,
       created_by_user_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'create_task', ?, 'hash', '{}', 'running', 0,
+    ) VALUES (?, ?, ?, 'user-a', ?, ?, 'create_task', ?, 'hash', '{}', 'running', 0,
       'user-a', ?, ?)
   `).run(
     `command-${taskSpace.id}`,
@@ -667,15 +667,16 @@ test('Agent 主动解绑原子撤销 binding、取消命令、清理 cursor 并�
     }
     const insertCommand = db.prepare(`
       INSERT INTO sync_task_command(
-        id, task_space_id, project_id, agent_id, binding_id, command_type,
+        id, task_space_id, project_id, target_user_id, agent_id, binding_id, command_type,
         idempotency_key, request_hash, payload_json, status, attempts,
         created_by_user_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 'create_task', ?, 'hash', '{}', 'running', 0, 'user-a', ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, 'create_task', ?, 'hash', '{}', 'running', 0, 'user-a', ?, ?)
     `)
     insertCommand.run(
       'detach-command-a',
       first.taskSpace.id,
       first.project.id,
+      'user-a',
       first.binding.agentId,
       first.binding.id,
       'detach-a',
@@ -686,6 +687,7 @@ test('Agent 主动解绑原子撤销 binding、取消命令、清理 cursor 并�
       'detach-command-c',
       first.taskSpace.id,
       first.project.id,
+      extra.userId,
       second.binding.agentId,
       second.binding.id,
       'detach-c',

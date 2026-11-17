@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对服务端测试、迁移、权限和真实双客户端验收要求"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核对 Web 类型、构建、交互和状态文案验收"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "核对客户端事件、capability 和远程调用限制"}
+{"file": ".trellis/tasks/11-17-multi-client-task-sync-control-plane/research/current-sync-architecture.md", "reason": "复核变更是否真正消除活动任务全量落地和双索引漂移"}

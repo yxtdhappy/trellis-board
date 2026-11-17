@@ -11,7 +11,7 @@ import {
   stateFile,
 } from './config.js'
 
-export const DATABASE_SCHEMA_VERSION = 15
+export const DATABASE_SCHEMA_VERSION = 16
 
 const LEGACY_IMPORT_KEY = 'legacy_json_imported_v1'
 const EXECUTION_EVENTS_STARTED_KEY = 'execution_events_started_at'
@@ -1555,6 +1555,217 @@ function ensureV15Schema(db) {
   `)
 }
 
+const SCHEMA_V16_SQL = `
+  CREATE TABLE IF NOT EXISTS sync_task (
+    execution_task_key TEXT PRIMARY KEY,
+    task_key TEXT NOT NULL,
+    task_space_id TEXT NOT NULL REFERENCES sync_task_space(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES sync_project(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL,
+    relative_dir TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    priority TEXT NOT NULL,
+    created_by_user_id TEXT REFERENCES user_account(id) ON DELETE SET NULL,
+    assignee_user_id TEXT REFERENCES user_account(id) ON DELETE SET NULL,
+    assignee_dev_id TEXT,
+    stage TEXT NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+    materialization_state TEXT NOT NULL DEFAULT 'pending' CHECK (
+      materialization_state IN ('none', 'pending', 'claimed', 'materialized', 'failed')
+    ),
+    task_version INTEGER NOT NULL DEFAULT 1,
+    content_revision INTEGER,
+    lease_id TEXT,
+    previous_assignee_user_id TEXT REFERENCES user_account(id) ON DELETE SET NULL,
+    handoff_state TEXT NOT NULL DEFAULT 'none' CHECK (
+      handoff_state IN (
+        'none', 'handoff_pending', 'target_materializing',
+        'source_cleanup_pending', 'source_cleanup_conflict', 'completed'
+      )
+    ),
+    materialized_by_agent_id TEXT REFERENCES agent_device(id) ON DELETE SET NULL,
+    materialized_at TEXT,
+    materialized_revision INTEGER,
+    materialized_manifest_sha256 TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    archived_at TEXT,
+    UNIQUE(task_space_id, task_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS sync_task_project_assignee
+    ON sync_task(project_id, assignee_user_id, archived);
+  CREATE INDEX IF NOT EXISTS sync_task_space_assignee
+    ON sync_task(task_space_id, assignee_user_id, archived);
+  CREATE INDEX IF NOT EXISTS sync_task_creator
+    ON sync_task(created_by_user_id, archived);
+  CREATE INDEX IF NOT EXISTS sync_task_materialization
+    ON sync_task(task_space_id, materialization_state, archived);
+
+  CREATE TABLE IF NOT EXISTS sync_task_lease (
+    id TEXT PRIMARY KEY,
+    execution_task_key TEXT NOT NULL REFERENCES sync_task(execution_task_key) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agent_device(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES user_account(id) ON DELETE CASCADE,
+    lease_token TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'released', 'expired', 'revoked')),
+    expires_at TEXT NOT NULL,
+    last_heartbeat_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS sync_task_lease_one_active
+    ON sync_task_lease(execution_task_key)
+    WHERE status = 'active';
+  CREATE INDEX IF NOT EXISTS sync_task_lease_agent
+    ON sync_task_lease(agent_id, status, expires_at);
+  CREATE INDEX IF NOT EXISTS sync_task_lease_user
+    ON sync_task_lease(user_id, status, expires_at);
+  CREATE INDEX IF NOT EXISTS sync_task_lease_task
+    ON sync_task_lease(execution_task_key, created_at DESC);
+`
+
+function rebuildTaskCommandTableForV16(db) {
+  const columns = db.prepare('PRAGMA table_info(sync_task_command)').all()
+  const byName = new Map(columns.map((column) => [column.name, column]))
+  if (
+    byName.has('target_user_id') &&
+    Number(byName.get('agent_id')?.notnull || 0) === 0 &&
+    Number(byName.get('binding_id')?.notnull || 0) === 0
+  ) {
+    return
+  }
+
+  db.exec(`
+    DROP INDEX IF EXISTS sync_task_command_agent_pending;
+    DROP INDEX IF EXISTS sync_task_command_task_space_time;
+    ALTER TABLE sync_task_command RENAME TO sync_task_command_v15;
+  `)
+  db.exec(`
+    CREATE TABLE sync_task_command (
+      id TEXT PRIMARY KEY,
+      task_space_id TEXT NOT NULL REFERENCES sync_task_space(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL REFERENCES sync_project(id) ON DELETE CASCADE,
+      target_user_id TEXT NOT NULL REFERENCES user_account(id) ON DELETE CASCADE,
+      agent_id TEXT REFERENCES agent_device(id) ON DELETE SET NULL,
+      binding_id TEXT REFERENCES sync_agent_binding(id) ON DELETE SET NULL,
+      command_type TEXT NOT NULL CHECK (
+        command_type IN ('create_task', 'assign_task', 'sync_branch', 'refresh_status')
+      ),
+      idempotency_key TEXT NOT NULL,
+      request_hash TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN ('pending', 'delivered', 'running', 'succeeded', 'failed', 'cancelled')
+      ),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      lease_expires_at TEXT,
+      result_json TEXT,
+      error_text TEXT,
+      created_by_user_id TEXT NOT NULL REFERENCES user_account(id),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(created_by_user_id, command_type, idempotency_key)
+    );
+
+    INSERT INTO sync_task_command(
+      id, task_space_id, project_id, target_user_id, agent_id, binding_id,
+      command_type, idempotency_key, request_hash, payload_json, status,
+      attempts, lease_expires_at, result_json, error_text,
+      created_by_user_id, created_at, updated_at
+    )
+    SELECT
+      command.id,
+      command.task_space_id,
+      command.project_id,
+      COALESCE(
+        (SELECT agent.user_id FROM agent_device agent WHERE agent.id = command.agent_id),
+        command.created_by_user_id
+      ),
+      command.agent_id,
+      command.binding_id,
+      command.command_type,
+      command.idempotency_key,
+      command.request_hash,
+      command.payload_json,
+      command.status,
+      command.attempts,
+      command.lease_expires_at,
+      command.result_json,
+      command.error_text,
+      command.created_by_user_id,
+      command.created_at,
+      command.updated_at
+    FROM sync_task_command_v15 command;
+
+    DROP TABLE sync_task_command_v15;
+
+    CREATE INDEX sync_task_command_agent_pending
+      ON sync_task_command(agent_id, status, created_at);
+    CREATE INDEX sync_task_command_target_pending
+      ON sync_task_command(target_user_id, status, created_at);
+    CREATE INDEX sync_task_command_task_space_time
+      ON sync_task_command(task_space_id, created_at DESC);
+  `)
+}
+
+function ensureV16Schema(db) {
+  db.exec(SCHEMA_V16_SQL)
+  rebuildTaskCommandTableForV16(db)
+  db.exec(`
+    INSERT OR IGNORE INTO sync_task(
+      execution_task_key, task_key, task_space_id, project_id, task_id,
+      relative_dir, title, description, priority, created_by_user_id,
+      assignee_user_id, assignee_dev_id, stage, archived,
+      materialization_state, task_version, content_revision, created_at,
+      updated_at, archived_at
+    )
+    SELECT
+      task_index.execution_task_key,
+      task_index.task_key,
+      task_index.task_space_id,
+      task_index.project_id,
+      substr(task_index.execution_task_key, instr(task_index.execution_task_key, '::') + 2),
+      task_index.relative_dir,
+      task_index.title,
+      '',
+      task_index.priority,
+      COALESCE(
+        task_index.assignee_user_id,
+        project.created_by_user_id,
+        (SELECT member.user_id FROM sync_project_member member
+         WHERE member.project_id = task_index.project_id
+         ORDER BY CASE member.role WHEN 'lead' THEN 0 ELSE 1 END, member.created_at
+         LIMIT 1)
+      ),
+      task_index.assignee_user_id,
+      task_index.assignee_dev_id,
+      task_index.derived_stage,
+      task_index.archived,
+      'materialized',
+      1,
+      NULL,
+      task_index.updated_at,
+      task_index.updated_at,
+      CASE WHEN task_index.archived = 1
+        THEN COALESCE(task_index.archived_at, task_index.updated_at) END
+    FROM sync_task_index task_index
+    JOIN sync_project project ON project.id = task_index.project_id
+    WHERE task_index.rowid = (
+      SELECT chosen.rowid
+      FROM sync_task_index chosen
+      WHERE chosen.task_space_id = task_index.task_space_id
+        AND chosen.execution_task_key = task_index.execution_task_key
+      ORDER BY chosen.archived DESC,
+        COALESCE(chosen.archived_at, chosen.updated_at) DESC,
+        chosen.task_key DESC
+      LIMIT 1
+    );
+  `)
+}
+
 function tableExists(db, table) {
   return Boolean(
     db
@@ -1582,7 +1793,10 @@ function ensureSchema(db, { databaseFile } = {}) {
   const schemaVersion = tableExists(db, 'app_meta') ? readMeta(db, 'schema_version') : null
   const numericVersion = schemaVersion == null ? null : Number(schemaVersion)
 
-  if (numericVersion !== null && ![6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(numericVersion)) {
+  if (
+    numericVersion !== null &&
+    ![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].includes(numericVersion)
+  ) {
     throw new Error(
       `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除当前 board.sqlite 后重建`,
     )
@@ -1606,6 +1820,7 @@ function ensureSchema(db, { databaseFile } = {}) {
     ensureV13Schema(db)
     ensureV14Schema(db)
     ensureV15Schema(db)
+    ensureV16Schema(db)
     if (numericVersion == null || numericVersion < DATABASE_SCHEMA_VERSION) {
       writeMeta(db, 'schema_version', DATABASE_SCHEMA_VERSION)
     }

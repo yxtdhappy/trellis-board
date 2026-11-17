@@ -28,6 +28,7 @@ import { PublishOperationDialog } from '@/features/board/dialogs/PublishOperatio
 import { SavedViewsDialog } from '@/features/board/dialogs/SavedViewsDialog'
 import { TaskDetailDialog } from '@/features/board/dialogs/TaskDetailDialog'
 import { TaskOperationList } from '@/features/board/TaskOperationList'
+import { HandoffNotice } from '@/desktop/HandoffNotice'
 import { LiveSyncControlDialog } from '@/desktop/LiveSyncControlDialog'
 import { isAttention, type BoardTask } from '@/features/board/task-view'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
@@ -464,6 +465,7 @@ export function BoardPage() {
           return id
         }}
       />
+      <HandoffNotice />
       <LiveSyncControlDialog />
       <TaskDetailDialog
         task={selected}

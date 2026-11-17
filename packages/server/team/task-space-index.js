@@ -328,6 +328,12 @@ function publicRow(row) {
     assignee: row.assignee_dev_id || null,
     assigneeDevId: row.assignee_dev_id || null,
     assigneeUserId: row.assignee_user_id || null,
+    previousAssigneeUserId: row.task_previous_assignee_user_id || null,
+    materializationState: row.task_materialization_state || 'materialized',
+    controlTaskVersion: row.control_task_version == null ? null : Number(row.control_task_version),
+    handoffState: row.task_handoff_state || 'none',
+    leaseStatus: row.task_lease_status || null,
+    leaseExpiresAt: row.task_lease_expires_at || null,
     dueDate: row.due_date || null,
     lastActivityAt: row.last_activity_at || row.updated_at,
     isBlocked: Boolean(row.is_blocked),
@@ -437,6 +443,7 @@ export function createTaskSpaceIndex({
   stageIds,
   taskSpaces,
   archiveSnapshots = null,
+  taskControl = null,
   executionWipLimit = 2,
   onQueryRevisionChanged = null,
   onProjected = null,
@@ -966,17 +973,81 @@ export function createTaskSpaceIndex({
         existingTags.get(row.task_key).push(row.tag_key)
       }
 
-      const desired = new Map()
-      const desiredTags = new Map()
+      const tasksByExecutionKey = new Map()
       for (const task of board.tasks || []) {
         if (!task.taskVersion) continue
+        const executionTaskKey = task.executionTaskKey || task.taskKey
+        const group = tasksByExecutionKey.get(executionTaskKey) || []
+        group.push(task)
+        tasksByExecutionKey.set(executionTaskKey, group)
+      }
+      const projectedTasks = [...tasksByExecutionKey.values()].flatMap((group) => {
+        const archived = group.filter((task) => task.archived)
+        return archived.length > 0 ? archived : group
+      })
+      const authority = taskControl?.authoritativeTasks(taskSpace.id) || new Map()
+      const desired = new Map()
+      const desiredTags = new Map()
+      for (const task of projectedTasks) {
         const row = indexRowForTask(task, latest, users, boardVersion, timestamp)
+        const controlled = authority.get(row.execution_task_key)
+        if (controlled) {
+          if (controlled.archived && controlled.task_key) row.task_key = controlled.task_key
+          row.relative_dir = controlled.relative_dir || row.relative_dir
+          row.title = controlled.title || row.title
+          row.assignee_user_id = controlled.assignee_user_id || row.assignee_user_id
+          row.assignee_dev_id = controlled.assignee_dev_id || row.assignee_dev_id
+          row.archived = controlled.archived ? 1 : row.archived
+          row.archived_at = controlled.archived_at || row.archived_at
+        }
         desired.set(row.task_key, row)
         desiredTags.set(
           row.task_key,
           [...new Set((task.execution?.tags || []).map((tag) => String(tag).toLowerCase()))].sort(),
         )
       }
+      for (const pending of taskControl?.pendingTasks(taskSpace.id) || []) {
+        const taskKey = pending.task_key
+        if (desired.has(taskKey)) continue
+        desired.set(taskKey, {
+          task_space_id: taskSpace.id,
+          project_id: taskSpace.project_id,
+          task_key: taskKey,
+          execution_task_key: pending.execution_task_key,
+          relative_dir: pending.relative_dir,
+          branch_name: taskSpace.branch_name,
+          title: pending.title,
+          search_text: searchText({
+            title: pending.title,
+            taskKey,
+            relativeDir: pending.relative_dir,
+            projectName: taskSpace.project_name,
+            branchName: taskSpace.branch_name,
+          }),
+          archived: 0,
+          archived_at: null,
+          priority: pending.priority,
+          derived_stage: 'planning',
+          assignee_dev_id: pending.assignee_dev_id,
+          assignee_user_id: pending.assignee_user_id,
+          due_date: null,
+          last_activity_at: pending.updated_at,
+          is_blocked: 0,
+          is_unblocked_ready: 0,
+          attention_flags_json: '[]',
+          group_key: taskKey,
+          group_role: 'parent',
+          task_version: String(pending.task_version),
+          board_version: boardVersion,
+          updated_at: timestamp,
+        })
+        desiredTags.set(taskKey, [])
+      }
+      taskControl?.reconcileProjection({
+        taskSpaceId: taskSpace.id,
+        projectId: taskSpace.project_id,
+        tasks: projectedTasks,
+      })
 
       const upsert = db.prepare(`
         INSERT INTO sync_task_index(
@@ -1805,11 +1876,28 @@ export function createTaskSpaceIndex({
         s.status AS task_space_status, s.revision, s.indexed_revision,
         s.archive_revision, s.archive_indexed_revision, s.archive_candidate_snapshot_id,
         s.last_error AS task_space_error,
-        evidence.source_branch_name
+        evidence.source_branch_name,
+        controlled.materialization_state AS task_materialization_state,
+        controlled.task_version AS control_task_version,
+        controlled.previous_assignee_user_id AS task_previous_assignee_user_id,
+        controlled.handoff_state AS task_handoff_state,
+        currentLease.status AS task_lease_status,
+        currentLease.expires_at AS task_lease_expires_at
       FROM sync_task_index t
       JOIN sync_task_space s ON s.id = t.task_space_id
       JOIN sync_project p ON p.id = t.project_id
       JOIN team ON team.id = p.owner_team_id
+      LEFT JOIN sync_task controlled
+        ON controlled.task_space_id = t.task_space_id
+       AND controlled.execution_task_key = t.execution_task_key
+      LEFT JOIN sync_task_lease currentLease
+        ON currentLease.id = (
+          SELECT lease.id
+          FROM sync_task_lease lease
+          WHERE lease.execution_task_key = controlled.execution_task_key
+          ORDER BY lease.created_at DESC, lease.id DESC
+          LIMIT 1
+        )
       LEFT JOIN sync_task_merge_evidence evidence
         ON evidence.project_id = t.project_id
        AND evidence.task_id = ${stableTaskIdSql('t')}

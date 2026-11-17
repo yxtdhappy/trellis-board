@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -23,10 +24,12 @@ const SYNC_TABLES = [
   'sync_project',
   'sync_project_member',
   'sync_project_team_access',
+  'sync_task',
   'sync_task_command',
   'sync_task_assignment',
   'sync_task_index',
   'sync_task_index_tag',
+  'sync_task_lease',
   'sync_task_space',
   'sync_task_space_batch',
   'sync_task_space_file',
@@ -41,7 +44,7 @@ function tableNames(db) {
     .map((row) => row.name)
 }
 
-test('schema v15 新库包含团队任务、本地快照和归档同步表', () => {
+test('schema v16 新库包含团队任务、权威任务、租约、本地快照和归档同步表', () => {
   const db = openDatabase({
     databaseFile: ':memory:',
     fallbackRepositories: [],
@@ -49,7 +52,7 @@ test('schema v15 新库包含团队任务、本地快照和归档同步表', () 
     legacyJsonImport: false,
   })
   try {
-    assert.equal(DATABASE_SCHEMA_VERSION, 15)
+    assert.equal(DATABASE_SCHEMA_VERSION, 16)
     const names = tableNames(db)
     for (const table of SYNC_TABLES) assert.ok(names.includes(table), `缺少 ${table}`)
     assert.ok(names.includes('team_project'))
@@ -68,12 +71,12 @@ test('schema v15 新库包含团队任务、本地快照和归档同步表', () 
   }
 })
 
-test('v10 升级到 v15 补监听、弃用和基线字段并保留已有关联', () => {
+test('v10 升级到 v16 补监听、弃用、权威任务和基线字段并保留已有关联', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v12-'))
   const databaseFile = path.join(root, 'board.sqlite')
   let reopened = null
   try {
-    const db = openDatabase({
+    let db = openDatabase({
       databaseFile,
       fallbackRepositories: [],
       importLegacyRepositories: false,
@@ -188,11 +191,11 @@ test('v10 升级到 v15 补监听、弃用和基线字段并保留已有关联',
     )
     assert.equal(
       reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '15',
+      '16',
     )
     const backupName = fs
       .readdirSync(path.join(root, 'backups'))
-      .find((name) => name.startsWith('board.sqlite.pre-v15.'))
+      .find((name) => name.startsWith('board.sqlite.pre-v16.'))
     assert.ok(backupName)
     const backup = new DatabaseSync(path.join(root, 'backups', backupName))
     try {
@@ -244,7 +247,7 @@ test('v10 升级到 v15 补监听、弃用和基线字段并保留已有关联',
     assert.equal(
       fs
         .readdirSync(path.join(root, 'backups'))
-        .filter((name) => name.startsWith('board.sqlite.pre-v15.')).length,
+        .filter((name) => name.startsWith('board.sqlite.pre-v16.')).length,
       1,
     )
     reopened.close()
@@ -259,12 +262,12 @@ test('v10 升级到 v15 补监听、弃用和基线字段并保留已有关联',
   }
 })
 
-test('v11 升级到 v15 只补弃用字段，历史 disabled 不自动变成 retired', () => {
+test('v11 升级到 v16 只补弃用字段，历史 disabled 不自动变成 retired', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v12-v11-upgrade-'))
   const databaseFile = path.join(root, 'board.sqlite')
   let reopened = null
   try {
-    const db = openDatabase({
+    let db = openDatabase({
       databaseFile,
       fallbackRepositories: [],
       importLegacyRepositories: false,
@@ -316,7 +319,7 @@ test('v11 升级到 v15 只补弃用字段，历史 disabled 不自动变成 ret
     })
     assert.equal(
       reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '15',
+      '16',
     )
     const row = reopened
       .prepare(`
@@ -335,7 +338,7 @@ test('v11 升级到 v15 只补弃用字段，历史 disabled 不自动变成 ret
     )
     const backupName = fs
       .readdirSync(path.join(root, 'backups'))
-      .find((name) => name.startsWith('board.sqlite.pre-v15.'))
+      .find((name) => name.startsWith('board.sqlite.pre-v16.'))
     assert.ok(backupName)
     const backup = new DatabaseSync(path.join(root, 'backups', backupName))
     try {
@@ -390,9 +393,9 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
     db.exec(`
       CREATE TRIGGER fail_v12_metadata
       BEFORE UPDATE ON app_meta
-      WHEN NEW.key = 'schema_version' AND NEW.value = '15'
+      WHEN NEW.key = 'schema_version' AND NEW.value = '16'
       BEGIN
-        SELECT RAISE(ABORT, 'v15 metadata blocked');
+        SELECT RAISE(ABORT, 'v16 metadata blocked');
       END;
     `)
     db.close()
@@ -405,7 +408,7 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
           importLegacyRepositories: false,
           legacyJsonImport: false,
         }),
-      /v15 metadata blocked/,
+      /v16 metadata blocked/,
     )
     const check = new DatabaseSync(databaseFile, { readOnly: true })
     try {
@@ -439,7 +442,7 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
     assert.equal(
       fs
         .readdirSync(path.join(root, 'backups'))
-        .some((name) => name.startsWith('board.sqlite.pre-v15.')),
+        .some((name) => name.startsWith('board.sqlite.pre-v16.')),
       true,
     )
   } finally {
@@ -447,13 +450,33 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
   }
 })
 
-test('v9 升级到 v15 保留旧项目行并创建备份', () => {
+test('v9 升级到 v16 保留旧项目行并创建备份', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v12-v9-upgrade-'))
-  const databaseFile = path.join(root, 'board.sqlite')
   try {
-    fs.mkdirSync(path.join(root, 'projects'), { recursive: true })
-    fs.writeFileSync(path.join(root, 'projects', 'keep.txt'), 'old project\n')
-    fs.writeFileSync(path.join(root, 'git-credentials.key'), 'old key material\n')
+    const child = spawnSync(
+      process.execPath,
+      [path.join(import.meta.dirname, 'fixtures', 'database-v9-upgrade.js'), root],
+      { encoding: 'utf8' },
+    )
+    assert.equal(child.status, 0, child.stderr || child.stdout)
+    const result = JSON.parse(child.stdout)
+    assert.equal(result.schemaVersion, '16')
+    assert.equal(result.projectCount, 1)
+    assert.equal(result.hasSyncProject, true)
+    assert.ok(result.backupName)
+    assert.deepEqual(result.backup, { schemaVersion: '9', projectCount: 1 })
+    assert.equal(result.projectFileExists, true)
+    assert.equal(result.credentialFileExists, true)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  }
+})
+
+test('v15 升级到 v16 回填活动/归档权威任务并选择归档最终状态', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v16-backfill-'))
+  const databaseFile = path.join(root, 'board.sqlite')
+  let reopened = null
+  try {
     const db = openDatabase({
       databaseFile,
       fallbackRepositories: [],
@@ -461,85 +484,123 @@ test('v9 升级到 v15 保留旧项目行并创建备份', () => {
       legacyJsonImport: false,
     })
     const now = new Date().toISOString()
-    db.prepare(
-      `INSERT INTO team(id, name, slug, status, created_at, updated_at)
-       VALUES ('team-1', '团队一', 'team-1', 'active', ?, ?)`,
-    ).run(now, now)
-    db.prepare(
-      `INSERT INTO repositories(id, name, path, path_key, position, created_at, updated_at)
-       VALUES ('repo-1', '旧项目', 'D:/old', 'd:/old', 0, ?, ?)`,
-    ).run(now, now)
-    db.prepare(
-      `INSERT INTO team_project(
-        repository_id, team_id, workspace_key, remote_url, remote_identity_hash,
-        sync_branch, sync_status, created_at, updated_at
-      ) VALUES ('repo-1', 'team-1', 'old', 'https://example.com/old.git', 'old-hash',
-        'main', 'current', ?, ?)`,
-    ).run(now, now)
-    db.exec('DROP TABLE sync_active_agent')
-    db.exec('DROP TABLE sync_agent_binding')
-    db.exec('DROP TABLE sync_agent_cursor')
-    db.exec('DROP TABLE sync_conflict_backup')
-    db.exec('DROP TABLE sync_conflict')
-    db.exec('DROP TABLE sync_file_audit')
-    db.exec('DROP TABLE sync_task_command')
-    db.exec('DROP TABLE sync_task_assignment')
-    db.exec('DROP TABLE sync_task_index_tag')
-    db.exec('DROP TABLE sync_task_index')
-    db.exec('DROP TABLE sync_task_space_scan_cache')
-    db.exec('DROP TABLE sync_task_space_batch')
-    db.exec('DROP TABLE sync_task_merge_evidence')
-    db.exec('DROP TABLE sync_task_space_file')
-    db.exec('DROP TABLE sync_task_space')
-    db.exec('DROP TABLE sync_project_member')
-    db.exec('DROP TABLE sync_project_team_access')
-    db.exec('DROP TABLE sync_project')
-    db.prepare("UPDATE app_meta SET value = '9' WHERE key = 'schema_version'").run()
+    db.prepare(`
+      INSERT INTO team(id, name, slug, status, created_at, updated_at)
+      VALUES ('team-1', '团队一', 'team-1', 'active', ?, ?)
+    `).run(now, now)
+    db.prepare(`
+      INSERT INTO user_account(
+        id, username_key, username, display_name, password_hash, password_params_json,
+        system_admin, status, must_change_password, password_changed_at, created_at, updated_at
+      ) VALUES ('user-1', 'user-1', 'user-1', '用户一', 'x', '{}', 0, 'active', 0, ?, ?, ?)
+    `).run(now, now, now)
+    db.prepare(`
+      INSERT INTO agent_device(
+        id, user_id, device_name, platform, agent_version, protocol_version,
+        credential_hash, status, last_seen_at, created_at
+      ) VALUES ('agent-1', 'user-1', '设备一', 'win32', '0.1.0', 3, 'credential', 'active', ?, ?)
+    `).run(now, now)
+    db.prepare(`
+      INSERT INTO sync_project(
+        id, name, remote_url, remote_identity_hash, owner_team_id, status,
+        created_by_user_id, created_by_agent_id, created_at, updated_at
+      ) VALUES ('project-1', '项目一', 'https://example.com/repo.git', 'hash-1', 'team-1',
+        'active', 'user-1', 'agent-1', ?, ?)
+    `).run(now, now)
+    db.prepare(`
+      INSERT INTO sync_task_space(
+        id, project_id, branch_name, status, revision, indexed_revision, archive_revision,
+        archive_indexed_revision, created_by_user_id, created_by_agent_id, created_at, updated_at
+      ) VALUES ('space-1', 'project-1', 'main', 'active', 2, 2, 1, 1,
+        'user-1', 'agent-1', ?, ?)
+    `).run(now, now)
+    const insertIndex = db.prepare(`
+      INSERT INTO sync_task_index(
+        task_space_id, project_id, task_key, execution_task_key, relative_dir,
+        branch_name, title, search_text, archived, archived_at, priority, derived_stage,
+        assignee_dev_id, assignee_user_id, last_activity_at, attention_flags_json,
+        group_key, group_role, task_version, board_version, updated_at
+      ) VALUES ('space-1', 'project-1', ?, ?, ?, 'main', ?, ?, ?, ?, 'P2', 'planning',
+        'alice', 'user-1', ?, '[]', ?, 'single', 'v1', 'v1', ?)
+    `)
+    insertIndex.run(
+      'space-1::.trellis/tasks/11-17-task-a',
+      'space-1::task-a',
+      '.trellis/tasks/11-17-task-a',
+      '活动副本',
+      '活动副本',
+      0,
+      null,
+      now,
+      'space-1::.trellis/tasks/11-17-task-a',
+      now,
+    )
+    insertIndex.run(
+      'space-1::.trellis/tasks/archive/2026-11/11-17-task-a',
+      'space-1::task-a',
+      '.trellis/tasks/archive/2026-11/11-17-task-a',
+      '归档副本',
+      '归档副本',
+      1,
+      now,
+      now,
+      'space-1::.trellis/tasks/archive/2026-11/11-17-task-a',
+      now,
+    )
+    insertIndex.run(
+      'space-1::.trellis/tasks/11-17-task-b',
+      'space-1::task-b',
+      '.trellis/tasks/11-17-task-b',
+      '活动任务',
+      '活动任务',
+      0,
+      null,
+      now,
+      'space-1::.trellis/tasks/11-17-task-b',
+      now,
+    )
+    db.exec('DROP TABLE sync_task_lease')
+    db.exec('DROP TABLE sync_task')
+    db.prepare("UPDATE app_meta SET value = '15' WHERE key = 'schema_version'").run()
     db.close()
 
-    const upgraded = new DatabaseSync(databaseFile)
-    upgraded.exec('PRAGMA foreign_keys = ON')
-    upgraded.exec(`
-      CREATE TABLE IF NOT EXISTS app_meta (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    `)
-    upgraded.close()
-
-    const reopened = openDatabase({
+    reopened = openDatabase({
       databaseFile,
       fallbackRepositories: [],
       importLegacyRepositories: false,
       legacyJsonImport: false,
     })
-    try {
-      assert.equal(
-        reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-        '15',
-      )
-      assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM team_project').get().count, 1)
-      assert.ok(tableNames(reopened).includes('sync_project'))
-      const backups = fs.readdirSync(path.join(root, 'backups'))
-      const backupName = backups.find((name) => name.includes('pre-v15'))
-      assert.ok(backupName)
-      const backup = new DatabaseSync(path.join(root, 'backups', backupName))
-      try {
-        assert.equal(
-          backup.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-          '9',
-        )
-        assert.equal(backup.prepare('SELECT COUNT(*) AS count FROM team_project').get().count, 1)
-      } finally {
-        backup.close()
-      }
-      assert.equal(fs.existsSync(path.join(root, 'projects', 'keep.txt')), true)
-      assert.equal(fs.existsSync(path.join(root, 'git-credentials.key')), true)
-    } finally {
-      reopened.close()
-    }
+    const tasks = reopened
+      .prepare(`
+        SELECT execution_task_key, relative_dir, archived, archived_at,
+               created_by_user_id, assignee_user_id, materialization_state
+        FROM sync_task
+        ORDER BY execution_task_key
+      `)
+      .all()
+    assert.equal(tasks.length, 2)
+    assert.deepEqual(
+      {
+        ...tasks.find((task) => task.execution_task_key === 'space-1::task-a'),
+      },
+      {
+        execution_task_key: 'space-1::task-a',
+        relative_dir: '.trellis/tasks/archive/2026-11/11-17-task-a',
+        archived: 1,
+        archived_at: now,
+        created_by_user_id: 'user-1',
+        assignee_user_id: 'user-1',
+        materialization_state: 'materialized',
+      },
+    )
+    assert.equal(tasks.find((task) => task.execution_task_key === 'space-1::task-b').archived, 0)
+    assert.ok(
+      fs
+        .readdirSync(path.join(root, 'backups'))
+        .some((name) => name.startsWith('board.sqlite.pre-v16.')),
+    )
   } finally {
-    fs.rmSync(root, { recursive: true, force: true })
+    reopened?.close()
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })

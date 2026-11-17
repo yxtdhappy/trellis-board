@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import {
   attentionReasons,
   branchLabel,
+  controlToneClass,
   dueLabel,
   initials,
   isAttention,
@@ -17,6 +18,7 @@ import {
 } from './task-view.ts'
 import { StageTape } from './StageTape.tsx'
 import { priorityTone } from './tone.ts'
+import { taskControlView } from '@/lib/team-client.js'
 
 type TaskCardProps = {
   task: BoardTask
@@ -66,6 +68,7 @@ export function TaskCard({ task, onOpen, onEditPlan }: TaskCardProps) {
   const tags = taskTags(task)
   const conditions = conditionBadges(task)
   const attention = attentionReasons(task).slice(0, 3)
+  const control = taskControlView(task)
   const projectLabel = [task.teamName, task.projectName, branchLabel(task)]
     .filter(Boolean)
     .join(' · ')
@@ -102,6 +105,20 @@ export function TaskCard({ task, onOpen, onEditPlan }: TaskCardProps) {
           </span>
         </div>
       </div>
+
+      {control.available ? (
+        <div className="flex flex-wrap items-center gap-1">
+          <span
+            className={cn(
+              'rounded-full px-1.5 py-px text-2xs font-medium',
+              controlToneClass(control.tone),
+            )}
+            title={control.description}
+          >
+            {control.label}
+          </span>
+        </div>
+      ) : null}
 
       <h4 className="line-clamp-2 text-xs leading-4 font-semibold text-foreground">{task.title}</h4>
       <p className="break-all text-2xs leading-3.5 text-muted-foreground">{task.dirName}</p>
