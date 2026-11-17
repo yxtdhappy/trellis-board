@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
@@ -51,14 +52,20 @@ function request(
         const chunks = []
         response.on('data', (chunk) => chunks.push(chunk))
         response.on('end', () => {
-          const text = Buffer.concat(chunks).toString('utf8')
+          const buffer = Buffer.concat(chunks)
+          const text = buffer.toString('utf8')
           let parsed = null
           try {
             parsed = text ? JSON.parse(text) : null
           } catch {
             parsed = text
           }
-          resolve({ status: response.statusCode, headers: response.headers, body: parsed })
+          resolve({
+            status: response.statusCode,
+            headers: response.headers,
+            body: parsed,
+            buffer,
+          })
         })
       },
     )
@@ -908,4 +915,352 @@ test('归档同步管理 API 仅允许系统管理员且不回显凭据', async 
     ).status,
     403,
   )
+})
+
+test('归档附件详情与下载只读取本地快照并执行 Session 权限和响应头', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-archive-file-http-'))
+  const dataDir = path.join(root, 'data')
+  const runtime = await createTeamRuntime({
+    config: {
+      mode: 'team',
+      bindHost: '127.0.0.1',
+      port: 0,
+      publicUrl: new URL(PUBLIC_ORIGIN),
+      publicOrigin: PUBLIC_ORIGIN,
+      sessionTtlMs: 12 * 60 * 60 * 1000,
+      agentStaleMs: 60_000,
+      cookieSecure: false,
+      trustProxy: false,
+      allowLocalGitRemotes: false,
+    },
+    databaseFile: path.join(dataDir, 'board.sqlite'),
+    dataDir,
+    logger: LOGGER,
+    requireAdmin: false,
+    archiveGitRunProcessImpl: () => {
+      throw new Error('读取归档时禁止执行 Git')
+    },
+  })
+  await runtime.start()
+  runtime.db.prepare('UPDATE sync_archive_sync_config SET enabled = 0').run()
+  t.after(async () => {
+    await runtime.stop()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  const now = new Date().toISOString()
+  runtime.db
+    .prepare(`
+      INSERT INTO team(id, name, slug, status, created_at, updated_at)
+      VALUES ('team-owner', 'Owner', 'team-owner', 'active', ?, ?),
+             ('team-other', 'Other', 'team-other', 'active', ?, ?)
+    `)
+    .run(now, now, now, now)
+  const owner = await createUser(runtime.db, {
+    username: 'owner-file',
+    displayName: '项目成员',
+    password: 'Owner-File-Password-123',
+    systemAdmin: false,
+    mustChangePassword: false,
+  })
+  const outsider = await createUser(runtime.db, {
+    username: 'outsider-file',
+    displayName: '其他团队',
+    password: 'Outsider-File-Password-123',
+    systemAdmin: false,
+    mustChangePassword: false,
+  })
+  runtime.db
+    .prepare(`
+      INSERT INTO team_member(team_id, user_id, role, created_at, updated_at)
+      VALUES ('team-owner', ?, 'member', ?, ?),
+             ('team-other', ?, 'member', ?, ?)
+    `)
+    .run(owner.id, now, now, outsider.id, now, now)
+  runtime.db
+    .prepare(`
+      INSERT INTO sync_project(
+        id, name, remote_url, remote_identity_hash, baseline_branch, owner_team_id,
+        status, created_by_user_id, created_at, updated_at
+      ) VALUES ('project-files', '归档项目', 'https://example.com/archive.git',
+        'archive-hash', 'main', 'team-owner', 'active', ?, ?, ?)
+    `)
+    .run(owner.id, now, now)
+  runtime.db
+    .prepare(`
+      INSERT INTO sync_project_team_access(
+        project_id, team_id, access_role, created_by_user_id, created_at
+      ) VALUES ('project-files', 'team-owner', 'owner', ?, ?)
+    `)
+    .run(owner.id, now)
+  runtime.db
+    .prepare(`
+      INSERT INTO sync_task_space(
+        id, project_id, branch_name, status, revision, indexed_revision,
+        created_by_user_id, created_at, updated_at
+      ) VALUES ('space-files', 'project-files', 'main', 'active', 0, 0, ?, ?, ?),
+               ('space-files-alt', 'project-files', 'feature-alt', 'active', 0, 0, ?, ?, ?)
+    `)
+    .run(owner.id, now, now, owner.id, now, now)
+
+  const taskDir = '.trellis/tasks/archive/2026-11/11-16-old'
+  const taskJson = JSON.stringify({
+    id: 'old',
+    title: '归档附件任务',
+    description: '',
+    status: 'completed',
+    priority: 'P2',
+    assignee: owner.username,
+    creator: owner.username,
+    branch: 'main',
+  })
+  const prd = '# 旧任务\n\n## Requirements\n\n- 完成\n\n## Acceptance Criteria\n\n- [x] 完成\n'
+  const image = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+  const staging = runtime.services.archiveSnapshots.createStaging('space-files', 'attempt-http')
+  const files = [
+    staging.writeBlob(
+      {
+        relativePath: `${taskDir}/task.json`,
+        blobOid: 'a'.repeat(40),
+      },
+      Buffer.from(taskJson),
+    ),
+    staging.writeBlob(
+      {
+        relativePath: `${taskDir}/prd.md`,
+        blobOid: 'b'.repeat(40),
+      },
+      Buffer.from(prd),
+    ),
+    staging.writeBlob(
+      {
+        relativePath: `${taskDir}/screenshot.png`,
+        blobOid: 'c'.repeat(40),
+      },
+      image,
+    ),
+  ]
+  const published = runtime.services.archiveSnapshots.publish({
+    staging,
+    head: 'd'.repeat(40),
+    files,
+  })
+  const snapshotId = crypto.randomUUID()
+  runtime.db
+    .prepare(`
+      INSERT INTO sync_archive_snapshot(
+        id, task_space_id, source_head, status, storage_root,
+        file_count, byte_count, manifest_sha256, published_at
+      ) VALUES (?, 'space-files', ?, 'published', ?, ?, ?, ?, ?)
+    `)
+    .run(
+      snapshotId,
+      published.sourceHead,
+      published.storageRoot,
+      published.fileCount,
+      published.byteCount,
+      published.manifestSha256,
+      now,
+    )
+  const insertFile = runtime.db.prepare(`
+    INSERT INTO sync_archive_file(
+      id, task_space_id, snapshot_id, relative_path, blob_oid, sha256, content_text,
+      size_bytes, mime_type, storage_key, text_excerpt, task_id, task_dir,
+      source_head, updated_at
+    ) VALUES (?, 'space-files', ?, ?, ?, ?, '', ?, ?, ?, NULL, ?, ?, ?, ?)
+  `)
+  const fileIds = []
+  for (const file of published.files) {
+    const id = crypto.randomUUID()
+    fileIds.push(id)
+    insertFile.run(
+      id,
+      snapshotId,
+      file.relativePath,
+      file.blobOid,
+      file.sha256,
+      file.sizeBytes,
+      file.mimeType,
+      file.storageKey,
+      file.relativePath.endsWith('/task.json') ? 'old' : null,
+      taskDir,
+      published.sourceHead,
+      now,
+    )
+  }
+  published.release()
+  runtime.db
+    .prepare(`
+      UPDATE sync_task_space
+      SET archive_revision = 1, archive_snapshot_id = ?, archive_candidate_snapshot_id = NULL
+      WHERE id = ?
+    `)
+    .run(snapshotId, 'space-files')
+  await runtime.services.taskSpaceIndex.materializeNow('space-files', { source: 'archive' })
+
+  const ownerLogin = await request(runtime, '/api/auth/login', {
+    method: 'POST',
+    body: { username: owner.username, password: 'Owner-File-Password-123' },
+  })
+  const outsiderLogin = await request(runtime, '/api/auth/login', {
+    method: 'POST',
+    body: { username: outsider.username, password: 'Outsider-File-Password-123' },
+  })
+  const ownerCookie = cookie(ownerLogin)
+  const outsiderCookie = cookie(outsiderLogin)
+  const executionTaskKey = runtime.db
+    .prepare('SELECT execution_task_key FROM sync_task_index WHERE task_space_id = ?')
+    .get('space-files').execution_task_key
+  const detail = await request(
+    runtime,
+    `/api/tasks/${encodeURIComponent(executionTaskKey)}?taskSpaceId=space-files`,
+    { cookie: ownerCookie },
+  )
+  assert.equal(detail.status, 200, JSON.stringify(detail.body))
+  assert.equal(detail.body.task.files.length, 3)
+  assert.equal(JSON.stringify(detail.body).includes('storageKey'), false)
+  const imageMeta = detail.body.task.files.find((file) => file.name === 'screenshot.png')
+  assert.equal(imageMeta.mimeType, 'image/png')
+  assert.equal(imageMeta.sizeBytes, image.length)
+  const archiveUrl = (taskSpaceId, fileId) =>
+    `/api/archive-files/${encodeURIComponent(fileId)}?taskSpaceId=${encodeURIComponent(taskSpaceId)}`
+  assert.equal(imageMeta.downloadUrl, archiveUrl('space-files', imageMeta.id))
+  const imageRow = runtime.db
+    .prepare('SELECT * FROM sync_archive_file WHERE id = ?')
+    .get(imageMeta.id)
+  const historyImageId = crypto.randomUUID()
+  runtime.db
+    .prepare(`
+      INSERT INTO sync_archive_file_history(
+        id, task_space_id, snapshot_id, relative_path, blob_oid, sha256,
+        content_text, size_bytes, mime_type, storage_key, text_excerpt,
+        task_id, task_dir, source_head, updated_at
+      )
+      SELECT ?, task_space_id, snapshot_id, relative_path, blob_oid, sha256,
+             content_text, size_bytes, mime_type, storage_key, text_excerpt,
+             task_id, task_dir, source_head, updated_at
+      FROM sync_archive_file
+      WHERE id = ?
+    `)
+    .run(historyImageId, imageMeta.id)
+
+  assert.equal((await request(runtime, archiveUrl('space-files', imageMeta.id))).status, 401)
+  const inaccessibleReal = await request(runtime, archiveUrl('space-files', imageMeta.id), {
+    cookie: outsiderCookie,
+  })
+  const inaccessibleFake = await request(runtime, archiveUrl('space-files', crypto.randomUUID()), {
+    cookie: outsiderCookie,
+  })
+  const inaccessibleInvalid = await request(runtime, archiveUrl('space-files', 'bad id'), {
+    cookie: outsiderCookie,
+  })
+  assert.equal(inaccessibleReal.status, 403)
+  assert.equal(inaccessibleFake.status, 403)
+  assert.equal(inaccessibleInvalid.status, 403)
+  assert.deepEqual(inaccessibleFake.body, inaccessibleReal.body)
+  assert.deepEqual(inaccessibleInvalid.body, inaccessibleReal.body)
+  assert.equal(
+    (
+      await request(runtime, archiveUrl('space-files', crypto.randomUUID()), {
+        cookie: ownerCookie,
+      })
+    ).status,
+    404,
+  )
+  assert.equal(
+    (
+      await request(runtime, archiveUrl('space-files-alt', imageMeta.id), {
+        cookie: ownerCookie,
+      })
+    ).status,
+    404,
+  )
+  runtime.db
+    .prepare("UPDATE sync_task_space SET status = 'disabled' WHERE id = 'space-files-alt'")
+    .run()
+  assert.equal(
+    (
+      await request(runtime, archiveUrl('space-files-alt', imageMeta.id), {
+        cookie: ownerCookie,
+      })
+    ).status,
+    409,
+  )
+  assert.equal(
+    (
+      await request(runtime, `/api/archive-files/${encodeURIComponent(imageMeta.id)}`, {
+        cookie: ownerCookie,
+      })
+    ).status,
+    400,
+  )
+  assert.equal(
+    (
+      await request(runtime, archiveUrl('x'.repeat(129), imageMeta.id), {
+        cookie: ownerCookie,
+      })
+    ).status,
+    400,
+  )
+  assert.equal(
+    (
+      await request(runtime, archiveUrl('space-files', 'x'.repeat(129)), {
+        cookie: ownerCookie,
+      })
+    ).status,
+    400,
+  )
+  assert.equal(
+    (
+      await request(
+        runtime,
+        `/api/archive-files/%E0%A4%A?taskSpaceId=${encodeURIComponent('space-files')}`,
+        { cookie: ownerCookie },
+      )
+    ).status,
+    400,
+  )
+  assert.equal(
+    (
+      await request(
+        runtime,
+        `/api/archive-files/${encodeURIComponent(imageMeta.id)}?taskSpaceId=%E0%A4%A`,
+        { cookie: ownerCookie },
+      )
+    ).status,
+    400,
+  )
+  assert.equal(
+    (
+      await request(runtime, archiveUrl('space-files', 'bad id'), {
+        cookie: ownerCookie,
+      })
+    ).status,
+    400,
+  )
+
+  const downloaded = await request(runtime, archiveUrl('space-files', imageMeta.id), {
+    cookie: ownerCookie,
+  })
+  assert.equal(downloaded.status, 200)
+  assert.equal(downloaded.headers['content-type'], 'image/png')
+  assert.equal(downloaded.headers['content-length'], String(image.length))
+  assert.equal(downloaded.headers['cache-control'], 'private, no-store')
+  assert.equal(downloaded.headers['x-content-type-options'], 'nosniff')
+  assert.match(downloaded.headers['content-disposition'], /^attachment; filename="screenshot\.png"/)
+  assert.match(downloaded.headers['content-disposition'], /filename\*=UTF-8''screenshot\.png/)
+  assert.deepEqual([...downloaded.buffer], [...image])
+
+  const historyDownloaded = await request(runtime, archiveUrl('space-files', historyImageId), {
+    cookie: ownerCookie,
+  })
+  assert.equal(historyDownloaded.status, 200)
+  assert.deepEqual([...historyDownloaded.buffer], [...image])
+
+  fs.rmSync(path.join(dataDir, 'archive-snapshots', ...imageRow.storage_key.split('/')))
+  const missing = await request(runtime, archiveUrl('space-files', imageMeta.id), {
+    cookie: ownerCookie,
+  })
+  assert.equal(missing.status, 503)
+  assert.equal(missing.body.code, 'ARCHIVE_LOCAL_FILE_UNAVAILABLE')
 })

@@ -65,9 +65,8 @@ import assert from "node:assert/strict";
 - 缓存测试同时验证首次解析、命中复用和只刷新变化任务，不能只断言数组长度。
 - E2E 文本判断至少覆盖计划、否定、完成和表格结论。
 - 依赖测试至少覆盖缺失、自引用、重复、空/超长原因、二/三节点循环、事件失败回滚、解除历史、重开和重新创建。
-- 迁移测试至少覆盖新库 v12、v10 补监听列、v11 补 retired/基线/证据结构、v6-v11 顺序升级、
-  源版本备份、
-  旧表保留、失败回滚和大于 v12 拒绝。
+- 迁移测试至少覆盖新库 v15、v10 补监听列、v11 补 retired/基线/证据结构、v13 归档隔离、
+  v14 -> v15 归档快照元数据、v6-v14 顺序升级、源版本备份、旧表保留、失败回滚和大于 v15 拒绝。
 - Team 项目接入测试至少覆盖规范化远端去重、同远端不同分支隔离、owner/invite、
   `access_required` 不泄漏任务内容，以及并发 attach 收敛到同一项目。
 - tasks-only 测试至少覆盖路径白名单、LF 摘要、完整任务目录、文件级 CAS、整批回滚、
@@ -79,6 +78,9 @@ import assert from "node:assert/strict";
 - Team 任务索引的性能测试必须覆盖可信 warm 基线下的目录级增量：单任务变化只扫描一个目录，
   未变化索引行和 `updated_at` 不改，增量 Board 与同快照 full 重建的任务、关系、成员和风险投影一致；
   同时覆盖扫描期间新 revision 的 superseded 收敛、事务内复核失败回滚和同 revision 人工阶段重投影。
+- 归档本地快照测试必须覆盖普通二进制附件、内容寻址哈希、16 MiB/512 MiB 限额、staging 原子发布、
+  candidate 导入不退役 active、索引失败保留旧 fileId 下载、索引成功原子激活、database 发布失败
+  保留旧快照和 Board、服务重启读取、数据库备份引用以及 TaskSpace 删除后的清理。
 - 错误诊断测试至少覆盖 TeamError 结构化字段、非 TeamError 的 stack/cause、递归对象与循环引用、
   Authorization/Cookie/JWT/复合 token 键脱敏、绝对路径脱敏、`last_error` 的 `code: message`
   格式以及 1000 字符上限；结构化详情还必须验证总长度预算，并断言

@@ -8,10 +8,12 @@
 - 客户端：Windows 10/11 x64；安装包包含固定 Node runtime 和 Trellis CLI，本机执行任务命令时仍需
   Git 和 Python。
 - 运行数据：由 `TRELLIS_BOARD_DATA_DIR` 指定，Ubuntu 建议 `/var/lib/trellis-board`。
-- 数据库：运行数据目录中的 `board.sqlite`，当前 schema v12。
-- Team 服务端不保存项目 Git 凭据，不创建 `data/projects/**` 工作副本，也不 clone、fetch、commit 或 push。
+- 数据库：运行数据目录中的 `board.sqlite`，当前 schema v15。
+- 活动任务链路不让服务端 clone/fetch 项目 Git，也不保存项目 Git 凭据。后台归档同步只读取
+  `.trellis/tasks/archive/**`，使用按来源隔离的只读凭据，不创建 `data/projects/**` 工作副本，
+  不 checkout、commit 或 push。
 - 项目源码和共享 `.trellis` 配置仍由客户端 Git 管理；Team Board 只持久化和广播
-  `.trellis/tasks/**`。
+  活动 `.trellis/tasks/**`，并把归档 Git tree 的完整文件保存到本地快照。
 - 任务空间键是“规范化 Git 远端 + 分支”。同一仓库不同分支是不同 taskSpace。
 - 一个账号同一时刻只有一个有效 Agent。新设备登录会撤销旧设备并关闭旧命令通道。
 
@@ -27,7 +29,8 @@
 | `PORT` | 否 | `4317` | HTTP 和 Team 服务端口 |
 | `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES` | 否 | standalone `true`，team `false` | 是否接受本地 `file://` Git 远端 |
 
-Team 模式没有 `TRELLIS_TEAM_GIT_POLL_MS`。项目远端不再由服务端轮询。
+Team 模式没有 `TRELLIS_TEAM_GIT_POLL_MS`。活动任务远端不由服务端轮询；归档同步调度器只按配置周期
+读取远端归档路径。
 服务固定监听 `0.0.0.0`。直接使用 HTTP 或通过反向代理提供 HTTPS 均可；反向代理应传递
 `X-Forwarded-Proto`，服务会据此自动设置安全 Cookie。
 团队版需要本地 Git 远端时显式设置 `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES=true`；团队版默认关闭，
@@ -59,8 +62,9 @@ export TRELLIS_BOARD_DATA_DIR=/var/lib/trellis-board
 node packages/server/index.js
 ```
 
-服务账号必须能读写 `TRELLIS_BOARD_DATA_DIR` 和 SQLite 文件。Team 服务端不需要安装项目 Git 或
-配置 Git 凭据；standalone 模式仍按本机仓库运行。
+服务账号必须能读写 `TRELLIS_BOARD_DATA_DIR`、SQLite 文件和 `archive-snapshots/`。Team 运行归档
+Git 同步时需要可执行的 Git CLI；HTTPS 公开仓库可以匿名读取，私有仓库和 SSH 来源在管理页配置
+按来源隔离的只读凭据。standalone 模式仍按本机仓库运行。
 
 ## 3. 首次部署
 
@@ -247,8 +251,8 @@ if (Test-Path (Join-Path $dataDir 'board.sqlite-shm')) { Copy-Item (Join-Path $d
 `<数据目录>/plugins`，随数据目录一起备份；用默认用户目录时为 `TrellisBoard/server` 的同级目录，
 需要单独归档 `plugins/`。
 
-本版本支持 v6 至 v11 升级到 v12。启动时先写
-`backups/board.sqlite.pre-v12.<timestamp>`，再创建缺失的 `sync_*` 表。旧账号、团队、项目、审计、
+本版本支持 v6 至 v14 升级到 v15。启动时先写
+`backups/board.sqlite.pre-v15.<timestamp>`，再补齐缺失的 `sync_*` 表。旧账号、团队、项目、审计、
 旧实时表和 Git 凭据表不会自动删除，但 Team 运行链路不再读取它们。
 
 升级步骤：
@@ -263,7 +267,7 @@ $env:PORT = '4317'
 node packages/server/team/cli.js status
 ```
 
-结果应显示 `schemaVersion=12`、`journalMode=wal` 和 `integrity=ok`。
+结果应显示 `schemaVersion=15`、`journalMode=wal` 和 `integrity=ok`。
 
 4. 检查登录、团队、`sync_project`、taskSpace、Agent active slot 和 Board SSE。
 5. 旧项目不会自动成为新任务空间；用户需要在客户端重新选择并接入项目。
@@ -272,15 +276,18 @@ node packages/server/team/cli.js status
 
 1. 停止新版服务并再次备份当前数据库。
 2. 切回旧二进制版本。
-3. 若旧二进制不能接受 schema v12，必须恢复 `backups/board.sqlite.pre-v12.*` 备份以及对应的
-   WAL 和 SHM；不能直接把 schema v12 数据库交给不兼容的旧二进制。
-4. 恢复后升级阶段产生的 `sync_*` 数据不会保留在旧数据库中；需要保留时先另存当前 v12 数据库。
-5. 不删除 `data/projects/**`、旧 `git-credentials.key` 和旧数据库表；它们只作为人工回滚材料保留。
+3. 若旧二进制不能接受 schema v15，必须恢复 `backups/board.sqlite.pre-v15.*` 备份以及对应的
+   WAL 和 SHM；不能直接把 schema v15 数据库交给不兼容的旧二进制。
+4. 恢复后升级阶段产生的 `sync_*` 数据不会保留在旧数据库中；需要保留时先另存当前 v15 数据库。
+5. 不删除 `archive-snapshots/`、`data/projects/**`、归档凭据密钥和旧数据库表；它们只作为人工回滚材料保留。
 
 ## 8. 备份与恢复
 
 - Team runtime 启动时和每 24 小时用 `VACUUM INTO` 创建
   `backups/board.sqlite.snapshot.<UTC timestamp>`，自动保留最近 7 份。
+- 数据库备份可能仍引用 `archive-snapshots/**`；备份和恢复必须同时保留运行数据目录中的
+  `archive-snapshots/` 以及配置归档凭据时生成的 `archive-git-credentials.key`。清理器会读取保留中的
+  `board.sqlite.snapshot.*`，不会删除受这些备份引用的快照。
 - 升级、维护和批量操作前仍应停止服务并额外复制 `board.sqlite*`。
 - 每日快照失败只记录告警，不阻塞服务；运维必须监控 `任务快照数据库备份失败`。
 - 客户端冲突备份由用户自行保留；服务端不保存完整历史正文，历史版本由客户端 Git 负责。
@@ -307,12 +314,16 @@ SSE 断线：检查 `/api/board/events` 与 `/api/agent/events` 的代理缓冲�
 补拉，不重新 full pull。
 
 Team 服务意外访问 Git：这是架构回归。检查 `createTeamRuntime()` 装配、Team 路由表和日志；正常 Team
-启动不应创建 `data/projects/**`、读取 `git-credentials.key` 或 spawn 项目 Git。
+启动不应创建 `data/projects/**`、读取旧项目 `git-credentials.key` 或在活动任务/HTTP 读取链路 spawn
+项目 Git。只有归档 scheduler 可以读取归档凭据并执行隔离的只读 Git 命令。
+
+`ARCHIVE_LOCAL_FILE_UNAVAILABLE`：SQLite 元数据存在，但本地快照文件缺失、大小或 SHA-256 不匹配。
+不要从 Web 请求触发 Git；保留现有 Board，等待下一次归档同步或按归档快照运维说明恢复数据目录。
 
 ## 10. 发布检查单
 
 - `yarn test` 全部通过，`yarn format:check` 通过。
-- Team 空库和 v6 至 v11 升级库均能打开 schema v12。
+- Team 空库和 v6 至 v14 升级库均能打开 schema v15。
 - Team 启动不创建 `data/projects/**`，旧 Git/live 路由返回 404。
 - 服务端只接受 `.trellis/tasks/**`，单批 CAS、删除墓碑、归档移动和冲突回滚通过。
 - 同远端不同分支 taskSpace、revision、cursor 和 Board 完全隔离。
@@ -320,4 +331,5 @@ Team 服务意外访问 Git：这是架构回归。检查 `createTeamRuntime()` 
 - 换设备后旧 Agent 立即被撤销；新设备未重新绑定项目前不能领取命令。
 - Windows 实机完成登录、初始化、首次推送、接入、两客户端同步、冲突处理、命令投递和重启验收。
 - 每日快照存在且保留 7 份；数据库、日志和 API 不包含 Token、Cookie、私钥或任务正文泄漏。
+- 归档附件详情、401/403、下载头和本地文件缺失 503 已通过；`archive-snapshots/` 与数据库备份引用一致。
 - 反向代理的 Board/Agent SSE 已关闭缓冲，任务快照请求体限制正确。

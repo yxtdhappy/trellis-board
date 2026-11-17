@@ -6,7 +6,7 @@
 | --- | --- |
 | [packages/server/config.js](../../../packages/server/config.js) | 跨平台运行数据根、SQLite 路径、团队监听与公开地址配置 |
 | [packages/server/data-migration.js](../../../packages/server/data-migration.js) | 从旧源码 `data/` 迁移运行数据并重写受管项目路径 |
-| [packages/server/database.js](../../../packages/server/database.js) | `node:sqlite` 连接、PRAGMA、顺序迁移到 schema v14、事务辅助 |
+| [packages/server/database.js](../../../packages/server/database.js) | `node:sqlite` 连接、PRAGMA、顺序迁移到 schema v15、事务辅助 |
 | [packages/server/repositories.js](../../../packages/server/repositories.js) | standalone 白名单增删、ID 生成和路径规范化 |
 | [packages/server/loader.js](../../../packages/server/loader.js) | 扫描任务、读取证据、推导阶段和父子关系 |
 | [packages/server/scan-worker.js](../../../packages/server/scan-worker.js) | standalone Worker Thread 扫描与增量任务刷新 |
@@ -17,6 +17,7 @@
 | [packages/server/team/task-space-service.js](../../../packages/server/team/task-space-service.js) | 全局项目、分支任务空间、团队访问、成员和 Agent binding |
 | [packages/server/team/task-snapshot-service.js](../../../packages/server/team/task-snapshot-service.js) | tasks 快照、文件级 CAS、revision、游标、冲突和审计 |
 | [packages/server/team/task-space-index.js](../../../packages/server/team/task-space-index.js) | 从持久化快照物化临时任务目录并生成 taskSpace 索引 |
+| [packages/server/team/archive-local-snapshot.js](../../../packages/server/team/archive-local-snapshot.js) | 归档完整文件的内容寻址本地快照、原子发布、下载校验和清理 |
 | [packages/server/team/archive-git-{store,sync,credentials}.js](../../../packages/server/team/archive-git-sync.js) | 服务端只读归档 Git 导入、按来源凭据隔离和失败日志 |
 | [packages/server/team/task-command-service.js](../../../packages/server/team/task-command-service.js) | Web 创建/改派命令、在线 Agent 检查、租约、重试和完成门禁 |
 | [packages/server/team/sync-agent-service.js](../../../packages/server/team/sync-agent-service.js) | Agent 注册/鉴权、单账号活动槽和设备替换 |
@@ -41,7 +42,7 @@ packages/server/team/http.js
   -> task-space-service
   -> task-snapshot-service
   -> task-space-index -> loader + sync_task_space_file
-  -> archive-git-sync -> archive-git-store + archive-git-credentials
+  -> archive-git-sync -> archive-git-store + archive-git-credentials + archive-local-snapshot
   -> task-command-service -> task-space-service + sync-agent-service
   -> gitless-board-service -> task-space-index + execution stores
   -> agent-event-stream / board-events
@@ -92,8 +93,11 @@ Team runtime 的事实链拆成两条：
 
 远端分支 archive/**
   -> 后台 scheduler -> 只读 fetch + object read
-  -> sync_archive_file -> archive revision -> same taskSpaceIndex
-  -> 归档索引 + Board tasks.changed（不触发 Agent task.changed）
+  -> staging 本地完整快照 -> 原子发布 heads/<head>
+  -> 候选 snapshot + 不可变历史 fileId + archive revision
+  -> same taskSpaceIndex 读取候选
+  -> 同一事务激活 snapshot + 归档索引 + Board tasks.changed
+    （不触发 Agent task.changed）
 ```
 
 关键边界：
@@ -109,8 +113,9 @@ Team runtime 的事实链拆成两条：
   因而该证据属于受信 Agent 声明而非服务端独立证明。
 - 基线 taskSpace 首次接纳来源不同任务后，来源 taskSpace 的同一稳定任务 ID 转为只读历史副本。
   默认 Board 查询以基线副本优先并隐藏来源重复项，旧快照、冲突和审计不删除。
-- 活动任务服务端只持久化 `.trellis/tasks/<task-dir>/**`。归档 Git 导入另存
-  `sync_archive_file`，不读取源码、scripts、spec、config、workflow、agents、workspace、
+- 活动任务服务端只持久化 `.trellis/tasks/<task-dir>/**`。归档 Git 导入保存
+  `.trellis/tasks/archive/**` 中的全部普通文件到本地内容寻址快照，SQLite 只保存元数据和
+  文本搜索投影，不读取源码、scripts、spec、config、workflow、agents、workspace、
   `.developer` 或本机编码 Agent 目录。
 - Team Board 的创建/改派不直接写项目文件。Web 只创建 `sync_task_command`；目标用户唯一在线 Agent
   在本地执行 `task.py create` 或原子修改 `task.json.assignee`，再通过同一 CAS 链上传。
@@ -156,8 +161,10 @@ Team 扫描不读取 Git 元数据、workspace 会话、`.developer`、scripts�
 
 ### 1. Scope / Trigger
 
-- Trigger：服务端归档只读 Git 导入涉及远端 transport、批量对象读取、任务路径安全和 Agent/Board 读取隔离。
-- 目标：同步阶段允许远端 Git；同步结束后所有产品读取只使用 SQLite/已导入数据，不得隐式回源远端。
+- Trigger：服务端归档只读 Git 导入涉及远端 transport、批量对象读取、完整本地快照、任务路径安全
+  和 Agent/Board 读取隔离。
+- 目标：同步阶段允许远端 Git；同步结束后详情、搜索和附件下载只使用 SQLite 与本地快照，
+  不得隐式回源远端。
 
 ### 2. Signatures
 
@@ -171,6 +178,7 @@ git -c fetch.negotiationAlgorithm=noop fetch origin \
 
 - stdin：每行一个缺失 blob OID。
 - 本地对象读取：`git cat-file --batch`，且环境固定 `GIT_NO_LAZY_FETCH=1`。
+- 快照存储：`createArchiveSnapshotStore({ db, dataDir, databaseFile, logger })`。
 - 路径规范化：
 
 ```js
@@ -184,8 +192,15 @@ taskDirectoryFromPath(value, { allowUnsupportedExtension = false })
 - 必须先在 bare cache 中配置 `remote.origin.url`，再执行高层 `git fetch origin ... --stdin`；该命令支持 HTTP/HTTPS、SSH 和 file transport，并能把多个 OID 合并进一个 pack。
 - prefetch 和 `cat-file` 都保持 `GIT_NO_LAZY_FETCH=1`。网络对象只允许由同步阶段的显式批量 fetch 获取，`cat-file` 不得触发逐对象懒加载。
 - `allowUnsupportedExtension` 只允许合法归档路径跳过扩展名白名单；NUL、反斜杠、绝对路径、`.`/`..`、空段和越出 `.trellis/tasks` 的路径仍必须拒绝。
-- 必须先校验归档目录结构，再按扩展名跳过附件；不能因为文件是 `.png/.ps1` 等附件就绕过月份、任务目录和归档根路径校验。
-- 当前文本归档只导入 `.json/.jsonl/.md/.txt/.yaml/.yml`。其他普通文件是附件，跳过单个文件，不使整个 taskSpace 失败；完整附件本地快照由独立后续任务定义。
+- 必须先校验归档目录结构，再导入文件；不能因为文件是 `.png/.ps1` 等附件就绕过月份、任务目录和归档根路径校验。
+- archive tree 中的全部普通文件都写入 staging。符号链接、子模块和非普通 Git 条目继续使本次导入失败。
+- SQLite `sync_archive_file` 只保存 SHA-256、Git OID、大小、MIME、来源 HEAD、`storage_key`
+  和文本摘要；正文位于 `archive-snapshots/<taskSpaceId>/heads/<head>/files/<sha256>`。
+- `content_text` 停止写入。无本地快照的 v14 legacy 行仍可按只读正文回退；下一次成功同步后切换。
+- 新快照完整发布后先写候选和 `archive_candidate_snapshot_id`，不得在导入事务退役当前
+  `archive_snapshot_id`。索引事务重新校验候选指针，并在同一事务中退役旧 active、激活候选、
+  写 Board/索引和 `archive_indexed_revision`；任一阶段失败保留上一份 active 快照、Board、
+  revision 和旧 fileId 下载。
 
 ### 4. Validation & Error Matrix
 
@@ -194,15 +209,16 @@ taskDirectoryFromPath(value, { allowUnsupportedExtension = false })
 | HTTPS/SSH/file 远端批量获取缺失 blob | 使用高层 `git fetch origin --stdin`，一次请求可包含多个 OID |
 | 调用 `fetch-pack <https-url>` | 视为实现错误，不得进入发布 |
 | `cat-file` 遇到本地缺失对象 | `GIT_NO_LAZY_FETCH=1` 使其失败，不能请求远端 |
-| 合法路径扩展名不在白名单 | 跳过该附件，继续读取其他支持文件 |
+| 合法路径中的普通附件文件 | 写入本地快照并返回元数据，不按扩展名过滤 |
 | 非法路径即使扩展名不在白名单 | 拒绝并记录失败，不能靠跳过绕过路径校验 |
 | 符号链接/子模块/非普通 blob | 返回不支持的 Git 条目错误 |
 | 单文件或总大小超限 | 整次归档发布失败，保留上一份成功归档 |
+| 读取时本地文件缺失或哈希不匹配 | `503 ARCHIVE_LOCAL_FILE_UNAVAILABLE`，请求不得运行 Git 或回源 |
 
 ### 5. Good/Base/Bad Cases
 
-- Good：GitHub HTTPS 归档一次 `fetch origin --stdin` 拉取全部缺失 OID，随后本地 `cat-file` 读取；Board 查询不启动 Git。
-- Base：归档同时含 `task.json`、`prd.md`、`screenshot.png`；前两者导入，PNG 跳过，任务空间成功。
+- Good：GitHub HTTPS 归档一次 `fetch origin --stdin` 拉取全部缺失 OID，随后物化快照；断网和重启后仍可读取 Board 与附件。
+- Base：归档同时含 `task.json`、`prd.md`、`screenshot.png`；三者都进入本地快照，SQLite 正文列为空。
 - Bad：每个 blob 单独执行 `cat-file` 触发 promisor fetch，导致数百次 HTTPS 请求。
 - Bad：为了跳过 PNG 而先跳过路径安全检查，导致 `../secret.png` 也被忽略而非报错。
 
@@ -210,10 +226,12 @@ taskDirectoryFromPath(value, { allowUnsupportedExtension = false })
 
 - `archive-git-store.test.js` 断言 fetch 参数包含 `fetch origin` 和 `--stdin`，不包含 `fetch-pack` 或远端 URL。
 - 断言 fetch 与 cat-file 子进程环境都有 `GIT_NO_LAZY_FETCH=1`。
-- 一次 stdin 包含多个 OID，并验证附件 blob 未进入 cache。
+- 一次 stdin 包含多个 OID，并验证 PNG、脚本、Excel、class 和 pen 文件都进入快照 cache。
 - shared 路径测试覆盖合法 PNG 与带 PNG 扩展名的 `..`、反斜杠、绝对路径、NUL 和越界路径。
-- 服务端测试覆盖月份非法的附件路径，确认扩展名过滤不能让非法归档路径静默通过。
-- 真实 E2E 至少覆盖一个 HTTPS 和一个 SSH 来源，确认 HTTPS 成功且同步后读取阶段没有新远端连接。
+- 服务端测试覆盖月份非法的附件路径，确认附件导入不能绕过归档目录和路径校验。
+- `archive-local-snapshot.test.js` 覆盖发布失败、候选/active 引用保护、重启、备份引用、清理和损坏检测。
+- HTTP 测试覆盖 401/403/404、固定响应头和本地文件缺失 503。
+- 真实 E2E 至少覆盖一个 HTTPS 和一个 SSH 来源，确认同步后断网读取和重启读取都没有新远端连接。
 
 ### 7. Wrong vs Correct
 
@@ -241,14 +259,14 @@ spawn('git', [
 
 Standalone 启动：
 
-1. 准备跨平台运行数据根，打开 `board.sqlite` 并顺序迁移到 schema v14；
+1. 准备跨平台运行数据根，打开 `board.sqlite` 并顺序迁移到 schema v15；
 2. 固定监听 `0.0.0.0:4317`，端口可通过 `PORT` 调整；
 3. 启动白名单仓库 watcher；
 4. 异步触发初始扫描。
 
 Team 启动：
 
-1. 打开同一个 schema v14，但禁止导入本机默认仓库或旧 JSON；
+1. 打开同一个 schema v15，但禁止导入本机默认仓库或旧 JSON；
 2. 装配 `taskSpaces`、`taskSnapshots`、`taskSpaceIndex`、`taskCommands`、`agentService`、
    `agentEvents`、`boardEvents`、`taskSnapshotBackups` 和 `archiveGitSync`；
 3. 不装配旧 `git-manager`、工作副本、项目 clone、Git commit/push 或旧实时覆盖层；只启动归档
@@ -286,8 +304,10 @@ Team 启动：
 
 ## 配置与常量
 
-- `DATABASE_SCHEMA_VERSION` 当前为 `14`。v13 -> v14 增加归档文件、凭据、同步配置/状态/失败日志表，
-  增加活动/归档双 revision，并把旧 archive 文件作为只读 legacy 缓存隔离。迁移不删除旧表和历史文件。
+- `DATABASE_SCHEMA_VERSION` 当前为 `15`。v13 -> v14 增加归档文件、凭据、同步配置/状态/失败日志表，
+  增加活动/归档双 revision；v14 -> v15 增加 `sync_archive_snapshot`、
+  `sync_archive_file_history`、active/candidate 指针和归档文件元数据列，
+  `content_text` 保留为 legacy 只读回退。迁移不删除旧表和历史文件。
 - `SCAN_SCHEMA_VERSION` 当前为 `11`；Board 输出结构不兼容时同步递增。
 - `AGENT_PROTOCOL_VERSION` 当前为 `3`；命令 payload 和 Agent 事件都按 v3 校验。
 - 在线 Agent 的 `last_seen_at` 窗口固定为 60 秒。

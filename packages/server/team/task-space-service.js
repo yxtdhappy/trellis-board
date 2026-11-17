@@ -275,6 +275,7 @@ export function createTaskSpaceService({
   now = () => new Date(),
   staleMs = null,
   backupService = null,
+  onTaskSpacePurged = null,
 }) {
   const allowFileRemote = allowedFileRemote === true || config?.allowLocalGitRemotes === true
   const configuredStaleMs = Number(staleMs ?? config.agentStaleMs ?? DEFAULT_LISTENER_STALE_MS)
@@ -1224,6 +1225,11 @@ export function createTaskSpaceService({
         throw teamError(409, ERROR_CODES.CONFLICT, '任务空间状态已变化，请刷新后重试')
       }
     })
+    try {
+      onTaskSpacePurged?.(taskSpace.id)
+    } catch {
+      // 文件清理失败由后续启动清理重试，不能把已提交的数据库删除报成失败。
+    }
     return {
       purged: true,
       taskSpaceId: taskSpace.id,

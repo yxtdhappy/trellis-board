@@ -67,7 +67,7 @@ ETag、缓存键和游标绑定用户、团队、项目/taskSpace 集合哈希�
 改变归档查询的 ETag、缓存键和游标。`/api/team/status` 同时返回 `queryRevision` 与 `archiveRevision`，
 `statusEtag` 覆盖两者；不新增 SSE 事件名。
 
-### SQLite v14
+### SQLite v15
 
 新模式只使用以下表；旧 `project_live_*`、`team_project`、`git_operation`、`git_credential`
 等表保留但不读写：
@@ -80,7 +80,8 @@ ETag、缓存键和游标绑定用户、团队、项目/taskSpace 集合哈希�
 - `sync_task_assignment`
 - `sync_task_command`
 - `sync_conflict`、`sync_conflict_backup`、`sync_file_audit`
-- `sync_archive_file`、`sync_archive_git_credential`
+- `sync_archive_file`、`sync_archive_file_history`、`sync_archive_git_credential`
+- `sync_archive_snapshot`
 - `sync_archive_sync_config`、`sync_archive_sync_state`、`sync_archive_sync_log`
 
 v12 在 `sync_agent_binding` 上增加 `is_listening`、`listener_reported_at`、`last_listener_at`，
@@ -105,6 +106,13 @@ v13 -> v14 在 `VACUUM INTO` 备份后把旧归档行复制为 `blob_oid='legacy
 Agent 文件表、pending conflict 和客户端 cursor 迁移路径中移除归档。首次 Git 成功导入前旧归档
 仍可读，成功后由 Git 快照替换。
 
+v15 把 Git 归档导入结果保存为不可变本地快照。`sync_archive_snapshot` 记录来源 HEAD、
+active 标记、存储根、文件数、字节数和 manifest 摘要；`sync_task_space` 保存 active/candidate
+快照指针；`sync_archive_file` 只保存当前候选/active 的文件元数据、SHA-256、MIME、
+`storage_key` 和文本摘要投影，不再写入正文；`sync_archive_file_history` 保存被替换但仍需供
+旧 Board fileId 访问的不可变映射。导入不得退役 active，候选只在索引事务成功时原子激活。
+v14 legacy `content_text` 保留为只读回退。
+
 ### 服务与 SSE
 
 ```text
@@ -114,7 +122,7 @@ createTaskCommandService({ db, taskSpaces, agents, events })
 createSyncAgentService({ db, config, events })
 createTaskSnapshotBackupService({ db, databaseFile, logger })
 createAgentEventStream({ db, commands, logger })
-createArchiveGitSyncService({ db, config, dataDir, taskSpaceIndex, logger })
+createArchiveGitSyncService({ db, config, dataDir, taskSpaceIndex, snapshots, logger })
 ```
 
 Agent SSE 事件为 `command.available`、`agent.revoked`、`task.changed`、`cursor.invalidated`。
@@ -453,10 +461,14 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 
 ### 备份
 
-- v13 -> v14 升级前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v14.*`；更早版本按
+- v13 -> v14 / v14 -> v15 升级前使用 `VACUUM INTO` 写入当前目标版本的
+  `backups/board.sqlite.pre-v15.*`；更早版本按
   原顺序迁移，最终备份名使用当前目标版本。
 - Team runtime 启动时和每 24 小时写入
   `backups/board.sqlite.snapshot.<UTC timestamp>`，保留最近 7 份。
+- 这些受管数据库备份仍可能引用 `archive-snapshots/**`；归档快照清理必须同时读取当前数据库的
+  active/candidate/历史 fileId 引用和全部保留备份中的 `sync_archive_snapshot.storage_root`，
+  备份轮换前不得删除对应目录。
 - 每日容错备份失败只记结构化告警，不阻塞 HTTP、快照提交或 SSE；管理员移除分支使用的严格备份
   失败必须中止删除，不写删除审计。
 - 客户端冲突备份位于

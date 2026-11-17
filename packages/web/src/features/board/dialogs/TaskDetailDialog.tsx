@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { X } from 'lucide-react'
+import { Download, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { fetchTaskDetail, api, type TaskSpace } from '@/api/board'
+import { downloadArchiveFile, fetchTaskDetail, api, type TaskSpace } from '@/api/board'
 import { ApiError } from '@/api/request'
 import { renderMarkdown } from '@/lib/markdown.js'
 import { cn } from '@/lib/utils'
@@ -46,6 +46,13 @@ const ARTIFACTS = [
 ] as const
 
 type ArtifactEntry = { path?: string; content?: string; truncated?: boolean }
+
+function fileSizeLabel(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+}
 
 function dependencyStateText(task: BoardTask) {
   const execution = task.execution || {}
@@ -241,6 +248,7 @@ export function TaskDetailDialog({
   const progress = current ? taskProgress(current) : null
   const stage = current ? nextStage(current) : null
   const artifacts = readArtifacts(current)
+  const archiveFiles = Array.isArray(current?.files) ? current.files : []
   const { readOnly: assignmentReadOnly, canSubmit: assignmentCanSubmit } = assignmentActionState(
     current,
     assignee,
@@ -648,6 +656,67 @@ export function TaskDetailDialog({
                   </p>
                 )}
               </section>
+
+              {current.archived ? (
+                <section className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-[0.6875rem] font-semibold text-muted-foreground">
+                      归档附件
+                    </h3>
+                    <span className="text-[0.625rem] text-muted-foreground">
+                      {archiveFiles.length} 个本地快照文件
+                    </span>
+                  </div>
+                  {loading && !archiveFiles.length ? (
+                    <p className="text-[0.6875rem] text-muted-foreground">归档附件正在读取…</p>
+                  ) : archiveFiles.length ? (
+                    <ul className="flex flex-col divide-y divide-border/60 rounded-lg border border-border">
+                      {archiveFiles.map((file) => (
+                        <li key={file.id} className="flex min-w-0 items-center gap-2 px-2.5 py-2">
+                          <span className="flex min-w-0 flex-1 flex-col">
+                            <b
+                              className="truncate text-[0.71875rem] font-semibold"
+                              title={file.path}
+                            >
+                              {file.name}
+                            </b>
+                            <small className="truncate text-[0.625rem] text-muted-foreground">
+                              {file.mimeType} · {fileSizeLabel(file.sizeBytes)}
+                            </small>
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1"
+                            disabled={busy === `archive:${file.id}`}
+                            onClick={async () => {
+                              setBusy(`archive:${file.id}`)
+                              try {
+                                await downloadArchiveFile(file)
+                              } catch (error) {
+                                toast.error(
+                                  error instanceof Error
+                                    ? error.message
+                                    : '归档本地文件不可用，请等待下一次同步',
+                                )
+                              } finally {
+                                setBusy('')
+                              }
+                            }}
+                          >
+                            <Download className="size-3.5" />
+                            {busy === `archive:${file.id}` ? '读取中' : '下载'}
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-[0.6875rem] text-muted-foreground">
+                      当前还没有可下载的本地快照附件。
+                    </p>
+                  )}
+                </section>
+              ) : null}
             </DialogBody>
           )}
 

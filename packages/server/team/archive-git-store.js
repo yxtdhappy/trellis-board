@@ -1,16 +1,15 @@
-import crypto from 'node:crypto'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
   normalizeSnapshotPath,
-  normalizeSnapshotText,
-  snapshotSha256,
-  TASK_SNAPSHOT_MAX_FILE_BYTES,
-  TASK_SNAPSHOT_EXTENSIONS,
   taskDirectoryFromPath,
 } from '@trellis-board/shared/task-snapshot.js'
 import { validateGitBranchName } from '@trellis-board/shared/remote-identity.js'
+import {
+  ARCHIVE_SNAPSHOT_MAX_BYTES,
+  ARCHIVE_SNAPSHOT_MAX_FILE_BYTES,
+} from './archive-local-snapshot.js'
 import { teamError } from './errors.js'
 import { minimalEnvironment, runProcess, sanitizeProcessOutput, terminateTree } from './process.js'
 
@@ -28,8 +27,8 @@ const PROXY_ENV_KEYS = [
 const FETCH_TIMEOUT_MS = 180_000
 const OBJECT_TIMEOUT_MS = 180_000
 const MAX_ARCHIVE_FILES = 10_000
-const MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
-const MAX_BLOB_BATCH_BYTES = 32 * TASK_SNAPSHOT_MAX_FILE_BYTES
+const MAX_BLOB_BATCH_BYTES = 32 * 1024 * 1024
+const MAX_BLOB_BATCH_FILES = 32
 
 function textOutput(result) {
   return `${result?.stderr || ''}\n${result?.stdout || ''}`.trim()
@@ -101,11 +100,11 @@ function parseBlobBatch(buffer, requestedOids) {
     ) {
       throw new Error('git cat-file 返回了不支持的归档对象')
     }
-    if (size > TASK_SNAPSHOT_MAX_FILE_BYTES) {
+    if (size > ARCHIVE_SNAPSHOT_MAX_FILE_BYTES) {
       throw teamError(
         409,
         'ARCHIVE_FILE_TOO_LARGE',
-        `Git 归档文件超过 ${TASK_SNAPSHOT_MAX_FILE_BYTES / 1024 / 1024} MiB`,
+        `Git 归档文件超过 ${ARCHIVE_SNAPSHOT_MAX_FILE_BYTES / 1024 / 1024} MiB`,
       )
     }
     if (!oid.endsWith(requestedOid) && !requestedOid.endsWith(oid)) {
@@ -329,11 +328,6 @@ export function createArchiveGitStore({
       if (!directory.archived) {
         throw teamError(409, 'ARCHIVE_PATH_INVALID', 'Git 归档导入出现了非归档任务路径')
       }
-      if (
-        !TASK_SNAPSHOT_EXTENSIONS.some((extension) => normalized.toLowerCase().endsWith(extension))
-      ) {
-        continue
-      }
       if (!/^[a-f0-9]{40,64}$/i.test(oid)) throw new Error('Git 归档对象 ID 无效')
       if (seen.has(normalized)) throw new Error('Git 归档路径重复')
       seen.add(normalized)
@@ -343,6 +337,98 @@ export function createArchiveGitStore({
       throw teamError(409, 'ARCHIVE_TREE_TOO_LARGE', `归档文件数超过上限 ${MAX_ARCHIVE_FILES}`)
     }
     return entries
+  }
+
+  async function readBlobSizes(cwd, requestedOids, auth, signal) {
+    if (!requestedOids.length) return new Map()
+    return new Promise((resolve, reject) => {
+      const child = spawnImpl(
+        'git',
+        [...baseConfig(), 'cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'],
+        {
+          cwd,
+          env: environment(auth),
+          shell: false,
+          windowsHide: true,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+      )
+      const stdout = []
+      const stderr = []
+      let stdoutBytes = 0
+      let settled = false
+      let timer = null
+      let abortListener = null
+      const cleanup = () => {
+        if (timer) clearTimeout(timer)
+        if (signal && abortListener) signal.removeEventListener('abort', abortListener)
+      }
+      const fail = (error) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        void terminateTree(child).then(
+          () => reject(error),
+          () => reject(error),
+        )
+      }
+      timer = setTimeout(() => fail(new Error('读取 Git 归档对象大小超时')), OBJECT_TIMEOUT_MS)
+      if (signal) {
+        abortListener = () => fail(new Error('读取 Git 归档对象大小已取消'))
+        signal.addEventListener('abort', abortListener, { once: true })
+        if (signal.aborted) abortListener()
+      }
+      child.stdin.on('error', () => {})
+      child.stdout.on('data', (chunk) => {
+        stdoutBytes += chunk.length
+        if (stdoutBytes > 16 * 1024 * 1024) {
+          fail(new Error('Git 归档对象大小输出超过限制'))
+          return
+        }
+        stdout.push(chunk)
+      })
+      child.stderr.on('data', (chunk) => stderr.push(chunk))
+      child.once('error', (error) => fail(error))
+      child.once('close', (code) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        if (code !== 0) {
+          const output = sanitizeProcessOutput(Buffer.concat(stderr).toString('utf8'), {
+            maxBytes: 2048,
+            redact: auth?.redact || [],
+          })
+          reject(classifier(output))
+          return
+        }
+        try {
+          const sizes = new Map()
+          for (const line of Buffer.concat(stdout).toString('utf8').split(/\r?\n/)) {
+            if (!line) continue
+            const fields = line.trim().split(/\s+/)
+            if (fields.length !== 3) throw new Error('Git 归档对象大小格式无效')
+            const [oid, type, sizeText] = fields
+            const size = Number(sizeText)
+            if (
+              !/^[a-f0-9]{40,64}$/i.test(oid) ||
+              type !== 'blob' ||
+              !Number.isSafeInteger(size) ||
+              size < 0
+            ) {
+              throw new Error('Git 归档对象大小无效')
+            }
+            sizes.set(oid, size)
+          }
+          if (requestedOids.some((oid) => !sizes.has(oid))) {
+            throw new Error('Git 未返回全部归档对象大小')
+          }
+          resolve(sizes)
+        } catch (error) {
+          reject(error)
+        }
+      })
+      child.stdin.end(`${requestedOids.join('\n')}\n`)
+    })
   }
 
   async function readBlobBatch(cwd, requestedOids, maxBytes, auth, signal) {
@@ -502,23 +588,53 @@ export function createArchiveGitStore({
   }
 
   async function readObjects(cwd, entries, auth, signal, onBlob) {
-    await prefetchBlobs(
-      cwd,
-      entries.map((entry) => entry.oid),
-      auth,
-      signal,
-    )
-    const batchSize = 32
-    for (let index = 0; index < entries.length; index += batchSize) {
-      const batch = entries.slice(index, index + batchSize)
+    const requestedOids = [...new Set(entries.map((entry) => entry.oid))]
+    await prefetchBlobs(cwd, requestedOids, auth, signal)
+    const sizes = await readBlobSizes(cwd, requestedOids, auth, signal)
+    let totalBytes = 0
+    for (const entry of entries) {
+      entry.size = sizes.get(entry.oid)
+      if (entry.size > ARCHIVE_SNAPSHOT_MAX_FILE_BYTES) {
+        throw teamError(
+          409,
+          'ARCHIVE_FILE_TOO_LARGE',
+          `Git 归档文件超过 ${ARCHIVE_SNAPSHOT_MAX_FILE_BYTES / 1024 / 1024} MiB`,
+        )
+      }
+      totalBytes += entry.size
+    }
+    if (totalBytes > ARCHIVE_SNAPSHOT_MAX_BYTES) {
+      throw teamError(
+        409,
+        'ARCHIVE_TREE_TOO_LARGE',
+        `归档文件总量超过 ${ARCHIVE_SNAPSHOT_MAX_BYTES / 1024 / 1024} MiB`,
+      )
+    }
+    const batches = []
+    let batch = []
+    let batchBytes = 0
+    for (const entry of entries) {
+      if (
+        batch.length &&
+        (batch.length >= MAX_BLOB_BATCH_FILES || batchBytes + entry.size > MAX_BLOB_BATCH_BYTES)
+      ) {
+        batches.push(batch)
+        batch = []
+        batchBytes = 0
+      }
+      batch.push(entry)
+      batchBytes += entry.size
+    }
+    if (batch.length) batches.push(batch)
+    for (const currentBatch of batches) {
       const output = await readBlobBatch(
         cwd,
-        batch.map((entry) => entry.oid),
+        currentBatch.map((entry) => entry.oid),
         MAX_BLOB_BATCH_BYTES,
         auth,
         signal,
       )
-      for (const entry of batch) {
+      for (const entry of currentBatch) {
         const blob = output.get(entry.oid)
         if (!blob) throw new Error('Git 未返回归档对象内容')
         onBlob(entry, blob)
@@ -532,6 +648,7 @@ export function createArchiveGitStore({
     taskSpace,
     knownHead = null,
     signal = null,
+    snapshotWriter = null,
   }) {
     const branchName = validateGitBranchName(taskSpace.branch_name)
     const resolved = credentials.resolveForRemote(project.remote_url, {
@@ -577,38 +694,26 @@ export function createArchiveGitStore({
         if (error && typeof error === 'object') error.archivePhase = 'import'
         throw error
       }
-      const decoder = new TextDecoder('utf-8', { fatal: true })
+      if (!snapshotWriter?.writeBlob) throw new Error('归档 Git 导入缺少本地快照写入器')
       const files = []
       let byteCount = 0
       const collectBlob = (entry, blob) => {
-        let decoded
-        try {
-          decoded = decoder.decode(blob)
-        } catch {
-          throw teamError(
-            409,
-            'ARCHIVE_FILE_NOT_UTF8',
-            `归档文件不是严格 UTF-8: ${entry.relativePath}`,
-          )
-        }
-        const content = normalizeSnapshotText(decoded)
-        byteCount += Buffer.byteLength(content, 'utf8')
-        if (byteCount > MAX_ARCHIVE_BYTES) {
+        const file = snapshotWriter.writeBlob(entry, blob)
+        byteCount += file.sizeBytes
+        if (byteCount > ARCHIVE_SNAPSHOT_MAX_BYTES) {
           throw teamError(
             409,
             'ARCHIVE_TREE_TOO_LARGE',
-            `归档正文总量超过 ${MAX_ARCHIVE_BYTES / 1024 / 1024} MiB`,
+            `归档文件总量超过 ${ARCHIVE_SNAPSHOT_MAX_BYTES / 1024 / 1024} MiB`,
           )
         }
         files.push({
-          relativePath: entry.relativePath,
+          ...file,
           blobOid: entry.oid,
-          sha256: snapshotSha256(content),
-          content,
           taskDir: entry.directory.taskDir,
           taskId:
             entry.relativePath === `${entry.directory.taskDir}/task.json`
-              ? parseTaskId(content)
+              ? parseTaskId(blob.toString('utf8'))
               : null,
         })
       }

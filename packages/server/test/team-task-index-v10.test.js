@@ -837,11 +837,14 @@ test('新 index 实例从持久化投影状态继续增量重建', async () => {
     })
     await ctx.index.materializeNow(ctx.taskSpaceId)
     const initialCache = ctx.db
-      .prepare('SELECT projection_state_json FROM sync_task_space_scan_cache WHERE task_space_id = ?')
+      .prepare(
+        'SELECT projection_state_json FROM sync_task_space_scan_cache WHERE task_space_id = ?',
+      )
       .get(ctx.taskSpaceId)
     assert.ok(initialCache.projection_state_json)
     const initialState = JSON.parse(initialCache.projection_state_json)
-    assert.equal(initialState.schemaVersion, 1)
+    assert.equal(initialState.schemaVersion, 3)
+    assert.equal(initialState.archiveSnapshotId, null)
     assert.equal(typeof initialState.manualStageFingerprint, 'string')
     assert.ok(Array.isArray(initialState.tasks))
     assert.ok(Array.isArray(initialState.dirFingerprints))
@@ -850,8 +853,7 @@ test('新 index 实例从持久化投影状态继续增量重建', async () => {
     assert.ok(initialState.tasks.every(([, task]) => task && typeof task === 'object'))
     assert.ok(
       initialState.dirFingerprints.every(
-        (entry) =>
-          Array.isArray(entry) && entry.length === 2 && typeof entry[1] === 'string',
+        (entry) => Array.isArray(entry) && entry.length === 2 && typeof entry[1] === 'string',
       ),
     )
     await ctx.index.close()
@@ -879,7 +881,9 @@ test('新 index 实例从持久化投影状态继续增量重建', async () => {
       2,
     )
     const cached = ctx.db
-      .prepare('SELECT projection_state_json FROM sync_task_space_scan_cache WHERE task_space_id = ?')
+      .prepare(
+        'SELECT projection_state_json FROM sync_task_space_scan_cache WHERE task_space_id = ?',
+      )
       .get(ctx.taskSpaceId)
     assert.ok(cached.projection_state_json)
     assert.equal(cached.projection_state_json.includes('trellis-task-space-snapshot'), false)
@@ -958,9 +962,7 @@ test('服务启动预热复用持久化状态且只扫描变化任务', async ()
       },
     })
     assert.notEqual(
-      ctx.db
-        .prepare('SELECT status FROM sync_task_space WHERE id = ?')
-        .get(ctx.taskSpaceId).status,
+      ctx.db.prepare('SELECT status FROM sync_task_space WHERE id = ?').get(ctx.taskSpaceId).status,
       'disabled',
     )
     const results = await restarted.warmActive()

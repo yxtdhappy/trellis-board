@@ -11,7 +11,9 @@ const SYNC_TABLES = [
   'sync_agent_binding',
   'sync_agent_cursor',
   'sync_archive_file',
+  'sync_archive_file_history',
   'sync_archive_git_credential',
+  'sync_archive_snapshot',
   'sync_archive_sync_config',
   'sync_archive_sync_log',
   'sync_archive_sync_state',
@@ -39,7 +41,7 @@ function tableNames(db) {
     .map((row) => row.name)
 }
 
-test('schema v14 新库包含团队任务和归档同步表', () => {
+test('schema v15 新库包含团队任务、本地快照和归档同步表', () => {
   const db = openDatabase({
     databaseFile: ':memory:',
     fallbackRepositories: [],
@@ -47,7 +49,7 @@ test('schema v14 新库包含团队任务和归档同步表', () => {
     legacyJsonImport: false,
   })
   try {
-    assert.equal(DATABASE_SCHEMA_VERSION, 14)
+    assert.equal(DATABASE_SCHEMA_VERSION, 15)
     const names = tableNames(db)
     for (const table of SYNC_TABLES) assert.ok(names.includes(table), `缺少 ${table}`)
     assert.ok(names.includes('team_project'))
@@ -66,7 +68,7 @@ test('schema v14 新库包含团队任务和归档同步表', () => {
   }
 })
 
-test('v10 升级到 v12 补监听、弃用和基线字段并保留已有关联', () => {
+test('v10 升级到 v15 补监听、弃用和基线字段并保留已有关联', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v12-'))
   const databaseFile = path.join(root, 'board.sqlite')
   let reopened = null
@@ -186,11 +188,11 @@ test('v10 升级到 v12 补监听、弃用和基线字段并保留已有关联',
     )
     assert.equal(
       reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '14',
+      '15',
     )
     const backupName = fs
       .readdirSync(path.join(root, 'backups'))
-      .find((name) => name.startsWith('board.sqlite.pre-v14.'))
+      .find((name) => name.startsWith('board.sqlite.pre-v15.'))
     assert.ok(backupName)
     const backup = new DatabaseSync(path.join(root, 'backups', backupName))
     try {
@@ -242,7 +244,7 @@ test('v10 升级到 v12 补监听、弃用和基线字段并保留已有关联',
     assert.equal(
       fs
         .readdirSync(path.join(root, 'backups'))
-        .filter((name) => name.startsWith('board.sqlite.pre-v14.')).length,
+        .filter((name) => name.startsWith('board.sqlite.pre-v15.')).length,
       1,
     )
     reopened.close()
@@ -257,7 +259,7 @@ test('v10 升级到 v12 补监听、弃用和基线字段并保留已有关联',
   }
 })
 
-test('v11 升级到 v12 只补弃用字段，历史 disabled 不自动变成 retired', () => {
+test('v11 升级到 v15 只补弃用字段，历史 disabled 不自动变成 retired', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v12-v11-upgrade-'))
   const databaseFile = path.join(root, 'board.sqlite')
   let reopened = null
@@ -314,7 +316,7 @@ test('v11 升级到 v12 只补弃用字段，历史 disabled 不自动变成 ret
     })
     assert.equal(
       reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '14',
+      '15',
     )
     const row = reopened
       .prepare(`
@@ -333,7 +335,7 @@ test('v11 升级到 v12 只补弃用字段，历史 disabled 不自动变成 ret
     )
     const backupName = fs
       .readdirSync(path.join(root, 'backups'))
-      .find((name) => name.startsWith('board.sqlite.pre-v14.'))
+      .find((name) => name.startsWith('board.sqlite.pre-v15.'))
     assert.ok(backupName)
     const backup = new DatabaseSync(path.join(root, 'backups', backupName))
     try {
@@ -388,9 +390,9 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
     db.exec(`
       CREATE TRIGGER fail_v12_metadata
       BEFORE UPDATE ON app_meta
-      WHEN NEW.key = 'schema_version' AND NEW.value = '14'
+      WHEN NEW.key = 'schema_version' AND NEW.value = '15'
       BEGIN
-        SELECT RAISE(ABORT, 'v14 metadata blocked');
+        SELECT RAISE(ABORT, 'v15 metadata blocked');
       END;
     `)
     db.close()
@@ -403,7 +405,7 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
           importLegacyRepositories: false,
           legacyJsonImport: false,
         }),
-      /v14 metadata blocked/,
+      /v15 metadata blocked/,
     )
     const check = new DatabaseSync(databaseFile, { readOnly: true })
     try {
@@ -437,7 +439,7 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
     assert.equal(
       fs
         .readdirSync(path.join(root, 'backups'))
-        .some((name) => name.startsWith('board.sqlite.pre-v14.')),
+        .some((name) => name.startsWith('board.sqlite.pre-v15.')),
       true,
     )
   } finally {
@@ -445,7 +447,7 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
   }
 })
 
-test('v9 升级到 v12 保留旧项目行并创建备份', () => {
+test('v9 升级到 v15 保留旧项目行并创建备份', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-v12-v9-upgrade-'))
   const databaseFile = path.join(root, 'board.sqlite')
   try {
@@ -515,12 +517,12 @@ test('v9 升级到 v12 保留旧项目行并创建备份', () => {
     try {
       assert.equal(
         reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-        '14',
+        '15',
       )
       assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM team_project').get().count, 1)
       assert.ok(tableNames(reopened).includes('sync_project'))
       const backups = fs.readdirSync(path.join(root, 'backups'))
-      const backupName = backups.find((name) => name.includes('pre-v14'))
+      const backupName = backups.find((name) => name.includes('pre-v15'))
       assert.ok(backupName)
       const backup = new DatabaseSync(path.join(root, 'backups', backupName))
       try {

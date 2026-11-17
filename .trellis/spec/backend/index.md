@@ -9,6 +9,7 @@
 | [架构与运行时](./architecture-and-runtime.md) | 模块职责、依赖方向、主线程与 Worker Thread |
 | [扫描与持久化](./scanning-and-persistence.md) | 任务证据、阶段推导、缓存、文件监听和刷新队列 |
 | [HTTP 与文件边界](./http-and-filesystem.md) | API、输入校验、白名单、原子写和静态文件 |
+| [归档快照运维](./archive-snapshot-operations.md) | 本地完整快照、数据库备份引用、清理、恢复与排障 |
 | [插件运行时](./plugin-runtime.md) | 子进程协议、清单与版本、生命周期、存储与命名空间、任务写入 |
 | [插件测试](./plugin-testing.md) | 协议契约、插件功能、真实组合的分层测试与覆盖矩阵 |
 | [桌面 Agent 运行契约](./desktop-agent-runtime.md) | 进程内 Rust Agent 模块边界、协议/超时/控制事件、数据兼容、环境门与单 EXE 打包 |

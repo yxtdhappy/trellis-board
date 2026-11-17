@@ -11,7 +11,7 @@ import {
   stateFile,
 } from './config.js'
 
-export const DATABASE_SCHEMA_VERSION = 14
+export const DATABASE_SCHEMA_VERSION = 15
 
 const LEGACY_IMPORT_KEY = 'legacy_json_imported_v1'
 const EXECUTION_EVENTS_STARTED_KEY = 'execution_events_started_at'
@@ -1409,6 +1409,152 @@ function ensureV14Schema(db) {
   `)
 }
 
+const SCHEMA_V15_SQL = `
+  CREATE TABLE IF NOT EXISTS sync_archive_snapshot (
+    id TEXT PRIMARY KEY,
+    task_space_id TEXT NOT NULL REFERENCES sync_task_space(id) ON DELETE CASCADE,
+    source_head TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'published'
+      CHECK (status IN ('published', 'retired')),
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    storage_root TEXT NOT NULL,
+    file_count INTEGER NOT NULL DEFAULT 0,
+    byte_count INTEGER NOT NULL DEFAULT 0,
+    manifest_sha256 TEXT NOT NULL,
+    published_at TEXT NOT NULL,
+    retired_at TEXT,
+    UNIQUE(task_space_id, source_head)
+  );
+
+  CREATE INDEX IF NOT EXISTS sync_archive_snapshot_task_space
+    ON sync_archive_snapshot(task_space_id, status, published_at DESC);
+
+  CREATE TABLE IF NOT EXISTS sync_archive_file_history (
+    id            TEXT PRIMARY KEY,
+    task_space_id TEXT NOT NULL REFERENCES sync_task_space(id) ON DELETE CASCADE,
+    snapshot_id   TEXT REFERENCES sync_archive_snapshot(id) ON DELETE CASCADE,
+    relative_path TEXT NOT NULL,
+    blob_oid      TEXT NOT NULL,
+    sha256        TEXT NOT NULL,
+    content_text  TEXT NOT NULL DEFAULT '',
+    size_bytes    INTEGER NOT NULL DEFAULT 0,
+    mime_type     TEXT NOT NULL DEFAULT 'application/octet-stream',
+    storage_key   TEXT,
+    text_excerpt  TEXT,
+    task_id       TEXT,
+    task_dir      TEXT NOT NULL,
+    source_head   TEXT,
+    updated_at    TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS sync_archive_file_history_task_space
+    ON sync_archive_file_history(task_space_id, snapshot_id, relative_path);
+  CREATE INDEX IF NOT EXISTS sync_archive_file_history_storage
+    ON sync_archive_file_history(task_space_id, storage_key);
+`
+
+function ensureV15Schema(db) {
+  db.exec(SCHEMA_V15_SQL)
+  for (const [name, definition] of [
+    ['id', 'TEXT'],
+    ['size_bytes', 'INTEGER NOT NULL DEFAULT 0'],
+    ['mime_type', "TEXT NOT NULL DEFAULT 'application/octet-stream'"],
+    ['storage_key', 'TEXT'],
+    ['text_excerpt', 'TEXT'],
+    ['snapshot_id', 'TEXT REFERENCES sync_archive_snapshot(id) ON DELETE CASCADE'],
+  ]) {
+    if (!hasColumn(db, 'sync_archive_file', name)) {
+      db.exec(`ALTER TABLE sync_archive_file ADD COLUMN ${name} ${definition}`)
+    }
+  }
+  if (!hasColumn(db, 'sync_archive_snapshot', 'active')) {
+    db.exec(`
+      ALTER TABLE sync_archive_snapshot
+      ADD COLUMN active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
+    `)
+  }
+  for (const name of ['archive_snapshot_id', 'archive_candidate_snapshot_id']) {
+    if (!hasColumn(db, 'sync_task_space', name)) {
+      db.exec(`
+        ALTER TABLE sync_task_space
+        ADD COLUMN ${name} TEXT REFERENCES sync_archive_snapshot(id) ON DELETE RESTRICT
+      `)
+    }
+  }
+  db.exec(`
+    UPDATE sync_archive_file
+    SET id = 'legacy-' || lower(hex(randomblob(16)))
+    WHERE id IS NULL OR id = '';
+
+    UPDATE sync_archive_file
+    SET size_bytes = length(CAST(content_text AS BLOB))
+    WHERE size_bytes = 0 AND length(content_text) > 0;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS sync_archive_file_id_unique
+      ON sync_archive_file(id);
+
+    CREATE INDEX IF NOT EXISTS sync_archive_file_id
+      ON sync_archive_file(id);
+
+    CREATE INDEX IF NOT EXISTS sync_archive_file_storage
+      ON sync_archive_file(task_space_id, storage_key);
+
+    CREATE INDEX IF NOT EXISTS sync_archive_snapshot_active
+      ON sync_archive_snapshot(task_space_id, active, published_at DESC);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS sync_archive_snapshot_one_active
+      ON sync_archive_snapshot(task_space_id)
+      WHERE active = 1;
+
+    CREATE INDEX IF NOT EXISTS sync_archive_file_snapshot
+      ON sync_archive_file(task_space_id, snapshot_id);
+
+    UPDATE sync_task_space
+    SET archive_snapshot_id = (
+      SELECT snapshot.id
+      FROM sync_archive_snapshot snapshot
+      WHERE snapshot.task_space_id = sync_task_space.id
+        AND snapshot.status = 'published'
+        AND snapshot.active = 1
+      ORDER BY snapshot.published_at DESC, snapshot.id DESC
+      LIMIT 1
+    )
+    WHERE archive_snapshot_id IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM sync_archive_snapshot snapshot
+        WHERE snapshot.task_space_id = sync_task_space.id
+          AND snapshot.status = 'published'
+          AND snapshot.active = 1
+      );
+
+    UPDATE sync_archive_snapshot
+    SET active = CASE
+      WHEN id = (
+        SELECT task_space.archive_snapshot_id
+        FROM sync_task_space task_space
+        WHERE task_space.id = sync_archive_snapshot.task_space_id
+      ) THEN 1
+      ELSE 0
+    END;
+
+    UPDATE sync_archive_file
+    SET snapshot_id = (
+      SELECT task_space.archive_snapshot_id
+      FROM sync_task_space task_space
+      WHERE task_space.id = sync_archive_file.task_space_id
+    )
+    WHERE snapshot_id IS NULL
+      AND storage_key IS NOT NULL
+      AND EXISTS (
+        SELECT 1
+        FROM sync_task_space task_space
+        WHERE task_space.id = sync_archive_file.task_space_id
+          AND task_space.archive_snapshot_id IS NOT NULL
+      );
+  `)
+}
+
 function tableExists(db, table) {
   return Boolean(
     db
@@ -1436,7 +1582,7 @@ function ensureSchema(db, { databaseFile } = {}) {
   const schemaVersion = tableExists(db, 'app_meta') ? readMeta(db, 'schema_version') : null
   const numericVersion = schemaVersion == null ? null : Number(schemaVersion)
 
-  if (numericVersion !== null && ![6, 7, 8, 9, 10, 11, 12, 13, 14].includes(numericVersion)) {
+  if (numericVersion !== null && ![6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(numericVersion)) {
     throw new Error(
       `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除当前 board.sqlite 后重建`,
     )
@@ -1459,6 +1605,7 @@ function ensureSchema(db, { databaseFile } = {}) {
     ensureV12Schema(db)
     ensureV13Schema(db)
     ensureV14Schema(db)
+    ensureV15Schema(db)
     if (numericVersion == null || numericVersion < DATABASE_SCHEMA_VERSION) {
       writeMeta(db, 'schema_version', DATABASE_SCHEMA_VERSION)
     }

@@ -1,5 +1,5 @@
 import { ApiError, requestJson, redirectToLogin } from './request.ts'
-import type { BoardTask } from '@/features/board/task-view'
+import type { ArchiveFileMetadata, BoardTask } from '@/features/board/task-view'
 import { normalizeTaskPage } from '@/lib/team-client.js'
 
 export type Project = {
@@ -167,6 +167,40 @@ export const fetchTaskDetail = (task: BoardTask) =>
     projectId: task.projectId,
     taskPath: task.relativeDir,
   }).then((payload) => payload?.task || (payload as BoardTask | null))
+
+export async function downloadArchiveFile(file: ArchiveFileMetadata) {
+  let response: Response
+  try {
+    response = await fetch(file.downloadUrl, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
+  } catch {
+    throw new ApiError('无法读取归档本地文件')
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    if (response.status === 401) redirectToLogin()
+    throw new ApiError(payload?.error || '归档本地文件不可用', {
+      status: response.status,
+      code: payload?.code || null,
+      details: payload?.details || null,
+      recoverable: Boolean(payload?.recoverable),
+      payload,
+    })
+  }
+  const objectUrl = URL.createObjectURL(await response.blob())
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = file.name
+  document.body.appendChild(anchor)
+  try {
+    anchor.click()
+  } finally {
+    anchor.remove()
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+  }
+}
 
 export type TeamQueryPage = {
   tasks: BoardTask[]

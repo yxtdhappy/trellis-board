@@ -3,14 +3,12 @@ import { withTransaction } from '../database.js'
 import { appendAuditEvent } from './audit.js'
 import { diagnosticError, errorSummary, sanitizeDiagnosticText } from './error-diagnostics.js'
 import { ERROR_CODES, teamError } from './errors.js'
-import {
-  formatGitRemote,
-  normalizeGitRemote,
-} from '@trellis-board/shared/remote-identity.js'
+import { formatGitRemote, normalizeGitRemote } from '@trellis-board/shared/remote-identity.js'
 import {
   archiveCredentialOrigin,
   createArchiveGitCredentialService,
 } from './archive-git-credentials.js'
+import { createArchiveSnapshotStore } from './archive-local-snapshot.js'
 import { createArchiveGitStore } from './archive-git-store.js'
 
 const MIN_INTERVAL_SECONDS = 60
@@ -72,8 +70,16 @@ export function createArchiveGitSyncService({
   logger = console,
   runProcessImpl,
   store: providedStore = null,
+  snapshots: providedSnapshots = null,
 }) {
   const credentials = createArchiveGitCredentialService({ db, dataDir })
+  const snapshots =
+    providedSnapshots ||
+    createArchiveSnapshotStore({
+      db,
+      dataDir,
+      logger,
+    })
   const store =
     providedStore ||
     createArchiveGitStore({
@@ -222,9 +228,20 @@ export function createArchiveGitSyncService({
 
   function importSnapshot(taskSpaceId, snapshot) {
     return withTransaction(db, () => {
+      const taskSpace = db
+        .prepare(`
+          SELECT archive_snapshot_id, archive_candidate_snapshot_id
+          FROM sync_task_space
+          WHERE id = ?
+        `)
+        .get(taskSpaceId)
+      const activeSnapshotId = taskSpace?.archive_snapshot_id || null
+      const previousCandidateId = taskSpace?.archive_candidate_snapshot_id || null
       const existingRows = db
         .prepare(`
-          SELECT relative_path, blob_oid, sha256, task_dir, task_id
+          SELECT id, relative_path, blob_oid, sha256, task_dir, task_id,
+                 content_text, size_bytes, mime_type, storage_key, text_excerpt,
+                 source_head, snapshot_id
           FROM sync_archive_file
           WHERE task_space_id = ?
         `)
@@ -244,7 +261,14 @@ export function createArchiveGitSyncService({
           contentChanged = true
           break
         }
-        if (row.blob_oid === 'legacy') legacyMetadataReplaced = true
+        if (
+          row.blob_oid === 'legacy' ||
+          !row.storage_key ||
+          Number(row.size_bytes) !== Number(file.sizeBytes) ||
+          row.mime_type !== file.mimeType
+        ) {
+          legacyMetadataReplaced = true
+        }
       }
       if (!contentChanged) {
         for (const relativePath of existing.keys()) {
@@ -254,77 +278,138 @@ export function createArchiveGitSyncService({
           }
         }
       }
-      const changed = contentChanged || legacyMetadataReplaced
-
+      const changed = contentChanged
       const timestamp = new Date().toISOString()
-      let archiveRevision = Number(
-        db.prepare('SELECT archive_revision FROM sync_task_space WHERE id = ?').get(taskSpaceId)
-          ?.archive_revision || 0,
-      )
-      if (changed) {
-        const deleteFile = db.prepare(
-          'DELETE FROM sync_archive_file WHERE task_space_id = ? AND relative_path = ?',
-        )
-        const upsert = db.prepare(`
-          INSERT INTO sync_archive_file(
-            task_space_id, relative_path, blob_oid, sha256, content_text,
+      if (!previousCandidateId) {
+        const insertHistory = db.prepare(`
+          INSERT OR IGNORE INTO sync_archive_file_history(
+            id, task_space_id, snapshot_id, relative_path, blob_oid, sha256,
+            content_text, size_bytes, mime_type, storage_key, text_excerpt,
             task_id, task_dir, source_head, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(task_space_id, relative_path) DO UPDATE SET
-            blob_oid = excluded.blob_oid,
-            sha256 = excluded.sha256,
-            content_text = excluded.content_text,
-            task_id = excluded.task_id,
-            task_dir = excluded.task_dir,
-            source_head = excluded.source_head,
-            updated_at = excluded.updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
-        for (const [relativePath, row] of existing) {
-          if (!desired.has(relativePath)) deleteFile.run(taskSpaceId, relativePath)
-        }
-        for (const file of desired.values()) {
-          const row = existing.get(file.relativePath)
-          if (
-            row &&
-            row.sha256 === file.sha256 &&
-            row.task_dir === file.taskDir &&
-            (row.task_id || null) === (file.taskId || null) &&
-            row.blob_oid !== 'legacy'
-          ) {
-            continue
-          }
-          upsert.run(
+        for (const row of existingRows) {
+          insertHistory.run(
+            row.id,
             taskSpaceId,
-            file.relativePath,
-            file.blobOid,
-            file.sha256,
-            file.content,
-            file.taskId,
-            file.taskDir,
-            snapshot.head,
+            row.snapshot_id || activeSnapshotId,
+            row.relative_path,
+            row.blob_oid,
+            row.sha256,
+            row.content_text || '',
+            row.size_bytes,
+            row.mime_type,
+            row.storage_key,
+            row.text_excerpt,
+            row.task_id,
+            row.task_dir,
+            row.source_head,
             timestamp,
           )
         }
+      }
+
+      let snapshotRow = db
+        .prepare('SELECT id FROM sync_archive_snapshot WHERE task_space_id = ? AND source_head = ?')
+        .get(taskSpaceId, snapshot.head)
+      const candidateSnapshotId = snapshotRow?.id || crypto.randomUUID()
+      if (snapshotRow) {
         db.prepare(`
-          UPDATE sync_task_space
-          SET archive_revision = archive_revision + 1, updated_at = ?
+          UPDATE sync_archive_snapshot
+          SET status = 'published',
+              active = CASE WHEN id = ? THEN 1 ELSE 0 END,
+              storage_root = ?, file_count = ?, byte_count = ?,
+              manifest_sha256 = ?, published_at = ?, retired_at = NULL
           WHERE id = ?
-        `).run(timestamp, taskSpaceId)
-        archiveRevision = Number(
-          db.prepare('SELECT archive_revision FROM sync_task_space WHERE id = ?').get(taskSpaceId)
-            .archive_revision,
+        `).run(
+          activeSnapshotId,
+          snapshot.storageRoot,
+          snapshot.fileCount,
+          snapshot.byteCount,
+          snapshot.manifestSha256,
+          timestamp,
+          candidateSnapshotId,
+        )
+      } else {
+        db.prepare(`
+          INSERT INTO sync_archive_snapshot(
+            id, task_space_id, source_head, status, active, storage_root,
+            file_count, byte_count, manifest_sha256, published_at, retired_at
+          ) VALUES (?, ?, ?, 'published', 0, ?, ?, ?, ?, ?, NULL)
+        `).run(
+          candidateSnapshotId,
+          taskSpaceId,
+          snapshot.head,
+          snapshot.storageRoot,
+          snapshot.fileCount,
+          snapshot.byteCount,
+          snapshot.manifestSha256,
+          timestamp,
         )
       }
+      const activeHistory = db
+        .prepare(`
+          SELECT id, relative_path, sha256, size_bytes, mime_type
+          FROM sync_archive_file_history
+          WHERE task_space_id = ?
+            AND (
+              (snapshot_id = ?)
+              OR (? IS NULL AND snapshot_id IS NULL)
+            )
+        `)
+        .all(taskSpaceId, activeSnapshotId, activeSnapshotId)
+      const activeFiles = new Map(activeHistory.map((row) => [row.relative_path, row]))
+
+      db.prepare('DELETE FROM sync_archive_file WHERE task_space_id = ?').run(taskSpaceId)
+      const insertFile = db.prepare(`
+        INSERT INTO sync_archive_file(
+          id, task_space_id, snapshot_id, relative_path, blob_oid, sha256, content_text,
+          size_bytes, mime_type, storage_key, text_excerpt,
+          task_id, task_dir, source_head, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      for (const file of desired.values()) {
+        const activeFile = activeFiles.get(file.relativePath)
+        const reusableId =
+          activeFile &&
+          activeFile.sha256 === file.sha256 &&
+          Number(activeFile.size_bytes) === Number(file.sizeBytes) &&
+          activeFile.mime_type === file.mimeType
+            ? activeFile.id
+            : crypto.randomUUID()
+        insertFile.run(
+          reusableId,
+          taskSpaceId,
+          candidateSnapshotId,
+          file.relativePath,
+          file.blobOid,
+          file.sha256,
+          file.sizeBytes,
+          file.mimeType,
+          file.storageKey,
+          file.textExcerpt || null,
+          file.taskId,
+          file.taskDir,
+          snapshot.head,
+          timestamp,
+        )
+      }
+      db.prepare(`
+        UPDATE sync_task_space
+        SET archive_candidate_snapshot_id = ?,
+            archive_revision = archive_revision + ?,
+            updated_at = ?
+        WHERE id = ?
+      `).run(candidateSnapshotId, changed ? 1 : 0, timestamp, taskSpaceId)
+      const archiveRevision = Number(
+        db.prepare('SELECT archive_revision FROM sync_task_space WHERE id = ?').get(taskSpaceId)
+          .archive_revision,
+      )
 
       const priorSuccess = db
         .prepare('SELECT last_success_at FROM sync_archive_sync_state WHERE task_space_id = ?')
         .get(taskSpaceId)?.last_success_at
-      const archiveIndexedRevision = Number(
-        db
-          .prepare('SELECT archive_indexed_revision FROM sync_task_space WHERE id = ?')
-          .get(taskSpaceId).archive_indexed_revision,
-      )
-      const needsIndex = changed || archiveIndexedRevision < archiveRevision || !priorSuccess
+      const needsIndex = true
       db.prepare(`
         UPDATE sync_archive_sync_state
         SET status = ?, ref_name = 'refs/heads/trellis-archive',
@@ -340,6 +425,12 @@ export function createArchiveGitSyncService({
         timestamp,
         taskSpaceId,
       )
+      if (previousCandidateId && previousCandidateId !== candidateSnapshotId) {
+        db.prepare(`
+          DELETE FROM sync_archive_snapshot
+          WHERE id = ? AND task_space_id = ? AND active = 0
+        `).run(previousCandidateId, taskSpaceId)
+      }
       return {
         changed,
         contentChanged,
@@ -402,30 +493,51 @@ export function createArchiveGitSyncService({
           .prepare('SELECT COUNT(*) AS count FROM sync_archive_file WHERE task_space_id = ?')
           .get(taskSpaceId).count,
       )
+      const publishedSnapshot = db
+        .prepare(`
+          SELECT *
+          FROM sync_archive_snapshot
+          WHERE task_space_id = ? AND status = 'published' AND active = 1
+          ORDER BY published_at DESC, id DESC
+          LIMIT 1
+        `)
+        .get(taskSpaceId)
       const knownHead =
         priorState?.last_success_at &&
         priorState.remote_head &&
-        currentFileCount === Number(priorState.file_count)
+        currentFileCount === Number(priorState.file_count) &&
+        publishedSnapshot?.source_head === priorState.remote_head &&
+        snapshots.snapshotUsable(publishedSnapshot)
           ? priorState.remote_head
           : null
-      const snapshot = await store.readSnapshot({
-        taskSpaceId,
-        project,
-        taskSpace,
-        knownHead,
-        signal: abortController.signal,
-      })
+      const staging = snapshots.createStaging(taskSpaceId, attemptId)
+      let snapshot
+      try {
+        snapshot = await store.readSnapshot({
+          taskSpaceId,
+          project,
+          taskSpace,
+          knownHead,
+          signal: abortController.signal,
+          snapshotWriter: staging,
+        })
+      } catch (error) {
+        staging.cancel()
+        throw error
+      }
       if (snapshot.skipped) {
+        staging.cancel()
         const revisions = db
           .prepare(`
-            SELECT archive_revision, archive_indexed_revision
+            SELECT archive_revision, archive_indexed_revision, archive_candidate_snapshot_id
             FROM sync_task_space
             WHERE id = ?
           `)
           .get(taskSpaceId)
         const needsIndex =
+          Boolean(revisions?.archive_candidate_snapshot_id) ||
           Number(revisions?.archive_indexed_revision || 0) <
-          Number(revisions?.archive_revision || 0)
+            Number(revisions?.archive_revision || 0)
         const timestamp = new Date().toISOString()
         db.prepare(`
           UPDATE sync_archive_sync_state
@@ -461,7 +573,40 @@ export function createArchiveGitSyncService({
       }
       phase = 'import'
       markImporting(taskSpaceId, snapshot.head)
-      const imported = importSnapshot(taskSpaceId, snapshot)
+      let published
+      try {
+        published = snapshots.publish({
+          staging,
+          head: snapshot.head,
+          files: snapshot.files,
+        })
+      } catch (error) {
+        staging.cancel()
+        if (error && typeof error === 'object') error.archivePhase = 'import'
+        throw error
+      }
+      const stagedFiles = new Map(snapshot.files.map((file) => [file.relativePath, file]))
+      let imported
+      try {
+        imported = importSnapshot(taskSpaceId, {
+          ...snapshot,
+          ...published,
+          files: published.files.map((file) => ({
+            ...stagedFiles.get(file.relativePath),
+            ...file,
+          })),
+        })
+      } finally {
+        published.release?.()
+      }
+      try {
+        snapshots.cleanup()
+      } catch (error) {
+        logger.warn?.('归档快照清理失败', {
+          taskSpaceId,
+          errorCode: error?.code || 'ARCHIVE_SNAPSHOT_CLEANUP_FAILED',
+        })
+      }
       failureCounts.delete(taskSpaceId)
       backoffUntil.delete(taskSpaceId)
       if (imported.needsIndex) {
@@ -497,6 +642,14 @@ export function createArchiveGitSyncService({
       }
     } catch (error) {
       if (stopped && abortController.signal.aborted) return { taskSpaceId, aborted: true }
+      try {
+        snapshots.cleanup()
+      } catch (cleanupError) {
+        logger.warn?.('归档快照失败清理未完成', {
+          taskSpaceId,
+          errorCode: cleanupError?.code || 'ARCHIVE_SNAPSHOT_CLEANUP_FAILED',
+        })
+      }
       const failurePhase =
         phase === 'fetch' && error?.code && phaseForError(error) === 'import' ? 'import' : phase
       recordFailure(taskSpaceId, attemptId, failurePhase, error)
@@ -659,7 +812,12 @@ export function createArchiveGitSyncService({
       const archiveStats = db
         .prepare(`
           SELECT COUNT(*) AS file_count,
-                 COALESCE(SUM(length(CAST(content_text AS BLOB))), 0) AS byte_count
+                 COALESCE(SUM(
+                   CASE
+                     WHEN size_bytes > 0 THEN size_bytes
+                     ELSE length(CAST(content_text AS BLOB))
+                   END
+                 ), 0) AS byte_count
           FROM sync_archive_file
           WHERE task_space_id = ?
         `)
@@ -793,6 +951,14 @@ export function createArchiveGitSyncService({
       SET status = 'current', last_indexed_at = ?, last_error = NULL, updated_at = ?
       WHERE task_space_id = ?
     `).run(timestamp, timestamp, payload.taskSpaceId)
+    try {
+      snapshots.cleanup()
+    } catch (error) {
+      logger.warn?.('归档快照索引后清理失败', {
+        taskSpaceId: payload.taskSpaceId,
+        errorCode: error?.code || 'ARCHIVE_SNAPSHOT_CLEANUP_FAILED',
+      })
+    }
   }
 
   function onIndexProjectionFailed({ taskSpaceId, error, attemptId, sources = [] }) {
@@ -868,6 +1034,7 @@ export function createArchiveGitSyncService({
 
   return {
     credentials,
+    snapshots,
     start,
     stop,
     overview,

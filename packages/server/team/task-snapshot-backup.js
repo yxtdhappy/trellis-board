@@ -3,7 +3,20 @@ import path from 'node:path'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const DEFAULT_RETENTION = 7
-const SNAPSHOT_PATTERN = /^board\.sqlite\.snapshot\.\d{8}T\d{9}Z$/
+export const TASK_SNAPSHOT_BACKUP_PATTERN = /^board\.sqlite\.snapshot\.\d{8}T\d{9}Z$/
+
+export function listTaskSnapshotBackupFiles(databaseFile) {
+  if (!databaseFile || databaseFile === ':memory:' || databaseFile.startsWith('file:')) {
+    return []
+  }
+  const backupDir = path.join(path.dirname(databaseFile), 'backups')
+  if (!fs.existsSync(backupDir)) return []
+  return fs
+    .readdirSync(backupDir)
+    .filter((name) => TASK_SNAPSHOT_BACKUP_PATTERN.test(name))
+    .sort()
+    .map((name) => path.join(backupDir, name))
+}
 
 function timestamp(now) {
   return now.toISOString().replaceAll('-', '').replaceAll(':', '').replace('.', '')
@@ -21,11 +34,7 @@ export function createTaskSnapshotBackupService({
   let timer = null
 
   function snapshots() {
-    if (!backupDir || !fs.existsSync(backupDir)) return []
-    return fs
-      .readdirSync(backupDir)
-      .filter((name) => SNAPSHOT_PATTERN.test(name))
-      .sort()
+    return listTaskSnapshotBackupFiles(databaseFile).map((file) => path.basename(file))
   }
 
   function prune() {

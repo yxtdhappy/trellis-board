@@ -14,6 +14,7 @@ import { createBoardEventService } from '../board-events.js'
 import { openDatabase } from '../database.js'
 import { STAGE_IDS } from '../metadata.js'
 import { createAgentEventStream } from './agent-event-stream.js'
+import { createArchiveSnapshotStore } from './archive-local-snapshot.js'
 import { createArchiveGitSyncService } from './archive-git-sync.js'
 import { appendAuditEvent, listAuditEvents } from './audit.js'
 import { createDesktopAuthService } from './desktop-auth.js'
@@ -301,6 +302,23 @@ function requireAdmin(actor) {
   }
 }
 
+function archiveContentDisposition(name) {
+  const value = String(name || 'archive-file')
+  const fallback = value.replace(/[^\x20-\x7e]|["\\\r\n]/g, '_') || 'archive-file'
+  const encoded = encodeURIComponent(value).replace(
+    /['()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`
+}
+
+function archiveContentType(value) {
+  const contentType = String(value || '')
+  return /^[A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+(?:; charset=utf-8)?$/.test(contentType)
+    ? contentType
+    : 'application/octet-stream'
+}
+
 function requireTeamAdmin(db, actor, teamId = null) {
   if (actor?.systemAdmin) {
     return resolveTeamScope(db, actor, teamId)
@@ -443,6 +461,14 @@ function routeMatch(pathname, pattern) {
     return match.slice(1).map((item) => decodeURIComponent(item))
   } catch {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, '请求路径编码无效')
+  }
+}
+
+function assertValidQueryEncoding(search) {
+  try {
+    decodeURIComponent(search)
+  } catch {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'URL 查询编码无效')
   }
 }
 
@@ -1248,6 +1274,26 @@ function createRequestHandler({
     const { pathname } = url
     const actor = requireActor(request)
 
+    const archiveFileMatch = routeMatch(pathname, /^\/api\/archive-files\/([^/]+)$/)
+    if (archiveFileMatch && request.method === 'GET') {
+      assertValidQueryEncoding(url.search)
+      const taskSpaceId = String(url.searchParams.get('taskSpaceId') || '').trim()
+      if (!taskSpaceId || taskSpaceId.length > 128) {
+        throw teamError(400, ERROR_CODES.INVALID_INPUT, '任务空间 ID 格式无效')
+      }
+      const file = await boardService.getArchiveFile(actor, taskSpaceId, archiveFileMatch[0])
+      response.writeHead(200, {
+        ...securityHeaders(),
+        'content-type': archiveContentType(file.mimeType),
+        'content-length': file.buffer.length,
+        'content-disposition': archiveContentDisposition(file.name),
+        'cache-control': 'private, no-store',
+        'x-content-type-options': 'nosniff',
+      })
+      response.end(file.buffer)
+      return true
+    }
+
     if (pathname === '/api/tasks/query' && request.method === 'GET') {
       const queryInput = taskQueryInput(url)
       queryInput.taskSpaceId = url.searchParams.get('taskSpaceId')
@@ -1714,6 +1760,19 @@ export async function createTeamRuntime({
     legacyJsonImport: false,
     logger,
   })
+  const archiveSnapshots = createArchiveSnapshotStore({
+    db,
+    dataDir,
+    databaseFile,
+    logger,
+  })
+  try {
+    archiveSnapshots.cleanup()
+  } catch (error) {
+    logger.warn('归档快照启动清理失败', {
+      errorCode: error?.code || 'ARCHIVE_SNAPSHOT_CLEANUP_FAILED',
+    })
+  }
   const taskSnapshotBackups = createTaskSnapshotBackupService({
     db,
     databaseFile,
@@ -1754,6 +1813,15 @@ export async function createTeamRuntime({
       db,
       config,
       backupService: taskSnapshotBackups,
+      onTaskSpacePurged: () => {
+        try {
+          archiveSnapshots.cleanup()
+        } catch (error) {
+          logger.warn('归档快照移除清理失败', {
+            errorCode: error?.code || 'ARCHIVE_SNAPSHOT_CLEANUP_FAILED',
+          })
+        }
+      },
     })
     taskCommands = createTaskCommandService({
       db,
@@ -1766,6 +1834,7 @@ export async function createTeamRuntime({
       db,
       stageIds: STAGE_IDS,
       taskSpaces,
+      archiveSnapshots,
       executionWipLimit: EXECUTION_WIP_LIMIT,
       onQueryRevisionChanged: (revision) => boardEvents.publish({ revision }),
       onProjected: (projection) => {
@@ -1792,12 +1861,14 @@ export async function createTeamRuntime({
       taskSpaceIndex,
       logger,
       runProcessImpl: archiveGitRunProcessImpl,
+      snapshots: archiveSnapshots,
     })
     const desktopAuthService = createDesktopAuthService({ db, ...desktopAuth })
     const boardService = createGitlessBoardService({
       db,
       taskSpaces,
       taskSpaceIndex,
+      archiveSnapshots,
       agents: agentService,
       executionWipLimit: EXECUTION_WIP_LIMIT,
     })
@@ -1916,6 +1987,7 @@ export async function createTeamRuntime({
         boardEvents,
         boardService,
         taskSnapshotBackups,
+        archiveSnapshots,
       },
       start,
       stop,

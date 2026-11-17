@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "约束同步阶段与读取阶段的运行时边界，禁止读取请求访问 Git 远端"}
+{"file": ".trellis/spec/backend/scanning-and-persistence.md", "reason": "约束 schema、快照持久化、索引 revision 和失败保留"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "约束附件下载 API、权限、路径安全和响应头"}
+{"file": ".trellis/tasks/11-17-archive-local-snapshot-read/research/local-snapshot-contract.md", "reason": "提供现状事实、容量基线和本地快照建议"}

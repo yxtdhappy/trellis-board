@@ -19,11 +19,12 @@ standalone 每个仓库的扫描根为 `.trellis/tasks`。只有包含 `task.jso
 这里有两类扫描输入：
 
 - standalone 直接扫描 SQLite 白名单中的本机仓库，可读取 workspace 和 Git 元数据。
-- Team taskSpace 的活动扫描只物化 `sync_task_space_file`；归档扫描只物化 `sync_archive_file`。
-  两者都不读取 Git、workspace、`.developer`、scripts、spec、config 或 workflow；归档正文由
-  服务端只读 Git importer 写入 `sync_archive_file`。
-- 当前文本归档只导入 `.json/.jsonl/.md/.txt/.yaml/.yml`。归档中的其他普通文件作为附件跳过，
-  不能让单个 `.png/.ps1/.xlsx` 等附件阻断整个分支；非法归档路径仍必须失败，不能借附件过滤绕过安全校验。
+- Team taskSpace 的活动扫描只物化 `sync_task_space_file`；归档扫描只物化 `sync_archive_file`
+  元数据并从 `archive-snapshots/` 读取本地正文。两条索引链路都不读取 Git、workspace、
+  `.developer`、scripts、spec、config 或 workflow；只有归档同步阶段允许独占远端 Git。
+- 归档 Git importer 导入 `.trellis/tasks/archive/**` 中的全部普通文件，包括
+  `.png/.ps1/.xlsx/.class/.pen`。SQLite `content_text` 不再写新正文，完整文件进入内容寻址本地快照；
+  legacy 行在成功同步前继续只读回退。
 
 任务证据主要来自：
 
@@ -85,17 +86,21 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 `database.js` 是 schema 和迁移的唯一所有者：
 
-- 当前 schema 为 v14。新库和旧库升级都保留旧账号、团队、`team_project`、`project_live_*`、
+- 当前 schema 为 v15。新库和旧库升级都保留旧账号、团队、`team_project`、`project_live_*`、
   `git_operation`、`git_credential` 和插件表，并新增 `sync_project`、
   `sync_task_space`、`sync_task_space_file`、`sync_task_space_batch`、`sync_active_agent`、
   `sync_agent_binding`、`sync_agent_cursor`、`sync_task_index`、`sync_task_command`、
-  `sync_task_merge_evidence`、`sync_conflict`、`sync_file_audit`、`sync_archive_file`、
+  `sync_task_merge_evidence`、`sync_conflict`、`sync_file_audit`、`sync_archive_snapshot`、
+  `sync_archive_file`、
   `sync_archive_git_credential`、`sync_archive_sync_config/state/log` 等表。
 - Team runtime 只读写 `sync_*`、账号、团队、审计和执行扩展表；旧 Git 和实时覆盖表只作为人工回滚材料，
   不在启动、扫描、项目接入或命令链路中读取。
 - `sync_task_space_file` 保存 LF 规范化后的活动正文、摘要、删除墓碑、来源 Agent/用户和 revision；
-  `sync_archive_file` 保存服务端 Git 导入的归档正文；活动路径不得写入归档表，archive 路径不得写入
-  Agent 文件表；
+  `sync_archive_snapshot` 保存归档来源 HEAD、active 标记、本地存储根和 manifest 摘要，
+  `sync_task_space` 分别保存已激活和候选快照指针，`sync_archive_file` 只保存当前候选/active
+  映射的 SHA-256、Git OID、大小、MIME、`storage_key` 和文本摘要投影，
+  `sync_archive_file_history` 用不可变 fileId 保存被替换但仍可能被旧 Board 访问的映射。
+  活动路径不得写入归档表，archive 路径不得写入 Agent 文件表；
   `sync_task_index` 以 `(task_space_id, task_key)` 隔离路径实例；跨 taskSpace 判定同一稳定任务时
   使用 `execution_task_key` 的 `::<task.json.id>` 后缀。默认查询在基线索引已有同一稳定任务 ID 时
   隐藏来源旧副本。
@@ -111,9 +116,15 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
   创建 `sync_task_merge_evidence`、task ID 索引并回填基线；已有项目优先选择最早创建的活动
   taskSpace，时间相同按 ID 排序。v13 -> v14 创建归档表、凭据表、同步状态/日志表，增加活动/归档
   双 revision 和 `sync_task_space_scan_cache.projection_state_json`，并把旧 archive 文件复制为只读
-  legacy 缓存后从 Agent 文件表移除。新库直接包含最终结构，v6-v13 升级复用同一入口。
-- 迁移前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v14.*`。补列、表、索引、数据回填或
-  schema 版本写入任一步失败时整体回滚；大于 v14 的数据库拒绝打开。
+  legacy 缓存后从 Agent 文件表移除。v14 -> v15 增加 `sync_archive_snapshot` 和
+  `sync_archive_file_history`，`sync_archive_file` 幂等补
+  `id/snapshot_id/size_bytes/mime_type/storage_key/text_excerpt`，快照表补 active 标记，
+   taskSpace 补 active/candidate 快照指针，并回填 legacy ID、大小和现有 active 引用。
+  `snapshot_id`、历史快照和 taskSpace 指针都有外键约束；每个 taskSpace 的 active 快照由
+  `sync_archive_snapshot_one_active` 部分唯一索引限制为一个。
+  新库直接包含最终结构，v6-v14 升级复用同一入口。
+- 迁移前使用 `VACUUM INTO` 写入 `backups/board.sqlite.pre-v15.*`。补列、表、索引、数据回填或
+  schema 版本写入任一步失败时整体回滚；大于 v15 的数据库拒绝打开。
 - v1 -> v2 -> v3 顺序迁移在单一 `BEGIN IMMEDIATE` 事务中完成；迁移前用 `VACUUM INTO` 写入可独立打开的源版本快照，命名为 `board.sqlite.v1-backup` 或 `board.sqlite.v2-backup`。失败时主库保留源版本和原表，备份仍可独立打开。
 - 首次初始化在 `BEGIN IMMEDIATE` 中一次性导入四个旧 JSON，并写入 `legacy_json_imported_v1`。
 - 迁移后不再读写旧 JSON；它们只作为迁移来源和回滚备份。
@@ -124,6 +135,15 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 - `sync_task_space.revision` 只由成功的非 no-op 活动快照批次递增；`indexed_revision` 只由成功投影推进。
   `archive_revision` 只由成功 Git 归档导入递增；`archive_indexed_revision` 只由归档索引投影推进。
+- 归档同步先在 staging 物化全部文件，单文件 16 MiB、单 TaskSpace 512 MiB 超限时整体失败。
+  快照目录完整发布后才写候选快照、不可变历史 fileId、当前文件映射和 revision；导入不得退役
+  当前 active 快照。索引事务重新校验候选指针，并在同一事务中退役旧 active、激活候选、写
+  Board cache 和 `archive_indexed_revision`。SQLite 或索引失败时，上一份 active 快照、旧 Board、
+  revision 和 fileId 下载保持不变。
+- 相同内容只更换来源 HEAD 时创建新候选并更新 `source_head/storage_key` 和快照元数据，
+  不递增 `archive_revision`；候选指针仍必须经过一次成功索引才能激活。
+  清理只删除未受 active/candidate、当前历史 fileId、当前数据库或受管
+  `board.sqlite.snapshot.*` 备份引用的目录。
 - Team 任务索引的 warm 基线包含活动/归档两个 revision、按任务目录保存的完整 loader 事实、覆盖活动行
   和删除墓碑的目录指纹、稳定 project/workspace 成员、任务详情、人工阶段指纹和最近指标。基线与
   Board cache、两份 indexed revision 在同一事务写入 `sync_task_space_scan_cache.projection_state_json`；
@@ -137,14 +157,16 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 - 增量 Board 与前缀任务索引必须与同快照 full 重建一致，包括 `project.members`。稳定项目成员使用
   `workspaceMembers`，并与当前全部任务 `assignee/creator` 去重排序后生成 `members`，不能复用旧
   Board 中的参与者集合。
-- 每个候选投影在 `BEGIN IMMEDIATE` 中重新校验活动 revision、archive revision、retired/status 和人工阶段
-  指纹。扫描或等待期间出现新 revision 时，旧候选整体 superseded，不写 `sync_task_index`、
-  `sync_task_index_tag`、Board cache、assignment 或 `indexed_revision`；下一轮收敛最新快照。
+- 每个候选投影在 `BEGIN IMMEDIATE` 中重新校验活动 revision、archive revision、候选快照指针、
+  retired/status 和人工阶段指纹。扫描或等待期间出现新 revision 或新候选时，旧投影整体
+  superseded，不写 `sync_task_index`、`sync_task_index_tag`、Board cache、assignment、
+  `indexed_revision` 或快照 active 指针；下一轮收敛最新候选。
 - 索引写入按 `(task_space_id, task_key)` 做差异 UPSERT/DELETE，未变化行的 `board_version` 和
   `updated_at` 保持不变；只对新增、字段变化或标签变化的任务重建标签。禁止在正常 warm 路径固定
   全删全插。
-- Board cache、索引、标签、assignment 投影和 `indexed_revision` 必须在同一事务成功或回滚。成功
-  提交后才发布 query revision、SSE 和替换进程内 warm 状态；失败继续保留上一份一致 Board。
+- Board cache、索引、标签、assignment 投影、快照 active/candidate 指针和两份 indexed revision
+  必须在同一事务成功或回滚。成功提交后才发布 query revision、SSE、执行快照清理并替换进程内
+  warm 状态；失败继续保留上一份一致 Board。
 - `sync_task_space_file` 的主键是 `(task_space_id, relative_path)`；删除写墓碑而不是物理删除，供增量
   cursor 获取最后一次删除。
 - `sync_task_space_batch` 的主键是 `(agent_id, task_space_id, batch_id)`；请求摘要不同时拒绝相同 batchId。
@@ -219,9 +241,9 @@ HTTP 层把完整 board 持久化到 SQLite `scan_cache` 单行，并用 `SCAN_S
 
 #### 6. Tests Required
 
-- `packages/server/test/database.test.js` / `database-v10.test.js`：新库 v14、v10 监听补列、
-  v11 retired/基线/证据结构、v13 -> v14 归档隔离与双 revision、v6-v13 顺序升级、源版本备份、
-  旧表保留、归档时间回填、失败回滚和大于 v14 拒绝。
+- `packages/server/test/database.test.js` / `database-v10.test.js`：新库 v15、v10 监听补列、
+  v11 retired/基线/证据结构、v13 -> v14 归档隔离与双 revision、v14 -> v15 快照元数据、
+  v6-v14 顺序升级、源版本备份、旧表保留、归档时间回填、失败回滚和大于 v15 拒绝。
 - `execution-store.test.js`：缺失、自引用、重复、原因边界、二/三节点环、创建/解除事件回滚、重开和重新创建。
 - `execution-projection.test.js`：列表不带完整数组；详情同时返回活动与已结束双向历史；解除区间时长使用 `resolvedAt - createdAt`；开工、完成条件不改变阶段完成状态。
 - 真实 HTTP：失败前后依赖与事件计数一致；循环错误含标题闭环。
@@ -431,8 +453,8 @@ withTransaction(db, () => {
 
 ## 修改检查
 
-- [ ] schema v14 新增归档文件、凭据、同步状态/日志、活动和归档双 revision，旧依赖、归档、团队和 Git 表仍可打开，大于 v14 的版本仍被拒绝。
-- [ ] v10 -> v11 幂等补监听列，v11 -> v12 幂等补 retired、基线、证据表和索引，v13 -> v14 幂等迁移归档；v6-v13 顺序迁移成功；源版本备份可独立打开，旧数据保留和迁移失败回滚正确。
+- [ ] schema v15 新增完整本地快照元数据、归档文件大小/MIME/存储键、活动和归档双 revision，旧依赖、归档、团队和 Git 表仍可打开，大于 v15 的版本仍被拒绝。
+- [ ] v10 -> v11 幂等补监听列，v11 -> v12 幂等补 retired、基线、证据表和索引，v13 -> v14 隔离归档，v14 -> v15 补快照元数据；v6-v14 顺序迁移成功；源版本备份可独立打开，旧数据保留和迁移失败回滚正确。
 - [ ] 基线 taskSpace 已有同一稳定任务 ID 时，默认任务查询、计数、筛选和分页只返回基线副本；来源快照仍可显式读取。
 - [ ] 扫描只把包含 `task.json` 的目录认作任务。
 - [ ] 新证据文件已加入读取和缓存签名范围。
@@ -446,8 +468,11 @@ withTransaction(db, () => {
 - [ ] 身份冲突清除后不会从冲突快照补写虚假阶段变化。
 - [ ] 删除或重命名任务后缓存能清理旧项。
 - [ ] 移除项目时同一事务清理对应 `task_stage` 和执行扩展数据，且不会误删相似项目 ID 的记录。
-- [ ] Team 活动快照只读取活动 `.trellis/tasks/<task-dir>/**`；归档只读取 `sync_archive_file`，
-      不依赖 `data/projects/**`、workspace 或 HTTP 请求栈中的 Git 子进程。
-- [ ] 归档 Git 导入只接受 `.trellis/tasks/archive/<YYYY-MM>/<task-dir>/<file>`，失败保留上一份
-      `sync_archive_file` 和 Board cache，`last_indexed_at` 只在索引成功后推进。
+- [ ] Team 活动快照只读取活动 `.trellis/tasks/<task-dir>/**`；归档只读取
+      `sync_archive_file` 元数据和 `archive-snapshots/`，不依赖 `data/projects/**`、workspace
+      或 HTTP 请求栈中的 Git 子进程。
+- [ ] 归档 Git 导入只接受 `.trellis/tasks/archive/<YYYY-MM>/<task-dir>/<file>` 的全部普通文件，
+      staging 完整发布后只写候选；索引成功事务同时激活候选、写 Board cache 并推进
+      `archive_indexed_revision`。失败时上一份 active 快照、revision、fileId 下载和 Board cache
+      保持可用。
 - [ ] Team 每日数据库快照使用 `VACUUM INTO`，保留最近 7 份且备份失败不阻塞服务。

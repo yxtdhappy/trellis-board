@@ -28,6 +28,15 @@ export type DependencyRecord = {
   resolvedAt?: string
 }
 
+export type ArchiveFileMetadata = {
+  id: string
+  path: string
+  name: string
+  sizeBytes: number
+  mimeType: string
+  downloadUrl: string
+}
+
 export type TaskExecution = {
   dueDate?: string | null
   milestone?: string | null
@@ -83,6 +92,7 @@ export type BoardTask = {
   tags?: string[]
   stages: Stage[]
   execution?: TaskExecution
+  files?: ArchiveFileMetadata[]
   history?: { undo?: { available?: boolean; label?: string; disabledReason?: string } }
   [key: string]: unknown
 }

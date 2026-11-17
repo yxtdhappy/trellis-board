@@ -66,6 +66,7 @@ export function createGitlessBoardService({
   db,
   taskSpaces,
   taskSpaceIndex,
+  archiveSnapshots = null,
   agents = null,
   executionWipLimit = EXECUTION_WIP_LIMIT,
 }) {
@@ -392,6 +393,10 @@ export function createGitlessBoardService({
           )
           .get(space.project.id, taskId)?.source_branch_name || null
       : null
+    const current =
+      Number(space.indexed_revision) === Number(space.revision) &&
+      Number(space.archive_indexed_revision) === Number(space.archive_revision) &&
+      !space.archive_candidate_snapshot_id
     return {
       task: {
         ...detail,
@@ -402,15 +407,57 @@ export function createGitlessBoardService({
         sourceBranchName: sourceBranchName || space.branch_name,
         teamId: space.project.owner_team_id,
         teamName: space.project.owner_team_name || null,
-        projectSyncStatus:
-          Number(space.indexed_revision) === Number(space.revision) ? 'current' : 'stale',
-        stale: Number(space.indexed_revision) !== Number(space.revision),
+        projectSyncStatus: current ? 'current' : 'stale',
+        stale: !current,
         assignment: publicAssignment(
           db
             .prepare('SELECT * FROM sync_task_assignment WHERE execution_task_key = ?')
             .get(context.indexed.execution_task_key),
         ),
       },
+    }
+  }
+
+  async function getArchiveFile(actor, taskSpaceId, fileId) {
+    const spaceId = requiredText(taskSpaceId, '任务空间 ID', 128)
+    try {
+      taskSpaces.authorizeTaskSpace(actor, spaceId, 'view')
+    } catch (error) {
+      if (error?.status === 403 || error?.status === 404) {
+        throw teamError(403, ERROR_CODES.FORBIDDEN, '无权下载该归档文件')
+      }
+      throw error
+    }
+    const id = String(fileId || '').trim()
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, '归档文件 ID 格式无效')
+    }
+    let row = db
+      .prepare(`
+        SELECT f.*
+        FROM sync_archive_file f
+        WHERE f.task_space_id = ? AND f.id = ?
+      `)
+      .get(spaceId, id)
+    if (!row) {
+      row = db
+        .prepare(`
+          SELECT f.*
+          FROM sync_archive_file_history f
+          WHERE f.task_space_id = ? AND f.id = ?
+        `)
+        .get(spaceId, id)
+    }
+    if (!row) throw teamError(404, ERROR_CODES.NOT_FOUND, '归档文件不存在')
+    if (!archiveSnapshots || !row.storage_key) {
+      throw teamError(503, 'ARCHIVE_LOCAL_FILE_UNAVAILABLE', '归档本地文件不可用')
+    }
+    return {
+      taskSpaceId: row.task_space_id,
+      relativePath: row.relative_path,
+      name: row.relative_path.split('/').pop() || 'archive-file',
+      mimeType: row.mime_type || 'application/octet-stream',
+      buffer: await archiveSnapshots.readDownload(row),
     }
   }
 
@@ -820,6 +867,7 @@ export function createGitlessBoardService({
     status,
     getBoard,
     getTask,
+    getArchiveFile,
     updatePlan,
     setStage,
     createDependency,

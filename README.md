@@ -4,7 +4,8 @@ Trellis Board 提供两种运行模式：
 
 - `standalone`：默认监听 `0.0.0.0`，扫描本机白名单仓库，适合本机或可信局域网使用。
 - `team`：提供账号、项目权限、任务空间快照、实时同步、命令投递、审计和 Windows Agent。
-  服务端不 clone/fetch 项目 Git，也不保存项目 Git 凭据。
+  活动任务链路不 clone/fetch 项目 Git，也不保存项目 Git 凭据；只有后台归档同步会使用按来源隔离的
+  只读凭据读取 `.trellis/tasks/archive/**`，不创建项目工作副本。
 
 两种模式共用同一套任务推导、看板和 SQLite 代码。团队版的部署、升级、备份和故障处置见
 [团队版运维手册](./docs/team-operations.md)。
@@ -90,6 +91,7 @@ Team 模式只监听和同步 `.trellis/tasks/**`；workspace、`.developer`、s
 - 归档状态：是否位于 `.trellis/tasks/archive/`
 - standalone 项目成员：`.trellis/workspace/<developer>/`
 - Team 项目成员：`sync_project_member.trellis_dev_id`
+- Team 归档附件：`archive-snapshots/<taskSpaceId>/heads/<head>/files/<sha256>`
 
 ## 本地持久化
 
@@ -131,29 +133,34 @@ Board 自身可变状态统一保存在该目录下的 `board.sqlite`：
 - `sync_active_agent`、`sync_agent_binding`、`sync_agent_cursor`：单账号活动 Agent、项目绑定和游标
 - `sync_task_index`、`sync_task_command`：taskSpace 任务索引、创建/改派命令
 - `sync_conflict`、`sync_conflict_backup`、`sync_file_audit`：CAS 冲突、覆盖备份和追加式文件审计
+- `sync_archive_snapshot`、`sync_archive_file`、`sync_archive_file_history`：归档来源 HEAD、
+  active/candidate 本地快照、当前文件元数据和不可变历史 fileId
+- `sync_archive_git_credential`、`sync_archive_sync_config/state/log`：按来源隔离的只读凭据和同步状态
 - `user_session`、`saved_view`、`user_board_state`：登录、保存视图和个人 WIP
 - `audit_event`：团队审计
 - `app_meta`：数据库 schema 版本和旧 JSON 迁移标记
 
-全新数据库直接创建 schema v10。新 Team 链路只读写 `sync_*`、账号、团队、审计和执行扩展表；
+全新数据库直接创建 schema v15。新 Team 链路只读写 `sync_*`、账号、团队、审计和执行扩展表；
 旧 `team_project`、`project_live_*`、`agent_live_cursor`、`git_credential`、`git_ssh_known_host`
 等表保留为人工回滚材料，但不在启动、项目接入、任务同步或命令链路中读取。
 首次打开 standalone 空库时仍会在一个事务中读取 `repos.json`、`task-metadata.json`、
 `scan-cache.json` 和 `board-state.json` 并导入，然后写入一次性的 `legacy_json_imported_v1` 标记。
 Team 模式禁止导入本机默认仓库和旧 JSON。
 
-v6/v7/v8/v9 数据库升级到 v10 前会在运行数据目录的 `backups/` 写入
-`board.sqlite.pre-v10.*` 快照，再创建缺失的 `sync_*` 表。旧账号、团队、项目、审计和旧表保持不变。
+v6-v14 数据库升级到 v15 前会在运行数据目录的 `backups/` 写入
+`board.sqlite.pre-v15.*` 快照，再补齐缺失的 `sync_*` 表。旧账号、团队、项目、审计和旧表保持不变。
 `v5` 及更旧版本仍拒绝启动，不能通过删除数据库代替迁移。Team runtime 还会每 24 小时创建
 `board.sqlite.snapshot.*`，保留最近 7 份。
 
 SQLite 使用 WAL 模式。standalone 主线程和扫描 Worker 各自持有连接；Team 快照提交、索引投影和命令状态
-都使用事务和条件更新。Team 服务端不需要 `git-credentials.key`。热备份前应先停止服务，并同时处理
-可能存在的 `board.sqlite-wal` 与 `board.sqlite-shm`。
+都使用事务和条件更新。旧项目 `git-credentials.key` 不再使用；配置归档 Git 凭据时会生成独立的
+`archive-git-credentials.key`。热备份前应先停止服务，并同时处理可能存在的 `board.sqlite-wal`、
+`board.sqlite-shm`、`archive-snapshots/` 和归档凭据密钥。
 
 回滚到旧版 Board 时，先停止服务并归档当前运行数据目录（插件配置与日志在
 `<TrellisBoard>/plugins`，默认配置下与 `server` 平级，需要一并归档），再切换到旧代码和旧库备份。旧版不解释
-`sync_*` 数据；Team 已提交的任务快照不会自动写回客户端 Git。详细步骤见
+`sync_*` 数据；Team 已提交的活动任务和归档快照不会自动写回客户端 Git。v15 本地快照在回滚时保留，
+不要手工删除 `archive-snapshots/`。详细步骤见
 [团队版运维手册](./docs/team-operations.md)。
 
 ## 重要限制

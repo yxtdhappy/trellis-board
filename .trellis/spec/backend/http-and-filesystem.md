@@ -57,6 +57,7 @@ Team 模式在原 standalone 路由之外只装配以下任务快照和命令边
 | `GET /api/task-operations?taskSpaceId=` | 创建/改派操作列表 | 200 |
 | `POST /api/task-operations/:id/retry` | 同幂等键重试失败命令 | 200 |
 | `POST /api/task-operations/:id/cancel` | 取消未成功命令 | 200 |
+| `GET /api/archive-files/:fileId?taskSpaceId=` | 任务详情附件列表返回的受 Session 保护下载 | 200 |
 | `GET /api/task-spaces/:id/listeners` | 项目负责人或团队管理员读取脱敏监听详情 | 200 |
 | `GET /api/projects/:projectId/task-spaces` | 有项目管理权限者读取活跃、技术停用和 retired 分支摘要 | 200 |
 | `POST /api/projects/:projectId/task-spaces/:id/retire` | 弃用分支并保留数据 | 200 |
@@ -395,7 +396,8 @@ SQLite、Board 查询与 SSE。Team 活动任务链路不再 clone/fetch 项目�
   `scheme + host + port` 隔离的只读凭据、立即同步和查看失败日志。
 - SQLite：`sync_project(remote_identity_hash UNIQUE)`、
   `sync_task_space UNIQUE(project_id, branch_name)`、`sync_project_member`、
-  `sync_agent_binding`、`sync_archive_file`、`sync_archive_sync_config/state/log`。
+  `sync_agent_binding`、`sync_archive_snapshot`、`sync_archive_file`、
+  `sync_archive_sync_config/state/log`。
 
 #### 3. Contracts
 
@@ -406,8 +408,9 @@ SQLite、Board 查询与 SSE。Team 活动任务链路不再 clone/fetch 项目�
 - 同远端不同分支各自创建 taskSpace，revision、cursor、command 和 index 独立。
 - Agent 只上传活动 `.trellis/tasks/<task-dir>/**`；`.trellis/tasks/archive/**` 返回
   `409 ARCHIVE_SYNC_SERVER_MANAGED`。初始化 scripts/spec/config/workflow/agents 由客户端 Git 管理。
-- 归档 Git 只读取活动分支的 `.trellis/tasks/archive/**`，不 checkout、commit 或 push；凭据 API
-  只返回来源、类型、配置状态、指纹和时间，不返回私钥或 Token。
+- 归档 Git 只读取活动分支的 `.trellis/tasks/archive/**`，不 checkout、commit 或 push；
+  同步结果保存为本地完整快照，详情和下载请求不得启动 Git。凭据 API 只返回来源、类型、
+  配置状态、指纹和时间，不返回私钥或 Token。
 - 项目成员写角色和 `trellis_dev_id` 写入 `sync_project_member`，Board 委派不再读取 workspace。
 - binding 不保存客户端绝对路径；`local_repo_key` 只用于服务端幂等绑定，不参与文件夹访问。
 - `detach` 在事务中只撤销当前 Agent 的 binding，取消该 binding 的未完成命令、删除对应 cursor
@@ -450,7 +453,12 @@ SQLite、Board 查询与 SSE。Team 活动任务链路不再 clone/fetch 项目�
 - `packages/server/test/team-release.test.js`：Team 启动不创建 `data/projects` 工作副本；没有归档任务
   或凭据时 scheduler 不启动 Git 子进程。
 - `packages/server/test/database-v10.test.js`：v10 -> v11 补监听列，v11 -> v12 补弃用列、基线、
-  证据表和索引，v13 -> v14 隔离归档并增加双 revision；顺序升级保留旧表与数据。
+  证据表和索引，v13 -> v14 隔离归档并增加双 revision，v14 -> v15 补快照表；
+  顺序升级保留旧表与数据。
+- `packages/server/test/team-gitless-http.test.js`：
+  `GET /api/archive-files/:fileId?taskSpaceId=` 的 401/403/404、固定响应头和文件缺失 503。
+- `packages/server/test/archive-local-snapshot.test.js`：内容寻址、哈希校验、并发清理保护、
+  数据库备份引用和 TaskSpace 删除清理。
 
 #### 7. Wrong vs Correct
 
@@ -470,6 +478,88 @@ const taskSpaceKey = `${projectId}:${branchName}`
 ```
 
 项目全局唯一，团队只进入 `sync_project_team_access`，分支进入独立 taskSpace。
+
+### Scenario: 归档附件本地下载
+
+#### 1. Scope / Trigger
+
+- Trigger：归档任务详情返回附件列表，或新增 `/api/archive-files/:fileId?taskSpaceId=` 下载。
+- 目标：请求阶段只按 SQLite 元数据定位本地快照，不接触 Git、远端或客户端路径。
+
+#### 2. Signatures
+
+- 详情附件：`{ id, path, name, sizeBytes, mimeType, downloadUrl }`，其中
+  `downloadUrl=/api/archive-files/<fileId>?taskSpaceId=<taskSpaceId>`。
+- `GET /api/archive-files/:fileId?taskSpaceId=`：只接受服务端生成的稳定文件 ID 和不可省略的
+  TaskSpace 作用域。
+- `createGitlessBoardService().getArchiveFile(actor, taskSpaceId, fileId)`：先授权指定
+  TaskSpace，再校验和查询 fileId。
+
+#### 3. Contracts
+
+- HTTP 入口先解析并校验非空、长度不超过 128 的 `taskSpaceId`，再调用服务层。
+- Session 用户必须先对 URL 中的 TaskSpace 有实时 `view` 权限。授权通过后才校验 `fileId` 格式并
+  查询元数据；未登录返回 401，无权限统一返回 403，不暴露文件是否存在。
+- SQL 查询必须同时匹配 `f.task_space_id = ? AND f.id = ?`。先查 `sync_archive_file` 的当前
+  active/candidate 映射，找不到再查 `sync_archive_file_history`。候选索引失败期间，旧 Board
+  暴露的 fileId 仍必须读取原 active 快照；索引成功后才能清理不再被当前或历史映射引用的旧快照。
+- 读取前用受控 `storageKey` 和真实路径重新校验仍在 `archive-snapshots/` 内，并校验文件大小和
+  SHA-256。
+- 成功响应固定 `Content-Type`、`Content-Length`、`Content-Disposition: attachment`、
+  `Cache-Control: private, no-store` 和 `X-Content-Type-Options: nosniff`。
+- 文件名同时输出 ASCII fallback 和 RFC 5987 `filename*`；HTML、SVG、脚本和未知类型都只能下载。
+- 本地文件缺失、损坏或校验失败返回 `503 ARCHIVE_LOCAL_FILE_UNAVAILABLE`，不得在请求中同步 Git。
+
+#### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 未登录或 Session 失效 | `401 AUTHORIZATION_REQUIRED` |
+| `taskSpaceId` 缺失、为空或超过 128 字符 | `400 INVALID_INPUT` |
+| 查询串百分号编码非法 | `400 INVALID_INPUT` |
+| 用户无 TaskSpace 查看权限 | `403 FORBIDDEN`，同一空间的真实和伪造 fileId 响应一致 |
+| fileId 格式非法 | `400 INVALID_INPUT` |
+| 已授权 TaskSpace 内文件 ID 不存在 | `404 NOT_FOUND` |
+| TaskSpace 技术停用或 retired | `409 PROJECT_NOT_READY` |
+| 本地文件缺失、哈希不符或路径越界 | `503 ARCHIVE_LOCAL_FILE_UNAVAILABLE` |
+| 下载并发超过 4 | `503 ARCHIVE_DOWNLOAD_BUSY` |
+| 本地读取超过 30 秒 | `503 ARCHIVE_DOWNLOAD_TIMEOUT` |
+
+#### 5. Good/Base/Bad Cases
+
+- Good：详情只返回 `screenshot.png` 的元数据；点击下载后由 Session API 返回 PNG 字节和附件头。
+- Base：v14 legacy 文本文件仍可在任务详情读取，但没有 `storage_key` 时下载返回本地文件不可用。
+- Bad：把 `storageKey` 放进详情响应并由浏览器拼路径，导致路径伪造和快照目录泄漏。
+
+#### 6. Tests Required
+
+- `team-gitless-http.test.js`：401、无权限空间真实/伪造 ID 均为 403、可访问空间伪造 ID 404、
+  跨 TaskSpace 查询 404、URL 编码/长度、当前/历史映射、详情 URL 带 `taskSpaceId`、成功头、缺失文件 503；
+  `archive-git-sync.test.js` 覆盖候选索引失败时旧 fileId 仍下载旧字节。
+- `archive-local-snapshot.test.js`：哈希校验、非法 `storageKey`、并发/重启和清理。
+- 浏览器：归档详情显示名称、MIME、大小；HTML/SVG 不内联执行；下载失败只提示本地不可用。
+
+#### 7. Wrong vs Correct
+
+Wrong：
+
+```js
+const file = path.join(dataDir, url.searchParams.get("path"))
+response.end(fs.readFileSync(file))
+```
+
+Correct：
+
+```js
+const file = await boardService.getArchiveFile(actor, taskSpaceId, fileId)
+response.writeHead(200, {
+  "content-type": file.mimeType,
+  "content-length": file.buffer.length,
+  "content-disposition": archiveContentDisposition(file.name),
+  "x-content-type-options": "nosniff",
+})
+response.end(file.buffer)
+```
 
 ## 路径安全
 

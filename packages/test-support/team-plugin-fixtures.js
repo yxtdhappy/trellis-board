@@ -148,5 +148,10 @@ export function cleanupWorkspace(workspace, db) {
   } catch {
     // 关闭失败不掩盖断言。
   }
-  fs.rmSync(workspace.root, { recursive: true, force: true })
+  fs.rmSync(workspace.root, {
+    recursive: true,
+    force: true,
+    maxRetries: 20,
+    retryDelay: 50,
+  })
 }
