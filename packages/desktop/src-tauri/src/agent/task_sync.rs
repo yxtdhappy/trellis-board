@@ -11162,6 +11162,22 @@ mod tests {
             .save_config(test_config(binding.clone()))
             .await
             .expect("config");
+        store
+            .write_json(
+                &store.paths.task_cursors_file,
+                &json!({
+                    "version": CURSOR_VERSION,
+                    "taskSpaces": {
+                        "space-1": {
+                            "revision": 10,
+                            "revisionGuardVersion": REVISION_GUARD_VERSION,
+                            "sequence": 0
+                        }
+                    }
+                }),
+            )
+            .await
+            .expect("cursor");
 
         let (server_url, changes, requests, server_task) = mock_api_server(json!({
             "revision": 10,
