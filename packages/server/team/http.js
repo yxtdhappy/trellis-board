@@ -271,6 +271,7 @@ function pagePayload(page) {
 function statusEtag(status) {
   const version = JSON.stringify({
     queryRevision: status.queryRevision,
+    archiveRevision: status.archiveRevision,
     queryDay: status.queryDay,
     assignments: status.assignments,
     projects: status.projects.map(({ agents: _agents, ...project }) => project),

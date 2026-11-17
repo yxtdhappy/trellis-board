@@ -504,6 +504,7 @@ export function createBoardService({
       .filter((row) => projectIds.has(row.project_id)).length
     return {
       queryRevision: taskIndex.queryRevision(),
+      archiveRevision: taskIndex.archiveQueryRevision(),
       queryDay: shanghaiDay(),
       assignments: { pending: pendingAssignments },
       boardVersions: Object.fromEntries(

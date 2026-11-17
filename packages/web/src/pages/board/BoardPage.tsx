@@ -125,10 +125,11 @@ export function BoardPage() {
   const displayName = runtime?.user?.displayName || runtime?.user?.username || '看板用户'
   const savedViews = useMemo(() => normalizeViews(board?.savedViews), [board?.savedViews])
   const archived = useMemo(() => tasks.filter((task) => task.archived), [tasks])
+  const archiveRevisionValue =
+    controller.teamStatus?.archiveRevision ?? controller.teamStatus?.queryRevision
   const archiveRevision =
-    typeof controller.teamStatus?.queryRevision === 'number' ||
-    typeof controller.teamStatus?.queryRevision === 'string'
-      ? controller.teamStatus.queryRevision
+    typeof archiveRevisionValue === 'number' || typeof archiveRevisionValue === 'string'
+      ? archiveRevisionValue
       : null
   const activeCount = tasks.filter((task) => !task.archived).length
   const navItems = useMemo<BoardNavItem[]>(

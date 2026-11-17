@@ -510,6 +510,23 @@ export function createTaskSpaceIndex({
     return revision
   }
 
+  function archiveQueryRevision() {
+    return Number(
+      db.prepare("SELECT value FROM app_meta WHERE key = 'archiveQueryRevision'").get()?.value || 0,
+    )
+  }
+
+  function incrementArchiveQueryRevision() {
+    db.prepare(`
+      INSERT INTO app_meta(key, value, updated_at)
+      VALUES ('archiveQueryRevision', '1', ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = CAST(CAST(value AS INTEGER) + 1 AS TEXT),
+        updated_at = excluded.updated_at
+    `).run(new Date().toISOString())
+    return archiveQueryRevision()
+  }
+
   function taskSpaceRow(taskSpaceId) {
     return db
       .prepare(`
@@ -920,6 +937,7 @@ export function createTaskSpaceIndex({
         'DELETE FROM sync_task_index WHERE task_space_id = ? AND task_key = ?',
       )
       const changedKeys = new Set()
+      let archiveChanged = false
 
       for (const [taskKey, row] of desired) {
         const previous = existingByKey.get(taskKey)
@@ -931,13 +949,18 @@ export function createTaskSpaceIndex({
             for (const tag of desiredTags.get(taskKey)) insertTag.run(taskSpace.id, taskKey, tag)
           }
           changedKeys.add(taskKey)
+          if (row.archived || previous?.archived) archiveChanged = true
         }
       }
       for (const taskKey of existingByKey.keys()) {
         if (desired.has(taskKey)) continue
         deleteIndex.run(taskSpace.id, taskKey)
         changedKeys.add(taskKey)
+        if (existingByKey.get(taskKey)?.archived) archiveChanged = true
       }
+
+      // ponytail: 归档版本只看归档行；baseline 空间的身份增删会改变归档去重可见性，
+      // 若该极端场景成真，把 baseline 空间插入/删除的执行身份纳入 archiveChanged 判定。
 
       db.prepare(`
         INSERT INTO sync_task_space_scan_cache(
@@ -979,6 +1002,9 @@ export function createTaskSpaceIndex({
       if (Number(updated.changes) !== 1) throw new ProjectionSuperseded(targetRevision)
       return {
         queryRevision: incrementQueryRevision({ publish: false }),
+        archiveQueryRevision: archiveChanged
+          ? incrementArchiveQueryRevision()
+          : archiveQueryRevision(),
         changedIndexCount: changedKeys.size,
       }
     })
@@ -1497,7 +1523,7 @@ export function createTaskSpaceIndex({
     const scopeHash = hashValue(scope)
     const filterHash = hashValue(filters)
     const mineMembers = filters.scope === 'mine' ? mineMemberSignature(actor.userId) : null
-    const revision = queryRevision()
+    const revision = filters.archived ? archiveQueryRevision() : queryRevision()
     const day = shanghaiDay()
     const etag = `"${hashValue({
       user: actor.userId,
@@ -1744,6 +1770,7 @@ export function createTaskSpaceIndex({
     warmActive,
     queryTasks,
     queryRevision,
+    archiveQueryRevision,
     incrementQueryRevision,
     close,
   }

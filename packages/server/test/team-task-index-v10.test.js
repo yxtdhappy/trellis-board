@@ -341,6 +341,138 @@ test('归档 revision 独立推进并只投影归档任务', async () => {
   }
 })
 
+test('归档查询版本与全局版本解耦：活跃变化不动归档 etag 和游标', async () => {
+  const ctx = setup()
+  const archivedTasks = [
+    { dir: '.trellis/tasks/archive/2026-11/11-01-old-a', id: 'old-a', title: '归档 A' },
+    { dir: '.trellis/tasks/archive/2026-11/11-02-old-b', id: 'old-b', title: '归档 B' },
+  ]
+  const archiveTaskJson = (id, title) =>
+    JSON.stringify({
+      id,
+      title,
+      description: '',
+      status: 'completed',
+      priority: 'P2',
+      assignee: 'alice',
+      creator: 'alice',
+      branch: 'main',
+    })
+  const insertArchive = ctx.db.prepare(`
+    INSERT INTO sync_archive_file(
+      task_space_id, relative_path, blob_oid, sha256, content_text,
+      task_id, task_dir, source_head, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const writeArchiveTask = ({ dir, id, title }) => {
+    const taskJson = archiveTaskJson(id, title)
+    const prd = '# 旧任务\n\n## Requirements\n\n- 已完成\n\n## Acceptance Criteria\n\n- [x] 完成\n'
+    const timestamp = new Date().toISOString()
+    insertArchive.run(
+      ctx.taskSpaceId,
+      `${dir}/task.json`,
+      'b'.repeat(40),
+      snapshotSha256(taskJson),
+      taskJson,
+      id,
+      dir,
+      'c'.repeat(40),
+      timestamp,
+    )
+    insertArchive.run(
+      ctx.taskSpaceId,
+      `${dir}/prd.md`,
+      'd'.repeat(40),
+      snapshotSha256(prd),
+      prd,
+      null,
+      dir,
+      'c'.repeat(40),
+      timestamp,
+    )
+  }
+  const bumpArchiveRevision = (value) =>
+    ctx.db
+      .prepare('UPDATE sync_task_space SET archive_revision = ?, updated_at = ? WHERE id = ?')
+      .run(value, new Date().toISOString(), ctx.taskSpaceId)
+  try {
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-archive-version-active',
+      clientSequence: 1,
+      files: files('active'),
+    })
+    await ctx.index.materializeNow(ctx.taskSpaceId)
+    const actor = ctx.taskSpaces.actorContext('user-1')
+    const archiveRevisionBase = ctx.index.archiveQueryRevision()
+    const activeEtag = ctx.index.queryTasks(actor).etag
+    const archivedEtag = ctx.index.queryTasks(actor, { archived: true }).etag
+
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-archive-version-active-2',
+      clientSequence: 2,
+      files: withServerBase(ctx, files('active', 'changed')),
+    })
+    await ctx.index.materializeNow(ctx.taskSpaceId)
+    assert.notEqual(ctx.index.queryTasks(actor).etag, activeEtag)
+    assert.equal(ctx.index.archiveQueryRevision(), archiveRevisionBase)
+    assert.equal(ctx.index.queryTasks(actor, { archived: true }).etag, archivedEtag)
+
+    archivedTasks.forEach(writeArchiveTask)
+    bumpArchiveRevision(1)
+    await ctx.index.materializeNow(ctx.taskSpaceId, { source: 'archive' })
+    assert.equal(ctx.index.archiveQueryRevision(), archiveRevisionBase + 1)
+    const firstArchivePage = ctx.index.queryTasks(actor, { archived: true, limit: 1 })
+    assert.equal(firstArchivePage.total, 2)
+    assert.notEqual(firstArchivePage.etag, archivedEtag)
+    assert.ok(firstArchivePage.nextCursor)
+
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-archive-version-active-3',
+      clientSequence: 3,
+      files: withServerBase(ctx, files('active', 'changed-again')),
+    })
+    await ctx.index.materializeNow(ctx.taskSpaceId)
+    const secondArchivePage = ctx.index.queryTasks(actor, {
+      archived: true,
+      limit: 1,
+      cursor: firstArchivePage.nextCursor,
+    })
+    assert.equal(secondArchivePage.tasks.length, 1)
+
+    const noop = await ctx.index.materializeNow(ctx.taskSpaceId, { source: 'archive' })
+    assert.equal(noop.superseded, false)
+    assert.equal(ctx.index.archiveQueryRevision(), archiveRevisionBase + 1)
+
+    const renamedJson = archiveTaskJson(archivedTasks[0].id, '归档 A 改名')
+    ctx.db
+      .prepare(`
+        UPDATE sync_archive_file SET content_text = ?, sha256 = ?
+        WHERE task_space_id = ? AND relative_path = ?
+      `)
+      .run(
+        renamedJson,
+        snapshotSha256(renamedJson),
+        ctx.taskSpaceId,
+        `${archivedTasks[0].dir}/task.json`,
+      )
+    bumpArchiveRevision(2)
+    await ctx.index.materializeNow(ctx.taskSpaceId, { source: 'archive' })
+    assert.equal(ctx.index.archiveQueryRevision(), archiveRevisionBase + 2)
+    assert.throws(
+      () =>
+        ctx.index.queryTasks(actor, {
+          archived: true,
+          limit: 1,
+          cursor: firstArchivePage.nextCursor,
+        }),
+      (error) => error.status === 409 && error.code === 'CURSOR_INVALID',
+    )
+  } finally {
+    await ctx.index.close()
+    ctx.db.close()
+  }
+})
+
 test('索引提交失败时索引、缓存和 indexed_revision 整体回滚', async () => {
   const ctx = setup({ autoIndex: false })
   const firstDir = '.trellis/tasks/11-10-rollback-a'

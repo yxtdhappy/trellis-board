@@ -62,6 +62,10 @@ ETag、缓存键和游标绑定用户、团队、项目/taskSpace 集合哈希�
 分页以 `last_activity_at/archived_at + taskSpaceId + taskKey` 稳定排序。
 `branch` 为可选单值子串筛选，trim 后大小写不敏感匹配，`%`、`_` 等字符按字面处理。
 分支匹配使用与前端一致的 Unicode 小写语义，不能直接依赖 SQLite 内置 `lower()`，它只折叠 ASCII。
+归档查询（`archived=true`）不使用全局 query revision，而是绑定独立归档域版本
+`app_meta.archiveQueryRevision`：只有索引里归档行新增、修改、删除或归档标记翻转才推进，活跃任务同步不再
+改变归档查询的 ETag、缓存键和游标。`/api/team/status` 同时返回 `queryRevision` 与 `archiveRevision`，
+`statusEtag` 覆盖两者；不新增 SSE 事件名。
 
 ### SQLite v14
 
