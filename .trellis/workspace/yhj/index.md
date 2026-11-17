@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 59
+- **Total Sessions**: 60
 - **Last Active**: 2026-11-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1418 | Active |
+| `journal-1.md` | ~1441 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 60 | 2026-11-17 | 归档凭据项目关联展示 | `7ed2e69` | `main` |
 | 59 | 2026-11-17 | 归档 Git HTTPS 批量导入与附件兼容修复 | `2cdad8e` | `main` |
 | 58 | 2026-11-17 | 客户端品牌与版本号显示 | `c8318dd`, `2e0f270` | `main` |
 | 57 | 2026-11-17 | Team 任务索引增量物化性能优化 | `ed6acf1` | `main` |
