@@ -107,6 +107,11 @@ export function BranchListenersDialog({
                         @{listener.username}
                       </span>
                     ) : null}
+                    {listener.trellisDevId && listener.trellisDevId !== listener.username ? (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[0.59375rem] text-muted-foreground">
+                        Trellis ID：{listener.trellisDevId}
+                      </span>
+                    ) : null}
                     <span
                       className={`rounded-full px-2 py-0.5 text-[0.59375rem] font-medium ${
                         listener.online

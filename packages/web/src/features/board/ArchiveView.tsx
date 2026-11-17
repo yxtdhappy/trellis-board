@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -6,6 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useArchiveTasks } from '@/hooks/useArchiveTasks'
 import { formatArchiveTimestamp, sortArchivedTasks } from '@/lib/archive-sort.js'
 import { branchMatches } from '@/lib/execution-filter.js'
+import { archiveProjectAfterTeamChange, resolveArchiveProjectId } from '@/lib/archive-filter.js'
 import { archiveAssigneeOptions } from '@/lib/team-client.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
 import { Pagination } from './Pagination.tsx'
@@ -17,6 +18,8 @@ type ArchiveViewProps = {
   tasks: BoardTask[]
   projects: { id: string; name: string; teamId?: string | null }[]
   teams: { id: string; name: string }[]
+  projectId: string
+  onProjectChange: (id: string) => void
   branch: string
   onBranchChange: (branch: string) => void
   teamMode: boolean
@@ -31,6 +34,8 @@ export function ArchiveView({
   tasks,
   projects,
   teams,
+  projectId,
+  onProjectChange,
   branch,
   onBranchChange,
   teamMode,
@@ -42,7 +47,6 @@ export function ArchiveView({
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const [archiveTeamId, setArchiveTeamId] = useState('all')
-  const [archiveProjectId, setArchiveProjectId] = useState('all')
   const teamOptions = useMemo(
     () => [
       { value: 'all', label: '全部团队' },
@@ -54,18 +58,24 @@ export function ArchiveView({
     () => projects.filter((project) => archiveTeamId === 'all' || project.teamId === archiveTeamId),
     [archiveTeamId, projects],
   )
-  const projectOptions = useMemo(
-    () => [
+  const effectiveProjectId = resolveArchiveProjectId(projectId, projects)
+  const projectOptions = useMemo(() => {
+    const options = [
       { value: 'all', label: '全部项目' },
       ...availableProjects.map((project) => ({ value: project.id, label: project.name })),
-    ],
-    [availableProjects],
-  )
-  const effectiveProjectId =
-    archiveProjectId !== 'all' &&
-    !availableProjects.some((project) => project.id === archiveProjectId)
-      ? 'all'
-      : archiveProjectId
+    ]
+    if (
+      effectiveProjectId !== 'all' &&
+      !options.some((option) => option.value === effectiveProjectId)
+    ) {
+      const current = projects.find((project) => project.id === effectiveProjectId)
+      options.push({ value: effectiveProjectId, label: current?.name || effectiveProjectId })
+    }
+    return options
+  }, [availableProjects, effectiveProjectId, projects])
+  useEffect(() => {
+    setPage(0)
+  }, [projectId])
   const archive = useArchiveTasks({
     enabled: teamMode,
     teamId: archiveTeamId,
@@ -179,16 +189,12 @@ export function ArchiveView({
               options={teamOptions}
               onChange={(next) => {
                 setArchiveTeamId(next)
-                if (
-                  effectiveProjectId !== 'all' &&
-                  !projects.some(
-                    (project) =>
-                      project.id === effectiveProjectId &&
-                      (next === 'all' || project.teamId === next),
-                  )
-                ) {
-                  setArchiveProjectId('all')
-                }
+                const nextProjectId = archiveProjectAfterTeamChange(
+                  effectiveProjectId,
+                  next,
+                  projects,
+                )
+                if (nextProjectId !== effectiveProjectId) onProjectChange(nextProjectId)
                 setPage(0)
               }}
             />
@@ -198,7 +204,7 @@ export function ArchiveView({
               value={effectiveProjectId}
               options={projectOptions}
               onChange={(next) => {
-                setArchiveProjectId(next)
+                onProjectChange(next)
                 setPage(0)
               }}
             />
@@ -210,7 +216,7 @@ export function ArchiveView({
             value={effectiveProjectId}
             options={projectOptions}
             onChange={(next) => {
-              setArchiveProjectId(next)
+              onProjectChange(next)
               setPage(0)
             }}
           />

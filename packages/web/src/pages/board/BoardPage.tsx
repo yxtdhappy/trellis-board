@@ -409,6 +409,8 @@ export function BoardPage() {
               tasks={archived}
               projects={runtime?.projects || projects}
               teams={runtime?.teams || []}
+              projectId={filters.projectId || 'all'}
+              onProjectChange={(projectId) => setFilters({ projectId, taskSpaceId: 'all' })}
               branch={filters.branch}
               onBranchChange={(branch) => setFilters({ branch })}
               teamMode={teamMode}

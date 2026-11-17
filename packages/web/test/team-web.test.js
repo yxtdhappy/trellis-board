@@ -20,6 +20,7 @@ import {
   normalizeTeamTaskRow,
   normalizeTeamStatus,
   planEditingState,
+  pickProjectTrellisDevId,
   redactSensitiveDetail,
   safeReturnTo,
   shouldReloadTasks,
@@ -40,6 +41,18 @@ test('幂等键在没有 randomUUID 的 HTTP 页面仍可生成', () => {
 
 test('escapeHtml 转义所有 HTML 上下文危险字符', () => {
   assert.equal(escapeHtml(`<a title="'">&</a>`), '&lt;a title=&quot;&#39;&quot;&gt;&amp;&lt;/a&gt;')
+})
+
+test('pickProjectTrellisDevId 按远端身份匹配项目 dev id，未匹配时回落', () => {
+  const projects = [
+    { id: 'p1', remoteIdentityHash: 'hash-a', trellisDevId: 'flyfly6' },
+    { id: 'p2', remoteIdentityHash: 'hash-b', trellisDevId: '   ' },
+  ]
+  assert.equal(pickProjectTrellisDevId(projects, 'hash-a', 'fenglei'), 'flyfly6')
+  assert.equal(pickProjectTrellisDevId(projects, ' hash-a ', 'fenglei'), 'flyfly6')
+  assert.equal(pickProjectTrellisDevId(projects, 'hash-b', 'fenglei'), 'fenglei')
+  assert.equal(pickProjectTrellisDevId(projects, '', 'fenglei'), 'fenglei')
+  assert.equal(pickProjectTrellisDevId(projects, 'hash-a', ''), 'flyfly6')
 })
 
 test('团队查询参数保留服务端筛选并限制页大小', () => {

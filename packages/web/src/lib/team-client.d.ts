@@ -34,6 +34,11 @@ export function createIdempotencyKey(
 export function normalizeUser(payload: unknown): RuntimeUser | null
 export function normalizeRuntime(payload: unknown): Runtime
 export function normalizeProjectMembers(payload: unknown): unknown[]
+export function pickProjectTrellisDevId(
+  projects: unknown,
+  remoteIdentityKey: unknown,
+  fallback: string,
+): string
 export function normalizeTeamProject(payload: unknown): Record<string, unknown>
 export function normalizeTeamProjects(payload: unknown): Record<string, unknown>[]
 export function normalizeTaskPage(payload: unknown): TaskPage

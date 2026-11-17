@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { TRELLIS_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
+import { pickProjectTrellisDevId } from '@/lib/team-client.js'
 import { normalizeProjectInspection, type ProjectInspection } from '@/lib/project-inspection.js'
 import { onboardingErrorMessage, preflightBlockReason } from '@/lib/onboarding-probe.js'
 import { AgentToolSelector } from './AgentToolSelector.tsx'
@@ -73,10 +74,17 @@ type Association = {
 
 type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
+type ProjectIdentity = {
+  id: string
+  remoteIdentityHash?: string | null
+  trellisDevId?: string | null
+}
+
 type ProjectOnboardingDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   path: string
+  projects: ProjectIdentity[]
   teams: TeamOption[]
   defaultTeamId: string
   defaultDeveloperId: string
@@ -206,6 +214,7 @@ export function ProjectOnboardingDialog({
   open,
   onOpenChange,
   path,
+  projects,
   teams,
   defaultTeamId,
   defaultDeveloperId,
@@ -293,10 +302,16 @@ export function ProjectOnboardingDialog({
     }
   }, [open, path, reloadToken, invoke])
 
+  const preferredDeveloperId = pickProjectTrellisDevId(
+    projects,
+    inspection?.remoteIdentityKey,
+    defaultDeveloperId.trim(),
+  )
+
   useEffect(() => {
     if (!open || developerIdEdited.current) return
-    setDeveloperId(defaultDeveloperId.trim())
-  }, [open, path, defaultDeveloperId])
+    setDeveloperId(preferredDeveloperId)
+  }, [open, path, preferredDeveloperId])
 
   useEffect(() => {
     if (!open) {

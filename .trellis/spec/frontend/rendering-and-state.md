@@ -35,6 +35,10 @@
   `relativeDir`，而任务卡使用 `dirName`；304 响应没有 body，保持 ETag 分支不规范化。
 - EventSource 只随 runtime 生命周期创建，筛选和 teamId 变化不能反复断开重连；刷新回调通过 ref
   取最新版本。组件卸载时必须关闭 EventSource、清空合并计时器和所有状态轮询。
+- 需要「单次在途 + 合并后续请求」的轮询走 `packages/web/src/lib/refresh-coordinator.js`。该协调器
+  由 `useMemo` 持有、生命周期跨 StrictMode 的 cleanup→remount，因此 effect 必须在 body 里调用
+  `activate()`、cleanup 里 `dispose()`：只写 `useEffect(() => () => coordinator.dispose())`
+  会在 dev 双调用后永久关闭协调器（现象是 `/api/team/status` 永不发起、项目栏为空，生产构建正常）。
 - taskSpace 切换必须清空旧分页 cursor、ETag、操作列表、冲突详情和负责人候选；请求序号阻止旧响应覆盖。
 - 任务操作状态使用 `normalizeOperation()` 统一驼峰/下划线字段。`failed` 显示重试，`pending/delivered/running`
   显示“创建中/改派中”和取消；`succeeded` 后才重载正式任务和负责人。
@@ -166,6 +170,11 @@
 - 五态文案固定：`online`“在线监听 N / 已关联 M”、`inactive`“当前未激活，关联保留”、
   `unassociated`“无客户端关联”、`unknown_legacy`“旧客户端，监听状态未知”、`disabled`“已停用”。
 - “全部项目”也要展示逐分支监听摘要；普通浏览器不显示本地解绑操作。
+- 监听详情里的 `Trellis ID：<devId>` 只在项目 dev id 存在且与账号用户名不同时显示，账号本身仍显示
+  `@username`；dev id 相等时不重复展示。
+- 接入/快速初始化弹窗的 Trellis developer ID 默认取该项目的 `trellisDevId`（按
+  `remoteIdentityKey === remoteIdentityHash` 匹配项目），无映射回落到用户名；用户手改后不得覆盖。
+  已接入项目重新关联并显式提交不同 dev id 时，服务端才会修正成员映射。
 - 当前客户端 approved 且非 `detachPending` 时显示“不再同步此分支”，必须先二次确认。
 - 所有破坏性操作的二次确认统一走 `packages/web/src/components/ui/confirm-dialog.tsx` 的
   `useConfirm()`（`ConfirmDialogProvider` 只在 `app/providers.tsx` 挂载；本地登录壳不弹确认）。
@@ -240,6 +249,9 @@ const commandState = taskCommandState(taskSpace, teamMode)
 
 ## 归档分页
 
+- 归档视图的项目筛选以页面 `filters.projectId` 为唯一来源，受控接收 `projectId`/`onProjectChange`，
+  不得在归档内部另存一份项目状态；团队切换只在当前项目不属于新团队时写回 `'all'`，
+  项目变化必须回到第一页。
 - 团队归档索引使用独立查询状态，不读取活动任务 `teamPage`，也不复用其游标。
 - 归档查询固定携带 `archived=true` 和 `limit=20`；上一页读取本地游标栈，下一页写入服务端 `nextCursor`。
 - 团队、项目、分支、搜索、负责人或 `queryRevision` 变化时清空游标并从第一页重载；

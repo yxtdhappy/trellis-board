@@ -1,4 +1,5 @@
 export type RefreshCoordinator = {
+  activate: () => void
   request: () => Promise<void>
   dispose: () => void
 }

@@ -108,7 +108,10 @@ export function useBoard(): BoardController {
 
   const teamMode = runtime?.team === true || runtime?.mode === 'team'
 
-  useEffect(() => () => teamStatusRefresh.dispose(), [teamStatusRefresh])
+  useEffect(() => {
+    teamStatusRefresh.activate()
+    return () => teamStatusRefresh.dispose()
+  }, [teamStatusRefresh])
 
   const loadBoard = useCallback(async (_force = false, quiet = false) => {
     if (!quiet) setLoading(true)
@@ -204,8 +207,9 @@ export function useBoard(): BoardController {
     try {
       const result = await fetchTaskOperations(filters.taskSpaceId)
       if (request !== operationsRequest.current) return
-      const next =
-        (result?.operations || []).map((item) => normalizeOperation(item) as PublishOperation)
+      const next = (result?.operations || []).map(
+        (item) => normalizeOperation(item) as PublishOperation,
+      )
       replaceOperations(next)
     } catch {
       // 操作列表失败不覆盖正式任务查询结果。
@@ -386,39 +390,42 @@ export function useBoard(): BoardController {
     }
   }, [operation, reloadCurrentSource, loadTeamStatus, loadOperations])
 
-  const setFilters = useCallback((patch: Partial<BoardFilters>) => {
-    setFiltersState((current) => {
-      const next = { ...current, ...patch }
-      if (patch.teamId !== undefined && patch.projectId === undefined) {
-        next.projectId = 'all'
-        next.taskSpaceId = 'all'
+  const setFilters = useCallback(
+    (patch: Partial<BoardFilters>) => {
+      setFiltersState((current) => {
+        const next = { ...current, ...patch }
+        if (patch.teamId !== undefined && patch.projectId === undefined) {
+          next.projectId = 'all'
+          next.taskSpaceId = 'all'
+        }
+        if (patch.projectId !== undefined && patch.taskSpaceId === undefined) {
+          next.taskSpaceId = 'all'
+        }
+        if (patch.teamId !== undefined && patch.executionView === undefined) {
+          next.executionView = 'all'
+        }
+        return next
+      })
+      teamPageIndex.current = 0
+      teamCursors.current = [null]
+      boardEtag.current = null
+      teamPageRequest.current += 1
+      if (
+        patch.taskSpaceId !== undefined ||
+        patch.projectId !== undefined ||
+        patch.teamId !== undefined
+      ) {
+        operationsRequest.current += 1
+        clearOperations()
       }
-      if (patch.projectId !== undefined && patch.taskSpaceId === undefined) {
-        next.taskSpaceId = 'all'
+      if (patch.teamId !== undefined) {
+        teamPreferenceRequest.current += 1
+        setTeamPage(null)
+        setBoard((current) => (current ? { ...current, savedViews: [], settings: {} } : current))
       }
-      if (patch.teamId !== undefined && patch.executionView === undefined) {
-        next.executionView = 'all'
-      }
-      return next
-    })
-    teamPageIndex.current = 0
-    teamCursors.current = [null]
-    boardEtag.current = null
-    teamPageRequest.current += 1
-    if (
-      patch.taskSpaceId !== undefined ||
-      patch.projectId !== undefined ||
-      patch.teamId !== undefined
-    ) {
-      operationsRequest.current += 1
-      clearOperations()
-    }
-    if (patch.teamId !== undefined) {
-      teamPreferenceRequest.current += 1
-      setTeamPage(null)
-      setBoard((current) => (current ? { ...current, savedViews: [], settings: {} } : current))
-    }
-  }, [clearOperations])
+    },
+    [clearOperations],
+  )
 
   const actions = useMemo(
     () => ({

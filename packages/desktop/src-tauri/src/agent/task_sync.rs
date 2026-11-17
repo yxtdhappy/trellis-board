@@ -1287,6 +1287,7 @@ pub struct TaskSync {
     binding_sync_lock: Mutex<()>,
     syncing_task_spaces: Mutex<HashMap<String, usize>>,
     binding_sync_idle: Notify,
+    heartbeat_wake: Option<Arc<Notify>>,
     deferred_uploads: Mutex<HashMap<String, HashSet<String>>>,
     #[cfg(test)]
     head_tree_scans: std::sync::atomic::AtomicUsize,
@@ -1329,6 +1330,7 @@ impl TaskSync {
             binding_sync_lock: Mutex::new(()),
             syncing_task_spaces: Mutex::new(HashMap::new()),
             binding_sync_idle: Notify::new(),
+            heartbeat_wake: None,
             deferred_uploads: Mutex::new(HashMap::new()),
             #[cfg(test)]
             head_tree_scans: std::sync::atomic::AtomicUsize::new(0),
@@ -1354,6 +1356,17 @@ impl TaskSync {
     pub fn with_state_sink(mut self, sink: StateSink) -> Self {
         self.state_sink = Some(sink);
         self
+    }
+
+    pub fn with_heartbeat_wake(mut self, wake: Arc<Notify>) -> Self {
+        self.heartbeat_wake = Some(wake);
+        self
+    }
+
+    fn wake_heartbeat(&self) {
+        if let Some(wake) = &self.heartbeat_wake {
+            wake.notify_one();
+        }
     }
 
     async fn ensure_ownership_index_loaded(&self) {
@@ -1465,6 +1478,7 @@ impl TaskSync {
         };
         if changed {
             self.notify_state_changed();
+            self.wake_heartbeat();
         }
         self.ownership_projection_epoch.fetch_add(
             1,
@@ -1533,6 +1547,7 @@ impl TaskSync {
                 self.deferred_uploads.lock().await.remove(task_space_id);
                 drop(syncing);
                 self.binding_sync_idle.notify_waiters();
+                self.wake_heartbeat();
                 return;
             };
             if *count > 1 {
@@ -1589,6 +1604,7 @@ impl TaskSync {
             }
         }
         self.binding_sync_idle.notify_waiters();
+        self.wake_heartbeat();
     }
 
     async fn prepare_bindings(self: &Arc<Self>, bindings: Vec<AgentBinding>) -> Vec<String> {
@@ -2850,7 +2866,6 @@ impl TaskSync {
         };
         revalidate || self.read_cursor(task_space_id).await.revision != revision_before
     }
-
     pub async fn pull_and_report_for_event(
         self: &Arc<Self>,
         task_space_id: &str,
@@ -3112,8 +3127,9 @@ impl TaskSync {
             let bindings = self.bindings.lock().await;
             bindings.values().cloned().collect()
         };
-        let syncing = self.syncing_task_spaces.lock().await;
-        bindings.retain(|binding| !syncing.contains_key(&binding.task_space_id));
+        // 监听集合只排除首次同步尚未完成的绑定：增量/补拉进行中仍算在线监听，
+        // 否则一次长同步就会让客户端在服务端永久显示为不在线。
+        bindings.retain(|binding| binding.initial_sync_completed && !binding.detach_pending);
         bindings.sort_by(|left, right| left.task_space_id.cmp(&right.task_space_id));
         bindings
     }
@@ -3917,10 +3933,10 @@ impl TaskSync {
         let projection_epoch = self.projection_epoch(&binding.task_space_id).await;
         self.refresh_ownership_index_binding_with_scan(binding, projection_epoch, true)
             .await?;
-        if !self
+        let epoch_ok = self
             .projection_epoch_matches(&binding.task_space_id, projection_epoch)
-            .await
-        {
+            .await;
+        if !epoch_ok {
             return protocol::err(code::BINDING_UNKNOWN, "本地任务文件索引已失效");
         }
         self.ensure_ownership_index_loaded().await;
@@ -7099,6 +7115,33 @@ mod tests {
         (root, store, sync, binding)
     }
 
+    #[tokio::test]
+    async fn heartbeat_wake_fires_only_when_bindings_change() {
+        let (_root, _store, sync, binding) = test_task_sync_fixture("heartbeat-wake").await;
+        let wake = Arc::new(Notify::new());
+        let sync = sync.with_heartbeat_wake(wake.clone());
+
+        let notified = wake.notified();
+        tokio::pin!(notified);
+        sync.set_bindings(vec![binding.clone()]).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), notified)
+                .await
+                .is_ok(),
+            "绑定集合变化必须唤醒心跳"
+        );
+
+        let notified = wake.notified();
+        tokio::pin!(notified);
+        sync.set_bindings(vec![binding]).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), notified)
+                .await
+                .is_err(),
+            "绑定集合未变化不应唤醒心跳"
+        );
+    }
+
     async fn exact_deferred_fixture(
         prefix: &str,
     ) -> (PathBuf, Arc<ConfigStore>, AgentBinding, String) {
@@ -7946,6 +7989,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn initial_sync_pending_binding_not_listening() {
+        let (root, store, mut binding, _task_dir) =
+            exact_deferred_fixture("trellis-listening-pending").await;
+        binding.initial_sync_completed = false;
+        let (server_url, _changes, _requests, server_task) = mock_api_server(json!({
+            "revision": 1,
+            "files": []
+        }))
+        .await;
+        let api = Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+        let sync = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
+
+        let task_space_ids = sync.prepare_startup_bindings(vec![binding]).await;
+
+        assert_eq!(task_space_ids, vec!["space-1".to_string()]);
+        assert!(sync.active_bindings().await.is_empty());
+        server_task.abort();
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
     async fn startup_bindings_activate_before_background_pull() {
         let (root, store, binding, task_dir) =
             exact_deferred_fixture("trellis-startup-activate").await;
@@ -7962,7 +8026,7 @@ mod tests {
             .await;
 
         assert_eq!(task_space_ids, vec!["space-1".to_string()]);
-        assert!(sync.active_bindings().await.is_empty());
+        assert_eq!(sync.active_bindings().await.len(), 1);
         assert!(requests.lock().await.is_empty());
         let (events, receiver) = mpsc::unbounded_channel();
         let watcher_sync = sync.clone();

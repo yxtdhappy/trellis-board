@@ -1660,7 +1660,10 @@ export async function createTeamRuntime({
     const agentService = createSyncAgentService({
       db,
       config,
-      events: agentEvents,
+      events: {
+        publishAgentRevoked: (agentId) => agentEvents.publishAgentRevoked(agentId),
+        publishBoardChanged: () => boardEvents.publish({}),
+      },
     })
     const taskSpaces = createTaskSpaceService({
       db,

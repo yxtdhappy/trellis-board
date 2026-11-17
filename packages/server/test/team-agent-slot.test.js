@@ -26,14 +26,19 @@ function setup() {
      VALUES ('team-1', 'user-1', 'member', ?, ?)`,
   ).run(now, now)
   const revoked = []
+  const published = []
   return {
     db,
     revoked,
+    published,
     service: createSyncAgentService({
       db,
       events: {
         publishAgentRevoked(agentId) {
           revoked.push(agentId)
+        },
+        publishBoardChanged() {
+          published.push(true)
         },
       },
     }),
@@ -218,6 +223,32 @@ test('监听协议心跳只把上报集合标记为在线，并为全部 approve
     assert.equal(service.onlineAgentForTaskSpace('space-a', 'user-1').length, 1)
     assert.equal(service.onlineAgentForTaskSpace('space-b', 'user-1').length, 0)
     assert.equal(service.onlineListenerCount('space-a'), 1)
+  } finally {
+    db.close()
+  }
+})
+
+test('监听集合变化才发布看板事件，重复心跳不重复发布', () => {
+  const { db, service, published } = setup()
+  try {
+    const first = register(service, db, '监听设备')
+    insertListenerBindings(db, first.agent.id)
+    service.heartbeat(first.agent, heartbeatInput(first.agent, ['space-a']))
+    assert.equal(published.length, 1)
+    service.heartbeat(first.agent, heartbeatInput(first.agent, ['space-a']))
+    assert.equal(published.length, 1)
+    service.heartbeat(first.agent, heartbeatInput(first.agent, ['space-a', 'space-b']))
+    assert.equal(published.length, 2)
+    service.heartbeat(first.agent, heartbeatInput(first.agent, []))
+    assert.equal(published.length, 3)
+    const legacy = {
+      protocolVersion: 3,
+      agentId: first.agent.id,
+      agentVersion: '0.1.0',
+      deviceName: first.agent.deviceName,
+    }
+    service.heartbeat(first.agent, legacy)
+    assert.equal(published.length, 3)
   } finally {
     db.close()
   }

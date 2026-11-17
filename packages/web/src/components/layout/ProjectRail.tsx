@@ -29,6 +29,7 @@ type Project = {
   syncBranch?: string | null
   teamName?: string | null
   taskSpaces?: TaskSpace[]
+  trellisDevId?: string | null
 }
 
 type LiveSyncStatus = 'pending' | 'syncing' | 'ready' | 'error'
@@ -1021,7 +1022,13 @@ export function ProjectRail({
             if (!open) setQuickAgentTaskSpaceId(null)
           }}
           taskSpaceId={quickAgentTaskSpaceId ?? ''}
-          defaultDeveloperId={defaultDeveloperId}
+          defaultDeveloperId={
+            projects
+              .find((project) =>
+                (project.taskSpaces || []).some((space) => space.id === quickAgentTaskSpaceId),
+              )
+              ?.trellisDevId?.trim() || defaultDeveloperId
+          }
           invoke={invoke}
         />
       ) : null}
@@ -1031,6 +1038,7 @@ export function ProjectRail({
             open={onboardingOpen}
             onOpenChange={setOnboardingOpen}
             path={onboardingPath}
+            projects={projects}
             teams={teams}
             defaultTeamId={teamId === 'all' ? '' : teamId}
             defaultDeveloperId={defaultDeveloperId}

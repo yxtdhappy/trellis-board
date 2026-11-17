@@ -143,6 +143,10 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 客户端每次心跳前重新读取配置并校验真实 Git 分支，排除 `detachPending`、非 approved、
   门禁错误或已撤销 binding；服务端在同一事务更新全部 approved binding 的报告时间，并只对
   上报集合设置 `is_listening=1`。
+- 客户端本地绑定集合真实变化或一次任务同步结束（`finish_binding_sync`）后必须唤醒心跳循环
+  立即上报，不得等 15s 周期；唤醒只提前下一次心跳，成功仍重置周期，失败保持指数退避。
+- 服务端同一事务前后比较 approved 且 `is_listening=1` 的 taskSpace 集合，只有集合不同才发布
+  看板变更事件；重复心跳和旧客户端心跳不得重复发布。
 - taskSpace 监听状态固定按 `disabled -> online -> unassociated -> unknown_legacy -> inactive`
   派生。`unassociated` 表示 approved binding 已为零；`inactive` 表示仍有 approved binding
   但当前无人监听。
@@ -450,7 +454,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | HEAD/ref 指纹与持久索引一致 | 复用 tracked paths，不执行 `git ls-tree` |
 | 任务目录不在 Git 脏目录并集中 | 不递归枚举该目录，直接复用持久摘要；写操作仍实时读取真实内容 |
 | 任务目录在 Git 脏目录并集中 | 只重扫该目录，按 size/mtime 精确复用或重算文件摘要 |
-| 启动同步尚未完成 | heartbeat 保活但该 binding 不进入监听集合；命令等待，watcher 事件暂存到串行链收尾 |
+| 启动同步尚未完成（`initial_sync_completed == false`）或 `detachPending` | heartbeat 保活但该 binding 不进入监听集合；命令等待，watcher 事件暂存到串行链收尾 |
+| 首次同步已完成、但其后有增量拉取/补拉/被取消的启动同步仍在进行 | 仍算在线监听；`active_bindings()` 只按 `initial_sync_completed && !detach_pending` 判定，`syncing_task_spaces` 不参与 |
 | 基线首次收到来源不同任务但无证据 | `409 TASK_MERGE_EVIDENCE_REQUIRED`，不写快照 |
 | 证据版本、类型、HEAD SHA、任务 ID、目录、路径或分支不匹配 | `400/409`，整批不写 |
 | 来源 taskSpace 写入已由基线接管的稳定任务 ID | `409 TASK_OWNED_BY_BASELINE`，旧快照不变 |

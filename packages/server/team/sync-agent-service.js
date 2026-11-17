@@ -75,6 +75,15 @@ function listenerReport(input) {
   return taskSpaceIds
 }
 
+function sameIdSet(left, right) {
+  if (!left || !right) return left === right
+  if (left.size !== right.size) return false
+  for (const value of left) {
+    if (!right.has(value)) return false
+  }
+  return true
+}
+
 function agentVersion(value) {
   const version = String(value || '').trim()
   if (!SEMVER.test(version)) {
@@ -475,6 +484,18 @@ export function createSyncAgentService({
       listeningTaskSpaceIds == null
         ? null
         : listeningTaskSpaceIds.filter((taskSpaceId) => !rejectedTaskSpaceIds.has(taskSpaceId))
+    const listeningBefore =
+      acceptedListeningTaskSpaceIds == null
+        ? null
+        : new Set(
+            db
+              .prepare(`
+                SELECT task_space_id FROM sync_agent_binding
+                WHERE agent_id = ? AND sync_status = 'approved' AND is_listening = 1
+              `)
+              .all(agent.id)
+              .map((row) => row.task_space_id),
+          )
     withTransaction(db, () => {
       db.prepare(`
         UPDATE agent_device
@@ -558,6 +579,18 @@ export function createSyncAgentService({
         }
       }
     })
+    if (acceptedListeningTaskSpaceIds != null) {
+      const listeningAfter = new Set(
+        db
+          .prepare(`
+            SELECT task_space_id FROM sync_agent_binding
+            WHERE agent_id = ? AND sync_status = 'approved' AND is_listening = 1
+          `)
+          .all(agent.id)
+          .map((row) => row.task_space_id),
+      )
+      if (!sameIdSet(listeningBefore, listeningAfter)) events?.publishBoardChanged?.()
+    }
     return {
       protocolVersion: AGENT_PROTOCOL_VERSION,
       minimumAgentVersion: MINIMUM_AGENT_VERSION,
