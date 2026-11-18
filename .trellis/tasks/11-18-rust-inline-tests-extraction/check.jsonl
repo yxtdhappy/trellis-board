@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "验证模块拆分与可见性契约"}
+{"file": ".trellis/spec/guides/index.md", "reason": "行尾 LF 与提交前检查"}

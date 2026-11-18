@@ -180,18 +180,21 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
 }
 ```
 
-## Scenario: agent 大模块的目录化拆分
+## Scenario: Rust 模块的目录化拆分与测试外移
 
 ### 1. Scope / Trigger
 
-- `packages/desktop/src-tauri/src/agent/` 下某个模块超过约 1200 行，需要拆成 `foo.rs` + `foo/` 目录时适用。
-- 现有先例：`task_sync.rs`（15798 行）拆为 17 个职责子模块 + `task_sync/tests/`；根文件 394 行。
+- `packages/desktop/src-tauri/src/` 下任何 `.rs` 超过 1200 行（**测试代码计入行数**）时适用：要么把测试搬走，要么把职责拆成 `foo.rs` + `foo/`。
+- 现有先例：`task_sync.rs`（15798 行）拆为 17 个职责子模块 + `task_sync/tests/`，根文件 394 行；`env.rs`（1640 行）拆为根 312 + `env/probe.rs` + `env/install.rs` + `env/tests.rs`；其余 23 个内联 `mod tests` 已外移。
 
 ### 2. Layout
 
 - `foo.rs` 保留：`mod` 声明、常量、主类型定义与其构造/`Drop`、对外重导出、`#[cfg(test)] mod tests;`。
 - `foo/<concern>.rs`：单一职责子模块，单文件 ≤ 1200 行；根文件 ≤ 500 行。
-- `foo/tests/`：`mod.rs`（共享 import + `mod` 声明）、`support.rs`（fixture，`pub(super)`）、按主题划分的测试文件。
+- `foo/tests.rs`：默认的测试文件，业务文件里只留 `#[cfg(test)] mod tests;`（原文的 `#[cfg(all(test, windows))]` 等属性原样保留）。
+- `foo/tests/`：测试超过 1200 行时升级为目录——`mod.rs`（共享 import + `mod` 声明）、`support.rs`（fixture，`pub(super)`）、按主题划分的测试文件。
+- crate 根 `src/main.rs` 无法用同名目录，写 `#[cfg(test)] #[path = "main/tests.rs"] mod tests;`。
+- 测试外移只做缩进回退（`mod tests {` 内的 4 空格），不改测试体；`use super::*;` 在 `foo::tests` 里语义不变。
 
 ### 3. Contracts
 
@@ -213,3 +216,9 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
 
 - `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml` 全绿。
 - 测试名集合与拆分前 `-- --list` 结果逐项比对为空差集。
+
+### 6. 增量守卫
+
+- 任何后续改动（加功能、加测试、改注释）如果使某个文件超过上限，必须在**同一次改动内**拆完再提交：超限文件不得新增行，"下次再拆"不算完成。
+- 判断顺序：先外移测试（`foo/tests.rs`），仍超限再按职责拆 `foo/<concern>.rs`；两种情况都要保持外部 `use` 路径零改动。
+- 提交前跑 `rg -n '^mod tests \{' packages/desktop/src-tauri/src` 必须无输出；`cargo test` 全绿且测试名集合不变。

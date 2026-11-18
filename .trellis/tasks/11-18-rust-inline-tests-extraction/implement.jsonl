@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "桌面端 Rust 模块布局与可见性契约"}
+{"file": ".trellis/tasks/archive/2026-11/11-18-refactor-task-sync-module-split/design.md", "reason": "已完成的同类拆分设计：foo.rs + foo/ 目录共存、pub(super) 可见性契约"}

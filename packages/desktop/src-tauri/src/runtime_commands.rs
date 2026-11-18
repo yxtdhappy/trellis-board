@@ -67,12 +67,4 @@ pub async fn runtime_install(app: AppHandle) -> Result<RuntimeInstallResult, Str
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn loads_document_with_default_schema() {
-        let document = load_client_document();
-        assert!(document.is_object());
-    }
-}
+mod tests;
