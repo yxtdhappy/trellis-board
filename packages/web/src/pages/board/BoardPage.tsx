@@ -40,6 +40,7 @@ import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
 import { canManageProject, createIdempotencyKey, taskVersion } from '@/lib/team-client.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 function normalizeViews(value: unknown): { id: string; name: string }[] {
   if (!Array.isArray(value)) return []
@@ -359,12 +360,9 @@ export function BoardPage() {
 
         <main className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive"
-            >
-              {error}
-            </p>
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           ) : null}
 
           {teamMode && view === 'pipeline' ? (

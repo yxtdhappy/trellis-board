@@ -17,6 +17,7 @@ import {
 } from '@/lib/condition-checks.js'
 import { cn } from '@/lib/utils'
 import type { BoardTask } from './task-view.ts'
+import { Alert } from '@/components/ui/alert'
 
 type ConditionChecksProps = {
   task: BoardTask
@@ -72,10 +73,10 @@ function ConditionTable({ rows, kind }: ConditionTableProps) {
 
 function SuccessSummary({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-success/20 bg-success-soft px-3 py-2 text-2xs font-semibold text-success">
+    <Alert className="border-success/20 bg-success-soft px-3 py-2 text-2xs font-semibold text-success">
       <CircleCheckIcon className="size-3.5" aria-hidden="true" />
       {label}
-    </div>
+    </Alert>
   )
 }
 

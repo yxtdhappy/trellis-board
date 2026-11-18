@@ -212,6 +212,14 @@ size: { default: '', xs: 'h-auto px-1.5 py-px' }
 - 提示/说明：`dialogs/` 6 份 callout、`ProjectOnboardingDialog:625,633,707,737-783`（预检 5 状态压成一个 `Alert`，variant 由状态映射）、`ProjectRail:718,726`（抽本地 `RailNotice`，只在本文件出现两次）、`TaskDetailDialog:463,731,789`、`PluginsView:206`、`HandoffNotice:257`。
 - `CreateTaskDialog:291` 的成功文案改走 `toast`，`Alert` 只承载错误（成功用绿色提示条与全站一致）。
 
+### 7.1 实施修正（批 6 完成后回写）
+
+- `Alert` 只有 `default`/`destructive` 两个变体，success/warning 提示一律用 `variant` 默认 + `className="border-success/35 bg-success-soft text-success"` / `border-warning/35 bg-warning-soft text-warning` 覆盖，不新增 registry 变体。
+- `Alert` 内部硬编码 `role="alert"`，非错误类提示（同步中、待确认）传 `role="status"` 覆盖（props 在 `role` 之后展开）。
+- 图标提示条保留 `<svg>` 作首个直接子元素：`Alert` 的 `has-[>svg]:grid-cols-[auto_1fr]` 会把它放进左列并 `row-span-2`。
+- 表单内联错误（弹窗正文里 `text-xs text-destructive` 的一行文案）不套 `Alert`：加边框会把简单校验错误放大成横幅；已登记为例外清单（`implement.md` 批 6 执行记录）。
+- 带按钮的错误提示把按钮放进 `AlertDescription` 的 flex 行（`OwnershipInboxPanel`）或用 `AlertTitle` + `AlertDescription` 两行（`ArchiveSyncTab`），不用 `AlertAction` 的绝对定位（窄容器会压住文本）。
+
 ## 8. 卡片与表格（批 7）
 
 - `Panel` → `ui/panel.tsx`：保留 `rounded-xl border border-border bg-card` + `title/kicker/description/action/children` props，内部 `Card className="rounded-xl border border-border ring-0"` + `CardHeader/CardTitle/CardDescription/CardAction/CardContent`；23 处 admin 调用只改 import，board 8 处容器 `Panel`（无 header props）直接替换手写 `rounded-xl border bg-card`。

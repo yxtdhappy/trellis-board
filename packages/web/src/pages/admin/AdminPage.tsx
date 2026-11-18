@@ -24,6 +24,7 @@ import { ArchiveSyncTab } from '@/features/admin/ArchiveSyncTab'
 import { OneTimeCredentialDialog } from '@/features/admin/OneTimeCredentialDialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 const VIEWS: {
   id: AdminView
@@ -174,12 +175,9 @@ export function AdminPage() {
         ) : null}
 
         {phase === 'error' ? (
-          <p
-            role="alert"
-            className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-xs text-destructive"
-          >
-            {bootError}
-          </p>
+          <Alert variant="destructive">
+            <AlertDescription>{bootError}</AlertDescription>
+          </Alert>
         ) : null}
 
         {phase === 'denied' ? (

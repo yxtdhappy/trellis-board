@@ -26,6 +26,7 @@ import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
 import { Field, Panel, Row } from './shared.tsx'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
 const STATUS_LABELS: Record<string, string> = {
   idle: '等待同步',
@@ -235,12 +236,14 @@ export function ArchiveSyncTab() {
 
   if (sync.error && !sync.overview) {
     return (
-      <div className="flex flex-col gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-4">
-        <strong className="text-xs text-destructive">{sync.error}</strong>
-        <Button size="sm" variant="outline" type="button" onClick={() => void sync.reload()}>
-          重新读取
-        </Button>
-      </div>
+      <Alert variant="destructive">
+        <AlertTitle>{sync.error}</AlertTitle>
+        <AlertDescription>
+          <Button size="sm" variant="outline" type="button" onClick={() => void sync.reload()}>
+            重新读取
+          </Button>
+        </AlertDescription>
+      </Alert>
     )
   }
 
@@ -576,9 +579,9 @@ export function ArchiveSyncTab() {
           </DialogHeader>
           <DialogBody className="flex flex-col gap-2">
             {sync.logsError ? (
-              <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
-                {sync.logsError}
-              </p>
+              <Alert variant="destructive">
+                <AlertDescription>{sync.logsError}</AlertDescription>
+              </Alert>
             ) : null}
             {sync.logs.length === 0 && !sync.logsLoading ? (
               sync.logsError ? null : (

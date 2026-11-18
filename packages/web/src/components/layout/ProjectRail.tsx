@@ -24,6 +24,7 @@ import {
 import { createRefreshCoordinator } from '@/lib/refresh-coordinator.js'
 import { cn } from '@/lib/utils'
 import { StatusPill } from '@/components/ui/status-pill'
+import { Alert } from '@/components/ui/alert'
 
 type Project = {
   id: string
@@ -727,20 +728,20 @@ export function ProjectRail({
         </Button>
       ) : null}
       {invoke && syncingAssociations.length ? (
-        <div
+        <Alert
           role="status"
-          className="mb-1 rounded-lg border border-warning/35 bg-warning-soft px-2 py-1.5 text-2xs leading-4 text-warning"
+          className="mb-1 border-warning/35 bg-warning-soft px-2 py-1.5 text-2xs leading-4 text-warning"
         >
           正在同步任务，此时切换 Git 分支可能导致任务错位或污染，建议等待同步完成后再切换。
-        </div>
+        </Alert>
       ) : null}
       {invoke && reviewAssociations.length ? (
-        <div
+        <Alert
           role="status"
-          className="mb-1 rounded-lg border border-warning/35 bg-warning-soft px-2 py-1.5 text-2xs leading-4 text-warning"
+          className="mb-1 border-warning/35 bg-warning-soft px-2 py-1.5 text-2xs leading-4 text-warning"
         >
           有分支等待确认任务差异，确认处理方式后才会同步任务。
-        </div>
+        </Alert>
       ) : null}
       <button
         type="button"
@@ -1126,12 +1127,9 @@ export function ProjectRail({
       })}
 
       {associationError ? (
-        <p
-          role="alert"
-          className="mx-1 mt-1 rounded-md bg-destructive/10 px-2 py-1.5 text-2xs leading-4 text-destructive"
-        >
+        <Alert variant="destructive" className="mx-1 mt-1 text-2xs leading-4">
           {associationError}
-        </p>
+        </Alert>
       ) : null}
 
       {!invoke && manageEnabled ? (

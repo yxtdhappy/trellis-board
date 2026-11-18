@@ -49,9 +49,9 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
                 key={device.id}
                 actions={
                   device.status === 'revoked' ? (
-                    <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-2xs font-semibold text-destructive">
+                    <StatusPill tone="destructive">
                       已撤销 {formatTime(device.revokedAt)}
-                    </span>
+                    </StatusPill>
                   ) : (
                     <Button
                       variant="ghost"

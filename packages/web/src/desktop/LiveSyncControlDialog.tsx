@@ -16,6 +16,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { errorMessage, invoke, listen } from '@/desktop/tauri'
 import { SelectField } from '@/features/board/SelectField'
 import { createRefreshCoordinator } from '@/lib/refresh-coordinator.js'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 const MonacoDiff = lazy(() => import('./MonacoDiff.tsx'))
 
@@ -803,10 +804,10 @@ export function LiveSyncControlDialog() {
           ) : null}
 
           {errorText ? (
-            <p role="alert" className="flex items-start gap-2 text-sm text-destructive">
+            <Alert variant="destructive">
               <AlertCircle className="mt-0.5 size-4 shrink-0" />
-              {errorText}
-            </p>
+              <AlertDescription className="text-sm">{errorText}</AlertDescription>
+            </Alert>
           ) : null}
         </DialogBody>
         <DialogFooter>

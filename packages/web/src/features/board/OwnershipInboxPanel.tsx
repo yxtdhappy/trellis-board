@@ -4,6 +4,7 @@ import { ownershipInboxItemKey, ownershipInboxReasonLabel } from '@/lib/ownershi
 import type { OwnershipInboxItem, OwnershipInboxProjectGroup } from '@/lib/ownership-inbox.js'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 type OwnershipInboxPanelProps = {
   count: number
@@ -107,12 +108,14 @@ export function OwnershipInboxPanel({
       {open ? (
         <div id="ownership-inbox-list" className="mt-2 border-t border-warning/25 pt-2">
           {error ? (
-            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg bg-background/70 px-2 py-1.5 text-xs text-destructive">
-              <span className="min-w-0 flex-1 break-words">待归属任务加载失败：{error}</span>
-              <Button type="button" variant="outline" size="xs" onClick={onRetry}>
-                重试
-              </Button>
-            </div>
+            <Alert variant="destructive" className="mb-2 bg-background/70 px-2 py-1.5">
+              <AlertDescription className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="min-w-0 flex-1 break-words">待归属任务加载失败：{error}</span>
+                <Button type="button" variant="outline" size="xs" onClick={onRetry}>
+                  重试
+                </Button>
+              </AlertDescription>
+            </Alert>
           ) : null}
 
           {loading && items.length === 0 ? (

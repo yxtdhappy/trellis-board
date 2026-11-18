@@ -14,6 +14,7 @@ import { projectListenerView } from '@/lib/project-rail-association.js'
 import { cn } from '@/lib/utils'
 import { StatusPill } from '@/components/ui/status-pill'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 type BranchListenersDialogProps = {
   taskSpace: TaskSpace | null
@@ -84,12 +85,9 @@ export function BranchListenersDialog({
           ) : null}
           {loading ? <p className="text-xs text-muted-foreground">正在读取客户端信息…</p> : null}
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive"
-            >
-              {error}
-            </p>
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           ) : null}
           {!loading && !error && listeners.length === 0 ? (
             <Empty className="p-4">

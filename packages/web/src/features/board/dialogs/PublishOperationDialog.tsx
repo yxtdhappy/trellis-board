@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { isCompleteOperation, isRetryableOperation } from '@/lib/team-client.js'
 import type { PublishOperation } from '@/hooks/useBoard'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 const OPERATION_LABELS: Record<string, string> = {
   pending: '等待目标客户端',
@@ -72,9 +73,9 @@ export function PublishOperationDialog({
             <p className="text-muted-foreground">任务：{operation.taskKey}</p>
           ) : null}
           {operation?.error ? (
-            <p role="alert" className="rounded-lg bg-destructive/10 px-2.5 py-1.5 text-destructive">
-              {operation.error}
-            </p>
+            <Alert variant="destructive">
+              <AlertDescription>{operation.error}</AlertDescription>
+            </Alert>
           ) : null}
           {status === 'failed' && retryable ? (
             <p className="text-2xs text-muted-foreground">

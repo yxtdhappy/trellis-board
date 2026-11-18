@@ -19,6 +19,7 @@ import { formatTime, statusTone } from '@/lib/admin-shared'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
 import { Field, Panel, Row } from './shared.tsx'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 type BranchManagementPanelProps = {
   projectSelected: boolean
@@ -349,10 +350,12 @@ export function BranchManagementPanel({
               <DialogBody className="flex flex-col gap-2.5">
                 <ImpactSummary taskSpace={purgeTarget} />
                 {purgeStep === 1 ? (
-                  <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
-                    将删除该分支的任务快照、绑定、游标、命令、冲突和索引；服务端会先创建数据库备份。
-                    真实 Git 分支和客户端本地 <code>.trellis/tasks</code> 不会删除。
-                  </p>
+                  <Alert variant="destructive" className="leading-5">
+                    <AlertDescription className="leading-5">
+                      将删除该分支的任务快照、绑定、游标、命令、冲突和索引；服务端会先创建数据库备份。
+                      真实 Git 分支和客户端本地 <code>.trellis/tasks</code> 不会删除。
+                    </AlertDescription>
+                  </Alert>
                 ) : (
                   <Field label="输入分支名称">
                     <Input

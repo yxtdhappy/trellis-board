@@ -8,6 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
 import { Progress } from '@/components/ui/progress'
 import { errorMessage, invoke, listen } from './tauri.ts'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 type StepId =
   | 'node:check'
@@ -343,10 +344,10 @@ export function LoginApp() {
               })}
             </ol>
             {envError ? (
-              <p role="alert" className="flex items-start gap-2 text-sm text-destructive">
+              <Alert variant="destructive">
                 <AlertCircle className="mt-0.5 size-4 shrink-0" />
-                {envError}
-              </p>
+                <AlertDescription className="text-sm">{envError}</AlertDescription>
+              </Alert>
             ) : null}
             <div className="flex flex-wrap gap-2">
               {installVisible ? (
@@ -440,10 +441,10 @@ export function LoginApp() {
                 />
               </div>
               {loginError ? (
-                <p role="alert" className="flex items-start gap-2 text-sm text-destructive">
+                <Alert variant="destructive">
                   <AlertCircle className="mt-0.5 size-4 shrink-0" />
-                  {loginError}
-                </p>
+                  <AlertDescription className="text-sm">{loginError}</AlertDescription>
+                </Alert>
               ) : null}
               <Button ref={submitRef} type="submit" className="w-full" disabled={submitting}>
                 {submitting ? '正在登录…' : '登录'}

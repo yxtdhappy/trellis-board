@@ -22,6 +22,7 @@ import { onboardingErrorMessage, preflightBlockReason } from '@/lib/onboarding-p
 import { AgentToolSelector } from './AgentToolSelector.tsx'
 import { SelectField } from '../SelectField.tsx'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 type TeamOption = {
   id: string
@@ -625,16 +626,18 @@ export function ProjectOnboardingDialog({
               </dl>
 
               {associationLoadError ? (
-                <p className="rounded-lg border border-destructive/40 p-3 text-destructive">
-                  无法读取本地项目关联，已阻止接入，避免产生重复绑定：{associationLoadError}
-                </p>
+                <Alert variant="destructive">
+                  <AlertDescription>
+                    无法读取本地项目关联，已阻止接入，避免产生重复绑定：{associationLoadError}
+                  </AlertDescription>
+                </Alert>
               ) : open && !associationsLoaded ? (
                 <div className="flex flex-col gap-1.5">
                   <Skeleton className="h-4 w-48" />
                   <Skeleton className="h-8 w-full" />
                 </div>
               ) : replacedAssociations.length ? (
-                <div className="flex flex-col gap-2 rounded-lg border border-warning/35 bg-warning-soft p-3">
+                <Alert className="flex flex-col gap-2 border-warning/35 bg-warning-soft p-3 text-warning">
                   <p className="font-medium text-warning">将替换当前仓库的旧分支绑定</p>
                   <p className="text-muted-foreground">
                     当前目录准备接入 <code>{inspection.branchName}</code>，但本机仍绑定：
@@ -651,7 +654,7 @@ export function ProjectOnboardingDialog({
                     接入前会再次确认。替换只会停止本机旧分支同步，不会删除旧任务空间、旧任务或其他设备的绑定。需要同时同步两个分支时，请使用独立
                     Git worktree。
                   </p>
-                </div>
+                </Alert>
               ) : null}
 
               <div className="grid gap-3 sm:grid-cols-2">

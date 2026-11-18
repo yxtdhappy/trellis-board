@@ -13,6 +13,7 @@ import { Pagination } from './Pagination.tsx'
 import { SearchableSelect } from './SearchableSelect'
 import { SelectField } from './SelectField.tsx'
 import { branchLabel, initials, type BoardTask } from './task-view.ts'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 type ArchiveViewProps = {
   tasks: BoardTask[]
@@ -224,9 +225,9 @@ export function ArchiveView({
       </div>
 
       {teamMode && archive.error ? (
-        <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          {archive.error}
-        </p>
+        <Alert variant="destructive">
+          <AlertDescription>{archive.error}</AlertDescription>
+        </Alert>
       ) : null}
 
       <div

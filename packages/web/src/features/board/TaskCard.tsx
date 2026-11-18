@@ -170,12 +170,9 @@ export function TaskCard({ task, onOpen, onEditPlan, localState, onDownload }: T
       {attention.length ? (
         <div className="flex flex-wrap gap-1">
           {attention.map((reason) => (
-            <span
-              key={reason.id}
-              className="rounded-full bg-destructive/10 px-1.5 py-px text-2xs font-medium text-destructive"
-            >
+            <StatusPill key={reason.id} tone="destructive" size="xs">
               {reason.label}
-            </span>
+            </StatusPill>
           ))}
         </div>
       ) : null}

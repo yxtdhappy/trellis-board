@@ -7,6 +7,7 @@ import { Separator } from '@/components/ui/separator'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
 import { ApiError, requestJson } from '@/api/request'
 import { normalizeRuntime, normalizeUser, safeReturnTo } from '@/lib/team-client.js'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 type LoginState = 'checking' | 'ready' | 'submitting'
 
@@ -177,9 +178,9 @@ export function LoginPage() {
                 />
               </div>
               {message ? (
-                <p role="alert" aria-live="assertive" className="text-sm text-destructive">
-                  {message}
-                </p>
+                <Alert variant="destructive">
+                  <AlertDescription className="text-sm">{message}</AlertDescription>
+                </Alert>
               ) : null}
               <Button
                 type="submit"

@@ -161,6 +161,24 @@ cd packages/web && npx tsc -b && npx oxlint src   # 格式化在仓库根：npx 
 
 提交：`refactor(web): 提示与错误条统一为 alert`
 
+### 执行记录（批 6，已完成）
+
+- 错误条 → `<Alert variant="destructive"><AlertDescription>…</AlertDescription></Alert>`（15 处 / 12 文件）：`pages/board/BoardPage.tsx`、`features/board/ArchiveView.tsx`、`features/plugins/PluginsView.tsx`、`pages/admin/AdminPage.tsx`（启动失败）、`pages/login/LoginPage.tsx`、`desktop/LoginApp.tsx`（环境错误 + 登录错误两处，保留 `AlertCircle` 作首个 `<svg>` 子元素，走 `has-[>svg]` 两列栅格）、`desktop/LiveSyncControlDialog.tsx`、`features/board/dialogs/BranchListenersDialog.tsx`、`features/board/dialogs/PublishOperationDialog.tsx`、`features/board/dialogs/ProjectOnboardingDialog.tsx`（`associationLoadError`）、`features/board/dialogs/AgentQuickInitDialog.tsx`、`components/layout/ProjectRail.tsx`（`associationError`，`className="mx-1 mt-1 text-2xs leading-4"`）、`features/board/OwnershipInboxPanel.tsx`（错误 + `重试` 按钮放进 `AlertDescription` 的 flex 行）、`features/admin/ArchiveSyncTab.tsx`（概览错误用 `AlertTitle` + `AlertDescription` 包 `重新读取`；日志错误单行）、`features/admin/BranchManagementPanel.tsx`（删除分支影响说明）。
+- 成功/警告配色仍靠 `className` 覆盖（`Alert` 只有 `default`/`destructive`）：`features/board/dialogs/AgentQuickInitDialog.tsx`（已全部初始化 → `border-success/35 bg-success-soft text-success`）、`features/board/ConditionChecks.tsx` `SuccessSummary`（`border-success/20 bg-success-soft text-success`，保留 `CircleCheckIcon`）、`features/board/dialogs/ProjectOnboardingDialog.tsx`（`replacedAssociations` 警告块 → `border-warning/35 bg-warning-soft text-warning`）、`components/layout/ProjectRail.tsx` 两条同步/待确认提醒（`role="status"`，覆盖 `Alert` 硬编码的 `role="alert"`）。
+- 顺带补齐批 4 漏收的两处药片：`features/admin/DevicesTab.tsx:52`（`已撤销 …` → `<StatusPill tone="destructive">`）、`features/board/TaskCard.tsx:175`（关注信号 → `<StatusPill tone="destructive" size="xs">`）。
+
+保留例外（不套 `Alert`）：
+
+- 表单内联错误保持纯文本：`features/board/dialogs/PasswordDialog.tsx:100`、`features/admin/ResetPasswordDialog.tsx:100`、`features/board/dialogs/TaskOwnershipDialog.tsx:321`、`features/board/dialogs/AssigneeWarningDialog.tsx:77`、`features/admin/BranchManagementPanel.tsx:309,372`、`features/board/dialogs/ProjectOnboardingDialog.tsx:588,744,751`、`features/board/dialogs/CreateTaskDialog.tsx:226`、`features/admin/ProjectsTab.tsx:401`、`features/plugins/PluginsView.tsx:327`、`features/board/TaskOperationList.tsx:81`。
+- 容器型/可交互提示保持原标签：`features/board/OwnershipInboxPanel.tsx:80`（`<section>` 带按钮的警告区）、`features/board/TaskCard.tsx:130`（可点击的"下载到本机"胶囊）、`components/layout/ProjectRail.tsx:885`（带冲突圆点的可点击 chip，`bg-destructive/10` 属交互底色）、`components/layout/ProjectRail.tsx:909`（按钮 hover 态）。
+- 结构型状态底色（`features/board/ConditionChecks.tsx:114-221` 的检查行/图标方块 `bg-*-soft/50`）保留，属容器而非提示。
+
+实测（4318 + 5180 + tabbit，临时库 `C:\projects\.trellis-verify-data`）：
+
+- 登录页错误路径（错误密码 → `POST /api/auth/login` 401）：渲染 1 个 `[data-slot="alert"]`，`role="alert"`、`background-color: oklch(1 0 0)`、`color: oklch(0.577 0.245 27.325)`、`border-radius: 10px`、高 33px、`AlertDescription` 文字色 `oklab(… / 0.9)`，文案「用户名或密码错误」。
+- 管理页（临时会话 + `team-verify`）：7 个 `role=tab`、6 个 `EmptyRow`、0 个残留 `Skeleton`、0 条 console error，标题「团队管理 · Trellis Board」。
+- 闸门：`npx tsc -b` rc=0；`npx oxlint` 18 个改动文件 0 warning；`npx oxfmt` 18 文件通过。
+
 ## 批 7 卡片与表格（≈40）
 
 1. 23 处 `Panel` 改 import 到 `@/components/ui/panel`；删 `features/admin/shared.tsx:25-42`。

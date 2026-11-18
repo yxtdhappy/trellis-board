@@ -18,6 +18,7 @@ import { normalizeProjectInspection } from '@/lib/project-inspection.js'
 import { onboardingErrorMessage } from '@/lib/onboarding-probe.js'
 import { AgentToolSelector } from './AgentToolSelector.tsx'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
@@ -199,16 +200,18 @@ export function AgentQuickInitDialog({
                   onToggleTool={toggleTool}
                 />
                 {allInitialized ? (
-                  <p className="rounded-lg border border-success/35 bg-success-soft p-3 text-success">
-                    当前仓库的编码 Agent 均已初始化，无需重复操作。
-                  </p>
+                  <Alert className="border-success/35 bg-success-soft text-success">
+                    <AlertDescription className="text-success">
+                      当前仓库的编码 Agent 均已初始化，无需重复操作。
+                    </AlertDescription>
+                  </Alert>
                 ) : null}
               </>
             ) : null}
             {error ? (
-              <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-destructive">
-                {error}
-              </p>
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
             ) : null}
           </DialogBody>
           <DialogFooter>
