@@ -2,7 +2,6 @@
   "name": "trellis-board",
   "version": "0.4.38",
   "private": true,
-  "packageManager": "yarn@3.5.0",
   "workspaces": [
     "packages/*"
   ],
@@ -34,5 +33,6 @@
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "packageManager": "yarn@3.5.0"
 }
