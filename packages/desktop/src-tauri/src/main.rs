@@ -223,6 +223,7 @@ fn initial_server_url() -> Option<String> {
     config::server_url_from_args()
         .or_else(|| std::env::var("TRELLIS_DESKTOP_SERVER_URL").ok())
         .or_else(|| config::load().ok().flatten().map(|value| value.server_url))
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn cookie_for(board: &Url, value: &str) -> Result<Cookie<'static>, String> {
@@ -338,6 +339,7 @@ async fn app_status(app: AppHandle, window: WebviewWindow) -> Result<AppStatus, 
         server_url: config
             .as_ref()
             .map(|value| value.server_url.clone())
+            .filter(|value| !value.trim().is_empty())
             .or_else(initial_server_url),
         username: config.as_ref().and_then(|value| value.username.clone()),
         password: config.as_ref().and_then(|value| value.password.clone()),
@@ -424,6 +426,9 @@ async fn desktop_login(
         trellis_runtime: previous_config
             .as_ref()
             .and_then(|value| value.trellis_runtime.clone()),
+        python_runtime: previous_config
+            .as_ref()
+            .and_then(|value| value.python_runtime.clone()),
     }) {
         let _ = delete_session_cookie(&window, &board);
         let _ = agent_service::logout(&app, &server_url, &token).await;

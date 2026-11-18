@@ -37,6 +37,10 @@ fn write(level: &str, message: &str) {
     eprint!("{line}");
 }
 
+pub fn info(message: &str) {
+    write("info", message);
+}
+
 pub fn warn(message: &str) {
     write("warn", message);
 }

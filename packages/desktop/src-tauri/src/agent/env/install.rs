@@ -2,17 +2,81 @@ use super::*;
 
 // ---------------------------------------------------------------- install
 
-pub async fn install(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct InstallPlan {
+    pub download_node: bool,
+    pub install_trellis: bool,
+    pub install_python: bool,
+}
+
+pub(super) fn install_plan(
+    node: &NodeStatus,
+    trellis: &TrellisStatus,
+    python: &PythonStatus,
+) -> InstallPlan {
+    InstallPlan {
+        download_node: !node.ok,
+        install_trellis: !trellis.ok,
+        install_python: !python.ok,
+    }
+}
+
+/// flag 命中时 `resolve_*` 返回 source=`client`；保留原 flag 的来源便于诊断。
+fn reused_source(previous: Option<String>, status: &Option<String>, fallback: &str) -> String {
+    if status.as_deref() == Some("client") {
+        previous.unwrap_or_else(|| fallback.to_string())
+    } else {
+        status.clone().unwrap_or_else(|| fallback.to_string())
+    }
+}
+
+fn node_has_npm(node_path: &Path) -> bool {
+    node_path
+        .parent()
+        .map(|directory| {
+            directory
+                .join("node_modules")
+                .join("npm")
+                .join("bin")
+                .join("npm-cli.js")
+        })
+        .filter(|path| path.is_file())
+        .is_some()
+        || find_in_path(&path_dirs(), "npm.cmd").is_some()
+}
+
+pub async fn install<C: ClientConfigLike>(
     data_dir: &Path,
+    config: &mut C,
     mut on_progress: impl FnMut(&str, &str) + Send,
 ) -> AgentResult<RuntimeInstallResult> {
-    let node_path = node_exe_path(data_dir);
-    let node_version = match node_version_at(&node_path).await {
-        Some(version) => {
-            on_progress("node:validate", &format!("Node.js {version} 已就绪"));
-            version
-        }
-        None => install_node(data_dir, &mut on_progress).await?,
+    let previous_node_source = config.node_runtime().map(|flag| flag.source);
+    let previous_trellis_source = config.trellis_runtime().map(|flag| flag.source);
+    let previous_python_source = config.python_runtime().map(|flag| flag.source);
+
+    let node_status = resolve_node(data_dir, config).await;
+    let trellis_status = resolve_trellis(data_dir, config).await;
+    let python_status = resolve_python(config).await;
+    let plan = install_plan(&node_status, &trellis_status, &python_status);
+
+    // Node：已通过环境门校验就直接复用，只有缺失/全部候选都不可用时才下载私有 Node。
+    let (mut node_version, mut node_path, mut node_source) = if plan.download_node {
+        (
+            install_node(data_dir, &mut on_progress).await?,
+            node_exe_path(data_dir),
+            "downloaded".to_string(),
+        )
+    } else {
+        let version = node_status.version.clone().ok_or_else(|| {
+            AgentError::new(CODE_NODE_INVALID, "Node.js 状态缺少版本")
+                .with_details(Some(json!({ "stage": "node:validate" })))
+        })?;
+        let path = node_status.path.clone().ok_or_else(|| {
+            AgentError::new(CODE_NODE_INVALID, "Node.js 状态缺少路径")
+                .with_details(Some(json!({ "stage": "node:validate" })))
+        })?;
+        let source = reused_source(previous_node_source, &node_status.source, "client");
+        (version, PathBuf::from(path), source)
     };
     if !is_version_at_least(&node_version, NODE_MIN_VERSION) {
         return Err(AgentError::new(
@@ -22,64 +86,80 @@ pub async fn install(
         .with_details(Some(json!({ "stage": "node:validate" }))));
     }
 
-    let cli_path = trellis_cli_path(data_dir);
-    let existing = read_package_version(&cli_path)
-        .filter(|version| is_version_at_least(version, TRELLIS_VERSION));
-    let trellis_version = match existing {
-        Some(version) => {
-            on_progress("trellis:validate", &format!("Trellis CLI {version} 已就绪"));
-            version
+    // Trellis：缺失时优先用已确定的 Node 安装到客户端私有前缀；系统 Node 没有 npm
+    // 时再补私有 Node，保证安装可完成。
+    let (trellis_version, cli_path, trellis_source) = if plan.install_trellis {
+        if !node_has_npm(&node_path) {
+            node_version = install_node(data_dir, &mut on_progress).await?;
+            node_path = node_exe_path(data_dir);
+            node_source = "downloaded".to_string();
         }
-        None => {
-            on_progress("trellis:install", "正在安装 Trellis CLI");
-            install_trellis(data_dir, &node_path, &mut on_progress).await?;
-            on_progress("trellis:validate", "正在校验 Trellis CLI");
-            let version = read_package_version(&cli_path).ok_or_else(|| {
-                AgentError::new(code::MISSING_TRELLIS, "Trellis CLI 安装后未找到")
-                    .with_details(Some(json!({ "stage": "trellis:validate" })))
-            })?;
-            if !is_version_at_least(&version, TRELLIS_VERSION) {
-                return Err(AgentError::new(
-                    code::MISSING_TRELLIS,
-                    format!("Trellis CLI 版本过低: {version}"),
-                )
-                .with_details(Some(json!({ "stage": "trellis:validate" }))));
-            }
-            version
+        on_progress("trellis:install", "正在安装 Trellis CLI");
+        install_trellis(data_dir, &node_path, &mut on_progress).await?;
+        on_progress("trellis:validate", "正在校验 Trellis CLI");
+        let cli_path = trellis_cli_path(data_dir);
+        let version = read_package_version(&cli_path).ok_or_else(|| {
+            AgentError::new(code::MISSING_TRELLIS, "Trellis CLI 安装后未找到")
+                .with_details(Some(json!({ "stage": "trellis:validate" })))
+        })?;
+        if !is_version_at_least(&version, TRELLIS_VERSION) {
+            return Err(AgentError::new(
+                code::MISSING_TRELLIS,
+                format!("Trellis CLI 版本过低: {version}"),
+            )
+            .with_details(Some(json!({ "stage": "trellis:validate" }))));
         }
+        (version, cli_path, "client-prefix".to_string())
+    } else {
+        let version = trellis_status.version.clone().ok_or_else(|| {
+            AgentError::new(code::MISSING_TRELLIS, "Trellis CLI 状态缺少版本")
+                .with_details(Some(json!({ "stage": "trellis:validate" })))
+        })?;
+        let cli_path = trellis_status.cli_path.clone().ok_or_else(|| {
+            AgentError::new(code::MISSING_TRELLIS, "Trellis CLI 状态缺少路径")
+                .with_details(Some(json!({ "stage": "trellis:validate" })))
+        })?;
+        let source = reused_source(previous_trellis_source, &trellis_status.source, "global");
+        (version, PathBuf::from(cli_path), source)
     };
 
-    let (python_path, python_version) = match installed_python().await {
-        Some((path, version)) => {
-            on_progress("python:validate", &format!("Python {version} 已就绪"));
-            (path, version)
-        }
-        None => install_python(data_dir, &mut on_progress).await?,
+    // Python：已通过校验就复用。
+    let (python_version, python_path, python_source) = if plan.install_python {
+        let (path, version) = install_python(data_dir, &mut on_progress).await?;
+        (version, path, "installed".to_string())
+    } else {
+        let version = python_status.version.clone().ok_or_else(|| {
+            AgentError::new(CODE_PYTHON_INVALID, "Python 状态缺少版本")
+                .with_details(Some(json!({ "stage": "python:validate" })))
+        })?;
+        let path = python_status.path.clone().ok_or_else(|| {
+            AgentError::new(CODE_PYTHON_INVALID, "Python 状态缺少路径")
+                .with_details(Some(json!({ "stage": "python:validate" })))
+        })?;
+        let source = reused_source(previous_python_source, &python_status.source, "path");
+        (version, PathBuf::from(path), source)
     };
 
     on_progress("write-flag", "正在保存运行时配置");
     let installed_at = protocol::now_iso8601();
-    write_runtime_flags(
-        data_dir,
-        &NodeRuntimeFlag {
-            version: node_version.clone(),
-            path: node_path.display().to_string(),
-            source: "downloaded".to_string(),
-            installed_at: installed_at.clone(),
-        },
-        &TrellisRuntimeFlag {
-            version: trellis_version.clone(),
-            cli_path: cli_path.display().to_string(),
-            source: "client-prefix".to_string(),
-            installed_at: installed_at.clone(),
-        },
-        &PythonRuntimeFlag {
-            version: python_version.clone(),
-            path: python_path.display().to_string(),
-            source: "installed".to_string(),
-            installed_at,
-        },
-    )?;
+    config.set_node_runtime(Some(NodeRuntimeFlag {
+        version: node_version.clone(),
+        path: node_path.display().to_string(),
+        source: node_source,
+        installed_at: installed_at.clone(),
+    }));
+    config.set_trellis_runtime(Some(TrellisRuntimeFlag {
+        version: trellis_version.clone(),
+        cli_path: cli_path.display().to_string(),
+        source: trellis_source,
+        installed_at: installed_at.clone(),
+    }));
+    config.set_python_runtime(Some(PythonRuntimeFlag {
+        version: python_version.clone(),
+        path: python_path.display().to_string(),
+        source: python_source,
+        installed_at,
+    }));
 
     on_progress(
         "ready",
@@ -306,6 +386,12 @@ pub(super) async fn installed_python() -> Option<(PathBuf, String)> {
     }
     if let Some(found) = find_in_path(&path_dirs(), "python.exe") {
         candidates.push(found);
+    }
+    for dir in python_dirs() {
+        let executable = dir.join("python.exe");
+        if is_usable_file(&executable) {
+            candidates.push(executable);
+        }
     }
     for program in candidates {
         let Some(version) = python_version_at(&program, &[]).await else {
@@ -576,68 +662,3 @@ pub(super) async fn install_trellis(
     }
     Ok(())
 }
-
-/// 把三个运行时 flag 合并写入 `<data_dir>/client.json`（schema 3）。
-pub fn write_runtime_flags(
-    data_dir: &Path,
-    node: &NodeRuntimeFlag,
-    trellis: &TrellisRuntimeFlag,
-    python: &PythonRuntimeFlag,
-) -> AgentResult<()> {
-    let path = data_dir.join("client.json");
-    let mut document: Map<String, Value> = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')).ok())
-        .and_then(|value| value.as_object().cloned())
-        .unwrap_or_default();
-    document.insert("schema_version".to_string(), json!(3));
-    document.insert(
-        "node_runtime".to_string(),
-        serde_json::to_value(node).map_err(|error| {
-            AgentError::new(
-                code::CONFIG_INVALID,
-                format!("运行时配置序列化失败: {error}"),
-            )
-        })?,
-    );
-    document.insert(
-        "trellis_runtime".to_string(),
-        serde_json::to_value(trellis).map_err(|error| {
-            AgentError::new(
-                code::CONFIG_INVALID,
-                format!("运行时配置序列化失败: {error}"),
-            )
-        })?,
-    );
-    document.insert(
-        "python_runtime".to_string(),
-        serde_json::to_value(python).map_err(|error| {
-            AgentError::new(
-                code::CONFIG_INVALID,
-                format!("运行时配置序列化失败: {error}"),
-            )
-        })?,
-    );
-    let payload = serde_json::to_vec_pretty(&Value::Object(document)).map_err(|error| {
-        AgentError::new(
-            code::CONFIG_INVALID,
-            format!("运行时配置序列化失败: {error}"),
-        )
-    })?;
-
-    std::fs::create_dir_all(data_dir).map_err(|error| {
-        AgentError::new(code::CONFIG_INVALID, format!("无法创建配置目录: {error}"))
-    })?;
-    let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
-    std::fs::write(&temp, payload).map_err(|error| {
-        AgentError::new(code::CONFIG_INVALID, format!("无法写入运行时配置: {error}"))
-    })?;
-    if std::fs::rename(&temp, &path).is_err() {
-        let _ = std::fs::remove_file(&path);
-        std::fs::rename(&temp, &path).map_err(|error| {
-            AgentError::new(code::CONFIG_INVALID, format!("无法写入运行时配置: {error}"))
-        })?;
-    }
-    Ok(())
-}
-

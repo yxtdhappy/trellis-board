@@ -56,9 +56,9 @@ const PROGRESS_STEP: Record<string, StepId> = {
 
 type RuntimeStatus = {
   state?: 'checking' | 'ready' | 'needs_setup' | 'installing' | 'failed'
-  node?: { ok?: boolean; version?: string }
-  trellis?: { ok?: boolean; version?: string }
-  python?: { ok?: boolean; version?: string; foundVersion?: string }
+  node?: { ok?: boolean; version?: string; foundVersion?: string; minVersion?: string }
+  trellis?: { ok?: boolean; version?: string; foundVersion?: string; requiredVersion?: string }
+  python?: { ok?: boolean; version?: string; foundVersion?: string; minVersion?: string }
   error?: string
 }
 
@@ -137,26 +137,45 @@ export function LoginApp() {
     }
     if (state === 'needs_setup') {
       setSteps({ active: null, done: ['node:check', 'trellis:check', 'python:check'] })
+      const detected: string[] = []
+      if (node.ok && node.version) detected.push(`Node.js ${node.version}`)
+      if (trellis.ok && trellis.version) detected.push(`Trellis ${trellis.version}`)
+      if (python.ok && python.version) detected.push(`Python ${python.version}`)
       const missing: string[] = []
-      if (!node.ok) missing.push('Node.js')
-      if (!trellis.ok) missing.push('Trellis CLI')
-      if (!python.ok) {
+      if (!node.ok) {
         missing.push(
-          python.foundVersion ? `Python（当前 ${python.foundVersion}，需 ≥ 3.9）` : 'Python',
+          node.foundVersion
+            ? `Node.js（当前 ${node.foundVersion}，需 ≥ ${node.minVersion ?? '18.17.0'}）`
+            : 'Node.js',
         )
       }
+      if (!trellis.ok) {
+        missing.push(
+          trellis.foundVersion
+            ? `Trellis CLI（当前 ${trellis.foundVersion}，需 ≥ ${trellis.requiredVersion ?? '0.6.17'}）`
+            : 'Trellis CLI',
+        )
+      }
+      if (!python.ok) {
+        missing.push(
+          python.foundVersion
+            ? `Python（当前 ${python.foundVersion}，需 ≥ ${python.minVersion ?? '3.9.0'}）`
+            : 'Python',
+        )
+      }
+      const detectedText = detected.length ? `已检测到 ${detected.join('、')}。` : ''
       setEnvStatus(
         missing.length
-          ? `${missing.join('、')} 缺失或版本过低，请先安装运行环境。`
-          : '请先安装运行环境。',
+          ? `${detectedText}${missing.join('、')} 缺失或版本过低，请先安装运行环境。`
+          : `${detectedText}请先安装运行环境。`,
       )
       setInstallVisible(true)
-      setRetryVisible(false)
+      setRetryVisible(true)
       return
     }
     if (state === 'failed') {
       setInstallVisible(true)
-      setRetryVisible(false)
+      setRetryVisible(true)
       setEnvStatus('运行环境检查失败。')
       setEnvError(status?.error || '请重试或检查网络连接。')
       return
@@ -195,7 +214,7 @@ export function LoginApp() {
     setEnvError(null)
     setInstallVisible(false)
     setRetryVisible(false)
-    setSteps({ active: 'node:download', done: [] })
+    setSteps({ active: null, done: ['node:check', 'trellis:check', 'python:check'] })
     setEnvStatus('正在准备运行环境…')
     try {
       const result = await invoke<{

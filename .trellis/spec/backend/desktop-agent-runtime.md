@@ -125,7 +125,8 @@
 - 数据兼容：`data/agent/config.json`、`state.json`（schema 2）、`credential.dpapi`（schema 1）、
   `event-cursors.json`、`live-cursors.json` 的路径与字段不得改名（`live-cursors.json` 现由
   `TaskSync` 独占，文件名沿用旧值）。`client.json` schema 3 新增 `node_runtime`、
-  `trellis_runtime`（snake_case），旧 schema 2 读取时自动迁移。新增
+  `trellis_runtime`、`python_runtime`（snake_case），旧 schema 2 读取时自动迁移；`serverUrl`
+  允许缺省为空串（登录前文档只有运行时标记），登录保存必须保留三个运行时 flag。新增
   `task-control-state.json` 保存控制状态、lease fencing 和 handoff ACK/通知去重状态，不保存任务正文
   或本机绝对仓库路径。
 - `TRELLIS_AGENT_ROOT` 优先于 `%LOCALAPPDATA%/TrellisBoardAgent`（独立 Agent CLI 场景）。
@@ -135,13 +136,20 @@
 - 首次启动先 `runtime_status`：Node ≥ 18.17.0，Trellis CLI ≥ 0.6.17（读包内 `package.json.version`），
   Python ≥ 3.9.0。
 - 查找顺序 Node：flag → PATH 与版本管理器/常见安装前缀（fnm `aliases/*`、`node-versions/*/installation`、
-  nvm、Volta、`%ProgramFiles%\nodejs`）；Trellis：flag → `<data>/npm-global` → 同一批前缀目录下的全局包
+  nvm、Volta、`%ProgramFiles%\nodejs`、`%APPDATA%\npm`、`%LOCALAPPDATA%\pnpm`）→ 客户端私有
+  `<data>/runtime/node`；Trellis：flag → `<data>/npm-global` → 同一批前缀目录下的全局包
   （不跑 `npm root -g`，npm.cmd 内部同样依赖 PATH）；Python：flag → `TRELLIS_PYTHON` → PATH 的
-  `python.exe` → `py -3`（用 `py -3 -c "import sys; print(sys.executable)"` 解析出真实解释器）。
-  探测成功后写回 flag，Agent 只认 flag。
-- 缺失时 `runtime_install`：npmmirror 下载 `node-v24.22.3-win-x64.zip` 并校验 sha256
+  `python.exe` → 常见安装根目录（`%LOCALAPPDATA%\Programs\Python\Python*`、
+  `%ProgramFiles%\Python*`、`%SystemDrive%\Python*`）→ `py -3`
+  （用 `py -3 -c "import sys; print(sys.executable)"` 解析出真实解释器）。
+  0 字节文件（Windows App Execution Alias）不得作为可执行文件；flag 版本过低时必须继续探测其它候选。
+  探测成功后写回 flag，Agent 只认 flag；客户端私有前缀解析成功时同样写回 `trellis_runtime`。
+- `runtime_install` 是**增量安装**：先复用环境门已解析的 Node / Trellis / Python，只对缺失组件执行
+  下载或安装。Node 可用时不下载私有 Node；Trellis 缺失时优先用已解析的 Node 执行
+  `npm install -g --prefix <data>/npm-global @mindfoldhq/trellis@0.6.17`，仅当该 Node 没有 npm 时才
+  补私有 Node。Node 缺失时才从 npmmirror 下载 `node-v24.22.3-win-x64.zip` 并校验 sha256
   （`e612af99f626ab415ea225af6bce5c971feb448cb5cae250bb1c3fa50c5f7d9f`），只解出 `node.exe`
-  与 npm，然后 `npm install -g --prefix <data>/npm-global @mindfoldhq/trellis@0.6.17`。
+  与 npm。运行时 flag 与 `schemaVersion` 统一由 `runtime_commands` 保存到 `client.json`。
 - Python 缺失或低于 3.9 时安装官方安装器 `python-3.12.8-amd64.exe`
   （sha256 `71bd44e6b0e91c17558963557e4cdb80b483de9b0a0a9717f06cf896f95ab598`），参数
   `/quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 InstallLauncherAllUsers=0 Include_test=0 Include_doc=0 Shortcuts=0`；
@@ -217,6 +225,9 @@
   `save-local-copy`，`mode` 为 `safe`/`review`），前端不得新增动作值。
 - 手动唤起待处理控制事件只能调 `live_control_show`（capability `allow-live-control-show`）：
   它只聚焦/显示主窗口并发射 `live-control-changed`，无待处理返回 `false`；不得为确认弹窗另建窗口。
+- 环境门未就绪（`needs_setup`）时登录页必须展示已检测到的组件及版本，并提供“重新检查”；
+  `runtime_install` 只对实际下载/安装的组件发送 `runtime-progress`，复用组件不发送
+  `node:validate`/`trellis:validate`/`python:validate`，避免前端把校验映射成下载/安装步骤。
 - dev 模式：根 `yarn desktop:dev` 运行 `scripts/desktop-dev.mjs`，并发启动三件事：`node --watch
   packages/server/index.js`（4317 本地服务端）、`packages/web` 根目录的 Vite（默认 5200，看板 UI + HMR +
   `/api` 代理，端口可用 `TRELLIS_BOARD_DEV_PORT` 覆盖）、`cargo tauri dev`（自身 `beforeDevCommand` 再起

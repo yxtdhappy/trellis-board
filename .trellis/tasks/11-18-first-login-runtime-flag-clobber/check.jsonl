@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "校验运行时 flag 持久化与只认 flag 的契约未被破坏"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "校验登录/退出配置路径与 capability 契约"}
+{"file": ".trellis/spec/guides/index.md", "reason": "跨层检查与 LF 行尾守门"}

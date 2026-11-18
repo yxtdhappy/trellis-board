@@ -9,6 +9,8 @@ const LEGACY_SCHEMA_VERSION: u32 = 2;
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfig {
     pub schema_version: u32,
+    // 登录前的 client.json 只有运行时标记、没有 serverUrl；缺省为空串而不是解析失败。
+    #[serde(default)]
     pub server_url: String,
     #[serde(default)]
     pub username: Option<String>,
@@ -18,6 +20,8 @@ pub struct ClientConfig {
     pub node_runtime: Option<serde_json::Value>,
     #[serde(rename = "trellis_runtime", alias = "trellisRuntime", default)]
     pub trellis_runtime: Option<serde_json::Value>,
+    #[serde(rename = "python_runtime", alias = "pythonRuntime", default)]
+    pub python_runtime: Option<serde_json::Value>,
 }
 
 pub fn data_dir() -> PathBuf {

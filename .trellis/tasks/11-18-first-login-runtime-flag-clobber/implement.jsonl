@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "环境门探测、client.json schema 3 运行时 flag（snake_case）与数据兼容契约"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "本地登录页/退出登录的 ClientConfig 与会话清理契约"}

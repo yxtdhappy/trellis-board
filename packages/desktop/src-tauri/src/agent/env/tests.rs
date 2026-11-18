@@ -55,7 +55,7 @@ fn rejects_corrupt_downloads() {
 fn finds_executables_on_provided_path() {
     let directory = temp_dir("path");
     let executable = directory.join("node.exe");
-    std::fs::write(&executable, b"").expect("write");
+    std::fs::write(&executable, b"node").expect("write");
     let dirs = vec![directory.join("missing"), directory.clone()];
     assert_eq!(
         find_in_path(&dirs, "node.exe").as_deref(),
@@ -63,6 +63,9 @@ fn finds_executables_on_provided_path() {
     );
     assert_eq!(find_in_path(&dirs, "npm.cmd"), None);
     assert_eq!(find_in_path(&[], "node.exe"), None);
+    let empty = directory.join("empty.exe");
+    std::fs::write(&empty, b"").expect("write empty");
+    assert_eq!(find_in_path(&[directory.clone()], "empty.exe"), None);
     let _ = std::fs::remove_dir_all(&directory);
 }
 
@@ -82,7 +85,117 @@ fn fallback_dirs_cover_version_manager_prefixes() {
     assert!(dirs.contains(&version));
     assert!(dirs.contains(&PathBuf::from("C:\\local\\Programs\\nodejs")));
     assert!(dirs.contains(&PathBuf::from("C:\\pf\\nodejs")));
+    assert!(dirs.contains(&app_data.join("npm")));
+    assert!(dirs.contains(&PathBuf::from("C:\\local\\pnpm")));
     let _ = std::fs::remove_dir_all(&app_data);
+}
+
+#[test]
+fn python_dirs_cover_common_install_roots() {
+    let local = temp_dir("py-local");
+    let local_python = local.join("Programs/Python/Python312");
+    std::fs::create_dir_all(&local_python).expect("local python dir");
+    let program_files = temp_dir("py-pf");
+    let all_users = program_files.join("Python311");
+    std::fs::create_dir_all(&all_users).expect("program files python dir");
+    std::fs::create_dir_all(program_files.join("Other")).expect("other dir");
+    let drive = temp_dir("py-drive");
+    let custom = drive.join("Python314");
+    std::fs::create_dir_all(&custom).expect("custom python dir");
+    std::fs::create_dir_all(drive.join("Windows")).expect("windows dir");
+
+    let dirs = python_dirs_in(Some(&local), Some(&program_files), Some(&drive));
+    assert!(dirs.contains(&local_python));
+    assert!(dirs.contains(&all_users));
+    assert!(dirs.contains(&custom));
+    assert!(!dirs.contains(&program_files.join("Other")));
+    assert!(!dirs.contains(&drive.join("Windows")));
+    let _ = std::fs::remove_dir_all(&local);
+    let _ = std::fs::remove_dir_all(&program_files);
+    let _ = std::fs::remove_dir_all(&drive);
+}
+
+fn node_state(ok: bool) -> NodeStatus {
+    NodeStatus {
+        ok,
+        version: ok.then(|| "24.13.0".to_string()),
+        path: ok.then(|| "C:\\Program Files\\nodejs\\node.exe".to_string()),
+        source: ok.then(|| "path".to_string()),
+        min_version: NODE_MIN_VERSION.to_string(),
+        found_version: None,
+    }
+}
+
+fn trellis_state(ok: bool) -> TrellisStatus {
+    TrellisStatus {
+        ok,
+        version: ok.then(|| TRELLIS_VERSION.to_string()),
+        cli_path: ok.then(|| "C:\\data\\trellis.js".to_string()),
+        source: ok.then(|| "global".to_string()),
+        required_version: TRELLIS_VERSION.to_string(),
+        found_version: None,
+    }
+}
+
+fn python_state(ok: bool) -> PythonStatus {
+    PythonStatus {
+        ok,
+        version: ok.then(|| "3.14.3".to_string()),
+        path: ok.then(|| "C:\\Python314\\python.exe".to_string()),
+        source: ok.then(|| "path".to_string()),
+        min_version: PYTHON_MIN_VERSION.to_string(),
+        found_version: None,
+    }
+}
+
+#[test]
+fn install_plan_only_installs_missing_components() {
+    let ready = install_plan(
+        &node_state(true),
+        &trellis_state(true),
+        &python_state(true),
+    );
+    assert!(!ready.download_node);
+    assert!(!ready.install_trellis);
+    assert!(!ready.install_python);
+
+    // 只缺 Trellis：不能因为私有 Node 不存在就重新下载 Node。
+    let trellis_only = install_plan(
+        &node_state(true),
+        &trellis_state(false),
+        &python_state(true),
+    );
+    assert!(!trellis_only.download_node);
+    assert!(trellis_only.install_trellis);
+    assert!(!trellis_only.install_python);
+
+    let node_missing = install_plan(
+        &node_state(false),
+        &trellis_state(true),
+        &python_state(true),
+    );
+    assert!(node_missing.download_node);
+    assert!(!node_missing.install_trellis);
+    assert!(!node_missing.install_python);
+}
+
+#[tokio::test]
+async fn resolve_trellis_writes_flag_for_client_prefix() {
+    let data_dir = temp_dir("trellis-prefix-flag");
+    let package = data_dir.join("npm-global/node_modules/@mindfoldhq/trellis");
+    std::fs::create_dir_all(package.join("bin")).expect("bin dir");
+    std::fs::write(package.join("package.json"), r#"{"version":"0.6.17"}"#).expect("pkg");
+    std::fs::write(package.join("bin/trellis.js"), b"cli").expect("cli");
+
+    let mut config = json!({ "schemaVersion": 3 });
+    let status = resolve_trellis(&data_dir, &mut config).await;
+    assert!(status.ok);
+    assert_eq!(status.source.as_deref(), Some("client-prefix"));
+    let flag = config.trellis_runtime().expect("flag written");
+    assert_eq!(flag.version, "0.6.17");
+    assert_eq!(flag.source, "client-prefix");
+    assert!(Path::new(&flag.cli_path).ends_with("trellis.js"));
+    let _ = std::fs::remove_dir_all(&data_dir);
 }
 
 #[test]
