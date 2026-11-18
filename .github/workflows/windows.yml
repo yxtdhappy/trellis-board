@@ -50,6 +50,16 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.release_tag != '' && format('refs/tags/{0}', inputs.release_tag) || github.sha }}
+      # .gitattributes 要求 LF；Windows 上脚本若用默认换行写文件，CRLF 会绕过 eol=lf 直接进索引。
+      - name: Check tracked files use LF
+        shell: bash
+        run: |
+          offenders=$(git ls-files --eol | grep 'i/crlf' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::以下文件在索引中存成了 CRLF，必须是 LF（详见 .trellis/spec/guides/index.md）"
+            echo "$offenders"
+            exit 1
+          fi
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: 24

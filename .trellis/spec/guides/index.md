@@ -25,6 +25,13 @@
 - 改 SQLite schema、旧 JSON 迁移、扫描缓存结构或 `SCAN_SCHEMA_VERSION`。
 - 在 `public/` 新增一个纯函数模块，同时准备让 `packages/server/` 复用。
 
+## 行尾约定
+
+- 仓库统一 LF：`.gitattributes` 是 `* text=auto eol=lf`，`.trellis/**` 另有 `text eol=lf`。
+- 提交前跑 `git ls-files --eol | rg 'i/crlf'`，有输出先归一为 LF；索引里的 CRLF blob 会让这些文件永远显示为已修改（git 无法就地修正已存的 blob）。
+- 写文件的脚本必须显式 `newline="\n"`：Windows 下 `open(path, "w")` 与 `Path.write_text` 默认把 `\n` 翻成 `\r\n`。`.trellis/scripts/common/{io,developer,task_store}.py` 已修，`trellis update` 覆盖后需重新修。
+- 守门：`.github/workflows/windows.yml` 的 `node-tests` job 有 `Check tracked files use LF` 步骤，索引出现 CRLF 直接失败。
+
 ## 验证基线
 
 ```powershell

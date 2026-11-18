@@ -573,6 +573,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         prd_path.write_text(
             _default_prd_content(args.title, description),
             encoding="utf-8",
+            newline="\n",
         )
 
     # Create empty implement.jsonl / check.jsonl for sub-agent-capable
@@ -587,7 +588,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         for jsonl_name in ("implement.jsonl", "check.jsonl"):
             jsonl_path = task_dir / jsonl_name
             if not jsonl_path.exists():
-                jsonl_path.write_text("", encoding="utf-8")
+                jsonl_path.write_text("", encoding="utf-8", newline="\n")
         created_jsonl = True
 
     # Establish the bidirectional link. Both sides were validated above, so a
@@ -997,7 +998,7 @@ def _apply_rename(plan: _RenamePlan, repo_root: Path) -> int:
 
     for jsonl_path, _linenos, text in plan.jsonl:
         try:
-            jsonl_path.write_text(text, encoding="utf-8")
+            jsonl_path.write_text(text, encoding="utf-8", newline="\n")
         except OSError as exc:
             print(
                 colored(f"Error: Failed to write {jsonl_path}: {exc}", Colors.RED),

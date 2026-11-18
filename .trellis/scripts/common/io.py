@@ -136,7 +136,8 @@ def write_text_atomic(path: Path, text: str) -> bool:
 
     try:
         try:
-            f = os.fdopen(fd, "w", encoding="utf-8")
+            # newline="\n"：Windows 下默认会把 \n 翻成 \r\n，CRLF 会污染索引。
+            f = os.fdopen(fd, "w", encoding="utf-8", newline="\n")
         except OSError:
             # fdopen never took ownership of fd; close it ourselves.
             os.close(fd)

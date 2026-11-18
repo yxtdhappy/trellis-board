@@ -61,7 +61,8 @@ def init_developer(name: str, repo_root: Path | None = None) -> bool:
     try:
         dev_file.write_text(
             f"name={name}\ninitialized_at={initialized_at}\n",
-            encoding="utf-8"
+            encoding="utf-8",
+            newline="\n",
         )
     except (OSError, IOError) as e:
         print(f"Error: Failed to create .developer file: {e}", file=sys.stderr)
@@ -87,7 +88,7 @@ def init_developer(name: str, repo_root: Path | None = None) -> bool:
 
 """
         try:
-            journal_file.write_text(journal_content, encoding="utf-8")
+            journal_file.write_text(journal_content, encoding="utf-8", newline="\n")
         except (OSError, IOError) as e:
             print(f"Error: Failed to create journal file: {e}", file=sys.stderr)
             return False
@@ -137,7 +138,7 @@ def init_developer(name: str, repo_root: Path | None = None) -> bool:
 - Use `add_session.py` to record sessions
 """
         try:
-            index_file.write_text(index_content, encoding="utf-8")
+            index_file.write_text(index_content, encoding="utf-8", newline="\n")
         except (OSError, IOError) as e:
             print(f"Error: Failed to create index.md: {e}", file=sys.stderr)
             return False
