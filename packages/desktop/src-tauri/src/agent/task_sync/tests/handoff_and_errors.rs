@@ -524,8 +524,14 @@ fn readonly_dirs_round_trip_and_drop_archive_entries() {
 
 #[tokio::test]
 async fn marking_readonly_dir_drops_stale_deferred_entry() {
-    let (root, store, sync, _binding) =
+    let (root, store, sync, mut binding) =
         test_task_sync_fixture("trellis-readonly-deferred").await;
+    binding.initial_sync_completed = true;
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+    sync.set_bindings(vec![binding]).await;
     store
         .write_json(
             &store.paths.task_cursors_file,
