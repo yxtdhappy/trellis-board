@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/11-18-refactor-task-sync-module-split/design.md", "reason": "核对根文件 ≤500 行、子文件 ≤1200 行、可见性口径与 design §2/§3 一致"}
+{"file": ".trellis/tasks/11-18-refactor-task-sync-module-split/research/structure-map.md", "reason": "核对 1–11112 行全部 item 已按区间落入对应模块，无遗漏无重复"}
+{"file": ".trellis/tasks/11-18-refactor-task-sync-module-split/research/test-inventory.txt", "reason": "核对 123 个测试/fixture 全部存在，测试数量与基线一致"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "核对对外的 Tauri 命令签名与 agent 模块导出符号未变化"}

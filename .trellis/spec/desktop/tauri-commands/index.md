@@ -179,3 +179,37 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
     })
 }
 ```
+
+## Scenario: agent 大模块的目录化拆分
+
+### 1. Scope / Trigger
+
+- `packages/desktop/src-tauri/src/agent/` 下某个模块超过约 1200 行，需要拆成 `foo.rs` + `foo/` 目录时适用。
+- 现有先例：`task_sync.rs`（15798 行）拆为 17 个职责子模块 + `task_sync/tests/`；根文件 394 行。
+
+### 2. Layout
+
+- `foo.rs` 保留：`mod` 声明、常量、主类型定义与其构造/`Drop`、对外重导出、`#[cfg(test)] mod tests;`。
+- `foo/<concern>.rs`：单一职责子模块，单文件 ≤ 1200 行；根文件 ≤ 500 行。
+- `foo/tests/`：`mod.rs`（共享 import + `mod` 声明）、`support.rs`（fixture，`pub(super)`）、按主题划分的测试文件。
+
+### 3. Contracts
+
+- `agent/mod.rs` 与所有 `crate::agent::foo::X` 调用路径**零改动**：子模块 item 用 `pub(super)`，由根文件按原可见性重导出（`pub use` / `pub(crate) use` / `use`）。
+- 子模块用 `use super::*;` 取得根文件的私有 import 与重导出；根文件重导出块加 `#[allow(unused_imports)]`，因为同一批符号被 bin 与 test 两个编译目标分别使用。
+- 拆分是对单一大 `impl` 的切片：每个子模块内的 `impl Type { ... }` 只是搬运边界，不新增方法分组语义。
+- 拆分类重构禁止 `cargo fmt`（仓库无 rustfmt 配置），禁止顺手改逻辑；验证以"行内容多重集等价 + 测试集合等价"证明。
+
+### 4. Validation
+
+| 条件 | 结果 |
+| --- | --- |
+| 根文件 > 500 行或子文件 > 1200 行 | 拆分不合格 |
+| 外部调用方需要改 `use` 路径 | 可见性契约被破坏 |
+| 测试名集合与拆分前不一致 | 有测试被丢弃或改名 |
+| `cargo check --all-targets` warning 数高于拆分前 | 引入了新的未使用项 |
+
+### 5. Tests Required
+
+- `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml` 全绿。
+- 测试名集合与拆分前 `-- --list` 结果逐项比对为空差集。

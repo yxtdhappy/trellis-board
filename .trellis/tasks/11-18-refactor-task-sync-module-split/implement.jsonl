@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "约束 desktop 命令层与 agent 模块的边界，拆分后对外命令入口不得变化"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "约束跨层改动范围：本次只搬移 task_sync 内部结构，不改协议与命令契约"}
+{"file": ".trellis/tasks/11-18-refactor-task-sync-module-split/design.md", "reason": "模块划分、可见性契约 pub(super)、依赖方向与回滚方式的权威依据"}
+{"file": ".trellis/tasks/11-18-refactor-task-sync-module-split/research/structure-map.md", "reason": "每个 item 的精确源行区间与所属模块，实施时按此搬移"}
+{"file": ".trellis/tasks/11-18-refactor-task-sync-module-split/research/test-inventory.txt", "reason": "123 个测试/fixture 函数的精确区间，第 5 步拆分测试的清单"}
