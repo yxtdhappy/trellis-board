@@ -9,8 +9,9 @@ import { fetchAdminTeams, formatError } from '@/api/admin'
 import type { AdminUser, Team } from '@/api/admin'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import { formatTime, statusTone } from '@/lib/admin-shared'
-import { AccountDialog, AccountForm } from './AccountDialog.tsx'
-import type { AccountFormValues } from './AccountDialog.tsx'
+import { AccountForm } from './AccountForm.tsx'
+import type { AccountFormValues } from './AccountForm.tsx'
+import { TeamCheckboxList } from './TeamCheckboxList.tsx'
 import { adminPasswordError } from './password-policy.ts'
 import { ResetPasswordDialog } from './ResetPasswordDialog.tsx'
 import { StatusPill } from '@/components/ui/status-pill'
@@ -29,7 +30,6 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
   const [systemAdmin, setSystemAdmin] = useState(false)
   const [busy, setBusy] = useState(false)
   const [selectedId, setSelectedId] = useState('')
-  const [dialogUser, setDialogUser] = useState<AdminUser | null>(null)
   const [resetUser, setResetUser] = useState<AdminUser | null>(null)
 
   useEffect(() => {
@@ -52,9 +52,9 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
 
   const selectedUser = users.find((user) => user.id === selectedId) ?? null
 
-  function toggleCreateTeam(teamId: string, checked: boolean) {
+  function toggleCreateTeam(teamId: string) {
     setTeamIds((current) =>
-      checked ? [...current, teamId] : current.filter((id) => id !== teamId),
+      current.includes(teamId) ? current.filter((id) => id !== teamId) : [...current, teamId],
     )
   }
 
@@ -154,31 +154,13 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                   至少 6 个字符，不做复杂度校验。
                 </FieldDescription>
               </Field>
-              <div className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-muted-foreground">所属团队</span>
-                {teams.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">暂无团队，可先建号后补配。</p>
-                ) : (
-                  <div className="flex flex-col gap-1.5 rounded-lg border border-border p-2">
-                    {teams.map((team) => (
-                      <label
-                        key={team.id}
-                        className="flex items-center gap-2 text-xs text-foreground"
-                      >
-                        <Checkbox
-                          checked={teamIds.includes(team.id)}
-                          onCheckedChange={(checked) => toggleCreateTeam(team.id, checked === true)}
-                          disabled={busy}
-                        />
-                        <span className="min-w-0 truncate">{team.name}</span>
-                        <StatusPill tone={statusTone(team.status)}>
-                          {team.status || 'unknown'}
-                        </StatusPill>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <TeamCheckboxList
+                teams={teams}
+                selectedIds={teamIds}
+                onToggle={toggleCreateTeam}
+                disabled={busy}
+                emptyText="暂无团队，可先建号后补配。"
+              />
               <label className="flex items-center gap-2 text-xs text-foreground">
                 <Checkbox
                   checked={systemAdmin}
@@ -232,10 +214,7 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                         variant="ghost"
                         size="sm"
                         type="button"
-                        onClick={() => {
-                          setSelectedId(user.id)
-                          setDialogUser(user)
-                        }}
+                        onClick={() => setSelectedId(user.id)}
                       >
                         编辑
                       </Button>
@@ -301,12 +280,6 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
         </Panel>
       </div>
 
-      <AccountDialog
-        user={dialogUser}
-        teams={teams}
-        onClose={() => setDialogUser(null)}
-        onSave={saveAccount}
-      />
       <ResetPasswordDialog
         user={resetUser}
         onConfirm={resetPassword}

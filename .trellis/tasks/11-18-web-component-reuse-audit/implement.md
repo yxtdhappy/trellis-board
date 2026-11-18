@@ -325,6 +325,23 @@ export function toneSurface(tone, quiet = false)
 
 提交：`docs(web): 沉淀组件复用规范并收敛 admin 重复表单`
 
+### 执行记录（已完成）
+
+新增 3 文件：`features/admin/TeamCheckboxList.tsx`、`features/admin/PluginBindingForm.tsx`、`features/admin/AccountForm.tsx`（`AccountForm`/`AccountFormValues` 从 `AccountDialog.tsx` 迁出）。删除 `features/admin/AccountDialog.tsx`（178 行）。改 `UsersTab.tsx`、`PluginsTab.tsx`、`ProjectsTab.tsx`、`ArchiveSyncTab.tsx`。admin 目录净 −234 行。
+
+- `TeamCheckboxList({ teams, selectedIds, onToggle, disabled, emptyText })`：两处团队勾选块合一，`onToggle(teamId)` 由调用侧按成员关系翻转（等价于原 `checked === true` 分支）；**空态文案不同，用必填 `emptyText` 各自保留**（「暂无团队，可先建号后补配。」/「暂无团队，可创建团队后再分配。」）。
+- `PluginBindingForm({ draft, onChange, onSubmit, submitLabel, disabled, projectOptions, submitProps, className })`：`projectOptions` 存在才渲染 Board 项目 `SelectField`；两个 Input 统一 `className="text-xs"` + `maxLength={200}`；提交按钮 `disabled` 由 `disabled || (!projectOptions ? false : !draft.projectId) || !draft.externalProjectId.trim()` 计算。`ProjectsTab` 传 `submitProps={{ size: 'sm', className: 'self-start' }}` 保持原按钮尺寸（默认 Button 在 flex-col 里会拉满宽度）。
+- `AffectedProjectList({ projects, limit, ariaLabel, id, tabIndex, className })`（`ArchiveSyncTab.tsx` 内本地组件）：两处 `<ul>` 合一。「另有 N 个」保持原来的**兄弟 `<p>`**，没有移进 `ul`（移进去会改 DOM 与视觉），文案改用 `PROJECT_PREVIEW_LIMIT`。
+- 双编辑入口收敛：删 `dialogUser` state、`AccountDialog` 渲染与 import；行内「编辑」只 `setSelectedId(user.id)`；`AccountForm` 去掉 `onCancel`（原对话框专用），提交行只剩 submit 按钮。**计划里的「按钮行移回 `DialogFooter`」不再适用** —— 对话框已删除。
+- `PluginsTab`：删「详情」按钮（与整行 `<button>` 同一 `setSelected`）；整行热区按钮作为已登记例外保留。
+
+闸门：`npx tsc -b` 0 error；`npx oxlint src` 0 error（55 条存量 warning）；`npx oxfmt` 全部改动文件。断言：`rg "<button[ >]"`、`type="checkbox"`、`bg-*-soft`、`<table`、ui 外 `@base-ui/react` 全空；`rg "AccountDialog"` 无输出；`bg-muted/40 p-2.5` 仅剩 `PluginBindingForm.tsx:35`。
+
+浏览器（team 模式 4317 + vite 5173，`cli.js init-admin` 造管理员 + 强制改密流程后进 `/admin`）：
+
+- 用户账号：创建表单与编辑表单各 1 个 `所属团队` 列表；点「编辑」后 `[data-slot="dialog-content"]` 计数 0、`button` 文案只有「创建账号/保存账号」（无「取消」）；勾选「验证团队」后 `aria-checked` false→true，点「保存账号」后 `team_member` 落库一行 —— 抽取后的 `AccountForm` + `TeamCheckboxList` 端到端可用。
+- 未能可视化验证：`ProjectsTab`/`PluginsTab` 的 `PluginBindingForm`（team 模式没有项目与插件绑定数据，注册项目需 desktop 配对）、`ArchiveSyncTab` 的受影响项目列表（需要 git 凭据）。仅类型检查 + 同构核对。
+
 ## 收尾
 
 1. 全量闸门 + PRD 全部 16 条验收逐条勾。

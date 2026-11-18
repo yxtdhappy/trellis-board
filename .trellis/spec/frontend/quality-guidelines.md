@@ -35,6 +35,7 @@
 - 只用 token 类：`bg-background`、`text-foreground`、`border-border`、`text-muted-foreground`、`bg-primary` 等。
 - 间距与圆角沿用现有尺度（卡片 `rounded-xl p-4`、按钮 `h-8 text-xs`、徽章 `rounded-full px-2 py-0.5`）。
 - 深色模式必须验证：任何写死颜色的类都会在 `.dark` 下失效。
+- 新增或替换 UI 前先查 [组件复用规范](./component-reuse.md)：分层、选择矩阵、禁止清单与审计命令都在那里。
 - 窄屏：管理台两列在 `<1024px` 折叠为单列；看板侧栏在 `<1024px` 隐藏。
 
 ### 响应式断点

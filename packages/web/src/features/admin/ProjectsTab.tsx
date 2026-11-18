@@ -22,6 +22,8 @@ import { AuditItem, Row } from './shared.tsx'
 import { SelectField } from '@/features/board/SelectField'
 import { Panel } from '@/components/ui/panel'
 import { Field, FieldLabel } from '@/components/ui/field'
+import { PluginBindingForm } from './PluginBindingForm.tsx'
+import type { BindingDraft } from './PluginBindingForm.tsx'
 
 export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) {
   const {
@@ -63,7 +65,10 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
   const [pluginId, setPluginId] = useState('')
   const [pluginBindings, setPluginBindings] = useState<PluginBindingView[]>([])
   const [pluginBusy, setPluginBusy] = useState(false)
-  const [pluginForm, setPluginForm] = useState({ externalProjectId: '', externalProjectName: '' })
+  const [pluginForm, setPluginForm] = useState<BindingDraft>({
+    externalProjectId: '',
+    externalProjectName: '',
+  })
 
   useEffect(() => {
     if (!selectedTeamId) {
@@ -493,42 +498,23 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                   ))
                 )}
               </div>
-              <div className="mt-1 flex flex-col gap-1.5 rounded-lg bg-muted/40 p-2.5">
-                <Input
-                  maxLength={200}
-                  placeholder="插件侧项目 ID"
-                  value={pluginForm.externalProjectId}
-                  onChange={(event) =>
-                    setPluginForm((prev) => ({ ...prev, externalProjectId: event.target.value }))
-                  }
-                />
-                <Input
-                  maxLength={200}
-                  placeholder="插件侧项目名称（可选）"
-                  value={pluginForm.externalProjectName}
-                  onChange={(event) =>
-                    setPluginForm((prev) => ({ ...prev, externalProjectName: event.target.value }))
-                  }
-                />
-                <Button
-                  size="sm"
-                  type="button"
-                  className="self-start"
-                  disabled={pluginBusy || !pluginId || !pluginForm.externalProjectId.trim()}
-                  onClick={() =>
-                    void runPluginBinding(async () => {
-                      await addBinding(pluginId, selectedTeamId, {
-                        projectId: accessProjectId,
-                        externalProjectId: pluginForm.externalProjectId.trim(),
-                        externalProjectName: pluginForm.externalProjectName.trim(),
-                      })
-                      setPluginForm({ externalProjectId: '', externalProjectName: '' })
-                    }, '已绑定插件项目')
-                  }
-                >
-                  添加绑定
-                </Button>
-              </div>
+              <PluginBindingForm
+                className="mt-1"
+                submitProps={{ size: 'sm', className: 'self-start' }}
+                draft={pluginForm}
+                onChange={setPluginForm}
+                disabled={pluginBusy || !pluginId}
+                onSubmit={() =>
+                  void runPluginBinding(async () => {
+                    await addBinding(pluginId, selectedTeamId, {
+                      projectId: accessProjectId,
+                      externalProjectId: pluginForm.externalProjectId.trim(),
+                      externalProjectName: pluginForm.externalProjectName.trim(),
+                    })
+                    setPluginForm({ externalProjectId: '', externalProjectName: '' })
+                  }, '已绑定插件项目')
+                }
+              />
             </>
           )}
         </Panel>

@@ -20,6 +20,7 @@ import type {
   ArchiveTaskSpaceSync,
 } from '@/api/admin'
 import { formatTime, statusTone } from '@/lib/admin-shared'
+import { cn } from '@/lib/utils'
 import { useArchiveSync } from '@/hooks/useArchiveSync'
 import { SelectField } from '@/features/board/SelectField'
 import { StatusPill } from '@/components/ui/status-pill'
@@ -91,6 +92,41 @@ function taskSpaceText(taskSpace: ArchiveTaskSpaceSync) {
 
 function affectedProjectText(project: AffectedProject) {
   return `${project.name} · ${project.branches.join(' / ')}`
+}
+
+function AffectedProjectList({
+  projects,
+  limit,
+  ariaLabel,
+  id,
+  tabIndex,
+  className,
+}: {
+  projects: AffectedProject[]
+  limit?: number
+  ariaLabel?: string
+  id?: string
+  tabIndex?: number
+  className?: string
+}) {
+  const visible = limit === undefined ? projects : projects.slice(0, limit)
+  return (
+    <ul
+      aria-label={ariaLabel}
+      id={id}
+      tabIndex={tabIndex}
+      className={cn(
+        'flex max-h-40 flex-col gap-1 overflow-y-auto rounded-md border border-border bg-muted/30 p-2',
+        className,
+      )}
+    >
+      {visible.map((project) => (
+        <li key={project.key} className="min-w-0 break-words" title={affectedProjectText(project)}>
+          {affectedProjectText(project)}
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 function shortHead(value: string | null) {
@@ -182,8 +218,7 @@ export function ArchiveSyncTab() {
 
   async function deleteCredential(credential: ArchiveGitCredential) {
     const affected = credentialProjects(sync.overview?.taskSpaces ?? [], credential.id)
-    const visibleProjects = affected.slice(0, PROJECT_PREVIEW_LIMIT)
-    const remainingProjects = affected.length - visibleProjects.length
+    const remainingProjects = affected.length - PROJECT_PREVIEW_LIMIT
     const credentialName = displayText(credential.name, '未命名凭据')
     const accepted = await confirm({
       title: `删除 ${displayText(credential.origin, '该来源')} 的归档凭据？`,
@@ -197,23 +232,14 @@ export function ArchiveSyncTab() {
             <p>当前没有项目使用凭据“{credentialName}”。</p>
           ) : (
             <>
-              <ul
-                aria-label={`凭据 ${credentialName} 的受影响项目`}
-                className="flex max-h-40 flex-col gap-1 overflow-y-auto rounded-md border border-border bg-muted/30 p-2"
-              >
-                {visibleProjects.map((project) => (
-                  <li
-                    key={project.key}
-                    className="min-w-0 break-words"
-                    title={affectedProjectText(project)}
-                  >
-                    {affectedProjectText(project)}
-                  </li>
-                ))}
-              </ul>
+              <AffectedProjectList
+                projects={affected}
+                limit={PROJECT_PREVIEW_LIMIT}
+                ariaLabel={`凭据 ${credentialName} 的受影响项目`}
+              />
               {remainingProjects > 0 ? (
                 <p>
-                  另有 {remainingProjects} 个项目同样受影响，此处仅列出前 {visibleProjects.length}{' '}
+                  另有 {remainingProjects} 个项目同样受影响，此处仅列出前 {PROJECT_PREVIEW_LIMIT}{' '}
                   个。
                 </p>
               ) : null}
@@ -570,22 +596,13 @@ export function ArchiveSyncTab() {
                           )}
                         </div>
                         {expanded && affected.length > 0 ? (
-                          <ul
+                          <AffectedProjectList
+                            projects={affected}
                             id={projectListId}
                             tabIndex={0}
-                            aria-label={`凭据 ${credentialName} 自动适用的项目`}
-                            className="mt-1 flex max-h-40 flex-col gap-1 overflow-y-auto overscroll-contain rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                          >
-                            {affected.map((project) => (
-                              <li
-                                key={project.key}
-                                className="min-w-0 break-words"
-                                title={affectedProjectText(project)}
-                              >
-                                {affectedProjectText(project)}
-                              </li>
-                            ))}
-                          </ul>
+                            ariaLabel={`凭据 ${credentialName} 自动适用的项目`}
+                            className="mt-1 overscroll-contain text-xs text-muted-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                          />
                         ) : null}
                       </div>
                     </Row>

@@ -2,8 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { Puzzle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { SelectField } from '@/features/board/SelectField'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import { fetchAdminProjects, type TeamProject } from '@/api/admin'
 import {
@@ -23,6 +21,8 @@ import { statusTone } from '@/lib/admin-shared'
 import { EmptyRow } from '@/components/ui/empty-row'
 import { Row } from './shared.tsx'
 import { Panel } from '@/components/ui/panel'
+import { PluginBindingForm } from './PluginBindingForm.tsx'
+import type { BindingDraft } from './PluginBindingForm.tsx'
 
 const collator = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' })
 
@@ -39,8 +39,7 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
   const [bindings, setBindings] = useState<PluginBindingView[]>([])
   const [projects, setProjects] = useState<TeamProject[]>([])
   const [busy, setBusy] = useState(false)
-  const [form, setForm] = useState({
-    projectId: '',
+  const [form, setForm] = useState<BindingDraft>({
     externalProjectId: '',
     externalProjectName: '',
   })
@@ -185,14 +184,6 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
                         )}
                       </>
                     ) : null}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      onClick={() => setSelected(row.id)}
-                    >
-                      详情
-                    </Button>
                   </>
                 }
               >
@@ -259,43 +250,21 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
           )}
         </div>
 
-        <div className="mt-2 flex flex-col gap-1.5 rounded-lg bg-muted/40 p-2.5">
-          <SelectField
-            ariaLabel="选择 Board 项目"
-            placeholder="选择 Board 项目"
-            value={form.projectId}
-            options={projects.map((project) => ({ value: project.id, label: project.name }))}
-            onChange={(next) => setForm((prev) => ({ ...prev, projectId: next }))}
-          />
-          <Input
-            className="text-xs"
-            placeholder="插件侧项目 ID"
-            value={form.externalProjectId}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, externalProjectId: event.target.value }))
-            }
-          />
-          <Input
-            className="text-xs"
-            placeholder="插件侧项目名称（可选）"
-            value={form.externalProjectName}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, externalProjectName: event.target.value }))
-            }
-          />
-          <Button
-            type="button"
-            disabled={busy || needTeam || !selected || !form.projectId || !form.externalProjectId}
-            onClick={() =>
-              void run(async () => {
-                await addBinding(selected, teamId, form)
-                setForm({ projectId: '', externalProjectId: '', externalProjectName: '' })
-              }, '已绑定项目')
-            }
-          >
-            添加绑定
-          </Button>
-        </div>
+        <PluginBindingForm
+          className="mt-2"
+          draft={form}
+          onChange={setForm}
+          projectOptions={projects.map((project) => ({ value: project.id, label: project.name }))}
+          disabled={busy || needTeam || !selected}
+          onSubmit={() =>
+            void run(async () => {
+              const { projectId } = form
+              if (!projectId) return
+              await addBinding(selected, teamId, { ...form, projectId })
+              setForm({ externalProjectId: '', externalProjectName: '' })
+            }, '已绑定项目')
+          }
+        />
 
         {plugin ? (
           <p className="text-2xs text-muted-foreground">
