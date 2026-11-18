@@ -1486,3 +1486,27 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 64: 修复首次登录覆盖运行环境标记并增量安装
+<!-- trellis-session: v=2 fp=987923bf22881b8a -->
+
+**Date**: 2026-11-18
+**Task**: 修复首次登录覆盖运行环境标记并增量安装
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+同步 origin/main 后重放运行环境门修复：登录保存保留 node/trellis/python flag；环境门补齐 npm/pnpm/Python 兜底、0 字节别名跳过、私有 Trellis 前缀写回 flag；runtime_install 改为只装缺失组件；登录页展示已检测版本与最低要求；新增 Rust/静态回归测试并更新 spec；顺带归一远端 node-detection 任务 jsonl 行尾为 LF。本机无 cargo/node_modules，cargo test 与 tsc 未本地执行，交由 CI。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `635bc46` | fix(desktop): 保留首次登录运行环境标记并增量安装 |
+| `8b578f4` | chore(trellis): 归一远端任务文件行尾为 LF |
+
+### Status
+
+[OK] **Completed**
