@@ -1189,3 +1189,38 @@ task_sync.rs 15798 行拆为根 394 行 + 17 个职责子模块 + tests/ 7 文�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 36: desktop 客户端 Node 环境检测与手动路径
+<!-- trellis-session: v=2 fp=34aa194b15804a62 -->
+
+**Date**: 2026-11-18
+**Task**: desktop 客户端 Node 环境检测与手动路径
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+修复 client.json 持久化缺陷并补齐 Node 探测、私有运行时自愈与手动指定路径
+
+### Main Changes
+
+- config.rs 改 camelCase schemaVersion（兼容 snake_case）、补 serverUrl 默认值与 python_runtime，登录不再覆盖运行时 flag
+- probe.rs 补 nvm v*/NVM_HOME/NVM_SYMLINK/FNM_*/VOLTA_HOME 探测，PowerShell 刷新 PATH + where.exe node，每次 check 只探一次，Node flag 丢失时从私有运行时自愈
+- 新增 runtime_set_node_path 命令（permission + capability + 登录页手动表单）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `180d6f6` | feat(desktop): 客户端 Node 环境检测与手动路径 |
+
+### Testing
+
+- [OK] cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml（247 passed）
+- [OK] yarn test 652/650、yarn test:plugins 107/106、yarn build:desktop
+- [OK] WebView2 CDP e2e：PATH 剥离探测、私有运行时自愈、手动路径与坏路径拒绝、登录后三个 flag 保留、远端 URL 命令被 capability 拒绝
+
+### Status
+
+[OK] **Completed**
