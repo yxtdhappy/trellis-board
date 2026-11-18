@@ -5,10 +5,29 @@
 **每批固定闸门**（下称〈闸门〉）：
 
 ```
-cd packages/web && npx tsc -b && npx oxlint src && yarn oxfmt src
+cd packages/web && npx tsc -b && npx oxlint src   # 格式化在仓库根：npx oxfmt <files>
 ```
 
 外加该批的 `rg` 断言与浏览器抽查；控制台 0 error。
+
+> 注：格式化真实命令是仓库根的 `npx oxfmt <files>`（root `package.json` 的 `format` = `oxfmt .`）；`yarn oxfmt` 不存在。
+
+## 执行记录（实际顺序，计划外插入的视觉修正）
+
+用户实测反馈插入了两轮「尺寸/原生控件/插件样式」修正，均落在批 2 之后、批 3 之前：
+
+- 批 1（已提交 `d1687007c2` / `fc6864ca7c` / `99ce9c9ecb`）：13 个 `ui/` 文件 + `research/component-audit.md`。
+- 批 2（未提交）：分段与单选 7 文件（`ui/toggle.tsx` 新增 `variant: 'primary'`；`PreferencesDialog`、`ExecutionHeader`、`AdminPage`、`SavedViewsDialog`、`LiveSyncControlDialog`、`TopBar`）。
+- 批 2.5 视觉修正（未提交，计划外）：
+  1. 字号段 `p-0.75`+`h-auto` → `p-0.5`+`h-full`（32 轨道 / 28 item，实测居中）。
+  2. `AdminPage` 导航 TabsList 隐藏横向滚动条。
+  3. `ui/select.tsx` `px-2 py-1.5` → `px-2 py-0`。
+  4. 同排按钮统一 32px：`ProjectsTab`（刷新项目数据/邀请）、`TeamsTab`（创建/加入/停用）、`AuditTab`（刷新）、`ArchiveSyncTab`（刷新状态/全部立即同步/保存同步配置/创建凭据）、`DevicesTab`（刷新设备列表/生成令牌/生成配对码）、`FlowSignals`（WIP 输入 + 刷新）、`TeamView`（刷新）、`TaskDetailDialog`（阶段证据/保存计划字段/创建阻断依赖/确认分配）、`TaskOwnershipDialog`（三处）、`PluginsTab`（添加绑定）。
+  5. 原生控件清零：`TeamSwitcher`、`TeamsTab`×2、`PluginsTab`（select + 2 input）→ `SelectField`/`Input`。
+  6. `vite.config.ts` 增加 `/plugin-ui` proxy（dev 下插件面板 CSS 被 SPA 兜底成 HTML 的根因）。
+  7. 头像/头部对齐：`TopBar`、`AdminPage` 的 `size-7` → `size-8`；`AdminPage` 返回看板链接补 `h-8`。
+- 已验证：`npx tsc -b` rc=0、`npx oxlint` 0 error（14 条既有 warning）、`npx oxfmt` 19 文件通过；浏览器实测管理页 7 视图 + 看板 4 视图无高度不一致（仅品牌链接 `a:24` 保留）、`select` 数 0、5 个 `select-trigger` 全 32、字号组 32/28、`/plugin-ui/*.css` 返回 `text/css`。
+
 
 ## 批 0 基线（无代码改动）
 
@@ -31,13 +50,13 @@ cd packages/web && npx tsc -b && npx oxlint src && yarn oxfmt src
 ## 批 2 分段与单选控件（8 处）
 
 1. `features/board/ExecutionHeader.tsx:58-80` → `Tabs/TabsList/TabsTrigger` + `aria-label="任务范围"`（取 `stash@{0}` 已验证版本）。
-2. `features/settings/PreferencesDialog.tsx:129-141` → 受控 `ToggleGroup value={[fontSize]}`，容器 `flex h-8 items-stretch rounded-lg bg-muted p-0.75`，item `h-full flex-1 rounded-md text-xs` + `aria-pressed:bg-primary aria-pressed:font-semibold aria-pressed:text-primary-foreground`；`onValueChange` 忽略空数组（单选不可取消）。紫色被 `toggleVariants` 的 `aria-pressed:bg-muted` 压住 → 在 `ui/toggle.tsx` 加 `variant="primary"`。
+2. `features/settings/PreferencesDialog.tsx:129-141` → 受控 `ToggleGroup value={[fontSize]}`，容器 `flex h-8 items-stretch rounded-lg bg-muted p-0.75`，`spacing={0.75}`（不能是 0，否则圆角被 `group-data-[spacing=0]` 接管，见 design §3.5），item `h-auto self-stretch flex-1 rounded-md text-xs`；`onValueChange` 取 `FONT_CHOICES.find(...)?.value` 后 `if (next)`，忽略空数组（单选不可取消）。紫色被 `toggleVariants` 的 `aria-pressed:bg-muted` 压住 → 在 `ui/toggle.tsx` 加 `variant="primary"`。
 3. `PreferencesDialog.tsx:94-121` 主题三选一 → `ToggleGroup`，item 内保留 `<ThemePreview>` 装饰块。
-4. `components/layout/TopBar.tsx:143-159` → `TabsList variant="line"`；保留现有滚动到可视区 `useEffect`（`:76-87`）。
+4. `components/layout/TopBar.tsx:143-159` → **不换 Tabs**（MPA 跳转，无 tabpanel）：保留 `<nav>` + `aria-current="page"`，两套手写 class 收编成 `Button variant="ghost" size="sm"`；保留现有滚动到可视区 `useEffect`（`:76-87`）。
 5. `pages/admin/AdminPage.tsx:192-210` → `Tabs`（`aria-current` 与 `bg-primary` 选中态删除）。
-6. `desktop/LiveSyncControlDialog.tsx:260-277` → `Tabs`，`value` 用文件 id/路径。
-7. `features/board/dialogs/SavedViewsDialog.tsx:110-118,128-136` → `<ToggleGroup multiple>`，删手写 `toggle()` 数组逻辑。
-8. `ExecutionHeader.tsx:83-105`（保存组合视图，含删除键）→ `Badge render={<button type="button" aria-pressed/>}` + 内层 `span role="button" onClick stopPropagation`（design §3.4）；**不用** ToggleGroup（R3）。
+6. `desktop/LiveSyncControlDialog.tsx:260-277` → `ToggleGroup orientation="vertical"`（文件列表是纵向单选，不是视图切换），`value` 用索引字符串。
+7. `features/board/dialogs/SavedViewsDialog.tsx:110-118,128-136` → `<ToggleGroup multiple spacing={1.5}>`（圆角要归调用侧），删手写 `toggle()` 数组逻辑。
+8. `ExecutionHeader.tsx:83-105`（保存组合视图）**移到批 4**：走 `badgeVariants`（design §3.4），不用 ToggleGroup（内层有删除按钮）。
 9. 浏览器实测：字号组 32px 轨道 / 26px item / 紫色；看板组 `role=tab` + `aria-selected=true`；顶部导航与 admin 导航左右方向键可切换；保存视图"点名称切换、点 × 只删"。
 10. item 仍矮 2px → 试 `self-stretch`；无效则停下问用户（不自行退回 `Tabs`）。
 
@@ -62,8 +81,9 @@ cd packages/web && npx tsc -b && npx oxlint src && yarn oxfmt src
 3. `features/admin/shared.tsx`：`StatusPill`/`TONE_CLASS` 删除，调用点改 `import { StatusPill } from '@/components/ui/status-pill'`（33 处 / 10 文件）。
 4. 手写药片 → `Badge`/`StatusPill`：`TaskCard:100,113,150`、`TeamView:303,313`、`PluginsView:285-316`（5 个）、`TaskDetailDialog:446,467,486,570`、`BranchListenersDialog:110,113,124`、`PublishOperationDialog:63-71`、`PreferencesDialog:158`、`ProjectRail:813,889`、`AttentionQueue:30,68`、`ConditionChecks:137,162,206,219,242`、`TaskOperationList:11-27`、`FlowSignals:124-130`、`Kanban:37`。
 5. 删 `ConditionChecks:113-119`、`FlowSignals:124-130`、`TaskOperationList:11-27`、`TaskCard` 内的本地 tone 词表。
-6. 断言：`rg -n "bg-(success|warning|destructive|primary)-soft" packages/web/src -g '!**/components/ui/**'` 无输出；`rg -n "rounded-full (px|py)-" …` 仅剩登记例外（`StageTape`、`HandoffNotice`）。
-7. 四档 tone 各验一次配色与迁移前一致。
+6. `features/board/ExecutionHeader.tsx:83-105`（保存组合视图，从批 2 移入）：已保存视图的 `<span>` 用 `badgeVariants({ variant: active ? 'default' : 'outline' })` 做类来源、内置视图用 `<Badge render={<button aria-pressed/>}`（design §3.4）；保留外层切换 + 内层 `×` 两个按钮。
+7. 断言：`rg -n "bg-(success|warning|destructive|primary)-soft" packages/web/src -g '!**/components/ui/**'` 无输出；`rg -n "rounded-full (px|py)-" …` 仅剩登记例外（`StageTape`、`HandoffNotice`）。
+8. 四档 tone 各验一次配色与迁移前一致。
 
 提交：`refactor(web): 状态药片与 tone 配色收敛到 badge`
 

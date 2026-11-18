@@ -253,7 +253,6 @@ export function ArchiveSyncTab() {
             description="服务端只读取各项目分支的 .trellis/tasks/archive，不经过 Agent 上传。"
             action={
               <Button
-                size="sm"
                 type="button"
                 variant="outline"
                 disabled={sync.busy}
@@ -284,7 +283,7 @@ export function ArchiveSyncTab() {
               <p className="text-xs text-muted-foreground">
                 最近保存 {formatTime(overview.config.updatedAt)}
               </p>
-              <Button size="sm" type="submit" className="self-start" disabled={sync.busy}>
+              <Button type="submit" className="self-start" disabled={sync.busy}>
                 保存同步配置
               </Button>
             </form>
@@ -395,7 +394,7 @@ export function ArchiveSyncTab() {
                 </>
               )}
               <div className="flex gap-2">
-                <Button size="sm" type="submit" disabled={sync.busy}>
+                <Button type="submit" disabled={sync.busy}>
                   {editing ? '保存凭据' : '创建凭据'}
                 </Button>
                 {editing ? (
@@ -532,7 +531,6 @@ export function ArchiveSyncTab() {
             description="最近更新时间是归档文件成功进入任务索引的时间，不是最近尝试时间。"
             action={
               <Button
-                size="sm"
                 type="button"
                 variant="outline"
                 disabled={sync.busy}

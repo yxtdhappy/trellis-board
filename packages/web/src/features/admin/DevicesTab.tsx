@@ -33,7 +33,7 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
         title="我的设备"
         description="设备凭证只在 Agent 本机加密保存。撤销后该设备的绑定和待执行命令立即失效。"
         action={
-          <Button variant="outline" size="sm" type="button" onClick={() => void reloadDevices()}>
+          <Button variant="outline" type="button" onClick={() => void reloadDevices()}>
             刷新设备列表
           </Button>
         }
@@ -131,7 +131,6 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
             <EmptyRow>尚未生成桌面设备令牌。</EmptyRow>
           )}
           <Button
-            size="sm"
             type="button"
             className="self-start"
             onClick={() => void createDesktopEnrollToken()}
@@ -159,12 +158,7 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
           ) : (
             <EmptyRow>尚未生成配对码。</EmptyRow>
           )}
-          <Button
-            size="sm"
-            type="button"
-            className="self-start"
-            onClick={() => void createPairingCode()}
-          >
+          <Button type="button" className="self-start" onClick={() => void createPairingCode()}>
             生成我的配对码
           </Button>
           <div className="flex flex-col gap-1">

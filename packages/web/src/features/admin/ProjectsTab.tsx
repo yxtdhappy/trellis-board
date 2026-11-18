@@ -146,7 +146,6 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
             />
             <Button
               variant="outline"
-              size="sm"
               type="button"
               disabled={!accessProjectId}
               onClick={refreshAccess}
@@ -197,7 +196,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                 />
               </Field>
             </div>
-            <Button size="sm" type="submit" className="self-start">
+            <Button type="submit" className="self-start">
               保存成员
             </Button>
           </form>
@@ -298,7 +297,6 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
               onChange={setAccessRole}
             />
             <Button
-              size="sm"
               type="button"
               disabled={!accessProjectId || !inviteTeamId}
               onClick={() => {
@@ -351,7 +349,6 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           action={
             <Button
               variant="outline"
-              size="sm"
               type="button"
               className="rounded-full"
               onClick={() => void createPairingCode(selectedTeamId || undefined)}

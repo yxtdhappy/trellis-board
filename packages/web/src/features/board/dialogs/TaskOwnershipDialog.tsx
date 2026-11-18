@@ -274,7 +274,6 @@ export function TaskOwnershipDialog({
                 </span>
                 <Button
                   type="button"
-                  size="sm"
                   variant="outline"
                   disabled={!selectedDirs.length || submitting || !result?.branchName}
                   onClick={() => void submitDecisions('use-branch', result?.branchName || '')}
@@ -295,7 +294,6 @@ export function TaskOwnershipDialog({
                 />
                 <Button
                   type="button"
-                  size="sm"
                   variant="outline"
                   disabled={!selectedDirs.length || !otherBranch || submitting}
                   onClick={() => void submitDecisions('use-branch', otherBranch)}
@@ -304,7 +302,6 @@ export function TaskOwnershipDialog({
                 </Button>
                 <Button
                   type="button"
-                  size="sm"
                   variant="ghost"
                   disabled={!selectedDirs.length || submitting}
                   onClick={() => void submitDecisions('defer')}

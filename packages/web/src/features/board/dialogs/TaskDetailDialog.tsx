@@ -515,8 +515,7 @@ export function TaskDetailDialog({
                   <h3 className="text-xs font-semibold text-muted-foreground">阶段证据</h3>
                   {canEditPlan ? (
                     <Button
-                      size="sm"
-                      className="ml-auto h-7 px-3 text-xs font-semibold"
+                      className="ml-auto text-xs font-semibold"
                       onClick={() => {
                         setEditingPlan((value) => !value)
                         setDueDate(current.execution?.dueDate || '')
@@ -555,7 +554,7 @@ export function TaskDetailDialog({
                         onChange={(e) => setTags(e.target.value)}
                       />
                     </div>
-                    <Button size="sm" className="mt-auto" onClick={savePlan}>
+                    <Button className="mt-auto" onClick={savePlan}>
                       保存计划字段
                     </Button>
                   </div>
@@ -676,7 +675,6 @@ export function TaskDetailDialog({
                         onChange={(event) => setReason(event.target.value)}
                       />
                       <Button
-                        size="sm"
                         disabled={busy === 'dependency'}
                         onClick={() => void addDependency()}
                       >
@@ -810,7 +808,6 @@ export function TaskDetailDialog({
                   disabled={assignmentReadOnly || commandBlocked}
                 />
                 <Button
-                  size="sm"
                   disabled={!canAssign}
                   onClick={async () => {
                     if (!current || !canAssign) return

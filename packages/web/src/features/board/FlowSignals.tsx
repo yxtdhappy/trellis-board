@@ -62,20 +62,14 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             WIP 软上限
             <Input
-              className="h-7 w-14 text-xs"
+              className="h-8 w-14 text-xs"
               inputMode="numeric"
               value={value}
               onChange={(event) => setValue(event.target.value)}
               aria-label="WIP 软上限"
             />
           </label>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs"
-            onClick={save}
-            disabled={saving}
-          >
+          <Button variant="outline" onClick={save} disabled={saving}>
             {saving ? '保存中…' : '保存'}
           </Button>
         </div>

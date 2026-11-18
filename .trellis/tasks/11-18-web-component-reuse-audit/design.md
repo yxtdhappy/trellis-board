@@ -101,33 +101,39 @@ size: { default: '', xs: 'h-auto px-1.5 py-px' }
 
 ### 3.3 其余四处
 
-- `TopBar.tsx:143-159`（顶部导航）→ `TabsList variant="line"` + `TabsTrigger`；现有"滚动到可视区"的 `useEffect`（`:76-87`）保留。
+- `TopBar.tsx:143-159`（顶部导航）→ **不换 Tabs**：这是 MPA 页面跳转（`onNavigate` → `window.location.assign`），`role="tablist"` 需要配对的 `tabpanel`，换掉只会退化语义。保留 `<nav>` + `aria-current="page"`，只把两套手写 class 收编成 `Button variant="ghost" size="sm"`（选中加 `bg-secondary`）；现有"滚动到可视区"的 `useEffect`（`:76-87`）保留。
 - `AdminPage.tsx:192-210`（admin 视图导航）→ `Tabs`（原 `aria-current` + `bg-primary` 选中态由 Tabs 接管）。
 - `LiveSyncControlDialog.tsx:260-277`（文件切换器）→ `Tabs`，`value` 用文件路径/id。
 - `SavedViewsDialog.tsx:110-118,128-136`（阶段/标签多选）→ `<ToggleGroup multiple>`，`value` 直接是字符串数组，删掉手写 `toggle()`。
 - `PreferencesDialog.tsx:94-121`（主题三选一，含预览卡）→ `<ToggleGroup>` 的 item 内放 `ThemePreview` 装饰块；不装 `radio-group`（YAGNI）。
 
-### 3.4 保存组合视图（`ExecutionHeader.tsx:83-105`）
+### 3.4 保存组合视图（`ExecutionHeader.tsx:83-105`，移到批 4）
+
+两个子结构分开处理，都用 `badgeVariants` 作为唯一颜色来源：
 
 ```tsx
+// 已保存视图：容器是 span（内含"切换"与"删除"两个按钮），不能给 span 挂 onSelect
+<span className={cn(badgeVariants({ variant: active ? 'default' : 'outline' }), 'gap-1 pr-1')}>
+  <button type="button" onClick={() => onChange({ executionView: view.id })}>{view.name}</button>
+  <button type="button" aria-label={`删除组合视图 ${view.name}`} onClick={() => onDeleteView(view.id)}>×</button>
+</span>
+
+// 内置视图：纯按钮
 <Badge
   variant={active ? 'default' : 'outline'}
-  size="xs"
-  className="gap-1 pr-1"
-  render={<button type="button" aria-pressed={active} />}
-  onClick={() => onSelectView(view.id)}
->
-  {view.name}
-  <span
-    role="button"
-    tabIndex={-1}
-    aria-label={`删除组合视图 ${view.name}`}
-    onClick={(event) => { event.stopPropagation(); onDeleteView(view.id) }}
-  >×</span>
-</Badge>
+  render={<button type="button" aria-pressed={active} onClick={() => onChange({ executionView: view.id })} />}
+>{view.name}</Badge>
 ```
 
-保留现有 DOM 语义（外层切换 + 内层删除），只把颜色/尺寸类换成 `Badge`；`StopPropagation` 保证"只删不切"。
+放弃 `Badge render={<button>}` + 内层 `role="button"` 的方案：`Badge` 带 `overflow-hidden` 与 `[&>svg]:size-2.5!`，且嵌套可交互元素会让点击区域互相吞并。保留现有 DOM 语义（外层切换 + 内层删除）。
+
+### 3.5 `ToggleGroup` 的 `spacing` 陷阱（实测）
+
+`ui/toggle-group.tsx:73` 对 `data-spacing=0` 打了一串 `group-data-[spacing=0]/toggle-group:rounded-none` 与 `first:rounded-l-md / last:rounded-r-md`，其选择器特异性高于调用侧 `rounded-full`/`rounded-md`。因此：
+
+- 需要"各自独立的药片/胶囊"时**不能**用 `spacing={0}`，用 `spacing={1}`/`{1.5}`（间隙 = `--spacing(n)`），圆角才归调用侧控制。
+- 需要"连体分段条"时才用 `spacing={0}`，此时圆角由 group 的首尾规则接管。
+- `ToggleGroup` 单选模式再次点击当前项会回调 `[]`；受控组件必须"取第一项且命中才 set"，否则会清空选择。
 
 ## 4. 下拉与输入（批 3）
 
@@ -146,6 +152,15 @@ searchable       → 内部切到 @/components/ui/combobox
 - `ui/combobox.tsx` 导出 `Combobox/ComboboxInput/ComboboxTrigger/ComboboxList/ComboboxItem/ComboboxEmpty`，把 `Combobox.Root/InputGroup/Portal/Positioner/Popup` 全收进 ui 层。
 - `controlClass`（`admin/shared.tsx:6`）删除：`<input className={controlClass}>`→`<Input className="text-xs">`（`Input` 默认 `text-sm`，admin 密排场景显式降到 `text-xs`）；`<select>`→`SelectField`；`MultiSelectField.tsx:54-57` 的触发器皮肤改 `cn(controlClass… )` 删除后走 `Input` 外观，`:68` 的 `ChevronDownIcon` 与 `SelectTrigger` 对齐，`:72` 写死的 `Agent 工具` label 改为 props。
 - 原生控件清单：`PluginsTab:253,265,273`、`TeamsTab:117,171,184`、`TeamSwitcher:31`（全站最后一个原生 `<select>`）。
+
+## 4.1 尺寸基线与原生控件（实测补充）
+
+- 基线：所有可交互控件（`Input`/`Textarea`/`SelectTrigger`/`Button` 默认档）统一 32px（`h-8`）。`ui/select.tsx:41` 的 `px-2 py-1.5` 已改 `py-0`，否则 32px 高里塞 18px 内容盒会裁字。
+- 与 32px 控件同排的按钮一律用默认档；`size="sm"`（28px）只允许出现在：表格行内动作、文件/列表行内联动作、弹窗页脚、文字型「加载更多」。
+- 前端不得出现原生 `<select>`/`<option>`/`<checkbox>`：`TeamSwitcher`、`TeamsTab`（选择用户/团队角色）、`PluginsTab`（项目选择 + 两个输入）已全部换成 `SelectField`/`Input`，实测 `document.querySelectorAll('select').length === 0`。
+- 分段控件尺寸：轨道 `h-8` + `p-0.5`、item `h-full`（28px，2px 内缩）。不要用 `p-0.75`+`h-6`（26px，旧版被判"选中项比容器小"的根因）。
+- 横向滚动的 `TabsList` 必须隐藏滚动条：`[scrollbar-width:none] [&::-webkit-scrollbar]:hidden`（`AdminPage` 导航）。
+- dev 环境：插件面板 iframe 内的 `/plugin-ui/*` 静态资源必须由 `packages/web/vite.config.ts` 的 proxy 转给后端，否则命中 SPA 兜底返回 `text/html`，`<link rel=stylesheet>` 被浏览器拒收 → 面板裸样式。
 
 ## 5. tone 与药片（批 4）
 
@@ -258,7 +273,7 @@ searchable       → 内部切到 @/components/ui/combobox
 
 ## 12. 验证策略
 
-- 静态（每批）：`npx tsc -b`（packages/web）、`npx oxlint src`、`yarn oxfmt <files>`、PRD 里对应 `rg` 断言。
+- 静态（每批）：`npx tsc -b`（packages/web）、`npx oxlint src`、`npx oxfmt <files>`、PRD 里对应 `rg` 断言。
 - 动态（每批受影响的页面）：`yarn dev` + 真实浏览器，检查控制台 0 error、布局无塌陷、label 点击可聚焦、药片配色与改前一致。
-- 视觉对比：5 处表格迁移前后逐列截图对比；4 档 tone 各验一次；字号/看板分段控件的实测数值（32px 轨道 / 26px item / `aria-selected`）。
+- 视觉对比：5 处表格迁移前后逐列截图对比；4 档 tone 各验一次；字号/看板分段控件的实测数值（32px 轨道 / 28px item / `aria-selected`）。
 - 收尾：`git diff --stat` 核对只动清单内文件；全量浏览器抽查 12 个页面。

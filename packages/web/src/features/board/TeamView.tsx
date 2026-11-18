@@ -226,7 +226,7 @@ export function TeamView({
               setPage(0)
             }}
           />
-          <Button variant="outline" size="sm" onClick={onRefresh}>
+          <Button variant="outline" onClick={onRefresh}>
             刷新
           </Button>
         </div>

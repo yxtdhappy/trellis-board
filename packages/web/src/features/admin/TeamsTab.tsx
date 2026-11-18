@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import * as admin from '@/api/admin'
 import type { AdminUser, Team, TeamMember } from '@/api/admin'
 import { Button } from '@/components/ui/button'
+import { SelectField } from '@/features/board/SelectField'
 import { EmptyRow, Panel, StatusPill, controlClass } from '@/features/admin/shared'
 import { cn } from '@/lib/utils'
 
@@ -120,7 +121,7 @@ export function TeamsTab() {
             placeholder="新团队名称"
             onChange={(event) => setName(event.target.value)}
           />
-          <Button size="sm" className="h-7 px-2 text-xs" disabled={busy} onClick={create}>
+          <Button disabled={busy} onClick={create}>
             创建
           </Button>
         </div>
@@ -153,13 +154,7 @@ export function TeamsTab() {
         description={selected ? `slug: ${selected.slug}` : '选择一个团队查看成员。'}
         action={
           selected ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              disabled={busy}
-              onClick={() => toggleStatus(selected)}
-            >
+            <Button variant="outline" disabled={busy} onClick={() => toggleStatus(selected)}>
               {selected.status === 'active' ? '停用团队' : '启用团队'}
             </Button>
           ) : null
@@ -168,34 +163,28 @@ export function TeamsTab() {
         {selected ? (
           <>
             <div className="flex flex-wrap items-center gap-1.5">
-              <select
-                aria-label="选择用户"
-                className={cn(controlClass, 'max-w-52')}
+              <SelectField
+                ariaLabel="选择用户"
+                className="max-w-52"
+                placeholder="选择账号"
                 value={userId}
-                onChange={(event) => setUserId(event.target.value)}
-              >
-                <option value="">选择账号</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.displayName || user.username}
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label="团队角色"
-                className={cn(controlClass, 'w-28')}
+                options={users.map((user) => ({
+                  value: user.id,
+                  label: user.displayName || user.username,
+                }))}
+                onChange={setUserId}
+              />
+              <SelectField
+                ariaLabel="团队角色"
+                className="w-28"
                 value={role}
-                onChange={(event) => setRole(event.target.value)}
-              >
-                <option value="member">成员</option>
-                <option value="admin">团队管理员</option>
-              </select>
-              <Button
-                size="sm"
-                className="h-7 px-2 text-xs"
-                disabled={busy || !userId}
-                onClick={addMember}
-              >
+                options={[
+                  { value: 'member', label: '成员' },
+                  { value: 'admin', label: '团队管理员' },
+                ]}
+                onChange={(next) => setRole(next)}
+              />
+              <Button disabled={busy || !userId} onClick={addMember}>
                 加入团队
               </Button>
             </div>

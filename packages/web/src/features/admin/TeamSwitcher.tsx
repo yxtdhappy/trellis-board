@@ -1,5 +1,4 @@
-import { controlClass } from '@/features/admin/shared'
-import { cn } from '@/lib/utils'
+import { SelectField } from '@/features/board/SelectField'
 
 type TeamOption = {
   id: string
@@ -28,20 +27,17 @@ export function TeamSwitcher({
   return (
     <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
       <span className="hidden sm:inline">团队</span>
-      <select
-        aria-label={ariaLabel}
-        className={cn(controlClass, 'w-auto min-w-28')}
+      <SelectField
+        ariaLabel={ariaLabel}
+        className="w-auto min-w-28"
         value={value}
         disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {includeAll ? <option value="all">全部团队</option> : null}
-        {teams.map((team) => (
-          <option key={team.id} value={team.id}>
-            {team.name}
-          </option>
-        ))}
-      </select>
+        options={[
+          ...(includeAll ? [{ value: 'all', label: '全部团队' }] : []),
+          ...teams.map((team) => ({ value: team.id, label: team.name })),
+        ]}
+        onChange={onChange}
+      />
     </label>
   )
 }

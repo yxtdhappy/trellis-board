@@ -35,6 +35,11 @@ export default defineConfig({
         // 保持原始 Host/Origin 一致：服务端 CSRF 校验要求 Origin 与 Host 同源
         changeOrigin: false,
       },
+      // 插件面板 iframe 依赖宿主提供的样式/脚本，dev 下不代理会被 index.html 兜底成 HTML。
+      '/plugin-ui': {
+        target: `http://127.0.0.1:${serverPort}`,
+        changeOrigin: false,
+      },
     },
   },
 })

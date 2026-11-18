@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { Puzzle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { SelectField } from '@/features/board/SelectField'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import { fetchAdminProjects, type TeamProject } from '@/api/admin'
 import {
@@ -33,7 +35,11 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
   const [bindings, setBindings] = useState<PluginBindingView[]>([])
   const [projects, setProjects] = useState<TeamProject[]>([])
   const [busy, setBusy] = useState(false)
-  const [form, setForm] = useState({ projectId: '', externalProjectId: '', externalProjectName: '' })
+  const [form, setForm] = useState({
+    projectId: '',
+    externalProjectId: '',
+    externalProjectName: '',
+  })
 
   const teamId = adminTeamId || ''
 
@@ -41,8 +47,11 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
     const rows = await listTeamPlugins(teamId || null)
     setPlugins(rows)
     // 默认落在「当前团队已启用」的插件上，否则第一个；不然一进来看到的是无关插件的空绑定。
-    const preferred = rows.find((row) => row.teamEnabled) ?? rows.find((row) => row.enabled) ?? rows[0]
-    setSelected((current) => (rows.some((row) => row.id === current) ? current : (preferred?.id ?? '')))
+    const preferred =
+      rows.find((row) => row.teamEnabled) ?? rows.find((row) => row.enabled) ?? rows[0]
+    setSelected((current) =>
+      rows.some((row) => row.id === current) ? current : (preferred?.id ?? ''),
+    )
   }, [teamId])
 
   useEffect(() => {
@@ -228,10 +237,7 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
                     className="text-destructive"
                     disabled={busy}
                     onClick={() =>
-                      void run(
-                        () => removeBinding(row.pluginId, row.teamId, row.id),
-                        '已解除绑定',
-                      )
+                      void run(() => removeBinding(row.pluginId, row.teamId, row.id), '已解除绑定')
                     }
                   >
                     解除
@@ -250,28 +256,23 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
         </div>
 
         <div className="mt-2 flex flex-col gap-1.5 rounded-lg bg-muted/40 p-2.5">
-          <select
-            className="h-7 rounded-md border border-border bg-card px-2 text-xs"
+          <SelectField
+            ariaLabel="选择 Board 项目"
+            placeholder="选择 Board 项目"
             value={form.projectId}
-            onChange={(event) => setForm((prev) => ({ ...prev, projectId: event.target.value }))}
-          >
-            <option value="">选择 Board 项目</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-          <input
-            className="h-7 rounded-md border border-border bg-card px-2 text-xs"
+            options={projects.map((project) => ({ value: project.id, label: project.name }))}
+            onChange={(next) => setForm((prev) => ({ ...prev, projectId: next }))}
+          />
+          <Input
+            className="text-xs"
             placeholder="插件侧项目 ID"
             value={form.externalProjectId}
             onChange={(event) =>
               setForm((prev) => ({ ...prev, externalProjectId: event.target.value }))
             }
           />
-          <input
-            className="h-7 rounded-md border border-border bg-card px-2 text-xs"
+          <Input
+            className="text-xs"
             placeholder="插件侧项目名称（可选）"
             value={form.externalProjectName}
             onChange={(event) =>
@@ -279,7 +280,6 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
             }
           />
           <Button
-            size="sm"
             type="button"
             disabled={busy || needTeam || !selected || !form.projectId || !form.externalProjectId}
             onClick={() =>

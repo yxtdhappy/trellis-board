@@ -91,12 +91,7 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
               onChange={setRange}
             />
           </label>
-          <Button
-            variant="outline"
-            size="sm"
-            type="button"
-            onClick={() => void loadSystemAudit(true)}
-          >
+          <Button variant="outline" type="button" onClick={() => void loadSystemAudit(true)}>
             刷新
           </Button>
         </div>
