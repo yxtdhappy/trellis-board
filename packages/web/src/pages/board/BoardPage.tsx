@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   fetchTaskSpaceAssignees,
   logout,
@@ -15,6 +15,10 @@ import { ArchiveView } from '@/features/board/ArchiveView'
 import { ExecutionHeader } from '@/features/board/ExecutionHeader'
 import { FlowSignals } from '@/features/board/FlowSignals'
 import { Kanban } from '@/features/board/Kanban'
+import { useLocalTaskState } from '@/features/board/useLocalTaskState'
+import type { TaskLocalState } from '@/features/board/TaskCard'
+import { toast } from 'sonner'
+import { errorMessage } from '@/desktop/tauri'
 import { Overview } from '@/features/board/Overview'
 import { OwnershipInboxPanel } from '@/features/board/OwnershipInboxPanel'
 import { PluginsView } from '@/features/plugins/PluginsView'
@@ -91,6 +95,42 @@ export function BoardPage() {
   const desktopInvoke = (window as Window & { __TAURI__?: { core?: { invoke?: DesktopInvoke } } })
     .__TAURI__?.core?.invoke
   const isTauri = Boolean(desktopInvoke)
+  const localTaskSpaceIds = useMemo(
+    () => [...new Set(tasks.flatMap((task) => (task.taskSpaceId ? [task.taskSpaceId] : [])))],
+    [tasks],
+  )
+  const {
+    readonlyDirs,
+    localDirs,
+    refresh: refreshLocalTaskState,
+  } = useLocalTaskState(localTaskSpaceIds)
+  const localStateFor = useCallback(
+    (task: BoardTask): TaskLocalState | undefined => {
+      if (!isTauri || !task.taskSpaceId) return undefined
+      const key = `${task.taskSpaceId}\u0000${task.relativeDir}`
+      if (readonlyDirs.has(key)) return 'readonly'
+      if (localDirs.has(key)) return 'local'
+      return task.executionTaskKey ? 'remote' : undefined
+    },
+    [isTauri, readonlyDirs, localDirs],
+  )
+  const downloadTask = useCallback(
+    async (task: BoardTask) => {
+      const taskSpaceId = task.taskSpaceId
+      const separator = task.executionTaskKey?.indexOf('::') ?? -1
+      const taskId =
+        task.executionTaskKey && separator >= 0 ? task.executionTaskKey.slice(separator + 2) : ''
+      if (!desktopInvoke || !taskSpaceId || !taskId) return
+      try {
+        await desktopInvoke('live_task_download', { taskSpaceId, taskId })
+        toast.success('已下载到本机')
+        void refreshLocalTaskState()
+      } catch (error) {
+        toast.error(errorMessage(error, '下载任务失败'))
+      }
+    },
+    [desktopInvoke, refreshLocalTaskState],
+  )
   const canManageAdmin =
     Boolean(runtime?.systemAdmin) ||
     Boolean(runtime?.teams?.some((team) => team.role === 'admin')) ||
@@ -393,6 +433,8 @@ export function BoardPage() {
                 groups={groups}
                 onOpen={(task) => setSelected(task)}
                 onEditPlan={(task) => setSelected(task)}
+                localStateFor={localStateFor}
+                onDownload={(task) => void downloadTask(task)}
               />
             </>
           ) : null}

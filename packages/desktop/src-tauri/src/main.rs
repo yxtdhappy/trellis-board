@@ -723,6 +723,43 @@ async fn set_task_ownership(
 }
 
 #[tauri::command]
+async fn live_task_download(
+    app: AppHandle,
+    window: WebviewWindow,
+    task_space_id: String,
+    task_id: String,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
+    let task_id = validate_live_id(&task_id, "任务 ID")?;
+    agent_service::download_task(&app, &task_space_id, &task_id).await
+}
+
+#[tauri::command]
+async fn live_local_task_state(
+    app: AppHandle,
+    window: WebviewWindow,
+    task_space_id: String,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
+    agent_service::local_task_state(&app, &task_space_id).await
+}
+
+#[tauri::command]
+async fn live_conflicts_show(
+    app: AppHandle,
+    window: WebviewWindow,
+    task_space_id: Option<String>,
+) -> Result<bool, String> {
+    ensure_board_caller(&app, &window)?;
+    let task_space_id = task_space_id
+        .map(|value| validate_live_id(&value, "任务空间 ID"))
+        .transpose()?;
+    agent_service::reopen_conflicts(&app, task_space_id).await
+}
+
+#[tauri::command]
 async fn desktop_sidecar_status(
     app: AppHandle,
     window: WebviewWindow,
@@ -989,6 +1026,9 @@ fn main() {
             sync_deferred_tasks,
             list_task_ownership,
             set_task_ownership,
+            live_task_download,
+            live_local_task_state,
+            live_conflicts_show,
             desktop_sidecar_status,
             runtime_status,
             runtime_install,

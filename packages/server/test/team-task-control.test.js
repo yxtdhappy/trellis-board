@@ -799,3 +799,115 @@ test('项目成员降为只读后 Agent 不能继续读取正文或上传', () =
     db.close()
   }
 })
+
+function archiveTask(taskControl, db, taskSpaceId, executionTaskKey, archiveName) {
+  const task = db
+    .prepare('SELECT * FROM sync_task WHERE execution_task_key = ?')
+    .get(executionTaskKey)
+  taskControl.reconcileProjection({
+    taskSpaceId,
+    projectId: task.project_id,
+    tasks: [
+      {
+        taskKey: `${taskSpaceId}::.trellis/tasks/archive/2026-11/${archiveName}`,
+        executionTaskKey,
+        relativeDir: `.trellis/tasks/archive/2026-11/${archiveName}`,
+        title: task.title,
+        priority: task.priority,
+        derivedStage: 'archive',
+        archived: true,
+        archivedAt: new Date().toISOString(),
+      },
+    ],
+  })
+  return task
+}
+
+test('归档任务的活跃路径按 basename 反解返回 409，未知目录仍为 404，legacy 文件仍为 403', () => {
+  const { db, taskControl, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    const files = taskFiles('task-dir-lookup', '归档反解任务')
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-dir-lookup-1',
+      clientSequence: 1,
+      files,
+    })
+    archiveTask(
+      taskControl,
+      db,
+      taskSpaceId,
+      `${taskSpaceId}::task-dir-lookup`,
+      '11-17-task-dir-lookup',
+    )
+    assert.throws(
+      () =>
+        snapshots.directorySnapshot(agentA, taskSpaceId, '.trellis/tasks/11-17-task-dir-lookup'),
+      (error) => error.status === 409 && error.code === 'TASK_ARCHIVED',
+    )
+    assert.throws(
+      () => snapshots.directorySnapshot(agentA, taskSpaceId, '.trellis/tasks/11-17-unknown'),
+      (error) => error.status === 404 && error.code === 'NOT_FOUND',
+    )
+    db.prepare(`
+      INSERT INTO sync_task_space_file(
+        task_space_id, relative_path, revision, sha256, content_text, task_id, task_dir,
+        source_agent_id, source_user_id, source_client_sequence, updated_at
+      ) VALUES (?, ?, 1, ?, ?, 'legacy-task', '.trellis/tasks/11-17-legacy', 'agent-a', 'user-a', 1, ?)
+    `).run(
+      taskSpaceId,
+      '.trellis/tasks/11-17-legacy/prd.md',
+      'a'.repeat(64),
+      '# legacy\n',
+      new Date().toISOString(),
+    )
+    assert.throws(
+      () => snapshots.directorySnapshot(agentA, taskSpaceId, '.trellis/tasks/11-17-legacy'),
+      (error) => error.status === 403 && error.message === '只能读取本人任务内容',
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('任务归档收敛 pending 冲突且冲突列表排除已归档任务', () => {
+  const { db, taskControl, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    const archivedFiles = taskFiles('task-conflict-archive', '待归档冲突任务')
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-conflict-archive-1',
+      clientSequence: 1,
+      files: archivedFiles,
+    })
+    const inserted = db.prepare(`
+      INSERT INTO sync_conflict(
+        id, task_space_id, task_id, task_dir, files_json, server_revision, client_sequence,
+        batch_id, status, created_by_user_id, created_by_agent_id, created_at
+      ) VALUES (?, ?, 'task-conflict-archive', '.trellis/tasks/11-17-task-conflict-archive',
+        '[]', 1, 2, 'batch-conflict-1', 'pending', 'user-a', 'agent-a', ?)
+    `)
+    const createdAt = new Date().toISOString()
+    inserted.run('conflict-archive', taskSpaceId, createdAt)
+    inserted.run('conflict-defensive', taskSpaceId, createdAt)
+
+    archiveTask(
+      taskControl,
+      db,
+      taskSpaceId,
+      `${taskSpaceId}::task-conflict-archive`,
+      '11-17-task-conflict-archive',
+    )
+    const resolved = db
+      .prepare('SELECT status, resolved_at FROM sync_conflict WHERE id = ?')
+      .get('conflict-archive')
+    assert.equal(resolved.status, 'resolved')
+    assert.ok(resolved.resolved_at)
+
+    // defensive case: sync_task 已归档但冲突仍为 pending，列表也不应下发
+    db.prepare(
+      "UPDATE sync_conflict SET status = 'pending', resolved_at = NULL WHERE id = 'conflict-defensive'",
+    ).run()
+    assert.deepEqual(snapshots.listConflicts(agentA, taskSpaceId), [])
+  } finally {
+    db.close()
+  }
+})

@@ -516,6 +516,74 @@ pub async fn set_task_ownership(
         .map_err(|error| message(&error))
 }
 
+/// 对照 JS `live-task-download`：把服务端上的任务目录拉到本地，作为只读镜像。
+pub async fn download_task(
+    app: &AppHandle,
+    task_space_id: &str,
+    task_id: &str,
+) -> Result<Value, String> {
+    let service = service(app).map_err(|error| message(&error))?;
+    let (config, api) = service
+        .agent_context()
+        .await
+        .map_err(|error| message(&error))?;
+    let task_sync = service.task_sync(api, config.bindings).await;
+    task_sync
+        .download_task(task_space_id, task_id)
+        .await
+        .map_err(|error| message(&error))
+}
+
+pub async fn local_task_state(app: &AppHandle, task_space_id: &str) -> Result<Value, String> {
+    let service = service(app).map_err(|error| message(&error))?;
+    let (config, api) = service
+        .agent_context()
+        .await
+        .map_err(|error| message(&error))?;
+    let task_sync = service.task_sync(api, config.bindings).await;
+    task_sync
+        .local_task_state(task_space_id)
+        .await
+        .map_err(|error| message(&error))
+}
+
+/// 重新露出仍然成立的冲突审查；返回是否真的推了一条冲突控制事件。
+pub async fn reopen_conflicts(
+    app: &AppHandle,
+    task_space_id: Option<String>,
+) -> Result<bool, String> {
+    let service = service(app).map_err(|error| message(&error))?;
+    let (config, api) = service
+        .agent_context()
+        .await
+        .map_err(|error| message(&error))?;
+    let space_ids: Vec<String> = match task_space_id {
+        Some(id) => vec![id],
+        None => {
+            let mut ids: Vec<String> = Vec::new();
+            for binding in &config.bindings {
+                if !ids.contains(&binding.task_space_id) {
+                    ids.push(binding.task_space_id.clone());
+                }
+            }
+            ids
+        }
+    };
+    let task_sync = service.task_sync(api, config.bindings).await;
+    let mut shown = false;
+    for space_id in space_ids {
+        if let Some(event) = task_sync
+            .reopen_conflicts(&space_id)
+            .await
+            .map_err(|error| message(&error))?
+        {
+            service.publish_control(event);
+            shown = true;
+        }
+    }
+    Ok(shown)
+}
+
 pub async fn login(
     app: &AppHandle,
     server_url: &str,

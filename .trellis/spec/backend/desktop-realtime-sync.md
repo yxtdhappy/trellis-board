@@ -302,9 +302,13 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 客户端 cursor v3 额外保存每个已同步文件的服务端摘要。增量上传的 `baseSha256` 必须来自
   上次成功应用或上传后的本地基线，不能在提交前临时读取服务端最新摘要来充当基线，否则会
   绕过离线并发冲突。
-- `write_cursor` 只在 revision、sequence、baselines、deferred、ownershipPending、conflictBlocked
-  或 pending 发生实际变化时更新 `updatedAt` 并原子替换文件；缺失 pending upload 的重复 revision、
+- `write_cursor` 只在 revision、sequence、baselines、deferred、ownershipPending、conflictBlocked、
+  readonlyTaskDirs 或 pending 发生实际变化时更新 `updatedAt` 并原子替换文件；缺失 pending upload 的重复 revision、
   相同 patch 或只刷新时间的调用不得重写 `live-cursors.json`。
+- 目录级 `fetch_directory` 失败分三类：`403`/`TASK_WRITE_FORBIDDEN` 写 `readonlyTaskDirs` 并跳过该目录
+  （不中断整次 pull、不上传、不写 baselines，目录消失或控件 assignee 变回本人时解除）；`TASK_ARCHIVED`/
+  `ARCHIVE_SYNC_SERVER_MANAGED`/`404` 直接跳过；其余错误必须经 `with_task_dir` 注入 `details.taskDir`
+  再上抛，日志与 `task_sync_error` 事件同时携带 `errorCode`/`serverCode`。
 - 每次拉取前先比较本地任务目录与 cursor 基线：本地有未上传变化时先走 CAS 上传；上传成功后再
   拉取新 revision，发生冲突时停止应用远端目录。首次接入选择“仅同步无冲突项”或“暂不处理”
   跳过的本地目录作为延后状态持久化，用户再次修改前不得自动上传；延后目录随后被服务端修改时

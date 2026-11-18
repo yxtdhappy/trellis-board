@@ -131,6 +131,21 @@ description = "当前 Board origin 关闭已读通知。"
 commands.allow = ["live_control_dismiss"]
 
 [[permission]]
+identifier = "allow-live-task-download"
+description = "当前 Board origin 可把已关联任务空间里未归档的任务下载为本机只读副本。"
+commands.allow = ["live_task_download"]
+
+[[permission]]
+identifier = "allow-live-local-task-state"
+description = "当前 Board origin 可读取已关联任务空间的本地任务状态（本地/只读/未下载）。"
+commands.allow = ["live_local_task_state"]
+
+[[permission]]
+identifier = "allow-live-conflicts-show"
+description = "当前 Board origin 可重新打开未处理的任务冲突确认弹窗。"
+commands.allow = ["live_conflicts_show"]
+
+[[permission]]
 identifier = "allow-runtime-status"
 description = "本地登录页可检查 Node.js 与 Trellis CLI 运行环境。"
 commands.allow = ["runtime_status"]

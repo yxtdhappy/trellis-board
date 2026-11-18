@@ -328,8 +328,11 @@ fn map_server_error(
     if let Some(details) = payload.get("details") {
         error = error.with_details(Some(details.clone()));
     }
-    if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+    // 只有 401 代表凭证失效：服务端对“无权访问某个任务目录”等资源级拒绝也用 403 FORBIDDEN，
+    // 若一并映射成 AUTH_REVOKED 会让单个目录的权限问题中断整次同步并触发重新登录。
+    if status == StatusCode::UNAUTHORIZED
         || server_code == code::AUTH_REVOKED
+        || server_code == "AGENT_AUTH_REQUIRED"
     {
         error.code = code::AUTH_REVOKED.to_string();
         error.terminal = true;
@@ -375,6 +378,20 @@ mod tests {
         let error = map_server_error(StatusCode::UNAUTHORIZED, &json!({"message":"nope"}), None);
         assert_eq!(error.code, code::AUTH_REVOKED);
         assert!(error.terminal);
+    }
+
+    #[test]
+    fn keeps_scoped_forbidden_as_directory_error() {
+        // 目录级 403 不是凭证失效：同步层要靠 server_code 判断“他人任务只读跳过”。
+        let error = map_server_error(
+            StatusCode::FORBIDDEN,
+            &json!({"error": "只能读取本人任务内容", "code": "FORBIDDEN"}),
+            None,
+        );
+        assert_ne!(error.code, code::AUTH_REVOKED);
+        assert!(!error.terminal);
+        assert_eq!(error.status, Some(403));
+        assert_eq!(error.server_code.as_deref(), Some("FORBIDDEN"));
     }
 
     #[test]

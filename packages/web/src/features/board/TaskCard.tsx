@@ -1,4 +1,4 @@
-import { Copy } from 'lucide-react'
+import { Copy, Download } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { copyText } from '@/browser/clipboard.js'
 import { conditionBadges } from '@/lib/condition-checks.js'
@@ -20,10 +20,14 @@ import { StageTape } from './StageTape.tsx'
 import { priorityTone } from './tone.ts'
 import { taskControlView } from '@/lib/team-client.js'
 
+export type TaskLocalState = 'local' | 'readonly' | 'remote'
+
 type TaskCardProps = {
   task: BoardTask
   onOpen: (task: BoardTask) => void
   onEditPlan?: (task: BoardTask) => void
+  localState?: TaskLocalState
+  onDownload?: (task: BoardTask) => void
 }
 
 type CopyTaskNameButtonProps = {
@@ -62,7 +66,7 @@ export function CopyTaskNameButton({
   )
 }
 
-export function TaskCard({ task, onOpen, onEditPlan }: TaskCardProps) {
+export function TaskCard({ task, onOpen, onEditPlan, localState, onDownload }: TaskCardProps) {
   const progress = taskProgress(task)
   const next = nextStage(task)
   const tags = taskTags(task)
@@ -122,6 +126,35 @@ export function TaskCard({ task, onOpen, onEditPlan }: TaskCardProps) {
 
       <h4 className="line-clamp-2 text-xs leading-4 font-semibold text-foreground">{task.title}</h4>
       <p className="break-all text-2xs leading-3.5 text-muted-foreground">{task.dirName}</p>
+
+      {localState ? (
+        <div className="relative flex flex-wrap items-center gap-1 text-2xs">
+          {localState === 'remote' ? (
+            <button
+              type="button"
+              className="relative flex items-center gap-1 rounded-full border border-warning/35 bg-warning-soft px-1.5 py-px font-medium text-warning hover:bg-warning/15 disabled:opacity-60"
+              title="下载到本机"
+              aria-label={`下载任务 ${task.dirName} 到本机`}
+              disabled={!onDownload}
+              onClick={() => onDownload?.(task)}
+            >
+              <Download className="size-2.5" aria-hidden="true" />
+              未下载到本机
+            </button>
+          ) : (
+            <span
+              className={cn(
+                'rounded-full px-1.5 py-px font-medium',
+                localState === 'readonly'
+                  ? 'bg-muted text-muted-foreground'
+                  : 'bg-success-soft text-success',
+              )}
+            >
+              {localState === 'readonly' ? '已在本机（只读）' : '已在本机'}
+            </span>
+          )}
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-1 text-2xs text-muted-foreground">
         <span>{dueLabel(task.execution?.dueDate)}</span>

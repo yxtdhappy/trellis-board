@@ -815,6 +815,18 @@ export function createTaskControlService({
     `)
       .get(taskSpaceId, taskDir)
     if (!row) {
+      const basename = taskDir.split('/').filter(Boolean).pop() || ''
+      if (basename) {
+        const pattern = `.trellis/tasks/archive/%/${basename.replace(/[\\%_]/g, (ch) => `\\${ch}`)}`
+        const archived = db
+          .prepare(`
+          SELECT 1 FROM sync_task
+          WHERE task_space_id = ? AND archived = 1 AND relative_dir LIKE ? ESCAPE '\\'
+          LIMIT 1
+        `)
+          .get(taskSpaceId, pattern)
+        if (archived) throw teamError(409, 'TASK_ARCHIVED', '任务已归档')
+      }
       const legacy = db
         .prepare(`
         SELECT 1 FROM sync_task_space_file
@@ -971,6 +983,11 @@ export function createTaskControlService({
           executionTaskKey,
         )
         revokeLeases(executionTaskKey, timestamp)
+        db.prepare(`
+          UPDATE sync_conflict SET status = 'resolved', resolved_at = ?
+          WHERE task_space_id = ? AND status = 'pending'
+            AND (task_dir = ? OR task_id = ?)
+        `).run(timestamp, taskSpaceId, existing.relative_dir, existing.task_id)
       } else if (!task.archived && !existing.archived && task.relativeDir) {
         db.prepare(`
           UPDATE sync_task
@@ -1185,6 +1202,7 @@ export function createTaskControlService({
   return {
     createPendingTask,
     assignPendingTask,
+    assertAgentAccess,
     assertUploadAllowed,
     commitUpload,
     completeCommand,

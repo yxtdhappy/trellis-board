@@ -118,6 +118,13 @@ cursor 兼容字段：
   `use-server` 或成功 `overwrite-server` 前不得自动重试。`save-local-copy` 不解除 pending。
 - `ownershipPending`/`conflictBlocked` 的清理必须在 cursor 锁内单次读改写；本地已删除或移动的目录
   不能永久残留待确认状态。
+- 冲突状态必须可重新暴露：`live_conflicts_show` 拉服务端 `/conflicts`，只对 `fetch_directory` 返回 200
+  且文件非空的冲突重建 `task_file_conflict` 控制事件；服务端列表已不含的目录一律清 `conflict_blocked`，
+  目录已 404 的死冲突直接按 `use-server` 收敛，不留残影。
+- 任务归档必须在同一事务把该任务 pending `sync_conflict` 置 `resolved`，`listConflicts()` 追加
+  “排除已归档任务”的防御过滤；否则用户已归档的冲突会永久 pending。
+- `assertReadable` 活跃路径未命中时按 basename 反解归档行并返回 `409 TASK_ARCHIVED`，不得用 legacy
+  403 文案掩盖“任务已归档”；只有确实存在 legacy 活行时才返回 403。
 - 清理脚本允许重复运行：remove taskSpace 仍为 `active` 时走原有“墓碑重复目录并停用”路径；
   remove 已经 `disabled` 时，只有在显式传入 `--cleanup-conflicts`、
   `--disable-remove-task-space` 且 `filesToDelete=0` 时，才允许 conflict-only apply。
@@ -143,6 +150,10 @@ cursor 兼容字段：
 | pending batch 文件字节保持不变 | 按原 batchId/clientSequence/files 重放 |
 | 用户改归属导致 pending 文件会变化 | 不原地改写 pending；失败关闭并等待显式处理 |
 | 现有 pending conflict | 返回稳定 conflictId，不新增同类行 |
+| 客户端目录在服务端由其他负责人持有 | `403 TASK_WRITE_FORBIDDEN` → cursor `readonlyTaskDirs`，跳过该目录，整次拉取继续 |
+| 服务端任务已归档但活跃目录仍有 legacy 文件 | 按 basename 反解归档行 → `409 TASK_ARCHIVED`，客户端跳过并清理活跃副本 |
+| 归档任务仍有 pending conflict | 归档事务内置 `status='resolved'`，`listConflicts()` 不再返回 |
+| 项目栏点击“N 个冲突待处理”但服务端已无冲突 | `live_conflicts_show` 返回 false，清理 `conflictBlocked`，UI 提示“没有待处理的任务冲突” |
 | 同一任务跨不同 Agent 冲突 | 每个 Agent 保留独立 pending，便于定位来源 |
 
 ## 5. Good / Base / Bad Cases
@@ -176,6 +187,11 @@ cursor 兼容字段：
 - `task-space-duplicate-cleanup.test.js`：默认 dry-run 零写入、VACUUM INTO 备份、只墓碑重复目录、
   每组只保留最新 pending、显式 disabled、状态/revision 漂移拒绝，以及“旧 taskSpace 已 disabled
   且没有重复文件时仍可幂等清理 conflict”。
+- `team-agent-task-readonly-api.test.js`：`GET …/tasks` 只含 `archived = 0` 且按归属过滤正文，非负责人
+  可读 `GET …/tasks/:id/files`，已归档任务返回 404；`team-task-control.test.js` 覆盖归档 409、
+  未知 404、legacy 403 文案、归档同事务收敛 conflict 与 `listConflicts` 过滤。
+- `task_sync.rs` 单元测试：`with_task_dir` 注入与保留、错误事件同时带 `errorCode`/`serverCode`、
+  `readonlyTaskDirs` 往返与 archive 剔除、403/归档分类（`AUTH_REVOKED` 不算 403）、归档副本摘要一致性。
 
 ## 7. Wrong vs Correct
 

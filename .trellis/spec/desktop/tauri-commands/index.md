@@ -18,6 +18,15 @@
   `desktop_sidecar_status`，Board 页面的 `LiveSyncControlDialog` 仍调用 `live_control_pending`。
 - `live_control_*` 与 `set_task_ownership` 只对 `board-local-association` 窗口放行，且必须经
   `ensure_board_caller`；不存在独立 `live-control` 窗口，也没有 `live_control_resize`。
+- 只读任务投影：`live_local_task_state(taskSpaceId)` 返回 `{taskSpaceId, localDirs, readonlyDirs,
+  archivedResidue}`，用于看板三态（`local`/`readonly`/`remote`）；`live_task_download(taskSpaceId, taskId)`
+  从 `GET …/tasks/:id/files` 下载只读副本（不写 baselines、后续上传被 `readonlyTaskDirs` 过滤），返回
+  `{taskId, taskDir, fileCount}`；`live_conflicts_show(taskSpaceId?)` 重建仍成立的冲突控制事件并返回
+  是否真的推了一条。三者同样只对 Board 窗口放行并过 `validate_live_id`。
+- 新增远程 Board 可调用的命令，除 `main.rs` 注册外还必须在 `permissions/desktop.toml` 声明
+  `allow-<command>`（`commands.allow`）并加入 `capabilities/board-local-association.json` 的
+  `permissions`；只在 `generate_handler!` 注册时远程页面调用会返回
+  `Command not found`（错误文案为 `not allowed`）。
 - 前端必须先注册监听，再执行首次读取；可见时保留 10 秒兜底，隐藏时停止。
 - Rust 只在 cursor、binding、ownership、Git 投影、sidecar 或控制队列实际变化后发射。
 - 请求在途时只保留一次后续刷新，相同归一化结果复用原引用。

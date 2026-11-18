@@ -712,6 +712,25 @@ function createRequestHandler({
       )
       return true
     }
+    const tasksListMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/tasks$/)
+    if (tasksListMatch && request.method === 'GET') {
+      sendJson(response, 200, {
+        tasks: taskSnapshots.listTaskSummaries(agent, tasksListMatch[0]),
+      })
+      return true
+    }
+    const taskFilesMatch = routeMatch(
+      pathname,
+      /^\/api\/agent\/task-spaces\/([^/]+)\/tasks\/([^/]+)\/files$/,
+    )
+    if (taskFilesMatch && request.method === 'GET') {
+      sendJson(
+        response,
+        200,
+        taskSnapshots.taskFilesById(agent, taskFilesMatch[0], taskFilesMatch[1]),
+      )
+      return true
+    }
     const preflightMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/preflight$/)
     if (preflightMatch && request.method === 'POST') {
       const body = await readJsonBody(request, MAX_LIVE_BATCH_BYTES)

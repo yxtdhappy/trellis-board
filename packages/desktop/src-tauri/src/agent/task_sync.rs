@@ -16,7 +16,7 @@ use crate::agent::state_events::StateSink;
 use crate::agent::store::{AgentBinding, ConfigStore};
 use crate::agent::task_control::{
     handoff_state_key, parse_state_file, selected_server_task_ids, StoredTaskHandoff,
-    StoredTaskLease, TaskControl, TaskControlStateFile, UploadFence,
+    StoredTaskLease, TaskControl, TaskControlState, TaskControlStateFile, UploadFence,
 };
 
 pub const TASK_SNAPSHOT_MAX_FILES: usize = 1024;
@@ -93,7 +93,26 @@ fn task_sync_error_event(
     {
         event["taskDir"] = Value::String(task_dir.to_string());
     }
+    event["errorCode"] = Value::String(error.code.clone());
+    if let Some(server_code) = &error.server_code {
+        event["serverCode"] = Value::String(server_code.clone());
+    }
     event
+}
+
+/// 只补 taskDir，保留服务端错误码/状态，便于上层按目录定位失败原因。
+fn with_task_dir(mut error: AgentError, task_dir: &str) -> AgentError {
+    match &mut error.details {
+        Some(details) => {
+            if details.get("taskDir").is_none() && details.is_object() {
+                details["taskDir"] = Value::String(task_dir.to_string());
+            }
+        }
+        None => {
+            error.details = Some(json!({ "taskDir": task_dir }));
+        }
+    }
+    error
 }
 
 fn approved_bindings(bindings: Vec<AgentBinding>) -> HashMap<String, AgentBinding> {
@@ -287,9 +306,11 @@ fn is_sha256(value: &str) -> bool {
 
 fn is_handoff_backup_id(value: &str) -> bool {
     value.len() == 24
-        && value
-            .strip_prefix("handoff-")
-            .is_some_and(|suffix| suffix.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
+        && value.strip_prefix("handoff-").is_some_and(|suffix| {
+            suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
 }
 
 fn sha256_bytes(value: &[u8]) -> String {
@@ -941,9 +962,7 @@ pub fn classify_task_snapshots(
 fn baselines_from_snapshot(files: &[SnapshotFile]) -> BTreeMap<String, String> {
     files
         .iter()
-        .filter(|file| {
-            !file.deleted && !file.archived && is_sha256(&file.sha256)
-        })
+        .filter(|file| !file.deleted && !file.archived && is_sha256(&file.sha256))
         .map(|file| (file.path.clone(), file.sha256.clone()))
         .collect()
 }
@@ -1068,6 +1087,8 @@ pub struct Cursor {
     pub deferred: BTreeMap<String, BTreeMap<String, String>>,
     pub ownership_pending: BTreeMap<String, String>,
     pub conflict_blocked: BTreeMap<String, String>,
+    /// 只读镜像目录（他人任务/本机下载副本），值为 FOREIGN_OWNER 或 DOWNLOADED。
+    pub readonly_task_dirs: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1122,6 +1143,10 @@ fn cursor_from_entry(entry: &Value) -> Cursor {
             .get("conflictBlocked")
             .map(parse_conflict_blocked)
             .unwrap_or_default(),
+        readonly_task_dirs: entry
+            .get("readonlyTaskDirs")
+            .map(parse_readonly_task_dirs)
+            .unwrap_or_default(),
     };
     cursor.baselines = normalize_baselines(&cursor.baselines);
     cursor.deferred.retain(|task_dir, files| {
@@ -1135,6 +1160,9 @@ fn cursor_from_entry(entry: &Value) -> Cursor {
         .retain(|task_dir, _| !is_archive_task_dir(task_dir));
     cursor
         .conflict_blocked
+        .retain(|task_dir, _| !is_archive_task_dir(task_dir));
+    cursor
+        .readonly_task_dirs
         .retain(|task_dir, _| !is_archive_task_dir(task_dir));
     cursor
         .pending_rejected
@@ -1211,7 +1239,9 @@ fn cursor_entry_needs_archive_migration(entry: &Value) -> bool {
             entry
                 .get(*field)
                 .and_then(Value::as_object)
-                .is_some_and(|values| values.keys().any(|task_dir| is_archive_task_dir(task_dir)))
+                    .is_some_and(|values| {
+                        values.keys().any(|task_dir| is_archive_task_dir(task_dir))
+                    })
             })
 }
 
@@ -1405,9 +1435,8 @@ fn normalize_index(mut index: OwnershipIndex) -> Option<OwnershipIndex> {
             .tracked_paths
             .drain(..)
             .filter(|path| {
-                task_directory_from_path(path).is_ok_and(|parts| {
-                    !parts.archived && parts.file_path == "task.json"
-                })
+                task_directory_from_path(path)
+                    .is_ok_and(|parts| !parts.archived && parts.file_path == "task.json")
             })
             .collect::<HashSet<_>>();
         if tracked_paths.len() > OWNERSHIP_INDEX_MAX_TRACKED_PATHS {
@@ -1919,9 +1948,7 @@ impl TaskSync {
             return Ok(());
         }
         (self.emit)(handoff_notice(binding, handoff));
-        self.persist_task_control_change(|controls| {
-            controls.mark_handoff_notified(key, state)
-        })
+        self.persist_task_control_change(|controls| controls.mark_handoff_notified(key, state))
         .await?;
         Ok(())
     }
@@ -1973,9 +2000,7 @@ impl TaskSync {
                 .map(str::to_string),
             updated_at: protocol::now_iso8601(),
         };
-        self.persist_task_control_change(|state| {
-            state.set_lease(execution_task_key, stored)
-        })
+        self.persist_task_control_change(|state| state.set_lease(execution_task_key, stored))
         .await?;
         Ok(())
     }
@@ -2032,24 +2057,20 @@ impl TaskSync {
                 Duration::from_secs(60),
             )
             .await?;
-        let task = response.get("task").ok_or_else(|| {
-            AgentError::new(code::INVALID_RESPONSE, "任务认领响应缺少 task")
-        })?;
+        let task = response
+            .get("task")
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "任务认领响应缺少 task"))?;
         let control = TaskControl::from_task_value(task)?;
         let lease = response
             .get("lease")
             .filter(|lease| !lease.is_null())
-            .ok_or_else(|| {
-                AgentError::new(code::INVALID_RESPONSE, "任务认领响应缺少 lease")
-            })?;
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "任务认领响应缺少 lease"))?;
         let lease_token = lease
             .get("token")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|token| !token.is_empty())
-            .ok_or_else(|| {
-                AgentError::new(code::INVALID_RESPONSE, "任务认领响应缺少 lease.token")
-            })?
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "任务认领响应缺少 lease.token"))?
             .to_string();
         self.upsert_task_control(binding, &control).await?;
         self.save_task_lease(&control.execution_task_key, lease.clone())
@@ -2073,9 +2094,9 @@ impl TaskSync {
                 Duration::from_secs(60),
             )
             .await?;
-        let task = response.get("task").ok_or_else(|| {
-            AgentError::new(code::INVALID_RESPONSE, "任务心跳响应缺少 task")
-        })?;
+        let task = response
+            .get("task")
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "任务心跳响应缺少 task"))?;
         let control = TaskControl::from_task_value(task)?;
         let lease = response.get("lease").filter(|lease| !lease.is_null()).ok_or_else(
             || AgentError::new(code::INVALID_RESPONSE, "任务心跳响应缺少 lease"),
@@ -2085,9 +2106,7 @@ impl TaskSync {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|token| !token.is_empty())
-            .ok_or_else(|| {
-                AgentError::new(code::INVALID_RESPONSE, "任务心跳响应缺少 lease.token")
-            })?
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "任务心跳响应缺少 lease.token"))?
             .to_string();
         self.upsert_task_control(binding, &control).await?;
         self.save_task_lease(&control.execution_task_key, lease.clone())
@@ -2203,9 +2222,7 @@ impl TaskSync {
             .join(task_space_id);
         match tokio::fs::symlink_metadata(&root).await {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
-            Ok(_) => {
-                return protocol::err(code::INVALID_RESPONSE, "handoff 任务空间备份目录无效")
-            }
+            Ok(_) => return protocol::err(code::INVALID_RESPONSE, "handoff 任务空间备份目录无效"),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 tokio::fs::create_dir(&root).await.map_err(io_error)?;
             }
@@ -2385,9 +2402,7 @@ impl TaskSync {
                     return protocol::err(code::INVALID_RESPONSE, "已有 handoff 备份内容不一致");
                 }
             }
-            Ok(_) => {
-                return protocol::err(code::INVALID_RESPONSE, "handoff 备份目标不是真实目录")
-            }
+            Ok(_) => return protocol::err(code::INVALID_RESPONSE, "handoff 备份目标不是真实目录"),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let source_dir = resolve_task_directory(binding, &handoff.relative_dir).await?;
                 copy_directory(&source_dir, &target).await?;
@@ -4001,9 +4016,7 @@ impl TaskSync {
                 {
                     continue
                 }
-                Ok(_) => {
-                    return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接")
-                }
+                Ok(_) => return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接"),
                 Err(error) => return Err(io_error(error)),
             }
             let mut entries = tokio::fs::read_dir(&directory).await.map_err(io_error)?;
@@ -4191,10 +4204,11 @@ impl TaskSync {
             .as_ref()
             .filter(|entry| entry.files_complete && !entry.head_commit.is_empty())
             .map(|entry| entry.head_commit.clone());
-        let (head_commit, head_changed_dirs, previous_tracked_paths, previous_tracked_loaded) = if head_cache_matches {
-            let entry = previous
-                .as_ref()
-                .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "ownership 索引状态无效"))?;
+        let (head_commit, head_changed_dirs, previous_tracked_paths, previous_tracked_loaded) =
+            if head_cache_matches {
+                let entry = previous.as_ref().ok_or_else(|| {
+                    AgentError::new(code::INVALID_RESPONSE, "ownership 索引状态无效")
+                })?;
             (
                 entry.head_commit.clone(),
                 Some(HashSet::new()),
@@ -4671,18 +4685,15 @@ impl TaskSync {
     }
 
     async fn assert_binding_active(&self, binding: &AgentBinding) -> AgentResult<()> {
-        let config = self
-            .store
-            .read_config(false)
-            .await?
-            .ok_or_else(|| AgentError::new(code::CONFIG_MISSING, "Agent 配置缺失，请重新登录"))?;
+        let config =
+            self.store.read_config(false).await?.ok_or_else(|| {
+                AgentError::new(code::CONFIG_MISSING, "Agent 配置缺失，请重新登录")
+            })?;
         let current = config
             .bindings
             .iter()
             .find(|item| item.local_id == binding.local_id);
-        if current.is_some_and(|item| {
-            item.sync_status == "approved" && !item.detach_pending
-        }) {
+        if current.is_some_and(|item| item.sync_status == "approved" && !item.detach_pending) {
             Ok(())
         } else {
             protocol::err(code::BINDING_UNKNOWN, "本地任务空间关联已停用或正在解除")
@@ -4865,8 +4876,20 @@ impl TaskSync {
     async fn report_error(&self, task_space_id: &str, error: &AgentError) {
         let binding = self.bindings.lock().await.get(task_space_id).cloned();
         let message = protocol::safe_error_message(&error.to_string());
+        let task_dir = error
+            .details
+            .as_ref()
+            .and_then(|details| details.get("taskDir"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let server_code = error
+            .server_code
+            .as_deref()
+            .map(|code| format!(",\"serverCode\":\"{code}\""))
+            .unwrap_or_default();
         crate::logging::warn(&format!(
-            "任务空间同步失败 {{\"taskSpaceId\":\"{task_space_id}\",\"error\":\"{message}\"}}"
+            "任务空间同步失败 {{\"taskSpaceId\":\"{task_space_id}\",\"code\":\"{code}\",\"taskDir\":\"{task_dir}\"{server_code},\"error\":\"{message}\"}}",
+            code = error.code
         ));
         (self.emit)(task_sync_error_event(
             binding.as_ref(),
@@ -5016,8 +5039,7 @@ impl TaskSync {
             }
             loop {
                 match tokio::time::timeout(WATCH_DEBOUNCE, receiver.recv()).await {
-                    Ok(Some(event)) => {
-                        match event {
+                    Ok(Some(event)) => match event {
                             WatchEvent::TaskPath {
                                 task_space_id,
                                 relative_path,
@@ -5033,8 +5055,7 @@ impl TaskSync {
                             WatchEvent::GitChanged { task_space_id } => {
                                 git_changed.insert(task_space_id);
                             }
-                        }
-                    }
+                    },
                     Ok(None) => return,
                     Err(_) => break,
                 }
@@ -5252,6 +5273,10 @@ impl TaskSync {
         entry.insert(
             "conflictBlocked".into(),
             conflict_blocked_to_value(&cursor.conflict_blocked),
+        );
+        entry.insert(
+            "readonlyTaskDirs".into(),
+            readonly_task_dirs_to_value(&cursor.readonly_task_dirs),
         );
         entry.insert(
             "pendingRejected".into(),
@@ -5574,14 +5599,18 @@ impl TaskSync {
     async fn clear_conflict_blocked(
         &self,
         task_space_id: &str,
-        conflict_id: &str,
+        conflict_id: Option<&str>,
         task_dirs: &[String],
     ) -> AgentResult<()> {
         let cursor = self.read_cursor(task_space_id).await;
         let mut blocked = cursor.conflict_blocked.clone();
         let before = blocked.len();
         for task_dir in task_dirs {
-            if blocked.get(task_dir).map(String::as_str) == Some(conflict_id) {
+            let matched = match conflict_id {
+                Some(conflict_id) => blocked.get(task_dir).map(String::as_str) == Some(conflict_id),
+                None => true,
+            };
+            if matched {
                 blocked.remove(task_dir);
             }
         }
@@ -5596,6 +5625,376 @@ impl TaskSync {
             },
         )
         .await
+    }
+
+    /// 记录只读镜像目录，后续拉取不再把它的本地改动写回服务端。
+    async fn mark_readonly_dir(
+        &self,
+        task_space_id: &str,
+        task_dir: &str,
+        reason: &str,
+    ) -> AgentResult<()> {
+        if is_archive_task_dir(task_dir) || task_dir.is_empty() {
+            return Ok(());
+        }
+        let cursor = self.read_cursor(task_space_id).await;
+        let mut dirs = cursor.readonly_task_dirs.clone();
+        if dirs.get(task_dir).map(String::as_str) == Some(reason) {
+            return Ok(());
+        }
+        dirs.insert(task_dir.to_string(), reason.to_string());
+        self.write_cursor(
+            task_space_id,
+            CursorPatch {
+                readonly_task_dirs: Some(dirs),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// 服务端已归档的任务若本地还留着活跃副本，按内容一致性清理。
+    async fn cleanup_archived_controls(&self, binding: &AgentBinding, controls: &[TaskControl]) {
+        for control in controls {
+            if control.control_state() == TaskControlState::Archived {
+                self.cleanup_archived_residue(binding, &control.relative_dir)
+                    .await;
+            }
+        }
+    }
+
+    /// 清理不再成立的只读标记：本地目录消失，或任务分配人变化（可能已改派给本机用户）。
+    async fn prune_readonly_dirs(
+        &self,
+        binding: &AgentBinding,
+        controls: Option<&[TaskControl]>,
+    ) -> AgentResult<()> {
+        let cursor = self.read_cursor(&binding.task_space_id).await;
+        if cursor.readonly_task_dirs.is_empty() {
+            return Ok(());
+        }
+        let by_dir: HashMap<&str, &TaskControl> = controls
+            .unwrap_or_default()
+            .iter()
+            .map(|control| (control.relative_dir.as_str(), control))
+            .collect();
+        let mut dirs = cursor.readonly_task_dirs.clone();
+        let before = dirs.len();
+        for (task_dir, reason) in &cursor.readonly_task_dirs {
+            let reassigned = by_dir.get(task_dir.as_str()).is_some_and(|control| {
+                control.is_writable_local()
+                    && control.assignee_user_id.as_deref() != readonly_reason_assignee(reason)
+            });
+            if reassigned {
+                dirs.remove(task_dir);
+                continue;
+                }
+            match resolve_task_directory(binding, task_dir).await {
+                Ok(path) if tokio::fs::metadata(&path).await.is_ok() => {}
+                _ => {
+                    dirs.remove(task_dir);
+            }
+        }
+        }
+        if dirs.len() == before {
+            return Ok(());
+        }
+        self.write_cursor(
+            &binding.task_space_id,
+            CursorPatch {
+                readonly_task_dirs: Some(dirs),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// 处理 state=archived 控件时清理本地残留活跃副本：只有归档副本存在且内容一致才删除。
+    async fn cleanup_archived_residue(&self, binding: &AgentBinding, task_dir: &str) {
+        let Some(name) = task_dir.rsplit('/').next().filter(|name| !name.is_empty()) else {
+            return;
+        };
+        let Some(active) =
+            active_task_directory_from_relative(&format!("{ACTIVE_TASKS_ROOT}/{name}/task.json"))
+        else {
+            return;
+        };
+        let tasks_root = Path::new(&binding.repo_path).join(ACTIVE_TASKS_ROOT);
+        let Some(active_path) = protocol::resolve_task_dir_under(&tasks_root, &active) else {
+            return;
+        };
+        if tokio::fs::metadata(&active_path).await.is_err() {
+            return;
+        }
+        let copies = archived_task_copies(binding).await;
+        let Some(archive_dir) = copies.get(name) else {
+            crate::logging::warn(&format!(
+                "本地残留已归档任务副本 {active}：未找到归档副本，已跳过清理"
+            ));
+            return;
+        };
+        let Some(archive_path) = protocol::resolve_task_dir_under(&tasks_root, archive_dir) else {
+            return;
+        };
+        let identical = match (
+            task_directory_digest(&active_path).await,
+            task_directory_digest(&archive_path).await,
+        ) {
+            (Ok(active_digest), Ok(archive_digest)) => {
+                !active_digest.is_empty() && active_digest == archive_digest
+            }
+            _ => false,
+        };
+        if !identical {
+            crate::logging::warn(&format!(
+                "本地残留已归档任务副本 {active}：存在未同步改动，已跳过清理"
+            ));
+            return;
+        }
+        match self.remove_task_directory(binding, &active).await {
+            Ok(()) => crate::logging::warn(&format!("清理残留活跃副本 {active}")),
+            Err(error) => crate::logging::warn(&format!(
+                "清理残留活跃副本 {active} 失败：{}",
+                protocol::safe_error_message(&error.message)
+            )),
+        }
+    }
+
+    /// 下载服务端任务为本地只读副本，避免交叉任务空间无法同步。
+    pub(crate) async fn download_task(
+        &self,
+        task_space_id: &str,
+        task_id: &str,
+    ) -> AgentResult<Value> {
+        let binding = self.binding(task_space_id).await?;
+        let tasks = self
+            .api
+            .request_json(
+                Method::GET,
+                &format!("/api/agent/task-spaces/{task_space_id}/tasks"),
+                None,
+                Duration::from_secs(60),
+            )
+            .await?;
+        let task = tasks
+            .get("tasks")
+            .and_then(Value::as_array)
+            .and_then(|items| {
+                items
+                    .iter()
+                    .find(|item| item.get("taskId").and_then(Value::as_str) == Some(task_id))
+            })
+            .cloned()
+            .ok_or_else(|| {
+                AgentError::new(code::INVALID_RESPONSE, "服务端不存在该任务，可能已归档")
+            })?;
+        let task_dir = task
+            .get("taskDir")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if active_task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
+            != Some(task_dir.as_str())
+        {
+            return protocol::err(code::INVALID_RESPONSE, "任务目录无效或已由服务端 Git 归档");
+        }
+        let target = resolve_task_directory(&binding, &task_dir).await?;
+        if tokio::fs::metadata(&target).await.is_ok() {
+            return protocol::err(
+                code::INVALID_RESPONSE,
+                "本机已存在该任务目录，请先处理本地副本",
+            );
+        }
+        let directory = self
+            .api
+            .request_json_limited(
+                Method::GET,
+                &format!("/api/agent/task-spaces/{task_space_id}/tasks/{task_id}/files"),
+                None,
+                Duration::from_secs(120),
+                MAX_SNAPSHOT_RESPONSE_BYTES,
+            )
+            .await
+            .map_err(|error| with_task_dir(error, &task_dir))?;
+        let files = parse_directory_files(&directory, &task_dir)?;
+        if files.is_empty() {
+            return protocol::err(code::INVALID_RESPONSE, "服务端任务文件为空");
+        }
+        let file_count = files.len();
+        write_task_directory(
+            &binding,
+            &SnapshotGroup {
+                task_dir: task_dir.clone(),
+                archived: false,
+                archive_month: None,
+                files,
+                task_id: Some(task_id.to_string()),
+                task_branch: None,
+            },
+        )
+        .await?;
+        let assignee = self.control_assignee(task_space_id, &task_dir).await;
+        self.mark_readonly_dir(
+            task_space_id,
+            &task_dir,
+            &readonly_reason("DOWNLOADED", &assignee),
+        )
+        .await?;
+        Ok(json!({
+            "taskId": task_id,
+            "taskDir": task_dir,
+            "fileCount": file_count,
+        }))
+    }
+
+    async fn control_assignee(&self, task_space_id: &str, task_dir: &str) -> String {
+        self.ensure_task_control_loaded().await;
+        let state = self.task_control_state.lock().await;
+        let binding = self.bindings.lock().await.get(task_space_id).cloned();
+        let Some(binding) = binding else {
+            return String::new();
+        };
+        let assignee = state
+            .controls_for_binding(&binding.local_id, task_space_id)
+            .find(|(_, control)| control.relative_dir == task_dir)
+            .map(|(_, control)| control.assignee_user_id.clone().unwrap_or_default())
+            .unwrap_or_default();
+        assignee
+    }
+
+    /// 本机任务目录状态：已落盘、只读镜像、以及已归档但仍留在活跃目录的残留。
+    pub(crate) async fn local_task_state(&self, task_space_id: &str) -> AgentResult<Value> {
+        let binding = self.binding(task_space_id).await?;
+        let files = read_local_task_snapshot_files(Path::new(&binding.repo_path), None).await?;
+        let mut local_dirs: BTreeSet<String> = BTreeSet::new();
+        for file in &files {
+            if let Some(task_dir) = file
+                .get("path")
+                .and_then(Value::as_str)
+                .and_then(active_task_directory_from_relative)
+            {
+                local_dirs.insert(task_dir);
+            }
+        }
+        let cursor = self.read_cursor(task_space_id).await;
+        let copies = archived_task_copies(&binding).await;
+        let archived_residue: Vec<String> = local_dirs
+            .iter()
+            .filter(|task_dir| {
+                task_dir
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|name| copies.contains_key(name))
+            })
+            .cloned()
+            .collect();
+        Ok(json!({
+            "taskSpaceId": task_space_id,
+            "localDirs": local_dirs.into_iter().collect::<Vec<_>>(),
+            "readonlyDirs": cursor.readonly_task_dirs.into_keys().collect::<Vec<_>>(),
+            "archivedResidue": archived_residue,
+        }))
+    }
+
+    /// 重新露出仍然有效的待处理冲突；服务端已失效的去服务端收敛掉。
+    pub(crate) async fn reopen_conflicts(&self, task_space_id: &str) -> AgentResult<Option<Value>> {
+        let conflicts = self.fetch_conflicts(task_space_id).await?;
+        let mut event: Option<Value> = None;
+        // 服务端仍然认得这些目录上的冲突，阻塞标记必须留着。
+        let mut live_dirs: HashSet<String> = HashSet::new();
+        for conflict in &conflicts {
+            let Some(conflict_id) = conflict.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            let mut candidates: Vec<String> = conflict
+                .get("taskDir")
+                .and_then(Value::as_str)
+                .map(conflict_task_directories)
+                .into_iter()
+                .flat_map(|(local, server)| [local, server])
+                .flatten()
+                .filter(|task_dir| !is_archive_task_dir(task_dir))
+                .collect();
+            if let Some(items) = conflict.get("files").and_then(Value::as_array) {
+                for item in items {
+                    if let Some(task_dir) = item
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .and_then(active_task_directory_from_relative)
+                    {
+                        candidates.push(task_dir);
+                    }
+                }
+            }
+            candidates.sort();
+            candidates.dedup();
+            let mut alive: Option<String> = None;
+            for task_dir in &candidates {
+                match self.fetch_directory(task_space_id, task_dir).await {
+                    Ok(directory) => {
+                        if !parse_directory_files(&directory, task_dir)?.is_empty() {
+                            alive = Some(task_dir.clone());
+                            break;
+                        }
+                    }
+                    Err(error) if error.status == Some(404) || is_archived_task_error(&error) => {}
+                    Err(error) => return Err(with_task_dir(error, task_dir)),
+                }
+            }
+            if let Some(task_dir) = alive {
+                live_dirs.extend(candidates.iter().cloned());
+                if event.is_none() {
+                    event = Some(json!({
+                        "type": "task_file_conflict",
+                        "taskSpaceId": task_space_id,
+                        "conflict": {
+                            "conflictId": conflict_id,
+                            "taskId": conflict.get("taskId").cloned().unwrap_or(Value::Null),
+                            "taskTitle": conflict.get("taskTitle").cloned().unwrap_or_else(|| json!("任务")),
+                            "taskDir": task_dir,
+                            "files": conflict.get("files").cloned().unwrap_or_else(|| json!([])),
+                            "message": "任务文件已被其他成员修改",
+                            "suggestion": "先查看差异，再选择保留哪一份",
+                        },
+                    }));
+                }
+                continue;
+            }
+            if candidates.is_empty() {
+                continue;
+            }
+            if let Err(error) = self
+                .resolve_conflict(
+                    task_space_id,
+                    conflict_id,
+                    &json!({ "action": "use-server" }),
+                )
+                .await
+            {
+                crate::logging::warn(&format!(
+                    "清理失效冲突失败 {conflict_id}：{}",
+                    protocol::safe_error_message(&error.message)
+                ));
+                // 服务端还认它，先留着阻塞标记，等下一轮再收敛。
+                live_dirs.extend(candidates);
+                continue;
+            }
+            self.clear_conflict_blocked(task_space_id, Some(conflict_id), &candidates)
+                .await?;
+        }
+        // 服务端列表里已经没有的目录，本地不能再挂着「冲突待处理」。
+        let cursor = self.read_cursor(task_space_id).await;
+        let stale: Vec<String> = cursor
+            .conflict_blocked
+            .keys()
+            .filter(|task_dir| !live_dirs.contains(*task_dir))
+            .cloned()
+            .collect();
+        if !stale.is_empty() {
+            self.clear_conflict_blocked(task_space_id, None, &stale)
+                .await?;
+        }
+        Ok(event)
     }
 
     fn ownership_event(
@@ -6437,6 +6836,8 @@ impl TaskSync {
             self.merge_task_controls(binding, controls).await?;
             self.release_inactive_task_leases(Some(controls)).await;
             self.process_handoff_controls(binding, controls).await?;
+            self.cleanup_archived_controls(binding, controls).await;
+            self.prune_readonly_dirs(binding, Some(controls)).await?;
         }
 
         let snapshot_files = parse_snapshot_files(&snapshot)?;
@@ -6474,9 +6875,11 @@ impl TaskSync {
             .local_sync_state(binding, &cursor, &snapshot_baselines)
             .await?;
         let inactive_dirs = inactive_control_dirs(snapshot_controls.as_deref());
+        let readonly_dirs: HashSet<String> = cursor.readonly_task_dirs.keys().cloned().collect();
         let dirty_dirs: Vec<String> = dirty_dirs
             .into_iter()
             .filter(|task_dir| !inactive_dirs.contains(task_dir))
+            .filter(|task_dir| !readonly_dirs.contains(task_dir))
             .collect();
         let deferred: BTreeMap<String, BTreeMap<String, String>> = deferred
             .into_iter()
@@ -6608,7 +7011,23 @@ impl TaskSync {
             changed_dirs.extend(deleted_dirs.iter().cloned());
             let mut by_dir: Vec<SnapshotGroup> = Vec::new();
             for task_dir in changed_dirs {
-                let directory = self.fetch_directory(&task_space_id, &task_dir).await?;
+                let directory = match self.fetch_directory(&task_space_id, &task_dir).await {
+                    Ok(directory) => directory,
+                    Err(error) if error.status == Some(404) || is_archived_task_error(&error) => {
+                        continue
+                    }
+                    Err(error) if is_foreign_task_error(&error) => {
+                        let assignee = self.control_assignee(&task_space_id, &task_dir).await;
+                        self.mark_readonly_dir(
+                            &task_space_id,
+                            &task_dir,
+                            &readonly_reason("FOREIGN_OWNER", &assignee),
+                        )
+                        .await?;
+                        continue;
+                    }
+                    Err(error) => return Err(with_task_dir(error, &task_dir)),
+                };
                 let files = parse_directory_files(&directory, &task_dir)?;
                 by_dir.push(SnapshotGroup {
                     task_dir: task_dir.clone(),
@@ -6775,12 +7194,7 @@ impl TaskSync {
                         .local
                         .as_ref()
                         .map(file_state_from_group)
-                        .or_else(|| {
-                            difference
-                                .server
-                                .as_ref()
-                                .map(file_state_from_group)
-                        })
+                        .or_else(|| difference.server.as_ref().map(file_state_from_group))
                         .unwrap_or_default();
                     deferred.insert(task_dir, state);
                 }
@@ -7713,10 +8127,12 @@ impl TaskSync {
                 .map(|(_, control)| control.relative_dir.clone())
                 .collect()
         };
+        let readonly_dirs: HashSet<String> = cursor.readonly_task_dirs.keys().cloned().collect();
         let requested: HashSet<String> = task_dirs
             .iter()
             .filter(|task_dir| !is_archive_task_dir(task_dir))
             .filter(|task_dir| !inactive_control_dirs.contains(*task_dir))
+            .filter(|task_dir| !readonly_dirs.contains(*task_dir))
             .filter(|task_dir| !prehandled_dirs.contains(*task_dir))
             .cloned()
             .collect();
@@ -7800,17 +8216,39 @@ impl TaskSync {
         let mut entries: Vec<(String, Option<SnapshotGroup>, Vec<SnapshotFile>)> = Vec::new();
         let unique: HashSet<String> = allowed.into_iter().collect();
         let http_started = Instant::now();
+        let mut archived_dirs: Vec<String> = Vec::new();
         for task_dir in unique {
             let server_files = match self.fetch_directory(&task_space_id, &task_dir).await {
                 Ok(server) => parse_directory_files(&server, &task_dir)?,
                 Err(error) if error.status == Some(404) => Vec::new(),
-                Err(error) => return Err(error),
+                Err(error) if is_foreign_task_error(&error) => {
+                    let assignee = self.control_assignee(&task_space_id, &task_dir).await;
+                    self.mark_readonly_dir(
+                        &task_space_id,
+                        &task_dir,
+                        &readonly_reason("FOREIGN_OWNER", &assignee),
+                    )
+                    .await?;
+                    crate::logging::warn(&format!(
+                        "跳过他人任务目录（只读镜像）：{task_dir} {}",
+                        protocol::safe_error_message(&error.message)
+                    ));
+                    continue;
+                }
+                Err(error) if is_archived_task_error(&error) => {
+                    archived_dirs.push(task_dir.clone());
+                    continue;
+                }
+                Err(error) => return Err(with_task_dir(error, &task_dir)),
             };
             entries.push((
                 task_dir.clone(),
                 local_by_dir.get(&task_dir).cloned(),
                 server_files,
             ));
+        }
+        for task_dir in &archived_dirs {
+            self.cleanup_archived_residue(binding, task_dir).await;
         }
         sync_trace(
             &task_space_id,
@@ -8737,7 +9175,8 @@ impl TaskSync {
             Some(group) => {
                 let directory = self
                     .fetch_directory(&task_space_id, &group.task_dir)
-                    .await?;
+                    .await
+                    .map_err(|error| with_task_dir(error, &group.task_dir))?;
                 parse_directory_files(&directory, &group.task_dir)?
             }
             None => Vec::new(),
@@ -8853,7 +9292,7 @@ impl TaskSync {
                 .into_iter()
                 .flatten()
                 .collect();
-            self.clear_conflict_blocked(task_space_id, conflict_id, &task_dirs)
+            self.clear_conflict_blocked(task_space_id, Some(conflict_id), &task_dirs)
                 .await?;
             return Ok(resolved);
         }
@@ -8996,7 +9435,7 @@ impl TaskSync {
                 .into_iter()
                 .flatten()
                 .collect();
-            self.clear_conflict_blocked(task_space_id, conflict_id, &task_dirs)
+            self.clear_conflict_blocked(task_space_id, Some(conflict_id), &task_dirs)
                 .await?;
         }
         let mut payload = result;
@@ -9161,9 +9600,16 @@ impl TaskSync {
         }
         let mut server_files = Vec::new();
         for candidate in &candidates {
-            let directory = self
+            let directory = match self
                 .fetch_directory(&binding.task_space_id, candidate)
-                .await?;
+                .await
+            {
+                Ok(directory) => directory,
+                Err(error) if error.status == Some(404) || is_archived_task_error(&error) => {
+                    continue
+                }
+                Err(error) => return Err(with_task_dir(error, candidate)),
+            };
             let files = parse_directory_files(&directory, candidate)?;
             if !files.is_empty() {
                 server = Some(candidate.clone());
@@ -9203,6 +9649,7 @@ struct CursorPatch {
     deferred: Option<BTreeMap<String, BTreeMap<String, String>>>,
     ownership_pending: Option<BTreeMap<String, String>>,
     conflict_blocked: Option<BTreeMap<String, String>>,
+    readonly_task_dirs: Option<BTreeMap<String, String>>,
 }
 
 fn apply_cursor_patch(cursor: &mut Cursor, next: &CursorPatch) -> bool {
@@ -9237,6 +9684,9 @@ fn apply_cursor_patch(cursor: &mut Cursor, next: &CursorPatch) -> bool {
     }
     if let Some(conflict_blocked) = &next.conflict_blocked {
         cursor.conflict_blocked = conflict_blocked.clone();
+    }
+    if let Some(readonly_task_dirs) = &next.readonly_task_dirs {
+        cursor.readonly_task_dirs = readonly_task_dirs.clone();
     }
     *cursor != before
 }
@@ -9449,9 +9899,9 @@ fn parse_snapshot_controls(snapshot: &Value) -> AgentResult<Option<Vec<TaskContr
     let Some(values) = snapshot.get("controls") else {
         return Ok(None);
     };
-    let values = values.as_array().ok_or_else(|| {
-        AgentError::new(code::INVALID_RESPONSE, "快照 controls 必须是数组")
-    })?;
+    let values = values
+        .as_array()
+        .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "快照 controls 必须是数组"))?;
     values
         .iter()
         .map(TaskControl::from_control_value)
@@ -9476,9 +9926,8 @@ fn execution_task_keys_from_upload(
         let Some(content) = file.get("content").and_then(Value::as_str) else {
             continue;
         };
-        let document: Value = serde_json::from_str(content).map_err(|_| {
-            AgentError::new(code::INVALID_RESPONSE, "task.json 不是合法 JSON")
-        })?;
+        let document: Value = serde_json::from_str(content)
+            .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "task.json 不是合法 JSON"))?;
         let task_id = document
             .get("id")
             .and_then(Value::as_str)
@@ -9764,6 +10213,47 @@ fn conflict_blocked_to_value(blocked: &BTreeMap<String, String>) -> Value {
             .map(|(task_dir, conflict_id)| (task_dir.clone(), json!({ "conflictId": conflict_id })))
             .collect(),
     )
+}
+
+fn readonly_task_dirs_to_value(dirs: &BTreeMap<String, String>) -> Value {
+    Value::Object(
+        dirs.iter()
+            .map(|(task_dir, reason)| (task_dir.clone(), json!(reason)))
+            .collect(),
+    )
+}
+
+fn readonly_reason(kind: &str, assignee: &str) -> String {
+    if assignee.is_empty() {
+        kind.to_string()
+    } else {
+        format!("{kind}:{assignee}")
+    }
+}
+
+fn readonly_reason_assignee(reason: &str) -> Option<&str> {
+    reason.split_once(':').map(|(_, assignee)| assignee)
+}
+
+fn parse_readonly_task_dirs(value: &Value) -> BTreeMap<String, String> {
+    let mut dirs = BTreeMap::new();
+    let Some(object) = value.as_object() else {
+        return dirs;
+    };
+    for (task_dir, reason) in object {
+        if is_archive_task_dir(task_dir)
+            || task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
+                != Some(task_dir.as_str())
+        {
+            continue;
+        }
+        let reason = reason
+            .as_str()
+            .filter(|value| !value.is_empty() && value.len() <= 128)
+            .unwrap_or("FOREIGN_OWNER");
+        dirs.insert(task_dir.clone(), reason.to_string());
+    }
+    dirs
 }
 
 fn pending_rejected_to_value(rejected: &BTreeMap<String, PendingRejection>) -> Value {
@@ -10142,6 +10632,119 @@ async fn resolve_task_directory(
     Ok(target)
 }
 
+/// 扫描 `.trellis/tasks/archive/<month>/<name>`，返回任务名到归档目录的映射。
+async fn archived_task_copies(binding: &AgentBinding) -> BTreeMap<String, String> {
+    let root = Path::new(&binding.repo_path).join(ARCHIVE_TASKS_ROOT);
+    let mut copies = BTreeMap::new();
+    let mut months = match tokio::fs::read_dir(&root).await {
+        Ok(months) => months,
+        Err(_) => return copies,
+    };
+    let mut month_dirs: Vec<(String, PathBuf)> = Vec::new();
+    while let Ok(Some(entry)) = months.next_entry().await {
+        if !entry
+            .file_type()
+            .await
+            .map(|kind| kind.is_dir())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        month_dirs.push((
+            entry.file_name().to_string_lossy().to_string(),
+            entry.path(),
+        ));
+    }
+    for (month, path) in month_dirs {
+        let mut entries = match tokio::fs::read_dir(&path).await {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if !entry
+                .file_type()
+                .await
+                .map(|kind| kind.is_dir())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            copies.insert(
+                entry.file_name().to_string_lossy().to_string(),
+                format!(
+                    "{ARCHIVE_TASKS_ROOT}/{month}/{}",
+                    entry.file_name().to_string_lossy()
+                ),
+            );
+        }
+    }
+    copies
+}
+
+fn is_foreign_task_error(error: &AgentError) -> bool {
+    if matches!(
+        error.code.as_str(),
+        code::AUTH_REVOKED | code::DESKTOP_TOKEN_INVALID
+    ) {
+        return false;
+    }
+    matches!(
+        error.server_code.as_deref(),
+        Some("TASK_WRITE_FORBIDDEN") | Some("FORBIDDEN")
+    ) || error.status == Some(403)
+}
+
+fn is_archived_task_error(error: &AgentError) -> bool {
+    matches!(
+        error.server_code.as_deref(),
+        Some("TASK_ARCHIVED") | Some("ARCHIVE_SYNC_SERVER_MANAGED")
+    )
+}
+
+/// 目录内快照文件的内容摘要，用于比较活跃副本与归档副本是否一致。
+async fn task_directory_digest(root: &Path) -> AgentResult<BTreeMap<String, String>> {
+    let mut digest = BTreeMap::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let mut entries = match tokio::fs::read_dir(&directory).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(BTreeMap::new())
+            }
+            Err(error) => return Err(io_error(error)),
+        };
+        while let Some(entry) = entries.next_entry().await.map_err(io_error)? {
+            let path = entry.path();
+            let metadata = tokio::fs::symlink_metadata(&path).await.map_err(io_error)?;
+            if metadata.file_type().is_symlink() {
+                return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接");
+            }
+            if metadata.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !metadata.is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if !SNAPSHOT_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件路径越界"))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let bytes = tokio::fs::read(&path).await.map_err(io_error)?;
+            let text = String::from_utf8(bytes).map_err(|_| {
+                AgentError::new(code::INVALID_RESPONSE, "任务文件不是有效的 UTF-8 文本")
+            })?;
+            digest.insert(relative, snapshot_sha256(&normalize_snapshot_text(&text)));
+        }
+    }
+    Ok(digest)
+}
+
 async fn write_task_directory(binding: &AgentBinding, group: &SnapshotGroup) -> AgentResult<()> {
     if group.archived
         || is_archive_task_dir(&group.task_dir)
@@ -10440,9 +11043,7 @@ pub async fn read_local_task_snapshot_files(
             {
                 continue
             }
-            Ok(_) => {
-                return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接")
-            }
+            Ok(_) => return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接"),
             Err(error) => return Err(io_error(error)),
         }
         let mut entries = tokio::fs::read_dir(&directory).await.map_err(io_error)?;
@@ -12182,16 +12783,16 @@ mod tests {
             test_task_sync_fixture("trellis-ownership-projection-head").await;
         let repo = Path::new(&binding.repo_path);
         init_git_repo(repo);
-        write_task_json(repo, ".trellis/tasks/baseline-task", "baseline-task", "main").await;
-        run_git(repo, &["add", ".trellis/tasks"]);
-        run_git(repo, &["commit", "--no-verify", "-m", "baseline task"]);
         write_task_json(
             repo,
-            ".trellis/tasks/merged-later",
-            "merged-later",
-            "dev1",
+            ".trellis/tasks/baseline-task",
+            "baseline-task",
+            "main",
         )
         .await;
+        run_git(repo, &["add", ".trellis/tasks"]);
+        run_git(repo, &["commit", "--no-verify", "-m", "baseline task"]);
+        write_task_json(repo, ".trellis/tasks/merged-later", "merged-later", "dev1").await;
 
         binding.baseline_branch = Some("main".to_string());
         store
@@ -15052,6 +15653,146 @@ mod tests {
             .await
             .expect("changed file");
         assert!(!sync.suppressed_event(&binding, relative).await);
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[test]
+    fn with_task_dir_injects_and_keeps_existing_directory() {
+        let error = with_task_dir(
+            AgentError::new(code::HTTP_ERROR, "写入失败"),
+            ".trellis/tasks/task-a",
+        );
+        assert_eq!(
+            error
+                .details
+                .as_ref()
+                .and_then(|details| details.get("taskDir")),
+            Some(&json!(".trellis/tasks/task-a"))
+        );
+
+        let mut existing = AgentError::new(code::HTTP_ERROR, "写入失败");
+        existing.details = Some(json!({ "taskDir": ".trellis/tasks/task-b" }));
+        let kept = with_task_dir(existing, ".trellis/tasks/task-a");
+        assert_eq!(
+            kept.details
+                .as_ref()
+                .and_then(|details| details.get("taskDir")),
+            Some(&json!(".trellis/tasks/task-b"))
+        );
+    }
+
+    #[test]
+    fn error_event_carries_error_and_server_codes() {
+        let mut error = AgentError::new(code::HTTP_ERROR, "失败");
+        error.server_code = Some("TASK_ARCHIVED".into());
+        let event = task_sync_error_event(None, "space-1", &error, "失败".into());
+        assert_eq!(event["errorCode"], json!(code::HTTP_ERROR));
+        assert_eq!(event["serverCode"], json!("TASK_ARCHIVED"));
+
+        let event = task_sync_error_event(
+            None,
+            "space-1",
+            &AgentError::new(code::HTTP_ERROR, "失败"),
+            "失败".into(),
+        );
+        assert!(event.get("serverCode").is_none());
+    }
+
+    #[test]
+    fn readonly_dirs_round_trip_and_drop_archive_entries() {
+        let mut dirs = BTreeMap::new();
+        dirs.insert(
+            ".trellis/tasks/task-a".to_string(),
+            readonly_reason("FOREIGN_OWNER", "user-1"),
+        );
+        dirs.insert(
+            ".trellis/tasks/archive/2026-11/task-b".to_string(),
+            readonly_reason("DOWNLOADED", "user-2"),
+        );
+        let parsed = parse_readonly_task_dirs(&readonly_task_dirs_to_value(&dirs));
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(
+            parsed.get(".trellis/tasks/task-a").map(String::as_str),
+            Some("FOREIGN_OWNER:user-1")
+        );
+        assert_eq!(
+            readonly_reason_assignee("FOREIGN_OWNER:user-1"),
+            Some("user-1")
+        );
+        assert_eq!(readonly_reason_assignee("DOWNLOADED"), None);
+
+        let cursor = cursor_from_entry(&json!({
+            "readonlyTaskDirs": { ".trellis/tasks/task-c": "DOWNLOADED" },
+        }));
+        assert_eq!(
+            cursor.readonly_task_dirs.get(".trellis/tasks/task-c"),
+            Some(&"DOWNLOADED".to_string())
+        );
+
+        let mut patch = CursorPatch::default();
+        patch.readonly_task_dirs = Some(BTreeMap::new());
+        let mut cursor = cursor.clone();
+        assert!(apply_cursor_patch(&mut cursor, &patch));
+        assert!(cursor.readonly_task_dirs.is_empty());
+    }
+
+    #[test]
+    fn write_forbidden_and_archived_errors_are_classified_apart() {
+        let mut forbidden = AgentError::new(code::HTTP_ERROR, "无权限");
+        forbidden.status = Some(403);
+        assert!(is_foreign_task_error(&forbidden));
+        assert!(!is_archived_task_error(&forbidden));
+
+        let mut revoked = AgentError::new(code::AUTH_REVOKED, "登录失效");
+        revoked.status = Some(403);
+        assert!(!is_foreign_task_error(&revoked));
+
+        let mut archived = AgentError::new(code::HTTP_ERROR, "已归档");
+        archived.server_code = Some("TASK_ARCHIVED".into());
+        assert!(is_archived_task_error(&archived));
+        assert!(!is_foreign_task_error(&archived));
+
+        let mut managed = AgentError::new(code::HTTP_ERROR, "归档由服务端管理");
+        managed.server_code = Some("ARCHIVE_SYNC_SERVER_MANAGED".into());
+        assert!(is_archived_task_error(&managed));
+
+        let mut other = AgentError::new(code::HTTP_ERROR, "服务异常");
+        other.status = Some(500);
+        assert!(!is_foreign_task_error(&other));
+        assert!(!is_archived_task_error(&other));
+    }
+
+    #[tokio::test]
+    async fn directory_digest_compares_copies_by_content() {
+        let root = std::env::temp_dir().join(format!("digest-{}", uuid::Uuid::new_v4()));
+        let active = root.join("active");
+        let archived = root.join("archived");
+        tokio::fs::create_dir_all(&active).await.expect("active");
+        tokio::fs::create_dir_all(&archived)
+            .await
+            .expect("archived");
+        tokio::fs::write(active.join("task.json"), "{\"id\":\"a\"}")
+            .await
+            .expect("write");
+        tokio::fs::write(archived.join("task.json"), "{\"id\":\"a\"}")
+            .await
+            .expect("write");
+        assert_eq!(
+            task_directory_digest(&active).await.expect("active digest"),
+            task_directory_digest(&archived)
+                .await
+                .expect("archived digest")
+        );
+
+        tokio::fs::write(archived.join("prd.md"), "# 差异")
+            .await
+            .expect("write");
+        assert_ne!(
+            task_directory_digest(&active).await.expect("active digest"),
+            task_directory_digest(&archived)
+                .await
+                .expect("archived digest")
+        );
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 }

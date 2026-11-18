@@ -369,6 +369,54 @@ export function createTaskSnapshotService({
     }
   }
 
+  function listTaskSummaries(agent, taskSpaceId) {
+    bindingContext(agent, taskSpaceId)
+    taskControl?.assertAgentAccess(agent, taskSpaceId)
+    return db
+      .prepare(`
+      SELECT task_id, relative_dir, title, stage, assignee_user_id, created_by_user_id, updated_at
+      FROM sync_task
+      WHERE task_space_id = ? AND archived = 0
+      ORDER BY updated_at DESC
+    `)
+      .all(taskSpaceId)
+      .map((row) => ({
+        taskId: row.task_id,
+        taskDir: row.relative_dir,
+        title: row.title,
+        stage: row.stage,
+        assigneeUserId: row.assignee_user_id,
+        createdByUserId: row.created_by_user_id,
+        updatedAt: row.updated_at,
+      }))
+  }
+
+  function taskFilesById(agent, taskSpaceId, taskId) {
+    bindingContext(agent, taskSpaceId)
+    taskControl?.assertAgentAccess(agent, taskSpaceId)
+    const row = db
+      .prepare(`
+      SELECT task_id, relative_dir FROM sync_task
+      WHERE task_space_id = ? AND task_id = ? AND archived = 0
+      LIMIT 1
+    `)
+      .get(taskSpaceId, String(taskId || ''))
+    if (!row) throw teamError(404, ERROR_CODES.NOT_FOUND, '任务不存在')
+    const files = db
+      .prepare(`
+      SELECT relative_path, sha256, content_text FROM sync_task_space_file
+      WHERE task_space_id = ? AND task_dir = ? AND deleted = 0
+      ORDER BY relative_path
+    `)
+      .all(taskSpaceId, row.relative_dir)
+      .map((file) => ({
+        path: file.relative_path,
+        sha256: file.sha256,
+        content: file.content_text || '',
+      }))
+    return { taskId: row.task_id, taskDir: row.relative_dir, files }
+  }
+
   function preflight(agent, taskSpaceId, input = {}) {
     bindingContext(agent, taskSpaceId)
     const allFileGroups = { maxFiles: Number.POSITIVE_INFINITY, maxBytes: Number.POSITIVE_INFINITY }
@@ -1212,6 +1260,11 @@ export function createTaskSnapshotService({
                ) AS conflict_rank
         FROM sync_conflict c
         WHERE c.task_space_id = ? AND c.status = 'pending'
+          AND NOT EXISTS (
+            SELECT 1 FROM sync_task t
+            WHERE t.task_space_id = c.task_space_id AND t.archived = 1
+              AND (t.task_id = c.task_id OR t.relative_dir = c.task_dir)
+          )
       )
       SELECT * FROM ranked
       WHERE conflict_rank = 1
@@ -1394,6 +1447,8 @@ export function createTaskSnapshotService({
   return {
     snapshot,
     directorySnapshot,
+    listTaskSummaries,
+    taskFilesById,
     preflight,
     taskOwnership,
     applyChanges,

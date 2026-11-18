@@ -68,9 +68,18 @@ type ControlEvent =
       branchName?: string
       taskDir?: string
       message?: string
+      errorCode?: string
+      serverCode?: string
     }
 type ReviewOption = { value: string; label: string }
 type Action = { label: string; action: string; variant?: 'default' | 'destructive' | 'outline' }
+
+function errorCodeLabel(event: { errorCode?: string; serverCode?: string }): string {
+  const code = event.errorCode?.trim() || ''
+  const serverCode = event.serverCode?.trim() || ''
+  if (code && serverCode) return `${code} (${serverCode})`
+  return code || serverCode
+}
 
 function formatSource(changedBy: ChangedBy | string | null | undefined): string {
   if (!changedBy || typeof changedBy === 'string') return ''
@@ -779,6 +788,12 @@ export function LiveSyncControlDialog() {
                 <>
                   <dt className="text-muted-foreground">任务目录</dt>
                   <dd className="break-all text-muted-foreground">{event.taskDir}</dd>
+                </>
+              ) : null}
+              {event.errorCode?.trim() || event.serverCode?.trim() ? (
+                <>
+                  <dt className="text-muted-foreground">错误码</dt>
+                  <dd className="break-all text-muted-foreground">{errorCodeLabel(event)}</dd>
                 </>
               ) : null}
             </dl>

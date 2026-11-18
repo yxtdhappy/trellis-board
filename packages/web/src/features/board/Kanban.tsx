@@ -2,7 +2,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { laneTone } from './tone.ts'
 import type { BoardTask } from './task-view.ts'
 import { laneForTask, nextStage, STAGE_LANES, taskProgress } from './task-view.ts'
-import { CopyTaskNameButton, TaskCard } from './TaskCard.tsx'
+import { CopyTaskNameButton, TaskCard, type TaskLocalState } from './TaskCard.tsx'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
 import { cn } from '@/lib/utils'
 
@@ -10,9 +10,11 @@ type KanbanProps = {
   groups: { key: string; parent: BoardTask; members: BoardTask[] }[]
   onOpen: (task: BoardTask) => void
   onEditPlan: (task: BoardTask) => void
+  localStateFor?: (task: BoardTask) => TaskLocalState | undefined
+  onDownload?: (task: BoardTask) => void
 }
 
-export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
+export function Kanban({ groups, onOpen, onEditPlan, localStateFor, onDownload }: KanbanProps) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-baseline gap-2">
@@ -68,6 +70,8 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
                             task={group.parent}
                             onOpen={onOpen}
                             onEditPlan={onEditPlan}
+                            localState={localStateFor?.(group.parent)}
+                            onDownload={onDownload}
                           />
                         )
                       }
@@ -88,7 +92,13 @@ export function Kanban({ groups, onOpen, onEditPlan }: KanbanProps) {
                             </span>
                             <span>{children.length} 个子任务</span>
                           </div>
-                          <TaskCard task={group.parent} onOpen={onOpen} onEditPlan={onEditPlan} />
+                          <TaskCard
+                            task={group.parent}
+                            onOpen={onOpen}
+                            onEditPlan={onEditPlan}
+                            localState={localStateFor?.(group.parent)}
+                            onDownload={onDownload}
+                          />
                           {children.length ? (
                             <div className="flex flex-col gap-0.5 pl-1">
                               <p className="px-1 text-2xs text-muted-foreground">子任务</p>

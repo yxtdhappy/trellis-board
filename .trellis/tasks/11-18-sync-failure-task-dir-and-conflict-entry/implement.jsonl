@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "同步/拉取/控制事件的既有契约与不变量，改动 task_sync 拉取与上传循环前必读"}
+{"file": ".trellis/spec/backend/task-ownership-and-conflict-idempotency.md", "reason": "conflictBlocked/ownershipPending 的收敛规则、冲突处理动作语义，本任务的核心约束"}
+{"file": ".trellis/spec/backend/desktop-task-path-resolution.md", "reason": "任务目录解析与归档路径判定（active_task_directory_from_relative / is_archive_task_dir）"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "agent 运行时、命令注册与错误上报通道"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "新增 tauri 命令的命名、参数与注册规范"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "弹窗/项目栏的状态渲染与刷新约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "服务端与 Rust 改动的最小化与测试要求"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端组件的样式与可访问性检查项"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层改动（桌面命令 / 前端 / 服务端）需同步评估的影响面"}

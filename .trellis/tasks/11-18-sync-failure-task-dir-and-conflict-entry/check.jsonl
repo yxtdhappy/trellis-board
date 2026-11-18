@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/task-ownership-and-conflict-idempotency.md", "reason": "检查冲突与归属状态是否在同一游标锁内收敛、无永久残留"}
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "检查拉取/上传链路是否仍满足 revision、baseline、幂等约束"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查服务端/Rust 改动范围、错误语义与测试覆盖"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查弹窗与项目栏改动的样式与可访问性"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "检查新命令参数、错误返回与注册完整性"}

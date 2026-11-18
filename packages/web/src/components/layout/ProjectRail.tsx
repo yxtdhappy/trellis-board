@@ -250,7 +250,10 @@ function deferredSyncErrorMessage(error: unknown): string {
   return message.trim() || '本地待同步任务补传失败'
 }
 
-function projectAssociationView(association: LocalAssociation | undefined): ProjectAssociationView {
+function projectAssociationView(
+  association: LocalAssociation | undefined,
+  omitConflict = false,
+): ProjectAssociationView {
   if (!association) {
     return {
       label: '未关联 · 关联本地仓库',
@@ -301,7 +304,7 @@ function projectAssociationView(association: LocalAssociation | undefined): Proj
   }
   const ownership = associationOwnershipCounts(association)
   const taskState = associationTaskStateCounts(association)
-  if (association.liveSyncStatus !== 'error' && taskState.conflictCount > 0) {
+  if (!omitConflict && association.liveSyncStatus !== 'error' && taskState.conflictCount > 0) {
     return {
       label: `已关联 · ${taskState.conflictCount} 个冲突待处理`,
       detail:
@@ -681,6 +684,16 @@ export function ProjectRail({
     }
   }
 
+  async function openConflicts(association: LocalAssociation) {
+    if (!invoke) return
+    try {
+      const shown = await invoke('live_conflicts_show', { taskSpaceId: association.taskSpaceId })
+      if (shown !== true) toast.info('没有待处理的任务冲突')
+    } catch (error) {
+      toast.error(associationErrorMessage(error))
+    }
+  }
+
   const syncingAssociations = [...associations.values()].filter(
     (association) =>
       association.status === 'approved' &&
@@ -760,6 +773,13 @@ export function ProjectRail({
         const pausedBranchCount = countProjectPausedBranches(project, associations)
         const showPartialPause =
           !selectedTaskSpace && taskSpaces.length > 1 && pausedBranchCount > 0
+        const projectConflictCount = projectAssociation
+          ? associationTaskStateCounts(projectAssociation).conflictCount
+          : 0
+        const conflictAssociation =
+          invoke && projectConflictCount > 0 && projectAssociation?.status === 'approved'
+            ? projectAssociation
+            : undefined
         const view = invoke
           ? showPartialPause
             ? {
@@ -768,7 +788,7 @@ export function ProjectRail({
                 dotClassName: 'bg-warning',
                 textClassName: 'text-warning',
               }
-            : projectAssociationView(projectAssociation)
+            : projectAssociationView(projectAssociation, projectConflictCount > 0)
           : null
         const activeView = invoke ? projectAssociationView(activeAssociation) : null
         const hasListenerSummary = taskSpaces.some((taskSpace) => projectListenerView(taskSpace))
@@ -856,6 +876,27 @@ export function ProjectRail({
                 )
               ) : null}
             </div>
+            {conflictAssociation ? (
+              <button
+                type="button"
+                className="ml-5 mt-0.5 flex min-w-0 items-center gap-1.5 rounded-md border border-destructive/35 bg-destructive/10 px-2 py-1 text-left text-2xs text-destructive hover:bg-destructive/15"
+                aria-label={`处理 ${conflictAssociation.branchName} 的 ${projectConflictCount} 个冲突`}
+                title={
+                  conflictAssociation.conflictPendingTaskDirs
+                    .map((taskDir) => taskDir.split('/').at(-1))
+                    .join('、') || conflictAssociation.branchName
+                }
+                onClick={() => void openConflicts(conflictAssociation)}
+              >
+                <span
+                  className="size-1.5 shrink-0 rounded-full bg-destructive"
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1 truncate">
+                  已关联 · {projectConflictCount} 个冲突待处理 · 点击处理
+                </span>
+              </button>
+            ) : null}
             {current === project.id ? (
               <button
                 type="button"
