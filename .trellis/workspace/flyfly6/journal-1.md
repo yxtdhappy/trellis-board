@@ -1152,3 +1152,40 @@ task_sync.rs 15798 行拆为根 394 行 + 17 个职责子模块 + tests/ 7 文�
 ### Next Steps
 
 - 把全部 Rust 内联测试统一外移（23 文件），并把文件行数上限写进 spec
+
+
+## Session 35: Rust 内联测试外移与 env 模块拆分
+<!-- trellis-session: v=2 fp=3a99bb22d20ba35c -->
+
+**Date**: 2026-11-18
+**Task**: Rust 内联测试外移与 env 模块拆分
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+23 个 Rust 文件的内联 mod tests 外移到相邻 foo/tests.rs，agent/env.rs 拆为根+probe+install+tests，并把行尾与超限守卫写进 spec/CI。
+
+### Main Changes
+
+- 23 个 src/**/*.rs 的 mod tests 外移到相邻 foo/tests.rs（main.rs 用 #[path]，credential.rs 保留 windows 属性）
+- agent/env.rs 1414 行拆为根 312 + env/probe.rs 469 + env/install.rs 643 + env/tests.rs 225，外部 use 路径零改动
+- spec desktop 场景改为「Rust 模块的目录化拆分与测试外移」并新增增量守卫，spec guides 记录行尾约定
+- Trellis 脚本写文件补 newline，CI node-tests 增加 LF 守门
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7a70ac0` | fix(ci): 统一 LF 行尾并加 CI 守门 |
+| `c2d48bc` | refactor(desktop): 外移内联测试并拆分 env 模块 |
+
+### Testing
+
+- [OK] cargo test --all-targets: 232 passed / 0 failed（与基线一致）
+- [OK] cargo check --all-targets: 6 条 warning，逐条与基线相同
+- [OK] rg '^mod tests \{' packages/desktop/src-tauri/src 无输出；23 个源文件与测试文件内容多重集等价校验通过
+
+### Status
+
+[OK] **Completed**
