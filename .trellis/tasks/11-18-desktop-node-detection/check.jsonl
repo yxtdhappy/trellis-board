@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "验收时核对探测顺序与配置契约未漂移"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "验收 command/permission/capability 三处一致"}
+{"file": ".trellis/tasks/11-18-desktop-node-detection/design.md", "reason": "对照设计中的测试矩阵与回滚点"}

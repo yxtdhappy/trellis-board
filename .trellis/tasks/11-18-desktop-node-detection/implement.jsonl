@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范总索引，定位环境门与运行时条款"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "环境门查找顺序、client.json schema 3、禁止 sidecar 的硬约束"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "新增 Tauri 命令的注册、权限与 capability 契约"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "LoginApp 改动的 oxfmt/oxlint/tsc 闸门"}
