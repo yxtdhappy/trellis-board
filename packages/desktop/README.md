@@ -14,6 +14,9 @@ Tauri v2 单进程客户端：Agent（心跳、SSE 事件、任务空间同步�
   `%LOCALAPPDATA%\TrellisBoard\data\runtime\node` 与 `%LOCALAPPDATA%\TrellisBoard\data\npm-global`，
   Python 缺失时静默安装官方 CPython 3.12.8 到当前用户目录
 - 分发方式：解压即用的 Windows x64 绿色 ZIP（包内只有一个 EXE），不提供安装包
+- 生产包查看页面调试：`tauri` 依赖启用 `devtools` 特性，release 构建同样打开 WebView2 调试器
+  （`AreDevToolsEnabled`），右键页面即可从上下文菜单打开「检查」；删掉该特性后 wry 在 release 里把它
+  强制设为 false，右键菜单就没有这一项
 
 ## 登录与单 Agent
 
