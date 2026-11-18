@@ -76,6 +76,13 @@ Web 创建/改派
 
 修改路径格式时，同时检查 [packages/server/config.js](../../../packages/server/config.js)、[packages/server/repositories.js](../../../packages/server/repositories.js)、[packages/server/loader.js](../../../packages/server/loader.js)、[packages/server/watcher.js](../../../packages/server/watcher.js)、[packages/server/actions.js](../../../packages/server/actions.js) 和 [public/app.js](../../../public/app.js)。
 
+### Team 任务空间快照与归档
+
+- 任务身份是**目录名**：`task.json.id` 是 slug，跨日期可重名；`${MM-DD}-${slug}` 目录在创建时保证当前与归档中唯一。跨日期对位任务一律按目录名，不按 `task.json.id`，也不按 `sync_archive_file.task_id`（它只在 `task.json` 行非空）。
+- `sync_task_space_file` 只承载活跃目录行，归档目录行只写 `sync_archive_file`。归档 Git 同步必须调用 `packages/server/team/task-snapshot-service.js` 的 `purgeArchivedTaskFiles()`，把同目录名的活跃行软删除（`deleted=1`、`content_text=NULL`、`sha256=snapshotSha256('')`）并递增 `sync_task_space.revision`；否则任何新绑定在 safe 首同步都会把归档任务重新落盘成活跃任务。
+- Agent 不能推送已归档目录的活跃文件（409 `ARCHIVE_SYNC_SERVER_MANAGED`）；纯 `deleted:true` 批次仍放行，用于清理残留。
+- 读取侧（`fileRows`、`preflight`、索引 `readFileMetadata`）只按 `.trellis/tasks/archive/` 路径前缀过滤，不反查归档表，所以写入侧的不变量是唯一防线。
+
 ### 列表与详情
 
 `GET /api/board` 返回列表投影，`toTaskListItem()` 明确挑选字段并移除产物正文；`projectBoardExecution()` 再批量叠加轻量计划摘要、注意力原因和执行指标摘要，不向列表返回事件正文。列表响应不得包含 `artifacts`、`execution.events` 或 `execution.history`。[public/app.js](../../../public/app.js) 点击任务后再调用 `/api/task` 获取完整产物、最近 1000 条事件、撤销状态和完整指标。

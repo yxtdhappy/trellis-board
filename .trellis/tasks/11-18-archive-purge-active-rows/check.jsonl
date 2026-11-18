@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "验证基线：Node 内置测试是唯一自动验证入口"}
+{"file": ".trellis/tasks/11-18-archive-purge-active-rows/research/archive-resurrection-trace.md", "reason": "复现要点与自愈路径断言"}

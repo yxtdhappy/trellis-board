@@ -5,7 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { openDatabase } from '../database.js'
 import { createTaskSnapshotBackupService } from '../team/task-snapshot-backup.js'
-import { createTaskSnapshotService } from '../team/task-snapshot-service.js'
+import { createTaskSnapshotService, purgeArchivedTaskFiles } from '../team/task-snapshot-service.js'
 import { createTaskSpaceService } from '../team/task-space-service.js'
 import {
   ARCHIVE_SYNC_SERVER_MANAGED,
@@ -1107,6 +1107,143 @@ test('250 个文件的单任务目录可通过 preflight 和覆盖冲突处理',
       db.prepare('SELECT status FROM sync_conflict WHERE id = ?').get(conflict.conflictId).status,
       'resolved',
     )
+  } finally {
+    db.close()
+  }
+})
+
+function insertArchiveRow(db, taskSpaceId, archiveDir, content, taskId = 'unrelated-slug') {
+  db.prepare(`
+    INSERT INTO sync_archive_file(
+      id, task_space_id, relative_path, blob_oid, sha256, content_text,
+      task_id, task_dir, source_head, updated_at
+    ) VALUES (?, ?, ?, 'blob', ?, ?, ?, ?, 'head', ?)
+  `).run(
+    `archive-${archiveDir.replaceAll('/', '-')}`,
+    taskSpaceId,
+    `${archiveDir}/task.json`,
+    snapshotSha256(content),
+    content,
+    taskId,
+    archiveDir,
+    new Date().toISOString(),
+  )
+}
+
+test('归档同步按目录名清理残留活跃行并下发墓碑', () => {
+  const { db, snapshots, agentA, taskSpaceId } = setup()
+  const archiveDir = '.trellis/tasks/archive/2026-11/11-10-demo'
+  try {
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-purge-1',
+      clientSequence: 1,
+      files: batch('demo', '示例'),
+    })
+    // task_id 故意与活跃行不同：匹配必须走目录名。
+    insertArchiveRow(
+      db,
+      taskSpaceId,
+      archiveDir,
+      JSON.stringify({ id: 'demo', title: '示例', branch: 'main' }),
+    )
+
+    const purged = purgeArchivedTaskFiles(db, taskSpaceId)
+    assert.deepEqual(purged, { purged: 2, revision: 2 })
+    assert.equal(
+      db.prepare('SELECT revision FROM sync_task_space WHERE id = ?').get(taskSpaceId).revision,
+      2,
+    )
+    const rows = db
+      .prepare(
+        'SELECT deleted, content_text, sha256 FROM sync_task_space_file WHERE task_space_id = ? ORDER BY relative_path',
+      )
+      .all(taskSpaceId)
+    assert.deepEqual(
+      rows.map((row) => [row.deleted, row.content_text, row.sha256]),
+      [
+        [1, null, snapshotSha256('')],
+        [1, null, snapshotSha256('')],
+      ],
+    )
+    const audits = db
+      .prepare(
+        "SELECT relative_path, operation, new_sha256 FROM sync_file_audit WHERE operation = 'delete' ORDER BY relative_path",
+      )
+      .all()
+    assert.deepEqual(
+      audits.map((row) => [row.relative_path, row.new_sha256]),
+      [
+        ['.trellis/tasks/11-10-demo/prd.md', null],
+        ['.trellis/tasks/11-10-demo/task.json', null],
+      ],
+    )
+    assert.deepEqual(snapshots.snapshot(agentA, taskSpaceId).files, [])
+    // 客户端本地没有副本时也不再被判为「仅服务端」，避免又被写回本地。
+    assert.deepEqual(snapshots.preflight(agentA, taskSpaceId, { files: [] }).tasks, [])
+    const incremental = snapshots.snapshot(agentA, taskSpaceId, { afterRevision: 1 })
+    assert.deepEqual(
+      incremental.files.map((file) => [file.path, file.deleted]),
+      [
+        ['.trellis/tasks/11-10-demo/prd.md', true],
+        ['.trellis/tasks/11-10-demo/task.json', true],
+      ],
+    )
+    assert.equal(purgeArchivedTaskFiles(db, taskSpaceId).purged, 0)
+    assert.equal(
+      db.prepare('SELECT revision FROM sync_task_space WHERE id = ?').get(taskSpaceId).revision,
+      2,
+    )
+    // 归档行目录名与活跃行不同时不得误清。
+    insertArchiveRow(db, taskSpaceId, '.trellis/tasks/archive/2026-11/11-11-other', '{}')
+    assert.deepEqual(purgeArchivedTaskFiles(db, taskSpaceId), { purged: 0, revision: 2 })
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS count FROM sync_file_audit WHERE operation = 'delete'").get()
+        .count,
+      2,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('归档任务拒绝活跃上传但允许删除', () => {
+  const { db, snapshots, agentA, taskSpaceId } = setup()
+  const taskDir = '.trellis/tasks/11-10-demo'
+  try {
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-guard-1',
+      clientSequence: 1,
+      files: batch('demo', '示例'),
+    })
+    insertArchiveRow(
+      db,
+      taskSpaceId,
+      '.trellis/tasks/archive/2026-11/11-10-demo',
+      JSON.stringify({ id: 'demo', title: '示例', branch: 'main' }),
+    )
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'batch-guard-reject',
+          clientSequence: 2,
+          files: batch('demo', '示例'),
+        }),
+      (error) => error.status === 409 && error.code === ARCHIVE_SYNC_SERVER_MANAGED,
+    )
+    const uploaded = snapshots.snapshot(agentA, taskSpaceId).files
+    const removed = snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-guard-delete',
+      clientSequence: 2,
+      files: uploaded.map((file) => ({
+        path: file.path,
+        content: '',
+        sha256: snapshotSha256(''),
+        baseSha256: file.sha256,
+        deleted: true,
+      })),
+    })
+    assert.equal(removed.revision, 2)
+    assert.equal(snapshots.directorySnapshot(agentA, taskSpaceId, taskDir).files.length, 0)
   } finally {
     db.close()
   }

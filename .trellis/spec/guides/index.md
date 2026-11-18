@@ -9,6 +9,7 @@
 | 修改 13 个流程阶段、阶段推导或人工阶段 | [跨层契约](./cross-layer-thinking-guide.md) |
 | 修改 `/api/*` 请求或响应、列表与详情字段 | [跨层契约](./cross-layer-thinking-guide.md) |
 | 修改 Team taskSpace、tasks-only 快照、Agent 命令或 Board SSE | [跨层契约](./cross-layer-thinking-guide.md) |
+| 修改归档同步、`sync_task_space_file` 或 `sync_archive_file` | [跨层契约](./cross-layer-thinking-guide.md) |
 | 修改路径规范化、`taskKey`、白名单仓库或写操作 | [跨层契约](./cross-layer-thinking-guide.md) |
 | 修改桌面 Tauri 命令、远程 capability、窗口导航或本地登录页跳转 | [桌面 Tauri 命令与导航](../desktop/tauri-commands/index.md) |
 | 新增常量、解析函数、校验函数或前端工具模块 | [代码复用指南](./code-reuse-thinking-guide.md) |

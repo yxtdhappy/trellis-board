@@ -10,6 +10,7 @@ import {
 } from './archive-git-credentials.js'
 import { createArchiveSnapshotStore } from './archive-local-snapshot.js'
 import { createArchiveGitStore } from './archive-git-store.js'
+import { purgeArchivedTaskFiles } from './task-snapshot-service.js'
 
 const MIN_INTERVAL_SECONDS = 60
 const MAX_INTERVAL_SECONDS = 24 * 60 * 60
@@ -527,6 +528,7 @@ export function createArchiveGitSyncService({
       }
       if (snapshot.skipped) {
         staging.cancel()
+        const purged = purgeArchivedTaskFiles(db, taskSpaceId)
         const revisions = db
           .prepare(`
             SELECT archive_revision, archive_indexed_revision, archive_candidate_snapshot_id
@@ -535,6 +537,7 @@ export function createArchiveGitSyncService({
           `)
           .get(taskSpaceId)
         const needsIndex =
+          purged.purged > 0 ||
           Boolean(revisions?.archive_candidate_snapshot_id) ||
           Number(revisions?.archive_indexed_revision || 0) <
             Number(revisions?.archive_revision || 0)
@@ -560,6 +563,7 @@ export function createArchiveGitSyncService({
           branch: taskSpace.branch_name,
           head: snapshot.head,
           needsIndex,
+          purgedFiles: purged.purged,
           manual,
           ...snapshot.metrics,
         })
@@ -609,7 +613,9 @@ export function createArchiveGitSyncService({
       }
       failureCounts.delete(taskSpaceId)
       backoffUntil.delete(taskSpaceId)
-      if (imported.needsIndex) {
+      const purged = purgeArchivedTaskFiles(db, taskSpaceId)
+      const needsIndex = imported.needsIndex || purged.purged > 0
+      if (needsIndex) {
         void taskSpaceIndex.enqueue(taskSpaceId, { source: 'archive' }).catch((error) => {
           logger.warn?.('归档索引排队失败', {
             taskSpaceId,
@@ -628,7 +634,8 @@ export function createArchiveGitSyncService({
         changed: imported.changed,
         contentChanged: imported.contentChanged,
         legacyMetadataReplaced: imported.legacyMetadataReplaced,
-        needsIndex: imported.needsIndex,
+        needsIndex,
+        purgedFiles: purged.purged,
         manual,
         ...snapshot.metrics,
       })
@@ -636,7 +643,7 @@ export function createArchiveGitSyncService({
         taskSpaceId,
         changed: imported.changed,
         archiveRevision: imported.archiveRevision,
-        needsIndex: imported.needsIndex,
+        needsIndex,
         fileCount: snapshot.fileCount,
         byteCount: snapshot.byteCount,
       }

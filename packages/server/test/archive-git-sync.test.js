@@ -887,3 +887,139 @@ test('候选快照索引失败时保留旧 fileId 和下载，成功后原子切
     fs.rmSync(ctx.dataDir, { recursive: true, force: true })
   }
 })
+
+test('HEAD 未变化的归档同步也会清理残留活跃行并触发索引', async () => {
+  const ctx = setup()
+  const snapshots = createArchiveSnapshotStore({ db: ctx.db, dataDir: ctx.dataDir })
+  const head = 'a'.repeat(40)
+  const timestamp = new Date().toISOString()
+  const taskDir = '.trellis/tasks/11-16-old'
+  const archiveDir = '.trellis/tasks/archive/2026-11/11-16-old'
+  const queued = []
+  let snapshotCalls = 0
+  try {
+    const taskJson = JSON.stringify({ id: 'old', title: '归档任务', branch: 'main' })
+    const activeFile = ctx.db.prepare(`
+      INSERT INTO sync_task_space_file(
+        task_space_id, relative_path, revision, sha256, content_text, deleted,
+        task_id, task_dir, updated_at
+      ) VALUES (?, ?, 1, ?, ?, 0, 'old', ?, ?)
+    `)
+    for (const [name, content] of [
+      ['task.json', taskJson],
+      ['prd.md', '# 归档任务\n'],
+    ]) {
+      activeFile.run(
+        ctx.taskSpaceId,
+        `${taskDir}/${name}`,
+        snapshotSha256(content),
+        content,
+        taskDir,
+        timestamp,
+      )
+    }
+    ctx.db
+      .prepare(`
+        INSERT INTO sync_archive_file(
+          id, task_space_id, relative_path, blob_oid, sha256, content_text,
+          task_id, task_dir, source_head, updated_at
+        ) VALUES (?, ?, ?, 'blob', ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        crypto.randomUUID(),
+        ctx.taskSpaceId,
+        `${archiveDir}/task.json`,
+        snapshotSha256(taskJson),
+        taskJson,
+        'old',
+        archiveDir,
+        head,
+        timestamp,
+      )
+    const sync = createArchiveGitSyncService({
+      db: ctx.db,
+      dataDir: ctx.dataDir,
+      config: { allowLocalGitRemotes: false },
+      taskSpaceIndex: {
+        async enqueue(taskSpaceId, options) {
+          queued.push({ taskSpaceId, options })
+        },
+      },
+      store: {
+        async readSnapshot(input) {
+          snapshotCalls += 1
+          if (snapshotCalls === 1) {
+            return { skipped: true, head, metrics: { fetchMs: 1, readMs: 0, totalMs: 1 } }
+          }
+          const fixture = snapshot(ctx.taskSpaceId)
+          const files = fixture.files.map((file) => ({
+            ...input.snapshotWriter.writeBlob(file, Buffer.from(file.content)),
+            blobOid: file.blobOid,
+            taskDir: file.taskDir,
+            taskId: file.taskId,
+          }))
+          return {
+            head: 'b'.repeat(40),
+            files,
+            fileCount: files.length,
+            byteCount: files.reduce((sum, file) => sum + file.sizeBytes, 0),
+            skipped: false,
+            metrics: { fetchMs: 1, readMs: 1, totalMs: 2 },
+            taskSpaceId: ctx.taskSpaceId,
+          }
+        },
+      },
+      snapshots,
+      logger: LOGGER,
+    })
+    await sync.runNow(ctx.taskSpaceId)
+    await waitFor(() => queued.length === 1)
+    assert.deepEqual(queued[0], {
+      taskSpaceId: ctx.taskSpaceId,
+      options: { source: 'archive' },
+    })
+    assert.equal(
+      ctx.db
+        .prepare(
+          'SELECT COUNT(*) AS count FROM sync_task_space_file WHERE task_space_id = ? AND deleted = 1',
+        )
+        .get(ctx.taskSpaceId).count,
+      2,
+    )
+    const space = ctx.db
+      .prepare('SELECT revision, status FROM sync_task_space WHERE id = ?')
+      .get(ctx.taskSpaceId)
+    assert.equal(space.revision, 1)
+    assert.equal(space.status, 'indexing')
+
+    // 有变化路径：importSnapshot 之后同样清理残留活跃行。
+    // 第一次 purge 把空间置为 indexing，索引完成后由索引服务恢复 active。
+    ctx.db.prepare("UPDATE sync_task_space SET status = 'active' WHERE id = ?").run(ctx.taskSpaceId)
+    activeFile.run(
+      ctx.taskSpaceId,
+      `${taskDir}/design.md`,
+      snapshotSha256('# 设计\n'),
+      '# 设计\n',
+      taskDir,
+      timestamp,
+    )
+    await sync.runNow(ctx.taskSpaceId)
+    await waitFor(() => queued.length === 2)
+    assert.equal(
+      ctx.db
+        .prepare(
+          'SELECT COUNT(*) AS count FROM sync_task_space_file WHERE task_space_id = ? AND deleted = 1',
+        )
+        .get(ctx.taskSpaceId).count,
+      3,
+    )
+    assert.equal(
+      ctx.db.prepare('SELECT revision FROM sync_task_space WHERE id = ?').get(ctx.taskSpaceId)
+        .revision,
+      2,
+    )
+  } finally {
+    ctx.db.close()
+    fs.rmSync(ctx.dataDir, { recursive: true, force: true })
+  }
+})

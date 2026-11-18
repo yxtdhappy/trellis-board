@@ -161,6 +161,94 @@ function normalizeMergeEvidence(value) {
   }
 }
 
+const ARCHIVE_TASK_DIR = /^\.trellis\/tasks\/archive\/\d{4}-(?:0[1-9]|1[0-2])\/([^/]+)$/
+
+// 任务身份是目录名：task.json 的 id 是 slug，跨日期可重复。
+function activeTaskDirOfArchiveDir(archiveDir) {
+  const match = ARCHIVE_TASK_DIR.exec(String(archiveDir || '').trim())
+  return match ? `.trellis/tasks/${match[1]}` : null
+}
+
+function archivedActiveTaskDirs(db, taskSpaceId) {
+  return new Set(
+    db
+      .prepare('SELECT DISTINCT task_dir FROM sync_archive_file WHERE task_space_id = ?')
+      .all(taskSpaceId)
+      .map((row) => activeTaskDirOfArchiveDir(row.task_dir))
+      .filter(Boolean),
+  )
+}
+
+// 归档只写 sync_archive_file；此前的活跃行必须一并软删除，否则新绑定会把归档任务复活。
+export function purgeArchivedTaskFiles(db, taskSpaceId, { now = () => new Date() } = {}) {
+  return withTransaction(db, () => {
+    const space = db
+      .prepare('SELECT id, revision, status, retired_at FROM sync_task_space WHERE id = ?')
+      .get(taskSpaceId)
+    if (!space || space.status === 'disabled' || space.retired_at) {
+      return { purged: 0, revision: Number(space?.revision || 0) }
+    }
+    const revision = Number(space.revision || 0)
+    const archivedDirs = [...archivedActiveTaskDirs(db, taskSpaceId)]
+    if (!archivedDirs.length) return { purged: 0, revision }
+    const rows = db
+      .prepare(`
+      SELECT relative_path, sha256, task_id
+      FROM sync_task_space_file
+      WHERE task_space_id = ? AND deleted = 0
+        AND task_dir IN (${archivedDirs.map(() => '?').join(', ')})
+      ORDER BY relative_path
+    `)
+      .all(taskSpaceId, ...archivedDirs)
+    if (!rows.length) return { purged: 0, revision }
+    const nextRevision = revision + 1
+    const timestamp = now().toISOString()
+    const tombstone = db.prepare(`
+      UPDATE sync_task_space_file
+      SET deleted = 1, content_text = NULL, sha256 = ?, revision = ?, updated_at = ?
+      WHERE task_space_id = ? AND relative_path = ? AND deleted = 0
+    `)
+    const audit = db.prepare(`
+      INSERT INTO sync_file_audit(
+        task_space_id, relative_path, task_id, operation, old_sha256,
+        new_sha256, revision, source_user_id, source_agent_id, occurred_at
+      ) VALUES (?, ?, ?, 'delete', ?, NULL, ?, NULL, NULL, ?)
+    `)
+    const tombstoneSha256 = snapshotSha256('')
+    let purged = 0
+    for (const row of rows) {
+      const result = tombstone.run(
+        tombstoneSha256,
+        nextRevision,
+        timestamp,
+        taskSpaceId,
+        row.relative_path,
+      )
+      if (Number(result.changes) !== 1) continue
+      purged += 1
+      audit.run(
+        taskSpaceId,
+        row.relative_path,
+        row.task_id || null,
+        row.sha256,
+        nextRevision,
+        timestamp,
+      )
+    }
+    const updated = db
+      .prepare(`
+      UPDATE sync_task_space
+      SET revision = ?, status = 'indexing', updated_at = ?
+      WHERE id = ? AND status != 'disabled' AND retired_at IS NULL
+    `)
+      .run(nextRevision, timestamp, taskSpaceId)
+    if (Number(updated.changes) !== 1) {
+      throw teamError(409, ERROR_CODES.PROJECT_NOT_READY, '任务空间已停用')
+    }
+    return { purged, revision: nextRevision }
+  })
+}
+
 export function createTaskSnapshotService({
   db,
   taskSpaces,
@@ -844,6 +932,16 @@ export function createTaskSnapshotService({
         })
       }
       const complete = validateCompleteTaskGroups(taskSpaceId, files, space.branch_name)
+      if (files.some((file) => !file.deleted)) {
+        const archivedDirs = archivedActiveTaskDirs(db, taskSpaceId)
+        if (complete.taskDirs.some((dir) => archivedDirs.has(dir))) {
+          throw teamError(
+            409,
+            ARCHIVE_SYNC_SERVER_MANAGED,
+            '归档任务由服务端 Git 索引管理，不能推送活跃文件',
+          )
+        }
+      }
       const ownership = validateTaskOwnership({
         space,
         complete,
