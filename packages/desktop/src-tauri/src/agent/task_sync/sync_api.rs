@@ -54,26 +54,12 @@ impl TaskSync {
     pub async fn list_task_ownership(&self, task_space_id: &str) -> AgentResult<Value> {
         let binding = self.binding(task_space_id).await?;
         self.assert_binding_branch(&binding).await?;
+        self.cleanup_missing_ownership_inbox(&binding, None).await?;
         let groups = self.local_groups(&binding, None).await?;
-        let local_dirs: HashSet<String> =
-            groups.iter().map(|group| group.task_dir.clone()).collect();
         let cursor = self.read_cursor(task_space_id).await;
-        self.clear_ownership_pending(
-            task_space_id,
-            &cursor
-                .ownership_pending
-                .keys()
-                .filter(|task_dir| !local_dirs.contains(*task_dir))
-                .cloned()
-                .collect::<Vec<_>>(),
-        )
-        .await?;
-        self.sync_ownership_inbox(
-            &binding,
-            &cursor.ownership_pending,
-            &groups,
-        )
-        .await;
+        let ledger_task_dirs = ownership_ledger_task_dirs(&cursor);
+        self.sync_ownership_inbox(&binding, &ledger_task_dirs, &groups)
+            .await;
         let candidates: Vec<SnapshotGroup> = groups
             .into_iter()
             .filter(|group| {
@@ -232,6 +218,7 @@ impl TaskSync {
         }
 
         let cursor = self.read_cursor(task_space_id).await;
+        let ledger_task_dirs = ownership_ledger_task_dirs(&cursor);
         let mut pending = cursor.ownership_pending.clone();
         let mut current_branch = Vec::new();
         let mut applied = 0usize;
@@ -277,12 +264,8 @@ impl TaskSync {
         .await?;
         let ownership_groups: Vec<SnapshotGroup> =
             groups_by_dir.values().cloned().collect();
-        self.sync_ownership_inbox(
-            &binding,
-            &cursor.ownership_pending,
-            &ownership_groups,
-        )
-        .await;
+        self.sync_ownership_inbox(&binding, &ledger_task_dirs, &ownership_groups)
+            .await;
         let sync = if current_branch.is_empty() {
             Value::Null
         } else {

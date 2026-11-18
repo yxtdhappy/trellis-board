@@ -492,6 +492,7 @@ pub(super) struct CursorPatch {
     pub(super) baselines: Option<BTreeMap<String, String>>,
     pub(super) deferred: Option<BTreeMap<String, BTreeMap<String, String>>>,
     pub(super) ownership_pending: Option<BTreeMap<String, String>>,
+    pub(super) ownership_ledger_removals: Option<BTreeSet<String>>,
     pub(super) conflict_blocked: Option<BTreeMap<String, String>>,
     pub(super) readonly_task_dirs: Option<BTreeMap<String, String>>,
 }
@@ -524,6 +525,12 @@ pub(super) fn apply_cursor_patch(cursor: &mut Cursor, next: &CursorPatch) -> boo
     }
     if let Some(ownership_pending) = &next.ownership_pending {
         cursor.ownership_pending = ownership_pending.clone();
+    }
+    if let Some(task_dirs) = &next.ownership_ledger_removals {
+        for task_dir in task_dirs {
+            cursor.ownership_pending.remove(task_dir);
+            cursor.pending_rejected.remove(task_dir);
+        }
     }
     if let Some(conflict_blocked) = &next.conflict_blocked {
         cursor.conflict_blocked = conflict_blocked.clone();

@@ -777,6 +777,15 @@ impl TaskSync {
             .await
         {
             Ok((paused, local_dirs)) => {
+                if let Err(error) = self
+                    .cleanup_missing_ownership_inbox(&binding, None)
+                    .await
+                {
+                    crate::logging::warn(&format!(
+                        "清理已删除待归属任务失败：{}",
+                        protocol::safe_error_message(&error.message)
+                    ));
+                }
                 let mut paused: Vec<String> = paused.iter().cloned().collect();
                 let mut local_dirs: Vec<String> = local_dirs.iter().cloned().collect();
                 paused.sort();

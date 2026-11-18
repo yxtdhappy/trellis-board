@@ -9,6 +9,14 @@ pub(super) struct OwnershipDecision {
     pub(super) action: String,
     pub(super) branch_name: String,
 }
+pub(super) fn ownership_ledger_task_dirs(cursor: &Cursor) -> BTreeSet<String> {
+    cursor
+        .ownership_pending
+        .keys()
+        .chain(cursor.pending_rejected.keys())
+        .cloned()
+        .collect()
+}
 #[derive(Default)]
 pub(super) struct OwnershipResolution {
     pub(super) syncable: HashMap<String, SnapshotGroup>,
@@ -179,12 +187,9 @@ impl TaskSync {
         )
         .await?;
         let groups: Vec<SnapshotGroup> = groups_by_dir.into_values().collect();
-        self.sync_ownership_inbox(
-            binding,
-            &cursor.ownership_pending,
-            &groups,
-        )
-        .await;
+        let previous_task_dirs = ownership_ledger_task_dirs(&cursor);
+        self.sync_ownership_inbox(binding, &previous_task_dirs, &groups)
+            .await;
         Ok(())
     }
 }
@@ -496,10 +501,111 @@ impl TaskSync {
     }
 }
 impl TaskSync {
+    pub(super) async fn missing_active_task_dirs(
+        &self,
+        binding: &AgentBinding,
+        task_dirs: &BTreeSet<String>,
+    ) -> AgentResult<Vec<String>> {
+        let repo = Path::new(&binding.repo_path);
+        let trellis_root = repo.join(".trellis");
+        let tasks_root = repo.join(ACTIVE_TASKS_ROOT);
+        for (path, label) in [(&trellis_root, ".trellis"), (&tasks_root, ACTIVE_TASKS_ROOT)] {
+            match tokio::fs::symlink_metadata(path).await {
+                Ok(metadata)
+                    if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+                Ok(_) => {
+                    return protocol::err(
+                        code::MISSING_TRELLIS,
+                        format!("{label} 必须是可访问的真实目录"),
+                    )
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return protocol::err(
+                        code::MISSING_TRELLIS,
+                        format!("{label} 不存在，不能确认任务目录已删除"),
+                    )
+                }
+                Err(error) => return Err(io_error(error)),
+            }
+        }
+        // 能打开任务根才允许把子目录 NotFound 解释成“已删除”。
+        let _ = tokio::fs::read_dir(&tasks_root).await.map_err(io_error)?;
+
+        let mut missing = Vec::new();
+        for task_dir in task_dirs {
+            let relative = protocol::resolve_task_dir_under(
+                Path::new(ACTIVE_TASKS_ROOT),
+                task_dir,
+            )
+            .ok_or_else(|| task_directory_error(task_dir, "待清理任务目录格式无效"))?;
+            match tokio::fs::symlink_metadata(repo.join(relative)).await {
+                Ok(metadata)
+                    if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+                Ok(_) => {
+                    return Err(task_directory_error(
+                        task_dir,
+                        "待清理任务路径不是安全的真实目录",
+                    ))
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    missing.push(task_dir.clone())
+                }
+                Err(error) => return Err(io_error(error)),
+            }
+        }
+        Ok(missing)
+    }
+}
+impl TaskSync {
+    pub(super) async fn cleanup_missing_ownership_inbox(
+        &self,
+        binding: &AgentBinding,
+        candidate_task_dirs: Option<&HashSet<String>>,
+    ) -> AgentResult<Vec<String>> {
+        if binding.read_only {
+            return Ok(Vec::new());
+        }
+        let cursor = self.read_cursor(&binding.task_space_id).await;
+        let candidates: BTreeSet<String> = ownership_ledger_task_dirs(&cursor)
+            .into_iter()
+            .filter(|task_dir| {
+                candidate_task_dirs
+                    .map_or(true, |candidates| candidates.contains(task_dir))
+            })
+            .collect();
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.assert_binding_branch(binding).await?;
+        let missing = self
+            .missing_active_task_dirs(binding, &candidates)
+            .await?;
+        if missing.is_empty() {
+            return Ok(Vec::new());
+        }
+        for chunk in missing.chunks(OWNERSHIP_INBOX_MAX_CHANGES) {
+            let deletes: Vec<Value> = chunk
+                .iter()
+                .map(|task_dir| json!({ "taskDir": task_dir }))
+                .collect();
+            self.put_ownership_inbox(binding, &[], &deletes).await?;
+        }
+        self.write_cursor(
+            &binding.task_space_id,
+            CursorPatch {
+                ownership_ledger_removals: Some(missing.iter().cloned().collect()),
+                ..Default::default()
+            },
+        )
+        .await?;
+        Ok(missing)
+    }
+}
+impl TaskSync {
     pub(super) async fn sync_ownership_inbox(
         &self,
         binding: &AgentBinding,
-        previous_pending: &BTreeMap<String, String>,
+        previous_task_dirs: &BTreeSet<String>,
         groups: &[SnapshotGroup],
     ) {
         if binding.read_only {
@@ -564,59 +670,28 @@ impl TaskSync {
         }
 
         let mut deletes = Vec::new();
-        for task_dir in previous_pending
-            .keys()
+        for task_dir in previous_task_dirs
+            .iter()
             .filter(|task_dir| !current.contains_key(*task_dir))
         {
-            let task_id = match groups_by_dir
-                .get(task_dir)
-                .and_then(|group| group.task_id.clone())
-            {
-                Some(task_id) => task_id,
-                None => match self
-                    .read_ownership_inbox_task_id(binding, task_dir)
-                    .await
-                {
-                    Some(task_id) => task_id,
-                    None => task_dir.rsplit('/').next().unwrap_or_default().to_string(),
-                },
-            };
-            if task_id.is_empty() || task_id.len() > 128 {
+            // 只有目录仍存在时，这里才代表“已归属/已解除待归属”。
+            // 目录消失产生的删除差集必须走 cleanup_missing_ownership_inbox。
+            if !groups_by_dir.contains_key(task_dir) {
                 continue;
             }
-            deletes.push(json!({
-                "taskId": task_id,
-                "taskDir": task_dir,
-            }));
+            deletes.push(json!({ "taskDir": task_dir }));
         }
 
         for chunk in upserts.chunks(OWNERSHIP_INBOX_MAX_CHANGES) {
-            if !self
-                .put_ownership_inbox(binding, chunk, &[])
-                .await
-            {
+            if self.put_ownership_inbox(binding, chunk, &[]).await.is_err() {
                 return;
             }
         }
         for chunk in deletes.chunks(OWNERSHIP_INBOX_MAX_CHANGES) {
-            if !self
-                .put_ownership_inbox(binding, &[], chunk)
-                .await
-            {
+            if self.put_ownership_inbox(binding, &[], chunk).await.is_err() {
                 return;
             }
         }
-    }
-}
-impl TaskSync {
-    pub(super) async fn read_ownership_inbox_task_id(
-        &self,
-        binding: &AgentBinding,
-        task_dir: &str,
-    ) -> Option<String> {
-        let path = Path::new(&binding.repo_path).join(task_dir).join("task.json");
-        let content = tokio::fs::read_to_string(path).await.ok()?;
-        parse_task_metadata(&content).0
     }
 }
 impl TaskSync {
@@ -625,14 +700,17 @@ impl TaskSync {
         binding: &AgentBinding,
         upserts: &[Value],
         deletes: &[Value],
-    ) -> bool {
+    ) -> AgentResult<()> {
         if upserts.is_empty() && deletes.is_empty() {
-            return true;
+            return Ok(());
         }
-        let observed = match self.assert_binding_branch(binding).await {
-            Ok(value) => value,
-            Err(_) => return false,
-        };
+        if self
+            .ownership_inbox_unavailable
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Ok(());
+        }
+        let observed = self.assert_binding_branch(binding).await?;
         let result = self
             .api
             .request_json(
@@ -650,7 +728,7 @@ impl TaskSync {
             )
             .await;
         match result {
-            Ok(_) => true,
+            Ok(_) => Ok(()),
             Err(error) if matches!(error.status, Some(404) | Some(405)) => {
                 if !self
                     .ownership_inbox_unavailable
@@ -660,14 +738,14 @@ impl TaskSync {
                         "服务端不支持待归属摘要接口，继续使用普通任务同步",
                     );
                 }
-                false
+                Ok(())
             }
             Err(error) => {
                 crate::logging::warn(&format!(
                     "待归属摘要同步失败：{}",
                     protocol::safe_error_message(&error.message)
                 ));
-                false
+                Err(error)
             }
         }
     }
@@ -678,6 +756,8 @@ impl TaskSync {
         binding: &AgentBinding,
         groups: &[SnapshotGroup],
     ) -> AgentResult<OwnershipResolution> {
+        let previous_task_dirs =
+            ownership_ledger_task_dirs(&self.read_cursor(&binding.task_space_id).await);
         let unresolved_ids: Vec<String> = groups
             .iter()
             .filter(|group| group.task_id.is_some() && group.task_branch.is_none())
@@ -846,11 +926,7 @@ impl TaskSync {
             &resolution.syncable.keys().cloned().collect::<Vec<_>>(),
         )
         .await?;
-        let current_ownership_pending = self
-            .read_cursor(&binding.task_space_id)
-            .await
-            .ownership_pending;
-        self.sync_ownership_inbox(binding, &current_ownership_pending, groups)
+        self.sync_ownership_inbox(binding, &previous_task_dirs, groups)
             .await;
         self.ownership_event(binding, &fresh, &resolution.project_task_spaces);
         Ok(resolution)

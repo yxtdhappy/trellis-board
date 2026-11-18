@@ -431,7 +431,6 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
       upserts: [],
       deletes: [
         {
-          taskId: ownershipInboxItem.taskId,
           taskDir: ownershipInboxItem.taskDir,
         },
       ],

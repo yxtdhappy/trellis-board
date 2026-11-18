@@ -198,22 +198,31 @@ impl TaskSync {
                 }
                 let mut paths: Vec<String> = paths.into_iter().collect();
                 paths.sort();
-                let target_count = paths
+                let target_dirs: HashSet<String> = paths
                     .iter()
                     .filter_map(|path| active_task_directory_from_relative(path))
-                    .collect::<HashSet<_>>()
-                    .len();
+                    .collect();
+                let target_count = target_dirs.len();
                 // 首次同步未完成时 watcher 仍在监听，但上传必须等 bootstrap 拉取落地，
                 // 否则会用本地旧内容抢在服务端快照之前写入（对照 JS `_uploadDirty` 的守卫）。
-                let ready = self
+                let binding = self
                     .bindings
                     .lock()
                     .await
                     .get(&task_space_id)
-                    .is_some_and(|binding| !binding.read_only && binding.initial_sync_completed);
-                if ready {
+                    .cloned()
+                    .filter(|binding| {
+                        !binding.read_only && binding.initial_sync_completed
+                    });
+                if let Some(binding) = binding {
                     let serial = self.task_space_sync_lock(&task_space_id).await;
                     let _serial = serial.lock().await;
+                    if let Err(error) = self
+                        .cleanup_missing_ownership_inbox(&binding, Some(&target_dirs))
+                        .await
+                    {
+                        self.report_error(&task_space_id, &error).await;
+                    }
                     if let Err(error) = self.upload_dirty(&task_space_id, &paths).await {
                         self.report_error(&task_space_id, &error).await;
                     }

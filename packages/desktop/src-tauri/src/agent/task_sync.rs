@@ -336,7 +336,12 @@ use ownership_index::{
     ownership_projection_cache_matches,
 };
 #[allow(unused_imports)]
-use ownership_inbox::{OwnershipDecision, OwnershipResolution, OwnershipReview};
+use ownership_inbox::{
+    OwnershipDecision,
+    OwnershipResolution,
+    OwnershipReview,
+    ownership_ledger_task_dirs,
+};
 #[allow(unused_imports)]
 use paths::{
     absolute_task_path,

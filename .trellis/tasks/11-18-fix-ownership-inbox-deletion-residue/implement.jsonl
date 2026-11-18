@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/task-ownership-and-conflict-idempotency.md","reason":"待归属摘要收件箱、stable task identity、删除幂等和 ownership cursor 契约"}
+{"file":".trellis/tasks/11-18-fix-ownership-inbox-deletion-residue/research/ownership-inbox-deletion-contract.md","reason":"本缺陷的源码证据、现有触发链、两项 cursor 状态和验证落点"}
+{"file":".trellis/spec/backend/desktop-agent-runtime.md","reason":"Rust TaskSync 模块边界、路径安全、状态事件和异步运行约束"}
+{"file":".trellis/spec/backend/desktop-task-path-resolution.md","reason":"taskDir 到本机任务根的安全解析与 symlink 失败关闭规则"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"server API、SQLite、Rust Agent 与 Web 状态跨层一致性检查"}

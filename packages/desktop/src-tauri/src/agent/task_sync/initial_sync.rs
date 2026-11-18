@@ -205,11 +205,9 @@ impl TaskSync {
         .await?;
         self.write_server_cursor(&task_space_id, verified_revision)
             .await?;
-        let ownership_pending = self
-            .read_cursor(&task_space_id)
-            .await
-            .ownership_pending;
-        self.sync_ownership_inbox(binding, &ownership_pending, &verified_local)
+        let previous_task_dirs =
+            ownership_ledger_task_dirs(&self.read_cursor(&task_space_id).await);
+        self.sync_ownership_inbox(binding, &previous_task_dirs, &verified_local)
             .await;
         if !conflicts.is_empty() {
             let conflict_differences: Vec<Difference> = verified_differences

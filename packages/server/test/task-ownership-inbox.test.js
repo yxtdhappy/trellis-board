@@ -137,6 +137,10 @@ function snapshotBatch(taskId, sequence) {
   }
 }
 
+function deleteByDir(taskDir) {
+  return { taskDir }
+}
+
 test('待归属摘要幂等、多来源聚合、删除和稳定分页', () => {
   const { db, taskSpaces, inbox, agentA, agentB, projectId, taskSpaceId } = setup()
   try {
@@ -253,6 +257,160 @@ test('待归属摘要超过 200 项或字段非法时整批拒绝', () => {
     assert.equal(
       db.prepare('SELECT COUNT(*) AS count FROM sync_task_ownership_inbox').get().count,
       0,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('待归属摘要按 taskDir 精确删除并满足来源隔离和幂等', () => {
+  const { db, inbox, agentA, agentB, projectId, taskSpaceId } = setup()
+  try {
+    const taskDir = '.trellis/tasks/11-18-directory-identity'
+    const item = {
+      ...upsert('stable-task-id'),
+      taskDir,
+    }
+    inbox.apply(agentA, taskSpaceId, write('main', [item]))
+    inbox.apply(
+      agentA,
+      taskSpaceId,
+      write('main', [
+        {
+          ...upsert('historical-task-id'),
+          taskDir,
+        },
+      ]),
+    )
+    inbox.apply(agentB, taskSpaceId, write('main', [item]))
+    assert.equal(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM sync_task_ownership_inbox
+           WHERE project_id = ? AND task_dir = ?`,
+        )
+        .get(projectId, taskDir).count,
+      3,
+    )
+
+    const first = inbox.apply(agentA, taskSpaceId, write('main', [], [deleteByDir(taskDir)]))
+    assert.equal(first.changed, true)
+    assert.equal(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM sync_task_ownership_inbox
+           WHERE project_id = ? AND task_dir = ? AND source_agent_id = ?`,
+        )
+        .get(projectId, taskDir, agentA.id).count,
+      0,
+    )
+    assert.equal(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM sync_task_ownership_inbox
+           WHERE project_id = ? AND task_dir = ? AND source_agent_id = ?`,
+        )
+        .get(projectId, taskDir, agentB.id).count,
+      1,
+    )
+
+    const repeated = inbox.apply(agentA, taskSpaceId, write('main', [], [deleteByDir(taskDir)]))
+    assert.equal(repeated.changed, false)
+    inbox.apply(agentB, taskSpaceId, write('main', [], [deleteByDir(taskDir)]))
+    assert.equal(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM sync_task_ownership_inbox
+           WHERE project_id = ? AND task_dir = ?`,
+        )
+        .get(projectId, taskDir).count,
+      0,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('待归属摘要删除兼容 taskId 但以 taskDir 为目录身份', () => {
+  const { db, inbox, agentA, taskSpaceId } = setup()
+  try {
+    const taskDir = '.trellis/tasks/11-18-date-prefixed-directory'
+    inbox.apply(
+      agentA,
+      taskSpaceId,
+      write('main', [
+        {
+          ...upsert('real-task-id'),
+          taskDir,
+        },
+      ]),
+    )
+
+    const result = inbox.apply(
+      agentA,
+      taskSpaceId,
+      write(
+        'main',
+        [],
+        [
+          {
+            taskId: '11-18-date-prefixed-directory',
+            taskDir,
+          },
+        ],
+      ),
+    )
+    assert.equal(result.changed, true)
+    assert.equal(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM sync_task_ownership_inbox
+           WHERE task_id = 'real-task-id' AND task_dir = ?`,
+        )
+        .get(taskDir).count,
+      0,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('待归属摘要删除缺少或非法 taskDir 时整批拒绝', () => {
+  const { db, inbox, agentA, taskSpaceId } = setup()
+  try {
+    const taskDir = '.trellis/tasks/11-18-kept'
+    inbox.apply(
+      agentA,
+      taskSpaceId,
+      write('main', [
+        {
+          ...upsert('kept'),
+          taskDir,
+        },
+      ]),
+    )
+
+    assert.throws(
+      () =>
+        inbox.apply(
+          agentA,
+          taskSpaceId,
+          write('main', [], [{ taskDir }, { taskDir: '.trellis/tasks/../escape' }]),
+        ),
+      /任务目录格式无效/,
+    )
+    assert.equal(
+      db.prepare('SELECT COUNT(*) AS count FROM sync_task_ownership_inbox').get().count,
+      1,
+    )
+
+    assert.throws(
+      () => inbox.apply(agentA, taskSpaceId, write('main', [], [{ taskId: 'bad id', taskDir }])),
+      /任务 ID 格式无效/,
+    )
+    assert.equal(
+      db.prepare('SELECT COUNT(*) AS count FROM sync_task_ownership_inbox').get().count,
+      1,
     )
   } finally {
     db.close()

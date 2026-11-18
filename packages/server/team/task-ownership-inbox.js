@@ -88,10 +88,14 @@ function normalizeDelete(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, '待归属删除项格式无效')
   }
-  return {
-    taskId: taskId(value.taskId),
+  const normalized = {
     taskDir: taskDir(value.taskDir),
   }
+  // 新客户端只依赖稳定目录；旧客户端携带 taskId 时继续做格式校验以保持兼容。
+  if (value.taskId != null) {
+    normalized.taskId = taskId(value.taskId)
+  }
+  return normalized
 }
 
 function normalizeObservedBranch(input, space, binding) {
@@ -250,11 +254,11 @@ export function createTaskOwnershipInboxService({
 
       const remove = db.prepare(`
         DELETE FROM sync_task_ownership_inbox
-        WHERE source_task_space_id = ? AND source_agent_id = ?
-          AND task_id = ?
+        WHERE project_id = ? AND source_task_space_id = ?
+          AND source_agent_id = ? AND task_dir = ?
       `)
       for (const item of deletes) {
-        changed += Number(remove.run(taskSpaceId, agent.id, item.taskId).changes)
+        changed += Number(remove.run(space.project_id, taskSpaceId, agent.id, item.taskDir).changes)
       }
     })
     return {

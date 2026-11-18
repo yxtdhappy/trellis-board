@@ -252,6 +252,8 @@ await api.uploadTaskSpaceChanges(taskSpaceId, {
   `observedBranchName` 与服务端 taskSpace/binding 一致。
 - 单次 upsert + delete 最多 200 项并整体校验；upsert/delete 必须幂等，同一稳定任务的多来源行按
   项目 + taskId 聚合展示。
+- inbox delete 的目录身份固定为 `project_id + source_task_space_id + source_agent_id + task_dir`；
+  `taskId` 只做旧客户端兼容和格式校验，不能作为唯一删除键，也不能从目录名反推。
 - 正常任务快照被接纳时，必须在同一 `BEGIN IMMEDIATE` 事务删除该 `projectId + taskId` 的全部摘要；
   摘要删除失败时任务快照整体回滚。
 - inbox 变化只发布轻量 `tasks.changed`，不推进 taskSpace revision。`status.ownershipInboxCount`
@@ -263,6 +265,11 @@ await api.uploadTaskSpaceChanges(taskSpaceId, {
 | --- | --- |
 | 同一来源重复 upsert | 更新摘要，保留 firstSeenAt |
 | delete 目标不存在 | 成功且幂等 |
+| delete 只携带 `taskDir` | 按当前项目、taskSpace、Agent 和目录精确删除 |
+| delete 的 `taskId` 与目录 basename 不一致 | 仍按 `taskDir` 删除，不能返回成功但零行 |
+| 父目录 `.trellis/tasks` 缺失或不可读 | 客户端不得提交批量 delete，保留 cursor |
+| 客户端删除请求网络失败或服务端 5xx | 保留 `ownershipPending`/`pendingRejected`，后续重试 |
+| 客户端连接不支持 inbox 的旧服务端（404/405） | 可清对应本地摘要；旧服务端不可能存在远端摘要行 |
 | 单批超过 200 项 | 400，整批不写 |
 | projectIds 越权 | 403 |
 | 正常任务写入和摘要清理任一失败 | 两者整体回滚 |
