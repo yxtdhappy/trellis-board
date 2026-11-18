@@ -68,7 +68,13 @@ test('desktop ui output is ignored and hand-written pages are gone', () => {
 })
 
 test('control sync errors show project and branch without repo paths', () => {
-  const taskSync = read('packages/desktop/src-tauri/src/agent/task_sync.rs')
+  const taskSync = [
+    'packages/desktop/src-tauri/src/agent/task_sync.rs',
+    'packages/desktop/src-tauri/src/agent/task_sync/bindings.rs',
+    'packages/desktop/src-tauri/src/agent/task_sync/errors.rs',
+  ]
+    .map(read)
+    .join('\n')
   const control = read('packages/web/src/desktop/LiveSyncControlDialog.tsx')
 
   assert.match(taskSync, /event\["projectName"\]/)
@@ -92,7 +98,13 @@ test('desktop state refresh uses events, ETag and visible fallbacks', () => {
   const control = read('packages/web/src/desktop/LiveSyncControlDialog.tsx')
   const useBoard = read('packages/web/src/hooks/useBoard.ts')
   const boardApi = read('packages/web/src/api/board.ts')
-  const taskSync = read('packages/desktop/src-tauri/src/agent/task_sync.rs')
+  const taskSync = [
+    'packages/desktop/src-tauri/src/agent/task_sync.rs',
+    'packages/desktop/src-tauri/src/agent/task_sync/bindings.rs',
+    'packages/desktop/src-tauri/src/agent/task_sync/errors.rs',
+  ]
+    .map(read)
+    .join('\n')
   const agentService = read('packages/desktop/src-tauri/src/agent_service.rs')
 
   assert.ok(capability.permissions.includes('core:event:allow-listen'))

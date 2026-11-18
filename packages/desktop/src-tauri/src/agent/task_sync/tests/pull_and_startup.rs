@@ -283,6 +283,66 @@ async fn unchanged_startup_pull_skips_second_ownership_validation() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
+#[tokio::test]
+async fn unchanged_startup_pull_revalidates_pending_ownership_ledger() {
+    let (root, store, binding, _) =
+        exact_deferred_fixture("trellis-startup-ownership-retry").await;
+    let missing = ".trellis/tasks/offline-missing";
+    store
+        .write_json(
+            &store.paths.task_cursors_file,
+            &json!({
+                "version": CURSOR_VERSION,
+                "taskSpaces": {
+                    "space-1": {
+                        "revision": 1,
+                        "revisionGuardVersion": 1,
+                        "sequence": 1,
+                        "ownershipPending": {
+                            missing: {
+                                "fingerprint": "a".repeat(64),
+                                "reason": "TASK_OWNERSHIP_REQUIRED",
+                            },
+                        },
+                        "pendingRejected": {
+                            missing: {
+                                "batchId": "batch-1",
+                                "clientSequence": 1,
+                                "reason": "TASK_OWNERSHIP_REQUIRED",
+                                "createdAt": "2026-11-18T00:00:00.000Z",
+                                "blockedAt": "2026-11-18T00:00:01.000Z",
+                            },
+                        },
+                    },
+                },
+            }),
+        )
+        .await
+        .expect("ownership cursor");
+    let (server_url, _changes, requests, server_task) = mock_api_server(json!({
+        "revision": 1,
+        "files": []
+    }))
+    .await;
+    let api =
+        Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+    let sync = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
+    sync.set_bindings(vec![binding]).await;
+
+    assert!(sync.pull_and_report("space-1").await);
+    sync.sync_task_spaces(vec!["space-1".to_string()]).await;
+
+    assert!(requests.lock().await.iter().any(|request| {
+        request == "PUT /api/agent/task-spaces/space-1/ownership-inbox"
+    }));
+    let cursor = sync.read_cursor("space-1").await;
+    assert!(cursor.ownership_pending.is_empty());
+    assert!(cursor.pending_rejected.is_empty());
+
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
 
 #[tokio::test]
 async fn startup_deferred_reconcile_does_not_trigger_baseline_upload() {

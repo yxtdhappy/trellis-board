@@ -596,7 +596,11 @@ impl TaskSync {
 impl TaskSync {
     /// 拉取、补收敛基线任务，并对失败写日志和 `task_sync_error` 控制事件。
     pub async fn pull_and_report(&self, task_space_id: &str) -> bool {
-        let revision_before = self.read_cursor(task_space_id).await.revision;
+        let cursor_before = self.read_cursor(task_space_id).await;
+        let revision_before = cursor_before.revision;
+        // 离线失败留下的账本不能依赖服务端 revision 变化，启动时仍要对账一次。
+        let ownership_retry = !cursor_before.ownership_pending.is_empty()
+            || !cursor_before.pending_rejected.is_empty();
         let mut reconciled_deferred = HashSet::new();
         let revalidate = match self
             .pull_task_space_tracking(task_space_id, &mut reconciled_deferred)
@@ -618,7 +622,9 @@ impl TaskSync {
                 true
             }
         };
-        revalidate || self.read_cursor(task_space_id).await.revision != revision_before
+        revalidate
+            || ownership_retry
+            || self.read_cursor(task_space_id).await.revision != revision_before
     }
     pub async fn pull_and_report_for_event(
         self: &Arc<Self>,
