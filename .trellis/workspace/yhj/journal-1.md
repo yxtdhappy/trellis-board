@@ -1462,3 +1462,27 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 62: 完成待归属删除离线续传与 0.4.40 E2E
+<!-- trellis-session: v=2 fp=e90e5409caf4e679 -->
+
+**Date**: 2026-11-18
+**Task**: 完成待归属删除离线续传与 0.4.40 E2E
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+修复启动 revision 未变化时跳过 ownership 校验的问题；发布 0.4.40；真实 Windows E2E 覆盖离线删除续传、客户端重启、普通墓碑、父目录失败关闭、archive 移动和最终数据清理。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8c101fc` | fix(sync): 启动时续传离线待归属删除 |
+| `f09f416` | docs(trellis): 记录待归属删除 E2E 验收 |
+
+### Status
+
+[OK] **Completed**

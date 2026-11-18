@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 61
-- **Last Active**: 2026-11-17
+- **Total Sessions**: 62
+- **Last Active**: 2026-11-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1464 | Active |
+| `journal-1.md` | ~1488 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 62 | 2026-11-18 | 完成待归属删除离线续传与 0.4.40 E2E | `8c101fc`, `f09f416` | `main` |
 | 61 | 2026-11-17 | 归档附件本地快照与只读访问 | `98b3e81` | `main` |
 | 60 | 2026-11-17 | 归档凭据项目关联展示 | `7ed2e69` | `main` |
 | 59 | 2026-11-17 | 归档 Git HTTPS 批量导入与附件兼容修复 | `2cdad8e` | `main` |
