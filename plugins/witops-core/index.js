@@ -782,51 +782,39 @@ export default createPlugin({
         }
       })
 
-      // 面板：某个项目下的全部任务
+      // 面板：某个项目（或产品）下的全部任务。
+      // 平台接口 POST /task/task/page：产品空间传 productId，项目空间传 projectId；
+      // last:'true' 表示只看当前版本（与 witops-web 项目空间任务列表一致）。
       ctx.http.route('GET', '/project-tasks', async (request) => {
         try {
           const projectId = text(request.query.projectId)
           if (!projectId) return respond(400, { error: '缺少 projectId' })
           const page = Math.max(1, asPositiveInt(request.query.page, 1))
           const size = Math.min(100, Math.max(1, asPositiveInt(request.query.size, 20)))
-          // 任务看板接口：{projectId, type:"4"}，返回按状态分组的全部任务（不分页）。
-          const data = await session.authorized((token) =>
-            client.statusBulletin(
-              {
-                projectId,
-                type: '4',
-                ...(text(request.query.productId)
-                  ? { productId: text(request.query.productId) }
-                  : {}),
-                ...(text(request.query.projectModuleId)
-                  ? { projectModuleId: text(request.query.projectModuleId) }
-                  : {}),
-                ...(text(request.query.code) ? { code: text(request.query.code) } : {}),
-              },
-              { token },
-            ),
-          )
-          const statuses = text(request.query.tasksStatus)
-            .split(',')
-            .map((value) => value.trim())
-            .filter(Boolean)
-          const priority = text(request.query.priority)
-          const keyword = text(request.query.name).toLowerCase()
-          const items = normalizeProjectTasks(data).filter((row) => {
-            if (statuses.length && !statuses.includes(String(row.status ?? ''))) return false
-            if (priority && row.priority !== priority) return false
-            if (keyword) {
-              const haystack = `${row.code} ${row.name}`.toLowerCase()
-              if (!haystack.includes(keyword)) return false
-            }
-            return true
-          })
-          const start = (page - 1) * size
+          const numericId = /^\d+$/.test(projectId) ? Number(projectId) : projectId
+          // type: '0' 产品空间 / '2' 项目空间；不传则先按产品查，空结果再按项目查。
+          const kind = text(request.query.type)
+          const types = text(request.query.types)
+          const fetchPage = (key) => {
+            const body = { current: page, size, last: 'true', [key]: numericId }
+            if (types) body.types = types
+            return session.authorized((token) => client.projectTaskPage(body, { token }))
+          }
+          let data
+          if (kind === '2') {
+            data = await fetchPage('projectId')
+          } else if (kind === '0') {
+            data = await fetchPage('productId')
+          } else {
+            data = await fetchPage('productId')
+            if (!Number(data?.total)) data = await fetchPage('projectId')
+          }
+          const rows = normalizeProjectTasks(data)
           return respond(200, {
             page,
             size,
-            total: items.length,
-            items: items.slice(start, start + size),
+            total: Number(data?.total ?? rows.length),
+            items: rows,
           })
         } catch (error) {
           return failure(error)
