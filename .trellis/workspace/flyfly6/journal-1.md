@@ -1030,3 +1030,45 @@ Session summary was not supplied.
 ### Next Steps
 
 - 拉取 origin/main 后推送 2 个提交（origin/main 已领先 4 个提交）
+
+
+## Session 32: 修复归档任务复活：服务端清理残留活跃行
+<!-- trellis-session: v=2 fp=5dcd24407fa120ee -->
+
+**Date**: 2026-11-18
+**Task**: 修复归档任务复活：服务端清理残留活跃行
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+归档同步按目录名清理残留的活跃快照行，并拒绝已归档任务的活跃上传
+
+### Main Changes
+
+- 新增 purgeArchivedTaskFiles：按归档目录名反解活跃目录，把残留 sync_task_space_file 行置删除、写删除审计、revision 推进并置 indexing，幂等
+- 归档同步的 HEAD 跳过与 import 两条路径都调用清理，并把结果并入 needsIndex 触发重建索引
+- applyChanges 在批次含活跃文件且命中已归档目录时返回 409 ARCHIVE_SYNC_SERVER_MANAGED，纯删除批次放行
+- 补充 server 测试与跨层契约文档
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5e8b8493ef` | fix(server): 归档同步清理残留活跃行，阻断已归档任务复活 |
+
+### Testing
+
+- [OK] node --test packages/server/test/team-task-snapshot.test.js -> 22 pass
+- [OK] node --test packages/server/test/archive-git-sync.test.js -> 6 pass
+- [OK] 全量 npm test -> 642 tests, 640 pass, 2 skipped
+- [OK] npx oxfmt --check 改动文件 -> 通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 部署服务端后确认残留活跃行被打成墓碑、客户端增量删除两份复活目录
+- 清理本地 .trellis/tasks/11-17-fix-archive-filter-listener-dev-id 与 11-17-in-window-task-sync-dialog 两个 bug 产物目录
