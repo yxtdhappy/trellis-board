@@ -13,7 +13,6 @@ import {
 const KEY_FILE = 'archive-git-credentials.key'
 const MAX_SSH_KEY_BYTES = 32 * 1024
 const MAX_TOKEN_BYTES = 8 * 1024
-const MAX_KNOWN_HOSTS_BYTES = 64 * 1024
 const ASKPASS_HELPER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'git-askpass.js')
 
 function cleanText(value, label, maxLength, { required = true } = {}) {
@@ -88,77 +87,6 @@ function authTypeForScheme(scheme) {
   return scheme === 'ssh' ? 'ssh_key' : 'https_token'
 }
 
-function fingerprintForKey(keyBase64) {
-  return `SHA256:${crypto
-    .createHash('sha256')
-    .update(Buffer.from(keyBase64, 'base64'))
-    .digest('base64')
-    .replace(/=+$/, '')}`
-}
-
-function knownHostsEntryMatches(hostField, host, port) {
-  const field = String(hostField || '').trim()
-  if (!field || field.startsWith('|')) return false
-  const expected = port === 22 ? host : `[${host}]:${port}`
-  return field.split(',').some((item) => item.trim().toLowerCase() === expected.toLowerCase())
-}
-
-function parseKnownHosts(value, host, port) {
-  const raw = String(value || '').trim()
-  if (!raw) {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'SSH 凭据必须配置 known_hosts')
-  }
-  if (Buffer.byteLength(raw, 'utf8') > MAX_KNOWN_HOSTS_BYTES) {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'known_hosts 超过 64 KiB')
-  }
-  const lines = []
-  const fingerprints = []
-  for (const sourceLine of raw.split(/\r?\n/)) {
-    const line = sourceLine.trim()
-    if (!line || line.startsWith('#')) continue
-    const fields = line.split(/\s+/)
-    if (fields.length !== 3 || !knownHostsEntryMatches(fields[0], host, port)) continue
-    const [, algorithm, keyBase64] = fields
-    try {
-      if (!Buffer.from(keyBase64, 'base64').length) continue
-    } catch {
-      continue
-    }
-    lines.push(`${fields[0]} ${algorithm} ${keyBase64}`)
-    fingerprints.push({
-      algorithm,
-      fingerprint: fingerprintForKey(keyBase64),
-    })
-  }
-  if (!lines.length) {
-    throw teamError(
-      400,
-      ERROR_CODES.INVALID_INPUT,
-      `known_hosts 没有匹配 ${port === 22 ? host : `[${host}]:${port}`} 的主机公钥`,
-    )
-  }
-  return {
-    text: `${[...new Set(lines)].join('\n')}\n`,
-    fingerprints: fingerprints.filter(
-      (entry, index, all) =>
-        all.findIndex((item) => item.fingerprint === entry.fingerprint) === index,
-    ),
-  }
-}
-
-function publicKnownHostFingerprints(text) {
-  const result = []
-  for (const line of String(text || '').split(/\r?\n/)) {
-    const fields = line.trim().split(/\s+/)
-    if (fields.length !== 3) continue
-    result.push({
-      algorithm: fields[1],
-      fingerprint: fingerprintForKey(fields[2]),
-    })
-  }
-  return result
-}
-
 function publicCredential(row) {
   return {
     id: row.id,
@@ -171,8 +99,6 @@ function publicCredential(row) {
     username: row.username || null,
     configured: true,
     publicKeyFingerprint: row.public_key_fingerprint || null,
-    knownHostsConfigured: Boolean(String(row.known_hosts_text || '').trim()),
-    knownHostsFingerprints: publicKnownHostFingerprints(row.known_hosts_text),
     secretVersion: Number(row.secret_version),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -336,10 +262,6 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
         ? cleanText(input.username || 'x-access-token', 'HTTPS 用户名', 200)
         : null
     const payload = credentialPayload(input, authType)
-    const knownHosts =
-      authType === 'ssh_key'
-        ? parseKnownHosts(input.knownHostsText, origin.host, origin.port)
-        : { text: null, fingerprints: [] }
     const id = crypto.randomUUID()
     const encrypted = encrypt(id, origin, authType, 1, payload)
     const now = new Date().toISOString()
@@ -349,8 +271,8 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
           INSERT INTO sync_archive_git_credential(
             id, name, scheme, host, port, auth_type, username, secret_version,
             secret_iv, secret_tag, secret_ciphertext, public_key_fingerprint,
-            known_hosts_text, created_by_user_id, updated_by_user_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+            created_by_user_id, updated_by_user_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
         `).run(
           id,
           name,
@@ -363,7 +285,6 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
           encrypted.iv,
           encrypted.tag,
           encrypted.ciphertext,
-          knownHosts.text,
           actor.userId,
           actor.userId,
           now,
@@ -377,7 +298,6 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
           detail: {
             origin: origin.origin,
             authType,
-            knownHostsFingerprints: knownHosts.fingerprints,
           },
         })
       })
@@ -428,18 +348,11 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
         : null
     const secretProvided =
       row.auth_type === 'ssh_key' ? input.privateKey != null : input.token != null
-    const knownHostsProvided = row.auth_type === 'ssh_key' && input.knownHostsText != null
-    if (!secretProvided && !knownHostsProvided && name === row.name && username === row.username) {
+    if (!secretProvided && name === row.name && username === row.username) {
       return publicCredential(row)
     }
     const existing = secretProvided ? decrypt(row) : null
     const payload = secretProvided ? credentialPayload(input, row.auth_type, existing) : null
-    const knownHosts = knownHostsProvided
-      ? parseKnownHosts(input.knownHostsText, row.host, row.port)
-      : {
-          text: row.known_hosts_text,
-          fingerprints: publicKnownHostFingerprints(row.known_hosts_text),
-        }
     const version = secretProvided ? Number(row.secret_version) + 1 : Number(row.secret_version)
     const encrypted = payload
       ? encrypt(
@@ -459,7 +372,6 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
             secret_iv = COALESCE(?, secret_iv),
             secret_tag = COALESCE(?, secret_tag),
             secret_ciphertext = COALESCE(?, secret_ciphertext),
-            known_hosts_text = ?,
             updated_by_user_id = ?, updated_at = ?
         WHERE id = ?
       `).run(
@@ -469,7 +381,6 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
         encrypted?.iv ?? null,
         encrypted?.tag ?? null,
         encrypted?.ciphertext ?? null,
-        knownHosts.text,
         actor.userId,
         now,
         row.id,
@@ -486,9 +397,7 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
             name !== row.name ? 'name' : null,
             username !== row.username ? 'username' : null,
             secretProvided ? 'secret' : null,
-            knownHostsProvided ? 'knownHosts' : null,
           ].filter(Boolean),
-          knownHostsFingerprints: knownHosts.fingerprints,
         },
       })
     })
@@ -557,7 +466,6 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
         origin,
         authType: row.auth_type,
         username: row.username || null,
-        knownHostsText: row.known_hosts_text || '',
         payload: decrypt(row),
       },
     }
@@ -604,14 +512,8 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
       if (!privateKey) {
         throw teamError(409, 'ARCHIVE_CREDENTIAL_INVALID', 'SSH 私钥为空')
       }
-      if (!String(credential.knownHostsText || '').trim()) {
-        throw teamError(409, 'ARCHIVE_SSH_HOST_UNTRUSTED', 'SSH 来源尚未配置 known_hosts')
-      }
       fs.writeFileSync(identityFile, `${privateKey}\n`, { mode: 0o600, encoding: 'utf8' })
-      fs.writeFileSync(knownHostsFile, credential.knownHostsText, {
-        mode: 0o600,
-        encoding: 'utf8',
-      })
+      fs.writeFileSync(knownHostsFile, '', { mode: 0o600, encoding: 'utf8' })
       if (process.platform !== 'win32') {
         fs.chmodSync(identityFile, 0o600)
         fs.chmodSync(knownHostsFile, 0o600)
@@ -622,7 +524,8 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
       const options = [
         '-o BatchMode=yes',
         '-o ConnectTimeout=15',
-        '-o StrictHostKeyChecking=yes',
+        // shortcut: 不校验 SSH 主机密钥，若后续恢复指纹校验需增加 known_hosts 管理。
+        '-o StrictHostKeyChecking=no',
         `-o GlobalKnownHostsFile=${quote(path.join(dir, 'global_known_hosts'))}`,
         `-o UserKnownHostsFile=${quote(knownHostsFile)}`,
         '-o IdentitiesOnly=yes',

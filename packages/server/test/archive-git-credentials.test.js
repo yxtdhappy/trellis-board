@@ -11,7 +11,6 @@ const PRIVATE_KEY = [
   'b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ==',
   '-----END OPENSSH PRIVATE KEY-----',
 ].join('\n')
-const HOST_KEY = 'AAAAC3NzaC1lZDI1NTE5AAAAIK2mFakeHostKeyMaterialForTestsOnly'
 
 function setup() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-archive-credentials-'))
@@ -45,7 +44,6 @@ test('归档凭据按精确来源加密保存且 API 不回显秘密', async () 
       host: 'git.weintdata.cn',
       port: 1022,
       privateKey: PRIVATE_KEY,
-      knownHostsText: `[git.weintdata.cn]:1022 ssh-ed25519 ${HOST_KEY}`,
     })
     const https = ctx.service.create(ctx.actor, {
       name: 'GitHub',
@@ -62,6 +60,8 @@ test('归档凭据按精确来源加密保存且 API 不回显秘密', async () 
       assert.equal(Object.hasOwn(dto, 'secretTag'), false)
       assert.equal(Object.hasOwn(dto, 'privateKey'), false)
       assert.equal(Object.hasOwn(dto, 'token'), false)
+      assert.equal(Object.hasOwn(dto, 'knownHostsConfigured'), false)
+      assert.equal(Object.hasOwn(dto, 'knownHostsFingerprints'), false)
       assert.equal(Object.hasOwn(dto, 'knownHostsText'), false)
     }
 
@@ -75,6 +75,7 @@ test('归档凭据按精确来源加密保存且 API 不回显秘密', async () 
     assert.ok(stored.every((row) => row.secret_ciphertext && row.secret_tag))
     assert.ok(stored.every((row) => !row.secret_ciphertext.includes(PRIVATE_KEY)))
     assert.ok(stored.every((row) => !row.secret_ciphertext.includes('ghp_archiveToken')))
+    assert.ok(stored.every((row) => !row.known_hosts_text))
     assert.equal(fs.existsSync(path.join(ctx.dataDir, 'archive-git-credentials.key')), true)
 
     const resolvedSsh = ctx.service.resolveForRemote(
@@ -126,24 +127,30 @@ test('归档凭据按精确来源加密保存且 API 不回显秘密', async () 
   }
 })
 
-test('SSH known_hosts 必须匹配凭据来源的 host 和 port', () => {
+test('SSH 凭据只使用私钥且不校验主机密钥', async () => {
   const ctx = setup()
   try {
-    assert.throws(
-      () =>
-        ctx.service.create(ctx.actor, {
-          scheme: 'ssh',
-          host: 'git.weintdata.cn',
-          port: 1022,
-          privateKey: PRIVATE_KEY,
-          knownHostsText: `git.weintdata.cn ssh-ed25519 ${HOST_KEY}`,
-        }),
-      /known_hosts 没有匹配 \[git\.weintdata\.cn\]:1022/,
+    const ssh = ctx.service.create(ctx.actor, {
+      scheme: 'ssh',
+      host: 'git.weintdata.cn',
+      port: 1022,
+      privateKey: PRIVATE_KEY,
+    })
+    let authDirectory = null
+    await ctx.service.withAuth(
+      ctx.service.resolveForRemote('ssh://git.weintdata.cn:1022/prod-mdp/repo.git').credential,
+      async (auth) => {
+        authDirectory = auth.dir
+        const scriptPath = auth.env.GIT_SSH_COMMAND.slice(1, -1)
+        const script = fs.readFileSync(scriptPath, 'utf8')
+        assert.match(script, /StrictHostKeyChecking=no/)
+        assert.doesNotMatch(script, /StrictHostKeyChecking=yes/)
+      },
     )
-    assert.equal(
-      ctx.db.prepare('SELECT COUNT(*) AS count FROM sync_archive_git_credential').get().count,
-      0,
-    )
+    assert.equal(fs.existsSync(authDirectory), false)
+
+    const rotated = ctx.service.update(ctx.actor, ssh.id, { privateKey: PRIVATE_KEY })
+    assert.equal(rotated.secretVersion, 2)
   } finally {
     ctx.db.close()
     fs.rmSync(ctx.dataDir, { recursive: true, force: true })

@@ -175,8 +175,6 @@ export type ArchiveGitCredential = {
   username: string | null
   configured: boolean
   publicKeyFingerprint: string | null
-  knownHostsConfigured: boolean
-  knownHostsFingerprints: { algorithm: string; fingerprint: string }[]
   secretVersion: number
   createdAt: string | null
   updatedAt: string | null
@@ -533,16 +531,6 @@ export function readArchiveGitCredential(input: unknown): ArchiveGitCredential {
     username: optionalText(row.username),
     configured: flag(row.configured ?? true),
     publicKeyFingerprint: optionalText(row.publicKeyFingerprint ?? row.public_key_fingerprint),
-    knownHostsConfigured: flag(row.knownHostsConfigured ?? row.known_hosts_configured),
-    knownHostsFingerprints: rows(row.knownHostsFingerprints ?? row.known_hosts_fingerprints).map(
-      (value) => {
-        const item = record(value)
-        return {
-          algorithm: text(item.algorithm),
-          fingerprint: text(item.fingerprint),
-        }
-      },
-    ),
     secretVersion: Number(row.secretVersion ?? row.secret_version ?? 0) || 0,
     createdAt: optionalText(row.createdAt ?? row.created_at),
     updatedAt: optionalText(row.updatedAt ?? row.updated_at),
@@ -960,7 +948,6 @@ export type ArchiveCredentialInput = {
   username?: string
   token?: string
   privateKey?: string
-  knownHostsText?: string
 }
 
 export async function createArchiveSyncCredential(

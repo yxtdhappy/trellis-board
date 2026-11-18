@@ -105,7 +105,6 @@ export function useArchiveSync(): ArchiveSyncController {
               username: input.username,
               token: input.token || undefined,
               privateKey: input.privateKey || undefined,
-              knownHostsText: input.knownHostsText || undefined,
             })
           : await admin.createArchiveSyncCredential(input)
         toast.success(credentialId ? '归档 Git 凭据已更新。' : '归档 Git 凭据已创建。')

@@ -99,7 +99,6 @@ type CredentialDraft = {
   username: string
   token: string
   privateKey: string
-  knownHostsText: string
 }
 
 const EMPTY_CREDENTIAL: CredentialDraft = {
@@ -110,7 +109,6 @@ const EMPTY_CREDENTIAL: CredentialDraft = {
   username: 'x-access-token',
   token: '',
   privateKey: '',
-  knownHostsText: '',
 }
 
 export function ArchiveSyncTab() {
@@ -145,7 +143,6 @@ export function ArchiveSyncTab() {
       username: credential.username || 'x-access-token',
       token: '',
       privateKey: '',
-      knownHostsText: '',
     })
   }
 
@@ -172,7 +169,6 @@ export function ArchiveSyncTab() {
       username: draft.scheme === 'https' ? draft.username.trim() : undefined,
       token: draft.scheme === 'https' ? draft.token : undefined,
       privateKey: draft.scheme === 'ssh' ? draft.privateKey : undefined,
-      knownHostsText: draft.scheme === 'ssh' ? draft.knownHostsText : undefined,
     }
     const saved = await sync.saveCredential(input, editing?.id)
     if (saved) resetCredential()
@@ -384,7 +380,7 @@ export function ArchiveSyncTab() {
                 <>
                   <Field
                     label={editing ? '轮换 SSH 私钥（留空则保留）' : 'SSH 私钥'}
-                    hint="只用于精确匹配的 SSH 来源。"
+                    hint="连接时只使用私钥，不校验 SSH 主机密钥。"
                   >
                     <Textarea
                       className="min-h-28 font-mono text-xs"
@@ -393,22 +389,6 @@ export function ArchiveSyncTab() {
                       value={draft.privateKey}
                       onChange={(event) =>
                         setDraft((current) => ({ ...current, privateKey: event.target.value }))
-                      }
-                    />
-                  </Field>
-                  <Field
-                    label={editing ? '更新 known_hosts（留空则保留）' : 'known_hosts'}
-                    hint="必须包含该主机和端口对应的完整 known_hosts 行。"
-                  >
-                    <Textarea
-                      className="min-h-24 font-mono text-xs"
-                      required={!editing}
-                      value={draft.knownHostsText}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          knownHostsText: event.target.value,
-                        }))
                       }
                     />
                   </Field>
@@ -498,15 +478,6 @@ export function ArchiveSyncTab() {
                           <code>{displayText(credential.origin, '来源地址缺失')}</code> · 更新{' '}
                           {formatTime(credential.updatedAt)}
                         </p>
-                        {credential.knownHostsFingerprints.length ? (
-                          <p className="truncate text-2xs text-muted-foreground">
-                            主机指纹{' '}
-                            {displayText(
-                              credential.knownHostsFingerprints[0].fingerprint,
-                              '指纹信息缺失',
-                            )}
-                          </p>
-                        ) : null}
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                           <span>自动适用 {affected.length} 个项目</span>
                           {affected.length > 0 ? (
