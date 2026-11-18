@@ -1,6 +1,7 @@
 import { LoaderCircle, RotateCcw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { PublishOperation } from '@/hooks/useBoard'
+import { Panel } from '@/components/ui/panel'
 
 type TaskOperationListProps = {
   operations: PublishOperation[]
@@ -52,7 +53,7 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
     .slice(0, 8)
   if (!visible.length) return null
   return (
-    <section className="rounded-xl border border-border bg-card px-3 py-2.5">
+    <Panel className="gap-0 border border-border px-3 py-2.5">
       <div className="mb-2 flex items-center justify-between gap-2">
         <div>
           <h2 className="text-xs font-semibold">创建与改派操作</h2>
@@ -110,6 +111,6 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
           )
         })}
       </div>
-    </section>
+    </Panel>
   )
 }

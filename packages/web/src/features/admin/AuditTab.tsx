@@ -13,8 +13,9 @@ import type { AuditEvent } from '@/api/admin'
 import { formatTime, statusTone } from '@/lib/admin-shared'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
-import { Panel } from './shared.tsx'
+
 import { SelectField } from '@/features/board/SelectField'
+import { Panel } from '@/components/ui/panel'
 
 const RANGE_OPTIONS = [
   { value: '7', label: '最近 7 天' },

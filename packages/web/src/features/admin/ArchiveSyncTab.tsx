@@ -24,9 +24,10 @@ import { useArchiveSync } from '@/hooks/useArchiveSync'
 import { SelectField } from '@/features/board/SelectField'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
-import { Field, Panel, Row } from './shared.tsx'
+import { Field, Row } from './shared.tsx'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Panel } from '@/components/ui/panel'
 
 const STATUS_LABELS: Record<string, string> = {
   idle: '等待同步',

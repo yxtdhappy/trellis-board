@@ -192,6 +192,24 @@ cd packages/web && npx tsc -b && npx oxlint src   # 格式化在仓库根：npx 
 
 提交：`refactor(web): 面板与表格改用 panel/table`
 
+### 执行记录（批 7，已完成）
+
+改动 17 文件：
+
+- `components/ui/panel.tsx`：增 `as`（`section|div|aside|article`）+ 原生属性透传；`Omit<…, 'ref'>` 规避联合标签 `ref` 冲突。
+- `features/admin/shared.tsx`：删 `Panel`/`PanelProps` 与不再使用的 `cn` 导入。
+- admin 8 文件 `Panel` 改从 `@/components/ui/panel` 引入（`ArchiveSyncTab`、`AuditTab`、`BranchManagementPanel`、`DevicesTab`、`PluginsTab`、`ProjectsTab`、`TeamsTab`、`UsersTab`）。
+- board 容器 → `Panel`：`AttentionQueue.tsx:26`、`FlowSignals.tsx:54`、`TaskOperationList.tsx:56`、`TeamView.tsx:107`（`as="aside"`）/`:210`、`ArchiveView.tsx:234`（`as="div"`，`p-0`）、`components/layout/ProjectRail.tsx:1152`（`as="div"`）、`features/plugins/PluginsView.tsx`（`as="article"`，保留 `draggable`/拖拽回调）。
+
+偏差（均为放弃项，理由见 `design.md` §8）：
+
+- 两张手写 `<table>`（`ArchiveView`、`TeamView`）已改用 `ui/table`：`Table` 增 `containerClassName`，容器 `h-full overflow-y-auto` / `min-h-0 flex-1 overflow-auto` 成为真正的竖向滚动祖先，`thead` 用 `sticky top-0 z-10 bg-muted`；实测滚动 240px 后表头顶边仍贴容器顶边。`ScrollArea` 在 `ArchiveView` 已被表格容器取代。
+- `TaskDetailDialog:563`/`:741` 的 `ul.divide-y` 保留：无表头无列宽，`ul` 语义正确。
+- 行卡片（`AssignmentsDialog:88`、`ProjectManagerDialog:131`、`BranchListenersDialog:100`）保留：`rounded-lg bg-muted` 与面板 `rounded-xl bg-card` 视觉不同。
+- 计划里 `rg "<(table|thead…)"` 断言改为「仅剩两张手写表格」。
+
+闸门：`npx tsc -b` rc=0；`npx oxfmt` 17 文件；`npx oxlint` 0 error（既有 `react(set-state-in-effect)` 等 warning 不变）。
+
 ## 批 8 表单行（≈25）
 
 1. admin `Field` 19 处（6 文件）→ `ui/field`：每个控件补 `id` + `FieldLabel htmlFor`，`hint` → `FieldDescription`；`Row` 留在 feature（spec 登记）。

@@ -18,8 +18,9 @@ import type { TaskSpaceActionOutcome } from '@/hooks/useAdminProjects'
 import { formatTime, statusTone } from '@/lib/admin-shared'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
-import { Field, Panel, Row } from './shared.tsx'
+import { Field, Row } from './shared.tsx'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Panel } from '@/components/ui/panel'
 
 type BranchManagementPanelProps = {
   projectSelected: boolean

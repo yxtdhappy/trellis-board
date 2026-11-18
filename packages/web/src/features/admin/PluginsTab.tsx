@@ -21,7 +21,8 @@ import {
 import { StatusPill } from '@/components/ui/status-pill'
 import { statusTone } from '@/lib/admin-shared'
 import { EmptyRow } from '@/components/ui/empty-row'
-import { Panel, Row } from './shared.tsx'
+import { Row } from './shared.tsx'
+import { Panel } from '@/components/ui/panel'
 
 const collator = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' })
 

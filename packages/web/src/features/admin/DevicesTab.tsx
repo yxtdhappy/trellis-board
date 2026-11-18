@@ -7,7 +7,8 @@ import { formatTime, statusTone } from '@/lib/admin-shared'
 import { copyText } from '@/browser/clipboard.js'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
-import { Panel, Row } from './shared.tsx'
+import { Row } from './shared.tsx'
+import { Panel } from '@/components/ui/panel'
 
 export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
   const {

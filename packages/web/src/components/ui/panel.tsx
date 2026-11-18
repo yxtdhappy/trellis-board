@@ -1,19 +1,32 @@
-import type { ReactNode } from 'react'
+import type { ComponentProps, ElementType, ReactNode } from 'react'
 import { cn } from 'cn'
+
+type PanelTag = 'section' | 'div' | 'aside' | 'article'
 
 type PanelProps = {
   kicker?: string
   title?: string
   description?: string
   action?: ReactNode
+  as?: PanelTag
   className?: string
   children: ReactNode
-}
+} & Omit<ComponentProps<'section'>, 'children' | 'className' | 'title' | 'ref'>
 
-export function Panel({ kicker, title, description, action, className, children }: PanelProps) {
+export function Panel({
+  kicker,
+  title,
+  description,
+  action,
+  as = 'section',
+  className,
+  children,
+  ...props
+}: PanelProps) {
+  const Tag = as as ElementType
   const hasHeader = Boolean(kicker || title || description || action)
   return (
-    <section className={cn('flex flex-col gap-2.5 rounded-xl bg-card p-4', className)}>
+    <Tag className={cn('flex flex-col gap-2.5 rounded-xl bg-card p-4', className)} {...props}>
       {hasHeader ? (
         <header className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -30,6 +43,6 @@ export function Panel({ kicker, title, description, action, className, children 
         </header>
       ) : null}
       {children}
-    </section>
+    </Tag>
   )
 }

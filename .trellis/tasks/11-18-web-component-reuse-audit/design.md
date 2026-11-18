@@ -222,28 +222,20 @@ size: { default: '', xs: 'h-auto px-1.5 py-px' }
 
 ## 8. 卡片与表格（批 7）
 
-- `Panel` → `ui/panel.tsx`：保留 `rounded-xl border border-border bg-card` + `title/kicker/description/action/children` props，内部 `Card className="rounded-xl border border-border ring-0"` + `CardHeader/CardTitle/CardDescription/CardAction/CardContent`；23 处 admin 调用只改 import，board 8 处容器 `Panel`（无 header props）直接替换手写 `rounded-xl border bg-card`。
-- 语义标签优先：`TeamView:106` 的 `<aside>`、`ArchiveView:233` 的 `<section>` 保持标签，只把内层容器换成 `Panel`。
-- 行卡片：`AssignmentsDialog:88`、`ProjectManagerDialog:131`、`BranchListenersDialog:100`、`DependencyItem:103`、`TaskDetailDialog:437` 统一 `<Panel className="px-2.5 py-2">`（无 header）。
-- 表格：`Table` 外层 `div[data-slot=table-container]` 自带 `overflow-x-auto`；`TableHead` 默认 `h-10 px-2`，手写是 `sticky top-0 bg-muted px-3 py-2` → 全部用 `className` 覆盖回原值：
+- `Panel` 保持自建实现（`flex flex-col gap-2.5 rounded-xl bg-card p-4`），不套 `Card`：`Card` 的 `rounded-lg ring-1 ring-foreground/10` 与全站现有 `rounded-xl` 面板不是同一视觉，套上必然漂移。
+- `Panel` 增 `as?: 'section' | 'div' | 'aside' | 'article'`（默认 `section`）与其余原生属性透传，语义标签由调用侧决定：`TeamView:106` `<Panel as="aside">`、`ArchiveView:233` `<Panel as="div">`、`PluginsView:267` `<Panel as="article">`。
+- 23 处 admin 调用只改 import（`@/components/ui/panel`），`features/admin/shared.tsx` 的 `Panel` 删除；board 容器 `AttentionQueue`、`FlowSignals`、`TaskOperationList`、`TeamView`（两处）、`ArchiveView`、`ProjectRail:1147` 卡片、`PluginsView:267` 卡片全部改为 `<Panel>` + `className` 覆盖间距，视觉逐字保留。
+- 表格：两张手写 `<table>`（`ArchiveView`、`TeamView`）改用 `ui/table`，并把滚动责任交给表格容器——`Table` 新增 `containerClassName`，容器 `overflow-y-auto` + 定高后，`thead` 的 `sticky top-0` 才真的有滚动祖先（`overflow-x-auto` 会连带把 `overflow-y` 变成 `auto`，容器不设高度时只是「不滚动的滚动祖先」，`sticky` 会随内容滚走；这正是原先不敢换的原因）。
+- 表头/单元格用 `className` 覆盖回原值：`TableHeader` 加 `sticky top-0 z-10 bg-muted text-2xs text-muted-foreground`，表头行 `border-0 hover:bg-transparent`，`TableHead` 加 `h-auto text-inherit`（默认 `h-10 px-2 text-foreground` 会把字号/内边距/颜色都改掉），`TableCell` 加 `whitespace-normal`（默认 `whitespace-nowrap` 会让任务标题不换行）。
+- `ConditionChecks:36-56` 是 `grid` 假表（`grid-cols-[92px_minmax(220px,1.2fr)…]`），`Table` 无法表达响应式列宽 → 保留 grid，spec 登记为允许例外。
+- `TaskDetailDialog:563`（阶段证据）、`:741`（附件行）的 `ul.divide-y` 模拟表格同样不转 `Table`：无表头、无列宽约束，`ul` 语义正确。
 
-```tsx
-<Table className="border-collapse text-left text-xs">
-  <TableHeader className="sticky top-0 bg-muted text-2xs text-muted-foreground">
-    <TableRow className="border-b">
-      <TableHead className="px-3 py-2 font-semibold">任务</TableHead>
-    </TableRow>
-  </TableHeader>
-  <TableBody>
-    <TableRow className="cursor-pointer border-b border-border/60 hover:bg-muted/40">
-      <TableCell className="px-3 py-2">…</TableCell>
-    </TableRow>
-  </TableBody>
-</Table>
-```
+### 8.1 实施修正（批 7 完成后回写）
 
-- `ConditionChecks:36-56` 是 `grid` 假表（响应式列宽 `grid-cols-[92px_minmax(220px,1.2fr)…]`），`Table` 无法表达 grid 列宽 → **保留 grid，只把行容器换成 `TableRow` 等语义无效**，故本项降级为"不动"，在 spec 登记为允许例外（响应式 grid 表）。
-- `TaskDetailDialog:563`（阶段证据四列）、`:741`（附件行）转 `Table`，`colSpan` 空态行保留。
+- 行卡片（`AssignmentsDialog:88`、`ProjectManagerDialog:131`、`BranchListenersDialog:100`）不转 `Panel`：面板是 `rounded-xl bg-card p-4`，行卡片是 `rounded-lg bg-muted px-3 py-2`，转过去等于改视觉；且三处间距各不相同，抽象不出稳定契约。
+- `Panel` 的 `as` 用 `const Tag = as as ElementType` + `Omit<ComponentProps<'section'>, 'children' | 'className' | 'title' | 'ref'>`：联合标签的 `ref` 类型互相冲突（`TS2322`），省略 `ref` 是唯一不需要 `@ts-expect-error` 的写法。
+- 表格转换的实测：注入 40 行后 `scrollTop=240`，两张表的 `thead` 顶边仍等于容器顶边（`stuck: true`），`position: sticky`、`z-index: 10`、表头底色 `oklch(0.97 0 0)`（`bg-muted`）、单元格 `8px 12px`、字重 600 与改造前一致。
+- `PluginsView:267` 的 `article` 自带 `draggable`/`onDragStart`/`onDrop`，`Panel` 的属性透传让它们原样生效，无需额外包装。
 
 ## 9. 表单（批 8）
 

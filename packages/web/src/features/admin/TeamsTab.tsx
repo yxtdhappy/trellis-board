@@ -8,8 +8,9 @@ import { SelectField } from '@/features/board/SelectField'
 import { StatusPill } from '@/components/ui/status-pill'
 import { statusTone } from '@/lib/admin-shared'
 import { EmptyRow } from '@/components/ui/empty-row'
-import { Panel } from '@/features/admin/shared'
+
 import { cn } from '@/lib/utils'
+import { Panel } from '@/components/ui/panel'
 
 export function TeamsTab() {
   const [teams, setTeams] = useState<Team[]>([])

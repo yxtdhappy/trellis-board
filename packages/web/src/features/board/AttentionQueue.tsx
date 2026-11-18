@@ -10,6 +10,7 @@ import {
 } from './task-view.ts'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
+import { Panel } from '@/components/ui/panel'
 
 type AttentionQueueProps = {
   tasks: BoardTask[]
@@ -22,7 +23,7 @@ export function AttentionQueue({ tasks, onOpen }: AttentionQueueProps) {
   const queue = tasks.filter(isAttention)
 
   return (
-    <section className="flex flex-col gap-2 rounded-xl border border-border bg-card p-3">
+    <Panel className="gap-2 border border-border p-3">
       <div className="flex flex-wrap items-baseline gap-2">
         <p className="text-2xs font-semibold tracking-[0.08em] text-muted-foreground">
           ATTENTION QUEUE
@@ -85,6 +86,6 @@ export function AttentionQueue({ tasks, onOpen }: AttentionQueueProps) {
         按逾期、截止、优先级、检查、实现和停滞排序。
         {queue.length > MAX_ROWS ? ` 另有 ${queue.length - MAX_ROWS} 个信号未展开。` : ''}
       </p>
-    </section>
+    </Panel>
   )
 }

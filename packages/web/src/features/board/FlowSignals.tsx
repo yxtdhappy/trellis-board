@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import type { BoardTask } from './task-view.ts'
 import { recommendedTask } from './task-view.ts'
 import { cn } from '@/lib/utils'
+import { Panel } from '@/components/ui/panel'
 
 type FlowSignalsProps = {
   tasks: BoardTask[]
@@ -50,7 +51,7 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
   }
 
   return (
-    <section className="flex flex-col gap-2.5 rounded-xl border border-border bg-card p-3">
+    <Panel className="border border-border p-3">
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0">
           <p className="text-2xs font-semibold tracking-[0.08em] text-muted-foreground">
@@ -111,7 +112,7 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
           '当前没有需要优先处理的信号'
         )}
       </p>
-    </section>
+    </Panel>
   )
 }
 

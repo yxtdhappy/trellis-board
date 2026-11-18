@@ -15,7 +15,8 @@ import { adminPasswordError } from './password-policy.ts'
 import { ResetPasswordDialog } from './ResetPasswordDialog.tsx'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
-import { Field, Panel, Row } from './shared.tsx'
+import { Field, Row } from './shared.tsx'
+import { Panel } from '@/components/ui/panel'
 
 export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
   const { users, reloadUsers, createUser, updateUser, toggleUser, resetPassword } = consoleApi

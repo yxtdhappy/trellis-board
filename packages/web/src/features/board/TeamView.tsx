@@ -11,6 +11,15 @@ import { branchMatches } from '@/lib/execution-filter.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
 import type { BoardFilters } from '@/hooks/useBoard'
 import { taskControlView } from '@/lib/team-client.js'
+import { Panel } from '@/components/ui/panel'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 
 type TeamViewProps = {
   tasks: BoardTask[]
@@ -103,7 +112,7 @@ export function TeamView({
 
   return (
     <div className="flex min-h-0 flex-1 gap-3">
-      <aside className="flex w-67 shrink-0 flex-col gap-2.5 overflow-y-auto rounded-xl border border-border bg-card p-3">
+      <Panel as="aside" className="w-67 shrink-0 overflow-y-auto border border-border p-3">
         <div className="flex flex-col gap-1">
           <h2 className="text-sm font-semibold font-heading">跨项目查询</h2>
           <p className="text-2xs text-muted-foreground">筛选条件即时生效</p>
@@ -204,9 +213,9 @@ export function TeamView({
             onChange={(next) => onChange({ blocked: next as BoardFilters['blocked'] })}
           />
         </div>
-      </aside>
+      </Panel>
 
-      <section className="flex min-h-0 flex-1 flex-col gap-2 rounded-xl border border-border bg-card p-3">
+      <Panel className="min-h-0 flex-1 gap-2 border border-border p-3">
         <div className="flex flex-wrap items-center gap-2">
           <div className="min-w-0">
             <p className="text-2xs font-semibold tracking-[0.08em] text-muted-foreground">
@@ -234,92 +243,99 @@ export function TeamView({
         {loading ? (
           <p className="px-1 py-10 text-center text-xs text-muted-foreground">正在读取团队任务…</p>
         ) : (
-          <div className="min-h-0 flex-1 overflow-auto">
-            <table className="w-full border-collapse text-left">
-              <thead className="sticky top-0 bg-muted text-2xs text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 font-semibold">任务</th>
-                  <th className="px-3 py-2 font-semibold">负责人</th>
-                  <th className="px-3 py-2 font-semibold">项目</th>
-                  <th className="px-3 py-2 font-semibold whitespace-nowrap">阶段</th>
-                  <th className="px-3 py-2 font-semibold whitespace-nowrap">优先级</th>
-                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">更新</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      className="px-3 py-10 text-center text-xs text-muted-foreground"
+          <Table
+            containerClassName="min-h-0 flex-1 overflow-auto"
+            className="border-collapse text-left"
+          >
+            <TableHeader className="sticky top-0 z-10 bg-muted text-2xs text-muted-foreground">
+              <TableRow className="border-0 hover:bg-transparent">
+                <TableHead className="h-auto text-inherit px-3 py-2 font-semibold">任务</TableHead>
+                <TableHead className="h-auto text-inherit px-3 py-2 font-semibold">
+                  负责人
+                </TableHead>
+                <TableHead className="h-auto text-inherit px-3 py-2 font-semibold">项目</TableHead>
+                <TableHead className="h-auto text-inherit px-3 py-2 font-semibold whitespace-nowrap">
+                  阶段
+                </TableHead>
+                <TableHead className="h-auto text-inherit px-3 py-2 font-semibold whitespace-nowrap">
+                  优先级
+                </TableHead>
+                <TableHead className="h-auto text-inherit px-3 py-2 text-right font-semibold whitespace-nowrap">
+                  更新
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {visible.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="px-3 py-10 text-center text-xs text-muted-foreground"
+                  >
+                    团队视图没有可展示的任务
+                  </TableCell>
+                </TableRow>
+              ) : (
+                visible.map((task) => {
+                  const stageLabel = task.stages.find(
+                    (item) => item.id === task.derivedStage,
+                  )?.label
+                  const projectLabel = [task.teamName, task.projectName, branchLabel(task)]
+                    .filter(Boolean)
+                    .join(' · ')
+                  const control = taskControlView(task)
+                  return (
+                    <TableRow
+                      key={taskInstanceKey(task)}
+                      className="cursor-pointer border-b border-border/60 text-xs hover:bg-muted/40"
+                      onClick={() => onOpen(task)}
                     >
-                      团队视图没有可展示的任务
-                    </td>
-                  </tr>
-                ) : (
-                  visible.map((task) => {
-                    const stageLabel = task.stages.find(
-                      (item) => item.id === task.derivedStage,
-                    )?.label
-                    const projectLabel = [task.teamName, task.projectName, branchLabel(task)]
-                      .filter(Boolean)
-                      .join(' · ')
-                    const control = taskControlView(task)
-                    return (
-                      <tr
-                        key={taskInstanceKey(task)}
-                        className="cursor-pointer border-b border-border/60 text-xs hover:bg-muted/40"
-                        onClick={() => onOpen(task)}
-                      >
-                        <td className="px-3 py-2">
-                          <span className="block font-medium">{task.title}</span>
-                          <small className="text-2xs text-muted-foreground">
-                            #{task.dirName} · {projectLabel}
-                          </small>
-                          {control.available ? (
-                            <StatusPill
-                              tone={controlTone(control.tone)}
-                              size="xs"
-                              className="mt-1 w-fit font-medium"
-                              title={control.description}
-                            >
-                              {control.label}
-                            </StatusPill>
-                          ) : null}
-                        </td>
-                        <td className="px-3 py-2">
-                          <span className="flex items-center gap-1.5">
-                            <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-2xs font-semibold">
-                              {initials(task.assignee)}
-                            </span>
-                            {task.assignee || '未派发'}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">{projectLabel}</td>
-                        <td className="px-3 py-2 whitespace-nowrap">
+                      <TableCell className="whitespace-normal px-3 py-2">
+                        <span className="block font-medium">{task.title}</span>
+                        <small className="text-2xs text-muted-foreground">
+                          #{task.dirName} · {projectLabel}
+                        </small>
+                        {control.available ? (
                           <StatusPill
-                            tone={stageTone(stageLabel)}
+                            tone={controlTone(control.tone)}
                             size="xs"
-                            className="font-medium"
+                            className="mt-1 w-fit font-medium"
+                            title={control.description}
                           >
-                            {stageLabel || statusLabel(task.stage || task.status) || '未开始'}
+                            {control.label}
                           </StatusPill>
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          <StatusPill tone={priorityTone(task.priority)} size="xs">
-                            {task.priority || 'P2'}
-                          </StatusPill>
-                        </td>
-                        <td className="px-3 py-2 text-right text-2xs whitespace-nowrap text-muted-foreground">
-                          {dueLabel(task.execution?.dueDate)}
-                        </td>
-                      </tr>
-                    )
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="whitespace-normal px-3 py-2">
+                        <span className="flex items-center gap-1.5">
+                          <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-2xs font-semibold">
+                            {initials(task.assignee)}
+                          </span>
+                          {task.assignee || '未派发'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="whitespace-normal px-3 py-2 text-xs text-muted-foreground">
+                        {projectLabel}
+                      </TableCell>
+                      <TableCell className="whitespace-normal px-3 py-2 whitespace-nowrap">
+                        <StatusPill tone={stageTone(stageLabel)} size="xs" className="font-medium">
+                          {stageLabel || statusLabel(task.stage || task.status) || '未开始'}
+                        </StatusPill>
+                      </TableCell>
+                      <TableCell className="whitespace-normal px-3 py-2 whitespace-nowrap">
+                        <StatusPill tone={priorityTone(task.priority)} size="xs">
+                          {task.priority || 'P2'}
+                        </StatusPill>
+                      </TableCell>
+                      <TableCell className="whitespace-normal px-3 py-2 text-right text-2xs whitespace-nowrap text-muted-foreground">
+                        {dueLabel(task.execution?.dueDate)}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
+            </TableBody>
+          </Table>
         )}
 
         <Pagination
@@ -328,7 +344,7 @@ export function TeamView({
           onChange={setPage}
           label={`显示 ${visible.length ? current * PAGE_SIZE + 1 : 0}-${current * PAGE_SIZE + visible.length} / 共 ${rows.length} 条`}
         />
-      </section>
+      </Panel>
     </div>
   )
 }

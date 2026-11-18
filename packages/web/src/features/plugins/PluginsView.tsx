@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils'
 import { PluginLogsDialog } from './PluginLogsDialog.tsx'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Panel } from '@/components/ui/panel'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -235,7 +236,8 @@ export function PluginsView() {
             const dragging = draggingId === plugin.id
             const dropTarget = dragOverId === plugin.id && !dragging
             return (
-              <article
+              <Panel
+                as="article"
                 key={plugin.id}
                 draggable={!disabled && !savingOrder}
                 onDragStart={(event) => {
@@ -264,7 +266,7 @@ export function PluginsView() {
                   setDragOverId('')
                 }}
                 className={cn(
-                  'flex flex-col gap-2.5 rounded-xl border bg-card p-3.5 transition',
+                  'border p-3.5 transition',
                   dragging ? 'border-dashed border-border opacity-40' : 'border-border',
                   dropTarget && 'border-primary ring-2 ring-primary/25',
                 )}
@@ -343,7 +345,7 @@ export function PluginsView() {
                     日志
                   </Button>
                 </div>
-              </article>
+              </Panel>
             )
           })}
         </div>

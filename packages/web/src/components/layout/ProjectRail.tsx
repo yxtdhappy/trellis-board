@@ -25,6 +25,7 @@ import { createRefreshCoordinator } from '@/lib/refresh-coordinator.js'
 import { cn } from '@/lib/utils'
 import { StatusPill } from '@/components/ui/status-pill'
 import { Alert } from '@/components/ui/alert'
+import { Panel } from '@/components/ui/panel'
 
 type Project = {
   id: string
@@ -1144,7 +1145,7 @@ export function ProjectRail({
         </Button>
       ) : null}
 
-      <div className="mt-auto flex flex-col gap-2 rounded-xl bg-card p-2.5">
+      <Panel as="div" className="mt-auto gap-2 p-2.5">
         <div className="flex items-center gap-1.5">
           <span
             className={
@@ -1177,7 +1178,7 @@ export function ProjectRail({
           <RefreshCw className={refreshing ? 'size-3 animate-spin' : 'size-3'} />
           {refreshing ? '正在扫描…' : '重新扫描仓库'}
         </Button>
-      </div>
+      </Panel>
       {invoke ? (
         <AgentQuickInitDialog
           open={quickAgentTaskSpaceId !== null}

@@ -18,8 +18,9 @@ import { formatTime, statusTone } from '@/lib/admin-shared'
 import { BranchManagementPanel } from './BranchManagementPanel'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
-import { AuditItem, Field, Panel, Row } from './shared.tsx'
+import { AuditItem, Field, Row } from './shared.tsx'
 import { SelectField } from '@/features/board/SelectField'
+import { Panel } from '@/components/ui/panel'
 
 export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) {
   const {

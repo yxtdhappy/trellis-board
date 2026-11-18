@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { useArchiveTasks } from '@/hooks/useArchiveTasks'
 import { formatArchiveTimestamp, sortArchivedTasks } from '@/lib/archive-sort.js'
 import { branchMatches } from '@/lib/execution-filter.js'
@@ -14,6 +13,15 @@ import { SearchableSelect } from './SearchableSelect'
 import { SelectField } from './SelectField.tsx'
 import { branchLabel, initials, type BoardTask } from './task-view.ts'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Panel } from '@/components/ui/panel'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 
 type ArchiveViewProps = {
   tasks: BoardTask[]
@@ -230,103 +238,112 @@ export function ArchiveView({
         </Alert>
       ) : null}
 
-      <div
-        className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card"
+      <Panel
+        as="div"
+        className="min-h-0 flex-1 overflow-hidden border border-border p-0"
         aria-busy={teamMode && archive.loading}
       >
-        <ScrollArea className="h-full">
-          <table className="w-full border-collapse text-left">
-            <thead className="sticky top-0 bg-muted text-2xs text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 font-semibold">任务</th>
-                <th className="px-3 py-2 font-semibold">负责人</th>
-                <th className="px-3 py-2 font-semibold">完成证据</th>
-                <th className="px-3 py-2 text-right font-semibold">归档时间</th>
-                <th className="px-3 py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {teamMode && archive.loading && visible.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-3 py-10 text-center text-xs text-muted-foreground">
-                    正在加载归档任务
-                  </td>
-                </tr>
-              ) : visible.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-3 py-10 text-center text-xs text-muted-foreground">
-                    没有符合条件的归档任务
-                  </td>
-                </tr>
-              ) : (
-                visible.map((task) => {
-                  const evidence = task.stages
-                    .filter((stage) => stage.complete)
-                    .map((stage) => stage.label)
-                    .slice(0, 2)
-                  const projectLabel = [task.teamName, task.projectName, branchLabel(task)]
-                    .filter(Boolean)
-                    .join(' · ')
-                  return (
-                    <tr
-                      key={taskInstanceKey(task)}
-                      className="cursor-pointer border-b border-border/60 text-xs hover:bg-muted/40"
-                      onClick={() => onOpen(task)}
-                    >
-                      <td className="px-3 py-2.5">
-                        <span className="block font-medium">{task.title}</span>
-                        <small className="text-2xs text-muted-foreground">
-                          #{task.dirName} · {projectLabel} · 已归档
-                        </small>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className="flex items-center gap-1.5">
-                          <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-2xs font-semibold">
-                            {initials(task.assignee)}
-                          </span>
-                          {task.assignee || '未派发'}
+        <Table containerClassName="h-full overflow-y-auto" className="border-collapse text-left">
+          <TableHeader className="sticky top-0 z-10 bg-muted text-2xs text-muted-foreground">
+            <TableRow className="border-0 hover:bg-transparent">
+              <TableHead className="h-auto text-inherit px-3 py-2 font-semibold">任务</TableHead>
+              <TableHead className="h-auto text-inherit px-3 py-2 font-semibold">负责人</TableHead>
+              <TableHead className="h-auto text-inherit px-3 py-2 font-semibold">
+                完成证据
+              </TableHead>
+              <TableHead className="h-auto text-inherit px-3 py-2 text-right font-semibold">
+                归档时间
+              </TableHead>
+              <TableHead className="h-auto text-inherit px-3 py-2" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {teamMode && archive.loading && visible.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={5}
+                  className="px-3 py-10 text-center text-xs text-muted-foreground"
+                >
+                  正在加载归档任务
+                </TableCell>
+              </TableRow>
+            ) : visible.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={5}
+                  className="px-3 py-10 text-center text-xs text-muted-foreground"
+                >
+                  没有符合条件的归档任务
+                </TableCell>
+              </TableRow>
+            ) : (
+              visible.map((task) => {
+                const evidence = task.stages
+                  .filter((stage) => stage.complete)
+                  .map((stage) => stage.label)
+                  .slice(0, 2)
+                const projectLabel = [task.teamName, task.projectName, branchLabel(task)]
+                  .filter(Boolean)
+                  .join(' · ')
+                return (
+                  <TableRow
+                    key={taskInstanceKey(task)}
+                    className="cursor-pointer border-b border-border/60 text-xs hover:bg-muted/40"
+                    onClick={() => onOpen(task)}
+                  >
+                    <TableCell className="whitespace-normal px-3 py-2.5">
+                      <span className="block font-medium">{task.title}</span>
+                      <small className="text-2xs text-muted-foreground">
+                        #{task.dirName} · {projectLabel} · 已归档
+                      </small>
+                    </TableCell>
+                    <TableCell className="whitespace-normal px-3 py-2.5">
+                      <span className="flex items-center gap-1.5">
+                        <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-2xs font-semibold">
+                          {initials(task.assignee)}
                         </span>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        {evidence.length ? (
-                          <span className="flex flex-wrap gap-1">
-                            {evidence.map((label) => (
-                              <span
-                                key={label}
-                                className="rounded-sm border border-border px-1.5 py-px text-2xs text-muted-foreground"
-                              >
-                                {label}
-                              </span>
-                            ))}
-                          </span>
-                        ) : (
-                          <span className="text-2xs text-muted-foreground">无完成证据</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5 text-right text-2xs text-muted-foreground">
-                        {formatArchiveTimestamp(task)}
-                      </td>
-                      <td className="px-3 py-2.5 text-right">
-                        <button
-                          type="button"
-                          aria-label={`打开归档任务 ${task.title}`}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            onOpen(task)
-                          }}
-                          className="text-muted-foreground hover:text-foreground"
-                        >
-                          <ChevronRight className="size-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-        </ScrollArea>
-      </div>
+                        {task.assignee || '未派发'}
+                      </span>
+                    </TableCell>
+                    <TableCell className="whitespace-normal px-3 py-2.5">
+                      {evidence.length ? (
+                        <span className="flex flex-wrap gap-1">
+                          {evidence.map((label) => (
+                            <span
+                              key={label}
+                              className="rounded-sm border border-border px-1.5 py-px text-2xs text-muted-foreground"
+                            >
+                              {label}
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <span className="text-2xs text-muted-foreground">无完成证据</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="whitespace-normal px-3 py-2.5 text-right text-2xs text-muted-foreground">
+                      {formatArchiveTimestamp(task)}
+                    </TableCell>
+                    <TableCell className="whitespace-normal px-3 py-2.5 text-right">
+                      <button
+                        type="button"
+                        aria-label={`打开归档任务 ${task.title}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onOpen(task)
+                        }}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <ChevronRight className="size-3.5" />
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
+            )}
+          </TableBody>
+        </Table>
+      </Panel>
 
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted-foreground">
