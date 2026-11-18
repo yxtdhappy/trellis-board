@@ -1305,3 +1305,40 @@ packages/web 全量审计后按 shadcn/base-ui 规则把重复实现收敛到 co
 ### Next Steps
 
 - 无；任务已归档。monaco-editor 依赖缺口已随并发会话修复
+
+
+## Session 39: 运行时环境检测收口
+<!-- trellis-session: v=2 fp=2a1b5aa12064ea18 -->
+
+**Date**: 2026-11-19
+**Task**: 运行时环境检测收口
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+修复合并后运行时检测的重复探测、候选顺序与旧键兼容问题
+
+### Main Changes
+
+- flag 均有效时跳过 PowerShell；Node/Trellis 未就绪才刷新一次
+- Node 候选 fresh PATH 优先、私有 runtime 兜底，保留 flag.source
+- npm/Trellis 安装复用探测目录，Python 增加 fresh where
+- 旧 schema_version 直接忽略并删除旧键清理
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9b55bda16f` | fix(desktop): 收口运行时环境检测 |
+| `6c31860986` | chore(task): archive 11-18-runtime-detection-cleanup |
+
+### Testing
+
+- [OK] cargo test: 272 passed
+- [OK] yarn test: 655 pass / 2 skipped
+- [OK] cargo clippy: 改动模块无警告
+
+### Status
+
+[OK] **Completed**
