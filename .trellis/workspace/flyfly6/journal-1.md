@@ -1113,3 +1113,42 @@ Session summary was not supplied.
 ### Next Steps
 
 - 部署服务端到 192.168.65.27:4317 后观察 mdp-backend-web 两条陈旧冲突是否随归档收敛消失
+
+
+## Session 34: 拆分 task_sync.rs 万行模块并外移测试
+<!-- trellis-session: v=2 fp=eec82654ebb5c477 -->
+
+**Date**: 2026-11-18
+**Task**: 拆分 task_sync.rs 万行模块并外移测试
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+task_sync.rs 15798 行拆为根 394 行 + 17 个职责子模块 + tests/ 7 文件，行为不变并沉淀规格
+
+### Main Changes
+
+- 机械 codemod 按 item 行区间切片，私有 item/字段放宽为 pub(super)，根文件按原可见性重导出 + allow(unused_imports)
+- 单一大 impl TaskSync 按模块边界切片，构造与 Drop 留根；测试拆到 task_sync/tests/（support + 6 主题文件）
+- spec 新增「agent 大模块的目录化拆分」场景：布局、可见性契约、验证矩阵
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `53037f4` | refactor(desktop): 拆分 task_sync.rs 为职责子模块 |
+| `c0a323a` | chore(task): archive 11-18-refactor-task-sync-module-split |
+
+### Testing
+
+- [OK] cargo test 232 passed / 0 failed；cargo check --all-targets 6 warning 与基线一致
+- [OK] 107 个测试名集合差集为空；行内容多重集等价（仅少了 mod tests { 一行）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 把全部 Rust 内联测试统一外移（23 文件），并把文件行数上限写进 spec
