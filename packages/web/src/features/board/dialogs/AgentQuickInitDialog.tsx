@@ -12,13 +12,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import type { ProjectInspection } from '@/lib/project-inspection.js'
 import { normalizeProjectInspection } from '@/lib/project-inspection.js'
 import { onboardingErrorMessage } from '@/lib/onboarding-probe.js'
 import { AgentToolSelector } from './AgentToolSelector.tsx'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Field, FieldLabel } from '@/components/ui/field'
 
 type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
@@ -176,8 +176,8 @@ export function AgentQuickInitDialog({
               </div>
             ) : inspection ? (
               <>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="quick-agent-developer">Trellis developer ID</Label>
+                <Field className="gap-1.5">
+                  <FieldLabel htmlFor="quick-agent-developer">Trellis developer ID</FieldLabel>
                   <Input
                     id="quick-agent-developer"
                     value={developerId}
@@ -190,7 +190,7 @@ export function AgentQuickInitDialog({
                       setError('')
                     }}
                   />
-                </div>
+                </Field>
                 <AgentToolSelector
                   existingTools={inspection.existingAgentTools}
                   selectedTools={selectedTools}

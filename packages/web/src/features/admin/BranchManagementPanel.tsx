@@ -18,9 +18,10 @@ import type { TaskSpaceActionOutcome } from '@/hooks/useAdminProjects'
 import { formatTime, statusTone } from '@/lib/admin-shared'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
-import { Field, Row } from './shared.tsx'
+import { Row } from './shared.tsx'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Panel } from '@/components/ui/panel'
+import { Field, FieldLabel } from '@/components/ui/field'
 
 type BranchManagementPanelProps = {
   projectSelected: boolean
@@ -296,8 +297,15 @@ export function BranchManagementPanel({
             <form className="flex min-h-0 flex-1 flex-col gap-2.5" onSubmit={submitRetire}>
               <DialogBody className="flex flex-col gap-2.5">
                 <ImpactSummary taskSpace={retireTarget} />
-                <Field label="弃用原因（可选）">
+                <Field className="gap-1">
+                  <FieldLabel
+                    htmlFor="retire-reason"
+                    className="text-xs font-medium text-muted-foreground"
+                  >
+                    弃用原因（可选）
+                  </FieldLabel>
                   <Textarea
+                    id="retire-reason"
                     maxLength={500}
                     rows={3}
                     placeholder="记录为什么不再使用这个分支"
@@ -358,8 +366,15 @@ export function BranchManagementPanel({
                     </AlertDescription>
                   </Alert>
                 ) : (
-                  <Field label="输入分支名称">
+                  <Field className="gap-1">
+                    <FieldLabel
+                      htmlFor="purge-confirmation"
+                      className="text-xs font-medium text-muted-foreground"
+                    >
+                      输入分支名称
+                    </FieldLabel>
                     <Input
+                      id="purge-confirmation"
                       autoComplete="off"
                       autoFocus
                       value={purgeConfirmation}

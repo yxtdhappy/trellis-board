@@ -239,17 +239,27 @@ size: { default: '', xs: 'h-auto px-1.5 py-px' }
 
 ## 9. 表单（批 8）
 
-`admin/shared.tsx` 的 `Field` 是"label 包 children"（点文字得焦点），`ui/field` 用 `htmlFor`/`id`：
+`admin/shared.tsx` 的 `Field` 是"label 包 children"（点文字得焦点，但控件无 `id`，也不支持 `aria-describedby`），`ui/field` 用 `htmlFor`/`id` 显式关联：
 
 ```tsx
-<Field>
-  <FieldLabel htmlFor="team-name">团队名称</FieldLabel>
+<Field className="gap-1">
+  <FieldLabel htmlFor="team-name" className="text-xs font-medium text-muted-foreground">
+    团队名称
+  </FieldLabel>
   <Input id="team-name" />
-  <FieldDescription>…</FieldDescription>
+  <FieldDescription className="text-2xs">…</FieldDescription>
 </Field>
 ```
 
-迁移清单：admin 19 处 + `TaskDetailDialog:532,659` + `SavedViewsDialog` + `TaskOwnershipDialog:222`（`Field orientation="horizontal"` + `Card`）。`Row`（admin 列表行）保留在 feature，spec 登记为已知布局件。
+`ui/field` 的默认值与现有视觉不同（`gap-2` vs 4px、label 无 muted 色、`FieldDescription` 是 `text-xs` 而非 `text-2xs`），因此每处都用 `className` 覆盖回原值；**不新增变体、不加 props 包装器**，覆盖是调用侧一行类名。
+
+迁移清单（全部完成）：
+
+- admin 22 处 `Field`（6 文件）：`AccountDialog` 2、`ArchiveSyncTab` 9、`BranchManagementPanel` 2、`ProjectsTab` 4、`ResetPasswordDialog` 2、`UsersTab` 3；控件 id 见 `implement.md` 批 8 执行记录。
+- board 弹窗 13 处 `<div className="flex flex-col gap-1.5">` + `<Label htmlFor>` 行：`CreateTaskDialog` 7、`PasswordDialog` 3、`ProjectOnboardingDialog` 2、`AgentQuickInitDialog` 1 → `<Field className="gap-1.5">` + `<FieldLabel htmlFor>`（id 不变，视觉不变）。
+- `TaskDetailDialog` 计划字段三处（截止日期/里程碑/标签）由 `<div>` + 无关联 `Label` 改 `Field`/`FieldLabel htmlFor` + `id`（`task-plan-due-date`/`-milestone`/`-tags`）；阻断依赖行的原因输入补 `aria-label`（同行 `SelectField` 早有 `ariaLabel`）。
+- `TaskOwnershipDialog` 的候选行原为 `<label>` 包 `Checkbox`（Base UI 渲染成 `button[role=checkbox]`，点文字不勾选）→ `Field orientation="horizontal"` + `Checkbox id` + `FieldLabel htmlFor` + `FieldContent`，点标题即勾选。
+- `Row`（admin 列表行 `flex min-h-12 items-center justify-between border-b`）保留在 feature，spec 登记为已知布局件；它没有对应 registry 组件，硬抽 `ui/` 只会多一层无意义抽象。
 
 ## 10. 其余原子归属（批 9）
 

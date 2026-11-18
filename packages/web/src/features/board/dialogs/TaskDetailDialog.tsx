@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Field, FieldLabel } from '@/components/ui/field'
 import { downloadArchiveFile, fetchTaskDetail, api, type TaskSpace } from '@/api/board'
 import { ApiError } from '@/api/request'
 import { renderMarkdown } from '@/lib/markdown.js'
@@ -521,31 +521,40 @@ export function TaskDetailDialog({
                 </div>
                 {editingPlan && canEditPlan ? (
                   <div className="grid gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_1fr_auto]">
-                    <div className="flex flex-col gap-1">
-                      <Label className="text-2xs">截止日期</Label>
+                    <Field className="gap-1">
+                      <FieldLabel htmlFor="task-plan-due-date" className="text-2xs">
+                        截止日期
+                      </FieldLabel>
                       <Input
+                        id="task-plan-due-date"
                         className="text-xs"
                         type="date"
                         value={dueDate}
                         onChange={(e) => setDueDate(e.target.value)}
                       />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <Label className="text-2xs">里程碑</Label>
+                    </Field>
+                    <Field className="gap-1">
+                      <FieldLabel htmlFor="task-plan-milestone" className="text-2xs">
+                        里程碑
+                      </FieldLabel>
                       <Input
+                        id="task-plan-milestone"
                         className="text-xs"
                         value={milestone}
                         onChange={(e) => setMilestone(e.target.value)}
                       />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <Label className="text-2xs">标签</Label>
+                    </Field>
+                    <Field className="gap-1">
+                      <FieldLabel htmlFor="task-plan-tags" className="text-2xs">
+                        标签
+                      </FieldLabel>
                       <Input
+                        id="task-plan-tags"
                         className="text-xs"
                         value={tags}
                         onChange={(e) => setTags(e.target.value)}
                       />
-                    </div>
+                    </Field>
                     <Button className="mt-auto" onClick={savePlan}>
                       保存计划字段
                     </Button>
@@ -655,6 +664,7 @@ export function TaskDetailDialog({
                         onChange={setBlockerKey}
                       />
                       <Input
+                        aria-label="阻断原因"
                         className="text-xs"
                         placeholder="阻断原因（最多 500 字）"
                         maxLength={500}

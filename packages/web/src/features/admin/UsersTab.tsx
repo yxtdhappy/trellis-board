@@ -15,8 +15,9 @@ import { adminPasswordError } from './password-policy.ts'
 import { ResetPasswordDialog } from './ResetPasswordDialog.tsx'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
-import { Field, Row } from './shared.tsx'
+import { Row } from './shared.tsx'
 import { Panel } from '@/components/ui/panel'
+import { Field, FieldLabel, FieldDescription } from '@/components/ui/field'
 
 export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
   const { users, reloadUsers, createUser, updateUser, toggleUser, resetPassword } = consoleApi
@@ -98,8 +99,15 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
             description="仅系统管理员可建号；填写初始密码并分配团队，团队可留空。"
           >
             <form className="flex flex-col gap-2" onSubmit={handleCreate}>
-              <Field label="登录名">
+              <Field className="gap-1">
+                <FieldLabel
+                  htmlFor="new-user-username"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  登录名
+                </FieldLabel>
                 <Input
+                  id="new-user-username"
                   maxLength={64}
                   required
                   autoComplete="off"
@@ -108,8 +116,15 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                   onChange={(event) => setUsername(event.target.value)}
                 />
               </Field>
-              <Field label="显示名">
+              <Field className="gap-1">
+                <FieldLabel
+                  htmlFor="new-user-display-name"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  显示名
+                </FieldLabel>
                 <Input
+                  id="new-user-display-name"
                   maxLength={80}
                   required
                   disabled={busy}
@@ -117,8 +132,15 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                   onChange={(event) => setDisplayName(event.target.value)}
                 />
               </Field>
-              <Field label="初始密码" hint="至少 6 个字符，不做复杂度校验。">
+              <Field className="gap-1">
+                <FieldLabel
+                  htmlFor="new-user-password"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  初始密码
+                </FieldLabel>
                 <Input
+                  id="new-user-password"
                   type="password"
                   minLength={6}
                   required
@@ -127,6 +149,10 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                 />
+
+                <FieldDescription className="text-2xs">
+                  至少 6 个字符，不做复杂度校验。
+                </FieldDescription>
               </Field>
               <div className="flex flex-col gap-1.5">
                 <span className="text-xs font-medium text-muted-foreground">所属团队</span>

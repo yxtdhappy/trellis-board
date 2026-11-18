@@ -12,8 +12,9 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import type { AdminUser } from '@/api/admin'
-import { Field } from './shared.tsx'
+
 import { adminPasswordError } from './password-policy.ts'
+import { Field, FieldLabel, FieldDescription } from '@/components/ui/field'
 
 export function ResetPasswordDialog({
   user,
@@ -74,8 +75,15 @@ export function ResetPasswordDialog({
         </DialogHeader>
         <form className="flex min-h-0 flex-1 flex-col gap-2.5" onSubmit={handleSubmit}>
           <DialogBody className="flex flex-col gap-2.5">
-            <Field label="新密码" hint="至少 6 个字符，不做复杂度校验。">
+            <Field className="gap-1">
+              <FieldLabel
+                htmlFor="reset-password"
+                className="text-xs font-medium text-muted-foreground"
+              >
+                新密码
+              </FieldLabel>
               <Input
+                id="reset-password"
                 type="password"
                 minLength={6}
                 required
@@ -84,9 +92,20 @@ export function ResetPasswordDialog({
                 onChange={(event) => setPassword(event.target.value)}
                 disabled={busy}
               />
+
+              <FieldDescription className="text-2xs">
+                至少 6 个字符，不做复杂度校验。
+              </FieldDescription>
             </Field>
-            <Field label="确认新密码">
+            <Field className="gap-1">
+              <FieldLabel
+                htmlFor="reset-password-confirm"
+                className="text-xs font-medium text-muted-foreground"
+              >
+                确认新密码
+              </FieldLabel>
               <Input
+                id="reset-password-confirm"
                 type="password"
                 minLength={6}
                 required

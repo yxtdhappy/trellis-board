@@ -14,8 +14,9 @@ import { Input } from '@/components/ui/input'
 import type { AdminUser, Team } from '@/api/admin'
 import { StatusPill } from '@/components/ui/status-pill'
 import { statusTone } from '@/lib/admin-shared'
-import { Field } from './shared.tsx'
+
 import { SelectField } from '@/features/board/SelectField'
+import { Field, FieldLabel } from '@/components/ui/field'
 
 export type AccountFormValues = {
   displayName: string
@@ -54,8 +55,15 @@ export function AccountForm({ user, teams, submitLabel, onSubmit, onCancel }: Ac
 
   return (
     <form className="flex flex-col gap-2.5" onSubmit={handleSubmit}>
-      <Field label="显示名">
+      <Field className="gap-1">
+        <FieldLabel
+          htmlFor="account-display-name"
+          className="text-xs font-medium text-muted-foreground"
+        >
+          显示名
+        </FieldLabel>
         <Input
+          id="account-display-name"
           maxLength={80}
           required
           value={displayName}
@@ -63,8 +71,12 @@ export function AccountForm({ user, teams, submitLabel, onSubmit, onCancel }: Ac
           disabled={busy}
         />
       </Field>
-      <Field label="状态">
+      <Field className="gap-1">
+        <FieldLabel htmlFor="account-status" className="text-xs font-medium text-muted-foreground">
+          状态
+        </FieldLabel>
         <SelectField
+          id="account-status"
           value={status}
           options={[
             { value: 'active', label: '启用' },

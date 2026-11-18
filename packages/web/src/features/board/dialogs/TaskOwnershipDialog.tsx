@@ -13,6 +13,7 @@ import {
 import { SelectField } from '../SelectField'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
+import { Field, FieldContent, FieldLabel } from '@/components/ui/field'
 
 type OwnershipChoice = {
   taskSpaceId: string
@@ -220,28 +221,33 @@ export function TaskOwnershipDialog({
         <h3 className="text-xs font-semibold text-muted-foreground">
           {label}（{group.length}）
         </h3>
-        {group.map((item) => (
-          <label
-            key={item.taskDir}
-            className="flex items-start gap-2 rounded-lg border border-border p-2.5"
-          >
-            <Checkbox
-              checked={selected.has(item.taskDir)}
-              onCheckedChange={(checked) => toggleItem(item.taskDir, checked === true)}
-              disabled={submitting}
-            />
-            <span className="min-w-0 flex-1">
-              <span className="block text-xs font-medium text-foreground">{item.title}</span>
-              <span className="mt-0.5 block break-all text-2xs text-muted-foreground">
-                {item.taskDir}
-              </span>
-              <span className="mt-1 block text-2xs text-muted-foreground">
-                {item.branchName ? `当前归属：${item.branchName}` : '当前归属：未确认'}
-                {item.suggestedBranchName ? ` · 建议：${item.suggestedBranchName}` : ''}
-              </span>
-            </span>
-          </label>
-        ))}
+        {group.map((item) => {
+          const checkboxId = `ownership-${item.taskDir.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+          return (
+            <Field
+              key={item.taskDir}
+              orientation="horizontal"
+              className="items-start gap-2 rounded-lg border border-border p-2.5"
+            >
+              <Checkbox
+                id={checkboxId}
+                checked={selected.has(item.taskDir)}
+                onCheckedChange={(checked) => toggleItem(item.taskDir, checked === true)}
+                disabled={submitting}
+              />
+              <FieldContent className="gap-1">
+                <FieldLabel htmlFor={checkboxId} className="text-xs font-medium text-foreground">
+                  {item.title}
+                </FieldLabel>
+                <span className="break-all text-2xs text-muted-foreground">{item.taskDir}</span>
+                <span className="text-2xs text-muted-foreground">
+                  {item.branchName ? `当前归属：${item.branchName}` : '当前归属：未确认'}
+                  {item.suggestedBranchName ? ` · 建议：${item.suggestedBranchName}` : ''}
+                </span>
+              </FieldContent>
+            </Field>
+          )
+        })}
       </section>
     )
   }

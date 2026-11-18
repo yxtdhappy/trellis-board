@@ -18,9 +18,10 @@ import { formatTime, statusTone } from '@/lib/admin-shared'
 import { BranchManagementPanel } from './BranchManagementPanel'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
-import { AuditItem, Field, Row } from './shared.tsx'
+import { AuditItem, Row } from './shared.tsx'
 import { SelectField } from '@/features/board/SelectField'
 import { Panel } from '@/components/ui/panel'
+import { Field, FieldLabel } from '@/components/ui/field'
 
 export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) {
   const {
@@ -165,8 +166,15 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           }
         >
           <form className="flex flex-col gap-2" onSubmit={handleSaveMember}>
-            <Field label="用户 ID">
+            <Field className="gap-1">
+              <FieldLabel
+                htmlFor="member-user-id"
+                className="text-xs font-medium text-muted-foreground"
+              >
+                用户 ID
+              </FieldLabel>
               <Input
+                id="member-user-id"
                 maxLength={100}
                 required
                 placeholder="管理员可复制用户 ID"
@@ -175,8 +183,15 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
               />
             </Field>
             <div className="grid grid-cols-2 gap-2">
-              <Field label="角色">
+              <Field className="gap-1">
+                <FieldLabel
+                  htmlFor="member-role"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  角色
+                </FieldLabel>
                 <SelectField
+                  id="member-role"
                   value={role}
                   options={[
                     { value: 'member', label: '成员' },
@@ -186,8 +201,15 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                   onChange={setRole}
                 />
               </Field>
-              <Field label="Trellis developer ID">
+              <Field className="gap-1">
+                <FieldLabel
+                  htmlFor="member-developer-id"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  Trellis developer ID
+                </FieldLabel>
                 <Input
+                  id="member-developer-id"
                   maxLength={100}
                   placeholder="只读角色可留空"
                   disabled={readOnly}
@@ -420,8 +442,15 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           ) : (
             <>
               {pluginChoices.length > 1 ? (
-                <Field label="插件">
+                <Field className="gap-1">
+                  <FieldLabel
+                    htmlFor="binding-plugin"
+                    className="text-xs font-medium text-muted-foreground"
+                  >
+                    插件
+                  </FieldLabel>
                   <SelectField
+                    id="binding-plugin"
                     ariaLabel="插件"
                     value={pluginId}
                     options={pluginChoices.map((row) => ({ value: row.id, label: row.name }))}

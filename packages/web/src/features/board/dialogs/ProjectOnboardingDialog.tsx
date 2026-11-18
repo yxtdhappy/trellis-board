@@ -12,7 +12,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TRELLIS_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
@@ -23,6 +22,7 @@ import { AgentToolSelector } from './AgentToolSelector.tsx'
 import { SelectField } from '../SelectField.tsx'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Field, FieldLabel } from '@/components/ui/field'
 
 type TeamOption = {
   id: string
@@ -658,8 +658,8 @@ export function ProjectOnboardingDialog({
               ) : null}
 
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="onboard-team">项目归属团队</Label>
+                <Field className="gap-1.5">
+                  <FieldLabel htmlFor="onboard-team">项目归属团队</FieldLabel>
                   <SelectField
                     id="onboard-team"
                     value={teamId}
@@ -670,9 +670,9 @@ export function ProjectOnboardingDialog({
                       setPreflight(null)
                     }}
                   />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="onboard-developer">Trellis developer ID</Label>
+                </Field>
+                <Field className="gap-1.5">
+                  <FieldLabel htmlFor="onboard-developer">Trellis developer ID</FieldLabel>
                   <Input
                     id="onboard-developer"
                     value={developerId}
@@ -684,7 +684,7 @@ export function ProjectOnboardingDialog({
                       setPreflight(null)
                     }}
                   />
-                </div>
+                </Field>
               </div>
 
               {!inspection.hasTrellis || !inspection.hasTasks || missingTools.length ? (

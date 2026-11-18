@@ -24,10 +24,11 @@ import { useArchiveSync } from '@/hooks/useArchiveSync'
 import { SelectField } from '@/features/board/SelectField'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
-import { Field, Row } from './shared.tsx'
+import { Row } from './shared.tsx'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Panel } from '@/components/ui/panel'
+import { Field, FieldLabel, FieldDescription } from '@/components/ui/field'
 
 const STATUS_LABELS: Record<string, string> = {
   idle: '等待同步',
@@ -278,8 +279,15 @@ export function ArchiveSyncTab() {
                 </span>
                 <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="启用归档同步" />
               </label>
-              <Field label="同步周期（秒）" hint="允许 60 到 86400 秒。">
+              <Field className="gap-1">
+                <FieldLabel
+                  htmlFor="sync-interval-seconds"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  同步周期（秒）
+                </FieldLabel>
                 <Input
+                  id="sync-interval-seconds"
                   type="number"
                   min={60}
                   max={86400}
@@ -287,6 +295,8 @@ export function ArchiveSyncTab() {
                   value={intervalSeconds}
                   onChange={(event) => setIntervalSeconds(event.target.value)}
                 />
+
+                <FieldDescription className="text-2xs">允许 60 到 86400 秒。</FieldDescription>
               </Field>
               <p className="text-xs text-muted-foreground">
                 最近保存 {formatTime(overview.config.updatedAt)}
@@ -304,8 +314,15 @@ export function ArchiveSyncTab() {
           >
             <form className="flex flex-col gap-2.5" onSubmit={saveCredential}>
               <div className="grid grid-cols-[1fr_100px] gap-2">
-                <Field label="远端协议">
+                <Field className="gap-1">
+                  <FieldLabel
+                    htmlFor="credential-scheme"
+                    className="text-xs font-medium text-muted-foreground"
+                  >
+                    远端协议
+                  </FieldLabel>
                   <SelectField
+                    id="credential-scheme"
                     value={draft.scheme}
                     disabled={Boolean(editing)}
                     options={[
@@ -321,8 +338,15 @@ export function ArchiveSyncTab() {
                     }
                   />
                 </Field>
-                <Field label="端口">
+                <Field className="gap-1">
+                  <FieldLabel
+                    htmlFor="credential-port"
+                    className="text-xs font-medium text-muted-foreground"
+                  >
+                    端口
+                  </FieldLabel>
                   <Input
+                    id="credential-port"
                     type="number"
                     min={1}
                     max={65535}
@@ -335,8 +359,15 @@ export function ArchiveSyncTab() {
                   />
                 </Field>
               </div>
-              <Field label="主机">
+              <Field className="gap-1">
+                <FieldLabel
+                  htmlFor="credential-host"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  主机
+                </FieldLabel>
                 <Input
+                  id="credential-host"
                   required
                   disabled={Boolean(editing)}
                   placeholder="git.weintdata.cn"
@@ -346,8 +377,15 @@ export function ArchiveSyncTab() {
                   }
                 />
               </Field>
-              <Field label="名称">
+              <Field className="gap-1">
+                <FieldLabel
+                  htmlFor="credential-name"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  名称
+                </FieldLabel>
                 <Input
+                  id="credential-name"
                   maxLength={100}
                   value={draft.name}
                   placeholder="例如：公司 Git 只读凭据"
@@ -358,8 +396,15 @@ export function ArchiveSyncTab() {
               </Field>
               {draft.scheme === 'https' ? (
                 <>
-                  <Field label="HTTPS 用户名">
+                  <Field className="gap-1">
+                    <FieldLabel
+                      htmlFor="credential-username"
+                      className="text-xs font-medium text-muted-foreground"
+                    >
+                      HTTPS 用户名
+                    </FieldLabel>
                     <Input
+                      id="credential-username"
                       maxLength={200}
                       value={draft.username}
                       onChange={(event) =>
@@ -367,11 +412,15 @@ export function ArchiveSyncTab() {
                       }
                     />
                   </Field>
-                  <Field
-                    label={editing ? '轮换 Token（留空则保留）' : '访问 Token'}
-                    hint="公开仓库也可以不创建 HTTPS 凭据。"
-                  >
+                  <Field className="gap-1">
+                    <FieldLabel
+                      htmlFor="credential-token"
+                      className="text-xs font-medium text-muted-foreground"
+                    >
+                      {editing ? '轮换 Token（留空则保留）' : '访问 Token'}
+                    </FieldLabel>
                     <Input
+                      id="credential-token"
                       type="password"
                       autoComplete="new-password"
                       required={!editing}
@@ -380,15 +429,23 @@ export function ArchiveSyncTab() {
                         setDraft((current) => ({ ...current, token: event.target.value }))
                       }
                     />
+
+                    <FieldDescription className="text-2xs">
+                      公开仓库也可以不创建 HTTPS 凭据。
+                    </FieldDescription>
                   </Field>
                 </>
               ) : (
                 <>
-                  <Field
-                    label={editing ? '轮换 SSH 私钥（留空则保留）' : 'SSH 私钥'}
-                    hint="连接时只使用私钥，不校验 SSH 主机密钥。"
-                  >
+                  <Field className="gap-1">
+                    <FieldLabel
+                      htmlFor="credential-private-key"
+                      className="text-xs font-medium text-muted-foreground"
+                    >
+                      {editing ? '轮换 SSH 私钥（留空则保留）' : 'SSH 私钥'}
+                    </FieldLabel>
                     <Textarea
+                      id="credential-private-key"
                       className="min-h-28 font-mono text-xs"
                       autoComplete="off"
                       required={!editing}
@@ -397,6 +454,34 @@ export function ArchiveSyncTab() {
                         setDraft((current) => ({ ...current, privateKey: event.target.value }))
                       }
                     />
+
+                    <FieldDescription className="text-2xs">
+                      只用于精确匹配的 SSH 来源。
+                    </FieldDescription>
+                  </Field>
+                  <Field className="gap-1">
+                    <FieldLabel
+                      htmlFor="credential-known-hosts"
+                      className="text-xs font-medium text-muted-foreground"
+                    >
+                      {editing ? '更新 known_hosts（留空则保留）' : 'known_hosts'}
+                    </FieldLabel>
+                    <Textarea
+                      id="credential-known-hosts"
+                      className="min-h-24 font-mono text-xs"
+                      required={!editing}
+                      value={draft.knownHostsText}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          knownHostsText: event.target.value,
+                        }))
+                      }
+                    />
+
+                    <FieldDescription className="text-2xs">
+                      必须包含该主机和端口对应的完整 known_hosts 行。
+                    </FieldDescription>
                   </Field>
                 </>
               )}

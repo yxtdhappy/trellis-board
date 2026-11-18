@@ -11,8 +11,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { changePassword } from '@/api/board'
+import { Field, FieldLabel } from '@/components/ui/field'
 
 type PasswordDialogProps = {
   open: boolean
@@ -63,8 +63,8 @@ export function PasswordDialog({ open, onOpenChange }: PasswordDialogProps) {
         </DialogHeader>
         <form className="flex min-h-0 flex-1 flex-col gap-3" onSubmit={submit}>
           <DialogBody className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="password-current">当前密码</Label>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="password-current">当前密码</FieldLabel>
               <Input
                 id="password-current"
                 type="password"
@@ -72,9 +72,9 @@ export function PasswordDialog({ open, onOpenChange }: PasswordDialogProps) {
                 value={current}
                 onChange={(event) => setCurrent(event.target.value)}
               />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="password-next">新密码</Label>
+            </Field>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="password-next">新密码</FieldLabel>
               <Input
                 id="password-next"
                 type="password"
@@ -82,9 +82,9 @@ export function PasswordDialog({ open, onOpenChange }: PasswordDialogProps) {
                 value={next}
                 onChange={(event) => setNext(event.target.value)}
               />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="password-confirm">确认新密码</Label>
+            </Field>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="password-confirm">确认新密码</FieldLabel>
               <Input
                 id="password-confirm"
                 type="password"
@@ -92,7 +92,7 @@ export function PasswordDialog({ open, onOpenChange }: PasswordDialogProps) {
                 value={confirm}
                 onChange={(event) => setConfirm(event.target.value)}
               />
-            </div>
+            </Field>
             <p className="rounded-lg bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground">
               至少 {MIN_LENGTH} 位。更新成功后其他会话会立即失效。
             </p>

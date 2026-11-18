@@ -11,7 +11,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { fetchTaskSpaceAssignees, type TaskSpace, type TaskSpaceAssignee } from '@/api/board'
 import {
@@ -21,6 +20,7 @@ import {
 } from '@trellis-board/shared/slug.js'
 import { createIdempotencyKey, taskCommandState } from '@/lib/team-client.js'
 import { SelectField } from '../SelectField.tsx'
+import { Field, FieldLabel } from '@/components/ui/field'
 
 type CreateTaskDialogProps = {
   open: boolean
@@ -192,8 +192,8 @@ export function CreateTaskDialog({
         </DialogHeader>
         <form className="flex min-h-0 flex-1 flex-col gap-3" onSubmit={submit}>
           <DialogBody className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="create-project">项目 / 仓库</Label>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="create-project">项目 / 仓库</FieldLabel>
               <SelectField
                 id="create-project"
                 value={projectId}
@@ -203,10 +203,10 @@ export function CreateTaskDialog({
                 }))}
                 onChange={setProjectId}
               />
-            </div>
+            </Field>
             {taskSpaces.length > 1 ? (
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="create-task-space">共享分支任务空间</Label>
+              <Field className="gap-1.5">
+                <FieldLabel htmlFor="create-task-space">共享分支任务空间</FieldLabel>
                 <SelectField
                   id="create-task-space"
                   value={taskSpaceId}
@@ -217,7 +217,7 @@ export function CreateTaskDialog({
                   }))}
                   onChange={setTaskSpaceId}
                 />
-              </div>
+              </Field>
             ) : taskSpaces.length === 1 ? (
               <p className="text-xs text-muted-foreground">
                 同步任务空间：{taskSpaces[0].branchName}
@@ -230,18 +230,18 @@ export function CreateTaskDialog({
                 {commandState.reason}
               </p>
             ) : null}
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="create-title">任务标题</Label>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="create-title">任务标题</FieldLabel>
               <Input
                 id="create-title"
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
                 maxLength={120}
               />
-            </div>
+            </Field>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="create-assignee">负责人</Label>
+              <Field className="gap-1.5">
+                <FieldLabel htmlFor="create-assignee">负责人</FieldLabel>
                 <SelectField
                   id="create-assignee"
                   value={assigneeUserId}
@@ -252,9 +252,9 @@ export function CreateTaskDialog({
                   }))}
                   onChange={setAssigneeUserId}
                 />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="create-priority">优先级</Label>
+              </Field>
+              <Field className="gap-1.5">
+                <FieldLabel htmlFor="create-priority">优先级</FieldLabel>
                 <SelectField
                   id="create-priority"
                   value={priority}
@@ -264,10 +264,10 @@ export function CreateTaskDialog({
                   }))}
                   onChange={setPriority}
                 />
-              </div>
+              </Field>
             </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="create-slug">任务标识</Label>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="create-slug">任务标识</FieldLabel>
               <Input
                 id="create-slug"
                 value={slug}
@@ -277,16 +277,16 @@ export function CreateTaskDialog({
                   setManualSlug(true)
                 }}
               />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="create-description">描述</Label>
+            </Field>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="create-description">描述</FieldLabel>
               <Textarea
                 id="create-description"
                 rows={3}
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
               />
-            </div>
+            </Field>
             {message ? (
               <p className="text-xs text-muted-foreground" role="status">
                 {message}

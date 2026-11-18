@@ -3,24 +3,6 @@ import type { AuditEvent } from '@/api/admin'
 import { StatusPill } from '@/components/ui/status-pill'
 import { statusTone } from '@/lib/admin-shared'
 
-export function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string
-  hint?: string
-  children: ReactNode
-}) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      {children}
-      {hint ? <span className="text-2xs text-muted-foreground">{hint}</span> : null}
-    </label>
-  )
-}
-
 export function Row({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
   return (
     <div className="flex min-h-12 items-center justify-between gap-3 border-b border-border py-2 last:border-b-0">

@@ -220,6 +220,27 @@ cd packages/web && npx tsc -b && npx oxlint src   # 格式化在仓库根：npx 
 
 提交：`refactor(web): 表单行统一为 field 并补齐 label 关联`
 
+### 执行记录（批 8，已完成）
+
+改动 13 文件：
+
+- `features/admin/shared.tsx`：删 `Field`（保留 `Row`/`ActionLabels`/`AuditItem`）。
+- admin 6 文件 22 处改 `Field`/`FieldLabel htmlFor`/`FieldDescription`，新增 id：`account-display-name`、`account-status`、`sync-interval-seconds`、`credential-scheme|port|host|name|username|token|private-key|known-hosts`、`retire-reason`、`purge-confirmation`、`member-user-id`、`member-role`、`member-developer-id`、`binding-plugin`、`reset-password`、`reset-password-confirm`、`new-user-username`、`new-user-display-name`、`new-user-password`。
+- board 弹窗 13 处 `<div className="flex flex-col gap-1.5">` + `<Label htmlFor>` → `Field className="gap-1.5"` + `FieldLabel`：`CreateTaskDialog`(7)、`PasswordDialog`(3)、`ProjectOnboardingDialog`(2)、`AgentQuickInitDialog`(1)。
+- `TaskDetailDialog.tsx`：计划字段三处改 `Field` + 带 `id` 的 `Input`；阻断原因输入补 `aria-label="阻断原因"`；`Label` 导入换成 field 三件套。
+- `TaskOwnershipDialog.tsx`：候选行 `<label>` 包 `Checkbox` → `Field orientation="horizontal"` + `Checkbox id` + `FieldLabel htmlFor` + `FieldContent`。
+
+偏差：
+
+- 视觉靠调用侧 `className` 覆盖（`gap-1`/`gap-1.5`、label 的 `text-xs font-medium text-muted-foreground`、hint 的 `text-2xs`），不给 `ui/field` 加变体或 props 包装器。
+- `Row` 保留在 feature（spec 登记）。
+- 计划里 `SavedViewsDialog` 无需迁移（它用的是 `ToggleGroup` + `Input`，无 `Label` 包裹）。
+- `TaskOwnershipDialog` 的 `section` 未改 `Panel`：弹窗正文内没有卡片底色，套 Panel 会引入 `bg-card` 视觉变化。
+
+闸门：`npx tsc -b` rc=0；`npx oxfmt` 12 文件（`TaskDetailDialog.tsx` 除外，避免整文件重排）；`npx oxlint` 0 error。
+
+实测（4318 + 5180 + 临时会话）：管理页项目协作 3 个 `[data-slot="field"]`、用户账号 3 个，`gap` 均为 4px（= 改造前 `gap-1`）、label 12px `oklch(0.556 0 0)`（= `text-muted-foreground`）、hint 10px（= `text-2xs`）、`label[for]` 全部命中控件、点击「用户 ID」后 `document.activeElement.id === 'member-user-id'`；创建任务弹窗 3 个 field `gap` 6px（= 改造前 `gap-1.5`），label 与控件 id 一致。
+
 ## 批 9 其余原子（≈30）
 
 1. `Avatar`（`ui/avatar`）：`ArchiveView:283`、`TaskCard:159`、`TeamView:121,293`（`TopBar` 已用）。
