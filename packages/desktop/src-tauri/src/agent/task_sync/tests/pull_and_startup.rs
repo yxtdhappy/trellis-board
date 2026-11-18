@@ -264,6 +264,43 @@ async fn startup_pull_reconciles_exact_deferred_once_at_same_revision() {
 
 
 #[tokio::test]
+async fn startup_pull_drops_deferred_entries_for_readonly_mirrors() {
+    let (root, store, binding, task_dir) =
+        exact_deferred_fixture("trellis-deferred-readonly").await;
+    let mut cursors = store.read_task_cursors().await;
+    cursors["taskSpaces"]["space-1"]["readonlyTaskDirs"] = json!({
+        (task_dir.clone()): "FOREIGN_OWNER:user-1"
+    });
+    store
+        .write_json(&store.paths.task_cursors_file, &cursors)
+        .await
+        .expect("cursor");
+
+    let (server_url, changes, _requests, server_task) = mock_api_server(json!({
+        "revision": 1,
+        "files": []
+    }))
+    .await;
+    let api =
+        Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+    let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
+
+    sync.update_bindings(vec![binding.clone()]).await;
+
+    let cursor = sync.read_cursor("space-1").await;
+    assert!(!cursor.deferred.contains_key(&task_dir));
+    assert_eq!(
+        cursor.readonly_task_dirs.get(&task_dir).map(String::as_str),
+        Some("FOREIGN_OWNER:user-1")
+    );
+    assert!(changes.lock().await.is_empty());
+
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+
+#[tokio::test]
 async fn unchanged_startup_pull_skips_second_ownership_validation() {
     let (root, store, binding, _) =
         exact_deferred_fixture("trellis-startup-single-validation").await;

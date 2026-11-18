@@ -302,7 +302,11 @@ impl TaskSync {
         }
         let cursor = self.read_cursor(task_space_id).await;
         let mut dirs = cursor.readonly_task_dirs.clone();
-        if dirs.get(task_dir).map(String::as_str) == Some(reason) {
+        // 只读镜像不可能再上传：顺手清掉首次同步遗留的待上传记录，避免角标和弹窗长期误导。
+        let mut deferred = cursor.deferred.clone();
+        deferred.remove(task_dir);
+        let deferred_changed = deferred.len() != cursor.deferred.len();
+        if dirs.get(task_dir).map(String::as_str) == Some(reason) && !deferred_changed {
             return Ok(());
         }
         dirs.insert(task_dir.to_string(), reason.to_string());
@@ -310,6 +314,7 @@ impl TaskSync {
             task_space_id,
             CursorPatch {
                 readonly_task_dirs: Some(dirs),
+                deferred: deferred_changed.then_some(deferred),
                 ..Default::default()
             },
         )

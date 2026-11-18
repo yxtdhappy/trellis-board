@@ -464,6 +464,7 @@ impl TaskSync {
         let deferred: BTreeMap<String, BTreeMap<String, String>> = deferred
             .into_iter()
             .filter(|(task_dir, _)| !inactive_dirs.contains(task_dir))
+            .filter(|(task_dir, _)| !readonly_dirs.contains(task_dir))
             .collect();
         sync_trace(
             &task_space_id,

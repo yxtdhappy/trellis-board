@@ -267,6 +267,31 @@ fn association_cursor_status_dirs_are_read_only_projections() {
 }
 
 #[test]
+fn deferred_task_dirs_exclude_readonly_mirrors() {
+    let cursors = json!({
+        "taskSpaces": {
+            "space-1": {
+                "deferred": {
+                    ".trellis/tasks/foreign": {
+                        ".trellis/tasks/foreign/task.json": "a".repeat(64)
+                    },
+                    ".trellis/tasks/mine": {
+                        ".trellis/tasks/mine/task.json": "b".repeat(64)
+                    }
+                },
+                "readonlyTaskDirs": {
+                    ".trellis/tasks/foreign": "FOREIGN_OWNER:user-1"
+                }
+            }
+        }
+    });
+    assert_eq!(
+        deferred_task_dirs(&cursors, "space-1"),
+        vec![".trellis/tasks/mine".to_string()]
+    );
+}
+
+#[test]
 fn login_summary_uses_camel_case_and_skips_missing_fields() {
     let pending = DesktopLoginSummary {
         ok: true,

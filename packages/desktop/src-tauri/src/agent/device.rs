@@ -3,6 +3,7 @@
 //! Board 的登录/登出/撤销接口需要 origin、Cookie 和 Set-Cookie，`ApiClient` 不暴露这些能力，
 //! 因此这里单独持有一个受控的 reqwest 客户端，只用于会话类请求。
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -1001,14 +1002,30 @@ async fn local_ownership_dirs(
 }
 
 /// 尚未补同步的本地任务目录（只看 `.trellis/tasks/` 前缀，按字典序）。
+/// 只读镜像（他人任务/本机下载副本）永远不会上传，即使游标里残留 deferred 也不展示。
 fn deferred_task_dirs(cursors: &Value, task_space_id: &str) -> Vec<String> {
-    let mut dirs: Vec<String> = cursors
+    let Some(space) = cursors
         .get("taskSpaces")
         .and_then(Value::as_object)
         .and_then(|spaces| spaces.get(task_space_id))
-        .and_then(|space| space.get("deferred"))
+    else {
+        return Vec::new();
+    };
+    let readonly: HashSet<&str> = space
+        .get("readonlyTaskDirs")
         .and_then(Value::as_object)
-        .map(|deferred| deferred.keys().cloned().collect())
+        .map(|dirs| dirs.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    let mut dirs: Vec<String> = space
+        .get("deferred")
+        .and_then(Value::as_object)
+        .map(|deferred| {
+            deferred
+                .keys()
+                .filter(|dir| !readonly.contains(dir.as_str()))
+                .cloned()
+                .collect()
+        })
         .unwrap_or_default();
     dirs.retain(|dir| dir.starts_with(".trellis/tasks/"));
     dirs.sort();

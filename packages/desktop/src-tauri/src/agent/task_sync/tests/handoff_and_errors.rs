@@ -520,3 +520,48 @@ fn readonly_dirs_round_trip_and_drop_archive_entries() {
     assert!(apply_cursor_patch(&mut cursor, &patch));
     assert!(cursor.readonly_task_dirs.is_empty());
 }
+
+
+#[tokio::test]
+async fn marking_readonly_dir_drops_stale_deferred_entry() {
+    let (root, store, sync, _binding) =
+        test_task_sync_fixture("trellis-readonly-deferred").await;
+    store
+        .write_json(
+            &store.paths.task_cursors_file,
+            &json!({
+                "version": CURSOR_VERSION,
+                "taskSpaces": {
+                    "space-1": {
+                        "deferred": {
+                            ".trellis/tasks/task-a": {
+                                ".trellis/tasks/task-a/task.json": "a".repeat(64)
+                            }
+                        }
+                    }
+                }
+            }),
+        )
+        .await
+        .expect("cursor");
+
+    sync.mark_readonly_dir(
+        "space-1",
+        ".trellis/tasks/task-a",
+        &readonly_reason("FOREIGN_OWNER", "user-1"),
+    )
+    .await
+    .expect("mark readonly");
+
+    let cursor = sync.read_cursor("space-1").await;
+    assert!(cursor.deferred.is_empty());
+    assert_eq!(
+        cursor
+            .readonly_task_dirs
+            .get(".trellis/tasks/task-a")
+            .map(String::as_str),
+        Some("FOREIGN_OWNER:user-1")
+    );
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}

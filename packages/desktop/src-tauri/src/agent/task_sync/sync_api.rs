@@ -289,7 +289,25 @@ impl TaskSync {
             return protocol::err(code::COMMAND_INVALID, "只读关联不能上传本地任务");
         }
         let cursor = self.read_cursor(&binding.task_space_id).await;
-        let mut task_dirs: Vec<String> = cursor.deferred.keys().cloned().collect();
+        let readonly: HashSet<String> = cursor.readonly_task_dirs.keys().cloned().collect();
+        if cursor.deferred.keys().any(|task_dir| readonly.contains(task_dir)) {
+            let mut deferred = cursor.deferred.clone();
+            deferred.retain(|task_dir, _| !readonly.contains(task_dir));
+            self.write_cursor(
+                &binding.task_space_id,
+                CursorPatch {
+                    deferred: Some(deferred),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        }
+        let mut task_dirs: Vec<String> = cursor
+            .deferred
+            .keys()
+            .filter(|task_dir| !readonly.contains(*task_dir))
+            .cloned()
+            .collect();
         if task_dirs.is_empty() {
             return Ok(json!({
                 "taskSpaceId": binding.task_space_id,
