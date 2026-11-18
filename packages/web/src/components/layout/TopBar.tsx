@@ -142,19 +142,20 @@ export function TopBar({
             aria-label="看板视图"
           >
             {nav.map((item) => (
-              <button
+              <Button
                 key={item.id}
-                type="button"
+                variant="ghost"
+                size="sm"
                 onClick={() => onNavigate(item.id)}
                 className={
                   item.id === activeNav
-                    ? 'shrink-0 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold whitespace-nowrap text-foreground'
-                    : 'shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium whitespace-nowrap text-muted-foreground hover:bg-muted hover:text-foreground'
+                    ? 'shrink-0 gap-0 bg-secondary font-semibold whitespace-nowrap text-foreground hover:bg-secondary'
+                    : 'shrink-0 gap-0 font-medium whitespace-nowrap text-muted-foreground'
                 }
                 aria-current={item.id === activeNav ? 'page' : undefined}
               >
                 {item.label}
-              </button>
+              </Button>
             ))}
           </nav>
         )}
@@ -189,7 +190,7 @@ export function TopBar({
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <Avatar className="size-7">
+              <Avatar className="size-8">
                 <AvatarFallback className="bg-secondary text-2xs font-semibold text-muted-foreground">
                   {initials(displayName)}
                 </AvatarFallback>

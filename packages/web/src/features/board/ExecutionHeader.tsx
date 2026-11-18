@@ -1,6 +1,7 @@
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { BUILTIN_VIEWS } from '@/lib/execution-filter.js'
 import type { BoardFilters } from '@/hooks/useBoard'
 
@@ -55,26 +56,16 @@ export function ExecutionHeader({
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
-            {[
-              { id: 'all', label: '全部进行中' },
-              { id: 'mine', label: '只看我的' },
-            ].map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onChange({ scope: item.id === 'mine' ? 'mine' : 'all' })}
-                className={
-                  (item.id === 'mine') === (filters.scope === 'mine')
-                    ? 'rounded-md bg-card px-2.5 py-1 text-xs font-semibold'
-                    : 'rounded-md px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground'
-                }
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <Button variant="outline" size="sm" onClick={onSaveView}>
+          <Tabs
+            value={filters.scope === 'mine' ? 'mine' : 'all'}
+            onValueChange={(value) => onChange({ scope: value === 'mine' ? 'mine' : 'all' })}
+          >
+            <TabsList aria-label="任务范围">
+              <TabsTrigger value="all">全部进行中</TabsTrigger>
+              <TabsTrigger value="mine">只看我的</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <Button variant="outline" onClick={onSaveView}>
             保存组合视图
           </Button>
         </div>
@@ -86,7 +77,7 @@ export function ExecutionHeader({
             key={view.id}
             className={
               filters.executionView === view.id
-                ? 'flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground'
+                ? 'flex items-center gap-1 rounded-full border border-primary bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground'
                 : 'flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground'
             }
           >
@@ -110,7 +101,7 @@ export function ExecutionHeader({
             onClick={() => onChange({ executionView: view.id })}
             className={
               filters.executionView === view.id
-                ? 'rounded-full bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground'
+                ? 'rounded-full border border-primary bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground'
                 : 'rounded-full border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground'
             }
           >

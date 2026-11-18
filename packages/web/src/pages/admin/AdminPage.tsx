@@ -1,7 +1,7 @@
-import { cn } from 'cn'
 import { LogOut, Moon, Sun } from 'lucide-react'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -110,7 +110,7 @@ export function AdminPage() {
             <span className="text-sm font-semibold font-heading">Trellis Board</span>
           </a>
           <a
-            className="rounded-lg bg-muted px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            className="inline-flex h-8 items-center rounded-lg bg-muted px-2.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
             href="/"
           >
             返回看板
@@ -126,7 +126,7 @@ export function AdminPage() {
           />
           <DropdownMenu>
             <DropdownMenuTrigger className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <Avatar size="sm" className="size-7">
+              <Avatar size="sm" className="size-8">
                 <AvatarFallback className="bg-secondary text-2xs font-semibold text-muted-foreground">
                   {avatarText}
                 </AvatarFallback>
@@ -189,24 +189,18 @@ export function AdminPage() {
 
         {phase === 'ready' ? (
           <>
-            <nav aria-label="管理导航" className="flex flex-wrap items-center gap-1">
-              {visibleViews.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  aria-current={view === item.id ? 'page' : undefined}
-                  className={cn(
-                    'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
-                    view === item.id
-                      ? 'bg-primary text-primary-foreground'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                  )}
-                  onClick={() => setView(item.id)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </nav>
+            <Tabs value={view} onValueChange={(value) => setView(value)}>
+              <TabsList
+                aria-label="管理导航"
+                className="max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              >
+                {visibleViews.map((item) => (
+                  <TabsTrigger key={item.id} value={item.id}>
+                    {item.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
 
             <div>
               {view === 'project-access' ? <ProjectsTab console={consoleApi} /> : null}

@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useAppearance } from '@/app/theme'
 import type { FontSize, ThemePreference } from '@/lib/appearance.js'
 import { cn } from '@/lib/utils'
@@ -91,20 +92,22 @@ export function PreferencesDialog({
         <DialogBody className="mx-0 flex flex-col gap-5.5 px-5 pt-4.5 pb-5">
           <section className="flex flex-col gap-2.5">
             <span className="text-xs font-semibold text-foreground">主题</span>
-            <div role="radiogroup" aria-label="主题" className="grid grid-cols-3 gap-2.5">
+            <ToggleGroup
+              value={[theme]}
+              onValueChange={(value: string[]) => {
+                const next = THEME_CHOICES.find((choice) => choice.value === value[0])?.value
+                if (next) setTheme(next)
+              }}
+              aria-label="主题"
+              className="grid w-full grid-cols-3 items-stretch gap-2.5"
+            >
               {THEME_CHOICES.map(({ value, label }) => {
                 const active = theme === value
                 return (
-                  <button
+                  <ToggleGroupItem
                     key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    onClick={() => setTheme(value)}
-                    className={cn(
-                      'flex flex-col gap-2 rounded-lg border p-2 text-left transition-colors',
-                      active ? 'border-primary' : 'border-border hover:border-foreground/20',
-                    )}
+                    value={value}
+                    className="h-auto flex-col items-stretch gap-2 rounded-lg border border-border p-2 text-left aria-pressed:border-primary aria-pressed:bg-card"
                   >
                     <ThemePreview mode={value} />
                     <span
@@ -115,10 +118,10 @@ export function PreferencesDialog({
                     >
                       {label}
                     </span>
-                  </button>
+                  </ToggleGroupItem>
                 )
               })}
-            </div>
+            </ToggleGroup>
           </section>
 
           <section className="flex flex-col gap-2.5">
@@ -126,32 +129,27 @@ export function PreferencesDialog({
               <span className="text-xs font-semibold text-foreground">字体大小</span>
               <span className="text-2xs text-muted-foreground">当前 {fontPixels}px</span>
             </div>
-            <div
-              role="radiogroup"
+            <ToggleGroup
+              value={[fontSize]}
+              onValueChange={(value: string[]) => {
+                const next = FONT_CHOICES.find((choice) => choice.value === value[0])?.value
+                if (next) setFontSize(next)
+              }}
+              spacing={0.75}
               aria-label="字体大小"
-              className="flex h-8 items-center gap-0.75 rounded-lg bg-muted p-0.75"
+              className="flex h-8 w-full items-stretch rounded-lg bg-muted p-0.75"
             >
-              {FONT_CHOICES.map(({ value, label }) => {
-                const active = fontSize === value
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    onClick={() => setFontSize(value)}
-                    className={cn(
-                      'h-6 flex-1 rounded-md text-xs transition-colors',
-                      active
-                        ? 'bg-primary font-semibold text-primary-foreground'
-                        : 'text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    {label}
-                  </button>
-                )
-              })}
-            </div>
+              {FONT_CHOICES.map(({ value, label }) => (
+                <ToggleGroupItem
+                  key={value}
+                  value={value}
+                  variant="primary"
+                  className="h-full flex-1 rounded-md text-xs text-muted-foreground"
+                >
+                  {label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
             <div className="flex flex-col gap-1.5 rounded-lg bg-muted p-3">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold text-foreground">任务流水线</span>

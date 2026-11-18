@@ -11,11 +11,14 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { toast } from 'sonner'
 import { SelectField } from '../SelectField.tsx'
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const
+const PILL_ITEM =
+  'h-6 rounded-full px-2 text-xs aria-pressed:border-transparent aria-pressed:bg-primary aria-pressed:text-primary-foreground'
 const BLOCKED_OPTIONS = [
   { id: 'any', label: '不限阻断状态' },
   { id: 'blocked', label: '只看被阻断' },
@@ -46,10 +49,6 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
     setDueWithinDays('')
     setStaleDays('')
     setBlocked('any')
-  }
-
-  function toggle(list: string[], value: string) {
-    return list.includes(value) ? list.filter((item) => item !== value) : [...list, value]
   }
 
   async function submit() {
@@ -106,38 +105,48 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
 
           <div className="flex flex-col gap-1">
             <Label className="text-2xs">优先级</Label>
-            <div className="flex flex-wrap gap-1.5">
+            <ToggleGroup
+              multiple
+              value={priorities}
+              onValueChange={(value: string[]) => setPriorities(value)}
+              spacing={1.5}
+              aria-label="优先级"
+              className="flex flex-wrap gap-1.5"
+            >
               {PRIORITIES.map((priority) => (
-                <Button
+                <ToggleGroupItem
                   key={priority}
-                  type="button"
-                  size="xs"
-                  variant={priorities.includes(priority) ? 'default' : 'outline'}
-                  className="rounded-full"
-                  onClick={() => setPriorities((current) => toggle(current, priority))}
+                  value={priority}
+                  variant="outline"
+                  className={PILL_ITEM}
                 >
                   {priority}
-                </Button>
+                </ToggleGroupItem>
               ))}
-            </div>
+            </ToggleGroup>
           </div>
 
           <div className="flex flex-col gap-1">
             <Label className="text-2xs">阶段</Label>
-            <div className="flex flex-wrap gap-1.5">
+            <ToggleGroup
+              multiple
+              value={stages}
+              onValueChange={(value: string[]) => setStages(value)}
+              spacing={1.5}
+              aria-label="阶段"
+              className="flex flex-wrap gap-1.5"
+            >
               {FILTER_STAGES.map((stage) => (
-                <Button
+                <ToggleGroupItem
                   key={stage.id}
-                  type="button"
-                  size="xs"
-                  variant={stages.includes(stage.id) ? 'default' : 'outline'}
-                  className="rounded-full"
-                  onClick={() => setStages((current) => toggle(current, stage.id))}
+                  value={stage.id}
+                  variant="outline"
+                  className={PILL_ITEM}
                 >
                   {stage.label}
-                </Button>
+                </ToggleGroupItem>
               ))}
-            </div>
+            </ToggleGroup>
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2">

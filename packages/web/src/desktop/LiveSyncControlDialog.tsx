@@ -12,10 +12,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { errorMessage, invoke, listen } from '@/desktop/tauri'
 import { SelectField } from '@/features/board/SelectField'
 import { createRefreshCoordinator } from '@/lib/refresh-coordinator.js'
-import { cn } from '@/lib/utils'
 
 const MonacoDiff = lazy(() => import('./MonacoDiff.tsx'))
 
@@ -262,28 +262,31 @@ function DiffViewer({ files }: { files: DiffFile[] }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1" aria-label="差异文件">
+      <ToggleGroup
+        orientation="vertical"
+        value={[String(index)]}
+        onValueChange={(value) => {
+          const next = Number(value[0])
+          if (Number.isInteger(next)) setActiveIndex(next)
+        }}
+        spacing={1}
+        aria-label="差异文件"
+        className="w-full flex-col items-stretch"
+      >
         {files.map((item, position) => {
           const itemSource = formatSource(item.changedBy)
           return (
-            <button
+            <ToggleGroupItem
               key={`${item.path ?? 'file'}:${position}`}
-              type="button"
-              aria-pressed={position === index}
-              className={cn(
-                'flex min-w-0 flex-col rounded-md px-2 py-1.5 text-left text-xs',
-                position === index
-                  ? 'bg-muted text-foreground'
-                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-              )}
-              onClick={() => setActiveIndex(position)}
+              value={String(position)}
+              className="h-auto min-w-0 flex-col items-start gap-0 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/50 aria-pressed:bg-muted aria-pressed:text-foreground"
             >
               <span className="truncate font-medium">{item.path ?? '未知文件'}</span>
               {itemSource ? <span className="truncate text-xs">{itemSource}</span> : null}
-            </button>
+            </ToggleGroupItem>
           )
         })}
-      </div>
+      </ToggleGroup>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <p className="min-w-0 break-all font-medium text-foreground">{file.path ?? '未知文件'}</p>
         <p className="text-muted-foreground">
