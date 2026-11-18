@@ -2,15 +2,15 @@
 
 ## 当前状态
 
-- 服务端、客户端、Rust 回归测试和规范回写已完成。
-- 服务端聚焦测试、Trellis validate、IDEA 静态检查通过。
-- Rust 编译/测试和真实 Windows 客户端 E2E 尚待具备 Rust 工具链及新桌面包的环境执行。
+- 服务端、客户端、Rust 回归测试、规范回写和真实 Windows 客户端 E2E 均已完成。
+- GitHub Actions `44291537801` 的 Node 测试、Rust 单测、桌面打包和 portable smoke 均通过。
+- `v0.4.40` 真机验证覆盖离线续传、客户端重启、普通墓碑、父目录失败关闭和 archive 移动。
 
 ## 前置门禁
 
-- [ ] 用户明确批准最终规划摘要。
-- [ ] 执行 `python ./.trellis/scripts/task.py start 11-18-fix-ownership-inbox-deletion-residue`。
-- [ ] 确认当前活动任务切换为目标任务，保留其他未提交改动不动。
+- [x] 用户明确批准最终规划摘要。
+- [x] 执行 `python ./.trellis/scripts/task.py start 11-18-fix-ownership-inbox-deletion-residue`。
+- [x] 确认当前活动任务切换为目标任务，保留其他未提交改动不动。
 
 ## 实施步骤
 
@@ -90,12 +90,13 @@
 
 按项目约束，所有开发完成前不反复编译；完成全部代码后只执行一次最终验证批次。
 
-- [ ] `node --test packages/server/test/task-ownership-inbox.test.js`
-- [ ] `node --test packages/server/test/team-gitless-http.test.js`
-- [ ] `cargo fmt --manifest-path packages/desktop/src-tauri/Cargo.toml --check`
-- [ ] `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`
-- [ ] `python ./.trellis/scripts/task.py validate 11-18-fix-ownership-inbox-deletion-residue`
-- [ ] `git diff --check`
+- [x] `node --test packages/server/test/task-ownership-inbox.test.js`：7/7 通过。
+- [x] `node --test packages/server/test/team-gitless-http.test.js`：4/4 通过。
+- [x] GitHub Actions `cargo test`：Rust 单测通过。
+- [x] `python ./.trellis/scripts/task.py validate 11-18-fix-ownership-inbox-deletion-residue`
+- [x] `git diff --check`
+
+本机没有 Rust 工具链，因此 `cargo fmt --check` 未在本地执行；Rust 编译与测试由 Windows CI 实际验证。
 
 ## 真实 E2E
 

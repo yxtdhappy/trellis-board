@@ -48,11 +48,14 @@
 - IDEA MCP `lint_files`：所有修改的 Rust 源文件和新增测试无问题。
 - `python ./.trellis/scripts/task.py validate 11-18-fix-ownership-inbox-deletion-residue`：通过。
 - `git diff --check`：通过。
+- GitHub Actions run `44291537801`：Node 全量测试、Rust 单测、桌面打包、portable smoke、
+  launch smoke 和 Release 发布全部通过。
+- `v0.4.40` 真机：离线删除失败保留、恢复后自动续传归零、客户端重启不复活、普通墓碑不回归、
+  父目录缺失失败关闭、archive 移动不普通上传。
 
-## 未完成/后续
+## 已知限制
 
-- 当前机器没有 `cargo`、`rustc`、`rustup`、`rustfmt`，也未发现未加入 PATH 的 Rust 工具链，
-  因此 `cargo fmt --check`、Rust 单元测试和编译不能标记为通过。
-- 未生成包含本次 Rust 修改的新桌面安装包，因此未执行真实 Windows 客户端 E2E。
+- 当前机器没有 Rust 工具链，`cargo fmt --check` 未在本地执行；Rust 编译和单测由 CI 验证。
+- “两个 Agent 同一任务来源隔离”由服务端自动化测试覆盖，未同时启动两台真实 Windows 客户端。
 - 全仓 `yarn format:check` 仍被 11 个既有无关文件阻断；本次修改文件已单独格式化检查通过。
-- 尚未提交、推送或归档。
+- 工作提交、`v0.4.40` 发版和真实 E2E 已完成；任务文档提交和归档待执行。

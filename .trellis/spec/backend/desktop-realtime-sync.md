@@ -969,6 +969,8 @@ Cursor.ownershipPending + Cursor.pendingRejected = 待归属摘要删除重试�
   `symlink_metadata` 返回 `NotFound` 时，才能向服务端提交只含 `taskDir` 的 delete。
 - 服务端确认删除或明确返回旧服务端 404/405 后，必须用一个 cursor patch 同时移除两份状态；网络、
   5xx、分支校验、父目录不可读和未知 IO 错误全部保留两份状态，等待 watcher、ownership 校验或重启重试。
+- 启动时只要 `ownershipPending` 或 `pendingRejected` 非空，`pull_and_report()` 必须报告需要继续
+  ownership 校验，即使服务端 revision 未变化。不能把“没有新快照”误判为“没有本地删除账本要重试”。
 - 网络失败、超时、429 重试耗尽和未知失败必须保留 pending 并停止该 taskSpace，不能猜测服务端未提交。
 - 上传成功只推进 `sequence`、baselines 和 pending 状态，不把响应 revision 写入
   `cursor.revision`；只有完整 pull/apply 成功后才能推进已应用 revision。
@@ -989,6 +991,32 @@ Cursor.ownershipPending + Cursor.pendingRejected = 待归属摘要删除重试�
 | `.trellis`/`.trellis/tasks` 缺失、不可读或类型异常 | 失败关闭，不把空扫描结果解释为全部删除 |
 | inbox delete 网络失败或 5xx | 两份 cursor 状态不变，后续触发点继续重试 |
 | inbox 接口 404/405 | 标记可选能力缺失；已确认不存在目录的两份本地状态可清理 |
+| 启动 revision 未变化但待归属/拒绝账本非空 | 仍执行 ownership 校验，成功后清两份账本 |
 | 上传返回 revision 已越过他人变更 | `cursor.revision` 不变，下一次 pull 补齐 |
 | guard<1 且 full snapshot 未收敛 | guard 保持 0，不删除本地任务 |
 | guard 修复成功 | 写 verified revision 和 guard=1 |
+
+### 5. Tests Required
+
+- `unchanged_startup_pull_revalidates_pending_ownership_ledger`：预置相同 revision 和非空双账本，
+  启动 pull 后必须发送 `PUT .../ownership-inbox`，并清空两份账本。
+
+### 6. Wrong vs Correct
+
+#### Wrong
+
+```rust
+revalidate || self.read_cursor(task_space_id).await.revision != revision_before
+```
+
+服务端 revision 未变化时跳过 ownership 校验，离线删除意图永远不续传。
+
+#### Correct
+
+```rust
+let ownership_retry = !cursor_before.ownership_pending.is_empty()
+    || !cursor_before.pending_rejected.is_empty();
+revalidate
+    || ownership_retry
+    || self.read_cursor(task_space_id).await.revision != revision_before
+```

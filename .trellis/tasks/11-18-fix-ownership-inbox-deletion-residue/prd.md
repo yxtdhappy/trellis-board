@@ -91,16 +91,26 @@
 
 ## Acceptance Criteria
 
-- [ ] AC1：创建任务 ID 与目录 basename 不一致的空分支任务，确认项目收件箱出现 1 条后，直接删除本地目录；服务端 inbox 行在健康网络 5 秒内变为 0。
-- [ ] AC2：同一操作后，客户端 `ownershipPending` 和 `pendingRejected` 均不再包含该目录，ProjectRail 不再显示待归属或“服务端拒绝待处理”。
-- [ ] AC3：退出并重新打开客户端，已删除条目不会重新出现；若上次删除请求未能送达，重启后会继续重试并在成功后收敛。
-- [ ] AC4：模拟服务端不可达后删除任务，失败期间不误报成功；恢复连接后删除成功，且期间没有丢失删除依据。
-- [ ] AC5：临时让 `.trellis/tasks` 不可读或缺失，cursor 中其他待归属摘要全部保留，不产生批量 delete。
-- [ ] AC6：两个 Agent 报告同一任务时，Agent A 删除只能移除自己的来源行；Agent B 未删除前项目聚合收件箱仍保留该任务。
-- [ ] AC7：同一 delete 连续提交两次均成功且幂等，第二次返回无变化。
-- [ ] AC8：活动任务移动到 `archive/**` 时，旧活动目录摘要按本流程删除；不向服务端上传归档路径，后续仍由 Git 归档同步负责归档内容。
-- [ ] AC9：普通已上传任务的删除仍走原有快照墓碑流程，任务正文、冲突、审计和 revision 行为不回归。
-- [ ] AC10：相关服务端测试、Rust 单元测试、任务校验和真实 Windows 客户端 E2E 均记录通过证据。
+- [x] AC1：创建任务 ID 与目录 basename 不一致的空分支任务，确认项目收件箱出现 1 条后，直接删除本地目录；服务端 inbox 行在健康网络 5 秒内变为 0。
+      （2026-11-18 真机：0.4.40 恢复后 772ms 收敛；见 [e2e-report.md](./e2e-report.md#23-040-启动自动续传)）
+- [x] AC2：同一操作后，客户端 `ownershipPending` 和 `pendingRejected` 均不再包含该目录，ProjectRail 不再显示待归属或“服务端拒绝待处理”。
+      （真机：两份 cursor 均为空，UI 无待归属/拒绝提示；见 [e2e-report.md](./e2e-report.md#23-040-启动自动续传)）
+- [x] AC3：退出并重新打开客户端，已删除条目不会重新出现；若上次删除请求未能送达，重启后会继续重试并在成功后收敛。
+      （真机：0.4.40 重启 PID `41428` 后仍为 0，未复活；见 [e2e-report.md](./e2e-report.md#24-客户端重启不复活)）
+- [x] AC4：模拟服务端不可达后删除任务，失败期间不误报成功；恢复连接后删除成功，且期间没有丢失删除依据。
+      （真机：离线记录 `NETWORK_ERROR`，SQLite 与双账本保留；恢复后自动续传归零；见 [e2e-report.md](./e2e-report.md#22-服务端离线后删除任务)）
+- [x] AC5：临时让 `.trellis/tasks` 不可读或缺失，cursor 中其他待归属摘要全部保留，不产生批量 delete。
+      （真机：父目录缺失 8 秒，inbox 1、双账本、128 条索引全部保留；见 [e2e-report.md](./e2e-report.md#26-父目录缺失时失败关闭)）
+- [x] AC6：两个 Agent 报告同一任务时，Agent A 删除只能移除自己的来源行；Agent B 未删除前项目聚合收件箱仍保留该任务。
+      （服务端自动化：来源隔离与 `taskDir` 精确删除 7/7 通过；见 [e2e-report.md](./e2e-report.md#4-自动化验证)）
+- [x] AC7：同一 delete 连续提交两次均成功且幂等，第二次返回无变化。
+      （服务端自动化：重复删除幂等用例通过；见 [e2e-report.md](./e2e-report.md#4-自动化验证)）
+- [x] AC8：活动任务移动到 `archive/**` 时，旧活动目录摘要按本流程删除；不向服务端上传归档路径，后续仍由 Git 归档同步负责归档内容。
+      （真机：移动后 inbox/双账本归零，活动表、归档表、任务索引均无 probe 路径；见 [e2e-report.md](./e2e-report.md#27-活动任务移动到-archive)）
+- [x] AC9：普通已上传任务的删除仍走原有快照墓碑流程，任务正文、冲突、审计和 revision 行为不回归。
+      （真机：索引删除，两条文件行在 revision 9 变为 `deleted=1`；见 [e2e-report.md](./e2e-report.md#25-普通-main-已上传任务删除回归)）
+- [x] AC10：相关服务端测试、Rust 单元测试、任务校验和真实 Windows 客户端 E2E 均记录通过证据。
+      （GitHub Actions run `44291537801`、服务端 7/7 与 4/4、Trellis validate 和真实 0.4.40 客户端均通过；见 [e2e-report.md](./e2e-report.md#4-自动化验证)）
 
 ## Out of Scope
 
