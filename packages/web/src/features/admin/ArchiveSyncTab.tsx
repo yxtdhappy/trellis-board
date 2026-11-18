@@ -459,30 +459,6 @@ export function ArchiveSyncTab() {
                       只用于精确匹配的 SSH 来源。
                     </FieldDescription>
                   </Field>
-                  <Field className="gap-1">
-                    <FieldLabel
-                      htmlFor="credential-known-hosts"
-                      className="text-xs font-medium text-muted-foreground"
-                    >
-                      {editing ? '更新 known_hosts（留空则保留）' : 'known_hosts'}
-                    </FieldLabel>
-                    <Textarea
-                      id="credential-known-hosts"
-                      className="min-h-24 font-mono text-xs"
-                      required={!editing}
-                      value={draft.knownHostsText}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          knownHostsText: event.target.value,
-                        }))
-                      }
-                    />
-
-                    <FieldDescription className="text-2xs">
-                      必须包含该主机和端口对应的完整 known_hosts 行。
-                    </FieldDescription>
-                  </Field>
                 </>
               )}
               <div className="flex gap-2">
