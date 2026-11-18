@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { changePassword } from '@/api/board'
-import { Field, FieldLabel } from '@/components/ui/field'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 
 type PasswordDialogProps = {
   open: boolean
@@ -96,11 +96,7 @@ export function PasswordDialog({ open, onOpenChange }: PasswordDialogProps) {
             <p className="rounded-lg bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground">
               至少 {MIN_LENGTH} 位。更新成功后其他会话会立即失效。
             </p>
-            {message ? (
-              <p className="text-xs text-destructive" role="alert">
-                {message}
-              </p>
-            ) : null}
+            {message ? <FieldError className="text-xs">{message}</FieldError> : null}
           </DialogBody>
           <DialogFooter className="gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

@@ -13,7 +13,7 @@ import {
 import { SelectField } from '../SelectField'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
-import { Field, FieldContent, FieldLabel } from '@/components/ui/field'
+import { Field, FieldContent, FieldError, FieldLabel } from '@/components/ui/field'
 
 type OwnershipChoice = {
   taskSpaceId: string
@@ -323,11 +323,7 @@ export function TaskOwnershipDialog({
               {renderOwnershipGroup('待确认归属', pendingItems)}
             </>
           ) : null}
-          {message ? (
-            <p role="alert" className="text-xs text-destructive">
-              {message}
-            </p>
-          ) : null}
+          {message ? <FieldError className="text-xs">{message}</FieldError> : null}
         </DialogBody>
         <DialogFooter>
           <Button

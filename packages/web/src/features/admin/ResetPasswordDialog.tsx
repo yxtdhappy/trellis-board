@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input'
 import type { AdminUser } from '@/api/admin'
 
 import { adminPasswordError } from './password-policy.ts'
-import { Field, FieldLabel, FieldDescription } from '@/components/ui/field'
+import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
 
 export function ResetPasswordDialog({
   user,
@@ -115,11 +115,7 @@ export function ResetPasswordDialog({
                 disabled={busy}
               />
             </Field>
-            {error ? (
-              <p role="alert" className="text-xs text-destructive">
-                {error}
-              </p>
-            ) : null}
+            {error ? <FieldError className="text-xs">{error}</FieldError> : null}
           </DialogBody>
           <DialogFooter>
             <Button variant="outline" size="sm" type="button" onClick={close} disabled={busy}>

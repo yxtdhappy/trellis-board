@@ -31,6 +31,8 @@
 | 只读展示卡 | `ui/card` | 用 `Card` 包业务面板 |
 | 表格 | `ui/table`；需要 sticky 表头时用 `Table` 的 `containerClassName` 保证滚动祖先正确 | 手写 `<table>` |
 | 表单行 | `ui/field`：`Field`/`FieldLabel htmlFor`/`FieldDescription`/`FieldError` | 自写 label + div |
+| 表单/操作错误行 | `FieldError`（`className="text-xs"` 保持 12px/16px 行高） | 手写 `<p role="alert" className="text-xs text-destructive">` |
+| 只读令牌/等宽展示 | 原生 `<input readOnly>`（`ui/input` 的 `h-8 rounded-md bg-input/20` 会改高度、圆角、底色） | 用 `Input` 再覆盖一堆类 |
 | 空态 | `ui/empty-row`（单行）、`ui/empty`（整块） | 自写 `<p class="text-muted-foreground">` |
 | 加载占位 | `ui/skeleton` | 文字「加载中…」 |
 | 提示 / 错误条 | `ui/alert`（`AlertTitle`/`AlertDescription`/`AlertAction`） | 自写带底色的 div |
@@ -61,7 +63,7 @@
 
 ## 审计命令
 
-在 `packages/web` 下执行；前 5 条预期无输出，例外必须在任务 `implement.md` 登记。
+在 `packages/web` 下执行；前 6 条预期无输出，例外必须在任务 `implement.md` 登记。
 
 ```bash
 rg -n "<button[ >]" src -g '!**/components/ui/**'
@@ -69,6 +71,7 @@ rg -n "bg-(success|warning|destructive|primary)-soft" src -g '!**/components/ui/
 rg -n "type=\"checkbox\"" src
 rg -n "@base-ui/react" src -g '!**/components/ui/**'
 rg -n "<table" src -g '!**/components/ui/**'
+rg -n "role=\"alert\"" src -g '!**/components/ui/**'
 rg -n "<select" src -g '!**/components/ui/**'
 rg -n "#[0-9a-fA-F]{6}\b" src
 ```

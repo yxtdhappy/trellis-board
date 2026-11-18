@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { FieldError } from '@/components/ui/field'
 
 export type AssigneeWarningDetails = {
   warningId: string
@@ -73,11 +74,7 @@ export function AssigneeWarningDialog({
               跟踪而需要手工处理；目标客户端上线后再接管并落地。
             </p>
           </div>
-          {error ? (
-            <p role="alert" className="text-xs text-destructive">
-              {error}
-            </p>
-          ) : null}
+          {error ? <FieldError className="text-xs">{error}</FieldError> : null}
         </DialogBody>
         <DialogFooter className="gap-2 sm:justify-between">
           <Button variant="outline" disabled={Boolean(busy)} onClick={onCancel}>

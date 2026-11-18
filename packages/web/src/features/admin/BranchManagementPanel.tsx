@@ -21,7 +21,7 @@ import { EmptyRow } from '@/components/ui/empty-row'
 import { Row } from './shared.tsx'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Panel } from '@/components/ui/panel'
-import { Field, FieldLabel } from '@/components/ui/field'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 
 type BranchManagementPanelProps = {
   projectSelected: boolean
@@ -314,11 +314,7 @@ export function BranchManagementPanel({
                     disabled={retireBusy}
                   />
                 </Field>
-                {retireError ? (
-                  <p role="alert" className="text-xs text-destructive">
-                    {retireError}
-                  </p>
-                ) : null}
+                {retireError ? <FieldError className="text-xs">{retireError}</FieldError> : null}
               </DialogBody>
               <DialogFooter>
                 <Button
@@ -384,11 +380,7 @@ export function BranchManagementPanel({
                     />
                   </Field>
                 )}
-                {purgeError ? (
-                  <p role="alert" className="text-xs text-destructive">
-                    {purgeError}
-                  </p>
-                ) : null}
+                {purgeError ? <FieldError className="text-xs">{purgeError}</FieldError> : null}
               </DialogBody>
               <DialogFooter>
                 <Button

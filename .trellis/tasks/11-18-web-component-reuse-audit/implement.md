@@ -342,11 +342,76 @@ export function toneSurface(tone, quiet = false)
 - 用户账号：创建表单与编辑表单各 1 个 `所属团队` 列表；点「编辑」后 `[data-slot="dialog-content"]` 计数 0、`button` 文案只有「创建账号/保存账号」（无「取消」）；勾选「验证团队」后 `aria-checked` false→true，点「保存账号」后 `team_member` 落库一行 —— 抽取后的 `AccountForm` + `TeamCheckboxList` 端到端可用。
 - 未能可视化验证：`ProjectsTab`/`PluginsTab` 的 `PluginBindingForm`（team 模式没有项目与插件绑定数据，注册项目需 desktop 配对）、`ArchiveSyncTab` 的受影响项目列表（需要 git 凭据）。仅类型检查 + 同构核对。
 
+## 真实客户端 e2e（已完成）
+
+构建：`yarn build:desktop`（`tsc -b && vite build --config vite.desktop.config.ts` → `packages/desktop/ui`）+ `cd packages/desktop/src-tauri && cargo build --release --features tauri/custom-protocol`。**必须显式带 `tauri/custom-protocol`**：`Cargo.toml` 没有 `[features]` 段，裸 `cargo build --release` 会按 dev 模式编译（走 `devUrl: http://localhost:5199`、不内嵌 `frontendDist`），窗口打开后停在 `about:blank`，手动导航得到 `asset not found: index.html`、`tauri-codegen-assets` 为空。
+
+驱动：`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 ./trellis-board-client.exe`，Node 内置 `WebSocket` 直连 CDP（`Runtime.evaluate` / `Page.captureScreenshot` / `Input.dispatchMouseEvent`）；tabbit 只能驱动 Chrome，接不进 WebView2。窗口用 Win32 `MoveWindow` 改宽度可触发容器查询。原生文件夹选择框用 `WM_SETTEXT`（`Edit` id 1152）+ `BM_CLICK`（`Button` id 1）驱动，UIAutomation 对它的 footer 按钮不可见。
+
+team 服务器：`TRELLIS_BOARD_MODE=team TRELLIS_BOARD_DATA_DIR=… node packages/server/index.js`；admin 入口是 **`/admin.html`**（`/admin` 返回 `静态资源不存在`）；管理员用 `cli.js init-admin` 造。项目通过「接入本地项目 → 检查任务差异 → 接入并上传本地任务」关联本仓库（13 任务、4 进行中），之后看板/团队/任务详情全部有真实数据。
+
+实测（WebView2，DPR 1.5，窗口缩放使 CSS 值约 ×1.12）：
+
+- 看板：TopBar、ProjectRail（`trellis-board 已关联 · 同步正常`、`main 在线监听 1 / 已关联 1`）、FlowSignals 4 张 Signal、StatTile 3 块、AttentionQueue、组合视图药片、轻量 Kanban —— 无漂移。
+- Avatar：表格/团队视角 18–23px 且 `::after` `display:none`；TopBar 账号头像仍是默认 36px 带描边（未改动的组件）。
+- Progress：`progress-track` h=7（≈6px CSS）、全圆角、bg=secondary；`progress-indicator` bg=primary、`width:100%`。
+- Separator：ProjectRail 垂直分隔线 x=34 w=1 h=53、`bg-border/70`、`aria-orientation=vertical`，分支组起点 x=39（`gap-1`）；TeamView 两条水平分隔线正常。
+- Tooltip：主题按钮「切换到深色主题」、ProjectRail Bot「初始化编码 Agent」、窄窗口（986px）下的搜索图标「搜索任务、负责人」——触发器都是可聚焦的 `data-slot="tooltip-trigger"`，`title` 已移除；文字截断与禁用态仍保留原生 `title`。
+- 分页：团队视角 `显示 1-4 / 共 4 条`；表格 sticky 表头与列宽节奏正常。
+- 任务详情：条件检查的开工卡 `border-destructive/20 bg-destructive-soft/50 text-destructive`（computed bg `/0.5`）、图标底板 `bg-destructive-soft`=`rgb(254,226,226)`、成功药片 `bg-success-soft`=`rgb(220,252,231)` —— tone 收敛（R5）在真实客户端一致。
+- admin：7 个 tab 全部渲染；团队 tab 建团队成功；用户账号 tab 只有「创建账号/保存账号」、无对话框、所属团队列表与药片正常；插件 tab 的「添加绑定」按钮 h=36 全宽 disabled（`PluginsTab` 不传 `submitProps`，与改动前一致）。
+
+未能覆盖：`ArchiveView` 的分页编号分支（team 模式归档为 0 条，浏览器端已用 125 条验证过）、`PluginBindingForm`/`ArchiveSyncTab` 的绑定与受影响项目列表（无插件绑定、无 git 凭据数据）。
+
+清理：客户端与服务进程已结束，`C:/projects/.verify-data` 与全部 `.tmp-*` 临时脚本/截图已删除。
+
+### 全量复查（Phase 2.2，已完成）
+
+按 `research/component-audit.md` 的横向结论逐条核当前代码：
+
+| 结论 | 现状 |
+| --- | --- |
+| `eyebrow`/`code-block` 重复 | 已抽为 `ui/eyebrow.tsx`、`ui/code-block.tsx`，无残留 |
+| `SummaryGrid` 重复 | 无命中；原 label/value 网格已由 `Field` 布局承担，剩余 `grid-cols-2` 只有 `desktop/LiveSyncControlDialog.tsx:218`（diff 双栏）与 `ProjectOnboardingDialog.tsx:209,663`（Skeleton 占位） |
+| 原生 `<select>`/`<textarea>`/`radio-group` | 无命中（下拉走 `SelectField`/`Combobox`，选项集合走 `ToggleGroup`） |
+| `StatusDot` | 只出现在 `ProjectRail.tsx`（单文件本地函数），按「第三处才提升」不提升 |
+
+**新发现的残留并已修**：6 处手写错误行 `<p role="alert" className="text-xs text-destructive">` 与本规范矩阵冲突（表单/操作错误应走 `FieldError`），全部改为 `<FieldError className="text-xs">`：
+
+- `features/admin/BranchManagementPanel.tsx:318,388`（退休/清除分支失败）
+- `features/admin/ResetPasswordDialog.tsx:119`
+- `features/board/dialogs/AssigneeWarningDialog.tsx:77`
+- `features/board/dialogs/PasswordDialog.tsx:100`
+- `features/board/dialogs/TaskOwnershipDialog.tsx:327`
+
+`FieldError` 基础类是 `text-xs/relaxed font-normal text-destructive`，传 `className="text-xs"` 后 tailwind-merge 结果为 `font-normal text-destructive text-xs`（`/relaxed` 被覆盖）。在真实页面测量新旧两种写法的错误行：字号 12px、行高 16px、`color` 同一 destructive token、`font-weight` 400、`margin` 0、`height` 16px、`display` block —— 完全一致，元素从 `<p>` 变 `<div>` 不影响布局。
+
+**登记例外（不收敛）**：`features/admin/DevicesTab.tsx:106` 的一次性设备令牌是 `<input readOnly>` + `rounded-lg border-border bg-transparent px-2.5 py-2 font-mono text-xs`，`ui/input` 的基础类 `h-8 rounded-md border-input bg-input/20 px-2.5 py-1` 会同时改高度、圆角与底色，属只读等宽展示而非可编辑字段。
+
 ## 收尾
 
-1. 全量闸门 + PRD 全部 16 条验收逐条勾。
-2. 浏览器全量抽查：登录、看板（概览/团队/归档/任务详情/筛选/组合视图/接管通知）、偏好设置、admin 全部 8 个 tab、desktop 同步对话框；控制台 0 error、布局无塌陷。
-3. `git diff --stat` 与 `research/component-audit.md` 清单核对，无越界文件。
-4. 删除批 0 的临时截图目录。
-5. `stash@{0}` 已在批 2 合并，向用户确认后 `git stash drop`。
-6. 汇报全部改动范围与验证结果，取得提交确认（本批已是逐批提交，此处确认最终状态与任务目录入库）。
+### PRD 验收逐条
+
+| # | 断言 | 结果 |
+|---|------|------|
+| 1 | `@base-ui/react` 仅 `components/ui/*` | 通过，ui 外无输出 |
+| 2 | `Panel`/`StatusPill`/`EmptyRow`/`controlClass` 不再定义在 `features/admin/shared.tsx` | 通过：`shared.tsx` 只剩 `Row`/`AuditItem` 两个导出；命中只剩 import 与调用（`ProjectRail.tsx:26,28`、`shared.tsx:3`），`api/panels.ts` 的 `PluginPanel` 与组件无关 |
+| 3 | 裸 `<table>` 无输出 | 通过 |
+| 4 | 裸 `<button>` 仅登记例外 | 通过，单行 `<button` 无输出；多行写法的整行热区见批 9 例外表 |
+| 5 | `type="checkbox"` 无输出 | 通过 |
+| 6 | `bg-*-soft` 无输出 | 通过（`TONE_SURFACE` 在 `ui/status-pill.tsx`） |
+| 7 | `rounded-full (px\|py)-` 仅登记例外 | **登记**：`TaskCard.tsx:100`、`dialogs/SavedViewsDialog.tsx:21` —— 都是给 `Badge` 传 className 收窄尺寸，不是重复实现；PRD 原文举例的 `StageTape`/`HandoffNotice` 已不再命中 |
+| 8 | `title={` 在 `components/layout` 仅登记例外 | **登记并修正描述**：`ProjectRail.tsx:823,831,845,855,908,934,965,1017,1071,1085,1099,1137` + `TopBar.tsx:141`，分三类——文字截断提示（项目名/视图详情/分支名/品牌名）、复合状态提示（`待归属任务 N`、`branchName：counts · label`）、禁用态提示（`上传本地任务`、`不再同步此分支`、`服务端解绑待确认`）。PRD 写的「仅剩禁用态提示」过窄，实际还有前两类，均不可换 Tooltip（无独立图标触发器） |
+| 9 | 分段控件：紫色选中、`role=tab`+`aria-selected`、键盘左右键 | 通过（批 2 实测；真实客户端复验药片外层 28 / 内层 18） |
+| 10 | 5 处表格逐列一致 | 通过（批 7 记录 + 客户端团队视角/归档索引实测） |
+| 11 | label 点击聚焦抽查 | 通过（批 8 记录） |
+| 12 | 药片四档配色一致 | 通过（批 4 记录 + 客户端条件检查/表格药片实测） |
+| 13 | `npx tsc -b` 通过、`npx oxlint src` 0 error、`npx oxfmt` 已格式化 | 通过（0 error，55 条存量 warning 全在未触碰文件） |
+| 14 | 浏览器抽查全量 | 通过（standalone + team 两种模式；真实客户端复验看板/admin/任务详情） |
+| 15 | `frontend/component-reuse.md` 可经 `frontend/index.md` 抵达 | 通过（`index.md:11` 挂索引，`quality-guidelines.md:38` 指向） |
+
+### 剩余动作
+
+1. `git diff --stat` 与 `research/component-audit.md` 清单核对，无越界文件。
+2. `git stash list` 已为空（`stash@{0}` 在批 2 合并后已清理），无需再 drop。
+3. 汇报改动范围与验证结果，取得提交确认（逐批提交已完成，此处确认最终状态与任务目录入库）。
