@@ -1,0 +1,13 @@
+# 提交前格式化暂存文件。换行符由 .gitattributes 的 `* text=auto eol=lf` 在 git add 时统一。
+# shortcut: rustfmt edition 写死 2021（当前只有 packages/desktop/src-tauri 一个 crate），
+# 出现多 edition crate 时改成脚本按最近的 Cargo.toml 分组。
+pre-commit:
+  commands:
+    oxfmt:
+      glob: '*.{js,jsx,ts,tsx,mjs,cjs,json,yaml,yml,css,scss,html}'
+      run: node node_modules/oxfmt/bin/oxfmt --write --no-error-on-unmatched-pattern {staged_files}
+      stage_fixed: true
+    rustfmt:
+      glob: '*.rs'
+      run: rustfmt --edition 2021 {staged_files}
+      stage_fixed: true

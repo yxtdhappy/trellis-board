@@ -34,6 +34,12 @@ docs/             运维与设计文档
 常用命令：`yarn dev`、`yarn start`、`yarn build`、`yarn build:desktop`、`yarn test:all`、
 `yarn desktop:build`、`yarn desktop:package`。
 
+`yarn install` 会通过 lefthook 装好 git hook（写入 `.git/hooks/pre-commit`）；已经安装过依赖的仓库
+更新到含本提交的版本后，如果 `.git/hooks/pre-commit` 不存在，执行一次 `yarn lefthook install` 即可
+（yarn 3 在依赖未变时不会重跑 `postinstall`）。提交前 `lefthook.yml` 里的命令会格式化暂存文件
+（oxfmt 处理前端/脚本，rustfmt 处理 `.rs`），未暂存改动不会被带进提交；换行符由 `.gitattributes`
+统一为 LF；格式化失败会中止提交，需要绕过时用 `git commit --no-verify`。
+
 ## 启动
 
 需要 Node.js 24 或更高版本，持久化使用 Node 内置的 `node:sqlite`。
