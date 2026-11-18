@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { useArchiveTasks } from '@/hooks/useArchiveTasks'
 import { formatArchiveTimestamp, sortArchivedTasks } from '@/lib/archive-sort.js'
@@ -299,9 +300,11 @@ export function ArchiveView({
                     </TableCell>
                     <TableCell className="whitespace-normal px-3 py-2.5">
                       <span className="flex items-center gap-1.5">
-                        <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-2xs font-semibold">
-                          {initials(task.assignee)}
-                        </span>
+                        <Avatar className="size-4 after:hidden">
+                          <AvatarFallback className="bg-secondary text-2xs font-semibold">
+                            {initials(task.assignee)}
+                          </AvatarFallback>
+                        </Avatar>
                         {task.assignee || '未派发'}
                       </span>
                     </TableCell>

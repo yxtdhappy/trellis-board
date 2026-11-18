@@ -194,15 +194,17 @@ export function PluginsView() {
             {plugins.length} 个插件
             {plugins.length > 1 ? ' · 拖动卡片调整插件与面板顺序' : ''}
           </span>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
+            className="px-2.5"
             disabled={disabled || reloading}
             onClick={() => void reload()}
             title="重读插件配置目录（TrellisBoard/plugins）的 plugins.json 与 plugins.secrets.json，重启受影响的插件"
-            className="h-7 rounded-md border border-border px-2.5 text-xs hover:bg-muted disabled:opacity-50"
           >
             {reloading ? '重载中…' : '刷新配置'}
-          </button>
+          </Button>
         </div>
       </div>
 

@@ -5,6 +5,7 @@ import type { OwnershipInboxItem, OwnershipInboxProjectGroup } from '@/lib/owner
 import { Empty, EmptyDescription } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { toneSurface } from '@/components/ui/status-pill'
 
 type OwnershipInboxPanelProps = {
   count: number
@@ -77,7 +78,9 @@ export function OwnershipInboxPanel({
       : projectGroups.find((group) => group.projectId === projectId)?.projectName || '当前项目'
 
   return (
-    <section className="rounded-xl border border-warning/35 bg-warning-soft px-3 py-2.5 text-warning">
+    <section
+      className={`rounded-xl border border-warning/35 px-3 py-2.5 ${toneSurface('warning')}`}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <div role="status" className="min-w-0 flex-1">
           <p className="text-xs font-semibold">

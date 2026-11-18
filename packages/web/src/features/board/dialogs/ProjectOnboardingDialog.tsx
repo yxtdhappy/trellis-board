@@ -22,6 +22,7 @@ import { AgentToolSelector } from './AgentToolSelector.tsx'
 import { SelectField } from '../SelectField.tsx'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { toneSurface } from '@/components/ui/status-pill'
 import { Field, FieldLabel } from '@/components/ui/field'
 
 type TeamOption = {
@@ -637,7 +638,9 @@ export function ProjectOnboardingDialog({
                   <Skeleton className="h-8 w-full" />
                 </div>
               ) : replacedAssociations.length ? (
-                <Alert className="flex flex-col gap-2 border-warning/35 bg-warning-soft p-3 text-warning">
+                <Alert
+                  className={`flex flex-col gap-2 border-warning/35 p-3 ${toneSurface('warning')}`}
+                >
                   <p className="font-medium text-warning">将替换当前仓库的旧分支绑定</p>
                   <p className="text-muted-foreground">
                     当前目录准备接入 <code>{inspection.branchName}</code>，但本机仍绑定：

@@ -181,7 +181,8 @@ size: { default: '', xs: 'h-auto px-1.5 py-px' }
 - `features/board/tone.ts`：`priorityTone/stageTone/laneTone` 改为返回 tone 键，删掉拼接 class 的分支；圆点色改由 `ui/status-pill.tsx` 的 `toneDot(tone)` 提供，替掉 `Kanban.tsx:39` 的 `laneTone(lane.id).split(' ')[0]` 字符串切割。
 - `features/board/task-view.ts` 的 `controlToneClass` → `controlTone`（返回 tone 键）。
 - `lib/admin-shared.ts` 的 `statusTone` 保持返回 tone 键（现状即如此），只补 `tone→Badge variant` 映射到 `ui/status-pill.tsx`。
-- `ui/badge.tsx` 是唯一出现 `bg-*-soft` 的文件；`ConditionChecks:113-119,137,162,206,219,242`、`TaskOperationList:11-27`、`FlowSignals:124-130` 的本地 `TONES` 全删。
+- `ui/badge.tsx`（药片变体）与 `ui/status-pill.tsx`（`TONE_DOT`/`TONE_SURFACE`）是唯一出现 `bg-*-soft` 的文件；`ConditionChecks:113-119,137,162,206,219,242`、`TaskOperationList:11-27`、`FlowSignals:124-130` 的本地 `TONES` 全删。
+- 面状提示（提示条 / 条件卡片 / 图标底板）走 `toneSurface(tone, quiet?)`（`ui/status-pill.tsx` 导出）：`success`/`warning`/`destructive` 各一档，`quiet` 给 `/50` 淡底；边框透明度由调用侧给（`border-warning/35`、`border-success/20`），属性不重叠所以不打架。批 9 收尾时把 6 文件 16 处手拼 `bg-*-soft` 全部改用它，PRD 验收的 rg 断言因此通过。
 - `StatusPill` 签名：`{ tone: Tone; children: ReactNode; className?: string; title?: string; size?: 'default' | 'xs' }`，内部 `Badge variant={TONE_VARIANT[tone]}`；`admin/shared.tsx` 里的 `TONE_CLASS` 删除，其导出的 `StatusPill({ value })` **删除**（不再保留适配器）：23 处调用点直连 `@/components/ui/status-pill`，写法 `<StatusPill tone={statusTone(x)}>{x || 'unknown'}</StatusPill>`，`tone` 只在调用点由 `statusTone()` 求得，`ui/status-pill.tsx` 不感知 admin 状态词表。
 
 映射表（写进 `ui/status-pill.tsx` 与 spec）：
@@ -278,6 +279,14 @@ size: { default: '', xs: 'h-auto px-1.5 py-px' }
 | `Separator` | `ProjectRail:900,926` | 现有 `border-l` 是在容器上画线，改为容器内嵌 `Separator orientation="vertical"` |
 | `ScrollArea` | `ProjectRail:597` | 现有 `max-h-56 overflow-auto` |
 | `Tooltip` | `ProjectRail:800,823,841,913,1004`、`TopBar:165,191` | `TooltipProvider` 已在 `app/providers.tsx`；禁用态触发器包一层 `span tabIndex={0}`，否则保留 `title` |
+
+### 10.1 实施修正（批 9 完成后回写）
+
+- `StatTile` 不用 `Card size="sm"`：`Card` 是 `rounded-lg bg-card py-3 ring-1 ring-foreground/10`，而 `Overview` 是 `rounded-xl border bg-card px-3 py-2`、`FlowSignals` 是 `rounded-lg border bg-muted/40 px-2.5 py-2`，两处都要整段覆盖。改为普通 `div` + `className` 透传，基础类只留 `flex flex-col`，gap 也交给调用侧（`FlowSignals` 原本无 gap，若进基础类会多 2px×2）。
+- `Pagination` 不用 `PaginationLink/Previous/Next`：它们是 `<a>`，客户端分页用锚点会丢键盘语义与 `aria-current` 语义。改为 `PaginationNav` + `PaginationContent` + `PaginationItem` 包 `Button`，`pageItems` 算法与文案不动。
+- `ScrollArea` 未迁移：`ProjectRail` 弹窗正文是 `max-h-56 overflow-auto`（无确定高度），Base UI Viewport 是 `size-full`，父级只有 max-height 会塌陷；保留原生滚动并登记例外。
+- 禁用态 Tooltip 全部保留 `title`（`ProjectRail` 上传本地任务 / 不再同步）：包 `span tabIndex={0}` 会让禁用按钮看起来可聚焦，且原生 `title` 在禁用态同样不触发，行为等价。
+- 链接型按钮用 `Button render={<a href />}`（`DevicesTab` 打开桌面客户端、`AdminPage` 返回看板）：Base UI 的 `render` 会把根元素替换成 `<a>`，实测 tag 为 `A`、无嵌套交互元素、高度/圆角/底色与改造前一致，同时补上 focus ring 与 hover。
 
 ## 11. 规范落盘（批 10）
 

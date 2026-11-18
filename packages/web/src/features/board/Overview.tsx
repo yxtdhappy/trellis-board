@@ -1,3 +1,5 @@
+import { StatTile } from './StatTile.tsx'
+
 type OverviewProps = {
   active: number
   archived: number
@@ -14,14 +16,13 @@ export function Overview({ active, archived, attention, repositories }: Overview
   return (
     <section className="grid grid-cols-2 gap-2 lg:grid-cols-3">
       {cards.map((card) => (
-        <div
+        <StatTile
           key={card.label}
-          className="flex flex-col gap-0.5 rounded-xl border border-border bg-card px-3 py-2"
-        >
-          <p className="text-2xs text-muted-foreground">{card.label}</p>
-          <p className="text-xl leading-6 font-semibold font-heading tabular-nums">{card.value}</p>
-          <p className="truncate text-2xs text-muted-foreground">{card.caption}</p>
-        </div>
+          {...card}
+          className="gap-0.5 rounded-xl border border-border bg-card px-3 py-2"
+          valueClassName="tabular-nums"
+          captionClassName="truncate"
+        />
       ))}
     </section>
   )

@@ -31,6 +31,25 @@ export function toneDot(tone: Tone) {
   return TONE_DOT[tone]
 }
 
+// 面状提示（提示条 / 条件卡片 / 图标底板）：bg-*-soft 与 text-* 只在这里出现
+type SurfaceTone = 'success' | 'warning' | 'destructive'
+
+const TONE_SURFACE: Record<SurfaceTone, string> = {
+  success: 'bg-success-soft text-success',
+  warning: 'bg-warning-soft text-warning',
+  destructive: 'bg-destructive-soft text-destructive',
+}
+
+const TONE_SURFACE_QUIET: Record<SurfaceTone, string> = {
+  success: 'bg-success-soft/50 text-success',
+  warning: 'bg-warning-soft/50 text-warning',
+  destructive: 'bg-destructive-soft/50 text-destructive',
+}
+
+export function toneSurface(tone: SurfaceTone, quiet = false): string {
+  return quiet ? TONE_SURFACE_QUIET[tone] : TONE_SURFACE[tone]
+}
+
 export function StatusPill({
   tone,
   children,

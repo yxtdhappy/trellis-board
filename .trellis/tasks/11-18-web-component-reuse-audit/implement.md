@@ -256,6 +256,64 @@ cd packages/web && npx tsc -b && npx oxlint src   # 格式化在仓库根：npx 
 
 提交：`refactor(web): 头像/进度/分页/提示等原子改用 ui 组件`
 
+### 执行记录（批 9，已完成）
+
+改动 14 文件（11 改 + `ui/progress` 加法 + 2 个 admin 链接按钮 + 新增 `features/board/StatTile.tsx`）：
+
+- `ui/progress.tsx`：加 `trackClassName`/`indicatorClassName`（加法，默认值不变）。
+- `Avatar`：`ArchiveView:302`、`TaskCard:181`、`TeamView:311` 用 `size-4` + `after:hidden`（默认描边伪元素）压掉；`TeamView:130` 用 `size-5`。fallback 保留 `bg-secondary text-2xs font-semibold`。
+- `Progress`：`TeamView` 手写双 span → `<Progress value trackClassName="h-1.5 rounded-full bg-secondary" indicatorClassName="rounded-full bg-primary" className="w-full gap-0" />`。
+- `Separator`：`ProjectRail` 两处 `border-l + pl-1` → `flex gap-1` + `<Separator orientation="vertical" className="bg-border/70" />` + `flex min-w-0 flex-1 flex-col`。
+- `Tooltip` 5 处：`ProjectRail` 的 Bot / FolderGit2 / 协作成员，`TopBar` 的搜索 / 主题。统一 `<Tooltip><TooltipTrigger render={<Button … />}>…</TooltipTrigger><TooltipContent>`，删 `title`。
+- `Pagination`：UI 换成 `PaginationNav` + `PaginationContent` + `PaginationItem` 包 `Button`（不用 `PaginationLink/Previous/Next`，它们是 `<a>`，客户端分页会丢键盘语义）；`pageItems` 算法、props、文案、`ml-auto` 容器全保留。
+- `StatTile`：`Overview` 三块 + `FlowSignals` 四块共用；基础类只留 `flex flex-col`，gap / 边框 / 圆角 / `tabular-nums` / `truncate` 全由调用侧传，避免 FlowSignals（原本无 gap、无 tabular-nums）漂移。
+- `Button` 收编：`ExecutionHeader` 内建视图药片（改为 `span.viewPill` 包 `Button`，与 saved view 药片同构）、`PluginsView` 刷新配置（`variant="outline" size="sm" className="px-2.5"`）、`TopBar` 移动端搜索「取消」（`variant="ghost" size="sm" className="h-6 rounded-lg"`）、`ProjectRail` 的 warning 文本按钮 / 上传 / detach、`DevicesTab` 打开桌面客户端、`AdminPage` 返回看板（后两者 `render={<a />}`）。
+- 本地抽取：`ProjectRail` 的 `StatusDot`（5 处圆点）、`TopBar` 的 `SearchField`（两处搜索框）。
+
+例外逐条理由（不是遗漏，是改完更差）：
+
+| 例外 | 不处理的原因 |
+|---|---|
+| `ScrollArea`（`ProjectRail.tsx:603`） | Base UI Viewport 是 `size-full`，父容器只有 `max-h-56`（无确定高度）→ Viewport 高度 0，列表直接塌陷。改成固定 `h-56` 会让内容少时盒子反而变高。 |
+| 禁用态 `title`（上传本地任务 / 不再同步） | Tooltip 需要可聚焦触发器；禁用 `<button>` 无法聚焦，包 `span tabIndex={0}` 会让读屏以为可操作。原生 `title` 在禁用态同样不弹，行为等价，改它零收益。 |
+| `ProjectRail` 行级按钮（753/813/916/1007） | 都是「整行可点 + 选中态自定义底色」：`h-8 rounded-lg px-2 text-left text-xs` + 条件 `border-primary/40 bg-primary/15`（或 `bg-warning-soft` / `bg-muted/30`）。Button 没有任何 variant/size 匹配，需覆盖 height/radius/padding/text-align + 条件类，且 `[&_svg]` 规则会改写行内图标尺寸。 |
+| `TaskCard:129` warning 药片 | `rounded-full border-warning/35 bg-warning-soft` 的自定义 tone 药片 —— 这是 R5（tone 单一来源）的收敛对象，不是 Button 收编对象。 |
+| `TaskCard:195`「计划」chip | 改 `Button variant="outline"` 会同时引入两处回归：hover 底色 `bg-muted` → `bg-input/50`，以及 base 的 `disabled:opacity-50`（原按钮禁用时不变灰）。为 6 个字符的类名换来两处视觉变化，不划算。 |
+| `PluginsView:275` 拖动把手 | `⠿` 是 22×14px 的定制热区（`text-sm leading-none px-1`）；Button 所有 size 都是方形（`icon-xs`=24×24），会顶高卡片头部行。 |
+| admin/board 整行热区（`PluginsTab:199`、`TeamsTab:136`、`ArchiveView:331`、`AttentionQueue:47`、`Kanban:108`、`TaskCard:55/90`） | 整卡/整行点击区：Button 的 `inline-flex items-center justify-center` + `active:translate-y-px` + `shrink-0` 会改布局，`TaskCard:90` 是 `absolute inset-0` 覆盖层，点击时会整卡抖一下。 |
+
+遗留（不属于批 9 范围，转批 10 处理）：
+
+- 无。
+
+### tone 收敛（R5，并入本批）
+
+`ui/status-pill.tsx` 新增面状 tone 单一来源（`bg-*-soft` 与 `text-*` 只出现在这里，和既有 `TONE_VARIANT`/`TONE_DOT` 同处）：
+
+```ts
+const TONE_SURFACE       = { success: 'bg-success-soft text-success', warning: 'bg-warning-soft text-warning', destructive: 'bg-destructive-soft text-destructive' }
+const TONE_SURFACE_QUIET = { … '/50' 底 … }   // 条件卡片用的淡一档
+export function toneSurface(tone, quiet = false)
+```
+
+16 处手拼调用点改用它（6 文件）：`ProjectRail.tsx:740,748,921`、`ConditionChecks.tsx:76,114,115,119,120,138,139,220,221`、`OwnershipInboxPanel.tsx:80`、`TaskCard.tsx:131`、`dialogs/AgentQuickInitDialog.tsx:203`、`dialogs/ProjectOnboardingDialog.tsx:640`。边框透明度（`/20`、`/35`）仍留在调用侧，与 helper 不冲突（属性不重叠），所以视觉零漂移。
+
+验证：`rg -n "bg-(success|warning|destructive|primary|info)-soft" packages/web/src -g '!**/components/ui/**'` 无输出（PRD 验收第 91 行通过）；浏览器实测任务详情「条件检查」两张卡片 `bg-success-soft/50`、`bg-warning-soft/50`（computed `oklab(… / 0.5)`、边框 `/0.2`），图标底板 `bg-success-soft`（`rgb(220,252,231)`），与改造前一致。
+
+闸门：`npx tsc -b` 0 error（此前 `src/desktop/MonacoDiff.tsx` 的 `monaco-editor/editor/editor.api` TS2307 已消失）；`npx oxlint src` 0 error（55 条 warning 全在未触碰代码的存量问题）；`npx oxfmt` 全部改动文件。
+
+实测（standalone 4317 + vite 5173，加入本仓库 13 任务 / 125 归档）：
+
+- 表格头像 16px、`::after` `display:none`、fallback `bg=secondary`；负责人行 20px。
+- `progress-track` h=6 / 圆角全圆 / `bg=secondary`，indicator `bg=primary`，`value` 100→`width:100%`、67→`width:67%`。
+- 归档分页 `nav[aria-label=pagination]` 335px 且右对齐（`ml-auto` 未丢），按钮 `上一页 1 2 3 4 5 6 7 下一页`（125/20=7 页）。
+- 组合视图药片（API 造一条 saved view）：外层 25px、内层 button 16px / `pad 0` / `border 0`，与内建药片同形；内建药片改成 `span` + `Button` 后实测 25px / 内层 16px / 12px，与 saved view 完全一致。
+- `TopBar` 移动端「取消」：`data-slot="button"`、h=24、`padding 0 8px`、radius 10px、12px、muted 色 —— 与改造前一致。
+- `PluginsView` 刷新配置：`data-slot="button"`、h=28、12px、`padding 0 10px`、1px 边框 —— 与改造前一致。
+- `AdminPage` 返回看板：渲染为 `A`、无嵌套交互元素、h=32、`bg=muted`、radius 10px。
+- Tooltip：hover 主题按钮弹出「切换到深色主题」108×28。
+- 未能可视化验证：`ProjectRail` 的 Separator 与 icon Tooltip（需 desktop 本地关联 / 分支监听数据），`DevicesTab` 打开桌面客户端（standalone 无 admin 接口，报「接口不存在」）—— 仅代码层 + 同构机制核对。
+
 ## 批 10 业务去重 + 规范落盘
 
 1. `TeamCheckboxList`：`UsersTab:132-149` + `AccountDialog:103-116` → `features/admin/TeamCheckboxList.tsx`。

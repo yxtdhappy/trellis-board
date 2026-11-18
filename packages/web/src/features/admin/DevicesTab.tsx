@@ -124,12 +124,18 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
                 >
                   复制令牌
                 </Button>
-                <a
-                  className="inline-flex items-center rounded-md border border-border px-3 py-1.5 text-xs font-medium"
-                  href={`trellisboard://enroll?token=${encodeURIComponent(desktopToken.token)}&server=${encodeURIComponent(window.location.origin)}`}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="px-3"
+                  render={
+                    <a
+                      href={`trellisboard://enroll?token=${encodeURIComponent(desktopToken.token)}&server=${encodeURIComponent(window.location.origin)}`}
+                    />
+                  }
                 >
                   打开桌面客户端
-                </a>
+                </Button>
               </div>
             </div>
           ) : (

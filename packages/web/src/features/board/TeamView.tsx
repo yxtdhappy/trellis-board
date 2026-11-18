@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { Input } from '@/components/ui/input'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
 import { Pagination } from './Pagination.tsx'
 import { SelectField } from './SelectField.tsx'
@@ -127,19 +129,19 @@ export function TeamView({
             ) : (
               owners.map(([owner, count]) => (
                 <li key={owner} className="flex items-center gap-2">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-secondary text-2xs font-semibold text-muted-foreground">
-                    {initials(owner)}
-                  </span>
+                  <Avatar className="size-5 shrink-0 after:hidden">
+                    <AvatarFallback className="bg-secondary text-2xs font-semibold text-muted-foreground">
+                      {initials(owner)}
+                    </AvatarFallback>
+                  </Avatar>
                   <span className="truncate text-xs">{owner}</span>
                   <span className="ml-auto flex w-21 shrink-0 items-center justify-end gap-1">
-                    <span className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
-                      <span
-                        className="block h-full rounded-full bg-primary"
-                        style={{
-                          width: `${Math.round((count / maxOwnerCount) * 100)}%`,
-                        }}
-                      />
-                    </span>
+                    <Progress
+                      value={Math.round((count / maxOwnerCount) * 100)}
+                      className="w-full gap-0"
+                      trackClassName="h-1.5 rounded-full bg-secondary"
+                      indicatorClassName="rounded-full bg-primary"
+                    />
                     <span className="w-4 shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
                       {count}
                     </span>
@@ -308,9 +310,11 @@ export function TeamView({
                       </TableCell>
                       <TableCell className="whitespace-normal px-3 py-2">
                         <span className="flex items-center gap-1.5">
-                          <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-2xs font-semibold">
-                            {initials(task.assignee)}
-                          </span>
+                          <Avatar className="size-4 after:hidden">
+                            <AvatarFallback className="bg-secondary text-2xs font-semibold">
+                              {initials(task.assignee)}
+                            </AvatarFallback>
+                          </Avatar>
                           {task.assignee || '未派发'}
                         </span>
                       </TableCell>

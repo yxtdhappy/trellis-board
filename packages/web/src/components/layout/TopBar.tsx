@@ -19,6 +19,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { useAppearance } from '@/app/theme'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
 import { PreferencesDialog } from '@/features/settings/PreferencesDialog'
@@ -27,6 +29,34 @@ import { TeamSwitcher } from '@/features/admin/TeamSwitcher'
 
 export type BoardNavItem = { id: string; label: string }
 type TeamOption = { id: string; name: string }
+
+function SearchField({
+  className,
+  inputClassName,
+  autoFocus,
+  value,
+  onChange,
+}: {
+  className?: string
+  inputClassName?: string
+  autoFocus?: boolean
+  value: string
+  onChange: (value: string) => void
+}) {
+  return (
+    <div className={cn('relative', className)}>
+      <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        autoFocus={autoFocus}
+        className={cn('pl-8 text-xs', inputClassName)}
+        placeholder="搜索任务、负责人"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        aria-label="搜索任务"
+      />
+    </div>
+  )
+}
 
 type TopBarProps = {
   brandName: string
@@ -116,24 +146,22 @@ export function TopBar({
 
         {searchOpen ? (
           <div className="flex min-w-0 flex-1 items-center gap-2 @max-[48em]:order-last @max-[48em]:h-10 @max-[48em]:w-full @max-[48em]:flex-none @min-[64em]:hidden">
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                autoFocus
-                className="w-full pl-8 text-xs"
-                placeholder="搜索任务、负责人"
-                value={search}
-                onChange={(event) => onSearch(event.target.value)}
-                aria-label="搜索任务"
-              />
-            </div>
-            <button
+            <SearchField
+              className="min-w-0 flex-1"
+              inputClassName="w-full"
+              autoFocus
+              value={search}
+              onChange={onSearch}
+            />
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 rounded-lg text-muted-foreground"
               onClick={() => setSearchOpen(false)}
-              className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
             >
               取消
-            </button>
+            </Button>
           </div>
         ) : (
           <nav
@@ -164,26 +192,28 @@ export function TopBar({
           {teams.length > 1 ? (
             <TeamSwitcher teams={teams} value={teamId} includeAll onChange={onTeamChange} />
           ) : null}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 @min-[64em]:hidden"
-            onClick={() => setSearchOpen(true)}
-            aria-label="搜索任务、负责人"
-            title="搜索任务、负责人"
-          >
-            <Search className="size-4" />
-          </Button>
-          <div className="relative hidden @min-[64em]:block">
-            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="w-60 pl-8 text-xs @max-[80em]:w-40"
-              placeholder="搜索任务、负责人"
-              value={search}
-              onChange={(event) => onSearch(event.target.value)}
-              aria-label="搜索任务"
-            />
-          </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 @min-[64em]:hidden"
+                  onClick={() => setSearchOpen(true)}
+                  aria-label="搜索任务、负责人"
+                />
+              }
+            >
+              <Search className="size-4" />
+            </TooltipTrigger>
+            <TooltipContent>搜索任务、负责人</TooltipContent>
+          </Tooltip>
+          <SearchField
+            className="hidden @min-[64em]:block"
+            inputClassName="w-60 @max-[80em]:w-40"
+            value={search}
+            onChange={onSearch}
+          />
           <Button className="gap-1.5 px-3 text-xs" onClick={onCreate}>
             <Plus className="size-3.5" />
             创建任务
@@ -226,16 +256,22 @@ export function TopBar({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={() => setTheme(nextTheme)}
-            aria-label={themeLabel}
-            title={themeLabel}
-          >
-            {resolvedTheme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8"
+                  onClick={() => setTheme(nextTheme)}
+                  aria-label={themeLabel}
+                />
+              }
+            >
+              {resolvedTheme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+            </TooltipTrigger>
+            <TooltipContent>{themeLabel}</TooltipContent>
+          </Tooltip>
         </div>
         <PreferencesDialog open={preferencesOpen} onOpenChange={setPreferencesOpen} />
       </header>

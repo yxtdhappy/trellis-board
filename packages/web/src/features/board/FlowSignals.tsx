@@ -4,8 +4,8 @@ import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import type { BoardTask } from './task-view.ts'
 import { recommendedTask } from './task-view.ts'
-import { cn } from '@/lib/utils'
 import { Panel } from '@/components/ui/panel'
+import { StatTile } from './StatTile.tsx'
 
 type FlowSignalsProps = {
   tasks: BoardTask[]
@@ -134,15 +134,13 @@ type SignalProps = {
 
 function Signal({ label, value, suffix, caption, tone }: SignalProps) {
   return (
-    <div className="rounded-lg border border-border/70 bg-muted/40 px-2.5 py-2">
-      <p className="text-2xs text-muted-foreground">{label}</p>
-      <p className={cn('text-xl leading-6 font-semibold font-heading', TONES[tone])}>
-        {value}
-        {suffix ? (
-          <span className="text-xs font-normal text-muted-foreground">{suffix}</span>
-        ) : null}
-      </p>
-      <p className="text-2xs text-muted-foreground">{caption}</p>
-    </div>
+    <StatTile
+      label={label}
+      value={value}
+      suffix={suffix}
+      caption={caption}
+      tone={TONES[tone]}
+      className="rounded-lg border border-border/70 bg-muted/40 px-2.5 py-2"
+    />
   )
 }

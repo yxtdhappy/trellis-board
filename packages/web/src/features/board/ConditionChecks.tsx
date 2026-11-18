@@ -8,7 +8,7 @@ import {
   ListChecksIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { StatusPill, type Tone } from '@/components/ui/status-pill'
+import { StatusPill, toneSurface, type Tone } from '@/components/ui/status-pill'
 import {
   conditionMode,
   conditionRows,
@@ -73,7 +73,9 @@ function ConditionTable({ rows, kind }: ConditionTableProps) {
 
 function SuccessSummary({ label }: { label: string }) {
   return (
-    <Alert className="border-success/20 bg-success-soft px-3 py-2 text-2xs font-semibold text-success">
+    <Alert
+      className={cn('border-success/20 px-3 py-2 text-2xs font-semibold', toneSurface('success'))}
+    >
       <CircleCheckIcon className="size-3.5" aria-hidden="true" />
       {label}
     </Alert>
@@ -111,13 +113,13 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
   const startTone = !startKnown
     ? 'border-border/70 bg-muted/40'
     : startCount
-      ? 'border-destructive/20 bg-destructive-soft/50'
-      : 'border-success/20 bg-success-soft/50'
+      ? cn('border-destructive/20', toneSurface('destructive', true))
+      : cn('border-success/20', toneSurface('success', true))
   const completionTone = !completionKnown
     ? 'border-border/70 bg-muted/40'
     : completionCount
-      ? 'border-warning/20 bg-warning-soft/50'
-      : 'border-success/20 bg-success-soft/50'
+      ? cn('border-warning/20', toneSurface('warning', true))
+      : cn('border-success/20', toneSurface('success', true))
 
   return (
     <section className="flex flex-col gap-2">
@@ -135,8 +137,8 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
                 !startKnown
                   ? 'bg-muted text-muted-foreground'
                   : startCount
-                    ? 'bg-destructive-soft text-destructive'
-                    : 'bg-success-soft text-success',
+                    ? toneSurface('destructive')
+                    : toneSurface('success'),
               )}
             >
               {!startKnown ? (
@@ -217,8 +219,8 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
                 !completionKnown
                   ? 'bg-muted text-muted-foreground'
                   : completionCount
-                    ? 'bg-warning-soft text-warning'
-                    : 'bg-success-soft text-success',
+                    ? toneSurface('warning')
+                    : toneSurface('success'),
               )}
             >
               {!completionKnown ? (

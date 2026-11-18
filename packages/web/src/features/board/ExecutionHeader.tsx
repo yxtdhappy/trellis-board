@@ -84,28 +84,48 @@ export function ExecutionHeader({
       <div className="flex flex-wrap items-center gap-1.5">
         {savedViews.map((view) => (
           <span key={view.id} className={viewPill(filters.executionView === view.id)}>
-            <button type="button" onClick={() => onChange({ executionView: view.id })}>
-              {view.name}
-            </button>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
+              className={cn(
+                'h-auto min-h-0 gap-0 border-0 p-0 text-xs text-inherit hover:bg-transparent hover:text-inherit',
+                filters.executionView === view.id && 'font-semibold',
+              )}
+              onClick={() => onChange({ executionView: view.id })}
+            >
+              {view.name}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
               aria-label={`删除组合视图 ${view.name}`}
-              className="opacity-70 hover:opacity-100"
+              className={cn(
+                'h-auto min-h-0 gap-0 border-0 p-0 text-xs text-inherit opacity-70 hover:bg-transparent hover:text-inherit hover:opacity-100',
+                filters.executionView === view.id && 'font-semibold',
+              )}
               onClick={() => onDeleteView(view.id)}
             >
               ×
-            </button>
+            </Button>
           </span>
         ))}
         {BUILTIN_VIEWS.map((view) => (
-          <button
-            key={view.id}
-            type="button"
-            onClick={() => onChange({ executionView: view.id })}
-            className={viewPill(filters.executionView === view.id)}
-          >
-            {view.name}
-          </button>
+          <span key={view.id} className={viewPill(filters.executionView === view.id)}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={cn(
+                'h-auto min-h-0 gap-0 border-0 p-0 text-xs text-inherit hover:bg-transparent hover:text-inherit',
+                filters.executionView === view.id && 'font-semibold',
+              )}
+              onClick={() => onChange({ executionView: view.id })}
+            >
+              {view.name}
+            </Button>
+          </span>
         ))}
         <span className="ml-auto text-xs text-muted-foreground">
           {currentViewLabel} · {today}

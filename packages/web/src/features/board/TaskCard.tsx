@@ -1,4 +1,5 @@
 import { Copy, Download } from 'lucide-react'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { copyText } from '@/browser/clipboard.js'
 import { conditionBadges } from '@/lib/condition-checks.js'
@@ -17,7 +18,7 @@ import {
   type BoardTask,
 } from './task-view.ts'
 import { StageTape } from './StageTape.tsx'
-import { StatusPill } from '@/components/ui/status-pill'
+import { StatusPill, toneSurface } from '@/components/ui/status-pill'
 import { priorityTone } from './tone.ts'
 import { taskControlView } from '@/lib/team-client.js'
 
@@ -127,7 +128,10 @@ export function TaskCard({ task, onOpen, onEditPlan, localState, onDownload }: T
           {localState === 'remote' ? (
             <button
               type="button"
-              className="relative flex items-center gap-1 rounded-full border border-warning/35 bg-warning-soft px-1.5 py-px font-medium text-warning hover:bg-warning/15 disabled:opacity-60"
+              className={cn(
+                'relative flex items-center gap-1 rounded-full border border-warning/35 px-1.5 py-px font-medium hover:bg-warning/15 disabled:opacity-60',
+                toneSurface('warning'),
+              )}
               title="下载到本机"
               aria-label={`下载任务 ${task.dirName} 到本机`}
               disabled={!onDownload}
@@ -178,9 +182,11 @@ export function TaskCard({ task, onOpen, onEditPlan, localState, onDownload }: T
       ) : null}
 
       <div className="flex items-center gap-1.5 text-2xs text-muted-foreground">
-        <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-2xs font-semibold">
-          {initials(task.assignee)}
-        </span>
+        <Avatar className="size-4 after:hidden">
+          <AvatarFallback className="bg-secondary text-2xs font-semibold">
+            {initials(task.assignee)}
+          </AvatarFallback>
+        </Avatar>
         <span className="truncate">{task.assignee || '未派发'}</span>
         <span className="ml-auto whitespace-nowrap">
           {next?.label} · {progress.percent}%

@@ -18,6 +18,7 @@ import { onboardingErrorMessage } from '@/lib/onboarding-probe.js'
 import { AgentToolSelector } from './AgentToolSelector.tsx'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { toneSurface } from '@/components/ui/status-pill'
 import { Field, FieldLabel } from '@/components/ui/field'
 
 type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
@@ -200,7 +201,7 @@ export function AgentQuickInitDialog({
                   onToggleTool={toggleTool}
                 />
                 {allInitialized ? (
-                  <Alert className="border-success/35 bg-success-soft text-success">
+                  <Alert className={`border-success/35 ${toneSurface('success')}`}>
                     <AlertDescription className="text-success">
                       当前仓库的编码 Agent 均已初始化，无需重复操作。
                     </AlertDescription>

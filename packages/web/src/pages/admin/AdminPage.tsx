@@ -112,12 +112,13 @@ export function AdminPage() {
             <TrellisLogo size={24} />
             <span className="text-sm font-semibold font-heading">Trellis Board</span>
           </a>
-          <a
-            className="inline-flex h-8 items-center rounded-lg bg-muted px-2.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-            href="/"
+          <Button
+            variant="ghost"
+            className="rounded-lg bg-muted px-2.5 text-muted-foreground"
+            render={<a href="/" />}
           >
             返回看板
-          </a>
+          </Button>
         </div>
         <div className="flex items-center gap-2">
           <TeamSwitcher
