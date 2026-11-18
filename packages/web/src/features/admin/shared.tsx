@@ -34,14 +34,6 @@ export function Panel({ kicker, title, description, action, className, children 
   )
 }
 
-export function EmptyRow({ children }: { children: ReactNode }) {
-  return (
-    <p className="rounded-lg bg-muted/50 px-3 py-4 text-center text-xs text-muted-foreground">
-      {children}
-    </p>
-  )
-}
-
 export function Field({
   label,
   hint,

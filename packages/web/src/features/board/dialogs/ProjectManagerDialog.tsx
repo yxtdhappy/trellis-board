@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
+import { Empty, EmptyDescription } from '@/components/ui/empty'
 
 type ProjectManagerProps = {
   open: boolean
@@ -121,9 +122,9 @@ export function ProjectManagerDialog({
         <DialogBody className="flex flex-col gap-2">
           <p className="text-xs font-semibold text-muted-foreground">已纳入看板</p>
           {rows.length === 0 ? (
-            <p className="rounded-lg bg-muted px-3 py-6 text-center text-xs text-muted-foreground">
-              还没有项目
-            </p>
+            <Empty className="bg-muted/40 p-4">
+              <EmptyDescription>还没有项目</EmptyDescription>
+            </Empty>
           ) : (
             rows.map((row) => (
               <div

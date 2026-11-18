@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input'
 import { SelectField } from '@/features/board/SelectField'
 import { StatusPill } from '@/components/ui/status-pill'
 import { statusTone } from '@/lib/admin-shared'
-import { EmptyRow, Panel } from '@/features/admin/shared'
+import { EmptyRow } from '@/components/ui/empty-row'
+import { Panel } from '@/features/admin/shared'
 import { cn } from '@/lib/utils'
 
 export function TeamsTab() {

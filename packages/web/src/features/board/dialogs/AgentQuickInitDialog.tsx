@@ -17,6 +17,7 @@ import type { ProjectInspection } from '@/lib/project-inspection.js'
 import { normalizeProjectInspection } from '@/lib/project-inspection.js'
 import { onboardingErrorMessage } from '@/lib/onboarding-probe.js'
 import { AgentToolSelector } from './AgentToolSelector.tsx'
+import { Skeleton } from '@/components/ui/skeleton'
 
 type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
@@ -168,9 +169,10 @@ export function AgentQuickInitDialog({
           </DialogHeader>
           <DialogBody className="flex flex-col gap-4">
             {loading ? (
-              <p className="rounded-lg border border-dashed border-border p-4 text-muted-foreground">
-                正在读取当前仓库已初始化的编码 Agent…
-              </p>
+              <div className="flex flex-col gap-1.5">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-8 w-full" />
+              </div>
             ) : inspection ? (
               <>
                 <div className="flex flex-col gap-1.5">

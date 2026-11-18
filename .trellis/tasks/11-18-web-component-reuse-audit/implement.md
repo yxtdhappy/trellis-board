@@ -130,6 +130,28 @@ cd packages/web && npx tsc -b && npx oxlint src   # 格式化在仓库根：npx 
 
 提交：`refactor(web): 空态与加载占位改用 empty/skeleton`
 
+### 执行记录（批 5，已完成）
+
+实测口径修正：`EmptyRow` 实际 **28 处 / 8 个 admin 文件**（`ArchiveSyncTab`3、`AuditTab`2、`BranchManagementPanel`2、`DevicesTab`3、`PluginsTab`2、`ProjectsTab`11、`TeamsTab`3、`UsersTab`2），不是 37 处；`features/admin/shared.tsx` 的 `EmptyRow` 已删。
+
+改动文件（21）：
+- `components/ui/`：无新增依赖改动（`empty`/`skeleton`/`checkbox` 批 1 已装）。
+- admin：`ArchiveSyncTab.tsx`（`EmptyRow` 来源 + 2 处 `Skeleton`）、`AuditTab.tsx`/`BranchManagementPanel.tsx`/`DevicesTab.tsx`/`PluginsTab.tsx`/`UsersTab.tsx`/`TeamsTab.tsx`/`ProjectsTab.tsx`（`EmptyRow` 来源）、`shared.tsx`（删 `EmptyRow`）。
+- board：`AttentionQueue.tsx`（Empty）、`OwnershipInboxPanel.tsx`（Skeleton + Empty）、`dialogs/AssignmentsDialog.tsx`、`dialogs/ProjectManagerDialog.tsx`、`dialogs/BranchListenersDialog.tsx`、`dialogs/TaskOwnershipDialog.tsx`（Skeleton + Empty）、`dialogs/TaskDetailDialog.tsx`（2 处 Skeleton）、`dialogs/ProjectOnboardingDialog.tsx`（Empty + Skeleton）、`dialogs/AgentQuickInitDialog.tsx`（Skeleton）、`dialogs/AgentToolSelector.tsx`（`Checkbox` + `id`/`htmlFor`、`Empty`、`已初始化` → `<Badge variant="secondary" size="xs">`）。
+- 其它：`features/plugins/PluginsView.tsx`（2 处 `Empty` + `EmptyHeader/Title/Description`）、`pages/admin/AdminPage.tsx`（加载 → 3 行 `Skeleton`、denied → `Empty`）。
+
+偏差与保留：
+- `Empty` 允许 `className` 覆盖紧凑内边距（`p-3`/`p-4`/`bg-muted/40`/`border border-dashed`），因为其默认 `p-6 + flex-1` 在侧栏和弹窗正文里过重；`Empty` 的 `border-dashed` 只有在调用侧给 `border` 宽度时才可见。
+- 行内轻量空态**保留纯 `<p>`**：`dialogs/TaskDetailDialog.tsx:602,614`（两列依赖格）、`TeamView.tsx:117`（`<li>` 列表项）、`TeamView.tsx:250-256`（表格 `colSpan` 行）、`AccountDialog.tsx:88`/`UsersTab.tsx:133`（表单提示）、`ArchiveSyncTab.tsx:198`（确认文案列表）、`CreateTaskDialog.tsx:226`/`ProjectOnboardingDialog.tsx:744,758`（错误文案）。判定：换成 `Empty`/`EmptyRow` 会引入 `p-4`+背景+圆角，破坏两列格与表格行高。
+- `Kanban.tsx:74` 是列表过滤逻辑不是空态，未动。
+- `AgentToolSelector` 由 `<label>` 包裹改为 `htmlFor` + `id`：Base UI `Checkbox` 渲染的是 `button[role=checkbox]`，label 包裹点击不会切换，必须走 `for/id`。
+- `onChange` → `onCheckedChange`：与仓内既有用法一致（`dialogs/TaskOwnershipDialog.tsx` 全选 checkbox）。
+
+验证：
+- `cd packages/web && npx tsc -b` rc=0；`npx oxlint` 21 文件 0 error / 19 条既有 warning；`npx oxfmt` 21 文件通过。
+- 断言 `rg -n 'type="checkbox"' packages/web/src` 无输出；`rg -n '正在读取|正在加载|加载中'` 在 `packages/web/src`（排除 `components/ui`）无输出。
+- 浏览器实测（4318 后端 + 5180 vite）：看板侧栏 `[data-slot="empty"]` 渲染「当前没有逾期、截止、停滞与阶段信号。」；`admin.html` 项目协作 6 个 `p.rounded-lg.bg-muted/50`（`EmptyRow`）正常渲染、7 个 `role=tab`；插件 tab 药片正常。`data-slot="checkbox"` 的交互由 `TaskOwnershipDialog` 既有用法与 tsc 保证（`AgentQuickInitDialog`/`ProjectOnboardingDialog` 需要本地 Git 仓库才能打开，浏览器不可达）。
+
 ## 批 6 提示与错误（30+）
 
 1. 错误条 → `<Alert variant="destructive">`：`LoginApp:346,443`、`LoginPage:180`、`BoardPage:320`、`AdminPage:172`、`LiveSyncControlDialog:788`、`PluginsView:206`、`OwnershipInboxPanel:106`、`ArchiveView:227`、`TaskOwnershipDialog:320`、`ProjectOnboardingDialog:586`、`PasswordDialog:100`、`AgentQuickInitDialog:207`、`PublishOperationDialog:77`、`CreateTaskDialog:291`（成功文案改走 `toast`）。

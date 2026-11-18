@@ -20,7 +20,8 @@ import {
 } from '@/api/team-plugins'
 import { StatusPill } from '@/components/ui/status-pill'
 import { statusTone } from '@/lib/admin-shared'
-import { EmptyRow, Panel, Row } from './shared.tsx'
+import { EmptyRow } from '@/components/ui/empty-row'
+import { Panel, Row } from './shared.tsx'
 
 const collator = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' })
 

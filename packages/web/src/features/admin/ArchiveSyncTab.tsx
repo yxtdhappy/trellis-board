@@ -23,7 +23,9 @@ import { formatTime, statusTone } from '@/lib/admin-shared'
 import { useArchiveSync } from '@/hooks/useArchiveSync'
 import { SelectField } from '@/features/board/SelectField'
 import { StatusPill } from '@/components/ui/status-pill'
-import { EmptyRow, Field, Panel, Row } from './shared.tsx'
+import { EmptyRow } from '@/components/ui/empty-row'
+import { Field, Panel, Row } from './shared.tsx'
+import { Skeleton } from '@/components/ui/skeleton'
 
 const STATUS_LABELS: Record<string, string> = {
   idle: '等待同步',
@@ -224,9 +226,10 @@ export function ArchiveSyncTab() {
 
   if (sync.loading && !sync.overview) {
     return (
-      <p className="rounded-xl bg-card px-4 py-6 text-xs text-muted-foreground">
-        正在读取归档同步状态…
-      </p>
+      <div className="flex flex-col gap-2 rounded-xl bg-card p-4">
+        <Skeleton className="h-4 w-40" />
+        <Skeleton className="h-8 w-full" />
+      </div>
     )
   }
 
@@ -598,9 +601,7 @@ export function ArchiveSyncTab() {
                 </article>
               ))
             )}
-            {sync.logsLoading ? (
-              <p className="py-2 text-center text-xs text-muted-foreground">正在读取日志…</p>
-            ) : null}
+            {sync.logsLoading ? <Skeleton className="mx-auto my-2 h-16 w-full" /> : null}
           </DialogBody>
           <DialogFooter>
             {sync.logsHasMore ? (

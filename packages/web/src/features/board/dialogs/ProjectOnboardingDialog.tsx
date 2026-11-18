@@ -21,6 +21,7 @@ import { normalizeProjectInspection, type ProjectInspection } from '@/lib/projec
 import { onboardingErrorMessage, preflightBlockReason } from '@/lib/onboarding-probe.js'
 import { AgentToolSelector } from './AgentToolSelector.tsx'
 import { SelectField } from '../SelectField.tsx'
+import { Empty, EmptyDescription } from '@/components/ui/empty'
 
 type TeamOption = {
   id: string
@@ -597,9 +598,11 @@ export function ProjectOnboardingDialog({
               </div>
             </div>
           ) : !inspection ? (
-            <p className="rounded-lg border border-dashed border-border p-4 text-muted-foreground">
-              没有读取到有效的本地 Git 仓库，请重新选择仓库根目录。
-            </p>
+            <Empty className="border border-dashed">
+              <EmptyDescription>
+                没有读取到有效的本地 Git 仓库，请重新选择仓库根目录。
+              </EmptyDescription>
+            </Empty>
           ) : (
             <>
               <dl className="grid grid-cols-[92px_minmax(0,1fr)] gap-x-3 gap-y-2 rounded-lg bg-muted/40 p-3">
@@ -626,9 +629,10 @@ export function ProjectOnboardingDialog({
                   无法读取本地项目关联，已阻止接入，避免产生重复绑定：{associationLoadError}
                 </p>
               ) : open && !associationsLoaded ? (
-                <p className="rounded-lg border border-dashed border-border p-3 text-muted-foreground">
-                  正在核对当前仓库已有的本地绑定…
-                </p>
+                <div className="flex flex-col gap-1.5">
+                  <Skeleton className="h-4 w-48" />
+                  <Skeleton className="h-8 w-full" />
+                </div>
               ) : replacedAssociations.length ? (
                 <div className="flex flex-col gap-2 rounded-lg border border-warning/35 bg-warning-soft p-3">
                   <p className="font-medium text-warning">将替换当前仓库的旧分支绑定</p>

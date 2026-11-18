@@ -2,6 +2,8 @@ import { useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { ownershipInboxItemKey, ownershipInboxReasonLabel } from '@/lib/ownership-inbox.js'
 import type { OwnershipInboxItem, OwnershipInboxProjectGroup } from '@/lib/ownership-inbox.js'
+import { Empty, EmptyDescription } from '@/components/ui/empty'
+import { Skeleton } from '@/components/ui/skeleton'
 
 type OwnershipInboxPanelProps = {
   count: number
@@ -114,11 +116,16 @@ export function OwnershipInboxPanel({
           ) : null}
 
           {loading && items.length === 0 ? (
-            <p className="py-2 text-xs">正在加载待归属任务…</p>
+            <div className="flex flex-col gap-1.5 py-2">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+            </div>
           ) : null}
 
           {!loading && !error && items.length === 0 ? (
-            <p className="py-2 text-xs">当前范围内没有待归属任务。</p>
+            <Empty className="p-3">
+              <EmptyDescription>当前范围内没有待归属任务。</EmptyDescription>
+            </Empty>
           ) : null}
 
           <div className="flex flex-col gap-2">

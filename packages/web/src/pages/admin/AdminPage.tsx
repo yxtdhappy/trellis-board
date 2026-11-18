@@ -22,6 +22,8 @@ import { DevicesTab } from '@/features/admin/DevicesTab'
 import { AuditTab } from '@/features/admin/AuditTab'
 import { ArchiveSyncTab } from '@/features/admin/ArchiveSyncTab'
 import { OneTimeCredentialDialog } from '@/features/admin/OneTimeCredentialDialog'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
+import { Skeleton } from '@/components/ui/skeleton'
 
 const VIEWS: {
   id: AdminView
@@ -164,9 +166,11 @@ export function AdminPage() {
         </div>
 
         {phase === 'loading' ? (
-          <p className="rounded-xl bg-card px-4 py-6 text-xs text-muted-foreground">
-            正在读取团队账号和项目权限…
-          </p>
+          <div className="flex flex-col gap-2 rounded-xl bg-card p-4">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
         ) : null}
 
         {phase === 'error' ? (
@@ -179,12 +183,14 @@ export function AdminPage() {
         ) : null}
 
         {phase === 'denied' ? (
-          <div className="flex flex-col gap-1.5 rounded-xl bg-card p-6">
-            <strong className="text-sm text-foreground">当前账号没有管理入口</strong>
-            <span className="text-xs leading-relaxed text-muted-foreground">
-              系统管理员可管理系统能力；项目负责人可管理自己项目的成员、Agent 绑定和审计。
-            </span>
-          </div>
+          <Empty className="bg-card">
+            <EmptyHeader>
+              <EmptyTitle>当前账号没有管理入口</EmptyTitle>
+              <EmptyDescription>
+                系统管理员可管理系统能力；项目负责人可管理自己项目的成员、Agent 绑定和审计。
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : null}
 
         {phase === 'ready' ? (

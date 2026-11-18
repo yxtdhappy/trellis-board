@@ -13,6 +13,7 @@ import {
 import { projectListenerView } from '@/lib/project-rail-association.js'
 import { cn } from '@/lib/utils'
 import { StatusPill } from '@/components/ui/status-pill'
+import { Empty, EmptyDescription } from '@/components/ui/empty'
 
 type BranchListenersDialogProps = {
   taskSpace: TaskSpace | null
@@ -91,7 +92,9 @@ export function BranchListenersDialog({
             </p>
           ) : null}
           {!loading && !error && listeners.length === 0 ? (
-            <p className="text-xs text-muted-foreground">当前没有已批准的客户端关联。</p>
+            <Empty className="p-4">
+              <EmptyDescription>当前没有已批准的客户端关联。</EmptyDescription>
+            </Empty>
           ) : null}
           {listeners.length ? (
             <div className="flex flex-col gap-2">

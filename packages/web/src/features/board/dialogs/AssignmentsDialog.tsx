@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
+import { Empty, EmptyDescription } from '@/components/ui/empty'
 
 export type Assignment = {
   executionTaskKey?: string
@@ -78,9 +79,9 @@ export function AssignmentsDialog({
         </DialogHeader>
         <DialogBody className="flex flex-col gap-2">
           {rows.length === 0 ? (
-            <p className="rounded-lg bg-muted px-3 py-6 text-center text-xs text-muted-foreground">
-              当前没有待接受任务
-            </p>
+            <Empty className="bg-muted/40 p-4">
+              <EmptyDescription>当前没有待接受任务</EmptyDescription>
+            </Empty>
           ) : (
             rows.map((row) => (
               <div

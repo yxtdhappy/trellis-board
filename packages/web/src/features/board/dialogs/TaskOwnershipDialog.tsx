@@ -11,6 +11,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { SelectField } from '../SelectField'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Empty, EmptyDescription } from '@/components/ui/empty'
 
 type OwnershipChoice = {
   taskSpaceId: string
@@ -254,9 +256,11 @@ export function TaskOwnershipDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-3">
-          {loading ? <p className="text-xs text-muted-foreground">正在读取本地任务…</p> : null}
+          {loading ? <Skeleton className="h-8 w-full" /> : null}
           {!loading && !items.length ? (
-            <p className="text-xs text-muted-foreground">当前没有需要处理归属的任务。</p>
+            <Empty className="p-4">
+              <EmptyDescription>当前没有需要处理归属的任务。</EmptyDescription>
+            </Empty>
           ) : null}
           {items.length ? (
             <>

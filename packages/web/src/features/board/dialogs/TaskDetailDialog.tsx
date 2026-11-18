@@ -42,6 +42,7 @@ import {
   taskControlView,
 } from '@/lib/team-client.js'
 import { AssigneeWarningDialog, type AssigneeWarningDetails } from './AssigneeWarningDialog.tsx'
+import { Skeleton } from '@/components/ui/skeleton'
 
 const ARTIFACTS = [
   { key: 'prd', label: 'PRD', hint: '需求、范围与验收标准' },
@@ -427,7 +428,11 @@ export function TaskDetailDialog({
           </DialogHeader>
 
           {!current ? (
-            <p className="py-10 text-center text-xs text-muted-foreground">正在读取任务详情…</p>
+            <div className="flex flex-col gap-2 px-2 py-4">
+              <Skeleton className="h-5 w-40" />
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
           ) : (
             <DialogBody className="flex flex-col gap-4">
               {contentMaterialized ? (
@@ -715,7 +720,7 @@ export function TaskDetailDialog({
                     跟踪而需要按 Git 流程处理。
                   </p>
                   {loading && !archiveFiles.length ? (
-                    <p className="text-[0.6875rem] text-muted-foreground">归档附件正在读取…</p>
+                    <Skeleton className="h-6 w-40" />
                   ) : archiveFiles.length ? (
                     <ul className="flex flex-col divide-y divide-border/60 rounded-lg border border-border">
                       {archiveFiles.map((file) => (

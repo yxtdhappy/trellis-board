@@ -6,7 +6,8 @@ import type { AdminConsole } from '@/hooks/useAdminConsole'
 import { formatTime, statusTone } from '@/lib/admin-shared'
 import { copyText } from '@/browser/clipboard.js'
 import { StatusPill } from '@/components/ui/status-pill'
-import { EmptyRow, Panel, Row } from './shared.tsx'
+import { EmptyRow } from '@/components/ui/empty-row'
+import { Panel, Row } from './shared.tsx'
 
 export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
   const {

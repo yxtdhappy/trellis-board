@@ -14,6 +14,7 @@ import {
 } from '@/api/plugins'
 import { cn } from '@/lib/utils'
 import { PluginLogsDialog } from './PluginLogsDialog.tsx'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -213,14 +214,22 @@ export function PluginsView() {
       ) : null}
 
       {disabled ? (
-        <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
-          插件机制已被 TRELLIS_PLUGINS_DISABLED=1 关闭。
-        </p>
+        <Empty className="border border-dashed">
+          <EmptyHeader>
+            <EmptyTitle>插件机制已关闭</EmptyTitle>
+            <EmptyDescription>插件机制已被 TRELLIS_PLUGINS_DISABLED=1 关闭。</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : plugins.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
-          还没有加载任何插件。把插件目录放到 &lt;TrellisBoard&gt;/plugins/&lt;id&gt;/ 或安装目录的
-          plugins/&lt;id&gt;/， 并在 &lt;TrellisBoard&gt;/plugins/plugins.json 登记后刷新。
-        </p>
+        <Empty className="border border-dashed">
+          <EmptyHeader>
+            <EmptyTitle>还没有加载任何插件</EmptyTitle>
+            <EmptyDescription>
+              把插件目录放到 &lt;TrellisBoard&gt;/plugins/&lt;id&gt;/ 或安装目录的
+              plugins/&lt;id&gt;/， 并在 &lt;TrellisBoard&gt;/plugins/plugins.json 登记后刷新。
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : (
         <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
           {plugins.map((plugin, index) => {

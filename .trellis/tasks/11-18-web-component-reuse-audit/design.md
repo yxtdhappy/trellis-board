@@ -200,12 +200,11 @@ size: { default: '', xs: 'h-auto px-1.5 py-px' }
 
 ## 6. 空态与加载（批 5）
 
-- `ui/empty-row.tsx`：`<Empty className="rounded-lg bg-muted/50 px-3 py-4"><EmptyTitle className="text-xs font-normal text-muted-foreground">{children}</EmptyTitle></Empty>`，`EmptyRow` 的 37 处只改 import 来源。
-- 散落空态统一为 `<Empty><EmptyHeader><EmptyTitle>…</EmptyTitle><EmptyDescription>…</EmptyDescription></EmptyHeader></Empty>`；`Kanban:74` 的空列保留虚线边框外观（`className="border-dashed"`）。
-- 加载占位统一 `Skeleton`：`AdminPage:167`、`ArchiveSyncTab:229`、`TaskDetailDialog:430`、`TaskOwnershipDialog:257`、`ProjectOnboardingDialog:629`、`PluginLogsDialog:38`、`OwnershipInboxPanel:121`、`AgentQuickInitDialog:171`。
-- 例外：`ProjectRail:1037,1067` 的 `animate-pulse` 是图标脉冲（上传/解绑进行中），不换骨架。
-
-## 7. 提示与错误（批 6）
+- `ui/empty-row.tsx`：`<p className="cn('rounded-lg bg-muted/50 px-3 py-4 text-center text-xs text-muted-foreground', className)">`，与旧 `features/admin/shared.tsx` 的 `EmptyRow` 逐字一致（**不复用 `Empty`**：`Empty` 的 `flex-1`/`gap-4`/`p-6` 会撑破表格行与两列格）。实际调用点 28 处 / 8 个 admin 文件，只改 import 来源。
+- 块级空态统一 `<Empty>`（`<EmptyHeader><EmptyTitle>…</EmptyTitle><EmptyDescription>…</EmptyDescription></EmptyHeader>`）；只有一行文案时直接 `<EmptyDescription>` 省掉 header。`Empty` 的 `border-dashed` 不含宽度，要虚线框必须调用侧给 `border`。侧栏/弹窗正文用 `className="p-3"`/`p-4`、`bg-muted/40` 压紧，避免默认 `p-6 + flex-1` 过重。
+- 加载占位统一 `Skeleton`（2–3 行 `h-4/h-8`），不再写「正在读取…」文案：`AdminPage.tsx`、`ArchiveSyncTab.tsx`（含日志）、`TaskDetailDialog.tsx`（详情与归档附件）、`TaskOwnershipDialog.tsx`、`ProjectOnboardingDialog.tsx`、`AgentQuickInitDialog.tsx`、`OwnershipInboxPanel.tsx`。
+- `AgentToolSelector.tsx`：原生 `<input type="checkbox">` → `Checkbox`（Base UI 渲染 `button[role=checkbox]`，所以**必须** `id` + `label htmlFor`，不能只靠 label 包裹），`onChange` → `onCheckedChange`；「已初始化」手写文字 → `<Badge variant="secondary" size="xs">`。
+- 例外（保留纯 `<p>`）：两列依赖格 `TaskDetailDialog.tsx:602,614`、列表项 `TeamView.tsx:117`、表格 `colSpan` 行 `TeamView.tsx:250-256`、表单提示 `AccountDialog.tsx:88`/`UsersTab.tsx:133`、错误文案 `CreateTaskDialog.tsx:226`/`ProjectOnboardingDialog.tsx:744,758`；`ProjectRail:1037,1067` 的 `animate-pulse` 是图标脉冲（上传/解绑进行中），不换骨架。## 7. 提示与错误（批 6）
 
 `Alert` 变体映射：`default`→提示、`destructive`→错误、`success`/`warning` 若注册表不含则用 `className` 覆盖（`Alert` 的 variant 只有 `default`/`destructive`，success/warning 由 `className` 传 `border-success/35 bg-success-soft`，保持现状配色）。
 

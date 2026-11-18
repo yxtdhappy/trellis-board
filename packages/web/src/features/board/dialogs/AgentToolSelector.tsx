@@ -1,6 +1,9 @@
 import { useMemo } from 'react'
 import { Input } from '@/components/ui/input'
 import { TRELLIS_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Empty, EmptyDescription } from '@/components/ui/empty'
+import { Badge } from '@/components/ui/badge'
 
 type AgentToolSelectorProps = {
   existingTools: readonly string[]
@@ -54,29 +57,32 @@ export function AgentToolSelector({
             return (
               <label
                 key={tool.id}
+                htmlFor={`agent-tool-${tool.id}`}
                 className={
                   existing
                     ? 'flex items-center gap-2 rounded-md border border-border px-2.5 py-2 opacity-60'
                     : 'flex items-center gap-2 rounded-md border border-border px-2.5 py-2'
                 }
               >
-                <input
-                  type="checkbox"
+                <Checkbox
+                  id={`agent-tool-${tool.id}`}
                   checked={existing || selectedToolIds.has(tool.id)}
                   disabled={existing || disabled}
-                  onChange={() => onToggleTool(tool.id)}
+                  onCheckedChange={() => onToggleTool(tool.id)}
                 />
                 <span>{tool.label}</span>
                 {existing ? (
-                  <span className="ml-auto text-2xs text-muted-foreground">已初始化</span>
+                  <Badge variant="secondary" className="ml-auto" size="xs">
+                    已初始化
+                  </Badge>
                 ) : null}
               </label>
             )
           })
         ) : (
-          <p className="rounded-md border border-dashed border-border px-2.5 py-3 text-muted-foreground sm:col-span-2">
-            没有匹配的 Agent
-          </p>
+          <Empty className="border border-dashed p-3 sm:col-span-2">
+            <EmptyDescription>没有匹配的 Agent</EmptyDescription>
+          </Empty>
         )}
       </div>
     </div>

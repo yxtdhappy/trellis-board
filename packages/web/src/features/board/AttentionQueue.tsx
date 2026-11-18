@@ -9,6 +9,7 @@ import {
   type BoardTask,
 } from './task-view.ts'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
+import { Empty, EmptyDescription } from '@/components/ui/empty'
 
 type AttentionQueueProps = {
   tasks: BoardTask[]
@@ -34,7 +35,9 @@ export function AttentionQueue({ tasks, onOpen }: AttentionQueueProps) {
       </div>
 
       {queue.length === 0 ? (
-        <p className="text-xs text-muted-foreground">当前没有逾期、截止、停滞与阶段信号。</p>
+        <Empty className="p-3">
+          <EmptyDescription>当前没有逾期、截止、停滞与阶段信号。</EmptyDescription>
+        </Empty>
       ) : (
         <ScrollArea className="max-h-49">
           <ul className="flex flex-col divide-y divide-border/60 pr-2">
