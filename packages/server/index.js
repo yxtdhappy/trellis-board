@@ -30,6 +30,7 @@ import { createServerLogger } from './logger.js'
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
 const appDir = path.resolve(serverDir, '../..')
+const serverVersion = readPackageVersion(path.join(appDir, 'package.json'))
 const publicDir = path.join(serverDir, 'public')
 // 宿主提供给插件面板的通用 UI 资源（combo 等），与插件开关无关
 const pluginUiDir = path.join(serverDir, 'plugin-ui')
@@ -68,6 +69,14 @@ function initializeStandaloneState(
   repositoryStore = createRepositoryStore()
   executionStore = createExecutionStore({ db: database, stageIds: STAGE_IDS })
   boardEventService = createBoardEventService()
+}
+
+function readPackageVersion(manifestPath) {
+  try {
+    return String(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).version || '0.0.0')
+  } catch {
+    return '0.0.0'
+  }
 }
 
 function sendJson(response, status, payload) {
@@ -601,7 +610,7 @@ async function handleApi(request, response, url) {
     return
   }
   if (request.method === 'GET' && url.pathname === '/api/health') {
-    sendJson(response, 200, { status: 'ok', processId: process.pid })
+    sendJson(response, 200, { status: 'ok', processId: process.pid, version: serverVersion })
     return
   }
   if (request.method === 'POST' && url.pathname === '/api/board/refresh/start') {

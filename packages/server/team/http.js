@@ -1659,6 +1659,7 @@ function createRequestHandler({
         mode: 'team',
         processId: process.pid,
         serverStartedAt: serverStartedAt,
+        version: readHostVersion(),
       })
       return
     }

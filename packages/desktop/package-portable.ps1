@@ -16,7 +16,8 @@
 [CmdletBinding()]
 param(
   [string]$ReleaseDirectory,
-  [string]$OutputDirectory
+  [string]$OutputDirectory,
+  [string]$Notes = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,6 +73,9 @@ if (-not (Test-Path -LiteralPath $tauriConfigPath -PathType Leaf)) {
 $version = (Get-Content -LiteralPath $tauriConfigPath -Raw | ConvertFrom-Json).version
 if (-not $version -or $version -notmatch '^[0-9A-Za-z._-]+$') {
   Fail 2 "版本号格式无效: $version"
+}
+if (-not $Notes) {
+  $Notes = "Trellis Board $version"
 }
 
 $controlledOutput = Get-FullPath (Join-Path $ReleaseDirectory 'bundle\portable')
@@ -174,9 +178,22 @@ try {
   "$zipHash  $packageName.zip" |
     Set-Content -LiteralPath $zipChecksumPath -Encoding Ascii
 
+  $latestPath = Join-Path $OutputDirectory 'latest.json'
+  $latest = [ordered]@{
+    version = $version
+    file = "$packageName.zip"
+    sha256 = $zipHash
+    size = (Get-Item -LiteralPath $zipPath).Length
+    notes = $Notes
+    publishedAt = (Get-Date).ToUniversalTime().ToString('o')
+  }
+  $latest | ConvertTo-Json |
+    Set-Content -LiteralPath $latestPath -Encoding UTF8
+
   Write-Output "portableDirectory=$packageDirectory"
   Write-Output "portableZip=$zipPath"
   Write-Output "portableZipSha256=$zipChecksumPath"
+  Write-Output "portableLatest=$latestPath"
 } catch {
   $script:FailureCode = if ($script:FailureCode -eq 1) { 3 } else { $script:FailureCode }
   throw

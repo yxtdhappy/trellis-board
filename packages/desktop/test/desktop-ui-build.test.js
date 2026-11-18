@@ -178,7 +178,7 @@ test('desktop board shows the product name and version from a board-only command
   assert.match(boardPage, /desktopInvoke\('client_identity'\)/)
   assert.match(boardPage, /useState\('Trellis Board'\)/)
   assert.match(topBar, /aria-label=\{`\$\{brandName\} 首页`\}/)
-  assert.match(topBar, /v\{version\}/)
+  assert.match(topBar, /v\{displayVersion\}/)
 })
 
 test('windows workflows build the desktop ui before the client is bundled or tested', () => {

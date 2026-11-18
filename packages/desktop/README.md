@@ -42,7 +42,7 @@ Tauri v2 单进程客户端：Agent（心跳、SSE 事件、任务空间同步�
 - 一个账号同一时刻只有一个有效 Agent。新设备生效后旧设备凭证立即失效，旧 SSE 关闭，旧命令取消。
 - 换设备不迁移本地仓库绝对路径、project binding、cursor 或 pending batch；新设备必须重新选择项目。
 - `mustChangePassword=true` 时只建立 Board 会话，不创建设备；改密后下一次登录再建立设备。
-- 升级前必须先退出托盘客户端，否则运行中的进程会锁定 `trellis-board-client.exe`，替换文件失败。
+- 自动更新会写入新的 `trellis-board-client.exe` 后退出并重启；手工替换程序目录时仍必须先退出托盘客户端，否则运行中的进程会锁定 EXE，替换文件失败。
 
 设备注册通过一次性的桌面兑换令牌调用：
 
@@ -363,9 +363,16 @@ yarn desktop:package
 
 - `packages\desktop\src-tauri\target\release\trellis-board-client.exe`
 - `packages\desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>_x64-portable.zip`
+- `packages\desktop\src-tauri\target\release\bundle\portable\latest.json`
 
-CI（`.github/workflows/windows.yml`）跑完仍上传 `trellis-board-desktop-windows` artifact（zip + sha256）；
-推送 `v*` tag 或手动触发时填写 `release_tag` 输入，还会把这两项作为 Release 资产挂到该 tag 的 Release 上。
+更新服务器地址在构建时通过环境变量 `TRELLIS_UPDATE_SERVER` 注入（例如
+`$env:TRELLIS_UPDATE_SERVER = 'https://example.com/trellis-board'` 后再执行 `cargo tauri build`）。
+未设置、空值或不是合法的 http(s) 地址时，客户端彻底关闭更新检查，托盘「检查更新」置灰，
+更新对话框显示「未配置更新服务器」。该地址无法在运行时修改，换服务器需要重新打包。
+
+CI（`.github/workflows/windows.yml`）从仓库变量 `vars.TRELLIS_UPDATE_SERVER` 读取同一地址并传给 `tauri build`；
+跑完仍上传 `trellis-board-desktop-windows` artifact（zip + sha256 + `latest.json`）；
+推送 `v*` tag 或手动触发时填写 `release_tag` 输入，还会把这三项作为 Release 资产挂到该 tag 的 Release 上。
 发布时版本号不需要手工改：`Resolve release version` 从 tag 取版本，`Stamp version from tag` 在构建前写入
 `packages/desktop/package.json`、`packages/desktop/src-tauri/tauri.conf.json`、`packages/desktop/src-tauri/Cargo.toml`，
 绿色包名与 `VERSION.txt` 随之变化，冒烟测试会校验二者与 tag 一致。本地构建仍用仓库里签入的版本号。
@@ -414,9 +421,42 @@ packages\desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>
 
 升级与卸载见下节。ZIP 同目录的 `.sha256` 文件用于校验压缩包完整性。
 
+## 自动更新
+
+配置了 `TRELLIS_UPDATE_SERVER` 的正式构建会在启动 5 秒后检查一次，之后每 6 小时检查一次；顶栏客户端版本号
+可点击打开更新对话框，托盘菜单也有「检查更新」。发现新版本时发一次系统通知，点击通知或托盘项会打开对话框。
+
+文件服务器只需放置两个文件（同一目录）：
+
+```text
+latest.json
+TrellisBoard_<version>_x64-portable.zip
+```
+
+`latest.json` 由 `package-portable.ps1` 生成，字段为：
+
+```json
+{
+  "version": "0.4.41",
+  "file": "TrellisBoard_0.4.41_x64-portable.zip",
+  "sha256": "<zip 的 SHA-256>",
+  "size": 12345678,
+  "notes": "本次更新内容",
+  "publishedAt": "2026-11-18T12:00:00.0000000Z"
+}
+```
+
+客户端按 `version` 做严格 semver 比较，下载 `file` 后校验 `size` 与 `sha256`，从 ZIP 根目录或单一顶层目录中
+取出唯一的 `trellis-board-client.exe`，备份旧 EXE 后替换并重启。下载缓存在
+`%LOCALAPPDATA%\TrellisBoard\data\updates\<version>`；通知去重记录在 `data\update-state.json`。
+没有代码签名，只保证压缩包与清单中的 SHA-256 一致。开发构建（debug）拒绝自动更新。
+
+系统通知的点击事件只在通知仍显示于屏幕时可靠回传；通知进入操作中心后再点击不会打开对话框，
+此时仍可通过托盘「检查更新」或顶栏版本号打开。
+
 ## 升级与卸载
 
-客户端不做系统级安装，升级和卸载都是文件操作：
+客户端不做系统级安装，升级和卸载都是文件操作。配置了更新服务器时优先用自动更新；手工升级步骤：
 
 1. 从托盘菜单退出客户端，运行中的进程会锁定 `trellis-board-client.exe`。
 2. 用新版本目录替换旧目录；卸载则直接删除程序目录。

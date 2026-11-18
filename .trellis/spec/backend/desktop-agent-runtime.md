@@ -270,11 +270,15 @@
 
 - `tauri.conf.json` 不得出现 `bundle.externalBin` 或 `bundle.resources`（trellis-runtime）。
 - `packages/desktop/` 下不得出现 `sidecar/`、`package.json`、`package-lock.json`、`binaries/`、`resources/`。
-- `package-portable.ps1` 只打包 `trellis-board-client.exe` + `VERSION.txt` + `SHA256SUMS.txt` + 使用说明。
+- `package-portable.ps1` 只把 `trellis-board-client.exe` + `VERSION.txt` + `SHA256SUMS.txt` + 使用说明放进 ZIP；
+  输出目录另外生成 `TrellisBoard_<version>_x64-portable.zip`、`.zip.sha256` 和 `latest.json`
+  （`{version,file,sha256,size,notes,publishedAt}`），不得把 `latest.json` 塞进 ZIP。
 - 客户端只分发绿色 ZIP：`bundle.active = false`，保留 `bundle.icon`（tauri-build 靠它写 EXE 图标和版本资源），
   不得重新开启 `bundle.targets`、`installerHooks`、`install.ps1`/`uninstall.ps1` 或 NSIS 工具缓存。
+- 更新服务器只在构建时通过 `TRELLIS_UPDATE_SERVER` 注入（`build.rs` 声明 `rerun-if-env-changed`，Rust 用
+  `option_env!`）；未设置、空值或非 http(s) 时更新整体关闭，不得退回运行时配置或默认公网地址。
 - 分发出口：CI 上传 `trellis-board-desktop-windows` artifact，并在 `v*` tag 或手动触发带 `release_tag` 时
-  把 zip + `.sha256` 作为 Release 资产上传；artifact 永远是外层 zip 包，需要裸文件时走 Release。
+  把 zip、`.sha256`、`latest.json` 作为 Release 资产上传；artifact 永远是外层 zip 包，需要裸文件时走 Release。
 - 版本号以仓库签入值为准（发版脚本写入）；CI 的 `Resolve release version` 取 `v<major>.<minor>.<patch>`，
   `Stamp version from tag` 在构建前按 tag 兜底盖章 `packages/desktop/package.json`、
   `packages/desktop/src-tauri/tauri.conf.json`、`packages/desktop/src-tauri/Cargo.toml`（`main.rs` 的

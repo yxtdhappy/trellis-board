@@ -61,6 +61,8 @@ function SearchField({
 type TopBarProps = {
   brandName: string
   version?: string
+  serverVersion?: string
+  onOpenUpdate?: () => void
   nav: BoardNavItem[]
   activeNav: string
   onNavigate: (id: string) => void
@@ -80,6 +82,8 @@ type TopBarProps = {
 export function TopBar({
   brandName,
   version,
+  serverVersion,
+  onOpenUpdate,
   nav,
   activeNav,
   onNavigate,
@@ -101,6 +105,7 @@ export function TopBar({
   const [searchOpen, setSearchOpen] = useState(false)
   const nextTheme = resolvedTheme === 'dark' ? 'light' : 'dark'
   const themeLabel = resolvedTheme === 'dark' ? '切换到浅色主题' : '切换到深色主题'
+  const displayVersion = onOpenUpdate ? version : serverVersion
 
   // 插件多到需要横向滚动时，切到视口外的面板要把它滚进来
   useEffect(() => {
@@ -128,21 +133,37 @@ export function TopBar({
   return (
     <div className="@container shrink-0">
       <header className="flex h-14 flex-wrap items-center gap-3 border-b border-border bg-card px-4 @max-[48em]:h-24 @max-[48em]:items-start @max-[48em]:gap-y-0">
-        <a
-          className="flex h-14 shrink-0 items-center gap-2"
-          href="/"
-          aria-label={`${brandName} 首页`}
-        >
-          <TrellisLogo size={24} />
+        <div className="flex h-14 shrink-0 items-center gap-2">
+          <a className="flex h-14 items-center" href="/" aria-label={`${brandName} 首页`}>
+            <TrellisLogo size={24} />
+          </a>
           <span className="flex min-w-0 flex-col justify-center leading-none @max-[64em]:hidden">
-            <span className="max-w-40 truncate text-sm font-semibold" title={brandName}>
+            <a className="max-w-40 truncate text-sm font-semibold" href="/" title={brandName}>
               {brandName}
-            </span>
-            {version ? (
-              <span className="mt-1 text-2xs font-medium text-muted-foreground">v{version}</span>
+            </a>
+            {displayVersion ? (
+              onOpenUpdate ? (
+                <Button
+                  type="button"
+                  variant="link"
+                  size="xs"
+                  className="mt-0.5 h-auto justify-start p-0 text-2xs font-medium text-muted-foreground hover:text-foreground"
+                  onClick={onOpenUpdate}
+                  aria-label={`客户端版本 v${displayVersion}，检查更新`}
+                >
+                  v{displayVersion}
+                </Button>
+              ) : (
+                <span
+                  className="mt-1 text-2xs font-medium text-muted-foreground"
+                  title="服务端版本"
+                >
+                  v{displayVersion}
+                </span>
+              )
             ) : null}
           </span>
-        </a>
+        </div>
 
         {searchOpen ? (
           <div className="flex min-w-0 flex-1 items-center gap-2 @max-[48em]:order-last @max-[48em]:h-10 @max-[48em]:w-full @max-[48em]:flex-none @min-[64em]:hidden">

@@ -11,6 +11,21 @@ description = "当前已登录 Board 可读取桌面客户端的只读品牌名�
 commands.allow = ["client_identity"]
 
 [[permission]]
+identifier = "allow-update-status"
+description = "当前已登录 Board 可读取缓存的客户端更新状态，不发起网络请求。"
+commands.allow = ["update_status"]
+
+[[permission]]
+identifier = "allow-update-check"
+description = "当前已登录 Board 可请求客户端检查更新服务器。"
+commands.allow = ["update_check"]
+
+[[permission]]
+identifier = "allow-update-apply"
+description = "当前已登录 Board 可下载、校验并安装客户端更新，随后重启。"
+commands.allow = ["update_apply"]
+
+[[permission]]
 identifier = "allow-desktop-login"
 description = "仅本地登录页向进程内 Agent 提交账号密码。"
 commands.allow = ["desktop_login"]

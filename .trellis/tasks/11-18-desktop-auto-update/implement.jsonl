@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "绿色 ZIP 分发、版本号来源、打包与 CI 资产的硬约束"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "新增 update_status/update_check/update_apply 的注册、权限、capability 契约"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "/api/health 响应与 sendJson 约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "TopBar/UpdateDialog 的 oxfmt、类型与可访问性闸门"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "desktop 适配组件与 hooks 目录归属"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "对话框、事件监听与异步状态约定"}

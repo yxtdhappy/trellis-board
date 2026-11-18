@@ -9,7 +9,7 @@
 | `GET /api/board` | 优先返回本地缓存，必要时后台刷新 | 200 |
 | `GET /api/board/events` | Board 任务变更 SSE；单机免登录，团队使用 Session Cookie | 200 |
 | `GET /api/board/status` | 刷新、队列和监听状态 | 200 |
-| `GET /api/health` | 健康检查与进程 ID | 200 |
+| `GET /api/health` | 健康检查、进程 ID 与服务端版本（`version`） | 200 |
 | `POST /api/board/refresh/start` | 后台启动完整扫描 | 202 |
 | `POST /api/board/refresh` | 同步等待完整扫描 | 200 |
 | `GET /api/repositories` | 白名单项目 | 200 |

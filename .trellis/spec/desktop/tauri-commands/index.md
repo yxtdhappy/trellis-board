@@ -222,3 +222,50 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
 - 任何后续改动（加功能、加测试、改注释）如果使某个文件超过上限，必须在**同一次改动内**拆完再提交：超限文件不得新增行，"下次再拆"不算完成。
 - 判断顺序：先外移测试（`foo/tests.rs`），仍超限再按职责拆 `foo/<concern>.rs`；两种情况都要保持外部 `use` 路径零改动。
 - 提交前跑 `rg -n '^mod tests \{' packages/desktop/src-tauri/src` 必须无输出；`cargo test` 全绿且测试名集合不变。
+
+## Scenario: 客户端自动更新
+
+### 1. Scope / Trigger
+
+- 修改 `update_status`、`update_check`、`update_apply`、`update-*` 事件、托盘「检查更新」或通知点击行为时适用。
+
+### 2. Signatures
+
+- 命令：`update_status() -> UpdateStatus`、`update_check() -> UpdateStatus`、`update_apply() -> { applied: boolean }`，
+  三个命令都先执行 `ensure_board_caller(&app, &window)?`。
+- 权限：`allow-update-status`、`allow-update-check`、`allow-update-apply`，只加入
+  `capabilities/board-local-association.json`；`main.json`（本地登录页）不得包含。
+- 状态 payload（camelCase）：`{ enabled, currentVersion, server, latest, updateAvailable, checkedAt, error }`，
+  `latest` 为 `{ version, notes, publishedAt, size } | null`。
+- 事件：`update-status-changed`（payload 同状态）、`update-progress`（`{ stage, downloaded, total }`）、
+  `update-open-dialog`（空 payload）。
+- 更新源：构建时 `option_env!("TRELLIS_UPDATE_SERVER")`；未配置时 `enabled=false`，不发起网络请求。
+
+### 3. Contracts
+
+- `update_status` 只返回内存缓存，不触网；`update_check` 串行化并更新缓存后发 `update-status-changed`。
+- 清单固定为 `<base>/latest.json`，`file` 必须是不含路径分隔符的裸 `.zip` 文件名；下载后必须校验清单的
+  `size` 与 SHA-256，并只解压 ZIP 根目录下唯一的 `trellis-board-client.exe`。
+- `update_apply` 只在正式构建可用；替换 EXE 前先备份为 `.old`，失败必须回滚。重启必须延迟启动，
+  避免与 single-instance 插件抢跑；成功后退出当前进程。
+- 通知去重记录在 `data/update-state.json` 的 `lastNotifiedVersion`，不得写入 `client.json`。
+- 同一版本只通知一次；点击通知只负责聚焦窗口并发 `update-open-dialog`，不直接开始下载。
+- 顶栏客户端版本号是更新入口；普通浏览器没有该入口，只展示服务端版本。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| 未配置更新服务器 | 三个命令可见但 `update_status.enabled=false`；检查返回未启用，不联网 |
+| 调用窗口不是当前 Board origin | 命令返回错误，不读更新缓存、不改状态 |
+| 清单版本不高于当前版本 | `updateAvailable=false`，不发通知 |
+| 清单字段非法或响应超限 | 保留上次 `latest`，只设置 `error`，不中断客户端 |
+| SHA-256、大小或 ZIP 结构不符 | 删除临时文件并返回错误，原 EXE 不变 |
+| debug 构建调用 `update_apply` | 直接返回“开发构建不支持自动更新” |
+| 替换 EXE 失败 | 回滚 `.old`，保持旧版本可启动 |
+
+### 5. Tests Required
+
+- Rust：版本比较、清单校验（含 BOM）、SHA-256/大小校验、ZIP 路径选择、替换回滚、通知去重。
+- `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml` 全绿。
+- 手工：配置 `TRELLIS_UPDATE_SERVER` 构建正式包，用本地静态服务器验证检查、通知、下载、重启。

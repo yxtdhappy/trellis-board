@@ -18,7 +18,9 @@ import { Kanban } from '@/features/board/Kanban'
 import { useLocalTaskState } from '@/features/board/useLocalTaskState'
 import type { TaskLocalState } from '@/features/board/TaskCard'
 import { toast } from 'sonner'
-import { errorMessage } from '@/desktop/tauri'
+import { errorMessage, listen } from '@/desktop/tauri'
+import { UpdateDialog } from '@/desktop/UpdateDialog'
+import { useServerVersion } from '@/hooks/useServerVersion'
 import { Overview } from '@/features/board/Overview'
 import { OwnershipInboxPanel } from '@/features/board/OwnershipInboxPanel'
 import { PluginsView } from '@/features/plugins/PluginsView'
@@ -77,6 +79,8 @@ export function BoardPage() {
   const [localAssociations, setLocalAssociations] = useState<LocalAssociation[]>([])
   const [brandName, setBrandName] = useState('Trellis Board')
   const [clientVersion, setClientVersion] = useState('')
+  const [updateOpen, setUpdateOpen] = useState(false)
+  const serverVersion = useServerVersion()
 
   const {
     board,
@@ -259,6 +263,20 @@ export function BoardPage() {
   }, [desktopInvoke])
 
   useEffect(() => {
+    if (!listen) return
+    let active = true
+    let stop: (() => void) | undefined
+    void listen('update-open-dialog', () => setUpdateOpen(true)).then((unlisten) => {
+      if (active) stop = unlisten
+      else unlisten()
+    })
+    return () => {
+      active = false
+      stop?.()
+    }
+  }, [])
+
+  useEffect(() => {
     let cancelled = false
     fetchPanels()
       .then((list) => {
@@ -321,6 +339,8 @@ export function BoardPage() {
       <TopBar
         brandName={brandName}
         version={clientVersion || undefined}
+        serverVersion={serverVersion || undefined}
+        onOpenUpdate={isTauri ? () => setUpdateOpen(true) : undefined}
         nav={navItems}
         activeNav={view}
         onNavigate={(id) => setView(id)}
@@ -524,6 +544,13 @@ export function BoardPage() {
           return id
         }}
       />
+      {isTauri ? (
+        <UpdateDialog
+          open={updateOpen}
+          onOpenChange={setUpdateOpen}
+          serverVersion={serverVersion}
+        />
+      ) : null}
       <HandoffNotice />
       <LiveSyncControlDialog />
       <TaskDetailDialog

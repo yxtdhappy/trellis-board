@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "验收 command/permission/capability 三处一致"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "验收分发物、版本号同步与 CI 发布约束"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验收前端格式、类型与交互可访问性"}
+{"file": ".trellis/tasks/11-18-desktop-auto-update/design.md", "reason": "对照失败矩阵、回滚路径与测试清单"}

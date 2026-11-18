@@ -161,6 +161,8 @@ jobs:
         run: cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml
       - name: Bundle desktop client
         working-directory: packages/desktop
+        env:
+          TRELLIS_UPDATE_SERVER: ${{ vars.TRELLIS_UPDATE_SERVER }}
         run: tauri build
       - name: Check artifacts
         run: |
@@ -192,6 +194,24 @@ jobs:
           $expectedZipHash = ((Get-Content -LiteralPath $zipChecksum.FullName -Raw).Trim() -split '\s+')[0]
           if ($actualZipHash -ne $expectedZipHash) {
             throw "portable ZIP SHA256 mismatch"
+          }
+
+          $latestPath = Join-Path $portableRoot "latest.json"
+          if (-not (Test-Path -LiteralPath $latestPath -PathType Leaf)) {
+            throw "missing latest.json"
+          }
+          $latest = Get-Content -LiteralPath $latestPath -Raw | ConvertFrom-Json
+          if ($latest.file -ne $zip.Name) {
+            throw "latest.json file is '$($latest.file)', expected $($zip.Name)"
+          }
+          if ([string]$latest.sha256 -ne $actualZipHash) {
+            throw "latest.json SHA256 mismatch"
+          }
+          if ([int64]$latest.size -ne $zip.Length) {
+            throw "latest.json size is '$($latest.size)', expected $($zip.Length)"
+          }
+          if ($env:RELEASE_VERSION -and [string]$latest.version -ne $env:RELEASE_VERSION) {
+            throw "latest.json version is '$($latest.version)', expected $env:RELEASE_VERSION"
           }
 
           $extractRoot = Join-Path $env:RUNNER_TEMP "portable smoke 中文"
@@ -261,6 +281,7 @@ jobs:
           path: |
             packages/desktop/src-tauri/target/release/bundle/portable/*.zip
             packages/desktop/src-tauri/target/release/bundle/portable/*.zip.sha256
+            packages/desktop/src-tauri/target/release/bundle/portable/latest.json
           if-no-files-found: error
           retention-days: 14
       - name: Publish release assets
@@ -273,9 +294,9 @@ jobs:
 
           $dir = "packages/desktop/src-tauri/target/release/bundle/portable"
           $assets = @(Get-ChildItem -LiteralPath $dir -File |
-            Where-Object { $_.Name -match '\.zip(\.sha256)?$' } |
+            Where-Object { $_.Name -match '\.zip(\.sha256)?$' -or $_.Name -eq 'latest.json' } |
             ForEach-Object { $_.FullName })
-          if ($assets.Count -ne 2) { throw "expected zip and sha256 in $dir, found $($assets.Count)" }
+          if ($assets.Count -ne 3) { throw "expected zip, sha256 and latest.json in $dir, found $($assets.Count)" }
 
           # 仓库开启了 immutable releases：Release 一旦公开就不能再上传资产（HTTP 422），
           # 所以先建草稿、传完资产再公开；同名 Release 已存在时删掉重建。

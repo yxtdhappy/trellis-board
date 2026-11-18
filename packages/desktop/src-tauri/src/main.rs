@@ -10,6 +10,7 @@ mod config;
 mod logging;
 mod navigation;
 mod runtime_commands;
+mod update;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
@@ -19,7 +20,7 @@ use serde::Serialize;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{
-    webview::PageLoadEvent, AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow,
+    webview::PageLoadEvent, AppHandle, Emitter, Manager, RunEvent, Url, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
@@ -356,6 +357,30 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
         name: client_brand_name(app.config().product_name.as_deref()),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
+}
+
+#[tauri::command]
+fn update_status(app: AppHandle, window: WebviewWindow) -> Result<update::UpdateStatus, String> {
+    ensure_board_caller(&app, &window)?;
+    Ok(update::status(&app))
+}
+
+#[tauri::command]
+async fn update_check(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<update::UpdateStatus, String> {
+    ensure_board_caller(&app, &window)?;
+    Ok(update::check(&app).await)
+}
+
+#[tauri::command]
+async fn update_apply(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<update::UpdateApplyResult, String> {
+    ensure_board_caller(&app, &window)?;
+    update::apply(&app).await
 }
 
 #[tauri::command]
@@ -866,7 +891,7 @@ async fn live_control_dismiss(app: AppHandle, window: WebviewWindow) -> Result<(
     agent_service::dismiss_control(&app)
 }
 
-fn focus_main_window(app: &AppHandle) {
+pub(crate) fn focus_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
@@ -899,6 +924,13 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "打开主窗口", true, None::<&str>)?;
     let live_control = MenuItem::with_id(app, "review-live", "处理实时确认", true, None::<&str>)?;
     let sync = MenuItem::with_id(app, "sync", "恢复同步", true, None::<&str>)?;
+    let check_update = MenuItem::with_id(
+        app,
+        "check-update",
+        "检查更新",
+        update::enabled(),
+        None::<&str>,
+    )?;
     let logs = MenuItem::with_id(app, "logs", "打开日志目录", true, None::<&str>)?;
     let autostart = CheckMenuItem::with_id(
         app,
@@ -911,7 +943,15 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
-        &[&show, &live_control, &sync, &logs, &autostart, &quit],
+        &[
+            &show,
+            &live_control,
+            &sync,
+            &check_update,
+            &logs,
+            &autostart,
+            &quit,
+        ],
     )?;
     let Some(icon) = app.default_window_icon().cloned() else {
         logging::warn("客户端缺少窗口图标，托盘不可用");
@@ -929,6 +969,10 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             }
             "pause" => agent_service::toggle_pause(app),
             "sync" => agent_service::sync_action(app),
+            "check-update" => {
+                focus_main_window(app);
+                let _ = app.emit("update-open-dialog", ());
+            }
             "logs" => {
                 let directory = config::logs_dir();
                 let _ = std::fs::create_dir_all(&directory);
@@ -1019,6 +1063,7 @@ fn main() {
         ))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             app_status,
             client_identity,
@@ -1053,7 +1098,10 @@ fn main() {
             live_control_decide,
             live_control_diff,
             live_control_initial,
-            live_control_dismiss
+            live_control_dismiss,
+            update_status,
+            update_check,
+            update_apply
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -1062,6 +1110,7 @@ fn main() {
             agent_service::register(&handle);
             let auth = DesktopAuthState::default();
             app.manage(auth.clone());
+            update::register(&handle);
             build_tray(&handle)?;
             build_main_window(&handle, minimized, auth)?;
             Ok(())
