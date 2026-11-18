@@ -14,9 +14,10 @@ import {
   type PluginBindingView,
   type TeamPluginView,
 } from '@/api/team-plugins'
-import { formatTime } from '@/lib/admin-shared'
+import { formatTime, statusTone } from '@/lib/admin-shared'
 import { BranchManagementPanel } from './BranchManagementPanel'
-import { AuditItem, EmptyRow, Field, Panel, Row, StatusPill } from './shared.tsx'
+import { StatusPill } from '@/components/ui/status-pill'
+import { AuditItem, EmptyRow, Field, Panel, Row } from './shared.tsx'
 import { SelectField } from '@/features/board/SelectField'
 
 export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) {
@@ -243,8 +244,12 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                         <strong className="truncate text-xs font-medium">
                           {member.displayName || member.username || member.userId}
                         </strong>
-                        <StatusPill value={member.role} />
-                        <StatusPill value={member.status} />
+                        <StatusPill tone={statusTone(member.role)}>
+                          {member.role || 'unknown'}
+                        </StatusPill>
+                        <StatusPill tone={statusTone(member.status)}>
+                          {member.status || 'unknown'}
+                        </StatusPill>
                       </div>
                       <p className="truncate text-2xs text-muted-foreground">
                         用户 <code>{member.userId || '未知'}</code> · developer{' '}
@@ -330,8 +335,12 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                 >
                   <div className="flex items-center gap-1.5">
                     <strong className="text-xs font-medium">{access.teamName}</strong>
-                    <StatusPill value={access.accessRole} />
-                    <StatusPill value={access.teamStatus} />
+                    <StatusPill tone={statusTone(access.accessRole)}>
+                      {access.accessRole || 'unknown'}
+                    </StatusPill>
+                    <StatusPill tone={statusTone(access.teamStatus)}>
+                      {access.teamStatus || 'unknown'}
+                    </StatusPill>
                   </div>
                 </Row>
               ))
@@ -367,8 +376,14 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                       <strong className="truncate text-xs font-medium">
                         {binding.deviceName || binding.agentId}
                       </strong>
-                      <StatusPill value={binding.status} />
-                      {binding.agentStatus ? <StatusPill value={binding.agentStatus} /> : null}
+                      <StatusPill tone={statusTone(binding.status)}>
+                        {binding.status || 'unknown'}
+                      </StatusPill>
+                      {binding.agentStatus ? (
+                        <StatusPill tone={statusTone(binding.agentStatus)}>
+                          {binding.agentStatus || 'unknown'}
+                        </StatusPill>
+                      ) : null}
                     </div>
                     <p className="truncate text-2xs text-muted-foreground">
                       所有者 {binding.ownerDisplayName || binding.ownerUsername || '未知'} · 分支{' '}

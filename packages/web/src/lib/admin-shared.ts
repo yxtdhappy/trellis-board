@@ -1,4 +1,6 @@
-export type Tone = 'success' | 'warning' | 'danger' | 'neutral'
+import type { Tone } from '@/components/ui/status-pill'
+
+export type { Tone }
 
 export function formatTime(value: string | null | undefined): string {
   if (!value) return '从未'
@@ -19,12 +21,12 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   pending: 'warning',
   warning: 'warning',
   retired: 'warning',
-  needs_repair: 'danger',
-  failed: 'danger',
-  error: 'danger',
-  rejected: 'danger',
-  revoked: 'danger',
-  disabled: 'danger',
+  needs_repair: 'destructive',
+  failed: 'destructive',
+  error: 'destructive',
+  rejected: 'destructive',
+  revoked: 'destructive',
+  disabled: 'destructive',
 }
 
 export function statusTone(status: string | null | undefined): Tone {

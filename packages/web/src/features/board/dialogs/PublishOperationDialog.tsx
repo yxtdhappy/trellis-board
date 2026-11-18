@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { StatusPill } from '@/components/ui/status-pill'
 import {
   Dialog,
   DialogBody,
@@ -60,17 +61,11 @@ export function PublishOperationDialog({
 
         <DialogBody className="flex flex-col gap-2 text-xs">
           <div className="flex items-center gap-2">
-            <span
-              className={
-                status === 'failed'
-                  ? 'rounded-full bg-destructive/10 px-2 py-0.5 font-semibold text-destructive'
-                  : complete
-                    ? 'rounded-full bg-success-soft px-2 py-0.5 font-semibold text-success'
-                    : 'rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary'
-              }
+            <StatusPill
+              tone={status === 'failed' ? 'destructive' : complete ? 'success' : 'primary'}
             >
               {OPERATION_LABELS[status] || status}
-            </span>
+            </StatusPill>
             <span className="text-muted-foreground">操作 #{operation?.id || '待服务端返回'}</span>
           </div>
           {operation?.taskKey ? (

@@ -1,7 +1,9 @@
 import { Input } from '@/components/ui/input'
 import { SelectField } from '@/features/board/SelectField'
+import { badgeVariants } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { cn } from '@/lib/utils'
 import { BUILTIN_VIEWS } from '@/lib/execution-filter.js'
 import type { BoardFilters } from '@/hooks/useBoard'
 
@@ -18,6 +20,14 @@ type ExecutionHeaderProps = {
 }
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
+
+function viewPill(active: boolean) {
+  return cn(
+    badgeVariants({ variant: active ? 'default' : 'outline' }),
+    'h-auto gap-1 px-2.5 py-1 text-xs',
+    active ? 'font-semibold' : 'bg-card text-muted-foreground hover:text-foreground',
+  )
+}
 
 const BLOCKED_OPTIONS = [
   { value: 'any', label: '不限' },
@@ -73,14 +83,7 @@ export function ExecutionHeader({
 
       <div className="flex flex-wrap items-center gap-1.5">
         {savedViews.map((view) => (
-          <span
-            key={view.id}
-            className={
-              filters.executionView === view.id
-                ? 'flex items-center gap-1 rounded-full border border-primary bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground'
-                : 'flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground'
-            }
-          >
+          <span key={view.id} className={viewPill(filters.executionView === view.id)}>
             <button type="button" onClick={() => onChange({ executionView: view.id })}>
               {view.name}
             </button>
@@ -99,11 +102,7 @@ export function ExecutionHeader({
             key={view.id}
             type="button"
             onClick={() => onChange({ executionView: view.id })}
-            className={
-              filters.executionView === view.id
-                ? 'rounded-full border border-primary bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground'
-                : 'rounded-full border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground'
-            }
+            className={viewPill(filters.executionView === view.id)}
           >
             {view.name}
           </button>

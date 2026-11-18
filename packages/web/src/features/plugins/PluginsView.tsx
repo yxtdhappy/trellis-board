@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { StatusPill, type Tone } from '@/components/ui/status-pill'
 import {
   fetchPluginLogs,
   fetchPlugins,
@@ -27,20 +28,19 @@ const STATUS_LABELS: Record<string, string> = {
   'missing-secret': '缺少配置',
 }
 
-const STATUS_TONES: Record<string, string> = {
-  running: 'bg-success-soft text-success',
-  starting: 'bg-warning-soft text-warning',
-  error: 'bg-destructive-soft text-destructive',
-  crashing: 'bg-destructive-soft text-destructive',
-  incompatible: 'bg-destructive-soft text-destructive',
-  'missing-secret': 'bg-warning-soft text-warning',
-  stopped: 'bg-muted text-muted-foreground',
-  disabled: 'bg-muted text-muted-foreground',
+const STATUS_TONES: Record<string, Tone> = {
+  running: 'success',
+  starting: 'warning',
+  error: 'destructive',
+  crashing: 'destructive',
+  incompatible: 'destructive',
+  'missing-secret': 'warning',
+  stopped: 'neutral',
+  disabled: 'neutral',
 }
 
-function statusTone(plugin: PluginInfo) {
-  if (plugin.status === 'error' && plugin.lastError) return STATUS_TONES.error
-  return STATUS_TONES[plugin.status] || 'bg-secondary text-secondary-foreground'
+function statusTone(plugin: PluginInfo): Tone {
+  return STATUS_TONES[plugin.status] || 'neutral'
 }
 
 export function PluginsView() {
@@ -282,16 +282,11 @@ export function PluginsView() {
                     </h2>
                     <p className="truncate font-mono text-xs text-muted-foreground">{plugin.id}</p>
                   </div>
-                  <span
-                    className={cn(
-                      'shrink-0 rounded-full px-2 py-0.5 text-2xs font-semibold',
-                      statusTone(plugin),
-                    )}
-                  >
+                  <StatusPill tone={statusTone(plugin)} className="shrink-0">
                     {plugin.status === 'error' && plugin.lastError
                       ? '错误'
                       : STATUS_LABELS[plugin.status] || plugin.status}
-                  </span>
+                  </StatusPill>
                 </header>
 
                 <div className="flex flex-wrap gap-1.5 text-2xs text-muted-foreground">
@@ -302,17 +297,15 @@ export function PluginsView() {
                     api {plugin.apiVersion ?? '?'}
                   </span>
                   {!plugin.compatible ? (
-                    <span className="rounded-full bg-destructive-soft px-2 py-0.5 font-medium text-destructive">
+                    <StatusPill tone="destructive" className="font-medium">
                       {plugin.reason || '不兼容'}
-                    </span>
+                    </StatusPill>
                   ) : null}
                   {plugin.pid ? (
                     <span className="rounded-full bg-muted px-2 py-0.5">pid {plugin.pid}</span>
                   ) : null}
                   {plugin.restarts ? (
-                    <span className="rounded-full bg-warning-soft px-2 py-0.5 text-warning">
-                      重启 {plugin.restarts}
-                    </span>
+                    <StatusPill tone="warning">重启 {plugin.restarts}</StatusPill>
                   ) : null}
                 </div>
 

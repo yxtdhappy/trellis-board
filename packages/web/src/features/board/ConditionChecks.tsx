@@ -8,6 +8,7 @@ import {
   ListChecksIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { StatusPill, type Tone } from '@/components/ui/status-pill'
 import {
   conditionMode,
   conditionRows,
@@ -28,8 +29,7 @@ type ConditionTableProps = {
 }
 
 function ConditionTable({ rows, kind }: ConditionTableProps) {
-  const tone =
-    kind === 'start' ? 'bg-destructive-soft text-destructive' : 'bg-warning-soft text-warning'
+  const tone: Tone = kind === 'start' ? 'destructive' : 'warning'
 
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-card">
@@ -44,9 +44,9 @@ function ConditionTable({ rows, kind }: ConditionTableProps) {
           key={`${kind}:${row.label}`}
           className="grid gap-1.5 border-b border-border/60 p-3 text-2xs last:border-b-0 lg:grid-cols-[92px_minmax(220px,1.2fr)_minmax(220px,1fr)_132px] lg:items-center lg:gap-3 lg:py-2"
         >
-          <span className={cn('w-fit rounded-full px-2 py-0.5 text-2xs font-semibold', tone)}>
+          <StatusPill tone={tone} className="w-fit">
             {row.stageLabel}
-          </span>
+          </StatusPill>
           <span className="font-semibold text-foreground">{row.label}</span>
           <span className="min-w-0">
             <span className="mb-0.5 block text-2xs text-muted-foreground lg:hidden">当前证据</span>
@@ -159,9 +159,9 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
               </p>
             </div>
             {startKnown && startCount ? (
-              <span className="ml-auto rounded-full bg-destructive-soft px-2 py-0.5 text-2xs font-semibold text-destructive">
+              <StatusPill tone="destructive" className="ml-auto">
                 缺 {startCount} 项
-              </span>
+              </StatusPill>
             ) : null}
             {mode !== 'planning' && startKnown && startCount ? (
               <Button
@@ -203,9 +203,9 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
             <h4 className="text-xs font-semibold text-foreground">完成条件</h4>
             <p className="text-2xs text-muted-foreground">进入实现后开始检查，规划阶段暂不适用。</p>
           </div>
-          <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-2xs font-semibold text-muted-foreground">
+          <StatusPill tone="neutral" className="ml-auto">
             暂不适用
-          </span>
+          </StatusPill>
         </div>
       ) : (
         <section className={cn('flex flex-col gap-2 rounded-xl border p-3', completionTone)}>
@@ -239,9 +239,9 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
               </p>
             </div>
             {completionKnown && completionCount ? (
-              <span className="ml-auto rounded-full bg-warning-soft px-2 py-0.5 text-2xs font-semibold text-warning">
+              <StatusPill tone="warning" className="ml-auto">
                 缺 {completionCount} 项
-              </span>
+              </StatusPill>
             ) : null}
           </div>
           {!completionKnown ? (

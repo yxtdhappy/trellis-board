@@ -15,11 +15,10 @@ import { Label } from '@/components/ui/label'
 import { downloadArchiveFile, fetchTaskDetail, api, type TaskSpace } from '@/api/board'
 import { ApiError } from '@/api/request'
 import { renderMarkdown } from '@/lib/markdown.js'
-import { cn } from '@/lib/utils'
 import type { Stage } from '../task-view.ts'
 import {
   branchLabel,
-  controlToneClass,
+  controlTone,
   dueLabel,
   isAttention,
   attentionReasons,
@@ -33,6 +32,7 @@ import { StageTape } from '../StageTape.tsx'
 import { ConditionChecks } from '../ConditionChecks.tsx'
 import { toast } from 'sonner'
 import { SelectField } from '../SelectField.tsx'
+import { StatusPill } from '@/components/ui/status-pill'
 import { priorityTone, stageTone, statusLabel, statusTone } from '../tone.ts'
 import {
   assignmentActionState,
@@ -443,18 +443,17 @@ export function TaskDetailDialog({
                 ].map(([label, value]) => (
                   <div key={label} className="flex flex-col gap-1 rounded-lg bg-muted px-2.5 py-2">
                     <span className="text-2xs text-muted-foreground">{label}</span>
-                    <span
-                      className={cn(
-                        'w-fit rounded-full px-1.5 py-px text-xs font-semibold',
-                        label === '优先级'
-                          ? priorityTone(value)
-                          : label === '状态'
-                            ? statusTone(value)
-                            : 'bg-transparent p-0 text-xs text-foreground',
-                      )}
-                    >
-                      {value}
-                    </span>
+                    {label === '优先级' || label === '状态' ? (
+                      <StatusPill
+                        tone={label === '优先级' ? priorityTone(value) : statusTone(value)}
+                        size="xs"
+                        className="w-fit text-xs"
+                      >
+                        {value}
+                      </StatusPill>
+                    ) : (
+                      <span className="w-fit text-xs font-semibold">{value}</span>
+                    )}
                   </div>
                 ))}
               </div>
@@ -465,14 +464,7 @@ export function TaskDetailDialog({
                     <span className="text-2xs font-semibold tracking-[0.08em] text-muted-foreground">
                       服务端控制状态
                     </span>
-                    <span
-                      className={cn(
-                        'rounded-full px-2 py-0.5 text-2xs font-semibold',
-                        controlToneClass(control.tone),
-                      )}
-                    >
-                      {control.label}
-                    </span>
+                    <StatusPill tone={controlTone(control.tone)}>{control.label}</StatusPill>
                   </div>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
                     {control.description}
@@ -486,17 +478,12 @@ export function TaskDetailDialog({
                 <span className="text-xs font-semibold text-muted-foreground">关注信号</span>
                 {isAttention(current) ? (
                   attentionReasons(current).map((reason) => (
-                    <span
-                      key={reason.id}
-                      className="rounded-full bg-destructive-soft px-2 py-0.5 text-2xs font-semibold text-destructive"
-                    >
+                    <StatusPill key={reason.id} tone="destructive">
                       {reason.label}
-                    </span>
+                    </StatusPill>
                   ))
                 ) : (
-                  <span className="rounded-full bg-secondary px-2 py-0.5 text-2xs font-semibold text-secondary-foreground">
-                    无风险信号
-                  </span>
+                  <StatusPill tone="neutral">无风险信号</StatusPill>
                 )}
                 <span className="ml-auto text-2xs text-muted-foreground">
                   {stage?.label} · {progress?.percent}% · {progress?.done}/{progress?.total}{' '}
@@ -564,14 +551,9 @@ export function TaskDetailDialog({
                     <li key={item.id}>
                       <div className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs">
                         <span className="w-4 text-2xs text-muted-foreground">{item.index}</span>
-                        <span
-                          className={cn(
-                            'rounded-full px-1.5 py-px text-2xs font-medium',
-                            stageTone(item.label),
-                          )}
-                        >
+                        <StatusPill tone={stageTone(item.label)} size="xs" className="font-medium">
                           {item.label}
-                        </span>
+                        </StatusPill>
                         <span className="ml-auto text-2xs text-muted-foreground">
                           {stageSourceLabel(item)}
                         </span>

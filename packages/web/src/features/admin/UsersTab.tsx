@@ -8,12 +8,13 @@ import { Input } from '@/components/ui/input'
 import { fetchAdminTeams, formatError } from '@/api/admin'
 import type { AdminUser, Team } from '@/api/admin'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
-import { formatTime } from '@/lib/admin-shared'
+import { formatTime, statusTone } from '@/lib/admin-shared'
 import { AccountDialog, AccountForm } from './AccountDialog.tsx'
 import type { AccountFormValues } from './AccountDialog.tsx'
 import { adminPasswordError } from './password-policy.ts'
 import { ResetPasswordDialog } from './ResetPasswordDialog.tsx'
-import { EmptyRow, Field, Panel, Row, StatusPill } from './shared.tsx'
+import { StatusPill } from '@/components/ui/status-pill'
+import { EmptyRow, Field, Panel, Row } from './shared.tsx'
 
 export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
   const { users, reloadUsers, createUser, updateUser, toggleUser, resetPassword } = consoleApi
@@ -142,7 +143,9 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                           disabled={busy}
                         />
                         <span className="min-w-0 truncate">{team.name}</span>
-                        <StatusPill value={team.status} />
+                        <StatusPill tone={statusTone(team.status)}>
+                          {team.status || 'unknown'}
+                        </StatusPill>
                       </label>
                     ))}
                   </div>
@@ -239,7 +242,9 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                         <strong className="truncate text-xs font-medium">
                           {user.displayName || user.username}
                         </strong>
-                        <StatusPill value={user.status} />
+                        <StatusPill tone={statusTone(user.status)}>
+                          {user.status || 'unknown'}
+                        </StatusPill>
                         {user.systemAdmin ? (
                           <span className="text-2xs font-semibold text-muted-foreground">
                             系统管理员

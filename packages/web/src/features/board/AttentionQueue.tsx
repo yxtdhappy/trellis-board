@@ -1,4 +1,5 @@
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { StatusPill } from '@/components/ui/status-pill'
 import { priorityTone } from './tone.ts'
 import {
   attentionReasons,
@@ -8,7 +9,6 @@ import {
   type BoardTask,
 } from './task-view.ts'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
-import { cn } from '@/lib/utils'
 
 type AttentionQueueProps = {
   tasks: BoardTask[]
@@ -27,9 +27,9 @@ export function AttentionQueue({ tasks, onOpen }: AttentionQueueProps) {
           ATTENTION QUEUE
         </p>
         <h2 className="text-sm leading-5 font-semibold font-heading">注意力队列</h2>
-        <span className="rounded-full bg-destructive-soft px-1.5 py-px text-2xs font-semibold text-destructive">
+        <StatusPill tone="destructive" size="xs">
           {queue.length}
-        </span>
+        </StatusPill>
         <span className="ml-auto text-2xs text-muted-foreground">每行一个信号，按紧急程度排列</span>
       </div>
 
@@ -45,14 +45,9 @@ export function AttentionQueue({ tasks, onOpen }: AttentionQueueProps) {
                   onClick={() => onOpen(task)}
                   className="flex w-full items-center gap-2 py-1.5 text-left hover:bg-muted/50"
                 >
-                  <span
-                    className={cn(
-                      'shrink-0 rounded-full px-1.5 py-px text-2xs font-semibold',
-                      priorityTone(task.priority),
-                    )}
-                  >
+                  <StatusPill tone={priorityTone(task.priority)} size="xs" className="shrink-0">
                     {task.priority || 'P2'}
-                  </span>
+                  </StatusPill>
                   <span className="truncate text-xs font-medium">{task.title}</span>
                   <span className="shrink-0 text-2xs text-muted-foreground">
                     {[task.teamName, task.projectName, branchLabel(task)]
@@ -63,12 +58,14 @@ export function AttentionQueue({ tasks, onOpen }: AttentionQueueProps) {
                     {attentionReasons(task)
                       .slice(0, 2)
                       .map((reason) => (
-                        <span
+                        <StatusPill
                           key={reason.id}
-                          className="rounded-full bg-destructive-soft px-1.5 py-px text-2xs font-medium text-destructive"
+                          tone="destructive"
+                          size="xs"
+                          className="font-medium"
                         >
                           {reason.label}
-                        </span>
+                        </StatusPill>
                       ))}
                     <span className="text-2xs text-muted-foreground">
                       {dueLabel(task.execution?.dueDate)}

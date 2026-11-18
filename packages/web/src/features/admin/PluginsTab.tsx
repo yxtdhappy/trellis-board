@@ -18,7 +18,9 @@ import {
   type PluginBindingView,
   type TeamPluginView,
 } from '@/api/team-plugins'
-import { EmptyRow, Panel, Row, StatusPill } from './shared.tsx'
+import { StatusPill } from '@/components/ui/status-pill'
+import { statusTone } from '@/lib/admin-shared'
+import { EmptyRow, Panel, Row } from './shared.tsx'
 
 const collator = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' })
 
@@ -125,7 +127,7 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
                 key={row.id}
                 actions={
                   <>
-                    <StatusPill value={row.status} />
+                    <StatusPill tone={statusTone(row.status)}>{row.status || 'unknown'}</StatusPill>
                     {isAdmin ? (
                       <Button
                         variant="ghost"

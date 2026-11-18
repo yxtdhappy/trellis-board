@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { StatusPill } from '@/components/ui/status-pill'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useAppearance } from '@/app/theme'
 import type { FontSize, ThemePreference } from '@/lib/appearance.js'
@@ -153,9 +154,9 @@ export function PreferencesDialog({
             <div className="flex flex-col gap-1.5 rounded-lg bg-muted p-3">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold text-foreground">任务流水线</span>
-                <span className="rounded-full bg-success-soft px-1.5 py-0.5 text-2xs font-medium text-success">
+                <StatusPill tone="success" size="xs" className="py-0.5 font-medium">
                   进行中
-                </span>
+                </StatusPill>
               </div>
               <p className="text-xs text-muted-foreground">
                 调整后文字与间距一起等比缩放，界面整体随之放大。

@@ -1,14 +1,8 @@
 import type { ReactNode } from 'react'
 import { cn } from 'cn'
 import type { AuditEvent } from '@/api/admin'
+import { StatusPill } from '@/components/ui/status-pill'
 import { statusTone } from '@/lib/admin-shared'
-
-const TONE_CLASS: Record<string, string> = {
-  success: 'bg-success-soft text-success',
-  warning: 'bg-warning-soft text-warning',
-  danger: 'bg-destructive-soft text-destructive',
-  neutral: 'bg-muted text-muted-foreground',
-}
 
 type PanelProps = {
   kicker?: string
@@ -37,19 +31,6 @@ export function Panel({ kicker, title, description, action, className, children 
       </header>
       {children}
     </section>
-  )
-}
-
-export function StatusPill({ value }: { value: string | null | undefined }) {
-  return (
-    <span
-      className={cn(
-        'rounded-full px-2 py-0.5 text-2xs font-semibold whitespace-nowrap',
-        TONE_CLASS[statusTone(value)],
-      )}
-    >
-      {value || 'unknown'}
-    </span>
   )
 }
 
@@ -128,7 +109,9 @@ export function AuditItem({ event }: { event: AuditEvent }) {
       </span>
       <span className="w-16 shrink-0 truncate font-medium">{actor}</span>
       <span className="min-w-0 flex-1 truncate text-muted-foreground">{auditSummary(event)}</span>
-      <StatusPill value={event.result} />
+      <StatusPill tone={statusTone(event.result)} className="whitespace-nowrap">
+        {event.result || 'unknown'}
+      </StatusPill>
     </article>
   )
 }

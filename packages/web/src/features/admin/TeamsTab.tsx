@@ -5,7 +5,9 @@ import type { AdminUser, Team, TeamMember } from '@/api/admin'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { SelectField } from '@/features/board/SelectField'
-import { EmptyRow, Panel, StatusPill } from '@/features/admin/shared'
+import { StatusPill } from '@/components/ui/status-pill'
+import { statusTone } from '@/lib/admin-shared'
+import { EmptyRow, Panel } from '@/features/admin/shared'
 import { cn } from '@/lib/utils'
 
 export function TeamsTab() {
@@ -144,7 +146,7 @@ export function TeamsTab() {
                   {team.memberCount} 名成员 · {team.projectCount} 个项目
                 </span>
               </span>
-              <StatusPill value={team.status} />
+              <StatusPill tone={statusTone(team.status)}>{team.status || 'unknown'}</StatusPill>
             </button>
           ))}
         </div>

@@ -41,6 +41,9 @@ features/**          ← 业务，只能用 ui/* + layout/*
 ```ts
 success: 'bg-success-soft text-success',
 warning: 'bg-warning-soft text-warning',
+info: 'bg-info-soft text-info',          // 批 4 补：lane=planning 的蓝
+'primary-soft': 'bg-primary-soft text-primary', // 批 4 补：lane=implementation 的紫
+danger: 'bg-destructive text-white',     // 批 4 补：P0 实心红
 ```
 
 以及尺寸档（现有固定 `h-5 px-2 text-2xs`，手写药片普遍是 `h-auto px-1.5 py-px`）：
@@ -49,7 +52,9 @@ warning: 'bg-warning-soft text-warning',
 size: { default: '', xs: 'h-auto px-1.5 py-px' }
 ```
 
-**不加 `danger`/`neutral`/`info`**：`destructive` 已覆盖 danger、`secondary` 覆盖 neutral，新增同义档只会让"该用哪个"重新变成问题（这也解释了为什么之前 45 处药片各写一遍）。
+**不加 `neutral`**：`secondary` 已覆盖中性。
+
+**批 4 修正**：原计划"不新增 `danger`/`info`"，但 `features/board/tone.ts` 的真实色板里三档无法用现有变体表达——`P0 = bg-destructive text-white`（实心红，`destructive` 是软底，不等价）、`planning = bg-info-soft text-info`（蓝，`outline` 无法表达）、`implementation = bg-primary-soft text-primary`（软紫，`default` 是实心紫）。为保视觉零漂移，补这三档并写进 spec；命名规则：**`danger` = 实心红（高优先警示）**，**`destructive` = 软底红（错误态）**。
 
 ## 3. 分段控件：Tabs vs ToggleGroup
 
@@ -173,21 +178,25 @@ size: { default: '', xs: 'h-auto px-1.5 py-px' }
 业务状态 ──statusTone()/priorityTone()/stageTone()/controlTone()──> tone 键 ──Badge/StatusPill──> 颜色类
 ```
 
-- `features/board/tone.ts`：`priorityTone/stageTone/laneTone` 改为返回 tone 键（`'success'|'warning'|'danger'|'neutral'|'info'`），删掉拼接 class 的分支；新增 `laneDotTone(id)` 返回 `bg-*` 圆点类，替掉 `Kanban.tsx:37` 的 `laneTone(lane.id).split(' ')[0]` 字符串切割。
+- `features/board/tone.ts`：`priorityTone/stageTone/laneTone` 改为返回 tone 键，删掉拼接 class 的分支；圆点色改由 `ui/status-pill.tsx` 的 `toneDot(tone)` 提供，替掉 `Kanban.tsx:39` 的 `laneTone(lane.id).split(' ')[0]` 字符串切割。
 - `features/board/task-view.ts` 的 `controlToneClass` → `controlTone`（返回 tone 键）。
 - `lib/admin-shared.ts` 的 `statusTone` 保持返回 tone 键（现状即如此），只补 `tone→Badge variant` 映射到 `ui/status-pill.tsx`。
 - `ui/badge.tsx` 是唯一出现 `bg-*-soft` 的文件；`ConditionChecks:113-119,137,162,206,219,242`、`TaskOperationList:11-27`、`FlowSignals:124-130` 的本地 `TONES` 全删。
-- `StatusPill` 上提后签名：`{ tone: Tone; children: ReactNode; className?: string }`，内部 `Badge variant={toneVariant[tone]}`；`admin/shared.tsx` 里的 `TONE_CLASS` 删除。
+- `StatusPill` 签名：`{ tone: Tone; children: ReactNode; className?: string; title?: string; size?: 'default' | 'xs' }`，内部 `Badge variant={TONE_VARIANT[tone]}`；`admin/shared.tsx` 里的 `TONE_CLASS` 删除，其导出的 `StatusPill({ value })` **删除**（不再保留适配器）：23 处调用点直连 `@/components/ui/status-pill`，写法 `<StatusPill tone={statusTone(x)}>{x || 'unknown'}</StatusPill>`，`tone` 只在调用点由 `statusTone()` 求得，`ui/status-pill.tsx` 不感知 admin 状态词表。
 
 映射表（写进 `ui/status-pill.tsx` 与 spec）：
 
-| tone | Badge variant |
-|---|---|
-| success | `success` |
-| warning | `warning` |
-| danger | `destructive` |
-| neutral | `secondary` |
-| info | `outline`（现有描边即可，不新增 `info`） |
+| tone | Badge variant | 典型来源 |
+|---|---|---|
+| success | `success` | 已完成/在线/lane=verification |
+| warning | `warning` | 待放行/临近截止/lane=review |
+| danger | `danger`（实心红） | 优先级 P0 |
+| destructive | `destructive`（软底红） | 失败/被阻断/关系异常 |
+| neutral | `secondary` | P2/P3/未知 |
+| info | `info`（软蓝） | lane=planning |
+| primary | `primary-soft`（软紫） | lane=implementation / 监听在线 |
+
+`Tone` 类型定义在 `ui/status-pill.tsx`，`lib/admin-shared.ts` 只做 `import type` 再 `export type` 转出，两处不再各写一份。
 
 ## 6. 空态与加载（批 5）
 

@@ -10,8 +10,9 @@ import {
 } from '@/components/ui/table'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import type { AuditEvent } from '@/api/admin'
-import { formatTime } from '@/lib/admin-shared'
-import { EmptyRow, Panel, StatusPill } from './shared.tsx'
+import { formatTime, statusTone } from '@/lib/admin-shared'
+import { StatusPill } from '@/components/ui/status-pill'
+import { EmptyRow, Panel } from './shared.tsx'
 import { SelectField } from '@/features/board/SelectField'
 
 const RANGE_OPTIONS = [
@@ -156,7 +157,9 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
                         ) : null}
                       </TableCell>
                       <TableCell>
-                        <StatusPill value={event.result} />
+                        <StatusPill tone={statusTone(event.result)}>
+                          {event.result || 'unknown'}
+                        </StatusPill>
                       </TableCell>
                     </TableRow>
                     {detail !== '{}' ? (

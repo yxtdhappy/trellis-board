@@ -12,7 +12,9 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import type { AdminUser, Team } from '@/api/admin'
-import { Field, StatusPill } from './shared.tsx'
+import { StatusPill } from '@/components/ui/status-pill'
+import { statusTone } from '@/lib/admin-shared'
+import { Field } from './shared.tsx'
 import { SelectField } from '@/features/board/SelectField'
 
 export type AccountFormValues = {
@@ -94,7 +96,7 @@ export function AccountForm({ user, teams, submitLabel, onSubmit, onCancel }: Ac
                   disabled={busy}
                 />
                 <span className="min-w-0 truncate">{team.name}</span>
-                <StatusPill value={team.status} />
+                <StatusPill tone={statusTone(team.status)}>{team.status || 'unknown'}</StatusPill>
               </label>
             ))}
           </div>

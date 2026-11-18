@@ -15,8 +15,9 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import type { AdminTaskSpace } from '@/api/admin'
 import type { TaskSpaceActionOutcome } from '@/hooks/useAdminProjects'
-import { formatTime } from '@/lib/admin-shared'
-import { EmptyRow, Field, Panel, Row, StatusPill } from './shared.tsx'
+import { formatTime, statusTone } from '@/lib/admin-shared'
+import { StatusPill } from '@/components/ui/status-pill'
+import { EmptyRow, Field, Panel, Row } from './shared.tsx'
 
 type BranchManagementPanelProps = {
   projectSelected: boolean
@@ -44,9 +45,13 @@ function ImpactSummary({ taskSpace }: { taskSpace: AdminTaskSpace }) {
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/35 p-3 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         <strong className="font-medium text-foreground">{taskSpace.branchName}</strong>
-        <StatusPill value={lifecycleLabel(taskSpace)} />
+        <StatusPill tone={statusTone(lifecycleLabel(taskSpace))}>
+          {lifecycleLabel(taskSpace) || 'unknown'}
+        </StatusPill>
         {taskSpace.status !== taskSpace.lifecycleStatus ? (
-          <StatusPill value={taskSpace.status} />
+          <StatusPill tone={statusTone(taskSpace.status)}>
+            {taskSpace.status || 'unknown'}
+          </StatusPill>
         ) : null}
       </div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground sm:grid-cols-3">
@@ -243,9 +248,13 @@ export function BranchManagementPanel({
                         <code className="truncate text-xs font-medium text-foreground">
                           {taskSpace.branchName}
                         </code>
-                        <StatusPill value={lifecycleLabel(taskSpace)} />
+                        <StatusPill tone={statusTone(lifecycleLabel(taskSpace))}>
+                          {lifecycleLabel(taskSpace) || 'unknown'}
+                        </StatusPill>
                         {taskSpace.status !== taskSpace.lifecycleStatus ? (
-                          <StatusPill value={taskSpace.status} />
+                          <StatusPill tone={statusTone(taskSpace.status)}>
+                            {taskSpace.status || 'unknown'}
+                          </StatusPill>
                         ) : null}
                       </div>
                       <p className="truncate text-2xs text-muted-foreground">

@@ -18,6 +18,9 @@ const badgeVariants = cva(
         link: 'text-primary underline-offset-4 hover:underline',
         success: 'bg-success-soft text-success',
         warning: 'bg-warning-soft text-warning',
+        info: 'bg-info-soft text-info',
+        'primary-soft': 'bg-primary-soft text-primary',
+        danger: 'bg-destructive text-white',
       },
       size: {
         default: '',

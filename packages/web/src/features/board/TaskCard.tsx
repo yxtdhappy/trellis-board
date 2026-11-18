@@ -7,7 +7,7 @@ import { toast } from 'sonner'
 import {
   attentionReasons,
   branchLabel,
-  controlToneClass,
+  controlTone,
   dueLabel,
   initials,
   isAttention,
@@ -17,6 +17,7 @@ import {
   type BoardTask,
 } from './task-view.ts'
 import { StageTape } from './StageTape.tsx'
+import { StatusPill } from '@/components/ui/status-pill'
 import { priorityTone } from './tone.ts'
 import { taskControlView } from '@/lib/team-client.js'
 
@@ -99,28 +100,22 @@ export function TaskCard({ task, onOpen, onEditPlan, localState, onDownload }: T
               关系异常
             </Badge>
           ) : null}
-          <span
-            className={cn(
-              'rounded-full px-1.5 py-px text-2xs font-semibold',
-              priorityTone(task.priority),
-            )}
-          >
+          <StatusPill tone={priorityTone(task.priority)} size="xs">
             {task.priority || 'P2'}
-          </span>
+          </StatusPill>
         </div>
       </div>
 
       {control.available ? (
         <div className="flex flex-wrap items-center gap-1">
-          <span
-            className={cn(
-              'rounded-full px-1.5 py-px text-2xs font-medium',
-              controlToneClass(control.tone),
-            )}
+          <StatusPill
+            tone={controlTone(control.tone)}
+            size="xs"
+            className="font-medium"
             title={control.description}
           >
             {control.label}
-          </span>
+          </StatusPill>
         </div>
       ) : null}
 
@@ -142,16 +137,13 @@ export function TaskCard({ task, onOpen, onEditPlan, localState, onDownload }: T
               未下载到本机
             </button>
           ) : (
-            <span
-              className={cn(
-                'rounded-full px-1.5 py-px font-medium',
-                localState === 'readonly'
-                  ? 'bg-muted text-muted-foreground'
-                  : 'bg-success-soft text-success',
-              )}
+            <StatusPill
+              tone={localState === 'readonly' ? 'neutral' : 'success'}
+              size="xs"
+              className="font-medium"
             >
               {localState === 'readonly' ? '已在本机（只读）' : '已在本机'}
-            </span>
+            </StatusPill>
           )}
         </div>
       ) : null}

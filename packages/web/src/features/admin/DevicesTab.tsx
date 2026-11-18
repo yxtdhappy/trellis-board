@@ -3,9 +3,10 @@ import { MonitorSmartphone } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
-import { formatTime } from '@/lib/admin-shared'
+import { formatTime, statusTone } from '@/lib/admin-shared'
 import { copyText } from '@/browser/clipboard.js'
-import { EmptyRow, Panel, Row, StatusPill } from './shared.tsx'
+import { StatusPill } from '@/components/ui/status-pill'
+import { EmptyRow, Panel, Row } from './shared.tsx'
 
 export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
   const {
@@ -68,7 +69,9 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
                       <strong className="truncate text-xs font-medium">{device.deviceName}</strong>
-                      <StatusPill value={device.status} />
+                      <StatusPill tone={statusTone(device.status)}>
+                        {device.status || 'unknown'}
+                      </StatusPill>
                     </div>
                     <p className="truncate text-2xs text-muted-foreground">
                       所有者 {device.displayName || device.username || '未知'} ·{' '}

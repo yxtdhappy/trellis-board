@@ -1,3 +1,4 @@
+import type { Tone } from '@/components/ui/status-pill'
 import {
   ATTENTION_REASON_LABELS,
   FILTER_STAGES,
@@ -126,18 +127,18 @@ export function branchLabel(task: Pick<BoardTask, 'branchName' | 'sourceBranchNa
   return `分支 ${task.branchName}`
 }
 
-export function controlToneClass(tone?: string) {
+export function controlTone(tone?: string): Tone {
   switch (tone) {
     case 'success':
-      return 'bg-success-soft text-success'
+      return 'success'
     case 'warning':
-      return 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+      return 'warning'
     case 'danger':
-      return 'bg-destructive/10 text-destructive'
+      return 'destructive'
     case 'info':
-      return 'bg-primary/10 text-primary'
+      return 'primary'
     default:
-      return 'bg-muted text-muted-foreground'
+      return 'neutral'
   }
 }
 

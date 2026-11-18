@@ -4,11 +4,11 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Pagination } from './Pagination.tsx'
 import { SelectField } from './SelectField.tsx'
-import { branchLabel, controlToneClass, dueLabel, initials, type BoardTask } from './task-view.ts'
+import { branchLabel, controlTone, dueLabel, initials, type BoardTask } from './task-view.ts'
+import { StatusPill } from '@/components/ui/status-pill'
 import { priorityTone, stageTone, statusLabel } from './tone.ts'
 import { branchMatches } from '@/lib/execution-filter.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
-import { cn } from '@/lib/utils'
 import type { BoardFilters } from '@/hooks/useBoard'
 import { taskControlView } from '@/lib/team-client.js'
 
@@ -277,15 +277,14 @@ export function TeamView({
                             #{task.dirName} · {projectLabel}
                           </small>
                           {control.available ? (
-                            <span
-                              className={cn(
-                                'mt-1 w-fit rounded-full px-1.5 py-px text-2xs font-medium',
-                                controlToneClass(control.tone),
-                              )}
+                            <StatusPill
+                              tone={controlTone(control.tone)}
+                              size="xs"
+                              className="mt-1 w-fit font-medium"
                               title={control.description}
                             >
                               {control.label}
-                            </span>
+                            </StatusPill>
                           ) : null}
                         </td>
                         <td className="px-3 py-2">
@@ -298,24 +297,18 @@ export function TeamView({
                         </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground">{projectLabel}</td>
                         <td className="px-3 py-2 whitespace-nowrap">
-                          <span
-                            className={cn(
-                              'rounded-full px-1.5 py-px text-2xs font-medium',
-                              stageTone(stageLabel),
-                            )}
+                          <StatusPill
+                            tone={stageTone(stageLabel)}
+                            size="xs"
+                            className="font-medium"
                           >
                             {stageLabel || statusLabel(task.stage || task.status) || '未开始'}
-                          </span>
+                          </StatusPill>
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">
-                          <span
-                            className={cn(
-                              'rounded-full px-1.5 py-px text-2xs font-semibold',
-                              priorityTone(task.priority),
-                            )}
-                          >
+                          <StatusPill tone={priorityTone(task.priority)} size="xs">
                             {task.priority || 'P2'}
-                          </span>
+                          </StatusPill>
                         </td>
                         <td className="px-3 py-2 text-right text-2xs whitespace-nowrap text-muted-foreground">
                           {dueLabel(task.execution?.dueDate)}

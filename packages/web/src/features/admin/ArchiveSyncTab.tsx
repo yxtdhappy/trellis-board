@@ -19,10 +19,11 @@ import type {
   ArchiveGitCredential,
   ArchiveTaskSpaceSync,
 } from '@/api/admin'
-import { formatTime } from '@/lib/admin-shared'
+import { formatTime, statusTone } from '@/lib/admin-shared'
 import { useArchiveSync } from '@/hooks/useArchiveSync'
 import { SelectField } from '@/features/board/SelectField'
-import { EmptyRow, Field, Panel, Row, StatusPill } from './shared.tsx'
+import { StatusPill } from '@/components/ui/status-pill'
+import { EmptyRow, Field, Panel, Row } from './shared.tsx'
 
 const STATUS_LABELS: Record<string, string> = {
   idle: '等待同步',
@@ -469,8 +470,10 @@ export function ArchiveSyncTab() {
                           >
                             {credentialName}
                           </strong>
-                          <StatusPill value={credential.scheme.toUpperCase()} />
-                          <StatusPill value="已配置" />
+                          <StatusPill tone={statusTone(credential.scheme.toUpperCase())}>
+                            {credential.scheme.toUpperCase() || 'unknown'}
+                          </StatusPill>
+                          <StatusPill tone={statusTone('已配置')}>已配置</StatusPill>
                         </div>
                         <p className="truncate text-xs text-muted-foreground">
                           <code>{displayText(credential.origin, '来源地址缺失')}</code> · 更新{' '}
@@ -585,7 +588,7 @@ export function ArchiveSyncTab() {
                   className="rounded-lg border border-border bg-background/60 p-3"
                 >
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <StatusPill value={log.phase} />
+                    <StatusPill tone={statusTone(log.phase)}>{log.phase || 'unknown'}</StatusPill>
                     <code className="text-xs text-destructive">{log.errorCode}</code>
                     <span className="ml-auto text-2xs text-muted-foreground">
                       {formatTime(log.createdAt)}
@@ -653,8 +656,12 @@ function TaskSpaceRow({
           <strong className="truncate text-xs font-medium">
             {displayText(taskSpace.projectName, '项目名称缺失')}
           </strong>
-          <StatusPill value={displayText(taskSpace.branchName, '分支名称缺失')} />
-          <StatusPill value={statusLabel(taskSpace.status)} />
+          <StatusPill tone={statusTone(displayText(taskSpace.branchName, '分支名称缺失'))}>
+            {displayText(taskSpace.branchName, '分支名称缺失') || 'unknown'}
+          </StatusPill>
+          <StatusPill tone={statusTone(statusLabel(taskSpace.status))}>
+            {statusLabel(taskSpace.status) || 'unknown'}
+          </StatusPill>
           <span className="text-2xs text-muted-foreground">
             {credentialStateLabel(taskSpace.credentialState)}
           </span>

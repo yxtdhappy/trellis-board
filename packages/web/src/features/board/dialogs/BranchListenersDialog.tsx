@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { projectListenerView } from '@/lib/project-rail-association.js'
 import { cn } from '@/lib/utils'
+import { StatusPill } from '@/components/ui/status-pill'
 
 type BranchListenersDialogProps = {
   taskSpace: TaskSpace | null
@@ -107,24 +108,20 @@ export function BranchListenersDialog({
                       <span className="text-2xs text-muted-foreground">@{listener.username}</span>
                     ) : null}
                     {listener.trellisDevId && listener.trellisDevId !== listener.username ? (
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
+                      <StatusPill tone="neutral" className="font-normal">
                         Trellis ID：{listener.trellisDevId}
-                      </span>
+                      </StatusPill>
                     ) : null}
-                    <span
-                      className={cn(
-                        'rounded-full px-2 py-0.5 text-2xs font-medium',
-                        listener.online
-                          ? 'bg-primary/10 text-primary'
-                          : 'bg-muted text-muted-foreground',
-                      )}
+                    <StatusPill
+                      tone={listener.online ? 'primary' : 'neutral'}
+                      className="font-medium"
                     >
                       {listener.online ? '在线监听' : '未监听'}
-                    </span>
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
+                    </StatusPill>
+                    <StatusPill tone="neutral" className="font-normal">
                       绑定状态：
                       {listener.bindingStatus === 'approved' ? '已批准' : listener.bindingStatus}
-                    </span>
+                    </StatusPill>
                   </div>
                   <p className="mt-1 text-xs text-foreground">
                     设备：{listener.deviceName || '未命名设备'}

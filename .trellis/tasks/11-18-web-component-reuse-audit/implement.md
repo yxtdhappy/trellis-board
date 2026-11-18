@@ -98,6 +98,28 @@ cd packages/web && npx tsc -b && npx oxlint src   # 格式化在仓库根：npx 
 
 提交：`refactor(web): 状态药片与 tone 配色收敛到 badge`
 
+### 执行记录（批 4，已完成）
+
+改动 20 文件：`ui/badge.tsx`、`ui/status-pill.tsx`、`lib/admin-shared.ts`、`features/admin/shared.tsx`、`features/board/{tone.ts,task-view.ts,AttentionQueue,TaskCard,TeamView,Kanban,ConditionChecks,ExecutionHeader}`、`features/board/dialogs/{TaskDetailDialog,BranchListenersDialog,PublishOperationDialog}`、`features/plugins/PluginsView.tsx`、`features/settings/PreferencesDialog.tsx`、`components/layout/ProjectRail.tsx`。
+
+偏差与取舍：
+- badge 实际新增 **`info` / `primary-soft` / `danger`(实心红)** 三档（design §2 已同步修正）：`bg-info-soft`、`bg-primary-soft`、`bg-destructive text-white` 用现有变体表达不了，强转会视觉漂移。`neutral` 仍不加（`secondary` 覆盖）。
+- admin 适配器**已删除**（用户要求单一形态）：`features/admin/shared.tsx` 不再导出 `StatusPill`，23 处调用点改为直连 `@/components/ui/status-pill` + `statusTone()`，形如 `<StatusPill tone={statusTone(x)}>{x || 'unknown'}</StatusPill>`（涉及 `AccountDialog`/`ArchiveSyncTab`/`AuditTab`/`BranchManagementPanel`/`DevicesTab`/`PluginsTab`/`ProjectsTab`/`TeamsTab`/`UsersTab`/`shared.tsx` 的 `AuditItem`）。
+- 圆点色用 `ui/status-pill.tsx` 的 `toneDot(tone)`（计划中的 `laneDotTone`），`Kanban.tsx:39` 的 `.split(' ')[0]` 已删。
+- `ExecutionHeader` 已保存视图与内置视图**都**用 `badgeVariants` 生成类，未用 `Badge render={<button/>}`（外层要嵌套 `×` 按钮，`Badge` 的 `overflow-hidden`/固定 `h-5` 不合适）。
+
+保留例外（非药片，不改）：
+- `FlowSignals.tsx:118-124`、`TaskOperationList.tsx:11-27` 是**文字色**映射，不是药片。
+- `TaskCard.tsx:130` 是交互式"下载到本机"胶囊按钮（带 `disabled`/`hover`），保留 `<button>`。
+- `ConditionChecks.tsx:113-119,137-138,219-220` 是容器底色/图标方块，属批 6。
+- 横幅类 `bg-*-soft`（`ProjectRail:732,740,908`、`PluginsView:209`、`ConditionChecks:75`、`OwnershipInboxPanel:77`、`AgentQuickInitDialog:200`、`ProjectOnboardingDialog:633`）留批 6 `Alert`。
+
+实测（4318 + 5180 + tabbit，临时库 `C:\projects\.trellis-verify-data`）：
+- 看板 Kanban 四个泳道计数药片：`info`=`rgb(219,234,254)`/`rgb(29,78,216)`、`warning`=`rgb(254,243,199)`/`rgb(180,83,9)`、`primary-soft`=`rgb(237,233,254)`/紫、`success`=`rgb(220,252,231)`/`rgb(21,128,61)`，高度 19–20px，`rounded-full` 生效。
+- 执行头组合视图胶囊：选中 `bg-primary` 紫 + 26px、未选中 `bg-card` + 26px（同高，批 2.5 的 24/26 差异已消失）。
+- 插件页状态药片 `运行中` → `success` 变体绿底；`document.querySelectorAll('select').length === 0`。
+- 管理页「团队」：`active` → `success` 绿底 20px（走适配器）；导航 7 个 `role=tab` 正常。
+
 ## 批 5 空态与加载（空态 40+ / 骨架 10）
 
 1. 37 处 `EmptyRow` 只改 import 到 `@/components/ui/empty-row`；删 `features/admin/shared.tsx:57-63`。

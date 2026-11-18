@@ -1,4 +1,5 @@
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { StatusPill, toneDot } from '@/components/ui/status-pill'
 import { laneTone } from './tone.ts'
 import type { BoardTask } from './task-view.ts'
 import { laneForTask, nextStage, STAGE_LANES, taskProgress } from './task-view.ts'
@@ -36,7 +37,7 @@ export function Kanban({ groups, onOpen, onEditPlan, localStateFor, onDownload }
             >
               <header className="flex items-center gap-1.5">
                 <span
-                  className={cn('size-1.5 rounded-full', laneTone(lane.id).split(' ')[0])}
+                  className={cn('size-1.5 rounded-full', toneDot(laneTone(lane.id)))}
                   aria-hidden="true"
                 />
                 <h3 className="text-xs font-semibold">
@@ -45,14 +46,9 @@ export function Kanban({ groups, onOpen, onEditPlan, localStateFor, onDownload }
                   </span>
                   {lane.label}
                 </h3>
-                <span
-                  className={cn(
-                    'rounded-full px-1.5 py-px text-2xs font-semibold',
-                    laneTone(lane.id),
-                  )}
-                >
+                <StatusPill tone={laneTone(lane.id)} size="xs">
                   {laneGroups.length}
-                </span>
+                </StatusPill>
               </header>
 
               <ScrollArea className="min-h-0 flex-1">

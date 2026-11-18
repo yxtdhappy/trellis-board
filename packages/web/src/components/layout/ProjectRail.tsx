@@ -23,6 +23,7 @@ import {
 } from '@/lib/project-rail-association.js'
 import { createRefreshCoordinator } from '@/lib/refresh-coordinator.js'
 import { cn } from '@/lib/utils'
+import { StatusPill } from '@/components/ui/status-pill'
 
 type Project = {
   id: string
@@ -829,13 +830,14 @@ export function ProjectRail({
                 </span>
               </button>
               {current === 'all' && projectInboxCount > 0 ? (
-                <span
-                  className="mr-1 shrink-0 rounded-full border border-warning/35 bg-warning-soft px-1.5 py-0.5 text-2xs font-semibold text-warning"
-                  aria-label={`待归属任务 ${projectInboxCount}`}
+                <StatusPill
+                  tone="warning"
+                  size="xs"
+                  className="mr-1 py-0.5"
                   title={`待归属任务 ${projectInboxCount}`}
                 >
                   待归属任务 {projectInboxCount}
-                </span>
+                </StatusPill>
               ) : null}
               {invoke && activeTaskSpace ? (
                 activeAssociation?.status === 'approved' ? (
@@ -925,16 +927,13 @@ export function ProjectRail({
                   aria-hidden="true"
                 />
                 <span className="min-w-0 flex-1 truncate">待归属任务 {projectInboxCount}</span>
-                <span
-                  className={cn(
-                    'shrink-0 rounded-full px-1.5 py-0.5 font-semibold',
-                    projectInboxCount > 0
-                      ? 'bg-warning/15 text-warning'
-                      : 'bg-muted text-muted-foreground',
-                  )}
+                <StatusPill
+                  tone={projectInboxCount > 0 ? 'warning' : 'neutral'}
+                  size="xs"
+                  className="py-0.5"
                 >
                   {projectInboxCount}
-                </span>
+                </StatusPill>
               </button>
             ) : null}
             {current === 'all' && hasListenerSummary ? (
