@@ -20,13 +20,6 @@ fn load_client_document() -> Value {
         .unwrap_or_else(|| json!({ "schemaVersion": config::SCHEMA_VERSION }))
 }
 
-/// 旧安装曾写入 snake_case 的 `schema_version`；读取/保存时顺手清掉，避免两个 schema 键并存。
-fn normalize_schema_key(document: &mut Value) {
-    if let Some(object) = document.as_object_mut() {
-        object.remove("schema_version");
-    }
-}
-
 fn save_client_document(document: &Value) -> Result<(), String> {
     config::ensure_directories()?;
     let path = client_document_path();
@@ -92,7 +85,6 @@ pub async fn runtime_status() -> Result<RuntimeStatus, String> {
         .await
         .map_err(|error| error.message)?;
     log_runtime_status(&status);
-    normalize_schema_key(&mut document);
     document["schemaVersion"] = json!(config::SCHEMA_VERSION);
     if document != before {
         let _ = save_client_document(&document);
@@ -126,7 +118,6 @@ pub async fn runtime_install(app: AppHandle) -> Result<RuntimeInstallResult, Str
     })
     .await
     .map_err(|error| error.message)?;
-    normalize_schema_key(&mut document);
     document["schemaVersion"] = json!(config::SCHEMA_VERSION);
     let _ = save_client_document(&document);
     let _ = app.emit(

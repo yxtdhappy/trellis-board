@@ -98,6 +98,70 @@ fn where_node_output_yields_parent_dirs() {
 }
 
 #[test]
+fn where_python_output_yields_parent_dirs() {
+    let dirs = where_python_dirs(
+        "C:\\Python312\\python.exe\r\nC:\\Windows\\py.exe\r\n\"C:\\Program Files\\Python311\\python.exe\"\r\nC:\\Python312\\python.exe\r\n",
+    );
+    assert_eq!(
+        dirs,
+        vec![
+            PathBuf::from("C:\\Python312"),
+            PathBuf::from("C:\\Program Files\\Python311"),
+        ]
+    );
+    assert!(where_python_dirs("C:\\Windows\\python3.exe").is_empty());
+}
+
+#[tokio::test]
+async fn resolve_runtime_reuses_valid_flags_without_probing() {
+    let directory = temp_dir("runtime-flags");
+    let node = directory.join("node.exe");
+    std::fs::write(&node, b"node").expect("node");
+    let cli = directory.join("npm-global/node_modules/@mindfoldhq/trellis/bin/trellis.js");
+    std::fs::create_dir_all(cli.parent().expect("cli parent")).expect("cli dir");
+    std::fs::write(&cli, b"cli").expect("cli");
+    std::fs::write(
+        directory.join("npm-global/node_modules/@mindfoldhq/trellis/package.json"),
+        r#"{"version":"0.6.17"}"#,
+    )
+    .expect("package");
+
+    let mut config = json!({
+        "node_runtime": {
+            "version": "24.22.3",
+            "path": node.display().to_string(),
+            "source": "manual",
+            "installed_at": ""
+        },
+        "trellis_runtime": {
+            "version": "0.6.17",
+            "cli_path": cli.display().to_string(),
+            "source": "client-prefix",
+            "installed_at": ""
+        }
+    });
+    let (node_status, trellis_status, dirs, probed) =
+        resolve_runtime(&directory, &mut config).await;
+    assert!(node_status.ok);
+    assert_eq!(node_status.source.as_deref(), Some("manual"));
+    assert!(trellis_status.ok);
+    assert!(dirs.is_empty());
+    assert!(!probed);
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn node_has_npm_uses_given_dirs() {
+    let directory = temp_dir("npm-dirs");
+    std::fs::write(directory.join("npm.cmd"), b"npm").expect("npm");
+    assert!(node_has_npm(
+        Path::new("C:\\private\\node.exe"),
+        std::slice::from_ref(&directory)
+    ));
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
 fn manual_node_path_accepts_file_dir_and_quotes() {
     let directory = temp_dir("manual");
     let executable = directory.join("node.exe");
@@ -216,11 +280,7 @@ fn python_state(ok: bool) -> PythonStatus {
 
 #[test]
 fn install_plan_only_installs_missing_components() {
-    let ready = install_plan(
-        &node_state(true),
-        &trellis_state(true),
-        &python_state(true),
-    );
+    let ready = install_plan(&node_state(true), &trellis_state(true), &python_state(true));
     assert!(!ready.download_node);
     assert!(!ready.install_trellis);
     assert!(!ready.install_python);

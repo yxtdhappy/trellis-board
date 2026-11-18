@@ -22,10 +22,10 @@ test('client config tolerates pre-login runtime documents', () => {
 
 test('runtime install reuses detected runtimes and only installs missing pieces', () => {
   const install = read('packages/desktop/src-tauri/src/agent/env/install.rs')
-  assert.match(install, /resolve_node\(data_dir, config, &dirs\)/)
-  assert.match(install, /resolve_trellis\(data_dir, config, &dirs\)/)
+  assert.match(install, /resolve_runtime\(data_dir, config\)/)
   assert.match(install, /resolve_python\(config\)/)
   assert.match(install, /install_plan\(&node_status, &trellis_status, &python_status\)/)
+  assert.match(install, /node_has_npm\(&node_path, &dirs\)/)
   assert.doesNotMatch(install, /fn write_runtime_flags/)
 })
 
@@ -44,10 +44,11 @@ test('login page shows detected versions and can re-check', () => {
   assert.doesNotMatch(login, /active: 'node:download'/)
 })
 
-test('runtime status writes a diagnosis summary and normalizes the schema key', () => {
+test('runtime status writes a diagnosis summary and ignores legacy schema keys', () => {
   const commands = read('packages/desktop/src-tauri/src/runtime_commands.rs')
   assert.match(commands, /logging::info/)
   assert.match(commands, /运行环境检查 state=/)
-  assert.match(commands, /fn normalize_schema_key/)
-  assert.match(commands, /remove\("schema_version"\)/)
+  assert.doesNotMatch(commands, /normalize_schema_key/)
+  assert.doesNotMatch(commands, /remove\("schema_version"\)/)
+  assert.match(commands, /schemaVersion/)
 })

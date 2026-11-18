@@ -110,6 +110,7 @@ pub(super) fn probe_dirs() -> Vec<PathBuf> {
 /// 进程启动时的 `PATH` 是快照：客户端运行期间新装的 Node 写进了注册表 PATH，
 /// 只能让 PowerShell 重新读一次环境变量再 `where node`。
 const WHERE_NODE_SCRIPT: &str = "$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User'); where.exe node";
+const WHERE_PYTHON_SCRIPT: &str = "$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User'); where.exe python.exe";
 const WHERE_NODE_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(super) fn powershell_exe() -> PathBuf {
@@ -126,15 +127,15 @@ pub(super) fn powershell_exe() -> PathBuf {
     }
 }
 
-pub(super) fn where_node_dirs(output: &str) -> Vec<PathBuf> {
+fn where_executable_dirs(output: &str, executable: &str) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     for line in output.lines() {
         let line = line.trim().trim_matches('"').trim();
         let path = Path::new(line);
-        let is_node = path
+        let matches = path
             .file_name()
             .and_then(|name| name.to_str())
-            .map(|name| name.eq_ignore_ascii_case("node.exe"))
+            .map(|name| name.eq_ignore_ascii_case(executable))
             .unwrap_or(false);
         let Some(parent) = path
             .parent()
@@ -142,11 +143,19 @@ pub(super) fn where_node_dirs(output: &str) -> Vec<PathBuf> {
         else {
             continue;
         };
-        if is_node && !dirs.iter().any(|dir| dir == parent) {
+        if matches && !dirs.iter().any(|dir| dir == parent) {
             dirs.push(parent.to_path_buf());
         }
     }
     dirs
+}
+
+pub(super) fn where_node_dirs(output: &str) -> Vec<PathBuf> {
+    where_executable_dirs(output, "node.exe")
+}
+
+pub(super) fn where_python_dirs(output: &str) -> Vec<PathBuf> {
+    where_executable_dirs(output, "python.exe")
 }
 
 pub(super) async fn where_node_dirs_fresh() -> Vec<PathBuf> {
@@ -172,9 +181,33 @@ pub(super) async fn where_node_dirs_fresh() -> Vec<PathBuf> {
     }
 }
 
+pub(super) async fn where_python_dirs_fresh() -> Vec<PathBuf> {
+    let output = run_process(
+        &powershell_exe(),
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            WHERE_PYTHON_SCRIPT,
+        ],
+        &ProcessOptions {
+            timeout: Some(WHERE_NODE_TIMEOUT),
+            max_output_bytes: 65_536,
+            ..Default::default()
+        },
+    )
+    .await;
+    match output {
+        Ok(output) if output.success() => where_python_dirs(&output.stdout),
+        _ => Vec::new(),
+    }
+}
+
 pub(super) async fn probe_dirs_fresh() -> Vec<PathBuf> {
-    let mut dirs = probe_dirs();
-    dirs.extend(where_node_dirs_fresh().await);
+    // 新装的 Node 会写进注册表 PATH；fresh 结果必须排在进程启动快照前面，
+    // 否则旧的 PATH 目录里那份 Node 会先命中。
+    let mut dirs = where_node_dirs_fresh().await;
+    dirs.extend(probe_dirs());
     dedupe_dirs(dirs)
 }
 
@@ -390,14 +423,28 @@ pub(super) fn trellis_from_cmd(cmd: &Path) -> Option<PathBuf> {
 
 // ---------------------------------------------------------------- check
 
+/// 先用 flag / 私有运行时做一次零探测解析；只有 Node 或 Trellis 未就绪时
+/// 才刷新 PATH（PowerShell）并重解析一次。返回值里的目录可供安装复用。
+pub(super) async fn resolve_runtime<C: ClientConfigLike>(
+    data_dir: &Path,
+    config: &mut C,
+) -> (NodeStatus, TrellisStatus, Vec<PathBuf>, bool) {
+    let node = resolve_node(data_dir, config, &[]).await;
+    let trellis = resolve_trellis(data_dir, config, &[]).await;
+    if node.ok && trellis.ok {
+        return (node, trellis, Vec::new(), false);
+    }
+    let dirs = probe_dirs_fresh().await;
+    let node = resolve_node(data_dir, config, &dirs).await;
+    let trellis = resolve_trellis(data_dir, config, &dirs).await;
+    (node, trellis, dirs, true)
+}
+
 pub async fn check<C: ClientConfigLike>(
     data_dir: &Path,
     config: &mut C,
 ) -> AgentResult<RuntimeStatus> {
-    // Node 与 Trellis 共用一次探测：PowerShell 刷新 PATH 每个进程只跑一次。
-    let dirs = probe_dirs_fresh().await;
-    let node = resolve_node(data_dir, config, &dirs).await;
-    let trellis = resolve_trellis(data_dir, config, &dirs).await;
+    let (node, trellis, _, _) = resolve_runtime(data_dir, config).await;
     let python = resolve_python(config).await;
     let state = if node.ok && trellis.ok && python.ok {
         RuntimeState::Ready
@@ -436,21 +483,31 @@ pub(super) async fn resolve_node<C: ClientConfigLike>(
                 .map(|value| is_version_at_least(value, NODE_MIN_VERSION))
                 .unwrap_or(false);
             if ok {
+                let source = if flag.source.is_empty() {
+                    "client".to_string()
+                } else {
+                    flag.source.clone()
+                };
                 return NodeStatus {
                     ok: true,
                     version,
                     path: Some(flag.path),
-                    source: Some("client".to_string()),
+                    source: Some(source),
                     min_version: NODE_MIN_VERSION.to_string(),
                     found_version: None,
                 };
             }
             // flag 版本过低：保留为兜底结果，继续找 PATH / 私有运行时里的更新版本。
+            let source = if flag.source.is_empty() {
+                "client".to_string()
+            } else {
+                flag.source.clone()
+            };
             outdated = Some(NodeStatus {
                 ok: false,
                 version: None,
                 path: Some(flag.path),
-                source: Some("client".to_string()),
+                source: Some(source),
                 min_version: NODE_MIN_VERSION.to_string(),
                 found_version: version,
             });
@@ -469,36 +526,16 @@ pub(super) async fn resolve_node<C: ClientConfigLike>(
         found_version: None,
     };
 
-    // 客户端私有运行时是环境门自己装的，flag 丢了也能自愈，不需要重新探测系统。
-    let client_node = node_exe_path(data_dir);
-    if is_usable_file(&client_node) {
-        if let Some(version) = node_version_at(&client_node).await {
-            if is_version_at_least(&version, NODE_MIN_VERSION) {
-                config.set_node_runtime(Some(NodeRuntimeFlag {
-                    version: version.clone(),
-                    path: client_node.display().to_string(),
-                    source: "client".to_string(),
-                    installed_at: protocol::now_iso8601(),
-                }));
-                return NodeStatus {
-                    ok: true,
-                    version: Some(version),
-                    path: Some(client_node.display().to_string()),
-                    source: Some("client".to_string()),
-                    min_version: NODE_MIN_VERSION.to_string(),
-                    found_version: None,
-                };
-            }
-        }
-    }
-
-    // 候选顺序：PATH/版本管理器/常见前缀 → 客户端私有 runtime（上次安装或中断留下）。
+    // 候选顺序：fresh PATH/版本管理器/常见前缀 → 客户端私有 runtime（只作兜底）。
     // 逐个候选试 `node --version`：旧版本只在全部不合格时作为「版本过低」返回。
+    let client_node = node_exe_path(data_dir);
     let mut candidates: Vec<(PathBuf, &'static str)> = dirs
         .iter()
         .map(|dir| (dir.join("node.exe"), "path"))
         .collect();
     candidates.push((client_node, "client"));
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|(path, _)| seen.insert(path.clone()));
 
     for (executable, source) in candidates {
         if !is_usable_file(&executable) {
@@ -597,7 +634,7 @@ pub(super) async fn resolve_trellis<C: ClientConfigLike>(
     // 全局包就挂在 node.exe 同级（`npm root -g` 的前缀目录），逐个候选目录看一遍；
     // 不跑 `npm root -g`：npm.cmd 内部的 `node` 同样依赖 PATH，解析不出来时只会更糟。
     for dir in dirs {
-        let Some((cli, source)) = trellis_cli_in(&dir) else {
+        let Some((cli, source)) = trellis_cli_in(dir) else {
             continue;
         };
         let status = trellis_status(&cli, source);
@@ -698,12 +735,17 @@ pub(super) async fn resolve_python<C: ClientConfigLike>(config: &mut C) -> Pytho
     let mut outdated: Option<PythonStatus> = None;
     if let Some(flag) = config.python_runtime() {
         let executable = PathBuf::from(&flag.path);
+        let source = if flag.source.is_empty() {
+            "client"
+        } else {
+            flag.source.as_str()
+        };
         if is_usable_file(&executable) {
             match python_version_at(&executable, &[]).await {
                 Some(version) if is_version_at_least(&version, PYTHON_MIN_VERSION) => {
-                    return python_status(&version, &executable, "client");
+                    return python_status(&version, &executable, source);
                 }
-                Some(version) => outdated = Some(python_status(&version, &executable, "client")),
+                Some(version) => outdated = Some(python_status(&version, &executable, source)),
                 None => {}
             }
         } else {
@@ -716,6 +758,9 @@ pub(super) async fn resolve_python<C: ClientConfigLike>(config: &mut C) -> Pytho
     if let Some(value) = std::env::var_os("TRELLIS_PYTHON") {
         candidates.push((PathBuf::from(value), "env"));
     }
+    for dir in where_python_dirs_fresh().await {
+        candidates.push((dir.join("python.exe"), "path"));
+    }
     if let Some(found) = find_in_path(&path_dirs(), "python.exe") {
         candidates.push((found, "path"));
     }
@@ -725,6 +770,8 @@ pub(super) async fn resolve_python<C: ClientConfigLike>(config: &mut C) -> Pytho
             candidates.push((executable, "common-prefix"));
         }
     }
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|(path, _)| seen.insert(path.clone()));
 
     let mut found: Option<(PathBuf, String, &'static str)> = None;
     for (program, source) in candidates {

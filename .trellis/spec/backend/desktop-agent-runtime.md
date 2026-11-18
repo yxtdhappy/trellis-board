@@ -134,14 +134,18 @@
 ## 3. 环境门
 
 - 首次启动先 `runtime_status`：Node ≥ 18.17.0，Trellis CLI ≥ 0.6.17（读包内 `package.json.version`），
-  Python ≥ 3.9.0。
-- 查找顺序 Node：flag → `<data>/runtime/node/node.exe`（客户端私有运行时，flag 丢失时自愈写回
-  `source: "client"`）→ PATH 与版本管理器/常见安装前缀（fnm `aliases/*`、`node-versions/*/installation`、
-  nvm `v*` 子目录与 `NVM_HOME`/`NVM_SYMLINK`、`FNM_DIR`/`FNM_MULTISHELL_PATH`、`VOLTA_HOME/bin`、
-  `%ProgramFiles%\nodejs`、`%APPDATA%\npm`、`%LOCALAPPDATA%\pnpm`）→ PowerShell 重新读取机器/用户
-  `PATH` 后 `where.exe node`（`-NoProfile -NonInteractive`、15s 超时，失败静默降级）→ 登录页手动指定；
+  Python ≥ 3.9.0。解析先只用 flag / 私有前缀；Node 或 Trellis 未就绪时才执行一次 PowerShell 刷新，
+  flag 均有效时不启动 PowerShell。
+- 查找顺序 Node：flag → PowerShell 重新读取机器/用户 `PATH` 后 `where.exe node`（`-NoProfile
+  -NonInteractive`、15s 超时，失败静默降级）→ PATH 与版本管理器/常见安装前缀（fnm `aliases/*`、
+  `node-versions/*/installation`、nvm `v*` 子目录与 `NVM_HOME`/`NVM_SYMLINK`、
+  `FNM_DIR`/`FNM_MULTISHELL_PATH`、`VOLTA_HOME/bin`、`%ProgramFiles%\nodejs`、`%APPDATA%\npm`、
+  `%LOCALAPPDATA%\pnpm`）→ `<data>/runtime/node/node.exe`（客户端私有运行时，仅作兜底，flag 丢失时
+  自愈写回 `source: "client"`）→ 登录页手动指定；fresh `where.exe` 结果必须排在进程启动时的 PATH
+  快照之前。
   Trellis：flag → `<data>/npm-global` → 同一批前缀目录下的全局包（不跑 `npm root -g`，npm.cmd 内部
-  同样依赖 PATH）；Python：flag → `TRELLIS_PYTHON` → PATH 的 `python.exe` → 常见安装根目录
+  同样依赖 PATH）；Python：flag → `TRELLIS_PYTHON` → fresh `where.exe python.exe` → 静态 PATH 的
+  `python.exe` → 常见安装根目录
   （`%LOCALAPPDATA%\Programs\Python\Python*`、`%ProgramFiles%\Python*`、`%SystemDrive%\Python*`）→
   `py -3`（用 `py -3 -c "import sys; print(sys.executable)"` 解析出真实解释器）。
   0 字节文件（Windows App Execution Alias）不得作为可执行文件；flag 版本过低时必须继续探测其它候选。
@@ -149,7 +153,8 @@
 - 手动兜底 `runtime_set_node_path`：接受 `node.exe` 或它所在目录（去首尾引号，不展开 `~`/环境变量），
   必须存在、可执行且 ≥ 18.17.0，成功写 `node_runtime`（`source: "manual"`），失败返回
   `NODE_PATH_INVALID` 且不改动已有 flag。仅本地登录页 capability 可调用。
-- `client.json` 契约：`schemaVersion` 为 camelCase（兼容旧键 `schema_version`），`serverUrl` 可缺省
+- `client.json` 契约：`schemaVersion` 为 camelCase；旧 `schema_version` 不再读取（只含旧键的文件按无配置处理），
+  `serverUrl` 可缺省
   （环境门在登录前写 flag），三个运行时 flag 键为 `node_runtime` / `trellis_runtime` / `python_runtime`
   （兼容 `nodeRuntime` 等 camelCase 别名）；登录保存时必须保留三个 flag。
 - `runtime_install` 是**增量安装**：先复用环境门已解析的 Node / Trellis / Python，只对缺失组件执行

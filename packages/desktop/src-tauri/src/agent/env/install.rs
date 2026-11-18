@@ -21,16 +21,7 @@ pub(super) fn install_plan(
     }
 }
 
-/// flag 命中时 `resolve_*` 返回 source=`client`；保留原 flag 的来源便于诊断。
-fn reused_source(previous: Option<String>, status: &Option<String>, fallback: &str) -> String {
-    if status.as_deref() == Some("client") {
-        previous.unwrap_or_else(|| fallback.to_string())
-    } else {
-        status.clone().unwrap_or_else(|| fallback.to_string())
-    }
-}
-
-fn node_has_npm(node_path: &Path) -> bool {
+pub(super) fn node_has_npm(node_path: &Path, dirs: &[PathBuf]) -> bool {
     node_path
         .parent()
         .map(|directory| {
@@ -42,7 +33,7 @@ fn node_has_npm(node_path: &Path) -> bool {
         })
         .filter(|path| path.is_file())
         .is_some()
-        || find_in_path(&path_dirs(), "npm.cmd").is_some()
+        || find_in_path(dirs, "npm.cmd").is_some()
 }
 
 pub async fn install<C: ClientConfigLike>(
@@ -50,15 +41,13 @@ pub async fn install<C: ClientConfigLike>(
     config: &mut C,
     mut on_progress: impl FnMut(&str, &str) + Send,
 ) -> AgentResult<RuntimeInstallResult> {
-    let previous_node_source = config.node_runtime().map(|flag| flag.source);
-    let previous_trellis_source = config.trellis_runtime().map(|flag| flag.source);
-    let previous_python_source = config.python_runtime().map(|flag| flag.source);
-
-    let dirs = probe_dirs_fresh().await;
-    let node_status = resolve_node(data_dir, config, &dirs).await;
-    let trellis_status = resolve_trellis(data_dir, config, &dirs).await;
+    let (node_status, trellis_status, mut dirs, probed) = resolve_runtime(data_dir, config).await;
     let python_status = resolve_python(config).await;
     let plan = install_plan(&node_status, &trellis_status, &python_status);
+    if plan.install_trellis && !probed {
+        // flag 解析已完成但仍需安装 Trellis：补一次 PATH，供 npm 查找复用。
+        dirs = probe_dirs_fresh().await;
+    }
 
     // Node：已通过环境门校验就直接复用，只有缺失/全部候选都不可用时才下载私有 Node。
     let (mut node_version, mut node_path, mut node_source) = if plan.download_node {
@@ -76,7 +65,10 @@ pub async fn install<C: ClientConfigLike>(
             AgentError::new(CODE_NODE_INVALID, "Node.js 状态缺少路径")
                 .with_details(Some(json!({ "stage": "node:validate" })))
         })?;
-        let source = reused_source(previous_node_source, &node_status.source, "client");
+        let source = node_status
+            .source
+            .clone()
+            .unwrap_or_else(|| "client".to_string());
         (version, PathBuf::from(path), source)
     };
     if !is_version_at_least(&node_version, NODE_MIN_VERSION) {
@@ -90,13 +82,13 @@ pub async fn install<C: ClientConfigLike>(
     // Trellis：缺失时优先用已确定的 Node 安装到客户端私有前缀；系统 Node 没有 npm
     // 时再补私有 Node，保证安装可完成。
     let (trellis_version, cli_path, trellis_source) = if plan.install_trellis {
-        if !node_has_npm(&node_path) {
+        if !node_has_npm(&node_path, &dirs) {
             node_version = install_node(data_dir, &mut on_progress).await?;
             node_path = node_exe_path(data_dir);
             node_source = "downloaded".to_string();
         }
         on_progress("trellis:install", "正在安装 Trellis CLI");
-        install_trellis(data_dir, &node_path, &mut on_progress).await?;
+        install_trellis(data_dir, &node_path, &dirs, &mut on_progress).await?;
         on_progress("trellis:validate", "正在校验 Trellis CLI");
         let cli_path = trellis_cli_path(data_dir);
         let version = read_package_version(&cli_path).ok_or_else(|| {
@@ -120,7 +112,10 @@ pub async fn install<C: ClientConfigLike>(
             AgentError::new(code::MISSING_TRELLIS, "Trellis CLI 状态缺少路径")
                 .with_details(Some(json!({ "stage": "trellis:validate" })))
         })?;
-        let source = reused_source(previous_trellis_source, &trellis_status.source, "global");
+        let source = trellis_status
+            .source
+            .clone()
+            .unwrap_or_else(|| "global".to_string());
         (version, PathBuf::from(cli_path), source)
     };
 
@@ -137,7 +132,10 @@ pub async fn install<C: ClientConfigLike>(
             AgentError::new(CODE_PYTHON_INVALID, "Python 状态缺少路径")
                 .with_details(Some(json!({ "stage": "python:validate" })))
         })?;
-        let source = reused_source(previous_python_source, &python_status.source, "path");
+        let source = python_status
+            .source
+            .clone()
+            .unwrap_or_else(|| "path".to_string());
         (version, PathBuf::from(path), source)
     };
 
@@ -589,6 +587,7 @@ pub(super) async fn cleanup_partial(data_dir: &Path) {
 pub(super) async fn install_trellis(
     data_dir: &Path,
     node_path: &Path,
+    dirs: &[PathBuf],
     on_progress: &mut (impl FnMut(&str, &str) + Send),
 ) -> AgentResult<()> {
     let prefix = npm_global_dir(data_dir);
@@ -633,7 +632,7 @@ pub(super) async fn install_trellis(
             &options,
         )
         .await?
-    } else if let Some(npm) = find_in_path(&probe_dirs_fresh().await, "npm.cmd") {
+    } else if let Some(npm) = find_in_path(dirs, "npm.cmd") {
         on_progress("trellis:install", "正在安装 Trellis CLI");
         let line = format!(
             "\"{}\" install -g --prefix \"{prefix_text}\" {package}",
@@ -663,5 +662,3 @@ pub(super) async fn install_trellis(
     }
     Ok(())
 }
-
-
