@@ -90,28 +90,4 @@ fn load_keeps_runtime_flags_without_server_url() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
-#[test]
-fn legacy_schema_snake_case_key_is_accepted() {
-    let _env = test_env_lock();
-    let directory = std::env::temp_dir().join(format!(
-        "trellis-desktop-config-env-gate-{}",
-        std::process::id()
-    ));
-    std::env::set_var("TRELLIS_DESKTOP_HOME", &directory);
-    // 环境门在登录前写入：没有 serverUrl，键名曾是 snake_case。
-    std::fs::create_dir_all(&directory).expect("data dir");
-    std::fs::write(
-        config_path(),
-        r#"{"schema_version":3,"node_runtime":{"version":"24.22.3","path":"C:\\node\\node.exe","source":"client"},"trellis_runtime":{"version":"0.6.17","cliPath":"C:\\trellis.js","source":"client"},"python_runtime":{"version":"3.12.8","path":"C:\\python.exe","source":"client"}}"#,
-    )
-    .expect("write env gate config");
-    let loaded = load()
-        .expect("load env gate config")
-        .expect("config parses without serverUrl");
-    assert_eq!(loaded.schema_version, SCHEMA_VERSION);
-    assert_eq!(loaded.server_url, "");
-    assert!(loaded.node_runtime.is_some());
-    assert!(loaded.trellis_runtime.is_some());
-    assert!(loaded.python_runtime.is_some());
-    let _ = std::fs::remove_dir_all(directory);
-}
+

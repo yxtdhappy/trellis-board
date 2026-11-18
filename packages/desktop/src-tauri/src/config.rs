@@ -8,7 +8,6 @@ const LEGACY_SCHEMA_VERSION: u32 = 2;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfig {
-    #[serde(alias = "schema_version")]
     pub schema_version: u32,
     // 登录前的 client.json 只有运行时标记、没有 serverUrl；缺省为空串而不是解析失败。
     #[serde(default)]

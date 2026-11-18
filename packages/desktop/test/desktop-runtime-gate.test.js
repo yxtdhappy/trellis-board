@@ -22,8 +22,8 @@ test('client config tolerates pre-login runtime documents', () => {
 
 test('runtime install reuses detected runtimes and only installs missing pieces', () => {
   const install = read('packages/desktop/src-tauri/src/agent/env/install.rs')
-  assert.match(install, /resolve_node\(data_dir, config\)/)
-  assert.match(install, /resolve_trellis\(data_dir, config\)/)
+  assert.match(install, /resolve_node\(data_dir, config, &dirs\)/)
+  assert.match(install, /resolve_trellis\(data_dir, config, &dirs\)/)
   assert.match(install, /resolve_python\(config\)/)
   assert.match(install, /install_plan\(&node_status, &trellis_status, &python_status\)/)
   assert.doesNotMatch(install, /fn write_runtime_flags/)
