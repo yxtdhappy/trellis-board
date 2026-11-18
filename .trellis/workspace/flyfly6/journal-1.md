@@ -1072,3 +1072,44 @@ Session summary was not supplied.
 
 - 部署服务端后确认残留活跃行被打成墓碑、客户端增量删除两份复活目录
 - 清理本地 .trellis/tasks/11-17-fix-archive-filter-listener-dev-id 与 11-17-in-window-task-sync-dialog 两个 bug 产物目录
+
+
+## Session 33: 任务同步失败定位与冲突待处理入口
+<!-- trellis-session: v=2 fp=dffb1bf8bc86793c -->
+
+**Date**: 2026-11-18
+**Task**: 任务同步失败定位与冲突待处理入口
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+同步失败弹窗可见失败任务与错误码；他人任务目录按归属只读跳过；归档任务返回 409 并清理本地残留副本；看板三态徽标与手动下载；项目栏冲突入口可重建控制事件
+
+### Main Changes
+
+- task_sync/agent_service/main：目录级错误注入 taskDir、readonlyTaskDirs、归档残留清理、live_local_task_state/live_task_download/live_conflicts_show
+- http.rs：403 不再判为 AUTH_REVOKED，仅 401/AGENT_AUTH_REQUIRED 视为凭证失效
+- server：assertReadable 归档任务返回 409 TASK_ARCHIVED、只读 /tasks 与 /tasks/:id/files、归档同事务收敛 sync_conflict 并过滤冲突列表
+- web：弹窗错误码行、看板三态徽标与下载、项目栏冲突按钮、useLocalTaskState 15s 可见轮询
+- capability/permission 补齐三个新命令授权，spec 记录规则
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ae23c4f` | fix(sync): 同步失败可定位、按归属同步与冲突入口 |
+| `9bffd2b` | chore(task): archive 11-18-sync-failure-task-dir-and-conflict-entry |
+
+### Testing
+
+- [OK] cargo test --bins 232 passed；服务端 5 文件 20 passed；web tsc -b + vite build 通过；oxfmt/oxlint 干净
+- [OK] 本地隔离服务端 E2E：他人目录跳过、归档残留清理、冲突弹窗与收敛、只读下载与保护均实测通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 部署服务端到 192.168.65.27:4317 后观察 mdp-backend-web 两条陈旧冲突是否随归档收敛消失

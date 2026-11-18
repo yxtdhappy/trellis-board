@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 32
+- **Total Sessions**: 33
 - **Last Active**: 2026-11-18
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1074 | Active |
+| `journal-1.md` | ~1115 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 33 | 2026-11-18 | 任务同步失败定位与冲突待处理入口 | `ae23c4f`, `9bffd2b` | `main` |
 | 32 | 2026-11-18 | 修复归档任务复活：服务端清理残留活跃行 | `5e8b8493ef` | `main` |
 | 31 | 2026-11-17 | 统一 Web 端字号与尺寸刻度，清理 shadcn 规范违规 | `2a8bf36` | `main` |
 | 30 | 2026-11-17 | 归档页改用归档域版本刷新，避免同步期间反复重拉 | `38c6e24`, `b028777` | `main` |
