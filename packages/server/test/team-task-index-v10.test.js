@@ -192,6 +192,65 @@ test('快照 Worker 不读取 Git/workspace 也能索引任务', async () => {
   }
 })
 
+test('控制面改派即使内容 revision 未变也会刷新查询索引', async () => {
+  const ctx = setup({ autoIndex: false, withTaskControl: true })
+  try {
+    const now = new Date().toISOString()
+    ctx.db
+      .prepare(`
+        INSERT INTO user_account(
+          id, username_key, username, display_name, password_hash, password_params_json,
+          system_admin, status, must_change_password, password_changed_at, created_at, updated_at
+        ) VALUES ('user-2', 'user-2', 'user-2', '用户二', 'x', '{}', 0, 'active', 0, ?, ?, ?)
+      `)
+      .run(now, now, now)
+    ctx.db
+      .prepare(`
+        INSERT INTO team_member(team_id, user_id, role, created_at, updated_at)
+        VALUES ('team-1', 'user-2', 'member', ?, ?)
+      `)
+      .run(now, now)
+    ctx.snapshots.applyChanges(ctx.agent, ctx.taskSpaceId, {
+      batchId: 'batch-control-refresh',
+      clientSequence: 1,
+      files: files('control-refresh'),
+    })
+    await ctx.index.materializeNow(ctx.taskSpaceId)
+    const revision = ctx.db
+      .prepare('SELECT revision FROM sync_task_space WHERE id = ?')
+      .get(ctx.taskSpaceId).revision
+    const executionTaskKey = `${ctx.taskSpaceId}::control-refresh`
+
+    ctx.db
+      .prepare(`
+        UPDATE sync_task
+        SET assignee_user_id = 'user-2', assignee_dev_id = 'bob',
+            task_version = task_version + 1, updated_at = ?
+        WHERE execution_task_key = ?
+      `)
+      .run(new Date().toISOString(), executionTaskKey)
+    await ctx.index.materializeNow(ctx.taskSpaceId)
+
+    const task = ctx.db
+      .prepare(`
+        SELECT assignee_user_id, assignee_dev_id
+        FROM sync_task_index
+        WHERE task_space_id = ? AND execution_task_key = ?
+      `)
+      .get(ctx.taskSpaceId, executionTaskKey)
+    assert.equal(
+      ctx.db.prepare('SELECT revision FROM sync_task_space WHERE id = ?').get(ctx.taskSpaceId)
+        .revision,
+      revision,
+    )
+    assert.equal(task.assignee_user_id, 'user-2')
+    assert.equal(task.assignee_dev_id, 'bob')
+  } finally {
+    await ctx.index.close()
+    ctx.db.close()
+  }
+})
+
 test('warm revision 只扫描变化任务并复用未变化任务', async () => {
   const ctx = setup()
   try {

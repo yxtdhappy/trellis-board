@@ -644,6 +644,7 @@ export function createTaskCommandService({
       }
       const task = taskControl.completeCommand(agent, row.task_space_id, {
         ...result,
+        commandType: row.command_type,
         taskId: expectedTaskId,
         executionTaskKey: expectedExecutionTaskKey,
       })
@@ -654,6 +655,14 @@ export function createTaskCommandService({
       }
       return task
     })
+    if (controlledTask) {
+      onTaskControlChanged?.({
+        taskSpaceId: row.task_space_id,
+        executionTaskKey: controlledTask.executionTaskKey,
+        reason: `${row.command_type}_completed`,
+      })
+      events?.notifyTaskControlChanged?.(row.task_space_id)
+    }
     return {
       operation: operationPublic(
         db.prepare('SELECT * FROM sync_task_command WHERE id = ?').get(row.id),

@@ -435,8 +435,16 @@ impl AgentRuntime {
                 }
                 Ok(())
             }
+            "control.changed" => {
+                if let Some(task_space_id) = data.get("taskSpaceId").and_then(Value::as_str) {
+                    self.task_sync
+                        .pull_and_report_for_event(task_space_id, None)
+                        .await;
+                }
+                Ok(())
+            }
             "command" => {
-                let raw = data.get("command").cloned().unwrap_or(Value::Null);
+                let raw = command_from_frame(&data);
                 match protocol::validate_command(&raw) {
                     Ok(command) => {
                         let runtime = self.clone();
@@ -581,6 +589,14 @@ impl AgentRuntime {
             let _ = store.write_state(payload).await;
         });
     }
+}
+
+fn command_from_frame(data: &Value) -> Value {
+    data.get("payload")
+        .and_then(|payload| payload.get("command"))
+        .or_else(|| data.get("command"))
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 fn heartbeat_payload(config: &AgentConfig, listening_task_space_ids: &[String]) -> Value {
@@ -838,5 +854,24 @@ mod tests {
             payload: json!({ "taskSpaceId": "space-a" }),
         };
         assert!(!command_target_active(&[binding], &command));
+    }
+
+    #[test]
+    fn command_frame_supports_nested_and_legacy_shapes() {
+        let command = json!({
+            "id": "command-1",
+            "bindingId": "binding-space-a",
+            "type": "assign_task",
+            "payload": {
+                "taskSpaceId": "space-a",
+                "assigneeUserId": "user-a",
+                "executionTaskKey": "space-a::task-a"
+            }
+        });
+        assert_eq!(
+            command_from_frame(&json!({ "payload": { "command": command.clone() } })),
+            command
+        );
+        assert_eq!(command_from_frame(&json!({ "command": command.clone() })), command);
     }
 }

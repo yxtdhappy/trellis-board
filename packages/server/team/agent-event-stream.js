@@ -46,6 +46,8 @@ export function createAgentEventStream({ db, commands, logger = console }) {
             teamId: null,
             type: 'command',
             payload: { command },
+            // 兼容只读取顶层 command 的旧客户端；新客户端优先读取 payload.command。
+            command,
           },
           command.id,
         )
@@ -80,6 +82,27 @@ export function createAgentEventStream({ db, commands, logger = console }) {
           type: 'task.changed',
           taskSpaceId,
           revision,
+        })
+      }
+    }
+  }
+
+  function notifyTaskControlChanged(taskSpaceId) {
+    if (closed) return
+    const bindings = db
+      .prepare(`
+      SELECT agent_id
+      FROM sync_agent_binding
+      WHERE task_space_id = ? AND sync_status = 'approved'
+    `)
+      .all(taskSpaceId)
+    for (const binding of bindings) {
+      const set = streams.get(binding.agent_id)
+      if (!set) continue
+      for (const stream of set) {
+        frame(stream.response, 'control.changed', {
+          type: 'control.changed',
+          taskSpaceId,
         })
       }
     }
@@ -153,6 +176,7 @@ export function createAgentEventStream({ db, commands, logger = console }) {
     open,
     notifyCommandAvailable,
     notifyTaskSpaceChanged,
+    notifyTaskControlChanged,
     publishAgentRevoked,
     close,
   }

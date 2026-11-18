@@ -80,6 +80,8 @@ function setup() {
     WHERE task_space_id = ?
   `).run(now, now, first.taskSpace.id)
   const events = []
+  const taskControlChanges = []
+  const controlEvents = []
   const agents = createSyncAgentService({
     db,
     config: { agentStaleMs: 60_000 },
@@ -95,6 +97,12 @@ function setup() {
       notifyCommandAvailable(agentId) {
         events.push(agentId)
       },
+      notifyTaskControlChanged(taskSpaceId) {
+        controlEvents.push(taskSpaceId)
+      },
+    },
+    onTaskControlChanged({ taskSpaceId }) {
+      taskControlChanges.push(taskSpaceId)
     },
   })
   return {
@@ -103,6 +111,8 @@ function setup() {
     commands,
     taskControl,
     events,
+    controlEvents,
+    taskControlChanges,
     actor: taskSpaces.actorContext('user-a'),
     taskSpaceId: second.taskSpace.id,
     targetAgentId: 'agent-b',
@@ -384,7 +394,7 @@ test('未进入 running 的命令不能提交执行结果', () => {
 })
 
 test('成功结果必须等待索引命中；失败后可重试并重新绑定当前有效 Agent', () => {
-  const { db, taskSpaces, commands, actor, taskSpaceId } = setup()
+  const { db, taskSpaces, commands, actor, taskSpaceId, controlEvents, taskControlChanges } = setup()
   try {
     const queued = commands.enqueue(actor, createInput(taskSpaceId))
     const payload = queued.operation.payload
@@ -437,12 +447,20 @@ test('成功结果必须等待索引命中；失败后可重试并重新绑定�
       },
     })
     assert.equal(completed.operation.status, 'succeeded')
+    assert.deepEqual(controlEvents, [taskSpaceId])
+    assert.equal(taskControlChanges.at(-1), taskSpaceId)
     assert.equal(completed.task.materializationState, 'materialized')
     assert.equal(
       db
         .prepare('SELECT materialization_state FROM sync_task WHERE execution_task_key = ?')
         .get(payload.executionTaskKey).materialization_state,
       'materialized',
+    )
+    assert.notEqual(
+      db
+        .prepare('SELECT handoff_state FROM sync_task WHERE execution_task_key = ?')
+        .get(payload.executionTaskKey).handoff_state,
+      'source_cleanup_pending',
     )
 
     const failed = commands.enqueue(

@@ -455,3 +455,57 @@ git diff --check
   `cargo clippy` 与完整桌面构建仍未执行。
 - 真实双客户端 E2E、Windows 隐藏/最小化系统通知和桌面安装包验收仍未执行。因此本任务继续保持
   `in_progress`，不能进入提交/归档阶段，也不能宣称整体完成。
+
+### 真实 E2E 修复闭环（2026-11-18）
+
+状态：由当前单客户端环境完成的控制面创建链路已通过。第二账号 handoff、Windows 隐藏态通知和
+真实 Git 归档清理仍是未覆盖边界。
+
+真实 E2E 发现并修复：
+
+- Agent SSE command 的标准命令位于 `payload.command`，旧 Rust 客户端只读取顶层字段，导致命令停在
+  `delivered`。客户端优先读取嵌套字段并兼容旧顶层字段；兼容期服务端同时发送两种形状。
+- 内容 revision 未变化时，负责人等控制字段变化不会触发任务索引重投影。现以权威任务指纹参与
+  no-op、增量缓存和持久投影判断。
+- 内容上传阶段仅按“创建者 ≠ 负责人”提前写 `source_cleanup_pending`，导致跨用户
+  `create_task` 被误判为来源副本交接。现在只有 `assign_task` 在命令结果和索引校验完成后进入
+  来源清理，`create_task` 成功保持 `handoff_state=none`。
+- 命令完成后新增向后兼容的 `control.changed` SSE 失效事件，创建者无需等待无关任务变化即可拉取
+  最新控制状态；旧客户端忽略未知事件。
+
+真实创建链路：
+
+```text
+taskId: e2e-create-control-fixed-20261118
+commandId: 1adfbfcd-e97e-4ed6-9dd7-f0b25ea4df3b
+revision: 541
+```
+
+- `/start`、`/claim`、`/changes`、`/result` 均返回 200。
+- 命令最终 `succeeded`，任务 `materialized_revision=541`，Board 索引负责人为 `yhj`。
+- 数据库 `materialization_state=materialized`、`handoff_state=none`。
+- Board 显示“任务已落地”，操作显示“任务文件已同步并由服务端索引成功”。
+
+清理：
+
+- 探针正文先移动到 `%TEMP%` 可恢复备份。
+- watcher 在 revision 542 写入 4 条删除墓碑，Board 与索引移除探针。
+- 清理前生成 79,753,216 字节独立数据库备份。
+- 单事务精确删除 3 个探针任务、6 个租约、4 条命令、12 个文件墓碑、34 条文件审计和 10 个批次；
+  清理后全部计数为 0。
+
+最终验证：
+
+```text
+yarn test
+643 tests / 642 passed / 1 skipped / 0 failed
+
+yarn build
+yarn build:desktop
+git diff --check
+```
+
+- Web 构建与桌面 UI 构建通过；仅有既有大 chunk 和 `theme-init.js` 非 module 提示。
+- 当前 Windows 环境仍无 Rust 工具链；Rust 单测和桌面客户端打包由 GitHub `windows.yml` 真实执行。
+- 双账号 handoff、隐藏/最小化系统通知和真实 Git 归档清理仍不能在本机单客户端环境完成，不能标记为
+  已通过。

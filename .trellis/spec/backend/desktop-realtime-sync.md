@@ -148,7 +148,8 @@ createAgentEventStream({ db, commands, logger })
 createArchiveGitSyncService({ db, config, dataDir, taskSpaceIndex, snapshots, logger })
 ```
 
-Agent SSE 事件为 `command.available`、`agent.revoked`、`task.changed`、`cursor.invalidated`。
+Agent SSE 事件为 `command`、`control.changed`、`agent.revoked`、`task.changed`、
+`cursor.invalidated`。
 Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快照，不通过 SSE 传输任务正文。
 
 - `task.changed.revision` 必须是非负安全整数。服务端按 taskSpace 在内存中保存最后已广播 revision，
@@ -850,6 +851,91 @@ serverUrl=http://192.168.65.27:4317
 
 任务级分支归属、ownership API、冲突幂等和历史清理约束见
 [任务级分支归属与冲突幂等](./task-ownership-and-conflict-idempotency.md)。
+
+## 场景：Agent 命令完成与控制面失效事件
+
+### 1. Scope / Trigger
+
+- Trigger：修改 Agent command SSE、`taskControl.completeCommand()`、控制面负责人投影或
+  `create_task` / `assign_task` 生命周期时。
+
+### 2. Signatures
+
+```text
+SSE command       : { type: "command", payload: { command }, command, teamId: null }
+SSE control.changed: { type: "control.changed", taskSpaceId }
+taskControl.completeCommand(agent, taskSpaceId, {
+  commandType, taskId, executionTaskKey, revision
+})
+```
+
+### 3. Contracts
+
+- `command` 的标准命令对象位于 `payload.command`。兼容期服务端同时提供顶层
+  `command`；客户端必须先读 `payload.command`，缺失时才回退顶层字段。
+- 旧客户端收到未知 `control.changed` 必须安全忽略；新客户端收到后对指定 taskSpace
+  触发一次控制状态拉取，事件本身不携带任务正文。
+- 内容上传只推进 materialization，不能提前写 `source_cleanup_pending`。命令结果和索引
+  校验完成后，`create_task` 成功固定收敛为 `handoff_state=none`；只有跨用户的
+  `assign_task` 才可进入 `source_cleanup_pending`。
+- 命令完成事务提交后，服务端推进查询 revision、发布 Board `tasks.changed`，并向该
+  taskSpace 的 approved bindings 广播 `control.changed`。事件丢失时仍由下一次普通同步修复。
+- `sync_task_index` 的 no-op 指纹必须包含权威任务的负责人、设备、路径、标题、优先级、
+  归档、materialization 和 taskVersion；内容 revision 未变化不能跳过控制面负责人刷新。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 标准 SSE `command` | 从 `payload.command` 解析并执行 |
+| 只有旧顶层 `command` | 兼容解析并执行 |
+| 已知事件缺少必要字段 | 忽略该事件，不阻断后续 SSE |
+| 未知事件 `control.changed` 被旧客户端收到 | 客户端默认忽略，不重连 |
+| `create_task` 创建者与负责人不同 | 命令成功后 `handoff_state=none` |
+| `assign_task` 创建者与负责人不同 | 命令成功并等待索引后 `source_cleanup_pending` |
+| 上传完成但命令结果尚未确认 | 不提前进入来源清理 |
+| 内容 revision 未变但负责人变化 | 权威任务指纹变化，索引必须重投影 |
+
+### 5. Good/Base/Bad Cases
+
+- Good：管理员创建任务给另一在线成员，目标客户端从 `payload.command` 执行；上传 revision
+  更新、索引命中后命令成功，任务负责人立即出现在 Board，handoff 保持 `none`。
+- Base：旧服务端仍发送顶层 `command`，新客户端兼容执行。
+- Bad：客户端只读顶层字段，命令长期停在 `delivered`，目标客户端不调用 `/start`。
+- Bad：内容上传阶段仅按“创建者 ≠ 负责人”写 `source_cleanup_pending`，普通创建任务被误判为
+  handoff，Board 永久显示“等待来源副本清理”。
+
+### 6. Tests Required
+
+- `agent-event-stream.test.js`：command 同时含 `payload.command` 与顶层 `command`；
+  `control.changed` 广播到指定 taskSpace 的所有绑定 Agent。
+- `team-task-control.test.js`：真实 claim + 上传后，`create_task` 完成不清理，
+  `assign_task` 完成才清理。
+- `team-task-commands.test.js`：命令完成推进控制事件、Board revision，并写入 materialization。
+- `team-task-index-v10.test.js`：内容 revision 不变但负责人变化时索引仍刷新。
+- `runtime.rs`：标准嵌套 command、旧顶层 command 均可解析；真实创建 E2E 必须验证
+  `/start`、`/claim`、`/changes`、`/result`、索引和 `handoff_state=none`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+const raw = data.command
+const handoffState = creatorId !== assigneeId ? 'source_cleanup_pending' : 'none'
+```
+
+#### Correct
+
+```js
+const raw = data.payload?.command ?? data.command
+const handoffState =
+  commandType === 'create_task'
+    ? 'none'
+    : commandType === 'assign_task' && creatorId !== assigneeId
+      ? 'source_cleanup_pending'
+      : currentHandoffState
+```
 
 ## 场景：Pending 原样重放与已应用 revision
 

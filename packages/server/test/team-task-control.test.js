@@ -108,9 +108,13 @@ function setup() {
 }
 
 function taskFiles(taskId, title, assignee = 'alice') {
+  return taskFilesAt(`.trellis/tasks/11-17-${taskId}`, taskId, title, assignee)
+}
+
+function taskFilesAt(taskDir, taskId, title, assignee = 'alice') {
   return [
     {
-      path: `.trellis/tasks/11-17-${taskId}/task.json`,
+      path: `${taskDir}/task.json`,
       content: JSON.stringify({
         id: taskId,
         title,
@@ -122,7 +126,7 @@ function taskFiles(taskId, title, assignee = 'alice') {
       }),
     },
     {
-      path: `.trellis/tasks/11-17-${taskId}/prd.md`,
+      path: `${taskDir}/prd.md`,
       content: `# ${title}\n`,
     },
   ].map((file) => ({ ...file, sha256: snapshotSha256(file.content) }))
@@ -649,6 +653,86 @@ test('handoff 控制面暴露他人租约并拒绝清理 ACK', () => {
       totalBytes: 256,
     })
     assert.equal(conflict.handoffState, 'source_cleanup_conflict')
+  } finally {
+    db.close()
+  }
+})
+
+test('create_task 完成不触发来源清理，assign_task 完成后才触发', () => {
+  const { db, taskControl, snapshots, agentA, agentB, taskSpaceId } = setup()
+  try {
+    const created = taskControl.createPendingTask('user-a', {
+      taskSpaceId,
+      assigneeUserId: 'user-b',
+      title: '直接创建给执行人',
+      slug: 'create-for-executor',
+      idempotencyKey: 'create-for-executor',
+    })
+    const createdClaim = taskControl.claim(agentB, taskSpaceId, created.executionTaskKey)
+    const createdUpload = snapshots.applyChanges(agentB, taskSpaceId, {
+      batchId: 'batch-create-for-executor',
+      clientSequence: 1,
+      taskVersion: createdClaim.task.taskVersion,
+      leaseToken: createdClaim.lease.token,
+      files: taskFilesAt(created.relativeDir, created.taskId, '直接创建给执行人', 'bob'),
+    })
+    assert.notEqual(
+      db
+        .prepare('SELECT handoff_state FROM sync_task WHERE execution_task_key = ?')
+        .get(created.executionTaskKey).handoff_state,
+      'source_cleanup_pending',
+    )
+    const createCompleted = taskControl.completeCommand(agentB, taskSpaceId, {
+      commandType: 'create_task',
+      taskId: created.taskId,
+      revision: createdUpload.revision,
+    })
+    assert.equal(createCompleted.handoffState, 'none')
+
+    const source = taskControl.createPendingTask('user-a', {
+      taskSpaceId,
+      assigneeUserId: 'user-a',
+      title: '创建后改派',
+      slug: 'assign-after-create',
+      idempotencyKey: 'assign-after-create',
+    })
+    const sourceClaim = taskControl.claim(agentA, taskSpaceId, source.executionTaskKey)
+    const sourceUpload = snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-assign-after-create-source',
+      clientSequence: 1,
+      taskVersion: sourceClaim.task.taskVersion,
+      leaseToken: sourceClaim.lease.token,
+      files: taskFilesAt(source.relativeDir, source.taskId, '创建后改派'),
+    })
+    taskControl.completeCommand(agentA, taskSpaceId, {
+      commandType: 'create_task',
+      taskId: source.taskId,
+      revision: sourceUpload.revision,
+    })
+    taskControl.assignPendingTask({
+      executionTaskKey: source.executionTaskKey,
+      assigneeUserId: 'user-b',
+    })
+    const assignedClaim = taskControl.claim(agentB, taskSpaceId, source.executionTaskKey)
+    const assignedUpload = snapshots.applyChanges(agentB, taskSpaceId, {
+      batchId: 'batch-assign-after-create-target',
+      clientSequence: 2,
+      taskVersion: assignedClaim.task.taskVersion,
+      leaseToken: assignedClaim.lease.token,
+      files: taskFilesAt(source.relativeDir, source.taskId, '创建后改派', 'bob'),
+    })
+    assert.notEqual(
+      db
+        .prepare('SELECT handoff_state FROM sync_task WHERE execution_task_key = ?')
+        .get(source.executionTaskKey).handoff_state,
+      'source_cleanup_pending',
+    )
+    const assignCompleted = taskControl.completeCommand(agentB, taskSpaceId, {
+      commandType: 'assign_task',
+      taskId: source.taskId,
+      revision: assignedUpload.revision,
+    })
+    assert.equal(assignCompleted.handoffState, 'source_cleanup_pending')
   } finally {
     db.close()
   }

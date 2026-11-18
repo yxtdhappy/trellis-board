@@ -83,3 +83,67 @@ test('Agent task.changed 按 taskSpace 只广播递增 revision', () => {
   assert.deepEqual(taskChangedPayloads(responses.get('agent-2')), expected)
   events.close()
 })
+
+test('Agent command 同时提供标准嵌套载荷和旧客户端兼容字段', () => {
+  const command = {
+    id: 'command-1',
+    bindingId: 'binding-1',
+    type: 'assign_task',
+    payload: {
+      taskSpaceId: 'space-a',
+      assigneeUserId: 'user-a',
+      executionTaskKey: 'space-a::task-a',
+    },
+  }
+  const delivered = []
+  const db = {
+    prepare(sql) {
+      if (sql.includes('SELECT 1 FROM sync_active_agent')) {
+        return { get: () => ({ found: 1 }) }
+      }
+      throw new Error(`unexpected SQL: ${sql}`)
+    },
+  }
+  const events = createAgentEventStream({
+    db,
+    commands: {
+      staleLeases() {},
+      available() {
+        return [command]
+      },
+      markDelivered(agentId, commandId) {
+        delivered.push([agentId, commandId])
+      },
+    },
+  })
+  const response = createResponse()
+  events.open({
+    agent: { id: 'agent-1', userId: 'user-agent-1' },
+    response,
+  })
+
+  const payload = response.lines
+    .filter((line) => line.startsWith('data: '))
+    .map((line) => JSON.parse(line.slice(6)))
+    .find((item) => item.type === 'command')
+  assert.deepEqual(payload.payload.command, command)
+  assert.deepEqual(payload.command, command)
+  assert.deepEqual(delivered, [['agent-1', 'command-1']])
+  events.close()
+})
+
+test('命令完成后向 taskSpace 绑定 Agents 广播控制面失效事件', () => {
+  const { events, responses } = createFixture(['agent-1', 'agent-2'])
+
+  events.notifyTaskControlChanged('space-a')
+
+  const expected = [{ type: 'control.changed', taskSpaceId: 'space-a' }]
+  for (const response of responses.values()) {
+    const payloads = response.lines
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => JSON.parse(line.slice(6)))
+      .filter((payload) => payload.type === 'control.changed')
+    assert.deepEqual(payloads, expected)
+  }
+  events.close()
+})

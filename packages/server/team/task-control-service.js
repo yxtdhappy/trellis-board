@@ -643,12 +643,9 @@ export function createTaskControlService({
       ? Number(existing.task_version) + (contentChanged || metadataChanged ? 1 : 0)
       : 1
     const isTargetWriter = assignee.userId === agent.userId
-    const handoffState =
-      existing?.created_by_user_id && existing.created_by_user_id !== assignee.userId
-        ? isTargetWriter
-          ? 'source_cleanup_pending'
-          : 'handoff_pending'
-        : 'none'
+    // 内容上传只推进 materialization；来源清理必须等命令结果和索引校验完成后由
+    // completeCommand() 按命令类型收敛，避免 create_task 在命令确认前误触发清理。
+    const handoffState = existing?.handoff_state || 'none'
     if (!existing) {
       db.prepare(`
         INSERT INTO sync_task(
@@ -770,11 +767,14 @@ export function createTaskControlService({
     }
     const timestamp = now().toISOString()
     const handoffState =
-      row.created_by_user_id &&
-      row.created_by_user_id !== row.assignee_user_id &&
-      row.assignee_user_id === agent.userId
-        ? 'source_cleanup_pending'
-        : row.handoff_state
+      input.commandType === 'create_task'
+        ? 'none'
+        : input.commandType === 'assign_task' &&
+            row.created_by_user_id &&
+            row.created_by_user_id !== row.assignee_user_id &&
+            row.assignee_user_id === agent.userId
+          ? 'source_cleanup_pending'
+          : row.handoff_state
     db.prepare(`
       UPDATE sync_task
       SET materialization_state = 'materialized',

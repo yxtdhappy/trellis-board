@@ -36,6 +36,7 @@ function serializeProjectionState({
   dirFingerprints,
   projectError,
   manualStageFingerprint,
+  taskControlFingerprint,
   detailTasks,
   archiveSnapshotId,
   stats,
@@ -49,6 +50,7 @@ function serializeProjectionState({
         dirFingerprints: [...dirFingerprints.entries()],
         projectError: projectError || null,
         manualStageFingerprint,
+        taskControlFingerprint,
         detailTasks,
         archiveSnapshotId,
         stats,
@@ -93,6 +95,8 @@ function parseProjectionState(value) {
       dirFingerprints,
       projectError: state.projectError || null,
       manualStageFingerprint: state.manualStageFingerprint,
+      taskControlFingerprint:
+        typeof state.taskControlFingerprint === 'string' ? state.taskControlFingerprint : null,
       detailTasks: state.detailTasks,
       archiveSnapshotId: state.archiveSnapshotId,
       stats: state.stats && typeof state.stats === 'object' ? state.stats : null,
@@ -145,6 +149,26 @@ function manualStageFingerprint(taskSpaceId, records) {
   return hashValue(
     Object.entries(records)
       .filter(([key]) => key.startsWith(`${taskSpaceId}/`))
+      .sort(([left], [right]) => left.localeCompare(right, 'en')),
+  )
+}
+
+function taskControlFingerprint(authority) {
+  return hashValue(
+    [...authority.values()]
+      .map((task) => [
+        task.execution_task_key,
+        task.task_key,
+        task.relative_dir,
+        task.title,
+        task.priority,
+        task.assignee_user_id,
+        task.assignee_dev_id,
+        task.archived,
+        task.archived_at,
+        task.materialization_state,
+        task.task_version,
+      ])
       .sort(([left], [right]) => left.localeCompare(right, 'en')),
   )
 }
@@ -1192,6 +1216,8 @@ export function createTaskSpaceIndex({
     }
     const currentManualRecords = getManualRecords(db)
     const currentManualFingerprint = manualStageFingerprint(taskSpace.id, currentManualRecords)
+    const authority = taskControl?.authoritativeTasks(taskSpace.id) || new Map()
+    const currentTaskControlFingerprint = taskControlFingerprint(authority)
     const canIncremental = canUseProjectionState(state, taskSpace)
     const stats = {
       mode: canIncremental ? 'incremental' : 'full',
@@ -1217,7 +1243,8 @@ export function createTaskSpaceIndex({
       targetArchiveRevision === Number(state.archiveRevision) &&
       targetArchiveSnapshotId === state.archiveSnapshotId &&
       !taskSpace.archive_candidate_snapshot_id &&
-      currentManualFingerprint === state.manualStageFingerprint
+      currentManualFingerprint === state.manualStageFingerprint &&
+      currentTaskControlFingerprint === state.taskControlFingerprint
     ) {
       const lastStats = state.stats || stats
       return {
@@ -1374,6 +1401,7 @@ export function createTaskSpaceIndex({
       revision: targetRevision,
       archiveRevision: targetArchiveRevision,
       manualStageFingerprint: materializedBoard.manualStageFingerprint,
+      taskControlFingerprint: currentTaskControlFingerprint,
       tasks: [...nextRawTasks.entries()]
         .sort(([left], [right]) => left.localeCompare(right, 'en'))
         .map(([taskDir, task]) => [taskDir, task.taskVersion || null]),
@@ -1384,6 +1412,7 @@ export function createTaskSpaceIndex({
       dirFingerprints: changeState.currentFingerprints,
       projectError,
       manualStageFingerprint: materializedBoard.manualStageFingerprint,
+      taskControlFingerprint: currentTaskControlFingerprint,
       detailTasks: materializedBoard.detailTasks,
       archiveSnapshotId: targetArchiveSnapshotId,
       stats,
@@ -1439,6 +1468,7 @@ export function createTaskSpaceIndex({
       project,
       projectError,
       manualStageFingerprint: materializedBoard.manualStageFingerprint,
+      taskControlFingerprint: currentTaskControlFingerprint,
       stats: { ...stats },
     }
     materialized.set(taskSpaceId, nextState)
@@ -1588,6 +1618,9 @@ export function createTaskSpaceIndex({
       const taskSpace = taskSpaceRow(taskSpaceId)
       if (!taskSpace) return null
       const currentManualFingerprint = manualStageFingerprint(taskSpaceId, getManualRecords(db))
+      const currentTaskControlFingerprint = taskControlFingerprint(
+        taskControl?.authoritativeTasks(taskSpaceId) || new Map(),
+      )
       const targetArchiveSnapshotId = archiveSnapshotIdForTaskSpace(taskSpace)
       const cached = materialized.get(taskSpaceId)
       if (
@@ -1595,7 +1628,8 @@ export function createTaskSpaceIndex({
         cached?.revision === Number(taskSpace.revision) &&
         cached?.archiveRevision === Number(taskSpace.archive_revision) &&
         cached?.archiveSnapshotId === targetArchiveSnapshotId &&
-        cached.manualStageFingerprint === currentManualFingerprint
+        cached.manualStageFingerprint === currentManualFingerprint &&
+        cached.taskControlFingerprint === currentTaskControlFingerprint
       ) {
         return cached
       }
@@ -1606,7 +1640,8 @@ export function createTaskSpaceIndex({
         next?.revision === Number(taskSpace.revision) &&
         next?.archiveRevision === Number(taskSpace.archive_revision) &&
         next?.archiveSnapshotId === targetArchiveSnapshotId &&
-        next.manualStageFingerprint === currentManualFingerprint
+        next.manualStageFingerprint === currentManualFingerprint &&
+        next.taskControlFingerprint === currentTaskControlFingerprint
       ) {
         return next
       }
