@@ -1,0 +1,145 @@
+# Implement — Web 组件复用审计与 shadcn 最佳实践沉淀
+
+前置：PRD「待评审确认」3 条答复后 `task.py start web-component-reuse-audit`。10 批各自独立闸门 + 独立提交（R16），每批完成后汇报范围与验证结果。
+
+**每批固定闸门**（下称〈闸门〉）：
+
+```
+cd packages/web && npx tsc -b && npx oxlint src && yarn oxfmt src
+```
+
+外加该批的 `rg` 断言与浏览器抽查；控制台 0 error。
+
+## 批 0 基线（无代码改动）
+
+1. `git stash list` 确认 `stash@{0}` = `wip(prefs-tabs)`；`git stash show -p stash@{0}` 留作批 2 的 `ExecutionHeader` 参考实现。
+2. 记录浏览器基线截图：偏好设置、看板（概览/团队/归档）、admin（Teams/Users/Projects/Audit/Plugins/Devices/ArchiveSync）、desktop 同步对话框、登录页。存项目内临时目录，批末删除。
+3. 确认审计清单文件数与工作区一致：`git ls-files 'packages/web/src/**/*.tsx' | grep -v components/ui | wc -l` = 62。
+
+## 批 1 组件层补齐（不动业务）
+
+1. `cd packages/web && npx shadcn@latest add toggle toggle-group field input-group empty alert combobox`。
+2. 修生成文件的 import：`@/registry/base-mira/ui/*` → `@/components/ui/*`（`toggle-group.tsx` 引 `toggleVariants`，`combobox.tsx` 引 `input-group`）。`toggleVariants` 档位保持原样。
+3. `components/ui/badge.tsx`：`badgeVariants.variant` 加 `success: 'bg-success-soft text-success'`、`warning: 'bg-warning-soft text-warning'`；新增 `size` 维度 `{ default: '', xs: 'h-auto px-1.5 py-px' }`（现有 `h-5 px-2 text-2xs` 留在 default）。**不加** `danger`/`neutral`/`info`。
+4. 新建 `components/ui/panel.tsx`：从 `features/admin/shared.tsx:25-42` 平移 props（`title/kicker/description/action/children/className`），容器保留 `rounded-xl border border-border bg-card`，内部用 `Card className="rounded-xl ring-0"` + `CardHeader/CardTitle/CardDescription/CardAction/CardContent`；`kicker` 保留 `tracking-[0.14em]`。
+5. 新建 `components/ui/empty-row.tsx`（`Empty` + `EmptyTitle` 单行紧凑变体，视觉照抄 `shared.tsx:59`）、`components/ui/status-pill.tsx`（`tone → Badge variant` 映射表见 design §5）、`components/ui/code-block.tsx`、`components/ui/eyebrow.tsx`。
+6. `ui/combobox.tsx` 由 `shadcn add combobox` 生成（295 行，16 导出），不是自建：确认 import 已指向 `@/components/ui/*`；多选场景用 `ComboboxChips`/`ComboboxChip`/`ComboboxChipsInput`。
+7. 〈闸门〉；断言 `npx shadcn@latest view` 装出的 7 个文件均能被 `import { … } from '@/components/ui/x'` 解析（`tsc` 覆盖）。本批不产生业务 diff：`git diff --stat packages/web/src/features` 为空。
+
+提交：`feat(web): 补齐 ui 原子层并新增 panel/status-pill/combobox`
+
+## 批 2 分段与单选控件（8 处）
+
+1. `features/board/ExecutionHeader.tsx:58-80` → `Tabs/TabsList/TabsTrigger` + `aria-label="任务范围"`（取 `stash@{0}` 已验证版本）。
+2. `features/settings/PreferencesDialog.tsx:129-141` → 受控 `ToggleGroup value={[fontSize]}`，容器 `flex h-8 items-stretch rounded-lg bg-muted p-0.75`，item `h-full flex-1 rounded-md text-xs` + `aria-pressed:bg-primary aria-pressed:font-semibold aria-pressed:text-primary-foreground`；`onValueChange` 忽略空数组（单选不可取消）。紫色被 `toggleVariants` 的 `aria-pressed:bg-muted` 压住 → 在 `ui/toggle.tsx` 加 `variant="primary"`。
+3. `PreferencesDialog.tsx:94-121` 主题三选一 → `ToggleGroup`，item 内保留 `<ThemePreview>` 装饰块。
+4. `components/layout/TopBar.tsx:143-159` → `TabsList variant="line"`；保留现有滚动到可视区 `useEffect`（`:76-87`）。
+5. `pages/admin/AdminPage.tsx:192-210` → `Tabs`（`aria-current` 与 `bg-primary` 选中态删除）。
+6. `desktop/LiveSyncControlDialog.tsx:260-277` → `Tabs`，`value` 用文件 id/路径。
+7. `features/board/dialogs/SavedViewsDialog.tsx:110-118,128-136` → `<ToggleGroup multiple>`，删手写 `toggle()` 数组逻辑。
+8. `ExecutionHeader.tsx:83-105`（保存组合视图，含删除键）→ `Badge render={<button type="button" aria-pressed/>}` + 内层 `span role="button" onClick stopPropagation`（design §3.4）；**不用** ToggleGroup（R3）。
+9. 浏览器实测：字号组 32px 轨道 / 26px item / 紫色；看板组 `role=tab` + `aria-selected=true`；顶部导航与 admin 导航左右方向键可切换；保存视图"点名称切换、点 × 只删"。
+10. item 仍矮 2px → 试 `self-stretch`；无效则停下问用户（不自行退回 `Tabs`）。
+
+提交：`refactor(web): 分段与单选控件改用 tabs/toggle-group`
+
+## 批 3 下拉与输入（19 处）
+
+1. `features/board/SelectField.tsx`：props 保持（`SelectOption`），新增 `searchable?: boolean`；`searchable` 时内部走 `@/components/ui/combobox`；手写 `<span data-slot="select-value">`（`:30-38`）→ `SelectValue`。
+2. 删 `features/board/ExecutionHeader.tsx:190-210` 的 `FilterField`，调用点换 `SelectField`。
+3. `features/board/SearchableSelect.tsx` 只留数据适配，原语改从 `@/components/ui/combobox` 取；`rg -n "@base-ui/react" packages/web/src -g '!**/components/ui/**'` 无输出。
+4. 删 `features/admin/shared.tsx:6` 的 `controlClass`，11 处调用点：`<input>`→`<Input className="text-xs">`、`<textarea>`→`<Textarea className="text-xs">`、`<select>`→`SelectField`。涉及 `AccountDialog:66`、`ArchiveSyncTab`、`AuditTab:61,73,85`、`ProjectsTab:138,179,282,292,416`、`TeamSwitcher:33`、`TeamsTab:117,171-182,184-193`。
+5. 原生控件收编：`features/admin/PluginsTab.tsx:253-263,265-279`（原生 `<select>` + 两个 `<input>`）、`TeamsTab:117,171-193`、`TeamSwitcher:31-43`（全站最后一个原生 `<select>`）→ `SelectField`/`Input`。
+6. `features/admin/MultiSelectField.tsx:50-60` 触发器 → `ui/combobox` 多选形态；`:72` 写死的 `<DropdownMenuLabel>Agent 工具</DropdownMenuLabel>` 改 props。
+7. 〈闸门〉+ 断言 `rg -n "controlClass|<select|<option" packages/web/src -g '!**/components/ui/**'` 无输出。
+
+提交：`refactor(web): 下拉与输入收敛为 select-field/combobox`
+
+## 批 4 tone 与药片（≈45 处）
+
+1. `features/board/tone.ts`：`priorityTone/stageTone/laneTone` 返回 tone 键；新增 `laneDotTone(id)`；删拼接 class 的代码。
+2. `features/board/task-view.ts` 的 `controlToneClass` → `controlTone`（返回 tone 键）。
+3. `features/admin/shared.tsx`：`StatusPill`/`TONE_CLASS` 删除，调用点改 `import { StatusPill } from '@/components/ui/status-pill'`（33 处 / 10 文件）。
+4. 手写药片 → `Badge`/`StatusPill`：`TaskCard:100,113,150`、`TeamView:303,313`、`PluginsView:285-316`（5 个）、`TaskDetailDialog:446,467,486,570`、`BranchListenersDialog:110,113,124`、`PublishOperationDialog:63-71`、`PreferencesDialog:158`、`ProjectRail:813,889`、`AttentionQueue:30,68`、`ConditionChecks:137,162,206,219,242`、`TaskOperationList:11-27`、`FlowSignals:124-130`、`Kanban:37`。
+5. 删 `ConditionChecks:113-119`、`FlowSignals:124-130`、`TaskOperationList:11-27`、`TaskCard` 内的本地 tone 词表。
+6. 断言：`rg -n "bg-(success|warning|destructive|primary)-soft" packages/web/src -g '!**/components/ui/**'` 无输出；`rg -n "rounded-full (px|py)-" …` 仅剩登记例外（`StageTape`、`HandoffNotice`）。
+7. 四档 tone 各验一次配色与迁移前一致。
+
+提交：`refactor(web): 状态药片与 tone 配色收敛到 badge`
+
+## 批 5 空态与加载（空态 40+ / 骨架 10）
+
+1. 37 处 `EmptyRow` 只改 import 到 `@/components/ui/empty-row`；删 `features/admin/shared.tsx:57-63`。
+2. 散落空态 → `Empty`：`AttentionQueue:41`、`OwnershipInboxPanel:117,121`、`Kanban:74`（保留 `border-dashed` 外观）、`TaskDetailDialog:621,634,718,782`、`PluginsView:215,218,220`、`ProjectOnboardingDialog:600`、`TaskOwnershipDialog:259`、`AdminPage:180`、`AgentToolSelector:77-79`、`TaskOwnershipDialog:264`、`AssignmentsDialog:81`、`ProjectManagerDialog:123`、`BranchListenersDialog:93`、`TeamView:117,250`、`AssignmentsDialog:103` 同族空态。
+3. 加载占位 → `Skeleton`：`AgentQuickInitDialog:171`、`ProjectOnboardingDialog:629`、`TaskDetailDialog:430`、`TaskOwnershipDialog:257`、`AdminPage:167`、`ArchiveSyncTab:229,631`、`PluginLogsDialog:38`、`OwnershipInboxPanel:121`。
+4. `AgentToolSelector.tsx:63-64` 原生 checkbox → `Checkbox`（`id` + `label htmlFor`）；`:71` 药片 → `Badge`。
+5. 断言 `rg -n 'type="checkbox"' packages/web/src/features` 无输出；`ProjectRail:1037,1067` 的 `animate-pulse` **不动**。
+
+提交：`refactor(web): 空态与加载占位改用 empty/skeleton`
+
+## 批 6 提示与错误（30+）
+
+1. 错误条 → `<Alert variant="destructive">`：`LoginApp:346,443`、`LoginPage:180`、`BoardPage:320`、`AdminPage:172`、`LiveSyncControlDialog:788`、`PluginsView:206`、`OwnershipInboxPanel:106`、`ArchiveView:227`、`TaskOwnershipDialog:320`、`ProjectOnboardingDialog:586`、`PasswordDialog:100`、`AgentQuickInitDialog:207`、`PublishOperationDialog:77`、`CreateTaskDialog:291`（成功文案改走 `toast`）。
+2. 提示/说明 → `Alert`（`default` 或 `className` 覆盖 success/warning 配色）：`dialogs/` 6 份 callout（`AgentQuickInitDialog:200`、`AssigneeWarningDialog:68`、`PasswordDialog:96`、`AssignmentsDialog:103`、`BranchListenersDialog:75`、`PublishOperationDialog:79`）、`ProjectOnboardingDialog:625,629,633,707,737,783`（预检 5 状态按状态映射 variant）、`ProjectRail:718,726`（抽本地 `RailNotice`）、`TaskDetailDialog:463,731,789`、`HandoffNotice:257`。
+3. 断言 `rg -n 'role="alert"' packages/web/src -g '!**/components/ui/**'` 无输出。
+4. 浏览器验证：登录失败、看板无团队 403、插件启动失败三条错误路径外观一致且可读。
+
+提交：`refactor(web): 提示与错误条统一为 alert`
+
+## 批 7 卡片与表格（≈40）
+
+1. 23 处 `Panel` 改 import 到 `@/components/ui/panel`；删 `features/admin/shared.tsx:25-42`。
+2. board 8 处容器 → `Panel`（`ArchiveView:233`、`AttentionQueue:24`、`FlowSignals:53`、`Overview:19`、`TaskOperationList:55`、`TeamView:106,209`、`OwnershipInboxPanel:77`），语义标签 `<section>/<aside>` 保留（R11）。
+3. 其余手写卡片 → `Panel`/`Card`：`ProjectRail:1109`、`PluginsView:231-346`（`<article>` 保留）、`HandoffNotice:257-289`、`dialogs/` 行卡片（`AssignmentsDialog:88`、`ProjectManagerDialog:131`、`BranchListenersDialog:100`）、`DependencyItem:103`、`TaskDetailDialog:437`。
+4. 表格化：
+   - `ArchiveView.tsx:237-330`、`TeamView.tsx:238-329` → `Table`（design §8 写法，`className` 覆盖回 `sticky bg-muted px-3 py-2`，保留行 `onClick`/hover/`colSpan` 空态行）。
+   - `TaskDetailDialog.tsx:563-589`（`ul.divide-y` 四列）、`:741-779`（附件行）→ `Table`。
+   - `ConditionChecks.tsx:36-56` 响应式 `grid` 假表 → **不动**，spec 登记为允许例外。
+5. 断言 `rg -n "<(table|thead|tbody|tr|th|td)[ >]" packages/web/src -g '!**/components/ui/**'` 无输出；三张表逐列截图对比。
+
+提交：`refactor(web): 面板与表格改用 panel/table`
+
+## 批 8 表单行（≈25）
+
+1. admin `Field` 19 处（6 文件）→ `ui/field`：每个控件补 `id` + `FieldLabel htmlFor`，`hint` → `FieldDescription`；`Row` 留在 feature（spec 登记）。
+2. `TaskDetailDialog:532-559`（`Label` 无 `htmlFor`、`Input` 无 `id`）与 `:659` 补关联。
+3. `ProjectOnboardingDialog:655` ↔ `CreateTaskDialog:196` 用同一 `ui/field` 行组件。
+4. `TaskOwnershipDialog:222` 用 `Field orientation="horizontal"` + `Panel`。
+5. 浏览器逐处点 label（抽查 ≥10 处）确认聚焦。
+
+提交：`refactor(web): 表单行统一为 field 并补齐 label 关联`
+
+## 批 9 其余原子（≈30）
+
+1. `Avatar`（`ui/avatar`）：`ArchiveView:283`、`TaskCard:159`、`TeamView:121,293`（`TopBar` 已用）。
+2. `Progress`：`TeamView:126-133` 的 `style={{width}}` → `ui/progress`（`StageTape` 多段条不动）。
+3. `Separator`：`ProjectRail:900,926` 的 `border-l` → 容器内 `<Separator orientation="vertical">`。
+4. `ScrollArea`：`ProjectRail:597`。
+5. `Tooltip`：`ProjectRail:800,823,841,913,1004`、`TopBar:165,191`；禁用态触发器包 `<span tabIndex={0}>`，无法聚焦则保留 `title`（R13）。
+6. `Pagination`：`features/board/Pagination.tsx` 的 UI 部分 → `ui/pagination`，保留 `pageItems` 算法作为 `items` 生成器；消费点 `ArchiveView:336`、`TeamView:332`。
+7. `StatTile`：`Overview:17` + `FlowSignals:133` → `features/board/StatTile.tsx`（`Card size="sm"`）。
+8. `StatusDot`（`ProjectRail` 6 处：`:740,792,881,960,1115-1119`）抽本地组件；`SearchField`（`TopBar:117,174`）抽本地组件；`SummaryGrid`（`LiveSyncControlDialog:649,703,765` + `:679,726`、`ProjectOnboardingDialog:605`）抽 `dl` 组件。
+9. `Button` 收编：`ProjectRail:1003,1015`→`variant="ghost" size="xs"`、`:1028,1047,1058`→`size="icon-xs"`、`TopBar:129`→`variant="ghost" size="sm"`、`TaskCard:49,170`、`PluginsView:194`→`variant="outline" size="sm"`、`:266`→`variant="ghost" size="icon-xs"`、链接型按钮 `DevicesTab:123`/`AdminPage:112`→`Button render={<a href/>}`。
+10. 断言 `rg -n "<button[ >]" packages/web/src -g '!**/components/ui/**'` 仅剩登记例外（`TaskCard:84` 整卡热区、`AssigneeWarningDialog`、`ProjectRail` 图标脉冲）。
+
+提交：`refactor(web): 头像/进度/分页/提示等原子改用 ui 组件`
+
+## 批 10 业务去重 + 规范落盘
+
+1. `TeamCheckboxList`：`UsersTab:132-149` + `AccountDialog:103-116` → `features/admin/TeamCheckboxList.tsx`。
+2. `PluginBindingForm`：`ProjectsTab:458-486` + `PluginsTab:252-292` → `features/admin/PluginBindingForm.tsx`，字段与校验文案统一（现状已不同步）。
+3. `AffectedProjectList`：`ArchiveSyncTab:198-208` + `:533-548` → 本地组件。
+4. `AccountDialog:104-113` 按钮行移回 `DialogFooter`；`UsersTab:171-181`/`:271-276` 双编辑入口收敛为一处（左栏内联）；`PluginsTab:163-174` 行 `<button>` 与"详情"按钮合并为单击触发行本身。
+5. 新建 `.trellis/spec/frontend/component-reuse.md`（分层规则、组件选择矩阵、禁止清单、`ui/` 新增与提升流程、审计命令（参数数组传参）、PR 前自查、旧→新对照表）；`frontend/index.md` 挂索引；`frontend/quality-guidelines.md` 加一行指向。
+6. 〈闸门〉。
+
+提交：`docs(web): 沉淀组件复用规范并收敛 admin 重复表单`
+
+## 收尾
+
+1. 全量闸门 + PRD 全部 16 条验收逐条勾。
+2. 浏览器全量抽查：登录、看板（概览/团队/归档/任务详情/筛选/组合视图/接管通知）、偏好设置、admin 全部 8 个 tab、desktop 同步对话框；控制台 0 error、布局无塌陷。
+3. `git diff --stat` 与 `research/component-audit.md` 清单核对，无越界文件。
+4. 删除批 0 的临时截图目录。
+5. `stash@{0}` 已在批 2 合并，向用户确认后 `git stash drop`。
+6. 汇报全部改动范围与验证结果，取得提交确认（本批已是逐批提交，此处确认最终状态与任务目录入库）。
