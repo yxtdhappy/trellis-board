@@ -29,7 +29,7 @@ impl TaskSync {
             None => {
                 let (tx, rx) = mpsc::unbounded_channel();
                 let this = self.clone();
-                tauri::async_runtime::spawn(async move { this.watch_loop(rx).await });
+                crate::agent::rt::spawn(async move { this.watch_loop(rx).await });
                 state.tx = Some(tx.clone());
                 tx
             }

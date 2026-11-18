@@ -9,6 +9,7 @@ pub mod http;
 pub mod onboarding;
 pub mod process;
 pub mod protocol;
+pub mod rt;
 pub mod runtime;
 pub mod state_events;
 pub mod store;

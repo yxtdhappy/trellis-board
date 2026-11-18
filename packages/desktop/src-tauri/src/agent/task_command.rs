@@ -794,6 +794,8 @@ async fn run_task_python(repo_path: &Path, args: &[String]) -> AgentResult<()> {
         candidates.push((python, script_invocation(&script_text, args)));
     }
     candidates.push(("python".to_string(), script_invocation(&script_text, args)));
+    // Windows 的启动器叫 python / py，Linux 发行版基本只有 python3。
+    candidates.push(("python3".to_string(), script_invocation(&script_text, args)));
     candidates.push((
         "py".to_string(),
         std::iter::once("-3".to_string())

@@ -87,7 +87,7 @@ impl AgentRuntime {
             .prepare_startup_bindings(config.bindings.clone())
             .await;
         let startup = runtime.clone();
-        tauri::async_runtime::spawn(async move {
+        crate::agent::rt::spawn(async move {
             let mut shutdown = startup.shutdown.subscribe();
             if *shutdown.borrow() {
                 return;
@@ -121,7 +121,7 @@ impl AgentRuntime {
 
     fn spawn_heartbeat_loop(self: &Arc<Self>) {
         let runtime = self.clone();
-        tauri::async_runtime::spawn(async move {
+        crate::agent::rt::spawn(async move {
             let mut shutdown = runtime.shutdown.subscribe();
             let mut delay = RETRY_BASE;
             let mut next_delay = Duration::ZERO;
@@ -304,7 +304,7 @@ impl AgentRuntime {
         let runtime = self.clone();
         let queue: Arc<Mutex<VecDeque<SseFrame>>> = Arc::new(Mutex::new(VecDeque::new()));
         let notify = Arc::new(Notify::new());
-        tauri::async_runtime::spawn(async move {
+        crate::agent::rt::spawn(async move {
             let mut shutdown = runtime.shutdown.subscribe();
             let mut delay = RETRY_BASE;
             let mut reconnect = false;
@@ -448,7 +448,7 @@ impl AgentRuntime {
                 match protocol::validate_command(&raw) {
                     Ok(command) => {
                         let runtime = self.clone();
-                        tauri::async_runtime::spawn(async move {
+                        crate::agent::rt::spawn(async move {
                             runtime.run_command(command).await;
                         });
                         Ok(())
@@ -585,7 +585,7 @@ impl AgentRuntime {
             "lastError": message,
         });
         let store = self.store.clone();
-        tauri::async_runtime::spawn(async move {
+        crate::agent::rt::spawn(async move {
             let _ = store.write_state(payload).await;
         });
     }

@@ -9,17 +9,39 @@ publish = false
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# 默认构建桌面壳；`--no-default-features` 时只编译 headless agent（Linux 调试用）。
+default = ["desktop"]
+desktop = [
+  "dep:tauri",
+  "dep:tauri-plugin-opener",
+  "dep:tauri-plugin-single-instance",
+  "dep:tauri-plugin-autostart",
+  "dep:tauri-plugin-window-state",
+  "dep:tauri-plugin-dialog",
+  "dep:tauri-plugin-notification",
+]
+
+[[bin]]
+name = "trellis-board-client"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "trellis-agent"
+path = "src/bin/trellis-agent.rs"
+
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "devtools"] }
-tauri-plugin-opener = "2"
-tauri-plugin-single-instance = "2"
-tauri-plugin-autostart = "2"
-tauri-plugin-window-state = "2"
-tauri-plugin-dialog = "2"
+tauri = { version = "2", features = ["tray-icon", "devtools"], optional = true }
+tauri-plugin-opener = { version = "2", optional = true }
+tauri-plugin-single-instance = { version = "2", optional = true }
+tauri-plugin-autostart = { version = "2", optional = true }
+tauri-plugin-window-state = { version = "2", optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
 cookie = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs", "net", "io-util", "process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs", "net", "io-util", "process", "signal"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "charset", "http2"] }
 futures-util = "0.3"
 notify = "6"
@@ -30,7 +52,7 @@ url = "2"
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
-tauri-plugin-notification = { version = "2.8", default-features = false }
+tauri-plugin-notification = { version = "2.8", default-features = false, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }

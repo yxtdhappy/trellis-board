@@ -86,8 +86,10 @@ pub async fn run_process(
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .creation_flags(0x0800_0000);
+        .stderr(Stdio::piped());
+    // CREATE_NO_WINDOW：只在 Windows 上存在，其他平台不需要。
+    #[cfg(windows)]
+    builder.creation_flags(0x0800_0000);
     if let Some(cwd) = &options.cwd {
         builder.current_dir(cwd);
     }
@@ -202,14 +204,15 @@ async fn kill_process_tree(pid: Option<u32>) {
     let taskkill = std::path::Path::new(&system_root)
         .join("System32")
         .join("taskkill.exe");
-    let _ = Command::new(taskkill)
+    let mut command = Command::new(taskkill);
+    command
         .args(["/pid", &pid.to_string(), "/T", "/F"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(0x0800_0000)
-        .status()
-        .await;
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    let _ = command.status().await;
 }
 
 #[cfg(test)]
