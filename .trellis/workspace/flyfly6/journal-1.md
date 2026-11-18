@@ -1224,3 +1224,45 @@ task_sync.rs 15798 行拆为根 394 行 + 17 个职责子模块 + tests/ 7 文�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 37: 客户端自动更新与版本展示
+<!-- trellis-session: v=2 fp=b9ca533483e3d782 -->
+
+**Date**: 2026-11-18
+**Task**: 客户端自动更新与版本展示
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+桌面客户端从文件服务器检查、校验、替换并重启完成自动更新；顶栏区分客户端与服务端版本。
+
+### Main Changes
+
+- 构建期 TRELLIS_UPDATE_SERVER 配置更新源，启动/定时/手动检查 latest.json
+- 下载并校验 ZIP 大小与 SHA-256，解压替换 EXE，失败回滚，延时重启
+- 新版本系统通知与点击打开更新对话框
+- 服务端 /api/health 返回版本，顶栏与更新对话框展示客户端/服务端版本
+- package-portable.ps1 生成 latest.json，CI 发布 3 个资产
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f0448081cd` | feat(desktop): 客户端自动更新与版本展示 |
+| `44dff7e12e0477d5ba5a4228c5a36ad277aa4c65` | chore(task): archive 11-18-desktop-auto-update |
+
+### Testing
+
+- [OK] cargo test 264 通过；cargo clippy 无新增告警
+- [OK] yarn test 652（650 通过、2 跳过）、yarn build、yarn build:desktop 通过
+- [OK] 发布构建 E2E：启动检查、通知去重、替换与重启路径验证
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 按 yarn release:desktop 发布，上传 ZIP、.zip.sha256、latest.json 并设置 TRELLIS_UPDATE_SERVER

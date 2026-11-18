@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 36
+- **Total Sessions**: 37
 - **Last Active**: 2026-11-18
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1226 | Active |
+| `journal-1.md` | ~1268 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 37 | 2026-11-18 | 客户端自动更新与版本展示 | `f0448081cd`, `44dff7e12e0477d5ba5a4228c5a36ad277aa4c65` | `main` |
 | 36 | 2026-11-18 | desktop 客户端 Node 环境检测与手动路径 | `180d6f6` | `main` |
 | 35 | 2026-11-18 | Rust 内联测试外移与 env 模块拆分 | `7a70ac0`, `c2d48bc` | `main` |
 | 34 | 2026-11-18 | 拆分 task_sync.rs 万行模块并外移测试 | `53037f4`, `c0a323a` | `main` |
