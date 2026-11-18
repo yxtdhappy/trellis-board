@@ -1266,3 +1266,42 @@ task_sync.rs 15798 行拆为根 394 行 + 17 个职责子模块 + tests/ 7 文�
 ### Next Steps
 
 - 按 yarn release:desktop 发布，上传 ZIP、.zip.sha256、latest.json 并设置 TRELLIS_UPDATE_SERVER
+
+
+## Session 38: Web 组件复用审计与 shadcn 规范沉淀（批 1-10）
+<!-- trellis-session: v=2 fp=3a7a87d9f31b21d3 -->
+
+**Date**: 2026-11-19
+**Task**: Web 组件复用审计与 shadcn 规范沉淀（批 1-10）
+**Package**: web
+**Branch**: `main`
+
+### Summary
+
+packages/web 全量审计后按 shadcn/base-ui 规则把重复实现收敛到 components/ui，并沉淀 frontend/component-reuse.md；含真实客户端 WebView2 e2e 与 PRD 15 条验收。
+
+### Main Changes
+
+- 批 1-10：Panel/Table/Field/Tabs/ToggleGroup/SelectField/Badge/Empty/Skeleton/Alert/StatTile/Progress/Avatar/Separator/Tooltip/Pagination 收敛；toneSurface 统一状态色；admin 抽 TeamCheckboxList/PluginBindingForm/AccountForm 并删 AccountDialog；错误行统一 FieldError
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `381c660` | refactor(web): 原子控件与 tone 配色收敛到 ui（批 9） |
+| `9791498` | docs(web): 沉淀组件复用规范并收敛 admin 重复表单 |
+| `cf2ad42` | refactor(web): 删除被 AccountForm 取代的 AccountDialog |
+| `61d4b74` | refactor(web): 错误行统一用 FieldError 并补齐复查记录 |
+| `d1b7120` | chore(task): archive 11-18-web-component-reuse-audit |
+
+### Testing
+
+- [OK] npx tsc -b 0 error；npx oxlint src 0 error（55 条存量 warning）；6 条 rg 断言全空；standalone + team + 真实客户端（cargo build --release --features tauri/custom-protocol）实测看板/团队/归档/admin/任务详情零漂移
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 无；任务已归档。monaco-editor 依赖缺口已随并发会话修复

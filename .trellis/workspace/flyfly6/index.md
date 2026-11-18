@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 37
-- **Last Active**: 2026-11-18
+- **Total Sessions**: 38
+- **Last Active**: 2026-11-19
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1268 | Active |
+| `journal-1.md` | ~1307 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 38 | 2026-11-19 | Web 组件复用审计与 shadcn 规范沉淀（批 1-10） | `381c660`, `9791498`, `cf2ad42`, `61d4b74`, `d1b7120` | `main` |
 | 37 | 2026-11-18 | 客户端自动更新与版本展示 | `f0448081cd`, `44dff7e12e0477d5ba5a4228c5a36ad277aa4c65` | `main` |
 | 36 | 2026-11-18 | desktop 客户端 Node 环境检测与手动路径 | `180d6f6` | `main` |
 | 35 | 2026-11-18 | Rust 内联测试外移与 env 模块拆分 | `7a70ac0`, `c2d48bc` | `main` |
