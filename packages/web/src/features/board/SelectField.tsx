@@ -1,4 +1,10 @@
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
 export type SelectOption = { value: string; label: string }
@@ -32,16 +38,9 @@ export function SelectField({
       disabled={disabled}
     >
       <SelectTrigger id={id} aria-label={ariaLabel} className={cn('w-full rounded-md', className)}>
-        <span
-          data-slot="select-value"
-          className={
-            current
-              ? 'flex flex-1 items-center text-left'
-              : 'flex flex-1 items-center text-left text-muted-foreground'
-          }
-        >
-          {current?.label ?? placeholder}
-        </span>
+        <SelectValue>
+          {current ? current.label : <span className="text-muted-foreground">{placeholder}</span>}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         {options.map((option) => (

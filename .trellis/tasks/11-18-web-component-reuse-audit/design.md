@@ -142,11 +142,14 @@ size: { default: '', xs: 'h-auto px-1.5 py-px' }
 收敛：
 
 ```tsx
-// features/board/SelectField.tsx —— 唯一入口，保留现有 props，新增 searchable
-<input|select> 外观 → ui/select 的 SelectTrigger / <Input>
-当前值渲染       → <SelectValue />
-searchable       → 内部切到 @/components/ui/combobox
+// features/board/SelectField.tsx —— 静态选项唯一入口，保留现有 props
+<select> 外观     → ui/select 的 SelectTrigger
+当前值渲染        → <SelectValue />
+// features/board/SearchableSelect.tsx —— 需要搜索/大量选项时的唯一入口
+→ @/components/ui/combobox 组合（对象 value + itemToStringLabel）
 ```
+
+**计划偏差（已实施）**：原计划给 `SelectField` 加 `searchable` 开关，实际不加——一个组件承担两种交互（原生 select 语义 vs 可输入 combobox）会让 props 与 a11y 都含糊；搜索场景直接用 `SearchableSelect`。`features/admin/MultiSelectField.tsx` 全仓库 0 调用点（`AgentToolSelector` 自带一份），直接删除而不迁移。
 
 - `FilterField` 删除，调用点换 `SelectField`（options 形状同为 `SelectOption`，`SearchableSelect.tsx` 已 `import type { SelectOption } from './SelectField'` 证明可互换）。
 - `ui/combobox.tsx` 导出 `Combobox/ComboboxInput/ComboboxTrigger/ComboboxList/ComboboxItem/ComboboxEmpty`，把 `Combobox.Root/InputGroup/Portal/Positioner/Popup` 全收进 ui 层。

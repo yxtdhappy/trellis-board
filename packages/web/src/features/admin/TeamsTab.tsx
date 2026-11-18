@@ -3,8 +3,9 @@ import { toast } from 'sonner'
 import * as admin from '@/api/admin'
 import type { AdminUser, Team, TeamMember } from '@/api/admin'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { SelectField } from '@/features/board/SelectField'
-import { EmptyRow, Panel, StatusPill, controlClass } from '@/features/admin/shared'
+import { EmptyRow, Panel, StatusPill } from '@/features/admin/shared'
 import { cn } from '@/lib/utils'
 
 export function TeamsTab() {
@@ -115,8 +116,8 @@ export function TeamsTab() {
     <div className="grid gap-3 lg:grid-cols-[320px_1fr]">
       <Panel title="团队" description="系统管理员可创建、停用和分配成员。">
         <div className="flex gap-1.5">
-          <input
-            className={controlClass}
+          <Input
+            className="text-xs"
             value={name}
             placeholder="新团队名称"
             onChange={(event) => setName(event.target.value)}

@@ -1,5 +1,5 @@
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
+import { SelectField } from '@/features/board/SelectField'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { BUILTIN_VIEWS } from '@/lib/execution-filter.js'
@@ -20,9 +20,9 @@ type ExecutionHeaderProps = {
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 
 const BLOCKED_OPTIONS = [
-  { id: 'any', name: '不限' },
-  { id: 'blocked', name: '仅被阻断' },
-  { id: 'unblocked', name: '阻断已解除' },
+  { value: 'any', label: '不限' },
+  { value: 'blocked', label: '仅被阻断' },
+  { value: 'unblocked', label: '阻断已解除' },
 ]
 
 export function ExecutionHeader({
@@ -114,15 +114,19 @@ export function ExecutionHeader({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <FilterField
-          label="项目"
-          value={filters.projectId}
-          options={[
-            { id: 'all', name: '全部授权项目' },
-            ...projects.map((p) => ({ id: p.id, name: p.name })),
-          ]}
-          onChange={(value) => onChange({ projectId: value })}
-        />
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          项目
+          <SelectField
+            ariaLabel="项目"
+            className="w-auto min-w-28"
+            value={filters.projectId}
+            options={[
+              { value: 'all', label: '全部授权项目' },
+              ...projects.map((p) => ({ value: p.id, label: p.name })),
+            ]}
+            onChange={(value) => onChange({ projectId: value })}
+          />
+        </label>
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           分支
           <Input
@@ -133,70 +137,56 @@ export function ExecutionHeader({
             onChange={(event) => onChange({ branch: event.target.value })}
           />
         </label>
-        <FilterField
-          label="负责人"
-          value={filters.assignee || '__all'}
-          options={[
-            { id: '__all', name: '全部负责人' },
-            ...assignees.map((name) => ({ id: name, name })),
-          ]}
-          onChange={(value) => onChange({ assignee: value === '__all' ? '' : value })}
-        />
-        <FilterField
-          label="优先级"
-          value={filters.priority || '__all'}
-          options={[
-            { id: '__all', name: '全部优先级' },
-            ...PRIORITIES.map((p) => ({ id: p, name: p })),
-          ]}
-          onChange={(value) => onChange({ priority: value === '__all' ? '' : value })}
-        />
-        <FilterField
-          label="阶段"
-          value={filters.stage || '__all'}
-          options={[
-            { id: '__all', name: '全部阶段' },
-            ...stages.map((stage) => ({ id: stage.id, name: stage.label })),
-          ]}
-          onChange={(value) => onChange({ stage: value === '__all' ? '' : value })}
-        />
-        <FilterField
-          label="阻断"
-          value={filters.blocked}
-          options={BLOCKED_OPTIONS}
-          onChange={(value) => onChange({ blocked: value as BoardFilters['blocked'] })}
-        />
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          负责人
+          <SelectField
+            ariaLabel="负责人"
+            className="w-auto min-w-28"
+            value={filters.assignee || '__all'}
+            options={[
+              { value: '__all', label: '全部负责人' },
+              ...assignees.map((name) => ({ value: name, label: name })),
+            ]}
+            onChange={(value) => onChange({ assignee: value === '__all' ? '' : value })}
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          优先级
+          <SelectField
+            ariaLabel="优先级"
+            className="w-auto min-w-28"
+            value={filters.priority || '__all'}
+            options={[
+              { value: '__all', label: '全部优先级' },
+              ...PRIORITIES.map((p) => ({ value: p, label: p })),
+            ]}
+            onChange={(value) => onChange({ priority: value === '__all' ? '' : value })}
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          阶段
+          <SelectField
+            ariaLabel="阶段"
+            className="w-auto min-w-28"
+            value={filters.stage || '__all'}
+            options={[
+              { value: '__all', label: '全部阶段' },
+              ...stages.map((stage) => ({ value: stage.id, label: stage.label })),
+            ]}
+            onChange={(value) => onChange({ stage: value === '__all' ? '' : value })}
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          阻断
+          <SelectField
+            ariaLabel="阻断"
+            className="w-auto min-w-28"
+            value={filters.blocked}
+            options={BLOCKED_OPTIONS}
+            onChange={(value) => onChange({ blocked: value as BoardFilters['blocked'] })}
+          />
+        </label>
       </div>
     </div>
-  )
-}
-
-type FilterFieldProps = {
-  label: string
-  value: string
-  options: { id: string; name: string }[]
-  onChange: (value: string) => void
-}
-
-function FilterField({ label, value, options, onChange }: FilterFieldProps) {
-  const current = options.find((option) => option.id === value) || options[0]
-  return (
-    <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-      {label}
-      <Select value={current.id} onValueChange={(next) => onChange(String(next ?? ''))}>
-        <SelectTrigger className="min-w-28 gap-1.5 rounded-md text-xs">
-          <span data-slot="select-value" className="flex flex-1 items-center gap-1.5 text-left">
-            {current.name}
-          </span>
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((option) => (
-            <SelectItem key={option.id} value={option.id}>
-              {option.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </label>
   )
 }

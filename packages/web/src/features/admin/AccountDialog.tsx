@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import type { AdminUser, Team } from '@/api/admin'
-import { Field, StatusPill, controlClass } from './shared.tsx'
+import { Field, StatusPill } from './shared.tsx'
 import { SelectField } from '@/features/board/SelectField'
 
 export type AccountFormValues = {
@@ -63,7 +63,6 @@ export function AccountForm({ user, teams, submitLabel, onSubmit, onCancel }: Ac
       </Field>
       <Field label="状态">
         <SelectField
-          className={controlClass}
           value={status}
           options={[
             { value: 'active', label: '启用' },

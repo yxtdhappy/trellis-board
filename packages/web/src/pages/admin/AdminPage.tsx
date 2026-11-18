@@ -126,7 +126,7 @@ export function AdminPage() {
           />
           <DropdownMenu>
             <DropdownMenuTrigger className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <Avatar size="sm" className="size-8">
+              <Avatar className="size-8">
                 <AvatarFallback className="bg-secondary text-2xs font-semibold text-muted-foreground">
                   {avatarText}
                 </AvatarFallback>

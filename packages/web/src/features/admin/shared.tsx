@@ -3,9 +3,6 @@ import { cn } from 'cn'
 import type { AuditEvent } from '@/api/admin'
 import { statusTone } from '@/lib/admin-shared'
 
-export const controlClass =
-  'h-8 w-full min-w-0 rounded-md border border-input bg-input/20 px-2.5 text-xs text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30'
-
 const TONE_CLASS: Record<string, string> = {
   success: 'bg-success-soft text-success',
   warning: 'bg-warning-soft text-warning',

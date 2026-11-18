@@ -22,7 +22,7 @@ import type {
 import { formatTime } from '@/lib/admin-shared'
 import { useArchiveSync } from '@/hooks/useArchiveSync'
 import { SelectField } from '@/features/board/SelectField'
-import { EmptyRow, Field, Panel, Row, StatusPill, controlClass } from './shared.tsx'
+import { EmptyRow, Field, Panel, Row, StatusPill } from './shared.tsx'
 
 const STATUS_LABELS: Record<string, string> = {
   idle: '等待同步',
@@ -298,7 +298,6 @@ export function ArchiveSyncTab() {
               <div className="grid grid-cols-[1fr_100px] gap-2">
                 <Field label="远端协议">
                   <SelectField
-                    className={controlClass}
                     value={draft.scheme}
                     disabled={Boolean(editing)}
                     options={[

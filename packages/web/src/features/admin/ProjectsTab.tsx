@@ -16,7 +16,7 @@ import {
 } from '@/api/team-plugins'
 import { formatTime } from '@/lib/admin-shared'
 import { BranchManagementPanel } from './BranchManagementPanel'
-import { AuditItem, EmptyRow, Field, Panel, Row, StatusPill, controlClass } from './shared.tsx'
+import { AuditItem, EmptyRow, Field, Panel, Row, StatusPill } from './shared.tsx'
 import { SelectField } from '@/features/board/SelectField'
 
 export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) {
@@ -135,7 +135,6 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           <div className="flex items-center gap-2">
             <SelectField
               ariaLabel="项目"
-              className={controlClass}
               value={accessProjectId}
               placeholder="请选择项目"
               options={projectOptions.map((project) => ({
@@ -175,7 +174,6 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
             <div className="grid grid-cols-2 gap-2">
               <Field label="角色">
                 <SelectField
-                  className={controlClass}
                   value={role}
                   options={[
                     { value: 'member', label: '成员' },
@@ -278,7 +276,6 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           <div className="grid grid-cols-[minmax(0,1fr)_110px_auto] gap-2">
             <SelectField
               ariaLabel="邀请团队"
-              className={controlClass}
               value={inviteTeamId}
               placeholder="选择要邀请的团队"
               options={teams
@@ -288,7 +285,6 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
             />
             <SelectField
               ariaLabel="团队访问角色"
-              className={controlClass}
               value={accessRole}
               options={[
                 { value: 'member', label: '成员团队' },
@@ -410,7 +406,6 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                 <Field label="插件">
                   <SelectField
                     ariaLabel="插件"
-                    className={controlClass}
                     value={pluginId}
                     options={pluginChoices.map((row) => ({ value: row.id, label: row.name }))}
                     onChange={setPluginId}

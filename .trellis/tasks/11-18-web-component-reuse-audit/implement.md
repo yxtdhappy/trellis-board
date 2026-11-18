@@ -28,6 +28,17 @@ cd packages/web && npx tsc -b && npx oxlint src   # 格式化在仓库根：npx 
   7. 头像/头部对齐：`TopBar`、`AdminPage` 的 `size-7` → `size-8`；`AdminPage` 返回看板链接补 `h-8`。
 - 已验证：`npx tsc -b` rc=0、`npx oxlint` 0 error（14 条既有 warning）、`npx oxfmt` 19 文件通过；浏览器实测管理页 7 视图 + 看板 4 视图无高度不一致（仅品牌链接 `a:24` 保留）、`select` 数 0、5 个 `select-trigger` 全 32、字号组 32/28、`/plugin-ui/*.css` 返回 `text/css`。
 
+- 批 3（已落盘，未提交）：
+  1. `SelectField` 手写 `<span data-slot="select-value">` → `SelectValue`（占位符走 `text-muted-foreground`）。
+  2. 删 `ExecutionHeader` 的 `FilterField`（4 处调用 + 定义），5 个筛选项统一 `<label>标签 + SelectField className="w-auto min-w-28"`。
+  3. `SearchableSelect` 改为 `@/components/ui/combobox` 组合（`ComboboxInput/ComboboxContent/ComboboxList/ComboboxItem/ComboboxEmpty`），对象 value + `itemToStringLabel`；`features/**` 再无 `@base-ui/react/*` 直连。
+  4. 删 `features/admin/shared.tsx` 的 `controlClass`（11 处调用点清零）：`SelectField` 去掉冗余 `className`，`TeamsTab` 原生 `<input>` → `Input className="text-xs"`。
+  5. **偏差 1**：`SelectField` 未加 `searchable` prop——需要搜索的场景由 `SearchableSelect`（combobox）承担，加开关会让一个组件承担两种交互，违反单一职责。
+  6. **偏差 2**：`features/admin/MultiSelectField.tsx` 直接删除而非改 combobox 多选——全仓库 0 个调用点（`AgentToolSelector` 早已自带一份），属死代码。
+  7. 顺带修 `AdminPage` 头部头像 `<Avatar size="sm" className="size-8">` → `<Avatar className="size-8">`（`data-[size=sm]:size-6` 与 `size-8` 是不同 modifier，`cn` 不消解，实际渲染 24px）。
+  8. 断言全过：`rg -n "@base-ui/react|<select|<option|controlClass" packages/web/src -g '!**/components/ui/**'` 均无输出；`npx tsc -b` rc=0、`npx oxlint` 0 error、`npx oxfmt` 9 文件。
+  9. 浏览器实测（临时实例 4318/5180）：看板 5 个筛选 `select-trigger` 全 32px、选 P0 生效；归档索引 3 个 combobox 输入 32px、popup 列出选项、选中后输入框显示标签；管理页「团队」`select-trigger` 三个全 32、`select` 数 0、无高度不一致；账号编辑弹窗 trigger/Input 32、`select` 数 0。
+
 
 ## 批 0 基线（无代码改动）
 

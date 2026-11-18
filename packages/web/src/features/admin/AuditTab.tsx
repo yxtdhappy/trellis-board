@@ -11,7 +11,7 @@ import {
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import type { AuditEvent } from '@/api/admin'
 import { formatTime } from '@/lib/admin-shared'
-import { EmptyRow, Panel, StatusPill, controlClass } from './shared.tsx'
+import { EmptyRow, Panel, StatusPill } from './shared.tsx'
 import { SelectField } from '@/features/board/SelectField'
 
 const RANGE_OPTIONS = [
@@ -58,7 +58,6 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
           <label className="flex min-w-40 flex-1 flex-col gap-1">
             <span className="text-xs font-medium text-muted-foreground">动作</span>
             <SelectField
-              className={controlClass}
               value={action}
               options={[
                 { value: 'all', label: '全部动作' },
@@ -70,7 +69,6 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
           <label className="flex min-w-40 flex-1 flex-col gap-1">
             <span className="text-xs font-medium text-muted-foreground">操作人</span>
             <SelectField
-              className={controlClass}
               value={actor}
               options={[
                 { value: 'all', label: '全部操作人' },
@@ -82,7 +80,6 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
           <label className="flex min-w-32 flex-col gap-1">
             <span className="text-xs font-medium text-muted-foreground">时间范围</span>
             <SelectField
-              className={controlClass}
               value={range}
               options={RANGE_OPTIONS.map((option) => ({
                 value: option.value,
