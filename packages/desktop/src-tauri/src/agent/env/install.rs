@@ -54,8 +54,9 @@ pub async fn install<C: ClientConfigLike>(
     let previous_trellis_source = config.trellis_runtime().map(|flag| flag.source);
     let previous_python_source = config.python_runtime().map(|flag| flag.source);
 
-    let node_status = resolve_node(data_dir, config).await;
-    let trellis_status = resolve_trellis(data_dir, config).await;
+    let dirs = probe_dirs_fresh().await;
+    let node_status = resolve_node(data_dir, config, &dirs).await;
+    let trellis_status = resolve_trellis(data_dir, config, &dirs).await;
     let python_status = resolve_python(config).await;
     let plan = install_plan(&node_status, &trellis_status, &python_status);
 
@@ -632,7 +633,7 @@ pub(super) async fn install_trellis(
             &options,
         )
         .await?
-    } else if let Some(npm) = find_in_path(&path_dirs(), "npm.cmd") {
+    } else if let Some(npm) = find_in_path(&probe_dirs_fresh().await, "npm.cmd") {
         on_progress("trellis:install", "正在安装 Trellis CLI");
         let line = format!(
             "\"{}\" install -g --prefix \"{prefix_text}\" {package}",
@@ -662,3 +663,5 @@ pub(super) async fn install_trellis(
     }
     Ok(())
 }
+
+

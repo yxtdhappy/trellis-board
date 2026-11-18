@@ -70,6 +70,72 @@ fn finds_executables_on_provided_path() {
 }
 
 #[test]
+fn nvm_version_dirs_are_probed() {
+    let app_data = temp_dir("nvm");
+    let version = app_data.join("nvm/v24.22.3");
+    std::fs::create_dir_all(&version).expect("version dir");
+    let dirs = fallback_dirs_in(Some(&app_data), None, None);
+    assert!(dirs.contains(&version));
+    assert!(dirs.contains(&app_data.join("nvm")));
+    let _ = std::fs::remove_dir_all(&app_data);
+}
+
+#[test]
+fn where_node_output_yields_parent_dirs() {
+    let dirs = where_node_dirs(
+        "C:\\Program Files\\nodejs\\node.exe\r\n\r\n\"C:\\nvm\\v24.22.3\\node.exe\"\r\nC:\\Windows\\System32\\where.exe\r\nC:\\nvm\\v24.22.3\\node.exe\r\n  C:\\fnm\\node.exe  \r\n",
+    );
+    assert_eq!(
+        dirs,
+        vec![
+            PathBuf::from("C:\\Program Files\\nodejs"),
+            PathBuf::from("C:\\nvm\\v24.22.3"),
+            PathBuf::from("C:\\fnm"),
+        ]
+    );
+    assert!(where_node_dirs("").is_empty());
+    assert!(where_node_dirs("C:\\Windows\\node_modules\\.bin\\node.cmd").is_empty());
+}
+
+#[test]
+fn manual_node_path_accepts_file_dir_and_quotes() {
+    let directory = temp_dir("manual");
+    let executable = directory.join("node.exe");
+    std::fs::write(&executable, b"").expect("write node");
+    let expected = Some(executable.clone());
+    assert_eq!(
+        node_executable_from_input(&directory.display().to_string()),
+        expected
+    );
+    assert_eq!(
+        node_executable_from_input(&executable.display().to_string()),
+        expected
+    );
+    assert_eq!(
+        node_executable_from_input(&format!("\"{}\"", executable.display())),
+        expected
+    );
+    assert_eq!(node_executable_from_input("  "), None);
+    assert_eq!(node_executable_from_input("C:\\missing\\node.exe"), None);
+    assert_eq!(
+        node_executable_from_input(&directory.join("npm.cmd").display().to_string()),
+        None
+    );
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[tokio::test]
+async fn set_node_path_rejects_missing_file_without_touching_config() {
+    let mut document = serde_json::json!({ "node_runtime": { "path": "C:\\keep\\node.exe" } });
+    let before = document.clone();
+    let error = set_node_path(&mut document, "C:\\missing\\node.exe")
+        .await
+        .expect_err("missing node rejected");
+    assert_eq!(error.code, CODE_NODE_PATH_INVALID);
+    assert_eq!(document, before);
+}
+
+#[test]
 fn fallback_dirs_cover_version_manager_prefixes() {
     let app_data = temp_dir("fallback");
     let alias = app_data.join("fnm/aliases/default");
@@ -188,7 +254,7 @@ async fn resolve_trellis_writes_flag_for_client_prefix() {
     std::fs::write(package.join("bin/trellis.js"), b"cli").expect("cli");
 
     let mut config = json!({ "schemaVersion": 3 });
-    let status = resolve_trellis(&data_dir, &mut config).await;
+    let status = resolve_trellis(&data_dir, &mut config, &[]).await;
     assert!(status.ok);
     assert_eq!(status.source.as_deref(), Some("client-prefix"));
     let flag = config.trellis_runtime().expect("flag written");
@@ -241,9 +307,7 @@ fn status_paths_live_under_data_dir() {
     );
     assert_eq!(
         trellis_cli_path(data_dir),
-        PathBuf::from(
-            "C:\\data\\npm-global\\node_modules\\@mindfoldhq\\trellis\\bin\\trellis.js"
-        )
+        PathBuf::from("C:\\data\\npm-global\\node_modules\\@mindfoldhq\\trellis\\bin\\trellis.js")
     );
     assert_eq!(
         npm_global_dir(data_dir),

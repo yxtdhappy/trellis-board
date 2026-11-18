@@ -10,6 +10,7 @@
     "allow-app-status",
     "allow-appearance-load",
     "allow-runtime-status",
+    "allow-runtime-set-node-path",
     "allow-runtime-install",
     "allow-desktop-login"
   ]

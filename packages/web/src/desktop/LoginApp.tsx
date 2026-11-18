@@ -56,7 +56,14 @@ const PROGRESS_STEP: Record<string, StepId> = {
 
 type RuntimeStatus = {
   state?: 'checking' | 'ready' | 'needs_setup' | 'installing' | 'failed'
-  node?: { ok?: boolean; version?: string; foundVersion?: string; minVersion?: string }
+  node?: {
+    ok?: boolean
+    version?: string
+    path?: string
+    source?: string
+    foundVersion?: string
+    minVersion?: string
+  }
   trellis?: { ok?: boolean; version?: string; foundVersion?: string; requiredVersion?: string }
   python?: { ok?: boolean; version?: string; foundVersion?: string; minVersion?: string }
   error?: string
@@ -97,6 +104,10 @@ export function LoginApp() {
   const [installVisible, setInstallVisible] = useState(false)
   const [retryVisible, setRetryVisible] = useState(false)
   const [installing, setInstalling] = useState(false)
+  const [nodeMissing, setNodeMissing] = useState(false)
+  const [nodePath, setNodePath] = useState('')
+  const [savingNodePath, setSavingNodePath] = useState(false)
+  const [nodePathError, setNodePathError] = useState<string | null>(null)
   const [loginStatus, setLoginStatus] = useState('正在读取上次登录设置…')
   const [loginError, setLoginError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -121,6 +132,8 @@ export function LoginApp() {
     const trellis = status?.trellis ?? {}
     const python = status?.python ?? {}
     if (state !== 'ready') setPhase('env')
+    // 只在 Node 确实不可用时给手动入口，环境就绪时不出现多余控件。
+    setNodeMissing(state !== 'ready' && node.ok !== true)
     if (state === 'ready') {
       setSteps({ active: null, done: [...STEP_ORDER] })
       setEnvStatus(
@@ -234,6 +247,20 @@ export function LoginApp() {
       setRetryVisible(true)
     } finally {
       setInstalling(false)
+    }
+  }
+
+  async function applyNodePath(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!invoke || savingNodePath) return
+    setNodePathError(null)
+    setSavingNodePath(true)
+    try {
+      applyRuntime(await invoke<RuntimeStatus>('runtime_set_node_path', { path: nodePath }))
+    } catch (error) {
+      setNodePathError(errorMessage(error, '无法使用该 Node.js 路径'))
+    } finally {
+      setSavingNodePath(false)
     }
   }
 
@@ -367,6 +394,35 @@ export function LoginApp() {
                 <AlertCircle className="mt-0.5 size-4 shrink-0" />
                 <AlertDescription className="text-sm">{envError}</AlertDescription>
               </Alert>
+            ) : null}
+            {nodeMissing && !installing ? (
+              <form className="flex flex-col gap-2" onSubmit={(event) => void applyNodePath(event)}>
+                <Label htmlFor="node-path">手动指定 Node.js 路径</Label>
+                <Input
+                  id="node-path"
+                  type="text"
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder={'C:\\Program Files\\nodejs 或 ...\\node.exe'}
+                  disabled={savingNodePath}
+                  value={nodePath}
+                  onChange={(event) => setNodePath(event.target.value)}
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="outline"
+                  disabled={savingNodePath || !nodePath.trim()}
+                >
+                  {savingNodePath ? '正在校验…' : '使用该路径'}
+                </Button>
+                {nodePathError ? (
+                  <Alert variant="destructive">
+                    <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                    <AlertDescription className="text-sm">{nodePathError}</AlertDescription>
+                  </Alert>
+                ) : null}
+              </form>
             ) : null}
             <div className="flex flex-wrap gap-2">
               {installVisible ? (

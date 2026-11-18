@@ -365,6 +365,15 @@ async fn runtime_status(window: WebviewWindow) -> Result<agent::env::RuntimeStat
 }
 
 #[tauri::command]
+async fn runtime_set_node_path(
+    window: WebviewWindow,
+    path: String,
+) -> Result<agent::env::RuntimeStatus, String> {
+    ensure_local_caller(&window)?;
+    runtime_commands::runtime_set_node_path(path).await
+}
+
+#[tauri::command]
 async fn runtime_install(
     app: AppHandle,
     window: WebviewWindow,
@@ -1036,6 +1045,7 @@ fn main() {
             live_conflicts_show,
             desktop_sidecar_status,
             runtime_status,
+            runtime_set_node_path,
             runtime_install,
             live_control_pending,
             handoff_notice_pending,

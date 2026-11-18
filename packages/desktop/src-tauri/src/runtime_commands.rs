@@ -100,6 +100,20 @@ pub async fn runtime_status() -> Result<RuntimeStatus, String> {
     Ok(status)
 }
 
+/// 先写 flag 再 `check`：`check` 会直接复用刚验证过的 flag，不重复跑版本探测。
+pub async fn runtime_set_node_path(path: String) -> Result<RuntimeStatus, String> {
+    let data_dir = config::data_dir();
+    let mut document = load_client_document();
+    env::set_node_path(&mut document, &path)
+        .await
+        .map_err(|error| error.message)?;
+    let status = env::check(&data_dir, &mut document)
+        .await
+        .map_err(|error| error.message)?;
+    save_client_document(&document)?;
+    Ok(status)
+}
+
 pub async fn runtime_install(app: AppHandle) -> Result<RuntimeInstallResult, String> {
     let data_dir = config::data_dir();
     let emitter = app.clone();

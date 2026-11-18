@@ -151,6 +151,11 @@ description = "本地登录页可检查 Node.js 与 Trellis CLI 运行环境。"
 commands.allow = ["runtime_status"]
 
 [[permission]]
+identifier = "allow-runtime-set-node-path"
+description = "本地登录页可在环境检查时手动指定 node.exe 或它所在的目录。"
+commands.allow = ["runtime_set_node_path"]
+
+[[permission]]
 identifier = "allow-runtime-install"
 description = "本地登录页可在环境缺失时安装运行环境。"
 commands.allow = ["runtime_install"]
