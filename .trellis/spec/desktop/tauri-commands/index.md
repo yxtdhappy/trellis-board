@@ -180,6 +180,35 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
 }
 ```
 
+## Scenario: 初始化后清理 Python 缓存模板哈希
+
+### 1. Scope / Trigger
+
+- 修改完整 `trellis init`、已有任务树的 Agent-only 初始化，或 `.trellis/.template-hashes.json` 清理行为时适用。
+
+### 2. Contracts
+
+- 两条初始化路径只在子进程成功返回后执行清理；失败结果和原有错误映射不变。
+- 清单键为 POSIX 相对路径。只删除任一路径段为 `__pycache__` 或以 `.pyc` 结尾的 `hashes` 键。
+- 保留其他哈希值、顶层字段和 `.pyc` 文件；无目标键时不重写清单。
+- 清单写回使用同目录临时文件 + rename；解析失败或清理失败静默降级，不覆盖初始化成功结果。
+- 不修改 Trellis 上游包的 `EXCLUDE_FROM_HASH`，也不在客户端重建 Agent-only `merge: true` 语义。
+
+### 3. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| 初始化命令失败 | 不读取、不修改模板哈希清单 |
+| 清单含缓存键 | 仅删除目标键后原子写回 |
+| 清单无缓存键 | 不重写文件 |
+| 清单无法解析或缺少 `hashes` 对象 | 不改原文件，清理错误被降级 |
+
+### 4. Tests Required
+
+- 混合清单仅删除缓存键，其他字段和值保持不变。
+- 无效清单返回清理错误且原字节不变。
+- 成功包装路径吞掉清理错误；失败包装路径不执行清理。
+
 ## Scenario: Rust 模块的目录化拆分与测试外移
 
 ### 1. Scope / Trigger

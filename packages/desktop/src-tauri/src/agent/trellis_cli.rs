@@ -2,10 +2,12 @@
 //! 不负责安装运行环境（见 env.rs），也不下载模板。
 //! 工具映射对照 shared/trellis-agent-tools.js；行为对照 desktop/sidecar/trellis-runtime.js。
 
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::json;
+use tokio::io::AsyncWriteExt;
 
 use crate::agent::process::{run_process, ProcessOptions, ProcessOutput};
 use crate::agent::protocol::{code, AgentError, AgentResult};
@@ -254,7 +256,7 @@ pub async fn initialize_trellis(
     };
     let output = run_process(&runtime.node_exe, &args, &options).await?;
     if output.success() {
-        return Ok(());
+        return finish_init(repo_path, Ok(())).await;
     }
     Err(trellis_failure(
         repo_path,
@@ -281,7 +283,7 @@ pub async fn initialize_agents(
     };
     let output = run_process(&runtime.node_exe, &args, &options).await?;
     if output.success() {
-        return Ok(());
+        return finish_init(repo_path, Ok(())).await;
     }
     Err(trellis_failure(
         repo_path,
@@ -289,6 +291,83 @@ pub async fn initialize_agents(
         &output,
         "Trellis Agent 配置失败",
     ))
+}
+
+async fn finish_init(repo_path: &Path, result: AgentResult<()>) -> AgentResult<()> {
+    if result.is_ok() {
+        let _ = cleanup_template_hashes(repo_path).await;
+    }
+    result
+}
+
+async fn cleanup_template_hashes(repo_path: &Path) -> io::Result<()> {
+    let path = repo_path.join(".trellis").join(".template-hashes.json");
+    let bytes = tokio::fs::read(&path).await?;
+    let mut manifest: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let hashes = manifest
+        .get_mut("hashes")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "模板哈希清单缺少 hashes 对象",
+            )
+        })?;
+    let stale_keys: Vec<String> = hashes
+        .keys()
+        .filter(|key| is_pycache_hash(key))
+        .cloned()
+        .collect();
+    if stale_keys.is_empty() {
+        return Ok(());
+    }
+    for key in stale_keys {
+        hashes.remove(&key);
+    }
+
+    let mut encoded = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if bytes.ends_with(b"\n") {
+        encoded.push(b'\n');
+    }
+    write_manifest_atomic(&path, &encoded).await
+}
+
+fn is_pycache_hash(key: &str) -> bool {
+    let normalized = key.replace('\\', "/");
+    normalized
+        .split('/')
+        .any(|segment| segment == "__pycache__")
+        || normalized.ends_with(".pyc")
+}
+
+async fn write_manifest_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "template-hashes.json".to_string());
+    let temp = path.with_file_name(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let result = async {
+        let mut handle = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .await?;
+        handle.write_all(data).await?;
+        handle.sync_all().await?;
+        drop(handle);
+        tokio::fs::rename(&temp, path).await
+    }
+    .await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&temp).await;
+    }
+    result
 }
 
 /// JS 侧的 Pi 修复依赖打包的 trellis-pi-repair.mjs，Rust 运行环境没有该脚本，
