@@ -2,11 +2,12 @@ use super::*;
 
 impl TaskSync {
     /// 校验仓库当前分支与绑定分支一致；失败时把错误写入绑定状态并保留。
+    /// 通知在“进入暂停”的边沿直接发出，避免其他调用方只持久化不发通知而吞掉提示。
     pub(super) async fn assert_binding_branch(&self, binding: &AgentBinding) -> AgentResult<String> {
         #[cfg(test)]
         self.branch_validations
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.assert_binding_active(binding).await?;
+        let previous_error_code = self.assert_binding_active(binding).await?;
         let hooks_dir = self.binding_hooks_dir(binding);
         match crate::agent::git::assert_repository_branch(
             Path::new(&binding.repo_path),
@@ -17,22 +18,44 @@ impl TaskSync {
         {
             Ok(branch) => {
                 self.clear_branch_guard_error(binding).await;
+                self.forget_branch_guard_notice(binding).await;
                 Ok(branch)
             }
-            Err(mut error) => {
+            Err(error) => {
                 if is_branch_guard_error(&error) {
-                    let entered = !binding
-                        .last_error_code
-                        .as_deref()
-                        .is_some_and(is_branch_guard_code);
+                    // 使用刚从配置读到的最新错误码判断边沿，避免调用方传入的 binding 副本滞后。
+                    let entered =
+                        !previous_error_code.as_deref().is_some_and(is_paused_state_code);
                     let changed = self.persist_binding_sync_error(binding, &error).await;
-                    if entered && changed {
-                        error = with_branch_guard_entered(error, true);
+                    if !entered {
+                        self.branch_guard_notified
+                            .lock()
+                            .await
+                            .insert(binding.local_repo_key.clone());
+                    } else if changed {
+                        // entered && !changed：另一个并发路径已持久化，由它负责发射。
+                        let mut notified = self.branch_guard_notified.lock().await;
+                        if notified.insert(binding.local_repo_key.clone()) {
+                            (self.emit)(task_sync_notice_event(
+                                Some(binding),
+                                &binding.task_space_id,
+                                &error,
+                                protocol::safe_error_message(&error.message),
+                            ));
+                        }
                     }
                 }
                 Err(error)
             }
         }
+    }
+
+    /// 分支恢复后允许同一仓库下一次进入暂停时重新提醒一次。
+    pub(super) async fn forget_branch_guard_notice(&self, binding: &AgentBinding) {
+        self.branch_guard_notified
+            .lock()
+            .await
+            .remove(&binding.local_repo_key);
     }
 }
 impl TaskSync {

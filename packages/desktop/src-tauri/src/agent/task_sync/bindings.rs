@@ -366,7 +366,6 @@ impl TaskSync {
                 .push(binding);
         }
         let mut selected = Vec::new();
-        let mut notified_repos = HashSet::new();
         for items in groups.into_values() {
             if items.len() == 1 {
                 let binding = items.into_iter().next().expect("single binding");
@@ -381,13 +380,12 @@ impl TaskSync {
                     {
                         self.clear_branch_guard_error(&binding).await;
                     }
+                    self.forget_branch_guard_notice(&binding).await;
                     selected.push(binding);
                 } else {
                     match self.assert_binding_branch(&binding).await {
                         Ok(_) => selected.push(binding),
-                        Err(error) => {
-                            self.report_binding_error(&binding, &error, &mut notified_repos)
-                        }
+                        Err(error) => self.report_binding_error(&binding, &error),
                     }
                 }
                 continue;
@@ -405,13 +403,12 @@ impl TaskSync {
                     {
                         self.clear_branch_guard_error(binding).await;
                     }
+                    self.forget_branch_guard_notice(binding).await;
                     matches.push(binding.clone());
                 } else {
                     match self.assert_binding_branch(binding).await {
                         Ok(_) => matches.push(binding.clone()),
-                        Err(error) => {
-                            self.report_binding_error(binding, &error, &mut notified_repos);
-                        }
+                        Err(error) => self.report_binding_error(binding, &error),
                     }
                 }
             }
@@ -442,26 +439,10 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) fn report_binding_error(
-        &self,
-        binding: &AgentBinding,
-        error: &AgentError,
-        notified_repos: &mut HashSet<String>,
-    ) {
+    /// 分支守卫的 notice 已在 `assert_binding_branch` 的进入边沿发出，这里只过滤模态事件；
+    /// 其他错误保持原有 `task_sync_error` 行为。
+    pub(super) fn report_binding_error(&self, binding: &AgentBinding, error: &AgentError) {
         if is_branch_guard_error(error) {
-            if !branch_guard_entered(error) {
-                return;
-            }
-            let key = format!("{}\0{}", binding.local_repo_key, error.code);
-            if !notified_repos.insert(key) {
-                return;
-            }
-            (self.emit)(task_sync_notice_event(
-                Some(binding),
-                &binding.task_space_id,
-                error,
-                protocol::safe_error_message(&error.message),
-            ));
             return;
         }
         (self.emit)(task_sync_error_event(
@@ -473,7 +454,12 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) async fn assert_binding_active(&self, binding: &AgentBinding) -> AgentResult<()> {
+    /// 校验 binding 仍处于 approved，并返回持久化的 `last_error_code`，
+    /// 供分支守卫判断是否真的从正常状态进入暂停，而不是使用可能滞后的内存副本。
+    pub(super) async fn assert_binding_active(
+        &self,
+        binding: &AgentBinding,
+    ) -> AgentResult<Option<String>> {
         let config =
             self.store.read_config(false).await?.ok_or_else(|| {
                 AgentError::new(code::CONFIG_MISSING, "Agent 配置缺失，请重新登录")
@@ -481,11 +467,11 @@ impl TaskSync {
         let current = config
             .bindings
             .iter()
-            .find(|item| item.local_id == binding.local_id);
-        if current.is_some_and(|item| item.sync_status == "approved" && !item.detach_pending) {
-            Ok(())
-        } else {
-            protocol::err(code::BINDING_UNKNOWN, "本地任务空间关联已停用或正在解除")
+            .find(|item| item.local_id == binding.local_id)
+            .filter(|item| item.sync_status == "approved" && !item.detach_pending);
+        match current {
+            Some(item) => Ok(item.last_error_code.clone()),
+            None => protocol::err(code::BINDING_UNKNOWN, "本地任务空间关联已停用或正在解除"),
         }
     }
 }
@@ -699,14 +685,7 @@ impl TaskSync {
             code = error.code
         ));
         if is_branch_guard_error(error) {
-            if branch_guard_entered(error) {
-                (self.emit)(task_sync_notice_event(
-                    binding.as_ref(),
-                    task_space_id,
-                    error,
-                    message,
-                ));
-            }
+            // notice 已在 assert_binding_branch 的进入边沿发出，避免重复提示。
             return;
         }
         (self.emit)(task_sync_error_event(

@@ -345,6 +345,9 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   该绑定在暂停期间不进入运行集合：不拉取、不监听任务文件、心跳不上报在线监听，`pull_task_space`
   返回 `skipped/BINDING_INACTIVE`。分支守卫错误只按“进入暂停”的状态边沿发一次非模态
   `task_sync_notice`，不得每轮心跳重复弹窗；切回绑定分支恢复后再次进入暂停才可再次提示。
+  边沿判断必须读取刚持久化的 `last_error_code`，通知由 `assert_binding_branch` 自己发射，
+  不能依赖某个调用方（ownership 校验、事件 pull、心跳选择等共享同一守卫）；心跳写入的
+  `BINDING_BRANCH_MISMATCH` 也视为已暂停状态，避免错误码交替导致重复提醒。
 - 普通同分支任务不得读取 HEAD tree。只有当前 binding 是项目基线且遇到来源分支不同的任务时，才允许
   一次 `git rev-parse --verify HEAD^{commit}`；同一 HEAD 下执行一次
   `git ls-tree -r --name-only <HEAD> -- .trellis`，多项任务共享 HashSet。普通 watcher、普通上传、

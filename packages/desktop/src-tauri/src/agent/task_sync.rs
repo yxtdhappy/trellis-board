@@ -107,6 +107,7 @@ pub struct TaskSync {
     ownership_refresh_lock: Mutex<()>,
     ownership_inbox_unavailable: std::sync::atomic::AtomicBool,
     binding_selection_lock: Mutex<()>,
+    branch_guard_notified: Mutex<HashSet<String>>,
     binding_sync_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     syncing_task_spaces: Mutex<HashMap<String, usize>>,
     binding_sync_idle: Notify,
@@ -154,6 +155,7 @@ impl TaskSync {
             ownership_refresh_lock: Mutex::new(()),
             ownership_inbox_unavailable: std::sync::atomic::AtomicBool::new(false),
             binding_selection_lock: Mutex::new(()),
+            branch_guard_notified: Mutex::new(HashSet::new()),
             binding_sync_locks: Mutex::new(HashMap::new()),
             syncing_task_spaces: Mutex::new(HashMap::new()),
             binding_sync_idle: Notify::new(),
@@ -278,18 +280,17 @@ use cursor::{
 };
 #[allow(unused_imports)]
 use errors::{
-    branch_guard_entered,
     io_error,
     is_archived_task_error,
     is_branch_guard_error,
     is_explicit_pending_rejection,
     is_foreign_task_error,
+    is_paused_state_code,
     required_client_sequence,
     skipped_for_explicit_pending_rejection,
     sync_trace,
     task_sync_error_event,
     task_sync_notice_event,
-    with_branch_guard_entered,
     with_task_dir,
 };
 #[allow(unused_imports)]

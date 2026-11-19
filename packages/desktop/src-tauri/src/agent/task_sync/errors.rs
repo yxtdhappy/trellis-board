@@ -56,28 +56,9 @@ pub(super) fn task_sync_notice_event(
     }
     event
 }
-/// 在错误上标记“本次调用是否从非暂停状态进入暂停状态”，供上报层决定是否发 notice。
-pub(super) fn with_branch_guard_entered(mut error: AgentError, entered: bool) -> AgentError {
-    let mut details = match error.details.take() {
-        Some(Value::Object(details)) => details,
-        Some(other) => {
-            let mut details = serde_json::Map::new();
-            details.insert("detail".to_string(), other);
-            details
-        }
-        None => serde_json::Map::new(),
-    };
-    details.insert("branchGuardEntered".to_string(), Value::Bool(entered));
-    error.details = Some(Value::Object(details));
-    error
-}
-pub(super) fn branch_guard_entered(error: &AgentError) -> bool {
-    error
-        .details
-        .as_ref()
-        .and_then(|details| details.get("branchGuardEntered"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+/// 心跳会写入 `BINDING_BRANCH_MISMATCH`；它和分支守卫错误一样表示已处于暂停状态。
+pub(super) fn is_paused_state_code(value: &str) -> bool {
+    is_branch_guard_code(value) || value == "BINDING_BRANCH_MISMATCH"
 }
 /// 只补 taskDir，保留服务端错误码/状态，便于上层按目录定位失败原因。
 pub(super) fn with_task_dir(mut error: AgentError, task_dir: &str) -> AgentError {

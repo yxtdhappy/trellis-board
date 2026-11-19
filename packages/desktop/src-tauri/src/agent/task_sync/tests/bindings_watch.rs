@@ -580,3 +580,59 @@ async fn non_branch_guard_error_keeps_modal_control_event() {
     assert_eq!(captured_errors(&events).len(), 1);
     assert!(captured_notices(&events).is_empty());
 }
+
+
+#[tokio::test]
+async fn direct_branch_guard_check_emits_notice_once() {
+    let (root, store, sync, binding, events) =
+        branch_guard_fixture("trellis-branch-guard-direct").await;
+
+    let error = sync
+        .assert_binding_branch(&binding)
+        .await
+        .expect_err("branch mismatch");
+    assert_eq!(error.code, code::BRANCH_MISMATCH);
+    assert_eq!(captured_notices(&events).len(), 1);
+
+    let fresh = stored_bindings(&store).await;
+    let _ = sync
+        .assert_binding_branch(&fresh[0])
+        .await
+        .expect_err("still mismatch");
+    assert_eq!(captured_notices(&events).len(), 1);
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+
+#[tokio::test]
+async fn stale_binding_copy_still_allows_notice_after_recovery() {
+    let (root, store, sync, binding, events) =
+        branch_guard_fixture("trellis-branch-guard-stale").await;
+    let repo = Path::new(&binding.repo_path);
+
+    let _ = sync
+        .assert_binding_branch(&binding)
+        .await
+        .expect_err("branch mismatch");
+    assert_eq!(captured_notices(&events).len(), 1);
+
+    run_git(repo, &["checkout", "--quiet", "main"]);
+    let _ = sync
+        .assert_binding_branch(&binding)
+        .await
+        .expect("recovered");
+
+    run_git(repo, &["checkout", "--quiet", "feature"]);
+    // 模拟调用方持有旧副本：内存里仍是 BRANCH_MISMATCH，但持久化状态已经恢复。
+    // 边沿必须依据刚读取的持久化状态，而不是这个滞后副本。
+    let mut stale = binding.clone();
+    stale.last_error_code = Some(code::BRANCH_MISMATCH.to_string());
+    let _ = sync
+        .assert_binding_branch(&stale)
+        .await
+        .expect_err("branch mismatch again");
+    assert_eq!(captured_notices(&events).len(), 2);
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}

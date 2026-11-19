@@ -14,6 +14,7 @@
 - 当前 `main` 已把首次控制提醒从 `focus_main_window` 改为 `notify_control` 系统通知（`agent_service.rs:288-294`、`agent_service.rs:349-374`）；用户实际使用的旧版本仍会抢焦点。无论哪种方式，反复弹出的模态框本身仍是打断来源。
 - 暂停语义已从代码路径确认：不匹配的绑定不会进入 `selected`，`prepare_bindings` 只把 `selected` 写入运行集合（`bindings.rs:296-314`）；`sync_task_spaces` 为空时直接返回（`bindings.rs:118-121`）；watcher 只为 `selected` 重建（`bindings.rs:349`、`task_sync/watch.rs:19-38`）；事件拉取遇到未运行绑定返回 `BINDING_INACTIVE` 跳过（`task_sync/pull.rs:291-300`）；本地任务目录写入只发生在 pull 路径且 pull 前有分支守卫（`task_sync/pull.rs:353`、`task_sync/local_files.rs:393`）。
 - 项目栏已能显示该分支“已暂停 / 分支不一致”状态：`packages/web/src/components/layout/ProjectRail.tsx:304-305`、`packages/web/src/lib/project-rail-association.js:70-71`。
+- 实测发现分支切换可能先被 `ownership 增量校验` 或事件 pull 路径检测到；这些路径同样调用 `assert_binding_branch` 并持久化错误。若通知只在心跳的 `select_bindings` 发出，进入边沿会被提前“消费”，导致一条消息都不发。因此通知必须由公共守卫 `assert_binding_branch` 自己发射。
 
 ## Requirements
 

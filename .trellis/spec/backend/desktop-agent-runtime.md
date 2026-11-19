@@ -46,9 +46,10 @@
   服务端也无对应路由），属死代码，Rust 不再移植实时文件同步。
 - 分支守卫错误（`BRANCH_MISMATCH`/`BRANCH_INVALID`/`DETACHED_HEAD`/`GIT_FAILED`/`NOT_GIT_REPOSITORY`/
   `REPO_NOT_FOUND`/`REPO_PATH_INVALID`）是持续状态，不得作为 `task_sync_error` 进入 `ControlHub`。
-  只在从非暂停进入暂停时发一次 `task_sync_notice`，由 `publish_control` 直接转成 `task-sync-notice`
-  Tauri 事件：不发系统通知、不弹模态框、不调用 `focus_main_window`；暂停期间重复心跳、切换另一个
-  非绑定分支、进程启动/窗口重载都不得重复提醒。
+  只在从非暂停进入暂停时发一次 `task_sync_notice`，且必须由 `assert_binding_branch` 在所有调用路径
+  上统一发射（不能只依赖 `select_bindings`，否则 ownership/pull 路径会先持久化并吞掉边沿）。
+  事件由 `publish_control` 直接转成 `task-sync-notice` Tauri 事件：不发系统通知、不弹模态框、
+  不调用 `focus_main_window`；暂停期间重复心跳、切换另一个非绑定分支、进程启动/窗口重载都不得重复提醒。
 - 超时预算：登录/登出/关联列表 15s；inspect-project / 实时决策 60s；首次同步与备份恢复 120s；
   check-push / preflight 240s；associate / initialize-project 600s；`trellis init` 与 Agent-only 配置 210s；
   `task.py` 150s；npm 安装 300s。

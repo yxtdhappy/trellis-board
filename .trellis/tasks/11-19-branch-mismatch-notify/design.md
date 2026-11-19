@@ -53,34 +53,39 @@ AgentRuntime::heartbeat_once (每 15s)
 
 ### 3.2 触发条件（进入暂停的边沿）
 
-在 `assert_binding_branch` 失败分支：
+实测发现：分支切换可能先被 `ownership 增量校验`、事件 pull 等路径发现；这些路径同样调用 `assert_binding_branch` 并持久化错误。如果通知只在 `select_bindings` 的 `report_binding_error` 里发，进入边沿会被这些路径先“消费”掉，心跳再检查时已经处于错误状态，结果**一条消息都不会发**。
 
-1. 读取传入 binding 的 `last_error_code`（来自本轮配置读取或已选绑定集合）。
-2. `let entered = !binding.last_error_code.as_deref().is_some_and(is_branch_guard_code);`
-3. 调用 `persist_binding_sync_error` 持久化状态；仅当 `entered && persisted_changed` 时，在返回的 `AgentError.details` 写入 `branchGuardEntered: true`。
+因此通知必须由 `assert_binding_branch` 自己在进入边沿发出：
+
+1. 通过 `assert_binding_active` 的返回值读取**刚持久化的** `last_error_code`，不使用调用方传入的可能滞后的 binding 副本。
+2. `let entered = !previous.as_deref().is_some_and(is_paused_state_code);`
+3. 调用 `persist_binding_sync_error` 持久化；`changed` 表示配置是否实际变化。
+4. 若 `entered && changed`，在 `TaskSync.branch_guard_notified`（按 `local_repo_key` 的内存集合）中占位；首次占位成功才 emit `task_sync_notice`。
+5. 若 `entered && !changed`，说明另一个并发路径已经持久化，由它负责发射。
+6. 若 `!entered`，把 `local_repo_key` 记入集合，避免启动时已暂停或重复心跳再次提醒。
+
+`is_paused_state_code` 同时把分支守卫 7 码和心跳写入的 `BINDING_BRANCH_MISMATCH` 视为“已暂停”，避免两种错误码逐轮交替时重复提醒。
 
 状态矩阵：
 
 | 之前持久化状态 | 本次真实分支 | entered | 结果 |
 | --- | --- | --- | --- |
 | 无错误 / 非分支守卫错误 | 不匹配 | true | 持久化 + 发一次 notice |
-| 已是分支守卫错误（同一分支或另一个非绑定分支） | 不匹配 | false | 更新错误文案，不发 notice |
-| 已是分支守卫错误 | 匹配 | - | `clear_branch_guard_error` 清除，不发 notice |
+| 已是分支守卫或 `BINDING_BRANCH_MISMATCH`（同一分支或另一个非绑定分支） | 不匹配 | false | 更新错误文案，不发 notice |
+| 已是分支守卫错误 | 匹配 | - | `clear_branch_guard_error` 清除并从集合移除，不发 notice |
 | 已清除后再次不匹配 | 不匹配 | true | 再发一次 notice |
 | 进程启动时配置已是分支守卫错误 | 不匹配 | false | 不发 notice（符合已确认的产品决策） |
+| 同仓库多绑定同时不匹配 | 不匹配 | true | 首个 binding 发射，后续被 `local_repo_key` 集合去重 |
 
-`persist_binding_sync_error` 改为返回 `bool`（配置是否实际变化），供状态通知复用；`changed` 仍用于原有的 `notify_state_changed` 逻辑。
+`persist_binding_sync_error` 返回 `bool`（配置是否实际变化），供状态通知复用；`changed` 仍用于原有的 `notify_state_changed` 逻辑。
 
 ### 3.3 发射路径
 
-新增 `task_sync_notice_event(binding, task_space_id, error, message)`（放在 `task_sync/errors.rs`，与 `task_sync_error_event` 并列）。
+`task_sync_notice_event(binding, task_space_id, error, message)` 放在 `task_sync/errors.rs`，与 `task_sync_error_event` 并列。
 
-- `report_binding_error`（仅被 `select_bindings` 调用）：
-  - 分支守卫错误：仅当 `details.branchGuardEntered == true` 时发 notice；按 `local_repo_key + code` 在单轮 `select_bindings` 内去重，避免同仓库多绑定产生多条消息。
-  - 其他错误：保持原 `task_sync_error`。
-- `report_error`（pull/watcher 失败）：
-  - 分支守卫错误：仅 `branchGuardEntered == true` 时发 notice；否则只保留日志，不弹窗。
-  - 其他错误：保持原 `task_sync_error`。
+- `assert_binding_branch`：唯一发射点，按 3.2 的边沿与集合去重；任何调用方（心跳选择、ownership 校验、事件 pull、上传、watcher）都经过这里。
+- `report_binding_error` / `report_error`：分支守卫错误只过滤，不再发模态 `task_sync_error`，也不重复发 notice；其他错误保持原行为。
+- `forget_branch_guard_notice`：分支恢复时从集合移除 `local_repo_key`，允许下一次进入暂停重新提醒；`select_bindings` 的快路径也调用它。
 
 `AgentService::publish_control`：
 
@@ -129,6 +134,8 @@ match control.get("type").and_then(Value::as_str) {
 3. 切回绑定分支后错误清除、绑定重新入选；再次切走发第 2 条 notice。
 4. 同仓库多绑定同时进入暂停只发 1 条 notice。
 5. 非分支守卫错误仍发 `task_sync_error`（回归）。
+6. 直接调用 `assert_binding_branch`（模拟 ownership/pull 路径）也能发出且只发一次 notice。
+7. 复用旧 binding 副本（`last_error_code` 仍是守卫码）在恢复后再次失败时仍能提醒，证明边沿依据持久化状态。
 
 ## 6. 兼容性
 
