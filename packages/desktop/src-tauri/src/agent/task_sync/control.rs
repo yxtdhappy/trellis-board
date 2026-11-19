@@ -353,6 +353,46 @@ impl TaskSync {
     }
 }
 impl TaskSync {
+    /// 任务命令完成后主动释放写租约。
+    ///
+    /// 设计允许“先释放租约”再让创建者清理源副本；目标客户端若继续持有租约，
+    /// 创建者的 handoff 清理会一直收敛为 `lease_active` 冲突。释放失败不影响
+    /// 命令结果，后续用户编辑时上传路径会重新 claim。
+    pub(crate) async fn release_execution_lease(&self, execution_task_key: &str) {
+        let Some(lease) = self.stored_task_lease(execution_task_key).await else {
+            return;
+        };
+        match self
+            .release_remote_task(execution_task_key, &lease.token)
+            .await
+        {
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.server_code.as_deref(),
+                    Some("TASK_LEASE_INVALID")
+                        | Some("TASK_LEASE_REQUIRED")
+                        | Some("NOT_FOUND")
+                ) => {}
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "命令完成后释放任务租约失败 {}：{}",
+                    execution_task_key,
+                    protocol::safe_error_message(&error.message)
+                ));
+                return;
+            }
+        }
+        if let Err(error) = self.remove_task_lease(execution_task_key).await {
+            crate::logging::warn(&format!(
+                "删除命令任务租约失败 {}：{}",
+                execution_task_key,
+                protocol::safe_error_message(&error.message)
+            ));
+        }
+    }
+}
+impl TaskSync {
     pub(super) async fn ack_remote_handoff(&self, handoff: &StoredTaskHandoff) -> AgentResult<Value> {
         let encoded = urlencode(&handoff.execution_task_key);
         let body = handoff_ack_request(handoff)?;

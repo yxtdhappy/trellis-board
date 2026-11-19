@@ -69,6 +69,60 @@ async fn claim_persists_lease_for_restart_recovery() {
 
 
 #[tokio::test]
+async fn release_execution_lease_releases_stored_lease_once() {
+    let (root, store, _sync, binding) =
+        test_task_sync_fixture("trellis-control-release").await;
+    let controls = json!([{
+        "executionTaskKey": "space-1::task-a",
+        "taskId": "task-a",
+        "relativeDir": ".trellis/tasks/task-a",
+        "title": "任务 A",
+        "state": "materialized",
+        "taskVersion": 3,
+        "assigneeUserId": "user-b",
+        "handoffState": "none",
+        "updatedAt": "2026-11-17T00:00:00.000Z"
+    }]);
+    let (server_url, _changes, requests, server_task) = mock_api_server(json!({
+        "revision": 1,
+        "files": [],
+        "controls": controls,
+    }))
+    .await;
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+    let sink: ControlSink = Arc::new(|_| {});
+    let sync = TaskSync::new(store.clone(), api, sink);
+    sync.set_bindings(vec![binding.clone()]).await;
+    sync.claim_remote_task(&binding, "space-1::task-a")
+        .await
+        .expect("claim");
+    assert!(sync.stored_task_lease("space-1::task-a").await.is_some());
+
+    sync.release_execution_lease("space-1::task-a").await;
+    assert!(sync.stored_task_lease("space-1::task-a").await.is_none());
+    let release_count = requests
+        .lock()
+        .await
+        .iter()
+        .filter(|request| request.ends_with("/release"))
+        .count();
+    assert_eq!(release_count, 1);
+
+    // 没有本地租约时不再重复请求释放。
+    sync.release_execution_lease("space-1::task-a").await;
+    let release_count = requests
+        .lock()
+        .await
+        .iter()
+        .filter(|request| request.ends_with("/release"))
+        .count();
+    assert_eq!(release_count, 1);
+
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn rejects_archived_task_directory_under_temp_repo() {
     let (root, _store, _sync, binding) = test_task_sync_fixture("trellis-task-path").await;
     let tasks_root = Path::new(&binding.repo_path).join(".trellis").join("tasks");

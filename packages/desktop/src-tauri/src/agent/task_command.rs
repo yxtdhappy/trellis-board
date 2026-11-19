@@ -497,6 +497,12 @@ async fn finish_create(
         .sync_task_directories(&binding.task_space_id, &[task_dir.to_string()], true)
         .await?;
     let revision = require_synced_revision(&synced)?;
+    if let Some(execution_task_key) = create_execution_task_key(command, binding) {
+        context
+            .task_sync
+            .release_execution_lease(&execution_task_key)
+            .await;
+    }
     Ok(json!({
         "taskId": task_id,
         "taskKey": format!("{}::{task_dir}", binding.task_space_id),
@@ -659,6 +665,12 @@ async fn assign_task(
         )
         .await?;
     let revision = require_synced_revision(&synced)?;
+    // 目标端上传完成后释放租约，创建者收到 source_cleanup_pending 时才能
+    // 自动备份并删除源副本；否则会因 leaseHeldByOtherUser 收敛为冲突。
+    context
+        .task_sync
+        .release_execution_lease(execution_task_key)
+        .await;
     let task_id = task_id_of(&task, &task_dir)?;
     Ok(json!({
         "taskId": task_id,
