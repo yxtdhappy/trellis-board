@@ -73,3 +73,6 @@ packages/desktop/src-tauri/gen/
 packages/desktop/ui/
 .mcp.json
 .codex
+
+# Local Paseo workspace config
+paseo.json
