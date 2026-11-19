@@ -1564,3 +1564,28 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 67: 多客户端任务同步控制面双客户端 E2E 收尾
+<!-- trellis-session: v=2 fp=5f8491a1df3bf6e4 -->
+
+**Date**: 2026-11-19
+**Task**: 多客户端任务同步控制面双客户端 E2E 收尾
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成双客户端 handoff/租约/归档 tombstone/迁移重复验证；补齐命令 revision、租约释放、ToastText02 通知和归档脏副本保留；清理探针与数据库并记录 E2E/检查报告。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9cb3c77` | fix(desktop): 便携版 handoff 通知改用 ToastText02 |
+| `fb51ea2` | fix(desktop): 补充 base64 Engine 导入 |
+| `5f8dfe4` | docs(task): record dual-client E2E closure and sync contracts |
+
+### Status
+
+[OK] **Completed**
