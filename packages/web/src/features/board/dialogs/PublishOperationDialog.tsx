@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { isCompleteOperation, isRetryableOperation } from '@/lib/team-client.js'
-import type { PublishOperation } from '@/hooks/useBoard'
+import type { PublishOperation } from '@/hooks/board-types.ts'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
 const OPERATION_LABELS: Record<string, string> = {

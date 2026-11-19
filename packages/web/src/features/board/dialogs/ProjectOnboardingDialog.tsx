@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import {
@@ -19,200 +18,25 @@ import { pickProjectTrellisDevId } from '@/lib/team-client.js'
 import { normalizeProjectInspection, type ProjectInspection } from '@/lib/project-inspection.js'
 import { onboardingErrorMessage, preflightBlockReason } from '@/lib/onboarding-probe.js'
 import { AgentToolSelector } from './AgentToolSelector.tsx'
+import { OnboardingSkeleton } from './OnboardingSkeleton.tsx'
+import {
+  normalizeAssociation,
+  normalizePreflight,
+  stateLabel,
+  text,
+} from './project-onboarding-normalize.ts'
+import type {
+  Association,
+  InitialSyncMode,
+  PreflightResult,
+  ProjectOnboardingDialogProps,
+  PushState,
+} from './project-onboarding-types.ts'
 import { SelectField } from '../SelectField.tsx'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { toneSurface } from '@/components/ui/status-pill'
 import { Field, FieldLabel } from '@/components/ui/field'
-
-type TeamOption = {
-  id: string
-  name: string
-}
-
-type PushState = {
-  state: string
-  message?: string
-  dirtySummary?: string
-}
-
-type SnapshotDifference = {
-  type: string
-  taskId: string | null
-  taskDir: string | null
-}
-
-type PreflightCounts = {
-  same: number
-  localOnly: number
-  serverOnly: number
-  conflicts: number
-  invalid: number
-}
-
-type PreflightResult = {
-  status: string
-  revision: number
-  differences: SnapshotDifference[]
-  counts: PreflightCounts
-}
-
-type InitialSyncMode = 'bootstrap' | 'safe' | 'review'
-
-type LiveSyncStatus = 'pending' | 'syncing' | 'ready' | 'error'
-
-type Association = {
-  projectId: string
-  taskSpaceId: string
-  repoPath: string
-  displayName: string
-  branchName: string
-  teamId: string | null
-  status: string
-  readOnly: boolean
-  lastErrorCode: string | null
-  lastError: string | null
-  liveSyncStatus: LiveSyncStatus
-  liveSyncError: string | null
-}
-
-type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
-
-type ProjectIdentity = {
-  id: string
-  remoteIdentityHash?: string | null
-  trellisDevId?: string | null
-}
-
-type ProjectOnboardingDialogProps = {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  path: string
-  projects: ProjectIdentity[]
-  teams: TeamOption[]
-  defaultTeamId: string
-  defaultDeveloperId: string
-  invoke: TauriInvoke
-  onAssociated: (association: Association) => void
-}
-
-function text(value: unknown): string {
-  return typeof value === 'string' ? value : ''
-}
-
-function normalizeAssociation(value: unknown): Association | null {
-  if (!value || typeof value !== 'object') return null
-  const row = value as Record<string, unknown>
-  if (
-    typeof row.projectId !== 'string' ||
-    typeof row.taskSpaceId !== 'string' ||
-    typeof row.repoPath !== 'string' ||
-    typeof row.displayName !== 'string' ||
-    typeof row.branchName !== 'string' ||
-    typeof row.status !== 'string'
-  ) {
-    return null
-  }
-  return {
-    projectId: row.projectId,
-    taskSpaceId: row.taskSpaceId,
-    repoPath: row.repoPath,
-    displayName: row.displayName,
-    branchName: row.branchName,
-    teamId: typeof row.teamId === 'string' ? row.teamId : null,
-    status: row.status,
-    readOnly: row.readOnly === true,
-    lastErrorCode: typeof row.lastErrorCode === 'string' ? row.lastErrorCode : null,
-    lastError: typeof row.lastError === 'string' ? row.lastError : null,
-    liveSyncStatus:
-      row.liveSyncStatus === 'syncing' ||
-      row.liveSyncStatus === 'ready' ||
-      row.liveSyncStatus === 'error'
-        ? row.liveSyncStatus
-        : 'pending',
-    liveSyncError: typeof row.liveSyncError === 'string' ? row.liveSyncError : null,
-  }
-}
-
-function normalizePreflight(value: unknown): PreflightResult | null {
-  if (!value || typeof value !== 'object') return null
-  const row = value as Record<string, unknown>
-  const status = text(row.status)
-  if (!status) return null
-  const differences = Array.isArray(row.differences)
-    ? row.differences
-        .filter((item): item is Record<string, unknown> =>
-          Boolean(item && typeof item === 'object'),
-        )
-        .map((item) => ({
-          type: text(item.type),
-          taskId: typeof item.taskId === 'string' ? item.taskId : null,
-          taskDir: typeof item.taskDir === 'string' ? item.taskDir : null,
-        }))
-        .filter((item) => item.type)
-    : []
-  const rawCounts =
-    row.counts && typeof row.counts === 'object' ? (row.counts as Record<string, unknown>) : {}
-  const count = (key: string) => {
-    const value = rawCounts[key]
-    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0
-  }
-  return {
-    status,
-    revision: typeof row.revision === 'number' && Number.isFinite(row.revision) ? row.revision : 0,
-    differences,
-    counts: {
-      same: count('same'),
-      localOnly: count('localOnly'),
-      serverOnly: count('serverOnly'),
-      conflicts: count('conflicts'),
-      invalid: count('invalid'),
-    },
-  }
-}
-
-function stateLabel(push: PushState | null): string {
-  if (!push) return ''
-  switch (push.state) {
-    case 'waiting_commit':
-      return '等待提交：请先提交 .trellis 初始化文件。'
-    case 'waiting_push':
-      return '等待推送：本地提交还没有推送到远端分支。'
-    case 'branch_missing':
-      return '远端分支还不存在，请先执行 git push -u origin 当前分支。'
-    case 'remote_ahead':
-      return '远端分支比本地更新，请先拉取并处理后再接入。'
-    case 'diverged':
-      return '本地与远端已经分叉，请先处理 Git 历史。'
-    case 'unable_to_verify':
-      return '暂时无法连接远端，不能确认是否已经推送。'
-    case 'ready':
-      return '初始化文件已提交并推送，可以接入团队。'
-    default:
-      return push.message || '等待检查推送状态。'
-  }
-}
-
-function OnboardingSkeleton() {
-  return (
-    <div className="flex flex-col gap-3" aria-busy="true" aria-live="polite">
-      <p className="flex items-center gap-2 text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-        正在读取本地仓库信息…
-      </p>
-      <div className="flex flex-col gap-2 rounded-lg bg-muted/40 p-3">
-        <Skeleton className="h-3.5 w-3/4" />
-        <Skeleton className="h-3.5 w-1/2" />
-        <Skeleton className="h-3.5 w-11/12" />
-        <Skeleton className="h-3.5 w-2/3" />
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Skeleton className="h-14" />
-        <Skeleton className="h-14" />
-      </div>
-    </div>
-  )
-}
 
 export function ProjectOnboardingDialog({
   open,

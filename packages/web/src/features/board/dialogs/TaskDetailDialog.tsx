@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Download, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -12,9 +11,8 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Field, FieldLabel } from '@/components/ui/field'
-import { downloadArchiveFile, fetchTaskDetail, api, type TaskSpace } from '@/api/board'
+import { fetchTaskDetail, api } from '@/api/board'
 import { ApiError } from '@/api/request'
-import { renderMarkdown } from '@/lib/markdown.js'
 import type { Stage } from '../task-view.ts'
 import {
   branchLabel,
@@ -27,7 +25,7 @@ import {
   taskProgress,
   taskTags,
 } from '../task-view.ts'
-import type { BoardTask, DependencyRecord } from '../task-view.ts'
+import type { BoardTask } from '../task-view.ts'
 import { StageTape } from '../StageTape.tsx'
 import { ConditionChecks } from '../ConditionChecks.tsx'
 import { toast } from 'sonner'
@@ -42,136 +40,18 @@ import {
   taskControlView,
 } from '@/lib/team-client.js'
 import { AssigneeWarningDialog, type AssigneeWarningDetails } from './AssigneeWarningDialog.tsx'
+import { DependencyItem } from './TaskDetailDependencyItem.tsx'
+import { TaskDetailArchiveFiles } from './TaskDetailArchiveFiles.tsx'
+import { TaskDetailArtifactViewer } from './TaskDetailArtifactViewer.tsx'
+import { TaskDetailArtifactsSection } from './TaskDetailArtifactsSection.tsx'
+import {
+  authoritativeTaskField,
+  dependencyStateText,
+  readArtifacts,
+  type ArtifactEntry,
+} from './task-detail-artifacts.ts'
+import type { TaskDetailDialogProps } from './task-detail-types.ts'
 import { Skeleton } from '@/components/ui/skeleton'
-
-const ARTIFACTS = [
-  { key: 'source', label: 'WitOps 原文', hint: '从 WitOps 同步的任务字段与描述' },
-  { key: 'prd', label: 'PRD', hint: '需求、范围与验收标准' },
-  { key: 'design', label: 'Design', hint: '技术设计与关键取舍' },
-  { key: 'implement', label: 'Implement', hint: '实施计划与检查项' },
-  { key: 'implementationReport', label: '实施报告', hint: '实现结果与验证记录' },
-  { key: 'checkReport', label: '检查报告', hint: '质量检查与问题闭环' },
-  { key: 'e2eReport', label: 'E2E 报告', hint: '真实环境端到端验证' },
-] as const
-
-type ArtifactEntry = { path?: string; content?: string; truncated?: boolean }
-
-function authoritativeTaskField<K extends keyof BoardTask>(
-  task: BoardTask | null,
-  detail: BoardTask,
-  key: K,
-): BoardTask[K] {
-  return task && Object.hasOwn(task, key) ? task[key] : detail[key]
-}
-
-function fileSizeLabel(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
-}
-
-function dependencyStateText(task: BoardTask) {
-  const execution = task.execution || {}
-  const blockedBy = execution.blockedBy || []
-  const state = execution.isBlocked
-    ? `当前被 ${blockedBy.length} 项依赖阻断`
-    : execution.isUnblockedReady
-      ? '已有阻断解除，当前无活动阻断，可继续推进'
-      : '当前没有活动阻断'
-  const wip =
-    task.archived || task.derivedStage !== 'implement'
-      ? '当前阶段不计入实现中 WIP'
-      : execution.risk?.wipState === 'over_limit'
-        ? '实现中 WIP 超出软上限'
-        : execution.risk?.wipState === 'at_limit'
-          ? '实现中 WIP 达到软上限'
-          : '实现中 WIP 在软上限内'
-  return `${state} · ${wip}`
-}
-
-function DependencyItem({
-  item,
-  relation,
-  disabled,
-  onResolve,
-}: {
-  item: DependencyRecord
-  relation: 'blocked' | 'blocks'
-  disabled?: boolean
-  onResolve?: () => void
-}) {
-  return (
-    <article className="flex flex-col gap-1 rounded-lg bg-muted px-2.5 py-2 text-xs">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="rounded-full bg-background px-1.5 py-0.5 text-2xs font-semibold text-muted-foreground">
-          {relation === 'blocked' ? '阻断我' : '我阻断'}
-        </span>
-        <strong className="text-xs font-semibold">{item.title || '未命名任务'}</strong>
-        <small className="text-2xs text-muted-foreground">
-          {item.projectName || ''}
-          {item.createdBy ? ` · ${item.createdBy}` : ''}
-        </small>
-      </div>
-      <p className="text-2xs text-muted-foreground">{item.reason || '未记录原因'}</p>
-      <div className="flex items-center gap-2">
-        <time className="text-2xs text-muted-foreground" dateTime={item.createdAt}>
-          {item.createdAt ? new Date(item.createdAt).toLocaleString('zh-CN') : '时间未知'}
-        </time>
-        {onResolve ? (
-          <Button
-            variant="ghost"
-            size="xs"
-            className="ml-auto"
-            disabled={disabled}
-            onClick={onResolve}
-          >
-            解除依赖
-          </Button>
-        ) : null}
-      </div>
-    </article>
-  )
-}
-
-function readArtifacts(task: BoardTask | null) {
-  const source = task?.artifacts
-  if (!source || typeof source !== 'object') return []
-  const record = source as Record<string, ArtifactEntry>
-  return ARTIFACTS.map((definition) => ({
-    ...definition,
-    artifact: record[definition.key],
-  })).filter((item) => item.artifact?.path)
-}
-
-type TaskDetailActions = {
-  addDependency: (payload: {
-    blocked: { taskSpaceId: string; executionTaskKey?: string; taskPath?: string }
-    blocker: { taskSpaceId: string; executionTaskKey?: string; taskPath?: string }
-    reason: string
-    assigneeDecision?: {
-      warningId: string
-      action: 'continue' | 'takeover'
-    }
-  }) => Promise<void>
-  removeDependency: (
-    id: string,
-    assigneeDecision?: { warningId: string; action: 'continue' | 'takeover' },
-  ) => Promise<void>
-}
-
-type TaskDetailDialogProps = {
-  task: BoardTask | null
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onAssign: (task: BoardTask, assignee: string) => Promise<void>
-  assignees: string[]
-  taskSpace?: TaskSpace | null
-  teamMode?: boolean
-  onPlanSaved: () => void
-  tasks: BoardTask[]
-  actions: TaskDetailActions
-}
 
 export function TaskDetailDialog({
   task,
@@ -188,8 +68,7 @@ export function TaskDetailDialog({
   const [detail, setDetail] = useState<BoardTask | null>(null)
   const [loading, setLoading] = useState(false)
   const [assignee, setAssignee] = useState('')
-  const [artifact, setArtifact] = useState<{ label: string; entry: ArtifactEntry } | null>(null)
-  const artifactHeaderRef = useRef<HTMLDivElement>(null)
+  const [artifact, setArtifact] = useState<{ label: string; entry?: ArtifactEntry } | null>(null)
   const [editingPlan, setEditingPlan] = useState(false)
   const [dueDate, setDueDate] = useState('')
   const [milestone, setMilestone] = useState('')
@@ -480,306 +359,233 @@ export function TaskDetailDialog({
 
               {contentMaterialized ? (
                 <>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs font-semibold text-muted-foreground">关注信号</span>
-                {isAttention(current) ? (
-                  attentionReasons(current).map((reason) => (
-                    <StatusPill key={reason.id} tone="destructive">
-                      {reason.label}
-                    </StatusPill>
-                  ))
-                ) : (
-                  <StatusPill tone="neutral">无风险信号</StatusPill>
-                )}
-                <span className="ml-auto text-2xs text-muted-foreground">
-                  {stage?.label} · {progress?.percent}% · {progress?.done}/{progress?.total}{' '}
-                  必需阶段
-                </span>
-              </div>
-
-              <ConditionChecks
-                key={`${current.taskKey}:${current.derivedStage}`}
-                task={current}
-                loading={loading}
-              />
-
-              <section className="flex flex-col gap-1.5">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xs font-semibold text-muted-foreground">阶段证据</h3>
-                  {canEditPlan ? (
-                    <Button
-                      className="ml-auto text-xs font-semibold"
-                      onClick={() => {
-                        setEditingPlan((value) => !value)
-                        setDueDate(current.execution?.dueDate || '')
-                        setMilestone(String(current.execution?.milestone || ''))
-                        setTags(taskTags(current).join(', '))
-                      }}
-                    >
-                      编辑计划
-                    </Button>
-                  ) : null}
-                </div>
-                {editingPlan && canEditPlan ? (
-                  <div className="grid gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_1fr_auto]">
-                    <Field className="gap-1">
-                      <FieldLabel htmlFor="task-plan-due-date" className="text-2xs">
-                        截止日期
-                      </FieldLabel>
-                      <Input
-                        id="task-plan-due-date"
-                        className="text-xs"
-                        type="date"
-                        value={dueDate}
-                        onChange={(e) => setDueDate(e.target.value)}
-                      />
-                    </Field>
-                    <Field className="gap-1">
-                      <FieldLabel htmlFor="task-plan-milestone" className="text-2xs">
-                        里程碑
-                      </FieldLabel>
-                      <Input
-                        id="task-plan-milestone"
-                        className="text-xs"
-                        value={milestone}
-                        onChange={(e) => setMilestone(e.target.value)}
-                      />
-                    </Field>
-                    <Field className="gap-1">
-                      <FieldLabel htmlFor="task-plan-tags" className="text-2xs">
-                        标签
-                      </FieldLabel>
-                      <Input
-                        id="task-plan-tags"
-                        className="text-xs"
-                        value={tags}
-                        onChange={(e) => setTags(e.target.value)}
-                      />
-                    </Field>
-                    <Button className="mt-auto" onClick={savePlan}>
-                      保存计划字段
-                    </Button>
-                  </div>
-                ) : null}
-                <ul className="flex flex-col divide-y divide-border/60 rounded-lg border border-border">
-                  {current.stages.map((item: Stage) => (
-                    <li key={item.id}>
-                      <div className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs">
-                        <span className="w-4 text-2xs text-muted-foreground">{item.index}</span>
-                        <StatusPill tone={stageTone(item.label)} size="xs" className="font-medium">
-                          {item.label}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs font-semibold text-muted-foreground">关注信号</span>
+                    {isAttention(current) ? (
+                      attentionReasons(current).map((reason) => (
+                        <StatusPill key={reason.id} tone="destructive">
+                          {reason.label}
                         </StatusPill>
-                        <span className="ml-auto text-2xs text-muted-foreground">
-                          {stageSourceLabel(item)}
-                        </span>
-                        <span
-                          className="max-w-[45%] truncate text-2xs text-muted-foreground"
-                          title={item.evidence}
+                      ))
+                    ) : (
+                      <StatusPill tone="neutral">无风险信号</StatusPill>
+                    )}
+                    <span className="ml-auto text-2xs text-muted-foreground">
+                      {stage?.label} · {progress?.percent}% · {progress?.done}/{progress?.total}{' '}
+                      必需阶段
+                    </span>
+                  </div>
+
+                  <ConditionChecks
+                    key={`${current.taskKey}:${current.derivedStage}`}
+                    task={current}
+                    loading={loading}
+                  />
+
+                  <section className="flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xs font-semibold text-muted-foreground">阶段证据</h3>
+                      {canEditPlan ? (
+                        <Button
+                          className="ml-auto text-xs font-semibold"
+                          onClick={() => {
+                            setEditingPlan((value) => !value)
+                            setDueDate(current.execution?.dueDate || '')
+                            setMilestone(String(current.execution?.milestone || ''))
+                            setTags(taskTags(current).join(', '))
+                          }}
                         >
-                          {item.evidence || '等待执行'}
-                        </span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-
-              {current.execution?.blockedBy ? (
-                <section className="flex flex-col gap-1.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-xs font-semibold text-muted-foreground">风险与依赖</h3>
-                    <span className="text-2xs text-muted-foreground">
-                      {dependencyStateText(current)}
-                    </span>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <div className="flex flex-col gap-1">
-                      <h4 className="text-2xs font-semibold text-muted-foreground">
-                        Blocked by / 被谁阻断
-                      </h4>
-                      {(current.execution.blockedBy || []).length ? (
-                        current.execution.blockedBy.map((item) => (
-                          <DependencyItem
-                            key={item.id}
-                            item={item}
-                            relation="blocked"
-                            disabled={Boolean(current.archived) || Boolean(busy)}
-                            onResolve={() =>
-                              void run(
-                                'resolve:' + item.id,
-                                (decision) => actions.removeDependency(item.id, decision),
-                                '阻断依赖已解除',
-                              )
-                            }
+                          编辑计划
+                        </Button>
+                      ) : null}
+                    </div>
+                    {editingPlan && canEditPlan ? (
+                      <div className="grid gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                        <Field className="gap-1">
+                          <FieldLabel htmlFor="task-plan-due-date" className="text-2xs">
+                            截止日期
+                          </FieldLabel>
+                          <Input
+                            id="task-plan-due-date"
+                            className="text-xs"
+                            type="date"
+                            value={dueDate}
+                            onChange={(e) => setDueDate(e.target.value)}
                           />
-                        ))
-                      ) : (
-                        <p className="text-2xs text-muted-foreground">当前没有活动阻断。</p>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <h4 className="text-2xs font-semibold text-muted-foreground">
-                        Blocks / 阻断了谁
-                      </h4>
-                      {(current.execution.blocks || []).length ? (
-                        (current.execution.blocks || []).map((item) => (
-                          <DependencyItem key={item.id} item={item} relation="blocks" disabled />
-                        ))
-                      ) : (
-                        <p className="text-2xs text-muted-foreground">
-                          这个任务目前没有阻断其他任务。
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  {(current.execution.resolvedBlockedBy || []).length ||
-                  (current.execution.resolvedBlocks || []).length ? (
-                    <details className="rounded-lg border border-border px-2.5 py-1.5 text-2xs text-muted-foreground">
-                      <summary className="cursor-pointer">
-                        已解除依赖：曾被阻断 {(current.execution.resolvedBlockedBy || []).length} 项
-                        · 曾阻断其他任务 {(current.execution.resolvedBlocks || []).length} 项
-                      </summary>
-                      <ul className="mt-1 flex flex-col gap-0.5">
-                        {[
-                          ...(current.execution.resolvedBlockedBy || []),
-                          ...(current.execution.resolvedBlocks || []),
-                        ].map((item) => (
-                          <li key={item.id} className="truncate">
-                            {item.title || '未命名任务'} · {item.reason || '未记录原因'}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  ) : null}
-                  {!current.archived ? (
-                    <div className="grid gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_auto]">
-                      <SelectField
-                        ariaLabel="阻断方任务"
-                        className="min-w-0 text-xs"
-                        placeholder="请选择阻断方任务"
-                        value={blockerKey}
-                        options={dependencyCandidates.map((candidate) => ({
-                          value: candidate.taskKey,
-                          label: `${candidate.projectName} · ${candidate.title}`,
-                        }))}
-                        onChange={setBlockerKey}
-                      />
-                      <Input
-                        aria-label="阻断原因"
-                        className="text-xs"
-                        placeholder="阻断原因（最多 500 字）"
-                        maxLength={500}
-                        value={reason}
-                        onChange={(event) => setReason(event.target.value)}
-                      />
-                      <Button
-                        disabled={busy === 'dependency'}
-                        onClick={() => void addDependency()}
-                      >
-                        {busy === 'dependency' ? '正在创建…' : '创建阻断依赖'}
-                      </Button>
-                    </div>
-                  ) : null}
-                </section>
-              ) : null}
-
-              <section className="flex flex-col gap-1.5">
-                <h3 className="text-xs font-semibold text-muted-foreground">任务产物</h3>
-                {loading && !artifacts.length ? (
-                  <p className="text-xs text-muted-foreground">任务产物正在读取…</p>
-                ) : artifacts.length ? (
-                  <div className="flex flex-col gap-1">
-                    {artifacts.map(({ key, label, hint, artifact: entry }) => (
-                      <Button
-                        key={key}
-                        variant="ghost"
-                        className="h-auto items-start justify-start gap-2 rounded-lg bg-muted px-2.5 py-2 text-left hover:bg-muted/70"
-                        onClick={() => setArtifact({ label, entry })}
-                      >
-                        <span className="flex size-6 items-center justify-center rounded bg-card text-2xs font-bold text-muted-foreground">
-                          MD
-                        </span>
-                        <span className="flex min-w-0 flex-col">
-                          <b className="text-xs font-semibold">{label}</b>
-                          <small className="truncate text-2xs text-muted-foreground">
-                            {hint} · {entry?.path?.split('/').pop()}
-                          </small>
-                        </span>
-                        <span className="ml-auto text-2xs text-primary">查看</span>
-                      </Button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    这个任务没有可读取的 Markdown 产物。
-                  </p>
-                )}
-              </section>
-
-              {current.archived ? (
-                <section className="flex flex-col gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-[0.6875rem] font-semibold text-muted-foreground">
-                      归档附件
-                    </h3>
-                    <span className="text-[0.625rem] text-muted-foreground">
-                      {archiveFiles.length} 个本地快照文件
-                    </span>
-                  </div>
-                  <p className="rounded-lg border border-border px-2.5 py-2 text-2xs leading-5 text-muted-foreground">
-                    归档后，本地活动副本可能保留、进入受保护清理，或因已修改、被 Git
-                    跟踪而需要按 Git 流程处理。
-                  </p>
-                  {loading && !archiveFiles.length ? (
-                    <Skeleton className="h-6 w-40" />
-                  ) : archiveFiles.length ? (
+                        </Field>
+                        <Field className="gap-1">
+                          <FieldLabel htmlFor="task-plan-milestone" className="text-2xs">
+                            里程碑
+                          </FieldLabel>
+                          <Input
+                            id="task-plan-milestone"
+                            className="text-xs"
+                            value={milestone}
+                            onChange={(e) => setMilestone(e.target.value)}
+                          />
+                        </Field>
+                        <Field className="gap-1">
+                          <FieldLabel htmlFor="task-plan-tags" className="text-2xs">
+                            标签
+                          </FieldLabel>
+                          <Input
+                            id="task-plan-tags"
+                            className="text-xs"
+                            value={tags}
+                            onChange={(e) => setTags(e.target.value)}
+                          />
+                        </Field>
+                        <Button className="mt-auto" onClick={savePlan}>
+                          保存计划字段
+                        </Button>
+                      </div>
+                    ) : null}
                     <ul className="flex flex-col divide-y divide-border/60 rounded-lg border border-border">
-                      {archiveFiles.map((file) => (
-                        <li key={file.id} className="flex min-w-0 items-center gap-2 px-2.5 py-2">
-                          <span className="flex min-w-0 flex-1 flex-col">
-                            <b
-                              className="truncate text-[0.71875rem] font-semibold"
-                              title={file.path}
+                      {current.stages.map((item: Stage) => (
+                        <li key={item.id}>
+                          <div className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs">
+                            <span className="w-4 text-2xs text-muted-foreground">{item.index}</span>
+                            <StatusPill
+                              tone={stageTone(item.label)}
+                              size="xs"
+                              className="font-medium"
                             >
-                              {file.name}
-                            </b>
-                            <small className="truncate text-[0.625rem] text-muted-foreground">
-                              {file.mimeType} · {fileSizeLabel(file.sizeBytes)}
-                            </small>
-                          </span>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-1"
-                            disabled={busy === `archive:${file.id}`}
-                            onClick={async () => {
-                              setBusy(`archive:${file.id}`)
-                              try {
-                                await downloadArchiveFile(file)
-                              } catch (error) {
-                                toast.error(
-                                  error instanceof Error
-                                    ? error.message
-                                    : '归档本地文件不可用，请等待下一次同步',
-                                )
-                              } finally {
-                                setBusy('')
-                              }
-                            }}
-                          >
-                            <Download className="size-3.5" />
-                            {busy === `archive:${file.id}` ? '读取中' : '下载'}
-                          </Button>
+                              {item.label}
+                            </StatusPill>
+                            <span className="ml-auto text-2xs text-muted-foreground">
+                              {stageSourceLabel(item)}
+                            </span>
+                            <span
+                              className="max-w-[45%] truncate text-2xs text-muted-foreground"
+                              title={item.evidence}
+                            >
+                              {item.evidence || '等待执行'}
+                            </span>
+                          </div>
                         </li>
                       ))}
                     </ul>
-                  ) : (
-                    <p className="text-[0.6875rem] text-muted-foreground">
-                      当前还没有可下载的本地快照附件。
-                    </p>
-                  )}
-                </section>
-              ) : null}
+                  </section>
+
+                  {current.execution?.blockedBy ? (
+                    <section className="flex flex-col gap-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-xs font-semibold text-muted-foreground">风险与依赖</h3>
+                        <span className="text-2xs text-muted-foreground">
+                          {dependencyStateText(current)}
+                        </span>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="flex flex-col gap-1">
+                          <h4 className="text-2xs font-semibold text-muted-foreground">
+                            Blocked by / 被谁阻断
+                          </h4>
+                          {(current.execution.blockedBy || []).length ? (
+                            current.execution.blockedBy.map((item) => (
+                              <DependencyItem
+                                key={item.id}
+                                item={item}
+                                relation="blocked"
+                                disabled={Boolean(current.archived) || Boolean(busy)}
+                                onResolve={() =>
+                                  void run(
+                                    'resolve:' + item.id,
+                                    (decision) => actions.removeDependency(item.id, decision),
+                                    '阻断依赖已解除',
+                                  )
+                                }
+                              />
+                            ))
+                          ) : (
+                            <p className="text-2xs text-muted-foreground">当前没有活动阻断。</p>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <h4 className="text-2xs font-semibold text-muted-foreground">
+                            Blocks / 阻断了谁
+                          </h4>
+                          {(current.execution.blocks || []).length ? (
+                            (current.execution.blocks || []).map((item) => (
+                              <DependencyItem
+                                key={item.id}
+                                item={item}
+                                relation="blocks"
+                                disabled
+                              />
+                            ))
+                          ) : (
+                            <p className="text-2xs text-muted-foreground">
+                              这个任务目前没有阻断其他任务。
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      {(current.execution.resolvedBlockedBy || []).length ||
+                      (current.execution.resolvedBlocks || []).length ? (
+                        <details className="rounded-lg border border-border px-2.5 py-1.5 text-2xs text-muted-foreground">
+                          <summary className="cursor-pointer">
+                            已解除依赖：曾被阻断{' '}
+                            {(current.execution.resolvedBlockedBy || []).length} 项 · 曾阻断其他任务{' '}
+                            {(current.execution.resolvedBlocks || []).length} 项
+                          </summary>
+                          <ul className="mt-1 flex flex-col gap-0.5">
+                            {[
+                              ...(current.execution.resolvedBlockedBy || []),
+                              ...(current.execution.resolvedBlocks || []),
+                            ].map((item) => (
+                              <li key={item.id} className="truncate">
+                                {item.title || '未命名任务'} · {item.reason || '未记录原因'}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                      {!current.archived ? (
+                        <div className="grid gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_auto]">
+                          <SelectField
+                            ariaLabel="阻断方任务"
+                            className="min-w-0 text-xs"
+                            placeholder="请选择阻断方任务"
+                            value={blockerKey}
+                            options={dependencyCandidates.map((candidate) => ({
+                              value: candidate.taskKey,
+                              label: `${candidate.projectName} · ${candidate.title}`,
+                            }))}
+                            onChange={setBlockerKey}
+                          />
+                          <Input
+                            aria-label="阻断原因"
+                            className="text-xs"
+                            placeholder="阻断原因（最多 500 字）"
+                            maxLength={500}
+                            value={reason}
+                            onChange={(event) => setReason(event.target.value)}
+                          />
+                          <Button
+                            disabled={busy === 'dependency'}
+                            onClick={() => void addDependency()}
+                          >
+                            {busy === 'dependency' ? '正在创建…' : '创建阻断依赖'}
+                          </Button>
+                        </div>
+                      ) : null}
+                    </section>
+                  ) : null}
+
+                  <TaskDetailArtifactsSection
+                    artifacts={artifacts}
+                    loading={loading}
+                    onOpen={setArtifact}
+                  />
+
+                  {current.archived ? (
+                    <TaskDetailArchiveFiles
+                      files={archiveFiles}
+                      loading={loading}
+                      busy={busy}
+                      onBusy={setBusy}
+                    />
+                  ) : null}
                 </>
               ) : (
                 <section className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-3">
@@ -839,26 +645,7 @@ export function TaskDetailDialog({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(artifact)} onOpenChange={(value) => !value && setArtifact(null)}>
-        <DialogContent className="sm:max-w-205" initialFocus={artifactHeaderRef}>
-          <DialogHeader ref={artifactHeaderRef} tabIndex={-1} className="outline-none">
-            <DialogTitle className="text-base">工件查看 · {artifact?.label}</DialogTitle>
-            <DialogDescription>{artifact?.entry?.path}</DialogDescription>
-          </DialogHeader>
-          <DialogBody
-            className="markdown-body max-w-none break-words [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_img]:max-w-full"
-            dangerouslySetInnerHTML={{
-              __html: renderMarkdown(artifact?.entry?.content || '（无可预览内容）'),
-            }}
-          />
-          <DialogFooter className="gap-2">
-            <Button variant="outline" className="gap-1.5" onClick={() => setArtifact(null)}>
-              <X className="size-3.5" />
-              关闭
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TaskDetailArtifactViewer artifact={artifact} onClose={() => setArtifact(null)} />
       <AssigneeWarningDialog
         warning={assigneeWarning}
         onCancel={() => {

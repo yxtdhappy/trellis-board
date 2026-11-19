@@ -8,7 +8,6 @@ import {
   fetchAssignments,
   fetchBoard,
   fetchBoardSettings,
-  fetchOwnershipInbox,
   fetchRepositories,
   fetchSavedViews,
   fetchTeamStatus,
@@ -28,26 +27,8 @@ import {
 import type { BoardPayload, BoardStatus, Project, TeamQueryPage, TeamRuntime } from '@/api/board'
 import { teamRowToBoardTask, type BoardTask } from '@/features/board/task-view'
 import { ApiError } from '@/api/request'
-import {
-  mergeOwnershipInboxItems,
-  normalizeOwnershipInboxCount,
-  summarizeOwnershipInbox,
-} from '@/lib/ownership-inbox.js'
-import type { OwnershipInboxItem, OwnershipInboxProjectGroup } from '@/lib/ownership-inbox.js'
+import { normalizeOwnershipInboxCount, summarizeOwnershipInbox } from '@/lib/ownership-inbox.js'
 
-export type BoardFilters = {
-  teamId: string
-  projectId: string
-  taskSpaceId: string
-  scope: 'all' | 'mine'
-  search: string
-  branch: string
-  assignee: string
-  priority: string
-  stage: string
-  blocked: 'any' | 'blocked' | 'unblocked'
-  executionView: string
-}
 import {
   buildTaskQuery,
   createIdempotencyKey,
@@ -57,6 +38,8 @@ import {
   operationPollDelay,
 } from '@/lib/team-client.js'
 import { createRefreshCoordinator } from '@/lib/refresh-coordinator.js'
+import { useOwnershipInbox } from './useOwnershipInbox.ts'
+import type { BoardController, BoardFilters, PublishOperation } from './board-types.ts'
 
 const BUILTIN_VIEW_IDS = ['all', 'p0p1', 'due', 'stale', 'implementing', 'blocked'] as const
 
@@ -66,13 +49,6 @@ export function useBoard(): BoardController {
   const [runtime, setRuntime] = useState<TeamRuntime | null>(null)
   const [teamPage, setTeamPage] = useState<TeamQueryPage | null>(null)
   const [teamStatus, setTeamStatus] = useState<Record<string, unknown> | null>(null)
-  const [ownershipInboxOpen, setOwnershipInboxOpen] = useState(false)
-  const [ownershipInboxItems, setOwnershipInboxItems] = useState<OwnershipInboxItem[]>([])
-  const [ownershipInboxTotal, setOwnershipInboxTotal] = useState(0)
-  const [ownershipInboxNextCursor, setOwnershipInboxNextCursor] = useState<string | null>(null)
-  const [ownershipInboxLoading, setOwnershipInboxLoading] = useState(false)
-  const [ownershipInboxLoadingMore, setOwnershipInboxLoadingMore] = useState(false)
-  const [ownershipInboxError, setOwnershipInboxError] = useState('')
   const [assignments, setAssignments] = useState<unknown[]>([])
   const [operation, setOperation] = useState<PublishOperation | null>(null)
   const [operations, setOperations] = useState<PublishOperation[]>([])
@@ -99,9 +75,6 @@ export function useBoard(): BoardController {
   const teamCursors = useRef<(string | null)[]>([null])
   const teamPageIndex = useRef(0)
   const teamPageRequest = useRef(0)
-  const ownershipInboxRequest = useRef(0)
-  const ownershipInboxCursor = useRef<string | null>(null)
-  const ownershipInboxOpenRef = useRef(false)
   const operationsRequest = useRef(0)
   const operationsSignature = useRef('[]')
   const teamPreferenceRequest = useRef(0)
@@ -124,6 +97,11 @@ export function useBoard(): BoardController {
   )
 
   const teamMode = runtime?.team === true || runtime?.mode === 'team'
+  const inbox = useOwnershipInbox({
+    teamMode,
+    teamId: filters.teamId,
+    projectId: filters.projectId,
+  })
 
   useEffect(() => {
     teamStatusRefresh.activate()
@@ -205,70 +183,6 @@ export function useBoard(): BoardController {
 
   const loadTeamStatus = useCallback(() => teamStatusRefresh.request(), [teamStatusRefresh])
 
-  const clearOwnershipInbox = useCallback(() => {
-    ownershipInboxRequest.current += 1
-    ownershipInboxCursor.current = null
-    setOwnershipInboxItems([])
-    setOwnershipInboxTotal(0)
-    setOwnershipInboxNextCursor(null)
-    setOwnershipInboxLoading(false)
-    setOwnershipInboxLoadingMore(false)
-    setOwnershipInboxError('')
-  }, [])
-
-  const loadOwnershipInbox = useCallback(
-    async (mode: 'replace' | 'next' = 'replace') => {
-      if (!teamMode) {
-        clearOwnershipInbox()
-        return
-      }
-      const next = mode === 'next'
-      const cursor = next ? ownershipInboxCursor.current : null
-      if (next && !cursor) return
-      const request = ++ownershipInboxRequest.current
-      setOwnershipInboxLoading(!next)
-      setOwnershipInboxLoadingMore(next)
-      if (!next) setOwnershipInboxError('')
-      try {
-        const page = await fetchOwnershipInbox({
-          teamId: filters.teamId,
-          projectId: filters.projectId,
-          cursor,
-        })
-        if (request !== ownershipInboxRequest.current) return
-        setOwnershipInboxItems((current) =>
-          next ? mergeOwnershipInboxItems(current, page.items) : page.items,
-        )
-        ownershipInboxCursor.current = page.nextCursor
-        setOwnershipInboxNextCursor(page.nextCursor)
-        setOwnershipInboxTotal(page.total)
-        setOwnershipInboxError('')
-      } catch (err) {
-        if (request !== ownershipInboxRequest.current) return
-        if ((err as Error)?.name === 'AbortError') return
-        setOwnershipInboxError((err as Error).message)
-      } finally {
-        if (request === ownershipInboxRequest.current) {
-          setOwnershipInboxLoading(false)
-          setOwnershipInboxLoadingMore(false)
-        }
-      }
-    },
-    [teamMode, filters.teamId, filters.projectId, clearOwnershipInbox],
-  )
-
-  const reloadOwnershipInbox = useCallback(
-    () => loadOwnershipInbox('replace'),
-    [loadOwnershipInbox],
-  )
-
-  const loadMoreOwnershipInbox = useCallback(async () => {
-    if (ownershipInboxLoading || ownershipInboxLoadingMore || !ownershipInboxCursor.current) {
-      return
-    }
-    await loadOwnershipInbox('next')
-  }, [ownershipInboxLoading, ownershipInboxLoadingMore, loadOwnershipInbox])
-
   const replaceOperations = useCallback((next: PublishOperation[]) => {
     const signature = JSON.stringify(next)
     if (signature === operationsSignature.current) return
@@ -335,20 +249,16 @@ export function useBoard(): BoardController {
   const alignBoard = useCallback(async () => {
     if (teamMode) {
       await Promise.all([loadTeamPage(true), loadTeamStatus()])
-      if (ownershipInboxOpenRef.current) await loadOwnershipInbox()
+      if (inbox.openRef.current) await inbox.reload()
       return
     }
     await loadBoard(false, true)
-  }, [teamMode, loadBoard, loadTeamPage, loadTeamStatus, loadOwnershipInbox])
+  }, [teamMode, loadBoard, loadTeamPage, loadTeamStatus, inbox.reload])
 
   const alignBoardRef = useRef(alignBoard)
   useEffect(() => {
     alignBoardRef.current = alignBoard
   }, [alignBoard])
-
-  useEffect(() => {
-    ownershipInboxOpenRef.current = ownershipInboxOpen
-  }, [ownershipInboxOpen])
 
   useEffect(() => {
     if (!runtime) return
@@ -411,22 +321,6 @@ export function useBoard(): BoardController {
       setError((err as Error).message)
     })
   }, [teamMode, loadTeamPreferences])
-
-  useEffect(() => {
-    if (!ownershipInboxOpen) return
-    if (!teamMode) {
-      clearOwnershipInbox()
-      return
-    }
-    void reloadOwnershipInbox()
-  }, [
-    ownershipInboxOpen,
-    teamMode,
-    filters.teamId,
-    filters.projectId,
-    reloadOwnershipInbox,
-    clearOwnershipInbox,
-  ])
 
   useEffect(() => {
     if (!teamMode || filters.taskSpaceId === 'all') {
@@ -528,7 +422,7 @@ export function useBoard(): BoardController {
         clearOperations()
       }
       if (ownershipScopeChanged) {
-        clearOwnershipInbox()
+        inbox.clear()
       }
       if (patch.teamId !== undefined) {
         teamPreferenceRequest.current += 1
@@ -536,7 +430,7 @@ export function useBoard(): BoardController {
         setBoard((current) => (current ? { ...current, savedViews: [], settings: {} } : current))
       }
     },
-    [clearOperations, clearOwnershipInbox, filters.teamId, filters.projectId],
+    [clearOperations, inbox.clear, filters.teamId, filters.projectId],
   )
 
   const actions = useMemo(
@@ -545,7 +439,7 @@ export function useBoard(): BoardController {
         if (teamMode) {
           await loadTeamPage(false)
           await loadTeamStatus()
-          if (ownershipInboxOpenRef.current) await loadOwnershipInbox()
+          if (inbox.openRef.current) await inbox.reload()
           return
         }
         await loadBoard(true)
@@ -653,7 +547,7 @@ export function useBoard(): BoardController {
       loadTeamPage,
       loadTeamPreferences,
       loadTeamStatus,
-      loadOwnershipInbox,
+      inbox.reload,
       loadAssignments,
       reloadCurrentSource,
       trackOperation,
@@ -722,17 +616,15 @@ export function useBoard(): BoardController {
     (projectId: string) => {
       const scope = projectId || 'all'
       const sameScope = filters.projectId === scope
-      const nextOpen = !(ownershipInboxOpenRef.current && sameScope)
-      ownershipInboxOpenRef.current = nextOpen
-      setOwnershipInboxOpen(nextOpen)
+      inbox.toggle(sameScope)
       if (!sameScope) setFilters({ projectId: scope })
     },
     [filters.projectId, setFilters],
   )
 
   useEffect(() => {
-    if (ownershipInboxOpen && ownershipInboxSummary.count === 0) clearOwnershipInbox()
-  }, [ownershipInboxOpen, ownershipInboxSummary.count, clearOwnershipInbox])
+    if (inbox.open && ownershipInboxSummary.count === 0) inbox.clear()
+  }, [inbox.open, ownershipInboxSummary.count, inbox.clear])
 
   useEffect(() => {
     if (!teamMode || projects.length === 0 || filters.projectId === 'all') return
@@ -758,16 +650,16 @@ export function useBoard(): BoardController {
     ownershipInbox: {
       count: ownershipInboxSummary.count,
       projectGroups: ownershipInboxSummary.groups,
-      open: ownershipInboxOpen,
-      items: ownershipInboxItems,
-      total: ownershipInboxTotal,
-      nextCursor: ownershipInboxNextCursor,
-      loading: ownershipInboxLoading,
-      loadingMore: ownershipInboxLoadingMore,
-      error: ownershipInboxError,
+      open: inbox.open,
+      items: inbox.items,
+      total: inbox.total,
+      nextCursor: inbox.nextCursor,
+      loading: inbox.loading,
+      loadingMore: inbox.loadingMore,
+      error: inbox.error,
       toggle: toggleOwnershipInbox,
-      reload: reloadOwnershipInbox,
-      loadMore: loadMoreOwnershipInbox,
+      reload: inbox.reload,
+      loadMore: inbox.loadMore,
     },
     assignments,
     filters,
@@ -779,83 +671,4 @@ export function useBoard(): BoardController {
     actions,
     builtinViews: BUILTIN_VIEW_IDS,
   }
-}
-
-export type PublishOperation = {
-  id: string | null
-  status?: string
-  code?: string | null
-  error?: string | null
-  commandType?: string | null
-  taskSpaceId?: string | null
-  taskKey?: string | null
-  projectId?: string | null
-  result?: Record<string, unknown>
-  raw?: unknown
-}
-
-export type BoardActions = {
-  refresh: () => Promise<void>
-  saveWip: (limit: number) => Promise<void>
-  createTask: (payload: Record<string, unknown>) => Promise<void>
-  assign: (payload: Record<string, unknown>) => Promise<void>
-  addDependency: (payload: {
-    blocked: { taskSpaceId: string; executionTaskKey?: string; taskPath?: string }
-    blocker: { taskSpaceId: string; executionTaskKey?: string; taskPath?: string }
-    reason: string
-    assigneeDecision?: { warningId: string; action: 'continue' | 'takeover' }
-  }) => Promise<void>
-  removeDependency: (
-    id: string,
-    assigneeDecision?: { warningId: string; action: 'continue' | 'takeover' },
-  ) => Promise<void>
-  saveView: (name: string, filter: Record<string, unknown>) => Promise<string>
-  deleteView: (id: string) => Promise<void>
-  retryOperation: (id?: string) => Promise<void>
-  cancelOperation: (id: string) => Promise<void>
-  dismissOperation: () => void
-  accept: (payload: unknown) => Promise<void>
-  reloadAssignments: () => Promise<void>
-  repositories: {
-    list: () => Promise<{ id?: string; name?: string; path?: string }[]>
-    pick: () => Promise<string[]>
-    add: (paths: string[]) => Promise<void>
-    remove: (id: string) => Promise<void>
-  }
-}
-
-export type BoardController = {
-  board: BoardPayload | null
-  tasks: BoardTask[]
-  projects: BoardPayload['projects']
-  status: BoardStatus | null
-  runtime: TeamRuntime | null
-  teamMode: boolean
-  teamPage: TeamQueryPage | null
-  teamStatus: Record<string, unknown> | null
-  ownershipInbox: OwnershipInboxController
-  assignments: unknown[]
-  filters: BoardFilters
-  setFilters: (patch: Partial<BoardFilters>) => void
-  error: string
-  loading: boolean
-  operation: PublishOperation | null
-  operations: PublishOperation[]
-  actions: BoardActions
-  builtinViews: readonly string[]
-}
-
-export type OwnershipInboxController = {
-  count: number
-  projectGroups: OwnershipInboxProjectGroup[]
-  open: boolean
-  items: OwnershipInboxItem[]
-  total: number
-  nextCursor: string | null
-  loading: boolean
-  loadingMore: boolean
-  error: string
-  toggle: (projectId: string) => void
-  reload: () => Promise<void>
-  loadMore: () => Promise<void>
 }

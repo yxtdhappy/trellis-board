@@ -1,6 +1,6 @@
 import { LoaderCircle, RotateCcw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import type { PublishOperation } from '@/hooks/useBoard'
+import type { PublishOperation } from '@/hooks/board-types.ts'
 import { Panel } from '@/components/ui/panel'
 
 type TaskOperationListProps = {
