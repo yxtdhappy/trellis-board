@@ -339,8 +339,15 @@ revision 能正常追平，证明“清除归档目录基线”即可终止循�
 
 结论：多分支歧义、手工归属、inbox 清除和“只在目标分支保留一份”均通过。
 
-结论：7.9 的单项、双客户端和多分支验证均通过；剩余工作只有清理测试用的
-team-board 临时绑定/worktree 与相应 inbox 摘要。
+测试环境清理：
+
+- 桌面端解除 `team-board` 关联后，服务端 taskSpace `083129a0-…` 已删除，
+  项目只剩 `main`；该 taskSpace 的绑定已移除，项目 inbox 归零。
+- 本机 worktree `D:\wit\trellis-board-team-board` 与临时本地分支 `team-board` 已删除。
+- 主客户端 cursor revision 75、无 pending/账本残留。
+
+结论：7.9 的单项、双客户端和多分支验证均通过，测试环境已清理；
+可以进入收尾（GitHub 推送待网络恢复后重试）。
 
 ## 8. 复验结论
 
@@ -356,5 +363,5 @@ team-board 临时绑定/worktree 与相应 inbox 摘要。
   手工归属后只进入 main，inbox 清除）。
 
 本任务涉及的真实缺陷（删除收敛、归档残留 pull 循环、旧 pending 阻塞、guard 一次性修复）
-以及双客户端 revision 交错、多分支歧义均已修复并复验通过。
-剩余只有清理测试用的 team-board 临时绑定/worktree 和相应 inbox 摘要，然后即可收尾。
+以及双客户端 revision 交错、多分支歧义均已修复并复验通过；测试环境已清理，可以进入收尾。
+本地 `77aa64b` 及后续文档提交的 push 因 GitHub 网络不可达暂未完成，恢复后重试。
