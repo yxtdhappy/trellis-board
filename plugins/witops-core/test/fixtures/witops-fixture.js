@@ -52,8 +52,62 @@ export const SAMPLE_DETAIL = {
   ].join(''),
 }
 
+export const SAMPLE_REQUIREMENT = {
+  businessId: '3001',
+  code: 'R3001',
+  name: '需求 A',
+  type: 3,
+  status: 3,
+  priority: 2,
+  categoryDicConfigName: '产品设计',
+  assignedToUserId: 900,
+  expectCompleteTime: '2026-11-30 18:00:00',
+  description: '<p>需求整体目标</p>',
+}
+
+export const SAMPLE_BUG = {
+  businessId: '40001',
+  code: 'B40001',
+  name: '登录失败',
+  type: 2,
+  status: 1,
+  priority: 1,
+  categoryDicConfigCode: 2,
+  categoryDicConfigName: '前端开发',
+  assignedToUserId: 900,
+  expectCompleteTime: '2026-11-18 18:00:00',
+  description: '<p>复现步骤</p>',
+}
+
+export const SAMPLE_WORK_ORDER = {
+  businessId: '50001',
+  code: 'W50001',
+  name: '现场工单',
+  type: 0,
+  status: 1,
+  priority: 3,
+  assignedToUserId: 900,
+  expectCompleteTime: '2026-11-22 18:00:00',
+  description: '<p>客户反馈</p>',
+}
+
+export const SAMPLE_CHILD = {
+  businessId: '10004',
+  code: 'T10004',
+  name: '需求子任务',
+  type: 4,
+  status: 1,
+  priority: 2,
+  assignedToUserId: 900,
+  parentType: 'STORY',
+  parentId: 3001,
+  parentCode: 'R3001',
+  parentName: '需求 A',
+  description: '<p>子任务内容</p>',
+}
+
 export async function createWitopsFixture({
-  tasks = [SAMPLE_DETAIL],
+  tasks = [SAMPLE_DETAIL, SAMPLE_REQUIREMENT, SAMPLE_BUG, SAMPLE_WORK_ORDER, SAMPLE_CHILD],
   accounts = [{ account: 'alice', password: 'secret' }],
   token = 'fixture-token',
   failuresRemaining = 0,
@@ -94,6 +148,8 @@ export async function createWitopsFixture({
     const findUserPath = `${gateway}${adminService}/api/sysUser/findUser`
     const pagePath = `${gateway}${taskService}/nodeTask/page`
     const detailPath = `${gateway}${taskService}/task/detail`
+    const nodeDetailPath = `${gateway}${taskService}/nodeTask/detail`
+    const childPath = `${gateway}${taskService}/task/childTask`
     const storyPath = `${gateway}${taskService}/story/detail`
     const storyPagePath = `${gateway}${taskService}/story/page`
     const dictPath = `${gateway}${adminService}/api/sysDicConfig/getListByKey`
@@ -127,15 +183,32 @@ export async function createWitopsFixture({
     }
 
     if (pathname === pagePath) {
+      if (body.categories) {
+        json(response, 500, {
+          code: 50000,
+          error:
+            "### Error querying database.  Cause: java.sql.SQLSyntaxErrorException: Unknown column 'business.category' in 'where clause'",
+        })
+        return
+      }
       const wanted = String(body.status ?? '')
         .split(',')
         .map((part) => Number(part.trim()))
       const records = [...byKey.values()]
-        .filter((task) => (body.type ? Number(task.type) === Number(body.type) : true))
+        .filter((task) =>
+          body.type !== undefined && body.type !== null && body.type !== ''
+            ? Number(task.type) === Number(body.type)
+            : true,
+        )
         .filter((task) =>
           wanted.length && wanted.some((code) => Number.isFinite(code))
             ? wanted.includes(Number(task.status))
             : true,
+        )
+        .filter((task) => (body.code ? String(task.code ?? '').includes(String(body.code)) : true))
+        .filter((task) => (body.name ? String(task.name ?? '').includes(String(body.name)) : true))
+        .filter((task) =>
+          body.priority ? String(task.priority ?? '') === String(body.priority) : true,
         )
         .map((task) => ({
           businessId: task.businessId,
@@ -150,6 +223,8 @@ export async function createWitopsFixture({
           parentId: task.parentId,
           parentCode: task.parentCode,
           parentName: task.parentName,
+          categoryDicConfigCode: task.categoryDicConfigCode,
+          categoryDicConfigName: task.categoryDicConfigName,
         }))
       const current = Number(body.current ?? 1)
       const size = Number(body.size ?? 20)
@@ -164,6 +239,30 @@ export async function createWitopsFixture({
           size,
         },
       })
+      return
+    }
+
+    if (pathname === nodeDetailPath) {
+      state.detailCalls += 1
+      const task = byKey.get(`${body.type}:${body.id}`)
+      json(response, 200, { code: 20000, data: task ?? null })
+      return
+    }
+
+    if (pathname === childPath) {
+      const parentId = String(body.id ?? '')
+      const children = [...byKey.values()]
+        .filter((task) => String(task.parentId ?? task.parentStoryId ?? '') === parentId)
+        .filter((task) => [0, 2, 4].includes(Number(task.type)))
+        .map((task) => ({
+          businessId: task.businessId,
+          code: task.code,
+          name: task.name,
+          type: task.type,
+          status: task.status,
+          assignedToUserName: task.developerName ?? task.assignedToUserName ?? '',
+        }))
+      json(response, 200, { code: 20000, data: { children } })
       return
     }
 
@@ -214,6 +313,10 @@ export async function createWitopsFixture({
           { code: 2, name: 'UAT' },
           { code: 3, name: 'PRO' },
           { code: 4, name: 'SIT' },
+        ],
+        bugCategory: [
+          { code: 1, name: '界面' },
+          { code: 2, name: '逻辑' },
         ],
       }
       json(response, 200, { code: 20000, data: dicts[body.type] ?? [] })

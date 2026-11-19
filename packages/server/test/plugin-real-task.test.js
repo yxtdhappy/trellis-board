@@ -32,6 +32,63 @@ function makeTrellisRepo() {
   return root
 }
 
+test('真实 task.py：baseBranch、父任务与 extraFiles 落盘', { skip: !hasPython3() }, async () => {
+  const repoRoot = makeTrellisRepo()
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-real-task-link-'))
+  const db = openPluginDatabase({
+    root: workspace,
+    databaseFile: path.join(workspace, 'board.sqlite'),
+    legacyFiles: [],
+  })
+  try {
+    const service = createTaskService({
+      repositories: [{ id: 'repo', name: 'repo', path: repoRoot }],
+      db,
+    })
+    const parent = await service.create({
+      repositoryId: 'repo',
+      title: '父任务',
+      description: '父任务描述',
+      assignee: 'alice',
+      priority: 'P1',
+      slug: 'parent-link-check',
+      baseBranch: 'feature/base',
+      extraFiles: { 'task.md': '# 平台原文\n\n父任务内容\n' },
+    })
+    const child = await service.create({
+      repositoryId: 'repo',
+      title: '子任务',
+      description: '子任务描述',
+      assignee: 'alice',
+      priority: 'P2',
+      slug: 'child-link-check',
+      baseBranch: 'feature/base',
+      parentDir: parent.relativeDir,
+    })
+
+    const parentFull = path.join(repoRoot, '.trellis', 'tasks', parent.relativeDir)
+    const childFull = path.join(repoRoot, '.trellis', 'tasks', child.relativeDir)
+    const parentJson = JSON.parse(fs.readFileSync(path.join(parentFull, 'task.json'), 'utf8'))
+    const childJson = JSON.parse(fs.readFileSync(path.join(childFull, 'task.json'), 'utf8'))
+    assert.equal(parentJson.base_branch, 'feature/base')
+    assert.equal(childJson.base_branch, 'feature/base')
+    assert.equal(childJson.parent, parent.relativeDir)
+    assert.deepEqual(parentJson.children, [child.relativeDir])
+    assert.equal(
+      fs.readFileSync(path.join(parentFull, 'task.md'), 'utf8'),
+      '# 平台原文\n\n父任务内容\n',
+    )
+  } finally {
+    try {
+      db.close()
+    } catch {
+      // 关闭失败不掩盖前面的断言错误。
+    }
+    fs.rmSync(workspace, { recursive: true, force: true })
+    fs.rmSync(repoRoot, { recursive: true, force: true })
+  }
+})
+
 test('真实 task.py：创建、写 prd、合并 meta、改派与阶段更新', { skip: !hasPython3() }, async () => {
   const repoRoot = makeTrellisRepo()
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-real-task-db-'))

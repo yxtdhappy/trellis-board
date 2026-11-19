@@ -37,6 +37,19 @@ const BUILTIN_ENV = new Map([
   [4, 'SIT'],
 ])
 
+/** 平台节点类型（与 witops-web 的 detailTypes 一致）。 */
+export const TYPE_LABELS = new Map([
+  [0, '工单'],
+  [1, '发版单'],
+  [2, '缺陷'],
+  [3, '需求'],
+  [4, '任务'],
+])
+
+export function typeLabel(type) {
+  return TYPE_LABELS.get(Number(type)) ?? `类型 ${type}`
+}
+
 export function dictionaryToMap(rows) {
   const map = new Map()
   if (!Array.isArray(rows)) return map
@@ -134,6 +147,7 @@ export function buildTaskDraft({
   dictionaries = {},
   baseUrl = '',
   webRoot = '',
+  parentBusinessId = null,
 } = {}) {
   const statusMap = dictionaries.taskStatus?.size ? dictionaries.taskStatus : BUILTIN_STATUS
   const categoryMap = dictionaries.taskCategory?.size ? dictionaries.taskCategory : BUILTIN_CATEGORY
@@ -141,6 +155,8 @@ export function buildTaskDraft({
   const envMap = dictionaries.systemEnv?.size ? dictionaries.systemEnv : BUILTIN_ENV
 
   const typeCode = Number(type)
+  const typeName = text(pick(detail, 'typeName')) || typeLabel(typeCode)
+  const isRequirement = typeCode === 3
   const code =
     text(pick(detail, 'code', 'taskCode', 'number')) ||
     `witops-${typeCode || 4}-${String(businessId).toLowerCase()}`
@@ -195,7 +211,10 @@ export function buildTaskDraft({
     : []
 
   const product = text(pick(detail, 'productName')) || text(pick(detail, 'productAbbreviation'))
-  const requirement = resolveRequirement(detail, story)
+  // 需求自己就是 Trellis 父任务，子任务通过 meta.witops.storyId 挂回它。
+  const requirement = isRequirement
+    ? { id: text(businessId), code, name }
+    : resolveRequirement(detail, story)
   const storyName = requirement
     ? [requirement.code, requirement.name].filter(Boolean).join(' ')
     : ''
@@ -206,15 +225,19 @@ export function buildTaskDraft({
 
   const facts = [
     ['平台任务', `${code}（${name}）`],
-    ['类型', text(pick(detail, 'typeName')) || String(type)],
+    ['类型', typeName],
     ['状态', statusName],
     ['优先级', priority],
     ['分类', categoryName],
     ['产品', product],
     ['模块', text(pick(detail, 'projectModuleName', 'moduleName'))],
     ['迭代', text(pick(detail, 'iterationName', 'sprintName'))],
-    ['需求', storyName],
-    ['需求链接', storyUrl],
+    ...(isRequirement
+      ? []
+      : [
+          ['需求', storyName],
+          ['需求链接', storyUrl],
+        ]),
     [
       '环境',
       env && /^(DEV|FAT|UAT|PRO|SIT)$/.test(env)
@@ -230,7 +253,8 @@ export function buildTaskDraft({
     ['链接', link],
   ].filter(([, value]) => value !== '' && value !== null && value !== undefined)
 
-  const prdParts = [
+  // 平台原文完整落 task.md：后续 trellis-brainstorm 以它为输入生成 prd.md。
+  const sourceParts = [
     `# ${code} ${name}`,
     '',
     '## 来源',
@@ -245,16 +269,31 @@ export function buildTaskDraft({
   ]
 
   if (descriptionSource === 'story') {
-    prdParts.push('', '> 任务本身没有描述，以上内容来自父需求。')
+    sourceParts.push('', '> 任务本身没有描述，以上内容来自父需求。')
   }
   if (attachments.length) {
-    prdParts.push('', '## 附件', '', ...attachments.map((item) => `- ${item}`))
+    sourceParts.push('', '## 附件', '', ...attachments.map((item) => `- ${item}`))
   }
   if (validation && !validation.ok) {
-    prdParts.push('', '> 描述转换回退为纯文本：' + validation.errors.slice(0, 3).join('；'))
+    sourceParts.push('', '> 描述转换回退为纯文本：' + validation.errors.slice(0, 3).join('；'))
   }
+  const taskMarkdown = `${sourceParts.join('\n')}\n`
 
-  const title = truncate(`${code} 【${categoryName || '任务'}】${name}`, 200)
+  const prd = [
+    `# ${code} ${name}`,
+    '',
+    '> 本任务由 WitOps 同步创建，平台原文在 `task.md`。',
+    '> prd.md 尚未生成：先运行 trellis-brainstorm，用澄清后的需求覆盖本文件。',
+    '',
+    '## 下一步',
+    '',
+    '- [ ] 阅读 `task.md` 的来源表与任务描述',
+    '- [ ] 运行 trellis-brainstorm 生成需求澄清与实现范围',
+    '- [ ] 把 brainstorm 结果写回 `prd.md`，再开始实现',
+    '',
+  ].join('\n')
+
+  const title = truncate(`${code} 【${categoryName || typeName}】${name}`, 200)
   const requirementNote = requirement
     ? `所属需求 ${requirement.code}${requirement.name ? `（${requirement.name}）` : ''}，需求 id ${requirement.id}。`
     : ''
@@ -266,6 +305,7 @@ export function buildTaskDraft({
   const meta = {
     witops: {
       type: Number(type) || type,
+      typeName,
       businessId: String(businessId),
       code,
       status: statusName,
@@ -276,6 +316,7 @@ export function buildTaskDraft({
       storyId: requirement ? requirement.id : null,
       storyCode: requirement ? requirement.code : null,
       storyName: requirement && requirement.name ? requirement.name : null,
+      parentBusinessId: parentBusinessId ? String(parentBusinessId) : null,
       url: link,
       dueDate: dueDate ?? null,
       importedAt: new Date().toISOString(),
@@ -288,15 +329,19 @@ export function buildTaskDraft({
     name,
     code,
     slug,
+    type: typeCode,
+    typeName,
     description,
-    prd: `${prdParts.join('\n')}\n`,
+    taskMarkdown,
+    prd,
     assignee,
     priority,
     dueDate,
     meta,
-    extraFiles: config.keepRaw
-      ? { 'prd.witops.html': rawTaskDescription || rawStoryDescription }
-      : {},
+    extraFiles: {
+      'task.md': taskMarkdown,
+      ...(config.keepRaw ? { 'prd.witops.html': rawTaskDescription || rawStoryDescription } : {}),
+    },
     rawDeveloper: text(assignedToUserId),
   }
 }

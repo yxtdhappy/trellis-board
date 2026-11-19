@@ -45,6 +45,7 @@ import { AssigneeWarningDialog, type AssigneeWarningDetails } from './AssigneeWa
 import { Skeleton } from '@/components/ui/skeleton'
 
 const ARTIFACTS = [
+  { key: 'source', label: 'WitOps 原文', hint: '从 WitOps 同步的任务字段与描述' },
   { key: 'prd', label: 'PRD', hint: '需求、范围与验收标准' },
   { key: 'design', label: 'Design', hint: '技术设计与关键取舍' },
   { key: 'implement', label: 'Implement', hint: '实施计划与检查项' },

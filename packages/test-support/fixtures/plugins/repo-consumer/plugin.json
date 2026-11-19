@@ -14,7 +14,7 @@
     {
       "name": "trellis.projects",
       "version": "^1.0.0",
-      "methods": ["list", "current"]
+      "methods": ["list", "current", "branches"]
     },
     {
       "name": "trellis.repositories",

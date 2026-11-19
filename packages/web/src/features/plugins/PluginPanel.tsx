@@ -156,7 +156,7 @@ export function PluginPanel({
           ? `${panel.src}${panel.src.includes('?') ? '&' : '?'}repositoryId=${encodeURIComponent(projectId)}`
           : panel.src
       }
-      sandbox="allow-scripts allow-forms"
+      sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
       className="min-h-0 w-full flex-1 rounded-xl border border-border bg-card"
     />
   )

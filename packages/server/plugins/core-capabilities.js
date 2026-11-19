@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { ERROR_CODES, appError, invalidParams } from './protocol.js'
 
 /**
@@ -28,6 +29,7 @@ export const CORE_CAPABILITIES = Object.freeze([
       list: { access: 'read', permission: 'projects:read', timeoutMs: 10_000 },
       get: { access: 'read', permission: 'projects:read', timeoutMs: 10_000 },
       current: { access: 'read', permission: 'projects:read', timeoutMs: 10_000 },
+      branches: { access: 'read', permission: 'projects:read', timeoutMs: 10_000 },
     },
   },
   {
@@ -44,6 +46,54 @@ export const CORE_CAPABILITIES = Object.freeze([
 
 function publicRepository({ id, name, path: repositoryPath }) {
   return { id, name, path: repositoryPath }
+}
+
+const BRANCH_CACHE_TTL_MS = 15_000
+const branchCache = new Map()
+
+/** 本地分支列表：只读 refs/heads，避免把远端分支混进「基线分支」选项。 */
+function readLocalBranches(repositoryPath) {
+  const cached = branchCache.get(repositoryPath)
+  if (cached && Date.now() - cached.at < BRANCH_CACHE_TTL_MS) return cached.value
+  const value = { branch: null, branches: [] }
+  try {
+    const output = execFileSync(
+      'git',
+      ['for-each-ref', '--format=%(refname:short)%09%(HEAD)', 'refs/heads'],
+      {
+        cwd: repositoryPath,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+      },
+    )
+    const branches = []
+    for (const line of output.split(/\r?\n/)) {
+      const [name, head = ''] = line.split('\t')
+      if (!name) continue
+      branches.push(name)
+      if (head.trim() === '*') value.branch = name
+    }
+    branches.sort((left, right) => left.localeCompare(right, 'en'))
+    value.branches = branches
+  } catch {
+    // 非 Git 目录或环境里没有 git 时返回空列表，面板退化为自由输入。
+  }
+  if (!value.branch) {
+    try {
+      const head = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+        cwd: repositoryPath,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+      }).trim()
+      if (head && head !== 'HEAD') value.branch = head
+    } catch {
+      // 忽略：没有当前分支时由面板让用户手填。
+    }
+  }
+  branchCache.set(repositoryPath, { at: Date.now(), value })
+  return value
 }
 
 function publicProject({ id, name, path: repositoryPath }) {
@@ -163,6 +213,15 @@ export function createCoreCapabilities({
           ? projects[0]
           : null
       return { project }
+    },
+    async branches(params) {
+      const id = String(params?.repositoryId ?? params?.id ?? '').trim()
+      if (!id) throw invalidParams('projects/branches 缺少 repositoryId')
+      const project = projectList(repositories, repositoryService).find(
+        (item) => item.repositoryId === id,
+      )
+      if (!project) throw appError(ERROR_CODES.NOT_FOUND, `项目不存在: ${id}`)
+      return { repositoryId: project.repositoryId, ...readLocalBranches(project.path) }
     },
   })
 

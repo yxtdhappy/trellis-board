@@ -7,6 +7,8 @@ const DEFAULT_PATHS = {
   taskPage: '/nodeTask/page',
   storyPage: '/story/page',
   taskDetail: '/task/detail',
+  nodeTaskDetail: '/nodeTask/detail',
+  childTask: '/task/childTask',
   storyDetail: '/story/detail',
   treeChild: '/task/removeAllSiblings',
   workHourList: '/workHourExamine/taskWorkHourList',
@@ -53,6 +55,12 @@ export function resolvePaths(config = {}) {
     taskPage: joinPath(gateway, taskService, paths.taskPage ?? DEFAULT_PATHS.taskPage),
     storyPage: joinPath(gateway, taskService, paths.storyPage ?? DEFAULT_PATHS.storyPage),
     taskDetail: joinPath(gateway, taskService, paths.taskDetail ?? DEFAULT_PATHS.taskDetail),
+    nodeTaskDetail: joinPath(
+      gateway,
+      taskService,
+      paths.nodeTaskDetail ?? DEFAULT_PATHS.nodeTaskDetail,
+    ),
+    childTask: joinPath(gateway, taskService, paths.childTask ?? DEFAULT_PATHS.childTask),
     storyDetail: joinPath(gateway, taskService, paths.storyDetail ?? DEFAULT_PATHS.storyDetail),
     treeChild: joinPath(gateway, taskService, paths.treeChild ?? DEFAULT_PATHS.treeChild),
     workHourList: joinPath(gateway, taskService, paths.workHourList ?? DEFAULT_PATHS.workHourList),
@@ -190,6 +198,12 @@ export function createWitopsClient(
       request(paths.storyPage, { ...options, method: 'POST', body: params }),
     detail: (params, options) =>
       request(paths.taskDetail, { ...options, method: 'POST', body: params }),
+    // 统一详情：需求/任务/缺陷/工单都走 nodeTask/detail，返回 nextTaskDetail。
+    nodeTaskDetail: (params, options) =>
+      request(paths.nodeTaskDetail, { ...options, method: 'POST', body: params }),
+    // 已拆分的直接子任务（需求详情页「子任务」用的就是这个接口）。
+    childTask: (params, options) =>
+      request(paths.childTask, { ...options, method: 'POST', body: params }),
     story: (params, options) =>
       request(paths.storyDetail, { ...options, method: 'POST', body: params }),
     tree: (params, options) =>
