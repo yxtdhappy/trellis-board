@@ -313,8 +313,41 @@ revision 能正常追平，证明“清除归档目录基线”即可终止循�
 结论：双客户端 revision 交错通过；创建与删除分别在约 1–2 秒内被我们的客户端应用，
 已应用 revision 与服务端一致。
 
-结论：7.9 的两项单客户端验证和双客户端交错验证均通过；剩余的真机验证只有
-“多分支歧义任务”，需要项目第二个分支 taskSpace。
+#### 7.9.4 多分支歧义任务
+
+测试建立在同一项目两个 taskSpace 上：
+
+- 新建 worktree `D:\wit\trellis-board-team-board`（分支 `team-board`），在桌面客户端接入；
+  服务端创建 taskSpace `083129a0-df10-44b8-9a35-a31939cdbd17`（branch `team-board`，
+  revision 0），绑定 `approved`。
+- team-board 分支初始同步扫描到 4 个本地任务：3 个属于其他分支（paused）、
+  1 个 `branch=null`（`11-08-team-realtime-collaboration`，review）。客户端发布了该待归属摘要，
+  服务端项目 inbox 出现 1 条；初始同步审查未处理，team-board taskSpace 保持 revision 0。
+
+歧义探针：
+
+- 在 `main` 工作区创建 `.trellis/tasks/11-19-e2e-multibranch-ambiguous-1120`（`branch=null`）。
+- 约 1 秒后：cursor `ownershipPending` 出现该目录，服务端 inbox 新增
+  `TASK_OWNERSHIP_REQUIRED`（source branch `main`），项目 inbox 共 2 条。
+- 关键断言：main 与 team-board 两个 taskSpace 都没有该任务的索引行，
+  revision 保持 71 / 0——项目存在两个分支时**不再自动推断 main**。
+- 执行 `task.py set-branch .trellis/tasks/11-19-e2e-multibranch-ambiguous-1120 main` 后：
+  约 1.6 秒内 `ownershipPending` 清除、inbox 条目清除、main 索引出现该任务、
+  main revision 71 → **72**、baseline 更新；team-board revision 仍为 0。
+- 删除探针后：main 索引归零（revision 73），inbox 中该条目保持 0；
+  只剩 team-board 分支自身的 `11-08-team-realtime-collaboration` 摘要。
+
+结论：多分支歧义、手工归属、inbox 清除和“只在目标分支保留一份”均通过。
+
+测试环境清理：
+
+- 桌面端解除 `team-board` 关联后，服务端 taskSpace `083129a0-…` 已删除，
+  项目只剩 `main`；该 taskSpace 的绑定已移除，项目 inbox 归零。
+- 本机 worktree `D:\wit\trellis-board-team-board` 与临时本地分支 `team-board` 已删除。
+- 主客户端 cursor revision 75、无 pending/账本残留。
+
+结论：7.9 的单项、双客户端和多分支验证均通过，测试环境已清理；
+可以进入收尾（GitHub 推送待网络恢复后重试）。
 
 ## 8. 复验结论
 
@@ -326,8 +359,9 @@ revision 能正常追平，证明“清除归档目录基线”即可终止循�
 - 旧 cursor 一次性 guard 修复及重启不重复：**已在 0.4.45 真机通过**（见 7.9.2）。
 - 真实双客户端 revision 交错：**已通过**（见 7.9.3：TE 第二客户端创建/删除，
   cursor 66→68→69，无跳跃）。
-- 多分支歧义：仍未做真实 E2E，需要项目第二个分支 taskSpace；沿用自动化覆盖说明。
+- 多分支歧义任务：**已通过**（见 7.9.4：两个 taskSpace 时不自动归属，
+  手工归属后只进入 main，inbox 清除）。
 
 本任务涉及的真实缺陷（删除收敛、归档残留 pull 循环、旧 pending 阻塞、guard 一次性修复）
-以及双客户端 revision 交错均已修复并复验通过，可以进入收尾；多分支歧义应作为已知限制保留，
-而不是声称已做真实 E2E。
+以及双客户端 revision 交错、多分支歧义均已修复并复验通过；测试环境已清理，可以进入收尾。
+本地 `77aa64b` 及后续文档提交的 push 因 GitHub 网络不可达暂未完成，恢复后重试。
