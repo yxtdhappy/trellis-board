@@ -3,23 +3,28 @@ import type { ReactNode } from 'react'
 import { applyMarkdownTheme } from '@/lib/markdown-theme'
 import {
   DEFAULT_FONT_SIZE,
+  DEFAULT_NOTIFY_MODE,
   DEFAULT_THEME,
   FONT_SIZE_STORAGE_KEY,
+  NOTIFY_MODE_STORAGE_KEY,
   THEME_STORAGE_KEY,
   fontPixels,
   normalizeFontSize,
+  normalizeNotifyMode,
   normalizeTheme,
   resolveTheme,
 } from '@/lib/appearance.js'
-import type { FontSize, ThemePreference } from '@/lib/appearance.js'
+import type { FontSize, NotifyMode, ThemePreference } from '@/lib/appearance.js'
 
 type AppearanceContextValue = {
   theme: ThemePreference
   resolvedTheme: 'light' | 'dark'
   fontSize: FontSize
   fontPixels: number
+  notifyMode: NotifyMode
   setTheme: (theme: ThemePreference) => void
   setFontSize: (fontSize: FontSize) => void
+  setNotifyMode: (mode: NotifyMode) => void
   resetAppearance: () => void
 }
 
@@ -35,6 +40,15 @@ function readInitialFontSize(): FontSize {
   return normalizeFontSize(document.documentElement.dataset.fontSize)
 }
 
+function readInitialNotifyMode(): NotifyMode {
+  if (typeof window === 'undefined') return DEFAULT_NOTIFY_MODE
+  try {
+    return normalizeNotifyMode(localStorage.getItem(NOTIFY_MODE_STORAGE_KEY))
+  } catch {
+    return DEFAULT_NOTIFY_MODE
+  }
+}
+
 function readSystemDark(): boolean {
   if (typeof window === 'undefined') return false
   return window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -48,11 +62,20 @@ function desktopInvoke(): DesktopInvoke | undefined {
   return typeof invoke === 'function' ? invoke : undefined
 }
 
-function readDesktopAppearance(value: unknown): { theme: ThemePreference; fontSize: FontSize } {
+function readDesktopAppearance(value: unknown): {
+  theme: ThemePreference
+  fontSize: FontSize
+  notifyMode: NotifyMode
+} {
   const record: object = typeof value === 'object' && value !== null ? value : {}
   const theme = 'theme' in record ? record.theme : undefined
   const fontSize = 'fontSize' in record ? record.fontSize : undefined
-  return { theme: normalizeTheme(theme), fontSize: normalizeFontSize(fontSize) }
+  const notifyMode = 'notifyMode' in record ? record.notifyMode : undefined
+  return {
+    theme: normalizeTheme(theme),
+    fontSize: normalizeFontSize(fontSize),
+    notifyMode: normalizeNotifyMode(notifyMode),
+  }
 }
 
 function storePreference(key: string, value: string) {
@@ -66,6 +89,7 @@ function storePreference(key: string, value: string) {
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemePreference>(readInitialTheme)
   const [fontSize, setFontSizeState] = useState<FontSize>(readInitialFontSize)
+  const [notifyMode, setNotifyModeState] = useState<NotifyMode>(readInitialNotifyMode)
   const [systemDark, setSystemDark] = useState(readSystemDark)
   const touched = useRef(false)
 
@@ -79,6 +103,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
         const loaded = readDesktopAppearance(payload)
         setThemeState(loaded.theme)
         setFontSizeState(loaded.fontSize)
+        setNotifyModeState(loaded.notifyMode)
       })
       .catch(() => {
         /* 读取设备偏好失败时保持当前外观 */
@@ -112,15 +137,19 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     storePreference(FONT_SIZE_STORAGE_KEY, fontSize)
   }, [fontSize])
 
+  useEffect(() => {
+    storePreference(NOTIFY_MODE_STORAGE_KEY, notifyMode)
+  }, [notifyMode])
+
   // 只在用户真正改过外观时落盘，挂载时的初始值不回写设备偏好。
   useEffect(() => {
     if (!touched.current) return
     const invoke = desktopInvoke()
     if (!invoke) return
-    invoke('appearance_save', { theme, fontSize }).catch(() => {
+    invoke('appearance_save', { theme, fontSize, notifyMode }).catch(() => {
       /* 导航中或权限变化时保存失败，忽略 */
     })
-  }, [theme, fontSize])
+  }, [theme, fontSize, notifyMode])
 
   const setTheme = useCallback((next: ThemePreference) => {
     touched.current = true
@@ -130,10 +159,15 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     touched.current = true
     setFontSizeState(normalizeFontSize(next))
   }, [])
+  const setNotifyMode = useCallback((next: NotifyMode) => {
+    touched.current = true
+    setNotifyModeState(normalizeNotifyMode(next))
+  }, [])
   const resetAppearance = useCallback(() => {
     touched.current = true
     setThemeState(DEFAULT_THEME)
     setFontSizeState(DEFAULT_FONT_SIZE)
+    setNotifyModeState(DEFAULT_NOTIFY_MODE)
   }, [])
 
   const value = useMemo(
@@ -142,11 +176,22 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       resolvedTheme,
       fontSize,
       fontPixels: fontPixels(fontSize),
+      notifyMode,
       setTheme,
       setFontSize,
+      setNotifyMode,
       resetAppearance,
     }),
-    [theme, resolvedTheme, fontSize, setTheme, setFontSize, resetAppearance],
+    [
+      theme,
+      resolvedTheme,
+      fontSize,
+      notifyMode,
+      setTheme,
+      setFontSize,
+      setNotifyMode,
+      resetAppearance,
+    ],
   )
 
   return <AppearanceContext.Provider value={value}>{children}</AppearanceContext.Provider>

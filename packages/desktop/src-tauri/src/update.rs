@@ -136,7 +136,14 @@ pub fn register(app: &AppHandle) {
             return;
         }
         crate::focus_main_window(&handle);
-        let _ = handle.emit("update-open-dialog", ());
+        // 同一个 tap 也服务于同步通知：只有确实存在新版本时才打开更新对话框。
+        let available = handle
+            .try_state::<UpdateManager>()
+            .map(|manager| manager.snapshot().update_available)
+            .unwrap_or(false);
+        if available {
+            let _ = handle.emit("update-open-dialog", ());
+        }
     }) {
         logging::warn(&format!("无法注册系统通知点击处理：{error}"));
     }

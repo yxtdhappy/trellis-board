@@ -15,11 +15,31 @@ fn appearance_normalises_and_round_trips() {
     let stored = Appearance {
         theme: "dark".to_string(),
         font_size: "xl".to_string(),
+        notify_mode: "unfocused".to_string(),
     };
     save(&stored).expect("save appearance");
     assert_eq!(load(), stored);
     let payload = std::fs::read_to_string(appearance_path()).unwrap();
     assert!(payload.contains("\"fontSize\": \"xl\""));
+    assert!(payload.contains("\"notifyMode\": \"unfocused\""));
+
+    // 旧版本只写 theme/fontSize 的文件：notifyMode 缺失按“始终提示”处理。
+    std::fs::write(appearance_path(), r#"{"theme":"dark","fontSize":"sm"}"#).unwrap();
+    assert_eq!(load().notify_mode, "always");
+
+    std::fs::write(
+        appearance_path(),
+        r#"{"theme":"dark","fontSize":"sm","notifyMode":"always "}"#,
+    )
+    .unwrap();
+    assert_eq!(load().notify_mode, "always");
+
+    std::fs::write(
+        appearance_path(),
+        r#"{"theme":"dark","fontSize":"sm","notifyMode":"bogus"}"#,
+    )
+    .unwrap();
+    assert_eq!(load().notify_mode, "always");
 
     std::fs::write(appearance_path(), r#"{"theme":"neon","fontSize":"huge"}"#).unwrap();
     assert_eq!(load(), Appearance::default());

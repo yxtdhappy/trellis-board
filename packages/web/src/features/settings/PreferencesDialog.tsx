@@ -12,7 +12,7 @@ import {
 import { StatusPill } from '@/components/ui/status-pill'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useAppearance } from '@/app/theme'
-import type { FontSize, ThemePreference } from '@/lib/appearance.js'
+import type { FontSize, NotifyMode, ThemePreference } from '@/lib/appearance.js'
 import { cn } from '@/lib/utils'
 
 const THEME_CHOICES: { value: ThemePreference; label: string }[] = [
@@ -26,6 +26,12 @@ const FONT_CHOICES: { value: FontSize; label: string }[] = [
   { value: 'md', label: '标准' },
   { value: 'lg', label: '大' },
   { value: 'xl', label: '特大' },
+]
+
+const NOTIFY_CHOICES: { value: NotifyMode; label: string }[] = [
+  { value: 'never', label: '从不' },
+  { value: 'unfocused', label: '仅在未聚焦时' },
+  { value: 'always', label: '始终' },
 ]
 
 function ThemePreview({ mode }: { mode: ThemePreference }) {
@@ -68,7 +74,16 @@ export function PreferencesDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const { theme, fontSize, fontPixels, setTheme, setFontSize, resetAppearance } = useAppearance()
+  const {
+    theme,
+    fontSize,
+    fontPixels,
+    notifyMode,
+    setTheme,
+    setFontSize,
+    setNotifyMode,
+    resetAppearance,
+  } = useAppearance()
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -77,7 +92,7 @@ export function PreferencesDialog({
           <div className="flex flex-col gap-1">
             <DialogTitle className="text-sm font-semibold">偏好设置</DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              外观设置保存在本机，随时可以更改。
+              外观与通知设置保存在本机，随时可以更改。
             </DialogDescription>
           </div>
           <Button
@@ -162,6 +177,34 @@ export function PreferencesDialog({
                 调整后文字与间距一起等比缩放，界面整体随之放大。
               </p>
             </div>
+          </section>
+
+          <section className="flex flex-col gap-2.5">
+            <span className="text-xs font-semibold text-foreground">同步通知</span>
+            <ToggleGroup
+              value={[notifyMode]}
+              onValueChange={(value: string[]) => {
+                const next = NOTIFY_CHOICES.find((choice) => choice.value === value[0])?.value
+                if (next) setNotifyMode(next)
+              }}
+              spacing={0.75}
+              aria-label="同步通知"
+              className="flex h-8 w-full items-stretch rounded-lg bg-muted p-0.75"
+            >
+              {NOTIFY_CHOICES.map(({ value, label }) => (
+                <ToggleGroupItem
+                  key={value}
+                  value={value}
+                  variant="primary"
+                  className="h-full flex-1 rounded-md text-xs text-muted-foreground"
+                >
+                  {label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+            <p className="text-xs text-muted-foreground">
+              只影响系统通知，点击通知可把窗口带回前台；应用内的差异弹窗不受影响。
+            </p>
           </section>
         </DialogBody>
 

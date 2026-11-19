@@ -1,10 +1,13 @@
 export const THEMES = ['light', 'dark', 'system']
 export const FONT_SIZE_KEYS = ['sm', 'md', 'lg', 'xl']
 export const FONT_SIZES = { sm: 14, md: 16, lg: 18, xl: 20 }
+export const NOTIFY_MODES = ['never', 'unfocused', 'always']
 export const DEFAULT_THEME = 'system'
 export const DEFAULT_FONT_SIZE = 'md'
+export const DEFAULT_NOTIFY_MODE = 'always'
 export const THEME_STORAGE_KEY = 'trellis-theme'
 export const FONT_SIZE_STORAGE_KEY = 'trellis-font-size'
+export const NOTIFY_MODE_STORAGE_KEY = 'trellis-notify-mode'
 
 export function normalizeTheme(value) {
   return THEMES.includes(value) ? value : DEFAULT_THEME
@@ -12,6 +15,10 @@ export function normalizeTheme(value) {
 
 export function normalizeFontSize(value) {
   return FONT_SIZE_KEYS.includes(value) ? value : DEFAULT_FONT_SIZE
+}
+
+export function normalizeNotifyMode(value) {
+  return NOTIFY_MODES.includes(value) ? value : DEFAULT_NOTIFY_MODE
 }
 
 export function resolveTheme(theme, prefersDark) {

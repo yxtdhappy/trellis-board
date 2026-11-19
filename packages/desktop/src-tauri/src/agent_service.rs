@@ -10,6 +10,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::menu::MenuItem;
 use tauri::{AppHandle, Emitter, Manager, Wry};
+use tauri_plugin_notification::NotificationExt;
 
 use crate::agent::association::{associate_desktop_project, AssociateParams};
 use crate::agent::control::ControlHub;
@@ -45,7 +46,7 @@ pub struct AgentService {
     paused: Arc<AtomicBool>,
     runtime: Arc<Mutex<Option<Arc<AgentRuntime>>>>,
     starting: Arc<AtomicBool>,
-    auto_focus_consumed: Arc<AtomicBool>,
+    auto_notify_consumed: Arc<AtomicBool>,
     sync_menu_item: Arc<Mutex<Option<MenuItem<Wry>>>>,
 }
 
@@ -68,7 +69,7 @@ pub fn register(app: &AppHandle) {
         paused: Arc::new(AtomicBool::new(false)),
         runtime: Arc::new(Mutex::new(None)),
         starting: Arc::new(AtomicBool::new(false)),
-        auto_focus_consumed: Arc::new(AtomicBool::new(false)),
+        auto_notify_consumed: Arc::new(AtomicBool::new(false)),
         sync_menu_item: Arc::new(Mutex::new(None)),
     });
 }
@@ -253,6 +254,33 @@ impl AgentService {
         let _ = self.app.emit("live-control-changed", ());
     }
 
+    fn window_focused(&self) -> bool {
+        self.app
+            .get_webview_window("main")
+            .and_then(|window| window.is_focused().ok())
+            .unwrap_or(false)
+    }
+
+    /// 自动事件只发系统通知，绝不抢焦点；档位由「偏好设置 → 同步通知」决定。
+    fn notify_control(&self, control: &Value) {
+        match crate::appearance::load().notify_mode.as_str() {
+            "never" => return,
+            "unfocused" if self.window_focused() => return,
+            _ => {}
+        }
+        let (title, body) = control_notification(control);
+        if let Err(error) = self
+            .app
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show()
+        {
+            crate::logging::warn(&format!("发送同步通知失败：{error}"));
+        }
+    }
+
     fn notify_sidecar(&self) {
         self.state_events.notify_sidecar();
     }
@@ -302,22 +330,22 @@ impl AgentService {
             return;
         }
         let review = control.get("type").and_then(Value::as_str) == Some("initial_sync_review");
-        let (became_front, changed) = self.hub.push_with_change(control);
+        let (became_front, changed) = self.hub.push_with_change(control.clone());
         if changed {
             self.notify_live_control();
         }
         if review {
-            // 差异审查是首次接入的必经步骤：被关闭过、或每进程只自动聚焦一次已消费，也要重新露出。
+            // 差异审查是首次接入的必经步骤：被关闭过也要重新露出，但只发通知不抢焦点。
             if changed {
-                crate::focus_main_window(&self.app);
+                self.notify_control(&control);
             }
             return;
         }
         if !became_front {
             return;
         }
-        if !self.auto_focus_consumed.swap(true, Ordering::SeqCst) {
-            crate::focus_main_window(&self.app);
+        if !self.auto_notify_consumed.swap(true, Ordering::SeqCst) {
+            self.notify_control(&control);
         }
     }
 
@@ -375,6 +403,67 @@ impl AgentService {
     }
 }
 
+/// 系统通知文案：纯函数便于单测。缺项目信息时不拼空括号。
+fn control_notification(control: &Value) -> (String, String) {
+    let text = |pointer: &str| {
+        control
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+    };
+    let scope = match (text("/projectName"), text("/branchName")) {
+        ("", "") => String::new(),
+        (project, "") => format!("{project}："),
+        (project, branch) => format!("{project}（{branch}）："),
+    };
+    let count = |key: &str| {
+        control
+            .get(key)
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0)
+    };
+    match control
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+    {
+        "initial_sync_review" => (
+            "有任务差异需要确认".to_string(),
+            format!(
+                "{scope}{} 个任务存在差异，打开客户端逐项处理。",
+                count("differences")
+            ),
+        ),
+        "task_file_conflict" => {
+            let target = match text("/conflict/taskDir") {
+                "" => "任务文件",
+                task_dir => task_dir,
+            };
+            (
+                "任务文件冲突".to_string(),
+                format!("{scope}{target} 被同时修改，打开客户端选择保留哪一份。"),
+            )
+        }
+        "task_ownership_review" => (
+            "任务归属需要确认".to_string(),
+            format!("{scope}{} 个任务需要确认开发分支。", count("items")),
+        ),
+        "task_sync_error" => {
+            let detail = match text("/message") {
+                "" => text("/error"),
+                message => message,
+            };
+            ("任务同步失败".to_string(), format!("{scope}{detail}"))
+        }
+        _ => (
+            "Trellis Board 有新的同步事件".to_string(),
+            format!("{scope}打开客户端查看任务同步情况。"),
+        ),
+    }
+}
+
 pub fn pending_control(app: &AppHandle) -> Option<Value> {
     service(app)
         .ok()
@@ -385,6 +474,8 @@ pub fn show_pending_control(app: &AppHandle) -> bool {
     let Ok(service) = service(app) else {
         return false;
     };
+    // 用户主动要求查看：把「稍后处理」过的事件放回队列，否则同内容不会再自动出现。
+    service.hub.reveal_dismissed();
     if service.pending_control().is_none() {
         return false;
     }
@@ -396,6 +487,7 @@ pub fn show_pending_control(app: &AppHandle) -> bool {
 pub fn clear_control(app: &AppHandle) {
     if let Ok(service) = service(app) {
         if service.hub.dismiss_with_change().unwrap_or(false) {
+            service.hub.clear_dismissed();
             service.notify_live_control();
         }
     }
@@ -863,3 +955,6 @@ pub async fn detach_local_association(
 
 /// 与 `sidecar.rs` 的 `SidecarStatus` 同形，前端 `ProjectRail` 继续读取。
 pub type SidecarStatus = AgentStatus;
+
+#[cfg(test)]
+mod tests;

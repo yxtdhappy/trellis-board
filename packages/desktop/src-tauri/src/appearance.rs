@@ -6,15 +6,19 @@ use crate::config;
 
 pub const THEMES: [&str; 3] = ["light", "dark", "system"];
 pub const FONT_SIZES: [&str; 4] = ["sm", "md", "lg", "xl"];
+pub const NOTIFY_MODES: [&str; 3] = ["never", "unfocused", "always"];
 
 const DEFAULT_THEME: &str = "system";
 const DEFAULT_FONT_SIZE: &str = "md";
+const DEFAULT_NOTIFY_MODE: &str = "always";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Appearance {
     pub theme: String,
     pub font_size: String,
+    #[serde(default)]
+    pub notify_mode: String,
 }
 
 impl Default for Appearance {
@@ -22,6 +26,7 @@ impl Default for Appearance {
         Self {
             theme: DEFAULT_THEME.to_string(),
             font_size: DEFAULT_FONT_SIZE.to_string(),
+            notify_mode: DEFAULT_NOTIFY_MODE.to_string(),
         }
     }
 }
@@ -38,6 +43,11 @@ impl Appearance {
                 self.font_size.clone()
             } else {
                 DEFAULT_FONT_SIZE.to_string()
+            },
+            notify_mode: if NOTIFY_MODES.contains(&self.notify_mode.as_str()) {
+                self.notify_mode.clone()
+            } else {
+                DEFAULT_NOTIFY_MODE.to_string()
             },
         }
     }

@@ -54,7 +54,13 @@ type OwnershipItem = {
   choices?: OwnershipChoice[]
 }
 type ControlEvent =
-  | { type: 'initial_sync_review'; taskSpaceId?: string; differences?: Difference[] }
+  | {
+      type: 'initial_sync_review'
+      taskSpaceId?: string
+      projectName?: string
+      branchName?: string
+      differences?: Difference[]
+    }
   | { type: 'task_file_conflict'; taskSpaceId?: string; conflict?: Conflict }
   | {
       type: 'task_ownership_review'
@@ -652,6 +658,16 @@ export function LiveSyncControlDialog() {
           {message ? (
             <p role="status" className="text-sm leading-6 text-muted-foreground">
               {message}
+            </p>
+          ) : null}
+          {event?.type === 'initial_sync_review' && (event.projectName || event.branchName) ? (
+            <p className="text-xs text-muted-foreground">
+              {[
+                event.projectName ? `项目：${event.projectName}` : null,
+                event.branchName ? `分支：${event.branchName}` : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </p>
           ) : null}
         </DialogHeader>

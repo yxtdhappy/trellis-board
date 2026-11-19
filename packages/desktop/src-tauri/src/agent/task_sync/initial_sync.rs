@@ -28,16 +28,14 @@ impl TaskSync {
             .collect();
         let mut server_groups = groups_from_structs(&server_files)?;
         retain_server_groups_for_revision_guard(binding, &mut server_groups);
-        self.prepare_controlled_server_groups(
-            binding,
-            controls.as_deref(),
-            &mut server_groups,
-        )
-        .await?;
-        let differences = hide_control_tombstone_local_only(
+        self.prepare_controlled_server_groups(binding, controls.as_deref(), &mut server_groups)
+            .await?;
+        let mut differences = hide_control_tombstone_local_only(
             classify_task_snapshots(&local_groups, &server_groups),
             controls.as_deref(),
         );
+        self.gate_local_only_differences(binding, &mut differences)
+            .await?;
         let server_only: Vec<SnapshotGroup> = differences
             .iter()
             .filter(|item| item.kind == DiffKind::ServerOnly)
@@ -66,9 +64,7 @@ impl TaskSync {
                         }
                     }
                 }
-                DiffKind::ContentConflict
-                | DiffKind::MoveDeleteConflict
-                | DiffKind::Invalid => {
+                DiffKind::ContentConflict | DiffKind::MoveDeleteConflict | DiffKind::Invalid => {
                     conflicts.push(difference.to_control());
                     let task_dir = difference
                         .local
@@ -155,10 +151,12 @@ impl TaskSync {
         )
         .await?;
         let verified_local = self.local_groups(binding, None).await?;
-        let verified_differences = hide_control_tombstone_local_only(
+        let mut verified_differences = hide_control_tombstone_local_only(
             classify_task_snapshots(&verified_local, &verified_server),
             verified_controls.as_deref(),
         );
+        self.gate_local_only_differences(binding, &mut verified_differences)
+            .await?;
         let unresolved: Vec<&Difference> = verified_differences
             .iter()
             .filter(|item| item.kind != DiffKind::Same)
@@ -258,10 +256,12 @@ impl TaskSync {
         self.prepare_controlled_server_groups(binding, controls, &mut server_groups)
             .await?;
         let server_baselines = baselines_from_snapshot(&snapshot_files);
-        let differences = hide_control_tombstone_local_only(
+        let mut differences = hide_control_tombstone_local_only(
             classify_task_snapshots(&local_groups, &server_groups),
             controls,
         );
+        self.gate_local_only_differences(binding, &mut differences)
+            .await?;
         let actionable: Vec<&Difference> = differences
             .iter()
             .filter(|item| item.kind != DiffKind::Same)
@@ -373,10 +373,12 @@ impl TaskSync {
                 &mut verified_server,
             )
             .await?;
-            let verified_differences = hide_control_tombstone_local_only(
+            let mut verified_differences = hide_control_tombstone_local_only(
                 classify_task_snapshots(&verified_local, &verified_server),
                 verified_controls.as_deref(),
             );
+            self.gate_local_only_differences(binding, &mut verified_differences)
+                .await?;
             let unresolved = verified_differences
                 .iter()
                 .filter(|item| item.kind != DiffKind::Same)
@@ -419,17 +421,72 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) fn emit_differences(&self, binding: &AgentBinding, revision: u64, differences: &[Difference]) {
+    pub(super) fn emit_differences(
+        &self,
+        binding: &AgentBinding,
+        revision: u64,
+        differences: &[Difference],
+    ) {
         (self.emit)(json!({
             "type": "initial_sync_review",
             "taskSpaceId": binding.task_space_id,
+            "projectName": binding.display_name,
+            "branchName": binding.branch_name,
             "revision": revision,
             "differences": differences.iter().map(Difference::to_control).collect::<Vec<_>>(),
         }));
     }
 }
+
 impl TaskSync {
-    pub(super) async fn complete_initial_sync(&self, task_space_id: &str, mode: &str) -> AgentResult<()> {
+    /// 首同步与接入后的同步共用同一归属闸门：服务端快照只下发本人任务，
+    /// 同事的任务目录在本地只是 git 里的只读镜像，不能判成「本地独有」。
+    /// 目录接口回 403 → 记为只读镜像；回「已归档」→ 直接剔除；404 → 真实的本地新增。
+    pub(super) async fn gate_local_only_differences(
+        &self,
+        binding: &AgentBinding,
+        differences: &mut Vec<Difference>,
+    ) -> AgentResult<()> {
+        let task_space_id = binding.task_space_id.clone();
+        let mut invisible: HashSet<String> = HashSet::new();
+        for difference in differences.iter() {
+            if difference.kind != DiffKind::LocalOnly {
+                continue;
+            }
+            let task_dir = difference.task_dir.clone();
+            match self.fetch_directory(&task_space_id, &task_dir).await {
+                Ok(_) => {}
+                Err(error) if is_archived_task_error(&error) => {
+                    invisible.insert(task_dir);
+                }
+                Err(error) if is_foreign_task_error(&error) => {
+                    let assignee = self.control_assignee(&task_space_id, &task_dir).await;
+                    self.mark_readonly_dir(
+                        &task_space_id,
+                        &task_dir,
+                        &readonly_reason("FOREIGN_OWNER", &assignee),
+                    )
+                    .await?;
+                    invisible.insert(task_dir);
+                }
+                Err(_) => {}
+            }
+        }
+        if !invisible.is_empty() {
+            differences.retain(|difference| {
+                !(difference.kind == DiffKind::LocalOnly
+                    && invisible.contains(&difference.task_dir))
+            });
+        }
+        Ok(())
+    }
+}
+impl TaskSync {
+    pub(super) async fn complete_initial_sync(
+        &self,
+        task_space_id: &str,
+        mode: &str,
+    ) -> AgentResult<()> {
         self.write_cursor(
             task_space_id,
             CursorPatch {
@@ -647,10 +704,12 @@ impl TaskSync {
         self.prepare_controlled_server_groups(&binding, controls.as_deref(), &mut server_groups)
             .await?;
         let snapshot_baselines = baselines_from_snapshot(&snapshot_files);
-        let differences = hide_control_tombstone_local_only(
+        let mut differences = hide_control_tombstone_local_only(
             classify_task_snapshots(&local_groups, &server_groups),
             controls.as_deref(),
         );
+        self.gate_local_only_differences(&binding, &mut differences)
+            .await?;
 
         if mode == "safe" {
             let server_only: Vec<SnapshotGroup> = differences
@@ -936,7 +995,10 @@ pub(super) fn initial_sync_mode(binding: &AgentBinding) -> String {
         "safe".into()
     }
 }
-pub(super) fn retain_server_groups_for_binding(binding: &AgentBinding, groups: &mut Vec<SnapshotGroup>) {
+pub(super) fn retain_server_groups_for_binding(
+    binding: &AgentBinding,
+    groups: &mut Vec<SnapshotGroup>,
+) {
     groups.retain(|group| {
         !group.archived
             && !is_archive_task_dir(&group.task_dir)
@@ -951,8 +1013,7 @@ pub(super) fn binding_is_baseline(binding: &AgentBinding) -> bool {
     binding.baseline_branch.as_deref() == Some(binding.branch_name.as_str())
 }
 pub(super) fn allows_cross_source_server_group(binding: &AgentBinding, mode: &str) -> bool {
-    binding_is_baseline(binding)
-        && (mode == REVISION_GUARD_SYNC_MODE || mode == CONFLICT_SYNC_MODE)
+    binding_is_baseline(binding) && (mode == REVISION_GUARD_SYNC_MODE || mode == CONFLICT_SYNC_MODE)
 }
 /// 一次性全量对账必须保住基线任务空间里已由服务端接纳的跨来源任务；
 /// 普通增量同步仍按当前绑定分支过滤。

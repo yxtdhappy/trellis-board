@@ -30,7 +30,6 @@ pub(super) fn test_binding(task_space_id: &str) -> AgentBinding {
     }
 }
 
-
 pub(super) fn run_git(repo: &Path, args: &[&str]) {
     let output = std::process::Command::new(crate::agent::git::GIT_BINARY)
         .args(["-C", repo.to_str().expect("utf8 path")])
@@ -44,14 +43,12 @@ pub(super) fn run_git(repo: &Path, args: &[&str]) {
     );
 }
 
-
 pub(super) fn init_git_repo(repo: &Path) {
     run_git(repo, &["init", "--initial-branch=main"]);
     run_git(repo, &["config", "user.email", "test@example.com"]);
     run_git(repo, &["config", "user.name", "Test"]);
     run_git(repo, &["config", "commit.gpgsign", "false"]);
 }
-
 
 pub(super) async fn write_task_json(repo: &Path, task_dir: &str, task_id: &str, branch: &str) {
     let directory = repo.join(task_dir);
@@ -65,7 +62,6 @@ pub(super) async fn write_task_json(repo: &Path, task_dir: &str, task_id: &str, 
     .await
     .expect("task json");
 }
-
 
 pub(super) async fn mock_api_server(
     snapshot_payload: Value,
@@ -100,9 +96,7 @@ pub(super) async fn mock_api_server(
                 let mut request = Vec::new();
                 let mut chunk = [0u8; 4096];
                 let header_end = loop {
-                    if let Some(index) = request
-                        .windows(4)
-                        .position(|window| window == b"\r\n\r\n")
+                    if let Some(index) = request.windows(4).position(|window| window == b"\r\n\r\n")
                     {
                         break index;
                     }
@@ -150,10 +144,7 @@ pub(super) async fn mock_api_server(
                 let mut parts = request_line.split_whitespace();
                 let method = parts.next().unwrap_or_default();
                 let path = parts.next().unwrap_or_default();
-                requests
-                    .lock()
-                    .await
-                    .push(format!("{method} {path}"));
+                requests.lock().await.push(format!("{method} {path}"));
                 let write_response = if method == "POST" && path.ends_with("/changes") {
                     let mut index = write_response_index.lock().await;
                     let current = *index;
@@ -182,12 +173,16 @@ pub(super) async fn mock_api_server(
                         .and_then(Value::as_u64)
                         .unwrap_or(200);
                     match status {
+                        403 => ("403 Forbidden", json!({ "code": "FORBIDDEN" })),
                         404 => ("404 Not Found", json!({ "code": "TASK_NOT_FOUND" })),
                         409 => (
                             "409 Conflict",
-                            snapshot_payload.get("directoryPayload").cloned().unwrap_or_else(
-                                || json!({ "code": "ARCHIVE_SYNC_SERVER_MANAGED" }),
-                            ),
+                            snapshot_payload
+                                .get("directoryPayload")
+                                .cloned()
+                                .unwrap_or_else(
+                                    || json!({ "code": "ARCHIVE_SYNC_SERVER_MANAGED" }),
+                                ),
                         ),
                         _ => (
                             "200 OK",
@@ -205,8 +200,7 @@ pub(super) async fn mock_api_server(
                     ("200 OK", json!({ "ok": true }))
                 } else if method == "POST" && path.ends_with("/changes") {
                     changes.lock().await.push(body);
-                    match write_response
-                        .or_else(|| snapshot_payload.get("writeResponse").cloned())
+                    match write_response.or_else(|| snapshot_payload.get("writeResponse").cloned())
                     {
                         Some(response) => {
                             let status = response
@@ -330,7 +324,6 @@ pub(super) async fn mock_api_server(
     (format!("http://{address}"), changes, requests, task)
 }
 
-
 pub(super) fn decode_mock_task_key(value: &str) -> String {
     let mut bytes = Vec::with_capacity(value.len());
     let raw = value.as_bytes();
@@ -349,7 +342,6 @@ pub(super) fn decode_mock_task_key(value: &str) -> String {
     }
     String::from_utf8(bytes).unwrap_or_else(|_| value.to_string())
 }
-
 
 pub(super) fn remote_task_from_control(control: &Value) -> Value {
     let state = control
@@ -379,10 +371,8 @@ pub(super) struct ReplayFixture {
     pub(super) evidence: Value,
 }
 
-
 pub(super) async fn replay_fixture(prefix: &str, write_response: Option<Value>) -> ReplayFixture {
-    let (root, store, _sync, mut binding) =
-        test_task_sync_fixture(prefix).await;
+    let (root, store, _sync, mut binding) = test_task_sync_fixture(prefix).await;
     let repo = Path::new(&binding.repo_path);
     init_git_repo(repo);
     let task_dir = ".trellis/tasks/task-a";
@@ -447,8 +437,7 @@ pub(super) async fn replay_fixture(prefix: &str, write_response: Option<Value>) 
         snapshot["writeResponse"] = response;
     }
     let (server_url, changes, requests, server_task) = mock_api_server(snapshot).await;
-    let api =
-        Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
     let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
     sync.set_bindings(vec![binding.clone()]).await;
     ReplayFixture {
@@ -464,15 +453,13 @@ pub(super) async fn replay_fixture(prefix: &str, write_response: Option<Value>) 
     }
 }
 
-
 pub(super) async fn test_task_sync_fixture(
     prefix: &str,
 ) -> (PathBuf, Arc<ConfigStore>, TaskSync, AgentBinding) {
     let root = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
     let store = Arc::new(ConfigStore::new_unsecured_for_test(root.clone()));
     store.ensure_directories().await.expect("directories");
-    let api =
-        Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
     let sink: ControlSink = Arc::new(|_| {});
     let sync = TaskSync::new(store.clone(), api, sink);
     let mut binding = test_binding("space-1");
@@ -483,7 +470,6 @@ pub(super) async fn test_task_sync_fixture(
     binding.repo_path = repo_path.to_string_lossy().to_string();
     (root, store, sync, binding)
 }
-
 
 pub(super) async fn exact_deferred_fixture(
     prefix: &str,
@@ -504,7 +490,6 @@ pub(super) async fn exact_deferred_fixture(
     write_deferred_cursor(&store, &task_dir, &task_hash, &task_hash).await;
     (root, store, binding, task_dir)
 }
-
 
 pub(super) async fn write_deferred_cursor(
     store: &ConfigStore,
@@ -539,7 +524,6 @@ pub(super) async fn write_deferred_cursor(
         .expect("cursor");
 }
 
-
 pub(super) fn test_config(binding: AgentBinding) -> AgentConfig {
     AgentConfig {
         schema_version: crate::agent::store::CONFIG_SCHEMA_VERSION,
@@ -559,7 +543,6 @@ pub(super) fn test_config(binding: AgentBinding) -> AgentConfig {
     }
 }
 
-
 pub(super) fn snapshot_file_value(path: impl Into<String>, content: impl Into<String>) -> Value {
     let path: String = path.into();
     let content: String = content.into();
@@ -569,13 +552,11 @@ pub(super) fn snapshot_file_value(path: impl Into<String>, content: impl Into<St
     })
 }
 
-
 pub(super) fn batch_file_values(count: usize) -> Vec<Value> {
     (0..count)
         .map(|index| snapshot_file_value(format!(".trellis/tasks/a/file-{index}.md"), ""))
         .collect()
 }
-
 
 pub(super) fn assert_cursor_patch_changes_once(
     cursor: &mut Cursor,
@@ -584,7 +565,6 @@ pub(super) fn assert_cursor_patch_changes_once(
     assert!(apply_cursor_patch(cursor, &make_patch()));
     assert!(!apply_cursor_patch(cursor, &make_patch()));
 }
-
 
 pub(super) fn task_group(task_id: &str, task_dir: &str, files: &[(&str, &str)]) -> SnapshotGroup {
     let mut snapshot_files = Vec::new();

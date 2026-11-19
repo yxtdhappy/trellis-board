@@ -25,6 +25,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
 const SESSION_COOKIE: &str = "trellis_team_session";
@@ -326,9 +327,16 @@ fn appearance_save(
     window: WebviewWindow,
     theme: String,
     font_size: String,
+    notify_mode: Option<String>,
 ) -> Result<(), String> {
     ensure_board_caller(&app, &window)?;
-    appearance::save(&appearance::Appearance { theme, font_size })
+    // 旧 Web 包不带 notifyMode：保留设备上已有的档位，避免顺手把它重置。
+    let notify_mode = notify_mode.unwrap_or_else(|| appearance::load().notify_mode);
+    appearance::save(&appearance::Appearance {
+        theme,
+        font_size,
+        notify_mode,
+    })
 }
 
 #[tauri::command]
@@ -899,6 +907,19 @@ pub(crate) fn focus_main_window(app: &AppHandle) {
     }
 }
 
+/// 同步通知的点击入口：只把窗口带回前台。更新对话框由 `update::register` 自己的回调判断，
+/// 插件允许多个 handler 并存，因此未配置更新服务器时这里仍然生效。
+fn register_notification_tap(app: &AppHandle) {
+    let handle = app.clone();
+    if let Err(error) = app.notification().on_action(move |action| {
+        if action.action_id() == "tap" {
+            focus_main_window(&handle);
+        }
+    }) {
+        logging::warn(&format!("无法注册系统通知点击处理：{error}"));
+    }
+}
+
 fn validate_live_id(value: &str, label: &str) -> Result<String, String> {
     let value = value.trim();
     if !(8..=128).contains(&value.len())
@@ -1108,6 +1129,7 @@ fn main() {
             let _ = config::ensure_directories();
             logging::init(&config::logs_dir());
             agent_service::register(&handle);
+            register_notification_tap(&handle);
             let auth = DesktopAuthState::default();
             app.manage(auth.clone());
             update::register(&handle);

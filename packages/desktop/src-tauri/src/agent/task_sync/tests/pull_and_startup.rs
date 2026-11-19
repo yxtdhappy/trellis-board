@@ -1,5 +1,5 @@
-use super::*;
 use super::support::*;
+use super::*;
 
 #[tokio::test]
 async fn revision_guard_downloads_baseline_cross_source_server_only_task() {
@@ -52,10 +52,7 @@ async fn revision_guard_downloads_baseline_cross_source_server_only_task() {
     let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
     sync.set_bindings(vec![binding.clone()]).await;
 
-    let result = sync
-        .repair_revision_guard(&binding)
-        .await
-        .expect("repair");
+    let result = sync.repair_revision_guard(&binding).await.expect("repair");
     assert_eq!(result["repaired"], true);
     assert_eq!(result["downloaded"], 1);
     assert_eq!(
@@ -86,7 +83,6 @@ async fn revision_guard_downloads_baseline_cross_source_server_only_task() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[test]
 fn revision_guard_keeps_cross_source_tasks_only_for_baseline_binding() {
     let group = SnapshotGroup {
@@ -108,7 +104,6 @@ fn revision_guard_keeps_cross_source_tasks_only_for_baseline_binding() {
     retain_server_groups_for_revision_guard(&binding, &mut groups);
     assert_eq!(groups.len(), 1);
 }
-
 
 #[test]
 fn cross_source_server_apply_requires_baseline_guard_or_conflict_mode() {
@@ -136,7 +131,6 @@ fn cross_source_server_apply_requires_baseline_guard_or_conflict_mode() {
     ));
 }
 
-
 #[tokio::test]
 async fn initial_sync_pending_binding_not_listening() {
     let (root, store, mut binding, _task_dir) =
@@ -158,11 +152,9 @@ async fn initial_sync_pending_binding_not_listening() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn startup_bindings_activate_before_background_pull() {
-    let (root, store, binding, task_dir) =
-        exact_deferred_fixture("trellis-startup-activate").await;
+    let (root, store, binding, task_dir) = exact_deferred_fixture("trellis-startup-activate").await;
     let (server_url, _changes, requests, server_task) = mock_api_server(json!({
         "revision": 1,
         "files": []
@@ -171,9 +163,7 @@ async fn startup_bindings_activate_before_background_pull() {
     let api = Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
     let sync = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
 
-    let task_space_ids = sync
-        .prepare_startup_bindings(vec![binding])
-        .await;
+    let task_space_ids = sync.prepare_startup_bindings(vec![binding]).await;
 
     assert_eq!(task_space_ids, vec!["space-1".to_string()]);
     assert_eq!(sync.active_bindings().await.len(), 1);
@@ -220,18 +210,15 @@ async fn startup_bindings_activate_before_background_pull() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn startup_pull_reconciles_exact_deferred_once_at_same_revision() {
-    let (root, store, binding, task_dir) =
-        exact_deferred_fixture("trellis-deferred-startup").await;
+    let (root, store, binding, task_dir) = exact_deferred_fixture("trellis-deferred-startup").await;
     let (server_url, changes, requests, server_task) = mock_api_server(json!({
         "revision": 1,
         "files": []
     }))
     .await;
-    let api =
-        Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
     let sink: ControlSink = Arc::new(|_| {});
     let sync = Arc::new(TaskSync::new(store.clone(), api, sink));
 
@@ -262,7 +249,6 @@ async fn startup_pull_reconciles_exact_deferred_once_at_same_revision() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn startup_pull_drops_deferred_entries_for_readonly_mirrors() {
     let (root, store, binding, task_dir) =
@@ -281,8 +267,7 @@ async fn startup_pull_drops_deferred_entries_for_readonly_mirrors() {
         "files": []
     }))
     .await;
-    let api =
-        Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
     let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
 
     sync.update_bindings(vec![binding.clone()]).await;
@@ -299,7 +284,6 @@ async fn startup_pull_drops_deferred_entries_for_readonly_mirrors() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn unchanged_startup_pull_skips_second_ownership_validation() {
     let (root, store, binding, _) =
@@ -309,8 +293,7 @@ async fn unchanged_startup_pull_skips_second_ownership_validation() {
         "files": []
     }))
     .await;
-    let api =
-        Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
     let sync = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
     sync.set_bindings(vec![binding]).await;
 
@@ -322,8 +305,7 @@ async fn unchanged_startup_pull_skips_second_ownership_validation() {
 
 #[tokio::test]
 async fn unchanged_startup_pull_revalidates_pending_ownership_ledger() {
-    let (root, store, binding, _) =
-        exact_deferred_fixture("trellis-startup-ownership-retry").await;
+    let (root, store, binding, _) = exact_deferred_fixture("trellis-startup-ownership-retry").await;
     let missing = ".trellis/tasks/offline-missing";
     store
         .write_json(
@@ -361,17 +343,18 @@ async fn unchanged_startup_pull_revalidates_pending_ownership_ledger() {
         "files": []
     }))
     .await;
-    let api =
-        Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
     let sync = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
     sync.set_bindings(vec![binding]).await;
 
     assert!(sync.pull_and_report("space-1").await);
     sync.sync_task_spaces(vec!["space-1".to_string()]).await;
 
-    assert!(requests.lock().await.iter().any(|request| {
-        request == "PUT /api/agent/task-spaces/space-1/ownership-inbox"
-    }));
+    assert!(requests
+        .lock()
+        .await
+        .iter()
+        .any(|request| { request == "PUT /api/agent/task-spaces/space-1/ownership-inbox" }));
     let cursor = sync.read_cursor("space-1").await;
     assert!(cursor.ownership_pending.is_empty());
     assert!(cursor.pending_rejected.is_empty());
@@ -379,7 +362,6 @@ async fn unchanged_startup_pull_revalidates_pending_ownership_ledger() {
     server_task.abort();
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[tokio::test]
 async fn startup_deferred_reconcile_does_not_trigger_baseline_upload() {
@@ -394,16 +376,14 @@ async fn startup_deferred_reconcile_does_not_trigger_baseline_upload() {
         .save_config(test_config(binding.clone()))
         .await
         .expect("config");
-    let task_hash =
-        snapshot_sha256("{\"id\":\"task-a\",\"branch\":\"dev1\"}\n");
+    let task_hash = snapshot_sha256("{\"id\":\"task-a\",\"branch\":\"dev1\"}\n");
     write_deferred_cursor(&store, &task_dir, &task_hash, &task_hash).await;
     let (server_url, changes, requests, server_task) = mock_api_server(json!({
         "revision": 1,
         "files": []
     }))
     .await;
-    let api =
-        Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
     let sink: ControlSink = Arc::new(|_| {});
     let sync = Arc::new(TaskSync::new(store.clone(), api, sink));
 
@@ -423,14 +403,12 @@ async fn startup_deferred_reconcile_does_not_trigger_baseline_upload() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn startup_local_deferred_change_still_allows_baseline_reconcile() {
     let (root, store, mut binding, task_dir) =
         exact_deferred_fixture("trellis-deferred-local-change").await;
     let repo = Path::new(&binding.repo_path);
-    let old_hash =
-        snapshot_sha256("{\"id\":\"task-a\",\"branch\":\"main\"}\n");
+    let old_hash = snapshot_sha256("{\"id\":\"task-a\",\"branch\":\"main\"}\n");
     write_task_json(repo, &task_dir, "task-a", "dev1").await;
     run_git(repo, &["add", ".trellis/tasks"]);
     run_git(repo, &["commit", "--no-verify", "-m", "source task"]);
@@ -439,16 +417,14 @@ async fn startup_local_deferred_change_still_allows_baseline_reconcile() {
         .save_config(test_config(binding.clone()))
         .await
         .expect("config");
-    let changed_hash =
-        snapshot_sha256("{\"id\":\"task-a\",\"branch\":\"dev1\"}\n");
+    let changed_hash = snapshot_sha256("{\"id\":\"task-a\",\"branch\":\"dev1\"}\n");
     write_deferred_cursor(&store, &task_dir, &changed_hash, &old_hash).await;
     let (server_url, changes, _requests, server_task) = mock_api_server(json!({
         "revision": 1,
         "files": []
     }))
     .await;
-    let api =
-        Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
     let sink: ControlSink = Arc::new(|_| {});
     let sync = Arc::new(TaskSync::new(store.clone(), api, sink));
 
@@ -464,11 +440,9 @@ async fn startup_local_deferred_change_still_allows_baseline_reconcile() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn normal_pull_reconciles_exact_deferred_without_dirty_upload() {
-    let (root, store, binding, task_dir) =
-        exact_deferred_fixture("trellis-deferred-pull").await;
+    let (root, store, binding, task_dir) = exact_deferred_fixture("trellis-deferred-pull").await;
     let task_json = format!("{task_dir}/task.json");
     let repo_path = Path::new(&binding.repo_path).to_path_buf();
     let content = "{\"id\":\"task-a\",\"branch\":\"main\"}\n";
@@ -485,8 +459,7 @@ async fn normal_pull_reconciles_exact_deferred_without_dirty_upload() {
         }]
     }))
     .await;
-    let api =
-        Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
     let sink: ControlSink = Arc::new(|_| {});
     let sync = TaskSync::new(store.clone(), api, sink);
     sync.set_bindings(vec![binding]).await;
@@ -513,7 +486,6 @@ async fn normal_pull_reconciles_exact_deferred_without_dirty_upload() {
     server_task.abort();
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[tokio::test]
 async fn archived_directory_409_clears_cursor_state_and_pull_advances_revision() {
@@ -574,28 +546,34 @@ async fn archived_directory_409_clears_cursor_state_and_pull_advances_revision()
     let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
     sync.set_bindings(vec![binding.clone()]).await;
 
-    let result = tokio::time::timeout(
-        Duration::from_secs(10),
-        sync.pull_task_space("space-1"),
-    )
-    .await
-    .expect("归档 409 后 pull 必须收敛，不能无限重试")
-    .expect("pull");
+    let result = tokio::time::timeout(Duration::from_secs(10), sync.pull_task_space("space-1"))
+        .await
+        .expect("归档 409 后 pull 必须收敛，不能无限重试")
+        .expect("pull");
     assert_eq!(result["revision"], 3);
 
     let cursor = sync.read_cursor("space-1").await;
-    assert_eq!(cursor.revision, 3, "收敛后必须应用快照并推进已应用 revision");
+    assert_eq!(
+        cursor.revision, 3,
+        "收敛后必须应用快照并推进已应用 revision"
+    );
     assert!(!cursor.baselines.contains_key(&task_json));
     assert!(cursor.pending.is_none());
     assert!(changes.lock().await.is_empty(), "归档目录不得产生上传批次");
     let requests = requests.lock().await;
     assert_eq!(
-        requests.iter().filter(|request| request.contains("/files?")).count(),
+        requests
+            .iter()
+            .filter(|request| request.contains("/files?"))
+            .count(),
         1,
         "归档 409 后不得重复请求同一目录"
     );
     assert_eq!(
-        requests.iter().filter(|request| request.contains("/snapshot?")).count(),
+        requests
+            .iter()
+            .filter(|request| request.contains("/snapshot?"))
+            .count(),
         2,
         "首轮 dirty 上传后必须再拉取一次快照收敛"
     );
@@ -608,7 +586,6 @@ async fn archived_directory_409_clears_cursor_state_and_pull_advances_revision()
     server_task.abort();
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[test]
 fn exact_deferred_state_reconciles_without_dirty_upload() {
@@ -635,7 +612,6 @@ fn exact_deferred_state_reconciles_without_dirty_upload() {
     assert!(reconciled.contains(task_dir));
 }
 
-
 #[test]
 fn hash_mismatch_keeps_deferred_protected() {
     let task_dir = ".trellis/tasks/task-a";
@@ -657,7 +633,6 @@ fn hash_mismatch_keeps_deferred_protected() {
     assert!(dirty.is_empty());
     assert_eq!(deferred, cursor.deferred);
 }
-
 
 #[test]
 fn server_missing_file_keeps_deferred_protected() {
@@ -687,7 +662,6 @@ fn server_missing_file_keeps_deferred_protected() {
     assert_eq!(deferred, cursor.deferred);
 }
 
-
 #[test]
 fn local_extra_file_keeps_deferred_protected() {
     let task_dir = ".trellis/tasks/task-a";
@@ -715,7 +689,6 @@ fn local_extra_file_keeps_deferred_protected() {
     assert_eq!(deferred, cursor.deferred);
 }
 
-
 #[test]
 fn empty_server_baseline_keeps_deferred_protected() {
     let task_dir = ".trellis/tasks/task-a";
@@ -730,35 +703,28 @@ fn empty_server_baseline_keeps_deferred_protected() {
         ..Default::default()
     };
 
-    let (dirty, deferred, _) =
-        local_sync_state_from_groups(&cursor, &[group], &BTreeMap::new());
+    let (dirty, deferred, _) = local_sync_state_from_groups(&cursor, &[group], &BTreeMap::new());
 
     assert!(dirty.is_empty());
     assert_eq!(deferred, cursor.deferred);
 }
 
-
 #[test]
 fn missing_local_directory_keeps_deferred_protected() {
     let task_dir = ".trellis/tasks/task-a";
     let task_json = format!("{task_dir}/task.json");
-    let deferred_state = BTreeMap::from([(
-        task_json,
-        snapshot_sha256("{\"id\":\"task-a\"}\n"),
-    )]);
+    let deferred_state = BTreeMap::from([(task_json, snapshot_sha256("{\"id\":\"task-a\"}\n"))]);
     let cursor = Cursor {
         baselines: deferred_state.clone(),
         deferred: BTreeMap::from([(task_dir.to_string(), deferred_state.clone())]),
         ..Default::default()
     };
 
-    let (dirty, deferred, _) =
-        local_sync_state_from_groups(&cursor, &[], &deferred_state);
+    let (dirty, deferred, _) = local_sync_state_from_groups(&cursor, &[], &deferred_state);
 
     assert!(dirty.is_empty());
     assert_eq!(deferred, cursor.deferred);
 }
-
 
 #[test]
 fn changed_deferred_state_still_uses_cursor_baseline_for_dirty() {
@@ -769,22 +735,113 @@ fn changed_deferred_state_still_uses_cursor_baseline_for_dirty() {
         task_dir,
         &[("task.json", "{\"id\":\"task-a\",\"title\":\"changed\"}\n")],
     );
-    let old_state =
-        BTreeMap::from([(task_json.clone(), snapshot_sha256("{\"id\":\"task-a\"}\n"))]);
+    let old_state = BTreeMap::from([(task_json.clone(), snapshot_sha256("{\"id\":\"task-a\"}\n"))]);
     let cursor = Cursor {
         baselines: old_state.clone(),
         deferred: BTreeMap::from([(task_dir.to_string(), old_state.clone())]),
         ..Default::default()
     };
 
-    let (dirty, deferred, reconciled) =
-        local_sync_state_from_groups(&cursor, &[group], &old_state);
+    let (dirty, deferred, reconciled) = local_sync_state_from_groups(&cursor, &[group], &old_state);
 
     assert_eq!(dirty, vec![task_dir.to_string()]);
     assert!(deferred.is_empty());
     assert!(reconciled.is_empty());
 }
 
+#[tokio::test]
+async fn initial_sync_treats_foreign_local_task_as_readonly_mirror() {
+    let (root, store, _sync, mut binding) =
+        test_task_sync_fixture("trellis-initial-sync-foreign").await;
+    let repo = Path::new(&binding.repo_path);
+    init_git_repo(repo);
+    let task_dir = ".trellis/tasks/task-colleague";
+    write_task_json(repo, task_dir, "task-colleague", "main").await;
+    run_git(repo, &["add", ".trellis/tasks"]);
+    run_git(repo, &["commit", "--no-verify", "-m", "colleague task"]);
+    binding.initial_sync_mode = "review".to_string();
+    binding.initial_sync_completed = false;
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+
+    let (server_url, changes, _requests, server_task) = mock_api_server(json!({
+        "revision": 2,
+        "files": [],
+        "directoryStatus": 403
+    }))
+    .await;
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+    let events: Arc<std::sync::Mutex<Vec<Value>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink: ControlSink = {
+        let events = events.clone();
+        Arc::new(move |event| events.lock().expect("events").push(event))
+    };
+    let sync = Arc::new(TaskSync::new(store.clone(), api, sink));
+    sync.set_bindings(vec![binding.clone()]).await;
+
+    let result = sync.pull_task_space("space-1").await.expect("initial sync");
+
+    assert_eq!(result["pendingReview"], false);
+    assert_eq!(result["differences"].as_array().map(Vec::len), Some(0));
+    assert!(
+        events.lock().expect("events").is_empty(),
+        "他人任务目录不得作为差异弹窗上报"
+    );
+    let cursor = sync.read_cursor("space-1").await;
+    assert_eq!(
+        cursor.readonly_task_dirs.get(task_dir).map(String::as_str),
+        Some("FOREIGN_OWNER")
+    );
+    assert!(changes.lock().await.is_empty(), "只读镜像不得上传");
+
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn initial_sync_keeps_local_task_the_server_does_not_know() {
+    let (root, store, _sync, mut binding) =
+        test_task_sync_fixture("trellis-initial-sync-unknown").await;
+    let repo = Path::new(&binding.repo_path);
+    init_git_repo(repo);
+    let task_dir = ".trellis/tasks/task-mine";
+    write_task_json(repo, task_dir, "task-mine", "main").await;
+    run_git(repo, &["add", ".trellis/tasks"]);
+    run_git(repo, &["commit", "--no-verify", "-m", "my task"]);
+    binding.initial_sync_mode = "review".to_string();
+    binding.initial_sync_completed = false;
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+
+    let (server_url, _changes, _requests, server_task) = mock_api_server(json!({
+        "revision": 2,
+        "files": [],
+        "directoryStatus": 404
+    }))
+    .await;
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+    let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
+    sync.set_bindings(vec![binding.clone()]).await;
+
+    let result = sync.pull_task_space("space-1").await.expect("initial sync");
+
+    assert_eq!(result["pendingReview"], true);
+    let differences = result["differences"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(differences.len(), 1);
+    assert_eq!(differences[0]["type"], "local-only");
+    let cursor = sync.read_cursor("space-1").await;
+    assert!(cursor.readonly_task_dirs.is_empty());
+
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
 
 #[test]
 fn initial_sync_keeps_cross_branch_groups_present_locally() {

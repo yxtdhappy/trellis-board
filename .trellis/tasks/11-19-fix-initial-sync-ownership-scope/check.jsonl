@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "校验命令注册/权限/通知行为"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "校验前端类型、构建与组件复用"}
