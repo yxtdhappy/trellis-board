@@ -215,16 +215,49 @@ revision 能正常追平，证明“清除归档目录基线”即可终止循�
 - 规范：`.trellis/spec/backend/desktop-realtime-sync.md` 已写入契约。
 
 验证状态：IDEA lint（error/warning）与 `git diff --check` 通过；独立 `trellis-check`
-复查 0 个需修改发现。本机无 Rust 工具链，编译与单测待 CI；真实 E2E 需在包含本次
-修复的新版本客户端上复验 `启动同步完成` 恢复和 cursor revision 追平。
+复查 0 个需修改发现。本机无 Rust 工具链，编译与单测待 CI。
+
+### 7.8 0.4.45 真机复验（修复已生效）
+
+版本与构建：
+
+- 工作提交 `2c08b29`（`fix(sync): 收敛归档残留导致的 pull 循环`），发版提交
+  `bf8b37c chore(release): 0.4.45`，标签 `v0.4.45`。
+- GitHub Actions run `44448351024` 成功（Node/Rust 单测、desktop 打包、Release 发布）。
+- portable 包
+  `TrellisBoard_0.4.45_x64-portable.zip`，SHA-256
+  `cc66bd66b9dbf53269ba1d65d13692258654148a1ce6f6d9dc1d7b4c6b85bed8`，
+  本地校验一致。
+
+复验步骤与结果：
+
+1. 停止 0.4.44 客户端，备份 `live-cursors.json`，向 `trellis-board/main` 的 cursor
+   重新注入两个归档目录的 4 条 stale baseline，并把 revision 置为 56
+   （服务端为 57）。
+2. 启动 `0.4.45` portable 客户端（PID `37612`，开启 HTTP trace）。
+3. 首次 pull 得到 `dirtyDirs=2`；客户端对两个归档目录各请求一次
+   `/files?taskDir=...`，均返回 409 `ARCHIVE_SYNC_SERVER_MANAGED`。
+4. `upload-total`：`committedRevision=0`、`revision=56`、`targetDirs=2`；
+   随后 `task_dir_removals` 生效，两个目录的基线被清除。
+5. 第二次 `pull-cursor` 后应用快照：`启动同步完成 taskSpaceId=3536a478`
+   `elapsedMs=7646`（修复前永不打印）。
+6. 最终状态：cursor revision **57**（与 server revision 57 一致）；
+   baseline 只剩两个当前任务目录；`pending`、`ownershipPending`、
+   `pendingRejected` 为空；项目 inbox 为 0。
+7. 全程只出现两次归档目录 `/files` 请求和两次 pull-cursor，
+   未再出现 1.4 秒级的 `pull → 409 → pull` 循环。
+
+结论：7.4 的归档残留 pull 循环在 `0.4.45` 上修复并真机复验通过；
+备份文件为 `live-cursors.json.bak-20261119-before-0445-e2e`。
 
 ## 8. 复验结论
 
 - 原失败项“删除尚待归属任务后 cursor 与项目收件箱收敛”：**复验通过**（1.065s 内收敛）。
 - 上传不推进已应用 revision：**复验通过**。
-- 存在归档移出残留时 pull 循环空转、已应用 revision 无法前进：**已在工作区修复**
-  （cursor patch + 回归测试，见 7.7），待 CI 编译/单测与新版本客户端真机复验。
-- 真实双客户端 revision 交错、队头阻塞和多分支歧义：仍未做真实 E2E，沿用自动化覆盖说明。
+- 存在归档移出残留时 pull 循环空转、已应用 revision 无法前进：**已在 0.4.45 修复并真机复验通过**
+  （见 7.8：启动同步恢复、revision 56→57、无循环）。
+- 真实双客户端 revision 交错、旧 pending 队头阻塞和多分支歧义：仍未做真实 E2E，
+  沿用自动化覆盖说明。
 
-因此本任务仍不应标记为完整 E2E 通过；需先取得包含 7.7 修复的客户端构建并复验
-`启动同步完成` 与 cursor revision 追平。
+本任务的两个真实缺陷（删除收敛、归档残留 pull 循环）均已修复并复验通过，可以进入收尾；
+上述未覆盖场景应作为已知限制保留，而不是声称已做真实 E2E。
