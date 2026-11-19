@@ -1,19 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { openDatabase } from '../database.js'
 import { diagnosticError, errorSummary, sanitizeDiagnosticText } from '../team/error-diagnostics.js'
 import { ERROR_CODES, TeamError } from '../team/errors.js'
 import { createRefreshScheduler } from '../team/http.js'
-import { createProjectService } from '../team/projects.js'
-
-const SILENT_LOGGER = {
-  info() {},
-  warn() {},
-  error() {},
-}
 
 test('TeamError 日志字段保留诊断并脱敏详情', () => {
   const error = new TeamError(
@@ -96,80 +85,6 @@ test('定时刷新失败日志记录结构化 TeamError 字段', async () => {
     branch: 'dev',
     token: '[redacted]',
   })
-})
-
-test('项目刷新把 TeamError code 和脱敏消息写入 last_error', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-project-error-summary-'))
-  const dataDir = path.join(root, 'data')
-  const db = openDatabase({
-    databaseFile: path.join(dataDir, 'board.sqlite'),
-    fallbackRepositories: [],
-    importLegacyRepositories: false,
-    legacyJsonImport: false,
-    logger: SILENT_LOGGER,
-  })
-  t.after(() => {
-    db.close()
-    fs.rmSync(root, { recursive: true, force: true })
-  })
-
-  const now = new Date().toISOString()
-  const projectPath = path.join(dataDir, 'projects', 'p1')
-  fs.mkdirSync(projectPath, { recursive: true })
-  db.prepare(`
-    INSERT INTO team(id, name, slug, status, created_at, updated_at)
-    VALUES ('t1', '团队 t1', 't1', 'active', ?, ?)
-  `).run(now, now)
-  db.prepare(`
-    INSERT INTO repositories(id, name, path, path_key, position, created_at, updated_at)
-    VALUES ('p1', '项目一', ?, ?, 0, ?, ?)
-  `).run(projectPath.replaceAll('\\', '/'), projectPath.toLowerCase(), now, now)
-  db.prepare(`
-    INSERT INTO team_project(
-      repository_id, team_id, workspace_key, remote_url, remote_identity_hash,
-      sync_branch, trusted_task_toolchain_sha256, sync_status, created_at, updated_at
-    ) VALUES ('p1', 't1', 'p1-workspace', 'https://example.com/p1.git', ?,
-      'main', ?, 'current', ?, ?)
-  `).run('f'.repeat(64), 'a'.repeat(64), now, now)
-
-  const projectService = createProjectService({
-    db,
-    config: { allowLocalGitRemotes: true },
-    dataDir,
-    gitManager: {
-      withProjectLock(projectId, callback) {
-        assert.equal(projectId, 'p1')
-        return callback()
-      },
-      async fetchAndFastForward() {
-        throw new TeamError(
-          502,
-          ERROR_CODES.GIT_REMOTE_FAILED,
-          '同步项目失败 C:\\Users\\alice\\private\\repo token=refresh-secret',
-        )
-      },
-    },
-    credentialService: null,
-    taskIndex: {
-      incrementQueryRevision() {},
-    },
-  })
-
-  await assert.rejects(
-    () => projectService.refreshScheduled('p1'),
-    (error) => error.code === ERROR_CODES.GIT_REMOTE_FAILED,
-  )
-
-  const row = db
-    .prepare('SELECT sync_status, last_error FROM team_project WHERE repository_id = ?')
-    .get('p1')
-  assert.equal(row.sync_status, 'stale')
-  assert.equal(
-    row.last_error,
-    `${ERROR_CODES.GIT_REMOTE_FAILED}: 同步项目失败 [redacted-path] token=[redacted]`,
-  )
-  assert.equal(row.last_error.includes('refresh-secret'), false)
-  assert.equal(row.last_error.includes('C:\\Users\\alice'), false)
 })
 
 test('错误摘要限制长度并始终附带脱敏 code', () => {

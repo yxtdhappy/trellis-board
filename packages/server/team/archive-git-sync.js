@@ -11,57 +11,21 @@ import {
 import { createArchiveSnapshotStore } from './archive-local-snapshot.js'
 import { createArchiveGitStore } from './archive-git-store.js'
 import { purgeArchivedTaskFiles } from './task-snapshot-service.js'
+import { testArchiveCredential } from './archive-git-test-credential.js'
+import { importArchiveSnapshot } from './archive-snapshot-import.js'
 
-const MIN_INTERVAL_SECONDS = 60
-const MAX_INTERVAL_SECONDS = 24 * 60 * 60
-const MAX_CONCURRENT_TASKS = 2
-const MAX_FAILURE_LOGS = 100
-const BACKOFF_SECONDS = [30, 60, 120, 300, 600, 1800]
-
-function boundedInteger(value, label, minimum, maximum) {
-  const number = Number(value)
-  if (!Number.isInteger(number) || number < minimum || number > maximum) {
-    throw teamError(
-      400,
-      ERROR_CODES.INVALID_INPUT,
-      `${label}必须是 ${minimum} 到 ${maximum} 的整数`,
-    )
-  }
-  return number
-}
-
-function booleanValue(value, label) {
-  if (value === true || value === 1 || value === '1' || value === 'true') return true
-  if (value === false || value === 0 || value === '0' || value === 'false') return false
-  throw teamError(400, ERROR_CODES.INVALID_INPUT, `${label}必须是布尔值`)
-}
-
-function phaseForError(error) {
-  if (error?.archivePhase === 'fetch' || error?.archivePhase === 'import') {
-    return error.archivePhase
-  }
-  const code = String(error?.code || '')
-  if (
-    code.startsWith('ARCHIVE_ENTRY_') ||
-    code.startsWith('ARCHIVE_FILE_') ||
-    code === 'ARCHIVE_PATH_INVALID' ||
-    code === 'ARCHIVE_TREE_TOO_LARGE'
-  ) {
-    return 'import'
-  }
-  return 'fetch'
-}
-
-function normalizedErrorCode(error, phase) {
-  const code = String(error?.code || '').trim()
-  if (code && /^[A-Z0-9_:-]{2,100}$/.test(code)) return code
-  return phase === 'index' ? 'ARCHIVE_INDEX_FAILED' : 'ARCHIVE_SYNC_FAILED'
-}
-
-function normalizedLimit(value, fallback = 50) {
-  if (value == null || value === '') return fallback
-  return boundedInteger(value, 'limit', 1, 100)
-}
+import {
+  BACKOFF_SECONDS,
+  MAX_CONCURRENT_TASKS,
+  MAX_FAILURE_LOGS,
+  MAX_INTERVAL_SECONDS,
+  MIN_INTERVAL_SECONDS,
+  boundedInteger,
+  booleanValue,
+  normalizedErrorCode,
+  normalizedLimit,
+  phaseForError,
+} from './archive-sync-utils.js'
 
 export function createArchiveGitSyncService({
   db,
@@ -227,222 +191,6 @@ export function createArchiveGitSyncService({
     `).run(head, timestamp, taskSpaceId)
   }
 
-  function importSnapshot(taskSpaceId, snapshot) {
-    return withTransaction(db, () => {
-      const taskSpace = db
-        .prepare(`
-          SELECT archive_snapshot_id, archive_candidate_snapshot_id
-          FROM sync_task_space
-          WHERE id = ?
-        `)
-        .get(taskSpaceId)
-      const activeSnapshotId = taskSpace?.archive_snapshot_id || null
-      const previousCandidateId = taskSpace?.archive_candidate_snapshot_id || null
-      const existingRows = db
-        .prepare(`
-          SELECT id, relative_path, blob_oid, sha256, task_dir, task_id,
-                 content_text, size_bytes, mime_type, storage_key, text_excerpt,
-                 source_head, snapshot_id
-          FROM sync_archive_file
-          WHERE task_space_id = ?
-        `)
-        .all(taskSpaceId)
-      const existing = new Map(existingRows.map((row) => [row.relative_path, row]))
-      const desired = new Map(snapshot.files.map((file) => [file.relativePath, file]))
-      let contentChanged = false
-      let legacyMetadataReplaced = false
-      for (const [relativePath, file] of desired) {
-        const row = existing.get(relativePath)
-        if (
-          !row ||
-          row.sha256 !== file.sha256 ||
-          row.task_dir !== file.taskDir ||
-          (row.task_id || null) !== (file.taskId || null)
-        ) {
-          contentChanged = true
-          break
-        }
-        if (
-          row.blob_oid === 'legacy' ||
-          !row.storage_key ||
-          Number(row.size_bytes) !== Number(file.sizeBytes) ||
-          row.mime_type !== file.mimeType
-        ) {
-          legacyMetadataReplaced = true
-        }
-      }
-      if (!contentChanged) {
-        for (const relativePath of existing.keys()) {
-          if (!desired.has(relativePath)) {
-            contentChanged = true
-            break
-          }
-        }
-      }
-      const changed = contentChanged
-      const timestamp = new Date().toISOString()
-      if (!previousCandidateId) {
-        const insertHistory = db.prepare(`
-          INSERT OR IGNORE INTO sync_archive_file_history(
-            id, task_space_id, snapshot_id, relative_path, blob_oid, sha256,
-            content_text, size_bytes, mime_type, storage_key, text_excerpt,
-            task_id, task_dir, source_head, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-        for (const row of existingRows) {
-          insertHistory.run(
-            row.id,
-            taskSpaceId,
-            row.snapshot_id || activeSnapshotId,
-            row.relative_path,
-            row.blob_oid,
-            row.sha256,
-            row.content_text || '',
-            row.size_bytes,
-            row.mime_type,
-            row.storage_key,
-            row.text_excerpt,
-            row.task_id,
-            row.task_dir,
-            row.source_head,
-            timestamp,
-          )
-        }
-      }
-
-      let snapshotRow = db
-        .prepare('SELECT id FROM sync_archive_snapshot WHERE task_space_id = ? AND source_head = ?')
-        .get(taskSpaceId, snapshot.head)
-      const candidateSnapshotId = snapshotRow?.id || crypto.randomUUID()
-      if (snapshotRow) {
-        db.prepare(`
-          UPDATE sync_archive_snapshot
-          SET status = 'published',
-              active = CASE WHEN id = ? THEN 1 ELSE 0 END,
-              storage_root = ?, file_count = ?, byte_count = ?,
-              manifest_sha256 = ?, published_at = ?, retired_at = NULL
-          WHERE id = ?
-        `).run(
-          activeSnapshotId,
-          snapshot.storageRoot,
-          snapshot.fileCount,
-          snapshot.byteCount,
-          snapshot.manifestSha256,
-          timestamp,
-          candidateSnapshotId,
-        )
-      } else {
-        db.prepare(`
-          INSERT INTO sync_archive_snapshot(
-            id, task_space_id, source_head, status, active, storage_root,
-            file_count, byte_count, manifest_sha256, published_at, retired_at
-          ) VALUES (?, ?, ?, 'published', 0, ?, ?, ?, ?, ?, NULL)
-        `).run(
-          candidateSnapshotId,
-          taskSpaceId,
-          snapshot.head,
-          snapshot.storageRoot,
-          snapshot.fileCount,
-          snapshot.byteCount,
-          snapshot.manifestSha256,
-          timestamp,
-        )
-      }
-      const activeHistory = db
-        .prepare(`
-          SELECT id, relative_path, sha256, size_bytes, mime_type
-          FROM sync_archive_file_history
-          WHERE task_space_id = ?
-            AND (
-              (snapshot_id = ?)
-              OR (? IS NULL AND snapshot_id IS NULL)
-            )
-        `)
-        .all(taskSpaceId, activeSnapshotId, activeSnapshotId)
-      const activeFiles = new Map(activeHistory.map((row) => [row.relative_path, row]))
-
-      db.prepare('DELETE FROM sync_archive_file WHERE task_space_id = ?').run(taskSpaceId)
-      const insertFile = db.prepare(`
-        INSERT INTO sync_archive_file(
-          id, task_space_id, snapshot_id, relative_path, blob_oid, sha256, content_text,
-          size_bytes, mime_type, storage_key, text_excerpt,
-          task_id, task_dir, source_head, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      for (const file of desired.values()) {
-        const activeFile = activeFiles.get(file.relativePath)
-        const reusableId =
-          activeFile &&
-          activeFile.sha256 === file.sha256 &&
-          Number(activeFile.size_bytes) === Number(file.sizeBytes) &&
-          activeFile.mime_type === file.mimeType
-            ? activeFile.id
-            : crypto.randomUUID()
-        insertFile.run(
-          reusableId,
-          taskSpaceId,
-          candidateSnapshotId,
-          file.relativePath,
-          file.blobOid,
-          file.sha256,
-          file.sizeBytes,
-          file.mimeType,
-          file.storageKey,
-          file.textExcerpt || null,
-          file.taskId,
-          file.taskDir,
-          snapshot.head,
-          timestamp,
-        )
-      }
-      db.prepare(`
-        UPDATE sync_task_space
-        SET archive_candidate_snapshot_id = ?,
-            archive_revision = archive_revision + ?,
-            updated_at = ?
-        WHERE id = ?
-      `).run(candidateSnapshotId, changed ? 1 : 0, timestamp, taskSpaceId)
-      const archiveRevision = Number(
-        db.prepare('SELECT archive_revision FROM sync_task_space WHERE id = ?').get(taskSpaceId)
-          .archive_revision,
-      )
-
-      const priorSuccess = db
-        .prepare('SELECT last_success_at FROM sync_archive_sync_state WHERE task_space_id = ?')
-        .get(taskSpaceId)?.last_success_at
-      const needsIndex = true
-      db.prepare(`
-        UPDATE sync_archive_sync_state
-        SET status = ?, ref_name = 'refs/heads/trellis-archive',
-            remote_head = ?, last_success_at = ?, last_error = NULL,
-            file_count = ?, byte_count = ?, updated_at = ?
-        WHERE task_space_id = ?
-      `).run(
-        needsIndex ? 'indexing' : 'current',
-        snapshot.head,
-        timestamp,
-        snapshot.fileCount,
-        snapshot.byteCount,
-        timestamp,
-        taskSpaceId,
-      )
-      if (previousCandidateId && previousCandidateId !== candidateSnapshotId) {
-        db.prepare(`
-          DELETE FROM sync_archive_snapshot
-          WHERE id = ? AND task_space_id = ? AND active = 0
-        `).run(previousCandidateId, taskSpaceId)
-      }
-      return {
-        changed,
-        contentChanged,
-        legacyMetadataReplaced,
-        needsIndex,
-        archiveRevision,
-        firstSuccess: !priorSuccess,
-      }
-    })
-  }
-
   async function acquireSlot() {
     if (activeSlots < MAX_CONCURRENT_TASKS) {
       activeSlots += 1
@@ -592,7 +340,7 @@ export function createArchiveGitSyncService({
       const stagedFiles = new Map(snapshot.files.map((file) => [file.relativePath, file]))
       let imported
       try {
-        imported = importSnapshot(taskSpaceId, {
+        imported = importArchiveSnapshot(db, taskSpaceId, {
           ...snapshot,
           ...published,
           files: published.files.map((file) => ({
@@ -990,53 +738,13 @@ export function createArchiveGitSyncService({
     `).run(new Date().toISOString(), id)
   }
 
-  async function testCredential(actor, credentialId, signal = null) {
-    const profile = credentials.list().find((item) => item.id === String(credentialId || ''))
-    if (!profile) throw teamError(404, ERROR_CODES.NOT_FOUND, '归档 Git 凭据不存在')
-    const candidates = activeTaskSpaces().filter((space) => {
-      try {
-        const remote = normalizeGitRemote(space.remote_url, {
-          allowFileRemote: Boolean(config?.allowLocalGitRemotes),
-        })
-        return archiveCredentialOrigin(remote) === profile.origin
-      } catch {
-        return false
-      }
-    })
-    if (!candidates.length) {
-      throw teamError(409, 'ARCHIVE_CREDENTIAL_NO_PROJECT', '该来源下没有可测试的活动任务空间')
-    }
-    const taskSpace = candidates[0]
-    const resolved = credentials.resolveForRemote(taskSpace.remote_url, {
-      allowFileRemote: Boolean(config?.allowLocalGitRemotes),
-    })
-    const result = await store.testCredential({
-      credential: resolved.credential,
-      remoteUrl: resolved.remote.url,
-      branchName: taskSpace.branch_name,
+  function testCredential(actor, credentialId, signal = null) {
+    return testArchiveCredential(
+      { db, config, credentials, store, activeTaskSpaces },
+      actor,
+      credentialId,
       signal,
-    })
-    withTransaction(db, () => {
-      appendAuditEvent(db, {
-        actorUserId: actor.userId,
-        action: 'archive_git_credential_tested',
-        targetType: 'archive_git_credential',
-        targetId: profile.id,
-        result: 'success',
-        detail: {
-          origin: profile.origin,
-          taskSpaceId: taskSpace.id,
-          branchFound: result.branchFound,
-        },
-      })
-    })
-    return {
-      ok: true,
-      origin: profile.origin,
-      taskSpaceId: taskSpace.id,
-      branchName: taskSpace.branch_name,
-      branchFound: result.branchFound,
-    }
+    )
   }
 
   return {

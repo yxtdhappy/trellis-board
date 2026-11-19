@@ -30,7 +30,8 @@
 
 ```text
 standalone:
-packages/server/index.js
+packages/server/index.js（只有一个 CLI bootstrap，业务在 standalone/ 下）
+  -> standalone/server.js -> state / api / plugins / static / refresh / watcher
   -> database / loader / persistence / actions / repositories / watcher
   -> execution-store / execution-projection
 
@@ -270,8 +271,8 @@ Team 启动：
 1. 打开同一个 schema v16，但禁止导入本机默认仓库或旧 JSON；
 2. 装配 `taskSpaces`、`taskSnapshots`、`taskSpaceIndex`、`taskCommands`、`agentService`、
    `agentEvents`、`boardEvents`、`taskSnapshotBackups` 和 `archiveGitSync`；
-3. 不装配旧 `git-manager`、工作副本、项目 clone、Git commit/push 或旧实时覆盖层；只启动归档
-   只读 Git 定时导入；
+3. 不装配旧 `git-manager`、工作副本、项目 clone、Git commit/push 或旧实时覆盖层（旧 Git 栈与旧实时
+   覆盖层文件已删除，不要再引入同名模块）；只启动归档只读 Git 定时导入；
 4. HTTP 监听成功后启动每日数据库快照备份和归档同步调度；
 5. 主入口在后台对全部未停用 taskSpace 调用 `taskSpaceIndex.warmActive()`，预热失败只记录警告，
    不阻塞端口监听或 HTTP 请求。
