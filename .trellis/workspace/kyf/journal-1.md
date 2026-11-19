@@ -109,3 +109,39 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: WitOps 任务面板增强
+<!-- trellis-session: v=2 fp=59ad6aef2ec4bda8 -->
+
+**Date**: 2026-11-19
+**Task**: WitOps 任务面板增强
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+witops-core 支持任务/需求/缺陷/工单四类数据源与筛选、本地分支选择、预览与二次确认、task.md 契约、需求父子任务；同步修复下游 prd.md 消费者。
+
+### Main Changes
+
+- witops-core 面板：四类筛选、类型徽标、分支下拉、task.md 预览、重复任务回退 prd.md、无 ready 项隐藏创建按钮
+- 宿主：trellis.projects.branches、task.py --parent、loader task.md 产物、TaskDetailDialog WitOps 原文
+- 下游：workbench 读 task.md、acp-dispatch prompt、DoR 占位 PRD 判定
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `74df282d` | feat(witops): 增强任务面板筛选、分支选择与父子任务下发 |
+| `cea1a177` | docs(task): 记录 WitOps 任务面板增强 |
+
+### Testing
+
+- [OK] yarn test 659/659
+- [OK] yarn test:plugins 113 pass / 1 skip
+- [OK] 4403 实测 /mine?categories=1 返回 200，重复任务预览返回 task.md/prd.md 内容
+
+### Status
+
+[OK] **Completed**
