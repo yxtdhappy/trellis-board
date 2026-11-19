@@ -39,6 +39,10 @@ function makeRepo() {
     path.join(root, '.trellis', 'tasks', '10-20-live', 'prd.md'),
     '# Live\n\n## Requirements\n\n- Real requirement\n\n## Acceptance Criteria\n\n- [x] Done\n',
   )
+  fs.writeFileSync(
+    path.join(root, '.trellis', 'tasks', '10-20-live', 'task.md'),
+    '# Live source\n\n平台原文\n',
+  )
   fs.writeFileSync(path.join(root, '.trellis', 'tasks', '10-20-live', 'design.md'), '# Design\n')
   fs.writeFileSync(
     path.join(root, '.trellis', 'tasks', '10-20-live', 'implement.md'),
@@ -230,6 +234,7 @@ test('列表投影保留轻量证据摘要并移除产物正文', () => {
       .map(toTaskListItem)
       .find((task) => !task.archived)
     assert.equal(live.summary.hasPrd, true)
+    assert.equal(live.summary.hasSource, true)
     assert.equal(live.summary.prdAcceptanceCount, 1)
     assert.equal(live.summary.prdCheckedCount, 1)
     assert.equal(live.summary.designMeaningful, false)
@@ -438,6 +443,7 @@ test('独立 E2E 报告可作为真实验证的完成证据', () => {
     assert.equal(e2e.source, 'e2e-report')
     assert.equal(live.summary.hasE2eReport, true)
     assert.equal(live.artifacts.e2eReport.content.includes('真实浏览器 E2E 已完成'), true)
+    assert.equal(live.artifacts.source.content.includes('平台原文'), true)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

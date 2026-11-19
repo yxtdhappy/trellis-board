@@ -3,16 +3,43 @@
  *
  * 去重真源是 `task.json.meta.witops.businessId`（见 links.js），插件 store 只作缓存，
  * 因此 store 丢失不会重复建任务。
+ *
+ * 平台原文写 `task.md`；`prd.md` 只放占位提示，等 trellis-brainstorm 生成后再覆盖。
+ * 需求（type=3）下发时，平台的已拆分子任务会作为 Trellis 子任务挂在父任务下。
  */
-import { buildTaskDraft, dictionaryToMap, summarizeRecord } from './mapper.js'
+import fs from 'node:fs'
+import path from 'node:path'
+
+import { buildTaskDraft, dictionaryToMap, summarizeRecord, typeLabel } from './mapper.js'
 import { asPositiveInt, detailOf, pick, stripAnsi, text } from './util.js'
 
 const DICTIONARY_TYPES = ['priority', 'taskStatus', 'taskCategory', 'systemEnv']
 const MAX_BATCH = 50
+const MAX_CHILDREN = 30
+const CHILD_TYPES = new Set([0, 2, 3, 4])
+const PRIORITY_PATTERN = /^P[0-3]$/
+
+/** 读取任务目录内的文件；relativeDir 已由 task-service 校验，这里再做一次越界保护。 */
+function readTaskFile(task, name) {
+  const projectPath = text(task?.projectPath)
+  const relativeDir = text(task?.relativeDir)
+  if (!projectPath || !relativeDir) return ''
+  const root = path.resolve(projectPath, '.trellis', 'tasks')
+  const dir = path.resolve(root, relativeDir)
+  if (dir !== root && !dir.startsWith(root + path.sep)) return ''
+  try {
+    const file = path.join(dir, name)
+    if (!fs.existsSync(file)) return ''
+    return fs.readFileSync(file, 'utf8')
+  } catch {
+    return ''
+  }
+}
 
 export function createDispatch({ ctx, config, client, session, links, onChanged = () => {} }) {
   const dictionaryCache = new Map()
   const dictionaryTtl = Number(config.cacheTtlMs || 0)
+  let categoryNames = new Map()
 
   function legacyKey(type, businessId) {
     return `task:${type}:${businessId}`
@@ -47,26 +74,135 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     return result
   }
 
-  async function fetchPage({ page = 1, size, status, type } = {}) {
+  /** 面板筛选项：优先级、状态、缺陷分类、节点类型。 */
+  async function loadFilterOptions({ force = false } = {}) {
+    const dictionaries = await loadDictionaries({ force })
+    const priorityMap = dictionaries.priority?.size
+      ? dictionaries.priority
+      : new Map([
+          [1, 'P0'],
+          [2, 'P1'],
+          [3, 'P2'],
+          [4, 'P3'],
+        ])
+    let categories = []
+    const cachedCategories = dictionaryCache.get('bugCategory')
+    try {
+      if (!force && cachedCategories && Date.now() - cachedCategories.at <= dictionaryTtl) {
+        categories = cachedCategories.value
+      } else {
+        const rows = await session.authorized((token) =>
+          client.dictionary({ type: 'bugCategory', status: 1, size: 200 }, { token }),
+        )
+        const records = Array.isArray(rows) ? rows : (rows?.records ?? [])
+        // 缺陷分类的 code 可能是字符串，不能用 dictionaryToMap 的 Number 转换。
+        categories = records
+          .map((row) => ({
+            code: text(row?.code ?? row?.dicConfigCode ?? row?.value ?? row?.key),
+            name: text(row?.name ?? row?.dicConfigName ?? row?.label ?? row?.text),
+          }))
+          .filter((item) => item.code && item.name)
+        dictionaryCache.set('bugCategory', { at: Date.now(), value: categories })
+      }
+    } catch (error) {
+      ctx.log.warn('缺陷分类加载失败，筛选项退化为空', { message: error.message })
+    }
+    categoryNames = new Map(categories.map((item) => [String(item.code), String(item.name)]))
+    return {
+      types: [3, 4, 2, 0].map((type) => ({ type, name: typeLabel(type) })),
+      priorities: [...priorityMap.entries()]
+        .map(([code, name]) => ({ code: String(code), name }))
+        .sort((left, right) => left.code.localeCompare(right.code)),
+      statuses: [
+        { code: '1', name: '待处理' },
+        { code: '3', name: '进行中' },
+        { code: '2', name: '已完成' },
+        { code: '4', name: '已取消' },
+        { code: '97', name: '待提交' },
+        { code: '99', name: '已关闭' },
+      ],
+      categories,
+    }
+  }
+
+  function filterValue(value) {
+    if (Array.isArray(value))
+      return value
+        .map((item) => text(item))
+        .filter(Boolean)
+        .join(',')
+    return text(value)
+  }
+
+  /** 类型 0（工单）是合法值，不能用 `Number(x) || fallback` 判断。 */
+  function asTypeCode(value, fallback = 4) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed)) return parsed
+    }
+    const base = Number(fallback)
+    return Number.isFinite(base) && String(fallback ?? '').trim() !== '' ? base : 4
+  }
+
+  async function fetchPage({ page = 1, size, status, type, filters = {} } = {}) {
+    const categoryFilter = filterValue(filters.categories)
     const payload = {
       current: asPositiveInt(page, 1),
       size: asPositiveInt(size, config.pageSize),
-      status: status ?? config.status,
-      type: Number(type ?? config.type) || config.type,
+      status: filterValue(filters.status) || status || config.status,
+      type: asTypeCode(type, config.type),
     }
-    const assignedToUserId = config.assignedToUserId ?? session.state.userId ?? null
-    if (assignedToUserId !== null && assignedToUserId !== undefined && assignedToUserId !== '') {
+    // 平台把 categories 映射到 business.category，但该列在部分部署不存在（SQL 500）。
+    // 缺陷分类改为本地过滤：多取一些记录，按 categoryDicConfigCode / 名称匹配。
+    const localCategory = Boolean(categoryFilter) && payload.type === 2
+    if (localCategory) {
+      payload.size = Math.max(payload.size, Math.min(200, Number(config.categoryScanSize) || 200))
+    }
+    const assignedToUserId = filters.assignedToUserId
+    if (assignedToUserId === 'all') {
+      // 用户显式选择「全部负责人」：不再注入当前用户。
+    } else if (
+      assignedToUserId !== undefined &&
+      assignedToUserId !== null &&
+      assignedToUserId !== ''
+    ) {
       payload.assignedToUserId = assignedToUserId
+    } else {
+      const fallback = config.assignedToUserId ?? session.state.userId ?? null
+      if (fallback !== null && fallback !== undefined && fallback !== '') {
+        payload.assignedToUserId = fallback
+      }
+    }
+    for (const key of ['code', 'name', 'priority', 'iterationId', 'productIds']) {
+      const value = filterValue(filters[key])
+      if (value) payload[key] = value
     }
     if (config.extraQuery && typeof config.extraQuery === 'object') {
       Object.assign(payload, config.extraQuery)
     }
     const data = await session.authorized((token) => client.page(payload, { token }))
-    const records = Array.isArray(data) ? data : data?.records || data?.list || []
+    let records = Array.isArray(data) ? data : data?.records || data?.list || []
+    if (localCategory) {
+      const wantedCodes = new Set(
+        categoryFilter
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean),
+      )
+      const wantedNames = new Set(
+        [...wantedCodes].map((code) => categoryNames.get(code)).filter(Boolean),
+      )
+      records = records.filter((record) => {
+        const code = text(pick(record, 'categoryDicConfigCode', 'categoryCode'))
+        if (code) return wantedCodes.has(code)
+        const name = text(pick(record, 'categoryDicConfigName', 'taskCategoryName', 'category'))
+        return Boolean(name) && wantedNames.has(name)
+      })
+    }
     return {
       records,
-      total: Number(data?.total ?? records.length),
-      pages: Number(data?.pages ?? 1),
+      total: localCategory ? records.length : Number(data?.total ?? records.length),
+      pages: localCategory ? 1 : Number(data?.pages ?? 1),
       current: Number(data?.current ?? payload.current),
       size: Number(data?.size ?? payload.size),
     }
@@ -81,17 +217,34 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     return found.length ? found[0] : null
   }
 
+  /**
+   * 统一详情接口 nodeTask/detail 覆盖需求/任务/缺陷/工单；
+   * 旧环境没有这个接口时回退到 task/detail、story/detail。
+   */
   async function fetchDetail(type, businessId) {
-    const raw = await session.authorized((token) =>
-      client.detail({ id: businessId, type }, { token }),
-    )
-    const detail = detailOf(raw)
-    return detail && Object.keys(detail).length ? detail : null
+    const typeCode = Number(type)
+    const attempts = [
+      (token) => client.nodeTaskDetail({ id: businessId, type: typeCode }, { token }),
+      ...(typeCode === 3
+        ? [(token) => client.story({ id: businessId, type: 3 }, { token })]
+        : [(token) => client.detail({ id: businessId, type: typeCode }, { token })]),
+    ]
+    for (const attempt of attempts) {
+      try {
+        const raw = await session.authorized(attempt)
+        const detail = detailOf(raw)
+        if (detail && Object.keys(detail).length) return detail
+      } catch (error) {
+        if (error?.authExpired || error?.code === 1001) throw error
+        // 继续尝试下一个详情接口。
+      }
+    }
+    return null
   }
 
   /** 拉详情 + 字典 + 父需求回退，产出完整 draft（不落盘）。 */
-  async function prepare({ type, businessId }) {
-    const typeCode = Number(type) || Number(config.type) || 4
+  async function prepare({ type, businessId, storyId = null }) {
+    const typeCode = asTypeCode(type, config.type)
     const id = text(businessId)
     if (!id) return { status: 'failed', reason: 'missing-business-id' }
     const detail = await fetchDetail(typeCode, id)
@@ -102,8 +255,8 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     const hasTaskDescription = Boolean(
       String(pick(detail, 'description', 'content', 'remark') || '').trim(),
     )
-    const parentStoryId = detail.parentStoryId ?? detail.storyId ?? null
-    if (!hasTaskDescription && parentStoryId) {
+    const parentStoryId = storyId ?? detail.parentStoryId ?? detail.storyId ?? null
+    if (!hasTaskDescription && parentStoryId && text(parentStoryId) !== id) {
       try {
         const raw = await session.authorized((token) =>
           client.story({ id: parentStoryId, type: 3 }, { token }),
@@ -127,27 +280,120 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
       dictionaries,
       baseUrl: config.baseUrl,
       webRoot: config.webRoot,
+      parentBusinessId: storyId,
     })
     return { status: 'ready', draft, detail }
   }
 
+  /** 需求下已拆分的直接子任务。 */
+  async function childrenOf(requirementId) {
+    try {
+      const data = await session.authorized((token) =>
+        client.childTask({ id: requirementId, type: 3 }, { token }),
+      )
+      const children = Array.isArray(data?.children)
+        ? data.children
+        : Array.isArray(data)
+          ? data
+          : []
+      return children.filter((child) => child && typeof child === 'object')
+    } catch (error) {
+      if (error?.authExpired || error?.code === 1001) throw error
+      ctx.log.warn('子任务列表加载失败', {
+        requirementId: String(requirementId),
+        message: error.message,
+      })
+      return []
+    }
+  }
+
+  function childEntry(child) {
+    return {
+      businessId: text(pick(child, 'businessId', 'sourceId', 'id')),
+      type: asTypeCode(child.type, 4),
+      code: text(child.code) || '',
+      title: text(pick(child, 'name', 'title')) || '',
+      assignee: text(pick(child, 'assignedToUserName', 'assigneeName', 'assignee')),
+      status: text(pick(child, 'sourceStatusName', 'statusName', 'status')),
+    }
+  }
+
+  async function previewChildren(requirementId) {
+    const children = await childrenOf(requirementId)
+    return children
+      .map(childEntry)
+      .filter((child) => child.businessId && CHILD_TYPES.has(child.type))
+  }
+
+  /** 已存在任务也允许预览：优先 task.md，旧任务回退 prd.md / task.json.description。 */
+  async function existingDraft(link, typeCode) {
+    try {
+      const task = await ctx.tasks.get({ taskKey: link.taskKey })
+      let sourceName = 'task.md'
+      let taskMarkdown = readTaskFile(task, 'task.md')
+      if (!taskMarkdown.trim()) {
+        const prd = readTaskFile(task, 'prd.md')
+        if (prd.trim() && !/prd\.md 尚未生成|平台原文在 `task\.md`/.test(prd)) {
+          sourceName = 'prd.md'
+          taskMarkdown = prd
+        }
+      }
+      if (!taskMarkdown.trim()) {
+        const raw = readTaskFile(task, 'task.json')
+        try {
+          const description = text(JSON.parse(raw)?.description)
+          if (description) {
+            sourceName = 'task.json'
+            taskMarkdown = description
+          }
+        } catch {
+          // task.json 损坏时保持空内容，预览只显示 duplicated 提示。
+        }
+      }
+      if (!taskMarkdown.trim()) return null
+      if (taskMarkdown.length > 20_000) {
+        taskMarkdown = `${taskMarkdown.slice(0, 20_000)}\n\n…（内容过长，已截断）`
+      }
+      const meta = task.meta?.witops ?? {}
+      const draftType = asTypeCode(meta.type ?? typeCode, typeCode)
+      return {
+        title: task.title ?? link.title ?? null,
+        slug: path.basename(String(task.relativeDir ?? '')),
+        code: meta.code ?? link.code ?? '',
+        type: draftType,
+        typeName: typeLabel(draftType),
+        assignee: task.assignee ?? null,
+        priority: task.priority ?? 'P2',
+        dueDate: meta.dueDate ?? null,
+        sourceName,
+        taskMarkdown,
+      }
+    } catch {
+      return null
+    }
+  }
+
   async function previewOne({ type, businessId }) {
-    const typeCode = Number(type) || Number(config.type) || 4
+    const typeCode = asTypeCode(type, config.type)
     const id = text(businessId)
     if (!id) return { status: 'failed', reason: 'missing-business-id' }
+    const children = typeCode === 3 ? await previewChildren(id) : []
     const existing = await findExisting(typeCode, id)
     if (existing) {
+      const draft = await existingDraft(existing, typeCode)
       return {
         status: 'duplicated',
         type: typeCode,
         businessId: id,
         taskKey: existing.taskKey,
         title: existing.title ?? null,
+        ...(draft ? { draft } : {}),
+        children,
       }
     }
     const prepared = await prepare({ type: typeCode, businessId: id })
     if (prepared.status !== 'ready') {
-      return { type: typeCode, businessId: id, ...prepared }
+      return { type: typeCode, businessId: id, ...prepared, children }
     }
     const { draft } = prepared
     return {
@@ -158,14 +404,18 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
         title: draft.title,
         slug: draft.slug,
         code: draft.code,
+        type: draft.type,
+        typeName: draft.typeName,
         assignee: draft.assignee,
         priority: draft.priority,
         dueDate: draft.dueDate ?? null,
         description: draft.description,
+        taskMarkdown: draft.taskMarkdown,
         prd: draft.prd,
         meta: draft.meta,
         extraFiles: Object.keys(draft.extraFiles ?? {}),
       },
+      children,
     }
   }
 
@@ -179,14 +429,170 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     return raw.split('\n').find((line) => line.trim()) || '下发失败'
   }
 
-  async function createOne({ type, businessId, repositoryId, dueDate }) {
-    const typeCode = Number(type) || Number(config.type) || 4
+  function chosenPriority(priority, fallback) {
+    const value = text(priority).toUpperCase()
+    return PRIORITY_PATTERN.test(value) ? value : fallback
+  }
+
+  /** 创建单个 Trellis 任务（父任务或子任务），返回 taskKey / relativeDir。 */
+  async function createTaskRecord({
+    draft,
+    repositoryId,
+    dueDate,
+    baseBranch,
+    priority,
+    parentDir,
+    parentBusinessId,
+  }) {
+    const meta = parentBusinessId
+      ? {
+          ...draft.meta,
+          witops: { ...draft.meta.witops, parentBusinessId: String(parentBusinessId) },
+        }
+      : draft.meta
+    const created = await ctx.tasks.create({
+      repositoryId,
+      title: draft.title,
+      description: draft.description,
+      prd: draft.prd,
+      assignee: draft.assignee,
+      priority: chosenPriority(priority, draft.priority),
+      slug: draft.slug,
+      meta,
+      extraFiles: draft.extraFiles,
+      baseBranch: text(baseBranch) || undefined,
+      parentDir: parentDir || undefined,
+    })
+    const taskKey = created?.taskKey ?? created?.task?.taskKey ?? null
+    const relativeDir = created?.relativeDir ?? (taskKey ? String(taskKey).split('::')[1] : null)
+    let appliedDueDate = text(dueDate) || draft.dueDate || null
+    if (taskKey && appliedDueDate) {
+      try {
+        const plan = await ctx.tasks.setPlan({ taskKey, dueDate: appliedDueDate })
+        appliedDueDate = plan?.dueDate ?? appliedDueDate
+      } catch (error) {
+        ctx.log.warn('截止日期写入看板失败', {
+          taskKey,
+          dueDate: appliedDueDate,
+          message: error.message,
+        })
+      }
+    }
+    return { taskKey, relativeDir, appliedDueDate }
+  }
+
+  /** 需求下的已拆分子任务 → Trellis 子任务。已存在的子任务跳过，支持补建。 */
+  async function createChildren({
+    requirementId,
+    parentDir,
+    repositoryId,
+    baseBranch,
+    priority,
+    dueDate,
+  }) {
+    if (!parentDir) return []
+    const children = await childrenOf(requirementId)
+    const results = []
+    for (const child of children.slice(0, MAX_CHILDREN)) {
+      const entry = childEntry(child)
+      if (!entry.businessId || !CHILD_TYPES.has(entry.type)) continue
+      const existing = await findExisting(entry.type, entry.businessId)
+      if (existing?.taskKey) {
+        results.push({ ...entry, status: 'duplicated', taskKey: existing.taskKey })
+        continue
+      }
+      const prepared = await prepare({
+        type: entry.type,
+        businessId: entry.businessId,
+        storyId: requirementId,
+      })
+      if (prepared.status !== 'ready') {
+        results.push({ ...entry, ...prepared })
+        continue
+      }
+      const { draft } = prepared
+      if (!draft.assignee) {
+        if (config.skipIfNoAssignee !== false) {
+          results.push({ ...entry, status: 'skipped', reason: 'missing-assignee' })
+          continue
+        }
+        results.push({ ...entry, status: 'failed', reason: 'missing-assignee' })
+        continue
+      }
+      try {
+        const created = await createTaskRecord({
+          draft,
+          repositoryId,
+          dueDate,
+          baseBranch,
+          priority,
+          parentDir,
+          parentBusinessId: requirementId,
+        })
+        results.push({
+          ...entry,
+          status: 'imported',
+          taskKey: created.taskKey,
+          title: draft.title,
+          dueDate: created.appliedDueDate,
+        })
+        ctx.log.info('下发平台子任务', {
+          businessId: entry.businessId,
+          taskKey: created.taskKey,
+          parent: parentDir,
+        })
+      } catch (error) {
+        const reason = describeError(error, draft.slug)
+        ctx.log.error('子任务下发失败', {
+          businessId: entry.businessId,
+          message: reason,
+          code: error.code ?? null,
+        })
+        results.push({ ...entry, status: 'failed', reason })
+      }
+    }
+    return results
+  }
+
+  async function createOne({
+    type,
+    businessId,
+    repositoryId,
+    dueDate,
+    baseBranch,
+    priority,
+    includeChildren,
+  }) {
+    const typeCode = asTypeCode(type, config.type)
     const id = text(businessId)
     if (!id) return { status: 'failed', reason: 'missing-business-id' }
+    const wantsChildren = typeCode === 3 && includeChildren !== false
 
     const existing = await findExisting(typeCode, id)
     if (existing?.taskKey) {
-      return { status: 'duplicated', taskKey: existing.taskKey, title: existing.title ?? null }
+      const result = {
+        status: 'duplicated',
+        taskKey: existing.taskKey,
+        title: existing.title ?? null,
+        code: existing.code ?? null,
+      }
+      if (wantsChildren) {
+        try {
+          result.children = await createChildren({
+            requirementId: id,
+            parentDir: String(existing.taskKey).split('::')[1] || null,
+            repositoryId: text(repositoryId) || requireRepository(),
+            baseBranch,
+            priority,
+            dueDate,
+          })
+          result.childSummary = summarizeResults(result.children)
+        } catch (error) {
+          result.children = []
+          result.childrenError = describeError(error)
+        }
+      }
+      return result
     }
 
     let slug = ''
@@ -209,37 +615,19 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
         return { status: 'failed', reason }
       }
 
-      const created = await ctx.tasks.create({
+      const created = await createTaskRecord({
+        draft,
         repositoryId: targetRepository,
-        title: draft.title,
-        description: draft.description,
-        prd: draft.prd,
-        assignee: draft.assignee,
-        priority: draft.priority,
-        slug: draft.slug,
-        meta: draft.meta,
-        extraFiles: draft.extraFiles,
+        dueDate,
+        baseBranch,
+        priority,
+        parentDir: null,
       })
-      const taskKey = created?.taskKey ?? created?.task?.taskKey ?? null
-      let appliedDueDate = text(dueDate) || draft.dueDate || null
-      if (taskKey && appliedDueDate) {
-        try {
-          const plan = await ctx.tasks.setPlan({ taskKey, dueDate: appliedDueDate })
-          appliedDueDate = plan?.dueDate ?? appliedDueDate
-        } catch (error) {
-          ctx.log.warn('截止日期写入看板失败', {
-            businessId: id,
-            taskKey,
-            dueDate: appliedDueDate,
-            message: error.message,
-          })
-        }
-      }
       const record = {
-        taskKey,
+        taskKey: created.taskKey,
         title: draft.title,
         code: draft.code,
-        dueDate: appliedDueDate,
+        dueDate: created.appliedDueDate,
         importedAt: new Date().toISOString(),
       }
       // 仅作审计记录，不参与去重。
@@ -248,16 +636,37 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
       })
       links.invalidate()
       onChanged()
-      ctx.log.info('下发平台任务', { businessId: id, taskKey, assignee: draft.assignee })
-      return {
+      ctx.log.info('下发平台任务', {
+        businessId: id,
+        taskKey: created.taskKey,
+        assignee: draft.assignee,
+      })
+      const result = {
         status: 'imported',
-        taskKey,
+        taskKey: created.taskKey,
         title: draft.title,
         code: draft.code,
-        dueDate: appliedDueDate,
+        dueDate: created.appliedDueDate,
       }
+      if (wantsChildren && created.relativeDir) {
+        try {
+          result.children = await createChildren({
+            requirementId: id,
+            parentDir: created.relativeDir,
+            repositoryId: targetRepository,
+            baseBranch,
+            priority,
+            dueDate,
+          })
+          result.childSummary = summarizeResults(result.children)
+        } catch (error) {
+          result.children = []
+          result.childrenError = describeError(error)
+        }
+      }
+      return result
     } catch (error) {
-      if (error?.code === 1001) throw error
+      if (error?.code === 1001 || error?.authExpired) throw error
       const reason = describeError(error, slug)
       ctx.log.error('下发失败', { businessId: id, message: reason, code: error.code ?? null })
       return { status: 'failed', reason }
@@ -272,13 +681,22 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
 
   function normalizeItems(body = {}) {
     const repositoryId = text(body.repositoryId)
+    const baseBranch = text(body.baseBranch)
+    const priority = text(body.priority)
+    const includeChildren = body.includeChildren
+    const decorate = (item) => ({
+      baseBranch: text(item.baseBranch) || baseBranch,
+      priority: text(item.priority) || priority,
+      includeChildren: item.includeChildren ?? includeChildren,
+    })
     if (Array.isArray(body.items)) {
       return body.items
         .map((item) => ({
-          type: Number(item.type ?? body.type ?? config.type) || 4,
+          type: asTypeCode(item.type ?? body.type, config.type),
           businessId: text(item.businessId ?? item.id),
           repositoryId: text(item.repositoryId) || repositoryId,
           dueDate: text(item.dueDate),
+          ...decorate(item),
         }))
         .filter((item) => item.businessId)
     }
@@ -286,18 +704,22 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     if (ids.length) {
       return ids
         .map((id) => ({
-          type: Number(body.type ?? config.type) || 4,
+          type: asTypeCode(body.type, config.type),
           businessId: text(id),
           repositoryId,
+          dueDate: text(body.dueDate),
+          ...decorate({}),
         }))
         .filter((item) => item.businessId)
     }
     if (body.businessId) {
       return [
         {
-          type: Number(body.type ?? config.type) || 4,
+          type: asTypeCode(body.type, config.type),
           businessId: text(body.businessId),
           repositoryId,
+          dueDate: text(body.dueDate),
+          ...decorate({}),
         },
       ]
     }
@@ -336,7 +758,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
           if (candidates.some((item) => item.businessId === businessId)) continue
           candidates.push({
             businessId,
-            type: Number(record.type ?? config.type) || 4,
+            type: asTypeCode(record.type, config.type),
             repositoryId,
           })
         }
@@ -369,7 +791,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     const result = await fetchPage({ page, size, status, type })
     const tasks = []
     for (const record of result.records) {
-      const recordType = Number(record.type ?? config.type) || 4
+      const recordType = asTypeCode(record.type, config.type)
       const businessId = text(record.businessId ?? record.id)
       const imported = businessId ? await findExisting(recordType, businessId) : null
       tasks.push(summarizeRecord(record, { type: recordType, imported }))
@@ -385,10 +807,14 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
 
   return {
     loadDictionaries,
+    loadFilterOptions,
     fetchPage,
     prepare,
     previewOne,
+    previewChildren,
+    childrenOf,
     createOne,
+    createChildren,
     createBatch,
     normalizeItems,
     summarizeResults,

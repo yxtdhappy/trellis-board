@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,6 +21,26 @@ async function post(baseUrl, route, body) {
 test('大纲关联、解析与回归预检按 manifest 工作', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'scenario-outline-'))
   await writeFile(path.join(dir, 'outline-a.md'), '# 大纲 A\n\n- 用例一\n', 'utf8')
+  const repoRoot = path.join(dir, 'repo')
+  const taskDir = path.join(repoRoot, '.trellis', 'tasks', '11-19-task-1')
+  await mkdir(taskDir, { recursive: true })
+  await writeFile(
+    path.join(taskDir, 'task.json'),
+    JSON.stringify(
+      {
+        title: '独立任务',
+        status: 'in_progress',
+        assignee: 'alice',
+        priority: 'P1',
+        relativeDir: '11-19-task-1',
+        meta: {},
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  )
+  await writeFile(path.join(taskDir, 'prd.md'), '# 独立任务\n\n## 验收\n\n- 可运行\n', 'utf8')
   const harness = await createHarness({
     plugins: [
       {
@@ -36,6 +56,7 @@ test('大纲关联、解析与回归预检按 manifest 工作', async () => {
       },
     ],
     hostVersion: '0.2.0',
+    repositories: [{ id: 'repo', name: 'Repo', path: repoRoot }],
   })
   const http = await startHttpServer(harness.runtime)
   try {
@@ -106,20 +127,38 @@ test('大纲关联、解析与回归预检按 manifest 工作', async () => {
       name: 'outline-b.md',
       content: '# 大纲 B\n\n- 新用例\n',
       scope: 'task',
-      taskKeys: ['task-1'],
+      taskKeys: ['repo::11-19-task-1'],
       route: '/task',
       source: 'generated',
     })
     assert.equal(saved.status, 200)
     assert.equal(saved.body.outline.scope, 'task')
-    assert.deepEqual(saved.body.outline.taskKeys, ['task-1'])
+    assert.deepEqual(saved.body.outline.taskKeys, ['repo::11-19-task-1'])
 
     const defaults = await fetch(`${http.baseUrl}/api/plugins/${ID}/defaults`).then((response) =>
       response.json(),
     )
     const meta = defaults.outlines.find((outline) => outline.name === 'outline-b.md')
     assert.equal(meta.scope, 'task')
-    assert.deepEqual(meta.taskKeys, ['task-1'])
+    assert.deepEqual(meta.taskKeys, ['repo::11-19-task-1'])
+
+    const taskResolved = await post(http.baseUrl, '/outlines/resolve', {
+      subjects: [
+        {
+          kind: 'trellis',
+          key: 'trellis:repo::11-19-task-1',
+          taskKey: 'repo::11-19-task-1',
+          title: '独立任务',
+        },
+      ],
+    })
+    assert.equal(taskResolved.status, 200)
+    const taskResolution = taskResolved.body.results['trellis:repo::11-19-task-1']
+    assert.equal(taskResolution.outline, 'outline-b.md')
+    assert.equal(taskResolution.outlineSource, 'manifest-task')
+    assert.equal(taskResolution.outlineConfidence, 'high')
+    assert.equal(taskResolution.targetUrl, 'https://example.test/app')
+    assert.equal(taskResolution.targetUrlSource, 'config')
   } finally {
     await http.close()
     await harness.cleanup()

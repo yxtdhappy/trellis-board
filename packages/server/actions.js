@@ -108,6 +108,7 @@ export async function createTask(input, { listRepositories = getRepositories } =
     slug,
     '--no-start',
   ]
+  if (input.parentDir) args.push('--parent', cleanText(input.parentDir, '父任务目录', 1000))
   if (input.baseBranch) args.push('--base-branch', cleanText(input.baseBranch, '目标分支', 200))
   if (input.packageName) args.push('--package', cleanText(input.packageName, '包名', 100))
 

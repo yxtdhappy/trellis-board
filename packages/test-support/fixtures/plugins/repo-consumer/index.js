@@ -32,6 +32,18 @@ export default createPlugin({
         return { status: 403, body: { code: error.code, message: error.message } }
       }
     })
+    ctx.http.route('GET', '/branches', async (request) => {
+      try {
+        return {
+          status: 200,
+          body: await ctx.capabilities.call('trellis.projects', 'branches', {
+            repositoryId: request.query.repositoryId,
+          }),
+        }
+      } catch (error) {
+        return { status: 403, body: { code: error.code, message: error.message } }
+      }
+    })
     ctx.http.route('POST', '/add', async (request) => {
       try {
         const body = request.json()

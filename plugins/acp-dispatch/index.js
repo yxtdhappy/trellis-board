@@ -32,7 +32,8 @@ const DEFAULTS = {
 const DEFAULT_PROMPT = [
   '请执行 Trellis 任务 {relativeDir}（{title}）。',
   '仓库目录：{cwd}。',
-  '先阅读 .trellis/tasks/{relativeDir}/prd.md 与同目录下的 implement.md / check.jsonl，',
+  '先阅读 .trellis/tasks/{relativeDir}/task.md（平台原文，若存在）与 prd.md，',
+  '以及同目录下的 implement.md / check.jsonl，',
   '按其中的验收标准实施改动并运行相关测试，最后给出改动摘要与验证结果。',
 ].join('\n')
 

@@ -37,10 +37,11 @@ const DEFAULTS = {
   assignee: '',
   developerMap: {},
   skipIfNoAssignee: true,
-  types: [3, 4],
+  types: [0, 2, 3, 4],
   type: 4,
   status: '1,3',
   pageSize: 50,
+  categoryScanSize: 200,
   maxItems: 200,
   maxPerSync: 50,
   cacheTtlMs: 60_000,
@@ -194,6 +195,52 @@ export default createPlugin({
       99: '已关闭',
     }
 
+    // 与 witops-web 的 detailTypes 一致：0 工单 / 2 缺陷 / 3 需求 / 4 任务。
+    const ITEM_KINDS = {
+      0: { kind: 'workOrder', label: '工单' },
+      1: { kind: 'release', label: '发版单' },
+      2: { kind: 'bug', label: '缺陷' },
+      3: { kind: 'requirement', label: '需求' },
+      4: { kind: 'task', label: '任务' },
+    }
+    const ALLOWED_TYPES = [0, 2, 3, 4]
+    const PRIORITY_LABELS = { 1: 'P0', 2: 'P1', 3: 'P2', 4: 'P3' }
+
+    function itemKind(type) {
+      return ITEM_KINDS[type] ?? { kind: 'task', label: `类型 ${type}` }
+    }
+
+    function parseTypeList(value) {
+      const raw = Array.isArray(value) ? value : text(value).split(',')
+      return raw
+        .map((part) => text(part))
+        .filter(Boolean)
+        .map((part) => Number(part))
+        .filter((code) => Number.isInteger(code) && ALLOWED_TYPES.includes(code))
+    }
+
+    function normalizeFilters(input = {}) {
+      const filters = {}
+      for (const key of ['code', 'name', 'priority', 'status', 'categories', 'iterationId']) {
+        const value = input[key]
+        if (Array.isArray(value)) {
+          const joined = value
+            .map((part) => text(part))
+            .filter(Boolean)
+            .join(',')
+          if (joined) filters[key] = joined
+        } else if (text(value)) {
+          filters[key] = text(value)
+        }
+      }
+      if (input.allUsers === true || input.allUsers === '1' || input.allUsers === 1) {
+        filters.assignedToUserId = 'all'
+      } else if (text(input.assignedToUserId)) {
+        filters.assignedToUserId = text(input.assignedToUserId)
+      }
+      return filters
+    }
+
     function rowsOf(payload) {
       if (Array.isArray(payload)) return payload
       const rows = pick(payload, 'records', 'list', 'rows', 'data', 'items')
@@ -263,16 +310,27 @@ export default createPlugin({
       const type = numberOrNull(record?.type) ?? 4
       const id = normalizeId(pick(record, 'businessId', 'sourceId', 'id'))
       const requirement = resolveRequirement(record)
+      const kind = itemKind(type)
+      const priorityCode = numberOrNull(
+        pick(record, 'priorityDicConfigCode', 'priorityCode', 'priority'),
+      )
       return {
-        kind: type === 3 ? 'requirement' : 'task',
+        kind: kind.kind,
+        kindLabel: kind.label,
         type,
+        typeName: text(pick(record, 'typeName')) || kind.label,
         id,
         code: text(pick(record, 'code', 'businessCode')) || id,
         title: text(pick(record, 'name', 'title')),
         status: statusLabel(
           pick(record, 'sourceStatusName', 'statusName', 'sourceStatus', 'status'),
         ),
-        priority: text(pick(record, 'priorityDicConfigCode', 'priorityName', 'priority')),
+        priority:
+          text(pick(record, 'priorityName', 'priority')) || PRIORITY_LABELS[priorityCode] || '',
+        category: text(pick(record, 'taskCategoryName', 'categoryDicConfigName', 'category')),
+        categoryCode: text(pick(record, 'categoryDicConfigCode', 'categoryCode')),
+        module: text(pick(record, 'projectModuleName', 'moduleName')),
+        iteration: text(pick(record, 'iterationName', 'sprintName')),
         assignee: text(pick(record, 'assignedToUserName', 'assigneeName', 'assignee')),
         dueDate: calendarDate(
           pick(
@@ -284,6 +342,7 @@ export default createPlugin({
             'planEndTime',
           ),
         ),
+        mentionTime: text(pick(record, 'mentionTime')),
         storyId: requirement ? requirement.id : null,
         storyCode: requirement ? requirement.code : null,
         storyName: requirement && requirement.name ? requirement.name : null,
@@ -292,26 +351,36 @@ export default createPlugin({
       }
     }
 
-    async function mine({ types, force = false } = {}) {
-      const key = 'mine'
+    async function mine({ types, filters, force = false } = {}) {
+      const wanted = parseTypeList(types).length
+        ? parseTypeList(types)
+        : parseTypeList(config.types)
+      const activeTypes = wanted.length ? wanted : [3, 4]
+      const activeFilters = normalizeFilters(filters)
+      const key = `mine:${activeTypes.join(',')}:${JSON.stringify(activeFilters)}`
       if (!force) {
         const hit = cached(key)
         if (hit) return hit
       }
-      const wanted =
-        Array.isArray(types) && types.length
-          ? types.map(Number).filter((value) => value === 3 || value === 4)
-          : config.types
       const items = []
-      for (const type of wanted.length ? wanted : [3, 4]) {
+      const seen = new Set()
+      for (const type of activeTypes) {
         let current = 1
         let pages = 1
         while (current <= pages && items.length < Number(config.maxItems || 200)) {
-          const page = await dispatch.fetchPage({ type, page: current })
+          const page = await dispatch.fetchPage({
+            type,
+            page: current,
+            filters: activeFilters,
+          })
           pages = Math.max(1, page.pages)
           for (const record of page.records) {
             if (items.length >= Number(config.maxItems || 200)) break
-            items.push(normalizeItem(record))
+            const item = normalizeItem(record)
+            const itemId = `${item.type}:${item.id}`
+            if (!item.id || seen.has(itemId)) continue
+            seen.add(itemId)
+            items.push(item)
           }
           current += 1
         }
@@ -320,6 +389,8 @@ export default createPlugin({
       return remember(key, {
         userId: await session.resolveUserId(),
         items,
+        types: activeTypes,
+        filters: activeFilters,
         fetchedAt: new Date().toISOString(),
       })
     }
@@ -653,6 +724,7 @@ export default createPlugin({
         try {
           results.push({ ...item, ...(await dispatch.previewOne(item)) })
         } catch (error) {
+          if (error?.authExpired) throw error
           results.push({ ...item, status: 'failed', reason: error.message })
         }
       }
@@ -696,6 +768,9 @@ export default createPlugin({
           type: params?.type,
           businessId: normalizeId(params?.businessId ?? params?.id),
           repositoryId: params?.repositoryId,
+          baseBranch: params?.baseBranch,
+          priority: params?.priority,
+          includeChildren: params?.includeChildren,
         }),
       'task.batchCreate': (params) => dispatch.createBatch(dispatch.normalizeItems(params ?? {})),
       'task.syncRecent': (params) =>
@@ -824,8 +899,31 @@ export default createPlugin({
 
     ctx.http.route('GET', '/mine', async (request) => {
       try {
-        const data = await mine({ force: request.query.refresh === '1' })
+        const data = await mine({
+          types: parseTypeList(request.query.types),
+          filters: {
+            code: request.query.code,
+            name: request.query.name,
+            priority: request.query.priority,
+            status: request.query.status,
+            categories: request.query.categories,
+            iterationId: request.query.iterationId,
+            allUsers: request.query.allUsers === '1',
+          },
+          force: request.query.refresh === '1',
+        })
         return respond(200, data)
+      } catch (error) {
+        return failure(error)
+      }
+    })
+
+    ctx.http.route('GET', '/filters', async (request) => {
+      try {
+        return respond(
+          200,
+          await dispatch.loadFilterOptions({ force: request.query.refresh === '1' }),
+        )
       } catch (error) {
         return failure(error)
       }
@@ -895,11 +993,33 @@ export default createPlugin({
     ctx.http.route('GET', '/projects', async () => {
       try {
         const result = await ctx.capabilities.call('trellis.projects', 'list')
-        const projects = (result?.projects ?? []).map((project) => ({
-          repositoryId: project.repositoryId,
-          name: project.name ?? project.repositoryId,
-          path: project.path ?? null,
-        }))
+        const projects = await Promise.all(
+          (result?.projects ?? []).map(async (project) => {
+            const base = {
+              repositoryId: project.repositoryId,
+              name: project.name ?? project.repositoryId,
+              path: project.path ?? null,
+              branch: null,
+              branches: [],
+            }
+            try {
+              const info = await ctx.capabilities.call('trellis.projects', 'branches', {
+                repositoryId: project.repositoryId,
+              })
+              return {
+                ...base,
+                branch: info?.branch ?? null,
+                branches: Array.isArray(info?.branches) ? info.branches : [],
+              }
+            } catch (error) {
+              ctx.log.warn('本地分支读取失败', {
+                repositoryId: project.repositoryId,
+                message: error.message,
+              })
+              return base
+            }
+          }),
+        )
         return respond(200, {
           projects,
           defaultRepositoryId: text(config.repositoryId) || projects[0]?.repositoryId || null,

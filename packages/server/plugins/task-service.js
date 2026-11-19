@@ -34,7 +34,10 @@ function readText(file) {
 function fileDorGapCount(full, task) {
   if (task?.status !== 'planning') return 0
   let gaps = 0
-  if (readText(path.join(full, 'prd.md')).trim().length < 20) gaps += 1
+  const prd = readText(path.join(full, 'prd.md')).trim()
+  // WitOps 同步的 prd.md 只是占位，真正的 PRD 要等 trellis-brainstorm 生成。
+  const placeholder = /prd\.md 尚未生成|平台原文在 `task\.md`/.test(prd)
+  if (prd.length < 20 || placeholder) gaps += 1
   if (!fs.existsSync(path.join(full, 'implement.md'))) gaps += 1
   return gaps
 }
@@ -154,6 +157,9 @@ export function createTaskService({
         priority: params.priority ?? 'P2',
         slug: params.slug,
         packageName: params.packageName,
+        // 平台任务落到本地时要指定基线分支；子任务要挂到父任务目录下。
+        baseBranch: params.baseBranch,
+        parentDir: params.parentDir,
       },
       { listRepositories: () => repositories },
     )

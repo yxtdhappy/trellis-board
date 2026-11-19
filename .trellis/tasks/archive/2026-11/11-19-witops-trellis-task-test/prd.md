@@ -49,15 +49,17 @@
 
 ## Acceptance Criteria
 
-- [ ] 无 WIT Ops 需求的 Trellis 任务能在「Trellis 任务」视图中出现并发起测试。
-- [ ] 纯 `taskKey` 调用 `POST /tests` 能成功进入 `runs.start`；任务不存在时返回明确错误，不使用需求 target。
-- [ ] 任务无大纲时返回 `needOutline`，面板阻止提交并显示生成入口。
-- [ ] 任务有 `prd.md` 时能生成任务级大纲，保存后 manifest 的 `taskKeys` 包含该任务。
-- [ ] 任务有需求且需求无大纲时，默认生成需求级大纲并关联需求；需求已有大纲时任务继承，不重复生成。
-- [ ] 任务行显示最近运行状态；运行记录按 `taskKey` 查询正确。
-- [ ] 需求回归只接受需求级大纲；任务级大纲不会被静默用于需求回归。
-- [ ] 1006px/360px 下新增任务视图和测试弹窗无横向滚动。
-- [ ] `yarn test:plugins` 通过；新增任务测试用例覆盖 task-only 解析、发起和生成上下文。
+- [x] 无 WIT Ops 需求的 Trellis 任务能在「Trellis 任务」视图中出现并发起测试。
+- [x] 纯 `taskKey` 调用 `POST /tests` 能成功进入 `runs.start`；任务不存在时返回明确错误，不使用需求 target。
+- [x] 任务无大纲时返回 `needOutline`，面板阻止提交并显示生成入口。
+- [x] 任务有 `prd.md` 时能生成任务级大纲，保存后 manifest 的 `taskKeys` 包含该任务。
+- [x] 任务有需求且需求无大纲时，默认生成需求级大纲并关联需求；需求已有大纲时任务继承，不重复生成。
+- [x] 任务行显示最近运行状态；运行记录按 `taskKey` 查询正确。
+- [x] 需求回归只接受需求级大纲；任务级大纲不会被静默用于需求回归。
+- [x] 1006px/360px 下新增任务视图和测试弹窗无横向滚动。
+- [x] `yarn test:plugins` 通过；新增任务测试用例覆盖 task-only 解析、发起和生成上下文。
+
+说明：`outline-flow.test.js` 覆盖 task-only 解析与任务级保存；task-only 发起由 4403 工作台手工验证（`POST /tests` 创建 runs.start，`noRun` 模式）。
 
 ## Risks
 

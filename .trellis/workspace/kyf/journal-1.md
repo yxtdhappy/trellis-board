@@ -85,3 +85,63 @@
 
 - 将 gitignored 的 plugins/witops-workbench/** 同步到目标部署位置
 - 有测试账号后补真实业务运行与保存大纲 UI E2E
+
+
+## Session 3: WitOps Trellis 任务测试与插件降级
+<!-- trellis-session: v=2 fp=d1e7e778c4da58f0 -->
+
+**Date**: 2026-11-19
+**Task**: WitOps Trellis 任务测试与插件降级
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成并归档 11-19-witops-trellis-task-test：工作台 Trellis 任务视图、纯 taskKey 发起、任务级大纲生成与结果归属；补充 task-only 大纲解析测试；仅安装 witops-workbench 时通过 /features 隐藏缺失依赖入口并保留 Trellis 任务视图；全量 4403 与隔离 4405 验证通过，yarn test:plugins 114/113/1。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d1808e06` | docs(task): record witops workbench dependency fallback |
+| `2db2b09a` | test(scenario): cover task-only outline resolution |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 4: WitOps 任务面板增强
+<!-- trellis-session: v=2 fp=59ad6aef2ec4bda8 -->
+
+**Date**: 2026-11-19
+**Task**: WitOps 任务面板增强
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+witops-core 支持任务/需求/缺陷/工单四类数据源与筛选、本地分支选择、预览与二次确认、task.md 契约、需求父子任务；同步修复下游 prd.md 消费者。
+
+### Main Changes
+
+- witops-core 面板：四类筛选、类型徽标、分支下拉、task.md 预览、重复任务回退 prd.md、无 ready 项隐藏创建按钮
+- 宿主：trellis.projects.branches、task.py --parent、loader task.md 产物、TaskDetailDialog WitOps 原文
+- 下游：workbench 读 task.md、acp-dispatch prompt、DoR 占位 PRD 判定
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `74df282d` | feat(witops): 增强任务面板筛选、分支选择与父子任务下发 |
+| `cea1a177` | docs(task): 记录 WitOps 任务面板增强 |
+
+### Testing
+
+- [OK] yarn test 659/659
+- [OK] yarn test:plugins 113 pass / 1 skip
+- [OK] 4403 实测 /mine?categories=1 返回 200，重复任务预览返回 task.md/prd.md 内容
+
+### Status
+
+[OK] **Completed**

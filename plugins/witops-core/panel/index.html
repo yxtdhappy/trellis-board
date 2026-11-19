@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>任务</title>
+    <title>WitOps 工作项</title>
     <link rel="stylesheet" href="/plugin-ui/v1/tokens.css" />
     <link rel="stylesheet" href="/plugin-ui/v1/base.css" />
     <link rel="stylesheet" href="/plugin-ui/v1/ui.css" />
@@ -12,15 +12,12 @@
   <body>
     <header class="head">
       <div>
-        <h1>任务</h1>
+        <h1>WitOps 工作项</h1>
         <p id="meta" class="tb-muted tb-small">加载中…</p>
       </div>
       <div class="actions">
         <span id="auth-chip" class="tb-chip">未登录</span>
-        <label class="toggle"><input id="show-requirements" type="checkbox" checked /> 需求</label>
-        <label class="toggle"><input id="show-tasks" type="checkbox" checked /> 任务</label>
         <button id="sync" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">同步最近</button>
-        <button id="refresh" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">刷新</button>
         <button id="logout" class="tb-btn tb-btn-ghost tb-btn-sm" type="button" hidden>退出</button>
       </div>
     </header>
@@ -50,12 +47,55 @@
     <div id="error" class="error" hidden></div>
     <div id="notice" class="notice" hidden></div>
 
+    <section class="filters" aria-label="筛选条件">
+      <div class="filter-row">
+        <div id="type-chips" class="type-chips" role="group" aria-label="数据类型"></div>
+        <label class="filter-field filter-code"
+          ><span>编号</span><input id="filter-code" class="tb-input" type="text" autocomplete="off"
+        /></label>
+        <label class="filter-field filter-name"
+          ><span>标题</span><input id="filter-name" class="tb-input" type="text" autocomplete="off"
+        /></label>
+        <label class="filter-field"
+          ><span>优先级</span
+          ><select id="filter-priority" class="tb-input">
+            <option value="">全部</option>
+          </select></label
+        >
+        <label class="filter-field"
+          ><span>状态</span
+          ><select id="filter-status" class="tb-input">
+            <option value="">全部</option>
+          </select></label
+        >
+        <label class="toggle filter-toggle"
+          ><input id="filter-all-users" type="checkbox" /> 全部负责人</label
+        >
+      </div>
+      <div id="filter-secondary" class="filter-row filter-row-secondary" hidden>
+        <label class="filter-field filter-category"
+          ><span>缺陷分类</span
+          ><select id="filter-categories" class="tb-input">
+            <option value="">全部</option>
+          </select></label
+        >
+        <span class="filter-hint">仅缺陷类型生效</span>
+      </div>
+      <div class="filter-footer">
+        <span class="filter-hint">筛选条件变更后自动生效</span>
+        <button id="filter-reset" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">重置</button>
+      </div>
+    </section>
+
     <div class="bulk">
       <label class="toggle"><input id="select-all" type="checkbox" /> 全选</label>
       <button id="dispatch-selected" class="tb-btn tb-btn-sm" type="button" disabled>
         批量创建
       </button>
       <span id="selected-count" class="tb-muted tb-small">未选择</span>
+      <button id="refresh" class="tb-btn tb-btn-ghost tb-btn-sm bulk-refresh" type="button">
+        刷新列表
+      </button>
     </div>
 
     <div class="tb-table-wrap table-wrap">
@@ -63,38 +103,70 @@
         <thead>
           <tr>
             <th class="pick"></th>
+            <th>类型</th>
             <th>编号</th>
-            <th>标题</th>
+            <th class="title">标题</th>
+            <th>优先级</th>
             <th>状态</th>
-            <th>截止日期</th>
             <th>负责人</th>
+            <th>截止日期</th>
             <th class="story">需求</th>
             <th class="trellis">Trellis</th>
+            <th class="ops">操作</th>
           </tr>
         </thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
-    <p id="empty" class="tb-muted tb-small empty" hidden>暂无任务</p>
+    <p id="empty" class="tb-muted tb-small empty" hidden>暂无工作项</p>
 
-    <tb-dialog id="dispatch-dialog" title="创建任务" ok-text="确认创建">
+    <tb-dialog id="preview-dialog" title="任务内容预览" ok-text="去创建">
+      <div id="preview-body" class="preview-body"></div>
+    </tb-dialog>
+
+    <tb-dialog id="create-dialog" title="创建 Trellis 任务" ok-text="确认创建">
       <p id="dialog-hint" class="tb-muted tb-small"></p>
+      <div id="dialog-summary" class="summary-grid"></div>
       <label class="field">
         <span>项目</span>
         <select id="dialog-project" class="tb-input"></select>
       </label>
       <label class="field">
-        <span>截止日期</span>
-        <input
-          id="dialog-due"
-          class="tb-input"
-          type="text"
-          placeholder="YYYY-MM-DD"
-          maxlength="10"
-          autocomplete="off"
-          inputmode="numeric"
-        />
+        <span>基于本地分支</span>
+        <select id="dialog-branch" class="tb-input"></select>
       </label>
+      <div class="dialog-row">
+        <label class="field">
+          <span>优先级</span>
+          <select id="dialog-priority" class="tb-input">
+            <option value="">按平台</option>
+            <option value="P0">P0</option>
+            <option value="P1">P1</option>
+            <option value="P2">P2</option>
+            <option value="P3">P3</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>截止日期</span>
+          <input
+            id="dialog-due"
+            class="tb-input"
+            type="text"
+            placeholder="YYYY-MM-DD"
+            maxlength="10"
+            autocomplete="off"
+            inputmode="numeric"
+          />
+        </label>
+      </div>
+      <label id="dialog-children-row" class="toggle" hidden>
+        <input id="dialog-children" type="checkbox" checked /> 同时创建该需求已拆分的子任务
+      </label>
+      <div class="dialog-actions">
+        <button id="dialog-preview" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">
+          预览任务内容
+        </button>
+      </div>
     </tb-dialog>
 
     <script src="/api/plugins/accounts-core/panel/widget/credentials-widget.js"></script>

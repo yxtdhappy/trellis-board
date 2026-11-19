@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import {
   createHarness,
   fixtureModule,
@@ -66,6 +68,45 @@ test('宿主 trellis.repositories 能力对声明依赖的插件可用且可写'
   } finally {
     await http.close()
     await harness.cleanup()
+  }
+})
+
+test('宿主 trellis.projects.branches 返回本地分支与当前分支', async () => {
+  const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-branches-'))
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repoPath })
+  execFileSync(
+    'git',
+    [
+      '-c',
+      'user.name=test',
+      '-c',
+      'user.email=test@example.com',
+      'commit',
+      '--allow-empty',
+      '-m',
+      'init',
+    ],
+    { cwd: repoPath },
+  )
+  execFileSync('git', ['checkout', '-q', '-b', 'feature/a'], { cwd: repoPath })
+  const harness = await createHarness({
+    plugins: [plugin('repo-consumer')],
+    repositories: [{ id: 'git-repository', name: 'Git Repository', path: repoPath }],
+  })
+  const http = await startHttpServer(harness.runtime)
+  try {
+    const response = await request(
+      http.baseUrl,
+      '/api/plugins/repo-consumer/branches?repositoryId=git-repository',
+    )
+    assert.equal(response.status, 200, JSON.stringify(response.json))
+    assert.equal(response.json.repositoryId, 'git-repository')
+    assert.equal(response.json.branch, 'feature/a')
+    assert.deepEqual(response.json.branches, ['feature/a', 'main'])
+  } finally {
+    await http.close()
+    await harness.cleanup()
+    fs.rmSync(repoPath, { recursive: true, force: true })
   }
 })
 

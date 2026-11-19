@@ -77,6 +77,18 @@ function findTaskDirectory(repoRoot) {
   return path.join(tasksRoot, names[0])
 }
 
+function findTaskDirectories(repoRoot) {
+  const tasksRoot = path.join(repoRoot, '.trellis', 'tasks')
+  return fs
+    .readdirSync(tasksRoot)
+    .filter((name) => /^\d{2}-\d{2}-/.test(name))
+    .map((name) => path.join(tasksRoot, name))
+}
+
+function readTaskJson(directory) {
+  return JSON.parse(fs.readFileSync(path.join(directory, 'task.json'), 'utf8'))
+}
+
 test('HTML 转换：标题、列表、表格表头、围栏与实体', () => {
   const html = [
     '<h2>背景</h2>',
@@ -146,16 +158,19 @@ test('buildTaskDraft 生成标题、PRD、meta 与 HTML 原文', () => {
   })
   assert.equal(draft.slug, 'T10001')
   assert.match(draft.title, /T10001/)
-  assert.match(draft.prd, /^\| 字段 \|$/m)
+  assert.match(draft.taskMarkdown, /^\| 字段 \| 值 \|$/m)
+  assert.match(draft.prd, /prd\.md 尚未生成/)
+  assert.match(draft.prd, /trellis-brainstorm/)
   assert.equal(draft.meta.witops.businessId, '10001')
   assert.equal(draft.meta.agent, 'opencode')
   assert.match(draft.meta.witops.url, /nodeTaskDetail\/4\/10001$/)
   assert.equal(draft.meta.witops.storyId, '3001')
   assert.equal(draft.meta.witops.storyCode, 'R3001')
   assert.equal(draft.meta.witops.storyName, '需求 A')
-  assert.match(draft.prd, /\| 需求 \| R3001 需求 A \|/)
+  assert.match(draft.taskMarkdown, /\| 需求 \| R3001 需求 A \|/)
   assert.match(draft.description, /所属需求 R3001（需求 A），需求 id 3001/)
-  assert.match(draft.prd, /提出时间/)
+  assert.match(draft.taskMarkdown, /提出时间/)
+  assert.equal(draft.extraFiles['task.md'], draft.taskMarkdown)
   assert.match(draft.extraFiles['prd.witops.html'], /<table>/)
   assert.match(
     draft.description,
@@ -186,9 +201,11 @@ test('GET /mine 登录后拉取并映射列表', async () => {
   try {
     const response = await call(context.http, `/api/plugins/${PLUGIN_ID}/mine`)
     assert.equal(response.status, 200)
-    assert.equal(response.json.items.length, 1)
-    const item = response.json.items[0]
-    assert.equal(item.id, '10001')
+    const byId = new Map(response.json.items.map((item) => [item.id, item]))
+    assert.equal(byId.size, 5)
+    const item = byId.get('10001')
+    assert.equal(item.kind, 'task')
+    assert.equal(item.kindLabel, '任务')
     assert.equal(item.code, 'T10001')
     assert.equal(item.status, '进行中')
     assert.equal(item.dueDate, '2026-11-20')
@@ -197,6 +214,10 @@ test('GET /mine 登录后拉取并映射列表', async () => {
     assert.equal(item.storyName, '需求 A')
     assert.match(item.storyUrl, /nodeTaskDetail\/3\/3001$/)
     assert.deepEqual(item.trellisTasks, [])
+    assert.equal(byId.get('3001').kind, 'requirement')
+    assert.equal(byId.get('40001').kind, 'bug')
+    assert.equal(byId.get('50001').kind, 'workOrder')
+    assert.equal(byId.get('10004').kind, 'task')
     assert.equal(context.fixture.state.logins, 1)
   } finally {
     await context.cleanup()
@@ -213,20 +234,24 @@ test('POST /dispatch 创建任务、写 PRD 与 meta，并保证幂等', async (
     assert.match(taskKey, /^repo::\d{2}-\d{2}-T10001$/)
 
     const directory = findTaskDirectory(context.repo.repositoryPath)
+    const taskMarkdown = fs.readFileSync(path.join(directory, 'task.md'), 'utf8')
+    assert.match(taskMarkdown, /^\| 字段 \| 值 \|$/m)
+    assert.match(taskMarkdown, /```text\nnpm test/)
+    assert.match(taskMarkdown, /- 拆分组件/)
+    assert.match(taskMarkdown, /https:\/\/example\.test\/doc/)
+    assert.doesNotMatch(taskMarkdown, /\[object Object\]/)
+    assert.equal(validateMarkdown(taskMarkdown).ok, true)
+
     const prd = fs.readFileSync(path.join(directory, 'prd.md'), 'utf8')
-    assert.match(prd, /^\| 字段 \| 值 \|$/m)
-    assert.match(prd, /```text\nnpm test/)
-    assert.match(prd, /- 拆分组件/)
-    assert.match(prd, /https:\/\/example\.test\/doc/)
-    assert.doesNotMatch(prd, /\[object Object\]/)
-    assert.equal(validateMarkdown(prd).ok, true)
+    assert.match(prd, /prd\.md 尚未生成/)
+    assert.match(prd, /trellis-brainstorm/)
 
     const taskJson = JSON.parse(fs.readFileSync(path.join(directory, 'task.json'), 'utf8'))
     assert.equal(taskJson.meta.witops.businessId, '10001')
     assert.equal(taskJson.meta.witops.storyId, '3001')
     assert.equal(taskJson.meta.witops.storyCode, 'R3001')
     assert.equal(taskJson.meta.witops.storyName, '需求 A')
-    assert.match(prd, /\| 需求链接 \| .*nodeTaskDetail\/3\/3001 \|/)
+    assert.match(taskMarkdown, /\| 需求链接 \| .*nodeTaskDetail\/3\/3001 \|/)
     assert.equal(taskJson.assignee, 'bob')
 
     const second = await dispatch(context, { items: [{ businessId: '10001', type: 4 }] })
@@ -262,7 +287,7 @@ test('父节点是任务时不算需求，任务 meta 不带 story', () => {
   assert.equal(draft.meta.witops.storyId, null)
   assert.equal(draft.meta.witops.storyCode, null)
   assert.equal(draft.meta.witops.storyName, null)
-  assert.doesNotMatch(draft.prd, /需求链接/)
+  assert.doesNotMatch(draft.taskMarkdown, /需求链接/)
   assert.doesNotMatch(draft.description, /所属需求/)
 })
 
@@ -350,6 +375,8 @@ test('POST /dispatch/preview 返回 draft 或 duplicated', async () => {
     assert.equal(before.json.results[0].status, 'ready')
     assert.match(before.json.results[0].draft.title, /T10001/)
     assert.equal(before.json.results[0].draft.assignee, 'bob')
+    assert.match(before.json.results[0].draft.taskMarkdown, /^\| 字段 \| 值 \|$/m)
+    assert.match(before.json.results[0].draft.prd, /prd\.md 尚未生成/)
 
     await dispatch(context, { businessId: '10001' })
     const after = await call(context.http, `/api/plugins/${PLUGIN_ID}/dispatch/preview`, {
@@ -358,6 +385,29 @@ test('POST /dispatch/preview 返回 draft 或 duplicated', async () => {
     })
     assert.equal(after.json.results[0].status, 'duplicated')
     assert.ok(after.json.results[0].taskKey)
+    // 已存在任务也要能预览现有 task.md，而不是只给 duplicated 提示。
+    assert.match(after.json.results[0].draft?.taskMarkdown ?? '', /T10001/)
+    assert.equal(after.json.results[0].draft?.code, 'T10001')
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('已存在任务没有 task.md 时回退预览 prd.md', async () => {
+  const context = await setup()
+  try {
+    await dispatch(context, { businessId: '10001' })
+    const directory = findTaskDirectory(context.repo.repositoryPath)
+    fs.rmSync(path.join(directory, 'task.md'))
+    fs.writeFileSync(path.join(directory, 'prd.md'), '# 历史 PRD\n\n旧任务内容')
+    const preview = await call(context.http, `/api/plugins/${PLUGIN_ID}/dispatch/preview`, {
+      method: 'POST',
+      body: { businessId: '10001' },
+    })
+    const result = preview.json.results[0]
+    assert.equal(result.status, 'duplicated')
+    assert.equal(result.draft?.sourceName, 'prd.md')
+    assert.match(result.draft?.taskMarkdown ?? '', /历史 PRD/)
   } finally {
     await context.cleanup()
   }
@@ -432,10 +482,10 @@ test('任务描述为空时回退父需求并标注来源', async () => {
     assert.equal(response.status, 200)
     assert.equal(response.json.summary.imported, 1)
     const directory = findTaskDirectory(context.repo.repositoryPath)
-    const prd = fs.readFileSync(path.join(directory, 'prd.md'), 'utf8')
-    assert.match(prd, /需求描述/)
-    assert.match(prd, /来自父需求/)
-    assert.match(prd, /\| 描述来源 \| 父需求 \|/)
+    const taskMarkdown = fs.readFileSync(path.join(directory, 'task.md'), 'utf8')
+    assert.match(taskMarkdown, /需求描述/)
+    assert.match(taskMarkdown, /来自父需求/)
+    assert.match(taskMarkdown, /\| 描述来源 \| 父需求 \|/)
   } finally {
     await context.cleanup()
   }
@@ -551,7 +601,7 @@ test('5xx 按退避重试后成功', async () => {
     assert.equal(response.status, 200)
     assert.equal(response.json.summary.imported, 1)
     const detailCalls = context.fixture.state.requests.filter((item) =>
-      item.url.endsWith('/task/detail'),
+      item.url.endsWith('/nodeTask/detail'),
     )
     assert.equal(detailCalls.length, 3)
   } finally {
@@ -675,6 +725,153 @@ test('配置里带密码时首个请求自动登录，无需面板操作', async
     assert.equal(response.status, 200)
     assert.equal(response.json.summary.imported, 1)
     assert.equal(context.fixture.state.logins, 1)
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('GET /filters 返回四类数据源与筛选项', async () => {
+  const context = await setup()
+  try {
+    const response = await call(context.http, `/api/plugins/${PLUGIN_ID}/filters`)
+    assert.equal(response.status, 200)
+    assert.deepEqual(
+      response.json.types.map((item) => item.type),
+      [3, 4, 2, 0],
+    )
+    assert.deepEqual(
+      response.json.types.map((item) => item.name),
+      ['需求', '任务', '缺陷', '工单'],
+    )
+    assert.ok(response.json.priorities.some((item) => item.code === '1' && item.name === 'P0'))
+    assert.ok(response.json.statuses.some((item) => item.code === '3' && item.name === '进行中'))
+    assert.deepEqual(
+      response.json.categories.map((item) => item.code),
+      ['1', '2'],
+    )
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('GET /mine 支持类型、编号、优先级、分类与负责人筛选', async () => {
+  const context = await setup()
+  try {
+    const filtered = await call(
+      context.http,
+      `/api/plugins/${PLUGIN_ID}/mine?types=0,2&code=B40001&priority=1&categories=2`,
+    )
+    assert.equal(filtered.status, 200)
+    assert.equal(filtered.json.items.length, 1)
+    assert.equal(filtered.json.items[0].id, '40001')
+    assert.equal(filtered.json.items[0].kind, 'bug')
+    assert.equal(filtered.json.items[0].category, '前端开发')
+    assert.equal(filtered.json.items[0].categoryCode, '2')
+
+    const pageCalls = context.fixture.state.requests.filter((entry) =>
+      entry.url.endsWith('/nodeTask/page'),
+    )
+    assert.ok(pageCalls.length >= 2)
+    assert.ok(pageCalls.every((entry) => entry.body.assignedToUserId === 900))
+    assert.ok(pageCalls.every((entry) => entry.body.categories === undefined))
+
+    const none = await call(context.http, `/api/plugins/${PLUGIN_ID}/mine?types=2&categories=1`)
+    assert.equal(none.status, 200)
+    assert.equal(none.json.items.length, 0)
+
+    const allUsers = await call(
+      context.http,
+      `/api/plugins/${PLUGIN_ID}/mine?types=2&allUsers=1&refresh=1`,
+    )
+    assert.equal(allUsers.status, 200)
+    const lastPage = context.fixture.state.requests
+      .filter((entry) => entry.url.endsWith('/nodeTask/page'))
+      .at(-1)
+    assert.equal(lastPage.body.assignedToUserId, undefined)
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('需求下发创建父子任务，写入 base_branch 与 parentBusinessId', async () => {
+  const context = await setup()
+  try {
+    const result = await dispatch(context, {
+      businessId: '3001',
+      type: 3,
+      baseBranch: 'feature/witops',
+      includeChildren: true,
+    })
+    assert.equal(result.status, 200)
+    assert.equal(result.json.summary.imported, 1)
+    assert.equal(result.json.results[0].childSummary.imported, 2)
+
+    const directories = findTaskDirectories(context.repo.repositoryPath)
+    assert.equal(directories.length, 3)
+    const parent = directories.find((directory) => directory.endsWith('R3001'))
+    const child = directories.find((directory) => directory.endsWith('T10004'))
+    assert.ok(parent, `缺少父任务目录: ${directories.join(', ')}`)
+    assert.ok(child, `缺少子任务目录: ${directories.join(', ')}`)
+
+    const parentJson = readTaskJson(parent)
+    assert.equal(parentJson.base_branch, 'feature/witops')
+    assert.deepEqual(
+      [...parentJson.children].sort(),
+      directories
+        .filter((directory) => directory !== parent)
+        .map((directory) => path.basename(directory))
+        .sort(),
+    )
+
+    const childJson = readTaskJson(child)
+    assert.equal(childJson.base_branch, 'feature/witops')
+    assert.equal(childJson.parent, path.basename(parent))
+    assert.equal(childJson.meta.witops.parentBusinessId, '3001')
+    assert.equal(childJson.meta.witops.storyId, '3001')
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('重复下发需求时只补建缺失的子任务', async () => {
+  const context = await setup()
+  try {
+    const first = await dispatch(context, {
+      businessId: '3001',
+      type: 3,
+      includeChildren: false,
+    })
+    assert.equal(first.json.summary.imported, 1)
+    assert.equal(findTaskDirectories(context.repo.repositoryPath).length, 1)
+
+    const second = await dispatch(context, {
+      businessId: '3001',
+      type: 3,
+      includeChildren: true,
+    })
+    assert.equal(second.json.summary.duplicated, 1)
+    assert.equal(second.json.results[0].childSummary.imported, 2)
+    assert.equal(findTaskDirectories(context.repo.repositoryPath).length, 3)
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('需求预览返回 task.md 与已拆分子任务', async () => {
+  const context = await setup()
+  try {
+    const preview = await call(context.http, `/api/plugins/${PLUGIN_ID}/dispatch/preview`, {
+      method: 'POST',
+      body: { businessId: '3001', type: 3 },
+    })
+    assert.equal(preview.status, 200)
+    assert.equal(preview.json.results[0].status, 'ready')
+    assert.match(preview.json.results[0].draft.taskMarkdown, /需求整体目标/)
+    assert.equal(preview.json.results[0].children.length, 2)
+    assert.deepEqual(preview.json.results[0].children.map((child) => child.code).sort(), [
+      'T10001',
+      'T10004',
+    ])
   } finally {
     await context.cleanup()
   }
