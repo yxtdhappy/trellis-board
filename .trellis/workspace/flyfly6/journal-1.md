@@ -1404,6 +1404,26 @@ packages/web 全量审计后按 shadcn/base-ui 规则把重复实现收敛到 co
 - 新任务自动接入并 safe 首同步，首次上传成功后才显示分支
 - 归档同步后隐藏、worktree 删除/重建复位，手工 binding 不受影响
 - 新增 Tauri 状态/重试/刷新命令与项目栏过滤、错误提示
+## Session 42: 拆分 server/web 超大模块并补齐独立模式测试
+<!-- trellis-session: v=2 fp=1ac11f27873e23f9 -->
+
+**Date**: 2026-11-19
+**Task**: 拆分 server/web 超大模块并补齐独立模式测试
+**Package**: server
+**Branch**: `count-server-web-loc-large-files`
+
+### Summary
+
+把 server 与 web 中 19 个超过 800/700 行的源文件拆到阈值内，删除约 9000 行死代码，index.js 改为显式 state 对象并补上独立模式测试；同时写入 spec 规则防止复发。
+
+### Main Changes
+
+- packages/server/index.js 1025 → 49 行，业务搬入 standalone/{state,server,api,refresh,watcher,scan-worker,repositories,tasks,plugins,static,folder-picker,http-io,board-state}.js，19 个模块级可变状态收成 createStandaloneState()
+- database.js 拆出 database-{sql,migrations,legacy-import,meta,transaction}，schema 按版本目录化；execution-store、loader、plugins/supervisor 各自拆出纯逻辑模块
+- team/http.js 拆成 http/{common,context,routes/*}，task-space-index 拆成 task-index/*，task-control/task-snapshot/task-space 拆分补齐
+- 删除 legacy Git 栈与旧实时覆盖层（board/task-writes/live-sync/agents/git-manager/git-credentials/projects/agent-events）
+- web：useBoard、TaskDetailDialog、ProjectOnboardingDialog、ProjectRail、ArchiveSyncTab、LiveSyncControlDialog 拆分；api/admin 与 lib/team-client 目录化并保留 barrel
+- 新增 .trellis/spec/guides/module-size-guide.md 规定行数上限与例外规则，同步 architecture-and-runtime / quality-guidelines
 
 ### Git Commits
 
@@ -1418,6 +1438,13 @@ packages/web 全量审计后按 shadcn/base-ui 规则把重复实现收敛到 co
 - [OK] yarn test：659 tests，656 pass，3 skipped
 - [OK] yarn build：通过
 - [OK] 真实 Tauri + 真实 worktree 手工验收通过（错误重试入口未触发）
+| `4220dc4` | refactor(server): 拆分超大模块、独立模式状态对象化并删除 legacy 栈 |
+| `c3bc0d1` | refactor(web): 拆分超大组件与 hook 模块 |
+
+### Testing
+
+- [OK] yarn test 630/627 pass；yarn test:plugins 114/113；server 494/491；web 91/91；oxfmt 与 web build、build:desktop 全通过
+- [OK] 真实客户端验证：standalone 模式启动服务 + Tabbit 真实浏览器打开看板、任务详情、重新扫描、插件页均正常
 
 ### Status
 
@@ -1426,3 +1453,4 @@ packages/web 全量审计后按 shadcn/base-ui 规则把重复实现收敛到 co
 ### Next Steps
 
 - 观察真实服务端归档同步延迟下的隐藏时序
+- packages/server/plugins/supervisor.js 仍 1868 行，按 spec 作为单状态机例外保留，后续增长需先拆逻辑

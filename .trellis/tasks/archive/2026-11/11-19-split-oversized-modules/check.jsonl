@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/11-19-split-oversized-modules/design.md","reason":"核对 D1/D2/D3 决策结果与批次边界是否与实际改动一致。"}
+{"file":".trellis/tasks/11-19-split-oversized-modules/implement.md","reason":"按批次逐项核对 checklist 与验证命令是否全部执行。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"确认 server 侧验证门禁全绿，且未引入新抽象层。"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"确认拆分后 team 运行时仍不装配旧 Git 栈，模块依赖方向未被反转。"}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"确认新增子目录、barrel 与 lib 配对符合目录规范。"}

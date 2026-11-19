@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { BUILTIN_VIEWS } from '@/lib/execution-filter.js'
-import type { BoardFilters } from '@/hooks/useBoard'
+import type { BoardFilters } from '@/hooks/board-types.ts'
 
 type ExecutionHeaderProps = {
   filters: BoardFilters

@@ -14,11 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useConfirm } from '@/components/ui/confirm-dialog'
-import type {
-  ArchiveCredentialInput,
-  ArchiveGitCredential,
-  ArchiveTaskSpaceSync,
-} from '@/api/admin'
+import type { ArchiveCredentialInput, ArchiveGitCredential } from '@/api/admin'
 import { formatTime, statusTone } from '@/lib/admin-shared'
 import { cn } from '@/lib/utils'
 import { useArchiveSync } from '@/hooks/useArchiveSync'
@@ -30,69 +26,16 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Panel } from '@/components/ui/panel'
 import { Field, FieldLabel, FieldDescription } from '@/components/ui/field'
-
-const STATUS_LABELS: Record<string, string> = {
-  idle: '等待同步',
-  syncing: '正在拉取',
-  importing: '正在导入',
-  indexing: '正在更新索引',
-  current: '已更新',
-  stale: '索引落后',
-  error: '同步失败',
-  index_error: '索引失败',
-}
-
-const PROJECT_PREVIEW_LIMIT = 5
-
-function statusLabel(value: string) {
-  return STATUS_LABELS[value] || value
-}
-
-function credentialStateLabel(value: string) {
-  if (value === 'configured') return '已匹配 · 未验证'
-  if (value === 'anonymous') return '公开 HTTPS 匿名'
-  if (value === 'missing') return '缺少 SSH 凭据'
-  if (value === 'unsupported') return '远端协议不支持'
-  return value ? `未知凭据状态（${value}）` : '凭据状态未知'
-}
-
-function displayText(value: string | null | undefined, fallback: string) {
-  return value?.trim() || fallback
-}
-
-type AffectedProject = {
-  key: string
-  name: string
-  branches: string[]
-}
-
-function credentialProjects(taskSpaces: ArchiveTaskSpaceSync[], credentialId: string) {
-  if (!credentialId) return []
-  const projects = new Map<string, AffectedProject>()
-  taskSpaces.forEach((taskSpace, index) => {
-    if (taskSpace.credential?.id !== credentialId) return
-    const key = taskSpace.projectId || taskSpace.taskSpaceId || `project-${index}`
-    const project = projects.get(key) ?? {
-      key,
-      name: displayText(taskSpace.projectName, '项目名称缺失'),
-      branches: [],
-    }
-    const branchName = displayText(taskSpace.branchName, '分支名称缺失')
-    if (!project.branches.includes(branchName)) project.branches.push(branchName)
-    projects.set(key, project)
-  })
-  return [...projects.values()]
-}
-
-function taskSpaceText(taskSpace: ArchiveTaskSpaceSync) {
-  const projectName = displayText(taskSpace.projectName, '项目名称缺失')
-  const branchName = displayText(taskSpace.branchName, '分支名称缺失')
-  return `${projectName} · ${branchName}`
-}
-
-function affectedProjectText(project: AffectedProject) {
-  return `${project.name} · ${project.branches.join(' / ')}`
-}
+import {
+  PROJECT_PREVIEW_LIMIT,
+  displayText,
+  credentialProjects,
+  taskSpaceText,
+  affectedProjectText,
+  EMPTY_CREDENTIAL,
+} from './archive-sync-format.ts'
+import type { AffectedProject, CredentialDraft } from './archive-sync-format.ts'
+import { TaskSpaceRow } from './ArchiveSyncTaskSpaceRow.tsx'
 
 function AffectedProjectList({
   projects,
@@ -127,30 +70,6 @@ function AffectedProjectList({
       ))}
     </ul>
   )
-}
-
-function shortHead(value: string | null) {
-  return value ? value.slice(0, 10) : '—'
-}
-
-type CredentialDraft = {
-  name: string
-  scheme: 'ssh' | 'https'
-  host: string
-  port: string
-  username: string
-  token: string
-  privateKey: string
-}
-
-const EMPTY_CREDENTIAL: CredentialDraft = {
-  name: '',
-  scheme: 'ssh',
-  host: '',
-  port: '22',
-  username: 'x-access-token',
-  token: '',
-  privateKey: '',
 }
 
 export function ArchiveSyncTab() {
@@ -704,87 +623,5 @@ export function ArchiveSyncTab() {
         </DialogContent>
       </Dialog>
     </>
-  )
-}
-
-function TaskSpaceRow({
-  taskSpace,
-  busy,
-  onRun,
-  onLogs,
-}: {
-  taskSpace: ArchiveTaskSpaceSync
-  busy: boolean
-  onRun: () => void
-  onLogs: () => void
-}) {
-  const failed = taskSpace.status === 'error' || taskSpace.status === 'index_error'
-  return (
-    <Row
-      actions={
-        <>
-          <Button size="sm" type="button" variant="outline" disabled={busy} onClick={onRun}>
-            立即同步
-          </Button>
-          {taskSpace.failureCount > 0 ? (
-            <Button size="sm" type="button" variant="ghost" onClick={onLogs}>
-              失败日志
-            </Button>
-          ) : null}
-        </>
-      }
-    >
-      <div className="flex min-w-0 flex-col gap-1">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <strong className="truncate text-xs font-medium">
-            {displayText(taskSpace.projectName, '项目名称缺失')}
-          </strong>
-          <StatusPill tone={statusTone(displayText(taskSpace.branchName, '分支名称缺失'))}>
-            {displayText(taskSpace.branchName, '分支名称缺失') || 'unknown'}
-          </StatusPill>
-          <StatusPill tone={statusTone(statusLabel(taskSpace.status))}>
-            {statusLabel(taskSpace.status) || 'unknown'}
-          </StatusPill>
-          <span className="text-2xs text-muted-foreground">
-            {credentialStateLabel(taskSpace.credentialState)}
-          </span>
-        </div>
-        <div className="grid gap-x-4 gap-y-0.5 text-xs text-muted-foreground sm:grid-cols-2">
-          <span>
-            最近更新：{taskSpace.lastIndexedAt ? formatTime(taskSpace.lastIndexedAt) : '尚未更新'}
-          </span>
-          <span>最近尝试：{formatTime(taskSpace.lastAttemptAt)}</span>
-          <span>最近成功：{formatTime(taskSpace.lastSuccessAt)}</span>
-          <span>
-            文件 {taskSpace.fileCount} · 归档 revision {taskSpace.archiveIndexedRevision}/
-            {taskSpace.archiveRevision}
-          </span>
-          <span>
-            Commit <code>{shortHead(taskSpace.remoteHead)}</code>
-          </span>
-          {taskSpace.credentialState === 'configured' ? (
-            <span
-              className="truncate"
-              title={`使用凭据：${displayText(taskSpace.credential?.name, '凭据名称缺失')}`}
-            >
-              使用凭据：{displayText(taskSpace.credential?.name, '凭据名称缺失')}
-            </span>
-          ) : null}
-          <span className="truncate" title={taskSpace.origin || taskSpace.remoteUrl}>
-            来源 <code>{displayText(taskSpace.origin || taskSpace.remoteUrl, '来源地址缺失')}</code>
-          </span>
-        </div>
-        {taskSpace.nextAttemptAt ? (
-          <p className="text-2xs text-muted-foreground">
-            下次自动尝试：{formatTime(taskSpace.nextAttemptAt)}
-          </p>
-        ) : null}
-        {taskSpace.lastError ? (
-          <p className={failed ? 'text-2xs text-destructive' : 'text-2xs text-muted-foreground'}>
-            {taskSpace.lastError}
-          </p>
-        ) : null}
-      </div>
-    </Row>
   )
 }

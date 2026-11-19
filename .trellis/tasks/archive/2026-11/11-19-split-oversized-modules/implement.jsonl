@@ -1,0 +1,9 @@
+{"file":".trellis/tasks/11-19-split-oversized-modules/design.md","reason":"批次划分（B0–B6）、模块边界与决策 D1/D2/D3 的处置结果。"}
+{"file":".trellis/tasks/11-19-split-oversized-modules/implement.md","reason":"逐批 checklist、验证命令与回滚点，实现阶段按此执行。"}
+{"file":".trellis/spec/guides/index.md","reason":"B6 需在该「何时阅读」表与快速触发条件中登记 module-size-guide 入口。"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"server 运行时装配事实：team 运行时不接入旧 Git 栈，拆分后不得重新引入。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"server 代码质量与验证门禁，拆分后每批必须通过。"}
+{"file":".trellis/spec/backend/plugin-runtime.md","reason":"plugins/supervisor.js 的插件进程与配置重载契约，B1-d 拆分依据。"}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"web 目录分层、组件/纯模块命名与 lib/*.js+.d.ts 成对约束，B1-e/B1-f/B4 必须遵守。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"web 验证门禁（tsc -b、vite build、oxlint）。"}
+{"file":".trellis/spec/frontend/component-reuse.md","reason":"ProjectRail/TaskDetailDialog/ProjectOnboardingDialog 拆分时的复用与提升规则。"}

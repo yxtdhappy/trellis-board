@@ -13,8 +13,18 @@ function read(relativePath) {
   return fs.readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8')
 }
 
+function readTree(relativeDir) {
+  const base = new URL(`../${relativeDir}/`, import.meta.url)
+  return fs
+    .readdirSync(base, { recursive: true })
+    .filter((name) => name.endsWith('.js'))
+    .map((name) => fs.readFileSync(new URL(name, base), 'utf8'))
+    .join('\n')
+}
+
 test('Team runtime 只装配任务空间快照链路，不导入旧 Git 或实时覆盖层', () => {
   const http = read('team/http.js')
+  const httpTree = `${http}\n${readTree('team/http')}`
   for (const legacy of [
     './git-manager.js',
     './git-credentials.js',
@@ -23,7 +33,7 @@ test('Team runtime 只装配任务空间快照链路，不导入旧 Git 或实�
     './task-writes.js',
     './task-index.js',
   ]) {
-    assert.equal(http.includes(legacy), false, legacy)
+    assert.equal(httpTree.includes(legacy), false, legacy)
   }
   for (const current of [
     './gitless-board-service.js',
@@ -34,12 +44,12 @@ test('Team runtime 只装配任务空间快照链路，不导入旧 Git 或实�
   ]) {
     assert.equal(http.includes(current), true, current)
   }
-  assert.match(http, /task-spaces\/preflight/)
-  assert.equal(http.includes('/detach$'), true)
-  assert.equal(http.includes('/listeners$'), true)
-  assert.match(read('team/task-space-service.js'), /function detachAgent/)
-  assert.match(read('team/task-space-service.js'), /function listenerDetails/)
-  assert.doesNotMatch(http, /\bspawn\s*\(|\bexecFile\s*\(/)
+  assert.match(httpTree, /task-spaces\/preflight/)
+  assert.equal(httpTree.includes('/detach$'), true)
+  assert.equal(httpTree.includes('/listeners$'), true)
+  assert.match(read('team/task-space/bindings.js'), /function detachAgent/)
+  assert.match(read('team/task-space/bindings.js'), /function listenerDetails/)
+  assert.doesNotMatch(httpTree, /\bspawn\s*\(|\bexecFile\s*\(/)
   const snapshotService = read('team/task-snapshot-service.js')
   assert.doesNotMatch(snapshotService, /from ['"]node:child_process['"]/)
   assert.doesNotMatch(snapshotService, /['"]\.\/(?:git-manager|git-credentials|live-sync)\.js['"]/)

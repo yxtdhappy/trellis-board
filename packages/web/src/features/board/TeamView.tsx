@@ -11,7 +11,7 @@ import { StatusPill } from '@/components/ui/status-pill'
 import { priorityTone, stageTone, statusLabel } from './tone.ts'
 import { branchMatches } from '@/lib/execution-filter.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
-import type { BoardFilters } from '@/hooks/useBoard'
+import type { BoardFilters } from '@/hooks/board-types.ts'
 import { taskControlView } from '@/lib/team-client.js'
 import { Panel } from '@/components/ui/panel'
 import {

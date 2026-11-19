@@ -13,6 +13,7 @@
 | 修改路径规范化、`taskKey`、白名单仓库或写操作 | [跨层契约](./cross-layer-thinking-guide.md) |
 | 修改桌面 Tauri 命令、远程 capability、窗口导航或本地登录页跳转 | [桌面 Tauri 命令与导航](../desktop/tauri-commands/index.md) |
 | 新增常量、解析函数、校验函数或前端工具模块 | [代码复用指南](./code-reuse-thinking-guide.md) |
+| 新增模块或拆分模块、单文件接近 800/700 行 | [模块行数上限指南](./module-size-guide.md) |
 | 同时修改 `packages/server/`、`public/`、`packages/test-support/` | 两份指南都读 |
 
 ## 快速触发条件

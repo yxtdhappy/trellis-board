@@ -1,25 +1,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { minimalEnvironment, terminateTree } from '../team/process.js'
+import { minimalEnvironment } from '../team/process.js'
 import {
   HOST_API_VERSION,
-  MAX_FRAME_BYTES,
   ERROR_CODES,
-  RPC,
   RpcError,
   PERMISSION_BY_METHOD,
   ALWAYS_ALLOWED_METHODS,
   HOST_TO_PLUGIN_TIMEOUTS,
-  encodeFrame,
-  createFrameDecoder,
-  successResponse,
-  errorResponse,
-  notificationFrame,
-  requestFrame,
-  isRequest,
-  isNotification,
-  isResponse,
   methodNotFound,
   invalidParams,
   appError,
@@ -35,12 +24,14 @@ import {
   defaultSecretsFile,
   defaultSecretsKeyFile,
   deleteSecretRef,
-  inlineSecretFields,
   loadSecretsFile,
-  resolveConfigReferences,
-  summarizeSources,
   writeSecretRef,
 } from './secrets.js'
+import { configSignature, loadPluginConfigFile, nowIso, redactConfig } from './config.js'
+import { createLogRing, rotateLogFile } from './log-ring.js'
+import { PluginProcess } from './plugin-process.js'
+
+export { loadPluginConfigFile }
 
 export const PLUGIN_STATUSES = Object.freeze([
   'starting',
@@ -53,315 +44,24 @@ export const PLUGIN_STATUSES = Object.freeze([
 ])
 
 const DEFAULT_RESTART_DELAYS = [1_000, 2_000, 4_000, 8_000, 16_000]
+
 const MAX_RESTART_DELAY = 60_000
+
 const AUTO_DISABLE_WINDOW_MS = 10 * 60 * 1000
+
 const AUTO_DISABLE_LIMIT = 5
+
 const EVENT_QUEUE_LIMIT = 500
+
 const EVENT_ACK_TIMEOUT_MS = 30_000
+
 const EVENT_MAX_ATTEMPTS = 3
+
 const EVENT_RING_LIMIT = 1000
-const LOG_RING_LIMIT = 500
-const LOG_FILE_LIMIT = 10 * 1024 * 1024
-const LOG_FILE_KEEP = 3
-const SENSITIVE_KEY_PATTERN = /(token|password|secret|apikey|api_key|credential)/i
+
 const RESERVED_ROOT_PREFIXES = ['/api']
+
 const RESERVED_ROOT_PATHS = new Set(['/'])
-
-function nowIso() {
-  return new Date().toISOString()
-}
-
-function redactValue(key, value) {
-  if (SENSITIVE_KEY_PATTERN.test(key)) {
-    if (value && typeof value === 'object') return redactConfig(value)
-    return '***'
-  }
-  if (value && typeof value === 'object') {
-    return Array.isArray(value)
-      ? value.map((item) => (item && typeof item === 'object' ? redactConfig(item) : item))
-      : redactConfig(value)
-  }
-  return value
-}
-
-export function redactConfig(config) {
-  if (!config || typeof config !== 'object') return config
-  const result = {}
-  for (const [key, value] of Object.entries(config)) {
-    result[key] = redactValue(key, value)
-  }
-  return result
-}
-
-/**
- * 生成与键序无关的配置签名，用于判断 reload 时配置是否真的变了。
- * 值里可能有 null（缺失的 secret/env 引用），必须与 undefined 区分开。
- */
-function configSignature(value) {
-  if (value === undefined) return 'undefined'
-  if (value === null || typeof value !== 'object') return JSON.stringify(value)
-  if (Array.isArray(value)) return `[${value.map(configSignature).join(',')}]`
-  return `{${Object.keys(value)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${configSignature(value[key])}`)
-    .join(',')}}`
-}
-
-export function loadPluginConfigFile(file, { env = process.env, secretsFile } = {}) {
-  if (!fs.existsSync(file)) return { plugins: [], missing: [], warnings: [] }
-  let raw
-  try {
-    raw = JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch {
-    throw new Error('plugins.json 不是合法 JSON')
-  }
-  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.plugins)) {
-    throw new Error('plugins.json 必须包含 plugins 数组')
-  }
-  const secrets = loadSecretsFile(
-    secretsFile || env.TRELLIS_BOARD_SECRETS_FILE || defaultSecretsFile(file),
-  )
-  const warnings = secrets.warnings.map((warning) => ({ ...warning }))
-  const missing = []
-  const plugins = raw.plugins.map((entry, index) => {
-    if (!entry || typeof entry !== 'object') {
-      throw new Error(`plugins.json 第 ${index + 1} 项不是对象`)
-    }
-    const id = String(entry.id || '').trim()
-    if (!id) throw new Error(`plugins.json 第 ${index + 1} 项缺少 id`)
-    if (!/^[A-Za-z0-9._-]+$/.test(id)) {
-      throw new Error(`插件 id 只能包含字母、数字、点、下划线与中划线: ${id}`)
-    }
-    const entryMissing = []
-    const sources = {}
-    const config = resolveConfigReferences(entry.config ?? {}, {
-      env,
-      refs: secrets.refs,
-      missing: entryMissing,
-      sources,
-    })
-    const inline = inlineSecretFields(sources)
-    if (inline.length) {
-      warnings.push({ kind: 'inline-secret', id, fields: inline })
-    }
-    missing.push({
-      id,
-      names: entryMissing.filter((name, at) => entryMissing.indexOf(name) === at),
-    })
-    const sortValue = entry.sort === undefined || entry.sort === null ? null : Number(entry.sort)
-    if (sortValue !== null && !Number.isFinite(sortValue)) {
-      throw new Error(`插件 ${id} 的 sort 必须是数字`)
-    }
-    return {
-      id,
-      module: String(entry.module || '').trim(),
-      enabled: entry.enabled !== false,
-      sort: sortValue,
-      version: entry.version == null ? undefined : String(entry.version),
-      command: entry.command ? String(entry.command) : null,
-      args: Array.isArray(entry.args) ? entry.args.map(String) : null,
-      config: config ?? {},
-      configSource: summarizeSources(sources),
-      allowMissingSecrets: entry.allowMissingSecrets === true,
-    }
-  })
-  return { plugins, missing, warnings, secretsFile: secrets.file }
-}
-
-function createLogRing(limit = LOG_RING_LIMIT) {
-  const entries = []
-  return {
-    push(entry) {
-      entries.push(entry)
-      if (entries.length > limit) entries.splice(0, entries.length - limit)
-    },
-    list(tail = 200) {
-      return entries.slice(-Math.max(1, Math.min(limit, Number(tail) || 200)))
-    },
-  }
-}
-
-function rotateLogFile(file) {
-  if (!fs.existsSync(file)) return
-  if (fs.statSync(file).size < LOG_FILE_LIMIT) return
-  for (let index = LOG_FILE_KEEP - 1; index >= 1; index -= 1) {
-    const from = index === 1 ? file : `${file}.${index}`
-    const to = `${file}.${index + 1}`
-    if (fs.existsSync(from)) {
-      try {
-        fs.renameSync(from, to)
-      } catch {
-        // 轮转失败不能影响插件运行。
-      }
-    }
-  }
-  try {
-    fs.renameSync(file, `${file}.1`)
-  } catch {
-    // 当前文件改名失败时保留原文件，下一次轮转再试。
-  }
-}
-
-/**
- * 一个插件子进程的封装：spawn、帧解码、请求 id、超时与终止。
- */
-class PluginProcess {
-  constructor(runtime, entry, { command, args, cwd, env }) {
-    this.runtime = runtime
-    this.entry = entry
-    this.command = command
-    this.args = args
-    this.cwd = cwd
-    this.env = env
-    this.child = null
-    this.decoder = null
-    this.pending = new Map()
-    this.sequence = 0
-    this.stopping = false
-    this.exited = false
-    this.exitPromise = new Promise((resolve) => {
-      this.resolveExit = resolve
-    })
-  }
-
-  start() {
-    this.child = this.runtime.spawnImpl(this.command, this.args, {
-      cwd: this.cwd,
-      env: this.env,
-      shell: false,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-    this.decoder = createFrameDecoder({
-      maxBytes: MAX_FRAME_BYTES,
-      onMessage: (message) => this.handleMessage(message),
-      onError: (error) => {
-        this.runtime.recordError(this.entry, error.message)
-        this.runtime.audit(this.entry, 'protocol-error', { message: error.message })
-        if (error.code === ERROR_CODES.RATE_LIMITED) {
-          // 超过 1 MiB 说明帧边界已不可信，继续解析只会读到半截数据，直接断开进程。
-          this.runtime.audit(this.entry, 'frame-too-large', { message: error.message })
-          this.kill()
-        }
-      },
-    })
-    this.child.stdout.on('data', (chunk) => this.decoder.push(chunk))
-    this.child.stderr.setEncoding('utf8')
-    this.child.stderr.on('data', (chunk) => {
-      for (const line of String(chunk).split(/\r?\n/)) {
-        if (line.trim()) this.runtime.writeLog(this.entry, 'stderr', line, {})
-      }
-    })
-    this.child.once('error', (error) => {
-      this.runtime.recordError(this.entry, error.message)
-      this.rejectAll(error)
-    })
-    this.child.once('exit', (code, signal) => {
-      this.exited = true
-      this.rejectAll(new Error(`插件进程已退出（code=${code}, signal=${signal ?? '-'}）`))
-      this.resolveExit({ code, signal })
-      this.runtime.handleExit(this.entry, { code, signal })
-    })
-    return this
-  }
-
-  handleMessage(message) {
-    if (isResponse(message)) {
-      const pending = this.pending.get(message.id)
-      if (!pending) return
-      this.pending.delete(message.id)
-      clearTimeout(pending.timer)
-      if (message.error) {
-        const error = new RpcError(
-          message.error.data?.code ?? ERROR_CODES.INTERNAL_ERROR,
-          message.error.message || '插件返回错误',
-          { rpcCode: message.error.code, data: message.error.data?.detail },
-        )
-        pending.reject(error)
-      } else {
-        pending.resolve(message.result)
-      }
-      return
-    }
-    if (isRequest(message)) {
-      this.runtime.handlePluginRequest(this.entry, message).then(
-        (result) => this.write(successResponse(message.id, result)),
-        (error) => {
-          const payload = errorResponse(message.id, error)
-          this.write(payload)
-        },
-      )
-      return
-    }
-    if (isNotification(message)) {
-      this.runtime.handlePluginNotification(this.entry, message)
-    }
-  }
-
-  write(message) {
-    if (!this.child || this.exited || this.child.stdin.destroyed) return false
-    try {
-      this.child.stdin.write(encodeFrame(message))
-      return true
-    } catch (error) {
-      this.runtime.recordError(this.entry, error.message)
-      return false
-    }
-  }
-
-  request(method, params, timeoutMs) {
-    if (!this.child || this.exited) {
-      return Promise.reject(new RpcError(ERROR_CODES.DISABLED, '插件进程未运行'))
-    }
-    const id = `h${++this.sequence}`
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id)
-        // 超时只取消当前请求，不终止进程；插件可以忽略取消通知，宿主不再等待结果。
-        this.notify('request/cancel', { id })
-        reject(new RpcError(ERROR_CODES.TIMEOUT, `插件请求超时: ${method}`))
-      }, timeoutMs)
-      timer.unref?.()
-      this.pending.set(id, { resolve, reject, timer })
-      this.write(requestFrame(id, method, params))
-    })
-  }
-
-  notify(method, params) {
-    return this.write(notificationFrame(method, params))
-  }
-
-  cancelRequest(id) {
-    return this.notify('request/cancel', { id })
-  }
-
-  rejectAll(error) {
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer)
-      pending.reject(error)
-    }
-    this.pending.clear()
-  }
-
-  async stop(graceMs) {
-    this.stopping = true
-    try {
-      await this.request('shutdown', {}, this.runtime.timeoutFor('shutdown'))
-    } catch {
-      // 插件可能已经退出或不响应，继续走终止流程。
-    }
-    const exited = await Promise.race([
-      this.exitPromise.then(() => true),
-      new Promise((resolve) => setTimeout(() => resolve(false), graceMs)),
-    ])
-    if (!exited && this.child) await terminateTree(this.child)
-    await Promise.race([this.exitPromise, new Promise((resolve) => setTimeout(resolve, graceMs))])
-  }
-
-  kill() {
-    if (this.child && !this.exited) void terminateTree(this.child)
-  }
-}
 
 export class PluginSupervisor {
   constructor({
@@ -2166,5 +1866,3 @@ function compareVersions(left, right) {
   }
   return 0
 }
-
-export { createFrameDecoder, RPC }

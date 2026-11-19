@@ -75,7 +75,12 @@ test('control sync errors show project and branch without repo paths', () => {
   ]
     .map(read)
     .join('\n')
-  const control = read('packages/web/src/desktop/LiveSyncControlDialog.tsx')
+  const control = [
+    'packages/web/src/desktop/LiveSyncControlDialog.tsx',
+    'packages/web/src/desktop/live-control/control-event.ts',
+  ]
+    .map(read)
+    .join('\n')
 
   assert.match(taskSync, /event\["projectName"\]/)
   assert.match(taskSync, /event\["branchName"\]/)

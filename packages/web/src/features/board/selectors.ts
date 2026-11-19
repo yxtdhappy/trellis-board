@@ -1,6 +1,6 @@
 import { groupActiveTasks, type BoardTask } from './task-view.ts'
 import { branchMatches, findView, taskMatchesView, taskTagNames } from '@/lib/execution-filter.js'
-import type { BoardFilters } from '@/hooks/useBoard'
+import type { BoardFilters } from '@/hooks/board-types.ts'
 
 export type BoardView = 'pipeline' | 'team' | 'archive' | 'plugins'
 
