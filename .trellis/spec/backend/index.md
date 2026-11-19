@@ -12,6 +12,7 @@
 | [归档快照运维](./archive-snapshot-operations.md) | 本地完整快照、数据库备份引用、清理、恢复与排障 |
 | [插件运行时](./plugin-runtime.md) | 子进程协议、清单与版本、生命周期、存储与命名空间、任务写入 |
 | [插件测试](./plugin-testing.md) | 协议契约、插件功能、真实组合的分层测试与覆盖矩阵 |
+| [Scenario 测试大纲关联与生成](./scenario-outlines.md) | manifest 元数据、解析优先级、生成 job、回归预检错误矩阵 |
 | [桌面 Agent 运行契约](./desktop-agent-runtime.md) | 进程内 Rust Agent 模块边界、协议/超时/控制事件、数据兼容、环境门与单 EXE 打包 |
 | [桌面任务快照同步](./desktop-realtime-sync.md) | tasks-only 快照、CAS、任务空间、SSE、命令、冲突与备份 |
 | [本机 taskDir 安全解析与错误展示](./desktop-task-path-resolution.md) | 跨端相对路径、Windows 路径边界、失败关闭与可读同步错误 |

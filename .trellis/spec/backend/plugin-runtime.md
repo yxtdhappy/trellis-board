@@ -214,3 +214,9 @@ rows.render(await bridge.get('/accounts').then((p) => p.accounts))
 （应只授予受信任的桥接插件）。
 插件不应把可选或私有插件名写进自己的 manifest 或代码；需要跨插件调用时，通过 `trellis.capabilities.call`
 由运行时参数决定目标。
+
+## 9. 常见陷阱
+
+- **改 manifest 必须重启 server**：`plugin.json` 的 `version`、`provides`/`requires` 变更后，只 stop/start 插件不会重读清单，可能出现 `1008 插件握手版本与清单不一致`。停掉 server 进程后重新启动，再检查 `/api/plugins` 的 `version/status/lastError`。
+- **`http/request` 默认 30s，插件侧改不了**：耗时操作（模型生成、批量回归）不要同步等待。立即返回 `202 {jobId}`，用 `GET ...?jobId=` 轮询；面板 bridge 显式设 `timeout: 300000`。
+- **插件目录默认被忽略**：根 `.gitignore` 的 `plugins/*` 会忽略 `plugins/witops-workbench/**` 等本地插件。改完先 `git check-ignore -v <path>` 确认是否会进入提交；不会时需单独部署/同步。
