@@ -1510,3 +1510,27 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 65: 客户端 Trellis 初始化后清理 __pycache__ 模板哈希
+<!-- trellis-session: v=2 fp=09a6ddf70b933c37 -->
+
+**Date**: 2026-11-19
+**Task**: 客户端 Trellis 初始化后清理 __pycache__ 模板哈希
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+在 desktop 初始化完成后增加共用模板哈希清理入口：Agent-only 与完整 init 落盘后删除 .template-hashes.json 中 __pycache__/ 与 *.pyc 键，清理失败降级不影响初始化，并在 desktop spec 记录触发路径。真机 v0.4.44 Agent-only init 验证原 188 个键全部保留且值不变、探针键被删除；完整 init 共用入口由 Rust 单元测试覆盖。CI run 44420836007 全绿，发布 0.4.44。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cf47f9f` | fix(desktop): clean pycache template hashes after init |
+| `654d9f0` | chore(release): 0.4.44 |
+
+### Status
+
+[OK] **Completed**
