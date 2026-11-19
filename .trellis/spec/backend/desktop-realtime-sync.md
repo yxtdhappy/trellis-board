@@ -309,6 +309,15 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   （不中断整次 pull、不上传、不写 baselines，目录消失或控件 assignee 变回本人时解除）；`TASK_ARCHIVED`/
   `ARCHIVE_SYNC_SERVER_MANAGED`/`404` 直接跳过；其余错误必须经 `with_task_dir` 注入 `details.taskDir`
   再上抛，日志与 `task_sync_error` 事件同时携带 `errorCode`/`serverCode`。
+- 服务端明确返回 `TASK_ARCHIVED` 或 `ARCHIVE_SYNC_SERVER_MANAGED` 时，客户端除执行既有
+  `cleanup_archived_residue`（仅当归档副本存在且内容摘要一致才删除本地活跃残留）外，还必须在同一次
+  目录上传返回前用一个 `task_dir_removals` cursor patch 批量移除这些目录的 baselines（按
+  `{taskDir}/` 前缀匹配文件路径）和 deferred。否则已移入 archive 的目录仍留在 cursor 基线里，
+  每轮 pull 都把它判为 dirty，upload 反复收到 409，`pull_tracking` 无法应用快照、已应用 revision 停滞。
+  该 patch 只清理本地同步状态：不删除本地文件内容，不清理 `ownershipPending`/`pendingRejected`
+  （服务端摘要删除仍由 `cleanup_missing_ownership_inbox` 负责），也不改动 `conflictBlocked`/
+  `readonlyTaskDirs`。只有清理后本地活跃目录确实不存在时才移除基线；本地仍留有内容（例如归档副本缺失
+  或内容不一致）时保留基线，行为与修复前一致，由用户处理残留。
 - 每次拉取前先比较本地任务目录与 cursor 基线：本地有未上传变化时先走 CAS 上传；上传成功后再
   拉取新 revision，发生冲突时停止应用远端目录。首次接入选择“仅同步无冲突项”或“暂不处理”
   跳过的本地目录作为延后状态持久化，用户再次修改前不得自动上传；延后目录随后被服务端修改时

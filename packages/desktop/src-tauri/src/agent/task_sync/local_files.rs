@@ -59,6 +59,19 @@ impl TaskSync {
     }
 }
 impl TaskSync {
+    /// 本地是否仍存在该活跃任务目录；用于区分“归档移出后的残留基线”和“仍有本地内容的目录”。
+    pub(super) async fn active_task_directory_exists(
+        &self,
+        binding: &AgentBinding,
+        task_dir: &str,
+    ) -> bool {
+        match resolve_task_directory(binding, task_dir).await {
+            Ok(path) => tokio::fs::metadata(&path).await.is_ok(),
+            Err(_) => false,
+        }
+    }
+}
+impl TaskSync {
     /// 处理 state=archived 控件时清理本地残留活跃副本：只有归档副本存在且内容一致才删除。
     pub(super) async fn cleanup_archived_residue(&self, binding: &AgentBinding, task_dir: &str) {
         let Some(name) = task_dir.rsplit('/').next().filter(|name| !name.is_empty()) else {

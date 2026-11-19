@@ -515,6 +515,101 @@ async fn normal_pull_reconciles_exact_deferred_without_dirty_upload() {
 }
 
 
+#[tokio::test]
+async fn archived_directory_409_clears_cursor_state_and_pull_advances_revision() {
+    let (root, store, _sync, mut binding) =
+        test_task_sync_fixture("trellis-archived-residue-pull").await;
+    let repo = Path::new(&binding.repo_path);
+    init_git_repo(repo);
+    let task_dir = ".trellis/tasks/11-18-archived-task";
+    write_task_json(repo, task_dir, "archived-task", "main").await;
+    run_git(repo, &["add", ".trellis/tasks"]);
+    run_git(repo, &["commit", "--no-verify", "-m", "task"]);
+    binding.initial_sync_completed = true;
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+
+    let task_json = format!("{task_dir}/task.json");
+    let stale_hash = "0".repeat(64);
+    store
+        .write_json(
+            &store.paths.task_cursors_file,
+            &json!({
+                "version": CURSOR_VERSION,
+                "taskSpaces": {
+                    "space-1": {
+                        "revision": 1,
+                        "revisionGuardVersion": 1,
+                        "sequence": 1,
+                        "baselines": {
+                            (task_json.clone()): stale_hash.clone()
+                        }
+                    }
+                }
+            }),
+        )
+        .await
+        .expect("cursor");
+
+    // E2E 7.4 现场：服务端已把任务移入 archive，本地活跃副本已不存在。
+    tokio::fs::remove_dir_all(repo.join(task_dir))
+        .await
+        .expect("remove archived active dir");
+    run_git(repo, &["add", "-A"]);
+    run_git(repo, &["commit", "--no-verify", "-m", "archive move"]);
+
+    let (server_url, changes, requests, server_task) = mock_api_server(json!({
+        "revision": 3,
+        "files": [],
+        "directoryStatus": 409,
+        "directoryPayload": {
+            "code": "ARCHIVE_SYNC_SERVER_MANAGED",
+            "error": "归档任务由服务端 Git 索引管理"
+        }
+    }))
+    .await;
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+    let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
+    sync.set_bindings(vec![binding.clone()]).await;
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        sync.pull_task_space("space-1"),
+    )
+    .await
+    .expect("归档 409 后 pull 必须收敛，不能无限重试")
+    .expect("pull");
+    assert_eq!(result["revision"], 3);
+
+    let cursor = sync.read_cursor("space-1").await;
+    assert_eq!(cursor.revision, 3, "收敛后必须应用快照并推进已应用 revision");
+    assert!(!cursor.baselines.contains_key(&task_json));
+    assert!(cursor.pending.is_none());
+    assert!(changes.lock().await.is_empty(), "归档目录不得产生上传批次");
+    let requests = requests.lock().await;
+    assert_eq!(
+        requests.iter().filter(|request| request.contains("/files?")).count(),
+        1,
+        "归档 409 后不得重复请求同一目录"
+    );
+    assert_eq!(
+        requests.iter().filter(|request| request.contains("/snapshot?")).count(),
+        2,
+        "首轮 dirty 上传后必须再拉取一次快照收敛"
+    );
+    drop(requests);
+    assert!(
+        tokio::fs::metadata(repo.join(task_dir)).await.is_err(),
+        "清理不得重建本地活跃目录"
+    );
+
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+
 #[test]
 fn exact_deferred_state_reconciles_without_dirty_upload() {
     let task_dir = ".trellis/tasks/task-a";
