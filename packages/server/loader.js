@@ -36,6 +36,7 @@ const STAGE_META = {
 
 const TASK_CACHE_FILES = [
   'task.json',
+  'task.md',
   'prd.md',
   'design.md',
   'implement.md',
@@ -307,6 +308,7 @@ function buildArtifactSummary(files, includeContent = false) {
         : null
   return {
     summary: {
+      hasSource: Boolean(files.source),
       hasPrd: Boolean(files.prd),
       hasDesign: Boolean(files.design),
       hasImplement: Boolean(files.implement),
@@ -322,6 +324,7 @@ function buildArtifactSummary(files, includeContent = false) {
       designMeaningful: hasMeaningfulDocument(files.design?.content || ''),
     },
     artifacts: {
+      source: normalize(files.source),
       prd: normalize(files.prd),
       design: normalize(files.design),
       implement: normalize(files.implement),
@@ -528,12 +531,14 @@ function buildTask(
   const taskJson = readJson(taskJsonPath)
   if (!taskJson) return null
   const archivedAt = archived ? modifiedAt(taskJsonPath) : null
+  const sourcePath = path.join(taskDir, 'task.md')
   const prdPath = path.join(taskDir, 'prd.md')
   const designPath = path.join(taskDir, 'design.md')
   const implementPath = path.join(taskDir, 'implement.md')
   const implementationReportPath = path.join(taskDir, 'implementation-report.md')
   const checkReportPath = path.join(taskDir, 'check-report.md')
   const e2eReportPath = path.join(taskDir, 'e2e-report.md')
+  const sourceContent = safeRead(sourcePath)
   const prdContent = safeRead(prdPath)
   const implementContent = safeRead(implementPath)
   const designContent = safeRead(designPath)
@@ -542,6 +547,7 @@ function buildTask(
   const e2eReportContent = safeRead(e2eReportPath)
   const researchDir = path.join(taskDir, 'research')
   const files = {
+    source: fs.existsSync(sourcePath) ? { path: sourcePath, content: sourceContent } : null,
     prd: fs.existsSync(prdPath) ? { path: prdPath, content: prdContent } : null,
     design: fs.existsSync(designPath) ? { path: designPath, content: designContent } : null,
     implement: fs.existsSync(implementPath)
