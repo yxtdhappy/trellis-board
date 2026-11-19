@@ -102,11 +102,7 @@ impl TaskSync {
 impl TaskSync {
     pub(super) async fn stored_task_handoff(&self, key: &str) -> Option<StoredTaskHandoff> {
         self.ensure_task_control_loaded().await;
-        self.task_control_state
-            .lock()
-            .await
-            .handoff(key)
-            .cloned()
+        self.task_control_state.lock().await.handoff(key).cloned()
     }
 }
 impl TaskSync {
@@ -162,7 +158,7 @@ impl TaskSync {
         }
         (self.emit)(handoff_notice(binding, handoff));
         self.persist_task_control_change(|controls| controls.mark_handoff_notified(key, state))
-        .await?;
+            .await?;
         Ok(())
     }
 }
@@ -209,19 +205,19 @@ impl TaskSync {
         let stored = StoredTaskLease {
             token: token.to_string(),
             expires_at: expires_at.to_string(),
-            lease_id: lease
-                .get("id")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            lease_id: lease.get("id").and_then(Value::as_str).map(str::to_string),
             updated_at: protocol::now_iso8601(),
         };
         self.persist_task_control_change(|state| state.set_lease(execution_task_key, stored))
-        .await?;
+            .await?;
         Ok(())
     }
 }
 impl TaskSync {
-    pub(super) async fn stored_task_lease(&self, execution_task_key: &str) -> Option<StoredTaskLease> {
+    pub(super) async fn stored_task_lease(
+        &self,
+        execution_task_key: &str,
+    ) -> Option<StoredTaskLease> {
         self.ensure_task_control_loaded().await;
         self.task_control_state
             .lock()
@@ -319,9 +315,10 @@ impl TaskSync {
             .get("task")
             .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "任务心跳响应缺少 task"))?;
         let control = TaskControl::from_task_value(task)?;
-        let lease = response.get("lease").filter(|lease| !lease.is_null()).ok_or_else(
-            || AgentError::new(code::INVALID_RESPONSE, "任务心跳响应缺少 lease"),
-        )?;
+        let lease = response
+            .get("lease")
+            .filter(|lease| !lease.is_null())
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "任务心跳响应缺少 lease"))?;
         let next_token = lease
             .get("token")
             .and_then(Value::as_str)
@@ -353,7 +350,48 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) async fn ack_remote_handoff(&self, handoff: &StoredTaskHandoff) -> AgentResult<Value> {
+    /// 任务命令完成后主动释放写租约。
+    ///
+    /// 设计允许“先释放租约”再让创建者清理源副本；目标客户端若继续持有租约，
+    /// 创建者的 handoff 清理会一直收敛为 `lease_active` 冲突。释放失败不影响
+    /// 命令结果，后续用户编辑时上传路径会重新 claim。
+    pub(crate) async fn release_execution_lease(&self, execution_task_key: &str) {
+        let Some(lease) = self.stored_task_lease(execution_task_key).await else {
+            return;
+        };
+        match self
+            .release_remote_task(execution_task_key, &lease.token)
+            .await
+        {
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.server_code.as_deref(),
+                    Some("TASK_LEASE_INVALID") | Some("TASK_LEASE_REQUIRED") | Some("NOT_FOUND")
+                ) => {}
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "命令完成后释放任务租约失败 {}：{}",
+                    execution_task_key,
+                    protocol::safe_error_message(&error.message)
+                ));
+                return;
+            }
+        }
+        if let Err(error) = self.remove_task_lease(execution_task_key).await {
+            crate::logging::warn(&format!(
+                "删除命令任务租约失败 {}：{}",
+                execution_task_key,
+                protocol::safe_error_message(&error.message)
+            ));
+        }
+    }
+}
+impl TaskSync {
+    pub(super) async fn ack_remote_handoff(
+        &self,
+        handoff: &StoredTaskHandoff,
+    ) -> AgentResult<Value> {
         let encoded = urlencode(&handoff.execution_task_key);
         let body = handoff_ack_request(handoff)?;
         self.api
@@ -450,10 +488,7 @@ impl TaskSync {
                     AgentError::new(code::INVALID_RESPONSE, "任务控制响应缺少 task")
                 })?;
                 let control = TaskControl::from_task_value(task)?;
-                self.update_control_task_version(
-                    &control.execution_task_key,
-                    control.task_version,
-                )
+                self.update_control_task_version(&control.execution_task_key, control.task_version)
                     .await?;
                 Ok(Some(control))
             }
@@ -524,10 +559,7 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) async fn release_inactive_task_leases(
-        &self,
-        controls: Option<&[TaskControl]>,
-    ) {
+    pub(super) async fn release_inactive_task_leases(&self, controls: Option<&[TaskControl]>) {
         let Some(controls) = controls else {
             return;
         };
@@ -540,10 +572,7 @@ impl TaskSync {
                 control.control_state(),
                 control.relative_dir
             ));
-            let Some(lease) = self
-                .stored_task_lease(&control.execution_task_key)
-                .await
-            else {
+            let Some(lease) = self.stored_task_lease(&control.execution_task_key).await else {
                 continue;
             };
             match self
@@ -566,10 +595,7 @@ impl TaskSync {
                     ));
                 }
             }
-            if let Err(error) = self
-                .remove_task_lease(&control.execution_task_key)
-                .await
-            {
+            if let Err(error) = self.remove_task_lease(&control.execution_task_key).await {
                 crate::logging::warn(&format!(
                     "删除本地失效任务租约失败 {}：{}",
                     control.task_id,
@@ -602,11 +628,7 @@ impl TaskSync {
             .iter()
             .filter_map(|task_dir| {
                 state
-                    .execution_task_key_for_dir(
-                        &binding.local_id,
-                        &binding.task_space_id,
-                        task_dir,
-                    )
+                    .execution_task_key_for_dir(&binding.local_id, &binding.task_space_id, task_dir)
                     .cloned()
             })
             .collect();

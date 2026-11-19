@@ -70,6 +70,8 @@ pub struct TaskControl {
     #[serde(default)]
     pub materialized_revision: Option<u64>,
     #[serde(default)]
+    pub content_revision: Option<u64>,
+    #[serde(default)]
     pub materialized_at: Option<String>,
     #[serde(default)]
     pub lease_held_by_other_user: bool,
@@ -108,6 +110,7 @@ impl TaskControl {
             assignee_user_id: optional_nonempty_text(value, "assigneeUserId"),
             handoff_state: optional_text(value, "handoffState"),
             materialized_revision: value.get("materializedRevision").and_then(Value::as_u64),
+            content_revision: value.get("contentRevision").and_then(Value::as_u64),
             materialized_at: optional_nonempty_text(value, "materializedAt"),
             lease_held_by_other_user: value
                 .get("leaseHeldByOtherUser")
@@ -163,6 +166,7 @@ impl TaskControl {
             assignee_user_id: optional_nonempty_text(value, "assigneeUserId"),
             handoff_state: optional_text(value, "handoffState"),
             materialized_revision: value.get("materializedRevision").and_then(Value::as_u64),
+            content_revision: value.get("contentRevision").and_then(Value::as_u64),
             materialized_at: optional_nonempty_text(value, "materializedAt"),
             lease_held_by_other_user: false,
             updated_at: optional_text(value, "updatedAt"),
@@ -231,11 +235,8 @@ impl StoredTaskControl {
         let task_space_id = execution_key_task_space_id(&control.execution_task_key)?;
         if control.task_id.is_empty()
             || control.relative_dir.is_empty()
-            || protocol::resolve_task_dir_under(
-                Path::new(".trellis/tasks"),
-                &control.relative_dir,
-            )
-            .is_none()
+            || protocol::resolve_task_dir_under(Path::new(".trellis/tasks"), &control.relative_dir)
+                .is_none()
         {
             return protocol::err(code::INVALID_RESPONSE, "任务控制目录无效");
         }
@@ -380,10 +381,7 @@ impl TaskControlStateFile {
         }
         for control in controls {
             if execution_key_task_space_id(&control.execution_task_key)? != task_space_id {
-                return protocol::err(
-                    code::INVALID_RESPONSE,
-                    "任务控制与当前任务空间不一致",
-                );
+                return protocol::err(code::INVALID_RESPONSE, "任务控制与当前任务空间不一致");
             }
         }
         let existing = self.controls.clone();
@@ -554,8 +552,7 @@ impl TaskControlStateFile {
         if self.leases.get(execution_task_key) == Some(&lease) {
             return false;
         }
-        self.leases
-            .insert(execution_task_key.to_string(), lease);
+        self.leases.insert(execution_task_key.to_string(), lease);
         true
     }
 
@@ -590,12 +587,14 @@ impl TaskControlStateFile {
         task_space_id: &str,
         relative_dir: &str,
     ) -> Option<&String> {
-        self.controls.iter().find_map(|(execution_task_key, control)| {
-            (control.local_id == local_id
-                && control.task_space_id == task_space_id
-                && control.relative_dir == relative_dir)
-                .then_some(execution_task_key)
-        })
+        self.controls
+            .iter()
+            .find_map(|(execution_task_key, control)| {
+                (control.local_id == local_id
+                    && control.task_space_id == task_space_id
+                    && control.relative_dir == relative_dir)
+                    .then_some(execution_task_key)
+            })
     }
 }
 

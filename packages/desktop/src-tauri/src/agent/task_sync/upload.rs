@@ -26,6 +26,7 @@ impl TaskSync {
         );
         let mut applied_revision = cursor.revision;
         let mut committed_revision = 0u64;
+        let mut last_control = Value::Null;
         let mut baseline_files: Vec<SnapshotFile> = Vec::new();
         let mut prehandled_dirs = HashSet::new();
         let mut pending_outcome = None;
@@ -42,12 +43,13 @@ impl TaskSync {
                     return Ok(result);
                 }
                 if result.get("skipped").and_then(Value::as_bool) != Some(true) {
-                    committed_revision = committed_revision.max(
-                        result
-                            .get("revision")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0),
-                    );
+                    committed_revision = committed_revision
+                        .max(result.get("revision").and_then(Value::as_u64).unwrap_or(0));
+                    if let Some(control) =
+                        result.get("control").filter(|control| !control.is_null())
+                    {
+                        last_control = control.clone();
+                    }
                     baseline_files.extend(parse_snapshot_files_from_values(&retry_files)?);
                 }
                 prehandled_dirs.extend(retry_dirs);
@@ -55,8 +57,7 @@ impl TaskSync {
                 cursor = self.read_cursor(&task_space_id).await;
             }
         }
-        if cursor.revision_guard_version < REVISION_GUARD_VERSION
-            && binding.initial_sync_completed
+        if cursor.revision_guard_version < REVISION_GUARD_VERSION && binding.initial_sync_completed
         {
             return Box::pin(self.repair_revision_guard(binding)).await;
         }
@@ -95,9 +96,7 @@ impl TaskSync {
             }));
         }
         let local_started = Instant::now();
-        let local_groups = self
-            .local_groups(binding, Some(&requested))
-            .await?;
+        let local_groups = self.local_groups(binding, Some(&requested)).await?;
         sync_trace(
             &task_space_id,
             "upload-local",
@@ -263,6 +262,10 @@ impl TaskSync {
                         .and_then(Value::as_u64)
                         .unwrap_or(0),
                 );
+                if let Some(control) = uploaded.get("control").filter(|control| !control.is_null())
+                {
+                    last_control = control.clone();
+                }
                 baseline_files.extend(uploads_to_snapshot_files(&files)?);
                 cursor = self.read_cursor(&task_space_id).await;
             }
@@ -303,6 +306,10 @@ impl TaskSync {
                         .and_then(Value::as_u64)
                         .unwrap_or(0),
                 );
+                if let Some(control) = uploaded.get("control").filter(|control| !control.is_null())
+                {
+                    last_control = control.clone();
+                }
                 baseline_files.extend(uploads_to_snapshot_files(&files)?);
                 cursor = self.read_cursor(&task_space_id).await;
             }
@@ -349,6 +356,9 @@ impl TaskSync {
         Ok(json!({
             "revision": applied_revision,
             "committedRevision": committed_revision,
+            // 命令结果需要任务当前的 content revision；上传响应里的 `revision`
+            // 是非 reconcile 上传前的游标版本，只有 control.task 携带权威值。
+            "control": last_control,
             "sequence": cursor.sequence,
             "baselineFiles": baseline_files.iter().map(|file| json!({
                 "path": file.path,
@@ -483,35 +493,26 @@ impl TaskSync {
                         "controlState": control.state,
                     }));
                 }
-                let fenced = if let Some(stored_lease) = self
-                    .stored_task_lease(execution_task_key)
-                    .await
-                {
-                    match self
-                        .heartbeat_remote_task(
-                            binding,
-                            execution_task_key,
-                            &stored_lease.token,
-                        )
-                        .await
-                    {
-                        Ok(value) => Ok(value),
-                        Err(error)
-                            if matches!(
-                                error.server_code.as_deref(),
-                                Some("TASK_LEASE_INVALID")
-                                    | Some("TASK_LEASE_REQUIRED")
-                            ) =>
+                let fenced =
+                    if let Some(stored_lease) = self.stored_task_lease(execution_task_key).await {
+                        match self
+                            .heartbeat_remote_task(binding, execution_task_key, &stored_lease.token)
+                            .await
                         {
-                            self.claim_remote_task(binding, execution_task_key)
-                                .await
+                            Ok(value) => Ok(value),
+                            Err(error)
+                                if matches!(
+                                    error.server_code.as_deref(),
+                                    Some("TASK_LEASE_INVALID") | Some("TASK_LEASE_REQUIRED")
+                                ) =>
+                            {
+                                self.claim_remote_task(binding, execution_task_key).await
+                            }
+                            Err(error) => Err(error),
                         }
-                        Err(error) => Err(error),
-                    }
-                } else {
-                    self.claim_remote_task(binding, execution_task_key)
-                        .await
-                };
+                    } else {
+                        self.claim_remote_task(binding, execution_task_key).await
+                    };
                 match fenced {
                     Ok((claimed, lease_token)) => {
                         fence = Some(UploadFence {
@@ -653,8 +654,7 @@ impl TaskSync {
         let result = loop {
             // 每次尝试都重新校验分支，并把实际分支名带给服务端。
             let observed = self.assert_binding_branch(binding).await?;
-            let request =
-                build_upload_request(&batch, active_sequence, &observed, fence.as_ref());
+            let request = build_upload_request(&batch, active_sequence, &observed, fence.as_ref());
             match self
                 .upload_with_slot(&task_space_id, retry_delay, &request)
                 .await
@@ -752,7 +752,8 @@ impl TaskSync {
         }
         if let Some(execution_task_key) = persisted_execution_task_key.as_deref() {
             if let Some(lease) = result.get("lease").filter(|lease| !lease.is_null()) {
-                self.save_task_lease(execution_task_key, lease.clone()).await?;
+                self.save_task_lease(execution_task_key, lease.clone())
+                    .await?;
             }
             if let Some(task_version) = result.get("taskVersion").and_then(Value::as_u64) {
                 self.update_control_task_version(execution_task_key, task_version)

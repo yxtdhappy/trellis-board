@@ -1,10 +1,9 @@
-use super::*;
 use super::support::*;
+use super::*;
 
 #[tokio::test]
 async fn claim_persists_lease_for_restart_recovery() {
-    let (root, store, _sync, binding) =
-        test_task_sync_fixture("trellis-control-lease").await;
+    let (root, store, _sync, binding) = test_task_sync_fixture("trellis-control-lease").await;
     let controls = json!([{
         "executionTaskKey": "space-1::task-a",
         "taskId": "task-a",
@@ -22,8 +21,7 @@ async fn claim_persists_lease_for_restart_recovery() {
         "controls": controls,
     }))
     .await;
-    let api =
-        Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
     let sink: ControlSink = Arc::new(|_| {});
     let sync = TaskSync::new(store.clone(), api.clone(), sink);
     sync.set_bindings(vec![binding.clone()]).await;
@@ -67,6 +65,58 @@ async fn claim_persists_lease_for_restart_recovery() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
+#[tokio::test]
+async fn release_execution_lease_releases_stored_lease_once() {
+    let (root, store, _sync, binding) = test_task_sync_fixture("trellis-control-release").await;
+    let controls = json!([{
+        "executionTaskKey": "space-1::task-a",
+        "taskId": "task-a",
+        "relativeDir": ".trellis/tasks/task-a",
+        "title": "任务 A",
+        "state": "materialized",
+        "taskVersion": 3,
+        "assigneeUserId": "user-b",
+        "handoffState": "none",
+        "updatedAt": "2026-11-17T00:00:00.000Z"
+    }]);
+    let (server_url, _changes, requests, server_task) = mock_api_server(json!({
+        "revision": 1,
+        "files": [],
+        "controls": controls,
+    }))
+    .await;
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+    let sink: ControlSink = Arc::new(|_| {});
+    let sync = TaskSync::new(store.clone(), api, sink);
+    sync.set_bindings(vec![binding.clone()]).await;
+    sync.claim_remote_task(&binding, "space-1::task-a")
+        .await
+        .expect("claim");
+    assert!(sync.stored_task_lease("space-1::task-a").await.is_some());
+
+    sync.release_execution_lease("space-1::task-a").await;
+    assert!(sync.stored_task_lease("space-1::task-a").await.is_none());
+    let release_count = requests
+        .lock()
+        .await
+        .iter()
+        .filter(|request| request.ends_with("/release"))
+        .count();
+    assert_eq!(release_count, 1);
+
+    // 没有本地租约时不再重复请求释放。
+    sync.release_execution_lease("space-1::task-a").await;
+    let release_count = requests
+        .lock()
+        .await
+        .iter()
+        .filter(|request| request.ends_with("/release"))
+        .count();
+    assert_eq!(release_count, 1);
+
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
 
 #[tokio::test]
 async fn rejects_archived_task_directory_under_temp_repo() {
@@ -79,22 +129,17 @@ async fn rejects_archived_task_directory_under_temp_repo() {
             .expect("active task"),
         tasks_root.join("active-task")
     );
-    let error = resolve_task_directory(
-        &binding,
-        ".trellis/tasks/archive/2026-11/archived-task",
-    )
-    .await
-    .expect_err("归档目录必须由服务端 Git 管理");
+    let error = resolve_task_directory(&binding, ".trellis/tasks/archive/2026-11/archived-task")
+        .await
+        .expect_err("归档目录必须由服务端 Git 管理");
     assert_eq!(error.code, code::INVALID_RESPONSE);
 
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn invalid_remove_keeps_existing_task_directory() {
-    let (root, _store, sync, binding) =
-        test_task_sync_fixture("trellis-task-remove").await;
+    let (root, _store, sync, binding) = test_task_sync_fixture("trellis-task-remove").await;
     let sentinel = Path::new(&binding.repo_path)
         .join(".trellis")
         .join("tasks")
@@ -116,11 +161,9 @@ async fn invalid_remove_keeps_existing_task_directory() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn invalid_backup_does_not_create_live_backup() {
-    let (root, store, sync, binding) =
-        test_task_sync_fixture("trellis-task-backup").await;
+    let (root, store, sync, binding) = test_task_sync_fixture("trellis-task-backup").await;
 
     let error = sync
         .backup_directory(&binding, ".trellis/tasks/../keep")
@@ -135,7 +178,6 @@ async fn invalid_backup_does_not_create_live_backup() {
 
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[test]
 fn sync_error_event_contains_readable_scope_without_repo_path() {
@@ -153,7 +195,6 @@ fn sync_error_event_contains_readable_scope_without_repo_path() {
     assert!(event.get("repoPath").is_none());
     assert!(!event.to_string().contains("C:/repos"));
 }
-
 
 #[test]
 fn handoff_manifest_is_stable_and_ack_contains_only_cleanup_metadata() {
@@ -203,7 +244,6 @@ fn handoff_manifest_is_stable_and_ack_contains_only_cleanup_metadata() {
     assert!(request.get("path").is_none());
 }
 
-
 #[test]
 fn handoff_git_gate_accepts_only_fully_untracked_directories() {
     use crate::agent::git::GitStatusEntry;
@@ -227,11 +267,9 @@ fn handoff_git_gate_accepts_only_fully_untracked_directories() {
     assert!(!git_entries_all_untracked(&[]));
 }
 
-
 #[tokio::test]
 async fn handoff_source_fails_closed_on_baseline_or_git_uncertainty() {
-    let (root, store, sync, binding) =
-        test_task_sync_fixture("trellis-handoff-source").await;
+    let (root, store, sync, binding) = test_task_sync_fixture("trellis-handoff-source").await;
     store
         .save_config(test_config(binding.clone()))
         .await
@@ -293,10 +331,7 @@ async fn handoff_source_fails_closed_on_baseline_or_git_uncertainty() {
         &binding.task_space_id,
         CursorPatch {
             baselines: Some(BTreeMap::from([
-                (
-                    format!("{task_dir}/task.json"),
-                    snapshot_sha256(task_json),
-                ),
+                (format!("{task_dir}/task.json"), snapshot_sha256(task_json)),
                 (format!("{task_dir}/prd.md"), snapshot_sha256(prd)),
             ])),
             ..Default::default()
@@ -318,11 +353,9 @@ async fn handoff_source_fails_closed_on_baseline_or_git_uncertainty() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn handoff_retry_requires_complete_and_verifiable_backup() {
-    let (root, store, sync, binding) =
-        test_task_sync_fixture("trellis-handoff-backup-check").await;
+    let (root, store, sync, binding) = test_task_sync_fixture("trellis-handoff-backup-check").await;
     let task_dir = ".trellis/tasks/task-backup";
     let source_dir = Path::new(&binding.repo_path).join(task_dir);
     tokio::fs::create_dir_all(&source_dir)
@@ -387,6 +420,7 @@ async fn handoff_retry_requires_complete_and_verifiable_backup() {
         assignee_user_id: Some("user-b".to_string()),
         handoff_state: "source_cleanup_pending".to_string(),
         materialized_revision: Some(1),
+        content_revision: None,
         materialized_at: None,
         lease_held_by_other_user: false,
         updated_at: String::new(),
@@ -433,11 +467,9 @@ async fn handoff_retry_requires_complete_and_verifiable_backup() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn suppression_requires_matching_content_and_consumes_once() {
-    let (root, _store, sync, binding) =
-        test_task_sync_fixture("trellis-watch-suppression").await;
+    let (root, _store, sync, binding) = test_task_sync_fixture("trellis-watch-suppression").await;
     let relative = ".trellis/tasks/a/prd.md";
     let path = Path::new(&binding.repo_path).join(".trellis/tasks/a/prd.md");
     tokio::fs::create_dir_all(path.parent().expect("parent"))
@@ -464,7 +496,6 @@ async fn suppression_requires_matching_content_and_consumes_once() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[test]
 fn error_event_carries_error_and_server_codes() {
     let mut error = AgentError::new(code::HTTP_ERROR, "失败");
@@ -481,7 +512,6 @@ fn error_event_carries_error_and_server_codes() {
     );
     assert!(event.get("serverCode").is_none());
 }
-
 
 #[test]
 fn readonly_dirs_round_trip_and_drop_archive_entries() {
@@ -520,7 +550,6 @@ fn readonly_dirs_round_trip_and_drop_archive_entries() {
     assert!(apply_cursor_patch(&mut cursor, &patch));
     assert!(cursor.readonly_task_dirs.is_empty());
 }
-
 
 #[tokio::test]
 async fn marking_readonly_dir_drops_stale_deferred_entry() {

@@ -10,6 +10,33 @@ fn scoped(kind: &str) -> Value {
 }
 
 #[test]
+fn handoff_notification_only_covers_terminal_outcomes() {
+    assert_eq!(
+        handoff_notification(&json!({ "outcome": "", "taskId": "task-a" })),
+        None
+    );
+    assert_eq!(
+        handoff_notification(&json!({
+            "outcome": "cleaned",
+            "taskId": "e2e-handoff-1",
+            "reason": null
+        })),
+        Some(("任务已被认领，本地副本已清理", "e2e-handoff-1".to_string()))
+    );
+    assert_eq!(
+        handoff_notification(&json!({
+            "outcome": "conflict",
+            "taskId": "e2e-handoff-2",
+            "reason": "lease_active"
+        })),
+        Some((
+            "任务已被认领，本地副本需保留",
+            "e2e-handoff-2 · 任务仍有其他客户端持有写租约，暂未清理".to_string()
+        ))
+    );
+}
+
+#[test]
 fn review_notification_counts_differences() {
     let mut control = scoped("initial_sync_review");
     control["differences"] = json!([{ "type": "local-only" }, { "type": "content-conflict" }]);

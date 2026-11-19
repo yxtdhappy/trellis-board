@@ -1,5 +1,5 @@
-use super::*;
 use super::support::*;
+use super::*;
 
 #[tokio::test]
 async fn local_only_task_upload_treats_missing_directory_as_first_snapshot() {
@@ -58,14 +58,13 @@ async fn local_only_task_upload_treats_missing_directory_as_first_snapshot() {
     assert!(requests
         .iter()
         .any(|request| request.contains("/files?taskDir=")));
-    assert!(requests.iter().any(|request| {
-        request == "POST /api/agent/task-spaces/space-1/changes"
-    }));
+    assert!(requests
+        .iter()
+        .any(|request| { request == "POST /api/agent/task-spaces/space-1/changes" }));
 
     server_task.abort();
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[test]
 fn snapshot_controls_distinguish_legacy_and_authoritative_empty() {
@@ -81,11 +80,9 @@ fn snapshot_controls_distinguish_legacy_and_authoritative_empty() {
     );
 }
 
-
 #[tokio::test]
 async fn deletion_only_upload_recovers_persisted_control_identity() {
-    let (root, store, sync, binding) =
-        test_task_sync_fixture("trellis-control-delete").await;
+    let (root, store, sync, binding) = test_task_sync_fixture("trellis-control-delete").await;
     let mut state = TaskControlStateFile::empty();
     state
         .upsert_control(
@@ -100,6 +97,7 @@ async fn deletion_only_upload_recovers_persisted_control_identity() {
                 assignee_user_id: Some("user-b".to_string()),
                 handoff_state: "none".to_string(),
                 materialized_revision: None,
+                content_revision: None,
                 materialized_at: None,
                 lease_held_by_other_user: false,
                 updated_at: "2026-11-17T00:00:00.000Z".to_string(),
@@ -131,7 +129,6 @@ async fn deletion_only_upload_recovers_persisted_control_identity() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn task_directory_resolution_rejects_invalid_relative_path() {
     let binding = test_binding("space-1");
@@ -140,12 +137,8 @@ async fn task_directory_resolution_rejects_invalid_relative_path() {
         .expect_err("目录穿越");
     assert_eq!(error.code, code::INVALID_RESPONSE);
     let details = error.details.expect("路径错误详情");
-    assert_eq!(
-        details["taskDir"],
-        json!(".trellis/tasks/../evil")
-    );
+    assert_eq!(details["taskDir"], json!(".trellis/tasks/../evil"));
 }
-
 
 #[test]
 fn groups_more_than_batch_limit_across_task_directories() {
@@ -165,7 +158,6 @@ fn groups_more_than_batch_limit_across_task_directories() {
     assert!(groups.iter().all(|group| group.files.len() == 550));
 }
 
-
 #[test]
 fn validates_upload_batch_file_count_boundary() {
     let mut files = batch_file_values(TASK_SNAPSHOT_MAX_FILES);
@@ -178,7 +170,6 @@ fn validates_upload_batch_file_count_boundary() {
     let error = validate_upload_batch(&files).expect_err("超过文件数上限应失败");
     assert!(error.message.contains("1024"));
 }
-
 
 #[test]
 fn validates_upload_batch_byte_boundary() {
@@ -199,7 +190,6 @@ fn validates_upload_batch_byte_boundary() {
     assert!(error.message.contains("64 MiB"));
 }
 
-
 #[test]
 fn upload_batch_rejects_archive_paths() {
     let files = vec![snapshot_file_value(
@@ -209,7 +199,6 @@ fn upload_batch_rejects_archive_paths() {
     let error = validate_upload_batch(&files).expect_err("归档路径必须拒绝");
     assert!(error.message.contains("服务端 Git"));
 }
-
 
 #[test]
 fn group_rejects_duplicate_snapshot_paths() {
@@ -221,7 +210,6 @@ fn group_rejects_duplicate_snapshot_paths() {
     let error = group_task_snapshot_files(&files).expect_err("重复路径应失败");
     assert!(error.message.contains("不能重复"));
 }
-
 
 #[test]
 fn server_snapshot_parser_ignores_archive_files() {
@@ -240,17 +228,12 @@ fn server_snapshot_parser_ignores_archive_files() {
     assert_eq!(files[0].path, ".trellis/tasks/a/prd.md");
 }
 
-
 #[test]
 fn directory_parser_rejects_archive_targets() {
-    let error = parse_directory_files(
-        &json!({ "files": [] }),
-        ".trellis/tasks/archive/2026-11/a",
-    )
-    .expect_err("归档目录不能走 Agent 快照");
+    let error = parse_directory_files(&json!({ "files": [] }), ".trellis/tasks/archive/2026-11/a")
+        .expect_err("归档目录不能走 Agent 快照");
     assert_eq!(error.code, code::INVALID_RESPONSE);
 }
-
 
 #[test]
 fn groups_ignore_archived_task_directories() {
@@ -264,7 +247,6 @@ fn groups_ignore_archived_task_directories() {
     assert_eq!(groups.iter().filter(|group| group.archived).count(), 0);
     assert_eq!(groups.iter().filter(|group| !group.archived).count(), 1);
 }
-
 
 #[test]
 fn task_title_reads_trimmed_title_or_none() {
@@ -289,7 +271,6 @@ fn task_title_reads_trimmed_title_or_none() {
     );
     assert_eq!(task_title(&broken), None);
 }
-
 
 #[test]
 fn difference_control_carries_both_task_titles() {
@@ -340,7 +321,6 @@ fn difference_control_carries_both_task_titles() {
     assert!(untitled.to_control()["title"].is_null());
 }
 
-
 #[test]
 fn normalizes_text_and_paths() {
     assert_eq!(normalize_snapshot_text("\u{feff}a\r\nb\rc"), "a\nb\nc");
@@ -354,7 +334,6 @@ fn normalizes_text_and_paths() {
         ".trellis/tasks/archive/2026-09/01-x"
     );
 }
-
 
 #[test]
 fn classifies_snapshot_differences() {
@@ -397,7 +376,6 @@ fn classifies_snapshot_differences() {
     assert_eq!(by_id.get("c"), Some(&DiffKind::ServerOnly));
 }
 
-
 #[test]
 fn rejects_duplicate_task_ids_as_invalid() {
     let local = vec![
@@ -419,7 +397,6 @@ fn rejects_duplicate_task_ids_as_invalid() {
         .all(|item| item.kind == DiffKind::Invalid));
 }
 
-
 #[test]
 fn builds_upload_files_with_deletions() {
     let local = task_group("a", ".trellis/tasks/a", &[("prd.md", "new")]);
@@ -439,8 +416,7 @@ fn builds_upload_files_with_deletions() {
         ".trellis/tasks/a/notes.md".to_string(),
         snapshot_sha256("old"),
     );
-    let files =
-        build_directory_files(".trellis/tasks/a", Some(&local), &server_files, &baselines);
+    let files = build_directory_files(".trellis/tasks/a", Some(&local), &server_files, &baselines);
     assert_eq!(files.len(), 2);
     let deleted = files.iter().find(|file| file.deleted).expect("deletion");
     assert_eq!(deleted.path, ".trellis/tasks/a/notes.md");
@@ -449,7 +425,6 @@ fn builds_upload_files_with_deletions() {
         Some(snapshot_sha256("old").as_str())
     );
 }
-
 
 #[tokio::test]
 async fn reads_local_task_snapshot_files() {
@@ -485,16 +460,14 @@ async fn reads_local_task_snapshot_files() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn targeted_local_read_does_not_decode_sibling_task_bodies() {
-    let root = std::env::temp_dir().join(format!(
-        "trellis-targeted-scan-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let root = std::env::temp_dir().join(format!("trellis-targeted-scan-{}", uuid::Uuid::new_v4()));
     let selected = root.join(".trellis").join("tasks").join("selected");
     let sibling = root.join(".trellis").join("tasks").join("sibling");
-    tokio::fs::create_dir_all(&selected).await.expect("selected");
+    tokio::fs::create_dir_all(&selected)
+        .await
+        .expect("selected");
     tokio::fs::create_dir_all(&sibling).await.expect("sibling");
     tokio::fs::write(selected.join("prd.md"), "ok")
         .await
@@ -511,7 +484,6 @@ async fn targeted_local_read_does_not_decode_sibling_task_bodies() {
     assert_eq!(files[0]["path"], ".trellis/tasks/selected/prd.md");
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[test]
 fn with_task_dir_injects_and_keeps_existing_directory() {
@@ -538,7 +510,6 @@ fn with_task_dir_injects_and_keeps_existing_directory() {
     );
 }
 
-
 #[test]
 fn write_forbidden_and_archived_errors_are_classified_apart() {
     let mut forbidden = AgentError::new(code::HTTP_ERROR, "无权限");
@@ -564,7 +535,6 @@ fn write_forbidden_and_archived_errors_are_classified_apart() {
     assert!(!is_foreign_task_error(&other));
     assert!(!is_archived_task_error(&other));
 }
-
 
 #[tokio::test]
 async fn directory_digest_compares_copies_by_content() {

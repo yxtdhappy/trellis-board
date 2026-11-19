@@ -10,13 +10,12 @@ impl TaskSync {
             return protocol::err(code::COMMAND_INVALID, "任务执行身份与当前任务空间不一致");
         }
         let binding = self.binding(task_space_id).await?;
-        let (control, _) = self
-            .claim_remote_task(&binding, execution_task_key)
-            .await?;
+        let (control, _) = self.claim_remote_task(&binding, execution_task_key).await?;
         Ok(json!({
             "executionTaskKey": control.execution_task_key,
             "taskId": control.task_id,
             "taskVersion": control.task_version,
+            "contentRevision": control.content_revision,
             "state": control.state,
             "handoffState": control.handoff_state,
         }))
@@ -73,10 +72,7 @@ impl TaskSync {
             .collect();
         let resolution = self.resolve_task_ownership(&binding, &candidates).await?;
         let mut project_task_spaces = resolution.project_task_spaces.clone();
-        if let Ok(result) = self
-            .fetch_task_ownership(&binding.task_space_id, &[])
-            .await
-        {
+        if let Ok(result) = self.fetch_task_ownership(&binding.task_space_id, &[]).await {
             if let Some(items) = result
                 .get("projectTaskSpaces")
                 .and_then(Value::as_array)
@@ -128,10 +124,7 @@ impl TaskSync {
             .cloned()
             .ok_or_else(|| AgentError::new(code::CONFIG_INVALID, "任务归属决定必须是数组"))?;
         if raw.is_empty() || raw.len() > TASK_OWNERSHIP_QUERY_LIMIT {
-            return protocol::err(
-                code::CONFIG_INVALID,
-                "任务归属决定必须包含 1 到 200 个任务",
-            );
+            return protocol::err(code::CONFIG_INVALID, "任务归属决定必须包含 1 到 200 个任务");
         }
         let binding = self.binding(task_space_id).await?;
         self.assert_binding_branch(&binding).await?;
@@ -207,8 +200,7 @@ impl TaskSync {
             .collect();
         allowed_branches.insert(binding.branch_name.clone());
         for decision in &normalized {
-            if decision.action == "use-branch"
-                && !allowed_branches.contains(&decision.branch_name)
+            if decision.action == "use-branch" && !allowed_branches.contains(&decision.branch_name)
             {
                 return protocol::err(
                     code::CONFIG_INVALID,
@@ -262,8 +254,7 @@ impl TaskSync {
                 .collect::<Vec<_>>(),
         )
         .await?;
-        let ownership_groups: Vec<SnapshotGroup> =
-            groups_by_dir.values().cloned().collect();
+        let ownership_groups: Vec<SnapshotGroup> = groups_by_dir.values().cloned().collect();
         self.sync_ownership_inbox(&binding, &ledger_task_dirs, &ownership_groups)
             .await;
         let sync = if current_branch.is_empty() {
@@ -290,7 +281,11 @@ impl TaskSync {
         }
         let cursor = self.read_cursor(&binding.task_space_id).await;
         let readonly: HashSet<String> = cursor.readonly_task_dirs.keys().cloned().collect();
-        if cursor.deferred.keys().any(|task_dir| readonly.contains(task_dir)) {
+        if cursor
+            .deferred
+            .keys()
+            .any(|task_dir| readonly.contains(task_dir))
+        {
             let mut deferred = cursor.deferred.clone();
             deferred.retain(|task_dir, _| !readonly.contains(task_dir));
             self.write_cursor(

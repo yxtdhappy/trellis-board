@@ -544,12 +544,17 @@ impl AgentRuntime {
             match outcome {
                 Ok(_) => return,
                 Err(error) => {
-                    let waiting_index = error
-                        .details
-                        .as_ref()
-                        .and_then(|details| details.get("waitingIndex"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
+                    // 服务端以错误码 COMMAND_WAITING_INDEX 表示权威索引尚未追上
+                    // 本次上传；早期客户端只认 details.waitingIndex，导致按普通
+                    // 错误少重试。这里以错误码为主，保留字段兼容。
+                    let waiting_index = error.server_code.as_deref()
+                        == Some("COMMAND_WAITING_INDEX")
+                        || error
+                            .details
+                            .as_ref()
+                            .and_then(|details| details.get("waitingIndex"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
                     let limit = if waiting_index {
                         COMMAND_MAX_RETRIES_WAITING_INDEX
                     } else {
@@ -557,9 +562,24 @@ impl AgentRuntime {
                     };
                     attempts += 1;
                     if attempts > limit {
+                        crate::logging::warn(&format!(
+                            "命令结果提交失败，已停止重试 {}（attempts={}）：{} {}",
+                            command.id,
+                            attempts - 1,
+                            error.code,
+                            safe_error_message(&error.message)
+                        ));
                         return;
                     }
-                    tokio::time::sleep(RETRY_BASE * attempts as u32).await;
+                    crate::logging::warn(&format!(
+                        "命令结果提交失败，准备重试 {}（attempts={}/{}）：{} {}",
+                        command.id,
+                        attempts,
+                        limit,
+                        error.code,
+                        safe_error_message(&error.message)
+                    ));
+                    tokio::time::sleep((RETRY_BASE * attempts as u32).min(RETRY_MAX)).await;
                 }
             }
         }

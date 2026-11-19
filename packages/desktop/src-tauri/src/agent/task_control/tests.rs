@@ -11,6 +11,7 @@ fn control(state: &str, task_id: &str) -> TaskControl {
         assignee_user_id: Some("user-b".to_string()),
         handoff_state: "none".to_string(),
         materialized_revision: None,
+        content_revision: None,
         materialized_at: None,
         lease_held_by_other_user: false,
         updated_at: "2026-11-17T00:00:00.000Z".to_string(),
@@ -100,10 +101,7 @@ fn stored_task_version_never_regresses() {
 
     assert!(state.update_task_version(&execution_task_key, 4));
     assert!(!state.update_task_version(&execution_task_key, 3));
-    assert_eq!(
-        state.controls[&execution_task_key].task_version,
-        4
-    );
+    assert_eq!(state.controls[&execution_task_key].task_version, 4);
 }
 
 #[test]
@@ -136,9 +134,8 @@ fn lease_state_round_trips_for_restart_recovery() {
             updated_at: "2026-11-17T09:50:00.000Z".to_string(),
         },
     ));
-    let restored = parse_state_file(
-        &serde_json::to_string(&state).expect("serialize control state"),
-    );
+    let restored =
+        parse_state_file(&serde_json::to_string(&state).expect("serialize control state"));
     assert_eq!(
         restored.leases["space-1::task-a"].token.as_str(),
         "lease-token"
@@ -154,11 +151,7 @@ fn stored_control_recovers_execution_key_for_deletion_only_upload() {
 
     assert_eq!(
         state
-            .execution_task_key_for_dir(
-                "local-1",
-                "space-1",
-                ".trellis/tasks/task-a"
-            )
+            .execution_task_key_for_dir("local-1", "space-1", ".trellis/tasks/task-a")
             .map(String::as_str),
         Some("space-1::task-a")
     );

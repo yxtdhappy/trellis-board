@@ -2,7 +2,11 @@ use super::*;
 
 impl TaskSync {
     /// 服务端已归档的任务若本地还留着活跃副本，按内容一致性清理。
-    pub(super) async fn cleanup_archived_controls(&self, binding: &AgentBinding, controls: &[TaskControl]) {
+    pub(super) async fn cleanup_archived_controls(
+        &self,
+        binding: &AgentBinding,
+        controls: &[TaskControl],
+    ) {
         for control in controls {
             if control.control_state() == TaskControlState::Archived {
                 self.cleanup_archived_residue(binding, &control.relative_dir)
@@ -37,13 +41,13 @@ impl TaskSync {
             if reassigned {
                 dirs.remove(task_dir);
                 continue;
-                }
+            }
             match resolve_task_directory(binding, task_dir).await {
                 Ok(path) if tokio::fs::metadata(&path).await.is_ok() => {}
                 _ => {
                     dirs.remove(task_dir);
+                }
             }
-        }
         }
         if dirs.len() == before {
             return Ok(());
@@ -211,6 +215,53 @@ impl TaskSync {
         }))
     }
 }
+impl TaskSync {
+    /// 改派命令的本地物化：目标目录不存在时，从服务端快照原子写入完整任务目录。
+    /// 返回写入的服务端文件集合，供命令层复用 task.json 摘要和基线。
+    pub(crate) async fn materialize_task_directory(
+        &self,
+        binding: &AgentBinding,
+        task_dir: &str,
+    ) -> AgentResult<Vec<SnapshotFile>> {
+        let target = resolve_task_directory(binding, task_dir).await?;
+        if tokio::fs::metadata(&target).await.is_ok() {
+            return protocol::err(code::INVALID_RESPONSE, "本地任务目录已存在，不能重复物化");
+        }
+        let directory = self
+            .fetch_directory(&binding.task_space_id, task_dir)
+            .await?;
+        let files = parse_directory_files(&directory, task_dir)?;
+        if files.is_empty() {
+            return protocol::err(code::INVALID_RESPONSE, "服务端任务文件为空");
+        }
+        if files.iter().any(|file| file.archived) {
+            return protocol::err(code::INVALID_RESPONSE, "归档任务不能物化为本地工作副本");
+        }
+        let task_json = files
+            .iter()
+            .find(|file| file.file_path == "task.json")
+            .ok_or_else(|| {
+                AgentError::new(code::INVALID_RESPONSE, "服务端缺少目标任务的 task.json")
+            })?;
+        let task_id = parse_task_id(&task_json.content).ok_or_else(|| {
+            AgentError::new(code::INVALID_RESPONSE, "服务端 task.json 缺少任务 id")
+        })?;
+        let task_branch = parse_task_metadata(&task_json.content).1;
+        write_task_directory(
+            binding,
+            &SnapshotGroup {
+                task_dir: task_dir.to_string(),
+                archived: false,
+                archive_month: None,
+                files: files.clone(),
+                task_id: Some(task_id),
+                task_branch,
+            },
+        )
+        .await?;
+        Ok(files)
+    }
+}
 pub(super) async fn resolve_task_directory(
     binding: &AgentBinding,
     task_dir: &str,
@@ -237,7 +288,10 @@ pub(super) async fn resolve_task_directory(
     for path in paths {
         match tokio::fs::symlink_metadata(&path).await {
             Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(task_directory_error(task_dir, "任务目录路径不能经过符号链接"))
+                return Err(task_directory_error(
+                    task_dir,
+                    "任务目录路径不能经过符号链接",
+                ))
             }
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
@@ -337,7 +391,10 @@ pub(super) async fn task_directory_digest(root: &Path) -> AgentResult<BTreeMap<S
     }
     Ok(digest)
 }
-pub(super) async fn write_task_directory(binding: &AgentBinding, group: &SnapshotGroup) -> AgentResult<()> {
+pub(super) async fn write_task_directory(
+    binding: &AgentBinding,
+    group: &SnapshotGroup,
+) -> AgentResult<()> {
     if group.archived
         || is_archive_task_dir(&group.task_dir)
         || group.files.iter().any(|file| file.archived)
@@ -388,7 +445,9 @@ pub(super) async fn write_task_directory(binding: &AgentBinding, group: &Snapsho
     Ok(())
 }
 pub(super) async fn copy_directory(source: &Path, target: &Path) -> AgentResult<()> {
-    let source_metadata = tokio::fs::symlink_metadata(source).await.map_err(io_error)?;
+    let source_metadata = tokio::fs::symlink_metadata(source)
+        .await
+        .map_err(io_error)?;
     if !source_metadata.is_dir() || source_metadata.file_type().is_symlink() {
         return protocol::err(code::INVALID_RESPONSE, "备份源必须是真实目录");
     }
@@ -424,7 +483,9 @@ pub(super) async fn copy_directory(source: &Path, target: &Path) -> AgentResult<
                     return protocol::err(code::INVALID_RESPONSE, "备份源不允许符号链接");
                 }
                 if metadata.is_dir() {
-                    tokio::fs::create_dir(&destination).await.map_err(io_error)?;
+                    tokio::fs::create_dir(&destination)
+                        .await
+                        .map_err(io_error)?;
                     stack.push(path);
                 } else if metadata.is_file() {
                     if let Some(parent) = destination.parent() {
@@ -452,7 +513,9 @@ pub(super) async fn copy_directory(source: &Path, target: &Path) -> AgentResult<
     copy_result
 }
 pub(super) async fn task_directory_file_paths(source: &Path) -> AgentResult<BTreeSet<String>> {
-    let metadata = tokio::fs::symlink_metadata(source).await.map_err(io_error)?;
+    let metadata = tokio::fs::symlink_metadata(source)
+        .await
+        .map_err(io_error)?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return protocol::err(code::INVALID_RESPONSE, "任务目录必须是真实目录");
     }
@@ -493,10 +556,7 @@ pub async fn read_local_task_snapshot_files(
         match tokio::fs::symlink_metadata(path).await {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
             Ok(_) => {
-                return protocol::err(
-                    code::MISSING_TRELLIS,
-                    format!("{label} 必须是真实目录"),
-                )
+                return protocol::err(code::MISSING_TRELLIS, format!("{label} 必须是真实目录"))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => return Err(io_error(error)),
@@ -517,9 +577,7 @@ pub async fn read_local_task_snapshot_files(
     while let Some(directory) = stack.pop() {
         match tokio::fs::symlink_metadata(&directory).await {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
-            Err(error)
-                if task_dirs.is_some() && error.kind() == std::io::ErrorKind::NotFound =>
-            {
+            Err(error) if task_dirs.is_some() && error.kind() == std::io::ErrorKind::NotFound => {
                 continue
             }
             Ok(_) => return protocol::err(code::INVALID_RESPONSE, "任务目录不允许符号链接"),

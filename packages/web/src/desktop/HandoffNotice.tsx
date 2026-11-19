@@ -1,5 +1,5 @@
 import { Info, TriangleAlert } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { invoke, listen } from '@/desktop/tauri'
 
@@ -15,7 +15,6 @@ type HandoffNotice = {
 }
 
 const NOTICE_STORAGE_KEY = 'trellis.handoff-notice-notified.v1'
-let notificationPermissionRequest: Promise<NotificationPermission> | null = null
 
 function normalizeNotices(value: unknown): HandoffNotice[] {
   if (!Array.isArray(value)) return []
@@ -68,54 +67,6 @@ function saveNotified(values: Set<string>) {
   }
 }
 
-function notificationApi(): typeof Notification | null {
-  if (typeof window === 'undefined' || !('Notification' in window)) return null
-  return window.Notification
-}
-
-async function ensureNotificationPermission(): Promise<NotificationPermission> {
-  const api = notificationApi()
-  if (!api) return 'denied'
-  if (api.permission === 'granted' || api.permission === 'denied') return api.permission
-  if (!notificationPermissionRequest) {
-    try {
-      notificationPermissionRequest = api.requestPermission()
-    } catch {
-      notificationPermissionRequest = Promise.resolve('denied')
-    }
-  }
-  try {
-    return await notificationPermissionRequest
-  } catch {
-    return 'denied'
-  }
-}
-
-function forgetNotified(key: string) {
-  const notified = readNotified()
-  if (!notified.delete(key)) return
-  saveNotified(notified)
-}
-
-async function showSystemNotification(notice: HandoffNotice): Promise<boolean> {
-  const api = notificationApi()
-  if (!api || (await ensureNotificationPermission()) !== 'granted') return false
-  const key = noticeKey(notice)
-  try {
-    const notification = new api(noticeTitle(notice), {
-      body: `${notice.taskId} · ${reasonLabel(notice)}`,
-      tag: `trellis-board-handoff:${key}`,
-    })
-    notification.onerror = () => {
-      forgetNotified(key)
-      notification.close()
-    }
-    return true
-  } catch {
-    return false
-  }
-}
-
 function reasonLabel(notice: HandoffNotice): string {
   switch (notice.reason) {
     case 'missing':
@@ -159,7 +110,6 @@ function noticeTitle(notice: HandoffNotice): string {
 
 export function HandoffNotice() {
   const [notices, setNotices] = useState<HandoffNotice[]>([])
-  const inFlight = useRef(new Set<string>())
   const persistentNotices = notices.filter((notice) => notice.outcome !== 'cleaned')
 
   const load = useCallback(async (): Promise<HandoffNotice[]> => {
@@ -176,24 +126,10 @@ export function HandoffNotice() {
   }, [])
 
   const notifyVisible = useCallback(async () => {
+    // 窗口隐藏/最小化时由桌面层发送原生通知，页内只负责可见时的 toast。
+    if (document.visibilityState !== 'visible') return
     const next = await load()
     const notified = readNotified()
-    if (document.visibilityState !== 'visible') {
-      for (const notice of next) {
-        const key = noticeKey(notice)
-        if (notified.has(key) || inFlight.current.has(key)) continue
-        inFlight.current.add(key)
-        try {
-          if (await showSystemNotification(notice)) {
-            notified.add(key)
-            saveNotified(notified)
-          }
-        } finally {
-          inFlight.current.delete(key)
-        }
-      }
-      return
-    }
     for (const notice of next) {
       const key = noticeKey(notice)
       if (notified.has(key)) continue

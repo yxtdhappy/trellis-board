@@ -381,12 +381,16 @@ async fn create_task(
             "archive 是保留的归档目录，不能用作任务标识",
         );
     }
-    if let Some(execution_task_key) = create_execution_task_key(command, binding) {
-        context
-            .task_sync
-            .claim_execution_task(&binding.task_space_id, &execution_task_key)
-            .await?;
-    }
+    let claimed_content_revision =
+        if let Some(execution_task_key) = create_execution_task_key(command, binding) {
+            let claim = context
+                .task_sync
+                .claim_execution_task(&binding.task_space_id, &execution_task_key)
+                .await?;
+            claim.get("contentRevision").and_then(Value::as_u64)
+        } else {
+            None
+        };
     let tasks_root = repo_path.join(".trellis").join("tasks");
     let before = task_directories(&tasks_root).await?;
     let existing = tasks_root.join(&slug);
@@ -400,12 +404,21 @@ async fn create_task(
                 let updated = read_task_json_opt(&existing.join("task.json"))
                     .await?
                     .ok_or_else(|| AgentError::new(code::GIT_FAILED, "task.py 未保留任务文件"))?;
-                if updated.get("branch").and_then(Value::as_str) != Some(binding.branch_name.as_str())
+                if updated.get("branch").and_then(Value::as_str)
+                    != Some(binding.branch_name.as_str())
                 {
                     return protocol::err(code::GIT_FAILED, "task.py 未能写入任务的分支归属");
                 }
                 let task_id = task_id_of(&updated, &task_dir)?;
-                return finish_create(context, binding, command, &task_dir, &task_id).await;
+                return finish_create(
+                    context,
+                    binding,
+                    command,
+                    &task_dir,
+                    &task_id,
+                    claimed_content_revision,
+                )
+                .await;
             }
             return protocol::err(
                 code::COMMAND_INVALID,
@@ -457,7 +470,15 @@ async fn create_task(
         return protocol::err(code::GIT_FAILED, "task.py 未能写入任务的分支归属");
     }
     let task_id = task_id_of(&task, &task_dir)?;
-    finish_create(context, binding, command, &task_dir, &task_id).await
+    finish_create(
+        context,
+        binding,
+        command,
+        &task_dir,
+        &task_id,
+        claimed_content_revision,
+    )
+    .await
 }
 
 /// create_task 的新服务端会在 payload 中带 executionTaskKey；兼容只带
@@ -489,6 +510,7 @@ async fn finish_create(
     command: &AgentCommand,
     task_dir: &str,
     task_id: &str,
+    claimed_content_revision: Option<u64>,
 ) -> AgentResult<Value> {
     // ponytail: JS 的 `_uploadDirectories` 同时支持 reconcile 与 baseShaByPath；create 无基线，
     // 直接走 reconcile=true 的入口。
@@ -496,7 +518,13 @@ async fn finish_create(
         .task_sync
         .sync_task_directories(&binding.task_space_id, &[task_dir.to_string()], true)
         .await?;
-    let revision = require_synced_revision(&synced)?;
+    let revision = require_synced_revision(&synced, claimed_content_revision)?;
+    if let Some(execution_task_key) = create_execution_task_key(command, binding) {
+        context
+            .task_sync
+            .release_execution_lease(&execution_task_key)
+            .await;
+    }
     Ok(json!({
         "taskId": task_id,
         "taskKey": format!("{}::{task_dir}", binding.task_space_id),
@@ -529,75 +557,132 @@ async fn assign_task(
         .payload_str("executionTaskKey")
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AgentError::new(code::COMMAND_INVALID, "改派命令缺少任务执行身份"))?;
-    context
+    let claim = context
         .task_sync
         .claim_execution_task(&binding.task_space_id, execution_task_key)
         .await?;
+    let claimed_content_revision = claim.get("contentRevision").and_then(Value::as_u64);
     let task_json_path = target.join("task.json");
-    let content = read_utf8(&task_json_path).await?;
-    let mut task: Value = serde_json::from_str(&content)
-        .map_err(|_| AgentError::new(code::COMMAND_INVALID, "任务 task.json 已损坏"))?;
-    if !task.is_object() {
-        return protocol::err(code::COMMAND_INVALID, "任务 task.json 已损坏");
-    }
-    let dirty_paths: Vec<String> =
-        git::status_paths(repo_path, hooks_dir, std::slice::from_ref(&task_dir))
+    let mut task: Value;
+    let task_json_file: SnapshotFile;
+    let apply_assignee: bool;
+    let base_sha: BTreeMap<String, String>;
+    if tokio::fs::metadata(&target).await.is_ok() {
+        let content = read_utf8(&task_json_path).await?;
+        task = serde_json::from_str(&content)
+            .map_err(|_| AgentError::new(code::COMMAND_INVALID, "任务 task.json 已损坏"))?;
+        if !task.is_object() {
+            return protocol::err(code::COMMAND_INVALID, "任务 task.json 已损坏");
+        }
+        let git_entries = git::status_paths(repo_path, hooks_dir, std::slice::from_ref(&task_dir))
             .await
-            .map_err(|_| AgentError::new(code::GIT_FAILED, "无法检查目标任务目录状态"))?
-            .into_iter()
+            .map_err(|_| AgentError::new(code::GIT_FAILED, "无法检查目标任务目录状态"))?;
+        let dirty_paths: Vec<String> = git_entries
+            .iter()
             .map(|entry| entry.path.replace('\\', "/"))
             .collect();
-    let dirty = !dirty_paths.is_empty();
-    let task_json_relative = format!("{task_dir}/task.json");
-    let directory = context
-        .task_sync
-        .fetch_directory(&binding.task_space_id, &task_dir)
-        .await?;
-    let files = task_sync::parse_directory_files(&directory, &task_dir)?;
-    let task_json_file = files
-        .iter()
-        .find(|file| file.path.ends_with("/task.json"))
-        .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "服务端缺少目标任务的 task.json"))?;
-    if let Some(base_sha) = command
-        .payload_str("baseTaskSha256")
-        .filter(|value| !value.is_empty())
-    {
-        if task_json_file.sha256 != base_sha {
-            return protocol::err(code::HTTP_ERROR, "任务文件已被其他成员修改，改派命令已取消");
+        let dirty = !dirty_paths.is_empty();
+        let all_untracked =
+            !git_entries.is_empty() && git_entries.iter().all(|entry| entry.status == "??");
+        let task_json_relative = format!("{task_dir}/task.json");
+        let directory = context
+            .task_sync
+            .fetch_directory(&binding.task_space_id, &task_dir)
+            .await?;
+        let files = task_sync::parse_directory_files(&directory, &task_dir)?;
+        task_json_file = files
+            .iter()
+            .find(|file| file.path.ends_with("/task.json"))
+            .cloned()
+            .ok_or_else(|| {
+                AgentError::new(code::INVALID_RESPONSE, "服务端缺少目标任务的 task.json")
+            })?;
+        if let Some(base_sha) = command
+            .payload_str("baseTaskSha256")
+            .filter(|value| !value.is_empty())
+        {
+            // 目标客户端自己的 watcher 可能先于命令上传了同一改派结果；服务端
+            // assignee 已是目标值时按幂等成功继续，真正的他人内容修改仍然取消。
+            if task_json_file.sha256 != base_sha
+                && task_assignee(&task_json_file).as_deref() != Some(assignee.as_str())
+            {
+                return protocol::err(code::HTTP_ERROR, "任务文件已被其他成员修改，改派命令已取消");
+            }
         }
+        let local_matches_server = snapshot_sha256(&content) == task_json_file.sha256;
+        // 整目录未跟踪通常意味着这是物化后上传失败的副本：允许 lease 持有者重试，
+        // 避免把目标自己的新副本按 LOCAL_DIRTY 拒绝。
+        let retry_after_upload_failure = !local_matches_server
+            && ((!dirty_paths.is_empty()
+                && dirty_paths.iter().all(|path| path == &task_json_relative))
+                || all_untracked)
+            && retry_shape_matches(&task, &task_json_file, &assignee);
+        // 客户端自己物化出来的完整副本尚未提交，但内容与服务端一致；
+        // 它不含用户改动，可以继续完成改派，不能按 LOCAL_DIRTY 拒绝。
+        let materialized_copy = all_untracked && local_matches_server;
+        if dirty && !retry_after_upload_failure && !materialized_copy {
+            return protocol::err(
+                code::LOCAL_DIRTY,
+                format!(
+                    "目标任务目录有未提交修改，请先处理：{}",
+                    dirty_paths
+                        .join("\n")
+                        .chars()
+                        .take(STATUS_DETAIL_LIMIT)
+                        .collect::<String>()
+                ),
+            );
+        }
+        if !local_matches_server && !retry_after_upload_failure {
+            return protocol::err(
+                code::HTTP_ERROR,
+                "本地任务文件与服务端基线不一致，请先同步任务空间后再改派",
+            );
+        }
+        apply_assignee = local_matches_server;
+        // 以服务端当前摘要作为整批基线：目标副本可能刚物化、cursor 尚无逐文件基线，
+        // 只带 task.json 会让其余未变文件被服务端误判为冲突。
+        base_sha = files
+            .iter()
+            .map(|file| (file.path.clone(), file.sha256.clone()))
+            .collect();
+    } else {
+        let files = context
+            .task_sync
+            .materialize_task_directory(binding, &task_dir)
+            .await?;
+        task_json_file = files
+            .iter()
+            .find(|file| file.path.ends_with("/task.json"))
+            .cloned()
+            .ok_or_else(|| {
+                AgentError::new(code::INVALID_RESPONSE, "服务端缺少目标任务的 task.json")
+            })?;
+        if let Some(base_sha) = command
+            .payload_str("baseTaskSha256")
+            .filter(|value| !value.is_empty())
+        {
+            if task_json_file.sha256 != base_sha
+                && task_assignee(&task_json_file).as_deref() != Some(assignee.as_str())
+            {
+                return protocol::err(code::HTTP_ERROR, "任务文件已被其他成员修改，改派命令已取消");
+            }
+        }
+        task = serde_json::from_str(&task_json_file.content)
+            .map_err(|_| AgentError::new(code::COMMAND_INVALID, "任务 task.json 已损坏"))?;
+        if !task.is_object() {
+            return protocol::err(code::COMMAND_INVALID, "任务 task.json 已损坏");
+        }
+        apply_assignee = true;
+        base_sha = files
+            .iter()
+            .map(|file| (file.path.clone(), file.sha256.clone()))
+            .collect();
     }
-    let local_matches_server = snapshot_sha256(&content) == task_json_file.sha256;
-    let retry_after_upload_failure = !local_matches_server
-        && !dirty_paths.is_empty()
-        && dirty_paths.iter().all(|path| path == &task_json_relative)
-        && retry_shape_matches(&task, task_json_file, &assignee);
-    if dirty && !retry_after_upload_failure {
-        return protocol::err(
-            code::LOCAL_DIRTY,
-            format!(
-                "目标任务目录有未提交修改，请先处理：{}",
-                dirty_paths
-                    .join("\n")
-                    .chars()
-                    .take(STATUS_DETAIL_LIMIT)
-                    .collect::<String>()
-            ),
-        );
-    }
-    if !local_matches_server && !retry_after_upload_failure {
-        return protocol::err(
-            code::HTTP_ERROR,
-            "本地任务文件与服务端基线不一致，请先同步任务空间后再改派",
-        );
-    }
-    if local_matches_server {
+    if apply_assignee {
         task["assignee"] = Value::String(assignee.clone());
         atomic_write_json(&task_json_path, &task).await?;
     }
-    let base_sha: BTreeMap<String, String> =
-        [(task_json_file.path.clone(), task_json_file.sha256.clone())]
-            .into_iter()
-            .collect();
     let synced = context
         .task_sync
         .sync_task_directories_with_base(
@@ -606,7 +691,13 @@ async fn assign_task(
             Some(&base_sha),
         )
         .await?;
-    let revision = require_synced_revision(&synced)?;
+    let revision = require_synced_revision(&synced, claimed_content_revision)?;
+    // 目标端上传完成后释放租约，创建者收到 source_cleanup_pending 时才能
+    // 自动备份并删除源副本；否则会因 leaseHeldByOtherUser 收敛为冲突。
+    context
+        .task_sync
+        .release_execution_lease(execution_task_key)
+        .await;
     let task_id = task_id_of(&task, &task_dir)?;
     Ok(json!({
         "taskId": task_id,
@@ -617,6 +708,17 @@ async fn assign_task(
         "revision": revision,
         "commandId": command.id,
     }))
+}
+
+fn task_assignee(server_file: &SnapshotFile) -> Option<String> {
+    serde_json::from_str::<Value>(&server_file.content)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("assignee")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
 }
 
 fn retry_shape_matches(task: &Value, server_file: &SnapshotFile, assignee: &str) -> bool {
@@ -630,7 +732,7 @@ fn retry_shape_matches(task: &Value, server_file: &SnapshotFile, assignee: &str)
     task.as_object() == Some(&expected)
 }
 
-fn require_synced_revision(result: &Value) -> AgentResult<u64> {
+fn require_synced_revision(result: &Value, claimed_revision: Option<u64>) -> AgentResult<u64> {
     if result.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
         let message = result
             .get("message")
@@ -638,7 +740,32 @@ fn require_synced_revision(result: &Value) -> AgentResult<u64> {
             .unwrap_or("任务文件已被其他成员修改，本次命令未保存");
         return protocol::err(code::HTTP_ERROR, message);
     }
-    match result.get("revision").and_then(Value::as_u64) {
+    if result.get("skipped").and_then(Value::as_bool) == Some(true) {
+        return protocol::err(
+            code::HTTP_ERROR,
+            "任务文件尚未成功上传到服务端，请检查同步错误后重试",
+        );
+    }
+    // 命令结果必须携带任务自己的 content revision：上传响应里的
+    // `revision` 是上传前的空间游标（非 reconcile 上传不会推进游标），
+    // `committedRevision` 只在本次确有提交时非零。`control.task.contentRevision`
+    // 由服务端 commitUpload 在提交和 no-op 两条路径都写成任务当前版本，
+    // 是命令结果唯一可靠的取值。
+    let revision = result
+        .get("control")
+        .and_then(|control| control.get("task"))
+        .and_then(|task| task.get("contentRevision"))
+        .and_then(Value::as_u64)
+        .filter(|revision| *revision >= 1)
+        .or_else(|| {
+            result
+                .get("committedRevision")
+                .and_then(Value::as_u64)
+                .filter(|revision| *revision >= 1)
+        })
+        .or_else(|| claimed_revision.filter(|revision| *revision >= 1))
+        .or_else(|| result.get("revision").and_then(Value::as_u64));
+    match revision {
         Some(revision) if revision >= 1 => Ok(revision),
         _ => protocol::err(
             code::HTTP_ERROR,
