@@ -441,6 +441,7 @@ async fn handoff_retry_requires_complete_and_verifiable_backup() {
         assignee_user_id: Some("user-b".to_string()),
         handoff_state: "source_cleanup_pending".to_string(),
         materialized_revision: Some(1),
+        content_revision: None,
         materialized_at: None,
         lease_held_by_other_user: false,
         updated_at: String::new(),

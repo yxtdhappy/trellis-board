@@ -70,6 +70,8 @@ pub struct TaskControl {
     #[serde(default)]
     pub materialized_revision: Option<u64>,
     #[serde(default)]
+    pub content_revision: Option<u64>,
+    #[serde(default)]
     pub materialized_at: Option<String>,
     #[serde(default)]
     pub lease_held_by_other_user: bool,
@@ -108,6 +110,7 @@ impl TaskControl {
             assignee_user_id: optional_nonempty_text(value, "assigneeUserId"),
             handoff_state: optional_text(value, "handoffState"),
             materialized_revision: value.get("materializedRevision").and_then(Value::as_u64),
+            content_revision: value.get("contentRevision").and_then(Value::as_u64),
             materialized_at: optional_nonempty_text(value, "materializedAt"),
             lease_held_by_other_user: value
                 .get("leaseHeldByOtherUser")
@@ -163,6 +166,7 @@ impl TaskControl {
             assignee_user_id: optional_nonempty_text(value, "assigneeUserId"),
             handoff_state: optional_text(value, "handoffState"),
             materialized_revision: value.get("materializedRevision").and_then(Value::as_u64),
+            content_revision: value.get("contentRevision").and_then(Value::as_u64),
             materialized_at: optional_nonempty_text(value, "materializedAt"),
             lease_held_by_other_user: false,
             updated_at: optional_text(value, "updatedAt"),

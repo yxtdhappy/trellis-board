@@ -26,6 +26,7 @@ impl TaskSync {
         );
         let mut applied_revision = cursor.revision;
         let mut committed_revision = 0u64;
+        let mut last_control = Value::Null;
         let mut baseline_files: Vec<SnapshotFile> = Vec::new();
         let mut prehandled_dirs = HashSet::new();
         let mut pending_outcome = None;
@@ -48,6 +49,9 @@ impl TaskSync {
                             .and_then(Value::as_u64)
                             .unwrap_or(0),
                     );
+                    if let Some(control) = result.get("control").filter(|control| !control.is_null()) {
+                        last_control = control.clone();
+                    }
                     baseline_files.extend(parse_snapshot_files_from_values(&retry_files)?);
                 }
                 prehandled_dirs.extend(retry_dirs);
@@ -263,6 +267,9 @@ impl TaskSync {
                         .and_then(Value::as_u64)
                         .unwrap_or(0),
                 );
+                if let Some(control) = uploaded.get("control").filter(|control| !control.is_null()) {
+                    last_control = control.clone();
+                }
                 baseline_files.extend(uploads_to_snapshot_files(&files)?);
                 cursor = self.read_cursor(&task_space_id).await;
             }
@@ -303,6 +310,9 @@ impl TaskSync {
                         .and_then(Value::as_u64)
                         .unwrap_or(0),
                 );
+                if let Some(control) = uploaded.get("control").filter(|control| !control.is_null()) {
+                    last_control = control.clone();
+                }
                 baseline_files.extend(uploads_to_snapshot_files(&files)?);
                 cursor = self.read_cursor(&task_space_id).await;
             }
@@ -349,6 +359,9 @@ impl TaskSync {
         Ok(json!({
             "revision": applied_revision,
             "committedRevision": committed_revision,
+            // 命令结果需要任务当前的 content revision；上传响应里的 `revision`
+            // 是非 reconcile 上传前的游标版本，只有 control.task 携带权威值。
+            "control": last_control,
             "sequence": cursor.sequence,
             "baselineFiles": baseline_files.iter().map(|file| json!({
                 "path": file.path,

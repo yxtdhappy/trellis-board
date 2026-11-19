@@ -17,6 +17,7 @@ impl TaskSync {
             "executionTaskKey": control.execution_task_key,
             "taskId": control.task_id,
             "taskVersion": control.task_version,
+            "contentRevision": control.content_revision,
             "state": control.state,
             "handoffState": control.handoff_state,
         }))

@@ -11,6 +11,7 @@ fn control(state: &str, task_id: &str) -> TaskControl {
         assignee_user_id: Some("user-b".to_string()),
         handoff_state: "none".to_string(),
         materialized_revision: None,
+        content_revision: None,
         materialized_at: None,
         lease_held_by_other_user: false,
         updated_at: "2026-11-17T00:00:00.000Z".to_string(),

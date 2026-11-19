@@ -381,12 +381,16 @@ async fn create_task(
             "archive 是保留的归档目录，不能用作任务标识",
         );
     }
-    if let Some(execution_task_key) = create_execution_task_key(command, binding) {
-        context
-            .task_sync
-            .claim_execution_task(&binding.task_space_id, &execution_task_key)
-            .await?;
-    }
+    let claimed_content_revision =
+        if let Some(execution_task_key) = create_execution_task_key(command, binding) {
+            let claim = context
+                .task_sync
+                .claim_execution_task(&binding.task_space_id, &execution_task_key)
+                .await?;
+            claim.get("contentRevision").and_then(Value::as_u64)
+        } else {
+            None
+        };
     let tasks_root = repo_path.join(".trellis").join("tasks");
     let before = task_directories(&tasks_root).await?;
     let existing = tasks_root.join(&slug);
@@ -405,7 +409,15 @@ async fn create_task(
                     return protocol::err(code::GIT_FAILED, "task.py 未能写入任务的分支归属");
                 }
                 let task_id = task_id_of(&updated, &task_dir)?;
-                return finish_create(context, binding, command, &task_dir, &task_id).await;
+                return finish_create(
+                    context,
+                    binding,
+                    command,
+                    &task_dir,
+                    &task_id,
+                    claimed_content_revision,
+                )
+                .await;
             }
             return protocol::err(
                 code::COMMAND_INVALID,
@@ -457,7 +469,15 @@ async fn create_task(
         return protocol::err(code::GIT_FAILED, "task.py 未能写入任务的分支归属");
     }
     let task_id = task_id_of(&task, &task_dir)?;
-    finish_create(context, binding, command, &task_dir, &task_id).await
+    finish_create(
+        context,
+        binding,
+        command,
+        &task_dir,
+        &task_id,
+        claimed_content_revision,
+    )
+    .await
 }
 
 /// create_task 的新服务端会在 payload 中带 executionTaskKey；兼容只带
@@ -489,6 +509,7 @@ async fn finish_create(
     command: &AgentCommand,
     task_dir: &str,
     task_id: &str,
+    claimed_content_revision: Option<u64>,
 ) -> AgentResult<Value> {
     // ponytail: JS 的 `_uploadDirectories` 同时支持 reconcile 与 baseShaByPath；create 无基线，
     // 直接走 reconcile=true 的入口。
@@ -496,7 +517,7 @@ async fn finish_create(
         .task_sync
         .sync_task_directories(&binding.task_space_id, &[task_dir.to_string()], true)
         .await?;
-    let revision = require_synced_revision(&synced)?;
+    let revision = require_synced_revision(&synced, claimed_content_revision)?;
     if let Some(execution_task_key) = create_execution_task_key(command, binding) {
         context
             .task_sync
@@ -535,10 +556,11 @@ async fn assign_task(
         .payload_str("executionTaskKey")
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AgentError::new(code::COMMAND_INVALID, "改派命令缺少任务执行身份"))?;
-    context
+    let claim = context
         .task_sync
         .claim_execution_task(&binding.task_space_id, execution_task_key)
         .await?;
+    let claimed_content_revision = claim.get("contentRevision").and_then(Value::as_u64);
     let task_json_path = target.join("task.json");
     let mut task: Value;
     let task_json_file: SnapshotFile;
@@ -664,7 +686,7 @@ async fn assign_task(
             Some(&base_sha),
         )
         .await?;
-    let revision = require_synced_revision(&synced)?;
+    let revision = require_synced_revision(&synced, claimed_content_revision)?;
     // 目标端上传完成后释放租约，创建者收到 source_cleanup_pending 时才能
     // 自动备份并删除源副本；否则会因 leaseHeldByOtherUser 收敛为冲突。
     context
@@ -705,7 +727,7 @@ fn retry_shape_matches(task: &Value, server_file: &SnapshotFile, assignee: &str)
     task.as_object() == Some(&expected)
 }
 
-fn require_synced_revision(result: &Value) -> AgentResult<u64> {
+fn require_synced_revision(result: &Value, claimed_revision: Option<u64>) -> AgentResult<u64> {
     if result.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
         let message = result
             .get("message")
@@ -713,7 +735,32 @@ fn require_synced_revision(result: &Value) -> AgentResult<u64> {
             .unwrap_or("任务文件已被其他成员修改，本次命令未保存");
         return protocol::err(code::HTTP_ERROR, message);
     }
-    match result.get("revision").and_then(Value::as_u64) {
+    if result.get("skipped").and_then(Value::as_bool) == Some(true) {
+        return protocol::err(
+            code::HTTP_ERROR,
+            "任务文件尚未成功上传到服务端，请检查同步错误后重试",
+        );
+    }
+    // 命令结果必须携带任务自己的 content revision：上传响应里的
+    // `revision` 是上传前的空间游标（非 reconcile 上传不会推进游标），
+    // `committedRevision` 只在本次确有提交时非零。`control.task.contentRevision`
+    // 由服务端 commitUpload 在提交和 no-op 两条路径都写成任务当前版本，
+    // 是命令结果唯一可靠的取值。
+    let revision = result
+        .get("control")
+        .and_then(|control| control.get("task"))
+        .and_then(|task| task.get("contentRevision"))
+        .and_then(Value::as_u64)
+        .filter(|revision| *revision >= 1)
+        .or_else(|| {
+            result
+                .get("committedRevision")
+                .and_then(Value::as_u64)
+                .filter(|revision| *revision >= 1)
+        })
+        .or_else(|| claimed_revision.filter(|revision| *revision >= 1))
+        .or_else(|| result.get("revision").and_then(Value::as_u64));
+    match revision {
         Some(revision) if revision >= 1 => Ok(revision),
         _ => protocol::err(
             code::HTTP_ERROR,

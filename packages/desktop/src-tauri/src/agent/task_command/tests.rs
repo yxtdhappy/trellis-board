@@ -65,11 +65,46 @@ fn task_assignee_reads_server_task_json() {
 
 #[test]
 fn synced_revision_requires_positive_revision() {
-    assert!(require_synced_revision(&json!({ "revision": 3 })).is_ok());
-    assert!(require_synced_revision(&json!({ "revision": 0 })).is_err());
+    assert!(require_synced_revision(&json!({ "revision": 3 }), None).is_ok());
+    assert!(require_synced_revision(&json!({ "revision": 0 }), None).is_err());
     let conflict =
-        require_synced_revision(&json!({ "code": "TASK_FILE_CONFLICT" })).unwrap_err();
+        require_synced_revision(&json!({ "code": "TASK_FILE_CONFLICT" }), None).unwrap_err();
     assert_eq!(conflict.code, code::HTTP_ERROR);
+}
+
+#[test]
+fn synced_revision_prefers_task_content_revision() {
+    // no-op 上传：revision 是上传前游标，control.task.contentRevision 才是
+    // 服务端命令结果校验要求的任务版本。
+    let noop = json!({
+        "revision": 85,
+        "committedRevision": 0,
+        "control": { "task": { "contentRevision": 86 } }
+    });
+    assert_eq!(require_synced_revision(&noop, None).unwrap(), 86);
+
+    let committed = json!({
+        "revision": 85,
+        "committedRevision": 86,
+        "control": { "task": { "contentRevision": 86 } }
+    });
+    assert_eq!(require_synced_revision(&committed, None).unwrap(), 86);
+
+    let committed_without_control = json!({ "revision": 85, "committedRevision": 86 });
+    assert_eq!(
+        require_synced_revision(&committed_without_control, None).unwrap(),
+        86
+    );
+
+    let skipped = json!({ "skipped": true, "reason": "TASK_CONTROL_INACTIVE" });
+    assert!(require_synced_revision(&skipped, None).is_err());
+
+    // 重试时无需上传：claim 返回的任务 content revision 作为回退。
+    let noop_without_control = json!({ "revision": 85, "committedRevision": 0 });
+    assert_eq!(
+        require_synced_revision(&noop_without_control, Some(86)).unwrap(),
+        86
+    );
 }
 
 #[test]
