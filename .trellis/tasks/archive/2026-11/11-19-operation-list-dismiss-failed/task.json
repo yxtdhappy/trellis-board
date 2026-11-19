@@ -4,7 +4,7 @@
   "branch": "main",
   "children": [],
   "commit": null,
-  "completedAt": null,
+  "completedAt": "2026-11-20",
   "createdAt": "2026-11-19",
   "creator": "test",
   "description": "让创建与改派操作面板可以忽略失败/取消的历史操作，避免永久残留红色失败记录",
@@ -19,7 +19,7 @@
   "priority": "P2",
   "relatedFiles": [],
   "scope": null,
-  "status": "in_progress",
+  "status": "completed",
   "subtasks": [],
   "title": "创建与改派操作面板支持忽略失败操作",
   "worktree_path": null
