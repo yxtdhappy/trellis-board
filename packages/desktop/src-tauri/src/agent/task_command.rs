@@ -537,6 +537,7 @@ async fn assign_task(
     let mut task: Value;
     let task_json_file: SnapshotFile;
     let apply_assignee: bool;
+    let base_sha: BTreeMap<String, String>;
     if tokio::fs::metadata(&target).await.is_ok() {
         let content = read_utf8(&task_json_path).await?;
         task = serde_json::from_str(&content)
@@ -601,6 +602,12 @@ async fn assign_task(
             );
         }
         apply_assignee = local_matches_server;
+        // 以服务端当前摘要作为整批基线：目标副本可能刚物化、cursor 尚无逐文件基线，
+        // 只带 task.json 会让其余未变文件被服务端误判为冲突。
+        base_sha = files
+            .iter()
+            .map(|file| (file.path.clone(), file.sha256.clone()))
+            .collect();
     } else {
         let files = context
             .task_sync
@@ -625,15 +632,15 @@ async fn assign_task(
             return protocol::err(code::COMMAND_INVALID, "任务 task.json 已损坏");
         }
         apply_assignee = true;
+        base_sha = files
+            .iter()
+            .map(|file| (file.path.clone(), file.sha256.clone()))
+            .collect();
     }
     if apply_assignee {
         task["assignee"] = Value::String(assignee.clone());
         atomic_write_json(&task_json_path, &task).await?;
     }
-    let base_sha: BTreeMap<String, String> =
-        [(task_json_file.path.clone(), task_json_file.sha256.clone())]
-            .into_iter()
-            .collect();
     let synced = context
         .task_sync
         .sync_task_directories_with_base(
