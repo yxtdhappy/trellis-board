@@ -389,6 +389,8 @@ export function BoardPage() {
           {teamMode && view === 'pipeline' ? (
             <TaskOperationList
               operations={controller.operations}
+              userKey={runtime?.user?.username || ''}
+              taskSpaceId={filters.taskSpaceId === 'all' ? '' : filters.taskSpaceId}
               onRetry={actions.retryOperation}
               onCancel={actions.cancelOperation}
             />

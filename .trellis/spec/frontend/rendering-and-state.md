@@ -255,6 +255,15 @@ const commandState = taskCommandState(taskSpace, teamMode)
 - 操作状态固定映射：`pending=等待投递`、`delivered=等待 Agent 执行`、`running=Agent 正在执行`、
   `succeeded=已完成，正式任务已同步`、`failed=执行失败`、`cancelled=已取消`。
 - `failed` 才显示重试；`pending/delivered/running` 显示取消；`succeeded/cancelled` 不显示可执行按钮。
+- 已结束操作（`succeeded`/`failed`/`cancelled`）单行提供「忽略」入口，点击后立即隐藏；进行中操作
+  （`pending`/`delivered`/`running`）不提供忽略，且不受本地忽略记录影响。
+- 忽略记录按 `runtime.user.username + taskSpaceId` 存于 `localStorage`
+  （`trellis.dismissed-operations.v1:<user>:<space>`），只对已结束状态生效：重试回到 `pending`
+  时重新显示，再次失败后仍按原忽略记录隐藏。成功项 10 分钟自动隐藏规则不变。
+- `localStorage` 不可访问、读取失败或写入失败时，忽略退化为仅当前页面会话内生效且不得抛出异常；
+  服务端快照中不再出现的操作 ID 从本地忽略记录中清理。可见列表过滤由
+  `packages/web/src/lib/operation-visibility.js` 统一提供，并由
+  `packages/web/test/operation-visibility.test.js` 覆盖。
 - 同一 taskSpace 的操作列表是最多 100 条的服务端快照，前端最多展示最近 8 条并保留近期成功项。
 - 创建表单只在请求成功入队后关闭；正式任务出现仍由下一次 Board SSE/REST 对齐决定。
 - Agent 离线、目标成员不可写、binding 缺失或 `TASK_SPACE_NO_ONLINE_LISTENER` 等错误必须保留

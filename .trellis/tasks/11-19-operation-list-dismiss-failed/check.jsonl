@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "类型检查、构建、测试与可访问性验收要求"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端契约检查"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "核查操作项刷新、SSE/REST 对齐与状态边界"}
+{"file": ".trellis/spec/frontend/component-reuse.md", "reason": "核查是否复用既有组件而不是重写"}

@@ -1,12 +1,33 @@
-import { LoaderCircle, RotateCcw, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { EyeOff, LoaderCircle, RotateCcw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { PublishOperation } from '@/hooks/board-types.ts'
 import { Panel } from '@/components/ui/panel'
+import {
+  isDismissibleOperation,
+  normalizeDismissedOperationIds,
+  operationDismissStorageKey,
+  pruneDismissedOperationIds,
+  readDismissedOperationIds,
+  visibleOperations,
+  writeDismissedOperationIds,
+} from '@/lib/operation-visibility.js'
 
 type TaskOperationListProps = {
   operations: PublishOperation[]
+  userKey: string
+  taskSpaceId: string
   onRetry: (id: string) => Promise<void>
   onCancel: (id: string) => Promise<void>
+}
+
+function resolveLocalStorage(): Storage | null {
+  try {
+    return window.localStorage || null
+  } catch {
+    /* 隐私模式或禁用存储时按无持久化处理 */
+    return null
+  }
 }
 
 function statusView(operation: PublishOperation): { label: string; tone: string } {
@@ -41,16 +62,55 @@ function actionLabel(operation: PublishOperation): string {
   return operation.commandType === 'assign_task' ? '改派中' : '创建中'
 }
 
-export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperationListProps) {
-  const visible = operations
-    .filter(
-      (operation) =>
-        operation.status !== 'succeeded' ||
-        Date.now() -
-          Date.parse(String((operation.raw as Record<string, unknown>)?.updatedAt || '')) <
-          10 * 60 * 1000,
-    )
-    .slice(0, 8)
+export function TaskOperationList({
+  operations,
+  userKey,
+  taskSpaceId,
+  onRetry,
+  onCancel,
+}: TaskOperationListProps) {
+  const storageKey = operationDismissStorageKey(userKey, taskSpaceId)
+  return (
+    <TaskOperationListBody
+      key={storageKey}
+      operations={operations}
+      storageKey={storageKey}
+      onRetry={onRetry}
+      onCancel={onCancel}
+    />
+  )
+}
+
+type TaskOperationListBodyProps = Omit<TaskOperationListProps, 'userKey' | 'taskSpaceId'> & {
+  storageKey: string
+}
+
+function TaskOperationListBody({
+  operations,
+  storageKey,
+  onRetry,
+  onCancel,
+}: TaskOperationListBodyProps) {
+  const [dismissedIds, setDismissedIds] = useState<string[]>(() =>
+    readDismissedOperationIds(resolveLocalStorage(), storageKey),
+  )
+
+  useEffect(() => {
+    // 空列表可能是尚未加载或服务端暂无记录，此时不能清空本地忽略记录。
+    if (!operations.length) return
+    const pruned = pruneDismissedOperationIds(dismissedIds, operations)
+    if (pruned.length === dismissedIds.length) return
+    setDismissedIds(pruned)
+    writeDismissedOperationIds(resolveLocalStorage(), storageKey, pruned)
+  }, [operations, dismissedIds, storageKey])
+
+  const dismiss = (id: string) => {
+    const next = normalizeDismissedOperationIds([...dismissedIds, id])
+    setDismissedIds(next)
+    writeDismissedOperationIds(resolveLocalStorage(), storageKey, next)
+  }
+
+  const visible = visibleOperations(operations, { dismissedIds })
   if (!visible.length) return null
   return (
     <Panel className="gap-0 border border-border px-3 py-2.5">
@@ -59,6 +119,7 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
           <h2 className="text-xs font-semibold">创建与改派操作</h2>
           <p className="text-2xs text-muted-foreground">
             任务会先以待交付控制状态进入看板；目标客户端上线后接管、落地正文并完成 operation。
+            已结束的操作可以忽略，忽略记录只保存在当前浏览器。
           </p>
         </div>
       </div>
@@ -66,6 +127,7 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
         {visible.map((operation) => {
           const status = statusView(operation)
           const active = ['pending', 'delivered', 'running'].includes(operation.status || '')
+          const dismissible = isDismissibleOperation(operation) && Boolean(operation.id)
           return (
             <div
               key={operation.id || `${operation.commandType}-${operation.taskKey}`}
@@ -105,6 +167,18 @@ export function TaskOperationList({ operations, onRetry, onCancel }: TaskOperati
                 >
                   <X className="size-3" />
                   取消
+                </Button>
+              ) : null}
+              {dismissible ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  className="gap-1 text-muted-foreground"
+                  onClick={() => dismiss(operation.id as string)}
+                >
+                  <EyeOff className="size-3" />
+                  忽略
                 </Button>
               ) : null}
             </div>
