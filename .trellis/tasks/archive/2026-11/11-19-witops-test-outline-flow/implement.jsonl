@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "核对插件 HTTP 命名空间、store、capability、面板 sandbox 与清单版本约束"}
+{"file": ".trellis/spec/backend/plugin-testing.md", "reason": "按 L3 插件测试规范补 createHarness/HTTP 用例与覆盖矩阵"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "确认 yarn test:plugins、真实服务验收与 Node 内置测试基线"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "避免工作台与 scenario-copilot 各写一套大纲解析"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对插件面板、HTTP、capability 的跨层契约"}
+{"file": ".trellis/tasks/11-19-witops-test-outline-flow/research/current-flow.md", "reason": "当前弹窗溢出、静默兜底、manifest 与回归链路证据"}

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/plugin-testing.md", "reason": "复核测试是否从真实入口覆盖解析、关联、无大纲与回归预检"}
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "复核面板 sandbox、HTTP 命名空间、manifest 版本与错误码"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "复核 yarn test:plugins 与手工服务验收证据"}
+{"file": ".trellis/tasks/11-19-witops-test-outline-flow/research/current-flow.md", "reason": "逐条核对静默兜底是否移除、UI/后端是否一致"}
