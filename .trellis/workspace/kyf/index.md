@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 1
-- **Last Active**: 2026-11-05
+- **Total Sessions**: 2
+- **Last Active**: 2026-11-19
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~47 | Active |
+| `journal-1.md` | ~87 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 2 | 2026-11-19 | WitOps 运行测试：大纲关联、生成与回归预检 | `ea03931`, `362b747` | `main` |
 | 1 | 2026-11-05 | 插件机制（子进程 JSON-RPC） | `22b5c57`, `a5d63f7`, `c6469ae`, `7aeb4b1` | `codex/team-board` |
 <!-- @@@/auto:session-history -->
 
