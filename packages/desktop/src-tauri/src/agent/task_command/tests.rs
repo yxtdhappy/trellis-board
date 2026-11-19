@@ -48,6 +48,22 @@ fn resolve_task_dir_rejects_traversal() {
 }
 
 #[test]
+fn task_assignee_reads_server_task_json() {
+    let file = SnapshotFile {
+        path: ".trellis/tasks/task-a/task.json".into(),
+        task_dir: ".trellis/tasks/task-a".into(),
+        file_path: "task.json".into(),
+        archived: false,
+        archive_month: None,
+        content: "{\"id\":\"task-a\",\"assignee\":\"test\"}\n".into(),
+        sha256: "a".repeat(64),
+        deleted: false,
+        base_sha256: None,
+    };
+    assert_eq!(task_assignee(&file).as_deref(), Some("test"));
+}
+
+#[test]
 fn synced_revision_requires_positive_revision() {
     assert!(require_synced_revision(&json!({ "revision": 3 })).is_ok());
     assert!(require_synced_revision(&json!({ "revision": 0 })).is_err());

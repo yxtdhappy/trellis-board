@@ -570,7 +570,11 @@ async fn assign_task(
             .payload_str("baseTaskSha256")
             .filter(|value| !value.is_empty())
         {
-            if task_json_file.sha256 != base_sha {
+            // 目标客户端自己的 watcher 可能先于命令上传了同一改派结果；服务端
+            // assignee 已是目标值时按幂等成功继续，真正的他人内容修改仍然取消。
+            if task_json_file.sha256 != base_sha
+                && task_assignee(&task_json_file).as_deref() != Some(assignee.as_str())
+            {
                 return protocol::err(code::HTTP_ERROR, "任务文件已被其他成员修改，改派命令已取消");
             }
         }
@@ -622,7 +626,9 @@ async fn assign_task(
             .payload_str("baseTaskSha256")
             .filter(|value| !value.is_empty())
         {
-            if task_json_file.sha256 != base_sha {
+            if task_json_file.sha256 != base_sha
+                && task_assignee(&task_json_file).as_deref() != Some(assignee.as_str())
+            {
                 return protocol::err(code::HTTP_ERROR, "任务文件已被其他成员修改，改派命令已取消");
             }
         }
@@ -660,6 +666,17 @@ async fn assign_task(
         "revision": revision,
         "commandId": command.id,
     }))
+}
+
+fn task_assignee(server_file: &SnapshotFile) -> Option<String> {
+    serde_json::from_str::<Value>(&server_file.content)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("assignee")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
 }
 
 fn retry_shape_matches(task: &Value, server_file: &SnapshotFile, assignee: &str) -> bool {
