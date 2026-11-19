@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "核对暂停期间不 pull/upload/写本地、分支守卫失败关闭语义未被放宽"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "核对控制事件脱敏、无 repoPath、非模态事件路由"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "核对新事件不影响 live_control_pending、无独立控制窗口、无 focus 副作用"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "核对前端监听生命周期、无轮询放大、项目栏状态仍为权威展示"}
+{"file": ".trellis/spec/guides/index.md", "reason": "通用质量与检查清单"}

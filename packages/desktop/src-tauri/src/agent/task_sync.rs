@@ -278,6 +278,7 @@ use cursor::{
 };
 #[allow(unused_imports)]
 use errors::{
+    branch_guard_entered,
     io_error,
     is_archived_task_error,
     is_branch_guard_error,
@@ -287,6 +288,8 @@ use errors::{
     skipped_for_explicit_pending_rejection,
     sync_trace,
     task_sync_error_event,
+    task_sync_notice_event,
+    with_branch_guard_entered,
     with_task_dir,
 };
 #[allow(unused_imports)]

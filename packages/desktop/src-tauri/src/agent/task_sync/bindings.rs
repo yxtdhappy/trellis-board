@@ -366,6 +366,7 @@ impl TaskSync {
                 .push(binding);
         }
         let mut selected = Vec::new();
+        let mut notified_repos = HashSet::new();
         for items in groups.into_values() {
             if items.len() == 1 {
                 let binding = items.into_iter().next().expect("single binding");
@@ -384,7 +385,9 @@ impl TaskSync {
                 } else {
                     match self.assert_binding_branch(&binding).await {
                         Ok(_) => selected.push(binding),
-                        Err(error) => self.report_binding_error(&binding, &error),
+                        Err(error) => {
+                            self.report_binding_error(&binding, &error, &mut notified_repos)
+                        }
                     }
                 }
                 continue;
@@ -407,7 +410,7 @@ impl TaskSync {
                     match self.assert_binding_branch(binding).await {
                         Ok(_) => matches.push(binding.clone()),
                         Err(error) => {
-                            self.report_binding_error(binding, &error);
+                            self.report_binding_error(binding, &error, &mut notified_repos);
                         }
                     }
                 }
@@ -439,7 +442,28 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) fn report_binding_error(&self, binding: &AgentBinding, error: &AgentError) {
+    pub(super) fn report_binding_error(
+        &self,
+        binding: &AgentBinding,
+        error: &AgentError,
+        notified_repos: &mut HashSet<String>,
+    ) {
+        if is_branch_guard_error(error) {
+            if !branch_guard_entered(error) {
+                return;
+            }
+            let key = format!("{}\0{}", binding.local_repo_key, error.code);
+            if !notified_repos.insert(key) {
+                return;
+            }
+            (self.emit)(task_sync_notice_event(
+                Some(binding),
+                &binding.task_space_id,
+                error,
+                protocol::safe_error_message(&error.message),
+            ));
+            return;
+        }
         (self.emit)(task_sync_error_event(
             Some(binding),
             &binding.task_space_id,
@@ -491,7 +515,7 @@ impl TaskSync {
         &self,
         binding: &AgentBinding,
         error: &AgentError,
-    ) {
+    ) -> bool {
         let message = protocol::safe_error_message(&error.message);
         let error_code = error.code.clone();
         let local_id = binding.local_id.clone();
@@ -531,14 +555,16 @@ impl TaskSync {
             .await;
         match result {
             Ok(_) if changed.load(std::sync::atomic::Ordering::SeqCst) => {
-                self.notify_state_changed()
+                self.notify_state_changed();
+                true
             }
-            Ok(_) => {}
+            Ok(_) => false,
             Err(error) => {
                 crate::logging::warn(&format!(
                     "保存任务同步状态失败：{}",
                     protocol::safe_error_message(&error.message)
                 ));
+                false
             }
         }
     }
@@ -672,6 +698,17 @@ impl TaskSync {
             "任务空间同步失败 {{\"taskSpaceId\":\"{task_space_id}\",\"code\":\"{code}\",\"taskDir\":\"{task_dir}\"{server_code},\"error\":\"{message}\"}}",
             code = error.code
         ));
+        if is_branch_guard_error(error) {
+            if branch_guard_entered(error) {
+                (self.emit)(task_sync_notice_event(
+                    binding.as_ref(),
+                    task_space_id,
+                    error,
+                    message,
+                ));
+            }
+            return;
+        }
         (self.emit)(task_sync_error_event(
             binding.as_ref(),
             task_space_id,

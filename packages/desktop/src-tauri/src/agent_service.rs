@@ -347,13 +347,19 @@ impl AgentService {
     }
 
     fn publish_control(&self, control: Value) {
-        if control.get("type").and_then(Value::as_str) == Some("task_handoff") {
+        let control_type = control.get("type").and_then(Value::as_str);
+        if control_type == Some("task_handoff") {
             self.notify_handoff_terminal(&control);
             let _ = self.app.emit("handoff-control-changed", control);
             self.notify_live_control();
             return;
         }
-        let review = control.get("type").and_then(Value::as_str) == Some("initial_sync_review");
+        if control_type == Some("task_sync_notice") {
+            // 持续状态只做非模态提示：不入控制队列、不发系统通知、不阻塞操作。
+            let _ = self.app.emit("task-sync-notice", control);
+            return;
+        }
+        let review = control_type == Some("initial_sync_review");
         let (became_front, changed) = self.hub.push_with_change(control.clone());
         if changed {
             self.notify_live_control();

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "分支守卫、暂停语义、控制事件与 cursor/拉取/上传门禁的既有契约"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "进程内 Agent 的控制事件、task_sync_error 字段与脱敏约束"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "Tauri 事件契约、Board 窗口放行与 live-control 监听规则"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "Web 事件监听、刷新协调与项目栏状态投影约定"}

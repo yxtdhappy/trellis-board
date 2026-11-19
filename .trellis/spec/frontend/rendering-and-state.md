@@ -28,6 +28,8 @@
 - Tauri 本地关联和 sidecar 先注册 `desktop-state-changed` 再执行首次权威读取；事件只触发重新读取
   `list_local_associations` / `desktop_sidecar_status`，不作为业务状态本身。页面可见时保留 10 秒
   兜底，隐藏时停止；focus、恢复可见和监听恢复时立即对齐。
+- 桌面端持续同步状态（如分支不一致已暂停）通过 `task-sync-notice` 的 sonner toast 提示一次：
+  非模态、不阻塞、不抢焦点，也不用 Dialog 复述；项目栏的“已暂停”仍是持续状态的权威展示。
 - `/api/task-operations?taskSpaceId=` 只在选中具体 taskSpace 时创建 3 秒刷新；结果稳定签名相同
   时保留原数组。单条创建/改派进度只对 `pending/delivered/running` 继续退避查询，进入
   `failed/succeeded/cancelled` 后停止，用户显式重试失败项后重新开始。

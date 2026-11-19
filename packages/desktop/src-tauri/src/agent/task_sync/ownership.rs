@@ -19,9 +19,16 @@ impl TaskSync {
                 self.clear_branch_guard_error(binding).await;
                 Ok(branch)
             }
-            Err(error) => {
+            Err(mut error) => {
                 if is_branch_guard_error(&error) {
-                    self.persist_binding_sync_error(binding, &error).await;
+                    let entered = !binding
+                        .last_error_code
+                        .as_deref()
+                        .is_some_and(is_branch_guard_code);
+                    let changed = self.persist_binding_sync_error(binding, &error).await;
+                    if entered && changed {
+                        error = with_branch_guard_entered(error, true);
+                    }
                 }
                 Err(error)
             }

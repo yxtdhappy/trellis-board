@@ -10,12 +10,16 @@
 
 - `desktop-state-changed` payload：`{ topics: ["associations", "sidecar"] }`。
 - `live-control-changed` payload：空事件。
+- `task-sync-notice` payload：`{ type: "task_sync_notice", kind: "branch_guard", taskSpaceId,
+  projectName?, branchName?, errorCode, message }`，只在分支守卫从正常进入暂停时发送一次。
 - Board capability：`core:event:allow-listen`、`core:event:allow-unlisten`。
 
 ### 3. Contracts
 
 - 事件只是失效通知；ProjectRail 收到后仍调用 `list_local_associations` /
   `desktop_sidecar_status`，Board 页面的 `LiveSyncControlDialog` 仍调用 `live_control_pending`。
+- `task-sync-notice` 只做非模态提示（Board 内 sonner toast）：不进入 `ControlHub`、不改变
+  `live_control_pending`、不触发系统通知、不聚焦窗口；同一项目用固定 toast id 合并。
 - `live_control_*` 与 `set_task_ownership` 只对 `board-local-association` 窗口放行，且必须经
   `ensure_board_caller`；不存在独立 `live-control` 窗口，也没有 `live_control_resize`。
 - 只读任务投影：`live_local_task_state(taskSpaceId)` 返回 `{taskSpaceId, localDirs, readonlyDirs,

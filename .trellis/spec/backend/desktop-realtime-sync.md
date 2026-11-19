@@ -342,6 +342,9 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - Agent 在首次同步、增量 pull、上传、watcher 触发、pending retry、延后补同步、服务端目录实际写入
   以及冲突覆盖前都必须重新读取本地真实分支。分支不匹配时失败关闭：不写任务目录、不上传、不推进
   cursor、不补发 pending，并把 `BRANCH_MISMATCH` 投影到项目栏；切回绑定分支后才可恢复。
+  该绑定在暂停期间不进入运行集合：不拉取、不监听任务文件、心跳不上报在线监听，`pull_task_space`
+  返回 `skipped/BINDING_INACTIVE`。分支守卫错误只按“进入暂停”的状态边沿发一次非模态
+  `task_sync_notice`，不得每轮心跳重复弹窗；切回绑定分支恢复后再次进入暂停才可再次提示。
 - 普通同分支任务不得读取 HEAD tree。只有当前 binding 是项目基线且遇到来源分支不同的任务时，才允许
   一次 `git rev-parse --verify HEAD^{commit}`；同一 HEAD 下执行一次
   `git ls-tree -r --name-only <HEAD> -- .trellis`，多项任务共享 HashSet。普通 watcher、普通上传、

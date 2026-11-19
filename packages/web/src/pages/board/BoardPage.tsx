@@ -37,6 +37,7 @@ import { TaskDetailDialog } from '@/features/board/dialogs/TaskDetailDialog'
 import { TaskOperationList } from '@/features/board/TaskOperationList'
 import { HandoffNotice } from '@/desktop/HandoffNotice'
 import { LiveSyncControlDialog } from '@/desktop/LiveSyncControlDialog'
+import { SyncNotice } from '@/desktop/SyncNotice'
 import { isAttention, type BoardTask } from '@/features/board/task-view'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
@@ -552,6 +553,7 @@ export function BoardPage() {
         />
       ) : null}
       <HandoffNotice />
+      <SyncNotice />
       <LiveSyncControlDialog />
       <TaskDetailDialog
         task={selected}

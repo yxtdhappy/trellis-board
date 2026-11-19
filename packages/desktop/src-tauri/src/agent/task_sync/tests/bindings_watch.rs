@@ -382,3 +382,201 @@ async fn git_watcher_tracks_head_index_and_refs() {
     assert!(paths.iter().any(|(path, _)| path.ends_with("refs")));
     let _ = tokio::fs::remove_dir_all(root).await;
 }
+
+async fn stored_bindings(store: &ConfigStore) -> Vec<AgentBinding> {
+    store
+        .read_config(false)
+        .await
+        .expect("read config")
+        .expect("config")
+        .bindings
+}
+
+fn captured_notices(events: &Arc<std::sync::Mutex<Vec<Value>>>) -> Vec<Value> {
+    events
+        .lock()
+        .expect("events")
+        .iter()
+        .filter(|event| event.get("type").and_then(Value::as_str) == Some("task_sync_notice"))
+        .cloned()
+        .collect()
+}
+
+fn captured_errors(events: &Arc<std::sync::Mutex<Vec<Value>>>) -> Vec<Value> {
+    events
+        .lock()
+        .expect("events")
+        .iter()
+        .filter(|event| event.get("type").and_then(Value::as_str) == Some("task_sync_error"))
+        .cloned()
+        .collect()
+}
+
+async fn branch_guard_fixture(
+    prefix: &str,
+) -> (
+    PathBuf,
+    Arc<ConfigStore>,
+    Arc<TaskSync>,
+    AgentBinding,
+    Arc<std::sync::Mutex<Vec<Value>>>,
+) {
+    let (root, store, _sync, binding) = test_task_sync_fixture(prefix).await;
+    let repo = Path::new(&binding.repo_path);
+    init_git_repo(repo);
+    tokio::fs::write(repo.join("README.md"), "x\n")
+        .await
+        .expect("readme");
+    run_git(repo, &["add", "README.md"]);
+    run_git(repo, &["commit", "--no-verify", "-m", "init"]);
+    run_git(repo, &["checkout", "--quiet", "-b", "feature"]);
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = events.clone();
+    let sink: ControlSink = Arc::new(move |value| {
+        captured.lock().expect("events").push(value);
+    });
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
+    let sync = Arc::new(TaskSync::new(store.clone(), api, sink));
+    (root, store, sync, binding, events)
+}
+
+#[tokio::test]
+async fn branch_mismatch_pauses_sync_and_notifies_once() {
+    let (root, store, sync, _binding, events) =
+        branch_guard_fixture("trellis-branch-guard-pause").await;
+
+    let ids = sync
+        .prepare_startup_bindings(stored_bindings(&store).await)
+        .await;
+    assert!(ids.is_empty());
+    assert!(sync.active_bindings().await.is_empty());
+    let pulled = sync.pull_task_space("space-1").await.expect("inactive pull");
+    assert_eq!(pulled["skipped"], json!(true));
+    assert_eq!(pulled["reason"], json!("BINDING_INACTIVE"));
+
+    let notices = captured_notices(&events);
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0]["errorCode"], json!("BRANCH_MISMATCH"));
+    assert_eq!(notices[0]["projectName"], json!("Repo"));
+    assert_eq!(notices[0]["branchName"], json!("main"));
+    assert!(captured_errors(&events).is_empty());
+
+    let _ = sync
+        .prepare_startup_bindings(stored_bindings(&store).await)
+        .await;
+    assert_eq!(captured_notices(&events).len(), 1);
+    assert!(sync.active_bindings().await.is_empty());
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn switching_between_unbound_branches_does_not_renotify() {
+    let (root, store, sync, binding, events) =
+        branch_guard_fixture("trellis-branch-guard-other-branch").await;
+    let repo = Path::new(&binding.repo_path);
+
+    let _ = sync
+        .prepare_startup_bindings(stored_bindings(&store).await)
+        .await;
+    assert_eq!(captured_notices(&events).len(), 1);
+
+    run_git(repo, &["checkout", "--quiet", "-b", "feature-b"]);
+    let _ = sync
+        .prepare_startup_bindings(stored_bindings(&store).await)
+        .await;
+    assert!(sync.active_bindings().await.is_empty());
+    assert_eq!(captured_notices(&events).len(), 1);
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn branch_guard_recovery_allows_a_new_notice() {
+    let (root, store, sync, binding, events) =
+        branch_guard_fixture("trellis-branch-guard-recovery").await;
+    let repo = Path::new(&binding.repo_path);
+
+    let _ = sync
+        .prepare_startup_bindings(stored_bindings(&store).await)
+        .await;
+    assert_eq!(captured_notices(&events).len(), 1);
+
+    run_git(repo, &["checkout", "--quiet", "main"]);
+    let ids = sync
+        .prepare_startup_bindings(stored_bindings(&store).await)
+        .await;
+    assert_eq!(ids, vec!["space-1".to_string()]);
+    let recovered = stored_bindings(&store).await;
+    assert!(recovered[0].last_error_code.is_none());
+    assert_eq!(captured_notices(&events).len(), 1);
+
+    run_git(repo, &["checkout", "--quiet", "feature"]);
+    let _ = sync
+        .prepare_startup_bindings(stored_bindings(&store).await)
+        .await;
+    assert_eq!(captured_notices(&events).len(), 2);
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn branch_guard_notice_dedupes_bindings_in_the_same_repo() {
+    let (root, store, sync, binding, events) =
+        branch_guard_fixture("trellis-branch-guard-dedupe").await;
+    let mut second = binding.clone();
+    second.local_id = "local-space-2".to_string();
+    second.server_binding_id = Some("binding-space-2".to_string());
+    second.task_space_id = "space-2".to_string();
+    // 同一仓库的双 approved 绑定属于升级前兼容状态：`save_config` 会拒绝新的双绑定写入，
+    // 这里直接写配置文件模拟旧版本遗留状态。
+    let mut config = test_config(binding.clone());
+    config.bindings.push(second.clone());
+    store
+        .write_json(&store.paths.config_file, &config)
+        .await
+        .expect("config");
+
+    let _ = sync
+        .prepare_startup_bindings(vec![binding, second])
+        .await;
+    assert!(sync.active_bindings().await.is_empty());
+    assert_eq!(captured_notices(&events).len(), 1);
+
+    let _ = sync
+        .prepare_startup_bindings(stored_bindings(&store).await)
+        .await;
+    assert_eq!(captured_notices(&events).len(), 1);
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn non_branch_guard_error_keeps_modal_control_event() {
+    let (_root, _store, sync, binding, events) =
+        branch_guard_fixture("trellis-branch-guard-modal").await;
+    sync.set_bindings(vec![binding]).await;
+
+    sync.report_error(
+        "space-1",
+        &AgentError::new(code::HTTP_ERROR, "同步失败"),
+    )
+    .await;
+
+    let errors = captured_errors(&events);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0]["errorCode"], json!("HTTP_ERROR"));
+    assert!(captured_notices(&events).is_empty());
+
+    sync.report_error(
+        "space-1",
+        &AgentError::new(code::BRANCH_MISMATCH, "本地当前分支为 feature，绑定分支为 main"),
+    )
+    .await;
+    assert_eq!(captured_errors(&events).len(), 1);
+    assert!(captured_notices(&events).is_empty());
+}
