@@ -286,8 +286,35 @@ revision 能正常追平，证明“清除归档目录基线”即可终止循�
 - 同期另一个 taskSpace `d3a320e8` 自身做了一次 full snapshot，
   与本任务无关，不能算作 `trellis-board` 的重复修复。
 
-结论：7.9 的两项单客户端验证通过；剩余的真机验证只有“双客户端 revision 交错”和
-“多分支歧义任务”，均需要第二台在线客户端或项目第二个分支 taskSpace。
+#### 7.9.3 双客户端 revision 交错（通过 TE 第二客户端）
+
+第二客户端：
+
+- 账户 `test` / 设备 `DESKTOP-AC42130`，新 Agent `0f5fd998-…`，
+  绑定 `trellis-board/main` 为 `approved`，在线监听（`last_seen` 04:15:27）。
+- 与我们的 `yhj` / `Z0198-YHJ-E` 是不同 Agent，服务端会把变更事件广播给我们。
+
+创建事件：
+
+- TE 客户端创建 `11-19-e2e-19`（“e2e测试-19”），服务端索引出现该任务，
+  4 个文件（task.json/prd.md/check.jsonl/implement.jsonl）写入 revision 68。
+- 我们的客户端在 04:17:09–04:17:10 依次执行
+  `pull-cursor revision 67 → afterRevision=67`、`revision 68 → afterRevision=68`，
+  cursor 从 **66 追到 68**，`dirtyDirs=0`，无错误。
+- 普通 pull 不把 server-only 任务下载到本地（本地始终没有 `11-19-e2e-19` 目录），
+  符合当前职责。
+
+删除事件：
+
+- TE 客户端删除该任务后，服务端 revision 69，4 个文件全部 `deleted=1`，索引行归零。
+- 我们的客户端在 04:23:27 执行 `pull-cursor revision 68 → afterRevision=68`，
+  04:23:28 完成 `pull-local`，cursor 从 **68 追到 69**，无跳跃、无错误。
+
+结论：双客户端 revision 交错通过；创建与删除分别在约 1–2 秒内被我们的客户端应用，
+已应用 revision 与服务端一致。
+
+结论：7.9 的两项单客户端验证和双客户端交错验证均通过；剩余的真机验证只有
+“多分支歧义任务”，需要项目第二个分支 taskSpace。
 
 ## 8. 复验结论
 
@@ -297,9 +324,10 @@ revision 能正常追平，证明“清除归档目录基线”即可终止循�
   （见 7.8：启动同步恢复、revision 56→57、无循环）。
 - 旧 `branch=null` pending 不阻塞后续 main 任务：**已在 0.4.45 真机通过**（见 7.9.1）。
 - 旧 cursor 一次性 guard 修复及重启不重复：**已在 0.4.45 真机通过**（见 7.9.2）。
-- 真实双客户端 revision 交错和多分支歧义：仍未做真实 E2E，需要第二台在线客户端或项目第二个
-  分支 taskSpace；沿用自动化覆盖说明。
+- 真实双客户端 revision 交错：**已通过**（见 7.9.3：TE 第二客户端创建/删除，
+  cursor 66→68→69，无跳跃）。
+- 多分支歧义：仍未做真实 E2E，需要项目第二个分支 taskSpace；沿用自动化覆盖说明。
 
 本任务涉及的真实缺陷（删除收敛、归档残留 pull 循环、旧 pending 阻塞、guard 一次性修复）
-均已修复并复验通过，可以进入收尾；双客户端交错与多分支歧义应作为已知限制保留，
+以及双客户端 revision 交错均已修复并复验通过，可以进入收尾；多分支歧义应作为已知限制保留，
 而不是声称已做真实 E2E。
