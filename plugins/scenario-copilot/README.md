@@ -47,8 +47,8 @@
 | --- | --- |
 | `scenarioRoot` | scenario-copilot 包目录，必须包含 `dist/bin/scenario-copilot.js` |
 | `workspaceDir` | spec、snapshot、Playwright storageState 的输出目录 |
-| `outlinesDir` | 测试大纲目录；面板从该目录读取 `.md` / `.txt` |
-| `defaultOutline` | 未指定大纲时的默认大纲文件名 |
+| `outlinesDir` | 测试大纲目录；面板从该目录读取 `.md` / `.txt`，并在同目录维护 `outlines.manifest.json` 关联元数据 |
+| `defaultOutline` | 仅在没有需求/任务上下文时作为兜底；有上下文时不再静默使用默认大纲 |
 | `targetUrl` | 未在任务/需求或 binding 上配置目标地址时的兜底地址 |
 | `knowledgePath` | 可选的领域知识文件；为空则不注入 |
 | `orgName` / `username` / `password` | 目标环境登录信息 |
@@ -60,22 +60,53 @@
 
 ## 能力
 
-manifest `provides` 发布 `scenario.copilot` v1.1.0：
+manifest `provides` 发布 `scenario.copilot` v1.3.0：
 
 - `defaults.get` / `bindings.get`
 - `runs.list` / `runs.get` / `runs.start` / `runs.cancel`
 - `regressions.start` / `regressions.get` / `regressions.cancel`
 - `outlines.list` / `outlines.generate` / `outlines.save`
+- `outlines.resolve` / `outlines.associate`
+- `regressions.preflight`
 - `runs.resume`（`action: next | only-failed | regenerate`）
 
 `witops-workbench` 通过宿主能力桥调用这些方法，不直接依赖 HTTP 路由。
+
+## 大纲关联与解析
+
+大纲文件本身仍是 `OutlineParser` 能消费的 Markdown，不写 YAML frontmatter。关联信息放在同目录的 `outlines.manifest.json`：
+
+```json
+{
+  "version": 1,
+  "outlines": {
+    "R35627-business-category.md": {
+      "title": "业务分类",
+      "scope": "requirement",
+      "requirementIds": ["35627"],
+      "requirementCodes": ["R35627"],
+      "taskKeys": [],
+      "route": "/dm/model/materializedModel",
+      "source": "generated",
+      "status": "active",
+      "contentHash": "sha256..."
+    }
+  }
+}
+```
+
+- `outlines.associate({name, scope, requirementIds, requirementCodes, taskKeys, route, mode})`：把已有大纲关联到需求/任务；`mode=merge` 合并，`replace` 覆盖关联字段。
+- `outlines.resolve({subjects})`：批量解析每个测试对象的大纲与目标地址。
+- 解析优先级：显式选择 > 任务 binding > 需求 binding > manifest taskKeys > manifest requirementIds/requirementCodes > 文件名推测 > 默认大纲（仅无上下文）> 无。
+- 文件名推测和默认大纲都会标记为低置信；没有显式关联时不会再把 `listOutlines()[0]` 当成兜底。
+- 回归下发前调用 `regressions.preflight`，缺失原因区分 `outline-missing` / `outline-guessed` / `url-missing` / `subject-invalid`；默认拒绝执行，`allowMissing: true` 才继续。
 
 ## 生成大纲
 
 `outlines.generate` 走 CLI 的 `outline` 命令（`<scenarioRoot>/dist/bin/scenario-copilot.js outline --json`），把页面粘贴的需求描述 / 测试要点转成 `OutlineParser` 能消费的 Markdown：`# 标题`、`## 前置条件`、`## 用例 N：名称`、编号步骤。CLI 侧提示词会要求不写登录步骤与 URL，返回后会做结构校验并把问题放进 `warnings`。
 
-- 路由：`POST /outlines/generate`（`{title, requirementText, notes, requirementId, targetRoute, caseCount}`）、`POST /outlines/save`（`{content, name, overwrite}`）、`GET /outlines`
-- 面板入口：测试大纲行右侧「生成大纲」，生成后可预览、命名并保存，保存后自动选中
+- 路由：`POST /outlines/generate`（`{title, requirementText, notes, requirementId, targetRoute, caseCount}`）、`POST /outlines/save`（`{content, name, overwrite, scope, requirementIds, requirementCodes, taskKeys, route, source, status}`）、`POST /outlines/associate`、`POST /outlines/resolve`、`POST /regressions/preflight`、`GET /outlines`
+- 面板入口：测试大纲行右侧「生成大纲」，生成后可预览、命名并保存，保存后自动选中；已有大纲可点「关联当前选择」写明需求/任务关联
 - 依赖：CLI 已构建出 `dist/bin/scenario-copilot.js`，且 `llmBaseUrl` / `llmApiKey` / `llmModel` 可用；CLI 缺失时面板隐藏该按钮（`defaults.canGenerateOutline`）
 
 ## 分阶段与续跑

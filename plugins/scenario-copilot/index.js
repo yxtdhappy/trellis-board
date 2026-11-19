@@ -63,8 +63,10 @@ function text(value, fallback = '') {
 }
 
 function parseList(value) {
-  if (Array.isArray(value)) return value.map((item) => text(item)).filter(Boolean)
-  return text(value)
+  if (Array.isArray(value)) {
+    return value.map((item) => text(item == null ? '' : String(item))).filter(Boolean)
+  }
+  return text(value == null ? '' : String(value))
     .split(/[\s,，;；]+/)
     .map((item) => item.trim())
     .filter(Boolean)
@@ -100,17 +102,98 @@ function requirementNumbers(subject) {
   return { witops: code, trellis: '' }
 }
 
-function listOutlines(config) {
-  const dir = text(config.outlinesDir) ? path.resolve(config.outlinesDir) : ''
+const OUTLINE_MANIFEST = 'outlines.manifest.json'
+
+function outlineDirOf(config) {
+  const configured = text(config.outlinesDir)
+  return configured ? path.resolve(configured) : ''
+}
+
+function outlineManifestPath(config) {
+  const directory = outlineDirOf(config)
+  return directory ? path.join(directory, OUTLINE_MANIFEST) : ''
+}
+
+function emptyManifest() {
+  return { version: 1, outlines: {} }
+}
+
+function readManifest(config) {
+  const file = outlineManifestPath(config)
+  if (!file || !fs.existsSync(file)) return emptyManifest()
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const outlines =
+      parsed && typeof parsed === 'object' && parsed.outlines && typeof parsed.outlines === 'object'
+        ? parsed.outlines
+        : {}
+    return { version: 1, outlines: { ...outlines } }
+  } catch {
+    // Manifest 只是辅助索引：损坏时回退到纯文件列表，不能阻塞已有大纲运行。
+    return emptyManifest()
+  }
+}
+
+function writeManifest(config, manifest) {
+  const file = outlineManifestPath(config)
+  if (!file) return
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`
+  const payload = { version: 1, outlines: manifest?.outlines || {} }
+  fs.writeFileSync(temp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+  fs.renameSync(temp, file)
+}
+
+function outlineStem(name) {
+  return String(name || '').replace(/\.(md|txt)$/i, '')
+}
+
+function normalizeOutlineMeta(value = {}, fallbackName = '') {
+  const source = value && typeof value === 'object' ? value : {}
+  return {
+    title: text(source.title) || outlineStem(fallbackName),
+    scope: ['requirement', 'task'].includes(text(source.scope))
+      ? text(source.scope)
+      : 'requirement',
+    requirementIds: parseList(source.requirementIds),
+    requirementCodes: parseList(source.requirementCodes),
+    taskKeys: parseList(source.taskKeys),
+    route: text(source.route),
+    source: text(source.source) || 'manual',
+    status: ['active', 'draft', 'archived'].includes(text(source.status))
+      ? text(source.status)
+      : 'active',
+    createdAt: text(source.createdAt),
+    updatedAt: text(source.updatedAt),
+    contentHash: text(source.contentHash),
+  }
+}
+
+function outlineMetaOf(manifest, name) {
+  return normalizeOutlineMeta(manifest?.outlines?.[name], name)
+}
+
+function outlineHash(content) {
+  return createHash('sha256')
+    .update(String(content ?? ''), 'utf8')
+    .digest('hex')
+}
+
+function listOutlines(config, manifest = readManifest(config)) {
+  const dir = outlineDirOf(config)
   if (!dir || !fs.existsSync(dir)) return []
   return fs
     .readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && /\.(md|txt)$/i.test(entry.name))
-    .map((entry) => ({
-      name: entry.name,
-      title: entry.name.replace(/\.(md|txt)$/i, ''),
-      size: fs.statSync(path.join(dir, entry.name)).size,
-    }))
+    .map((entry) => {
+      const meta = outlineMetaOf(manifest, entry.name)
+      const file = path.join(dir, entry.name)
+      return {
+        name: entry.name,
+        size: fs.statSync(file).size,
+        ...meta,
+      }
+    })
     .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
 }
 
@@ -155,7 +238,7 @@ function summaryOf(run) {
 
 export default createPlugin({
   name: PLUGIN_ID,
-  version: '0.4.0',
+  version: '0.5.0',
   apiVersion: 1,
   permissions: [
     'capabilities:provide',
@@ -361,15 +444,227 @@ export default createPlugin({
       )
     }
 
-    function outlineForTask(task) {
+    function guessOutlineForTask(task, outlines) {
       if (!task) return ''
       const slug = path.basename(task.relativeDir || '')
+      if (!slug) return ''
       return (
-        listOutlines(config).find((outline) => {
-          const stem = outline.name.replace(/\.(md|txt)$/i, '')
+        outlines.find((outline) => {
+          const stem = outlineStem(outline.name)
           return slug.includes(stem) || stem.includes(slug)
         })?.name ?? ''
       )
+    }
+
+    async function requirementBindingOf(requirementId) {
+      const id = text(requirementId)
+      if (!id) return {}
+      const value = await ctx.store.get(`binding:requirement:${id}`).catch(() => null)
+      return value && typeof value === 'object' ? value : {}
+    }
+
+    function outlineCandidatesForSubject(subject, options) {
+      const { binding, requirementBinding, manifest, outlines, input, allowDefaultOutline } =
+        options
+      const available = new Set(outlines.map((outline) => outline.name))
+      const candidates = []
+      const seen = new Set()
+      const add = (name, source, confidence) => {
+        const value = text(name)
+        if (!value || seen.has(value)) return
+        seen.add(value)
+        candidates.push({
+          name: value,
+          title: outlines.find((outline) => outline.name === value)?.title || outlineStem(value),
+          source,
+          confidence,
+          available: available.has(value),
+        })
+      }
+      const matchesRequirement = (meta) => {
+        const ids = parseList(meta.requirementIds)
+        const codes = parseList(meta.requirementCodes)
+        return (
+          (subject.requirementId && ids.includes(subject.requirementId)) ||
+          (subject.requirementCode && codes.includes(subject.requirementCode))
+        )
+      }
+      const matchesSortedByUpdate = (predicate) =>
+        Object.entries(manifest.outlines || {})
+          .filter(([, meta]) => predicate(meta && typeof meta === 'object' ? meta : {}))
+          .sort((a, b) => String(b[1]?.updatedAt).localeCompare(String(a[1]?.updatedAt)))
+
+      add(input.outline, 'explicit', 'high')
+      if (subject.kind === 'trellis') {
+        add(binding.outline, 'task-binding', 'high')
+        add(requirementBinding.outline, 'requirement-binding', 'high')
+        for (const [name] of matchesSortedByUpdate((meta) =>
+          parseList(meta.taskKeys).includes(subject.taskKey),
+        )) {
+          add(name, 'manifest-task', 'high')
+        }
+        for (const [name] of matchesSortedByUpdate(matchesRequirement)) {
+          add(name, 'manifest-requirement', 'high')
+        }
+        add(guessOutlineForTask(subject.task, outlines), 'filename-guess', 'low')
+      } else {
+        add(binding.outline, 'requirement-binding', 'high')
+        for (const [name] of matchesSortedByUpdate(matchesRequirement)) {
+          add(name, 'manifest-requirement', 'high')
+        }
+      }
+      if (allowDefaultOutline) add(config.defaultOutline, 'default', 'low')
+
+      const selected =
+        candidates.find((candidate) => candidate.available) ||
+        candidates.find((candidate) => candidate.source === 'explicit') ||
+        null
+      return { selected, candidates }
+    }
+
+    function targetUrlCandidates(subject, options) {
+      const { binding, requirementBinding, task, input } = options
+      const candidates = []
+      const add = (url, source) => {
+        const value = text(url)
+        if (value) candidates.push({ url: value, source })
+      }
+      add(input.targetUrl, 'input')
+      add(binding.targetUrl, subject.kind === 'trellis' ? 'task-binding' : 'requirement-binding')
+      if (subject.kind === 'trellis') add(requirementBinding.targetUrl, 'requirement-binding')
+      add(taskTarget(task), 'task-meta')
+      add(config.targetUrl, 'config')
+      return candidates
+    }
+
+    async function resolveOutlineForSubject(subject, raw = {}, options = {}) {
+      const binding = options.binding ?? (await bindingOf(subject))
+      const requirementBinding =
+        options.requirementBinding ??
+        (subject.kind === 'trellis' && subject.requirementId
+          ? await requirementBindingOf(subject.requirementId)
+          : subject.kind === 'requirement'
+            ? binding
+            : {})
+      const manifest = options.manifest || readManifest(config)
+      const outlines = options.outlines || listOutlines(config, manifest)
+      const allowDefaultOutline =
+        raw.allowDefaultOutline === true ||
+        (raw.allowDefaultOutline === undefined && !subject.requirementId && !subject.taskKey)
+      const { selected, candidates } = outlineCandidatesForSubject(subject, {
+        binding,
+        requirementBinding,
+        manifest,
+        outlines,
+        input: raw,
+        allowDefaultOutline,
+      })
+      const targets = targetUrlCandidates(subject, {
+        binding,
+        requirementBinding,
+        task: subject.task,
+        input: raw,
+      })
+      const target =
+        targets.find((candidate) => /^https?:\/\//i.test(candidate.url)) || targets[0] || null
+      return {
+        outline: selected?.name || '',
+        outlineTitle: selected?.title || '',
+        outlineSource: selected?.source || 'none',
+        outlineConfidence: selected?.confidence || 'none',
+        outlineAvailable: Boolean(selected?.available),
+        candidates: candidates.slice(0, 20),
+        targetUrl: target?.url || '',
+        targetUrlSource: target?.source || 'none',
+        targetUrlCandidates: targets,
+        requirementId: subject.requirementId || '',
+        requirementCode: subject.requirementCode || '',
+        taskKey: subject.taskKey || '',
+        binding,
+      }
+    }
+
+    async function resolveBatch(input = {}) {
+      const subjects = Array.isArray(input.subjects)
+        ? input.subjects
+        : input.subject && typeof input.subject === 'object'
+          ? [input.subject]
+          : []
+      const manifest = readManifest(config)
+      const outlines = listOutlines(config, manifest)
+      const results = {}
+      for (const raw of subjects) {
+        if (!raw || typeof raw !== 'object') continue
+        const fallbackKey =
+          text(raw.key) || text(raw.taskKey) || text(raw.requirementId) || 'unknown'
+        try {
+          const subject = await resolveSubject(raw)
+          results[subject.key] = await resolveOutlineForSubject(subject, raw, {
+            manifest,
+            outlines,
+          })
+        } catch (error) {
+          results[fallbackKey] = {
+            outline: '',
+            outlineSource: 'none',
+            outlineConfidence: 'none',
+            outlineAvailable: false,
+            candidates: [],
+            targetUrl: '',
+            targetUrlSource: 'none',
+            error: error.message,
+          }
+        }
+      }
+      return { results }
+    }
+
+    async function regressionPreflight(input = {}) {
+      const subjects = Array.isArray(input.subjects) ? input.subjects : []
+      const manifest = readManifest(config)
+      const outlines = listOutlines(config, manifest)
+      const missing = []
+      for (const raw of subjects) {
+        if (!raw || typeof raw !== 'object') continue
+        let subject
+        try {
+          subject = await resolveSubject(raw)
+        } catch (error) {
+          missing.push({
+            subjectKey: text(raw.key) || text(raw.taskKey) || text(raw.requirementId) || 'unknown',
+            requirementId: text(raw.requirementId),
+            taskKey: text(raw.taskKey),
+            title: text(raw.title),
+            reasons: ['subject-invalid'],
+            error: error.message,
+          })
+          continue
+        }
+        const resolution = await resolveOutlineForSubject(subject, raw, {
+          manifest,
+          outlines,
+        })
+        const reasons = []
+        if (!resolution.outline || !resolution.outlineAvailable) reasons.push('outline-missing')
+        else if (['filename-guess', 'default'].includes(resolution.outlineSource)) {
+          reasons.push('outline-guessed')
+        }
+        if (!/^https?:\/\//i.test(resolution.targetUrl)) reasons.push('url-missing')
+        if (reasons.length) {
+          missing.push({
+            subjectKey: subject.key,
+            requirementId: subject.requirementId,
+            requirementCode: subject.requirementCode,
+            taskKey: subject.taskKey,
+            title: subject.title,
+            outline: resolution.outline,
+            outlineSource: resolution.outlineSource,
+            targetUrl: resolution.targetUrl,
+            reasons,
+          })
+        }
+      }
+      return { ready: missing.length === 0, total: subjects.length, missing }
     }
 
     async function resolveSubject(input = {}) {
@@ -398,8 +693,10 @@ export default createPlugin({
         kind: 'trellis',
         key: `trellis:${taskKey}`,
         taskKey,
-        requirementId: text(task.meta?.requirement_id),
-        requirementCode: text(task.meta?.requirement_code || task.meta?.code),
+        requirementId: text(raw?.requirementId) || text(task.meta?.requirement_id),
+        requirementCode:
+          text(raw?.requirementCode || raw?.code) ||
+          text(task.meta?.requirement_code || task.meta?.code),
         title: task.title,
         task,
       }
@@ -409,28 +706,42 @@ export default createPlugin({
       const subject = await resolveSubject(input)
       const task = subject.task
       const binding = await bindingOf(subject)
-      const outlineName =
-        text(input.outline) ||
-        text(binding.outline) ||
-        outlineForTask(task) ||
-        text(config.defaultOutline) ||
-        listOutlines(config)[0]?.name ||
-        ''
-      const outlineDir = text(config.outlinesDir) ? path.resolve(config.outlinesDir) : ''
+      const manifest = readManifest(config)
+      const outlines = listOutlines(config, manifest)
+      const resolution = await resolveOutlineForSubject(subject, input, {
+        binding,
+        manifest,
+        outlines,
+      })
+      const outlineDir = outlineDirOf(config)
       if (!outlineDir) throw ctx.error(2002, '未配置 outlinesDir（测试大纲目录）')
-      const outlinePath = path.join(outlineDir, path.basename(outlineName))
-      if (!outlineName || !fs.existsSync(outlinePath)) {
-        throw ctx.error(2002, `测试大纲不存在: ${outlineName || '(未指定)'}`, { outlineDir })
+      const outlineName = resolution.outline
+      if (!outlineName) {
+        throw ctx.error(2002, '未关联测试大纲，请先生成或选择测试大纲', {
+          needOutline: true,
+          subjectKey: subject.key,
+          requirementId: subject.requirementId,
+          taskKey: subject.taskKey,
+          candidates: resolution.candidates,
+        })
       }
-      const targetUrl =
-        text(input.targetUrl) ||
-        text(binding.targetUrl) ||
-        taskTarget(task) ||
-        text(config.targetUrl)
+      const outlinePath = path.join(outlineDir, path.basename(outlineName))
+      if (!resolution.outlineAvailable || !fs.existsSync(outlinePath)) {
+        throw ctx.error(2002, `测试大纲不存在: ${outlineName}`, {
+          outlineDir,
+          needOutline: true,
+          subjectKey: subject.key,
+          candidates: resolution.candidates,
+        })
+      }
+      const targetUrl = resolution.targetUrl
       if (!/^https?:\/\//i.test(targetUrl)) {
         const label =
           subject.kind === 'trellis' ? `任务 ${subject.taskKey}` : `需求 ${subject.title}`
-        throw ctx.error(2003, `${label} 未配置测试地址`, { subjectKey: subject.key })
+        throw ctx.error(2003, `${label} 未配置测试地址`, {
+          subjectKey: subject.key,
+          targetUrlSource: resolution.targetUrlSource,
+        })
       }
       const username = text(input.username) || config.username
       const password = text(input.password) || config.password
@@ -694,6 +1005,15 @@ export default createPlugin({
         ? input.subjects.filter((item) => item && typeof item === 'object')
         : []
       if (!subjects.length) throw ctx.error(2006, '回归任务至少需要一个测试对象')
+      const preflight = await regressionPreflight({
+        subjects: subjects.map((item) => ({
+          ...item,
+          outline: text(item.outline) || text(input.outline),
+        })),
+      })
+      if (!preflight.ready && input.allowMissing !== true) {
+        throw ctx.error(2011, '回归预检未通过', { missing: preflight.missing })
+      }
       const group = {
         id: `rg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         name: text(input.name) || `回归 ${new Date().toLocaleString('zh-CN', { hour12: false })}`,
@@ -850,9 +1170,8 @@ export default createPlugin({
     }
 
     function saveOutline(input = {}) {
-      const configured = text(config.outlinesDir)
-      if (!configured) throw ctx.error(2002, '未配置 outlinesDir（测试大纲目录）')
-      const directory = path.resolve(configured)
+      const directory = outlineDirOf(config)
+      if (!directory) throw ctx.error(2002, '未配置 outlinesDir（测试大纲目录）')
       fs.mkdirSync(directory, { recursive: true })
       const content = String(input.content ?? '')
         .replace(/\r\n/g, '\n')
@@ -862,21 +1181,91 @@ export default createPlugin({
       if (!heading) throw ctx.error(2008, '大纲缺少一级标题（# 标题）')
       const title = heading[1].trim()
       let name =
-        path.basename(text(input.name) || `${slugify(title)}.md`).replace(/[\\/:*?"<>|]+/g, '-').trim() ||
-        `${slugify(title)}.md`
+        path
+          .basename(text(input.name) || `${slugify(title)}.md`)
+          .replace(/[\\/:*?"<>|]+/g, '-')
+          .trim() || `${slugify(title)}.md`
       if (!/\.(md|txt)$/i.test(name)) name = `${name}.md`
       const full = path.join(directory, name)
       if (!full.startsWith(directory + path.sep)) throw ctx.error(2010, '文件名不合法')
       if (fs.existsSync(full) && input.overwrite === false) {
         throw ctx.error(2009, `大纲已存在: ${name}`)
       }
-      fs.writeFileSync(full, content.endsWith('\n') ? content : `${content}\n`, 'utf8')
+      const normalized = content.endsWith('\n') ? content : `${content}\n`
+      fs.writeFileSync(full, normalized, 'utf8')
+      const manifest = readManifest(config)
+      const previous =
+        manifest.outlines[name] && typeof manifest.outlines[name] === 'object'
+          ? manifest.outlines[name]
+          : {}
+      const now = new Date().toISOString()
+      const next = { ...previous }
+      if (input.scope !== undefined) next.scope = input.scope
+      if (input.requirementIds !== undefined) next.requirementIds = input.requirementIds
+      if (input.requirementCodes !== undefined) next.requirementCodes = input.requirementCodes
+      if (input.taskKeys !== undefined) next.taskKeys = input.taskKeys
+      if (input.route !== undefined) next.route = input.route
+      if (input.source !== undefined) next.source = input.source
+      if (input.status !== undefined) next.status = input.status
+      const meta = normalizeOutlineMeta(
+        {
+          ...next,
+          title,
+          createdAt: text(previous.createdAt) || now,
+          updatedAt: now,
+          contentHash: outlineHash(normalized),
+        },
+        name,
+      )
+      manifest.outlines[name] = meta
+      writeManifest(config, manifest)
       return {
         name,
-        title: name.replace(/\.(md|txt)$/i, ''),
+        title,
         size: fs.statSync(full).size,
-        outlines: listOutlines(config),
+        outline: { name, ...meta },
+        outlines: listOutlines(config, manifest),
       }
+    }
+
+    function associateOutline(input = {}) {
+      const directory = outlineDirOf(config)
+      if (!directory) throw ctx.error(2002, '未配置 outlinesDir（测试大纲目录）')
+      const name = path.basename(text(input.name))
+      if (!name || !/\.(md|txt)$/i.test(name)) throw ctx.error(2010, '文件名不合法')
+      const full = path.join(directory, name)
+      if (!fs.existsSync(full)) throw ctx.error(2002, `测试大纲不存在: ${name}`)
+      const manifest = readManifest(config)
+      const previous =
+        manifest.outlines[name] && typeof manifest.outlines[name] === 'object'
+          ? manifest.outlines[name]
+          : {}
+      const now = new Date().toISOString()
+      const next = { ...previous }
+      if (input.scope !== undefined) next.scope = input.scope
+      if (input.route !== undefined) next.route = input.route
+      if (input.source !== undefined) next.source = input.source
+      if (input.status !== undefined) next.status = input.status
+      const merge = input.mode !== 'replace'
+      for (const key of ['requirementIds', 'requirementCodes', 'taskKeys']) {
+        if (input[key] === undefined) continue
+        next[key] = merge
+          ? [...new Set([...parseList(previous[key]), ...parseList(input[key])])]
+          : parseList(input[key])
+      }
+      const meta = normalizeOutlineMeta(
+        {
+          ...next,
+          title: text(previous.title) || outlineStem(name),
+          createdAt: text(previous.createdAt) || now,
+          updatedAt: now,
+          contentHash: outlineHash(fs.readFileSync(full, 'utf8')),
+        },
+        name,
+      )
+      manifest.outlines[name] = meta
+      writeManifest(config, manifest)
+      return { outline: { name, ...meta }, outlines: listOutlines(config, manifest) }
     }
 
     async function resumeRun(input = {}) {
@@ -935,6 +1324,12 @@ export default createPlugin({
 
     ctx.http.route('POST', '/outlines/save', async (request) => saveOutline(request.json()))
 
+    ctx.http.route('POST', '/outlines/resolve', async (request) => resolveBatch(request.json()))
+
+    ctx.http.route('POST', '/outlines/associate', async (request) =>
+      associateOutline(request.json()),
+    )
+
     ctx.http.route('GET', '/tasks', async () => {
       const tasks = await ctx.tasks.list({ includeArchived: true })
       const bindings = await listBindings()
@@ -991,6 +1386,10 @@ export default createPlugin({
       group: await cancelRegression(request.json().id),
     }))
 
+    ctx.http.route('POST', '/regressions/preflight', async (request) =>
+      regressionPreflight(request.json()),
+    )
+
     ctx.capabilities.register('scenario.copilot', {
       'defaults.get': async () => defaultsResult(),
       'bindings.get': async (params) => bindingsResult(params),
@@ -1006,9 +1405,12 @@ export default createPlugin({
       'regressions.start': async (params) => startRegression(params),
       'regressions.get': async (params) => getRegression(params?.id),
       'regressions.cancel': async (params) => cancelRegression(params?.id),
+      'regressions.preflight': async (params) => regressionPreflight(params),
       'outlines.list': async () => ({ outlines: listOutlines(config) }),
       'outlines.generate': async (params) => generateOutline(params),
       'outlines.save': async (params) => saveOutline(params),
+      'outlines.resolve': async (params) => resolveBatch(params),
+      'outlines.associate': async (params) => associateOutline(params),
     })
 
     ctx.effect(() => {

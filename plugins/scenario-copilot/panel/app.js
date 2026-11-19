@@ -9,7 +9,7 @@ const state = {
   outlineDraft: null,
 }
 
-const bridge = window.TrellisBridge.create()
+const bridge = window.TrellisBridge.create({ timeout: 300000 })
 
 bridge.onInit(() => {
   if (state.init) return
@@ -93,7 +93,7 @@ async function boot() {
     $('org').value = defaults.orgName || ''
     $('no-run').checked = !defaults.hasCredentials
     $('generate-outline').hidden = !defaults.canGenerateOutline
-    renderOutlines(defaults.outlines || [], defaults.defaultOutline)
+    renderOutlines(defaults.outlines || [], '')
     renderTasks()
     renderRuns()
     setHint(
@@ -133,27 +133,24 @@ function applyTask(taskKey) {
   if (!task) return
   $('target').value = task.binding?.targetUrl || ''
   const outline = task.binding?.outline
-  if (outline && [...$('outline').options].some((option) => option.value === outline)) {
-    $('outline').value = outline
-  }
+  $('outline').value =
+    outline && [...$('outline').options].some((option) => option.value === outline) ? outline : ''
   setHint(
     task.binding?.targetUrl ? '使用该任务已保存的测试地址' : '该任务尚未配置测试地址，请填写后下发',
     'muted',
   )
 }
 
-function renderOutlines(outlines, defaultOutline) {
+function renderOutlines(outlines, selected) {
   const select = $('outline')
   select.replaceChildren()
-  if (!outlines.length) {
-    select.append(el('option', { value: '', textContent: '（插件 outlines 目录为空）' }))
-    return
-  }
+  select.append(el('option', { value: '', textContent: '未关联（由任务/需求自动解析）' }))
   for (const outline of outlines) {
     const option = el('option', { value: outline.name, textContent: outline.title })
-    if (outline.name === defaultOutline) option.selected = true
+    if (outline.name === selected) option.selected = true
     select.append(option)
   }
+  if (selected) select.value = selected
 }
 
 function renderRuns() {
@@ -245,7 +242,12 @@ function renderDetail(run) {
   }
   if (run.error) meta.append(el('div', { textContent: `错误：${run.error}` }))
   if (run.statePath) {
-    meta.append(el('div', {}, [el('span', { textContent: '状态文件：' }), el('code', { textContent: run.statePath })]))
+    meta.append(
+      el('div', {}, [
+        el('span', { textContent: '状态文件：' }),
+        el('code', { textContent: run.statePath }),
+      ]),
+    )
   }
 
   const failedBox = $('failed-tests')
@@ -253,7 +255,9 @@ function renderDetail(run) {
   const failed = Array.isArray(run.failedTests) ? run.failedTests : []
   failedBox.hidden = failed.length === 0
   if (failed.length) {
-    failedBox.append(el('div', { className: 'failed-title', textContent: `失败用例（${failed.length}）` }))
+    failedBox.append(
+      el('div', { className: 'failed-title', textContent: `失败用例（${failed.length}）` }),
+    )
     for (const title of failed) {
       failedBox.append(el('div', { className: 'failed-item', textContent: title }))
     }
@@ -388,9 +392,13 @@ $('gen-save').addEventListener('click', async () => {
   const button = $('gen-save')
   button.disabled = true
   try {
+    const task = selectedTask()
     const saved = await bridge.post('/outlines/save', {
       content: draft.content,
       name: $('gen-name').value,
+      scope: task ? 'task' : 'requirement',
+      taskKeys: task ? [task.taskKey] : [],
+      source: 'generated',
     })
     renderOutlines(saved.outlines || [], saved.name)
     $('outline').value = saved.name
