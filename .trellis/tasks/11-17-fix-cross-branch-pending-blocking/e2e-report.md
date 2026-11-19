@@ -250,14 +250,56 @@ revision 能正常追平，证明“清除归档目录基线”即可终止循�
 结论：7.4 的归档残留 pull 循环在 `0.4.45` 上修复并真机复验通过；
 备份文件为 `live-cursors.json.bak-20261119-before-0445-e2e`。
 
+### 7.9 单客户端补充验证（0.4.45）
+
+#### 7.9.1 旧 `branch=null` pending 不阻塞后续 main 任务
+
+构造与结果：
+
+- 停止客户端并备份 cursor，向 `trellis-board/main` 注入 pending 批次
+  `11111111-1111-4111-8111-111111111120`，`clientSequence=1795057865656`，
+  文件为 `.trellis/tasks/11-19-e2e-pending-blocking-1120/task.json` 与 `prd.md`，
+  其中 `task.json.branch=null`。
+- 启动 `0.4.45` 后，客户端按原批次重放：`POST .../changes` 返回
+  **409**（`requestBytes=808`、`responseBytes=251`）。
+- 约 6.9 秒后 pending 清除，cursor 同时写入
+  `pendingRejected` 与 `ownershipPending`（bounded 摘要），服务端项目 inbox 出现 1 条
+  `TASK_OWNERSHIP_REQUIRED`。
+- 随后创建 `branch=main` 的
+  `.trellis/tasks/11-19-e2e-unblocked-main-1120`；约 4 秒后新批次
+  `POST .../changes` 返回 **200**，服务端索引出现该任务，cursor 基线更新。
+- 说明旧 pending 的明确拒绝没有阻塞后续任务，R1/R2 的真实链路通过。
+- 清理：旧 probe 目录本地不存在，`cleanup_missing_ownership_inbox`
+  自动清掉服务端 inbox 与两份账本；删除新 probe 后索引归零；
+  最终 cursor revision 64、pending/账本为空。
+
+#### 7.9.2 旧 cursor 一次性 revision guard 修复
+
+- 备份 cursor，把 `revisionGuardVersion` 置 0（其余保持 revision 64）。
+- 启动 `0.4.45`：约 2.9 秒后出现 `afterRevision=0` 的 full snapshot；
+  约 5.5 秒后 guard 写回 **1**，两个活动任务目录
+  `11-17-fix-cross-branch-pending-blocking`、`11-17-multi-client-task-sync-control-plane`
+  均保留；启动同步 6.1 秒完成，无失败日志。
+- 再次重启（guard=1）：`trellis-board/main` 的 pull-http 为
+  `afterRevision=64`，**没有**再次出现 `afterRevision=0`；
+  guard 保持 1，pending 为空。
+- 同期另一个 taskSpace `d3a320e8` 自身做了一次 full snapshot，
+  与本任务无关，不能算作 `trellis-board` 的重复修复。
+
+结论：7.9 的两项单客户端验证通过；剩余的真机验证只有“双客户端 revision 交错”和
+“多分支歧义任务”，均需要第二台在线客户端或项目第二个分支 taskSpace。
+
 ## 8. 复验结论
 
 - 原失败项“删除尚待归属任务后 cursor 与项目收件箱收敛”：**复验通过**（1.065s 内收敛）。
 - 上传不推进已应用 revision：**复验通过**。
 - 存在归档移出残留时 pull 循环空转、已应用 revision 无法前进：**已在 0.4.45 修复并真机复验通过**
   （见 7.8：启动同步恢复、revision 56→57、无循环）。
-- 真实双客户端 revision 交错、旧 pending 队头阻塞和多分支歧义：仍未做真实 E2E，
-  沿用自动化覆盖说明。
+- 旧 `branch=null` pending 不阻塞后续 main 任务：**已在 0.4.45 真机通过**（见 7.9.1）。
+- 旧 cursor 一次性 guard 修复及重启不重复：**已在 0.4.45 真机通过**（见 7.9.2）。
+- 真实双客户端 revision 交错和多分支歧义：仍未做真实 E2E，需要第二台在线客户端或项目第二个
+  分支 taskSpace；沿用自动化覆盖说明。
 
-本任务的两个真实缺陷（删除收敛、归档残留 pull 循环）均已修复并复验通过，可以进入收尾；
-上述未覆盖场景应作为已知限制保留，而不是声称已做真实 E2E。
+本任务涉及的真实缺陷（删除收敛、归档残留 pull 循环、旧 pending 阻塞、guard 一次性修复）
+均已修复并复验通过，可以进入收尾；双客户端交错与多分支歧义应作为已知限制保留，
+而不是声称已做真实 E2E。
