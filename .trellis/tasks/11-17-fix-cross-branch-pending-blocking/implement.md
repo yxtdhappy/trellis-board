@@ -243,3 +243,51 @@ yarn build
   本任务文件 `oxfmt --check` 和 `git diff --check` 通过。
 - 当前机器没有可用 `cargo`/`rustup`，Rust 编译与单元测试尚未执行。
 - 尚未重启最新服务，因此真实接口和 UI E2E 尚未执行；不得用旧进程结果冒充本版本验证。
+
+## 9. 2026-11-19 归档残留 pull 循环修复
+
+### 问题
+
+E2E 报告 7.4：cursor 基线仍包含已移入 `.trellis/tasks/archive/` 的任务目录，本地活跃副本已不存在。
+每轮 pull 因此得到 `dirtyDirs=2` → `upload_directories` → `GET /files?taskDir=...` 返回
+`409 ARCHIVE_SYNC_SERVER_MANAGED` → 只做 `cleanup_archived_residue`（活跃目录不存在时直接返回）
+→ 基线未清理 → `pull_tracking` 递归回自身，约 1.4 秒循环一次，cursor revision 停在 18，
+`启动同步完成` 不打印。
+
+### 改动文件
+
+- `packages/desktop/src-tauri/src/agent/task_sync/cursor.rs`
+  - `CursorPatch` 新增 `task_dir_removals: Option<BTreeSet<String>>`；`apply_cursor_patch` 在既有
+    cursor 写锁流程内按 `{taskDir}/` 前缀移除该目录的全部 baselines 并移除同名 deferred。
+  - 新增 `remove_task_dir_cursor_state()`，一次 `write_cursor` 批量持久化。
+  - 有意不清理 `ownershipPending`/`pendingRejected`：服务端 inbox 摘要删除仍由
+    `cleanup_missing_ownership_inbox` 配套完成，避免产生孤立服务端摘要。
+- `packages/desktop/src-tauri/src/agent/task_sync/upload.rs`
+  - `is_archived_task_error()` 分类出的目录先逐个执行 `cleanup_archived_residue()`；清理后本地活跃
+    目录确实不存在的目录汇总为一批，在 `upload_directories` 返回前写入上述 cursor patch。
+  - 本地仍有内容的目录保留基线，行为与修复前一致；不删除本地文件内容。
+- `packages/desktop/src-tauri/src/agent/task_sync/local_files.rs`
+  - 新增 `active_task_directory_exists()`，供上述安全判断复用 `resolve_task_directory`。
+- `packages/desktop/src-tauri/src/agent/task_sync/tests/support.rs`
+  - mock 服务端 `/files?` 支持 `directoryStatus=409` + `directoryPayload`，用于模拟归档错误。
+- `packages/desktop/src-tauri/src/agent/task_sync/tests/cursor_state.rs`
+  - `task_dir_removals_clear_only_target_directory_state`：只移除目标目录的 baselines/deferred，
+    同前缀兄弟目录与其他目录保留，`ownershipPending`/`pendingRejected` 不变，重复 patch 不产生写入。
+- `packages/desktop/src-tauri/src/agent/task_sync/tests/pull_and_startup.rs`
+  - `archived_directory_409_clears_cursor_state_and_pull_advances_revision`：复现 7.4 现场，
+    断言 409 后基线被清除、不再请求该目录、只发生一次 dirty 上传、下一轮 pull 应用快照并把
+    cursor revision 从 1 推进到 3，且不重建本地活跃目录。
+- `.trellis/spec/backend/desktop-realtime-sync.md`
+  - 写入“服务端明确归档即清理该任务目录 cursor 基线/deferred”的契约与安全边界。
+
+### 验证
+
+- 本机没有 `cargo`/`rustup`/`rustfmt`，因此未执行 Rust 编译和单元测试。
+- IDEA MCP `lint_files`（error 与 warning 两档）对全部修改的 Rust 源文件和测试文件均无问题。
+- `git diff --check` 通过。
+- 独立 `trellis-check` 复查：0 个需要修改的发现；确认 cursor patch 原子性、同前缀兄弟目录隔离、
+  upload 路径 cursor 刷新、测试复现性、既有归档/只读/账本/本地-only 路径无回归。
+- CI 必须执行：`cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml task_sync`，
+  以覆盖新增的两个测试以及既有 cursor/pull 回归。
+- 本次未改 Node/Web 代码，不需要重跑 Node 测试；真实 E2E 需在下一版客户端重启后确认
+  `启动同步完成` 恢复打印且 `live-cursors.json` 不再保留这两个归档目录基线。

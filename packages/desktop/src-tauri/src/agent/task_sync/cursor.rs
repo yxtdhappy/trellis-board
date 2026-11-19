@@ -428,6 +428,27 @@ impl TaskSync {
     }
 }
 impl TaskSync {
+    /// 服务端明确归档任务目录后，一次性丢弃这些目录的本地同步基线与 deferred。
+    /// 必须在 upload 返回前持久化；否则同一批目录会一直被判定为 dirty，`pull_tracking` 无法收敛。
+    pub(super) async fn remove_task_dir_cursor_state(
+        &self,
+        task_space_id: &str,
+        task_dirs: &[String],
+    ) -> AgentResult<()> {
+        if task_dirs.is_empty() {
+            return Ok(());
+        }
+        self.write_cursor(
+            task_space_id,
+            CursorPatch {
+                task_dir_removals: Some(task_dirs.iter().cloned().collect()),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+}
+impl TaskSync {
     pub async fn remove_task_cursor(&self, task_space_id: &str) -> AgentResult<()> {
         let _guard = self.cursor_write.lock().await;
         let _file_guard = self.store.lock_task_cursors(Duration::from_secs(5)).await?;
@@ -493,6 +514,9 @@ pub(super) struct CursorPatch {
     pub(super) deferred: Option<BTreeMap<String, BTreeMap<String, String>>>,
     pub(super) ownership_pending: Option<BTreeMap<String, String>>,
     pub(super) ownership_ledger_removals: Option<BTreeSet<String>>,
+    /// 需要整体丢弃本地同步状态的活跃任务目录（例如服务端已明确归档）。
+    /// 只移除 baselines/deferred，服务端待归属账本另由 `cleanup_missing_ownership_inbox` 负责。
+    pub(super) task_dir_removals: Option<BTreeSet<String>>,
     pub(super) conflict_blocked: Option<BTreeMap<String, String>>,
     pub(super) readonly_task_dirs: Option<BTreeMap<String, String>>,
 }
@@ -530,6 +554,16 @@ pub(super) fn apply_cursor_patch(cursor: &mut Cursor, next: &CursorPatch) -> boo
         for task_dir in task_dirs {
             cursor.ownership_pending.remove(task_dir);
             cursor.pending_rejected.remove(task_dir);
+        }
+    }
+    if let Some(task_dirs) = &next.task_dir_removals {
+        for task_dir in task_dirs {
+            // baselines 以文件路径为键；只按 `{task_dir}/` 前缀移除，不能误伤同前缀的兄弟目录。
+            let prefix = format!("{task_dir}/");
+            cursor
+                .baselines
+                .retain(|path_name, _| path_name != task_dir && !path_name.starts_with(&prefix));
+            cursor.deferred.remove(task_dir);
         }
     }
     if let Some(conflict_blocked) = &next.conflict_blocked {

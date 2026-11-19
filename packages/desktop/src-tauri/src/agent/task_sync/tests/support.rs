@@ -181,10 +181,15 @@ pub(super) async fn mock_api_server(
                         .get("directoryStatus")
                         .and_then(Value::as_u64)
                         .unwrap_or(200);
-                    if status == 404 {
-                        ("404 Not Found", json!({ "code": "TASK_NOT_FOUND" }))
-                    } else {
-                        (
+                    match status {
+                        404 => ("404 Not Found", json!({ "code": "TASK_NOT_FOUND" })),
+                        409 => (
+                            "409 Conflict",
+                            snapshot_payload.get("directoryPayload").cloned().unwrap_or_else(
+                                || json!({ "code": "ARCHIVE_SYNC_SERVER_MANAGED" }),
+                            ),
+                        ),
+                        _ => (
                             "200 OK",
                             json!({
                                 "files": snapshot_payload
@@ -192,7 +197,7 @@ pub(super) async fn mock_api_server(
                                     .cloned()
                                     .unwrap_or_else(|| Value::Array(Vec::new()))
                             }),
-                        )
+                        ),
                     }
                 } else if method == "PUT" && path.ends_with("/cursor") {
                     ("200 OK", json!({}))

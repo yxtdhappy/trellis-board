@@ -788,6 +788,65 @@ fn cursor_patch_only_reports_real_changes() {
 
 
 #[test]
+fn task_dir_removals_clear_only_target_directory_state() {
+    let task_dir = ".trellis/tasks/task-a";
+    // 同前缀的兄弟目录必须保留，证明按 `{task_dir}/` 精确前缀移除。
+    let sibling = ".trellis/tasks/task-a-copy";
+    let other = ".trellis/tasks/task-b";
+    let hash = |seed: char| seed.to_string().repeat(64);
+    let mut cursor = Cursor {
+        baselines: BTreeMap::from([
+            (format!("{task_dir}/task.json"), hash('a')),
+            (format!("{task_dir}/prd.md"), hash('b')),
+            (format!("{sibling}/task.json"), hash('c')),
+            (format!("{other}/task.json"), hash('d')),
+        ]),
+        deferred: BTreeMap::from([
+            (
+                task_dir.to_string(),
+                BTreeMap::from([(format!("{task_dir}/task.json"), hash('a'))]),
+            ),
+            (
+                other.to_string(),
+                BTreeMap::from([(format!("{other}/task.json"), hash('d'))]),
+            ),
+        ]),
+        ownership_pending: BTreeMap::from([(task_dir.to_string(), hash('e'))]),
+        pending_rejected: BTreeMap::from([(
+            task_dir.to_string(),
+            PendingRejection {
+                batch_id: "batch-1".to_string(),
+                client_sequence: 3,
+                reason: "TASK_OWNERSHIP_REQUIRED".to_string(),
+                created_at: "2026-11-19T00:00:00.000Z".to_string(),
+                blocked_at: "2026-11-19T00:00:01.000Z".to_string(),
+            },
+        )]),
+        ..Default::default()
+    };
+    let patch = || CursorPatch {
+        task_dir_removals: Some(BTreeSet::from([task_dir.to_string()])),
+        ..Default::default()
+    };
+
+    assert!(apply_cursor_patch(&mut cursor, &patch()));
+    assert!(!cursor.baselines.contains_key(&format!("{task_dir}/task.json")));
+    assert!(!cursor.baselines.contains_key(&format!("{task_dir}/prd.md")));
+    assert!(!cursor.deferred.contains_key(task_dir));
+    assert!(cursor.baselines.contains_key(&format!("{sibling}/task.json")));
+    assert_eq!(
+        cursor.baselines.get(&format!("{other}/task.json")),
+        Some(&hash('d'))
+    );
+    assert!(cursor.deferred.contains_key(other));
+    // 服务端待归属账本由 cleanup_missing_ownership_inbox 配套删除，本 patch 不直接清理。
+    assert!(cursor.ownership_pending.contains_key(task_dir));
+    assert!(cursor.pending_rejected.contains_key(task_dir));
+    assert!(!apply_cursor_patch(&mut cursor, &patch()), "重复 patch 不得产生写入");
+}
+
+
+#[test]
 fn grouped_baselines_keep_task_scope() {
     let task_a_dir = ".trellis/tasks/task-a";
     let task_b_dir = ".trellis/tasks/task-b";

@@ -18,11 +18,15 @@ Trellis CLI 的 `initializeHashes` 会递归遍历 `.trellis/`，而其 `EXCLUDE
 
 ## Acceptance Criteria
 
-- [ ] 在存在 `__pycache__/*.pyc` 的仓库执行 Agent-only init 后，清单不含 pycache 键，其余键保持不变。
+- [x] 在存在 `__pycache__/*.pyc` 的仓库执行 Agent-only init 后，清单不含 pycache 键，其余键保持不变。
+      （2026-11-19 真机 `v0.4.44`：原 188 个键全部保留且值不变，探针键删除，结果无 pycache/pyc 键；详见 `e2e-report.md`）
 - [ ] 完整 init 路径同样生效；若某路径确认不会产生 pycache 键，需加断言防回归。
-- [ ] 单元测试：构造含 pycache 键的 manifest，执行清理后仅删除目标键，其余键逐字节保留。
-- [ ] 初始化成功/失败时行为不回归；清理错误被降级处理，不覆盖原有错误上报。
-- [ ] 在 `.trellis/spec/desktop/` 记录该兜底行为与触发路径。
+      （已有共用清理入口测试与 GitHub Rust 测试，但本轮未执行完整 init 真机路径）
+- [x] 单元测试：构造含 pycache 键的 manifest，执行清理后仅删除目标键，其余键逐字节保留。
+      （GitHub Actions Rust unit tests 通过，run `44420836007`）
+- [x] 初始化成功/失败时行为不回归；清理错误被降级处理，不覆盖原有错误上报。
+      （Rust unit tests 与真机 Agent-only init 均通过）
+- [x] 在 `.trellis/spec/desktop/` 记录该兜底行为与触发路径。
 
 ## Constraints
 

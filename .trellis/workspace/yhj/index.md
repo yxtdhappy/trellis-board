@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 64
-- **Last Active**: 2026-11-18
+- **Total Sessions**: 65
+- **Last Active**: 2026-11-19
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1512 | Active |
+| `journal-1.md` | ~1536 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 65 | 2026-11-19 | 客户端 Trellis 初始化后清理 __pycache__ 模板哈希 | `cf47f9f`, `654d9f0` | `main` |
 | 64 | 2026-11-18 | 修复首次登录覆盖运行环境标记并增量安装 | `635bc46`, `8b578f4` | `main` |
 | 62 | 2026-11-18 | 完成待归属删除离线续传与 0.4.40 E2E | `8c101fc`, `f09f416` | `main` |
 | 61 | 2026-11-17 | 归档附件本地快照与只读访问 | `98b3e81` | `main` |

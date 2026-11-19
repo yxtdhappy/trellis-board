@@ -190,8 +190,21 @@ impl TaskSync {
                 server_files,
             ));
         }
+        let mut cleared_dirs: Vec<String> = Vec::new();
         for task_dir in &archived_dirs {
             self.cleanup_archived_residue(binding, task_dir).await;
+            // 本地活跃副本已不存在（归档移出后的常态，或残留已被安全清理）才丢弃同步基线；
+            // 本地仍有内容时保留基线，避免把用户本地数据当作新任务重新上传。
+            if !self.active_task_directory_exists(binding, task_dir).await {
+                cleared_dirs.push(task_dir.clone());
+            }
+        }
+        if !cleared_dirs.is_empty() {
+            // 服务端已明确归档：清掉这些目录的 baselines/deferred，避免下一轮 pull 仍把它们判为 dirty。
+            // 服务端待归属账本不在本次清理范围，仍由 cleanup_missing_ownership_inbox 负责。
+            self.remove_task_dir_cursor_state(&task_space_id, &cleared_dirs)
+                .await?;
+            cursor = self.read_cursor(&task_space_id).await;
         }
         sync_trace(
             &task_space_id,
