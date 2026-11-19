@@ -28,7 +28,7 @@
 - 当前真实环境中，`trellis-board/main` 的 cursor 从
   `2026-11-17T08:52:29.033Z` 起保留 pending batch
   `a9bac4cb-2b73-4746-bacd-a8786f7eeef8`，其中包含
-  `.trellis/tasks/11-17-http-archive-sync`；该任务 `branch=null`、
+  一个已删除的规划任务目录；该任务 `branch=null`、
   `base_branch=team-board`，并持续超过 10 分钟未完成。
 - watcher 路径不会丢失：客户端约 `2.439s` 扫到了新任务，阻塞发生在 cursor pending
   重试后的提前返回，不在文件监听或归档扫描。
@@ -67,7 +67,7 @@
   `11-17-archive-local-snapshot-read`、`11-17-fix-archive-filter-listener-dev-id`、
   `11-17-in-window-task-sync-dialog`。
 - 漏掉的 3 个任务并非都因分支过滤：
-  - `11-17-http-archive-sync`：旧 pending 的 `branch=null` 与当前本地 `branch=main`
+  - 一个已删除的规划任务：旧 pending 的 `branch=null` 与当前本地 `branch=main`
     不一致，触发 `TASK_OWNERSHIP_PENDING_MISMATCH`，并提前终止上传。
   - `11-17-fix-cross-branch-pending-blocking`：在该 pending 之后创建，被同一提前返回阻塞。
   - `11-17-desktop-log-timestamp-format`：服务端在 revision 443 删除该任务，
