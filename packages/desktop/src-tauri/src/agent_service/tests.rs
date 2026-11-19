@@ -10,6 +10,14 @@ fn scoped(kind: &str) -> Value {
 }
 
 #[test]
+fn xml_escape_covers_special_chars() {
+    assert_eq!(
+        xml_escape("a&b<c>\"d\"'e'"),
+        "a&amp;b&lt;c&gt;&quot;d&quot;&apos;e&apos;"
+    );
+}
+
+#[test]
 fn handoff_notification_only_covers_terminal_outcomes() {
     assert_eq!(
         handoff_notification(&json!({ "outcome": "", "taskId": "task-a" })),

@@ -585,6 +585,7 @@ impl TaskSync {
                         error.server_code.as_deref(),
                         Some("TASK_LEASE_INVALID")
                             | Some("TASK_LEASE_REQUIRED")
+                            | Some("FORBIDDEN")
                             | Some("NOT_FOUND")
                     ) => {}
                 Err(error) => {

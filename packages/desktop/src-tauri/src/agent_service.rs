@@ -279,16 +279,7 @@ impl AgentService {
         if !self.window_hidden_or_minimized() {
             return;
         }
-        if let Err(error) = self
-            .app
-            .notification()
-            .builder()
-            .title(title)
-            .body(body)
-            .show()
-        {
-            crate::logging::warn(&format!("发送任务认领系统通知失败：{error}"));
-        }
+        show_windows_toast(&self.app.config().identifier, title, &body);
     }
 
     /// 自动事件只发系统通知，绝不抢焦点；档位由「偏好设置 → 同步通知」决定。
@@ -470,6 +461,71 @@ fn handoff_reason_label(reason: Option<&str>) -> &'static str {
         Some("lease_active") => "任务仍有其他客户端持有写租约，暂未清理",
         Some(_) => "本地副本状态需要人工确认",
         None => "",
+    }
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+/// 便携版应用的 AUMID 没有 Start Menu 注册，Windows 会静默丢弃插件默认的
+/// ToastGeneric 通知；传统 ToastText02 模板可以正常显示。这里用
+/// PowerShell WinRT 直接发 ToastText02，避免依赖插件模板。
+fn show_windows_toast(app_id: &str, title: &str, body: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let xml = format!(
+            "<toast><visual><binding template=\"ToastText02\"><text id=\"1\">{}</text><text id=\"2\">{}</text></binding></visual></toast>",
+            xml_escape(title),
+            xml_escape(body),
+        );
+        let xml_base64 = base64::engine::general_purpose::STANDARD.encode(xml.as_bytes());
+        let app_id = app_id.replace('\'', "''");
+        let script = format!(
+            "$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]\n\
+             $null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime]\n\
+             $xmlText = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{xml_base64}'))\n\
+             $xml = New-Object Windows.Data.Xml.Dom.XmlDocument\n\
+             $xml.LoadXml($xmlText)\n\
+             $toast = New-Object Windows.UI.Notifications.ToastNotification $xml\n\
+             [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{app_id}').Show($toast)\n"
+        );
+        let encoded =
+            base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>());
+        match std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+        {
+            Ok(mut child) => {
+                std::thread::spawn(move || match child.wait() {
+                    Ok(status) if status.success() => {}
+                    Ok(status) => crate::logging::warn(&format!(
+                        "发送任务认领系统通知失败：PowerShell 退出码 {status}"
+                    )),
+                    Err(error) => crate::logging::warn(&format!(
+                        "等待任务认领系统通知进程失败：{error}"
+                    )),
+                });
+            }
+            Err(error) => crate::logging::warn(&format!(
+                "启动任务认领系统通知失败：{error}"
+            )),
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app_id, title, body);
     }
 }
 
