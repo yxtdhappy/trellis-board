@@ -140,3 +140,33 @@ http://192.168.137.10:4403/ → WitOps 工作台 → Trellis 任务
 - 不允许任务级大纲写 `requirementIds`。
 - 不允许点击运行自动生成大纲。
 - 任务视图和测试弹窗在 360px 下不得撑宽页面。
+
+## 6. UI 反馈修整（2026-11-19）
+
+- 任务表改为固定列宽：`table-layout: fixed` + `<colgroup>`，测试列 140px；项目列单元格不再命中通用 `.project` inline-flex 规则，所有单元格同高、底边对齐。
+- 原型需求链接移入「配置」弹窗，保存到插件 store 的 `settings.prototypeUrl`；关注 ID 编辑移入独立弹窗，主页面只保留数量/未匹配提示与表格展示。
+- 验证：1006px 视口任务列宽 `[258,80,72,56,76,120,140,120]`、行高 72px、表格容器 922/922；360px 视口 watch/settings 弹窗 284/284、body 318/318；`/settings` GET/POST 正常。
+- 注意：`plugins/witops-workbench/**` 仍被根 `.gitignore` 忽略，改动只存在于主工作树，需单独同步/部署。
+
+## 7. 原型链接导入卡住修复（2026-11-19）
+
+- 服务端 `fetchPrototype` 报 `fetch failed`：WSL 的 systemd-resolved 当前 DNS（223.5.5.5）无法解析 `prototype.weintdata.cn`；`192.168.18.1` 可解析到 `192.168.19.171`，已加入 `/etc/hosts` 作为本机解析。
+- 前端 `resolve` 原先复用 `state.loading`，启动时 `/summary` 未完成期间解析按钮被禁用且无反馈；改为独立 `state.resolving`，并让“保存并查询”使用独立 `state.saving`，启动加载期间也能导入。
+- ego 实测完整页面：编辑关注 ID → 填入原型链接 → 解析到 28 个需求 → 保存并查询 → 弹窗关闭、关注数 28、状态完成，无卡住。
+- 注意：`/etc/hosts` 映射为当前环境配置，不属于仓库代码；原型 IP 变化时需更新。
+
+## 8. Jenkins CI 配置入口（2026-11-19）
+
+- 根因：`ci.job` 只支持 `plugins.json`，面板没有配置入口；同时 `witops-workbench` 未声明 `jenkins.ops.jobs.list`。
+- 面板「配置」新增 Jenkins Job（带 `jobs.list` 候选 datalist）与分支参数名；CI 条新增「配置」按钮。
+- 后端 `settings` 持久化 `ciJob/ciBranchParam`，启动时覆盖 `ciConfig`；新增 `GET /ci/jobs` 与 `ci.jobs` capability，requires 增加 `jobs.list`。
+- 验证：`/ci/jobs` 返回 4 个任务；配置 `{fat}luban_mdp-backend-web` 后 `/ci` 返回 `#54 SUCCESS`，CI 条显示 job、构建号，日志可打开。
+
+## 9. 仅安装 witops-workbench 的降级验证（2026-11-19）
+
+- 新增 `GET /features`：通过 `trellis.capabilities.list` 读取运行时能力目录，返回 `witops/scenario/jenkins/trellis`；manifest 增加 `trellis.capabilities.list` require。
+- 面板按 `features` 隐藏关注需求/我的待办/CI 条、测试/大纲/回归列与按钮；`setView` 在缺少 `witops-core` 时强制 Trellis 任务视图，并显示「未安装：…；相关入口已隐藏，Trellis 任务仍可用」。
+- `/summary`、`/test-defaults`、`/ci`、`/trellis-tasks` 在依赖缺失时返回 200 + 空结果/明确错误，不再 500。
+- 修复 `renderFeatures` 引用不存在的 `#watch-toolbar` 导致 `setView` 未执行的问题（HTML 补 id）。
+- 隔离环境 `/tmp/witops-only`（仅 workbench，端口 4405）验证：`/features` 为 `witops:false, scenario:false, jenkins:false, trellis:true`；面板只显示 Trellis 任务，测试/大纲/操作列隐藏，1006/360 均无 body 横向溢出；`/summary`、`/test-defaults`、`/ci`、`/trellis-tasks` 均 200。
+- 全量环境 4403 重启后 `/features` 四项均为 true，任务视图/列宽/测试入口无回归；`yarn test:plugins` 113 tests / 112 pass / 1 skip。
