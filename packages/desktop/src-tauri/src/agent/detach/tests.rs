@@ -22,6 +22,7 @@ fn binding() -> AgentBinding {
         initial_sync_mode: "bootstrap".to_string(),
         initial_sync_completed: true,
         initial_review_pending: false,
+        tracked_task_dirs: Vec::new(),
         live_sync_status: "ready".to_string(),
         live_sync_error: None,
         last_synced_at: None,
@@ -64,8 +65,7 @@ fn terminal_errors_cover_404_and_known_binding_states() {
 
 #[tokio::test]
 async fn mark_pending_updates_only_the_selected_binding() {
-    let root =
-        std::env::temp_dir().join(format!("trellis-detach-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("trellis-detach-{}", uuid::Uuid::new_v4()));
     let store = ConfigStore::new_unsecured_for_test(root);
     store.ensure_directories().await.expect("directories");
     let mut seeded = config();
@@ -79,8 +79,15 @@ async fn mark_pending_updates_only_the_selected_binding() {
     let selected = mark_pending(&store, "space-1").await.expect("pending");
     assert_eq!(selected.task_space_id, "space-1");
     assert!(!selected.detach_pending);
-    let saved = store.read_config(false).await.expect("read").expect("config");
+    let saved = store
+        .read_config(false)
+        .await
+        .expect("read")
+        .expect("config");
     assert!(saved.bindings[0].detach_pending);
     assert!(!saved.bindings[1].detach_pending);
-    assert_eq!(saved.bindings[0].last_error.as_deref(), Some("服务端解绑待确认"));
+    assert_eq!(
+        saved.bindings[0].last_error.as_deref(),
+        Some("服务端解绑待确认")
+    );
 }

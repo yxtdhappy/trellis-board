@@ -16,3 +16,4 @@ pub mod task_command;
 pub mod task_control;
 pub mod task_sync;
 pub mod trellis_cli;
+pub mod worktree;

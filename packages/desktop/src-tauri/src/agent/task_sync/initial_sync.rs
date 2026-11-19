@@ -550,6 +550,14 @@ impl TaskSync {
         if task_dirs.is_empty() {
             return Ok(Value::Null);
         }
+        if !binding.tracked_task_dirs.is_empty() {
+            let tracked: HashSet<&str> = binding
+                .tracked_task_dirs
+                .iter()
+                .map(String::as_str)
+                .collect();
+            task_dirs.retain(|task_dir| tracked.contains(task_dir.as_str()));
+        }
         let dirs: Vec<String> = task_dirs.into_iter().collect();
         self.upload_directories(&binding, &dirs, true, None).await
     }

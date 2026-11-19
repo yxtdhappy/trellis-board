@@ -17,6 +17,7 @@ use crate::agent::protocol::{
 use crate::agent::state_events::StateSink;
 use crate::agent::store::{AgentBinding, AgentConfig, ConfigStore};
 use crate::agent::task_sync::{ControlSink, TaskSync};
+use crate::agent::worktree::WorktreeService;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const RETRY_BASE: Duration = Duration::from_secs(1);
@@ -29,6 +30,7 @@ pub struct AgentRuntime {
     api: Arc<ApiClient>,
     paused: Arc<AtomicBool>,
     task_sync: Arc<TaskSync>,
+    worktree: Arc<WorktreeService>,
     heartbeat_wake: Arc<Notify>,
     shutdown: watch::Sender<bool>,
     stopped: AtomicBool,
@@ -64,17 +66,25 @@ impl AgentRuntime {
         let heartbeat_wake = Arc::new(Notify::new());
         let task_sync = Arc::new(
             TaskSync::new(store.clone(), api.clone(), emit.clone())
-                .with_state_sink(state_sink)
+                .with_state_sink(state_sink.clone())
                 .with_heartbeat_wake(heartbeat_wake.clone())
                 .with_ownership_index_writer(),
         );
         task_sync.ensure_ownership_validation_worker();
+        let worktree = WorktreeService::new(
+            store.clone(),
+            api.clone(),
+            task_sync.clone(),
+            state_sink,
+            paused.clone(),
+        );
         let (shutdown, _) = watch::channel(false);
         let runtime = Arc::new(Self {
             store,
             api,
             paused,
             task_sync,
+            worktree,
             heartbeat_wake,
             shutdown,
             stopped: AtomicBool::new(false),
@@ -86,6 +96,7 @@ impl AgentRuntime {
             .task_sync
             .prepare_startup_bindings(config.bindings.clone())
             .await;
+        runtime.worktree.start(runtime.shutdown.subscribe()).await;
         let startup = runtime.clone();
         tauri::async_runtime::spawn(async move {
             let mut shutdown = startup.shutdown.subscribe();
@@ -111,10 +122,15 @@ impl AgentRuntime {
         &self.task_sync
     }
 
+    pub(crate) fn worktree(&self) -> &WorktreeService {
+        &self.worktree
+    }
+
     pub fn stop(&self) {
         if self.stopped.swap(true, Ordering::SeqCst) {
             return;
         }
+        self.worktree.stop();
         let _ = self.shutdown.send(true);
         self.write_state_blocking("stopped", None, None);
     }
@@ -179,11 +195,10 @@ impl AgentRuntime {
                 safe_error_message(&error.to_string())
             ));
         }
-        let config = self
-            .store
-            .read_config(false)
-            .await?
-            .ok_or_else(|| AgentError::new(code::CONFIG_MISSING, "Agent 配置缺失，请重新登录"))?;
+        let config =
+            self.store.read_config(false).await?.ok_or_else(|| {
+                AgentError::new(code::CONFIG_MISSING, "Agent 配置缺失，请重新登录")
+            })?;
         self.task_sync
             .update_bindings(config.bindings.clone())
             .await;
@@ -194,7 +209,7 @@ impl AgentRuntime {
             .into_iter()
             .map(|binding| binding.task_space_id)
             .collect();
-         let body = heartbeat_payload(&config, &listening_task_space_ids);
+        let body = heartbeat_payload(&config, &listening_task_space_ids);
         let response = self
             .api
             .request_json(
@@ -637,10 +652,7 @@ fn command_target_active(bindings: &[AgentBinding], command: &AgentCommand) -> b
     })
 }
 
-fn merge_heartbeat_bindings(
-    config: &mut AgentConfig,
-    heartbeat: &HeartbeatResponse,
-) -> bool {
+fn merge_heartbeat_bindings(config: &mut AgentConfig, heartbeat: &HeartbeatResponse) -> bool {
     let by_task_space: HashMap<&str, &ServerBinding> = heartbeat
         .bindings
         .iter()
@@ -654,13 +666,11 @@ fn merge_heartbeat_bindings(
         if heartbeat.compatible && heartbeat.bindings.is_empty() {
             if binding.sync_status != "revoked"
                 || binding.last_error_code.as_deref() != Some("BINDING_UNKNOWN")
-                || binding.last_error.as_deref()
-                    != Some("服务端已撤销该任务空间关联，请重新关联")
+                || binding.last_error.as_deref() != Some("服务端已撤销该任务空间关联，请重新关联")
             {
                 binding.sync_status = "revoked".to_string();
                 binding.last_error_code = Some("BINDING_UNKNOWN".to_string());
-                binding.last_error =
-                    Some("服务端已撤销该任务空间关联，请重新关联".to_string());
+                binding.last_error = Some("服务端已撤销该任务空间关联，请重新关联".to_string());
                 changed = true;
             }
             continue;

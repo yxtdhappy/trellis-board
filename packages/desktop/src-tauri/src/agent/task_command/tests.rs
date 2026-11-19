@@ -51,8 +51,7 @@ fn resolve_task_dir_rejects_traversal() {
 fn synced_revision_requires_positive_revision() {
     assert!(require_synced_revision(&json!({ "revision": 3 })).is_ok());
     assert!(require_synced_revision(&json!({ "revision": 0 })).is_err());
-    let conflict =
-        require_synced_revision(&json!({ "code": "TASK_FILE_CONFLICT" })).unwrap_err();
+    let conflict = require_synced_revision(&json!({ "code": "TASK_FILE_CONFLICT" })).unwrap_err();
     assert_eq!(conflict.code, code::HTTP_ERROR);
 }
 
@@ -233,8 +232,7 @@ fn identical_binding_result_does_not_emit_again() {
 fn test_context(root: &Path) -> (Arc<ConfigStore>, Arc<TaskSync>) {
     let store = Arc::new(ConfigStore::new(root.join("data")));
     let api = Arc::new(
-        crate::agent::http::ApiClient::new("http://127.0.0.1:1", None, None)
-            .expect("api client"),
+        crate::agent::http::ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"),
     );
     let sink: task_sync::ControlSink = Arc::new(|_| {});
     let task_sync = Arc::new(TaskSync::new(store.clone(), api, sink));
@@ -431,6 +429,7 @@ fn sample_binding() -> AgentBinding {
         initial_sync_mode: "review".into(),
         initial_sync_completed: true,
         initial_review_pending: false,
+        tracked_task_dirs: Vec::new(),
         live_sync_status: "synced".into(),
         live_sync_error: None,
         last_synced_at: None,

@@ -27,6 +27,7 @@ use crate::agent::store::{AgentBinding, AgentConfig, ConfigStore};
 use crate::agent::task_control::{parse_state_file, HandoffNotice};
 use crate::agent::task_sync::{ControlSink, TaskSync};
 use crate::agent::trellis_cli::TrellisRuntime;
+use crate::agent::worktree::WorktreeStatusView;
 
 pub use crate::agent::device::LocalAssociation;
 
@@ -917,6 +918,53 @@ pub async fn list_associations(app: &AppHandle) -> Result<Vec<LocalAssociation>,
         ));
     }
     Ok(associations)
+}
+
+pub async fn list_worktree_status(app: &AppHandle) -> Result<Vec<WorktreeStatusView>, String> {
+    let service = service(app).map_err(|error| message(&error))?;
+    let runtime = service
+        .runtime
+        .lock()
+        .map_err(|_| "无法读取 Agent 运行状态".to_string())?
+        .clone();
+    Ok(runtime
+        .map(|runtime| runtime.worktree().list())
+        .unwrap_or_default())
+}
+
+pub async fn refresh_worktree_discovery(
+    app: &AppHandle,
+) -> Result<Vec<WorktreeStatusView>, String> {
+    let service = service(app).map_err(|error| message(&error))?;
+    let runtime = service
+        .runtime
+        .lock()
+        .map_err(|_| "无法读取 Agent 运行状态".to_string())?
+        .clone()
+        .ok_or_else(|| "Agent 尚未运行".to_string())?;
+    runtime
+        .worktree()
+        .refresh()
+        .await
+        .map_err(|error| message(&error))
+}
+
+pub async fn retry_worktree_auto_attach(
+    app: &AppHandle,
+    key: &str,
+) -> Result<Vec<WorktreeStatusView>, String> {
+    let service = service(app).map_err(|error| message(&error))?;
+    let runtime = service
+        .runtime
+        .lock()
+        .map_err(|_| "无法读取 Agent 运行状态".to_string())?
+        .clone()
+        .ok_or_else(|| "Agent 尚未运行".to_string())?;
+    runtime
+        .worktree()
+        .retry(key)
+        .await
+        .map_err(|error| message(&error))
 }
 
 pub async fn pending_handoff_notices(app: &AppHandle) -> Result<Vec<HandoffNotice>, String> {

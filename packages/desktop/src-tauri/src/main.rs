@@ -680,6 +680,38 @@ async fn list_local_associations(
 }
 
 #[tauri::command]
+async fn list_worktree_status(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<Vec<crate::agent::worktree::WorktreeStatusView>, String> {
+    ensure_board_caller(&app, &window)?;
+    agent_service::list_worktree_status(&app).await
+}
+
+#[tauri::command]
+async fn refresh_worktree_discovery(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<Vec<crate::agent::worktree::WorktreeStatusView>, String> {
+    ensure_board_caller(&app, &window)?;
+    agent_service::refresh_worktree_discovery(&app).await
+}
+
+#[tauri::command]
+async fn retry_worktree_auto_attach(
+    app: AppHandle,
+    window: WebviewWindow,
+    key: String,
+) -> Result<Vec<crate::agent::worktree::WorktreeStatusView>, String> {
+    ensure_board_caller(&app, &window)?;
+    let key = key.trim();
+    if key.is_empty() || key.len() > 4096 {
+        return Err("worktree 标识无效".to_string());
+    }
+    agent_service::retry_worktree_auto_attach(&app, key).await
+}
+
+#[tauri::command]
 async fn detach_local_association(
     app: AppHandle,
     window: WebviewWindow,
@@ -1100,6 +1132,9 @@ fn main() {
             cancel_pending_project,
             associate_pending_project,
             list_local_associations,
+            list_worktree_status,
+            refresh_worktree_discovery,
+            retry_worktree_auto_attach,
             detach_local_association,
             inspect_associated_project_agents,
             initialize_associated_project_agents,

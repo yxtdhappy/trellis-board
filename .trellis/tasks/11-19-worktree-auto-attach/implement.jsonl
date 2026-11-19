@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "tasks-only 快照、taskSpace、CAS、cursor、归档同步和命令契约"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "进程内 Rust Agent 模块边界、数据兼容和 Tauri 命令契约"}
+{"file": ".trellis/spec/backend/task-ownership-and-conflict-idempotency.md", "reason": "任务级 branch 归属、ownership、merge evidence 和待归属规则"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "Board 任务字段、taskSpace 状态和前端渲染契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Node 测试、迁移和 Team 同步测试基线"}
+{"file": ".trellis/tasks/11-19-worktree-auto-attach/research/worktree-sync-contracts.md", "reason": "本任务相关的 taskSpace/CAS/归档/ownership/worktree Git 事实摘要"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "新 Tauri 命令注册、capability、ensure_board_caller 与状态事件契约"}

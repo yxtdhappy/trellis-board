@@ -295,11 +295,7 @@ pub async fn initialize_project(options: &InitializeOptions<'_>) -> AgentResult<
     let tools_missing = selected_tools
         .iter()
         .any(|id| !inspected.existing_agent_tools.contains(id));
-    match initialization_mode(
-        inspected.has_trellis,
-        inspected.has_tasks,
-        tools_missing,
-    ) {
+    match initialization_mode(inspected.has_trellis, inspected.has_tasks, tools_missing) {
         InitializationMode::FullInit => {
             trellis_cli::initialize_trellis(
                 options.runtime,
@@ -577,6 +573,7 @@ pub async fn attach_project(
         initial_sync_mode: mode.to_string(),
         initial_sync_completed: false,
         initial_review_pending: mode == "review",
+        tracked_task_dirs: Vec::new(),
         live_sync_status: "syncing".to_string(),
         live_sync_error: None,
         last_synced_at: None,

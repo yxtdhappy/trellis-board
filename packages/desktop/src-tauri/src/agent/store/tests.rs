@@ -40,7 +40,10 @@ fn creates_paths_under_root() {
 fn detach_pending_defaults_false_and_round_trips() {
     let binding = binding("local-1", "ts-1", false);
     let mut value = serde_json::to_value(&binding).expect("serialize");
-    value.as_object_mut().expect("binding object").remove("detachPending");
+    value
+        .as_object_mut()
+        .expect("binding object")
+        .remove("detachPending");
     let parsed: AgentBinding = serde_json::from_value(value).expect("deserialize");
     assert!(!parsed.detach_pending);
 
@@ -71,6 +74,7 @@ fn binding(local_id: &str, task_space_id: &str, read_only: bool) -> AgentBinding
         initial_sync_mode: "bootstrap".into(),
         initial_sync_completed: true,
         initial_review_pending: false,
+        tracked_task_dirs: Vec::new(),
         live_sync_status: "ready".into(),
         live_sync_error: None,
         last_synced_at: None,

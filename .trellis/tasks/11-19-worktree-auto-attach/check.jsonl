@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "检查快照过滤、单写者、游标和归档状态迁移"}
+{"file": ".trellis/spec/backend/task-ownership-and-conflict-idempotency.md", "reason": "检查 branch/ownership/merge evidence 未被绕过"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "检查 Board 来源标识、待合入和本地三态"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 Node 测试、迁移和真实 HTTP 验收"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查跨层字段、路径、索引和前端消费者是否同步"}
+{"file": ".trellis/tasks/11-19-worktree-auto-attach/research/worktree-sync-contracts.md", "reason": "用于检查单写者、快照过滤、归档状态和 Git worktree 边界"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "检查命令注册、权限/capability、事件失效通知和窗口边界"}

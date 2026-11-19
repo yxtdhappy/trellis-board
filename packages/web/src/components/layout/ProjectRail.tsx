@@ -42,6 +42,21 @@ type Project = {
 
 type LiveSyncStatus = 'pending' | 'syncing' | 'ready' | 'error'
 
+export type WorktreeStatus = {
+  path: string
+  branchName: string
+  taskSpaceId: string | null
+  autoManaged: boolean
+  status: string
+  visibility: 'hidden' | 'visible' | 'hidden_empty' | 'hidden_missing'
+  archiveSyncPending: boolean
+  activeTaskCount: number
+  serverActiveTaskCount: number
+  lastError: string | null
+  lastVisibilityError: string | null
+  lastVisibilityAt: string | null
+}
+
 export type LocalAssociation = {
   projectId: string
   taskSpaceId: string
@@ -238,6 +253,63 @@ function normalizeAssociations(value: unknown): LocalAssociation[] {
     const association = normalizeAssociation(item)
     return association ? [association] : []
   })
+}
+
+function normalizeWorktreeStatus(value: unknown): WorktreeStatus | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (
+    typeof record.path !== 'string' ||
+    typeof record.branchName !== 'string' ||
+    typeof record.autoManaged !== 'boolean' ||
+    typeof record.status !== 'string' ||
+    (record.visibility !== 'hidden' &&
+      record.visibility !== 'visible' &&
+      record.visibility !== 'hidden_empty' &&
+      record.visibility !== 'hidden_missing')
+  ) {
+    return null
+  }
+  return {
+    path: record.path,
+    branchName: record.branchName,
+    taskSpaceId: typeof record.taskSpaceId === 'string' ? record.taskSpaceId : null,
+    autoManaged: record.autoManaged,
+    status: record.status,
+    visibility: record.visibility,
+    archiveSyncPending: record.archiveSyncPending === true,
+    activeTaskCount:
+      typeof record.activeTaskCount === 'number' && Number.isSafeInteger(record.activeTaskCount)
+        ? Math.max(0, record.activeTaskCount)
+        : 0,
+    serverActiveTaskCount:
+      typeof record.serverActiveTaskCount === 'number' &&
+      Number.isSafeInteger(record.serverActiveTaskCount)
+        ? Math.max(0, record.serverActiveTaskCount)
+        : 0,
+    lastError: typeof record.lastError === 'string' ? record.lastError : null,
+    lastVisibilityError:
+      typeof record.lastVisibilityError === 'string' ? record.lastVisibilityError : null,
+    lastVisibilityAt: typeof record.lastVisibilityAt === 'string' ? record.lastVisibilityAt : null,
+  }
+}
+
+function normalizeWorktreeStatuses(value: unknown): WorktreeStatus[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    const status = normalizeWorktreeStatus(item)
+    return status ? [status] : []
+  })
+}
+
+function worktreeStatusSignature(statuses: WorktreeStatus[]): string {
+  return statuses
+    .map(
+      (status) =>
+        `${status.taskSpaceId || status.path}:${status.autoManaged}:${status.visibility}:${status.status}:${status.archiveSyncPending}:${status.activeTaskCount}:${status.serverActiveTaskCount}:${status.lastError || ''}:${status.lastVisibilityError || ''}`,
+    )
+    .sort()
+    .join('|')
 }
 
 function normalizeSidecarStatus(value: unknown): SidecarStatus | null {
@@ -449,6 +521,9 @@ export function ProjectRail({
   const invoke = useMemo(() => tauriInvoke(), [])
   const confirm = useConfirm()
   const [associations, setAssociations] = useState<Map<string, LocalAssociation>>(() => new Map())
+  const [worktreeStatuses, setWorktreeStatuses] = useState<Map<string, WorktreeStatus>>(
+    () => new Map(),
+  )
   const [associationError, setAssociationError] = useState('')
   const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus | null>(null)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
@@ -458,8 +533,10 @@ export function ProjectRail({
   const [inspectingProject, setInspectingProject] = useState(false)
   const [syncingDeferredTaskSpace, setSyncingDeferredTaskSpace] = useState<string | null>(null)
   const [detachingTaskSpace, setDetachingTaskSpace] = useState<string | null>(null)
+  const [retryingWorktreeKey, setRetryingWorktreeKey] = useState<string | null>(null)
   const [listenerTaskSpace, setListenerTaskSpace] = useState<TaskSpace | null>(null)
   const associationSignatureRef = useRef('')
+  const worktreeStatusSignatureRef = useRef('')
   const refreshProjectStateRef = useRef<() => Promise<void>>(async () => {})
   const onAssociationsChangeRef = useRef(onAssociationsChange)
 
@@ -496,6 +573,23 @@ export function ProjectRail({
       }
     }
 
+    async function loadWorktreeStatuses() {
+      try {
+        const result = await currentInvoke('list_worktree_status')
+        if (cancelled) return
+        const normalized = normalizeWorktreeStatuses(result)
+        const signature = worktreeStatusSignature(normalized)
+        if (signature !== worktreeStatusSignatureRef.current) {
+          worktreeStatusSignatureRef.current = signature
+          setWorktreeStatuses(
+            new Map(normalized.map((item) => [item.taskSpaceId || item.path, item])),
+          )
+        }
+      } catch {
+        // worktree 自动接入是增强能力；命令不可用时保持分支默认可见。
+      }
+    }
+
     async function loadSidecarStatus() {
       try {
         const result = await currentInvoke('desktop_sidecar_status')
@@ -510,9 +604,14 @@ export function ProjectRail({
     }
 
     const associationRefresh = createRefreshCoordinator(loadAssociations)
+    const worktreeRefresh = createRefreshCoordinator(loadWorktreeStatuses)
     const sidecarRefresh = createRefreshCoordinator(loadSidecarStatus)
     const refreshAll = async () => {
-      await Promise.all([associationRefresh.request(), sidecarRefresh.request()])
+      await Promise.all([
+        associationRefresh.request(),
+        worktreeRefresh.request(),
+        sidecarRefresh.request(),
+      ])
     }
     refreshProjectStateRef.current = refreshAll
 
@@ -541,7 +640,10 @@ export function ProjectRail({
       if (document.visibilityState !== 'visible') return
       const topics = desktopStateTopics(event.payload)
       if (!topics.size) return
-      if (topics.has('associations')) void associationRefresh.request()
+      if (topics.has('associations')) {
+        void associationRefresh.request()
+        void worktreeRefresh.request()
+      }
       if (topics.has('sidecar')) void sidecarRefresh.request()
     }
 
@@ -568,6 +670,7 @@ export function ProjectRail({
       cancelled = true
       unlisten?.()
       associationRefresh.dispose()
+      worktreeRefresh.dispose()
       sidecarRefresh.dispose()
       clearFallback()
       window.removeEventListener('focus', refreshVisible)
@@ -712,8 +815,39 @@ export function ProjectRail({
   const reviewAssociations = [...associations.values()].filter(
     (association) => association.status === 'approved' && association.initialReviewPending,
   )
+  const worktreeIssues = [...worktreeStatuses.values()].filter(
+    (status) =>
+      status.autoManaged &&
+      (status.lastError || status.lastVisibilityError || status.visibility === 'hidden_missing'),
+  )
+  async function retryWorktree(key: string) {
+    if (!invoke || retryingWorktreeKey) return
+    setRetryingWorktreeKey(key)
+    try {
+      await invoke('retry_worktree_auto_attach', { key })
+      toast.success('已重新尝试接入 worktree')
+      void onRefresh()
+      await refreshProjectStateRef.current()
+    } catch (error) {
+      toast.error(associationErrorMessage(error))
+    } finally {
+      setRetryingWorktreeKey(null)
+    }
+  }
+  const visibleTaskSpaces = (project: Project) =>
+    (project.taskSpaces || []).filter((taskSpace) => {
+      const status = worktreeStatuses.get(taskSpace.id)
+      return !status || !status.autoManaged || status.visibility === 'visible'
+    })
+  useEffect(() => {
+    if (currentTaskSpace === 'all' || projects.length === 0) return
+    const selected = projects.some((project) =>
+      visibleTaskSpaces(project).some((taskSpace) => taskSpace.id === currentTaskSpace),
+    )
+    if (!selected) onSelectTaskSpace('all')
+  }, [currentTaskSpace, onSelectTaskSpace, projects, worktreeStatuses])
   const taskSpaceCount = projects.reduce(
-    (total, project) => total + (project.taskSpaces?.length || 0),
+    (total, project) => total + visibleTaskSpaces(project).length,
     0,
   )
 
@@ -756,6 +890,55 @@ export function ProjectRail({
           有分支等待确认任务差异，确认处理方式后才会同步任务。
         </Alert>
       ) : null}
+      {invoke && worktreeIssues.length ? (
+        <Alert
+          role="status"
+          className={cn(
+            'mb-1 border-warning/35 px-2 py-1.5 text-2xs leading-4',
+            toneSurface('warning'),
+          )}
+        >
+          <div className="flex flex-col gap-1">
+            <span>{worktreeIssues.length} 个 worktree 需要处理</span>
+            {worktreeIssues.slice(0, 3).map((issue) => {
+              const key = issue.taskSpaceId || issue.path
+              const association = issue.taskSpaceId
+                ? associations.get(issue.taskSpaceId)
+                : undefined
+              const detail =
+                issue.lastError ||
+                issue.lastVisibilityError ||
+                (issue.visibility === 'hidden_missing' ? 'worktree 已删除，可解绑' : '自动接入失败')
+              return (
+                <div key={issue.path} className="flex items-start justify-between gap-2">
+                  <span className="min-w-0 truncate" title={`${issue.path}：${detail}`}>
+                    {issue.branchName || issue.path}：{detail}
+                  </span>
+                  {issue.visibility === 'hidden_missing' && association ? (
+                    <button
+                      type="button"
+                      className="shrink-0 underline disabled:opacity-50"
+                      disabled={detachingTaskSpace !== null}
+                      onClick={() => void detachAssociation(association)}
+                    >
+                      {detachingTaskSpace === association.taskSpaceId ? '处理中' : '解绑'}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="shrink-0 underline disabled:opacity-50"
+                      disabled={retryingWorktreeKey !== null}
+                      onClick={() => void retryWorktree(key)}
+                    >
+                      {retryingWorktreeKey === key ? '处理中' : '重试'}
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </Alert>
+      ) : null}
       <button
         type="button"
         onClick={() => onSelect('all')}
@@ -772,7 +955,7 @@ export function ProjectRail({
         <p className="px-2 pb-1 text-2xs leading-4 text-muted-foreground">全部项目按分支独立统计</p>
       ) : null}
       {projects.map((project) => {
-        const taskSpaces = project.taskSpaces || []
+        const taskSpaces = visibleTaskSpaces(project)
         const projectInboxCount = Math.max(0, project.ownershipInboxCount || 0)
         const selectedTaskSpace =
           current === project.id
@@ -986,6 +1169,7 @@ export function ProjectRail({
                 <div className="flex min-w-0 flex-1 flex-col">
                   {taskSpaces.map((taskSpace) => {
                     const branchAssociation = associations.get(taskSpace.id)
+                    const worktreeStatus = worktreeStatuses.get(taskSpace.id)
                     const branchView = invoke ? projectAssociationView(branchAssociation) : null
                     const listenerView = projectListenerView(taskSpace)
                     const detachPending = branchAssociation?.detachPending === true
@@ -997,6 +1181,12 @@ export function ProjectRail({
                     const branchTitle = [
                       listenerView ? `${listenerView.counts} · ${listenerView.label}` : null,
                       branchView ? `本地关联：${branchView.label}` : null,
+                      worktreeStatus?.archiveSyncPending
+                        ? '本地任务已归档，等待服务端归档同步完成'
+                        : null,
+                      worktreeStatus?.lastVisibilityError
+                        ? `可见性检查失败：${worktreeStatus.lastVisibilityError}`
+                        : null,
                       listenerView?.detail,
                     ]
                       .filter(Boolean)
@@ -1054,6 +1244,16 @@ export function ProjectRail({
                             {detachPending ? (
                               <span className="block truncate text-2xs leading-3 text-warning">
                                 服务端解绑待确认
+                              </span>
+                            ) : null}
+                            {worktreeStatus?.archiveSyncPending ? (
+                              <span className="block truncate text-2xs leading-3 text-warning">
+                                等待归档同步
+                              </span>
+                            ) : null}
+                            {worktreeStatus?.lastVisibilityError ? (
+                              <span className="block truncate text-2xs leading-3 text-warning">
+                                可见性检查失败
                               </span>
                             ) : null}
                           </span>

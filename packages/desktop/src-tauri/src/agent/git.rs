@@ -49,11 +49,12 @@ pub enum GitOperation {
     Fetch,
     RevList,
     Merge,
+    WorktreeList,
 }
 
 #[allow(dead_code)]
 impl GitOperation {
-    pub const ALL: [GitOperation; 15] = [
+    pub const ALL: [GitOperation; 16] = [
         GitOperation::CheckRef,
         GitOperation::ConfigSparse,
         GitOperation::ShowToplevel,
@@ -69,6 +70,7 @@ impl GitOperation {
         GitOperation::Fetch,
         GitOperation::RevList,
         GitOperation::Merge,
+        GitOperation::WorktreeList,
     ];
 
     /// JS 侧的操作名（日志与白名单契约共用）。
@@ -89,6 +91,7 @@ impl GitOperation {
             GitOperation::Fetch => "fetch",
             GitOperation::RevList => "rev-list",
             GitOperation::Merge => "merge",
+            GitOperation::WorktreeList => "worktree-list",
         }
     }
 }
@@ -286,6 +289,13 @@ pub fn git_args(
                 "--left-right".to_string(),
                 "--count".to_string(),
                 "HEAD...FETCH_HEAD".to_string(),
+            ]);
+        }
+        GitOperation::WorktreeList => {
+            args.extend([
+                "worktree".to_string(),
+                "list".to_string(),
+                "--porcelain".to_string(),
             ]);
         }
         GitOperation::Merge => {
@@ -538,6 +548,65 @@ pub async fn ls_remote(
     }
 }
 
+/// `git worktree list --porcelain` 的一条记录。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitWorktree {
+    pub path: PathBuf,
+    pub head: Option<String>,
+    pub branch: Option<String>,
+    pub bare: bool,
+    pub prunable: bool,
+}
+
+pub async fn worktree_list(repo_path: &Path, hooks_dir: &Path) -> AgentResult<Vec<GitWorktree>> {
+    ensure_hooks_dir(hooks_dir).await?;
+    let output = run_git(
+        GitOperation::WorktreeList,
+        repo_path,
+        hooks_dir,
+        &GitParams::default(),
+        LOCAL_TIMEOUT,
+    )
+    .await?;
+    let value = require_success(&output, "无法读取 Git worktree 列表")?;
+    let mut worktrees = Vec::new();
+    let mut current: Option<GitWorktree> = None;
+    for line in value.lines() {
+        if line.is_empty() {
+            if let Some(worktree) = current.take() {
+                worktrees.push(worktree);
+            }
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("worktree ") {
+            if let Some(worktree) = current.take() {
+                worktrees.push(worktree);
+            }
+            current = Some(GitWorktree {
+                path: PathBuf::from(path),
+                head: None,
+                branch: None,
+                bare: false,
+                prunable: false,
+            });
+        } else if let Some(worktree) = current.as_mut() {
+            if let Some(head) = line.strip_prefix("HEAD ") {
+                worktree.head = Some(head.to_string());
+            } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+                worktree.branch = Some(branch.to_string());
+            } else if line == "bare" {
+                worktree.bare = true;
+            } else if line == "prunable" || line.starts_with("prunable ") {
+                worktree.prunable = true;
+            }
+        }
+    }
+    if let Some(worktree) = current {
+        worktrees.push(worktree);
+    }
+    Ok(worktrees)
+}
+
 pub async fn ls_tree(
     repo_path: &Path,
     hooks_dir: &Path,
@@ -716,6 +785,25 @@ pub fn detect_git_state(repo_path: &Path) -> Option<&'static str> {
         .find(|marker| git_dir.join(*marker).exists())
 }
 
+/// 普通 checkout 返回 `.git`，linked worktree 返回共享的 common dir。
+pub fn common_dir(repo_path: &Path) -> Option<PathBuf> {
+    let git_dir = resolve_git_dir(repo_path)?;
+    let common = std::fs::read_to_string(git_dir.join("commondir"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                path
+            } else {
+                git_dir.join(path)
+            }
+        })
+        .unwrap_or_else(|| git_dir.clone());
+    std::fs::canonicalize(&common).ok().or(Some(common))
+}
+
 /// 解析 porcelain v1 输出；rename/copy 行取箭头后的新路径。
 pub fn parse_status(output: &str) -> Vec<GitStatusEntry> {
     output.lines().filter_map(parse_status_line).collect()
@@ -874,9 +962,7 @@ fn parse_status_line(line: &str) -> Option<GitStatusEntry> {
     let rest = line.get(separator_index + 1..)?;
     let (original_path, path) = if first == 'R' || first == 'C' || second == 'R' || second == 'C' {
         match rest.rsplit_once(" -> ") {
-            Some((old, new)) if !old.is_empty() && !new.is_empty() => {
-                (Some(old.to_string()), new)
-            }
+            Some((old, new)) if !old.is_empty() && !new.is_empty() => (Some(old.to_string()), new),
             _ => (None, rest),
         }
     } else {
@@ -905,9 +991,12 @@ fn parse_diff_tree_paths(value: &str) -> AgentResult<Vec<String>> {
             .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "Git 差量输出缺少路径"))?;
         if status.is_empty()
             || status.len() > 2
-            || !status
-                .bytes()
-                .all(|byte| matches!(byte, b'A' | b'C' | b'D' | b'M' | b'R' | b'T' | b'U' | b'X' | b'B'))
+            || !status.bytes().all(|byte| {
+                matches!(
+                    byte,
+                    b'A' | b'C' | b'D' | b'M' | b'R' | b'T' | b'U' | b'X' | b'B'
+                )
+            })
         {
             return Err(AgentError::new(
                 code::INVALID_RESPONSE,

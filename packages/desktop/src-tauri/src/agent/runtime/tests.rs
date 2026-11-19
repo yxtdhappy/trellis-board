@@ -22,6 +22,7 @@ fn binding(task_space_id: &str) -> AgentBinding {
         initial_sync_mode: "bootstrap".to_string(),
         initial_sync_completed: true,
         initial_review_pending: false,
+        tracked_task_dirs: Vec::new(),
         live_sync_status: "ready".to_string(),
         live_sync_error: None,
         last_synced_at: None,
@@ -148,5 +149,8 @@ fn command_frame_supports_nested_and_legacy_shapes() {
         command_from_frame(&json!({ "payload": { "command": command.clone() } })),
         command
     );
-    assert_eq!(command_from_frame(&json!({ "command": command.clone() })), command);
+    assert_eq!(
+        command_from_frame(&json!({ "command": command.clone() })),
+        command
+    );
 }

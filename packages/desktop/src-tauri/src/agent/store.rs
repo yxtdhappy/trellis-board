@@ -87,6 +87,8 @@ pub struct AgentBinding {
     pub initial_sync_mode: String,
     pub initial_sync_completed: bool,
     pub initial_review_pending: bool,
+    #[serde(default)]
+    pub tracked_task_dirs: Vec<String>,
     pub live_sync_status: String,
     #[serde(default)]
     pub live_sync_error: Option<String>,
@@ -251,6 +253,7 @@ fn validate_binding(binding: &AgentBinding, index: usize) -> AgentResult<AgentBi
         initial_sync_mode,
         initial_sync_completed,
         initial_review_pending,
+        tracked_task_dirs: binding.tracked_task_dirs.clone(),
         live_sync_status: binding.live_sync_status.clone(),
         live_sync_error: optional_string(binding.live_sync_error.as_deref(), "liveSyncError", 500)?,
         last_synced_at: optional_string(binding.last_synced_at.as_deref(), "lastSyncedAt", 64)?,

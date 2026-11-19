@@ -87,10 +87,8 @@ impl TaskSync {
             self.notify_state_changed();
             self.wake_heartbeat();
         }
-        self.ownership_projection_epoch.fetch_add(
-            1,
-            std::sync::atomic::Ordering::SeqCst,
-        );
+        self.ownership_projection_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.head_tree_cache.lock().await.clear();
         self.ownership_projection_cache.lock().await.clear();
         self.baseline_owned.lock().await.clear();
@@ -240,7 +238,10 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) async fn prepare_bindings(self: &Arc<Self>, bindings: Vec<AgentBinding>) -> Vec<String> {
+    pub(super) async fn prepare_bindings(
+        self: &Arc<Self>,
+        bindings: Vec<AgentBinding>,
+    ) -> Vec<String> {
         let _selection = self.binding_selection_lock.lock().await;
         let _lifecycle = self.cursor_write.lock().await;
         let active_local_ids: Option<HashSet<String>> = match self.store.read_config(false).await {
@@ -263,6 +264,8 @@ impl TaskSync {
                 active_local_ids
                     .as_ref()
                     .is_some_and(|ids| ids.contains(&binding.local_id))
+                    && (Path::new(&binding.repo_path).is_dir()
+                        || binding.tracked_task_dirs.is_empty())
             })
             .collect::<Vec<_>>();
         let candidate = approved_bindings(filtered.clone());
@@ -319,10 +322,8 @@ impl TaskSync {
         if unchanged {
             return Vec::new();
         }
-        self.ownership_projection_epoch.fetch_add(
-            1,
-            std::sync::atomic::Ordering::SeqCst,
-        );
+        self.ownership_projection_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.head_tree_cache.lock().await.clear();
         self.ownership_projection_cache.lock().await.clear();
         self.baseline_owned.lock().await.clear();
@@ -486,7 +487,11 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) async fn persist_binding_sync_error(&self, binding: &AgentBinding, error: &AgentError) {
+    pub(super) async fn persist_binding_sync_error(
+        &self,
+        binding: &AgentBinding,
+        error: &AgentError,
+    ) {
         let message = protocol::safe_error_message(&error.message);
         let error_code = error.code.clone();
         let local_id = binding.local_id.clone();
@@ -684,6 +689,30 @@ impl TaskSync {
             .cloned()
             .filter(|binding| !binding.detach_pending)
             .ok_or_else(|| AgentError::new(code::BINDING_UNKNOWN, "任务空间尚未关联到本地仓库"))
+    }
+}
+
+impl TaskSync {
+    pub async fn set_tracked_task_dirs(&self, task_space_id: &str, task_dirs: Vec<String>) {
+        if let Some(binding) = self.bindings.lock().await.get_mut(task_space_id) {
+            binding.tracked_task_dirs = task_dirs.clone();
+        }
+        let task_space_id = task_space_id.to_string();
+        let _ = self
+            .store
+            .update_config(false, move |config| {
+                let Some(config) = config else {
+                    return Ok(None);
+                };
+                let mut next = config.clone();
+                for binding in &mut next.bindings {
+                    if binding.task_space_id == task_space_id {
+                        binding.tracked_task_dirs = task_dirs.clone();
+                    }
+                }
+                Ok(Some(next))
+            })
+            .await;
     }
 }
 impl TaskSync {

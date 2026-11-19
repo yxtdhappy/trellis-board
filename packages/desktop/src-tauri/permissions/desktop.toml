@@ -76,6 +76,21 @@ description = "当前 Board origin 可读取本地项目关联状态。"
 commands.allow = ["list_local_associations"]
 
 [[permission]]
+identifier = "allow-list-worktree-status"
+description = "当前 Board origin 可读取自动发现的 worktree 接入与可见性状态。"
+commands.allow = ["list_worktree_status"]
+
+[[permission]]
+identifier = "allow-refresh-worktree-discovery"
+description = "当前 Board origin 可触发一次 worktree 发现与状态重算。"
+commands.allow = ["refresh_worktree_discovery"]
+
+[[permission]]
+identifier = "allow-retry-worktree-auto-attach"
+description = "当前 Board origin 可重试指定 worktree 的自动接入。"
+commands.allow = ["retry_worktree_auto_attach"]
+
+[[permission]]
 identifier = "allow-detach-local-association"
 description = "当前 Board origin 可停止已批准关联的本地同步，并请求服务端权威解绑。"
 commands.allow = ["detach_local_association"]
