@@ -586,7 +586,10 @@ async fn assign_task(
                 && dirty_paths.iter().all(|path| path == &task_json_relative))
                 || all_untracked)
             && retry_shape_matches(&task, &task_json_file, &assignee);
-        if dirty && !retry_after_upload_failure {
+        // 客户端自己物化出来的完整副本尚未提交，但内容与服务端一致；
+        // 它不含用户改动，可以继续完成改派，不能按 LOCAL_DIRTY 拒绝。
+        let materialized_copy = all_untracked && local_matches_server;
+        if dirty && !retry_after_upload_failure && !materialized_copy {
             return protocol::err(
                 code::LOCAL_DIRTY,
                 format!(
