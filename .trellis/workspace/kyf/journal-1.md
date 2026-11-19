@@ -85,3 +85,27 @@
 
 - 将 gitignored 的 plugins/witops-workbench/** 同步到目标部署位置
 - 有测试账号后补真实业务运行与保存大纲 UI E2E
+
+
+## Session 3: WitOps Trellis 任务测试与插件降级
+<!-- trellis-session: v=2 fp=d1e7e778c4da58f0 -->
+
+**Date**: 2026-11-19
+**Task**: WitOps Trellis 任务测试与插件降级
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成并归档 11-19-witops-trellis-task-test：工作台 Trellis 任务视图、纯 taskKey 发起、任务级大纲生成与结果归属；补充 task-only 大纲解析测试；仅安装 witops-workbench 时通过 /features 隐藏缺失依赖入口并保留 Trellis 任务视图；全量 4403 与隔离 4405 验证通过，yarn test:plugins 114/113/1。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d1808e06` | docs(task): record witops workbench dependency fallback |
+| `2db2b09a` | test(scenario): cover task-only outline resolution |
+
+### Status
+
+[OK] **Completed**
