@@ -211,6 +211,59 @@ impl TaskSync {
         }))
     }
 }
+impl TaskSync {
+    /// 改派命令的本地物化：目标目录不存在时，从服务端快照原子写入完整任务目录。
+    /// 返回写入的服务端文件集合，供命令层复用 task.json 摘要和基线。
+    pub(crate) async fn materialize_task_directory(
+        &self,
+        binding: &AgentBinding,
+        task_dir: &str,
+    ) -> AgentResult<Vec<SnapshotFile>> {
+        let target = resolve_task_directory(binding, task_dir).await?;
+        if tokio::fs::metadata(&target).await.is_ok() {
+            return protocol::err(
+                code::INVALID_RESPONSE,
+                "本地任务目录已存在，不能重复物化",
+            );
+        }
+        let directory = self
+            .fetch_directory(&binding.task_space_id, task_dir)
+            .await?;
+        let files = parse_directory_files(&directory, task_dir)?;
+        if files.is_empty() {
+            return protocol::err(code::INVALID_RESPONSE, "服务端任务文件为空");
+        }
+        if files.iter().any(|file| file.archived) {
+            return protocol::err(
+                code::INVALID_RESPONSE,
+                "归档任务不能物化为本地工作副本",
+            );
+        }
+        let task_json = files
+            .iter()
+            .find(|file| file.file_path == "task.json")
+            .ok_or_else(|| {
+                AgentError::new(code::INVALID_RESPONSE, "服务端缺少目标任务的 task.json")
+            })?;
+        let task_id = parse_task_id(&task_json.content).ok_or_else(|| {
+            AgentError::new(code::INVALID_RESPONSE, "服务端 task.json 缺少任务 id")
+        })?;
+        let task_branch = parse_task_metadata(&task_json.content).1;
+        write_task_directory(
+            binding,
+            &SnapshotGroup {
+                task_dir: task_dir.to_string(),
+                archived: false,
+                archive_month: None,
+                files: files.clone(),
+                task_id: Some(task_id),
+                task_branch,
+            },
+        )
+        .await?;
+        Ok(files)
+    }
+}
 pub(super) async fn resolve_task_directory(
     binding: &AgentBinding,
     task_dir: &str,

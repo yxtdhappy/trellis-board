@@ -534,63 +534,99 @@ async fn assign_task(
         .claim_execution_task(&binding.task_space_id, execution_task_key)
         .await?;
     let task_json_path = target.join("task.json");
-    let content = read_utf8(&task_json_path).await?;
-    let mut task: Value = serde_json::from_str(&content)
-        .map_err(|_| AgentError::new(code::COMMAND_INVALID, "任务 task.json 已损坏"))?;
-    if !task.is_object() {
-        return protocol::err(code::COMMAND_INVALID, "任务 task.json 已损坏");
-    }
-    let dirty_paths: Vec<String> =
-        git::status_paths(repo_path, hooks_dir, std::slice::from_ref(&task_dir))
+    let mut task: Value;
+    let task_json_file: SnapshotFile;
+    let apply_assignee: bool;
+    if tokio::fs::metadata(&target).await.is_ok() {
+        let content = read_utf8(&task_json_path).await?;
+        task = serde_json::from_str(&content)
+            .map_err(|_| AgentError::new(code::COMMAND_INVALID, "任务 task.json 已损坏"))?;
+        if !task.is_object() {
+            return protocol::err(code::COMMAND_INVALID, "任务 task.json 已损坏");
+        }
+        let git_entries = git::status_paths(repo_path, hooks_dir, std::slice::from_ref(&task_dir))
             .await
-            .map_err(|_| AgentError::new(code::GIT_FAILED, "无法检查目标任务目录状态"))?
-            .into_iter()
+            .map_err(|_| AgentError::new(code::GIT_FAILED, "无法检查目标任务目录状态"))?;
+        let dirty_paths: Vec<String> = git_entries
+            .iter()
             .map(|entry| entry.path.replace('\\', "/"))
             .collect();
-    let dirty = !dirty_paths.is_empty();
-    let task_json_relative = format!("{task_dir}/task.json");
-    let directory = context
-        .task_sync
-        .fetch_directory(&binding.task_space_id, &task_dir)
-        .await?;
-    let files = task_sync::parse_directory_files(&directory, &task_dir)?;
-    let task_json_file = files
-        .iter()
-        .find(|file| file.path.ends_with("/task.json"))
-        .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "服务端缺少目标任务的 task.json"))?;
-    if let Some(base_sha) = command
-        .payload_str("baseTaskSha256")
-        .filter(|value| !value.is_empty())
-    {
-        if task_json_file.sha256 != base_sha {
-            return protocol::err(code::HTTP_ERROR, "任务文件已被其他成员修改，改派命令已取消");
+        let dirty = !dirty_paths.is_empty();
+        let all_untracked =
+            !git_entries.is_empty() && git_entries.iter().all(|entry| entry.status == "??");
+        let task_json_relative = format!("{task_dir}/task.json");
+        let directory = context
+            .task_sync
+            .fetch_directory(&binding.task_space_id, &task_dir)
+            .await?;
+        let files = task_sync::parse_directory_files(&directory, &task_dir)?;
+        task_json_file = files
+            .iter()
+            .find(|file| file.path.ends_with("/task.json"))
+            .cloned()
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "服务端缺少目标任务的 task.json"))?;
+        if let Some(base_sha) = command
+            .payload_str("baseTaskSha256")
+            .filter(|value| !value.is_empty())
+        {
+            if task_json_file.sha256 != base_sha {
+                return protocol::err(code::HTTP_ERROR, "任务文件已被其他成员修改，改派命令已取消");
+            }
         }
+        let local_matches_server = snapshot_sha256(&content) == task_json_file.sha256;
+        // 整目录未跟踪通常意味着这是物化后上传失败的副本：允许 lease 持有者重试，
+        // 避免把目标自己的新副本按 LOCAL_DIRTY 拒绝。
+        let retry_after_upload_failure = !local_matches_server
+            && ((!dirty_paths.is_empty()
+                && dirty_paths.iter().all(|path| path == &task_json_relative))
+                || all_untracked)
+            && retry_shape_matches(&task, &task_json_file, &assignee);
+        if dirty && !retry_after_upload_failure {
+            return protocol::err(
+                code::LOCAL_DIRTY,
+                format!(
+                    "目标任务目录有未提交修改，请先处理：{}",
+                    dirty_paths
+                        .join("\n")
+                        .chars()
+                        .take(STATUS_DETAIL_LIMIT)
+                        .collect::<String>()
+                ),
+            );
+        }
+        if !local_matches_server && !retry_after_upload_failure {
+            return protocol::err(
+                code::HTTP_ERROR,
+                "本地任务文件与服务端基线不一致，请先同步任务空间后再改派",
+            );
+        }
+        apply_assignee = local_matches_server;
+    } else {
+        let files = context
+            .task_sync
+            .materialize_task_directory(binding, &task_dir)
+            .await?;
+        task_json_file = files
+            .iter()
+            .find(|file| file.path.ends_with("/task.json"))
+            .cloned()
+            .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "服务端缺少目标任务的 task.json"))?;
+        if let Some(base_sha) = command
+            .payload_str("baseTaskSha256")
+            .filter(|value| !value.is_empty())
+        {
+            if task_json_file.sha256 != base_sha {
+                return protocol::err(code::HTTP_ERROR, "任务文件已被其他成员修改，改派命令已取消");
+            }
+        }
+        task = serde_json::from_str(&task_json_file.content)
+            .map_err(|_| AgentError::new(code::COMMAND_INVALID, "任务 task.json 已损坏"))?;
+        if !task.is_object() {
+            return protocol::err(code::COMMAND_INVALID, "任务 task.json 已损坏");
+        }
+        apply_assignee = true;
     }
-    let local_matches_server = snapshot_sha256(&content) == task_json_file.sha256;
-    let retry_after_upload_failure = !local_matches_server
-        && !dirty_paths.is_empty()
-        && dirty_paths.iter().all(|path| path == &task_json_relative)
-        && retry_shape_matches(&task, task_json_file, &assignee);
-    if dirty && !retry_after_upload_failure {
-        return protocol::err(
-            code::LOCAL_DIRTY,
-            format!(
-                "目标任务目录有未提交修改，请先处理：{}",
-                dirty_paths
-                    .join("\n")
-                    .chars()
-                    .take(STATUS_DETAIL_LIMIT)
-                    .collect::<String>()
-            ),
-        );
-    }
-    if !local_matches_server && !retry_after_upload_failure {
-        return protocol::err(
-            code::HTTP_ERROR,
-            "本地任务文件与服务端基线不一致，请先同步任务空间后再改派",
-        );
-    }
-    if local_matches_server {
+    if apply_assignee {
         task["assignee"] = Value::String(assignee.clone());
         atomic_write_json(&task_json_path, &task).await?;
     }

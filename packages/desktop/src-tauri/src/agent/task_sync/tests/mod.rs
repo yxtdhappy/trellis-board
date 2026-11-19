@@ -8,5 +8,6 @@ mod ownership_projection;
 mod ownership_inbox;
 mod bindings_watch;
 mod handoff_and_errors;
+mod materialization;
 mod pull_and_startup;
 mod support;
