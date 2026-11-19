@@ -261,6 +261,35 @@ impl AgentService {
             .unwrap_or(false)
     }
 
+    fn window_hidden_or_minimized(&self) -> bool {
+        let Some(window) = self.app.get_webview_window("main") else {
+            return true;
+        };
+        let visible = window.is_visible().unwrap_or(true);
+        let minimized = window.is_minimized().unwrap_or(false);
+        !visible || minimized
+    }
+
+    /// handoff 终态在窗口隐藏/最小化时用原生通知；可见时由 Board 内 toast 展示。
+    fn notify_handoff_terminal(&self, control: &Value) {
+        let Some((title, body)) = handoff_notification(control) else {
+            return;
+        };
+        if !self.window_hidden_or_minimized() {
+            return;
+        }
+        if let Err(error) = self
+            .app
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show()
+        {
+            crate::logging::warn(&format!("发送任务认领系统通知失败：{error}"));
+        }
+    }
+
     /// 自动事件只发系统通知，绝不抢焦点；档位由「偏好设置 → 同步通知」决定。
     fn notify_control(&self, control: &Value) {
         match crate::appearance::load().notify_mode.as_str() {
@@ -325,6 +354,7 @@ impl AgentService {
 
     fn publish_control(&self, control: Value) {
         if control.get("type").and_then(Value::as_str) == Some("task_handoff") {
+            self.notify_handoff_terminal(&control);
             let _ = self.app.emit("handoff-control-changed", control);
             self.notify_live_control();
             return;
@@ -404,6 +434,44 @@ impl AgentService {
 }
 
 /// 系统通知文案：纯函数便于单测。缺项目信息时不拼空括号。
+fn handoff_notification(control: &Value) -> Option<(&'static str, String)> {
+    let title = match control.get("outcome").and_then(Value::as_str) {
+        Some("cleaned") => "任务已被认领，本地副本已清理",
+        Some("conflict") => "任务已被认领，本地副本需保留",
+        _ => return None,
+    };
+    let task_id = control
+        .get("taskId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let reason = handoff_reason_label(control.get("reason").and_then(Value::as_str));
+    let body = if reason.is_empty() {
+        task_id.to_string()
+    } else {
+        format!("{task_id} · {reason}")
+    };
+    Some((title, body))
+}
+
+fn handoff_reason_label(reason: Option<&str>) -> &'static str {
+    match reason {
+        Some("missing") => "本地活动副本已不存在",
+        Some("git_tracked") => "任务目录已进入 Git 跟踪，保留本地副本",
+        Some("git_modified") => "任务目录包含修改，保留本地副本",
+        Some("not_untracked") => "任务目录不是纯未跟踪副本，保留本地文件",
+        Some("no_files") => "任务目录没有可清理文件",
+        Some("baseline_mismatch") => "本地内容与已同步基线不一致，保留本地副本",
+        Some("branch_mismatch") => "当前 Git 分支与任务空间不一致",
+        Some("backup_failed") => "本地备份失败，未删除任何任务文件",
+        Some("backup_too_large") => "本地任务副本超过安全备份上限，已保留",
+        Some("cleanup_failed") => "本地备份已完成，但目录清理失败",
+        Some("lease_active") => "任务仍有其他客户端持有写租约，暂未清理",
+        Some(_) => "本地副本状态需要人工确认",
+        None => "",
+    }
+}
+
 fn control_notification(control: &Value) -> (String, String) {
     let text = |pointer: &str| {
         control
