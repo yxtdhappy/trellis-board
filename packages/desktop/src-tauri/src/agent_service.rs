@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use base64::Engine;
+
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::menu::MenuItem;
@@ -501,7 +503,7 @@ fn show_windows_toast(app_id: &str, title: &str, body: &str) {
         let encoded =
             base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>());
         match std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded.as_str()])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .creation_flags(CREATE_NO_WINDOW)
