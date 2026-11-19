@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "插件 HTTP/能力/任务 DTO 与清单重启边界"}
+{"file": ".trellis/spec/backend/plugin-testing.md", "reason": "插件 L3 测试与 createHarness 约定"}
+{"file": ".trellis/spec/backend/scenario-outlines.md", "reason": "大纲 manifest、解析优先级、生成 job、回归预检契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Node 版本、测试命令与验证要求"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有 target/解析逻辑，避免两套实现"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "面板-宿主-插件跨层契约检查"}
+{"file": ".trellis/tasks/11-19-witops-trellis-task-test/research/current-flow.md", "reason": "当前代码阻塞点与可复用函数"}

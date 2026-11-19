@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/plugin-testing.md", "reason": "验证 task-only 插件测试覆盖"}
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "验证 HTTP/能力/任务边界"}
+{"file": ".trellis/spec/backend/scenario-outlines.md", "reason": "验证大纲/回归契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证命令与质量门禁"}
+{"file": ".trellis/tasks/11-19-witops-trellis-task-test/research/current-flow.md", "reason": "对照原始阻塞点"}
