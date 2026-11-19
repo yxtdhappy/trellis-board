@@ -304,3 +304,17 @@
   `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`（crate 只有 bin target，`--lib` 会报
   `no library targets found`）、`yarn test`、`cargo tauri build`（`target/release` 只有
   `trellis-board-client.exe`，无 `bundle/nsis/`）。
+
+## 9. 隐藏/最小化系统通知
+
+- 只在主窗口隐藏或最小化、且 handoff 进入终态 `cleaned`/`conflict` 时发送系统通知；窗口可见时
+  只保留页内 toast，不重复发系统通知。
+- WebView2 的 `http://` 非安全上下文没有 Web Notification API，不得把它作为回退；页内提示由
+  Web 层负责。
+- 便携版 AUMID `com.trellisboard.client` 会静默丢弃 `ToastGeneric`。Windows 原生通知必须使用
+  `ToastText02`，通过 PowerShell `-EncodedCommand` 调用 WinRT `CreateToastNotifier(aumid)`；
+  子进程使用 `CREATE_NO_WINDOW` 且丢弃 stdout/stderr，失败只记录日志，不阻塞清理 ACK。
+- 通知文案中的任务标题/原因必须做 XML 转义；同一 handoff ID + state 只通知一次，重复
+  `control.changed` 不重复弹窗。
+- 验证：Rust 单测覆盖 `xml_escape` 和“只有终态才通知”；Windows 真机在客户端最小化时确认
+  通知中心出现对应任务。

@@ -1029,3 +1029,72 @@ revalidate
     || ownership_retry
     || self.read_cursor(task_space_id).await.revision != revision_before
 ```
+
+## 场景：命令 revision、租约释放与归档墓碑
+
+### 1. Scope / Trigger
+
+- 修改 `completeCommand` 结果 revision、命令后租约、handoff 清理租约判断、归档 tombstone，
+  或同 ID 本地迁移副本的 claim/上传行为时适用。
+
+### 2. Contracts
+
+- 上传响应 `revision` 是上传前的 taskSpace 游标，不是任务内容 revision。命令结果必须依次取
+  `control.task.contentRevision`、`committedRevision`、claim 返回的 `contentRevision`；
+  `completeCommand` 要求结果 revision 精确等于 `sync_task.content_revision`。
+  `COMMAND_WAITING_INDEX` 是可重试状态，不能当作永久失败。
+- 命令成功上传后客户端释放执行租约。服务端 handoff 清理只把
+  `lease.user_id !== agent.userId && lease.user_id !== row.assignee_user_id` 的租约视为阻塞；
+  负责人自己的租约不得触发 `HANDOFF_LEASE_HELD`。
+- 归档同步把 `.trellis/tasks/archive/<YYYY-MM>/<name>` 导入 `sync_archive_file`，并为同名活跃目录
+  写删除墓碑。`reconcileProjection` 以唯一归档任务为权威：`sync_task.relative_dir` 收敛到归档路径，
+  `archived=1`，`task_version` 加一，活动索引不再展示第二份状态。
+- 客户端处理 `state=archived` 时，只有本地归档副本存在且目录摘要一致才删除活跃副本；摘要不一致
+  必须保留本地目录并告警。上传遇到 `TASK_ARCHIVED` 只清 pending，不写回。
+- 活跃本地任务复用已归档 `task.json.id`：基线空间 claim 返回 `TASK_ARCHIVED`，非基线空间返回
+  `TASK_OWNED_BY_BASELINE`；不得上传、复活归档行或删除本地正文。
+- 从 Git 分支删除归档文件后，下一次归档同步删除 `sync_archive_file` 并推进
+  `archive_revision`；归档墓碑由明确的运维清理删除，不能静默复活。
+
+### 3. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 命令结果使用上传响应 `revision` | `TASK_VERSION_STALE`，命令停留在 running |
+| 结果 revision 精确等于内容 revision | 命令成功，控制面推进 |
+| 服务端返回 `COMMAND_WAITING_INDEX` | 客户端保留重试，不标记永久失败 |
+| 命令上传后未释放租约 | 来源清理可能被误判为第三方并发；必须主动释放 |
+| 清理时只有负责人自己的租约 | 允许 cleaned ACK |
+| 清理时存在第三方租约 | `HANDOFF_LEASE_HELD`，冲突 ACK |
+| 归档副本与活跃副本摘要一致 | 删除本地活跃副本 |
+| 归档副本与活跃副本摘要不同 | 保留活跃副本并告警 |
+| 活跃副本复用归档 ID | claim 拒绝，不上传、不删除本地正文 |
+| 归档文件从 Git 删除 | `sync_archive_file` 清空对应行，归档 revision 推进 |
+
+### 4. Tests Required
+
+- `team-task-control.test.js`：负责人租约允许清理、第三方租约拒绝清理。
+- `team-task-index-v10.test.js`：重复 `task.json.id` 标记 `identity_conflict`；归档权威覆盖活动索引
+  并把 `task_key` 收敛到归档路径。
+- `team-task-commands.test.js` / `agent-event-stream.test.js`：命令 revision、控制面失效事件。
+- 桌面 Rust：归档墓碑摘要不一致时保留、`TASK_ARCHIVED` 跳过上传、命令 revision 解析与租约释放。
+- 真实双客户端 E2E：归档干净副本删除、脏副本保留；旧客户端离线写入被拒绝。
+
+### 5. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let revision = upload_response["revision"].as_u64();
+complete_command(revision); // 上传前空间游标，触发 TASK_VERSION_STALE
+```
+
+#### Correct
+
+```rust
+let revision = result.pointer("/control/task/contentRevision")
+    .and_then(Value::as_u64)
+    .or_else(|| result.get("committedRevision").and_then(Value::as_u64))
+    .or(claimed_revision)
+    .ok_or_else(|| protocol::err(code::HTTP_ERROR, "任务内容尚未提交"))?;
+```
