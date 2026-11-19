@@ -170,3 +170,12 @@ http://192.168.137.10:4403/ → WitOps 工作台 → Trellis 任务
 - 修复 `renderFeatures` 引用不存在的 `#watch-toolbar` 导致 `setView` 未执行的问题（HTML 补 id）。
 - 隔离环境 `/tmp/witops-only`（仅 workbench，端口 4405）验证：`/features` 为 `witops:false, scenario:false, jenkins:false, trellis:true`；面板只显示 Trellis 任务，测试/大纲/操作列隐藏，1006/360 均无 body 横向溢出；`/summary`、`/test-defaults`、`/ci`、`/trellis-tasks` 均 200。
 - 全量环境 4403 重启后 `/features` 四项均为 true，任务视图/列宽/测试入口无回归；`yarn test:plugins` 113 tests / 112 pass / 1 skip。
+
+## 10. 归档前验收（2026-11-19）
+
+- `outline-flow.test.js` 增加 task-only resolve 用例：构造 `repo::11-19-task-1` 任务，保存 `taskKeys` 后解析返回 `manifest-task` 与 `config` 地址。
+- task-only 发起在 4403 工作台手工验证：纯 `taskKey` 进入 `runs.start`，无 `requirementId`；无大纲返回 `needOutline`。
+- `node --check plugins/scenario-copilot/test/outline-flow.test.js` 通过。
+- `node --test plugins/scenario-copilot/test/outline-flow.test.js` 1/1 通过。
+- `yarn test:plugins` 见最终执行结果；`oxfmt`、`git diff --check` 通过。
+- 已知边界：workbench 源码按 `.gitignore` 约定不入库，只保留本地主工作树；归档提交仅包含任务记录与 scenario 测试。
