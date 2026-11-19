@@ -1342,3 +1342,45 @@ packages/web 全量审计后按 shadcn/base-ui 规则把重复实现收敛到 co
 ### Status
 
 [OK] **Completed**
+
+
+## Session 40: 修复首同步差异误报、稍后处理失效与抢焦点弹窗
+<!-- trellis-session: v=2 fp=47fcdd464b1f6ab0 -->
+
+**Date**: 2026-11-19
+**Task**: 修复首同步差异误报、稍后处理失效与抢焦点弹窗
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+首同步改用服务端归属闸门、稍后处理记签名、差异事件带项目名、自动事件改系统通知、偏好新增三档同步通知
+
+### Main Changes
+
+- initial_sync.rs 新增 gate_local_only_differences：403 记只读镜像、409 剔除、404 保留，接入 5 处分类入口
+- control.rs 按 taskSpaceId+差异内容记签名，dismiss 后同内容不再入队；reveal_dismissed/clear_dismissed 支撑手动唤回与完成清理
+- emit_differences 补 projectName/branchName，LiveSyncControlDialog 头部展示项目与分支
+- agent_service 用 notify_control 替代自动流程的 focus_main_window，通知 tap 回窗口，更新对话框仅在有新版本时弹出
+- appearance.json 新增 notifyMode（never/unfocused/always，默认 always），偏好设置新增三档选择
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5248bef` | fix(sync): 首同步复用归属闸门并让差异提示不再抢焦点 |
+| `4b9bfaf` | chore(task): archive 11-19-fix-initial-sync-ownership-scope |
+
+### Testing
+
+- [OK] cargo test -- --test-threads=2：291 passed
+- [OK] yarn workspace @trellis-board/web build / lint / oxfmt --check 通过
+- [OK] yarn test：653/657，2 项为环境失败（desktop-ui 未构建、Windows 临时目录 EBUSY）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 桌面端真机回归：首同步不弹窗、稍后处理不再自动重开、点通知回窗口、三档偏好生效

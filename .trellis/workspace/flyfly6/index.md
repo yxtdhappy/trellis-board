@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 39
+- **Total Sessions**: 40
 - **Last Active**: 2026-11-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1344 | Active |
+| `journal-1.md` | ~1386 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 40 | 2026-11-19 | 修复首同步差异误报、稍后处理失效与抢焦点弹窗 | `5248bef`, `4b9bfaf` | `main` |
 | 39 | 2026-11-19 | 运行时环境检测收口 | `9b55bda16f`, `6c31860986` | `main` |
 | 38 | 2026-11-19 | Web 组件复用审计与 shadcn 规范沉淀（批 1-10） | `381c660`, `9791498`, `cf2ad42`, `61d4b74`, `d1b7120` | `main` |
 | 37 | 2026-11-18 | 客户端自动更新与版本展示 | `f0448081cd`, `44dff7e12e0477d5ba5a4228c5a36ad277aa4c65` | `main` |
