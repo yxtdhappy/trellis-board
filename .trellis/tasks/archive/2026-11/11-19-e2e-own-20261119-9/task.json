@@ -1,0 +1,11 @@
+{
+  "id": "e2e-own-20261119-9",
+  "title": "E2E own task probe 20261119 v9",
+  "description": "Ninth E2E probe, owned by yhj, used to verify A edits its own task without polluting B's workspace. Safe to delete after verification.",
+  "priority": "P2",
+  "status": "planning",
+  "creator": "yhj",
+  "createdAt": "2026-11-19",
+  "assignee": "yhj",
+  "branch": "main"
+}

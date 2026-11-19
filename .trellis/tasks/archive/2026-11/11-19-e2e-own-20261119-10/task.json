@@ -1,0 +1,11 @@
+{
+  "id": "e2e-own-20261119-10",
+  "title": "E2E own task probe 20261119 v10",
+  "description": "Tenth E2E probe, owned by yhj, used for the archive tombstone dirty-copy test. Safe to delete after verification.",
+  "priority": "P2",
+  "status": "planning",
+  "creator": "yhj",
+  "createdAt": "2026-11-19",
+  "assignee": "yhj",
+  "branch": "main"
+}
