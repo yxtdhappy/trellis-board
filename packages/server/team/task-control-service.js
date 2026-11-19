@@ -888,7 +888,13 @@ export function createTaskControlService({
           materializedRevision:
             row.materialized_revision == null ? null : Number(row.materialized_revision),
           materializedAt: row.materialized_at,
-          leaseHeldByOtherUser: Boolean(lease && lease.user_id !== agent.userId),
+          // 目标负责人自己的租约说明任务正在由新的负责人正常使用，不应阻止
+          // 创建者清理自己的来源副本；只有第三方租约才意味着真正的并发写入。
+          leaseHeldByOtherUser: Boolean(
+            lease &&
+              lease.user_id !== agent.userId &&
+              lease.user_id !== row.assignee_user_id,
+          ),
           updatedAt: row.updated_at,
         }
       })
@@ -1140,7 +1146,12 @@ export function createTaskControlService({
         throw teamError(409, 'HANDOFF_NOT_READY', '任务当前没有待确认的 handoff 清理状态')
       }
       const lease = activeLease(row.execution_task_key)
-      if (ack.outcome === 'cleaned' && lease && lease.user_id !== agent.userId) {
+      if (
+        ack.outcome === 'cleaned' &&
+        lease &&
+        lease.user_id !== agent.userId &&
+        lease.user_id !== row.assignee_user_id
+      ) {
         throw teamError(409, 'HANDOFF_LEASE_HELD', '任务仍被其他客户端修改，暂不能确认清理')
       }
       const timestamp = now().toISOString()

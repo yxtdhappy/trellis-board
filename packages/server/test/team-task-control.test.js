@@ -601,34 +601,94 @@ test('多个活动副本身份冲突时不改写已有权威任务路径', () =>
   }
 })
 
-test('handoff 控制面暴露他人租约并拒绝清理 ACK', () => {
+function prepareHandoffTask(db, snapshots, agentA, taskSpaceId, taskId) {
+  const files = taskFiles(taskId, '租约保护任务')
+  snapshots.applyChanges(agentA, taskSpaceId, {
+    batchId: `batch-${taskId}-1`,
+    clientSequence: 1,
+    files,
+  })
+  const executionTaskKey = `${taskSpaceId}::${taskId}`
+  const timestamp = new Date().toISOString()
+  db.prepare(`
+    UPDATE sync_task
+    SET assignee_user_id = 'user-b', assignee_dev_id = 'bob',
+        previous_assignee_user_id = 'user-a', materialization_state = 'materialized',
+        materialized_at = ?, materialized_revision = 1,
+        handoff_state = 'source_cleanup_pending', updated_at = ?
+    WHERE execution_task_key = ?
+  `).run(timestamp, timestamp, executionTaskKey)
+  db.prepare(`
+    UPDATE sync_task_lease SET status = 'revoked'
+    WHERE execution_task_key = ? AND status = 'active'
+  `).run(executionTaskKey)
+  db.prepare('UPDATE sync_task SET lease_id = NULL WHERE execution_task_key = ?').run(
+    executionTaskKey,
+  )
+  return executionTaskKey
+}
+
+test('handoff 清理允许当前负责人的租约', () => {
   const { db, taskControl, snapshots, agentA, agentB, taskSpaceId } = setup()
   try {
-    const files = taskFiles('task-handoff-lease', '租约保护任务')
-    snapshots.applyChanges(agentA, taskSpaceId, {
-      batchId: 'batch-handoff-lease-1',
-      clientSequence: 1,
-      files,
-    })
-    const executionTaskKey = `${taskSpaceId}::task-handoff-lease`
-    const timestamp = new Date().toISOString()
-    db.prepare(`
-      UPDATE sync_task
-      SET assignee_user_id = 'user-b', assignee_dev_id = 'bob',
-          previous_assignee_user_id = 'user-a', materialization_state = 'materialized',
-          materialized_at = ?, materialized_revision = 1,
-          handoff_state = 'source_cleanup_pending', updated_at = ?
-      WHERE execution_task_key = ?
-    `).run(timestamp, timestamp, executionTaskKey)
-
-    db.prepare(`
-      UPDATE sync_task_lease SET status = 'revoked'
-      WHERE execution_task_key = ? AND status = 'active'
-    `).run(executionTaskKey)
-    db.prepare('UPDATE sync_task SET lease_id = NULL WHERE execution_task_key = ?').run(
-      executionTaskKey,
+    const executionTaskKey = prepareHandoffTask(
+      db,
+      snapshots,
+      agentA,
+      taskSpaceId,
+      'task-handoff-target-lease',
     )
     taskControl.claim(agentB, taskSpaceId, executionTaskKey)
+    const control = taskControl
+      .controlsForAgent(agentA, taskSpaceId)
+      .find((item) => item.executionTaskKey === executionTaskKey)
+    assert.equal(control.state, 'handoff_materialized')
+    assert.equal(control.leaseHeldByOtherUser, false)
+
+    const cleaned = taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+      outcome: 'cleaned',
+      backupId: 'handoff-0123456789abcdef',
+      manifestSha256: 'd'.repeat(64),
+      fileCount: 2,
+      totalBytes: 256,
+    })
+    assert.equal(cleaned.handoffState, 'completed')
+  } finally {
+    db.close()
+  }
+})
+
+test('handoff 清理仍拒绝第三方租约', () => {
+  const { db, taskControl, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    const executionTaskKey = prepareHandoffTask(
+      db,
+      snapshots,
+      agentA,
+      taskSpaceId,
+      'task-handoff-third-party-lease',
+    )
+    insertUser(db, 'user-c', '第三方')
+    insertAgent(db, 'agent-c', 'user-c')
+    const timestamp = new Date().toISOString()
+    const expiresAt = new Date(Date.now() + 60_000).toISOString()
+    db.prepare(`
+      INSERT INTO sync_task_lease(
+        id, execution_task_key, agent_id, user_id, lease_token, status,
+        expires_at, last_heartbeat_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+    `).run(
+      'lease-third-party',
+      executionTaskKey,
+      'agent-c',
+      'user-c',
+      'third-party-token',
+      expiresAt,
+      timestamp,
+      timestamp,
+      timestamp,
+    )
+
     const control = taskControl
       .controlsForAgent(agentA, taskSpaceId)
       .find((item) => item.executionTaskKey === executionTaskKey)
