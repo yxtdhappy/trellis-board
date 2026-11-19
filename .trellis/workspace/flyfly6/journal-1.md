@@ -1384,3 +1384,45 @@ packages/web 全量审计后按 shadcn/base-ui 规则把重复实现收敛到 co
 ### Next Steps
 
 - 桌面端真机回归：首同步不弹窗、稍后处理不再自动重开、点通知回窗口、三档偏好生效
+
+
+## Session 41: worktree 自动接入与懒显示
+<!-- trellis-session: v=2 fp=a63ac7cfbb7100ba -->
+
+**Date**: 2026-11-19
+**Task**: worktree 自动接入与懒显示
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+实现 worktree 自动发现、自动接入、tracked allowlist 与动态可见性，并完成真实 Tauri 手工验收。
+
+### Main Changes
+
+- 新增 agent/worktree 模块与 Git worktree 枚举、common dir 监听
+- 新任务自动接入并 safe 首同步，首次上传成功后才显示分支
+- 归档同步后隐藏、worktree 删除/重建复位，手工 binding 不受影响
+- 新增 Tauri 状态/重试/刷新命令与项目栏过滤、错误提示
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `23565c3` | feat(desktop): 自动接入 worktree 并懒显示任务分支 |
+| `3fcb72b` | chore(task): archive 11-19-worktree-auto-attach |
+
+### Testing
+
+- [OK] cargo test：300 passed
+- [OK] yarn test：659 tests，656 pass，3 skipped
+- [OK] yarn build：通过
+- [OK] 真实 Tauri + 真实 worktree 手工验收通过（错误重试入口未触发）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 观察真实服务端归档同步延迟下的隐藏时序
