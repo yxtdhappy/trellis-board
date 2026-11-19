@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 65
+- **Total Sessions**: 66
 - **Last Active**: 2026-11-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1536 | Active |
+| `journal-1.md` | ~1566 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 66 | 2026-11-19 | 修复归档残留 pull 循环并完成活动任务同步 E2E | `2c08b29`, `57ebef4`, `bf8b37c`, `c24b81e`, `9c14485`, `ef85e2e`, `d88115b`, `cd936e7` | `main` |
 | 65 | 2026-11-19 | 客户端 Trellis 初始化后清理 __pycache__ 模板哈希 | `cf47f9f`, `654d9f0` | `main` |
 | 64 | 2026-11-18 | 修复首次登录覆盖运行环境标记并增量安装 | `635bc46`, `8b578f4` | `main` |
 | 62 | 2026-11-18 | 完成待归属删除离线续传与 0.4.40 E2E | `8c101fc`, `f09f416` | `main` |

@@ -1534,3 +1534,33 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 66: 修复归档残留 pull 循环并完成活动任务同步 E2E
+<!-- trellis-session: v=2 fp=5e0c724edf11bc98 -->
+
+**Date**: 2026-11-19
+**Task**: 修复归档残留 pull 循环并完成活动任务同步 E2E
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+修复归档残留导致的 pull 无限循环：服务端明确返回 TASK_ARCHIVED/ARCHIVE_SYNC_SERVER_MANAGED 时，客户端通过 task_dir_removals cursor patch 清除对应目录的 baselines/deferred，避免 pull 递归空转；补充 Rust 回归测试与 desktop-realtime-sync 契约。发布 v0.4.45，CI 全绿（Node/Rust/portable/Release）。真机复验：删除待归属任务 1.065s 收敛；旧 branch=null pending 原样重放收到 409 后约 4s 内新 main 任务上传成功；上传只更新 sequence/baselines、不推进已应用 revision；旧 cursor guard 修复只执行一次且不删除本地任务；双客户端 revision 交错 cursor 66→68→69；多分支歧义在 main/team-board 两 taskSpace 下不自动归属，手工归属后只进入 main。测试用 team-board worktree 与 taskSpace 已清理。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2c08b29` | fix(sync): 收敛归档残留导致的 pull 循环 |
+| `57ebef4` | docs(task): 记录活动任务同步与待归属复验结果 |
+| `bf8b37c` | chore(release): 0.4.45 |
+| `c24b81e` | docs(task): 记录 0.4.45 归档残留修复复验 |
+| `9c14485` | docs(task): 记录单客户端同步与 guard 复验 |
+| `ef85e2e` | docs(task): 记录双客户端 revision 交错复验 |
+| `d88115b` | docs(task): 记录多分支歧义复验 |
+| `cd936e7` | docs(task): 记录多分支测试环境清理 |
+
+### Status
+
+[OK] **Completed**
