@@ -1,11 +1,23 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { ownershipInboxItemKey, ownershipInboxReasonLabel } from '@/lib/ownership-inbox.js'
-import type { OwnershipInboxItem, OwnershipInboxProjectGroup } from '@/lib/ownership-inbox.js'
+import {
+  defaultOwnershipBranch,
+  ownershipAssignAvailability,
+  ownershipAssignErrorMessage,
+  ownershipInboxItemKey,
+  ownershipInboxReasonLabel,
+} from '@/lib/ownership-inbox.js'
+import type {
+  OwnershipBranchOption,
+  OwnershipInboxItem,
+  OwnershipInboxProjectGroup,
+  OwnershipLocalAssociation,
+} from '@/lib/ownership-inbox.js'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { toneSurface } from '@/components/ui/status-pill'
+import { SelectField } from './SelectField'
 
 type OwnershipInboxPanelProps = {
   count: number
@@ -18,9 +30,15 @@ type OwnershipInboxPanelProps = {
   loading: boolean
   loadingMore: boolean
   error: string
+  currentUserId: string
+  isTauri: boolean
+  invoke: ((command: string, args?: Record<string, unknown>) => Promise<unknown>) | null
+  taskSpacesByProject: Map<string, OwnershipBranchOption[]>
+  localAssociations: Map<string, OwnershipLocalAssociation>
   onToggle: () => void
   onRetry: () => void
   onLoadMore: () => void
+  onAssigned: () => void
 }
 
 function inboxTime(value: string) {
@@ -50,10 +68,66 @@ export function OwnershipInboxPanel({
   loading,
   loadingMore,
   error,
+  currentUserId,
+  isTauri,
+  invoke,
+  taskSpacesByProject,
+  localAssociations,
   onToggle,
   onRetry,
   onLoadMore,
+  onAssigned,
 }: OwnershipInboxPanelProps) {
+  const [assigningKey, setAssigningKey] = useState<string | null>(null)
+  const [branchDraft, setBranchDraft] = useState('')
+  const [submittingKey, setSubmittingKey] = useState<string | null>(null)
+  const [assignErrors, setAssignErrors] = useState<Record<string, string>>({})
+
+  function clearAssignError(key: string) {
+    setAssignErrors((current) => {
+      if (!current[key]) return current
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
+  }
+
+  function startAssign(item: OwnershipInboxItem, branches: OwnershipBranchOption[]) {
+    const key = ownershipInboxItemKey(item)
+    const branch = defaultOwnershipBranch(item, branches)
+    setAssigningKey(key)
+    setBranchDraft(branch?.branchName || '')
+    clearAssignError(key)
+  }
+
+  function cancelAssign() {
+    setAssigningKey(null)
+    setBranchDraft('')
+  }
+
+  async function submitAssign(item: OwnershipInboxItem) {
+    if (!invoke || submittingKey || !branchDraft) return
+    const key = ownershipInboxItemKey(item)
+    setSubmittingKey(key)
+    clearAssignError(key)
+    try {
+      await invoke('set_task_ownership', {
+        taskSpaceId: item.taskSpaceId,
+        decisions: [{ taskDir: item.taskDir, action: 'use-branch', branchName: branchDraft }],
+      })
+      setAssigningKey(null)
+      setBranchDraft('')
+      onAssigned()
+    } catch (assignError) {
+      setAssignErrors((current) => ({
+        ...current,
+        [key]: ownershipAssignErrorMessage(assignError),
+      }))
+    } finally {
+      setSubmittingKey(null)
+    }
+  }
+
   const groupedItems = useMemo(() => {
     const groups = new Map<string, { projectName: string; items: OwnershipInboxItem[] }>()
     for (const item of items) {
@@ -141,38 +215,112 @@ export function OwnershipInboxPanel({
                   <p className="mb-1 text-2xs font-semibold text-warning">{group.projectName}</p>
                 ) : null}
                 <ul className="flex flex-col divide-y divide-border/60">
-                  {group.items.map((item) => (
-                    <li key={ownershipInboxItemKey(item)} className="py-2 first:pt-0 last:pb-0">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <p className="min-w-0 flex-1 break-words text-xs font-semibold text-foreground">
-                          {item.title}
+                  {group.items.map((item) => {
+                    const key = ownershipInboxItemKey(item)
+                    const availability = ownershipAssignAvailability({
+                      item,
+                      currentUserId,
+                      isTauri,
+                      branches: taskSpacesByProject.get(item.projectId) || [],
+                      association: localAssociations.get(item.taskSpaceId) || null,
+                    })
+                    const submitting = submittingKey === key
+                    const assigning = assigningKey === key
+                    const assignBusy = Boolean(submittingKey)
+                    return (
+                      <li key={key} className="py-2 first:pt-0 last:pb-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <p className="min-w-0 flex-1 break-words text-xs font-semibold text-foreground">
+                            {item.title}
+                          </p>
+                          <span className="rounded-full border border-warning/35 px-1.5 py-0.5 text-2xs font-medium text-warning">
+                            待归属
+                          </span>
+                        </div>
+                        <p className="mt-0.5 break-all font-mono text-2xs text-muted-foreground">
+                          {item.taskDir}
                         </p>
-                        <span className="rounded-full border border-warning/35 px-1.5 py-0.5 text-2xs font-medium text-warning">
-                          待归属
-                        </span>
-                      </div>
-                      <p className="mt-0.5 break-all font-mono text-2xs text-muted-foreground">
-                        {item.taskDir}
-                      </p>
-                      <p className="mt-1 break-words text-xs text-foreground">
-                        {ownershipInboxReasonLabel(item.reason)}
-                        <span className="ml-1 text-2xs text-muted-foreground">({item.reason})</span>
-                      </p>
-                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-2xs leading-4 text-muted-foreground">
-                        <span>
-                          来源分支：
-                          {item.sourceBranches.length ? item.sourceBranches.join('、') : '未知'}
-                        </span>
-                        <span>
-                          来源客户端：
-                          {item.sourceClients.length
-                            ? item.sourceClients.map(clientLabel).join('、')
-                            : '未知'}
-                        </span>
-                        <span>最近发现：{inboxTime(item.lastSeenAt)}</span>
-                      </div>
-                    </li>
-                  ))}
+                        <p className="mt-1 break-words text-xs text-foreground">
+                          {ownershipInboxReasonLabel(item.reason)}
+                          <span className="ml-1 text-2xs text-muted-foreground">
+                            ({item.reason})
+                          </span>
+                        </p>
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-2xs leading-4 text-muted-foreground">
+                          <span>
+                            来源分支：
+                            {item.sourceBranches.length ? item.sourceBranches.join('、') : '未知'}
+                          </span>
+                          <span>
+                            来源客户端：
+                            {item.sourceClients.length
+                              ? item.sourceClients.map(clientLabel).join('、')
+                              : '未知'}
+                          </span>
+                          <span>负责人：{item.assigneeDevId || '未知'}</span>
+                          <span>最近发现：{inboxTime(item.lastSeenAt)}</span>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                          {assigning ? (
+                            <>
+                              <SelectField
+                                id={`ownership-branch-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
+                                value={branchDraft}
+                                ariaLabel="归属分支"
+                                placeholder="选择归属分支"
+                                className="max-w-56"
+                                options={availability.branches.map((branch) => ({
+                                  value: branch.branchName,
+                                  label: branch.branchName,
+                                }))}
+                                onChange={setBranchDraft}
+                                disabled={assignBusy}
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="border-warning/40 bg-background/70 text-warning hover:bg-background"
+                                disabled={!branchDraft || assignBusy}
+                                onClick={() => void submitAssign(item)}
+                              >
+                                {submitting ? '归属中…' : '确认归属'}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={assignBusy}
+                                onClick={cancelAssign}
+                              >
+                                取消
+                              </Button>
+                            </>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="border-warning/40 bg-background/70 text-warning hover:bg-background"
+                              disabled={!availability.available || assignBusy}
+                              title={availability.reason || undefined}
+                              onClick={() => startAssign(item, availability.branches)}
+                            >
+                              {submitting ? '归属中…' : '归属分支'}
+                            </Button>
+                          )}
+                          {!availability.available ? (
+                            <span className="text-2xs text-muted-foreground">
+                              {availability.reason}
+                            </span>
+                          ) : null}
+                        </div>
+                        {assignErrors[key] ? (
+                          <p className="mt-1 text-2xs text-destructive">{assignErrors[key]}</p>
+                        ) : null}
+                      </li>
+                    )
+                  })}
                 </ul>
               </div>
             ))}

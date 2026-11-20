@@ -9,6 +9,7 @@ const MAX_TASK_ID_LENGTH = 128
 const MAX_TASK_DIR_LENGTH = 512
 const MAX_TITLE_LENGTH = 300
 const MAX_REASON_LENGTH = 128
+const MAX_ASSIGNEE_DEV_ID_LENGTH = 120
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
@@ -63,6 +64,19 @@ function changes(input, key) {
   return value
 }
 
+function assigneeDevId(value) {
+  if (value == null) return null
+  if (typeof value !== 'string') {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, '任务负责人 ID 格式无效')
+  }
+  const text = value.trim()
+  if (!text) return null
+  if (textLength(text) > MAX_ASSIGNEE_DEV_ID_LENGTH || /[\u0000-\u001f\u007f]/.test(text)) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, '任务负责人 ID 格式无效')
+  }
+  return text
+}
+
 function normalizeUpsert(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, '待归属摘要格式无效')
@@ -81,6 +95,7 @@ function normalizeUpsert(value) {
     title: requiredText(value.title, '任务标题', MAX_TITLE_LENGTH),
     reason,
     fingerprint,
+    assigneeDevId: assigneeDevId(value.assigneeDevId),
   }
 }
 
@@ -190,6 +205,16 @@ export function createTaskOwnershipInboxService({
   taskSnapshots,
   now = () => new Date(),
 }) {
+  // 负责人映射只来自项目成员表，客户端上报的 dev id 不能直接当作账号身份。
+  const resolveAssignee = db.prepare(`
+    SELECT m.user_id
+    FROM sync_project_member m
+    JOIN user_account u ON u.id = m.user_id
+    WHERE m.project_id = ? AND lower(m.trellis_dev_id) = lower(?)
+      AND u.status = 'active'
+    LIMIT 1
+  `)
+
   function apply(agent, taskSpaceId, input = {}) {
     const { space, binding } = taskSnapshots.bindingContext(agent, taskSpaceId)
     const actor = taskSpaces.actorContext(agent.userId)
@@ -218,8 +243,9 @@ export function createTaskOwnershipInboxService({
         INSERT INTO sync_task_ownership_inbox(
           id, project_id, source_task_space_id, source_agent_id, source_user_id,
           task_id, task_dir, title, reason, source_branch_name, fingerprint,
+          assignee_user_id, assignee_dev_id,
           first_seen_at, last_seen_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_task_space_id, source_agent_id, task_id) DO UPDATE SET
           project_id = excluded.project_id,
           source_user_id = excluded.source_user_id,
@@ -228,10 +254,15 @@ export function createTaskOwnershipInboxService({
           reason = excluded.reason,
           source_branch_name = excluded.source_branch_name,
           fingerprint = excluded.fingerprint,
+          assignee_user_id = excluded.assignee_user_id,
+          assignee_dev_id = excluded.assignee_dev_id,
           last_seen_at = excluded.last_seen_at,
           updated_at = excluded.updated_at
       `)
       for (const item of upserts) {
+        const assigneeUserId = item.assigneeDevId
+          ? resolveAssignee.get(space.project_id, item.assigneeDevId)?.user_id || null
+          : null
         changed += Number(
           upsert.run(
             crypto.randomUUID(),
@@ -245,6 +276,8 @@ export function createTaskOwnershipInboxService({
             item.reason,
             space.branch_name,
             item.fingerprint,
+            assigneeUserId,
+            item.assigneeDevId,
             timestamp,
             timestamp,
             timestamp,
@@ -304,6 +337,7 @@ export function createTaskOwnershipInboxService({
       ),
       grouped AS (
         SELECT project_id, task_id, task_dir, title, reason,
+               source_task_space_id, assignee_user_id, assignee_dev_id,
                grouped_first_seen_at AS first_seen_at,
                grouped_last_seen_at AS last_seen_at
         FROM ranked
@@ -336,6 +370,7 @@ export function createTaskOwnershipInboxService({
       .prepare(`
         ${groupedSql}
         SELECT g.project_id, g.task_id, g.task_dir, g.title, g.reason,
+               g.source_task_space_id, g.assignee_user_id, g.assignee_dev_id,
                g.first_seen_at, g.last_seen_at, p.name AS project_name
         FROM grouped g
         JOIN sync_project p ON p.id = g.project_id
@@ -386,8 +421,11 @@ export function createTaskOwnershipInboxService({
         projectName: row.project_name,
         taskId: row.task_id,
         taskDir: row.task_dir,
+        taskSpaceId: row.source_task_space_id,
         title: row.title,
         reason: row.reason,
+        assigneeUserId: row.assignee_user_id || null,
+        assigneeDevId: row.assignee_dev_id || null,
         sourceBranches: [...(source?.branches || [])].sort(),
         sourceClients: [...(source?.clients.values() || [])],
         firstSeenAt: row.first_seen_at,

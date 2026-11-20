@@ -88,7 +88,7 @@ const tables = reopened
   .map((row) => row.name)
 const backupName = fs
   .readdirSync(path.join(root, 'backups'))
-  .find((name) => name.includes('pre-v17'))
+  .find((name) => name.includes('pre-v18'))
 let backupResult = null
 if (backupName) {
   const backup = new DatabaseSync(path.join(root, 'backups', backupName))

@@ -1,5 +1,20 @@
 use super::*;
 
+/// task.json 负责人（assignee 优先，creator 兜底）；服务端只接受不超过 120 字符且无控制字符的值。
+fn ownership_inbox_assignee(group: &SnapshotGroup) -> Option<String> {
+    let content = group
+        .files
+        .iter()
+        .find(|file| file.file_path == "task.json" && !file.deleted)?
+        .content
+        .as_str();
+    let owner = task_owner(content)?;
+    if owner.chars().count() > 120 || owner.chars().any(|ch| ch.is_control()) {
+        return None;
+    }
+    Some(owner)
+}
+
 pub(super) struct OwnershipReview {
     pub(super) group: SnapshotGroup,
     pub(super) reason: String,
@@ -661,13 +676,17 @@ impl TaskSync {
                 .chars()
                 .take(300)
                 .collect();
-            upserts.push(json!({
+            let mut upsert = json!({
                 "taskId": task_id,
                 "taskDir": task_dir,
                 "title": title,
                 "reason": "TASK_OWNERSHIP_REQUIRED",
                 "fingerprint": fingerprint,
-            }));
+            });
+            if let Some(owner) = ownership_inbox_assignee(group) {
+                upsert["assigneeDevId"] = json!(owner);
+            }
+            upserts.push(upsert);
         }
 
         let mut deletes = Vec::new();

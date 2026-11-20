@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/task-ownership-and-conflict-idempotency.md", "reason": "校验归属写入、空 branch 服务端拒绝语义与 inbox 清理不回归"}
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "校验上传、命令与新失败路径不破坏既有同步状态机"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "校验新命令已在 main.rs、permissions/desktop.toml 与 capability 中放行"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端类型检查、构建、测试与可访问性验证"}

@@ -282,8 +282,8 @@ pub(crate) use snapshot::parse_directory_files;
 use snapshot::{
     build_directory_files, file_map, groups_from_structs, is_handoff_backup_id, is_sha256,
     move_pairs, parse_snapshot_controls, parse_snapshot_files, parse_snapshot_files_from_values,
-    parse_task_id, parse_task_metadata, same_files, sha256_bytes, task_fingerprint, task_title,
-    uploads_to_snapshot_files, validate_upload_batch, DirectoryEntry, UploadMode,
+    parse_task_id, parse_task_metadata, same_files, sha256_bytes, task_fingerprint, task_owner,
+    task_title, uploads_to_snapshot_files, validate_upload_batch, DirectoryEntry, UploadMode,
 };
 #[allow(unused_imports)]
 pub use snapshot::{

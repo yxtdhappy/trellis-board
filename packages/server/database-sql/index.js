@@ -1,4 +1,4 @@
-export const DATABASE_SCHEMA_VERSION = 17
+export const DATABASE_SCHEMA_VERSION = 18
 
 export { BASE_SCHEMA_V1_SQL } from './v01-base.js'
 export { SCHEMA_V2_SQL } from './v02.js'
@@ -13,6 +13,7 @@ export { SCHEMA_V14_SQL } from './v14.js'
 export { SCHEMA_V15_SQL } from './v15.js'
 export { SCHEMA_V16_SQL } from './v16.js'
 export { SCHEMA_V17_SQL } from './v17.js'
+export { SCHEMA_V18_SQL, SCHEMA_V18_TASK_OWNERSHIP_INBOX_COLUMNS } from './v18.js'
 
 export function hasColumn(db, table, column) {
   return db
