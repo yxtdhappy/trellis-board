@@ -300,6 +300,65 @@ async fn cleanup_deleted_ownership_clears_ledger_against_old_server() {
 }
 
 #[tokio::test]
+async fn ownership_inbox_upsert_reports_assignee_and_omits_unknown_owner() {
+    let (root, store, sync, binding, bodies, server) =
+        inbox_fixture("ownership-inbox-assignee", vec![200]).await;
+    let owned = ".trellis/tasks/owned";
+    let unowned = ".trellis/tasks/unowned";
+    write_ownership_cursor(
+        &store,
+        json!({
+            owned: {
+                "fingerprint": pending_fingerprint(),
+                "reason": "TASK_OWNERSHIP_REQUIRED",
+            },
+            unowned: {
+                "fingerprint": pending_fingerprint(),
+                "reason": "TASK_OWNERSHIP_REQUIRED",
+            },
+        }),
+        json!({}),
+    )
+    .await;
+    let groups = vec![
+        task_group(
+            "owned",
+            owned,
+            &[(
+                "task.json",
+                "{\"id\":\"owned\",\"branch\":null,\"assignee\":\"yuhaojie\"}\n",
+            )],
+        ),
+        task_group(
+            "unowned",
+            unowned,
+            &[("task.json", "{\"id\":\"unowned\",\"branch\":null}\n")],
+        ),
+    ];
+
+    sync.sync_ownership_inbox(&binding, &BTreeSet::new(), &groups)
+        .await;
+
+    let sent = bodies.lock().await.clone();
+    assert_eq!(sent.len(), 1);
+    let upserts = sent[0]["upserts"].as_array().expect("upserts");
+    assert_eq!(upserts.len(), 2);
+    let owned_upsert = upserts
+        .iter()
+        .find(|item| item["taskDir"].as_str() == Some(owned))
+        .expect("owned upsert");
+    assert_eq!(owned_upsert["assigneeDevId"], json!("yuhaojie"));
+    let unowned_upsert = upserts
+        .iter()
+        .find(|item| item["taskDir"].as_str() == Some(unowned))
+        .expect("unowned upsert");
+    assert!(unowned_upsert.get("assigneeDevId").is_none());
+
+    server.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn missing_local_group_never_guesses_ownership_delete() {
     let (root, _store, sync, binding, bodies, server) =
         inbox_fixture("ownership-inbox-no-guess", vec![200]).await;

@@ -14,6 +14,7 @@ import {
   SCHEMA_V15_SQL,
   SCHEMA_V16_SQL,
   SCHEMA_V17_SQL,
+  SCHEMA_V18_TASK_OWNERSHIP_INBOX_COLUMNS,
   hasColumn,
   rebuildTaskCommandTableForV16,
 } from './database-sql/index.js'
@@ -479,6 +480,14 @@ export function ensureV16Schema(db) {
 
 export function ensureV17Schema(db) {
   db.exec(SCHEMA_V17_SQL)
+}
+
+export function ensureV18Schema(db) {
+  for (const [name, definition] of SCHEMA_V18_TASK_OWNERSHIP_INBOX_COLUMNS) {
+    if (!hasColumn(db, 'sync_task_ownership_inbox', name)) {
+      db.exec(`ALTER TABLE sync_task_ownership_inbox ADD COLUMN ${name} ${definition}`)
+    }
+  }
 }
 
 export function backupBeforeUpgrade(db, databaseFile) {

@@ -308,11 +308,13 @@ Team 启动：
 
 ## 配置与常量
 
-- `DATABASE_SCHEMA_VERSION` 当前为 `16`。v13 -> v14 增加归档文件、凭据、同步配置/状态/失败日志表，
+- `DATABASE_SCHEMA_VERSION` 当前为 `18`。v13 -> v14 增加归档文件、凭据、同步配置/状态/失败日志表，
   增加活动/归档双 revision；v14 -> v15 增加 `sync_archive_snapshot`、
   `sync_archive_file_history`、active/candidate 指针和归档文件元数据列，
   `content_text` 保留为 legacy 只读回退；v15 -> v16 增加 `sync_task`、`sync_task_lease`，
-  重建支持 `target_user_id` 的 `sync_task_command`。迁移不删除旧表和历史文件。
+  重建支持 `target_user_id` 的 `sync_task_command`；v17 -> v18 给
+  `sync_task_ownership_inbox` 增加可空的 `assignee_user_id`、`assignee_dev_id`（按列名守卫重复执行）。
+  迁移不删除旧表和历史文件。
 - `SCAN_SCHEMA_VERSION` 当前为 `11`；Board 输出结构不兼容时同步递增。
 - `AGENT_PROTOCOL_VERSION` 当前为 `3`；命令 payload 和 Agent 事件都按 v3 校验。
 - 在线 Agent 的 `last_seen_at` 窗口固定为 60 秒。

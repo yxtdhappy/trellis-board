@@ -242,10 +242,33 @@ await api.uploadTaskSpaceChanges(taskSpaceId, {
 - 项目 DTO：`ownershipInboxCount`
 - 表：`sync_task_ownership_inbox`
 
+Agent upsert 可选携带负责人：
+
+```json
+{
+  "taskId": "task-a",
+  "taskDir": ".trellis/tasks/task-a",
+  "title": "任务标题",
+  "reason": "TASK_OWNERSHIP_REQUIRED",
+  "fingerprint": "<sha256>",
+  "assigneeDevId": "yuhaojie"
+}
+```
+
+Web item 增加 `taskSpaceId`（来源 taskSpace）、`assigneeUserId`、`assigneeDevId`；旧服务端或旧行可能缺失，
+前端必须按「负责人未知」禁用归属操作。
+
 ### 3. Contracts
 
-- 摘要收件箱只保存任务 ID、目录、标题、原因、来源 taskSpace/Agent、来源分支、fingerprint 和时间；
-  不保存正文、附件、绝对路径或秘密。
+- 摘要收件箱只保存任务 ID、目录、标题、原因、来源 taskSpace/Agent、来源分支、fingerprint、时间以及
+  负责人 dev ID / 映射后的用户 ID；不保存正文、附件、绝对路径或秘密。
+- `assigneeDevId` 由 Agent 从 `task.json` 的 `assignee`（缺失回退 `creator`）生成，trim 后不超过 120
+  字符且不含控制字符；服务端只按项目成员表 `sync_project_member.trellis_dev_id`（大小写不敏感）解析
+  `assignee_user_id`，不能把客户端上报值直接当账号身份。解析不到时保留 dev ID、`assignee_user_id=NULL`。
+- 看板「归属」操作只对 `assigneeUserId === 当前登录用户 id` 开放；负责人未知、非 Tauri、本地关联缺失/
+  只读/解绑中/分支不一致、没有 active 任务空间分支时一律禁用并给出原因。本地权威校验仍是
+  `set_task_ownership` 的 `local_groups` 过滤：非负责人任务被 `retain_owned_groups` 丢弃后返回
+  「任务归属决定包含无效的任务目录」。
 - 摘要不属于任何 taskSpace，不写入 `sync_task`，不创建 assignment、lease、command，也不参与
   ownership、merge evidence、CAS 或普通分支统计。
 - Agent 写入复用 active Agent、approved 非只读 binding、项目和 taskSpace 读权限，并校验
@@ -271,6 +294,9 @@ await api.uploadTaskSpaceChanges(taskSpaceId, {
 | 客户端删除请求网络失败或服务端 5xx | 保留 `ownershipPending`/`pendingRejected`，后续重试 |
 | 客户端连接不支持 inbox 的旧服务端（404/405） | 可清对应本地摘要；旧服务端不可能存在远端摘要行 |
 | 单批超过 200 项 | 400，整批不写 |
+| `assigneeDevId` 超过 120 字符或含控制字符 | 400，整批不写 |
+| `assigneeDevId` 无法映射到 active 项目成员 | 保留 `assigneeDevId`，`assigneeUserId=NULL`，前端禁用归属 |
+| 当前用户不是任务负责人 | UI 禁用；绕过 UI 后 `set_task_ownership` 返回「无效的任务目录」，不写文件 |
 | projectIds 越权 | 403 |
 | 正常任务写入和摘要清理任一失败 | 两者整体回滚 |
 | 旧服务端无 inbox API | Agent 标记可选能力缺失，普通同步继续 |

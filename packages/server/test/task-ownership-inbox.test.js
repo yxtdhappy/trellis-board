@@ -263,6 +263,55 @@ test('待归属摘要超过 200 项或字段非法时整批拒绝', () => {
   }
 })
 
+test('待归属摘要记录负责人映射、来源任务空间并兼容旧客户端', () => {
+  const { db, taskSpaces, inbox, agentA, taskSpaceId } = setup()
+  try {
+    inbox.apply(
+      agentA,
+      taskSpaceId,
+      write('main', [
+        { ...upsert('task-owner'), assigneeDevId: '  BOB  ' },
+        { ...upsert('task-unknown'), assigneeDevId: 'ghost' },
+        upsert('task-legacy'),
+      ]),
+    )
+    const page = inbox.list(taskSpaces.actorContext('user-a'), { teamId: 'team-1', limit: 50 })
+    const byId = new Map(page.items.map((item) => [item.taskId, item]))
+    assert.equal(byId.get('task-owner').assigneeUserId, 'user-b')
+    assert.equal(byId.get('task-owner').assigneeDevId, 'BOB')
+    assert.equal(byId.get('task-owner').taskSpaceId, taskSpaceId)
+    assert.equal(byId.get('task-unknown').assigneeUserId, null)
+    assert.equal(byId.get('task-unknown').assigneeDevId, 'ghost')
+    assert.equal(byId.get('task-legacy').assigneeUserId, null)
+    assert.equal(byId.get('task-legacy').assigneeDevId, null)
+  } finally {
+    db.close()
+  }
+})
+
+test('待归属摘要负责人 ID 超过长度或包含控制字符时整批拒绝', () => {
+  const { db, inbox, agentA, taskSpaceId } = setup()
+  try {
+    for (const assigneeDevId of ['bad\nname', 'x'.repeat(121)]) {
+      assert.throws(
+        () =>
+          inbox.apply(
+            agentA,
+            taskSpaceId,
+            write('main', [{ ...upsert('task-invalid-owner'), assigneeDevId }]),
+          ),
+        /任务负责人 ID 格式无效/,
+      )
+    }
+    assert.equal(
+      db.prepare('SELECT COUNT(*) AS count FROM sync_task_ownership_inbox').get().count,
+      0,
+    )
+  } finally {
+    db.close()
+  }
+})
+
 test('待归属摘要按 taskDir 精确删除并满足来源隔离和幂等', () => {
   const { db, inbox, agentA, agentB, projectId, taskSpaceId } = setup()
   try {

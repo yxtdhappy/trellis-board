@@ -44,6 +44,8 @@ import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
 import { fetchDesktopPanels } from '@/api/desktop-plugins'
 import { DesktopPluginsView } from '@/features/plugins/DesktopPluginsView'
 import { canManageProject, createIdempotencyKey, taskVersion } from '@/lib/team-client.js'
+import { normalizeOwnershipBranches } from '@/lib/ownership-inbox.js'
+import type { OwnershipBranchOption, OwnershipLocalAssociation } from '@/lib/ownership-inbox.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
@@ -107,6 +109,25 @@ export function BoardPage() {
   const desktopInvoke = (window as Window & { __TAURI__?: { core?: { invoke?: DesktopInvoke } } })
     .__TAURI__?.core?.invoke
   const isTauri = Boolean(desktopInvoke)
+  const ownershipTaskSpaces = useMemo(() => {
+    const byProject = new Map<string, OwnershipBranchOption[]>()
+    for (const project of projects) {
+      byProject.set(project.id, normalizeOwnershipBranches(project.taskSpaces))
+    }
+    return byProject
+  }, [projects])
+  const ownershipLocalAssociations = useMemo(() => {
+    const byTaskSpace = new Map<string, OwnershipLocalAssociation>()
+    for (const association of localAssociations) {
+      byTaskSpace.set(association.taskSpaceId, {
+        status: association.status,
+        readOnly: association.readOnly,
+        detachPending: association.detachPending,
+        lastErrorCode: association.lastErrorCode,
+      })
+    }
+    return byTaskSpace
+  }, [localAssociations])
   const localTaskSpaceIds = useMemo(
     () => [...new Set(tasks.flatMap((task) => (task.taskSpaceId ? [task.taskSpaceId] : [])))],
     [tasks],
@@ -434,9 +455,19 @@ export function BoardPage() {
                 loading={ownershipInbox.loading}
                 loadingMore={ownershipInbox.loadingMore}
                 error={ownershipInbox.error}
+                currentUserId={runtime?.user?.id || ''}
+                isTauri={isTauri}
+                invoke={desktopInvoke || null}
+                taskSpacesByProject={ownershipTaskSpaces}
+                localAssociations={ownershipLocalAssociations}
                 onToggle={() => ownershipInbox.toggle(filters.projectId)}
                 onRetry={() => void ownershipInbox.reload()}
                 onLoadMore={() => void ownershipInbox.loadMore()}
+                onAssigned={() => {
+                  toast.success('任务归属已更新')
+                  void ownershipInbox.reload()
+                  void actions.refresh()
+                }}
               />
               <FlowSignals
                 tasks={tasks.filter((task) => !task.archived)}

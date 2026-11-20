@@ -8,12 +8,33 @@ export type OwnershipInboxItem = {
   projectName: string
   taskId: string
   taskDir: string
+  taskSpaceId: string
   title: string
   reason: string
+  assigneeUserId: string | null
+  assigneeDevId: string | null
   sourceBranches: string[]
   sourceClients: OwnershipInboxSourceClient[]
   firstSeenAt: string
   lastSeenAt: string
+}
+
+export type OwnershipBranchOption = {
+  taskSpaceId: string
+  branchName: string
+}
+
+export type OwnershipLocalAssociation = {
+  status: string
+  readOnly: boolean
+  detachPending: boolean
+  lastErrorCode: string | null
+}
+
+export type OwnershipAssignAvailability = {
+  available: boolean
+  reason: string
+  branches: OwnershipBranchOption[]
 }
 
 export type OwnershipInboxPage = {
@@ -55,5 +76,24 @@ export function buildOwnershipInboxQuery(input?: {
   limit?: number
   cursor?: string | null
 }): string
+
+export function normalizeOwnershipBranches(
+  taskSpaces: Array<{ id?: string; branchName?: string; status?: string }> | null | undefined,
+): OwnershipBranchOption[]
+
+export function defaultOwnershipBranch(
+  item: OwnershipInboxItem | null | undefined,
+  branches: OwnershipBranchOption[] | null | undefined,
+): OwnershipBranchOption | null
+
+export function ownershipAssignAvailability(input?: {
+  item?: OwnershipInboxItem | null
+  currentUserId?: string
+  isTauri?: boolean
+  branches?: OwnershipBranchOption[] | null
+  association?: OwnershipLocalAssociation | null
+}): OwnershipAssignAvailability
+
+export function ownershipAssignErrorMessage(error: unknown): string
 
 export function ownershipInboxReasonLabel(reason: unknown): string

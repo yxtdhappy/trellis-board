@@ -42,8 +42,11 @@ function normalizeItem(value) {
     projectName: text(row.projectName) || projectId,
     taskId,
     taskDir,
+    taskSpaceId: text(row.taskSpaceId),
     title: text(row.title) || fallbackTitle,
     reason: text(row.reason) || 'TASK_OWNERSHIP_REQUIRED',
+    assigneeUserId: text(row.assigneeUserId) || null,
+    assigneeDevId: text(row.assigneeDevId) || null,
     sourceBranches: uniqueTexts(row.sourceBranches),
     sourceClients: normalizeSourceClients(row.sourceClients),
     firstSeenAt: text(row.firstSeenAt),
@@ -118,6 +121,77 @@ export function buildOwnershipInboxQuery({
   params.set('limit', String(Math.max(1, Math.min(200, Number(limit) || 50))))
   if (cursor) params.set('cursor', cursor)
   return params.toString()
+}
+
+export function normalizeOwnershipBranches(taskSpaces) {
+  if (!Array.isArray(taskSpaces)) return []
+  const branches = []
+  const seen = new Set()
+  for (const space of taskSpaces) {
+    if (!space || typeof space !== 'object') continue
+    const taskSpaceId = text(space.id)
+    const branchName = text(space.branchName)
+    if (!taskSpaceId || !branchName || seen.has(taskSpaceId)) continue
+    if (space.status && space.status !== 'active') continue
+    seen.add(taskSpaceId)
+    branches.push({ taskSpaceId, branchName })
+  }
+  return branches
+}
+
+export function defaultOwnershipBranch(item, branches) {
+  const options = Array.isArray(branches) ? branches : []
+  for (const branch of Array.isArray(item?.sourceBranches) ? item.sourceBranches : []) {
+    const match = options.find((option) => option.branchName === text(branch))
+    if (match) return match
+  }
+  return options[0] || null
+}
+
+export function ownershipAssignAvailability({
+  item,
+  currentUserId,
+  isTauri = false,
+  branches = [],
+  association = null,
+} = {}) {
+  const options = Array.isArray(branches) ? branches : []
+  const unavailable = (reason) => ({ available: false, reason, branches: options })
+  if (!item) return unavailable('待归属任务信息不完整')
+  if (!text(item.assigneeUserId)) return unavailable('负责人未知，等待来源客户端重新同步')
+  if (!text(currentUserId) || text(item.assigneeUserId) !== text(currentUserId)) {
+    return unavailable('仅任务负责人可操作')
+  }
+  if (!isTauri) return unavailable('请在桌面客户端中操作')
+  if (!text(item.taskSpaceId)) return unavailable('缺少来源任务空间，无法定位本地任务')
+  if (!association) return unavailable('请在本机关联该分支后操作')
+  if (association.status !== 'approved') return unavailable('当前本地关联已失效，请重新关联')
+  if (association.readOnly) return unavailable('当前关联为只读，不能修改任务归属')
+  if (association.detachPending) return unavailable('当前分支正在解绑，请稍后再试')
+  if (
+    association.lastErrorCode === 'BRANCH_MISMATCH' ||
+    association.lastErrorCode === 'BINDING_BRANCH_MISMATCH'
+  ) {
+    return unavailable('当前 Git 分支与关联分支不一致，请切回绑定分支后重试')
+  }
+  if (!options.length) return unavailable('当前项目没有可用的任务空间分支')
+  return { available: true, reason: '', branches: options }
+}
+
+export function ownershipAssignErrorMessage(error) {
+  const raw =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : typeof error?.message === 'string'
+          ? error.message
+          : ''
+  const message = raw.replace(/^Error:\s*/i, '').trim()
+  if (!message) return '任务归属失败，请稍后重试'
+  if (message.includes('无效的任务目录')) return '本机没有该任务副本，请在负责人本机操作'
+  if (message.includes('有效分支')) return '所选分支不属于当前项目的有效任务空间'
+  return message
 }
 
 export function ownershipInboxReasonLabel(reason) {
