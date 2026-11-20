@@ -1643,3 +1643,30 @@ BRANCH_MISMATCH 每次心跳重复弹窗且抢焦点；改为 assert_binding_bra
 ### Status
 
 [OK] **Completed**
+
+
+## Session 70: 为 handoff ACK 增加服务端物化轮次 fencing 并完成真实 E2E
+<!-- trellis-session: v=2 fp=83cc0b804dc920e0 -->
+
+**Date**: 2026-11-20
+**Task**: 为 handoff ACK 增加服务端物化轮次 fencing 并完成真实 E2E
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+在服务端 ackHandoff 增加 materializedAt/materializedRevision 校验，轮次不匹配返回 409 HANDOFF_CYCLE_STALE 且不推进状态/不写审计；客户端 ACK 携带轮次、旧记录从本地控制回填、收到 409 保持 pending。服务端与客户端测试覆盖陈旧 cleaned/conflict ACK、兼容路径和终态幂等；spec 同步更新。CI run 44667614623 全绿并产出构建。真实 E2E：创建任务并委派给 kyf 形成新轮次（epoch 03:32:52.733Z/158），向本机注入旧轮次 pending ACK 后启动新客户端，服务端日志确认拒绝（server.1.log:3009），审计仅新增新轮次 cleaned（id=38，backup handoff-cd290a1a20126452），服务端 completed，本机目录删除，Board UI 显示认领与清理已完成。原客户端已恢复；本地服务端以新代码直接运行（PID 3336）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c57a1a1` | feat(server): handoff ACK 增加物化轮次 fencing |
+| `5856d56` | feat(desktop): handoff ACK 携带物化轮次并处理陈旧拒绝 |
+| `3062a7f` | docs(spec): 补充 handoff ACK 轮次 fencing 契约 |
+| `1b761b0` | chore(task): 记录 handoff ACK 轮次 fencing 任务产物 |
+| `ff49cdd` | docs(task): 补充 handoff ACK 轮次 fencing E2E 报告 |
+
+### Status
+
+[OK] **Completed**
