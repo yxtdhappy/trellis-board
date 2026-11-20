@@ -11,6 +11,14 @@ const USAGE =
   "用法: node --input-type=module - <trellis.js> <repo> <snapshot|repair|hash> [...]";
 const WINDOWS_DRIVE = /^[A-Za-z]:/;
 
+// Node 的 JS 版 realpathSync 会先 lstat 盘符根（Windows 上是 "D:"），部分 DLP/网络盘会以
+// EISDIR 拦截；除了 helper 自己的 realpath 调用，Node 的 ESM resolver 也会调用它来解析
+// Trellis 模块，因此在加载任何 Trellis 模块前替换为 native 版。
+const nativeRealpath = fs.realpathSync.native;
+if (typeof nativeRealpath === "function") {
+  fs.realpathSync = nativeRealpath;
+}
+
 function fail(message) {
   throw new Error(message);
 }
@@ -26,6 +34,16 @@ function normalizeRepoPath(raw) {
     value += path.sep;
   }
   return path.resolve(value);
+}
+
+function isDriveRoot(value) {
+  return process.platform === "win32" && /^[A-Za-z]:\\$/.test(value);
+}
+
+// Node 的 JS 版 realpathSync 会先 binding.lstat 盘符根（Windows 上即 "D:"），
+// 部分 DLP/网络盘会以 EISDIR 拦截；native 版走系统 API，不经过该 lstat。
+function realpathSync(target) {
+  return nativeRealpath ? nativeRealpath(target) : fs.realpathSync(target);
 }
 
 function validateRelativePath(relativePath) {
@@ -72,14 +90,14 @@ function requireDirectoryInsideRoot(realRoot, directory, relativePath) {
     if (!stats.isDirectory() && !stats.isSymbolicLink()) {
       fail(`模板目录不是目录: ${relativePath}`);
     }
-    const realDirectory = fs.realpathSync(directory);
+    const realDirectory = realpathSync(directory);
     if (!isInsideRoot(realRoot, realDirectory)) {
       fail(`模板路径越界: ${relativePath}`);
     }
     return realDirectory;
   }
   fs.mkdirSync(directory);
-  const realDirectory = fs.realpathSync(directory);
+  const realDirectory = realpathSync(directory);
   if (!isInsideRoot(realRoot, realDirectory)) {
     fail(`模板路径越界: ${relativePath}`);
   }
@@ -116,7 +134,7 @@ function resolveExistingFile(realRoot, relativePath) {
     if (!stats.isDirectory() && !stats.isSymbolicLink()) {
       return null;
     }
-    const realDirectory = fs.realpathSync(next);
+    const realDirectory = realpathSync(next);
     if (!isInsideRoot(realRoot, realDirectory)) {
       return null;
     }
@@ -233,8 +251,13 @@ async function main() {
     fail("Trellis 运行时缺少模板收集接口");
   }
 
-  const realRoot = fs.realpathSync(normalizeRepoPath(repoPath));
-  if (!fs.statSync(realRoot).isDirectory()) {
+  let realRoot = normalizeRepoPath(repoPath);
+  // 部分 DLP/网络盘会在 realpath/stat 盘符根时内部 lstat "D:" 并报 EISDIR；
+  // 盘符根本身已经是绝对目录，跳过这两个调用，后续目标路径仍逐段做 realpath 校验。
+  if (!isDriveRoot(realRoot)) {
+    realRoot = normalizeRepoPath(realpathSync(realRoot));
+  }
+  if (!isDriveRoot(realRoot) && !fs.statSync(realRoot).isDirectory()) {
     fail("仓库路径不是目录");
   }
 

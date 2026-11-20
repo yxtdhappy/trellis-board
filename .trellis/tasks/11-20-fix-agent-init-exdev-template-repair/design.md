@@ -66,6 +66,28 @@ configurePlatform(platform, repo)
   `realpathSync`；正常绝对路径保持不变。
 - 该规范化只影响裸盘符，不改变普通项目路径、盘符子目录或 UNC 路径。
 
+### 2.5 v0.4.53 仍失败：JS realpath 与扩展路径
+
+另一机器日志（v0.4.53）：
+
+```text
+node --input-type=module - <cli.js> \\?\D:\codeSpace\WIT\mdp-backend-service snapshot pi
+stderr: EISDIR: illegal operation on a directory, lstat 'D:'
+```
+
+- Rust 传入的是 canonicalize 后的 `\\?\D:\...` 扩展路径，不是裸盘符，因此 2.4 的规范化不命中。
+- Node 的 JS 版 `fs.realpathSync` 实现会先执行 `binding.lstat(getRealpathRootLstatPath(base))`；
+  Windows 上该调用落在 `D:`，被该机器的 DLP/网络盘以 EISDIR 拒绝。`fs.realpathSync.native`
+  走操作系统 realpath，不经过这个 lstat。
+- 触发点有两个：helper 自身的 `realpathSync(realRoot)` / 父目录校验，以及 Node ESM resolver
+  在 `import()` Trellis 模块时的 `finalizeResolution → realpathSync`。后者发生在 helper 读仓库
+  路径之前，所以只改 helper 的调用点不够。
+- 处理：
+  1. helper 模块顶层（任何 `import()` 之前）执行
+     `fs.realpathSync = fs.realpathSync.native`（native 不存在时保留原函数）；
+  2. helper 内部的 realpath 统一走 native；
+  3. 保留 2.4 的裸盘符规范化与盘符根 realpath/stat 跳过，作为附加防御。
+
 ## 3. 总体结构
 
 ```text
@@ -247,6 +269,8 @@ fn hash_helper_args(cli, repo, payload_json) -> Vec<String>;
 
 - 目标必须是 repoRoot 内的相对路径；拒绝空段、`..`、NUL、盘符、ADS、绝对路径。
 - 父目录 realpath 必须在 repoRoot 内；Windows 普通路径与 `\\?\` 扩展路径都按同一规则处理。
+- realpath 一律使用 `fs.realpathSync.native`；helper 在加载 Trellis ESM 模块前把
+  `fs.realpathSync` 替换为 native，避免 Node ESM resolver 触发 DLP 的 `lstat 'D:'`。
 - 只创建缺失文件；已有文件不读、不写、不删。
 - 失败回滚只删除本次创建的文件，且先记录再写入。
 - 不修改 `.trellis` 之外的 Trellis 元数据；不写 spec、workflow、任务或根文件。
@@ -286,7 +310,8 @@ fn hash_helper_args(cli, repo, payload_json) -> Vec<String>;
 
 - Rust 单测：平台识别、参数拼接、错误文案/details、helper 结构约束、裸盘符规范化、现有 hash 清理回归。
 - Node 测试：用 fake Trellis 包执行内嵌 helper 的 snapshot / repair / hash，覆盖已有文件保护、
-  路径越界、失败回滚、内容不一致不登记。
+  路径越界、失败回滚、内容不一致不登记；故障注入覆盖「JS realpath 抛 EISDIR + `\\?\` 扩展路径」，
+  验证 helper 仍能完成 repair。
 - 真机 E2E：本机 DLP 环境创建临时 Git 仓库，执行真实 Agent-only 与完整 init 的
   「失败 → 补齐 → 重试成功」，验证 Pi/OMP 文件与 manifest；完整 init 必须使用修正后的
   `--pi` 参数（不再出现 `unknown option`）。

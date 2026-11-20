@@ -115,3 +115,23 @@ Trellis 0.6.17 的 `init --help` 也没有该选项；旧 JS `trellisAgentToolFl
 - Release：[`v0.4.53`](https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.53)。
 - 待验证：另一台机器安装 `v0.4.53` 后在盘符根项目重试 Pi 初始化；若仍报 EISDIR，需要完整
   `error_tail` / 客户端日志。
+
+## 10. JS realpath EISDIR 追加修复（v0.4.54）
+
+另一台机器 v0.4.53 日志：
+
+```text
+node --input-type=module - <cli.js> \\?\D:\codeSpace\WIT\mdp-backend-service snapshot pi
+stderr: EISDIR: illegal operation on a directory, lstat 'D:'
+```
+
+- 路径是 `\\?\D:\...` 扩展路径，不是裸盘符；v0.4.53 的规范化不命中。
+- Node JS 版 `fs.realpathSync` 会先 `binding.lstat` 盘符根 `D:`；该机器 DLP 返回 EISDIR。
+  ESM resolver 在 `import()` Trellis 模块时同样调用它，因此只改 helper 自身调用点不够。
+- 本机故障注入复现：preload 用抛 `EISDIR lstat 'D:'` 的函数替换 `fs.realpathSync`，并以
+  `\\?\` 扩展路径执行 helper。修复前 helper 在模块解析阶段失败，修复后 `repair pi` 成功写出
+  `.pi/extensions/trellis/index.ts`。
+- 修复：helper 顶层在加载 Trellis 模块前切换 `fs.realpathSync.native`；helper 内部 realpath
+  全部走 native；保留裸盘符规范化与盘符根 realpath/stat 跳过。
+- `node --test packages/desktop/test/agent-template-repair.test.js` 12/12 通过。
+- 待发布 v0.4.54 并在用户机器实测。

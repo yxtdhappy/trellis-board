@@ -1,6 +1,7 @@
 # 实施计划
 
-> 状态：v0.4.51 与 v0.4.53（盘符根修复）已发布并通过 CI；待用户机器验证。
+> 状态：v0.4.51 / v0.4.53 已发布并通过 CI；v0.4.54（native realpath 修复）已实现并通过 Node
+> 测试，待提交、发布与用户机器验证。
 > 本机无 Rust 工具链，`cargo fmt --check` / `cargo clippy` 仍未执行（CI 也未配置这两步）。
 > 任务尚未归档。
 
@@ -52,7 +53,8 @@
   - 路径越界、绝对路径、盘符、ADS、NUL、空段/`.` 段、junction 越界均拒绝且不落盘；
   - repair 中途失败回滚本次创建文件；
   - hash 只登记内容与模板一致的缺失文件，非字符串条目跳过；
-  - 多平台同路径不同内容 fail-closed。
+  - 多平台同路径不同内容 fail-closed；
+  - JS realpath 故障注入 + `\\?\` 扩展路径：helper 在加载模块前切换 native realpath，repair 成功。
 - [x] 开发过程中只跑 Node 测试；Rust 编译/测试留到第 5 步统一执行。
 
 ## 4. Windows 真机 E2E（不构建 Rust）
@@ -83,7 +85,7 @@
 - [x] `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`。—— **CI run
   [`44694310603`](https://github.com/yxtdhappy/trellis-board/actions/runs/44694310603) 的
   `Rust unit tests` 通过**（tag `v0.4.51`）。
-- [x] `node --test packages/desktop/test/agent-template-repair.test.js`：10/10 通过。
+- [x] `node --test packages/desktop/test/agent-template-repair.test.js`：12/12 通过。
 - [x] `yarn test`：660/662 通过、1 跳过、1 个无关服务端并行 flake；失败项单独复跑通过。
 - [x] `rg -n '^mod tests \{' packages/desktop/src-tauri/src`：仅 5 个既有文件；本任务未新增内联测试。
 - [x] `trellis_cli.rs` 667 行、`tests.rs` 410 行，均低于 1200 行上限。
@@ -119,6 +121,18 @@
   （tag `v0.4.53`，desktop job 5m59s）成功：`Rust unit tests`、desktop build、便携包/启动冒烟、
   Release 资产发布全部通过。
 - [ ] 用户机器用 `v0.4.53` 在盘符根项目重试；失败则收集完整 error_tail/客户端日志。
+
+## 8. JS realpath EISDIR 跟进（v0.4.54）
+
+- [x] 用户机器 v0.4.53 日志显示路径为 `\\?\D:\codeSpace\...`，snapshot/repair 仍报
+  `EISDIR ... lstat 'D:'`，并非裸盘符。
+- [x] 定位：Node JS 版 `fs.realpathSync` 先 `binding.lstat` 盘符根；ESM resolver 与 helper
+  自身 realpath 都会触发。
+- [x] helper 顶层在加载 Trellis 模块前把 `fs.realpathSync` 替换为 `.native`；helper 内部
+  realpath 统一走 native；保留裸盘符规范化与盘符根跳过。
+- [x] 新增故障注入测试：JS realpath 抛 EISDIR + `\\?\` 扩展路径，repair 仍成功；12/12 通过。
+- [ ] 提交/推送 `main`、`yarn release:desktop 0.4.54`、CI 构建。
+- [ ] 用户机器用 `v0.4.54` 重试 Pi 初始化；若仍失败，收集完整 `error_tail` 与客户端日志。
 
 ## 风险与回滚点
 

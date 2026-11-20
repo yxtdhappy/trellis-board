@@ -12,6 +12,41 @@ const helperSource = fs.readFileSync(
   'utf8',
 )
 
+// 复现部分 DLP/网络盘机器上 realpath/stat 盘符根时内部 lstat "D:" 报 EISDIR 的行为。
+const EISDIR_PATCH = String.raw`
+const fs = require('node:fs')
+const blocked = (value) => /^[A-Za-z]:\\?$/.test(String(value))
+function eisdir() {
+  const error = new Error("EISDIR: illegal operation on a directory, lstat 'D:'")
+  error.code = 'EISDIR'
+  error.syscall = 'lstat'
+  error.path = 'D:'
+  return error
+}
+for (const name of ['realpathSync', 'statSync', 'lstatSync']) {
+  const original = fs[name]
+  fs[name] = function patched(target, ...args) {
+    if (blocked(target)) throw eisdir()
+    return original.call(this, target, ...args)
+  }
+}
+`
+
+// 模拟 Node JS 版 realpathSync 在盘符根上触发 DLP 的 lstat EISDIR；native 版必须仍可用。
+const JS_REALPATH_PATCH = String.raw`
+const fs = require('node:fs')
+const native = fs.realpathSync.native
+function blocked() {
+  const error = new Error("EISDIR: illegal operation on a directory, lstat 'D:'")
+  error.code = 'EISDIR'
+  error.syscall = 'lstat'
+  error.path = 'D:'
+  throw error
+}
+blocked.native = native
+fs.realpathSync = blocked
+`
+
 function createFakePackage(dir, platformTemplates) {
   const packageRoot = path.join(dir, 'trellis')
   fs.mkdirSync(path.join(packageRoot, 'bin'), { recursive: true })
@@ -130,6 +165,83 @@ test('snapshot reports missing and existing templates without probing python', (
     assert.equal(fs.existsSync(path.join(repo, '.fake-python-called')), false)
   })
 })
+
+test(
+  'snapshot tolerates a drive root blocked by realpath/lstat',
+  { skip: process.platform !== 'win32' },
+  (t) => {
+    withTempDir(t, (dir) => {
+      const repo = path.join(dir, 'cwd')
+      fs.mkdirSync(repo)
+      const { cliPath } = createFakePackage(path.join(dir, 'fake'), {
+        pi: [['.pi/extensions/trellis/index.ts', 'extension']],
+      })
+      const patchPath = path.join(dir, 'eisdir-patch.cjs')
+      fs.writeFileSync(patchPath, EISDIR_PATCH)
+
+      const result = spawnSync(
+        process.execPath,
+        ['--input-type=module', '-', cliPath, 'D:', 'snapshot', 'pi'],
+        {
+          cwd: repo,
+          encoding: 'utf8',
+          input: helperSource,
+          timeout: 60_000,
+          env: {
+            ...process.env,
+            // NODE_OPTIONS 会吞掉双引号内的反斜杠，这里统一用正斜杠。
+            NODE_OPTIONS: `--require "${patchPath.replaceAll('\\', '/')}"`,
+          },
+        },
+      )
+
+      assert.equal(result.status, 0, result.stderr)
+      const payload = lastJsonLine(result.stdout)
+      assert.deepEqual(payload.missing, ['.pi/extensions/trellis/index.ts'])
+    })
+  },
+)
+
+test(
+  'repair uses native realpath when the JS realpath hits EISDIR',
+  { skip: typeof fs.realpathSync.native !== 'function' },
+  (t) => {
+    withTempDir(t, (dir) => {
+      const repo = path.join(dir, 'repo')
+      fs.mkdirSync(repo)
+      const { cliPath } = createFakePackage(path.join(dir, 'fake'), {
+        pi: [['.pi/extensions/trellis/index.ts', 'extension']],
+      })
+      const patchPath = path.join(dir, 'js-realpath-patch.cjs')
+      fs.writeFileSync(patchPath, JS_REALPATH_PATCH)
+      // 与 Rust canonicalize 后传入的 Windows 扩展路径一致。
+      const repoArg = process.platform === 'win32' ? `\\\\?\\${repo}` : repo
+
+      const result = spawnSync(
+        process.execPath,
+        ['--input-type=module', '-', cliPath, repoArg, 'repair', 'pi'],
+        {
+          cwd: repo,
+          encoding: 'utf8',
+          input: helperSource,
+          timeout: 60_000,
+          env: {
+            ...process.env,
+            NODE_OPTIONS: `--require "${patchPath.replaceAll('\\', '/')}"`,
+          },
+        },
+      )
+
+      assert.equal(result.status, 0, result.stderr)
+      const payload = lastJsonLine(result.stdout)
+      assert.deepEqual(payload.created, ['.pi/extensions/trellis/index.ts'])
+      assert.equal(
+        fs.readFileSync(path.join(repo, '.pi', 'extensions', 'trellis', 'index.ts'), 'utf8'),
+        'extension',
+      )
+    })
+  },
+)
 
 test('repair creates only missing templates with direct writes', (t) => {
   withTempDir(t, (dir) => {

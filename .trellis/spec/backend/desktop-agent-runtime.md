@@ -241,7 +241,11 @@
 - 补齐 helper `agent_template_repair.mjs` 通过 `include_str!` 内嵌，经环境门确定的 `node.exe` + `cli.js`
   从 stdin 执行，复用包的 `collectPlatformTemplates` / `resolveSupportedPython` / `initializeHashes`。
   `repair` 只创建缺失文件并使用 `openSync(..., "wx")` 直写，禁止临时文件 + rename，已有文件不读不覆盖；
-  目标与父目录必须经 realpath 校验留在仓库根内，失败回滚本次创建的文件。`snapshot` 在首次 init 前记录
+  目标与父目录必须经 realpath 校验留在仓库根内，失败回滚本次创建的文件。realpath 一律使用
+  `fs.realpathSync.native`：helper 必须在加载任何 Trellis ESM 模块之前把 `fs.realpathSync` 替换为
+  native，因为 Node JS 版实现会先 `lstat` 盘符根（`D:`），部分 DLP/网络盘会以 `EISDIR` 拒绝，
+  且 ESM resolver 的模块解析同样会触发该调用。裸盘符 `X:` 仍需先规范为 `X:\`，盘符根的
+  realpath/stat 可直接跳过。`snapshot` 在首次 init 前记录
   所选平台缺失的模板路径（不探测 Python，失败静默降级）；补齐并重试成功后，`hash` 只把「快照缺失、
   现已存在且 UTF-8 内容与模板一致」的路径并入 `.template-hashes.json`，初始化前已存在的用户文件不得登记。
   哈希补偿在 `finish_init()` 之前执行，失败不影响已成功的初始化结果。

@@ -100,3 +100,17 @@ R8 测试与真机 E2E、R9 移除 `--pi-presence` 均已核对。新增 details
   [`44699199899`](https://github.com/yxtdhappy/trellis-board/actions/runs/44699199899)
   （tag `v0.4.53`，desktop job 5m59s）通过 `Rust unit tests`、打包、冒烟和 Release 资产发布。
   仍待用户机器验证。
+
+## v0.4.54 跟进（JS realpath EISDIR）
+
+- v0.4.53 在用户机器仍报 `EISDIR ... lstat 'D:'`。日志显示 Rust 传入的是
+  `\\?\D:\codeSpace\WIT\mdp-backend-service` 扩展路径，不是裸盘符，故 `normalize_repo_path`
+  不命中。
+- 根因：Node JS 版 `fs.realpathSync` 先 `binding.lstat` 盘符根（`D:`）；ESM resolver 在
+  `import()` Trellis 模块时也会调用它，发生在 helper 读仓库路径之前。
+- 修复：helper 顶层在任何 `import()` 之前把 `fs.realpathSync` 替换为 `fs.realpathSync.native`；
+  helper 内部 realpath 统一走 native；保留裸盘符规范化与盘符根 realpath/stat 跳过。
+- 新增故障注入测试：preload 把 `fs.realpathSync` 换成抛 `EISDIR lstat 'D:'` 的函数并传入
+  `\\?\` 扩展路径，helper 的 repair 仍成功。`node --test` 12/12 通过；
+  `node --check` 与 `npx oxfmt --check` 通过。
+- 待办：提交、发布 v0.4.54、CI 与用户机器验证。

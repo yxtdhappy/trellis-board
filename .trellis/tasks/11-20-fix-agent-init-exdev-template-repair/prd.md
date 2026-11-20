@@ -25,6 +25,11 @@
 - 2026-11-20 其他机器反馈：项目位于盘符根时，Pi 初始化报
   `Pi 模板补齐失败：EISDIR: illegal operation on a directory, lstat 'D:'`。Windows 上裸盘符
   `D:` 是驱动器相对路径；init/补齐/hash 前必须统一规范为 `D:\`（或项目实际绝对路径）。
+- v0.4.53 只规范了裸盘符，另一台机器仍失败。完整日志显示 Rust 传入的是 `\\?\D:\codeSpace\...`
+  扩展路径；Node 的 JS 版 `fs.realpathSync` 会先 `binding.lstat` 盘符根（`D:`），该机器的
+  DLP/网络盘以 EISDIR 拦截。触发点不只是 helper 自身的 realpath，Node 的 ESM resolver 在
+  `import()` Trellis 模块时也会调用同一个 JS realpath。v0.4.54 必须在加载模块前把
+  `fs.realpathSync` 换成 `fs.realpathSync.native`，helper 自身的 realpath 也只用 native。
 
 ## Requirements
 
@@ -48,6 +53,10 @@
   客户端完成状态检测。
 - R10 盘符根路径：完整 init、Agent-only、snapshot/repair/hash 之前，把裸盘符（`X:`）统一规范为
   `X:\`；补齐 helper 自身也做同样规范化，避免 realpath/lstat 对 `D:` 报 EISDIR。
+- R11 EISDIR realpath 规避：helper 必须在加载任何 Trellis ESM 模块之前，用
+  `fs.realpathSync.native` 替换 Node 的 JS 版 `fs.realpathSync`，覆盖 ESM resolver 与 helper
+  自身的 realpath 调用；不得依赖裸盘符规范化来处理 `\\?\X:\...` 扩展路径。native 不可用时
+  才回退 JS 版。
 
 ## Acceptance Criteria
 
