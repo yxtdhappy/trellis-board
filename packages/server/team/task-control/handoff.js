@@ -13,14 +13,19 @@ function currentCycle(row) {
 
 /**
  * ACK 必须声明自己处理的是哪一次物化轮次，任何状态推进与幂等判断之前先做 fencing。
+ * `materializedAt` 是本轮首次物化时间，是轮次主键；同轮后续上传可能推进
+ * `materializedRevision`，因此只有 at 缺失时才回退比较 revision。
  * 旧客户端不携带轮次字段时保持兼容；携带字段但与会话行不一致的迟到 ACK 直接拒绝。
  */
 function assertHandoffCycle(row, ack, { logger, executionTaskKey }) {
   const current = currentCycle(row)
-  const staleAt = ack.materializedAt != null && ack.materializedAt !== current.materializedAt
-  const staleRevision =
-    ack.materializedRevision != null && ack.materializedRevision !== current.materializedRevision
-  if (!staleAt && !staleRevision) return
+  const stale =
+    ack.materializedAt != null
+      ? ack.materializedAt !== current.materializedAt
+      : ack.materializedRevision != null
+        ? ack.materializedRevision !== current.materializedRevision
+        : false
+  if (!stale) return
   logger?.warn?.('handoff ACK 属于旧物化轮次，拒绝推进状态', {
     executionTaskKey,
     requestedMaterializedAt: ack.materializedAt,

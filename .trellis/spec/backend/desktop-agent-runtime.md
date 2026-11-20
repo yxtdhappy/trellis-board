@@ -89,9 +89,9 @@
     暂存目录，失败不得删除源目录。
 - 服务端 handoff ACK 的 `cleaned` 必须携带合法 `backupId`、64 位小写 manifest SHA-256、
   `fileCount >= 1` 和 `totalBytes >= 1`；新客户端还必须携带当前轮次的 `materializedAt` 与
-  （存在时）`materializedRevision`，服务端在幂等判断前做轮次 fencing，任一字段与当前
-  `sync_task` 不一致时返回 `409 HANDOFF_CYCLE_STALE` 且不改状态、不写审计；旧客户端两个字段
-  都缺省时保持兼容。已完成终态重复 ACK 只有在轮次匹配且 outcome、reason、backupId、
+  （存在时）`materializedRevision`，服务端在幂等判断前做轮次 fencing：以 `materializedAt` 为主，
+  仅 at 缺失时才比较 revision，不一致时返回 `409 HANDOFF_CYCLE_STALE` 且不改状态、不写审计；
+  旧客户端两个字段都缺省时保持兼容。已完成终态重复 ACK 只有在轮次匹配且 outcome、reason、backupId、
   manifest、文件数和总字节数完全一致时才幂等返回，否则返回 `HANDOFF_ACK_MISMATCH`。
 - `TaskSync` 在 cursor、binding、ownership 或本地 Git 投影实际变化后通过统一 state sink 通知；
   `write_cursor` / `remove_task_cursor` 必须在落盘成功且 patch 确已改变状态后才通知，无变化不得发射。

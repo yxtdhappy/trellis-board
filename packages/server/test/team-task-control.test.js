@@ -36,7 +36,7 @@ function insertAgent(db, id, userId) {
   `).run(userId, id, now)
 }
 
-function setup() {
+function setup(clock = () => new Date()) {
   const db = openDatabase({
     databaseFile: ':memory:',
     fallbackRepositories: [],
@@ -85,8 +85,8 @@ function setup() {
     config: { agentStaleMs: 60_000 },
     events: { publishAgentRevoked() {} },
   })
-  const taskControl = createTaskControlService({ db })
-  const snapshots = createTaskSnapshotService({ db, taskSpaces, taskControl })
+  const taskControl = createTaskControlService({ db, now: clock })
+  const snapshots = createTaskSnapshotService({ db, taskSpaces, taskControl, now: clock })
   const commands = createTaskCommandService({
     db,
     taskSpaces,
@@ -130,6 +130,16 @@ function taskFilesAt(taskDir, taskId, title, assignee = 'alice') {
       content: `# ${title}\n`,
     },
   ].map((file) => ({ ...file, sha256: snapshotSha256(file.content) }))
+}
+
+function syncTaskRow(db, executionTaskKey) {
+  return db.prepare('SELECT * FROM sync_task WHERE execution_task_key = ?').get(executionTaskKey)
+}
+
+function tickingClock(start) {
+  const base = Date.parse(start)
+  let offset = 0
+  return () => new Date(base + offset++)
 }
 
 test('控制信息不截断超过 200 个本人任务', () => {
@@ -724,6 +734,285 @@ test('陈旧轮次的 cleaned/conflict ACK 返回 HANDOFF_CYCLE_STALE 且不推�
         .get().count,
       1,
     )
+  } finally {
+    db.close()
+  }
+})
+
+test('同一物化轮次内多次上传与命令完成保持首次物化时间，ACK 以 at 优先', () => {
+  const { db, taskControl, snapshots, agentA, agentB, taskSpaceId } = setup(
+    tickingClock('2026-11-20T03:56:03.000Z'),
+  )
+  try {
+    const taskDir = '.trellis/tasks/11-17-task-epoch-stable'
+    const taskId = 'task-epoch-stable'
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-epoch-source',
+      clientSequence: 1,
+      files: taskFilesAt(taskDir, taskId, '轮次稳定任务', 'alice'),
+    })
+    const executionTaskKey = `${taskSpaceId}::${taskId}`
+
+    // 跨用户改派开启新轮次：上一轮物化标识全部清空。
+    taskControl.assignPendingTask({ executionTaskKey, assigneeUserId: 'user-b' })
+    const assigned = syncTaskRow(db, executionTaskKey)
+    assert.equal(assigned.materialization_state, 'pending')
+    assert.equal(assigned.materialized_at, null)
+    assert.equal(assigned.materialized_revision, null)
+    assert.equal(assigned.materialized_manifest_sha256, null)
+    assert.equal(assigned.materialized_by_agent_id, null)
+
+    // 目标首次上传写入本轮 epoch。
+    const claimed = taskControl.claim(agentB, taskSpaceId, executionTaskKey)
+    const current = snapshots.directorySnapshot(agentB, taskSpaceId, taskDir)
+    const firstFiles = current.files.map((file) => {
+      if (!file.path.endsWith('/task.json')) {
+        return {
+          path: file.path,
+          content: file.content,
+          sha256: file.sha256,
+          baseSha256: file.sha256,
+        }
+      }
+      const document = JSON.parse(file.content)
+      document.assignee = 'bob'
+      const content = JSON.stringify(document)
+      return { path: file.path, content, sha256: snapshotSha256(content), baseSha256: file.sha256 }
+    })
+    const first = snapshots.applyChanges(agentB, taskSpaceId, {
+      batchId: 'batch-epoch-target-1',
+      clientSequence: 1,
+      taskVersion: claimed.task.taskVersion,
+      leaseToken: claimed.lease.token,
+      files: firstFiles,
+    })
+    const afterFirst = syncTaskRow(db, executionTaskKey)
+    const epoch = afterFirst.materialized_at
+    assert.ok(epoch)
+    assert.equal(afterFirst.materialized_by_agent_id, 'agent-b')
+    assert.equal(Number(afterFirst.materialized_revision), first.revision)
+
+    // 同轮第二次上传推进 revision，但不得改写首次物化时间。
+    const latest = snapshots.directorySnapshot(agentB, taskSpaceId, taskDir)
+    const prd = latest.files.find((file) => file.path.endsWith('/prd.md'))
+    const changedContent = '# 轮次稳定任务\n\n第二次上传\n'
+    const second = snapshots.applyChanges(agentB, taskSpaceId, {
+      batchId: 'batch-epoch-target-2',
+      clientSequence: 2,
+      taskVersion: afterFirst.task_version,
+      leaseToken: claimed.lease.token,
+      files: [
+        {
+          path: prd.path,
+          content: changedContent,
+          sha256: snapshotSha256(changedContent),
+          baseSha256: prd.sha256,
+        },
+      ],
+    })
+    assert.ok(second.revision > first.revision)
+    const afterSecond = syncTaskRow(db, executionTaskKey)
+    assert.equal(afterSecond.materialized_at, epoch)
+    assert.equal(Number(afterSecond.materialized_revision), second.revision)
+
+    // 命令完成只收敛状态，不得覆盖本轮首次物化时间。
+    const completed = taskControl.completeCommand(agentB, taskSpaceId, {
+      commandType: 'assign_task',
+      taskId,
+      revision: second.revision,
+    })
+    assert.equal(completed.handoffState, 'source_cleanup_pending')
+    const afterComplete = syncTaskRow(db, executionTaskKey)
+    assert.equal(afterComplete.materialized_at, epoch)
+    assert.equal(Number(afterComplete.materialized_revision), second.revision)
+
+    // ACK 携带的 revision 已落后于最新上传，但 at 匹配时仍必须成功。
+    assert.notEqual(Number(afterComplete.materialized_revision), first.revision)
+    const cleaned = taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+      outcome: 'cleaned',
+      backupId: 'handoff-0123456789abcdef',
+      manifestSha256: 'e'.repeat(64),
+      fileCount: 2,
+      totalBytes: 256,
+      materializedAt: epoch,
+      materializedRevision: first.revision,
+    })
+    assert.equal(cleaned.handoffState, 'completed')
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'",
+        )
+        .get().count,
+      1,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('再次改派清空并重建物化轮次，旧轮次 ACK 返回 HANDOFF_CYCLE_STALE', () => {
+  const { db, taskControl, snapshots, agentA, agentB, taskSpaceId } = setup(
+    tickingClock('2026-11-20T04:10:00.000Z'),
+  )
+  try {
+    const taskDir = '.trellis/tasks/11-17-task-epoch-cycles'
+    const taskId = 'task-epoch-cycles'
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-cycles-source',
+      clientSequence: 1,
+      files: taskFilesAt(taskDir, taskId, '跨轮任务', 'alice'),
+    })
+    const executionTaskKey = `${taskSpaceId}::${taskId}`
+
+    // 第一轮：目标上传（内容未变也可）并完成命令，建立本轮 epoch。
+    taskControl.assignPendingTask({ executionTaskKey, assigneeUserId: 'user-b' })
+    const firstClaim = taskControl.claim(agentB, taskSpaceId, executionTaskKey)
+    const firstSnapshot = snapshots.directorySnapshot(agentB, taskSpaceId, taskDir)
+    const firstUpload = snapshots.applyChanges(agentB, taskSpaceId, {
+      batchId: 'batch-cycles-target-1',
+      clientSequence: 1,
+      taskVersion: firstClaim.task.taskVersion,
+      leaseToken: firstClaim.lease.token,
+      files: firstSnapshot.files.map((file) => ({
+        path: file.path,
+        content: file.content,
+        sha256: file.sha256,
+        baseSha256: file.sha256,
+      })),
+    })
+    taskControl.completeCommand(agentB, taskSpaceId, {
+      commandType: 'assign_task',
+      taskId,
+      revision: firstUpload.revision,
+    })
+    const firstEpoch = syncTaskRow(db, executionTaskKey).materialized_at
+    assert.ok(firstEpoch)
+
+    // 第二轮：改派回创建者再改派给目标，轮次字段被清空。
+    taskControl.assignPendingTask({ executionTaskKey, assigneeUserId: 'user-a' })
+    const cleared = syncTaskRow(db, executionTaskKey)
+    assert.equal(cleared.materialized_at, null)
+    assert.equal(cleared.materialized_revision, null)
+    assert.equal(cleared.materialized_manifest_sha256, null)
+    assert.equal(cleared.materialized_by_agent_id, null)
+    assert.equal(cleared.handoff_state, 'none')
+
+    taskControl.assignPendingTask({ executionTaskKey, assigneeUserId: 'user-b' })
+    const secondClaim = taskControl.claim(agentB, taskSpaceId, executionTaskKey)
+    const secondSnapshot = snapshots.directorySnapshot(agentB, taskSpaceId, taskDir)
+    const prd = secondSnapshot.files.find((file) => file.path.endsWith('/prd.md'))
+    const changedContent = '# 跨轮任务\n\n第二轮物化\n'
+    const secondUpload = snapshots.applyChanges(agentB, taskSpaceId, {
+      batchId: 'batch-cycles-target-2',
+      clientSequence: 2,
+      taskVersion: secondClaim.task.taskVersion,
+      leaseToken: secondClaim.lease.token,
+      files: [
+        {
+          path: prd.path,
+          content: changedContent,
+          sha256: snapshotSha256(changedContent),
+          baseSha256: prd.sha256,
+        },
+      ],
+    })
+    taskControl.completeCommand(agentB, taskSpaceId, {
+      commandType: 'assign_task',
+      taskId,
+      revision: secondUpload.revision,
+    })
+    const row = syncTaskRow(db, executionTaskKey)
+    assert.ok(row.materialized_at)
+    assert.notEqual(row.materialized_at, firstEpoch)
+    assert.equal(row.handoff_state, 'source_cleanup_pending')
+
+    // 上一轮 epoch 必须被拒绝，且不写审计、不改状态。
+    assert.throws(
+      () =>
+        taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+          outcome: 'cleaned',
+          backupId: 'handoff-0123456789abcdef',
+          manifestSha256: 'e'.repeat(64),
+          fileCount: 2,
+          totalBytes: 256,
+          materializedAt: firstEpoch,
+          materializedRevision: firstUpload.revision,
+        }),
+      (error) =>
+        error.status === 409 &&
+        error.code === 'HANDOFF_CYCLE_STALE' &&
+        error.details.materializedAt === row.materialized_at,
+    )
+    const afterStale = syncTaskRow(db, executionTaskKey)
+    assert.equal(afterStale.handoff_state, 'source_cleanup_pending')
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'",
+        )
+        .get().count,
+      0,
+    )
+
+    // 新轮次 epoch 可完成；revision 差异被 at 优先规则忽略。
+    const cleaned = taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+      outcome: 'cleaned',
+      backupId: 'handoff-0123456789abcdef',
+      manifestSha256: 'e'.repeat(64),
+      fileCount: 2,
+      totalBytes: 256,
+      materializedAt: row.materialized_at,
+      materializedRevision: firstUpload.revision,
+    })
+    assert.equal(cleaned.handoffState, 'completed')
+  } finally {
+    db.close()
+  }
+})
+
+test('assign_task 无内容上传时由命令完成补写本轮首次物化时间', () => {
+  const { db, taskControl, snapshots, agentA, agentB, taskSpaceId } = setup(
+    tickingClock('2026-11-20T04:20:00.000Z'),
+  )
+  try {
+    const taskDir = '.trellis/tasks/11-17-task-epoch-command'
+    const taskId = 'task-epoch-command'
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-command-source',
+      clientSequence: 1,
+      files: taskFilesAt(taskDir, taskId, '命令补写任务', 'alice'),
+    })
+    const executionTaskKey = `${taskSpaceId}::${taskId}`
+
+    taskControl.assignPendingTask({ executionTaskKey, assigneeUserId: 'user-b' })
+    const assigned = syncTaskRow(db, executionTaskKey)
+    assert.equal(assigned.materialized_at, null)
+    assert.equal(assigned.materialized_revision, null)
+
+    const completed = taskControl.completeCommand(agentB, taskSpaceId, {
+      commandType: 'assign_task',
+      taskId,
+      revision: Number(assigned.content_revision),
+    })
+    assert.equal(completed.materializationState, 'materialized')
+    assert.equal(completed.handoffState, 'source_cleanup_pending')
+
+    const row = syncTaskRow(db, executionTaskKey)
+    assert.ok(row.materialized_at)
+    assert.equal(row.materialized_by_agent_id, 'agent-b')
+    assert.equal(Number(row.materialized_revision), Number(assigned.content_revision))
+
+    const cleaned = taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+      outcome: 'cleaned',
+      backupId: 'handoff-0123456789abcdef',
+      manifestSha256: 'e'.repeat(64),
+      fileCount: 1,
+      totalBytes: 32,
+      materializedAt: row.materialized_at,
+      materializedRevision: Number(row.materialized_revision),
+    })
+    assert.equal(cleaned.handoffState, 'completed')
   } finally {
     db.close()
   }

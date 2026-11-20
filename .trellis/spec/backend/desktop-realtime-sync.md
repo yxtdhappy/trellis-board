@@ -438,12 +438,21 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   已授予时尝试系统通知，API、权限或安全上下文不可用时降级为持久页内状态并在恢复可见后补提示。
   冲突状态持续显示非模态页内提示；固定页内状态只展示冲突和处理中项。
 
+`sync_task.materialized_at` 是目标写入者**本轮首次物化时间**，一轮内只写一次：跨用户改派
+（`assignPendingTask`）在 `materialization_state='pending'` 的同时清空 `materialized_at`、
+`materialized_revision`、`materialized_manifest_sha256` 和 `materialized_by_agent_id`；目标上传仅在
+`materialized_at IS NULL` 时写入，同轮后续上传只推进 `materialized_revision`；命令完成只在为空时
+补写 `materialized_at` 与 `materialized_by_agent_id`，绝不覆盖首次物化时间，`materialized_revision`
+继续写命令结果 revision。历史行不迁移，下一次跨用户改派时自然获得稳定 epoch。
+
 服务端 `POST /api/agent/tasks/:executionTaskKey/handoff-ack` 的 `cleaned` 必须包含合法
 `backupId`、64 位 manifest SHA-256、正文件数和正总字节数；冲突 reason 只接受固定白名单。
 请求可选携带 `materializedAt`（`YYYY-MM-DDTHH:mm:ss.sssZ`，24 字符，与 `sync_task.materialized_at`
 精确相等）与 `materializedRevision`（非负安全整数）。服务端在 Agent/所有权校验之后、幂等判断和
-任何状态推进之前执行轮次 fencing：任一提供的字段与当前 `sync_task` 行不一致（包括当前
-`materialized_at` 为空而请求提供了值）返回 `409 HANDOFF_CYCLE_STALE`，`details` 返回当前
+任何状态推进之前执行轮次 fencing，以 `materializedAt` 为主：提供了 at 时只比较 at，忽略
+`materializedRevision` 差异（同轮后续上传可能推进 revision）；仅 at 缺失时才回退比较
+`materializedRevision`；当前 `materialized_at` 为空而请求提供了 at 也视为陈旧。拒绝时返回
+`409 HANDOFF_CYCLE_STALE`，`details` 返回当前
 `{materializedAt, materializedRevision}`，不写审计、不改 `handoff_state`。两个字段都缺失时走旧
 客户端兼容路径；永远不升级、始终不发送轮次字段的旧客户端仍可能触发跨轮次竞态，升级窗口内按
 已知限制接受，后续可要求最小 Agent 版本。已完成终态的重复 ACK 只有在轮次匹配且全部审计元数据
@@ -594,7 +603,7 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 | 其他客户端仍持有有效任务租约 | 控制面 `leaseHeldByOtherUser=true`，ACK `conflict/lease_active`；服务端拒绝 cleaned 时返回 `409 HANDOFF_LEASE_HELD` |
 | cleaned ACK 重试时备份缺失、非目录、身份或摘要不一致 | 改为 `conflict/missing`，不得报告 cleaned |
 | handoff 本地目录包含符号链接、特殊文件或读取失败 | 不删除正文，收敛为 `conflict/unknown`，不中断其他任务同步 |
-| handoff ACK 携带的物化轮次与当前 `sync_task` 不一致 | `409 HANDOFF_CYCLE_STALE`，状态和审计不变；客户端保持 pending 等下一轮控制同步 |
+| handoff ACK 携带的物化轮次与当前 `sync_task` 不一致（at 优先，at 缺失才比较 revision） | `409 HANDOFF_CYCLE_STALE`，状态和审计不变；客户端保持 pending 等下一轮控制同步 |
 | handoff ACK 未携带轮次字段（旧客户端） | 兼容路径，按现有状态机处理 |
 | 已完成 handoff 的重复 ACK 元数据不一致（轮次匹配） | `409 HANDOFF_ACK_MISMATCH`，不改写首次审计 |
 | handoff ACK 网络失败 | 本地 ACK 状态保持 pending；后续同步或重启重试，不阻塞 Board |
@@ -720,7 +729,9 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   baseline/branch/Git 不确定时失败关闭、100,000 文件与 64 MiB 边界、完整备份回读校验、cleaned ACK
   重启重试、备份缺失转 conflict、重复 ACK 元数据冲突、他人租约保护和通知去重不抢焦点；以及同一
   任务第二轮及后续物化轮次的 ACK 重置与重新清理（含同轮重复同步不重复清理/ACK、旧状态文件
-  缺少轮次字段时的自愈）。服务端还必须覆盖 ACK 轮次匹配成功、新一轮 `source_cleanup_pending` 下
+  缺少轮次字段时的自愈）。服务端还必须覆盖同一轮次内多次上传与命令完成保持首次
+  `materialized_at`、ACK 用较早 revision 配合匹配 at 成功、改派清空并重建轮次后旧 at 返回
+  `HANDOFF_CYCLE_STALE`、无上传时命令完成补写 at、ACK 轮次匹配成功、新一轮 `source_cleanup_pending` 下
   陈旧 cleaned/conflict ACK 返回 `HANDOFF_CYCLE_STALE` 且状态/审计不变、新一轮轮次 ACK 收敛
   `completed`、已完成终态匹配轮次幂等而陈旧轮次优先拒绝、缺省轮次兼容和非法轮次字段 400；客户端
   还必须覆盖 ACK 请求字段、409 后保持 pending、旧记录用本地控制回填轮次，以及 409 后新控制到达

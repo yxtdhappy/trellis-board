@@ -262,6 +262,8 @@ export function createStatements(db) {
       UPDATE sync_task
       SET assignee_user_id = ?, assignee_dev_id = ?, previous_assignee_user_id = ?,
           materialization_state = 'pending',
+          materialized_at = NULL, materialized_revision = NULL,
+          materialized_manifest_sha256 = NULL, materialized_by_agent_id = NULL,
           handoff_state = CASE WHEN ? = created_by_user_id THEN 'none' ELSE 'handoff_pending' END,
           task_version = task_version + 1, lease_id = NULL, updated_at = ?
       WHERE execution_task_key = ?
@@ -298,7 +300,8 @@ export function createStatements(db) {
           materialization_state = ?,
           task_version = ?, content_revision = ?, handoff_state = ?,
           materialized_by_agent_id = CASE WHEN ? THEN ? ELSE materialized_by_agent_id END,
-          materialized_at = CASE WHEN ? THEN ? ELSE materialized_at END,
+          materialized_at = CASE
+            WHEN ? AND materialized_at IS NULL THEN ? ELSE materialized_at END,
           materialized_revision = CASE WHEN ? THEN ? ELSE materialized_revision END,
           materialized_manifest_sha256 = CASE WHEN ? THEN ? ELSE materialized_manifest_sha256 END,
           updated_at = ?
@@ -307,7 +310,8 @@ export function createStatements(db) {
     updateTaskCommandComplete: db.prepare(`
       UPDATE sync_task
       SET materialization_state = 'materialized',
-          materialized_by_agent_id = ?, materialized_at = ?,
+          materialized_by_agent_id = COALESCE(materialized_by_agent_id, ?),
+          materialized_at = COALESCE(materialized_at, ?),
           materialized_revision = ?, handoff_state = ?, updated_at = ?
       WHERE execution_task_key = ?
     `),
