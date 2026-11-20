@@ -574,8 +574,8 @@ async fn archived_directory_409_clears_cursor_state_and_pull_advances_revision()
             .iter()
             .filter(|request| request.contains("/snapshot?"))
             .count(),
-        2,
-        "首轮 dirty 上传后必须再拉取一次快照收敛"
+        1,
+        "上传未产生提交时直接应用当前快照收敛，不得重复拉取或递归"
     );
     drop(requests);
     assert!(
