@@ -139,3 +139,26 @@ stderr: EISDIR: illegal operation on a directory, lstat 'D:'
   `TrellisBoard_0.4.54_x64-portable.zip`（4,959,654 bytes，sha256
   `85d3b522d0014dd889e32a823bd9698f5149832f4a6ebbfcd95fa5d369e442de`）。
 - 待用户机器安装 v0.4.54 实测确认。
+
+## 11. Agent-only developer 身份与日志降噪（v0.4.55）
+
+本机真实 `@mindfoldhq/trellis@0.6.17` 临时仓库 E2E：
+
+| 步骤 | 结果 |
+| --- | --- |
+| helper `developer nzhou` | 生成 `.trellis/.developer`（`name=nzhou`）、`workspace/nzhou/journal-1.md`、`index.md` |
+| Agent-only 首次 `pi` | 仍命中 `.pi/extensions/trellis/index.ts` EXDEV（预期） |
+| helper `repair pi` | `created` 2 项，`skipped=49` |
+| Agent-only 重试 | 退出码 0；`.pi/extensions/trellis/index.ts`、`.pi/settings.json` 存在 |
+| developer 保留 | 第二次 developer helper 不覆盖已有身份 |
+| 名称/越界防护 | 路径分隔符、盘符、ADS、控制字符、`.`/`..`、junction 越界均拒绝 |
+
+- developer 文件模板与上游 `init_developer.py` 对齐（Node 写 LF，Python 在 Windows 写 CRLF；
+  内容与结构一致，Trellis 按 `name=` 行读取）。
+- 日志：首次预期 EXDEV 由 WARN 降为 INFO；`core.sparseCheckout` 未配置的 exit 1 不再写 WARN。
+- 发布：提交 `23a7a01`，tag `v0.4.55`；CI run
+  [`44707239133`](https://github.com/yxtdhappy/trellis-board/actions/runs/44707239133) 成功；
+  `TrellisBoard_0.4.55_x64-portable.zip`（4,962,355 bytes，sha256
+  `8de5a5dda2c8cdc06a015e27d4cd1699668c84d73208b1a061593695f1135949`）。
+- 待用户机器验证。已知限制：所有 Agent 已初始化时弹窗无可提交工具，可用
+  `python .trellis/scripts/init_developer.py <id>` 或选择任意仍缺失的 Agent。

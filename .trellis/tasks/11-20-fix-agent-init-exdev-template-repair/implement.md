@@ -158,9 +158,18 @@
 - [x] 首次 init 的预期 EXDEV 不再记通用 WARN：`ProcessOptions.suppress_failure_log` 抑制，
   命中补齐写 INFO，非补齐失败手动 WARN；`git config --bool core.sparseCheckout` 的预期 exit 1
   也不再记 WARN。`git.rs` / `task_command.rs` 的完整字面量已适配新字段。
-- [ ] 提交/推送 `main`、`yarn release:desktop 0.4.55`、CI 构建。
+- [x] 提交 `23a7a01 fix(desktop): initialize developer identity in Agent-only setup`，推送 `main`。
+- [x] `yarn release:desktop 0.4.55`；tag `v0.4.55` 已推送。
+- [x] CI run [`44707239133`](https://github.com/yxtdhappy/trellis-board/actions/runs/44707239133)
+  （main windows，desktop job 8m24s）成功：Node/Server tests、`Rust unit tests`、desktop build、
+  便携包/启动冒烟、Release 资产发布全部通过。
+- [x] Release：[`v0.4.55`](https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.55)，
+  资产 `TrellisBoard_0.4.55_x64-portable.zip`（4,962,355 bytes，sha256
+  `8de5a5dda2c8cdc06a015e27d4cd1699668c84d73208b1a061593695f1135949`）。
 - [ ] 用户机器用 `v0.4.55` 初始化 Agent，确认 `.developer` 与 workspace 生成、日志只保留
   预期内的 INFO/无关 WARN。
+  —— 若目标机器所有 Agent 都已初始化，弹窗没有可提交的工具；可先执行
+  `python .trellis/scripts/init_developer.py <id>`，或选择任意仍缺失的 Agent 触发补齐。
 
 ## 风险与回滚点
 

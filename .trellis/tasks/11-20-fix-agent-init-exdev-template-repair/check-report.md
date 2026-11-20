@@ -125,3 +125,25 @@ R8 测试与真机 E2E、R9 移除 `--pi-presence` 均已核对。新增 details
   `TrellisBoard_0.4.54_x64-portable.zip`，4,959,654 bytes，sha256
   `85d3b522d0014dd889e32a823bd9698f5149832f4a6ebbfcd95fa5d369e442de`。
 - 剩余验证：用户机器安装 v0.4.54 后重试 Pi 初始化。
+
+## v0.4.55 跟进（Agent-only developer 身份）
+
+- v0.4.54 初始化成功后，`.trellis/.developer` 与 `.trellis/workspace/<id>` 未生成。
+- 根因：项目已有 `.trellis/tasks` 时走 Agent-only helper，该路径不执行 `trellis init -u`，
+  弹窗提交的 developer ID 被忽略。
+- 修复：helper 增加 `developer <name>` 模式（按 0.6.17 `init_developer.py` 语义直写
+  `.developer`、`journal-1.md`、`index.md`）；`initialize_agents` 在平台配置前调用，失败则
+  不配置 Agent；已有有效身份不覆盖，`.developer` 最后写。
+- 日志：`ProcessOptions.suppress_failure_log` 抑制首次 init 的预期 EXDEV WARN，命中补齐写 INFO，
+  非补齐失败仍写 WARN；`core.sparseCheckout` 未配置的 exit 1 不再写 WARN。
+- 验证：`node --test packages/desktop/test/agent-template-repair.test.js` 17/17 通过；
+  本机真实 0.6.17 包 E2E（developer → Agent-only 首次 EXDEV → repair → 重试成功）通过，
+  生成的 `.developer` / workspace / Pi 文件齐全。
+- 提交 `23a7a01`；CI run
+  [`44707239133`](https://github.com/yxtdhappy/trellis-board/actions/runs/44707239133)
+  （desktop job 8m24s）成功，含 `Rust unit tests`；Release
+  [`v0.4.55`](https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.55)，
+  `TrellisBoard_0.4.55_x64-portable.zip`（4,962,355 bytes，sha256
+  `8de5a5dda2c8cdc06a015e27d4cd1699668c84d73208b1a061593695f1135949`）。
+- 待用户机器验证。已知限制：若所有 Agent 均已初始化，弹窗没有可提交工具；需用
+  `init_developer.py` 或先选任意仍缺失的 Agent。
