@@ -1725,3 +1725,45 @@ BRANCH_MISMATCH 每次心跳重复弹窗且抢焦点；改为 assert_binding_bra
 ### Status
 
 [OK] **Completed**
+
+
+## Session 73: 接入初始化增强：一键推送、Agent 忽略规则与 developer 默认值
+<!-- trellis-session: v=2 fp=83c5a30f0b58326a -->
+
+**Date**: 2026-11-20
+**Task**: 接入初始化增强：一键推送、Agent 忽略规则与 developer 默认值
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+完成接入初始化三项增强，并通过 CI 与真机验收。
+
+### Main Changes
+
+- 首次推送确认新增一键提交并推送，固定 message 初始化trellis，只提交 .trellis、.gitignore、AGENTS.md、.gitattributes、.agents（存在时）。
+- 初始化后按所选 Agent 把根锚定忽略规则写入项目 .gitignore，等价规则去重、保留 CRLF、重复执行幂等。
+- ProjectInspection 新增 developerName，两个初始化弹窗优先读取 .trellis/.developer 的 name。
+- 同步 Tauri 权限、PRD/README/团队运维文档与桌面端规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7178c4b` | feat(onboarding): 一键提交推送并自动忽略 Agent 目录 |
+| `1e40359` | fix(onboarding): 一键提交包含初始化生成文件 |
+
+### Testing
+
+- [OK] CI run 44752124935（commit 1e40359）：node tests、desktop build（含 Rust unit tests、打包与 smoke test）通过。
+- [OK] 真机验收：新增文件均进入 初始化trellis 提交，.developer 被忽略，notes.txt 未跟踪；.gitignore 去重与追加正确。
+- [OK] 本次改动文件 oxfmt 检查通过；仓库级 format:check 仍有 25 个仓库既有未格式化文件。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 清理 GitHub 私有测试仓库（需 gh delete_repo scope）。
+- 评估桌面端 Git 子进程的代理配置/继承；当前 ENV_ALLOWLIST 不继承 HTTPS_PROXY，弱网直连会失败。

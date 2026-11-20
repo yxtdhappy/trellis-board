@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 72
+- **Total Sessions**: 73
 - **Last Active**: 2026-11-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1727 | Active |
+| `journal-1.md` | ~1769 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 73 | 2026-11-20 | 接入初始化增强：一键推送、Agent 忽略规则与 developer 默认值 | `7178c4b`, `1e40359` | `main` |
 | 72 | 2026-11-20 | 修复 Agent 初始化 EXDEV / EISDIR 与 developer 身份 | `e9aae35`, `3884a5e`, `fd254c5`, `23a7a01`, `d685eaf`, `1783ff2`, `41a590c` | `main` |
 | 71 | 2026-11-20 | 稳定 handoff 物化轮次标识并发布 v0.4.50 | `a359fcf`, `2a70ac3`, `6fc29cd`, `aa779c4` | `main` |
 | 70 | 2026-11-20 | 为 handoff ACK 增加服务端物化轮次 fencing 并完成真实 E2E | `c57a1a1`, `5856d56`, `3062a7f`, `1b761b0`, `ff49cdd` | `main` |
