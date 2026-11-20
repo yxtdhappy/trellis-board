@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 42
-- **Last Active**: 2026-11-19
+- **Total Sessions**: 43
+- **Last Active**: 2026-11-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1428 | Active |
+| `journal-1.md` | ~1494 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 43 | 2026-11-20 | 同步仅处理本人任务：枚举期归属过滤与服务端新建/改派校验 | `c3f27b0`, `5ca22a5` | `investigate/join-project-prompt-assignee` |
 | 42 | 2026-11-19 | 拆分 server/web 超大模块并补齐独立模式测试 | `4220dc4`, `c3bc0d1` | `count-server-web-loc-large-files` |
 | 41 | 2026-11-19 | worktree 自动接入与懒显示 | `23565c3`, `3fcb72b` | `main` |
 | 40 | 2026-11-19 | 修复首同步差异误报、稍后处理失效与抢焦点弹窗 | `5248bef`, `4b9bfaf` | `main` |

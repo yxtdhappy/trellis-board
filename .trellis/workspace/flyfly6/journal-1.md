@@ -1454,3 +1454,41 @@ packages/web 全量审计后按 shadcn/base-ui 规则把重复实现收敛到 co
 
 - 观察真实服务端归档同步延迟下的隐藏时序
 - packages/server/plugins/supervisor.js 仍 1868 行，按 spec 作为单状态机例外保留，后续增长需先拆逻辑
+
+
+## Session 43: 同步仅处理本人任务：枚举期归属过滤与服务端新建/改派校验
+<!-- trellis-session: v=2 fp=297b497686c34188 -->
+
+**Date**: 2026-11-20
+**Task**: 同步仅处理本人任务：枚举期归属过滤与服务端新建/改派校验
+**Package**: server
+**Branch**: `investigate/join-project-prompt-assignee`
+
+### Summary
+
+客户端在任务枚举出口按 task.json 归属过滤；服务端新建任务校验上传方即负责人；改派仅允许当前负责人/项目 lead/自取。
+
+### Main Changes
+
+- 新增 packages/desktop/src-tauri/src/agent/task_sync/ownership_filter.rs：local_owner_id / retain_owned_groups / owns_task_dir / task_dir_writable_local，接入 local_groups 与 local_metadata_groups 出口
+- snapshot.rs 新增 task_owner(content)；worktree/mod.rs 导出 developer_id
+- packages/server/team/task-control/uploads.js：assertUploadAllowed 任务行不存在时校验解析出的负责人，否则 403 TASK_WRITE_FORBIDDEN
+- packages/server/team/task-command-service.js：assign_task 增加 assertCanAssign（当前负责人/lead/自取）
+- .trellis/spec/backend/task-ownership-and-conflict-idempotency.md 追加「枚举期归属过滤与新建/改派归属校验」契约
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c3f27b0` | fix(sync): 同步仅处理本人任务，收紧新建与改派归属校验 |
+| `5ca22a5` | chore(task): archive 11-20-sync-mine-only-ownership |
+
+### Testing
+
+- [OK] cargo test（packages/desktop/src-tauri）：318 passed，1 failed 为既有 flake pull_and_startup::archived_directory_409_clears_cursor_state_and_pull_advances_revision（基线同样失败）
+- [OK] node --test packages/server/test/team-task-control.test.js packages/server/test/team-task-commands.test.js：28/28
+- [OK] 全量 node --test packages 通配：645 中 1 失败，为 desktop-ui-build 缺 packages/desktop/ui/index.html 构建产物（环境问题，与本改动无关）
+
+### Status
+
+[OK] **Completed**
