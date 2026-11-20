@@ -437,6 +437,11 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   各提示一次。Board 可见时使用 Sonner；隐藏或最小化时仅在 WebView 暴露 Web Notification API 且权限
   已授予时尝试系统通知，API、权限或安全上下文不可用时降级为持久页内状态并在恢复可见后补提示。
   冲突状态持续显示非模态页内提示；固定页内状态只展示冲突和处理中项。
+- 客户端合并快照 `controls`（字段存在即权威）时，必须同步清理当前 binding（`localId + taskSpaceId`）
+  中不再对应 `handoff_materialized + source_cleanup_pending|source_cleanup_conflict` 的本地 handoff
+  记录：任务回到 claimed/materialized/archived、`handoff_state` 变为 none/completed、或不再出现在
+  控制面时删除记录；`outcome=cleaned` 的成功记录保留。否则服务端已结束 handoff 后本地冲突提示会
+  永久驻留。控制面回退到更低 `taskVersion` 时沿用合并后的较新控制，不能误判为离开 handoff。
 
 `sync_task.materialized_at` 是目标写入者**本轮首次物化时间**，一轮内只写一次：跨用户改派
 （`assignPendingTask`）在 `materialization_state='pending'` 的同时清空 `materialized_at`、
@@ -729,7 +734,9 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   baseline/branch/Git 不确定时失败关闭、100,000 文件与 64 MiB 边界、完整备份回读校验、cleaned ACK
   重启重试、备份缺失转 conflict、重复 ACK 元数据冲突、他人租约保护和通知去重不抢焦点；以及同一
   任务第二轮及后续物化轮次的 ACK 重置与重新清理（含同轮重复同步不重复清理/ACK、旧状态文件
-  缺少轮次字段时的自愈）。服务端还必须覆盖同一轮次内多次上传与命令完成保持首次
+  缺少轮次字段时的自愈）。控制面合并还必须覆盖：任务回到 claimed/none 后清理本地 conflict 记录、
+  保留进行中的 pending/conflict 与 `outcome=cleaned` 记录、其他 binding 不受影响、旧 `taskVersion`
+  快照不误删。服务端还必须覆盖同一轮次内多次上传与命令完成保持首次
   `materialized_at`、ACK 用较早 revision 配合匹配 at 成功、改派清空并重建轮次后旧 at 返回
   `HANDOFF_CYCLE_STALE`、无上传时命令完成补写 at、ACK 轮次匹配成功、新一轮 `source_cleanup_pending` 下
   陈旧 cleaned/conflict ACK 返回 `HANDOFF_CYCLE_STALE` 且状态/审计不变、新一轮轮次 ACK 收敛

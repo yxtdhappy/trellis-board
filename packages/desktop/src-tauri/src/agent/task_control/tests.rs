@@ -348,3 +348,188 @@ fn legacy_handoff_without_cycle_epoch_resets_on_new_control() {
     assert_eq!(handoff.outcome, "");
     assert_eq!(handoff.backup_id, None);
 }
+
+#[test]
+fn merge_binding_controls_drops_handoff_after_control_returns_to_claimed() {
+    let mut state = TaskControlStateFile::empty();
+    let handoff = handoff_control("task-a");
+    state
+        .upsert_handoff_control("local-1", &handoff)
+        .expect("store handoff");
+    let key = handoff_state_key("local-1", &handoff.execution_task_key);
+    assert!(state.mark_handoff_ack_pending(
+        &key,
+        "conflict",
+        Some("unknown".to_string()),
+        None,
+        None,
+        2,
+        128,
+        "2026-11-20T04:30:27.000Z",
+    ));
+    assert!(state.mark_handoff_ack_done(&key, "2026-11-20T04:30:28.000Z"));
+    assert_eq!(state.pending_handoff_notices().len(), 1);
+
+    let claimed = control("claimed", "task-a");
+    assert!(state
+        .merge_binding_controls("local-1", "space-1", std::slice::from_ref(&claimed))
+        .expect("merge claimed control"));
+    assert!(state.handoffs.is_empty());
+    assert!(state.pending_handoff_notices().is_empty());
+}
+
+#[test]
+fn stale_handoff_cleanup_alone_reports_state_change() {
+    let mut state = TaskControlStateFile::empty();
+    let claimed = control("claimed", "task-a");
+    assert!(state
+        .merge_binding_controls("local-1", "space-1", std::slice::from_ref(&claimed))
+        .expect("seed controls"));
+    state
+        .upsert_handoff_control("local-1", &handoff_control("task-a"))
+        .expect("store handoff");
+
+    // 控制面没有变化，只有残留下发的 handoff 记录被删除，也必须要求持久化。
+    assert!(state
+        .merge_binding_controls("local-1", "space-1", std::slice::from_ref(&claimed))
+        .expect("merge unchanged controls"));
+    assert!(state.handoffs.is_empty());
+    // 清理完成后再次合并相同控制面不得重复写盘。
+    assert!(!state
+        .merge_binding_controls("local-1", "space-1", std::slice::from_ref(&claimed))
+        .expect("repeat merge is a no-op"));
+}
+
+#[test]
+fn merge_binding_controls_keeps_active_conflict_handoff() {
+    let mut state = TaskControlStateFile::empty();
+    let mut conflict = handoff_control("task-a");
+    conflict.handoff_state = "source_cleanup_conflict".to_string();
+    state
+        .upsert_handoff_control("local-1", &conflict)
+        .expect("store handoff");
+    let key = handoff_state_key("local-1", &conflict.execution_task_key);
+    assert_eq!(state.handoff(&key).expect("handoff").ack_state, "done");
+
+    state
+        .merge_binding_controls("local-1", "space-1", std::slice::from_ref(&conflict))
+        .expect("merge active conflict");
+    let handoff = state.handoff(&key).expect("retained handoff");
+    assert_eq!(handoff.server_handoff_state, "source_cleanup_conflict");
+    let notices = state.pending_handoff_notices();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].outcome, "conflict");
+}
+
+#[test]
+fn merge_binding_controls_keeps_active_pending_handoff() {
+    let mut state = TaskControlStateFile::empty();
+    let handoff = handoff_control("task-a");
+    state
+        .upsert_handoff_control("local-1", &handoff)
+        .expect("store handoff");
+    let key = handoff_state_key("local-1", &handoff.execution_task_key);
+
+    state
+        .merge_binding_controls("local-1", "space-1", std::slice::from_ref(&handoff))
+        .expect("merge active pending");
+    let handoff = state.handoff(&key).expect("retained handoff");
+    assert_eq!(handoff.ack_state, "pending");
+    assert_eq!(handoff.server_handoff_state, "source_cleanup_pending");
+    assert_eq!(state.pending_handoff_notices().len(), 1);
+}
+
+#[test]
+fn merge_binding_controls_keeps_cleaned_handoff_notice() {
+    let mut state = TaskControlStateFile::empty();
+    let handoff = handoff_control("task-a");
+    state
+        .upsert_handoff_control("local-1", &handoff)
+        .expect("store handoff");
+    let key = handoff_state_key("local-1", &handoff.execution_task_key);
+    mark_cleaned(&mut state, &key);
+
+    state
+        .merge_binding_controls("local-1", "space-1", &[control("claimed", "task-a")])
+        .expect("merge claimed control");
+    let handoff = state.handoff(&key).expect("cleaned handoff");
+    assert_eq!(handoff.ack_state, "done");
+    assert_eq!(handoff.outcome, "cleaned");
+    assert_eq!(state.pending_handoff_notices()[0].outcome, "cleaned");
+}
+
+#[test]
+fn merge_binding_controls_keeps_handoffs_of_other_bindings() {
+    let mut state = TaskControlStateFile::empty();
+    let mut other_device = handoff_control("task-a");
+    other_device.handoff_state = "source_cleanup_conflict".to_string();
+    state
+        .upsert_handoff_control("local-2", &other_device)
+        .expect("store other device handoff");
+    let mut other_space = handoff_control("task-b");
+    other_space.execution_task_key = "space-2::task-b".to_string();
+    other_space.handoff_state = "source_cleanup_conflict".to_string();
+    state
+        .upsert_handoff_control("local-1", &other_space)
+        .expect("store other task space handoff");
+    state
+        .upsert_handoff_control("local-1", &handoff_control("task-c"))
+        .expect("store stale handoff");
+
+    state
+        .merge_binding_controls("local-1", "space-1", &[control("claimed", "task-a")])
+        .expect("merge current binding");
+
+    assert_eq!(state.handoffs.len(), 2);
+    assert!(state
+        .handoff(&handoff_state_key("local-2", "space-1::task-a"))
+        .is_some());
+    assert!(state
+        .handoff(&handoff_state_key("local-1", "space-2::task-b"))
+        .is_some());
+    assert!(state
+        .handoff(&handoff_state_key("local-1", "space-1::task-c"))
+        .is_none());
+}
+
+#[test]
+fn merge_binding_controls_drops_handoff_missing_from_control_snapshot() {
+    let mut state = TaskControlStateFile::empty();
+    let mut conflict = handoff_control("task-a");
+    conflict.handoff_state = "source_cleanup_conflict".to_string();
+    state
+        .upsert_handoff_control("local-1", &conflict)
+        .expect("store handoff");
+
+    let other_task = control("claimed", "task-b");
+    state
+        .merge_binding_controls("local-1", "space-1", std::slice::from_ref(&other_task))
+        .expect("merge unrelated control");
+    assert!(state.handoffs.is_empty());
+    assert!(state.pending_handoff_notices().is_empty());
+}
+
+#[test]
+fn merge_binding_controls_keeps_handoff_when_snapshot_version_rolls_back() {
+    let mut state = TaskControlStateFile::empty();
+    let mut materialized = handoff_control("task-a");
+    materialized.task_version = 4;
+    assert!(state
+        .upsert_control("local-1", &materialized)
+        .expect("seed handoff control"));
+    state
+        .upsert_handoff_control("local-1", &materialized)
+        .expect("store handoff");
+    let key = handoff_state_key("local-1", &materialized.execution_task_key);
+
+    // 延迟到达的旧快照 taskVersion 更低；控制面回退不能被当成离开 handoff。
+    let stale_claimed = control("claimed", "task-a");
+    assert!(stale_claimed.task_version < materialized.task_version);
+    assert!(!state
+        .merge_binding_controls("local-1", "space-1", std::slice::from_ref(&stale_claimed))
+        .expect("ignore stale snapshot"));
+    assert_eq!(state.controls["space-1::task-a"].state, "handoff_materialized");
+    let handoff = state.handoff(&key).expect("retained handoff");
+    assert_eq!(handoff.server_handoff_state, "source_cleanup_pending");
+    assert_eq!(state.pending_handoff_notices().len(), 1);
+}
