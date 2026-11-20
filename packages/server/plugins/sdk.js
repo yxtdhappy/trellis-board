@@ -78,6 +78,14 @@ function matchesEvent(pattern, name) {
  */
 const requestScope = new AsyncLocalStorage()
 
+/**
+ * team 模式下宿主按 actor 给 store 分区（`user:<userId>:<key>`），
+ * 所以每次 store 调用都要带上当前请求的 actorRef，否则会被当成"缺少 actor 上下文"拒绝。
+ */
+function actorRefOf() {
+  return requestScope.getStore()?.actor?.ref ?? null
+}
+
 export function createPlugin({
   name,
   version,
@@ -304,11 +312,20 @@ export function startPluginRuntime(
       },
     },
     store: {
-      get: (key) => call('store/get', { key }).then((result) => result?.value ?? null),
+      get: (key) =>
+        call('store/get', { key, actorRef: actorRefOf() }).then((result) => result?.value ?? null),
       set: (key, value) =>
-        call('store/set', { key, value }).then((result) => result?.value ?? null),
-      delete: (key) => call('store/delete', { key }).then((result) => Boolean(result?.deleted)),
-      list: (prefix = '') => call('store/list', { prefix }).then((result) => result?.entries ?? []),
+        call('store/set', { key, value, actorRef: actorRefOf() }).then(
+          (result) => result?.value ?? null,
+        ),
+      delete: (key) =>
+        call('store/delete', { key, actorRef: actorRefOf() }).then((result) =>
+          Boolean(result?.deleted),
+        ),
+      list: (prefix = '') =>
+        call('store/list', { prefix, actorRef: actorRefOf() }).then(
+          (result) => result?.entries ?? [],
+        ),
     },
     schedule: {
       every(intervalMs, handler) {
