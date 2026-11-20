@@ -5,7 +5,9 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
-const serverPort = process.env.PORT || '4317'
+const devPort = Number(process.env.VITE_DEV_PORT || 5173)
+const apiTarget =
+  process.env.VITE_API_TARGET || `http://127.0.0.1:${process.env.PORT || '4317'}`
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -28,16 +30,17 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: devPort,
+    strictPort: true,
     proxy: {
       '/api': {
-        target: `http://127.0.0.1:${serverPort}`,
+        target: apiTarget,
         // 保持原始 Host/Origin 一致：服务端 CSRF 校验要求 Origin 与 Host 同源
         changeOrigin: false,
       },
       // 插件面板 iframe 依赖宿主提供的样式/脚本，dev 下不代理会被 index.html 兜底成 HTML。
       '/plugin-ui': {
-        target: `http://127.0.0.1:${serverPort}`,
+        target: apiTarget,
         changeOrigin: false,
       },
     },
