@@ -145,5 +145,6 @@ R8 测试与真机 E2E、R9 移除 `--pi-presence` 均已核对。新增 details
   [`v0.4.55`](https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.55)，
   `TrellisBoard_0.4.55_x64-portable.zip`（4,962,355 bytes，sha256
   `8de5a5dda2c8cdc06a015e27d4cd1699668c84d73208b1a061593695f1135949`）。
-- 待用户机器验证。已知限制：若所有 Agent 均已初始化，弹窗没有可提交工具；需用
-  `init_developer.py` 或先选任意仍缺失的 Agent。
+- 用户已确认 v0.4.55 在目标机器全部成功（Agent 初始化、`.developer`、workspace、日志均符合预期）。
+  已知限制：若所有 Agent 均已初始化，弹窗没有可提交工具；需用 `init_developer.py` 或先选任意
+  仍缺失的 Agent。

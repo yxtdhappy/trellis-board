@@ -166,9 +166,9 @@
 - [x] Release：[`v0.4.55`](https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.55)，
   资产 `TrellisBoard_0.4.55_x64-portable.zip`（4,962,355 bytes，sha256
   `8de5a5dda2c8cdc06a015e27d4cd1699668c84d73208b1a061593695f1135949`）。
-- [ ] 用户机器用 `v0.4.55` 初始化 Agent，确认 `.developer` 与 workspace 生成、日志只保留
-  预期内的 INFO/无关 WARN。
-  —— 若目标机器所有 Agent 都已初始化，弹窗没有可提交的工具；可先执行
+- [x] 用户机器用 `v0.4.55` 初始化 Agent 成功；用户已确认 `.developer`、workspace、Agent
+  初始化和日志均符合预期。
+  —— 已知限制：若目标机器所有 Agent 都已初始化，弹窗没有可提交的工具；可先执行
   `python .trellis/scripts/init_developer.py <id>`，或选择任意仍缺失的 Agent 触发补齐。
 
 ## 风险与回滚点

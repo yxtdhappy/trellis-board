@@ -160,5 +160,6 @@ stderr: EISDIR: illegal operation on a directory, lstat 'D:'
   [`44707239133`](https://github.com/yxtdhappy/trellis-board/actions/runs/44707239133) 成功；
   `TrellisBoard_0.4.55_x64-portable.zip`（4,962,355 bytes，sha256
   `8de5a5dda2c8cdc06a015e27d4cd1699668c84d73208b1a061593695f1135949`）。
-- 待用户机器验证。已知限制：所有 Agent 已初始化时弹窗无可提交工具，可用
+- 用户已确认 v0.4.55 在目标机器全部成功（Agent 初始化、`.developer`、workspace、日志均符合预期）。
+  已知限制：所有 Agent 已初始化时弹窗无可提交工具，可用
   `python .trellis/scripts/init_developer.py <id>` 或选择任意仍缺失的 Agent。
