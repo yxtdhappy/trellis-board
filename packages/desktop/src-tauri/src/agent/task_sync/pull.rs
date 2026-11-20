@@ -509,6 +509,26 @@ impl TaskSync {
                     "pendingReview": true,
                 }));
             }
+            // 上传后需要再拉一次才能看到新 revision；但如果本轮没有提交任何内容
+            // （典型：dirty 目录本地已无文件、build_directory_files 产出空差异），
+            // 继续尾递归不会改变任何状态，只会无限加深调用栈直至 stack overflow。
+            // 2026-11-20 实测：dirtyDirs=2、localGroups=0、committedRevision=0 时
+            // 每秒递归多次，约 50s 后 tokio worker 栈溢出 abort。
+            let committed = uploaded
+                .get("committedRevision")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if committed == 0 {
+                crate::logging::warn(&format!(
+                    "上传未产生提交，停止递归拉取：dirtyDirs={dirty_dirs:?}"
+                ));
+                return Ok(json!({
+                    "skipped": true,
+                    "reason": "SYNC_NO_PROGRESS",
+                    "dirtyDirs": dirty_dirs,
+                    "revision": cursor.revision,
+                }));
+            }
             return Box::pin(self.pull_tracking(binding, reconciled_deferred)).await;
         }
 
