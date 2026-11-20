@@ -59,3 +59,8 @@
 - 同轮 ACK 不再因 `materialized_at` 被反复改写而误拒（E2E A）。
 - 跨轮陈旧 ACK 被服务端 fencing 拒绝，且不影响新轮次完成（E2E B）。
 - 旧手工任务 `handoff-manual-e2e-114216` 仍显示“本地副本状态需要人工确认”，属于上一版本缺陷遗留的已知状态，不属于本次修复验收范围。
+## CI 与发布
+
+- 代码提交：`a359fcf`（修复）、`2a70ac3`、`6fc29cd`（任务记录与 E2E 证据），已推送 `origin/main`。
+- 标签 `v0.4.50` → windows run [44675756042](https://github.com/yxtdhappy/trellis-board/actions/runs/44675756042)，结论 `success`（2026-11-20T04:47:32Z）。
+- GitHub Release `Trellis Board v0.4.50` 已发布：`TrellisBoard_0.4.50_x64-portable.zip`（4,311,900 字节）、`.sha256`、`latest.json`。

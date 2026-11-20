@@ -32,11 +32,11 @@
 
 ## Acceptance Criteria
 
-- [ ] AC1：同一轮内目标多次上传后，创建者使用首次物化 epoch ACK 成功，不再出现 `HANDOFF_CYCLE_STALE`。
-- [ ] AC2：跨轮次旧 ACK 仍返回 `409 HANDOFF_CYCLE_STALE`，状态与审计不变。
-- [ ] AC3：真实 A 流程（创建 → 委派给 kyf）完成来源备份与删除，服务端 `completed`，Board 显示“认领与清理已完成”，无 `conflict/missing`。
-- [ ] AC4：旧客户端不带轮次字段仍可 ACK；现有 handoff 测试不回归。
-- [ ] AC5：spec 更新；CI 的 Node 测试通过（如允许执行）。
+- [x] AC1：同一轮内目标多次上传后，创建者使用首次物化 epoch ACK 成功，不再出现 `HANDOFF_CYCLE_STALE`。
+- [x] AC2：跨轮次旧 ACK 仍返回 `409 HANDOFF_CYCLE_STALE`，状态与审计不变。
+- [x] AC3：真实 A 流程（创建 → 委派给 kyf）完成来源备份与删除，服务端 `completed`，Board 显示“认领与清理已完成”，无 `conflict/missing`。
+- [x] AC4：旧客户端不带轮次字段仍可 ACK；现有 handoff 测试不回归。
+- [x] AC5：spec 更新；CI 的 Node 测试通过（v0.4.50 构建 run 44675756042 success）。
 
 ## Out of Scope
 
