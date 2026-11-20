@@ -274,3 +274,73 @@ await api.uploadTaskSpaceChanges(taskSpaceId, {
 | projectIds 越权 | 403 |
 | 正常任务写入和摘要清理任一失败 | 两者整体回滚 |
 | 旧服务端无 inbox API | Agent 标记可选能力缺失，普通同步继续 |
+
+## 场景：枚举期归属过滤与新建/改派归属校验
+
+### 1. Scope / Trigger
+
+- Trigger：修改本地任务目录枚举、首次同步差异分类、增量同步 dirty 判定、归属收件箱上传、
+  服务端 `POST /changes` 新建分支或 `assign_task` 命令时。
+- 背景：服务端任务空间快照按负责人裁剪（`visibleTaskIds`），他人任务在客户端看来与“服务端没有”
+  完全无法区分；只靠上传被拒后写 `readonlyTaskDirs`，他人任务仍会先进入差异弹窗、先被上传、
+  先触发 404 探针。所有权必须在**枚举出口**就生效，而不是在失败路径上补救。
+
+### 2. Signatures
+
+```text
+packages/desktop/src-tauri/src/agent/task_sync/ownership_filter.rs
+TaskSync.local_owner_id(&binding) -> Option<String>
+TaskSync.retain_owned_groups(&binding, groups: Vec<SnapshotGroup>) -> Vec<SnapshotGroup>
+TaskSync.owns_task_dir(&binding, owner_id: &str, group: &SnapshotGroup) -> bool
+
+packages/server/team/task-control/uploads.js
+assertUploadAllowed(agent, taskSpaceId, complete, input = {}, context = { files, projectId })
+
+packages/server/team/task-command-service.js
+assertCanAssign(actor, indexed, assigneeUserId, projectId)
+```
+
+### 3. Contracts
+
+- 归属谓词：`task.json.assignee` 非空优先，否则 `creator`；大小写不敏感比较。两侧任一为空、
+  读不到 `task.json`、读不到本机 dev ID 时一律**保留**（fail open），避免误吞本人任务。
+- 本机 dev ID 复用 `agent::worktree::developer_id(repo_path, config, remote_identity_key)`：
+  先读 `<repo>/.trellis/.developer` 的 `name=`，再回退同 remote 主仓库，最后回退 `config.username`。
+- 服务端控制行可用时优先以控制行判定：`TaskControlState::is_writable_local()`
+  （`materialized|claimed|pending_delivery`）即保留，即使 `task.json` 指向他人。
+- `retain_owned_groups()` 必须在 `local_groups()` / `local_metadata_groups()` 的唯一出口调用，
+  使首次同步差异、增量同步 dirty/deferred、归属收件箱、冲突流程共享同一过滤；`read_only` binding
+  或空分组直接短路返回，不做 Git/文件探测。
+- 被过滤的目录不得上传、不得进入差异列表、不得触发 `fetch_directory` 探针、不得写
+  `readonlyTaskDirs`；只允许一条 warn 日志（`跳过他人任务目录`）。
+- 服务端 `assertUploadAllowed` 在**任务行不存在**时必须校验上传文档解析出的负责人：
+  `tasks.resolveAssignee()` 的 `assignee.userId !== agent.userId` 返回
+  `403 TASK_WRITE_FORBIDDEN`，不得建行。行已存在时的 409/租约语义不变。
+- `assign_task` 只允许三种操作者：目标负责人等于操作者（自取）、当前负责人、项目 `lead`；
+  其他成员返回 `403 FORBIDDEN` 且不写命令行。任务是否为当前负责人读取权威 `sync_task` 行，
+  不读 `task.json`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 本地目录 `assignee`/`creator` 都是他人 | 枚举期丢弃，不进差异、不上传、不探针 |
+| 本地目录 owner 是本机 dev ID（大小写不同） | 保留，正常参与同步 |
+| 本地目录无 `assignee`/`creator` | 保留（fail open） |
+| 本地 `task.json` 不可读或解析失败 | 保留（fail open） |
+| 无 `config.json` 或 `.trellis/.developer`，dev ID 取不到 | 全部保留，不误吞 |
+| 服务端控制行为 `materialized/claimed/pending_delivery` | 保留，即使 `task.json` 指向他人 |
+| 服务端无任务行、上传文档负责人是他人 | `403 TASK_WRITE_FORBIDDEN`，不建行、不写文件 |
+| 服务端无任务行、上传文档无负责人 | 回退上传者，正常建行 |
+| 服务端已有他人的行 | 既有 `409 TASK_WRITE_FORBIDDEN`，语义不变 |
+| 非负责人、非 lead 的成员改派他人任务 | `403 FORBIDDEN`，不写命令 |
+| 当前负责人或项目 lead 改派 | `202`，命令入队 |
+| 普通成员改派给自己 | `202`（自取） |
+
+### 5. Tests Required
+
+- `src/agent/task_sync/tests/ownership_filter.rs`：他人目录被丢弃、本人 assignee/creator 保留、
+  无 owner 保留、控制行可写时保留、无本地身份时全部保留。
+- `team-task-control.test.js`：无任务行时他人负责人上传被拒且不写入任何行；无负责人仍可建行；
+  已有他人行仍是 409。
+- `team-task-commands.test.js`：自取、当前负责人、lead 改派成功；其他成员 403 且无命令行。

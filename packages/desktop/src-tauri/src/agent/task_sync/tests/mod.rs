@@ -6,6 +6,7 @@ mod bindings_watch;
 mod cursor_state;
 mod handoff_and_errors;
 mod materialization;
+mod ownership_filter;
 mod ownership_inbox;
 mod ownership_projection;
 mod pull_and_startup;

@@ -3,6 +3,8 @@ mod registry;
 mod visibility;
 mod watch;
 
+pub(crate) use discovery::developer_id;
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

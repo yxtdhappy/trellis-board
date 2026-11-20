@@ -154,6 +154,24 @@ export function createTaskCommandService({
     return { space, userId, member }
   }
 
+  function isProjectLead(userId, projectId) {
+    if (!userId || !projectId) return false
+    const row = db
+      .prepare('SELECT role FROM sync_project_member WHERE project_id = ? AND user_id = ?')
+      .get(projectId, userId)
+    return row?.role === 'lead'
+  }
+
+  /** 改派只允许当前负责人、项目负责人、或把任务接到自己名下。 */
+  function assertCanAssign(actor, indexed, assigneeUserId, projectId) {
+    if (assigneeUserId === actor.userId) return
+    const current =
+      indexed.assignee_user_id ?? indexed.assigneeUserId ?? indexed.assignee_user ?? null
+    if (current === actor.userId) return
+    if (isProjectLead(actor.userId, projectId)) return
+    throw teamError(403, ERROR_CODES.FORBIDDEN, '只有当前负责人或项目负责人可以改派该任务')
+  }
+
   function uniqueOnlineTarget(taskSpaceId, assigneeUserId) {
     if (agents.onlineListenerCount(taskSpaceId) === 0) return null
     const candidates = agents.onlineAgentForTaskSpace(taskSpaceId, assigneeUserId)
@@ -232,6 +250,12 @@ export function createTaskCommandService({
       if (!taskId || `${taskSpaceId}::${taskId}` !== executionTaskKey) {
         throw teamError(409, ERROR_CODES.CONFLICT, '任务执行身份不稳定，不能改派')
       }
+      assertCanAssign(
+        actor,
+        indexed,
+        assigneeUserId,
+        indexed.project_id || targetContext.space.project_id,
+      )
       payload = {
         executionTaskKey,
         taskKey: indexed.task_key || indexed.taskKey,

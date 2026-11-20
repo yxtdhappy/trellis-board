@@ -100,7 +100,10 @@ export function createApply({
         evidence: mergeEvidence,
         observedBranch,
       })
-      taskControl?.assertUploadAllowed(agent, taskSpaceId, complete, input)
+      taskControl?.assertUploadAllowed(agent, taskSpaceId, complete, input, {
+        files,
+        projectId: space.project_id,
+      })
       const current = currentPathRows(
         statements,
         taskSpaceId,

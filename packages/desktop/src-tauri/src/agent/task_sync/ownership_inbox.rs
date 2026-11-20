@@ -42,7 +42,8 @@ impl TaskSync {
         task_dirs: Option<&HashSet<String>>,
     ) -> AgentResult<Vec<SnapshotGroup>> {
         let files = self.local_files(binding, task_dirs).await?;
-        group_task_snapshot_files(&files)
+        let groups = group_task_snapshot_files(&files)?;
+        Ok(self.retain_owned_groups(binding, groups).await)
     }
 }
 impl TaskSync {
@@ -514,10 +515,12 @@ impl TaskSync {
         let repo = Path::new(&binding.repo_path);
         let trellis_root = repo.join(".trellis");
         let tasks_root = repo.join(ACTIVE_TASKS_ROOT);
-        for (path, label) in [(&trellis_root, ".trellis"), (&tasks_root, ACTIVE_TASKS_ROOT)] {
+        for (path, label) in [
+            (&trellis_root, ".trellis"),
+            (&tasks_root, ACTIVE_TASKS_ROOT),
+        ] {
             match tokio::fs::symlink_metadata(path).await {
-                Ok(metadata)
-                    if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+                Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
                 Ok(_) => {
                     return protocol::err(
                         code::MISSING_TRELLIS,
@@ -538,14 +541,10 @@ impl TaskSync {
 
         let mut missing = Vec::new();
         for task_dir in task_dirs {
-            let relative = protocol::resolve_task_dir_under(
-                Path::new(ACTIVE_TASKS_ROOT),
-                task_dir,
-            )
-            .ok_or_else(|| task_directory_error(task_dir, "待清理任务目录格式无效"))?;
+            let relative = protocol::resolve_task_dir_under(Path::new(ACTIVE_TASKS_ROOT), task_dir)
+                .ok_or_else(|| task_directory_error(task_dir, "待清理任务目录格式无效"))?;
             match tokio::fs::symlink_metadata(repo.join(relative)).await {
-                Ok(metadata)
-                    if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+                Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
                 Ok(_) => {
                     return Err(task_directory_error(
                         task_dir,
@@ -574,17 +573,14 @@ impl TaskSync {
         let candidates: BTreeSet<String> = ownership_ledger_task_dirs(&cursor)
             .into_iter()
             .filter(|task_dir| {
-                candidate_task_dirs
-                    .map_or(true, |candidates| candidates.contains(task_dir))
+                candidate_task_dirs.map_or(true, |candidates| candidates.contains(task_dir))
             })
             .collect();
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
         self.assert_binding_branch(binding).await?;
-        let missing = self
-            .missing_active_task_dirs(binding, &candidates)
-            .await?;
+        let missing = self.missing_active_task_dirs(binding, &candidates).await?;
         if missing.is_empty() {
             return Ok(Vec::new());
         }
@@ -739,9 +735,7 @@ impl TaskSync {
                     .ownership_inbox_unavailable
                     .swap(true, std::sync::atomic::Ordering::SeqCst)
                 {
-                    crate::logging::warn(
-                        "服务端不支持待归属摘要接口，继续使用普通任务同步",
-                    );
+                    crate::logging::warn("服务端不支持待归属摘要接口，继续使用普通任务同步");
                 }
                 Ok(())
             }
@@ -917,12 +911,7 @@ impl TaskSync {
                 .syncable
                 .keys()
                 .cloned()
-                .chain(
-                    resolution
-                        .paused
-                        .iter()
-                        .map(|group| group.task_dir.clone()),
-                )
+                .chain(resolution.paused.iter().map(|group| group.task_dir.clone()))
                 .collect::<Vec<_>>(),
         )
         .await?;
@@ -948,9 +937,7 @@ impl TaskSync {
         resolution: &mut OwnershipResolution,
     ) -> AgentResult<()> {
         if branch_name == binding.branch_name {
-            resolution
-                .syncable
-                .insert(group.task_dir.clone(), group);
+            resolution.syncable.insert(group.task_dir.clone(), group);
             return Ok(());
         }
         if binding.baseline_branch.as_deref() != Some(binding.branch_name.as_str()) {
@@ -983,9 +970,7 @@ impl TaskSync {
                 "headCommit": head,
             }),
         );
-        resolution
-            .syncable
-            .insert(group.task_dir.clone(), group);
+        resolution.syncable.insert(group.task_dir.clone(), group);
         Ok(())
     }
 }

@@ -263,6 +263,17 @@ pub(super) fn parse_task_metadata(content: &str) -> (Option<String>, Option<Stri
             .map(str::to_string),
     )
 }
+pub(super) fn task_owner(content: &str) -> Option<String> {
+    let parsed: Value = serde_json::from_str(content).ok()?;
+    ["assignee", "creator"].iter().find_map(|field| {
+        parsed
+            .get(*field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
 pub(super) fn task_title(group: &SnapshotGroup) -> Option<String> {
     let content = group
         .files
@@ -299,7 +310,10 @@ pub(super) fn file_map(group: &SnapshotGroup) -> BTreeMap<String, String> {
         .map(|file| (file.path.clone(), file.sha256.clone()))
         .collect()
 }
-pub(super) fn same_files(left: &BTreeMap<String, String>, right: &BTreeMap<String, String>) -> bool {
+pub(super) fn same_files(
+    left: &BTreeMap<String, String>,
+    right: &BTreeMap<String, String>,
+) -> bool {
     left == right
 }
 pub fn classify_task_snapshots(
@@ -551,10 +565,7 @@ pub(crate) fn parse_directory_files(
     if active_task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
         != Some(task_dir)
     {
-        return protocol::err(
-            code::INVALID_RESPONSE,
-            "任务目录无效或已由服务端 Git 归档",
-        );
+        return protocol::err(code::INVALID_RESPONSE, "任务目录无效或已由服务端 Git 归档");
     }
     let values = directory
         .get("files")
@@ -611,8 +622,7 @@ pub(super) fn build_directory_files(
         if local_paths.contains(&path_name) {
             continue;
         }
-        let belongs =
-            active_task_directory_from_relative(&path_name).as_deref() == Some(task_dir);
+        let belongs = active_task_directory_from_relative(&path_name).as_deref() == Some(task_dir);
         if !belongs {
             continue;
         }

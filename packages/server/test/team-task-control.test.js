@@ -1262,3 +1262,141 @@ test('任务归档收敛 pending 冲突且冲突列表排除已归档任务', ()
     db.close()
   }
 })
+
+test('服务端无任务行时上传者必须是任务负责人', () => {
+  const { db, snapshots, agentA, agentB, taskSpaceId } = setup()
+  try {
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'batch-forged-assignee',
+          clientSequence: 1,
+          files: taskFiles('task-forged', '替别人建行', 'bob'),
+        }),
+      (error) => error.status === 403 && error.code === 'TASK_WRITE_FORBIDDEN',
+    )
+    assert.equal(
+      db.prepare('SELECT COUNT(*) AS count FROM sync_task WHERE task_space_id = ?').get(taskSpaceId)
+        .count,
+      0,
+    )
+    assert.equal(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM sync_task_space_file WHERE task_space_id = ?')
+        .get(taskSpaceId).count,
+      0,
+    )
+
+    const files = taskFiles('task-anonymous', '无负责人任务')
+    for (const file of files) {
+      if (!file.path.endsWith('/task.json')) continue
+      const parsed = JSON.parse(file.content)
+      delete parsed.assignee
+      delete parsed.creator
+      file.content = JSON.stringify(parsed)
+      file.sha256 = snapshotSha256(file.content)
+    }
+    const applied = snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-anonymous-owner',
+      clientSequence: 1,
+      files,
+    })
+    assert.equal(applied.revision, 1)
+    assert.equal(
+      db
+        .prepare('SELECT assignee_user_id FROM sync_task WHERE execution_task_key = ?')
+        .get(`${taskSpaceId}::task-anonymous`).assignee_user_id,
+      'user-a',
+    )
+
+    // 已有他人在服务端持有时，仍是既有的 409 语义
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentB, taskSpaceId, {
+          batchId: 'batch-other-owner',
+          clientSequence: 1,
+          files: files.map((file) => ({ ...file, baseSha256: null })),
+        }),
+      (error) => error.status === 409,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('改派只允许当前负责人、项目负责人或自取', () => {
+  const { db, commands, snapshots, agentA, taskControl, taskSpaces, taskSpaceId } = setup()
+  try {
+    insertUser(db, 'user-c', '第三人')
+    insertAgent(db, 'agent-c', 'user-c')
+    const projectId = db
+      .prepare('SELECT project_id FROM sync_task_space WHERE id = ?')
+      .get(taskSpaceId).project_id
+    taskSpaces.upsertMember(taskSpaces.actorContext('user-a'), {
+      projectId,
+      userId: 'user-c',
+      role: 'member',
+      trellisDevId: 'carol',
+    })
+
+    const files = taskFiles('task-assign', '改派目标', 'alice')
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-assign-source',
+      clientSequence: 1,
+      files,
+    })
+    const executionTaskKey = `${taskSpaceId}::task-assign`
+    const member = taskSpaces.actorContext('user-b')
+
+    assert.throws(
+      () =>
+        commands.enqueue(member, {
+          commandType: 'assign_task',
+          taskSpaceId,
+          assigneeUserId: 'user-c',
+          executionTaskKey,
+          idempotencyKey: 'assign-other-to-third',
+        }),
+      (error) => error.status === 403 && error.code === 'FORBIDDEN',
+    )
+    assert.equal(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM sync_task_command WHERE idempotency_key = ?')
+        .get('assign-other-to-third').count,
+      0,
+    )
+
+    const selfClaim = commands.enqueue(member, {
+      commandType: 'assign_task',
+      taskSpaceId,
+      assigneeUserId: 'user-b',
+      executionTaskKey,
+      idempotencyKey: 'assign-self-claim',
+    })
+    assert.equal(selfClaim.statusCode, 202)
+    assert.equal(selfClaim.operation.targetUserId, 'user-b')
+
+    const byLead = commands.enqueue(taskSpaces.actorContext('user-a'), {
+      commandType: 'assign_task',
+      taskSpaceId,
+      assigneeUserId: 'user-c',
+      executionTaskKey,
+      idempotencyKey: 'assign-by-lead',
+    })
+    assert.equal(byLead.statusCode, 202)
+    assert.equal(byLead.operation.targetUserId, 'user-c')
+
+    taskControl.assignPendingTask({ executionTaskKey, assigneeUserId: 'user-b' })
+    const byOwner = commands.enqueue(member, {
+      commandType: 'assign_task',
+      taskSpaceId,
+      assigneeUserId: 'user-c',
+      executionTaskKey,
+      idempotencyKey: 'assign-by-current-owner',
+    })
+    assert.equal(byOwner.statusCode, 202)
+    assert.equal(byOwner.operation.targetUserId, 'user-c')
+  } finally {
+    db.close()
+  }
+})

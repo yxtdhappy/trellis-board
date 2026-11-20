@@ -1,7 +1,11 @@
 use super::*;
 
 impl TaskSync {
-    pub(super) async fn fetch_snapshot(&self, task_space_id: &str, after_revision: u64) -> AgentResult<Value> {
+    pub(super) async fn fetch_snapshot(
+        &self,
+        task_space_id: &str,
+        after_revision: u64,
+    ) -> AgentResult<Value> {
         self.api
             .request_json_limited(
                 Method::GET,
@@ -22,10 +26,7 @@ impl TaskSync {
         if active_task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
             != Some(task_dir)
         {
-            return protocol::err(
-                code::INVALID_RESPONSE,
-                "任务目录无效或已由服务端 Git 归档",
-            );
+            return protocol::err(code::INVALID_RESPONSE, "任务目录无效或已由服务端 Git 归档");
         }
         let encoded = urlencode(task_dir);
         self.api
@@ -40,7 +41,11 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) async fn write_server_cursor(&self, task_space_id: &str, revision: u64) -> AgentResult<()> {
+    pub(super) async fn write_server_cursor(
+        &self,
+        task_space_id: &str,
+        revision: u64,
+    ) -> AgentResult<()> {
         let known = self.bindings.lock().await.contains_key(task_space_id);
         if !known || !self.task_space_is_active(task_space_id).await {
             return Ok(());
@@ -200,7 +205,11 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) async fn suppressed_event(&self, binding: &AgentBinding, relative_path: &str) -> bool {
+    pub(super) async fn suppressed_event(
+        &self,
+        binding: &AgentBinding,
+        relative_path: &str,
+    ) -> bool {
         let absolute = absolute_task_path(binding, relative_path);
         let expected = {
             let mut suppressed = self.suppressed.lock().await;
@@ -256,23 +265,26 @@ impl TaskSync {
             return protocol::err(code::BINDING_UNKNOWN, "本地任务文件索引已失效");
         }
         self.ensure_ownership_index_loaded().await;
-        let index = self.ownership_index.lock().await;
-        let entry = index
-            .bindings
-            .get(&binding.local_id)
-            .filter(|entry| {
-                entry.task_space_id == binding.task_space_id
-                    && entry.repo_path == binding.repo_path
-                    && entry.branch_name == binding.branch_name
-                    && entry.baseline_branch == binding.baseline_branch
-            })
-            .ok_or_else(|| {
-                AgentError::new(code::INVALID_RESPONSE, "本地任务文件索引缺少当前绑定")
-            })?;
-        if !entry.files_complete {
-            return protocol::err(code::INVALID_RESPONSE, "本地任务文件索引尚未完整");
-        }
-        indexed_local_groups(entry)
+        let groups = {
+            let index = self.ownership_index.lock().await;
+            let entry = index
+                .bindings
+                .get(&binding.local_id)
+                .filter(|entry| {
+                    entry.task_space_id == binding.task_space_id
+                        && entry.repo_path == binding.repo_path
+                        && entry.branch_name == binding.branch_name
+                        && entry.baseline_branch == binding.baseline_branch
+                })
+                .ok_or_else(|| {
+                    AgentError::new(code::INVALID_RESPONSE, "本地任务文件索引缺少当前绑定")
+                })?;
+            if !entry.files_complete {
+                return protocol::err(code::INVALID_RESPONSE, "本地任务文件索引尚未完整");
+            }
+            indexed_local_groups(entry)?
+        };
+        Ok(self.retain_owned_groups(binding, groups).await)
     }
 }
 impl TaskSync {
@@ -311,19 +323,16 @@ impl TaskSync {
             let (cursor_revision, has_pending_upload) =
                 self.read_cursor_event_state(task_space_id).await;
             let guard_due = binding.initial_sync_completed
-                && self
-                    .read_cursor(task_space_id)
-                    .await
-                    .revision_guard_version
+                && self.read_cursor(task_space_id).await.revision_guard_version
                     < REVISION_GUARD_VERSION;
             if !guard_due
                 && !should_pull_for_event(
-                binding.initial_sync_completed,
-                binding.initial_review_pending,
-                cursor_revision,
-                event_revision,
-                has_pending_upload,
-            )
+                    binding.initial_sync_completed,
+                    binding.initial_review_pending,
+                    cursor_revision,
+                    event_revision,
+                    has_pending_upload,
+                )
             {
                 self.retry_pending_handoff_acks(&binding).await?;
                 return Ok(json!({
@@ -339,8 +348,7 @@ impl TaskSync {
 impl TaskSync {
     pub(super) async fn pull(&self, binding: &AgentBinding) -> AgentResult<Value> {
         let mut reconciled_deferred = HashSet::new();
-        self.pull_tracking(binding, &mut reconciled_deferred)
-            .await
+        self.pull_tracking(binding, &mut reconciled_deferred).await
     }
 }
 impl TaskSync {

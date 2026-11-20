@@ -33,12 +33,32 @@ export function createUploads({ statements, views, leases, tasks, now = () => ne
     }
   }
 
-  function assertUploadAllowed(agent, taskSpaceId, complete, input = {}) {
+  /** 服务端尚无任务行时，上传者必须是该任务解析出的负责人，否则任何人都能替别人建行。 */
+  function assertNewTaskOwnedByUploader({ agent, taskSpaceId, complete, context }) {
+    const files = Array.isArray(context.files) ? context.files : []
+    if (!context.projectId || !complete.taskDir || !files.some((file) => !file.deleted)) return
+    const { document } = documentForUpload(taskSpaceId, complete.taskDir, files)
+    const assignee = tasks.resolveAssignee(context.projectId, document, agent.userId)
+    if (assignee.userId !== agent.userId) {
+      throw teamError(403, 'TASK_WRITE_FORBIDDEN', '任务负责人不是本机用户，不能新建任务', {
+        details: {
+          taskId: complete.taskId,
+          taskDir: complete.taskDir,
+          assigneeUserId: assignee.userId,
+        },
+      })
+    }
+  }
+
+  function assertUploadAllowed(agent, taskSpaceId, complete, input = {}, context = {}) {
     views.assertAgentAccess(agent, taskSpaceId)
     const executionTaskKey =
       complete.taskId == null ? null : canonicalKey(taskSpaceId, complete.taskId)
     const row = executionTaskKey ? statements.readTask.get(executionTaskKey) : null
-    if (!row) return { task: null, lease: null }
+    if (!row) {
+      assertNewTaskOwnedByUploader({ agent, taskSpaceId, complete, context })
+      return { task: null, lease: null }
+    }
     if (row.archived) {
       throw teamError(409, 'TASK_ARCHIVED', '任务已归档，拒绝旧客户端重新写回', {
         details: {
