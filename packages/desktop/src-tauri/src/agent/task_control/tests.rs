@@ -18,6 +18,32 @@ fn control(state: &str, task_id: &str) -> TaskControl {
     }
 }
 
+const FIRST_MATERIALIZED_AT: &str = "2026-11-19T08:00:00.000Z";
+const SECOND_MATERIALIZED_AT: &str = "2026-11-20T01:57:03.950Z";
+const LEGACY_BACKUP_ID: &str = "handoff-8f4d8c4dab571e0e";
+
+fn handoff_control(task_id: &str) -> TaskControl {
+    let mut control = control("handoff_materialized", task_id);
+    control.handoff_state = "source_cleanup_pending".to_string();
+    control.materialized_at = Some(FIRST_MATERIALIZED_AT.to_string());
+    control.materialized_revision = Some(1);
+    control
+}
+
+fn mark_cleaned(state: &mut TaskControlStateFile, key: &str) {
+    assert!(state.mark_handoff_ack_pending(
+        key,
+        "cleaned",
+        None,
+        Some(LEGACY_BACKUP_ID.to_string()),
+        Some("a".repeat(64)),
+        2,
+        128,
+        "2026-11-19T08:05:00.000Z",
+    ));
+    assert!(state.mark_handoff_ack_done(key, "2026-11-19T08:06:00.000Z"));
+}
+
 #[test]
 fn only_writable_controls_select_server_task_bodies() {
     let controls = vec![
@@ -218,4 +244,107 @@ fn cleaned_handoff_notice_waits_for_ack_completion() {
     let notices = state.pending_handoff_notices();
     assert_eq!(notices.len(), 1);
     assert_eq!(notices[0].outcome, "cleaned");
+}
+
+#[test]
+fn same_materialization_cycle_preserves_done_handoff_ack() {
+    let mut state = TaskControlStateFile::empty();
+    let first = handoff_control("task-a");
+    state
+        .upsert_handoff_control("local-1", &first)
+        .expect("store handoff");
+    let key = handoff_state_key("local-1", &first.execution_task_key);
+    mark_cleaned(&mut state, &key);
+    // 进程重启后同一轮次仍须保留 done/cleaned。
+    let mut state =
+        parse_state_file(&serde_json::to_string(&state).expect("serialize control state"));
+    let manifest_sha256 = "a".repeat(64);
+
+    // 同一物化轮次内 taskVersion/updatedAt 变化不得重置已完成的 ACK。
+    let mut repeat = first.clone();
+    repeat.task_version += 1;
+    repeat.updated_at = "2026-11-19T09:00:00.000Z".to_string();
+    assert!(state
+        .upsert_handoff_control("local-1", &repeat)
+        .expect("repeat control"));
+    let handoff = state.handoff(&key).expect("handoff");
+    assert_eq!(handoff.ack_state, "done");
+    assert_eq!(handoff.outcome, "cleaned");
+    assert_eq!(handoff.backup_id.as_deref(), Some(LEGACY_BACKUP_ID));
+    assert_eq!(handoff.manifest_sha256.as_deref(), Some(manifest_sha256.as_str()));
+    assert_eq!(handoff.file_count, 2);
+    assert_eq!(handoff.total_bytes, 128);
+    assert!(!state
+        .upsert_handoff_control("local-1", &repeat)
+        .expect("idempotent repeat"));
+}
+
+#[test]
+fn new_materialization_cycle_resets_stale_handoff_ack() {
+    let mut state = TaskControlStateFile::empty();
+    let first = handoff_control("task-a");
+    state
+        .upsert_handoff_control("local-1", &first)
+        .expect("store first cycle");
+    let key = handoff_state_key("local-1", &first.execution_task_key);
+    mark_cleaned(&mut state, &key);
+
+    let mut second = first.clone();
+    second.materialized_at = Some(SECOND_MATERIALIZED_AT.to_string());
+    second.materialized_revision = Some(2);
+    second.updated_at = SECOND_MATERIALIZED_AT.to_string();
+    assert!(state
+        .upsert_handoff_control("local-1", &second)
+        .expect("store second cycle"));
+
+    let handoff = state.handoff(&key).expect("handoff");
+    assert_eq!(handoff.materialized_at.as_deref(), Some(SECOND_MATERIALIZED_AT));
+    assert_eq!(handoff.materialized_revision, Some(2));
+    assert_eq!(handoff.ack_state, "pending");
+    assert_eq!(handoff.outcome, "");
+    assert_eq!(handoff.reason, None);
+    assert_eq!(handoff.backup_id, None);
+    assert_eq!(handoff.manifest_sha256, None);
+    assert_eq!(handoff.file_count, 0);
+    assert_eq!(handoff.total_bytes, 0);
+    assert_eq!(handoff.notified_state, "");
+    assert!(state.pending_handoff_acks("local-1").is_empty());
+}
+
+#[test]
+fn legacy_handoff_without_cycle_epoch_resets_on_new_control() {
+    let mut state = TaskControlStateFile::empty();
+    let mut legacy = control("handoff_materialized", "task-a");
+    legacy.handoff_state = "source_cleanup_pending".to_string();
+    state
+        .upsert_handoff_control("local-1", &legacy)
+        .expect("store legacy handoff");
+    let key = handoff_state_key("local-1", &legacy.execution_task_key);
+    mark_cleaned(&mut state, &key);
+
+    // 模拟旧状态文件：轮次字段缺省而不是显式 null。
+    let mut encoded = serde_json::to_value(&state).expect("serialize state");
+    if let Some(records) = encoded.get_mut("handoffs").and_then(serde_json::Value::as_object_mut) {
+        for record in records.values_mut() {
+            if let Some(record) = record.as_object_mut() {
+                let _ = record.remove("materializedAt");
+                let _ = record.remove("materializedRevision");
+            }
+        }
+    }
+    let mut restored = parse_state_file(&encoded.to_string());
+    let legacy_handoff = restored.handoff(&key).expect("legacy handoff");
+    assert!(legacy_handoff.materialized_at.is_none());
+    assert!(legacy_handoff.materialized_revision.is_none());
+
+    let epoch = handoff_control("task-a");
+    assert!(restored
+        .upsert_handoff_control("local-1", &epoch)
+        .expect("new epoch control"));
+    let handoff = restored.handoff(&key).expect("handoff");
+    assert_eq!(handoff.materialized_at.as_deref(), Some(FIRST_MATERIALIZED_AT));
+    assert_eq!(handoff.materialized_revision, Some(1));
+    assert_eq!(handoff.ack_state, "pending");
+    assert_eq!(handoff.outcome, "");
+    assert_eq!(handoff.backup_id, None);
 }

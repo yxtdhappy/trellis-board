@@ -420,6 +420,12 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   `409 HANDOFF_LEASE_HELD`。重试 `cleaned` 前必须重新验证完整备份，缺失时改为 `conflict/missing`，
   本地检查异常时改为 `conflict/unknown`。删除前再次校验来源摘要和真实分支，并通过
   `.trellis/.agent-handoff-cleanup-<uuid>` 原子改名后再清理；遗留暂存目录由后续同步收敛。
+- 本地 `ackState/outcome/reason/backupId/manifestSha256/fileCount/totalBytes` 属于**单个物化
+  轮次**，轮次标识取控制面 `materializedAt`（缺失时回退 `materializedRevision`）。同一
+  `executionTaskKey` 再次收到 `source_cleanup_pending` 且轮次标识变化时，必须先丢弃上一轮 ACK
+  终态（重置为 pending、空 outcome、清空备份字段与通知去重状态），再执行完整清理；只有同一
+  轮次内才允许 pending 重试与 done 幂等。旧状态文件缺少轮次字段时，遇到携带轮次标识的控制必须
+  按新一轮自愈。两轮内容完全相同时允许复用内容寻址的 `handoff-<sha16>` 备份，不重复复制。
 - `task_handoff` 不进入 `ControlHub`，不聚焦或激活窗口。Board 通过独立
   `handoff-control-changed` 事件和 `handoff_notice_pending` 命令读取状态。通知去重键由
   `executionTaskKey + handoffState + outcome` 组成，同一任务进入 conflict、cleaned 等不同阶段时仍可
@@ -698,8 +704,9 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
   upload 请求 fencing，以及 archived/reassigned 不落盘、不上传、不删除本地数据。
 - handoff 还必须覆盖 manifest 稳定性、ACK 元数据脱敏、干净未跟踪副本备份后删除、dirty/tracked/
   baseline/branch/Git 不确定时失败关闭、100,000 文件与 64 MiB 边界、完整备份回读校验、cleaned ACK
-  重启重试、备份缺失转 conflict、重复 ACK 元数据冲突、他人租约保护和通知去重不抢焦点。Board
-  静态契约覆盖 `handoff_notice_pending`、capability 和页内提示入口。
+  重启重试、备份缺失转 conflict、重复 ACK 元数据冲突、他人租约保护和通知去重不抢焦点；以及同一
+  任务第二轮及后续物化轮次的 ACK 重置与重新清理（含同轮重复同步不重复清理/ACK、旧状态文件
+  缺少轮次字段时的自愈）。Board 静态契约覆盖 `handoff_notice_pending`、capability 和页内提示入口。
 - `packages/desktop/src-tauri/src/agent/{store,credential,http,control}.rs`：配置原子写与双绑定拒绝、
   DPAPI 往返、SSE 分帧、控制事件去重与过期；代理绕过需覆盖回环、私网、链路本地、IPv6
   ULA/link-local、`.local` 和公网域名。

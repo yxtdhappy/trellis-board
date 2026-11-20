@@ -309,6 +309,8 @@ pub(super) async fn mock_api_server(
                     }
                 } else if method == "POST" && path.ends_with("/release") {
                     ("200 OK", json!({ "released": true, "idempotent": false }))
+                } else if method == "POST" && path.ends_with("/handoff-ack") {
+                    ("200 OK", json!({ "handoffState": "completed" }))
                 } else {
                     ("404 Not Found", json!({ "error": "unexpected request" }))
                 };

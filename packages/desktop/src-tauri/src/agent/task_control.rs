@@ -281,6 +281,10 @@ pub struct StoredTaskHandoff {
     pub task_id: String,
     pub relative_dir: String,
     pub server_handoff_state: String,
+    #[serde(default)]
+    pub materialized_at: Option<String>,
+    #[serde(default)]
+    pub materialized_revision: Option<u64>,
     pub ack_state: String,
     pub outcome: String,
     #[serde(default)]
@@ -311,6 +315,8 @@ impl StoredTaskHandoff {
             task_id: stored_control.task_id,
             relative_dir: stored_control.relative_dir,
             server_handoff_state: control.handoff_state.clone(),
+            materialized_at: control.materialized_at.clone(),
+            materialized_revision: control.materialized_revision,
             ack_state: if conflict { "done" } else { "pending" }.to_string(),
             outcome: if conflict { "conflict" } else { "" }.to_string(),
             reason: conflict.then(|| "unknown".to_string()),
@@ -358,6 +364,23 @@ pub struct HandoffNotice {
 
 pub fn handoff_state_key(local_id: &str, execution_task_key: &str) -> String {
     format!("{local_id}::{execution_task_key}")
+}
+
+/// ACK 状态属于单次物化轮次：`materializedAt`/`materializedRevision` 变化即代表服务端
+/// 重新物化了该任务（例如再次跨用户委派），旧轮次的 done/cleaned 不能吞掉新轮次清理。
+/// 旧状态文件缺少轮次标识时，遇到携带标识的新控制按新一轮自愈；两侧都无法判断时保持同轮。
+fn same_materialization_cycle(prev: &StoredTaskHandoff, next: &StoredTaskHandoff) -> bool {
+    if let (Some(prev_at), Some(next_at)) = (&prev.materialized_at, &next.materialized_at) {
+        return prev_at == next_at;
+    }
+    if let (Some(prev_revision), Some(next_revision)) =
+        (prev.materialized_revision, next.materialized_revision)
+    {
+        return prev_revision == next_revision;
+    }
+    !(prev.materialized_at.is_none()
+        && prev.materialized_revision.is_none()
+        && (next.materialized_at.is_some() || next.materialized_revision.is_some()))
 }
 
 impl TaskControlStateFile {
@@ -431,18 +454,22 @@ impl TaskControlStateFile {
         let key = handoff_state_key(local_id, &control.execution_task_key);
         let mut next = StoredTaskHandoff::from_control(local_id, control)?;
         if let Some(previous) = self.handoffs.get(&key) {
-            next.ack_state = previous.ack_state.clone();
-            next.outcome = previous.outcome.clone();
-            next.reason = previous.reason.clone();
-            next.backup_id = previous.backup_id.clone();
-            next.manifest_sha256 = previous.manifest_sha256.clone();
-            next.file_count = previous.file_count;
-            next.total_bytes = previous.total_bytes;
-            next.notified_state = previous.notified_state.clone();
-            if control.handoff_state == "source_cleanup_conflict" && previous.outcome.is_empty() {
-                next.ack_state = "done".to_string();
-                next.outcome = "conflict".to_string();
-                next.reason = Some("unknown".to_string());
+            if same_materialization_cycle(previous, &next) {
+                next.ack_state = previous.ack_state.clone();
+                next.outcome = previous.outcome.clone();
+                next.reason = previous.reason.clone();
+                next.backup_id = previous.backup_id.clone();
+                next.manifest_sha256 = previous.manifest_sha256.clone();
+                next.file_count = previous.file_count;
+                next.total_bytes = previous.total_bytes;
+                next.notified_state = previous.notified_state.clone();
+                if control.handoff_state == "source_cleanup_conflict"
+                    && previous.outcome.is_empty()
+                {
+                    next.ack_state = "done".to_string();
+                    next.outcome = "conflict".to_string();
+                    next.reason = Some("unknown".to_string());
+                }
             }
         }
         if self.handoffs.get(&key) == Some(&next) {

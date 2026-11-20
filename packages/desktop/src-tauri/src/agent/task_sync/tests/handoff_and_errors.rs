@@ -225,6 +225,8 @@ fn handoff_manifest_is_stable_and_ack_contains_only_cleanup_metadata() {
         task_id: "a".to_string(),
         relative_dir: task_dir.to_string(),
         server_handoff_state: "source_cleanup_pending".to_string(),
+        materialized_at: None,
+        materialized_revision: None,
         ack_state: "pending".to_string(),
         outcome: "cleaned".to_string(),
         reason: None,
@@ -297,6 +299,8 @@ async fn handoff_source_fails_closed_on_baseline_or_git_uncertainty() {
         task_id: "task-a".to_string(),
         relative_dir: task_dir.to_string(),
         server_handoff_state: "source_cleanup_pending".to_string(),
+        materialized_at: None,
+        materialized_revision: None,
         ack_state: "pending".to_string(),
         outcome: String::new(),
         reason: None,
@@ -399,6 +403,8 @@ async fn handoff_retry_requires_complete_and_verifiable_backup() {
         task_id: "task-backup".to_string(),
         relative_dir: task_dir.to_string(),
         server_handoff_state: "source_cleanup_pending".to_string(),
+        materialized_at: None,
+        materialized_revision: None,
         ack_state: "pending".to_string(),
         outcome: "cleaned".to_string(),
         reason: None,
@@ -464,6 +470,146 @@ async fn handoff_retry_requires_complete_and_verifiable_backup() {
         .handoff_backup_is_valid(&binding, &expected)
         .await
         .expect("unexpected file invalidates backup"));
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+async fn handoff_backup_names(store: &ConfigStore, task_space_id: &str) -> Vec<String> {
+    let root = store.paths.live_backups_dir.join(task_space_id);
+    let mut entries = match tokio::fs::read_dir(&root).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => panic!("读取 handoff 备份目录失败: {error}"),
+    };
+    let mut names = Vec::new();
+    while let Some(entry) = entries.next_entry().await.expect("backup entry") {
+        names.push(entry.file_name().to_string_lossy().to_string());
+    }
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn second_materialization_cycle_cleans_source_and_acks_with_new_backup() {
+    let (root, store, _sync, binding) =
+        test_task_sync_fixture("trellis-handoff-second-cycle").await;
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+    let repo = Path::new(&binding.repo_path);
+    init_git_repo(repo);
+    let task_dir = ".trellis/tasks/task-a";
+    let directory = repo.join(task_dir);
+    tokio::fs::create_dir_all(&directory)
+        .await
+        .expect("task directory");
+    let task_json = "{\"id\":\"task-a\",\"branch\":\"main\"}\n";
+    let prd = "# task-a\n";
+    tokio::fs::write(directory.join("task.json"), task_json)
+        .await
+        .expect("task json");
+    tokio::fs::write(directory.join("prd.md"), prd)
+        .await
+        .expect("prd");
+
+    let (server_url, _changes, requests, server_task) =
+        mock_api_server(json!({ "revision": 1, "files": [] })).await;
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+    let sink: ControlSink = Arc::new(|_| {});
+    let sync = TaskSync::new(store.clone(), api, sink);
+    sync.set_bindings(vec![binding.clone()]).await;
+    sync.write_cursor(
+        &binding.task_space_id,
+        CursorPatch {
+            baselines: Some(BTreeMap::from([
+                (format!("{task_dir}/task.json"), snapshot_sha256(task_json)),
+                (format!("{task_dir}/prd.md"), snapshot_sha256(prd)),
+            ])),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("cursor");
+
+    let first = TaskControl {
+        execution_task_key: "space-1::task-a".to_string(),
+        task_id: "task-a".to_string(),
+        relative_dir: task_dir.to_string(),
+        title: "任务 A".to_string(),
+        state: "handoff_materialized".to_string(),
+        task_version: 3,
+        assignee_user_id: Some("user-b".to_string()),
+        handoff_state: "source_cleanup_pending".to_string(),
+        materialized_revision: Some(1),
+        content_revision: None,
+        materialized_at: Some("2026-11-19T08:00:00.000Z".to_string()),
+        lease_held_by_other_user: false,
+        updated_at: "2026-11-19T08:00:00.000Z".to_string(),
+    };
+    let key = sync
+        .upsert_task_handoff_control(&binding, &first)
+        .await
+        .expect("first round control");
+    let manifest_sha256 = "a".repeat(64);
+    sync.mark_handoff_ack_pending(
+        &key,
+        "cleaned",
+        None,
+        Some("handoff-8f4d8c4dab571e0e"),
+        Some(manifest_sha256.as_str()),
+        2,
+        128,
+    )
+    .await
+    .expect("first round ack pending");
+    sync.mark_handoff_ack_done(&key).await.expect("first round ack done");
+    assert!(directory.exists());
+    assert!(handoff_backup_names(&store, &binding.task_space_id).await.is_empty());
+    let mut second = first.clone();
+    second.materialized_at = Some("2026-11-20T01:57:03.950Z".to_string());
+    second.materialized_revision = Some(2);
+    second.updated_at = "2026-11-20T01:57:03.950Z".to_string();
+    sync.process_handoff_control(&binding, &second).await.expect("second cycle cleanup");
+
+    assert!(!directory.exists(), "第二轮必须删除来源副本");
+    let backups = handoff_backup_names(&store, &binding.task_space_id).await;
+    assert_eq!(backups.len(), 1, "第二轮必须生成新备份：{backups:?}");
+    assert!(backups[0].starts_with("handoff-"));
+    let record = sync.stored_task_handoff(&key).await.expect("handoff record");
+    assert_eq!(record.materialized_at.as_deref(), Some("2026-11-20T01:57:03.950Z"));
+    assert_eq!(record.materialized_revision, Some(2));
+    assert_eq!(record.ack_state, "done");
+    assert_eq!(record.outcome, "cleaned");
+    assert_eq!(record.backup_id.as_deref(), Some(backups[0].as_str()));
+    assert_eq!(
+        requests
+            .lock()
+            .await
+            .iter()
+            .filter(|request| request.ends_with("/handoff-ack"))
+            .count(),
+        1,
+        "第二轮必须发送一次 ACK"
+    );
+
+    // 同一物化轮次重复同步：不重置、不重复清理、不重复 ACK。
+    sync.process_handoff_control(&binding, &second).await.expect("same cycle resync");
+    assert!(!directory.exists());
+    assert_eq!(handoff_backup_names(&store, &binding.task_space_id).await.len(), 1);
+    let record = sync.stored_task_handoff(&key).await.expect("handoff record");
+    assert_eq!(record.ack_state, "done");
+    assert_eq!(record.outcome, "cleaned");
+    assert_eq!(
+        requests
+            .lock()
+            .await
+            .iter()
+            .filter(|request| request.ends_with("/handoff-ack"))
+            .count(),
+        1
+    );
+
+    server_task.abort();
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
