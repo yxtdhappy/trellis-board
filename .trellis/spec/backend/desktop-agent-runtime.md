@@ -77,7 +77,9 @@
     taskSpace、executionTaskKey、taskId、taskDir 和 materialized revision；复制或元数据验证失败时
     清理本次新建的不完整目录；
   - dirty、Git tracked、Git 状态不确定、文件集合或摘要不一致时保留本地目录并 ACK `conflict`；
-  - ACK 网络失败保持 pending，后续控制同步、事件触发和重启后重试。重试 `cleaned` 前必须重新验证完整
+  - ACK 网络失败保持 pending，后续控制同步、事件触发和重启后重试；服务端返回
+    `409 HANDOFF_CYCLE_STALE` 时同样保持 pending，不标记 done、不转 conflict，由下一轮控制重置后
+    重新清理和 ACK。重试 `cleaned` 前必须重新验证完整
     备份；缺失、非目录、身份或摘要不一致时改为 `conflict/missing`，本地检查异常改为
     `conflict/unknown`，不能发送虚假 cleaned；
   - 控制面 `leaseHeldByOtherUser=true` 时不得自动删除，ACK `conflict/lease_active`；服务端返回
@@ -86,7 +88,10 @@
     `.trellis/.agent-handoff-cleanup-<uuid>`，验证为真实目录后再递归清理；后续每次控制同步清理遗留
     暂存目录，失败不得删除源目录。
 - 服务端 handoff ACK 的 `cleaned` 必须携带合法 `backupId`、64 位小写 manifest SHA-256、
-  `fileCount >= 1` 和 `totalBytes >= 1`；已完成终态重复 ACK 只有在 outcome、reason、backupId、
+  `fileCount >= 1` 和 `totalBytes >= 1`；新客户端还必须携带当前轮次的 `materializedAt` 与
+  （存在时）`materializedRevision`，服务端在幂等判断前做轮次 fencing，任一字段与当前
+  `sync_task` 不一致时返回 `409 HANDOFF_CYCLE_STALE` 且不改状态、不写审计；旧客户端两个字段
+  都缺省时保持兼容。已完成终态重复 ACK 只有在轮次匹配且 outcome、reason、backupId、
   manifest、文件数和总字节数完全一致时才幂等返回，否则返回 `HANDOFF_ACK_MISMATCH`。
 - `TaskSync` 在 cursor、binding、ownership 或本地 Git 投影实际变化后通过统一 state sink 通知；
   `write_cursor` / `remove_task_cursor` 必须在落盘成功且 patch 确已改变状态后才通知，无变化不得发射。
