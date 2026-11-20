@@ -21,15 +21,27 @@ fn load_client_document() -> Value {
 }
 
 fn save_client_document(document: &Value) -> Result<(), String> {
-    config::ensure_directories()?;
+    config::ensure_directories().map_err(|error| {
+        logging::warn(&error);
+        error
+    })?;
     let path = client_document_path();
     let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
-    let payload = serde_json::to_vec_pretty(document)
-        .map_err(|error| format!("无法序列化运行时配置: {error}"))?;
-    std::fs::write(&temp, payload).map_err(|error| format!("无法写入运行时配置: {error}"))?;
+    let payload = serde_json::to_vec_pretty(document).map_err(|error| {
+        let message = format!("无法序列化运行时配置: {error}");
+        logging::warn(&message);
+        message
+    })?;
+    std::fs::write(&temp, payload).map_err(|error| {
+        let message = format!("无法写入运行时配置 {}: {error}", temp.display());
+        logging::warn(&message);
+        message
+    })?;
     std::fs::rename(&temp, &path).map_err(|error| {
         let _ = std::fs::remove_file(&temp);
-        format!("无法替换运行时配置 {}: {error}", path.display())
+        let message = format!("无法替换运行时配置 {}: {error}", path.display());
+        logging::warn(&message);
+        message
     })
 }
 
@@ -77,13 +89,29 @@ fn log_runtime_status(status: &RuntimeStatus) {
     ));
 }
 
+fn log_error(scope: &str, error: &crate::agent::protocol::AgentError) {
+    logging::warn(&format!(
+        "{scope}失败 code={} message={} details={}",
+        error.code,
+        error.message,
+        error
+            .details
+            .as_ref()
+            .map(Value::to_string)
+            .unwrap_or_else(|| "-".to_string())
+    ));
+}
+
 pub async fn runtime_status() -> Result<RuntimeStatus, String> {
     let data_dir = config::data_dir();
     let mut document = load_client_document();
     let before = document.clone();
     let status = env::check(&data_dir, &mut document)
         .await
-        .map_err(|error| error.message)?;
+        .map_err(|error| {
+            log_error("运行环境检查", &error);
+            error.message
+        })?;
     log_runtime_status(&status);
     document["schemaVersion"] = json!(config::SCHEMA_VERSION);
     if document != before {
@@ -98,10 +126,16 @@ pub async fn runtime_set_node_path(path: String) -> Result<RuntimeStatus, String
     let mut document = load_client_document();
     env::set_node_path(&mut document, &path)
         .await
-        .map_err(|error| error.message)?;
+        .map_err(|error| {
+            log_error("设置 Node.js 路径", &error);
+            error.message
+        })?;
     let status = env::check(&data_dir, &mut document)
         .await
-        .map_err(|error| error.message)?;
+        .map_err(|error| {
+            log_error("运行环境检查", &error);
+            error.message
+        })?;
     save_client_document(&document)?;
     Ok(status)
 }
@@ -117,7 +151,10 @@ pub async fn runtime_install(app: AppHandle) -> Result<RuntimeInstallResult, Str
         );
     })
     .await
-    .map_err(|error| error.message)?;
+    .map_err(|error| {
+        log_error("运行环境安装", &error);
+        error.message
+    })?;
     document["schemaVersion"] = json!(config::SCHEMA_VERSION);
     let _ = save_client_document(&document);
     let _ = app.emit(

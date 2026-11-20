@@ -8,6 +8,9 @@ use tokio::process::Command;
 
 use crate::agent::protocol::{code, AgentError, AgentResult};
 
+/// 失败命令写入日志时保留的输出尾部长度。
+const LOG_TAIL_CHARS: usize = 2_000;
+
 const ENV_ALLOWLIST: [&str; 15] = [
     "PATH",
     "PATHEXT",
@@ -62,11 +65,19 @@ impl ProcessOutput {
         self.exit_code == 0
     }
 
-    pub fn stderr_tail(&self, limit: usize) -> String {
-        let mut chars: Vec<char> = self.stderr.chars().rev().take(limit).collect();
-        chars.reverse();
-        chars.into_iter().collect()
+    pub fn stdout_tail(&self, limit: usize) -> String {
+        tail_chars(&self.stdout, limit)
     }
+
+    pub fn stderr_tail(&self, limit: usize) -> String {
+        tail_chars(&self.stderr, limit)
+    }
+}
+
+fn tail_chars(text: &str, limit: usize) -> String {
+    let mut chars: Vec<char> = text.chars().rev().take(limit).collect();
+    chars.reverse();
+    chars.into_iter().collect()
 }
 
 pub async fn run_process(
@@ -98,6 +109,10 @@ pub async fn run_process(
     }
 
     let mut child = builder.spawn().map_err(|error| {
+        crate::logging::warn(&format!(
+            "命令无法启动: {}: {error}",
+            command_text(command, args)
+        ));
         AgentError::new(code::HTTP_ERROR, format!("无法启动子进程: {error}"))
             .with_details(Some(json!({ "spawnFailed": true })))
     })?;
@@ -122,12 +137,21 @@ pub async fn run_process(
 
     let status = match tokio::time::timeout(timeout, child.wait()).await {
         Ok(result) => result.map_err(|error| {
+            crate::logging::warn(&format!(
+                "命令等待失败: {}: {error}",
+                command_text(command, args)
+            ));
             AgentError::new(code::HTTP_ERROR, format!("子进程执行失败: {error}"))
         })?,
         Err(_) => {
             kill_process_tree(pid).await;
             let _ = child.kill().await;
             let _ = writer.await;
+            crate::logging::warn(&format!(
+                "命令超时({}s): {}",
+                timeout.as_secs(),
+                command_text(command, args)
+            ));
             return Err(AgentError::new(code::GIT_TIMEOUT, "子进程执行超时")
                 .with_details(Some(json!({ "timedOut": true }))));
         }
@@ -135,28 +159,47 @@ pub async fn run_process(
 
     let _ = writer.await;
     let stdout = match stdout_task.await {
-        Ok(Ok(text)) => text,
+        Ok(Ok(bytes)) => decode_output(&bytes),
         _ => {
             kill_process_tree(pid).await;
-            return err_output_limit();
+            return err_output_limit(command, args);
         }
     };
     let stderr = match stderr_task.await {
-        Ok(Ok(text)) => text,
+        Ok(Ok(bytes)) => decode_output(&bytes),
         _ => {
             kill_process_tree(pid).await;
-            return err_output_limit();
+            return err_output_limit(command, args);
         }
     };
 
-    Ok(ProcessOutput {
+    let output = ProcessOutput {
         exit_code: status.code().unwrap_or(-1),
         stdout,
         stderr,
-    })
+    };
+    if !output.success() {
+        crate::logging::warn(&format!(
+            "命令失败(exit={}): {}\nstdout: {}\nstderr: {}",
+            output.exit_code,
+            command_text(command, args),
+            output.stdout_tail(LOG_TAIL_CHARS),
+            output.stderr_tail(LOG_TAIL_CHARS),
+        ));
+    }
+    Ok(output)
 }
 
-async fn read_capped<R>(mut stream: Option<R>, limit: usize) -> Result<String, ()>
+fn command_text(command: &std::path::Path, args: &[&str]) -> String {
+    let mut text = command.display().to_string();
+    for arg in args {
+        text.push(' ');
+        text.push_str(arg);
+    }
+    text
+}
+
+async fn read_capped<R>(mut stream: Option<R>, limit: usize) -> Result<Vec<u8>, ()>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -178,10 +221,53 @@ where
             }
         }
     }
-    Ok(String::from_utf8_lossy(&collected).to_string())
+    Ok(collected)
 }
 
-fn err_output_limit() -> AgentResult<ProcessOutput> {
+/// Windows 的 cmd.exe 等子进程按系统代码页（中文为 GBK）写输出，整段按 UTF-8
+/// 解码会变成 U+FFFD。逐行先试 UTF-8，失败的行再按 OEM 代码页解码。
+fn decode_output(bytes: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_string();
+    }
+    bytes
+        .split_inclusive(|byte| *byte == b'\n')
+        .map(|line| match std::str::from_utf8(line) {
+            Ok(text) => text.to_string(),
+            Err(_) => decode_oem(line),
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn decode_oem(bytes: &[u8]) -> String {
+    use windows::Win32::Globalization::{
+        GetOEMCP, MultiByteToWideChar, MULTI_BYTE_TO_WIDE_CHAR_FLAGS,
+    };
+    let codepage = unsafe { GetOEMCP() };
+    let flags = MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0);
+    let needed = unsafe { MultiByteToWideChar(codepage, flags, bytes, None) };
+    if needed <= 0 {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    let mut wide = vec![0u16; needed as usize];
+    let written = unsafe { MultiByteToWideChar(codepage, flags, bytes, Some(&mut wide)) };
+    if written <= 0 {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    String::from_utf16_lossy(&wide[..written as usize])
+}
+
+#[cfg(not(windows))]
+fn decode_oem(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn err_output_limit(command: &std::path::Path, args: &[&str]) -> AgentResult<ProcessOutput> {
+    crate::logging::warn(&format!(
+        "命令输出超过大小限制: {}",
+        command_text(command, args)
+    ));
     Err(
         AgentError::new(code::INVALID_RESPONSE, "子进程输出超过大小限制")
             .with_details(Some(json!({ "outputLimit": true }))),
