@@ -106,11 +106,82 @@ export const SAMPLE_CHILD = {
   description: '<p>子任务内容</p>',
 }
 
+const PROJECT_TASKS = [
+  {
+    businessId: '3001',
+    code: 'R3001',
+    name: '需求 A',
+    type: 3,
+    status: 3,
+    priorityDicConfigCode: 2,
+    assignedToUserName: '张三',
+    expectCompleteTime: '2026-11-30 18:00:00',
+    projectId: 'p1',
+  },
+  {
+    businessId: '10001',
+    code: 'T10001',
+    name: '列表页重构',
+    type: 4,
+    status: 3,
+    priorityDicConfigCode: 2,
+    assignedToUserName: '李四',
+    expectCompleteTime: '2026-11-20 18:00:00',
+    projectId: 'p1',
+    parentType: 'STORY',
+    parentId: 3001,
+    parentCode: 'R3001',
+    parentName: '需求 A',
+  },
+  {
+    businessId: '40001',
+    code: 'B40001',
+    name: '登录失败',
+    type: 2,
+    status: 1,
+    priorityDicConfigCode: 1,
+    assignedToUserName: '王五',
+    expectCompleteTime: '2026-11-18 18:00:00',
+    projectId: 'p1',
+    parentType: 'STORY',
+    parentId: 3001,
+    parentCode: 'R3001',
+    parentName: '需求 A',
+  },
+  {
+    businessId: '10002',
+    code: 'T10002',
+    name: '产品二任务',
+    type: 4,
+    status: 1,
+    priorityDicConfigCode: 3,
+    assignedToUserName: '李四',
+    projectId: 'p2',
+  },
+  // 产品空间（/task/task/page 只认 productId），用 projectProductId 标记归属。
+  {
+    businessId: '10003',
+    code: 'T10003',
+    name: '产品空间任务',
+    type: 4,
+    status: 3,
+    priorityDicConfigCode: 1,
+    assignedToUserName: '王五',
+    projectProductId: 'p3',
+    parentType: 'STORY',
+    parentId: 3002,
+    parentCode: 'R3002',
+    parentName: '产品需求',
+  },
+]
+
 export async function createWitopsFixture({
   tasks = [SAMPLE_DETAIL, SAMPLE_REQUIREMENT, SAMPLE_BUG, SAMPLE_WORK_ORDER, SAMPLE_CHILD],
+  projectTasks = PROJECT_TASKS,
   accounts = [{ account: 'alice', password: 'secret' }],
   token = 'fixture-token',
   failuresRemaining = 0,
+  projectListFails = false,
 } = {}) {
   const state = {
     requests: [],
@@ -152,6 +223,10 @@ export async function createWitopsFixture({
     const childPath = `${gateway}${taskService}/task/childTask`
     const storyPath = `${gateway}${taskService}/story/detail`
     const storyPagePath = `${gateway}${taskService}/story/page`
+    const projectPagePath = `${gateway}${taskService}/task/task/page`
+    const projectListPath = `${gateway}${taskService}/project/list`
+    const userPagePath = `${gateway}${adminService}/api/sysUser/page`
+    const iterationPath = `${gateway}${taskService}/iteration/list`
     const dictPath = `${gateway}${adminService}/api/sysDicConfig/getListByKey`
 
     if (pathname === loginPath) {
@@ -279,13 +354,100 @@ export async function createWitopsFixture({
     }
 
     if (pathname === storyPagePath) {
+      // 需求表头要的字段（优先级/状态/负责人/截止）都来自这里。
+      const records = [
+        {
+          id: 3001,
+          businessId: '3001',
+          code: 'R3001',
+          name: '需求 A',
+          type: 3,
+          priorityDicConfigCode: 2,
+          priorityName: 'P1',
+          status: 3,
+          statusName: '进行中',
+          assignedToUserId: 901,
+          assignedToUserName: 'bob',
+          expectCompleteTime: '2026-11-30 18:00:00',
+          projectId: 'p1',
+        },
+      ]
+      const type = body.type === undefined ? 3 : Number(body.type)
+      const rows = type === 3 ? records : []
+      json(response, 200, { code: 20000, data: { records: rows, total: rows.length, pages: 1 } })
+      return
+    }
+
+    // 空间分类表：type=0 是产品空间，type=2 是项目空间。
+    if (pathname === projectListPath) {
+      if (projectListFails) {
+        json(response, 500, { message: 'project/list unavailable' })
+        return
+      }
+      const rows =
+        Number(body.type) === 0
+          ? [{ id: 'p3', name: '产品空间一' }]
+          : [
+              { id: 'p1', name: '项目一' },
+              { id: 'p2', name: '项目二' },
+            ]
+      json(response, 200, { code: 20000, data: rows })
+      return
+    }
+
+    if (pathname === projectPagePath) {
+      const list = (value) =>
+        String(value ?? '')
+          .split(',')
+          .map((part) => part.trim())
+          .filter(Boolean)
+      const types = list(body.types).map(Number).filter(Number.isFinite)
+      const products = list(body.productIds ?? body.productId)
+      const projectIds = list(body.projectIds ?? body.projectId)
+      const statuses = list(body.sourceStatus).map(Number).filter(Number.isFinite)
+      const priorities = list(body.priorityDicConfigCodes)
+      const records = projectTasks
+        .filter((task) => (types.length ? types.includes(Number(task.type)) : true))
+        .filter((task) =>
+          products.length
+            ? products.includes(String(task.projectProductId ?? ''))
+            : projectIds.length
+              ? projectIds.includes(String(task.projectId ?? ''))
+              : true,
+        )
+        .filter((task) => (statuses.length ? statuses.includes(Number(task.status)) : true))
+        .filter((task) =>
+          priorities.length ? priorities.includes(String(task.priorityDicConfigCode)) : true,
+        )
+        .filter((task) => (body.code ? String(task.code).includes(String(body.code)) : true))
+      const current = Number(body.current ?? 1)
+      const size = Number(body.size ?? 50)
+      const start = (current - 1) * size
+      json(response, 200, {
+        code: 20000,
+        data: { records: records.slice(start, start + size), total: records.length },
+      })
+      return
+    }
+
+    if (pathname === userPagePath) {
       json(response, 200, {
         code: 20000,
         data: {
-          records: [{ businessId: '3001', code: 'REQ-3001', name: '需求 A' }],
-          total: 1,
-          pages: 1,
+          records: [
+            { id: 900, username: 'alice' },
+            { id: 901, username: 'bob' },
+          ],
+          total: 2,
         },
+      })
+      return
+    }
+
+    if (pathname === iterationPath) {
+      json(response, 200, {
+        code: 20000,
+        data: [{ id: 45, name: '迭代 45' }],
       })
       return
     }

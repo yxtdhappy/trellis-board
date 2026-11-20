@@ -17,9 +17,12 @@ const DEFAULT_PATHS = {
   taskUpdate: '/task/update',
   projectByMaster: '/project/findByMaster',
   projectByParticipant: '/project/findByParticipant',
+  projectList: '/project/list',
   projectUserRole: '/projectUserRole/userRole',
   projectTaskPage: '/task/task/page',
   statusBulletin: '/bulletin/statusBulletin',
+  userPage: '/api/sysUser/page',
+  iterationList: '/iteration/list',
 }
 
 export class ApiError extends Error {
@@ -77,6 +80,7 @@ export function resolvePaths(config = {}) {
       taskService,
       paths.projectByParticipant ?? DEFAULT_PATHS.projectByParticipant,
     ),
+    projectList: joinPath(gateway, taskService, paths.projectList ?? DEFAULT_PATHS.projectList),
     projectUserRole: joinPath(
       gateway,
       taskService,
@@ -91,6 +95,12 @@ export function resolvePaths(config = {}) {
       gateway,
       taskService,
       paths.statusBulletin ?? DEFAULT_PATHS.statusBulletin,
+    ),
+    userPage: joinPath(gateway, adminService, paths.userPage ?? DEFAULT_PATHS.userPage),
+    iterationList: joinPath(
+      gateway,
+      taskService,
+      paths.iterationList ?? DEFAULT_PATHS.iterationList,
     ),
   }
 }
@@ -220,6 +230,8 @@ export function createWitopsClient(
       request(paths.projectByMaster, { ...options, method: 'POST', body: params }),
     projectByParticipant: (params, options) =>
       request(paths.projectByParticipant, { ...options, method: 'POST', body: params }),
+    projects: (params, options) =>
+      request(paths.projectList, { ...options, method: 'POST', body: params }),
     projectUserRole: (params, options) =>
       request(paths.projectUserRole, { ...options, method: 'POST', body: params }),
     projectTaskPage: (params, options) =>
@@ -227,5 +239,10 @@ export function createWitopsClient(
     // 任务看板：一次返回按状态分组的全部任务（witops-web statusDashboard/4 用的就是这个）。
     statusBulletin: (params, options) =>
       request(paths.statusBulletin, { ...options, method: 'POST', body: params }),
+    // 负责人下拉：面板的「负责人」筛选需要真实用户名，列表里的 assignedToUserName 只覆盖已出现的人。
+    userPage: (params, options) =>
+      request(paths.userPage, { ...options, method: 'POST', body: params }),
+    iterations: (params, options) =>
+      request(paths.iterationList, { ...options, method: 'POST', body: params }),
   }
 }

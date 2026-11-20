@@ -9,6 +9,12 @@ import { createLinkIndex } from './links.js'
 import { createDispatch } from './dispatch.js'
 import { resolveRequirement } from './mapper.js'
 import {
+  buildTaskFilters,
+  groupByRequirement,
+  normalizeTeamTasks,
+  sanitizePreferences,
+} from './team-view.js'
+import {
   asPositiveInt,
   calendarDate,
   detailOf,
@@ -185,16 +191,6 @@ export default createPlugin({
       onChanged: () => readCache.clear(),
     })
 
-    const PROJECT_TASK_STATUS = {
-      0: '草稿',
-      1: '待处理',
-      2: '已完成',
-      3: '进行中',
-      4: '已取消',
-      97: '待提交',
-      99: '已关闭',
-    }
-
     // 与 witops-web 的 detailTypes 一致：0 工单 / 2 缺陷 / 3 需求 / 4 任务。
     const ITEM_KINDS = {
       0: { kind: 'workOrder', label: '工单' },
@@ -258,46 +254,13 @@ export default createPlugin({
         .filter((row) => row.id && row.name)
     }
 
-    // 任务看板返回按状态分好的列： [{ status, statusName, taskResps: [...] }]
-    function isStatusBoard(payload) {
-      const columns = Array.isArray(payload) ? payload : rowsOf(payload)
-      return columns.some((column) => Array.isArray(column?.taskResps))
+    function normalizeProjectTasks(payload, options) {
+      return normalizeTeamTasks(payload, options)
     }
 
-    function flattenStatusBoard(payload) {
-      const columns = Array.isArray(payload) ? payload : rowsOf(payload)
-      const rows = []
-      for (const column of columns) {
-        const tasks = Array.isArray(column?.taskResps) ? column.taskResps : []
-        for (const task of tasks) {
-          rows.push({ ...task, __columnStatus: column?.status, __columnName: column?.statusName })
-        }
-      }
-      return rows
-    }
-
-    function normalizeProjectTasks(payload) {
-      const source = isStatusBoard(payload) ? flattenStatusBoard(payload) : rowsOf(payload)
-      return source.map((row) => {
-        const statusCode = numberOrNull(
-          pick(row, 'tasksStatus', 'status', 'taskStatus', '__columnStatus'),
-        )
-        return {
-          id: text(pick(row, 'id', 'taskId', 'businessId')),
-          code: text(pick(row, 'code', 'taskCode', 'businessCode')),
-          name: text(pick(row, 'name', 'title', 'taskName')),
-          status: statusCode,
-          statusLabel:
-            text(pick(row, 'tasksStatusName', 'statusName', '__columnName')) ||
-            PROJECT_TASK_STATUS[statusCode] ||
-            '',
-          priority: text(pick(row, 'priorityDicConfigCode', 'priorityName', 'priority')),
-          assignee: text(pick(row, 'assignedToUserName', 'assigneeName', 'assignee')),
-          dueDate: calendarDate(
-            pick(row, 'expectCompleteTime', 'expectFinishTime', 'deadline', 'planEndTime'),
-          ),
-        }
-      })
+    /** 面板行附上跳转链接：点标题直接开 WitOps 详情页。 */
+    function withPanelLink(item) {
+      return { ...item, url: itemLink(item.type, item.id) }
     }
 
     function itemLink(type, id) {
@@ -793,6 +756,164 @@ export default createPlugin({
       return { status, headers: { 'content-type': type }, body }
     }
 
+    /** 平台 ID 多数是数字串，但项目白名单偶尔给字符串 id，统一按“能转就转”处理。 */
+    function numericId(value) {
+      const raw = text(value)
+      return /^\d+$/.test(raw) ? Number(raw) : raw
+    }
+
+    // 空间分类：产品空间（RD***）和项目空间（PS***）用的是两套查询键，
+    // 混着传不会报错，只会老老实实返回 0 条（RD411-2602 空列表就是这么来的）。
+    // /project/list?type=0 是产品、type=2 是项目，两份清单缓存 10 分钟。
+    const spaceKinds = new Map()
+    const SPACE_KIND_TTL = 10 * 60 * 1000
+
+    function rememberSpaceKind(id, kind) {
+      const key = text(id)
+      if (key) spaceKinds.set(key, { kind, at: Date.now() })
+    }
+
+    async function resolveSpaceKinds(ids) {
+      const now = Date.now()
+      const stale = ids.filter((id) => {
+        const hit = spaceKinds.get(text(id))
+        return !hit || now - hit.at > SPACE_KIND_TTL
+      })
+      if (stale.length) {
+        const [products, projects] = await session.authorized((token) =>
+          Promise.all([
+            client.projects({ type: 0, size: 10000 }, { token }).catch(() => null),
+            client.projects({ type: 2, size: 10000 }, { token }).catch(() => null),
+          ]),
+        )
+        for (const [kind, payload] of [
+          ['product', products],
+          ['project', projects],
+        ]) {
+          for (const row of rowsOf(payload)) {
+            rememberSpaceKind(pick(row, 'id', 'projectId'), kind)
+          }
+        }
+      }
+      return ids.map((id) => spaceKinds.get(text(id))?.kind ?? null)
+    }
+
+    async function planSpaceQueries(ids, explicit) {
+      if (explicit === '0') return [{ kind: 'product', ids }]
+      if (explicit === '2') return [{ kind: 'project', ids }]
+      let kinds = await resolveSpaceKinds(ids).catch(() => ids.map(() => null))
+      const unknown = ids.filter((_, index) => !kinds[index])
+      if (unknown.length) {
+        // 分类表不可用（接口失败/新建空间）：逐个 id 探一次，探到的结果同样缓存 10 分钟。
+        // 探测故意不带筛选、size=1：只要看哪个空间键能命中，避免被筛选条件误导。
+        await session
+          .authorized(async (token) => {
+            for (const id of unknown) await probeSpaceKind(id, token)
+          })
+          .catch(() => {})
+        kinds = await resolveSpaceKinds(ids).catch(() => ids.map(() => null))
+      }
+      const buckets = { product: [], project: [] }
+      ids.forEach((id, index) =>
+        buckets[kinds[index] === 'product' ? 'product' : 'project'].push(id),
+      )
+      const plan = []
+      if (buckets.product.length) plan.push({ kind: 'product', ids: buckets.product })
+      if (buckets.project.length) plan.push({ kind: 'project', ids: buckets.project })
+      return plan
+    }
+
+    async function probeSpaceKind(id, token) {
+      const probe = (kind) => fetchSpacePage(kind, [id], { page: 1, size: 1, filters: {} }, token)
+      const product = await probe('product')
+      if (Number(product?.total ?? 0)) return rememberSpaceKind(id, 'product')
+      const project = await probe('project')
+      if (Number(project?.total ?? 0)) return rememberSpaceKind(id, 'project')
+      return null
+    }
+
+    function fetchSpacePage(kind, ids, { page, size, filters }, token) {
+      const singular = kind === 'product' ? 'productId' : 'projectId'
+      const plural = kind === 'product' ? 'productIds' : 'projectIds'
+      const key = ids.length === 1 ? singular : plural
+      const value = ids.length === 1 ? numericId(ids[0]) : ids.map(numericId).join(',')
+      const body = { current: page, size, last: 'true', ...filters, [key]: value }
+      return client.projectTaskPage(body, { token })
+    }
+
+    // 任务行只带 parentCode/parentName，需求表头要的优先级/状态/负责人/截止只在 /story/page 里。
+    // 按空间拉一份需求索引缓存 60 秒：翻页、改筛选不会反复打平台。
+    const groupStoryCache = new Map()
+    const GROUP_STORY_TTL = 60 * 1000
+    const STORY_PAGE_SIZE = 200
+    const STORY_PAGE_MAX = 3
+
+    async function fetchGroupStoryRows(step, token) {
+      // 需求列表和任务列表用同一套空间键：产品空间 projectProductId(s)，项目空间 projectId(s)。
+      const singular = step.kind === 'product' ? 'projectProductId' : 'projectId'
+      const plural = step.kind === 'product' ? 'projectProductIds' : 'projectIds'
+      const key = step.ids.length === 1 ? singular : plural
+      const value =
+        step.ids.length === 1 ? numericId(step.ids[0]) : step.ids.map(numericId).join(',')
+      const rows = []
+      let current = 1
+      let total = 0
+      while (current <= STORY_PAGE_MAX) {
+        const data = await client.storyPage(
+          { current, size: STORY_PAGE_SIZE, last: 'true', [key]: value },
+          { token },
+        )
+        const page = rowsOf(data)
+        total = Number(data?.total ?? page.length)
+        rows.push(...page)
+        if (page.length < STORY_PAGE_SIZE || rows.length >= total) break
+        current += 1
+      }
+      return rows
+    }
+
+    async function loadGroupStoryIndex(plan) {
+      const cacheKey = plan.map((step) => `${step.kind}:${step.ids.join(',')}`).join('|')
+      const hit = groupStoryCache.get(cacheKey)
+      if (hit && Date.now() - hit.at < GROUP_STORY_TTL) return hit.map
+      const map = new Map()
+      await session.authorized(async (token) => {
+        for (const step of plan) {
+          for (const row of await fetchGroupStoryRows(step, token)) {
+            const [story] = normalizeProjectTasks({ records: [row] })
+            if (story?.id) map.set(text(story.id), story)
+          }
+        }
+      })
+      groupStoryCache.set(cacheKey, { at: Date.now(), map })
+      return map
+    }
+
+    /** 给需求分组补上优先级/状态/负责人/截止；拿不到就保留原来的空列。 */
+    async function enrichRequirements(groups, plan) {
+      const ids = groups.map((group) => text(group.requirement?.id)).filter(Boolean)
+      if (!ids.length) return
+      const index = await loadGroupStoryIndex(plan)
+      for (const group of groups) {
+        const story = index.get(text(group.requirement?.id))
+        if (!story) continue
+        group.requirement = { ...group.requirement, ...pickStoryFields(story, group.requirement) }
+      }
+    }
+
+    function pickStoryFields(story, current) {
+      return {
+        priority: story.priority || current.priority,
+        priorityCode: story.priorityCode ?? current.priorityCode,
+        status: story.status || current.status,
+        statusCode: story.statusCode ?? current.statusCode,
+        assignee: story.assignee || current.assignee,
+        assigneeId: story.assigneeId || current.assigneeId,
+        dueDate: story.dueDate || current.dueDate,
+        projectId: story.projectId || current.projectId,
+      }
+    }
+
     function failure(error, fallbackStatus = 502) {
       let status = fallbackStatus
       if (error?.code === 1001) status = 401
@@ -857,45 +978,154 @@ export default createPlugin({
         }
       })
 
-      // 面板：某个项目（或产品）下的全部任务。
-      // 平台接口 POST /task/task/page：产品空间传 productId，项目空间传 projectId；
+      // 面板：所选空间（可多选）下的任务列表。
+      // 平台 POST /task/task/page 有两个坑，都用真实项目验证过：
+      // 1. 产品空间（RD***）只认 productId/productIds，项目空间（PS***）只认 projectId/projectIds，
+      //    传错键不报错，直接返回 0 条；所以先按 /project/list 分类，再分组查询合并。
+      // 2. `types` 在 PageTaskReq 里是业务类型（0/1/5...），不是 需求3/任务4/缺陷2，
+      //    传 3/4/2 会把结果筛成 0，因此这里不再下发（类型由面板按行展示）。
       // last:'true' 表示只看当前版本（与 witops-web 项目空间任务列表一致）。
+      // 返回里同时给扁平 items 和按需求分组好的 groups：分组是纯函数，放服务端只为让面板少算一遍。
       ctx.http.route('GET', '/project-tasks', async (request) => {
         try {
-          const projectId = text(request.query.projectId)
-          if (!projectId) return respond(400, { error: '缺少 projectId' })
+          const ids = text(request.query.projectIds)
+            .split(',')
+            .map((part) => text(part))
+            .filter(Boolean)
+            .slice(0, 20)
+          const single = text(request.query.projectId)
+          if (!ids.length && !single) return respond(400, { error: '缺少 projectId' })
+          const wanted = ids.length ? ids : [single]
           const page = Math.max(1, asPositiveInt(request.query.page, 1))
-          const size = Math.min(100, Math.max(1, asPositiveInt(request.query.size, 20)))
-          const numericId = /^\d+$/.test(projectId) ? Number(projectId) : projectId
-          // type: '0' 产品空间 / '2' 项目空间；不传则先按产品查，空结果再按项目查。
-          const kind = text(request.query.type)
-          const types = text(request.query.types)
-          const fetchPage = (key) => {
-            const body = { current: page, size, last: 'true', [key]: numericId }
-            if (types) body.types = types
-            return session.authorized((token) => client.projectTaskPage(body, { token }))
-          }
-          let data
-          if (kind === '2') {
-            data = await fetchPage('projectId')
-          } else if (kind === '0') {
-            data = await fetchPage('productId')
-          } else {
-            data = await fetchPage('productId')
-            if (!Number(data?.total)) data = await fetchPage('projectId')
-          }
-          const rows = normalizeProjectTasks(data)
-          return respond(200, {
-            page,
-            size,
-            total: Number(data?.total ?? rows.length),
-            items: rows,
+          const size = Math.min(200, Math.max(1, asPositiveInt(request.query.size, 50)))
+          const filters = buildTaskFilters(request.query)
+          // type: '0' 产品空间 / '2' 项目空间；不传则按空间清单自动判断。
+          const plan = await planSpaceQueries(wanted, text(request.query.type))
+          const items = []
+          let total = 0
+          await session.authorized(async (token) => {
+            for (const step of plan) {
+              const data = await fetchSpacePage(step.kind, step.ids, { page, size, filters }, token)
+              total += Number(data?.total ?? 0)
+              for (const row of normalizeProjectTasks(data, { flatten: true })) {
+                items.push(withPanelLink(row))
+              }
+            }
           })
+          const unique = []
+          const seen = new Set()
+          for (const item of items) {
+            const key = `${item.type}:${item.id}`
+            if (seen.has(key)) continue
+            seen.add(key)
+            unique.push(item)
+          }
+          const groups = groupByRequirement(unique)
+          await enrichRequirements(groups, plan).catch(() => {})
+          return respond(200, { page, size, total, items: unique, groups })
         } catch (error) {
           return failure(error)
         }
       })
+
+      // 面板：某个需求（或任务/缺陷）下的直接子项。展开时按需调用，面板侧做缓存。
+      ctx.http.route('GET', '/children', async (request) => {
+        try {
+          const id = text(request.query.id)
+          const type = numberOrNull(request.query.type) ?? 4
+          if (!id) return respond(400, { error: '缺少 id' })
+          const key = `children:${type}:${id}`
+          const hit = cached(key)
+          if (hit) return respond(200, { items: hit, cached: true })
+          const data = await session.authorized((token) =>
+            client.childTask({ id: numericId(id), type }, { token }),
+          )
+          const items = normalizeProjectTasks(data, { flatten: true }).map(withPanelLink)
+          remember(key, items)
+          return respond(200, { items, cached: false })
+        } catch (error) {
+          return failure(error)
+        }
+      })
+
+      // 负责人下拉：一次拉一份用户清单，面板展开多选时用。
+      // 普通成员可能没有 sysUser 权限，失败时返回空列表让面板退回到“已出现的人”。
+      ctx.http.route('GET', '/users', async () => {
+        const hit = cached('users')
+        if (hit) return respond(200, { items: hit })
+        try {
+          const data = await session.authorized((token) =>
+            client.userPage({ current: 1, size: 2000, status: 1 }, { token }),
+          )
+          const items = rowsOf(data)
+            .map((row) => ({
+              id: text(pick(row, 'id', 'userId')),
+              name: text(pick(row, 'username', 'nickname', 'name', 'displayName')),
+            }))
+            .filter((row) => row.id && row.name)
+          remember('users', items)
+          return respond(200, { items })
+        } catch (error) {
+          return respond(200, { items: [], error: error.message, degraded: true })
+        }
+      })
+
+      // 迭代下拉：/iteration/list，按选中的项目过滤；失败同样降级为空。
+      ctx.http.route('GET', '/iterations', async (request) => {
+        const projectId = text(request.query.projectId)
+        const key = `iterations:${projectId}`
+        const hit = cached(key)
+        if (hit) return respond(200, { items: hit })
+        try {
+          const body = {}
+          if (projectId) body.projectId = numericId(projectId)
+          const data = await session.authorized((token) => client.iterations(body, { token }))
+          const items = rowsOf(data)
+            .map((row) => ({
+              id: text(pick(row, 'id', 'iterationId')),
+              name: text(pick(row, 'name', 'iterationName', 'title')),
+            }))
+            .filter((row) => row.id && row.name)
+          remember(key, items)
+          return respond(200, { items })
+        } catch (error) {
+          return respond(200, { items: [], error: error.message, degraded: true })
+        }
+      })
     }
+
+    // 面板偏好：team 下 ctx.store 已按用户分区（user:<id>:<key>），
+    // 面板 iframe 是 sandbox 无 same-origin，localStorage 会抛 SecurityError，所以落服务端。
+    const PREFS_KEY = 'panel:preferences'
+    const prefsAvailable =
+      typeof ctx.store?.get === 'function' && typeof ctx.store?.set === 'function'
+
+    ctx.http.route('GET', '/prefs', async () => {
+      if (!prefsAvailable) return respond(200, { prefs: {} })
+      try {
+        const prefs = (await ctx.store.get(PREFS_KEY)) ?? {}
+        return respond(200, { prefs })
+      } catch (error) {
+        return respond(200, { prefs: {}, error: error.message })
+      }
+    })
+
+    ctx.http.route('PUT', '/prefs', async (request) => {
+      if (!prefsAvailable) return respond(200, { prefs: {} })
+      const body = request.json() ?? {}
+      try {
+        const current = (await ctx.store.get(PREFS_KEY)) ?? {}
+        const next = {
+          ...current,
+          ...sanitizePreferences(body),
+          updatedAt: new Date().toISOString(),
+        }
+        await ctx.store.set(PREFS_KEY, next)
+        return respond(200, { prefs: next })
+      } catch (error) {
+        return respond(200, { prefs: {}, error: error.message })
+      }
+    })
 
     ctx.http.route('GET', '/mine', async (request) => {
       try {

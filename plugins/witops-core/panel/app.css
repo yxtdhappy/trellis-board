@@ -47,7 +47,40 @@ body {
 }
 
 .table-wrap {
+  position: relative;
   margin-top: 14px;
+}
+
+/* 加载态：细条 + 转圈，不遮挡已经渲染出来的旧数据 */
+.table-loading {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--tb-muted-fg);
+  background: var(--tb-muted);
+  border-radius: var(--tb-radius-sm);
+}
+
+.table-loading[hidden] {
+  display: none;
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in oklab, var(--tb-muted-fg) 35%, transparent);
+  border-top-color: var(--tb-accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .tb-table {
@@ -55,26 +88,31 @@ body {
   min-width: 1080px;
 }
 
-/* 固定列宽：标题列吃剩余空间，避免被其它列挤窄 */
-.tb-table th:nth-child(1) {
+/*
+ * 固定列宽只作用于 standalone 面板的 11 列表。
+ * 团队面板是 8 列（展开/编号/标题/优先级/状态/负责人/截止/项目），
+ * 之前全局的 nth-child 规则把第 2 列（标题）压成 56px，剩余宽度全给了第 4 列（优先级），
+ * 于是出现"优先级列特别宽、标题被挤没"的现象。团队表改用 colgroup 显式定宽。
+ */
+body:not(.team-panel) .tb-table th:nth-child(1) {
   width: 48px;
 }
-.tb-table th:nth-child(2) {
+body:not(.team-panel) .tb-table th:nth-child(2) {
   width: 56px;
 }
-.tb-table th:nth-child(3) {
+body:not(.team-panel) .tb-table th:nth-child(3) {
   width: 96px;
 }
-.tb-table th:nth-child(5) {
+body:not(.team-panel) .tb-table th:nth-child(5) {
   width: 54px;
 }
-.tb-table th:nth-child(6) {
+body:not(.team-panel) .tb-table th:nth-child(6) {
   width: 60px;
 }
-.tb-table th:nth-child(7) {
+body:not(.team-panel) .tb-table th:nth-child(7) {
   width: 60px;
 }
-.tb-table th:nth-child(8) {
+body:not(.team-panel) .tb-table th:nth-child(8) {
   width: 76px;
 }
 
@@ -616,98 +654,423 @@ td.pick {
   margin-top: 10px;
 }
 
-/* ---- 可搜索的项目选择（combobox）---- */
-.combo {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 260px;
-}
-
-.combo-label {
-  color: var(--tb-muted-fg);
+/* ---- 项目多选：复用 .ms（details+checkbox），只是面板更宽、带搜索 ---- */
+.team-panel .tb-input-sm {
+  height: 28px;
+  padding: 3px 8px;
   font-size: 12px;
 }
 
-.combo-control {
+/* 选择器压过后面的 .ms-panel（同权重时后者会覆盖 min-width）。 */
+.ms .ms-panel.ms-panel-wide {
+  min-width: 320px;
+  max-width: 380px;
+  max-height: 340px;
+}
+
+/* 项目名可能很长：摘要单行省略，不把工具栏撑爆。 */
+.ms-projects > summary {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ms-search {
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+.ms-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ms-option-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ms-option-meta {
+  flex-shrink: 0;
+  font-family: var(--tb-mono);
+  font-size: 11px;
+  color: var(--tb-muted-fg);
+}
+
+.ms-empty {
+  margin: 0;
+  padding: 8px 6px;
+  font-size: 12px;
+  color: var(--tb-muted-fg);
+}
+
+.ms-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  padding-top: 6px;
+  margin-top: 6px;
+  border-top: 1px solid var(--tb-border);
+}
+
+.toolbar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.toolbar-label {
+  font-size: 12px;
+  color: var(--tb-muted-fg);
+}
+
+.team-filters {
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  margin-top: 10px;
+}
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--tb-muted-fg);
+}
+
+.filter-text input {
+  width: 128px;
+}
+
+.filter-iteration select,
+.filter-date input {
+  min-width: 128px;
+}
+
+/* 多选筛选：details/summary 实现，点空白自动收起 */
+.ms {
   position: relative;
 }
 
-.combo input.tb-input {
-  width: 100%;
-  padding-right: 28px;
-}
-
-.combo input:disabled {
-  background: var(--tb-muted);
-  cursor: default;
-}
-
-.combo-control::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  right: 11px;
-  width: 6px;
-  height: 6px;
-  margin-top: -5px;
-  border-right: 1.5px solid var(--tb-muted-fg);
-  border-bottom: 1.5px solid var(--tb-muted-fg);
-  transform: rotate(45deg);
-  pointer-events: none;
-}
-
-.combo-list {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 4px);
-  right: 0;
-  left: 0;
-  max-height: 240px;
-  margin: 0;
-  padding: 4px;
-  overflow: auto;
+.ms > summary {
   list-style: none;
+  cursor: pointer;
+}
+
+.ms > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ms[data-active='true'] > summary {
+  color: var(--tb-accent);
+  border-color: var(--tb-accent);
+}
+
+.ms-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  min-width: 180px;
+  max-height: 260px;
+  padding: 6px;
+  overflow: auto;
   background: var(--tb-card);
   border: 1px solid var(--tb-border);
   border-radius: var(--tb-radius);
   box-shadow: 0 10px 30px rgb(0 0 0 / 14%);
 }
 
-.combo-list[hidden] {
-  display: none;
-}
-
-.combo-option {
+.ms-option {
   display: flex;
-  gap: 8px;
-  align-items: baseline;
-  justify-content: space-between;
-  padding: 6px 8px;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 6px;
   font-size: 12px;
   color: var(--tb-card-fg);
-  border-radius: var(--tb-radius-sm);
   cursor: pointer;
+  border-radius: var(--tb-radius-sm);
 }
 
-.combo-option[data-active='true'] {
+.ms-option:hover {
   background: var(--tb-muted);
 }
 
-.combo-option[aria-selected='true'] {
+.ms-count {
   font-weight: 600;
-  color: var(--tb-accent);
 }
 
-.combo-option .meta {
+/*
+ * 团队表：用 colgroup 显式定宽，标题列吃掉剩余空间。
+ * （旧版靠全局 nth-child 定宽，落到 8 列表上会把优先级列撑满整行。）
+ */
+.team-table {
+  min-width: 720px;
+}
+
+.team-table col.col-toggle {
+  width: 56px;
+}
+
+/* 折叠列只放箭头/类型标签：右边留白去掉，标签才有位置不换行 */
+.team-table td.col-toggle {
+  padding-right: 2px;
+}
+
+.team-table col.col-code {
+  width: 104px;
+}
+
+.team-table col.col-priority {
+  width: 58px;
+}
+
+.team-table col.col-status {
+  width: 78px;
+}
+
+.team-table col.col-assignee {
+  width: 78px;
+}
+
+.team-table col.col-due {
+  width: 88px;
+}
+
+.team-table col.col-project {
+  width: 132px;
+}
+
+.team-table.no-project col.col-project,
+.team-table.no-project th.col-project,
+.team-table.no-project td.col-project {
+  display: none;
+}
+
+.team-table td {
+  vertical-align: top;
+}
+
+.team-table td.col-code {
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: var(--tb-mono);
+  font-size: 11px;
+  color: var(--tb-muted-fg);
+  white-space: nowrap;
+}
+
+.team-table td.col-due,
+.team-table td.col-assignee,
+.team-table td.col-status,
+.team-table td.col-priority {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.cell-muted {
+  color: var(--tb-muted-fg);
+}
+
+.pill {
+  display: inline-block;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--tb-muted);
+  border-radius: 999px;
+}
+
+.pill-p0 {
+  color: #b91c1c;
+  background: rgb(185 28 28 / 14%);
+}
+
+.pill-p1 {
+  color: #c2410c;
+  background: rgb(194 65 12 / 14%);
+}
+
+.pill-p2 {
+  color: #1d4ed8;
+  background: rgb(29 78 216 / 12%);
+}
+
+.pill-p3,
+.pill-muted {
+  color: var(--tb-muted-fg);
+}
+
+.pill-running {
+  color: #1d4ed8;
+  background: rgb(29 78 216 / 12%);
+}
+
+.pill-todo {
+  color: #b45309;
+  background: rgb(180 83 9 / 14%);
+}
+
+.pill-done {
+  color: #15803d;
+  background: rgb(21 128 61 / 14%);
+}
+
+.pill-cancel {
+  color: var(--tb-muted-fg);
+}
+
+.row-toggle {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--tb-muted-fg);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--tb-radius-sm);
+}
+
+.row-toggle:hover {
+  color: var(--tb-card-fg);
+  background: var(--tb-muted);
+}
+
+.team-table .group-row {
+  cursor: pointer;
+}
+
+.team-table .group-row > td {
+  border-top: 1px solid var(--tb-border);
+  font-size: 12px;
+}
+
+.team-table .group-row.is-open > td {
+  background: color-mix(in srgb, var(--tb-muted) 70%, transparent);
+}
+
+.team-table .group-row:hover > td {
+  background: color-mix(in srgb, var(--tb-muted) 45%, transparent);
+}
+
+.title-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tb-card-fg);
+}
+
+.title-link {
+  font-weight: 500;
+  color: var(--tb-card-fg);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.title-link:hover {
+  text-decoration: underline;
+}
+
+.child-count {
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--tb-muted-fg);
+  background: var(--tb-muted);
+  border-radius: 999px;
+}
+
+.group-hint {
+  font-size: 11px;
+  color: var(--tb-muted-fg);
+  opacity: 0.85;
+}
+
+.child-badge {
+  display: inline-block;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--tb-muted-fg);
+  white-space: nowrap;
+  border: 1px solid var(--tb-border);
+  border-radius: 4px;
+}
+
+/* 按类型上色：任务冷色、缺陷暖红，扫一眼就能分清 */
+.child-badge.kind-task {
+  color: var(--tb-ok);
+  background: color-mix(in oklab, var(--tb-ok) 12%, transparent);
+  border-color: color-mix(in oklab, var(--tb-ok) 38%, transparent);
+}
+
+.child-badge.kind-bug {
+  color: var(--tb-danger);
+  background: color-mix(in oklab, var(--tb-danger) 12%, transparent);
+  border-color: color-mix(in oklab, var(--tb-danger) 38%, transparent);
+}
+
+.child-badge.kind-requirement {
+  color: var(--tb-accent);
+  background: color-mix(in oklab, var(--tb-accent) 12%, transparent);
+  border-color: color-mix(in oklab, var(--tb-accent) 38%, transparent);
+}
+
+.child-badge.kind-workOrder {
+  color: var(--tb-warn);
+  background: color-mix(in oklab, var(--tb-warn) 12%, transparent);
+  border-color: color-mix(in oklab, var(--tb-warn) 38%, transparent);
+}
+
+.team-table .child-placeholder {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--tb-muted-fg);
+}
+
+.team-table .child-placeholder .spinner {
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+
+.team-table .child-row > td {
+  padding-top: 3px;
+  padding-bottom: 3px;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--tb-muted) 30%, transparent);
+}
+
+.team-table .child-row:hover > td {
+  background: color-mix(in srgb, var(--tb-muted) 55%, transparent);
+}
+
+.team-table .child-row-empty > td {
+  padding: 6px 8px;
   font-size: 11px;
   color: var(--tb-muted-fg);
 }
 
-.combo-empty {
-  padding: 8px;
-  font-size: 12px;
-  color: var(--tb-muted-fg);
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }

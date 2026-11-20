@@ -44,50 +44,124 @@
 
     <section id="workspace" class="team-workspace" hidden>
       <div class="team-toolbar">
-        <div class="combo" id="project-combo">
-          <span id="project-label" class="combo-label">项目</span>
-          <div class="combo-control">
+        <details class="ms ms-projects" id="ms-projects">
+          <summary class="tb-btn tb-btn-ghost tb-btn-sm">
+            项目：<span class="ms-count" id="project-count">全部</span>
+          </summary>
+          <div class="ms-panel ms-panel-wide" role="group" aria-label="项目">
             <input
-              id="project-input"
-              class="tb-input"
-              type="text"
-              role="combobox"
+              id="project-search"
+              class="tb-input tb-input-sm ms-search"
+              type="search"
               autocomplete="off"
-              spellcheck="false"
-              aria-labelledby="project-label"
-              aria-autocomplete="list"
-              aria-expanded="false"
-              aria-controls="project-list"
-              placeholder="搜索项目"
+              placeholder="搜索项目名称或编号"
             />
-            <ul
-              id="project-list"
-              class="combo-list"
-              role="listbox"
-              aria-labelledby="project-label"
-              hidden
-            ></ul>
+            <div id="project-options" class="ms-options"></div>
+            <div class="ms-actions">
+              <button id="project-all" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">
+                全选
+              </button>
+              <button id="project-none" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">
+                清空
+              </button>
+            </div>
           </div>
-        </div>
+        </details>
         <button id="reload" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">刷新</button>
       </div>
+
+      <div class="team-toolbar team-filters">
+        <label class="filter-field filter-text">
+          <span>编号</span>
+          <input
+            id="filter-code"
+            class="tb-input tb-input-sm"
+            type="search"
+            placeholder="模糊匹配"
+          />
+        </label>
+        <label class="filter-field filter-text">
+          <span>标题</span>
+          <input
+            id="filter-name"
+            class="tb-input tb-input-sm"
+            type="search"
+            placeholder="模糊匹配"
+          />
+        </label>
+        <details class="ms" id="ms-status" data-label="状态">
+          <summary class="tb-btn tb-btn-ghost tb-btn-sm">
+            状态：<span class="ms-count">全部</span>
+          </summary>
+          <div class="ms-panel" role="group" aria-label="状态"></div>
+        </details>
+        <details class="ms" id="ms-priority" data-label="优先级">
+          <summary class="tb-btn tb-btn-ghost tb-btn-sm">
+            优先级：<span class="ms-count">全部</span>
+          </summary>
+          <div class="ms-panel" role="group" aria-label="优先级"></div>
+        </details>
+        <details class="ms" id="ms-assignee" data-label="负责人">
+          <summary class="tb-btn tb-btn-ghost tb-btn-sm">
+            负责人：<span class="ms-count">全部</span>
+          </summary>
+          <div class="ms-panel" role="group" aria-label="负责人"></div>
+        </details>
+        <label class="filter-field filter-iteration">
+          <span>迭代</span>
+          <select id="filter-iteration" class="tb-input tb-input-sm">
+            <option value="">全部迭代</option>
+          </select>
+        </label>
+        <label class="filter-field filter-date">
+          <span>创建</span>
+          <input id="filter-create-from" class="tb-input tb-input-sm" type="date" />
+        </label>
+        <label class="filter-field filter-date">
+          <span>至</span>
+          <input id="filter-create-to" class="tb-input tb-input-sm" type="date" />
+        </label>
+        <button id="filter-reset" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">
+          重置筛选
+        </button>
+      </div>
+
+      <div id="loading" class="table-loading" role="status" aria-live="polite" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span class="loading-text">正在加载任务…</span>
+      </div>
+
       <div class="tb-table-wrap table-wrap">
-        <table class="tb-table">
+        <table class="tb-table team-table no-project" id="team-table">
+          <colgroup>
+            <col class="col-toggle" />
+            <col class="col-code" />
+            <col class="col-title" />
+            <col class="col-priority" />
+            <col class="col-status" />
+            <col class="col-assignee" />
+            <col class="col-due" />
+            <col class="col-project" />
+          </colgroup>
           <thead>
             <tr>
-              <th>编号</th>
-              <th>标题</th>
-              <th>状态</th>
-              <th>优先级</th>
-              <th>负责人</th>
-              <th>截止日期</th>
+              <th class="col-toggle"><span class="visually-hidden">展开</span></th>
+              <th class="col-code">编号</th>
+              <th class="col-title">标题</th>
+              <th class="col-priority">优先级</th>
+              <th class="col-status">状态</th>
+              <th class="col-assignee">负责人</th>
+              <th class="col-due">截止日期</th>
+              <th class="col-project">项目</th>
             </tr>
           </thead>
           <tbody id="rows"></tbody>
         </table>
         <p id="empty" class="tb-muted tb-small empty" hidden>这个项目暂时没有任务</p>
       </div>
+
       <div class="team-pager">
+        <span id="hint" class="tb-muted tb-small"></span>
         <button id="prev" class="tb-btn tb-btn-ghost tb-btn-sm" type="button" disabled>
           上一页
         </button>
