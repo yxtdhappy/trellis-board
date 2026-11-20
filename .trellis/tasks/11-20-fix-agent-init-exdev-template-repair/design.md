@@ -52,6 +52,20 @@ configurePlatform(platform, repo)
   该选项，完整 init 会先报 `unknown option '--pi-presence'`。旧 JS 的 `trellisAgentToolFlags()`
   只返回 `flag`，`presenceMode: "all"` 一直只用于客户端检测。本次一并删除该参数。
 
+### 2.4 盘符根路径
+
+另一台机器项目位于 `D:\` 根时，修复 helper 的 `realpath/lstat` 报
+`EISDIR: illegal operation on a directory, lstat 'D:'`。Windows 上 `D:` 是驱动器相对路径
+（取决于进程在 D: 上的当前目录），DLP/网络盘会把它重定向成不可 lstat 的对象。
+
+处理：
+
+- Rust `normalize_repo_root()`：仅当路径正好是两个字符且第二个是 `:` 时补 `\`；
+  `initialize_with_repair()` 在 snapshot / init / repair / hash / finish_init 之前统一使用规范化路径。
+- helper `normalizeRepoPath()`：`/^[A-Za-z]:$/` 同样补 `path.sep`，再 `path.resolve()` 后
+  `realpathSync`；正常绝对路径保持不变。
+- 该规范化只影响裸盘符，不改变普通项目路径、盘符子目录或 UNC 路径。
+
 ## 3. 总体结构
 
 ```text
@@ -194,6 +208,8 @@ enum InitMode<'a> {
     AgentsOnly,
 }
 
+fn normalize_repo_root(path: &Path) -> PathBuf; // 裸盘符 D: -> D:\
+
 async fn run_init_process(runtime, repo, tools, mode) -> AgentResult<ProcessOutput>;
 async fn initialize_with_repair(runtime, repo, tools, mode, fallback_prefix) -> AgentResult<()>;
 ```
@@ -268,7 +284,7 @@ fn hash_helper_args(cli, repo, payload_json) -> Vec<String>;
 
 ## 11. 验证策略
 
-- Rust 单测：平台识别、参数拼接、错误文案/details、helper 结构约束、现有 hash 清理回归。
+- Rust 单测：平台识别、参数拼接、错误文案/details、helper 结构约束、裸盘符规范化、现有 hash 清理回归。
 - Node 测试：用 fake Trellis 包执行内嵌 helper 的 snapshot / repair / hash，覆盖已有文件保护、
   路径越界、失败回滚、内容不一致不登记。
 - 真机 E2E：本机 DLP 环境创建临时 Git 仓库，执行真实 Agent-only 与完整 init 的

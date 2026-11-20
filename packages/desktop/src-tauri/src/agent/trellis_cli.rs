@@ -312,6 +312,19 @@ async fn run_init_process(
     run_process(&runtime.node_exe, &args, &options).await
 }
 
+fn normalize_repo_root(path: &Path) -> PathBuf {
+    // 裸盘符（如 D:）在 Windows 上是「驱动器相对路径」，realpath/lstat 可能被 DLP 或
+    // 网络盘重定向后报 EISDIR；用户选择盘符根时统一补成 D:\。
+    #[cfg(windows)]
+    {
+        let raw = path.as_os_str().to_string_lossy();
+        if raw.len() == 2 && raw.as_bytes()[1] == b':' {
+            return PathBuf::from(format!("{raw}\\"));
+        }
+    }
+    path.to_path_buf()
+}
+
 async fn initialize_with_repair(
     runtime: &TrellisRuntime,
     repo_path: &Path,
@@ -319,6 +332,9 @@ async fn initialize_with_repair(
     mode: InitMode<'_>,
     fallback_prefix: &str,
 ) -> AgentResult<()> {
+    let normalized_repo = normalize_repo_root(repo_path);
+    let repo_path = normalized_repo.as_path();
+
     // 第一次初始化前记录所选 Pi / OMP 平台尚缺失的模板；仅用于补登记模板哈希。
     let selected_platforms = selected_repair_platforms(agent_tools);
     let missing_before = if selected_platforms.is_empty() {

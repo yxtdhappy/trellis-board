@@ -19,6 +19,15 @@ function writeJson(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
+function normalizeRepoPath(raw) {
+  let value = raw;
+  // 裸盘符是 Windows 的驱动器相对路径；补成盘符根，避免 realpath/lstat 对 "D:" 报 EISDIR。
+  if (process.platform === "win32" && /^[A-Za-z]:$/.test(value)) {
+    value += path.sep;
+  }
+  return path.resolve(value);
+}
+
 function validateRelativePath(relativePath) {
   if (typeof relativePath !== "string" || relativePath.length === 0) {
     fail("模板路径为空");
@@ -224,7 +233,7 @@ async function main() {
     fail("Trellis 运行时缺少模板收集接口");
   }
 
-  const realRoot = fs.realpathSync(repoPath);
+  const realRoot = fs.realpathSync(normalizeRepoPath(repoPath));
   if (!fs.statSync(realRoot).isDirectory()) {
     fail("仓库路径不是目录");
   }

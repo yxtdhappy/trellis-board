@@ -422,7 +422,29 @@ impl TaskControlStateFile {
             self.controls
                 .insert(control.execution_task_key.clone(), stored);
         }
-        Ok(before_controls != self.controls)
+        // 控制面是权威：任务已离开 handoff 清理状态后，本地残留的冲突记录必须移除，
+        // 否则失效提示会永久驻留；cleaned 成功记录保留既有通知语义。
+        let before_handoff_count = self.handoffs.len();
+        let merged_controls = &self.controls;
+        self.handoffs.retain(|_, handoff| {
+            if handoff.local_id != local_id || handoff.task_space_id != task_space_id {
+                return true;
+            }
+            if handoff.outcome == "cleaned" {
+                return true;
+            }
+            merged_controls
+                .get(&handoff.execution_task_key)
+                .is_some_and(|control| {
+                    control.state == "handoff_materialized"
+                        && matches!(
+                            control.handoff_state.as_str(),
+                            "source_cleanup_pending" | "source_cleanup_conflict"
+                        )
+                })
+        });
+        let handoffs_changed = self.handoffs.len() != before_handoff_count;
+        Ok(before_controls != self.controls || handoffs_changed)
     }
 
     pub fn upsert_control(&mut self, local_id: &str, control: &TaskControl) -> AgentResult<bool> {

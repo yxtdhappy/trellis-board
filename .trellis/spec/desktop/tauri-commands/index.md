@@ -349,3 +349,38 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
 - `packages/desktop/test/desktop-ui-build.test.js`：7 个权限/命令成对出现、capability 白名单、
   `ensure_board_caller`、懒启动与 Web 入口 gating。
 - `packages/desktop/src-tauri/src/plugin_host/tests.rs`：路径隔离键、清单合并、资源释放、DPAPI 往返。
+
+## Scenario: 客户端日志文件与轮转
+
+### 1. Scope / Trigger
+
+- 修改 `logging.rs`、日志目录、`logging::init` 调用点或「打开日志目录」时适用。
+
+### 2. Signatures
+
+- `logging::init(directory: &Path)`：启动时调用一次，目录为 `config::logs_dir()`。
+- `logging::info(message)` / `logging::warn(message)`：唯一落盘入口。
+- 文件：`desktop.log`（当前）、`desktop.1.log`、`desktop.2.log`（历史）。
+
+### 3. Contracts
+
+- 每行写入前经过 `redact`：Bearer 凭证与 `credential` / `pairingCode` / `sessionToken` / `token` / `password` 字段值替换为 `***`。
+- 当前文件达到 5 MiB（`MAX_LOG_BYTES`）时，在下一次写入前轮转：删除最旧历史、历史依次改名、当前文件改名为 `desktop.1.log`。
+- 只保留 2 份历史（`ROTATED_LOGS`），目录总占用上限 15 MiB。
+- 追加与轮转由 `LOG_LOCK` 串行化；任一步失败（文件占用、权限不足）静默降级为继续追加，不改变命令结果、不 panic。
+- 不引入日志框架：框架接管写入路径会绕过脱敏，且按时间轮转无法保证磁盘上限。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| 当前文件 < 5 MiB | 仅追加 |
+| 当前文件 ≥ 5 MiB | 轮转后新建当前文件继续写 |
+| 历史已满 | 先删除 `desktop.2.log` 再改名 |
+| rename/remove 失败 | 保持当前文件继续追加，允许超限 |
+| 日志目录不可写或不存在 | 不写文件，不影响调用方 |
+
+### 5. Tests Required
+
+- `logging::tests` 覆盖：达到上限轮转、历史份数上限、写入失败静默。
+- `agent::process::tests::logs_failed_commands` 覆盖失败命令落盘。
