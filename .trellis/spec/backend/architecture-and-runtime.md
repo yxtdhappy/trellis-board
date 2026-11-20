@@ -61,7 +61,9 @@ onboarding.rs
 `database.js` 的连接、事务和迁移入口。`loader.js` 是可复用扫描核心；Worker、详情接口和 Team 快照
 投影都复用它，不在 HTTP 路由另写阶段推导。
 
-## Standalone 运行时
+## Standalone 运行时（已降级 / Legacy）
+
+> **降级说明**：`standalone` 模式已降级为遗留兼容模式（Frozen / Legacy），不再新增功能特性或要求双轨同步；新能力与插件演进统一围绕 `team` 服务端与桌面 EXE 主线开展，仅保留以下现状供回溯与存量测试。
 
 单机模式继续读取 SQLite `repositories` 白名单中的本机仓库：
 

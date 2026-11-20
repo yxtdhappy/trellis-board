@@ -1,0 +1,30 @@
+{
+  "id": "team-plugin-architecture-refactor",
+  "name": "team-plugin-architecture-refactor",
+  "title": "团队版主线插件体系改造（服务器默认屏蔽、6 大插件入驻 EXE 与极简配置）",
+  "description": "父任务：生产 Team 服务器默认屏蔽插件；将 witops-core、scenario-copilot、jenkins-ops、accounts-core、acp-dispatch、a2a-intake 六大内置插件迁入桌面 EXE 本机宿主并简化 plugin.json 配置（除账号信息外启用即用）；Standalone 降级不再维护。父任务只维护总需求集、任务地图与跨子任务验收口径，不直接实现。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": "server",
+  "priority": "P1",
+  "creator": "kanyifei",
+  "assignee": "kanyifei",
+  "createdAt": "2026-11-20",
+  "completedAt": "2026-11-20",
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "11-20-team-plugin-server-gating",
+    "11-20-desktop-local-plugin-host",
+    "11-20-desktop-plugins-zero-config"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "三个子任务均已归档：server gating (baeb4383之前)、desktop local host (baeb4383)、zero-config plugins (f51b7883)。Linux 验证：yarn test 664、yarn test:plugins 134、web lint/build、cargo check --tests 通过；Windows 真机 cargo test/绿色包验收因本机缺少 Rust/MSVC 工具链尚未执行，需在带工具链的 Windows 环境补跑。",
+  "meta": {}
+}

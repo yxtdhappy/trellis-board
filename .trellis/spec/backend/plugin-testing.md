@@ -18,6 +18,9 @@
 - L3 必须走真实入口：`createHarness` 读取 `plugin.json`、启动子进程、经 `/api/plugins/<id>/...` 或事件驱动；不得直接 import 插件内部函数来替代入口。
 - L2 不为单个业务插件写分支；新增协议行为先加 fixture 插件和 L2 用例。
 - L4 默认跳过，不能成为唯一证据。
+- 桌面本机宿主用 `packages/desktop/test/plugin-host.test.js`：真实 `host.mjs` + 临时数据目录 +
+  `accounts-core`，覆盖 bearer 鉴权、secret 面板路径重写、面板资源、启停、仓库注入与空清单零插件。
+  不依赖 Electron/Tauri；Rust 侧路径隔离、清单合并与资源释放由 `cargo test` 覆盖。
 
 ## L2 必测清单
 

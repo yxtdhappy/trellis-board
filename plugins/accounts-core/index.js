@@ -22,6 +22,7 @@ const ACCOUNT_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
 const DEFAULT_PRESETS = [
   { id: 'witops', name: 'WitOps 平台' },
   { id: 'jenkins', name: 'Jenkins' },
+  { id: 'scenario', name: 'Scenario Copilot' },
 ]
 
 function text(value) {

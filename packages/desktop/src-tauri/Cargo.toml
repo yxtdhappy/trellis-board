@@ -1,6 +1,6 @@
 [package]
 name = "trellis-board-client"
-version = "0.4.51"
+version = "0.4.52"
 description = "Trellis Board Windows desktop client"
 edition = "2021"
 rust-version = "1.90"
@@ -33,7 +33,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 tauri-plugin-notification = { version = "2.8", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Globalization"] }
 
 [profile.release]
 codegen-units = 1

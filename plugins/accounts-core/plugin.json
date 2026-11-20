@@ -4,6 +4,9 @@
   "description": "集中维护内网 AD 统一账号与各系统绑定，通过 accounts.credentials capability 供其他插件解析凭据。",
   "version": "1.0.0",
   "apiVersion": 1,
+  "targets": [
+    "desktop"
+  ],
   "allowMissingSecrets": true,
   "engines": {
     "board": ">=0.4.0"
@@ -47,10 +50,5 @@
       "order": 30
     }
   ],
-  "config": {
-    "systemPresets": [
-      { "id": "witops", "name": "WitOps 平台" },
-      { "id": "jenkins", "name": "Jenkins" }
-    ]
-  }
+  "config": {}
 }

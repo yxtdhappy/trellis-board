@@ -141,6 +141,10 @@ test('团队模式静态资源能提供字体与外部主题脚本', async (t) =
     String(script.headers['content-security-policy']),
     /connect-src 'self' ipc: http:\/\/ipc\.localhost/,
   )
+  assert.match(
+    String(script.headers['content-security-policy']),
+    /frame-src 'self' http:\/\/127\.0\.0\.1:\*/,
+  )
 
   const marker = await get(runtime, `/${markerName}`)
   assert.equal(marker.status, 200)

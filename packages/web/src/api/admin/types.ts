@@ -226,6 +226,9 @@ export type Runtime = {
   systemAdmin: boolean
   teams: Team[]
   projects: RuntimeProject[]
+  features: {
+    pluginsEnabled: boolean
+  }
 }
 
 export type NewUserInput = {

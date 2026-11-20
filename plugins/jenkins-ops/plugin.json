@@ -4,6 +4,9 @@
   "description": "触发、中止、查询 Jenkins 构建，读取控制台日志与构建产物，并以 jenkins.ops capability 供其他插件与 agent 调用。",
   "version": "1.0.0",
   "apiVersion": 1,
+  "targets": [
+    "desktop"
+  ],
   "allowMissingSecrets": true,
   "engines": {
     "board": ">=0.4.0"
@@ -21,7 +24,9 @@
     {
       "name": "accounts.credentials",
       "version": "^1.0.0",
-      "methods": ["credential.resolve"]
+      "methods": [
+        "credential.resolve"
+      ]
     }
   ],
   "provides": [
@@ -82,18 +87,5 @@
       "order": 35
     }
   ],
-  "config": {
-    "baseUrl": "",
-    "username": "",
-    "jobFilter": [],
-    "views": [],
-    "verifyTls": true,
-    "crumb": "auto",
-    "timeoutMs": 20000,
-    "retries": 1,
-    "maxLogLines": 2000,
-    "repositoryId": "",
-    "credentialSource": "auto",
-    "accountSystemId": "jenkins"
-  }
+  "config": {}
 }

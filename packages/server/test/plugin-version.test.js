@@ -118,3 +118,23 @@ test('manifestFailureMessage 生成可读原因', () => {
   assert.match(message, /1\.0\.0/)
   assert.match(message, /0\.1\.0/)
 })
+
+test('validateManifest 接受 desktop targets 与空 config', () => {
+  const result = validateManifest(
+    { id: 'demo', name: 'Demo', version: '1.0.0', apiVersion: 1, targets: ['desktop'], config: {} },
+    { hostVersion: '0.4.48', hostApiVersion: 1 },
+  )
+  assert.equal(result.ok, true, result.reason)
+  assert.deepEqual(result.manifest.targets, ['desktop'])
+  assert.deepEqual(result.manifest.config, {})
+})
+
+test('validateManifest 拒绝未知或重复 targets', () => {
+  for (const targets of [['mobile'], ['desktop', 'desktop'], []]) {
+    const result = validateManifest(
+      { id: 'demo', name: 'Demo', version: '1.0.0', apiVersion: 1, targets },
+      { hostVersion: '0.4.48', hostApiVersion: 1 },
+    )
+    assert.equal(result.ok, false)
+  }
+})

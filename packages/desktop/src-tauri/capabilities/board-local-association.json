@@ -48,6 +48,13 @@
     "allow-desktop-sidecar-status",
     "allow-preflight-pending-project",
     "allow-appearance-load",
-    "allow-appearance-save"
+    "allow-appearance-save",
+    "allow-desktop-plugins-list",
+    "allow-desktop-plugin-set-enabled",
+    "allow-desktop-plugin-reorder",
+    "allow-desktop-plugin-logs",
+    "allow-desktop-plugin-panels",
+    "allow-desktop-plugin-request",
+    "allow-desktop-plugin-asset"
   ]
 }

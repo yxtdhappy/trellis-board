@@ -1,0 +1,17 @@
+.fields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 12px 20px;
+  align-items: center;
+  margin: 0;
+}
+.fields dd {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  min-width: 0;
+}
+.fields code {
+  overflow-wrap: anywhere;
+}

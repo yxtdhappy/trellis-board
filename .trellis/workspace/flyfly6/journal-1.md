@@ -1505,13 +1505,38 @@ packages/web 全量审计后按 shadcn/base-ui 规则把重复实现收敛到 co
 ### Summary
 
 reconcile 判定已自动接入 worktree 被删除后调用 detach_local_association，成功即删注册表条目、按重读 config 刷新 TaskSync/watcher；detach_pending 静默 15s 重试；无 binding 直接清理；手工接入沿用分支守卫。ProjectRail 移除 hidden_missing 提示与解绑按钮；alertVariants 补 *:min-w-0 修复网格项无法收缩导致的文本溢出。cargo test 328 passed，web build/lint 通过。
+## Session 45: 客户端命令报错可读性与日志留存
+<!-- trellis-session: v=2 fp=54b8ff8ea01a520d -->
+
+**Date**: 2026-11-20
+**Task**: 客户端命令报错可读性与日志留存
+**Package**: desktop
+**Branch**: `design-assigned-task-worktree-flow`
+
+### Summary
+
+修复中文 Windows 命令报错乱码（OEMCP 逐行回退解码）、子进程失败统一落日志、desktop.log 5MiB/2 份轮转
+
+### Main Changes
+
+- process.rs: read_capped 返回 Vec<u8> + decode_output/decode_oem；失败路径 logging::warn 记录命令/退出码/stdout/stderr 尾部；runtime_commands.rs: log_error 覆盖 runtime_status/set_node_path/install 与配置写入；logging.rs: MAX_LOG_BYTES=5MiB、ROTATED_LOGS=2、LOG_LOCK 串行化、rotate_if_needed 失败降级；Cargo.toml 增加 Win32_Globalization
 
 ### Git Commits
 
 | Hash | Message |
 |------|---------|
 | `a12f4d9` | feat(desktop): worktree 删除后自动解绑并修复 Alert 溢出 |
+| `fbe9a714` | fix(desktop): 修复命令报错乱码、记录命令失败日志并按大小轮转 |
+| `af9b4e7` | chore(task): archive 11-20-client-command-logging |
+
+### Testing
+
+- [OK] cargo test --bin trellis-board-client -- logging:: → 5 passed；-- process::tests → 4 passed；rustfmt --check 通过；chcp=936 确认真实执行中文断言
 
 ### Status
 
 [OK] **Completed**
+
+### Next Steps
+
+- 实机验证登录页首次安装失败的界面展示与「打开日志目录」中的历史文件

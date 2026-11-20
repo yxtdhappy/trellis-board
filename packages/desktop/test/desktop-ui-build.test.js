@@ -209,3 +209,43 @@ test('windows workflows build the desktop ui before the client is bundled or tes
     'desktop-build must build the desktop ui before tauri build',
   )
 })
+
+test('desktop local plugin commands stay board-only and lazy', () => {
+  const permissions = read('packages/desktop/src-tauri/permissions/desktop.toml')
+  const capability = JSON.parse(
+    read('packages/desktop/src-tauri/capabilities/board-local-association.json'),
+  )
+  const localCapability = JSON.parse(read('packages/desktop/src-tauri/capabilities/main.json'))
+  const main = read('packages/desktop/src-tauri/src/main.rs')
+  const host = read('packages/desktop/src-tauri/src/plugin_host.rs')
+  const boardPage = read('packages/web/src/pages/board/BoardPage.tsx')
+  const adapter = read('packages/web/src/api/desktop-plugins.ts')
+
+  const commands = [
+    ['desktop-plugins-list', 'desktop_plugins_list'],
+    ['desktop-plugin-set-enabled', 'desktop_plugin_set_enabled'],
+    ['desktop-plugin-reorder', 'desktop_plugin_reorder'],
+    ['desktop-plugin-logs', 'desktop_plugin_logs'],
+    ['desktop-plugin-panels', 'desktop_plugin_panels'],
+    ['desktop-plugin-request', 'desktop_plugin_request'],
+    ['desktop-plugin-asset', 'desktop_plugin_asset'],
+  ]
+  for (const [identifier, command] of commands) {
+    assert.match(permissions, new RegExp(`identifier = "allow-${identifier}"`))
+    assert.match(permissions, new RegExp(`commands\\.allow = \\["${command}"\\]`))
+    assert.ok(capability.permissions.includes(`allow-${identifier}`))
+    assert.ok(!localCapability.permissions.includes(`allow-${identifier}`))
+    assert.match(main, new RegExp(`${command},?`))
+    assert.match(host, new RegExp(`pub async fn ${command}\\(`))
+  }
+
+  // 每个命令先校验调用方 origin，再触碰宿主状态。
+  assert.match(host, /caller\(&app, &window\)\?;/)
+  assert.match(host, /ensure_board_caller/)
+  assert.match(host, /if !entries\.any_enabled\(\) \{\s+return Ok\(false\);/)
+  assert.match(host, /desktop-plugins/)
+  assert.match(host, /kill_process_tree/)
+  assert.match(boardPage, /isTauri && teamMode \? \[DESKTOP_PLUGIN_NAV\] : \[\]/)
+  assert.match(boardPage, /fetchDesktopPanels/)
+  assert.match(adapter, /desktop_plugin_request/)
+})

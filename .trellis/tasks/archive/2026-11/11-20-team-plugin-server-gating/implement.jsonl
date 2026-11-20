@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "插件启用、禁用、白名单与面板静态资源约束"}
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "Team 运行时装配与环境配置边界"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "Team HTTP 路由、Origin 校验与匿名面板路径约束"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "Web 导航与管理 Tab 条件渲染状态来源"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "runtime features 字段跨后端与前端一致性"}

@@ -104,6 +104,17 @@ function booleanSetting(env, name, fallback) {
   throw new Error(`${name} 只能是 true 或 false`)
 }
 
+/**
+ * Team 插件白名单。未设置、空串、`none`、`false` 都解析为空数组：
+ * 生产 Team 服务器默认不装载任何插件，必须显式配置才放行。
+ */
+export function parsePluginAllowlist(raw) {
+  const value = String(raw ?? '').trim()
+  if (!value) return []
+  if (['none', 'false', '0'].includes(value.toLowerCase())) return []
+  return [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))]
+}
+
 export function parseTeamConfig(env = process.env) {
   const mode = String(env.TRELLIS_BOARD_MODE || 'standalone')
     .trim()
@@ -134,5 +145,7 @@ export function parseTeamConfig(env = process.env) {
     agentStaleMs: 60_000,
     trustProxy: false,
     allowLocalGitRemotes,
+    pluginsDisabled: booleanSetting(env, 'TRELLIS_PLUGINS_DISABLED', false),
+    pluginAllowlist: parsePluginAllowlist(env.TRELLIS_TEAM_PLUGINS_ALLOWLIST),
   }
 }

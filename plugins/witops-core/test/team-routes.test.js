@@ -10,12 +10,17 @@ import assert from 'node:assert/strict'
 import plugin from '../index.js'
 import { createWitopsFixture, pluginConfig } from './fixtures/witops-fixture.js'
 
-async function createTeamContext(fixture, { credential = { token: 'fixture-token' } } = {}) {
+async function createTeamContext(
+  fixture,
+  { credential = { token: 'fixture-token' }, actor = { userId: 'user-a' } } = {},
+) {
   const routes = new Map()
   const store = new Map()
+  const actorRef = { current: actor }
   const ctx = {
     mode: 'team',
     config: pluginConfig({ baseUrl: fixture.baseUrl }),
+    currentActor: () => actorRef.current,
     currentCredential: () => credential,
     log: { info() {}, warn() {}, error() {} },
     error: (code, message, detail) => Object.assign(new Error(message), { code, detail }),
@@ -71,7 +76,14 @@ async function createTeamContext(fixture, { credential = { token: 'fixture-token
     return handler(request)
   }
 
-  return { call, routes, store }
+  return {
+    call,
+    routes,
+    store,
+    setActor: (next) => {
+      actorRef.current = next
+    },
+  }
 }
 
 async function withFixture(options, run) {
@@ -271,4 +283,38 @@ test('没有 WitOps 凭据时面板路由返回 401 而不是 500', async () => 
   } finally {
     await fixture.close()
   }
+})
+
+test('Team 模式下读缓存按 actor 隔离，刷新只清本人缓存', async () => {
+  await withFixture({}, async ({ call, fixture, setActor }) => {
+    const userCalls = () =>
+      fixture.state.requests.filter((request) => request.url.endsWith('/api/sysUser/page')).length
+
+    setActor({ userId: 'user-a' })
+    const first = await call('GET', '/users')
+    assert.equal(first.status, 200)
+    assert.equal(first.body.items.length, 2)
+    assert.equal(userCalls(), 1)
+
+    await call('GET', '/users')
+    assert.equal(userCalls(), 1, '同一用户第二次请求应命中缓存')
+
+    setActor({ userId: 'user-b' })
+    await call('GET', '/users')
+    assert.equal(userCalls(), 2, '换用户必须重新请求，不能命中别人的缓存')
+
+    // B 刷新只能清 B 自己：A 下一次仍命中自己的缓存。
+    await call('POST', '/refresh')
+    setActor({ userId: 'user-a' })
+    await call('GET', '/users')
+    assert.equal(userCalls(), 2, 'B 的刷新不应清掉 A 的缓存')
+
+    // A 刷新后才重新回源；B 已被自己的刷新清空，随后也会重新请求。
+    await call('POST', '/refresh')
+    await call('GET', '/users')
+    assert.equal(userCalls(), 3, 'A 刷新后应重新拉取')
+    setActor({ userId: 'user-b' })
+    await call('GET', '/users')
+    assert.equal(userCalls(), 4, 'B 的缓存已在 B 刷新时清空')
+  })
 })

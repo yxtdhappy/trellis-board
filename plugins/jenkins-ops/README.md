@@ -183,3 +183,8 @@ npm run test:plugins                             # 全部插件
 !plugins/jenkins-ops/
 !plugins/jenkins-ops/**
 ```
+
+## 零配置
+
+`plugin.json` 的 `config` 为空：`baseUrl`、job 与本地凭据都可以在面板中维护；
+`credentialSource: "auto"` 会优先解析 `accounts-core` 中绑定的 Jenkins 系统，未绑定时回退本地凭据。

@@ -1,8 +1,9 @@
 # Trellis Board Windows 客户端
 
-Tauri v2 单进程客户端：Agent（心跳、SSE 事件、任务空间同步、任务命令）全部在
-`trellis-board-client.exe` 内以 Rust 实现，没有任何 sidecar 或内置 Node 运行时。客户端冷启动先做
-运行环境检查，再显示本地登录页；登录成功后当前 WebView 进入 Board。
+Tauri v2 客户端：Agent（心跳、SSE 事件、任务空间同步、任务命令）全部在
+`trellis-board-client.exe` 内以 Rust 实现，没有任何 sidecar 或内置 Node 运行时。绿色包只含一个 EXE；
+本机插件宿主（Node）只在用户启用至少一个本机插件时按需拉起。客户端冷启动先做运行环境检查，再显示
+本地登录页；登录成功后当前 WebView 进入 Board。
 
 - 客户端版本：`packages/desktop/src-tauri/Cargo.toml`、`packages/desktop/src-tauri/tauri.conf.json`
 - Board 左上角品牌名：`packages/desktop/src-tauri/tauri.conf.json` 的 `productName`，空白时默认
@@ -83,7 +84,35 @@ runtime_status
 - 系统已有 Node ≥ 18.17、trellis ≥ 0.6.17 且 Python ≥ 3.9 时直接跳过安装，只写标志位。
 - Python 只被用来执行项目内的 `.trellis/scripts/*.py`（`task.py create` / `set-branch`、同步时的分支推断），客户端其余部分不依赖它；已有低于 3.9 的 Python 不卸载，侧装并存。
 - 安装包内不再携带 Node 与 trellis 依赖树；环境门是项目初始化的前置条件。
-- Node 只用于环境门校验与项目初始化，运行期不再有常驻 `node.exe` 子进程。
+- Node 用于环境门校验、项目初始化，以及启用本机插件后的本机插件宿主；未启用任何插件时不拉起常驻
+  `node.exe` 子进程。
+
+## 本机插件宿主
+
+Team 服务端默认关闭插件机制；桌面客户端改用 EXE 内置的本机插件宿主承载 6 个内置插件
+（`witops-core`、`scenario-copilot`、`jenkins-ops`、`accounts-core`、`acp-dispatch`、`a2a-intake`）。
+
+- 运行条件：本机插件宿主复用服务端插件运行时，依赖 `node:sqlite`，需要 Node.js ≥ 22.5；低版本会返回
+  明确错误，不影响 Agent 与任务同步。
+- 懒启动：`desktop_plugins_list` 只读配置；只有至少一个插件 `enabled` 时才使用环境门下载的
+  `runtime\node\node.exe` 启动宿主，停用最后一个插件或退出托盘立即回收进程树。
+- 隔离目录：`%LOCALAPPDATA%\TrellisBoard\data\desktop-plugins\<serverHash>\<userId>\`
+  （`plugins.json`、`plugins/logs`、`store`、`board.sqlite`、DPAPI 加密的 `secrets.dpapi`）。
+  切换服务器或账号不会复用上一个账号的插件数据。
+- 内置资源：构建期由 `src-tauri/build.rs` 把宿主脚本、服务端插件运行时、共享工具与 6 个插件嵌入
+  EXE，首次启动按版本校验和释放到
+  `%LOCALAPPDATA%\TrellisBoard\runtime\plugins\<version>\<stamp>\`；绿色包仍是单 EXE。
+- 用户覆盖：`%LOCALAPPDATA%\TrellisBoard\plugins\<id>\` 下同时放 `index.js` 与 `plugin.json`
+  即可覆盖内置实现。
+- 网络边界：宿主只绑定 `127.0.0.1` 随机端口；面板通过随机 secret 路径加载，内部管理接口要求
+  bearer token；Board 页面通过 7 个 `desktop_plugin*` IPC 命令访问，全部经 `ensure_board_caller`
+  同源校验。
+- 面板桥接：面板 iframe 指向 loopback URL，HTML 中的 `/api/plugins/` 会被重写为
+  `/s/<secret>/`；`trellis:request` 由 Web 侧转发到 `desktop_plugin_request`，事件走宿主 SSE。
+- 「本机插件」入口只在 `isTauri === true` 的 Team 模式显示；纯浏览器看不到该入口，也拿不到任何
+  本机插件数据。
+- 本地关联（approved、非只读、非待移除）会作为 `trellis.projects` 注入宿主，供插件按
+  `repositoryId` 读写本地 `.trellis/tasks/**`；Rust `TaskSync` 继续负责上行同步。
 
 ## Agent 生命周期
 
@@ -290,6 +319,13 @@ create_task / assign_task
 - `inspect_associated_project_agents`
 - `initialize_associated_project_agents`
 - `desktop_sidecar_status`
+- `desktop_plugins_list`
+- `desktop_plugin_set_enabled`
+- `desktop_plugin_reorder`
+- `desktop_plugin_logs`
+- `desktop_plugin_panels`
+- `desktop_plugin_request`
+- `desktop_plugin_asset`
 
 Rust 仍会把当前 WebView origin 与本次登录成功的 Board origin 做同源比较。远程页面没有通用文件系统、
 Shell、进程或 dialog 权限。
@@ -328,9 +364,14 @@ packages/desktop/
     src/agent/                    进程内 Agent（protocol/store/credential/http/process/git/env/
                                   device/association/onboarding/task_sync/task_command/runtime/control）
     src/runtime_commands.rs       环境门命令（runtime_status/runtime_install）
+    src/plugin_host.rs            本机插件宿主生命周期、路径隔离、DPAPI、IPC 命令
+    src/plugin_host/assets.rs     EXE 内置宿主/插件资源的按版本释放
+    build.rs                      把宿主、服务端插件运行时、共享工具与内置插件嵌入 EXE
     src/logging.rs                日志脱敏
     capabilities/                 本地登录、远程项目接入
     permissions/desktop.toml      显式命令权限
+  plugin-host/host.mjs            桌面本机插件宿主（loopback HTTP、SSE、面板代理）
+  test/plugin-host.test.js        宿主鉴权、面板重写、启停与仓库注入测试
   package-portable.ps1            组装绿色目录、校验文件和 ZIP
 ```
 

@@ -157,28 +157,92 @@ export default createPlugin({
       : createSession({ ctx, config, client })
     const links = createLinkIndex({ ctx, config })
     const readCache = new Map()
+    const groupStoryCaches = new Map()
     let dispatch = null
-    let storyIndexCache = null
-    let storyIndexPromise = null
+    const READ_CACHE_MAX_ENTRIES = 400
+    const READ_CACHE_MAX_PER_SCOPE = 80
+    const storyIndexCaches = new Map()
+    const storyIndexPromises = new Map()
+
+    // Team 模式同一进程服务多个用户：读缓存必须按 actor 分区，
+    // 否则 A 的 /project-tasks 会命中 B 的缓存。standalone 保持单命名空间。
+    function cacheScope() {
+      if (!teamMode) return 'local'
+      const userId = text(ctx.currentActor?.()?.userId)
+      return userId ? `user:${userId}` : null
+    }
+
+    function scopedKey(key) {
+      const scope = cacheScope()
+      return scope ? `${scope}\u0000${key}` : null
+    }
+
+    function clearScopedKeys(store, scope) {
+      for (const key of [...store.keys()]) {
+        if (key.startsWith(`${scope}\u0000`)) store.delete(key)
+      }
+    }
+
+    function clearStoryCaches(scope) {
+      for (const store of [storyIndexCaches, storyIndexPromises, groupStoryCaches]) {
+        for (const key of [...store.keys()]) {
+          if (key === scope || key.startsWith(`${scope}\u0000`)) store.delete(key)
+        }
+      }
+    }
+
+    function trimReadCache(scope) {
+      if (scope) {
+        let count = 0
+        for (const key of [...readCache.keys()]) {
+          if (!key.startsWith(`${scope}\u0000`)) continue
+          count += 1
+          if (count > READ_CACHE_MAX_PER_SCOPE) readCache.delete(key)
+        }
+      }
+      while (readCache.size > READ_CACHE_MAX_ENTRIES) {
+        readCache.delete(readCache.keys().next().value)
+      }
+    }
+
+    /** 只清当前用户（Team 模式）的缓存；拿不到 actor 时不清，避免误伤其他用户。 */
+    function clearReadCache() {
+      const scope = cacheScope()
+      if (!scope) return
+      clearScopedKeys(readCache, scope)
+      clearStoryCaches(scope)
+    }
+
+    function resetAllCaches() {
+      readCache.clear()
+      groupStoryCaches.clear()
+      storyIndexCaches.clear()
+      storyIndexPromises.clear()
+    }
 
     // 统一账号变更后重算凭据（下次 ensureToken 用新密码登录），并丢掉旧缓存。
     ctx.events.on('accounts-core/changed', async () => {
       await refreshAccounts({ reason: 'accounts-changed' })
-      readCache.clear()
+      resetAllCaches()
     })
 
     function cached(key) {
-      const entry = readCache.get(key)
+      const scoped = scopedKey(key)
+      if (!scoped) return null
+      const entry = readCache.get(scoped)
       if (!entry) return null
       if (Date.now() - entry.at > Number(config.cacheTtlMs || 0)) {
-        readCache.delete(key)
+        readCache.delete(scoped)
         return null
       }
       return entry.value
     }
 
     function remember(key, value) {
-      readCache.set(key, { at: Date.now(), value })
+      const scoped = scopedKey(key)
+      if (!scoped) return value
+      readCache.set(scoped, { at: Date.now(), value })
+      trimReadCache(cacheScope())
       return value
     }
 
@@ -188,7 +252,7 @@ export default createPlugin({
       client,
       session,
       links,
-      onChanged: () => readCache.clear(),
+      onChanged: () => clearReadCache(),
     })
 
     // 与 witops-web 的 detailTypes 一致：0 工单 / 2 缺陷 / 3 需求 / 4 任务。
@@ -386,36 +450,44 @@ export default createPlugin({
       return Array.isArray(data) ? data : (data?.records ?? data?.list ?? [])
     }
 
-    async function loadStoryIndex() {
-      if (storyIndexCache && Date.now() - storyIndexCache.at <= Number(config.cacheTtlMs || 0)) {
-        return storyIndexCache.value
-      }
-      if (storyIndexPromise) return storyIndexPromise
-      storyIndexPromise = (async () => {
-        const index = new Map()
-        let current = 1
-        let pages = 1
-        while (current <= Math.min(pages, 10)) {
-          const data = await session.authorized((token) =>
-            client.storyPage({ current, size: 200 }, { token }),
-          )
-          const records = storyRecords(data)
-          for (const record of records) {
-            const story = normalizeStory(record)
-            if (story.id) index.set(story.id, story)
-          }
-          pages = Math.max(1, Number(data?.pages ?? 1))
-          if (records.length < 200) break
-          current += 1
+    async function buildStoryIndex() {
+      const index = new Map()
+      let current = 1
+      let pages = 1
+      while (current <= Math.min(pages, 10)) {
+        const data = await session.authorized((token) =>
+          client.storyPage({ current, size: 200 }, { token }),
+        )
+        const records = storyRecords(data)
+        for (const record of records) {
+          const story = normalizeStory(record)
+          if (story.id) index.set(story.id, story)
         }
-        storyIndexCache = { at: Date.now(), value: index }
-        return index
-      })()
-      try {
-        return await storyIndexPromise
-      } finally {
-        storyIndexPromise = null
+        pages = Math.max(1, Number(data?.pages ?? 1))
+        if (records.length < 200) break
+        current += 1
       }
+      return index
+    }
+
+    async function loadStoryIndex() {
+      const scope = cacheScope()
+      // 拿不到 actor（Team 模式）时只请求不写缓存，避免把某个用户的数据写给下一个请求。
+      if (!scope) return buildStoryIndex()
+      const hit = storyIndexCaches.get(scope)
+      if (hit && Date.now() - hit.at <= Number(config.cacheTtlMs || 0)) {
+        return hit.value
+      }
+      const pending = storyIndexPromises.get(scope)
+      if (pending) return pending
+      const promise = buildStoryIndex()
+        .then((index) => {
+          storyIndexCaches.set(scope, { at: Date.now(), value: index })
+          return index
+        })
+        .finally(() => storyIndexPromises.delete(scope))
+      storyIndexPromises.set(scope, promise)
+      return promise
     }
 
     function codeKey(value) {
@@ -638,7 +710,7 @@ export default createPlugin({
           { token },
         ),
       )
-      readCache.clear()
+      clearReadCache()
       return { id, status, result: data ?? null }
     }
 
@@ -657,7 +729,7 @@ export default createPlugin({
           { token },
         ),
       )
-      readCache.clear()
+      clearReadCache()
       return { id, status, result: data ?? null }
     }
 
@@ -675,7 +747,7 @@ export default createPlugin({
           { token },
         ),
       )
-      readCache.clear()
+      clearReadCache()
       return { id, assigneeId, result: data ?? null }
     }
 
@@ -843,10 +915,23 @@ export default createPlugin({
 
     // 任务行只带 parentCode/parentName，需求表头要的优先级/状态/负责人/截止只在 /story/page 里。
     // 按空间拉一份需求索引缓存 60 秒：翻页、改筛选不会反复打平台。
-    const groupStoryCache = new Map()
     const GROUP_STORY_TTL = 60 * 1000
+    const GROUP_STORY_MAX_PER_SCOPE = 24
+    const GROUP_STORY_MAX_SCOPES = 50
     const STORY_PAGE_SIZE = 200
     const STORY_PAGE_MAX = 3
+
+    // 按 actor 分桶：bucket 的 key 是用户范围，内层是空间组合。
+    function groupStoryBucket(scope) {
+      const existing = groupStoryCaches.get(scope)
+      if (existing) return existing
+      if (groupStoryCaches.size >= GROUP_STORY_MAX_SCOPES) {
+        groupStoryCaches.delete(groupStoryCaches.keys().next().value)
+      }
+      const bucket = new Map()
+      groupStoryCaches.set(scope, bucket)
+      return bucket
+    }
 
     async function fetchGroupStoryRows(step, token) {
       // 需求列表和任务列表用同一套空间键：产品空间 projectProductId(s)，项目空间 projectId(s)。
@@ -874,7 +959,9 @@ export default createPlugin({
 
     async function loadGroupStoryIndex(plan) {
       const cacheKey = plan.map((step) => `${step.kind}:${step.ids.join(',')}`).join('|')
-      const hit = groupStoryCache.get(cacheKey)
+      const scope = cacheScope()
+      const bucket = scope ? groupStoryBucket(scope) : null
+      const hit = bucket?.get(cacheKey)
       if (hit && Date.now() - hit.at < GROUP_STORY_TTL) return hit.map
       const map = new Map()
       await session.authorized(async (token) => {
@@ -885,7 +972,13 @@ export default createPlugin({
           }
         }
       })
-      groupStoryCache.set(cacheKey, { at: Date.now(), map })
+      if (bucket) {
+        bucket.delete(cacheKey)
+        bucket.set(cacheKey, { at: Date.now(), map })
+        while (bucket.size > GROUP_STORY_MAX_PER_SCOPE) {
+          bucket.delete(bucket.keys().next().value)
+        }
+      }
       return map
     }
 
@@ -1174,9 +1267,8 @@ export default createPlugin({
     })
 
     ctx.http.route('POST', '/refresh', async () => {
-      readCache.clear()
+      clearReadCache()
       links.invalidate()
-      storyIndexCache = null
       await dispatch.loadDictionaries({ force: true })
       return respond(200, { ok: true })
     })
@@ -1208,7 +1300,7 @@ export default createPlugin({
           remember: body.remember === true,
           source: 'panel',
         })
-        readCache.clear()
+        clearReadCache()
         return respond(200, { ok: true, auth: await authStatus() })
       } catch (error) {
         return failure(error, 502)

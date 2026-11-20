@@ -767,6 +767,7 @@ export class PluginSupervisor {
           config: state.config,
           permissions: state.manifest.permissions,
           dataDir: this.dataDir,
+          pluginDataDir: path.join(this.dataDir, 'plugin-data', state.id),
           repositories: this.repositories.map((repository) => ({
             id: repository.id,
             name: repository.name,

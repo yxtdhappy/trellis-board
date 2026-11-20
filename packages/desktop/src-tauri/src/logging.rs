@@ -2,9 +2,13 @@ use chrono::{SecondsFormat, Utc};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+
+const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
+const ROTATED_LOGS: u32 = 2;
 
 static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
+static LOG_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn init(directory: &Path) {
     if let Err(error) = std::fs::create_dir_all(directory) {
@@ -30,11 +34,47 @@ fn format_line(level: &str, message: &str) -> String {
 fn write(level: &str, message: &str) {
     let line = format_line(level, message);
     if let Some(path) = LOG_FILE.get() {
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-            let _ = file.write_all(line.as_bytes());
-        }
+        let _guard = LOG_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        append(path, &line);
     }
     eprint!("{line}");
+}
+
+fn append(path: &Path, line: &str) {
+    rotate_if_needed(path);
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+fn rotated_path(path: &Path, index: u32) -> PathBuf {
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("desktop");
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("log");
+    path.with_file_name(format!("{stem}.{index}.{extension}"))
+}
+
+/// 超过上限时把当前日志移入历史文件；任何一步失败都保持原文件可追加。
+fn rotate_if_needed(path: &Path) {
+    let oversized = std::fs::metadata(path)
+        .map(|meta| meta.len() >= MAX_LOG_BYTES)
+        .unwrap_or(false);
+    if !oversized {
+        return;
+    }
+    let _ = std::fs::remove_file(rotated_path(path, ROTATED_LOGS));
+    for index in (1..ROTATED_LOGS).rev() {
+        let source = rotated_path(path, index);
+        if source.exists() {
+            let _ = std::fs::rename(&source, rotated_path(path, index + 1));
+        }
+    }
+    let _ = std::fs::rename(path, rotated_path(path, 1));
 }
 
 pub fn info(message: &str) {

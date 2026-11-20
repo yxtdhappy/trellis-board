@@ -302,3 +302,85 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
 - Rust：版本比较、清单校验（含 BOM）、SHA-256/大小校验、ZIP 路径选择、替换回滚、通知去重。
 - `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml` 全绿。
 - 手工：配置 `TRELLIS_UPDATE_SERVER` 构建正式包，用本地静态服务器验证检查、通知、下载、重启。
+
+## Scenario: 桌面本机插件宿主 IPC
+
+### 1. Scope / Trigger
+
+- 修改 `packages/desktop/src-tauri/src/plugin_host.rs`、`packages/desktop/plugin-host/host.mjs` 或
+  Web 侧 `desktop_plugin*` 调用时适用。
+
+### 2. Signatures
+
+- `desktop_plugins_list() -> { disabled, running, hostVersion, plugins }`
+- `desktop_plugin_set_enabled(pluginId, enabled) -> { ok, running }`
+- `desktop_plugin_reorder(ids: string[]) -> { ok, plugins }`
+- `desktop_plugin_logs(pluginId, tail?) -> { entries }`
+- `desktop_plugin_panels() -> { panels, running }`；每个 panel 带 `host: "desktop"`、loopback `src` 与
+  `eventsSrc`
+- `desktop_plugin_request(pluginId, method, path, body?) -> { ok, status, contentType, data }`
+- `desktop_plugin_asset(pluginId, path) -> { status, contentType, content }`
+
+### 3. Contracts
+
+- 7 个命令都只加入 `board-local-association` capability，并先执行 `ensure_board_caller(&app, &window)?`；
+  本地登录页 capability 不得包含。
+- 懒启动：只有 `plugins.json` 里至少一个 `enabled` 插件时才解析 Node 并 spawn `host.mjs`；停用最后一个
+  插件、注销或退出托盘都回收进程树。宿主只绑定 `127.0.0.1`，管理接口要求随机 bearer token。
+- 数据目录按 `(serverHash, userId)` 隔离：`.../desktop-plugins/<hash>/<user>/`；`secrets.dpapi` 用
+  Windows DPAPI（CurrentUser）加密，宿主 ready 后删除解密出的 `secrets.json`。
+- 宿主需要 Node.js ≥ 22.5（`node:sqlite`）；低版本返回明确错误，不启动半可用进程。
+- 面板 iframe 指向 loopback `/s/<secret>/<plugin>/<entry>`；只有 `isTauri && teamMode` 渲染
+  「本机插件」入口，纯浏览器不拉取、不显示任何本机插件数据。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| 非当前 Board origin 调用 | 返回「该命令只允许当前登录的 Board 页面调用」 |
+| 没有任何 enabled 插件 | `running: false`，不创建 Node 进程 |
+| Node < 22.5 | 返回版本错误，不 spawn |
+| 停用最后一个插件 | 立即 kill 进程树并删除 `secrets.json` |
+| secret 路径错误 | 401/404，不落到插件进程 |
+
+### 5. Tests Required
+
+- `packages/desktop/test/plugin-host.test.js`：bearer 鉴权、面板 HTML 重写、资源、启停、仓库注入、空清单。
+- `packages/desktop/test/desktop-ui-build.test.js`：7 个权限/命令成对出现、capability 白名单、
+  `ensure_board_caller`、懒启动与 Web 入口 gating。
+- `packages/desktop/src-tauri/src/plugin_host/tests.rs`：路径隔离键、清单合并、资源释放、DPAPI 往返。
+
+## Scenario: 客户端日志文件与轮转
+
+### 1. Scope / Trigger
+
+- 修改 `logging.rs`、日志目录、`logging::init` 调用点或「打开日志目录」时适用。
+
+### 2. Signatures
+
+- `logging::init(directory: &Path)`：启动时调用一次，目录为 `config::logs_dir()`。
+- `logging::info(message)` / `logging::warn(message)`：唯一落盘入口。
+- 文件：`desktop.log`（当前）、`desktop.1.log`、`desktop.2.log`（历史）。
+
+### 3. Contracts
+
+- 每行写入前经过 `redact`：Bearer 凭证与 `credential` / `pairingCode` / `sessionToken` / `token` / `password` 字段值替换为 `***`。
+- 当前文件达到 5 MiB（`MAX_LOG_BYTES`）时，在下一次写入前轮转：删除最旧历史、历史依次改名、当前文件改名为 `desktop.1.log`。
+- 只保留 2 份历史（`ROTATED_LOGS`），目录总占用上限 15 MiB。
+- 追加与轮转由 `LOG_LOCK` 串行化；任一步失败（文件占用、权限不足）静默降级为继续追加，不改变命令结果、不 panic。
+- 不引入日志框架：框架接管写入路径会绕过脱敏，且按时间轮转无法保证磁盘上限。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| 当前文件 < 5 MiB | 仅追加 |
+| 当前文件 ≥ 5 MiB | 轮转后新建当前文件继续写 |
+| 历史已满 | 先删除 `desktop.2.log` 再改名 |
+| rename/remove 失败 | 保持当前文件继续追加，允许超限 |
+| 日志目录不可写或不存在 | 不写文件，不影响调用方 |
+
+### 5. Tests Required
+
+- `logging::tests` 覆盖：达到上限轮转、历史份数上限、写入失败静默。
+- `agent::process::tests::logs_failed_commands` 覆盖失败命令落盘。

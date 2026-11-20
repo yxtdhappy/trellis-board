@@ -3,6 +3,8 @@
 适用：所有插件宿主代码与 `plugins/<id>/` 下的插件实现。设计依据见
 [.trellis/tasks/11-04-plugin-architecture/prd.md](../../../.trellis/tasks/11-04-plugin-architecture/prd.md)。
 
+> **演进边界（2026-11-20）**：`standalone` 单机模式已降级不再维护新功能；当前主线为「生产 Team 服务端默认屏蔽插件 + 桌面 EXE 本机宿主托管内置及私有插件」。新插件与插件改造应优先遵循「`plugin.json` 极简化、除账号凭据外启用即用」原则。
+
 ## 1. 进程与协议
 
 - 插件是**独立子进程**，通过 stdin/stdout 交换 **NDJSON**（一行一个 JSON-RPC 2.0 消息），stderr 只写日志。
@@ -46,6 +48,54 @@
 - 健康检查 30s 一次，连续 3 次失败按崩溃处理；手动 `start` 清空重启计数并允许恢复。
 - 根路径冲突或占用核心前缀（`/`、`/api`）的插件直接 `blocked`，不 spawn。
 - 停插件顺序：`shutdown` → 3s 等待 → `terminateTree`（`packages/server/team/process.js`）。
+
+### 3.1 Team 服务端插件门禁
+
+- `parseTeamConfig()` 解析 `TRELLIS_PLUGINS_DISABLED`（`1` / `true`）与 `TRELLIS_TEAM_PLUGINS_ALLOWLIST`
+  （逗号分隔插件 ID；未设置、空串、`none`、`false`、`0` 均解析为空数组 `[]`）。
+- **生产 Team 服务器默认屏蔽全部插件**：`pluginsDisabled === true` 或白名单为空时，不扫描插件目录、
+  不创建 `createTeamPluginHost()`、不启动任何插件子进程，`plugin_registry` 也不会新增登记。
+- 关闭态契约：`GET /api/panels` → `{ panels: [] }`；`GET /api/plugins` →
+  `{ disabled: true, mode: 'team', plugins: [] }`；其余 `/api/plugins/:id/*`（含 `/app/panel*` 匿名静态资源）
+  与 `/api/events` → `404 PLUGIN_DISABLED`。
+- `/api/runtime` 未登录与已登录响应都带 `features.pluginsEnabled`；前端据此隐藏顶栏插件入口、
+  跳过 `/api/panels` 拉取，管理页隐藏「插件」Tab。
+- 显式放行时 `witops-core` 的读缓存、需求索引与分组需求缓存必须按 `ctx.currentActor().userId` 分区；
+  用户触发的刷新（`POST /refresh`）只清本人缓存。
+
+### 3.2 桌面本机插件宿主
+
+- 桌面 EXE 不依赖 Team 服务端插件机制；`packages/desktop/plugin-host/host.mjs` 复用
+  `createPluginRuntime()`，只监听 `127.0.0.1:0`，管理接口用随机 bearer token，面板路径带随机 secret。
+- 懒启动：`desktop_plugins_list` / `desktop_plugin_panels` 先合并 `plugins.json`；没有任何
+  `enabled` 插件时直接返回，不解析 Node、不创建子进程。停用最后一个插件或退出托盘时回收进程树。
+- 隔离目录：`%LOCALAPPDATA%/TrellisBoard/data/desktop-plugins/<serverHash>/<userId>/`；`plugins.json`
+  保存 enabled/sort/config，`secrets.dpapi` 使用 Windows DPAPI（CurrentUser）绑定当前账号，
+  启动前解密为 `secrets.json` 并在宿主 ready 后删除。
+- 内置资源由 `src-tauri/build.rs` 在编译期嵌入 EXE，`plugin_host::assets::ensure_runtime` 按
+  `版本 + 内容戳` 释放到 `%LOCALAPPDATA%/TrellisBoard/runtime/plugins/`，保持绿色包单 EXE。
+- 用户覆盖目录 `%LOCALAPPDATA%/TrellisBoard/plugins/<id>/` 需同时存在 `index.js` 与 `plugin.json`，
+  否则回退 EXE 内置实现。
+- 7 个 IPC 命令（`desktop_plugins_list`、`desktop_plugin_set_enabled/reorder/logs/panels/request/asset`）
+  全部经 `ensure_board_caller` 校验当前 WebView 与登录 Board 同源；只有 `isTauri` 页面渲染「本机插件」。
+- 面板 iframe 使用 loopback URL；宿主把 HTML 内 `/api/plugins/` 重写为 `/s/<secret>/`，并同源代理
+  `/plugin-ui/*` 静态资源。服务端 CSP 因此放行 `frame-src` 与 `connect-src` 的 `127.0.0.1` / `localhost`。
+- 当前登录账号的 approved、非只读、非待移除 `localAssociations` 会作为 `trellis.projects` 注入宿主；
+  插件读写本地 `.trellis/tasks/**` 后仍由 Rust `TaskSync` 负责上行同步。
+
+### 3.3 内置插件零配置
+
+- 六个内置插件的 `plugin.json` 只保留 `id/name/version/apiVersion/targets/permissions/panels/provides`
+  等身份与能力字段，`config` 固定为 `{}`；`targets: ["desktop"]` 声明主线目标。
+- 技术参数一律下沉为代码 `DEFAULTS`，允许 `config` 覆盖但不再要求必填：
+  - `ctx.paths.dataDir` = `<dataDir>/plugin-data/<pluginId>`，由 supervisor 在 `initialize` 下发；
+  - `trellis.projects` 返回 `branch` 与 `developerId`（读 `<repo>/.trellis/.developer`），供插件推导 cwd/负责人；
+  - `scenario-copilot` 自动探测 `MOM_SCENARIO_ROOT`、项目内 `packages/scenario-copilot` 或
+    `node_modules/@mom-cli/scenario-copilot`，工作区取关联项目，outlines 落 `<项目>/.trellis/scenario-outlines`；
+  - `acp-dispatch` 未配置 `command` 时按 `PATH`/`PATHEXT` 自动发现 `opencode`/`codex`/`claude` 等 CLI；
+  - `a2a-intake` 首次启动生成 24 字节本地 Token 并存入 `ctx.store`，`/a2a` 由插件自身校验 Bearer；
+    桌面宿主在 loopback 根路径暴露 `/a2a` 与 well-known 卡片，卡片地址由 `x-trellis-base` 推导。
+
 
 ## 4. 存储与命名空间
 

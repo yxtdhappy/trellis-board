@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "Tauri 命令签名、capability 声明与 ensure_board_caller 校验"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "桌面进程内 Agent 生命周期、DPAPI 凭据与本地绑定关系"}
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "本机 PluginSupervisor 装配与 sandbox iframe 桥接契约"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "Tauri 环境下远程与本机面板合并渲染策略"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "WebView <-> Tauri IPC <-> 本机 Node 插件宿主跨进程通信契约"}

@@ -4,6 +4,8 @@
 
 ## 1. 运行边界
 
+- 主线定位：Team 模式（中心 Team Server + Windows 桌面 EXE 客户端）是当前唯一持续维护的运行主线；`standalone` 单机模式已降级为遗留兼容模式，不再维护新功能。
+- 服务端插件边界：生产 Team 服务器默认屏蔽所有插件（需显式配置才放行）；个人/本机类插件演进方向为随桌面 EXE 运行并由个人账号隔离，不依赖服务端集中托管。
 - 服务端：Node.js 24、单实例 Node 进程、SQLite WAL。
 - 客户端：Windows 10/11 x64；安装包包含固定 Node runtime 和 Trellis CLI，本机执行任务命令时仍需
   Git 和 Python。
@@ -28,6 +30,8 @@
 | `TRELLIS_BOARD_DATA_DIR` | 生产必填 | 平台用户数据目录 | Windows 默认 `%LOCALAPPDATA%\TrellisBoard\server`；Ubuntu 建议 `/var/lib/trellis-board` |
 | `PORT` | 否 | `4317` | HTTP 和 Team 服务端口 |
 | `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES` | 否 | standalone `true`，team `false` | 是否接受本地 `file://` Git 远端 |
+| `TRELLIS_TEAM_PLUGINS_ALLOWLIST` | 否 | 空（全部屏蔽） | 逗号分隔的插件 ID 白名单；未设置、空串或 `none` 时 Team 服务不装载任何插件 |
+| `TRELLIS_PLUGINS_DISABLED` | 否 | `false` | 设为 `1`/`true` 时强制关闭 Team 插件宿主，优先于白名单 |
 
 Team 模式没有 `TRELLIS_TEAM_GIT_POLL_MS`。活动任务远端不由服务端轮询；归档同步调度器只按配置周期
 读取远端归档路径。
@@ -35,6 +39,13 @@ Team 模式没有 `TRELLIS_TEAM_GIT_POLL_MS`。活动任务远端不由服务端
 `X-Forwarded-Proto`，服务会据此自动设置安全 Cookie。
 团队版需要本地 Git 远端时显式设置 `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES=true`；团队版默认关闭，
 单机版默认开启。修改后需要重启服务并重新登录客户端，客户端才会刷新该能力。
+
+**Team 插件默认全部屏蔽**：未设置 `TRELLIS_TEAM_PLUGINS_ALLOWLIST` 时，服务端不扫描插件目录、
+不启动任何插件子进程；`GET /api/panels` 返回空数组，`GET /api/plugins` 返回 `disabled: true`，
+所有 `/api/plugins/:id/*`（含匿名面板静态资源）与插件 SSE 返回 404，`GET /api/runtime` 下发
+`features.pluginsEnabled=false`，网页端与管理页均不显示插件入口。确需在服务端临时放行时设置
+`TRELLIS_TEAM_PLUGINS_ALLOWLIST=witops-core` 并重启；紧急止血直接设 `TRELLIS_PLUGINS_DISABLED=1`。
+个人类插件推荐改用桌面 EXE 本机插件宿主，按账号隔离运行。
 
 Windows PowerShell 前台启动：
 

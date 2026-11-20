@@ -110,6 +110,9 @@ export type TeamRuntime = {
   systemAdmin?: boolean
   teams?: RuntimeTeam[]
   projects?: Project[]
+  features?: {
+    pluginsEnabled?: boolean
+  }
 }
 
 export type RuntimeTeam = {
