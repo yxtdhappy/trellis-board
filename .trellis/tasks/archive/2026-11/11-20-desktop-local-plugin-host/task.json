@@ -21,6 +21,6 @@
   "children": [],
   "parent": "11-20-team-plugin-architecture-refactor",
   "relatedFiles": [],
-  "notes": "Linux: cargo check --tests、yarn test、yarn test:plugins、web lint/build 通过；Windows 实机 cargo test 与绿色包验收待 Rust/MSVC 工具链就绪后补验。",
+  "notes": "Linux: cargo check --tests、yarn test、yarn test:plugins、web lint/build 通过。Windows 实机补验（2026-11-20，HEAD 23a7a01，vcvars64 + cargo test）：356 项 354 通过，plugin_host 7/7 全绿（含 DPAPI 往返与嵌入资产）；2 个失败均为既有环境类：decodes_system_codepage_output（系统区域 zh-CN 但 UI 语言 en-US，cmd 输出英文）、archived_directory_409（单独重跑 3.97s 通过，全量并行下 10s 预算超时）。绿色包实机验收仍未执行。",
   "meta": {}
 }

@@ -25,6 +25,6 @@
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "三个子任务均已归档：server gating (baeb4383之前)、desktop local host (baeb4383)、zero-config plugins (f51b7883)。Linux 验证：yarn test 664、yarn test:plugins 134、web lint/build、cargo check --tests 通过；Windows 真机 cargo test/绿色包验收因本机缺少 Rust/MSVC 工具链尚未执行，需在带工具链的 Windows 环境补跑。",
+  "notes": "三个子任务均已归档：server gating (baeb4383之前)、desktop local host (baeb4383)、zero-config plugins (f51b7883)。Linux 验证：yarn test 664、yarn test:plugins 134、web lint/build、cargo check --tests 通过；Windows 真机补验（2026-11-20，HEAD 23a7a01）：vcvars64 + cargo test 354/356 通过，plugin_host 7/7（含 DPAPI）；2 个失败为既有环境/flaky（命令输出语言、并行超时），与插件改造无关；绿色包实机验收待补。",
   "meta": {}
 }
