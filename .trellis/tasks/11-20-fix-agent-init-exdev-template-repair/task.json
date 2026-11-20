@@ -26,6 +26,9 @@
     "commit": "b3089f2",
     "ci_run": "44694310603",
     "release_tag": "v0.4.51",
-    "release_url": "https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.51"
+    "release_url": "https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.51",
+    "release_tag_drive_root": "v0.4.53",
+    "ci_run_drive_root": "44699199899",
+    "release_url_drive_root": "https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.53"
   }
 }

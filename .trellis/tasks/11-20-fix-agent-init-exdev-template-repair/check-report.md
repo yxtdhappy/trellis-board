@@ -81,8 +81,7 @@ R8 测试与真机 E2E、R9 移除 `--pi-presence` 均已核对。新增 details
 
 ## 残余风险
 
-1. Rust 代码未在本机编译/测试；CI 是首道真实编译，建议同时执行任务要求的
-   Pi/OMP 快速初始化验收。
+1. Rust 代码已由 CI `v0.4.51` / `v0.4.53` 编译并运行单测；`cargo fmt` / `clippy` 仍未执行。
 2. 最坏超时预算：原为 snapshot 60s + init 210s + repair 60s + retry 210s + hash 60s = 600s；
    主会话已将 `REPAIR_TIMEOUT` 收紧到 30s，最坏 510s，低于 initialize-project 的 600s 预算。
 3. 若未来 Trellis 版本让 pi/omp 模板出现「同一路径不同内容」，原实现会静默取后一个平台内容；
@@ -97,3 +96,7 @@ R8 测试与真机 E2E、R9 移除 `--pi-presence` 均已核对。新增 details
 - 本机无 Rust 工具链；CI run [`44694310603`](https://github.com/yxtdhappy/trellis-board/actions/runs/44694310603)
   （tag `v0.4.51`）已通过 `Rust unit tests`、desktop build、便携包/启动冒烟与 Release 资产发布。
   `cargo fmt --check` / `cargo clippy` 仍未执行（CI `windows.yml` 未配置这两步）。
+- 其他机器盘符根 `D:` 的 EISDIR 追加修复（`fb1df4e`）已进入 `v0.4.53`；CI run
+  [`44699199899`](https://github.com/yxtdhappy/trellis-board/actions/runs/44699199899)
+  （tag `v0.4.53`，desktop job 5m59s）通过 `Rust unit tests`、打包、冒烟和 Release 资产发布。
+  仍待用户机器验证。

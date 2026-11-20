@@ -1,6 +1,6 @@
 # 实施计划
 
-> 状态：v0.4.51 已发布并通过 CI；其他机器盘符根 `D:` 的 EISDIR 跟进修正进入 v0.4.52。
+> 状态：v0.4.51 与 v0.4.53（盘符根修复）已发布并通过 CI；待用户机器验证。
 > 本机无 Rust 工具链，`cargo fmt --check` / `cargo clippy` 仍未执行（CI 也未配置这两步）。
 > 任务尚未归档。
 
@@ -72,7 +72,7 @@
   - 执行 helper `repair pi` 后重试，确认成功；hash 补偿补回两个 Pi 键。
 - [x] 清理临时仓库；未触碰当前工作区的 `.pi` 半成品。
 - [x] 证据记录：`research/exdev-reproduction.md`、`e2e-report.md`。
-- [ ] 其他机器用 `v0.4.52` 在盘符根项目重试 Pi 初始化；若仍报 EISDIR，收集完整 error_tail/客户端日志。
+- [ ] 其他机器用 `v0.4.53` 在盘符根项目重试 Pi 初始化；若仍报 EISDIR，收集完整 error_tail/客户端日志。
 
 ## 5. 最终检查（全部开发完成后一次编译）
 
@@ -106,16 +106,19 @@
   单次重试、snapshot/hash 补偿契约、30s helper 超时预算。
 - [x] 核对 `tauri-commands` 场景索引：契约已写入 `desktop-agent-runtime.md`，无需新增独立场景。
 - [x] 更新本任务 `implement.md` 勾选、写检查报告/E2E 证据。
-- [ ] 走 `trellis:finish-work` 归档；提交前确认未混入无关脏改动（`11-20-test1/` 保持原状）。
-  —— **待用户确认是否提交/归档；Rust 编译仍待补跑**。
+- [ ] 走 `trellis:finish-work` 归档；提交前确认未混入无关脏改动。
+  —— **待用户机器验证与归档决策；cargo fmt/clippy 仍未执行**。
 
-## 7. 盘符根 EISDIR 跟进（v0.4.52）
+## 7. 盘符根 EISDIR 跟进（v0.4.53）
 
 - [x] 其他机器反馈 `Pi 模板补齐失败：EISDIR: ... lstat 'D:'`；定位为裸盘符驱动相对路径。
 - [x] Rust `normalize_repo_root()` + helper `normalizeRepoPath()`；新增单测
   `normalizes_bare_drive_root`。
-- [ ] Node 目标测试、提交/推送 main、`yarn release:desktop 0.4.52`、CI 构建。
-- [ ] 用户机器用 `v0.4.52` 在盘符根项目重试；失败则收集完整 error_tail/客户端日志。
+- [x] Node 目标测试、提交/推送 main、`yarn release:desktop 0.4.53`、CI 构建。
+- [x] CI run [`44699199899`](https://github.com/yxtdhappy/trellis-board/actions/runs/44699199899)
+  （tag `v0.4.53`，desktop job 5m59s）成功：`Rust unit tests`、desktop build、便携包/启动冒烟、
+  Release 资产发布全部通过。
+- [ ] 用户机器用 `v0.4.53` 在盘符根项目重试；失败则收集完整 error_tail/客户端日志。
 
 ## 风险与回滚点
 

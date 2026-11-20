@@ -97,5 +97,21 @@ Trellis 0.6.17 的 `init --help` 也没有该选项；旧 JS `trellisAgentToolFl
 ## 8. 未完成项
 
 - `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` 未执行：本机无 Rust 工具链，
-  CI 也没有这两个步骤。`cargo test` 已由 CI 通过。
+  CI 也没有这两个步骤。`cargo test` 已由 CI `v0.4.51` / `v0.4.53` 通过。
 - 临时 E2E 仓库已在归档前删除；证据保留在本报告与 `check-report.md`。
+- 盘符根 `D:` 的追加修复仍需在另一台机器用 `v0.4.53` 实测确认。
+
+## 9. 盘符根 EISDIR 追加修复（v0.4.53）
+
+- 其他机器反馈：`Pi 模板补齐失败：EISDIR: illegal operation on a directory, lstat 'D:'`。
+- 原因：`D:` 是 Windows 驱动器相对路径；v0.4.51 的补齐 helper 在 `realpath/lstat` 时直接使用
+  裸盘符，DLP/加密或网络盘环境把它重定向后返回 EISDIR。
+- 修复：Rust `normalize_repo_root()` 与 helper `normalizeRepoPath()` 在 snapshot / init / repair /
+  hash / `finish_init` 前把 `X:` 规范为 `X:\`；普通路径不变。
+- 提交：`fb1df4e fix(desktop): normalize drive-root repo paths for agent init`。
+- CI：run [`44699199899`](https://github.com/yxtdhappy/trellis-board/actions/runs/44699199899)
+  （tag `v0.4.53`，desktop job 5m59s）成功；`Rust unit tests`、打包、便携包/启动冒烟、Release 资产
+  全部通过。
+- Release：[`v0.4.53`](https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.53)。
+- 待验证：另一台机器安装 `v0.4.53` 后在盘符根项目重试 Pi 初始化；若仍报 EISDIR，需要完整
+  `error_tail` / 客户端日志。
