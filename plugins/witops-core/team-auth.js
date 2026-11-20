@@ -20,14 +20,6 @@ function isCredentialRejection(error) {
 }
 
 export function createTeamSession({ ctx, client }) {
-  const state = {
-    token: null,
-    account: null,
-    userId: null,
-    obtainedAt: null,
-    status: 'anonymous',
-  }
-
   function credential() {
     const value = ctx.currentCredential?.() ?? null
     return value && text(value.token) ? value : null
@@ -67,13 +59,8 @@ export function createTeamSession({ ctx, client }) {
     }
     const userId =
       numberOrNull(data?.user?.id ?? data?.userId ?? data?.id) ?? decodeUserId(token) ?? null
-    state.token = token
-    state.account = text(account)
-    state.userId = userId
-    state.obtainedAt = new Date().toISOString()
-    state.status = 'authenticated'
     ctx.log.info('平台登录成功', { account: maskAccount(account), mode: 'team' })
-    return { token, account: state.account, userId }
+    return { token, account: text(account), userId }
   }
 
   async function loginWithFeedback(account, password) {
@@ -96,11 +83,7 @@ export function createTeamSession({ ctx, client }) {
   }
 
   function logout() {
-    state.token = null
-    state.account = null
-    state.userId = null
-    state.obtainedAt = null
-    state.status = 'anonymous'
+    // 凭据由宿主按当前会话保管，插件进程内不保留任何跨请求状态。
     return { ok: true }
   }
 
@@ -141,7 +124,6 @@ export function createTeamSession({ ctx, client }) {
 
   return {
     mode: 'team',
-    state,
     login,
     logout,
     ensureToken,

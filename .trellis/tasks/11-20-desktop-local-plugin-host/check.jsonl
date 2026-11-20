@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "Rust 命令权限最小化与 origin 校验审查"}
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "验证本机宿主与服务端宿主行为一致性"}
+{"file": ".trellis/spec/backend/plugin-testing.md", "reason": "acp-dispatch 与 scenario-copilot 本机适配验证标准"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "双通道 PluginPanel 路由与纯浏览器降级隐藏验证"}

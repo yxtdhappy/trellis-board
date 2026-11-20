@@ -14,7 +14,7 @@ import { hasActiveAdmin } from './auth.js'
 import { ERROR_CODES, errorPayload, teamError } from './errors.js'
 import { createGitlessBoardService } from './gitless-board-service.js'
 import { createTeamPluginHost } from './plugins/host.js'
-import { createTeamPluginRoutes } from './plugins/http.js'
+import { createDisabledTeamPluginRoutes, createTeamPluginRoutes } from './plugins/http.js'
 import { createSyncAgentService } from './sync-agent-service.js'
 import { createTaskCommandService } from './task-command-service.js'
 import { createTaskControlService } from './task-control-service.js'
@@ -35,7 +35,7 @@ import {
   appRoot,
   defaultPublicDir,
   EXECUTION_WIP_LIMIT,
-  TEAM_PLUGIN_ALLOWLIST,
+  teamPluginsEnabled,
 } from './http/common.js'
 import { createRequestContext } from './http/context.js'
 import { createWorkspaceTemplateRoutes } from './http/routes/workspace-template.js'
@@ -453,21 +453,26 @@ export async function createTeamRuntime({
       ownershipInbox,
       executionWipLimit: EXECUTION_WIP_LIMIT,
     })
-    const pluginHost = createTeamPluginHost({
-      db,
-      appDir: appRoot,
-      dataDir,
-      pluginsDir: path.join(dataDir, 'plugins'),
-      bundledPluginsDir: path.join(appRoot, 'plugins'),
-      // 团队版目前只开放 witops-core：其他插件是 standalone 的运维工具，
-      // 放进团队实例只会让管理页出现一堆永远用不上的开关。
-      pluginAllowlist: TEAM_PLUGIN_ALLOWLIST,
-      hostVersion: readHostVersion(),
-      repositoriesProvider: () =>
-        db.prepare('SELECT id, name, path FROM repositories ORDER BY position, name').all(),
-      logger,
-    })
-    const pluginRoutes = createTeamPluginRoutes({ host: pluginHost, logger })
+    const pluginsEnabled = teamPluginsEnabled(config)
+    const pluginHost = pluginsEnabled
+      ? createTeamPluginHost({
+          db,
+          appDir: appRoot,
+          dataDir,
+          pluginsDir: path.join(dataDir, 'plugins'),
+          bundledPluginsDir: path.join(appRoot, 'plugins'),
+          // 只有运维显式配置 TRELLIS_TEAM_PLUGINS_ALLOWLIST 时才装载插件；
+          // 默认空集合，生产 Team 服务器开箱不启动任何插件子进程。
+          pluginAllowlist: config.pluginAllowlist,
+          hostVersion: readHostVersion(),
+          repositoriesProvider: () =>
+            db.prepare('SELECT id, name, path FROM repositories ORDER BY position, name').all(),
+          logger,
+        })
+      : null
+    const pluginRoutes = pluginsEnabled
+      ? createTeamPluginRoutes({ host: pluginHost, logger })
+      : createDisabledTeamPluginRoutes()
     const requestHandler = createRequestHandler({
       config,
       db,
@@ -511,13 +516,17 @@ export async function createTeamRuntime({
         taskSnapshotBackups.start()
         archiveGitSync.start()
         requestHandler.setStartedAt(new Date().toISOString())
-        try {
-          const pluginState = await pluginHost.start()
-          logger.info('team 插件已装载', {
-            plugins: pluginState.plugins.map((plugin) => `${plugin.id}:${plugin.status}`),
-          })
-        } catch (error) {
-          logger.error('team 插件装载失败', { error: error.message })
+        if (pluginHost) {
+          try {
+            const pluginState = await pluginHost.start()
+            logger.info('team 插件已装载', {
+              plugins: pluginState.plugins.map((plugin) => `${plugin.id}:${plugin.status}`),
+            })
+          } catch (error) {
+            logger.error('team 插件装载失败', { error: error.message })
+          }
+        } else {
+          logger.info('team 插件未启用（默认屏蔽；设置 TRELLIS_TEAM_PLUGINS_ALLOWLIST 显式放行）')
         }
         logger.info('Trellis Team Board 已启动', {
           url: `http://${config.bindHost || '0.0.0.0'}:${port}`,
@@ -533,7 +542,7 @@ export async function createTeamRuntime({
         taskSnapshotBackups.stop()
         await archiveGitSync.stop()
         await closeServer(server)
-        await pluginHost.stop().catch(() => {})
+        await pluginHost?.stop().catch(() => {})
         await taskSpaceIndex.close().catch(() => {})
         db.close()
         throw error
@@ -549,7 +558,7 @@ export async function createTeamRuntime({
       taskSnapshotBackups.stop()
       await archiveGitSync.stop()
       await closeServer(server)
-      await pluginHost.stop().catch(() => {})
+      await pluginHost?.stop().catch(() => {})
       await taskSpaceIndex.close()
       db.close()
     }

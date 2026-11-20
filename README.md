@@ -1,11 +1,11 @@
 # Trellis Board
 
-Trellis Board 提供两种运行模式：
+Trellis Board 当前以 **`team`（团队服务端 + Windows 桌面 EXE 客户端）作为唯一主线模式**；`standalone` 已降级为历史遗留模式（停止新功能维护，仅保留现有代码与测试兼容，不再推荐用于新部署）：
 
-- `standalone`：默认监听 `0.0.0.0`，扫描本机白名单仓库，适合本机或可信局域网使用。
-- `team`：提供账号、项目权限、任务空间快照、实时同步、命令投递、审计和 Windows Agent。
+- `team`（主线）：提供账号、项目权限、任务空间快照、实时同步、命令投递、审计和 Windows Agent。
   活动任务链路不 clone/fetch 项目 Git，也不保存项目 Git 凭据；只有后台归档同步会使用按来源隔离的
   只读凭据读取 `.trellis/tasks/archive/**`，不创建项目工作副本。
+- `standalone`（已降级 / Legacy，不再维护新功能）：默认监听 `0.0.0.0`，扫描本机白名单仓库，无账号鉴权，仅作历史兼容保留。
 
 两种模式共用同一套任务推导、看板和 SQLite 代码。团队版的部署、升级、备份和故障处置见
 [团队版运维手册](./docs/team-operations.md)。
@@ -185,7 +185,9 @@ SQLite 使用 WAL 模式。standalone 主线程和扫描 Worker 各自持有连�
 
 自动刷新仍会重新扫描全部白名单仓库，而不是只扫描发生变更的仓库。这样能正确重算跨仓库父子任务和父任务阶段继承；代价是每次有效变更后仍有约 8–15 秒的后台扫描。扫描期间再次变化会排队，并在本轮结束后再扫描一次。
 
-## Standalone 写操作
+## Standalone 写操作（已降级 / Legacy）
+
+> 注意：`standalone` 模式已停止维护新功能，仅保留既有单机流程兼容性；日常团队协作请使用下文的「团队模式」。
 
 - 创建任务：调用目标仓库自己的 `.trellis/scripts/task.py create --no-start`
 - 派发任务：更新指定任务的 `task.json.assignee`

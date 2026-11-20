@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "插件清单约定、零配置边界与跨插件 capability 契约"}
+{"file": ".trellis/spec/backend/plugin-testing.md", "reason": "6 大插件单元测试、真实任务创建测试与协议测试规范"}
+{"file": ".trellis/spec/backend/scenario-outlines.md", "reason": "scenario-copilot 零配置改造必须保持的测试大纲与回归契约"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "桌面端 localAssociations、DPAPI 与 Rust TaskSync 自动上行边界"}
+{"file": ".trellis/spec/frontend/component-reuse.md", "reason": "统一单套插件面板 /plugin-ui/v1/ 与 bridge.js 约定"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "manifest 精简与桌面宿主自动注入上下文的跨层协调"}

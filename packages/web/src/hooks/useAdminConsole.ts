@@ -32,6 +32,7 @@ export type AdminConsole = AdminProjects & {
   setView: (view: AdminView) => void
   isAdmin: boolean
   systemAdmin: boolean
+  pluginsEnabled: boolean
   teams: Team[]
   adminTeams: Team[]
   adminTeamId: string
@@ -76,6 +77,7 @@ export function useAdminConsole(): AdminConsole {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [systemAdmin, setSystemAdmin] = useState(false)
+  const [pluginsEnabled, setPluginsEnabled] = useState(true)
   const [teams, setTeams] = useState<Team[]>([])
   const [adminTeamId, setAdminTeamId] = useState('')
   const [runtimeProjects, setRuntimeProjects] = useState<admin.RuntimeProject[]>([])
@@ -111,6 +113,7 @@ export function useAdminConsole(): AdminConsole {
         if (cancelled) return
         setUser(runtime.user)
         setSystemAdmin(runtime.systemAdmin)
+        setPluginsEnabled(runtime.features?.pluginsEnabled !== false)
         setTeams(runtime.teams)
         setRuntimeProjects(runtime.projects)
         if (!runtime.team && !runtime.systemAdmin) {
@@ -360,6 +363,11 @@ export function useAdminConsole(): AdminConsole {
   })
   const displayName = user?.displayName || user?.username || '团队账号'
 
+  // 插件被服务端屏蔽时不能停在“插件”Tab：切回默认视图。
+  useEffect(() => {
+    if (!pluginsEnabled && view === 'plugins') setView('project-access')
+  }, [pluginsEnabled, view])
+
   return {
     ...projects,
     phase,
@@ -368,6 +376,7 @@ export function useAdminConsole(): AdminConsole {
     setView,
     isAdmin,
     systemAdmin,
+    pluginsEnabled,
     teams,
     adminTeams,
     adminTeamId,

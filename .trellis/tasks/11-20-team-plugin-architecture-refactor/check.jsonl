@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "插件宿主进程协议、manifest 校验、生命周期与能力清单总契约"}
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "Server 运行时模式（standalone vs team）边界与装配架构"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Web 看板与管理页组件栈及约束"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "Tauri 桌面命令注册、同源校验与安全边界"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨 Server/Web/Desktop/Plugin 契约联调与接口演进原则"}

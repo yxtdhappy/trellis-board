@@ -59,8 +59,10 @@ const NAV: BoardNavItem[] = [
   { id: 'pipeline', label: '任务流水线' },
   { id: 'team', label: '团队视角' },
   { id: 'archive', label: '归档索引' },
-  { id: 'plugins', label: '插件' },
 ]
+
+// 单机插件管理页只保留给 standalone 遗留模式；Team 模式的本机插件入口由桌面 EXE 独立提供。
+const STANDALONE_PLUGIN_NAV: BoardNavItem = { id: 'plugins', label: '插件' }
 
 type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 type DesktopClientIdentity = { name?: string; version?: string }
@@ -181,14 +183,17 @@ export function BoardPage() {
       ? archiveRevisionValue
       : null
   const activeCount = tasks.filter((task) => !task.archived).length
+  // 服务端未下发 features 时按开启处理；只有明确 false 才视为插件被屏蔽。
+  const pluginsEnabled = teamMode ? runtime?.features?.pluginsEnabled !== false : true
   const navItems = useMemo<BoardNavItem[]>(
     () => [
       ...NAV,
+      ...(teamMode ? [] : [STANDALONE_PLUGIN_NAV]),
       ...panels
         .filter((panel) => panel.placement === 'view')
         .map((panel) => ({ id: `panel:${panel.pluginId}:${panel.id}`, label: panel.title })),
     ],
-    [panels],
+    [panels, teamMode],
   )
   const activePanel = panels.find((panel) => `panel:${panel.pluginId}:${panel.id}` === view)
   const createProject =
@@ -278,6 +283,16 @@ export function BoardPage() {
   }, [])
 
   useEffect(() => {
+    // Team 模式不再提供单机插件管理页；旧书签/状态落在这里时回退到任务流水线。
+    if (teamMode && view === 'plugins') setView('pipeline')
+  }, [teamMode, view])
+
+  useEffect(() => {
+    if (!runtime) return
+    if (!pluginsEnabled) {
+      setPanels([])
+      return
+    }
     let cancelled = false
     fetchPanels()
       .then((list) => {
@@ -289,19 +304,20 @@ export function BoardPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [runtime, pluginsEnabled])
 
   useEffect(() => {
-    if (view !== 'plugins') return
+    if (view !== 'plugins' || !pluginsEnabled) return
     fetchPanels()
       .then(setPanels)
       .catch(() => {
         /* 插件页不可用时保留已有面板 */
       })
-  }, [view])
+  }, [view, pluginsEnabled])
 
   // 插件页改排序后立即重排导航，不用切走再回来。
   useEffect(() => {
+    if (!pluginsEnabled) return
     const refresh = () => {
       fetchPanels()
         .then(setPanels)
@@ -311,7 +327,7 @@ export function BoardPage() {
     }
     window.addEventListener('trellis:panels-changed', refresh)
     return () => window.removeEventListener('trellis:panels-changed', refresh)
-  }, [])
+  }, [pluginsEnabled])
 
   const syncLabel = teamMode
     ? `${projects.length} 个授权项目 · 事件驱动 · 10 秒可见兜底`

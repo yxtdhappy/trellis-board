@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "核对 manifest targets、allowMissingSecrets 与极简字段校验"}
+{"file": ".trellis/spec/backend/plugin-testing.md", "reason": "空 config 启用 6 个插件达到 running 及跨插件联动验收标准"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "服务端与插件测试、lint 与兼容性质量门"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "面板 UI、无阻塞账号交互与 web build/lint 校验"}

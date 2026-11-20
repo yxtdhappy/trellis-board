@@ -3,6 +3,8 @@
 适用：所有插件宿主代码与 `plugins/<id>/` 下的插件实现。设计依据见
 [.trellis/tasks/11-04-plugin-architecture/prd.md](../../../.trellis/tasks/11-04-plugin-architecture/prd.md)。
 
+> **演进边界（2026-11-20）**：`standalone` 单机模式已降级不再维护新功能；当前主线为「生产 Team 服务端默认屏蔽插件 + 桌面 EXE 本机宿主托管内置及私有插件」。新插件与插件改造应优先遵循「`plugin.json` 极简化、除账号凭据外启用即用」原则。
+
 ## 1. 进程与协议
 
 - 插件是**独立子进程**，通过 stdin/stdout 交换 **NDJSON**（一行一个 JSON-RPC 2.0 消息），stderr 只写日志。
@@ -46,6 +48,20 @@
 - 健康检查 30s 一次，连续 3 次失败按崩溃处理；手动 `start` 清空重启计数并允许恢复。
 - 根路径冲突或占用核心前缀（`/`、`/api`）的插件直接 `blocked`，不 spawn。
 - 停插件顺序：`shutdown` → 3s 等待 → `terminateTree`（`packages/server/team/process.js`）。
+
+### 3.1 Team 服务端插件门禁
+
+- `parseTeamConfig()` 解析 `TRELLIS_PLUGINS_DISABLED`（`1` / `true`）与 `TRELLIS_TEAM_PLUGINS_ALLOWLIST`
+  （逗号分隔插件 ID；未设置、空串、`none`、`false`、`0` 均解析为空数组 `[]`）。
+- **生产 Team 服务器默认屏蔽全部插件**：`pluginsDisabled === true` 或白名单为空时，不扫描插件目录、
+  不创建 `createTeamPluginHost()`、不启动任何插件子进程，`plugin_registry` 也不会新增登记。
+- 关闭态契约：`GET /api/panels` → `{ panels: [] }`；`GET /api/plugins` →
+  `{ disabled: true, mode: 'team', plugins: [] }`；其余 `/api/plugins/:id/*`（含 `/app/panel*` 匿名静态资源）
+  与 `/api/events` → `404 PLUGIN_DISABLED`。
+- `/api/runtime` 未登录与已登录响应都带 `features.pluginsEnabled`；前端据此隐藏顶栏插件入口、
+  跳过 `/api/panels` 拉取，管理页隐藏「插件」Tab。
+- 显式放行时 `witops-core` 的读缓存、需求索引与分组需求缓存必须按 `ctx.currentActor().userId` 分区；
+  用户触发的刷新（`POST /refresh`）只清本人缓存。
 
 ## 4. 存储与命名空间
 

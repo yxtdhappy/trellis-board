@@ -1,5 +1,7 @@
 # 插件命名与目录约定
 
+> **主线演进定位**：`standalone` 模式已降级不再维护新功能；生产 Team 服务器默认屏蔽插件。仓库随附的 6 大内置插件（`witops-core`、`scenario-copilot`、`jenkins-ops`、`accounts-core`、`acp-dispatch`、`a2a-intake`）主线演进方向为入驻 Windows 桌面 EXE 本机插件宿主——`plugin.json` 应保持极简，技术调优项下沉为代码默认值，除账号/凭据相关信息外做到启用即用。
+
 - 插件目录名必须等于 `plugin.json` 的 `id`，例如 `plugins/scenario-copilot/` ↔ `"id": "scenario-copilot"`。
 - `id` 使用小写 kebab-case，2–32 个字符，建议 `<领域>-<能力>`：`acp-dispatch`、`witops-intake`、`scenario-copilot`。
 - 不在 `id` 里重复宿主名：`plugins/` 下的插件都属于 Trellis Board，`trellis-board-plugin-` 前缀会让 `/api/plugins/<id>/*`、store key 和配置键变长。

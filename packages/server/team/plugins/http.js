@@ -550,6 +550,24 @@ export function createTeamPluginRoutes({ host, logger = console }) {
   return dispatch
 }
 
+/**
+ * 插件机制关闭时的路由兜底：不装载宿主、不扫描插件目录、不暴露清单与静态资源。
+ * 面板清单与插件列表返回空结果，其余 `/api/plugins/*` 与插件 SSE 一律 404。
+ */
+export function createDisabledTeamPluginRoutes() {
+  return async function disabledRoutes(request, response, url) {
+    if (request.method === 'GET' && url.pathname === '/api/panels') {
+      sendJson(response, 200, { panels: [] })
+      return true
+    }
+    if (request.method === 'GET' && url.pathname === '/api/plugins') {
+      sendJson(response, 200, { disabled: true, mode: 'team', plugins: [] })
+      return true
+    }
+    throw teamError(404, ERROR_CODES.PLUGIN_DISABLED, '插件机制已关闭')
+  }
+}
+
 function readBody(request) {
   return new Promise((resolve, reject) => {
     let raw = ''

@@ -1,7 +1,7 @@
 import { parseCookieHeader, readSession, SESSION_COOKIE } from '../auth.js'
 import { ERROR_CODES, teamError } from '../errors.js'
 import { TEAM_ROLES, listTeamsForActor } from '../teams.js'
-import { runtimeProject } from './common.js'
+import { runtimeProject, teamPluginsEnabled } from './common.js'
 
 export function createRequestContext(ctx) {
   const { config, db, boardService, taskSpaceIndex, agentService, boardEvents } = ctx
@@ -22,6 +22,7 @@ export function createRequestContext(ctx) {
   }
 
   function runtimePayload(actor) {
+    const features = { pluginsEnabled: teamPluginsEnabled(config) }
     if (!actor) {
       return {
         mode: 'team',
@@ -30,6 +31,7 @@ export function createRequestContext(ctx) {
         user: null,
         projects: [],
         capabilities: {},
+        features,
         allowLocalGitRemotes: Boolean(config.allowLocalGitRemotes),
       }
     }
@@ -46,6 +48,7 @@ export function createRequestContext(ctx) {
       activeTeam: null,
       teamRole: null,
       teams,
+      features,
       allowLocalGitRemotes: Boolean(config.allowLocalGitRemotes),
       projects: projects.map((project) => runtimeProject(project, actor)),
       capabilities: {

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "验证禁用开关、白名单与错误码契约"}
+{"file": ".trellis/spec/backend/plugin-testing.md", "reason": "团队插件禁用、白名单与多用户缓存隔离测试标准"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "服务端 lint、单测与错误码质量门槛"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端 build/lint/test 验收门槛"}

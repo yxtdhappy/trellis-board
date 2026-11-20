@@ -39,7 +39,15 @@ export const MAX_ARCHIVE_CREDENTIAL_BYTES = 160 * 1024
 
 export const EXECUTION_WIP_LIMIT = 2
 
-export const TEAM_PLUGIN_ALLOWLIST = ['witops-core']
+/**
+ * Team 插件是否启用：总开关关闭或白名单为空时一律视为关闭。
+ * 生产 Team 服务器默认白名单为空，即默认不装载任何插件。
+ */
+export function teamPluginsEnabled(config) {
+  if (!config) return false
+  if (config.pluginsDisabled === true) return false
+  return Array.isArray(config.pluginAllowlist) && config.pluginAllowlist.length > 0
+}
 
 export function requireObservedBranchName(body) {
   const value = body?.observedBranchName

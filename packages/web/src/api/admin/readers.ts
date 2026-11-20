@@ -206,6 +206,7 @@ export function readRuntime(payload: unknown): Runtime {
   const mode = text(row.mode ?? row.boardMode ?? row.board_mode, 'standalone').toLowerCase()
   const rawUser = row.user ?? row.currentUser ?? row.current_user
   const user = rawUser ? readSessionUser(rawUser) : null
+  const features = record(row.features)
   return {
     mode: mode === 'team' ? 'team' : 'standalone',
     team: flag(row.team ?? row.teamMode ?? row.team_mode) || mode === 'team',
@@ -214,6 +215,10 @@ export function readRuntime(payload: unknown): Runtime {
     systemAdmin: flag(row.systemAdmin ?? row.system_admin) || Boolean(user?.systemAdmin),
     teams: rows(row.teams).map(readTeam),
     projects: rows(row.projects ?? row.items).map(readRuntimeProject),
+    // 旧版服务端没有 features 字段：只有明确下发 false 才表示插件被关闭。
+    features: {
+      pluginsEnabled: features.pluginsEnabled === undefined ? true : flag(features.pluginsEnabled),
+    },
   }
 }
 

@@ -88,6 +88,7 @@ export function AdminPage() {
     setView,
     isAdmin,
     systemAdmin,
+    pluginsEnabled,
     adminTeams,
     adminTeamId,
     setAdminTeamId,
@@ -97,6 +98,7 @@ export function AdminPage() {
   } = consoleApi
   const activeView = VIEWS.find((item) => item.id === view) ?? VIEWS[0]
   const visibleViews = VIEWS.filter((item) => {
+    if (item.id === 'plugins' && !pluginsEnabled) return false
     if (item.id === 'users' || item.id === 'teams' || item.id === 'archive-sync') {
       return systemAdmin
     }
