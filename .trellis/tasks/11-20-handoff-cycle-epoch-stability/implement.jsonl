@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "核对 handoff ACK 轮次契约、materializedAt 语义与 fencing 比较顺序"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对 Node 测试夹具、验证命令和真实客户端 E2E 要求"}

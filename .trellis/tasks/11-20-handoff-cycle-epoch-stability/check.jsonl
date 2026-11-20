@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "复核 materializedAt 稳定性、ACK fencing 与跨轮次拒绝语义"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "复核测试覆盖、同轮多次上传用例与 E2E 验收"}
