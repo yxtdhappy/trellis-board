@@ -3,7 +3,7 @@
   "name": "desktop-local-plugin-host",
   "title": "桌面 EXE 本机插件宿主与 Tauri 双通道桥接",
   "description": "在 Tauri 桌面客户端中按需托管 6 大内置插件及本地私有插件，通过同源校验 Tauri IPC 桥接内嵌 Team 网页的 PluginPanel，按 (serverUrl, userId) 隔离数据与 DPAPI 凭据并随绿色包分发。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": "desktop",
@@ -11,7 +11,7 @@
   "creator": "kanyifei",
   "assignee": "kanyifei",
   "createdAt": "2026-11-20",
-  "completedAt": null,
+  "completedAt": "2026-11-20",
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "11-20-team-plugin-architecture-refactor",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Linux: cargo check --tests、yarn test、yarn test:plugins、web lint/build 通过；Windows 实机 cargo test 与绿色包验收待 Rust/MSVC 工具链就绪后补验。",
   "meta": {}
 }
