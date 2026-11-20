@@ -1696,3 +1696,32 @@ BRANCH_MISMATCH 每次心跳重复弹窗且抢焦点；改为 assert_binding_bra
 ### Status
 
 [OK] **Completed**
+
+
+## Session 72: 修复 Agent 初始化 EXDEV / EISDIR 与 developer 身份
+<!-- trellis-session: v=2 fp=d02000dc527cc109 -->
+
+**Date**: 2026-11-20
+**Task**: 修复 Agent 初始化 EXDEV / EISDIR 与 developer 身份
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+桌面 Agent 初始化在 Windows DLP 下补齐 Pi/OMP 模板并单次重试；v0.4.54 用 native realpath 修复 \?\D: 的 EISDIR；v0.4.55 在 Agent-only 路径补齐 .developer/workspace，并把预期 EXDEV 与 sparseCheckout exit 1 的日志降噪。Node 测试 17/17，CI 含 Rust unit tests 通过，Release v0.4.54/v0.4.55 已发布，用户确认目标机器成功。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e9aae35` | fix(desktop): use native realpath for agent template repair |
+| `3884a5e` | chore(release): 0.4.54 |
+| `fd254c5` | chore(task): record v0.4.54 native realpath release |
+| `23a7a01` | fix(desktop): initialize developer identity in Agent-only setup |
+| `d685eaf` | chore(release): 0.4.55 |
+| `1783ff2` | chore(task): record v0.4.55 developer identity release |
+| `41a590c` | chore(task): confirm v0.4.55 on target machine |
+
+### Status
+
+[OK] **Completed**
