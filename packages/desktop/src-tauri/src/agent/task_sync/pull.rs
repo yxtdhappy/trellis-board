@@ -439,7 +439,7 @@ impl TaskSync {
             &mut server_groups,
         )
         .await?;
-        let snapshot_baselines = if after_revision == 0 {
+        let mut snapshot_baselines = if after_revision == 0 {
             baselines_from_snapshot(&snapshot_files)
         } else {
             merge_baselines(&cursor.baselines, &snapshot_files)
@@ -524,7 +524,14 @@ impl TaskSync {
                 crate::logging::warn(&format!(
                     "上传未产生提交，继续应用当前快照：dirtyDirs={dirty_dirs:?}"
                 ));
+                // 上传可能已清理归档目录的本地 cursor 状态，必须用最新 cursor 重算基线，
+                // 否则旧基线会在末尾 merge 时被写回。
                 cursor = self.read_cursor(&task_space_id).await;
+                snapshot_baselines = if after_revision == 0 {
+                    baselines_from_snapshot(&snapshot_files)
+                } else {
+                    merge_baselines(&cursor.baselines, &snapshot_files)
+                };
             } else {
                 return Box::pin(self.pull_tracking(binding, reconciled_deferred)).await;
             }
