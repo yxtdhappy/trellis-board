@@ -114,3 +114,14 @@ R8 测试与真机 E2E、R9 移除 `--pi-presence` 均已核对。新增 details
   `\\?\` 扩展路径，helper 的 repair 仍成功。`node --test` 12/12 通过；
   `node --check` 与 `npx oxfmt --check` 通过。
 - 待办：提交、发布 v0.4.54、CI 与用户机器验证。
+
+### v0.4.54 发布结果
+
+- 提交 `e9aae35 fix(desktop): use native realpath for agent template repair`，已推送 `main`。
+- CI run [`44701951487`](https://github.com/yxtdhappy/trellis-board/actions/runs/44701951487)
+  （desktop job 9m54s）成功：Node/Server tests、`Rust unit tests`、desktop build、便携包/启动冒烟、
+  Release 资产发布全部通过。
+- Release [`v0.4.54`](https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.54)：
+  `TrellisBoard_0.4.54_x64-portable.zip`，4,959,654 bytes，sha256
+  `85d3b522d0014dd889e32a823bd9698f5149832f4a6ebbfcd95fa5d369e442de`。
+- 剩余验证：用户机器安装 v0.4.54 后重试 Pi 初始化。

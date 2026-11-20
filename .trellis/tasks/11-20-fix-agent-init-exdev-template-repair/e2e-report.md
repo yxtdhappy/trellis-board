@@ -134,4 +134,8 @@ stderr: EISDIR: illegal operation on a directory, lstat 'D:'
 - 修复：helper 顶层在加载 Trellis 模块前切换 `fs.realpathSync.native`；helper 内部 realpath
   全部走 native；保留裸盘符规范化与盘符根 realpath/stat 跳过。
 - `node --test packages/desktop/test/agent-template-repair.test.js` 12/12 通过。
-- 待发布 v0.4.54 并在用户机器实测。
+- 提交 `e9aae35`，发布 `v0.4.54`；CI run
+  [`44701951487`](https://github.com/yxtdhappy/trellis-board/actions/runs/44701951487) 成功，
+  `TrellisBoard_0.4.54_x64-portable.zip`（4,959,654 bytes，sha256
+  `85d3b522d0014dd889e32a823bd9698f5149832f4a6ebbfcd95fa5d369e442de`）。
+- 待用户机器安装 v0.4.54 实测确认。

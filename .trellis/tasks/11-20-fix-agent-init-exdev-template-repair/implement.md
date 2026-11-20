@@ -131,7 +131,14 @@
 - [x] helper 顶层在加载 Trellis 模块前把 `fs.realpathSync` 替换为 `.native`；helper 内部
   realpath 统一走 native；保留裸盘符规范化与盘符根跳过。
 - [x] 新增故障注入测试：JS realpath 抛 EISDIR + `\\?\` 扩展路径，repair 仍成功；12/12 通过。
-- [ ] 提交/推送 `main`、`yarn release:desktop 0.4.54`、CI 构建。
+- [x] 提交 `e9aae35 fix(desktop): use native realpath for agent template repair`，推送 `main`。
+- [x] `yarn release:desktop 0.4.54`；tag `v0.4.54` 已推送。
+- [x] CI run [`44701951487`](https://github.com/yxtdhappy/trellis-board/actions/runs/44701951487)
+  （main windows，desktop job 9m54s）成功：Node/Server tests、`Rust unit tests`、desktop build、
+  便携包/启动冒烟、Release 资产发布全部通过。
+- [x] Release：[`v0.4.54`](https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.54)，
+  资产 `TrellisBoard_0.4.54_x64-portable.zip`（4,959,654 bytes，sha256
+  `85d3b522d0014dd889e32a823bd9698f5149832f4a6ebbfcd95fa5d369e442de`）。
 - [ ] 用户机器用 `v0.4.54` 重试 Pi 初始化；若仍失败，收集完整 `error_tail` 与客户端日志。
 
 ## 风险与回滚点
