@@ -10,4 +10,10 @@ export function preflightBlockReason(input?: {
   pushState?: string | null
 }): string
 
+export function normalizePushState(value: unknown): {
+  state: string
+  message: string
+  dirtySummary: string
+}
+
 export function onboardingErrorMessage(error: unknown, fallback: string): string

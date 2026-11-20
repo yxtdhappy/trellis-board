@@ -69,6 +69,162 @@ fn rejects_forbidden_operations_and_invalid_markers() {
 }
 
 #[test]
+fn builds_write_operation_arguments() {
+    let repo = std::env::temp_dir().join("trellis-git-write-repo");
+    let hooks = std::env::temp_dir().join("trellis-git-write-hooks");
+    let paths = vec![".trellis".to_string(), ".gitignore".to_string()];
+
+    let add = git_args(
+        GitOperation::AddPaths,
+        &repo,
+        &hooks,
+        &GitParams {
+            paths: &paths,
+            ..Default::default()
+        },
+    )
+    .expect("add args");
+    assert!(add.ends_with(&[
+        "add".to_string(),
+        "-A".to_string(),
+        "--".to_string(),
+        ".trellis".to_string(),
+        ".gitignore".to_string(),
+    ]));
+
+    let diff = git_args(
+        GitOperation::DiffCachedQuiet,
+        &repo,
+        &hooks,
+        &GitParams {
+            paths: &paths,
+            ..Default::default()
+        },
+    )
+    .expect("diff cached args");
+    assert!(diff.contains(&"core.fsmonitor=false".to_string()));
+    assert!(diff.ends_with(&[
+        "diff".to_string(),
+        "--cached".to_string(),
+        "--quiet".to_string(),
+        "--".to_string(),
+        ".trellis".to_string(),
+        ".gitignore".to_string(),
+    ]));
+
+    let commit = git_args(
+        GitOperation::CommitPaths,
+        &repo,
+        &hooks,
+        &GitParams {
+            message: Some("初始化trellis"),
+            paths: &paths,
+            ..Default::default()
+        },
+    )
+    .expect("commit args");
+    assert!(commit.ends_with(&[
+        "commit".to_string(),
+        "-m".to_string(),
+        "初始化trellis".to_string(),
+        "--".to_string(),
+        ".trellis".to_string(),
+        ".gitignore".to_string(),
+    ]));
+
+    let push = git_args(
+        GitOperation::PushBranch,
+        &repo,
+        &hooks,
+        &GitParams {
+            branch: Some("feature/x"),
+            ..Default::default()
+        },
+    )
+    .expect("push args");
+    assert!(push.ends_with(&[
+        "push".to_string(),
+        "origin".to_string(),
+        "refs/heads/feature/x:refs/heads/feature/x".to_string(),
+    ]));
+}
+
+#[test]
+fn rejects_write_operations_without_paths_message_or_valid_branch() {
+    for operation in [
+        GitOperation::AddPaths,
+        GitOperation::DiffCachedQuiet,
+        GitOperation::CommitPaths,
+    ] {
+        let error = git_args(
+            operation,
+            Path::new("repo"),
+            Path::new("hooks"),
+            &GitParams {
+                message: Some("初始化trellis"),
+                ..Default::default()
+            },
+        )
+        .expect_err("missing paths");
+        assert_eq!(error.message, "Git 路径参数缺失");
+    }
+
+    let paths = vec![".trellis".to_string()];
+    let error = git_args(
+        GitOperation::CommitPaths,
+        Path::new("repo"),
+        Path::new("hooks"),
+        &GitParams {
+            paths: &paths,
+            ..Default::default()
+        },
+    )
+    .expect_err("missing message");
+    assert_eq!(error.message, "提交信息缺失");
+
+    let error = git_args(
+        GitOperation::PushBranch,
+        Path::new("repo"),
+        Path::new("hooks"),
+        &GitParams {
+            branch: Some("bad branch"),
+            ..Default::default()
+        },
+    )
+    .expect_err("invalid branch");
+    assert_eq!(error.code, code::BRANCH_INVALID);
+}
+
+#[test]
+fn classifies_commit_and_push_failures() {
+    assert!(classify_commit_failure("fatal: Please tell me who you are")
+        .message
+        .contains("user.name"));
+    assert!(classify_commit_failure("fatal: unable to auto-detect email address")
+        .message
+        .contains("user.email"));
+    let generic = classify_commit_failure("fatal: something else");
+    assert!(generic.message.starts_with("Git 提交失败："));
+
+    assert_eq!(
+        classify_push_failure("error: failed to push some refs (non-fast-forward)").code,
+        code::NO_FAST_FORWARD
+    );
+    assert_eq!(
+        classify_push_failure("! [rejected] main -> main (fetch first)").code,
+        code::NO_FAST_FORWARD
+    );
+    assert_eq!(
+        classify_push_failure("fatal: unable to access 'https://example.com/repo.git'").code,
+        code::REMOTE_UNREACHABLE
+    );
+    assert_eq!(
+        classify_push_failure("fatal: something else").code,
+        code::GIT_FAILED
+    );
+}
+
+#[test]
 fn parses_status_with_renames_and_untracked() {
     let output = concat!(
         " M src/lib.rs\r\n",
@@ -168,6 +324,64 @@ fn git_test_repo(label: &str) -> PathBuf {
         "init",
     ]);
     root
+}
+
+fn run_git_in(cwd: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new(GIT_BINARY)
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+#[tokio::test]
+async fn maps_diff_cached_exit_codes_and_commits_only_fixed_paths() {
+    let repo = git_test_repo("write-ops");
+    let hooks = repo.join("hooks");
+    std::fs::create_dir_all(&hooks).expect("create hooks");
+    run_git_in(&repo, &["config", "user.name", "Trellis Test"]);
+    run_git_in(&repo, &["config", "user.email", "test@example.com"]);
+    std::fs::create_dir_all(repo.join(".trellis")).expect("create trellis");
+    std::fs::write(repo.join(".trellis").join("init.md"), "trellis").expect("write trellis");
+    std::fs::write(repo.join("other.txt"), "other").expect("write other");
+    run_git_in(&repo, &["add", "other.txt"]);
+
+    let paths = vec![".trellis".to_string()];
+    add_paths(&repo, &hooks, &paths).await.expect("add paths");
+    assert!(has_staged_changes(&repo, &hooks, &paths)
+        .await
+        .expect("staged"));
+    commit_paths(&repo, &hooks, "初始化trellis", &paths)
+        .await
+        .expect("commit");
+    assert!(!has_staged_changes(&repo, &hooks, &paths)
+        .await
+        .expect("clean"));
+
+    let show = run_git_in(&repo, &["show", "--name-only", "--format="]);
+    assert!(show.lines().any(|line| line.trim() == ".trellis/init.md"));
+    assert!(!show.lines().any(|line| line.trim() == "other.txt"));
+    let staged = run_git_in(&repo, &["diff", "--cached", "--name-only"]);
+    assert!(staged.lines().any(|line| line.trim() == "other.txt"));
+
+    let not_a_repo = std::env::temp_dir().join(format!(
+        "trellis-git-non-repo-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&not_a_repo).expect("create non repo");
+    let error = has_staged_changes(&not_a_repo, &hooks, &paths)
+        .await
+        .expect_err("not a repository");
+    assert_eq!(error.code, code::GIT_FAILED);
+
+    std::fs::remove_dir_all(&repo).expect("cleanup");
+    std::fs::remove_dir_all(&not_a_repo).expect("cleanup");
 }
 
 #[tokio::test]

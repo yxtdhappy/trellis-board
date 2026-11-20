@@ -6,6 +6,8 @@
 - 类型检查与构建：`yarn build`（`tsc -b && vite build`，产物写入 `public/`）。
 - 单元测试：`yarn test`（`node --test packages/test-support/*.test.js`）。
 - 格式化：`yarn format`（`oxfmt .`）、`yarn format:check`（CI 用）。oxfmt 是唯一格式化工具，配置在根 `.oxfmtrc.json`（`printWidth 100`、无分号、单引号、2 空格、LF），不要再引入 Prettier/ESLint 格式化规则；改完代码先跑 `yarn format`。
+  - `yarn format` 会格式化整个仓库。工作区不是 format-clean 时，只对本次改动文件执行
+    `node_modules/.bin/oxfmt <files>`，不要顺带提交无关文件的格式化改动。
 - 本地联调：`yarn web:dev`（Vite 代理由 `/api` → `127.0.0.1:4317`，先 `yarn start` 起服务端）。
 - 交付前必须实际打开 `/`、`/admin.html`、`/login.html` 验收；构建成功不等于功能正确。
 

@@ -137,7 +137,8 @@ Board 项目栏
   -> 校验 Git 根、origin、当前分支、.trellis/tasks 和已有 Agent 工具
   -> 缺少 Trellis 时 invoke("initialize_pending_project")
   -> 环境门的 node.exe + @mindfoldhq/trellis CLI
-  -> 用户手动 commit/push
+  -> 初始化后把所选 Agent 的本机配置路径写入项目根 .gitignore
+  -> invoke("commit_and_push_pending_project")（或用户手动 commit/push）
   -> invoke("check_pending_project_push")
   -> invoke("preflight_pending_project")
   -> invoke("list_local_associations") 并核对同仓库旧分支
@@ -158,7 +159,12 @@ Board 项目栏
 - 需要同时同步两个分支时必须使用两个 Git worktree；每个 worktree 只绑定自己的当前分支。
 - `.trellis/tasks` 已存在时跳过初始化；`.trellis` 存在但缺 `tasks` 时仍要求初始化。
 - 编码 Agent 工具只影响当前设备，可后续追加；其他设备无需选择相同工具。
-- 初始化不自动 commit 或 push。用户完成后由客户端比较本地 HEAD 与远端分支。
+- 初始化不自动 commit 或 push。首次推送确认里的一键按钮只提交 `.trellis`（以及存在时的
+  `.gitignore`），提交信息固定为 `初始化trellis`，并推送当前分支到 origin 同名分支；没有可提交
+  内容时只推送，不创建空提交。之后由客户端比较本地 HEAD 与远端分支。
+- 初始化（完整 init 与追加 Agent）都会把所选 Agent 的本机配置路径幂等追加到项目根 `.gitignore`；
+  已存在的等价规则不重复添加，写入失败按初始化失败返回原因。
+- developer ID 默认优先取项目 `.trellis/.developer` 的 `name`，缺失时才回退到远端身份匹配或账号。
 - 推送状态为 `waiting_commit`、`waiting_push`、`branch_missing`、`remote_ahead`、`diverged`、
   `unable_to_verify` 或 `ready`；网络不可达不能显示成“未推送”。
 - 读取、初始化和关联只允许操作本次刚选择的 pending 项目路径，远程 Board 不能传任意本地路径。
@@ -188,6 +194,7 @@ Board 项目栏
 - 只读 approved binding 也可使用；初始化只写当前电脑的 Agent 配置，不改任务空间同步权限。
 - 已初始化工具在弹窗中禁用并标记“已初始化”，再次打开会重新探测实际仓库文件。
 - 初始化复用现有增量语义，不自动 commit、push、重启进程内任务同步或修改服务端任务数据。
+- 追加 Agent 同样会把对应本机配置路径写入项目根 `.gitignore`，重复执行保持幂等。
 - 旧版桌面客户端没有新命令时必须显示失败原因，不能静默假装成功。
 
 ## Tasks-only 同步
@@ -312,6 +319,7 @@ create_task / assign_task
 - `cancel_pending_project`
 - `associate_pending_project`
 - `check_pending_project_push`
+- `commit_and_push_pending_project`
 - `initialize_pending_project`
 - `pick_local_project_folder`
 - `inspect_local_project`

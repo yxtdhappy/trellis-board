@@ -328,3 +328,176 @@ fn selects_initialization_mode() {
         InitializationMode::None
     );
 }
+
+#[tokio::test]
+async fn reads_developer_name_from_trellis_developer_file() {
+    let repo = TempRepo::new("developer-name");
+    std::fs::create_dir_all(repo.root.join(".trellis")).expect("create trellis");
+    let developer = repo.root.join(".trellis").join(".developer");
+
+    assert_eq!(read_developer_name(&repo.root).await, None);
+
+    std::fs::write(
+        &developer,
+        "name=yhj\ninitialized_at=2026-11-07T20:57:57.226493\n",
+    )
+    .expect("write developer");
+    assert_eq!(
+        read_developer_name(&repo.root).await.as_deref(),
+        Some("yhj")
+    );
+
+    std::fs::write(&developer, "name=\ninitialized_at=x\n").expect("write empty name");
+    assert_eq!(read_developer_name(&repo.root).await, None);
+
+    std::fs::write(&developer, "name=yhj\r\ninitialized_at=x\r\n").expect("write crlf");
+    assert_eq!(
+        read_developer_name(&repo.root).await.as_deref(),
+        Some("yhj")
+    );
+}
+
+#[tokio::test]
+async fn inspection_exposes_developer_name_from_local_file() {
+    if !git_available() {
+        return;
+    }
+    let repo = init_repo(
+        "developer-inspection",
+        Some("https://example.com/team/repo.git"),
+    );
+    std::fs::create_dir_all(repo.root.join(".trellis")).expect("create trellis");
+    std::fs::write(repo.root.join(".trellis").join(".developer"), "name=yhj\n")
+        .expect("write developer");
+    let inspected = inspect_project(&repo.root, &repo.hooks, false)
+        .await
+        .expect("inspect repo");
+    assert_eq!(inspected.developer_name.as_deref(), Some("yhj"));
+}
+
+#[tokio::test]
+async fn creates_gitignore_with_selected_agent_rules() {
+    let repo = TempRepo::new("gitignore-create");
+    std::fs::create_dir_all(&repo.root).expect("create repo dir");
+    ensure_agent_gitignore(&repo.root, &["codex".to_string(), "claude-code".to_string()])
+        .await
+        .expect("ensure gitignore");
+    assert_eq!(
+        std::fs::read_to_string(repo.root.join(".gitignore")).expect("read gitignore"),
+        "# Trellis local agent configs (local only)\n/.claude/\n/.codex/\n"
+    );
+}
+
+#[tokio::test]
+async fn appends_gitignore_rules_and_preserves_content_and_newlines() {
+    let repo = TempRepo::new("gitignore-append");
+    std::fs::create_dir_all(&repo.root).expect("create repo dir");
+    let path = repo.root.join(".gitignore");
+
+    std::fs::write(&path, "/node_modules").expect("write gitignore");
+    ensure_agent_gitignore(&repo.root, &["codex".to_string()])
+        .await
+        .expect("ensure gitignore");
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read gitignore"),
+        "/node_modules\n# Trellis local agent configs (local only)\n/.codex/\n"
+    );
+
+    std::fs::write(
+        &path,
+        "dist/\r\n# Trellis local agent configs (local only)\r\n",
+    )
+    .expect("write crlf gitignore");
+    ensure_agent_gitignore(&repo.root, &["claude-code".to_string()])
+        .await
+        .expect("ensure gitignore crlf");
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read gitignore"),
+        "dist/\r\n# Trellis local agent configs (local only)\r\n/.claude/\r\n"
+    );
+}
+
+#[tokio::test]
+async fn dedupes_equivalent_gitignore_rules_and_is_idempotent() {
+    let repo = TempRepo::new("gitignore-dedupe");
+    std::fs::create_dir_all(&repo.root).expect("create repo dir");
+    let path = repo.root.join(".gitignore");
+    std::fs::write(&path, "codex\n/.codex/\n").expect("write gitignore");
+
+    ensure_agent_gitignore(&repo.root, &["codex".to_string()])
+        .await
+        .expect("ensure gitignore");
+    let first = std::fs::read_to_string(&path).expect("read gitignore");
+    assert_eq!(first, "codex\n/.codex/\n");
+
+    ensure_agent_gitignore(&repo.root, &["codex".to_string()])
+        .await
+        .expect("ensure gitignore again");
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read gitignore"),
+        first
+    );
+}
+
+#[test]
+fn contains_trellis_entry_matches_only_trellis_paths() {
+    assert!(contains_trellis_entry(&[".trellis/tasks/a/prd.md".to_string()]));
+    assert!(!contains_trellis_entry(&[".trellisx/a.md".to_string()]));
+    assert!(!contains_trellis_entry(&[]));
+}
+
+#[tokio::test]
+async fn commits_and_pushes_only_initialization_paths() {
+    if !git_available() {
+        return;
+    }
+    let bare = TempRepo::new("push-bare");
+    std::fs::create_dir_all(&bare.root).expect("create bare dir");
+    git(&bare.root, &["init", "--bare"]);
+    let origin = bare.root.to_string_lossy().replace('\\', "/");
+    let repo = init_repo("push-initial", Some(origin.as_str()));
+    git(&repo.root, &["config", "user.name", "Trellis Test"]);
+    git(&repo.root, &["config", "user.email", "test@example.com"]);
+    std::fs::create_dir_all(repo.root.join(".trellis").join("tasks")).expect("create tasks");
+    std::fs::write(
+        repo.root.join(".trellis").join("tasks").join("t1.md"),
+        "task",
+    )
+    .expect("write task");
+    std::fs::write(repo.root.join(".gitignore"), "/.codex/\n").expect("write gitignore");
+    std::fs::write(repo.root.join("other.txt"), "other").expect("write other");
+    // 用户已有的暂存改动不能被卷入初始化提交。
+    git(&repo.root, &["add", "other.txt"]);
+
+    let state = commit_and_push_initial(&repo.root, &repo.hooks, true)
+        .await
+        .expect("commit and push");
+    assert!(state.is_ready(), "{}", state.message);
+    assert_eq!(
+        git(&repo.root, &["log", "-1", "--format=%s"]).trim(),
+        "初始化trellis"
+    );
+
+    let committed = git(&repo.root, &["show", "--name-only", "--format="]);
+    let committed: Vec<&str> = committed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    assert!(committed.contains(&".gitignore"));
+    assert!(committed.iter().any(|path| path.starts_with(".trellis/")));
+    assert!(!committed.contains(&"other.txt"));
+    let staged = git(&repo.root, &["diff", "--cached", "--name-only"]);
+    assert!(staged.lines().any(|line| line.trim() == "other.txt"));
+
+    // 未出生分支完成 root commit 后，第二次点击只推送，不产生空提交。
+    let head_before = git(&repo.root, &["rev-parse", "HEAD"]);
+    let again = commit_and_push_initial(&repo.root, &repo.hooks, true)
+        .await
+        .expect("second commit and push");
+    assert!(again.is_ready(), "{}", again.message);
+    assert_eq!(git(&repo.root, &["rev-parse", "HEAD"]), head_before);
+    assert_eq!(git(&repo.root, &["rev-list", "--count", "HEAD"]).trim(), "1");
+    let remote_head = git(&bare.root, &["rev-parse", "refs/heads/main"]);
+    assert_eq!(again.local_head.as_deref(), Some(remote_head.trim()));
+}

@@ -56,6 +56,11 @@ description = "当前 Board origin 只能检查用户刚刚选择的本地项目
 commands.allow = ["check_pending_project_push"]
 
 [[permission]]
+identifier = "allow-commit-and-push-pending-project"
+description = "当前 Board origin 只能对用户刚刚选择的本地项目提交并推送 Trellis 初始化文件。"
+commands.allow = ["commit_and_push_pending_project"]
+
+[[permission]]
 identifier = "allow-preflight-pending-project"
 description = "当前 Board origin 只能只读预检用户刚刚选择的本地项目，不得建立绑定。"
 commands.allow = ["preflight_pending_project"]

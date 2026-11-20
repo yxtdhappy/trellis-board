@@ -225,6 +225,7 @@ fn status_report_exposes_binding_and_repository_fields() {
         requires_initialization: false,
         existing_agent_tools: Vec::new(),
         repository_name: "repo".into(),
+        developer_name: None,
     };
     let report = status_report(&sample_binding(), &inspection, "2026-11-12T00:00:00.000Z");
     assert_eq!(report["bindingId"], json!("binding-1"));

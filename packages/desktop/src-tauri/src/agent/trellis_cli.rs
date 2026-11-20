@@ -31,10 +31,23 @@ pub struct TrellisRuntime {
     pub cli_path: PathBuf,
 }
 
+/// Copilot 写入共享 `.github` 目录，只能忽略 Trellis 生成的精确子路径。
+const COPILOT_GITIGNORE_PATHS: &[&str] = &[
+    "/.github/copilot/",
+    "/.github/copilot-instructions.md",
+    "/.github/hooks/trellis.json",
+    "/.github/prompts/start.prompt.md",
+    "/.github/prompts/continue.prompt.md",
+    "/.github/prompts/finish-work.prompt.md",
+    "/.github/skills/trellis-*/",
+    "/.github/agents/trellis-*.agent.md",
+];
+
 struct AgentTool {
     id: &'static str,
     flag: &'static str,
     presence_paths: &'static [&'static str],
+    gitignore_paths: &'static [&'static str],
     /// 是否要求全部 presencePaths 命中（对照 JS 的 presenceMode: 'all'）。
     all_presence: bool,
 }
@@ -44,126 +57,147 @@ const AGENT_TOOLS: [AgentTool; 22] = [
         id: "cursor",
         flag: "--cursor",
         presence_paths: &[".cursor"],
+        gitignore_paths: &["/.cursor/"],
         all_presence: false,
     },
     AgentTool {
         id: "claude-code",
         flag: "--claude",
         presence_paths: &[".claude"],
+        gitignore_paths: &["/.claude/"],
         all_presence: false,
     },
     AgentTool {
         id: "opencode",
         flag: "--opencode",
         presence_paths: &[".opencode"],
+        gitignore_paths: &["/.opencode/"],
         all_presence: false,
     },
     AgentTool {
         id: "codex",
         flag: "--codex",
         presence_paths: &[".codex"],
+        gitignore_paths: &["/.codex/"],
         all_presence: false,
     },
     AgentTool {
         id: "kilo",
         flag: "--kilo",
         presence_paths: &[".kilocode"],
+        gitignore_paths: &["/.kilocode/"],
         all_presence: false,
     },
     AgentTool {
         id: "kiro",
         flag: "--kiro",
         presence_paths: &[".kiro/skills", ".kiro/agents", ".kiro/hooks"],
+        gitignore_paths: &["/.kiro/"],
         all_presence: false,
     },
     AgentTool {
         id: "gemini",
         flag: "--gemini",
         presence_paths: &[".gemini"],
+        gitignore_paths: &["/.gemini/"],
         all_presence: false,
     },
     AgentTool {
         id: "antigravity",
         flag: "--antigravity",
         presence_paths: &[".agent/workflows", ".agent/skills"],
+        gitignore_paths: &["/.agent/"],
         all_presence: false,
     },
     AgentTool {
         id: "devin",
         flag: "--devin",
         presence_paths: &[".devin/workflows", ".devin/skills"],
+        gitignore_paths: &["/.devin/"],
         all_presence: false,
     },
     AgentTool {
         id: "qoder",
         flag: "--qoder",
         presence_paths: &[".qoder"],
+        gitignore_paths: &["/.qoder/"],
         all_presence: false,
     },
     AgentTool {
         id: "codebuddy",
         flag: "--codebuddy",
         presence_paths: &[".codebuddy"],
+        gitignore_paths: &["/.codebuddy/"],
         all_presence: false,
     },
     AgentTool {
         id: "copilot",
         flag: "--copilot",
         presence_paths: &[".github/copilot", ".github/copilot-instructions.md"],
+        gitignore_paths: COPILOT_GITIGNORE_PATHS,
         all_presence: false,
     },
     AgentTool {
         id: "droid",
         flag: "--droid",
         presence_paths: &[".factory"],
+        gitignore_paths: &["/.factory/"],
         all_presence: false,
     },
     AgentTool {
         id: "dsh",
         flag: "--dsh",
         presence_paths: &[".dsh"],
+        gitignore_paths: &["/.dsh/"],
         all_presence: false,
     },
     AgentTool {
         id: "pi",
         flag: "--pi",
         presence_paths: &[".pi/extensions/trellis/index.ts", ".pi/settings.json"],
+        gitignore_paths: &["/.pi/"],
         all_presence: true,
     },
     AgentTool {
         id: "reasonix",
         flag: "--reasonix",
         presence_paths: &[".reasonix"],
+        gitignore_paths: &["/.reasonix/"],
         all_presence: false,
     },
     AgentTool {
         id: "zcode",
         flag: "--zcode",
         presence_paths: &[".zcode"],
+        gitignore_paths: &["/.zcode/"],
         all_presence: false,
     },
     AgentTool {
         id: "omp",
         flag: "--omp",
         presence_paths: &[".omp"],
+        gitignore_paths: &["/.omp/"],
         all_presence: false,
     },
     AgentTool {
         id: "trae",
         flag: "--trae",
         presence_paths: &[".trae"],
+        gitignore_paths: &["/.trae/"],
         all_presence: false,
     },
     AgentTool {
         id: "grok",
         flag: "--grok",
         presence_paths: &[".grok"],
+        gitignore_paths: &["/.grok/"],
         all_presence: false,
     },
     AgentTool {
         id: "kimi",
         flag: "--kimi",
         presence_paths: &[".kimi-code"],
+        gitignore_paths: &["/.kimi-code/"],
         all_presence: false,
     },
     AgentTool {
@@ -175,6 +209,7 @@ const AGENT_TOOLS: [AgentTool; 22] = [
             ".snow/agents",
             ".snow/hooks",
         ],
+        gitignore_paths: &["/.snow/"],
         all_presence: false,
     },
 ];
@@ -194,6 +229,23 @@ pub fn trellis_agent_tool_flags(tools: &[String]) -> Vec<String> {
         flags.push(entry.flag.to_string());
     }
     flags
+}
+
+/// 工具 ID 列表 → 需要写入项目 `.gitignore` 的本机配置路径。
+/// 按 `AGENT_TOOLS` 顺序展开并去重，保证输出稳定且可重复执行。
+pub fn agent_gitignore_paths(tools: &[String]) -> Vec<&'static str> {
+    let mut paths: Vec<&'static str> = Vec::new();
+    for tool in &AGENT_TOOLS {
+        if !tools.iter().any(|id| id.trim() == tool.id) {
+            continue;
+        }
+        for path in tool.gitignore_paths {
+            if !paths.contains(path) {
+                paths.push(path);
+            }
+        }
+    }
+    paths
 }
 
 fn init_args(cli_path: &Path, developer_id: &str, agent_tools: &[String]) -> Vec<String> {

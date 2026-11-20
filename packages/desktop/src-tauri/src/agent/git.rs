@@ -12,6 +12,10 @@ use crate::agent::process::{
 };
 use crate::agent::protocol::{code, AgentError, AgentResult};
 
+mod write;
+
+pub use write::{add_paths, commit_paths, has_staged_changes, push_branch};
+
 /// 与 JS 一致：按 PATH 解析 git（Rust 的 Command 会用父进程 PATH 查找裸命令名）。
 pub const GIT_BINARY: &str = "git";
 /// 固定 SSH 行为：禁止交互、严格校验主机密钥。
@@ -30,7 +34,7 @@ const NETWORK_TIMEOUT: Duration = Duration::from_secs(180);
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
 const ERROR_TAIL_CHARS: usize = 1024;
 
-/// 允许执行的操作；`DiffTree` 是桌面端受限增量扫描扩展，其余条目与 JS 操作白名单一致。
+/// 允许执行的操作；`DiffTree` 与末尾四个写操作是桌面端扩展，其余条目与 JS 操作白名单一致。
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitOperation {
@@ -50,11 +54,15 @@ pub enum GitOperation {
     RevList,
     Merge,
     WorktreeList,
+    AddPaths,
+    DiffCachedQuiet,
+    CommitPaths,
+    PushBranch,
 }
 
 #[allow(dead_code)]
 impl GitOperation {
-    pub const ALL: [GitOperation; 16] = [
+    pub const ALL: [GitOperation; 20] = [
         GitOperation::CheckRef,
         GitOperation::ConfigSparse,
         GitOperation::ShowToplevel,
@@ -71,6 +79,10 @@ impl GitOperation {
         GitOperation::RevList,
         GitOperation::Merge,
         GitOperation::WorktreeList,
+        GitOperation::AddPaths,
+        GitOperation::DiffCachedQuiet,
+        GitOperation::CommitPaths,
+        GitOperation::PushBranch,
     ];
 
     /// JS 侧的操作名（日志与白名单契约共用）。
@@ -92,6 +104,10 @@ impl GitOperation {
             GitOperation::RevList => "rev-list",
             GitOperation::Merge => "merge",
             GitOperation::WorktreeList => "worktree-list",
+            GitOperation::AddPaths => "add-paths",
+            GitOperation::DiffCachedQuiet => "diff-cached-quiet",
+            GitOperation::CommitPaths => "commit-paths",
+            GitOperation::PushBranch => "push-branch",
         }
     }
 }
@@ -120,6 +136,7 @@ pub struct GitParams<'a> {
     pub branch: Option<&'a str>,
     pub marker: Option<&'a str>,
     pub revision: Option<&'a str>,
+    pub message: Option<&'a str>,
     pub paths: &'a [String],
 }
 
@@ -159,6 +176,7 @@ pub fn git_args(
             | GitOperation::DiffTree
             | GitOperation::RevList
             | GitOperation::Merge
+            | GitOperation::DiffCachedQuiet
     ) {
         args.push("-c".to_string());
         args.push("core.fsmonitor=false".to_string());
@@ -306,8 +324,55 @@ pub fn git_args(
                 "FETCH_HEAD".to_string(),
             ]);
         }
+        GitOperation::AddPaths => {
+            require_paths(params)?;
+            args.extend(["add".to_string(), "-A".to_string(), "--".to_string()]);
+            args.extend(params.paths.iter().cloned());
+        }
+        GitOperation::DiffCachedQuiet => {
+            require_paths(params)?;
+            args.extend([
+                "diff".to_string(),
+                "--cached".to_string(),
+                "--quiet".to_string(),
+                "--".to_string(),
+            ]);
+            args.extend(params.paths.iter().cloned());
+        }
+        GitOperation::CommitPaths => {
+            require_paths(params)?;
+            let message = params
+                .message
+                .ok_or_else(|| AgentError::new(code::GIT_FAILED, "提交信息缺失"))?;
+            args.extend([
+                "commit".to_string(),
+                "-m".to_string(),
+                message.to_string(),
+                "--".to_string(),
+            ]);
+            args.extend(params.paths.iter().cloned());
+        }
+        GitOperation::PushBranch => {
+            let branch = params
+                .branch
+                .ok_or_else(|| AgentError::new(code::GIT_FAILED, "同步分支参数缺失"))?;
+            let branch = crate::agent::protocol::validate_branch_name_syntax(branch)?;
+            args.extend([
+                "push".to_string(),
+                "origin".to_string(),
+                format!("refs/heads/{branch}:refs/heads/{branch}"),
+            ]);
+        }
     }
     Ok(args)
+}
+
+/// 写操作必须带显式 pathspec，避免空参数被 Git 解释成“全部路径”。
+fn require_paths(params: &GitParams<'_>) -> AgentResult<()> {
+    if params.paths.is_empty() {
+        return Err(AgentError::new(code::GIT_FAILED, "Git 路径参数缺失"));
+    }
+    Ok(())
 }
 
 /// hooks 目录必须是真实空目录，避免仓库自带 hook 干扰（对照 JS ensureHooksDirectory）。
@@ -815,7 +880,56 @@ pub fn classify_fetch_failure(text: &str) -> AgentError {
     if lower.contains("couldn't find remote ref") || lower.contains("remote ref does not exist") {
         return AgentError::new(code::FETCH_FAILED, "远端同步分支不存在");
     }
-    let unreachable = [
+    if is_remote_unreachable(&lower) {
+        return unreachable_remote_error();
+    }
+    AgentError::new(
+        code::FETCH_FAILED,
+        format!("Git fetch 失败：{}", tail_text(text, 500)),
+    )
+}
+
+/// push 失败分类：非快进、网络/认证与其他错误分开提示。
+pub fn classify_push_failure(text: &str) -> AgentError {
+    let lower = text.to_lowercase();
+    if lower.contains("non-fast-forward")
+        || lower.contains("fetch first")
+        || lower.contains("[rejected]")
+    {
+        return AgentError::new(
+            code::NO_FAST_FORWARD,
+            "远端分支包含本地没有的新提交，请先拉取并处理后再推送",
+        );
+    }
+    if is_remote_unreachable(&lower) {
+        return unreachable_remote_error();
+    }
+    AgentError::new(
+        code::GIT_FAILED,
+        format!("Git push 失败：{}", tail_text(text, 500)),
+    )
+}
+
+/// commit 身份缺失时给出可操作提示，其余保留 Git 输出。
+pub fn classify_commit_failure(text: &str) -> AgentError {
+    let lower = text.to_lowercase();
+    if lower.contains("please tell me who you are")
+        || lower.contains("unable to auto-detect email address")
+        || lower.contains("empty ident name")
+    {
+        return AgentError::new(
+            code::GIT_FAILED,
+            "Git 提交失败：请先配置 git user.name 与 user.email",
+        );
+    }
+    AgentError::new(
+        code::GIT_FAILED,
+        format!("Git 提交失败：{}", tail_text(text, 500)),
+    )
+}
+
+fn is_remote_unreachable(lower: &str) -> bool {
+    [
         "could not resolve",
         "connection refused",
         "unable to access",
@@ -825,18 +939,17 @@ pub fn classify_fetch_failure(text: &str) -> AgentError {
         "does not appear to be a git repository",
         "no such file or directory",
         "timed out",
-    ];
-    if unreachable.iter().any(|needle| lower.contains(needle)) {
-        return AgentError::new(
-            code::REMOTE_UNREACHABLE,
-            "无法访问 Git 远端，请检查网络和凭据",
-        )
-        .retryable(true);
-    }
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn unreachable_remote_error() -> AgentError {
     AgentError::new(
-        code::FETCH_FAILED,
-        format!("Git fetch 失败：{}", tail_text(text, 500)),
+        code::REMOTE_UNREACHABLE,
+        "无法访问 Git 远端，请检查网络和凭据",
     )
+    .retryable(true)
 }
 
 /// fast-forward 合并失败分类，消息与 JS classifyMergeFailure 一致。
@@ -883,8 +996,12 @@ async fn run_git(
         stdin: None,
         timeout: Some(timeout),
         max_output_bytes: MAX_OUTPUT_BYTES,
-        // core.sparseCheckout 未配置时 exit 1 是正常分支，由 config_sparse 转成 false。
-        suppress_failure_log: matches!(operation, GitOperation::ConfigSparse),
+        // core.sparseCheckout 未配置时 exit 1、diff --cached --quiet 有差异时 exit 1
+        // 都是正常分支，由调用方转成结果，不记为命令失败。
+        suppress_failure_log: matches!(
+            operation,
+            GitOperation::ConfigSparse | GitOperation::DiffCachedQuiet
+        ),
         ..Default::default()
     };
     run_process(Path::new(GIT_BINARY), &arg_refs, &options)

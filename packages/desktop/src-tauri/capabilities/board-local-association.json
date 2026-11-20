@@ -22,6 +22,7 @@
     "allow-associate-pending-project",
     "allow-cancel-pending-project",
     "allow-check-pending-project-push",
+    "allow-commit-and-push-pending-project",
     "allow-detach-local-association",
     "allow-initialize-pending-project",
     "allow-inspect-local-project",

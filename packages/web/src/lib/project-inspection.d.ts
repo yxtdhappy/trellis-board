@@ -3,6 +3,7 @@ export type ProjectInspection = {
   repositoryName: string
   remoteUrl: string
   remoteIdentityKey: string
+  developerName: string
   branchName: string
   head: string
   clean: boolean

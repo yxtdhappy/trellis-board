@@ -213,6 +213,79 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
 - 无效清单返回清理错误且原字节不变。
 - 成功包装路径吞掉清理错误；失败包装路径不执行清理。
 
+## Scenario: 接入初始化的一键提交推送与 Agent 忽略规则
+
+### 1. Scope / Trigger
+
+- 修改首次推送确认、`commit_and_push_pending_project`、初始化后的项目 `.gitignore` 更新，或
+  `ProjectInspection.developerName` 时适用。
+
+### 2. Signatures
+
+- Tauri command：`commit_and_push_pending_project() -> { ok: true, state, message, localHead?,
+  remoteHead?, dirtySummary?, localAhead?, remoteAhead? }`
+- 权限：`allow-commit-and-push-pending-project`，同时写入
+  `permissions/desktop.toml` 与 `capabilities/board-local-association.json`。
+- 预检响应新增 `developerName: string | null`（camelCase）。
+- Git 写层：`add_paths`、`has_staged_changes`、`commit_paths`、`push_branch`；全部经
+  `git_args` 白名单与固定环境执行。
+
+### 3. Contracts
+
+- 命令无参数，只读 `DesktopAuthState.pending_project_path`，必须先 `ensure_board_caller`。
+- 只暂存 `.trellis` 与存在时的 `.gitignore`；commit message 固定 `初始化trellis`。
+- 使用 pathspec 形式 `git commit -m <message> -- <paths>`，不卷入其他已暂存文件。
+- 无暂存差异时只 push，不创建空提交；HEAD 中从未出现 `.trellis` 时返回 `MISSING_TRELLIS`。
+- push 使用全限定 refspec `refs/heads/<branch>:refs/heads/<branch>`；分支来自仓库当前分支。
+- 初始化（完整 init / Agent-only / mode=None 重试）后按所选工具把根锚定规则追加到项目 `.gitignore`：
+  22 个平台用顶层目录，Copilot 用 `.github` 精确子路径；等价规则去重、保留 CRLF、无新增不写。
+- `.gitignore` 写入失败按初始化失败返回；重试可补齐。
+- `developerName` 读取 `.trellis/.developer` 首个非空 `name=`，最长 120 字符；两个初始化弹窗
+  优先使用它，缺失时回退原有项目/账号默认值。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| 没有待接入项目路径 | 返回“请先选择本地 Git 项目目录” |
+| `.trellis` 被忽略或没有可提交文件 | `MISSING_TRELLIS`，不误报 ready |
+| Git 未配置 user.name/email | 提示先配置身份，保留本地状态 |
+| push 非快进 / 远端有新提交 | `NO_FAST_FORWARD` 可读提示 |
+| 网络或认证失败 | `REMOTE_UNREACHABLE`，不误报已推送 |
+| `.gitignore` 只读或非 UTF-8 | 初始化返回明确错误 |
+| `.developer` 缺失 / name 为空 | `developerName = null`，前端回退原有默认值 |
+
+### 5. Good/Base/Bad Cases
+
+- Good：初始化后点击一键按钮，只产生一个 `初始化trellis` 提交，push 后状态 ready。
+- Base：`.trellis` 已提交但尚未推送，点击按钮只 push，不产生空提交。
+- Bad：直接 `git add .trellis && git commit`，会把用户其他已暂存改动一起提交。
+
+### 6. Tests Required
+
+- Rust：写操作参数、`diff --cached --quiet` 0/1/错误映射、固定 pathspec 不提交其他暂存文件、
+  bare 远端端到端、二次点击不产生空提交、developer 解析、`.gitignore` 追加/去重/CRLF/幂等。
+- Web：`normalizePushState` 容错、`developerName` 缺失归一化为空字符串。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```bash
+git add .trellis
+git commit -m init        # 会提交其他已暂存文件
+git push                  # 依赖 push.default 与 upstream
+```
+
+#### Correct
+
+```bash
+git add -A -- .trellis .gitignore      # .gitignore 不存在时不传
+git diff --cached --quiet -- .trellis .gitignore
+git commit -m 初始化trellis -- .trellis .gitignore
+git push origin refs/heads/<branch>:refs/heads/<branch>
+```
+
 ## Scenario: Rust 模块的目录化拆分与测试外移
 
 ### 1. Scope / Trigger

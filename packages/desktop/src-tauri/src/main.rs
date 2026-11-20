@@ -599,6 +599,22 @@ async fn check_pending_project_push(
 }
 
 #[tauri::command]
+async fn commit_and_push_pending_project(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let path = app
+        .state::<DesktopAuthState>()
+        .pending_project_path
+        .lock()
+        .map_err(|_| "无法读取待接入项目路径".to_string())?
+        .clone()
+        .ok_or_else(|| "请先选择本地 Git 项目目录".to_string())?;
+    agent_service::commit_and_push_initial_project(&app, &path.to_string_lossy()).await
+}
+
+#[tauri::command]
 async fn preflight_pending_project(
     app: AppHandle,
     window: WebviewWindow,
@@ -1134,6 +1150,7 @@ fn main() {
             inspect_local_project,
             initialize_pending_project,
             check_pending_project_push,
+            commit_and_push_pending_project,
             preflight_pending_project,
             cancel_pending_project,
             associate_pending_project,

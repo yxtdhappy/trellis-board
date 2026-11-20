@@ -29,6 +29,9 @@ const MAX_REMOTE_LENGTH: usize = 4096;
 const MAX_REPO_PATH_LENGTH: usize = 4096;
 const DEFAULT_INITIAL_SYNC_MODE: &str = "review";
 const INITIAL_SYNC_MODES: [&str; 3] = ["bootstrap", "safe", "review"];
+const INITIAL_COMMIT_MESSAGE: &str = "初始化trellis";
+const GITIGNORE_TITLE: &str = "# Trellis local agent configs (local only)";
+const MAX_DEVELOPER_NAME_CHARS: usize = 120;
 
 /// checkInitialPush 的状态取值（对照 JS 的 `state`）。
 pub const PUSH_WAITING_COMMIT: &str = "waiting_commit";
@@ -60,6 +63,8 @@ pub struct ProjectInspection {
     pub requires_initialization: bool,
     pub existing_agent_tools: Vec<String>,
     pub repository_name: String,
+    #[serde(default)]
+    pub developer_name: Option<String>,
 }
 
 /// normalizeRemoteIdentity 的结果；`identity_hash` 用于远端身份比对。
@@ -264,6 +269,7 @@ pub async fn inspect_project_with(
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let developer_name = read_developer_name(&snapshot.root).await;
     Ok(ProjectInspection {
         root: snapshot.root.to_string_lossy().into_owned(),
         local_repo_key: snapshot.local_repo_key,
@@ -280,7 +286,87 @@ pub async fn inspect_project_with(
         requires_initialization: !has_trellis || !has_tasks,
         existing_agent_tools,
         repository_name,
+        developer_name,
     })
+}
+
+/// 读取 `.trellis/.developer` 的首个 `name=`；文件缺失、不可读或名称为空时返回 None。
+async fn read_developer_name(repo_path: &Path) -> Option<String> {
+    let text = tokio::fs::read_to_string(repo_path.join(".trellis").join(".developer"))
+        .await
+        .ok()?;
+    for line in text.lines() {
+        let Some(value) = line.strip_prefix("name=") else {
+            continue;
+        };
+        let name = value.trim();
+        if name.is_empty() || name.chars().count() > MAX_DEVELOPER_NAME_CHARS {
+            return None;
+        }
+        return Some(name.to_string());
+    }
+    None
+}
+
+/// 把所选 Agent 工具的本机配置路径追加到项目根 `.gitignore`。
+/// 保留原内容与换行风格；等价规则（忽略首尾 `/` 与空白）不重复添加；无新增时不写文件。
+async fn ensure_agent_gitignore(repo_path: &Path, agent_tools: &[String]) -> AgentResult<()> {
+    let rules = trellis_cli::agent_gitignore_paths(agent_tools);
+    if rules.is_empty() {
+        return Ok(());
+    }
+    let path = repo_path.join(".gitignore");
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => {
+            return err(
+                code::GIT_FAILED,
+                format!("无法读取项目 .gitignore：{error}"),
+            )
+        }
+    };
+    let text = String::from_utf8(bytes).map_err(|_| {
+        AgentError::new(
+            code::GIT_FAILED,
+            "项目 .gitignore 不是 UTF-8 编码，无法安全追加忽略规则",
+        )
+    })?;
+    let existing: HashSet<String> = text.lines().map(normalize_gitignore_rule).collect();
+    let missing: Vec<&str> = rules
+        .into_iter()
+        .filter(|rule| !existing.contains(&normalize_gitignore_rule(rule)))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut next = text;
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push_str(newline);
+    }
+    if !next.lines().any(|line| line.trim() == GITIGNORE_TITLE) {
+        next.push_str(GITIGNORE_TITLE);
+        next.push_str(newline);
+    }
+    for rule in missing {
+        next.push_str(rule);
+        next.push_str(newline);
+    }
+    tokio::fs::write(&path, next.as_bytes()).await.map_err(|error| {
+        AgentError::new(
+            code::GIT_FAILED,
+            format!("无法写入项目 .gitignore：{error}"),
+        )
+    })
+}
+
+/// `trim` 后去掉首尾 `/`，让 `.codex`、`.codex/`、`/.codex/` 视为同一规则。
+fn normalize_gitignore_rule(line: &str) -> String {
+    line.trim()
+        .trim_start_matches('/')
+        .trim_end_matches('/')
+        .to_string()
 }
 
 /// 缺 trellis/tasks 时完整初始化；已有任务树且缺 Agent 时只补平台配置。
@@ -316,6 +402,16 @@ pub async fn initialize_project(options: &InitializeOptions<'_>) -> AgentResult<
         }
         InitializationMode::None => {}
     }
+    // 即使本次无需初始化也要执行：失败或旧的半成品可以靠重试补齐忽略规则。
+    if let Err(error) = ensure_agent_gitignore(Path::new(&inspected.root), &selected_tools).await {
+        return Err(AgentError::new(
+            &error.code,
+            format!(
+                "Trellis 初始化文件可能已生成，但更新项目 .gitignore 失败：{}",
+                error.message
+            ),
+        ));
+    }
     inspect_project(
         Path::new(&inspected.root),
         options.hooks_dir,
@@ -334,7 +430,7 @@ pub async fn check_initial_push_with(
         inspect_git_project(repo_path, hooks_dir, allow_file_remote, Some(branch)).await?;
     let head = snapshot.head.clone();
     let committed = match (&head, git::ls_tree(&snapshot.root, hooks_dir, None).await) {
-        (Some(_), Ok(paths)) => paths.iter().any(|path| path.contains(".trellis/")),
+        (Some(_), Ok(paths)) => contains_trellis_entry(&paths),
         _ => false,
     };
     if !committed {
@@ -444,6 +540,43 @@ pub async fn check_initial_push_with(
     result.local_ahead = Some(local_ahead);
     result.remote_ahead = Some(remote_ahead);
     Ok(result)
+}
+
+/// 一次点击完成初始化提交与推送：只暂存并提交 `.trellis` 与存在时的 `.gitignore`，
+/// commit message 固定，push 当前分支到 origin 同名分支，最后复用推送状态检查。
+pub async fn commit_and_push_initial(
+    repo_path: &Path,
+    hooks_dir: &Path,
+    allow_file_remote: bool,
+) -> AgentResult<InitialPushState> {
+    let snapshot = inspect_git_project(repo_path, hooks_dir, allow_file_remote, None).await?;
+    let root = snapshot.root;
+    let mut paths = vec![".trellis".to_string()];
+    if path_exists(&root.join(".gitignore")).await {
+        paths.push(".gitignore".to_string());
+    }
+    git::add_paths(&root, hooks_dir, &paths).await?;
+    if git::has_staged_changes(&root, hooks_dir, &paths).await? {
+        git::commit_paths(&root, hooks_dir, INITIAL_COMMIT_MESSAGE, &paths).await?;
+    } else {
+        // 无暂存差异时仍可推送；但 HEAD 里从未出现过 .trellis 说明初始化文件没被纳入 Git。
+        let committed = git::ls_tree(&root, hooks_dir, None)
+            .await
+            .unwrap_or_default();
+        if !contains_trellis_entry(&committed) {
+            return err(
+                code::MISSING_TRELLIS,
+                "没有可提交的 .trellis 初始化文件，请检查 .trellis 是否被 .gitignore 忽略",
+            );
+        }
+    }
+    git::push_branch(&root, hooks_dir, &snapshot.current_branch).await?;
+    check_initial_push_with(&root, hooks_dir, &snapshot.current_branch, allow_file_remote).await
+}
+
+/// HEAD 树里是否已有 `.trellis` 文件（ls-tree 只查询 `.trellis` 路径）。
+fn contains_trellis_entry(paths: &[String]) -> bool {
+    paths.iter().any(|path| path.contains(".trellis/"))
 }
 
 pub async fn preflight_project_with(

@@ -19,6 +19,56 @@ fn maps_tool_ids_to_init_flags() {
 }
 
 #[test]
+fn maps_tools_to_gitignore_paths_in_table_order() {
+    assert_eq!(
+        agent_gitignore_paths(&["codex".to_string(), "claude-code".to_string()]),
+        vec!["/.claude/", "/.codex/"]
+    );
+    assert_eq!(
+        agent_gitignore_paths(&["pi".to_string(), "pi".to_string()]),
+        vec!["/.pi/"]
+    );
+    assert!(
+        agent_gitignore_paths(&["unknown-tool".to_string()]).is_empty()
+    );
+    assert!(agent_gitignore_paths(&[]).is_empty());
+}
+
+#[test]
+fn copilot_gitignore_uses_exact_github_paths() {
+    let paths = agent_gitignore_paths(&["copilot".to_string()]);
+    assert_eq!(paths.len(), 8);
+    for expected in [
+        "/.github/copilot/",
+        "/.github/copilot-instructions.md",
+        "/.github/hooks/trellis.json",
+        "/.github/prompts/start.prompt.md",
+        "/.github/prompts/continue.prompt.md",
+        "/.github/prompts/finish-work.prompt.md",
+        "/.github/skills/trellis-*/",
+        "/.github/agents/trellis-*.agent.md",
+    ] {
+        assert!(paths.contains(&expected), "missing {expected}");
+    }
+    assert!(!paths.contains(&"/.github/"));
+}
+
+#[test]
+fn every_agent_tool_declares_rooted_gitignore_paths() {
+    for tool in &AGENT_TOOLS {
+        assert!(
+            !tool.gitignore_paths.is_empty(),
+            "{} missing gitignore paths",
+            tool.id
+        );
+        for path in tool.gitignore_paths {
+            assert!(path.starts_with('/'), "{} rule must be root-anchored", tool.id);
+            assert_ne!(*path, "/.github/", "shared .github must not be ignored");
+        }
+    }
+}
+
+#[test]
 fn builds_init_arguments_in_order() {
     let tools = vec!["codex".to_string(), "snow".to_string()];
     assert_eq!(

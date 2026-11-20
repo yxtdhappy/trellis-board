@@ -15,6 +15,16 @@ export function preflightBlockReason({
   return ''
 }
 
+export function normalizePushState(value) {
+  const source = value && typeof value === 'object' ? value : {}
+  const text = (field) => (typeof source[field] === 'string' ? source[field] : '')
+  return {
+    state: text('state'),
+    message: text('message'),
+    dirtySummary: text('dirtySummary'),
+  }
+}
+
 export function onboardingErrorMessage(error, fallback) {
   let message = ''
   if (error instanceof Error) {

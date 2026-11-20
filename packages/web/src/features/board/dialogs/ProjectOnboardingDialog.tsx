@@ -16,14 +16,17 @@ import { TRELLIS_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.j
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import { pickProjectTrellisDevId } from '@/lib/team-client.js'
 import { normalizeProjectInspection, type ProjectInspection } from '@/lib/project-inspection.js'
-import { onboardingErrorMessage, preflightBlockReason } from '@/lib/onboarding-probe.js'
+import {
+  normalizePushState,
+  onboardingErrorMessage,
+  preflightBlockReason,
+} from '@/lib/onboarding-probe.js'
 import { AgentToolSelector } from './AgentToolSelector.tsx'
 import { OnboardingSkeleton } from './OnboardingSkeleton.tsx'
 import {
   normalizeAssociation,
   normalizePreflight,
   stateLabel,
-  text,
 } from './project-onboarding-normalize.ts'
 import type {
   Association,
@@ -67,6 +70,7 @@ export function ProjectOnboardingDialog({
   const [busy, setBusy] = useState(false)
   const [requiresInitialPush, setRequiresInitialPush] = useState(false)
   const pushCheckInFlight = useRef(false)
+  const pushActionSeq = useRef(0)
   const developerIdEdited = useRef(false)
   const defaultsKey = useRef('')
   const dialogHeaderRef = useRef<HTMLDivElement>(null)
@@ -130,11 +134,9 @@ export function ProjectOnboardingDialog({
     }
   }, [open, path, reloadToken, invoke])
 
-  const preferredDeveloperId = pickProjectTrellisDevId(
-    projects,
-    inspection?.remoteIdentityKey,
-    defaultDeveloperId.trim(),
-  )
+  const preferredDeveloperId =
+    inspection?.developerName.trim() ||
+    pickProjectTrellisDevId(projects, inspection?.remoteIdentityKey, defaultDeveloperId.trim())
 
   useEffect(() => {
     if (!open || developerIdEdited.current) return
@@ -254,19 +256,18 @@ export function ProjectOnboardingDialog({
   async function checkPush({ silent = false } = {}) {
     if (!inspection || busy || pushCheckInFlight.current) return
     pushCheckInFlight.current = true
+    const actionSeq = pushActionSeq.current
     if (!silent) {
       setBusy(true)
       setMessage('')
     }
     try {
-      const result = (await invoke('check_pending_project_push', {
+      const result = await invoke('check_pending_project_push', {
         branchName: inspection.branchName,
-      })) as Record<string, unknown>
-      const next: PushState = {
-        state: text(result.state),
-        message: text(result.message),
-        dirtySummary: text(result.dirtySummary),
-      }
+      })
+      // 一键提交期间由它返回最终状态，忽略更早发出的轮询结果。
+      if (actionSeq !== pushActionSeq.current) return
+      const next: PushState = normalizePushState(result)
       setPush(next)
       if (next.state !== 'ready') setPreflight(null)
       if (!silent) setMessage(stateLabel(next))
@@ -277,6 +278,25 @@ export function ProjectOnboardingDialog({
     } finally {
       pushCheckInFlight.current = false
       if (!silent) setBusy(false)
+    }
+  }
+
+  async function commitAndPush() {
+    if (!inspection || busy) return
+    pushActionSeq.current += 1
+    setBusy(true)
+    setMessage('')
+    try {
+      const result = await invoke('commit_and_push_pending_project')
+      const next: PushState = normalizePushState(result)
+      setPush(next)
+      if (next.state !== 'ready') setPreflight(null)
+      setMessage(stateLabel(next))
+    } catch (error) {
+      setPush(null)
+      setMessage(onboardingErrorMessage(error, '提交并推送失败'))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -541,21 +561,26 @@ export function ProjectOnboardingDialog({
                 <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
                   <p className="font-medium">首次推送确认</p>
                   <p className="text-muted-foreground">
-                    请先检查生成的 `.trellis` 文件，然后手动提交并推送到 `{inspection.branchName}
-                    `。客户端不会自动 commit 或 push。
+                    请先检查生成的 `.trellis` 文件，然后提交并推送到 `{inspection.branchName}
+                    `。客户端不会自动提交；点击“一键提交并推送”只提交 `.trellis`（以及存在时的
+                    `.gitignore`），也可以手动执行：
                   </p>
                   <code className="rounded bg-muted px-2 py-1 text-xs">
                     git add .trellis && git commit && git push
                   </code>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-fit"
-                    disabled={busy}
-                    onClick={() => void checkPush()}
-                  >
-                    {busy ? '正在检查…' : '检查推送状态'}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" disabled={busy} onClick={() => void commitAndPush()}>
+                      一键提交并推送
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => void checkPush()}
+                    >
+                      检查推送状态
+                    </Button>
+                  </div>
                   {push ? (
                     <p className={pushReady ? 'text-success' : 'text-warning'}>
                       {stateLabel(push)}

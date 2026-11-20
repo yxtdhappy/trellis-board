@@ -86,8 +86,8 @@ export function AgentQuickInitDialog({
 
   useEffect(() => {
     if (!open || developerIdEdited.current) return
-    setDeveloperId(defaultDeveloperId.trim())
-  }, [open, taskSpaceId, defaultDeveloperId])
+    setDeveloperId(inspection?.developerName.trim() || defaultDeveloperId.trim())
+  }, [open, taskSpaceId, defaultDeveloperId, inspection])
 
   const missingTools = useMemo(
     () =>

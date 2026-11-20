@@ -19,6 +19,7 @@ export function normalizeProjectInspection(value) {
     repositoryName: text(project.repositoryName) || '本地项目',
     remoteUrl,
     remoteIdentityKey: text(project.remoteIdentityKey),
+    developerName: text(project.developerName),
     branchName,
     head: text(project.head),
     clean: project.clean === true,

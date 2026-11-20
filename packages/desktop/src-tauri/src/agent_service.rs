@@ -1027,6 +1027,25 @@ pub async fn check_initial_push(
     Ok(payload)
 }
 
+pub async fn commit_and_push_initial_project(
+    app: &AppHandle,
+    repo_path: &str,
+) -> Result<Value, String> {
+    let service = service(app).map_err(|error| message(&error))?;
+    let allow_file_remote = service.allow_file_remote();
+    let hooks = service.ephemeral_hooks().map_err(|error| message(&error))?;
+    let result =
+        onboarding::commit_and_push_initial(Path::new(repo_path), &hooks, allow_file_remote).await;
+    let _ = std::fs::remove_dir_all(&hooks);
+    let state = result.map_err(|error| message(&error))?;
+    let mut payload =
+        serde_json::to_value(state).map_err(|error| format!("无法序列化提交推送结果：{error}"))?;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("ok".to_string(), Value::Bool(true));
+    }
+    Ok(payload)
+}
+
 pub async fn list_associations(app: &AppHandle) -> Result<Vec<LocalAssociation>, String> {
     let trace = std::env::var_os("TRELLIS_DESKTOP_HTTP_TRACE").is_some();
     let started = std::time::Instant::now();

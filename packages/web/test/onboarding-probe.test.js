@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   canProbeBranch,
+  normalizePushState,
   onboardingErrorMessage,
   preflightBlockReason,
 } from '../src/lib/onboarding-probe.js'
@@ -47,6 +48,21 @@ test('预检只在 Trellis 任务目录和首次推送就绪后开放', () => {
     preflightBlockReason({ hasTrellis: true, hasTasks: true, requiresPushCheck: false }),
     '',
   )
+})
+
+test('推送状态规范化容忍缺失与非字符串字段', () => {
+  assert.deepEqual(normalizePushState({ state: 'ready', message: '已推送', dirtySummary: 'M a' }), {
+    state: 'ready',
+    message: '已推送',
+    dirtySummary: 'M a',
+  })
+  assert.deepEqual(normalizePushState({ state: 42, message: null }), {
+    state: '',
+    message: '',
+    dirtySummary: '',
+  })
+  assert.deepEqual(normalizePushState(null), { state: '', message: '', dirtySummary: '' })
+  assert.deepEqual(normalizePushState('ready'), { state: '', message: '', dirtySummary: '' })
 })
 
 test('接入错误提取真实消息，不可读时使用兜底', () => {
