@@ -1767,3 +1767,27 @@ BRANCH_MISMATCH 每次心跳重复弹窗且抢焦点；改为 assert_binding_bra
 
 - 清理 GitHub 私有测试仓库（需 gh delete_repo scope）。
 - 评估桌面端 Git 子进程的代理配置/继承；当前 ENV_ALLOWLIST 不继承 HTTPS_PROXY，弱网直连会失败。
+
+
+## Session 74: 修复失效 handoff 冲突提示持续驻留
+<!-- trellis-session: v=2 fp=d99e6d56a8da43ad -->
+
+**Date**: 2026-11-20
+**Task**: 修复失效 handoff 冲突提示持续驻留
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+客户端本地 handoff 冲突记录在服务端控制面回到 claimed/none 后不再被处理，task-control-state.json 的残留记录长期驻留并持续显示右上角冲突卡片。修复：merge_binding_controls 合并权威 controls 后清理当前 binding 中不再对应 handoff_materialized + source_cleanup_pending/conflict 的记录，保留 cleaned 成功记录、进行中记录和其他 binding；仅删除记录也返回 true 触发持久化。新增 8 个单测，spec 同步 handoff 清理契约。验证：本机无 Rust 工具链，CI v0.4.55 desktop build（含 cargo test）成功；本机 v0.4.55 客户端已自动清除 handoff-manual-e2e-114216 残留记录并保留 3 条 cleaned 记录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b4146ce` | fix(desktop): prune stale handoff conflict notices |
+| `5a19079` | chore(task): record handoff stale-conflict notice fix |
+
+### Status
+
+[OK] **Completed**
