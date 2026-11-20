@@ -101,6 +101,13 @@ pub(super) fn handoff_ack_request(handoff: &StoredTaskHandoff) -> AgentResult<Va
             return protocol::err(code::INVALID_RESPONSE, "handoff ACK 结果尚未确定");
         }
     }
+    // 服务端按物化轮次 fencing：旧轮次 ACK 必须被识别为陈旧，不能推进新一轮清理状态。
+    if let Some(materialized_at) = handoff.materialized_at.as_deref() {
+        request["materializedAt"] = Value::String(materialized_at.to_string());
+    }
+    if let Some(materialized_revision) = handoff.materialized_revision {
+        request["materializedRevision"] = json!(materialized_revision);
+    }
     Ok(request)
 }
 pub(super) fn handoff_notice(binding: &AgentBinding, handoff: &StoredTaskHandoff) -> Value {

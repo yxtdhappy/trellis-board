@@ -79,10 +79,12 @@ pub(super) async fn mock_api_server(
     let changes = Arc::new(Mutex::new(Vec::new()));
     let requests = Arc::new(Mutex::new(Vec::new()));
     let write_response_index = Arc::new(Mutex::new(0usize));
+    let handoff_ack_index = Arc::new(Mutex::new(0usize));
     let snapshot_payload = Arc::new(snapshot_payload);
     let captured_changes = changes.clone();
     let captured_requests = requests.clone();
     let captured_write_response_index = write_response_index.clone();
+    let captured_handoff_ack_index = handoff_ack_index.clone();
     let captured_snapshot_payload = snapshot_payload.clone();
     let task = tokio::spawn(async move {
         loop {
@@ -92,6 +94,7 @@ pub(super) async fn mock_api_server(
             let changes = captured_changes.clone();
             let requests = captured_requests.clone();
             let write_response_index = captured_write_response_index.clone();
+            let handoff_ack_index = captured_handoff_ack_index.clone();
             let snapshot_payload = captured_snapshot_payload.clone();
             tokio::spawn(async move {
                 let mut request = Vec::new();
@@ -309,6 +312,66 @@ pub(super) async fn mock_api_server(
                     }
                 } else if method == "POST" && path.ends_with("/release") {
                     ("200 OK", json!({ "released": true, "idempotent": false }))
+                } else if method == "POST" && path.ends_with("/handoff-ack") {
+                    // 轮次不一致时模拟服务端 fencing 拒绝，可按测试需要要求指定轮次字段。
+                    let required_at = snapshot_payload
+                        .get("handoffAckRequireMaterializedAt")
+                        .and_then(Value::as_str);
+                    let required_revision = snapshot_payload
+                        .get("handoffAckRequireMaterializedRevision")
+                        .and_then(Value::as_u64);
+                    let cycle_matches = required_at
+                        .map(|expected| {
+                            body.get("materializedAt").and_then(Value::as_str) == Some(expected)
+                        })
+                        .unwrap_or(true)
+                        && required_revision
+                            .map(|expected| {
+                                body.get("materializedRevision").and_then(Value::as_u64)
+                                    == Some(expected)
+                            })
+                            .unwrap_or(true);
+                    if !cycle_matches {
+                        (
+                            "409 Conflict",
+                            json!({
+                                "code": "HANDOFF_CYCLE_STALE",
+                                "error": "handoff ACK 属于旧物化轮次"
+                            }),
+                        )
+                    } else {
+                        let response = {
+                            let mut index = handoff_ack_index.lock().await;
+                            let current = *index;
+                            *index += 1;
+                            snapshot_payload
+                                .get("handoffAckResponses")
+                                .and_then(Value::as_array)
+                                .and_then(|responses| responses.get(current))
+                                .cloned()
+                                .or_else(|| snapshot_payload.get("handoffAckResponse").cloned())
+                        };
+                        match response {
+                            Some(response) => {
+                                let status =
+                                    response.get("status").and_then(Value::as_u64).unwrap_or(200);
+                                let status_line = match status {
+                                    400 => "400 Bad Request",
+                                    403 => "403 Forbidden",
+                                    404 => "404 Not Found",
+                                    409 => "409 Conflict",
+                                    429 => "429 Too Many Requests",
+                                    500 => "500 Internal Server Error",
+                                    _ => "200 OK",
+                                };
+                                (
+                                    status_line,
+                                    response.get("payload").cloned().unwrap_or(Value::Null),
+                                )
+                            }
+                            None => ("200 OK", json!({ "handoffState": "completed" })),
+                        }
+                    }
                 } else {
                     ("404 Not Found", json!({ "error": "unexpected request" }))
                 };

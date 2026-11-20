@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "复核轮次重置后清理、ACK、重试和 conflict 语义是否符合 handoff 契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "复核 cargo test 覆盖、回归有效性和真实客户端 E2E 验收口径"}

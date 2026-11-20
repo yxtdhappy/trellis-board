@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "复核轮次 fencing 顺序、旧客户端兼容和错误码是否符合 ACK 契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "复核服务端/客户端测试覆盖、CI 与真实 E2E 验收口径"}

@@ -405,6 +405,25 @@ impl TaskSync {
     }
 }
 impl TaskSync {
+    /// 旧版持久记录可能没有轮次字段：发送前用本地最新控制回填请求副本，
+    /// 不改写持久记录，避免把回填结果当成新的服务端事实。
+    pub(super) async fn handoff_ack_cycle_backfill(
+        &self,
+        handoff: &StoredTaskHandoff,
+    ) -> StoredTaskHandoff {
+        let mut effective = handoff.clone();
+        if effective.materialized_at.is_none() && effective.materialized_revision.is_none() {
+            self.ensure_task_control_loaded().await;
+            let state = self.task_control_state.lock().await;
+            if let Some(control) = state.controls.get(&handoff.execution_task_key) {
+                effective.materialized_at = control.materialized_at.clone();
+                effective.materialized_revision = control.materialized_revision;
+            }
+        }
+        effective
+    }
+}
+impl TaskSync {
     pub(super) async fn attempt_handoff_ack(&self, key: &str) -> AgentResult<bool> {
         let Some(handoff) = self.stored_task_handoff(key).await else {
             return Ok(false);
@@ -412,10 +431,20 @@ impl TaskSync {
         if handoff.ack_state != "pending" || handoff.outcome.is_empty() {
             return Ok(false);
         }
-        match self.ack_remote_handoff(&handoff).await {
+        let effective = self.handoff_ack_cycle_backfill(&handoff).await;
+        match self.ack_remote_handoff(&effective).await {
             Ok(_) => {
                 self.mark_handoff_ack_done(key).await?;
                 Ok(true)
+            }
+            Err(error) if error.server_code.as_deref() == Some("HANDOFF_CYCLE_STALE") => {
+                // 服务端已进入新一轮物化：保持 pending，由下一次控制同步按新轮次重置后重新清理。
+                crate::logging::warn(&format!(
+                    "handoff ACK 属于旧物化轮次 {}：{}",
+                    handoff.task_id,
+                    protocol::safe_error_message(&error.message)
+                ));
+                Ok(false)
             }
             Err(error) if error.server_code.as_deref() == Some("HANDOFF_LEASE_HELD") => {
                 self.mark_handoff_ack_pending(

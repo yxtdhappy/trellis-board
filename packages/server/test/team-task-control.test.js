@@ -545,6 +545,297 @@ test('handoff ACK 仅允许创建者，重复提交幂等且审计脱敏', () =>
   }
 })
 
+test('handoff ACK 轮次匹配才推进，完成终态重复 ACK 元数据不一致仍拒绝', () => {
+  const { db, taskControl, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    const executionTaskKey = prepareHandoffTask(
+      db,
+      snapshots,
+      agentA,
+      taskSpaceId,
+      'task-handoff-cycle-match',
+    )
+    const row = db
+      .prepare('SELECT materialized_at, materialized_revision FROM sync_task WHERE execution_task_key = ?')
+      .get(executionTaskKey)
+    const ack = {
+      outcome: 'cleaned',
+      backupId: 'handoff-0123456789abcdef',
+      manifestSha256: 'e'.repeat(64),
+      fileCount: 2,
+      totalBytes: 256,
+      materializedAt: row.materialized_at,
+      materializedRevision: Number(row.materialized_revision),
+    }
+
+    const cleaned = taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, ack)
+    assert.equal(cleaned.handoffState, 'completed')
+    assert.equal(cleaned.idempotent, false)
+    assert.equal(
+      taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, ack).idempotent,
+      true,
+    )
+    assert.throws(
+      () =>
+        taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+          ...ack,
+          backupId: 'handoff-fedcba9876543210',
+          manifestSha256: 'f'.repeat(64),
+        }),
+      (error) => error.status === 409 && error.code === 'HANDOFF_ACK_MISMATCH',
+    )
+
+    // 已完成终态下轮次陈旧的重复 ACK 必须优先按 fencing 拒绝，不能进入幂等元数据比较。
+    assert.throws(
+      () =>
+        taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+          ...ack,
+          materializedAt: '2099-03-03T03:03:03.033Z',
+        }),
+      (error) => error.status === 409 && error.code === 'HANDOFF_CYCLE_STALE',
+    )
+
+    // 服务端已进入下一轮物化并重新等待清理：上一轮终态 ACK 必须先被轮次 fencing 拒绝，
+    // 不能进入 completed 幂等比较。
+    const nextAt = '2099-01-01T00:00:00.000Z'
+    db.prepare(`
+      UPDATE sync_task
+      SET materialized_at = ?, materialized_revision = 2, handoff_state = 'source_cleanup_pending'
+      WHERE execution_task_key = ?
+    `).run(nextAt, executionTaskKey)
+    assert.throws(
+      () => taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, ack),
+      (error) =>
+        error.status === 409 &&
+        error.code === 'HANDOFF_CYCLE_STALE' &&
+        error.details.materializedAt === nextAt &&
+        error.details.materializedRevision === 2,
+    )
+    assert.equal(
+      taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+        ...ack,
+        materializedAt: nextAt,
+        materializedRevision: 2,
+        backupId: 'handoff-fedcba9876543210',
+        manifestSha256: 'f'.repeat(64),
+      }).handoffState,
+      'completed',
+    )
+    assert.equal(
+      db
+        .prepare("SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'")
+        .get().count,
+      2,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('陈旧轮次的 cleaned/conflict ACK 返回 HANDOFF_CYCLE_STALE 且不推进状态或写审计', () => {
+  const { db, taskControl, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    const executionTaskKey = prepareHandoffTask(
+      db,
+      snapshots,
+      agentA,
+      taskSpaceId,
+      'task-handoff-cycle-stale',
+    )
+    const previous = db
+      .prepare('SELECT materialized_at, materialized_revision FROM sync_task WHERE execution_task_key = ?')
+      .get(executionTaskKey)
+    const nextAt = '2099-02-02T02:02:02.022Z'
+    db.prepare(`
+      UPDATE sync_task
+      SET materialized_at = ?, materialized_revision = 2, handoff_state = 'source_cleanup_pending'
+      WHERE execution_task_key = ?
+    `).run(nextAt, executionTaskKey)
+
+    const staleAck = {
+      outcome: 'cleaned',
+      backupId: 'handoff-0123456789abcdef',
+      manifestSha256: 'e'.repeat(64),
+      fileCount: 2,
+      totalBytes: 256,
+      materializedAt: previous.materialized_at,
+      materializedRevision: Number(previous.materialized_revision),
+    }
+    assert.throws(
+      () => taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, staleAck),
+      (error) => error.status === 409 && error.code === 'HANDOFF_CYCLE_STALE',
+    )
+    assert.throws(
+      () =>
+        taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+          outcome: 'conflict',
+          reason: 'git_tracked',
+          fileCount: 2,
+          totalBytes: 256,
+          materializedAt: previous.materialized_at,
+          materializedRevision: Number(previous.materialized_revision),
+        }),
+      (error) => error.status === 409 && error.code === 'HANDOFF_CYCLE_STALE',
+    )
+    // 只提供 revision 时也必须参与 fencing；0 是有效轮次，不能被当成缺省。
+    assert.throws(
+      () =>
+        taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+          ...staleAck,
+          materializedAt: undefined,
+          materializedRevision: 0,
+        }),
+      (error) => error.status === 409 && error.code === 'HANDOFF_CYCLE_STALE',
+    )
+    // 只提供 materializedAt 且陈旧时，即使 revision 匹配也必须拒绝。
+    assert.throws(
+      () =>
+        taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+          ...staleAck,
+          materializedRevision: 2,
+        }),
+      (error) => error.status === 409 && error.code === 'HANDOFF_CYCLE_STALE',
+    )
+    assert.equal(
+      db
+        .prepare('SELECT handoff_state FROM sync_task WHERE execution_task_key = ?')
+        .get(executionTaskKey).handoff_state,
+      'source_cleanup_pending',
+    )
+    assert.equal(
+      db
+        .prepare("SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'")
+        .get().count,
+      0,
+    )
+
+    const conflict = taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+      outcome: 'conflict',
+      reason: 'git_tracked',
+      fileCount: 2,
+      totalBytes: 256,
+      materializedAt: nextAt,
+      materializedRevision: 2,
+    })
+    assert.equal(conflict.handoffState, 'source_cleanup_conflict')
+    assert.equal(
+      db
+        .prepare("SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'")
+        .get().count,
+      1,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('handoff ACK 缺少轮次字段保持旧客户端兼容，当前轮次为空时拒绝提供的轮次', () => {
+  const { db, taskControl, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    const executionTaskKey = prepareHandoffTask(
+      db,
+      snapshots,
+      agentA,
+      taskSpaceId,
+      'task-handoff-cycle-compat',
+    )
+    const legacyAck = {
+      outcome: 'cleaned',
+      backupId: 'handoff-0123456789abcdef',
+      manifestSha256: 'e'.repeat(64),
+      fileCount: 2,
+      totalBytes: 256,
+    }
+    const cleaned = taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, legacyAck)
+    assert.equal(cleaned.handoffState, 'completed')
+    assert.equal(cleaned.idempotent, false)
+
+    db.prepare(`
+      UPDATE sync_task
+      SET materialized_at = NULL, materialized_revision = NULL,
+          handoff_state = 'source_cleanup_pending'
+      WHERE execution_task_key = ?
+    `).run(executionTaskKey)
+    assert.throws(
+      () =>
+        taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+          ...legacyAck,
+          materializedAt: '2026-11-19T08:00:00.000Z',
+        }),
+      (error) => error.status === 409 && error.code === 'HANDOFF_CYCLE_STALE',
+    )
+    // 服务端轮次为空且请求不携带轮次时仍走兼容路径。
+    assert.equal(
+      taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+        ...legacyAck,
+        backupId: 'handoff-fedcba9876543210',
+        manifestSha256: 'f'.repeat(64),
+      }).handoffState,
+      'completed',
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('非法 handoff 轮次字段返回 400 且不改状态', () => {
+  const { db, taskControl, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    const executionTaskKey = prepareHandoffTask(
+      db,
+      snapshots,
+      agentA,
+      taskSpaceId,
+      'task-handoff-cycle-invalid',
+    )
+    const baseAck = {
+      outcome: 'cleaned',
+      backupId: 'handoff-0123456789abcdef',
+      manifestSha256: 'e'.repeat(64),
+      fileCount: 2,
+      totalBytes: 256,
+    }
+    for (const materializedAt of [
+      '2026-11-19',
+      '2026-11-19T08:00:00Z',
+      '2026-11-19T08:00:00.000+08:00',
+    ]) {
+      assert.throws(
+        () =>
+          taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+            ...baseAck,
+            materializedAt,
+          }),
+        (error) => error.status === 400 && error.code === 'INVALID_INPUT',
+      )
+    }
+    for (const materializedRevision of [-1, 1.5, 'abc']) {
+      assert.throws(
+        () =>
+          taskControl.ackHandoff(agentA, taskSpaceId, executionTaskKey, {
+            ...baseAck,
+            materializedRevision,
+          }),
+        (error) => error.status === 400 && error.code === 'INVALID_INPUT',
+      )
+    }
+    assert.equal(
+      db
+        .prepare('SELECT handoff_state FROM sync_task WHERE execution_task_key = ?')
+        .get(executionTaskKey).handoff_state,
+      'source_cleanup_pending',
+    )
+    assert.equal(
+      db
+        .prepare("SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'")
+        .get().count,
+      0,
+    )
+  } finally {
+    db.close()
+  }
+})
+
 test('多个活动副本身份冲突时不改写已有权威任务路径', () => {
   const { db, taskControl, snapshots, agentA, taskSpaceId } = setup()
   try {

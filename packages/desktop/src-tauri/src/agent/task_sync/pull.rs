@@ -439,7 +439,7 @@ impl TaskSync {
             &mut server_groups,
         )
         .await?;
-        let snapshot_baselines = if after_revision == 0 {
+        let mut snapshot_baselines = if after_revision == 0 {
             baselines_from_snapshot(&snapshot_files)
         } else {
             merge_baselines(&cursor.baselines, &snapshot_files)
@@ -509,7 +509,32 @@ impl TaskSync {
                     "pendingReview": true,
                 }));
             }
-            return Box::pin(self.pull_tracking(binding, reconciled_deferred)).await;
+            // 上传后需要再拉一次才能看到新 revision；但如果本轮没有提交任何内容
+            // （典型：dirty 目录本地已无文件、build_directory_files 产出空差异），
+            // 继续尾递归不会改变任何状态，只会无限加深调用栈直至 stack overflow。
+            // 2026-11-20 实测：dirtyDirs=2、localGroups=0、committedRevision=0 时
+            // 每秒递归多次，约 50s 后 tokio worker 栈溢出 abort。
+            // 停止递归，但不能直接返回：服务端可能已在当前快照中推进 revision
+            // （例如归档目录 409 清理后仍需应用快照），必须继续应用手中的快照才能收敛。
+            let committed = uploaded
+                .get("committedRevision")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if committed == 0 {
+                crate::logging::warn(&format!(
+                    "上传未产生提交，继续应用当前快照：dirtyDirs={dirty_dirs:?}"
+                ));
+                // 上传可能已清理归档目录的本地 cursor 状态，必须用最新 cursor 重算基线，
+                // 否则旧基线会在末尾 merge 时被写回。
+                cursor = self.read_cursor(&task_space_id).await;
+                snapshot_baselines = if after_revision == 0 {
+                    baselines_from_snapshot(&snapshot_files)
+                } else {
+                    merge_baselines(&cursor.baselines, &snapshot_files)
+                };
+            } else {
+                return Box::pin(self.pull_tracking(binding, reconciled_deferred)).await;
+            }
         }
 
         if after_revision == 0 {

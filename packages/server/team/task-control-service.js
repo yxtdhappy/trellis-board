@@ -10,6 +10,7 @@ export function createTaskControlService({
   db,
   now = () => new Date(),
   leaseDurationMs = LEASE_DURATION_MS,
+  logger = null,
 }) {
   const statements = createStatements(db)
   const views = createViews({ statements, now })
@@ -17,7 +18,7 @@ export function createTaskControlService({
   const tasks = createTasks({ statements, views, leases, now })
   const uploads = createUploads({ statements, views, leases, tasks, now })
   const projection = createProjection({ statements, leases, tasks, now })
-  const handoff = createHandoff({ db, statements, views, now })
+  const handoff = createHandoff({ db, statements, views, now, logger })
 
   return {
     createPendingTask: tasks.createPendingTask,

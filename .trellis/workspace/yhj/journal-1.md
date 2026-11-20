@@ -1589,3 +1589,57 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 68: 分支不一致提醒降噪与非模态消息
+<!-- trellis-session: v=2 fp=79a8e4377376baa7 -->
+
+**Date**: 2026-11-20
+**Task**: 分支不一致提醒降噪与非模态消息
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+BRANCH_MISMATCH 每次心跳重复弹窗且抢焦点；改为 assert_binding_branch 在进入暂停边沿直接发一次 task_sync_notice，Board 内 sonner toast 呈现，绕过 ControlHub 与系统通知。修复 ownership 路径先持久化导致通知被吞的问题。0.4.48 真机验证：单次提醒、45s 不重复、恢复后再提醒、暂停重启不提醒。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c2a6981` | fix(desktop): 分支不一致只提醒一次且不再弹模态框 |
+| `9de6e69` | chore(release): 0.4.46 |
+| `5bd9c95` | fix(desktop): 分支守卫通知改由公共守卫发射 |
+| `1c494e5` | chore(release): 0.4.48 |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 69: 修复 handoff 二次委派来源副本不清理并完成真实 E2E
+<!-- trellis-session: v=2 fp=8bec868165e9927e -->
+
+**Date**: 2026-11-20
+**Task**: 修复 handoff 二次委派来源副本不清理并完成真实 E2E
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+定位同一任务多轮跨用户委派时本地 handoff 记录沿用上一轮 done/cleaned 的缺陷；在桌面 Agent 状态机按 materializedAt/materializedRevision 隔离轮次，新增单测与状态机回归测试并更新 handoff spec。CI 期间修正 6301262 引入的 pull 无提交不收敛回归（cab412d/d33817d/e6c2678），最终 CI run 44663521779 全绿。用 CI 构建在真实数据上完成 E2E：test1 来源副本备份后删除（handoff-c44c8d67db7c1af9），服务端 handoff_state=completed，审计 id=37 cleaned，Board 卡片显示“认领与清理已完成”。跨轮次陈旧 ACK 竞态另建跟进任务 11-20-handoff-ack-cycle-fencing。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7d0a241` | fix(desktop): handoff ACK 状态按物化轮次隔离 |
+| `a0c8469` | chore(task): 记录 handoff 二次轮次修复产物 |
+| `cab412d` | fix(desktop): 无提交时继续应用当前快照 |
+| `d33817d` | fix(desktop): 上传无提交时按最新 cursor 重算基线 |
+| `e6c2678` | test(desktop): 无提交收敛不再要求二次拉取快照 |
+| `6a7697c` | docs(task): 补充 handoff 二次轮次 E2E 验证报告 |
+
+### Status
+
+[OK] **Completed**
