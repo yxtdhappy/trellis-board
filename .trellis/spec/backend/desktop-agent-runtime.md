@@ -52,7 +52,7 @@
   不调用 `focus_main_window`；暂停期间重复心跳、切换另一个非绑定分支、进程启动/窗口重载都不得重复提醒。
 - 超时预算：登录/登出/关联列表 15s；inspect-project / 实时决策 60s；首次同步与备份恢复 120s；
   check-push / preflight 240s；associate / initialize-project 600s；`trellis init` 与 Agent-only 配置 210s；
-  `task.py` 150s；npm 安装 300s。
+  Pi/OMP 模板补齐 helper（snapshot / repair / hash）各 30s；`task.py` 150s；npm 安装 300s。
 - 认证被撤销（401 或 `AUTH_REVOKED`）时停止循环、写 `state.json`，不静默重试。
 - 本地改动只经 `TaskSync` 的 notify watcher 上传：监听 `<repo>/.trellis`，只关心 `.trellis/tasks/**`，
   250 ms 静默窗口合并后按任务目录调用 `upload_dirty`；不得新增独立的实时同步通道。
@@ -232,6 +232,19 @@
   `.trellis/tasks` 才执行完整 `trellis init`。helper 通过 stdin 复用包的 `configurePlatform`、
   `setWriteMode("skip")` 和 `initializeHashes(..., { merge: true })`，不得写 spec、workflow、任务或根文件；
   模块缺失、未知平台、Python 检测或平台配置失败必须失败关闭，不得退回完整初始化。
+- Pi / OMP 模板的原子写（`.<name>.<pid>.tmp` → `.ts`）在 Windows DLP 下会返回 `EXDEV`；完整 init 与
+  Agent-only 配置共用 `trellis_cli.rs` 的「识别 → 补齐 → 单次重试」：仅当所选工具含 `pi`/`omp` 且输出
+  （含反斜杠形式）或仓库命中 `.pi/extensions/trellis` / `.omp/extensions/trellis` 签名时触发；同时选择
+  两者时一次补齐覆盖全部所选平台，重试只执行一次。补齐失败按平台返回
+  `Pi` / `OMP` / `Pi/OMP 模板补齐失败`，重试仍失败返回
+  `<fallback>（模板已补齐，重试仍失败）`，不得循环重试或伪造成功；其他 `EXDEV` 与普通初始化错误保持原行为。
+- 补齐 helper `agent_template_repair.mjs` 通过 `include_str!` 内嵌，经环境门确定的 `node.exe` + `cli.js`
+  从 stdin 执行，复用包的 `collectPlatformTemplates` / `resolveSupportedPython` / `initializeHashes`。
+  `repair` 只创建缺失文件并使用 `openSync(..., "wx")` 直写，禁止临时文件 + rename，已有文件不读不覆盖；
+  目标与父目录必须经 realpath 校验留在仓库根内，失败回滚本次创建的文件。`snapshot` 在首次 init 前记录
+  所选平台缺失的模板路径（不探测 Python，失败静默降级）；补齐并重试成功后，`hash` 只把「快照缺失、
+  现已存在且 UTF-8 内容与模板一致」的路径并入 `.template-hashes.json`，初始化前已存在的用户文件不得登记。
+  哈希补偿在 `finish_init()` 之前执行，失败不影响已成功的初始化结果。
 
 ## 7. 本地前端（环境门、登录页）与看板内同步确认弹窗
 

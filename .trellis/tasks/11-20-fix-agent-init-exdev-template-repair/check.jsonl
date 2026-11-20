@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "核对 Rust 初始化契约、超时、单 exe 和错误行为"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "核对模板哈希清理、两路初始化和模块拆分约束"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "核对路径越界、symlink 和失败回滚"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对客户端、Trellis 包、模板哈希和完成状态之间的契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对自动化覆盖、真机验证和最终检查"}
+{"file": ".trellis/tasks/11-20-fix-agent-init-exdev-template-repair/research/exdev-reproduction.md", "reason": "本机 EXDEV 复现矩阵与真实 Agent-only 失败证据"}

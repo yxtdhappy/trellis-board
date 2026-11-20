@@ -13,9 +13,17 @@ use crate::agent::process::{run_process, ProcessOptions, ProcessOutput};
 use crate::agent::protocol::{code, AgentError, AgentResult};
 
 const INIT_TIMEOUT: Duration = Duration::from_secs(210);
+const REPAIR_TIMEOUT: Duration = Duration::from_secs(30);
 const INIT_MAX_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 const ERROR_TAIL_CHARS: usize = 2 * 1024;
 const AGENT_ONLY_INIT_HELPER: &str = include_str!("agent_only_init.mjs");
+const AGENT_TEMPLATE_REPAIR_HELPER: &str = include_str!("agent_template_repair.mjs");
+
+/// 已知会被 Windows DLP 以 EXDEV 拦截的模板平台与其扩展目录签名。
+const REPAIR_PLATFORMS: [(&str, &str); 2] = [
+    ("pi", ".pi/extensions/trellis"),
+    ("omp", ".omp/extensions/trellis"),
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrellisRuntime {
@@ -182,11 +190,8 @@ pub fn trellis_agent_tool_flags(tools: &[String]) -> Vec<String> {
         let Some(entry) = find_tool(tool.trim()) else {
             continue;
         };
+        // presenceMode 只用于客户端完成状态检测，Trellis CLI 没有对应参数。
         flags.push(entry.flag.to_string());
-        if entry.id == "pi" {
-            flags.push("--pi-presence".to_string());
-            flags.push("all".to_string());
-        }
     }
     flags
 }
@@ -240,57 +245,274 @@ pub async fn detect_agent_tools(repo_path: &Path) -> Vec<String> {
 }
 
 /// 在 repo_path 内执行 `<node.exe> <cli.js> init -y --skip-existing -u <developerId> <flags>`。
+/// 遇到 Pi / OMP 的 EXDEV 模板写入失败时补齐缺失模板并重试一次。
 pub async fn initialize_trellis(
     runtime: &TrellisRuntime,
     repo_path: &Path,
     developer_id: &str,
     agent_tools: &[String],
 ) -> AgentResult<()> {
-    let args = init_args(&runtime.cli_path, developer_id, agent_tools);
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let options = ProcessOptions {
-        cwd: Some(repo_path.to_path_buf()),
-        timeout: Some(INIT_TIMEOUT),
-        max_output_bytes: INIT_MAX_OUTPUT_BYTES,
-        ..ProcessOptions::default()
-    };
-    let output = run_process(&runtime.node_exe, &args, &options).await?;
-    if output.success() {
-        return finish_init(repo_path, Ok(())).await;
-    }
-    Err(trellis_failure(
+    initialize_with_repair(
+        runtime,
         repo_path,
         agent_tools,
-        &output,
+        InitMode::Full { developer_id },
         "Trellis 初始化失败",
-    ))
+    )
+    .await
 }
 
 /// 已有 Trellis 任务树时只通过 stdin 执行内嵌 helper，复用 Trellis 包的平台配置器和模板哈希。
+/// 与完整 init 共用同一套 EXDEV 识别、模板补齐和单次重试逻辑。
 pub async fn initialize_agents(
     runtime: &TrellisRuntime,
     repo_path: &Path,
     agent_tools: &[String],
 ) -> AgentResult<()> {
-    let args = agent_only_args(&runtime.cli_path, repo_path, agent_tools);
+    initialize_with_repair(
+        runtime,
+        repo_path,
+        agent_tools,
+        InitMode::AgentsOnly,
+        "Trellis Agent 配置失败",
+    )
+    .await
+}
+
+/// 初始化方式：完整 `trellis init` 或已有任务树的 Agent-only 配置。
+enum InitMode<'a> {
+    Full { developer_id: &'a str },
+    AgentsOnly,
+}
+
+async fn run_init_process(
+    runtime: &TrellisRuntime,
+    repo_path: &Path,
+    agent_tools: &[String],
+    mode: &InitMode<'_>,
+) -> AgentResult<ProcessOutput> {
+    let (args, stdin) = match mode {
+        InitMode::Full { developer_id } => (
+            init_args(&runtime.cli_path, *developer_id, agent_tools),
+            None,
+        ),
+        InitMode::AgentsOnly => (
+            agent_only_args(&runtime.cli_path, repo_path, agent_tools),
+            Some(AGENT_ONLY_INIT_HELPER.as_bytes().to_vec()),
+        ),
+    };
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let options = ProcessOptions {
         cwd: Some(repo_path.to_path_buf()),
-        stdin: Some(AGENT_ONLY_INIT_HELPER.as_bytes().to_vec()),
+        stdin,
         timeout: Some(INIT_TIMEOUT),
         max_output_bytes: INIT_MAX_OUTPUT_BYTES,
         ..ProcessOptions::default()
     };
-    let output = run_process(&runtime.node_exe, &args, &options).await?;
+    run_process(&runtime.node_exe, &args, &options).await
+}
+
+async fn initialize_with_repair(
+    runtime: &TrellisRuntime,
+    repo_path: &Path,
+    agent_tools: &[String],
+    mode: InitMode<'_>,
+    fallback_prefix: &str,
+) -> AgentResult<()> {
+    // 第一次初始化前记录所选 Pi / OMP 平台尚缺失的模板；仅用于补登记模板哈希。
+    let selected_platforms = selected_repair_platforms(agent_tools);
+    let missing_before = if selected_platforms.is_empty() {
+        Vec::new()
+    } else {
+        snapshot_missing_paths(runtime, repo_path, &selected_platforms).await
+    };
+
+    let output = run_init_process(runtime, repo_path, agent_tools, &mode).await?;
     if output.success() {
         return finish_init(repo_path, Ok(())).await;
     }
-    Err(trellis_failure(
-        repo_path,
-        agent_tools,
-        &output,
-        "Trellis Agent 配置失败",
-    ))
+
+    let repair_platforms = repair_platforms_for_failure(repo_path, agent_tools, &output);
+    if repair_platforms.is_empty() {
+        return Err(trellis_failure(agent_tools, &output, fallback_prefix));
+    }
+
+    let repair = run_repair_helper(runtime, repo_path, "repair", &repair_platforms).await?;
+    if !repair.success() {
+        return Err(repair_failure(agent_tools, &repair_platforms, &repair));
+    }
+
+    // 只重试一次；补齐或重试失败都必须返回可定位错误，不伪造成功。
+    let retry = run_init_process(runtime, repo_path, agent_tools, &mode).await?;
+    if !retry.success() {
+        return Err(retry_failure(agent_tools, &repair_platforms, &retry, fallback_prefix));
+    }
+
+    // 哈希补偿是尽力而为：失败不改变已经成功的初始化结果。
+    if !missing_before.is_empty() {
+        let _ = run_hash_helper(runtime, repo_path, &repair_platforms, &missing_before).await;
+    }
+    finish_init(repo_path, Ok(())).await
+}
+
+/// 所选工具中需要 EXDEV 补齐的 Pi / OMP 平台，固定顺序为 pi、omp。
+fn selected_repair_platforms(agent_tools: &[String]) -> Vec<String> {
+    REPAIR_PLATFORMS
+        .iter()
+        .filter(|&&(id, _)| agent_tools.iter().any(|tool| tool.trim() == id))
+        .map(|&(id, _)| id.to_string())
+        .collect()
+}
+
+/// 仅当输出含 EXDEV、所选工具含 Pi / OMP 且扩展目录签名成立时触发补齐。
+/// 同时选择 Pi 与 OMP 且任一签名成立时返回全部所选平台，一次补齐覆盖两者。
+fn repair_platforms_for_failure(
+    repo_path: &Path,
+    agent_tools: &[String],
+    output: &ProcessOutput,
+) -> Vec<String> {
+    let combined = format!("{}\n{}", output.stderr, output.stdout);
+    if !combined.contains("EXDEV") {
+        return Vec::new();
+    }
+    let selected = selected_repair_platforms(agent_tools);
+    if selected.is_empty() {
+        return Vec::new();
+    }
+    let signed = REPAIR_PLATFORMS.iter().any(|&(id, extension_dir)| {
+        if !selected.iter().any(|platform| platform.as_str() == id) {
+            return false;
+        }
+        let windows_dir = extension_dir.replace('/', "\\");
+        combined.contains(extension_dir)
+            || combined.contains(windows_dir.as_str())
+            || repo_path.join(extension_dir).exists()
+    });
+    if signed {
+        selected
+    } else {
+        Vec::new()
+    }
+}
+
+fn repair_helper_args(
+    cli_path: &Path,
+    repo_path: &Path,
+    mode: &str,
+    platforms: &[String],
+) -> Vec<String> {
+    let mut args = vec![
+        "--input-type=module".to_string(),
+        "-".to_string(),
+        cli_path.to_string_lossy().into_owned(),
+        repo_path.to_string_lossy().into_owned(),
+        mode.to_string(),
+    ];
+    args.extend(platforms.iter().cloned());
+    args
+}
+
+fn hash_helper_args(cli_path: &Path, repo_path: &Path, payload_json: &str) -> Vec<String> {
+    vec![
+        "--input-type=module".to_string(),
+        "-".to_string(),
+        cli_path.to_string_lossy().into_owned(),
+        repo_path.to_string_lossy().into_owned(),
+        "hash".to_string(),
+        payload_json.to_string(),
+    ]
+}
+
+async fn run_repair_helper(
+    runtime: &TrellisRuntime,
+    repo_path: &Path,
+    mode: &str,
+    platforms: &[String],
+) -> AgentResult<ProcessOutput> {
+    let args = repair_helper_args(&runtime.cli_path, repo_path, mode, platforms);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let options = ProcessOptions {
+        cwd: Some(repo_path.to_path_buf()),
+        stdin: Some(AGENT_TEMPLATE_REPAIR_HELPER.as_bytes().to_vec()),
+        timeout: Some(REPAIR_TIMEOUT),
+        max_output_bytes: INIT_MAX_OUTPUT_BYTES,
+        ..ProcessOptions::default()
+    };
+    run_process(&runtime.node_exe, &args, &options).await
+}
+
+async fn run_hash_helper(
+    runtime: &TrellisRuntime,
+    repo_path: &Path,
+    platforms: &[String],
+    missing: &[String],
+) -> AgentResult<ProcessOutput> {
+    let payload = json!({
+        "platforms": platforms,
+        "missing": missing,
+    })
+    .to_string();
+    let args = hash_helper_args(&runtime.cli_path, repo_path, &payload);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let options = ProcessOptions {
+        cwd: Some(repo_path.to_path_buf()),
+        stdin: Some(AGENT_TEMPLATE_REPAIR_HELPER.as_bytes().to_vec()),
+        timeout: Some(REPAIR_TIMEOUT),
+        max_output_bytes: INIT_MAX_OUTPUT_BYTES,
+        ..ProcessOptions::default()
+    };
+    run_process(&runtime.node_exe, &args, &options).await
+}
+
+/// snapshot 失败静默降级为空列表，不阻塞主初始化流程。
+async fn snapshot_missing_paths(
+    runtime: &TrellisRuntime,
+    repo_path: &Path,
+    platforms: &[String],
+) -> Vec<String> {
+    match run_repair_helper(runtime, repo_path, "snapshot", platforms).await {
+        Ok(output) if output.success() => parse_snapshot_missing_paths(&output.stdout),
+        _ => Vec::new(),
+    }
+}
+
+/// 取 stdout 最后一个以 `{` 开头的非空行，解析缺失模板路径。
+fn parse_snapshot_missing_paths(stdout: &str) -> Vec<String> {
+    let Some(line) = stdout
+        .lines()
+        .rev()
+        .find(|line| line.trim_start().starts_with('{'))
+    else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return Vec::new();
+    };
+    value
+        .get("missing")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn repair_platform_label(platforms: &[String]) -> String {
+    let mut labels = Vec::new();
+    if platforms.iter().any(|platform| platform.as_str() == "pi") {
+        labels.push("Pi");
+    }
+    if platforms.iter().any(|platform| platform.as_str() == "omp") {
+        labels.push("OMP");
+    }
+    if labels.is_empty() {
+        labels.push("Pi/OMP");
+    }
+    labels.join("/")
 }
 
 async fn finish_init(repo_path: &Path, result: AgentResult<()>) -> AgentResult<()> {
@@ -370,31 +592,55 @@ async fn write_manifest_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
     result
 }
 
-/// JS 侧的 Pi 修复依赖打包的 trellis-pi-repair.mjs，Rust 运行环境没有该脚本，
-/// 因此不伪造修复成功：保留原始 init 错误并附带 stderr 末 2 KiB，交由界面提示重装/重试。
+/// 非目标错误或补齐未触发时的通用失败：保留原始 init 错误并附带 stderr 末 2 KiB。
 fn trellis_failure(
-    repo_path: &Path,
     agent_tools: &[String],
     output: &ProcessOutput,
     fallback_prefix: &str,
 ) -> AgentError {
-    let combined = format!("{}\n{}", output.stderr, output.stdout);
-    let pi_repair_required = agent_tools.iter().any(|tool| tool.trim() == "pi")
-        && combined.contains("EXDEV")
-        && repo_path
-            .join(".pi")
-            .join("extensions")
-            .join("trellis")
-            .exists();
-    let message = if pi_repair_required {
-        format!("Pi 模板补齐失败：{}", error_tail(output))
-    } else {
-        format!("{fallback_prefix}：{}", error_tail(output))
-    };
+    let message = format!("{fallback_prefix}：{}", error_tail(output));
     AgentError::new(code::GIT_FAILED, message).with_details(Some(json!({
         "exitCode": output.exit_code,
         "agentTools": agent_tools,
-        "piRepairRequired": pi_repair_required,
+        "repairPlatforms": [],
+    })))
+}
+
+/// 补齐 helper 自身失败：不重试，返回可定位的平台与原始输出。
+fn repair_failure(
+    agent_tools: &[String],
+    platforms: &[String],
+    output: &ProcessOutput,
+) -> AgentError {
+    let message = format!(
+        "{} 模板补齐失败：{}",
+        repair_platform_label(platforms),
+        error_tail(output)
+    );
+    AgentError::new(code::GIT_FAILED, message).with_details(Some(json!({
+        "exitCode": output.exit_code,
+        "agentTools": agent_tools,
+        "repairPlatforms": platforms,
+        "repairFailed": true,
+    })))
+}
+
+/// 模板已补齐但单次重试仍失败：不循环重试，保留原始重试输出。
+fn retry_failure(
+    agent_tools: &[String],
+    platforms: &[String],
+    output: &ProcessOutput,
+    fallback_prefix: &str,
+) -> AgentError {
+    let message = format!(
+        "{fallback_prefix}（模板已补齐，重试仍失败）：{}",
+        error_tail(output)
+    );
+    AgentError::new(code::GIT_FAILED, message).with_details(Some(json!({
+        "exitCode": output.exit_code,
+        "agentTools": agent_tools,
+        "repairPlatforms": platforms,
+        "retryFailed": true,
     })))
 }
 
