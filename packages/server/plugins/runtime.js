@@ -520,6 +520,7 @@ export function createPluginRuntime({
     tasks: taskService,
     load,
     start,
+    panels,
     stop,
     reload,
     list,

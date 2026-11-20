@@ -41,6 +41,8 @@ import { SyncNotice } from '@/desktop/SyncNotice'
 import { isAttention, type BoardTask } from '@/features/board/task-view'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
+import { fetchDesktopPanels } from '@/api/desktop-plugins'
+import { DesktopPluginsView } from '@/features/plugins/DesktopPluginsView'
 import { canManageProject, createIdempotencyKey, taskVersion } from '@/lib/team-client.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -63,6 +65,8 @@ const NAV: BoardNavItem[] = [
 
 // 单机插件管理页只保留给 standalone 遗留模式；Team 模式的本机插件入口由桌面 EXE 独立提供。
 const STANDALONE_PLUGIN_NAV: BoardNavItem = { id: 'plugins', label: '插件' }
+// 仅桌面客户端可见：管理 EXE 内置的本机插件宿主。
+const DESKTOP_PLUGIN_NAV: BoardNavItem = { id: 'desktop-plugins', label: '本机插件' }
 
 type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 type DesktopClientIdentity = { name?: string; version?: string }
@@ -185,15 +189,23 @@ export function BoardPage() {
   const activeCount = tasks.filter((task) => !task.archived).length
   // 服务端未下发 features 时按开启处理；只有明确 false 才视为插件被屏蔽。
   const pluginsEnabled = teamMode ? runtime?.features?.pluginsEnabled !== false : true
+  const loadPanels = useCallback(async () => {
+    const [remote, desktop] = await Promise.all([
+      pluginsEnabled ? fetchPanels().catch(() => []) : Promise.resolve([]),
+      isTauri && teamMode ? fetchDesktopPanels().catch(() => []) : Promise.resolve([]),
+    ])
+    setPanels([...remote, ...desktop])
+  }, [isTauri, pluginsEnabled, teamMode])
   const navItems = useMemo<BoardNavItem[]>(
     () => [
       ...NAV,
+      ...(isTauri && teamMode ? [DESKTOP_PLUGIN_NAV] : []),
       ...(teamMode ? [] : [STANDALONE_PLUGIN_NAV]),
       ...panels
         .filter((panel) => panel.placement === 'view')
         .map((panel) => ({ id: `panel:${panel.pluginId}:${panel.id}`, label: panel.title })),
     ],
-    [panels, teamMode],
+    [isTauri, panels, teamMode],
   )
   const activePanel = panels.find((panel) => `panel:${panel.pluginId}:${panel.id}` === view)
   const createProject =
@@ -289,45 +301,20 @@ export function BoardPage() {
 
   useEffect(() => {
     if (!runtime) return
-    if (!pluginsEnabled) {
-      setPanels([])
-      return
-    }
-    let cancelled = false
-    fetchPanels()
-      .then((list) => {
-        if (!cancelled) setPanels(list)
-      })
-      .catch(() => {
-        /* 团队模式或插件关闭时没有面板 */
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [runtime, pluginsEnabled])
+    void loadPanels()
+  }, [runtime, loadPanels])
 
   useEffect(() => {
     if (view !== 'plugins' || !pluginsEnabled) return
-    fetchPanels()
-      .then(setPanels)
-      .catch(() => {
-        /* 插件页不可用时保留已有面板 */
-      })
-  }, [view, pluginsEnabled])
+    void loadPanels()
+  }, [view, pluginsEnabled, loadPanels])
 
   // 插件页改排序后立即重排导航，不用切走再回来。
   useEffect(() => {
-    if (!pluginsEnabled) return
-    const refresh = () => {
-      fetchPanels()
-        .then(setPanels)
-        .catch(() => {
-          /* 后端暂时不可用时保留已有面板 */
-        })
-    }
+    const refresh = () => void loadPanels()
     window.addEventListener('trellis:panels-changed', refresh)
     return () => window.removeEventListener('trellis:panels-changed', refresh)
-  }, [pluginsEnabled])
+  }, [loadPanels])
 
   const syncLabel = teamMode
     ? `${projects.length} 个授权项目 · 事件驱动 · 10 秒可见兜底`
@@ -495,6 +482,7 @@ export function BoardPage() {
           ) : null}
 
           {view === 'plugins' ? <PluginsView /> : null}
+          {view === 'desktop-plugins' && isTauri ? <DesktopPluginsView /> : null}
 
           {activePanel ? (
             <PluginPanel

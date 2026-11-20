@@ -21,7 +21,8 @@ export function securityHeaders() {
   return {
     'content-security-policy':
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-      "connect-src 'self' ipc: http://ipc.localhost; " +
+      "connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*; " +
+      "frame-src 'self' http://127.0.0.1:* http://localhost:*; " +
       "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     'x-content-type-options': 'nosniff',
     'x-frame-options': 'DENY',

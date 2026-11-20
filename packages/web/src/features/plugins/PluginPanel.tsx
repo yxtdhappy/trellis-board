@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { PluginPanel as PluginPanelInfo } from '@/api/panels'
+import { requestDesktopPlugin } from '@/api/desktop-plugins'
 import { useAppearance } from '@/app/theme'
 
 type BridgeMessage = {
@@ -60,6 +61,7 @@ export function PluginPanel({
 }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const { resolvedTheme: theme } = useAppearance()
+  const desktop = panel.host === 'desktop'
 
   useEffect(() => {
     const frame = frameRef.current
@@ -72,7 +74,11 @@ export function PluginPanel({
 
     const subscribe = () => {
       if (events) return
-      events = new EventSource(`/api/events?topics=${encodeURIComponent(panel.pluginId)}`)
+      const source = desktop
+        ? panel.eventsSrc
+        : `/api/events?topics=${encodeURIComponent(panel.pluginId)}`
+      if (!source) return
+      events = new EventSource(source)
       events.onmessage = (event) => {
         try {
           post({ type: 'trellis:event', event: JSON.parse(event.data) })
@@ -107,6 +113,22 @@ export function PluginPanel({
         return
       }
       try {
+        if (desktop) {
+          const response = await requestDesktopPlugin(
+            panel.pluginId,
+            (message.method || 'GET').toUpperCase(),
+            path,
+            message.body,
+          )
+          post({
+            type: 'trellis:response',
+            id,
+            ok: response.ok,
+            status: response.status,
+            data: response.data,
+          })
+          return
+        }
         const hasBody = message.body !== undefined && message.body !== null
         const response = await fetch(base + path, {
           method: (message.method || 'GET').toUpperCase(),
@@ -145,7 +167,7 @@ export function PluginPanel({
       frame.removeEventListener('load', init)
       events?.close()
     }
-  }, [panel, theme, projectId, projectName])
+  }, [desktop, panel, theme, projectId, projectName])
 
   return (
     <iframe

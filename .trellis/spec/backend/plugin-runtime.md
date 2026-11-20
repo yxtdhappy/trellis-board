@@ -63,6 +63,27 @@
 - 显式放行时 `witops-core` 的读缓存、需求索引与分组需求缓存必须按 `ctx.currentActor().userId` 分区；
   用户触发的刷新（`POST /refresh`）只清本人缓存。
 
+### 3.2 桌面本机插件宿主
+
+- 桌面 EXE 不依赖 Team 服务端插件机制；`packages/desktop/plugin-host/host.mjs` 复用
+  `createPluginRuntime()`，只监听 `127.0.0.1:0`，管理接口用随机 bearer token，面板路径带随机 secret。
+- 懒启动：`desktop_plugins_list` / `desktop_plugin_panels` 先合并 `plugins.json`；没有任何
+  `enabled` 插件时直接返回，不解析 Node、不创建子进程。停用最后一个插件或退出托盘时回收进程树。
+- 隔离目录：`%LOCALAPPDATA%/TrellisBoard/data/desktop-plugins/<serverHash>/<userId>/`；`plugins.json`
+  保存 enabled/sort/config，`secrets.dpapi` 使用 Windows DPAPI（CurrentUser）绑定当前账号，
+  启动前解密为 `secrets.json` 并在宿主 ready 后删除。
+- 内置资源由 `src-tauri/build.rs` 在编译期嵌入 EXE，`plugin_host::assets::ensure_runtime` 按
+  `版本 + 内容戳` 释放到 `%LOCALAPPDATA%/TrellisBoard/runtime/plugins/`，保持绿色包单 EXE。
+- 用户覆盖目录 `%LOCALAPPDATA%/TrellisBoard/plugins/<id>/` 需同时存在 `index.js` 与 `plugin.json`，
+  否则回退 EXE 内置实现。
+- 7 个 IPC 命令（`desktop_plugins_list`、`desktop_plugin_set_enabled/reorder/logs/panels/request/asset`）
+  全部经 `ensure_board_caller` 校验当前 WebView 与登录 Board 同源；只有 `isTauri` 页面渲染「本机插件」。
+- 面板 iframe 使用 loopback URL；宿主把 HTML 内 `/api/plugins/` 重写为 `/s/<secret>/`，并同源代理
+  `/plugin-ui/*` 静态资源。服务端 CSP 因此放行 `frame-src` 与 `connect-src` 的 `127.0.0.1` / `localhost`。
+- 当前登录账号的 approved、非只读、非待移除 `localAssociations` 会作为 `trellis.projects` 注入宿主；
+  插件读写本地 `.trellis/tasks/**` 后仍由 Rust `TaskSync` 负责上行同步。
+
+
 ## 4. 存储与命名空间
 
 - **插件一律不碰 SQLite**，只能通过 SDK 的 `ctx.store`；宿主按 `<pluginId>:<key>` 隔离。

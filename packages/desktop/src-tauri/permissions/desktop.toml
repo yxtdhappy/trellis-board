@@ -199,3 +199,38 @@ commands.allow = ["appearance_load"]
 identifier = "allow-appearance-save"
 description = "当前已登录的 Board origin 可把主题与根字号写入本机外观偏好。"
 commands.allow = ["appearance_save"]
+
+[[permission]]
+identifier = "allow-desktop-plugins-list"
+description = "当前 Board origin 可读取本机插件清单与运行状态。"
+commands.allow = ["desktop_plugins_list"]
+
+[[permission]]
+identifier = "allow-desktop-plugin-set-enabled"
+description = "当前 Board origin 可启用或停用本机插件；停用最后一个插件会回收 Node 进程。"
+commands.allow = ["desktop_plugin_set_enabled"]
+
+[[permission]]
+identifier = "allow-desktop-plugin-reorder"
+description = "当前 Board origin 可调整本机插件的面板顺序。"
+commands.allow = ["desktop_plugin_reorder"]
+
+[[permission]]
+identifier = "allow-desktop-plugin-logs"
+description = "当前 Board origin 可读取本机插件最近的日志。"
+commands.allow = ["desktop_plugin_logs"]
+
+[[permission]]
+identifier = "allow-desktop-plugin-panels"
+description = "当前 Board origin 可读取本机插件面板与事件地址。"
+commands.allow = ["desktop_plugin_panels"]
+
+[[permission]]
+identifier = "allow-desktop-plugin-request"
+description = "当前 Board origin 可代表面板向本机插件发起请求（仅 loopback 宿主）。"
+commands.allow = ["desktop_plugin_request"]
+
+[[permission]]
+identifier = "allow-desktop-plugin-asset"
+description = "当前 Board origin 可读取本机插件面板的静态文本资源。"
+commands.allow = ["desktop_plugin_asset"]

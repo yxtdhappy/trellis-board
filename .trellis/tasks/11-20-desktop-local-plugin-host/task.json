@@ -3,7 +3,7 @@
   "name": "desktop-local-plugin-host",
   "title": "桌面 EXE 本机插件宿主与 Tauri 双通道桥接",
   "description": "在 Tauri 桌面客户端中按需托管 6 大内置插件及本地私有插件，通过同源校验 Tauri IPC 桥接内嵌 Team 网页的 PluginPanel，按 (serverUrl, userId) 隔离数据与 DPAPI 凭据并随绿色包分发。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "desktop",

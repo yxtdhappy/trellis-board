@@ -302,3 +302,50 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
 - Rust：版本比较、清单校验（含 BOM）、SHA-256/大小校验、ZIP 路径选择、替换回滚、通知去重。
 - `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml` 全绿。
 - 手工：配置 `TRELLIS_UPDATE_SERVER` 构建正式包，用本地静态服务器验证检查、通知、下载、重启。
+
+## Scenario: 桌面本机插件宿主 IPC
+
+### 1. Scope / Trigger
+
+- 修改 `packages/desktop/src-tauri/src/plugin_host.rs`、`packages/desktop/plugin-host/host.mjs` 或
+  Web 侧 `desktop_plugin*` 调用时适用。
+
+### 2. Signatures
+
+- `desktop_plugins_list() -> { disabled, running, hostVersion, plugins }`
+- `desktop_plugin_set_enabled(pluginId, enabled) -> { ok, running }`
+- `desktop_plugin_reorder(ids: string[]) -> { ok, plugins }`
+- `desktop_plugin_logs(pluginId, tail?) -> { entries }`
+- `desktop_plugin_panels() -> { panels, running }`；每个 panel 带 `host: "desktop"`、loopback `src` 与
+  `eventsSrc`
+- `desktop_plugin_request(pluginId, method, path, body?) -> { ok, status, contentType, data }`
+- `desktop_plugin_asset(pluginId, path) -> { status, contentType, content }`
+
+### 3. Contracts
+
+- 7 个命令都只加入 `board-local-association` capability，并先执行 `ensure_board_caller(&app, &window)?`；
+  本地登录页 capability 不得包含。
+- 懒启动：只有 `plugins.json` 里至少一个 `enabled` 插件时才解析 Node 并 spawn `host.mjs`；停用最后一个
+  插件、注销或退出托盘都回收进程树。宿主只绑定 `127.0.0.1`，管理接口要求随机 bearer token。
+- 数据目录按 `(serverHash, userId)` 隔离：`.../desktop-plugins/<hash>/<user>/`；`secrets.dpapi` 用
+  Windows DPAPI（CurrentUser）加密，宿主 ready 后删除解密出的 `secrets.json`。
+- 宿主需要 Node.js ≥ 22.5（`node:sqlite`）；低版本返回明确错误，不启动半可用进程。
+- 面板 iframe 指向 loopback `/s/<secret>/<plugin>/<entry>`；只有 `isTauri && teamMode` 渲染
+  「本机插件」入口，纯浏览器不拉取、不显示任何本机插件数据。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| 非当前 Board origin 调用 | 返回「该命令只允许当前登录的 Board 页面调用」 |
+| 没有任何 enabled 插件 | `running: false`，不创建 Node 进程 |
+| Node < 22.5 | 返回版本错误，不 spawn |
+| 停用最后一个插件 | 立即 kill 进程树并删除 `secrets.json` |
+| secret 路径错误 | 401/404，不落到插件进程 |
+
+### 5. Tests Required
+
+- `packages/desktop/test/plugin-host.test.js`：bearer 鉴权、面板 HTML 重写、资源、启停、仓库注入、空清单。
+- `packages/desktop/test/desktop-ui-build.test.js`：7 个权限/命令成对出现、capability 白名单、
+  `ensure_board_caller`、懒启动与 Web 入口 gating。
+- `packages/desktop/src-tauri/src/plugin_host/tests.rs`：路径隔离键、清单合并、资源释放、DPAPI 往返。

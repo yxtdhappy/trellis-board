@@ -106,7 +106,7 @@ impl<'a> CredentialStore<'a> {
 }
 
 #[cfg(windows)]
-fn dpapi_protect(plaintext: &[u8]) -> AgentResult<Vec<u8>> {
+pub(crate) fn dpapi_protect(plaintext: &[u8]) -> AgentResult<Vec<u8>> {
     use windows::Win32::Security::Cryptography::{
         CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
     };
@@ -133,7 +133,7 @@ fn dpapi_protect(plaintext: &[u8]) -> AgentResult<Vec<u8>> {
 }
 
 #[cfg(windows)]
-fn dpapi_unprotect(ciphertext: &[u8]) -> AgentResult<Vec<u8>> {
+pub(crate) fn dpapi_unprotect(ciphertext: &[u8]) -> AgentResult<Vec<u8>> {
     use windows::Win32::Security::Cryptography::{
         CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
     };
@@ -173,12 +173,12 @@ fn copy_blob_and_free(
 }
 
 #[cfg(not(windows))]
-fn dpapi_protect(_plaintext: &[u8]) -> AgentResult<Vec<u8>> {
+pub(crate) fn dpapi_protect(_plaintext: &[u8]) -> AgentResult<Vec<u8>> {
     protocol::err(code::DPAPI_UNAVAILABLE, "Agent 凭证保护仅支持 Windows")
 }
 
 #[cfg(not(windows))]
-fn dpapi_unprotect(_ciphertext: &[u8]) -> AgentResult<Vec<u8>> {
+pub(crate) fn dpapi_unprotect(_ciphertext: &[u8]) -> AgentResult<Vec<u8>> {
     protocol::err(code::DPAPI_UNAVAILABLE, "Agent 凭证保护仅支持 Windows")
 }
 

@@ -9,6 +9,7 @@ mod appearance;
 mod config;
 mod logging;
 mod navigation;
+mod plugin_host;
 mod runtime_commands;
 mod update;
 
@@ -79,7 +80,10 @@ fn ensure_local_caller(window: &WebviewWindow) -> Result<(), String> {
     }
 }
 
-fn ensure_board_caller(app: &AppHandle, window: &WebviewWindow) -> Result<Url, String> {
+pub(crate) fn ensure_board_caller(
+    app: &AppHandle,
+    window: &WebviewWindow,
+) -> Result<Url, String> {
     let current = window
         .url()
         .map_err(|error| format!("无法确认 Board 页面来源：{error}"))?;
@@ -286,6 +290,7 @@ fn forget_saved_password() {
 
 async fn clear_desktop_session(app: &AppHandle, state: &DesktopAuthState, revoke_session: bool) {
     agent_service::stop(app);
+    plugin_host::stop(app).await;
     let board = state.board_url.read().ok().and_then(|value| value.clone());
     let token = state
         .session_token
@@ -1046,6 +1051,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "quit" => {
+                plugin_host::shutdown(app);
                 agent_service::shutdown(app);
                 app.exit(0);
             }
@@ -1157,13 +1163,21 @@ fn main() {
             live_control_dismiss,
             update_status,
             update_check,
-            update_apply
+            update_apply,
+            plugin_host::desktop_plugins_list,
+            plugin_host::desktop_plugin_set_enabled,
+            plugin_host::desktop_plugin_reorder,
+            plugin_host::desktop_plugin_logs,
+            plugin_host::desktop_plugin_panels,
+            plugin_host::desktop_plugin_request,
+            plugin_host::desktop_plugin_asset
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
             let _ = config::ensure_directories();
             logging::init(&config::logs_dir());
             agent_service::register(&handle);
+            plugin_host::register(&handle);
             register_notification_tap(&handle);
             let auth = DesktopAuthState::default();
             app.manage(auth.clone());
@@ -1182,6 +1196,7 @@ fn main() {
         .expect("failed to build Trellis Board desktop client")
         .run(|app, event| {
             if let RunEvent::Exit = event {
+                plugin_host::shutdown(app);
                 agent_service::shutdown(app);
             }
         });
