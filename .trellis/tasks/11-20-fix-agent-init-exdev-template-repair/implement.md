@@ -1,8 +1,8 @@
 # 实施计划
 
-> 状态：实现、Node 测试、Windows 真机 E2E 与 CI 构建均已完成。CI run
-> `44694310603`（tag `v0.4.51`）通过 `cargo test`、打包与冒烟测试；本机无 Rust 工具链，
-> `cargo fmt --check` / `cargo clippy` 仍未执行（CI 也未配置这两步）。任务尚未归档。
+> 状态：v0.4.51 已发布并通过 CI；其他机器盘符根 `D:` 的 EISDIR 跟进修正进入 v0.4.52。
+> 本机无 Rust 工具链，`cargo fmt --check` / `cargo clippy` 仍未执行（CI 也未配置这两步）。
+> 任务尚未归档。
 
 ## 1. 新增内嵌补齐 helper
 
@@ -16,6 +16,7 @@
 - [x] hash 只登记「本次缺失、现已存在且内容与模板一致」的路径。
 - [x] 多个平台命中同一路径且内容不一致时 fail-closed，不静默覆盖。
 - [x] 在 `trellis_cli.rs` 用 `include_str!("agent_template_repair.mjs")` 引入。
+- [x] helper 的 `normalizeRepoPath()` 把裸盘符 `D:` 补成 `D:\` 后再 `realpath`。
 
 ## 2. Rust 识别与执行层
 
@@ -33,6 +34,8 @@
 - [x] 保持 `finish_init()` 与 `cleanup_template_hashes()` 的现有语义；hash 补偿在 `finish_init()`
   之前执行。
 - [x] 不修改 `node_modules`、`tauri.conf.json`、打包脚本或 UI。
+- [x] 新增 `normalize_repo_root()`；`initialize_with_repair()` 在 snapshot / init / repair / hash /
+  `finish_init` 前把裸盘符规范为盘符根。
 
 ## 3. 自动化测试
 
@@ -41,6 +44,7 @@
   - helper 参数与模式；
   - 补齐失败与重试失败文案/details；
   - 内嵌 helper 包含 `openSync`/`"wx"`/`collectPlatformTemplates`，不含 `fs.renameSync`；
+  - 裸盘符 `D:` 规范化为 `D:\`，普通路径不变；
   - 现有 `finish_init` / hash 清理测试保持通过。
 - [x] 新增 `packages/desktop/test/agent-template-repair.test.js`：
   - 用 fake Trellis 包执行 snapshot / repair / hash；
@@ -68,6 +72,7 @@
   - 执行 helper `repair pi` 后重试，确认成功；hash 补偿补回两个 Pi 键。
 - [x] 清理临时仓库；未触碰当前工作区的 `.pi` 半成品。
 - [x] 证据记录：`research/exdev-reproduction.md`、`e2e-report.md`。
+- [ ] 其他机器用 `v0.4.52` 在盘符根项目重试 Pi 初始化；若仍报 EISDIR，收集完整 error_tail/客户端日志。
 
 ## 5. 最终检查（全部开发完成后一次编译）
 
@@ -103,6 +108,14 @@
 - [x] 更新本任务 `implement.md` 勾选、写检查报告/E2E 证据。
 - [ ] 走 `trellis:finish-work` 归档；提交前确认未混入无关脏改动（`11-20-test1/` 保持原状）。
   —— **待用户确认是否提交/归档；Rust 编译仍待补跑**。
+
+## 7. 盘符根 EISDIR 跟进（v0.4.52）
+
+- [x] 其他机器反馈 `Pi 模板补齐失败：EISDIR: ... lstat 'D:'`；定位为裸盘符驱动相对路径。
+- [x] Rust `normalize_repo_root()` + helper `normalizeRepoPath()`；新增单测
+  `normalizes_bare_drive_root`。
+- [ ] Node 目标测试、提交/推送 main、`yarn release:desktop 0.4.52`、CI 构建。
+- [ ] 用户机器用 `v0.4.52` 在盘符根项目重试；失败则收集完整 error_tail/客户端日志。
 
 ## 风险与回滚点
 

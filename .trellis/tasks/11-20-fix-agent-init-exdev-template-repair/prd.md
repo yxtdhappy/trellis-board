@@ -22,6 +22,9 @@
   `@mindfoldhq/trellis@0.6.17` 的 `trellis init` 没有该参数，完整 init 会在写入前报
   `unknown option '--pi-presence'`；`presenceMode: "all"` 只是客户端检测字段，旧 JS
   `trellisAgentToolFlags()` 从未把它传给 CLI。本任务一并移除该参数。
+- 2026-11-20 其他机器反馈：项目位于盘符根时，Pi 初始化报
+  `Pi 模板补齐失败：EISDIR: illegal operation on a directory, lstat 'D:'`。Windows 上裸盘符
+  `D:` 是驱动器相对路径；init/补齐/hash 前必须统一规范为 `D:\`（或项目实际绝对路径）。
 
 ## Requirements
 
@@ -43,6 +46,8 @@
   路径越界、已有文件保护和失败回滚；Windows 真机在本机 DLP 环境执行 Pi 与 OMP 的实际初始化。
 - R9 完整 init 参数：不得向 0.6.17 CLI 传递不存在的 `--pi-presence all`；`presenceMode: "all"` 只用于
   客户端完成状态检测。
+- R10 盘符根路径：完整 init、Agent-only、snapshot/repair/hash 之前，把裸盘符（`X:`）统一规范为
+  `X:\`；补齐 helper 自身也做同样规范化，避免 realpath/lstat 对 `D:` 报 EISDIR。
 
 ## Acceptance Criteria
 
@@ -51,6 +56,7 @@
 - [ ] 同一环境选择 OMP 执行初始化成功，`.omp/extensions/trellis/index.ts` 存在。
 - [ ] 缺少 `.trellis`/`.trellis/tasks` 时执行完整 `trellis init --pi` 也能在补齐后成功。
 - [ ] 完整 init 不再因为 `--pi-presence all` 报 `unknown option`；参数中只保留 `--pi`。
+- [ ] 项目位于盘符根（如 `D:\`）时，Pi 初始化不再报 `lstat 'D:'`，能完成补齐/重试。
 - [ ] 同时选择 Pi 与 OMP 时只补齐一次、只重试一次，两个平台都完成。
 - [ ] 非 Pi/OMP 的 `EXDEV`、普通初始化错误、补齐 helper 自身失败都不会进入重试循环。
 - [ ] 已有 Pi/OMP 文件（包括用户修改过的共享 `.agents/skills`）内容保持不变。

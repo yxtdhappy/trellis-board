@@ -93,6 +93,19 @@ fn selects_repair_platforms_in_fixed_order() {
 }
 
 #[test]
+fn normalizes_bare_drive_root() {
+    let normalized = normalize_repo_root(Path::new("D:"));
+    if cfg!(windows) {
+        assert_eq!(normalized, PathBuf::from("D:\\"));
+    } else {
+        assert_eq!(normalized, PathBuf::from("D:"));
+    }
+
+    let normal = Path::new(r"D:\projects\demo");
+    assert_eq!(normalize_repo_root(normal), normal);
+}
+
+#[test]
 fn detects_pi_repair_signature_from_output_and_directory() {
     let root = temp_root("repair-pi");
     let pi_tools = vec!["pi".to_string()];
