@@ -93,6 +93,7 @@ stderr: EISDIR: illegal operation on a directory, lstat 'D:'
 ```text
 initialize_trellis / initialize_agents
   → initialize_with_repair(mode = FullInit | AgentsOnly)
+      ├─ AgentsOnly? → helper "developer" <developerId>     // 必须先于平台配置
       ├─ selected = selected_repair_platforms(tools)            // pi / omp
       ├─ snapshot = run helper "snapshot" selected              // 可失败降级
       ├─ output   = run init
@@ -204,6 +205,28 @@ hash 的 json = {"platforms":["pi","omp"],"missing":["相对路径", ...]}
 「内容一致」是安全闸门：初始化前已存在的用户文件即使同名也不会被登记；只有本次由 Trellis
 生成/补齐、且内容与模板一致的文件才进入 manifest。
 
+### 5.5 developer 模式
+
+Agent-only 不执行 `trellis init`，因此弹窗里的 developer ID 必须在配置平台前落盘：
+
+```text
+node --input-type=module - <cliPath> <repoPath> developer <name>
+```
+
+- 语义对齐 Trellis 0.6.17 `.trellis/scripts/common/developer.py`：
+  - `.trellis/.developer` 写入 `name=<name>\ninitialized_at=<ISO>\n`；
+  - `.trellis/workspace/<name>/journal-1.md` 与 `index.md` 使用与 `init_developer.py` 相同的模板；
+  - 已有含有效 `name=` 的 `.developer` → 不覆盖、不创建第二个 workspace，输出
+    `{"developer":"<existing>","created":false}`。
+- `.developer` 最后写：workspace/文件任一步失败时，下次仍会重新进入并补齐，不会因半成品
+  `.developer` 而永久跳过。
+- 名称校验：非空、≤120 字符，拒绝 `/`、`\`、`:`、`*`、`?`、`"`、`<`、`>`、`|`、控制字符、
+  `.`/`..` 以及以点或空格结尾；允许空格、Unicode 等正常名称。
+- 路径安全：`.trellis` 必须存在；workspace 目录经 native realpath 确认留在仓库根内；
+  已有 `journal-1.md` / `index.md` 不覆盖。
+- 失败语义：developer helper 失败 → `Trellis developer 初始化失败：<tail>`，
+  details 含 `developer`、`developerFailed`，不继续配置 Agent。
+
 ## 6. Rust 侧改动
 
 文件：`packages/desktop/src-tauri/src/agent/trellis_cli.rs`
@@ -218,9 +241,10 @@ hash 的 json = {"platforms":["pi","omp"],"missing":["相对路径", ...]}
 ### 6.1 公开函数保持不变
 
 - `initialize_trellis(runtime, repo, developer_id, tools)`
-- `initialize_agents(runtime, repo, tools)`
+- `initialize_agents(runtime, repo, developer_id, tools)`
 
-两者改为构造 `InitMode` 并调用共享的 `initialize_with_repair()`；签名、调用方和 Tauri 命令不变。
+两者改为构造 `InitMode` 并调用共享的 `initialize_with_repair()`；Tauri 命令与 UI 返回值不变。
+`initialize_agents` 新增 `developer_id` 仅用于补齐本机 developer 身份，不影响平台参数。
 
 ### 6.2 内部结构
 
@@ -233,13 +257,17 @@ enum InitMode<'a> {
 fn normalize_repo_root(path: &Path) -> PathBuf; // 裸盘符 D: -> D:\
 
 async fn run_init_process(runtime, repo, tools, mode) -> AgentResult<ProcessOutput>;
-async fn initialize_with_repair(runtime, repo, tools, mode, fallback_prefix) -> AgentResult<()>;
+async fn initialize_with_repair(runtime, repo, tools, mode, developer_id, fallback_prefix)
+    -> AgentResult<()>;
 ```
 
 - `run_init_process` 根据 mode 组装现有 `init_args` / `agent_only_args`，使用现有
   `run_process`、`INIT_TIMEOUT`、`INIT_MAX_OUTPUT_BYTES`。
-- `initialize_with_repair` 负责 snapshot、首次 init、识别、repair、单次 retry、hash 补偿、
-  `finish_init`。
+- 首次 init 使用 `ProcessOptions.suppress_failure_log = true`，避免把预期 EXDEV 记成通用 WARN；
+  命中补齐时写 INFO，未命中补齐时由 `initialize_with_repair` 手动写 WARN，保留诊断能力。
+  重试仍使用正常失败日志。
+- `initialize_with_repair` 负责 Agent-only developer 补齐、snapshot、首次 init、识别、repair、
+  单次 retry、hash 补偿、`finish_init`。
 - 新增常量：`REPAIR_TIMEOUT = 30s`；helper 超时与 init 分开，避免完整 init 超时后
   “snapshot + init + repair + retry + hash” 超过 initialize-project 的 600s 预算（最坏 510s）。
 
@@ -271,6 +299,8 @@ fn hash_helper_args(cli, repo, payload_json) -> Vec<String>;
 - 父目录 realpath 必须在 repoRoot 内；Windows 普通路径与 `\\?\` 扩展路径都按同一规则处理。
 - realpath 一律使用 `fs.realpathSync.native`；helper 在加载 Trellis ESM 模块前把
   `fs.realpathSync` 替换为 native，避免 Node ESM resolver 触发 DLP 的 `lstat 'D:'`。
+- Agent-only developer 目录同样做路径校验：`.trellis` 必须存在，workspace 与 `.developer`
+  必须留在仓库根内；已有 journal/index 不覆盖；`.developer` 最后写。
 - 只创建缺失文件；已有文件不读、不写、不删。
 - 失败回滚只删除本次创建的文件，且先记录再写入。
 - 不修改 `.trellis` 之外的 Trellis 元数据；不写 spec、workflow、任务或根文件。
@@ -291,7 +321,8 @@ fn hash_helper_args(cli, repo, payload_json) -> Vec<String>;
 
 ## 9. 兼容与回滚
 
-- `initialize_trellis` / `initialize_agents` 的公开签名、Tauri 命令、UI 返回值不变。
+- `initialize_trellis` / `initialize_agents` 的 Tauri 命令、UI 返回值不变。
+- Agent-only 额外写 `.trellis/.developer` 与 developer workspace；已有有效身份不覆盖。
 - 正常（非 EXDEV）初始化路径只多一次 snapshot helper 调用（仅 Pi/OMP 被选中时），不改变写入内容。
 - 补齐 helper 内嵌，不改变安装包结构、`tauri.conf.json`、`package-portable.ps1`。
 - 回滚：删除 helper、恢复 `initialize_trellis` / `initialize_agents` 直接返回 `trellis_failure` 的
@@ -309,9 +340,10 @@ fn hash_helper_args(cli, repo, payload_json) -> Vec<String>;
 ## 11. 验证策略
 
 - Rust 单测：平台识别、参数拼接、错误文案/details、helper 结构约束、裸盘符规范化、现有 hash 清理回归。
-- Node 测试：用 fake Trellis 包执行内嵌 helper 的 snapshot / repair / hash，覆盖已有文件保护、
+- Node 测试：用 fake Trellis 包执行内嵌 helper 的 snapshot / repair / hash / developer，覆盖已有文件保护、
   路径越界、失败回滚、内容不一致不登记；故障注入覆盖「JS realpath 抛 EISDIR + `\\?\` 扩展路径」，
-  验证 helper 仍能完成 repair。
+  验证 helper 仍能完成 repair；developer 覆盖身份创建、已有身份保留、无效身份替换、名称穿越拒绝、
+  workspace junction 越界拒绝。
 - 真机 E2E：本机 DLP 环境创建临时 Git 仓库，执行真实 Agent-only 与完整 init 的
   「失败 → 补齐 → 重试成功」，验证 Pi/OMP 文件与 manifest；完整 init 必须使用修正后的
   `--pi` 参数（不再出现 `unknown option`）。

@@ -51,6 +51,9 @@ pub struct ProcessOptions {
     pub stdin: Option<Vec<u8>>,
     pub timeout: Option<Duration>,
     pub max_output_bytes: usize,
+    /// 调用方预期并会自行处理失败（例如首次初始化命中 EXDEV 后补齐）时，
+    /// 跳过通用的 `命令失败` WARN，避免把已恢复的失败记成告警。
+    pub suppress_failure_log: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -179,7 +182,7 @@ pub async fn run_process(
         stdout,
         stderr,
     };
-    if !output.success() {
+    if !output.success() && !options.suppress_failure_log {
         crate::logging::warn(&format!(
             "命令失败(exit={}): {}\nstdout: {}\nstderr: {}",
             output.exit_code,

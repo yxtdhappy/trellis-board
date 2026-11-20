@@ -910,6 +910,7 @@ async fn run_task_python(repo_path: &Path, args: &[String]) -> AgentResult<()> {
         stdin: None,
         timeout: Some(PYTHON_TIMEOUT),
         max_output_bytes: PYTHON_MAX_OUTPUT_BYTES,
+        ..Default::default()
     };
     let mut candidates: Vec<(String, Vec<String>)> = Vec::new();
     if let Ok(python) = std::env::var("TRELLIS_PYTHON") {

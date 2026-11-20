@@ -177,6 +177,22 @@ fn builds_repair_helper_arguments() {
         ]
     );
     assert_eq!(
+        repair_helper_args(
+            Path::new(r"C:\runtime\trellis.js"),
+            Path::new(r"C:\repo"),
+            "developer",
+            &["nzhou".to_string()],
+        ),
+        vec![
+            "--input-type=module".to_string(),
+            "-".to_string(),
+            r"C:\runtime\trellis.js".to_string(),
+            r"C:\repo".to_string(),
+            "developer".to_string(),
+            "nzhou".to_string(),
+        ]
+    );
+    assert_eq!(
         hash_helper_args(
             Path::new(r"C:\runtime\trellis.js"),
             Path::new(r"C:\repo"),
@@ -238,6 +254,21 @@ fn repair_and_retry_failures_are_actionable() {
     assert!(generic.message.starts_with("Trellis 初始化失败："));
     let details = generic.details.as_ref().unwrap();
     assert_eq!(details.get("repairPlatforms"), Some(&serde_json::json!([])));
+
+    let developer = developer_failure("nzhou", &output);
+    assert!(developer.message.starts_with("Trellis developer 初始化失败："));
+    let details = developer.details.as_ref().unwrap();
+    assert_eq!(
+        details.get("developer").and_then(serde_json::Value::as_str),
+        Some("nzhou")
+    );
+    assert_eq!(
+        details
+            .get("developerFailed")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert!(details.get("repoPath").is_none());
 }
 
 #[test]
@@ -246,6 +277,7 @@ fn embedded_repair_helper_writes_templates_directly() {
     assert!(AGENT_TEMPLATE_REPAIR_HELPER.contains("initializeHashes"));
     assert!(AGENT_TEMPLATE_REPAIR_HELPER.contains("resolveSupportedPython"));
     assert!(AGENT_TEMPLATE_REPAIR_HELPER.contains("openSync(target, \"wx\")"));
+    assert!(AGENT_TEMPLATE_REPAIR_HELPER.contains("initializeDeveloper"));
     assert!(!AGENT_TEMPLATE_REPAIR_HELPER.contains("fs.renameSync"));
 }
 

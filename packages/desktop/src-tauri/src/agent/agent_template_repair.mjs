@@ -6,9 +6,9 @@ import { pathToFileURL } from "node:url";
 // 由 trellis_cli.rs 以 `node --input-type=module -` 从 stdin 执行：所有参数来自命令行，
 // 不写入任何临时脚本。repair 只做直写（openSync "wx"），不经过原子写用的临时文件 + rename，
 // 因为 Windows DLP 会以 EXDEV 拦截 Node 的该组合。
-const MODES = new Set(["snapshot", "repair", "hash"]);
+const MODES = new Set(["snapshot", "repair", "hash", "developer"]);
 const USAGE =
-  "用法: node --input-type=module - <trellis.js> <repo> <snapshot|repair|hash> [...]";
+  "用法: node --input-type=module - <trellis.js> <repo> <snapshot|repair|hash|developer> [...]";
 const WINDOWS_DRIVE = /^[A-Za-z]:/;
 
 // Node 的 JS 版 realpathSync 会先 lstat 盘符根（Windows 上是 "D:"），部分 DLP/网络盘会以
@@ -82,6 +82,182 @@ function lstatOrNull(target) {
     }
     throw error;
   }
+}
+
+function writeIfMissing(target, content) {
+  try {
+    fs.writeFileSync(target, content, { encoding: "utf8", flag: "wx" });
+  } catch (error) {
+    if (error && error.code === "EEXIST") {
+      return;
+    }
+    throw error;
+  }
+}
+
+function readDeveloperName(devFile) {
+  let content;
+  try {
+    content = fs.readFileSync(devFile, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  for (const line of content.split(/\r?\n/)) {
+    if (line.startsWith("name=")) {
+      const value = line.slice("name=".length).trim();
+      if (value) {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+function validateDeveloperName(raw) {
+  if (typeof raw !== "string") {
+    fail("developer 名称无效");
+  }
+  const name = raw.trim();
+  if (!name) {
+    fail("developer 名称不能为空");
+  }
+  if (name.length > 120) {
+    fail("developer 名称不能超过 120 个字符");
+  }
+  if (name === "." || name === ".." || /[\\/:*?"<>|\u0000-\u001f]/.test(name)) {
+    fail(`developer 名称含非法字符: ${name}`);
+  }
+  if (/[. ]$/.test(name)) {
+    fail(`developer 名称不能以点或空格结尾: ${name}`);
+  }
+  return name;
+}
+
+function journalContent(name) {
+  return `# Journal - ${name} (Part 1)
+
+> AI development session journal
+> Started: ${new Date().toISOString().slice(0, 10)}
+
+---
+
+`;
+}
+
+function indexContent(name) {
+  return `# Workspace Index - ${name}
+
+> Journal tracking for AI development sessions.
+
+---
+
+## Current Status
+
+<!-- @@@auto:current-status -->
+- **Active File**: \`journal-1.md\`
+- **Total Sessions**: 0
+- **Last Active**: -
+<!-- @@@/auto:current-status -->
+
+---
+
+## Active Documents
+
+<!-- @@@auto:active-documents -->
+| File | Lines | Status |
+|------|-------|--------|
+| \`journal-1.md\` | ~0 | Active |
+<!-- @@@/auto:active-documents -->
+
+---
+
+## Session History
+
+<!-- @@@auto:session-history -->
+| # | Date | Title | Commits | Branch |
+|---|------|-------|---------|--------|
+<!-- @@@/auto:session-history -->
+
+---
+
+## Notes
+
+- Sessions are appended to journal files
+- New journal file created when current exceeds 2000 lines
+- Use \`add_session.py\` to record sessions
+`;
+}
+
+// 与 Trellis 0.6.17 的 .trellis/scripts/common/developer.py 保持一致：
+// 有效 .developer 已存在时不覆盖；只补缺失的 journal-1.md 与 index.md。
+function initializeDeveloper(realRoot, args) {
+  if (args.length !== 1) {
+    fail("developer 模式需要一个名称");
+  }
+  const name = validateDeveloperName(args[0]);
+  const trellisDir = path.join(realRoot, ".trellis");
+  const trellisStats = lstatOrNull(trellisDir);
+  if (!trellisStats || (!trellisStats.isDirectory() && !trellisStats.isSymbolicLink())) {
+    fail("Trellis 目录不存在，无法初始化 developer");
+  }
+  const realTrellis = realpathSync(trellisDir);
+  if (!isInsideRoot(realRoot, realTrellis)) {
+    fail("Trellis 目录越界");
+  }
+
+  const devFile = path.join(realTrellis, ".developer");
+  const devStats = lstatOrNull(devFile);
+  if (devStats) {
+    if (!devStats.isFile() && !devStats.isSymbolicLink()) {
+      fail(".developer 不是普通文件");
+    }
+    if (devStats.isSymbolicLink()) {
+      const realDev = realpathSync(devFile);
+      if (!isInsideRoot(realRoot, realDev)) {
+        fail(".developer 路径越界");
+      }
+    }
+    const existing = readDeveloperName(devFile);
+    if (existing) {
+      writeJson({ developer: existing, created: false });
+      return;
+    }
+  }
+
+  const workspaceRoot = requireDirectoryInsideRoot(
+    realRoot,
+    path.join(realTrellis, "workspace"),
+    ".trellis/workspace",
+  );
+  const workspaceDir = path.join(workspaceRoot, name);
+  const workspaceStats = lstatOrNull(workspaceDir);
+  if (workspaceStats && !workspaceStats.isDirectory() && !workspaceStats.isSymbolicLink()) {
+    fail("developer workspace 不是目录");
+  }
+  if (!workspaceStats) {
+    fs.mkdirSync(workspaceDir);
+  }
+  const realWorkspaceDir = realpathSync(workspaceDir);
+  if (!isInsideRoot(realRoot, realWorkspaceDir)) {
+    fail("developer workspace 路径越界");
+  }
+
+  writeIfMissing(path.join(realWorkspaceDir, "journal-1.md"), journalContent(name));
+  writeIfMissing(path.join(realWorkspaceDir, "index.md"), indexContent(name));
+  // .developer 最后写：前面任一步失败时下次仍会重新进入并补齐。
+  fs.writeFileSync(
+    devFile,
+    `name=${name}\ninitialized_at=${new Date().toISOString()}\n`,
+    "utf8",
+  );
+  writeJson({
+    developer: name,
+    created: true,
+    workspace: path.relative(realRoot, realWorkspaceDir).replaceAll("\\", "/"),
+  });
 }
 
 function requireDirectoryInsideRoot(realRoot, directory, relativePath) {
@@ -259,6 +435,11 @@ async function main() {
   }
   if (!isDriveRoot(realRoot) && !fs.statSync(realRoot).isDirectory()) {
     fail("仓库路径不是目录");
+  }
+
+  if (mode === "developer") {
+    initializeDeveloper(realRoot, rest);
+    return;
   }
 
   if (mode === "snapshot") {

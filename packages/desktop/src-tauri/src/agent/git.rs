@@ -883,6 +883,9 @@ async fn run_git(
         stdin: None,
         timeout: Some(timeout),
         max_output_bytes: MAX_OUTPUT_BYTES,
+        // core.sparseCheckout 未配置时 exit 1 是正常分支，由 config_sparse 转成 false。
+        suppress_failure_log: matches!(operation, GitOperation::ConfigSparse),
+        ..Default::default()
     };
     run_process(Path::new(GIT_BINARY), &arg_refs, &options)
         .await

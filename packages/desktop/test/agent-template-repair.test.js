@@ -393,6 +393,119 @@ test('repair refuses parent directories that resolve outside the repository', (t
   })
 })
 
+test('developer creates identity and workspace files without temp files', (t) => {
+  withTempDir(t, (dir) => {
+    const repo = path.join(dir, 'repo')
+    fs.mkdirSync(path.join(repo, '.trellis'), { recursive: true })
+    const { cliPath } = createFakePackage(path.join(dir, 'fake'), {})
+
+    const result = runRepairHelper(cliPath, repo, ['developer', 'nzhou'])
+
+    assert.equal(result.status, 0, result.stderr)
+    const payload = lastJsonLine(result.stdout)
+    assert.deepEqual(payload, {
+      developer: 'nzhou',
+      created: true,
+      workspace: '.trellis/workspace/nzhou',
+    })
+    assert.match(
+      fs.readFileSync(path.join(repo, '.trellis', '.developer'), 'utf8'),
+      /^name=nzhou\ninitialized_at=\S+\n$/,
+    )
+    assert.match(
+      fs.readFileSync(path.join(repo, '.trellis', 'workspace', 'nzhou', 'journal-1.md'), 'utf8'),
+      /^# Journal - nzhou \(Part 1\)/,
+    )
+    assert.match(
+      fs.readFileSync(path.join(repo, '.trellis', 'workspace', 'nzhou', 'index.md'), 'utf8'),
+      /^# Workspace Index - nzhou/,
+    )
+    assert.deepEqual(
+      listFiles(repo).filter((file) => file.endsWith('.tmp')),
+      [],
+    )
+  })
+})
+
+test('developer keeps a valid identity and does not create a second workspace', (t) => {
+  withTempDir(t, (dir) => {
+    const repo = path.join(dir, 'repo')
+    fs.mkdirSync(path.join(repo, '.trellis'), { recursive: true })
+    fs.writeFileSync(path.join(repo, '.trellis', '.developer'), 'name=alice\ninitialized_at=old\n')
+    const { cliPath } = createFakePackage(path.join(dir, 'fake'), {})
+
+    const result = runRepairHelper(cliPath, repo, ['developer', 'nzhou'])
+
+    assert.equal(result.status, 0, result.stderr)
+    const payload = lastJsonLine(result.stdout)
+    assert.deepEqual(payload, { developer: 'alice', created: false })
+    assert.equal(
+      fs.readFileSync(path.join(repo, '.trellis', '.developer'), 'utf8'),
+      'name=alice\ninitialized_at=old\n',
+    )
+    assert.equal(fs.existsSync(path.join(repo, '.trellis', 'workspace', 'nzhou')), false)
+  })
+})
+
+test('developer replaces an invalid identity and keeps existing journal files', (t) => {
+  withTempDir(t, (dir) => {
+    const repo = path.join(dir, 'repo')
+    const workspace = path.join(repo, '.trellis', 'workspace', 'nzhou')
+    fs.mkdirSync(workspace, { recursive: true })
+    fs.writeFileSync(path.join(repo, '.trellis', '.developer'), 'garbage\n')
+    fs.writeFileSync(path.join(workspace, 'journal-1.md'), 'user journal')
+    fs.writeFileSync(path.join(workspace, 'index.md'), 'user index')
+    const { cliPath } = createFakePackage(path.join(dir, 'fake'), {})
+
+    const result = runRepairHelper(cliPath, repo, ['developer', 'nzhou'])
+
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(lastJsonLine(result.stdout).created, true)
+    assert.match(
+      fs.readFileSync(path.join(repo, '.trellis', '.developer'), 'utf8'),
+      /^name=nzhou\n/,
+    )
+    assert.equal(fs.readFileSync(path.join(workspace, 'journal-1.md'), 'utf8'), 'user journal')
+    assert.equal(fs.readFileSync(path.join(workspace, 'index.md'), 'utf8'), 'user index')
+  })
+})
+
+test('developer rejects names that could escape the workspace', (t) => {
+  withTempDir(t, (dir) => {
+    const cases = ['', '../outside', 'nz/ou', 'nz\\ou', 'nz:ou', 'nz?ou', 'nz.', '.']
+    cases.forEach((name, index) => {
+      const repo = path.join(dir, `repo-${index}`)
+      fs.mkdirSync(path.join(repo, '.trellis'), { recursive: true })
+      const { cliPath } = createFakePackage(path.join(dir, `fake-${index}`), {})
+
+      const result = runRepairHelper(cliPath, repo, ['developer', name])
+
+      assert.notEqual(result.status, 0, name)
+      assert.match(result.stderr, /developer 名称/, name)
+      assert.equal(fs.existsSync(path.join(repo, '.trellis', '.developer')), false, name)
+      assert.equal(fs.existsSync(path.join(repo, '.trellis', 'workspace')), false, name)
+    })
+  })
+})
+
+test('developer refuses a workspace that resolves outside the repository', (t) => {
+  withTempDir(t, (dir) => {
+    const repo = path.join(dir, 'repo')
+    const outside = path.join(dir, 'outside')
+    fs.mkdirSync(path.join(repo, '.trellis'), { recursive: true })
+    fs.mkdirSync(outside)
+    fs.symlinkSync(outside, path.join(repo, '.trellis', 'workspace'), 'junction')
+    const { cliPath } = createFakePackage(path.join(dir, 'fake'), {})
+
+    const result = runRepairHelper(cliPath, repo, ['developer', 'nzhou'])
+
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /越界/)
+    assert.equal(fs.existsSync(path.join(outside, 'nzhou')), false)
+    assert.equal(fs.existsSync(path.join(repo, '.trellis', '.developer')), false)
+  })
+})
+
 test('helper rejects duplicate and unknown platforms before touching the repository', (t) => {
   withTempDir(t, (dir) => {
     const repo = path.join(dir, 'repo')

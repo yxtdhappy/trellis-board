@@ -30,6 +30,11 @@
   DLP/网络盘以 EISDIR 拦截。触发点不只是 helper 自身的 realpath，Node 的 ESM resolver 在
   `import()` Trellis 模块时也会调用同一个 JS realpath。v0.4.54 必须在加载模块前把
   `fs.realpathSync` 换成 `fs.realpathSync.native`，helper 自身的 realpath 也只用 native。
+- 2026-11-20 同一台机器升级 v0.4.54 后 Pi 初始化成功，但 `.trellis/.developer` 和
+  `.trellis/workspace/<developer>` 未生成。该仓库已有 `.trellis/tasks`，客户端走 Agent-only
+  路径；该路径只调用平台配置 helper，绕过 `trellis init -u`，因此弹窗里的 developer ID 没有
+  写入任何文件。完整 `trellis init` 会调用 `init_developer.py` 生成
+  `.developer`（`name=<id>`）与 `workspace/<id>/{journal-1.md,index.md}`。
 
 ## Requirements
 
@@ -57,6 +62,11 @@
   `fs.realpathSync.native` 替换 Node 的 JS 版 `fs.realpathSync`，覆盖 ESM resolver 与 helper
   自身的 realpath 调用；不得依赖裸盘符规范化来处理 `\\?\X:\...` 扩展路径。native 不可用时
   才回退 JS 版。
+- R12 Agent-only developer 身份：已有 `.trellis/tasks` 时，必须使用弹窗提交的 developer ID 补齐
+  `.trellis/.developer`（`name=<id>`）和 `.trellis/workspace/<id>/{journal-1.md,index.md}`，语义
+  对齐 Trellis 0.6.17 `init_developer.py`；已有有效 `name=` 的 `.developer` 不覆盖、不创建第二个
+  workspace；文件直写，不经过临时文件 + rename；名称拒绝路径穿越；developer 失败时不得先配置
+  Agent，避免出现无法重试的半成品。
 
 ## Acceptance Criteria
 
@@ -66,6 +76,9 @@
 - [ ] 缺少 `.trellis`/`.trellis/tasks` 时执行完整 `trellis init --pi` 也能在补齐后成功。
 - [ ] 完整 init 不再因为 `--pi-presence all` 报 `unknown option`；参数中只保留 `--pi`。
 - [ ] 项目位于盘符根（如 `D:\`）时，Pi 初始化不再报 `lstat 'D:'`，能完成补齐/重试。
+- [ ] 已有 `.trellis/tasks` 的项目填写 developer ID 初始化 Agent 后，`.trellis/.developer`
+  包含 `name=<id>`，`.trellis/workspace/<id>/journal-1.md` 与 `index.md` 存在；已有有效
+  `.developer` 不被覆盖；developer 失败时 Agent 平台文件不被修改。
 - [ ] 同时选择 Pi 与 OMP 时只补齐一次、只重试一次，两个平台都完成。
 - [ ] 非 Pi/OMP 的 `EXDEV`、普通初始化错误、补齐 helper 自身失败都不会进入重试循环。
 - [ ] 已有 Pi/OMP 文件（包括用户修改过的共享 `.agents/skills`）内容保持不变。

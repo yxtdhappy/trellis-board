@@ -309,6 +309,7 @@ pub async fn initialize_project(options: &InitializeOptions<'_>) -> AgentResult<
             trellis_cli::initialize_agents(
                 options.runtime,
                 Path::new(&inspected.root),
+                options.developer_id,
                 &selected_tools,
             )
             .await?;

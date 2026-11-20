@@ -1,7 +1,7 @@
 # 实施计划
 
-> 状态：v0.4.51 / v0.4.53 已发布并通过 CI；v0.4.54（native realpath 修复）已实现并通过 Node
-> 测试，待提交、发布与用户机器验证。
+> 状态：v0.4.51 / v0.4.53 / v0.4.54 已发布并通过 CI；v0.4.55（Agent-only developer 身份）
+> 已实现并通过 Node 测试，待提交、发布与用户机器验证。
 > 本机无 Rust 工具链，`cargo fmt --check` / `cargo clippy` 仍未执行（CI 也未配置这两步）。
 > 任务尚未归档。
 
@@ -85,7 +85,7 @@
 - [x] `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`。—— **CI run
   [`44694310603`](https://github.com/yxtdhappy/trellis-board/actions/runs/44694310603) 的
   `Rust unit tests` 通过**（tag `v0.4.51`）。
-- [x] `node --test packages/desktop/test/agent-template-repair.test.js`：12/12 通过。
+- [x] `node --test packages/desktop/test/agent-template-repair.test.js`：17/17 通过。
 - [x] `yarn test`：660/662 通过、1 跳过、1 个无关服务端并行 flake；失败项单独复跑通过。
 - [x] `rg -n '^mod tests \{' packages/desktop/src-tauri/src`：仅 5 个既有文件；本任务未新增内联测试。
 - [x] `trellis_cli.rs` 667 行、`tests.rs` 410 行，均低于 1200 行上限。
@@ -140,6 +140,27 @@
   资产 `TrellisBoard_0.4.54_x64-portable.zip`（4,959,654 bytes，sha256
   `85d3b522d0014dd889e32a823bd9698f5149832f4a6ebbfcd95fa5d369e442de`）。
 - [ ] 用户机器用 `v0.4.54` 重试 Pi 初始化；若仍失败，收集完整 `error_tail` 与客户端日志。
+  —— v0.4.54 已验证初始化成功；新问题转为 `.developer` / workspace 缺失，见第 9 节。
+
+## 9. Agent-only developer 身份补写（v0.4.55）
+
+- [x] 目标机器升级 v0.4.54 后 Pi 初始化成功，但 `.trellis/.developer` 与
+  `.trellis/workspace/<id>` 未生成。
+- [x] 定位：项目已有 `.trellis/tasks`，走 Agent-only helper；该路径绕过 `trellis init -u`，
+  弹窗提交的 developer ID 未被使用。
+- [x] helper 增加 `developer <name>` 模式，按 Trellis 0.6.17 `init_developer.py` 语义直写
+  `.developer`、`journal-1.md`、`index.md`；已有有效身份不覆盖；`.developer` 最后写。
+- [x] `initialize_agents` 接收 `developer_id`，在平台配置前调用 developer helper；失败时不配置
+  Agent，保证可重试；`initialize_trellis` 保持由完整 init 处理身份。
+- [x] Node 测试新增 5 个 developer 用例（创建、已有身份保留、无效身份替换、名称穿越拒绝、
+  workspace junction 越界），17/17 通过。
+- [x] Rust 测试新增 developer 参数拼接、错误文案/details、helper 结构断言。
+- [x] 首次 init 的预期 EXDEV 不再记通用 WARN：`ProcessOptions.suppress_failure_log` 抑制，
+  命中补齐写 INFO，非补齐失败手动 WARN；`git config --bool core.sparseCheckout` 的预期 exit 1
+  也不再记 WARN。`git.rs` / `task_command.rs` 的完整字面量已适配新字段。
+- [ ] 提交/推送 `main`、`yarn release:desktop 0.4.55`、CI 构建。
+- [ ] 用户机器用 `v0.4.55` 初始化 Agent，确认 `.developer` 与 workspace 生成、日志只保留
+  预期内的 INFO/无关 WARN。
 
 ## 风险与回滚点
 

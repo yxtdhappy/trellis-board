@@ -257,16 +257,19 @@ pub async fn initialize_trellis(
         repo_path,
         agent_tools,
         InitMode::Full { developer_id },
+        None,
         "Trellis 初始化失败",
     )
     .await
 }
 
 /// 已有 Trellis 任务树时只通过 stdin 执行内嵌 helper，复用 Trellis 包的平台配置器和模板哈希。
-/// 与完整 init 共用同一套 EXDEV 识别、模板补齐和单次重试逻辑。
+/// 与完整 init 共用同一套 EXDEV 识别、模板补齐和单次重试逻辑；Agent-only 不经过
+/// `trellis init`，因此需要单独补齐 developer 身份与 workspace。
 pub async fn initialize_agents(
     runtime: &TrellisRuntime,
     repo_path: &Path,
+    developer_id: &str,
     agent_tools: &[String],
 ) -> AgentResult<()> {
     initialize_with_repair(
@@ -274,6 +277,7 @@ pub async fn initialize_agents(
         repo_path,
         agent_tools,
         InitMode::AgentsOnly,
+        Some(developer_id),
         "Trellis Agent 配置失败",
     )
     .await
@@ -290,6 +294,7 @@ async fn run_init_process(
     repo_path: &Path,
     agent_tools: &[String],
     mode: &InitMode<'_>,
+    suppress_failure_log: bool,
 ) -> AgentResult<ProcessOutput> {
     let (args, stdin) = match mode {
         InitMode::Full { developer_id } => (
@@ -307,6 +312,7 @@ async fn run_init_process(
         stdin,
         timeout: Some(INIT_TIMEOUT),
         max_output_bytes: INIT_MAX_OUTPUT_BYTES,
+        suppress_failure_log,
         ..ProcessOptions::default()
     };
     run_process(&runtime.node_exe, &args, &options).await
@@ -330,10 +336,26 @@ async fn initialize_with_repair(
     repo_path: &Path,
     agent_tools: &[String],
     mode: InitMode<'_>,
+    developer_id: Option<&str>,
     fallback_prefix: &str,
 ) -> AgentResult<()> {
     let normalized_repo = normalize_repo_root(repo_path);
     let repo_path = normalized_repo.as_path();
+
+    // Agent-only 不执行 `trellis init`，developer 身份必须在配置平台前补齐；
+    // 放在首次 init 之前，developer helper 失败时不会留下“Agent 已初始化、无法重试”的半成品。
+    if let Some(developer_id) = developer_id {
+        let developer = run_repair_helper(
+            runtime,
+            repo_path,
+            "developer",
+            &[developer_id.to_string()],
+        )
+        .await?;
+        if !developer.success() {
+            return Err(developer_failure(developer_id, &developer));
+        }
+    }
 
     // 第一次初始化前记录所选 Pi / OMP 平台尚缺失的模板；仅用于补登记模板哈希。
     let selected_platforms = selected_repair_platforms(agent_tools);
@@ -343,15 +365,26 @@ async fn initialize_with_repair(
         snapshot_missing_paths(runtime, repo_path, &selected_platforms).await
     };
 
-    let output = run_init_process(runtime, repo_path, agent_tools, &mode).await?;
+    let output = run_init_process(runtime, repo_path, agent_tools, &mode, true).await?;
     if output.success() {
         return finish_init(repo_path, Ok(())).await;
     }
 
     let repair_platforms = repair_platforms_for_failure(repo_path, agent_tools, &output);
     if repair_platforms.is_empty() {
+        crate::logging::warn(&format!(
+            "命令失败(exit={}): {fallback_prefix}\nstdout: {}\nstderr: {}",
+            output.exit_code,
+            output.stdout_tail(ERROR_TAIL_CHARS),
+            output.stderr_tail(ERROR_TAIL_CHARS),
+        ));
         return Err(trellis_failure(agent_tools, &output, fallback_prefix));
     }
+    crate::logging::info(&format!(
+        "首次初始化命中 {} 模板 EXDEV，进入补齐（exit={}）",
+        repair_platform_label(&repair_platforms),
+        output.exit_code
+    ));
 
     let repair = run_repair_helper(runtime, repo_path, "repair", &repair_platforms).await?;
     if !repair.success() {
@@ -359,7 +392,7 @@ async fn initialize_with_repair(
     }
 
     // 只重试一次；补齐或重试失败都必须返回可定位错误，不伪造成功。
-    let retry = run_init_process(runtime, repo_path, agent_tools, &mode).await?;
+    let retry = run_init_process(runtime, repo_path, agent_tools, &mode, false).await?;
     if !retry.success() {
         return Err(retry_failure(agent_tools, &repair_platforms, &retry, fallback_prefix));
     }
@@ -638,6 +671,16 @@ fn repair_failure(
         "agentTools": agent_tools,
         "repairPlatforms": platforms,
         "repairFailed": true,
+    })))
+}
+
+/// Agent-only developer helper 失败：返回名称与原始输出，不继续配置平台。
+fn developer_failure(developer_id: &str, output: &ProcessOutput) -> AgentError {
+    let message = format!("Trellis developer 初始化失败：{}", error_tail(output));
+    AgentError::new(code::GIT_FAILED, message).with_details(Some(json!({
+        "exitCode": output.exit_code,
+        "developer": developer_id,
+        "developerFailed": true,
     })))
 }
 
