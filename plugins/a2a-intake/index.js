@@ -1,8 +1,19 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { randomBytes } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { createPlugin } from '@trellis-board/server/plugins/sdk.js'
 
 const PLUGIN_ID = 'a2a-intake'
+const PANEL_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'panel')
+const PANEL_ASSETS = new Map([
+  ['/panel', ['index.html', 'text/html; charset=utf-8']],
+  ['/panel/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/panel/app.css', ['app.css', 'text/css; charset=utf-8']],
+])
 
 const DEFAULTS = {
+  token: '',
   repositoryId: null,
   defaultAssignee: '',
   defaultPriority: 'P2',
@@ -111,9 +122,38 @@ export default createPlugin({
   async onStart(ctx) {
     const config = normalizeConfig(ctx.config)
     let sequence = 0
+    let project = null
+    try {
+      const listed = await ctx.capabilities.call('trellis.projects', 'list', {})
+      project = listed?.projects?.[0] ?? null
+    } catch {
+      // 项目能力不可用时保持空配置。
+    }
+    const defaultAssignee = String(config.defaultAssignee || project?.developerId || '').trim()
+    const defaultRepositoryId = config.repositoryId || project?.repositoryId || null
+    let localToken = String(config.token || '').trim()
+    if (!localToken) {
+      const stored = await ctx.store.get('local-token').catch(() => null)
+      localToken = String(stored || '').trim()
+      if (!localToken) {
+        localToken = randomBytes(24).toString('base64url')
+        await ctx.store
+          .set('local-token', localToken)
+          .catch((error) => ctx.log.warn('A2A token 持久化失败', { message: error.message }))
+      }
+    }
 
-    function card() {
-      const base = String(config.publicBaseUrl || '').replace(/\/+$/, '')
+    function publicBase(request) {
+      const configured = String(config.publicBaseUrl || '').replace(/\/+$/, '')
+      if (configured) return configured
+      const forwarded = String(request?.headers?.['x-trellis-base'] || '').replace(/\/+$/, '')
+      if (forwarded) return forwarded
+      const host = request?.headers?.host
+      return host ? `http://${host}` : ''
+    }
+
+    function card(request) {
+      const base = publicBase(request)
       return {
         name: `${PLUGIN_ID}`,
         description:
@@ -251,7 +291,7 @@ export default createPlugin({
       const payload = { ...parsePayload(text), ...(params?.metadata?.trellis ?? {}) }
       const title = String(payload.title ?? '').trim()
       if (!title) return rpcError(id, -32602, '缺少任务标题')
-      const assignee = String(payload.assignee ?? config.defaultAssignee ?? '').trim()
+      const assignee = String(payload.assignee ?? defaultAssignee ?? '').trim()
       if (!assignee) return rpcError(id, -32602, '缺少负责人 assignee')
       const agent = String(
         payload.agent ?? params?.metadata?.agent ?? config.defaultAgent ?? '',
@@ -263,7 +303,7 @@ export default createPlugin({
 
       try {
         const created = await ctx.tasks.create({
-          repositoryId: payload.repositoryId || config.repositoryId,
+          repositoryId: payload.repositoryId || defaultRepositoryId,
           title: title.slice(0, 200),
           description: String(payload.description ?? text).slice(0, 3000),
           prd: String(payload.prd ?? `# ${title}\n\n${payload.description ?? text}\n`),
@@ -366,17 +406,46 @@ export default createPlugin({
 
     const handlers = { send: handleSend, get: handleGet, cancel: handleCancel, board: handleBoard }
 
-    ctx.http.public('GET', '/.well-known/agent-card.json', async () => ({
+    ctx.http.public('GET', '/.well-known/agent-card.json', async (request) => ({
       status: 200,
-      body: card(),
+      body: card(request),
     }))
 
-    ctx.http.public('GET', '/.well-known/agent.json', async () => ({
+    ctx.http.public('GET', '/.well-known/agent.json', async (request) => ({
       status: 200,
-      body: card(),
+      body: card(request),
+    }))
+
+    for (const [route, [file, type]] of PANEL_ASSETS) {
+      ctx.http.route('GET', route, async () => {
+        try {
+          return {
+            status: 200,
+            headers: { 'content-type': type },
+            body: fs.readFileSync(path.join(PANEL_DIR, file), 'utf8'),
+          }
+        } catch {
+          return { status: 404, body: { error: '面板资源缺失' } }
+        }
+      })
+    }
+
+    ctx.http.route('GET', '/config', async (request) => ({
+      status: 200,
+      body: {
+        token: localToken,
+        publicBaseUrl: publicBase(request),
+        repositoryId: defaultRepositoryId,
+        defaultAssignee,
+      },
     }))
 
     ctx.http.public('POST', '/a2a', async (request) => {
+      const provided = String(
+        request.headers.authorization || request.headers.Authorization || '',
+      ).replace(/^Bearer\s+/i, '')
+      if (!provided) return { status: 401, body: { error: '缺少访问令牌' } }
+      if (provided !== localToken) return { status: 403, body: { error: '访问令牌无效' } }
       let envelope
       try {
         envelope = request.json()
@@ -407,8 +476,8 @@ export default createPlugin({
     })
 
     ctx.log.info('a2a-intake 已启动', {
-      repositoryId: config.repositoryId,
-      defaultAssignee: config.defaultAssignee,
+      repositoryId: defaultRepositoryId,
+      defaultAssignee,
       publicBaseUrl: config.publicBaseUrl,
     })
   },

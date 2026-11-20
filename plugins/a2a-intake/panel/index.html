@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>A2A 接入</title>
+    <link rel="stylesheet" href="/plugin-ui/v1/tokens.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/base.css" />
+    <link rel="stylesheet" href="/plugin-ui/v1/ui.css" />
+    <link rel="stylesheet" href="/api/plugins/a2a-intake/panel/app.css" />
+  </head>
+  <body>
+    <main class="tb-page">
+      <header class="tb-page-head">
+        <div>
+          <h1>A2A 接入</h1>
+          <p class="tb-muted">把下面的地址与 Token 填入本地 Agent 客户端，即可接收任务。</p>
+        </div>
+        <button id="refresh" class="tb-btn tb-btn-ghost tb-btn-sm" type="button">刷新</button>
+      </header>
+      <section class="tb-card">
+        <dl class="fields">
+          <dt>接入地址</dt>
+          <dd><code id="base-url">—</code><button class="tb-btn tb-btn-ghost tb-btn-sm" data-copy="base-url" type="button">复制</button></dd>
+          <dt>Bearer Token</dt>
+          <dd><code id="token">—</code><button class="tb-btn tb-btn-ghost tb-btn-sm" data-copy="token" type="button">复制</button></dd>
+          <dt>默认工作区</dt>
+          <dd><code id="repository">—</code></dd>
+          <dt>默认负责人</dt>
+          <dd><code id="assignee">—</code></dd>
+        </dl>
+        <p id="status" class="tb-muted tb-small"></p>
+      </section>
+    </main>
+    <script src="/plugin-ui/v1/bridge.js"></script>
+    <script src="/api/plugins/a2a-intake/panel/app.js"></script>
+  </body>
+</html>

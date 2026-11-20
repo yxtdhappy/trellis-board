@@ -4,6 +4,9 @@
   "description": "提供 WitOps 需求、任务树、工时、状态更新与任务下发到 Trellis 的标准 capability。",
   "version": "2.0.0",
   "apiVersion": 1,
+  "targets": [
+    "desktop"
+  ],
   "allowMissingSecrets": true,
   "engines": {
     "board": ">=0.2.0"
@@ -130,12 +133,19 @@
     {
       "name": "accounts.credentials",
       "version": "^1.0.0",
-      "methods": ["credential.resolve"]
+      "methods": [
+        "credential.resolve"
+      ]
     },
     {
       "name": "trellis.projects",
       "version": "^1.0.0",
-      "methods": ["list", "get", "current", "branches"]
+      "methods": [
+        "list",
+        "get",
+        "current",
+        "branches"
+      ]
     }
   ],
   "panels": [
@@ -147,47 +157,5 @@
       "order": 25
     }
   ],
-  "config": {
-    "baseUrl": "",
-    "gatewayPrefix": "/appgw",
-    "taskServicePrefix": "/weint-witops-service",
-    "adminServicePrefix": "/system-mng",
-    "webRoot": "weint-witops-web",
-    "platform": "MOM_WEB",
-    "path": "/weint-witops-web/dashboard/mine",
-    "repositoryId": "",
-    "userId": null,
-    "assignedToUserId": null,
-    "assignee": "",
-    "developerMap": {},
-    "skipIfNoAssignee": true,
-    "types": [0, 2, 3, 4],
-    "type": 4,
-    "status": "1,3",
-    "pageSize": 50,
-    "categoryScanSize": 200,
-    "maxItems": 200,
-    "maxPerSync": 50,
-    "cacheTtlMs": 60000,
-    "requestIntervalMs": 200,
-    "retries": 2,
-    "timeoutMs": 20000,
-    "keepRaw": false,
-    "agentId": null,
-    "credentialSource": "auto",
-    "accountSystemId": "witops",
-    "credentials": {
-      "mode": "password",
-      "account": "",
-      "password": "secret:witops-core/password",
-      "token": ""
-    },
-    "session": {
-      "persist": true
-    },
-    "poll": {
-      "enabled": false,
-      "intervalMs": 1800000
-    }
-  }
+  "config": {}
 }

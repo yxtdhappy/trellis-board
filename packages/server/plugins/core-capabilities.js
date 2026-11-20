@@ -96,8 +96,31 @@ function readLocalBranches(repositoryPath) {
   return value
 }
 
-function publicProject({ id, name, path: repositoryPath }) {
-  return { repositoryId: id, name, path: repositoryPath }
+function readDeveloper(repositoryPath) {
+  try {
+    const value = fs
+      .readFileSync(path.join(repositoryPath, '.trellis', '.developer'), 'utf8')
+      .trim()
+    return value ? value.slice(0, 200) : null
+  } catch {
+    return null
+  }
+}
+
+function publicProject({
+  id,
+  name,
+  path: repositoryPath,
+  branch,
+  branchName,
+  developerId,
+}) {
+  const project = { repositoryId: id, name, path: repositoryPath }
+  const currentBranch = branch ?? branchName
+  if (currentBranch) project.branch = currentBranch
+  const developer = developerId || readDeveloper(repositoryPath)
+  if (developer) project.developerId = developer
+  return project
 }
 
 function projectList(repositories, repositoryService) {

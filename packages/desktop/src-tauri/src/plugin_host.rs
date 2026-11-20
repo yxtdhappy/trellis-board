@@ -567,7 +567,7 @@ async fn push_repositories(app: &AppHandle) -> Result<(), String> {
                 "id": association.project_id,
                 "name": association.display_name,
                 "path": association.repo_path,
-                "branchName": association.branch_name,
+                "branch": association.branch_name,
             })
         })
         .collect();

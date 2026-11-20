@@ -23,30 +23,18 @@
   "id": "scenario-copilot",
   "module": "./plugins/scenario-copilot/index.js",
   "enabled": true,
-  "config": {
-    "scenarioRoot": "<path-to-scenario-copilot-package>",
-    "workspaceDir": "",
-    "outlinesDir": "<path-to-outlines>",
-    "defaultOutline": "",
-    "targetUrl": "",
-    "knowledgePath": "<path-to-knowledge.md>",
-    "username": "",
-    "password": "",
-    "llmBaseUrl": "",
-    "llmApiKey": "",
-    "llmModel": ""
-  }
+  "config": {}
 }
 ```
 
-`scenarioRoot` 必须显式配置；`workspaceDir` 留空时使用插件目录下的 `workspace/`，该目录已被 `.gitignore` 忽略。`outlinesDir` 与 `knowledgePath` 也由配置注入，仓库不内置任何外部项目的大纲或知识库。
+默认零配置：`scenarioRoot` 自动从 `MOM_SCENARIO_ROOT`、当前关联项目的 `packages/scenario-copilot` 或 `node_modules/@mom-cli/scenario-copilot` 探测；`workspaceDir` 取当前关联项目目录；`outlinesDir` 落在 `<workspaceDir>/.trellis/scenario-outlines`；`outputRoot` 与 `storageState` 落在 `ctx.paths.dataDir`。以下字段仍可按需覆盖。
 
 ## 配置
 
 | 字段 | 说明 |
 | --- | --- |
-| `scenarioRoot` | scenario-copilot 包目录，必须包含 `dist/bin/scenario-copilot.js` |
-| `workspaceDir` | spec、snapshot、Playwright storageState 的输出目录 |
+| `scenarioRoot` | 可选；scenario-copilot 包目录，必须包含 `dist/bin/scenario-copilot.js` |
+| `workspaceDir` | 可选；默认当前关联项目目录，spec/snapshot 输出目录 |
 | `outlinesDir` | 测试大纲目录；面板从该目录读取 `.md` / `.txt`，并在同目录维护 `outlines.manifest.json` 关联元数据 |
 | `defaultOutline` | 仅在没有需求/任务上下文时作为兜底；有上下文时不再静默使用默认大纲 |
 | `targetUrl` | 未在任务/需求或 binding 上配置目标地址时的兜底地址 |

@@ -49,3 +49,20 @@ test('plugins 目录遵循统一命名与清单约定', () => {
     names.add(manifest.name)
   }
 })
+
+test('内置插件清单保持零配置并声明 desktop target', () => {
+  const builtins = new Set([
+    'accounts-core',
+    'witops-core',
+    'jenkins-ops',
+    'acp-dispatch',
+    'scenario-copilot',
+    'a2a-intake',
+  ])
+  for (const { dir, manifest } of manifests()) {
+    if (!builtins.has(dir)) continue
+    assert.deepEqual(manifest.config, {}, `${dir} 的 config 必须为空对象`)
+    assert.ok(Array.isArray(manifest.targets), `${dir} 缺少 targets`)
+    assert.ok(manifest.targets.includes('desktop'), `${dir} 必须声明 desktop target`)
+  }
+})

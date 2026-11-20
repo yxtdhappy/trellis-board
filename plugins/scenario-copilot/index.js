@@ -252,6 +252,48 @@ export default createPlugin({
 
   async onStart(ctx) {
     const config = normalizeConfig(ctx.config)
+    const dataDir = text(ctx.paths?.dataDir)
+    let projectPaths = []
+    try {
+      const listed = await ctx.capabilities.call('trellis.projects', 'list', {})
+      projectPaths = (listed?.projects ?? []).map((project) => text(project.path)).filter(Boolean)
+    } catch {
+      // 项目能力不可用时退化为插件数据目录。
+    }
+    if (!config.workspaceDir) {
+      config.workspaceDir = projectPaths[0] || path.join(dataDir || PLUGIN_DIR, 'workspace')
+    }
+    if (!config.outlinesDir) {
+      config.outlinesDir = path.join(config.workspaceDir, '.trellis', 'scenario-outlines')
+    }
+    if (!config.outputRoot) {
+      config.outputRoot = path.join(dataDir || path.join(os.homedir(), '.scenario'), 'output')
+    }
+    if (!config.storageState) {
+      const candidate = path.join(
+        dataDir || path.join(os.homedir(), '.scenario'),
+        'storage-state.json',
+      )
+      if (fs.existsSync(candidate)) config.storageState = candidate
+    }
+
+    function scenarioRootCandidates() {
+      const values = []
+      const configured = text(config.scenarioRoot)
+      if (configured) {
+        values.push(path.resolve(configured), path.resolve(configured, 'packages', 'scenario-copilot'))
+      }
+      const envRoot = text(process.env.MOM_SCENARIO_ROOT)
+      if (envRoot) values.push(path.resolve(envRoot))
+      for (const project of projectPaths) {
+        values.push(
+          path.join(project, 'packages', 'scenario-copilot'),
+          path.join(project, 'node_modules', '@mom-cli', 'scenario-copilot'),
+        )
+      }
+      if (dataDir) values.push(path.join(dataDir, 'scenario-copilot'))
+      return [...new Set(values)]
+    }
     const runs = new Map()
     const groups = new Map()
     const children = new Map()
@@ -397,16 +439,16 @@ export default createPlugin({
     }
 
     function resolveRoot() {
-      const configured = text(config.scenarioRoot)
-      if (!configured) throw ctx.error(2001, '未配置 scenarioRoot（scenario-copilot 包目录）')
-      const candidates = [
-        path.resolve(configured),
-        path.resolve(configured, 'packages', 'scenario-copilot'),
-      ]
+      const candidates = scenarioRootCandidates()
       const root = candidates.find((candidate) =>
         fs.existsSync(path.join(candidate, 'dist', 'bin', 'scenario-copilot.js')),
       )
-      if (!root) throw ctx.error(2001, `scenario-copilot 不存在: ${configured}`)
+      if (!root) {
+        throw ctx.error(
+          2001,
+          `未找到 scenario-copilot CLI；已检查: ${candidates.join(', ') || '(无候选目录)'}`,
+        )
+      }
       return root
     }
 
@@ -812,7 +854,9 @@ export default createPlugin({
           .join(path.delimiter),
         MOM_TEST_TIMEOUT: String(Math.min(config.timeoutMs, 120_000)),
       }
-      if (config.storageState) env.MOM_STORAGE_STATE = config.storageState
+      if (config.storageState && fs.existsSync(config.storageState)) {
+        env.MOM_STORAGE_STATE = config.storageState
+      }
       if (config.llmApiKey) env.MOM_LLM_API_KEY = config.llmApiKey
       if (config.llmBaseUrl) env.MOM_LLM_BASE_URL = config.llmBaseUrl
       if (config.llmModel) env.MOM_LLM_MODEL = config.llmModel
@@ -1064,13 +1108,7 @@ export default createPlugin({
     }
 
     function cliEntry() {
-      const configured = text(config.scenarioRoot)
-      if (!configured) return ''
-      const candidates = [
-        path.resolve(configured),
-        path.resolve(configured, 'packages', 'scenario-copilot'),
-      ]
-      const root = candidates.find((candidate) =>
+      const root = scenarioRootCandidates().find((candidate) =>
         fs.existsSync(path.join(candidate, 'dist', 'bin', 'scenario-copilot.js')),
       )
       return root ? path.join(root, 'dist', 'bin', 'scenario-copilot.js') : ''

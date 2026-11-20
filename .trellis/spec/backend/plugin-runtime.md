@@ -83,6 +83,19 @@
 - 当前登录账号的 approved、非只读、非待移除 `localAssociations` 会作为 `trellis.projects` 注入宿主；
   插件读写本地 `.trellis/tasks/**` 后仍由 Rust `TaskSync` 负责上行同步。
 
+### 3.3 内置插件零配置
+
+- 六个内置插件的 `plugin.json` 只保留 `id/name/version/apiVersion/targets/permissions/panels/provides`
+  等身份与能力字段，`config` 固定为 `{}`；`targets: ["desktop"]` 声明主线目标。
+- 技术参数一律下沉为代码 `DEFAULTS`，允许 `config` 覆盖但不再要求必填：
+  - `ctx.paths.dataDir` = `<dataDir>/plugin-data/<pluginId>`，由 supervisor 在 `initialize` 下发；
+  - `trellis.projects` 返回 `branch` 与 `developerId`（读 `<repo>/.trellis/.developer`），供插件推导 cwd/负责人；
+  - `scenario-copilot` 自动探测 `MOM_SCENARIO_ROOT`、项目内 `packages/scenario-copilot` 或
+    `node_modules/@mom-cli/scenario-copilot`，工作区取关联项目，outlines 落 `<项目>/.trellis/scenario-outlines`；
+  - `acp-dispatch` 未配置 `command` 时按 `PATH`/`PATHEXT` 自动发现 `opencode`/`codex`/`claude` 等 CLI；
+  - `a2a-intake` 首次启动生成 24 字节本地 Token 并存入 `ctx.store`，`/a2a` 由插件自身校验 Bearer；
+    桌面宿主在 loopback 根路径暴露 `/a2a` 与 well-known 卡片，卡片地址由 `x-trellis-base` 推导。
+
 
 ## 4. 存储与命名空间
 

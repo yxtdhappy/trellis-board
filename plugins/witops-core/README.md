@@ -83,3 +83,9 @@ WitOps 同步下来的任务目录包含：
 node --test tests/witops-plugins.test.js
 node --test plugins/witops-core/test/index.test.js
 ```
+
+## 零配置
+
+`plugin.json` 的 `config` 为空：`repositoryId` 缺省时取 `trellis.projects` 的第一个关联项目，
+账号密码通过 `accounts-core` 的 `accounts.credentials` 解析；桌面宿主下任务直接写入本地
+`.trellis/tasks/**`，再由 Rust `TaskSync` 上行同步。

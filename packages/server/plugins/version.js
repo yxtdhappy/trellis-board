@@ -299,6 +299,20 @@ export function validateManifest(
   if (raw.permissions !== undefined && !stringArray(raw.permissions)) {
     return { ok: false, reason: 'invalid-manifest' }
   }
+  if (raw.config !== undefined && !isPlainObject(raw.config)) {
+    return { ok: false, reason: 'invalid-manifest' }
+  }
+  if (raw.targets !== undefined) {
+    const allowed = ['desktop', 'server', 'standalone']
+    if (
+      !Array.isArray(raw.targets) ||
+      raw.targets.length === 0 ||
+      raw.targets.some((item) => typeof item !== 'string' || !allowed.includes(item)) ||
+      new Set(raw.targets).size !== raw.targets.length
+    ) {
+      return { ok: false, reason: 'invalid-manifest' }
+    }
+  }
   if (raw.http !== undefined) {
     if (!isPlainObject(raw.http)) return { ok: false, reason: 'invalid-manifest' }
     const rootPaths = raw.http.rootPaths
@@ -359,6 +373,8 @@ export function validateManifest(
       version: raw.version,
       apiVersion: raw.apiVersion,
       engines: { board: raw.engines?.board ?? '*' },
+      targets: raw.targets ?? null,
+      config: raw.config ?? {},
       permissions: raw.permissions ?? [],
       http: { rootPaths: raw.http?.rootPaths ?? [], openPaths: raw.http?.openPaths ?? [] },
       panels: panels.panels,

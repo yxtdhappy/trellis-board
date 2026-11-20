@@ -85,6 +85,55 @@ function splitTaskKey(taskKey) {
   return { projectId, relativeDir }
 }
 
+function executableExtensions() {
+  const exts = String(process.env.PATHEXT || '').split(';').filter(Boolean)
+  if (process.platform !== 'win32') return ['']
+  return ['', ...new Set([...exts, '.EXE', '.CMD', '.BAT'].map((ext) => ext.toLowerCase()))]
+}
+
+/** 在 PATH 中查找可执行文件；只做存在性检查，不执行探测。 */
+function findExecutable(name) {
+  const directories = String(process.env.PATH || '')
+    .split(path.delimiter)
+    .filter(Boolean)
+  for (const directory of directories) {
+    for (const extension of executableExtensions()) {
+      const candidate = path.join(directory, name.endsWith(extension) ? name : `${name}${extension}`)
+      try {
+        const stat = fs.statSync(candidate)
+        if (stat.isFile()) return candidate
+      } catch {
+        // 继续查找。
+      }
+    }
+  }
+  return ''
+}
+
+const AGENT_BINARIES = {
+  opencode: ['opencode'],
+  codex: ['codex'],
+  claude: ['claude'],
+  'claude-code': ['claude'],
+  gemini: ['gemini'],
+  'cursor-agent': ['cursor-agent'],
+}
+
+/** 未显式配置 command 时，按 agent 类型探测本机 CLI。 */
+function detectCommand(agent) {
+  const names = AGENT_BINARIES[String(agent || '').trim()] || [
+    String(agent || '').trim(),
+    'opencode',
+    'codex',
+    'claude',
+  ]
+  for (const name of names.filter(Boolean)) {
+    const command = findExecutable(name)
+    if (command) return { command, agent: name === 'claude' ? 'claude' : name }
+  }
+  return null
+}
+
 function permissionStats(decisions = []) {
   return {
     allow: decisions.filter((decision) => !decision.cancelled && decision.policy === 'allow')
@@ -111,8 +160,22 @@ export default createPlugin({
 
   async onStart(ctx) {
     const config = normalizeConfig(ctx.config)
-    if (!config.command) {
-      ctx.log.warn('acp-dispatch 未配置 command，插件保持空闲')
+
+    function ensureCommand() {
+      if (config.command) return true
+      const detected = detectCommand(config.agent)
+      if (!detected) return false
+      config.command = detected.command
+      config.agent = detected.agent
+      ctx.log.info('acp-dispatch 已自动发现本地 Agent CLI', {
+        agent: config.agent,
+        command: config.command,
+      })
+      return true
+    }
+
+    if (!ensureCommand()) {
+      ctx.log.warn('acp-dispatch 未发现本地 Agent CLI，插件保持空闲', { agent: config.agent })
     }
 
     const active = new Map()
@@ -195,6 +258,7 @@ export default createPlugin({
     }
 
     async function discover() {
+      ensureCommand()
       if (!config.command) return { dispatched: 0, skipped: 'no-command' }
       const tasks = await ctx.tasks.list({
         repositoryId: config.repositoryId ?? undefined,
@@ -629,6 +693,7 @@ export default createPlugin({
     }
 
     async function panelData() {
+      ensureCommand()
       const tasks = await ctx.tasks
         .list({ repositoryId: config.repositoryId ?? undefined })
         .catch(() => [])
@@ -709,26 +774,29 @@ export default createPlugin({
       return { status: 200, body: { cancelled: entry.runId } }
     })
 
-    ctx.http.route('GET', '/status', async () => ({
-      status: 200,
-      body: {
-        agent: config.agent,
-        command: config.command,
-        configured: Boolean(config.command),
-        maxConcurrent: config.maxConcurrent,
-        runTimeoutMs: config.runTimeoutMs,
-        idleTimeoutMs: config.idleTimeoutMs,
-        active: [...active.values()].map((item) => ({
-          runId: item.runId,
-          taskKey: item.record.taskKey,
-        })),
-        queued: queue.map((task) => task.taskKey),
-        sessions: [...sessions.keys()],
-        dispatchUnbound: config.dispatchUnbound !== false,
-        lastDiscovery,
-        permission: config.permission,
-      },
-    }))
+    ctx.http.route('GET', '/status', async () => {
+      ensureCommand()
+      return {
+        status: 200,
+        body: {
+          agent: config.agent,
+          command: config.command,
+          configured: Boolean(config.command),
+          maxConcurrent: config.maxConcurrent,
+          runTimeoutMs: config.runTimeoutMs,
+          idleTimeoutMs: config.idleTimeoutMs,
+          active: [...active.values()].map((item) => ({
+            runId: item.runId,
+            taskKey: item.record.taskKey,
+          })),
+          queued: queue.map((task) => task.taskKey),
+          sessions: [...sessions.keys()],
+          dispatchUnbound: config.dispatchUnbound !== false,
+          lastDiscovery,
+          permission: config.permission,
+        },
+      }
+    })
 
     ctx.http.route('GET', '/executions', async (request) => {
       const limit = Math.min(100, Number(request.query.limit) || 20)

@@ -4,6 +4,9 @@
   "description": "通过 A2A JSON-RPC 接入消息、创建 Trellis 任务，并以标准 capability 桥接宿主与其他插件能力。",
   "version": "1.0.0",
   "apiVersion": 1,
+  "targets": [
+    "desktop"
+  ],
   "engines": {
     "board": ">=0.2.0"
   },
@@ -16,31 +19,56 @@
     "capabilities:invoke",
     "projects:read",
     "repositories:read",
-    "repositories:write"
+    "repositories:write",
+    "panels"
   ],
   "requires": [
     {
       "name": "trellis.repositories",
       "version": "^1.0.0",
-      "methods": ["list", "add", "remove"]
+      "methods": [
+        "list",
+        "add",
+        "remove"
+      ]
     },
     {
       "name": "trellis.capabilities",
       "version": "^1.0.0",
-      "methods": ["list", "call"]
+      "methods": [
+        "list",
+        "call"
+      ]
+    },
+    {
+      "name": "trellis.projects",
+      "version": "^1.0.0",
+      "methods": [
+        "list"
+      ]
     }
   ],
   "http": {
-    "rootPaths": ["/a2a", "/.well-known/agent-card.json", "/.well-known/agent.json"],
-    "openPaths": ["/.well-known/agent-card.json", "/.well-known/agent.json"]
+    "rootPaths": [
+      "/a2a",
+      "/.well-known/agent-card.json",
+      "/.well-known/agent.json"
+    ],
+    "openPaths": [
+      "/.well-known/agent-card.json",
+      "/.well-known/agent.json",
+      "/a2a"
+    ]
   },
-  "config": {
-    "token": "env:A2A_TOKEN",
-    "repositoryId": "",
-    "defaultAssignee": "",
-    "defaultPriority": "P2",
-    "publicBaseUrl": "",
-    "protocolVersion": "0.3.0",
-    "defaultAgent": "opencode"
-  }
+  "config": {},
+  "allowMissingSecrets": true,
+  "panels": [
+    {
+      "id": "a2a-intake",
+      "title": "A2A 接入",
+      "entry": "/panel",
+      "placement": "view",
+      "order": 40
+    }
+  ]
 }

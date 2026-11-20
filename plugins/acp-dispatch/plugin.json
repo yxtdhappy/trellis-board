@@ -4,6 +4,9 @@
   "description": "把 Trellis 任务派发给 ACP Agent 执行，并在「Agent 派发」面板展示运行状态。",
   "version": "1.1.0",
   "apiVersion": 1,
+  "targets": [
+    "desktop"
+  ],
   "engines": {
     "board": ">=0.2.0"
   },
@@ -27,26 +30,5 @@
       "order": 20
     }
   ],
-  "config": {
-    "agent": "opencode",
-    "command": "",
-    "args": [],
-    "cwd": "",
-    "permission": {
-      "default": "allow",
-      "byKind": {
-        "delete": "deny",
-        "fetch": "deny",
-        "switch_mode": "deny"
-      }
-    },
-    "runTimeoutMs": 21600000,
-    "maxConcurrent": 1,
-    "retryFailed": false,
-    "rerunSucceeded": false,
-    "dispatchUnbound": true,
-    "idleTimeoutMs": 1800000,
-    "sessionIdleMs": 600000,
-    "maxSessions": 3
-  }
+  "config": {}
 }

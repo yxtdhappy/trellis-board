@@ -246,6 +246,8 @@ export function startPluginRuntime(
       hostVersion: null,
     },
     mode: 'standalone',
+    // 插件专属可写目录；由宿主在 initialize 时下发，未下发时为 null。
+    paths: { dataDir: null },
     currentActor: () => requestScope.getStore()?.actor ?? null,
     currentCredential: () => requestScope.getStore()?.credential ?? null,
     tasks: {
@@ -400,6 +402,7 @@ export function startPluginRuntime(
     config = params.config ?? {}
     ctx.plugin.hostVersion = params.hostVersion ?? null
     ctx.mode = params.mode === 'team' ? 'team' : 'standalone'
+    ctx.paths.dataDir = params.pluginDataDir ?? params.dataDir ?? null
     if (Number.isInteger(params.apiVersion) && params.apiVersion <= plugin.apiVersion) {
       timeoutMs = 30_000
     }

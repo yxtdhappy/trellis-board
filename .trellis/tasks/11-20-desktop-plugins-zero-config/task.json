@@ -3,7 +3,7 @@
   "name": "desktop-plugins-zero-config",
   "title": "六大内置插件入驻 EXE 适配与 plugin.json 极简零配置改造",
   "description": "将 witops-core、scenario-copilot、jenkins-ops、accounts-core、acp-dispatch、a2a-intake 六大插件适配到桌面 EXE 本机宿主，大幅精简 plugin.json 配置字段，除账号/凭据信息外实现启用即用。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",

@@ -84,6 +84,21 @@ function fail(message) {
   process.exit(2)
 }
 
+function readTextBody(request, limit = BODY_LIMIT) {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    request.on('data', (chunk) => {
+      body += chunk
+      if (body.length > limit) {
+        reject(new Error('请求体过大'))
+        request.destroy()
+      }
+    })
+    request.on('end', () => resolve(body))
+    request.on('error', reject)
+  })
+}
+
 function readJsonBody(request, limit = BODY_LIMIT) {
   return new Promise((resolve, reject) => {
     let body = ''
@@ -237,13 +252,13 @@ function eventsHandler(request, response) {
   response.on('error', close)
 }
 
-async function forwardPanel(pluginId, subPath, search) {
+async function forwardPanel(pluginId, subPath, search, base) {
   const state = runtime.supervisor.plugins.get(pluginId)
   if (!state) return { status: 404, body: { error: `未知插件: ${pluginId}` } }
   const result = await runtime.supervisor.forwardHttp(state, {
     method: 'GET',
     path: `/${subPath}${search || ''}`,
-    headers: {},
+    headers: base ? { 'x-trellis-base': base } : {},
     body: '',
     anonymous: true,
   })
@@ -382,6 +397,40 @@ async function handle(request, response) {
     return
   }
 
+  // A2A 客户端只认识 loopback 根路径；插件自己校验自动签发的 Bearer token。
+  if (
+    url.pathname === '/a2a' ||
+    url.pathname === '/.well-known/agent-card.json' ||
+    url.pathname === '/.well-known/agent.json'
+  ) {
+    const state = runtime.supervisor.plugins.get('a2a-intake')
+    if (!state || state.status !== 'running') {
+      sendJson(response, 404, { error: 'a2a-intake 插件未启用' })
+      return
+    }
+    const body = request.method === 'GET' || request.method === 'HEAD' ? '' : await readTextBody(request)
+    const headers = {
+      'content-type': request.headers['content-type'] || 'application/json',
+      'x-trellis-base': `http://${request.headers.host || '127.0.0.1'}`,
+    }
+    if (request.headers.authorization) headers.authorization = request.headers.authorization
+    try {
+      const result = await runtime.supervisor.forwardHttp(state, {
+        method: request.method,
+        path: `${url.pathname}${url.search}`,
+        headers,
+        body,
+        anonymous: true,
+      })
+      writePluginResult(response, result, options.secret)
+    } catch (error) {
+      sendJson(response, Number.isInteger(error?.httpStatus) ? error.httpStatus : 502, {
+        error: error?.message || 'A2A 转发失败',
+      })
+    }
+    return
+  }
+
   const secretPrefix = `/s/${options.secret}/`
   if (url.pathname.startsWith(secretPrefix)) {
     const remainder = url.pathname.slice(secretPrefix.length)
@@ -396,7 +445,8 @@ async function handle(request, response) {
       sendJson(response, 404, { error: '面板资源路径无效' })
       return
     }
-    const result = await forwardPanel(pluginId, subPath, url.search)
+    const base = `http://${request.headers.host || '127.0.0.1'}/s/${options.secret}/${pluginId}`
+    const result = await forwardPanel(pluginId, subPath, url.search, base)
     writePluginResult(response, result, options.secret)
     return
   }

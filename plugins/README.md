@@ -2,6 +2,16 @@
 
 > **主线演进定位**：`standalone` 模式已降级不再维护新功能；生产 Team 服务器默认屏蔽插件。仓库随附的 6 大内置插件（`witops-core`、`scenario-copilot`、`jenkins-ops`、`accounts-core`、`acp-dispatch`、`a2a-intake`）主线演进方向为入驻 Windows 桌面 EXE 本机插件宿主——`plugin.json` 应保持极简，技术调优项下沉为代码默认值，除账号/凭据相关信息外做到启用即用。
 
+## 零配置清单
+
+- 六个内置插件的 `plugin.json` 只保留身份、能力、面板与权限，`config` 一律为 `{}`；需要用户填写的只有
+  `accounts-core` 的账号、`scenario-copilot` 的 LLM/目标账号等业务凭据，其余参数由代码默认值与运行时推导：
+  - 工作区/分支/负责人：宿主下发的 `trellis.projects`（桌面端来自 `localAssociations`）；
+  - 插件可写目录：SDK `ctx.paths.dataDir`（`<dataDir>/plugin-data/<pluginId>`）；
+  - 回调地址与本地 Token：桌面 loopback 宿主与插件自动生成并持久化。
+- `targets` 声明插件的主线目标，内置插件为 `["desktop"]`；缺省表示兼容全部宿主。
+- 需要区分环境的技术参数仍可写入 `config` 覆盖默认值，但不得再要求手工填写本机绝对路径。
+
 - 插件目录名必须等于 `plugin.json` 的 `id`，例如 `plugins/scenario-copilot/` ↔ `"id": "scenario-copilot"`。
 - `id` 使用小写 kebab-case，2–32 个字符，建议 `<领域>-<能力>`：`acp-dispatch`、`witops-intake`、`scenario-copilot`。
 - 不在 `id` 里重复宿主名：`plugins/` 下的插件都属于 Trellis Board，`trellis-board-plugin-` 前缀会让 `/api/plugins/<id>/*`、store key 和配置键变长。

@@ -129,3 +129,9 @@ node --test plugins/accounts-core/test/*.test.js
 
 `test/index.test.js` 覆盖 CRUD、密码不回传、capability 解析、删除保护、重启后持久化；
 `test/fixtures/accounts-caller` 是 capability 调用方样例。
+
+## 零配置
+
+`plugin.json` 的 `config` 为空；默认系统预设（WitOps / Jenkins / Scenario Copilot）由代码内置，
+面板只在用户需要时覆盖 `systemPresets`。账号与密码仍由用户维护，其他插件通过
+`accounts.credentials` capability 读取，无需在各自配置里重复填写。
