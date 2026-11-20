@@ -87,6 +87,7 @@ pub async fn run_process(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // CREATE_NO_WINDOW：只在 Windows 上存在，其他平台不需要。
     #[cfg(windows)]
     builder.creation_flags(0x0800_0000);
     if let Some(cwd) = &options.cwd {

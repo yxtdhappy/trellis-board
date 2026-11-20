@@ -116,7 +116,7 @@ impl WorktreeService {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(watch_tx);
         let mut watch_shutdown = shutdown.clone();
         let watcher_service = self.clone();
-        tauri::async_runtime::spawn(async move {
+        crate::agent::rt::spawn(async move {
             loop {
                 tokio::select! {
                     changed = watch_shutdown.changed() => {
@@ -144,7 +144,7 @@ impl WorktreeService {
             }
         });
         let service = self.clone();
-        tauri::async_runtime::spawn(async move {
+        crate::agent::rt::spawn(async move {
             let mut delay = Duration::from_secs(1);
             loop {
                 if !service.running.load(Ordering::SeqCst) {

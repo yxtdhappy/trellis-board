@@ -92,7 +92,10 @@ fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     fs::write(out_dir.join("embedded_assets.rs"), output).expect("无法写入嵌入资源清单");
 
-    tauri_build::build()
+    // headless 构建（`--no-default-features`）不产出桌面壳，跳过 Tauri 上下文生成。
+    if std::env::var_os("CARGO_FEATURE_DESKTOP").is_some() {
+        tauri_build::build();
+    }
 }
 
 fn collect_tree(root: &Path, repo_root: &Path, assets: &mut Vec<(String, PathBuf)>) {

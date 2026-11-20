@@ -865,7 +865,7 @@ impl TaskSync {
         }
         let this = Arc::downgrade(self);
         let state = self.ownership_validation_state.clone();
-        tauri::async_runtime::spawn(async move {
+        crate::agent::rt::spawn(async move {
             loop {
                 state.notify.notified().await;
                 let Some(sync) = this.upgrade() else {

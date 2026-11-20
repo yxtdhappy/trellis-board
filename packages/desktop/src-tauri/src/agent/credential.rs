@@ -5,7 +5,11 @@ use crate::agent::protocol::{self, code, AgentError, AgentResult};
 use crate::agent::store::ConfigStore;
 
 pub const CREDENTIAL_SCHEMA_VERSION: u32 = 1;
+#[cfg(windows)]
 pub const CREDENTIAL_ALGORITHM: &str = "WindowsDPAPI-CurrentUser";
+/// 非 Windows 平台没有 DPAPI，凭证以仅本用户可读（0600）的文件保存。
+#[cfg(not(windows))]
+pub const CREDENTIAL_ALGORITHM: &str = "FileOwnerOnly-0600";
 
 pub struct CredentialStore<'a> {
     store: &'a ConfigStore,
@@ -37,7 +41,9 @@ impl<'a> CredentialStore<'a> {
             "createdAt": now,
             "updatedAt": now,
         });
-        self.store.write_credential_record(&record).await
+        self.store.write_credential_record(&record).await?;
+        restrict_credential_permissions(&self.store.paths.credential_file);
+        Ok(())
     }
 
     pub async fn load_credential(&self) -> AgentResult<String> {
@@ -173,14 +179,24 @@ fn copy_blob_and_free(
 }
 
 #[cfg(not(windows))]
-pub(crate) fn dpapi_protect(_plaintext: &[u8]) -> AgentResult<Vec<u8>> {
-    protocol::err(code::DPAPI_UNAVAILABLE, "Agent 凭证保护仅支持 Windows")
+pub(crate) fn dpapi_protect(plaintext: &[u8]) -> AgentResult<Vec<u8>> {
+    // 非 Windows 无 DPAPI：写入时保持原样，由文件权限（0600）保证隔离。
+    Ok(plaintext.to_vec())
 }
 
 #[cfg(not(windows))]
-pub(crate) fn dpapi_unprotect(_ciphertext: &[u8]) -> AgentResult<Vec<u8>> {
-    protocol::err(code::DPAPI_UNAVAILABLE, "Agent 凭证保护仅支持 Windows")
+pub(crate) fn dpapi_unprotect(ciphertext: &[u8]) -> AgentResult<Vec<u8>> {
+    Ok(ciphertext.to_vec())
 }
+
+#[cfg(not(windows))]
+fn restrict_credential_permissions(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(windows)]
+fn restrict_credential_permissions(_path: &std::path::Path) {}
 
 #[cfg(all(test, windows))]
 mod tests;
