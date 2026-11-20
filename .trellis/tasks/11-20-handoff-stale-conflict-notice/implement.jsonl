@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "handoff 控制面、物化轮次、本地清理通道和页内提示的权威契约；修改 task_control 合并与通知逻辑前必须遵守"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "桌面 Agent 控制事件与 handoff_notice_pending 命令的运行契约"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "Rust 模块行数上限、测试外移和 Tauri 命令/capability 约束"}
