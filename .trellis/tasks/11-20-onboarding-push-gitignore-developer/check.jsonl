@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "检查新命令的权限声明、ensure_board_caller 与 capability 是否齐全。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查前端类型、组件复用、错误提示与测试边界是否符合规范。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 developerName、push 状态与 .gitignore 行为在各层是否一致。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查新增映射、解析和归一化函数是否复用现有模块而非重复实现。"}

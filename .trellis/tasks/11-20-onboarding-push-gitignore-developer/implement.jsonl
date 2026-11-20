@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "新增 commit_and_push_pending_project 必须遵循 ensure_board_caller、permissions/desktop.toml 与 capability 声明规则。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "修改两个弹窗与纯逻辑模块时遵循 TypeScript、React、shadcn 与测试边界规范。"}
+{"file": ".trellis/spec/frontend/component-reuse.md", "reason": "新增按钮与表单控件必须复用 components/ui，不新增自绘控件或重复抽象。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "追踪 Web invoke → Tauri command → agent_service → onboarding/git/gitignore 的跨层数据流。"}
