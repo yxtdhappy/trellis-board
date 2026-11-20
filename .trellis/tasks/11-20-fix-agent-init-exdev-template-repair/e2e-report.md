@@ -82,10 +82,20 @@ Trellis 0.6.17 的 `init --help` 也没有该选项；旧 JS `trellisAgentToolFl
 | `node --test packages/desktop/test/agent-template-repair.test.js` | 10/10 通过（新增冲突保护用例后） |
 | `yarn test` | 660/662 通过（1 跳过），另有与本任务无关的服务端并行 flake；失败项单独复跑通过 |
 
-## 7. 未完成项
+## 7. CI 构建与发布
 
-- 未在本机编译/运行 Rust：没有 `cargo`/`rustc`/`rustup`。需在 CI 或具备 Rust stable MSVC 的机器上执行
-  `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、
-  `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`，并建议在打包后的客户端上点一次
-  Pi/OMP 快速初始化。
+- 特性提交：`b3089f2 fix(desktop): recover Pi/OMP init from EXDEV template writes`。
+- 版本提交：`eb69d06 chore(release): 0.4.51`；tag `v0.4.51` 已推送。
+- CI run [`44694310603`](https://github.com/yxtdhappy/trellis-board/actions/runs/44694310603)：
+  `conclusion=success`，7m7s；`Rust unit tests`、desktop build、便携包、启动冒烟测试和
+  Release 资产发布全部通过。
+- Release：[`v0.4.51`](https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.51)。
+  资产 `TrellisBoard_0.4.51_x64-portable.zip`（4,322,722 bytes，sha256
+  `22550735744a87bbb69d76d88e98b99ae92998c838dff537a7719a65e116c553`）。
+- CI 未配置 `cargo fmt --check` / `cargo clippy`，这两项仍待补跑。
+
+## 8. 未完成项
+
+- `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` 未执行：本机无 Rust 工具链，
+  CI 也没有这两个步骤。`cargo test` 已由 CI 通过。
 - 临时 E2E 仓库已在归档前删除；证据保留在本报告与 `check-report.md`。

@@ -1,7 +1,8 @@
 # 实施计划
 
-> 状态：实现、Node 测试与 Windows 真机 E2E 已完成；本机无 Rust 工具链，Rust 编译/测试待 CI
-> 或具备 Rust stable MSVC 的环境补跑。未提交、未推送。
+> 状态：实现、Node 测试、Windows 真机 E2E 与 CI 构建均已完成。CI run
+> `44694310603`（tag `v0.4.51`）通过 `cargo test`、打包与冒烟测试；本机无 Rust 工具链，
+> `cargo fmt --check` / `cargo clippy` 仍未执行（CI 也未配置这两步）。任务尚未归档。
 
 ## 1. 新增内嵌补齐 helper
 
@@ -70,15 +71,29 @@
 
 ## 5. 最终检查（全部开发完成后一次编译）
 
-- [ ] `cargo fmt --check`（在 `packages/desktop/src-tauri`）。—— **本机无 Rust 工具链，未执行**。
-- [ ] `cargo clippy --all-targets -- -D warnings`（同一目录）。—— **本机无 Rust 工具链，未执行**。
-- [ ] `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`。—— **本机无 Rust 工具链，
-  未执行；需 CI 或用户环境补跑**。
+- [ ] `cargo fmt --check`（在 `packages/desktop/src-tauri`）。—— **本机无 Rust 工具链，未执行；
+  CI `windows.yml` 也未配置该步骤**。
+- [ ] `cargo clippy --all-targets -- -D warnings`（同一目录）。—— **本机无 Rust 工具链，未执行；
+  CI `windows.yml` 也未配置该步骤**。
+- [x] `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`。—— **CI run
+  [`44694310603`](https://github.com/yxtdhappy/trellis-board/actions/runs/44694310603) 的
+  `Rust unit tests` 通过**（tag `v0.4.51`）。
 - [x] `node --test packages/desktop/test/agent-template-repair.test.js`：10/10 通过。
 - [x] `yarn test`：660/662 通过、1 跳过、1 个无关服务端并行 flake；失败项单独复跑通过。
 - [x] `rg -n '^mod tests \{' packages/desktop/src-tauri/src`：仅 5 个既有文件；本任务未新增内联测试。
 - [x] `trellis_cli.rs` 667 行、`tests.rs` 410 行，均低于 1200 行上限。
-- [x] `git diff --check`、`git status --short` 确认只包含本任务文件；未提交、未推送。
+- [x] `git diff --check`；特性提交 `b3089f2`、版本提交 `eb69d06` 与 tag `v0.4.51` 已推送到
+  `origin/main`。任务元数据提交为 `3266ae0`。
+
+### CI 构建与发布
+
+- [x] CI run [`44694310603`](https://github.com/yxtdhappy/trellis-board/actions/runs/44694310603)
+  （tag `v0.4.51`，7m7s）成功：Node/Server tests、`Rust unit tests`、desktop build、
+  便携包与启动冒烟测试、Release 资产发布全部通过。
+- [x] Release：[`v0.4.51`](https://github.com/yxtdhappy/trellis-board/releases/tag/v0.4.51)，
+  资产 `TrellisBoard_0.4.51_x64-portable.zip`（4,322,722 bytes，sha256
+  `22550735744a87bbb69d76d88e98b99ae92998c838dff537a7719a65e116c553`）。
+- [ ] `cargo fmt --check` / `cargo clippy` 仍待补跑（本机无工具链，CI 未配置）。
 
 ## 6. 规格更新与收尾
 

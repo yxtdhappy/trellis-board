@@ -94,4 +94,6 @@ R8 测试与真机 E2E、R9 移除 `--pi-presence` 均已核对。新增 details
 - `REPAIR_TIMEOUT` 由 60s 改为 30s；`design.md`、`implement.md` 与本规格第 2 节已同步。
 - helper 的 `collectPlatformTemplates` 增加多平台同路径不同内容的 fail-closed 保护；
   `node --test packages/desktop/test/agent-template-repair.test.js` 10/10 通过。
-- Rust 工具链仍缺失，Rust 编译/测试未执行，需 CI 或具备 Rust stable MSVC 的环境补跑。
+- 本机无 Rust 工具链；CI run [`44694310603`](https://github.com/yxtdhappy/trellis-board/actions/runs/44694310603)
+  （tag `v0.4.51`）已通过 `Rust unit tests`、desktop build、便携包/启动冒烟与 Release 资产发布。
+  `cargo fmt --check` / `cargo clippy` 仍未执行（CI `windows.yml` 未配置这两步）。
