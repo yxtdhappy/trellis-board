@@ -356,9 +356,7 @@ export function ProjectRail({
     (association) => association.status === 'approved' && association.initialReviewPending,
   )
   const worktreeIssues = [...worktreeStatuses.values()].filter(
-    (status) =>
-      status.autoManaged &&
-      (status.lastError || status.lastVisibilityError || status.visibility === 'hidden_missing'),
+    (status) => status.autoManaged && (status.lastError || status.lastVisibilityError),
   )
   async function retryWorktree(key: string) {
     if (!invoke || retryingWorktreeKey) return
@@ -439,37 +437,20 @@ export function ProjectRail({
             <span>{worktreeIssues.length} 个 worktree 需要处理</span>
             {worktreeIssues.slice(0, 3).map((issue) => {
               const key = issue.taskSpaceId || issue.path
-              const association = issue.taskSpaceId
-                ? associations.get(issue.taskSpaceId)
-                : undefined
-              const detail =
-                issue.lastError ||
-                issue.lastVisibilityError ||
-                (issue.visibility === 'hidden_missing' ? 'worktree 已删除，可解绑' : '自动接入失败')
+              const detail = issue.lastError || issue.lastVisibilityError || '自动接入失败'
               return (
                 <div key={issue.path} className="flex items-start justify-between gap-2">
                   <span className="min-w-0 truncate" title={`${issue.path}：${detail}`}>
                     {issue.branchName || issue.path}：{detail}
                   </span>
-                  {issue.visibility === 'hidden_missing' && association ? (
-                    <button
-                      type="button"
-                      className="shrink-0 underline disabled:opacity-50"
-                      disabled={detachingTaskSpace !== null}
-                      onClick={() => void detachAssociation(association)}
-                    >
-                      {detachingTaskSpace === association.taskSpaceId ? '处理中' : '解绑'}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="shrink-0 underline disabled:opacity-50"
-                      disabled={retryingWorktreeKey !== null}
-                      onClick={() => void retryWorktree(key)}
-                    >
-                      {retryingWorktreeKey === key ? '处理中' : '重试'}
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className="shrink-0 underline disabled:opacity-50"
+                    disabled={retryingWorktreeKey !== null}
+                    onClick={() => void retryWorktree(key)}
+                  >
+                    {retryingWorktreeKey === key ? '处理中' : '重试'}
+                  </button>
                 </div>
               )
             })}

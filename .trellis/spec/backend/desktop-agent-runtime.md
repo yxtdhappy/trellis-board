@@ -141,6 +141,12 @@
   `task-control-state.json` 保存控制状态、lease fencing 和 handoff ACK/通知去重状态，不保存任务正文
   或本机绝对仓库路径。
 - `TRELLIS_AGENT_ROOT` 优先于 `%LOCALAPPDATA%/TrellisBoardAgent`（独立 Agent CLI 场景）。
+- worktree 自动接入（`WorktreeService::reconcile`，15s）：已自动接入（`auto_managed=true`）的条目在
+  `git worktree list` 不再列出、且（路径不存在 或 本轮列举全部成功）时视为删除，按 `task_space_id`
+  + 路径匹配 binding 调 `detach::detach_local_association`（`detach_pending` 也继续重试）；成功或
+  终态错误后删注册表条目，并用重读的 config 刷新 `TaskSync` 与 watcher。没有匹配 binding 的条目
+  直接删。手工接入（`auto_managed=false`）不自动解绑，沿用分支守卫错误。解绑失败只记日志，条目
+  保持 `hidden_missing`（分支隐藏、不进入任何用户提示），下轮 reconcile 重试。
 
 ## 3. 环境门
 

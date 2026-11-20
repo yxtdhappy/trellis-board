@@ -16,6 +16,7 @@ use notify::RecommendedWatcher;
 use serde::Serialize;
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
+use crate::agent::detach;
 use crate::agent::http::ApiClient;
 use crate::agent::onboarding::{self, AttachOptions};
 use crate::agent::protocol::{code, AgentError, AgentResult};
@@ -380,37 +381,80 @@ impl WorktreeService {
             changed |= self.upsert(entry);
         }
 
-        let snapshot = {
+        // 已删除的 worktree：先标记 hidden_missing（分支隐藏、不再提示），释放锁后再异步解绑。
+        let mut detach_targets: Vec<(String, String)> = Vec::new();
+        let mut dropped_paths: Vec<String> = Vec::new();
+        {
             let mut registry = self.lock_registry();
             for entry in registry.entries.values_mut() {
-                if entry.auto_managed && !found.contains(&entry.path) {
-                    let path_missing = !Path::new(&entry.path).exists();
-                    if !all_success && !path_missing {
-                        continue;
+                let Some(action) = deleted_worktree_action(
+                    entry,
+                    found.contains(&entry.path),
+                    all_success,
+                    &config.bindings,
+                ) else {
+                    continue;
+                };
+                match action {
+                    DeletedWorktreeAction::Detach(task_space_id) => {
+                        detach_targets.push((entry.path.clone(), task_space_id))
                     }
-                    if entry.visibility != WorktreeVisibility::HiddenMissing {
-                        changed = true;
-                        bindings_dirty = true;
-                    }
-                    entry.status = WorktreeStatus::Stale;
-                    entry.visibility = WorktreeVisibility::HiddenMissing;
-                    entry.archive_sync_pending = false;
-                    entry.active_task_count = 0;
-                    entry.server_active_task_count = 0;
-                    entry.last_error = None;
+                    DeletedWorktreeAction::Drop => dropped_paths.push(entry.path.clone()),
                 }
+                if entry.visibility != WorktreeVisibility::HiddenMissing {
+                    changed = true;
+                    bindings_dirty = true;
+                }
+                entry.status = WorktreeStatus::Stale;
+                entry.visibility = WorktreeVisibility::HiddenMissing;
+                entry.archive_sync_pending = false;
+                entry.active_task_count = 0;
+                entry.server_active_task_count = 0;
+                entry.last_error = None;
+                entry.last_visibility_error = None;
             }
-            if changed {
-                Some(registry.clone())
-            } else {
-                None
+        }
+
+        for path in dropped_paths {
+            self.lock_registry().entries.remove(&path);
+            changed = true;
+        }
+        for (path, task_space_id) in detach_targets {
+            match detach::detach_local_association(
+                &self.store,
+                &self.api,
+                &self.task_sync,
+                &task_space_id,
+                false,
+            )
+            .await
+            {
+                Ok(outcome) if outcome.detached => {
+                    self.lock_registry().entries.remove(&path);
+                    changed = true;
+                    bindings_dirty = true;
+                }
+                Ok(outcome) => crate::logging::warn(&format!(
+                    "worktree 已删除，解绑待重试（{path}）：{}",
+                    outcome.error.unwrap_or_default()
+                )),
+                Err(error) => crate::logging::warn(&format!(
+                    "worktree 已删除，解绑失败（{path}）：{}",
+                    error.message
+                )),
             }
-        };
-        if let Some(snapshot) = snapshot {
+        }
+
+        let mut latest_config: Option<AgentConfig> = None;
+        if changed {
+            let snapshot = self.lock_registry().clone();
             registry::save(&self.store, &snapshot).await?;
         }
         if bindings_dirty {
-            self.sync_active_bindings(config).await;
+            if let Some(config) = self.store.read_config(false).await? {
+                self.sync_active_bindings(&config).await;
+                latest_config = Some(config);
+            }
         }
         if let Some(tx) = self
             .watch_tx
@@ -418,7 +462,7 @@ impl WorktreeService {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
         {
-            watch::rebuild(self, config, &tx);
+            watch::rebuild(self, latest_config.as_ref().unwrap_or(config), &tx);
         }
         if changed {
             (self.state_sink)();
@@ -772,6 +816,36 @@ fn normalize_path(path: &str) -> String {
     path.trim_end_matches('/').to_ascii_lowercase()
 }
 
+enum DeletedWorktreeAction {
+    Detach(String),
+    Drop,
+}
+
+/// 已删除的 worktree：有对应 binding 时解绑，否则直接清理条目；`None` 表示本轮不处理。
+fn deleted_worktree_action(
+    entry: &WorktreeEntry,
+    discovered: bool,
+    all_success: bool,
+    bindings: &[AgentBinding],
+) -> Option<DeletedWorktreeAction> {
+    if !entry.auto_managed || discovered {
+        return None;
+    }
+    if !all_success && Path::new(&entry.path).exists() {
+        return None;
+    }
+    Some(
+        bindings
+            .iter()
+            .find(|binding| {
+                entry.task_space_id.as_deref() == Some(binding.task_space_id.as_str())
+                    && same_path(&binding.repo_path, &entry.path)
+            })
+            .map(|binding| DeletedWorktreeAction::Detach(binding.task_space_id.clone()))
+            .unwrap_or(DeletedWorktreeAction::Drop),
+    )
+}
+
 fn upload_succeeded(value: &serde_json::Value) -> bool {
     value.is_object()
         && value.get("code").is_none()
@@ -805,6 +879,87 @@ mod tests {
             r"C:\Users\Fenglei\projects\trellis-board",
             r"C:\Users\Fenglei\projects\trellis-board-wt-accept"
         ));
+    }
+
+    #[test]
+    fn deleted_worktree_detaches_bound_space_including_pending() {
+        let mut pending = binding();
+        pending.detach_pending = true;
+        assert!(matches!(
+            deleted_worktree_action(&deleted_entry(), false, true, &[pending]),
+            Some(DeletedWorktreeAction::Detach(id)) if id == "space-1"
+        ));
+
+        let mut manual = deleted_entry();
+        manual.auto_managed = false;
+        assert!(deleted_worktree_action(&manual, false, true, &[binding()]).is_none());
+        assert!(deleted_worktree_action(&deleted_entry(), true, true, &[binding()]).is_none());
+
+        let mut alive = deleted_entry();
+        alive.path = std::env::temp_dir().to_string_lossy().to_string();
+        assert!(deleted_worktree_action(&alive, false, false, &[binding()]).is_none());
+    }
+
+    #[test]
+    fn deleted_worktree_drops_entry_without_matching_binding() {
+        let mut unbound = deleted_entry();
+        unbound.task_space_id = None;
+        assert!(matches!(
+            deleted_worktree_action(&unbound, false, true, &[binding()]),
+            Some(DeletedWorktreeAction::Drop)
+        ));
+
+        let mut other_space = deleted_entry();
+        other_space.task_space_id = Some("space-2".into());
+        assert!(matches!(
+            deleted_worktree_action(&other_space, false, true, &[binding()]),
+            Some(DeletedWorktreeAction::Drop)
+        ));
+
+        let mut other_path = deleted_entry();
+        other_path.path = "C:/repo/other".into();
+        assert!(matches!(
+            deleted_worktree_action(&other_path, false, true, &[binding()]),
+            Some(DeletedWorktreeAction::Drop)
+        ));
+    }
+
+    fn binding() -> AgentBinding {
+        AgentBinding {
+            local_id: "local-1".into(),
+            server_binding_id: Some("binding-1".into()),
+            task_space_id: "space-1".into(),
+            project_id: "project-1".into(),
+            repo_path: "C:/repo/worktree".into(),
+            branch_name: "feature".into(),
+            baseline_branch: None,
+            team_id: Some("team-1".into()),
+            remote_identity_key: "a".repeat(64),
+            local_repo_key: "b".repeat(64),
+            display_name: "Repo".into(),
+            created_at: "2026-11-20T00:00:00.000Z".into(),
+            allow_file_remote: false,
+            read_only: false,
+            sync_status: "approved".into(),
+            detach_pending: false,
+            initial_sync_mode: "bootstrap".into(),
+            initial_sync_completed: true,
+            initial_review_pending: false,
+            tracked_task_dirs: Vec::new(),
+            live_sync_status: "ready".into(),
+            live_sync_error: None,
+            last_synced_at: None,
+            last_head: None,
+            last_error: None,
+            last_error_code: None,
+        }
+    }
+
+    fn deleted_entry() -> WorktreeEntry {
+        let mut entry = WorktreeEntry::new("C:/repo/worktree".into(), "feature".into());
+        entry.auto_managed = true;
+        entry.task_space_id = Some("space-1".into());
+        entry
     }
 
     #[test]

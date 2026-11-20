@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "desktop Agent 运行时、binding 与 detach 约定"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "ProjectRail 状态与提示渲染约定"}

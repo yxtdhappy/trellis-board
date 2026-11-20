@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "核对 worktree 解绑与 binding/TaskSync 契约"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "ProjectRail 提示与共享组件渲染约定"}
