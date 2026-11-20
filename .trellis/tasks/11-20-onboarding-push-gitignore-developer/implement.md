@@ -36,7 +36,8 @@
 - [x] `initialize_project` 在 init/Agent-only 完成后调用 `ensure_agent_gitignore`，再重新 inspect；
       即使 mode=None 也执行，保证失败后可重试修复。
 - [x] 新增 `pub async fn commit_and_push_initial(repo_path, hooks_dir, allow_file_remote) -> AgentResult<InitialPushState>`：
-  add 固定路径 → 判断是否需 commit → 固定 message commit → push 当前分支 → 复用
+  组装初始化生成路径（`.trellis` 必需；`.gitignore`、`AGENTS.md`、`.gitattributes`、`.agents` 存在时）
+  → 判断是否需 commit → 固定 message commit → push 当前分支 → 复用
   `check_initial_push_with` 返回最终状态；无 `.trellis` 可提交时给出明确错误。
 - [x] 更新 `task_command/tests.rs` 的 `ProjectInspection` 字面量。
 - [x] `onboarding/tests.rs` 增加：
@@ -62,7 +63,7 @@
   - developer 默认值改为 `inspection.developerName || pickProjectTrellisDevId(...)`；
   - 增加 `commitAndPush()`，失败/成功都更新 `push` 与 `message`；
   - “首次推送确认”按钮行加入“一键提交并推送”，保留“检查推送状态”和手动命令；
-  - 更新“客户端不会自动 commit/push”的文案。
+  - 更新“客户端不会自动 commit/push”的文案，列出初始化提交范围。
 - [x] `AgentQuickInitDialog.tsx`：developer 默认值改为
       `inspection.developerName || defaultDeveloperId`。
 - [x] `ProjectRail.tsx` 不修改默认值来源（弹窗内决定优先级）。

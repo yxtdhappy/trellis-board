@@ -233,7 +233,8 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
 ### 3. Contracts
 
 - 命令无参数，只读 `DesktopAuthState.pending_project_path`，必须先 `ensure_board_caller`。
-- 只暂存 `.trellis` 与存在时的 `.gitignore`；commit message 固定 `初始化trellis`。
+- 只暂存初始化生成的 `.trellis`、`.gitignore`、`AGENTS.md`、`.gitattributes`、`.agents/`
+  （后四者存在时）；commit message 固定 `初始化trellis`。
 - 使用 pathspec 形式 `git commit -m <message> -- <paths>`，不卷入其他已暂存文件。
 - 无暂存差异时只 push，不创建空提交；HEAD 中从未出现 `.trellis` 时返回 `MISSING_TRELLIS`。
 - push 使用全限定 refspec `refs/heads/<branch>:refs/heads/<branch>`；分支来自仓库当前分支。
@@ -264,7 +265,8 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
 ### 6. Tests Required
 
 - Rust：写操作参数、`diff --cached --quiet` 0/1/错误映射、固定 pathspec 不提交其他暂存文件、
-  bare 远端端到端、二次点击不产生空提交、developer 解析、`.gitignore` 追加/去重/CRLF/幂等。
+  `AGENTS.md`/`.gitattributes`/`.agents/` 进入初始化提交、bare 远端端到端、二次点击不产生空提交、
+  developer 解析、`.gitignore` 追加/去重/CRLF/幂等。
 - Web：`normalizePushState` 容错、`developerName` 缺失归一化为空字符串。
 
 ### 7. Wrong vs Correct
@@ -280,9 +282,9 @@ git push                  # 依赖 push.default 与 upstream
 #### Correct
 
 ```bash
-git add -A -- .trellis .gitignore      # .gitignore 不存在时不传
-git diff --cached --quiet -- .trellis .gitignore
-git commit -m 初始化trellis -- .trellis .gitignore
+git add -A -- .trellis .gitignore AGENTS.md .gitattributes .agents  # 后四者存在时传入
+git diff --cached --quiet -- .trellis .gitignore AGENTS.md .gitattributes .agents
+git commit -m 初始化trellis -- .trellis .gitignore AGENTS.md .gitattributes .agents
 git push origin refs/heads/<branch>:refs/heads/<branch>
 ```
 

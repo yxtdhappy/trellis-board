@@ -158,8 +158,8 @@ server {
 2. 客户端校验仓库根、origin 和当前分支，并检查 `.trellis/tasks`。
 3. 缺少 `.trellis` 或 `tasks` 时，用户选择本机需要的编码 Agent，由安装包内固定 Trellis runtime 初始化；
    初始化后把所选 Agent 的本机配置路径写入项目根 `.gitignore`。
-4. 用户检查文件后，可点击“一键提交并推送”由客户端只提交 `.trellis` 与存在时的 `.gitignore`，
-   也可以手动提交、推送；客户端不会自动 commit/push。
+4. 用户检查文件后，可点击“一键提交并推送”由客户端只提交初始化生成的 `.trellis`、`.gitignore`、
+   `AGENTS.md`、`.gitattributes`、`.agents/`（存在时），也可以手动提交、推送；客户端不会自动 commit/push。
 5. 用户点击“检查推送状态”。只有本地 HEAD 与远端目标分支一致、初始化文件已进入 HEAD 且相关路径干净时
    才允许接入。
 6. 用户选择 owner team 和 Trellis developer ID，客户端先调用

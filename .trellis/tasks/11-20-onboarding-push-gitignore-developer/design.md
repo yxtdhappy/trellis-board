@@ -29,8 +29,8 @@ commit_and_push_pending_project() -> { ok: true, state, message, localHead?, rem
 ### 2.2 后端流程（`onboarding::commit_and_push_initial`）
 
 1. `inspect_git_project(..., expected_branch=None)`：校验 Git 根、分支、origin、sparse checkout。
-2. 组装固定路径：`[".trellis"]`；`.gitignore` 存在时追加 `".gitignore"`。不存在不传，避免
-   `pathspec did not match`。
+2. 组装固定路径：`.trellis` 必需；`.gitignore`、`AGENTS.md`、`.gitattributes`、`.agents` 存在时追加。
+   不存在不传，避免 `pathspec did not match`。
 3. `git::add_paths(root, hooks, paths)` → `git add -A -- <paths>`。
 4. `git::has_staged_changes(root, hooks, paths)` → `git diff --cached --quiet -- <paths>`：
    - exit 0：无可提交内容。若 `.trellis/` 也从未进入 HEAD，返回明确错误
@@ -64,8 +64,8 @@ commit_and_push_pending_project() -> { ok: true, state, message, localHead?, rem
 - `commitAndPush()`：调用新命令，成功后用 `normalizePushState` 写入 `push`，并更新 `message`；
   失败走 `onboardingErrorMessage(error, '提交并推送失败')`。
 - 按钮行：`一键提交并推送`（主按钮）与 `检查推送状态`（outline）。
-- 文案改为：“客户端不会自动提交；点击按钮由客户端提交 `.trellis` 与 `.gitignore` 并推送，
-  也可以手动执行：”，保留原命令代码块。
+- 文案改为：“客户端不会自动提交；点击按钮由客户端提交初始化生成的 `.trellis`、`.gitignore`、
+  `AGENTS.md`、`.gitattributes`、`.agents/` 并推送，也可以手动执行：”，保留原命令代码块。
 - `busy` 同时保护两个按钮；5 秒静默轮询继续存在，成功后自动停止。
 
 ## 3. R2：自动更新 `.gitignore`
@@ -152,7 +152,8 @@ Copilot 写入共享 `.github` 目录，只忽略 Trellis 精确产物：
 - Rust `onboarding/tests.rs`：
   - `.developer` 解析：正常、缺失、空 name、CRLF；
   - `.gitignore`：新建、追加、等价规则去重、无尾换行、CRLF 保留、幂等；
-  - 一键提交推送：bare 远端端到端、固定 commit message、只含固定路径、无关已暂存文件不被提交、
+  - 一键提交推送：bare 远端端到端、固定 commit message、只含初始化生成路径（含 `AGENTS.md`/
+    `.gitattributes`/`.agents`）、无关已暂存文件不被提交、
     第二次点击不产生空提交、未出生分支可创建 root commit。
 - Rust `task_command/tests.rs`：补 `developer_name` 字段。
 - Web `packages/web/test/project-inspection.test.js`：`developerName` 归一化与默认值。

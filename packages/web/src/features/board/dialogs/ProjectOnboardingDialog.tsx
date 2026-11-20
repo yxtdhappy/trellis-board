@@ -561,9 +561,10 @@ export function ProjectOnboardingDialog({
                 <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
                   <p className="font-medium">首次推送确认</p>
                   <p className="text-muted-foreground">
-                    请先检查生成的 `.trellis` 文件，然后提交并推送到 `{inspection.branchName}
-                    `。客户端不会自动提交；点击“一键提交并推送”只提交 `.trellis`（以及存在时的
-                    `.gitignore`），也可以手动执行：
+                    请先检查生成的初始化文件，然后提交并推送到 `{inspection.branchName}
+                    `。客户端不会自动提交；点击“一键提交并推送”只提交初始化生成的
+                    `.trellis`、`.gitignore`、`AGENTS.md`、`.gitattributes`、`.agents/`，
+                    也可以手动执行：
                   </p>
                   <code className="rounded bg-muted px-2 py-1 text-xs">
                     git add .trellis && git commit && git push

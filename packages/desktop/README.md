@@ -159,9 +159,10 @@ Board 项目栏
 - 需要同时同步两个分支时必须使用两个 Git worktree；每个 worktree 只绑定自己的当前分支。
 - `.trellis/tasks` 已存在时跳过初始化；`.trellis` 存在但缺 `tasks` 时仍要求初始化。
 - 编码 Agent 工具只影响当前设备，可后续追加；其他设备无需选择相同工具。
-- 初始化不自动 commit 或 push。首次推送确认里的一键按钮只提交 `.trellis`（以及存在时的
-  `.gitignore`），提交信息固定为 `初始化trellis`，并推送当前分支到 origin 同名分支；没有可提交
-  内容时只推送，不创建空提交。之后由客户端比较本地 HEAD 与远端分支。
+- 初始化不自动 commit 或 push。首次推送确认里的一键按钮只提交初始化生成的 `.trellis`、
+  `.gitignore`、`AGENTS.md`、`.gitattributes`、`.agents/`（后四者存在时），提交信息固定为
+  `初始化trellis`，并推送当前分支到 origin 同名分支；没有可提交内容时只推送，不创建空提交。
+  之后由客户端比较本地 HEAD 与远端分支。
 - 初始化（完整 init 与追加 Agent）都会把所选 Agent 的本机配置路径幂等追加到项目根 `.gitignore`；
   已存在的等价规则不重复添加，写入失败按初始化失败返回原因。
 - developer ID 默认优先取项目 `.trellis/.developer` 的 `name`，缺失时才回退到远端身份匹配或账号。

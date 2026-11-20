@@ -220,7 +220,7 @@ SQLite 使用 WAL 模式。standalone 主线程和扫描 Worker 各自持有连�
 
 1. 选择 Git 仓库根目录，校验 origin、当前分支和 `.trellis/tasks`。
 2. 缺少 Trellis 时选择本机编码 Agent，由安装包内固定 runtime 初始化；初始化会把所选 Agent 的本地配置路径写入项目根 `.gitignore`，不会自动 commit/push。
-3. 可点击“一键提交并推送”，由客户端只提交 `.trellis` 与存在时的 `.gitignore`（提交信息固定为 `初始化trellis`）并推送当前分支；也可以手动提交并推送。随后客户端比较本地 HEAD 与远端分支，确认首次推送成功。
+3. 可点击“一键提交并推送”，由客户端只提交初始化生成的 `.trellis`、`.gitignore`、`AGENTS.md`、`.gitattributes`、`.agents/`（存在时；提交信息固定为 `初始化trellis`）并推送当前分支；也可以手动提交并推送。随后客户端比较本地 HEAD 与远端分支，确认首次推送成功。
 4. 选择 owner team 和 Trellis developer ID（默认优先读取 `.trellis/.developer` 的 `name`）；同一仓库已有其他分支时确认替换，再建立 Agent binding。
 
 Team 同步只覆盖 `.trellis/tasks/**`：

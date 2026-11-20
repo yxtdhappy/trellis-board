@@ -446,6 +446,34 @@ fn contains_trellis_entry_matches_only_trellis_paths() {
     assert!(!contains_trellis_entry(&[]));
 }
 
+#[test]
+fn selects_existing_initial_commit_paths() {
+    let repo = TempRepo::new("initial-paths");
+    std::fs::create_dir_all(&repo.root).expect("create repo dir");
+    assert_eq!(
+        initial_commit_paths(&repo.root),
+        vec![".trellis".to_string()]
+    );
+
+    std::fs::write(repo.root.join(".gitignore"), "").expect("write gitignore");
+    std::fs::write(repo.root.join("AGENTS.md"), "").expect("write agents");
+    std::fs::write(repo.root.join(".gitattributes"), "").expect("write gitattributes");
+    std::fs::create_dir_all(repo.root.join(".agents")).expect("create agents dir");
+    assert_eq!(
+        initial_commit_paths(&repo.root),
+        vec![
+            ".trellis".to_string(),
+            ".gitignore".to_string(),
+            "AGENTS.md".to_string(),
+            ".gitattributes".to_string(),
+            ".agents".to_string(),
+        ]
+    );
+
+    std::fs::write(repo.root.join("unrelated.txt"), "").expect("write unrelated");
+    assert_eq!(initial_commit_paths(&repo.root).len(), 5);
+}
+
 #[tokio::test]
 async fn commits_and_pushes_only_initialization_paths() {
     if !git_available() {
@@ -465,6 +493,15 @@ async fn commits_and_pushes_only_initialization_paths() {
     )
     .expect("write task");
     std::fs::write(repo.root.join(".gitignore"), "/.codex/\n").expect("write gitignore");
+    std::fs::write(repo.root.join("AGENTS.md"), "# Trellis\n").expect("write agents");
+    std::fs::write(repo.root.join(".gitattributes"), "* text=auto\n").expect("write gitattributes");
+    std::fs::create_dir_all(repo.root.join(".agents").join("skills").join("trellis"))
+        .expect("create agents skills");
+    std::fs::write(
+        repo.root.join(".agents").join("skills").join("trellis").join("SKILL.md"),
+        "# skill\n",
+    )
+    .expect("write skill");
     std::fs::write(repo.root.join("other.txt"), "other").expect("write other");
     // 用户已有的暂存改动不能被卷入初始化提交。
     git(&repo.root, &["add", "other.txt"]);
@@ -485,6 +522,9 @@ async fn commits_and_pushes_only_initialization_paths() {
         .filter(|line| !line.is_empty())
         .collect();
     assert!(committed.contains(&".gitignore"));
+    assert!(committed.contains(&"AGENTS.md"));
+    assert!(committed.contains(&".gitattributes"));
+    assert!(committed.contains(&".agents/skills/trellis/SKILL.md"));
     assert!(committed.iter().any(|path| path.starts_with(".trellis/")));
     assert!(!committed.contains(&"other.txt"));
     let staged = git(&repo.root, &["diff", "--cached", "--name-only"]);

@@ -32,6 +32,14 @@ const INITIAL_SYNC_MODES: [&str; 3] = ["bootstrap", "safe", "review"];
 const INITIAL_COMMIT_MESSAGE: &str = "初始化trellis";
 const GITIGNORE_TITLE: &str = "# Trellis local agent configs (local only)";
 const MAX_DEVELOPER_NAME_CHARS: usize = 120;
+/// 一键初始化提交包含的固定路径；`.trellis` 必需，其余存在时才提交。
+const INITIAL_COMMIT_PATHS: [&str; 5] = [
+    ".trellis",
+    ".gitignore",
+    "AGENTS.md",
+    ".gitattributes",
+    ".agents",
+];
 
 /// checkInitialPush 的状态取值（对照 JS 的 `state`）。
 pub const PUSH_WAITING_COMMIT: &str = "waiting_commit";
@@ -542,7 +550,8 @@ pub async fn check_initial_push_with(
     Ok(result)
 }
 
-/// 一次点击完成初始化提交与推送：只暂存并提交 `.trellis` 与存在时的 `.gitignore`，
+/// 一次点击完成初始化提交与推送：只暂存并提交初始化生成的固定路径
+/// （`.trellis`、`.gitignore`、`AGENTS.md`、`.gitattributes`、`.agents`），
 /// commit message 固定，push 当前分支到 origin 同名分支，最后复用推送状态检查。
 pub async fn commit_and_push_initial(
     repo_path: &Path,
@@ -551,10 +560,7 @@ pub async fn commit_and_push_initial(
 ) -> AgentResult<InitialPushState> {
     let snapshot = inspect_git_project(repo_path, hooks_dir, allow_file_remote, None).await?;
     let root = snapshot.root;
-    let mut paths = vec![".trellis".to_string()];
-    if path_exists(&root.join(".gitignore")).await {
-        paths.push(".gitignore".to_string());
-    }
+    let paths = initial_commit_paths(&root);
     git::add_paths(&root, hooks_dir, &paths).await?;
     if git::has_staged_changes(&root, hooks_dir, &paths).await? {
         git::commit_paths(&root, hooks_dir, INITIAL_COMMIT_MESSAGE, &paths).await?;
@@ -572,6 +578,17 @@ pub async fn commit_and_push_initial(
     }
     git::push_branch(&root, hooks_dir, &snapshot.current_branch).await?;
     check_initial_push_with(&root, hooks_dir, &snapshot.current_branch, allow_file_remote).await
+}
+
+/// `.trellis` 必需；其余初始化文件只在存在时加入，避免 Git pathspec 报错。
+fn initial_commit_paths(repo_path: &Path) -> Vec<String> {
+    let mut paths = Vec::new();
+    for path in INITIAL_COMMIT_PATHS {
+        if path == ".trellis" || repo_path.join(path).exists() {
+            paths.push(path.to_string());
+        }
+    }
+    paths
 }
 
 /// HEAD 树里是否已有 `.trellis` 文件（ls-tree 只查询 `.trellis` 路径）。
