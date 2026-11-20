@@ -3,7 +3,7 @@
   "name": "onboarding-push-gitignore-developer",
   "title": "接入初始化：一键提交推送、自动忽略 Agent 目录与 developer 默认值",
   "description": "在首次推送确认中增加一键提交并推送（固定 commit 信息“初始化trellis”）；初始化 Agent 后自动把所选 Agent 目录写入项目 .gitignore；两个初始化入口的 developer ID 默认优先读取 .trellis/.developer 的 name。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": "server",
@@ -11,7 +11,7 @@
   "creator": "yhj",
   "assignee": "yhj",
   "createdAt": "2026-11-20",
-  "completedAt": null,
+  "completedAt": "2026-11-20",
   "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
@@ -23,7 +23,7 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "commit": "7178c4b",
-    "ci_run": "44742740648"
+    "commit": "1e40359",
+    "ci_run": "44752124935"
   }
 }
