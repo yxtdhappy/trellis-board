@@ -1492,3 +1492,26 @@ packages/web 全量审计后按 shadcn/base-ui 规则把重复实现收敛到 co
 ### Status
 
 [OK] **Completed**
+
+
+## Session 44: worktree 删除后自动解绑 + Alert 溢出修复
+<!-- trellis-session: v=2 fp=934bda9a694e0a62 -->
+
+**Date**: 2026-11-20
+**Task**: worktree 删除后自动解绑 + Alert 溢出修复
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+reconcile 判定已自动接入 worktree 被删除后调用 detach_local_association，成功即删注册表条目、按重读 config 刷新 TaskSync/watcher；detach_pending 静默 15s 重试；无 binding 直接清理；手工接入沿用分支守卫。ProjectRail 移除 hidden_missing 提示与解绑按钮；alertVariants 补 *:min-w-0 修复网格项无法收缩导致的文本溢出。cargo test 328 passed，web build/lint 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a12f4d9` | feat(desktop): worktree 删除后自动解绑并修复 Alert 溢出 |
+
+### Status
+
+[OK] **Completed**
