@@ -1670,3 +1670,29 @@ BRANCH_MISMATCH 每次心跳重复弹窗且抢焦点；改为 assert_binding_bra
 ### Status
 
 [OK] **Completed**
+
+
+## Session 71: 稳定 handoff 物化轮次标识并发布 v0.4.50
+<!-- trellis-session: v=2 fp=4f1fcad3473dc9c5 -->
+
+**Date**: 2026-11-20
+**Task**: 稳定 handoff 物化轮次标识并发布 v0.4.50
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+服务端将 materialized_at 定义为每轮首次物化时间：改派清空、首次上传写入、命令完成仅补写；ACK fencing 以 materializedAt 为主、revision 仅兜底。修复同轮多次上传导致清理 ACK 被误拒的问题，跨轮陈旧 ACK 仍返回 409 HANDOFF_CYCLE_STALE。目标 Node 测试 24/24、全量 651 通过/1 跳过；真实客户端 E2E A（正常清理 completed）与 B（注入陈旧 ACK 被拒、新轮次完成）通过并留证；v0.4.50 CI 构建与 Release 发布成功。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a359fcf` | fix(server): 稳定 handoff 物化轮次标识 |
+| `2a70ac3` | chore(task): 记录 handoff 轮次标识稳定性任务产物 |
+| `6fc29cd` | docs(task): 补充 handoff 轮次标识稳定性 E2E 证据 |
+| `aa779c4` | docs(task): 记录 v0.4.50 发布与验收结果 |
+
+### Status
+
+[OK] **Completed**
