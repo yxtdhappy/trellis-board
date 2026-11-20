@@ -10,18 +10,18 @@
 
 ### 服务端
 
-- [ ] 1. `packages/server/team/task-control/shared.js` `updateTaskAssignee`：
+- [x] 1. `packages/server/team/task-control/shared.js` `updateTaskAssignee`：
       改派时清空 `materialized_at`、`materialized_revision`、`materialized_manifest_sha256`、
       `materialized_by_agent_id`，保留 `materialization_state='pending'` 和 handoff_state 规则。
-- [ ] 2. `shared.js` `updateTaskFromUpload`：
+- [x] 2. `shared.js` `updateTaskFromUpload`：
       `materialized_at` 仅在“目标写入者 + 当前为空”时写入；后续上传不改写。
       检查 `packages/server/team/task-control/uploads.js` 的参数绑定顺序并同步调整。
-- [ ] 3. `shared.js` `updateTaskCommandComplete`：
+- [x] 3. `shared.js` `updateTaskCommandComplete`：
       `materialized_at = COALESCE(materialized_at, ?)`、
       `materialized_by_agent_id = COALESCE(materialized_by_agent_id, ?)`，revision 继续写入。
-- [ ] 4. `packages/server/team/task-control/handoff.js` `assertHandoffCycle`：
+- [x] 4. `packages/server/team/task-control/handoff.js` `assertHandoffCycle`：
       `materializedAt` 优先且忽略 revision 差异；仅 at 缺失时比较 revision；两者缺失走兼容。
-- [ ] 5. `packages/server/test/team-task-control.test.js`：
+- [x] 5. `packages/server/test/team-task-control.test.js`：
       - 同轮多次上传后 at 稳定；
       - at 匹配 + revision 不同 → ACK 成功；
       - 改派清空并重新生成 at；旧 at → `HANDOFF_CYCLE_STALE`；
@@ -31,7 +31,7 @@
 
 ### 规范
 
-- [ ] 6. `.trellis/spec/backend/desktop-realtime-sync.md`：
+- [x] 6. `.trellis/spec/backend/desktop-realtime-sync.md`：
       - 定义 `materialized_at` 为“本轮首次物化时间”；
       - 改派清空、首次上传写入、completeCommand 只补写；
       - fencing 以 at 为主、revision 仅在 at 缺失时兜底；
@@ -39,21 +39,20 @@
 
 ### 验证
 
-- [ ] 7. 目标测试（必须）：
+- [x] 7. 目标测试（必须）：
       `node --test packages/server/test/team-task-control.test.js`
-- [ ] 8. 全量 Node 测试（如允许）：`yarn test`。
-- [ ] 9. 客户端编译/测试（如允许）：`cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`；
-      本次客户端无改动，可用 CI 验证。
-- [ ] 10. 重启本地服务端加载修复（`node packages/server/index.js`），确认端口 4317。
-- [ ] 11. 真实 E2E A（正常流程）：
+- [x] 8. 全量 Node 测试（如允许）：`yarn test`。
+- [x] 9. 客户端编译/测试：本机无 Rust 工具链，本次客户端无代码改动；由 v0.4.50 CI 构建验证。
+- [x] 10. 重启本地服务端加载修复（`node packages/server/index.js`），确认端口 4317。
+- [x] 11. 真实 E2E A（正常流程）：
       - 当前测试任务 `handoff-manual-e2e-114216` 处于 conflict/missing；
       - 保持新客户端运行，`handoff-test.py delegate handoff-manual-e2e-114216 yhj` 重新物化来源副本；
       - 再 `delegate ... kyf`，等待清理；
       - 断言：服务端 `completed`、本机目录删除、审计一条 cleaned、**无** `HANDOFF_CYCLE_STALE` 拒绝日志。
-- [ ] 12. 真实 E2E B（陈旧 ACK）：
+- [x] 12. 真实 E2E B（陈旧 ACK）：
       - 带回 yhj → 停止客户端 → 委派 kyf → `inject-stale` → 启动客户端；
       - 断言：服务端拒绝日志出现、旧 ACK 不写审计、新轮次完成、UI 绿色完成。
-- [ ] 13. 更新任务记录与 E2E 报告，归档。
+- [x] 13. 更新任务记录与 E2E 报告（`e2e-report.md`、`e2e-board-after.png`），归档。
 
 ## 验证命令
 
