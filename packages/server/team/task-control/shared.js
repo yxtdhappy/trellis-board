@@ -6,6 +6,7 @@ export const WRITABLE_ROLES = new Set(['lead', 'member'])
 export const ACTIVE_LEASE = 'active'
 export const HANDOFF_OUTCOMES = new Set(['cleaned', 'conflict'])
 export const HANDOFF_BACKUP_ID = /^handoff-[a-f0-9]{16}$/
+export const HANDOFF_MATERIALIZED_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 export const HANDOFF_CONFLICT_REASONS = new Set([
   'missing',
   'git_tracked',
@@ -128,6 +129,17 @@ export function normalizeHandoffAck(input = {}) {
   const reason = text(input.reason, 80)
   const fileCount = safeInteger(input.fileCount, '备份文件数', 100_000)
   const totalBytes = safeInteger(input.totalBytes, '备份字节数', 64 * 1024 * 1024)
+  const materializedAt = text(input.materializedAt, 24)
+  if (materializedAt && !HANDOFF_MATERIALIZED_AT.test(materializedAt)) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'handoff 物化时间格式无效')
+  }
+  let materializedRevision = null
+  if (input.materializedRevision !== undefined && input.materializedRevision !== null) {
+    materializedRevision = Number(input.materializedRevision)
+    if (!Number.isSafeInteger(materializedRevision) || materializedRevision < 0) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, 'handoff 物化轮次格式无效')
+    }
+  }
   if (outcome === 'cleaned' && (!backupId || !manifestSha256 || fileCount < 1 || totalBytes < 1)) {
     throw teamError(400, ERROR_CODES.INVALID_INPUT, '清理 ACK 缺少备份信息')
   }
@@ -141,6 +153,8 @@ export function normalizeHandoffAck(input = {}) {
     reason: reason || null,
     fileCount,
     totalBytes,
+    materializedAt: materializedAt || null,
+    materializedRevision,
   }
 }
 

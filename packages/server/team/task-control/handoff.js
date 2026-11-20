@@ -3,8 +3,38 @@ import { appendAuditEvent } from '../audit.js'
 import { ERROR_CODES, teamError } from '../errors.js'
 import { normalizeHandoffAck } from './shared.js'
 
+function currentCycle(row) {
+  return {
+    materializedAt: row.materialized_at || null,
+    materializedRevision:
+      row.materialized_revision == null ? null : Number(row.materialized_revision),
+  }
+}
+
+/**
+ * ACK 必须声明自己处理的是哪一次物化轮次，任何状态推进与幂等判断之前先做 fencing。
+ * 旧客户端不携带轮次字段时保持兼容；携带字段但与会话行不一致的迟到 ACK 直接拒绝。
+ */
+function assertHandoffCycle(row, ack, { logger, executionTaskKey }) {
+  const current = currentCycle(row)
+  const staleAt = ack.materializedAt != null && ack.materializedAt !== current.materializedAt
+  const staleRevision =
+    ack.materializedRevision != null && ack.materializedRevision !== current.materializedRevision
+  if (!staleAt && !staleRevision) return
+  logger?.warn?.('handoff ACK 属于旧物化轮次，拒绝推进状态', {
+    executionTaskKey,
+    requestedMaterializedAt: ack.materializedAt,
+    requestedMaterializedRevision: ack.materializedRevision,
+    currentMaterializedAt: current.materializedAt,
+    currentMaterializedRevision: current.materializedRevision,
+  })
+  throw teamError(409, 'HANDOFF_CYCLE_STALE', 'handoff ACK 属于旧物化轮次', {
+    details: current,
+  })
+}
+
 /** handoff 流程：创建者确认来源副本清理结果（幂等 ACK 与状态收敛）。 */
-export function createHandoff({ db, statements, views, now = () => new Date() }) {
+export function createHandoff({ db, statements, views, now = () => new Date(), logger = null }) {
   function ackHandoff(agent, taskSpaceId, executionTaskKey, input = {}) {
     views.assertAgentAccess(agent, taskSpaceId)
     const ack = normalizeHandoffAck(input)
@@ -16,6 +46,7 @@ export function createHandoff({ db, statements, views, now = () => new Date() })
       if (row.created_by_user_id !== agent.userId) {
         throw teamError(403, ERROR_CODES.FORBIDDEN, '只能由任务创建者处理 handoff 清理')
       }
+      assertHandoffCycle(row, ack, { logger, executionTaskKey })
       const nextState = ack.outcome === 'cleaned' ? 'completed' : 'source_cleanup_conflict'
       if (
         (row.handoff_state === 'completed' && ack.outcome === 'cleaned') ||

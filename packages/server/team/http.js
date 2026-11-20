@@ -387,7 +387,7 @@ export async function createTeamRuntime({
         }
       },
     })
-    const taskControl = createTaskControlService({ db })
+    const taskControl = createTaskControlService({ db, logger })
     let taskSpaceIndex = null
     taskCommands = createTaskCommandService({
       db,
