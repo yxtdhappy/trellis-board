@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 67
-- **Last Active**: 2026-11-19
+- **Total Sessions**: 68
+- **Last Active**: 2026-11-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1591 | Active |
+| `journal-1.md` | ~1617 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 68 | 2026-11-20 | 分支不一致提醒降噪与非模态消息 | `c2a6981`, `9de6e69`, `5bd9c95`, `1c494e5` | `main` |
 | 67 | 2026-11-19 | 多客户端任务同步控制面双客户端 E2E 收尾 | `9cb3c77`, `fb51ea2`, `5f8dfe4` | `main` |
 | 66 | 2026-11-19 | 修复归档残留 pull 循环并完成活动任务同步 E2E | `2c08b29`, `57ebef4`, `bf8b37c`, `c24b81e`, `9c14485`, `ef85e2e`, `d88115b`, `cd936e7` | `main` |
 | 65 | 2026-11-19 | 客户端 Trellis 初始化后清理 __pycache__ 模板哈希 | `cf47f9f`, `654d9f0` | `main` |

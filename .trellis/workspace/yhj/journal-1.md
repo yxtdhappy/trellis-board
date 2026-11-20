@@ -1589,3 +1589,29 @@ SSE 重连仅补拉当前激活 binding；未激活 taskSpace 返回 BINDING_INA
 ### Status
 
 [OK] **Completed**
+
+
+## Session 68: 分支不一致提醒降噪与非模态消息
+<!-- trellis-session: v=2 fp=79a8e4377376baa7 -->
+
+**Date**: 2026-11-20
+**Task**: 分支不一致提醒降噪与非模态消息
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+BRANCH_MISMATCH 每次心跳重复弹窗且抢焦点；改为 assert_binding_branch 在进入暂停边沿直接发一次 task_sync_notice，Board 内 sonner toast 呈现，绕过 ControlHub 与系统通知。修复 ownership 路径先持久化导致通知被吞的问题。0.4.48 真机验证：单次提醒、45s 不重复、恢复后再提醒、暂停重启不提醒。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c2a6981` | fix(desktop): 分支不一致只提醒一次且不再弹模态框 |
+| `9de6e69` | chore(release): 0.4.46 |
+| `5bd9c95` | fix(desktop): 分支守卫通知改由公共守卫发射 |
+| `1c494e5` | chore(release): 0.4.48 |
+
+### Status
+
+[OK] **Completed**
