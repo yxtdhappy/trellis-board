@@ -76,3 +76,6 @@ packages/desktop/ui/
 
 # Local Paseo workspace config
 paseo.json
+
+# Trellis local state (local only)
+/.trellis/.template-hashes.json
