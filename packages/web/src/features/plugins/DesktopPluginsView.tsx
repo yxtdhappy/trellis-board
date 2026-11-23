@@ -15,6 +15,7 @@ import { Switch } from '@/components/ui/switch'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Panel } from '@/components/ui/panel'
+import { cn } from '@/lib/utils'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 const POLL_INTERVAL_MS = 5000
@@ -59,6 +60,8 @@ export function DesktopPluginsView() {
   const [error, setError] = useState('')
   const [busyId, setBusyId] = useState('')
   const [savingOrder, setSavingOrder] = useState(false)
+  const [draggingId, setDraggingId] = useState('')
+  const [dragOverId, setDragOverId] = useState('')
   const [logs, setLogs] = useState<{ id: string; title: string } | null>(null)
   const [logEntries, setLogEntries] = useState<DesktopPluginLogEntry[]>([])
   const [logError, setLogError] = useState('')
@@ -185,9 +188,60 @@ export function DesktopPluginsView() {
         </Empty>
       ) : (
         <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-          {state.plugins.map((plugin, index) => (
-            <Panel as="article" key={plugin.id} className="border border-border p-3.5">
+          {state.plugins.map((plugin, index) => {
+            const dragging = draggingId === plugin.id
+            const dropTarget = dragOverId === plugin.id && !dragging
+            return (
+            <Panel
+              as="article"
+              key={plugin.id}
+              draggable={!state.disabled && !savingOrder}
+              onDragStart={(event) => {
+                setDraggingId(plugin.id)
+                event.dataTransfer.effectAllowed = 'move'
+                event.dataTransfer.setData('text/plain', plugin.id)
+              }}
+              onDragEnd={() => {
+                setDraggingId('')
+                setDragOverId('')
+              }}
+              onDragOver={(event) => {
+                if (!draggingId) return
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'move'
+                if (dragOverId !== plugin.id) setDragOverId(plugin.id)
+              }}
+              onDragLeave={() => {
+                setDragOverId((current) => (current === plugin.id ? '' : current))
+              }}
+              onDrop={(event) => {
+                event.preventDefault()
+                const id = draggingId || event.dataTransfer.getData('text/plain')
+                const source = state.plugins.findIndex((entry) => entry.id === id)
+                if (source >= 0) void move(state.plugins[source], index)
+                setDraggingId('')
+                setDragOverId('')
+              }}
+              className={cn(
+                'border p-3.5 transition',
+                dragging ? 'border-dashed border-border opacity-40' : 'border-border',
+                dropTarget && 'border-primary ring-2 ring-primary/25',
+              )}
+            >
               <header className="flex items-start gap-2">
+                <button
+                  type="button"
+                  aria-label={`拖动调整 ${plugin.name || plugin.id} 的顺序`}
+                  title="按住拖动调整顺序；聚焦后可用 ↑ ↓"
+                  className="mt-0.5 shrink-0 cursor-grab rounded px-1 text-sm leading-none text-muted-foreground/60 hover:bg-muted hover:text-foreground active:cursor-grabbing"
+                  onKeyDown={(event) => {
+                    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+                    event.preventDefault()
+                    void move(plugin, event.key === 'ArrowUp' ? index - 1 : index + 1)
+                  }}
+                >
+                  ⠿
+                </button>
                 <div className="min-w-0 flex-1">
                   <h2 className="truncate text-sm font-semibold font-heading">
                     {plugin.name || plugin.id}
@@ -268,7 +322,8 @@ export function DesktopPluginsView() {
                 </div>
               </div>
             </Panel>
-          ))}
+            )
+          })}
         </div>
       )}
 
