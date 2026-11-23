@@ -1,0 +1,33 @@
+{
+  "id": "web-ui-consistency-audit-fixes",
+  "name": "web-ui-consistency-audit-fixes",
+  "title": "全局 UI 一致性与视觉缺陷治理",
+  "description": "系统性修复全局 UI 审查发现的基础组件原语、弹窗规范、看板布局、管理后台、插件视图与桌面端专有界面的高度对齐、溢出、语义色与交互问题",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": "web",
+  "priority": "P2",
+  "creator": "flyfly6",
+  "assignee": "flyfly6",
+  "createdAt": "2026-11-23",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "11-23-task-detail-close-button-alignment",
+    "11-23-ui-primitives-foundation",
+    "11-23-dialogs-ui-consistency-fixes",
+    "11-23-board-layout-views-ui-fixes",
+    "11-23-admin-plugins-ui-fixes",
+    "11-23-desktop-ui-fixes"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
