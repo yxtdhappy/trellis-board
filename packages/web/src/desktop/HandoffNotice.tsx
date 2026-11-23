@@ -1,7 +1,15 @@
-import { Info, TriangleAlert } from 'lucide-react'
+import { Info, TriangleAlert, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { invoke, listen } from '@/desktop/tauri'
+import {
+  handoffNoticeKey,
+  legacyHandoffNoticeKey,
+  normalizeHandoffNotices,
+  readDismissedNotices,
+  visibleHandoffNotices,
+  writeDismissedNotices,
+} from '@/lib/handoff-notice.js'
 
 type HandoffNotice = {
   executionTaskKey: string
@@ -12,42 +20,17 @@ type HandoffNotice = {
   outcome: string
   reason?: string | null
   backupId?: string | null
+  materializedAt?: string | null
 }
 
 const NOTICE_STORAGE_KEY = 'trellis.handoff-notice-notified.v1'
 
-function normalizeNotices(value: unknown): HandoffNotice[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((item) => {
-    if (!item || typeof item !== 'object') return []
-    const record = item as Record<string, unknown>
-    if (
-      typeof record.executionTaskKey !== 'string' ||
-      typeof record.taskId !== 'string' ||
-      typeof record.relativeDir !== 'string' ||
-      typeof record.handoffState !== 'string' ||
-      typeof record.ackState !== 'string' ||
-      typeof record.outcome !== 'string'
-    ) {
-      return []
-    }
-    return [
-      {
-        executionTaskKey: record.executionTaskKey,
-        taskId: record.taskId,
-        relativeDir: record.relativeDir,
-        handoffState: record.handoffState,
-        ackState: record.ackState,
-        outcome: record.outcome,
-        reason: typeof record.reason === 'string' ? record.reason : null,
-        backupId: typeof record.backupId === 'string' ? record.backupId : null,
-      },
-    ]
-  })
-}
-
-function noticeKey(notice: HandoffNotice): string {
-  return `${notice.executionTaskKey}:${notice.handoffState}:${notice.outcome || 'checking'}`
+function browserStorage(): Storage | null {
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
 }
 
 function readNotified(): Set<string> {
@@ -110,13 +93,16 @@ function noticeTitle(notice: HandoffNotice): string {
 
 export function HandoffNotice() {
   const [notices, setNotices] = useState<HandoffNotice[]>([])
-  const persistentNotices = notices.filter((notice) => notice.outcome !== 'cleaned')
+  const [dismissed, setDismissed] = useState<Set<string>>(
+    () => new Set(readDismissedNotices(browserStorage())),
+  )
+  const persistentNotices = visibleHandoffNotices(notices, dismissed)
 
   const load = useCallback(async (): Promise<HandoffNotice[]> => {
     if (!invoke) return []
     try {
       const value = await invoke<unknown>('handoff_notice_pending')
-      const next = normalizeNotices(value)
+      const next = normalizeHandoffNotices(value)
       setNotices(next)
       return next
     } catch {
@@ -125,14 +111,31 @@ export function HandoffNotice() {
     }
   }, [])
 
+  const dismissAll = useCallback(() => {
+    const visible = visibleHandoffNotices(notices, dismissed)
+    if (visible.length === 0) return
+    const dismissedKeys = visible.map((notice) => handoffNoticeKey(notice))
+    const next = new Set([...dismissed, ...dismissedKeys])
+    setDismissed(next)
+    writeDismissedNotices(browserStorage(), next)
+    // 关闭时同步标记 toast 已提示，避免 visibilitychange 后再次弹出同一通知。
+    const notified = readNotified()
+    for (const key of dismissedKeys) notified.add(key)
+    saveNotified(notified)
+  }, [dismissed, notices])
+
   const notifyVisible = useCallback(async () => {
     // 窗口隐藏/最小化时由桌面层发送原生通知，页内只负责可见时的 toast。
     if (document.visibilityState !== 'visible') return
     const next = await load()
     const notified = readNotified()
     for (const notice of next) {
-      const key = noticeKey(notice)
+      const key = handoffNoticeKey(notice)
       if (notified.has(key)) continue
+      if (notified.has(legacyHandoffNoticeKey(notice))) {
+        notified.add(key)
+        continue
+      }
       const options = {
         id: key,
         description: `${notice.taskId} · ${reasonLabel(notice)}`,
@@ -190,16 +193,27 @@ export function HandoffNotice() {
       className="pointer-events-none fixed right-4 top-20 z-40 w-[22rem] max-w-[calc(100vw-2rem)]"
     >
       <div className="pointer-events-auto rounded-lg border bg-popover/95 p-3 text-popover-foreground shadow-lg backdrop-blur">
-        <p className="text-2xs font-semibold tracking-[0.18em] text-muted-foreground">
-          任务认领状态
-        </p>
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-2xs font-semibold tracking-[0.18em] text-muted-foreground">
+            任务认领状态
+          </p>
+          <button
+            type="button"
+            aria-label="关闭任务认领状态提示"
+            title="关闭"
+            className="-mt-1 -mr-1 rounded p-1 text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            onClick={dismissAll}
+          >
+            <X className="size-3.5" aria-hidden="true" />
+          </button>
+        </div>
         <div className="mt-2 flex flex-col gap-2">
           {persistentNotices.slice(0, 3).map((notice) => {
             const conflict =
               notice.outcome === 'conflict' || notice.handoffState === 'source_cleanup_conflict'
             const Icon = conflict ? TriangleAlert : Info
             return (
-              <div key={noticeKey(notice)} className="flex items-start gap-2">
+              <div key={handoffNoticeKey(notice)} className="flex items-start gap-2">
                 <Icon
                   className={
                     conflict

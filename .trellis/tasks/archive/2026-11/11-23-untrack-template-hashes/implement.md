@@ -34,10 +34,20 @@
 
 ## 5. 收尾（一次）
 
-- `cargo test -p trellis-board`（`packages/desktop/src-tauri`）。
+- `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`（与 CI 同一条命令）。
 - `node --test "packages/desktop/test/*.test.js"`。
 - 手工验证：在临时仓库走一次初始化提交，确认远端 `.trellis/` 不含 `.template-hashes.json`、本机文件存在。
 - 提示用户：本仓库自身需执行一次 `git rm --cached .trellis/.template-hashes.json`。
+
+## 实施修正（CI 暴露）
+
+`git commit -- <paths>` 是 `--only` 语义：按**工作区**重建这些路径，`git rm --cached` 暂存的删除会被忽略；
+只要工作区还有 manifest，它就会被重新写进提交（已用本地 git 复现）。修正：
+
+- 新增 `GitOperation::DiffCachedNames`（`git diff --cached --name-only -z`）与 `staged_paths()`，提交前检查索引里是否只有初始化路径。
+- 索引干净时用 `GitOperation::CommitIndex`（`git commit -m`，提交索引）完成脱管提交；
+  索引含其它暂存改动或读不到时退回原 `CommitPaths`（pathspec）提交，本次不脱管，避免卷入用户改动。
+- 新增 `is_initial_commit_path()` 判定暂存路径归属，并补单测。
 
 ## 验证结果
 

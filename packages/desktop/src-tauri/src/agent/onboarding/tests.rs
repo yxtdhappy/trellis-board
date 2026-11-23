@@ -483,6 +483,9 @@ async fn untracks_manifest_before_initial_commit() {
     git(&repo.root, &["config", "user.name", "Trellis Test"]);
     git(&repo.root, &["config", "user.email", "test@example.com"]);
     std::fs::create_dir_all(repo.root.join(".trellis")).expect("create trellis");
+    // 真实项目里 .trellis 还有 workflow.md 等文件；否则脱管后 HEAD 里干脆没有 .trellis。
+    std::fs::write(repo.root.join(".trellis").join("workflow.md"), "# 流程\n")
+        .expect("write workflow");
     std::fs::write(
         repo.root.join(".trellis").join(".template-hashes.json"),
         "{}\n",
@@ -497,6 +500,9 @@ async fn untracks_manifest_before_initial_commit() {
         .expect("commit and push");
     assert!(state.is_ready(), "{}", state.message);
     let tracked = git(&repo.root, &["ls-files"]);
+    assert!(tracked
+        .lines()
+        .any(|line| line.trim() == ".trellis/workflow.md"));
     assert!(!tracked
         .lines()
         .any(|line| line.trim() == TEMPLATE_HASHES_PATH));
@@ -511,6 +517,22 @@ async fn untracks_manifest_before_initial_commit() {
         repo.root.join(TEMPLATE_HASHES_PATH).exists(),
         "manifest 工作区文件应保留"
     );
+}
+
+#[test]
+fn recognizes_initial_commit_paths() {
+    for path in [
+        ".gitignore",
+        ".gitattributes",
+        "AGENTS.md",
+        ".trellis/workflow.md",
+        ".agents/skills/trellis.md",
+    ] {
+        assert!(is_initial_commit_path(path), "{path}");
+    }
+    for path in [".trellisx/a", "src/main.rs", ".gitignore.bak", "docs/AGENTS.md"] {
+        assert!(!is_initial_commit_path(path), "{path}");
+    }
 }
 
 #[test]

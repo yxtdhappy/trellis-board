@@ -37,6 +37,7 @@ const TEMPLATE_HASHES_PATH: &str = ".trellis/.template-hashes.json";
 const TEMPLATE_HASHES_RULE: &str = "/.trellis/.template-hashes.json";
 const LOCAL_STATE_TITLE: &str = "# Trellis local state (local only)";
 const MAX_DEVELOPER_NAME_CHARS: usize = 120;
+
 /// 一键初始化提交包含的固定路径；`.trellis` 必需，其余存在时才提交。
 const INITIAL_COMMIT_PATHS: [&str; 5] = [
     ".trellis",
@@ -45,6 +46,16 @@ const INITIAL_COMMIT_PATHS: [&str; 5] = [
     ".gitattributes",
     ".agents",
 ];
+
+/// 暂存路径是否属于本次初始化提交范围（顶层目录下的文件或固定的根文件）。
+fn is_initial_commit_path(path: &str) -> bool {
+    INITIAL_COMMIT_PATHS.iter().any(|entry| {
+        path == *entry
+            || path
+                .strip_prefix(*entry)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
+}
 
 /// checkInitialPush 的状态取值（对照 JS 的 `state`）。
 pub const PUSH_WAITING_COMMIT: &str = "waiting_commit";
@@ -578,18 +589,29 @@ pub async fn commit_and_push_initial(
 ) -> AgentResult<InitialPushState> {
     let snapshot = inspect_git_project(repo_path, hooks_dir, allow_file_remote, None).await?;
     let root = snapshot.root;
+    let paths = initial_commit_paths(&root);
+    // pathspec 提交按工作区重建这些路径，已跟踪但仍在工作区的 manifest 会被写回提交；
+    // 只有索引里没有其它暂存改动时才改走索引提交，让脱管的删除真正落进提交；
+    // 读不到索引状态时退回 pathspec 提交，宁可本次不脱管也不卷进未知改动。
+    let index_is_scoped = match git::staged_paths(&root, hooks_dir).await {
+        Ok(staged) => staged.iter().all(|path| is_initial_commit_path(path)),
+        Err(_) => false,
+    };
     // manifest 只描述本机磁盘：先补忽略规则，再把已跟踪的旧文件从索引移除，
     // 避免本次提交把它带上远端；重试时两步都幂等。没有 .trellis 时不产生副作用。
     if root.join(".trellis").is_dir() {
         ensure_template_hashes_ignored(&root).await?;
-        if git::is_tracked(&root, hooks_dir, TEMPLATE_HASHES_PATH).await? {
+        if index_is_scoped && git::is_tracked(&root, hooks_dir, TEMPLATE_HASHES_PATH).await? {
             git::untrack_path(&root, hooks_dir, TEMPLATE_HASHES_PATH).await?;
         }
     }
-    let paths = initial_commit_paths(&root);
     git::add_paths(&root, hooks_dir, &paths).await?;
     if git::has_staged_changes(&root, hooks_dir, &paths).await? {
-        git::commit_paths(&root, hooks_dir, INITIAL_COMMIT_MESSAGE, &paths).await?;
+        if index_is_scoped {
+            git::commit_index(&root, hooks_dir, INITIAL_COMMIT_MESSAGE).await?;
+        } else {
+            git::commit_paths(&root, hooks_dir, INITIAL_COMMIT_MESSAGE, &paths).await?;
+        }
     } else {
         // 无暂存差异时仍可推送；但 HEAD 里从未出现过 .trellis 说明初始化文件没被纳入 Git。
         let committed = git::ls_tree(&root, hooks_dir, None)

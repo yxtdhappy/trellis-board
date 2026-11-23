@@ -76,6 +76,27 @@ pub async fn has_staged_changes(
     }
 }
 
+/// `git commit -m <message>`：提交当前索引；调用方需保证索引里只有本次要提交的路径。
+pub async fn commit_index(repo_path: &Path, hooks_dir: &Path, message: &str) -> AgentResult<()> {
+    let output = run_write(
+        GitOperation::CommitIndex,
+        repo_path,
+        hooks_dir,
+        &GitParams {
+            message: Some(message),
+            ..Default::default()
+        },
+    )
+    .await?;
+    if output.exit_code == 0 {
+        return Ok(());
+    }
+    Err(classify_commit_failure(&format!(
+        "{}\n{}",
+        output.stderr, output.stdout
+    )))
+}
+
 /// `git commit -m <message> -- <paths>`：pathspec 形式只提交固定路径，不卷入其他已暂存改动。
 pub async fn commit_paths(
     repo_path: &Path,
