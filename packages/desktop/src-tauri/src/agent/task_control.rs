@@ -333,6 +333,7 @@ impl StoredTaskHandoff {
             outcome: self.outcome.clone(),
             reason: self.reason.clone(),
             backup_id: self.backup_id.clone(),
+            materialized_at: self.materialized_at.clone(),
         })
     }
 }
@@ -348,6 +349,7 @@ pub struct HandoffNotice {
     pub outcome: String,
     pub reason: Option<String>,
     pub backup_id: Option<String>,
+    pub materialized_at: Option<String>,
 }
 
 pub fn handoff_state_key(local_id: &str, execution_task_key: &str) -> String {

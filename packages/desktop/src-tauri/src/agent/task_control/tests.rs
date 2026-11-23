@@ -216,6 +216,7 @@ fn handoff_ack_state_survives_restart_and_keeps_conflict_notice() {
     let notices = restored.pending_handoff_notices();
     assert_eq!(notices.len(), 1);
     assert_eq!(notices[0].outcome, "conflict");
+    assert!(notices[0].materialized_at.is_none());
     assert!(restored.pending_handoff_acks("local-1").is_empty());
 }
 
@@ -244,6 +245,47 @@ fn cleaned_handoff_notice_waits_for_ack_completion() {
     let notices = state.pending_handoff_notices();
     assert_eq!(notices.len(), 1);
     assert_eq!(notices[0].outcome, "cleaned");
+    assert!(notices[0].materialized_at.is_none());
+}
+
+#[test]
+fn handoff_notice_carries_materialization_cycle() {
+    let mut state = TaskControlStateFile::empty();
+    state
+        .upsert_handoff_control("local-1", &handoff_control("task-a"))
+        .expect("store handoff");
+    let notices = state.pending_handoff_notices();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(
+        notices[0].materialized_at.as_deref(),
+        Some(FIRST_MATERIALIZED_AT)
+    );
+    let encoded = serde_json::to_value(&notices[0]).expect("serialize notice");
+    assert_eq!(
+        encoded
+            .get("materializedAt")
+            .and_then(serde_json::Value::as_str),
+        Some(FIRST_MATERIALIZED_AT)
+    );
+}
+
+#[test]
+fn handoff_notice_without_cycle_serializes_null() {
+    let mut state = TaskControlStateFile::empty();
+    let mut legacy = handoff_control("task-a");
+    legacy.materialized_at = None;
+    legacy.materialized_revision = None;
+    state
+        .upsert_handoff_control("local-1", &legacy)
+        .expect("store legacy handoff");
+    let notices = state.pending_handoff_notices();
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].materialized_at.is_none());
+    let encoded = serde_json::to_value(&notices[0]).expect("serialize notice");
+    assert!(encoded
+        .get("materializedAt")
+        .expect("materializedAt field")
+        .is_null());
 }
 
 #[test]

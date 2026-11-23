@@ -434,11 +434,15 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
   `409 HANDOFF_CYCLE_STALE` 时必须保持本地 ACK pending（warn 日志、不标记 done、不转 conflict），
   由下一次控制同步按新物化轮次重置后重新清理和 ACK；不能把该记录当成永久失败。
 - `task_handoff` 不进入 `ControlHub`，不聚焦或激活窗口。Board 通过独立
-  `handoff-control-changed` 事件和 `handoff_notice_pending` 命令读取状态。通知去重键由
-  `executionTaskKey + handoffState + outcome` 组成，同一任务进入 conflict、cleaned 等不同阶段时仍可
-  各提示一次。Board 可见时使用 Sonner；隐藏或最小化时仅在 WebView 暴露 Web Notification API 且权限
+  `handoff-control-changed` 事件和 `handoff_notice_pending` 命令读取状态。`handoff_notice_pending`
+  每条通知携带 `materializedAt`（本地轮次缺失时为 `null`）。通知去重键由
+  `executionTaskKey + handoffState + outcome + materializedAt` 组成（缺失用占位值），同一任务进入
+  conflict、cleaned 等不同阶段或再次委派产生新轮次时仍可各提示一次；升级前的三段键仍视为已提示。
+  Board 可见时使用 Sonner；隐藏或最小化时仅在 WebView 暴露 Web Notification API 且权限
   已授予时尝试系统通知，API、权限或安全上下文不可用时降级为持久页内状态并在恢复可见后补提示。
-  冲突状态持续显示非模态页内提示；固定页内状态只展示冲突和处理中项。
+  冲突状态持续显示非模态页内提示，但允许用户按轮次手动关闭：关闭状态按通知键写入 `localStorage`，
+  刷新/重启后仍保持，新任务或同一任务的新轮次重新显示；关闭只影响展示，不改变服务端 handoff 状态
+  或本地副本。固定页内状态只展示冲突和处理中项。
 - 客户端合并快照 `controls`（字段存在即权威）时，必须同步清理当前 binding（`localId + taskSpaceId`）
   中不再对应 `handoff_materialized + source_cleanup_pending|source_cleanup_conflict` 的本地 handoff
   记录：任务回到 claimed/materialized/archived、`handoff_state` 变为 none/completed、或不再出现在

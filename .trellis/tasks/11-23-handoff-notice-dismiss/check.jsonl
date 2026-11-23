@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "核对通知键、轮次与关闭语义"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "核对命令签名与 capability 未变更"}

@@ -313,12 +313,15 @@
   `live_control_pending`，页面可见时保留 10 秒兜底，隐藏时停止，focus/恢复可见时立即读取。
   `initial_sync_review` 每次内容变化都由 Rust 侧 `focus_main_window` 唤起主窗口，
   其余事件每进程只自动聚焦一次。
-- handoff 状态使用独立 `handoff-control-changed` 失效事件和 `handoff_notice_pending` Tauri 命令。
-  Board 可见时 `HandoffNotice` 使用 Sonner 页内提示。隐藏或最小化时仅在 WebView 提供 Web
-  Notification API 且权限已授予时尝试系统通知；API、权限或安全上下文不可用时仍以持久页内状态
-  在恢复可见后补提示。通知按 `executionTaskKey + handoffState + outcome` 去重，同一任务的不同
-  handoff 阶段仍可各提示一次。冲突状态提供持续的非模态页内状态，cleaned ACK 完成后页内固定状态
-  不长期占位。该通道不得弹出确认框、切换页面、聚焦或激活主窗口，也不得阻塞清理 ACK。
+- handoff 状态使用独立 `handoff-control-changed` 失效事件和 `handoff_notice_pending` Tauri 命令；
+  通知载荷包含 `materializedAt`（本地轮次缺失时为 `null`）。Board 可见时 `HandoffNotice` 使用
+  Sonner 页内提示。隐藏或最小化时仅在 WebView 提供 Web Notification API 且权限已授予时尝试系统
+  通知；API、权限或安全上下文不可用时仍以持久页内状态在恢复可见后补提示。通知按
+  `executionTaskKey + handoffState + outcome + materializedAt` 去重（旧三段键仍视为已提示），同一
+  任务的不同 handoff 阶段或新轮次仍可各提示一次。冲突状态提供持续可见但可手动关闭的非模态页内
+  状态：关闭状态按通知键持久化到 `localStorage`，刷新/重启后仍保持，新任务或新轮次重新显示，
+  关闭不改变服务端状态或本地副本；cleaned ACK 完成后页内固定状态不长期占位。该通道不得弹出
+  确认框、切换页面、聚焦或激活主窗口，也不得阻塞清理 ACK。
 - 弹窗使用 `components/ui/dialog.tsx` 的固定头/脚 + 单一 `DialogBody` 滚动壳，
   `sm:max-w-[min(72rem,92vw)]` / `max-h-[85vh]`；窄屏单列可用，宽屏冲突差异用 Monaco 左右分栏只读 diff。
 - 冲突差异必须走 `packages/web/src/desktop/MonacoDiff.tsx`（懒加载 chunk，加载失败回退双 `<pre>`）。
