@@ -268,7 +268,8 @@
 - `.template-hashes.json` 只描述本机磁盘状态，不得随仓库共享：完整 init 与 Agent-only 完成后都要在项目根
   `.gitignore` 追加 `/.trellis/.template-hashes.json`（独立小节，等价规则去重、幂等）；首次确认推送在
   `commit_and_push_initial` 里先补规则，再对已跟踪的该文件执行 `git rm --cached`（保留工作区、只影响索引），
-  脱管失败即中止提交。不得改写 `.trellis/.gitignore`——它会被 `trellis update` 整份重写。
+  脱管失败即中止提交。索引里已有其它暂存改动时退回 pathspec 提交并跳过脱管，避免把用户改动卷进初始化提交。
+  不得改写 `.trellis/.gitignore`——它会被 `trellis update` 整份重写。
 
 ## 7. 本地前端（环境门、登录页）与看板内同步确认弹窗
 

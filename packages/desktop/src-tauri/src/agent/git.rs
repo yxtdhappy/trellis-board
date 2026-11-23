@@ -14,7 +14,9 @@ use crate::agent::protocol::{code, AgentError, AgentResult};
 
 mod write;
 
-pub use write::{add_paths, commit_paths, has_staged_changes, push_branch, untrack_path};
+pub use write::{
+    add_paths, commit_index, commit_paths, has_staged_changes, push_branch, untrack_path,
+};
 
 /// 与 JS 一致：按 PATH 解析 git（Rust 的 Command 会用父进程 PATH 查找裸命令名）。
 pub const GIT_BINARY: &str = "git";
@@ -51,6 +53,7 @@ pub enum GitOperation {
     LsTree,
     LsFiles,
     DiffTree,
+    DiffCachedNames,
     Fetch,
     RevList,
     Merge,
@@ -58,13 +61,14 @@ pub enum GitOperation {
     AddPaths,
     RmCached,
     DiffCachedQuiet,
+    CommitIndex,
     CommitPaths,
     PushBranch,
 }
 
 #[allow(dead_code)]
 impl GitOperation {
-    pub const ALL: [GitOperation; 22] = [
+    pub const ALL: [GitOperation; 24] = [
         GitOperation::CheckRef,
         GitOperation::ConfigSparse,
         GitOperation::ShowToplevel,
@@ -78,6 +82,7 @@ impl GitOperation {
         GitOperation::LsTree,
         GitOperation::LsFiles,
         GitOperation::DiffTree,
+        GitOperation::DiffCachedNames,
         GitOperation::Fetch,
         GitOperation::RevList,
         GitOperation::Merge,
@@ -85,6 +90,7 @@ impl GitOperation {
         GitOperation::AddPaths,
         GitOperation::RmCached,
         GitOperation::DiffCachedQuiet,
+        GitOperation::CommitIndex,
         GitOperation::CommitPaths,
         GitOperation::PushBranch,
     ];
@@ -105,6 +111,7 @@ impl GitOperation {
             GitOperation::LsTree => "ls-tree",
             GitOperation::LsFiles => "ls-files",
             GitOperation::DiffTree => "diff-tree",
+            GitOperation::DiffCachedNames => "diff-cached-names",
             GitOperation::Fetch => "fetch",
             GitOperation::RevList => "rev-list",
             GitOperation::Merge => "merge",
@@ -112,6 +119,7 @@ impl GitOperation {
             GitOperation::AddPaths => "add-paths",
             GitOperation::RmCached => "rm-cached",
             GitOperation::DiffCachedQuiet => "diff-cached-quiet",
+            GitOperation::CommitIndex => "commit-index",
             GitOperation::CommitPaths => "commit-paths",
             GitOperation::PushBranch => "push-branch",
         }
@@ -306,6 +314,15 @@ pub fn git_args(
                 ":(exclude).trellis/tasks/archive".to_string(),
             ]);
         }
+        GitOperation::DiffCachedNames => {
+            args.extend([
+                "diff".to_string(),
+                "--cached".to_string(),
+                "--name-only".to_string(),
+                "-z".to_string(),
+                "--".to_string(),
+            ]);
+        }
         GitOperation::Fetch => {
             let branch = params
                 .branch
@@ -364,6 +381,12 @@ pub fn git_args(
                 "--".to_string(),
             ]);
             args.extend(params.paths.iter().cloned());
+        }
+        GitOperation::CommitIndex => {
+            let message = params
+                .message
+                .ok_or_else(|| AgentError::new(code::GIT_FAILED, "提交信息缺失"))?;
+            args.extend(["commit".to_string(), "-m".to_string(), message.to_string()]);
         }
         GitOperation::CommitPaths => {
             require_paths(params)?;
@@ -746,6 +769,29 @@ pub async fn is_tracked(repo_path: &Path, hooks_dir: &Path, path: &str) -> Agent
         1 => Ok(false),
         _ => Err(git_failure("无法检查文件是否被 Git 跟踪", &output)),
     }
+}
+
+/// `git diff --cached --name-only -z`：当前索引相对 HEAD 的全部暂存路径。
+pub async fn staged_paths(repo_path: &Path, hooks_dir: &Path) -> AgentResult<Vec<String>> {
+    ensure_hooks_dir(hooks_dir).await?;
+    let params = GitParams::default();
+    let output = run_git(
+        GitOperation::DiffCachedNames,
+        repo_path,
+        hooks_dir,
+        &params,
+        LOCAL_TIMEOUT,
+    )
+    .await?;
+    if output.exit_code != 0 {
+        return Err(git_failure("无法读取暂存区文件列表", &output));
+    }
+    Ok(output
+        .stdout
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 /// 比较两个提交在 `.trellis/tasks` 下的变化路径。

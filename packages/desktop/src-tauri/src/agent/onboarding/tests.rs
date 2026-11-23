@@ -514,6 +514,22 @@ async fn untracks_manifest_before_initial_commit() {
 }
 
 #[test]
+fn recognizes_initial_commit_paths() {
+    for path in [
+        ".gitignore",
+        ".gitattributes",
+        "AGENTS.md",
+        ".trellis/workflow.md",
+        ".agents/skills/trellis.md",
+    ] {
+        assert!(is_initial_commit_path(path), "{path}");
+    }
+    for path in [".trellisx/a", "src/main.rs", ".gitignore.bak", "docs/AGENTS.md"] {
+        assert!(!is_initial_commit_path(path), "{path}");
+    }
+}
+
+#[test]
 fn contains_trellis_entry_matches_only_trellis_paths() {
     assert!(contains_trellis_entry(&[
         ".trellis/tasks/a/prd.md".to_string()
