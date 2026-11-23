@@ -301,14 +301,14 @@ function eventsHandler(request, response) {
   response.on('error', close)
 }
 
-async function forwardPanel(pluginId, subPath, search, base) {
+async function forwardPanel(pluginId, subPath, search, base, method = 'GET', body = '', headers = {}) {
   const state = runtime.supervisor.plugins.get(pluginId)
   if (!state) return { status: 404, body: { error: `未知插件: ${pluginId}` } }
   const result = await runtime.supervisor.forwardHttp(state, {
-    method: 'GET',
+    method,
     path: `/${subPath}${search || ''}`,
-    headers: base ? { 'x-trellis-base': base } : {},
-    body: '',
+    headers: { ...headers, ...(base ? { 'x-trellis-base': base } : {}) },
+    body,
     anonymous: true,
   })
   return result && typeof result === 'object' ? result : { status: 502, body: { error: '插件返回无效响应' } }
@@ -596,7 +596,12 @@ async function handle(request, response) {
       return
     }
     const base = `http://${request.headers.host || '127.0.0.1'}/s/${options.secret}/${pluginId}`
-    const result = await forwardPanel(pluginId, subPath, url.search, base)
+    const method = String(request.method || 'GET').toUpperCase()
+    const body =
+      method === 'GET' || method === 'HEAD' ? '' : await readTextBody(request)
+    const headers = {}
+    if (request.headers['content-type']) headers['content-type'] = request.headers['content-type']
+    const result = await forwardPanel(pluginId, subPath, url.search, base, method, body, headers)
     writePluginResult(response, result, options.secret, options.panelPrefix)
     return
   }

@@ -143,7 +143,8 @@ test('运行中新建账号与系统后无需重启即免登录', async () => {
   const context = await setup()
   try {
     const before = await context.json(PLUGIN_ID, 'GET', '/credentials')
-    assert.equal(before.body.source, 'local')
+    assert.equal(before.body.available, true)
+    assert.equal(before.body.source, 'none')
     assert.match(before.body.error, /系统不存在/)
 
     await context.seedAccount()

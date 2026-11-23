@@ -101,6 +101,7 @@ export default createPlugin({
     const config = normalizeConfig({ ...rawConfig, ...(ctx.config ?? {}) })
     let accountCredential = null
     let accountsError = ''
+    let accountsAvailable = false
 
     // 统一账号优先：成功则覆盖 config.credentials，失败按 credentialSource 回退本地。
     // 先算结果再一次性提交，避免事件回包期间状态短暂变空。
@@ -127,6 +128,9 @@ export default createPlugin({
       if (seq !== refreshSeq) return
       accountCredential = next
       accountsError = error
+      // 只有 accounts-core 未运行/能力不可用时视为“不展示统一账号”；系统未绑定仍算可用。
+      const unavailable = /未运行|capability 不可用|CAPABILITY_UNAVAILABLE/.test(error)
+      accountsAvailable = Boolean(next) || (Boolean(error) && !unavailable)
       if (!next) {
         if (error) {
           ctx.log.info('统一账号不可用，按配置回退', {
@@ -1283,7 +1287,8 @@ export default createPlugin({
         await refreshAccounts({ reason: 'credentials-retry' })
       }
       return respond(200, {
-        source: accountCredential ? 'accounts' : 'local',
+        available: accountsAvailable,
+        source: accountCredential ? 'accounts' : accountsAvailable ? 'none' : 'local',
         systemId: config.accountSystemId,
         systemName: config.accountSystemName,
         accountId: accountCredential?.accountId ?? '',
@@ -1291,10 +1296,7 @@ export default createPlugin({
         hasPassword:
           Boolean(text(config.credentials.password)) || Boolean(await session.hasStoredPassword()),
         // 统一账号插件未运行时只是回退本地配置，不把内部 capability 错误抛给面板。
-        error:
-          accountsError && !/插件 .*未运行|capability 提供者未运行/.test(accountsError)
-            ? accountsError
-            : '',
+        error: accountsAvailable && accountsError ? accountsError : '',
       })
     })
 

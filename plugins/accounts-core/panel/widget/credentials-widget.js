@@ -42,6 +42,11 @@
   }
 
   function render(root, view) {
+    // accounts-core 未启用时整个来源卡片都不展示，避免把本地回退当成账号配置。
+    if (view.available === false) {
+      root.replaceChildren()
+      return
+    }
     const lines = []
     lines.push(
       el('div', { class: 'tw-head' }, [
@@ -90,7 +95,7 @@
             : `尚未绑定统一账号；在「统一账号」面板新建系统 ${view.systemId} 后自动启用。`,
         ),
       )
-    } else if (view.error) {
+    } else if (view.error && view.source !== 'local') {
       lines.push(el('p', { class: 'tw-hint tw-warn' }, view.error))
     }
     root.replaceChildren(el('div', { class: 'tw-card' }, lines))
@@ -105,6 +110,7 @@
       try {
         const view = (await request('GET', '/credentials')) || {}
         render(root, {
+          available: view.available !== false,
           source: view.source || 'none',
           username: view.username || '',
           systemId: view.systemId || systemId || '',
