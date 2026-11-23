@@ -128,11 +128,6 @@ impl TaskSync {
         }
         let binding = self.binding(task_space_id).await?;
         self.assert_binding_branch(&binding).await?;
-        let groups = self.local_groups(&binding, None).await?;
-        let groups_by_dir: HashMap<String, SnapshotGroup> = groups
-            .into_iter()
-            .map(|group| (group.task_dir.clone(), group))
-            .collect();
         let mut normalized = Vec::with_capacity(raw.len());
         let mut seen = HashSet::new();
         for item in raw {
@@ -144,7 +139,6 @@ impl TaskSync {
                 .to_string();
             if active_task_directory_from_relative(&format!("{task_dir}/task.json")).as_deref()
                 != Some(task_dir.as_str())
-                || !groups_by_dir.contains_key(&task_dir)
             {
                 return protocol::err(code::CONFIG_INVALID, "任务归属决定包含无效的任务目录");
             }
@@ -173,6 +167,21 @@ impl TaskSync {
                 action,
                 branch_name,
             });
+        }
+        let selected: HashSet<String> = normalized
+            .iter()
+            .map(|decision| decision.task_dir.clone())
+            .collect();
+        let groups = self.local_groups(&binding, Some(&selected)).await?;
+        let groups_by_dir: HashMap<String, SnapshotGroup> = groups
+            .into_iter()
+            .map(|group| (group.task_dir.clone(), group))
+            .collect();
+        if normalized
+            .iter()
+            .any(|decision| !groups_by_dir.contains_key(&decision.task_dir))
+        {
+            return protocol::err(code::CONFIG_INVALID, "任务归属决定包含无效的任务目录");
         }
 
         let task_ids: Vec<String> = normalized

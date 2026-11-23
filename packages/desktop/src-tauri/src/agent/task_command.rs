@@ -394,16 +394,24 @@ async fn create_task(
     let tasks_root = repo_path.join(".trellis").join("tasks");
     let before = task_directories(&tasks_root).await?;
     let existing = tasks_root.join(&slug);
-    match read_task_json_opt(&existing.join("task.json")).await? {
+    match read_task_json_opt(
+        &existing.join("task.json"),
+        &format!(".trellis/tasks/{slug}/task.json"),
+    )
+    .await?
+    {
         Some(task) => {
             if task.get("title").and_then(Value::as_str) == Some(title.as_str())
                 && task.get("assignee").and_then(Value::as_str) == Some(assignee.as_str())
             {
                 let task_dir = format!(".trellis/tasks/{slug}");
                 set_task_directory_branch(repo_path, &task_dir, &binding.branch_name).await?;
-                let updated = read_task_json_opt(&existing.join("task.json"))
-                    .await?
-                    .ok_or_else(|| AgentError::new(code::GIT_FAILED, "task.py 未保留任务文件"))?;
+                let updated = read_task_json_opt(
+                    &existing.join("task.json"),
+                    &format!(".trellis/tasks/{slug}/task.json"),
+                )
+                .await?
+                .ok_or_else(|| AgentError::new(code::GIT_FAILED, "task.py 未保留任务文件"))?;
                 if updated.get("branch").and_then(Value::as_str)
                     != Some(binding.branch_name.as_str())
                 {
@@ -463,9 +471,12 @@ async fn create_task(
     }
     let task_dir = format!(".trellis/tasks/{}", created[0]);
     set_task_directory_branch(repo_path, &task_dir, &binding.branch_name).await?;
-    let task = read_task_json_opt(&tasks_root.join(created[0].as_str()).join("task.json"))
-        .await?
-        .ok_or_else(|| AgentError::new(code::GIT_FAILED, "task.py 未生成可读取的 task.json"))?;
+    let task = read_task_json_opt(
+        &tasks_root.join(created[0].as_str()).join("task.json"),
+        &format!(".trellis/tasks/{}/task.json", created[0]),
+    )
+    .await?
+    .ok_or_else(|| AgentError::new(code::GIT_FAILED, "task.py 未生成可读取的 task.json"))?;
     if task.get("branch").and_then(Value::as_str) != Some(binding.branch_name.as_str()) {
         return protocol::err(code::GIT_FAILED, "task.py 未能写入任务的分支归属");
     }
@@ -568,7 +579,7 @@ async fn assign_task(
     let apply_assignee: bool;
     let base_sha: BTreeMap<String, String>;
     if tokio::fs::metadata(&target).await.is_ok() {
-        let content = read_utf8(&task_json_path).await?;
+        let content = read_utf8(&task_json_path, &format!("{task_dir}/task.json")).await?;
         task = serde_json::from_str(&content)
             .map_err(|_| AgentError::new(code::COMMAND_INVALID, "任务 task.json 已损坏"))?;
         if !task.is_object() {
@@ -818,29 +829,37 @@ async fn task_directories(tasks_root: &Path) -> AgentResult<HashSet<String>> {
     Ok(names)
 }
 
-async fn read_task_json_opt(path: &Path) -> AgentResult<Option<Value>> {
+async fn read_task_json_opt(path: &Path, label: &str) -> AgentResult<Option<Value>> {
     let bytes = match tokio::fs::read(path).await {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Ok(None),
     };
-    let text = String::from_utf8(bytes)
-        .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件不是有效的 UTF-8 文本"))?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        AgentError::new(
+            code::INVALID_RESPONSE,
+            format!("任务文件不是有效的 UTF-8 文本：{label}"),
+        )
+    })?;
     let value: Value = serde_json::from_str(&text)
         .map_err(|_| AgentError::new(code::COMMAND_INVALID, "任务 task.json 已损坏"))?;
     Ok(Some(value))
 }
 
 // ponytail: JS 让 ENOENT 冒泡成通用错误；这里统一映射为 COMMAND_INVALID，便于界面提示。
-async fn read_utf8(path: &Path) -> AgentResult<String> {
+async fn read_utf8(path: &Path, label: &str) -> AgentResult<String> {
     let bytes = tokio::fs::read(path).await.map_err(|_| {
         AgentError::new(
             code::COMMAND_INVALID,
             "目标任务目录不存在或 task.json 无法读取",
         )
     })?;
-    String::from_utf8(bytes)
-        .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件不是有效的 UTF-8 文本"))
+    String::from_utf8(bytes).map_err(|_| {
+        AgentError::new(
+            code::INVALID_RESPONSE,
+            format!("任务文件不是有效的 UTF-8 文本：{label}"),
+        )
+    })
 }
 
 async fn atomic_write_json(target: &Path, value: &Value) -> AgentResult<()> {
