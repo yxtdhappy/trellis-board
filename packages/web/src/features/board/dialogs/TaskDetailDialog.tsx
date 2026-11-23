@@ -598,11 +598,11 @@ export function TaskDetailDialog({
             </DialogBody>
           )}
 
-          <DialogFooter className="gap-2 sm:justify-between">
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-1.5">
+          <DialogFooter className="flex-col gap-1 sm:flex-col sm:justify-start">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-center gap-1.5">
                 <SelectField
-                  className="w-40 text-xs"
+                  className="w-auto min-w-0 flex-1 text-xs sm:w-40 sm:flex-none"
                   placeholder="请选择负责人"
                   value={assignee}
                   options={assignees.map((name) => ({ value: name, label: name }))}
@@ -625,21 +625,21 @@ export function TaskDetailDialog({
                   更新派发
                 </Button>
               </div>
-              {commandBlocked ? (
-                <p className="text-2xs text-warning" role="status">
-                  {commandState.reason}
-                </p>
-              ) : null}
-              {!assignmentReadOnly ? (
-                <p className="max-w-72 text-2xs leading-4 text-muted-foreground">
-                  目标客户端离线时也可以先排队；接管后旧负责人本地副本可能保留、进入受保护清理，
-                  或被 Git 跟踪而需要手工处理。
-                </p>
-              ) : null}
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                关闭
+              </Button>
             </div>
-            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-              关闭
-            </Button>
+            {commandBlocked ? (
+              <p className="text-2xs text-warning" role="status">
+                {commandState.reason}
+              </p>
+            ) : null}
+            {!assignmentReadOnly ? (
+              <p className="max-w-72 text-2xs leading-4 text-muted-foreground">
+                目标客户端离线时也可以先排队；接管后旧负责人本地副本可能保留、进入受保护清理， 或被
+                Git 跟踪而需要手工处理。
+              </p>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
