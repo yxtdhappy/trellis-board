@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "服务端启动与模块边界"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "服务端测试与验证"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "useBoard 数据路径与状态"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端验证要求"}
