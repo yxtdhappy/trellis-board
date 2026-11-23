@@ -60,7 +60,6 @@ export function TaskDetailDialog({
   onAssign,
   assignees,
   taskSpace = null,
-  teamMode = false,
   onPlanSaved,
   tasks,
   actions,
@@ -173,7 +172,7 @@ export function TaskDetailDialog({
     assignee,
     assignees,
   )
-  const commandState = taskCommandState(taskSpace, teamMode)
+  const commandState = taskCommandState(taskSpace)
   const commandBlocked = !assignmentReadOnly && !commandState.canSubmit
   const canAssign = assignmentCanSubmit && commandState.canSubmit
   const { readOnly: planReadOnly, canEdit: canEditPlan } = planEditingState(current)
@@ -631,7 +630,7 @@ export function TaskDetailDialog({
                   {commandState.reason}
                 </p>
               ) : null}
-              {teamMode && !assignmentReadOnly ? (
+              {!assignmentReadOnly ? (
                 <p className="max-w-72 text-2xs leading-4 text-muted-foreground">
                   目标客户端离线时也可以先排队；接管后旧负责人本地副本可能保留、进入受保护清理，
                   或被 Git 跟踪而需要手工处理。

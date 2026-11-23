@@ -1,7 +1,7 @@
-export function taskCommandState(
-  taskSpace: unknown,
-  teamMode?: boolean,
-): { canSubmit: boolean; reason: string | null }
+export function taskCommandState(taskSpace: unknown): {
+  canSubmit: boolean
+  reason: string | null
+}
 export type TaskControlTone = 'neutral' | 'info' | 'warning' | 'danger' | 'success'
 export type TaskControlView = {
   available: boolean

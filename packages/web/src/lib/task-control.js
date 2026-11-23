@@ -1,7 +1,6 @@
 import { boolean, existingValue, normalizeProjectMembers, taskVersion } from './team-normalize.js'
 
-export function taskCommandState(taskSpace = {}, teamMode = false) {
-  if (!teamMode) return { canSubmit: true, reason: null }
+export function taskCommandState(taskSpace = {}) {
   if (taskSpace?.listenerState === 'disabled' || taskSpace?.status === 'disabled') {
     return { canSubmit: false, reason: '该分支任务空间已停用' }
   }

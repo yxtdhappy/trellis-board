@@ -33,7 +33,6 @@ type CreateTaskDialogProps = {
   defaultProjectId: string
   defaultTaskSpaceId?: string
   localTaskSpaceId?: string
-  teamMode?: boolean
   onCreate: (payload: Record<string, unknown>) => Promise<void>
 }
 
@@ -44,7 +43,6 @@ export function CreateTaskDialog({
   defaultProjectId,
   defaultTaskSpaceId = '',
   localTaskSpaceId = '',
-  teamMode = false,
   onCreate,
 }: CreateTaskDialogProps) {
   const [projectId, setProjectId] = useState(
@@ -78,7 +76,7 @@ export function CreateTaskDialog({
   const selectedProject = projects.find((project) => project.id === projectId)
   const taskSpaces = useMemo(() => selectedProject?.taskSpaces || [], [selectedProject])
   const selectedTaskSpace = taskSpaces.find((taskSpace) => taskSpace.id === taskSpaceId)
-  const commandState = taskCommandState(selectedTaskSpace, teamMode)
+  const commandState = taskCommandState(selectedTaskSpace)
 
   useEffect(() => {
     if (!open) return
