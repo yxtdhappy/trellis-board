@@ -400,6 +400,43 @@ async fn ownership_projection_does_not_decode_other_task_files() {
 
 
 #[tokio::test]
+async fn ownership_index_reports_invalid_utf8_path() {
+    let (root, store, sync, binding) =
+        test_task_sync_fixture("trellis-ownership-invalid-utf8").await;
+    let repo = Path::new(&binding.repo_path);
+    init_git_repo(repo);
+    write_task_json(repo, ".trellis/tasks/task-a", "task-a", "main").await;
+    tokio::fs::write(
+        repo.join(".trellis/tasks/task-a").join("prd.md"),
+        [0xff_u8, 0xfe],
+    )
+    .await
+    .expect("invalid utf8 prd");
+    run_git(repo, &["add", ".trellis/tasks"]);
+    run_git(repo, &["commit", "--no-verify", "-m", "tasks"]);
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+
+    let sync = sync.with_ownership_index_writer();
+    let projection_epoch = sync.projection_epoch("space-1").await;
+    let error = sync
+        .refresh_ownership_index_binding_with_scan(&binding, projection_epoch, true)
+        .await
+        .expect_err("invalid utf8 task file");
+    assert_eq!(error.code, code::INVALID_RESPONSE);
+    assert!(
+        error.message.contains(".trellis/tasks/task-a/prd.md"),
+        "message should include relative path: {}",
+        error.message
+    );
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+
+#[tokio::test]
 async fn persistent_ownership_index_reuses_tasks_without_git() {
     let (root, store, sync, mut binding) =
         test_task_sync_fixture("trellis-ownership-index-hit").await;
