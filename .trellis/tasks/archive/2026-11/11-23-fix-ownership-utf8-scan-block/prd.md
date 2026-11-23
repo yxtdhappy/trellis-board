@@ -31,9 +31,11 @@
 
 ## Acceptance Criteria
 
-- [ ] 构造 `.trellis/tasks/<dir>/prd.md` 为非 UTF-8 时，`read_local_task_snapshot_files` 返回的错误消息包含 `.trellis/tasks/<dir>/prd.md`。
-- [ ] 构造 ownership 索引必须解码非 `task.json` 文件的场景时，错误消息包含该文件相对路径。
-- [ ] 目标任务目录正常、兄弟任务目录含非 UTF-8 文件时，`set_task_ownership` 成功（测试使用 `defer`；`use-branch` 复用同一预检），且兄弟目录文件不会被解码。
-- [ ] 目标任务自身含非 UTF-8 文件时，`set_task_ownership` 仍失败，错误消息包含该文件路径。
-- [ ] 既有归属校验（无效目录、重复决定、非法动作、非法分支）行为不变。
-- [ ] `cargo test` 中相关 task_sync / task_command 测试通过。
+> 验证证据：GitHub Actions run `45107316470`（tag `v0.4.57`），Rust 单测 376 通过，见 `check-report.md`。
+
+- [x] 构造 `.trellis/tasks/<dir>/prd.md` 为非 UTF-8 时，`read_local_task_snapshot_files` 返回的错误消息包含 `.trellis/tasks/<dir>/prd.md`。
+- [x] 构造 ownership 索引必须解码非 `task.json` 文件的场景时，错误消息包含该文件相对路径。
+- [x] 目标任务目录正常、兄弟任务目录含非 UTF-8 文件时，`set_task_ownership` 成功（测试使用 `defer`；`use-branch` 复用同一预检），且兄弟目录文件不会被解码。
+- [x] 目标任务自身含非 UTF-8 文件时，`set_task_ownership` 仍失败，错误消息包含该文件路径。
+- [x] 既有归属校验（无效目录、重复决定、非法动作、非法分支）行为不变。
+- [x] `cargo test` 中相关 task_sync / task_command 测试通过。

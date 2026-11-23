@@ -44,9 +44,10 @@ cd packages/desktop/src-tauri
 cargo test agent::task_sync agent::task_command
 ```
 
-**执行记录（2026-11-23）**：本机没有 Rust 工具链（`cargo`/`rustc` 均不存在），
-上述编译与测试**未执行**。不能把静态检查当作测试通过。需要在装有 Rust 工具链的机器上
-补跑 `cargo test agent::` 后再进入验收。
+**执行记录（2026-11-23）**：
+- 本机没有 Rust 工具链（`cargo`/`rustc` 均不存在），本地上述命令**未执行**。
+- GitHub Actions 在 tag `v0.4.57` 上执行 `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`：
+  run `45107316470`，`376 passed; 0 failed`；4 个新增测试全部通过。
 
 已完成的非编译检查：
 
@@ -69,4 +70,4 @@ rg -n "local_groups\(&binding, None\)" packages/desktop/src-tauri/src/agent/task
 - [x] 不修改 `.trellis/tasks/archive/**` 扫描语义。
 - [x] 不引入绝对路径到错误文案。
 - [x] 不改变服务端 API/schema。
-- [ ] 在具备 Rust 工具链的环境补跑 `cargo test agent::`。
+- [x] 在具备 Rust 工具链的环境补跑 `cargo test agent::`（已由 CI run `45107316470` 完成，376 通过）。
