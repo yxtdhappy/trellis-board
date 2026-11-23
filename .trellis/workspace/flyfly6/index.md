@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 46
+- **Total Sessions**: 47
 - **Last Active**: 2026-11-23
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1566 | Active |
+| `journal-1.md` | ~1589 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 47 | 2026-11-23 | 修复任务详情弹窗关闭按钮高度与对齐问题并规划全局 UI 治理任务树 | `1a2dd77` | `main` |
 | 46 | 2026-11-23 | 修复客户端登录心跳绑定解析失败 | `7d28af8`, `0d040c7` | `main` |
 | 45 | 2026-11-20 | 客户端命令报错可读性与日志留存 | `fbe9a714`, `af9b4e7` | `design-assigned-task-worktree-flow` |
 | 44 | 2026-11-20 | worktree 删除后自动解绑 + Alert 溢出修复 | `a12f4d9` | `main` |

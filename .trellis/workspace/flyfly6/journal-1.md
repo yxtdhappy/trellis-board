@@ -1564,3 +1564,26 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Status
 
 [OK] **Completed**
+
+
+## Session 47: 修复任务详情弹窗关闭按钮高度与对齐问题并规划全局 UI 治理任务树
+<!-- trellis-session: v=2 fp=d8a8207623d18a17 -->
+
+**Date**: 2026-11-23
+**Task**: 修复任务详情弹窗关闭按钮高度与对齐问题并规划全局 UI 治理任务树
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+修复 TaskDetailDialog 右下角关闭按钮高度（去 size=sm 统一 h-8）并与左侧更新派发按钮同操作行垂直居中对齐；完成全局前端 UI 审查并建立 1 个父任务 + 6 个子任务规划树，完成子任务 1 归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1a2dd77` | fix(web): 统一任务详情弹窗关闭按钮高度并与更新派发同行居中对齐 |
+
+### Status
+
+[OK] **Completed**
