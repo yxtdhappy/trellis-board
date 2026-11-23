@@ -18,7 +18,7 @@ function waitForReady(child, timeoutMs = 30000) {
     let buffer = ''
     const timer = setTimeout(() => {
       cleanup()
-      reject(new Error(`本机插件宿主启动超时：${buffer}`))
+      reject(new Error(`插件宿主启动超时：${buffer}`))
     }, timeoutMs)
     const onData = (chunk) => {
       buffer += chunk.toString()
@@ -38,7 +38,7 @@ function waitForReady(child, timeoutMs = 30000) {
     }
     const onExit = (code) => {
       cleanup()
-      reject(new Error(`本机插件宿主提前退出（${code}）：${buffer}`))
+      reject(new Error(`插件宿主提前退出（${code}）：${buffer}`))
     }
     const cleanup = () => {
       clearTimeout(timer)
@@ -81,7 +81,7 @@ async function waitFor(check, timeoutMs = 20000) {
   throw lastError || new Error('等待超时')
 }
 
-test('本机插件宿主：鉴权、面板重写、生命周期与仓库注入', async (t) => {
+test('插件宿主：鉴权、面板重写、生命周期与仓库注入', async (t) => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'trellis-plugin-host-'))
   const pluginsDir = path.join(dataDir, 'plugins')
   await mkdir(pluginsDir, { recursive: true })
@@ -223,7 +223,7 @@ test('本机插件宿主：鉴权、面板重写、生命周期与仓库注入',
   assert.equal(stderr.includes('Unhandled'), false, stderr)
 })
 
-test('本机插件宿主：空清单可以就绪且不启动插件进程', async (t) => {
+test('插件宿主：空清单可以就绪且不启动插件进程', async (t) => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'trellis-plugin-host-empty-'))
   const pluginsDir = path.join(dataDir, 'plugins')
   await mkdir(pluginsDir, { recursive: true })

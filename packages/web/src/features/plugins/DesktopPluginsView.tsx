@@ -72,7 +72,7 @@ export function DesktopPluginsView() {
       if (!mounted.current) return
       setState(next)
     } catch (err) {
-      if (mounted.current) setError(err instanceof Error ? err.message : '读取本机插件失败')
+      if (mounted.current) setError(err instanceof Error ? err.message : '读取插件失败')
     }
   }, [])
 
@@ -155,14 +155,14 @@ export function DesktopPluginsView() {
           <p className="text-2xs font-semibold tracking-[0.08em] text-muted-foreground">
             DESKTOP PLUGINS / LOCAL HOST
           </p>
-          <h1 className="text-lg leading-6 font-semibold font-heading">本机插件</h1>
+          <h1 className="text-lg leading-6 font-semibold font-heading">插件</h1>
           <p className="text-xs text-muted-foreground">
             插件运行在桌面客户端内，只绑定 127.0.0.1；没有启用任何插件时不会拉起 Node 进程。
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span>{state.hostVersion ? `宿主 ${state.hostVersion}` : ''}</span>
-          <span>{state.running ? '本机宿主运行中' : '本机宿主未启动'}</span>
+          <span>{state.running ? '插件宿主运行中' : '插件宿主未启动'}</span>
           <span>{state.plugins.length} 个插件</span>
         </div>
       </div>
@@ -176,7 +176,7 @@ export function DesktopPluginsView() {
       {state.plugins.length === 0 ? (
         <Empty className="border border-dashed">
           <EmptyHeader>
-            <EmptyTitle>还没有本机插件</EmptyTitle>
+            <EmptyTitle>还没有插件</EmptyTitle>
             <EmptyDescription>
               安装包内置的插件会列在这里；用户目录下
               %LOCALAPPDATA%\TrellisBoard\plugins\&lt;id&gt;\ 可覆盖内置实现。
@@ -278,7 +278,7 @@ export function DesktopPluginsView() {
             <p className="text-2xs font-semibold tracking-[0.14em] text-muted-foreground">
               DESKTOP PLUGIN LOGS
             </p>
-            <DialogTitle>本机插件日志</DialogTitle>
+            <DialogTitle>插件日志</DialogTitle>
             <DialogDescription>{logs?.title || ''}</DialogDescription>
           </DialogHeader>
           <DialogBody className="mx-4 rounded-lg bg-muted px-3 py-2.5">

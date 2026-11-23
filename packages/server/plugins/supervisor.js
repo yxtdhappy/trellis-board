@@ -973,7 +973,7 @@ export class PluginSupervisor {
     }
     const provider = this.plugins.get(providerId)
     if (!provider || provider.status !== 'running' || !provider.process) {
-      throw appError(ERROR_CODES.CAPABILITY_UNAVAILABLE, `capability 提供者未运行: ${providerId}`)
+      throw appError(ERROR_CODES.CAPABILITY_UNAVAILABLE, `插件 ${providerId} 未运行，无法提供该能力`)
     }
     const capability = (provider.manifest.provides ?? []).find((item) => item.name === name)
     const definition = capability?.methods?.[method]

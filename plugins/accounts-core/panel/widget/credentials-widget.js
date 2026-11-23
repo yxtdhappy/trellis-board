@@ -13,7 +13,7 @@
  */
 ;(function (global) {
   const CSS_HREF = '/api/plugins/accounts-core/panel/widget/credentials-widget.css'
-  const SOURCE_LABEL = { accounts: '统一账号', local: '本地账号', mixed: '混合', none: '未配置' }
+  const SOURCE_LABEL = { accounts: '统一账号', local: '本地配置', mixed: '混合', none: '未配置' }
 
   function ensureStyle() {
     if (document.querySelector(`link[href="${CSS_HREF}"]`)) return
@@ -45,7 +45,7 @@
     const lines = []
     lines.push(
       el('div', { class: 'tw-head' }, [
-        el('span', { class: 'tw-title' }, '账号来源'),
+        el('span', { class: 'tw-title' }, '凭据来源'),
         badge(view.source),
       ]),
     )
@@ -57,11 +57,11 @@
         ]),
       )
     }
-    if (view.systemId) {
+    if (view.systemName || view.systemId) {
       lines.push(
         el('div', { class: 'tw-row' }, [
           el('span', { class: 'tw-key' }, '系统'),
-          el('span', { class: 'tw-value' }, view.systemId),
+          el('span', { class: 'tw-value' }, view.systemName || view.systemId),
         ]),
       )
     }
@@ -96,10 +96,10 @@
     root.replaceChildren(el('div', { class: 'tw-card' }, lines))
   }
 
-  function mount({ root, request, systemId, pollMs = 15_000 } = {}) {
+  function mount({ root, request, systemId, systemName, pollMs = 15_000 } = {}) {
     if (!root || typeof request !== 'function') return { refresh: async () => {} }
     ensureStyle()
-    root.replaceChildren(el('div', { class: 'tw-card tw-loading' }, '读取账号来源…'))
+    root.replaceChildren(el('div', { class: 'tw-card tw-loading' }, '读取凭据来源…'))
 
     async function refresh() {
       try {
@@ -108,6 +108,7 @@
           source: view.source || 'none',
           username: view.username || '',
           systemId: view.systemId || systemId || '',
+          systemName: view.systemName || systemName || '',
           hasPassword: view.hasPassword !== false,
           error: view.error || '',
         })
@@ -115,7 +116,7 @@
         root.replaceChildren(
           el('div', { class: 'tw-card' }, [
             el('div', { class: 'tw-head' }, [
-              el('span', { class: 'tw-title' }, '账号来源'),
+              el('span', { class: 'tw-title' }, '凭据来源'),
               badge('none'),
             ]),
             el('p', { class: 'tw-hint tw-warn' }, `统一账号不可用：${error.message}`),

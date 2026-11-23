@@ -65,8 +65,8 @@ const NAV: BoardNavItem[] = [
   { id: 'archive', label: '归档索引' },
 ]
 
-// 仅桌面客户端可见：管理 EXE 内置的本机插件宿主。
-const DESKTOP_PLUGIN_NAV: BoardNavItem = { id: 'desktop-plugins', label: '本机插件' }
+// 仅桌面客户端可见：管理 EXE 内置的插件宿主。
+const DESKTOP_PLUGIN_NAV: BoardNavItem = { id: 'desktop-plugins', label: '插件' }
 
 type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 type DesktopClientIdentity = { name?: string; version?: string }
@@ -211,7 +211,7 @@ export function BoardPage() {
       : null
   const activeCount = tasks.filter((task) => !task.archived).length
   // 服务端未下发 features 时按开启处理；只有明确 false 才视为插件被屏蔽。
-  // 服务端插件面板只给非客户端页面；客户端插件由本机宿主提供。
+  // 服务端插件面板只给非客户端页面；客户端插件由插件宿主提供。
   const serverPluginsEnabled = !isClient && runtime?.features?.pluginsEnabled !== false
   const loadPanels = useCallback(async () => {
     const [remote, desktop] = await Promise.all([

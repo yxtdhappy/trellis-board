@@ -1,4 +1,4 @@
-//! 从 EXE 内嵌资源释放本机插件运行时（单文件绿色包，不依赖安装目录外的文件）。
+//! 从 EXE 内嵌资源释放插件运行时（单文件绿色包，不依赖安装目录外的文件）。
 
 use std::path::{Path, PathBuf};
 
@@ -23,9 +23,9 @@ pub fn ensure_runtime(data_dir: &Path) -> Result<PathBuf, String> {
     }
     let parent = root
         .parent()
-        .ok_or_else(|| "无法定位本机插件运行时目录".to_string())?;
+        .ok_or_else(|| "无法定位插件运行时目录".to_string())?;
     std::fs::create_dir_all(parent)
-        .map_err(|error| format!("无法创建本机插件运行时目录：{error}"))?;
+        .map_err(|error| format!("无法创建插件运行时目录：{error}"))?;
     let staging = parent.join(format!(".tmp-{}-{}", std::process::id(), ASSET_STAMP));
     if staging.exists() {
         let _ = std::fs::remove_dir_all(&staging);
@@ -49,7 +49,7 @@ pub fn ensure_runtime(data_dir: &Path) -> Result<PathBuf, String> {
     }
     std::fs::rename(&staging, &root).map_err(|error| {
         let _ = std::fs::remove_dir_all(&staging);
-        format!("无法启用本机插件运行时：{error}")
+        format!("无法启用插件运行时：{error}")
     })?;
     Ok(root)
 }

@@ -8,7 +8,7 @@ import type {
 } from './desktop-plugins'
 
 /**
- * 本机插件宿主 transport。
+ * 插件宿主 transport。
  *
  * - 桌面 EXE：走 Tauri IPC（`window.__TAURI__.core.invoke`）。
  * - 浏览器里的客户端页面：走 Vite 代理 `/local-plugin` 到本机 host.mjs。
@@ -21,7 +21,7 @@ const LOCAL_BASE = (import.meta.env.VITE_LOCAL_PLUGIN_BASE as string | undefined
 const LOCAL_TOKEN = (import.meta.env.VITE_LOCAL_PLUGIN_TOKEN as string | undefined) || ''
 const LOCAL_SECRET = (import.meta.env.VITE_LOCAL_PLUGIN_SECRET as string | undefined) || ''
 
-function injectedRole(): unknown {
+function injectedRole(): string | undefined {
   return typeof window === 'undefined' ? undefined : window.__TRELLIS_ROLE__
 }
 
@@ -46,7 +46,7 @@ async function httpJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!response.ok) {
     const message = (data as { error?: string } | null)?.error
-    throw new Error(message || `本机插件宿主请求失败（${response.status}）`)
+    throw new Error(message || `插件宿主请求失败（${response.status}）`)
   }
   return data as T
 }

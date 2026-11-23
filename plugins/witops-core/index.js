@@ -58,6 +58,7 @@ const DEFAULTS = {
   agentId: null,
   credentialSource: 'auto',
   accountSystemId: 'witops',
+  accountSystemName: 'WitOps',
   credentials: { mode: 'password', account: '', password: '', token: '' },
   session: { persist: true },
   poll: { enabled: false, intervalMs: 1_800_000 },
@@ -1276,17 +1277,61 @@ export default createPlugin({
     ctx.http.route('GET', '/auth', async () => respond(200, await authStatus()))
 
     // 供统一账号小组件使用：只暴露凭据来源与账号名，不暴露密码。
-    ctx.http.route('GET', '/credentials', async () =>
-      respond(200, {
+    ctx.http.route('GET', '/credentials', async () => {
+      // 启动顺序可能让 accounts-core 晚于本插件就绪；读取时懒重试一次。
+      if (accountsError && config.credentialSource !== 'local') {
+        await refreshAccounts({ reason: 'credentials-retry' })
+      }
+      return respond(200, {
         source: accountCredential ? 'accounts' : 'local',
         systemId: config.accountSystemId,
+        systemName: config.accountSystemName,
         accountId: accountCredential?.accountId ?? '',
         username: text(config.credentials.account),
         hasPassword:
           Boolean(text(config.credentials.password)) || Boolean(await session.hasStoredPassword()),
-        error: accountsError || '',
-      }),
-    )
+        // 统一账号插件未运行时只是回退本地配置，不把内部 capability 错误抛给面板。
+        error:
+          accountsError && !/插件 .*未运行|capability 提供者未运行/.test(accountsError)
+            ? accountsError
+            : '',
+      })
+    })
+
+    // 面板会话入口：team.js 用 /session 读写登录态。
+    ctx.http.route('GET', '/session', async () => {
+      const current = await authStatus()
+      return respond(200, {
+        online: current.status === 'authenticated',
+        account: current.account ?? null,
+        source: current.source,
+        credentialSource: current.credentialSource,
+      })
+    })
+
+    ctx.http.route('POST', '/session', async (request) => {
+      const body = request.json() ?? {}
+      if (!text(body.account) || !text(body.password)) {
+        return respond(400, { error: '需要 account 与 password' })
+      }
+      try {
+        await session.login({
+          account: body.account,
+          password: body.password,
+          remember: body.remember === true,
+          source: 'panel',
+        })
+        clearReadCache()
+        return respond(200, { ok: true, auth: await authStatus() })
+      } catch (error) {
+        return failure(error, 502)
+      }
+    })
+
+    ctx.http.route('DELETE', '/session', async () => {
+      await session.logout()
+      return respond(200, { ok: true })
+    })
 
     ctx.http.route('POST', '/login', async (request) => {
       const body = request.json() ?? {}
