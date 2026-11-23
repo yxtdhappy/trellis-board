@@ -40,6 +40,7 @@ function parseArgs(argv) {
     token: '',
     secret: '',
     panelPrefix: '',
+    repositories: [],
   }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
@@ -75,6 +76,10 @@ function parseArgs(argv) {
         break
       case '--panel-prefix':
         options.panelPrefix = String(value || '').replace(/\/$/, '')
+        index += 1
+        break
+      case '--repository':
+        if (value) options.repositories.push(String(value))
         index += 1
         break
       default:
@@ -241,7 +246,11 @@ function formatLog(value) {
   }
 }
 
-const repositories = []
+const repositories = options.repositories.map((repoPath) => ({
+  id: path.basename(repoPath),
+  name: path.basename(repoPath),
+  path: repoPath,
+}))
 const db = getDefaultDatabase({ logger })
 const runtime = createPluginRuntime({
   db,
