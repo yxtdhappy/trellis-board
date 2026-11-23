@@ -171,8 +171,8 @@
 ### 2. Signatures
 
 - `TaskSpaceListenerState = online | inactive | unassociated | unknown_legacy | disabled`。
-- `taskCommandState(taskSpace, teamMode) -> { canSubmit, reason }`：
-  `packages/web/src/lib/team-client.js`。
+- `taskCommandState(taskSpace) -> { canSubmit, reason }`：
+  `packages/web/src/lib/task-control.js`。
 - `projectListenerView(taskSpace)`：`packages/web/src/lib/project-rail-association.js`。
 - Tauri：`detach_local_association(taskSpaceId)`。
 
@@ -244,7 +244,7 @@ const canSubmit = taskSpace.status === 'active'
 Correct：
 
 ```tsx
-const commandState = taskCommandState(taskSpace, teamMode)
+const commandState = taskCommandState(taskSpace)
 <Button disabled={!commandState.canSubmit}>{commandState.reason || '创建并派发'}</Button>
 ```
 

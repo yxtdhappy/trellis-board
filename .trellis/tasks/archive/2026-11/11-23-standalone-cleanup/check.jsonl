@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对服务端测试与运行基线"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核对前端构建与浏览器回归"}

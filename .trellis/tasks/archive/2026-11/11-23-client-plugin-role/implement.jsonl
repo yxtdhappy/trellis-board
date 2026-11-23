@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "前端状态与插件入口改造"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端验证要求"}
+{"file": ".trellis/spec/backend/plugin-runtime.md", "reason": "Team 插件门禁与运行时契约"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "桌面命令与导航契约"}

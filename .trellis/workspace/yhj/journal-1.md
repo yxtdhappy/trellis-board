@@ -1791,3 +1791,27 @@ BRANCH_MISMATCH 每次心跳重复弹窗且抢焦点；改为 assert_binding_bra
 ### Status
 
 [OK] **Completed**
+
+
+## Session 75: 修复任务归属确认被非 UTF-8 文件整体阻断
+<!-- trellis-session: v=2 fp=c79d3c74442c9c74 -->
+
+**Date**: 2026-11-23
+**Task**: 修复任务归属确认被非 UTF-8 文件整体阻断
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+set_task_ownership 改为只扫描 decisions 涉及的 taskDir；快照/ownership 索引/任务命令的 UTF-8 解码错误带任务相对路径；新增 4 个回归测试。GitHub Actions tag v0.4.57 构建通过（376 个 Rust 测试），Release 已发布。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `35dbc73` | fix(desktop): 任务归属确认不再被非 UTF-8 文件整体阻断 |
+| `1e67c08` | chore(release): 0.4.57 |
+
+### Status
+
+[OK] **Completed**

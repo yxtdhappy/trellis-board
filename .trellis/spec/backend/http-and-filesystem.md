@@ -35,7 +35,7 @@
 
 ### Team tasks-only 与命令路由
 
-Team 模式在原 standalone 路由之外只装配以下任务快照和命令边界：
+Team 模式装配以下任务快照和命令边界：
 
 | 方法与路径 | 用途 | 成功状态 |
 | --- | --- | --- |
@@ -186,21 +186,17 @@ api('/api/repositories', 'DELETE', { id })
 
 #### 1. Scope / Trigger
 
-standalone 的项目人员来自任务所属仓库 `.trellis/workspace/<developer>`；Team 的任务快照不包含
-workspace，项目写成员和可委派人员只能来自 `sync_project_member` 的 `lead|member` 与
+Team 的任务快照不包含 workspace，项目写成员和可委派人员只能来自 `sync_project_member` 的 `lead|member` 与
 `trellis_dev_id` 映射。
 
 #### 2. Signatures
 
 - 项目投影：`{ members: string[], workspaceMembers: string[] }`
-- standalone `members`：workspace 成员与历史任务负责人/创建人的去重并集。
-- standalone `workspaceMembers`：仅 `.trellis/workspace` 的直接子目录名。
 - Team `GET /api/task-spaces/:id/assignees`：返回项目内已映射 developer ID 的可写成员。
 - `POST /api/tasks/assign`：Team 模式入队 `assign_task` 命令，不直接改项目文件。
 
 #### 3. Contracts
 
-- standalone 前端按 `task.projectId` 选择项目，委派下拉优先使用 `project.workspaceMembers`。
 - Team 前端按 `task.taskSpaceId` 请求候选人；候选必须 active、属于项目写角色且有
   `trellis_dev_id`。
 - Team 创建/改派只要求目标用户属于项目可写成员。目标客户端离线时先按 `target_user_id`
@@ -209,7 +205,6 @@ workspace，项目写成员和可委派人员只能来自 `sync_project_member` 
   `leaseStatus`、`leaseExpiresAt`、`previousAssigneeUserId` 和身份冲突标记；最新租约状态不能
   依赖会被过期清理的 `sync_task.lease_id`。
 - Team 项目成员变化写 `sync_project_member`，不依赖 `.trellis/workspace` 扫描。
-- 旧 standalone 缓存缺少 `workspaceMembers` 时可回退 `project.members`；Team 不用该回退伪造成员。
 
 #### 4. Validation & Error Matrix
 

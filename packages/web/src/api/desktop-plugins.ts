@@ -1,4 +1,4 @@
-import { invoke } from '@/desktop/tauri'
+import * as transport from './plugin-transport'
 
 export type DesktopPlugin = {
   id: string
@@ -45,41 +45,30 @@ export type DesktopPluginResponse = {
   data: unknown
 }
 
-export const desktopAvailable = Boolean(invoke)
-
-function requireInvoke() {
-  if (!invoke) throw new Error('当前环境不是桌面客户端')
-  return invoke
-}
+/** 本端是否能访问插件宿主：桌面 IPC 或浏览器客户端 HTTP。 */
+export const desktopAvailable = transport.pluginTransportAvailable()
 
 export async function fetchDesktopPlugins(): Promise<DesktopPluginsState> {
-  return requireInvoke()<DesktopPluginsState>('desktop_plugins_list')
+  return transport.listPlugins()
 }
 
 export async function setDesktopPluginEnabled(id: string, enabled: boolean): Promise<unknown> {
-  return requireInvoke()('desktop_plugin_set_enabled', { pluginId: id, enabled })
+  return transport.setPluginEnabled(id, enabled)
 }
 
 export async function reorderDesktopPlugins(ids: string[]): Promise<unknown> {
-  return requireInvoke()('desktop_plugin_reorder', { ids })
+  return transport.reorderPlugins(ids)
 }
 
 export async function fetchDesktopPluginLogs(
   id: string,
   tail = 200,
 ): Promise<DesktopPluginLogEntry[]> {
-  const result = await requireInvoke()<{ entries?: DesktopPluginLogEntry[] }>(
-    'desktop_plugin_logs',
-    { pluginId: id, tail },
-  )
-  return result?.entries ?? []
+  return transport.pluginLogs(id, tail)
 }
 
 export async function fetchDesktopPanels(): Promise<DesktopPanel[]> {
-  const result = await requireInvoke()<{ panels?: DesktopPanel[]; running?: boolean }>(
-    'desktop_plugin_panels',
-  )
-  return (result?.panels ?? []).map((panel) => ({ ...panel, host: 'desktop' as const }))
+  return transport.listPanels()
 }
 
 export async function requestDesktopPlugin(
@@ -88,17 +77,12 @@ export async function requestDesktopPlugin(
   path: string,
   body?: unknown,
 ): Promise<DesktopPluginResponse> {
-  return requireInvoke()<DesktopPluginResponse>('desktop_plugin_request', {
-    pluginId: id,
-    method,
-    path,
-    body: body ?? null,
-  })
+  return transport.requestPlugin(id, method, path, body)
 }
 
 export async function fetchDesktopPluginAsset(
   id: string,
   path: string,
 ): Promise<{ status: number; contentType?: string; content: string }> {
-  return requireInvoke()('desktop_plugin_asset', { pluginId: id, path })
+  return transport.pluginAsset(id, path)
 }

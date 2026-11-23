@@ -718,6 +718,12 @@ export default createPlugin({
           sessionId: item.record.session?.id ?? null,
         })),
         sessions: sessionsList,
+        // 面板左侧需要可选任务；只靠 runs/sessions 时新环境没有任何可选项。
+        tasks: tasks.map((task) => ({
+          taskKey: task.taskKey,
+          title: task.title,
+          status: task.status ?? null,
+        })),
         runs: runs.map((run) => ({
           runId: run.runId,
           taskKey: run.taskKey,

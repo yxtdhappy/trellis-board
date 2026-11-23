@@ -53,24 +53,26 @@ function renderList() {
   const runs = latestRuns(state.data?.runs || [])
   const activeKeys = new Set((state.data?.active || []).map((item) => item.taskKey))
   const sessions = new Map((state.data?.sessions || []).map((item) => [item.taskKey, item]))
+  const tasks = new Map((state.data?.tasks || []).map((item) => [item.taskKey, item]))
   list.replaceChildren()
-  if (!runs.size && !sessions.size) {
+  if (!runs.size && !sessions.size && !tasks.size) {
     const empty = document.createElement('li')
     empty.className = 'muted'
-    empty.textContent = '暂无运行记录'
+    empty.textContent = '暂无任务'
     list.append(empty)
     return
   }
-  const keys = new Set([...runs.keys(), ...sessions.keys()])
+  const keys = new Set([...tasks.keys(), ...runs.keys(), ...sessions.keys()])
   for (const taskKey of keys) {
+    const task = tasks.get(taskKey)
     const run = runs.get(taskKey)
     const session = sessions.get(taskKey)
-    const status = activeKeys.has(taskKey) ? 'running' : run?.status || 'idle'
+    const status = activeKeys.has(taskKey) ? 'running' : run?.status || task?.status || 'idle'
     const item = document.createElement('li')
     item.className = taskKey === state.taskKey ? 'active' : ''
     const row = document.createElement('div')
     row.className = 'row'
-    const title = span('title', taskLabel(taskKey))
+    const title = span('title', task?.title || taskLabel(taskKey))
     const statusKind = CHIP_KIND[status]
     const statusNode = statusKind ? chip(status, statusKind) : span('tb-muted tb-small', status)
     row.append(title, statusNode)
@@ -152,7 +154,10 @@ async function load() {
     state.data = await bridge.get('/panel/data')
     byId('agent-label').textContent = state.data.configured ? state.data.agent || 'agent' : '未配置'
     if (!state.taskKey) {
-      const first = (state.data.runs || [])[0]?.taskKey || (state.data.sessions || [])[0]?.taskKey
+      const first =
+        (state.data.tasks || [])[0]?.taskKey ||
+        (state.data.runs || [])[0]?.taskKey ||
+        (state.data.sessions || [])[0]?.taskKey
       if (first) state.taskKey = first
     }
     renderList()

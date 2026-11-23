@@ -4,11 +4,9 @@ import { mergeOwnershipInboxItems } from '@/lib/ownership-inbox.js'
 import type { OwnershipInboxItem } from '@/lib/ownership-inbox.js'
 
 export function useOwnershipInbox({
-  teamMode,
   teamId,
   projectId,
 }: {
-  teamMode: boolean
   teamId: string
   projectId: string
 }) {
@@ -37,10 +35,6 @@ export function useOwnershipInbox({
 
   const load = useCallback(
     async (mode: 'replace' | 'next' = 'replace') => {
-      if (!teamMode) {
-        clear()
-        return
-      }
       const next = mode === 'next'
       const from = next ? cursor.current : null
       if (next && !from) return
@@ -67,7 +61,7 @@ export function useOwnershipInbox({
         }
       }
     },
-    [teamMode, teamId, projectId, clear],
+    [teamId, projectId, clear],
   )
 
   const reload = useCallback(() => load('replace'), [load])
@@ -89,12 +83,8 @@ export function useOwnershipInbox({
 
   useEffect(() => {
     if (!open) return
-    if (!teamMode) {
-      clear()
-      return
-    }
     void reload()
-  }, [open, teamMode, teamId, projectId, reload, clear])
+  }, [open, teamId, projectId, reload])
 
   return {
     open,

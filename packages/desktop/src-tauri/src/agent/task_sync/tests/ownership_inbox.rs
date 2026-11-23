@@ -153,6 +153,75 @@ fn rejection() -> Value {
 }
 
 #[tokio::test]
+async fn assign_ownership_ignores_invalid_utf8_in_sibling_task_dir() {
+    let (root, _store, sync, binding, _bodies, server) =
+        inbox_fixture("ownership-assign-sibling", vec![200]).await;
+    let repo = Path::new(&binding.repo_path);
+    write_task_json(repo, ".trellis/tasks/target", "target", "").await;
+    tokio::fs::write(repo.join(".trellis/tasks/target/prd.md"), "# target\n")
+        .await
+        .expect("target prd");
+    let sibling = repo.join(".trellis/tasks/sibling");
+    tokio::fs::create_dir_all(&sibling).await.expect("sibling");
+    tokio::fs::write(sibling.join("prd.md"), [0xff_u8, 0xfe])
+        .await
+        .expect("invalid sibling prd");
+
+    let full_scan = read_local_task_snapshot_files(repo, None)
+        .await
+        .expect_err("full scan must fail on sibling");
+    assert!(
+        full_scan.message.contains(".trellis/tasks/sibling/prd.md"),
+        "full scan message should include relative path: {}",
+        full_scan.message
+    );
+
+    let result = sync
+        .set_task_ownership(
+            "space-1",
+            json!([{ "taskDir": ".trellis/tasks/target", "action": "defer" }]),
+        )
+        .await
+        .expect("targeted ownership ignores sibling");
+    assert_eq!(result["deferredCount"], 1);
+    assert_eq!(result["appliedCount"], 0);
+
+    server.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn assign_ownership_reports_target_invalid_utf8_path() {
+    let (root, _store, sync, binding, _bodies, server) =
+        inbox_fixture("ownership-assign-target", vec![200]).await;
+    let repo = Path::new(&binding.repo_path);
+    write_task_json(repo, ".trellis/tasks/target", "target", "").await;
+    tokio::fs::write(
+        repo.join(".trellis/tasks/target/prd.md"),
+        [0xff_u8, 0xfe],
+    )
+    .await
+    .expect("invalid target prd");
+
+    let error = sync
+        .set_task_ownership(
+            "space-1",
+            json!([{ "taskDir": ".trellis/tasks/target", "action": "defer" }]),
+        )
+        .await
+        .expect_err("target invalid utf8 must fail");
+    assert_eq!(error.code, code::INVALID_RESPONSE);
+    assert!(
+        error.message.contains(".trellis/tasks/target/prd.md"),
+        "message should include relative path: {}",
+        error.message
+    );
+
+    server.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn cleanup_deleted_ownership_uses_task_dir_and_clears_both_ledgers() {
     let (root, store, sync, binding, bodies, server) =
         inbox_fixture("ownership-inbox-cleanup", vec![200]).await;

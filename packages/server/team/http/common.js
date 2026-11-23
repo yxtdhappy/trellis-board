@@ -40,13 +40,11 @@ export const MAX_ARCHIVE_CREDENTIAL_BYTES = 160 * 1024
 export const EXECUTION_WIP_LIMIT = 2
 
 /**
- * Team 插件是否启用：总开关关闭或白名单为空时一律视为关闭。
- * 生产 Team 服务器默认白名单为空，即默认不装载任何插件。
+ * Team 服务端不承载插件：插件只由客户端本机宿主负责。
+ * 保留函数签名与 `features.pluginsEnabled` 字段，避免旧前端读取时崩溃。
  */
-export function teamPluginsEnabled(config) {
-  if (!config) return false
-  if (config.pluginsDisabled === true) return false
-  return Array.isArray(config.pluginAllowlist) && config.pluginAllowlist.length > 0
+export function teamPluginsEnabled() {
+  return false
 }
 
 export function requireObservedBranchName(body) {

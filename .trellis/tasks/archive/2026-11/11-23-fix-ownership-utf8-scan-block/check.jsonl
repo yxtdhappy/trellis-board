@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "校验扫描范围、UTF-8 失败关闭与同步状态机不回归"}
+{"file": ".trellis/spec/backend/desktop-task-path-resolution.md", "reason": "校验错误文案不含绝对路径且包含可定位相对路径"}
+{"file": ".trellis/spec/backend/task-ownership-and-conflict-idempotency.md", "reason": "校验确认归属的失败关闭与 inbox 清理行为"}

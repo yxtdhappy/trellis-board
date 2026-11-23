@@ -6,7 +6,6 @@ import {
   assignTaskRequest,
   createTaskRequest,
   fetchAssignments,
-  fetchBoard,
   fetchBoardSettings,
   fetchRepositories,
   fetchSavedViews,
@@ -45,7 +44,7 @@ const BUILTIN_VIEW_IDS = ['all', 'p0p1', 'due', 'stale', 'implementing', 'blocke
 
 export function useBoard(): BoardController {
   const [board, setBoard] = useState<BoardPayload | null>(null)
-  const [status, setStatus] = useState<BoardStatus | null>(null)
+  const [status] = useState<BoardStatus | null>(null)
   const [runtime, setRuntime] = useState<TeamRuntime | null>(null)
   const [teamPage, setTeamPage] = useState<TeamQueryPage | null>(null)
   const [teamStatus, setTeamStatus] = useState<Record<string, unknown> | null>(null)
@@ -96,9 +95,7 @@ export function useBoard(): BoardController {
     [],
   )
 
-  const teamMode = runtime?.team === true || runtime?.mode === 'team'
   const inbox = useOwnershipInbox({
-    teamMode,
     teamId: filters.teamId,
     projectId: filters.projectId,
   })
@@ -107,22 +104,6 @@ export function useBoard(): BoardController {
     teamStatusRefresh.activate()
     return () => teamStatusRefresh.dispose()
   }, [teamStatusRefresh])
-
-  const loadBoard = useCallback(async (_force = false, quiet = false) => {
-    if (!quiet) setLoading(true)
-    try {
-      const payload = await fetchBoard()
-      if (payload) {
-        setBoard(payload)
-        setStatus({ refreshRunning: Boolean(payload.refreshRunning) })
-        setError('')
-      }
-    } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      if (!quiet) setLoading(false)
-    }
-  }, [])
 
   const loadTeamPage = useCallback(
     async (quiet = false) => {
@@ -193,7 +174,7 @@ export function useBoard(): BoardController {
   const clearOperations = useCallback(() => replaceOperations([]), [replaceOperations])
 
   const loadOperations = useCallback(async () => {
-    if (!teamMode || filters.taskSpaceId === 'all') {
+    if (filters.taskSpaceId === 'all') {
       operationsRequest.current += 1
       clearOperations()
       return
@@ -209,7 +190,7 @@ export function useBoard(): BoardController {
     } catch {
       // 操作列表失败不覆盖正式任务查询结果。
     }
-  }, [teamMode, filters.taskSpaceId, clearOperations, replaceOperations])
+  }, [filters.taskSpaceId, clearOperations, replaceOperations])
 
   const loadAssignments = useCallback(async () => {
     try {
@@ -226,9 +207,8 @@ export function useBoard(): BoardController {
       .then((data) => {
         if (active && data) setRuntime(data)
       })
-      .catch(() => {
-        // 独立模式没有 /api/runtime，回落为单人看板
-        if (active) setRuntime({ team: false, authenticated: true, user: null })
+      .catch((err) => {
+        if (active) setError(err instanceof Error ? err.message : '读取运行时信息失败')
       })
     return () => {
       active = false
@@ -237,23 +217,15 @@ export function useBoard(): BoardController {
 
   useEffect(() => {
     if (!runtime) return
-    if (teamMode) {
-      void loadTeamPage(true)
-      void loadAssignments()
-      return
-    }
-    void loadBoard()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 初始化一次并按运行模式加载权威快照
-  }, [runtime, teamMode])
+    void loadTeamPage(true)
+    void loadAssignments()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 初始化一次并加载权威快照
+  }, [runtime])
 
   const alignBoard = useCallback(async () => {
-    if (teamMode) {
-      await Promise.all([loadTeamPage(true), loadTeamStatus()])
-      if (inbox.openRef.current) await inbox.reload()
-      return
-    }
-    await loadBoard(false, true)
-  }, [teamMode, loadBoard, loadTeamPage, loadTeamStatus, inbox.reload])
+    await Promise.all([loadTeamPage(true), loadTeamStatus()])
+    if (inbox.openRef.current) await inbox.reload()
+  }, [loadTeamPage, loadTeamStatus, inbox.reload])
 
   const alignBoardRef = useRef(alignBoard)
   useEffect(() => {
@@ -289,7 +261,6 @@ export function useBoard(): BoardController {
   }, [runtime])
 
   useEffect(() => {
-    if (!teamMode) return
     let timer = 0
     const schedule = () => {
       if (timer) window.clearTimeout(timer)
@@ -309,21 +280,20 @@ export function useBoard(): BoardController {
       if (timer) window.clearTimeout(timer)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [teamMode, loadTeamStatus])
+  }, [loadTeamStatus])
 
   useEffect(() => {
-    if (teamMode) void loadTeamPage(true)
-  }, [filters, teamMode, loadTeamPage])
+    void loadTeamPage(true)
+  }, [filters, loadTeamPage])
 
   useEffect(() => {
-    if (!teamMode) return
     void loadTeamPreferences().catch((err: unknown) => {
       setError((err as Error).message)
     })
-  }, [teamMode, loadTeamPreferences])
+  }, [loadTeamPreferences])
 
   useEffect(() => {
-    if (!teamMode || filters.taskSpaceId === 'all') {
+    if (filters.taskSpaceId === 'all') {
       clearOperations()
       return
     }
@@ -333,15 +303,11 @@ export function useBoard(): BoardController {
       operationsRequest.current += 1
       window.clearInterval(timer)
     }
-  }, [teamMode, filters.taskSpaceId, loadOperations, clearOperations])
+  }, [filters.taskSpaceId, loadOperations, clearOperations])
 
   const reloadCurrentSource = useCallback(async () => {
-    if (teamMode) {
-      await loadTeamPage(true)
-      return
-    }
-    await loadBoard(false, true)
-  }, [teamMode, loadBoard, loadTeamPage])
+    await loadTeamPage(true)
+  }, [loadTeamPage])
 
   const trackOperation = useCallback(
     (payload: unknown) => {
@@ -436,18 +402,13 @@ export function useBoard(): BoardController {
   const actions = useMemo(
     () => ({
       refresh: async () => {
-        if (teamMode) {
-          await loadTeamPage(false)
-          await loadTeamStatus()
-          if (inbox.openRef.current) await inbox.reload()
-          return
-        }
-        await loadBoard(true)
+        await loadTeamPage(false)
+        await loadTeamStatus()
+        if (inbox.openRef.current) await inbox.reload()
       },
       saveWip: async (limit: number) => {
-        await saveWipLimit(limit, teamMode ? filters.teamId : undefined)
-        if (teamMode) await loadTeamPreferences()
-        else await loadBoard(false, true)
+        await saveWipLimit(limit, filters.teamId)
+        await loadTeamPreferences()
       },
       createTask: async (payload: Record<string, unknown>) => {
         const idempotencyKey =
@@ -494,19 +455,19 @@ export function useBoard(): BoardController {
         const saved = await saveSavedView({
           name,
           filter: viewFilter,
-          ...(teamMode ? { teamId: filters.teamId } : {}),
+          teamId: filters.teamId,
         })
         await reloadCurrentSource()
-        if (teamMode) await loadTeamPreferences()
+        await loadTeamPreferences()
         return saved?.view?.id ?? ''
       },
       deleteView: async (id: string) => {
-        await deleteSavedView(id, teamMode ? filters.teamId : undefined)
+        await deleteSavedView(id, filters.teamId)
         if (filters.executionView === id) {
           setFiltersState((current) => ({ ...current, executionView: 'all' }))
         }
         await reloadCurrentSource()
-        if (teamMode) await loadTeamPreferences()
+        await loadTeamPreferences()
       },
       retryOperation: async (id?: string) => {
         const operationId = id || operation?.id
@@ -533,17 +494,15 @@ export function useBoard(): BoardController {
         pick: pickFolders,
         add: async (paths: string[]) => {
           await addRepositories(paths)
-          await loadBoard(false, true)
+          await loadTeamPage(false)
         },
         remove: async (id: string) => {
           await removeRepository(id)
-          await loadBoard(false, true)
+          await loadTeamPage(false)
         },
       },
     }),
     [
-      teamMode,
-      loadBoard,
       loadTeamPage,
       loadTeamPreferences,
       loadTeamStatus,
@@ -606,10 +565,10 @@ export function useBoard(): BoardController {
         ),
       }))
   }, [teamStatus, filters.teamId])
-  const projects: Project[] = teamMode ? teamProjects : board?.projects || []
+  const projects: Project[] = teamProjects
   const ownershipInboxSummary = useMemo(
-    () => summarizeOwnershipInbox(teamMode ? projects : [], filters.projectId),
-    [teamMode, projects, filters.projectId],
+    () => summarizeOwnershipInbox(projects, filters.projectId),
+    [projects, filters.projectId],
   )
 
   const toggleOwnershipInbox = useCallback(
@@ -627,16 +586,15 @@ export function useBoard(): BoardController {
   }, [inbox.open, ownershipInboxSummary.count, inbox.clear])
 
   useEffect(() => {
-    if (!teamMode || projects.length === 0 || filters.projectId === 'all') return
+    if (projects.length === 0 || filters.projectId === 'all') return
     if (!projects.some((project) => project.id === filters.projectId)) {
       setFilters({ projectId: projects[0].id, taskSpaceId: 'all' })
     }
-  }, [teamMode, projects, filters.projectId, setFilters])
+  }, [projects, filters.projectId, setFilters])
 
   const tasks = useMemo<BoardTask[]>(() => {
-    if (!teamMode) return board?.tasks || []
     return (teamPage?.tasks || []).map((row) => teamRowToBoardTask(row as Record<string, unknown>))
-  }, [teamMode, teamPage?.tasks, board?.tasks])
+  }, [teamPage?.tasks])
 
   return {
     board,
@@ -644,7 +602,6 @@ export function useBoard(): BoardController {
     projects,
     status,
     runtime,
-    teamMode,
     teamPage,
     teamStatus,
     ownershipInbox: {

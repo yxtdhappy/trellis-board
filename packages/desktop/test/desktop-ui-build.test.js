@@ -220,6 +220,7 @@ test('desktop local plugin commands stay board-only and lazy', () => {
   const host = read('packages/desktop/src-tauri/src/plugin_host.rs')
   const boardPage = read('packages/web/src/pages/board/BoardPage.tsx')
   const adapter = read('packages/web/src/api/desktop-plugins.ts')
+  const transport = read('packages/web/src/api/plugin-transport.ts')
 
   const commands = [
     ['desktop-plugins-list', 'desktop_plugins_list'],
@@ -245,7 +246,8 @@ test('desktop local plugin commands stay board-only and lazy', () => {
   assert.match(host, /if !entries\.any_enabled\(\) \{\s+return Ok\(false\);/)
   assert.match(host, /desktop-plugins/)
   assert.match(host, /kill_process_tree/)
-  assert.match(boardPage, /isTauri && teamMode \? \[DESKTOP_PLUGIN_NAV\] : \[\]/)
+  assert.match(boardPage, /isClient \? \[DESKTOP_PLUGIN_NAV\] : \[\]/)
   assert.match(boardPage, /fetchDesktopPanels/)
-  assert.match(adapter, /desktop_plugin_request/)
+  assert.match(adapter, /desktopAvailable = transport\.pluginTransportAvailable\(\)/)
+  assert.match(transport, /desktop_plugin_request/)
 })

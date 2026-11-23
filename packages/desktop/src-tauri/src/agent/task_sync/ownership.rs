@@ -418,7 +418,10 @@ impl TaskSync {
                 hashed += 1;
                 let bytes = tokio::fs::read(&path).await.map_err(io_error)?;
                 let text = String::from_utf8(bytes).map_err(|_| {
-                    AgentError::new(code::INVALID_RESPONSE, "任务文件不是有效的 UTF-8 文本")
+                    AgentError::new(
+                        code::INVALID_RESPONSE,
+                        format!("任务文件不是有效的 UTF-8 文本：{relative}"),
+                    )
                 })?;
                 let content = normalize_snapshot_text(&text);
                 let sha256 = snapshot_sha256(&content);

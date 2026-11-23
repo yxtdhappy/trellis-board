@@ -4,8 +4,8 @@
 
 ## 1. 运行边界
 
-- 主线定位：Team 模式（中心 Team Server + Windows 桌面 EXE 客户端）是当前唯一持续维护的运行主线；`standalone` 单机模式已降级为遗留兼容模式，不再维护新功能。
-- 服务端插件边界：生产 Team 服务器默认屏蔽所有插件（需显式配置才放行）；个人/本机类插件演进方向为随桌面 EXE 运行并由个人账号隔离，不依赖服务端集中托管。
+- 主线定位：Team 模式（中心 Team Server + Windows 桌面 EXE 客户端）是唯一运行模式；`standalone` 可执行代码已移除。
+- 服务端插件边界：生产 Team 服务器固定屏蔽所有服务端插件；插件只在桌面客户端本机运行，并由个人账号隔离，不依赖服务端集中托管。
 - 服务端：Node.js 24、单实例 Node 进程、SQLite WAL。
 - 客户端：Windows 10/11 x64；安装包包含固定 Node runtime 和 Trellis CLI，本机执行任务命令时仍需
   Git 和 Python。
@@ -26,12 +26,12 @@
 
 | 变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `TRELLIS_BOARD_MODE` | 是 | `standalone` | Team 部署设为 `team` |
+| `TRELLIS_BOARD_MODE` | 否 | `team` | 只接受 `team`；其他值启动时直接报错 |
 | `TRELLIS_BOARD_DATA_DIR` | 生产必填 | 平台用户数据目录 | Windows 默认 `%LOCALAPPDATA%\TrellisBoard\server`；Ubuntu 建议 `/var/lib/trellis-board` |
 | `PORT` | 否 | `4317` | HTTP 和 Team 服务端口 |
-| `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES` | 否 | standalone `true`，team `false` | 是否接受本地 `file://` Git 远端 |
-| `TRELLIS_TEAM_PLUGINS_ALLOWLIST` | 否 | 空（全部屏蔽） | 逗号分隔的插件 ID 白名单；未设置、空串或 `none` 时 Team 服务不装载任何插件 |
-| `TRELLIS_PLUGINS_DISABLED` | 否 | `false` | 设为 `1`/`true` 时强制关闭 Team 插件宿主，优先于白名单 |
+| `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES` | 否 | `false` | 是否接受本地 `file://` Git 远端 |
+| `TRELLIS_TEAM_PLUGINS_ALLOWLIST` | 否 | 空 | 保留字段；服务端插件已固定关闭，配置也不会启用 |
+| `TRELLIS_PLUGINS_DISABLED` | 否 | `true` | 保留字段；服务端插件已固定关闭 |
 
 Team 模式没有 `TRELLIS_TEAM_GIT_POLL_MS`。活动任务远端不由服务端轮询；归档同步调度器只按配置周期
 读取远端归档路径。
@@ -75,7 +75,7 @@ node packages/server/index.js
 
 服务账号必须能读写 `TRELLIS_BOARD_DATA_DIR`、SQLite 文件和 `archive-snapshots/`。Team 运行归档
 Git 同步时需要可执行的 Git CLI；HTTPS 公开仓库可以匿名读取，私有仓库和 SSH 来源在管理页配置
-按来源隔离的只读凭据。standalone 模式仍按本机仓库运行。
+按来源隔离的只读凭据。
 
 ## 3. 首次部署
 

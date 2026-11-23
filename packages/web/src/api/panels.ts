@@ -9,7 +9,7 @@ export type PluginPanel = {
   pluginId: string
   pluginName: string
   src: string
-  /** desktop：桌面客户端内置的本机插件宿主；缺省为服务端插件。 */
+  /** desktop：桌面客户端内置的插件宿主；缺省为服务端插件。 */
   host?: 'team' | 'desktop'
   eventsSrc?: string
 }

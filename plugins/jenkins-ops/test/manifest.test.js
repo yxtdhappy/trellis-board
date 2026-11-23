@@ -58,9 +58,27 @@ test('jenkins-ops 通过真实清单校验与握手', async () => {
   }
 })
 
-test('未配置时面板可用且给出版本与配置状态', async () => {
+test('内置默认 Jenkins 地址，宿主配置可覆盖', async () => {
   const harness = await createHarness({
     plugins: [{ id: ID, module: MODULE, enabled: true, config: {} }],
+    hostVersion: '0.4.24',
+  })
+  const http = await startHttpServer(harness.runtime)
+  try {
+    const status = await fetch(`${http.baseUrl}/api/plugins/${ID}/status`).then((response) =>
+      response.json(),
+    )
+    assert.equal(status.baseUrl, 'http://ci.weintdata.cn')
+    assert.equal(status.configured, true)
+  } finally {
+    await http.close()
+    await harness.cleanup()
+  }
+})
+
+test('未配置时面板可用且给出版本与配置状态', async () => {
+  const harness = await createHarness({
+    plugins: [{ id: ID, module: MODULE, enabled: true, config: { baseUrl: '' } }],
     hostVersion: '0.4.24',
   })
   const http = await startHttpServer(harness.runtime)

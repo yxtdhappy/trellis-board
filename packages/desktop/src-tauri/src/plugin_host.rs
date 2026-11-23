@@ -1,4 +1,4 @@
-//! 桌面 EXE 本机插件宿主：按 (serverHash, userId) 隔离、按需拉起 Node 进程。
+//! 桌面 EXE 插件宿主：按 (serverHash, userId) 隔离、按需拉起 Node 进程。
 //!
 //! Rust 只负责生命周期、隔离目录、DPAPI 凭据与 loopback 代理；
 //! 插件协议、supervisor、store、task-service 全部复用服务端 Node 实现。
@@ -68,7 +68,7 @@ pub fn register(app: &AppHandle) {
 
 fn state(app: &AppHandle) -> Result<tauri::State<'_, PluginHostState>, String> {
     app.try_state::<PluginHostState>()
-        .ok_or_else(|| "本机插件宿主尚未初始化".to_string())
+        .ok_or_else(|| "插件宿主尚未初始化".to_string())
 }
 
 fn caller(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
@@ -160,9 +160,9 @@ async fn current_scope() -> Result<(PathBuf, String), String> {
         .read_config(false)
         .await
         .map_err(|error| error.message)?
-        .ok_or_else(|| "尚未登录，无法使用本机插件".to_string())?;
+        .ok_or_else(|| "尚未登录，无法使用插件".to_string())?;
     if agent.server_url.trim().is_empty() {
-        return Err("尚未登录，无法使用本机插件".to_string());
+        return Err("尚未登录，无法使用插件".to_string());
     }
     let identity = agent
         .username
@@ -242,11 +242,11 @@ async fn ensure_running(app: &AppHandle) -> Result<bool, String> {
     }
     let mut child = command
         .spawn()
-        .map_err(|error| format!("无法启动本机插件宿主：{error}"))?;
+        .map_err(|error| format!("无法启动插件宿主：{error}"))?;
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| "无法读取本机插件宿主输出".to_string())?;
+        .ok_or_else(|| "无法读取插件宿主输出".to_string())?;
     let stderr = child.stderr.take();
     if let Some(stderr) = stderr {
         tauri::async_runtime::spawn(async move {
@@ -273,7 +273,7 @@ async fn ensure_running(app: &AppHandle) -> Result<bool, String> {
     inner.token = token;
     inner.secret = secret;
     inner.scope = Some(scope);
-    logging::info(&format!("本机插件宿主已启动 port={port}"));
+    logging::info(&format!("插件宿主已启动 port={port}"));
     Ok(true)
 }
 
@@ -293,11 +293,11 @@ async fn wait_ready(stdout: tokio::process::ChildStdout) -> Result<u16, String> 
                 }
             }
         }
-        Err("本机插件宿主未返回就绪端口".to_string())
+        Err("插件宿主未返回就绪端口".to_string())
     };
     match tokio::time::timeout(READY_TIMEOUT, read).await {
         Ok(result) => result,
-        Err(_) => Err("本机插件宿主启动超时".to_string()),
+        Err(_) => Err("插件宿主启动超时".to_string()),
     }
 }
 
@@ -321,7 +321,7 @@ async fn resolve_node(app: &AppHandle) -> Result<PathBuf, String> {
         // 插件宿主复用服务端插件运行时，依赖 node:sqlite（Node 22.5+）。
         if !crate::agent::env::is_version_at_least(&version, PLUGIN_HOST_NODE_VERSION) {
             return Err(format!(
-                "本机插件需要 Node.js {PLUGIN_HOST_NODE_VERSION} 或更高，当前 {version}"
+                "插件需要 Node.js {PLUGIN_HOST_NODE_VERSION} 或更高，当前 {version}"
             ));
         }
     }
@@ -332,7 +332,7 @@ async fn resolve_node(app: &AppHandle) -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .ok_or_else(|| {
             let _ = app;
-            "本机插件需要 Node.js 运行环境，请先在环境检查中安装".to_string()
+            "插件需要 Node.js 运行环境，请先在环境检查中安装".to_string()
         })
 }
 
@@ -348,21 +348,21 @@ async fn prepare_secrets(scope: &Path) {
         == Some(SECRETS_SCHEMA_VERSION as u64)
         && value.get("algorithm").and_then(Value::as_str) == Some(SECRETS_ALGORITHM);
     if !valid {
-        logging::warn("本机插件凭据文件格式无效，已忽略");
+        logging::warn("插件凭据文件格式无效，已忽略");
         return;
     }
     let Some(ciphertext) = value.get("ciphertext").and_then(Value::as_str) else {
         return;
     };
     let Ok(ciphertext) = base64::engine::general_purpose::STANDARD.decode(ciphertext) else {
-        logging::warn("本机插件凭据无法解码，已忽略");
+        logging::warn("插件凭据无法解码，已忽略");
         return;
     };
     let plaintext = match dpapi_unprotect(&ciphertext) {
         Ok(value) => value,
         Err(error) => {
             if error.code != "DPAPI_UNAVAILABLE" {
-                logging::warn(&format!("本机插件凭据解密失败：{}", error.message));
+                logging::warn(&format!("插件凭据解密失败：{}", error.message));
             }
             return;
         }
@@ -519,7 +519,7 @@ fn write_plugins_file(plugins_file: &Path, document: &Value) -> Result<(), Strin
 
 impl HostInner {
     fn base(&self) -> Result<String, String> {
-        let port = self.port.ok_or_else(|| "本机插件宿主未运行".to_string())?;
+        let port = self.port.ok_or_else(|| "插件宿主未运行".to_string())?;
         Ok(format!("http://127.0.0.1:{port}"))
     }
 }
@@ -544,12 +544,12 @@ async fn request_json(
     let response = request
         .send()
         .await
-        .map_err(|error| format!("本机插件宿主请求失败：{error}"))?;
+        .map_err(|error| format!("插件宿主请求失败：{error}"))?;
     let status = response.status();
     let text = response
         .text()
         .await
-        .map_err(|error| format!("读取本机插件响应失败：{error}"))?;
+        .map_err(|error| format!("读取插件响应失败：{error}"))?;
     let payload: Value = serde_json::from_str(&text).unwrap_or_else(|_| json!({ "error": text }));
     if status.is_success() {
         Ok(payload)
@@ -557,7 +557,7 @@ async fn request_json(
         let message = payload
             .get("error")
             .and_then(Value::as_str)
-            .unwrap_or("本机插件宿主返回错误");
+            .unwrap_or("插件宿主返回错误");
         Err(message.to_string())
     }
 }
@@ -732,7 +732,7 @@ pub async fn desktop_plugin_reorder(
 ) -> Result<Value, String> {
     caller(&app, &window)?;
     if !ensure_running(&app).await? {
-        return Err("本机插件宿主未运行".to_string());
+        return Err("插件宿主未运行".to_string());
     }
     let state = state(&app)?;
     request_json(
@@ -780,7 +780,7 @@ pub async fn desktop_plugin_panels(app: AppHandle, window: WebviewWindow) -> Res
     let payload = request_json(&state, reqwest::Method::GET, "/internal/panels", None).await?;
     let (base, secret, _port) = running_snapshot(&state)
         .await
-        .ok_or_else(|| "本机插件宿主未运行".to_string())?;
+        .ok_or_else(|| "插件宿主未运行".to_string())?;
     let panels = payload
         .get("panels")
         .and_then(Value::as_array)
@@ -821,7 +821,7 @@ pub async fn desktop_plugin_request(
         return Err("插件请求路径必须以 / 开头".to_string());
     }
     if !ensure_running(&app).await? {
-        return Err("本机插件宿主未运行".to_string());
+        return Err("插件宿主未运行".to_string());
     }
     let state = state(&app)?;
     let (base, token) = {
@@ -878,7 +878,7 @@ pub async fn desktop_plugin_asset(
 ) -> Result<Value, String> {
     caller(&app, &window)?;
     if !ensure_running(&app).await? {
-        return Err("本机插件宿主未运行".to_string());
+        return Err("插件宿主未运行".to_string());
     }
     let state = state(&app)?;
     let (base, secret) = {

@@ -71,8 +71,7 @@ Board 仍通过普通 REST 查询刷新，不从 SSE 接收任务正文。
 Web 端 Team 模式创建/改派不要求当前 taskSpace 有在线监听，只在任务空间停用或账号只读时提前阻止；
 最终写权限仍由服务端校验。`pending_delivery`、`claimed`、`lease_expired`、`version_stale`、
 `migration_conflict`、改派和 handoff 状态必须显示为可读控制状态。正文尚未 materialize 时，
-任务详情只展示服务端元数据和控制状态，禁止请求 `/api/task`、渲染产物或依赖分析；standalone
-或没有控制字段的旧 Team 数据保持正文可用兼容。
+任务详情只展示服务端元数据和控制状态，禁止请求 `/api/task`、渲染产物或依赖分析；没有控制字段的旧 Team 数据保持正文可用兼容。
 
 `taskSpaceId` 可选：指定时查询单分支；缺省或 `all` 时按当前 `teamId` 和可选 `projectIds` 查询所有可读
 taskSpace。服务端使用 `taskSpaces.listReadable()` 生成项目/任务空间集合并校验显式 projectIds。
@@ -224,6 +223,9 @@ Board SSE 继续只发送 `tasks.changed`，页面收到后重新查询 REST 快
 - 客户端和服务端都用 `normalizeSnapshotText()` 去除 BOM 并把 CRLF/CR 转为 LF，再用
   `snapshotSha256()` 计算摘要；客户端必须用 fatal UTF-8 解码，服务端必须拒绝
   `sha256` 与规范化内容不一致、`baseSha256` 非法或格式错误的记录。
+- 客户端任务快照扫描与 ownership 索引扫描遇到非 UTF-8 文件必须失败关闭，错误消息必须包含
+  该文件的仓库相对路径（`.trellis/tasks/...`），不得包含本机绝对路径；任务归属确认的预检
+  只扫描本次 decisions 涉及的 taskDir，无关任务目录的非 UTF-8 文件不得阻断归属动作。
 - 服务端每秒最多接受每个 Agent/taskSpace 5 个批次。
 - 客户端必须主动遵守服务端批次上限：同一 taskSpace 的上传请求完整结束后至少等待 260ms
   才可开始下一批；收到 `429 RATE_LIMITED` 时最多重试 2 次，且必须复用原

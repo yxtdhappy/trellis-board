@@ -1,8 +1,8 @@
 /**
- * Team 服务端插件门禁：默认屏蔽、显式白名单放行与 /api/runtime 开关下发。
+ * Team 服务端插件门禁：服务端固定关闭，插件只由客户端本机宿主提供。
  *
- * 生产 Team 服务器不配置任何环境变量时必须零插件子进程、零插件静态资源；
- * 只有运维显式设置 TRELLIS_TEAM_PLUGINS_ALLOWLIST 才装载白名单内的插件。
+ * 无论白名单如何配置，Team 服务端都必须零插件子进程、零插件静态资源；
+ * `features.pluginsEnabled` 保留字段但恒为 false，供旧前端读取不崩溃。
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -183,23 +183,19 @@ test('TRELLIS_PLUGINS_DISABLED=1 压过白名单强关插件', async (t) => {
   assert.equal(plugins.body.disabled, true)
 })
 
-test('显式白名单时 runtime 下发 pluginsEnabled=true 并按白名单登记', async (t) => {
+test('显式白名单也不能在 Team 服务端启用插件', async (t) => {
   const { runtime, cookie } = await startRuntime(t, {
     pluginAllowlist: ['witops-core'],
   })
   const runtimeInfo = await request(runtime, '/api/runtime', { cookie })
-  assert.equal(runtimeInfo.body.features.pluginsEnabled, true)
+  assert.equal(runtimeInfo.body.features.pluginsEnabled, false)
 
   const plugins = await request(runtime, '/api/plugins', { cookie })
   assert.equal(plugins.status, 200)
-  assert.equal(plugins.body.disabled, false)
-  assert.deepEqual(
-    plugins.body.plugins.map((plugin) => plugin.id),
-    ['witops-core'],
+  assert.deepEqual(plugins.body, { disabled: true, mode: 'team', plugins: [] })
+  assert.equal(
+    runtime.db.prepare('SELECT COUNT(*) AS count FROM plugin_registry').get().count,
+    0,
+    '白名单非空也不应扫描并登记插件',
   )
-  const registered = runtime.db
-    .prepare('SELECT plugin_id FROM plugin_registry ORDER BY plugin_id')
-    .all()
-    .map((row) => row.plugin_id)
-  assert.deepEqual(registered, ['witops-core'])
 })

@@ -485,6 +485,37 @@ async fn targeted_local_read_does_not_decode_sibling_task_bodies() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
+#[tokio::test]
+async fn local_task_scan_reports_invalid_utf8_path() {
+    let root = std::env::temp_dir().join(format!(
+        "trellis-invalid-utf8-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let task_dir = root.join(".trellis").join("tasks").join("bad");
+    tokio::fs::create_dir_all(&task_dir).await.expect("mkdir");
+    tokio::fs::write(task_dir.join("prd.md"), [0xff_u8, 0xfe])
+        .await
+        .expect("write");
+
+    let error = read_local_task_snapshot_files(&root, None)
+        .await
+        .expect_err("invalid utf8 task file");
+    assert_eq!(error.code, code::INVALID_RESPONSE);
+    assert!(
+        error.message.contains(".trellis/tasks/bad/prd.md"),
+        "message should include relative path: {}",
+        error.message
+    );
+    let root_text = root.to_string_lossy().to_string();
+    assert!(
+        !error.message.contains(root_text.as_str()),
+        "message must not include repo path: {}",
+        error.message
+    );
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
 #[test]
 fn with_task_dir_injects_and_keeps_existing_directory() {
     let error = with_task_dir(

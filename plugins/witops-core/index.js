@@ -30,7 +30,8 @@ import {
 const BASE_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 const DEFAULTS = {
-  baseUrl: '',
+  // 内置默认平台地址：宿主 plugins.json 里的 config.baseUrl 仍然优先覆盖。
+  baseUrl: 'http://witops.weintdata.cn',
   gatewayPrefix: '/appgw',
   taskServicePrefix: '/weint-witops-service',
   adminServicePrefix: '/system-mng',
@@ -58,6 +59,7 @@ const DEFAULTS = {
   agentId: null,
   credentialSource: 'auto',
   accountSystemId: 'witops',
+  accountSystemName: 'WitOps',
   credentials: { mode: 'password', account: '', password: '', token: '' },
   session: { persist: true },
   poll: { enabled: false, intervalMs: 1_800_000 },
@@ -100,6 +102,7 @@ export default createPlugin({
     const config = normalizeConfig({ ...rawConfig, ...(ctx.config ?? {}) })
     let accountCredential = null
     let accountsError = ''
+    let accountsAvailable = false
 
     // 统一账号优先：成功则覆盖 config.credentials，失败按 credentialSource 回退本地。
     // 先算结果再一次性提交，避免事件回包期间状态短暂变空。
@@ -126,6 +129,11 @@ export default createPlugin({
       if (seq !== refreshSeq) return
       accountCredential = next
       accountsError = error
+      // 只有 accounts-core 未运行/能力不可用/系统未配置时视为“不展示统一账号”；
+      // 系统已配置但未绑定账号仍算可用，面板会提示去绑定。
+      const unavailable =
+        /未运行|capability 不可用|CAPABILITY_UNAVAILABLE|系统不存在|系统已禁用/.test(error)
+      accountsAvailable = Boolean(next) || (Boolean(error) && !unavailable)
       if (!next) {
         if (error) {
           ctx.log.info('统一账号不可用，按配置回退', {
@@ -1276,17 +1284,59 @@ export default createPlugin({
     ctx.http.route('GET', '/auth', async () => respond(200, await authStatus()))
 
     // 供统一账号小组件使用：只暴露凭据来源与账号名，不暴露密码。
-    ctx.http.route('GET', '/credentials', async () =>
-      respond(200, {
-        source: accountCredential ? 'accounts' : 'local',
+    ctx.http.route('GET', '/credentials', async () => {
+      // 启动顺序可能让 accounts-core 晚于本插件就绪；读取时懒重试一次。
+      if (accountsError && config.credentialSource !== 'local') {
+        await refreshAccounts({ reason: 'credentials-retry' })
+      }
+      return respond(200, {
+        available: accountsAvailable,
+        source: accountCredential ? 'accounts' : accountsAvailable ? 'none' : 'local',
         systemId: config.accountSystemId,
+        systemName: config.accountSystemName,
         accountId: accountCredential?.accountId ?? '',
         username: text(config.credentials.account),
         hasPassword:
           Boolean(text(config.credentials.password)) || Boolean(await session.hasStoredPassword()),
-        error: accountsError || '',
-      }),
-    )
+        // 统一账号插件未运行时只是回退本地配置，不把内部 capability 错误抛给面板。
+        error: accountsAvailable && accountsError ? accountsError : '',
+      })
+    })
+
+    // 面板会话入口：team.js 用 /session 读写登录态。
+    ctx.http.route('GET', '/session', async () => {
+      const current = await authStatus()
+      return respond(200, {
+        online: current.status === 'authenticated',
+        account: current.account ?? null,
+        source: current.source,
+        credentialSource: current.credentialSource,
+      })
+    })
+
+    ctx.http.route('POST', '/session', async (request) => {
+      const body = request.json() ?? {}
+      if (!text(body.account) || !text(body.password)) {
+        return respond(400, { error: '需要 account 与 password' })
+      }
+      try {
+        await session.login({
+          account: body.account,
+          password: body.password,
+          remember: body.remember === true,
+          source: 'panel',
+        })
+        clearReadCache()
+        return respond(200, { ok: true, auth: await authStatus() })
+      } catch (error) {
+        return failure(error, 502)
+      }
+    })
+
+    ctx.http.route('DELETE', '/session', async () => {
+      await session.logout()
+      return respond(200, { ok: true })
+    })
 
     ctx.http.route('POST', '/login', async (request) => {
       const body = request.json() ?? {}

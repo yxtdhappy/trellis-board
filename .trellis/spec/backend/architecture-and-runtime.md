@@ -7,11 +7,11 @@
 | [packages/server/config.js](../../../packages/server/config.js) | 跨平台运行数据根、SQLite 路径、团队监听与公开地址配置 |
 | [packages/server/data-migration.js](../../../packages/server/data-migration.js) | 从旧源码 `data/` 迁移运行数据并重写受管项目路径 |
 | [packages/server/database.js](../../../packages/server/database.js) | `node:sqlite` 连接、PRAGMA、顺序迁移到 schema v16、事务辅助 |
-| [packages/server/repositories.js](../../../packages/server/repositories.js) | standalone 白名单增删、ID 生成和路径规范化 |
+| [packages/server/repositories.js](../../../packages/server/repositories.js) | 仓库白名单增删、ID 生成和路径规范化（Team 插件任务服务与历史数据） |
 | [packages/server/loader.js](../../../packages/server/loader.js) | 扫描任务、读取证据、推导阶段和父子关系 |
-| [packages/server/scan-worker.js](../../../packages/server/scan-worker.js) | standalone Worker Thread 扫描与增量任务刷新 |
-| [packages/server/watcher.js](../../../packages/server/watcher.js) | standalone 仓库 watcher；团队服务端不使用 |
-| [packages/shared/trellis-watcher.js](../../../packages/shared/trellis-watcher.js) | 单机与桌面客户端共用的任务/workspace 监听见 |
+| [packages/server/scan-worker.js](../../../packages/server/scan-worker.js) | 历史 Worker Thread 扫描核心；standalone 已移除，Team 不调用 |
+| [packages/server/watcher.js](../../../packages/server/watcher.js) | 历史仓库 watcher；standalone 已移除，Team 不调用 |
+| [packages/shared/trellis-watcher.js](../../../packages/shared/trellis-watcher.js) | 桌面客户端任务/workspace 监听 |
 | [packages/shared/task-snapshot.js](../../../packages/shared/task-snapshot.js) | tasks-only 路径、LF 摘要、任务目录分组和首次差异分类 |
 | [packages/shared/remote-identity.js](../../../packages/shared/remote-identity.js) | Git 远端规范化和任务空间身份输入 |
 | [packages/server/team/task-space-service.js](../../../packages/server/team/task-space-service.js) | 全局项目、分支任务空间、团队访问、成员和 Agent binding |
@@ -29,17 +29,9 @@
 ## 依赖方向
 
 ```text
-standalone:
-packages/server/index.js（只有一个 CLI bootstrap，业务在 standalone/ 下）
-  -> standalone/server.js -> state / api / plugins / static / refresh / watcher
-  -> database / loader / persistence / actions / repositories / watcher
-  -> execution-store / execution-projection
-
-packages/server/scan-worker.js
-  -> database / loader / metadata / repositories
-
 team:
-packages/server/team/http.js
+packages/server/index.js
+  -> team/runtime.js -> team/http.js
   -> task-space-service
   -> task-snapshot-service
   -> task-space-index -> loader + sync_task_space_file
@@ -60,25 +52,6 @@ onboarding.rs
 `config.js` 不反向导入业务模块。`database.js` 是 SQLite schema 和迁移的唯一所有者。业务模块不绕过
 `database.js` 的连接、事务和迁移入口。`loader.js` 是可复用扫描核心；Worker、详情接口和 Team 快照
 投影都复用它，不在 HTTP 路由另写阶段推导。
-
-## Standalone 运行时（已降级 / Legacy）
-
-> **降级说明**：`standalone` 模式已降级为遗留兼容模式（Frozen / Legacy），不再新增功能特性或要求双轨同步；新能力与插件演进统一围绕 `team` 服务端与桌面 EXE 主线开展，仅保留以下现状供回溯与存量测试。
-
-单机模式继续读取 SQLite `repositories` 白名单中的本机仓库：
-
-```text
-.trellis/tasks + workspace + task.json evidence
-  -> packages/server/scan-worker.js
-  -> packages/server/loader.js
-  -> scan_cache + execution tables
-  -> /api/board + /api/task
-```
-
-- HTTP 主线程维护 `boardCache`、`inflightScan`、`queuedRefresh`、Worker 请求 Map 和 watcher。
-- 完整仓库扫描在 Worker Thread 内执行；单任务事件可走增量刷新。
-- 跨项目父子关系仍在主线程组合，不能只看单个任务结果。
-- 创建任务和负责人写入由 standalone 路由调用目标仓库自己的 `task.py` 或原子写 `task.json`。
 
 ## Team 活动任务与归档运行时
 
@@ -287,7 +260,7 @@ Team 启动：
 
 ## 日志
 
-- 主入口创建 `createServerLogger({ dataDir })`，standalone 和 team runtime 接收同一个 logger。
+- 主入口创建 `createServerLogger({ dataDir })`，Team runtime 接收同一个 logger。
 - 实现是 `pino` + `pino-roll`，写入 `<dataDir>/logs/server.<n>.log`，每行一个 JSON 对象
   （`level` 数值、`time` ISO-8601、`msg` 已脱敏的自由文本）；文件名序号由 pino-roll 维护，
   不再有固定的 `server.log`。
@@ -299,7 +272,7 @@ Team 启动：
 ## 子进程与异步边界
 
 - SQLite 使用同步 `DatabaseSync`；多行业务写入必须在 `BEGIN IMMEDIATE` 事务内完成。
-- Standalone 的外部 `task.py` 使用 `spawn()` 参数数组，不启用 shell，并设置 `PYTHONUTF8=1`。
+- 服务端外部 `task.py`（插件任务服务）使用 `spawn()` 参数数组，不启用 shell，并设置 `PYTHONUTF8=1`。
 - 桌面 Agent 的 `task.py`、Git 检查、Trellis 初始化和 Git 子进程都在客户端执行。
 - 活动任务同步和命令投递不启动 Git/Python 子进程；Agent 命令通过 SSE 和 HTTP 结果协议完成。
   归档 scheduler 是唯一例外，只允许启动隔离 Git 进程读取 archive 对象，不能写入项目或活动快照。
@@ -318,7 +291,7 @@ Team 启动：
 - `SCAN_SCHEMA_VERSION` 当前为 `11`；Board 输出结构不兼容时同步递增。
 - `AGENT_PROTOCOL_VERSION` 当前为 `3`；命令 payload 和 Agent 事件都按 v3 校验。
 - 在线 Agent 的 `last_seen_at` 窗口固定为 60 秒。
-- standalone 默认接受本地 `file://` 远端；team 默认拒绝，必须显式设置
+- Team 默认拒绝本地 `file://` 远端，必须显式设置
   `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES=true`。
 - Team 服务启动配置包括 `TRELLIS_BOARD_MODE`、`TRELLIS_BOARD_DATA_DIR`、`PORT` 和上述远端开关。
 - Team 归档同步默认周期 `300s`，范围 `60-86400s`；凭据主密钥和临时 SSH 认证文件位于 Team data

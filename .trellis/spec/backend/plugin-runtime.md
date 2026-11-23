@@ -3,7 +3,7 @@
 适用：所有插件宿主代码与 `plugins/<id>/` 下的插件实现。设计依据见
 [.trellis/tasks/11-04-plugin-architecture/prd.md](../../../.trellis/tasks/11-04-plugin-architecture/prd.md)。
 
-> **演进边界（2026-11-20）**：`standalone` 单机模式已降级不再维护新功能；当前主线为「生产 Team 服务端默认屏蔽插件 + 桌面 EXE 本机宿主托管内置及私有插件」。新插件与插件改造应优先遵循「`plugin.json` 极简化、除账号凭据外启用即用」原则。
+> **演进边界（2026-11-23）**：`standalone` 可执行代码已移除；Team 服务端固定关闭插件（`teamPluginsEnabled()` 恒 `false`，白名单与 `TRELLIS_PLUGINS_DISABLED` 仅保留兼容）。插件只随桌面 EXE 或独立 `plugin-host/host.mjs` 运行。新插件与插件改造应优先遵循「`plugin.json` 极简化、除账号凭据外启用即用」原则。
 
 ## 1. 进程与协议
 
