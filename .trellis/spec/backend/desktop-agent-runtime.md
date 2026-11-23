@@ -265,6 +265,10 @@
   所选平台缺失的模板路径（不探测 Python，失败静默降级）；补齐并重试成功后，`hash` 只把「快照缺失、
   现已存在且 UTF-8 内容与模板一致」的路径并入 `.template-hashes.json`，初始化前已存在的用户文件不得登记。
   哈希补偿在 `finish_init()` 之前执行，失败不影响已成功的初始化结果。
+- `.template-hashes.json` 只描述本机磁盘状态，不得随仓库共享：完整 init 与 Agent-only 完成后都要在项目根
+  `.gitignore` 追加 `/.trellis/.template-hashes.json`（独立小节，等价规则去重、幂等）；首次确认推送在
+  `commit_and_push_initial` 里先补规则，再对已跟踪的该文件执行 `git rm --cached`（保留工作区、只影响索引），
+  脱管失败即中止提交。不得改写 `.trellis/.gitignore`——它会被 `trellis update` 整份重写。
 
 ## 7. 本地前端（环境门、登录页）与看板内同步确认弹窗
 

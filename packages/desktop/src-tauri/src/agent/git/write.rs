@@ -7,7 +7,7 @@ use super::{
     classify_commit_failure, classify_push_failure, ensure_hooks_dir, git_failure, run_git,
     GitOperation, GitParams, LOCAL_TIMEOUT, NETWORK_TIMEOUT,
 };
-use crate::agent::protocol::AgentResult;
+use crate::agent::protocol::{code, AgentError, AgentResult};
 
 /// 只暂存调用方给定的路径；paths 为空时 git_args 直接拒绝。
 pub async fn add_paths(repo_path: &Path, hooks_dir: &Path, paths: &[String]) -> AgentResult<()> {
@@ -25,6 +25,32 @@ pub async fn add_paths(repo_path: &Path, hooks_dir: &Path, paths: &[String]) -> 
         return Ok(());
     }
     Err(git_failure("无法暂存 Trellis 初始化文件", &output))
+}
+
+/// `git rm --cached --quiet -- <path>`：只从索引移除，工作区文件保留。
+pub async fn untrack_path(repo_path: &Path, hooks_dir: &Path, path: &str) -> AgentResult<()> {
+    let paths = [path.to_string()];
+    let output = run_write(
+        GitOperation::RmCached,
+        repo_path,
+        hooks_dir,
+        &GitParams {
+            paths: paths.as_slice(),
+            ..Default::default()
+        },
+    )
+    .await?;
+    if output.exit_code == 0 {
+        return Ok(());
+    }
+    let detail = format!("{}\n{}", output.stderr, output.stdout);
+    if detail.contains("has staged content different") || detail.contains("is not tracked") {
+        return Err(AgentError::new(
+            code::GIT_FAILED,
+            format!("无法把 {path} 从 Git 索引移除：该文件存在未提交的暂存改动，请先处理后再重试"),
+        ));
+    }
+    Err(git_failure("无法把模板基线文件从 Git 索引移除", &output))
 }
 
 /// `git diff --cached --quiet -- <paths>`：0 表示无暂存差异，1 表示存在差异。

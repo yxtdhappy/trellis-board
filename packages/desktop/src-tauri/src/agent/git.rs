@@ -14,7 +14,7 @@ use crate::agent::protocol::{code, AgentError, AgentResult};
 
 mod write;
 
-pub use write::{add_paths, commit_paths, has_staged_changes, push_branch};
+pub use write::{add_paths, commit_paths, has_staged_changes, push_branch, untrack_path};
 
 /// 与 JS 一致：按 PATH 解析 git（Rust 的 Command 会用父进程 PATH 查找裸命令名）。
 pub const GIT_BINARY: &str = "git";
@@ -49,12 +49,14 @@ pub enum GitOperation {
     RemoteUrl,
     LsRemote,
     LsTree,
+    LsFiles,
     DiffTree,
     Fetch,
     RevList,
     Merge,
     WorktreeList,
     AddPaths,
+    RmCached,
     DiffCachedQuiet,
     CommitPaths,
     PushBranch,
@@ -62,7 +64,7 @@ pub enum GitOperation {
 
 #[allow(dead_code)]
 impl GitOperation {
-    pub const ALL: [GitOperation; 20] = [
+    pub const ALL: [GitOperation; 22] = [
         GitOperation::CheckRef,
         GitOperation::ConfigSparse,
         GitOperation::ShowToplevel,
@@ -74,12 +76,14 @@ impl GitOperation {
         GitOperation::RemoteUrl,
         GitOperation::LsRemote,
         GitOperation::LsTree,
+        GitOperation::LsFiles,
         GitOperation::DiffTree,
         GitOperation::Fetch,
         GitOperation::RevList,
         GitOperation::Merge,
         GitOperation::WorktreeList,
         GitOperation::AddPaths,
+        GitOperation::RmCached,
         GitOperation::DiffCachedQuiet,
         GitOperation::CommitPaths,
         GitOperation::PushBranch,
@@ -99,12 +103,14 @@ impl GitOperation {
             GitOperation::RemoteUrl => "remote-url",
             GitOperation::LsRemote => "ls-remote",
             GitOperation::LsTree => "ls-tree",
+            GitOperation::LsFiles => "ls-files",
             GitOperation::DiffTree => "diff-tree",
             GitOperation::Fetch => "fetch",
             GitOperation::RevList => "rev-list",
             GitOperation::Merge => "merge",
             GitOperation::WorktreeList => "worktree-list",
             GitOperation::AddPaths => "add-paths",
+            GitOperation::RmCached => "rm-cached",
             GitOperation::DiffCachedQuiet => "diff-cached-quiet",
             GitOperation::CommitPaths => "commit-paths",
             GitOperation::PushBranch => "push-branch",
@@ -173,6 +179,7 @@ pub fn git_args(
             | GitOperation::GitPath
             | GitOperation::Status
             | GitOperation::StatusPaths
+            | GitOperation::LsFiles
             | GitOperation::DiffTree
             | GitOperation::RevList
             | GitOperation::Merge
@@ -269,6 +276,15 @@ pub fn git_args(
                 ".trellis".to_string(),
             ]);
         }
+        GitOperation::LsFiles => {
+            require_paths(params)?;
+            args.extend([
+                "ls-files".to_string(),
+                "--error-unmatch".to_string(),
+                "--".to_string(),
+            ]);
+            args.extend(params.paths.iter().cloned());
+        }
         GitOperation::DiffTree => {
             let previous = params
                 .marker
@@ -327,6 +343,16 @@ pub fn git_args(
         GitOperation::AddPaths => {
             require_paths(params)?;
             args.extend(["add".to_string(), "-A".to_string(), "--".to_string()]);
+            args.extend(params.paths.iter().cloned());
+        }
+        GitOperation::RmCached => {
+            require_paths(params)?;
+            args.extend([
+                "rm".to_string(),
+                "--cached".to_string(),
+                "--quiet".to_string(),
+                "--".to_string(),
+            ]);
             args.extend(params.paths.iter().cloned());
         }
         GitOperation::DiffCachedQuiet => {
@@ -697,6 +723,29 @@ pub async fn ls_tree(
         .filter(|line| !line.is_empty())
         .map(str::to_string)
         .collect())
+}
+
+/// `git ls-files --error-unmatch -- <path>`：exit 0 表示已跟踪，1 表示未跟踪（含被忽略或不存在）。
+pub async fn is_tracked(repo_path: &Path, hooks_dir: &Path, path: &str) -> AgentResult<bool> {
+    ensure_hooks_dir(hooks_dir).await?;
+    let paths = [path.to_string()];
+    let params = GitParams {
+        paths: paths.as_slice(),
+        ..Default::default()
+    };
+    let output = run_git(
+        GitOperation::LsFiles,
+        repo_path,
+        hooks_dir,
+        &params,
+        LOCAL_TIMEOUT,
+    )
+    .await?;
+    match output.exit_code {
+        0 => Ok(true),
+        1 => Ok(false),
+        _ => Err(git_failure("无法检查文件是否被 Git 跟踪", &output)),
+    }
 }
 
 /// 比较两个提交在 `.trellis/tasks` 下的变化路径。

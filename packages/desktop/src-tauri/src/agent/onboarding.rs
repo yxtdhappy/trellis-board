@@ -31,6 +31,11 @@ const DEFAULT_INITIAL_SYNC_MODE: &str = "review";
 const INITIAL_SYNC_MODES: [&str; 3] = ["bootstrap", "safe", "review"];
 const INITIAL_COMMIT_MESSAGE: &str = "初始化trellis";
 const GITIGNORE_TITLE: &str = "# Trellis local agent configs (local only)";
+/// `trellis init` 写入的模板基线：只描述本机磁盘状态，不随仓库共享
+/// （见 `.trellis/spec/backend/desktop-agent-runtime.md` 第 6 节）。
+const TEMPLATE_HASHES_PATH: &str = ".trellis/.template-hashes.json";
+const TEMPLATE_HASHES_RULE: &str = "/.trellis/.template-hashes.json";
+const LOCAL_STATE_TITLE: &str = "# Trellis local state (local only)";
 const MAX_DEVELOPER_NAME_CHARS: usize = 120;
 /// 一键初始化提交包含的固定路径；`.trellis` 必需，其余存在时才提交。
 const INITIAL_COMMIT_PATHS: [&str; 5] = [
@@ -316,13 +321,23 @@ async fn read_developer_name(repo_path: &Path) -> Option<String> {
     None
 }
 
-/// 把所选 Agent 工具的本机配置路径追加到项目根 `.gitignore`。
+/// 把所选 Agent 工具的本机配置路径与本机模板基线追加到项目根 `.gitignore`。
 /// 保留原内容与换行风格；等价规则（忽略首尾 `/` 与空白）不重复添加；无新增时不写文件。
 async fn ensure_agent_gitignore(repo_path: &Path, agent_tools: &[String]) -> AgentResult<()> {
     let rules = trellis_cli::agent_gitignore_paths(agent_tools);
-    if rules.is_empty() {
-        return Ok(());
+    if !rules.is_empty() {
+        append_gitignore_rules(repo_path, GITIGNORE_TITLE, &rules).await?;
     }
+    ensure_template_hashes_ignored(repo_path).await
+}
+
+/// `.template-hashes.json` 只描述本机磁盘状态，忽略后不再随仓库共享。
+async fn ensure_template_hashes_ignored(repo_path: &Path) -> AgentResult<()> {
+    append_gitignore_rules(repo_path, LOCAL_STATE_TITLE, &[TEMPLATE_HASHES_RULE]).await
+}
+
+/// 按小节追加规则：标题与已存在的等价规则都不重复写，无新增时不动文件。
+async fn append_gitignore_rules(repo_path: &Path, title: &str, rules: &[&str]) -> AgentResult<()> {
     let path = repo_path.join(".gitignore");
     let bytes = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
@@ -342,7 +357,8 @@ async fn ensure_agent_gitignore(repo_path: &Path, agent_tools: &[String]) -> Age
     })?;
     let existing: HashSet<String> = text.lines().map(normalize_gitignore_rule).collect();
     let missing: Vec<&str> = rules
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|rule| !existing.contains(&normalize_gitignore_rule(rule)))
         .collect();
     if missing.is_empty() {
@@ -353,8 +369,8 @@ async fn ensure_agent_gitignore(repo_path: &Path, agent_tools: &[String]) -> Age
     if !next.is_empty() && !next.ends_with('\n') {
         next.push_str(newline);
     }
-    if !next.lines().any(|line| line.trim() == GITIGNORE_TITLE) {
-        next.push_str(GITIGNORE_TITLE);
+    if !next.lines().any(|line| line.trim() == title) {
+        next.push_str(title);
         next.push_str(newline);
     }
     for rule in missing {
@@ -562,6 +578,14 @@ pub async fn commit_and_push_initial(
 ) -> AgentResult<InitialPushState> {
     let snapshot = inspect_git_project(repo_path, hooks_dir, allow_file_remote, None).await?;
     let root = snapshot.root;
+    // manifest 只描述本机磁盘：先补忽略规则，再把已跟踪的旧文件从索引移除，
+    // 避免本次提交把它带上远端；重试时两步都幂等。没有 .trellis 时不产生副作用。
+    if root.join(".trellis").is_dir() {
+        ensure_template_hashes_ignored(&root).await?;
+        if git::is_tracked(&root, hooks_dir, TEMPLATE_HASHES_PATH).await? {
+            git::untrack_path(&root, hooks_dir, TEMPLATE_HASHES_PATH).await?;
+        }
+    }
     let paths = initial_commit_paths(&root);
     git::add_paths(&root, hooks_dir, &paths).await?;
     if git::has_staged_changes(&root, hooks_dir, &paths).await? {

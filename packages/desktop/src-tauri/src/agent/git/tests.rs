@@ -149,6 +149,8 @@ fn builds_write_operation_arguments() {
 fn rejects_write_operations_without_paths_message_or_valid_branch() {
     for operation in [
         GitOperation::AddPaths,
+        GitOperation::LsFiles,
+        GitOperation::RmCached,
         GitOperation::DiffCachedQuiet,
         GitOperation::CommitPaths,
     ] {

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "桌面 Agent 运行契约：trellis_cli.rs 与 stdin Agent-only 子进程的边界、超时预算、不允许引入 sidecar 的约束"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "desktop 包唯一 spec 层：Tauri 命令与前端交互约定，确认本次改动不触碰命令层"}
+{"file": ".trellis/tasks/11-23-untrack-template-hashes/research/manifest-vs-gitignore.md", "reason": "上游 Trellis 0.6.17 的 hash/跳过行为、实测复现步骤与取舍记录"}
+{"file": ".trellis/spec/guides/index.md", "reason": "共享开发指南：改动范围、验证与文档同步要求"}
