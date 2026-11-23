@@ -8,6 +8,9 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url))
 const devPort = Number(process.env.VITE_DEV_PORT || 5173)
 const apiTarget =
   process.env.VITE_API_TARGET || `http://127.0.0.1:${process.env.PORT || '4317'}`
+const localPluginTarget =
+  process.env.VITE_LOCAL_PLUGIN_TARGET ||
+  `http://127.0.0.1:${process.env.VITE_LOCAL_PLUGIN_PORT || '4517'}`
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -42,6 +45,12 @@ export default defineConfig({
       '/plugin-ui': {
         target: apiTarget,
         changeOrigin: false,
+      },
+      // 浏览器客户端（role=client）通过本机插件宿主访问插件。
+      '/local-plugin': {
+        target: localPluginTarget,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/local-plugin/, ''),
       },
     },
   },

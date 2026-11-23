@@ -42,6 +42,7 @@ import { isAttention, type BoardTask } from '@/features/board/task-view'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
 import { fetchDesktopPanels } from '@/api/desktop-plugins'
+import { resolveRuntimeRole } from '@/lib/role'
 import { DesktopPluginsView } from '@/features/plugins/DesktopPluginsView'
 import { canManageProject, createIdempotencyKey, taskVersion } from '@/lib/team-client.js'
 import { normalizeOwnershipBranches } from '@/lib/ownership-inbox.js'
@@ -109,6 +110,11 @@ export function BoardPage() {
   const desktopInvoke = (window as Window & { __TAURI__?: { core?: { invoke?: DesktopInvoke } } })
     .__TAURI__?.core?.invoke
   const isTauri = Boolean(desktopInvoke)
+  const role = resolveRuntimeRole({
+    injected: (window as Window & { __TRELLIS_ROLE__?: string }).__TRELLIS_ROLE__,
+    build: import.meta.env.VITE_TRELLIS_ROLE,
+  })
+  const isClient = role === 'client'
   const ownershipTaskSpaces = useMemo(() => {
     const byProject = new Map<string, OwnershipBranchOption[]>()
     for (const project of projects) {
@@ -209,24 +215,26 @@ export function BoardPage() {
       : null
   const activeCount = tasks.filter((task) => !task.archived).length
   // 服务端未下发 features 时按开启处理；只有明确 false 才视为插件被屏蔽。
-  const pluginsEnabled = teamMode ? runtime?.features?.pluginsEnabled !== false : true
+  // 服务端插件面板只给非客户端页面；客户端插件由本机宿主提供。
+  const serverPluginsEnabled =
+    !isClient && (teamMode ? runtime?.features?.pluginsEnabled !== false : true)
   const loadPanels = useCallback(async () => {
     const [remote, desktop] = await Promise.all([
-      pluginsEnabled ? fetchPanels().catch(() => []) : Promise.resolve([]),
-      isTauri && teamMode ? fetchDesktopPanels().catch(() => []) : Promise.resolve([]),
+      serverPluginsEnabled ? fetchPanels().catch(() => []) : Promise.resolve([]),
+      isClient ? fetchDesktopPanels().catch(() => []) : Promise.resolve([]),
     ])
     setPanels([...remote, ...desktop])
-  }, [isTauri, pluginsEnabled, teamMode])
+  }, [isClient, serverPluginsEnabled])
   const navItems = useMemo<BoardNavItem[]>(
     () => [
       ...NAV,
-      ...(isTauri && teamMode ? [DESKTOP_PLUGIN_NAV] : []),
+      ...(isClient ? [DESKTOP_PLUGIN_NAV] : []),
       ...(teamMode ? [] : [STANDALONE_PLUGIN_NAV]),
       ...panels
         .filter((panel) => panel.placement === 'view')
         .map((panel) => ({ id: `panel:${panel.pluginId}:${panel.id}`, label: panel.title })),
     ],
-    [isTauri, panels, teamMode],
+    [isClient, panels, teamMode],
   )
   const activePanel = panels.find((panel) => `panel:${panel.pluginId}:${panel.id}` === view)
   const createProject =
@@ -326,9 +334,9 @@ export function BoardPage() {
   }, [runtime, loadPanels])
 
   useEffect(() => {
-    if (view !== 'plugins' || !pluginsEnabled) return
+    if (view !== 'plugins' || !serverPluginsEnabled) return
     void loadPanels()
-  }, [view, pluginsEnabled, loadPanels])
+  }, [view, serverPluginsEnabled, loadPanels])
 
   // 插件页改排序后立即重排导航，不用切走再回来。
   useEffect(() => {
@@ -513,7 +521,7 @@ export function BoardPage() {
           ) : null}
 
           {view === 'plugins' ? <PluginsView /> : null}
-          {view === 'desktop-plugins' && isTauri ? <DesktopPluginsView /> : null}
+          {view === 'desktop-plugins' && isClient ? <DesktopPluginsView /> : null}
 
           {activePanel ? (
             <PluginPanel
