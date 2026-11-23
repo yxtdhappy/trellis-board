@@ -20,7 +20,8 @@ const SECRET_PASSWORD_KEY = 'jenkins-ops/password'
 const SETTINGS_STORE_KEY = 'settings'
 
 const DEFAULTS = {
-  baseUrl: '',
+  // 内置默认 Jenkins 地址：面板设置或 plugins.json 的 config.baseUrl 仍然优先覆盖。
+  baseUrl: 'http://ci.weintdata.cn',
   username: '',
   password: '',
   jobFilter: [],

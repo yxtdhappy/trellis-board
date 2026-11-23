@@ -15,3 +15,29 @@
 .fields code {
   overflow-wrap: anywhere;
 }
+
+/* 页面容器与卡片：ui.css 只提供控件级类，面板级布局由插件自己定义。 */
+.tb-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px 24px;
+}
+
+.tb-page-head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.tb-page-head h1 {
+  margin-bottom: 2px;
+}
+
+.tb-card {
+  padding: 16px;
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius);
+  background: var(--tb-card);
+}

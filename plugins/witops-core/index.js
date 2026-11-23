@@ -30,7 +30,8 @@ import {
 const BASE_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 const DEFAULTS = {
-  baseUrl: '',
+  // 内置默认平台地址：宿主 plugins.json 里的 config.baseUrl 仍然优先覆盖。
+  baseUrl: 'http://witops.weintdata.cn',
   gatewayPrefix: '/appgw',
   taskServicePrefix: '/weint-witops-service',
   adminServicePrefix: '/system-mng',
@@ -128,8 +129,10 @@ export default createPlugin({
       if (seq !== refreshSeq) return
       accountCredential = next
       accountsError = error
-      // 只有 accounts-core 未运行/能力不可用时视为“不展示统一账号”；系统未绑定仍算可用。
-      const unavailable = /未运行|capability 不可用|CAPABILITY_UNAVAILABLE/.test(error)
+      // 只有 accounts-core 未运行/能力不可用/系统未配置时视为“不展示统一账号”；
+      // 系统已配置但未绑定账号仍算可用，面板会提示去绑定。
+      const unavailable =
+        /未运行|capability 不可用|CAPABILITY_UNAVAILABLE|系统不存在|系统已禁用/.test(error)
       accountsAvailable = Boolean(next) || (Boolean(error) && !unavailable)
       if (!next) {
         if (error) {
