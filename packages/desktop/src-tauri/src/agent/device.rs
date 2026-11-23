@@ -15,7 +15,7 @@ use crate::agent::credential::CredentialStore;
 use crate::agent::http::{bypass_proxy_for_server, ApiClient};
 use crate::agent::protocol::{
     self, code, err, parse_enroll_response, parse_heartbeat_response, AgentError, AgentResult,
-    AGENT_PROTOCOL_VERSION, AGENT_VERSION, LISTENER_REPORT_VERSION,
+    HeartbeatResponse, AGENT_PROTOCOL_VERSION, AGENT_VERSION, LISTENER_REPORT_VERSION,
 };
 use crate::agent::store::{
     create_config_revision, AgentBinding, AgentConfig, AgentTeam, ConfigStore,
@@ -630,18 +630,18 @@ async fn reusable_device(
     server_url: &str,
     username: &str,
     device_name: &str,
-) -> AgentResult<bool> {
+) -> AgentResult<Option<HeartbeatResponse>> {
     let Some(existing) = existing else {
-        return Ok(false);
+        return Ok(None);
     };
     if existing.server_url != server_url
         || existing.username.as_deref().unwrap_or("").to_lowercase() != username
     {
-        return Ok(false);
+        return Ok(None);
     }
     let credential = match CredentialStore::new(store).load_credential().await {
         Ok(credential) => credential,
-        Err(_) => return Ok(false),
+        Err(_) => return Ok(None),
     };
     let api = ApiClient::new(server_url, Some(credential), None)?;
     let bindings: Vec<Value> = existing
@@ -678,17 +678,14 @@ async fn reusable_device(
         )
         .await
     {
-        Ok(payload) => {
-            parse_heartbeat_response(&payload)?;
-            Ok(true)
-        }
+        Ok(payload) => Ok(Some(parse_heartbeat_response(&payload)?)),
         Err(error) => {
             let rejected = error.code == code::AUTH_REVOKED
                 || error.code == code::CREDENTIAL_MISSING
                 || error.code == code::CREDENTIAL_CORRUPT
                 || matches!(error.status, Some(401) | Some(403));
             if rejected {
-                Ok(false)
+                Ok(None)
             } else {
                 Err(error)
             }
@@ -778,12 +775,12 @@ async fn complete_login(
         return Ok(summary);
     }
 
-    let reusable = if force_new {
-        false
+    let reusable_heartbeat = if force_new {
+        None
     } else {
         reusable_device(store, existing.as_ref(), server_url, username, device_name).await?
     };
-    if reusable {
+    if let Some(heartbeat) = reusable_heartbeat {
         let teams = runtime.teams.clone();
         let allow_local_git_remotes = runtime.allow_local_git_remotes;
         let server_url = server_url.to_string();
@@ -799,6 +796,7 @@ async fn complete_login(
                 config.username = Some(username);
                 config.teams = teams;
                 config.allow_local_git_remotes = allow_local_git_remotes;
+                crate::agent::runtime::merge_heartbeat_bindings(&mut config, &heartbeat);
                 Ok(Some(config))
             })
             .await?;
@@ -885,8 +883,7 @@ pub async fn read_local_associations(
     let mut associations = Vec::with_capacity(config.bindings.len());
     for binding in config.bindings {
         let deferred_task_dirs = deferred_task_dirs(&deferred, &binding.task_space_id);
-        let pending_upload_task_dirs =
-            pending_upload_task_dirs(&deferred, &binding.task_space_id);
+        let pending_upload_task_dirs = pending_upload_task_dirs(&deferred, &binding.task_space_id);
         let pending_rejected_task_dirs =
             cursor_task_dirs(&deferred, &binding.task_space_id, "pendingRejected");
         let conflict_pending_task_dirs =

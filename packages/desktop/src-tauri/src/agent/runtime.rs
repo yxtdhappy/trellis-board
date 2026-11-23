@@ -672,7 +672,10 @@ fn command_target_active(bindings: &[AgentBinding], command: &AgentCommand) -> b
     })
 }
 
-fn merge_heartbeat_bindings(config: &mut AgentConfig, heartbeat: &HeartbeatResponse) -> bool {
+pub(crate) fn merge_heartbeat_bindings(
+    config: &mut AgentConfig,
+    heartbeat: &HeartbeatResponse,
+) -> bool {
     let by_task_space: HashMap<&str, &ServerBinding> = heartbeat
         .bindings
         .iter()
@@ -698,13 +701,21 @@ fn merge_heartbeat_bindings(config: &mut AgentConfig, heartbeat: &HeartbeatRespo
         let Some(remote) = by_task_space.get(binding.task_space_id.as_str()).copied() else {
             continue;
         };
-        if remote.local_repo_key != binding.local_repo_key {
+        let is_remote_mismatch = remote.status == "rejected"
+            && remote.error_code.as_deref() == Some(code::REMOTE_MISMATCH);
+        let repo_matches = match remote.local_repo_key.as_deref() {
+            Some(key) => key == binding.local_repo_key || is_remote_mismatch,
+            None => remote.status == "rejected",
+        };
+        if !repo_matches {
             continue;
         }
-        let branch_guarded = binding
-            .last_error_code
-            .as_deref()
-            .is_some_and(crate::agent::task_sync::is_branch_guard_code);
+        let is_approved = remote.status == "approved";
+        let branch_guarded = is_approved
+            && binding
+                .last_error_code
+                .as_deref()
+                .is_some_and(crate::agent::task_sync::is_branch_guard_code);
         let mut next_error_code = if branch_guarded {
             binding.last_error_code.clone()
         } else {
@@ -715,15 +726,20 @@ fn merge_heartbeat_bindings(config: &mut AgentConfig, heartbeat: &HeartbeatRespo
         } else {
             remote.error.clone()
         };
-        if remote
-            .branch_name
-            .as_deref()
-            .is_some_and(|branch| !branch.is_empty() && branch != binding.branch_name)
+        if is_approved
+            && remote
+                .branch_name
+                .as_deref()
+                .is_some_and(|branch| !branch.is_empty() && branch != binding.branch_name)
         {
             next_error_code = Some("BINDING_BRANCH_MISMATCH".to_string());
             next_error = Some("本地分支与服务端绑定分支不一致".to_string());
         }
-        let next_server_binding_id = Some(remote.id.clone());
+        let next_server_binding_id = match remote.id.as_ref() {
+            Some(id) => Some(id.clone()),
+            None if remote.error_code.as_deref() == Some(code::BINDING_UNKNOWN) => None,
+            None => binding.server_binding_id.clone(),
+        };
         let next_team_id = remote.team_id.clone().or_else(|| binding.team_id.clone());
         let next_baseline_branch = remote
             .baseline_branch

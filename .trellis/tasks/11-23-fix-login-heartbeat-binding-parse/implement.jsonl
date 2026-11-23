@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "桌面 Agent 进程内 Rust 契约、协议版本、分支守卫与心跳合并约束"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "Rust 模块行数上限与测试外移规范"}

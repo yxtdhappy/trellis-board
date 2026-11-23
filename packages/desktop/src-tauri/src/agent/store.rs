@@ -194,7 +194,7 @@ fn validate_binding(binding: &AgentBinding, index: usize) -> AgentResult<AgentBi
     };
     if !matches!(
         binding.sync_status.as_str(),
-        "pending" | "approved" | "rejected" | "revoked"
+        "pending" | "approved" | "rejected" | "revoked" | "disabled"
     ) {
         return protocol::err(
             code::CONFIG_INVALID,

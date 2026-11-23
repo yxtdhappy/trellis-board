@@ -342,11 +342,11 @@ pub fn parse_enroll_response(payload: &Value) -> AgentResult<EnrollResponse> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerBinding {
-    pub id: String,
+    pub id: Option<String>,
     pub task_space_id: String,
-    pub project_id: String,
+    pub project_id: Option<String>,
     pub team_id: Option<String>,
-    pub local_repo_key: String,
+    pub local_repo_key: Option<String>,
     pub status: String,
     pub branch_name: Option<String>,
     pub baseline_branch: Option<String>,
@@ -364,38 +364,77 @@ pub struct HeartbeatResponse {
     pub bindings: Vec<ServerBinding>,
 }
 
+fn present_field<'a>(
+    body: &'a Map<String, Value>,
+    key: &str,
+    alias: Option<&str>,
+) -> Option<&'a Value> {
+    match body.get(key) {
+        Some(value) if !value.is_null() => Some(value),
+        _ => alias
+            .and_then(|alt| body.get(alt))
+            .filter(|value| !value.is_null()),
+    }
+}
+
+fn parse_binding_safe_id(
+    body: &Map<String, Value>,
+    key: &str,
+    alias: Option<&str>,
+    field: &str,
+    allow_missing: bool,
+) -> AgentResult<Option<String>> {
+    match present_field(body, key, alias) {
+        Some(value) => assert_safe_id_default(value.as_str(), field).map(Some),
+        None if allow_missing => Ok(None),
+        None => err(code::INVALID_RESPONSE, format!("{field} 格式无效")),
+    }
+}
+
 fn parse_server_binding(value: &Value) -> AgentResult<ServerBinding> {
     let object = value
         .as_object()
         .ok_or_else(|| AgentError::new(code::INVALID_RESPONSE, "心跳响应包含无效绑定"))?;
-    let id = assert_safe_id(
-        string_field(object, "id").or_else(|| string_field(object, "bindingId")),
+    let status = match object.get("status") {
+        None | Some(Value::Null) => "pending".to_string(),
+        Some(Value::String(text)) => text.clone(),
+        Some(_) => return err(code::INVALID_RESPONSE, "心跳响应包含未知绑定状态"),
+    };
+    if !matches!(
+        status.as_str(),
+        "pending" | "approved" | "rejected" | "revoked" | "disabled"
+    ) {
+        return err(code::INVALID_RESPONSE, "心跳响应包含未知绑定状态");
+    }
+    // 服务端在 BINDING_UNKNOWN / REMOTE_MISMATCH 的 rejected 项中会省略 id/projectId/localRepoKey。
+    let allow_missing_binding_meta = status == "rejected";
+    let id = parse_binding_safe_id(
+        object,
+        "id",
+        Some("bindingId"),
         "绑定 ID",
-        code::INVALID_RESPONSE,
+        allow_missing_binding_meta,
     )?;
     let task_space_id = assert_safe_id(
         string_field(object, "taskSpaceId").or_else(|| string_field(object, "task_space_id")),
         "任务空间 ID",
         code::INVALID_RESPONSE,
     )?;
-    let project_id = assert_safe_id(
-        string_field(object, "projectId").or_else(|| string_field(object, "project_id")),
+    let project_id = parse_binding_safe_id(
+        object,
+        "projectId",
+        Some("project_id"),
         "项目 ID",
-        code::INVALID_RESPONSE,
+        allow_missing_binding_meta,
     )?;
-    let local_repo_key = string_field(object, "localRepoKey").unwrap_or("");
-    if !is_sha256_hex(local_repo_key) {
-        return err(code::INVALID_RESPONSE, "心跳响应包含无效本地仓库标识");
-    }
-    let status = string_field(object, "status")
-        .unwrap_or("pending")
-        .to_string();
-    if !matches!(
-        status.as_str(),
-        "pending" | "approved" | "rejected" | "revoked"
-    ) {
-        return err(code::INVALID_RESPONSE, "心跳响应包含未知绑定状态");
-    }
+    let local_repo_key = match present_field(object, "localRepoKey", None) {
+        Some(value) => match value.as_str() {
+            Some(text) if is_sha256_hex(text) => Some(text.to_string()),
+            _ => return err(code::INVALID_RESPONSE, "心跳响应包含无效本地仓库标识"),
+        },
+        None if allow_missing_binding_meta => None,
+        None => return err(code::INVALID_RESPONSE, "心跳响应包含无效本地仓库标识"),
+    };
     let team_id = match string_field(object, "teamId") {
         Some(value) => Some(assert_safe_id_default(Some(value), "团队 ID")?),
         None => None,
@@ -405,7 +444,7 @@ fn parse_server_binding(value: &Value) -> AgentResult<ServerBinding> {
         task_space_id,
         project_id,
         team_id,
-        local_repo_key: local_repo_key.to_string(),
+        local_repo_key,
         status,
         branch_name: string_field(object, "branchName").map(str::to_string),
         baseline_branch: string_field(object, "baselineBranch").map(str::to_string),

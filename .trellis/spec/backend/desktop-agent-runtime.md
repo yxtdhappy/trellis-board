@@ -122,6 +122,14 @@
   上传请求必须带 `observedBranchName`；同仓库多绑定时 `select_bindings` 逐个探分支，唯一匹配才启用。
   同一 `localRepoKey` 的 approved 绑定超过一个时，`ConfigStore` 拒写（`CONFIG_INVALID`，
   需要并行多分支请用独立 worktree）。
+- 心跳绑定解析与合并：`POST /api/agent/heartbeat` 在 `status == "rejected"`（`BINDING_UNKNOWN`、
+  `REMOTE_MISMATCH`）时允许省略 `id` / `projectId` / `localRepoKey`，并在任务空间停用/弃用时返回
+  `status == "disabled"`。`protocol::parse_server_binding` 仅对 `rejected` 放行缺失/`null` 元数据，
+  只要字段存在仍必须通过 `assert_safe_id` / `is_sha256_hex`；`store::validate_binding` 与协议层同样
+  允许 `"disabled"`。登录复用（`device::reusable_device`）与运行期心跳共用
+  `runtime::merge_heartbeat_bindings`：非 `approved` 状态不保留旧分支守卫或覆盖为
+  `BINDING_BRANCH_MISMATCH`，`REMOTE_MISMATCH` 不因 `localRepoKey` 不一致被跳过，`BINDING_UNKNOWN`
+  且无 `id` 时清空 `server_binding_id`。
 - 游标串行化：`write_cursor` 必须先拿 `<data>/agent/.live-cursors.lock`（`lock_task_cursors`），
   再重读磁盘合并写入；patch 没有改变 revision、sequence、baselines、deferred、ownershipPending、
   conflictBlocked 或 pending 时不得更新时间戳或重写文件。批次 409 且

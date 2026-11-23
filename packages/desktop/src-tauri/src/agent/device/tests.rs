@@ -204,8 +204,7 @@ fn local_association_round_trips_camel_case() {
 
 #[test]
 fn deferred_task_infos_extract_titles_or_none() {
-    let root =
-        std::env::temp_dir().join(format!("trellis-device-titles-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("trellis-device-titles-{}", uuid::Uuid::new_v4()));
     let titled = root.join(".trellis/tasks/11-12-titled");
     let untitled = root.join(".trellis/tasks/11-12-untitled");
     let broken = root.join(".trellis/tasks/11-12-broken");
@@ -343,4 +342,254 @@ fn maps_enroll_errors() {
     assert_eq!(other.code, code::CONFIG_INVALID);
     assert_eq!(other.message, "配置无效");
     assert!(!other.retryable);
+}
+
+#[tokio::test]
+async fn login_desktop_reuses_device_and_merges_unknown_and_disabled_bindings() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock server");
+    let address = listener.local_addr().expect("mock addr");
+    let server_url = format!("http://{address}");
+    let repo_key_disabled = "b".repeat(64);
+    let repo_key_disabled_clone = repo_key_disabled.clone();
+
+    let server_task = tokio::spawn(async move {
+        for _ in 0..3 {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let repo_key_disabled = repo_key_disabled_clone.clone();
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let header_end = loop {
+                    if let Some(index) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                    {
+                        break index;
+                    }
+                    let read = socket.read(&mut chunk).await.unwrap_or(0);
+                    if read == 0 {
+                        return;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                };
+                let header = String::from_utf8_lossy(&request[..header_end]).into_owned();
+                let request_line = header.lines().next().unwrap_or("").to_string();
+                let content_length = header
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or(0);
+                while request.len() < header_end + 4 + content_length {
+                    let read = socket.read(&mut chunk).await.unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                }
+
+                let (status, extra_headers, body) =
+                    if request_line.starts_with("POST /api/auth/login ") {
+                        (
+                            "200 OK",
+                            format!(
+                                "Set-Cookie: {SESSION_COOKIE}={}; Path=/; HttpOnly\r\n",
+                                "s".repeat(24)
+                            ),
+                            json!({
+                                "user": { "username": "dev", "mustChangePassword": false },
+                                "expiresAt": "2026-12-01T00:00:00.000Z"
+                            }),
+                        )
+                    } else if request_line.starts_with("GET /api/runtime ") {
+                        (
+                            "200 OK",
+                            String::new(),
+                            json!({
+                                "authenticated": true,
+                                "user": { "username": "dev" },
+                                "teams": [],
+                                "allowLocalGitRemotes": false
+                            }),
+                        )
+                    } else if request_line.starts_with("POST /api/agent/heartbeat ") {
+                        (
+                            "200 OK",
+                            String::new(),
+                            json!({
+                                "protocolVersion": AGENT_PROTOCOL_VERSION,
+                                "compatible": true,
+                                "bindings": [
+                                    {
+                                        "taskSpaceId": "space-unknown",
+                                        "status": "rejected",
+                                        "errorCode": "BINDING_UNKNOWN",
+                                        "error": "当前设备尚未接入该任务空间"
+                                    },
+                                    {
+                                        "id": "binding-disabled",
+                                        "taskSpaceId": "space-disabled",
+                                        "projectId": "project-1",
+                                        "localRepoKey": repo_key_disabled,
+                                        "status": "disabled",
+                                        "errorCode": "TASK_SPACE_DISABLED",
+                                        "error": "任务空间已停用"
+                                    }
+                                ]
+                            }),
+                        )
+                    } else {
+                        (
+                            "404 Not Found",
+                            String::new(),
+                            json!({ "error": "unexpected path" }),
+                        )
+                    };
+
+                let body_bytes = serde_json::to_vec(&body).expect("serialize response");
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                    body_bytes.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.write_all(&body_bytes).await;
+            });
+        }
+    });
+
+    let root = std::env::temp_dir().join(format!("trellis-device-login-{}", uuid::Uuid::new_v4()));
+    let store = ConfigStore::new_unsecured_for_test(root.clone());
+    store.ensure_directories().await.expect("directories");
+    CredentialStore::new(&store)
+        .save_credential(&"x".repeat(32))
+        .await
+        .expect("save credential");
+    let existing = AgentConfig {
+        schema_version: CONFIG_SCHEMA_VERSION,
+        revision: create_config_revision(),
+        server_url: server_url.clone(),
+        ca_file: None,
+        allow_local_git_remotes: false,
+        agent_id: "agent-1".to_string(),
+        device_name: "MyPC".to_string(),
+        username: Some("dev".to_string()),
+        team_id: None,
+        teams: Vec::new(),
+        protocol_version: AGENT_PROTOCOL_VERSION,
+        agent_version: Some(AGENT_VERSION.to_string()),
+        paired_at: Some("2026-11-01T00:00:00.000Z".to_string()),
+        bindings: vec![
+            AgentBinding {
+                local_id: "local-unknown".to_string(),
+                server_binding_id: Some("binding-unknown".to_string()),
+                task_space_id: "space-unknown".to_string(),
+                project_id: "project-1".to_string(),
+                repo_path: "C:/repos/unknown".to_string(),
+                branch_name: "main".to_string(),
+                baseline_branch: None,
+                team_id: None,
+                remote_identity_key: "a".repeat(64),
+                local_repo_key: "a".repeat(64),
+                display_name: "UnknownRepo".to_string(),
+                created_at: "2026-11-01T00:00:00.000Z".to_string(),
+                allow_file_remote: false,
+                read_only: false,
+                sync_status: "approved".to_string(),
+                detach_pending: false,
+                initial_sync_mode: "bootstrap".to_string(),
+                initial_sync_completed: true,
+                initial_review_pending: false,
+                tracked_task_dirs: Vec::new(),
+                live_sync_status: "ready".to_string(),
+                live_sync_error: None,
+                last_synced_at: None,
+                last_head: None,
+                last_error: None,
+                last_error_code: None,
+            },
+            AgentBinding {
+                local_id: "local-disabled".to_string(),
+                server_binding_id: Some("binding-disabled".to_string()),
+                task_space_id: "space-disabled".to_string(),
+                project_id: "project-1".to_string(),
+                repo_path: "C:/repos/disabled".to_string(),
+                branch_name: "main".to_string(),
+                baseline_branch: None,
+                team_id: None,
+                remote_identity_key: "b".repeat(64),
+                local_repo_key: repo_key_disabled,
+                display_name: "DisabledRepo".to_string(),
+                created_at: "2026-11-01T00:00:00.000Z".to_string(),
+                allow_file_remote: false,
+                read_only: false,
+                sync_status: "approved".to_string(),
+                detach_pending: false,
+                initial_sync_mode: "bootstrap".to_string(),
+                initial_sync_completed: true,
+                initial_review_pending: false,
+                tracked_task_dirs: Vec::new(),
+                live_sync_status: "ready".to_string(),
+                live_sync_error: None,
+                last_synced_at: None,
+                last_head: None,
+                last_error: None,
+                last_error_code: None,
+            },
+        ],
+    };
+    store
+        .update_config(true, move |_| Ok(Some(existing)))
+        .await
+        .expect("write initial config");
+
+    let api = ApiClient::new(&server_url, None, None).expect("api client");
+    let summary = login_desktop(&store, &api, "dev", "secret123", "MyPC", false)
+        .await
+        .expect("login succeeds");
+    assert!(summary.ok);
+    assert_eq!(summary.device_ready, Some(true));
+
+    let saved = store
+        .read_config(false)
+        .await
+        .expect("read config")
+        .expect("config exists");
+    let unknown = saved
+        .bindings
+        .iter()
+        .find(|item| item.task_space_id == "space-unknown")
+        .expect("space-unknown");
+    assert_eq!(unknown.sync_status, "rejected");
+    assert_eq!(unknown.server_binding_id, None);
+    assert_eq!(unknown.last_error_code.as_deref(), Some("BINDING_UNKNOWN"));
+    assert_eq!(
+        unknown.last_error.as_deref(),
+        Some("当前设备尚未接入该任务空间")
+    );
+
+    let disabled = saved
+        .bindings
+        .iter()
+        .find(|item| item.task_space_id == "space-disabled")
+        .expect("space-disabled");
+    assert_eq!(disabled.sync_status, "disabled");
+    assert_eq!(
+        disabled.server_binding_id.as_deref(),
+        Some("binding-disabled")
+    );
+    assert_eq!(
+        disabled.last_error_code.as_deref(),
+        Some("TASK_SPACE_DISABLED")
+    );
+    assert_eq!(disabled.last_error.as_deref(), Some("任务空间已停用"));
+
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
 }

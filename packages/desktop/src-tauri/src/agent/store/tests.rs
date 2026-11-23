@@ -99,3 +99,24 @@ fn rejects_second_active_binding_for_same_repository() {
     )
     .is_ok());
 }
+
+#[test]
+fn allows_disabled_and_rejected_binding_statuses_in_config() {
+    let mut disabled = binding("local-1", "ts-1", false);
+    disabled.remote_identity_key = "b".repeat(64);
+    disabled.server_binding_id = Some("binding-1".into());
+    disabled.sync_status = "disabled".into();
+    disabled.last_error_code = Some("TASK_SPACE_DISABLED".into());
+
+    let mut rejected = binding("local-2", "ts-2", false);
+    rejected.remote_identity_key = "c".repeat(64);
+    rejected.server_binding_id = None;
+    rejected.sync_status = "rejected".into();
+    rejected.last_error_code = Some("BINDING_UNKNOWN".into());
+
+    let mut config = sample_config();
+    config.bindings = vec![disabled, rejected];
+    let validated = validate_config(&config).expect("disabled and rejected bindings");
+    assert_eq!(validated.bindings[0].sync_status, "disabled");
+    assert_eq!(validated.bindings[1].sync_status, "rejected");
+}
