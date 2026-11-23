@@ -39,6 +39,7 @@ function parseArgs(argv) {
     hostVersion: '0.0.0',
     token: '',
     secret: '',
+    panelPrefix: '',
   }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
@@ -70,6 +71,10 @@ function parseArgs(argv) {
         break
       case '--secret':
         options.secret = String(value || '')
+        index += 1
+        break
+      case '--panel-prefix':
+        options.panelPrefix = String(value || '').replace(/\/$/, '')
         index += 1
         break
       default:
@@ -149,11 +154,11 @@ function safeJoin(root, relative) {
   return target
 }
 
-function panelHtml(html, secret) {
+function panelHtml(html, secret, prefix = '') {
   // 面板 HTML 里的 /api/plugins/<id>/... 由本机宿主提供；换成 secret 前缀后
   // iframe 子资源仍走同一个匿名通道，不会打到 Board 服务端。
   if (!html.includes('/api/plugins/')) return html
-  return html.replaceAll('/api/plugins/', `/s/${secret}/`)
+  return html.replaceAll('/api/plugins/', `${prefix}/s/${secret}/`)
 }
 
 const options = parseArgs(process.argv.slice(2))
@@ -166,6 +171,48 @@ const pluginsDir = options.pluginsDir
   : path.join(path.resolve(options.dataDir), 'plugins')
 const dataDir = path.resolve(options.dataDir)
 const appDir = path.resolve(options.appDir)
+
+// 与 packages/desktop/src-tauri/src/plugin_host.rs 的 BUILTIN_PLUGINS 保持同步。
+const BUILTIN_PLUGINS = [
+  ['acp-dispatch', 10],
+  ['witops-core', 20],
+  ['accounts-core', 30],
+  ['scenario-copilot', 40],
+  ['jenkins-ops', 50],
+  ['a2a-intake', 60],
+]
+
+/** 首次运行补齐内置插件条目；保留用户已有的 enabled/sort/config。 */
+function mergePluginsConfig(configFile, runtimeDir, userDir) {
+  let document = { version: 1, plugins: [] }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configFile, 'utf8').replace(/^\uFEFF/, ''))
+    if (parsed && typeof parsed === 'object') document = parsed
+  } catch {
+    /* 首次运行或文件损坏，按空配置重建 */
+  }
+  if (!Array.isArray(document.plugins)) document.plugins = []
+  const byId = new Map(
+    document.plugins
+      .filter((entry) => entry && typeof entry.id === 'string')
+      .map((entry) => [entry.id, entry]),
+  )
+  document.plugins = BUILTIN_PLUGINS.map(([id, sort]) => {
+    const entry = byId.get(id) ?? { id, enabled: false }
+    const overrideModule = path.join(userDir, id, 'index.js')
+    const overrideManifest = path.join(userDir, id, 'plugin.json')
+    entry.id = id
+    entry.module =
+      fs.existsSync(overrideModule) && fs.existsSync(overrideManifest)
+        ? overrideModule
+        : path.join(runtimeDir, 'plugins', id, 'index.js')
+    if (typeof entry.sort !== 'number') entry.sort = sort
+    if (typeof entry.enabled !== 'boolean') entry.enabled = false
+    return entry
+  })
+  fs.mkdirSync(path.dirname(configFile), { recursive: true })
+  fs.writeFileSync(configFile, `${JSON.stringify(document, null, 2)}\n`)
+}
 
 process.env.TRELLIS_BOARD_DATA_DIR = dataDir
 process.env.TRELLIS_BOARD_PLUGINS_DIR = pluginsDir
@@ -207,6 +254,8 @@ const runtime = createPluginRuntime({
   logger,
   env: process.env,
 })
+
+mergePluginsConfig(path.join(pluginsDir, 'plugins.json'), appDir, pluginsDir)
 
 let stopping = false
 let server = null
@@ -265,7 +314,7 @@ async function forwardPanel(pluginId, subPath, search, base) {
   return result && typeof result === 'object' ? result : { status: 502, body: { error: '插件返回无效响应' } }
 }
 
-function writePluginResult(response, result, secret) {
+function writePluginResult(response, result, secret, prefix = '') {
   const status = Number.isInteger(result?.status) ? result.status : 200
   const headers = result?.headers && typeof result.headers === 'object' ? result.headers : {}
   const body = result?.body ?? ''
@@ -275,7 +324,7 @@ function writePluginResult(response, result, secret) {
     return
   }
   const text = String(body)
-  const finalBody = type.includes('text/html') ? panelHtml(text, secret) : text
+  const finalBody = type.includes('text/html') ? panelHtml(text, secret, prefix) : text
   if (response.headersSent) {
     response.destroy()
     return
@@ -323,7 +372,7 @@ async function handleInternal(request, response, url, body) {
     return
   }
   if (url.pathname === '/internal/plugins' && request.method === 'GET') {
-    sendJson(response, 200, runtime.list())
+    sendJson(response, 200, { ...runtime.list(), running: true })
     return
   }
   if (url.pathname === '/internal/panels' && request.method === 'GET') {
@@ -352,6 +401,107 @@ async function handleInternal(request, response, url, body) {
     } catch (error) {
       sendJson(response, 400, { error: error instanceof Error ? error.message : '排序失败' })
     }
+    return
+  }
+  const enabledMatch = /^\/internal\/plugins\/([^/]+)\/enabled$/.exec(url.pathname)
+  if (enabledMatch && request.method === 'POST') {
+    const id = decodeURIComponent(enabledMatch[1])
+    if (typeof body?.enabled !== 'boolean') {
+      sendJson(response, 400, { error: 'enabled 必须是布尔值' })
+      return
+    }
+    const configFile = path.join(pluginsDir, 'plugins.json')
+    let document = null
+    try {
+      document = JSON.parse(fs.readFileSync(configFile, 'utf8').replace(/^\uFEFF/, ''))
+    } catch {
+      document = null
+    }
+    const entries = Array.isArray(document?.plugins) ? document.plugins : []
+    const entry = entries.find((item) => item?.id === id)
+    if (!entry) {
+      sendJson(response, 404, { error: `未知插件: ${id}` })
+      return
+    }
+    entry.enabled = body.enabled
+    fs.writeFileSync(configFile, `${JSON.stringify(document, null, 2)}\n`)
+    const reload = await runtime.reload()
+    // reload 只处理入口变化；开关从关到开需要显式拉起。
+    if (body.enabled) {
+      try {
+        await runtime.supervisor.startPlugin(id)
+      } catch (error) {
+        sendJson(response, 500, {
+          ok: false,
+          error: error instanceof Error ? error.message : '插件启动失败',
+          ...runtime.list(),
+          running: true,
+          reload,
+        })
+        return
+      }
+    }
+    sendJson(response, 200, { ok: true, ...runtime.list(), running: true, reload })
+    return
+  }
+  const requestMatch = /^\/internal\/plugins\/([^/]+)\/request$/.exec(url.pathname)
+  if (requestMatch && request.method === 'POST') {
+    const id = decodeURIComponent(requestMatch[1])
+    const state = runtime.supervisor.plugins.get(id)
+    if (!state) {
+      sendJson(response, 404, { error: `未知插件: ${id}` })
+      return
+    }
+    const method = String(body?.method || 'GET').toUpperCase()
+    const requestPath = String(body?.path || '')
+    if (!requestPath.startsWith('/')) {
+      sendJson(response, 400, { error: '插件请求路径必须以 / 开头' })
+      return
+    }
+    const result = await runtime.supervisor.forwardHttp(state, {
+      method,
+      path: requestPath,
+      headers: {
+        'content-type': 'application/json',
+        'x-trellis-base': `http://${request.headers.host || '127.0.0.1'}`,
+      },
+      body: body?.body == null ? '' : JSON.stringify(body.body),
+      anonymous: true,
+    })
+    const status = Number.isInteger(result?.status) ? result.status : 200
+    const contentType = String(result?.headers?.['content-type'] || 'application/json')
+    let data = result?.body ?? null
+    if (typeof data === 'string' && contentType.includes('json')) {
+      try {
+        data = JSON.parse(data)
+      } catch {
+        /* 保留原始文本 */
+      }
+    }
+    sendJson(response, 200, {
+      ok: status >= 200 && status < 300,
+      status,
+      contentType,
+      data,
+    })
+    return
+  }
+  const assetMatch = /^\/internal\/plugins\/([^/]+)\/asset$/.exec(url.pathname)
+  if (assetMatch && request.method === 'GET') {
+    const id = decodeURIComponent(assetMatch[1])
+    const assetPath = String(url.searchParams.get('path') || '').replace(/^\/+/, '')
+    if (!assetPath) {
+      sendJson(response, 400, { error: '缺少 path 参数' })
+      return
+    }
+    const base = `http://${request.headers.host || '127.0.0.1'}/s/${options.secret}/${id}`
+    const result = await forwardPanel(id, assetPath, '', base)
+    const bodyValue = result?.body ?? ''
+    sendJson(response, 200, {
+      status: Number.isInteger(result?.status) ? result.status : 200,
+      contentType: String(result?.headers?.['content-type'] || 'application/octet-stream'),
+      content: typeof bodyValue === 'string' ? bodyValue : JSON.stringify(bodyValue),
+    })
     return
   }
   const admin = /^\/internal\/plugins\/([^/]+)\/(start|stop)$/.exec(url.pathname)
@@ -422,7 +572,7 @@ async function handle(request, response) {
         body,
         anonymous: true,
       })
-      writePluginResult(response, result, options.secret)
+      writePluginResult(response, result, options.secret, options.panelPrefix)
     } catch (error) {
       sendJson(response, Number.isInteger(error?.httpStatus) ? error.httpStatus : 502, {
         error: error?.message || 'A2A 转发失败',
@@ -447,7 +597,7 @@ async function handle(request, response) {
     }
     const base = `http://${request.headers.host || '127.0.0.1'}/s/${options.secret}/${pluginId}`
     const result = await forwardPanel(pluginId, subPath, url.search, base)
-    writePluginResult(response, result, options.secret)
+    writePluginResult(response, result, options.secret, options.panelPrefix)
     return
   }
 
