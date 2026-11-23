@@ -116,26 +116,18 @@ export function parsePluginAllowlist(raw) {
 }
 
 export function parseTeamConfig(env = process.env) {
-  const mode = String(env.TRELLIS_BOARD_MODE || 'standalone')
+  const mode = String(env.TRELLIS_BOARD_MODE || 'team')
     .trim()
     .toLowerCase()
-  if (!new Set(['standalone', 'team']).has(mode)) {
-    throw new Error('TRELLIS_BOARD_MODE 只能是 standalone 或 team')
+  if (mode !== 'team') {
+    throw new Error('TRELLIS_BOARD_MODE 只能是 team')
   }
   const port = integerSetting(env, 'PORT', 4317, 1, 65535)
   const allowLocalGitRemotes = booleanSetting(
     env,
     'TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES',
-    mode === 'standalone',
+    false,
   )
-  if (mode === 'standalone') {
-    return {
-      mode,
-      port,
-      bindHost: '0.0.0.0',
-      allowLocalGitRemotes,
-    }
-  }
 
   return {
     mode,

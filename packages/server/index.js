@@ -1,15 +1,22 @@
 import './env-bootstrap.js'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { dataDir } from './config.js'
+import { dataDir, parseTeamConfig } from './config.js'
 import { createServerLogger } from './logger.js'
-import { startApplication } from './standalone/server.js'
+import { migrateLegacyRuntimeData } from './data-migration.js'
+import { createTeamRuntime } from './team/http.js'
 
-export {
-  startApplication,
-  startStandaloneServer,
-  stopStandaloneServer,
-} from './standalone/server.js'
+/**
+ * 唯一启动入口：Team 服务端。
+ * standalone 模式已删除，TRELLIS_BOARD_MODE 只接受 `team`。
+ */
+export async function startApplication(config = parseTeamConfig(), logger = console) {
+  migrateLegacyRuntimeData()
+  const runtime = await createTeamRuntime({ config, logger })
+  const started = await runtime.start()
+  void started.services.taskSpaceIndex.warmActive()
+  return started
+}
 
 let activeRuntime = null
 let stopping = false

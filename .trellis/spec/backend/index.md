@@ -27,7 +27,7 @@
 - 运行数据只写 `TRELLIS_BOARD_DATA_DIR`（默认是系统用户数据目录）；用户要求的任务操作只写白名单仓库 `.trellis/` 内允许的文件。
 - 跨包引用使用 workspace 包名（`@trellis-board/shared/…`、`@trellis-board/test-support/…`）；被多个 workspace 共用的第三方依赖在根 `package.json` 声明，仅单包使用的留在该包。
 - `team` 是当前唯一主线模式，提供账号、团队、审计、任务空间同步和桌面 Agent 权限；Team 仍使用单实例 SQLite 和内存 SSE，不能描述成共享数据库或多实例高可用。
-- `standalone` 是无账号鉴权、只适合可信网络的本机/局域网模式，**现已降级为历史遗留模式（Legacy / 停止功能演进）**：新功能、新插件与前端改造不再要求维护或适配 standalone 专属链路，仅保持不破坏既有测试，暂不删除旧代码。
+- `standalone` 可执行代码已移除，`TRELLIS_BOARD_MODE` 只接受 `team`；旧 `standalone` 数据目录与 JSON 仅由一次性迁移逻辑读取，不再提供无鉴权运行模式。
 
 ## 关键边界
 

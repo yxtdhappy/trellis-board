@@ -1,13 +1,12 @@
 # Trellis Board
 
-Trellis Board 当前以 **`team`（团队服务端 + Windows 桌面 EXE 客户端）作为唯一主线模式**；`standalone` 已降级为历史遗留模式（停止新功能维护，仅保留现有代码与测试兼容，不再推荐用于新部署）：
+Trellis Board 当前以 **`team`（团队服务端 + Windows 桌面 EXE 客户端）作为唯一支持模式**；`standalone` 可执行代码已移除，`TRELLIS_BOARD_MODE` 只接受 `team`：
 
-- `team`（主线）：提供账号、项目权限、任务空间快照、实时同步、命令投递、审计和 Windows Agent。
+- `team`（唯一模式）：提供账号、项目权限、任务空间快照、实时同步、命令投递、审计和 Windows Agent。
   活动任务链路不 clone/fetch 项目 Git，也不保存项目 Git 凭据；只有后台归档同步会使用按来源隔离的
   只读凭据读取 `.trellis/tasks/archive/**`，不创建项目工作副本。
-- `standalone`（已降级 / Legacy，不再维护新功能）：默认监听 `0.0.0.0`，扫描本机白名单仓库，无账号鉴权，仅作历史兼容保留。
 
-两种模式共用同一套任务推导、看板和 SQLite 代码。团队版的部署、升级、备份和故障处置见
+任务推导、看板和 SQLite 代码只服务 Team。团队版的部署、升级、备份和故障处置见
 [团队版运维手册](./docs/team-operations.md)。
 
 ## 仓库结构
@@ -60,8 +59,8 @@ yarn start
 
 仓库根的 `.env` 已入库：首行 `node_version=24` 供 Jenkins 流水线读取并切换 Node 版本，其余键是团队版
 运行默认值（`PORT=4317`、`TRELLIS_BOARD_MODE=team`、`TRELLIS_BOARD_DATA_DIR=`、
-`TRELLIS_WATCH_DEBOUNCE_MS=400`），所以 `yarn start` 默认以团队模式启动。删掉或把
-`TRELLIS_BOARD_MODE` 改成 `standalone` 即回到无鉴权模式；可用键见根目录 `.env.example`。
+`TRELLIS_WATCH_DEBOUNCE_MS=400`），所以 `yarn start` 默认以团队模式启动。`TRELLIS_BOARD_MODE`
+只接受 `team`，其他值会在启动时直接报错；可用键见根目录 `.env.example`。
 团队模式首次使用需先建系统管理员（见下）。
 
 ### Jenkins 部署
@@ -72,22 +71,17 @@ Jenkins 部署脚本读取 `.env` 的 `node_version` 切 Node，然后 `yarn ins
 
 前端开发用 `yarn dev`：并行启动 `node --watch packages/server/index.js`（服务端改动自动重启）和 Vite 开发服务器（页面 HMR），`/api` 由 Vite 代理到 `PORT` 指定的端口，默认 `http://127.0.0.1:4317`；5173 被占用时 Vite 会自动递增端口，以控制台打印的地址为准。
 
-standalone 模式监听所有网络接口 `0.0.0.0`，且没有账号鉴权，只能用于可信网络。团队模式同样
-监听所有接口，HTTP 和 HTTPS 均可使用。
+团队模式监听所有网络接口，HTTP 和 HTTPS 均可使用。
 
-standalone 页面先显示本地扫描缓存。服务启动后会监听白名单仓库的 `.trellis/tasks`、
-`.trellis/workspace` 和 `.trellis/.developer`；相关文件变更会经过 400ms 防抖合并，再由独立
-Worker Thread 重建缓存。前端通过 Board SSE `tasks.changed` 和页面 focus 触发 REST 对齐，不再
-持续轮询任务 revision。
+Team 模式只监听和同步 `.trellis/tasks/**`；workspace、`.developer`、scripts、spec、config、workflow
+和本机编码 Agent 目录都由客户端 Git 管理。
 
 “重新扫描仓库”按钮仍保留，用于人工强制刷新。扫描期间如果文件再次变化，会在当前扫描结束后再跑一轮，避免最后一次变更丢失。`/api/board/status` 会返回监听状态、最近文件和刷新队列；防抖时间可通过 `TRELLIS_WATCH_DEBOUNCE_MS` 调整，最低 100ms。
 
 文件监听使用 Node 的递归 `fs.watch`，当前实现面向 Windows/macOS 本机运行。Linux 或网络盘若不支持递归监听，需要改成每级目录监听或轮询，页面上的手动刷新仍可作为回退。
 
-`.trellis/tasks` 和 `.trellis/workspace` 下的文件会参与 standalone 缓存更新，但只有当前看板实际
+`.trellis/tasks` 下的文件变更会参与 Team 快照更新，但只有当前看板实际
 读取的任务文档、`task.json`、`implement.jsonl`、`check.jsonl`、workspace 索引和 journal 会改变展示结果。
-Team 模式只监听和同步 `.trellis/tasks/**`；workspace、`.developer`、scripts、spec、config、workflow
-和本机编码 Agent 目录都由客户端 Git 管理。
 
 ## 数据来源
 
@@ -95,7 +89,6 @@ Team 模式只监听和同步 `.trellis/tasks/**`；workspace、`.developer`、s
 - 任务阶段证据：`prd.md`、`design.md`、`implement.md`、`implementation-report.md`、`check-report.md`、`e2e-report.md`、`research/`、`implement.jsonl`、`check.jsonl`
 - 父子任务：优先使用 `parent`/`children`；跨仓库兼容明确的 `meta.frontendTask`、`meta.backendTask`、`meta.childTask`、`meta.integrationTask`、`meta.uiTask` 及 `meta.*ParentTask`。其他普通 `meta` 路径只作为普通字段，不建立父子关系
 - 归档状态：是否位于 `.trellis/tasks/archive/`
-- standalone 项目成员：`.trellis/workspace/<developer>/`
 - Team 项目成员：`sync_project_member.trellis_dev_id`
 - Team 归档附件：`archive-snapshots/<taskSpaceId>/heads/<head>/files/<sha256>`
 
@@ -149,16 +142,15 @@ Board 自身可变状态统一保存在该目录下的 `board.sqlite`：
 全新数据库直接创建 schema v15。新 Team 链路只读写 `sync_*`、账号、团队、审计和执行扩展表；
 旧 `team_project`、`project_live_*`、`agent_live_cursor`、`git_credential`、`git_ssh_known_host`
 等表保留为人工回滚材料，但不在启动、项目接入、任务同步或命令链路中读取。
-首次打开 standalone 空库时仍会在一个事务中读取 `repos.json`、`task-metadata.json`、
+首次打开空库时仍会在一个事务中读取历史 `repos.json`、`task-metadata.json`、
 `scan-cache.json` 和 `board-state.json` 并导入，然后写入一次性的 `legacy_json_imported_v1` 标记。
-Team 模式禁止导入本机默认仓库和旧 JSON。
 
 v6-v14 数据库升级到 v15 前会在运行数据目录的 `backups/` 写入
 `board.sqlite.pre-v15.*` 快照，再补齐缺失的 `sync_*` 表。旧账号、团队、项目、审计和旧表保持不变。
 `v5` 及更旧版本仍拒绝启动，不能通过删除数据库代替迁移。Team runtime 还会每 24 小时创建
 `board.sqlite.snapshot.*`，保留最近 7 份。
 
-SQLite 使用 WAL 模式。standalone 主线程和扫描 Worker 各自持有连接；Team 快照提交、索引投影和命令状态
+SQLite 使用 WAL 模式。Team 快照提交、索引投影和命令状态
 都使用事务和条件更新。旧项目 `git-credentials.key` 不再使用；配置归档 Git 凭据时会生成独立的
 `archive-git-credentials.key`。热备份前应先停止服务，并同时处理可能存在的 `board.sqlite-wal`、
 `board.sqlite-shm`、`archive-snapshots/` 和归档凭据密钥。
@@ -184,22 +176,6 @@ SQLite 使用 WAL 模式。standalone 主线程和扫描 Worker 各自持有连�
 `prd.md`、`design.md`、`implement.md`、`implementation-report.md`、`check-report.md`、`e2e-report.md` 的详情预览会截断到每个文件 40,000 字符；完整文件仍在仓库中。阶段判断读取原文件，不受预览截断影响。
 
 自动刷新仍会重新扫描全部白名单仓库，而不是只扫描发生变更的仓库。这样能正确重算跨仓库父子任务和父任务阶段继承；代价是每次有效变更后仍有约 8–15 秒的后台扫描。扫描期间再次变化会排队，并在本轮结束后再扫描一次。
-
-## Standalone 写操作（已降级 / Legacy）
-
-> 注意：`standalone` 模式已停止维护新功能，仅保留既有单机流程兼容性；日常团队协作请使用下文的「团队模式」。
-
-- 创建任务：调用目标仓库自己的 `.trellis/scripts/task.py create --no-start`
-- 派发任务：更新指定任务的 `task.json.assignee`
-- 流程勾选：只写入看板数据库，不改写 Trellis 的正式任务状态
-- 计划字段：从任务卡片或详情维护截止日期、里程碑和标签，只写 SQLite
-- 组合视图：保存、复用和删除个人筛选条件
-- 阻断依赖：从任务详情创建或解除，依赖与事件同事务写入 SQLite
-- WIP 软上限：在流动信号面板设置 1–9，达到或超出只提醒，不阻止阶段操作
-
-接口只允许操作 SQLite `repositories` 表中的白名单仓库；不提供任意路径读取。
-
-主要源码入口：[packages/server/index.js](./packages/server/index.js)、[packages/server/database.js](./packages/server/database.js)、[packages/server/repositories.js](./packages/server/repositories.js)、[packages/server/persistence.js](./packages/server/persistence.js)、[packages/server/watcher.js](./packages/server/watcher.js)、[packages/server/loader.js](./packages/server/loader.js)、[packages/server/scan-worker.js](./packages/server/scan-worker.js)、[packages/server/actions.js](./packages/server/actions.js)、[packages/web/src/main.tsx](./packages/web/src/main.tsx)。
 
 ## 团队模式
 

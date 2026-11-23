@@ -32,7 +32,7 @@
 ## 硬约束
 
 - 禁止靠合并行、删注释、压成一行的三元表达式来「达标」：统计的是物理行数，但压缩可读性同样视为违规。
-- `import.meta.url` 相对路径在搬文件后会指向新目录，搬动前先 `rg "import.meta.url"` 核对（`packages/server/team/http.js`、`packages/server/team/task-space-index.js`、`packages/server/standalone/state.js`、`packages/server/loader.js` 均有）。
+- `import.meta.url` 相对路径在搬文件后会指向新目录，搬动前先 `rg "import.meta.url"` 核对（`packages/server/team/http.js`、`packages/server/team/task-space-index.js`、`packages/server/loader.js` 均有）。
 - 有测试以文本方式读源码断言内容（`packages/server/test/team-static.test.js` 读 `team/http.js`、`team/task-space-service.js`；`packages/desktop/test/desktop-ui-build.test.js` 读 web 组件），搬动被断言的字符串/文件名时必须同步改写断言，并保持断言验证的仍是同一个可观察行为，不得删除或放宽。
 - Worker Thread 图（`scan-worker.js`）会加载整张 import 图：拆分后不能出现循环 import，模块级缓存只能有一份。
 

@@ -71,8 +71,7 @@ Board 仍通过普通 REST 查询刷新，不从 SSE 接收任务正文。
 Web 端 Team 模式创建/改派不要求当前 taskSpace 有在线监听，只在任务空间停用或账号只读时提前阻止；
 最终写权限仍由服务端校验。`pending_delivery`、`claimed`、`lease_expired`、`version_stale`、
 `migration_conflict`、改派和 handoff 状态必须显示为可读控制状态。正文尚未 materialize 时，
-任务详情只展示服务端元数据和控制状态，禁止请求 `/api/task`、渲染产物或依赖分析；standalone
-或没有控制字段的旧 Team 数据保持正文可用兼容。
+任务详情只展示服务端元数据和控制状态，禁止请求 `/api/task`、渲染产物或依赖分析；没有控制字段的旧 Team 数据保持正文可用兼容。
 
 `taskSpaceId` 可选：指定时查询单分支；缺省或 `all` 时按当前 `teamId` 和可选 `projectIds` 查询所有可读
 taskSpace。服务端使用 `taskSpaces.listReadable()` 生成项目/任务空间集合并校验显式 projectIds。

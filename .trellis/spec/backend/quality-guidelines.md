@@ -51,7 +51,6 @@ import assert from "node:assert/strict";
 | [packages/server/execution-store.js](../../../packages/server/execution-store.js) | 计划字段校验、标签原子替换、保存视图、依赖创建/解除、循环和事务回滚、扫描事件 |
 | [packages/server/execution-projection.js](../../../packages/server/execution-projection.js) | 截止/停滞/阻断注意力、身份冲突隐藏、DoR/DoD、WIP 和 Board 批量投影 |
 | [packages/server/task-location.js](../../../packages/server/task-location.js) | 白名单、任务根、真实路径和身份冲突定位 |
-| [packages/server/standalone/server.js](../../../packages/server/standalone/server.js) | 独立模式启动/关闭、`/api` 路由、静态与插件 UI 资源、错误响应文案 |
 | 前端纯模块 | Markdown 安全、slug、归档排序、组合筛选 |
 
 `packages/server/index.js` 的 HTTP 路由没有独立自动测试套件。修改 API、静态资源、刷新队列或 Worker 协议时，除 `yarn test` 外还要启动真实服务并用实际 HTTP 请求和页面操作验证。

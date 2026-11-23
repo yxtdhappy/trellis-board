@@ -11,14 +11,13 @@
 
 ## 扫描输入
 
-standalone 每个仓库的扫描根为 `.trellis/tasks`。只有包含 `task.json` 的任务目录成为任务；
+任务扫描根统一为 `.trellis/tasks`。只有包含 `task.json` 的任务目录成为任务；
 `archive/` 下任意嵌套层级的任务仍会被发现并标记为归档。Team 的活动任务扫描根只包含
 `.trellis/tasks/<task-dir>`，`archive/` 在客户端和 Agent 快照进入索引前即被排除；Team 归档来自
 服务端后台 Git 导入的 `sync_archive_file`，两条事实源在 taskSpace 索引中合并。
 
 这里有两类扫描输入：
 
-- standalone 直接扫描 SQLite 白名单中的本机仓库，可读取 workspace 和 Git 元数据。
 - Team taskSpace 的活动扫描只物化 `sync_task_space_file`；归档扫描只物化 `sync_archive_file`
   元数据并从 `archive-snapshots/` 读取本地正文。两条索引链路都不读取 Git、workspace、
   `.developer`、scripts、spec、config 或 workflow；只有归档同步阶段允许独占远端 Git。
@@ -459,7 +458,7 @@ withTransaction(db, () => {
 - [ ] 基线 taskSpace 已有同一稳定任务 ID 时，默认任务查询、计数、筛选和分页只返回基线副本；来源快照仍可显式读取。
 - [ ] 扫描只把包含 `task.json` 的目录认作任务。
 - [ ] 新证据文件已加入读取和缓存签名范围。
-- [ ] standalone 缓存失效范围覆盖 workspace、关系和 Git 元数据影响；Team 只按 taskSpace revision 失效。
+- [ ] Team 缓存失效只按 taskSpace revision 进行。
 - [ ] E2E 计划/否定/完成三种语义均有测试。
 - [ ] 输出结构不兼容时更新 `SCAN_SCHEMA_VERSION`。
 - [ ] 列表摘要保留证据计数和 Design 有效性，但不泄漏完整依赖数组、事件或产物正文。
