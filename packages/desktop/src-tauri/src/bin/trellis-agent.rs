@@ -136,10 +136,7 @@ async fn associate(store: &ConfigStore, args: &Parsed) -> AgentResult<()> {
         developer_id: args.required("--developer")?,
         display_name: args.value("--display-name").map(str::to_string),
         require_pushed: args.flag("--require-pushed"),
-        initial_sync_mode: args
-            .value("--initial-mode")
-            .unwrap_or("safe")
-            .to_string(),
+        initial_sync_mode: args.value("--initial-mode").unwrap_or("safe").to_string(),
     };
     let summary = associate_desktop_project(store, &api, params).await?;
     print_json(&serde_json::to_value(&summary).unwrap_or(Value::Null))?;
@@ -156,14 +153,8 @@ async fn run(store: Arc<ConfigStore>, args: &Parsed) -> AgentResult<()> {
         let _ = std::io::stdout().flush();
     });
     let state_sink: StateSink = Arc::new(|| {});
-    let runtime = AgentRuntime::start(
-        store.clone(),
-        emit,
-        state_sink,
-        paused.clone(),
-        &hub,
-    )
-    .await?;
+    let runtime =
+        AgentRuntime::start(store.clone(), emit, state_sink, paused.clone(), &hub).await?;
     logging::warn(&format!(
         "Agent 已启动：{}（{}），pid={}",
         config.server_url,
@@ -267,9 +258,10 @@ fn logs(store: &ConfigStore, args: &Parsed) -> AgentResult<()> {
 async fn agent_context(
     store: &ConfigStore,
 ) -> AgentResult<(crate::agent::store::AgentConfig, Arc<ApiClient>)> {
-    let config = store.read_config(false).await?.ok_or_else(|| {
-        AgentError::new(code::CONFIG_MISSING, "尚未登录，请先执行 login")
-    })?;
+    let config = store
+        .read_config(false)
+        .await?
+        .ok_or_else(|| AgentError::new(code::CONFIG_MISSING, "尚未登录，请先执行 login"))?;
     if config.agent_id.trim().is_empty() {
         return Err(AgentError::new(
             code::CONFIG_MISSING,
@@ -367,9 +359,9 @@ impl Parsed {
     }
 
     fn required(&self, key: &str) -> AgentResult<String> {
-        self.value(key).map(str::to_string).ok_or_else(|| {
-            AgentError::new(code::COMMAND_INVALID, format!("缺少必需参数 {key}"))
-        })
+        self.value(key)
+            .map(str::to_string)
+            .ok_or_else(|| AgentError::new(code::COMMAND_INVALID, format!("缺少必需参数 {key}")))
     }
 
     fn flag(&self, key: &str) -> bool {
@@ -391,7 +383,6 @@ impl Parsed {
         ))
     }
 }
-
 
 #[cfg(unix)]
 fn terminate_signal() -> Option<tokio::signal::unix::Signal> {

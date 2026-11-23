@@ -506,10 +506,19 @@ fn show_windows_toast(app_id: &str, title: &str, body: &str) {
              $toast = New-Object Windows.UI.Notifications.ToastNotification $xml\n\
              [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{app_id}').Show($toast)\n"
         );
-        let encoded =
-            base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>());
+        let encoded = base64::engine::general_purpose::STANDARD.encode(
+            script
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<u8>>(),
+        );
         match std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded.as_str()])
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-EncodedCommand",
+                encoded.as_str(),
+            ])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .creation_flags(CREATE_NO_WINDOW)
@@ -521,14 +530,12 @@ fn show_windows_toast(app_id: &str, title: &str, body: &str) {
                     Ok(status) => crate::logging::warn(&format!(
                         "发送任务认领系统通知失败：PowerShell 退出码 {status}"
                     )),
-                    Err(error) => crate::logging::warn(&format!(
-                        "等待任务认领系统通知进程失败：{error}"
-                    )),
+                    Err(error) => {
+                        crate::logging::warn(&format!("等待任务认领系统通知进程失败：{error}"))
+                    }
                 });
             }
-            Err(error) => crate::logging::warn(&format!(
-                "启动任务认领系统通知失败：{error}"
-            )),
+            Err(error) => crate::logging::warn(&format!("启动任务认领系统通知失败：{error}")),
         }
     }
     #[cfg(not(target_os = "windows"))]

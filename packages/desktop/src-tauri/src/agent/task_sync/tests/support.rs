@@ -353,8 +353,10 @@ pub(super) async fn mock_api_server(
                         };
                         match response {
                             Some(response) => {
-                                let status =
-                                    response.get("status").and_then(Value::as_u64).unwrap_or(200);
+                                let status = response
+                                    .get("status")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(200);
                                 let status_line = match status {
                                     400 => "400 Bad Request",
                                     403 => "403 Forbidden",

@@ -306,6 +306,8 @@ fn hex(bytes: &[u8]) -> String {
 mod install;
 mod probe;
 
+// bin 侧只用到 probe 导出，install 的 glob 重导在 bin crate 里必然「未使用」。
+#[allow(unused_imports)]
 pub use install::*;
 pub use probe::*;
 

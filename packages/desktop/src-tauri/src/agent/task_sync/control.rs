@@ -106,6 +106,7 @@ impl TaskSync {
     }
 }
 impl TaskSync {
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn mark_handoff_ack_pending(
         &self,
         key: &str,

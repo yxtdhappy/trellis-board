@@ -4,11 +4,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 async fn mock_inbox_server(
     statuses: Vec<u16>,
-) -> (
-    String,
-    Arc<Mutex<Vec<Value>>>,
-    tokio::task::JoinHandle<()>,
-) {
+) -> (String, Arc<Mutex<Vec<Value>>>, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind inbox server");
@@ -29,9 +25,7 @@ async fn mock_inbox_server(
                 let mut request = Vec::new();
                 let mut chunk = [0u8; 4096];
                 let header_end = loop {
-                    if let Some(index) = request
-                        .windows(4)
-                        .position(|window| window == b"\r\n\r\n")
+                    if let Some(index) = request.windows(4).position(|window| window == b"\r\n\r\n")
                     {
                         break index;
                     }
@@ -64,8 +58,7 @@ async fn mock_inbox_server(
                 )
                 .unwrap_or(Value::Null);
                 bodies.lock().await.push(body);
-                let index = response_index
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let index = response_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let status = statuses
                     .get(index)
                     .copied()
@@ -104,7 +97,7 @@ async fn inbox_fixture(
     Arc<Mutex<Vec<Value>>>,
     tokio::task::JoinHandle<()>,
 ) {
-    let (root, store, _sync, mut binding) = test_task_sync_fixture(prefix).await;
+    let (root, store, _sync, binding) = test_task_sync_fixture(prefix).await;
     let repo = Path::new(&binding.repo_path);
     init_git_repo(repo);
     tokio::fs::write(repo.join("README.md"), "fixture\n")
@@ -190,10 +183,7 @@ async fn cleanup_deleted_ownership_uses_task_dir_and_clears_both_ledgers() {
     assert_eq!(removed, vec![missing.to_string()]);
     let sent = bodies.lock().await.clone();
     assert_eq!(sent.len(), 1);
-    assert_eq!(
-        sent[0]["deletes"],
-        json!([{ "taskDir": missing }])
-    );
+    assert_eq!(sent[0]["deletes"], json!([{ "taskDir": missing }]));
     let cursor = sync.read_cursor("space-1").await;
     assert!(!cursor.ownership_pending.contains_key(missing));
     assert!(!cursor.pending_rejected.contains_key(missing));
@@ -391,7 +381,11 @@ async fn resolved_ownership_delete_contains_only_task_dir() {
     )
     .await;
     let previous = BTreeSet::from([task_dir.to_string()]);
-    let groups = vec![task_group("server-id", task_dir, &[("task.json", task_json)])];
+    let groups = vec![task_group(
+        "server-id",
+        task_dir,
+        &[("task.json", task_json)],
+    )];
     store
         .write_json(
             &store.paths.task_cursors_file,
@@ -476,10 +470,7 @@ async fn cleanup_deleted_ownership_keeps_all_ledgers_after_partial_batch_failure
     assert_eq!(error.status, Some(500));
     assert_eq!(bodies.lock().await.len(), 2);
     assert_eq!(
-        sync.read_cursor("space-1")
-            .await
-            .ownership_pending
-            .len(),
+        sync.read_cursor("space-1").await.ownership_pending.len(),
         OWNERSHIP_INBOX_MAX_CHANGES + 1
     );
 

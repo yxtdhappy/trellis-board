@@ -26,7 +26,7 @@ pub(super) fn handoff_manifest(
         if !is_sha256(sha256) || sha256 != snapshot_sha256(content) {
             return protocol::err(code::INVALID_RESPONSE, "任务文件摘要不一致");
         }
-        let size = u64::try_from(normalize_snapshot_text(content).as_bytes().len())
+        let size = u64::try_from(normalize_snapshot_text(content).len())
             .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "任务文件大小超出范围"))?;
         total_bytes = total_bytes
             .checked_add(size)
@@ -57,12 +57,7 @@ pub(super) fn handoff_manifest(
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    Ok((
-        manifest_sha256,
-        files.len() as u64,
-        total_bytes,
-        manifest,
-    ))
+    Ok((manifest_sha256, files.len() as u64, total_bytes, manifest))
 }
 pub(super) fn handoff_ack_request(handoff: &StoredTaskHandoff) -> AgentResult<Value> {
     let mut request = json!({
@@ -176,11 +171,7 @@ impl TaskSync {
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
             return protocol::err(code::INVALID_RESPONSE, "handoff 备份根目录必须是真实目录");
         }
-        let root = self
-            .store
-            .paths
-            .live_backups_dir
-            .join(task_space_id);
+        let root = self.store.paths.live_backups_dir.join(task_space_id);
         match tokio::fs::symlink_metadata(&root).await {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
             Ok(_) => return protocol::err(code::INVALID_RESPONSE, "handoff 任务空间备份目录无效"),
@@ -202,9 +193,10 @@ impl TaskSync {
         binding: &AgentBinding,
         handoff: &StoredTaskHandoff,
     ) -> AgentResult<bool> {
-        let (Some(backup_id), Some(expected_manifest_sha256)) =
-            (handoff.backup_id.as_deref(), handoff.manifest_sha256.as_deref())
-        else {
+        let (Some(backup_id), Some(expected_manifest_sha256)) = (
+            handoff.backup_id.as_deref(),
+            handoff.manifest_sha256.as_deref(),
+        ) else {
             return Ok(false);
         };
         if !is_sha256(expected_manifest_sha256) {
@@ -241,7 +233,8 @@ impl TaskSync {
             Err(_) => return Ok(false),
         };
         if manifest.get("version").and_then(Value::as_u64) != Some(1)
-            || manifest.get("taskDir").and_then(Value::as_str) != Some(handoff.relative_dir.as_str())
+            || manifest.get("taskDir").and_then(Value::as_str)
+                != Some(handoff.relative_dir.as_str())
             || !handoff_manifest_files_match(
                 &target,
                 &manifest,
@@ -261,21 +254,17 @@ impl TaskSync {
             Ok(value) => value,
             Err(_) => return Ok(false),
         };
-        Ok(
-            meta.get("version").and_then(Value::as_u64) == Some(1)
-                && meta.get("backupId").and_then(Value::as_str) == Some(backup_id)
-                && meta.get("taskSpaceId").and_then(Value::as_str)
-                    == Some(binding.task_space_id.as_str())
-                && meta.get("executionTaskKey").and_then(Value::as_str)
-                    == Some(handoff.execution_task_key.as_str())
-                && meta.get("taskId").and_then(Value::as_str) == Some(handoff.task_id.as_str())
-                && meta.get("taskDir").and_then(Value::as_str)
-                    == Some(handoff.relative_dir.as_str())
-                && meta.get("manifestSha256").and_then(Value::as_str)
-                    == Some(expected_manifest_sha256)
-                && meta.get("fileCount").and_then(Value::as_u64) == Some(handoff.file_count)
-                && meta.get("totalBytes").and_then(Value::as_u64) == Some(handoff.total_bytes),
-        )
+        Ok(meta.get("version").and_then(Value::as_u64) == Some(1)
+            && meta.get("backupId").and_then(Value::as_str) == Some(backup_id)
+            && meta.get("taskSpaceId").and_then(Value::as_str)
+                == Some(binding.task_space_id.as_str())
+            && meta.get("executionTaskKey").and_then(Value::as_str)
+                == Some(handoff.execution_task_key.as_str())
+            && meta.get("taskId").and_then(Value::as_str) == Some(handoff.task_id.as_str())
+            && meta.get("taskDir").and_then(Value::as_str) == Some(handoff.relative_dir.as_str())
+            && meta.get("manifestSha256").and_then(Value::as_str) == Some(expected_manifest_sha256)
+            && meta.get("fileCount").and_then(Value::as_u64) == Some(handoff.file_count)
+            && meta.get("totalBytes").and_then(Value::as_u64) == Some(handoff.total_bytes))
     }
 }
 impl TaskSync {
@@ -458,7 +447,10 @@ impl TaskSync {
                     Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
                     _ => {
                         let _ = tokio::fs::rename(&trash, &source).await;
-                        return protocol::err(code::INVALID_RESPONSE, "handoff 清理目标不是真实目录");
+                        return protocol::err(
+                            code::INVALID_RESPONSE,
+                            "handoff 清理目标不是真实目录",
+                        );
                     }
                 }
                 if let Err(error) = tokio::fs::remove_dir_all(&trash).await {
@@ -530,13 +522,16 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) async fn retry_pending_handoff_acks(&self, binding: &AgentBinding) -> AgentResult<()> {
+    pub(super) async fn retry_pending_handoff_acks(
+        &self,
+        binding: &AgentBinding,
+    ) -> AgentResult<()> {
         self.ensure_task_control_loaded().await;
         let pending = {
             let state = self.task_control_state.lock().await;
             state.pending_handoff_acks(&binding.local_id)
         };
-        for (key, mut handoff) in pending {
+        for (key, handoff) in pending {
             if handoff.lease_held_by_other_user {
                 self.mark_handoff_ack_pending(
                     &key,
@@ -548,7 +543,7 @@ impl TaskSync {
                     handoff.total_bytes,
                 )
                 .await?;
-                handoff = self.stored_task_handoff(&key).await.unwrap_or(handoff);
+
                 let _ = self.attempt_handoff_ack(&key).await?;
                 if let Some(current) = self.stored_task_handoff(&key).await {
                     self.emit_handoff_notice(binding, &key, &current).await?;
@@ -592,37 +587,35 @@ impl TaskSync {
                         handoff.total_bytes,
                     )
                     .await?;
-                    handoff = self.stored_task_handoff(&key).await.unwrap_or(handoff);
                 } else {
-                    let exists =
-                        match self
-                            .handoff_task_directory_exists(binding, &handoff.relative_dir)
-                            .await
-                        {
-                            Ok(exists) => exists,
-                            Err(error) => {
-                                crate::logging::warn(&format!(
-                                    "handoff 本地目录复核失败 {}：{}",
-                                    handoff.task_id,
-                                    protocol::safe_error_message(&error.message)
-                                ));
-                                self.mark_handoff_ack_pending(
-                                    &key,
-                                    "conflict",
-                                    Some("unknown"),
-                                    handoff.backup_id.as_deref(),
-                                    handoff.manifest_sha256.as_deref(),
-                                    handoff.file_count,
-                                    handoff.total_bytes,
-                                )
-                                .await?;
-                                let _ = self.attempt_handoff_ack(&key).await?;
-                                if let Some(current) = self.stored_task_handoff(&key).await {
-                                    self.emit_handoff_notice(binding, &key, &current).await?;
-                                }
-                                continue;
+                    let exists = match self
+                        .handoff_task_directory_exists(binding, &handoff.relative_dir)
+                        .await
+                    {
+                        Ok(exists) => exists,
+                        Err(error) => {
+                            crate::logging::warn(&format!(
+                                "handoff 本地目录复核失败 {}：{}",
+                                handoff.task_id,
+                                protocol::safe_error_message(&error.message)
+                            ));
+                            self.mark_handoff_ack_pending(
+                                &key,
+                                "conflict",
+                                Some("unknown"),
+                                handoff.backup_id.as_deref(),
+                                handoff.manifest_sha256.as_deref(),
+                                handoff.file_count,
+                                handoff.total_bytes,
+                            )
+                            .await?;
+                            let _ = self.attempt_handoff_ack(&key).await?;
+                            if let Some(current) = self.stored_task_handoff(&key).await {
+                                self.emit_handoff_notice(binding, &key, &current).await?;
                             }
-                        };
+                            continue;
+                        }
+                    };
                     if exists {
                         let branch_matches = matches!(
                             git_head_branch_name(Path::new(&binding.repo_path)).await,
@@ -698,7 +691,6 @@ impl TaskSync {
                             )
                             .await?;
                         }
-                        handoff = self.stored_task_handoff(&key).await.unwrap_or(handoff);
                     }
                 }
             }
@@ -789,7 +781,7 @@ impl TaskSync {
         let git_entries = match crate::agent::git::status_paths(
             Path::new(&binding.repo_path),
             &self.binding_hooks_dir(binding),
-            &[handoff.relative_dir.clone()],
+            std::slice::from_ref(&handoff.relative_dir),
         )
         .await
         {
@@ -831,9 +823,7 @@ impl TaskSync {
         binding: &AgentBinding,
         control: &TaskControl,
     ) -> AgentResult<()> {
-        let key = self
-            .upsert_task_handoff_control(binding, control)
-            .await?;
+        let key = self.upsert_task_handoff_control(binding, control).await?;
         let Some(handoff) = self.stored_task_handoff(&key).await else {
             return Ok(());
         };
@@ -872,16 +862,8 @@ impl TaskSync {
                     handoff.task_id,
                     protocol::safe_error_message(&error.message)
                 ));
-                self.mark_handoff_ack_pending(
-                    &key,
-                    "conflict",
-                    Some("unknown"),
-                    None,
-                    None,
-                    0,
-                    0,
-                )
-                .await?;
+                self.mark_handoff_ack_pending(&key, "conflict", Some("unknown"), None, None, 0, 0)
+                    .await?;
                 let _ = self.attempt_handoff_ack(&key).await?;
                 if let Some(current) = self.stored_task_handoff(&key).await {
                     self.emit_handoff_notice(binding, &key, &current).await?;
@@ -891,16 +873,8 @@ impl TaskSync {
         };
         match source_state {
             HandoffSourceState::Conflict(reason) => {
-                self.mark_handoff_ack_pending(
-                    &key,
-                    "conflict",
-                    Some(reason),
-                    None,
-                    None,
-                    0,
-                    0,
-                )
-                .await?;
+                self.mark_handoff_ack_pending(&key, "conflict", Some(reason), None, None, 0, 0)
+                    .await?;
                 let _ = self.attempt_handoff_ack(&key).await?;
                 if let Some(current) = self.stored_task_handoff(&key).await {
                     self.emit_handoff_notice(binding, &key, &current).await?;
@@ -1052,7 +1026,9 @@ pub(super) async fn cleanup_handoff_backup_temps(target: &Path) -> AgentResult<(
         if !metadata.is_file() || metadata.file_type().is_symlink() {
             return protocol::err(code::INVALID_RESPONSE, "handoff 元数据临时文件状态异常");
         }
-        tokio::fs::remove_file(entry.path()).await.map_err(io_error)?;
+        tokio::fs::remove_file(entry.path())
+            .await
+            .map_err(io_error)?;
     }
     Ok(())
 }
@@ -1082,7 +1058,10 @@ pub(super) async fn handoff_manifest_files_match(
         if !safe_handoff_relative_path(path) || !is_sha256(sha256) {
             return Ok(false);
         }
-        if expected.insert(path.to_string(), (sha256.to_string(), size)).is_some() {
+        if expected
+            .insert(path.to_string(), (sha256.to_string(), size))
+            .is_some()
+        {
             return Ok(false);
         }
     }
@@ -1108,7 +1087,7 @@ pub(super) async fn handoff_manifest_files_match(
             return Ok(false);
         };
         let normalized = normalize_snapshot_text(&content);
-        let size = u64::try_from(normalized.as_bytes().len())
+        let size = u64::try_from(normalized.len())
             .map_err(|_| AgentError::new(code::INVALID_RESPONSE, "备份文件大小超出范围"))?;
         if size != expected_size || snapshot_sha256(&content) != expected_sha256 {
             return Ok(false);

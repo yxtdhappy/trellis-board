@@ -8,8 +8,8 @@ struct TempRepo {
 
 impl TempRepo {
     fn new(tag: &str) -> Self {
-        let base = std::env::temp_dir()
-            .join(format!("trellis-onboarding-{tag}-{}", uuid::Uuid::new_v4()));
+        let base =
+            std::env::temp_dir().join(format!("trellis-onboarding-{tag}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).expect("create temp dir");
         Self {
             root: base.join("repo"),
@@ -159,9 +159,8 @@ fn normalizes_https_remote_identity_with_stable_hash() {
     let expected = sha256_hex(br#"{"host":"github.com","port":0,"path":"Team/Repo"}"#);
     assert_eq!(identity.identity_hash, expected);
 
-    let custom_port =
-        normalize_remote_identity("ssh://git@example.com:2222/team/repo.git", false)
-            .expect("ssh identity");
+    let custom_port = normalize_remote_identity("ssh://git@example.com:2222/team/repo.git", false)
+        .expect("ssh identity");
     assert_eq!(custom_port.port, 2222);
     assert_eq!(custom_port.host, "example.com");
     assert_eq!(custom_port.path, "team/repo");
@@ -193,22 +192,20 @@ fn rejects_invalid_remote_shapes() {
             .code,
         code::REMOTE_INVALID
     );
-    let file =
-        normalize_remote_identity("file:///C:/repos/demo.git", true).expect("file remote");
+    let file = normalize_remote_identity("file:///C:/repos/demo.git", true).expect("file remote");
     assert_eq!(file.host, "file");
     assert_eq!(file.path, "C:/repos/demo");
 }
 
 #[test]
 fn parses_scp_style_remote() {
-    let identity = normalize_remote_identity("git@example.com:team/repo.git", false)
-        .expect("scp identity");
+    let identity =
+        normalize_remote_identity("git@example.com:team/repo.git", false).expect("scp identity");
     assert_eq!(identity.host, "example.com");
     assert_eq!(identity.port, 0);
     assert_eq!(identity.path, "team/repo");
 
-    let ipv6 =
-        normalize_remote_identity("git@[::1]:team/repo.git", false).expect("ipv6 identity");
+    let ipv6 = normalize_remote_identity("git@[::1]:team/repo.git", false).expect("ipv6 identity");
     assert_eq!(ipv6.host, "::1");
     assert_eq!(ipv6.path, "team/repo");
 }
@@ -269,8 +266,7 @@ async fn requires_pushed_commit_rejects_waiting_state() {
 #[test]
 fn normalizes_agent_tool_selection() {
     assert_eq!(
-        normalize_agent_tools(&[" cursor ".to_string(), "pi".to_string()])
-            .expect("known tools"),
+        normalize_agent_tools(&[" cursor ".to_string(), "pi".to_string()]).expect("known tools"),
         vec!["cursor".to_string(), "pi".to_string()]
     );
     assert_eq!(
@@ -379,9 +375,12 @@ async fn inspection_exposes_developer_name_from_local_file() {
 async fn creates_gitignore_with_selected_agent_rules() {
     let repo = TempRepo::new("gitignore-create");
     std::fs::create_dir_all(&repo.root).expect("create repo dir");
-    ensure_agent_gitignore(&repo.root, &["codex".to_string(), "claude-code".to_string()])
-        .await
-        .expect("ensure gitignore");
+    ensure_agent_gitignore(
+        &repo.root,
+        &["codex".to_string(), "claude-code".to_string()],
+    )
+    .await
+    .expect("ensure gitignore");
     assert_eq!(
         std::fs::read_to_string(repo.root.join(".gitignore")).expect("read gitignore"),
         "# Trellis local agent configs (local only)\n/.claude/\n/.codex/\n"
@@ -441,7 +440,9 @@ async fn dedupes_equivalent_gitignore_rules_and_is_idempotent() {
 
 #[test]
 fn contains_trellis_entry_matches_only_trellis_paths() {
-    assert!(contains_trellis_entry(&[".trellis/tasks/a/prd.md".to_string()]));
+    assert!(contains_trellis_entry(&[
+        ".trellis/tasks/a/prd.md".to_string()
+    ]));
     assert!(!contains_trellis_entry(&[".trellisx/a.md".to_string()]));
     assert!(!contains_trellis_entry(&[]));
 }
@@ -498,7 +499,11 @@ async fn commits_and_pushes_only_initialization_paths() {
     std::fs::create_dir_all(repo.root.join(".agents").join("skills").join("trellis"))
         .expect("create agents skills");
     std::fs::write(
-        repo.root.join(".agents").join("skills").join("trellis").join("SKILL.md"),
+        repo.root
+            .join(".agents")
+            .join("skills")
+            .join("trellis")
+            .join("SKILL.md"),
         "# skill\n",
     )
     .expect("write skill");
@@ -537,7 +542,10 @@ async fn commits_and_pushes_only_initialization_paths() {
         .expect("second commit and push");
     assert!(again.is_ready(), "{}", again.message);
     assert_eq!(git(&repo.root, &["rev-parse", "HEAD"]), head_before);
-    assert_eq!(git(&repo.root, &["rev-list", "--count", "HEAD"]).trim(), "1");
+    assert_eq!(
+        git(&repo.root, &["rev-list", "--count", "HEAD"]).trim(),
+        "1"
+    );
     let remote_head = git(&bare.root, &["rev-parse", "refs/heads/main"]);
     assert_eq!(again.local_head.as_deref(), Some(remote_head.trim()));
 }

@@ -120,12 +120,9 @@ impl ApiClient {
         if let Some(credential) = &self.credential {
             request = request.header(AUTHORIZATION, format!("Bearer {credential}"));
         }
-        let body_bytes = body
-            .map(serde_json::to_vec)
-            .transpose()
-            .map_err(|error| {
-                AgentError::new(code::INVALID_RESPONSE, format!("请求体序列化失败: {error}"))
-            })?;
+        let body_bytes = body.map(serde_json::to_vec).transpose().map_err(|error| {
+            AgentError::new(code::INVALID_RESPONSE, format!("请求体序列化失败: {error}"))
+        })?;
         if let Some(request_body) = body_bytes.clone() {
             request = request.body(request_body);
         }

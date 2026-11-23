@@ -7,10 +7,7 @@ fn maps_tool_ids_to_init_flags() {
         "pi".to_string(),
         "unknown-tool".to_string(),
     ];
-    assert_eq!(
-        trellis_agent_tool_flags(&tools),
-        vec!["--cursor", "--pi"]
-    );
+    assert_eq!(trellis_agent_tool_flags(&tools), vec!["--cursor", "--pi"]);
     assert!(trellis_agent_tool_flags(&[]).is_empty());
     assert_eq!(
         trellis_agent_tool_flags(&["claude-code".to_string()]),
@@ -28,9 +25,7 @@ fn maps_tools_to_gitignore_paths_in_table_order() {
         agent_gitignore_paths(&["pi".to_string(), "pi".to_string()]),
         vec!["/.pi/"]
     );
-    assert!(
-        agent_gitignore_paths(&["unknown-tool".to_string()]).is_empty()
-    );
+    assert!(agent_gitignore_paths(&["unknown-tool".to_string()]).is_empty());
     assert!(agent_gitignore_paths(&[]).is_empty());
 }
 
@@ -62,7 +57,11 @@ fn every_agent_tool_declares_rooted_gitignore_paths() {
             tool.id
         );
         for path in tool.gitignore_paths {
-            assert!(path.starts_with('/'), "{} rule must be root-anchored", tool.id);
+            assert!(
+                path.starts_with('/'),
+                "{} rule must be root-anchored",
+                tool.id
+            );
             assert_ne!(*path, "/.github/", "shared .github must not be ignored");
         }
     }
@@ -117,8 +116,7 @@ fn agent_only_helper_uses_trellis_configurators() {
 }
 
 fn temp_root(label: &str) -> PathBuf {
-    let root =
-        std::env::temp_dir().join(format!("trellis-cli-{label}-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("trellis-cli-{label}-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     root
 }
@@ -137,7 +135,10 @@ fn selects_repair_platforms_in_fixed_order() {
         selected_repair_platforms(&["omp".to_string(), "pi".to_string()]),
         vec!["pi".to_string(), "omp".to_string()]
     );
-    assert_eq!(selected_repair_platforms(&[" pi ".to_string()]), vec!["pi".to_string()]);
+    assert_eq!(
+        selected_repair_platforms(&[" pi ".to_string()]),
+        vec!["pi".to_string()]
+    );
     assert!(selected_repair_platforms(&["codex".to_string()]).is_empty());
     assert!(selected_repair_platforms(&[]).is_empty());
 }
@@ -163,10 +164,16 @@ fn detects_pi_repair_signature_from_output_and_directory() {
     assert!(repair_platforms_for_failure(&root, &pi_tools, &bare_output).is_empty());
 
     let output = exdev_output("EXDEV: rename .pi/extensions/trellis/index.ts");
-    assert_eq!(repair_platforms_for_failure(&root, &pi_tools, &output), vec!["pi".to_string()]);
+    assert_eq!(
+        repair_platforms_for_failure(&root, &pi_tools, &output),
+        vec!["pi".to_string()]
+    );
 
     let output = exdev_output("EXDEV: rename .pi\\extensions\\trellis\\index.ts");
-    assert_eq!(repair_platforms_for_failure(&root, &pi_tools, &output), vec!["pi".to_string()]);
+    assert_eq!(
+        repair_platforms_for_failure(&root, &pi_tools, &output),
+        vec!["pi".to_string()]
+    );
 
     std::fs::create_dir_all(root.join(".pi").join("extensions").join("trellis")).unwrap();
     assert_eq!(
@@ -186,7 +193,10 @@ fn detects_omp_output_signature_without_existing_directory() {
     let root = temp_root("repair-omp");
     let output = exdev_output("EXDEV: rename .omp/extensions/trellis/index.ts");
     let omp_tools = vec!["omp".to_string()];
-    assert_eq!(repair_platforms_for_failure(&root, &omp_tools, &output), vec!["omp".to_string()]);
+    assert_eq!(
+        repair_platforms_for_failure(&root, &omp_tools, &output),
+        vec!["omp".to_string()]
+    );
     std::fs::remove_dir_all(&root).unwrap();
 }
 
@@ -280,8 +290,16 @@ fn repair_and_retry_failures_are_actionable() {
     let repair = repair_failure(&tools, &["pi".to_string(), "omp".to_string()], &output);
     assert!(repair.message.starts_with("Pi/OMP 模板补齐失败："));
     let details = repair.details.as_ref().unwrap();
-    assert_eq!(details.get("repairFailed").and_then(serde_json::Value::as_bool), Some(true));
-    assert_eq!(details.get("repairPlatforms"), Some(&serde_json::json!(["pi", "omp"])));
+    assert_eq!(
+        details
+            .get("repairFailed")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        details.get("repairPlatforms"),
+        Some(&serde_json::json!(["pi", "omp"]))
+    );
     assert!(details.get("repoPath").is_none());
 
     let omp_repair = repair_failure(&tools, &["omp".to_string()], &output);
@@ -295,10 +313,20 @@ fn repair_and_retry_failures_are_actionable() {
         &output,
         "Trellis Agent 配置失败",
     );
-    assert!(retry.message.starts_with("Trellis Agent 配置失败（模板已补齐，重试仍失败）："));
+    assert!(retry
+        .message
+        .starts_with("Trellis Agent 配置失败（模板已补齐，重试仍失败）："));
     let details = retry.details.as_ref().unwrap();
-    assert_eq!(details.get("retryFailed").and_then(serde_json::Value::as_bool), Some(true));
-    assert_eq!(details.get("repairPlatforms"), Some(&serde_json::json!(["pi"])));
+    assert_eq!(
+        details
+            .get("retryFailed")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        details.get("repairPlatforms"),
+        Some(&serde_json::json!(["pi"]))
+    );
 
     let generic = trellis_failure(&tools, &output, "Trellis 初始化失败");
     assert!(generic.message.starts_with("Trellis 初始化失败："));
@@ -306,7 +334,9 @@ fn repair_and_retry_failures_are_actionable() {
     assert_eq!(details.get("repairPlatforms"), Some(&serde_json::json!([])));
 
     let developer = developer_failure("nzhou", &output);
-    assert!(developer.message.starts_with("Trellis developer 初始化失败："));
+    assert!(developer
+        .message
+        .starts_with("Trellis developer 初始化失败："));
     let details = developer.details.as_ref().unwrap();
     assert_eq!(
         details.get("developer").and_then(serde_json::Value::as_str),
@@ -333,8 +363,7 @@ fn embedded_repair_helper_writes_templates_directly() {
 
 #[tokio::test]
 async fn detects_tools_from_repository_markers() {
-    let root =
-        std::env::temp_dir().join(format!("trellis-cli-detect-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("trellis-cli-detect-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join(".cursor")).unwrap();
     std::fs::create_dir_all(root.join(".pi").join("extensions").join("trellis")).unwrap();
     std::fs::write(
@@ -355,8 +384,7 @@ async fn detects_tools_from_repository_markers() {
 }
 
 fn temp_repo(label: &str) -> PathBuf {
-    let root =
-        std::env::temp_dir().join(format!("trellis-cli-{label}-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("trellis-cli-{label}-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join(".trellis")).unwrap();
     root
 }

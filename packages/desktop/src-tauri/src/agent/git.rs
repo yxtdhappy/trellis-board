@@ -1002,7 +1002,6 @@ async fn run_git(
             operation,
             GitOperation::ConfigSparse | GitOperation::DiffCachedQuiet
         ),
-        ..Default::default()
     };
     run_process(Path::new(GIT_BINARY), &arg_refs, &options)
         .await

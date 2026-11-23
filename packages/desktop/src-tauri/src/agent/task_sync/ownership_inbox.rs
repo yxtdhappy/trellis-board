@@ -588,7 +588,7 @@ impl TaskSync {
         let candidates: BTreeSet<String> = ownership_ledger_task_dirs(&cursor)
             .into_iter()
             .filter(|task_dir| {
-                candidate_task_dirs.map_or(true, |candidates| candidates.contains(task_dir))
+                candidate_task_dirs.is_none_or(|candidates| candidates.contains(task_dir))
             })
             .collect();
         if candidates.is_empty() {

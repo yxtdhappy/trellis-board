@@ -790,7 +790,7 @@ impl TaskSync {
                 .to_string();
             decision_map.insert(key, action);
         }
-        let mut latest_revision = snapshot_revision(&snapshot);
+        let latest_revision = snapshot_revision(&snapshot);
         let mut baseline_files: Vec<SnapshotFile> = Vec::new();
         let mut deferred: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
         let (mut downloaded, mut uploaded, mut saved_local, mut skipped) = (0u32, 0u32, 0u32, 0u32);

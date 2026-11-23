@@ -21,10 +21,7 @@ fn load_client_document() -> Value {
 }
 
 fn save_client_document(document: &Value) -> Result<(), String> {
-    config::ensure_directories().map_err(|error| {
-        logging::warn(&error);
-        error
-    })?;
+    config::ensure_directories().inspect_err(|error| logging::warn(error))?;
     let path = client_document_path();
     let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
     let payload = serde_json::to_vec_pretty(document).map_err(|error| {

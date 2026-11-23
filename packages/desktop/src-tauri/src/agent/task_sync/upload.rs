@@ -239,13 +239,13 @@ impl TaskSync {
                 .upload_persisted_batch(binding, &cursor, value, evidence)
                 .await?
             {
-                if skipped_for_explicit_pending_rejection(&uploaded) {
-                    if self.read_cursor(&task_space_id).await.pending.is_none() {
-                        handled.insert(source.0.clone());
-                        handled.insert(target.0.clone());
-                        last_nonblocking_skip = Some(uploaded);
-                        continue;
-                    }
+                if skipped_for_explicit_pending_rejection(&uploaded)
+                    && self.read_cursor(&task_space_id).await.pending.is_none()
+                {
+                    handled.insert(source.0.clone());
+                    handled.insert(target.0.clone());
+                    last_nonblocking_skip = Some(uploaded);
+                    continue;
                 }
                 if uploaded.get("skipped").and_then(Value::as_bool) == Some(true) {
                     return Ok(uploaded);
@@ -287,11 +287,11 @@ impl TaskSync {
                 .upload_persisted_batch(binding, &cursor, value, evidence)
                 .await?
             {
-                if skipped_for_explicit_pending_rejection(&uploaded) {
-                    if self.read_cursor(&task_space_id).await.pending.is_none() {
-                        last_nonblocking_skip = Some(uploaded);
-                        continue;
-                    }
+                if skipped_for_explicit_pending_rejection(&uploaded)
+                    && self.read_cursor(&task_space_id).await.pending.is_none()
+                {
+                    last_nonblocking_skip = Some(uploaded);
+                    continue;
                 }
                 if uploaded.get("skipped").and_then(Value::as_bool) == Some(true) {
                     return Ok(uploaded);

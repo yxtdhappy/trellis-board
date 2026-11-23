@@ -571,21 +571,33 @@ async fn second_materialization_cycle_cleans_source_and_acks_with_new_backup() {
     )
     .await
     .expect("first round ack pending");
-    sync.mark_handoff_ack_done(&key).await.expect("first round ack done");
+    sync.mark_handoff_ack_done(&key)
+        .await
+        .expect("first round ack done");
     assert!(directory.exists());
-    assert!(handoff_backup_names(&store, &binding.task_space_id).await.is_empty());
+    assert!(handoff_backup_names(&store, &binding.task_space_id)
+        .await
+        .is_empty());
     let mut second = first.clone();
     second.materialized_at = Some("2026-11-20T01:57:03.950Z".to_string());
     second.materialized_revision = Some(2);
     second.updated_at = "2026-11-20T01:57:03.950Z".to_string();
-    sync.process_handoff_control(&binding, &second).await.expect("second cycle cleanup");
+    sync.process_handoff_control(&binding, &second)
+        .await
+        .expect("second cycle cleanup");
 
     assert!(!directory.exists(), "第二轮必须删除来源副本");
     let backups = handoff_backup_names(&store, &binding.task_space_id).await;
     assert_eq!(backups.len(), 1, "第二轮必须生成新备份：{backups:?}");
     assert!(backups[0].starts_with("handoff-"));
-    let record = sync.stored_task_handoff(&key).await.expect("handoff record");
-    assert_eq!(record.materialized_at.as_deref(), Some("2026-11-20T01:57:03.950Z"));
+    let record = sync
+        .stored_task_handoff(&key)
+        .await
+        .expect("handoff record");
+    assert_eq!(
+        record.materialized_at.as_deref(),
+        Some("2026-11-20T01:57:03.950Z")
+    );
     assert_eq!(record.materialized_revision, Some(2));
     assert_eq!(record.ack_state, "done");
     assert_eq!(record.outcome, "cleaned");
@@ -602,10 +614,20 @@ async fn second_materialization_cycle_cleans_source_and_acks_with_new_backup() {
     );
 
     // 同一物化轮次重复同步：不重置、不重复清理、不重复 ACK。
-    sync.process_handoff_control(&binding, &second).await.expect("same cycle resync");
+    sync.process_handoff_control(&binding, &second)
+        .await
+        .expect("same cycle resync");
     assert!(!directory.exists());
-    assert_eq!(handoff_backup_names(&store, &binding.task_space_id).await.len(), 1);
-    let record = sync.stored_task_handoff(&key).await.expect("handoff record");
+    assert_eq!(
+        handoff_backup_names(&store, &binding.task_space_id)
+            .await
+            .len(),
+        1
+    );
+    let record = sync
+        .stored_task_handoff(&key)
+        .await
+        .expect("handoff record");
     assert_eq!(record.ack_state, "done");
     assert_eq!(record.outcome, "cleaned");
     assert_eq!(
@@ -681,10 +703,16 @@ async fn stale_cycle_ack_keeps_pending_record() {
     .expect("pending ack");
 
     assert!(!sync.attempt_handoff_ack(&key).await.expect("attempt"));
-    let record = sync.stored_task_handoff(&key).await.expect("handoff record");
+    let record = sync
+        .stored_task_handoff(&key)
+        .await
+        .expect("handoff record");
     assert_eq!(record.ack_state, "pending");
     assert_eq!(record.outcome, "cleaned");
-    assert_eq!(record.backup_id.as_deref(), Some("handoff-0123456789abcdef"));
+    assert_eq!(
+        record.backup_id.as_deref(),
+        Some("handoff-0123456789abcdef")
+    );
     assert_eq!(
         requests
             .lock()
@@ -753,7 +781,10 @@ async fn legacy_handoff_ack_backfills_cycle_from_latest_control() {
 
     // mock 服务端只在请求携带控制面的轮次时才接受 ACK。
     assert!(sync.attempt_handoff_ack(&key).await.expect("attempt"));
-    let record = sync.stored_task_handoff(&key).await.expect("handoff record");
+    let record = sync
+        .stored_task_handoff(&key)
+        .await
+        .expect("handoff record");
     assert_eq!(record.ack_state, "done");
     assert_eq!(record.outcome, "cleaned");
     // 回填只用于请求副本，不改写持久记录。
@@ -841,7 +872,9 @@ async fn stale_pending_ack_recovers_after_new_materialization_cycle() {
     assert_eq!(record.outcome, "cleaned");
     assert!(!directory.exists(), "第一轮已删除来源副本");
     assert_eq!(
-        handoff_backup_names(&store, &binding.task_space_id).await.len(),
+        handoff_backup_names(&store, &binding.task_space_id)
+            .await
+            .len(),
         1,
         "第一轮必须生成备份"
     );
@@ -981,8 +1014,10 @@ fn readonly_dirs_round_trip_and_drop_archive_entries() {
         Some(&"DOWNLOADED".to_string())
     );
 
-    let mut patch = CursorPatch::default();
-    patch.readonly_task_dirs = Some(BTreeMap::new());
+    let patch = CursorPatch {
+        readonly_task_dirs: Some(BTreeMap::new()),
+        ..Default::default()
+    };
     let mut cursor = cursor.clone();
     assert!(apply_cursor_patch(&mut cursor, &patch));
     assert!(cursor.readonly_task_dirs.is_empty());

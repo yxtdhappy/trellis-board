@@ -119,4 +119,5 @@ pub fn minimized_from_args() -> bool {
 }
 
 #[cfg(test)]
+#[path = "config/tests.rs"]
 mod tests;

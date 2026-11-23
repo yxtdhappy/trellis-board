@@ -32,18 +32,6 @@ impl TaskControlState {
         }
     }
 
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Materialized => "materialized",
-            Self::Claimed => "claimed",
-            Self::PendingDelivery => "pending_delivery",
-            Self::Reassigned => "reassigned",
-            Self::Archived => "archived",
-            Self::HandoffMaterialized => "handoff_materialized",
-            Self::Unknown(value) => value,
-        }
-    }
-
     pub fn is_writable_local(&self) -> bool {
         matches!(
             self,
@@ -485,8 +473,7 @@ impl TaskControlStateFile {
                 next.file_count = previous.file_count;
                 next.total_bytes = previous.total_bytes;
                 next.notified_state = previous.notified_state.clone();
-                if control.handoff_state == "source_cleanup_conflict"
-                    && previous.outcome.is_empty()
+                if control.handoff_state == "source_cleanup_conflict" && previous.outcome.is_empty()
                 {
                     next.ack_state = "done".to_string();
                     next.outcome = "conflict".to_string();
@@ -501,6 +488,7 @@ impl TaskControlStateFile {
         Ok(true)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn mark_handoff_ack_pending(
         &mut self,
         key: &str,

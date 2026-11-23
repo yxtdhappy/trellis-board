@@ -452,7 +452,7 @@ impl TaskSync {
         } else {
             merge_baselines(&cursor.baselines, &snapshot_files)
         };
-        let mut latest_revision = snapshot
+        let latest_revision = snapshot
             .get("revision")
             .and_then(Value::as_u64)
             .unwrap_or(0);

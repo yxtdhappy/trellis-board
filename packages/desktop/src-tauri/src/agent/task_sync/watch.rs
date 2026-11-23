@@ -40,16 +40,15 @@ impl TaskSync {
                 let task_space_id = binding.task_space_id.clone();
                 let watch_root = root.clone();
                 let sender = tx.clone();
-                let watcher = notify::recommended_watcher(
-                    move |result: notify::Result<notify::Event>| {
+                let watcher =
+                    notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
                         let Ok(event) = result else {
                             return;
                         };
                         if !is_relevant_watch_event(&event) {
                             return;
                         }
-                        let is_remove =
-                            matches!(&event.kind, notify::event::EventKind::Remove(_));
+                        let is_remove = matches!(&event.kind, notify::event::EventKind::Remove(_));
                         for path in event.paths {
                             let Ok(relative) = path.strip_prefix(&watch_root) else {
                                 continue;
@@ -65,10 +64,7 @@ impl TaskSync {
                             let removed_task_dir = !is_remove
                                 && !path.exists()
                                 && active_task_directory_from_relative(&full_relative).is_some();
-                            if !file_changed
-                                && !is_remove
-                                && !removed_task_dir
-                            {
+                            if !file_changed && !is_remove && !removed_task_dir {
                                 continue;
                             }
                             if active_task_directory_from_relative(&full_relative).is_none() {
@@ -79,8 +75,7 @@ impl TaskSync {
                                 relative_path: full_relative,
                             });
                         }
-                    },
-                );
+                    });
                 match watcher {
                     Ok(mut watcher) => {
                         if let Err(error) = watcher.watch(&root, RecursiveMode::Recursive) {
@@ -130,7 +125,10 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) async fn watch_loop(self: Arc<Self>, mut receiver: mpsc::UnboundedReceiver<WatchEvent>) {
+    pub(super) async fn watch_loop(
+        self: Arc<Self>,
+        mut receiver: mpsc::UnboundedReceiver<WatchEvent>,
+    ) {
         let mut pending: HashMap<String, HashSet<String>> = HashMap::new();
         let mut git_changed: HashSet<String> = HashSet::new();
         loop {
@@ -157,21 +155,21 @@ impl TaskSync {
             loop {
                 match tokio::time::timeout(WATCH_DEBOUNCE, receiver.recv()).await {
                     Ok(Some(event)) => match event {
-                            WatchEvent::TaskPath {
-                                task_space_id,
-                                relative_path,
-                            } => {
-                                if active_task_directory_from_relative(&relative_path).is_none() {
-                                    continue;
-                                }
-                                pending
-                                    .entry(task_space_id)
-                                    .or_default()
-                                    .insert(relative_path);
+                        WatchEvent::TaskPath {
+                            task_space_id,
+                            relative_path,
+                        } => {
+                            if active_task_directory_from_relative(&relative_path).is_none() {
+                                continue;
                             }
-                            WatchEvent::GitChanged { task_space_id } => {
-                                git_changed.insert(task_space_id);
-                            }
+                            pending
+                                .entry(task_space_id)
+                                .or_default()
+                                .insert(relative_path);
+                        }
+                        WatchEvent::GitChanged { task_space_id } => {
+                            git_changed.insert(task_space_id);
+                        }
                     },
                     Ok(None) => return,
                     Err(_) => break,
@@ -211,9 +209,7 @@ impl TaskSync {
                     .await
                     .get(&task_space_id)
                     .cloned()
-                    .filter(|binding| {
-                        !binding.read_only && binding.initial_sync_completed
-                    });
+                    .filter(|binding| !binding.read_only && binding.initial_sync_completed);
                 if let Some(binding) = binding {
                     let serial = self.task_space_sync_lock(&task_space_id).await;
                     let _serial = serial.lock().await;
@@ -243,12 +239,7 @@ impl TaskSync {
                 );
             }
             for task_space_id in std::mem::take(&mut git_changed) {
-                if !self
-                    .bindings
-                    .lock()
-                    .await
-                    .contains_key(&task_space_id)
-                {
+                if !self.bindings.lock().await.contains_key(&task_space_id) {
                     continue;
                 }
                 let syncing = {
@@ -381,10 +372,7 @@ pub(super) async fn git_watch_paths(repo_path: &Path) -> Vec<(PathBuf, Recursive
     let candidates = [
         (git_dir.join("HEAD"), RecursiveMode::NonRecursive),
         (git_dir.join("index"), RecursiveMode::NonRecursive),
-        (
-            common_dir.join("packed-refs"),
-            RecursiveMode::NonRecursive,
-        ),
+        (common_dir.join("packed-refs"), RecursiveMode::NonRecursive),
         (common_dir.join("refs"), RecursiveMode::Recursive),
     ];
     let mut seen = HashSet::new();
@@ -407,11 +395,7 @@ pub(super) async fn resolve_git_dir(repo_path: &Path) -> Option<PathBuf> {
         return Some(dot_git);
     }
     let text = tokio::fs::read_to_string(&dot_git).await.ok()?;
-    let value = text
-        .lines()
-        .next()?
-        .strip_prefix("gitdir:")?
-        .trim();
+    let value = text.lines().next()?.strip_prefix("gitdir:")?.trim();
     if value.is_empty() {
         return None;
     }

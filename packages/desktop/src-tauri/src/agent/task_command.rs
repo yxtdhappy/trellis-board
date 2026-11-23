@@ -490,14 +490,7 @@ fn create_execution_task_key(command: &AgentCommand, binding: &AgentBinding) -> 
     {
         return Some(value.to_string());
     }
-    if command
-        .payload
-        .get("taskVersion")
-        .and_then(Value::as_u64)
-        .is_none()
-    {
-        return None;
-    }
+    command.payload.get("taskVersion").and_then(Value::as_u64)?;
     command
         .payload_str("taskId")
         .filter(|value| !value.is_empty())

@@ -137,4 +137,5 @@ pub fn redact(input: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "logging/tests.rs"]
 mod tests;

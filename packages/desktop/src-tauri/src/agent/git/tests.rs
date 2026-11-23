@@ -5,8 +5,8 @@ fn builds_fixed_arguments_in_order() {
     let base = std::env::temp_dir();
     let repo = base.join("trellis-git-args-repo");
     let hooks = base.join("trellis-git-args-hooks");
-    let args = git_args(GitOperation::Status, &repo, &hooks, &GitParams::default())
-        .expect("status args");
+    let args =
+        git_args(GitOperation::Status, &repo, &hooks, &GitParams::default()).expect("status args");
     assert_eq!(
         args,
         vec![
@@ -28,8 +28,8 @@ fn builds_fixed_arguments_in_order() {
         ]
     );
 
-    let merged = git_args(GitOperation::Merge, &repo, &hooks, &GitParams::default())
-        .expect("merge args");
+    let merged =
+        git_args(GitOperation::Merge, &repo, &hooks, &GitParams::default()).expect("merge args");
     assert!(merged.ends_with(&[
         "--no-overwrite-ignore".to_string(),
         "FETCH_HEAD".to_string()
@@ -46,11 +46,7 @@ fn builds_fixed_arguments_in_order() {
         },
     )
     .expect("status paths args");
-    assert!(status_paths.ends_with(&[
-        "--".to_string(),
-        "a.txt".to_string(),
-        "b.txt".to_string(),
-    ]));
+    assert!(status_paths.ends_with(&["--".to_string(), "a.txt".to_string(), "b.txt".to_string(),]));
 }
 
 #[test]
@@ -200,9 +196,11 @@ fn classifies_commit_and_push_failures() {
     assert!(classify_commit_failure("fatal: Please tell me who you are")
         .message
         .contains("user.name"));
-    assert!(classify_commit_failure("fatal: unable to auto-detect email address")
-        .message
-        .contains("user.email"));
+    assert!(
+        classify_commit_failure("fatal: unable to auto-detect email address")
+            .message
+            .contains("user.email")
+    );
     let generic = classify_commit_failure("fatal: something else");
     assert!(generic.message.starts_with("Git 提交失败："));
 
@@ -258,10 +256,7 @@ fn parses_nul_separated_diff_tree_paths() {
     .expect("diff paths");
     assert_eq!(
         paths,
-        vec![
-            ".trellis/tasks/old/prd.md",
-            ".trellis/tasks/new/prd.md"
-        ]
+        vec![".trellis/tasks/old/prd.md", ".trellis/tasks/new/prd.md"]
     );
     assert!(parse_diff_tree_paths("Z\u{0}.trellis/tasks/a.md\u{0}").is_err());
 }
@@ -370,10 +365,8 @@ async fn maps_diff_cached_exit_codes_and_commits_only_fixed_paths() {
     let staged = run_git_in(&repo, &["diff", "--cached", "--name-only"]);
     assert!(staged.lines().any(|line| line.trim() == "other.txt"));
 
-    let not_a_repo = std::env::temp_dir().join(format!(
-        "trellis-git-non-repo-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let not_a_repo =
+        std::env::temp_dir().join(format!("trellis-git-non-repo-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&not_a_repo).expect("create non repo");
     let error = has_staged_changes(&not_a_repo, &hooks, &paths)
         .await

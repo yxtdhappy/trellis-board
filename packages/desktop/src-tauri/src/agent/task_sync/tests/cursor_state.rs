@@ -1,5 +1,5 @@
-use super::*;
 use super::support::*;
+use super::*;
 
 #[test]
 fn required_sequence_only_reads_conflict_details() {
@@ -19,14 +19,12 @@ fn required_sequence_only_reads_conflict_details() {
     assert_eq!(required_client_sequence(&error), None);
 }
 
-
 #[test]
 fn branch_guard_codes_cover_branch_failures() {
     assert!(is_branch_guard_code(code::BRANCH_MISMATCH));
     assert!(is_branch_guard_code(code::DETACHED_HEAD));
     assert!(!is_branch_guard_code(code::LOCAL_DIRTY));
 }
-
 
 #[test]
 fn baseline_branch_change_invalidates_binding_cache() {
@@ -35,7 +33,6 @@ fn baseline_branch_change_invalidates_binding_cache() {
     next.baseline_branch = Some("main".to_string());
     assert!(!binding_entry_unchanged(&current, &next));
 }
-
 
 #[test]
 fn pending_batch_preserves_merge_evidence() {
@@ -58,7 +55,6 @@ fn pending_batch_preserves_merge_evidence() {
     .expect("pending batch");
     assert_eq!(pending.merge_evidence, Some(evidence));
 }
-
 
 #[test]
 fn cursor_defaults_new_guard_fields_and_bounds_rejected_summaries() {
@@ -101,7 +97,6 @@ fn cursor_defaults_new_guard_fields_and_bounds_rejected_summaries() {
     assert!(summaries.contains_key(".trellis/tasks/task-54"));
 }
 
-
 #[test]
 fn pending_rejection_classifier_is_explicit_only() {
     for value in [
@@ -113,11 +108,15 @@ fn pending_rejection_classifier_is_explicit_only() {
     ] {
         assert!(is_explicit_pending_rejection(value), "{value}");
     }
-    for value in ["NETWORK_ERROR", "HTTP_ERROR", "TASK_FILE_CONFLICT", "CONFLICT"] {
+    for value in [
+        "NETWORK_ERROR",
+        "HTTP_ERROR",
+        "TASK_FILE_CONFLICT",
+        "CONFLICT",
+    ] {
         assert!(!is_explicit_pending_rejection(value), "{value}");
     }
 }
-
 
 #[test]
 fn pending_skip_continues_only_for_explicit_rejection() {
@@ -149,7 +148,6 @@ fn pending_skip_continues_only_for_explicit_rejection() {
         "reason": "TASK_OWNERSHIP_REQUIRED"
     })));
 }
-
 
 #[tokio::test]
 async fn pending_replay_reuses_snapshot_and_does_not_advance_applied_revision() {
@@ -188,7 +186,6 @@ async fn pending_replay_reuses_snapshot_and_does_not_advance_applied_revision() 
     let _ = tokio::fs::remove_dir_all(fixture.root).await;
 }
 
-
 #[tokio::test]
 async fn explicit_pending_rejection_clears_body_and_records_bounded_summary() {
     let fixture = replay_fixture(
@@ -225,11 +222,9 @@ async fn explicit_pending_rejection_clears_body_and_records_bounded_summary() {
         space["pendingRejected"][".trellis/tasks/task-a"]["reason"],
         "TASK_OWNERSHIP_REQUIRED"
     );
-    assert!(
-        space["pendingRejected"][".trellis/tasks/task-a"]
-            .get("files")
-            .is_none()
-    );
+    assert!(space["pendingRejected"][".trellis/tasks/task-a"]
+        .get("files")
+        .is_none());
     assert_eq!(
         space["ownershipPending"][".trellis/tasks/task-a"]["reason"],
         "TASK_OWNERSHIP_REQUIRED"
@@ -244,7 +239,6 @@ async fn explicit_pending_rejection_clears_body_and_records_bounded_summary() {
     fixture.server_task.abort();
     let _ = tokio::fs::remove_dir_all(fixture.root).await;
 }
-
 
 #[tokio::test]
 async fn explicit_pending_rejection_does_not_block_following_task_upload() {
@@ -346,17 +340,14 @@ async fn explicit_pending_rejection_does_not_block_following_task_upload() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn revision_guard_repairs_once_without_overwriting_conflicted_local_task() {
-    let (root, store, _sync, mut binding) =
-        test_task_sync_fixture("trellis-revision-guard").await;
+    let (root, store, _sync, mut binding) = test_task_sync_fixture("trellis-revision-guard").await;
     let repo = Path::new(&binding.repo_path);
     init_git_repo(repo);
     let task_dir = ".trellis/tasks/task-a";
     let task_path = repo.join(task_dir).join("task.json");
-    let local_content =
-        "{\"id\":\"task-a\",\"branch\":\"main\",\"title\":\"本地版本\"}\n";
+    let local_content = "{\"id\":\"task-a\",\"branch\":\"main\",\"title\":\"本地版本\"}\n";
     tokio::fs::create_dir_all(task_path.parent().expect("parent"))
         .await
         .expect("task dir");
@@ -390,8 +381,7 @@ async fn revision_guard_repairs_once_without_overwriting_conflicted_local_task()
         )
         .await
         .expect("cursor");
-    let remote_content =
-        "{\"id\":\"task-a\",\"branch\":\"main\",\"title\":\"服务端版本\"}\n";
+    let remote_content = "{\"id\":\"task-a\",\"branch\":\"main\",\"title\":\"服务端版本\"}\n";
     let (server_url, _changes, requests, server_task) = mock_api_server(json!({
         "revision": 1,
         "files": [
@@ -399,15 +389,11 @@ async fn revision_guard_repairs_once_without_overwriting_conflicted_local_task()
         ]
     }))
     .await;
-    let api =
-        Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
     let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
     sync.set_bindings(vec![binding.clone()]).await;
 
-    let result = sync
-        .repair_revision_guard(&binding)
-        .await
-        .expect("repair");
+    let result = sync.repair_revision_guard(&binding).await.expect("repair");
     assert_eq!(result["repaired"], true);
     assert_eq!(
         tokio::fs::read_to_string(&task_path)
@@ -454,7 +440,6 @@ async fn revision_guard_repairs_once_without_overwriting_conflicted_local_task()
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[test]
 fn upload_request_carries_persisted_fencing_fields() {
     let files = vec![json!({
@@ -490,14 +475,16 @@ fn upload_request_carries_persisted_fencing_fields() {
     );
     assert_eq!(request["taskVersion"], 4);
     assert_eq!(request["leaseToken"], "lease-token");
-    assert_eq!(request["files"][0]["path"], ".trellis/tasks/task-a/task.json");
+    assert_eq!(
+        request["files"][0]["path"],
+        ".trellis/tasks/task-a/task.json"
+    );
     assert_eq!(request["files"], json!(files));
     assert_eq!(request["mergeEvidence"], evidence);
     assert_eq!(request["batchId"], "batch-1");
     assert_eq!(request["clientSequence"], 8);
     assert_eq!(request["observedBranchName"], "main");
 }
-
 
 #[test]
 fn first_upload_response_control_supplies_persisted_execution_key() {
@@ -518,7 +505,6 @@ fn first_upload_response_control_supplies_persisted_execution_key() {
     );
     assert!(response_control_execution_task_key(Some("space-1::other"), &control).is_err());
 }
-
 
 #[tokio::test]
 async fn persistent_projection_does_not_bypass_branch_guard() {
@@ -551,17 +537,12 @@ async fn persistent_projection_does_not_bypass_branch_guard() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn rejects_oversized_batch_before_pending_write_and_retry() {
-    let root = std::env::temp_dir().join(format!(
-        "trellis-upload-limit-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let root = std::env::temp_dir().join(format!("trellis-upload-limit-{}", uuid::Uuid::new_v4()));
     let store = Arc::new(ConfigStore::new_unsecured_for_test(root.clone()));
     store.ensure_directories().await.expect("directories");
-    let api =
-        Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
     let sink: ControlSink = Arc::new(|_| {});
     let sync = TaskSync::new(store.clone(), api, sink);
     let binding = test_binding("space-1");
@@ -572,7 +553,10 @@ async fn rejects_oversized_batch_before_pending_write_and_retry() {
         .await
         .expect_err("新批次应在写入 pending 前拒绝");
     assert!(write_error.message.contains("1024"));
-    assert!(!store.paths.task_cursors_file.exists(), "超限新批次不得留下 pending");
+    assert!(
+        !store.paths.task_cursors_file.exists(),
+        "超限新批次不得留下 pending"
+    );
 
     let retry_error = sync
         .retry_pending_batch(
@@ -588,11 +572,13 @@ async fn rejects_oversized_batch_before_pending_write_and_retry() {
         .await
         .expect_err("超限 pending 应在重试前拒绝");
     assert!(retry_error.message.contains("1024"));
-    assert!(!store.paths.task_cursors_file.exists(), "超限 pending 重试不得产生新写入");
+    assert!(
+        !store.paths.task_cursors_file.exists(),
+        "超限 pending 重试不得产生新写入"
+    );
 
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[test]
 fn archive_pending_batch_is_migrated_without_reusing_batch_id() {
@@ -627,12 +613,8 @@ fn archive_pending_batch_is_migrated_without_reusing_batch_id() {
     assert!(migrated.client_sequence > 10);
     assert_eq!(migrated.files.len(), 1);
     assert!(migrated.merge_evidence.is_none());
-    assert_eq!(
-        migrated.files[0]["path"],
-        json!(".trellis/tasks/a/prd.md")
-    );
+    assert_eq!(migrated.files[0]["path"], json!(".trellis/tasks/a/prd.md"));
 }
-
 
 #[test]
 fn cursor_sanitizes_archive_paths() {
@@ -680,7 +662,6 @@ fn cursor_sanitizes_archive_paths() {
     assert!(cursor.pending_rejected.is_empty());
 }
 
-
 #[test]
 fn event_revision_only_skips_completed_unchanged_sync() {
     assert!(!should_pull_for_event(true, false, 10, Some(10), false));
@@ -692,58 +673,42 @@ fn event_revision_only_skips_completed_unchanged_sync() {
     assert!(should_pull_for_event(true, false, 10, None, false));
 }
 
-
 #[test]
 fn cursor_patch_only_reports_real_changes() {
     let mut cursor = Cursor::default();
-    assert_cursor_patch_changes_once(
-        &mut cursor,
-        || CursorPatch {
-            revision: Some(10),
-            revision_guard_version: Some(REVISION_GUARD_VERSION),
-            sequence: Some(2),
-            ..Default::default()
-        },
-    );
+    assert_cursor_patch_changes_once(&mut cursor, || CursorPatch {
+        revision: Some(10),
+        revision_guard_version: Some(REVISION_GUARD_VERSION),
+        sequence: Some(2),
+        ..Default::default()
+    });
 
     let baselines = BTreeMap::from([(".trellis/tasks/a/prd.md".to_string(), "a".repeat(64))]);
-    assert_cursor_patch_changes_once(
-        &mut cursor,
-        || CursorPatch {
-            baselines: Some(baselines.clone()),
-            ..Default::default()
-        },
-    );
+    assert_cursor_patch_changes_once(&mut cursor, || CursorPatch {
+        baselines: Some(baselines.clone()),
+        ..Default::default()
+    });
 
     let deferred = BTreeMap::from([(
         ".trellis/tasks/a".to_string(),
         BTreeMap::from([(".trellis/tasks/a/prd.md".to_string(), "b".repeat(64))]),
     )]);
-    assert_cursor_patch_changes_once(
-        &mut cursor,
-        || CursorPatch {
-            deferred: Some(deferred.clone()),
-            ..Default::default()
-        },
-    );
+    assert_cursor_patch_changes_once(&mut cursor, || CursorPatch {
+        deferred: Some(deferred.clone()),
+        ..Default::default()
+    });
 
     let ownership = BTreeMap::from([(".trellis/tasks/a".to_string(), "fingerprint".to_string())]);
-    assert_cursor_patch_changes_once(
-        &mut cursor,
-        || CursorPatch {
-            ownership_pending: Some(ownership.clone()),
-            ..Default::default()
-        },
-    );
+    assert_cursor_patch_changes_once(&mut cursor, || CursorPatch {
+        ownership_pending: Some(ownership.clone()),
+        ..Default::default()
+    });
 
     let blocked = BTreeMap::from([(".trellis/tasks/a".to_string(), "conflict-1".to_string())]);
-    assert_cursor_patch_changes_once(
-        &mut cursor,
-        || CursorPatch {
-            conflict_blocked: Some(blocked.clone()),
-            ..Default::default()
-        },
-    );
+    assert_cursor_patch_changes_once(&mut cursor, || CursorPatch {
+        conflict_blocked: Some(blocked.clone()),
+        ..Default::default()
+    });
 
     let rejected = BTreeMap::from([(
         ".trellis/tasks/a".to_string(),
@@ -755,13 +720,10 @@ fn cursor_patch_only_reports_real_changes() {
             blocked_at: "2026-11-18T00:01:00.000Z".to_string(),
         },
     )]);
-    assert_cursor_patch_changes_once(
-        &mut cursor,
-        || CursorPatch {
-            pending_rejected: Some(rejected.clone()),
-            ..Default::default()
-        },
-    );
+    assert_cursor_patch_changes_once(&mut cursor, || CursorPatch {
+        pending_rejected: Some(rejected.clone()),
+        ..Default::default()
+    });
 
     let pending = PendingBatch {
         batch_id: "batch-1".to_string(),
@@ -770,13 +732,10 @@ fn cursor_patch_only_reports_real_changes() {
         merge_evidence: None,
         created_at: "2026-11-18T00:00:00.000Z".to_string(),
     };
-    assert_cursor_patch_changes_once(
-        &mut cursor,
-        || CursorPatch {
-            pending: Some(Some(pending.clone())),
-            ..Default::default()
-        },
-    );
+    assert_cursor_patch_changes_once(&mut cursor, || CursorPatch {
+        pending: Some(Some(pending.clone())),
+        ..Default::default()
+    });
     assert!(apply_cursor_patch(
         &mut cursor,
         &CursorPatch {
@@ -785,7 +744,6 @@ fn cursor_patch_only_reports_real_changes() {
         }
     ));
 }
-
 
 #[test]
 fn task_dir_removals_clear_only_target_directory_state() {
@@ -830,10 +788,14 @@ fn task_dir_removals_clear_only_target_directory_state() {
     };
 
     assert!(apply_cursor_patch(&mut cursor, &patch()));
-    assert!(!cursor.baselines.contains_key(&format!("{task_dir}/task.json")));
+    assert!(!cursor
+        .baselines
+        .contains_key(&format!("{task_dir}/task.json")));
     assert!(!cursor.baselines.contains_key(&format!("{task_dir}/prd.md")));
     assert!(!cursor.deferred.contains_key(task_dir));
-    assert!(cursor.baselines.contains_key(&format!("{sibling}/task.json")));
+    assert!(cursor
+        .baselines
+        .contains_key(&format!("{sibling}/task.json")));
     assert_eq!(
         cursor.baselines.get(&format!("{other}/task.json")),
         Some(&hash('d'))
@@ -842,9 +804,11 @@ fn task_dir_removals_clear_only_target_directory_state() {
     // 服务端待归属账本由 cleanup_missing_ownership_inbox 配套删除，本 patch 不直接清理。
     assert!(cursor.ownership_pending.contains_key(task_dir));
     assert!(cursor.pending_rejected.contains_key(task_dir));
-    assert!(!apply_cursor_patch(&mut cursor, &patch()), "重复 patch 不得产生写入");
+    assert!(
+        !apply_cursor_patch(&mut cursor, &patch()),
+        "重复 patch 不得产生写入"
+    );
 }
-
 
 #[test]
 fn grouped_baselines_keep_task_scope() {
@@ -877,7 +841,6 @@ fn grouped_baselines_keep_task_scope() {
     assert!(reconciled.is_empty());
 }
 
-
 #[test]
 fn detach_pending_is_excluded_and_selection_identity_is_stable() {
     let selected = test_binding("space-1");
@@ -890,7 +853,6 @@ fn detach_pending_is_excluded_and_selection_identity_is_stable() {
         &approved_bindings(vec![selected])
     ));
 }
-
 
 #[tokio::test]
 async fn remove_task_cursor_only_deletes_selected_task_space() {
@@ -907,9 +869,7 @@ async fn remove_task_cursor_only_deletes_selected_task_space() {
         )
         .await
         .expect("cursor file");
-    let api = Arc::new(
-        ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"),
-    );
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
     let sink: ControlSink = Arc::new(|_| {});
     let changes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let changes_sink = changes.clone();
@@ -921,19 +881,13 @@ async fn remove_task_cursor_only_deletes_selected_task_space() {
     let state = store.read_task_cursors().await;
     assert!(state["taskSpaces"].get("space-1").is_none());
     assert_eq!(state["taskSpaces"]["space-2"]["revision"], 2);
-    assert_eq!(
-        changes.load(std::sync::atomic::Ordering::SeqCst),
-        1
-    );
+    assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
-
 
 #[tokio::test]
 async fn write_cursor_skips_unchanged_patch() {
-    let root = std::env::temp_dir().join(format!(
-        "trellis-task-cursor-noop-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("trellis-task-cursor-noop-{}", uuid::Uuid::new_v4()));
     let store = Arc::new(ConfigStore::new_unsecured_for_test(root));
     store.ensure_directories().await.expect("directories");
     let binding = test_binding("space-1");
@@ -963,8 +917,7 @@ async fn write_cursor_skips_unchanged_patch() {
         .write_json(&store.paths.task_cursors_file, &initial)
         .await
         .expect("cursor file");
-    let api =
-        Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
     let sink: ControlSink = Arc::new(|_| {});
     let state_changes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let state_changes_sink = state_changes.clone();
@@ -989,10 +942,7 @@ async fn write_cursor_skips_unchanged_patch() {
             )])),
             deferred: Some(BTreeMap::from([(
                 ".trellis/tasks/a".to_string(),
-                BTreeMap::from([(
-                    ".trellis/tasks/a/prd.md".to_string(),
-                    "b".repeat(64),
-                )]),
+                BTreeMap::from([(".trellis/tasks/a/prd.md".to_string(), "b".repeat(64))]),
             )])),
             ..Default::default()
         },
@@ -1003,10 +953,7 @@ async fn write_cursor_skips_unchanged_patch() {
         .await
         .expect("cursor after");
     assert_eq!(after, before);
-    assert_eq!(
-        state_changes.load(std::sync::atomic::Ordering::SeqCst),
-        0
-    );
+    assert_eq!(state_changes.load(std::sync::atomic::Ordering::SeqCst), 0);
 
     sync.write_cursor(
         "space-1",
@@ -1019,12 +966,8 @@ async fn write_cursor_skips_unchanged_patch() {
     .expect("changed cursor");
     let state = store.read_task_cursors().await;
     assert_eq!(state["taskSpaces"]["space-1"]["revision"], 11);
-    assert_eq!(
-        state_changes.load(std::sync::atomic::Ordering::SeqCst),
-        1
-    );
+    assert_eq!(state_changes.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
-
 
 #[tokio::test]
 async fn archive_pending_migration_is_persisted_once() {
@@ -1074,8 +1017,7 @@ async fn archive_pending_migration_is_persisted_once() {
         )
         .await
         .expect("cursor");
-    let api =
-        Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
     let sync = TaskSync::new(store.clone(), api, Arc::new(|_| {}));
     sync.set_bindings(vec![binding.clone()]).await;
 
@@ -1087,17 +1029,13 @@ async fn archive_pending_migration_is_persisted_once() {
     assert!(entry["baselines"]
         .as_object()
         .is_some_and(|values| values.is_empty()));
-    assert_eq!(
-        entry["pending"]["files"].as_array().map(Vec::len),
-        Some(1)
-    );
+    assert_eq!(entry["pending"]["files"].as_array().map(Vec::len), Some(1));
     assert_ne!(entry["pending"]["batchId"], json!("batch-archive-mixed"));
     assert_eq!(
         entry["pending"]["files"][0]["path"],
         json!(".trellis/tasks/a/prd.md")
     );
 }
-
 
 #[tokio::test]
 async fn current_event_revision_skips_snapshot_and_local_scan() {
@@ -1123,15 +1061,11 @@ async fn current_event_revision_skips_snapshot_and_local_scan() {
         )
         .await
         .expect("cursor file");
-    let api =
-        Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
     let reports = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
     let sink_reports = reports.clone();
     let sink: ControlSink = Arc::new(move |value| {
-        sink_reports
-            .lock()
-            .expect("reports lock")
-            .push(value);
+        sink_reports.lock().expect("reports lock").push(value);
     });
     let before = tokio::fs::read(&store.paths.task_cursors_file)
         .await
@@ -1153,7 +1087,6 @@ async fn current_event_revision_skips_snapshot_and_local_scan() {
     assert_eq!(after, before);
     assert!(reports.lock().expect("reports lock").is_empty());
 }
-
 
 #[test]
 fn next_client_sequence_stays_above_cursor_and_wall_clock() {

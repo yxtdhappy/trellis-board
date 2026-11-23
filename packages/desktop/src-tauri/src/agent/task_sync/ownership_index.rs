@@ -119,9 +119,7 @@ pub(super) fn normalize_index(mut index: OwnershipIndex) -> Option<OwnershipInde
             return None;
         }
         for (task_dir, task) in &binding.tasks {
-            let Some(file) = binding.files.get(&format!("{task_dir}/task.json")) else {
-                return None;
-            };
+            let file = binding.files.get(&format!("{task_dir}/task.json"))?;
             if file.size != task.task_json_size
                 || file.modified_ns != task.task_json_modified_ns
                 || file.sha256 != task.task_json_sha256
@@ -204,15 +202,12 @@ pub(crate) async fn load_ownership_index(path: &Path) -> Option<OwnershipIndex> 
     let index = serde_json::from_str::<OwnershipIndex>(&text).ok()?;
     normalize_index(index)
 }
+pub(crate) type IndexedOwnershipProjection =
+    (Arc<HashSet<String>>, Arc<HashSet<String>>, String, String);
 pub(crate) fn indexed_ownership_projection(
     index: &OwnershipIndex,
     binding: &AgentBinding,
-) -> Option<(
-    Arc<HashSet<String>>,
-    Arc<HashSet<String>>,
-    String,
-    String,
-)> {
+) -> Option<IndexedOwnershipProjection> {
     let entry = index.bindings.get(&binding.local_id)?;
     if entry.task_space_id != binding.task_space_id
         || entry.repo_path != binding.repo_path
@@ -228,7 +223,9 @@ pub(crate) fn indexed_ownership_projection(
         entry.head_fingerprint.clone(),
     ))
 }
-pub(super) fn indexed_local_groups(entry: &OwnershipIndexBinding) -> AgentResult<Vec<SnapshotGroup>> {
+pub(super) fn indexed_local_groups(
+    entry: &OwnershipIndexBinding,
+) -> AgentResult<Vec<SnapshotGroup>> {
     let mut groups = BTreeMap::<String, SnapshotGroup>::new();
     for (path, file) in &entry.files {
         let parts = task_directory_from_path(path)?;
@@ -260,7 +257,9 @@ pub(super) fn indexed_local_groups(entry: &OwnershipIndexBinding) -> AgentResult
     }
     let mut groups = groups.into_values().collect::<Vec<_>>();
     for group in &mut groups {
-        group.files.sort_by(|left, right| left.path.cmp(&right.path));
+        group
+            .files
+            .sort_by(|left, right| left.path.cmp(&right.path));
     }
     Ok(groups)
 }
@@ -322,16 +321,13 @@ impl TaskSync {
         }
         let index = self.ownership_index.lock().await.clone();
         if index.bindings.len() > OWNERSHIP_INDEX_MAX_BINDINGS
-            || index
-                .bindings
-                .values()
-                .any(|binding| {
-                    binding.tasks.len() > OWNERSHIP_INDEX_MAX_TASKS
-                        || binding.files.len() > OWNERSHIP_INDEX_MAX_FILES
-                        || binding.dirty_task_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS
-                        || binding.local_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS
-                        || binding.tracked_paths.len() > OWNERSHIP_INDEX_MAX_TRACKED_PATHS
-                })
+            || index.bindings.values().any(|binding| {
+                binding.tasks.len() > OWNERSHIP_INDEX_MAX_TASKS
+                    || binding.files.len() > OWNERSHIP_INDEX_MAX_FILES
+                    || binding.dirty_task_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS
+                    || binding.local_dirs.len() > OWNERSHIP_INDEX_MAX_TASKS
+                    || binding.tracked_paths.len() > OWNERSHIP_INDEX_MAX_TRACKED_PATHS
+            })
         {
             return protocol::err(code::CONFIG_INVALID, "ownership 索引超过条目上限");
         }

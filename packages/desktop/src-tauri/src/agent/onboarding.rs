@@ -361,12 +361,14 @@ async fn ensure_agent_gitignore(repo_path: &Path, agent_tools: &[String]) -> Age
         next.push_str(rule);
         next.push_str(newline);
     }
-    tokio::fs::write(&path, next.as_bytes()).await.map_err(|error| {
-        AgentError::new(
-            code::GIT_FAILED,
-            format!("无法写入项目 .gitignore：{error}"),
-        )
-    })
+    tokio::fs::write(&path, next.as_bytes())
+        .await
+        .map_err(|error| {
+            AgentError::new(
+                code::GIT_FAILED,
+                format!("无法写入项目 .gitignore：{error}"),
+            )
+        })
 }
 
 /// `trim` 后去掉首尾 `/`，让 `.codex`、`.codex/`、`/.codex/` 视为同一规则。
@@ -577,7 +579,13 @@ pub async fn commit_and_push_initial(
         }
     }
     git::push_branch(&root, hooks_dir, &snapshot.current_branch).await?;
-    check_initial_push_with(&root, hooks_dir, &snapshot.current_branch, allow_file_remote).await
+    check_initial_push_with(
+        &root,
+        hooks_dir,
+        &snapshot.current_branch,
+        allow_file_remote,
+    )
+    .await
 }
 
 /// `.trellis` 必需；其余初始化文件只在存在时加入，避免 Git pathspec 报错。

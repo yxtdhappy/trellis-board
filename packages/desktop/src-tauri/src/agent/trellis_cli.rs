@@ -350,7 +350,7 @@ async fn run_init_process(
 ) -> AgentResult<ProcessOutput> {
     let (args, stdin) = match mode {
         InitMode::Full { developer_id } => (
-            init_args(&runtime.cli_path, *developer_id, agent_tools),
+            init_args(&runtime.cli_path, developer_id, agent_tools),
             None,
         ),
         InitMode::AgentsOnly => (
@@ -397,13 +397,8 @@ async fn initialize_with_repair(
     // Agent-only 不执行 `trellis init`，developer 身份必须在配置平台前补齐；
     // 放在首次 init 之前，developer helper 失败时不会留下“Agent 已初始化、无法重试”的半成品。
     if let Some(developer_id) = developer_id {
-        let developer = run_repair_helper(
-            runtime,
-            repo_path,
-            "developer",
-            &[developer_id.to_string()],
-        )
-        .await?;
+        let developer =
+            run_repair_helper(runtime, repo_path, "developer", &[developer_id.to_string()]).await?;
         if !developer.success() {
             return Err(developer_failure(developer_id, &developer));
         }
@@ -446,7 +441,12 @@ async fn initialize_with_repair(
     // 只重试一次；补齐或重试失败都必须返回可定位错误，不伪造成功。
     let retry = run_init_process(runtime, repo_path, agent_tools, &mode, false).await?;
     if !retry.success() {
-        return Err(retry_failure(agent_tools, &repair_platforms, &retry, fallback_prefix));
+        return Err(retry_failure(
+            agent_tools,
+            &repair_platforms,
+            &retry,
+            fallback_prefix,
+        ));
     }
 
     // 哈希补偿是尽力而为：失败不改变已经成功的初始化结果。
@@ -632,10 +632,7 @@ async fn cleanup_template_hashes(repo_path: &Path) -> io::Result<()> {
         .get_mut("hashes")
         .and_then(serde_json::Value::as_object_mut)
         .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "模板哈希清单缺少 hashes 对象",
-            )
+            io::Error::new(io::ErrorKind::InvalidData, "模板哈希清单缺少 hashes 对象")
         })?;
     let stale_keys: Vec<String> = hashes
         .keys()

@@ -1,5 +1,5 @@
-use super::*;
 use super::support::*;
+use super::*;
 
 #[tokio::test]
 async fn heartbeat_wake_fires_only_when_bindings_change() {
@@ -28,11 +28,9 @@ async fn heartbeat_wake_fires_only_when_bindings_change() {
     );
 }
 
-
 #[tokio::test]
 async fn binding_sync_waiters_wake_after_last_job() {
-    let (root, store, binding, _) =
-        exact_deferred_fixture("trellis-binding-sync-waiters").await;
+    let (root, store, binding, _) = exact_deferred_fixture("trellis-binding-sync-waiters").await;
     let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
     let sync = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
     sync.prepare_startup_bindings(vec![binding]).await;
@@ -59,7 +57,6 @@ async fn binding_sync_waiters_wake_after_last_job() {
 
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[tokio::test]
 async fn binding_update_reconciles_existing_tracked_baseline_task() {
@@ -114,14 +111,10 @@ async fn binding_update_reconciles_existing_tracked_baseline_task() {
         "files": []
     }))
     .await;
-    let api = Arc::new(
-        ApiClient::new(&server_url, None, None).expect("mock api client"),
-    );
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("mock api client"));
     let sink: ControlSink = Arc::new(|_| {});
     let api_for_restart = api.clone();
-    let sync = Arc::new(
-        TaskSync::new(store.clone(), api, sink).with_ownership_index_writer(),
-    );
+    let sync = Arc::new(TaskSync::new(store.clone(), api, sink).with_ownership_index_writer());
 
     sync.update_bindings(vec![binding.clone()]).await;
 
@@ -135,20 +128,12 @@ async fn binding_update_reconciles_existing_tracked_baseline_task() {
         assert_eq!(changes[0]["files"][0]["path"], task_json);
         assert_eq!(changes[0]["observedBranchName"], "main");
     }
-    assert!(sync
-        .read_cursor("space-1")
-        .await
-        .pending
-        .is_none());
+    assert!(sync.read_cursor("space-1").await.pending.is_none());
     drop(sync);
 
     let restarted = Arc::new(
-        TaskSync::new(
-            store.clone(),
-            api_for_restart.clone(),
-            Arc::new(|_| {}),
-        )
-        .with_ownership_index_writer(),
+        TaskSync::new(store.clone(), api_for_restart.clone(), Arc::new(|_| {}))
+            .with_ownership_index_writer(),
     );
     restarted.update_bindings(vec![binding.clone()]).await;
     assert_eq!(
@@ -177,7 +162,6 @@ async fn binding_update_reconciles_existing_tracked_baseline_task() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn bindings_notify_only_after_actual_change() {
     let root = std::env::temp_dir().join(format!(
@@ -185,8 +169,7 @@ async fn bindings_notify_only_after_actual_change() {
         uuid::Uuid::new_v4()
     ));
     let store = Arc::new(ConfigStore::new_unsecured_for_test(root));
-    let api =
-        Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
     let changes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let changes_sink = changes.clone();
     let state_sink: StateSink = Arc::new(move || {
@@ -211,7 +194,6 @@ async fn bindings_notify_only_after_actual_change() {
     assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
 
-
 #[tokio::test]
 async fn heartbeat_metadata_reuses_selected_bindings_without_git_validation() {
     let root = std::env::temp_dir().join(format!(
@@ -230,8 +212,7 @@ async fn heartbeat_metadata_reuses_selected_bindings_without_git_validation() {
         .save_config(test_config(binding.clone()))
         .await
         .expect("config");
-    let api =
-        Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
     let sync = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
     sync.set_bindings(vec![binding.clone()]).await;
     sync.branch_validations
@@ -260,29 +241,25 @@ async fn heartbeat_metadata_reuses_selected_bindings_without_git_validation() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[test]
 fn ignores_access_only_watch_events() {
     let access = notify::Event::new(notify::event::EventKind::Access(
         notify::event::AccessKind::Open(notify::event::AccessMode::Read),
     ));
-    let modify =
-        notify::Event::new(notify::event::EventKind::Modify(notify::event::ModifyKind::Any));
+    let modify = notify::Event::new(notify::event::EventKind::Modify(
+        notify::event::ModifyKind::Any,
+    ));
 
     assert!(!is_relevant_watch_event(&access));
     assert!(is_relevant_watch_event(&modify));
 }
 
-
 #[tokio::test]
 async fn task_space_sync_locks_are_shared_per_space_only() {
-    let root = std::env::temp_dir().join(format!(
-        "trellis-task-space-lock-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("trellis-task-space-lock-{}", uuid::Uuid::new_v4()));
     let store = Arc::new(ConfigStore::new_unsecured_for_test(root));
-    let api =
-        Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
     let sync = TaskSync::new(store, api, Arc::new(|_| {}));
     let first = sync.task_space_sync_lock("space-1").await;
     let same = sync.task_space_sync_lock("space-1").await;
@@ -290,7 +267,6 @@ async fn task_space_sync_locks_are_shared_per_space_only() {
     assert!(Arc::ptr_eq(&first, &same));
     assert!(!Arc::ptr_eq(&first, &other));
 }
-
 
 #[tokio::test]
 async fn repeated_binding_error_notifies_only_once() {
@@ -304,8 +280,7 @@ async fn repeated_binding_error_notifies_only_once() {
         .save_config(test_config(binding.clone()))
         .await
         .expect("config");
-    let api =
-        Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api client"));
     let changes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let changes_sink = changes.clone();
     let state_sink: StateSink = Arc::new(move || {
@@ -322,7 +297,6 @@ async fn repeated_binding_error_notifies_only_once() {
     assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
-
 #[test]
 fn watcher_only_tracks_task_paths() {
     assert!(is_watched_trellis_path("tasks"));
@@ -338,14 +312,11 @@ fn watcher_only_tracks_task_paths() {
         Some(".trellis/tasks/11-12-demo")
     );
     assert_eq!(
-        task_directory_from_relative(".trellis/tasks/archive/2026-11/11-12-demo/prd.md")
-            .as_deref(),
+        task_directory_from_relative(".trellis/tasks/archive/2026-11/11-12-demo/prd.md").as_deref(),
         Some(".trellis/tasks/archive/2026-11/11-12-demo")
     );
     assert_eq!(
-        active_task_directory_from_relative(
-            ".trellis/tasks/archive/2026-11/11-12-demo/prd.md"
-        ),
+        active_task_directory_from_relative(".trellis/tasks/archive/2026-11/11-12-demo/prd.md"),
         None
     );
     assert_eq!(
@@ -354,13 +325,9 @@ fn watcher_only_tracks_task_paths() {
     );
 }
 
-
 #[tokio::test]
 async fn git_watcher_tracks_head_index_and_refs() {
-    let root = std::env::temp_dir().join(format!(
-        "trellis-git-watch-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let root = std::env::temp_dir().join(format!("trellis-git-watch-{}", uuid::Uuid::new_v4()));
     let git_dir = root.join(".git");
     tokio::fs::create_dir_all(git_dir.join("refs/heads"))
         .await
@@ -454,7 +421,10 @@ async fn branch_mismatch_pauses_sync_and_notifies_once() {
         .await;
     assert!(ids.is_empty());
     assert!(sync.active_bindings().await.is_empty());
-    let pulled = sync.pull_task_space("space-1").await.expect("inactive pull");
+    let pulled = sync
+        .pull_task_space("space-1")
+        .await
+        .expect("inactive pull");
     assert_eq!(pulled["skipped"], json!(true));
     assert_eq!(pulled["reason"], json!("BINDING_INACTIVE"));
 
@@ -541,9 +511,7 @@ async fn branch_guard_notice_dedupes_bindings_in_the_same_repo() {
         .await
         .expect("config");
 
-    let _ = sync
-        .prepare_startup_bindings(vec![binding, second])
-        .await;
+    let _ = sync.prepare_startup_bindings(vec![binding, second]).await;
     assert!(sync.active_bindings().await.is_empty());
     assert_eq!(captured_notices(&events).len(), 1);
 
@@ -561,11 +529,8 @@ async fn non_branch_guard_error_keeps_modal_control_event() {
         branch_guard_fixture("trellis-branch-guard-modal").await;
     sync.set_bindings(vec![binding]).await;
 
-    sync.report_error(
-        "space-1",
-        &AgentError::new(code::HTTP_ERROR, "同步失败"),
-    )
-    .await;
+    sync.report_error("space-1", &AgentError::new(code::HTTP_ERROR, "同步失败"))
+        .await;
 
     let errors = captured_errors(&events);
     assert_eq!(errors.len(), 1);
@@ -574,13 +539,15 @@ async fn non_branch_guard_error_keeps_modal_control_event() {
 
     sync.report_error(
         "space-1",
-        &AgentError::new(code::BRANCH_MISMATCH, "本地当前分支为 feature，绑定分支为 main"),
+        &AgentError::new(
+            code::BRANCH_MISMATCH,
+            "本地当前分支为 feature，绑定分支为 main",
+        ),
     )
     .await;
     assert_eq!(captured_errors(&events).len(), 1);
     assert!(captured_notices(&events).is_empty());
 }
-
 
 #[tokio::test]
 async fn direct_branch_guard_check_emits_notice_once() {
@@ -604,10 +571,9 @@ async fn direct_branch_guard_check_emits_notice_once() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn stale_binding_copy_still_allows_notice_after_recovery() {
-    let (root, store, sync, binding, events) =
+    let (root, _store, sync, binding, events) =
         branch_guard_fixture("trellis-branch-guard-stale").await;
     let repo = Path::new(&binding.repo_path);
 

@@ -271,7 +271,10 @@ fn same_materialization_cycle_preserves_done_handoff_ack() {
     assert_eq!(handoff.ack_state, "done");
     assert_eq!(handoff.outcome, "cleaned");
     assert_eq!(handoff.backup_id.as_deref(), Some(LEGACY_BACKUP_ID));
-    assert_eq!(handoff.manifest_sha256.as_deref(), Some(manifest_sha256.as_str()));
+    assert_eq!(
+        handoff.manifest_sha256.as_deref(),
+        Some(manifest_sha256.as_str())
+    );
     assert_eq!(handoff.file_count, 2);
     assert_eq!(handoff.total_bytes, 128);
     assert!(!state
@@ -298,7 +301,10 @@ fn new_materialization_cycle_resets_stale_handoff_ack() {
         .expect("store second cycle"));
 
     let handoff = state.handoff(&key).expect("handoff");
-    assert_eq!(handoff.materialized_at.as_deref(), Some(SECOND_MATERIALIZED_AT));
+    assert_eq!(
+        handoff.materialized_at.as_deref(),
+        Some(SECOND_MATERIALIZED_AT)
+    );
     assert_eq!(handoff.materialized_revision, Some(2));
     assert_eq!(handoff.ack_state, "pending");
     assert_eq!(handoff.outcome, "");
@@ -324,7 +330,10 @@ fn legacy_handoff_without_cycle_epoch_resets_on_new_control() {
 
     // 模拟旧状态文件：轮次字段缺省而不是显式 null。
     let mut encoded = serde_json::to_value(&state).expect("serialize state");
-    if let Some(records) = encoded.get_mut("handoffs").and_then(serde_json::Value::as_object_mut) {
+    if let Some(records) = encoded
+        .get_mut("handoffs")
+        .and_then(serde_json::Value::as_object_mut)
+    {
         for record in records.values_mut() {
             if let Some(record) = record.as_object_mut() {
                 let _ = record.remove("materializedAt");
@@ -342,7 +351,10 @@ fn legacy_handoff_without_cycle_epoch_resets_on_new_control() {
         .upsert_handoff_control("local-1", &epoch)
         .expect("new epoch control"));
     let handoff = restored.handoff(&key).expect("handoff");
-    assert_eq!(handoff.materialized_at.as_deref(), Some(FIRST_MATERIALIZED_AT));
+    assert_eq!(
+        handoff.materialized_at.as_deref(),
+        Some(FIRST_MATERIALIZED_AT)
+    );
     assert_eq!(handoff.materialized_revision, Some(1));
     assert_eq!(handoff.ack_state, "pending");
     assert_eq!(handoff.outcome, "");
@@ -528,7 +540,10 @@ fn merge_binding_controls_keeps_handoff_when_snapshot_version_rolls_back() {
     assert!(!state
         .merge_binding_controls("local-1", "space-1", std::slice::from_ref(&stale_claimed))
         .expect("ignore stale snapshot"));
-    assert_eq!(state.controls["space-1::task-a"].state, "handoff_materialized");
+    assert_eq!(
+        state.controls["space-1::task-a"].state,
+        "handoff_materialized"
+    );
     let handoff = state.handoff(&key).expect("retained handoff");
     assert_eq!(handoff.server_handoff_state, "source_cleanup_pending");
     assert_eq!(state.pending_handoff_notices().len(), 1);

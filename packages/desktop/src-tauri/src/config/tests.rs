@@ -89,5 +89,3 @@ fn load_keeps_runtime_flags_without_server_url() {
     assert!(reloaded.python_runtime.is_some());
     let _ = std::fs::remove_dir_all(directory);
 }
-
-

@@ -65,7 +65,10 @@ fn finds_executables_on_provided_path() {
     assert_eq!(find_in_path(&[], "node.exe"), None);
     let empty = directory.join("empty.exe");
     std::fs::write(&empty, b"").expect("write empty");
-    assert_eq!(find_in_path(&[directory.clone()], "empty.exe"), None);
+    assert_eq!(
+        find_in_path(std::slice::from_ref(&directory), "empty.exe"),
+        None
+    );
     let _ = std::fs::remove_dir_all(&directory);
 }
 

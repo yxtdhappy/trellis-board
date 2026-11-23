@@ -63,9 +63,11 @@ fn merge_keeps_user_state_and_refreshes_modules() {
     .unwrap();
 
     let entries = merge_plugins_file(&plugins_file, &runtime, &user_dir).unwrap();
-    assert_eq!(entries.enabled, vec!["witops-core".to_string(), "custom".to_string()]);
-    let document: Value =
-        serde_json::from_slice(&std::fs::read(&plugins_file).unwrap()).unwrap();
+    assert_eq!(
+        entries.enabled,
+        vec!["witops-core".to_string(), "custom".to_string()]
+    );
+    let document: Value = serde_json::from_slice(&std::fs::read(&plugins_file).unwrap()).unwrap();
     let plugins = document["plugins"].as_array().unwrap();
     let witops = plugins
         .iter()
@@ -93,8 +95,7 @@ fn merge_keeps_user_state_and_refreshes_modules() {
     std::fs::write(plugin_dir.join("plugin.json"), "{}").unwrap();
     std::fs::write(plugin_dir.join("index.js"), "").unwrap();
     merge_plugins_file(&plugins_file, &runtime, &user_dir).unwrap();
-    let document: Value =
-        serde_json::from_slice(&std::fs::read(&plugins_file).unwrap()).unwrap();
+    let document: Value = serde_json::from_slice(&std::fs::read(&plugins_file).unwrap()).unwrap();
     let accounts = document["plugins"]
         .as_array()
         .unwrap()
@@ -103,7 +104,10 @@ fn merge_keeps_user_state_and_refreshes_modules() {
         .unwrap();
     assert_eq!(
         accounts["module"].as_str().unwrap().replace('\\', "/"),
-        plugin_dir.join("index.js").to_string_lossy().replace('\\', "/")
+        plugin_dir
+            .join("index.js")
+            .to_string_lossy()
+            .replace('\\', "/")
     );
     let _ = std::fs::remove_dir_all(&root);
 }

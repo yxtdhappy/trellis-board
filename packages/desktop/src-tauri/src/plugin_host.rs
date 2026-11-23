@@ -139,7 +139,11 @@ pub fn user_key(username: &str) -> String {
         safe.truncate(48);
     }
     let digest = Sha256::digest(trimmed.as_bytes());
-    let suffix: String = digest.iter().take(4).map(|byte| format!("{byte:02x}")).collect();
+    let suffix: String = digest
+        .iter()
+        .take(4)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     format!("{safe}-{suffix}")
 }
 
@@ -412,10 +416,16 @@ fn merge_plugins_file(
     }
     let mut document = std::fs::read_to_string(plugins_file)
         .ok()
-        .and_then(|text| serde_json::from_str::<Value>(text.strip_prefix('\u{feff}').unwrap_or(&text)).ok())
+        .and_then(|text| {
+            serde_json::from_str::<Value>(text.strip_prefix('\u{feff}').unwrap_or(&text)).ok()
+        })
         .filter(Value::is_object)
         .unwrap_or_else(|| json!({ "version": 1, "plugins": [] }));
-    if !document.get("plugins").map(Value::is_array).unwrap_or(false) {
+    if !document
+        .get("plugins")
+        .map(Value::is_array)
+        .unwrap_or(false)
+    {
         document["plugins"] = json!([]);
     }
     let existing = document["plugins"].as_array().cloned().unwrap_or_default();
@@ -435,7 +445,8 @@ fn merge_plugins_file(
             .cloned()
             .unwrap_or_else(|| json!({ "id": id, "enabled": false }));
         let override_module = user_dir.join(id).join("index.js");
-        let module = if override_module.is_file() && user_dir.join(id).join("plugin.json").is_file() {
+        let module = if override_module.is_file() && user_dir.join(id).join("plugin.json").is_file()
+        {
             override_module
         } else {
             runtime.join("plugins").join(id).join("index.js")
@@ -463,11 +474,15 @@ fn merge_plugins_file(
     document["plugins"] = Value::Array(entries.clone());
     let payload = serde_json::to_vec_pretty(&document)
         .map_err(|error| format!("无法序列化插件配置：{error}"))?;
-    std::fs::write(plugins_file, payload)
-        .map_err(|error| format!("无法写入插件配置：{error}"))?;
+    std::fs::write(plugins_file, payload).map_err(|error| format!("无法写入插件配置：{error}"))?;
     let enabled = entries
         .iter()
-        .filter(|entry| entry.get("enabled").and_then(Value::as_bool).unwrap_or(false))
+        .filter(|entry| {
+            entry
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
         .filter_map(|entry| entry.get("id").and_then(Value::as_str).map(str::to_string))
         .collect();
     Ok(PluginEntries { enabled })
@@ -479,7 +494,11 @@ fn read_plugins_file(plugins_file: &Path) -> Result<Value, String> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let mut document: Value =
         serde_json::from_str(text).map_err(|error| format!("插件配置不是合法 JSON：{error}"))?;
-    if !document.get("plugins").map(Value::is_array).unwrap_or(false) {
+    if !document
+        .get("plugins")
+        .map(Value::is_array)
+        .unwrap_or(false)
+    {
         document["plugins"] = json!([]);
     }
     Ok(document)
@@ -607,10 +626,7 @@ async fn reload_with_secrets(app: &AppHandle) -> Result<Value, String> {
 // ---------------------------------------------------------------- Tauri 命令
 
 #[tauri::command]
-pub async fn desktop_plugins_list(
-    app: AppHandle,
-    window: WebviewWindow,
-) -> Result<Value, String> {
+pub async fn desktop_plugins_list(app: AppHandle, window: WebviewWindow) -> Result<Value, String> {
     caller(&app, &window)?;
     let state = state(&app)?;
     let running = ensure_running(&app).await?;
@@ -674,11 +690,7 @@ pub async fn desktop_plugin_set_enabled(
     let (scope, _) = current_scope().await?;
     let plugins_file = scope.join("plugins").join("plugins.json");
     let runtime = runtime_dir()?;
-    merge_plugins_file(
-        &plugins_file,
-        &runtime,
-        &config::data_dir().join("plugins"),
-    )?;
+    merge_plugins_file(&plugins_file, &runtime, &config::data_dir().join("plugins"))?;
     let mut document = read_plugins_file(&plugins_file)?;
     let entries = document["plugins"]
         .as_array_mut()
@@ -693,9 +705,12 @@ pub async fn desktop_plugin_set_enabled(
     let any_enabled = document["plugins"]
         .as_array()
         .map(|entries| {
-            entries
-                .iter()
-                .any(|entry| entry.get("enabled").and_then(Value::as_bool).unwrap_or(false))
+            entries.iter().any(|entry| {
+                entry
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            })
         })
         .unwrap_or(false);
     if !any_enabled {
@@ -745,17 +760,17 @@ pub async fn desktop_plugin_logs(
     request_json(
         &state,
         reqwest::Method::GET,
-        &format!("/internal/plugins/{}/logs?tail={tail}", encode_segment(&plugin_id)),
+        &format!(
+            "/internal/plugins/{}/logs?tail={tail}",
+            encode_segment(&plugin_id)
+        ),
         None,
     )
     .await
 }
 
 #[tauri::command]
-pub async fn desktop_plugin_panels(
-    app: AppHandle,
-    window: WebviewWindow,
-) -> Result<Value, String> {
+pub async fn desktop_plugin_panels(app: AppHandle, window: WebviewWindow) -> Result<Value, String> {
     caller(&app, &window)?;
     if !ensure_running(&app).await? {
         return Ok(json!({ "panels": [], "running": false }));
@@ -778,10 +793,7 @@ pub async fn desktop_plugin_panels(
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            let src = panel
-                .get("src")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let src = panel.get("src").and_then(Value::as_str).unwrap_or_default();
             let rewritten = src.replacen("/api/plugins/", &format!("/s/{secret}/"), 1);
             panel["host"] = json!("desktop");
             panel["src"] = json!(format!("{base}{rewritten}"));
@@ -822,10 +834,7 @@ pub async fn desktop_plugin_request(
         .http
         .request(
             method,
-            format!(
-                "{base}/api/plugins/{}{path}",
-                encode_segment(&plugin_id)
-            ),
+            format!("{base}/api/plugins/{}{path}", encode_segment(&plugin_id)),
         )
         .bearer_auth(token);
     if let Some(body) = body {
@@ -877,11 +886,7 @@ pub async fn desktop_plugin_asset(
         (inner.base()?, inner.secret.clone())
     };
     let clean = path.trim_start_matches('/');
-    let url = format!(
-        "{base}/s/{secret}/{}/{}",
-        encode_segment(&plugin_id),
-        clean
-    );
+    let url = format!("{base}/s/{secret}/{}/{}", encode_segment(&plugin_id), clean);
     let response = state
         .http
         .get(url)

@@ -80,10 +80,7 @@ fn ensure_local_caller(window: &WebviewWindow) -> Result<(), String> {
     }
 }
 
-pub(crate) fn ensure_board_caller(
-    app: &AppHandle,
-    window: &WebviewWindow,
-) -> Result<Url, String> {
+pub(crate) fn ensure_board_caller(app: &AppHandle, window: &WebviewWindow) -> Result<Url, String> {
     let current = window
         .url()
         .map_err(|error| format!("无法确认 Board 页面来源：{error}"))?;

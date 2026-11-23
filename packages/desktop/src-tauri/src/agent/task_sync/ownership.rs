@@ -3,7 +3,10 @@ use super::*;
 impl TaskSync {
     /// 校验仓库当前分支与绑定分支一致；失败时把错误写入绑定状态并保留。
     /// 通知在“进入暂停”的边沿直接发出，避免其他调用方只持久化不发通知而吞掉提示。
-    pub(super) async fn assert_binding_branch(&self, binding: &AgentBinding) -> AgentResult<String> {
+    pub(super) async fn assert_binding_branch(
+        &self,
+        binding: &AgentBinding,
+    ) -> AgentResult<String> {
         #[cfg(test)]
         self.branch_validations
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -24,8 +27,9 @@ impl TaskSync {
             Err(error) => {
                 if is_branch_guard_error(&error) {
                     // 使用刚从配置读到的最新错误码判断边沿，避免调用方传入的 binding 副本滞后。
-                    let entered =
-                        !previous_error_code.as_deref().is_some_and(is_paused_state_code);
+                    let entered = !previous_error_code
+                        .as_deref()
+                        .is_some_and(is_paused_state_code);
                     let changed = self.persist_binding_sync_error(binding, &error).await;
                     if !entered {
                         self.branch_guard_notified
@@ -59,7 +63,10 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) async fn binding_head(&self, binding: &AgentBinding) -> AgentResult<(String, String)> {
+    pub(super) async fn binding_head(
+        &self,
+        binding: &AgentBinding,
+    ) -> AgentResult<(String, String)> {
         let branch = self.assert_binding_branch(binding).await?;
         let hooks_dir = self.binding_hooks_dir(binding);
         let head = crate::agent::git::head_commit(Path::new(&binding.repo_path), &hooks_dir, false)
@@ -101,7 +108,7 @@ impl TaskSync {
         #[cfg(test)]
         self.head_tree_scans
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let paths = crate::agent::git::ls_tree(repo, &hooks_dir, Some(&head)).await?;
+        let paths = crate::agent::git::ls_tree(repo, &hooks_dir, Some(head)).await?;
         let tracked_paths = Arc::new(paths.into_iter().collect::<HashSet<_>>());
         self.head_tree_cache.lock().await.insert(
             binding.task_space_id.clone(),
@@ -296,22 +303,12 @@ impl TaskSync {
         let tasks_root = trellis_root.join("tasks");
         for (path, label) in [(&trellis_root, ".trellis"), (&tasks_root, ".trellis/tasks")] {
             match tokio::fs::symlink_metadata(path).await {
-                Ok(metadata)
-                    if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+                Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
                 Ok(_) => {
-                    return protocol::err(
-                        code::MISSING_TRELLIS,
-                        format!("{label} 必须是真实目录"),
-                    )
+                    return protocol::err(code::MISSING_TRELLIS, format!("{label} 必须是真实目录"))
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return Ok((
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        Vec::new(),
-                        0,
-                        0,
-                    ))
+                    return Ok((BTreeMap::new(), BTreeMap::new(), Vec::new(), 0, 0))
                 }
                 Err(error) => return Err(io_error(error)),
             }
@@ -334,11 +331,9 @@ impl TaskSync {
         };
         while let Some(directory) = stack.pop() {
             match tokio::fs::symlink_metadata(&directory).await {
-                Ok(metadata)
-                    if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+                Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
                 Err(error)
-                    if scan_task_dirs.is_some()
-                        && error.kind() == std::io::ErrorKind::NotFound =>
+                    if scan_task_dirs.is_some() && error.kind() == std::io::ErrorKind::NotFound =>
                 {
                     continue
                 }
@@ -399,14 +394,12 @@ impl TaskSync {
                 if let Some(cached) = reusable_file.filter(|_| task_metadata_cached) {
                     files.insert(relative.clone(), cached.clone());
                     if parts.file_path == "task.json" {
-                        let task = previous_tasks
-                            .get(&parts.task_dir)
-                            .ok_or_else(|| {
-                                AgentError::new(
-                                    code::INVALID_RESPONSE,
-                                    "ownership 文件缓存缺少 task.json 元数据",
-                                )
-                            })?;
+                        let task = previous_tasks.get(&parts.task_dir).ok_or_else(|| {
+                            AgentError::new(
+                                code::INVALID_RESPONSE,
+                                "ownership 文件缓存缺少 task.json 元数据",
+                            )
+                        })?;
                         tasks.insert(parts.task_dir.clone(), task.clone());
                     }
                     continue;
@@ -537,23 +530,23 @@ impl TaskSync {
                 let entry = previous.as_ref().ok_or_else(|| {
                     AgentError::new(code::INVALID_RESPONSE, "ownership 索引状态无效")
                 })?;
-            (
-                entry.head_commit.clone(),
-                Some(HashSet::new()),
-                entry.tracked_paths.iter().cloned().collect::<HashSet<_>>(),
-                entry.tracked_paths_loaded,
-            )
-        } else {
-            let (_, head_commit) = self.binding_head(binding).await?;
-            let head_changed_dirs = match previous_head_commit.as_deref() {
-                Some(previous_head) => {
-                    self.task_head_changed_dirs(binding, previous_head, &head_commit)
-                        .await
-                }
-                None => None,
+                (
+                    entry.head_commit.clone(),
+                    Some(HashSet::new()),
+                    entry.tracked_paths.iter().cloned().collect::<HashSet<_>>(),
+                    entry.tracked_paths_loaded,
+                )
+            } else {
+                let (_, head_commit) = self.binding_head(binding).await?;
+                let head_changed_dirs = match previous_head_commit.as_deref() {
+                    Some(previous_head) => {
+                        self.task_head_changed_dirs(binding, previous_head, &head_commit)
+                            .await
+                    }
+                    None => None,
+                };
+                (head_commit, head_changed_dirs, HashSet::new(), false)
             };
-            (head_commit, head_changed_dirs, HashSet::new(), false)
-        };
 
         let mut git_calls = if head_cache_matches { 0 } else { 3 };
         git_calls += 1;
@@ -565,101 +558,94 @@ impl TaskSync {
             && worktree_dirty.is_some()
             && previous.is_some()
             && !(force_file_scan && !files_complete);
-        let (
-            tasks,
-            files,
-            local_dirs,
-            files_complete,
-            hashed,
-            parsed,
-            scan_mode,
-        ) = if reuse_incremental {
-            let entry = previous.as_ref().ok_or_else(|| {
-                AgentError::new(code::INVALID_RESPONSE, "ownership 索引状态无效")
-            })?;
-            let current_dirty = worktree_dirty.clone().unwrap_or_default();
-            let mut scan_dirs = current_dirty;
-            scan_dirs.extend(entry.dirty_task_dirs.iter().cloned());
-            scan_dirs.extend(head_changed_dirs.unwrap_or_default());
-            if scan_dirs.is_empty() {
-                (
-                    entry.tasks.clone(),
-                    entry.files.clone(),
-                    entry.local_dirs.clone(),
-                    entry.files_complete,
-                    0,
-                    0,
-                    "reused",
-                )
+        let (tasks, files, local_dirs, files_complete, hashed, parsed, scan_mode) =
+            if reuse_incremental {
+                let entry = previous.as_ref().ok_or_else(|| {
+                    AgentError::new(code::INVALID_RESPONSE, "ownership 索引状态无效")
+                })?;
+                let current_dirty = worktree_dirty.clone().unwrap_or_default();
+                let mut scan_dirs = current_dirty;
+                scan_dirs.extend(entry.dirty_task_dirs.iter().cloned());
+                scan_dirs.extend(head_changed_dirs.unwrap_or_default());
+                if scan_dirs.is_empty() {
+                    (
+                        entry.tasks.clone(),
+                        entry.files.clone(),
+                        entry.local_dirs.clone(),
+                        entry.files_complete,
+                        0,
+                        0,
+                        "reused",
+                    )
+                } else {
+                    let (scanned_tasks, scanned_files, scanned_dirs, hashed, parsed) = self
+                        .scan_ownership_index_files(
+                            Path::new(&binding.repo_path),
+                            &entry.tasks,
+                            &entry.files,
+                            Some(&scan_dirs),
+                            entry.files_complete,
+                        )
+                        .await?;
+                    let mut tasks = entry.tasks.clone();
+                    tasks.retain(|task_dir, _| !scan_dirs.contains(task_dir));
+                    tasks.extend(scanned_tasks);
+                    let mut files = entry.files.clone();
+                    files.retain(|path, _| {
+                        task_directory_from_path(path)
+                            .ok()
+                            .is_none_or(|parts| !scan_dirs.contains(&parts.task_dir))
+                    });
+                    files.extend(scanned_files);
+                    let mut local_dirs: HashSet<String> =
+                        entry.local_dirs.iter().cloned().collect();
+                    local_dirs.retain(|task_dir| !scan_dirs.contains(task_dir));
+                    local_dirs.extend(scanned_dirs);
+                    let mut local_dirs: Vec<String> = local_dirs.into_iter().collect();
+                    local_dirs.sort();
+                    (
+                        tasks,
+                        files,
+                        local_dirs,
+                        entry.files_complete,
+                        hashed,
+                        parsed,
+                        if head_cache_matches {
+                            "incremental"
+                        } else {
+                            "head-incremental"
+                        },
+                    )
+                }
             } else {
-                let (scanned_tasks, scanned_files, scanned_dirs, hashed, parsed) = self
+                let previous_tasks = previous
+                    .as_ref()
+                    .map(|entry| entry.tasks.clone())
+                    .unwrap_or_default();
+                let previous_files = previous
+                    .as_ref()
+                    .map(|entry| entry.files.clone())
+                    .unwrap_or_default();
+                let hash_all_files = force_file_scan || files_complete;
+                let (tasks, files, local_dirs, hashed, parsed) = self
                     .scan_ownership_index_files(
                         Path::new(&binding.repo_path),
-                        &entry.tasks,
-                        &entry.files,
-                        Some(&scan_dirs),
-                        entry.files_complete,
+                        &previous_tasks,
+                        &previous_files,
+                        None,
+                        hash_all_files,
                     )
                     .await?;
-                let mut tasks = entry.tasks.clone();
-                tasks.retain(|task_dir, _| !scan_dirs.contains(task_dir));
-                tasks.extend(scanned_tasks);
-                let mut files = entry.files.clone();
-                files.retain(|path, _| {
-                    task_directory_from_path(path)
-                        .ok()
-                        .map_or(true, |parts| !scan_dirs.contains(&parts.task_dir))
-                });
-                files.extend(scanned_files);
-                let mut local_dirs: HashSet<String> =
-                    entry.local_dirs.iter().cloned().collect();
-                local_dirs.retain(|task_dir| !scan_dirs.contains(task_dir));
-                local_dirs.extend(scanned_dirs);
-                let mut local_dirs: Vec<String> = local_dirs.into_iter().collect();
-                local_dirs.sort();
                 (
                     tasks,
                     files,
                     local_dirs,
-                    entry.files_complete,
+                    hash_all_files,
                     hashed,
                     parsed,
-                    if head_cache_matches {
-                        "incremental"
-                    } else {
-                        "head-incremental"
-                    },
+                    "full",
                 )
-            }
-        } else {
-            let previous_tasks = previous
-                .as_ref()
-                .map(|entry| entry.tasks.clone())
-                .unwrap_or_default();
-            let previous_files = previous
-                .as_ref()
-                .map(|entry| entry.files.clone())
-                .unwrap_or_default();
-            let hash_all_files = force_file_scan || files_complete;
-            let (tasks, files, local_dirs, hashed, parsed) = self
-                .scan_ownership_index_files(
-                    Path::new(&binding.repo_path),
-                    &previous_tasks,
-                    &previous_files,
-                    None,
-                    hash_all_files,
-                )
-                .await?;
-            (
-                tasks,
-                files,
-                local_dirs,
-                hash_all_files,
-                hashed,
-                parsed,
-                "full",
-            )
-        };
+            };
         let mut paused: HashSet<String> = tasks
             .iter()
             .filter(|(_, task)| {
@@ -807,10 +793,7 @@ impl TaskSync {
             .await
         {
             Ok((paused, local_dirs)) => {
-                if let Err(error) = self
-                    .cleanup_missing_ownership_inbox(&binding, None)
-                    .await
-                {
+                if let Err(error) = self.cleanup_missing_ownership_inbox(&binding, None).await {
                     crate::logging::warn(&format!(
                         "清理已删除待归属任务失败：{}",
                         protocol::safe_error_message(&error.message)
@@ -935,8 +918,7 @@ impl TaskSync {
             }
         }
 
-        let tasks_root_safe =
-            ownership_tasks_root_is_safe(Path::new(&binding.repo_path)).await;
+        let tasks_root_safe = ownership_tasks_root_is_safe(Path::new(&binding.repo_path)).await;
         if tasks_root_safe
             && self
                 .ownership_validation_started

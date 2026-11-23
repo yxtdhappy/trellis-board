@@ -1,5 +1,5 @@
-use super::*;
 use super::support::*;
+use super::*;
 
 #[tokio::test]
 async fn baseline_ownership_ignores_tracked_source_branches_and_reuses_head_tree() {
@@ -17,18 +17,12 @@ async fn baseline_ownership_ignores_tracked_source_branches_and_reuses_head_tree
         .await;
     }
     run_git(repo, &["add", ".trellis/tasks"]);
-    run_git(
-        repo,
-        &["commit", "--no-verify", "-m", "track merged tasks"],
-    );
-    write_task_json(
-        repo,
-        ".trellis/tasks/active-probe",
-        "active-probe",
-        "dev1",
-    )
-    .await;
-    let groups = sync.local_groups(&binding, None).await.expect("local groups");
+    run_git(repo, &["commit", "--no-verify", "-m", "track merged tasks"]);
+    write_task_json(repo, ".trellis/tasks/active-probe", "active-probe", "dev1").await;
+    let groups = sync
+        .local_groups(&binding, None)
+        .await
+        .expect("local groups");
     assert_eq!(groups.len(), 18);
 
     binding.baseline_branch = Some("main".to_string());
@@ -53,9 +47,7 @@ async fn baseline_ownership_ignores_tracked_source_branches_and_reuses_head_tree
         .save_config(test_config(binding.clone()))
         .await
         .expect("config");
-    let paused = sync
-        .ownership_paused_task_dirs(&binding, &groups)
-        .await;
+    let paused = sync.ownership_paused_task_dirs(&binding, &groups).await;
     assert_eq!(
         paused.into_iter().collect::<Vec<_>>(),
         vec![".trellis/tasks/active-probe".to_string()]
@@ -65,17 +57,19 @@ async fn baseline_ownership_ignores_tracked_source_branches_and_reuses_head_tree
             .load(std::sync::atomic::Ordering::SeqCst),
         1
     );
-    let associations =
-        crate::agent::device::read_local_associations(&store, Some(&sync))
-            .await
-            .expect("local associations");
+    let associations = crate::agent::device::read_local_associations(&store, Some(&sync))
+        .await
+        .expect("local associations");
     assert_eq!(associations[0].ownership_paused_count, 1);
     assert_eq!(
         associations[0].ownership_paused_task_dirs,
         vec![".trellis/tasks/active-probe".to_string()]
     );
     let (_, first_paths) = sync.head_tree_paths(&binding).await.expect("head tree");
-    let (_, second_paths) = sync.head_tree_paths(&binding).await.expect("cached head tree");
+    let (_, second_paths) = sync
+        .head_tree_paths(&binding)
+        .await
+        .expect("cached head tree");
     assert_eq!(first_paths.len(), 17);
     assert!(Arc::ptr_eq(&first_paths, &second_paths));
     assert_eq!(
@@ -85,9 +79,7 @@ async fn baseline_ownership_ignores_tracked_source_branches_and_reuses_head_tree
     );
 
     run_git(repo, &["checkout", "--quiet", "-b", "dev1"]);
-    let cached_paused = sync
-        .ownership_paused_task_dirs(&binding, &groups)
-        .await;
+    let cached_paused = sync.ownership_paused_task_dirs(&binding, &groups).await;
     assert_eq!(
         cached_paused.into_iter().collect::<Vec<_>>(),
         vec![".trellis/tasks/active-probe".to_string()]
@@ -105,14 +97,11 @@ async fn baseline_ownership_ignores_tracked_source_branches_and_reuses_head_tree
             .expect("cached head tree");
         entry.validated_at = Instant::now() - OWNERSHIP_PROJECTION_CACHE_TTL;
     }
-    let stale_paused = sync
-        .ownership_paused_task_dirs(&binding, &groups)
-        .await;
+    let stale_paused = sync.ownership_paused_task_dirs(&binding, &groups).await;
     assert_eq!(stale_paused.len(), 18);
 
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[tokio::test]
 async fn ownership_projection_caches_local_task_scan() {
@@ -120,20 +109,8 @@ async fn ownership_projection_caches_local_task_scan() {
         test_task_sync_fixture("trellis-ownership-projection-cache").await;
     let repo = Path::new(&binding.repo_path);
     init_git_repo(repo);
-    write_task_json(
-        repo,
-        ".trellis/tasks/merged-task",
-        "merged-task",
-        "dev1",
-    )
-    .await;
-    write_task_json(
-        repo,
-        ".trellis/tasks/active-probe",
-        "active-probe",
-        "dev1",
-    )
-    .await;
+    write_task_json(repo, ".trellis/tasks/merged-task", "merged-task", "dev1").await;
+    write_task_json(repo, ".trellis/tasks/active-probe", "active-probe", "dev1").await;
     run_git(repo, &["add", ".trellis/tasks/merged-task"]);
     run_git(repo, &["commit", "--no-verify", "-m", "merge task"]);
 
@@ -214,7 +191,6 @@ async fn ownership_projection_caches_local_task_scan() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn ownership_projection_does_not_write_back_after_invalidation() {
     let (root, _store, sync, binding) =
@@ -248,7 +224,6 @@ async fn ownership_projection_does_not_write_back_after_invalidation() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn unrelated_projection_invalidation_does_not_block_cache_write() {
     let (root, _store, sync, binding) =
@@ -281,7 +256,6 @@ async fn unrelated_projection_invalidation_does_not_block_cache_write() {
         .contains_key(&binding.task_space_id));
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[tokio::test]
 async fn ownership_projection_refreshes_paused_after_head_change() {
@@ -345,7 +319,6 @@ async fn ownership_projection_refreshes_paused_after_head_change() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn ownership_projection_does_not_decode_other_task_files() {
     let (root, store, sync, binding) =
@@ -397,7 +370,6 @@ async fn ownership_projection_does_not_decode_other_task_files() {
 
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[tokio::test]
 async fn persistent_ownership_index_reuses_tasks_without_git() {
@@ -470,7 +442,6 @@ async fn persistent_ownership_index_reuses_tasks_without_git() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn temporary_task_sync_never_writes_ownership_index() {
     let (root, store, sync, mut binding) =
@@ -493,7 +464,6 @@ async fn temporary_task_sync_never_writes_ownership_index() {
 
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[tokio::test]
 async fn persistent_ownership_index_reparses_only_changed_task_json() {
@@ -544,11 +514,9 @@ async fn persistent_ownership_index_reparses_only_changed_task_json() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn warm_local_sync_reuses_all_task_file_hashes_without_reads() {
-    let (root, store, sync, binding) =
-        test_task_sync_fixture("trellis-local-sync-index-hit").await;
+    let (root, store, sync, binding) = test_task_sync_fixture("trellis-local-sync-index-hit").await;
     let repo = Path::new(&binding.repo_path);
     init_git_repo(repo);
     let task_dir = ".trellis/tasks/task-a";
@@ -573,13 +541,14 @@ async fn warm_local_sync_reuses_all_task_file_hashes_without_reads() {
         .await
         .expect("warm ownership file index");
     assert_eq!(
-        warmup.task_file_reads.load(std::sync::atomic::Ordering::SeqCst),
+        warmup
+            .task_file_reads
+            .load(std::sync::atomic::Ordering::SeqCst),
         3
     );
 
     let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
-    let restarted =
-        TaskSync::new(store, api, Arc::new(|_| {})).with_ownership_index_writer();
+    let restarted = TaskSync::new(store, api, Arc::new(|_| {})).with_ownership_index_writer();
     let (dirty, _, _) = restarted
         .local_sync_state(&binding, &Cursor::default(), &BTreeMap::new())
         .await
@@ -606,7 +575,6 @@ async fn warm_local_sync_reuses_all_task_file_hashes_without_reads() {
 
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[tokio::test]
 async fn local_sync_rehashes_only_changed_file_and_matches_full_scan() {
@@ -636,8 +604,7 @@ async fn local_sync_rehashes_only_changed_file_and_matches_full_scan() {
         .expect("changed prd");
 
     let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
-    let restarted =
-        TaskSync::new(store, api, Arc::new(|_| {})).with_ownership_index_writer();
+    let restarted = TaskSync::new(store, api, Arc::new(|_| {})).with_ownership_index_writer();
     let cursor = Cursor::default();
     let server_baselines = BTreeMap::new();
     let indexed = restarted
@@ -672,7 +639,6 @@ async fn local_sync_rehashes_only_changed_file_and_matches_full_scan() {
 
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[tokio::test]
 async fn forced_local_sync_detects_change_after_projection_warmup() {
@@ -739,7 +705,6 @@ async fn forced_local_sync_detects_change_after_projection_warmup() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn associations_read_persistent_index_before_runtime_starts() {
     let (root, store, sync, mut binding) =
@@ -776,7 +741,6 @@ async fn associations_read_persistent_index_before_runtime_starts() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn ownership_index_rejects_schema_and_invalid_paths() {
     let root = std::env::temp_dir().join(format!(
@@ -798,10 +762,7 @@ async fn ownership_index_rejects_schema_and_invalid_paths() {
         "tasks".into(),
         json!({"../escape":{"taskJsonSize":1,"taskJsonSha256":"x"}}),
     );
-    binding.insert(
-        "files".into(),
-        json!({"../escape":{"size":1,"sha256":"x"}}),
-    );
+    binding.insert("files".into(), json!({"../escape":{"size":1,"sha256":"x"}}));
     binding.insert("paused".into(), json!(["../escape"]));
     binding.insert("localDirs".into(), json!(["../escape"]));
     let mut bindings = serde_json::Map::new();
@@ -823,7 +784,6 @@ async fn ownership_index_rejects_schema_and_invalid_paths() {
 
     let _ = tokio::fs::remove_dir_all(root).await;
 }
-
 
 #[test]
 fn ownership_index_rejects_oversized_tracked_paths() {
@@ -855,13 +815,10 @@ fn ownership_index_rejects_oversized_tracked_paths() {
     assert!(normalize_index(index).is_none());
 }
 
-
 #[tokio::test]
 async fn local_task_scan_rejects_non_directory_trellis_root() {
-    let root = std::env::temp_dir().join(format!(
-        "trellis-local-scan-root-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("trellis-local-scan-root-{}", uuid::Uuid::new_v4()));
     tokio::fs::create_dir_all(&root).await.expect("root");
     tokio::fs::write(root.join(".trellis"), b"not a directory")
         .await
@@ -875,11 +832,9 @@ async fn local_task_scan_rejects_non_directory_trellis_root() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn head_fingerprint_changes_with_current_branch_commit() {
-    let (root, _store, _sync, binding) =
-        test_task_sync_fixture("trellis-head-fingerprint").await;
+    let (root, _store, _sync, binding) = test_task_sync_fixture("trellis-head-fingerprint").await;
     let repo = Path::new(&binding.repo_path);
     init_git_repo(repo);
     let before = git_head_fingerprint(repo).await.expect("unborn HEAD");
@@ -894,50 +849,34 @@ async fn head_fingerprint_changes_with_current_branch_commit() {
     let _ = tokio::fs::remove_dir_all(root).await;
 }
 
-
 #[tokio::test]
 async fn head_diff_only_scans_changed_active_task_directories() {
-    let (root, _store, sync, binding) =
-        test_task_sync_fixture("trellis-head-diff").await;
+    let (root, _store, sync, binding) = test_task_sync_fixture("trellis-head-diff").await;
     let repo = Path::new(&binding.repo_path);
     init_git_repo(repo);
     write_task_json(repo, ".trellis/tasks/live", "live", "main").await;
     run_git(repo, &["add", "."]);
     run_git(repo, &["commit", "--no-verify", "-m", "first"]);
-    let first = crate::agent::git::head_commit(
-        repo,
-        &sync.binding_hooks_dir(&binding),
-        false,
-    )
-    .await
-    .expect("first head")
-    .expect("first commit");
+    let first = crate::agent::git::head_commit(repo, &sync.binding_hooks_dir(&binding), false)
+        .await
+        .expect("first head")
+        .expect("first commit");
 
     write_task_json(repo, ".trellis/tasks/live", "live", "main").await;
-    tokio::fs::write(
-        repo.join(".trellis/tasks/live/prd.md"),
-        "# changed\n",
-    )
-    .await
-    .expect("changed file");
+    tokio::fs::write(repo.join(".trellis/tasks/live/prd.md"), "# changed\n")
+        .await
+        .expect("changed file");
     run_git(repo, &["add", "."]);
     run_git(repo, &["commit", "--no-verify", "-m", "second"]);
-    let second = crate::agent::git::head_commit(
-        repo,
-        &sync.binding_hooks_dir(&binding),
-        false,
-    )
-    .await
-    .expect("second head")
-    .expect("second commit");
+    let second = crate::agent::git::head_commit(repo, &sync.binding_hooks_dir(&binding), false)
+        .await
+        .expect("second head")
+        .expect("second commit");
     let changed = sync
         .task_head_changed_dirs(&binding, &first, &second)
         .await
         .expect("head diff");
-    assert_eq!(
-        changed,
-        HashSet::from([".trellis/tasks/live".to_string()])
-    );
+    assert_eq!(changed, HashSet::from([".trellis/tasks/live".to_string()]));
 
     let archive = repo
         .join(".trellis")
@@ -947,32 +886,22 @@ async fn head_diff_only_scans_changed_active_task_directories() {
     tokio::fs::create_dir_all(&archive)
         .await
         .expect("archive month");
-    tokio::fs::rename(
-        repo.join(".trellis/tasks/live"),
-        archive.join("live"),
-    )
-    .await
-    .expect("archive move");
+    tokio::fs::rename(repo.join(".trellis/tasks/live"), archive.join("live"))
+        .await
+        .expect("archive move");
     tokio::fs::write(archive.join("live").join("screenshot.png"), [0xff, 0xfe])
         .await
         .expect("archive binary");
     run_git(repo, &["add", "-A", "."]);
     run_git(repo, &["commit", "--no-verify", "-m", "archive"]);
-    let third = crate::agent::git::head_commit(
-        repo,
-        &sync.binding_hooks_dir(&binding),
-        false,
-    )
-    .await
-    .expect("third head")
-    .expect("third commit");
+    let third = crate::agent::git::head_commit(repo, &sync.binding_hooks_dir(&binding), false)
+        .await
+        .expect("third head")
+        .expect("third commit");
     let archived = sync
         .task_head_changed_dirs(&binding, &second, &third)
         .await
         .expect("archive diff");
-    assert_eq!(
-        archived,
-        HashSet::from([".trellis/tasks/live".to_string()])
-    );
+    assert_eq!(archived, HashSet::from([".trellis/tasks/live".to_string()]));
     let _ = tokio::fs::remove_dir_all(root).await;
 }

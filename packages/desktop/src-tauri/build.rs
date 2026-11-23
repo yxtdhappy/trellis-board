@@ -41,10 +41,22 @@ fn main() {
         .expect("无法定位仓库根目录");
 
     let mut assets: Vec<(String, PathBuf)> = Vec::new();
-    collect_tree(&repo_root.join("packages").join("server"), &repo_root, &mut assets);
-    collect_tree(&repo_root.join("packages").join("shared"), &repo_root, &mut assets);
+    collect_tree(
+        &repo_root.join("packages").join("server"),
+        &repo_root,
+        &mut assets,
+    );
+    collect_tree(
+        &repo_root.join("packages").join("shared"),
+        &repo_root,
+        &mut assets,
+    );
     for plugin in BUILTIN_PLUGINS {
-        collect_tree(&repo_root.join("plugins").join(plugin), &repo_root, &mut assets);
+        collect_tree(
+            &repo_root.join("plugins").join(plugin),
+            &repo_root,
+            &mut assets,
+        );
     }
     let host = repo_root
         .join("packages")
@@ -82,10 +94,7 @@ fn main() {
     output.push_str("pub static RUNTIME_ASSETS: &[(&str, &str)] = &[\n");
     for (dest, source) in &assets {
         let source = source.display().to_string().replace('\\', "/");
-        output.push_str(&format!(
-            "    ({:?}, include_str!({:?})),\n",
-            dest, source
-        ));
+        output.push_str(&format!("    ({:?}, include_str!({:?})),\n", dest, source));
     }
     output.push_str("];\n");
 

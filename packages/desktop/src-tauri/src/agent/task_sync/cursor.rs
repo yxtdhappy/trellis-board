@@ -54,15 +54,17 @@ pub(super) fn baselines_by_task_dir(
     }
     grouped
 }
+pub(super) type LocalSyncState = (
+    Vec<String>,
+    BTreeMap<String, BTreeMap<String, String>>,
+    HashSet<String>,
+);
+
 pub(super) fn local_sync_state_from_groups(
     cursor: &Cursor,
     local_groups: &[SnapshotGroup],
     server_baselines: &BTreeMap<String, String>,
-) -> (
-    Vec<String>,
-    BTreeMap<String, BTreeMap<String, String>>,
-    HashSet<String>,
-) {
+) -> LocalSyncState {
     let by_dir: HashMap<&str, &SnapshotGroup> = local_groups
         .iter()
         .map(|group| (group.task_dir.as_str(), group))
@@ -205,7 +207,10 @@ pub(super) fn cursor_from_entry(entry: &Value) -> Cursor {
         .and_then(|batch| migrate_archive_pending_batch(batch, cursor.sequence));
     cursor
 }
-pub(super) fn migrate_archive_pending_batch(batch: PendingBatch, cursor_sequence: u64) -> Option<PendingBatch> {
+pub(super) fn migrate_archive_pending_batch(
+    batch: PendingBatch,
+    cursor_sequence: u64,
+) -> Option<PendingBatch> {
     let mut kept = Vec::with_capacity(batch.files.len());
     let mut changed = false;
     for file in &batch.files {
@@ -266,9 +271,9 @@ pub(super) fn cursor_entry_needs_archive_migration(entry: &Value) -> bool {
         || ["ownershipPending", "conflictBlocked", "pendingRejected"]
             .iter()
             .any(|field| {
-            entry
-                .get(*field)
-                .and_then(Value::as_object)
+                entry
+                    .get(*field)
+                    .and_then(Value::as_object)
                     .is_some_and(|values| {
                         values.keys().any(|task_dir| is_archive_task_dir(task_dir))
                     })
@@ -332,7 +337,11 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) async fn write_cursor(&self, task_space_id: &str, next: CursorPatch) -> AgentResult<()> {
+    pub(super) async fn write_cursor(
+        &self,
+        task_space_id: &str,
+        next: CursorPatch,
+    ) -> AgentResult<()> {
         let _guard = self.cursor_write.lock().await;
         let known = self.bindings.lock().await.contains_key(task_space_id);
         if !known || !self.task_space_is_active(task_space_id).await {
@@ -423,8 +432,12 @@ impl TaskSync {
     }
 }
 impl TaskSync {
-    pub(super) async fn migrate_cursor_archive_state(&self, task_space_id: &str) -> AgentResult<()> {
-        self.write_cursor(task_space_id, CursorPatch::default()).await
+    pub(super) async fn migrate_cursor_archive_state(
+        &self,
+        task_space_id: &str,
+    ) -> AgentResult<()> {
+        self.write_cursor(task_space_id, CursorPatch::default())
+            .await
     }
 }
 impl TaskSync {
@@ -526,8 +539,7 @@ pub(super) fn apply_cursor_patch(cursor: &mut Cursor, next: &CursorPatch) -> boo
         cursor.revision = cursor.revision.max(revision);
     }
     if let Some(revision_guard_version) = next.revision_guard_version {
-        cursor.revision_guard_version =
-            cursor.revision_guard_version.max(revision_guard_version);
+        cursor.revision_guard_version = cursor.revision_guard_version.max(revision_guard_version);
     }
     if let Some(sequence) = next.sequence {
         cursor.sequence = cursor.sequence.max(sequence);
@@ -640,8 +652,7 @@ pub(super) fn parse_deferred(value: &Value) -> Option<BTreeMap<String, BTreeMap<
         }
         if !is_archive_task_dir(task_dir)
             && files.keys().all(|path_name| {
-                active_task_directory_from_relative(path_name).as_deref()
-                    == Some(task_dir.as_str())
+                active_task_directory_from_relative(path_name).as_deref() == Some(task_dir.as_str())
             })
         {
             deferred.insert(task_dir.clone(), files);
