@@ -259,7 +259,9 @@ test('本机插件宿主：空清单可以就绪且不启动插件进程', async
   const base = `http://127.0.0.1:${ready.port}`
   const list = await request(base, '/internal/plugins')
   assert.equal(list.status, 200)
-  assert.deepEqual(list.data.plugins, [])
+  // 空清单会补齐内置插件，但全部默认禁用，不拉起任何插件进程。
+  assert.equal(list.data.plugins.length, 6)
+  assert.ok(list.data.plugins.every((plugin) => plugin.status !== 'running'))
   const panels = await request(base, '/internal/panels')
   assert.deepEqual(panels.data.panels, [])
   await request(base, '/internal/shutdown', { method: 'POST' })
