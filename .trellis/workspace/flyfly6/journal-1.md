@@ -1540,3 +1540,27 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Next Steps
 
 - 实机验证登录页首次安装失败的界面展示与「打开日志目录」中的历史文件
+
+
+## Session 46: 修复客户端登录心跳绑定解析失败
+<!-- trellis-session: v=2 fp=8bac9c6578931e0d -->
+
+**Date**: 2026-11-23
+**Task**: 修复客户端登录心跳绑定解析失败
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+服务端 rejected 绑定可缺 id/projectId/localRepoKey，协议解析放宽为 Option 且仅 rejected 允许缺省；merge_heartbeat_bindings 区分 REMOTE_MISMATCH/BINDING_UNKNOWN，非 approved 不覆盖本地绑定与分支保护；reusable_device 鉴权失败降级 Ok(None)，complete_login 先合并心跳再落盘。顺带对齐 clippy/rustfmt 基线，cargo fmt/clippy -D warnings/cargo test(379) 全绿。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7d28af8` | chore(desktop): 对齐 clippy/rustfmt 基线 |
+| `0d040c7` | fix(desktop): 心跳绑定解析兼容 rejected 绑定 |
+
+### Status
+
+[OK] **Completed**

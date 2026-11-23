@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 45
-- **Last Active**: 2026-11-20
+- **Total Sessions**: 46
+- **Last Active**: 2026-11-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1542 | Active |
+| `journal-1.md` | ~1566 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 46 | 2026-11-23 | 修复客户端登录心跳绑定解析失败 | `7d28af8`, `0d040c7` | `main` |
 | 45 | 2026-11-20 | 客户端命令报错可读性与日志留存 | `fbe9a714`, `af9b4e7` | `design-assigned-task-worktree-flow` |
 | 44 | 2026-11-20 | worktree 删除后自动解绑 + Alert 溢出修复 | `a12f4d9` | `main` |
 | 43 | 2026-11-20 | 同步仅处理本人任务：枚举期归属过滤与服务端新建/改派校验 | `c3f27b0`, `5ca22a5` | `investigate/join-project-prompt-assignee` |
