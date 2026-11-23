@@ -24,7 +24,6 @@ export type TaskDetailDialogProps = {
   onAssign: (task: BoardTask, assignee: string) => Promise<void>
   assignees: string[]
   taskSpace?: TaskSpace | null
-  teamMode?: boolean
   onPlanSaved: () => void
   tasks: BoardTask[]
   actions: TaskDetailActions

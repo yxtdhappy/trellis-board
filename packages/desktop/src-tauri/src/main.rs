@@ -1089,6 +1089,8 @@ fn build_main_window(
     let builder =
         WebviewWindowBuilder::new(app, "main", WebviewUrl::App(PathBuf::from("index.html")))
             .title("Trellis Board")
+            // 本窗口始终是客户端：插件由本机宿主提供，与服务端是否 Team 模式无关。
+            .initialization_script("window.__TRELLIS_ROLE__ = 'client';")
             .inner_size(1280.0, 800.0)
             .min_inner_size(960.0, 640.0)
             .visible(!minimized)

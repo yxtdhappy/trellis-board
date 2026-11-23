@@ -65,7 +65,6 @@ export type BoardController = {
   projects: BoardPayload['projects']
   status: BoardStatus | null
   runtime: TeamRuntime | null
-  teamMode: boolean
   teamPage: TeamQueryPage | null
   teamStatus: Record<string, unknown> | null
   ownershipInbox: OwnershipInboxController
