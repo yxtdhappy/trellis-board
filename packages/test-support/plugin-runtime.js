@@ -77,6 +77,7 @@ export async function createHarness({
   withRepository = false,
   repositories = null,
   secrets = null,
+  userProvider = null,
   start = true,
 } = {}) {
   const workspace = makeWorkspace({ withRepository: repositories ? false : withRepository })
@@ -112,6 +113,7 @@ export async function createHarness({
     autoDisableLimit,
     healthIntervalMs,
     timeoutOverrides,
+    userProvider,
   })
   await runtime.load()
   if (start) await runtime.start()

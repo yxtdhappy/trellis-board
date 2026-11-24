@@ -152,3 +152,73 @@ test('trellis.capabilities 可发现并代理调用其他插件的能力', async
     await harness.cleanup()
   }
 })
+
+test('宿主 trellis.user.current 暴露脱敏登录用户并校验 user:read 权限', async () => {
+  const harness = await createHarness({
+    plugins: [plugin('repo-consumer'), plugin('repo-reader-without-permission')],
+    repositories: [],
+    userProvider: () => ({
+      userId: 'u-1',
+      username: 'kanyifei',
+      displayName: 'Kan Yifei',
+      serverUrl: 'http://board.internal:4317',
+      password: 'must-not-leak-password',
+      sessionToken: 'must-not-leak-token',
+    }),
+  })
+  const http = await startHttpServer(harness.runtime)
+  try {
+    const allowed = await request(http.baseUrl, '/api/plugins/repo-consumer/user')
+    assert.equal(allowed.status, 200, JSON.stringify(allowed.json))
+    assert.deepEqual(allowed.json, {
+      user: {
+        userId: 'u-1',
+        username: 'kanyifei',
+        displayName: 'Kan Yifei',
+        serverUrl: 'http://board.internal:4317',
+      },
+    })
+
+    const denied = await request(http.baseUrl, '/api/plugins/repo-reader-without-permission/user')
+    assert.equal(denied.status, 403)
+    assert.equal(denied.json.code, 1001)
+  } finally {
+    await http.close()
+    await harness.cleanup()
+  }
+})
+
+test('宿主 trellis.projects.developers 与 readDeveloper 精确解析 .trellis/.developer 的 name= 与 workspace', async () => {
+  const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-devs-'))
+  fs.mkdirSync(path.join(repoPath, '.trellis', 'workspace', 'alice'), { recursive: true })
+  fs.mkdirSync(path.join(repoPath, '.trellis', 'workspace', 'bob'), { recursive: true })
+  fs.mkdirSync(path.join(repoPath, '.trellis', 'workspace', '.hidden'), { recursive: true })
+  fs.writeFileSync(
+    path.join(repoPath, '.trellis', '.developer'),
+    'name=alice\ninitialized_at=2026-11-20T10:09:58.926484\n',
+  )
+  const harness = await createHarness({
+    plugins: [plugin('repo-consumer')],
+    repositories: [{ id: 'dev-repo', name: 'Dev Repo', path: repoPath }],
+  })
+  const http = await startHttpServer(harness.runtime)
+  try {
+    const project = await request(http.baseUrl, '/api/plugins/repo-consumer/project')
+    // fixture 调用 repositoryId: 'demo-repository'，直接查 developers
+    const devs = await request(
+      http.baseUrl,
+      '/api/plugins/repo-consumer/developers?repositoryId=dev-repo',
+    )
+    assert.equal(devs.status, 200, JSON.stringify(devs.json))
+    assert.deepEqual(devs.json, {
+      repositoryId: 'dev-repo',
+      currentDeveloper: 'alice',
+      developers: ['alice', 'bob'],
+    })
+    assert.equal(project.status, 200)
+  } finally {
+    await http.close()
+    await harness.cleanup()
+    fs.rmSync(repoPath, { recursive: true, force: true })
+  }
+})

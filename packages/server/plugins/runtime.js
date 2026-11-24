@@ -73,6 +73,9 @@ export function createPluginRuntime({
   healthIntervalMs,
   timeoutOverrides,
   autoDisableLimit,
+  entriesProvider = null,
+  orderWriter = null,
+  userProvider = null,
   now = () => new Date().toISOString(),
 }) {
   const pluginStore = store ?? createPluginStore({ db })
@@ -101,6 +104,9 @@ export function createPluginRuntime({
     healthIntervalMs,
     timeoutOverrides,
     autoDisableLimit,
+    entriesProvider,
+    orderWriter,
+    userProvider,
     now,
   })
   const disabled = String(env.TRELLIS_PLUGINS_DISABLED || '') === '1'

@@ -8,18 +8,24 @@
     "repositories:read",
     "repositories:write",
     "projects:read",
+    "user:read",
     "http:route"
   ],
   "requires": [
     {
       "name": "trellis.projects",
       "version": "^1.0.0",
-      "methods": ["list", "current", "branches"]
+      "methods": ["list", "current", "branches", "developers"]
     },
     {
       "name": "trellis.repositories",
       "version": "^1.0.0",
       "methods": ["list", "add"]
+    },
+    {
+      "name": "trellis.user",
+      "version": "^1.0.0",
+      "methods": ["current"]
     }
   ]
 }

@@ -9,6 +9,7 @@ export default createPlugin({
     'repositories:read',
     'repositories:write',
     'projects:read',
+    'user:read',
     'http:route',
   ],
 
@@ -39,6 +40,28 @@ export default createPlugin({
           body: await ctx.capabilities.call('trellis.projects', 'branches', {
             repositoryId: request.query.repositoryId,
           }),
+        }
+      } catch (error) {
+        return { status: 403, body: { code: error.code, message: error.message } }
+      }
+    })
+    ctx.http.route('GET', '/developers', async (request) => {
+      try {
+        return {
+          status: 200,
+          body: await ctx.capabilities.call('trellis.projects', 'developers', {
+            repositoryId: request.query.repositoryId,
+          }),
+        }
+      } catch (error) {
+        return { status: 403, body: { code: error.code, message: error.message } }
+      }
+    })
+    ctx.http.route('GET', '/user', async () => {
+      try {
+        return {
+          status: 200,
+          body: await ctx.capabilities.call('trellis.user', 'current'),
         }
       } catch (error) {
         return { status: 403, body: { code: error.code, message: error.message } }

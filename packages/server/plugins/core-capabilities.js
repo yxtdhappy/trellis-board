@@ -22,6 +22,14 @@ export const CORE_CAPABILITIES = Object.freeze([
     },
   },
   {
+    name: 'trellis.user',
+    version: '1.0.0',
+    description: '当前登录用户信息',
+    methods: {
+      current: { access: 'read', permission: 'user:read', timeoutMs: 10_000 },
+    },
+  },
+  {
     name: 'trellis.projects',
     version: '1.0.0',
     description: '当前看板项目上下文',
@@ -30,6 +38,7 @@ export const CORE_CAPABILITIES = Object.freeze([
       get: { access: 'read', permission: 'projects:read', timeoutMs: 10_000 },
       current: { access: 'read', permission: 'projects:read', timeoutMs: 10_000 },
       branches: { access: 'read', permission: 'projects:read', timeoutMs: 10_000 },
+      developers: { access: 'read', permission: 'projects:read', timeoutMs: 10_000 },
     },
   },
   {
@@ -96,25 +105,75 @@ function readLocalBranches(repositoryPath) {
   return value
 }
 
-function readDeveloper(repositoryPath) {
+export function readDeveloper(repositoryPath) {
   try {
-    const value = fs
-      .readFileSync(path.join(repositoryPath, '.trellis', '.developer'), 'utf8')
-      .trim()
-    return value ? value.slice(0, 200) : null
+    const content = fs.readFileSync(path.join(repositoryPath, '.trellis', '.developer'), 'utf8')
+    const lines = content.split(/\r?\n/).map((line) => line.trim())
+    for (const line of lines) {
+      if (!line || line.startsWith('#')) continue
+      if (line.startsWith('name=')) {
+        const value = line.slice('name='.length).trim()
+        return value ? value.slice(0, 120) : null
+      }
+    }
+    const nonEmpty = lines.filter((line) => line && !line.startsWith('#'))
+    if (nonEmpty.length === 1 && !nonEmpty[0].includes('=')) {
+      return nonEmpty[0].slice(0, 120)
+    }
+    return null
   } catch {
     return null
   }
 }
 
-function publicProject({
-  id,
-  name,
-  path: repositoryPath,
-  branch,
-  branchName,
-  developerId,
-}) {
+export function readWorkspaceDevelopers(repositoryPath) {
+  const currentDeveloper = readDeveloper(repositoryPath)
+  const workspaceDir = path.join(repositoryPath, '.trellis', 'workspace')
+  const developers = []
+  try {
+    if (fs.existsSync(workspaceDir) && fs.statSync(workspaceDir).isDirectory()) {
+      for (const entry of fs.readdirSync(workspaceDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue
+        const name = entry.name.trim()
+        if (
+          !name ||
+          name.startsWith('.') ||
+          name.includes('/') ||
+          name.includes('\\') ||
+          name.includes('..')
+        ) {
+          continue
+        }
+        developers.push(name)
+      }
+      developers.sort((left, right) => left.localeCompare(right, 'en'))
+    }
+  } catch {
+    // 忽略读取异常，降级为空列表。
+  }
+  return { currentDeveloper, developers }
+}
+
+function sanitizeCurrentUser(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const textField = (value) => {
+    if (value === undefined || value === null) return null
+    const clean = String(value).trim()
+    return clean ? clean.slice(0, 200) : null
+  }
+  const user = {
+    userId: textField(raw.userId ?? raw.id),
+    username: textField(raw.username ?? raw.account),
+    displayName: textField(raw.displayName ?? raw.name),
+    serverUrl: textField(raw.serverUrl),
+  }
+  if (!user.userId && !user.username && !user.displayName && !user.serverUrl) {
+    return null
+  }
+  return user
+}
+
+function publicProject({ id, name, path: repositoryPath, branch, branchName, developerId }) {
   const project = { repositoryId: id, name, path: repositoryPath }
   const currentBranch = branch ?? branchName
   if (currentBranch) project.branch = currentBranch
@@ -177,6 +236,7 @@ function addInMemory(repositories, inputs) {
 export function createCoreCapabilities({
   repositories,
   repositoryService,
+  userProvider = () => null,
   listCapabilities = () => [],
   invokeCapability = async () => {
     throw appError(ERROR_CODES.CAPABILITY_UNAVAILABLE, '宿主未配置能力调用代理')
@@ -184,6 +244,12 @@ export function createCoreCapabilities({
 }) {
   const definitions = new Map(CORE_CAPABILITIES.map((definition) => [definition.name, definition]))
   const handlers = new Map()
+
+  handlers.set('trellis.user', {
+    async current(_params, state) {
+      return { user: sanitizeCurrentUser(await userProvider(state)) }
+    },
+  })
 
   handlers.set('trellis.capabilities', {
     async list() {
@@ -245,6 +311,20 @@ export function createCoreCapabilities({
       )
       if (!project) throw appError(ERROR_CODES.NOT_FOUND, `项目不存在: ${id}`)
       return { repositoryId: project.repositoryId, ...readLocalBranches(project.path) }
+    },
+    async developers(params) {
+      const projects = projectList(repositories, repositoryService)
+      const requested = String(params?.repositoryId ?? params?.id ?? '').trim()
+      const project = requested
+        ? projects.find((item) => item.repositoryId === requested)
+        : projects.length === 1
+          ? projects[0]
+          : null
+      if (!project) {
+        if (requested) throw appError(ERROR_CODES.NOT_FOUND, `项目不存在: ${requested}`)
+        throw invalidParams('projects/developers 缺少 repositoryId')
+      }
+      return { repositoryId: project.repositoryId, ...readWorkspaceDevelopers(project.path) }
     },
   })
 

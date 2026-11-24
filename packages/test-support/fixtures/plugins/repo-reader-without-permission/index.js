@@ -17,5 +17,15 @@ export default createPlugin({
         }
       }
     })
+    ctx.http.route('GET', '/user', async () => {
+      try {
+        return { status: 200, body: await ctx.capabilities.call('trellis.user', 'current') }
+      } catch (error) {
+        return {
+          status: error.code === 1001 ? 403 : 500,
+          body: { code: error.code, message: error.message },
+        }
+      }
+    })
   },
 })

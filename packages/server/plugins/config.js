@@ -50,20 +50,14 @@ export function configSignature(value) {
     .join(',')}}`
 }
 
-export function loadPluginConfigFile(file, { env = process.env, secretsFile } = {}) {
-  if (!fs.existsSync(file)) return { plugins: [], missing: [], warnings: [] }
-  let raw
-  try {
-    raw = JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch {
-    throw new Error('plugins.json 不是合法 JSON')
-  }
+export function normalizePluginConfigDocument(raw, { env = process.env, secretsFile = null } = {}) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.plugins)) {
     throw new Error('plugins.json 必须包含 plugins 数组')
   }
-  const secrets = loadSecretsFile(
-    secretsFile || env.TRELLIS_BOARD_SECRETS_FILE || defaultSecretsFile(file),
-  )
+  const resolvedSecretsFile = secretsFile || env.TRELLIS_BOARD_SECRETS_FILE || null
+  const secrets = resolvedSecretsFile
+    ? loadSecretsFile(resolvedSecretsFile)
+    : { file: null, refs: new Map(), warnings: [] }
   const warnings = secrets.warnings.map((warning) => ({ ...warning }))
   const missing = []
   const plugins = raw.plugins.map((entry, index) => {
@@ -109,4 +103,18 @@ export function loadPluginConfigFile(file, { env = process.env, secretsFile } = 
     }
   })
   return { plugins, missing, warnings, secretsFile: secrets.file }
+}
+
+export function loadPluginConfigFile(file, { env = process.env, secretsFile } = {}) {
+  if (!fs.existsSync(file)) return { plugins: [], missing: [], warnings: [] }
+  let raw
+  try {
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    throw new Error('plugins.json 不是合法 JSON')
+  }
+  return normalizePluginConfigDocument(raw, {
+    env,
+    secretsFile: secretsFile || env.TRELLIS_BOARD_SECRETS_FILE || defaultSecretsFile(file),
+  })
 }

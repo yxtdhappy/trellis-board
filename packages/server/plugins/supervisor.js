@@ -27,7 +27,13 @@ import {
   loadSecretsFile,
   writeSecretRef,
 } from './secrets.js'
-import { configSignature, loadPluginConfigFile, nowIso, redactConfig } from './config.js'
+import {
+  configSignature,
+  loadPluginConfigFile,
+  normalizePluginConfigDocument,
+  nowIso,
+  redactConfig,
+} from './config.js'
 import { createLogRing, rotateLogFile } from './log-ring.js'
 import { PluginProcess } from './plugin-process.js'
 
@@ -89,6 +95,9 @@ export class PluginSupervisor {
     actorContext = null,
     userConfigProvider = null,
     sessionResolver = null,
+    entriesProvider = null,
+    orderWriter = null,
+    userProvider = null,
   }) {
     this.db = db
     this.appDir = appDir
@@ -97,9 +106,13 @@ export class PluginSupervisor {
     this.hostVersion = hostVersion
     this.repositories = repositories
     this.tasks = tasks
+    this.entriesProvider = entriesProvider
+    this.orderWriter = orderWriter
+    this.userProvider = userProvider ?? (() => this.actorContext?.getStore?.() ?? null)
     this.coreCapabilities = createCoreCapabilities({
       repositories,
       repositoryService,
+      userProvider: (state) => this.userProvider(state),
       listCapabilities: () => this.capabilityCatalog(),
       invokeCapability: (request) => this.invokeBrokeredCapability(request),
     })
@@ -134,8 +147,19 @@ export class PluginSupervisor {
     this.logDir = path.join(this.pluginsDir, 'logs')
   }
 
+  async readPluginConfig() {
+    if (typeof this.entriesProvider === 'function') {
+      const entries = await this.entriesProvider()
+      return normalizePluginConfigDocument(
+        { version: 1, plugins: Array.isArray(entries) ? entries : [] },
+        { env: this.env, secretsFile: this.secretsFile },
+      )
+    }
+    return loadPluginConfigFile(this.configFile, { env: this.env })
+  }
+
   async load() {
-    const config = loadPluginConfigFile(this.configFile, { env: this.env })
+    const config = await this.readPluginConfig()
     for (const warning of config.warnings) {
       this.logger.warn?.('插件配置警告', warning)
     }
@@ -213,7 +237,7 @@ export class PluginSupervisor {
     }
     let config
     try {
-      config = loadPluginConfigFile(this.configFile, { env: this.env })
+      config = await this.readPluginConfig()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.logger.warn?.('插件配置重载失败，保留旧配置', error)
@@ -973,7 +997,10 @@ export class PluginSupervisor {
     }
     const provider = this.plugins.get(providerId)
     if (!provider || provider.status !== 'running' || !provider.process) {
-      throw appError(ERROR_CODES.CAPABILITY_UNAVAILABLE, `插件 ${providerId} 未运行，无法提供该能力`)
+      throw appError(
+        ERROR_CODES.CAPABILITY_UNAVAILABLE,
+        `插件 ${providerId} 未运行，无法提供该能力`,
+      )
     }
     const capability = (provider.manifest.provides ?? []).find((item) => item.name === name)
     const definition = capability?.methods?.[method]
@@ -1668,7 +1695,9 @@ export class PluginSupervisor {
     if (missing.length) throw new Error(`顺序里缺少插件: ${missing.join(', ')}`)
 
     const sorts = new Map(ordered.map((id, index) => [id, (index + 1) * 10]))
-    if (fs.existsSync(this.configFile)) {
+    if (typeof this.orderWriter === 'function') {
+      this.orderWriter(ordered, sorts)
+    } else if (fs.existsSync(this.configFile)) {
       let raw
       try {
         raw = JSON.parse(fs.readFileSync(this.configFile, 'utf8'))
