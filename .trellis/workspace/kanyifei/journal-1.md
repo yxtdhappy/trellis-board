@@ -29,3 +29,28 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: Retire desktop plugins.json and expose trellis.user core capability
+<!-- trellis-session: v=2 fp=6a2f7adeb151cefe -->
+
+**Date**: 2026-11-24
+**Task**: Retire desktop plugins.json and expose trellis.user core capability
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+Added trellis.user.current and trellis.projects.developers core capabilities, replaced desktop plugins/plugins.json with minimal plugin-state.json + one-time migration, and upgraded witops-core with zero-config 5-level assignee auto-association and dialog binding UI.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4353a483` | feat(plugins): expose trellis.user.current and trellis.projects.developers core capabilities |
+| `b64c51d5` | refactor(desktop): retire plugins.json in favor of plugin-state.json and user injection |
+| `9eb94487` | feat(witops-core): auto-associate assignee from logged-in user and add dialog binding UI |
+
+### Status
+
+[OK] **Completed**
