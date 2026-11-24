@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use base64::Engine;
 
@@ -49,6 +50,7 @@ pub struct AgentService {
     paused: Arc<AtomicBool>,
     runtime: Arc<Mutex<Option<Arc<AgentRuntime>>>>,
     starting: Arc<AtomicBool>,
+    user_stopped: Arc<AtomicBool>,
     auto_notify_consumed: Arc<AtomicBool>,
     sync_menu_item: Arc<Mutex<Option<MenuItem<Wry>>>>,
 }
@@ -72,8 +74,51 @@ pub fn register(app: &AppHandle) {
         paused: Arc::new(AtomicBool::new(false)),
         runtime: Arc::new(Mutex::new(None)),
         starting: Arc::new(AtomicBool::new(false)),
+        user_stopped: Arc::new(AtomicBool::new(false)),
         auto_notify_consumed: Arc::new(AtomicBool::new(false)),
         sync_menu_item: Arc::new(Mutex::new(None)),
+    });
+    spawn_watchdog(app.clone());
+}
+
+/// 运行时被认证失败/吊销等原因停掉后自动拉起，避免只能重启客户端才能恢复同步。
+fn spawn_watchdog(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(30));
+        ticker.tick().await;
+        let mut attempts = 0u32;
+        loop {
+            ticker.tick().await;
+            let Ok(service) = service(&app) else {
+                continue;
+            };
+            if service.paused.load(Ordering::SeqCst) || service.user_stopped.load(Ordering::SeqCst) {
+                continue;
+            }
+            let running = match service.runtime.lock() {
+                Ok(guard) => guard
+                    .as_ref()
+                    .map(|runtime| !runtime.is_stopped())
+                    .unwrap_or(false),
+                Err(_) => true,
+            };
+            if running {
+                attempts = 0;
+                continue;
+            }
+            let has_config = matches!(service.store.read_config(false).await, Ok(Some(_)));
+            if !has_config {
+                continue;
+            }
+            if attempts >= 10 {
+                continue;
+            }
+            if attempts == 0 {
+                crate::logging::warn("检测到后台同步已停止，正在自动恢复");
+            }
+            attempts += 1;
+            start(&app);
+        }
     });
 }
 
@@ -181,6 +226,7 @@ pub fn start(app: &AppHandle) {
         return;
     };
     if service.paused.load(Ordering::SeqCst) {
+        crate::logging::info("后台同步处于暂停状态，跳过启动");
         return;
     }
     if service
@@ -205,13 +251,17 @@ pub fn restart(app: &AppHandle) {
 }
 
 pub fn stop(app: &AppHandle) {
+    stop_with_reason(app, "应用主动停止后台同步");
+}
+
+pub fn stop_with_reason(app: &AppHandle, reason: &str) {
     let Some(service) = app
         .try_state::<AgentService>()
         .map(|state| state.inner().clone())
     else {
         return;
     };
-    service.stop_runtime();
+    service.stop_runtime(reason);
     refresh_sync_menu(app);
 }
 
@@ -223,7 +273,7 @@ pub fn toggle_pause(app: &AppHandle) {
     service.paused.store(paused, Ordering::SeqCst);
     service.notify_sidecar();
     if paused {
-        service.stop_runtime();
+        service.stop_runtime("用户暂停后台同步");
         refresh_sync_menu(app);
         return;
     }
@@ -234,7 +284,7 @@ pub fn toggle_pause(app: &AppHandle) {
 }
 
 pub fn shutdown(app: &AppHandle) {
-    stop(app);
+    stop_with_reason(app, "应用退出");
 }
 
 impl AgentService {
@@ -334,14 +384,16 @@ impl AgentService {
         if let Ok(mut guard) = self.runtime.lock() {
             *guard = Some(runtime);
         }
+        self.user_stopped.store(false, Ordering::SeqCst);
         self.notify_sidecar();
         Ok(())
     }
 
-    fn stop_runtime(&self) {
+    fn stop_runtime(&self, reason: &str) {
+        self.user_stopped.store(true, Ordering::SeqCst);
         let taken = self.runtime.lock().ok().and_then(|mut guard| guard.take());
         if let Some(runtime) = taken {
-            runtime.stop();
+            runtime.stop(reason);
             self.notify_sidecar();
         }
     }

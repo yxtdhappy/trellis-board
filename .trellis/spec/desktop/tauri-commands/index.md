@@ -573,6 +573,7 @@ pub fn take_pending_share_link(
 - 单轮心跳必须有 `round_timeout` 总上限；超时后进入下一轮，绝不退出循环。
 - 只有认证失败（`protocol::is_authentication_error`）与 `agent.revoked` 能停止运行时。
 - 失败、超时、恢复三类事件必须经 `logging::warn` / `logging::info` 落盘；成功心跳不写日志（避免每 15 秒一条），只在恢复时记一条 info。
+- `AgentRuntime::stop(reason)` 必须记录停止原因；应用层主动停止走 `AgentService::stop_runtime(reason)` 并置 `user_stopped`，与运行时自停（认证失败/吊销）区分开。
 
 ### 4. Validation & Error Matrix
 
@@ -584,6 +585,8 @@ pub fn take_pending_share_link(
 | 网络错误 | warn「心跳失败（code）」，写 error 状态，1s→2s→…→60s 退避 |
 | 恢复成功且上一轮失败 | info「心跳恢复：上报 N 个监听任务空间」并把状态改回 `running` |
 | 401 / `AUTH_REVOKED` | 写 `AUTH_REVOKED` 并 `stop()`，不再重试 |
+| 运行时被停掉（认证失败、吊销等） | info「Agent 运行时停止：{reason}」；`AgentService` 看门狗 30s 内自动拉起，最多连续 10 次 |
+| 用户主动停止（托盘暂停、退出登录、退出应用） | 置 `user_stopped`，看门狗不得拉起，直到下一次成功启动 |
 
 ### 5. Tests Required
 

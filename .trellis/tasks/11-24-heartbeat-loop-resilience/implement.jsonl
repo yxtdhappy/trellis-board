@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/11-24-heartbeat-loop-resilience/design.md", "reason": "技术设计：先心跳后同步、同步 30s+整轮 60s 双超时、日志与恢复写状态、测试设计"}
+{"file": ".trellis/tasks/11-24-heartbeat-loop-resilience/research/incident-2026-11-24.md", "reason": "现场证据链、已排除假设、复现与观测命令"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "日志规范（logging::info/warn、脱敏）与 Rust 单文件 1200 行/根文件 500 行上限"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "客户端心跳与服务端 60s 在线判定的跨层契约一致性"}

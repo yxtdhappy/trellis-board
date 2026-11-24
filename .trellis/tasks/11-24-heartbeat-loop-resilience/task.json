@@ -1,0 +1,41 @@
+{
+  "id": "heartbeat-loop-resilience",
+  "name": "heartbeat-loop-resilience",
+  "title": "修复服务端重启后客户端心跳循环静默停止导致在线监听不恢复",
+  "description": "服务端每次重启后，所有已连接客户端的心跳循环都会静默停止：agent_device.last_seen_at 与 sync_agent_binding.listener_reported_at 冻结在重启瞬间，在线监听数归零，只有重启客户端进程才恢复。release 构建 panic=abort 可排除 panic，故为永久阻塞。需要把心跳与全量同步解耦（先心跳后同步）、给同步 30s 与整轮 60s 双重超时，并补齐失败/恢复日志与运行态恢复。",
+  "status": "in_progress",
+  "dev_type": null,
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "desktop",
+  "priority": "P1",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-24",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": "679a05c9a0eb31443bd8c14a9ec9750d5de64ec5",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "commits": [
+      "679a05c9a0eb31443bd8c14a9ec9750d5de64ec5"
+    ],
+    "commit_set_at": "2026-11-24T17:41:51",
+    "frontend_evidence": [
+      {
+        "type": "e2e",
+        "artifact": "https://github.com/yxtdhappy/trellis-board/actions/runs/45364924676",
+        "at": "2026-11-24T17:41:52",
+        "commit": "d0d2703"
+      }
+    ],
+    "frontend_evidence_at": "2026-11-24T17:41:52"
+  }
+}

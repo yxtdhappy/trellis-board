@@ -193,7 +193,7 @@ async fn run(store: Arc<ConfigStore>, args: &Parsed) -> AgentResult<()> {
             }
         }
     }
-    runtime.stop();
+    runtime.stop("命令行进程退出");
     // `AgentRuntime::stop()` 里写 `runtime.json` 是 spawn 出去的异步任务，进程立刻退出会丢掉
     // 这次写入（桌面端常驻进程不会遇到）。这里等它落盘，最多 1s。
     for _ in 0..20 {

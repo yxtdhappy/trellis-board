@@ -128,10 +128,15 @@ impl AgentRuntime {
         &self.worktree
     }
 
-    pub fn stop(&self) {
+    pub fn is_stopped(&self) -> bool {
+        self.stopped.load(Ordering::SeqCst)
+    }
+
+    pub fn stop(&self, reason: &str) {
         if self.stopped.swap(true, Ordering::SeqCst) {
             return;
         }
+        crate::logging::info(&format!("Agent 运行时停止：{reason}"));
         self.worktree.stop();
         let _ = self.shutdown.send(true);
         self.write_state_blocking("stopped", None, None);
@@ -179,7 +184,7 @@ impl AgentRuntime {
                         runtime
                             .write_state("error", Some(error), Some("AUTH_REVOKED"))
                             .await;
-                        runtime.stop();
+                        runtime.stop("认证失败");
                         break;
                     }
                     (RoundOutcome::TimedOut, _) => {
@@ -413,7 +418,7 @@ impl AgentRuntime {
                                         runtime
                                             .write_state("error", Some(&error), Some("AUTH_REVOKED"))
                                             .await;
-                                        runtime.stop();
+                                        runtime.stop("认证失败");
                                         return;
                                     }
                                 }
@@ -436,7 +441,7 @@ impl AgentRuntime {
                         runtime
                             .write_state("error", Some(&error), Some("AUTH_REVOKED"))
                             .await;
-                        runtime.stop();
+                        runtime.stop("认证失败");
                         break;
                     }
                     Err(error) => {
@@ -472,7 +477,7 @@ impl AgentRuntime {
             "agent.revoked" => {
                 self.write_state("revoked", None, Some("设备已被服务端吊销"))
                     .await;
-                self.stop();
+                self.stop("设备被服务端吊销");
                 Ok(())
             }
             "cursor.invalidated" => {

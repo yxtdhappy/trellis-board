@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/11-24-heartbeat-loop-resilience/prd.md", "reason": "验收标准 R1-R6 与 6 条 Acceptance Criteria"}
+{"file": ".trellis/tasks/11-24-heartbeat-loop-resilience/design.md", "reason": "测试设计 §5 与手工验证 §6"}
+{"file": ".trellis/tasks/11-24-heartbeat-loop-resilience/research/incident-2026-11-24.md", "reason": "修复后的四项验收观测口径"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "日志与模块大小规范核对"}
