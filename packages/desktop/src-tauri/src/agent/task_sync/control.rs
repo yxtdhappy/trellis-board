@@ -597,14 +597,15 @@ impl TaskSync {
             .iter()
             .filter(|control| !control.is_writable_local())
         {
-            crate::logging::warn(&format!(
-                "任务进入 {:?} 控制状态，本地数据保留并停止写回：{}",
-                control.control_state(),
-                control.relative_dir
-            ));
             let Some(lease) = self.stored_task_lease(&control.execution_task_key).await else {
+                // 没有本地租约 = 没有写回可停止，不为每个归档/交接任务每轮打印一次。
                 continue;
             };
+            crate::logging::info(&format!(
+                "释放失效任务租约：{}（{:?}）",
+                control.relative_dir,
+                control.control_state()
+            ));
             match self
                 .release_remote_task(&control.execution_task_key, &lease.token)
                 .await

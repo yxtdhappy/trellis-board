@@ -5,6 +5,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 mod bindings_watch;
 mod cursor_state;
 mod handoff_and_errors;
+mod inactive_controls;
 mod materialization;
 mod ownership_filter;
 mod ownership_inbox;

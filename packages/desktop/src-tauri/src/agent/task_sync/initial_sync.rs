@@ -1089,6 +1089,7 @@ pub(super) fn inactive_control_dirs(controls: Option<&[TaskControl]>) -> HashSet
         .unwrap_or_default()
         .iter()
         .filter(|control| !control.is_writable_local())
+        .filter(|control| !is_archive_task_dir(&control.relative_dir))
         .map(|control| control.relative_dir.clone())
         .collect()
 }

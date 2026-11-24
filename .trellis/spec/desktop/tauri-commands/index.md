@@ -455,6 +455,7 @@ git push origin refs/heads/<branch>:refs/heads/<branch>
 - 只保留 2 份历史（`ROTATED_LOGS`），目录总占用上限 15 MiB。
 - 追加与轮转由 `LOG_LOCK` 串行化；任一步失败（文件占用、权限不足）静默降级为继续追加，不改变命令结果、不 panic。
 - 不引入日志框架：框架接管写入路径会绕过脱敏，且按时间轮转无法保证磁盘上限。
+- 日志只记录真实动作或异常，禁止在每轮同步/心跳里按「状态」重复打印（反例：为快照里每个已归档 control 打一条「任务进入 Archived」）。状态未变化时静默；真实迁移或释放动作记 `info`，失败记 `warn`。
 
 ### 4. Validation & Error Matrix
 

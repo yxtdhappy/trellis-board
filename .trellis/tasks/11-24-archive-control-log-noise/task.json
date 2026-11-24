@@ -1,0 +1,30 @@
+{
+  "id": "archive-control-log-noise",
+  "name": "archive-control-log-noise",
+  "title": "桌面端归档任务控制日志降噪与归档目录排除",
+  "description": "消除桌面端每次同步为每个已归档 control 打印的 Archived WARN，并在客户端 control 消费点短路归档目录，保持归档残留清理行为不变",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "backend",
+  "scope": null,
+  "package": "desktop",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-24",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit"
+  }
+}
