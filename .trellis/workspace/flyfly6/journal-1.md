@@ -1717,3 +1717,41 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Next Steps
 
 - 对父任务 11-23-web-ui-consistency-audit-fixes（6/6 子任务已全部完成并归档）执行跨子任务集成复核，确认后再归档父任务
+
+
+## Session 53: 全局 UI 一致性治理集成复核、实机客户端 E2E 验收与父任务归档
+<!-- trellis-session: v=2 fp=f7d40277f33ab70d -->
+
+**Date**: 2026-11-24
+**Task**: 全局 UI 一致性治理集成复核、实机客户端 E2E 验收与父任务归档
+**Package**: web
+**Branch**: `main`
+
+### Summary
+
+完成父任务 11-23-web-ui-consistency-audit-fixes 跨子任务集成复核（6/6 子任务全部通过）与 L3 真实 Tauri 客户端（WebView2 CDP）实机验收，提交 e2e-report.md 并归档父任务
+
+### Main Changes
+
+- 完成 AC-P1 ~ AC-P5 全仓静态与质量门禁复核（全站 DialogFooter 0 处 size=sm/xs、0 处硬编码 text-amber-500/text-sky-500、0 处 scrollbar-gutter 错位、0 处 AlertCircle 重复 mt-0.5）
+- 执行 L3 真实 Tauri 客户端（--features tauri/custom-protocol）+ 隔离 Team 服务端（4461 / CDP 9341）实机验收：验证 LoginApp、Board 首页、CreateTask/Password/Preferences/Update 弹窗 0.0px 左缘对齐、390x844 窄屏侧栏抽屉、主题切换、桌面插件视图与管理后台 6 个 Tab，0 console error / 0 failed response
+- 清理测试进程/端口与 C:\projects\_trellis-board-e2e\ui-audit 临时目录，落盘 e2e-report.md 并归档父任务 11-23-web-ui-consistency-audit-fixes
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `56a808c` | docs(task): 记录全局 UI 治理实机客户端 E2E 验收报告 |
+| `05215c9` | chore(task): archive 11-23-web-ui-consistency-audit-fixes |
+
+### Testing
+
+- [OK] L1: @trellis-board/web lint (0 error)、tsc --noEmit、packages/web 115/115 单测、LF 检查全部通过；L3: 真实 Tauri 客户端 WebView2 CDP 全链路验证通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 全局 UI 一致性治理父子任务树（1 父 + 6 子）已全部收官归档
