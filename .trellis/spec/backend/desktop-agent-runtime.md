@@ -278,7 +278,7 @@
   `packages/web/vite.desktop.config.ts` 输出到 `packages/desktop/ui/`；登录后主窗口直接导航到远程 Board，
   实时同步确认没有独立窗口，而是 Board 页面内的 `packages/web/src/desktop/LiveSyncControlDialog.tsx`；
   `packages/desktop/ui/` 被 `.gitignore` 忽略，是构建产物，不得手写页面或脚本。
-- `yarn build:desktop` 必须先于 `cargo tauri build`；`cargo tauri build` 只打包
+- `yarn build --target=desktop-ui` 必须先于 `cargo tauri build`（或直接 `yarn build --target=desktop`）；`cargo tauri build` 只打包
   `frontendDist = ../ui` 的现有产物，CI 在 `windows.yml` 的 `Build desktop UI` 步骤构建。
 - `index.html` 必须保留 `Content-Security-Policy` meta（`script-src 'self'` / `style-src 'self'`）；
   构建产物不得包含内联 `<script>`/`style`，Vite 用 `base: './'` 输出相对资源路径。Board 页面由服务端提供，
@@ -296,9 +296,9 @@
 - 环境门未就绪（`needs_setup`）时登录页必须展示已检测到的组件及版本，并提供“重新检查”；
   `runtime_install` 只对实际下载/安装的组件发送 `runtime-progress`，复用组件不发送
   `node:validate`/`trellis:validate`/`python:validate`，避免前端把校验映射成下载/安装步骤。
-- dev 模式：根 `yarn desktop:dev` 运行 `scripts/desktop-dev.mjs`，并发启动三件事：`node --watch
+- dev 模式：根 `yarn dev --mode=desktop` 运行 `scripts/dev.mjs`，并发启动三件事：`node --watch
   packages/server/index.js`（4317 本地服务端）、`packages/web` 根目录的 Vite（默认 5200，看板 UI + HMR +
-  `/api` 代理，端口可用 `TRELLIS_BOARD_DEV_PORT` 覆盖）、`cargo tauri dev`（自身 `beforeDevCommand` 再起
+  `/api` 代理，端口可用 `--web-port` / `VITE_DEV_PORT` 或 `TRELLIS_BOARD_DEV_PORT` 覆盖）、`cargo tauri dev`（自身 `beforeDevCommand` 再起
   `vite.desktop.config.ts` 的 5199 登录壳）。登录页服务器地址必须填 `http://localhost:5200`（或
   `127.0.0.1:5200`），它才是看板来源；5199 只服务 `desktop/index.html`，手填会得到空白页。
   `navigation::is_dev_page` 仅在 `debug_assertions` 下按 `devUrl` 同源放行导航与 `ensure_local_caller`，

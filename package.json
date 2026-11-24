@@ -9,21 +9,13 @@
   "scripts": {
     "postinstall": "lefthook install",
     "dev": "node scripts/dev.mjs",
-    "start": "node packages/server/index.js",
-    "board": "yarn start",
-    "build": "yarn workspace @trellis-board/web build",
-    "build:desktop": "yarn workspace @trellis-board/web build:desktop",
-    "web:dev": "yarn workspace @trellis-board/web dev",
-    "desktop:build": "yarn workspace @trellis-board/desktop build",
-    "desktop:dev": "node scripts/desktop-dev.mjs",
-    "desktop:package": "pwsh -File packages/desktop/package-portable.ps1",
-    "release:desktop": "node scripts/release-desktop.mjs",
-    "capacity": "node scripts/team-capacity-check.js",
+    "start": "node scripts/start.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/test.mjs",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "test": "node --test \"packages/*/test/*.test.js\"",
-    "test:plugins": "node --test \"plugins/*/test/*.test.js\"",
-    "test:all": "yarn test && yarn test:plugins"
+    "release:desktop": "node scripts/release-desktop.mjs",
+    "capacity": "node scripts/team-capacity-check.js"
   },
   "dependencies": {
     "@mindfoldhq/trellis": "0.6.17",

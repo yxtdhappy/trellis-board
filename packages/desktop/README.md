@@ -396,14 +396,12 @@ packages/desktop/
 - WebView2 Runtime
 
 ```powershell
-yarn build:desktop
-cd packages/desktop
-cargo tauri build        # 未装 cargo-tauri 时用 npx @tauri-apps/cli@^2 build
-cd ../..
-yarn desktop:package
+yarn build --target=desktop-ui
+yarn build --target=desktop --skip-ui
+yarn build --target=portable
 ```
 
-`packages\desktop\ui` 是 `yarn build:desktop` 的产物（源码在 `packages/web/desktop` 与
+`packages\desktop\ui` 是 `yarn build --target=desktop-ui` 的产物（源码在 `packages/web/desktop` 与
 `packages/web/src/desktop`，组件复用 `packages/web/src/components/ui`），已在 `.gitignore` 中忽略；`cargo tauri build`
 只打包 `tauri.conf.json` 的 `frontendDist = ../ui`，不会替你构建前端，缺步骤会打出空窗口。
 运行期不需要 Node.js，也没有 sidecar：`cargo tauri build` 只产出单个客户端 EXE，`bundle.active = false`

@@ -16,8 +16,8 @@
 - `packages/web/index.html` → `src/main-board.tsx` → [BoardPage](../../../packages/web/src/pages/board/BoardPage.tsx)：任务流水线 / 团队视角 / 归档索引。
 - `packages/web/admin.html` → `src/main-admin.tsx` → [AdminPage](../../../packages/web/src/pages/admin/AdminPage.tsx)：团队管理七个 tab。
 - `packages/web/login.html` → `src/main-login.tsx` → [LoginPage](../../../packages/web/src/pages/login/LoginPage.tsx)：登录与首登改密跳转。
-- 构建：根目录 `yarn build`（执行 `packages/web` 的 `tsc -b && vite build`），产物写入 `packages/server/public/`；桌面 UI 用 `yarn build:desktop` 写入 `packages/desktop/ui/`。
-- 本地联调：`yarn web:dev`，Vite 把 `/api` 代理到 `http://127.0.0.1:4317`。
+- 构建：根目录 `yarn build`（执行 `packages/web` 的 `tsc -b && vite build`），产物写入 `packages/server/public/`；桌面 UI 用 `yarn build --target=desktop-ui` 写入 `packages/desktop/ui/`。
+- 本地联调：`yarn dev --mode=web`（或 `yarn dev` 同时起前后端），Vite 把 `/api` 代理到 `http://127.0.0.1:4317`。
 
 ## 必须记住的契约
 

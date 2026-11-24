@@ -5,12 +5,12 @@ Trellis Board 前端：React 19 + Vite 8 + TypeScript + Tailwind v4 + shadcn/ui�
 
 ## 构建与开发
 
-在仓库根执行（workspace 脚本转发到这里）：
+在仓库根执行（通过统一构建/开发脚本驱动）：
 
 ```powershell
-yarn build          # tsc -b && vite build -> packages/server/public
-yarn build:desktop  # tsc -b && vite build --config vite.desktop.config.ts -> packages/desktop/ui
-yarn web:dev        # Vite dev server，/api 代理到 127.0.0.1:4317
+yarn build                      # tsc -b && vite build -> packages/server/public
+yarn build --target=desktop-ui  # tsc -b && vite build --config vite.desktop.config.ts -> packages/desktop/ui
+yarn dev --mode=web             # Vite dev server，/api 代理到 127.0.0.1:4317
 ```
 
 `packages/web` 下也可直接 `yarn dev|build|build:desktop|lint`。

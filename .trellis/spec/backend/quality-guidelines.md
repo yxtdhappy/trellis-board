@@ -20,8 +20,8 @@
 
 - Node `>=24`，SQLite 使用内置 `node:sqlite`；当前开发机验证版本为 Node `24.21.0`。
 - CI 运行 `yarn test` 前必须先在仓库根目录执行 `yarn install --immutable`，真实 Trellis CLI 测试依赖根目录固定版本依赖。
-- 自动测试：`yarn test`（只跑 `packages/test-support/*.test.js`，不含 `plugins/` 下的插件测试）。
-- 插件测试：`yarn test:plugins`（`plugins/*/test/*.test.js`）；需要宿主与插件一起验证时用 `yarn test:all`。
+- 自动测试：`yarn test`（跑 `packages/*/test/*.test.js` 与 `scripts/test/*.test.js`，不含 `plugins/` 下的插件测试）。
+- 插件测试：`yarn test --scope=plugins`（`plugins/*/test/*.test.js`）；需要宿主与插件一起验证时用 `yarn test --scope=all`。
 - 启动：`node packages/server/index.js` 或 `yarn start`。
 - 项目没有 lint、类型检查或构建步骤，不能把不存在的检查写成通过项。
 

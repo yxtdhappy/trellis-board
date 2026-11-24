@@ -112,10 +112,10 @@
 根 `yarn test` 只跑宿主测试，默认不包含 `plugins/` 下的插件测试；插件测试必须显式运行。
 
 ```bash
-yarn test                                  # 宿主测试：packages/test-support/*.test.js
-yarn test:plugins                      # 插件测试：plugins/*/test/*.test.js
-yarn test:all                          # 宿主 + 插件一起跑
-TRELLIS_REAL_ACP=1 node --test plugins/acp-dispatch/test/real.test.js
+yarn test                                  # 宿主与脚本测试：packages/*/test/*.test.js + scripts/test/*.test.js
+yarn test --scope=plugins                  # 插件测试：plugins/*/test/*.test.js
+yarn test --scope=all                      # 宿主 + 插件一起跑
+yarn test --scope=plugins --real-acp --file=real.test.js
 ```
 
 CI（`.github/workflows/windows.yml`）只执行 `yarn test`，同样不跑插件测试；插件测试由插件维护者在本地或插件自己的仓库中执行。

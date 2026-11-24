@@ -35,7 +35,10 @@ test('desktop webviews are built from packages/web/desktop into packages/desktop
 
 test('built desktop pages load only relative assets and stay CSP-safe', () => {
   const built = path.join(root, 'packages/desktop/ui/index.html')
-  assert.ok(fs.existsSync(built), 'packages/desktop/ui/index.html missing: run yarn build:desktop')
+  assert.ok(
+    fs.existsSync(built),
+    'packages/desktop/ui/index.html missing: run yarn build --target=desktop-ui',
+  )
   const html = fs.readFileSync(built, 'utf8')
   assert.match(
     html,
@@ -197,16 +200,18 @@ test('windows workflows build the desktop ui before the client is bundled or tes
 
   const nodeTests = job('node-tests')
   assert.ok(
-    nodeTests.indexOf('yarn build:desktop') > 0 &&
-      nodeTests.indexOf('yarn build:desktop') < nodeTests.indexOf('run: yarn test:all'),
-    'node-tests must build the desktop ui before yarn test:all',
+    nodeTests.indexOf('yarn build --target=desktop-ui') > 0 &&
+      nodeTests.indexOf('yarn build --target=desktop-ui') <
+        nodeTests.indexOf('run: yarn test --scope=all'),
+    'node-tests must build the desktop ui before yarn test --scope=all',
   )
 
   const desktopBuild = job('desktop-build')
   assert.ok(
-    desktopBuild.indexOf('yarn build:desktop') > 0 &&
-      desktopBuild.indexOf('yarn build:desktop') < desktopBuild.indexOf('run: tauri build'),
-    'desktop-build must build the desktop ui before tauri build',
+    desktopBuild.indexOf('yarn build --target=desktop-ui') > 0 &&
+      desktopBuild.indexOf('yarn build --target=desktop-ui') <
+        desktopBuild.indexOf('run: yarn build --target=desktop --skip-ui'),
+    'desktop-build must build the desktop ui before yarn build --target=desktop --skip-ui',
   )
 })
 
