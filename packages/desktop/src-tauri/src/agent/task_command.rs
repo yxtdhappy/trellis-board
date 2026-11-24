@@ -366,7 +366,7 @@ async fn create_task(
         .payload_str("workType")
         .filter(|value| !value.is_empty());
     if let Some(value) = work_type {
-        if !matches!(*value, "backend" | "frontend" | "fullstack" | "research" | "docs") {
+        if !matches!(value, "backend" | "frontend" | "fullstack" | "research" | "docs") {
             return protocol::err(
                 code::COMMAND_INVALID,
                 "任务类型只能是 backend、frontend、fullstack、research 或 docs",
