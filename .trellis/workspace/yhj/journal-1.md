@@ -1815,3 +1815,29 @@ set_task_ownership 改为只扫描 decisions 涉及的 taskDir；快照/ownershi
 ### Status
 
 [OK] **Completed**
+
+
+## Session 76: 修复服务端重启后心跳永久停止
+<!-- trellis-session: v=2 fp=2cd3ac6b4875cdcd -->
+
+**Date**: 2026-11-24
+**Task**: 修复服务端重启后心跳永久停止
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+根因：服务端优雅关闭时 agent-event-stream close() 通过 endAgent 向所有在线 agent 广播 agent.revoked，客户端据此永久停止同步；另有心跳轮次无超时、启动预热阻塞循环、状态写失败被吞、看门狗拉起无日志四个放大因素。修复：关机只断流不发吊销事件；agent.revoked 改为心跳复验；心跳整轮 60s 上限 + 绑定同步 30s 上限；启动预热移入独立任务；write_state 失败记 warn；看门狗识别认证失败不重试并补齐日志；心跳成功时把被事件流写成 error 的状态改回 running。已发 v0.4.64/v0.4.65/v0.4.67，现场复测：重启服务端 4 秒内自动恢复在线监听，last_seen_at 不断档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `221392b` | fix(desktop): log agent stop reason and auto-restart stopped runtime |
+| `8cf25b8` | fix: stop treating server shutdown as device revocation |
+| `07c779d` | fix(desktop): restore running state after transient event-stream errors |
+| `502b3a8` | fix(desktop): compare work type against &str instead of str |
+
+### Status
+
+[OK] **Completed**

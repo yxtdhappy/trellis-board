@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 75
-- **Last Active**: 2026-11-23
+- **Total Sessions**: 76
+- **Last Active**: 2026-11-24
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1817 | Active |
+| `journal-1.md` | ~1843 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 76 | 2026-11-24 | 修复服务端重启后心跳永久停止 | `221392b`, `8cf25b8`, `07c779d`, `502b3a8` | `main` |
 | 75 | 2026-11-23 | 修复任务归属确认被非 UTF-8 文件整体阻断 | `35dbc73`, `1e67c08` | `main` |
 | 74 | 2026-11-20 | 修复失效 handoff 冲突提示持续驻留 | `b4146ce`, `5a19079` | `main` |
 | 73 | 2026-11-20 | 接入初始化增强：一键推送、Agent 忽略规则与 developer 默认值 | `7178c4b`, `1e40359` | `main` |
