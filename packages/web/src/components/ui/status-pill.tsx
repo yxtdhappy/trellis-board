@@ -18,13 +18,13 @@ const TONE_VARIANT: Record<
 }
 
 const TONE_DOT: Record<Tone, string> = {
-  success: 'bg-success-soft',
-  warning: 'bg-warning-soft',
+  success: 'bg-success',
+  warning: 'bg-warning',
   danger: 'bg-destructive',
-  destructive: 'bg-destructive-soft',
+  destructive: 'bg-destructive',
   neutral: 'bg-muted-foreground',
-  info: 'bg-info-soft',
-  primary: 'bg-primary-soft',
+  info: 'bg-info',
+  primary: 'bg-primary',
 }
 
 export function toneDot(tone: Tone) {

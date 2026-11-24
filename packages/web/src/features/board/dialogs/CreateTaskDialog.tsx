@@ -20,7 +20,7 @@ import {
 } from '@trellis-board/shared/slug.js'
 import { createIdempotencyKey, taskCommandState } from '@/lib/team-client.js'
 import { SelectField } from '../SelectField.tsx'
-import { Field, FieldLabel } from '@/components/ui/field'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 
 type CreateTaskDialogProps = {
   open: boolean
@@ -56,12 +56,12 @@ export function CreateTaskDialog({
   const [assigneeUserId, setAssigneeUserId] = useState('')
   const [taskAssignees, setTaskAssignees] = useState<TaskSpaceAssignee[]>([])
   const [priority, setPriority] = useState('P1')
-  const [message, setMessage] = useState('')
+  const [feedback, setFeedback] = useState<{ tone: 'status' | 'error'; text: string } | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     if (!open) return
-    setMessage('')
+    setFeedback(null)
   }, [open])
 
   useEffect(() => {
@@ -111,7 +111,10 @@ export function CreateTaskDialog({
       .catch((error) => {
         if (active) {
           setTaskAssignees([])
-          setMessage(error instanceof Error ? error.message : '无法读取项目负责人')
+          setFeedback({
+            tone: 'error',
+            text: error instanceof Error ? error.message : '无法读取项目负责人',
+          })
         }
       })
     return () => {
@@ -126,34 +129,37 @@ export function CreateTaskDialog({
 
   async function submit(event: FormEvent) {
     event.preventDefault()
-    setMessage('')
+    setFeedback(null)
     if (!projectId) {
-      setMessage('请选择项目')
+      setFeedback({ tone: 'error', text: '请选择项目' })
       return
     }
     if (!taskSpaceId) {
-      setMessage('请选择项目分支任务空间')
+      setFeedback({ tone: 'error', text: '请选择项目分支任务空间' })
       return
     }
     if (!commandState.canSubmit) {
-      setMessage(commandState.reason || '当前分支任务空间不可写')
+      setFeedback({ tone: 'error', text: commandState.reason || '当前分支任务空间不可写' })
       return
     }
     if (!title.trim()) {
-      setMessage('请填写任务标题')
+      setFeedback({ tone: 'error', text: '请填写任务标题' })
       return
     }
     if (!assigneeUserId) {
-      setMessage('请选择项目成员作为负责人')
+      setFeedback({ tone: 'error', text: '请选择项目成员作为负责人' })
       return
     }
     if (!description.trim()) {
-      setMessage('请填写任务描述')
+      setFeedback({ tone: 'error', text: '请填写任务描述' })
       return
     }
     const finalSlug = manualSlug ? normalizeTaskSlug(slug) : slugifyTaskTitle(title)
     if (!finalSlug || !TASK_SLUG_PATTERN.test(finalSlug)) {
-      setMessage('任务标识只能包含小写英文字母、数字和单个中划线，例如 board-task-export。')
+      setFeedback({
+        tone: 'error',
+        text: '任务标识只能包含小写英文字母、数字和单个中划线，例如 board-task-export。',
+      })
       return
     }
     setSubmitting(true)
@@ -171,9 +177,12 @@ export function CreateTaskDialog({
       setTitle('')
       setSlug('')
       setDescription('')
-      setMessage('任务已创建并等待目标客户端接管；可先在看板查看待交付状态。')
+      setFeedback({
+        tone: 'status',
+        text: '任务已创建并等待目标客户端接管；可先在看板查看待交付状态。',
+      })
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '创建失败')
+      setFeedback({ tone: 'error', text: error instanceof Error ? error.message : '创建失败' })
     } finally {
       setSubmitting(false)
     }
@@ -188,7 +197,7 @@ export function CreateTaskDialog({
             提交后任务立即进入看板；目标客户端离线时会保持待交付，稍后上线再接管。
           </DialogDescription>
         </DialogHeader>
-        <form className="flex min-h-0 flex-1 flex-col gap-3" onSubmit={submit}>
+        <form className="flex min-h-0 flex-1 flex-col gap-4" onSubmit={submit}>
           <DialogBody className="flex flex-col gap-3">
             <Field className="gap-1.5">
               <FieldLabel htmlFor="create-project">项目 / 仓库</FieldLabel>
@@ -285,10 +294,14 @@ export function CreateTaskDialog({
                 onChange={(event) => setDescription(event.target.value)}
               />
             </Field>
-            {message ? (
-              <p className="text-xs text-muted-foreground" role="status">
-                {message}
-              </p>
+            {feedback ? (
+              feedback.tone === 'error' ? (
+                <FieldError className="text-xs">{feedback.text}</FieldError>
+              ) : (
+                <p className="text-xs text-muted-foreground" role="status">
+                  {feedback.text}
+                </p>
+              )
             ) : null}
           </DialogBody>
           <DialogFooter className="gap-2">

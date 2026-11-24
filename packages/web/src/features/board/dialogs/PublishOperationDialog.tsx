@@ -50,7 +50,7 @@ export function PublishOperationDialog({
     <Dialog open={Boolean(operation)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-155">
         <DialogHeader>
-          <DialogTitle className="text-base">
+          <DialogTitle>
             {operation?.commandType === 'assign_task'
               ? '改派任务'
               : operation?.commandType === 'create_task'
@@ -85,10 +85,10 @@ export function PublishOperationDialog({
         </DialogBody>
 
         <DialogFooter className="gap-2">
-          {status === 'failed' ? <Button onClick={onRetry}>重试操作</Button> : null}
           <Button variant="outline" onClick={onClose}>
             关闭
           </Button>
+          {status === 'failed' ? <Button onClick={onRetry}>重试操作</Button> : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>

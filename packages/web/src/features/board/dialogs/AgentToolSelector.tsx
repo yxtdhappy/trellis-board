@@ -35,7 +35,7 @@ export function AgentToolSelector({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
+        <div className="min-w-0 flex-1">
           <p className="font-medium">本机编码 Agent</p>
           <p className="text-muted-foreground">
             只影响当前电脑；已初始化的工具不会重复写入，其他设备无需选择相同工具。
@@ -44,7 +44,7 @@ export function AgentToolSelector({
         <Input
           type="search"
           aria-label="搜索 Agent"
-          className="h-8 w-full sm:w-52"
+          className="h-8 w-full sm:w-52 sm:shrink-0"
           placeholder="搜索名称或 ID"
           value={search}
           onChange={(event) => onSearchChange(event.target.value)}

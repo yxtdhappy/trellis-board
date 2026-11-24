@@ -109,10 +109,16 @@ export function AdminPage() {
   return (
     <div className="min-h-dvh bg-background text-foreground">
       <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-border bg-card px-4">
-        <div className="flex items-center gap-3">
-          <a className="flex items-center gap-2" href="/" aria-label="返回 Trellis Board">
+        <div className="flex shrink-0 items-center gap-3">
+          <a
+            className="flex shrink-0 items-center gap-2 whitespace-nowrap"
+            href="/"
+            aria-label="返回 Trellis Board"
+          >
             <TrellisLogo size={24} />
-            <span className="text-sm font-semibold font-heading">Trellis Board</span>
+            <span className="whitespace-nowrap text-sm font-semibold font-heading">
+              Trellis Board
+            </span>
           </a>
           <Button
             variant="ghost"
@@ -140,7 +146,9 @@ export function AdminPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
               <div className="px-2 py-1.5 text-xs">
-                <div className="font-medium text-foreground">{displayName}</div>
+                <div className="truncate font-medium text-foreground" title={displayName}>
+                  {displayName}
+                </div>
                 <div className="text-xs text-muted-foreground">{roleLabel}</div>
               </div>
               <DropdownMenuSeparator />
@@ -199,7 +207,7 @@ export function AdminPage() {
             <Tabs value={view} onValueChange={(value) => setView(value)}>
               <TabsList
                 aria-label="管理导航"
-                className="max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                className="max-w-full justify-start overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 {visibleViews.map((item) => (
                   <TabsTrigger key={item.id} value={item.id}>

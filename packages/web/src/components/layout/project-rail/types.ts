@@ -90,4 +90,6 @@ export type ProjectRailProps = {
   refreshing: boolean
   onRefresh: () => void
   onAssociationsChange?: (associations: LocalAssociation[]) => void
+  mobileOpen?: boolean
+  onMobileOpenChange?: (open: boolean) => void
 }

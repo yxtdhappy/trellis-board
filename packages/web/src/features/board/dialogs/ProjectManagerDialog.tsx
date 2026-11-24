@@ -179,16 +179,13 @@ export function ProjectManagerDialog({
           </p>
         </DialogBody>
         <DialogFooter className="gap-2">
-          <Button
-            variant="outline"
-            className="gap-1.5"
-            onClick={() => void rescan()}
-            disabled={busy}
-          >
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+          <Button className="gap-1.5" onClick={() => void rescan()} disabled={busy}>
             <RefreshCw className={busy ? 'size-3.5 animate-spin' : 'size-3.5'} />
             重新扫描仓库
           </Button>
-          <Button onClick={() => onOpenChange(false)}>关闭</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

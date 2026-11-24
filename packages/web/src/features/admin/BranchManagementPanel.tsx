@@ -48,7 +48,7 @@ function ImpactSummary({ taskSpace }: { taskSpace: AdminTaskSpace }) {
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/35 p-3 text-xs">
       <div className="flex flex-wrap items-center gap-2">
-        <strong className="font-medium text-foreground">{taskSpace.branchName}</strong>
+        <strong className="break-all font-medium text-foreground">{taskSpace.branchName}</strong>
         <StatusPill tone={statusTone(lifecycleLabel(taskSpace))}>
           {lifecycleLabel(taskSpace) || 'unknown'}
         </StatusPill>
@@ -67,7 +67,7 @@ function ImpactSummary({ taskSpace }: { taskSpace: AdminTaskSpace }) {
         <span>最后活动 {formatTime(taskSpace.lastActivityAt)}</span>
       </div>
       {taskTitles.length ? (
-        <p className="leading-5 text-muted-foreground">
+        <p className="break-words leading-5 text-muted-foreground">
           未归档任务：{taskTitles.join('、')}
           {taskSpace.activeTaskCount > taskTitles.length
             ? ` 等 ${taskSpace.activeTaskCount} 个`
@@ -245,35 +245,39 @@ export function BranchManagementPanel({
                   {GROUP_TITLES[group]}
                   <span className="rounded-full bg-muted px-1.5 py-0.5">{rows.length}</span>
                 </h3>
-                {rows.map((taskSpace) => (
-                  <Row key={taskSpace.id} actions={branchActions(taskSpace)}>
-                    <div className="flex min-w-0 flex-col gap-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <code className="truncate text-xs font-medium text-foreground">
-                          {taskSpace.branchName}
-                        </code>
-                        <StatusPill tone={statusTone(lifecycleLabel(taskSpace))}>
-                          {lifecycleLabel(taskSpace) || 'unknown'}
-                        </StatusPill>
-                        {taskSpace.status !== taskSpace.lifecycleStatus ? (
-                          <StatusPill tone={statusTone(taskSpace.status)}>
-                            {taskSpace.status || 'unknown'}
+                {rows.map((taskSpace) => {
+                  const statsText = `任务 ${taskSpace.taskCount} · 文件 ${taskSpace.fileCount} · 监听 ${taskSpace.onlineListenerCount}/${taskSpace.approvedBindingCount} · 最后活动 ${formatTime(taskSpace.lastActivityAt)}`
+                  return (
+                    <Row key={taskSpace.id} actions={branchActions(taskSpace)}>
+                      <div className="flex min-w-0 flex-col gap-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <code
+                            className="min-w-0 truncate text-xs font-medium text-foreground"
+                            title={taskSpace.branchName}
+                          >
+                            {taskSpace.branchName}
+                          </code>
+                          <StatusPill tone={statusTone(lifecycleLabel(taskSpace))}>
+                            {lifecycleLabel(taskSpace) || 'unknown'}
                           </StatusPill>
+                          {taskSpace.status !== taskSpace.lifecycleStatus ? (
+                            <StatusPill tone={statusTone(taskSpace.status)}>
+                              {taskSpace.status || 'unknown'}
+                            </StatusPill>
+                          ) : null}
+                        </div>
+                        <p className="truncate text-2xs text-muted-foreground" title={statsText}>
+                          {statsText}
+                        </p>
+                        {taskSpace.retiredReason ? (
+                          <p className="break-words text-2xs text-muted-foreground">
+                            弃用原因：{taskSpace.retiredReason}
+                          </p>
                         ) : null}
                       </div>
-                      <p className="truncate text-2xs text-muted-foreground">
-                        任务 {taskSpace.taskCount} · 文件 {taskSpace.fileCount} · 监听{' '}
-                        {taskSpace.onlineListenerCount}/{taskSpace.approvedBindingCount} · 最后活动{' '}
-                        {formatTime(taskSpace.lastActivityAt)}
-                      </p>
-                      {taskSpace.retiredReason ? (
-                        <p className="truncate text-2xs text-muted-foreground">
-                          弃用原因：{taskSpace.retiredReason}
-                        </p>
-                      ) : null}
-                    </div>
-                  </Row>
-                ))}
+                    </Row>
+                  )
+                })}
               </section>
             )
           })}
@@ -317,16 +321,10 @@ export function BranchManagementPanel({
                 {retireError ? <FieldError className="text-xs">{retireError}</FieldError> : null}
               </DialogBody>
               <DialogFooter>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  type="button"
-                  onClick={closeRetire}
-                  disabled={retireBusy}
-                >
+                <Button variant="outline" type="button" onClick={closeRetire} disabled={retireBusy}>
                   取消
                 </Button>
-                <Button size="sm" type="submit" disabled={retireBusy}>
+                <Button type="submit" disabled={retireBusy}>
                   确认弃用
                 </Button>
               </DialogFooter>
@@ -344,7 +342,7 @@ export function BranchManagementPanel({
         <DialogContent className="sm:max-w-xl">
           <DialogHeader className="gap-1">
             <DialogTitle>移除分支</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="break-all">
               {purgeStep === 1
                 ? '这是不可逆的服务端数据删除。请先确认影响范围。'
                 : `再次确认：请输入分支名称 ${purgeTarget?.branchName || ''}。`}
@@ -383,19 +381,12 @@ export function BranchManagementPanel({
                 {purgeError ? <FieldError className="text-xs">{purgeError}</FieldError> : null}
               </DialogBody>
               <DialogFooter>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  type="button"
-                  onClick={closePurge}
-                  disabled={purgeBusy}
-                >
+                <Button variant="outline" type="button" onClick={closePurge} disabled={purgeBusy}>
                   取消
                 </Button>
                 {purgeStep === 1 ? (
                   <Button
                     variant="destructive"
-                    size="sm"
                     type="button"
                     onClick={() => setPurgeStep(2)}
                     disabled={purgeBusy}
@@ -405,7 +396,6 @@ export function BranchManagementPanel({
                 ) : (
                   <Button
                     variant="destructive"
-                    size="sm"
                     type="submit"
                     disabled={purgeBusy || purgeConfirmation !== purgeTarget.branchName}
                   >

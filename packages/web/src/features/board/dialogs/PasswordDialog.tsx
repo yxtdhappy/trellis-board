@@ -61,7 +61,7 @@ export function PasswordDialog({ open, onOpenChange }: PasswordDialogProps) {
           <DialogTitle>修改密码</DialogTitle>
           <DialogDescription>首次登录或密码被重置后需要先更新密码。</DialogDescription>
         </DialogHeader>
-        <form className="flex min-h-0 flex-1 flex-col gap-3" onSubmit={submit}>
+        <form className="flex min-h-0 flex-1 flex-col gap-4" onSubmit={submit}>
           <DialogBody className="flex flex-col gap-3">
             <Field className="gap-1.5">
               <FieldLabel htmlFor="password-current">当前密码</FieldLabel>

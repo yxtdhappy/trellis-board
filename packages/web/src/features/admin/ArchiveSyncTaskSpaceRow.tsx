@@ -17,6 +17,8 @@ export function TaskSpaceRow({
   onLogs: () => void
 }) {
   const failed = taskSpace.status === 'error' || taskSpace.status === 'index_error'
+  const projectName = displayText(taskSpace.projectName, '项目名称缺失')
+  const branchName = displayText(taskSpace.branchName, '分支名称缺失')
   return (
     <Row
       actions={
@@ -34,13 +36,11 @@ export function TaskSpaceRow({
     >
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-1.5">
-          <strong className="truncate text-xs font-medium">
-            {displayText(taskSpace.projectName, '项目名称缺失')}
+          <strong className="min-w-0 truncate text-xs font-medium" title={projectName}>
+            {projectName}
           </strong>
-          <StatusPill tone={statusTone(displayText(taskSpace.branchName, '分支名称缺失'))}>
-            {displayText(taskSpace.branchName, '分支名称缺失') || 'unknown'}
-          </StatusPill>
-          <StatusPill tone={statusTone(statusLabel(taskSpace.status))}>
+          <StatusPill tone="neutral">{branchName || 'unknown'}</StatusPill>
+          <StatusPill tone={statusTone(taskSpace.status)}>
             {statusLabel(taskSpace.status) || 'unknown'}
           </StatusPill>
           <span className="text-2xs text-muted-foreground">
@@ -78,7 +78,13 @@ export function TaskSpaceRow({
           </p>
         ) : null}
         {taskSpace.lastError ? (
-          <p className={failed ? 'text-2xs text-destructive' : 'text-2xs text-muted-foreground'}>
+          <p
+            className={
+              failed
+                ? 'break-words text-2xs text-destructive'
+                : 'break-words text-2xs text-muted-foreground'
+            }
+          >
             {taskSpace.lastError}
           </p>
         ) : null}

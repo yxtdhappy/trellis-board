@@ -26,10 +26,10 @@ export function TeamSwitcher({
 
   return (
     <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-      <span className="hidden sm:inline">团队</span>
+      <span className="hidden shrink-0 whitespace-nowrap sm:inline">团队</span>
       <SelectField
         ariaLabel={ariaLabel}
-        className="w-auto min-w-28"
+        className="w-auto min-w-28 max-w-48"
         value={value}
         disabled={disabled}
         options={[

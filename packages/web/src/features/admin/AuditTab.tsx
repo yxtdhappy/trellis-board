@@ -102,17 +102,12 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
         title="系统审计"
         description="审计详情在服务端脱敏后，浏览器渲染前再次隐藏 password、token、credential 等敏感键。"
         action={
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
               已加载 {systemAudit.length} / 显示 {filtered.length}
             </span>
             {systemAuditHasMore ? (
-              <Button
-                variant="outline"
-                size="sm"
-                type="button"
-                onClick={() => void loadSystemAudit(false)}
-              >
+              <Button variant="outline" type="button" onClick={() => void loadSystemAudit(false)}>
                 加载更多
               </Button>
             ) : null}
@@ -140,7 +135,7 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
                 return (
                   <Fragment key={event.id}>
                     <TableRow>
-                      <TableCell className="whitespace-nowrap text-muted-foreground">
+                      <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
                         {formatTime(event.occurredAt)}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
@@ -149,7 +144,7 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
                       <TableCell className="whitespace-nowrap">
                         {event.action || 'unknown'}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="max-w-72 whitespace-normal break-all">
                         <span className="text-muted-foreground">
                           {event.targetType || 'unknown'}
                         </span>{' '}
@@ -166,8 +161,8 @@ export function AuditTab({ console: consoleApi }: { console: AdminConsole }) {
                     </TableRow>
                     {detail !== '{}' ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="bg-muted/40">
-                          <pre className="max-h-40 overflow-auto text-2xs text-muted-foreground">
+                        <TableCell colSpan={5} className="whitespace-normal bg-muted/40">
+                          <pre className="max-h-40 max-w-full overflow-auto whitespace-pre-wrap break-all text-2xs text-muted-foreground">
                             {detail}
                           </pre>
                         </TableCell>

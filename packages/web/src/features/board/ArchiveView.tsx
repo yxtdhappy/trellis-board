@@ -104,8 +104,7 @@ export function ArchiveView({
           </p>
         </div>
         <Button
-          variant="ghost"
-          size="sm"
+          variant="outline"
           className="ml-auto"
           onClick={() => archive.refresh()}
           disabled={archive.loading}
@@ -138,7 +137,7 @@ export function ArchiveView({
         />
         <SearchableSelect
           ariaLabel="团队"
-          className="ml-auto w-40"
+          className="w-40 xl:ml-auto"
           value={archiveTeamId}
           options={teamOptions}
           onChange={(next) => {
@@ -175,7 +174,7 @@ export function ArchiveView({
               <TableHead className="h-auto text-inherit px-3 py-2 font-semibold">
                 完成证据
               </TableHead>
-              <TableHead className="h-auto text-inherit px-3 py-2 text-right font-semibold">
+              <TableHead className="h-auto text-inherit px-3 py-2 text-right font-semibold whitespace-nowrap">
                 归档时间
               </TableHead>
               <TableHead className="h-auto text-inherit px-3 py-2" />
@@ -215,20 +214,20 @@ export function ArchiveView({
                     className="cursor-pointer border-b border-border/60 text-xs hover:bg-muted/40"
                     onClick={() => onOpen(task)}
                   >
-                    <TableCell className="whitespace-normal px-3 py-2.5">
-                      <span className="block font-medium">{task.title}</span>
-                      <small className="text-2xs text-muted-foreground">
+                    <TableCell className="whitespace-normal break-words px-3 py-2.5">
+                      <span className="block break-words font-medium">{task.title}</span>
+                      <small className="block break-all text-2xs text-muted-foreground">
                         #{task.dirName} · {projectLabel} · 已归档
                       </small>
                     </TableCell>
-                    <TableCell className="whitespace-normal px-3 py-2.5">
+                    <TableCell className="whitespace-normal break-words px-3 py-2.5">
                       <span className="flex items-center gap-1.5">
-                        <Avatar className="size-4 after:hidden">
+                        <Avatar className="size-4 shrink-0 after:hidden">
                           <AvatarFallback className="bg-secondary text-2xs font-semibold">
                             {initials(task.assignee)}
                           </AvatarFallback>
                         </Avatar>
-                        {task.assignee || '未派发'}
+                        <span className="break-words">{task.assignee || '未派发'}</span>
                       </span>
                     </TableCell>
                     <TableCell className="whitespace-normal px-3 py-2.5">
@@ -247,10 +246,10 @@ export function ArchiveView({
                         <span className="text-2xs text-muted-foreground">无完成证据</span>
                       )}
                     </TableCell>
-                    <TableCell className="whitespace-normal px-3 py-2.5 text-right text-2xs text-muted-foreground">
+                    <TableCell className="whitespace-nowrap px-3 py-2.5 text-right text-2xs tabular-nums text-muted-foreground">
                       {formatArchiveTimestamp(task)}
                     </TableCell>
-                    <TableCell className="whitespace-normal px-3 py-2.5 text-right">
+                    <TableCell className="whitespace-nowrap px-3 py-2.5 text-right">
                       <button
                         type="button"
                         aria-label={`打开归档任务 ${task.title}`}
@@ -258,7 +257,7 @@ export function ArchiveView({
                           event.stopPropagation()
                           onOpen(task)
                         }}
-                        className="text-muted-foreground hover:text-foreground"
+                        className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
                       >
                         <ChevronRight className="size-3.5" />
                       </button>

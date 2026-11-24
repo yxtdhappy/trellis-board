@@ -1,4 +1,4 @@
-import { Info, TriangleAlert, X } from 'lucide-react'
+import { ChevronDown, Info, TriangleAlert, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { invoke, listen } from '@/desktop/tauri'
@@ -93,6 +93,7 @@ function noticeTitle(notice: HandoffNotice): string {
 
 export function HandoffNotice() {
   const [notices, setNotices] = useState<HandoffNotice[]>([])
+  const [collapsed, setCollapsed] = useState(false)
   const [dismissed, setDismissed] = useState<Set<string>>(
     () => new Set(readDismissedNotices(browserStorage())),
   )
@@ -186,26 +187,69 @@ export function HandoffNotice() {
 
   if (!invoke || persistentNotices.length === 0) return null
 
+  const hasConflict = persistentNotices.some(
+    (notice) => notice.outcome === 'conflict' || notice.handoffState === 'source_cleanup_conflict',
+  )
+  const SummaryIcon = hasConflict ? TriangleAlert : Info
+
+  if (collapsed) {
+    return (
+      <aside
+        aria-live="polite"
+        aria-label="任务认领与本地清理状态"
+        className="pointer-events-none fixed right-4 bottom-4 z-40 max-w-[calc(100vw-2rem)]"
+      >
+        <button
+          type="button"
+          aria-label="展开任务认领状态提示"
+          className="pointer-events-auto inline-flex items-center gap-2 rounded-full border bg-popover/95 px-3 py-1.5 text-xs font-medium text-popover-foreground shadow-lg backdrop-blur transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          onClick={() => setCollapsed(false)}
+        >
+          <SummaryIcon
+            className={
+              hasConflict ? 'size-3.5 shrink-0 text-warning' : 'size-3.5 shrink-0 text-info'
+            }
+            aria-hidden="true"
+          />
+          <span>
+            {persistentNotices.length} 项待处理{hasConflict ? '冲突' : '同步'}
+          </span>
+        </button>
+      </aside>
+    )
+  }
+
   return (
     <aside
       aria-live="polite"
       aria-label="任务认领与本地清理状态"
-      className="pointer-events-none fixed right-4 top-20 z-40 w-[22rem] max-w-[calc(100vw-2rem)]"
+      className="pointer-events-none fixed right-4 bottom-4 z-40 w-[22rem] max-w-[calc(100vw-2rem)]"
     >
       <div className="pointer-events-auto rounded-lg border bg-popover/95 p-3 text-popover-foreground shadow-lg backdrop-blur">
         <div className="flex items-start justify-between gap-2">
           <p className="text-2xs font-semibold tracking-[0.18em] text-muted-foreground">
             任务认领状态
           </p>
-          <button
-            type="button"
-            aria-label="关闭任务认领状态提示"
-            title="关闭"
-            className="-mt-1 -mr-1 rounded p-1 text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-            onClick={dismissAll}
-          >
-            <X className="size-3.5" aria-hidden="true" />
-          </button>
+          <div className="-mt-1 -mr-1 flex items-center gap-0.5">
+            <button
+              type="button"
+              aria-label="收起任务认领状态提示"
+              title="收起"
+              className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              onClick={() => setCollapsed(true)}
+            >
+              <ChevronDown className="size-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              aria-label="关闭任务认领状态提示"
+              title="关闭"
+              className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              onClick={dismissAll}
+            >
+              <X className="size-3.5" aria-hidden="true" />
+            </button>
+          </div>
         </div>
         <div className="mt-2 flex flex-col gap-2">
           {persistentNotices.slice(0, 3).map((notice) => {
@@ -217,9 +261,10 @@ export function HandoffNotice() {
                 <Icon
                   className={
                     conflict
-                      ? 'mt-0.5 size-4 shrink-0 text-amber-500'
-                      : 'mt-0.5 size-4 shrink-0 text-sky-500'
+                      ? 'mt-0.5 size-4 shrink-0 text-warning'
+                      : 'mt-0.5 size-4 shrink-0 text-info'
                   }
+                  aria-hidden="true"
                 />
                 <div className="min-w-0">
                   <p className="text-sm font-medium">{noticeTitle(notice)}</p>

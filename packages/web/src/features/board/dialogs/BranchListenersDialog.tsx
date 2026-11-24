@@ -68,7 +68,7 @@ export function BranchListenersDialog({
       <DialogContent className="sm:max-w-180">
         <DialogHeader>
           <DialogTitle>分支监听详情</DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="break-words">
             {taskSpace.branchName}
             {view ? ` · ${view.counts}` : ''}
           </DialogDescription>

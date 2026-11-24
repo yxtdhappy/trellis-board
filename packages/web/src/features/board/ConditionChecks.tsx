@@ -33,8 +33,8 @@ function ConditionTable({ rows, kind }: ConditionTableProps) {
   const tone: Tone = kind === 'start' ? 'destructive' : 'warning'
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border/70 bg-card">
-      <div className="hidden grid-cols-[92px_minmax(220px,1.2fr)_minmax(220px,1fr)_132px] gap-3 border-b border-border/70 bg-muted/50 px-3 py-2 text-2xs font-semibold text-muted-foreground lg:grid">
+    <div className="overflow-x-auto rounded-lg border border-border/70 bg-card">
+      <div className="hidden grid-cols-[92px_minmax(160px,1.2fr)_minmax(160px,1fr)_132px] gap-3 border-b border-border/70 bg-muted/50 px-3 py-2 text-2xs font-semibold text-muted-foreground lg:grid">
         <span>对应阶段</span>
         <span>缺失项</span>
         <span>当前证据</span>
@@ -43,12 +43,12 @@ function ConditionTable({ rows, kind }: ConditionTableProps) {
       {rows.map((row) => (
         <div
           key={`${kind}:${row.label}`}
-          className="grid gap-1.5 border-b border-border/60 p-3 text-2xs last:border-b-0 lg:grid-cols-[92px_minmax(220px,1.2fr)_minmax(220px,1fr)_132px] lg:items-center lg:gap-3 lg:py-2"
+          className="grid gap-1.5 border-b border-border/60 p-3 text-2xs last:border-b-0 lg:grid-cols-[92px_minmax(160px,1.2fr)_minmax(160px,1fr)_132px] lg:items-center lg:gap-3 lg:py-2"
         >
           <StatusPill tone={tone} className="w-fit">
             {row.stageLabel}
           </StatusPill>
-          <span className="font-semibold text-foreground">{row.label}</span>
+          <span className="min-w-0 font-semibold break-words text-foreground">{row.label}</span>
           <span className="min-w-0">
             <span className="mb-0.5 block text-2xs text-muted-foreground lg:hidden">当前证据</span>
             <span className="line-clamp-2 text-muted-foreground" title={row.evidence}>
@@ -63,7 +63,7 @@ function ConditionTable({ rows, kind }: ConditionTableProps) {
           >
             <span className="mr-1 text-muted-foreground lg:hidden">下一步</span>
             {row.nextAction}
-            <ArrowRightIcon className="size-3" aria-hidden="true" />
+            <ArrowRightIcon className="size-3 shrink-0" aria-hidden="true" />
           </span>
         </div>
       ))}
@@ -74,9 +74,12 @@ function ConditionTable({ rows, kind }: ConditionTableProps) {
 function SuccessSummary({ label }: { label: string }) {
   return (
     <Alert
-      className={cn('border-success/20 px-3 py-2 text-2xs font-semibold', toneSurface('success'))}
+      className={cn(
+        'flex items-center gap-1.5 border-success/20 px-3 py-2 text-2xs font-semibold',
+        toneSurface('success'),
+      )}
     >
-      <CircleCheckIcon className="size-3.5" aria-hidden="true" />
+      <CircleCheckIcon className="size-3.5 shrink-0" aria-hidden="true" />
       {label}
     </Alert>
   )
@@ -133,7 +136,7 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
           <div className="flex flex-wrap items-center gap-2">
             <span
               className={cn(
-                'flex size-7 items-center justify-center rounded-lg',
+                'flex size-7 shrink-0 items-center justify-center rounded-lg',
                 !startKnown
                   ? 'bg-muted text-muted-foreground'
                   : startCount
@@ -149,7 +152,7 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
                 <CircleCheckIcon className="size-4" aria-hidden="true" />
               )}
             </span>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h4 className="text-xs font-semibold text-foreground">开工条件</h4>
               <p className="text-2xs text-muted-foreground">
                 {!startKnown
@@ -171,7 +174,7 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="text-xs text-destructive"
+                className="text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
                 aria-expanded={startExpanded}
                 disabled={!startLabels}
                 onClick={() => setStartExpanded((value) => !value)}
@@ -199,10 +202,10 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
 
       {mode === 'planning' ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/40 px-3 py-2">
-          <span className="flex size-7 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <ListChecksIcon className="size-4" aria-hidden="true" />
           </span>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h4 className="text-xs font-semibold text-foreground">完成条件</h4>
             <p className="text-2xs text-muted-foreground">进入实现后开始检查，规划阶段暂不适用。</p>
           </div>
@@ -215,7 +218,7 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
           <div className="flex flex-wrap items-center gap-2">
             <span
               className={cn(
-                'flex size-7 items-center justify-center rounded-lg',
+                'flex size-7 shrink-0 items-center justify-center rounded-lg',
                 !completionKnown
                   ? 'bg-muted text-muted-foreground'
                   : completionCount
@@ -231,7 +234,7 @@ export function ConditionChecks({ task, loading }: ConditionChecksProps) {
                 <CircleCheckIcon className="size-4" aria-hidden="true" />
               )}
             </span>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h4 className="text-xs font-semibold text-foreground">完成条件</h4>
               <p className="text-2xs text-muted-foreground">
                 {!completionKnown

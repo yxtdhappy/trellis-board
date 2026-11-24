@@ -80,7 +80,7 @@ export function AssigneeWarningDialog({
           <Button variant="outline" disabled={Boolean(busy)} onClick={onCancel}>
             取消
           </Button>
-          <div className="flex gap-2">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button
               variant="outline"
               disabled={Boolean(busy)}

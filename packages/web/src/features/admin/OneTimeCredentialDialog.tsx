@@ -47,8 +47,8 @@ export function OneTimeCredentialDialog({
           <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
             SHOWN ONCE
           </p>
-          <DialogTitle>{credential?.title || '一次性凭证'}</DialogTitle>
-          <DialogDescription>{credential?.description}</DialogDescription>
+          <DialogTitle className="break-words">{credential?.title || '一次性凭证'}</DialogTitle>
+          <DialogDescription className="break-words">{credential?.description}</DialogDescription>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-2">
           <code className="block overflow-x-auto rounded-lg bg-muted px-3 py-3 text-sm font-semibold break-all text-foreground">
@@ -59,10 +59,10 @@ export function OneTimeCredentialDialog({
           </p>
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" size="sm" type="button" onClick={copy}>
+          <Button variant="outline" type="button" onClick={copy}>
             {copyLabel}
           </Button>
-          <Button size="sm" type="button" onClick={close}>
+          <Button type="button" onClick={close}>
             我已保存
           </Button>
         </DialogFooter>

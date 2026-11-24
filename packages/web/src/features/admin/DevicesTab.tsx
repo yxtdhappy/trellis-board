@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { MonitorSmartphone } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import { formatTime, statusTone } from '@/lib/admin-shared'
 import { copyText } from '@/browser/clipboard.js'
@@ -103,11 +104,11 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
             <div className="flex flex-col gap-2">
               <label className="flex flex-col gap-1">
                 <span className="text-xs font-medium text-muted-foreground">一次性设备令牌</span>
-                <input
+                <Input
                   readOnly
                   value={desktopToken.token}
                   onFocus={(event) => event.currentTarget.select()}
-                  className="w-full rounded-lg border border-border bg-transparent px-2.5 py-2 font-mono text-xs"
+                  className="font-mono text-xs"
                 />
               </label>
               <p className="text-xs text-muted-foreground">
@@ -115,7 +116,7 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
                   ? `有效期至 ${formatTime(desktopToken.expiresAt)}，使用后立即失效。`
                   : '仅显示一次，使用后立即失效。'}
               </p>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   size="sm"
                   type="button"
@@ -127,7 +128,6 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="px-3"
                   render={
                     <a
                       href={`trellisboard://enroll?token=${encodeURIComponent(desktopToken.token)}&server=${encodeURIComponent(window.location.origin)}`}

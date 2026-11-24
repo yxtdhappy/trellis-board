@@ -24,7 +24,7 @@ export function AttentionQueue({ tasks, onOpen }: AttentionQueueProps) {
 
   return (
     <Panel className="gap-2 border border-border p-3">
-      <div className="flex flex-wrap items-baseline gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <p className="text-2xs font-semibold tracking-[0.08em] text-muted-foreground">
           ATTENTION QUEUE
         </p>
@@ -42,42 +42,50 @@ export function AttentionQueue({ tasks, onOpen }: AttentionQueueProps) {
       ) : (
         <ScrollArea className="max-h-49">
           <ul className="flex flex-col divide-y divide-border/60 pr-2">
-            {queue.slice(0, MAX_ROWS).map((task) => (
-              <li key={taskInstanceKey(task)}>
-                <button
-                  type="button"
-                  onClick={() => onOpen(task)}
-                  className="flex w-full items-center gap-2 py-1.5 text-left hover:bg-muted/50"
-                >
-                  <StatusPill tone={priorityTone(task.priority)} size="xs" className="shrink-0">
-                    {task.priority || 'P2'}
-                  </StatusPill>
-                  <span className="truncate text-xs font-medium">{task.title}</span>
-                  <span className="shrink-0 text-2xs text-muted-foreground">
-                    {[task.teamName, task.projectName, branchLabel(task)]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </span>
-                  <span className="ml-auto flex shrink-0 items-center gap-1">
-                    {attentionReasons(task)
-                      .slice(0, 2)
-                      .map((reason) => (
-                        <StatusPill
-                          key={reason.id}
-                          tone="destructive"
-                          size="xs"
-                          className="font-medium"
-                        >
-                          {reason.label}
-                        </StatusPill>
-                      ))}
-                    <span className="text-2xs text-muted-foreground">
-                      {dueLabel(task.execution?.dueDate)}
+            {queue.slice(0, MAX_ROWS).map((task) => {
+              const scopeLabel = [task.teamName, task.projectName, branchLabel(task)]
+                .filter(Boolean)
+                .join(' · ')
+              return (
+                <li key={taskInstanceKey(task)}>
+                  <button
+                    type="button"
+                    onClick={() => onOpen(task)}
+                    className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left hover:bg-muted/50"
+                  >
+                    <StatusPill tone={priorityTone(task.priority)} size="xs" className="shrink-0">
+                      {task.priority || 'P2'}
+                    </StatusPill>
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                      {task.title}
                     </span>
-                  </span>
-                </button>
-              </li>
-            ))}
+                    <span
+                      className="max-w-48 truncate text-2xs text-muted-foreground"
+                      title={scopeLabel}
+                    >
+                      {scopeLabel}
+                    </span>
+                    <span className="ml-auto flex shrink-0 items-center gap-1">
+                      {attentionReasons(task)
+                        .slice(0, 2)
+                        .map((reason) => (
+                          <StatusPill
+                            key={reason.id}
+                            tone="destructive"
+                            size="xs"
+                            className="font-medium"
+                          >
+                            {reason.label}
+                          </StatusPill>
+                        ))}
+                      <span className="whitespace-nowrap text-2xs text-muted-foreground">
+                        {dueLabel(task.execution?.dueDate)}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         </ScrollArea>
       )}

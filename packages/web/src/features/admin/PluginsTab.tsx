@@ -114,7 +114,7 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
             : '插件随服务启动；代码更新需要重启服务。团队启用只决定成员能不能看到入口，账号仍由本人登录。'
         }
         action={
-          <Button variant="outline" size="sm" type="button" onClick={() => void reload()}>
+          <Button variant="outline" type="button" onClick={() => void reload()}>
             刷新
           </Button>
         }
@@ -126,6 +126,9 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
             plugins.map((row) => (
               <Row
                 key={row.id}
+                className={`-mx-2 rounded-lg px-2 transition-colors ${
+                  selected === row.id ? 'bg-primary/10' : 'hover:bg-muted/40'
+                }`}
                 actions={
                   <>
                     <StatusPill tone={statusTone(row.status)}>{row.status || 'unknown'}</StatusPill>
@@ -189,19 +192,32 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
               >
                 <button
                   type="button"
-                  className="flex w-full items-center gap-2 text-left"
+                  className="flex w-full min-w-0 items-center gap-2 text-left"
                   onClick={() => setSelected(row.id)}
                 >
-                  <Puzzle className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                  <span className="text-xs font-semibold text-foreground">{row.name}</span>
-                  <span className="text-xs text-muted-foreground">v{row.version}</span>
+                  <Puzzle className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <span
+                    className="min-w-0 truncate text-xs font-semibold text-foreground"
+                    title={row.name}
+                  >
+                    {row.name}
+                  </span>
+                  <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+                    v{row.version}
+                  </span>
                   {row.sessions > 0 ? (
-                    <span className="text-2xs text-muted-foreground">{row.sessions} 人已登录</span>
+                    <span className="shrink-0 whitespace-nowrap text-2xs text-muted-foreground">
+                      {row.sessions} 人已登录
+                    </span>
                   ) : null}
                 </button>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {row.lastError || row.description || row.id}
-                </p>
+                {row.lastError ? (
+                  <p className="mt-0.5 break-words text-xs text-destructive">{row.lastError}</p>
+                ) : (
+                  <p className="mt-0.5 break-words text-xs text-muted-foreground">
+                    {row.description || row.id}
+                  </p>
+                )}
               </Row>
             ))
           )}
@@ -217,7 +233,7 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
             : '先在上方选择一个团队。'
         }
       >
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col">
           {bindings.length === 0 ? (
             <EmptyRow>当前团队还没有绑定项目。</EmptyRow>
           ) : (
@@ -239,10 +255,16 @@ export function PluginsTab({ console: consoleApi }: { console: AdminConsole }) {
                   </Button>
                 }
               >
-                <p className="text-xs font-semibold text-foreground">
+                <p
+                  className="truncate text-xs font-semibold text-foreground"
+                  title={row.projectName || row.projectId}
+                >
                   {row.projectName || row.projectId}
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p
+                  className="truncate text-xs text-muted-foreground"
+                  title={row.externalProjectName || row.externalProjectId}
+                >
                   插件项目：{row.externalProjectName || row.externalProjectId}
                 </p>
               </Row>

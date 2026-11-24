@@ -1587,3 +1587,171 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Status
 
 [OK] **Completed**
+
+
+## Session 48: 修复基础 UI 原语高度对齐与全局样式缺陷
+<!-- trellis-session: v=2 fp=c0a3bc667a390cd7 -->
+
+**Date**: 2026-11-24
+**Task**: 修复基础 UI 原语高度对齐与全局样式缺陷
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+统一 components/ui 基础原语高度与 Focus Ring，修复 Dialog/ConfirmDialog/InputGroup/Combobox/Select/Textarea/Toggle/Tabs/DropdownMenu/Pagination/Field/Panel/StatusPill/Badge/Alert/ScrollArea/Progress/Sonner 与 index.css 滚动条等系统性缺陷，并通过格式检查、lint、tsc 与单元测试
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9bf75e4` | fix(web): 修复基础 UI 原语高度对齐与全局样式缺陷 |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 49: 统一全站业务弹窗布局、按钮层级与对齐规范
+<!-- trellis-session: v=2 fp=831b684e1a519e64 -->
+
+**Date**: 2026-11-24
+**Task**: 统一全站业务弹窗布局、按钮层级与对齐规范
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+统一全站 21 个业务弹窗底栏按钮高度/顺序/主次层级与 DialogTitle 基准，修复 TaskOwnershipDialog 工具栏、PluginLogsDialog 与 TaskDetailArtifactViewer 双倍缩进、TaskDetailDialog/ConditionChecks 对齐与防溢出，以及 CreateTaskDialog/ProjectOnboardingDialog 错误提示分离
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `adc40f6` | fix(web): 统一全站业务弹窗布局、按钮层级与对齐规范 |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 50: 修复看板顶栏、项目侧栏与核心视图布局缺陷
+<!-- trellis-session: v=2 fp=961b146cf7b2100a -->
+
+**Date**: 2026-11-24
+**Task**: 修复看板顶栏、项目侧栏与核心视图布局缺陷
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成子任务 4（11-23-board-layout-views-ui-fixes）：修复 TopBar 紧凑搜索与容器查询导航、ProjectRail 滚动分层与窄屏抽屉、ProjectEntry 分支行防挤、Kanban/TaskCard/StageTape、AttentionQueue/ExecutionHeader/OwnershipInboxPanel、TeamView/ArchiveView/Pagination/TaskOperationList/FlowSignals/Overview/StatTile 与 LoginPage 的高度对齐、防溢出与响应式缺陷。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f41dec8` | fix(web): 修复看板顶栏、项目侧栏与核心视图布局缺陷 |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 51: 修复管理后台与插件视图对齐、状态色与响应缺陷
+<!-- trellis-session: v=2 fp=3206b30d4e1c2fec -->
+
+**Date**: 2026-11-24
+**Task**: 修复管理后台与插件视图对齐、状态色与响应缺陷
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成子任务 5（11-23-admin-plugins-ui-fixes）：统一管理后台表单/列表/面板按钮高度与圆角，补齐 TONE_BY_STATUS 英文状态语义色映射，修复 AdminPage 窄屏 Tab 左裁切、AuditTab 长详情溢出、DesktopPluginsView 卡片对齐并复用 PluginLogsDialog，以及 PluginPanel 主题热同步不断开 SSE。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2dd4385` | fix(web): 修复管理后台与插件视图对齐、状态色与响应缺陷 |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 52: 修复桌面端专有窗口、浮层与差异视图 UI 缺陷（子任务 6）
+<!-- trellis-session: v=2 fp=3c256e7dfad4a0bc -->
+
+**Date**: 2026-11-24
+**Task**: 修复桌面端专有窗口、浮层与差异视图 UI 缺陷（子任务 6）
+**Package**: web
+**Branch**: `main`
+
+### Summary
+
+完成 11-23-desktop-ui-fixes（父任务第 6/6 子任务），修复桌面端 HandoffNotice、LiveSyncControlDialog、ActionBar、DiffViewer、UpdateDialog 与 LoginApp 的布局重叠、路径截断、更新态关闭状态、冷启动白屏与语义色缺陷并归档
+
+### Main Changes
+
+- HandoffNotice：迁至 bottom-4 right-4 避开 Toast 与双行 TopBar，增加局部折叠收起胶囊交互，语义色替换为 text-warning / text-info
+- LiveSyncControlDialog / ActionBar / DiffViewer：弹窗按 diff/非 diff 分宽、状态文案改 DialogDescription、条件渲染 DialogFooter、移除 AlertCircle 重复 mt-0.5、底栏按钮统一默认 h-8、差异列表限高可滚且长路径截断不撑破、降级对比区补充边框与 font-mono
+- UpdateDialog / LoginApp：更新态隐藏右上角关闭按钮、修复版本号缺失拼接 v—、日志区补 break-words；LoginApp 补充 pending 加载占位卡片、修复 env 阶段双倍间距与按钮尺寸及 footer 长路径断行
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `abbe6af` | fix(web): 修复桌面端浮层、同步弹窗、差异视图与登录页 UI 缺陷 |
+| `15e10cd` | chore(task): archive 11-23-desktop-ui-fixes |
+
+### Testing
+
+- [OK] 改动 6 文件 oxfmt --check、@trellis-board/web lint（0 error / 0 新增 warning）、tsc --noEmit、packages/web 115/115 单测及全仓 LF 检查均通过；yarn test 690 pass / 4 skipped / 1 既有 Windows 环境无关失败（agent-template-repair.test.js lstat D: EISDIR）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 对父任务 11-23-web-ui-consistency-audit-fixes（6/6 子任务已全部完成并归档）执行跨子任务集成复核，确认后再归档父任务
+
+
+## Session 53: 全局 UI 一致性治理集成复核、实机客户端 E2E 验收与父任务归档
+<!-- trellis-session: v=2 fp=f7d40277f33ab70d -->
+
+**Date**: 2026-11-24
+**Task**: 全局 UI 一致性治理集成复核、实机客户端 E2E 验收与父任务归档
+**Package**: web
+**Branch**: `main`
+
+### Summary
+
+完成父任务 11-23-web-ui-consistency-audit-fixes 跨子任务集成复核（6/6 子任务全部通过）与 L3 真实 Tauri 客户端（WebView2 CDP）实机验收，提交 e2e-report.md 并归档父任务
+
+### Main Changes
+
+- 完成 AC-P1 ~ AC-P5 全仓静态与质量门禁复核（全站 DialogFooter 0 处 size=sm/xs、0 处硬编码 text-amber-500/text-sky-500、0 处 scrollbar-gutter 错位、0 处 AlertCircle 重复 mt-0.5）
+- 执行 L3 真实 Tauri 客户端（--features tauri/custom-protocol）+ 隔离 Team 服务端（4461 / CDP 9341）实机验收：验证 LoginApp、Board 首页、CreateTask/Password/Preferences/Update 弹窗 0.0px 左缘对齐、390x844 窄屏侧栏抽屉、主题切换、桌面插件视图与管理后台 6 个 Tab，0 console error / 0 failed response
+- 清理测试进程/端口与 C:\projects\_trellis-board-e2e\ui-audit 临时目录，落盘 e2e-report.md 并归档父任务 11-23-web-ui-consistency-audit-fixes
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `56a808c` | docs(task): 记录全局 UI 治理实机客户端 E2E 验收报告 |
+| `05215c9` | chore(task): archive 11-23-web-ui-consistency-audit-fixes |
+
+### Testing
+
+- [OK] L1: @trellis-board/web lint (0 error)、tsc --noEmit、packages/web 115/115 单测、LF 检查全部通过；L3: 真实 Tauri 客户端 WebView2 CDP 全链路验证通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 全局 UI 一致性治理父子任务树（1 父 + 6 子）已全部收官归档

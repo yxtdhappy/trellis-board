@@ -60,14 +60,36 @@ export function PluginPanel({
   projectName?: string
 }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
+  const readyRef = useRef(false)
   const { resolvedTheme: theme } = useAppearance()
+  const themeRef = useRef(theme)
+  const projectNameRef = useRef(projectName)
   const desktop = panel.host === 'desktop'
+
+  useEffect(() => {
+    themeRef.current = theme
+    projectNameRef.current = projectName
+    if (!readyRef.current) return
+    const view = frameRef.current?.contentWindow
+    if (!view) return
+    view.postMessage(
+      {
+        type: 'trellis:init',
+        theme,
+        tokens: readPanelTokens(),
+        panel: { id: panel.id, pluginId: panel.pluginId, title: panel.title },
+        context: { repositoryId: projectId, projectName },
+      },
+      '*',
+    )
+  }, [theme, projectName, panel.id, panel.pluginId, panel.title, projectId])
 
   useEffect(() => {
     const frame = frameRef.current
     const view = frame?.contentWindow
     if (!frame || !view) return undefined
 
+    readyRef.current = false
     const base = `/api/plugins/${encodeURIComponent(panel.pluginId)}`
     const post = (message: unknown) => view.postMessage(message, '*')
     let events: EventSource | null = null
@@ -89,12 +111,13 @@ export function PluginPanel({
     }
 
     const init = () => {
+      readyRef.current = true
       post({
         type: 'trellis:init',
-        theme,
+        theme: themeRef.current,
         tokens: readPanelTokens(),
         panel: { id: panel.id, pluginId: panel.pluginId, title: panel.title },
-        context: { repositoryId: projectId, projectName },
+        context: { repositoryId: projectId, projectName: projectNameRef.current },
       })
       subscribe()
     }
@@ -163,11 +186,12 @@ export function PluginPanel({
     window.addEventListener('message', onMessage)
     frame.addEventListener('load', init)
     return () => {
+      readyRef.current = false
       window.removeEventListener('message', onMessage)
       frame.removeEventListener('load', init)
       events?.close()
     }
-  }, [desktop, panel, theme, projectId, projectName])
+  }, [desktop, panel, projectId])
 
   return (
     <iframe

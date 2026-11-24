@@ -15,7 +15,6 @@ export function ActionBar({
       {actions.map((item) => (
         <Button
           key={`${item.action}:${item.label}`}
-          size="sm"
           variant={item.variant ?? 'outline'}
           disabled={busy && item.action !== 'close'}
           onClick={() => onAction(item.action)}

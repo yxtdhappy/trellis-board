@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Field, FieldLabel } from '@/components/ui/field'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { toast } from 'sonner'
@@ -87,24 +87,25 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-240">
+      <DialogContent className="sm:max-w-160">
         <DialogHeader>
-          <DialogTitle className="text-base">保存组合视图</DialogTitle>
+          <DialogTitle>保存组合视图</DialogTitle>
           <DialogDescription>把当前勾选的筛选条件保存成一条可复用的执行视图。</DialogDescription>
         </DialogHeader>
 
         <DialogBody className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <Label className="text-2xs">视图名称</Label>
+          <Field className="gap-1.5">
+            <FieldLabel htmlFor="saved-view-name">视图名称</FieldLabel>
             <Input
+              id="saved-view-name"
               className="text-xs"
               value={name}
               onChange={(event) => setName(event.target.value)}
             />
-          </div>
+          </Field>
 
-          <div className="flex flex-col gap-1">
-            <Label className="text-2xs">优先级</Label>
+          <Field className="gap-1.5">
+            <FieldLabel>优先级</FieldLabel>
             <ToggleGroup
               multiple
               value={priorities}
@@ -124,10 +125,10 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
-          </div>
+          </Field>
 
-          <div className="flex flex-col gap-1">
-            <Label className="text-2xs">阶段</Label>
+          <Field className="gap-1.5">
+            <FieldLabel>阶段</FieldLabel>
             <ToggleGroup
               multiple
               value={stages}
@@ -147,20 +148,22 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
-          </div>
+          </Field>
 
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div className="flex flex-col gap-1">
-              <Label className="text-2xs">标签（逗号分隔）</Label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="saved-view-tags">标签（逗号分隔）</FieldLabel>
               <Input
+                id="saved-view-tags"
                 className="text-xs"
                 value={tags}
                 onChange={(event) => setTags(event.target.value)}
               />
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label className="text-2xs">阻断状态</Label>
+            </Field>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="saved-view-blocked">阻断状态</FieldLabel>
               <SelectField
+                id="saved-view-blocked"
                 ariaLabel="阻断状态"
                 className="text-xs"
                 value={blocked}
@@ -170,35 +173,37 @@ export function SavedViewsDialog({ open, onOpenChange, onSave }: SavedViewsDialo
                 }))}
                 onChange={(next) => setBlocked(next as (typeof BLOCKED_OPTIONS)[number]['id'])}
               />
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label className="text-2xs">截止在 N 天内</Label>
+            </Field>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="saved-view-due-within">截止在 N 天内</FieldLabel>
               <Input
+                id="saved-view-due-within"
                 className="text-xs"
                 type="number"
                 min={0}
                 value={dueWithinDays}
                 onChange={(event) => setDueWithinDays(event.target.value)}
               />
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label className="text-2xs">超过 N 天未动</Label>
+            </Field>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="saved-view-stale-days">超过 N 天未动</FieldLabel>
               <Input
+                id="saved-view-stale-days"
                 className="text-xs"
                 type="number"
                 min={0}
                 value={staleDays}
                 onChange={(event) => setStaleDays(event.target.value)}
               />
-            </div>
+            </Field>
           </div>
         </DialogBody>
 
         <DialogFooter className="gap-2">
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button size="sm" disabled={saving} onClick={() => void submit()}>
+          <Button disabled={saving} onClick={() => void submit()}>
             {saving ? '正在保存…' : '保存组合视图'}
           </Button>
         </DialogFooter>

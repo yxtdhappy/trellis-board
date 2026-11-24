@@ -15,9 +15,9 @@ function DiffFileFallback({ file }: { file: DiffFile }) {
           { label: '本地版本', content: file.localContent },
           { label: '服务端版本', content: file.serverContent },
         ].map((side) => (
-          <section key={side.label}>
+          <section key={side.label} className="min-w-0">
             <strong className="text-xs text-muted-foreground">{side.label}</strong>
-            <pre className="mt-1 max-h-55 overflow-auto rounded-md bg-background/60 p-2 text-xs leading-5 whitespace-pre-wrap break-words">
+            <pre className="mt-1 max-h-55 overflow-auto rounded-md border border-border bg-muted/40 p-2 font-mono text-xs leading-5 whitespace-pre-wrap break-words">
               {side.content ?? '该文件在对应版本中不存在'}
             </pre>
           </section>
@@ -67,18 +67,25 @@ export function DiffViewer({ files }: { files: DiffFile[] }) {
         }}
         spacing={1}
         aria-label="差异文件"
-        className="w-full flex-col items-stretch"
+        className="max-h-36 w-full flex-col items-stretch overflow-y-auto"
       >
         {files.map((item, position) => {
+          const itemPath = item.path ?? '未知文件'
           const itemSource = formatSource(item.changedBy)
           return (
             <ToggleGroupItem
               key={`${item.path ?? 'file'}:${position}`}
               value={String(position)}
-              className="h-auto min-w-0 flex-col items-start gap-0 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/50 aria-pressed:bg-muted aria-pressed:text-foreground"
+              className="h-auto w-full min-w-0 flex-col items-start gap-0 overflow-hidden rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/50 aria-pressed:bg-muted aria-pressed:text-foreground"
             >
-              <span className="truncate font-medium">{item.path ?? '未知文件'}</span>
-              {itemSource ? <span className="truncate text-xs">{itemSource}</span> : null}
+              <span className="block w-full truncate font-medium" title={itemPath}>
+                {itemPath}
+              </span>
+              {itemSource ? (
+                <span className="block w-full truncate text-xs" title={itemSource}>
+                  {itemSource}
+                </span>
+              ) : null}
             </ToggleGroupItem>
           )
         })}

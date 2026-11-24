@@ -344,6 +344,32 @@ export function LoginApp() {
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-4 p-6">
+      {phase === 'pending' ? (
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <TrellisLogo size={36} />
+              <div>
+                <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
+                  TRELLIS DESKTOP
+                </p>
+                <h1 className="font-heading text-xl font-medium">正在启动</h1>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground"
+            >
+              <Loader2 className="size-4 shrink-0 animate-spin text-primary" aria-hidden="true" />
+              <span>{envStatus}</span>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {phase === 'env' ? (
         <Card className="w-full max-w-md">
           <CardHeader>
@@ -391,7 +417,7 @@ export function LoginApp() {
             </ol>
             {envError ? (
               <Alert variant="destructive">
-                <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                <AlertCircle className="size-4 shrink-0" />
                 <AlertDescription className="text-sm">{envError}</AlertDescription>
               </Alert>
             ) : null}
@@ -410,7 +436,6 @@ export function LoginApp() {
                 />
                 <Button
                   type="submit"
-                  size="sm"
                   variant="outline"
                   disabled={savingNodePath || !nodePath.trim()}
                 >
@@ -418,26 +443,28 @@ export function LoginApp() {
                 </Button>
                 {nodePathError ? (
                   <Alert variant="destructive">
-                    <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                    <AlertCircle className="size-4 shrink-0" />
                     <AlertDescription className="text-sm">{nodePathError}</AlertDescription>
                   </Alert>
                 ) : null}
               </form>
             ) : null}
-            <div className="flex flex-wrap gap-2">
-              {installVisible ? (
-                <Button size="sm" disabled={installing} onClick={() => void installRuntime()}>
-                  安装运行环境
-                </Button>
-              ) : null}
-              {retryVisible ? (
-                <Button size="sm" variant="outline" onClick={() => void refreshRuntime()}>
-                  重新检查
-                </Button>
-              ) : null}
-            </div>
+            {installVisible || retryVisible ? (
+              <div className="flex flex-wrap gap-2">
+                {installVisible ? (
+                  <Button disabled={installing} onClick={() => void installRuntime()}>
+                    安装运行环境
+                  </Button>
+                ) : null}
+                {retryVisible ? (
+                  <Button variant="outline" onClick={() => void refreshRuntime()}>
+                    重新检查
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
             <Separator />
-            <p className="pt-4 text-xs leading-6 text-muted-foreground">
+            <p className="text-xs leading-6 text-muted-foreground">
               运行环境缺失时客户端会从国内镜像下载便携 Node.js，并把 Trellis CLI
               安装到客户端私有目录，不改动系统环境；Python 缺失或低于 3.9 时下载官方安装包静默安装
               Python 3.12.8（仅当前用户，无需管理员权限）。
@@ -517,7 +544,7 @@ export function LoginApp() {
               </div>
               {loginError ? (
                 <Alert variant="destructive">
-                  <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                  <AlertCircle className="size-4 shrink-0" />
                   <AlertDescription className="text-sm">{loginError}</AlertDescription>
                 </Alert>
               ) : null}
@@ -533,10 +560,12 @@ export function LoginApp() {
         </Card>
       ) : null}
 
-      <footer className="flex w-full max-w-md flex-col items-center gap-1 text-xs text-muted-foreground">
-        <span>{version}</span>
-        <span>{configPath}</span>
-      </footer>
+      {version || configPath ? (
+        <footer className="flex w-full max-w-md flex-col items-center gap-1 text-xs text-muted-foreground">
+          {version ? <span>{version}</span> : null}
+          {configPath ? <span className="w-full break-all text-center">{configPath}</span> : null}
+        </footer>
+      ) : null}
     </main>
   )
 }

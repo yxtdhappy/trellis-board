@@ -172,7 +172,7 @@ function UpdateDialogSession({ onOpenChange, serverVersion }: Omit<UpdateDialogP
         if (!applying) onOpenChange(next)
       }}
     >
-      <DialogContent className="sm:max-w-120">
+      <DialogContent className="sm:max-w-120" showCloseButton={!applying}>
         <DialogHeader>
           <DialogTitle>客户端更新</DialogTitle>
           <DialogDescription>检查并安装桌面客户端的新版本。</DialogDescription>
@@ -180,9 +180,9 @@ function UpdateDialogSession({ onOpenChange, serverVersion }: Omit<UpdateDialogP
         <DialogBody className="flex flex-col gap-3">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
             <dt className="text-muted-foreground">客户端版本</dt>
-            <dd>v{status?.currentVersion ?? '—'}</dd>
+            <dd>{status?.currentVersion ? `v${status.currentVersion}` : '—'}</dd>
             <dt className="text-muted-foreground">服务端版本</dt>
-            <dd>v{serverVersion || '—'}</dd>
+            <dd>{serverVersion ? `v${serverVersion}` : '—'}</dd>
             <dt className="text-muted-foreground">更新服务器</dt>
             <dd className="truncate" title={status?.server ?? undefined}>
               {status?.server ?? '未配置'}
@@ -232,7 +232,7 @@ function UpdateDialogSession({ onOpenChange, serverVersion }: Omit<UpdateDialogP
                 发布时间 {formatTime(latest.publishedAt)} · {formatSize(latest.size)}
               </span>
               {latest.notes ? (
-                <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-muted/30 p-2 text-xs whitespace-pre-wrap">
+                <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-muted/30 p-2 text-xs whitespace-pre-wrap break-words">
                   {latest.notes}
                 </div>
               ) : null}

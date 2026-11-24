@@ -1,5 +1,6 @@
 import { AlertCircle } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { cn } from 'cn'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useConfirm } from '@/components/ui/confirm-dialog'
@@ -7,6 +8,7 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -352,17 +354,15 @@ export function LiveSyncControlDialog() {
         if (!next && !busy) void runAction('close')
       }}
     >
-      <DialogContent className="max-h-[85vh] sm:max-w-[min(72rem,92vw)]">
+      <DialogContent
+        className={cn('max-h-[85vh]', diff ? 'sm:max-w-[min(72rem,92vw)]' : 'sm:max-w-2xl')}
+      >
         <DialogHeader>
           <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
             团队实时同步
           </p>
           <DialogTitle>{title}</DialogTitle>
-          {message ? (
-            <p role="status" className="text-sm leading-6 text-muted-foreground">
-              {message}
-            </p>
-          ) : null}
+          {message ? <DialogDescription role="status">{message}</DialogDescription> : null}
           {event?.type === 'initial_sync_review' && (event.projectName || event.branchName) ? (
             <p className="text-xs text-muted-foreground">
               {[
@@ -524,16 +524,16 @@ export function LiveSyncControlDialog() {
 
           {errorText ? (
             <Alert variant="destructive">
-              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+              <AlertCircle className="size-4 shrink-0" />
               <AlertDescription className="text-sm">{errorText}</AlertDescription>
             </Alert>
           ) : null}
         </DialogBody>
-        <DialogFooter>
-          {actions.length > 0 ? (
+        {actions.length > 0 ? (
+          <DialogFooter>
             <ActionBar actions={actions} busy={busy} onAction={runAction} />
-          ) : null}
-        </DialogFooter>
+          </DialogFooter>
+        ) : null}
       </DialogContent>
     </Dialog>
   )

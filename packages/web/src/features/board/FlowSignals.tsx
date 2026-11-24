@@ -61,7 +61,7 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
         </div>
         <div className="ml-auto flex items-center gap-1.5">
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            WIP 软上限
+            <span className="shrink-0 whitespace-nowrap">WIP 软上限</span>
             <Input
               className="h-8 w-14 text-xs"
               inputMode="numeric"
@@ -104,7 +104,7 @@ export function FlowSignals({ tasks, wipLimit, onSaveWip }: FlowSignalsProps) {
         />
       </div>
 
-      <p className="text-xs text-muted-foreground">
+      <p className="break-words text-xs text-muted-foreground">
         焦点建议 ·{' '}
         {nextUp ? (
           <b className="font-medium text-foreground">{nextUp.title}</b>

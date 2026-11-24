@@ -4,6 +4,7 @@ import {
   DialogBody,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -95,7 +96,7 @@ export function AssignmentsDialog({
                     {row.assignee || '未派发'}
                   </span>
                 </div>
-                <Button size="sm" className="ml-auto h-7 text-xs" onClick={() => accept(row)}>
+                <Button size="sm" className="ml-auto shrink-0 text-xs" onClick={() => accept(row)}>
                   接受任务
                 </Button>
               </div>
@@ -105,6 +106,11 @@ export function AssignmentsDialog({
             接受后任务进入实现阶段；未接受的任务会保留在待我接受列表，并计入注意力队列。
           </p>
         </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

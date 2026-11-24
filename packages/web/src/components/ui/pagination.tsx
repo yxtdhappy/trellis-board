@@ -8,7 +8,7 @@ function Pagination({ className, ...props }: React.ComponentProps<'nav'>) {
   return (
     <nav
       role="navigation"
-      aria-label="pagination"
+      aria-label="分页"
       data-slot="pagination"
       className={cn('mx-auto flex w-full justify-center', className)}
       {...props}
@@ -56,12 +56,12 @@ function PaginationLink({ className, isActive, size = 'icon', ...props }: Pagina
 
 function PaginationPrevious({
   className,
-  text = 'Previous',
+  text = '上一页',
   ...props
 }: React.ComponentProps<typeof PaginationLink> & { text?: string }) {
   return (
     <PaginationLink
-      aria-label="Go to previous page"
+      aria-label="上一页"
       size="default"
       className={cn('pl-2!', className)}
       {...props}
@@ -74,12 +74,12 @@ function PaginationPrevious({
 
 function PaginationNext({
   className,
-  text = 'Next',
+  text = '下一页',
   ...props
 }: React.ComponentProps<typeof PaginationLink> & { text?: string }) {
   return (
     <PaginationLink
-      aria-label="Go to next page"
+      aria-label="下一页"
       size="default"
       className={cn('pr-2!', className)}
       {...props}
@@ -96,13 +96,13 @@ function PaginationEllipsis({ className, ...props }: React.ComponentProps<'span'
       aria-hidden
       data-slot="pagination-ellipsis"
       className={cn(
-        "flex size-7 items-center justify-center [&_svg:not([class*='size-'])]:size-3.5",
+        "flex size-8 items-center justify-center [&_svg:not([class*='size-'])]:size-3.5",
         className,
       )}
       {...props}
     >
       <MoreHorizontalIcon />
-      <span className="sr-only">More pages</span>
+      <span className="sr-only">更多页</span>
     </span>
   )
 }

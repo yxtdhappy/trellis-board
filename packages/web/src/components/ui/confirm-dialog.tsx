@@ -3,6 +3,7 @@ import * as React from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -64,9 +65,9 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
               <DialogTitle>{options.title}</DialogTitle>
             </DialogHeader>
             {options.description && (
-              <div className="whitespace-pre-line text-xs/relaxed text-muted-foreground">
+              <DialogBody className="whitespace-pre-line text-xs/relaxed text-muted-foreground">
                 {options.description}
-              </div>
+              </DialogBody>
             )}
             <DialogFooter>
               <Button variant="outline" onClick={() => settle(false)}>
