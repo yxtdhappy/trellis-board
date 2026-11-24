@@ -552,3 +552,40 @@ pub fn take_pending_share_link(
     Ok(take(&mut pending))
 }
 ```
+
+## Scenario: 心跳循环与在线状态
+
+### 1. Scope / Trigger
+
+- 修改 `agent/runtime.rs` 的心跳循环、`agent/heartbeat.rs`，或调整心跳间隔/超时/退避时适用。
+- 背景：服务端重启后曾出现心跳永久停在绑定同步 await 上、在线监听归零的故障（`.trellis/tasks/11-24-heartbeat-loop-resilience`）。
+
+### 2. Signatures
+
+- `HeartbeatPolicy { interval, retry_base, retry_max, binding_sync_timeout, round_timeout }`，默认 15s / 1s / 60s / 30s / 60s。
+- `heartbeat::bounded(limit, label, future) -> bool`：超时时记一条 warn 并返回 `false`。
+- `RoundOutcome::{Success, AuthenticationFailure, Failure, TimedOut}` 与 `next_delays(current_delay, policy) -> (backoff, next_delay)`。
+
+### 3. Contracts
+
+- 心跳一律先发请求、后做绑定同步：`heartbeat_once` 里的 `active_bindings()` 只读内存缓存，不得在 POST 之前等待 `update_bindings`。
+- 心跳路径上的每次 `update_bindings` 必须经 `bounded(binding_sync_timeout, ..)` 包裹。
+- 单轮心跳必须有 `round_timeout` 总上限；超时后进入下一轮，绝不退出循环。
+- 只有认证失败（`protocol::is_authentication_error`）与 `agent.revoked` 能停止运行时。
+- 失败、超时、恢复三类事件必须经 `logging::warn` / `logging::info` 落盘；成功心跳不写日志（避免每 15 秒一条），只在恢复时记一条 info。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| 正常 | 15s 一轮，不写日志 |
+| 绑定同步超过 30s | warn 一次，丢弃本轮同步；心跳此前已发出 |
+| 单轮超过 60s | warn「心跳单轮超过 60 秒未完成」，写 error 状态，15s 后进入下一轮 |
+| 网络错误 | warn「心跳失败（code）」，写 error 状态，1s→2s→…→60s 退避 |
+| 恢复成功且上一轮失败 | info「心跳恢复：上报 N 个监听任务空间」并把状态改回 `running` |
+| 401 / `AUTH_REVOKED` | 写 `AUTH_REVOKED` 并 `stop()`，不再重试 |
+
+### 5. Tests Required
+
+- `agent/heartbeat.rs` 单测：`classify` 四分类、超时后仍调度下一轮、退避翻倍且封顶 60s、`bounded` 超时返回 `false`。
+- 手工：重启服务端后 60s 内 `agent_device.last_seen_at` 恢复前进，`desktop.log` 出现「心跳失败 → 心跳恢复」。

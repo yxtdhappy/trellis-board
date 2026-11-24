@@ -5,6 +5,7 @@ pub mod detach;
 pub mod device;
 pub mod env;
 pub mod git;
+pub(crate) mod heartbeat;
 pub mod http;
 pub mod onboarding;
 pub mod process;

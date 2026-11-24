@@ -9,6 +9,9 @@ use tokio::sync::{watch, Mutex as AsyncMutex, Notify};
 use crate::agent::control::ControlHub;
 use crate::agent::credential::CredentialStore;
 use crate::agent::detach::{self, DetachOutcome};
+use crate::agent::heartbeat::{
+    bounded, HeartbeatPolicy, RoundOutcome, RoundResult, RETRY_BASE, RETRY_MAX,
+};
 use crate::agent::http::{ApiClient, SseFrame};
 use crate::agent::protocol::{
     self, code, safe_error_message, AgentCommand, AgentError, AgentResult, HeartbeatResponse,
@@ -19,9 +22,6 @@ use crate::agent::store::{AgentBinding, AgentConfig, ConfigStore};
 use crate::agent::task_sync::{ControlSink, TaskSync};
 use crate::agent::worktree::WorktreeService;
 
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
-const RETRY_BASE: Duration = Duration::from_secs(1);
-const RETRY_MAX: Duration = Duration::from_secs(60);
 const COMMAND_MAX_RETRIES_WAITING_INDEX: usize = 8;
 const COMMAND_MAX_RETRIES_OTHER: usize = 2;
 
@@ -32,6 +32,7 @@ pub struct AgentRuntime {
     task_sync: Arc<TaskSync>,
     worktree: Arc<WorktreeService>,
     heartbeat_wake: Arc<Notify>,
+    heartbeat_policy: HeartbeatPolicy,
     shutdown: watch::Sender<bool>,
     stopped: AtomicBool,
     agent_id: String,
@@ -86,6 +87,7 @@ impl AgentRuntime {
             task_sync,
             worktree,
             heartbeat_wake,
+            heartbeat_policy: HeartbeatPolicy::default(),
             shutdown,
             stopped: AtomicBool::new(false),
             agent_id: config.agent_id.clone(),
@@ -138,9 +140,11 @@ impl AgentRuntime {
     fn spawn_heartbeat_loop(self: &Arc<Self>) {
         let runtime = self.clone();
         crate::agent::rt::spawn(async move {
+            let policy = runtime.heartbeat_policy;
             let mut shutdown = runtime.shutdown.subscribe();
-            let mut delay = RETRY_BASE;
+            let mut delay = policy.retry_base;
             let mut next_delay = Duration::ZERO;
+            let mut failing = false;
             loop {
                 tokio::select! {
                     changed = shutdown.changed() => {
@@ -152,23 +156,46 @@ impl AgentRuntime {
                     _ = tokio::time::sleep(next_delay) => {}
                 }
                 if runtime.is_paused() {
-                    next_delay = HEARTBEAT_INTERVAL;
+                    next_delay = policy.interval;
                     continue;
                 }
-                match runtime.heartbeat_once().await {
-                    Ok(()) => {
-                        delay = RETRY_BASE;
-                        next_delay = HEARTBEAT_INTERVAL;
+                // 整轮总超时是最后一道保险：无论卡在哪个 await，下一轮都一定会来。
+                // 历史故障：服务端重启后心跳永久停在绑定同步上，正是缺这层上限。
+                let round: RoundResult =
+                    tokio::time::timeout(policy.round_timeout, runtime.heartbeat_once()).await;
+                let outcome = RoundOutcome::classify(&round);
+                match (outcome, &round) {
+                    (RoundOutcome::Success, _) => {
+                        if failing {
+                            failing = false;
+                            let listening = runtime.task_sync.active_bindings().await.len();
+                            crate::logging::info(&format!(
+                                "心跳恢复：上报 {listening} 个监听任务空间"
+                            ));
+                            runtime.write_state("running", None, None).await;
+                        }
                     }
-                    Err(error) if protocol::is_authentication_error(&error) => {
+                    (RoundOutcome::AuthenticationFailure, Ok(Err(error))) => {
                         runtime
-                            .write_state("error", Some(&error), Some("AUTH_REVOKED"))
+                            .write_state("error", Some(error), Some("AUTH_REVOKED"))
                             .await;
                         runtime.stop();
                         break;
                     }
-                    Err(error) => {
+                    (RoundOutcome::TimedOut, _) => {
+                        failing = true;
+                        crate::logging::warn(&format!(
+                            "心跳单轮超过 {} 秒未完成，已放弃本轮",
+                            policy.round_timeout.as_secs()
+                        ));
+                        runtime
+                            .write_state("error", None, Some("心跳超时（60 秒）"))
+                            .await;
+                    }
+                    (RoundOutcome::Failure, Ok(Err(error))) => {
+                        failing = true;
                         let message = safe_error_message(&error.to_string());
+                        crate::logging::warn(&format!("心跳失败（{}）：{message}", error.code));
                         runtime.write_state("error", None, Some(&message)).await;
                         let _ = runtime
                             .api
@@ -180,10 +207,13 @@ impl AgentRuntime {
                             )
                             .await;
                         tokio::time::sleep(delay).await;
-                        delay = (delay * 2).min(RETRY_MAX);
-                        next_delay = Duration::ZERO;
                     }
+                    // classify 与 round 的形状一一对应，这里只兜住不可达组合。
+                    _ => {}
                 }
+                let (backoff, upcoming) = outcome.next_delays(delay, &policy);
+                delay = backoff;
+                next_delay = upcoming;
             }
         });
     }
@@ -199,9 +229,8 @@ impl AgentRuntime {
             self.store.read_config(false).await?.ok_or_else(|| {
                 AgentError::new(code::CONFIG_MISSING, "Agent 配置缺失，请重新登录")
             })?;
-        self.task_sync
-            .update_bindings(config.bindings.clone())
-            .await;
+        // 先发心跳、后做绑定同步。缓存已由 start() 的 prepare_startup_bindings 预热，
+        // 这里的 active_bindings 只是内存读，确保在线状态不会被同步或 git I/O 挂住。
         let listening_task_space_ids: Vec<String> = self
             .task_sync
             .active_bindings()
@@ -238,8 +267,21 @@ impl AgentRuntime {
             })
             .await?
             .ok_or_else(|| AgentError::new(code::CONFIG_MISSING, "Agent 配置缺失，请重新登录"))?;
-        self.task_sync.update_bindings(merged.bindings).await;
+        self.update_bindings_bounded(merged.bindings).await;
         Ok(())
+    }
+
+    /// 心跳路径上的绑定同步：超过 `binding_sync_timeout` 就放弃本轮。
+    ///
+    /// 被丢弃的 future 会随 drop 释放任务同步的 AsyncMutex，下一轮重新对账；
+    /// 这样一次慢同步最多耽误一轮心跳（≤15s），不会让客户端永久掉线。
+    async fn update_bindings_bounded(&self, bindings: Vec<AgentBinding>) {
+        bounded(
+            self.heartbeat_policy.binding_sync_timeout,
+            "心跳：绑定同步",
+            self.task_sync.update_bindings(bindings),
+        )
+        .await;
     }
 
     async fn apply_bindings(&self, bindings: Vec<AgentBinding>) {
