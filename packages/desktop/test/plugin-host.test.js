@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import fs from 'node:fs'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -227,7 +228,10 @@ test('插件宿主：空清单可以就绪且不启动插件进程', async (t) =
   const dataDir = await mkdtemp(path.join(tmpdir(), 'trellis-plugin-host-empty-'))
   const pluginsDir = path.join(dataDir, 'plugins')
   await mkdir(pluginsDir, { recursive: true })
-  await writeFile(path.join(pluginsDir, 'plugins.json'), JSON.stringify({ version: 1, plugins: [] }))
+  await writeFile(
+    path.join(pluginsDir, 'plugins.json'),
+    JSON.stringify({ version: 1, plugins: [] }),
+  )
 
   const child = spawn(
     process.execPath,
@@ -262,6 +266,13 @@ test('插件宿主：空清单可以就绪且不启动插件进程', async (t) =
   // 空清单会补齐内置插件，但全部默认禁用，不拉起任何插件进程。
   assert.equal(list.data.plugins.length, 6)
   assert.ok(list.data.plugins.every((plugin) => plugin.status !== 'running'))
+  // 旧 plugins.json 被迁移为 plugins.json.migrated，且新生成极简 plugin-state.json。
+  assert.equal(fs.existsSync(path.join(pluginsDir, 'plugins.json')), false)
+  assert.equal(fs.existsSync(path.join(pluginsDir, 'plugins.json.migrated')), true)
+  const stateDoc = JSON.parse(fs.readFileSync(path.join(dataDir, 'plugin-state.json'), 'utf8'))
+  assert.equal(stateDoc.plugins.length, 6)
+  assert.equal(stateDoc.plugins[0].config, undefined)
+
   const panels = await request(base, '/internal/panels')
   assert.deepEqual(panels.data.panels, [])
   await request(base, '/internal/shutdown', { method: 'POST' })
@@ -271,3 +282,91 @@ test('插件宿主：空清单可以就绪且不启动插件进程', async (t) =
   })
 })
 
+test('插件宿主：无 plugins.json 启动不生成 plugins.json 并向插件暴露当前登录用户', async (t) => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'trellis-plugin-host-nouser-'))
+  const pluginsDir = path.join(dataDir, 'plugins')
+  await mkdir(pluginsDir, { recursive: true })
+  await writeFile(
+    path.join(dataDir, 'plugin-state.json'),
+    JSON.stringify({
+      version: 1,
+      plugins: [
+        {
+          id: 'repo-consumer',
+          module: path.join(
+            repoRoot,
+            'packages',
+            'test-support',
+            'fixtures',
+            'plugins',
+            'repo-consumer',
+            'index.js',
+          ),
+          enabled: true,
+          sort: 10,
+        },
+      ],
+    }),
+  )
+
+  const child = spawn(
+    process.execPath,
+    [
+      hostPath,
+      '--data-dir',
+      dataDir,
+      '--app-dir',
+      repoRoot,
+      '--plugins-dir',
+      pluginsDir,
+      '--user-json',
+      JSON.stringify({
+        userId: 'u-42',
+        username: 'kanyifei',
+        serverUrl: 'http://board.internal:4317',
+      }),
+      '--host-version',
+      '0.4.48',
+      '--token',
+      token,
+      '--secret',
+      secret,
+      '--port',
+      '0',
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  t.after(async () => {
+    if (child.exitCode === null) child.kill('SIGKILL')
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  const ready = await waitForReady(child)
+  const base = `http://127.0.0.1:${ready.port}`
+  assert.equal(fs.existsSync(path.join(pluginsDir, 'plugins.json')), false)
+
+  const userRes = await waitFor(async () => {
+    const res = await request(base, '/internal/plugins/repo-consumer/request', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'GET', path: '/user' }),
+    })
+    assert.equal(res.status, 200)
+    assert.equal(res.data.ok, true)
+    return res.data.data
+  })
+  assert.deepEqual(userRes, {
+    user: {
+      userId: 'u-42',
+      username: 'kanyifei',
+      displayName: null,
+      serverUrl: 'http://board.internal:4317',
+    },
+  })
+
+  await request(base, '/internal/shutdown', { method: 'POST' })
+  await new Promise((resolve) => {
+    if (child.exitCode !== null) return resolve()
+    child.once('exit', resolve)
+  })
+})

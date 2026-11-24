@@ -154,7 +154,14 @@ pub fn scope_dir(data_dir: &Path, server_url: &str, username: &str) -> PathBuf {
         .join(user_key(username))
 }
 
-async fn current_scope() -> Result<(PathBuf, String), String> {
+struct ScopeContext {
+    scope: PathBuf,
+    server_url: String,
+    user_id: String,
+    username: String,
+}
+
+async fn current_scope() -> Result<ScopeContext, String> {
     let store = ConfigStore::new(config::agent_root());
     let agent = store
         .read_config(false)
@@ -164,18 +171,31 @@ async fn current_scope() -> Result<(PathBuf, String), String> {
     if agent.server_url.trim().is_empty() {
         return Err("尚未登录，无法使用插件".to_string());
     }
-    let identity = agent
+    let username = agent
         .username
         .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(&agent.agent_id);
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("")
+        .to_string();
+    let identity = if !username.is_empty() {
+        username.as_str()
+    } else {
+        agent.agent_id.as_str()
+    };
     if identity.trim().is_empty() {
         return Err("缺少本机账号标识，无法隔离插件数据".to_string());
     }
-    Ok((
-        scope_dir(&config::data_dir(), &agent.server_url, identity),
-        agent.server_url,
-    ))
+    Ok(ScopeContext {
+        scope: scope_dir(&config::data_dir(), &agent.server_url, identity),
+        server_url: agent.server_url,
+        user_id: agent.agent_id,
+        username: if !username.is_empty() {
+            username
+        } else {
+            identity.to_string()
+        },
+    })
 }
 
 fn runtime_dir() -> Result<PathBuf, String> {
@@ -197,19 +217,26 @@ async fn ensure_running(app: &AppHandle) -> Result<bool, String> {
             _ => {}
         }
     }
-    let (scope, _server_url) = match current_scope().await {
+    let scope_ctx = match current_scope().await {
         Ok(value) => value,
         Err(_) => return Ok(false),
     };
+    let scope = scope_ctx.scope;
     let runtime = runtime_dir()?;
-    let plugins_file = scope.join("plugins").join("plugins.json");
-    let entries = merge_plugins_file(&plugins_file, &runtime, &config::data_dir().join("plugins"))?;
+    let state_file = scope.join("plugin-state.json");
+    let entries = ensure_state_file(&scope, &state_file)?;
     if !entries.any_enabled() {
         return Ok(false);
     }
     let node = resolve_node(app).await?;
     let token = uuid::Uuid::new_v4().simple().to_string();
     let secret = uuid::Uuid::new_v4().simple().to_string();
+    let user_json = serde_json::to_string(&json!({
+        "userId": scope_ctx.user_id,
+        "username": scope_ctx.username,
+        "serverUrl": scope_ctx.server_url,
+    }))
+    .unwrap_or_else(|_| "{}".to_string());
     prepare_secrets(&scope).await;
 
     let mut command = Command::new(&node);
@@ -219,8 +246,16 @@ async fn ensure_running(app: &AppHandle) -> Result<bool, String> {
         .arg(&scope)
         .arg("--app-dir")
         .arg(&runtime)
+        .arg("--runtime-dir")
+        .arg(&runtime)
         .arg("--plugins-dir")
         .arg(scope.join("plugins"))
+        .arg("--user-plugins-dir")
+        .arg(config::data_dir().join("plugins"))
+        .arg("--state-file")
+        .arg(&state_file)
+        .arg("--user-json")
+        .arg(&user_json)
         .arg("--host-version")
         .arg(env!("CARGO_PKG_VERSION"))
         .arg("--token")
@@ -382,7 +417,7 @@ pub fn protect_secrets(plaintext: &[u8]) -> Result<Value, String> {
     }))
 }
 
-// ---------------------------------------------------------------- plugins.json
+// ---------------------------------------------------------------- plugin-state.json
 
 #[derive(Debug, Default, Clone)]
 struct PluginEntries {
@@ -404,17 +439,22 @@ const BUILTIN_PLUGINS: &[(&str, i64)] = &[
     ("a2a-intake", 60),
 ];
 
-/// 合并内置清单：保留用户 enable/sort/config，只刷新入口路径与新增插件。
-fn merge_plugins_file(
-    plugins_file: &Path,
-    runtime: &Path,
-    user_dir: &Path,
-) -> Result<PluginEntries, String> {
-    if let Some(parent) = plugins_file.parent() {
+/// 维护极简 `plugin-state.json`（只存 id/enabled/sort，不再写入 plugins/plugins.json）；
+/// 若存在旧 `plugins/plugins.json`，执行一次性迁移并改名为 `plugins.json.migrated`。
+fn ensure_state_file(scope: &Path, state_file: &Path) -> Result<PluginEntries, String> {
+    if let Some(parent) = state_file.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| format!("无法创建插件配置目录：{error}"))?;
+            .map_err(|error| format!("无法创建插件状态目录：{error}"))?;
     }
-    let mut document = std::fs::read_to_string(plugins_file)
+    let legacy_file = scope.join("plugins").join("plugins.json");
+    let source_path = if state_file.is_file() {
+        state_file
+    } else if legacy_file.is_file() {
+        &legacy_file
+    } else {
+        state_file
+    };
+    let mut document = std::fs::read_to_string(source_path)
         .ok()
         .and_then(|text| {
             serde_json::from_str::<Value>(text.strip_prefix('\u{feff}').unwrap_or(&text)).ok()
@@ -439,29 +479,23 @@ fn merge_plugins_file(
         })
         .collect();
     let mut entries: Vec<Value> = Vec::new();
-    for (id, sort) in BUILTIN_PLUGINS {
-        let mut entry = by_id
-            .get(*id)
-            .cloned()
-            .unwrap_or_else(|| json!({ "id": id, "enabled": false }));
-        let override_module = user_dir.join(id).join("index.js");
-        let module = if override_module.is_file() && user_dir.join(id).join("plugin.json").is_file()
-        {
-            override_module
-        } else {
-            runtime.join("plugins").join(id).join("index.js")
-        };
-        entry["id"] = json!(id);
-        entry["module"] = json!(module.to_string_lossy().to_string());
-        if entry.get("sort").and_then(Value::as_i64).is_none() {
-            entry["sort"] = json!(sort);
-        }
-        if let Some(object) = entry.as_object_mut() {
-            object.entry("enabled").or_insert(json!(false));
-        }
-        entries.push(entry);
+    for (id, default_sort) in BUILTIN_PLUGINS {
+        let existing_entry = by_id.get(*id);
+        let enabled = existing_entry
+            .and_then(|item| item.get("enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let sort = existing_entry
+            .and_then(|item| item.get("sort"))
+            .and_then(Value::as_i64)
+            .unwrap_or(*default_sort);
+        entries.push(json!({
+            "id": id,
+            "enabled": enabled,
+            "sort": sort,
+        }));
     }
-    // 用户自建插件条目原样保留在末尾，不因内置合并被删。
+    // 用户自建插件条目（如带显式 module）保留启用状态与排序。
     for entry in existing {
         let Some(id) = entry.get("id").and_then(Value::as_str) else {
             continue;
@@ -469,14 +503,31 @@ fn merge_plugins_file(
         if BUILTIN_PLUGINS.iter().any(|(builtin, _)| *builtin == id) {
             continue;
         }
-        entries.push(entry);
+        let mut minimal = json!({
+            "id": id,
+            "enabled": entry.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+        });
+        if let Some(sort) = entry.get("sort").and_then(Value::as_i64) {
+            minimal["sort"] = json!(sort);
+        }
+        if let Some(module) = entry.get("module").and_then(Value::as_str) {
+            minimal["module"] = json!(module);
+        }
+        entries.push(minimal);
     }
-    document["plugins"] = Value::Array(entries.clone());
-    let payload = serde_json::to_vec_pretty(&document)
-        .map_err(|error| format!("无法序列化插件配置：{error}"))?;
-    std::fs::write(plugins_file, payload).map_err(|error| format!("无法写入插件配置：{error}"))?;
-    let enabled = entries
-        .iter()
+    let next_doc = json!({
+        "version": 1,
+        "plugins": entries,
+    });
+    write_state_file(state_file, &next_doc)?;
+    if !std::ptr::eq(source_path, state_file) && legacy_file.is_file() {
+        let migrated = scope.join("plugins").join("plugins.json.migrated");
+        let _ = std::fs::rename(&legacy_file, &migrated);
+    }
+    let enabled = next_doc["plugins"]
+        .as_array()
+        .into_iter()
+        .flatten()
         .filter(|entry| {
             entry
                 .get("enabled")
@@ -488,12 +539,12 @@ fn merge_plugins_file(
     Ok(PluginEntries { enabled })
 }
 
-fn read_plugins_file(plugins_file: &Path) -> Result<Value, String> {
-    let text = std::fs::read_to_string(plugins_file)
-        .map_err(|error| format!("无法读取插件配置：{error}"))?;
+fn read_state_file(state_file: &Path) -> Result<Value, String> {
+    let text = std::fs::read_to_string(state_file)
+        .map_err(|error| format!("无法读取插件状态：{error}"))?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let mut document: Value =
-        serde_json::from_str(text).map_err(|error| format!("插件配置不是合法 JSON：{error}"))?;
+        serde_json::from_str(text).map_err(|error| format!("插件状态不是合法 JSON：{error}"))?;
     if !document
         .get("plugins")
         .map(Value::is_array)
@@ -504,14 +555,14 @@ fn read_plugins_file(plugins_file: &Path) -> Result<Value, String> {
     Ok(document)
 }
 
-fn write_plugins_file(plugins_file: &Path, document: &Value) -> Result<(), String> {
+fn write_state_file(state_file: &Path, document: &Value) -> Result<(), String> {
     let payload = serde_json::to_vec_pretty(document)
-        .map_err(|error| format!("无法序列化插件配置：{error}"))?;
-    let temp = plugins_file.with_extension(format!("json.{}.tmp", std::process::id()));
-    std::fs::write(&temp, payload).map_err(|error| format!("无法写入插件配置：{error}"))?;
-    std::fs::rename(&temp, plugins_file).map_err(|error| {
+        .map_err(|error| format!("无法序列化插件状态：{error}"))?;
+    let temp = state_file.with_extension(format!("json.{}.tmp", std::process::id()));
+    std::fs::write(&temp, payload).map_err(|error| format!("无法写入插件状态：{error}"))?;
+    std::fs::rename(&temp, state_file).map_err(|error| {
         let _ = std::fs::remove_file(&temp);
-        format!("无法替换插件配置：{error}")
+        format!("无法替换插件状态：{error}")
     })
 }
 
@@ -631,40 +682,42 @@ pub async fn desktop_plugins_list(app: AppHandle, window: WebviewWindow) -> Resu
     let state = state(&app)?;
     let running = ensure_running(&app).await?;
     if !running {
-        let file = current_scope()
-            .await
-            .ok()
-            .map(|(scope, _)| scope.join("plugins").join("plugins.json"));
-        let plugins = file
-            .as_deref()
-            .and_then(|path| read_plugins_file(path).ok())
-            .and_then(|document| {
-                document
-                    .get("plugins")
-                    .and_then(Value::as_array)
-                    .map(|entries| {
-                        entries
-                            .iter()
-                            .map(|entry| {
-                                json!({
-                                    "id": entry.get("id").cloned().unwrap_or(Value::Null),
-                                    "name": entry.get("id").cloned().unwrap_or(Value::Null),
-                                    "version": Value::Null,
-                                    "apiVersion": Value::Null,
-                                    "compatible": true,
-                                    "reason": Value::Null,
-                                    "enabled": entry.get("enabled").and_then(Value::as_bool).unwrap_or(false),
-                                    "sort": entry.get("sort").cloned().unwrap_or(Value::Null),
-                                    "status": "stopped",
-                                    "pid": Value::Null,
-                                    "restarts": 0,
-                                    "lastError": Value::Null,
-                                })
+        let plugins = match current_scope().await {
+            Ok(scope_ctx) => {
+                let state_file = scope_ctx.scope.join("plugin-state.json");
+                let _ = ensure_state_file(&scope_ctx.scope, &state_file);
+                read_state_file(&state_file)
+                    .ok()
+                    .and_then(|document| {
+                        document
+                            .get("plugins")
+                            .and_then(Value::as_array)
+                            .map(|entries| {
+                                entries
+                                    .iter()
+                                    .map(|entry| {
+                                        json!({
+                                            "id": entry.get("id").cloned().unwrap_or(Value::Null),
+                                            "name": entry.get("id").cloned().unwrap_or(Value::Null),
+                                            "version": Value::Null,
+                                            "apiVersion": Value::Null,
+                                            "compatible": true,
+                                            "reason": Value::Null,
+                                            "enabled": entry.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+                                            "sort": entry.get("sort").cloned().unwrap_or(Value::Null),
+                                            "status": "stopped",
+                                            "pid": Value::Null,
+                                            "restarts": 0,
+                                            "lastError": Value::Null,
+                                        })
+                                    })
+                                    .collect::<Vec<_>>()
                             })
-                            .collect::<Vec<_>>()
                     })
-            })
-            .unwrap_or_default();
+                    .unwrap_or_default()
+            }
+            Err(_) => Vec::new(),
+        };
         return Ok(json!({
             "disabled": false,
             "running": false,
@@ -687,20 +740,19 @@ pub async fn desktop_plugin_set_enabled(
     enabled: bool,
 ) -> Result<Value, String> {
     caller(&app, &window)?;
-    let (scope, _) = current_scope().await?;
-    let plugins_file = scope.join("plugins").join("plugins.json");
-    let runtime = runtime_dir()?;
-    merge_plugins_file(&plugins_file, &runtime, &config::data_dir().join("plugins"))?;
-    let mut document = read_plugins_file(&plugins_file)?;
+    let scope_ctx = current_scope().await?;
+    let state_file = scope_ctx.scope.join("plugin-state.json");
+    ensure_state_file(&scope_ctx.scope, &state_file)?;
+    let mut document = read_state_file(&state_file)?;
     let entries = document["plugins"]
         .as_array_mut()
-        .ok_or_else(|| "插件配置缺少 plugins 数组".to_string())?;
+        .ok_or_else(|| "插件状态缺少 plugins 数组".to_string())?;
     let entry = entries
         .iter_mut()
         .find(|entry| entry.get("id").and_then(Value::as_str) == Some(plugin_id.as_str()))
         .ok_or_else(|| format!("未知插件: {plugin_id}"))?;
     entry["enabled"] = json!(enabled);
-    write_plugins_file(&plugins_file, &document)?;
+    write_state_file(&state_file, &document)?;
 
     let any_enabled = document["plugins"]
         .as_array()

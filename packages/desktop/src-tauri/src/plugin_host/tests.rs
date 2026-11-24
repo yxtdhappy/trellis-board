@@ -43,14 +43,13 @@ fn scope_dir_isolates_by_server_and_user() {
 }
 
 #[test]
-fn merge_keeps_user_state_and_refreshes_modules() {
+fn state_file_migrates_legacy_plugins_json_and_keeps_minimal_fields() {
     let root = temp_dir("merge");
-    let runtime = root.join("runtime");
-    let user_dir = root.join("user-plugins");
-    let plugins_file = root.join("plugins").join("plugins.json");
-    std::fs::create_dir_all(plugins_file.parent().unwrap()).unwrap();
+    let legacy_file = root.join("plugins").join("plugins.json");
+    let state_file = root.join("plugin-state.json");
+    std::fs::create_dir_all(legacy_file.parent().unwrap()).unwrap();
     std::fs::write(
-        &plugins_file,
+        &legacy_file,
         serde_json::to_vec_pretty(&json!({
             "version": 1,
             "plugins": [
@@ -62,12 +61,16 @@ fn merge_keeps_user_state_and_refreshes_modules() {
     )
     .unwrap();
 
-    let entries = merge_plugins_file(&plugins_file, &runtime, &user_dir).unwrap();
+    let entries = ensure_state_file(&root, &state_file).unwrap();
     assert_eq!(
         entries.enabled,
         vec!["witops-core".to_string(), "custom".to_string()]
     );
-    let document: Value = serde_json::from_slice(&std::fs::read(&plugins_file).unwrap()).unwrap();
+    // 旧 plugins.json 被迁移改名，不再重新生成 plugins/plugins.json。
+    assert!(!legacy_file.exists());
+    assert!(root.join("plugins").join("plugins.json.migrated").is_file());
+
+    let document: Value = serde_json::from_slice(&std::fs::read(&state_file).unwrap()).unwrap();
     let plugins = document["plugins"].as_array().unwrap();
     let witops = plugins
         .iter()
@@ -75,12 +78,8 @@ fn merge_keeps_user_state_and_refreshes_modules() {
         .unwrap();
     assert_eq!(witops["enabled"], true);
     assert_eq!(witops["sort"], 5);
-    assert_eq!(witops["config"]["x"], 1);
-    assert!(witops["module"]
-        .as_str()
-        .unwrap()
-        .replace('\\', "/")
-        .ends_with("runtime/plugins/witops-core/index.js"));
+    assert!(witops.get("config").is_none());
+    assert!(witops.get("module").is_none());
     // 用户自建条目保留在末尾。
     assert_eq!(plugins.last().unwrap()["id"], "custom");
     // 新增内置插件默认禁用。
@@ -89,26 +88,6 @@ fn merge_keeps_user_state_and_refreshes_modules() {
         .find(|entry| entry["id"] == "accounts-core")
         .unwrap();
     assert_eq!(accounts["enabled"], false);
-
-    let plugin_dir = user_dir.join("accounts-core");
-    std::fs::create_dir_all(&plugin_dir).unwrap();
-    std::fs::write(plugin_dir.join("plugin.json"), "{}").unwrap();
-    std::fs::write(plugin_dir.join("index.js"), "").unwrap();
-    merge_plugins_file(&plugins_file, &runtime, &user_dir).unwrap();
-    let document: Value = serde_json::from_slice(&std::fs::read(&plugins_file).unwrap()).unwrap();
-    let accounts = document["plugins"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["id"] == "accounts-core")
-        .unwrap();
-    assert_eq!(
-        accounts["module"].as_str().unwrap().replace('\\', "/"),
-        plugin_dir
-            .join("index.js")
-            .to_string_lossy()
-            .replace('\\', "/")
-    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

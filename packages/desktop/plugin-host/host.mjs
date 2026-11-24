@@ -35,7 +35,11 @@ function parseArgs(argv) {
     host: '127.0.0.1',
     dataDir: '',
     appDir: HOST_DIR,
+    runtimeDir: '',
     pluginsDir: '',
+    userPluginsDir: '',
+    stateFile: '',
+    userJson: '',
     hostVersion: '0.0.0',
     token: '',
     secret: '',
@@ -58,8 +62,24 @@ function parseArgs(argv) {
         options.appDir = String(value || HOST_DIR)
         index += 1
         break
+      case '--runtime-dir':
+        options.runtimeDir = String(value || '')
+        index += 1
+        break
       case '--plugins-dir':
         options.pluginsDir = String(value || '')
+        index += 1
+        break
+      case '--user-plugins-dir':
+        options.userPluginsDir = String(value || '')
+        index += 1
+        break
+      case '--state-file':
+        options.stateFile = String(value || '')
+        index += 1
+        break
+      case '--user-json':
+        options.userJson = String(value || '')
         index += 1
         break
       case '--host-version':
@@ -176,6 +196,23 @@ const pluginsDir = options.pluginsDir
   : path.join(path.resolve(options.dataDir), 'plugins')
 const dataDir = path.resolve(options.dataDir)
 const appDir = path.resolve(options.appDir)
+const runtimeDir = options.runtimeDir ? path.resolve(options.runtimeDir) : appDir
+const userPluginsDir = options.userPluginsDir ? path.resolve(options.userPluginsDir) : pluginsDir
+const stateFile = options.stateFile
+  ? path.resolve(options.stateFile)
+  : path.join(dataDir, 'plugin-state.json')
+const legacyPluginsFile = path.join(pluginsDir, 'plugins.json')
+const migratedPluginsFile = path.join(pluginsDir, 'plugins.json.migrated')
+
+let parsedUserInfo = null
+if (options.userJson) {
+  try {
+    const raw = JSON.parse(options.userJson)
+    if (raw && typeof raw === 'object') parsedUserInfo = raw
+  } catch {
+    parsedUserInfo = null
+  }
+}
 
 // 与 packages/desktop/src-tauri/src/plugin_host.rs 的 BUILTIN_PLUGINS 保持同步。
 const BUILTIN_PLUGINS = [
@@ -187,36 +224,100 @@ const BUILTIN_PLUGINS = [
   ['a2a-intake', 60],
 ]
 
-/** 首次运行补齐内置插件条目；保留用户已有的 enabled/sort/config。 */
-function mergePluginsConfig(configFile, runtimeDir, userDir) {
-  let document = { version: 1, plugins: [] }
+function writeStateFileAtomic(file, document) {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const temp = `${file}.${process.pid}.tmp`
+  fs.writeFileSync(temp, `${JSON.stringify(document, null, 2)}\n`)
+  fs.renameSync(temp, file)
+}
+
+function readJsonOrNull(file) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(configFile, 'utf8').replace(/^\uFEFF/, ''))
-    if (parsed && typeof parsed === 'object') document = parsed
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
+    return parsed && typeof parsed === 'object' ? parsed : null
   } catch {
-    /* 首次运行或文件损坏，按空配置重建 */
+    return null
   }
-  if (!Array.isArray(document.plugins)) document.plugins = []
+}
+
+/** 维护极简 plugin-state.json（不写 plugins/plugins.json），并一次性迁移旧 plugins.json。 */
+function ensurePluginState() {
+  const hasState = fs.existsSync(stateFile)
+  const legacyExists = !hasState && fs.existsSync(legacyPluginsFile)
+  const sourceDoc = hasState
+    ? readJsonOrNull(stateFile)
+    : legacyExists
+      ? readJsonOrNull(legacyPluginsFile)
+      : null
+  const existing = Array.isArray(sourceDoc?.plugins) ? sourceDoc.plugins : []
   const byId = new Map(
-    document.plugins
+    existing
       .filter((entry) => entry && typeof entry.id === 'string')
       .map((entry) => [entry.id, entry]),
   )
-  document.plugins = BUILTIN_PLUGINS.map(([id, sort]) => {
-    const entry = byId.get(id) ?? { id, enabled: false }
-    const overrideModule = path.join(userDir, id, 'index.js')
-    const overrideManifest = path.join(userDir, id, 'plugin.json')
-    entry.id = id
-    entry.module =
-      fs.existsSync(overrideModule) && fs.existsSync(overrideManifest)
-        ? overrideModule
-        : path.join(runtimeDir, 'plugins', id, 'index.js')
-    if (typeof entry.sort !== 'number') entry.sort = sort
-    if (typeof entry.enabled !== 'boolean') entry.enabled = false
-    return entry
+
+  const statePlugins = BUILTIN_PLUGINS.map(([id, defaultSort]) => {
+    const prev = byId.get(id)
+    return {
+      id,
+      enabled: typeof prev?.enabled === 'boolean' ? prev.enabled : false,
+      sort: typeof prev?.sort === 'number' ? prev.sort : defaultSort,
+    }
   })
-  fs.mkdirSync(path.dirname(configFile), { recursive: true })
-  fs.writeFileSync(configFile, `${JSON.stringify(document, null, 2)}\n`)
+
+  for (const entry of existing) {
+    if (!entry || typeof entry.id !== 'string') continue
+    if (BUILTIN_PLUGINS.some(([builtin]) => builtin === entry.id)) continue
+    const minimal = {
+      id: entry.id,
+      enabled: typeof entry.enabled === 'boolean' ? entry.enabled : false,
+    }
+    if (typeof entry.sort === 'number') minimal.sort = entry.sort
+    if (typeof entry.module === 'string' && entry.module.trim()) minimal.module = entry.module
+    statePlugins.push(minimal)
+  }
+
+  const nextDoc = { version: 1, plugins: statePlugins }
+  writeStateFileAtomic(stateFile, nextDoc)
+  if (legacyExists) {
+    try {
+      fs.renameSync(legacyPluginsFile, migratedPluginsFile)
+    } catch {
+      /* 忽略重命名失败 */
+    }
+  }
+  return nextDoc
+}
+
+function resolveBuiltinModule(id) {
+  const overrideModule = path.join(userPluginsDir, id, 'index.js')
+  const overrideManifest = path.join(userPluginsDir, id, 'plugin.json')
+  if (fs.existsSync(overrideModule) && fs.existsSync(overrideManifest)) {
+    return overrideModule
+  }
+  return path.join(runtimeDir, 'plugins', id, 'index.js')
+}
+
+function buildRuntimeEntries() {
+  const doc = ensurePluginState()
+  return doc.plugins.map((entry) => ({
+    id: entry.id,
+    module: entry.module || resolveBuiltinModule(entry.id),
+    enabled: entry.enabled === true,
+    sort: typeof entry.sort === 'number' ? entry.sort : null,
+    config: {},
+  }))
+}
+
+function updateOrderInStateFile(ordered, sorts) {
+  const doc = ensurePluginState()
+  const byId = new Map(doc.plugins.map((entry) => [entry.id, entry]))
+  const head = ordered.map((id) => byId.get(id)).filter(Boolean)
+  const rest = doc.plugins.filter((entry) => !head.includes(entry))
+  for (const entry of head) {
+    entry.sort = sorts.get(entry.id)
+  }
+  writeStateFileAtomic(stateFile, { version: 1, plugins: [...head, ...rest] })
 }
 
 process.env.TRELLIS_BOARD_DATA_DIR = dataDir
@@ -228,6 +329,7 @@ fs.mkdirSync(pluginsDir, { recursive: true })
 fs.mkdirSync(path.join(dataDir, 'logs'), { recursive: true })
 
 const { getDefaultDatabase } = await import('@trellis-board/server/database.js')
+const { createPluginStore } = await import('@trellis-board/server/plugins/store.js')
 const { createPluginRuntime } = await import('@trellis-board/server/plugins/runtime.js')
 
 const logger = {
@@ -252,6 +354,28 @@ const repositories = options.repositories.map((repoPath) => ({
   path: repoPath,
 }))
 const db = getDefaultDatabase({ logger })
+const pluginStore = createPluginStore({ db })
+
+// 若迁移自旧 plugins.json，把遗留的 witops-core developerMap/assignee 一次性导入 store。
+ensurePluginState()
+if (
+  fs.existsSync(migratedPluginsFile) &&
+  pluginStore.getState('witops-core', 'legacyDeveloperConfig') == null
+) {
+  const legacyDoc = readJsonOrNull(migratedPluginsFile)
+  const witopsEntry = Array.isArray(legacyDoc?.plugins)
+    ? legacyDoc.plugins.find((item) => item?.id === 'witops-core')
+    : null
+  const cfg = witopsEntry?.config
+  if (cfg && typeof cfg === 'object' && (cfg.developerMap || cfg.assignee)) {
+    pluginStore.setState('witops-core', 'legacyDeveloperConfig', {
+      developerMap:
+        cfg.developerMap && typeof cfg.developerMap === 'object' ? cfg.developerMap : {},
+      assignee: typeof cfg.assignee === 'string' ? cfg.assignee : '',
+    })
+  }
+}
+
 const runtime = createPluginRuntime({
   db,
   appDir,
@@ -259,12 +383,13 @@ const runtime = createPluginRuntime({
   pluginsDir,
   hostVersion: options.hostVersion,
   repositories,
-  configFile: path.join(pluginsDir, 'plugins.json'),
+  store: pluginStore,
+  entriesProvider: () => buildRuntimeEntries(),
+  orderWriter: (ordered, sorts) => updateOrderInStateFile(ordered, sorts),
+  userProvider: () => parsedUserInfo,
   logger,
   env: process.env,
 })
-
-mergePluginsConfig(path.join(pluginsDir, 'plugins.json'), appDir, pluginsDir)
 
 let stopping = false
 let server = null
@@ -281,7 +406,8 @@ function eventsHandler(request, response) {
     .split(',')
     .map((topic) => topic.trim())
     .filter(Boolean)
-  const matches = (name) => !topics.length || topics.some((topic) => name === topic || name.startsWith(`${topic}/`))
+  const matches = (name) =>
+    !topics.length || topics.some((topic) => name === topic || name.startsWith(`${topic}/`))
   response.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-store, no-transform',
@@ -310,7 +436,15 @@ function eventsHandler(request, response) {
   response.on('error', close)
 }
 
-async function forwardPanel(pluginId, subPath, search, base, method = 'GET', body = '', headers = {}) {
+async function forwardPanel(
+  pluginId,
+  subPath,
+  search,
+  base,
+  method = 'GET',
+  body = '',
+  headers = {},
+) {
   const state = runtime.supervisor.plugins.get(pluginId)
   if (!state) return { status: 404, body: { error: `未知插件: ${pluginId}` } }
   const result = await runtime.supervisor.forwardHttp(state, {
@@ -320,7 +454,9 @@ async function forwardPanel(pluginId, subPath, search, base, method = 'GET', bod
     body,
     anonymous: true,
   })
-  return result && typeof result === 'object' ? result : { status: 502, body: { error: '插件返回无效响应' } }
+  return result && typeof result === 'object'
+    ? result
+    : { status: 502, body: { error: '插件返回无效响应' } }
 }
 
 function writePluginResult(response, result, secret, prefix = '') {
@@ -419,13 +555,7 @@ async function handleInternal(request, response, url, body) {
       sendJson(response, 400, { error: 'enabled 必须是布尔值' })
       return
     }
-    const configFile = path.join(pluginsDir, 'plugins.json')
-    let document = null
-    try {
-      document = JSON.parse(fs.readFileSync(configFile, 'utf8').replace(/^\uFEFF/, ''))
-    } catch {
-      document = null
-    }
+    const document = ensurePluginState()
     const entries = Array.isArray(document?.plugins) ? document.plugins : []
     const entry = entries.find((item) => item?.id === id)
     if (!entry) {
@@ -433,7 +563,7 @@ async function handleInternal(request, response, url, body) {
       return
     }
     entry.enabled = body.enabled
-    fs.writeFileSync(configFile, `${JSON.stringify(document, null, 2)}\n`)
+    writeStateFileAtomic(stateFile, document)
     const reload = await runtime.reload()
     // reload 只处理入口变化；开关从关到开需要显式拉起。
     if (body.enabled) {
@@ -567,7 +697,8 @@ async function handle(request, response) {
       sendJson(response, 404, { error: 'a2a-intake 插件未启用' })
       return
     }
-    const body = request.method === 'GET' || request.method === 'HEAD' ? '' : await readTextBody(request)
+    const body =
+      request.method === 'GET' || request.method === 'HEAD' ? '' : await readTextBody(request)
     const headers = {
       'content-type': request.headers['content-type'] || 'application/json',
       'x-trellis-base': `http://${request.headers.host || '127.0.0.1'}`,
@@ -606,8 +737,7 @@ async function handle(request, response) {
     }
     const base = `http://${request.headers.host || '127.0.0.1'}/s/${options.secret}/${pluginId}`
     const method = String(request.method || 'GET').toUpperCase()
-    const body =
-      method === 'GET' || method === 'HEAD' ? '' : await readTextBody(request)
+    const body = method === 'GET' || method === 'HEAD' ? '' : await readTextBody(request)
     const headers = {}
     if (request.headers['content-type']) headers['content-type'] = request.headers['content-type']
     const result = await forwardPanel(pluginId, subPath, url.search, base, method, body, headers)
@@ -621,7 +751,8 @@ async function handle(request, response) {
   }
 
   if (url.pathname.startsWith('/internal/')) {
-    const body = request.method === 'GET' || request.method === 'HEAD' ? {} : await readJsonBody(request)
+    const body =
+      request.method === 'GET' || request.method === 'HEAD' ? {} : await readJsonBody(request)
     await handleInternal(request, response, url, body)
     return
   }
@@ -639,7 +770,6 @@ async function handle(request, response) {
 
   sendJson(response, 404, { error: '未知路径' })
 }
-
 
 async function shutdown() {
   if (stopping) return

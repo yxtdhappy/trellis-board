@@ -97,8 +97,9 @@ Team 服务端默认关闭插件机制；桌面客户端改用 EXE 内置的本�
 - 懒启动：`desktop_plugins_list` 只读配置；只有至少一个插件 `enabled` 时才使用环境门下载的
   `runtime\node\node.exe` 启动宿主，停用最后一个插件或退出托盘立即回收进程树。
 - 隔离目录：`%LOCALAPPDATA%\TrellisBoard\data\desktop-plugins\<serverHash>\<userId>\`
-  （`plugins.json`、`plugins/logs`、`store`、`board.sqlite`、DPAPI 加密的 `secrets.dpapi`）。
-  切换服务器或账号不会复用上一个账号的插件数据。
+  （`plugin-state.json`、`plugins/logs`、`store`、`board.sqlite`、DPAPI 加密的 `secrets.dpapi`）。
+  切换服务器或账号不会复用上一个账号的插件数据；旧版 `plugins/plugins.json` 会一次性迁移并重命名为
+  `plugins.json.migrated`。
 - 内置资源：构建期由 `src-tauri/build.rs` 把宿主脚本、服务端插件运行时、共享工具与 6 个插件嵌入
   EXE，首次启动按版本校验和释放到
   `%LOCALAPPDATA%\TrellisBoard\runtime\plugins\<version>\<stamp>\`；绿色包仍是单 EXE。
