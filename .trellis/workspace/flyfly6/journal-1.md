@@ -1610,3 +1610,26 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Status
 
 [OK] **Completed**
+
+
+## Session 49: 统一全站业务弹窗布局、按钮层级与对齐规范
+<!-- trellis-session: v=2 fp=831b684e1a519e64 -->
+
+**Date**: 2026-11-24
+**Task**: 统一全站业务弹窗布局、按钮层级与对齐规范
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+统一全站 21 个业务弹窗底栏按钮高度/顺序/主次层级与 DialogTitle 基准，修复 TaskOwnershipDialog 工具栏、PluginLogsDialog 与 TaskDetailArtifactViewer 双倍缩进、TaskDetailDialog/ConditionChecks 对齐与防溢出，以及 CreateTaskDialog/ProjectOnboardingDialog 错误提示分离
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `adc40f6` | fix(web): 统一全站业务弹窗布局、按钮层级与对齐规范 |
+
+### Status
+
+[OK] **Completed**

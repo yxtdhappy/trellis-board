@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 48
+- **Total Sessions**: 49
 - **Last Active**: 2026-11-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1612 | Active |
+| `journal-1.md` | ~1635 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 49 | 2026-11-24 | 统一全站业务弹窗布局、按钮层级与对齐规范 | `adc40f6` | `main` |
 | 48 | 2026-11-24 | 修复基础 UI 原语高度对齐与全局样式缺陷 | `9bf75e4` | `main` |
 | 47 | 2026-11-23 | 修复任务详情弹窗关闭按钮高度与对齐问题并规划全局 UI 治理任务树 | `1a2dd77` | `main` |
 | 46 | 2026-11-23 | 修复客户端登录心跳绑定解析失败 | `7d28af8`, `0d040c7` | `main` |
