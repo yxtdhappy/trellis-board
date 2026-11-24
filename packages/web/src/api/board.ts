@@ -1,5 +1,6 @@
 import { ApiError, requestJson, redirectToLogin } from './request.ts'
 import type { ArchiveFileMetadata, BoardTask } from '@/features/board/task-view'
+import { withBasePath } from '@/lib/base-path.js'
 import { normalizeTaskPage, taskContentMaterialized } from '@/lib/team-client.js'
 import { buildOwnershipInboxQuery, normalizeOwnershipInboxPage } from '@/lib/ownership-inbox.js'
 
@@ -179,7 +180,7 @@ export const fetchTaskDetail = (task: BoardTask) => {
 export async function downloadArchiveFile(file: ArchiveFileMetadata) {
   let response: Response
   try {
-    response = await fetch(file.downloadUrl, {
+    response = await fetch(withBasePath(file.downloadUrl), {
       credentials: 'same-origin',
       cache: 'no-store',
     })

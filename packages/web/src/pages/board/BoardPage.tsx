@@ -44,6 +44,7 @@ import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
 import { fetchDesktopPanels } from '@/api/desktop-plugins'
 import { resolveRuntimeRole } from '@/lib/role'
+import { withBasePath } from '@/lib/base-path.js'
 import { DesktopPluginsView } from '@/features/plugins/DesktopPluginsView'
 import { canManageProject, createIdempotencyKey, taskVersion } from '@/lib/team-client.js'
 import { normalizeOwnershipBranches } from '@/lib/ownership-inbox.js'
@@ -172,7 +173,7 @@ export function BoardPage() {
     Boolean(runtime?.systemAdmin) ||
     Boolean(runtime?.teams?.some((team) => team.role === 'admin')) ||
     projects.some((project) => canManageProject(project))
-  const adminHref = !isTauri && canManageAdmin ? '/admin.html' : undefined
+  const adminHref = !isTauri && canManageAdmin ? withBasePath('/admin.html') : undefined
 
   const groups = useMemo(
     () => filterGroups(tasks, filters, projects, board?.savedViews || [], { scopedByServer: true }),
@@ -361,7 +362,7 @@ export function BoardPage() {
     try {
       await logout()
     } finally {
-      window.location.assign('/login.html')
+      window.location.assign(withBasePath('/login.html'))
     }
   }
 

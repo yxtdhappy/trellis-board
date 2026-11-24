@@ -9,7 +9,8 @@ import { ERROR_CODES, teamError } from '../../errors.js'
 import { sendJson, requestProtocol, readJsonBody } from '../common.js'
 
 export function createAuthRoutes(ctx) {
-  const { config, db, readActor, runtimePayload, requireActor } = ctx
+  const { config, db, basePath = '', readActor, runtimePayload, requireActor } = ctx
+  const cookiePath = basePath || '/'
 
   async function handleAuth(request, response, url) {
     const { pathname } = url
@@ -30,7 +31,7 @@ export function createAuthRoutes(ctx) {
         username: body.username,
         password: body.password,
         request,
-        trustProxy: false,
+        trustProxy: Boolean(config.trustProxy),
         sessionTtlMs: config.sessionTtlMs,
       })
       sendJson(
@@ -44,6 +45,7 @@ export function createAuthRoutes(ctx) {
         {
           'set-cookie': sessionCookie(result.token, {
             cookieSecure: requestProtocol(request) === 'https:',
+            cookiePath,
           }),
         },
       )
@@ -59,6 +61,7 @@ export function createAuthRoutes(ctx) {
         {
           'set-cookie': clearSessionCookie({
             cookieSecure: requestProtocol(request) === 'https:',
+            cookiePath,
           }),
         },
       )

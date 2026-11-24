@@ -2,6 +2,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import { withTransaction } from '../database.js'
+import { normalizeBasePath } from '../config.js'
 import { linkTaskGroups, toTaskListItem, withManualStages } from '../loader.js'
 import { getManualRecords } from '../metadata.js'
 import { projectBoardExecution } from '../execution-projection.js'
@@ -47,11 +48,13 @@ export function createTaskSpaceIndex({
   archiveSnapshots = null,
   taskControl = null,
   executionWipLimit = 2,
+  basePath = '',
   onQueryRevisionChanged = null,
   onProjected = null,
   onProjectionFailed = null,
   logger = console,
 }) {
+  const normalizedBasePath = normalizeBasePath(basePath)
   let worker = null
   let requestId = 0
   const pending = new Map()
@@ -205,7 +208,7 @@ export function createTaskSpaceIndex({
         name: path.posix.basename(row.relative_path),
         sizeBytes: Number(row.size_bytes || 0),
         mimeType: row.mime_type || 'application/octet-stream',
-        downloadUrl: `/api/archive-files/${encodeURIComponent(row.id)}?taskSpaceId=${encodeURIComponent(taskSpaceId)}`,
+        downloadUrl: `${normalizedBasePath}/api/archive-files/${encodeURIComponent(row.id)}?taskSpaceId=${encodeURIComponent(taskSpaceId)}`,
       })
     }
     return grouped

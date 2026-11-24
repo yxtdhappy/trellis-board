@@ -12,6 +12,7 @@ const localPluginTarget =
   `http://127.0.0.1:${process.env.VITE_LOCAL_PLUGIN_PORT || '4517'}`
 
 export default defineConfig({
+  base: './',
   plugins: [react(), tailwindcss()],
   // 多个 dev server 共用 node_modules/.vite 会互相失效依赖优化（504 Outdated Optimize Dep）
   cacheDir: process.env.VITE_CACHE_DIR || 'node_modules/.vite',

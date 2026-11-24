@@ -159,12 +159,14 @@ impl RawResponse {
 /// 会话类请求客户端（带 origin / cookie 头，可读取 Set-Cookie）。
 struct SessionClient {
     server_url: String,
+    origin: String,
     http: reqwest::Client,
 }
 
 impl SessionClient {
     fn new(server_url: &str) -> AgentResult<Self> {
         let server_url = protocol::normalize_server_url(server_url)?;
+        let origin = protocol::server_origin(&server_url)?;
         let mut builder = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(15))
             .redirect(reqwest::redirect::Policy::none());
@@ -174,7 +176,11 @@ impl SessionClient {
         let http = builder.build().map_err(|error| {
             AgentError::new(code::HTTP_ERROR, format!("HTTP 客户端初始化失败：{error}"))
         })?;
-        Ok(Self { server_url, http })
+        Ok(Self {
+            server_url,
+            origin,
+            http,
+        })
     }
 
     async fn request(
@@ -390,7 +396,7 @@ async fn login_request(
         .request(
             Method::POST,
             "/api/auth/login",
-            &[("origin", client.server_url.clone())],
+            &[("origin", client.origin.clone())],
             Some(json!({ "username": username, "password": password })),
         )
         .await?;
@@ -455,7 +461,7 @@ async fn logout_request(client: &SessionClient, session_token: &str) -> AgentRes
             Method::POST,
             "/api/auth/logout",
             &[
-                ("origin", client.server_url.clone()),
+                ("origin", client.origin.clone()),
                 ("cookie", cookie_header(session_token)),
             ],
             Some(json!({})),
@@ -809,7 +815,7 @@ async fn complete_login(
             Method::POST,
             "/api/desktop/enroll-tokens",
             &[
-                ("origin", server_url.to_string()),
+                ("origin", client.origin.clone()),
                 ("cookie", cookie_header(&session.session_token)),
             ],
             Some(json!({ "deviceName": device_name })),

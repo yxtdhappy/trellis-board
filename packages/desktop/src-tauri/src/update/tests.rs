@@ -77,6 +77,18 @@ fn normalize_server_base_builds_client_updates_url() {
         normalize_server_base("http://[::1]:4317/"),
         Some("http://[::1]:4317/client-updates".to_string())
     );
+    assert_eq!(
+        normalize_server_base("http://spec-board.weintdata.cn/weint-spec-board"),
+        Some("http://spec-board.weintdata.cn/weint-spec-board/client-updates".to_string())
+    );
+    assert_eq!(
+        normalize_server_base("http://spec-board.weintdata.cn/weint-spec-board/"),
+        Some("http://spec-board.weintdata.cn/weint-spec-board/client-updates".to_string())
+    );
+    assert_eq!(
+        normalize_server_base("https://board.internal/weint-spec-board/login.html?next=/"),
+        Some("https://board.internal/weint-spec-board/client-updates".to_string())
+    );
     assert_eq!(normalize_server_base(""), None);
     assert_eq!(normalize_server_base("ftp://board.internal"), None);
     assert_eq!(normalize_server_base("not-a-url"), None);
@@ -123,5 +135,8 @@ async fn fetches_manifest_from_client_updates_subpath() {
     let base = normalize_server_base(&format!("http://{address}")).unwrap();
     let release = fetch_release(&reqwest::Client::new(), &base).await.unwrap();
     assert_eq!(release.version, "0.4.60");
-    assert!(server.join().unwrap().contains("GET /client-updates/latest.json"));
+    assert!(server
+        .join()
+        .unwrap()
+        .contains("GET /client-updates/latest.json"));
 }

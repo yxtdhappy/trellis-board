@@ -92,7 +92,7 @@ pub(crate) fn ensure_board_caller(app: &AppHandle, window: &WebviewWindow) -> Re
         .map_err(|_| "无法读取 Board 地址".to_string())?
         .clone()
         .ok_or_else(|| "尚未登录 Board".to_string())?;
-    if navigation::same_origin(&current, &board) {
+    if navigation::same_board_scope(&current, &board) {
         Ok(board)
     } else {
         Err("该命令只允许当前登录的 Board 页面调用".to_string())
@@ -189,24 +189,6 @@ fn validate_project_id(value: String) -> Result<String, String> {
     }
 }
 
-fn server_root(board: &Url) -> String {
-    let host = board.host_str().unwrap_or_default();
-    let host = if host.contains(':') && !host.starts_with('[') {
-        format!("[{host}]")
-    } else {
-        host.to_string()
-    };
-    format!(
-        "{}://{}{}",
-        board.scheme(),
-        host,
-        board
-            .port()
-            .map(|port| format!(":{port}"))
-            .unwrap_or_default()
-    )
-}
-
 fn default_device_name() -> String {
     std::env::var("COMPUTERNAME")
         .ok()
@@ -237,7 +219,7 @@ fn cookie_for(board: &Url, value: &str) -> Result<Cookie<'static>, String> {
         .to_string();
     Ok(Cookie::build((SESSION_COOKIE, value.to_string()))
         .domain(host)
-        .path("/")
+        .path(navigation::board_cookie_path(board))
         .http_only(true)
         .same_site(SameSite::Strict)
         .secure(board.scheme() == "https")
@@ -309,7 +291,7 @@ async fn clear_desktop_session(app: &AppHandle, state: &DesktopAuthState, revoke
     navigate_local_login(app, state);
     if revoke_session {
         if let (Some(board), Some(token)) = (board.as_ref(), token.as_deref()) {
-            let _ = agent_service::logout(app, &server_root(board), token).await;
+            let _ = agent_service::logout(app, &navigation::board_server_url(board), token).await;
         }
     }
 }
@@ -437,7 +419,7 @@ async fn desktop_login(
     validate_password(&password)?;
     // 登录页出现时旧会话已结束，先停止旧账号的后台同步，成功后再按新配置重启。
     agent_service::stop(&app);
-    let server_url = server_root(&board);
+    let server_url = navigation::board_server_url(&board);
     let previous = config::load().unwrap_or(None);
     let force_new = previous
         .as_ref()
@@ -1034,9 +1016,7 @@ fn build_main_window(
                 let state = shell_app.state::<DesktopAuthState>();
                 let board = state.board_url.read().ok().and_then(|value| value.clone());
                 if let Some(board) = board.as_ref() {
-                    if navigation::same_origin(candidate, board)
-                        && matches!(candidate.path(), "/login" | "/login.html")
-                    {
+                    if navigation::is_board_login_path(candidate, board) {
                         let app = shell_app.clone();
                         let auth = state.inner().clone();
                         tauri::async_runtime::spawn(async move {

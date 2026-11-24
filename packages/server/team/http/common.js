@@ -352,7 +352,24 @@ export function servePluginUi(request, response, url) {
   })
 }
 
-export function serveStatic(request, response, url, publicDir) {
+export function rewriteHtmlForBasePath(html, basePath) {
+  if (!basePath) return html
+  let rewritten = String(html).replace(
+    /\b(href|src)=(["'])(?:\.\/|\/(?=(?:assets\/|favicon\.svg\b|theme-init\.js\b)))/g,
+    `$1=$2${basePath}/`,
+  )
+  if (!/name=(["'])trellis-base-path\1/i.test(rewritten)) {
+    const meta = `<meta name="trellis-base-path" content="${basePath}" />`
+    if (/<\/head>/i.test(rewritten)) {
+      rewritten = rewritten.replace(/<\/head>/i, `  ${meta}\n  </head>`)
+    } else {
+      rewritten = `${meta}\n${rewritten}`
+    }
+  }
+  return rewritten
+}
+
+export function serveStatic(request, response, url, publicDir, { basePath = '' } = {}) {
   serveStaticCommon({
     request,
     response,
@@ -360,6 +377,7 @@ export function serveStatic(request, response, url, publicDir) {
     publicDir,
     security: true,
     cacheControl: () => 'no-store',
+    transformHtml: basePath ? (html) => rewriteHtmlForBasePath(html, basePath) : null,
     invalidPath: () =>
       sendJson(response, 400, {
         error: '静态资源路径无效',

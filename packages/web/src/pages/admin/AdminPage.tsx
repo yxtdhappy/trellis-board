@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
+import { withBasePath } from '@/lib/base-path.js'
 import { useAppearance } from '@/app/theme'
 import type { AdminView } from '@/api/admin'
 import { useAdminConsole } from '@/hooks/useAdminConsole'
@@ -112,7 +113,7 @@ export function AdminPage() {
         <div className="flex shrink-0 items-center gap-3">
           <a
             className="flex shrink-0 items-center gap-2 whitespace-nowrap"
-            href="/"
+            href={withBasePath('/')}
             aria-label="返回 Trellis Board"
           >
             <TrellisLogo size={24} />
@@ -123,7 +124,7 @@ export function AdminPage() {
           <Button
             variant="ghost"
             className="rounded-lg bg-muted px-2.5 text-muted-foreground"
-            render={<a href="/" />}
+            render={<a href={withBasePath('/')} />}
           >
             返回看板
           </Button>

@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
 import { ApiError, requestJson } from '@/api/request'
+import { withBasePath } from '@/lib/base-path.js'
 import { normalizeRuntime, normalizeUser, safeReturnTo } from '@/lib/team-client.js'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
@@ -16,7 +17,11 @@ type SessionUser = { mustChangePassword?: boolean } | null
 type LoginResponse = { user?: SessionUser } | null
 
 export function LoginPage() {
-  const returnTo = safeReturnTo(new URLSearchParams(window.location.search).get('returnTo'))
+  const homeHref = withBasePath('/')
+  const returnTo = safeReturnTo(
+    new URLSearchParams(window.location.search).get('returnTo'),
+    homeHref,
+  )
   const [state, setState] = useState<LoginState>('checking')
   const [message, setMessage] = useState('')
   const [username, setUsername] = useState('')
@@ -31,11 +36,11 @@ export function LoginPage() {
         const result = await requestJson('/api/runtime')
         const runtime = normalizeRuntime(result.data as Parameters<typeof normalizeRuntime>[0])
         if (!runtime.team) {
-          window.location.replace('/')
+          window.location.replace(homeHref)
           return
         }
         if (runtime.authenticated && runtime.user) {
-          window.location.replace(runtime.user.mustChangePassword ? '/' : returnTo)
+          window.location.replace(runtime.user.mustChangePassword ? homeHref : returnTo)
           return
         }
         if (cancelled) return
@@ -44,7 +49,7 @@ export function LoginPage() {
       } catch (error) {
         if (cancelled) return
         if (error instanceof ApiError && error.status === 404) {
-          window.location.replace('/')
+          window.location.replace(homeHref)
           return
         }
         setMessage(`无法读取登录状态：${(error as Error).message}`)
@@ -55,7 +60,7 @@ export function LoginPage() {
     return () => {
       cancelled = true
     }
-  }, [returnTo])
+  }, [homeHref, returnTo])
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -68,7 +73,7 @@ export function LoginPage() {
       })
       const sessionUser = result.data?.user ?? (result.data as SessionUser)
       const user = normalizeUser(sessionUser)
-      window.location.replace(user?.mustChangePassword ? '/' : returnTo)
+      window.location.replace(user?.mustChangePassword ? homeHref : returnTo)
     } catch (error) {
       setPassword('')
       setMessage((error as Error).message)
@@ -82,7 +87,7 @@ export function LoginPage() {
   return (
     <main className="grid min-h-dvh bg-background lg:grid-cols-[minmax(0,46%)_minmax(0,54%)]">
       <section className="hidden flex-col justify-between gap-12 bg-primary p-14 text-primary-foreground lg:flex">
-        <a className="flex items-center gap-3" href="/" aria-label="Trellis Board 首页">
+        <a className="flex items-center gap-3" href={homeHref} aria-label="Trellis Board 首页">
           <TrellisLogo size={36} variant="inverted" />
           <span className="flex flex-col leading-tight">
             <span className="text-base font-semibold">Trellis Board</span>
@@ -140,7 +145,7 @@ export function LoginPage() {
           <CardHeader className="gap-2">
             <a
               className="mb-1 flex items-center gap-2.5 lg:hidden"
-              href="/"
+              href={homeHref}
               aria-label="Trellis Board 首页"
             >
               <TrellisLogo size={28} />

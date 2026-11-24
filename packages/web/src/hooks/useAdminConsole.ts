@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ApiError, redirectToLogin } from '@/api/request'
+import { withBasePath } from '@/lib/base-path.js'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import * as admin from '@/api/admin'
 import type {
@@ -65,7 +66,7 @@ export type AdminConsole = AdminProjects & {
 
 function redirectIfUnauthorized(error: unknown): boolean {
   if (!(error instanceof ApiError) || error.status !== 401) return false
-  if (error.code === 'PASSWORD_CHANGE_REQUIRED') window.location.replace('/')
+  if (error.code === 'PASSWORD_CHANGE_REQUIRED') window.location.replace(withBasePath('/'))
   else redirectToLogin()
   return true
 }
@@ -117,7 +118,7 @@ export function useAdminConsole(): AdminConsole {
         setTeams(runtime.teams)
         setRuntimeProjects(runtime.projects)
         if (!runtime.team && !runtime.systemAdmin) {
-          window.location.replace('/')
+          window.location.replace(withBasePath('/'))
           return
         }
         if (!runtime.authenticated || !runtime.user) {
@@ -125,7 +126,7 @@ export function useAdminConsole(): AdminConsole {
           return
         }
         if (runtime.user.mustChangePassword) {
-          window.location.replace('/')
+          window.location.replace(withBasePath('/'))
           return
         }
         const manageableTeams = runtime.systemAdmin
@@ -352,7 +353,7 @@ export function useAdminConsole(): AdminConsole {
     } catch {
       // 即使服务端会话已失效，也回到登录页。
     }
-    window.location.replace('/login.html')
+    window.location.replace(withBasePath('/login.html'))
   }, [])
 
   const projects = useAdminProjects({

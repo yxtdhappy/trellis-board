@@ -85,8 +85,10 @@ Team 模式装配以下任务快照和命令边界：
 - Agent 认证和团队 Session 是两条独立鉴权链。Agent 路由要求设备 Bearer，Web 路由要求 Session Cookie
   并对写请求执行同源 Origin 校验。
 - Cookie 头解析与 `Set-Cookie` 拼装只在 `packages/server/team/auth.js` 用 `cookie` 包实现
-  （`parseCookieHeader` 返回 `Map`，`sessionCookie`/`clearSessionCookie` 统一 `HttpOnly; SameSite=Strict; Path=/`
+  （`parseCookieHeader` 返回 `Map`，`sessionCookie`/`clearSessionCookie` 统一 `HttpOnly; SameSite=Strict`、`Path=${basePath || '/'}`
   并在 HTTPS 时追加 `Secure`），不要另写 split/拼接。
+- 服务端支持通过 `TRELLIS_BOARD_BASE_PATH` 挂载在域名子路径（如 `/weint-spec-board`）：`http.js` 同时兼容反代透传前缀（`/weint-spec-board/*` 剥离前缀后再匹配，无尾斜杠 `GET/HEAD /weint-spec-board` 返回 `302` 至 `/weint-spec-board/`）与反代已剥离前缀（`/*`）；归档下载 `downloadUrl` 与 HTML 静态资源引用按 `basePath` 前缀输出，并在 HTML `<head>` 注入 `<meta name="trellis-base-path" content="${basePath}" />`（不引入 `<base>` 或内联脚本，保持 `script-src 'self'` 与 `base-uri 'none'`）。
+- `trustProxy`（`TRELLIS_BOARD_TRUST_PROXY`）默认 `true`，`POST /api/auth/login` 与 `POST /api/agent/enroll` 读取 `config.trustProxy` 决定是否信任 `X-Forwarded-For` 执行 IP 限流与会话记录。
 
 ## JSON 协议
 
@@ -591,7 +593,7 @@ fs.renameSync(tempFile, targetFile);
 
 `packages/web/vite.config.ts` 将构建产物写入 `packages/server/public/`，它同时是 standalone `packages/server/index.js` 和 Team `createTeamRuntime()` 的默认静态根目录。Team 默认使用 `path.resolve(serverDir, '../public')`，仍允许调用方通过 `publicDir` 显式覆盖；不要把默认目录解析到仓库根 `public/`。
 
-静态资源由 [packages/server/http-common.js](../../../packages/server/http-common.js) 的 `serveStatic()` 统一实现：只接受 `GET` / `HEAD`，将 `/` 映射为 `index.html`，用 `path.sep` 边界加 `realpathSync` 防目录越界，只服务 `STATIC_TYPES` 白名单内的扩展名，并发送 `content-length`。两个入口只注入响应形状：Team 返回 `404 {"error":"静态资源不存在","code":"NOT_FOUND"}` 且一律 `no-store`，Standalone 返回纯文本 `404` 且 HTML `no-store`、其他文件缓存 `60` 秒。修改静态边界时必须按对应入口补测试；Team 回归至少覆盖默认目录、显式覆盖、三个页面入口和 404 JSON。
+静态资源由 [packages/server/http-common.js](../../../packages/server/http-common.js) 的 `serveStatic()` 统一实现：只接受 `GET` / `HEAD`，将 `/` 映射为 `index.html`，用 `path.sep` 边界加 `realpathSync` 防目录越界，只服务 `STATIC_TYPES` 白名单内的扩展名，并发送 `content-length`（当 Team 配置了非空 `basePath` 时，`.html` 通过 `transformHtml` 注入 `<meta name="trellis-base-path" ... />` 并改写资源前缀，按改写后字节重算 `content-length`）。修改静态边界时必须按对应入口补测试；Team 回归至少覆盖默认目录、显式覆盖、三个页面入口、子路径 HTML 改写和 404 JSON。
 
 ## 反模式
 

@@ -593,3 +593,51 @@ async fn login_desktop_reuses_device_and_merges_unknown_and_disabled_bindings() 
     server_task.abort();
     let _ = tokio::fs::remove_dir_all(root).await;
 }
+
+#[tokio::test]
+async fn session_client_sends_subpath_url_with_pure_origin_header() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
+    let address = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.expect("accept");
+        let mut buf = [0u8; 4096];
+        let read = socket.read(&mut buf).await.expect("read");
+        let raw = String::from_utf8_lossy(&buf[..read]).to_string();
+        let body = r#"{"user":{"username":"alice","mustChangePassword":false},"expiresAt":"2099-01-01T00:00:00Z"}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: trellis_team_session={}; Path=/weint-spec-board; HttpOnly\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "t".repeat(32),
+            body.len(),
+            body
+        );
+        socket
+            .write_all(response.as_bytes())
+            .await
+            .expect("write response");
+        raw
+    });
+
+    let client =
+        SessionClient::new(&format!("http://{address}/weint-spec-board/")).expect("client");
+    let session = login_request(&client, "alice", "Secret-123")
+        .await
+        .expect("login succeeds");
+    assert_eq!(session.username, "alice");
+
+    let captured = server.await.expect("server join");
+    let normalized = captured.replace("\r\n", "\n");
+    assert!(
+        normalized.starts_with("POST /weint-spec-board/api/auth/login "),
+        "unexpected request line: {normalized}"
+    );
+    assert!(
+        normalized
+            .to_ascii_lowercase()
+            .contains(&format!("\norigin: http://{address}\n")),
+        "expected pure origin header without subpath, got: {normalized}"
+    );
+}

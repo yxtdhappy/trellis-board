@@ -59,8 +59,10 @@ yarn start
 
 仓库根的 `.env` 已入库：首行 `node_version=24` 供 Jenkins 流水线读取并切换 Node 版本，其余键是团队版
 运行默认值（`PORT=4317`、`TRELLIS_BOARD_MODE=team`、`TRELLIS_BOARD_DATA_DIR=`、
-`TRELLIS_WATCH_DEBOUNCE_MS=400`），所以 `yarn start` 默认以团队模式启动。`TRELLIS_BOARD_MODE`
-只接受 `team`，其他值会在启动时直接报错；可用键见根目录 `.env.example`。
+`TRELLIS_WATCH_DEBOUNCE_MS=400`、`TRELLIS_BOARD_BASE_PATH=/weint-spec-board`、
+`TRELLIS_BOARD_TRUST_PROXY=true`），所以 `yarn start` 默认以团队模式挂载 `/weint-spec-board` 启动
+（`yarn dev` 会自动屏蔽仅来自 `.env` 的 `TRELLIS_BOARD_BASE_PATH`，本地开发默认仍跑在 `/`；根路径部署可设 `--base-path=/`）。
+`TRELLIS_BOARD_MODE` 只接受 `team`，其他值会在启动时直接报错；可用键见根目录 `.env.example`。
 团队模式首次使用需先建系统管理员（见下）。
 
 ### 脚本命令与跨平台参数
@@ -70,7 +72,7 @@ yarn start
 | 命令 | 常用参数与说明 |
 | --- | --- |
 | `yarn dev` | 统一开发入口：`--mode=full`（默认，服务端 `--watch` + Vite HMR）、`web`（仅 Vite）、`server`（仅服务端）、`desktop`（服务端 + Board UI + `cargo tauri dev`）。默认使用 `<用户数据根>-dev` 隔离数据与插件目录，加 `--no-isolate` 直连生产目录；Vite `/api` 代理到 `PORT`，前端端口可用 `--web-port`（`VITE_DEV_PORT`）指定 |
-| `yarn start` | 同进程加载 `packages/server/index.js` 启动 Team 服务端，支持 `--port`、`--data-dir`、`--plugins-dir`、`--client-updates-dir`、`--watch-debounce` 等参数 |
+| `yarn start` | 同进程加载 `packages/server/index.js` 启动 Team 服务端，支持 `--port`、`--base-path`、`--trust-proxy`/`--no-trust-proxy`、`--data-dir`、`--plugins-dir`、`--client-updates-dir`、`--watch-debounce` 等参数 |
 | `yarn build` | 统一构建入口：`--target=web`（默认，输出到 `packages/server/public`）、`desktop-ui`（输出到 `packages/desktop/ui`）、`desktop`（桌面 EXE，可加 `--skip-ui`）、`portable`（Windows 便携 ZIP）、`all`（`web` + `desktop-ui`）；支持 `--role=server\|client` 与 `--skip-typecheck` |
 | `yarn test` | 统一测试与检查：`--scope=core`（默认，跑 `packages/*/test/*.test.js` 与 `scripts/test/*.test.js`）、`plugins`、`all`、`server`、`web`、`shared`、`desktop`、`scripts`、`rust`、`lint`；支持 `--file=<substr>` / 位置参数按文件名过滤、`-t/--grep` 正则过滤、`-e` / `--real-acp` |
 | `yarn format` / `yarn format:check` | 使用 `oxfmt` 格式化全仓或检查格式 |

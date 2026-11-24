@@ -153,6 +153,73 @@ pub fn assert_safe_id_default(value: Option<&str>, field: &str) -> AgentResult<S
     assert_safe_id(value, field, code::INVALID_RESPONSE)
 }
 
+const RESERVED_FIRST_SEGMENTS: [&str; 4] = ["api", "client-updates", "plugin-ui", "assets"];
+const RESERVED_PAGE_ENDINGS: [&str; 4] = ["login", "login.html", "admin.html", "index.html"];
+
+fn normalize_agent_subpath(raw_path: &str) -> AgentResult<String> {
+    if raw_path.is_empty() || raw_path == "/" {
+        return Ok(String::new());
+    }
+    if raw_path.contains("//")
+        || raw_path.contains('\\')
+        || raw_path
+            .chars()
+            .any(|ch| (ch as u32) <= 0x20 || ch == '\u{7f}')
+    {
+        return err(code::CONFIG_INVALID, "Agent 服务地址路径包含非法字符");
+    }
+    let trimmed = raw_path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    let body = trimmed.strip_prefix('/').unwrap_or(trimmed);
+    let segments: Vec<&str> = body.split('/').collect();
+    for segment in &segments {
+        let valid = !segment.is_empty()
+            && *segment != "."
+            && *segment != ".."
+            && segment.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'~')
+            });
+        if !valid {
+            return err(code::CONFIG_INVALID, "Agent 服务地址路径段格式无效");
+        }
+    }
+    if RESERVED_FIRST_SEGMENTS
+        .iter()
+        .any(|reserved| segments[0].eq_ignore_ascii_case(reserved))
+    {
+        return err(code::CONFIG_INVALID, "Agent 服务地址不能使用保留路径前缀");
+    }
+    if let Some(last) = segments.last() {
+        if RESERVED_PAGE_ENDINGS
+            .iter()
+            .any(|ending| last.eq_ignore_ascii_case(ending))
+        {
+            return err(
+                code::CONFIG_INVALID,
+                "Agent 服务地址请填写服务根路径，不要包含页面文件名",
+            );
+        }
+    }
+    Ok(format!("/{}", segments.join("/")))
+}
+
+fn format_origin(parsed: &url::Url) -> AgentResult<String> {
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| AgentError::new(code::CONFIG_INVALID, "Agent 服务地址缺少主机"))?;
+    let host = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    };
+    Ok(match parsed.port() {
+        Some(port) => format!("{}://{}:{}", parsed.scheme(), host, port),
+        None => format!("{}://{}", parsed.scheme(), host),
+    })
+}
+
 pub fn normalize_server_url(input: &str) -> AgentResult<String> {
     let trimmed = input.trim();
     let parsed = url::Url::parse(trimmed)
@@ -169,21 +236,20 @@ pub fn normalize_server_url(input: &str) -> AgentResult<String> {
             "Agent 服务地址不能包含账号、查询或片段",
         );
     }
-    if parsed.path() != "/" && !parsed.path().is_empty() {
-        return err(code::CONFIG_INVALID, "Agent 服务地址必须使用根路径");
-    }
     match parsed.scheme() {
         "http" | "https" => {}
         _ => return err(code::CONFIG_INVALID, "Agent 服务地址只支持 HTTP 或 HTTPS"),
     }
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| AgentError::new(code::CONFIG_INVALID, "Agent 服务地址缺少主机"))?;
-    let origin = match parsed.port() {
-        Some(port) => format!("{}://{}:{}", parsed.scheme(), host, port),
-        None => format!("{}://{}", parsed.scheme(), host),
-    };
-    Ok(origin)
+    let origin = format_origin(&parsed)?;
+    let subpath = normalize_agent_subpath(parsed.path())?;
+    Ok(format!("{origin}{subpath}"))
+}
+
+pub fn server_origin(server_url: &str) -> AgentResult<String> {
+    let normalized = normalize_server_url(server_url)?;
+    let parsed = url::Url::parse(&normalized)
+        .map_err(|_| AgentError::new(code::CONFIG_INVALID, "Agent 服务地址不是合法 URL"))?;
+    format_origin(&parsed)
 }
 
 const RESERVED_BRANCH_NAMES: [&str; 5] = ["HEAD", "FETCH_HEAD", "ORIG_HEAD", "MERGE_HEAD", "@"];

@@ -11,6 +11,7 @@ import {
 
 export function createAgentRoutes(ctx) {
   const {
+    config,
     taskSpaces,
     taskSnapshots,
     ownershipInbox,
@@ -31,7 +32,7 @@ export function createAgentRoutes(ctx) {
         response,
         201,
         agentService.enroll(body, {
-          ip: clientIp(request, false),
+          ip: clientIp(request, Boolean(config?.trustProxy)),
         }),
       )
       return true

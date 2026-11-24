@@ -175,7 +175,43 @@ pub(crate) fn normalize_server_base(raw: &str) -> Option<String> {
         .port()
         .map(|port| format!(":{port}"))
         .unwrap_or_default();
-    Some(format!("{}://{host}{port}/client-updates", url.scheme()))
+    let raw_path = url.path();
+    if raw_path.contains('\\') || raw_path.contains("//") {
+        return None;
+    }
+    let trimmed = raw_path.trim_end_matches('/');
+    let mut segments: Vec<&str> = if trimmed.is_empty() || trimmed == "/" {
+        Vec::new()
+    } else {
+        trimmed
+            .strip_prefix('/')
+            .unwrap_or(trimmed)
+            .split('/')
+            .collect()
+    };
+    if segments
+        .iter()
+        .any(|segment| segment.is_empty() || *segment == "." || *segment == "..")
+    {
+        return None;
+    }
+    if let Some(last) = segments.last() {
+        if matches!(
+            last.to_ascii_lowercase().as_str(),
+            "login.html" | "admin.html" | "index.html" | "login"
+        ) {
+            segments.pop();
+        }
+    }
+    let prefix = if segments.is_empty() {
+        String::new()
+    } else {
+        format!("/{}", segments.join("/"))
+    };
+    Some(format!(
+        "{}://{host}{port}{prefix}/client-updates",
+        url.scheme()
+    ))
 }
 
 pub(crate) fn resolve_effective_base(

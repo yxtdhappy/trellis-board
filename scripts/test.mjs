@@ -75,6 +75,12 @@ for (const warning of resolved.warnings) {
   console.warn(warning)
 }
 
+if (resolved.sources.TRELLIS_BOARD_BASE_PATH === '.env') {
+  delete resolved.env.TRELLIS_BOARD_BASE_PATH
+  resolved.deletedKeys.add('TRELLIS_BOARD_BASE_PATH')
+  delete resolved.sources.TRELLIS_BOARD_BASE_PATH
+}
+
 applyEnv(process.env, resolved.env, resolved.deletedKeys)
 
 const { scope, file: fileFlags, grep } = resolved.options

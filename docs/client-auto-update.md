@@ -159,7 +159,7 @@ docker run -d --name trellis-board \
 
 ### 4.2 Nginx 反向代理
 
-若 Team 看板通过 Nginx 暴露 HTTPS，确保 `/client-updates/` 透传到 Node 服务端且关闭大文件缓冲与清单缓存：
+若 Team 看板通过 Nginx 暴露 HTTP/HTTPS（支持根路径或通过 `TRELLIS_BOARD_BASE_PATH` 挂载到子路径如 `/weint-spec-board`），确保 `/client-updates/`（或 `<basePath>/client-updates/`）透传到 Node 服务端且关闭大文件缓冲与清单缓存：
 
 ```nginx
 location /client-updates/ {
@@ -170,6 +170,8 @@ location /client-updates/ {
     proxy_read_timeout 300s;
 }
 ```
+
+> 当服务端配置 `TRELLIS_BOARD_BASE_PATH=/weint-spec-board` 时，客户端登录 `http://spec-board.weintdata.cn/weint-spec-board` 会自动向 `http://spec-board.weintdata.cn/weint-spec-board/client-updates/latest.json` 检查更新；服务端同时兼容 Nginx 透传 `/weint-spec-board/client-updates/...` 与剥离前缀后转发 `/client-updates/...`。
 
 ---
 

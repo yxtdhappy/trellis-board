@@ -158,6 +158,8 @@ function usage() {
       '  TRELLIS_BOARD_ADMIN_USERNAME=<初始管理员登录名，默认 admin>',
       '  TRELLIS_BOARD_ADMIN_PASSWORD=<初始管理员密码，默认 123456!@#$%^>',
       '  TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES=<true|false>',
+      '  TRELLIS_BOARD_BASE_PATH=<挂载子路径前缀，如 /weint-spec-board>',
+      '  TRELLIS_BOARD_TRUST_PROXY=<true|false，默认 true>',
       '  PORT=<监听端口，默认 4317>',
       '',
     ].join('\n'),

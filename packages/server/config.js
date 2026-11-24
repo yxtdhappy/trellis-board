@@ -5,6 +5,7 @@ import { normalizeUsername, validatePassword } from './team/credentials.js'
 
 export const DEFAULT_INITIAL_ADMIN_USERNAME = 'admin'
 export const DEFAULT_INITIAL_ADMIN_PASSWORD = '123456!@#$%^'
+const RESERVED_BASE_SEGMENTS = new Set(['api', 'client-updates', 'plugin-ui', 'assets'])
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
 export const appDir = path.resolve(serverDir, '../..')
@@ -168,6 +169,28 @@ function initialAdminSetting(env) {
   return { username, password }
 }
 
+export function normalizeBasePath(raw) {
+  if (raw == null) return ''
+  const trimmed = String(raw).trim()
+  if (!trimmed || trimmed === '/') return ''
+  if (/[\u0000-\u0020\u007f\\?#%"'<>&]/.test(trimmed) || trimmed.includes('//')) {
+    throw new Error('TRELLIS_BOARD_BASE_PATH 配置无效：不能包含空白、斜杠重复或特殊字符')
+  }
+  const withLeading = trimmed.startsWith('/') ? trimmed : `/${trimmed}`
+  const stripped =
+    withLeading.length > 1 && withLeading.endsWith('/') ? withLeading.slice(0, -1) : withLeading
+  const segments = stripped.slice(1).split('/')
+  for (const segment of segments) {
+    if (!segment || segment === '.' || segment === '..' || !/^[A-Za-z0-9._~-]+$/.test(segment)) {
+      throw new Error(`TRELLIS_BOARD_BASE_PATH 配置无效：路径段 ${segment || '(空)'} 不合法`)
+    }
+  }
+  if (RESERVED_BASE_SEGMENTS.has(segments[0].toLowerCase())) {
+    throw new Error(`TRELLIS_BOARD_BASE_PATH 配置无效：不能使用保留前缀 /${segments[0]}`)
+  }
+  return `/${segments.join('/')}`
+}
+
 export function parseTeamConfig(env = process.env) {
   const mode = String(env.TRELLIS_BOARD_MODE || 'team')
     .trim()
@@ -176,6 +199,8 @@ export function parseTeamConfig(env = process.env) {
     throw new Error('TRELLIS_BOARD_MODE 只能是 team')
   }
   const port = integerSetting(env, 'PORT', 4317, 1, 65535)
+  const basePath = normalizeBasePath(env.TRELLIS_BOARD_BASE_PATH)
+  const trustProxy = booleanSetting(env, 'TRELLIS_BOARD_TRUST_PROXY', true)
   const allowLocalGitRemotes = booleanSetting(env, 'TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES', false)
   const initialAdmin = initialAdminSetting(env)
 
@@ -183,9 +208,10 @@ export function parseTeamConfig(env = process.env) {
     mode,
     bindHost: '0.0.0.0',
     port,
+    basePath,
     sessionTtlMs: 12 * 60 * 60 * 1000,
     agentStaleMs: 60_000,
-    trustProxy: false,
+    trustProxy,
     allowLocalGitRemotes,
     initialAdmin,
     pluginsDisabled: booleanSetting(env, 'TRELLIS_PLUGINS_DISABLED', false),

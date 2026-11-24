@@ -12,6 +12,22 @@ export const ENV_SCHEMA = [
     description: 'HTTP 服务监听端口（1-65535，默认 4317）',
   },
   {
+    env: 'TRELLIS_BOARD_BASE_PATH',
+    flag: 'base-path',
+    type: 'string',
+    scopes: ['dev', 'start'],
+    description: 'HTTP 服务挂载子路径前缀（例如 /weint-spec-board；传 / 表示根路径）',
+  },
+  {
+    env: 'TRELLIS_BOARD_TRUST_PROXY',
+    flag: 'trust-proxy',
+    type: 'boolean',
+    trueValue: 'true',
+    falseValue: 'false',
+    scopes: ['dev', 'start'],
+    description: '是否信任反向代理的 X-Forwarded-For 客户端 IP（默认 true）',
+  },
+  {
     env: 'TRELLIS_BOARD_DATA_DIR',
     flag: 'data-dir',
     type: 'path',

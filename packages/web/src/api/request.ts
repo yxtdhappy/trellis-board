@@ -1,3 +1,5 @@
+import { withBasePath } from '@/lib/base-path.js'
+
 export class ApiError extends Error {
   status: number
   code: string | null
@@ -59,7 +61,7 @@ export async function requestJson<T = unknown>(
 
   let response: Response
   try {
-    response = await fetch(url, {
+    response = await fetch(withBasePath(url), {
       method: verb,
       headers: requestHeaders,
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -91,8 +93,9 @@ export async function requestJson<T = unknown>(
 }
 
 export function redirectToLogin() {
+  const loginPath = withBasePath('/login.html')
+  if (window.location.pathname === loginPath) return
   const returnTo = `${window.location.pathname}${window.location.search}`
-  if (window.location.pathname === '/login.html') return
-  const target = `/login.html?returnTo=${encodeURIComponent(returnTo)}`
+  const target = `${loginPath}?returnTo=${encodeURIComponent(returnTo)}`
   window.location.assign(target)
 }

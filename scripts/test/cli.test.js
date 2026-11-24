@@ -196,3 +196,32 @@ test('formatEnvSummary masks sensitive values and formatHelp renders sections', 
     assert.match(text, /跨平台示例:/)
   }
 })
+
+test('resolveCliEnv supports --base-path and --trust-proxy / --no-trust-proxy', () => {
+  const startSubpath = resolveCliEnv({
+    command: 'start',
+    argv: ['--base-path=/weint-spec-board', '--no-trust-proxy'],
+    env: {},
+  })
+  assert.equal(startSubpath.env.TRELLIS_BOARD_BASE_PATH, '/weint-spec-board')
+  assert.equal(startSubpath.env.TRELLIS_BOARD_TRUST_PROXY, 'false')
+  assert.equal(startSubpath.sources.TRELLIS_BOARD_BASE_PATH, 'cli')
+  assert.equal(startSubpath.sources.TRELLIS_BOARD_TRUST_PROXY, 'cli')
+
+  const startRoot = resolveCliEnv({
+    command: 'start',
+    argv: ['--base-path=/', '--trust-proxy'],
+    env: {},
+  })
+  assert.equal(startRoot.env.TRELLIS_BOARD_BASE_PATH, '/')
+  assert.equal(startRoot.env.TRELLIS_BOARD_TRUST_PROXY, 'true')
+
+  const devIsolation = resolveCliEnv({
+    command: 'dev',
+    argv: [],
+    env: {},
+    rootDir: path.resolve(import.meta.dirname, '../..'),
+  })
+  assert.equal(devIsolation.sources.TRELLIS_BOARD_BASE_PATH, '.env')
+  assert.equal(devIsolation.env.TRELLIS_BOARD_BASE_PATH, '/weint-spec-board')
+})

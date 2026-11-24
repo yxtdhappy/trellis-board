@@ -26,6 +26,7 @@ import {
 import type { BoardPayload, BoardStatus, Project, TeamQueryPage, TeamRuntime } from '@/api/board'
 import { teamRowToBoardTask, type BoardTask } from '@/features/board/task-view'
 import { ApiError } from '@/api/request'
+import { withBasePath } from '@/lib/base-path.js'
 import { normalizeOwnershipInboxCount, summarizeOwnershipInbox } from '@/lib/ownership-inbox.js'
 
 import {
@@ -247,7 +248,7 @@ export function useBoard(): BoardController {
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') scheduleAlign()
     }
-    const events = new EventSource('/api/board/events')
+    const events = new EventSource(withBasePath('/api/board/events'))
     events.onopen = align
     events.addEventListener('tasks.changed', scheduleAlign)
     window.addEventListener('focus', scheduleAlign)

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { PluginPanel as PluginPanelInfo } from '@/api/panels'
 import { requestDesktopPlugin } from '@/api/desktop-plugins'
 import { useAppearance } from '@/app/theme'
+import { withBasePath } from '@/lib/base-path.js'
 
 type BridgeMessage = {
   type?: string
@@ -90,7 +91,7 @@ export function PluginPanel({
     if (!frame || !view) return undefined
 
     readyRef.current = false
-    const base = `/api/plugins/${encodeURIComponent(panel.pluginId)}`
+    const base = withBasePath(`/api/plugins/${encodeURIComponent(panel.pluginId)}`)
     const post = (message: unknown) => view.postMessage(message, '*')
     let events: EventSource | null = null
 
@@ -98,7 +99,7 @@ export function PluginPanel({
       if (events) return
       const source = desktop
         ? panel.eventsSrc
-        : `/api/events?topics=${encodeURIComponent(panel.pluginId)}`
+        : withBasePath(`/api/events?topics=${encodeURIComponent(panel.pluginId)}`)
       if (!source) return
       events = new EventSource(source)
       events.onmessage = (event) => {
@@ -193,14 +194,16 @@ export function PluginPanel({
     }
   }, [desktop, panel, projectId])
 
+  const panelSrc = desktop ? panel.src : withBasePath(panel.src)
+
   return (
     <iframe
       ref={frameRef}
       title={panel.title}
       src={
         projectId
-          ? `${panel.src}${panel.src.includes('?') ? '&' : '?'}repositoryId=${encodeURIComponent(projectId)}`
-          : panel.src
+          ? `${panelSrc}${panelSrc.includes('?') ? '&' : '?'}repositoryId=${encodeURIComponent(projectId)}`
+          : panelSrc
       }
       sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
       className="min-h-0 w-full flex-1 rounded-xl border border-border bg-card"

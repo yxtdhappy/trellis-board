@@ -75,6 +75,11 @@ if (isolate && (mode === 'full' || mode === 'server' || mode === 'desktop')) {
   }
 }
 
+if (resolved.sources.TRELLIS_BOARD_BASE_PATH === '.env') {
+  resolved.env.TRELLIS_BOARD_BASE_PATH = ''
+  resolved.sources.TRELLIS_BOARD_BASE_PATH = 'default'
+}
+
 applyEnv(process.env, resolved.env, resolved.deletedKeys)
 
 const webDir = path.join(ROOT_DIR, 'packages', 'web')
@@ -84,6 +89,8 @@ const serverEntry = path.join('packages', 'server', 'index.js')
 
 const summary = formatEnvSummary(`[dev:${mode}]`, resolved, [
   'PORT',
+  'TRELLIS_BOARD_BASE_PATH',
+  'TRELLIS_BOARD_TRUST_PROXY',
   'VITE_DEV_PORT',
   'VITE_TRELLIS_ROLE',
   'TRELLIS_BOARD_DATA_DIR',

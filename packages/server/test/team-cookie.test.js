@@ -52,6 +52,19 @@ test('会话 Cookie 带 HttpOnly、SameSite=Strict 与 Path=/', () => {
   assert.equal(attributes.has('Max-Age'), false)
 })
 
+test('会话与清除 Cookie 支持自定义 cookiePath', () => {
+  const created = parseSetCookie(
+    sessionCookie('token-value', { cookieSecure: false, cookiePath: '/weint-spec-board' }),
+  )
+  assert.equal(created.get('Path'), '/weint-spec-board')
+
+  const cleared = parseSetCookie(
+    clearSessionCookie({ cookieSecure: true, cookiePath: '/weint-spec-board' }),
+  )
+  assert.equal(cleared.get('Path'), '/weint-spec-board')
+  assert.equal(cleared.get('Max-Age'), '0')
+})
+
 test('HTTPS 请求的会话 Cookie 追加 Secure', () => {
   assert.equal(parseSetCookie(sessionCookie('t', { cookieSecure: true })).has('Secure'), true)
 })

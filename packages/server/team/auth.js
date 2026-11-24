@@ -551,8 +551,8 @@ export function sessionCookie(token, config) {
     value: token,
     httpOnly: true,
     sameSite: 'strict',
-    path: '/',
-    secure: Boolean(config.cookieSecure),
+    path: config?.cookiePath || '/',
+    secure: Boolean(config?.cookieSecure),
   })
 }
 
@@ -563,7 +563,7 @@ export function clearSessionCookie(config) {
     maxAge: 0,
     httpOnly: true,
     sameSite: 'strict',
-    path: '/',
-    secure: Boolean(config.cookieSecure),
+    path: config?.cookiePath || '/',
+    secure: Boolean(config?.cookieSecure),
   })
 }

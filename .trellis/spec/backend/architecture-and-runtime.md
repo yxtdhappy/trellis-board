@@ -294,6 +294,7 @@ Team 启动：
 - Team 默认拒绝本地 `file://` 远端，必须显式设置
   `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES=true`。
 - Team 服务启动配置包括 `TRELLIS_BOARD_MODE`、`TRELLIS_BOARD_DATA_DIR`、`PORT`、
+  `TRELLIS_BOARD_BASE_PATH`（默认根路径 `""`；仓库 `.env` 默认写入 `/weint-spec-board`，`yarn dev`/`yarn test` 自动隔离来自 `.env` 的默认值）、`TRELLIS_BOARD_TRUST_PROXY`（默认 `true`）、
   `TRELLIS_BOARD_ADMIN_USERNAME`（默认 `admin`）、`TRELLIS_BOARD_ADMIN_PASSWORD`（默认 `123456!@#$%^`）
   和上述远端开关。
   - 首次启动且 `requireAdmin: true`、数据库无有效管理员时，`createTeamRuntime()` 使用 `config.initialAdmin` 自动创建系统管理员（`systemAdmin: true`、`mustChangePassword: true`）；日志仅记录 `userId`、`username`、`mustChangePassword`，严禁输出密码明文。

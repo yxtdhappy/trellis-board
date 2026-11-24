@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/11-24-subpath-deploy-and-trust-proxy/research/subpath-audit.md", "reason": "服务端、Web 与桌面客户端子路径和 trustProxy 完整代码影响面审计"}
+{"file": ".trellis/spec/backend/http-and-filesystem.md", "reason": "HTTP 路由、Cookie、CSP、静态资源、写操作 Origin 校验与归档下载契约"}
+{"file": ".trellis/spec/backend/architecture-and-runtime.md", "reason": "服务端配置模块职责、运行时边界与依赖方向"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端多页入口、构建输出目录与纯逻辑模块复用约束"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "桌面导航、ensure_board_caller、自动更新源与 Rust 1200 行增量守卫"}
+{"file": ".trellis/spec/guides/index.md", "reason": "仓库 LF 行尾约定与跨层修改守卫"}

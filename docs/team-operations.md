@@ -30,6 +30,8 @@
 | `TRELLIS_BOARD_DATA_DIR` | 生产必填 | 平台用户数据目录 | Windows 默认 `%LOCALAPPDATA%\TrellisBoard\server`；Ubuntu 建议 `/var/lib/trellis-board` |
 | `TRELLIS_CLIENT_UPDATES_DIR` | 否 | `<TRELLIS_BOARD_DATA_DIR>/client-updates` | 桌面客户端自动更新文件托管目录（`latest.json` 与 `.zip`），详见 [客户端自动更新指南](./client-auto-update.md) |
 | `PORT` | 否 | `4317` | HTTP 和 Team 服务端口 |
+| `TRELLIS_BOARD_BASE_PATH` | 否 | `""`（根路径；仓库 `.env` 设为 `/weint-spec-board`） | 服务挂载子路径前缀（如 `/weint-spec-board`；传入 `/` 回退根路径） |
+| `TRELLIS_BOARD_TRUST_PROXY` | 否 | `true` | 是否信任反向代理的 `X-Forwarded-For` 客户端 IP（直连暴露 Node 端口时可设为 `false`） |
 | `TRELLIS_BOARD_ADMIN_USERNAME` | 否 | `admin` | 首次启动且无有效管理员时自动创建的初始管理员登录名 |
 | `TRELLIS_BOARD_ADMIN_PASSWORD` | 否 | `123456!@#$%^` | 初始管理员密码（写入 `.env` 时含 `#` 须加引号；仅首次建号生效，不覆盖已有管理员） |
 | `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES` | 否 | `false` | 是否接受本地 `file://` Git 远端 |
@@ -39,7 +41,8 @@
 Team 模式没有 `TRELLIS_TEAM_GIT_POLL_MS`。活动任务远端不由服务端轮询；归档同步调度器只按配置周期
 读取远端归档路径。
 服务固定监听 `0.0.0.0`。直接使用 HTTP 或通过反向代理提供 HTTPS 均可；反向代理应传递
-`X-Forwarded-Proto`，服务会据此自动设置安全 Cookie。
+`X-Forwarded-Proto`（用于识别 HTTPS 并设置安全 Cookie）与 `X-Forwarded-For`（`trustProxy` 默认为 `true`，登录限流按真实客户端 IP 隔离；直连暴露 Node 端口时请设 `TRELLIS_BOARD_TRUST_PROXY=false`）。
+如需挂载在域名子路径（例如 `http://spec-board.weintdata.cn/weint-spec-board`），配置 `TRELLIS_BOARD_BASE_PATH=/weint-spec-board`（仓库 `.env` 默认已设置该值，`yarn dev` 本地开发默认仍按 `/` 启动）；服务端同时兼容反代「透传前缀」与「剥离前缀」两种转发方式。
 团队版需要本地 Git 远端时显式设置 `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES=true`；团队版默认关闭，
 单机版默认开启。修改后需要重启服务并重新登录客户端，客户端才会刷新该能力。
 
@@ -119,45 +122,54 @@ POST /api/agent/task-spaces/:id/changes
 POST /api/agent/task-spaces/:id/conflicts/:conflictId/resolve
 ```
 
-Nginx 示例：
+Nginx 示例（根路径或子路径 `/weint-spec-board` 透传模式）：
 
 ```nginx
 server {
-    listen 443 ssl;
-    server_name board.example.com;
+    listen 80;
+    server_name spec-board.weintdata.cn;
 
     client_max_body_size 64k;
     proxy_read_timeout 60s;
     proxy_send_timeout 60s;
 
-    location / {
+    location = /weint-spec-board {
+        return 302 /weint-spec-board/;
+    }
+
+    location /weint-spec-board/ {
         proxy_pass http://127.0.0.1:4317;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_http_version 1.1;
     }
 
-    location ~ ^/api/(board|agent)/events$ {
+    location ~ ^/weint-spec-board/api/(board|agent)/events$ {
         proxy_pass http://127.0.0.1:4317;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_http_version 1.1;
         proxy_buffering off;
         proxy_cache off;
         proxy_read_timeout 1800s;
     }
 
-    location ~ ^/api/agent/task-spaces/[^/]+/(preflight|changes|conflicts/.+/resolve)$ {
+    location ~ ^/weint-spec-board/api/agent/task-spaces/[^/]+/(preflight|changes|conflicts/.+/resolve)$ {
         client_max_body_size 96m;
         proxy_pass http://127.0.0.1:4317;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_http_version 1.1;
     }
 }
 ```
 
-反向代理必须传递 `X-Forwarded-Proto`。不得记录 Cookie、Authorization、配对码、任务正文或
+> 若 Nginx 使用带尾斜杠的 `proxy_pass http://127.0.0.1:4317/;`（或 `rewrite ^/weint-spec-board/(.*)$ /$1 break;`）在转发前剥离前缀，只需确保服务端 `TRELLIS_BOARD_BASE_PATH=/weint-spec-board` 且保留 `Host`、`X-Forwarded-Proto` 与 `X-Forwarded-For` 即可同样正常工作。
+
+反向代理必须传递 `Host`、`X-Forwarded-Proto` 和 `X-Forwarded-For`。不得记录 Cookie、Authorization、配对码、任务正文或
 本地仓库路径。
 
 ## 5. 项目接入与任务空间

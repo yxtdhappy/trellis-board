@@ -4,8 +4,10 @@ import path from 'node:path'
 import {
   databaseFile as defaultDatabaseFile,
   dataDir as defaultDataDir,
+  normalizeBasePath,
   resolveClientUpdatesDir,
 } from '../config.js'
+import { securityHeaders } from '../http-common.js'
 import { createBoardEventService } from '../board-events.js'
 import { openDatabase } from '../database.js'
 import { STAGE_IDS } from '../metadata.js'
@@ -73,9 +75,11 @@ function createRequestHandler({
   pluginRoutes,
   serveClientUpdates,
   publicDir,
+  basePath: providedBasePath = '',
   logger,
   isClosing,
 }) {
+  const basePath = normalizeBasePath(providedBasePath ?? config?.basePath)
   const ctx = {
     config,
     db,
@@ -93,6 +97,7 @@ function createRequestHandler({
     desktopAuth,
     pluginRoutes,
     publicDir,
+    basePath,
     logger,
     isClosing,
   }
@@ -114,7 +119,24 @@ function createRequestHandler({
     if (isClosing()) {
       throw teamError(503, ERROR_CODES.SERVICE_SHUTTING_DOWN, '服务正在关闭')
     }
-    const url = new URL(request.url || '/', requestHostOrigin(request))
+    const rawUrl = new URL(request.url || '/', requestHostOrigin(request))
+    if (
+      basePath &&
+      rawUrl.pathname === basePath &&
+      (request.method === 'GET' || request.method === 'HEAD')
+    ) {
+      response.writeHead(302, {
+        ...securityHeaders(),
+        location: `${basePath}/${rawUrl.search}`,
+      })
+      response.end()
+      return
+    }
+    let url = rawUrl
+    if (basePath && rawUrl.pathname.startsWith(`${basePath}/`)) {
+      url = new URL(rawUrl.href)
+      url.pathname = rawUrl.pathname.slice(basePath.length) || '/'
+    }
     const isAgent = url.pathname === '/api/agent/enroll' || url.pathname.startsWith('/api/agent/')
     if (isAgent) {
       if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -148,7 +170,7 @@ function createRequestHandler({
       return
     }
     if (!url.pathname.startsWith('/api/')) {
-      serveStatic(request, response, url, publicDir)
+      serveStatic(request, response, url, publicDir, { basePath })
       return
     }
     if (url.pathname === '/api/auth/register') {
@@ -328,6 +350,7 @@ export async function createTeamRuntime({
   if (config?.mode !== 'team') {
     throw new Error('createTeamRuntime 只接受 team 配置')
   }
+  const basePath = normalizeBasePath(config.basePath)
   const db = openDatabase({
     databaseFile,
     fallbackRepositories: [],
@@ -434,6 +457,7 @@ export async function createTeamRuntime({
       archiveSnapshots,
       taskControl,
       executionWipLimit: EXECUTION_WIP_LIMIT,
+      basePath,
       onQueryRevisionChanged: (revision) => boardEvents.publish({ revision }),
       onProjected: (projection) => {
         boardEvents.publish({ revision: projection.revision })
@@ -524,6 +548,7 @@ export async function createTeamRuntime({
       pluginRoutes,
       serveClientUpdates,
       publicDir,
+      basePath,
       logger,
       isClosing: () => closing,
     })
@@ -563,9 +588,11 @@ export async function createTeamRuntime({
           logger.info('team 插件未启用（默认屏蔽；设置 TRELLIS_TEAM_PLUGINS_ALLOWLIST 显式放行）')
         }
         logger.info('Trellis Team Board 已启动', {
-          url: `http://${config.bindHost || '0.0.0.0'}:${port}`,
+          url: `http://${config.bindHost || '0.0.0.0'}:${port}${basePath}`,
           bindHost: config.bindHost || '0.0.0.0',
           port,
+          basePath: basePath || '/',
+          trustProxy: Boolean(config.trustProxy),
         })
         return runtime
       } catch (error) {

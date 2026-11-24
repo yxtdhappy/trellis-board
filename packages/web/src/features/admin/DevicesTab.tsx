@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
 import { formatTime, statusTone } from '@/lib/admin-shared'
+import { appOriginWithBase } from '@/lib/base-path.js'
 import { copyText } from '@/browser/clipboard.js'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
@@ -130,7 +131,7 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
                   size="sm"
                   render={
                     <a
-                      href={`trellisboard://enroll?token=${encodeURIComponent(desktopToken.token)}&server=${encodeURIComponent(window.location.origin)}`}
+                      href={`trellisboard://enroll?token=${encodeURIComponent(desktopToken.token)}&server=${encodeURIComponent(appOriginWithBase())}`}
                     />
                   }
                 >
@@ -175,7 +176,7 @@ export function DevicesTab({ console: consoleApi }: { console: AdminConsole }) {
           <div className="flex flex-col gap-1">
             <span className="text-xs font-medium text-muted-foreground">在 Agent 本机执行</span>
             <pre className="overflow-x-auto rounded-lg bg-muted px-2.5 py-2 text-xs text-muted-foreground">
-              {`.\\trellis-agent.cmd pair --server ${window.location.origin} --name $env:COMPUTERNAME`}
+              {`.\\trellis-agent.cmd pair --server ${appOriginWithBase()} --name $env:COMPUTERNAME`}
             </pre>
           </div>
         </Panel>

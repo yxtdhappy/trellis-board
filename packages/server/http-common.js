@@ -103,6 +103,7 @@ export function serveStatic({
   publicDir,
   security = false,
   cacheControl = (extension) => (extension === '.html' ? 'no-store' : 'public, max-age=60'),
+  transformHtml = null,
   invalidPath,
   methodNotAllowed,
   forbidden,
@@ -146,6 +147,22 @@ export function serveStatic({
   }
   if (!stat?.isFile()) {
     notFound()
+    return
+  }
+  if (extension === '.html' && typeof transformHtml === 'function') {
+    const html = fs.readFileSync(realPath, 'utf8')
+    const body = Buffer.from(transformHtml(html), 'utf8')
+    response.writeHead(200, {
+      ...(security ? securityHeaders() : {}),
+      'content-type': STATIC_TYPES.get(extension),
+      'content-length': body.length,
+      'cache-control': cacheControl(extension),
+    })
+    if (request.method === 'HEAD') {
+      response.end()
+      return
+    }
+    response.end(body)
     return
   }
   response.writeHead(200, {

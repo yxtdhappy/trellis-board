@@ -6,7 +6,22 @@ fn normalizes_server_urls() {
         normalize_server_url("http://localhost:4310").unwrap(),
         "http://localhost:4310"
     );
+    assert_eq!(
+        normalize_server_url("http://spec-board.weintdata.cn/weint-spec-board/").unwrap(),
+        "http://spec-board.weintdata.cn/weint-spec-board"
+    );
+    assert_eq!(
+        server_origin("http://spec-board.weintdata.cn/weint-spec-board/").unwrap(),
+        "http://spec-board.weintdata.cn"
+    );
+    assert_eq!(
+        server_origin("https://[::1]:8443/weint-spec-board").unwrap(),
+        "https://[::1]:8443"
+    );
     assert!(normalize_server_url("http://localhost:4310/api").is_err());
+    assert!(normalize_server_url("http://localhost:4310/weint-spec-board/login.html").is_err());
+    assert!(normalize_server_url("http://localhost:4310/a//b").is_err());
+    assert!(normalize_server_url("http://localhost:4310/../evil").is_err());
     assert!(normalize_server_url("ftp://localhost").is_err());
     assert!(normalize_server_url("http://user:pass@localhost").is_err());
 }

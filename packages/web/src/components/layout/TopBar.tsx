@@ -25,6 +25,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import { useAppearance } from '@/app/theme'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
+import { withBasePath } from '@/lib/base-path.js'
 import { PreferencesDialog } from '@/features/settings/PreferencesDialog'
 import { initials } from '@/features/board/task-view'
 import { TeamSwitcher } from '@/features/admin/TeamSwitcher'
@@ -157,11 +158,19 @@ export function TopBar({
               <TooltipContent>项目侧栏</TooltipContent>
             </Tooltip>
           ) : null}
-          <a className="flex h-14 items-center" href="/" aria-label={`${brandName} 首页`}>
+          <a
+            className="flex h-14 items-center"
+            href={withBasePath('/')}
+            aria-label={`${brandName} 首页`}
+          >
             <TrellisLogo size={24} />
           </a>
           <span className="flex min-w-0 flex-col justify-center leading-none @max-[64em]:hidden">
-            <a className="max-w-40 truncate text-sm font-semibold" href="/" title={brandName}>
+            <a
+              className="max-w-40 truncate text-sm font-semibold"
+              href={withBasePath('/')}
+              title={brandName}
+            >
               {brandName}
             </a>
             {displayVersion ? (

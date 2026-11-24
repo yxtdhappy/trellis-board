@@ -67,8 +67,8 @@
 ### 3. Contracts
 
 - `desktop_logout` 不接受 server URL 或 token 参数，只读取 `DesktopAuthState` 中的当前 Board 和会话令牌。
-- 命令必须先执行 `ensure_board_caller`，当前窗口 origin 必须与 `board_url` 相同。
-- 退出时停止 Agent、删除当前 Board Cookie、清空内存中的 Board URL 和 token、清除 `ClientConfig.password`、保留 `server_url` 与 `username`，并导航到本地登录页。
+- 命令必须先执行 `ensure_board_caller`，当前窗口必须与 `board_url` 同 origin 且处于其 `board_base_path` 子路径作用域内（`same_board_scope`）；写入和删除的会话 Cookie `Path` 必须与服务端一致（`<basePath>` 或 `/`）。
+- 退出时停止 Agent、删除当前 Board Cookie、清空内存中的 Board URL 和 token、清除 `ClientConfig.password`、保留 `server_url`（含子路径，无尾 `/`）与 `username`，并导航到本地登录页。
 - 本地登录页 URL 必须在 `WebviewWindowBuilder::on_page_load` 的 `PageLoadEvent::Started` 事件中，从 `navigation::is_local_page(payload.url())` 为真的页面捕获。
 - 不得在 `builder.build()` 后立即读取 `window.url()`；此时页面可能尚未加载并返回 `about:blank`。
 - 服务端会话撤销为尽力执行；本地认证状态和保存密码必须先清理。
@@ -347,7 +347,7 @@ git push origin refs/heads/<branch>:refs/heads/<branch>
   `latest` 为 `{ version, notes, publishedAt, size } | null`。
 - 事件：`update-status-changed`（payload 同状态）、`update-progress`（`{ stage, downloaded, total }`）、
   `update-open-dialog`（空 payload）。
-- 更新源：优先级为构建期 `option_env!("TRELLIS_UPDATE_SERVER")` > 运行时当前连接的 Team 服务端 `<server_root(board_url)>/client-updates`；两者都不可用时 `enabled=false`，不发起网络请求。
+- 更新源：优先级为构建期 `option_env!("TRELLIS_UPDATE_SERVER")` > 运行时当前连接的 Team 服务端 `<board_server_url(board_url)>/client-updates`（保留合法子路径，自动剔除末尾 `login.html` 等页面文件名）；两者都不可用时 `enabled=false`，不发起网络请求。
 
 ### 3. Contracts
 
