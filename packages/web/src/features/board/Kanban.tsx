@@ -4,6 +4,7 @@ import { laneTone } from './tone.ts'
 import type { BoardTask } from './task-view.ts'
 import { laneForTask, nextStage, STAGE_LANES, taskProgress } from './task-view.ts'
 import { CopyTaskNameButton, TaskCard, type TaskLocalState } from './TaskCard.tsx'
+import { ShareTaskButton } from './ShareTaskButton.tsx'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
 import { cn } from '@/lib/utils'
 
@@ -129,7 +130,12 @@ export function Kanban({ groups, onOpen, onEditPlan, localStateFor, onDownload }
                                         {nextStage(child)?.label} · {progress.percent}%
                                       </span>
                                     </button>
-                                    <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+                                    <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+                                      <ShareTaskButton
+                                        task={child}
+                                        compact
+                                        className="bg-card shadow-xs"
+                                      />
                                       <CopyTaskNameButton
                                         task={child}
                                         compact

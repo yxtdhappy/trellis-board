@@ -239,3 +239,8 @@ commands.allow = ["desktop_plugin_request"]
 identifier = "allow-desktop-plugin-asset"
 description = "当前 Board origin 可读取本机插件面板的静态文本资源。"
 commands.allow = ["desktop_plugin_asset"]
+
+[[permission]]
+identifier = "allow-take-pending-share-link"
+description = "当前已登录 Board 可读取并清空暂存的任务分享目标，只含服务地址与任务定位参数。"
+commands.allow = ["take_pending_share_link"]

@@ -28,6 +28,7 @@ export default defineConfig({
         main: path.resolve(rootDir, 'index.html'),
         admin: path.resolve(rootDir, 'admin.html'),
         login: path.resolve(rootDir, 'login.html'),
+        share: path.resolve(rootDir, 'share.html'),
       },
     },
   },

@@ -17,11 +17,12 @@ import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 type PasswordDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onChanged?: () => void
 }
 
 const MIN_LENGTH = 6
 
-export function PasswordDialog({ open, onOpenChange }: PasswordDialogProps) {
+export function PasswordDialog({ open, onOpenChange, onChanged }: PasswordDialogProps) {
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -46,6 +47,7 @@ export function PasswordDialog({ open, onOpenChange }: PasswordDialogProps) {
       setNext('')
       setConfirm('')
       setMessage('密码已更新，其他会话已失效')
+      onChanged?.()
       onOpenChange(false)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '更新失败')
