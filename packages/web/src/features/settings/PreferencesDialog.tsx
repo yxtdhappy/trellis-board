@@ -90,7 +90,7 @@ export function PreferencesDialog({
       <DialogContent showCloseButton={false} className="gap-0 p-0 sm:max-w-130">
         <DialogHeader className="flex-row items-start justify-between gap-3 border-b border-border px-5 pt-4.5 pb-3.5">
           <div className="flex flex-col gap-1">
-            <DialogTitle className="text-sm font-semibold">偏好设置</DialogTitle>
+            <DialogTitle>偏好设置</DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
               外观与通知设置保存在本机，随时可以更改。
             </DialogDescription>
@@ -209,12 +209,10 @@ export function PreferencesDialog({
         </DialogBody>
 
         <DialogFooter className="mt-0 border-t border-border px-5 py-3.5 sm:justify-between">
-          <Button variant="ghost" size="sm" onClick={resetAppearance}>
+          <Button variant="ghost" onClick={resetAppearance}>
             恢复默认
           </Button>
-          <Button size="sm" onClick={() => onOpenChange(false)}>
-            完成
-          </Button>
+          <Button onClick={() => onOpenChange(false)}>完成</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

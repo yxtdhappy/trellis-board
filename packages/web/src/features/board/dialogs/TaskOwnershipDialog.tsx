@@ -292,6 +292,7 @@ export function TaskOwnershipDialog({
                 </Button>
                 <SelectField
                   id="ownership-other-branch"
+                  className="w-44"
                   value={otherBranch}
                   placeholder="其他可见分支"
                   ariaLabel="其他可见分支"

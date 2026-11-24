@@ -18,13 +18,15 @@ export function DependencyItem({
         <span className="rounded-full bg-background px-1.5 py-0.5 text-2xs font-semibold text-muted-foreground">
           {relation === 'blocked' ? '阻断我' : '我阻断'}
         </span>
-        <strong className="text-xs font-semibold">{item.title || '未命名任务'}</strong>
+        <strong className="min-w-0 break-words text-xs font-semibold">
+          {item.title || '未命名任务'}
+        </strong>
         <small className="text-2xs text-muted-foreground">
           {item.projectName || ''}
           {item.createdBy ? ` · ${item.createdBy}` : ''}
         </small>
       </div>
-      <p className="text-2xs text-muted-foreground">{item.reason || '未记录原因'}</p>
+      <p className="break-words text-2xs text-muted-foreground">{item.reason || '未记录原因'}</p>
       <div className="flex items-center gap-2">
         <time className="text-2xs text-muted-foreground" dateTime={item.createdAt}>
           {item.createdAt ? new Date(item.createdAt).toLocaleString('zh-CN') : '时间未知'}

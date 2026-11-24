@@ -73,15 +73,10 @@ export function ResetPasswordDialog({
             {user ? `${user.username} 的全部会话会立即失效，需要重新登录。` : ''}
           </DialogDescription>
         </DialogHeader>
-        <form className="flex min-h-0 flex-1 flex-col gap-2.5" onSubmit={handleSubmit}>
-          <DialogBody className="flex flex-col gap-2.5">
-            <Field className="gap-1">
-              <FieldLabel
-                htmlFor="reset-password"
-                className="text-xs font-medium text-muted-foreground"
-              >
-                新密码
-              </FieldLabel>
+        <form className="flex min-h-0 flex-1 flex-col gap-4" onSubmit={handleSubmit}>
+          <DialogBody className="flex flex-col gap-3">
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="reset-password">新密码</FieldLabel>
               <Input
                 id="reset-password"
                 type="password"
@@ -97,13 +92,8 @@ export function ResetPasswordDialog({
                 至少 6 个字符，不做复杂度校验。
               </FieldDescription>
             </Field>
-            <Field className="gap-1">
-              <FieldLabel
-                htmlFor="reset-password-confirm"
-                className="text-xs font-medium text-muted-foreground"
-              >
-                确认新密码
-              </FieldLabel>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="reset-password-confirm">确认新密码</FieldLabel>
               <Input
                 id="reset-password-confirm"
                 type="password"
@@ -118,10 +108,10 @@ export function ResetPasswordDialog({
             {error ? <FieldError className="text-xs">{error}</FieldError> : null}
           </DialogBody>
           <DialogFooter>
-            <Button variant="outline" size="sm" type="button" onClick={close} disabled={busy}>
+            <Button variant="outline" type="button" onClick={close} disabled={busy}>
               取消
             </Button>
-            <Button size="sm" type="submit" disabled={busy}>
+            <Button type="submit" disabled={busy}>
               重置密码
             </Button>
           </DialogFooter>

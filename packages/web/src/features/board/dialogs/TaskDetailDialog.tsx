@@ -298,7 +298,7 @@ export function TaskDetailDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-310">
           <DialogHeader>
-            <DialogTitle className="pr-8 text-base">{current?.title || '任务详情'}</DialogTitle>
+            <DialogTitle className="break-words">{current?.title || '任务详情'}</DialogTitle>
             <DialogDescription>
               {current
                 ? `${current.teamName ? `${current.teamName} · ` : ''}${current.projectName}${ownershipLabel ? ` · ${ownershipLabel}` : ''} / ${current.dirName}`
@@ -325,7 +325,10 @@ export function TaskDetailDialog({
                   ['截止', dueLabel(current.execution?.dueDate)],
                   ['状态', statusLabel(current.status) || '规划'],
                 ].map(([label, value]) => (
-                  <div key={label} className="flex flex-col gap-1 rounded-lg bg-muted px-2.5 py-2">
+                  <div
+                    key={label}
+                    className="flex min-w-0 flex-col gap-1 rounded-lg bg-muted px-2.5 py-2"
+                  >
                     <span className="text-2xs text-muted-foreground">{label}</span>
                     {label === '优先级' || label === '状态' ? (
                       <StatusPill
@@ -336,7 +339,12 @@ export function TaskDetailDialog({
                         {value}
                       </StatusPill>
                     ) : (
-                      <span className="w-fit text-xs font-semibold">{value}</span>
+                      <span
+                        className="max-w-full truncate text-xs font-semibold"
+                        title={String(value)}
+                      >
+                        {value}
+                      </span>
                     )}
                   </div>
                 ))}
@@ -386,7 +394,9 @@ export function TaskDetailDialog({
                       <h3 className="text-xs font-semibold text-muted-foreground">阶段证据</h3>
                       {canEditPlan ? (
                         <Button
-                          className="ml-auto text-xs font-semibold"
+                          variant="outline"
+                          size="sm"
+                          className="ml-auto"
                           onClick={() => {
                             setEditingPlan((value) => !value)
                             setDueDate(current.execution?.dueDate || '')
@@ -394,7 +404,7 @@ export function TaskDetailDialog({
                             setTags(taskTags(current).join(', '))
                           }}
                         >
-                          编辑计划
+                          {editingPlan ? '收起编辑' : '编辑计划'}
                         </Button>
                       ) : null}
                     </div>
@@ -443,7 +453,9 @@ export function TaskDetailDialog({
                       {current.stages.map((item: Stage) => (
                         <li key={item.id}>
                           <div className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs">
-                            <span className="w-4 text-2xs text-muted-foreground">{item.index}</span>
+                            <span className="w-4 shrink-0 text-2xs text-muted-foreground">
+                              {item.index}
+                            </span>
                             <StatusPill
                               tone={stageTone(item.label)}
                               size="xs"
@@ -451,7 +463,7 @@ export function TaskDetailDialog({
                             >
                               {item.label}
                             </StatusPill>
-                            <span className="ml-auto text-2xs text-muted-foreground">
+                            <span className="ml-auto shrink-0 whitespace-nowrap text-2xs text-muted-foreground">
                               {stageSourceLabel(item)}
                             </span>
                             <span
@@ -475,7 +487,7 @@ export function TaskDetailDialog({
                         </span>
                       </div>
                       <div className="grid gap-2 sm:grid-cols-2">
-                        <div className="flex flex-col gap-1">
+                        <div className="flex min-w-0 flex-col gap-1">
                           <h4 className="text-2xs font-semibold text-muted-foreground">
                             Blocked by / 被谁阻断
                           </h4>
@@ -499,7 +511,7 @@ export function TaskDetailDialog({
                             <p className="text-2xs text-muted-foreground">当前没有活动阻断。</p>
                           )}
                         </div>
-                        <div className="flex flex-col gap-1">
+                        <div className="flex min-w-0 flex-col gap-1">
                           <h4 className="text-2xs font-semibold text-muted-foreground">
                             Blocks / 阻断了谁
                           </h4>
@@ -561,6 +573,7 @@ export function TaskDetailDialog({
                             onChange={(event) => setReason(event.target.value)}
                           />
                           <Button
+                            variant="outline"
                             disabled={busy === 'dependency'}
                             onClick={() => void addDependency()}
                           >

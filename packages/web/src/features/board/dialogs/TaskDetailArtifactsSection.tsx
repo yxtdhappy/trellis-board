@@ -28,19 +28,19 @@ export function TaskDetailArtifactsSection({
             <Button
               key={key}
               variant="ghost"
-              className="h-auto items-start justify-start gap-2 rounded-lg bg-muted px-2.5 py-2 text-left hover:bg-muted/70"
+              className="h-auto items-center justify-start gap-2 rounded-lg bg-muted px-2.5 py-2 text-left hover:bg-muted/70"
               onClick={() => onOpen({ label, entry })}
             >
-              <span className="flex size-6 items-center justify-center rounded bg-card text-2xs font-bold text-muted-foreground">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded bg-card text-2xs font-bold text-muted-foreground">
                 MD
               </span>
-              <span className="flex min-w-0 flex-col">
+              <span className="flex min-w-0 flex-1 flex-col">
                 <b className="text-xs font-semibold">{label}</b>
                 <small className="truncate text-2xs text-muted-foreground">
                   {hint} · {entry?.path?.split('/').pop()}
                 </small>
               </span>
-              <span className="ml-auto text-2xs text-primary">查看</span>
+              <span className="ml-auto shrink-0 text-2xs text-primary">查看</span>
             </Button>
           ))}
         </div>

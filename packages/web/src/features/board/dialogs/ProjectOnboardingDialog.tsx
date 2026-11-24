@@ -39,7 +39,9 @@ import { SelectField } from '../SelectField.tsx'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { toneSurface } from '@/components/ui/status-pill'
-import { Field, FieldLabel } from '@/components/ui/field'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
+
+type OnboardingFeedback = { tone: 'status' | 'error'; text: string } | null
 
 export function ProjectOnboardingDialog({
   open,
@@ -66,7 +68,7 @@ export function ProjectOnboardingDialog({
   const [localAssociations, setLocalAssociations] = useState<Association[]>([])
   const [associationsLoaded, setAssociationsLoaded] = useState(false)
   const [associationLoadError, setAssociationLoadError] = useState('')
-  const [message, setMessage] = useState('')
+  const [feedback, setFeedback] = useState<OnboardingFeedback>(null)
   const [busy, setBusy] = useState(false)
   const [requiresInitialPush, setRequiresInitialPush] = useState(false)
   const pushCheckInFlight = useRef(false)
@@ -85,7 +87,7 @@ export function ProjectOnboardingDialog({
     setAgentSearch('')
     setPush(null)
     setPreflight(null)
-    setMessage('')
+    setFeedback(null)
     setBusy(false)
     setRequiresInitialPush(false)
   }, [open, path])
@@ -212,21 +214,21 @@ export function ProjectOnboardingDialog({
     setSelectedTools((current) =>
       current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
     )
-    setMessage('')
+    setFeedback(null)
   }
 
   async function initialize() {
     if (!inspection) return
     if (!developerId.trim()) {
-      setMessage('请填写 Trellis developer ID。')
+      setFeedback({ tone: 'error', text: '请填写 Trellis developer ID。' })
       return
     }
     if (!selectedTools.length) {
-      setMessage('请至少选择一个本机需要使用的编码 Agent。')
+      setFeedback({ tone: 'error', text: '请至少选择一个本机需要使用的编码 Agent。' })
       return
     }
     setBusy(true)
-    setMessage('')
+    setFeedback(null)
     setPreflight(null)
     const initializesTaskTree = !inspection.hasTrellis || !inspection.hasTasks
     const needsInitialPush = requiresInitialPush || initializesTaskTree
@@ -241,13 +243,14 @@ export function ProjectOnboardingDialog({
       setRequiresInitialPush(needsInitialPush)
       setPush(null)
       setPreflight(null)
-      setMessage(
-        needsInitialPush
+      setFeedback({
+        tone: 'status',
+        text: needsInitialPush
           ? 'Trellis 初始化完成。请提交并推送共享初始化文件。'
           : '本机编码 Agent 工具初始化完成，不影响当前任务空间接入。',
-      )
+      })
     } catch (error) {
-      setMessage(onboardingErrorMessage(error, 'Trellis 初始化失败'))
+      setFeedback({ tone: 'error', text: onboardingErrorMessage(error, 'Trellis 初始化失败') })
     } finally {
       setBusy(false)
     }
@@ -259,7 +262,7 @@ export function ProjectOnboardingDialog({
     const actionSeq = pushActionSeq.current
     if (!silent) {
       setBusy(true)
-      setMessage('')
+      setFeedback(null)
     }
     try {
       const result = await invoke('check_pending_project_push', {
@@ -270,10 +273,10 @@ export function ProjectOnboardingDialog({
       const next: PushState = normalizePushState(result)
       setPush(next)
       if (next.state !== 'ready') setPreflight(null)
-      if (!silent) setMessage(stateLabel(next))
+      if (!silent) setFeedback({ tone: 'status', text: stateLabel(next) })
     } catch (error) {
       if (!silent) {
-        setMessage(onboardingErrorMessage(error, '检查推送状态失败'))
+        setFeedback({ tone: 'error', text: onboardingErrorMessage(error, '检查推送状态失败') })
       }
     } finally {
       pushCheckInFlight.current = false
@@ -285,16 +288,16 @@ export function ProjectOnboardingDialog({
     if (!inspection || busy) return
     pushActionSeq.current += 1
     setBusy(true)
-    setMessage('')
+    setFeedback(null)
     try {
       const result = await invoke('commit_and_push_pending_project')
       const next: PushState = normalizePushState(result)
       setPush(next)
       if (next.state !== 'ready') setPreflight(null)
-      setMessage(stateLabel(next))
+      setFeedback({ tone: 'status', text: stateLabel(next) })
     } catch (error) {
       setPush(null)
-      setMessage(onboardingErrorMessage(error, '提交并推送失败'))
+      setFeedback({ tone: 'error', text: onboardingErrorMessage(error, '提交并推送失败') })
     } finally {
       setBusy(false)
     }
@@ -320,15 +323,15 @@ export function ProjectOnboardingDialog({
   function validateBeforePreflight() {
     if (!inspection) return
     if (preflightBlockedReason) {
-      setMessage(preflightBlockedReason)
+      setFeedback({ tone: 'error', text: preflightBlockedReason })
       return false
     }
     if (!teamId) {
-      setMessage('请选择项目归属团队。')
+      setFeedback({ tone: 'error', text: '请选择项目归属团队。' })
       return false
     }
     if (!developerId.trim()) {
-      setMessage('请填写 Trellis developer ID。')
+      setFeedback({ tone: 'error', text: '请填写 Trellis developer ID。' })
       return false
     }
     return true
@@ -337,7 +340,7 @@ export function ProjectOnboardingDialog({
   async function runPreflight() {
     if (!inspection || !validateBeforePreflight()) return
     setBusy(true)
-    setMessage('')
+    setFeedback(null)
     try {
       const result = await invoke('preflight_pending_project', {
         teamId,
@@ -348,7 +351,7 @@ export function ProjectOnboardingDialog({
       if (!next) throw new Error('没有返回有效的任务预检结果')
       setPreflight(next)
     } catch (error) {
-      setMessage(onboardingErrorMessage(error, '任务预检失败'))
+      setFeedback({ tone: 'error', text: onboardingErrorMessage(error, '任务预检失败') })
     } finally {
       setBusy(false)
     }
@@ -357,7 +360,10 @@ export function ProjectOnboardingDialog({
   async function associate(initialMode: InitialSyncMode) {
     if (!inspection || !validateBeforePreflight()) return
     if (!associationsLoaded) {
-      setMessage('无法确认当前仓库已有本地绑定，为避免重复绑定，暂不能接入。')
+      setFeedback({
+        tone: 'error',
+        text: '无法确认当前仓库已有本地绑定，为避免重复绑定，暂不能接入。',
+      })
       return
     }
     if (replacedAssociations.length) {
@@ -376,7 +382,7 @@ export function ProjectOnboardingDialog({
       if (!confirmed) return
     }
     setBusy(true)
-    setMessage('')
+    setFeedback(null)
     try {
       const result = await invoke('associate_pending_project', {
         teamId,
@@ -389,7 +395,7 @@ export function ProjectOnboardingDialog({
       onAssociated(association)
       onOpenChange(false)
     } catch (error) {
-      setMessage(onboardingErrorMessage(error, '本地项目接入失败'))
+      setFeedback({ tone: 'error', text: onboardingErrorMessage(error, '本地项目接入失败') })
     } finally {
       setBusy(false)
     }
@@ -561,10 +567,10 @@ export function ProjectOnboardingDialog({
                 <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
                   <p className="font-medium">首次推送确认</p>
                   <p className="text-muted-foreground">
-                    请先检查生成的初始化文件，然后提交并推送到 `{inspection.branchName}
-                    `。客户端不会自动提交；点击“一键提交并推送”只提交初始化生成的
-                    `.trellis`、`.gitignore`、`AGENTS.md`、`.gitattributes`、`.agents/`，
-                    也可以手动执行：
+                    请先检查生成的初始化文件，然后提交并推送到 <code>{inspection.branchName}</code>
+                    。客户端不会自动提交；点击“一键提交并推送”只提交初始化生成的{' '}
+                    <code>.trellis</code>、<code>.gitignore</code>、<code>AGENTS.md</code>、
+                    <code>.gitattributes</code>、<code>.agents/</code>，也可以手动执行：
                   </p>
                   <code className="rounded bg-muted px-2 py-1 text-xs">
                     git add .trellis && git commit && git push
@@ -644,12 +650,16 @@ export function ProjectOnboardingDialog({
               ) : null}
             </>
           )}
-          {message ? (
-            <p className="text-xs text-muted-foreground" role="status">
-              {message}
-            </p>
+          {feedback ? (
+            feedback.tone === 'error' ? (
+              <FieldError className="text-xs">{feedback.text}</FieldError>
+            ) : (
+              <p className="text-xs text-muted-foreground" role="status">
+                {feedback.text}
+              </p>
+            )
           ) : null}
-          {!preflight && !message && preflightBlockedReason ? (
+          {!preflight && !feedback && preflightBlockedReason ? (
             <p id="onboard-preflight-reason" className="text-xs text-warning">
               {preflightBlockedReason}
             </p>
@@ -664,7 +674,7 @@ export function ProjectOnboardingDialog({
               type="button"
               disabled={busy || !inspection || Boolean(preflightBlockedReason)}
               aria-describedby={
-                preflightBlockedReason && !message ? 'onboard-preflight-reason' : undefined
+                preflightBlockedReason && !feedback ? 'onboard-preflight-reason' : undefined
               }
               onClick={() => void runPreflight()}
             >
@@ -687,6 +697,7 @@ export function ProjectOnboardingDialog({
             <>
               <Button
                 type="button"
+                variant="outline"
                 disabled={busy || !associationCheckPassed}
                 onClick={() => void associate('safe')}
               >

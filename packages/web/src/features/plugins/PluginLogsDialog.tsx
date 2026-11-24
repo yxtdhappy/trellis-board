@@ -1,8 +1,10 @@
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogBody,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -51,13 +53,20 @@ export function PluginLogsDialog({
             PLUGIN LOGS
           </p>
           <DialogTitle>插件日志</DialogTitle>
-          <DialogDescription>{title}</DialogDescription>
+          <DialogDescription className="break-words">{title}</DialogDescription>
         </DialogHeader>
-        <DialogBody className="mx-4 rounded-lg bg-muted px-3 py-2.5">
-          <pre className="font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
-            {body}
-          </pre>
+        <DialogBody>
+          <div className="rounded-lg bg-muted px-3 py-2.5">
+            <pre className="font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
+              {body}
+            </pre>
+          </div>
         </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
