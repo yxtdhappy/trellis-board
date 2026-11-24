@@ -6,8 +6,7 @@ import { defineConfig } from 'vite'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
 const devPort = Number(process.env.VITE_DEV_PORT || 5173)
-const apiTarget =
-  process.env.VITE_API_TARGET || `http://127.0.0.1:${process.env.PORT || '4317'}`
+const apiTarget = process.env.VITE_API_TARGET || `http://127.0.0.1:${process.env.PORT || '4317'}`
 const localPluginTarget =
   process.env.VITE_LOCAL_PLUGIN_TARGET ||
   `http://127.0.0.1:${process.env.VITE_LOCAL_PLUGIN_PORT || '4517'}`
@@ -51,6 +50,10 @@ export default defineConfig({
         target: localPluginTarget,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/local-plugin/, ''),
+      },
+      '/client-updates': {
+        target: apiTarget,
+        changeOrigin: false,
       },
     },
   },

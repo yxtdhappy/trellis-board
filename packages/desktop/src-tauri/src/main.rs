@@ -300,6 +300,7 @@ async fn clear_desktop_session(app: &AppHandle, state: &DesktopAuthState, revoke
     if let Ok(mut value) = state.board_url.write() {
         *value = None;
     }
+    update::set_server_url(app, None);
     forget_saved_password();
     navigate_local_login(app, state);
     if revoke_session {
@@ -488,6 +489,7 @@ async fn desktop_login(
         .session_token
         .lock()
         .map_err(|_| "无法保存登录会话".to_string())? = Some(token);
+    update::set_server_url(&app, Some(&server_url));
     let device_ready = summary.device_ready == Some(true);
     if device_ready {
         agent_service::restart(&app);
@@ -999,9 +1001,10 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         app,
         "check-update",
         "检查更新",
-        update::enabled(),
+        update::enabled(app),
         None::<&str>,
     )?;
+    update::set_tray_item(app, check_update.clone());
     let logs = MenuItem::with_id(app, "logs", "打开日志目录", true, None::<&str>)?;
     let autostart = CheckMenuItem::with_id(
         app,
@@ -1197,7 +1200,7 @@ fn main() {
             register_notification_tap(&handle);
             let auth = DesktopAuthState::default();
             app.manage(auth.clone());
-            update::register(&handle);
+            update::register(&handle, initial_server_url().as_deref());
             build_tray(&handle)?;
             build_main_window(&handle, minimized, auth)?;
             Ok(())

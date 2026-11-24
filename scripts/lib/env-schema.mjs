@@ -26,6 +26,13 @@ export const ENV_SCHEMA = [
     description: '插件配置与私有插件目录（相对路径按执行时工作目录解析）',
   },
   {
+    env: 'TRELLIS_CLIENT_UPDATES_DIR',
+    flag: 'client-updates-dir',
+    type: 'path',
+    scopes: ['dev', 'start'],
+    description: '桌面客户端自动更新包与清单目录（默认 <TRELLIS_BOARD_DATA_DIR>/client-updates）',
+  },
+  {
     env: 'TRELLIS_WATCH_DEBOUNCE_MS',
     flag: 'watch-debounce',
     type: 'int',

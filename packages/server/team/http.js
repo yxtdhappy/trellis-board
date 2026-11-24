@@ -1,7 +1,11 @@
 import crypto from 'node:crypto'
 import http from 'node:http'
 import path from 'node:path'
-import { databaseFile as defaultDatabaseFile, dataDir as defaultDataDir } from '../config.js'
+import {
+  databaseFile as defaultDatabaseFile,
+  dataDir as defaultDataDir,
+  resolveClientUpdatesDir,
+} from '../config.js'
 import { createBoardEventService } from '../board-events.js'
 import { openDatabase } from '../database.js'
 import { STAGE_IDS } from '../metadata.js'
@@ -38,6 +42,7 @@ import {
   teamPluginsEnabled,
 } from './http/common.js'
 import { createRequestContext } from './http/context.js'
+import { createClientUpdatesHandler } from './http/client-updates.js'
 import { createWorkspaceTemplateRoutes } from './http/routes/workspace-template.js'
 import { createAgentRoutes } from './http/routes/agent.js'
 import { createAuthRoutes } from './http/routes/auth.js'
@@ -66,6 +71,7 @@ function createRequestHandler({
   boardEvents,
   desktopAuth,
   pluginRoutes,
+  serveClientUpdates,
   publicDir,
   logger,
   isClosing,
@@ -135,6 +141,10 @@ function createRequestHandler({
     // 面板 iframe 没有 same-origin，取子资源时不带 Cookie。
     if (url.pathname.startsWith('/plugin-ui/')) {
       servePluginUi(request, response, url)
+      return
+    }
+    if (url.pathname === '/client-updates' || url.pathname.startsWith('/client-updates/')) {
+      serveClientUpdates(request, response, url)
       return
     }
     if (!url.pathname.startsWith('/api/')) {
@@ -303,6 +313,7 @@ export async function createTeamRuntime({
   config,
   databaseFile = defaultDatabaseFile,
   dataDir = defaultDataDir,
+  clientUpdatesDir = undefined,
   publicDir = defaultPublicDir,
   logger = console,
   requireAdmin = true,
@@ -473,6 +484,14 @@ export async function createTeamRuntime({
     const pluginRoutes = pluginsEnabled
       ? createTeamPluginRoutes({ host: pluginHost, logger })
       : createDisabledTeamPluginRoutes()
+    const resolvedClientUpdatesDir =
+      clientUpdatesDir ??
+      (dataDir === defaultDataDir
+        ? resolveClientUpdatesDir()
+        : path.join(path.resolve(dataDir), 'client-updates'))
+    const serveClientUpdates = createClientUpdatesHandler({
+      clientUpdatesDir: resolvedClientUpdatesDir,
+    })
     const requestHandler = createRequestHandler({
       config,
       db,
@@ -489,6 +508,7 @@ export async function createTeamRuntime({
       boardEvents,
       desktopAuth: desktopAuthService,
       pluginRoutes,
+      serveClientUpdates,
       publicDir,
       logger,
       isClosing: () => closing,

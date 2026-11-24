@@ -5,7 +5,8 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use serde::Serialize;
 use serde_json::json;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::menu::MenuItem;
+use tauri::{AppHandle, Emitter, Manager, Wry};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::config;
@@ -49,8 +50,9 @@ pub struct UpdateApplyResult {
 }
 
 pub struct UpdateManager {
-    enabled: bool,
-    base: Option<String>,
+    compile_base: Option<String>,
+    runtime_base: Mutex<Option<String>>,
+    tray_item: Mutex<Option<MenuItem<Wry>>>,
     current: String,
     status: Mutex<UpdateStatus>,
     latest_release: Mutex<Option<Release>>,
@@ -59,13 +61,19 @@ pub struct UpdateManager {
 }
 
 impl UpdateManager {
-    fn new() -> Self {
+    fn new(initial_server_url: Option<&str>) -> Self {
         let current = env!("CARGO_PKG_VERSION").to_string();
-        let base = configured_base();
+        let compile_base = configured_base();
+        let runtime_base = if compile_base.is_some() {
+            None
+        } else {
+            initial_server_url.and_then(normalize_server_base)
+        };
+        let base = resolve_effective_base(compile_base.as_deref(), runtime_base.as_deref());
         let status = UpdateStatus {
             enabled: base.is_some(),
             current_version: current.clone(),
-            server: base.clone(),
+            server: base,
             latest: None,
             update_available: false,
             checked_at: None,
@@ -77,14 +85,29 @@ impl UpdateManager {
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         Self {
-            enabled: base.is_some(),
-            base,
+            compile_base,
+            runtime_base: Mutex::new(runtime_base),
+            tray_item: Mutex::new(None),
             current,
             status: Mutex::new(status),
             latest_release: Mutex::new(None),
             check_lock: tokio::sync::Mutex::new(()),
             client,
         }
+    }
+
+    fn effective_base(&self) -> Option<String> {
+        if let Some(base) = &self.compile_base {
+            return Some(base.clone());
+        }
+        self.runtime_base
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_else(|error| error.into_inner().clone())
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.effective_base().is_some()
     }
 
     fn snapshot(&self) -> UpdateStatus {
@@ -101,10 +124,65 @@ impl UpdateManager {
             .unwrap_or_else(|error| error.into_inner());
         *guard = status;
     }
+
+    fn sync_tray(&self, enabled: bool) {
+        let item = self
+            .tray_item
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_else(|error| error.into_inner().clone());
+        if let Some(item) = item {
+            let _ = item.set_enabled(enabled);
+        }
+    }
 }
 
-pub fn enabled() -> bool {
-    configured_base().is_some()
+pub fn enabled(app: &AppHandle) -> bool {
+    app.try_state::<UpdateManager>()
+        .map(|manager| manager.is_enabled())
+        .unwrap_or_else(|| configured_base().is_some())
+}
+
+pub fn set_tray_item(app: &AppHandle, item: MenuItem<Wry>) {
+    let Some(manager) = app.try_state::<UpdateManager>() else {
+        return;
+    };
+    let enabled = manager.is_enabled();
+    let _ = item.set_enabled(enabled);
+    let mut guard = manager
+        .tray_item
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    *guard = Some(item);
+}
+
+pub(crate) fn normalize_server_base(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let url = url::Url::parse(raw).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = url.host_str()?;
+    let host = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    };
+    let port = url
+        .port()
+        .map(|port| format!(":{port}"))
+        .unwrap_or_default();
+    Some(format!("{}://{host}{port}/client-updates", url.scheme()))
+}
+
+pub(crate) fn resolve_effective_base(
+    compile_base: Option<&str>,
+    runtime_base: Option<&str>,
+) -> Option<String> {
+    compile_base.or(runtime_base).map(str::to_string)
 }
 
 fn configured_base() -> Option<String> {
@@ -119,16 +197,12 @@ fn configured_base() -> Option<String> {
     Some(raw.trim_end_matches('/').to_string())
 }
 
-pub fn register(app: &AppHandle) {
-    let manager = UpdateManager::new();
-    let manager_enabled = manager.enabled;
+pub fn register(app: &AppHandle, initial_server_url: Option<&str>) {
+    let manager = UpdateManager::new(initial_server_url);
+    let initial_base = manager.effective_base();
     let current = manager.current.clone();
     app.manage(manager);
     package::cleanup_stale();
-    if !manager_enabled {
-        logging::warn("未配置构建期更新服务器，自动更新已关闭");
-        return;
-    }
 
     let handle = app.clone();
     if let Err(error) = app.notification().on_action(move |action| {
@@ -148,18 +222,73 @@ pub fn register(app: &AppHandle) {
         logging::warn(&format!("无法注册系统通知点击处理：{error}"));
     }
 
-    logging::info(&format!(
-        "自动更新已启用：{}，当前版本 {current}",
-        UPDATE_SERVER.unwrap_or_default()
-    ));
+    if let Some(base) = initial_base {
+        logging::info(&format!("自动更新已启用：{base}，当前版本 {current}"));
+    } else {
+        logging::info("未配置构建期更新服务器，将在连接 Team 服务端后自动启用更新检查");
+    }
+
     let loop_app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(STARTUP_DELAY).await;
         loop {
-            check(&loop_app).await;
+            if loop_app
+                .try_state::<UpdateManager>()
+                .map(|manager| manager.is_enabled())
+                .unwrap_or(false)
+            {
+                check(&loop_app).await;
+            }
             tokio::time::sleep(CHECK_INTERVAL).await;
         }
     });
+}
+
+pub fn set_server_url(app: &AppHandle, board_url: Option<&str>) {
+    let Some(manager) = app.try_state::<UpdateManager>() else {
+        return;
+    };
+    if manager.compile_base.is_some() {
+        return;
+    }
+    let next = board_url.and_then(normalize_server_base);
+    {
+        let mut guard = manager
+            .runtime_base
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if *guard == next {
+            return;
+        }
+        *guard = next.clone();
+    }
+    if let Ok(mut guard) = manager.latest_release.lock() {
+        *guard = None;
+    }
+    let next_status = UpdateStatus {
+        enabled: next.is_some(),
+        current_version: manager.current.clone(),
+        server: next.clone(),
+        latest: None,
+        update_available: false,
+        checked_at: None,
+        error: None,
+    };
+    manager.store(next_status.clone());
+    manager.sync_tray(next.is_some());
+    let _ = app.emit("update-status-changed", next_status);
+    if let Some(base) = next {
+        logging::info(&format!(
+            "自动更新源已切换：{base}，当前版本 {}",
+            manager.current
+        ));
+        let check_app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            check(&check_app).await;
+        });
+    } else {
+        logging::info("已清除运行时更新服务器回退地址");
+    }
 }
 
 pub fn status(app: &AppHandle) -> UpdateStatus {
@@ -168,13 +297,23 @@ pub fn status(app: &AppHandle) -> UpdateStatus {
 
 pub async fn check(app: &AppHandle) -> UpdateStatus {
     let manager = app.state::<UpdateManager>();
-    if !manager.enabled {
+    let Some(base) = manager.effective_base() else {
         return manager.snapshot();
-    }
-    let base = manager.base.clone().unwrap_or_default();
+    };
     let client = manager.client.clone();
     let _guard = manager.check_lock.lock().await;
+    let Some(active_base) = manager.effective_base() else {
+        return manager.snapshot();
+    };
+    let base = if active_base == base {
+        base
+    } else {
+        active_base
+    };
     let result = fetch_release(&client, &base).await;
+    if manager.effective_base().as_deref() != Some(base.as_str()) {
+        return manager.snapshot();
+    }
     let mut status = manager.snapshot();
     status.checked_at = Some(now());
     match result {
@@ -233,9 +372,9 @@ pub async fn apply(app: &AppHandle) -> Result<UpdateApplyResult, String> {
         return Err("开发构建不支持自动更新，请使用正式打包版本".to_string());
     }
     let manager = app.state::<UpdateManager>();
-    if !manager.enabled {
+    let Some(base) = manager.effective_base() else {
         return Err("未配置更新服务器".to_string());
-    }
+    };
     let status = manager.snapshot();
     if !status.update_available {
         return Err("当前已是最新版本".to_string());
@@ -246,7 +385,6 @@ pub async fn apply(app: &AppHandle) -> Result<UpdateApplyResult, String> {
         .map_err(|_| "无法读取更新信息".to_string())?
         .clone()
         .ok_or_else(|| "尚未获取更新信息".to_string())?;
-    let base = manager.base.clone().unwrap_or_default();
     let client = manager.client.clone();
 
     let staging = config::data_dir().join("updates").join(&release.version);

@@ -61,8 +61,24 @@ export function resolvePluginsDir({
   return platformPath.join(resolveBoardRootDir({ platform, env, homeDir }), 'plugins')
 }
 
+export function resolveClientUpdatesDir({
+  platform = process.platform,
+  env = process.env,
+  homeDir = os.homedir(),
+  dataDir: explicitDataDir,
+} = {}) {
+  const platformPath = platform === 'win32' ? path.win32 : path.posix
+  const override = String(env.TRELLIS_CLIENT_UPDATES_DIR || '').trim()
+  if (override) return platformPath.resolve(override)
+  const baseDataDir = explicitDataDir
+    ? platformPath.resolve(explicitDataDir)
+    : resolveBoardDataDir({ platform, env, homeDir })
+  return platformPath.join(baseDataDir, 'client-updates')
+}
+
 export const dataDir = resolveBoardDataDir()
 export const pluginsDir = resolvePluginsDir()
+export const clientUpdatesDir = resolveClientUpdatesDir()
 export const databaseFile = path.join(dataDir, 'board.sqlite')
 export const metadataFile = path.join(dataDir, 'task-metadata.json')
 export const scanCacheFile = path.join(dataDir, 'scan-cache.json')
@@ -112,7 +128,14 @@ export function parsePluginAllowlist(raw) {
   const value = String(raw ?? '').trim()
   if (!value) return []
   if (['none', 'false', '0'].includes(value.toLowerCase())) return []
-  return [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))]
+  return [
+    ...new Set(
+      value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ]
 }
 
 export function parseTeamConfig(env = process.env) {
@@ -123,11 +146,7 @@ export function parseTeamConfig(env = process.env) {
     throw new Error('TRELLIS_BOARD_MODE 只能是 team')
   }
   const port = integerSetting(env, 'PORT', 4317, 1, 65535)
-  const allowLocalGitRemotes = booleanSetting(
-    env,
-    'TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES',
-    false,
-  )
+  const allowLocalGitRemotes = booleanSetting(env, 'TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES', false)
 
   return {
     mode,

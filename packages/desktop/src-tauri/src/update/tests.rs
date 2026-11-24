@@ -62,3 +62,66 @@ fn status_uses_camel_case_fields() {
     assert!(value.get("updateAvailable").is_some());
     assert!(value.get("current_version").is_none());
 }
+
+#[test]
+fn normalize_server_base_builds_client_updates_url() {
+    assert_eq!(
+        normalize_server_base("http://10.0.0.12:4317/"),
+        Some("http://10.0.0.12:4317/client-updates".to_string())
+    );
+    assert_eq!(
+        normalize_server_base("https://board.internal/login.html?next=/"),
+        Some("https://board.internal/client-updates".to_string())
+    );
+    assert_eq!(
+        normalize_server_base("http://[::1]:4317/"),
+        Some("http://[::1]:4317/client-updates".to_string())
+    );
+    assert_eq!(normalize_server_base(""), None);
+    assert_eq!(normalize_server_base("ftp://board.internal"), None);
+    assert_eq!(normalize_server_base("not-a-url"), None);
+}
+
+#[test]
+fn effective_base_prefers_compile_time_over_runtime_fallback() {
+    assert_eq!(
+        resolve_effective_base(
+            Some("https://files.internal/updates"),
+            Some("https://board.internal/client-updates")
+        ),
+        Some("https://files.internal/updates".to_string())
+    );
+    assert_eq!(
+        resolve_effective_base(None, Some("https://board.internal/client-updates")),
+        Some("https://board.internal/client-updates".to_string())
+    );
+    assert_eq!(resolve_effective_base(None, None), None);
+}
+
+#[tokio::test]
+async fn fetches_manifest_from_client_updates_subpath() {
+    use std::io::{Read, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let body = br#"{"version":"0.4.60","file":"TrellisBoard_0.4.60_x64-portable.zip","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","size":123}"#;
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut request = [0u8; 4096];
+        let read = socket.read(&mut request).unwrap();
+        let request = String::from_utf8_lossy(&request[..read]).to_string();
+        write!(
+            socket,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        socket.write_all(body).unwrap();
+        request
+    });
+
+    let base = normalize_server_base(&format!("http://{address}")).unwrap();
+    let release = fetch_release(&reqwest::Client::new(), &base).await.unwrap();
+    assert_eq!(release.version, "0.4.60");
+    assert!(server.join().unwrap().contains("GET /client-updates/latest.json"));
+}

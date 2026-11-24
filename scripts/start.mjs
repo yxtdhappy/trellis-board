@@ -37,6 +37,7 @@ const summary = formatEnvSummary('[start]', resolved, [
   'PORT',
   'TRELLIS_BOARD_DATA_DIR',
   'TRELLIS_BOARD_PLUGINS_DIR',
+  'TRELLIS_CLIENT_UPDATES_DIR',
   'TRELLIS_WATCH_DEBOUNCE_MS',
 ])
 if (summary) console.log(summary)
