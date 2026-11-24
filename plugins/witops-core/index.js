@@ -813,8 +813,13 @@ export default createPlugin({
           repositoryId: params?.repositoryId,
           baseBranch: params?.baseBranch,
           priority: params?.priority,
+          assignee: params?.assignee,
+          rememberBinding: params?.rememberBinding,
           includeChildren: params?.includeChildren,
         }),
+      'developers.list': (params) =>
+        dispatch.listDevelopers({ repositoryId: params?.repositoryId }),
+      'developer.bind': (params) => dispatch.bindDeveloper(params ?? {}),
       'task.batchCreate': (params) => dispatch.createBatch(dispatch.normalizeItems(params ?? {})),
       'task.syncRecent': (params) =>
         dispatch.syncRecent({ size: params?.size, repositoryId: params?.repositoryId }),
@@ -1396,6 +1401,25 @@ export default createPlugin({
           projects,
           defaultRepositoryId: text(config.repositoryId) || projects[0]?.repositoryId || null,
         })
+      } catch (error) {
+        return failure(error)
+      }
+    })
+
+    ctx.http.route('GET', '/developers', async (request) => {
+      try {
+        return respond(
+          200,
+          await dispatch.listDevelopers({ repositoryId: request.query?.repositoryId }),
+        )
+      } catch (error) {
+        return failure(error)
+      }
+    })
+
+    ctx.http.route('PUT', '/developer-bindings', async (request) => {
+      try {
+        return respond(200, await dispatch.bindDeveloper(request.json() ?? {}))
       } catch (error) {
         return failure(error)
       }

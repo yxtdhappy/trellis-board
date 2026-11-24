@@ -18,7 +18,12 @@ import { createWitopsClient } from '../witops-client.js'
 const PLUGIN_ID = 'witops-core'
 const PLUGIN_MODULE = fileURLToPath(new URL('../index.js', import.meta.url))
 
-async function setup({ fixtureOptions, config: configOverrides, secrets = null } = {}) {
+async function setup({
+  fixtureOptions,
+  config: configOverrides,
+  secrets = null,
+  userProvider = null,
+} = {}) {
   const fixture = await createWitopsFixture(fixtureOptions)
   const repo = createTaskRepository()
   const harness = await createHarness({
@@ -32,6 +37,7 @@ async function setup({ fixtureOptions, config: configOverrides, secrets = null }
     ],
     repositories: repo.repositories,
     secrets,
+    userProvider,
     hostVersion: '0.2.0',
   })
   const http = await startHttpServer(harness.runtime)
@@ -872,6 +878,120 @@ test('需求预览返回 task.md 与已拆分子任务', async () => {
       'T10001',
       'T10004',
     ])
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('零配置自动关联：WitOps 登录用户匹配 .trellis/.developer 并写入 store 绑定', async () => {
+  const context = await setup({ config: { developerMap: {}, assignee: '' } })
+  try {
+    fs.writeFileSync(
+      path.join(context.repo.repositoryPath, '.trellis', '.developer'),
+      'name=yuhaojie\ninitialized_at=2026-11-24T00:00:00Z\n',
+    )
+    fs.mkdirSync(path.join(context.repo.repositoryPath, '.trellis', 'workspace', 'yuhaojie'), {
+      recursive: true,
+    })
+
+    const dispatched = await dispatch(context, { businessId: '10001' })
+    assert.equal(dispatched.status, 200)
+    assert.equal(dispatched.json.summary.imported, 1)
+
+    const [taskDir] = findTaskDirectories(context.repo.repositoryPath)
+    const taskJson = readTaskJson(taskDir)
+    assert.equal(taskJson.assignee, 'yuhaojie')
+
+    const devs = await call(
+      context.http,
+      `/api/plugins/${PLUGIN_ID}/developers?repositoryId=repo`,
+    )
+    assert.equal(devs.status, 200)
+    assert.equal(devs.json.currentDeveloper, 'yuhaojie')
+    assert.equal(devs.json.bindings['900'], 'yuhaojie')
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('零配置回退：trellis.user.current 用户名匹配 .trellis/workspace 成员', async () => {
+  const context = await setup({
+    config: { developerMap: {}, assignee: '' },
+    userProvider: () => ({
+      userId: 'user-alice',
+      username: 'alice',
+      displayName: 'Alice',
+    }),
+  })
+  try {
+    fs.mkdirSync(path.join(context.repo.repositoryPath, '.trellis', 'workspace', 'alice'), {
+      recursive: true,
+    })
+
+    const dispatched = await dispatch(context, { businessId: '10001' })
+    assert.equal(dispatched.status, 200)
+    assert.equal(dispatched.json.summary.imported, 1)
+
+    const [taskDir] = findTaskDirectories(context.repo.repositoryPath)
+    const taskJson = readTaskJson(taskDir)
+    assert.equal(taskJson.assignee, 'alice')
+  } finally {
+    await context.cleanup()
+  }
+})
+
+test('缺少负责人返回结构化诊断，并支持弹窗手动选择与记住映射', async () => {
+  const unknownOwner = {
+    businessId: '72411',
+    code: 'T72411',
+    name: '跨人任务',
+    type: 4,
+    status: 1,
+    developerName: '',
+    assignedToUserId: 161,
+  }
+  const context = await setup({
+    fixtureOptions: { tasks: [unknownOwner] },
+    config: { developerMap: {}, assignee: '' },
+  })
+  try {
+    const skipped = await dispatch(context, { businessId: '72411' })
+    assert.equal(skipped.status, 200)
+    assert.equal(skipped.json.summary.skipped, 1)
+    const entry = skipped.json.results[0]
+    assert.equal(entry.reason, 'missing-assignee')
+    assert.equal(entry.details.witopsUserId, '161')
+    assert.ok(Array.isArray(entry.details.availableDevelopers))
+    assert.ok(entry.details.availableDevelopers.includes('bob'))
+    assert.match(entry.message, /可选 Trellis 成员/)
+
+    const explicit = await dispatch(context, {
+      businessId: '72411',
+      assignee: 'bob',
+      rememberBinding: true,
+    })
+    assert.equal(explicit.status, 200)
+    assert.equal(explicit.json.summary.imported, 1)
+    const [taskDir] = findTaskDirectories(context.repo.repositoryPath)
+    assert.equal(readTaskJson(taskDir).assignee, 'bob')
+
+    const devs = await call(
+      context.http,
+      `/api/plugins/${PLUGIN_ID}/developers?repositoryId=repo`,
+    )
+    assert.equal(devs.status, 200)
+    assert.equal(devs.json.bindings['161'], 'bob')
+
+    const putBind = await call(
+      context.http,
+      `/api/plugins/${PLUGIN_ID}/developer-bindings`,
+      {
+        method: 'PUT',
+        body: { repositoryId: 'repo', witopsUserId: '162', assignee: 'bob' },
+      },
+    )
+    assert.equal(putBind.status, 200)
+    assert.equal(putBind.json.bindings['162'], 'bob')
   } finally {
     await context.cleanup()
   }

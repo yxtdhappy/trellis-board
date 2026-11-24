@@ -343,6 +343,9 @@ export function buildTaskDraft({
       ...(config.keepRaw ? { 'prd.witops.html': rawTaskDescription || rawStoryDescription } : {}),
     },
     rawDeveloper: text(assignedToUserId),
+    rawDeveloperName: text(
+      pick(detail, 'assignedToUserName', 'assigneeName', 'developerName', 'assignedToName'),
+    ),
   }
 }
 

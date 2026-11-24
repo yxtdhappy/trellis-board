@@ -19,6 +19,14 @@ const state = {
   fetchedAt: null,
   projects: [],
   repositoryId: '',
+  developersInfo: {
+    repositoryId: '',
+    currentDeveloper: null,
+    developers: [],
+    bindings: {},
+    defaultAssignee: null,
+    witopsUserId: null,
+  },
   pending: [],
   previewItems: [],
   previewResults: [],
@@ -139,8 +147,14 @@ function summarizeOutcome(result, label) {
   if (childSummary.imported) parts.push(`子任务 ${childSummary.imported}`)
   if (childSummary.failed) parts.push(`子任务失败 ${childSummary.failed}`)
   const failures = (result?.results ?? []).filter((row) => row.status === 'failed')
+  const missingAssignee = (result?.results ?? []).find(
+    (row) => row.status === 'skipped' && row.reason === 'missing-assignee',
+  )
   if (!failures.length) {
-    return { notice: parts.length ? `${label}：${parts.join('，')}` : label, error: '' }
+    return {
+      notice: parts.length ? `${label}：${parts.join('，')}` : label,
+      error: missingAssignee?.message || '',
+    }
   }
   const first = failures[0]
   const reason = String(first.reason || '')
@@ -468,6 +482,71 @@ function renderProjects() {
   }
   state.repositoryId = select.value || current
   renderBranches()
+  void loadDevelopers(state.repositoryId)
+}
+
+async function loadDevelopers(repositoryId) {
+  const target = repositoryId || state.repositoryId || ''
+  try {
+    const query = target ? `?repositoryId=${encodeURIComponent(target)}` : ''
+    const data = await bridge.get(`/developers${query}`)
+    state.developersInfo = {
+      repositoryId: data?.repositoryId || target,
+      currentDeveloper: data?.currentDeveloper || null,
+      developers: Array.isArray(data?.developers) ? data.developers : [],
+      bindings: data?.bindings && typeof data.bindings === 'object' ? data.bindings : {},
+      defaultAssignee: data?.defaultAssignee || null,
+      witopsUserId: data?.witopsUserId || null,
+    }
+  } catch {
+    state.developersInfo = {
+      repositoryId: target,
+      currentDeveloper: null,
+      developers: [],
+      bindings: {},
+      defaultAssignee: null,
+      witopsUserId: null,
+    }
+  }
+  renderAssignees()
+}
+
+function renderAssignees() {
+  const select = byId('dialog-assignee')
+  if (!select) return
+  const info = state.developersInfo || {}
+  const list = Array.isArray(info.developers) ? info.developers : []
+  const single = state.pending.length === 1 ? state.pending[0] : null
+  const singleWitopsId = single?.assignedToUserId ? String(single.assignedToUserId) : ''
+  const boundAssignee = singleWitopsId ? info.bindings?.[singleWitopsId] : ''
+  const autoAssignee =
+    boundAssignee ||
+    (info.witopsUserId && singleWitopsId && String(info.witopsUserId) === singleWitopsId
+      ? info.defaultAssignee
+      : !singleWitopsId
+        ? info.defaultAssignee
+        : '') ||
+    info.defaultAssignee ||
+    ''
+
+  select.replaceChildren()
+  const autoOption = document.createElement('option')
+  autoOption.value = ''
+  autoOption.textContent = autoAssignee
+    ? `自动匹配（${autoAssignee}）`
+    : '自动匹配（当前用户 / 同名 / 映射）'
+  select.append(autoOption)
+
+  for (const dev of list) {
+    const option = document.createElement('option')
+    option.value = dev
+    option.textContent =
+      dev === info.currentDeveloper ? `${dev}（当前 .developer）` : dev
+    select.append(option)
+  }
+
+  const preferred = boundAssignee || autoAssignee || ''
+  select.value = preferred && list.includes(preferred) ? preferred : ''
 }
 
 function renderBranches() {
@@ -632,6 +711,7 @@ async function previewItems(items) {
   openPreviewDialog()
   try {
     const data = await bridge.post('/dispatch/preview', {
+      repositoryId: state.repositoryId || undefined,
       items: items.map((item) => ({ type: item.type, businessId: item.id })),
     })
     const results = Array.isArray(data?.results) ? data.results : []
@@ -680,6 +760,7 @@ function openCreateDialog(items) {
     ? String(single.priority).toUpperCase()
     : ''
   byId('dialog-due').value = single?.dueDate || ''
+  renderAssignees()
   void loadProjects()
   byId('create-dialog').showModal()
 }
@@ -732,6 +813,8 @@ async function dispatchItems(items, options = {}) {
       repositoryId: options.repositoryId || state.repositoryId || undefined,
       baseBranch: options.baseBranch || undefined,
       priority: options.priority || undefined,
+      assignee: options.assignee || undefined,
+      rememberBinding: options.rememberBinding === true,
       includeChildren: options.includeChildren !== false,
       items: items.map((item) => ({
         type: item.type,
@@ -815,6 +898,7 @@ on('dispatch-selected', 'click', () => {
 on('dialog-project', 'change', () => {
   state.repositoryId = byId('dialog-project').value
   renderBranches()
+  void loadDevelopers(state.repositoryId)
 })
 on('dialog-preview', 'click', () => void previewItems(state.pending))
 
@@ -842,19 +926,29 @@ byId('create-dialog').addEventListener('ok', async () => {
   const repositoryId = byId('dialog-project').value
   const baseBranch = byId('dialog-branch').value.trim()
   const priority = byId('dialog-priority').value
+  const assignee = byId('dialog-assignee')?.value.trim() || ''
+  const rememberBinding = byId('dialog-remember-assignee')?.checked === true
   const includeChildren = byId('dialog-children').checked
   const childrenHint = items.some((item) => item.type === 3) && includeChildren
   const ok = await confirm({
     title: '确认创建任务',
-    message: `将创建 ${items.length} 个 Trellis 任务${baseBranch ? `，基于分支 ${baseBranch}` : ''}${
-      childrenHint ? '，并创建需求下已拆分的子任务' : ''
-    }。确认继续？`,
+    message: `将创建 ${items.length} 个 Trellis 任务${assignee ? `，负责人 ${assignee}` : ''}${
+      baseBranch ? `，基于分支 ${baseBranch}` : ''
+    }${childrenHint ? '，并创建需求下已拆分的子任务' : ''}。确认继续？`,
     okText: '确认创建',
   })
   if (!ok) return
   state.error = ''
   closeCreateDialog()
-  void dispatchItems(items, { repositoryId, baseBranch, priority, dueDate, includeChildren })
+  void dispatchItems(items, {
+    repositoryId,
+    baseBranch,
+    priority,
+    dueDate,
+    assignee,
+    rememberBinding,
+    includeChildren,
+  })
 })
 
 function readFilters() {

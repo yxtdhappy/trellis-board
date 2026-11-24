@@ -10,7 +10,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { buildTaskDraft, dictionaryToMap, summarizeRecord, typeLabel } from './mapper.js'
+import {
+  buildTaskDraft,
+  dictionaryToMap,
+  resolveAssignee,
+  summarizeRecord,
+  typeLabel,
+} from './mapper.js'
 import { asPositiveInt, detailOf, pick, stripAnsi, text } from './util.js'
 
 const DICTIONARY_TYPES = ['priority', 'taskStatus', 'taskCategory', 'systemEnv']
@@ -18,6 +24,8 @@ const MAX_BATCH = 50
 const MAX_CHILDREN = 30
 const CHILD_TYPES = new Set([0, 2, 3, 4])
 const PRIORITY_PATTERN = /^P[0-3]$/
+const DEVELOPER_BINDINGS_PREFIX = 'developerBindings:'
+const LEGACY_DEVELOPER_CONFIG_KEY = 'legacyDeveloperConfig'
 
 /** 读取任务目录内的文件；relativeDir 已由 task-service 校验，这里再做一次越界保护。 */
 function readTaskFile(task, name) {
@@ -40,9 +48,230 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
   const dictionaryCache = new Map()
   const dictionaryTtl = Number(config.cacheTtlMs || 0)
   let categoryNames = new Map()
+  let legacyConfigCache
 
   function legacyKey(type, businessId) {
     return `task:${type}:${businessId}`
+  }
+
+  function bindingsKey(repositoryId) {
+    return `${DEVELOPER_BINDINGS_PREFIX}${text(repositoryId) || 'default'}`
+  }
+
+  async function loadLegacyDeveloperConfig() {
+    if (legacyConfigCache !== undefined) return legacyConfigCache
+    try {
+      const stored = await ctx.store.get(LEGACY_DEVELOPER_CONFIG_KEY)
+      legacyConfigCache = stored && typeof stored === 'object' ? stored : null
+    } catch {
+      legacyConfigCache = null
+    }
+    return legacyConfigCache
+  }
+
+  async function loadDeveloperBindings(repositoryId) {
+    try {
+      const stored = await ctx.store.get(bindingsKey(repositoryId))
+      return stored && typeof stored === 'object' ? stored : {}
+    } catch {
+      return {}
+    }
+  }
+
+  async function saveDeveloperBinding(repositoryId, witopsUserId, assignee) {
+    const dev = text(assignee)
+    const key = text(witopsUserId)
+    if (!dev || !key) return null
+    const storeKey = bindingsKey(repositoryId)
+    const existing = await loadDeveloperBindings(repositoryId)
+    const next = { ...existing, [key]: dev }
+    await ctx.store.set(storeKey, next)
+    return next
+  }
+
+  async function loadProjectDevelopers(repositoryId) {
+    const target = text(repositoryId)
+    try {
+      const result = await ctx.capabilities.call(
+        'trellis.projects',
+        'developers',
+        target ? { repositoryId: target } : {},
+      )
+      return {
+        repositoryId: text(result?.repositoryId) || target || null,
+        currentDeveloper: text(result?.currentDeveloper) || null,
+        developers: Array.isArray(result?.developers) ? result.developers.filter(Boolean) : [],
+      }
+    } catch {
+      return { repositoryId: target || null, currentDeveloper: null, developers: [] }
+    }
+  }
+
+  async function loadCurrentTrellisUser() {
+    try {
+      const result = await ctx.capabilities.call('trellis.user', 'current', {})
+      return result?.user && typeof result.user === 'object' ? result.user : null
+    } catch {
+      return null
+    }
+  }
+
+  async function currentWitopsUserId() {
+    if (session.state.userId !== null && session.state.userId !== undefined) {
+      return text(session.state.userId)
+    }
+    if (session.state.status === 'authenticated' && typeof session.resolveUserId === 'function') {
+      try {
+        return text(await session.resolveUserId())
+      } catch {
+        return ''
+      }
+    }
+    return ''
+  }
+
+  function matchDeveloperName(candidate, developers) {
+    const target = text(candidate).toLowerCase()
+    if (!target || !Array.isArray(developers)) return ''
+    return developers.find((dev) => text(dev).toLowerCase() === target) || ''
+  }
+
+  async function resolveTaskAssignee({
+    draft,
+    repositoryId,
+    explicitAssignee = '',
+    fallbackAssignee = '',
+    persistAutoBinding = true,
+  }) {
+    const targetRepo = text(repositoryId) || text(config.repositoryId)
+    const witopsDevId = text(draft.rawDeveloper)
+
+    const explicit = text(explicitAssignee)
+    if (explicit) {
+      return { assignee: explicit, source: 'explicit', projectDevs: null }
+    }
+
+    const bindings = await loadDeveloperBindings(targetRepo)
+    const bound = witopsDevId ? text(bindings[witopsDevId]) : ''
+    if (bound) {
+      return { assignee: bound, source: 'store', projectDevs: null }
+    }
+
+    const [projectDevs, trellisUser, sessionUserId] = await Promise.all([
+      loadProjectDevelopers(targetRepo),
+      loadCurrentTrellisUser(),
+      currentWitopsUserId(),
+    ])
+
+    if (
+      witopsDevId &&
+      sessionUserId &&
+      witopsDevId === sessionUserId &&
+      projectDevs.currentDeveloper
+    ) {
+      if (persistAutoBinding) {
+        await saveDeveloperBinding(targetRepo, witopsDevId, projectDevs.currentDeveloper).catch(
+          () => {},
+        )
+      }
+      return { assignee: projectDevs.currentDeveloper, source: 'auto-developer', projectDevs }
+    }
+
+    if ((!witopsDevId || !sessionUserId || witopsDevId === sessionUserId) && trellisUser) {
+      const matchedTrellisUser =
+        matchDeveloperName(trellisUser.username, projectDevs.developers) ||
+        matchDeveloperName(trellisUser.displayName, projectDevs.developers)
+      if (matchedTrellisUser) {
+        return { assignee: matchedTrellisUser, source: 'auto-trellis-user', projectDevs }
+      }
+    }
+
+    const matchedByName = matchDeveloperName(draft.rawDeveloperName, projectDevs.developers)
+    if (matchedByName) {
+      return { assignee: matchedByName, source: 'name-match', projectDevs }
+    }
+
+    const fromConfig = text(draft.assignee)
+    if (fromConfig) {
+      return { assignee: fromConfig, source: 'config', projectDevs }
+    }
+
+    const legacyConfig = await loadLegacyDeveloperConfig()
+    if (legacyConfig) {
+      const fromLegacy = text(resolveAssignee(witopsDevId || null, legacyConfig))
+      if (fromLegacy) {
+        return { assignee: fromLegacy, source: 'legacy-config', projectDevs }
+      }
+    }
+
+    const fallback = text(fallbackAssignee)
+    if (fallback) {
+      return { assignee: fallback, source: 'fallback', projectDevs }
+    }
+
+    return { assignee: '', source: null, projectDevs }
+  }
+
+  function missingAssigneeOutcome({ businessId, repositoryId, draft, projectDevs }) {
+    const reason = 'missing-assignee'
+    const availableDevelopers = projectDevs?.developers ?? []
+    const details = {
+      businessId,
+      repositoryId: text(repositoryId) || null,
+      witopsUserId: draft.rawDeveloper || null,
+      witopsAssigneeName: draft.rawDeveloperName || null,
+      currentDeveloper: projectDevs?.currentDeveloper || null,
+      availableDevelopers,
+    }
+    const developerHint = availableDevelopers.length
+      ? `可选 Trellis 成员：${availableDevelopers.join('、')}`
+      : '当前仓库暂无 .trellis/workspace 成员记录'
+    const sourceLabel = draft.rawDeveloperName || draft.rawDeveloper || '未知'
+    const message = `任务缺少 Trellis 负责人映射（WitOps 负责人：${sourceLabel}，${developerHint}），请在创建弹窗中选择负责人`
+    const status = config.skipIfNoAssignee !== false ? 'skipped' : 'failed'
+    return { status, reason, details, message }
+  }
+
+  async function listDevelopers({ repositoryId } = {}) {
+    const targetRepo = text(repositoryId) || text(config.repositoryId) || null
+    const [projectDevs, trellisUser, bindings, sessionUserId] = await Promise.all([
+      loadProjectDevelopers(targetRepo),
+      loadCurrentTrellisUser(),
+      loadDeveloperBindings(targetRepo),
+      currentWitopsUserId(),
+    ])
+    const defaultAssignee =
+      (sessionUserId && text(bindings[sessionUserId])) ||
+      projectDevs.currentDeveloper ||
+      matchDeveloperName(trellisUser?.username, projectDevs.developers) ||
+      matchDeveloperName(trellisUser?.displayName, projectDevs.developers) ||
+      text(config.assignee) ||
+      ''
+    return {
+      repositoryId: projectDevs.repositoryId || targetRepo,
+      currentDeveloper: projectDevs.currentDeveloper,
+      developers: projectDevs.developers,
+      trellisUser,
+      witopsUserId: sessionUserId || null,
+      bindings,
+      defaultAssignee: defaultAssignee || null,
+    }
+  }
+
+  async function bindDeveloper({ repositoryId, witopsUserId, assignee } = {}) {
+    const dev = text(assignee)
+    if (!dev) throw ctx.error(1002, '需要 assignee')
+    const targetRepo = text(repositoryId) || text(config.repositoryId) || 'default'
+    const targetWitopsId = text(witopsUserId) || (await currentWitopsUserId())
+    if (!targetWitopsId) throw ctx.error(1002, '缺少 WitOps 用户 ID（请先登录或传入 witopsUserId）')
+    const bindings = await saveDeveloperBinding(targetRepo, targetWitopsId, dev)
+    return {
+      ok: true,
+      repositoryId: targetRepo,
+      witopsUserId: targetWitopsId,
+      assignee: dev,
+      bindings,
+    }
   }
 
   function requireRepository() {
@@ -243,7 +472,15 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
   }
 
   /** 拉详情 + 字典 + 父需求回退，产出完整 draft（不落盘）。 */
-  async function prepare({ type, businessId, storyId = null }) {
+  async function prepare({
+    type,
+    businessId,
+    storyId = null,
+    repositoryId = '',
+    assignee = '',
+    fallbackAssignee = '',
+    persistAutoBinding = false,
+  }) {
     const typeCode = asTypeCode(type, config.type)
     const id = text(businessId)
     if (!id) return { status: 'failed', reason: 'missing-business-id' }
@@ -282,7 +519,16 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
       webRoot: config.webRoot,
       parentBusinessId: storyId,
     })
-    return { status: 'ready', draft, detail }
+    const resolution = await resolveTaskAssignee({
+      draft,
+      repositoryId,
+      explicitAssignee: assignee,
+      fallbackAssignee,
+      persistAutoBinding,
+    })
+    draft.assignee = resolution.assignee
+    draft.assigneeSource = resolution.source
+    return { status: 'ready', draft, detail, resolution }
   }
 
   /** 需求下已拆分的直接子任务。 */
@@ -373,7 +619,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     }
   }
 
-  async function previewOne({ type, businessId }) {
+  async function previewOne({ type, businessId, repositoryId = '', assignee = '' }) {
     const typeCode = asTypeCode(type, config.type)
     const id = text(businessId)
     if (!id) return { status: 'failed', reason: 'missing-business-id' }
@@ -391,11 +637,17 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
         children,
       }
     }
-    const prepared = await prepare({ type: typeCode, businessId: id })
+    const prepared = await prepare({
+      type: typeCode,
+      businessId: id,
+      repositoryId,
+      assignee,
+      persistAutoBinding: false,
+    })
     if (prepared.status !== 'ready') {
       return { type: typeCode, businessId: id, ...prepared, children }
     }
-    const { draft } = prepared
+    const { draft, resolution } = prepared
     return {
       status: 'ready',
       type: typeCode,
@@ -407,6 +659,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
         type: draft.type,
         typeName: draft.typeName,
         assignee: draft.assignee,
+        assigneeSource: draft.assigneeSource ?? null,
         priority: draft.priority,
         dueDate: draft.dueDate ?? null,
         description: draft.description,
@@ -415,6 +668,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
         meta: draft.meta,
         extraFiles: Object.keys(draft.extraFiles ?? {}),
       },
+      developers: resolution?.projectDevs?.developers ?? [],
       children,
     }
   }
@@ -489,6 +743,8 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     baseBranch,
     priority,
     dueDate,
+    fallbackAssignee = '',
+    rememberBinding = false,
   }) {
     if (!parentDir) return []
     const children = await childrenOf(requirementId)
@@ -505,19 +761,29 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
         type: entry.type,
         businessId: entry.businessId,
         storyId: requirementId,
+        repositoryId,
+        fallbackAssignee,
+        persistAutoBinding: true,
       })
       if (prepared.status !== 'ready') {
         results.push({ ...entry, ...prepared })
         continue
       }
-      const { draft } = prepared
+      const { draft, resolution } = prepared
       if (!draft.assignee) {
-        if (config.skipIfNoAssignee !== false) {
-          results.push({ ...entry, status: 'skipped', reason: 'missing-assignee' })
-          continue
-        }
-        results.push({ ...entry, status: 'failed', reason: 'missing-assignee' })
+        results.push({
+          ...entry,
+          ...missingAssigneeOutcome({
+            businessId: entry.businessId,
+            repositoryId,
+            draft,
+            projectDevs: resolution?.projectDevs,
+          }),
+        })
         continue
+      }
+      if (rememberBinding && text(fallbackAssignee) && draft.rawDeveloper && draft.assigneeSource === 'fallback') {
+        await saveDeveloperBinding(repositoryId, draft.rawDeveloper, draft.assignee).catch(() => {})
       }
       try {
         const created = await createTaskRecord({
@@ -562,6 +828,8 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     baseBranch,
     priority,
     includeChildren,
+    assignee,
+    rememberBinding,
   }) {
     const typeCode = asTypeCode(type, config.type)
     const id = text(businessId)
@@ -585,6 +853,8 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
             baseBranch,
             priority,
             dueDate,
+            fallbackAssignee: assignee,
+            rememberBinding: rememberBinding === true,
           })
           result.childSummary = summarizeResults(result.children)
         } catch (error) {
@@ -598,21 +868,38 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     let slug = ''
     try {
       const targetRepository = text(repositoryId) || requireRepository()
-      const prepared = await prepare({ type: typeCode, businessId: id })
+      const prepared = await prepare({
+        type: typeCode,
+        businessId: id,
+        repositoryId: targetRepository,
+        assignee,
+        persistAutoBinding: true,
+      })
       if (prepared.status !== 'ready') return prepared
-      const { draft } = prepared
+      const { draft, resolution } = prepared
       slug = draft.slug
 
       if (!draft.assignee) {
-        const reason = 'missing-assignee'
-        if (config.skipIfNoAssignee !== false) {
-          ctx.log.warn('任务缺少负责人，跳过下发', {
-            businessId: id,
-            developer: draft.rawDeveloper,
-          })
-          return { status: 'skipped', reason }
-        }
-        return { status: 'failed', reason }
+        const outcome = missingAssigneeOutcome({
+          businessId: id,
+          repositoryId: targetRepository,
+          draft,
+          projectDevs: resolution?.projectDevs,
+        })
+        ctx.log.warn('任务缺少负责人，跳过下发', {
+          businessId: id,
+          developer: draft.rawDeveloper,
+          developerName: draft.rawDeveloperName,
+          repositoryId: targetRepository,
+          availableDevelopers: outcome.details.availableDevelopers,
+        })
+        return outcome
+      }
+
+      if (rememberBinding === true && text(assignee) && draft.rawDeveloper) {
+        await saveDeveloperBinding(targetRepository, draft.rawDeveloper, draft.assignee).catch(
+          () => {},
+        )
       }
 
       const created = await createTaskRecord({
@@ -640,6 +927,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
         businessId: id,
         taskKey: created.taskKey,
         assignee: draft.assignee,
+        assigneeSource: draft.assigneeSource ?? null,
       })
       const result = {
         status: 'imported',
@@ -657,6 +945,8 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
             baseBranch,
             priority,
             dueDate,
+            fallbackAssignee: draft.assignee,
+            rememberBinding: rememberBinding === true,
           })
           result.childSummary = summarizeResults(result.children)
         } catch (error) {
@@ -683,10 +973,14 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     const repositoryId = text(body.repositoryId)
     const baseBranch = text(body.baseBranch)
     const priority = text(body.priority)
+    const assignee = text(body.assignee)
+    const rememberBinding = body.rememberBinding === true
     const includeChildren = body.includeChildren
     const decorate = (item) => ({
       baseBranch: text(item.baseBranch) || baseBranch,
       priority: text(item.priority) || priority,
+      assignee: text(item.assignee) || assignee,
+      rememberBinding: item.rememberBinding ?? rememberBinding,
       includeChildren: item.includeChildren ?? includeChildren,
     })
     if (Array.isArray(body.items)) {
@@ -821,5 +1115,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     syncRecent,
     importedList,
     tasksPage,
+    listDevelopers,
+    bindDeveloper,
   }
 }

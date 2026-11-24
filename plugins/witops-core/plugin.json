@@ -16,6 +16,7 @@
     "capabilities:call",
     "tasks:read",
     "projects:read",
+    "user:read",
     "tasks:write",
     "store",
     "events",
@@ -144,7 +145,15 @@
         "list",
         "get",
         "current",
-        "branches"
+        "branches",
+        "developers"
+      ]
+    },
+    {
+      "name": "trellis.user",
+      "version": "^1.0.0",
+      "methods": [
+        "current"
       ]
     }
   ],
