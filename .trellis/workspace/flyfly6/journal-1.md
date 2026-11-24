@@ -1587,3 +1587,26 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Status
 
 [OK] **Completed**
+
+
+## Session 48: 修复基础 UI 原语高度对齐与全局样式缺陷
+<!-- trellis-session: v=2 fp=c0a3bc667a390cd7 -->
+
+**Date**: 2026-11-24
+**Task**: 修复基础 UI 原语高度对齐与全局样式缺陷
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+统一 components/ui 基础原语高度与 Focus Ring，修复 Dialog/ConfirmDialog/InputGroup/Combobox/Select/Textarea/Toggle/Tabs/DropdownMenu/Pagination/Field/Panel/StatusPill/Badge/Alert/ScrollArea/Progress/Sonner 与 index.css 滚动条等系统性缺陷，并通过格式检查、lint、tsc 与单元测试
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9bf75e4` | fix(web): 修复基础 UI 原语高度对齐与全局样式缺陷 |
+
+### Status
+
+[OK] **Completed**
