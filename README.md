@@ -209,9 +209,9 @@ SQLite 使用 WAL 模式。Team 快照提交、索引投影和命令状态
 最小启动步骤：
 
 1. 准备 Node.js 24 和独立运行数据目录；Team 服务端不需要项目 Git、Git 凭据或 Python。
-2. 设置 `TRELLIS_BOARD_MODE=team`、`TRELLIS_BOARD_DATA_DIR`，需要时设置 `PORT` 和本地 Git 远端开关。
-3. 运行 `node packages/server/team/cli.js init-admin --username admin` 创建首个管理员。
-4. 启动服务，在 `/admin.html` 创建团队和用户。
+2. 设置 `TRELLIS_BOARD_MODE=team`、`TRELLIS_BOARD_DATA_DIR`，按需在 `.env` 或环境变量中配置 `PORT`、`TRELLIS_BOARD_ADMIN_USERNAME`（默认 `admin`）、`TRELLIS_BOARD_ADMIN_PASSWORD`（默认 `123456!@#$%^`，写入 `.env` 时含 `#` 需加引号）和本地 Git 远端开关。
+3. 直接启动服务即可在无有效管理员时自动创建初始管理员（首次登录需修改密码）；也可按需预先运行 `node packages/server/team/cli.js init-admin --username admin` 手动初始化。
+4. 登录并在 `/admin.html` 创建团队和用户。
 5. 安装 Windows 客户端，用服务器地址、账号和密码登录；项目由客户端选择本地 Git 仓库后接入。
 
 项目身份是规范化 Git 远端，任务空间身份是“远端 + 分支”。同一远端同分支在服务端全局唯一；

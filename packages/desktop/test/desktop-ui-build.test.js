@@ -189,6 +189,50 @@ test('desktop board shows the product name and version from a board-only command
   assert.match(topBar, /v\{displayVersion\}/)
 })
 
+test('desktop board can drain a task share link opened through the protocol handler', () => {
+  const permissions = read('packages/desktop/src-tauri/permissions/desktop.toml')
+  const capability = JSON.parse(
+    read('packages/desktop/src-tauri/capabilities/board-local-association.json'),
+  )
+  const localCapability = JSON.parse(read('packages/desktop/src-tauri/capabilities/main.json'))
+  const tauri = JSON.parse(read('packages/desktop/src-tauri/tauri.conf.json'))
+  const main = read('packages/desktop/src-tauri/src/main.rs')
+  const shareLink = read('packages/desktop/src-tauri/src/share_link.rs')
+  const shareLinkLib = read('packages/web/src/lib/share-link.ts')
+  const hook = read('packages/web/src/features/board/useShareLinkOpen.ts')
+  const boardPage = read('packages/web/src/pages/board/BoardPage.tsx')
+
+  assert.match(permissions, /identifier = "allow-take-pending-share-link"/)
+  assert.match(permissions, /commands\.allow = \["take_pending_share_link"\]/)
+  assert.ok(capability.permissions.includes('allow-take-pending-share-link'))
+  assert.ok(!localCapability.permissions.includes('allow-take-pending-share-link'))
+  assert.match(shareLink, /pub enum PendingShare/)
+  assert.match(shareLink, /Invalid,/)
+  assert.match(shareLink, /fn take_pending_share_link\(/)
+  assert.match(shareLink, /ensure_board_caller\(&app, &window\)\?/)
+  assert.match(shareLink, /spec-board/)
+  assert.match(shareLinkLib, /spec-board:\/\/task/)
+  assert.match(main, /plugin_host::desktop_plugin_asset,\s+share_link::take_pending_share_link/)
+  assert.match(main, /share_link::clear\(&mut value\)/)
+  assert.match(main, /register_share_link\(&handle\);/)
+  assert.match(main, /deep_link\.on_open_url/)
+  assert.deepEqual(tauri.plugins['deep-link'].desktop.schemes, ['spec-board'])
+  assert.match(hook, /if \(!enabled \|\| !invokeCommand \|\| !listenEvent\) return/)
+  assert.match(hook, /invokeCommand<PendingShare \| null>\('take_pending_share_link'\)/)
+  assert.match(hook, /pending\.kind === 'invalid'/)
+  assert.match(hook, /new URL\(target\.server\)\.origin === location\.origin/)
+  assert.match(hook, /\/api\/tasks\?\$\{query\}/)
+  assert.match(hook, /if \(!active \|\| sequence !== latest\) return/)
+  assert.match(
+    hook,
+    /listenEvent\('share-link-open',\s*\(\)\s*=>\s*\{[\s\S]*?takePending\(\)[\s\S]*?\}\)\s*\.then\([\s\S]*?takePending\(\)/,
+  )
+  assert.match(
+    boardPage,
+    /useShareLinkOpen\(\{[\s\S]*?enabled:\s*Boolean\(runtime\)\s*&&\s*!mustChangePassword/,
+  )
+})
+
 test('windows workflows build the desktop ui before the client is bundled or tested', () => {
   const workflow = read('.github/workflows/windows.yml')
   const jobs = workflow.split(/\n {2}(?=\w[\w-]*:\n)/)

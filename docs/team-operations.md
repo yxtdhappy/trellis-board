@@ -30,6 +30,8 @@
 | `TRELLIS_BOARD_DATA_DIR` | 生产必填 | 平台用户数据目录 | Windows 默认 `%LOCALAPPDATA%\TrellisBoard\server`；Ubuntu 建议 `/var/lib/trellis-board` |
 | `TRELLIS_CLIENT_UPDATES_DIR` | 否 | `<TRELLIS_BOARD_DATA_DIR>/client-updates` | 桌面客户端自动更新文件托管目录（`latest.json` 与 `.zip`），详见 [客户端自动更新指南](./client-auto-update.md) |
 | `PORT` | 否 | `4317` | HTTP 和 Team 服务端口 |
+| `TRELLIS_BOARD_ADMIN_USERNAME` | 否 | `admin` | 首次启动且无有效管理员时自动创建的初始管理员登录名 |
+| `TRELLIS_BOARD_ADMIN_PASSWORD` | 否 | `123456!@#$%^` | 初始管理员密码（写入 `.env` 时含 `#` 须加引号；仅首次建号生效，不覆盖已有管理员） |
 | `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES` | 否 | `false` | 是否接受本地 `file://` Git 远端 |
 | `TRELLIS_TEAM_PLUGINS_ALLOWLIST` | 否 | 空 | 保留字段；服务端插件已固定关闭，配置也不会启用 |
 | `TRELLIS_PLUGINS_DISABLED` | 否 | `true` | 保留字段；服务端插件已固定关闭 |
@@ -81,20 +83,27 @@ Git 同步时需要可执行的 Git CLI；HTTPS 公开仓库可以匿名读取�
 ## 3. 首次部署
 
 1. 准备运行数据目录；需要 HTTPS 时再准备反向代理。
-2. 在 Team 环境变量下创建首管理员：
+2. 按需在仓库根 `.env` 或进程环境变量中设置初始管理员凭据（未设置时默认登录名为 `admin`、默认密码为 `123456!@#$%^`；写入 `.env` 时若密码包含 `#` 必须使用引号包裹）：
 
 ```powershell
 $env:TRELLIS_BOARD_MODE = 'team'
 $env:PORT = '4317'
+$env:TRELLIS_BOARD_ADMIN_USERNAME = 'admin'
+$env:TRELLIS_BOARD_ADMIN_PASSWORD = '123456!@#$%^'
+```
+
+   如需在启动前手动交互式初始化首管理员，仍可运行：
+
+```powershell
 node packages/server/team/cli.js init-admin --username admin --display-name '系统管理员'
 ```
 
-3. 启动服务并打开 `http://<服务端IP>:4317/login.html`；使用 HTTPS 时打开对应域名。
-4. 首管理员首次登录必须修改临时密码。
+3. 启动服务（数据库尚无有效系统管理员时自动创建初始管理员，已有有效管理员时跳过不覆盖）并打开 `http://<服务端IP>:4317/login.html`；使用 HTTPS 时打开对应域名。
+4. 首管理员首次登录必须修改初始密码。
 5. 在 `/admin.html` 创建团队和用户；用户登录名不区分大小写，初始密码至少 6 个字符。
 6. 用户打开 Windows 客户端登录，再由客户端选择本地 Git 项目。
 
-HTTP 不提供公开注册。首个管理员只能通过服务器本机 CLI 创建，其余账号由系统管理员创建。
+HTTP 不提供公开注册。首个管理员在首次启动时由环境变量自动初始化或通过本机 CLI 创建，其余账号由系统管理员创建。
 
 ## 4. 反向代理
 

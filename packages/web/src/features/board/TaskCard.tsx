@@ -20,6 +20,7 @@ import { StageTape } from './StageTape.tsx'
 import { StatusPill, toneSurface } from '@/components/ui/status-pill'
 import { priorityTone } from './tone.ts'
 import { taskControlView } from '@/lib/team-client.js'
+import { ShareTaskButton } from './ShareTaskButton.tsx'
 
 export type TaskLocalState = 'local' | 'readonly' | 'remote'
 
@@ -202,6 +203,7 @@ export function TaskCard({ task, onOpen, onEditPlan, localState, onDownload }: T
               计划
             </button>
           ) : null}
+          <ShareTaskButton task={task} compact className="bg-card" />
           <CopyTaskNameButton task={task} className="bg-card" />
         </div>
       </div>

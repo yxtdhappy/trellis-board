@@ -1755,3 +1755,65 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Next Steps
 
 - 全局 UI 一致性治理父子任务树（1 父 + 6 子）已全部收官归档
+
+
+## Session 54: 支持从 env 配置初始管理员账号密码
+<!-- trellis-session: v=2 fp=57003c6df933e2d4 -->
+
+**Date**: 2026-11-24
+**Task**: 支持从 env 配置初始管理员账号密码
+**Package**: server
+**Branch**: `server-env-initial-admin-credentials`
+
+### Summary
+
+新增 TRELLIS_BOARD_ADMIN_USERNAME/PASSWORD（默认 admin / 123456!@#$%^），首次启动自动创建需改密的系统管理员；修复 6 项既有失败测试；真实服务实测通过
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `be601d9` | feat(server): 支持从 env 配置初始管理员账号密码并提供默认值 |
+
+### Testing
+
+- [OK] rebase 后 yarn test 712 项 708 通过 0 失败；真实启动登录改密重启幂等实测通过
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 55: 任务流水线任务分享链接与桌面端深度唤起
+<!-- trellis-session: v=2 fp=6f1937a28fa6b938 -->
+
+**Date**: 2026-11-24
+**Task**: 任务流水线任务分享链接与桌面端深度唤起
+**Package**: server
+**Branch**: `pipeline-task-share-deeplink`
+
+### Summary
+
+实现任务分享两跳链接、中转页与桌面客户端 spec-board:// 自定义协议深度唤起，完成 Code Review 全部 9 项缺陷修复、同步 origin/main 及 L1/L2/L3 真机复测闭环。
+
+### Main Changes
+
+- Web 端卡片/子任务行/详情弹窗新增分享按钮，复制随部署协议（http/https）一致的 /share.html?space=..&task=.. 链接
+- 新增免登录 share.html 中转页与 share-link 参数校验（控制字符/长度拦截、飞书引导与复制失败内联提示）
+- 桌面客户端注册 spec-board:// 自定义协议与单实例队列（PendingShare::{Target, Invalid}），支持冷启动/运行期/强制改密后自动打开及纯 query /api/tasks? 回源
+- 拆分 TaskDetailFooter.tsx 控制弹窗行数，补齐 Rust/Web 单测、契约测试与 tauri-commands spec 文档
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b9209fa` | feat(share): 支持任务分享链接与桌面端自定义协议深度唤起 |
+
+### Testing
+
+- [OK] L1: cargo test 400/400、yarn test 715 pass / 0 fail / 4 skipped、oxfmt/oxlint/tsc/rustfmt 全通过
+- [OK] L2/L3: HTTP(4399)+HTTPS(4443) 浏览器与真实桌面客户端 WebView2 全量 AC1~AC8 复测通过并清理隔离环境
+
+### Status
+
+[OK] **Completed**

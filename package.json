@@ -7,7 +7,6 @@
   ],
   "type": "module",
   "scripts": {
-    "postinstall": "lefthook install",
     "dev": "node scripts/dev.mjs",
     "start": "node scripts/start.mjs",
     "build": "node scripts/build.mjs",

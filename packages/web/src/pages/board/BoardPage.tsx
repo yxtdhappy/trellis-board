@@ -33,6 +33,8 @@ import { ProjectManagerDialog } from '@/features/board/dialogs/ProjectManagerDia
 import { PublishOperationDialog } from '@/features/board/dialogs/PublishOperationDialog'
 import { SavedViewsDialog } from '@/features/board/dialogs/SavedViewsDialog'
 import { TaskDetailDialog } from '@/features/board/dialogs/TaskDetailDialog'
+import { useShareLinkOpen } from '@/features/board/useShareLinkOpen'
+import { taskIdFromExecutionKey } from '@/lib/share-link.ts'
 import { TaskOperationList } from '@/features/board/TaskOperationList'
 import { HandoffNotice } from '@/desktop/HandoffNotice'
 import { LiveSyncControlDialog } from '@/desktop/LiveSyncControlDialog'
@@ -80,6 +82,7 @@ export function BoardPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [assignmentsOpen, setAssignmentsOpen] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
+  const [passwordChanged, setPasswordChanged] = useState(false)
   const [projectsOpen, setProjectsOpen] = useState(false)
   const [viewsOpen, setViewsOpen] = useState(false)
   const [taskAssignees, setTaskAssignees] = useState<TaskSpaceAssignee[]>([])
@@ -153,9 +156,7 @@ export function BoardPage() {
   const downloadTask = useCallback(
     async (task: BoardTask) => {
       const taskSpaceId = task.taskSpaceId
-      const separator = task.executionTaskKey?.indexOf('::') ?? -1
-      const taskId =
-        task.executionTaskKey && separator >= 0 ? task.executionTaskKey.slice(separator + 2) : ''
+      const taskId = taskIdFromExecutionKey(task.executionTaskKey)
       if (!desktopInvoke || !taskSpaceId || !taskId) return
       try {
         await desktopInvoke('live_task_download', { taskSpaceId, taskId })
@@ -186,6 +187,13 @@ export function BoardPage() {
       ),
     [projects],
   )
+  const mustChangePassword = Boolean(runtime?.user?.mustChangePassword) && !passwordChanged
+  useShareLinkOpen({
+    tasks,
+    onOpen: setSelected,
+    enabled: Boolean(runtime) && !mustChangePassword,
+  })
+
   const selectedTaskSpace = selected?.taskSpaceId
     ? taskSpacesById.get(selected.taskSpaceId) || null
     : null
@@ -562,7 +570,14 @@ export function BoardPage() {
         assignments={controller.assignments}
         onAccept={actions.accept}
       />
-      <PasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} />
+      <PasswordDialog
+        open={passwordOpen}
+        onOpenChange={setPasswordOpen}
+        onChanged={() => {
+          setPasswordChanged(true)
+          void actions.refresh()
+        }}
+      />
       <ProjectManagerDialog
         open={projectsOpen}
         onOpenChange={setProjectsOpen}

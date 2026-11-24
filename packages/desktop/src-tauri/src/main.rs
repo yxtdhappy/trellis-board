@@ -11,6 +11,8 @@ mod logging;
 mod navigation;
 mod plugin_host;
 mod runtime_commands;
+mod share_link;
+mod tray;
 mod update;
 
 use std::path::PathBuf;
@@ -18,27 +20,26 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use cookie::{Cookie, SameSite};
 use serde::Serialize;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
 use tauri::{
-    webview::PageLoadEvent, AppHandle, Emitter, Manager, RunEvent, Url, WebviewUrl, WebviewWindow,
+    webview::PageLoadEvent, AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
 };
-use tauri_plugin_autostart::ManagerExt as AutostartExt;
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
-use tauri_plugin_opener::OpenerExt;
 
 const SESSION_COOKIE: &str = "trellis_team_session";
 // 与 packages/shared/trellis-agent-tools.js 当前目录数量保持一致。
 const MAX_AGENT_TOOLS: usize = 22;
 
 #[derive(Clone, Default)]
-struct DesktopAuthState {
+pub(crate) struct DesktopAuthState {
     board_url: Arc<RwLock<Option<Url>>>,
     session_token: Arc<Mutex<Option<String>>>,
     local_url: Arc<Mutex<Option<Url>>>,
     pending_project_path: Arc<Mutex<Option<PathBuf>>>,
+    /// 分享链接只暂存在内存里，等已登录的 Board 取走；退出登录即作废。
+    pub(crate) pending_share: Arc<Mutex<Option<share_link::PendingShare>>>,
 }
 
 #[derive(Serialize)]
@@ -301,6 +302,9 @@ async fn clear_desktop_session(app: &AppHandle, state: &DesktopAuthState, revoke
         *value = None;
     }
     update::set_server_url(app, None);
+    if let Ok(mut value) = state.pending_share.lock() {
+        share_link::clear(&mut value);
+    }
     forget_saved_password();
     navigate_local_login(app, state);
     if revoke_session {
@@ -959,6 +963,26 @@ pub(crate) fn focus_main_window(app: &AppHandle) {
     }
 }
 
+/// 任务分享协议：注册 `spec-board` 并接管运行期唤起的链接。
+/// 冷启动时插件在自己的 setup 里已解析过 argv，事件早于本监听，因此还要读一次 `current`。
+fn register_share_link(app: &AppHandle) {
+    let deep_link = app.deep_link();
+    if let Err(error) = deep_link.register_all() {
+        logging::warn(&format!("注册任务分享协议失败：{error}"));
+    }
+    let handle = app.clone();
+    deep_link.on_open_url(move |event| {
+        for url in event.urls() {
+            share_link::handle(&handle, url.as_str());
+        }
+    });
+    if let Ok(Some(urls)) = deep_link.get_current() {
+        for url in urls {
+            share_link::handle(app, url.as_str());
+        }
+    }
+}
+
 /// 同步通知的点击入口：只把窗口带回前台。更新对话框由 `update::register` 自己的回调判断，
 /// 插件允许多个 handler 并存，因此未配置更新服务器时这里仍然生效。
 fn register_notification_tap(app: &AppHandle) {
@@ -987,95 +1011,6 @@ fn validate_live_id(value: &str, label: &str) -> Result<String, String> {
         return Err(format!("{label}格式无效"));
     }
     Ok(value.to_string())
-}
-
-fn autostart_enabled(app: &AppHandle) -> bool {
-    app.autolaunch().is_enabled().unwrap_or(false)
-}
-
-fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "打开主窗口", true, None::<&str>)?;
-    let live_control = MenuItem::with_id(app, "review-live", "处理实时确认", true, None::<&str>)?;
-    let sync = MenuItem::with_id(app, "sync", "恢复同步", true, None::<&str>)?;
-    let check_update = MenuItem::with_id(
-        app,
-        "check-update",
-        "检查更新",
-        update::enabled(app),
-        None::<&str>,
-    )?;
-    update::set_tray_item(app, check_update.clone());
-    let logs = MenuItem::with_id(app, "logs", "打开日志目录", true, None::<&str>)?;
-    let autostart = CheckMenuItem::with_id(
-        app,
-        "autostart",
-        "开机自启",
-        true,
-        autostart_enabled(app),
-        None::<&str>,
-    )?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(
-        app,
-        &[
-            &show,
-            &live_control,
-            &sync,
-            &check_update,
-            &logs,
-            &autostart,
-            &quit,
-        ],
-    )?;
-    let Some(icon) = app.default_window_icon().cloned() else {
-        logging::warn("客户端缺少窗口图标，托盘不可用");
-        return Ok(());
-    };
-    TrayIconBuilder::with_id("main")
-        .tooltip("Trellis Board")
-        .icon(icon)
-        .menu(&menu)
-        .show_menu_on_left_click(true)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => focus_main_window(app),
-            "review-live" => {
-                agent_service::show_pending_control(app);
-            }
-            "pause" => agent_service::toggle_pause(app),
-            "sync" => agent_service::sync_action(app),
-            "check-update" => {
-                focus_main_window(app);
-                let _ = app.emit("update-open-dialog", ());
-            }
-            "logs" => {
-                let directory = config::logs_dir();
-                let _ = std::fs::create_dir_all(&directory);
-                let _ = app
-                    .opener()
-                    .open_path(directory.to_string_lossy(), None::<&str>);
-            }
-            "autostart" => {
-                let manager = app.autolaunch();
-                let enabled = manager.is_enabled().unwrap_or(false);
-                let result = if enabled {
-                    manager.disable()
-                } else {
-                    manager.enable()
-                };
-                if let Err(error) = result {
-                    logging::warn(&format!("无法切换开机自启：{error}"));
-                }
-            }
-            "quit" => {
-                plugin_host::shutdown(app);
-                agent_service::shutdown(app);
-                app.exit(0);
-            }
-            _ => {}
-        })
-        .build(app)?;
-    agent_service::set_sync_menu_item(app, sync);
-    Ok(())
 }
 
 fn build_main_window(
@@ -1133,6 +1068,7 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             focus_main_window(app);
         }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -1189,7 +1125,8 @@ fn main() {
             plugin_host::desktop_plugin_logs,
             plugin_host::desktop_plugin_panels,
             plugin_host::desktop_plugin_request,
-            plugin_host::desktop_plugin_asset
+            plugin_host::desktop_plugin_asset,
+            share_link::take_pending_share_link
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -1200,8 +1137,9 @@ fn main() {
             register_notification_tap(&handle);
             let auth = DesktopAuthState::default();
             app.manage(auth.clone());
+            register_share_link(&handle);
             update::register(&handle, initial_server_url().as_deref());
-            build_tray(&handle)?;
+            tray::build(&handle)?;
             build_main_window(&handle, minimized, auth)?;
             Ok(())
         })

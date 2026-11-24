@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>打开 Trellis Board 客户端</title>
+    <script src="/theme-init.js"></script>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7f9;
+        --card: #ffffff;
+        --fg: #17181c;
+        --muted: #62656e;
+        --border: #dcdfe5;
+        --primary: #2563eb;
+        --primary-fg: #ffffff;
+      }
+      html.dark {
+        color-scheme: dark;
+        --bg: #14151a;
+        --card: #1c1e24;
+        --fg: #eceef3;
+        --muted: #9aa0ad;
+        --border: #2f323b;
+        --primary: #3b82f6;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          16px/1.6 system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+      }
+      main {
+        width: 100%;
+        max-width: 420px;
+        padding: 28px 24px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--card);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 20px 0 16px;
+      }
+      button {
+        padding: 8px 16px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--fg);
+        font: inherit;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      button.primary {
+        border-color: var(--primary);
+        background: var(--primary);
+        color: var(--primary-fg);
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .hint {
+        margin-top: 16px;
+      }
+      .error {
+        margin-top: 12px;
+        color: #dc2626;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 id="opening">正在打开 Trellis Board 客户端</h1>
+      <p id="status">如果已安装客户端，系统会提示你确认打开。</p>
+      <div class="actions" id="actions" hidden>
+        <button class="primary" id="open" type="button">打开客户端</button>
+        <button id="copy" type="button">复制客户端链接</button>
+      </div>
+      <p class="hint" id="hint">
+        没有反应？请确认本机已安装 Trellis Board
+        客户端并允许系统打开该链接；若在飞书等应用内置浏览器中无反应，请在系统浏览器中打开本页，或复制客户端链接。
+      </p>
+      <p class="error" id="copy-error" role="status" hidden></p>
+      <p class="error" id="error" hidden>分享链接不完整，请让分享人重新复制。</p>
+    </main>
+    <script type="module" src="/src/share.ts"></script>
+  </body>
+</html>

@@ -155,6 +155,8 @@ function usage() {
       '环境变量:',
       '  TRELLIS_BOARD_DATA_DIR=<运行数据目录>',
       '  TRELLIS_BOARD_MODE=team',
+      '  TRELLIS_BOARD_ADMIN_USERNAME=<初始管理员登录名，默认 admin>',
+      '  TRELLIS_BOARD_ADMIN_PASSWORD=<初始管理员密码，默认 123456!@#$%^>',
       '  TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES=<true|false>',
       '  PORT=<监听端口，默认 4317>',
       '',
