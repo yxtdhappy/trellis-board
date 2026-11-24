@@ -1633,3 +1633,26 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Status
 
 [OK] **Completed**
+
+
+## Session 50: 修复看板顶栏、项目侧栏与核心视图布局缺陷
+<!-- trellis-session: v=2 fp=961b146cf7b2100a -->
+
+**Date**: 2026-11-24
+**Task**: 修复看板顶栏、项目侧栏与核心视图布局缺陷
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成子任务 4（11-23-board-layout-views-ui-fixes）：修复 TopBar 紧凑搜索与容器查询导航、ProjectRail 滚动分层与窄屏抽屉、ProjectEntry 分支行防挤、Kanban/TaskCard/StageTape、AttentionQueue/ExecutionHeader/OwnershipInboxPanel、TeamView/ArchiveView/Pagination/TaskOperationList/FlowSignals/Overview/StatTile 与 LoginPage 的高度对齐、防溢出与响应式缺陷。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f41dec8` | fix(web): 修复看板顶栏、项目侧栏与核心视图布局缺陷 |
+
+### Status
+
+[OK] **Completed**
