@@ -72,9 +72,9 @@ jobs:
       - name: Build web
         run: yarn build
       - name: Build desktop UI
-        run: yarn build:desktop
+        run: yarn build --target=desktop-ui
       - name: Server and web tests
-        run: yarn test:all
+        run: yarn test --scope=all
 
   desktop-build:
     name: desktop build (windows)
@@ -155,15 +155,14 @@ jobs:
       - name: Build web
         run: yarn build
       - name: Build desktop UI
-        run: yarn build:desktop
+        run: yarn build --target=desktop-ui
       - name: Rust unit tests
         timeout-minutes: 25
-        run: cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml
+        run: yarn test --scope=rust
       - name: Bundle desktop client
-        working-directory: packages/desktop
         env:
           TRELLIS_UPDATE_SERVER: ${{ vars.TRELLIS_UPDATE_SERVER }}
-        run: tauri build
+        run: yarn build --target=desktop --skip-ui
       - name: Check artifacts
         run: |
           $release = "packages/desktop/src-tauri/target/release"
@@ -174,12 +173,7 @@ jobs:
           }
           Write-Host "client=$exe"
       - name: Package portable client
-        run: |
-          powershell -NoProfile -ExecutionPolicy Bypass `
-            -File packages/desktop/package-portable.ps1
-          if ($LASTEXITCODE -ne 0) {
-            throw "portable packaging exited with $LASTEXITCODE"
-          }
+        run: yarn build --target=portable
       - name: Portable package smoke test
         run: |
           $ErrorActionPreference = "Stop"

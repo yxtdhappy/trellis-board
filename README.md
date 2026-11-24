@@ -21,7 +21,7 @@ packages/
   shared/         服务端、Agent 与前端共用的纯 ESM 模块（含 zip 读取）
   test-support/   测试 harness、fixture 和插件 fixture
 plugins/          随仓库分发的参考插件，插件 id 与目录名一致
-scripts/          开发启动、容量检查、发布等脚本
+scripts/          统一开发、启动、构建、测试脚本（含跨平台 CLI/env 公共库）、容量检查与发布脚本
 docs/             运维与设计文档
 ```
 
@@ -30,8 +30,7 @@ docs/             运维与设计文档
 （如 `@trellis-board/shared/slug.js`），由 yarn 在根 `node_modules` 建立符号链接解析；
 被多个 workspace 共用的第三方依赖提升到根 `package.json` 声明。
 
-常用命令：`yarn dev`、`yarn start`、`yarn build`、`yarn build:desktop`、`yarn test:all`、
-`yarn desktop:build`、`yarn desktop:package`。
+常用命令：`yarn dev`、`yarn start`、`yarn build`、`yarn test`、`yarn format`、`yarn release:desktop`（详见下方「脚本命令与跨平台参数」，所有核心脚本均支持 `--help`）。
 
 `yarn install` 会通过 lefthook 装好 git hook（写入 `.git/hooks/pre-commit`）；已经安装过依赖的仓库
 更新到含本提交的版本后，如果 `.git/hooks/pre-commit` 不存在，执行一次 `yarn lefthook install` 即可
@@ -53,9 +52,9 @@ yarn start
 
 ### `.env`
 
-服务端启动时读取仓库根目录的 `.env`，与启动时的当前目录无关；`node packages/server/index.js`
-和 `node packages/server/team/cli.js` 使用同一份文件。文件可选，不存在时静默跳过。已存在的进程环境
-变量优先，`.env` 只补充缺失的键，因此 `PORT=4501 yarn start` 始终覆盖文件里的 `PORT`。
+服务端启动时读取仓库根目录的 `.env`，与启动时的当前目录无关；`yarn start`、`node packages/server/index.js`
+和 `node packages/server/team/cli.js` 使用同一份文件。文件可选，不存在时静默跳过。CLI 参数与已存在的进程环境
+变量均优先于 `.env`（`.env` 只补充缺失键），因此 `PORT=4501 yarn start` 与 `yarn start --port=4501` 都会覆盖文件里的 `PORT`。
 
 仓库根的 `.env` 已入库：首行 `node_version=24` 供 Jenkins 流水线读取并切换 Node 版本，其余键是团队版
 运行默认值（`PORT=4317`、`TRELLIS_BOARD_MODE=team`、`TRELLIS_BOARD_DATA_DIR=`、
@@ -63,13 +62,40 @@ yarn start
 只接受 `team`，其他值会在启动时直接报错；可用键见根目录 `.env.example`。
 团队模式首次使用需先建系统管理员（见下）。
 
+### 脚本命令与跨平台参数
+
+根 `package.json` 只保留核心入口，具体场景通过脚本参数切换（均可加 `--help` 查看完整选项与对应环境变量）：
+
+| 命令 | 常用参数与说明 |
+| --- | --- |
+| `yarn dev` | 统一开发入口：`--mode=full`（默认，服务端 `--watch` + Vite HMR）、`web`（仅 Vite）、`server`（仅服务端）、`desktop`（服务端 + Board UI + `cargo tauri dev`）。默认使用 `<用户数据根>-dev` 隔离数据与插件目录，加 `--no-isolate` 直连生产目录；Vite `/api` 代理到 `PORT`，前端端口可用 `--web-port`（`VITE_DEV_PORT`）指定 |
+| `yarn start` | 同进程加载 `packages/server/index.js` 启动 Team 服务端，支持 `--port`、`--data-dir`、`--plugins-dir`、`--watch-debounce` 等参数 |
+| `yarn build` | 统一构建入口：`--target=web`（默认，输出到 `packages/server/public`）、`desktop-ui`（输出到 `packages/desktop/ui`）、`desktop`（桌面 EXE，可加 `--skip-ui`）、`portable`（Windows 便携 ZIP）、`all`（`web` + `desktop-ui`）；支持 `--role=server\|client` 与 `--skip-typecheck` |
+| `yarn test` | 统一测试与检查：`--scope=core`（默认，跑 `packages/*/test/*.test.js` 与 `scripts/test/*.test.js`）、`plugins`、`all`、`server`、`web`、`shared`、`desktop`、`scripts`、`rust`、`lint`；支持 `--file=<substr>` / 位置参数按文件名过滤、`-t/--grep` 正则过滤、`-e` / `--real-acp` |
+| `yarn format` / `yarn format:check` | 使用 `oxfmt` 格式化全仓或检查格式 |
+| `yarn release:desktop` / `yarn capacity` | 桌面发版（递增版本/打 tag）与团队容量巡检 |
+
+#### Windows / Linux 跨平台传参与环境变量
+
+`dev`、`start`、`build`、`test` 共用统一的参数与环境变量解析器，支持以下 4 种传入方式：
+
+1. **短参数（推荐，Windows / Linux 通用）**：`yarn dev --plugins-dir=/tmp/test --port=4500`
+2. **同名全称参数（环境变量转小写、`_` 换 `-`）**：`yarn dev --trellis-board-plugins-dir=/tmp/test`
+3. **通用透传 `-e KEY=VALUE` 与 `--env-file=<path>`**：可传任意未登记环境变量或指定 `.env` 文件，例如：
+   `yarn dev -e TRELLIS_BOARD_PLUGINS_DIR=/tmp/test --env-file=.env.local`
+4. **Shell 环境变量**（也兼容 `npm run`）：
+   - Linux / macOS：`TRELLIS_BOARD_PLUGINS_DIR=/tmp/test yarn dev`（或 `export TRELLIS_BOARD_PLUGINS_DIR=/tmp/test && yarn dev`）
+   - Windows PowerShell：`$env:TRELLIS_BOARD_PLUGINS_DIR="C:\tmp\test"; yarn dev`
+   - Windows cmd：`set TRELLIS_BOARD_PLUGINS_DIR=C:\tmp\test&& yarn dev`
+   - 若习惯用 `npm run`，推荐加 `--`：`npm run dev -- --plugins-dir=/tmp/test`（漏写 `--` 如 `npm run dev --trellis-board-plugins-dir=/tmp/test` 时，白名单参数也会通过 `npm_config_*` 兜底生效并给出提示）
+
+**解析规则与优先级**：`CLI (--flag / -e)` > `npm_config_*（仅白名单兜底）` > `Shell 环境变量` > `--env-file` > 根 `.env`（仅补缺，空值键不覆盖默认值）> 脚本内置默认值。路径类参数（`--data-dir`、`--plugins-dir`、`--desktop-home`）按执行时的工作目录自动转为绝对路径；含 `TOKEN` / `SECRET` 的变量在启动摘要中自动脱敏为 `***`；未知参数会报错并给出拼写相近的参数建议。
+
 ### Jenkins 部署
 
 Jenkins 部署脚本读取 `.env` 的 `node_version` 切 Node，然后 `yarn install --immutable`、`yarn build`，
 再用它自己的 Dockerfile 构建镜像并以 `yarn start` 启动容器；仓库不维护 Dockerfile。`yarn build` 产出
 `packages/server/public`，运行数据由 `TRELLIS_BOARD_DATA_DIR` 指向的卷持久化，监听容器映射的 `PORT`。
-
-前端开发用 `yarn dev`：并行启动 `node --watch packages/server/index.js`（服务端改动自动重启）和 Vite 开发服务器（页面 HMR），`/api` 由 Vite 代理到 `PORT` 指定的端口，默认 `http://127.0.0.1:4317`；5173 被占用时 Vite 会自动递增端口，以控制台打印的地址为准。
 
 团队模式监听所有网络接口，HTTP 和 HTTPS 均可使用。
 
@@ -238,7 +264,7 @@ binding 不一致时暂停该仓库同步，不写任务目录、不上传、不
 管理接口：`GET /api/plugins`、`POST /api/plugins/<id>/start|stop`、`GET /api/plugins/<id>/logs|runs|audit`；
 前端入口在左侧导航「插件」。设置 `TRELLIS_PLUGINS_DISABLED=1` 可整体关闭。
 内置插件的功能测试与 fixture 放在 `plugins/<id>/test/`，宿主级协议测试在 `packages/server/test/`；
-`yarn test` 默认只跑 workspace 测试，插件测试用 `yarn test:plugins`。
+`yarn test` 默认只跑 workspace 与脚本测试，插件测试用 `yarn test --scope=plugins`（全量用 `yarn test --scope=all`）。
 
 插件默认没有沙箱：`acp-dispatch` 默认放行编辑与执行，只应在受信仓库、专用账号下启用。
 

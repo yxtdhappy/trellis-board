@@ -98,14 +98,14 @@ export function Kanban({ groups, onOpen, onEditPlan, localStateFor, onDownload }
                             onDownload={onDownload}
                           />
                           {children.length ? (
-                            <div className="flex flex-col gap-0.5 pl-1">
+                            <div className="flex flex-col gap-1 pl-1">
                               <p className="px-1 text-2xs text-muted-foreground">子任务</p>
                               {children.map((child) => {
                                 const progress = taskProgress(child)
                                 return (
                                   <div
                                     key={taskInstanceKey(child)}
-                                    className="group flex items-center gap-1 rounded-md hover:bg-muted"
+                                    className="group flex items-center gap-1 rounded-md border border-border/70 bg-card shadow-xs transition-colors hover:bg-muted/60"
                                   >
                                     <button
                                       type="button"

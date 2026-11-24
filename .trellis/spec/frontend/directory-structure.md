@@ -17,7 +17,7 @@
 | `packages/web/src/lib/` | 浏览器/Node 共用的纯逻辑模块（`.js`）与其 `.d.ts` |
 | `packages/shared/` | 前后端共用纯模块：`slug`、`task-snapshot`、`trellis-watcher`、`remote-identity`、`trellis-agent-tools`、`zip` |
 | `packages/server/public/` | **构建产物**，由根目录 `yarn build` 生成，不手改 |
-| `packages/desktop/ui/` | 桌面本地登录壳（`desktop/index.html`）**构建产物**，由 `yarn build:desktop` 生成，不手改 |
+| `packages/desktop/ui/` | 桌面本地登录壳（`desktop/index.html`）**构建产物**，由 `yarn build --target=desktop-ui` 生成，不手改 |
 
 ## 模块边界
 

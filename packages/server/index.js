@@ -32,7 +32,7 @@ async function stopActiveRuntime() {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+export function runServerEntry() {
   const logger = createServerLogger({ dataDir })
   activeLogger = logger
   startApplication(undefined, logger)
@@ -53,4 +53,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   }
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  runServerEntry()
 }
