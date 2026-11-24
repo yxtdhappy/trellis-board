@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   TRELLIS_AGENT_TOOLS,
+  TRELLIS_SUPPORTED_AGENT_TOOL_IDS,
+  TRELLIS_VISIBLE_AGENT_TOOLS,
   detectTrellisAgentTools,
   getTrellisAgentTool,
   normalizeTrellisAgentTools,
@@ -28,6 +30,26 @@ test('Trellis Agent 工具目录的 ID、flag、显示名和探测目录唯一',
       assert.doesNotMatch(presencePath, /^(?:\/|\.{1,2}(?:\/|$)|\.git(?:\/|$))/)
     }
     assert.equal(getTrellisAgentTool(tool.id), tool)
+  }
+})
+
+test('看板初始化/Agent-only 只暴露 7 个已支持平台', () => {
+  assert.deepEqual(
+    [...TRELLIS_SUPPORTED_AGENT_TOOL_IDS],
+    ['claude-code', 'codex', 'opencode', 'pi', 'omp', 'antigravity', 'dsh'],
+  )
+  assert.deepEqual(
+    TRELLIS_VISIBLE_AGENT_TOOLS.map((tool) => tool.id),
+    [...TRELLIS_SUPPORTED_AGENT_TOOL_IDS],
+  )
+  const visibleIds = new Set(TRELLIS_VISIBLE_AGENT_TOOLS.map((tool) => tool.id))
+  for (const tool of TRELLIS_AGENT_TOOLS) {
+    if (!visibleIds.has(tool.id)) {
+      assert.equal(
+        TRELLIS_VISIBLE_AGENT_TOOLS.some((item) => item.id === tool.id),
+        false,
+      )
+    }
   }
 })
 

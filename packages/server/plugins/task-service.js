@@ -95,6 +95,7 @@ function toTaskDto(project, relativeDir, task, extra = {}) {
     status: task?.status ?? 'unknown',
     assignee: task?.assignee ?? null,
     priority: task?.priority ?? 'P2',
+    workType: task?.work_type ?? null,
     meta: task?.meta ?? {},
     archived: Boolean(extra.archived),
     ...extra,
@@ -156,6 +157,7 @@ export function createTaskService({
         assignee: params.assignee,
         priority: params.priority ?? 'P2',
         slug: params.slug,
+        workType: params.workType,
         packageName: params.packageName,
         // 平台任务落到本地时要指定基线分支；子任务要挂到父任务目录下。
         baseBranch: params.baseBranch,
@@ -181,8 +183,10 @@ export function createTaskService({
         writeTextAtomic(target, String(content ?? ''))
       }
     }
-    if (params.meta && typeof params.meta === 'object') {
-      mergeMeta(full, params.meta)
+    const meta = params.meta && typeof params.meta === 'object' ? { ...params.meta } : {}
+    if (params.workType && !meta.label_source) meta.label_source = 'user-explicit'
+    if (Object.keys(meta).length > 0) {
+      mergeMeta(full, meta)
     }
 
     const task = readJson(path.join(full, 'task.json')) || {}

@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/11-23-trellis-workflow-evidence-loop/prd.md", "reason": "需求与验收标准"}
+{"file": ".trellis/tasks/11-23-trellis-workflow-evidence-loop/design.md", "reason": "设计契约、命令退出码与测试矩阵"}
+{"file": ".trellis/tasks/11-23-trellis-workflow-evidence-loop/research/gap-analysis.md", "reason": "回归样例与根因证据"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "只读投影约束"}

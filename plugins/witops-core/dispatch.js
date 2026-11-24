@@ -703,7 +703,11 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
           ...draft.meta,
           witops: { ...draft.meta.witops, parentBusinessId: String(parentBusinessId) },
         }
-      : draft.meta
+      : { ...draft.meta }
+    if (draft.workType) {
+      meta.label_source = meta.label_source || 'user-explicit'
+      meta.label_default_from = meta.label_default_from || 'witops-category'
+    }
     const created = await ctx.tasks.create({
       repositoryId,
       title: draft.title,
@@ -712,6 +716,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
       assignee: draft.assignee,
       priority: chosenPriority(priority, draft.priority),
       slug: draft.slug,
+      workType: draft.workType || undefined,
       meta,
       extraFiles: draft.extraFiles,
       baseBranch: text(baseBranch) || undefined,
@@ -782,7 +787,12 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
         })
         continue
       }
-      if (rememberBinding && text(fallbackAssignee) && draft.rawDeveloper && draft.assigneeSource === 'fallback') {
+      if (
+        rememberBinding &&
+        text(fallbackAssignee) &&
+        draft.rawDeveloper &&
+        draft.assigneeSource === 'fallback'
+      ) {
         await saveDeveloperBinding(repositoryId, draft.rawDeveloper, draft.assignee).catch(() => {})
       }
       try {
@@ -830,6 +840,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     includeChildren,
     assignee,
     rememberBinding,
+    workType,
   }) {
     const typeCode = asTypeCode(type, config.type)
     const id = text(businessId)
@@ -877,6 +888,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
       })
       if (prepared.status !== 'ready') return prepared
       const { draft, resolution } = prepared
+      if (text(workType)) draft.workType = text(workType)
       slug = draft.slug
 
       if (!draft.assignee) {
@@ -982,6 +994,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
       assignee: text(item.assignee) || assignee,
       rememberBinding: item.rememberBinding ?? rememberBinding,
       includeChildren: item.includeChildren ?? includeChildren,
+      workType: text(item.workType) || text(body.workType),
     })
     if (Array.isArray(body.items)) {
       return body.items

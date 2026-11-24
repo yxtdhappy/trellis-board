@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { TRELLIS_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
+import { TRELLIS_VISIBLE_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import { pickProjectTrellisDevId } from '@/lib/team-client.js'
 import { normalizeProjectInspection, type ProjectInspection } from '@/lib/project-inspection.js'
@@ -177,7 +177,9 @@ export function ProjectOnboardingDialog({
   const missingTools = useMemo(
     () =>
       inspection
-        ? TRELLIS_AGENT_TOOLS.filter((tool) => !inspection.existingAgentTools.includes(tool.id))
+        ? TRELLIS_VISIBLE_AGENT_TOOLS.filter(
+            (tool) => !inspection.existingAgentTools.includes(tool.id),
+          )
         : [],
     [inspection],
   )

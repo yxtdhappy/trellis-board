@@ -932,6 +932,12 @@ fn normalize_agent_tools(agent_tools: &[String]) -> AgentResult<Vec<String>> {
                 format!("不支持的 Agent 工具: {label}"),
             );
         }
+        if !trellis_cli::is_supported_agent_tool(id) {
+            return err(
+                code::COMMAND_INVALID,
+                format!("暂不支持的 Agent 工具: {id}"),
+            );
+        }
         selected.push(id.to_string());
     }
     Ok(selected)

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { TRELLIS_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
+import { TRELLIS_VISIBLE_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -92,7 +92,9 @@ export function AgentQuickInitDialog({
   const missingTools = useMemo(
     () =>
       inspection
-        ? TRELLIS_AGENT_TOOLS.filter((tool) => !inspection.existingAgentTools.includes(tool.id))
+        ? TRELLIS_VISIBLE_AGENT_TOOLS.filter(
+            (tool) => !inspection.existingAgentTools.includes(tool.id),
+          )
         : [],
     [inspection],
   )

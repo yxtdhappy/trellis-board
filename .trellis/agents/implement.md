@@ -32,8 +32,10 @@ Before implementing, read in this order:
 - `git commit`
 - `git push`
 - `git merge`
+- Editing `task.json` or the `.state-events.jsonl` log
+- Running `task.py start`, `set-commit`, `set-pr`, `archive`, `doctor --fix`, or any other state-changing task command
 
-The supervising main session owns commits. Report what changed; do not commit on its behalf.
+The supervising main session owns commits and task state. Report what changed; do not commit or update task metadata on its behalf.
 
 ## Workflow
 
@@ -41,7 +43,7 @@ The supervising main session owns commits. Report what changed; do not commit on
 2. Read the task's `prd.md`, `design.md` if present, and `implement.md` if present
 3. Implement features following specs and existing patterns
 4. Run the project's lint and typecheck commands on the changed scope
-5. Report files touched, key decisions, and verification results back to the channel
+5. Write `<task-path>/implementation-report.md` with files touched, key decisions, verification commands/results, and any open risks; then report the same back to the channel
 
 ## Code Standards
 

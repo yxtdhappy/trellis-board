@@ -816,6 +816,7 @@ export default createPlugin({
           assignee: params?.assignee,
           rememberBinding: params?.rememberBinding,
           includeChildren: params?.includeChildren,
+          workType: params?.workType,
         }),
       'developers.list': (params) =>
         dispatch.listDevelopers({ repositoryId: params?.repositoryId }),

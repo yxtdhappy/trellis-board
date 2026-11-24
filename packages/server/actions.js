@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process'
 import { pythonCommandCandidates } from './python.js'
 import { getRepositories } from './repositories.js'
 import { slugifyTaskTitle, TASK_SLUG_PATTERN } from '@trellis-board/shared/slug.js'
+import { isWorkType, WORK_TYPE_IDS } from '@trellis-board/shared/work-types.js'
 
 const ALLOWED_PRIORITIES = new Set(['P0', 'P1', 'P2', 'P3'])
 
@@ -74,6 +75,11 @@ export async function createTask(input, { listRepositories = getRepositories } =
   const assignee = cleanText(input.assignee, '负责人', 100)
   const priority = cleanText(input.priority || 'P2', '优先级', 2)
   if (!ALLOWED_PRIORITIES.has(priority)) throw new Error('优先级只能是 P0、P1、P2、P3')
+  const workType =
+    input.workType == null || input.workType === '' ? '' : cleanText(input.workType, '任务类型', 20)
+  if (workType && !isWorkType(workType)) {
+    throw new Error(`任务类型只能是 ${WORK_TYPE_IDS.join('、')}`)
+  }
   const requestedSlug =
     input.slug == null || input.slug === '' ? '' : cleanText(input.slug, '任务标识', 100)
   const slug = requestedSlug || slugifyTaskTitle(title)
@@ -108,6 +114,7 @@ export async function createTask(input, { listRepositories = getRepositories } =
     slug,
     '--no-start',
   ]
+  if (workType) args.push('--work-type', workType)
   if (input.parentDir) args.push('--parent', cleanText(input.parentDir, '父任务目录', 1000))
   if (input.baseBranch) args.push('--base-branch', cleanText(input.baseBranch, '目标分支', 200))
   if (input.packageName) args.push('--package', cleanText(input.packageName, '包名', 100))

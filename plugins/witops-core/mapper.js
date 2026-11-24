@@ -37,6 +37,16 @@ const BUILTIN_ENV = new Map([
   [4, 'SIT'],
 ])
 
+const WITOPS_CATEGORY_WORK_TYPES = new Map([
+  ['前端开发', 'frontend'],
+  ['后端开发', 'backend'],
+])
+
+/** 平台分类只提供前端/后端两个明确映射，其余分类留空，由用户在创建时选择。 */
+export function workTypeFromCategory(category) {
+  return WITOPS_CATEGORY_WORK_TYPES.get(String(category ?? '').trim()) ?? ''
+}
+
 /** 平台节点类型（与 witops-web 的 detailTypes 一致）。 */
 export const TYPE_LABELS = new Map([
   [0, '工单'],
@@ -337,6 +347,7 @@ export function buildTaskDraft({
     assignee,
     priority,
     dueDate,
+    workType: workTypeFromCategory(categoryName),
     meta,
     extraFiles: {
       'task.md': taskMarkdown,

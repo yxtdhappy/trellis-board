@@ -325,10 +325,14 @@ Goal: classify the request, get task-creation consent when a task is needed, and
 Create the task directory only after task-creation consent. The command sets status to `planning`, writes `task.json`, creates a default `prd.md`, and auto-targets the new task when session identity is available:
 
 ```bash
-python ./.trellis/scripts/task.py create "<task title>" --slug <name>
+python ./.trellis/scripts/task.py create "<task title>" --slug <name> \
+  --task-type simple|complex|research \
+  --work-type backend|frontend|fullstack|research|docs
 ```
 
 `--slug` is the human-readable name only. Do **not** include the `MM-DD-` date prefix; `task.py create` adds that prefix automatically.
+
+Both labels are required. Propose them with a one-line reason and get the user's confirmation once — never silently guess. `task_type` is the process commitment (`complex` requires `design.md` + `implement.md`); `work_type` is the surface. Shared UI/design-system work is still `frontend`, with `set-work-type --check-report-required` when visual proof is mandatory.
 
 For task trees, create the parent task first and then create each child with `--parent <parent-dir>`. Do not start the parent just because children exist; start the child that owns the next independently verifiable deliverable.
 
@@ -454,6 +458,8 @@ python ./.trellis/scripts/task.py start <task-dir>
 
 For lightweight tasks, `prd.md` can be enough. For complex tasks, `prd.md`, `design.md`, and `implement.md` must exist and be reviewed before start. On sub-agent-dispatch platforms, `implement.jsonl` and `check.jsonl` must both have real curated entries before start. Runtime consumers tolerate missing or seed-only manifests for compatibility, but that tolerance is not a planning-ready state.
 
+`task.py start` persists the status transition at the safe point: a complex task creates a task-only bookkeeping commit by default (`task.json` + `.state-events.jsonl`); simple/research tasks record the event log only. Pass `--commit-state` to force the commit for a simple task, or `--no-commit-state` to explicitly degrade. `--push` pushes the bookkeeping commit; it requires a commit. If git cannot make the commit (rebase/merge in progress, ignored task path, missing identity), start exits non-zero and the workflow must stop at this gate.
+
 After this command succeeds, the breadcrumb auto-switches to `[workflow-state:in_progress]`, and the rest of Phase 2 / 3 follows.
 
 If `task.py start` errors with a session-identity message (no context key from hook input, `TRELLIS_CONTEXT_ID`, or platform-native session env), follow the hint in the error to set up session identity, then retry.
@@ -489,6 +495,7 @@ Spawn the implement sub-agent:
 
 - **Agent type**: `trellis-implement`
 - **Task description**: Implement the reviewed task artifacts, consulting materials under `{TASK_DIR}/research/`; finish by running project lint and type-check
+- **Report requirement**: Write `{TASK_DIR}/implementation-report.md` with files, decisions, verification commands/results, and open risks
 - **Dispatch prompt guard**: The prompt MUST start with `Active task: <task path>`, then tell the spawned agent it is already the `trellis-implement` sub-agent and must implement directly, not spawn another `trellis-implement` / `trellis-check`.
 
 The platform hook/plugin auto-handles:
@@ -551,6 +558,7 @@ The check agent's job:
 - Review code changes against `prd.md`, `design.md` if present, and `implement.md` if present
 - Auto-fix issues it finds
 - Run lint and typecheck to verify
+- Write `{TASK_DIR}/check-report.md`; the main session's `task.py verify` gate reads it
 
 [/Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Snow, Reasonix, Trae, Grok, Kimi Code]
 
@@ -641,7 +649,14 @@ The AI drives a batched commit of this task's code changes so `/finish-work` can
 
 6. **On confirmation**: run `git add <files>` + `git commit -m "<msg>"` for each batch in order. Do not amend. Do not push.
 
-7. **On rejection** (user replies "不行" / "我自己来" / "manual" / any pushback on the plan): stop. Do not attempt a second plan. The user will commit by hand; you skip ahead to 3.5 once they confirm.
+7. **Record the final commit on the task** (mandatory, not a work commit):
+   ```bash
+   python ./.trellis/scripts/task.py set-commit <task-dir> <final-work-commit>
+   python ./.trellis/scripts/task.py set-pr <task-dir> <pr-url>   # if a PR exists
+   ```
+   `set-commit` writes the top-level `commit` field read by the board and appends to `meta.commits`. Pass `--persist` to create a task-only bookkeeping commit. Do this after the last work commit, before finish-work.
+
+8. **On rejection** (user replies "不行" / "我自己来" / "manual" / any pushback on the plan): stop. Do not attempt a second plan. The user will commit by hand; you skip ahead to 3.5 once they confirm.
 
 **Rules**:
 - No `git commit --amend` anywhere — three-stage three-commit flow (work commits → archive commit → journal commit).
@@ -651,7 +666,13 @@ The AI drives a batched commit of this task's code changes so `/finish-work` can
 
 #### 3.5 Wrap-up reminder
 
-After the above, remind the user they can run `/finish-work` to wrap up (archive the task, record the session).
+Before wrapping up, run the evidence gate:
+
+```bash
+python ./.trellis/scripts/task.py verify <task-dir> --strict
+```
+
+If it reports a missing commit, missing evidence, or a status regression, repair it with `set-commit` / `set-evidence` / `doctor --fix` before archiving. Then remind the user they can run `/finish-work` to wrap up (archive the task, record the session).
 
 ---
 

@@ -54,6 +54,25 @@ export const TRELLIS_AGENT_TOOLS = Object.freeze([
   },
 ])
 
+// Product-supported subset. Keep TRELLIS_AGENT_TOOLS complete for detection and
+// backward compatibility; only these IDs are offered by the onboarding / agent-only UI.
+export const TRELLIS_SUPPORTED_AGENT_TOOL_IDS = Object.freeze([
+  'claude-code',
+  'codex',
+  'opencode',
+  'pi',
+  'omp',
+  'antigravity',
+  'dsh',
+])
+
+export const TRELLIS_VISIBLE_AGENT_TOOLS = Object.freeze(
+  TRELLIS_SUPPORTED_AGENT_TOOL_IDS.flatMap((id) => {
+    const tool = TRELLIS_AGENT_TOOLS.find((item) => item.id === id)
+    return tool ? [tool] : []
+  }),
+)
+
 const TOOL_BY_ID = new Map(TRELLIS_AGENT_TOOLS.map((tool) => [tool.id, tool]))
 
 function normalizeTreePath(value) {

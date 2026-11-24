@@ -17,9 +17,9 @@ This prints:
 
 - **My active tasks** — review whether any besides the current one are actually done (code merged, AC met) and should be archived this round.
 - **Git status** — quick visual on what's dirty.
-- **Recent commits** — you'll need their hashes in Step 4 for `--commit`.
+- **Recent commits** — you'll need their hashes in Step 5 for `--commit`.
 
-If `--mode record` surfaces other completed tasks not tied to the current session, surface them to the user with a one-shot confirmation: "These N tasks look done — archive them too in this round? [y/N]". Default is no; the current active task is always archived in Step 3 regardless.
+If `--mode record` surfaces other completed tasks not tied to the current session, surface them to the user with a one-shot confirmation: "These N tasks look done — archive them too in this round? [y/N]". Default is no; the current active task is always archived in Step 4 regardless.
 
 ## Step 2: Sanity check — classify dirty paths
 
@@ -47,7 +47,23 @@ Then route:
   > "FYI, dirty files outside this task's scope — leaving them for the other window: `<list>`."
 - **Genuinely unsure** — ask the user once: "Are `<list>` this task's work I forgot to commit, or another window's? (commit / ignore)" — then route per their answer.
 
-## Step 3: Archive task(s)
+## Step 3: Evidence gate
+
+Before archiving, run:
+
+```bash
+python ./.trellis/scripts/task.py verify <task-name> --strict
+```
+
+If it reports a missing commit, missing check evidence, or a status regression, stop and repair it first:
+
+- `task.py set-commit <task-name> <final-work-commit>`
+- `task.py set-evidence <task-name> --type e2e|visual|manual --artifact <path-or-url>`
+- `task.py doctor <task-name> --fix` for safe repairs
+
+Do not archive past a failing gate. For a research/no-code task, run `archive <task-name> --planning-only` instead.
+
+## Step 4: Archive task(s)
 
 ```bash
 python ./.trellis/scripts/task.py archive <task-name>
@@ -57,7 +73,7 @@ At minimum: the current active task (if any). Plus any extra tasks the user conf
 
 If there is no active task and the user did not confirm any cleanup archives, skip this step.
 
-## Step 4: Record session journal
+## Step 5: Record session journal
 
 ```bash
 python ./.trellis/scripts/add_session.py \
@@ -66,6 +82,6 @@ python ./.trellis/scripts/add_session.py \
   --summary "Brief summary"
 ```
 
-Use the work-commit hashes produced in Phase 3.4 (visible in Step 1's `Recent commits` list, or via `git log --oneline`) for `--commit`. Do not include the archive commit hashes from Step 3. This produces a `chore: record journal` commit.
+Use the work-commit hashes produced in Phase 3.4 (visible in Step 1's `Recent commits` list, or via `git log --oneline`) for `--commit`. Do not include the archive commit hashes from Step 4. This produces a `chore: record journal` commit.
 
 Final git log order: `<work commits from 3.4>` → `chore(task): archive ...` (one or more) → `chore: record journal`.

@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "platforms": {
+    "claude-code": {
+      "name": "Claude Code",
+      "configDir": ".claude",
+      "capabilities": {
+        "commands": true,
+        "skills": true,
+        "agents": true,
+        "hooks": true,
+        "settings": true
+      },
+      "paths": {
+        "commands": ".claude/commands/trellis",
+        "skills": ".claude/skills",
+        "agents": ".claude/agents",
+        "hooks": ".claude/hooks",
+        "settings": ".claude/settings.json"
+      },
+      "commandPrefix": "/trellis:"
+    },
+    "codex": {
+      "name": "Codex",
+      "configDir": ".codex",
+      "sharedSkills": ".agents/skills",
+      "capabilities": {
+        "commands": false,
+        "skills": true,
+        "agents": true,
+        "hooks": true,
+        "settings": true
+      },
+      "paths": {
+        "skills": ".agents/skills",
+        "agents": ".codex/agents",
+        "hooks": ".codex/hooks",
+        "settings": ".codex/config.toml"
+      },
+      "commandPrefix": "$",
+      "notes": "No command directory; skills are invoked with $."
+    },
+    "opencode": {
+      "name": "OpenCode",
+      "configDir": ".opencode",
+      "capabilities": {
+        "commands": true,
+        "skills": true,
+        "agents": false,
+        "hooks": false,
+        "settings": false
+      },
+      "paths": {
+        "commands": ".opencode/commands/trellis",
+        "skills": ".opencode/skills"
+      },
+      "commandPrefix": "/trellis:"
+    },
+    "pi": {
+      "name": "Pi",
+      "configDir": ".pi",
+      "sharedSkills": ".agents/skills",
+      "capabilities": {
+        "commands": true,
+        "skills": true,
+        "agents": true,
+        "hooks": true,
+        "settings": true
+      },
+      "paths": {
+        "commands": ".pi/prompts",
+        "skills": ".agents/skills",
+        "agents": ".pi/agents",
+        "hooks": ".pi/extensions/trellis/index.ts",
+        "settings": ".pi/settings.json"
+      },
+      "commandPrefix": "/trellis-"
+    },
+    "omp": {
+      "name": "Oh My Pi",
+      "configDir": ".omp",
+      "capabilities": {
+        "commands": true,
+        "skills": true,
+        "agents": true,
+        "hooks": true,
+        "settings": false
+      },
+      "paths": {
+        "commands": ".omp/commands",
+        "skills": ".omp/skills",
+        "agents": ".omp/agents",
+        "hooks": ".omp/extensions/trellis/index.ts"
+      },
+      "commandPrefix": "/trellis:"
+    },
+    "antigravity": {
+      "name": "Antigravity",
+      "configDir": ".agent",
+      "capabilities": {
+        "commands": true,
+        "skills": true,
+        "agents": false,
+        "hooks": false,
+        "settings": false
+      },
+      "paths": {
+        "commands": ".agent/workflows",
+        "skills": ".agent/skills"
+      },
+      "commandPrefix": "/"
+    },
+    "dsh": {
+      "name": "DeepSeek Harness",
+      "configDir": ".dsh",
+      "sharedSkills": ".agents/skills",
+      "capabilities": {
+        "commands": true,
+        "skills": true,
+        "agents": false,
+        "hooks": false,
+        "settings": false
+      },
+      "paths": {
+        "commands": ".dsh/skills",
+        "skills": ".agents/skills",
+        "entrySkills": ".dsh/skills",
+        "instructions": ".dsh/DSH.md"
+      },
+      "commandPrefix": "trellis-"
+    }
+  }
+}

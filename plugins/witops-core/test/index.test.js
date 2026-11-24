@@ -12,7 +12,7 @@ import {
   SAMPLE_DETAIL,
 } from './fixtures/witops-fixture.js'
 import { htmlToMarkdown, safeHtmlToMarkdown, validateMarkdown } from '../html-to-markdown.js'
-import { buildTaskDraft, resolveAssignee } from '../mapper.js'
+import { buildTaskDraft, resolveAssignee, workTypeFromCategory } from '../mapper.js'
 import { createWitopsClient } from '../witops-client.js'
 
 const PLUGIN_ID = 'witops-core'
@@ -257,6 +257,8 @@ test('POST /dispatch 创建任务、写 PRD 与 meta，并保证幂等', async (
     assert.equal(taskJson.meta.witops.storyId, '3001')
     assert.equal(taskJson.meta.witops.storyCode, 'R3001')
     assert.equal(taskJson.meta.witops.storyName, '需求 A')
+    assert.equal(taskJson.work_type, 'frontend')
+    assert.equal(taskJson.meta.label_default_from, 'witops-category')
     assert.match(taskMarkdown, /\| 需求链接 \| .*nodeTaskDetail\/3\/3001 \|/)
     assert.equal(taskJson.assignee, 'bob')
 
@@ -273,6 +275,14 @@ test('POST /dispatch 创建任务、写 PRD 与 meta，并保证幂等', async (
   } finally {
     await context.cleanup()
   }
+})
+
+test('workTypeFromCategory 只映射前端/后端，其他分类留空', () => {
+  assert.equal(workTypeFromCategory('前端开发'), 'frontend')
+  assert.equal(workTypeFromCategory('后端开发'), 'backend')
+  assert.equal(workTypeFromCategory('测试任务'), '')
+  assert.equal(workTypeFromCategory(''), '')
+  assert.equal(workTypeFromCategory(null), '')
 })
 
 test('父节点是任务时不算需求，任务 meta 不带 story', () => {
@@ -902,10 +912,7 @@ test('零配置自动关联：WitOps 登录用户匹配 .trellis/.developer 并�
     const taskJson = readTaskJson(taskDir)
     assert.equal(taskJson.assignee, 'yuhaojie')
 
-    const devs = await call(
-      context.http,
-      `/api/plugins/${PLUGIN_ID}/developers?repositoryId=repo`,
-    )
+    const devs = await call(context.http, `/api/plugins/${PLUGIN_ID}/developers?repositoryId=repo`)
     assert.equal(devs.status, 200)
     assert.equal(devs.json.currentDeveloper, 'yuhaojie')
     assert.equal(devs.json.bindings['900'], 'yuhaojie')
@@ -975,21 +982,14 @@ test('缺少负责人返回结构化诊断，并支持弹窗手动选择与记�
     const [taskDir] = findTaskDirectories(context.repo.repositoryPath)
     assert.equal(readTaskJson(taskDir).assignee, 'bob')
 
-    const devs = await call(
-      context.http,
-      `/api/plugins/${PLUGIN_ID}/developers?repositoryId=repo`,
-    )
+    const devs = await call(context.http, `/api/plugins/${PLUGIN_ID}/developers?repositoryId=repo`)
     assert.equal(devs.status, 200)
     assert.equal(devs.json.bindings['161'], 'bob')
 
-    const putBind = await call(
-      context.http,
-      `/api/plugins/${PLUGIN_ID}/developer-bindings`,
-      {
-        method: 'PUT',
-        body: { repositoryId: 'repo', witopsUserId: '162', assignee: 'bob' },
-      },
-    )
+    const putBind = await call(context.http, `/api/plugins/${PLUGIN_ID}/developer-bindings`, {
+      method: 'PUT',
+      body: { repositoryId: 'repo', witopsUserId: '162', assignee: 'bob' },
+    })
     assert.equal(putBind.status, 200)
     assert.equal(putBind.json.bindings['162'], 'bob')
   } finally {

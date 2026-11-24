@@ -266,15 +266,16 @@ async fn requires_pushed_commit_rejects_waiting_state() {
 #[test]
 fn normalizes_agent_tool_selection() {
     assert_eq!(
-        normalize_agent_tools(&[" cursor ".to_string(), "pi".to_string()]).expect("known tools"),
-        vec!["cursor".to_string(), "pi".to_string()]
+        normalize_agent_tools(&[" claude-code ".to_string(), "pi".to_string()])
+            .expect("supported tools"),
+        vec!["claude-code".to_string(), "pi".to_string()]
     );
     assert_eq!(
         normalize_agent_tools(&[]).expect_err("empty").code,
         code::COMMAND_INVALID
     );
     assert_eq!(
-        normalize_agent_tools(&["cursor".to_string(), "cursor".to_string()])
+        normalize_agent_tools(&["pi".to_string(), "pi".to_string()])
             .expect_err("duplicate")
             .code,
         code::COMMAND_INVALID
@@ -282,6 +283,12 @@ fn normalizes_agent_tool_selection() {
     assert_eq!(
         normalize_agent_tools(&["nope".to_string()])
             .expect_err("unknown")
+            .code,
+        code::COMMAND_INVALID
+    );
+    assert_eq!(
+        normalize_agent_tools(&["cursor".to_string()])
+            .expect_err("unsupported")
             .code,
         code::COMMAND_INVALID
     );

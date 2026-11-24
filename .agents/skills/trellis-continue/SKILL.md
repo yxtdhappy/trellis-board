@@ -17,6 +17,14 @@ python ./.trellis/scripts/get_context.py
 
 Confirms: current task, git state, recent commits.
 
+If the active task is `in_progress`, run the read-only evidence gate before deciding where to resume:
+
+```bash
+python ./.trellis/scripts/task.py verify <task-dir>
+```
+
+If it reports `state_regressed`, repair it with `doctor --fix` before continuing. Do not assume the working-tree status survived a rebase/stash.
+
 ## Step 2: Load the Phase Index
 
 ```bash
@@ -30,7 +38,7 @@ Shows the Phase Index (Plan / Execute / Finish) with routing + skill mapping.
 `get_context.py` shows the active task's `status` field. Route by `status` + artifact presence. This command replaces the user needing to remember the Trellis flow; it does not itself approve implementation.
 
 - `status=planning` + no `prd.md` → **1.1** (load `trellis-brainstorm`)
-- `status=planning` + `prd.md` only → decide whether the task is lightweight or complex. Lightweight can move to **1.4** review; complex returns to **1.1** to add `design.md` + `implement.md`.
+- `status=planning` + `prd.md` only → route by the explicit `task_type`. `simple` can move to **1.4** review; `complex` returns to **1.1** to add `design.md` + `implement.md`; `research` can move to **1.4** with `archive --planning-only`.
 - `status=planning` + complex artifacts complete + sub-agent jsonl not curated (empty, or only a legacy `_example` placeholder row) → **1.3**
 - `status=planning` + required artifacts complete + required jsonl curated or inline mode → **1.4** (ask for start review; only run `task.py start` after user confirms)
 - `status=in_progress` + implementation not started → **2.1**

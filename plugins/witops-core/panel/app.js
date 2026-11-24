@@ -6,6 +6,14 @@ const KIND_META = {
 }
 const TYPE_ORDER = [3, 4, 2, 0]
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
+const CATEGORY_WORK_TYPES = new Map([
+  ['前端开发', 'frontend'],
+  ['后端开发', 'backend'],
+])
+
+function workTypeFromCategory(category) {
+  return CATEGORY_WORK_TYPES.get(String(category ?? '').trim()) || ''
+}
 
 const state = {
   items: [],
@@ -540,8 +548,7 @@ function renderAssignees() {
   for (const dev of list) {
     const option = document.createElement('option')
     option.value = dev
-    option.textContent =
-      dev === info.currentDeveloper ? `${dev}（当前 .developer）` : dev
+    option.textContent = dev === info.currentDeveloper ? `${dev}（当前 .developer）` : dev
     select.append(option)
   }
 
@@ -759,6 +766,7 @@ function openCreateDialog(items) {
   byId('dialog-priority').value = PRIORITIES.includes(String(single?.priority || '').toUpperCase())
     ? String(single.priority).toUpperCase()
     : ''
+  byId('dialog-work-type').value = single ? workTypeFromCategory(single.category) : ''
   byId('dialog-due').value = single?.dueDate || ''
   renderAssignees()
   void loadProjects()
@@ -813,6 +821,7 @@ async function dispatchItems(items, options = {}) {
       repositoryId: options.repositoryId || state.repositoryId || undefined,
       baseBranch: options.baseBranch || undefined,
       priority: options.priority || undefined,
+      workType: options.workType || undefined,
       assignee: options.assignee || undefined,
       rememberBinding: options.rememberBinding === true,
       includeChildren: options.includeChildren !== false,
@@ -926,6 +935,13 @@ byId('create-dialog').addEventListener('ok', async () => {
   const repositoryId = byId('dialog-project').value
   const baseBranch = byId('dialog-branch').value.trim()
   const priority = byId('dialog-priority').value
+  const workType = byId('dialog-work-type').value
+  if (!workType) {
+    state.error = '请选择任务类型'
+    byId('dialog-work-type').focus()
+    render()
+    return
+  }
   const assignee = byId('dialog-assignee')?.value.trim() || ''
   const rememberBinding = byId('dialog-remember-assignee')?.checked === true
   const includeChildren = byId('dialog-children').checked
@@ -945,6 +961,7 @@ byId('create-dialog').addEventListener('ok', async () => {
     baseBranch,
     priority,
     dueDate,
+    workType,
     assignee,
     rememberBinding,
     includeChildren,

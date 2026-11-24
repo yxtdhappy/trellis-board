@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { withTransaction } from '../database.js'
+import { isWorkType, WORK_TYPE_IDS } from '@trellis-board/shared/work-types.js'
 import { ERROR_CODES, teamError } from './errors.js'
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
@@ -200,6 +201,14 @@ export function createTaskCommandService({
         throw teamError(400, ERROR_CODES.INVALID_INPUT, '优先级必须是 P0、P1、P2 或 P3')
       }
       const title = requiredText(input.title, '任务标题', 200)
+      const workType = optionalText(input.workType, 20)
+      if (workType && !isWorkType(workType)) {
+        throw teamError(
+          400,
+          ERROR_CODES.INVALID_INPUT,
+          `任务类型只能是 ${WORK_TYPE_IDS.join('、')}`,
+        )
+      }
       const requestedSlug = String(input.slug || '').trim()
       const requestedRelativeDir = String(input.relativeDir || '').trim()
       const taskId = requestedSlug
@@ -211,6 +220,7 @@ export function createTaskCommandService({
       payload = {
         title,
         description: optionalText(input.description, 4000),
+        ...(workType ? { workType } : {}),
         priority,
         slug: taskId,
         taskId,

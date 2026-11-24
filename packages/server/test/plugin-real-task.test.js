@@ -107,12 +107,14 @@ test('真实 task.py：创建、写 prd、合并 meta、改派与阶段更新', 
       assignee: 'alice',
       priority: 'P1',
       slug: 'real-task-check',
+      workType: 'frontend',
       prd,
       meta: { agent: 'opencode', source: { type: 4, businessId: 10001 } },
     })
 
     assert.match(task.relativeDir, /^\d{2}-\d{2}-real-task-check$/)
     assert.equal(task.taskKey, `repo::${task.relativeDir}`)
+    assert.equal(task.workType, 'frontend')
     const full = path.join(repoRoot, '.trellis', 'tasks', task.relativeDir)
     const taskJson = JSON.parse(fs.readFileSync(path.join(full, 'task.json'), 'utf8'))
     assert.equal(taskJson.title, '真实任务脚本集成')
@@ -120,6 +122,8 @@ test('真实 task.py：创建、写 prd、合并 meta、改派与阶段更新', 
     assert.equal(taskJson.priority, 'P1')
     assert.equal(taskJson.assignee, 'alice')
     assert.equal(taskJson.creator, 'alice')
+    assert.equal(taskJson.work_type, 'frontend')
+    assert.equal(taskJson.meta.label_source, 'user-explicit')
     assert.equal(taskJson.meta.agent, 'opencode')
     assert.equal(taskJson.meta.source.businessId, 10001)
     assert.equal(fs.readFileSync(path.join(full, 'prd.md'), 'utf8'), prd)

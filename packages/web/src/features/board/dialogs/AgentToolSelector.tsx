@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Input } from '@/components/ui/input'
-import { TRELLIS_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
+import { TRELLIS_VISIBLE_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
 import { Badge } from '@/components/ui/badge'
@@ -26,8 +26,8 @@ export function AgentToolSelector({
   const selectedToolIds = useMemo(() => new Set(selectedTools), [selectedTools])
   const visibleTools = useMemo(() => {
     const query = search.trim().toLowerCase()
-    if (!query) return TRELLIS_AGENT_TOOLS
-    return TRELLIS_AGENT_TOOLS.filter(
+    if (!query) return TRELLIS_VISIBLE_AGENT_TOOLS
+    return TRELLIS_VISIBLE_AGENT_TOOLS.filter(
       (tool) => tool.label.toLowerCase().includes(query) || tool.id.toLowerCase().includes(query),
     )
   }, [search])

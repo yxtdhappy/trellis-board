@@ -34,8 +34,10 @@ Before reviewing, read in this order:
 - `git commit`
 - `git push`
 - `git merge`
+- Editing `task.json` or the `.state-events.jsonl` log
+- Running `task.py start`, `set-commit`, `set-pr`, `archive`, `doctor --fix`, or any other state-changing task command
 
-The supervising main session owns commits. Report the post-fix state; do not commit on its behalf.
+The supervising main session owns commits and task state. Report the post-fix state; do not commit or update task metadata on its behalf.
 
 ## Workflow
 
@@ -45,7 +47,7 @@ The supervising main session owns commits. Report the post-fix state; do not com
    - If mechanical (lint nit, missing type, wrong import, dead branch) → fix in-place
    - If a design/judgment issue → record and report, do not silently rewrite
 4. Run the project's lint and typecheck on the changed scope after self-fixes
-5. Report
+5. Write `<task-path>/check-report.md` with the report below, then report the same back to the channel
 
 ## Report Format
 

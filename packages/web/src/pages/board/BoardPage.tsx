@@ -50,6 +50,7 @@ import { canManageProject, createIdempotencyKey, taskVersion } from '@/lib/team-
 import { normalizeOwnershipBranches } from '@/lib/ownership-inbox.js'
 import type { OwnershipBranchOption, OwnershipLocalAssociation } from '@/lib/ownership-inbox.js'
 import { taskInstanceKey } from '@/lib/task-view-key.js'
+import { isWorkType, type WorkType } from '@trellis-board/shared/work-types.js'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
 function normalizeViews(value: unknown): { id: string; name: string }[] {
@@ -116,6 +117,11 @@ export function BoardPage() {
     build: import.meta.env.VITE_TRELLIS_ROLE,
   })
   const isClient = role === 'client'
+  const defaultCreateWorkType = useMemo<WorkType | ''>(() => {
+    if (typeof window === 'undefined') return ''
+    const value = new URLSearchParams(window.location.search).get('workType')
+    return isWorkType(value) ? value : ''
+  }, [])
   const ownershipTaskSpaces = useMemo(() => {
     const byProject = new Map<string, OwnershipBranchOption[]>()
     for (const project of projects) {
@@ -563,6 +569,7 @@ export function BoardPage() {
         defaultProjectId={filters.projectId}
         defaultTaskSpaceId={filters.taskSpaceId === 'all' ? '' : filters.taskSpaceId}
         localTaskSpaceId={localTaskSpaceId}
+        defaultWorkType={defaultCreateWorkType}
         onCreate={actions.createTask}
       />
       <AssignmentsDialog

@@ -18,6 +18,7 @@ import {
   slugifyTaskTitle,
   TASK_SLUG_PATTERN,
 } from '@trellis-board/shared/slug.js'
+import { WORK_TYPES, type WorkType } from '@trellis-board/shared/work-types.js'
 import { createIdempotencyKey, taskCommandState } from '@/lib/team-client.js'
 import { SelectField } from '../SelectField.tsx'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
@@ -33,6 +34,7 @@ type CreateTaskDialogProps = {
   defaultProjectId: string
   defaultTaskSpaceId?: string
   localTaskSpaceId?: string
+  defaultWorkType?: WorkType | ''
   onCreate: (payload: Record<string, unknown>) => Promise<void>
 }
 
@@ -43,12 +45,14 @@ export function CreateTaskDialog({
   defaultProjectId,
   defaultTaskSpaceId = '',
   localTaskSpaceId = '',
+  defaultWorkType = '',
   onCreate,
 }: CreateTaskDialogProps) {
   const [projectId, setProjectId] = useState(
     defaultProjectId === 'all' ? projects[0]?.id || '' : defaultProjectId,
   )
   const [taskSpaceId, setTaskSpaceId] = useState('')
+  const [workType, setWorkType] = useState<WorkType | ''>(defaultWorkType)
   const [title, setTitle] = useState('')
   const [slug, setSlug] = useState('')
   const [manualSlug, setManualSlug] = useState(false)
@@ -62,7 +66,8 @@ export function CreateTaskDialog({
   useEffect(() => {
     if (!open) return
     setFeedback(null)
-  }, [open])
+    setWorkType(defaultWorkType)
+  }, [defaultWorkType, open])
 
   useEffect(() => {
     if (!open || projects.length === 0) return
@@ -138,6 +143,10 @@ export function CreateTaskDialog({
       setFeedback({ tone: 'error', text: '请选择项目分支任务空间' })
       return
     }
+    if (!workType) {
+      setFeedback({ tone: 'error', text: '请选择任务类型' })
+      return
+    }
     if (!commandState.canSubmit) {
       setFeedback({ tone: 'error', text: commandState.reason || '当前分支任务空间不可写' })
       return
@@ -166,6 +175,7 @@ export function CreateTaskDialog({
     try {
       await onCreate({
         taskSpaceId,
+        workType,
         title: title.trim(),
         description,
         assigneeUserId,
@@ -237,6 +247,19 @@ export function CreateTaskDialog({
                 {commandState.reason}
               </p>
             ) : null}
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="create-work-type">任务类型</FieldLabel>
+              <SelectField
+                id="create-work-type"
+                value={workType}
+                placeholder="请选择任务类型"
+                options={WORK_TYPES.map((item) => ({
+                  value: item.id,
+                  label: `${item.label} · ${item.description}`,
+                }))}
+                onChange={(value) => setWorkType(value as WorkType | '')}
+              />
+            </Field>
             <Field className="gap-1.5">
               <FieldLabel htmlFor="create-title">任务标题</FieldLabel>
               <Input

@@ -214,6 +214,22 @@ const AGENT_TOOLS: [AgentTool; 22] = [
     },
 ];
 
+/// 当前产品在初始化/Agent-only 页面展示并允许选择的平台。
+/// 其余已知平台仍保留在 `AGENT_TOOLS` 中用于检测和向后兼容。
+const SUPPORTED_AGENT_TOOL_IDS: [&str; 7] = [
+    "claude-code",
+    "codex",
+    "opencode",
+    "pi",
+    "omp",
+    "antigravity",
+    "dsh",
+];
+
+pub fn is_supported_agent_tool(id: &str) -> bool {
+    SUPPORTED_AGENT_TOOL_IDS.contains(&id)
+}
+
 fn find_tool(id: &str) -> Option<&'static AgentTool> {
     AGENT_TOOLS.iter().find(|tool| tool.id == id)
 }

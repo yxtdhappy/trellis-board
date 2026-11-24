@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "name": "trellis-kit",
+  "version": "0.1.0",
+  "description": "Overlay that installs the task-state evidence loop into a Trellis project.",
+  "platformsFile": "platforms/registry.json",
+  "components": [
+    {
+      "id": "task-store",
+      "kind": "core",
+      "source": ".trellis/scripts/common/task_store.py",
+      "target": ".trellis/scripts/common/task_store.py"
+    },
+    {
+      "id": "state-events",
+      "kind": "core",
+      "source": ".trellis/scripts/common/state_events.py",
+      "target": ".trellis/scripts/common/state_events.py"
+    },
+    {
+      "id": "task-cli",
+      "kind": "core",
+      "source": ".trellis/scripts/task.py",
+      "target": ".trellis/scripts/task.py"
+    },
+    {
+      "id": "workflow",
+      "kind": "core",
+      "source": ".trellis/workflow.md",
+      "target": ".trellis/workflow.md"
+    },
+    {
+      "id": "task-state-contract",
+      "kind": "core",
+      "source": ".trellis/spec/guides/task-state-contract.md",
+      "target": ".trellis/spec/guides/task-state-contract.md"
+    },
+    {
+      "id": "task-state-skill",
+      "kind": "agent",
+      "source": ".agents/skills/trellis-task-state/SKILL.md",
+      "target": ".agents/skills/trellis-task-state/SKILL.md"
+    },
+    {
+      "id": "brainstorm-skill",
+      "kind": "agent",
+      "source": ".agents/skills/trellis-brainstorm/SKILL.md",
+      "target": ".agents/skills/trellis-brainstorm/SKILL.md"
+    },
+    {
+      "id": "start-skill",
+      "kind": "agent",
+      "source": ".agents/skills/trellis-start/SKILL.md",
+      "target": ".agents/skills/trellis-start/SKILL.md"
+    },
+    {
+      "id": "continue-skill",
+      "kind": "agent",
+      "source": ".agents/skills/trellis-continue/SKILL.md",
+      "target": ".agents/skills/trellis-continue/SKILL.md"
+    },
+    {
+      "id": "check-skill",
+      "kind": "agent",
+      "source": ".agents/skills/trellis-check/SKILL.md",
+      "target": ".agents/skills/trellis-check/SKILL.md"
+    },
+    {
+      "id": "finish-work-skill",
+      "kind": "agent",
+      "source": ".agents/skills/trellis-finish-work/SKILL.md",
+      "target": ".agents/skills/trellis-finish-work/SKILL.md"
+    },
+    {
+      "id": "implement-agent",
+      "kind": "agent",
+      "source": ".trellis/agents/implement.md",
+      "target": ".trellis/agents/implement.md"
+    },
+    {
+      "id": "check-agent",
+      "kind": "agent",
+      "source": ".trellis/agents/check.md",
+      "target": ".trellis/agents/check.md"
+    }
+  ],
+  "agentOnly": {
+    "skipKinds": [],
+    "forbiddenPaths": [".trellis/tasks", ".trellis/workspace", ".trellis/.runtime"]
+  }
+}

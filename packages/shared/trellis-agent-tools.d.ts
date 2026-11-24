@@ -8,6 +8,10 @@ export type TrellisAgentTool = {
 
 export const TRELLIS_AGENT_TOOLS: readonly TrellisAgentTool[]
 
+export const TRELLIS_SUPPORTED_AGENT_TOOL_IDS: readonly string[]
+
+export const TRELLIS_VISIBLE_AGENT_TOOLS: readonly TrellisAgentTool[]
+
 export function getTrellisAgentTool(id: string): TrellisAgentTool | null
 
 export function detectTrellisAgentTools(paths: unknown): string[]

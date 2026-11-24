@@ -18,11 +18,13 @@ Provides:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .config import (
     get_codex_dispatch_mode,
@@ -60,6 +62,7 @@ from .safe_commit import (
     safe_archive_paths_to_add,
     safe_git_add,
 )
+from .state_events import append_state_event, last_status_intent, read_state_events
 from .task_utils import (
     archive_destination_for,
     archive_task_complete,
@@ -73,6 +76,18 @@ from .task_utils import (
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+WORK_TYPE_IDS = ("backend", "frontend", "fullstack", "research", "docs")
+TASK_TYPE_IDS = ("simple", "complex", "research")
+
+# Top-level task.json keys that must go through their dedicated command.
+# `set-meta` writes into `meta`, so accepting these keys there would create a
+# second, invisible copy (the board and task.py read the top-level field).
+RESERVED_META_KEYS = frozenset({
+    "id", "name", "title", "status", "commit", "pr_url", "completedAt",
+    "work_type", "task_type", "branch", "base_branch", "subtasks", "children",
+    "parent",
+})
 
 # Characters stripped before deciding whether a title / description is empty.
 # This is deliberately the *union* of Python's str.strip() default set and
@@ -353,6 +368,28 @@ def cmd_create(args: argparse.Namespace) -> int:
         )
         return 1
 
+    work_type = strip_blank(getattr(args, "work_type", None))
+    if work_type and work_type not in WORK_TYPE_IDS:
+        print(
+            colored(
+                f"Error: --work-type must be one of: {', '.join(WORK_TYPE_IDS)}",
+                Colors.RED,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    task_type = strip_blank(getattr(args, "task_type", None))
+    if task_type and task_type not in TASK_TYPE_IDS:
+        print(
+            colored(
+                f"Error: --task-type must be one of: {', '.join(TASK_TYPE_IDS)}",
+                Colors.RED,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
     # Validate --meta (CLI source: fail-fast, before any directory is created)
     meta = _parse_meta_pairs(getattr(args, "meta", None))
     if meta is None:
@@ -532,6 +569,8 @@ def cmd_create(args: argparse.Namespace) -> int:
         "description": description,
         "status": "planning",
         "dev_type": None,
+        "task_type": task_type or None,
+        "work_type": work_type or None,
         "scope": None,
         "package": package,
         "priority": args.priority,
@@ -551,6 +590,8 @@ def cmd_create(args: argparse.Namespace) -> int:
         "notes": "",
         "meta": meta,
     }
+    if (task_type or work_type) and isinstance(meta, dict) and "label_source" not in meta:
+        meta["label_source"] = "user-explicit"
 
     # A directory without task.json is not a task: `list` hides it and every
     # lifecycle command refuses it. Fail here rather than printing "Created
@@ -1349,6 +1390,41 @@ def cmd_archive(args: argparse.Namespace) -> int:
                 )
                 return 1
 
+            planning_only = bool(getattr(args, "planning_only", False))
+            if planning_only:
+                if data.get("task_type") not in (None, "research"):
+                    print(colored(
+                        "Error: --planning-only is reserved for research tasks; "
+                        "for an abandoned code task use meta.abandoned + a normal archive.",
+                        Colors.RED,
+                    ), file=sys.stderr)
+                    return 1
+                meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+                meta["no_code"] = True
+                meta["planning_only"] = True
+                data["meta"] = meta
+            elif data.get("task_type") in {"simple", "complex"}:
+                # Evidence gate for labelled tasks. Legacy tasks without a
+                # task_type keep the historical permissive archive behaviour.
+                blocking = [
+                    finding for finding in _verify_task(task_dir, data)
+                    if finding.get("level") == "error"
+                ]
+                if blocking:
+                    print(colored(
+                        f"Error: refusing to archive '{task_name}': evidence gate failed.",
+                        Colors.RED,
+                    ), file=sys.stderr)
+                    for finding in blocking:
+                        print(f"  - [{finding.get('code')}] {finding.get('message')}", file=sys.stderr)
+                    print(
+                        "Repair with set-commit/set-evidence, or re-run with "
+                        "--planning-only for a no-code task. Task remains at "
+                        f"{_repo_relative_path(task_dir, repo_root)}.",
+                        file=sys.stderr,
+                    )
+                    return 1
+
             data["status"] = "completed"
             data["completedAt"] = today
             if not write_json(task_json_path, data):
@@ -1918,6 +1994,21 @@ def cmd_set_meta(args: argparse.Namespace) -> int:
         _report_read_failure(task_json, reason)
         return 1
 
+    if key in RESERVED_META_KEYS:
+        print(
+            colored(
+                f"Error: '{key}' is a top-level task field and cannot be set via set-meta.",
+                Colors.RED,
+            ),
+            file=sys.stderr,
+        )
+        print(
+            "Use the dedicated command instead: task.py set-task-type, "
+            "set-work-type, set-commit, set-pr, set-branch, or set-base-branch.",
+            file=sys.stderr,
+        )
+        return 1
+
     meta = data.get("meta")
     if not isinstance(meta, dict):
         meta = {}
@@ -1928,4 +2019,546 @@ def cmd_set_meta(args: argparse.Namespace) -> int:
         return 1
 
     print(colored(f"✓ Meta set: {key} = {value}", Colors.GREEN))
+    return 0
+
+
+# =============================================================================
+# Commands: task_type / work_type / commit / pr / evidence
+# =============================================================================
+
+def _load_task_for_write(args: argparse.Namespace) -> tuple[Path, Path, dict] | None:
+    """Resolve a task directory and read its task.json for a write command."""
+    repo_root = get_repo_root()
+    target_dir = resolve_task_dir(args.dir, repo_root)
+    if target_dir is None:
+        return None
+    task_json = target_dir / FILE_TASK_JSON
+    data, reason = read_json_checked(task_json)
+    if data is None:
+        _report_read_failure(task_json, reason)
+        return None
+    return target_dir, task_json, data
+
+
+def _set_label(args: argparse.Namespace, key: str, value: str, event: str) -> int:
+    """Shared implementation for set-task-type / set-work-type."""
+    loaded = _load_task_for_write(args)
+    if loaded is None:
+        return 1
+    target_dir, task_json, data = loaded
+
+    if data.get("status") != "planning":
+        if not getattr(args, "force", False):
+            print(
+                colored(
+                    f"Error: {key} can only be changed before task.py start "
+                    f"(current status: {data.get('status')}).",
+                    Colors.RED,
+                ),
+                file=sys.stderr,
+            )
+            print("Use --force --reason '<why>' to change it after start.", file=sys.stderr)
+            return 1
+        reason = strip_blank(getattr(args, "reason", None))
+        if not reason:
+            print(colored("Error: --force requires --reason '<why>'.", Colors.RED), file=sys.stderr)
+            return 1
+    else:
+        reason = strip_blank(getattr(args, "reason", None))
+
+    old_value = data.get(key)
+    data[key] = value
+    meta = data.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    meta["label_source"] = "user-explicit"
+    meta[f"{key}_updated_at"] = datetime.now().isoformat(timespec="seconds")
+    if reason:
+        meta[f"{key}_updated_reason"] = reason
+    data["meta"] = meta
+
+    if not write_json(task_json, data):
+        _report_write_failure(task_json)
+        return 1
+
+    append_state_event(
+        target_dir,
+        event,
+        from_status=data.get("status"),
+        to_status=data.get("status"),
+        actor=data.get("assignee") or get_developer(get_repo_root()),
+        reason=reason,
+        extra={key: value, "from_value": old_value},
+    )
+    print(colored(f"✓ {key} set to: {value}", Colors.GREEN))
+    return 0
+
+
+def cmd_set_task_type(args: argparse.Namespace) -> int:
+    """Set the explicit task complexity label."""
+    value = strip_blank(getattr(args, "task_type", None))
+    if value not in TASK_TYPE_IDS:
+        print(
+            colored(f"Error: task_type must be one of: {', '.join(TASK_TYPE_IDS)}", Colors.RED),
+            file=sys.stderr,
+        )
+        return 1
+    return _set_label(args, "task_type", value, "task_type_set")
+
+
+def cmd_set_work_type(args: argparse.Namespace) -> int:
+    """Set the explicit work surface label."""
+    value = strip_blank(getattr(args, "work_type", None))
+    if value not in WORK_TYPE_IDS:
+        print(
+            colored(f"Error: work_type must be one of: {', '.join(WORK_TYPE_IDS)}", Colors.RED),
+            file=sys.stderr,
+        )
+        return 1
+    result = _set_label(args, "work_type", value, "work_type_set")
+    if result != 0:
+        return result
+
+    if getattr(args, "check_report_required", False):
+        loaded = _load_task_for_write(args)
+        if loaded is None:
+            return 1
+        _, task_json, data = loaded
+        meta = data.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["frontend_check_report_required"] = True
+        data["meta"] = meta
+        if not write_json(task_json, data):
+            _report_write_failure(task_json)
+            return 1
+        print("✓ Frontend check-report is now required for this task")
+    return 0
+
+
+def cmd_set_commit(args: argparse.Namespace) -> int:
+    """Record the final implementation commit on the task."""
+    raw = strip_blank(getattr(args, "commit", None))
+    if not raw:
+        print(colored("Error: commit hash is required.", Colors.RED), file=sys.stderr)
+        return 1
+    if raw.upper() != "HEAD" and not re.fullmatch(r"[0-9a-fA-F]{7,40}", raw):
+        print(
+            colored("Error: commit must be 7-40 hex characters or HEAD.", Colors.RED),
+            file=sys.stderr,
+        )
+        return 1
+
+    loaded = _load_task_for_write(args)
+    if loaded is None:
+        return 1
+    target_dir, task_json, data = loaded
+    repo_root = get_repo_root()
+
+    if raw.upper() == "HEAD":
+        rc, out, err = run_git(["rev-parse", "HEAD"], cwd=repo_root)
+    else:
+        rc, out, err = run_git(["rev-parse", "--verify", f"{raw}^{{commit}}"], cwd=repo_root)
+    resolved = out.strip().splitlines()[0] if rc == 0 and out.strip() else None
+    object_present = resolved is not None
+
+    if resolved is None:
+        if not getattr(args, "allow_missing_object", False):
+            print(
+                colored(f"Error: commit object not found: {raw}", Colors.RED),
+                file=sys.stderr,
+            )
+            print(
+                "Fetch the commit first, or pass --allow-missing-object for a "
+                "shallow clone / cross-repo hash.",
+                file=sys.stderr,
+            )
+            return 1
+        resolved = raw
+        print(
+            colored(
+                f"Warning: commit object not present locally; recording {raw} anyway.",
+                Colors.YELLOW,
+            ),
+            file=sys.stderr,
+        )
+
+    meta = data.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    commits = meta.get("commits")
+    if not isinstance(commits, list):
+        commits = []
+    if resolved not in commits:
+        commits.append(resolved)
+    meta["commits"] = commits
+    meta["commit_set_at"] = datetime.now().isoformat(timespec="seconds")
+    if object_present:
+        meta.pop("commit_object_present", None)
+    else:
+        meta["commit_object_present"] = False
+    data["commit"] = resolved
+    data["meta"] = meta
+
+    if not write_json(task_json, data):
+        _report_write_failure(task_json)
+        return 1
+
+    append_state_event(
+        target_dir,
+        "commit_set",
+        from_status=data.get("status"),
+        to_status=data.get("status"),
+        actor=data.get("assignee") or get_developer(repo_root),
+        extra={"commit": resolved},
+    )
+
+    if getattr(args, "persist", False):
+        rel = task_json.relative_to(repo_root).as_posix()
+        paths = [rel]
+        events_path = target_dir / ".state-events.jsonl"
+        if events_path.is_file():
+            paths.append(events_path.relative_to(repo_root).as_posix())
+        ok, _, add_err = safe_git_add(paths, repo_root)
+        if not ok:
+            print(
+                colored(f"Error: could not stage {', '.join(paths)}: {add_err}", Colors.RED),
+                file=sys.stderr,
+            )
+            return 1
+        rc, _, commit_err = run_git(
+            [
+                "commit",
+                "--no-verify",
+                "-m",
+                f"chore(task): record commit {resolved[:7]}",
+                "--",
+                *paths,
+            ],
+            cwd=repo_root,
+        )
+        if rc != 0:
+            if "nothing to commit" in commit_err.lower() or "no changes added" in commit_err.lower():
+                print("✓ Commit already recorded; no bookkeeping commit needed")
+            else:
+                print(
+                    colored(
+                        "Warning: commit recorded in task.json but the bookkeeping "
+                        f"commit failed: {commit_err.strip()}",
+                        Colors.YELLOW,
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
+
+    print(colored(f"✓ Commit recorded: {resolved}", Colors.GREEN))
+    return 0
+
+
+def cmd_set_pr(args: argparse.Namespace) -> int:
+    """Record the pull-request URL on the task."""
+    url = strip_blank(getattr(args, "url", None))
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        print(colored("Error: PR URL must be an http(s) URL.", Colors.RED), file=sys.stderr)
+        return 1
+
+    loaded = _load_task_for_write(args)
+    if loaded is None:
+        return 1
+    target_dir, task_json, data = loaded
+    data["pr_url"] = url
+    if not write_json(task_json, data):
+        _report_write_failure(task_json)
+        return 1
+    append_state_event(
+        target_dir,
+        "pr_set",
+        from_status=data.get("status"),
+        to_status=data.get("status"),
+        extra={"pr_url": url},
+    )
+    print(colored(f"✓ PR recorded: {url}", Colors.GREEN))
+    return 0
+
+
+def cmd_set_evidence(args: argparse.Namespace) -> int:
+    """Record a frontend evidence reference (screenshot, preview, E2E run)."""
+    artifact = strip_blank(getattr(args, "artifact", None))
+    evidence_type = strip_blank(getattr(args, "type", None))
+    if not artifact or evidence_type not in ("e2e", "visual", "manual"):
+        print(
+            colored("Error: --type e2e|visual|manual and --artifact are required.", Colors.RED),
+            file=sys.stderr,
+        )
+        return 1
+
+    loaded = _load_task_for_write(args)
+    if loaded is None:
+        return 1
+    target_dir, task_json, data = loaded
+    meta = data.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    entries = meta.get("frontend_evidence")
+    if not isinstance(entries, list):
+        entries = []
+    entry = {
+        "type": evidence_type,
+        "artifact": artifact,
+        "at": datetime.now().isoformat(timespec="seconds"),
+    }
+    commit = strip_blank(getattr(args, "commit", None))
+    confirmed_by = strip_blank(getattr(args, "confirmed_by", None))
+    if commit:
+        entry["commit"] = commit
+    if confirmed_by:
+        entry["confirmed_by"] = confirmed_by
+    entries.append(entry)
+    meta["frontend_evidence"] = entries
+    meta["frontend_evidence_at"] = entry["at"]
+    data["meta"] = meta
+    if not write_json(task_json, data):
+        _report_write_failure(task_json)
+        return 1
+    append_state_event(
+        target_dir,
+        "evidence_set",
+        from_status=data.get("status"),
+        to_status=data.get("status"),
+        extra={"evidence": entry},
+    )
+    print(colored(f"✓ Frontend evidence recorded: {evidence_type} {artifact}", Colors.GREEN))
+    return 0
+
+
+def cmd_set_check_override(args: argparse.Namespace) -> int:
+    """Record an explicit user authorization to skip the check artifact."""
+    by = strip_blank(getattr(args, "by", None))
+    reason = strip_blank(getattr(args, "reason", None))
+    if not by or not reason:
+        print(colored("Error: --by and --reason are required.", Colors.RED), file=sys.stderr)
+        return 1
+
+    loaded = _load_task_for_write(args)
+    if loaded is None:
+        return 1
+    target_dir, task_json, data = loaded
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    commit = strip_blank(getattr(args, "commit", None)) or strip_blank(data.get("commit"))
+    override = {
+        "by": by,
+        "reason": reason,
+        "commit": commit or None,
+        "at": datetime.now().isoformat(timespec="seconds"),
+    }
+    meta["check_override"] = override
+    data["meta"] = meta
+    if not write_json(task_json, data):
+        _report_write_failure(task_json)
+        return 1
+    append_state_event(
+        target_dir,
+        "check_override",
+        from_status=data.get("status"),
+        to_status=data.get("status"),
+        reason=reason,
+        extra={"override": override},
+    )
+    print(colored("✓ Check override recorded", Colors.GREEN))
+    return 0
+
+
+def _acceptance_checked(task_dir: Path) -> bool:
+    prd = task_dir / "prd.md"
+    if not prd.is_file():
+        return False
+    try:
+        return any(
+            line.lstrip().startswith("- [x]")
+            for line in prd.read_text(encoding="utf-8").splitlines()
+        )
+    except OSError:
+        return False
+
+
+def _has_frontend_check_evidence(meta: dict) -> bool:
+    """Return True for a frontend evidence entry that can close the check gate.
+
+    E2E evidence is objective enough to stand alone; visual/manual evidence
+    needs an explicit owner confirmation so a screenshot alone cannot pass.
+    """
+    entries = meta.get("frontend_evidence")
+    if not isinstance(entries, list):
+        return False
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        evidence_type = item.get("type")
+        if evidence_type == "e2e":
+            return True
+        if evidence_type in ("visual", "manual") and item.get("confirmed_by"):
+            return True
+    return False
+
+
+def _verify_task(task_dir: Path, data: dict) -> list[dict]:
+    """Return findings without mutating the task."""
+    findings: list[dict] = []
+
+    def add(level: str, code: str, message: str) -> None:
+        findings.append({"level": level, "code": code, "message": message})
+
+    status = data.get("status")
+    task_type = data.get("task_type") or "legacy"
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+
+    intent = last_status_intent(task_dir)
+    if intent == "in_progress" and status == "planning":
+        add("error", "state_regressed", "event log says in_progress but task.json is planning")
+
+    events = read_state_events(task_dir)
+    if events and events[-1].get("event") == "state_commit_failed":
+        add("error", "state_not_persisted", "the last state transition failed its bookkeeping commit")
+
+    if not data.get("commit"):
+        if status in ("in_progress", "completed") and meta.get("commit"):
+            add("error", "commit_in_meta_only", "commit is in meta.commit, not the top-level field")
+        elif status in ("in_progress", "completed") and task_type != "research":
+            level = "error" if task_type == "complex" else "warning"
+            add(level, "commit_missing", "no top-level commit recorded")
+    elif meta.get("commit_object_present") is False:
+        add("warning", "commit_object_missing", "commit object was not present locally")
+
+    reports = {
+        "implementation": (task_dir / "implementation-report.md").is_file(),
+        "check": (task_dir / "check-report.md").is_file(),
+    }
+    override = meta.get("check_override")
+    if override and not isinstance(override, dict):
+        add("error", "check_override_invalid", "meta.check_override must be an object")
+    elif isinstance(override, dict):
+        bound = override.get("commit")
+        if bound and data.get("commit") and bound != data.get("commit"):
+            add("error", "check_override_stale", "meta.check_override is bound to a different commit")
+        if not override.get("by") or not override.get("reason"):
+            add("error", "check_override_incomplete", "meta.check_override needs by and reason")
+
+    frontend_check_ok = _has_frontend_check_evidence(meta)
+    if task_type == "complex":
+        if not (reports["check"] or _acceptance_checked(task_dir) or override or frontend_check_ok):
+            add(
+                "error",
+                "check_evidence_missing",
+                "complex task needs check-report, a checked acceptance item, "
+                "confirmed frontend evidence, or meta.check_override",
+            )
+    elif task_type == "simple":
+        if not (
+            data.get("commit")
+            or reports["implementation"]
+            or reports["check"]
+            or _acceptance_checked(task_dir)
+            or meta.get("frontend_evidence")
+        ):
+            add("error", "simple_evidence_missing", "simple task has no commit, report, acceptance, or frontend evidence")
+
+    work_type = data.get("work_type")
+    if work_type in ("frontend", "fullstack") and task_type == "complex":
+        if not (reports["check"] or frontend_check_ok or meta.get("check_override")):
+            add(
+                "error",
+                "frontend_evidence_missing",
+                "complex frontend/fullstack task needs check-report, confirmed "
+                "frontend evidence, or meta.check_override",
+            )
+
+    if work_type == "frontend" and meta.get("frontend_check_report_required"):
+        if not reports["check"]:
+            add("error", "frontend_check_report_missing", "frontend check-report is required")
+
+    if not (task_dir / "task.json").is_file():
+        add("error", "task_json_missing", "task.json does not exist")
+    return findings
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Check task evidence without changing it."""
+    loaded = _load_task_for_write(args)
+    if loaded is None:
+        return 1
+    target_dir, _task_json, data = loaded
+    findings = _verify_task(target_dir, data)
+    strict = getattr(args, "strict", False)
+    if strict:
+        for finding in findings:
+            if finding["level"] == "warning":
+                finding["level"] = "error"
+    errors = [item for item in findings if item["level"] == "error"]
+    warnings = [item for item in findings if item["level"] == "warning"]
+
+    if getattr(args, "json", False):
+        print(json.dumps({"ok": not errors, "errors": errors, "warnings": warnings}, ensure_ascii=False, indent=2))
+    else:
+        for item in findings:
+            color = Colors.RED if item["level"] == "error" else Colors.YELLOW
+            print(colored(f"[{item['level']}] {item['code']}: {item['message']}", color))
+        if not findings:
+            print(colored("✓ No findings", Colors.GREEN))
+
+    if errors:
+        return 1
+    if warnings:
+        return 2
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Reconcile safe, unambiguous state inconsistencies."""
+    loaded = _load_task_for_write(args)
+    if loaded is None:
+        return 1
+    target_dir, task_json, data = loaded
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    changes: list[str] = []
+
+    intent = last_status_intent(target_dir)
+    if intent == "in_progress" and data.get("status") == "planning":
+        changes.append("status: planning → in_progress (last event says in_progress)")
+        data["status"] = "in_progress"
+
+    if not data.get("commit") and isinstance(meta.get("commit"), str) and meta["commit"].strip():
+        changes.append(f"commit: meta.commit → top-level ({meta['commit'].strip()})")
+        data["commit"] = meta["commit"].strip()
+
+    if data.get("commit"):
+        commits = meta.get("commits")
+        if not isinstance(commits, list):
+            commits = []
+        if data["commit"] not in commits:
+            changes.append("meta.commits: append top-level commit")
+            commits.append(data["commit"])
+        meta["commits"] = commits
+        data["meta"] = meta
+
+    if not changes:
+        print(colored("✓ Nothing to repair", Colors.GREEN))
+        return 0
+
+    for change in changes:
+        print(("would " if not getattr(args, "fix", False) else "") + change)
+
+    if getattr(args, "fix", False):
+        if not write_json(task_json, data):
+            _report_write_failure(task_json)
+            return 1
+        append_state_event(
+            target_dir,
+            "doctor_repair",
+            from_status=data.get("status"),
+            to_status=data.get("status"),
+            reason="; ".join(changes),
+            extra={"changes": changes, "events": len(read_state_events(target_dir))},
+        )
+        print(colored("✓ Repairs written", Colors.GREEN))
     return 0

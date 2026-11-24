@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/11-23-trellis-workflow-evidence-loop/research/gap-analysis.md", "reason": "跨仓库证据链缺口、看板能力与方案对比"}
+{"file": ".trellis/tasks/11-23-trellis-workflow-evidence-loop/design.md", "reason": "技术设计：数据契约、命令算法、verify/doctor、overlay 与测试"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "阶段证据只读投影与跨层一致性约束"}
+{"file": ".trellis/spec/guides/index.md", "reason": "项目规范索引"}

@@ -362,6 +362,17 @@ async fn create_task(
 ) -> AgentResult<Value> {
     let title = command.requires("title")?.to_string();
     let assignee = command.requires("assigneeDevId")?.to_string();
+    let work_type = command
+        .payload_str("workType")
+        .filter(|value| !value.is_empty());
+    if let Some(value) = work_type {
+        if !matches!(*value, "backend" | "frontend" | "fullstack" | "research" | "docs") {
+            return protocol::err(
+                code::COMMAND_INVALID,
+                "任务类型只能是 backend、frontend、fullstack、research 或 docs",
+            );
+        }
+    }
     let slug = match command
         .payload_str("slug")
         .filter(|value| !value.is_empty())
@@ -441,26 +452,26 @@ async fn create_task(
         }
         None => {}
     }
-    run_task_python(
-        repo_path,
-        &[
-            "create".to_string(),
-            title.clone(),
-            format!(
-                "--description={}",
-                command.payload_str("description").unwrap_or("")
-            ),
-            format!("--assignee={assignee}"),
-            format!(
-                "--priority={}",
-                command.payload_str("priority").unwrap_or("P2")
-            ),
-            format!("--slug={slug}"),
-            "--no-start".to_string(),
-            format!("--base-branch={}", binding.branch_name),
-        ],
-    )
-    .await?;
+    let mut args = vec![
+        "create".to_string(),
+        title.clone(),
+        format!(
+            "--description={}",
+            command.payload_str("description").unwrap_or("")
+        ),
+        format!("--assignee={assignee}"),
+        format!(
+            "--priority={}",
+            command.payload_str("priority").unwrap_or("P2")
+        ),
+        format!("--slug={slug}"),
+        "--no-start".to_string(),
+        format!("--base-branch={}", binding.branch_name),
+    ];
+    if let Some(work_type) = work_type {
+        args.push(format!("--work-type={work_type}"));
+    }
+    run_task_python(repo_path, &args).await?;
     let after = task_directories(&tasks_root).await?;
     let created: Vec<&String> = after.difference(&before).collect();
     if created.len() != 1 {

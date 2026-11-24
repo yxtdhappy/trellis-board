@@ -4,17 +4,27 @@
 Task Management Script.
 
 Usage:
-    python task.py create "<title>" --description "<desc>" [--slug <name>] [--assignee <dev>] [--priority P0|P1|P2|P3] [--parent <dir>] [--package <pkg>] [--no-start] [--force]
+    python task.py create "<title>" --description "<desc>" [--slug <name>] [--task-type simple|complex|research] [--work-type backend|frontend|fullstack|research|docs] [--assignee <dev>] [--priority P0|P1|P2|P3] [--parent <dir>] [--package <pkg>] [--no-start] [--force]
     python task.py add-context <dir> <file> <path> [reason] # Add jsonl entry
     python task.py validate <dir>              # Validate jsonl files
     python task.py list-context <dir>          # List jsonl entries
-    python task.py start <dir>                 # Set active task, record current branch
+    python task.py start <dir> [--commit-state|--no-commit-state] [--push] [--force]
+                                                # Set active task, record current branch/status
     python task.py current [--source] [--json] # Show active task
     python task.py finish                      # Clear active task
     python task.py set-branch <dir> <branch>   # Set git branch
     python task.py set-base-branch <dir> <branch>  # Set PR target branch
     python task.py set-scope <dir> <scope>     # Set scope for PR title
     python task.py set-meta <dir> <key> <value>  # Set a task metadata key
+    python task.py set-task-type <dir> simple|complex|research
+    python task.py set-work-type <dir> backend|frontend|fullstack|research|docs [--check-report-required]
+    python task.py set-commit <dir> <hash|HEAD> [--allow-missing-object] [--persist]
+    python task.py set-pr <dir> <url>
+    python task.py set-evidence <dir> --type e2e|visual|manual --artifact <path-or-url> [--commit <hash>]
+    python task.py set-check-override <dir> --by <who> --reason <why> [--commit <hash>]
+    python task.py verify <dir> [--strict] [--json]  # Check evidence without writing
+    python task.py doctor <dir> [--fix] [--json]     # Repair safe state inconsistencies
+    python task.py archive <dir> [--planning-only] [--no-commit]
     python task.py rename <dir> <new-slug> [--dry-run]  # Rename task + references
     python task.py archive <task-dir> [--skip-branch-validation]  # Archive completed task
     python task.py list                        # List active tasks
@@ -47,17 +57,21 @@ from common.active_task import (
     resolve_context_key,
     set_active_task,
 )
-from common.git import current_branch_name
+from common.git import current_branch_name, run_git
 from common.io import (
     describe_json_read_failure,
     read_json_checked,
     write_json,
 )
+from common.safe_commit import safe_git_add
 from common.task_utils import resolve_task_dir, run_task_hooks
 from common.tasks import iter_active_tasks, children_progress
+from common.state_events import append_state_event
 
 # Import command handlers from split modules (also re-exports for plan.py compatibility)
 from common.task_store import (
+    TASK_TYPE_IDS,
+    WORK_TYPE_IDS,
     cmd_create,
     cmd_rename,
     cmd_archive,
@@ -65,6 +79,14 @@ from common.task_store import (
     cmd_set_base_branch,
     cmd_set_scope,
     cmd_set_meta,
+    cmd_set_task_type,
+    cmd_set_work_type,
+    cmd_set_commit,
+    cmd_set_pr,
+    cmd_set_evidence,
+    cmd_set_check_override,
+    cmd_verify,
+    cmd_doctor,
     cmd_add_subtask,
     cmd_remove_subtask,
 )
@@ -108,8 +130,9 @@ def _record_start_state(
         return
 
     applied: list[str] = []
+    old_status = data.get("status")
 
-    if data.get("status") == "planning":
+    if old_status == "planning":
         data["status"] = "in_progress"
         applied.append(f"✓ Status: planning → in_progress{label}")
 
@@ -150,6 +173,16 @@ def _record_start_state(
     for line in applied:
         print(colored(line, Colors.GREEN))
 
+    if old_status != data.get("status"):
+        append_state_event(
+            task_json_path.parent,
+            "status_transition",
+            from_status=old_status,
+            to_status=data.get("status"),
+            actor=data.get("assignee"),
+            reason="task.py start",
+        )
+
     if base_branch_conflict:
         # Recorded anyway — the value is true, it just cannot describe a PR.
         # Archive refuses this shape, so say so now rather than at the gate.
@@ -166,6 +199,110 @@ def _record_start_state(
             "set-branch <task> <feature-branch>",
             file=sys.stderr,
         )
+
+
+def _git_path(repo_root: Path, name: str) -> Path | None:
+    """Resolve a git metadata path (worktree-safe)."""
+    rc, out, _ = run_git(["rev-parse", "--git-path", name], cwd=repo_root)
+    if rc != 0 or not out.strip():
+        return None
+    path = Path(out.strip())
+    return path if path.is_absolute() else repo_root / path
+
+
+def _start_preflight(repo_root: Path, task_json_path: Path) -> tuple[bool, str]:
+    """Refuse a bookkeeping commit when git cannot safely make one."""
+    rc, out, _ = run_git(["rev-parse", "--is-inside-work-tree"], cwd=repo_root)
+    if rc != 0 or out.strip() != "true":
+        return False, "not inside a git work tree"
+
+    for marker, label in (
+        ("rebase-merge", "rebase in progress"),
+        ("rebase-apply", "rebase in progress"),
+        ("MERGE_HEAD", "merge in progress"),
+        ("CHERRY_PICK_HEAD", "cherry-pick in progress"),
+    ):
+        marker_path = _git_path(repo_root, marker)
+        if marker_path is not None and marker_path.exists():
+            return False, label
+
+    try:
+        rel = task_json_path.relative_to(repo_root).as_posix()
+    except ValueError:
+        return False, "task path is outside the repository"
+    rc, _, _ = run_git(["check-ignore", "-q", rel], cwd=repo_root)
+    if rc == 0:
+        return False, f"task path is git-ignored: {rel}"
+    if rc not in (0, 1):
+        return False, "could not check whether the task path is git-ignored"
+
+    rc, _, err = run_git(["var", "GIT_AUTHOR_IDENT"], cwd=repo_root)
+    if rc != 0:
+        return False, f"git identity is not configured: {err.strip() or 'GIT_AUTHOR_IDENT failed'}"
+    return True, ""
+
+
+def _start_commit_mode(args: argparse.Namespace, data: dict) -> bool:
+    if getattr(args, "no_commit_state", False):
+        return False
+    if getattr(args, "commit_state", False):
+        return True
+    return data.get("task_type") == "complex"
+
+
+def _commit_start_state(
+    task_json_path: Path,
+    repo_root: Path,
+    push: bool,
+) -> tuple[bool, str]:
+    """Commit only task.json + the state-event log, then optionally push."""
+    rel = task_json_path.relative_to(repo_root).as_posix()
+    paths = [rel]
+    events_path = task_json_path.parent / ".state-events.jsonl"
+    if events_path.is_file():
+        paths.append(events_path.relative_to(repo_root).as_posix())
+
+    ok, _, add_err = safe_git_add(paths, repo_root)
+    if not ok:
+        append_state_event(
+            task_json_path.parent,
+            "state_commit_failed",
+            from_status="in_progress",
+            to_status="in_progress",
+            reason=f"git add failed: {add_err.strip()}",
+        )
+        return False, f"could not stage {', '.join(paths)}: {add_err.strip()}"
+
+    rc, _, commit_err = run_git(
+        [
+            "commit",
+            "--no-verify",
+            "-m",
+            f"chore(task): start {task_json_path.parent.name}",
+            "--",
+            *paths,
+        ],
+        cwd=repo_root,
+    )
+    if rc != 0:
+        lowered = commit_err.lower()
+        if "nothing to commit" in lowered or "no changes added" in lowered:
+            pass
+        else:
+            append_state_event(
+                task_json_path.parent,
+                "state_commit_failed",
+                from_status="in_progress",
+                to_status="in_progress",
+                reason=f"git commit failed: {commit_err.strip()}",
+            )
+            return False, f"bookkeeping commit failed: {commit_err.strip()}"
+
+    if push:
+        rc, _, push_err = run_git(["push"], cwd=repo_root)
+        if rc != 0:
+            return False, f"git push failed: {push_err.strip()}"
+    return True, ""
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -190,6 +327,50 @@ def cmd_start(args: argparse.Namespace) -> int:
         print(colored(f"Error: Task not found: {task_input}", Colors.RED))
         print("Hint: Use task name (e.g., 'my-task') or full path (e.g., '.trellis/tasks/01-31-my-task')")
         return 1
+
+    # Explicit complex tasks must have both planning artifacts before start.
+    # Legacy tasks with no task_type stay on the old inferred behavior.
+    task_json_for_gate = full_path / FILE_TASK_JSON
+    start_data: dict = {}
+    if task_json_for_gate.is_file():
+        loaded_start_data, _ = read_json_checked(task_json_for_gate)
+        if isinstance(loaded_start_data, dict):
+            start_data = loaded_start_data
+        if start_data.get("task_type") == "complex":
+            missing = [
+                name for name in ("design.md", "implement.md")
+                if not (full_path / name).is_file()
+            ]
+            if missing:
+                print(
+                    colored(
+                        f"Error: complex task is missing {', '.join(missing)}.",
+                        Colors.RED,
+                    )
+                )
+                print("Add the missing planning artifact(s) before task.py start.")
+                return 1
+
+    commit_state = _start_commit_mode(args, start_data)
+    if getattr(args, "push", False) and not commit_state:
+        print(
+            colored(
+                "Error: --push requires a bookkeeping commit; use --commit-state "
+                "or omit --no-commit-state for a complex task.",
+                Colors.RED,
+            )
+        )
+        return 1
+    if commit_state:
+        ok, reason = _start_preflight(repo_root, task_json_for_gate)
+        if not ok:
+            print(colored(f"Error: cannot persist start state: {reason}", Colors.RED))
+            print(
+                "The task was not started. Fix the git state and retry, or pass "
+                "--no-commit-state to record only the event log.",
+                file=sys.stderr,
+            )
+            return 1
 
     # Context-manifest gate (#573): a seeded-but-uncurated implement/check
     # manifest means every sub-agent dispatched for this task runs with zero
@@ -251,6 +432,18 @@ def cmd_start(args: argparse.Namespace) -> int:
         # Still flip task.json status: planning → in_progress so downstream phases proceed.
         if task_json_path.is_file():
             _record_start_state(task_json_path, repo_root, " (degraded)")
+            if commit_state:
+                ok, reason = _commit_start_state(
+                    task_json_path, repo_root, getattr(args, "push", False)
+                )
+                if not ok:
+                    print(colored(f"Error: {reason}", Colors.RED), file=sys.stderr)
+                    print(
+                        "task.json keeps in_progress; run doctor --fix after "
+                        "fixing git, or re-run start.",
+                        file=sys.stderr,
+                    )
+                    return 3
             run_task_hooks("after_start", task_json_path, repo_root)
         return 0
 
@@ -261,6 +454,18 @@ def cmd_start(args: argparse.Namespace) -> int:
 
         if task_json_path.is_file():
             _record_start_state(task_json_path, repo_root)
+            if commit_state:
+                ok, reason = _commit_start_state(
+                    task_json_path, repo_root, getattr(args, "push", False)
+                )
+                if not ok:
+                    print(colored(f"Error: {reason}", Colors.RED), file=sys.stderr)
+                    print(
+                        "task.json keeps in_progress; run doctor --fix after "
+                        "fixing git, or re-run start.",
+                        file=sys.stderr,
+                    )
+                    return 3
 
         print()
         print(colored("The hook will now inject context from this task's jsonl files.", Colors.BLUE))
@@ -647,6 +852,16 @@ def main() -> int:
     p_create.add_argument("--parent", help="Parent task directory (establishes subtask link)")
     p_create.add_argument("--package", help="Package name for monorepo projects")
     p_create.add_argument(
+        "--task-type",
+        choices=TASK_TYPE_IDS,
+        help="Task complexity: simple, complex, or research",
+    )
+    p_create.add_argument(
+        "--work-type",
+        choices=WORK_TYPE_IDS,
+        help="Task work surface: backend, frontend, fullstack, research, or docs",
+    )
+    p_create.add_argument(
         "--base-branch",
         help="PR target branch (overrides origin/HEAD detection and the checked-out-branch fallback)",
     )
@@ -689,6 +904,27 @@ def main() -> int:
         action="store_true",
         help="Start even when implement.jsonl / check.jsonl have no curated entries",
     )
+    start_state = p_start.add_mutually_exclusive_group()
+    start_state.add_argument(
+        "--commit-state",
+        action="store_true",
+        help="Persist the status transition in a task-only bookkeeping commit",
+    )
+    start_state.add_argument(
+        "--no-commit-state",
+        action="store_true",
+        help="Only write the event log; do not create a bookkeeping commit",
+    )
+    p_start.add_argument(
+        "--push",
+        action="store_true",
+        help="Push the bookkeeping commit after creating it",
+    )
+    p_start.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow starting a task that is not in planning",
+    )
 
     # current
     p_current = subparsers.add_parser("current", help="Show active task")
@@ -721,6 +957,72 @@ def main() -> int:
     p_setmeta.add_argument("key", help="Metadata key")
     p_setmeta.add_argument("value", help="Metadata value")
 
+    # set-task-type
+    p_task_type = subparsers.add_parser("set-task-type", help="Set the explicit task complexity")
+    p_task_type.add_argument("dir", help="Task directory")
+    p_task_type.add_argument("task_type", choices=TASK_TYPE_IDS)
+    p_task_type.add_argument("--force", action="store_true", help="Allow changing after start")
+    p_task_type.add_argument("--reason", help="Why the label is changing (required with --force)")
+
+    # set-work-type
+    p_work_type = subparsers.add_parser("set-work-type", help="Set the explicit work surface")
+    p_work_type.add_argument("dir", help="Task directory")
+    p_work_type.add_argument("work_type", choices=WORK_TYPE_IDS)
+    p_work_type.add_argument("--force", action="store_true", help="Allow changing after start")
+    p_work_type.add_argument("--reason", help="Why the label is changing (required with --force)")
+    p_work_type.add_argument(
+        "--check-report-required",
+        action="store_true",
+        help="Require a frontend check-report for this task",
+    )
+
+    # set-commit
+    p_commit = subparsers.add_parser("set-commit", help="Record the final implementation commit")
+    p_commit.add_argument("dir", help="Task directory")
+    p_commit.add_argument("commit", help="Commit hash (7-40 hex) or HEAD")
+    p_commit.add_argument(
+        "--allow-missing-object",
+        action="store_true",
+        help="Record a commit that is not present locally (shallow/cross-repo)",
+    )
+    p_commit.add_argument(
+        "--persist",
+        action="store_true",
+        help="Create a bookkeeping commit containing only task.json",
+    )
+
+    # set-pr
+    p_pr = subparsers.add_parser("set-pr", help="Record the pull-request URL")
+    p_pr.add_argument("dir", help="Task directory")
+    p_pr.add_argument("url", help="PR URL (http/https)")
+
+    # set-evidence
+    p_evidence = subparsers.add_parser("set-evidence", help="Record frontend evidence")
+    p_evidence.add_argument("dir", help="Task directory")
+    p_evidence.add_argument("--type", choices=("e2e", "visual", "manual"), required=True)
+    p_evidence.add_argument("--artifact", required=True, help="Screenshot path, preview URL, or E2E run reference")
+    p_evidence.add_argument("--commit", help="Commit this evidence applies to")
+    p_evidence.add_argument("--confirmed-by", help="Who confirmed the visual/manual evidence")
+
+    # set-check-override
+    p_override = subparsers.add_parser("set-check-override", help="Record an explicit check-gate authorization")
+    p_override.add_argument("dir", help="Task directory")
+    p_override.add_argument("--by", required=True, help="Who authorized the override")
+    p_override.add_argument("--reason", required=True, help="Why the check artifact is not required")
+    p_override.add_argument("--commit", help="Bind the override to this commit (defaults to task commit)")
+
+    # verify
+    p_verify = subparsers.add_parser("verify", help="Check task evidence")
+    p_verify.add_argument("dir", help="Task directory")
+    p_verify.add_argument("--strict", action="store_true", help="Treat warnings as errors")
+    p_verify.add_argument("--json", action="store_true", help="Output JSON")
+
+    # doctor
+    p_doctor = subparsers.add_parser("doctor", help="Repair safe task-state inconsistencies")
+    p_doctor.add_argument("dir", help="Task directory")
+    p_doctor.add_argument("--fix", action="store_true", help="Write the repairs")
+    p_doctor.add_argument("--json", action="store_true", help="Output JSON")
+
     # rename
     p_rename = subparsers.add_parser("rename", help="Rename task and its references")
     p_rename.add_argument("name", help="Task directory or name")
@@ -735,6 +1037,11 @@ def main() -> int:
     p_archive = subparsers.add_parser("archive", help="Archive task")
     p_archive.add_argument("name", help="Task directory or name")
     p_archive.add_argument("--no-commit", action="store_true", help="Skip auto git commit after archive")
+    p_archive.add_argument(
+        "--planning-only",
+        action="store_true",
+        help="No-code task: mark meta.no_code/planning_only and skip the evidence gate",
+    )
     p_archive.add_argument(
         "--skip-branch-validation",
         action="store_true",
@@ -782,6 +1089,14 @@ def main() -> int:
         "set-base-branch": cmd_set_base_branch,
         "set-scope": cmd_set_scope,
         "set-meta": cmd_set_meta,
+        "set-task-type": cmd_set_task_type,
+        "set-work-type": cmd_set_work_type,
+        "set-commit": cmd_set_commit,
+        "set-pr": cmd_set_pr,
+        "set-evidence": cmd_set_evidence,
+        "set-check-override": cmd_set_check_override,
+        "verify": cmd_verify,
+        "doctor": cmd_doctor,
         "rename": cmd_rename,
         "archive": cmd_archive,
         "add-subtask": cmd_add_subtask,
