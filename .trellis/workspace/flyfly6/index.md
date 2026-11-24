@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 55
+- **Total Sessions**: 56
 - **Last Active**: 2026-11-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1819 | Active |
+| `journal-1.md` | ~1874 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 56 | 2026-11-24 | 分享页子路径适配与真实反向代理 e2e | `698737f` | `main` |
 | 55 | 2026-11-24 | 任务流水线任务分享链接与桌面端深度唤起 | `b9209fa` | `pipeline-task-share-deeplink` |
 | 54 | 2026-11-24 | 支持从 env 配置初始管理员账号密码 | `be601d9` | `server-env-initial-admin-credentials` |
 | 53 | 2026-11-24 | 全局 UI 一致性治理集成复核、实机客户端 E2E 验收与父任务归档 | `56a808c`, `05215c9` | `main` |

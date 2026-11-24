@@ -1817,3 +1817,58 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Status
 
 [OK] **Completed**
+
+
+## Session 56: 分享页子路径适配与真实反向代理 e2e
+<!-- trellis-session: v=2 fp=d7be69cae61b21e0 -->
+
+**Date**: 2026-11-24
+**Task**: 分享页子路径适配与真实反向代理 e2e
+**Package**: desktop
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Main Changes
+
+### 分享页子路径适配与真实反向代理 e2e
+
+- `share.html` 资源改相对路径；Web 侧 `normalizeShareServerUrl` / `isSameShareServer` 按含子路径的服务基址生成、解析、比对分享链接（保留子路径，拒绝凭证/查询/片段/`//`/`.`/`..`/保留首段/页面尾段）
+- Rust 侧 `RESERVED_PAGE_ENDINGS` 增加 `share.html`，`share_link::parse` 改用 `navigation::board_server_url` 保留子路径，`update::normalize_server_base` 剥离 `share.html` 尾段
+- 抽出 `packages/desktop/src-tauri/src/url_path.rs`（`raw_path_has_dot_segments`）供 `trellis-board-client` 与 `trellis-agent` 两个可执行目标共用，修复 e2e 中暴露的 `cargo build` E0433
+- 真实 Nginx（WSL Ubuntu 1.18）透传与剥离前缀两种模式全量实测，结果归档 `.trellis/tasks/archive/2026-11/11-24-subpath-deploy-and-trust-proxy/e2e-report.md`
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `698737f` | feat: 补齐分享页子路径支持并记录真实反代 e2e |
+
+### Testing
+
+- [OK] L1: cargo build exit 0、cargo test 408/408、yarn test --scope=all 868 pass / 0 fail / 5 skipped、yarn build + desktop-ui 构建、oxfmt/rustfmt（变更文件）通过
+- [OK] L2: WSL nginx 1.18 透传/剥离两模式：302、HTML 前缀注入、静态资源、Cookie Path、SSE（TTFB 0.207s）、share.html、trustProxy 限流与 XFF 落库、100MiB→413
+- [OK] L3: Tabbit 真实浏览器登录跳转与 EventSource，真实 debug 客户端 `desktop_login` 子路径成功、SSE opened、HttpOnly、client.json 持久化、更新源 `/client-updates` 路由正确
+
+### Known Gap
+
+- 单实例 argv 未转成 deep link 事件（`main.rs` 的 `single_instance::init` 回调只 `focus_main_window`），第二实例传 `spec-board://task?...` 时首实例无跳转；与子路径无关，另行立项
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `698737f` | feat: 补齐分享页子路径支持并记录真实反代 e2e |
+
+### Testing
+
+- [OK] L1: cargo build/cargo test 408、yarn test 868 pass / 0 fail / 5 skipped、yarn build 与 oxfmt/rustfmt 通过
+- [OK] L2: WSL nginx 1.18 透传/剥离两模式全量验证（重定向、HTML 注入、Cookie Path、SSE、share.html、trustProxy、100MiB→413）
+- [OK] L3: Tabbit 浏览器与真实 debug 客户端 desktop_login 子路径登录、SSE、HttpOnly、client.json 与 client-updates 路由
+
+### Status
+
+[OK] **Completed**
