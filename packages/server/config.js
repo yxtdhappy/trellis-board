@@ -1,6 +1,10 @@
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { normalizeUsername, validatePassword } from './team/credentials.js'
+
+export const DEFAULT_INITIAL_ADMIN_USERNAME = 'admin'
+export const DEFAULT_INITIAL_ADMIN_PASSWORD = '123456!@#$%^'
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
 export const appDir = path.resolve(serverDir, '../..')
@@ -138,6 +142,32 @@ export function parsePluginAllowlist(raw) {
   ]
 }
 
+function initialAdminSetting(env) {
+  const rawUsername = env.TRELLIS_BOARD_ADMIN_USERNAME
+  const usernameInput =
+    rawUsername == null || String(rawUsername).trim() === ''
+      ? DEFAULT_INITIAL_ADMIN_USERNAME
+      : String(rawUsername)
+  let username
+  try {
+    username = normalizeUsername(usernameInput).username
+  } catch (error) {
+    throw new Error(`TRELLIS_BOARD_ADMIN_USERNAME 配置无效：${error.message}`)
+  }
+
+  const rawPassword = env.TRELLIS_BOARD_ADMIN_PASSWORD
+  const passwordInput =
+    rawPassword == null || rawPassword === '' ? DEFAULT_INITIAL_ADMIN_PASSWORD : String(rawPassword)
+  let password
+  try {
+    password = validatePassword(passwordInput)
+  } catch (error) {
+    throw new Error(`TRELLIS_BOARD_ADMIN_PASSWORD 配置无效：${error.message}`)
+  }
+
+  return { username, password }
+}
+
 export function parseTeamConfig(env = process.env) {
   const mode = String(env.TRELLIS_BOARD_MODE || 'team')
     .trim()
@@ -147,6 +177,7 @@ export function parseTeamConfig(env = process.env) {
   }
   const port = integerSetting(env, 'PORT', 4317, 1, 65535)
   const allowLocalGitRemotes = booleanSetting(env, 'TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES', false)
+  const initialAdmin = initialAdminSetting(env)
 
   return {
     mode,
@@ -156,6 +187,7 @@ export function parseTeamConfig(env = process.env) {
     agentStaleMs: 60_000,
     trustProxy: false,
     allowLocalGitRemotes,
+    initialAdmin,
     pluginsDisabled: booleanSetting(env, 'TRELLIS_PLUGINS_DISABLED', false),
     pluginAllowlist: parsePluginAllowlist(env.TRELLIS_TEAM_PLUGINS_ALLOWLIST),
   }

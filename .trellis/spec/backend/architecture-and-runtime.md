@@ -293,7 +293,13 @@ Team 启动：
 - 在线 Agent 的 `last_seen_at` 窗口固定为 60 秒。
 - Team 默认拒绝本地 `file://` 远端，必须显式设置
   `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES=true`。
-- Team 服务启动配置包括 `TRELLIS_BOARD_MODE`、`TRELLIS_BOARD_DATA_DIR`、`PORT` 和上述远端开关。
+- Team 服务启动配置包括 `TRELLIS_BOARD_MODE`、`TRELLIS_BOARD_DATA_DIR`、`PORT`、
+  `TRELLIS_BOARD_ADMIN_USERNAME`（默认 `admin`）、`TRELLIS_BOARD_ADMIN_PASSWORD`（默认 `123456!@#$%^`）
+  和上述远端开关。
+  - 首次启动且 `requireAdmin: true`、数据库无有效管理员时，`createTeamRuntime()` 使用 `config.initialAdmin` 自动创建系统管理员（`systemAdmin: true`、`mustChangePassword: true`）；日志仅记录 `userId`、`username`、`mustChangePassword`，严禁输出密码明文。
+  - 数据库已有有效系统管理员时启动幂等跳过，不覆盖或重置已有账号密码；无有效管理员但目标用户名已被占用时直接冲突报错中止，不静默提权。
+  - `.env` 文件中若密码包含 `#`（如默认值 `123456!@#$%^`），必须使用单/双引号包裹，否则 `dotenv` 会将 `#` 及后续内容截断为行内注释。
+  - `config.js` 通过无副作用纯校验模块 [packages/server/team/credentials.js](../../../packages/server/team/credentials.js) 复用 `normalizeUsername` / `validatePassword`，不得反向导入依赖 `database.js` 的 `team/auth.js` 以免形成循环依赖。
 - Team 归档同步默认周期 `300s`，范围 `60-86400s`；凭据主密钥和临时 SSH 认证文件位于 Team data
   directory，按来源隔离，不能跨 host/port 复用。
 

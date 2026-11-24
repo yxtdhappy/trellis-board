@@ -2,8 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const ROOT = process.cwd()
+const ROOT = fileURLToPath(new URL('../../..', import.meta.url))
 const DOCS = [
   '.trellis/tasks/archive/2026-11/11-04-plugin-architecture/prd.md',
   '.trellis/tasks/archive/2026-11/11-04-plugin-architecture/implement.md',

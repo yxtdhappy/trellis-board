@@ -1,6 +1,7 @@
 import fs from "node:fs";
+import { createRequire, isBuiltin, registerHooks } from "node:module";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // 桌面客户端内嵌的 Pi / OMP 模板补齐 helper。
 // 由 trellis_cli.rs 以 `node --input-type=module -` 从 stdin 执行：所有参数来自命令行，
@@ -12,11 +13,49 @@ const USAGE =
 const WINDOWS_DRIVE = /^[A-Za-z]:/;
 
 // Node 的 JS 版 realpathSync 会先 lstat 盘符根（Windows 上是 "D:"），部分 DLP/网络盘会以
-// EISDIR 拦截；除了 helper 自己的 realpath 调用，Node 的 ESM resolver 也会调用它来解析
-// Trellis 模块，因此在加载任何 Trellis 模块前替换为 native 版。
+// EISDIR 拦截；Node 24 的 ESM resolver 在入口执行前已解构缓存 JS 版 realpathSync，
+// 因此同时注册 registerHooks 拦截本地模块路径，改用 native 版解析。
 const nativeRealpath = fs.realpathSync.native;
 if (typeof nativeRealpath === "function") {
   fs.realpathSync = nativeRealpath;
+  if (typeof registerHooks === "function") {
+    registerHooks({
+      resolve(specifier, context, nextResolve) {
+        if (isBuiltin(specifier)) {
+          return nextResolve(specifier, context);
+        }
+        let target = null;
+        if (specifier.startsWith("file:")) {
+          target = fileURLToPath(specifier);
+        } else if (
+          (specifier.startsWith("./") ||
+            specifier.startsWith("../") ||
+            specifier.startsWith("/")) &&
+          context.parentURL?.startsWith("file:")
+        ) {
+          target = fileURLToPath(new URL(specifier, context.parentURL));
+        }
+        if (target && fs.existsSync(target) && fs.statSync(target).isFile()) {
+          return {
+            url: pathToFileURL(nativeRealpath(target)).href,
+            shortCircuit: true,
+          };
+        }
+        try {
+          return nextResolve(specifier, context);
+        } catch (error) {
+          if (error?.code === "EISDIR" && context.parentURL?.startsWith("file:")) {
+            const fallback = createRequire(context.parentURL).resolve(specifier);
+            return {
+              url: pathToFileURL(nativeRealpath(fallback)).href,
+              shortCircuit: true,
+            };
+          }
+          throw error;
+        }
+      },
+    });
+  }
 }
 
 function fail(message) {

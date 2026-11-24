@@ -14,7 +14,7 @@ import { createArchiveSnapshotStore } from './archive-local-snapshot.js'
 import { createArchiveGitSyncService } from './archive-git-sync.js'
 import { createDesktopAuthService } from './desktop-auth.js'
 import { diagnosticError } from './error-diagnostics.js'
-import { hasActiveAdmin } from './auth.js'
+import { createUser, hasActiveAdmin } from './auth.js'
 import { ERROR_CODES, errorPayload, teamError } from './errors.js'
 import { createGitlessBoardService } from './gitless-board-service.js'
 import { createTeamPluginHost } from './plugins/host.js'
@@ -358,11 +358,25 @@ export async function createTeamRuntime({
 
   try {
     if (requireAdmin && !hasActiveAdmin(db)) {
-      throw teamError(
-        503,
-        ERROR_CODES.AUTH_REQUIRED,
-        '团队模式尚无系统管理员，请先在本机运行 node packages/server/team/cli.js init-admin',
-      )
+      if (!config.initialAdmin) {
+        throw teamError(
+          503,
+          ERROR_CODES.AUTH_REQUIRED,
+          '团队模式尚无系统管理员，请先在本机运行 node packages/server/team/cli.js init-admin',
+        )
+      }
+      const createdAdmin = await createUser(db, {
+        username: config.initialAdmin.username,
+        displayName: config.initialAdmin.username,
+        password: config.initialAdmin.password,
+        systemAdmin: true,
+        mustChangePassword: true,
+      })
+      logger.info('已自动初始化系统管理员', {
+        userId: createdAdmin.id,
+        username: createdAdmin.username,
+        mustChangePassword: createdAdmin.mustChangePassword,
+      })
     }
     const boardEvents = createBoardEventService(boardEventOptions)
     let taskCommands = null

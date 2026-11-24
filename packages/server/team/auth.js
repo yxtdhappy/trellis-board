@@ -1,8 +1,11 @@
 import crypto from 'node:crypto'
 import { parseCookie, stringifySetCookie } from 'cookie'
 import { withTransaction } from '../database.js'
+import { normalizeUsername, validatePassword } from './credentials.js'
 import { ERROR_CODES, teamError } from './errors.js'
 import { listActiveTeamMemberships, setUserTeams, validateTeamAssignments } from './teams.js'
+
+export { normalizeUsername, validatePassword }
 
 export const SESSION_COOKIE = 'trellis_team_session'
 export const PASSWORD_PARAMS = Object.freeze({
@@ -14,7 +17,6 @@ export const PASSWORD_PARAMS = Object.freeze({
   maxmem: 64 * 1024 * 1024,
 })
 
-const USERNAME_PATTERN = /^[A-Za-z0-9._-]{3,64}$/
 const LOGIN_WINDOW_MS = 15 * 60 * 1000
 const LOGIN_MAX_FAILURES = 5
 const LAST_SEEN_WRITE_MS = 5 * 60 * 1000
@@ -22,10 +24,6 @@ const SESSION_RETENTION_MS = 24 * 60 * 60 * 1000
 const DUMMY_SALT = Buffer.from('trellis-team-dummy-password-salt')
 let activeDerivations = 0
 const derivationQueue = []
-
-function textBytes(value) {
-  return Buffer.byteLength(value, 'utf8')
-}
 
 function deriveKey(password, salt, params = PASSWORD_PARAMS) {
   return new Promise((resolve, reject) => {
@@ -76,37 +74,6 @@ function publicUser(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
-}
-
-export function normalizeUsername(value) {
-  if (typeof value !== 'string') {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, '登录名必须是字符串')
-  }
-  const username = value.trim()
-  if (!USERNAME_PATTERN.test(username)) {
-    throw teamError(
-      400,
-      ERROR_CODES.INVALID_INPUT,
-      '登录名必须是 3 到 64 位 ASCII 字母、数字、点、下划线或中划线',
-    )
-  }
-  return {
-    username: username.toLowerCase(),
-    usernameKey: username.toLowerCase(),
-  }
-}
-
-export function validatePassword(password) {
-  if (typeof password !== 'string') {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, '密码必须是字符串')
-  }
-  if (Array.from(password).length < 6) {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, '密码至少需要 6 个字符')
-  }
-  if (textBytes(password) > 1024) {
-    throw teamError(400, ERROR_CODES.INVALID_INPUT, '密码不能超过 1024 字节')
-  }
-  return password
 }
 
 export async function hashPassword(password) {
