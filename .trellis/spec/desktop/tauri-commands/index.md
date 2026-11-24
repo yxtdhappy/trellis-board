@@ -347,11 +347,13 @@ git push origin refs/heads/<branch>:refs/heads/<branch>
   `latest` 为 `{ version, notes, publishedAt, size } | null`。
 - 事件：`update-status-changed`（payload 同状态）、`update-progress`（`{ stage, downloaded, total }`）、
   `update-open-dialog`（空 payload）。
-- 更新源：构建时 `option_env!("TRELLIS_UPDATE_SERVER")`；未配置时 `enabled=false`，不发起网络请求。
+- 更新源：优先级为构建期 `option_env!("TRELLIS_UPDATE_SERVER")` > 运行时当前连接的 Team 服务端 `<server_root(board_url)>/client-updates`；两者都不可用时 `enabled=false`，不发起网络请求。
 
 ### 3. Contracts
 
 - `update_status` 只返回内存缓存，不触网；`update_check` 串行化并更新缓存后发 `update-status-changed`。
+- 若未配置编译期 `TRELLIS_UPDATE_SERVER`，启动时读取 `initial_server_url()` 初始化回退源；登录设置 `board_url` 或 `desktop_logout` 清空 `board_url` 时通过 `update::set_server_url` 刷新更新源、清空旧缓存、发射 `update-status-changed` 并同步更新托盘「检查更新」菜单项可用状态。
+- Team 服务端通过免登录只读路由 `/client-updates/latest.json`（`no-store`）与 `/client-updates/<file>.zip`（流式、单段文件名白名单、`realpathSync` 防逃逸）托管 `<TRELLIS_BOARD_DATA_DIR>/client-updates`（可用 `TRELLIS_CLIENT_UPDATES_DIR` 覆盖）。
 - 清单固定为 `<base>/latest.json`，`file` 必须是不含路径分隔符的裸 `.zip` 文件名；下载后必须校验清单的
   `size` 与 SHA-256，并只解压 ZIP 根目录下唯一的 `trellis-board-client.exe`。
 - `update_apply` 只在正式构建可用；替换 EXE 前先备份为 `.old`，失败必须回滚。重启必须延迟启动，
@@ -364,8 +366,9 @@ git push origin refs/heads/<branch>:refs/heads/<branch>
 
 | 条件 | 行为 |
 | --- | --- |
-| 未配置更新服务器 | 三个命令可见但 `update_status.enabled=false`；检查返回未启用，不联网 |
+| 编译期与运行时均未配置更新源 | 三个命令可见但 `update_status.enabled=false`，托盘「检查更新」置灰；检查返回未启用，不联网 |
 | 调用窗口不是当前 Board origin | 命令返回错误，不读更新缓存、不改状态 |
+| 登录或切换 Team 服务端 | 未配置编译期地址时自动切换至 `<server_root>/client-updates`，点亮托盘菜单并立即检查一次 |
 | 清单版本不高于当前版本 | `updateAvailable=false`，不发通知 |
 | 清单字段非法或响应超限 | 保留上次 `latest`，只设置 `error`，不中断客户端 |
 | SHA-256、大小或 ZIP 结构不符 | 删除临时文件并返回错误，原 EXE 不变 |
@@ -374,9 +377,10 @@ git push origin refs/heads/<branch>:refs/heads/<branch>
 
 ### 5. Tests Required
 
-- Rust：版本比较、清单校验（含 BOM）、SHA-256/大小校验、ZIP 路径选择、替换回滚、通知去重。
+- Node：`packages/server/test/team-client-updates.test.js` 覆盖 `/client-updates/` 免登录托管、`no-store` 与路径安全。
+- Rust：版本比较、更新源优先级（编译期 > 运行时回退）、URL 规范化、清单校验（含 BOM）、SHA-256/大小校验、ZIP 路径选择、替换回滚、通知去重。
 - `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml` 全绿。
-- 手工：配置 `TRELLIS_UPDATE_SERVER` 构建正式包，用本地静态服务器验证检查、通知、下载、重启。
+- 手工：内网或本地 Team 服务端放置 `latest.json` 与 `.zip`，用无 `TRELLIS_UPDATE_SERVER` 的正式包登录后验证检查、通知、下载、重启。
 
 ## Scenario: 桌面本机插件宿主 IPC
 

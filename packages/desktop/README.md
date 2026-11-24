@@ -471,10 +471,14 @@ packages\desktop\src-tauri\target\release\bundle\portable\TrellisBoard_<version>
 
 ## 自动更新
 
-配置了 `TRELLIS_UPDATE_SERVER` 的正式构建会在启动 5 秒后检查一次，之后每 6 小时检查一次；顶栏客户端版本号
-可点击打开更新对话框，托盘菜单也有「检查更新」。发现新版本时发一次系统通知，点击通知或托盘项会打开对话框。
+桌面客户端支持两级更新源（完整部署与内网 Jenkins 一体化发布流程见 [客户端自动更新指南](../../docs/client-auto-update.md)）：
 
-文件服务器只需放置两个文件（同一目录）：
+1. **构建期显式配置**：配置了 `TRELLIS_UPDATE_SERVER` 的正式构建优先向 `<TRELLIS_UPDATE_SERVER>/latest.json` 检查更新；
+2. **Team 服务端内置回退**：未配置 `TRELLIS_UPDATE_SERVER` 时，客户端自动向当前连接的 Team 服务端 `<serverUrl>/client-updates` 检查与下载更新（无需为不同内网地址重编 EXE）。
+
+正式构建会在启动 5 秒后检查一次，之后每 6 小时检查一次；顶栏客户端版本号可点击打开更新对话框，托盘菜单也有「检查更新」。发现新版本时发一次系统通知，点击通知或托盘项会打开对话框。
+
+托管目录只需放置两个文件（同一目录，可直接放到 Team 服务端 `<TRELLIS_BOARD_DATA_DIR>/client-updates/` 或 `TRELLIS_CLIENT_UPDATES_DIR`）：
 
 ```text
 latest.json

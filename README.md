@@ -7,7 +7,8 @@ Trellis Board 当前以 **`team`（团队服务端 + Windows 桌面 EXE 客户�
   只读凭据读取 `.trellis/tasks/archive/**`，不创建项目工作副本。
 
 任务推导、看板和 SQLite 代码只服务 Team。团队版的部署、升级、备份和故障处置见
-[团队版运维手册](./docs/team-operations.md)。
+[团队版运维手册](./docs/team-operations.md)，桌面客户端自动更新与内网 Jenkins 一体化发布见
+[客户端自动更新指南](./docs/client-auto-update.md)。
 
 ## 仓库结构
 
@@ -69,7 +70,7 @@ yarn start
 | 命令 | 常用参数与说明 |
 | --- | --- |
 | `yarn dev` | 统一开发入口：`--mode=full`（默认，服务端 `--watch` + Vite HMR）、`web`（仅 Vite）、`server`（仅服务端）、`desktop`（服务端 + Board UI + `cargo tauri dev`）。默认使用 `<用户数据根>-dev` 隔离数据与插件目录，加 `--no-isolate` 直连生产目录；Vite `/api` 代理到 `PORT`，前端端口可用 `--web-port`（`VITE_DEV_PORT`）指定 |
-| `yarn start` | 同进程加载 `packages/server/index.js` 启动 Team 服务端，支持 `--port`、`--data-dir`、`--plugins-dir`、`--watch-debounce` 等参数 |
+| `yarn start` | 同进程加载 `packages/server/index.js` 启动 Team 服务端，支持 `--port`、`--data-dir`、`--plugins-dir`、`--client-updates-dir`、`--watch-debounce` 等参数 |
 | `yarn build` | 统一构建入口：`--target=web`（默认，输出到 `packages/server/public`）、`desktop-ui`（输出到 `packages/desktop/ui`）、`desktop`（桌面 EXE，可加 `--skip-ui`）、`portable`（Windows 便携 ZIP）、`all`（`web` + `desktop-ui`）；支持 `--role=server\|client` 与 `--skip-typecheck` |
 | `yarn test` | 统一测试与检查：`--scope=core`（默认，跑 `packages/*/test/*.test.js` 与 `scripts/test/*.test.js`）、`plugins`、`all`、`server`、`web`、`shared`、`desktop`、`scripts`、`rust`、`lint`；支持 `--file=<substr>` / 位置参数按文件名过滤、`-t/--grep` 正则过滤、`-e` / `--real-acp` |
 | `yarn format` / `yarn format:check` | 使用 `oxfmt` 格式化全仓或检查格式 |

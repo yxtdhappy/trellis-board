@@ -28,6 +28,7 @@
 | --- | --- | --- | --- |
 | `TRELLIS_BOARD_MODE` | 否 | `team` | 只接受 `team`；其他值启动时直接报错 |
 | `TRELLIS_BOARD_DATA_DIR` | 生产必填 | 平台用户数据目录 | Windows 默认 `%LOCALAPPDATA%\TrellisBoard\server`；Ubuntu 建议 `/var/lib/trellis-board` |
+| `TRELLIS_CLIENT_UPDATES_DIR` | 否 | `<TRELLIS_BOARD_DATA_DIR>/client-updates` | 桌面客户端自动更新文件托管目录（`latest.json` 与 `.zip`），详见 [客户端自动更新指南](./client-auto-update.md) |
 | `PORT` | 否 | `4317` | HTTP 和 Team 服务端口 |
 | `TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES` | 否 | `false` | 是否接受本地 `file://` Git 远端 |
 | `TRELLIS_TEAM_PLUGINS_ALLOWLIST` | 否 | 空 | 保留字段；服务端插件已固定关闭，配置也不会启用 |
