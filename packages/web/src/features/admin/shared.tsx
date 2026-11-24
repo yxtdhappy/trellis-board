@@ -2,12 +2,30 @@ import type { ReactNode } from 'react'
 import type { AuditEvent } from '@/api/admin'
 import { StatusPill } from '@/components/ui/status-pill'
 import { statusTone } from '@/lib/admin-shared'
+import { cn } from '@/lib/utils'
 
-export function Row({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
+export function Row({
+  children,
+  actions,
+  footer,
+  className,
+}: {
+  children: ReactNode
+  actions?: ReactNode
+  footer?: ReactNode
+  className?: string
+}) {
   return (
-    <div className="flex min-h-12 items-center justify-between gap-3 border-b border-border py-2 last:border-b-0">
-      <div className="min-w-0 flex-1">{children}</div>
-      {actions ? <div className="flex shrink-0 items-center gap-1.5">{actions}</div> : null}
+    <div
+      className={cn('flex flex-col gap-2 border-b border-border py-2 last:border-b-0', className)}
+    >
+      <div className="flex min-h-8 items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">{children}</div>
+        {actions ? (
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">{actions}</div>
+        ) : null}
+      </div>
+      {footer}
     </div>
   )
 }
@@ -45,14 +63,19 @@ function auditSummary(event: AuditEvent) {
 
 export function AuditItem({ event }: { event: AuditEvent }) {
   const actor = event.actorUserId || event.actorAgentId || 'system'
+  const summary = auditSummary(event)
   return (
     <article className="flex items-center gap-3 border-b border-border/60 py-2 text-xs last:border-b-0">
       <span className="w-11 shrink-0 text-2xs tabular-nums text-muted-foreground">
         {auditClock(event.occurredAt)}
       </span>
-      <span className="w-16 shrink-0 truncate font-medium">{actor}</span>
-      <span className="min-w-0 flex-1 truncate text-muted-foreground">{auditSummary(event)}</span>
-      <StatusPill tone={statusTone(event.result)} className="whitespace-nowrap">
+      <span className="w-16 shrink-0 truncate font-medium" title={actor}>
+        {actor}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-muted-foreground" title={summary}>
+        {summary}
+      </span>
+      <StatusPill tone={statusTone(event.result)} className="shrink-0 whitespace-nowrap">
         {event.result || 'unknown'}
       </StatusPill>
     </article>

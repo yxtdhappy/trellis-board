@@ -90,11 +90,9 @@ export function AccountForm({ user, teams, submitLabel, onSubmit }: AccountFormP
         disabled={busy}
         emptyText="暂无团队，可创建团队后再分配。"
       />
-      <div className="flex items-center justify-end gap-2 pt-1">
-        <Button size="sm" type="submit" disabled={busy}>
-          {submitLabel}
-        </Button>
-      </div>
+      <Button type="submit" className="self-start" disabled={busy}>
+        {submitLabel}
+      </Button>
     </form>
   )
 }

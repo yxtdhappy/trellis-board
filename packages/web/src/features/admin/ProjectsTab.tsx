@@ -144,6 +144,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           <div className="flex items-center gap-2">
             <SelectField
               ariaLabel="项目"
+              className="min-w-0 flex-1"
               value={accessProjectId}
               placeholder="请选择项目"
               options={projectOptions.map((project) => ({
@@ -307,7 +308,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           title="跨团队访问"
           description="同一个 Git 项目只保留一个全局任务空间；邀请其他团队不会复制项目或任务。"
         >
-          <div className="grid grid-cols-[minmax(0,1fr)_110px_auto] gap-2">
+          <div className="grid grid-cols-[minmax(0,1fr)_128px_auto] items-center gap-2">
             <SelectField
               ariaLabel="邀请团队"
               value={inviteTeamId}
@@ -362,8 +363,13 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                     )
                   }
                 >
-                  <div className="flex items-center gap-1.5">
-                    <strong className="text-xs font-medium">{access.teamName}</strong>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <strong
+                      className="min-w-0 truncate text-xs font-medium"
+                      title={access.teamName}
+                    >
+                      {access.teamName}
+                    </strong>
                     <StatusPill tone={statusTone(access.accessRole)}>
                       {access.accessRole || 'unknown'}
                     </StatusPill>
@@ -384,7 +390,6 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
             <Button
               variant="outline"
               type="button"
-              className="rounded-full"
               onClick={() => void createPairingCode(selectedTeamId || undefined)}
             >
               生成我的配对码
@@ -426,7 +431,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                       {formatTime(binding.lastSyncedAt)}
                     </p>
                     {binding.lastError ? (
-                      <p className="text-2xs text-destructive">{binding.lastError}</p>
+                      <p className="break-words text-2xs text-destructive">{binding.lastError}</p>
                     ) : null}
                   </div>
                 </Row>
@@ -488,10 +493,13 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                         </Button>
                       }
                     >
-                      <p className="text-xs font-semibold text-foreground">
+                      <p
+                        className="truncate text-xs font-semibold text-foreground"
+                        title={binding.externalProjectName || binding.externalProjectId}
+                      >
                         插件项目：{binding.externalProjectName || binding.externalProjectId}
                       </p>
-                      <p className="text-2xs text-muted-foreground">
+                      <p className="break-all text-2xs text-muted-foreground">
                         {binding.externalProjectId} · 绑定于 {formatTime(binding.createdAt)}
                       </p>
                     </Row>
@@ -500,7 +508,6 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
               </div>
               <PluginBindingForm
                 className="mt-1"
-                submitProps={{ size: 'sm', className: 'self-start' }}
                 draft={pluginForm}
                 onChange={setPluginForm}
                 disabled={pluginBusy || !pluginId}
@@ -524,12 +531,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           title="项目审计"
           action={
             accessProjectId && projectAuditHasMore ? (
-              <Button
-                variant="outline"
-                size="sm"
-                type="button"
-                onClick={() => void loadProjectAudit(false)}
-              >
+              <Button variant="outline" type="button" onClick={() => void loadProjectAudit(false)}>
                 加载更多
               </Button>
             ) : null

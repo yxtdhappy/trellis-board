@@ -16,7 +16,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/u
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Panel } from '@/components/ui/panel'
 import { cn } from '@/lib/utils'
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { PluginLogsDialog } from './PluginLogsDialog'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -93,7 +93,11 @@ export function DesktopPluginsView() {
     setBusyId(plugin.id)
     try {
       await setDesktopPluginEnabled(plugin.id, !plugin.enabled)
-      toast.success(plugin.enabled ? `已停用 ${plugin.name || plugin.id}` : `已启用 ${plugin.name || plugin.id}`)
+      toast.success(
+        plugin.enabled
+          ? `已停用 ${plugin.name || plugin.id}`
+          : `已启用 ${plugin.name || plugin.id}`,
+      )
       await load(true)
       window.dispatchEvent(new CustomEvent('trellis:panels-changed'))
     } catch (err) {
@@ -137,20 +141,6 @@ export function DesktopPluginsView() {
     }
   }
 
-  const body = logLoading
-    ? '加载中…'
-    : logError
-      ? `读取日志失败：${logError}`
-      : logEntries.length
-        ? logEntries
-            .map((entry) => {
-              const time = entry.at ? new Date(entry.at).toLocaleTimeString() : ''
-              const level = String(entry.level || 'info').toUpperCase().padEnd(5)
-              return `${time} ${level} ${entry.message || ''}`.trim()
-            })
-            .join('\n')
-        : '暂无日志'
-
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -164,7 +154,7 @@ export function DesktopPluginsView() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span>{state.hostVersion ? `宿主 ${state.hostVersion}` : ''}</span>
+          {state.hostVersion ? <span>宿主 {state.hostVersion}</span> : null}
           <span>{state.running ? '插件宿主运行中' : '插件宿主未启动'}</span>
           <span>{state.plugins.length} 个插件</span>
         </div>
@@ -181,8 +171,8 @@ export function DesktopPluginsView() {
           <EmptyHeader>
             <EmptyTitle>还没有插件</EmptyTitle>
             <EmptyDescription>
-              安装包内置的插件会列在这里；用户目录下
-              %LOCALAPPDATA%\TrellisBoard\plugins\&lt;id&gt;\ 可覆盖内置实现。
+              安装包内置的插件会列在这里；用户目录下 %LOCALAPPDATA%\TrellisBoard\plugins\&lt;id&gt;\
+              可覆盖内置实现。
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -192,157 +182,148 @@ export function DesktopPluginsView() {
             const dragging = draggingId === plugin.id
             const dropTarget = dragOverId === plugin.id && !dragging
             return (
-            <Panel
-              as="article"
-              key={plugin.id}
-              draggable={!state.disabled && !savingOrder}
-              onDragStart={(event) => {
-                setDraggingId(plugin.id)
-                event.dataTransfer.effectAllowed = 'move'
-                event.dataTransfer.setData('text/plain', plugin.id)
-              }}
-              onDragEnd={() => {
-                setDraggingId('')
-                setDragOverId('')
-              }}
-              onDragOver={(event) => {
-                if (!draggingId) return
-                event.preventDefault()
-                event.dataTransfer.dropEffect = 'move'
-                if (dragOverId !== plugin.id) setDragOverId(plugin.id)
-              }}
-              onDragLeave={() => {
-                setDragOverId((current) => (current === plugin.id ? '' : current))
-              }}
-              onDrop={(event) => {
-                event.preventDefault()
-                const id = draggingId || event.dataTransfer.getData('text/plain')
-                const source = state.plugins.findIndex((entry) => entry.id === id)
-                if (source >= 0) void move(state.plugins[source], index)
-                setDraggingId('')
-                setDragOverId('')
-              }}
-              className={cn(
-                'border p-3.5 transition',
-                dragging ? 'border-dashed border-border opacity-40' : 'border-border',
-                dropTarget && 'border-primary ring-2 ring-primary/25',
-              )}
-            >
-              <header className="flex items-start gap-2">
-                <button
-                  type="button"
-                  aria-label={`拖动调整 ${plugin.name || plugin.id} 的顺序`}
-                  title="按住拖动调整顺序；聚焦后可用 ↑ ↓"
-                  className="mt-0.5 shrink-0 cursor-grab rounded px-1 text-sm leading-none text-muted-foreground/60 hover:bg-muted hover:text-foreground active:cursor-grabbing"
-                  onKeyDown={(event) => {
-                    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
-                    event.preventDefault()
-                    void move(plugin, event.key === 'ArrowUp' ? index - 1 : index + 1)
-                  }}
-                >
-                  ⠿
-                </button>
-                <div className="min-w-0 flex-1">
-                  <h2 className="truncate text-sm font-semibold font-heading">
-                    {plugin.name || plugin.id}
-                  </h2>
-                  <p className="truncate font-mono text-xs text-muted-foreground">{plugin.id}</p>
-                </div>
-                <StatusPill tone={statusTone(plugin)} className="shrink-0">
-                  {plugin.status === 'error' && plugin.lastError
-                    ? '错误'
-                    : STATUS_LABELS[plugin.status] || plugin.status}
-                </StatusPill>
-              </header>
+              <Panel
+                as="article"
+                key={plugin.id}
+                draggable={!state.disabled && !savingOrder}
+                onDragStart={(event) => {
+                  setDraggingId(plugin.id)
+                  event.dataTransfer.effectAllowed = 'move'
+                  event.dataTransfer.setData('text/plain', plugin.id)
+                }}
+                onDragEnd={() => {
+                  setDraggingId('')
+                  setDragOverId('')
+                }}
+                onDragOver={(event) => {
+                  if (!draggingId) return
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  if (dragOverId !== plugin.id) setDragOverId(plugin.id)
+                }}
+                onDragLeave={() => {
+                  setDragOverId((current) => (current === plugin.id ? '' : current))
+                }}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  const id = draggingId || event.dataTransfer.getData('text/plain')
+                  const source = state.plugins.findIndex((entry) => entry.id === id)
+                  if (source >= 0) void move(state.plugins[source], index)
+                  setDraggingId('')
+                  setDragOverId('')
+                }}
+                className={cn(
+                  'h-full border p-3.5 transition',
+                  dragging ? 'border-dashed border-border opacity-40' : 'border-border',
+                  dropTarget && 'border-primary ring-2 ring-primary/25',
+                )}
+              >
+                <header className="flex items-start gap-2">
+                  <button
+                    type="button"
+                    aria-label={`拖动调整 ${plugin.name || plugin.id} 的顺序`}
+                    title="按住拖动调整顺序；聚焦后可用 ↑ ↓"
+                    className="inline-flex size-6 shrink-0 cursor-grab items-center justify-center rounded text-sm leading-none text-muted-foreground/60 outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+                      event.preventDefault()
+                      void move(plugin, event.key === 'ArrowUp' ? index - 1 : index + 1)
+                    }}
+                  >
+                    ⠿
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="truncate text-sm font-semibold font-heading">
+                      {plugin.name || plugin.id}
+                    </h2>
+                    <p className="truncate font-mono text-xs text-muted-foreground">{plugin.id}</p>
+                  </div>
+                  <StatusPill tone={statusTone(plugin)} className="shrink-0">
+                    {plugin.status === 'error' && plugin.lastError
+                      ? '错误'
+                      : STATUS_LABELS[plugin.status] || plugin.status}
+                  </StatusPill>
+                </header>
 
-              <div className="mt-2 flex flex-wrap gap-1.5 text-2xs text-muted-foreground">
-                <span className="rounded-full border border-border px-2 py-0.5">
-                  v{plugin.version ?? '?'}
-                </span>
-                <span className="rounded-full border border-border px-2 py-0.5">
-                  api {plugin.apiVersion ?? '?'}
-                </span>
-                {plugin.pid ? (
-                  <span className="rounded-full bg-muted px-2 py-0.5">pid {plugin.pid}</span>
-                ) : null}
-                {plugin.restarts ? (
-                  <StatusPill tone="warning">重启 {plugin.restarts}</StatusPill>
-                ) : null}
-              </div>
-
-              {plugin.lastError ? (
-                <p className="mt-2 text-xs text-destructive">{plugin.lastError}</p>
-              ) : null}
-
-              <div className="mt-3 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Switch
-                    checked={plugin.enabled}
-                    disabled={Boolean(busyId) || !plugin.compatible}
-                    onCheckedChange={() => void toggle(plugin)}
-                    aria-label={`${plugin.enabled ? '停用' : '启用'} ${plugin.name || plugin.id}`}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    {busyId === plugin.id ? '处理中…' : plugin.enabled ? '已启用' : '已停用'}
+                <div className="flex flex-wrap items-center gap-1.5 text-2xs text-muted-foreground">
+                  <span className="inline-flex h-5 items-center rounded-full border border-border px-2">
+                    v{plugin.version ?? '?'}
                   </span>
+                  <span className="inline-flex h-5 items-center rounded-full border border-border px-2">
+                    api {plugin.apiVersion ?? '?'}
+                  </span>
+                  {plugin.pid ? (
+                    <span className="inline-flex h-5 items-center rounded-full bg-muted px-2">
+                      pid {plugin.pid}
+                    </span>
+                  ) : null}
+                  {plugin.restarts ? (
+                    <StatusPill tone="warning">重启 {plugin.restarts}</StatusPill>
+                  ) : null}
                 </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="px-2"
-                    disabled={savingOrder || index === 0}
-                    onClick={() => void move(plugin, index - 1)}
-                    aria-label={`上移 ${plugin.name || plugin.id}`}
-                  >
-                    ↑
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="px-2"
-                    disabled={savingOrder || index === state.plugins.length - 1}
-                    onClick={() => void move(plugin, index + 1)}
-                    aria-label={`下移 ${plugin.name || plugin.id}`}
-                  >
-                    ↓
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="px-2.5"
-                    disabled={!isActive(plugin)}
-                    onClick={() => void openLogs(plugin)}
-                  >
-                    日志
-                  </Button>
+
+                {plugin.lastError ? (
+                  <p className="break-words text-xs text-destructive">{plugin.lastError}</p>
+                ) : null}
+
+                <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={plugin.enabled}
+                      disabled={Boolean(busyId) || !plugin.compatible}
+                      onCheckedChange={() => void toggle(plugin)}
+                      aria-label={`${plugin.enabled ? '停用' : '启用'} ${plugin.name || plugin.id}`}
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {busyId === plugin.id ? '处理中…' : plugin.enabled ? '已启用' : '已停用'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      disabled={savingOrder || index === 0}
+                      onClick={() => void move(plugin, index - 1)}
+                      aria-label={`上移 ${plugin.name || plugin.id}`}
+                    >
+                      ↑
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      disabled={savingOrder || index === state.plugins.length - 1}
+                      onClick={() => void move(plugin, index + 1)}
+                      aria-label={`下移 ${plugin.name || plugin.id}`}
+                    >
+                      ↓
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!isActive(plugin)}
+                      onClick={() => void openLogs(plugin)}
+                    >
+                      日志
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            </Panel>
+              </Panel>
             )
           })}
         </div>
       )}
 
-      <Dialog open={Boolean(logs)} onOpenChange={(open) => !open && setLogs(null)}>
-        <DialogContent className="sm:max-w-190">
-          <DialogHeader>
-            <p className="text-2xs font-semibold tracking-[0.14em] text-muted-foreground">
-              DESKTOP PLUGIN LOGS
-            </p>
-            <DialogTitle>插件日志</DialogTitle>
-            <DialogDescription>{logs?.title || ''}</DialogDescription>
-          </DialogHeader>
-          <DialogBody className="mx-4 rounded-lg bg-muted px-3 py-2.5">
-            <pre className="font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
-              {body}
-            </pre>
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
+      <PluginLogsDialog
+        open={Boolean(logs)}
+        onOpenChange={(open) => !open && setLogs(null)}
+        title={logs?.title || ''}
+        loading={logLoading}
+        error={logError}
+        entries={logEntries}
+      />
     </div>
   )
 }

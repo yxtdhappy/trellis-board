@@ -185,8 +185,14 @@ export function ArchiveSyncTab() {
     return (
       <Alert variant="destructive">
         <AlertTitle>{sync.error}</AlertTitle>
-        <AlertDescription>
-          <Button size="sm" variant="outline" type="button" onClick={() => void sync.reload()}>
+        <AlertDescription className="mt-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            type="button"
+            className="text-foreground"
+            onClick={() => void sync.reload()}
+          >
             重新读取
           </Button>
         </AlertDescription>
@@ -256,9 +262,10 @@ export function ArchiveSyncTab() {
             kicker="ARCHIVE / CREDENTIALS"
             title={editing ? `编辑 ${displayText(editing.origin, '来源地址缺失')}` : '新增来源凭据'}
             description="凭据严格按 scheme + host + port 隔离，不会跨域名或端口复用。"
+            className="[&_h2]:break-all"
           >
             <form className="flex flex-col gap-2.5" onSubmit={saveCredential}>
-              <div className="grid grid-cols-[1fr_100px] gap-2">
+              <div className="grid grid-cols-[minmax(0,1fr)_100px] gap-2">
                 <Field className="gap-1">
                   <FieldLabel
                     htmlFor="credential-scheme"
@@ -406,12 +413,12 @@ export function ArchiveSyncTab() {
                   </Field>
                 </>
               )}
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
                 <Button type="submit" disabled={sync.busy}>
                   {editing ? '保存凭据' : '创建凭据'}
                 </Button>
                 {editing ? (
-                  <Button size="sm" type="button" variant="outline" onClick={resetCredential}>
+                  <Button type="button" variant="outline" onClick={resetCredential}>
                     取消编辑
                   </Button>
                 ) : null}
@@ -437,6 +444,7 @@ export function ArchiveSyncTab() {
                 overview.credentials.map((credential, index) => {
                   const credentialKey = credential.id || `credential-${index}`
                   const credentialName = displayText(credential.name, '未命名凭据')
+                  const credentialOrigin = displayText(credential.origin, '来源地址缺失')
                   const affected = credentialProjects(overview.taskSpaces, credential.id)
                   const expanded = expandedCredentialKey === credentialKey
                   const projectListId = `archive-credential-${index}-projects`
@@ -474,6 +482,17 @@ export function ArchiveSyncTab() {
                           </Button>
                         </>
                       }
+                      footer={
+                        expanded && affected.length > 0 ? (
+                          <AffectedProjectList
+                            projects={affected}
+                            id={projectListId}
+                            tabIndex={0}
+                            ariaLabel={`凭据 ${credentialName} 自动适用的项目`}
+                            className="overscroll-contain text-xs text-muted-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                          />
+                        ) : null
+                      }
                     >
                       <div className="flex min-w-0 flex-col gap-0.5">
                         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -483,14 +502,16 @@ export function ArchiveSyncTab() {
                           >
                             {credentialName}
                           </strong>
-                          <StatusPill tone={statusTone(credential.scheme.toUpperCase())}>
+                          <StatusPill tone="neutral">
                             {credential.scheme.toUpperCase() || 'unknown'}
                           </StatusPill>
-                          <StatusPill tone={statusTone('已配置')}>已配置</StatusPill>
+                          <StatusPill tone="success">已配置</StatusPill>
                         </div>
-                        <p className="truncate text-xs text-muted-foreground">
-                          <code>{displayText(credential.origin, '来源地址缺失')}</code> · 更新{' '}
-                          {formatTime(credential.updatedAt)}
+                        <p
+                          className="truncate text-xs text-muted-foreground"
+                          title={credentialOrigin}
+                        >
+                          <code>{credentialOrigin}</code> · 更新 {formatTime(credential.updatedAt)}
                         </p>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                           <span>自动适用 {affected.length} 个项目</span>
@@ -514,15 +535,6 @@ export function ArchiveSyncTab() {
                             <span>当前没有项目使用此来源</span>
                           )}
                         </div>
-                        {expanded && affected.length > 0 ? (
-                          <AffectedProjectList
-                            projects={affected}
-                            id={projectListId}
-                            tabIndex={0}
-                            ariaLabel={`凭据 ${credentialName} 自动适用的项目`}
-                            className="mt-1 overscroll-contain text-xs text-muted-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                          />
-                        ) : null}
                       </div>
                     </Row>
                   )
@@ -607,7 +619,6 @@ export function ArchiveSyncTab() {
           <DialogFooter>
             {sync.logsHasMore ? (
               <Button
-                size="sm"
                 type="button"
                 variant="outline"
                 disabled={sync.logsLoading}
@@ -616,7 +627,7 @@ export function ArchiveSyncTab() {
                 加载更多
               </Button>
             ) : null}
-            <Button size="sm" type="button" variant="outline" onClick={sync.closeLogs}>
+            <Button type="button" variant="outline" onClick={sync.closeLogs}>
               关闭
             </Button>
           </DialogFooter>

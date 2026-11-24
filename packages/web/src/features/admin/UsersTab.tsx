@@ -154,13 +154,6 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                   至少 6 个字符，不做复杂度校验。
                 </FieldDescription>
               </Field>
-              <TeamCheckboxList
-                teams={teams}
-                selectedIds={teamIds}
-                onToggle={toggleCreateTeam}
-                disabled={busy}
-                emptyText="暂无团队，可先建号后补配。"
-              />
               <label className="flex items-center gap-2 text-xs text-foreground">
                 <Checkbox
                   checked={systemAdmin}
@@ -169,7 +162,14 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
                 />
                 系统管理员
               </label>
-              <Button size="sm" type="submit" className="self-start" disabled={busy}>
+              <TeamCheckboxList
+                teams={teams}
+                selectedIds={teamIds}
+                onToggle={toggleCreateTeam}
+                disabled={busy}
+                emptyText="暂无团队，可先建号后补配。"
+              />
+              <Button type="submit" className="self-start" disabled={busy}>
                 创建账号
               </Button>
             </form>
@@ -205,76 +205,80 @@ export function UsersTab({ console: consoleApi }: { console: AdminConsole }) {
             {users.length === 0 ? (
               <EmptyRow>暂无用户账号。</EmptyRow>
             ) : (
-              users.map((user) => (
-                <Row
-                  key={user.id}
-                  actions={
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        type="button"
-                        onClick={() => setSelectedId(user.id)}
-                      >
-                        编辑
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        type="button"
-                        onClick={() => setResetUser(user)}
-                      >
-                        重置密码
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        type="button"
-                        className={user.status === 'active' ? 'text-destructive' : undefined}
-                        onClick={() => void toggleUser(user)}
-                      >
-                        {user.status === 'active' ? '停用' : '启用'}
-                      </Button>
-                    </>
-                  }
-                >
-                  <div className="flex items-center gap-2">
-                    <Avatar size="sm">
-                      <AvatarFallback>
-                        {(user.displayName || user.username || '?').slice(0, 1)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <strong className="truncate text-xs font-medium">
-                          {user.displayName || user.username}
-                        </strong>
-                        <StatusPill tone={statusTone(user.status)}>
-                          {user.status || 'unknown'}
-                        </StatusPill>
-                        {user.systemAdmin ? (
-                          <span className="text-2xs font-semibold text-muted-foreground">
-                            系统管理员
-                          </span>
-                        ) : null}
+              users.map((user) => {
+                const name = user.displayName || user.username
+                return (
+                  <Row
+                    key={user.id}
+                    className={
+                      selectedId === user.id ? '-mx-2 rounded-lg bg-primary/10 px-2' : undefined
+                    }
+                    actions={
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          onClick={() => setSelectedId(user.id)}
+                        >
+                          编辑
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          onClick={() => setResetUser(user)}
+                        >
+                          重置密码
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          className={user.status === 'active' ? 'text-destructive' : undefined}
+                          onClick={() => void toggleUser(user)}
+                        >
+                          {user.status === 'active' ? '停用' : '启用'}
+                        </Button>
+                      </>
+                    }
+                  >
+                    <div className="flex items-center gap-2">
+                      <Avatar size="sm">
+                        <AvatarFallback>{(name || '?').slice(0, 1)}</AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <strong className="truncate text-xs font-medium" title={name}>
+                            {name}
+                          </strong>
+                          <StatusPill tone={statusTone(user.status)}>
+                            {user.status || 'unknown'}
+                          </StatusPill>
+                          {user.systemAdmin ? (
+                            <span className="shrink-0 whitespace-nowrap text-2xs font-semibold text-muted-foreground">
+                              系统管理员
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="truncate text-2xs text-muted-foreground">
+                          <code>{user.username}</code> · ID <code>{user.id}</code>
+                        </p>
+                        <p className="truncate text-2xs text-muted-foreground">
+                          团队{' '}
+                          {user.teams.length
+                            ? user.teams.map((team) => team.name).join('、')
+                            : '未分配'}
+                        </p>
+                        <p className="truncate text-2xs text-muted-foreground">
+                          最近改密 {formatTime(user.passwordChangedAt)} · 创建{' '}
+                          {formatTime(user.createdAt)}
+                        </p>
                       </div>
-                      <p className="truncate text-2xs text-muted-foreground">
-                        <code>{user.username}</code> · ID <code>{user.id}</code>
-                      </p>
-                      <p className="truncate text-2xs text-muted-foreground">
-                        团队{' '}
-                        {user.teams.length
-                          ? user.teams.map((team) => team.name).join('、')
-                          : '未分配'}
-                      </p>
-                      <p className="truncate text-2xs text-muted-foreground">
-                        最近改密 {formatTime(user.passwordChangedAt)} · 创建{' '}
-                        {formatTime(user.createdAt)}
-                      </p>
                     </div>
-                  </div>
-                </Row>
-              ))
+                  </Row>
+                )
+              })
             )}
           </div>
         </Panel>

@@ -117,9 +117,13 @@ export function TeamsTab() {
   }
 
   return (
-    <div className="grid gap-3 lg:grid-cols-[320px_1fr]">
-      <Panel title="团队" description="系统管理员可创建、停用和分配成员。">
-        <div className="flex gap-1.5">
+    <div className="grid gap-3.5 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <Panel
+        kicker="TEAMS / DIRECTORY"
+        title="团队"
+        description="系统管理员可创建、停用和分配成员。"
+      >
+        <div className="flex items-center gap-1.5">
           <Input
             className="text-xs"
             value={name}
@@ -137,24 +141,29 @@ export function TeamsTab() {
               key={team.id}
               type="button"
               className={cn(
-                'flex items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs',
+                'flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs',
                 team.id === selectedId ? 'bg-secondary text-foreground' : 'hover:bg-muted',
               )}
               onClick={() => setSelectedId(team.id)}
             >
               <span className="min-w-0">
-                <span className="block truncate font-medium">{team.name}</span>
-                <span className="block text-2xs text-muted-foreground">
+                <span className="block truncate font-medium" title={team.name}>
+                  {team.name}
+                </span>
+                <span className="block truncate text-2xs text-muted-foreground">
                   {team.memberCount} 名成员 · {team.projectCount} 个项目
                 </span>
               </span>
-              <StatusPill tone={statusTone(team.status)}>{team.status || 'unknown'}</StatusPill>
+              <StatusPill tone={statusTone(team.status)} className="shrink-0">
+                {team.status || 'unknown'}
+              </StatusPill>
             </button>
           ))}
         </div>
       </Panel>
 
       <Panel
+        kicker="TEAMS / MEMBERS"
         title={selected ? selected.name : '团队详情'}
         description={selected ? `slug: ${selected.slug}` : '选择一个团队查看成员。'}
         action={
@@ -181,7 +190,7 @@ export function TeamsTab() {
               />
               <SelectField
                 ariaLabel="团队角色"
-                className="w-28"
+                className="w-32"
                 value={role}
                 options={[
                   { value: 'member', label: '成员' },
@@ -200,15 +209,17 @@ export function TeamsTab() {
                   className="flex items-center justify-between gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 text-xs"
                 >
                   <span className="min-w-0">
-                    <span className="block truncate font-medium">{member.displayName}</span>
-                    <span className="block text-2xs text-muted-foreground">
+                    <span className="block truncate font-medium" title={member.displayName}>
+                      {member.displayName}
+                    </span>
+                    <span className="block truncate text-2xs text-muted-foreground">
                       {member.username} · {member.role === 'admin' ? '团队管理员' : '成员'}
                     </span>
                   </span>
                   <Button
                     variant="ghost"
-                    size="xs"
-                    className="px-1.5"
+                    size="sm"
+                    className="shrink-0 text-destructive"
                     disabled={busy}
                     onClick={() => removeMember(member)}
                   >
