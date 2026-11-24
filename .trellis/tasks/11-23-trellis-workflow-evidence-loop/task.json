@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "14fa6a3e865b29a02bed71fbe15595e4a60adc73",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -52,5 +52,10 @@
     "plugins/witops-core/panel/app.js"
   ],
   "notes": "方向已按 2026-11-23 复盘修正：以 agent 维护 Trellis 文件的 workflow/skills 为主线，看板保持只读，不做交互式补救。",
-  "meta": {}
+  "meta": {
+    "commits": [
+      "14fa6a3e865b29a02bed71fbe15595e4a60adc73"
+    ],
+    "commit_set_at": "2026-11-24T20:33:46"
+  }
 }
