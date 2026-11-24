@@ -30,7 +30,9 @@ export function Panel({
       {hasHeader ? (
         <header className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            {title ? <h2 className="text-sm font-semibold text-foreground">{title}</h2> : null}
+            {title ? (
+              <h2 className="font-heading text-sm font-semibold text-foreground">{title}</h2>
+            ) : null}
             {kicker || description ? (
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 {kicker ? <span className="font-semibold tracking-[0.14em]">{kicker}</span> : null}
@@ -39,7 +41,7 @@ export function Panel({
               </p>
             ) : null}
           </div>
-          {action}
+          {action ? <div className="shrink-0">{action}</div> : null}
         </header>
       ) : null}
       {children}

@@ -3,7 +3,7 @@
   "name": "ui-primitives-foundation",
   "title": "修复基础 UI 原语高度对齐与全局样式缺陷",
   "description": "统一 components/ui 基础原语默认高度与焦点样式，修复 Dialog/InputGroup/Combobox/Select/Toggle/Tabs/StatusPill/Badge/Alert/ScrollArea/Progress/Sonner 与 index.css 的系统性 UI 缺陷",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "web",

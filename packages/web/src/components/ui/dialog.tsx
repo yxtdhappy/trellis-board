@@ -9,6 +9,7 @@ import { XIcon } from 'lucide-react'
 
 // 多弹层叠加时只关闭最上层：按 DOM 顺序（后挂载的在上面）比较实例 id
 const DialogIdContext = React.createContext<string | null>(null)
+const DialogCloseButtonContext = React.createContext(true)
 type OpenChangeHandler = NonNullable<DialogPrimitive.Root.Props['onOpenChange']>
 type OpenChangeDetails = Parameters<OpenChangeHandler>[1]
 
@@ -91,11 +92,13 @@ function DialogContent({
         )}
         {...props}
       >
-        {children}
+        <DialogCloseButtonContext.Provider value={showCloseButton}>
+          {children}
+        </DialogCloseButtonContext.Provider>
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            render={<Button variant="ghost" className="absolute top-2 right-2" size="icon-sm" />}
+            render={<Button variant="ghost" className="absolute top-3 right-3" size="icon-sm" />}
           >
             <XIcon />
             <span className="sr-only">关闭</span>
@@ -110,20 +113,18 @@ function DialogBody({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="dialog-body"
-      className={cn(
-        'min-h-0 flex-1 -mx-4 overflow-y-auto overscroll-contain px-4 [scrollbar-gutter:stable_both-edges]',
-        className,
-      )}
+      className={cn('min-h-0 flex-1 -mx-4 overflow-y-auto overscroll-contain px-4', className)}
       {...props}
     />
   )
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
+  const hasCloseButton = React.useContext(DialogCloseButtonContext)
   return (
     <div
       data-slot="dialog-header"
-      className={cn('flex shrink-0 flex-col gap-1', className)}
+      className={cn('flex shrink-0 flex-col gap-1', hasCloseButton && 'pr-8', className)}
       {...props}
     />
   )
@@ -140,12 +141,15 @@ function DialogFooter({
   return (
     <div
       data-slot="dialog-footer"
-      className={cn('flex shrink-0 flex-col-reverse gap-2 sm:flex-row sm:justify-end', className)}
+      className={cn(
+        'flex shrink-0 flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end',
+        className,
+      )}
       {...props}
     >
       {children}
       {showCloseButton && (
-        <DialogPrimitive.Close render={<Button variant="outline" />}>Close</DialogPrimitive.Close>
+        <DialogPrimitive.Close render={<Button variant="outline" />}>关闭</DialogPrimitive.Close>
       )}
     </div>
   )
