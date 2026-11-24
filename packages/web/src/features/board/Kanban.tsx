@@ -105,15 +105,15 @@ export function Kanban({ groups, onOpen, onEditPlan, localStateFor, onDownload }
                                 return (
                                   <div
                                     key={taskInstanceKey(child)}
-                                    className="group flex items-center gap-1 rounded-md border border-border/70 bg-card shadow-xs transition-colors hover:bg-muted/60"
+                                    className="group relative flex items-center rounded-md border border-border/70 bg-card shadow-xs transition-colors hover:bg-muted/60"
                                   >
                                     <button
                                       type="button"
                                       onClick={() => onOpen(child)}
-                                      className="flex min-w-0 flex-1 items-center gap-2 py-1 pr-1 pl-1.5 text-left text-2xs"
+                                      className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-2xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                     >
                                       <span
-                                        className="size-1 shrink-0 rounded-full bg-border"
+                                        className="size-1 shrink-0 rounded-full bg-muted-foreground/45"
                                         aria-hidden="true"
                                       />
                                       <span className="flex min-w-0 flex-col">
@@ -129,11 +129,13 @@ export function Kanban({ groups, onOpen, onEditPlan, localStateFor, onDownload }
                                         {nextStage(child)?.label} · {progress.percent}%
                                       </span>
                                     </button>
-                                    <CopyTaskNameButton
-                                      task={child}
-                                      compact
-                                      className="mr-1 shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100"
-                                    />
+                                    <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+                                      <CopyTaskNameButton
+                                        task={child}
+                                        compact
+                                        className="bg-card shadow-xs"
+                                      />
+                                    </div>
                                   </div>
                                 )
                               })}
