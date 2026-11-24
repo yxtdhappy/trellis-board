@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 51
+- **Total Sessions**: 52
 - **Last Active**: 2026-11-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1681 | Active |
+| `journal-1.md` | ~1719 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 52 | 2026-11-24 | 修复桌面端专有窗口、浮层与差异视图 UI 缺陷（子任务 6） | `abbe6af`, `15e10cd` | `main` |
 | 51 | 2026-11-24 | 修复管理后台与插件视图对齐、状态色与响应缺陷 | `2dd4385` | `main` |
 | 50 | 2026-11-24 | 修复看板顶栏、项目侧栏与核心视图布局缺陷 | `f41dec8` | `main` |
 | 49 | 2026-11-24 | 统一全站业务弹窗布局、按钮层级与对齐规范 | `adc40f6` | `main` |

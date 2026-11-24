@@ -1679,3 +1679,41 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Status
 
 [OK] **Completed**
+
+
+## Session 52: 修复桌面端专有窗口、浮层与差异视图 UI 缺陷（子任务 6）
+<!-- trellis-session: v=2 fp=3c256e7dfad4a0bc -->
+
+**Date**: 2026-11-24
+**Task**: 修复桌面端专有窗口、浮层与差异视图 UI 缺陷（子任务 6）
+**Package**: web
+**Branch**: `main`
+
+### Summary
+
+完成 11-23-desktop-ui-fixes（父任务第 6/6 子任务），修复桌面端 HandoffNotice、LiveSyncControlDialog、ActionBar、DiffViewer、UpdateDialog 与 LoginApp 的布局重叠、路径截断、更新态关闭状态、冷启动白屏与语义色缺陷并归档
+
+### Main Changes
+
+- HandoffNotice：迁至 bottom-4 right-4 避开 Toast 与双行 TopBar，增加局部折叠收起胶囊交互，语义色替换为 text-warning / text-info
+- LiveSyncControlDialog / ActionBar / DiffViewer：弹窗按 diff/非 diff 分宽、状态文案改 DialogDescription、条件渲染 DialogFooter、移除 AlertCircle 重复 mt-0.5、底栏按钮统一默认 h-8、差异列表限高可滚且长路径截断不撑破、降级对比区补充边框与 font-mono
+- UpdateDialog / LoginApp：更新态隐藏右上角关闭按钮、修复版本号缺失拼接 v—、日志区补 break-words；LoginApp 补充 pending 加载占位卡片、修复 env 阶段双倍间距与按钮尺寸及 footer 长路径断行
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `abbe6af` | fix(web): 修复桌面端浮层、同步弹窗、差异视图与登录页 UI 缺陷 |
+| `15e10cd` | chore(task): archive 11-23-desktop-ui-fixes |
+
+### Testing
+
+- [OK] 改动 6 文件 oxfmt --check、@trellis-board/web lint（0 error / 0 新增 warning）、tsc --noEmit、packages/web 115/115 单测及全仓 LF 检查均通过；yarn test 690 pass / 4 skipped / 1 既有 Windows 环境无关失败（agent-template-repair.test.js lstat D: EISDIR）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 对父任务 11-23-web-ui-consistency-audit-fixes（6/6 子任务已全部完成并归档）执行跨子任务集成复核，确认后再归档父任务
