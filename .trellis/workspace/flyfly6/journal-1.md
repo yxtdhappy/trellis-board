@@ -1656,3 +1656,26 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Status
 
 [OK] **Completed**
+
+
+## Session 51: 修复管理后台与插件视图对齐、状态色与响应缺陷
+<!-- trellis-session: v=2 fp=3206b30d4e1c2fec -->
+
+**Date**: 2026-11-24
+**Task**: 修复管理后台与插件视图对齐、状态色与响应缺陷
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成子任务 5（11-23-admin-plugins-ui-fixes）：统一管理后台表单/列表/面板按钮高度与圆角，补齐 TONE_BY_STATUS 英文状态语义色映射，修复 AdminPage 窄屏 Tab 左裁切、AuditTab 长详情溢出、DesktopPluginsView 卡片对齐并复用 PluginLogsDialog，以及 PluginPanel 主题热同步不断开 SSE。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2dd4385` | fix(web): 修复管理后台与插件视图对齐、状态色与响应缺陷 |
+
+### Status
+
+[OK] **Completed**
