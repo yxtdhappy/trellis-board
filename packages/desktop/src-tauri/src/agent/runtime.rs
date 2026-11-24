@@ -36,6 +36,7 @@ pub struct AgentRuntime {
     shutdown: watch::Sender<bool>,
     stopped: AtomicBool,
     auth_failed: AtomicBool,
+    state_running: AtomicBool,
     agent_id: String,
     detach_lock: AsyncMutex<()>,
 }
@@ -92,6 +93,7 @@ impl AgentRuntime {
             shutdown,
             stopped: AtomicBool::new(false),
             auth_failed: AtomicBool::new(false),
+            state_running: AtomicBool::new(false),
             agent_id: config.agent_id.clone(),
             detach_lock: AsyncMutex::new(()),
         });
@@ -142,6 +144,11 @@ impl AgentRuntime {
         self.auth_failed.load(Ordering::SeqCst)
     }
 
+    /// 最近一次落盘的运行时状态是否为 running。
+    pub fn state_is_running(&self) -> bool {
+        self.state_running.load(Ordering::SeqCst)
+    }
+
     pub fn stop(&self, reason: &str) {
         if self.stopped.swap(true, Ordering::SeqCst) {
             return;
@@ -187,6 +194,11 @@ impl AgentRuntime {
                             crate::logging::info(&format!(
                                 "心跳恢复：上报 {listening} 个监听任务空间"
                             ));
+                            runtime.write_state("running", None, None).await;
+                        } else if !runtime.state_is_running() {
+                            // 事件流短暂断开会把状态写成 error，但心跳一直是通的：
+                            // 这里把状态改回 running，避免界面长期显示异常。
+                            crate::logging::info("心跳正常，运行状态已恢复为 running");
                             runtime.write_state("running", None, None).await;
                         }
                     }
@@ -669,6 +681,8 @@ impl AgentRuntime {
                 "写入运行时状态失败：{}",
                 safe_error_message(&error.to_string())
             ));
+        } else {
+            self.state_running.store(status == "running", Ordering::SeqCst);
         }
     }
 
