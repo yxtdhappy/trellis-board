@@ -171,30 +171,22 @@ async fn current_scope() -> Result<ScopeContext, String> {
     if agent.server_url.trim().is_empty() {
         return Err("尚未登录，无法使用插件".to_string());
     }
-    let username = agent
+    // identity 优先取用户名、退回本机 agent_id；两者都是 String，避免借用 agent 后再移动字段。
+    let identity = agent
         .username
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("")
-        .to_string();
-    let identity = if !username.is_empty() {
-        username.as_str()
-    } else {
-        agent.agent_id.as_str()
-    };
+        .map(str::to_owned)
+        .unwrap_or_else(|| agent.agent_id.clone());
     if identity.trim().is_empty() {
         return Err("缺少本机账号标识，无法隔离插件数据".to_string());
     }
     Ok(ScopeContext {
-        scope: scope_dir(&config::data_dir(), &agent.server_url, identity),
+        scope: scope_dir(&config::data_dir(), &agent.server_url, &identity),
         server_url: agent.server_url,
         user_id: agent.agent_id,
-        username: if !username.is_empty() {
-            username
-        } else {
-            identity.to_string()
-        },
+        username: identity,
     })
 }
 
