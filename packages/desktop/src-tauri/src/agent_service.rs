@@ -87,6 +87,7 @@ fn spawn_watchdog(app: AppHandle) {
         let mut ticker = tokio::time::interval(Duration::from_secs(30));
         ticker.tick().await;
         let mut attempts = 0u32;
+        let mut auth_reported = false;
         loop {
             ticker.tick().await;
             let Ok(service) = service(&app) else {
@@ -95,28 +96,40 @@ fn spawn_watchdog(app: AppHandle) {
             if service.paused.load(Ordering::SeqCst) || service.user_stopped.load(Ordering::SeqCst) {
                 continue;
             }
-            let running = match service.runtime.lock() {
-                Ok(guard) => guard
-                    .as_ref()
-                    .map(|runtime| !runtime.is_stopped())
-                    .unwrap_or(false),
-                Err(_) => true,
+            let (running, auth_failed) = match service.runtime.lock() {
+                Ok(guard) => match guard.as_ref() {
+                    Some(runtime) => (!runtime.is_stopped(), runtime.is_auth_failed()),
+                    None => (false, false),
+                },
+                Err(_) => (true, false),
             };
             if running {
                 attempts = 0;
+                auth_reported = false;
+                continue;
+            }
+            if auth_failed {
+                if !auth_reported {
+                    crate::logging::warn("后台同步因认证失败停止，等待重新登录后再恢复");
+                    auth_reported = true;
+                }
+                continue;
+            }
+            if attempts >= 10 {
+                if attempts == 10 {
+                    crate::logging::warn("后台同步自动恢复失败 10 次，暂停重试");
+                    attempts += 1;
+                }
                 continue;
             }
             let has_config = matches!(service.store.read_config(false).await, Ok(Some(_)));
             if !has_config {
                 continue;
             }
-            if attempts >= 10 {
-                continue;
-            }
-            if attempts == 0 {
+            attempts += 1;
+            if attempts == 1 {
                 crate::logging::warn("检测到后台同步已停止，正在自动恢复");
             }
-            attempts += 1;
             start(&app);
         }
     });
@@ -234,11 +247,15 @@ pub fn start(app: &AppHandle) {
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
+        crate::logging::info("后台同步启动已在进行中，跳过本次请求");
         return;
     }
     tauri::async_runtime::spawn(async move {
+        crate::logging::info("后台同步启动开始");
         if let Err(error) = service.start_runtime().await {
             crate::logging::warn(&format!("后台同步启动失败：{}", message(&error)));
+        } else {
+            crate::logging::info("后台同步启动完成");
         }
         service.starting.store(false, Ordering::SeqCst);
     });

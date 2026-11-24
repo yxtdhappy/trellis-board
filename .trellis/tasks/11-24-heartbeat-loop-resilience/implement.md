@@ -74,3 +74,25 @@ PRD 的 6 条 Acceptance Criteria 全部勾选；`research/verification.md` 含�
 - spec「心跳循环与在线状态」补两条契约与两行行为矩阵。
 
 验收路径：升级后关闭服务端再启动，`desktop.log` 应出现「Agent 运行时停止：…」并在 30s 内出现「检测到后台同步已停止，正在自动恢复」。
+
+## 进展（2026-11-24 20:15）：真正的触发点
+
+0.4.64 装上后复现，日志终于给出停止原因：
+
+```
+12:11:51.204Z INFO Agent 运行时停止：设备被服务端吊销
+12:12:09.812Z WARN 检测到后台同步已停止，正在自动恢复
+```
+
+但库里 `agent_device.status='active'`、`revoked_at` 为空——设备根本没被吊销。原因是服务端 `packages/server/team/agent-event-stream.js:166` 的 `close()`：优雅关闭时对每个在线 agent 调 `endAgent()`，而 `endAgent()` 会广播 `agent.revoked`（文案“账号已在其他设备登录或被管理员撤销”）。**每次关服务端，所有客户端都被告知“你被吊销了”**，然后按设计的认证失败语义永久停止。
+
+同时看门狗 12:12:09 的拉起没生效：`runtime.json` 停在 stopped，`last_seen_at` 卡在 12:11:47，但 12:13:03 又出现 ownership 扫描——说明 `AgentRuntime::start` 卡在 `prepare_startup_bindings`（在心跳循环启动之前，且无超时）。
+
+本轮改动：
+
+- 服务端 `close()`：只 `clearInterval` + `response.end()`，不再发 `agent.revoked`。
+- 客户端 `handle_frame("agent.revoked")`：不再直接 `stop()`，改为 warn + `heartbeat_wake.notify_one()` 复验；真吊销会在心跳拿到 401 后走认证失败分支。
+- `AgentRuntime` 新增 `auth_failed` 标记与 `is_auth_failed()`；认证失败的停止不再被看门狗反复拉起。
+- `AgentRuntime::start`：`prepare_startup_bindings` 移到独立任务里，事件循环与心跳循环先启动，预热卡住不再挡住心跳。
+- `store.write_state` 失败时写 warn（此前静默丢弃，导致按文件判断状态会误判）。
+- `agent_service`：启动开始/完成/重复启动跳过都落日志；看门狗区分“认证失败不重试”与“最多 10 次”。

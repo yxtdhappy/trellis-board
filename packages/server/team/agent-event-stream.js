@@ -169,7 +169,15 @@ export function createAgentEventStream({ db, commands, logger = console }) {
     lastTaskRevisionByTaskSpace.clear()
     if (heartbeatTimer) clearInterval(heartbeatTimer)
     heartbeatTimer = null
-    for (const agentId of [...streams.keys()]) endAgent(agentId)
+    // 关机只断开连接，不能走 endAgent：那会广播 agent.revoked，让所有在线客户端
+    // 误以为被吊销并永久停止同步（2026-11-24 事故）。客户端重连后会照常恢复。
+    for (const [agentId, set] of streams) {
+      for (const stream of set) {
+        clearInterval(stream.timer)
+        if (!stream.response.writableEnded) stream.response.end()
+      }
+      streams.delete(agentId)
+    }
   }
 
   return {

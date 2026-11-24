@@ -35,6 +35,7 @@ pub struct AgentRuntime {
     heartbeat_policy: HeartbeatPolicy,
     shutdown: watch::Sender<bool>,
     stopped: AtomicBool,
+    auth_failed: AtomicBool,
     agent_id: String,
     detach_lock: AsyncMutex<()>,
 }
@@ -90,23 +91,27 @@ impl AgentRuntime {
             heartbeat_policy: HeartbeatPolicy::default(),
             shutdown,
             stopped: AtomicBool::new(false),
+            auth_failed: AtomicBool::new(false),
             agent_id: config.agent_id.clone(),
             detach_lock: AsyncMutex::new(()),
         });
         runtime.write_state("running", None, None).await;
-        let startup_task_space_ids = runtime
-            .task_sync
-            .prepare_startup_bindings(config.bindings.clone())
-            .await;
         runtime.worktree.start(runtime.shutdown.subscribe()).await;
+        // 启动预热放到独立任务里：它在服务端刚恢复时可能长时间卡在拉取/上传上，
+        // 不能挡住事件循环与心跳循环的启动（2026-11-24 事故：预热卡住导致心跳不恢复）。
+        let bindings = config.bindings.clone();
         let startup = runtime.clone();
         crate::agent::rt::spawn(async move {
             let mut shutdown = startup.shutdown.subscribe();
             if *shutdown.borrow() {
                 return;
             }
+            let task_space_ids = tokio::select! {
+                ids = startup.task_sync.prepare_startup_bindings(bindings) => ids,
+                _ = shutdown.changed() => return,
+            };
             tokio::select! {
-                _ = startup.task_sync.sync_task_spaces(startup_task_space_ids) => {}
+                _ = startup.task_sync.sync_task_spaces(task_space_ids) => {}
                 _ = shutdown.changed() => {}
             }
         });
@@ -130,6 +135,11 @@ impl AgentRuntime {
 
     pub fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::SeqCst)
+    }
+
+    /// 因认证失败而停止时为真：这类停止重试也没用，需要用户重新登录。
+    pub fn is_auth_failed(&self) -> bool {
+        self.auth_failed.load(Ordering::SeqCst)
     }
 
     pub fn stop(&self, reason: &str) {
@@ -184,6 +194,7 @@ impl AgentRuntime {
                         runtime
                             .write_state("error", Some(error), Some("AUTH_REVOKED"))
                             .await;
+                        runtime.auth_failed.store(true, Ordering::SeqCst);
                         runtime.stop("认证失败");
                         break;
                     }
@@ -418,6 +429,7 @@ impl AgentRuntime {
                                         runtime
                                             .write_state("error", Some(&error), Some("AUTH_REVOKED"))
                                             .await;
+                                        runtime.auth_failed.store(true, Ordering::SeqCst);
                                         runtime.stop("认证失败");
                                         return;
                                     }
@@ -441,6 +453,7 @@ impl AgentRuntime {
                         runtime
                             .write_state("error", Some(&error), Some("AUTH_REVOKED"))
                             .await;
+                        runtime.auth_failed.store(true, Ordering::SeqCst);
                         runtime.stop("认证失败");
                         break;
                     }
@@ -475,9 +488,11 @@ impl AgentRuntime {
         let data = frame.data.clone();
         match event_type {
             "agent.revoked" => {
-                self.write_state("revoked", None, Some("设备已被服务端吊销"))
-                    .await;
-                self.stop("设备被服务端吊销");
+                // 服务端停机时也会广播这个事件（旧版 close() 走 endAgent），直接停会让
+                // 客户端在服务端重启后再也不回来。这里先唤醒一次心跳复验：真被吊销会拿到
+                // 401/AUTH_REVOKED，由认证失败分支停止运行时。
+                crate::logging::warn("收到 agent.revoked，立即复验设备状态");
+                self.heartbeat_wake.notify_one();
                 Ok(())
             }
             "cursor.invalidated" => {
@@ -649,7 +664,12 @@ impl AgentRuntime {
             "lastErrorCode": error.map(|value| value.code.clone()),
             "lastError": message,
         });
-        let _ = self.store.write_state(payload).await;
+        if let Err(error) = self.store.write_state(payload).await {
+            crate::logging::warn(&format!(
+                "写入运行时状态失败：{}",
+                safe_error_message(&error.to_string())
+            ));
+        }
     }
 
     fn write_state_blocking(
