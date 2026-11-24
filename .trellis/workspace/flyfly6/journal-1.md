@@ -1755,3 +1755,30 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Next Steps
 
 - 全局 UI 一致性治理父子任务树（1 父 + 6 子）已全部收官归档
+
+
+## Session 54: 支持从 env 配置初始管理员账号密码
+<!-- trellis-session: v=2 fp=57003c6df933e2d4 -->
+
+**Date**: 2026-11-24
+**Task**: 支持从 env 配置初始管理员账号密码
+**Package**: server
+**Branch**: `server-env-initial-admin-credentials`
+
+### Summary
+
+新增 TRELLIS_BOARD_ADMIN_USERNAME/PASSWORD（默认 admin / 123456!@#$%^），首次启动自动创建需改密的系统管理员；修复 6 项既有失败测试；真实服务实测通过
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `be601d9` | feat(server): 支持从 env 配置初始管理员账号密码并提供默认值 |
+
+### Testing
+
+- [OK] rebase 后 yarn test 712 项 708 通过 0 失败；真实启动登录改密重启幂等实测通过
+
+### Status
+
+[OK] **Completed**
