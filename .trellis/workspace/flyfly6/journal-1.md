@@ -1782,3 +1782,38 @@ reconcile 判定已自动接入 worktree 被删除后调用 detach_local_associa
 ### Status
 
 [OK] **Completed**
+
+
+## Session 55: 任务流水线任务分享链接与桌面端深度唤起
+<!-- trellis-session: v=2 fp=6f1937a28fa6b938 -->
+
+**Date**: 2026-11-24
+**Task**: 任务流水线任务分享链接与桌面端深度唤起
+**Package**: server
+**Branch**: `pipeline-task-share-deeplink`
+
+### Summary
+
+实现任务分享两跳链接、中转页与桌面客户端 spec-board:// 自定义协议深度唤起，完成 Code Review 全部 9 项缺陷修复、同步 origin/main 及 L1/L2/L3 真机复测闭环。
+
+### Main Changes
+
+- Web 端卡片/子任务行/详情弹窗新增分享按钮，复制随部署协议（http/https）一致的 /share.html?space=..&task=.. 链接
+- 新增免登录 share.html 中转页与 share-link 参数校验（控制字符/长度拦截、飞书引导与复制失败内联提示）
+- 桌面客户端注册 spec-board:// 自定义协议与单实例队列（PendingShare::{Target, Invalid}），支持冷启动/运行期/强制改密后自动打开及纯 query /api/tasks? 回源
+- 拆分 TaskDetailFooter.tsx 控制弹窗行数，补齐 Rust/Web 单测、契约测试与 tauri-commands spec 文档
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b9209fa` | feat(share): 支持任务分享链接与桌面端自定义协议深度唤起 |
+
+### Testing
+
+- [OK] L1: cargo test 400/400、yarn test 715 pass / 0 fail / 4 skipped、oxfmt/oxlint/tsc/rustfmt 全通过
+- [OK] L2/L3: HTTP(4399)+HTTPS(4443) 浏览器与真实桌面客户端 WebView2 全量 AC1~AC8 复测通过并清理隔离环境
+
+### Status
+
+[OK] **Completed**
