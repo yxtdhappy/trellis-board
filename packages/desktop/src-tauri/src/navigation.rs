@@ -1,9 +1,17 @@
 use tauri::{AppHandle, Url};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::url_path::raw_path_has_dot_segments;
+
 const LOCAL_HOST: &str = "tauri.localhost";
 const RESERVED_FIRST_SEGMENTS: [&str; 4] = ["api", "client-updates", "plugin-ui", "assets"];
-const RESERVED_PAGE_ENDINGS: [&str; 4] = ["login", "login.html", "admin.html", "index.html"];
+const RESERVED_PAGE_ENDINGS: [&str; 5] = [
+    "login",
+    "login.html",
+    "admin.html",
+    "index.html",
+    "share.html",
+];
 
 fn format_host_port(url: &Url) -> Option<String> {
     let host = url.host_str()?;
@@ -66,7 +74,11 @@ pub fn normalize_subpath(raw_path: &str) -> Result<String, String> {
 }
 
 pub fn validate_board_url(input: &str) -> Result<Url, String> {
-    let mut url = Url::parse(input.trim()).map_err(|_| "Board 地址不是合法 URL".to_string())?;
+    let trimmed = input.trim();
+    if raw_path_has_dot_segments(trimmed) {
+        return Err("Board 地址路径段格式无效".to_string());
+    }
+    let mut url = Url::parse(trimmed).map_err(|_| "Board 地址不是合法 URL".to_string())?;
     if url.username() != "" || url.password().is_some() {
         return Err("Board 地址不能包含账号或密码".to_string());
     }

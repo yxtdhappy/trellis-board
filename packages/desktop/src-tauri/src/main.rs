@@ -14,6 +14,7 @@ mod runtime_commands;
 mod share_link;
 mod tray;
 mod update;
+mod url_path;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};

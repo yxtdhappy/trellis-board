@@ -1,7 +1,8 @@
 import { copyText } from '@/browser/clipboard.js'
+import { appOriginWithBase } from '@/lib/base-path.js'
 import { buildProtocolUrl, parseSharePageParams } from '@/lib/share-link.ts'
 
-const parsed = parseSharePageParams(location.search, location.origin)
+const parsed = parseSharePageParams(location.search, appOriginWithBase())
 const target = parsed ? buildProtocolUrl(parsed) : ''
 
 const actions = document.getElementById('actions')

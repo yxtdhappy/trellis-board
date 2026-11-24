@@ -3,7 +3,8 @@ import { toast } from 'sonner'
 import { api } from '@/api/board'
 import { ApiError } from '@/api/request'
 import { invoke, listen } from '@/desktop/tauri'
-import { taskIdFromExecutionKey } from '@/lib/share-link.ts'
+import { appOriginWithBase } from '@/lib/base-path.js'
+import { isSameShareServer, taskIdFromExecutionKey } from '@/lib/share-link.ts'
 import type { BoardTask } from './task-view.ts'
 
 type ShareTarget = {
@@ -23,7 +24,7 @@ type ShareLinkOpenOptions = {
 
 /**
  * 处理桌面端转发的任务分享链接：链接定位参数只用于查找任务，
- * 打开前必须与当前 Board 同源，避免被外部链接带去别的服务器。
+ * 打开前必须比对当前 Board 服务基址（含子路径），避免同域不同子路径或外部地址串开。
  */
 export function useShareLinkOpen({ tasks, onOpen, enabled = true }: ShareLinkOpenOptions) {
   const tasksRef = useRef(tasks)
@@ -47,13 +48,7 @@ export function useShareLinkOpen({ tasks, onOpen, enabled = true }: ShareLinkOpe
 
     const openTarget = async (target: ShareTarget, sequence: number) => {
       if (!active) return
-      let sameOrigin = false
-      try {
-        sameOrigin = new URL(target.server).origin === location.origin
-      } catch {
-        sameOrigin = false
-      }
-      if (!sameOrigin) {
+      if (!isSameShareServer(target.server, appOriginWithBase())) {
         toast.error('该分享链接来自其他服务地址，请用分享时的地址登录后再打开')
         return
       }

@@ -47,6 +47,7 @@ fn rejects_credentials_reserved_and_invalid_urls() {
     assert!(validate_board_url("https://board.example.com/api").is_err());
     assert!(validate_board_url("https://board.example.com/client-updates").is_err());
     assert!(validate_board_url("https://board.example.com/weint-spec-board/login.html").is_err());
+    assert!(validate_board_url("https://board.example.com/weint-spec-board/share.html").is_err());
     assert!(validate_board_url("https://board.example.com/a//b").is_err());
     assert!(validate_board_url("https://board.example.com/../evil").is_err());
     assert!(validate_board_url("ftp://board.example.com").is_err());

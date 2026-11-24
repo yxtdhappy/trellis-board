@@ -15,6 +15,8 @@ mod agent;
 mod config;
 #[path = "../logging.rs"]
 mod logging;
+#[path = "../url_path.rs"]
+mod url_path;
 
 use std::io::{Read, Write};
 use std::path::PathBuf;

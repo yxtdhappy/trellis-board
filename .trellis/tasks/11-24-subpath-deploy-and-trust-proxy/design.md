@@ -75,7 +75,7 @@
 ### 2.3 Web 前端（`packages/web/`）
 - **构建与 HTML 入口**：
   - `packages/web/vite.config.ts` 增加 `base: './'`。
-  - `packages/web/{index,login,admin}.html` 将 `/favicon.svg` 与 `/theme-init.js` 改为 `./favicon.svg`、`./theme-init.js`。
+  - `packages/web/{index,login,admin,share}.html` 将 `/favicon.svg` 与 `/theme-init.js` 改为 `./favicon.svg`、`./theme-init.js`。
 - **公共纯模块 `packages/web/src/lib/base-path.js` + `.d.ts`**：
   - `normalizeBasePath(value)`：与服务端一致的轻量归一化（无尾 `/`、空串代表 `/`）。
   - `readBasePath(doc = globalThis.document)`：读取 `doc?.querySelector?.('meta[name="trellis-base-path"]')?.getAttribute('content')`，经 `normalizeBasePath` 返回。
@@ -93,6 +93,8 @@
   - `packages/web/src/hooks/useBoard.ts`：`new EventSource(withBasePath('/api/board/events'))`。
   - `packages/web/src/features/plugins/PluginPanel.tsx`：非 desktop 面板的 `base`、`events` source 与 `panel.src` 统一经 `withBasePath()`。
   - `packages/web/src/lib/safe-return-to.js`（及 `.d.ts`）：接受可选 `basePath = readBasePath()`；默认 `fallback = withBasePath('/', basePath)`；当 `basePath` 非空时要求 `target.pathname === basePath || target.pathname.startsWith(`${basePath}/`)`；禁止返回 `<basePath>/login` 或 `<basePath>/login.html`。
+  - `packages/web/src/lib/share-link.ts`：新增 `normalizeShareServerUrl(raw)` 与 `isSameShareServer(candidate, current)`（导入 `./base-path.js`，校验协议/无凭证/无查询片段/无 `//`/`.`/`..`/`\`/保留首段/保留页面文件名，并将服务基址规范化为 `${origin}${basePath}`）；`parseSharePageParams(search, origin)` 改用 `normalizeShareServerUrl(origin)` 保留合法子路径。
+  - `packages/web/src/share.ts`、`packages/web/src/features/board/ShareTaskButton.tsx`、`packages/web/src/features/board/useShareLinkOpen.ts`：统一通过 `appOriginWithBase()` 生成/解析分享链接并按 `isSameShareServer(target.server, appOriginWithBase())` 校验服务基址。
   - `LoginPage.tsx`、`BoardPage.tsx`、`AdminPage.tsx`、`TopBar.tsx`、`useAdminConsole.ts`：所有 `/`、`/login.html`、`/admin.html` 跳转与 `href` 改用 `withBasePath(...)`。
   - `DevicesTab.tsx`：`trellisboard://enroll?...&server=` 与 `trellis-agent.cmd pair --server ...` 改用 `appOriginWithBase()`。
 
@@ -102,7 +104,8 @@
 - **`packages/desktop/src-tauri/src/navigation.rs`**：
   - 新增纯函数 `normalize_subpath(raw_path: &str) -> Result<String, String>`：
     - 去除末尾 `/`；若为空返回 `""`；
-    - 校验不得包含 `//`、`\`、控制字符，任一段不得为 `.` 或 `..`，且段字符合法；不得直接以 `/login`、`/login.html`、`/admin.html`、`/index.html` 结尾（防止误把页面 URL 当服务根）。
+    - 校验不得包含 `//`、`\`、控制字符，任一段不得为 `.` 或 `..`，且段字符合法；不得直接以 `/login`、`/login.html`、`/admin.html`、`/index.html`、`/share.html` 结尾（防止误把页面 URL 当服务根）。
+  - `raw_path_has_dot_segments(input: &str) -> bool`：在 `Url::parse` 之前检查原始输入的路径段是否为 `.` 或 `..`（URL 解析会静默消解这些段，解析后再查已失效）；`validate_board_url`、`protocol::normalize_server_url`、`update::normalize_server_base` 都复用它。
   - `validate_board_url(input: &str) -> Result<Url, String>`：
     - 允许根路径或合法子路径；仍拒绝账号密码、query、fragment、非 http/https；
     - 返回规范化 `Url`（有子路径时路径设为 `<subpath>/`，根路径时为 `/`），便于 `window.navigate(board)` 一步落到带尾 `/` 的首页。
@@ -118,14 +121,16 @@
   - `ensure_board_caller()` 改用 `navigation::same_board_scope(&current, &board)`。
   - `cookie_for()` 的 `.path(...)` 改为 `navigation::board_cookie_path(board)`。
   - `on_navigation` 登录拦截改为 `navigation::is_board_login_path(candidate, board)`。
+- **`packages/desktop/src-tauri/src/share_link.rs`**：
+  - `parse()` 对 `server` 参数执行 `navigation::validate_board_url` 后改用 `navigation::board_server_url(&server)` 输出服务基址（保留合法子路径、去掉默认端口与尾斜杠），使同域多子路径可被准确区分。
 - **`packages/desktop/src-tauri/src/agent/protocol.rs`**：
-  - `normalize_server_url(input: &str) -> AgentResult<String>`：允许根路径或合法子路径（复用同款段校验规则：拒绝 `//`、`.`/`..`、`\`、控制字符、credentials、query、fragment、non-http(s)），返回无尾 `/` 的 `scheme://host[:port][<subpath>]`（IPv6 正确加方括号）。
+  - `normalize_server_url(input: &str) -> AgentResult<String>`：允许根路径或合法子路径（复用同款段校验规则：拒绝 `//`、`.`/`..`、`\`、控制字符、credentials、query、fragment、non-http(s) 以及 `share.html` 等页面结尾），返回无尾 `/` 的 `scheme://host[:port][<subpath>]`（IPv6 正确加方括号）。
   - 新增 `server_origin(server_url: &str) -> AgentResult<String>`：提取纯 `scheme://host[:port]`（不含 path），专供 HTTP `Origin` 请求头使用。
 - **`packages/desktop/src-tauri/src/agent/device.rs`**：
   - `SessionClient` 保存 `server_url`（含子路径，用于拼请求 URL）与 `origin`（经 `protocol::server_origin(&server_url)?`，用于 `Origin` 请求头）。
   - `login_request`、`logout_request`、`issue_desktop_enroll_token`（第 393、458、812 行）全部改为发送 `client.origin` 作为 `Origin` 头。
 - **`packages/desktop/src-tauri/src/update.rs`**：
-  - `normalize_server_base(raw: &str) -> Option<String>`：解析 URL 后保留合法子路径，若末段为 `login.html`、`admin.html`、`index.html` 或 `login` 则剥离末段，返回 `scheme://host[:port][<subpath>]/client-updates`。
+  - `normalize_server_base(raw: &str) -> Option<String>`：解析 URL 后保留合法子路径，若末段为 `login.html`、`admin.html`、`index.html`、`share.html` 或 `login` 则剥离末段，返回 `scheme://host[:port][<subpath>]/client-updates`。
 
 ---
 

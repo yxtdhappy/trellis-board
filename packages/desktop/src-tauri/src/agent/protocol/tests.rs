@@ -20,6 +20,7 @@ fn normalizes_server_urls() {
     );
     assert!(normalize_server_url("http://localhost:4310/api").is_err());
     assert!(normalize_server_url("http://localhost:4310/weint-spec-board/login.html").is_err());
+    assert!(normalize_server_url("http://localhost:4310/weint-spec-board/share.html").is_err());
     assert!(normalize_server_url("http://localhost:4310/a//b").is_err());
     assert!(normalize_server_url("http://localhost:4310/../evil").is_err());
     assert!(normalize_server_url("ftp://localhost").is_err());

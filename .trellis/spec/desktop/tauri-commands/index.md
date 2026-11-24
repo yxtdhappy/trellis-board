@@ -475,12 +475,12 @@ git push origin refs/heads/<branch>:refs/heads/<branch>
 
 ### 1. Scope / Trigger
 
-- 团队成员在浏览器打开 `<Board origin>/share.html?space=<taskSpaceId>&task=<taskId>` 后，中转页要唤起已安装客户端并打开该任务详情时适用。
+- 团队成员在浏览器打开 `<Board base URL>/share.html?space=<taskSpaceId>&task=<taskId>` 后，中转页要唤起已安装客户端并打开该任务详情时适用（`<Board base URL>` 由 `appOriginWithBase()` 拼出，支持根路径与配置了 `TRELLIS_BOARD_BASE_PATH` 的子路径）。
 - 只做任务定位：链接里不得携带、客户端也不得回传任何任务内容，避免浏览器端渲染只有 Board 才能看的数据。
 
 ### 2. Signatures
 
-- 协议链接：`spec-board://task?server=<Board origin>&space=<taskSpaceId>&task=<taskId>`
+- 协议链接：`spec-board://task?server=<Board base URL>&space=<taskSpaceId>&task=<taskId>`
 - 协议配置：`tauri.conf.json` 的 `plugins.deep-link.desktop.schemes = ["spec-board"]`
 - Tauri command：`take_pending_share_link() -> Result<Option<PendingShare>, String>`
 - 响应：`{ "kind": "target", "server": String, "taskSpaceId": String, "taskId": String } | { "kind": "invalid" } | null`
@@ -490,13 +490,13 @@ git push origin refs/heads/<branch>:refs/heads/<branch>
 
 ### 3. Contracts
 
-- `share_link::parse` 只接受 scheme 为 `spec-board` 且 host 为 `task` 的 URL；`server` 必须通过 `navigation::validate_board_url`，并归一化为 `origin()`；`space` / `task` 去空白后长度上限 512 且不含控制字符。
+- `share_link::parse` 只接受 scheme 为 `spec-board` 且 host 为 `task` 的 URL；`server` 必须通过 `navigation::validate_board_url`（支持合法子路径，拒绝保留前缀、`share.html` 等页面文件尾段以及解析前可识别的 `.`/`..` 段），并归一化为 `navigation::board_server_url(&server)`（去除默认端口与尾斜杠）；`space` / `task` 去空白后长度上限 512 且不含控制字符。
 - 解析结果写入 `DesktopAuthState.pending_share`（内存，后到合法目标覆盖先到，同值去重；非法链接仅在槽位为空时写入 `PendingShare::Invalid`，不覆盖尚未消费的合法目标）；不写磁盘、不进日志。
 - 冷启动、第二实例、运行期唤起三条入口都归一到 `share_link::handle`：写暂存 → `focus_main_window` → emit `share-link-open`。
 - 冷启动时插件的 `deep-link://new-url` 事件早于 `register_share_link` 的监听，因此 `register_share_link` 必须再读 `deep_link.get_current()`。
 - 命令必须先执行 `ensure_board_caller(&app, &window)?`，读取即 `take()`：一次链接只打开一次。
 - `clear_desktop_session` 清空 `pending_share`，链接不得跨账号存活。
-- Web 侧仅在 `runtime` 就绪且非 `mustChangePassword` 强制改密状态下消费暂存链接；`origin` 用 URL 归一化后逐段比较（`new URL(server).origin === location.origin`）；不一致只提示，不切换 Board；列表未命中时走纯 query 端点 `GET /api/tasks?taskSpaceId=...&executionTaskKey=...`。
+- Web 侧仅在 `runtime` 就绪且非 `mustChangePassword` 强制改密状态下消费暂存链接；使用 `isSameShareServer(target.server, appOriginWithBase())` 比对含子路径的服务基址（同域不同子路径互不打开，只提示不切换 Board）；列表未命中时走纯 query 端点 `GET /api/tasks?taskSpaceId=...&executionTaskKey=...`（经 `withBasePath` 自动补前缀）。
 - mac 上 `register_all()` 返回 `UnsupportedPlatform`，只记 warn，不影响启动。
 
 ### 4. Validation & Error Matrix
@@ -504,27 +504,27 @@ git push origin refs/heads/<branch>:refs/heads/<branch>
 | 条件 | 行为 |
 | --- | --- |
 | scheme/host 不是 `spec-board://task` | 记 warn，槽位为空时记为 `PendingShare::Invalid`，Web 提示"任务分享链接格式无效，请让分享人重新复制"（不覆盖已有合法目标） |
-| `server` 不是合法 http(s) origin（含 path/query/userinfo） | 同上，记 warn 并提示链接格式无效 |
+| `server` 不是合法 http(s) 服务基址（含 userinfo/query/fragment/保留前缀或 `share.html` 等页面文件名） | 同上，记 warn 并提示链接格式无效 |
 | `space` / `task` 缺失、空白、含控制字符或超长 | 同上，记 warn 并提示链接格式无效 |
 | 同一目标重复到达（argv + 事件） | 暂存已是该值，仅保留一次 |
 | 未登录或停留在本地登录页 | 命令返回 capability 错误，暂存保留到登录后 |
 | 首次登录强制改密（`mustChangePassword`） | `useShareLinkOpen` 暂停消费，改密完成后自动取出并打开 |
 | 退出登录 | 暂存清空 |
-| 链接 origin 与当前 Board 不一致 | Board 提示"来自其他服务地址"，不打开 |
+| 链接服务基址（含子路径）与当前 Board 不一致 | Board 提示"来自其他服务地址"，不打开 |
 | 任务不在当前看板数据里 | 走 `GET /api/tasks?taskSpaceId=&executionTaskKey=`，失败只提示"可能已失效或没有权限" |
 | 旧客户端没有该命令 | `useShareLinkOpen` 静默忽略，仅保留复制分享能力 |
 
 ### 5. Good/Base/Bad Cases
 
-- Good：已登录 `http://192.168.1.8:8080`，点击 `spec-board://task?server=http%3A%2F%2F192.168.1.8%3A8080&space=11-24-share&task=task-a`，窗口前置并打开任务详情。
+- Good：已登录 `http://spec-board.weintdata.cn/weint-spec-board`，点击 `spec-board://task?server=http%3A%2F%2Fspec-board.weintdata.cn%2Fweint-spec-board&space=11-24-share&task=task-a`，窗口前置并打开任务详情。
 - Base：未登录时点击链接，登录后自动打开同一任务。
-- Bad：把 `space` / `task` 换成完整任务 JSON 塞进链接，浏览器历史与日志里出现任务内容。
+- Bad：把 `space` / `task` 换成完整任务 JSON 塞进链接，浏览器历史与日志里出现任务内容；或截断 `server` 子路径导致同域不同子路径误判同源。
 
 ### 6. Tests Required
 
-- Rust `share_link::tests`：http/https 均可、默认端口归一化、错误 scheme/host/参数与超长参数被拒、`PendingShare` 去重/覆盖/非法占位与 `take`/`clear` 状态流转。
-- 静态契约测试断言权限只存在于 Board capability、命令已注册且调用 `ensure_board_caller`、`tauri.conf.json` 声明 `spec-board`。
-- 静态契约测试断言 Web 侧先 `listen('share-link-open')` 再 `take_pending_share_link`、比较 origin、使用 `/api/tasks?` 纯 query、包含卸载/改密守卫与 `PendingShare::Invalid` 处理。
+- Rust `share_link::tests`：http/https 根路径与合法子路径、默认端口与尾斜杠归一化、错误 scheme/host/保留前缀/页面文件名与超长参数被拒、`PendingShare` 去重/覆盖/非法占位与 `take`/`clear` 状态流转。
+- 静态契约测试断言权限只存在于 Board capability、命令已注册且调用 `ensure_board_caller`、`tauri.conf.json` 声明 `spec-board`、`share_link.rs` 使用 `navigation::board_server_url(&server)`。
+- 静态契约测试与 Web 单测断言 Web 侧先 `listen('share-link-open')` 再 `take_pending_share_link`、使用 `isSameShareServer(target.server, appOriginWithBase())` 比对基址、使用 `/api/tasks?` 纯 query、包含卸载/改密守卫与 `PendingShare::Invalid` 处理。
 
 ### 7. Wrong vs Correct
 

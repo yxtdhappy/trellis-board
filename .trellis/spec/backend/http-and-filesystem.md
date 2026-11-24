@@ -593,7 +593,7 @@ fs.renameSync(tempFile, targetFile);
 
 `packages/web/vite.config.ts` 将构建产物写入 `packages/server/public/`，它同时是 standalone `packages/server/index.js` 和 Team `createTeamRuntime()` 的默认静态根目录。Team 默认使用 `path.resolve(serverDir, '../public')`，仍允许调用方通过 `publicDir` 显式覆盖；不要把默认目录解析到仓库根 `public/`。
 
-静态资源由 [packages/server/http-common.js](../../../packages/server/http-common.js) 的 `serveStatic()` 统一实现：只接受 `GET` / `HEAD`，将 `/` 映射为 `index.html`，用 `path.sep` 边界加 `realpathSync` 防目录越界，只服务 `STATIC_TYPES` 白名单内的扩展名，并发送 `content-length`（当 Team 配置了非空 `basePath` 时，`.html` 通过 `transformHtml` 注入 `<meta name="trellis-base-path" ... />` 并改写资源前缀，按改写后字节重算 `content-length`）。修改静态边界时必须按对应入口补测试；Team 回归至少覆盖默认目录、显式覆盖、三个页面入口、子路径 HTML 改写和 404 JSON。
+静态资源由 [packages/server/http-common.js](../../../packages/server/http-common.js) 的 `serveStatic()` 统一实现：只接受 `GET` / `HEAD`，将 `/` 映射为 `index.html`，用 `path.sep` 边界加 `realpathSync` 防目录越界，只服务 `STATIC_TYPES` 白名单内的扩展名，并发送 `content-length`（当 Team 配置了非空 `basePath` 时，`.html` 通过 `transformHtml` 注入 `<meta name="trellis-base-path" ... />` 并改写资源前缀，按改写后字节重算 `content-length`）。修改静态边界时必须按对应入口补测试；Team 回归至少覆盖默认目录、显式覆盖、四个页面入口（`index.html`、`login.html`、`admin.html`、`share.html`）、子路径 HTML 改写和 404 JSON。
 
 ## 反模式
 

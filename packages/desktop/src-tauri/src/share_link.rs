@@ -53,9 +53,9 @@ fn clean_param(value: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
-/// 解析 `spec-board://task?server=<origin>&space=<taskSpaceId>&task=<taskId>`。
+/// 解析 `spec-board://task?server=<board_server_url>&space=<taskSpaceId>&task=<taskId>`。
 ///
-/// 链接可被任意程序触发，因此只接受合法的 http(s) origin 与受限长度的定位参数，
+/// 链接可被任意程序触发，因此只接受合法的 http(s) 服务基址（含可选子路径）与受限长度的定位参数，
 /// 不解析、不执行其中的任何其它字段。
 pub fn parse(raw: &str) -> Option<ShareTarget> {
     let url = Url::parse(raw.trim()).ok()?;
@@ -75,8 +75,8 @@ pub fn parse(raw: &str) -> Option<ShareTarget> {
     }
     let server = navigation::validate_board_url(&server?).ok()?;
     Some(ShareTarget {
-        // 归一化成 origin：与 Web 侧 `location.origin` 逐段比较时不受默认端口、大小写影响。
-        server: server.origin().ascii_serialization(),
+        // 归一化服务基址（保留合法子路径、去掉默认端口与尾斜杠），便于与 Web 侧比较。
+        server: navigation::board_server_url(&server),
         task_space_id: clean_param(&space?)?,
         task_id: clean_param(&task?)?,
     })

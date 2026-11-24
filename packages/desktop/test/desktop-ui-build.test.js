@@ -210,6 +210,7 @@ test('desktop board can drain a task share link opened through the protocol hand
   assert.match(shareLink, /Invalid,/)
   assert.match(shareLink, /fn take_pending_share_link\(/)
   assert.match(shareLink, /ensure_board_caller\(&app, &window\)\?/)
+  assert.match(shareLink, /navigation::board_server_url\(&server\)/)
   assert.match(shareLink, /spec-board/)
   assert.match(shareLinkLib, /spec-board:\/\/task/)
   assert.match(main, /plugin_host::desktop_plugin_asset,\s+share_link::take_pending_share_link/)
@@ -220,7 +221,7 @@ test('desktop board can drain a task share link opened through the protocol hand
   assert.match(hook, /if \(!enabled \|\| !invokeCommand \|\| !listenEvent\) return/)
   assert.match(hook, /invokeCommand<PendingShare \| null>\('take_pending_share_link'\)/)
   assert.match(hook, /pending\.kind === 'invalid'/)
-  assert.match(hook, /new URL\(target\.server\)\.origin === location\.origin/)
+  assert.match(hook, /isSameShareServer\(target\.server,\s*appOriginWithBase\(\)\)/)
   assert.match(hook, /\/api\/tasks\?\$\{query\}/)
   assert.match(hook, /if \(!active \|\| sequence !== latest\) return/)
   assert.match(

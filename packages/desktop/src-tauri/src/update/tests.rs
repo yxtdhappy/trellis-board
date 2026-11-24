@@ -89,6 +89,10 @@ fn normalize_server_base_builds_client_updates_url() {
         normalize_server_base("https://board.internal/weint-spec-board/login.html?next=/"),
         Some("https://board.internal/weint-spec-board/client-updates".to_string())
     );
+    assert_eq!(
+        normalize_server_base("https://board.internal/weint-spec-board/share.html?space=s&task=t"),
+        Some("https://board.internal/weint-spec-board/client-updates".to_string())
+    );
     assert_eq!(normalize_server_base(""), None);
     assert_eq!(normalize_server_base("ftp://board.internal"), None);
     assert_eq!(normalize_server_base("not-a-url"), None);

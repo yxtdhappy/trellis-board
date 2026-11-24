@@ -161,6 +161,9 @@ pub(crate) fn normalize_server_base(raw: &str) -> Option<String> {
     if raw.is_empty() {
         return None;
     }
+    if crate::url_path::raw_path_has_dot_segments(raw) {
+        return None;
+    }
     let url = url::Url::parse(raw).ok()?;
     if !matches!(url.scheme(), "http" | "https") {
         return None;
@@ -198,7 +201,7 @@ pub(crate) fn normalize_server_base(raw: &str) -> Option<String> {
     if let Some(last) = segments.last() {
         if matches!(
             last.to_ascii_lowercase().as_str(),
-            "login.html" | "admin.html" | "index.html" | "login"
+            "login.html" | "admin.html" | "index.html" | "share.html" | "login"
         ) {
             segments.pop();
         }

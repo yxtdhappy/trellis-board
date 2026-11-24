@@ -16,6 +16,7 @@
 - `packages/web/index.html` → `src/main-board.tsx` → [BoardPage](../../../packages/web/src/pages/board/BoardPage.tsx)：任务流水线 / 团队视角 / 归档索引。
 - `packages/web/admin.html` → `src/main-admin.tsx` → [AdminPage](../../../packages/web/src/pages/admin/AdminPage.tsx)：团队管理七个 tab。
 - `packages/web/login.html` → `src/main-login.tsx` → [LoginPage](../../../packages/web/src/pages/login/LoginPage.tsx)：登录与首登改密跳转。
+- `packages/web/share.html` → `src/share.ts`：任务分享链接中转页，拼装 `spec-board://task?...` 协议链接唤起桌面客户端（支持根路径与运行时 `basePath`）。
 - 构建：根目录 `yarn build`（执行 `packages/web` 的 `tsc -b && vite build`），产物写入 `packages/server/public/`；桌面 UI 用 `yarn build --target=desktop-ui` 写入 `packages/desktop/ui/`。
 - 本地联调：`yarn dev --mode=web`（或 `yarn dev` 同时起前后端），Vite 把 `/api` 代理到 `http://127.0.0.1:4317`。
 
@@ -33,4 +34,4 @@
 - 不引入第二个状态库（Redux/Zustand/React Query）；页面级 hook 已覆盖需求。
 - 不把 shadcn 组件手工重写；`components/ui/` 由 CLI 生成，只做必要包装。
 - 不在浏览器代码里导入 Node 内置模块。
-- 不新增路由库；三个页面是独立的 HTML 入口。
+- 不新增路由库；四个页面是独立的 HTML 入口。

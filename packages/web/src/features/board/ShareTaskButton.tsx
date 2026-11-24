@@ -2,6 +2,7 @@ import { Share2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { copyText } from '@/browser/clipboard.js'
 import { Button } from '@/components/ui/button'
+import { appOriginWithBase } from '@/lib/base-path.js'
 import { buildShareUrl, taskIdFromExecutionKey } from '@/lib/share-link.ts'
 import { cn } from '@/lib/utils'
 import type { BoardTask } from './task-view.ts'
@@ -21,7 +22,7 @@ export function ShareTaskButton({ task, compact = false, className = '' }: Share
   async function share() {
     if (!task.taskSpaceId || !taskId) return
     const url = buildShareUrl({
-      origin: location.origin,
+      origin: appOriginWithBase(),
       taskSpaceId: task.taskSpaceId,
       taskId,
     })

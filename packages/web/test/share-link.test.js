@@ -5,6 +5,8 @@ import {
   MAX_SHARE_PARAM_LENGTH,
   buildProtocolUrl,
   buildShareUrl,
+  isSameShareServer,
+  normalizeShareServerUrl,
   parseSharePageParams,
   sanitizeShareParam,
   taskIdFromExecutionKey,
@@ -78,4 +80,91 @@ test('中转页参数清洗与 origin 校验拒绝空白、控制字符、超长
   assert.equal(parseSharePageParams('?space=s%0Aa&task=t', 'http://127.0.0.1:4317'), null)
   assert.equal(parseSharePageParams('?space=s&task=t', 'file://'), null)
   assert.equal(parseSharePageParams('?space=s&task=t', 'null'), null)
+})
+
+test('子路径部署下分享链接、协议参数与基址比对保持一致', () => {
+  const subpathTarget = {
+    origin: 'http://spec-board.weintdata.cn/weint-spec-board/',
+    taskSpaceId: 'space-sub',
+    taskId: '11-24-subpath',
+  }
+  assert.equal(
+    buildShareUrl(subpathTarget),
+    'http://spec-board.weintdata.cn/weint-spec-board/share.html?space=space-sub&task=11-24-subpath',
+  )
+  const protocolUrl = buildProtocolUrl(subpathTarget)
+  const query = new URLSearchParams(protocolUrl.slice('spec-board://task?'.length))
+  assert.equal(query.get('server'), 'http://spec-board.weintdata.cn/weint-spec-board')
+
+  assert.deepEqual(
+    parseSharePageParams(
+      '?space=space-sub&task=11-24-subpath',
+      'HTTP://SPEC-BOARD.WEINTDATA.CN:80/weint-spec-board/',
+    ),
+    {
+      origin: 'http://spec-board.weintdata.cn/weint-spec-board',
+      taskSpaceId: 'space-sub',
+      taskId: '11-24-subpath',
+    },
+  )
+  assert.deepEqual(
+    parseSharePageParams(
+      '?space=space-sub&task=11-24-subpath',
+      'https://board.example.com:443/team/spec-board',
+    ),
+    {
+      origin: 'https://board.example.com/team/spec-board',
+      taskSpaceId: 'space-sub',
+      taskId: '11-24-subpath',
+    },
+  )
+
+  for (const invalidServer of [
+    'http://board.example.com/a//b',
+    'http://board.example.com/../evil',
+    'http://board.example.com/./evil',
+    'http://board.example.com/bad\\path',
+    'http://user:pass@board.example.com/weint-spec-board',
+    'http://board.example.com/weint-spec-board?x=1',
+    'http://board.example.com/weint-spec-board#hash',
+    'http://board.example.com/api',
+    'http://board.example.com/weint-spec-board/share.html',
+  ]) {
+    assert.equal(normalizeShareServerUrl(invalidServer), '', invalidServer)
+    assert.equal(parseSharePageParams('?space=s&task=t', invalidServer), null, invalidServer)
+  }
+
+  assert.equal(
+    isSameShareServer(
+      'http://spec-board.weintdata.cn/weint-spec-board',
+      'http://spec-board.weintdata.cn/weint-spec-board',
+    ),
+    true,
+  )
+  assert.equal(
+    isSameShareServer(
+      'HTTP://SPEC-BOARD.WEINTDATA.CN:80/weint-spec-board/',
+      'http://spec-board.weintdata.cn/weint-spec-board',
+    ),
+    true,
+  )
+  assert.equal(
+    isSameShareServer('https://board.example.com:443/', 'https://board.example.com'),
+    true,
+  )
+  assert.equal(
+    isSameShareServer(
+      'http://spec-board.weintdata.cn/weint-spec-board',
+      'http://spec-board.weintdata.cn/other-board',
+    ),
+    false,
+  )
+  assert.equal(
+    isSameShareServer(
+      'http://spec-board.weintdata.cn/weint-spec-board',
+      'http://spec-board.weintdata.cn',
+    ),
+    false,
+  )
+  assert.equal(isSameShareServer('invalid', 'http://spec-board.weintdata.cn'), false)
 })

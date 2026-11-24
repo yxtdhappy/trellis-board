@@ -154,7 +154,13 @@ pub fn assert_safe_id_default(value: Option<&str>, field: &str) -> AgentResult<S
 }
 
 const RESERVED_FIRST_SEGMENTS: [&str; 4] = ["api", "client-updates", "plugin-ui", "assets"];
-const RESERVED_PAGE_ENDINGS: [&str; 4] = ["login", "login.html", "admin.html", "index.html"];
+const RESERVED_PAGE_ENDINGS: [&str; 5] = [
+    "login",
+    "login.html",
+    "admin.html",
+    "index.html",
+    "share.html",
+];
 
 fn normalize_agent_subpath(raw_path: &str) -> AgentResult<String> {
     if raw_path.is_empty() || raw_path == "/" {
@@ -222,6 +228,9 @@ fn format_origin(parsed: &url::Url) -> AgentResult<String> {
 
 pub fn normalize_server_url(input: &str) -> AgentResult<String> {
     let trimmed = input.trim();
+    if crate::url_path::raw_path_has_dot_segments(trimmed) {
+        return err(code::CONFIG_INVALID, "Agent 服务地址路径段格式无效");
+    }
     let parsed = url::Url::parse(trimmed)
         .map_err(|_| AgentError::new(code::CONFIG_INVALID, "Agent 服务地址不是合法 URL"))?;
     if !parsed.username().is_empty() || parsed.password().is_some() {

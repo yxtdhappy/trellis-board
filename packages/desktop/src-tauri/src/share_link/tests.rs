@@ -29,14 +29,66 @@ fn normalizes_default_port_out_of_server_origin() {
 }
 
 #[test]
+fn parses_subpath_boards_and_normalizes_trailing_slash_and_default_port() {
+    let basic = parse(&link(
+        "http://spec-board.weintdata.cn/weint-spec-board",
+        "space-sub",
+        "11-24-subpath",
+    ))
+    .unwrap();
+    assert_eq!(
+        basic.server,
+        "http://spec-board.weintdata.cn/weint-spec-board"
+    );
+    assert_eq!(basic.task_space_id, "space-sub");
+    assert_eq!(basic.task_id, "11-24-subpath");
+
+    let upper_and_port = parse(&link(
+        "HTTP://SPEC-BOARD.WEINTDATA.CN:80/weint-spec-board/",
+        "space-sub",
+        "task-1",
+    ))
+    .unwrap();
+    assert_eq!(
+        upper_and_port.server,
+        "http://spec-board.weintdata.cn/weint-spec-board"
+    );
+
+    let https_nested = parse(&link(
+        "https://board.example.com:443/team/spec-board/",
+        "space-sub",
+        "task-2",
+    ))
+    .unwrap();
+    assert_eq!(
+        https_nested.server,
+        "https://board.example.com/team/spec-board"
+    );
+}
+
+#[test]
 fn rejects_links_that_do_not_point_at_a_board_task() {
     assert!(parse("https://board.example.com/share.html?space=s&task=t").is_none());
     assert!(parse("spec-board://other?server=http://board.example.com&space=s&task=t").is_none());
     assert!(parse("spec-board://task?server=http://board.example.com&space=s").is_none());
     assert!(parse("spec-board://task?space=s&task=t").is_none());
-    assert!(
-        parse("spec-board://task?server=http://board.example.com/sub&space=s&task=t").is_none()
-    );
+    assert!(parse(&link("http://board.example.com/api", "s", "t")).is_none());
+    assert!(parse(&link(
+        "http://board.example.com/weint-spec-board/share.html",
+        "s",
+        "t"
+    ))
+    .is_none());
+    assert!(parse(&link(
+        "http://board.example.com/weint-spec-board/login.html",
+        "s",
+        "t"
+    ))
+    .is_none());
+    assert!(parse(&link("http://board.example.com/a//b", "s", "t")).is_none());
+    assert!(parse(&link("http://board.example.com/../evil", "s", "t")).is_none());
+    assert!(parse(&link("http://board.example.com/sub?extra=1", "s", "t")).is_none());
+    assert!(parse(&link("http://user:pass@board.example.com/sub", "s", "t")).is_none());
     assert!(parse("spec-board://task?server=javascript:alert(1)&space=s&task=t").is_none());
     assert!(parse("").is_none());
 }

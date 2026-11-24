@@ -290,9 +290,14 @@ test('子路径配置支持双模式转发、无尾斜杠重定向、HTML 注入
       path.join(publicDir, 'admin.html'),
       '<!doctype html><html><head><link rel="icon" href="./favicon.svg" /><script src="./theme-init.js"></script></head><body>admin</body></html>',
     )
+    fs.writeFileSync(
+      path.join(publicDir, 'share.html'),
+      '<!doctype html><html><head><link rel="icon" href="./favicon.svg" /><script src="./theme-init.js"></script></head><body><script type="module" src="./assets/share.js"></script></body></html>',
+    )
     fs.writeFileSync(path.join(publicDir, 'favicon.svg'), '<svg></svg>')
     fs.writeFileSync(path.join(publicDir, 'theme-init.js'), 'void 0;\n')
     fs.writeFileSync(path.join(publicDir, 'assets', 'main.js'), 'console.log("ok");\n')
+    fs.writeFileSync(path.join(publicDir, 'assets', 'share.js'), 'console.log("share");\n')
     fs.writeFileSync(
       path.join(clientUpdatesDir, 'latest.json'),
       JSON.stringify({
@@ -352,8 +357,10 @@ test('子路径配置支持双模式转发、无尾斜杠重定向、HTML 注入
       '/weint-spec-board/',
       '/weint-spec-board/login.html',
       '/weint-spec-board/admin.html',
+      '/weint-spec-board/share.html?space=s1&task=t1',
       '/',
       '/login.html',
+      '/share.html?space=s1&task=t1',
     ]) {
       const page = await request(runtime, htmlPath)
       assert.equal(page.status, 200, htmlPath)
@@ -362,6 +369,7 @@ test('子路径配置支持双模式转发、无尾斜杠重定向、HTML 注入
       assert.match(page.text, /src="\/weint-spec-board\/theme-init\.js"/)
       assert.equal(page.headers['content-length'], String(page.raw.length))
       assert.match(String(page.headers['content-security-policy']), /base-uri 'none'/)
+      assert.match(String(page.headers['content-security-policy']), /script-src 'self'/)
     }
 
     const headPage = await request(runtime, '/weint-spec-board/', { method: 'HEAD' })
@@ -376,6 +384,7 @@ test('子路径配置支持双模式转发、无尾斜杠重定向、HTML 注入
     assert.equal((await request(runtime, '/weint-spec-board/api/health')).status, 200)
     assert.equal((await request(runtime, '/api/health')).status, 200)
     assert.equal((await request(runtime, '/weint-spec-board/assets/main.js')).status, 200)
+    assert.equal((await request(runtime, '/weint-spec-board/assets/share.js')).status, 200)
     assert.equal(
       (await request(runtime, '/weint-spec-board/client-updates/latest.json')).status,
       200,
