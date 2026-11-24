@@ -39,7 +39,13 @@ export function Pagination({
   }
   if (!numbered) {
     return (
-      <div className="flex items-center gap-2">
+      <div
+        className={
+          label
+            ? 'flex w-full flex-wrap items-center justify-between gap-2'
+            : 'flex items-center gap-2'
+        }
+      >
         {label ? <span className="text-xs text-muted-foreground">{label}</span> : null}
         <PaginationNav className="mx-0 w-fit justify-start">
           <PaginationContent className="gap-2">
@@ -54,7 +60,7 @@ export function Pagination({
                 上一页
               </Button>
             </PaginationItem>
-            <PaginationItem className="text-xs text-muted-foreground">
+            <PaginationItem className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
               第 {page + 1} / {pageCount} 页
             </PaginationItem>
             <PaginationItem>
@@ -74,8 +80,14 @@ export function Pagination({
     )
   }
   return (
-    <div className="flex items-center gap-1">
-      {label ? <span className="mr-1 text-xs text-muted-foreground">{label}</span> : null}
+    <div
+      className={
+        label
+          ? 'flex w-full flex-wrap items-center justify-between gap-2'
+          : 'flex items-center gap-1'
+      }
+    >
+      {label ? <span className="text-xs text-muted-foreground">{label}</span> : null}
       <PaginationNav className="mx-0 w-fit justify-start">
         <PaginationContent className="gap-1">
           <PaginationItem>

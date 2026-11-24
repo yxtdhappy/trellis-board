@@ -1,6 +1,5 @@
 import { Copy, Download } from 'lucide-react'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Badge } from '@/components/ui/badge'
 import { copyText } from '@/browser/clipboard.js'
 import { conditionBadges } from '@/lib/condition-checks.js'
 import { cn } from '@/lib/utils'
@@ -93,13 +92,13 @@ export function TaskCard({ task, onOpen, onEditPlan, localState, onDownload }: T
         aria-label={`打开任务 ${task.title}`}
         onClick={() => onOpen(task)}
       />
-      <div className="flex items-start gap-2">
-        <span className="truncate text-2xs text-muted-foreground">{projectLabel}</span>
-        <div className="ml-auto flex items-center gap-1">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 truncate text-2xs text-muted-foreground">{projectLabel}</span>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           {task.groupRelationsValid === false ? (
-            <Badge variant="outline" className="h-4 rounded-full px-1.5 text-2xs text-destructive">
+            <StatusPill tone="destructive" size="xs">
               关系异常
-            </Badge>
+            </StatusPill>
           ) : null}
           <StatusPill tone={priorityTone(task.priority)} size="xs">
             {task.priority || 'P2'}
@@ -129,7 +128,7 @@ export function TaskCard({ task, onOpen, onEditPlan, localState, onDownload }: T
             <button
               type="button"
               className={cn(
-                'relative flex items-center gap-1 rounded-full border border-warning/35 px-1.5 py-px font-medium hover:bg-warning/15 disabled:opacity-60',
+                'relative flex items-center gap-1 rounded-full border border-warning/35 px-1.5 py-px font-medium hover:brightness-95 dark:hover:brightness-110 disabled:opacity-60',
                 toneSurface('warning'),
               )}
               title="下载到本机"
@@ -181,31 +180,30 @@ export function TaskCard({ task, onOpen, onEditPlan, localState, onDownload }: T
         </div>
       ) : null}
 
-      <div className="flex items-center gap-1.5 text-2xs text-muted-foreground">
-        <Avatar className="size-4 after:hidden">
+      <div className="relative flex items-center gap-1.5 text-2xs text-muted-foreground">
+        <Avatar className="size-4 shrink-0 after:hidden">
           <AvatarFallback className="bg-secondary text-2xs font-semibold">
             {initials(task.assignee)}
           </AvatarFallback>
         </Avatar>
-        <span className="truncate">{task.assignee || '未派发'}</span>
-        <span className="ml-auto whitespace-nowrap">
+        <span className="min-w-0 truncate">{task.assignee || '未派发'}</span>
+        <span className="ml-auto shrink-0 whitespace-nowrap">
           {next?.label} · {progress.percent}%
         </span>
-      </div>
-
-      <div className="relative flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-        {onEditPlan ? (
-          <button
-            type="button"
-            className="rounded-md border border-border px-1.5 py-0.5 text-2xs text-muted-foreground hover:bg-muted"
-            onClick={() => onEditPlan(task)}
-            disabled={task.archived}
-            title={task.archived ? '归档任务只读' : '编辑计划字段'}
-          >
-            计划
-          </button>
-        ) : null}
-        <CopyTaskNameButton task={task} />
+        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center gap-1 rounded-md bg-card/95 pl-1.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+          {onEditPlan ? (
+            <button
+              type="button"
+              className="rounded-md border border-border bg-card px-1.5 py-0.5 text-2xs text-muted-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+              onClick={() => onEditPlan(task)}
+              disabled={task.archived}
+              title={task.archived ? '归档任务只读' : '编辑计划字段'}
+            >
+              计划
+            </button>
+          ) : null}
+          <CopyTaskNameButton task={task} className="bg-card" />
+        </div>
       </div>
     </article>
   )

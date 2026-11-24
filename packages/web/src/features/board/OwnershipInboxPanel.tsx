@@ -16,7 +16,7 @@ import type {
 import { Empty, EmptyDescription } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { toneSurface } from '@/components/ui/status-pill'
+import { StatusPill, toneSurface } from '@/components/ui/status-pill'
 import { SelectField } from './SelectField'
 
 type OwnershipInboxPanelProps = {
@@ -173,7 +173,7 @@ export function OwnershipInboxPanel({
           type="button"
           variant="outline"
           size="sm"
-          className="border-warning/40 bg-background/70 text-warning hover:bg-background"
+          className="border-warning/40 bg-background/70 text-warning hover:bg-background hover:text-warning dark:bg-background/70 dark:hover:bg-background"
           aria-expanded={open}
           aria-controls="ownership-inbox-list"
           onClick={onToggle}
@@ -233,9 +233,9 @@ export function OwnershipInboxPanel({
                           <p className="min-w-0 flex-1 break-words text-xs font-semibold text-foreground">
                             {item.title}
                           </p>
-                          <span className="rounded-full border border-warning/35 px-1.5 py-0.5 text-2xs font-medium text-warning">
+                          <StatusPill tone="warning" size="xs" className="shrink-0">
                             待归属
-                          </span>
+                          </StatusPill>
                         </div>
                         <p className="mt-0.5 break-all font-mono text-2xs text-muted-foreground">
                           {item.taskDir}
@@ -268,7 +268,7 @@ export function OwnershipInboxPanel({
                                 value={branchDraft}
                                 ariaLabel="归属分支"
                                 placeholder="选择归属分支"
-                                className="max-w-56"
+                                className="w-auto min-w-40 max-w-56"
                                 options={availability.branches.map((branch) => ({
                                   value: branch.branchName,
                                   label: branch.branchName,
@@ -279,8 +279,7 @@ export function OwnershipInboxPanel({
                               <Button
                                 type="button"
                                 variant="outline"
-                                size="sm"
-                                className="border-warning/40 bg-background/70 text-warning hover:bg-background"
+                                className="border-warning/40 bg-background/70 text-warning hover:bg-background hover:text-warning dark:bg-background/70 dark:hover:bg-background"
                                 disabled={!branchDraft || assignBusy}
                                 onClick={() => void submitAssign(item)}
                               >
@@ -289,7 +288,6 @@ export function OwnershipInboxPanel({
                               <Button
                                 type="button"
                                 variant="ghost"
-                                size="sm"
                                 disabled={assignBusy}
                                 onClick={cancelAssign}
                               >
@@ -300,8 +298,7 @@ export function OwnershipInboxPanel({
                             <Button
                               type="button"
                               variant="outline"
-                              size="sm"
-                              className="border-warning/40 bg-background/70 text-warning hover:bg-background"
+                              className="border-warning/40 bg-background/70 text-warning hover:bg-background hover:text-warning dark:bg-background/70 dark:hover:bg-background"
                               disabled={!availability.available || assignBusy}
                               title={availability.reason || undefined}
                               onClick={() => startAssign(item, availability.branches)}
@@ -334,8 +331,8 @@ export function OwnershipInboxPanel({
               <Button
                 type="button"
                 variant="outline"
-                size="xs"
-                className="border-warning/40 bg-background/70 text-warning"
+                size="sm"
+                className="border-warning/40 bg-background/70 text-warning hover:bg-background hover:text-warning dark:bg-background/70 dark:hover:bg-background"
                 disabled={loadingMore}
                 onClick={onLoadMore}
               >

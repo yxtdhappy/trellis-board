@@ -108,7 +108,7 @@ export function ProjectEntry(props: ProjectEntryProps) {
         className={
           current === project.id
             ? 'flex items-center rounded-lg border border-primary/40 bg-primary/15 text-foreground'
-            : 'flex items-center rounded-lg hover:bg-sidebar-accent/60'
+            : 'flex items-center rounded-lg border border-transparent hover:bg-sidebar-accent/60'
         }
       >
         <button
@@ -217,10 +217,13 @@ export function ProjectEntry(props: ProjectEntryProps) {
         <button
           type="button"
           className={cn(
-            'ml-5 mt-0.5 flex min-w-0 items-center gap-1.5 rounded-md border px-2 py-1 text-left text-2xs',
+            'ml-5 mt-0.5 flex min-w-0 items-center gap-1.5 rounded-md border px-2 py-1 text-left text-2xs disabled:pointer-events-none disabled:opacity-60',
             projectInboxCount > 0
-              ? cn('border-warning/35 hover:bg-warning/10', toneSurface('warning'))
-              : 'border-border/70 bg-muted/30 text-muted-foreground hover:bg-muted/60',
+              ? cn(
+                  'border-warning/35 hover:brightness-95 dark:hover:brightness-110',
+                  toneSurface('warning'),
+                )
+              : 'border-border/70 bg-muted/30 text-muted-foreground',
           )}
           aria-expanded={projectInboxCount > 0 && ownershipInboxOpen}
           aria-controls={projectInboxCount > 0 ? 'ownership-inbox-list' : undefined}
@@ -234,11 +237,11 @@ export function ProjectEntry(props: ProjectEntryProps) {
           onClick={() => onSelectOwnershipInbox(project.id)}
         >
           <StatusDot className={projectInboxCount > 0 ? 'bg-warning' : 'bg-muted-foreground/40'} />
-          <span className="min-w-0 flex-1 truncate">待归属任务 {projectInboxCount}</span>
+          <span className="min-w-0 flex-1 truncate">待归属任务</span>
           <StatusPill
             tone={projectInboxCount > 0 ? 'warning' : 'neutral'}
             size="xs"
-            className="py-0.5"
+            className="shrink-0 py-0.5"
           >
             {projectInboxCount}
           </StatusPill>
@@ -301,156 +304,165 @@ export function ProjectEntry(props: ProjectEntryProps) {
               ]
                 .filter(Boolean)
                 .join('；')
+              const showOwnershipAction =
+                branchAssociation?.status === 'approved' &&
+                !branchAssociation.readOnly &&
+                !branchPaused &&
+                ownership.totalCount > 0
+              const showInitialReviewAction =
+                branchAssociation?.status === 'approved' && branchAssociation.initialReviewPending
               return (
                 <div
                   key={taskSpace.id}
                   className={
                     currentTaskSpace === taskSpace.id
-                      ? 'flex items-center rounded-md border border-primary/35 bg-primary/20 text-2xs font-semibold text-foreground'
-                      : 'flex items-center rounded-md text-2xs text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'
+                      ? 'flex flex-col rounded-md border border-primary/35 bg-primary/20 text-2xs font-semibold text-foreground'
+                      : 'flex flex-col rounded-md border border-transparent text-2xs text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'
                   }
                 >
-                  <button
-                    type="button"
-                    onClick={() => onSelectTaskSpace(taskSpace.id)}
-                    className="flex min-w-0 flex-1 items-start gap-1.5 px-2 py-1 text-left"
-                    title={branchTitle || taskSpace.branchName}
-                  >
-                    <span
-                      className={cn(
-                        'mt-1 size-1 shrink-0 rounded-full',
-                        listenerView?.dotClassName || branchView?.dotClassName || 'bg-chart-3',
-                      )}
-                      aria-hidden="true"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1">
-                        <span className="min-w-0 flex-1 truncate">{taskSpace.branchName}</span>
-                        {branchPaused ? (
-                          <span className="shrink-0 text-2xs font-medium text-destructive">
-                            已暂停
+                  <div className="flex items-center">
+                    <button
+                      type="button"
+                      onClick={() => onSelectTaskSpace(taskSpace.id)}
+                      className="flex min-w-0 flex-1 items-start gap-1.5 px-2 py-1 text-left"
+                      title={branchTitle || taskSpace.branchName}
+                    >
+                      <span
+                        className={cn(
+                          'mt-1 size-1 shrink-0 rounded-full',
+                          listenerView?.dotClassName || branchView?.dotClassName || 'bg-chart-3',
+                        )}
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1">
+                          <span className="min-w-0 flex-1 truncate">{taskSpace.branchName}</span>
+                          {branchPaused ? (
+                            <span className="shrink-0 text-2xs font-medium text-destructive">
+                              已暂停
+                            </span>
+                          ) : null}
+                        </span>
+                        {listenerView ? (
+                          <>
+                            <span className="block truncate text-2xs leading-3 text-muted-foreground">
+                              {listenerView.counts}
+                            </span>
+                            <span
+                              className={cn(
+                                'block truncate text-2xs leading-3',
+                                listenerView.textClassName,
+                              )}
+                            >
+                              {listenerView.label}
+                            </span>
+                          </>
+                        ) : null}
+                        {detachPending ? (
+                          <span className="block truncate text-2xs leading-3 text-warning">
+                            服务端解绑待确认
+                          </span>
+                        ) : null}
+                        {worktreeStatus?.archiveSyncPending ? (
+                          <span className="block truncate text-2xs leading-3 text-warning">
+                            等待归档同步
+                          </span>
+                        ) : null}
+                        {worktreeStatus?.lastVisibilityError ? (
+                          <span className="block truncate text-2xs leading-3 text-warning">
+                            可见性检查失败
                           </span>
                         ) : null}
                       </span>
-                      {listenerView ? (
-                        <>
-                          <span className="block truncate text-2xs leading-3 text-muted-foreground">
-                            {listenerView.counts}
-                          </span>
-                          <span
-                            className={cn(
-                              'block truncate text-2xs leading-3',
-                              listenerView.textClassName,
-                            )}
-                          >
-                            {listenerView.label}
-                          </span>
-                        </>
-                      ) : null}
-                      {detachPending ? (
-                        <span className="block truncate text-2xs leading-3 text-warning">
-                          服务端解绑待确认
-                        </span>
-                      ) : null}
-                      {worktreeStatus?.archiveSyncPending ? (
-                        <span className="block truncate text-2xs leading-3 text-warning">
-                          等待归档同步
-                        </span>
-                      ) : null}
-                      {worktreeStatus?.lastVisibilityError ? (
-                        <span className="block truncate text-2xs leading-3 text-warning">
-                          可见性检查失败
-                        </span>
-                      ) : null}
-                    </span>
-                  </button>
-                  {branchAssociation?.status === 'approved' &&
-                  !branchAssociation.readOnly &&
-                  !branchPaused &&
-                  ownership.totalCount > 0 ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="mr-1 h-auto shrink-0 rounded border-0 px-1 text-2xs font-medium text-warning hover:bg-background hover:text-warning"
-                      aria-label={`处理 ${taskSpace.branchName} 的 ${ownership.totalCount} 个任务归属`}
-                      title={branchView?.detail || branchView?.label}
-                      onClick={() => setOwnershipTaskSpaceId(taskSpace.id)}
-                    >
-                      待处理 {ownership.totalCount}
-                    </Button>
-                  ) : null}
-                  {branchAssociation?.status === 'approved' &&
-                  branchAssociation.initialReviewPending ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="mr-1 h-auto shrink-0 rounded border-0 px-1 text-2xs font-medium text-warning hover:bg-background hover:text-warning"
-                      aria-label={`处理 ${taskSpace.branchName} 的任务差异`}
-                      title={branchView?.detail || branchView?.label}
-                      onClick={() => void openInitialReview()}
-                    >
-                      确认差异
-                    </Button>
-                  ) : null}
-                  {branchAssociation?.status === 'approved' &&
-                  !branchAssociation.readOnly &&
-                  branchAssociation.deferredCount > 0 ? (
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="mr-1 size-5 shrink-0 text-warning hover:bg-background hover:text-warning disabled:opacity-60"
-                      aria-label={`上传 ${taskSpace.branchName} 的 ${branchAssociation.deferredCount} 个本地任务`}
-                      title={`上传本地任务${deferredDetails ? `：${deferredDetails}` : ''}`}
-                      disabled={syncingDeferredTaskSpace !== null}
-                      onClick={() => void syncDeferredTasks(branchAssociation)}
-                    >
-                      <Upload
-                        className={
-                          syncingDeferredTaskSpace === taskSpace.id
-                            ? 'size-3 animate-pulse'
-                            : 'size-3'
-                        }
-                        aria-hidden="true"
-                      />
-                    </Button>
-                  ) : null}
-                  {taskSpace.canManage ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            className="mr-1 size-5 shrink-0 text-muted-foreground hover:bg-background"
-                            aria-label={`查看 ${taskSpace.branchName} 的分支监听详情`}
-                            onClick={() => setListenerTaskSpace(taskSpace)}
-                          />
-                        }
+                    </button>
+                    {branchAssociation?.status === 'approved' &&
+                    !branchAssociation.readOnly &&
+                    branchAssociation.deferredCount > 0 ? (
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="mr-1 size-5 shrink-0 text-warning hover:bg-background hover:text-warning disabled:opacity-60"
+                        aria-label={`上传 ${taskSpace.branchName} 的 ${branchAssociation.deferredCount} 个本地任务`}
+                        title={`上传本地任务${deferredDetails ? `：${deferredDetails}` : ''}`}
+                        disabled={syncingDeferredTaskSpace !== null}
+                        onClick={() => void syncDeferredTasks(branchAssociation)}
                       >
-                        <Users className="size-3" aria-hidden="true" />
-                      </TooltipTrigger>
-                      <TooltipContent>查看分支监听详情</TooltipContent>
-                    </Tooltip>
-                  ) : null}
-                  {branchAssociation?.status === 'approved' ? (
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="mr-1 size-5 shrink-0 text-muted-foreground hover:bg-background hover:text-destructive"
-                      aria-label={`不再同步 ${taskSpace.branchName}`}
-                      title={detachPending ? '服务端解绑待确认' : '不再同步此分支'}
-                      disabled={detachPending || detachingTaskSpace !== null}
-                      onClick={() => void detachAssociation(branchAssociation)}
-                    >
-                      <Unlink2
-                        className={
-                          detachingTaskSpace === taskSpace.id ? 'size-3 animate-pulse' : 'size-3'
-                        }
-                        aria-hidden="true"
-                      />
-                    </Button>
+                        <Upload
+                          className={
+                            syncingDeferredTaskSpace === taskSpace.id
+                              ? 'size-3 animate-pulse'
+                              : 'size-3'
+                          }
+                          aria-hidden="true"
+                        />
+                      </Button>
+                    ) : null}
+                    {taskSpace.canManage ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              className="mr-1 size-5 shrink-0 text-muted-foreground hover:bg-background"
+                              aria-label={`查看 ${taskSpace.branchName} 的分支监听详情`}
+                              onClick={() => setListenerTaskSpace(taskSpace)}
+                            />
+                          }
+                        >
+                          <Users className="size-3" aria-hidden="true" />
+                        </TooltipTrigger>
+                        <TooltipContent>查看分支监听详情</TooltipContent>
+                      </Tooltip>
+                    ) : null}
+                    {branchAssociation?.status === 'approved' ? (
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="mr-1 size-5 shrink-0 text-muted-foreground hover:bg-background hover:text-destructive"
+                        aria-label={`不再同步 ${taskSpace.branchName}`}
+                        title={detachPending ? '服务端解绑待确认' : '不再同步此分支'}
+                        disabled={detachPending || detachingTaskSpace !== null}
+                        onClick={() => void detachAssociation(branchAssociation)}
+                      >
+                        <Unlink2
+                          className={
+                            detachingTaskSpace === taskSpace.id ? 'size-3 animate-pulse' : 'size-3'
+                          }
+                          aria-hidden="true"
+                        />
+                      </Button>
+                    ) : null}
+                  </div>
+                  {showOwnershipAction || showInitialReviewAction ? (
+                    <div className="flex flex-wrap items-center gap-1 pr-2 pb-1 pl-4.5">
+                      {showOwnershipAction ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          className="h-5 shrink-0 rounded border-0 px-1.5 text-2xs font-medium text-warning hover:bg-background hover:text-warning"
+                          aria-label={`处理 ${taskSpace.branchName} 的 ${ownership.totalCount} 个任务归属`}
+                          title={branchView?.detail || branchView?.label}
+                          onClick={() => setOwnershipTaskSpaceId(taskSpace.id)}
+                        >
+                          待处理 {ownership.totalCount}
+                        </Button>
+                      ) : null}
+                      {showInitialReviewAction ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          className="h-5 shrink-0 rounded border-0 px-1.5 text-2xs font-medium text-warning hover:bg-background hover:text-warning"
+                          aria-label={`处理 ${taskSpace.branchName} 的任务差异`}
+                          title={branchView?.detail || branchView?.label}
+                          onClick={() => void openInitialReview()}
+                        >
+                          确认差异
+                        </Button>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               )

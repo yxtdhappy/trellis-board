@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  Inbox,
   KeyRound,
   LogOut,
   Moon,
+  PanelLeft,
   Plus,
   Search,
   Settings2,
@@ -63,6 +65,7 @@ type TopBarProps = {
   version?: string
   serverVersion?: string
   onOpenUpdate?: () => void
+  onOpenRail?: () => void
   nav: BoardNavItem[]
   activeNav: string
   onNavigate: (id: string) => void
@@ -84,6 +87,7 @@ export function TopBar({
   version,
   serverVersion,
   onOpenUpdate,
+  onOpenRail,
   nav,
   activeNav,
   onNavigate,
@@ -132,8 +136,27 @@ export function TopBar({
 
   return (
     <div className="@container shrink-0">
-      <header className="flex h-14 flex-wrap items-center gap-3 border-b border-border bg-card px-4 @max-[48em]:h-24 @max-[48em]:items-start @max-[48em]:gap-y-0">
+      <header className="flex min-h-14 flex-wrap items-center gap-3 border-b border-border bg-card px-4 @max-[48em]:h-auto @max-[48em]:min-h-24 @max-[48em]:items-start @max-[48em]:gap-y-0">
         <div className="flex h-14 shrink-0 items-center gap-2">
+          {onOpenRail ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8 lg:hidden"
+                    onClick={onOpenRail}
+                    aria-label="打开项目侧栏"
+                  />
+                }
+              >
+                <PanelLeft className="size-4" />
+              </TooltipTrigger>
+              <TooltipContent>项目侧栏</TooltipContent>
+            </Tooltip>
+          ) : null}
           <a className="flex h-14 items-center" href="/" aria-label={`${brandName} 首页`}>
             <TrellisLogo size={24} />
           </a>
@@ -166,7 +189,7 @@ export function TopBar({
         </div>
 
         {searchOpen ? (
-          <div className="flex min-w-0 flex-1 items-center gap-2 @max-[48em]:order-last @max-[48em]:h-10 @max-[48em]:w-full @max-[48em]:flex-none @min-[64em]:hidden">
+          <div className="flex min-w-0 flex-1 items-center gap-2 @max-[48em]:order-last @max-[48em]:h-10 @max-[48em]:w-full @max-[48em]:flex-none @max-[48em]:border-t @max-[48em]:border-border @min-[64em]:hidden">
             <SearchField
               className="min-w-0 flex-1"
               inputClassName="w-full"
@@ -177,58 +200,63 @@ export function TopBar({
             <Button
               type="button"
               variant="ghost"
-              size="sm"
-              className="h-6 rounded-lg text-muted-foreground"
+              size="default"
+              className="text-muted-foreground"
               onClick={() => setSearchOpen(false)}
             >
               取消
             </Button>
           </div>
-        ) : (
-          <nav
-            ref={navRef}
-            className="topbar-nav ml-3 flex h-14 min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overscroll-x-contain @max-[48em]:order-last @max-[48em]:ml-0 @max-[48em]:h-10 @max-[48em]:w-full @max-[48em]:flex-none @max-[48em]:border-t @max-[48em]:border-border"
-            aria-label="看板视图"
-          >
-            {nav.map((item) => (
-              <Button
-                key={item.id}
-                variant="ghost"
-                size="sm"
-                onClick={() => onNavigate(item.id)}
-                className={
-                  item.id === activeNav
-                    ? 'shrink-0 gap-0 bg-secondary font-semibold whitespace-nowrap text-foreground hover:bg-secondary'
-                    : 'shrink-0 gap-0 font-medium whitespace-nowrap text-muted-foreground'
-                }
-                aria-current={item.id === activeNav ? 'page' : undefined}
-              >
-                {item.label}
-              </Button>
-            ))}
-          </nav>
-        )}
+        ) : null}
 
-        <div className="ml-auto flex h-14 shrink-0 items-center gap-2">
+        <nav
+          ref={navRef}
+          className={cn(
+            'topbar-nav ml-3 flex h-14 min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overscroll-x-contain @max-[48em]:order-last @max-[48em]:ml-0 @max-[48em]:h-10 @max-[48em]:w-full @max-[48em]:flex-none @max-[48em]:border-t @max-[48em]:border-border',
+            searchOpen && 'hidden @min-[64em]:flex',
+          )}
+          aria-label="看板视图"
+        >
+          {nav.map((item) => (
+            <Button
+              key={item.id}
+              variant="ghost"
+              size="sm"
+              onClick={() => onNavigate(item.id)}
+              className={
+                item.id === activeNav
+                  ? 'shrink-0 gap-0 bg-secondary font-semibold whitespace-nowrap text-foreground hover:bg-secondary'
+                  : 'shrink-0 gap-0 font-medium whitespace-nowrap text-muted-foreground'
+              }
+              aria-current={item.id === activeNav ? 'page' : undefined}
+            >
+              {item.label}
+            </Button>
+          ))}
+        </nav>
+
+        <div className="ml-auto flex min-h-14 shrink-0 flex-wrap items-center justify-end gap-2 py-1">
           {teams.length > 1 ? (
             <TeamSwitcher teams={teams} value={teamId} includeAll onChange={onTeamChange} />
           ) : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-8 @min-[64em]:hidden"
-                  onClick={() => setSearchOpen(true)}
-                  aria-label="搜索任务、负责人"
-                />
-              }
-            >
-              <Search className="size-4" />
-            </TooltipTrigger>
-            <TooltipContent>搜索任务、负责人</TooltipContent>
-          </Tooltip>
+          {!searchOpen ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-8 @min-[64em]:hidden"
+                    onClick={() => setSearchOpen(true)}
+                    aria-label="搜索任务、负责人"
+                  />
+                }
+              >
+                <Search className="size-4" />
+              </TooltipTrigger>
+              <TooltipContent>搜索任务、负责人</TooltipContent>
+            </Tooltip>
+          ) : null}
           <SearchField
             className="hidden @min-[64em]:block"
             inputClassName="w-60 @max-[80em]:w-40"
@@ -248,12 +276,15 @@ export function TopBar({
               </Avatar>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
-              <div className="px-2 py-1.5 text-xs text-muted-foreground">
+              <div
+                className="truncate px-2 py-1.5 text-xs text-muted-foreground"
+                title={displayName || '未登录'}
+              >
                 {displayName || '未登录'}
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={onOpenAssignments}>
-                <Settings2 className="size-3.5" />
+                <Inbox className="size-3.5" />
                 待我接受
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={onOpenPassword}>

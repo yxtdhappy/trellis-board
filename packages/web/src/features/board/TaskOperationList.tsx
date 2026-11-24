@@ -139,12 +139,7 @@ function TaskOperationListBody({
               <strong className="min-w-0 flex-1 truncate font-medium">
                 {actionLabel(operation)} · {operationTitle(operation)}
               </strong>
-              <span className={status.tone}>{status.label}</span>
-              {operation.error ? (
-                <span className="basis-full break-words text-2xs text-destructive">
-                  {operation.error}
-                </span>
-              ) : null}
+              <span className={`shrink-0 whitespace-nowrap ${status.tone}`}>{status.label}</span>
               {operation.status === 'failed' && operation.id ? (
                 <Button
                   type="button"
@@ -180,6 +175,11 @@ function TaskOperationListBody({
                   <EyeOff className="size-3" />
                   忽略
                 </Button>
+              ) : null}
+              {operation.error ? (
+                <span className="basis-full break-words text-2xs text-destructive">
+                  {operation.error}
+                </span>
               ) : null}
             </div>
           )

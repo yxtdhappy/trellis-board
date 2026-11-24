@@ -110,7 +110,7 @@ export function LoginPage() {
               '项目权限、Agent 绑定与系统审计',
             ].map((item) => (
               <li key={item} className="flex items-center gap-3 text-sm text-primary-foreground/90">
-                <span className="flex size-5 items-center justify-center rounded-full bg-primary-foreground text-2xs font-bold text-primary">
+                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary-foreground text-2xs font-bold text-primary">
                   ✓
                 </span>
                 {item}
@@ -138,6 +138,19 @@ export function LoginPage() {
       <section className="flex items-center justify-center px-6 py-16">
         <Card className="w-full max-w-100 shadow-sm">
           <CardHeader className="gap-2">
+            <a
+              className="mb-1 flex items-center gap-2.5 lg:hidden"
+              href="/"
+              aria-label="Trellis Board 首页"
+            >
+              <TrellisLogo size={28} />
+              <span className="flex flex-col leading-tight">
+                <span className="text-sm font-semibold text-foreground">Trellis Board</span>
+                <span className="text-2xs tracking-[0.16em] text-muted-foreground">
+                  TEAM / BOARD
+                </span>
+              </span>
+            </a>
             <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
               TEAM ACCESS
             </p>
@@ -179,7 +192,7 @@ export function LoginPage() {
               </div>
               {message ? (
                 <Alert variant="destructive">
-                  <AlertDescription className="text-sm">{message}</AlertDescription>
+                  <AlertDescription>{message}</AlertDescription>
                 </Alert>
               ) : null}
               <Button

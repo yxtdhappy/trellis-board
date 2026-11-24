@@ -33,7 +33,7 @@ export function Kanban({ groups, onOpen, onEditPlan, localStateFor, onDownload }
           return (
             <section
               key={lane.id}
-              className="flex min-h-[100vh] flex-col gap-2 rounded-xl bg-muted/60 p-2.5"
+              className="flex min-h-60 max-h-[72vh] flex-col gap-2 rounded-xl bg-muted/60 p-2.5"
             >
               <header className="flex items-center gap-1.5">
                 <span
@@ -79,14 +79,16 @@ export function Kanban({ groups, onOpen, onEditPlan, localStateFor, onDownload }
                           key={group.key}
                           className="flex flex-col gap-1.5 rounded-lg bg-background/40 p-1.5"
                         >
-                          <div className="flex items-center justify-between px-1 text-2xs text-muted-foreground">
-                            <span className="truncate">
+                          <div className="flex items-center justify-between gap-2 px-1 text-2xs text-muted-foreground">
+                            <span className="min-w-0 truncate">
                               父任务 ·{' '}
                               {group.parent.teamName
                                 ? `${group.parent.teamName} · ${group.parent.projectName}`
                                 : group.parent.projectName}
                             </span>
-                            <span>{children.length} 个子任务</span>
+                            <span className="shrink-0 whitespace-nowrap">
+                              {children.length} 个子任务
+                            </span>
                           </div>
                           <TaskCard
                             task={group.parent}
@@ -111,7 +113,7 @@ export function Kanban({ groups, onOpen, onEditPlan, localStateFor, onDownload }
                                       className="flex min-w-0 flex-1 items-center gap-2 py-1 pr-1 pl-1.5 text-left text-2xs"
                                     >
                                       <span
-                                        className="size-1 rounded-full bg-border"
+                                        className="size-1 shrink-0 rounded-full bg-border"
                                         aria-hidden="true"
                                       />
                                       <span className="flex min-w-0 flex-col">
@@ -123,7 +125,7 @@ export function Kanban({ groups, onOpen, onEditPlan, localStateFor, onDownload }
                                           · {child.status}
                                         </small>
                                       </span>
-                                      <span className="ml-auto whitespace-nowrap text-2xs text-muted-foreground">
+                                      <span className="ml-auto shrink-0 whitespace-nowrap text-2xs text-muted-foreground">
                                         {nextStage(child)?.label} · {progress.percent}%
                                       </span>
                                     </button>

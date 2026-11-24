@@ -38,7 +38,7 @@ type TeamViewProps = {
 const PAGE_SIZE = 10
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const BLOCKED_OPTIONS = [
-  { value: 'any', label: '不限' },
+  { value: 'any', label: '全部阻断状态' },
   { value: 'blocked', label: '仅被阻断' },
   { value: 'unblocked', label: '阻断已解除' },
 ]
@@ -113,15 +113,18 @@ export function TeamView({
   const maxOwnerCount = owners[0]?.[1] ?? 1
 
   return (
-    <div className="flex min-h-0 flex-1 gap-3">
-      <Panel as="aside" className="w-67 shrink-0 overflow-y-auto border border-border p-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
+      <Panel
+        as="aside"
+        className="w-full shrink-0 overflow-y-auto border border-border p-3 lg:w-67"
+      >
         <div className="flex flex-col gap-1">
           <h2 className="text-sm font-semibold font-heading">跨项目查询</h2>
           <p className="text-2xs text-muted-foreground">筛选条件即时生效</p>
         </div>
 
-        <Separator className="mb-2" />
-        <div className="pt-2">
+        <Separator />
+        <div>
           <p className="text-2xs font-semibold text-muted-foreground">按负责人统计</p>
           <ul className="mt-1.5 flex flex-col gap-1.5">
             {owners.length === 0 ? (
@@ -142,7 +145,7 @@ export function TeamView({
                       trackClassName="h-1.5 rounded-full bg-secondary"
                       indicatorClassName="rounded-full bg-primary"
                     />
-                    <span className="w-4 shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
+                    <span className="min-w-5 shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
                       {count}
                     </span>
                   </span>
@@ -152,20 +155,23 @@ export function TeamView({
           </ul>
         </div>
 
-        <Separator className="mb-2" />
-        <div className="flex flex-col gap-1.5 pt-2">
-          <SelectField
-            ariaLabel="项目"
-            className="text-xs"
-            value={filters.projectId}
-            options={[
-              { value: 'all', label: '全部授权项目' },
-              ...projects.map((p) => ({ value: p.id, label: p.name })),
-            ]}
-            onChange={(next) => onChange({ projectId: next })}
-          />
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            分支
+        <Separator />
+        <div className="flex flex-col gap-1.5">
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="w-11 shrink-0 whitespace-nowrap">项目</span>
+            <SelectField
+              ariaLabel="项目"
+              className="min-w-0 flex-1 text-xs"
+              value={filters.projectId}
+              options={[
+                { value: 'all', label: '全部授权项目' },
+                ...projects.map((p) => ({ value: p.id, label: p.name })),
+              ]}
+              onChange={(next) => onChange({ projectId: next })}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="w-11 shrink-0 whitespace-nowrap">分支</span>
             <Input
               className="min-w-0 flex-1 text-xs"
               value={filters.branch}
@@ -177,47 +183,59 @@ export function TeamView({
               }}
             />
           </label>
-          <SelectField
-            ariaLabel="负责人"
-            className="text-xs"
-            value={filters.assignee || '__all'}
-            options={[
-              { value: '__all', label: '全部负责人' },
-              ...owners.map(([owner]) => ({ value: owner, label: owner })),
-            ]}
-            onChange={(next) => onChange({ assignee: next === '__all' ? '' : next })}
-          />
-          <SelectField
-            ariaLabel="优先级"
-            className="text-xs"
-            value={filters.priority || '__all'}
-            options={[
-              { value: '__all', label: '不限' },
-              ...PRIORITIES.map((p) => ({ value: p, label: p })),
-            ]}
-            onChange={(next) => onChange({ priority: next === '__all' ? '' : next })}
-          />
-          <SelectField
-            ariaLabel="阶段"
-            className="text-xs"
-            value={filters.stage || '__all'}
-            options={[
-              { value: '__all', label: '全部阶段' },
-              ...stages.map((s) => ({ value: s.id, label: s.label })),
-            ]}
-            onChange={(next) => onChange({ stage: next === '__all' ? '' : next })}
-          />
-          <SelectField
-            ariaLabel="阻断"
-            className="text-xs"
-            value={filters.blocked}
-            options={BLOCKED_OPTIONS}
-            onChange={(next) => onChange({ blocked: next as BoardFilters['blocked'] })}
-          />
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="w-11 shrink-0 whitespace-nowrap">负责人</span>
+            <SelectField
+              ariaLabel="负责人"
+              className="min-w-0 flex-1 text-xs"
+              value={filters.assignee || '__all'}
+              options={[
+                { value: '__all', label: '全部负责人' },
+                ...owners.map(([owner]) => ({ value: owner, label: owner })),
+              ]}
+              onChange={(next) => onChange({ assignee: next === '__all' ? '' : next })}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="w-11 shrink-0 whitespace-nowrap">优先级</span>
+            <SelectField
+              ariaLabel="优先级"
+              className="min-w-0 flex-1 text-xs"
+              value={filters.priority || '__all'}
+              options={[
+                { value: '__all', label: '全部优先级' },
+                ...PRIORITIES.map((p) => ({ value: p, label: p })),
+              ]}
+              onChange={(next) => onChange({ priority: next === '__all' ? '' : next })}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="w-11 shrink-0 whitespace-nowrap">阶段</span>
+            <SelectField
+              ariaLabel="阶段"
+              className="min-w-0 flex-1 text-xs"
+              value={filters.stage || '__all'}
+              options={[
+                { value: '__all', label: '全部阶段' },
+                ...stages.map((s) => ({ value: s.id, label: s.label })),
+              ]}
+              onChange={(next) => onChange({ stage: next === '__all' ? '' : next })}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="w-11 shrink-0 whitespace-nowrap">阻断</span>
+            <SelectField
+              ariaLabel="阻断"
+              className="min-w-0 flex-1 text-xs"
+              value={filters.blocked}
+              options={BLOCKED_OPTIONS}
+              onChange={(next) => onChange({ blocked: next as BoardFilters['blocked'] })}
+            />
+          </label>
         </div>
       </Panel>
 
-      <Panel className="min-h-0 flex-1 gap-2 border border-border p-3">
+      <Panel className="min-h-0 min-w-0 flex-1 gap-2 border border-border p-3">
         <div className="flex flex-wrap items-center gap-2">
           <div className="min-w-0">
             <p className="text-2xs font-semibold tracking-[0.08em] text-muted-foreground">
@@ -228,18 +246,20 @@ export function TeamView({
               {summary || '任务按负责人归集；阶段与风险来自任务产物和人工检查点。'}
             </p>
           </div>
-          <Input
-            className="ml-auto w-52 text-xs"
-            placeholder="搜索任务或负责人"
-            value={search}
-            onChange={(event) => {
-              setSearch(event.target.value)
-              setPage(0)
-            }}
-          />
-          <Button variant="outline" onClick={onRefresh}>
-            刷新
-          </Button>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Input
+              className="w-52 text-xs"
+              placeholder="搜索任务或负责人"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value)
+                setPage(0)
+              }}
+            />
+            <Button variant="outline" onClick={onRefresh} disabled={loading}>
+              刷新
+            </Button>
+          </div>
         </div>
 
         {loading ? (
@@ -292,9 +312,9 @@ export function TeamView({
                       className="cursor-pointer border-b border-border/60 text-xs hover:bg-muted/40"
                       onClick={() => onOpen(task)}
                     >
-                      <TableCell className="whitespace-normal px-3 py-2">
-                        <span className="block font-medium">{task.title}</span>
-                        <small className="text-2xs text-muted-foreground">
+                      <TableCell className="whitespace-normal break-words px-3 py-2">
+                        <span className="block break-words font-medium">{task.title}</span>
+                        <small className="block break-all text-2xs text-muted-foreground">
                           #{task.dirName} · {projectLabel}
                         </small>
                         {control.available ? (
@@ -310,28 +330,28 @@ export function TeamView({
                       </TableCell>
                       <TableCell className="whitespace-normal px-3 py-2">
                         <span className="flex items-center gap-1.5">
-                          <Avatar className="size-4 after:hidden">
+                          <Avatar className="size-4 shrink-0 after:hidden">
                             <AvatarFallback className="bg-secondary text-2xs font-semibold">
                               {initials(task.assignee)}
                             </AvatarFallback>
                           </Avatar>
-                          {task.assignee || '未派发'}
+                          <span className="break-words">{task.assignee || '未派发'}</span>
                         </span>
                       </TableCell>
-                      <TableCell className="whitespace-normal px-3 py-2 text-xs text-muted-foreground">
+                      <TableCell className="whitespace-normal break-words px-3 py-2 text-xs text-muted-foreground">
                         {projectLabel}
                       </TableCell>
-                      <TableCell className="whitespace-normal px-3 py-2 whitespace-nowrap">
+                      <TableCell className="whitespace-nowrap px-3 py-2">
                         <StatusPill tone={stageTone(stageLabel)} size="xs" className="font-medium">
                           {stageLabel || statusLabel(task.stage || task.status) || '未开始'}
                         </StatusPill>
                       </TableCell>
-                      <TableCell className="whitespace-normal px-3 py-2 whitespace-nowrap">
+                      <TableCell className="whitespace-nowrap px-3 py-2">
                         <StatusPill tone={priorityTone(task.priority)} size="xs">
                           {task.priority || 'P2'}
                         </StatusPill>
                       </TableCell>
-                      <TableCell className="whitespace-normal px-3 py-2 text-right text-2xs whitespace-nowrap text-muted-foreground">
+                      <TableCell className="whitespace-nowrap px-3 py-2 text-right text-2xs tabular-nums text-muted-foreground">
                         {dueLabel(task.execution?.dueDate)}
                       </TableCell>
                     </TableRow>

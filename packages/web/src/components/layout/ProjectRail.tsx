@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, RefreshCw } from 'lucide-react'
+import { Plus, RefreshCw, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { TaskSpace } from '@/api/board'
 import { StatusDot } from './project-rail/StatusDot.tsx'
@@ -57,6 +57,8 @@ export function ProjectRail({
   refreshing,
   onRefresh,
   onAssociationsChange,
+  mobileOpen = false,
+  onMobileOpenChange,
 }: ProjectRailProps) {
   const invoke = useMemo(() => tauriInvoke(), [])
   const confirm = useConfirm()
@@ -381,251 +383,297 @@ export function ProjectRail({
     )
     if (!selected) onSelectTaskSpace('all')
   }, [currentTaskSpace, onSelectTaskSpace, projects, worktreeStatuses])
+  useEffect(() => {
+    if (!mobileOpen || !onMobileOpenChange) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (document.querySelector('[data-dialog-id]')) return
+      onMobileOpenChange(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [mobileOpen, onMobileOpenChange])
+
   const taskSpaceCount = projects.reduce(
     (total, project) => total + visibleTaskSpaces(project, worktreeStatuses).length,
     0,
   )
 
   return (
-    <aside className="hidden w-58 shrink-0 flex-col gap-1 border-r border-border bg-sidebar px-2.5 py-3.5 lg:flex">
-      <p className="px-2 pb-1 text-2xs font-semibold tracking-[0.12em] text-muted-foreground">
-        项目
-      </p>
-      {invoke ? (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void startProjectOnboarding()}
-          disabled={inspectingProject}
-          className="mb-1 justify-start border-dashed text-xs text-muted-foreground hover:border-primary/50 hover:text-foreground"
-        >
-          <Plus className="size-3.5" />
-          接入本地项目
-        </Button>
+    <>
+      {mobileOpen ? (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+          onClick={() => onMobileOpenChange?.(false)}
+          aria-hidden="true"
+        />
       ) : null}
-      {invoke && syncingAssociations.length ? (
-        <Alert
-          role="status"
-          className={cn(
-            'mb-1 border-warning/35 px-2 py-1.5 text-2xs leading-4',
-            toneSurface('warning'),
-          )}
-        >
-          正在同步任务，此时切换 Git 分支可能导致任务错位或污染，建议等待同步完成后再切换。
-        </Alert>
-      ) : null}
-      {invoke && reviewAssociations.length ? (
-        <Alert
-          role="status"
-          className={cn(
-            'mb-1 border-warning/35 px-2 py-1.5 text-2xs leading-4',
-            toneSurface('warning'),
-          )}
-        >
-          有分支等待确认任务差异，确认处理方式后才会同步任务。
-        </Alert>
-      ) : null}
-      {invoke && worktreeIssues.length ? (
-        <Alert
-          role="status"
-          className={cn(
-            'mb-1 border-warning/35 px-2 py-1.5 text-2xs leading-4',
-            toneSurface('warning'),
-          )}
-        >
-          <div className="flex flex-col gap-1">
-            <span>{worktreeIssues.length} 个 worktree 需要处理</span>
-            {worktreeIssues.slice(0, 3).map((issue) => {
-              const key = issue.taskSpaceId || issue.path
-              const detail = issue.lastError || issue.lastVisibilityError || '自动接入失败'
-              return (
-                <div key={issue.path} className="flex items-start justify-between gap-2">
-                  <span className="min-w-0 truncate" title={`${issue.path}：${detail}`}>
-                    {issue.branchName || issue.path}：{detail}
-                  </span>
-                  <button
-                    type="button"
-                    className="shrink-0 underline disabled:opacity-50"
-                    disabled={retryingWorktreeKey !== null}
-                    onClick={() => void retryWorktree(key)}
-                  >
-                    {retryingWorktreeKey === key ? '处理中' : '重试'}
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        </Alert>
-      ) : null}
-      <button
-        type="button"
-        onClick={() => onSelect('all')}
-        className={
-          current === 'all'
-            ? 'flex h-8 items-center gap-2 rounded-lg border border-primary/40 bg-primary/15 px-2 text-left text-xs font-semibold text-foreground'
-            : 'flex h-8 items-center gap-2 rounded-lg px-2 text-left text-xs font-medium text-foreground hover:bg-sidebar-accent/60'
-        }
+      <aside
+        className={cn(
+          'min-h-0 w-58 shrink-0 flex-col gap-1 border-r border-border bg-sidebar px-2.5 py-3.5',
+          mobileOpen
+            ? 'fixed inset-y-0 left-0 z-40 flex h-dvh w-64 max-w-[85vw] shadow-xl lg:static lg:z-auto lg:h-auto lg:w-58 lg:shadow-none'
+            : 'hidden lg:flex',
+        )}
       >
-        <StatusDot className="bg-primary" />
-        全部项目
-      </button>
-      {current === 'all' && taskSpaceCount > 1 ? (
-        <p className="px-2 pb-1 text-2xs leading-4 text-muted-foreground">全部项目按分支独立统计</p>
-      ) : null}
-      {projects.map((project) => (
-        <ProjectEntry
-          key={project.id}
-          project={project}
-          associations={associations}
-          worktreeStatuses={worktreeStatuses}
-          current={current}
-          currentTaskSpace={currentTaskSpace}
-          inspectingProject={inspectingProject}
-          invoke={invoke}
-          ownershipInboxOpen={ownershipInboxOpen}
-          detachingTaskSpace={detachingTaskSpace}
-          syncingDeferredTaskSpace={syncingDeferredTaskSpace}
-          onStartOnboarding={() => void startProjectOnboarding()}
-          onSelect={onSelect}
-          onSelectTaskSpace={onSelectTaskSpace}
-          onSelectOwnershipInbox={onSelectOwnershipInbox}
-          onOpenConflicts={openConflicts}
-          onOpenInitialReview={() => void openInitialReview()}
-          onSyncDeferred={(association) => void syncDeferredTasks(association)}
-          onDetach={(association) => void detachAssociation(association)}
-          onListener={(taskSpace) => setListenerTaskSpace(taskSpace as TaskSpace)}
-          onOwnership={(taskSpaceId) => setOwnershipTaskSpaceId(taskSpaceId)}
-          onQuickAgent={(taskSpaceId) => setQuickAgentTaskSpaceId(taskSpaceId)}
-        />
-      ))}
-
-      {associationError ? (
-        <Alert variant="destructive" className="mx-1 mt-1 text-2xs leading-4">
-          {associationError}
-        </Alert>
-      ) : null}
-
-      {!invoke && manageEnabled ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onManage}
-          className="mt-2 justify-start gap-1.5 text-muted-foreground"
-        >
-          <Plus className="size-3.5" />
-          管理
-        </Button>
-      ) : null}
-
-      <Panel as="div" className="mt-auto gap-2 p-2.5">
-        <div className="flex items-center gap-1.5">
-          <StatusDot
-            className={
-              invoke
-                ? sidecarStatus?.running
-                  ? 'bg-primary'
-                  : 'bg-destructive'
-                : syncLive
-                  ? 'bg-primary'
-                  : 'bg-muted-foreground/50'
-            }
-          />
-          <span className="text-xs font-semibold text-foreground">同步状态</span>
+        <div className="flex shrink-0 flex-col gap-1">
+          <div className="flex items-center justify-between px-2 pb-1">
+            <p className="text-2xs font-semibold tracking-[0.12em] text-muted-foreground">项目</p>
+            {onMobileOpenChange ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="text-muted-foreground lg:hidden"
+                aria-label="关闭项目侧栏"
+                onClick={() => onMobileOpenChange(false)}
+              >
+                <X className="size-3.5" />
+              </Button>
+            ) : null}
+          </div>
+          {invoke ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void startProjectOnboarding()}
+              disabled={inspectingProject}
+              className="mb-1 justify-start border-dashed text-xs text-muted-foreground hover:border-primary/50 hover:text-foreground"
+            >
+              <Plus className="size-3.5" />
+              接入本地项目
+            </Button>
+          ) : null}
         </div>
-        <p className="text-2xs leading-4 text-muted-foreground">{syncLabel}</p>
-        {invoke ? (
-          <p className="text-2xs leading-4 text-muted-foreground">
-            客户端后台：
-            {sidecarStatus?.running ? '运行中' : sidecarStatus?.paused ? '已暂停' : '未运行'}
-          </p>
-        ) : null}
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 gap-1.5 text-xs"
-          onClick={onRefresh}
-          disabled={refreshing}
-        >
-          <RefreshCw className={refreshing ? 'size-3 animate-spin' : 'size-3'} />
-          {refreshing ? '正在扫描…' : '重新扫描仓库'}
-        </Button>
-      </Panel>
-      {invoke ? (
-        <AgentQuickInitDialog
-          open={quickAgentTaskSpaceId !== null}
-          onOpenChange={(open) => {
-            if (!open) setQuickAgentTaskSpaceId(null)
-          }}
-          taskSpaceId={quickAgentTaskSpaceId ?? ''}
-          defaultDeveloperId={
-            projects
-              .find((project) =>
-                (project.taskSpaces || []).some((space) => space.id === quickAgentTaskSpaceId),
-              )
-              ?.trellisDevId?.trim() || defaultDeveloperId
-          }
-          invoke={invoke}
-        />
-      ) : null}
-      {invoke ? (
-        <>
-          <ProjectOnboardingDialog
-            open={onboardingOpen}
-            onOpenChange={setOnboardingOpen}
-            path={onboardingPath}
-            projects={projects}
-            teams={teams}
-            defaultTeamId={teamId === 'all' ? '' : teamId}
-            defaultDeveloperId={defaultDeveloperId}
-            invoke={invoke}
-            onAssociated={(association) => {
-              const normalized = normalizeAssociation(association)
-              if (!normalized) {
-                toast.error('项目关联成功，但客户端返回了无效的关联状态')
-                return
+
+        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+          {invoke && syncingAssociations.length ? (
+            <Alert
+              role="status"
+              className={cn(
+                'mb-1 shrink-0 border-warning/35 px-2 py-1.5 text-2xs leading-4',
+                toneSurface('warning'),
+              )}
+            >
+              正在同步任务，此时切换 Git 分支可能导致任务错位或污染，建议等待同步完成后再切换。
+            </Alert>
+          ) : null}
+          {invoke && reviewAssociations.length ? (
+            <Alert
+              role="status"
+              className={cn(
+                'mb-1 shrink-0 border-warning/35 px-2 py-1.5 text-2xs leading-4',
+                toneSurface('warning'),
+              )}
+            >
+              有分支等待确认任务差异，确认处理方式后才会同步任务。
+            </Alert>
+          ) : null}
+          {invoke && worktreeIssues.length ? (
+            <Alert
+              role="status"
+              className={cn(
+                'mb-1 shrink-0 border-warning/35 px-2 py-1.5 text-2xs leading-4',
+                toneSurface('warning'),
+              )}
+            >
+              <div className="flex flex-col gap-1">
+                <span>{worktreeIssues.length} 个 worktree 需要处理</span>
+                {worktreeIssues.slice(0, 3).map((issue) => {
+                  const key = issue.taskSpaceId || issue.path
+                  const detail = issue.lastError || issue.lastVisibilityError || '自动接入失败'
+                  return (
+                    <div key={issue.path} className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 truncate" title={`${issue.path}：${detail}`}>
+                        {issue.branchName || issue.path}：{detail}
+                      </span>
+                      <button
+                        type="button"
+                        className="shrink-0 underline disabled:opacity-50"
+                        disabled={retryingWorktreeKey !== null}
+                        onClick={() => void retryWorktree(key)}
+                      >
+                        {retryingWorktreeKey === key ? '处理中' : '重试'}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </Alert>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => onSelect('all')}
+            className={
+              current === 'all'
+                ? 'flex h-8 shrink-0 items-center gap-2 rounded-lg border border-primary/40 bg-primary/15 px-2 text-left text-xs font-semibold text-foreground'
+                : 'flex h-8 shrink-0 items-center gap-2 rounded-lg border border-transparent px-2 text-left text-xs font-medium text-foreground hover:bg-sidebar-accent/60'
+            }
+          >
+            <StatusDot className="bg-primary" />
+            全部项目
+          </button>
+          {current === 'all' && taskSpaceCount > 1 ? (
+            <p className="px-2 pb-1 text-2xs leading-4 text-muted-foreground">
+              全部项目按分支独立统计
+            </p>
+          ) : null}
+          {projects.map((project) => (
+            <ProjectEntry
+              key={project.id}
+              project={project}
+              associations={associations}
+              worktreeStatuses={worktreeStatuses}
+              current={current}
+              currentTaskSpace={currentTaskSpace}
+              inspectingProject={inspectingProject}
+              invoke={invoke}
+              ownershipInboxOpen={ownershipInboxOpen}
+              detachingTaskSpace={detachingTaskSpace}
+              syncingDeferredTaskSpace={syncingDeferredTaskSpace}
+              onStartOnboarding={() => void startProjectOnboarding()}
+              onSelect={onSelect}
+              onSelectTaskSpace={onSelectTaskSpace}
+              onSelectOwnershipInbox={onSelectOwnershipInbox}
+              onOpenConflicts={openConflicts}
+              onOpenInitialReview={() => void openInitialReview()}
+              onSyncDeferred={(association) => void syncDeferredTasks(association)}
+              onDetach={(association) => void detachAssociation(association)}
+              onListener={(taskSpace) => setListenerTaskSpace(taskSpace as TaskSpace)}
+              onOwnership={(taskSpaceId) => setOwnershipTaskSpaceId(taskSpaceId)}
+              onQuickAgent={(taskSpaceId) => setQuickAgentTaskSpaceId(taskSpaceId)}
+            />
+          ))}
+
+          {associationError ? (
+            <Alert variant="destructive" className="mt-1 shrink-0 break-words text-2xs leading-4">
+              {associationError}
+            </Alert>
+          ) : null}
+
+          {!invoke && manageEnabled ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onManage}
+              className="mt-2 shrink-0 justify-start gap-1.5 text-muted-foreground"
+            >
+              <Plus className="size-3.5" />
+              管理
+            </Button>
+          ) : null}
+        </div>
+
+        <Panel as="div" className="mt-1 shrink-0 gap-2 p-2.5">
+          <div className="flex items-center gap-1.5">
+            <StatusDot
+              className={
+                invoke
+                  ? sidecarStatus?.running
+                    ? 'bg-primary'
+                    : 'bg-destructive'
+                  : syncLive
+                    ? 'bg-primary'
+                    : 'bg-muted-foreground/50'
               }
-              setAssociations((currentMap) => {
-                const next = new Map(currentMap)
-                for (const [taskSpaceId, existing] of next) {
-                  if (
-                    taskSpaceId !== normalized.taskSpaceId &&
-                    sameLocalRepositoryPath(existing.repoPath, normalized.repoPath)
-                  ) {
-                    next.delete(taskSpaceId)
-                  }
-                }
-                next.set(normalized.taskSpaceId, normalized)
-                return next
-              })
-              toast.success('本地项目已接入团队任务空间，正在同步任务。')
-              void onRefresh()
-            }}
-          />
-          <TaskOwnershipDialog
-            open={ownershipTaskSpaceId !== null}
+            />
+            <span className="text-xs font-semibold text-foreground">同步状态</span>
+          </div>
+          <p className="text-2xs leading-4 text-muted-foreground">{syncLabel}</p>
+          {invoke ? (
+            <p className="text-2xs leading-4 text-muted-foreground">
+              客户端后台：
+              {sidecarStatus?.running ? '运行中' : sidecarStatus?.paused ? '已暂停' : '未运行'}
+            </p>
+          ) : null}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 text-xs"
+            onClick={onRefresh}
+            disabled={refreshing}
+          >
+            <RefreshCw className={refreshing ? 'size-3 animate-spin' : 'size-3'} />
+            {refreshing ? '正在扫描…' : '重新扫描仓库'}
+          </Button>
+        </Panel>
+        {invoke ? (
+          <AgentQuickInitDialog
+            open={quickAgentTaskSpaceId !== null}
             onOpenChange={(open) => {
-              if (!open) setOwnershipTaskSpaceId(null)
+              if (!open) setQuickAgentTaskSpaceId(null)
             }}
-            taskSpaceId={ownershipTaskSpaceId || ''}
+            taskSpaceId={quickAgentTaskSpaceId ?? ''}
+            defaultDeveloperId={
+              projects
+                .find((project) =>
+                  (project.taskSpaces || []).some((space) => space.id === quickAgentTaskSpaceId),
+                )
+                ?.trellisDevId?.trim() || defaultDeveloperId
+            }
             invoke={invoke}
-            onChanged={() => {
-              toast.success('任务归属已更新，正在同步当前分支任务。')
-              void refreshProjectStateRef.current()
-              void onRefresh()
+          />
+        ) : null}
+        {invoke ? (
+          <>
+            <ProjectOnboardingDialog
+              open={onboardingOpen}
+              onOpenChange={setOnboardingOpen}
+              path={onboardingPath}
+              projects={projects}
+              teams={teams}
+              defaultTeamId={teamId === 'all' ? '' : teamId}
+              defaultDeveloperId={defaultDeveloperId}
+              invoke={invoke}
+              onAssociated={(association) => {
+                const normalized = normalizeAssociation(association)
+                if (!normalized) {
+                  toast.error('项目关联成功，但客户端返回了无效的关联状态')
+                  return
+                }
+                setAssociations((currentMap) => {
+                  const next = new Map(currentMap)
+                  for (const [taskSpaceId, existing] of next) {
+                    if (
+                      taskSpaceId !== normalized.taskSpaceId &&
+                      sameLocalRepositoryPath(existing.repoPath, normalized.repoPath)
+                    ) {
+                      next.delete(taskSpaceId)
+                    }
+                  }
+                  next.set(normalized.taskSpaceId, normalized)
+                  return next
+                })
+                toast.success('本地项目已接入团队任务空间，正在同步任务。')
+                void onRefresh()
+              }}
+            />
+            <TaskOwnershipDialog
+              open={ownershipTaskSpaceId !== null}
+              onOpenChange={(open) => {
+                if (!open) setOwnershipTaskSpaceId(null)
+              }}
+              taskSpaceId={ownershipTaskSpaceId || ''}
+              invoke={invoke}
+              onChanged={() => {
+                toast.success('任务归属已更新，正在同步当前分支任务。')
+                void refreshProjectStateRef.current()
+                void onRefresh()
+              }}
+            />
+          </>
+        ) : null}
+        {listenerTaskSpace ? (
+          <BranchListenersDialog
+            key={listenerTaskSpace.id}
+            taskSpace={listenerTaskSpace}
+            open
+            onOpenChange={(open) => {
+              if (!open) setListenerTaskSpace(null)
             }}
           />
-        </>
-      ) : null}
-      {listenerTaskSpace ? (
-        <BranchListenersDialog
-          key={listenerTaskSpace.id}
-          taskSpace={listenerTaskSpace}
-          open
-          onOpenChange={(open) => {
-            if (!open) setListenerTaskSpace(null)
-          }}
-        />
-      ) : null}
-    </aside>
+        ) : null}
+      </aside>
+    </>
   )
 }

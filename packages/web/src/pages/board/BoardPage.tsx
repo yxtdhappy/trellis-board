@@ -87,6 +87,7 @@ export function BoardPage() {
   const [brandName, setBrandName] = useState('Trellis Board')
   const [clientVersion, setClientVersion] = useState('')
   const [updateOpen, setUpdateOpen] = useState(false)
+  const [railOpen, setRailOpen] = useState(false)
   const serverVersion = useServerVersion()
 
   const {
@@ -173,8 +174,7 @@ export function BoardPage() {
   const adminHref = !isTauri && canManageAdmin ? '/admin.html' : undefined
 
   const groups = useMemo(
-    () =>
-      filterGroups(tasks, filters, projects, board?.savedViews || [], { scopedByServer: true }),
+    () => filterGroups(tasks, filters, projects, board?.savedViews || [], { scopedByServer: true }),
     [tasks, filters, projects, board?.savedViews],
   )
   const taskSpacesById = useMemo<Map<string, TaskSpace>>(
@@ -364,6 +364,7 @@ export function BoardPage() {
         version={clientVersion || undefined}
         serverVersion={serverVersion || undefined}
         onOpenUpdate={isTauri ? () => setUpdateOpen(true) : undefined}
+        onOpenRail={() => setRailOpen(true)}
         nav={navItems}
         activeNav={view}
         onNavigate={(id) => setView(id)}
@@ -387,11 +388,20 @@ export function BoardPage() {
           defaultDeveloperId={runtime?.user?.username || ''}
           current={filters.projectId}
           teamId={filters.teamId}
-          onSelect={(id) => setFilters({ projectId: id, taskSpaceId: 'all' })}
+          onSelect={(id) => {
+            setFilters({ projectId: id, taskSpaceId: 'all' })
+            setRailOpen(false)
+          }}
           currentTaskSpace={filters.taskSpaceId}
-          onSelectTaskSpace={(taskSpaceId) => setFilters({ taskSpaceId })}
+          onSelectTaskSpace={(taskSpaceId) => {
+            setFilters({ taskSpaceId })
+            setRailOpen(false)
+          }}
           ownershipInboxOpen={ownershipInbox.open}
-          onSelectOwnershipInbox={ownershipInbox.toggle}
+          onSelectOwnershipInbox={(projectId) => {
+            ownershipInbox.toggle(projectId)
+            setRailOpen(false)
+          }}
           onManage={() => setProjectsOpen(true)}
           manageEnabled={false}
           syncLabel={syncLabel}
@@ -399,6 +409,8 @@ export function BoardPage() {
           refreshing={Boolean(controller.status?.refreshRunning) || loading}
           onRefresh={() => void actions.refresh()}
           onAssociationsChange={setLocalAssociations}
+          mobileOpen={railOpen}
+          onMobileOpenChange={setRailOpen}
         />
 
         <main className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">

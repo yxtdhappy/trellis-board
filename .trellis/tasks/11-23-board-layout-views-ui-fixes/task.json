@@ -3,7 +3,7 @@
   "name": "board-layout-views-ui-fixes",
   "title": "修复看板顶栏、项目侧栏与核心视图布局缺陷",
   "description": "修复 TopBar、ProjectRail/ProjectEntry、BoardPage 窄屏入口、Kanban、AttentionQueue、TaskCard、StageTape、ExecutionHeader、OwnershipInboxPanel、TeamView、ArchiveView、Pagination、TaskOperationList、FlowSignals/Overview 与 LoginPage 的高度对齐、滚动与响应式问题",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "web",

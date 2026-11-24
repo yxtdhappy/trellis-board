@@ -24,8 +24,8 @@ const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 function viewPill(active: boolean) {
   return cn(
     badgeVariants({ variant: active ? 'default' : 'outline' }),
-    'h-auto gap-1 px-2.5 py-1 text-xs',
-    active ? 'font-semibold' : 'bg-card text-muted-foreground hover:text-foreground',
+    'h-auto gap-0 overflow-hidden p-0 text-xs',
+    active ? 'font-semibold' : 'bg-card text-muted-foreground hover:text-foreground dark:bg-card',
   )
 }
 
@@ -89,12 +89,13 @@ export function ExecutionHeader({
               variant="ghost"
               size="sm"
               className={cn(
-                'h-auto min-h-0 gap-0 border-0 p-0 text-xs text-inherit hover:bg-transparent hover:text-inherit',
+                'h-auto min-h-0 max-w-36 gap-0 rounded-none border-0 py-1 pr-1 pl-2.5 text-xs text-inherit hover:bg-transparent hover:text-inherit',
                 filters.executionView === view.id && 'font-semibold',
               )}
+              title={view.name}
               onClick={() => onChange({ executionView: view.id })}
             >
-              {view.name}
+              <span className="truncate">{view.name}</span>
             </Button>
             <Button
               type="button"
@@ -102,7 +103,7 @@ export function ExecutionHeader({
               size="sm"
               aria-label={`删除组合视图 ${view.name}`}
               className={cn(
-                'h-auto min-h-0 gap-0 border-0 p-0 text-xs text-inherit opacity-70 hover:bg-transparent hover:text-inherit hover:opacity-100',
+                'h-auto min-h-0 gap-0 rounded-none border-0 py-1 pr-2 pl-0.5 text-xs text-inherit opacity-70 hover:bg-transparent hover:text-inherit hover:opacity-100',
                 filters.executionView === view.id && 'font-semibold',
               )}
               onClick={() => onDeleteView(view.id)}
@@ -112,20 +113,22 @@ export function ExecutionHeader({
           </span>
         ))}
         {BUILTIN_VIEWS.map((view) => (
-          <span key={view.id} className={viewPill(filters.executionView === view.id)}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className={cn(
-                'h-auto min-h-0 gap-0 border-0 p-0 text-xs text-inherit hover:bg-transparent hover:text-inherit',
-                filters.executionView === view.id && 'font-semibold',
-              )}
-              onClick={() => onChange({ executionView: view.id })}
-            >
-              {view.name}
-            </Button>
-          </span>
+          <Button
+            key={view.id}
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={cn(
+              viewPill(filters.executionView === view.id),
+              'px-2.5 py-1 hover:bg-transparent',
+              filters.executionView === view.id
+                ? 'hover:bg-primary hover:text-primary-foreground'
+                : 'hover:bg-card dark:hover:bg-card',
+            )}
+            onClick={() => onChange({ executionView: view.id })}
+          >
+            {view.name}
+          </Button>
         ))}
         <span className="ml-auto text-xs text-muted-foreground">
           {currentViewLabel} · {today}
@@ -134,10 +137,10 @@ export function ExecutionHeader({
 
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          项目
+          <span className="shrink-0 whitespace-nowrap">项目</span>
           <SelectField
             ariaLabel="项目"
-            className="w-auto min-w-28"
+            className="w-auto min-w-28 max-w-52"
             value={filters.projectId}
             options={[
               { value: 'all', label: '全部授权项目' },
@@ -147,7 +150,7 @@ export function ExecutionHeader({
           />
         </label>
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          分支
+          <span className="shrink-0 whitespace-nowrap">分支</span>
           <Input
             className="w-32 text-xs"
             value={filters.branch}
@@ -157,10 +160,10 @@ export function ExecutionHeader({
           />
         </label>
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          负责人
+          <span className="shrink-0 whitespace-nowrap">负责人</span>
           <SelectField
             ariaLabel="负责人"
-            className="w-auto min-w-28"
+            className="w-auto min-w-28 max-w-52"
             value={filters.assignee || '__all'}
             options={[
               { value: '__all', label: '全部负责人' },
@@ -170,10 +173,10 @@ export function ExecutionHeader({
           />
         </label>
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          优先级
+          <span className="shrink-0 whitespace-nowrap">优先级</span>
           <SelectField
             ariaLabel="优先级"
-            className="w-auto min-w-28"
+            className="w-auto min-w-28 max-w-52"
             value={filters.priority || '__all'}
             options={[
               { value: '__all', label: '全部优先级' },
@@ -183,10 +186,10 @@ export function ExecutionHeader({
           />
         </label>
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          阶段
+          <span className="shrink-0 whitespace-nowrap">阶段</span>
           <SelectField
             ariaLabel="阶段"
-            className="w-auto min-w-28"
+            className="w-auto min-w-28 max-w-52"
             value={filters.stage || '__all'}
             options={[
               { value: '__all', label: '全部阶段' },
@@ -196,10 +199,10 @@ export function ExecutionHeader({
           />
         </label>
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          阻断
+          <span className="shrink-0 whitespace-nowrap">阻断</span>
           <SelectField
             ariaLabel="阻断"
-            className="w-auto min-w-28"
+            className="w-auto min-w-28 max-w-52"
             value={filters.blocked}
             options={BLOCKED_OPTIONS}
             onChange={(value) => onChange({ blocked: value as BoardFilters['blocked'] })}

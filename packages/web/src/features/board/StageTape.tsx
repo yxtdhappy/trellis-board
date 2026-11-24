@@ -14,13 +14,15 @@ export function StageTape({ stages, current }: { stages: Stage[]; current: strin
           ? stage.source === 'manual'
             ? 'bg-primary/60'
             : 'bg-primary'
-          : stage.optional
-            ? 'bg-border/70'
-            : 'bg-border'
+          : isCurrent
+            ? 'bg-primary/40'
+            : stage.optional
+              ? 'bg-border/70'
+              : 'bg-border'
         return (
           <span
             key={stage.id}
-            className={cn('h-1 flex-1', tone, isCurrent && 'ring-1 ring-primary/60')}
+            className={cn('h-1 flex-1', tone, isCurrent && 'ring-1 ring-inset ring-primary')}
             title={`${stage.label} · ${stageSourceLabel(stage)}`}
           />
         )
