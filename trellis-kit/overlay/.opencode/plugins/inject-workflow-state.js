@@ -239,4 +239,4 @@ async function server({ directory }) {
   }
 }
 
-export default { id: "trellis-workflow-state", effect: server }
+export default { id: "trellis-workflow-state", setup: server }

@@ -64,4 +64,4 @@ async function server({ directory }) {
   }
 }
 
-export default { id: "trellis-session-start", effect: server }
+export default { id: "trellis-session-start", setup: server }

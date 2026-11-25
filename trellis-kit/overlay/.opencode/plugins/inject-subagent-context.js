@@ -564,4 +564,4 @@ async function server({ directory, platform: hostPlatform = process.platform, en
     }
 }
 
-export default { id: "trellis-subagent-context", effect: server }
+export default { id: "trellis-subagent-context", setup: server }

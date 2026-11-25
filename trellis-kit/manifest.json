@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "trellis-kit",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Overlay that installs the task-state evidence loop into a Trellis project.",
   "platformsFile": "platforms/registry.json",
   "components": [
