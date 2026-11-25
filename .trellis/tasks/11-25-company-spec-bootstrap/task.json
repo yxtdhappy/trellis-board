@@ -1,0 +1,31 @@
+{
+  "id": "company-spec-bootstrap",
+  "name": "company-spec-bootstrap",
+  "title": "初始化时按项目类型注入公司开发规范",
+  "description": "trellis-board 初始化项目时，从内网 Git 规范仓库读取模板，按项目类型生成项目级 .trellis/spec",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-25",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "task_type_updated_at": "2026-11-25T21:04:57"
+  }
+}
