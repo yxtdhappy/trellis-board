@@ -79,3 +79,5 @@ paseo.json
 
 # Trellis local state (local only)
 /.trellis/.template-hashes.json
+# Trellis local agent configs (local only)
+/.opencode/

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "trellis-kit",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Overlay that installs the task-state evidence loop into a Trellis project.",
   "platformsFile": "platforms/registry.json",
   "components": [
@@ -125,10 +125,35 @@
       "source": ".agents/skills/trellis-api-e2e",
       "target": ".agents/skills/trellis-api-e2e",
       "directory": true
+    },
+    {
+      "id": "opencode-plugin-session-start",
+      "kind": "platform",
+      "platform": "opencode",
+      "source": ".opencode/plugins/session-start.js",
+      "target": ".opencode/plugins/session-start.js"
+    },
+    {
+      "id": "opencode-plugin-inject-workflow-state",
+      "kind": "platform",
+      "platform": "opencode",
+      "source": ".opencode/plugins/inject-workflow-state.js",
+      "target": ".opencode/plugins/inject-workflow-state.js"
+    },
+    {
+      "id": "opencode-plugin-inject-subagent-context",
+      "kind": "platform",
+      "platform": "opencode",
+      "source": ".opencode/plugins/inject-subagent-context.js",
+      "target": ".opencode/plugins/inject-subagent-context.js"
     }
   ],
   "agentOnly": {
     "skipKinds": [],
-    "forbiddenPaths": [".trellis/tasks", ".trellis/workspace", ".trellis/.runtime"]
+    "forbiddenPaths": [
+      ".trellis/tasks",
+      ".trellis/workspace",
+      ".trellis/.runtime"
+    ]
   }
 }

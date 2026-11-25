@@ -84,6 +84,15 @@ test('skill source and overlay scripts stay byte-identical and dead claude skill
   )
   assert.equal(dupClaudeSkills.length, 0)
 
+  const openCodePlugins = manifest.components.filter(
+    (item) => item.platform === 'opencode' && String(item.target).startsWith('.opencode/plugins/'),
+  )
+  assert.equal(openCodePlugins.length, 3)
+  for (const plugin of openCodePlugins) {
+    const source = fs.readFileSync(path.join(KIT_DIR, 'overlay', plugin.source), 'utf8')
+    assert.match(source, /export default \{ id: "[^"]+", effect: server \}/)
+  }
+
   for (const rel of ['.trellis/scripts/task.py', '.trellis/scripts/common/task_store.py']) {
     assert.equal(
       fs
@@ -97,6 +106,17 @@ test('skill source and overlay scripts stay byte-identical and dead claude skill
   withTempDir('trellis-kit-skills-', (tmp) => {
     runPython([APPLY_PY, '--target', tmp, '--force', '--platform', 'claude-code'])
     runPython([APPLY_PY, '--target', tmp, '--force', '--platform', 'codex'])
+    runPython([APPLY_PY, '--target', tmp, '--force', '--platform', 'opencode'])
+
+    for (const plugin of openCodePlugins) {
+      assert.equal(
+        fs
+          .readFileSync(path.join(tmp, plugin.target), 'utf8')
+          .includes('export default { id:'),
+        true,
+        `${plugin.target} was not applied`,
+      )
+    }
 
     assert.equal(
       fs
