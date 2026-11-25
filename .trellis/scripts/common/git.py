@@ -6,6 +6,7 @@ Single source of truth for running git commands across all Trellis scripts.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -48,6 +49,9 @@ def run_git(
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            ),
         )
         return result.returncode, result.stdout, result.stderr
     except Exception as e:

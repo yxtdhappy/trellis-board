@@ -96,6 +96,21 @@ test('skill source and overlay scripts stay byte-identical and dead claude skill
     assert.doesNotMatch(source, /MESSAGES_TRANSFORM_HOOK\]:/)
   }
 
+  for (const rel of ['.opencode/lib/session-utils.js', '.opencode/lib/trellis-context.js']) {
+    assert.match(
+      fs.readFileSync(path.join(KIT_DIR, 'overlay', rel), 'utf8'),
+      /windowsHide:\s*true/,
+      `${rel} must hide Windows child consoles`,
+    )
+  }
+  for (const rel of ['.trellis/scripts/common/git.py', '.trellis/scripts/common/session_context.py']) {
+    assert.match(
+      fs.readFileSync(path.join(KIT_DIR, 'overlay', rel), 'utf8'),
+      /CREATE_NO_WINDOW/,
+      `${rel} must hide Windows child consoles`,
+    )
+  }
+
   for (const rel of ['.trellis/scripts/task.py', '.trellis/scripts/common/task_store.py']) {
     assert.equal(
       fs

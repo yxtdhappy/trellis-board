@@ -337,6 +337,9 @@ def _fetch_trellis_version_output() -> str | None:
             encoding="utf-8",
             errors="replace",
             timeout=_UPDATE_CHECK_TIMEOUT_SECONDS,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            ),
         )
     except (OSError, subprocess.SubprocessError, TimeoutError):
         return None
