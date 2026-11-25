@@ -1866,3 +1866,46 @@ set_task_ownership 改为只扫描 decisions 涉及的 taskDir；快照/ownershi
 ### Status
 
 [OK] **Completed**
+
+
+## Session 78: 加固 wit-e2e-testing 并拆分 API/UI E2E 技能
+<!-- trellis-session: v=2 fp=f562eebe7be8fa74 -->
+
+**Date**: 2026-11-25
+**Task**: 加固 wit-e2e-testing 并拆分 API/UI E2E 技能
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成接口 E2E 证据/凭据加固，拆分为 wit-api-e2e 与 wit-ui-e2e，同步 .claude/.agents 与 wit-trellis-task-delivery，归档旧技能。
+
+### Main Changes
+
+- 代理 query 日志脱敏、token 文件所有权、脱敏 fail-closed、字符串 code、REQUIRE_JSON/CODE 与占位符断言
+- 新增 wit-api-e2e（Bash/PS 自测 14/14、12/12）与 wit-ui-e2e（方案 A，无 scripts）
+- 同步 .agents 技能根与 wit-trellis-task-delivery 两副本，归档旧 wit-e2e-testing
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e7ccd2a` | chore(task): 加固 E2E 技能证据与凭据处理 |
+| `97ea957` | docs(task): 校正 11-24 证据快照说明 |
+| `6c3a9b2` | chore(task): 记录 11-24 提交与检查覆盖 |
+| `e6222cc` | chore(task): 绑定 11-24 检查覆盖到任务提交 |
+| `8f95e7b` | chore(task): archive 11-24-harden-wit-e2e-testing-evidence |
+
+### Testing
+
+- [OK] bash wit-api-e2e/scripts/self-test/run.sh → 14/14 PASS
+- [OK] pwsh -File wit-api-e2e/scripts/self-test/run.ps1 → 12/12 PASS
+- [OK] task.py verify --strict → No findings；task.py archive → completed
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 后续任务按 Trellis 流程使用 wit-api-e2e / wit-ui-e2e
