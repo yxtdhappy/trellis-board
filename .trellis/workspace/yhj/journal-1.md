@@ -1841,3 +1841,28 @@ set_task_ownership 改为只扫描 decisions 涉及的 taskDir；快照/ownershi
 ### Status
 
 [OK] **Completed**
+
+
+## Session 77: 内置 trellis-api-e2e 技能并发布 v0.5.3
+<!-- trellis-session: v=2 fp=6a542d382e9420d1 -->
+
+**Date**: 2026-11-25
+**Task**: 内置 trellis-api-e2e 技能并发布 v0.5.3
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+将 14 文件 API E2E 技能作为 trellis-kit 目录组件分发到 7 个平台；接入 workflow/check/finish 软提醒；通过独立 check、合并 main、发布 v0.5.3。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e2f8ceb` | feat(trellis): 内置 trellis-api-e2e 技能并接入后端 E2E 流程 |
+| `0be4146` | chore(task): record commit e2f8ceb |
+| `dec8897` | chore(release): 0.5.3 |
+
+### Status
+
+[OK] **Completed**
