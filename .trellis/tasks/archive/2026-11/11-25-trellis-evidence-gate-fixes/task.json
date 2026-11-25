@@ -3,7 +3,7 @@
   "name": "trellis-evidence-gate-fixes",
   "title": "修复 trellis-kit 与任务状态证据门 3 处 P1 缺陷",
   "description": "同步 trellis-task-state SKILL.md 分发源，修复 state_persist_degraded 无法解除与 task_type_pending 绕过 archive 证据门问题",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "task_type": "simple",
   "work_type": "backend",
@@ -13,11 +13,11 @@
   "creator": "flyfly6",
   "assignee": "flyfly6",
   "createdAt": "2026-11-25",
-  "completedAt": null,
+  "completedAt": "2026-11-25",
   "branch": "trellis-continue-11-25-evidence-gate-fixes",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "f29e33d1bf8bfa3bf4f628d453ebfc0a48dbd9cb",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -27,6 +27,10 @@
   "meta": {
     "label_source": "user-explicit",
     "task_type_updated_at": "2026-11-25T11:41:26",
-    "task_type_updated_reason": "3 处边界清晰的脚本与 overlay 定向修复，无跨层设计或迁移"
+    "task_type_updated_reason": "3 处边界清晰的脚本与 overlay 定向修复，无跨层设计或迁移",
+    "commits": [
+      "f29e33d1bf8bfa3bf4f628d453ebfc0a48dbd9cb"
+    ],
+    "commit_set_at": "2026-11-25T12:43:31"
   }
 }
