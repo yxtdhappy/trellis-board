@@ -1087,10 +1087,22 @@ fn trellis_kit_root(app: &AppHandle) -> Option<PathBuf> {
             return Some(path);
         }
     }
+    match crate::kit_assets::ensure_kit(&crate::config::data_dir()) {
+        Ok(path) => return Some(path),
+        Err(error) => crate::logging::warn(&format!("无法释放内嵌 trellis-kit：{error}")),
+    }
     if let Ok(resource_dir) = app.path().resource_dir() {
         let path = resource_dir.join("trellis-kit");
         if path.is_dir() {
             return Some(path);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let path = parent.join("trellis-kit");
+            if path.is_dir() {
+                return Some(path);
+            }
         }
     }
     let dev = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../trellis-kit");

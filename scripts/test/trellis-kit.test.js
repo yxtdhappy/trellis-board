@@ -84,6 +84,15 @@ test('skill source and overlay scripts stay byte-identical and dead claude skill
   )
   assert.equal(dupClaudeSkills.length, 0)
 
+  const openCodePlugins = manifest.components.filter(
+    (item) => item.platform === 'opencode' && String(item.target).startsWith('.opencode/plugins/'),
+  )
+  assert.equal(openCodePlugins.length, 3)
+  for (const plugin of openCodePlugins) {
+    const source = fs.readFileSync(path.join(KIT_DIR, 'overlay', plugin.source), 'utf8')
+    assert.match(source, /export default \{ id: "[^"]+", effect: server \}/)
+  }
+
   for (const rel of ['.trellis/scripts/task.py', '.trellis/scripts/common/task_store.py']) {
     assert.equal(
       fs
@@ -97,6 +106,17 @@ test('skill source and overlay scripts stay byte-identical and dead claude skill
   withTempDir('trellis-kit-skills-', (tmp) => {
     runPython([APPLY_PY, '--target', tmp, '--force', '--platform', 'claude-code'])
     runPython([APPLY_PY, '--target', tmp, '--force', '--platform', 'codex'])
+    runPython([APPLY_PY, '--target', tmp, '--force', '--platform', 'opencode'])
+
+    for (const plugin of openCodePlugins) {
+      assert.equal(
+        fs
+          .readFileSync(path.join(tmp, plugin.target), 'utf8')
+          .includes('export default { id:'),
+        true,
+        `${plugin.target} was not applied`,
+      )
+    }
 
     assert.equal(
       fs
@@ -277,5 +297,83 @@ test('apply.py syncs TRELLIS-BOARD workflow rules into AGENTS.md idempotently', 
 
     runPython([APPLY_PY, '--target', tmp])
     assert.equal(fs.readFileSync(path.join(tmp, 'AGENTS.md'), 'utf8').trim(), snippet)
+  })
+})
+
+test('portable package stays single-file and build.rs embeds trellis-kit', (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('portable packaging is Windows-only')
+    return
+  }
+
+  const pwsh = process.env.TRELLIS_PWSH || 'pwsh'
+  try {
+    execFileSync(pwsh, ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  } catch {
+    t.skip('pwsh is not available')
+    return
+  }
+
+  withTempDir('trellis-portable-', (sandbox) => {
+    const release = path.join(sandbox, 'release')
+    const output = path.join(release, 'bundle', 'portable')
+    fs.mkdirSync(release, { recursive: true })
+    fs.writeFileSync(path.join(release, 'trellis-board-client.exe'), 'fake executable')
+
+    execFileSync(
+      pwsh,
+      [
+        '-NoProfile',
+        '-File',
+        path.join(ROOT_DIR, 'packages/desktop/package-portable.ps1'),
+        '-ReleaseDirectory',
+        release,
+        '-OutputDirectory',
+        output,
+      ],
+      { cwd: ROOT_DIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+
+    const packageDir = fs
+      .readdirSync(output)
+      .find(
+        (name) =>
+          name.startsWith('TrellisBoard_') &&
+          fs.statSync(path.join(output, name)).isDirectory(),
+      )
+    assert.ok(packageDir, 'portable package directory missing')
+
+    for (const relative of [
+      'trellis-board-client.exe',
+      'VERSION.txt',
+      'SHA256SUMS.txt',
+      '使用说明.txt',
+    ]) {
+      assert.equal(
+        fs.existsSync(path.join(output, packageDir, relative)),
+        true,
+        `portable package is missing ${relative}`,
+      )
+    }
+    assert.equal(
+      fs.existsSync(path.join(output, packageDir, 'trellis-kit')),
+      false,
+      'portable package must not ship trellis-kit as a sibling directory',
+    )
+
+    const buildSource = fs.readFileSync(
+      path.join(ROOT_DIR, 'packages/desktop/src-tauri/build.rs'),
+      'utf8',
+    )
+    assert.match(buildSource, /trellis-kit/)
+    assert.match(buildSource, /embedded_kit_assets/)
+    assert.equal(
+      fs.existsSync(
+        path.join(ROOT_DIR, 'packages/desktop/src-tauri/src/kit_assets.rs'),
+      ),
+      true,
+    )
   })
 })

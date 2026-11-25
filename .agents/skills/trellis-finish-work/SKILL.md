@@ -65,6 +65,8 @@ If it reports a missing commit, missing implementation/check evidence, missing r
 
 Do not archive past a failing gate. For a research/no-code task, run `archive <task-name> --planning-only` instead. `task.py archive` itself now treats warnings as blocking, so a successful archive is also a strict evidence check.
 
+For a backend code task (`work_type=backend`; or the backend-interface part of `fullstack`), also check `{TASK_DIR}/api-e2e-report.md` before archiving. This is a soft workflow requirement, not a `task.py verify` failure: if it is missing, surface it to the user and ask whether to run `trellis-api-e2e` first; if there is no API change, require a "not applicable" + reason in the report.
+
 ## Step 4: Archive task(s)
 
 ```bash

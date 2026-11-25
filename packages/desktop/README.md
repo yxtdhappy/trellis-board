@@ -1,7 +1,8 @@
 # Trellis Board Windows 客户端
 
 Tauri v2 客户端：Agent（心跳、SSE 事件、任务空间同步、任务命令）全部在
-`trellis-board-client.exe` 内以 Rust 实现，没有任何 sidecar 或内置 Node 运行时。绿色包只含一个 EXE；
+`trellis-board-client.exe` 内以 Rust 实现，没有任何 sidecar 或内置 Node 运行时。`trellis-kit` 工作流覆盖层
+内嵌在 EXE 中，首次初始化时释放到 `%LOCALAPPDATA%\TrellisBoard\data\runtime\kit`；绿色包只含一个 EXE 和说明文件。
 本机插件宿主（Node）只在用户启用至少一个本机插件时按需拉起。客户端冷启动先做运行环境检查，再显示
 本地登录页；登录成功后当前 WebView 进入 Board。
 
@@ -406,7 +407,8 @@ yarn build --target=portable
 `packages/web/src/desktop`，组件复用 `packages/web/src/components/ui`），已在 `.gitignore` 中忽略；`cargo tauri build`
 只打包 `tauri.conf.json` 的 `frontendDist = ../ui`，不会替你构建前端，缺步骤会打出空窗口。
 运行期不需要 Node.js，也没有 sidecar：`cargo tauri build` 只产出单个客户端 EXE，`bundle.active = false`
-不做任何打包，不再生成 NSIS 安装器。
+不做任何打包，不再生成 NSIS 安装器。`cargo tauri build` 会把 `trellis-kit/` 嵌入 EXE；
+`package-portable.ps1` 只组装单文件 EXE、版本与说明。
 
 产物：
 

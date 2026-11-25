@@ -1,0 +1,4 @@
+{"actor": "yhj", "at": "2026-11-25T06:15:55+00:00", "event": "status_transition", "from": "planning", "reason": "task.py start", "schemaVersion": 1, "to": "in_progress"}
+{"actor": null, "at": "2026-11-25T06:15:55+00:00", "event": "state_committed", "from": "in_progress", "reason": "task.py start --commit-state", "schemaVersion": 1, "to": "in_progress"}
+{"actor": "yhj", "at": "2026-11-25T06:38:47+00:00", "commit": "e2f8ceb5c795741fdf307f23a614bfdca8803cbd", "event": "commit_set", "from": "in_progress", "schemaVersion": 1, "to": "in_progress"}
+{"actor": "yhj", "at": "2026-11-25T06:58:57+00:00", "event": "status_transition", "from": "in_progress", "reason": "task.py archive", "schemaVersion": 1, "to": "completed"}

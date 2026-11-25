@@ -56,6 +56,13 @@ Run the project's lint, type-check, and test commands. Fix any failures before p
 - [ ] Bug fix → regression test added?
 - [ ] Changed behavior → existing tests updated?
 
+### Backend API E2E
+
+- [ ] `work_type=backend`（或 `fullstack` 改到后端接口）时，是否已跑一轮本机 `trellis-api-e2e`？
+- [ ] `{TASK_DIR}/api-e2e-report.md` 是否存在，且包含请求、对应后端日志、响应/落库复核？
+- [ ] 没有接口改动时，报告是否写明“不适用”及原因？
+- [ ] 这是软性流程要求，不作为 `task.py verify` 硬失败；缺失时在 check report 中明确记录。
+
 ### Spec Sync
 
 - [ ] Does `.trellis/spec/` need updates? (new patterns, conventions, lessons learned)

@@ -4,8 +4,8 @@
   组装 Trellis Board Windows x64 绿色 ZIP 包。
 
 .DESCRIPTION
-  只打包 `cargo tauri build` 产出的单个客户端 EXE，附加版本文件、SHA256 清单和使用说明。
-  客户端不再携带 Node 运行时或 sidecar 可执行体。
+  打包 `cargo tauri build` 产出的客户端 EXE，附加版本文件、SHA256 清单和使用说明。
+  客户端不再携带 Node 运行时或 sidecar 可执行体；trellis-kit 已内嵌在 EXE 中。
 
   退出码：
     0 成功

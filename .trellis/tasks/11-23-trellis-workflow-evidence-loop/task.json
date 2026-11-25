@@ -17,10 +17,12 @@
   "branch": "feat/trellis-workflow-evidence-loop",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": "66f83726ae2ecfcc42698e6ce2f95f2c5990a926",
+  "commit": "c88ac06ed4c1e4564153b75b6f46bb0908ed2931",
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "11-25-integrate-api-e2e-workflow"
+  ],
   "parent": null,
   "relatedFiles": [
     ".trellis/workflow.md",
@@ -73,8 +75,9 @@
   "meta": {
     "commits": [
       "14fa6a3e865b29a02bed71fbe15595e4a60adc73",
-      "66f83726ae2ecfcc42698e6ce2f95f2c5990a926"
+      "66f83726ae2ecfcc42698e6ce2f95f2c5990a926",
+      "c88ac06ed4c1e4564153b75b6f46bb0908ed2931"
     ],
-    "commit_set_at": "2026-11-25T10:32:20"
+    "commit_set_at": "2026-11-25T15:09:03"
   }
 }
