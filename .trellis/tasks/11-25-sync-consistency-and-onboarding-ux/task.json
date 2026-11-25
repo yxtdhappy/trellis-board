@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "53a4d2557543e895a3c2f6ab648bbb8b80c7f42e",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -27,6 +27,10 @@
   "meta": {
     "label_source": "user-explicit",
     "task_type_updated_at": "2026-11-25T16:39:06",
-    "task_type_updated_reason": "补标跨端同步与前端弹窗改造复杂任务类型"
+    "task_type_updated_reason": "补标跨端同步与前端弹窗改造复杂任务类型",
+    "commits": [
+      "53a4d2557543e895a3c2f6ab648bbb8b80c7f42e"
+    ],
+    "commit_set_at": "2026-11-25T16:40:13"
   }
 }
