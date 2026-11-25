@@ -1895,3 +1895,26 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 60: 应用与页面名称支持环境变量配置与去硬编码
+<!-- trellis-session: v=2 fp=499583c99929166a -->
+
+**Date**: 2026-11-25
+**Task**: 应用与页面名称支持环境变量配置与去硬编码
+**Package**: server
+**Branch**: `trellis-continue-configurable-app-name`
+
+### Summary
+
+支持通过 TRELLIS_BOARD_APP_NAME 环境变量配置应用与页面展示名称（.env 默认 Weint Spec Board），去除源码/HTML/前端/桌面端硬编码品牌文案，并保持底层技术标识不变。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dbf8aff` | feat(config): 应用与页面名称支持环境变量与运行时下发且去除硬编码品牌文案 |
+
+### Status
+
+[OK] **Completed**
