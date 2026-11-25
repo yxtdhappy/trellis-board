@@ -30,8 +30,8 @@
     "check_override": {
       "by": "yhj",
       "reason": "check-report.md 由主会话按 inline-self-check 生成；当前任务无 trellis-check 子代理类型，验证以自测/结构检查/UI smoke 记录为准",
-      "commit": "e7ccd2a",
-      "at": "2026-11-25T15:28:35"
+      "commit": "e7ccd2afc6039a2718385509039514082c66d311",
+      "at": "2026-11-25T15:28:51"
     }
   }
 }
