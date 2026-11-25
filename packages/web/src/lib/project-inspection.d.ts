@@ -1,3 +1,33 @@
+export type CompanySpecTemplateOption = {
+  id: string
+  label: string
+  group: string
+}
+
+export type CompanySpecDetected = {
+  projectType: string
+  template: string
+  evidence: string[]
+  warning: string
+}
+
+export type CompanySpecAvailability = {
+  available: boolean
+  enabledByDefault: boolean
+  name: string
+  templates: CompanySpecTemplateOption[]
+  detected: CompanySpecDetected | null
+}
+
+export type CompanySpecOutcome = {
+  attempted: boolean
+  applied: boolean
+  projectType: string | null
+  template: string | null
+  warning: string | null
+  evidence: string[]
+}
+
 export type ProjectInspection = {
   root: string
   repositoryName: string
@@ -15,3 +45,5 @@ export type ProjectInspection = {
 }
 
 export function normalizeProjectInspection(value: unknown): ProjectInspection | null
+export function normalizeCompanySpecAvailability(value: unknown): CompanySpecAvailability | null
+export function normalizeCompanySpecOutcome(value: unknown): CompanySpecOutcome | null

@@ -568,6 +568,7 @@ async fn initialize_pending_project(
     window: WebviewWindow,
     developer_id: String,
     agent_tools: Vec<String>,
+    company_spec_selection: Option<String>,
 ) -> Result<serde_json::Value, String> {
     ensure_board_caller(&app, &window)?;
     let developer_id = validate_developer_id(&developer_id)?;
@@ -579,8 +580,53 @@ async fn initialize_pending_project(
         .map_err(|_| "无法读取待接入项目路径".to_string())?
         .clone()
         .ok_or_else(|| "请先选择本地 Git 项目目录".to_string())?;
-    agent_service::initialize_project(&app, &path.to_string_lossy(), &developer_id, &agent_tools)
-        .await
+    agent_service::initialize_project(
+        &app,
+        &path.to_string_lossy(),
+        &developer_id,
+        &agent_tools,
+        company_spec_selection.as_deref(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn inspect_company_spec(
+    app: AppHandle,
+    window: WebviewWindow,
+    repo_path: String,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    agent_service::inspect_company_spec(&app, &repo_path).await
+}
+
+#[tauri::command]
+async fn plan_company_spec(
+    app: AppHandle,
+    window: WebviewWindow,
+    repo_path: String,
+    selection: Option<String>,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    agent_service::plan_company_spec(&app, &repo_path, selection.as_deref()).await
+}
+
+#[tauri::command]
+async fn apply_company_spec(
+    app: AppHandle,
+    window: WebviewWindow,
+    repo_path: String,
+    selection: Option<String>,
+    strategy: String,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    agent_service::apply_company_spec(
+        &app,
+        &repo_path,
+        selection.as_deref(),
+        &strategy,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -800,7 +846,7 @@ async fn initialize_associated_project_agents(
     let repo_path = approved_association_for_task_space(&associations, &task_space_id)?
         .repo_path
         .clone();
-    agent_service::initialize_project(&app, &repo_path, &developer_id, &agent_tools).await
+    agent_service::initialize_project(&app, &repo_path, &developer_id, &agent_tools, None).await
 }
 
 #[tauri::command]
@@ -1106,6 +1152,9 @@ fn main() {
             pick_local_project_folder,
             inspect_local_project,
             initialize_pending_project,
+            inspect_company_spec,
+            plan_company_spec,
+            apply_company_spec,
             check_pending_project_push,
             commit_and_push_pending_project,
             preflight_pending_project,

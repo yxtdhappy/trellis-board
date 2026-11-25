@@ -15,7 +15,23 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { TRELLIS_VISIBLE_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import { pickProjectTrellisDevId } from '@/lib/team-client.js'
-import { normalizeProjectInspection, type ProjectInspection } from '@/lib/project-inspection.js'
+import {
+  normalizeCompanySpecAvailability,
+  normalizeCompanySpecOutcome,
+  normalizeProjectInspection,
+  type CompanySpecAvailability,
+  type CompanySpecOutcome,
+  type ProjectInspection,
+} from '@/lib/project-inspection.js'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   normalizePushState,
   onboardingErrorMessage,
@@ -45,7 +61,14 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { StatusPill, toneSurface } from '@/components/ui/status-pill'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 
-type OnboardingFeedback = { tone: 'status' | 'error'; text: string } | null
+type OnboardingFeedback = { tone: 'status' | 'warning' | 'error'; text: string } | null
+
+const COMPANY_SPEC_GROUPS = [
+  { id: 'frontend', label: '前端' },
+  { id: 'backend', label: '后端' },
+  { id: 'fullstack', label: '全栈' },
+  { id: 'other', label: '其他' },
+] as const
 
 function PreflightDifferenceList({ items }: { items: SnapshotDifference[] }) {
   if (!items.length) return null
@@ -104,6 +127,9 @@ export function ProjectOnboardingDialog({
   const [associationsLoaded, setAssociationsLoaded] = useState(false)
   const [associationLoadError, setAssociationLoadError] = useState('')
   const [feedback, setFeedback] = useState<OnboardingFeedback>(null)
+  const [companySpec, setCompanySpec] = useState<CompanySpecAvailability | null>(null)
+  const [companySpecSelection, setCompanySpecSelection] = useState('none')
+  const [companySpecOutcome, setCompanySpecOutcome] = useState<CompanySpecOutcome | null>(null)
   const [busy, setBusy] = useState(false)
   const [requiresInitialPush, setRequiresInitialPush] = useState(false)
   const pushCheckInFlight = useRef(false)
@@ -123,6 +149,9 @@ export function ProjectOnboardingDialog({
     setPush(null)
     setPreflight(null)
     setFeedback(null)
+    setCompanySpec(null)
+    setCompanySpecSelection('none')
+    setCompanySpecOutcome(null)
     setBusy(false)
     setRequiresInitialPush(false)
   }, [open, path])
@@ -156,6 +185,12 @@ export function ProjectOnboardingDialog({
           setLoading(false)
           return
         }
+        const nextCompanySpec = normalizeCompanySpecAvailability(value)
+        setCompanySpec(nextCompanySpec)
+        setCompanySpecSelection(
+          nextCompanySpec?.available && nextCompanySpec.enabledByDefault ? 'auto' : 'none',
+        )
+        setCompanySpecOutcome(null)
         setSelectedTools(next.existingAgentTools.filter((id) => id === 'codex'))
         setRequiresInitialPush(Boolean(next.hasTrellis && !next.hasCommittedTrellis))
         setInspection(next)
@@ -222,6 +257,9 @@ export function ProjectOnboardingDialog({
     !inspection?.hasTrellis ||
     !inspection?.hasTasks ||
     Boolean(inspection && missingTools.some((tool) => selectedTools.includes(tool.id)))
+  const initializesTaskTree = Boolean(
+    inspection && (!inspection.hasTrellis || !inspection.hasTasks),
+  )
   const requiresPushCheck = requiresInitialPush
   const pushReady = push?.state === 'ready'
   const preflightBlockedReason = inspection
@@ -270,21 +308,31 @@ export function ProjectOnboardingDialog({
     const initializesTaskTree = !inspection.hasTrellis || !inspection.hasTasks
     const needsInitialPush = requiresInitialPush || initializesTaskTree
     try {
+      const applyCompanySpec = initializesTaskTree && companySpec?.available === true
       const result = await invoke('initialize_pending_project', {
         developerId: developerId.trim(),
         agentTools: selectedTools,
+        companySpecSelection: applyCompanySpec ? companySpecSelection : null,
       })
       const next = normalizeProjectInspection(result)
       if (!next) throw new Error('初始化后没有返回有效项目信息')
+      const outcome = normalizeCompanySpecOutcome(result)
       setInspection(next)
+      setCompanySpecOutcome(outcome)
       setRequiresInitialPush(needsInitialPush)
       setPush(null)
       setPreflight(null)
+      const baseText = needsInitialPush
+        ? 'Trellis 初始化完成。请提交并推送共享初始化文件。'
+        : '本机编码 Agent 工具初始化完成，不影响当前任务空间接入。'
+      const outcomeText = outcome?.attempted
+        ? outcome.applied
+          ? `已套用公司规范模板 ${outcome.template}。`
+          : `公司规范模板未套用：${outcome.warning || '未知原因'}`
+        : ''
       setFeedback({
-        tone: 'status',
-        text: needsInitialPush
-          ? 'Trellis 初始化完成。请提交并推送共享初始化文件。'
-          : '本机编码 Agent 工具初始化完成，不影响当前任务空间接入。',
+        tone: outcome?.attempted && !outcome.applied ? 'warning' : 'status',
+        text: [baseText, outcomeText].filter(Boolean).join(' '),
       })
     } catch (error) {
       setFeedback({ tone: 'error', text: onboardingErrorMessage(error, 'Trellis 初始化失败') })
@@ -581,6 +629,56 @@ export function ProjectOnboardingDialog({
 
               {!inspection.hasTrellis || !inspection.hasTasks || missingTools.length ? (
                 <div className="flex flex-col gap-2">
+                  {initializesTaskTree && companySpec?.available ? (
+                    <Field className="gap-1.5">
+                      <FieldLabel htmlFor="onboard-company-spec">公司开发规范</FieldLabel>
+                      <Select
+                        value={companySpecSelection}
+                        onValueChange={(value) => {
+                          setCompanySpecSelection(String(value ?? 'none'))
+                          setCompanySpecOutcome(null)
+                          setFeedback(null)
+                        }}
+                        disabled={busy}
+                      >
+                        <SelectTrigger id="onboard-company-spec" className="w-full rounded-md">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">不套用</SelectItem>
+                          <SelectItem value="auto">自动识别（推荐）</SelectItem>
+                          {COMPANY_SPEC_GROUPS.map((group) => {
+                            const options = companySpec.templates.filter(
+                              (template) => template.group === group.id,
+                            )
+                            if (!options.length) return null
+                            return (
+                              <SelectGroup key={group.id}>
+                                <SelectLabel>{group.label}</SelectLabel>
+                                {options.map((template) => (
+                                  <SelectItem key={template.id} value={template.id}>
+                                    {template.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            )
+                          })}
+                        </SelectContent>
+                      </Select>
+                      {companySpecSelection === 'auto' && companySpec.detected ? (
+                        <p className="text-xs text-muted-foreground">
+                          {companySpec.detected.template
+                            ? `检测到 ${companySpec.detected.projectType || '当前技术栈'}，将套用 ${companySpec.detected.template}。`
+                            : companySpec.detected.warning || '无法自动识别技术栈，将不套用。'}
+                        </p>
+                      ) : null}
+                      {companySpecOutcome?.attempted && companySpecOutcome.applied ? (
+                        <p className="text-xs text-muted-foreground">
+                          已套用 {companySpecOutcome.template}。
+                        </p>
+                      ) : null}
+                    </Field>
+                  ) : null}
                   <AgentToolSelector
                     existingTools={inspection.existingAgentTools}
                     selectedTools={selectedTools}
@@ -709,6 +807,10 @@ export function ProjectOnboardingDialog({
           {feedback ? (
             feedback.tone === 'error' ? (
               <FieldError className="text-xs">{feedback.text}</FieldError>
+            ) : feedback.tone === 'warning' ? (
+              <p className="text-xs text-warning" role="status">
+                {feedback.text}
+              </p>
             ) : (
               <p className="text-xs text-muted-foreground" role="status">
                 {feedback.text}

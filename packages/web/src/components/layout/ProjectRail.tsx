@@ -29,6 +29,7 @@ import { useConfirm } from '@/components/ui/confirm-dialog'
 import { listen } from '@/desktop/tauri'
 import { AgentQuickInitDialog } from '@/features/board/dialogs/AgentQuickInitDialog'
 import { BranchListenersDialog } from '@/features/board/dialogs/BranchListenersDialog'
+import { CompanySpecDialog } from '@/features/board/dialogs/CompanySpecDialog'
 import { ProjectOnboardingDialog } from '@/features/board/dialogs/ProjectOnboardingDialog'
 import { TaskOwnershipDialog } from '@/features/board/dialogs/TaskOwnershipDialog'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
@@ -71,6 +72,7 @@ export function ProjectRail({
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [onboardingPath, setOnboardingPath] = useState('')
   const [quickAgentTaskSpaceId, setQuickAgentTaskSpaceId] = useState<string | null>(null)
+  const [companySpecRepoPath, setCompanySpecRepoPath] = useState<string | null>(null)
   const [ownershipTaskSpaceId, setOwnershipTaskSpaceId] = useState<string | null>(null)
   const [inspectingProject, setInspectingProject] = useState(false)
   const [syncingDeferredTaskSpace, setSyncingDeferredTaskSpace] = useState<string | null>(null)
@@ -550,6 +552,7 @@ export function ProjectRail({
               onListener={(taskSpace) => setListenerTaskSpace(taskSpace as TaskSpace)}
               onOwnership={(taskSpaceId) => setOwnershipTaskSpaceId(taskSpaceId)}
               onQuickAgent={(taskSpaceId) => setQuickAgentTaskSpaceId(taskSpaceId)}
+              onOpenCompanySpec={(repoPath) => setCompanySpecRepoPath(repoPath)}
             />
           ))}
 
@@ -659,6 +662,24 @@ export function ProjectRail({
                 )
                 void onRefresh()
               }}
+            />
+            <CompanySpecDialog
+              open={companySpecRepoPath !== null}
+              onOpenChange={(open) => {
+                if (!open) setCompanySpecRepoPath(null)
+              }}
+              repoPath={companySpecRepoPath || ''}
+              projectName={
+                projects.find((project) =>
+                  Array.from(associations.values()).some(
+                    (association) =>
+                      association.status === 'approved' &&
+                      association.repoPath === companySpecRepoPath &&
+                      association.projectId === project.id,
+                  ),
+                )?.name || '本地项目'
+              }
+              invoke={invoke}
             />
             <TaskOwnershipDialog
               open={ownershipTaskSpaceId !== null}

@@ -71,7 +71,7 @@ fn every_agent_tool_declares_rooted_gitignore_paths() {
 fn builds_init_arguments_in_order() {
     let tools = vec!["codex".to_string(), "snow".to_string()];
     assert_eq!(
-        init_args(Path::new(r"C:\runtime\trellis.js"), "dev-1", &tools),
+        init_args(Path::new(r"C:\runtime\trellis.js"), "dev-1", &tools, None),
         vec![
             r"C:\runtime\trellis.js".to_string(),
             "init".to_string(),
@@ -81,6 +81,37 @@ fn builds_init_arguments_in_order() {
             "dev-1".to_string(),
             "--codex".to_string(),
             "--snow".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn appends_company_spec_registry_arguments() {
+    let tools = vec!["codex".to_string()];
+    let spec = CompanySpecInit {
+        registry_url: "ssh://git@example.com/team/specs.git",
+        template: "wit-frontend-vue2",
+    };
+    assert_eq!(
+        init_args(
+            Path::new(r"C:\runtime\trellis.js"),
+            "dev-1",
+            &tools,
+            Some(&spec),
+        ),
+        vec![
+            r"C:\runtime\trellis.js".to_string(),
+            "init".to_string(),
+            "-y".to_string(),
+            "--skip-existing".to_string(),
+            "-u".to_string(),
+            "dev-1".to_string(),
+            "--codex".to_string(),
+            "--registry".to_string(),
+            "ssh://git@example.com/team/specs.git".to_string(),
+            "--template".to_string(),
+            "wit-frontend-vue2".to_string(),
+            "--append".to_string(),
         ]
     );
 }

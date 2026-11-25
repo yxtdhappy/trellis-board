@@ -16,6 +16,8 @@ use tauri::{AppHandle, Emitter, Manager, Wry};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::agent::association::{associate_desktop_project, AssociateParams};
+use crate::agent::company_spec::lifecycle::{self, CompanySpecError};
+use crate::agent::company_spec::{self, CompanySpecRequest};
 use crate::agent::control::ControlHub;
 use crate::agent::credential::CredentialStore;
 use crate::agent::detach;
@@ -1063,7 +1065,13 @@ pub async fn inspect_project(app: &AppHandle, repo_path: &str) -> Result<Value, 
         onboarding::inspect_project(Path::new(repo_path), &hooks, allow_file_remote).await;
     let _ = std::fs::remove_dir_all(&hooks);
     let inspected = inspected.map_err(|error| message(&error))?;
-    Ok(json!({ "ok": true, "project": inspected }))
+    let kit_root = trellis_kit_root(app);
+    let company_spec = company_spec::availability(kit_root.as_deref(), Path::new(repo_path));
+    Ok(json!({
+        "ok": true,
+        "project": inspected,
+        "companySpec": company_spec,
+    }))
 }
 
 fn trellis_runtime() -> AgentResult<TrellisRuntime> {
@@ -1129,12 +1137,25 @@ pub async fn initialize_project(
     repo_path: &str,
     developer_id: &str,
     agent_tools: &[String],
+    company_spec_selection: Option<&str>,
 ) -> Result<Value, String> {
     let service = service(app).map_err(|error| message(&error))?;
     let runtime = trellis_runtime().map_err(|error| message(&error))?;
     let allow_file_remote = service.allow_file_remote();
     let hooks = service.ephemeral_hooks().map_err(|error| message(&error))?;
     let kit_root = trellis_kit_root(app);
+    let company_spec = kit_root.as_deref().and_then(|kit_root| {
+        let feature = company_spec::load_feature(Some(kit_root))?;
+        let (choice, warning) = company_spec::parse_choice(
+            company_spec_selection,
+            feature.enabled_by_default,
+        );
+        Some(CompanySpecRequest {
+            config: company_spec::config(&feature),
+            choice,
+            warning,
+        })
+    });
     let result = onboarding::initialize_project(&onboarding::InitializeOptions {
         repo_path: Path::new(repo_path),
         hooks_dir: &hooks,
@@ -1143,11 +1164,83 @@ pub async fn initialize_project(
         runtime: &runtime,
         allow_file_remote,
         kit_root: kit_root.as_deref(),
+        company_spec,
     })
     .await;
     let _ = std::fs::remove_dir_all(&hooks);
-    let project = result.map_err(|error| message(&error))?;
-    Ok(json!({ "ok": true, "project": project }))
+    let result = result.map_err(|error| message(&error))?;
+    Ok(json!({
+        "ok": true,
+        "project": result.project,
+        "companySpec": result.company_spec,
+    }))
+}
+
+fn lifecycle_error(error: CompanySpecError) -> String {
+    serde_json::to_string(&error).unwrap_or(error.message)
+}
+
+async fn approved_repo_path(app: &AppHandle, repo_path: &str) -> Result<PathBuf, String> {
+    let path = std::fs::canonicalize(repo_path)
+        .map_err(|_| "项目目录不存在或不可访问".to_string())?;
+    if !path.is_dir() {
+        return Err("项目路径不是目录".to_string());
+    }
+    let associations = list_associations(app).await?;
+    let approved = associations.iter().any(|association| {
+        association.status == "approved"
+            && std::fs::canonicalize(&association.repo_path)
+                .map(|candidate| candidate == path)
+                .unwrap_or(false)
+    });
+    if approved {
+        Ok(path)
+    } else {
+        Err("该路径未关联当前 Board".to_string())
+    }
+}
+
+pub async fn inspect_company_spec(
+    app: &AppHandle,
+    repo_path: &str,
+) -> Result<Value, String> {
+    let repo = approved_repo_path(app, repo_path).await?;
+    let kit_root = trellis_kit_root(app).ok_or_else(|| "找不到 trellis-kit".to_string())?;
+    let status = lifecycle::status(Some(&kit_root), &repo);
+    Ok(json!({ "ok": true, "status": status }))
+}
+
+pub async fn plan_company_spec(
+    app: &AppHandle,
+    repo_path: &str,
+    selection: Option<&str>,
+) -> Result<Value, String> {
+    let repo = approved_repo_path(app, repo_path).await?;
+    let runtime = trellis_runtime().map_err(|error| message(&error))?;
+    let kit_root = trellis_kit_root(app).ok_or_else(|| "找不到 trellis-kit".to_string())?;
+    let feature = company_spec::load_feature(Some(&kit_root))
+        .ok_or_else(|| "当前客户端未启用公司规范能力".to_string())?;
+    let plan = lifecycle::plan(&runtime, &kit_root, &repo, &feature, selection, "keep-local")
+        .await
+        .map_err(lifecycle_error)?;
+    Ok(json!({ "ok": true, "plan": plan }))
+}
+
+pub async fn apply_company_spec(
+    app: &AppHandle,
+    repo_path: &str,
+    selection: Option<&str>,
+    strategy: &str,
+) -> Result<Value, String> {
+    let repo = approved_repo_path(app, repo_path).await?;
+    let runtime = trellis_runtime().map_err(|error| message(&error))?;
+    let kit_root = trellis_kit_root(app).ok_or_else(|| "找不到 trellis-kit".to_string())?;
+    let feature = company_spec::load_feature(Some(&kit_root))
+        .ok_or_else(|| "当前客户端未启用公司规范能力".to_string())?;
+    let result = lifecycle::apply(&runtime, &kit_root, &repo, &feature, selection, strategy)
+        .await
+        .map_err(lifecycle_error)?;
+    Ok(json!({ "ok": true, "result": result }))
 }
 
 pub async fn check_initial_push(

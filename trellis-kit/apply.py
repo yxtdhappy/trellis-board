@@ -96,6 +96,62 @@ def load_json(path: Path) -> dict:
     return data
 
 
+def feature_components(manifest: dict) -> dict[str, dict]:
+    return {
+        component["id"]: component
+        for component in manifest.get("components", [])
+        if component.get("kind") == "feature" and isinstance(component.get("id"), str)
+    }
+
+
+def validate_feature_requests(requested: list[str], features: dict[str, dict]) -> int:
+    if not requested:
+        return 0
+    missing = [feature_id for feature_id in requested if feature_id not in features]
+    if missing:
+        available = ", ".join(sorted(features)) or "(none)"
+        print(
+            f"unknown feature(s): {', '.join(missing)}; available: {available}",
+            file=sys.stderr,
+        )
+        return 1
+    for feature_id in requested:
+        descriptor = features[feature_id].get("descriptor")
+        if not isinstance(descriptor, str) or not descriptor:
+            print(f"feature {feature_id}: missing descriptor", file=sys.stderr)
+            return 1
+        descriptor_path = (KIT_ROOT / descriptor).resolve()
+        try:
+            descriptor_path.relative_to(KIT_ROOT)
+        except ValueError:
+            print(f"feature {feature_id}: descriptor escapes kit root", file=sys.stderr)
+            return 1
+        if not descriptor_path.is_file():
+            print(f"feature {feature_id}: missing descriptor {descriptor_path}", file=sys.stderr)
+            return 1
+        data = load_json(descriptor_path)
+        if data.get("id") != feature_id:
+            print(f"feature {feature_id}: descriptor id mismatch", file=sys.stderr)
+            return 1
+    return 0
+
+
+def load_existing_features(marker: Path) -> list[str]:
+    if not marker.is_file():
+        return []
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"warning: cannot read {marker}: {exc}", file=sys.stderr)
+        return []
+    if not isinstance(data, dict):
+        return []
+    values = data.get("features")
+    if not isinstance(values, list):
+        return []
+    return [value for value in values if isinstance(value, str) and value]
+
+
 def selected_platforms(registry: dict, requested: list[str]) -> list[str]:
     available = registry.get("platforms", {})
     if not requested:
@@ -114,11 +170,27 @@ def main() -> int:
     parser.add_argument("--agent-only", action="store_true", help="Install agent assets only; never create task dirs")
     parser.add_argument("--dry-run", action="store_true", help="Print actions without writing")
     parser.add_argument("--force", action="store_true", help="Overwrite existing files")
+    parser.add_argument(
+        "--feature",
+        action="append",
+        default=[],
+        help="Enable an optional feature (repeatable); features are recorded, not copied",
+    )
     args = parser.parse_args()
 
     source = Path(args.source).resolve()
     target = Path(args.target).resolve()
     manifest = load_json(KIT_ROOT / "manifest.json")
+    features = feature_components(manifest)
+    if args.agent_only and args.feature:
+        print("--feature cannot be used with --agent-only", file=sys.stderr)
+        return 1
+    rc = validate_feature_requests(args.feature, features)
+    if rc:
+        return rc
+    if args.dry_run:
+        for feature_id in args.feature:
+            print(f"feature: {feature_id} -> {features[feature_id]['descriptor']}")
     registry = load_json(KIT_ROOT / manifest.get("platformsFile", "platforms/registry.json"))
     platforms = selected_platforms(registry, args.platform)
     platform_configs = registry.get("platforms", {})
@@ -175,6 +247,8 @@ def main() -> int:
 
     for component in manifest.get("components", []):
         kind = component.get("kind", "core")
+        if kind == "feature":
+            continue
         required_platform = component.get("platform")
         if required_platform and required_platform not in platforms:
             continue
@@ -237,6 +311,8 @@ def main() -> int:
 
     if not args.dry_run:
         marker = target / ".trellis" / ".kit-version"
+        existing_features = load_existing_features(marker)
+        enabled_features = sorted({*existing_features, *args.feature})
         marker.parent.mkdir(parents=True, exist_ok=True)
         with marker.open("w", encoding="utf-8", newline="\n") as handle:
             handle.write(
@@ -245,6 +321,7 @@ def main() -> int:
                         "version": manifest.get("version"),
                         "platforms": platforms,
                         "agentOnly": args.agent_only,
+                        "features": enabled_features,
                     },
                     ensure_ascii=False,
                     indent=2,

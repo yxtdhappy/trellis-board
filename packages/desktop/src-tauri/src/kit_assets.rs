@@ -70,6 +70,9 @@ mod tests {
         assert!(KIT_ASSETS
             .iter()
             .any(|(relative, _)| *relative == "platforms/registry.json"));
+        assert!(KIT_ASSETS
+            .iter()
+            .any(|(relative, _)| *relative == "features/company-spec/feature.json"));
     }
 
     #[test]

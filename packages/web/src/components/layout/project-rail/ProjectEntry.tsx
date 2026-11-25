@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FolderGit2, Unlink2, Upload, Users } from 'lucide-react'
+import { BookOpenCheck, FolderGit2, Unlink2, Upload, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusPill, toneSurface } from '@/components/ui/status-pill'
 import { Separator } from '@/components/ui/separator'
@@ -42,6 +42,7 @@ export type ProjectEntryProps = {
   onListener: (taskSpace: unknown) => void
   onOwnership: (taskSpaceId: string) => void
   onQuickAgent: (taskSpaceId: string) => void
+  onOpenCompanySpec: (repoPath: string) => void
 }
 
 export function ProjectEntry(props: ProjectEntryProps) {
@@ -68,6 +69,7 @@ export function ProjectEntry(props: ProjectEntryProps) {
     onListener,
     onOwnership,
     onQuickAgent,
+    onOpenCompanySpec,
   } = props
   const openConflicts = onOpenConflicts
   const openInitialReview = onOpenInitialReview
@@ -147,6 +149,26 @@ export function ProjectEntry(props: ProjectEntryProps) {
           >
             待归属任务 {projectInboxCount}
           </StatusPill>
+        ) : null}
+        {invoke && activeTaskSpace ? (
+          activeAssociation?.status === 'approved' ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="mr-0.5 shrink-0 text-muted-foreground"
+                    aria-label={`查看 ${project.name} 的公司开发规范`}
+                    onClick={() => onOpenCompanySpec(activeAssociation.repoPath)}
+                  />
+                }
+              >
+                <BookOpenCheck className="size-3.5" aria-hidden="true" />
+              </TooltipTrigger>
+              <TooltipContent>公司开发规范</TooltipContent>
+            </Tooltip>
+          ) : null
         ) : null}
         {invoke && activeTaskSpace ? (
           activeAssociation?.status === 'approved' ? (

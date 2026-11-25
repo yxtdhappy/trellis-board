@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "company-spec",
+  "name": "公司开发规范",
+  "version": "1.0.0",
+  "enabledByDefault": false,
+  "registry": "ssh://git@git.weintdata.cn:1022/prod-mdp/weint-dev-specs.git",
+  "templates": {
+    "vue2": "wit-frontend-vue2",
+    "mom3": "wit-frontend-mom3",
+    "react": "wit-frontend-react",
+    "java": "wit-backend-java",
+    "node": "wit-backend-node",
+    "vue2-java": "wit-fullstack-vue2-java",
+    "mom3-java": "wit-fullstack-mom3-java",
+    "react-java": "wit-fullstack-react-java",
+    "react-node": "wit-fullstack-react-node"
+  }
+}

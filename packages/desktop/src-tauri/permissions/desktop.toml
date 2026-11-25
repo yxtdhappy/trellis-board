@@ -51,6 +51,21 @@ description = "当前 Board origin 只能初始化用户刚刚选择的本地项
 commands.allow = ["initialize_pending_project"]
 
 [[permission]]
+identifier = "allow-inspect-company-spec"
+description = "当前 Board origin 只能只读检查已批准关联项目的公司开发规范状态。"
+commands.allow = ["inspect_company_spec"]
+
+[[permission]]
+identifier = "allow-plan-company-spec"
+description = "当前 Board origin 只能对已批准关联项目预览公司开发规范变更。"
+commands.allow = ["plan_company_spec"]
+
+[[permission]]
+identifier = "allow-apply-company-spec"
+description = "当前 Board origin 只能对已批准关联项目套用/更新公司开发规范。"
+commands.allow = ["apply_company_spec"]
+
+[[permission]]
 identifier = "allow-check-pending-project-push"
 description = "当前 Board origin 只能检查用户刚刚选择的本地项目首次推送状态。"
 commands.allow = ["check_pending_project_push"]

@@ -11,6 +11,18 @@ python trellis-kit/apply.py --target /path/to/project --force
 python trellis-kit/apply.py --target /path/to/project --agent-only --platform claude-code --platform codex
 ```
 
+Optional features are declared in `manifest.json` with `"kind": "feature"` and a
+descriptor under `features/`. Passing `--feature <id>` validates the
+descriptor, records the feature in `.trellis/.kit-version`, and does not copy
+the descriptor into the target:
+
+```bash
+python trellis-kit/apply.py --target /path/to/project --feature company-spec
+```
+
+Without `--feature`, previously recorded features are preserved. Features
+cannot be combined with `--agent-only`.
+
 `overlay/` is the self-contained copy of every managed file. The desktop
 client embeds `trellis-kit/` in its executable, extracts it under
 `%LOCALAPPDATA%\TrellisBoard\data\runtime\kit`, and applies it automatically after

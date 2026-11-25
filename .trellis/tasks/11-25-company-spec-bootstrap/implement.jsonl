@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "ProjectOnboardingDialog 反馈样式、组件复用与前端测试要求"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "优先复用 Trellis CLI registry 能力，避免自研注入器"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Rust → Tauri IPC → Web 的返回结构、失败语义与旧客户端兼容"}
+{"file": ".trellis/spec/guides/module-size-guide.md", "reason": "company_spec.rs 与 onboarding/trellis_cli 改动的文件行数上限与拆分规则"}
+{"file": ".trellis/tasks/11-25-company-spec-bootstrap/research/trellis-registry-mechanism.md", "reason": "CLI 0.6.17 registry/template 的参数、index 格式、两段路径约束、回退与哈希行为"}
+{"file": ".trellis/tasks/11-25-company-spec-bootstrap/research/company-wiki-spec-inventory.md", "reason": "公司 Wiki 规范 pageId/版本、模板 bundle 映射与内容缺口"}
+{"file": ".trellis/tasks/11-25-company-spec-bootstrap/research/kit-feature-mechanism.md", "reason": "Board 插件无 init 钩子/文件能力；采用 kit feature + apply.py --feature 的依据与开关语义"}
+{"file": ".trellis/tasks/11-25-company-spec-bootstrap/research/registry-verification.md", "reason": "公司 GitLab 落点、SSH/HTTP 可用性、CLI 解析结果与 registry 仓库创建约束"}

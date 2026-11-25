@@ -117,7 +117,10 @@ test('skill source and overlay scripts stay byte-identical and dead claude skill
       `${rel} must hide Windows child consoles`,
     )
   }
-  for (const rel of ['.trellis/scripts/common/git.py', '.trellis/scripts/common/session_context.py']) {
+  for (const rel of [
+    '.trellis/scripts/common/git.py',
+    '.trellis/scripts/common/session_context.py',
+  ]) {
     assert.match(
       fs.readFileSync(path.join(KIT_DIR, 'overlay', rel), 'utf8'),
       /CREATE_NO_WINDOW/,
@@ -142,9 +145,7 @@ test('skill source and overlay scripts stay byte-identical and dead claude skill
 
     for (const plugin of openCodePlugins) {
       assert.equal(
-        fs
-          .readFileSync(path.join(tmp, plugin.target), 'utf8')
-          .includes('export default { id:'),
+        fs.readFileSync(path.join(tmp, plugin.target), 'utf8').includes('export default { id:'),
         true,
         `${plugin.target} was not applied`,
       )
@@ -340,21 +341,12 @@ test('apply.py records optional features without copying their descriptors', () 
     runPython([APPLY_PY, '--target', target, '--force'], ROOT_DIR)
     let marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'))
     assert.deepEqual(marker.features, [])
-    assert.equal(
-      fs.existsSync(path.join(target, 'features/company-spec/feature.json')),
-      false,
-    )
+    assert.equal(fs.existsSync(path.join(target, 'features/company-spec/feature.json')), false)
 
-    runPython(
-      [APPLY_PY, '--target', target, '--force', '--feature', 'company-spec'],
-      ROOT_DIR,
-    )
+    runPython([APPLY_PY, '--target', target, '--force', '--feature', 'company-spec'], ROOT_DIR)
     marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'))
     assert.deepEqual(marker.features, ['company-spec'])
-    assert.equal(
-      fs.existsSync(path.join(target, 'features/company-spec/feature.json')),
-      false,
-    )
+    assert.equal(fs.existsSync(path.join(target, 'features/company-spec/feature.json')), false)
 
     runPython([APPLY_PY, '--target', target, '--force'], ROOT_DIR)
     marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'))
@@ -368,15 +360,7 @@ test('apply.py records optional features without copying their descriptors', () 
     assert.match(unknown.stderr, /unknown feature/)
 
     const agentOnly = runPythonResult(
-      [
-        APPLY_PY,
-        '--target',
-        target,
-        '--force',
-        '--agent-only',
-        '--feature',
-        'company-spec',
-      ],
+      [APPLY_PY, '--target', target, '--force', '--agent-only', '--feature', 'company-spec'],
       ROOT_DIR,
     )
     assert.notEqual(agentOnly.status, 0)
@@ -401,9 +385,7 @@ test('every manifest component matches the self-contained overlay', () => {
       assert.deepEqual(overlayFiles, sourceFiles, `${component.id} overlay file list differs`)
       for (const rel of sourceFiles) {
         assert.equal(
-          fs
-            .readFileSync(path.join(source, rel))
-            .equals(fs.readFileSync(path.join(overlay, rel))),
+          fs.readFileSync(path.join(source, rel)).equals(fs.readFileSync(path.join(overlay, rel))),
           true,
           `${component.id} overlay differs: ${rel}`,
         )
@@ -463,8 +445,7 @@ test('portable package stays single-file and build.rs embeds trellis-kit', (t) =
       .readdirSync(output)
       .find(
         (name) =>
-          name.startsWith('TrellisBoard_') &&
-          fs.statSync(path.join(output, name)).isDirectory(),
+          name.startsWith('TrellisBoard_') && fs.statSync(path.join(output, name)).isDirectory(),
       )
     assert.ok(packageDir, 'portable package directory missing')
 
@@ -493,9 +474,7 @@ test('portable package stays single-file and build.rs embeds trellis-kit', (t) =
     assert.match(buildSource, /trellis-kit/)
     assert.match(buildSource, /embedded_kit_assets/)
     assert.equal(
-      fs.existsSync(
-        path.join(ROOT_DIR, 'packages/desktop/src-tauri/src/kit_assets.rs'),
-      ),
+      fs.existsSync(path.join(ROOT_DIR, 'packages/desktop/src-tauri/src/kit_assets.rs')),
       true,
     )
   })

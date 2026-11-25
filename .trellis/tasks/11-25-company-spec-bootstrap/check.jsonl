@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 Rust/Node 测试、错误处理、日志脱敏与验证证据是否满足仓库质量门"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查初始化反馈的样式复用、文案与前端测试覆盖"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 Rust → Tauri IPC → Web 的返回结构、失败语义和旧客户端兼容"}
+{"file": ".trellis/spec/guides/module-size-guide.md", "reason": "复查 company_spec.rs 与相关改动没有超过文件行数上限"}
+{"file": ".trellis/tasks/11-25-company-spec-bootstrap/research/trellis-registry-mechanism.md", "reason": "按 CLI 实际行为核对 marker 校验、失败回退、monorepo 与 trellis update 验收"}
+{"file": ".trellis/tasks/11-25-company-spec-bootstrap/research/kit-feature-mechanism.md", "reason": "核对 feature 关闭/不可用/选择不套用时零行为变化，以及 --feature 追加语义"}
+{"file": ".trellis/tasks/11-25-company-spec-bootstrap/research/registry-verification.md", "reason": "核对 registry URL 使用 SSH、仓库为独立 registry、非产品仓库，且模板根有 index.json/marker"}

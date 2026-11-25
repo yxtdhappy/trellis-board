@@ -9,6 +9,7 @@ use std::time::Duration;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
 
+use crate::agent::company_spec::CompanySpecInit;
 use crate::agent::process::{run_process, ProcessOptions, ProcessOutput};
 use crate::agent::protocol::{code, AgentError, AgentResult};
 
@@ -264,7 +265,12 @@ pub fn agent_gitignore_paths(tools: &[String]) -> Vec<&'static str> {
     paths
 }
 
-fn init_args(cli_path: &Path, developer_id: &str, agent_tools: &[String]) -> Vec<String> {
+fn init_args(
+    cli_path: &Path,
+    developer_id: &str,
+    agent_tools: &[String],
+    company_spec: Option<&CompanySpecInit<'_>>,
+) -> Vec<String> {
     let mut args = vec![
         cli_path.to_string_lossy().into_owned(),
         "init".to_string(),
@@ -274,6 +280,13 @@ fn init_args(cli_path: &Path, developer_id: &str, agent_tools: &[String]) -> Vec
         developer_id.to_string(),
     ];
     args.extend(trellis_agent_tool_flags(agent_tools));
+    if let Some(spec) = company_spec {
+        args.push("--registry".to_string());
+        args.push(spec.registry_url.to_string());
+        args.push("--template".to_string());
+        args.push(spec.template.to_string());
+        args.push("--append".to_string());
+    }
     args
 }
 
@@ -319,6 +332,7 @@ pub async fn initialize_trellis(
     repo_path: &Path,
     developer_id: &str,
     agent_tools: &[String],
+    company_spec: Option<&CompanySpecInit<'_>>,
 ) -> AgentResult<()> {
     initialize_with_repair(
         runtime,
@@ -327,6 +341,7 @@ pub async fn initialize_trellis(
         InitMode::Full { developer_id },
         None,
         "Trellis 初始化失败",
+        company_spec,
     )
     .await
 }
@@ -347,6 +362,7 @@ pub async fn initialize_agents(
         InitMode::AgentsOnly,
         Some(developer_id),
         "Trellis Agent 配置失败",
+        None,
     )
     .await
 }
@@ -363,10 +379,11 @@ async fn run_init_process(
     agent_tools: &[String],
     mode: &InitMode<'_>,
     suppress_failure_log: bool,
+    company_spec: Option<&CompanySpecInit<'_>>,
 ) -> AgentResult<ProcessOutput> {
     let (args, stdin) = match mode {
         InitMode::Full { developer_id } => (
-            init_args(&runtime.cli_path, developer_id, agent_tools),
+            init_args(&runtime.cli_path, developer_id, agent_tools, company_spec),
             None,
         ),
         InitMode::AgentsOnly => (
@@ -406,6 +423,7 @@ async fn initialize_with_repair(
     mode: InitMode<'_>,
     developer_id: Option<&str>,
     fallback_prefix: &str,
+    company_spec: Option<&CompanySpecInit<'_>>,
 ) -> AgentResult<()> {
     let normalized_repo = normalize_repo_root(repo_path);
     let repo_path = normalized_repo.as_path();
@@ -428,7 +446,7 @@ async fn initialize_with_repair(
         snapshot_missing_paths(runtime, repo_path, &selected_platforms).await
     };
 
-    let output = run_init_process(runtime, repo_path, agent_tools, &mode, true).await?;
+    let output = run_init_process(runtime, repo_path, agent_tools, &mode, true, company_spec).await?;
     if output.success() {
         return finish_init(repo_path, Ok(())).await;
     }
@@ -455,7 +473,7 @@ async fn initialize_with_repair(
     }
 
     // 只重试一次；补齐或重试失败都必须返回可定位错误，不伪造成功。
-    let retry = run_init_process(runtime, repo_path, agent_tools, &mode, false).await?;
+    let retry = run_init_process(runtime, repo_path, agent_tools, &mode, false, company_spec).await?;
     if !retry.success() {
         return Err(retry_failure(
             agent_tools,

@@ -14,6 +14,10 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use url::Url;
 
+use crate::agent::company_spec::{
+    self, CompanySpecChoice, CompanySpecInit, CompanySpecOutcome, CompanySpecRequest,
+    CompanySpecSelection, SelectionResult,
+};
 use crate::agent::git::{self, GitStatusEntry};
 use crate::agent::http::ApiClient;
 use crate::agent::process::{run_process, ProcessOptions};
@@ -170,6 +174,17 @@ pub struct InitializeOptions<'a> {
     pub allow_file_remote: bool,
     /// Bundled/development `trellis-kit` directory; initialization fails if absent.
     pub kit_root: Option<&'a Path>,
+    /// 公司开发规范套用请求；None 表示 feature 不可用或未启用。
+    pub company_spec: Option<CompanySpecRequest>,
+}
+
+/// `initialize_project` 的返回：项目预检结果 + 本次公司规范套用结果。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InitializeProjectResult {
+    pub project: ProjectInspection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub company_spec: Option<CompanySpecOutcome>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -417,6 +432,7 @@ async fn apply_kit_overlay(
     repo_path: &Path,
     kit_root: Option<&Path>,
     agent_tools: &[String],
+    features: &[String],
 ) -> AgentResult<()> {
     let kit_root = kit_root.ok_or_else(|| {
         AgentError::new(
@@ -448,6 +464,10 @@ async fn apply_kit_overlay(
     for tool in agent_tools {
         args.push("--platform".to_string());
         args.push(tool.clone());
+    }
+    for feature in features {
+        args.push("--feature".to_string());
+        args.push(feature.clone());
     }
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
 
@@ -486,32 +506,120 @@ async fn apply_kit_overlay(
     Ok(())
 }
 
+/// 按请求的选项解析出模板；返回选择结果和要返回给前端的套用状态。
+fn resolve_company_spec(
+    request: &CompanySpecRequest,
+    repo_path: &Path,
+) -> (Option<CompanySpecSelection>, Option<CompanySpecOutcome>) {
+    let result = match &request.choice {
+        CompanySpecChoice::Skip => {
+            return (
+                None,
+                request.warning.as_ref().map(|warning| CompanySpecOutcome {
+                    attempted: false,
+                    applied: false,
+                    project_type: None,
+                    template: None,
+                    warning: Some(warning.clone()),
+                    evidence: Vec::new(),
+                }),
+            );
+        }
+        CompanySpecChoice::Auto => {
+            let detection = company_spec::detect(repo_path);
+            company_spec::select_template(&detection, &request.config.templates)
+        }
+        CompanySpecChoice::Template(template) => {
+            let detection = company_spec::detect(repo_path);
+            company_spec::resolve_manual(template, &request.config, &detection)
+        }
+    };
+    match result {
+        SelectionResult::Selected(selection) => {
+            let outcome = CompanySpecOutcome {
+                attempted: true,
+                applied: false,
+                project_type: selection.project_type.clone(),
+                template: Some(selection.template.clone()),
+                warning: None,
+                evidence: selection.evidence.clone(),
+            };
+            (Some(selection), Some(outcome))
+        }
+        SelectionResult::Skipped {
+            project_type,
+            reason,
+            evidence,
+        } => (
+            None,
+            Some(CompanySpecOutcome {
+                attempted: true,
+                applied: false,
+                project_type: Some(project_type),
+                template: None,
+                warning: Some(reason),
+                evidence,
+            }),
+        ),
+    }
+}
+
 /// 缺 trellis/tasks 时完整初始化；已有任务树且缺 Agent 时只补平台配置。
-pub async fn initialize_project(options: &InitializeOptions<'_>) -> AgentResult<ProjectInspection> {
+pub async fn initialize_project(
+    options: &InitializeOptions<'_>,
+) -> AgentResult<InitializeProjectResult> {
     let inspected = inspect_project(
         options.repo_path,
         options.hooks_dir,
         options.allow_file_remote,
     )
     .await?;
+    let root = PathBuf::from(&inspected.root);
     let selected_tools = normalize_agent_tools(options.agent_tools)?;
     let tools_missing = selected_tools
         .iter()
         .any(|id| !inspected.existing_agent_tools.contains(id));
+    let mut company_spec_outcome: Option<CompanySpecOutcome> = None;
+    let mut selected_spec: Option<CompanySpecSelection> = None;
     match initialization_mode(inspected.has_trellis, inspected.has_tasks, tools_missing) {
         InitializationMode::FullInit => {
+            if let Some(request) = options.company_spec.as_ref() {
+                let (selection, outcome) = resolve_company_spec(request, &root);
+                selected_spec = selection;
+                company_spec_outcome = outcome;
+            }
+            let spec_init =
+                match (options.company_spec.as_ref(), selected_spec.as_ref()) {
+                    (Some(request), Some(selection)) => Some(CompanySpecInit {
+                        registry_url: &request.config.registry,
+                        template: &selection.template,
+                    }),
+                    _ => None,
+                };
             trellis_cli::initialize_trellis(
                 options.runtime,
-                Path::new(&inspected.root),
+                &root,
                 options.developer_id,
                 &selected_tools,
+                spec_init.as_ref(),
             )
             .await?;
+            if let (Some(selection), Some(outcome)) =
+                (selected_spec.as_ref(), company_spec_outcome.as_mut())
+            {
+                match company_spec::verify(&root, selection) {
+                    Ok(()) => outcome.applied = true,
+                    Err(reason) => {
+                        outcome.warning =
+                            Some(format!("公司规范模板已下载但校验失败：{reason}"));
+                    }
+                }
+            }
         }
         InitializationMode::AgentsOnly => {
             trellis_cli::initialize_agents(
                 options.runtime,
-                Path::new(&inspected.root),
+                &root,
                 options.developer_id,
                 &selected_tools,
             )
@@ -521,14 +629,14 @@ pub async fn initialize_project(options: &InitializeOptions<'_>) -> AgentResult<
     }
     // 初始化与 Board workflow 是同一条流程：即使本次无需 trellis init，
     // 也要在 attach 前把 kit 应用到项目，避免新项目只拿到上游默认流程。
-    apply_kit_overlay(
-        Path::new(&inspected.root),
-        options.kit_root,
-        &selected_tools,
-    )
-    .await?;
+    let features: Vec<String> = company_spec_outcome
+        .as_ref()
+        .filter(|outcome| outcome.applied)
+        .map(|_| vec!["company-spec".to_string()])
+        .unwrap_or_default();
+    apply_kit_overlay(&root, options.kit_root, &selected_tools, &features).await?;
     // 即使本次无需初始化也要执行：失败或旧的半成品可以靠重试补齐忽略规则。
-    if let Err(error) = ensure_agent_gitignore(Path::new(&inspected.root), &selected_tools).await {
+    if let Err(error) = ensure_agent_gitignore(&root, &selected_tools).await {
         return Err(AgentError::new(
             &error.code,
             format!(
@@ -537,12 +645,11 @@ pub async fn initialize_project(options: &InitializeOptions<'_>) -> AgentResult<
             ),
         ));
     }
-    inspect_project(
-        Path::new(&inspected.root),
-        options.hooks_dir,
-        options.allow_file_remote,
-    )
-    .await
+    let project = inspect_project(&root, options.hooks_dir, options.allow_file_remote).await?;
+    Ok(InitializeProjectResult {
+        project,
+        company_spec: company_spec_outcome,
+    })
 }
 
 pub async fn check_initial_push_with(
