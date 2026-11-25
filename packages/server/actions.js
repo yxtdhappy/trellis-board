@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { pythonCommandCandidates } from './python.js'
 import { getRepositories } from './repositories.js'
 import { slugifyTaskTitle, TASK_SLUG_PATTERN } from '@trellis-board/shared/slug.js'
@@ -8,6 +8,7 @@ import { isWorkType, WORK_TYPE_IDS } from '@trellis-board/shared/work-types.js'
 
 const ALLOWED_PRIORITIES = new Set(['P0', 'P1', 'P2', 'P3'])
 const WORK_TYPE_FLAG = '--work-type'
+const CREATED_TASK_DIR_PATTERN = /\.trellis[\\/]tasks[\\/]([A-Za-z0-9._-]+)/
 
 function cleanText(value, label, maxLength) {
   if (typeof value !== 'string') throw new Error(`${label}必须是字符串`)
@@ -39,6 +40,75 @@ export function taskScriptSupports(repoPath, flag) {
     const script = path.join(repoPath, '.trellis', 'scripts', 'task.py')
     return fs.readFileSync(script, 'utf8').includes(flag)
   } catch {
+    return false
+  }
+}
+
+/**
+ * 找出 task.py create 刚建好的任务目录（相对 `.trellis/tasks`）。
+ *
+ * 优先从命令输出里取，输出没有目录行时退回 `MM-DD-<slug>` 约定。
+ */
+export function findCreatedTaskDir(repoPath, slug, output) {
+  const tasksRoot = path.join(repoPath, '.trellis', 'tasks')
+  const candidates = []
+  const matched = typeof output === 'string' ? output.match(CREATED_TASK_DIR_PATTERN) : null
+  if (matched) candidates.push(matched[1])
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  candidates.push(`${month}-${day}-${slug}`)
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(tasksRoot, candidate, 'task.json'))) return candidate
+  }
+  return ''
+}
+
+/** 目标仓库当前检出的分支；分离 HEAD、非 git 仓库或 git 不可用时返回空串。 */
+export function readCheckedOutBranch(repoPath) {
+  try {
+    const branch = execFileSync('git', ['-C', repoPath, 'branch', '--show-current'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    return branch.trim()
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 给新建任务补上分支归属。
+ *
+ * `task.py create` 把 `branch` 写成 null（`common/task_store.py` 的初始 dict），
+ * 只有 `task.py start` / `set-branch` 才会填。插件下发固定带 `--no-start`，于是
+ * 新建任务没有分支归属：首次上传时服务端校验任务目录后整批拒绝
+ * `TASK_OWNERSHIP_REQUIRED`，看板上就变成需要手动选分支的"未归属任务"。
+ * 创建后按当前检出分支补齐，已经写过的分支保持不变。
+ */
+export function stampCreatedTaskBranch(repoPath, taskDir, branch) {
+  if (!taskDir || !branch) return false
+  const taskJsonPath = path.join(repoPath, '.trellis', 'tasks', taskDir, 'task.json')
+  let task
+  try {
+    task = JSON.parse(fs.readFileSync(taskJsonPath, 'utf8'))
+  } catch {
+    return false
+  }
+  if (task.branch) return false
+  task.branch = branch
+  const temporaryPath = `${taskJsonPath}.${process.pid}.tmp`
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(task, null, 2)}\n`, 'utf8')
+    fs.renameSync(temporaryPath, taskJsonPath)
+    return true
+  } catch {
+    try {
+      fs.rmSync(temporaryPath, { force: true })
+    } catch {
+      // 清理临时文件的失败不影响创建结果
+    }
     return false
   }
 }
@@ -141,6 +211,8 @@ export async function createTask(input, { listRepositories = getRepositories } =
   if (input.packageName) args.push('--package', cleanText(input.packageName, '包名', 100))
 
   const output = await runTaskPython(repo.path, args)
+  const createdDir = findCreatedTaskDir(repo.path, slug, output.stdout)
+  stampCreatedTaskBranch(repo.path, createdDir, readCheckedOutBranch(repo.path))
   return { repository: repo, output }
 }
 
