@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 61
+- **Total Sessions**: 62
 - **Last Active**: 2026-11-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1938 | Active |
+| `journal-1.md` | ~1967 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 62 | 2026-11-25 | 同步一致性与接入弹窗验收收尾 | `53a4d25`, `ff922ea` | `main` |
 | 60 | 2026-11-25 | 应用与页面名称支持环境变量配置与去硬编码 | `dbf8aff` | `trellis-continue-configurable-app-name` |
 | 59 | 2026-11-25 | 对齐本地项目接入预检与首次同步口径并在弹窗展示差异明细 | `1db54ff` | `continue-onboarding-preflight-parity` |
 | 58 | 2026-11-25 | 修复 trellis-kit 与证据门缺陷并同步 AGENTS.md 工作流规则 | `f29e33d` | `trellis-continue-11-25-evidence-gate-fixes` |

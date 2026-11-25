@@ -1941,3 +1941,27 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 62: 同步一致性与接入弹窗验收收尾
+<!-- trellis-session: v=2 fp=947a1079a86c9c6a -->
+
+**Date**: 2026-11-25
+**Task**: 同步一致性与接入弹窗验收收尾
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+修复 pull_and_startup.rs clippy 告警，补充 agent_service::select_task_sync 运行态复用单测与 POST /api/agent/task-spaces/preflight 跨设备租约 HTTP 测试，完成独立 trellis-check 审查、全量门禁复验与任务归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `53a4d25` | fix(sync): 修复任务同步状态一致性并优化纯服务端任务接入弹窗 |
+| `ff922ea` | fix(sync): 补齐运行态复用与预检路由单测并完善任务验收报告 |
+
+### Status
+
+[OK] **Completed**
