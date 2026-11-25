@@ -44,6 +44,27 @@ function readTaskFile(task, name) {
   }
 }
 
+/**
+ * 把宿主 RPC 的 stderr 翻成能直接照做的提示。
+ *
+ * task.py 的 argparse 先打 usage 再打 `error: ...`；usage 因 choices 太长会折行，
+ * 只取第一行会只剩 `usage: task.py [-h]`，真正的原因被丢掉，所以优先挑带
+ * `error:` 的那一行。
+ */
+export function describeTaskError(message, slug = '') {
+  const raw = stripAnsi(message ?? '')
+  if (/Task already exists/i.test(raw)) {
+    const dir = (raw.match(/Task already exists:\s*(\S+)/) || [])[1] || slug
+    return `任务目录已存在但缺少 task.json：.trellis/tasks/${dir}；删除该空目录后重试同步`
+  }
+  const lines = raw
+    .split('\n')
+    .map((line) => line.replace(/\r+$/, '').trim())
+    .filter((line) => line)
+  const errorLine = lines.find((line) => /error\s*[:：]/i.test(line))
+  return errorLine || lines[0] || '下发失败'
+}
+
 export function createDispatch({ ctx, config, client, session, links, onChanged = () => {} }) {
   const dictionaryCache = new Map()
   const dictionaryTtl = Number(config.cacheTtlMs || 0)
@@ -675,12 +696,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
 
   /** 把宿主 RPC 的原始错误翻成能直接照做的中文提示。 */
   function describeError(error, slug = '') {
-    const raw = stripAnsi(error?.message ?? '')
-    if (/Task already exists/i.test(raw)) {
-      const dir = (raw.match(/Task already exists:\s*(\S+)/) || [])[1] || slug
-      return `任务目录已存在但缺少 task.json：.trellis/tasks/${dir}；删除该空目录后重试同步`
-    }
-    return raw.split('\n').find((line) => line.trim()) || '下发失败'
+    return describeTaskError(error?.message, slug)
   }
 
   function chosenPriority(priority, fallback) {

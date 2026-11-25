@@ -13,6 +13,7 @@ import {
 } from './fixtures/witops-fixture.js'
 import { htmlToMarkdown, safeHtmlToMarkdown, validateMarkdown } from '../html-to-markdown.js'
 import { buildTaskDraft, resolveAssignee, workTypeFromCategory } from '../mapper.js'
+import { describeTaskError } from '../dispatch.js'
 import { createWitopsClient } from '../witops-client.js'
 
 const PLUGIN_ID = 'witops-core'
@@ -94,6 +95,25 @@ function findTaskDirectories(repoRoot) {
 function readTaskJson(directory) {
   return JSON.parse(fs.readFileSync(path.join(directory, 'task.json'), 'utf8'))
 }
+
+test('宿主 stderr 优先暴露 error 行，不把 usage 当原因', () => {
+  const stderr =
+    'usage: task.py [-h]\r\n               {create,add-context,validate} ...\r\n' +
+    'task.py: error: unrecognized arguments: --work-type=backend\r\n'
+  assert.equal(
+    describeTaskError(stderr),
+    'task.py: error: unrecognized arguments: --work-type=backend',
+  )
+  assert.equal(describeTaskError(''), '下发失败')
+  assert.equal(
+    describeTaskError('\u001b[31mError: --description is required\u001b[0m'),
+    'Error: --description is required',
+  )
+  assert.match(
+    describeTaskError('Task already exists: 2026-11-25-probe', 'fallback-slug'),
+    /2026-11-25-probe/,
+  )
+})
 
 test('HTML 转换：标题、列表、表格表头、围栏与实体', () => {
   const html = [
