@@ -171,7 +171,7 @@ D1–D16 的完整理由、备选与影响见 `prd-details.md`；本文的 R1–
 - [ ] bookkeeping commit 失败时 `start` 返回非零、状态不被静默留在工作区、workflow 停在 start gate；`doctor --fix` 能重试，且有故障注入测试。
 - [ ] 本地 start commit 未 push 时，远端新增其他文件后 `pull --rebase` 不丢 in_progress；远端改同一 task.json 时冲突可见，`doctor --reconcile` 按规则保留/停止，不静默覆盖。
 - [ ] 文档明确“未 push 状态团队不可见”和“同一任务并发无分布式锁”，并有对应的回归/演练记录。
-- [ ] `set-meta` 不能静默写保留键；`set-commit`/`set-pr`/`verify`/`doctor` 有单测，跨平台可用。
+- [ ] `set-meta` 不能写保留键；`set-commit`/`stamp-check`/`verify`/`doctor` 有单测；complex independent check-report 未 stamp 时阻断。
 - [ ] 新任务 create 必须带 `work_type`；`task_type` 可空，由 agent 在 start 前判断/询问并 `set-task-type`；complex 缺 design/implement 在 start 前阻断；simple 多生成 design/implement 不降级、不报错。
 - [ ] frontend simple 只改 UI 时，有 commit + 截图/预览/验收/owner 确认之一即可通过，不强制 check-report；frontend complex 只有 commit + 一个验收勾选时被阻断，补 E2E/视觉证据 + owner 确认或 check-report 后通过；fullstack 缺任一端证据被阻断；research/docs 不被前端证据规则误伤。
 - [ ] 共享组件/设计系统/路由/状态/可访问性/性能敏感前端任务标记 `meta.frontend_check_report_required=true` 后，只有视觉证据/E2E 不通过，必须补 check-report 前端验证段；未标记任务不因缺 check-report 被误伤。

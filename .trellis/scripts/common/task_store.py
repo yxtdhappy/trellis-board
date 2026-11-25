@@ -18,9 +18,11 @@ Provides:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -2218,9 +2220,88 @@ def cmd_set_commit(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
+    check_binding: dict | None = None
+    check_report = target_dir / "check-report.md"
+    if check_report.is_file():
+        report_meta = _read_report_front_matter(check_report)
+        diff = strip_blank(report_meta.get("diff"))
+        if diff:
+            base = strip_blank(report_meta.get("base"))
+            scope_raw = strip_blank(report_meta.get("scope"))
+            if not base or not scope_raw:
+                print(
+                    colored(
+                        "Error: check-report.md has a diff but no base/scope; re-run stamp-check.",
+                        Colors.RED,
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
+            try:
+                scope = _parse_check_scope(scope_raw)
+            except ValueError as exc:
+                print(colored(f"Error: {exc}", Colors.RED), file=sys.stderr)
+                return 1
+            if object_present:
+                commit_fingerprint, fingerprint_err = _scoped_fingerprint(
+                    repo_root, base, scope, commit=resolved
+                )
+                if commit_fingerprint is None:
+                    print(
+                        colored(
+                            f"Error: could not fingerprint the checked scope at {resolved}: "
+                            f"{fingerprint_err}",
+                            Colors.RED,
+                        ),
+                        file=sys.stderr,
+                    )
+                    return 1
+                if commit_fingerprint != diff:
+                    print(
+                        colored(
+                            "Error: the checked worktree differs from the commit; "
+                            "re-check the current tree or update the check-report.",
+                            Colors.RED,
+                        ),
+                        file=sys.stderr,
+                    )
+                    return 1
+                check_binding = {
+                    "commit": resolved,
+                    "base": base,
+                    "scope": scope,
+                    "diff": diff,
+                    "report_sha256": hashlib.sha256(check_report.read_bytes()).hexdigest(),
+                }
+            else:
+                print(
+                    colored(
+                        "Warning: commit object is missing; check binding cannot be verified.",
+                        Colors.YELLOW,
+                    ),
+                    file=sys.stderr,
+                )
+        elif (
+            (data.get("task_type") or "legacy") == "complex"
+            and (report_meta.get("mode") or "").strip().lower() == "independent"
+            and not strip_blank(report_meta.get("commit"))
+        ):
+            print(
+                colored(
+                    "Error: complex independent check-report is not stamped; run "
+                    "`task.py stamp-check` before set-commit.",
+                    Colors.RED,
+                ),
+                file=sys.stderr,
+            )
+            return 1
+
     meta = data.get("meta")
     if not isinstance(meta, dict):
         meta = {}
+    meta.pop("check_binding", None)
+    if check_binding is not None:
+        meta["check_binding"] = check_binding
     commits = meta.get("commits")
     if not isinstance(commits, list):
         commits = []
@@ -2245,7 +2326,7 @@ def cmd_set_commit(args: argparse.Namespace) -> int:
         from_status=data.get("status"),
         to_status=data.get("status"),
         actor=data.get("assignee") or get_developer(repo_root),
-        extra={"commit": resolved},
+        extra={"commit": resolved, "check_bound": check_binding is not None},
     )
 
     if getattr(args, "persist", False):
@@ -2459,6 +2540,151 @@ def _read_report_front_matter(path: Path) -> dict[str, str]:
     return result
 
 
+def _parse_check_scope(raw: str) -> list[str]:
+    """Normalize a comma/newline separated check scope into repo paths."""
+    scope: list[str] = []
+    for item in re.split(r"[,\n]", raw or ""):
+        value = item.strip().replace("\\", "/")
+        if not value:
+            continue
+        if value.startswith("/") or re.match(r"^[A-Za-z]:", value):
+            raise ValueError(f"scope must be repo-relative: {value}")
+        if ".." in Path(value).parts:
+            raise ValueError(f"scope cannot contain '..': {value}")
+        scope.append(value)
+    return scope
+
+
+def _scoped_fingerprint(
+    repo_root: Path,
+    base: str,
+    scope: list[str],
+    commit: str | None = None,
+) -> tuple[str | None, str]:
+    """Return a stable hash of the scoped files at a commit or in the worktree."""
+    if commit:
+        rc, out, err = run_git(["ls-tree", "-r", commit, "--", *scope], cwd=repo_root)
+        if rc != 0:
+            return None, err
+        entries: list[str] = []
+        for line in out.splitlines():
+            if "\t" not in line:
+                continue
+            left, path = line.split("\t", 1)
+            parts = left.split()
+            if len(parts) >= 3 and parts[1] == "blob":
+                entries.append(f"{parts[0]} {parts[2]}\t{path}")
+    else:
+        with tempfile.TemporaryDirectory(prefix="trellis-check-") as tmp:
+            index = Path(tmp) / "index"
+            env = {"GIT_INDEX_FILE": str(index)}
+            rc, _, err = run_git(["read-tree", base], cwd=repo_root, env=env)
+            if rc != 0:
+                return None, err
+            rc, _, err = run_git(["add", "-A", "--", *scope], cwd=repo_root, env=env)
+            if rc != 0:
+                return None, err
+            rc, out, err = run_git(["ls-files", "-s", "--", *scope], cwd=repo_root, env=env)
+            if rc != 0:
+                return None, err
+            entries = []
+            for line in out.splitlines():
+                if "\t" not in line:
+                    continue
+                left, path = line.split("\t", 1)
+                parts = left.split()
+                if len(parts) >= 3 and parts[2] == "0":
+                    entries.append(f"{parts[0]} {parts[1]}\t{path}")
+
+    digest = hashlib.sha256("\n".join(sorted(entries)).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}", ""
+
+
+def _update_report_front_matter(path: Path, updates: dict[str, str]) -> None:
+    """Replace/add keys in a Markdown front-matter block, preserving the body."""
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    if lines and lines[0].strip() == "---":
+        end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+        if end is not None:
+            front = lines[1:end]
+            body = lines[end + 1 :]
+        else:
+            front = []
+            body = lines
+    else:
+        front = []
+        body = lines
+
+    wanted = {key.lower(): value for key, value in updates.items()}
+    rendered: list[str] = []
+    seen: set[str] = set()
+    for line in front:
+        if ":" in line:
+            key = line.split(":", 1)[0].strip().lower()
+            if key in wanted:
+                rendered.append(f"{key}: {wanted[key]}")
+                seen.add(key)
+                continue
+        rendered.append(line)
+    for key, value in updates.items():
+        if key.lower() not in seen:
+            rendered.append(f"{key.lower()}: {value}")
+
+    body_text = "\n".join(body).lstrip("\n")
+    path.write_text(
+        "---\n" + "\n".join(rendered).rstrip() + "\n---\n" + body_text,
+        encoding="utf-8",
+    )
+
+
+def cmd_stamp_check(args: argparse.Namespace) -> int:
+    """Stamp a check report with the exact worktree slice it checked."""
+    loaded = _load_task_for_write(args)
+    if loaded is None:
+        return 1
+    target_dir, _task_json, data = loaded
+    report = target_dir / "check-report.md"
+    if not report.is_file():
+        print(colored("Error: check-report.md does not exist.", Colors.RED), file=sys.stderr)
+        return 1
+    try:
+        scope = _parse_check_scope(getattr(args, "scope", ""))
+    except ValueError as exc:
+        print(colored(f"Error: {exc}", Colors.RED), file=sys.stderr)
+        return 1
+    if not scope:
+        print(colored("Error: --scope is required.", Colors.RED), file=sys.stderr)
+        return 1
+
+    repo_root = get_repo_root()
+    base_arg = strip_blank(getattr(args, "base", None)) or "HEAD"
+    rc, out, _ = run_git(["rev-parse", "--verify", f"{base_arg}^{{commit}}"], cwd=repo_root)
+    if rc != 0 or not out.strip():
+        print(colored(f"Error: base commit not found: {base_arg}", Colors.RED), file=sys.stderr)
+        return 1
+    base = out.strip().splitlines()[0]
+    fingerprint, err = _scoped_fingerprint(repo_root, base, scope)
+    if fingerprint is None:
+        print(colored(f"Error: could not fingerprint scope: {err}", Colors.RED), file=sys.stderr)
+        return 1
+
+    _update_report_front_matter(
+        report,
+        {"base": base, "scope": ",".join(scope), "diff": fingerprint},
+    )
+    append_state_event(
+        target_dir,
+        "check_stamped",
+        from_status=data.get("status"),
+        to_status=data.get("status"),
+        actor=data.get("assignee") or get_developer(repo_root),
+        extra={"base": base, "scope": scope, "diff": fingerprint},
+    )
+    print(colored(f"✓ Check report stamped: {fingerprint}", Colors.GREEN))
+    return 0
+
+
 def _verify_check_report_provenance(
     task_dir: Path,
     data: dict,
@@ -2474,7 +2700,7 @@ def _verify_check_report_provenance(
         add(
             "error",
             "check_report_provenance_missing",
-            "check-report.md needs front matter: mode, agent, session, commit",
+            "check-report.md needs front matter: mode, agent, session",
         )
         return
 
@@ -2509,6 +2735,37 @@ def _verify_check_report_provenance(
             "error",
             "check_report_commit_stale",
             "check-report.md is bound to a different commit",
+        )
+
+    task_meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    binding = task_meta.get("check_binding")
+    if binding is not None and not isinstance(binding, dict):
+        add("error", "check_binding_invalid", "meta.check_binding must be an object")
+    elif isinstance(binding, dict):
+        if binding.get("commit") != data.get("commit"):
+            add(
+                "error",
+                "check_binding_stale",
+                "meta.check_binding is bound to a different commit",
+            )
+        report_sha = hashlib.sha256(report.read_bytes()).hexdigest()
+        if binding.get("report_sha256") != report_sha:
+            add(
+                "error",
+                "check_report_changed_after_binding",
+                "check-report.md changed after it was bound to the commit",
+            )
+    elif (
+        mode == "independent"
+        and (data.get("task_type") or "legacy") == "complex"
+        and data.get("status") != "completed"
+        and not bound
+    ):
+        add(
+            "error",
+            "check_report_unbound",
+            "independent complex check-report is not bound to a commit; "
+            "run `task.py stamp-check` before commit",
         )
 
 

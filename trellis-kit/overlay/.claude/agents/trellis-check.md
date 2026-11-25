@@ -96,8 +96,11 @@ Write `<task-path>/check-report.md` with the report below; the main session's ev
 mode: independent
 agent: trellis-check
 session: <session-id>
-commit: <checked-commit-or-empty>
 ---
+
+The main session runs `task.py stamp-check <task> --scope <paths>` after
+accepting this report. It adds `base`, `scope`, and `diff` and binds the
+report to the commit's tree. Do not invent a `commit` value.
 
 ## Check Complete
 

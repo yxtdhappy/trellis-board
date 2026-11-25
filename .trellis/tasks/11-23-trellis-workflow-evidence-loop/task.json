@@ -69,7 +69,11 @@
     "packages/shared/trellis-agent-tools.js",
     "packages/web/src/features/board/dialogs/AgentToolSelector.tsx",
     "packages/web/src/pages/board/components/AgentQuickInitDialog.tsx",
-    "packages/web/src/features/board/dialogs/ProjectOnboardingDialog.tsx"
+    "packages/web/src/features/board/dialogs/ProjectOnboardingDialog.tsx",
+    ".trellis/scripts/common/git.py",
+    ".agents/skills/trellis-task-state/SKILL.md",
+    ".claude/skills/trellis-task-state/SKILL.md",
+    "scripts/test/task-check-binding.test.js"
   ],
   "notes": "方向已按 2026-11-23 复盘修正：以 agent 维护 Trellis 文件的 workflow/skills 为主线，看板保持只读，不做交互式补救。",
   "meta": {

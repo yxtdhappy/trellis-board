@@ -59,8 +59,13 @@ complex task's report without it.
 mode: independent
 agent: trellis-check
 session: <session-id>
-commit: <checked-commit-or-empty>
 ---
+```
+
+The main session runs `task.py stamp-check <task> --scope <paths>` after
+accepting the report. That command adds `base`, `scope`, and `diff` to this
+front matter and binds the report to the commit's tree. Do not invent a
+`commit` value.
 
 ## Check Complete
 

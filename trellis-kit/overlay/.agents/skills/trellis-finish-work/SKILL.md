@@ -57,10 +57,11 @@ python ./.trellis/scripts/task.py verify <task-name> --strict
 
 If it reports a missing commit, missing implementation/check evidence, missing report provenance, or a status regression, stop and repair it first:
 
-- `task.py set-commit <task-name> <final-work-commit>`
+- `task.py stamp-check <task-name> --scope <path[,path]>` after check, before the work commit
+- `task.py set-commit <task-name> <final-work-commit>` after the final work commit (binds the stamped report)
 - `task.py set-evidence <task-name> --type e2e|visual|manual --artifact <path-or-url>`
 - `task.py doctor <task-name> --fix` for safe repairs
-- complex tasks need both `implementation-report.md` and `check-report.md`; the check report starts with `mode`/`agent`/`session`/`commit` front matter
+- complex tasks need both `implementation-report.md` and `check-report.md`; the check report starts with `mode`/`agent`/`session` front matter (stamp-check adds `base`/`scope`/`diff`)
 - `mode: inline-self-check` needs `meta.check_override` (owner confirmation)
 
 Do not archive past a failing gate. For a research/no-code task, run `archive <task-name> --planning-only` instead. `task.py archive` itself now treats warnings as blocking, so a successful archive is also a strict evidence check.

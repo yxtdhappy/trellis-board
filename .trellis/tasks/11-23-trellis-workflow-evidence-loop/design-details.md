@@ -17,9 +17,12 @@
 | `check_evidence` | complex 无 check-report/验收（backend）；complex 无 check-report 且无有效前端证据（frontend）；fullstack 任一端缺失 | decision (exit 4) | decision | 授权写 override |
 | `frontend_evidence` | `work_type=frontend/fullstack`：`meta.frontend_evidence` 缺失、commit 不匹配、type=manual 用于 complex、或 visual/e2e 无确认/artifact；`meta.frontend_check_report_required=true` 但无 check-report | fail（complex）；warning（simple） | fail | 不自动生成，提示 `set-evidence`/`check-report` |
 | `check_override` | override.commit ≠ task.commit 或授权人非法 | warning | fail | 清除失效 override |
+| `check_binding` | complex independent check-report 未绑定；`meta.check_binding.commit` ≠ task.commit；报告哈希变化；绑定 scope 的 commit tree 与 stamp 不一致 | fail | fail | 重新 `stamp-check`/`set-commit` |
 | `meta_commit_trap` | `meta.commit` 有值但顶层 `commit` 为空 | fail | fail | 迁移到顶层 |
 | `uncommitted_task_json` | task.json 有未提交修改 | warning | fail | 不自动提交 |
 | `event_log` | JSONL 损坏/最后意图冲突 | warning | fail | 只报告 |
+
+**Check 树绑定（方案 B）**：check 阶段不要求 commit hash。`stamp-check` 在 check 完成后记录 `base` + `scope` + `diff`（临时 index 对 worktree 的 scoped 指纹）；工作提交后 `set-commit` 用 `git ls-tree` 对 `base..HEAD` 同一 scope 计算指纹，与 `diff` 不一致时拒绝写 commit。绑定写入 `meta.check_binding`，`verify` 还校验 check-report 文件哈希，防止绑定后改报告。只对 complex independent 强制；simple/inline 不强制。
 
 `needs_user_decision` 的交互流程：
 

@@ -323,6 +323,7 @@ lock(task)
 ### 6.3 `verify` 检查项（摘要）
 
 - 检查 status、标签、顶层 commit、commit 对象存在/可达、按 `task_type + work_type` 的证据矩阵、`meta.commit` 陷阱、未持久化状态。
+- complex independent check-report 必须通过 `stamp-check` 记录 `base/scope/diff`，并由 `set-commit` 写入 `meta.check_binding`；未绑定、binding commit 不符或报告哈希变化均阻断。
 - complex 前端缺 E2E/视觉 + owner 确认或 check-report → `needs_user_decision`（exit 4）；授权写 `meta.check_override`，绑定当前 commit，commit 变化失效。
 - legacy 任务按旧矩阵 + warning；完整检查项与告警文案见 `design-details.md`。
 

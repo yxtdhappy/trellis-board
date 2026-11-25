@@ -19,6 +19,7 @@ Usage:
     python task.py set-task-type <dir> simple|complex|research
     python task.py set-work-type <dir> backend|frontend|fullstack|research|docs [--check-report-required]
     python task.py set-commit <dir> <hash|HEAD> [--allow-missing-object] [--persist]
+    python task.py stamp-check <dir> --scope <path[,path]> [--base <hash>]
     python task.py set-pr <dir> <url>
     python task.py set-evidence <dir> --type e2e|visual|manual --artifact <path-or-url> [--commit <hash>]
     python task.py set-check-override <dir> --by <who> --reason <why> [--commit <hash>]
@@ -85,6 +86,7 @@ from common.task_store import (
     cmd_set_commit,
     cmd_set_pr,
     cmd_set_evidence,
+    cmd_stamp_check,
     cmd_set_check_override,
     cmd_verify,
     cmd_doctor,
@@ -1102,6 +1104,15 @@ def main() -> int:
         help="Create a bookkeeping commit containing only task.json",
     )
 
+    # stamp-check
+    p_stamp = subparsers.add_parser(
+        "stamp-check",
+        help="Stamp check-report.md with the worktree slice it checked",
+    )
+    p_stamp.add_argument("dir", help="Task directory")
+    p_stamp.add_argument("--scope", required=True, help="Comma-separated repo paths that were checked")
+    p_stamp.add_argument("--base", default="HEAD", help="Base commit (default: HEAD)")
+
     # set-pr
     p_pr = subparsers.add_parser("set-pr", help="Record the pull-request URL")
     p_pr.add_argument("dir", help="Task directory")
@@ -1203,6 +1214,7 @@ def main() -> int:
         "set-task-type": cmd_set_task_type,
         "set-work-type": cmd_set_work_type,
         "set-commit": cmd_set_commit,
+        "stamp-check": cmd_stamp_check,
         "set-pr": cmd_set_pr,
         "set-evidence": cmd_set_evidence,
         "set-check-override": cmd_set_check_override,

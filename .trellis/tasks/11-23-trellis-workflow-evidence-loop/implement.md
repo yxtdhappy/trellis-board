@@ -48,7 +48,8 @@
    - 只允许 start 前；start 后必须 `--force --reason` 并写 `status_reset`/`label_changed` 事件。
    - `--check-report-required` 写 `meta.frontend_check_report_required=true`。
 3. 证据命令
-   - `set-commit`：7–40 位 hex/HEAD，解析为完整 hash；默认 `git rev-parse --verify <hash>^{commit}`；对象不存在默认失败，`--allow-missing-object` 才写 `meta.commit_object_present=false`；顶层 `commit` + `meta.commits`；`--persist` 生成只含任务文件的 bookkeeping commit。
+   - `stamp-check`：check 后、工作提交前运行；记录 `base`/`scope`/`diff`（临时 index 对 worktree 的 scoped 指纹）。
+   - `set-commit`：7–40 位 hex/HEAD，解析为完整 hash；默认 `git rev-parse --verify <hash>^{commit}`；对象不存在默认失败，`--allow-missing-object` 才写 `meta.commit_object_present=false`；顶层 `commit` + `meta.commits`；`--persist` 生成只含任务文件的 bookkeeping commit；对已 stamp 的 check-report 复算 scope 指纹并写 `meta.check_binding`，不一致拒绝。
    - `set-pr`：只写顶层 `pr_url`，校验 http(s)。
    - `set-evidence`：`--type e2e|visual|manual --artifact <path-or-url> --commit <hash> [--confirmed-by]`，写 `meta.frontend_evidence`。
    - `set-meta`：拒绝 `status`/`commit`/`pr_url`/`completedAt`/`work_type`/`task_type` 等保留键，提示专用命令。
@@ -132,7 +133,7 @@
 
 ### 阶段 4：workflow / skills / agent prompts（已完成，待统一验证）
 
-1. `.trellis/workflow.md`：Phase 1 创建带标签；1.4 start 校验+持久化+verify；2.1/2.2 按类型产出报告/证据；3.4 提交后 `set-commit`/`set-pr`/`set-evidence`+verify；3.5 `verify --strict`。
+1. `.trellis/workflow.md`：Phase 1 创建带标签；1.4 start 校验+持久化+verify；2.1/2.2 按类型产出报告/证据；3.4 check 后 `stamp-check`，提交后 `set-commit`/`set-pr`/`set-evidence`+verify；3.5 `verify --strict`。
 2. 新增 `.agents/skills/trellis-task-state/SKILL.md`：契约、命令表、每阶段 checklist、失败处理、单一写入者。
 3. 更新 `trellis-brainstorm`/`start`/`check`/`finish-work`/`continue`：标签提议+用户确认、前端证据、override 询问、finish 前 verify、continue 时 doctor。
 4. 更新 `.trellis/agents/{implement,check}.md`、`.claude/agents/trellis-*.md`、`.codex/agents/*`：子代理不写 status/commit/pr_url，不执行 git commit；报告职责。
@@ -249,6 +250,15 @@ cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml
 - `oxlint packages/web`：0 errors（仅既有 warning）；`tsc -b --noEmit`：通过。
 - 本次改动文件 `oxfmt --check`：通过；全仓库 `yarn test --scope=lint` 仍被 22 个既有未格式化文件阻断（非本次改动）。
 - `cargo check/test`：本机未安装 `cargo`，未能执行；Rust 改动已人工复核，建议在装有 Rust 工具链的环境补跑。
+
+### 验证结果（2026-11-25，方案 B：check 树绑定）
+
+- `task.py stamp-check`：记录 `base`/`scope`/`diff`（临时 `GIT_INDEX_FILE` 对 worktree 的 scoped 指纹）；`set-commit` 用 `git ls-tree` 对 `base..HEAD` 同 scope 复算并写 `meta.check_binding`；不一致拒绝。
+- `verify`：complex 独立 check-report 未绑定报 `check_report_unbound`；binding commit 不符、报告哈希变化分别报错；simple/inline 不强制。
+- `python -m py_compile`：通过。
+- `node --test scripts/test/task-check-binding.test.js`：2/2（绑定成功 + 检查后改动被拒绝）。
+- `node --test scripts/test/trellis-kit.test.js`：5/5（overlay 同步、degraded 恢复、pending 门禁、AGENTS 注入、portable 单文件）。
+- `task.py validate`：通过。
 
 ## 7. 风险与回滚
 

@@ -31,6 +31,7 @@ def run_git(
     args: list[str],
     cwd: Path | None = None,
     timeout: float | None = None,
+    env: dict[str, str] | None = None,
 ) -> tuple[int, str, str]:
     """Run a git command and return (returncode, stdout, stderr).
 
@@ -49,6 +50,7 @@ def run_git(
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            env={**os.environ, **env} if env else None,
             creationflags=(
                 subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             ),

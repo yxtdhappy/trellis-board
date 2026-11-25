@@ -34,20 +34,22 @@ python ./.trellis/scripts/task.py start <task-dir>
 ## Evidence
 
 ```bash
+python ./.trellis/scripts/task.py stamp-check <task-dir> --scope <path[,path]> [--base <hash>]
 python ./.trellis/scripts/task.py set-commit <task-dir> <hash|HEAD> [--persist]
 python ./.trellis/scripts/task.py set-pr <task-dir> <url>
 python ./.trellis/scripts/task.py set-evidence <task-dir> --type e2e|visual|manual --artifact <path-or-url> [--commit <hash>]
 python ./.trellis/scripts/task.py set-check-override <task-dir> --by <who> --reason <why> [--commit <hash>]
 ```
 
-- `set-commit` writes the top-level `commit` read by the board and appends to `meta.commits`.
+- Run `stamp-check` after the check agent reports and before the work commit. It records `base` + `scope` + `diff` (the exact worktree slice checked).
+- `set-commit` writes the top-level `commit`, appends to `meta.commits`, and binds the stamped report in `meta.check_binding`; it refuses if the commit tree differs from the checked slice.
 - Do this after the final work commit, before finish-work.
 - `set-meta` refuses reserved top-level keys; use the dedicated commands.
 
 ## Evidence source
 
 - Complex tasks need both `implementation-report.md` and `check-report.md` (or `meta.check_override` for check evidence).
-- `check-report.md` must start with front matter: `mode: independent|inline-self-check`, `agent`, `session`, `commit`.
+- `check-report.md` must start with front matter: `mode: independent|inline-self-check`, `agent`, `session`; `stamp-check` adds `base`/`scope`/`diff`.
 - `mode: independent` cannot name `main-session` as the agent.
 - `mode: inline-self-check` is accepted only with `meta.check_override` (owner confirmation), because the main session is checking its own work.
 

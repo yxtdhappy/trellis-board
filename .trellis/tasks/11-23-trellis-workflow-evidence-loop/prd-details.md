@@ -57,6 +57,7 @@ R35860/R35862/R35868 事故暴露的是 Trellis 流程本身没有把“维护�
 | D14 | 工作类型与前端证据 | 新增顶层 `work_type=backend/frontend/fullstack/research/docs`，create 时必填，与只表复杂度的 `task_type` 正交；前端证据以浏览器 E2E、截图/预览、owner 确认为一等证据；`check-report` 不是前端硬门槛，普通 simple 前端不要求；complex 前端只勾一个验收项不足以通过，必须 E2E/视觉证据 + owner 确认，或 check-report；共享组件/设计系统/路由/状态/可访问性/性能敏感改动要求结构化 check-report |
 | D15 | 标签判定责任 | `work_type` 在 create 时确定；`task_type` 由 agent 在 brainstorm/start 前根据实际范围判断并说明理由，不确定时问用户一次；用户明确说“按建议”可记为 `user-delegated`；面板/插件中用户主动选择 `work_type` 视为 `user-explicit`；复制/子任务继承父任务 `task_type` 只作为提议；`meta.label_source` 记录 `user-explicit`/`agent-proposed-user-confirmed`/`agent-inferred`/`user-delegated`/`copied-from-parent`/`legacy`；不允许静默猜成 simple/backend |
 | D16 | 面板与插件创建入口 | 看板“创建任务并派发”表单与 WitOps 创建对话框只要求“任务类型”（work_type: backend/frontend/fullstack/research/docs），**不出现任务复杂度**；创建出的 `task.json` 顶层 `task_type` 为空并记 `meta.task_type_pending=true`，由 agent 后续 `set-task-type`；插件 `ctx.tasks.create` 接受可选 `taskType`/`workType`，DTO 返回二者；WitOps 只把“前端开发/后端开发”明确映射为 work_type，其他分类留空由用户选；插件对话框默认选中当前工作项映射的 work_type；看板表单接受 `defaultWorkType`（URL/插件上下文），没有值时保持空，不静默默认 backend；批量混合类型不猜 |
+| D17 | check 报告树绑定 | 不要求 check 阶段写 commit hash；check 完成后、工作提交前运行 `task.py stamp-check <task> --scope <paths>`，记录 `base`/`scope`/`diff`（worktree 指纹）；`set-commit` 计算 `base..HEAD` 同 scope 指纹并比较，一致才写 `meta.check_binding={commit,base,scope,diff,report_sha256}`；`verify` 检查 binding、commit、报告哈希；complex 独立 check 缺 binding 报错；simple/inline 不强制 |
 
 
 ### R5：补齐 Trellis 脚本与模板能力

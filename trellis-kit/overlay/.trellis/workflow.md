@@ -666,12 +666,18 @@ The AI drives a batched commit of this task's code changes so `/finish-work` can
 
 6. **On confirmation**: run `git add <files>` + `git commit -m "<msg>"` for each batch in order. Do not amend. Do not push.
 
+6b. **Stamp the accepted check-report** after the check agent reports and before the work commit:
+   ```bash
+   python ./.trellis/scripts/task.py stamp-check <task-dir> --scope <path[,path]>
+   ```
+   This records `base` + `scope` + `diff` (a hash of the exact worktree slice that was checked). `set-commit` later compares the commit's tree for the same scope and refuses if it differs. Do not hand-write `base`/`scope`/`diff`.
+
 7. **Record the final commit on the task** (mandatory, not a work commit):
    ```bash
    python ./.trellis/scripts/task.py set-commit <task-dir> <final-work-commit>
    python ./.trellis/scripts/task.py set-pr <task-dir> <pr-url>   # if a PR exists
    ```
-   `set-commit` writes the top-level `commit` field read by the board and appends to `meta.commits`. Pass `--persist` to create a task-only bookkeeping commit. Do this after the last work commit, before finish-work.
+   `set-commit` writes the top-level `commit` field read by the board and appends to `meta.commits`. It also binds the stamped check-report to the commit's scoped tree (`meta.check_binding`) and refuses if the checked tree differs. Pass `--persist` to create a task-only bookkeeping commit. Do this after the last work commit, before finish-work.
 
 8. **On rejection** (user replies "不行" / "我自己来" / "manual" / any pushback on the plan): stop. Do not attempt a second plan. The user will commit by hand; you skip ahead to 3.5 once they confirm.
 
