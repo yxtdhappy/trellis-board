@@ -374,6 +374,15 @@ test('every manifest component matches the self-contained overlay', () => {
     if (!component.source) continue
     const source = path.join(ROOT_DIR, component.source)
     const overlay = path.join(KIT_DIR, 'overlay', component.source)
+    if (!fs.existsSync(source)) {
+      // 平台源文件可能位于被 gitignore 的目录（如 .claude/），CI 只检出 overlay。
+      assert.equal(
+        fs.existsSync(overlay),
+        true,
+        `missing overlay for ${component.id}: ${component.source}`,
+      )
+      continue
+    }
     if (component.directory) {
       assert.equal(
         fs.existsSync(overlay),

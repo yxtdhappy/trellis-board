@@ -45,7 +45,7 @@ fn prunes_only_empty_remote_absent_local_directories_with_baselines() {
             )],
         ),
     ];
-    let local = HashSet::new();
+    let local = HashSet::from([alive.to_string()]);
 
     assert_eq!(
         prunable_task_directories(&entries, &baselines, &local),
