@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/task-ownership-and-conflict-idempotency.md", "reason": "枚举期归属过滤与服务端可见性/归档契约"}
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "团队同步预检与首次同步契约"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "Tauri 命令签名与 Rust 模块行数守卫"}
+{"file": ".trellis/spec/frontend/component-reuse.md", "reason": "Web 弹窗差异列表组件选型与禁用规范"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "AgentRuntime 停止生命周期与 TaskSync 资源清理契约"}

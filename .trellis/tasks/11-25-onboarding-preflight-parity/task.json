@@ -1,0 +1,30 @@
+{
+  "id": "onboarding-preflight-parity",
+  "name": "onboarding-preflight-parity",
+  "title": "对齐本地项目接入预检与首次同步口径并在弹窗展示差异明细",
+  "description": "将服务端与桌面端项目接入预检的归属、归档、分支与不可写目录过滤口径拉齐至首次同步，并在接入弹窗差异卡片展示具体差异任务标题、目录和类型",
+  "status": "planning",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "flyfly6",
+  "assignee": "flyfly6",
+  "createdAt": "2026-11-25",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit"
+  }
+}

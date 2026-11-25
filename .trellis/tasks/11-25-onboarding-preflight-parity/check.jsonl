@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/task-ownership-and-conflict-idempotency.md", "reason": "核验预检与首同步归属/可见性口径一致"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端测试与验证门槛"}
+{"file": ".trellis/spec/frontend/component-reuse.md", "reason": "前端组件复用审计与暗色主题检查"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端 lint/typecheck/构建检查"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "核验运行时停止与 watcher 释放不泄漏"}
