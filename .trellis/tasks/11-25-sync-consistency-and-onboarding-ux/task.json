@@ -1,0 +1,32 @@
+{
+  "id": "sync-consistency-and-onboarding-ux",
+  "name": "sync-consistency-and-onboarding-ux",
+  "title": "客户端任务同步一致性修复与接入弹窗优化",
+  "description": "修复桌面端写状态IPC绕过运行态TaskSync、download_task只读标记竞态、pull零游标分支漏过滤、preflight租约口径差、冲突收尾cursor不对称，并优化接入弹窗纯服务端任务按钮交互",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "flyfly6",
+  "assignee": "flyfly6",
+  "createdAt": "2026-11-25",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "task_type_updated_at": "2026-11-25T16:39:06",
+    "task_type_updated_reason": "补标跨端同步与前端弹窗改造复杂任务类型"
+  }
+}

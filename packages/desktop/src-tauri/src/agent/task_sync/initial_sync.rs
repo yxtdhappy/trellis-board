@@ -448,12 +448,17 @@ impl TaskSync {
         differences: &mut Vec<Difference>,
     ) -> AgentResult<()> {
         let task_space_id = binding.task_space_id.clone();
+        let readonly_dirs = self.read_cursor(&task_space_id).await.readonly_task_dirs;
         let mut invisible: HashSet<String> = HashSet::new();
         for difference in differences.iter() {
             if difference.kind != DiffKind::LocalOnly {
                 continue;
             }
             let task_dir = difference.task_dir.clone();
+            if readonly_dirs.contains_key(&task_dir) {
+                invisible.insert(task_dir);
+                continue;
+            }
             match self.fetch_directory(&task_space_id, &task_dir).await {
                 Ok(_) => {}
                 Err(error) if is_archived_task_error(&error) => {

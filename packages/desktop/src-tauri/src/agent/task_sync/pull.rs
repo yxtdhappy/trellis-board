@@ -547,10 +547,18 @@ impl TaskSync {
 
         if after_revision == 0 {
             let local_groups = self.local_groups(binding, None).await?;
-            let differences = hide_control_tombstone_local_only(
+            let mut differences = hide_control_tombstone_local_only(
                 classify_task_snapshots(&local_groups, &server_groups),
                 snapshot_controls.as_deref(),
             );
+            self.gate_local_only_differences(binding, &mut differences)
+                .await?;
+            let readonly_dirs: HashSet<String> = self
+                .read_cursor(&task_space_id)
+                .await
+                .readonly_task_dirs
+                .into_keys()
+                .collect();
             let conflict_kinds = [
                 DiffKind::ContentConflict,
                 DiffKind::MoveDeleteConflict,
@@ -592,6 +600,7 @@ impl TaskSync {
                 .filter_map(|item| item.local.as_ref().map(|group| group.task_dir.clone()))
                 .filter(|task_dir| !deferred.contains_key(task_dir))
                 .filter(|task_dir| !inactive_dirs.contains(task_dir))
+                .filter(|task_dir| !readonly_dirs.contains(task_dir))
                 .collect();
             if !local_only.is_empty() {
                 let uploaded = self

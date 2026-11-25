@@ -1304,3 +1304,123 @@ test('预检仅返回当前用户未归档活跃任务并列出隐藏目录与�
     db.close()
   }
 })
+
+test('preflight 排除同用户其他设备持有有效活跃租约的任务并保留本机与过期租约任务', () => {
+  const { db, service } = setup()
+  try {
+    const attached = service.attach('user-a', 'agent-a', {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'main',
+      displayName: 'Acme',
+      teamId: 'team-a',
+      developerId: 'alice',
+      localRepoKey: 'a'.repeat(64),
+    })
+    const now = new Date().toISOString()
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    const past = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    const taskSpaceId = attached.taskSpace.id
+    const projectId = attached.project.id
+    const insertTask = db.prepare(`
+      INSERT INTO sync_task(
+        execution_task_key, task_key, task_space_id, project_id, task_id, relative_dir,
+        title, description, priority, created_by_user_id, assignee_user_id, assignee_dev_id,
+        stage, archived, materialization_state, task_version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, '', 'P2', 'user-a', ?, 'alice',
+        'planning', 0, 'materialized', 1, ?, ?)
+    `)
+    const insertFile = db.prepare(`
+      INSERT INTO sync_task_space_file(
+        task_space_id, relative_path, revision, sha256, content_text, deleted,
+        task_id, task_dir, updated_at
+      ) VALUES (?, ?, 1, ?, ?, 0, ?, ?, ?)
+    `)
+    const insertLease = db.prepare(`
+      INSERT INTO sync_task_lease(
+        id, execution_task_key, agent_id, user_id, lease_token, status,
+        expires_at, last_heartbeat_at, created_at, updated_at
+      ) VALUES (?, ?, ?, 'user-a', ?, 'active', ?, ?, ?, ?)
+    `)
+    db.prepare(
+      `INSERT INTO agent_device(
+        id, user_id, device_name, platform, agent_version, protocol_version,
+        credential_hash, status, last_seen_at, created_at
+      ) VALUES (?, 'user-a', 'other-pc', 'win32', '0.1.0', 3, 'agent-other-credential', 'active', ?, ?)`,
+    ).run('agent-other', now, now)
+
+    for (const item of [
+      {
+        id: 'held-other',
+        dir: '.trellis/tasks/11-25-held-other',
+        title: '他机租约中',
+        leaseAgent: 'agent-other',
+        expiresAt: future,
+      },
+      {
+        id: 'held-self',
+        dir: '.trellis/tasks/11-25-held-self',
+        title: '本机租约中',
+        leaseAgent: 'agent-a',
+        expiresAt: future,
+      },
+      {
+        id: 'expired-other',
+        dir: '.trellis/tasks/11-25-expired',
+        title: '租约已过期',
+        leaseAgent: 'agent-other',
+        expiresAt: past,
+      },
+    ]) {
+      const key = `${taskSpaceId}::${item.id}`
+      insertTask.run(
+        key,
+        `${taskSpaceId}::${item.dir}`,
+        taskSpaceId,
+        projectId,
+        item.id,
+        item.dir,
+        item.title,
+        'user-a',
+        now,
+        now,
+      )
+      insertFile.run(
+        taskSpaceId,
+        `${item.dir}/task.json`,
+        '1'.repeat(64),
+        JSON.stringify({ id: item.id, title: item.title, branch: 'main' }),
+        item.id,
+        item.dir,
+        now,
+      )
+      insertLease.run(
+        `lease-${item.id}`,
+        key,
+        item.leaseAgent,
+        `token-${item.id}`,
+        item.expiresAt,
+        now,
+        now,
+        now,
+      )
+    }
+
+    const result = service.preflight(
+      'user-a',
+      {
+        remoteUrl: 'https://example.com/acme/repo.git',
+        branchName: 'main',
+        teamId: 'team-a',
+      },
+      { agentId: 'agent-a' },
+    )
+    assert.equal(result.status, 'existing')
+    assert.deepEqual(
+      result.tasks.map((task) => task.taskId),
+      ['expired-other', 'held-self'],
+    )
+    assert.equal(JSON.stringify(result).includes('"content"'), false)
+  } finally {
+    db.close()
+  }
+})

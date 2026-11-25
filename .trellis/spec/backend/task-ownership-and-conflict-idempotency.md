@@ -340,11 +340,11 @@ assertCanAssign(actor, indexed, assigneeUserId, projectId)
 - 被过滤的目录不得上传、不得进入差异列表、不得触发 `fetch_directory` 探针、不得写
   `readonlyTaskDirs`；只允许一条 warn 日志（`跳过他人任务目录`）。
 - 接入预检（服务端 `POST /api/agent/task-spaces/preflight` + 桌面端 `association::preflight_desktop_project`）
-  与首次同步共享同一归属与可见性口径：服务端只返回 `sync_task.assignee_user_id = userId AND archived = 0`
-  且非 `.trellis/tasks/archive/%` 的活跃任务，并通过 `hiddenTaskDirs` / `archivedTaskBasenames` 暴露非本人、
+  与首次同步共享同一归属与可见性口径：服务端只返回 `sync_task.assignee_user_id = userId AND archived = 0`、
+  非 `.trellis/tasks/archive/%` 且未被同用户其他设备持有有效活跃租约的活跃任务，并通过 `hiddenTaskDirs` / `archivedTaskBasenames` 暴露非本人、
   已归档与无 `sync_task` 行的 legacy 目录；桌面端在全部状态（含 `new`/`branch_new`）下复用
   `group_owned_by_developer` 与 `retain_server_groups_for_branch_initial_sync`，并剔除命中隐藏清单的
-  `LocalOnly` 差异，避免预检误报他人任务差异或冲突。
+  `LocalOnly` 差异，避免预检误报他人任务差异或冲突。`pull.rs` 的 `after_revision == 0` 兜底分支同样执行 `gate_local_only_differences` 与 `readonly_task_dirs` 过滤。
 - 服务端 `assertUploadAllowed` 在**任务行不存在**时必须校验上传文档解析出的负责人：
   `tasks.resolveAssignee()` 的 `assignee.userId !== agent.userId` 返回
   `403 TASK_WRITE_FORBIDDEN`，不得建行。行已存在时的 409/租约语义不变。

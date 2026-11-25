@@ -269,7 +269,7 @@ impl TaskSync {
         let sync = if current_branch.is_empty() {
             Value::Null
         } else {
-            self.sync_task_directories(task_space_id, &current_branch, true)
+            self.upload_directories(&binding, &current_branch, true, None)
                 .await?
         };
         Ok(json!({

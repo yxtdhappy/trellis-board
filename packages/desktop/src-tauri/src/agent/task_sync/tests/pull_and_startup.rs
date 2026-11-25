@@ -865,3 +865,204 @@ fn initial_sync_keeps_cross_branch_groups_present_locally() {
     retain_server_groups_for_initial_sync(&binding, &local, &mut absent);
     assert!(absent.is_empty(), "本地不存在的跨分支任务必须丢弃");
 }
+
+#[tokio::test]
+async fn pull_zero_revision_skips_readonly_and_foreign_local_tasks() {
+    let (root, store, _sync, mut binding) =
+        test_task_sync_fixture("trellis-pull-zero-filter").await;
+    let repo = Path::new(&binding.repo_path);
+    init_git_repo(repo);
+    let foreign_dir = ".trellis/tasks/11-25-foreign";
+    let readonly_dir = ".trellis/tasks/11-25-downloaded";
+    write_task_json(repo, foreign_dir, "foreign-1", "main").await;
+    write_task_json(repo, readonly_dir, "downloaded-1", "main").await;
+    run_git(repo, &["add", ".trellis/tasks"]);
+    run_git(repo, &["commit", "--no-verify", "-m", "tasks"]);
+    binding.initial_sync_completed = true;
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+    store
+        .write_json(
+            &store.paths.task_cursors_file,
+            &json!({
+                "version": CURSOR_VERSION,
+                "taskSpaces": {
+                    "space-1": {
+                        "revision": 0,
+                        "revisionGuardVersion": REVISION_GUARD_VERSION,
+                        "readonlyTaskDirs": {
+                            ".trellis/tasks/11-25-downloaded": "DOWNLOADED"
+                        }
+                    }
+                }
+            }),
+        )
+        .await
+        .expect("cursor");
+
+    let (server_url, changes, requests, server_task) = mock_api_server(json!({
+        "revision": 4,
+        "files": [],
+        "directoryStatus": 403
+    }))
+    .await;
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+    let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
+    sync.set_bindings(vec![binding.clone()]).await;
+
+    let result = sync
+        .pull_task_space("space-1")
+        .await
+        .expect("pull zero revision");
+    assert_eq!(result["revision"], 4);
+    assert!(result.get("pendingReview").is_none());
+    assert!(
+        changes.lock().await.is_empty(),
+        "只读与他人任务不得触发上传"
+    );
+    let cursor = sync.read_cursor("space-1").await;
+    assert_eq!(cursor.revision, 4);
+    assert_eq!(
+        cursor
+            .readonly_task_dirs
+            .get(foreign_dir)
+            .map(String::as_str),
+        Some("FOREIGN_OWNER")
+    );
+    assert_eq!(
+        cursor
+            .readonly_task_dirs
+            .get(readonly_dir)
+            .map(String::as_str),
+        Some("DOWNLOADED")
+    );
+    assert!(requests
+        .lock()
+        .await
+        .iter()
+        .any(|req| req == "PUT /api/agent/task-spaces/space-1/cursor"));
+
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn download_task_marks_readonly_and_suppressed_and_rolls_back_on_write_error() {
+    let (root, store, _sync, mut binding) = test_task_sync_fixture("trellis-download-guard").await;
+    let repo = Path::new(&binding.repo_path);
+    init_git_repo(repo);
+    tokio::fs::write(repo.join("README.md"), "repo\n")
+        .await
+        .expect("readme");
+    run_git(repo, &["add", "README.md"]);
+    run_git(repo, &["commit", "--no-verify", "-m", "init"]);
+    binding.initial_sync_completed = true;
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+
+    let task_dir = ".trellis/tasks/11-25-remote";
+    let task_json = "{\"id\":\"remote-1\",\"title\":\"他人任务\",\"branch\":\"main\"}\n";
+    let prd_md = "# 他人任务\n";
+    let (server_url, _changes, _requests, server_task) = mock_api_server(json!({
+        "revision": 2,
+        "tasks": [{
+            "taskId": "remote-1",
+            "taskDir": task_dir
+        }],
+        "files": [
+            snapshot_file_value(&format!("{task_dir}/task.json"), task_json),
+            snapshot_file_value(&format!("{task_dir}/prd.md"), prd_md)
+        ]
+    }))
+    .await;
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api client"));
+    let sync = Arc::new(TaskSync::new(store.clone(), api, Arc::new(|_| {})));
+    sync.set_bindings(vec![binding.clone()]).await;
+
+    let downloaded = sync
+        .download_task("space-1", "remote-1")
+        .await
+        .expect("download task");
+    assert_eq!(downloaded["taskDir"], task_dir);
+    assert_eq!(downloaded["fileCount"], 2);
+
+    let cursor = sync.read_cursor("space-1").await;
+    assert_eq!(
+        cursor.readonly_task_dirs.get(task_dir).map(String::as_str),
+        Some("DOWNLOADED")
+    );
+    let suppressed = sync.suppressed.lock().await;
+    assert_eq!(
+        suppressed
+            .get(&absolute_task_path(
+                &binding,
+                &format!("{task_dir}/task.json")
+            ))
+            .cloned()
+            .flatten(),
+        Some(snapshot_sha256(task_json))
+    );
+    assert_eq!(
+        suppressed
+            .get(&absolute_task_path(&binding, &format!("{task_dir}/prd.md")))
+            .cloned()
+            .flatten(),
+        Some(snapshot_sha256(prd_md))
+    );
+    drop(suppressed);
+
+    // 模拟写盘失败（非目录文件阻断 .trellis/tasks/11-25-bad 创建）：必须回滚 readonly 与 suppressed
+    let bad_dir = ".trellis/tasks/11-25-bad";
+    let (bad_url, _bad_changes, _bad_requests, bad_server) = mock_api_server(json!({
+        "revision": 2,
+        "tasks": [{
+            "taskId": "bad-1",
+            "taskDir": bad_dir
+        }],
+        "files": [
+            snapshot_file_value(&format!("{bad_dir}/task.json"), "{\"id\":\"bad-1\"}\n")
+        ]
+    }))
+    .await;
+    let bad_api = Arc::new(ApiClient::new(&bad_url, None, None).expect("bad api"));
+    let bad_sync = Arc::new(TaskSync::new(store.clone(), bad_api, Arc::new(|_| {})));
+    let mut bad_binding = binding.clone();
+    bad_binding.repo_path = root.join("missing-repo").to_string_lossy().to_string();
+    // 让 tasks_root 本身是普通文件，从而在 write_task_directory 时触发 IO 错误并测试回滚。
+    tokio::fs::create_dir_all(Path::new(&bad_binding.repo_path).join(".trellis"))
+        .await
+        .expect(".trellis parent");
+    tokio::fs::write(
+        Path::new(&bad_binding.repo_path)
+            .join(".trellis")
+            .join("tasks"),
+        "not a dir",
+    )
+    .await
+    .expect("blocking file");
+    bad_sync.set_bindings(vec![bad_binding.clone()]).await;
+
+    let err = bad_sync
+        .download_task("space-1", "bad-1")
+        .await
+        .expect_err("write error must fail");
+    assert!(!err.message.is_empty());
+    let after_rollback = bad_sync.read_cursor("space-1").await;
+    assert!(!after_rollback.readonly_task_dirs.contains_key(bad_dir));
+    assert!(!bad_sync
+        .suppressed
+        .lock()
+        .await
+        .contains_key(&absolute_task_path(
+            &bad_binding,
+            &format!("{bad_dir}/task.json")
+        )));
+
+    server_task.abort();
+    bad_server.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}

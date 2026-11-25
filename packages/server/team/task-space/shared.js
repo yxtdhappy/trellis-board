@@ -124,6 +124,14 @@ const STATEMENTS = {
     WHERE f.task_space_id = ? AND f.deleted = 0
       AND f.task_dir NOT LIKE '.trellis/tasks/archive/%'
       AND f.relative_path NOT LIKE '.trellis/tasks/archive/%'
+      AND NOT EXISTS (
+        SELECT 1 FROM sync_task_lease lease
+        WHERE lease.execution_task_key = t.execution_task_key
+          AND lease.status = 'active'
+          AND lease.expires_at > ?
+          AND ? IS NOT NULL
+          AND lease.agent_id <> ?
+      )
     ORDER BY f.task_dir, f.relative_path
   `,
   preflightHiddenTasks: `

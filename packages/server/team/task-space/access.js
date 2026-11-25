@@ -24,7 +24,7 @@ function parsePreflightTaskMeta(jsonText) {
   }
 }
 
-export function createAccess({ db, statements, view, allowFileRemote }) {
+export function createAccess({ db, statements, view, allowFileRemote, now = () => new Date() }) {
   function actorContext(userId, requestedTeamId = null) {
     const user = statements.userAccountById.get(userId)
     if (!user || user.status !== 'active') {
@@ -293,7 +293,7 @@ export function createAccess({ db, statements, view, allowFileRemote }) {
     }
   }
 
-  function preflight(userId, input = {}) {
+  function preflight(userId, input = {}, options = {}) {
     const resolved = resolve(userId, input)
     if (resolved.status !== 'existing' || !resolved.taskSpace) {
       return {
@@ -319,7 +319,15 @@ export function createAccess({ db, statements, view, allowFileRemote }) {
       }
     }
 
-    const rows = statements.preflightFiles.all(userId, resolved.taskSpace.id)
+    const agentId =
+      typeof options.agentId === 'string' && options.agentId.trim() ? options.agentId.trim() : null
+    const rows = statements.preflightFiles.all(
+      userId,
+      resolved.taskSpace.id,
+      now().toISOString(),
+      agentId,
+      agentId,
+    )
     const groups = new Map()
     for (const row of rows) {
       let group = groups.get(row.task_dir)

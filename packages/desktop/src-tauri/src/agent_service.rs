@@ -330,6 +330,21 @@ impl AgentService {
         })
     }
 
+    async fn lock_task_sync(
+        &self,
+        task_space_id: &str,
+    ) -> AgentResult<(Arc<TaskSync>, Option<tokio::sync::OwnedMutexGuard<()>>)> {
+        if let Some(running) = self.running_task_sync() {
+            if running.has_binding(task_space_id).await {
+                let serial = running.task_space_sync_lock(task_space_id).await;
+                return Ok((running, Some(serial.lock_owned().await)));
+            }
+        }
+        let (config, api) = self.agent_context().await?;
+        let task_sync = Arc::new(self.task_sync(api, config.bindings).await);
+        Ok((task_sync, None))
+    }
+
     fn notify_live_control(&self) {
         let _ = self.app.emit("live-control-changed", ());
     }
@@ -733,22 +748,10 @@ pub async fn decide_live_change(
     action: &str,
 ) -> Result<(), String> {
     let service = service(app).map_err(|error| message(&error))?;
-    if let Some(running) = service.running_task_sync() {
-        if running.has_binding(task_space_id).await {
-            let serial = running.task_space_sync_lock(task_space_id).await;
-            let _serial = serial.lock().await;
-            return running
-                .decide_conflict(task_space_id, conflict_id, action, None)
-                .await
-                .map(|_| ())
-                .map_err(|error| message(&error));
-        }
-    }
-    let (config, api) = service
-        .agent_context()
+    let (task_sync, _serial) = service
+        .lock_task_sync(task_space_id)
         .await
         .map_err(|error| message(&error))?;
-    let task_sync = service.task_sync(api, config.bindings).await;
     task_sync
         .decide_conflict(task_space_id, conflict_id, action, None)
         .await
@@ -780,11 +783,10 @@ pub async fn resolve_initial_sync(
     decisions: Option<Value>,
 ) -> Result<Value, String> {
     let service = service(app).map_err(|error| message(&error))?;
-    let (config, api) = service
-        .agent_context()
+    let (task_sync, _serial) = service
+        .lock_task_sync(task_space_id)
         .await
         .map_err(|error| message(&error))?;
-    let task_sync = service.task_sync(api, config.bindings).await;
     let decisions: Vec<Value> = match decisions {
         Some(Value::Array(items)) => items,
         _ => Vec::new(),
@@ -798,11 +800,10 @@ pub async fn resolve_initial_sync(
 /// 对照 JS `live-sync-deferred` 一次性命令：补传首次同步时暂缓的本地任务目录。
 pub async fn sync_deferred_tasks(app: &AppHandle, task_space_id: &str) -> Result<Value, String> {
     let service = service(app).map_err(|error| message(&error))?;
-    let (config, api) = service
-        .agent_context()
+    let (task_sync, _serial) = service
+        .lock_task_sync(task_space_id)
         .await
         .map_err(|error| message(&error))?;
-    let task_sync = service.task_sync(api, config.bindings).await;
     task_sync
         .sync_deferred_tasks(task_space_id)
         .await
@@ -828,11 +829,10 @@ pub async fn set_task_ownership(
     decisions: Value,
 ) -> Result<Value, String> {
     let service = service(app).map_err(|error| message(&error))?;
-    let (config, api) = service
-        .agent_context()
+    let (task_sync, _serial) = service
+        .lock_task_sync(task_space_id)
         .await
         .map_err(|error| message(&error))?;
-    let task_sync = service.task_sync(api, config.bindings).await;
     task_sync
         .set_task_ownership(task_space_id, decisions)
         .await
@@ -846,11 +846,10 @@ pub async fn download_task(
     task_id: &str,
 ) -> Result<Value, String> {
     let service = service(app).map_err(|error| message(&error))?;
-    let (config, api) = service
-        .agent_context()
+    let (task_sync, _serial) = service
+        .lock_task_sync(task_space_id)
         .await
         .map_err(|error| message(&error))?;
-    let task_sync = service.task_sync(api, config.bindings).await;
     task_sync
         .download_task(task_space_id, task_id)
         .await
@@ -876,13 +875,13 @@ pub async fn reopen_conflicts(
     task_space_id: Option<String>,
 ) -> Result<bool, String> {
     let service = service(app).map_err(|error| message(&error))?;
-    let (config, api) = service
-        .agent_context()
-        .await
-        .map_err(|error| message(&error))?;
     let space_ids: Vec<String> = match task_space_id {
         Some(id) => vec![id],
         None => {
+            let (config, _) = service
+                .agent_context()
+                .await
+                .map_err(|error| message(&error))?;
             let mut ids: Vec<String> = Vec::new();
             for binding in &config.bindings {
                 if !ids.contains(&binding.task_space_id) {
@@ -892,9 +891,12 @@ pub async fn reopen_conflicts(
             ids
         }
     };
-    let task_sync = service.task_sync(api, config.bindings).await;
     let mut shown = false;
     for space_id in space_ids {
+        let (task_sync, _serial) = service
+            .lock_task_sync(&space_id)
+            .await
+            .map_err(|error| message(&error))?;
         if let Some(event) = task_sync
             .reopen_conflicts(&space_id)
             .await

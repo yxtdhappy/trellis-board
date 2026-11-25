@@ -495,7 +495,7 @@ taskSpace、binding 或 cursor，也不返回任务正文。返回结果按稳�
 }
 ```
 
-`new`、`branch_new`、`access_required` 和 `unavailable` 不返回任何任务元数据（`tasks`/`hiddenTaskDirs`/`archivedTaskBasenames` 均为空）。只有 `existing` 且项目、taskSpace 均可用时才返回当前用户可见的未归档活跃任务分组及可选 `title`/`taskBranch`；`hiddenTaskDirs` 列出同任务空间内非本人活跃任务、已归档任务与无 `sync_task` 行的 legacy 活跃目录，`archivedTaskBasenames` 列出已归档目录名。桌面端透传 `developerId`（缺失回退 `worktree::developer_id`），在全状态下按 `group_owned_by_developer` 过滤本地他人任务，按 `retain_server_groups_for_branch_initial_sync` 过滤跨分支任务，并剔除命中 `hiddenTaskDirs`/`archivedTaskBasenames` 的 `LocalOnly` 差异；`difference_to_json` 带出 `title` 供接入弹窗展示明细。客户端使用这些元数据与本地文件摘要分类：
+`new`、`branch_new`、`access_required` 和 `unavailable` 不返回任何任务元数据（`tasks`/`hiddenTaskDirs`/`archivedTaskBasenames` 均为空）。只有 `existing` 且项目、taskSpace 均可用时才返回当前用户可见的未归档活跃任务分组及可选 `title`/`taskBranch`（传入 `agentId` 时排除同用户其他设备持有的未过期活跃租约，与首同步 `prepare_controlled_server_groups` 口径一致）；`hiddenTaskDirs` 列出同任务空间内非本人活跃任务、已归档任务与无 `sync_task` 行的 legacy 活跃目录，`archivedTaskBasenames` 列出已归档目录名。桌面端透传 `developerId`（缺失回退 `worktree::developer_id`），在全状态下按 `group_owned_by_developer` 过滤本地他人任务，按 `retain_server_groups_for_branch_initial_sync` 过滤跨分支任务，并剔除命中 `hiddenTaskDirs`/`archivedTaskBasenames` 的 `LocalOnly` 差异；`difference_to_json` 带出 `title` 供接入弹窗展示明细。客户端使用这些元数据与本地文件摘要分类：
 
 - `same`
 - `local-only`
@@ -504,11 +504,13 @@ taskSpace、binding 或 cursor，也不返回任务正文。返回结果按稳�
 - `move-delete-conflict`
 - `invalid`
 
-界面提供三个入口：
+界面入口根据差异类型分流：
 
-- 暂不接入：只关闭向导并清除待接入路径，不调用 attach，不写本地 binding/cursor，不写服务端。
-- 仅同步无冲突项：只下载 `server-only`，跳过本地独有、冲突和移动删除争议，不上传本地内容。
-- 查看并处理差异：按任务目录统一选择服务端、本地、保存副本或跳过，不能写半个任务。
+- 仅存在 `server-only`（无 `local-only`、冲突与结构异常）：展示中性提示与差异列表，底部收敛为「暂不接入」和主按钮「接入并同步服务端任务」（直接走 `safe` 模式）。
+- 存在 `local-only`、冲突或结构异常时，提供三个入口：
+  - 暂不接入：只关闭向导并清除待接入路径，不调用 attach，不写本地 binding/cursor，不写服务端。
+  - 仅同步无冲突项：只下载 `server-only`，跳过本地独有、冲突和移动删除争议，不上传本地内容。
+  - 查看并处理差异：按任务目录统一选择服务端、本地、保存副本或跳过，不能写半个任务。
 
 服务端没有快照时返回 `new` 或 `branch_new`。用户确认接入后使用内部 `bootstrap` 模式，把空
 服务端任务空间初始化为当前本地任务快照；只有这种情况允许首次上传本地任务。若预检到接入之间
@@ -544,8 +546,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 处理动作：
 
 - 查看差异：本地读取本地目录和服务端目录，逐文件返回内容差异。
-- `use-server`：先备份本地完整目录，再用服务端目录原子替换。
-- `overwrite-server`：客户端先经共享 `acquire_upload_fence` 获取/续约 `taskVersion` 与 `leaseToken`（遇到归档/只读/他人租约等控制面阻断直接返回 `skipped`），服务端 `resolveConflict` 将两字段透传给 `applyChangesInternal`；核对冲突摘要后保存服务端旧内容与新内容到 `sync_conflict_backup`，写新 revision 和审计并标记冲突已解决；客户端随后持久化控制态并将已覆盖文件写入 `suppressed`，避免 watcher 重复判定 dirty。
+- `use-server`：先备份本地完整目录，再用服务端目录原子替换；写本地游标并同步调用 `write_server_cursor` 上报最新 revision。
+- `overwrite-server`：客户端先经共享 `acquire_upload_fence` 获取/续约 `taskVersion` 与 `leaseToken`（遇到归档/只读/他人租约等控制面阻断直接返回 `skipped`），服务端 `resolveConflict` 将两字段透传给 `applyChangesInternal`；核对冲突摘要后保存服务端旧内容与新内容到 `sync_conflict_backup`，写新 revision 和审计并标记冲突已解决；客户端随后持久化控制态、将已覆盖文件写入 `suppressed`（避免 watcher 重复判定 dirty），推进本地 cursor 到服务端最新 revision 并上报 `write_server_cursor`。
 - `listConflicts` 关联 `sync_task` 返回可选 `taskTitle`；客户端 `reopen_conflicts` 与 `conflict_summary` 按 `taskTitle -> 本地 task.json title -> taskId -> taskDir -> "任务"` 逐级回退。
 - `save-local-copy`：复制本地完整目录到客户端备份，不改变服务端任务快照。
 

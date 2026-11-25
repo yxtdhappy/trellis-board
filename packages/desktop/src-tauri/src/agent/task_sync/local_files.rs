@@ -189,30 +189,85 @@ impl TaskSync {
             return protocol::err(code::INVALID_RESPONSE, "服务端任务文件为空");
         }
         let file_count = files.len();
-        write_task_directory(
-            &binding,
-            &SnapshotGroup {
-                task_dir: task_dir.clone(),
-                archived: false,
-                archive_month: None,
-                files,
-                task_id: Some(task_id.to_string()),
-                task_branch: None,
-            },
-        )
-        .await?;
         let assignee = self.control_assignee(task_space_id, &task_dir).await;
+        let previous_cursor = self.read_cursor(task_space_id).await;
+        let previous_readonly = previous_cursor.readonly_task_dirs.get(&task_dir).cloned();
+        let previous_deferred = previous_cursor.deferred.get(&task_dir).cloned();
         self.mark_readonly_dir(
             task_space_id,
             &task_dir,
             &readonly_reason("DOWNLOADED", &assignee),
         )
         .await?;
+        self.mark_files_suppressed(&binding, &files).await;
+        if let Err(error) = write_task_directory(
+            &binding,
+            &SnapshotGroup {
+                task_dir: task_dir.clone(),
+                archived: false,
+                archive_month: None,
+                files: files.clone(),
+                task_id: Some(task_id.to_string()),
+                task_branch: None,
+            },
+        )
+        .await
+        {
+            self.rollback_download_guards(
+                &binding,
+                &task_dir,
+                &files,
+                previous_readonly.as_deref(),
+                previous_deferred.as_ref(),
+            )
+            .await;
+            return Err(error);
+        }
         Ok(json!({
             "taskId": task_id,
             "taskDir": task_dir,
             "fileCount": file_count,
         }))
+    }
+
+    async fn rollback_download_guards(
+        &self,
+        binding: &AgentBinding,
+        task_dir: &str,
+        files: &[SnapshotFile],
+        previous_readonly: Option<&str>,
+        previous_deferred: Option<&BTreeMap<String, String>>,
+    ) {
+        {
+            let mut suppressed = self.suppressed.lock().await;
+            for file in files {
+                suppressed.remove(&absolute_task_path(binding, &file.path));
+            }
+        }
+        let cursor = self.read_cursor(&binding.task_space_id).await;
+        let mut dirs = cursor.readonly_task_dirs.clone();
+        match previous_readonly {
+            Some(reason) => {
+                dirs.insert(task_dir.to_string(), reason.to_string());
+            }
+            None => {
+                dirs.remove(task_dir);
+            }
+        }
+        let mut deferred = cursor.deferred.clone();
+        if let Some(prev) = previous_deferred {
+            deferred.insert(task_dir.to_string(), prev.clone());
+        }
+        let _ = self
+            .write_cursor(
+                &binding.task_space_id,
+                CursorPatch {
+                    readonly_task_dirs: Some(dirs),
+                    deferred: previous_deferred.map(|_| deferred),
+                    ..Default::default()
+                },
+            )
+            .await;
     }
 }
 impl TaskSync {

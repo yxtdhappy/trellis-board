@@ -23,7 +23,7 @@ export function createTaskSpaceService({
       : DEFAULT_LISTENER_STALE_MS
   const statements = createStatements(db)
   const view = createView({ statements, now, staleMs: effectiveStaleMs })
-  const access = createAccess({ db, statements, view, allowFileRemote })
+  const access = createAccess({ db, statements, view, allowFileRemote, now })
   const attach = createAttach({ db, statements, access, view, allowFileRemote }).attach
   const bindings = createBindings({ db, statements, access, view, now })
   const lifecycle = createLifecycle({

@@ -57,7 +57,7 @@
 - 本地改动只经 `TaskSync` 的 notify watcher 上传：监听 `<repo>/.trellis`，只关心 `.trellis/tasks/**`，
   250 ms 静默窗口合并后按任务目录调用 `upload_dirty`；不得新增独立的实时同步通道。
 - `TaskSync` 生命周期与无泄漏停止：`TaskSync.watch` 使用同步 `std::sync::Mutex` 并在后台 `watch_loop` 中仅持有 `Weak<TaskSync>`（仅在处理单批事件期间短暂 `upgrade`，空闲期不保留强引用）；`TaskSync::stop(&self)` 发送 `watch_shutdown` 信号、清空 `watchers` 与 `tx` 并唤醒 `ownership_validation_state`。`AgentRuntime::stop()` 与 `Drop for TaskSync` 均调用 `TaskSync::stop()`，确保 `restart` / `stop` 后旧 watcher 立即退出且不发生同机双传自冲突。
-- 运行态缓存一致：`agent_service::decide_live_change` 在 `AgentRuntime` 运行且持有目标绑定时，直接复用运行中的 `TaskSync`（经 `task_space_sync_lock` 串行化）执行 `decide_conflict`，使内存 `cursor_state` 与 `task_control_state` 保持同步；仅当后台未运行时回退临时 `TaskSync`。
+- 运行态缓存一致：`agent_service::lock_task_sync` 为 `decide_live_change`、`resolve_initial_sync`、`sync_deferred_tasks`、`set_task_ownership`、`download_task`、`reopen_conflicts` 统一在 `AgentRuntime` 运行且持有目标绑定时直接复用运行中的 `TaskSync`（经 `task_space_sync_lock` 串行化，其中 `set_task_ownership` 内部直接调用 `upload_directories` 避免重入死锁），使内存 `bindings`、`cursor_state`、`task_control_state` 与 `suppressed` 保持同步；仅当后台未运行时回退临时 `TaskSync`。`download_task` 写盘前先登记 `readonly_task_dirs` 与 `suppressed`，落盘失败时回滚守卫。
 - snapshot 带 `controls` 时只允许落地 `materialized/claimed/pending_delivery`，且先 claim；
   `archived/reassigned/handoff_materialized` 不得继续自动上传。`archived/reassigned` 只保留本地数据、
   释放已知失效 lease、记录控制状态并停止自动上传。

@@ -28,6 +28,7 @@ import {
   normalizePreflight,
   preflightDifferenceLabel,
   preflightDifferenceTone,
+  preflightPresentationMode,
   stateLabel,
 } from './project-onboarding-normalize.ts'
 import type {
@@ -456,7 +457,9 @@ export function ProjectOnboardingDialog({
   const actionableDifferences =
     preflight?.differences.filter((difference) => difference.type !== 'same') || []
   const newSnapshot = preflight?.status === 'new' || preflight?.status === 'branch_new'
-  const hasDifferences = preflight?.status === 'existing' && actionableDifferences.length > 0
+  const presentationMode = preflightPresentationMode(preflight)
+  const serverOnlySync = presentationMode === 'server-only'
+  const hasDifferences = presentationMode === 'review'
   const associationCheckPassed = associationsLoaded && !associationLoadError
 
   return (
@@ -667,6 +670,17 @@ export function ProjectOnboardingDialog({
                         />
                       ) : null}
                     </>
+                  ) : serverOnlySync ? (
+                    <>
+                      <p className="font-medium">
+                        服务端有 {preflight.counts.serverOnly || actionableDifferences.length}{' '}
+                        个任务待同步到本地
+                      </p>
+                      <p className="text-muted-foreground">
+                        本地没有待上传任务或内容冲突，接入后将同步以下服务端任务。暂不接入不会建立绑定，也不会写入本地游标或服务端。
+                      </p>
+                      <PreflightDifferenceList items={actionableDifferences} />
+                    </>
                   ) : hasDifferences ? (
                     <>
                       <p className="font-medium text-warning">本地与服务端的任务需要确认</p>
@@ -734,6 +748,14 @@ export function ProjectOnboardingDialog({
                 : preflight.counts.invalid > 0
                   ? '接入并检查异常任务'
                   : '接入并上传本地任务'}
+            </Button>
+          ) : serverOnlySync ? (
+            <Button
+              type="button"
+              disabled={busy || !associationCheckPassed}
+              onClick={() => void associate('safe')}
+            >
+              {busy ? '正在接入…' : '接入并同步服务端任务'}
             </Button>
           ) : hasDifferences ? (
             <>

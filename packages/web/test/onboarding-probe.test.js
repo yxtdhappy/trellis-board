@@ -11,6 +11,7 @@ import {
   normalizePreflight,
   preflightDifferenceLabel,
   preflightDifferenceTone,
+  preflightPresentationMode,
 } from '../src/features/board/dialogs/project-onboarding-normalize.ts'
 
 test('分支探测只在分支和远端 URL 都非空时触发', () => {
@@ -153,4 +154,90 @@ test('normalizeAssociation 保留 initialReviewPending 且映射差异标签与�
   assert.equal(preflightDifferenceTone('content-conflict'), 'warning')
   assert.equal(preflightDifferenceTone('move-delete-conflict'), 'danger')
   assert.equal(preflightDifferenceTone('invalid'), 'danger')
+})
+
+test('preflightPresentationMode 区分纯服务端任务与需确认差异', () => {
+  assert.equal(preflightPresentationMode(null), 'none')
+  assert.equal(
+    preflightPresentationMode(
+      normalizePreflight({
+        status: 'existing',
+        revision: 3,
+        differences: [{ type: 'server-only', taskId: 't1', taskDir: '.trellis/tasks/11-25-a' }],
+        counts: { same: 0, localOnly: 0, serverOnly: 1, conflicts: 0, invalid: 0 },
+      }),
+    ),
+    'server-only',
+  )
+  assert.equal(
+    preflightPresentationMode(
+      normalizePreflight({
+        status: 'existing',
+        revision: 3,
+        differences: [
+          { type: 'server-only', taskId: 't1', taskDir: '.trellis/tasks/11-25-a' },
+          { type: 'local-only', taskId: 't2', taskDir: '.trellis/tasks/11-25-b' },
+        ],
+        counts: { same: 0, localOnly: 1, serverOnly: 1, conflicts: 0, invalid: 0 },
+      }),
+    ),
+    'review',
+  )
+  assert.equal(
+    preflightPresentationMode(
+      normalizePreflight({
+        status: 'existing',
+        revision: 3,
+        differences: [
+          { type: 'content-conflict', taskId: 't1', taskDir: '.trellis/tasks/11-25-a' },
+        ],
+        counts: { same: 0, localOnly: 0, serverOnly: 0, conflicts: 1, invalid: 0 },
+      }),
+    ),
+    'review',
+  )
+  assert.equal(
+    preflightPresentationMode(
+      normalizePreflight({
+        status: 'existing',
+        revision: 3,
+        differences: [],
+        counts: { same: 2, localOnly: 0, serverOnly: 0, conflicts: 0, invalid: 0 },
+      }),
+    ),
+    'ready',
+  )
+  assert.equal(
+    preflightPresentationMode(
+      normalizePreflight({
+        status: 'new',
+        revision: 0,
+        differences: [],
+        counts: { same: 0, localOnly: 1, serverOnly: 0, conflicts: 0, invalid: 0 },
+      }),
+    ),
+    'bootstrap',
+  )
+  assert.equal(
+    preflightPresentationMode(
+      normalizePreflight({
+        status: 'new',
+        revision: 0,
+        differences: [],
+        counts: { same: 0, localOnly: 0, serverOnly: 0, conflicts: 0, invalid: 1 },
+      }),
+    ),
+    'bootstrap-invalid',
+  )
+  assert.equal(
+    preflightPresentationMode(
+      normalizePreflight({
+        status: 'access_required',
+        revision: 0,
+        differences: [],
+        counts: { same: 0, localOnly: 0, serverOnly: 0, conflicts: 0, invalid: 0 },
+      }),
+    ),
+    'blocked',
+  )
 })

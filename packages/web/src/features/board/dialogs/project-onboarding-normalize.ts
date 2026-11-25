@@ -2,6 +2,38 @@ import type { Association, PreflightResult, PushState } from './project-onboardi
 
 export type PreflightDiffTone = 'info' | 'primary' | 'warning' | 'danger' | 'neutral'
 
+export type PreflightPresentationMode =
+  | 'none'
+  | 'blocked'
+  | 'bootstrap'
+  | 'bootstrap-invalid'
+  | 'server-only'
+  | 'review'
+  | 'ready'
+
+export function preflightPresentationMode(
+  preflight: PreflightResult | null,
+): PreflightPresentationMode {
+  if (!preflight) return 'none'
+  if (preflight.status === 'access_required' || preflight.status === 'unavailable') {
+    return 'blocked'
+  }
+  if (preflight.status === 'new' || preflight.status === 'branch_new') {
+    return preflight.counts.invalid > 0 ? 'bootstrap-invalid' : 'bootstrap'
+  }
+  const { localOnly, serverOnly, conflicts, invalid } = preflight.counts
+  const hasReviewItems =
+    localOnly > 0 ||
+    conflicts > 0 ||
+    invalid > 0 ||
+    preflight.differences.some((item) => item.type !== 'same' && item.type !== 'server-only')
+  if (hasReviewItems) return 'review'
+  if (serverOnly > 0 || preflight.differences.some((item) => item.type === 'server-only')) {
+    return 'server-only'
+  }
+  return 'ready'
+}
+
 export function text(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }

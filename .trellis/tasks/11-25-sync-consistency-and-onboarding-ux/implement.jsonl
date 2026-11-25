@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/desktop-realtime-sync.md", "reason": "桌面端实时同步与预检/首同步/冲突契约"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "桌面端 AgentRuntime 与 TaskSync 生命周期约束"}
+{"file": ".trellis/spec/backend/task-ownership-and-conflict-idempotency.md", "reason": "任务归属与冲突幂等规则"}
+{"file": ".trellis/spec/frontend/component-reuse.md", "reason": "前端弹窗与组件复用规范"}

@@ -63,10 +63,11 @@ impl TaskSync {
                 }
             }
             baselines.extend(baselines_from_snapshot(&directories.server_files));
+            let next_revision = cursor.revision.max(revision);
             self.write_cursor(
                 task_space_id,
                 CursorPatch {
-                    revision: Some(cursor.revision.max(revision)),
+                    revision: Some(next_revision),
                     baselines: Some(baselines),
                     ..Default::default()
                 },
@@ -74,6 +75,8 @@ impl TaskSync {
             .await?;
             let resolved = self
                 .resolve_conflict(task_space_id, conflict_id, &json!({ "action": action }))
+                .await?;
+            self.write_server_cursor(task_space_id, next_revision)
                 .await?;
             let task_dirs: Vec<String> = [directories.local.clone(), directories.server.clone()]
                 .into_iter()
@@ -226,11 +229,16 @@ impl TaskSync {
                 .await?;
         } else {
             let uploaded_files = parse_snapshot_files_from_values(&values)?;
+            let next_revision = result
+                .get("revision")
+                .and_then(Value::as_u64)
+                .map(|revision| cursor.revision.max(revision))
+                .unwrap_or(cursor.revision);
             self.mark_files_suppressed(&binding, &uploaded_files).await;
             self.write_cursor(
                 task_space_id,
                 CursorPatch {
-                    revision: Some(cursor.revision),
+                    revision: Some(next_revision),
                     sequence: Some(next_sequence),
                     baselines: Some(merge_baselines(&cursor.baselines, &uploaded_files)),
                     pending: Some(None),
@@ -238,6 +246,8 @@ impl TaskSync {
                 },
             )
             .await?;
+            self.write_server_cursor(task_space_id, next_revision)
+                .await?;
             let task_dirs: Vec<String> = [directories.local.clone(), directories.server.clone()]
                 .into_iter()
                 .flatten()

@@ -56,7 +56,7 @@ export function createAgentRoutes(ctx) {
     }
     if (pathname === '/api/agent/task-spaces/preflight' && request.method === 'POST') {
       const body = await readJsonBody(request)
-      sendJson(response, 200, taskSpaces.preflight(agent.userId, body))
+      sendJson(response, 200, taskSpaces.preflight(agent.userId, body, { agentId: agent.id }))
       return true
     }
     if (pathname === '/api/agent/task-spaces/resolve' && request.method === 'POST') {

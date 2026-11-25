@@ -1184,9 +1184,15 @@ async fn overwrite_server_conflict_acquires_fence_updates_control_and_suppresses
         .any(|req| req.contains("/claim")));
 
     let cursor = sync.read_cursor("space-1").await;
+    assert_eq!(cursor.revision, 3);
     assert!(!cursor.conflict_blocked.contains_key(task_dir));
     assert!(cursor.sequence > 0);
     assert_eq!(sent_resolve[0]["clientSequence"], cursor.sequence);
+    assert!(requests
+        .lock()
+        .await
+        .iter()
+        .any(|req| req == "PUT /api/agent/task-spaces/space-1/cursor"));
 
     let suppressed = sync.suppressed.lock().await;
     assert_eq!(
@@ -1295,4 +1301,80 @@ fn conflict_summary_uses_title_then_task_id_then_fallback() {
         "details": { "files": [] }
     }));
     assert_eq!(fallback["taskTitle"], json!("任务"));
+}
+
+#[tokio::test]
+async fn use_server_conflict_updates_local_and_server_cursor_revision() {
+    let (root, store, _sync, mut binding) =
+        test_task_sync_fixture("trellis-use-server-cursor").await;
+    let repo = Path::new(&binding.repo_path);
+    init_git_repo(repo);
+    let task_dir = ".trellis/tasks/11-25-demo";
+    let local_json =
+        "{\"id\":\"demo\",\"title\":\"本地版本\",\"branch\":\"main\",\"assignee\":\"dev\"}\n";
+    let server_json =
+        "{\"id\":\"demo\",\"title\":\"服务端版本\",\"branch\":\"main\",\"assignee\":\"dev\"}\n";
+    tokio::fs::create_dir_all(repo.join(task_dir))
+        .await
+        .expect("task dir");
+    tokio::fs::write(repo.join(task_dir).join("task.json"), local_json)
+        .await
+        .expect("task json");
+    run_git(repo, &["add", "."]);
+    run_git(repo, &["commit", "--no-verify", "-m", "init"]);
+    binding.initial_sync_completed = true;
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+
+    let (server_url, _changes, requests, server_task) = mock_api_server(json!({
+        "revision": 6,
+        "conflicts": [{
+            "id": "conflict-1",
+            "taskId": "demo",
+            "taskTitle": "服务端版本",
+            "taskDir": task_dir,
+            "serverRevision": 6,
+            "files": []
+        }],
+        "files": [{
+            "path": format!("{task_dir}/task.json"),
+            "content": server_json,
+            "sha256": snapshot_sha256(server_json),
+        }],
+        "resolveResponse": {
+            "status": 200,
+            "payload": {
+                "conflictId": "conflict-1",
+                "action": "use-server",
+                "resolved": true
+            }
+        }
+    }))
+    .await;
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api"));
+    let sync = TaskSync::new(store.clone(), api, Arc::new(|_| {}));
+    sync.set_bindings(vec![binding.clone()]).await;
+
+    sync.decide_conflict("space-1", "conflict-1", "use-server", None)
+        .await
+        .expect("use-server");
+
+    let cursor = sync.read_cursor("space-1").await;
+    assert_eq!(cursor.revision, 6);
+    assert_eq!(
+        tokio::fs::read_to_string(repo.join(task_dir).join("task.json"))
+            .await
+            .expect("updated local task json"),
+        server_json
+    );
+    assert!(requests
+        .lock()
+        .await
+        .iter()
+        .any(|req| req == "PUT /api/agent/task-spaces/space-1/cursor"));
+
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
 }

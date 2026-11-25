@@ -171,6 +171,26 @@ pub(super) async fn mock_api_server(
                     )
                 } else if path.contains("/snapshot?") {
                     ("200 OK", snapshot_payload.as_ref().clone())
+                } else if method == "GET" && path.ends_with("/tasks") {
+                    (
+                        "200 OK",
+                        json!({
+                            "tasks": snapshot_payload
+                                .get("tasks")
+                                .cloned()
+                                .unwrap_or_else(|| Value::Array(Vec::new()))
+                        }),
+                    )
+                } else if method == "GET" && path.contains("/tasks/") && path.ends_with("/files") {
+                    (
+                        "200 OK",
+                        json!({
+                            "files": snapshot_payload
+                                .get("files")
+                                .cloned()
+                                .unwrap_or_else(|| Value::Array(Vec::new()))
+                        }),
+                    )
                 } else if path.contains("/files?") {
                     let status = snapshot_payload
                         .get("directoryStatus")
