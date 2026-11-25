@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 56
-- **Last Active**: 2026-11-24
+- **Total Sessions**: 58
+- **Last Active**: 2026-11-25
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1874 | Active |
+| `journal-1.md` | ~1897 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 58 | 2026-11-25 | 修复 trellis-kit 与证据门缺陷并同步 AGENTS.md 工作流规则 | `f29e33d` | `trellis-continue-11-25-evidence-gate-fixes` |
 | 56 | 2026-11-24 | 分享页子路径适配与真实反向代理 e2e | `698737f` | `main` |
 | 55 | 2026-11-24 | 任务流水线任务分享链接与桌面端深度唤起 | `b9209fa` | `pipeline-task-share-deeplink` |
 | 54 | 2026-11-24 | 支持从 env 配置初始管理员账号密码 | `be601d9` | `server-env-initial-admin-credentials` |

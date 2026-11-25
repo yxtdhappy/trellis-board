@@ -1872,3 +1872,26 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 58: 修复 trellis-kit 与证据门缺陷并同步 AGENTS.md 工作流规则
+<!-- trellis-session: v=2 fp=b4912d3b7995baf0 -->
+
+**Date**: 2026-11-25
+**Task**: 修复 trellis-kit 与证据门缺陷并同步 AGENTS.md 工作流规则
+**Package**: server
+**Branch**: `trellis-continue-11-25-evidence-gate-fixes`
+
+### Summary
+
+同步 trellis-task-state SKILL.md 分发源并清理冗余；修复 state_persist_degraded 解除与 task_type_pending 证据门；在 apply.py 与根目录 AGENTS.md 同步 Trellis Workflow 优先规则并补充 scripts/test/trellis-kit.test.js
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f29e33d` | fix(trellis-kit): 修复证据门 3 处 P1 缺陷并同步 AGENTS.md 工作流规则 |
+
+### Status
+
+[OK] **Completed**
