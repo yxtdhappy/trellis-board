@@ -827,7 +827,9 @@ async fn inspect_associated_project_branches(
     let repo_path = approved_association_for_task_space(&associations, &task_space_id)?
         .repo_path
         .clone();
-    agent::branch_inspect::inspect_associated_project_branches(&app, &repo_path).await
+    let service = agent_service::service(&app).map_err(|error| error.message)?;
+    let hooks = service.ephemeral_hooks().map_err(|error| error.message)?;
+    agent::branch_inspect::inspect_associated_project_branches(&repo_path, &hooks).await
 }
 
 #[tauri::command]

@@ -3,11 +3,9 @@
 use std::path::Path;
 
 use serde_json::{json, Value};
-use tauri::AppHandle;
 
 use crate::agent::git;
 use crate::agent::protocol::{code, AgentResult};
-use crate::agent_service::service;
 
 /// 返回 `{ repoPath, currentBranch, branches }`；detached HEAD 时 `currentBranch` 为 null。
 pub async fn inspect_branches(repo_path: &Path, hooks_dir: &Path) -> AgentResult<Value> {
@@ -29,15 +27,13 @@ pub async fn inspect_branches(repo_path: &Path, hooks_dir: &Path) -> AgentResult
     }))
 }
 
-/// Board 命令入口：按已批准关联的仓库路径读取分支，并附带 `ok` 标记。
+/// Board 命令入口：按已批准关联的仓库路径与临时 hooks 读取分支，并附带 `ok` 标记。
 pub async fn inspect_associated_project_branches(
-    app: &AppHandle,
     repo_path: &str,
+    hooks: &Path,
 ) -> Result<Value, String> {
-    let service = service(app).map_err(|error| error.message)?;
-    let hooks = service.ephemeral_hooks().map_err(|error| error.message)?;
-    let inspected = inspect_branches(Path::new(repo_path), &hooks).await;
-    let _ = std::fs::remove_dir_all(&hooks);
+    let inspected = inspect_branches(Path::new(repo_path), hooks).await;
+    let _ = std::fs::remove_dir_all(hooks);
     let mut payload = inspected.map_err(|error| error.message)?;
     if let Some(object) = payload.as_object_mut() {
         object.insert("ok".to_string(), Value::Bool(true));
