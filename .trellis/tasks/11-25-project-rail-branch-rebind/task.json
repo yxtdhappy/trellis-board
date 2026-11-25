@@ -1,0 +1,32 @@
+{
+  "id": "project-rail-branch-rebind",
+  "name": "project-rail-branch-rebind",
+  "title": "项目栏已关联分支图标支持重新绑定分支",
+  "description": "项目栏已关联状态下点击分支绑定图标弹出分支选择弹窗，可把本地仓库重新绑定到当前检出的其他分支",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-25",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "task_type_updated_at": "2026-11-25T22:37:54",
+    "task_type_updated_reason": "新增桌面 IPC 命令与权限、跨 Rust/Web 的绑定入口改造，需要 design.md 与 implement.md"
+  }
+}
