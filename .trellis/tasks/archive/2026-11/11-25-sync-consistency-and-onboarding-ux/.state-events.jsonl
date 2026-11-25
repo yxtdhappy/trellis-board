@@ -2,3 +2,4 @@
 {"actor": "flyfly6", "at": "2026-11-25T08:39:06+00:00", "event": "task_type_set", "from": "in_progress", "from_value": null, "reason": "补标跨端同步与前端弹窗改造复杂任务类型", "schemaVersion": 1, "task_type": "complex", "to": "in_progress"}
 {"actor": "flyfly6", "at": "2026-11-25T08:40:13+00:00", "commit": "53a4d2557543e895a3c2f6ab648bbb8b80c7f42e", "event": "commit_set", "from": "in_progress", "schemaVersion": 1, "to": "in_progress"}
 {"actor": "flyfly6", "at": "2026-11-25T08:59:54+00:00", "commit": "ff922ea09923aa0872f7da273f64937711475dfd", "event": "commit_set", "from": "in_progress", "schemaVersion": 1, "to": "in_progress"}
+{"actor": "flyfly6", "at": "2026-11-25T09:00:23+00:00", "event": "status_transition", "from": "in_progress", "reason": "task.py archive", "schemaVersion": 1, "to": "completed"}
