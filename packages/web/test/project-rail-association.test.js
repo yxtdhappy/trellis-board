@@ -8,6 +8,7 @@ import {
   desktopStateTopics,
   detachPendingAssociationView,
   isBranchAssociationPaused,
+  pendingUploadView,
   projectListenerView,
   selectProjectAssociation,
 } from '../src/lib/project-rail-association.js'
@@ -20,6 +21,29 @@ function association(taskSpaceId, liveSyncStatus, overrides = {}) {
     ...overrides,
   }
 }
+
+test('上传中的任务不显示为等待重试，超过阈值后才切换为警告', () => {
+  const uploading = pendingUploadView(
+    association('space-upload', 'ready', {
+      pendingUploadCount: 1,
+      pendingUploadTaskDirs: ['.trellis/tasks/11-25-project-rail-upload-status'],
+    }),
+  )
+  assert.equal(uploading.label, '已关联 · 正在上传 1 个任务')
+  assert.equal(uploading.dotClassName, 'bg-primary animate-pulse')
+  assert.equal(uploading.detail, '11-25-project-rail-upload-status')
+
+  const retrying = pendingUploadView(
+    association('space-upload', 'ready', {
+      pendingUploadCount: 2,
+      pendingUploadTaskDirs: ['.trellis/tasks/a', '.trellis/tasks/b'],
+      pendingUploadRetrying: true,
+    }),
+  )
+  assert.equal(retrying.label, '已关联 · 2 个任务等待重试上传')
+  assert.equal(retrying.dotClassName, 'bg-warning')
+  assert.equal(retrying.detail, 'a、b')
+})
 
 test('切换项目后，每个项目只读取自身 taskSpace 的同步状态', () => {
   const backend = {

@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/11-25-project-rail-upload-status/research/spec-excerpts.md", "reason": "关联事件刷新、日志规范与项目行状态优先级的硬约束摘录（spec 原文超注入上限）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端类型检查、lint 与纯逻辑测试约定"}
+{"file": ".trellis/spec/guides/module-size-guide.md", "reason": "association.ts 等 web 源文件行数上限"}
+{"file": ".trellis/tasks/11-25-project-rail-upload-status/design.md", "reason": "pending 停滞判定与失效目录收敛的具体设计"}

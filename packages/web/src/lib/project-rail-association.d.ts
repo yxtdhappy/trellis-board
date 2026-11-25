@@ -10,6 +10,8 @@ type ProjectRailAssociation = {
   ownershipPausedCount?: number
   ownershipPendingCount?: number
   pendingUploadCount?: number
+  pendingUploadTaskDirs?: string[]
+  pendingUploadRetrying?: boolean
   pendingRejectedCount?: number
   conflictPendingCount?: number
   lastErrorCode?: string | null
@@ -48,6 +50,10 @@ export function associationTaskStateCounts(association: ProjectRailAssociation |
   rejectedCount: number
   pendingUploadCount: number
 }
+
+export function pendingUploadView(
+  association: ProjectRailAssociation | null | undefined,
+): Omit<ProjectListenerView, 'state' | 'counts'>
 
 export function isBranchAssociationPaused(association: ProjectRailAssociation | undefined): boolean
 

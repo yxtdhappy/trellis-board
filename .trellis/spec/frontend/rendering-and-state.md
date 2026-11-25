@@ -68,6 +68,10 @@
   该状态在聚合优先级中介于 `error` 与 `syncing` 之间。
 - `liveSyncStatus=ready` 但 `deferredCount>0` 时必须显示“N 个本地任务未同步”，不能显示同步正常。
   可写关联提供显式确认后的补同步入口；只读关联不显示上传动作。补同步失败或冲突不得提示成功。
+- `pendingUploadCount>0` 时按 `pendingUploadRetrying` 区分：`false` 表示上传仍在进行，显示
+  “正在上传 N 个任务”并使用 primary/pulse；只有 `true`（outbox 已超过 30 秒）才显示
+  “N 个任务等待重试上传”的 warning。`pendingUploadRetrying` 由桌面端按 `pending.createdAt`
+  计算，前端不得用本地时间或轮询次数自行推断。
 - 上传本地任务的确认弹窗必须逐条列出待上传任务的标题与 `taskDir`（标题缺失回退目录名），
   并说明“冲突时仍会要求确认”；`ConfirmDialog` 的 `description` 必须是块级容器，不能渲染进 `<p>`。
   同步确认弹窗内的“上传本地任务”决策与分支行入口共用同一份任务清单。
@@ -497,8 +501,9 @@ return taskSpaces.length > 1 ? <BranchSelect value={preferred?.id} /> : <Current
 - 展开列表显示标题、任务目录、原因、来源分支、来源客户端和最近发现时间；支持独立下一页游标。
 - teamId/projectId 切换清空 inbox 数据与游标；请求序号阻止迟到响应覆盖新范围。`tasks.changed`
   刷新团队状态，面板已展开时同时刷新 inbox。
-- 分支关联显示优先级为：错误/绑定失效 > 冲突 > 服务端拒绝 > 待确认归属 > 上传重试 > 正常。
-  有这些状态时不得继续显示“同步正常”。
+- 分支关联显示优先级为：错误/绑定失效 > 冲突 > 服务端拒绝 > 待确认归属 > 上传中/上传重试 > 正常。
+  上传进行中属于正常流转，不得渲染成“等待重试”；只有超过 30 秒的 outbox 才按重试告警。有这些状态时
+  不得继续显示“同步正常”。
 
 ### 4. Validation & Error Matrix
 

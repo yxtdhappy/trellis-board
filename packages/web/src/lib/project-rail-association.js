@@ -46,6 +46,31 @@ export function associationTaskStateCounts(association) {
   }
 }
 
+export function pendingUploadView(association) {
+  const count = associationTaskStateCounts(association).pendingUploadCount
+  const detail =
+    (Array.isArray(association?.pendingUploadTaskDirs)
+      ? association.pendingUploadTaskDirs.filter((taskDir) => typeof taskDir === 'string')
+      : []
+    )
+      .map((taskDir) => taskDir.split('/').at(-1))
+      .join('、') || null
+  if (association?.pendingUploadRetrying !== true) {
+    return {
+      label: `已关联 · 正在上传 ${count} 个任务`,
+      detail,
+      dotClassName: 'bg-primary animate-pulse',
+      textClassName: 'text-muted-foreground',
+    }
+  }
+  return {
+    label: `已关联 · ${count} 个任务等待重试上传`,
+    detail,
+    dotClassName: 'bg-warning',
+    textClassName: 'text-warning',
+  }
+}
+
 function associationPriority(association) {
   if (!association) return 0
   if (association.status !== 'approved') return 5

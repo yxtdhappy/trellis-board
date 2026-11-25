@@ -189,7 +189,18 @@ impl TaskSync {
                 server_files,
             ));
         }
-        let mut cleared_dirs: Vec<String> = Vec::new();
+        // 服务端已无存活文件、本地目录也不存在时，基线与 deferred 只会在每轮被判为 dirty，
+        // 又生成空 diff 而无法收敛。只对本次实际抓取过的目录判定，避免误伤未请求的目录。
+        let mut existing_local_dirs = HashSet::new();
+        for (task_dir, _local, server_files) in &entries {
+            if server_files.is_empty()
+                && self.active_task_directory_exists(binding, task_dir).await
+            {
+                existing_local_dirs.insert(task_dir.clone());
+            }
+        }
+        let mut cleared_dirs =
+            prunable_task_directories(&entries, &cursor.baselines, &existing_local_dirs);
         for task_dir in &archived_dirs {
             self.cleanup_archived_residue(binding, task_dir).await;
             // 本地活跃副本已不存在（归档移出后的常态，或残留已被安全清理）才丢弃同步基线；
@@ -198,8 +209,10 @@ impl TaskSync {
                 cleared_dirs.push(task_dir.clone());
             }
         }
+        cleared_dirs.sort();
+        cleared_dirs.dedup();
         if !cleared_dirs.is_empty() {
-            // 服务端已明确归档：清掉这些目录的 baselines/deferred，避免下一轮 pull 仍把它们判为 dirty。
+            // 服务端已明确归档或目录已无存活文件：清掉 baselines/deferred，避免下一轮 pull 仍判 dirty。
             // 服务端待归属账本不在本次清理范围，仍由 cleanup_missing_ownership_inbox 负责。
             self.remove_task_dir_cursor_state(&task_space_id, &cleared_dirs)
                 .await?;
@@ -1014,4 +1027,29 @@ pub(super) fn pending_task_dirs(files: &[Value]) -> HashSet<String> {
                 .and_then(active_task_directory_from_relative)
         })
         .collect()
+}
+
+/// 仅对本次实际抓取过的目录判定：服务端无存活文件、本地目录不存在、且游标仍留有该目录基线时，
+/// 该基线只会让每轮 pull 反复判 dirty 并生成空 diff，必须一次性清理。
+pub(super) fn prunable_task_directories(
+    entries: &[(String, Option<SnapshotGroup>, Vec<SnapshotFile>)],
+    baselines: &BTreeMap<String, String>,
+    existing_local_dirs: &HashSet<String>,
+) -> Vec<String> {
+    let mut dirs: Vec<String> = entries
+        .iter()
+        .filter(|(task_dir, _, server_files)| {
+            if !server_files.is_empty() || existing_local_dirs.contains(task_dir) {
+                return false;
+            }
+            let prefix = format!("{task_dir}/");
+            baselines
+                .keys()
+                .any(|path| path == task_dir || path.starts_with(&prefix))
+        })
+        .map(|(task_dir, _, _)| task_dir.clone())
+        .collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs
 }

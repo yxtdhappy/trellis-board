@@ -113,6 +113,8 @@ pub struct LocalAssociation {
     #[serde(default)]
     pub pending_upload_task_dirs: Vec<String>,
     #[serde(default)]
+    pub pending_upload_retrying: bool,
+    #[serde(default)]
     pub pending_rejected_count: usize,
     #[serde(default)]
     pub pending_rejected_task_dirs: Vec<String>,
@@ -890,6 +892,7 @@ pub async fn read_local_associations(
     for binding in config.bindings {
         let deferred_task_dirs = deferred_task_dirs(&deferred, &binding.task_space_id);
         let pending_upload_task_dirs = pending_upload_task_dirs(&deferred, &binding.task_space_id);
+        let pending_upload_retrying = pending_upload_retrying(&deferred, &binding.task_space_id);
         let pending_rejected_task_dirs =
             cursor_task_dirs(&deferred, &binding.task_space_id, "pendingRejected");
         let conflict_pending_task_dirs =
@@ -930,6 +933,7 @@ pub async fn read_local_associations(
             ownership_pending_task_dirs,
             pending_upload_count: pending_upload_task_dirs.len(),
             pending_upload_task_dirs,
+            pending_upload_retrying,
             pending_rejected_count: pending_rejected_task_dirs.len(),
             pending_rejected_task_dirs,
             conflict_pending_count: conflict_pending_task_dirs.len(),
@@ -1051,6 +1055,30 @@ fn pending_upload_task_dirs(cursors: &Value, task_space_id: &str) -> Vec<String>
     dirs.sort();
     dirs.dedup();
     dirs
+}
+
+/// 上传批次在 POST 前持久化，成功后才清除；只有持续超过阈值才视为“等待重试”，
+/// 否则项目栏会把正常在途上传误报为失败重试。
+const PENDING_UPLOAD_RETRY_AFTER_SECS: i64 = 30;
+
+fn pending_upload_retrying(cursors: &Value, task_space_id: &str) -> bool {
+    let Some(created_at) = cursors
+        .get("taskSpaces")
+        .and_then(Value::as_object)
+        .and_then(|spaces| spaces.get(task_space_id))
+        .and_then(|space| space.get("pending"))
+        .and_then(|pending| pending.get("createdAt"))
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+    let Ok(created) = chrono::DateTime::parse_from_rfc3339(created_at) else {
+        return false;
+    };
+    chrono::Utc::now()
+        .signed_duration_since(created.with_timezone(&chrono::Utc))
+        .num_seconds()
+        >= PENDING_UPLOAD_RETRY_AFTER_SECS
 }
 
 fn cursor_task_dirs(cursors: &Value, task_space_id: &str, field: &str) -> Vec<String> {

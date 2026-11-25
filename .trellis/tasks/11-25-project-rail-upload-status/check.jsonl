@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/11-25-project-rail-upload-status/research/spec-excerpts.md", "reason": "核对日志只在状态变化/失败时记录、事件仍按 associations 主题触发"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "核对“正在上传/等待重试”文案与优先级符合规格，且规格已同步更新"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核对 web 单测、tsc、lint 与格式化检查"}
+{"file": ".trellis/spec/guides/module-size-guide.md", "reason": "核对改动后文件行数未超限"}

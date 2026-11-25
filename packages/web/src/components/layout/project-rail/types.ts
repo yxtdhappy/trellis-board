@@ -35,6 +35,7 @@ export type LocalAssociation = {
   ownershipPendingTaskDirs: string[]
   pendingUploadCount: number
   pendingUploadTaskDirs: string[]
+  pendingUploadRetrying: boolean
   pendingRejectedCount: number
   pendingRejectedTaskDirs: string[]
   conflictPendingCount: number

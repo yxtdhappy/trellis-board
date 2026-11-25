@@ -13,3 +13,4 @@ mod ownership_projection;
 mod pull_and_startup;
 mod snapshot_files;
 mod support;
+mod upload_cleanup;

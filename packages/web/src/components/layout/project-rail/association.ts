@@ -2,6 +2,7 @@ import {
   associationOwnershipCounts,
   associationTaskStateCounts,
   detachPendingAssociationView,
+  pendingUploadView,
 } from '@/lib/project-rail-association.js'
 import type {
   LiveSyncStatus,
@@ -126,6 +127,7 @@ export function normalizeAssociation(value: unknown): LocalAssociation | null {
     ownershipPendingTaskDirs,
     pendingUploadCount,
     pendingUploadTaskDirs,
+    pendingUploadRetrying: record.pendingUploadRetrying === true,
     pendingRejectedCount,
     pendingRejectedTaskDirs,
     conflictPendingCount,
@@ -266,14 +268,7 @@ export function projectAssociationView(
     }
   }
   if (association.liveSyncStatus !== 'error' && taskState.pendingUploadCount > 0) {
-    return {
-      label: `已关联 · ${taskState.pendingUploadCount} 个任务等待重试上传`,
-      detail:
-        association.pendingUploadTaskDirs.map((taskDir) => taskDir.split('/').at(-1)).join('、') ||
-        null,
-      dotClassName: 'bg-warning',
-      textClassName: 'text-warning',
-    }
+    return pendingUploadView(association)
   }
   switch (association.liveSyncStatus) {
     case 'syncing':

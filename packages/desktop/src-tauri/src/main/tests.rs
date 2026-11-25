@@ -25,6 +25,7 @@ fn association(task_space_id: &str, status: &str) -> agent_service::LocalAssocia
         ownership_pending_task_dirs: Vec::new(),
         pending_upload_count: 0,
         pending_upload_task_dirs: Vec::new(),
+        pending_upload_retrying: false,
         pending_rejected_count: 0,
         pending_rejected_task_dirs: Vec::new(),
         conflict_pending_count: 0,

@@ -151,6 +151,7 @@ fn local_association_round_trips_camel_case() {
         ownership_pending_task_dirs: vec![".trellis/tasks/11-12-b".to_string()],
         pending_upload_count: 1,
         pending_upload_task_dirs: vec![".trellis/tasks/11-12-c".to_string()],
+        pending_upload_retrying: true,
         pending_rejected_count: 1,
         pending_rejected_task_dirs: vec![".trellis/tasks/11-12-d".to_string()],
         conflict_pending_count: 1,
@@ -174,6 +175,7 @@ fn local_association_round_trips_camel_case() {
     assert_eq!(value["deferredTasks"][0]["title"], "修复登录");
     assert!(value["deferredTasks"][1]["title"].is_null());
     assert_eq!(value["pendingUploadCount"], 1);
+    assert_eq!(value["pendingUploadRetrying"], true);
     assert_eq!(
         value["pendingRejectedTaskDirs"][0],
         ".trellis/tasks/11-12-d"
@@ -198,8 +200,36 @@ fn local_association_round_trips_camel_case() {
     assert_eq!(minimal.live_sync_status, "pending");
     assert!(minimal.deferred_tasks.is_empty());
     assert_eq!(minimal.pending_upload_count, 0);
+    assert!(!minimal.pending_upload_retrying);
     assert_eq!(minimal.pending_rejected_count, 0);
     assert_eq!(minimal.conflict_pending_count, 0);
+}
+
+#[test]
+fn pending_upload_retrying_only_after_threshold() {
+    fn cursors(created_at: &str) -> serde_json::Value {
+        json!({
+            "taskSpaces": {
+                "space-1": { "pending": { "createdAt": created_at } }
+            }
+        })
+    }
+    fn stamp(seconds_ago: i64) -> String {
+        (chrono::Utc::now() - chrono::Duration::seconds(seconds_ago))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    }
+
+    assert!(!pending_upload_retrying(&cursors(&stamp(5)), "space-1"));
+    assert!(!pending_upload_retrying(&cursors(&stamp(29)), "space-1"));
+    assert!(pending_upload_retrying(&cursors(&stamp(31)), "space-1"));
+    assert!(pending_upload_retrying(&cursors(&stamp(120)), "space-1"));
+    assert!(!pending_upload_retrying(&cursors(""), "space-1"));
+    assert!(!pending_upload_retrying(&cursors("not-a-time"), "space-1"));
+    assert!(!pending_upload_retrying(
+        &json!({ "taskSpaces": { "space-1": {} } }),
+        "space-1"
+    ));
+    assert!(!pending_upload_retrying(&cursors(&stamp(120)), "space-2"));
 }
 
 #[test]
