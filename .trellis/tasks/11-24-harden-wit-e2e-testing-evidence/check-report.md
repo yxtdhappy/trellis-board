@@ -2,7 +2,7 @@
 mode: inline-self-check
 agent: main-session
 session: claude_ae0e318e-43aa-40c2-922f-246354254b3b
-commit:
+commit: e7ccd2a
 ---
 
 # 检查报告：加固 wit-e2e-testing 证据与凭据处理
@@ -50,7 +50,7 @@ commit:
 
 ## 4. 证据缺口与未覆盖
 
-- `research/` 当前只有 `skill-before/SKILL.md`、`skill-after-m1/SKILL.md`、`skill-split-map.md`、`ui-smoke/report.md`；完整备份、`m1.diff`、`m2.diff`、sha 清单、`check_skill_layout.py` 不在当前工作区。`implement.md` 中记录的 11 文件备份/2669/6800 行 diff 无法从当前工作区复现。
+- `research/` 有文档快照：`skill-before/`（SKILL + 4 references）、`skill-after-m1/`（SKILL + 4 references）、`skill-after-m2/`（API 5 个文档 + UI 3 个文档）、`task-delivery-before/`（2 个 SKILL）、`skill-split-map.md`、`ui-smoke/report.md`；但快照均未包含 scripts/self-test，`m1.diff`、`m2.diff`、sha 清单、`check_skill_layout.py` 不在当前工作区。`implement.md` 中记录的 11 文件完整备份/2669/6800 行 diff 无法从当前工作区完全复现。
 - 结构检查为手工核对（frontmatter、旧名 grep、文件集）；未运行 `check_skill_layout.py`。
 - UI smoke 只覆盖本地静态页；未验证真实项目页面、登录态、Network 业务请求、后端链路。
 - API 自测为 mock server；未连真实后端、未用真实 token；值级密钥未覆盖。

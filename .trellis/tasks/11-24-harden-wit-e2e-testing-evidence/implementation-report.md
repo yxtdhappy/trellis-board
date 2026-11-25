@@ -56,8 +56,8 @@
 
 ## 4. 偏差与未覆盖
 
-- 当前 `research/` 只剩 `skill-before/SKILL.md`、`skill-after-m1/SKILL.md`、`skill-split-map.md`、`ui-smoke/report.md`；`m1.diff`、`m2.diff`、sha 清单、`check_skill_layout.py` 在当前工作区缺失，无法重新生成完整 diff；结构检查以手工 frontmatter、旧名 grep、文件集核对代替。
-- 备份最初缺 scripts，后用 `.agents` 旧副本补齐；但补齐后的多文件快照未在当前工作区保留，恢复能力受限。
+- 当前 `research/` 有文档快照：`skill-before/`（SKILL + 4 references）、`skill-after-m1/`（SKILL + 4 references）、`skill-after-m2/`（API 5 个文档 + UI 3 个文档）、`task-delivery-before/`（2 个 SKILL）、`skill-split-map.md`、`ui-smoke/report.md`；但快照均未包含 scripts/self-test，`m1.diff`、`m2.diff`、sha 清单、`check_skill_layout.py` 仍缺失，无法重新生成完整 diff；结构检查以手工 frontmatter、旧名 grep、文件集核对代替。
+- 备份最初缺 scripts，后用 `.agents` 旧副本补齐脚本；但当前 `skill-before/` 未保留 scripts，恢复能力受限。
 - UI smoke 只验证本地静态页与操作/证据流程，未验证真实项目页面、登录态、Network 业务请求、后端链路。
 - API 自测使用 mock server，未连接真实后端、未使用真实 token；值级密钥（URL userinfo、JDBC password=）未处理。
 - 任务 `11-24` 是旧版任务（task_type/work_type 为空），无 `trellis-check` 子代理，检查报告按 `inline-self-check` 记录。
