@@ -492,6 +492,18 @@ fn sample_binding() -> AgentBinding {
     }
 }
 
+#[test]
+fn detects_work_type_support_from_task_script() {
+    // 本仓库的 task.py 在 create 子命令上声明了 --work-type。
+    assert!(task_script_supports_work_type(
+        "    p_create.add_argument(\n        \"--work-type\",\n"
+    ));
+    // 上游 Trellis 0.6.17 的 task.py 没有这个参数，客户端必须跳过它。
+    assert!(!task_script_supports_work_type(
+        "    p_create.add_argument(\"--parent\", help=\"Parent task directory\")"
+    ));
+}
+
 fn sample_command() -> AgentCommand {
     AgentCommand {
         id: "command-1".into(),

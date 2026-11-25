@@ -469,7 +469,13 @@ async fn create_task(
         format!("--base-branch={}", binding.branch_name),
     ];
     if let Some(work_type) = work_type {
-        args.push(format!("--work-type={work_type}"));
+        if script_supports_work_type(repo_path).await {
+            args.push(format!("--work-type={work_type}"));
+        } else {
+            crate::logging::warn(&format!(
+                "目标项目 task.py 不认识 --work-type，本次下发跳过 {work_type} 标记"
+            ));
+        }
     }
     run_task_python(repo_path, &args).await?;
     let after = task_directories(&tasks_root).await?;
@@ -903,6 +909,22 @@ fn script_invocation(script: &str, args: &[String]) -> Vec<String> {
     std::iter::once(script.to_string())
         .chain(args.iter().cloned())
         .collect()
+}
+
+/// `--work-type` 是 trellis-board 本地扩展（`.trellis/scripts/task.py` 的 create 子命令）。
+/// 上游 Trellis 0.6.17 的 task.py 不认识它，传过去会被 argparse 连整条命令一起拒掉
+/// （`task.py: error: unrecognized arguments: --work-type=...`）。
+fn task_script_supports_work_type(script_text: &str) -> bool {
+    script_text.contains("--work-type")
+}
+
+/// 读目标项目的 task.py 判断能力；读不到时按不支持处理，宁可少传参数也不让下发失败。
+async fn script_supports_work_type(repo_path: &Path) -> bool {
+    let script = repo_path.join(".trellis").join("scripts").join("task.py");
+    match tokio::fs::read_to_string(&script).await {
+        Ok(text) => task_script_supports_work_type(&text),
+        Err(_) => false,
+    }
 }
 
 /// 环境门记录在 `client.json` 的解释器；文件已被删除时跳过该候选。
