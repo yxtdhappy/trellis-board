@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": "53a4d2557543e895a3c2f6ab648bbb8b80c7f42e",
+  "commit": "ff922ea09923aa0872f7da273f64937711475dfd",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -29,8 +29,9 @@
     "task_type_updated_at": "2026-11-25T16:39:06",
     "task_type_updated_reason": "补标跨端同步与前端弹窗改造复杂任务类型",
     "commits": [
-      "53a4d2557543e895a3c2f6ab648bbb8b80c7f42e"
+      "53a4d2557543e895a3c2f6ab648bbb8b80c7f42e",
+      "ff922ea09923aa0872f7da273f64937711475dfd"
     ],
-    "commit_set_at": "2026-11-25T16:40:13"
+    "commit_set_at": "2026-11-25T16:59:54"
   }
 }
