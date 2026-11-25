@@ -30,6 +30,13 @@ and path differences. Platform-specific files are copied only when that
 platform is selected; shared skills are copied once; unsupported platform
 directories are not created.
 
+The directory skill `trellis-api-e2e` is installed as a complete 14-file skill
+under the selected platform's skill root (`.claude/skills`, `.opencode/skills`,
+`.omp/skills`, `.agent/skills`, or the shared `.agents/skills`). Backend code
+tasks are expected to run it before commit and write
+`{TASK_DIR}/api-e2e-report.md`; this is a workflow reminder, not a
+`task.py verify` gate.
+
 Existing projects can be upgraded with:
 
 ```bash

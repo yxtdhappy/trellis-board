@@ -158,6 +158,16 @@ def main() -> int:
         written.add(dst)
         return 0
 
+    def copy_tree(src_dir: Path, dst_dir: Path) -> int:
+        if not src_dir.is_dir():
+            print(f"missing source directory: {src_dir}", file=sys.stderr)
+            return 1
+        for src in sorted(p for p in src_dir.rglob("*") if p.is_file()):
+            rc = copy_file(src, dst_dir / src.relative_to(src_dir))
+            if rc:
+                return rc
+        return 0
+
     shared_skills = any(
         platform_configs.get(platform_id, {}).get("sharedSkills") == ".agents/skills"
         for platform_id in platforms
@@ -170,9 +180,12 @@ def main() -> int:
             continue
         if platforms and not shared_skills and component.get("target", "").startswith(".agents/skills/"):
             continue
-        if args.agent_only and kind not in ("core", "agent", "platform"):
+        if args.agent_only and kind not in ("core", "agent", "platform", "skill"):
             continue
-        rc = copy_file(source / component["source"], target / component["target"])
+        if component.get("directory"):
+            rc = copy_tree(source / component["source"], target / component["target"])
+        else:
+            rc = copy_file(source / component["source"], target / component["target"])
         if rc:
             return rc
 
@@ -184,16 +197,29 @@ def main() -> int:
             if c.get("source", "").endswith("/SKILL.md")
             and not c.get("platform")
         ]
+        directory_skills = [
+            c for c in manifest.get("components", [])
+            if c.get("directory") and c.get("kind") == "skill" and not c.get("platform")
+        ]
         for platform_id in platforms:
             config = platform_configs[platform_id]
             if config.get("sharedSkills") == ".agents/skills":
                 continue
             skill_root = config.get("paths", {}).get("skills")
             if not skill_root:
+                print(
+                    f"skip platform {platform_id}: registry has no paths.skills",
+                    file=sys.stderr,
+                )
                 continue
             for component in skill_sources:
                 name = component["source"].split("/")[-2]
                 rc = copy_file(source / component["source"], target / skill_root / name / "SKILL.md")
+                if rc:
+                    return rc
+            for component in directory_skills:
+                name = Path(component["source"]).name
+                rc = copy_tree(source / component["source"], target / skill_root / name)
                 if rc:
                     return rc
 

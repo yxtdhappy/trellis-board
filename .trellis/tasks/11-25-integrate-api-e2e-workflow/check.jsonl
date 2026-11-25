@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/11-25-integrate-api-e2e-workflow/prd.md", "reason": "逐条核对 R1-R5 与 Acceptance Criteria。"}
+{"file": ".trellis/tasks/11-25-integrate-api-e2e-workflow/design.md", "reason": "核对 apply.py/build_overlay.py 目录复制、平台循环和 workflow 文案是否按设计落地。"}
+{"file": ".trellis/tasks/11-25-integrate-api-e2e-workflow/implement.md", "reason": "核对 S1-S5 验证命令、执行记录和回滚边界。"}
+{"file": ".trellis/spec/guides/task-state-contract.md", "reason": "确认没有修改 task.py/task_store.py 的 verify 门禁或新增 task.json 字段。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查目录复制没有重复实现单文件复制逻辑。"}

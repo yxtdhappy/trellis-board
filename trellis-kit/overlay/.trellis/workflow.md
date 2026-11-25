@@ -206,6 +206,7 @@ Load `trellis-brainstorm`; stay in planning.
 Lightweight: `prd.md` can be enough. Complex: finish `prd.md`, `design.md`, and `implement.md`; ask for review before `task.py start`.
 Multi-deliverable scope: consider a parent task plus independently verifiable child tasks; dependencies must be written in child artifacts, not implied by tree position.
 Sub-agent mode: curate `implement.jsonl` and `check.jsonl` as spec/research manifests before start.
+Backend code task (`work_type=backend`; `fullstack` backend interface changes): plan one local `trellis-api-e2e` round and `{TASK_DIR}/api-e2e-report.md` before commit. No API change → record "not applicable" + reason. Soft workflow requirement, not `task.py verify`.
 [/workflow-state:planning]
 
 <!-- Per-turn breadcrumb: shown throughout Phase 1 when codex.dispatch_mode=inline.
@@ -219,6 +220,7 @@ Load `trellis-brainstorm`; stay in planning.
 Lightweight: `prd.md` can be enough. Complex: finish `prd.md`, `design.md`, and `implement.md`; ask for review before `task.py start`.
 Multi-deliverable scope: consider a parent task plus independently verifiable child tasks; dependencies must be written in child artifacts, not implied by tree position.
 Inline mode: skip jsonl curation; Phase 2 reads artifacts/specs via `trellis-before-dev`.
+Backend code task (`work_type=backend`; `fullstack` backend interface changes): plan one local `trellis-api-e2e` round and `{TASK_DIR}/api-e2e-report.md` before commit. No API change → record "not applicable" + reason. Soft workflow requirement, not `task.py verify`.
 [/workflow-state:planning-inline]
 
 ### Phase 2: Execute
@@ -239,6 +241,7 @@ Tools: `trellis-implement` / `trellis-research` are sub-agent types only (Task/A
 Flow: `trellis-implement` -> `trellis-check` -> `trellis-update-spec` -> commit (Phase 3.4) -> `/trellis:finish-work`.
 Main-session default: dispatch implement/check sub-agents. Sub-agent self-exemption: if already running as `trellis-implement`, do NOT spawn another `trellis-implement` or `trellis-check`; if already running as `trellis-check`, do NOT spawn another `trellis-check` or `trellis-implement`. Dispatch is main session only.
 Dispatch prompt starts with `Active task: <task path from task.py current>`. Read context: jsonl entries -> `prd.md` -> `design.md if present` -> `implement.md if present`.
+Backend code task (`work_type=backend`; `fullstack` backend interface changes): after code-level checks and before commit, run one local `trellis-api-e2e` round and write `{TASK_DIR}/api-e2e-report.md`. No API change → record "not applicable" + reason. Soft workflow requirement, not `task.py verify`.
 [/workflow-state:in_progress]
 
 <!-- Per-turn breadcrumb: shown while status='in_progress' when
@@ -250,6 +253,7 @@ Dispatch prompt starts with `Active task: <task path from task.py current>`. Rea
 Flow: `trellis-before-dev` -> edit -> `trellis-check` -> validation -> `trellis-update-spec` -> commit (Phase 3.4) -> `/trellis:finish-work`.
 Do not dispatch implement/check sub-agents in inline mode.
 Read context: `prd.md` -> `design.md if present` -> `implement.md if present`, plus relevant spec/research loaded by skills.
+Backend code task (`work_type=backend`; `fullstack` backend interface changes): after code-level checks and before commit, run one local `trellis-api-e2e` round and write `{TASK_DIR}/api-e2e-report.md`. No API change → record "not applicable" + reason. Soft workflow requirement, not `task.py verify`.
 [/workflow-state:in_progress-inline]
 
 ### Phase 3: Finish
@@ -576,6 +580,17 @@ Write `{TASK_DIR}/check-report.md` with `mode: inline-self-check`, `agent: main-
 [/codex-inline, Kilo, Antigravity, Devin, DeepSeek Harness]
 
 **Final pass (before Phase 3.4 commit)**: the last 2.2 of a task must run full-scope, not just on the latest implement chunk. List all affected packages with `python ./.trellis/scripts/get_context.py --mode packages`, then load each package's spec index Quality Check section. This catches cross-layer / multi-package issues a mid-iteration local 2.2 cannot.
+
+#### 2.2.1 Backend API E2E (soft requirement)
+
+For a backend code task (`work_type=backend`; or the backend-interface part of `fullstack`), after code-level checks and before commit:
+
+1. Load the `trellis-api-e2e` skill.
+2. Run one local API E2E round against the latest local backend, following the skill's rules.
+3. Write `{TASK_DIR}/api-e2e-report.md` with scenario, request, log evidence, response/persistence result, and pass/fail.
+4. If the task did not change any API behavior, write "not applicable" and the reason instead.
+
+This is a workflow requirement, not a `task.py verify` failure. It does not add a task.json field or block archive automatically; `trellis-check` and `/trellis:finish-work` remind the main session.
 
 #### 2.3 Rollback `[on demand]`
 

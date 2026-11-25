@@ -29,6 +29,12 @@ def main() -> int:
     for component in manifest.get("components", []):
         src = source / component["source"]
         dst = overlay / component["source"]
+        if component.get("directory"):
+            if not src.is_dir():
+                raise SystemExit(f"missing source directory: {src}")
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+            copied += sum(1 for path in src.rglob("*") if path.is_file())
+            continue
         if not src.is_file():
             raise SystemExit(f"missing source: {src}")
         dst.parent.mkdir(parents=True, exist_ok=True)

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "trellis-kit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Overlay that installs the task-state evidence loop into a Trellis project.",
   "platformsFile": "platforms/registry.json",
   "components": [
@@ -118,6 +118,13 @@
       "platform": "codex",
       "source": ".codex/agents/trellis-check.toml",
       "target": ".codex/agents/trellis-check.toml"
+    },
+    {
+      "id": "trellis-api-e2e-skill",
+      "kind": "skill",
+      "source": ".agents/skills/trellis-api-e2e",
+      "target": ".agents/skills/trellis-api-e2e",
+      "directory": true
     }
   ],
   "agentOnly": {

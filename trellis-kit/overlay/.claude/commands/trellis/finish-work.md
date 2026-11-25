@@ -52,6 +52,8 @@ python ./.trellis/scripts/task.py verify <task-name> --strict
 
 If it reports a missing commit, missing implementation/check evidence, report provenance, or a status regression, stop and repair it first with `set-commit`, `set-evidence`, `set-check-override`, or `doctor --fix`. Complex tasks need both `implementation-report.md` and `check-report.md`; the check report starts with `mode`/`agent`/`session`/`commit` front matter, and `mode: inline-self-check` needs `meta.check_override`. Do not archive past a failing gate. For a research/no-code task, use `archive <task-name> --planning-only`. `task.py archive` itself now treats warnings as blocking.
 
+For a backend code task (`work_type=backend`; or the backend-interface part of `fullstack`), also check `{TASK_DIR}/api-e2e-report.md`. This is a soft workflow requirement, not a `task.py verify` failure: if missing, surface it and ask whether to run `trellis-api-e2e` first; if there is no API change, require "not applicable" + reason in the report.
+
 ## Step 4: Archive task(s)
 
 ```bash
