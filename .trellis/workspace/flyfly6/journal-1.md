@@ -1918,3 +1918,26 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 59: 对齐本地项目接入预检与首次同步口径并在弹窗展示差异明细
+<!-- trellis-session: v=2 fp=9a5051842532befd -->
+
+**Date**: 2026-11-25
+**Task**: 对齐本地项目接入预检与首次同步口径并在弹窗展示差异明细
+**Package**: server
+**Branch**: `continue-onboarding-preflight-parity`
+
+### Summary
+
+对齐服务端与桌面端项目接入预检的归属、归档、分支与隐藏目录过滤口径；在接入弹窗展示差异任务标题、徽章与目录，并按 initialReviewPending 区分接入 toast；修复 AgentRuntime::stop 未停止 TaskSync 与 watch_loop Arc 强引用环导致的同机双传自冲突；修复 overwrite-server 缺失 taskVersion/leaseToken 与运行态缓存不一致，补齐冲突列表与重开标题回退。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1db54ff` | fix(sync): 对齐接入预检口径、消除僵尸监听并修复冲突覆盖与标题 |
+
+### Status
+
+[OK] **Completed**
