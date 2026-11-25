@@ -4,10 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import {
-  createHarness,
-  startHttpServer,
-} from '@trellis-board/test-support/plugin-runtime.js'
+import { createHarness, startHttpServer } from '@trellis-board/test-support/plugin-runtime.js'
 import { createTaskRepository } from '@trellis-board/test-support/task-repository.js'
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url))
@@ -21,7 +18,9 @@ function plugin(id, config = {}, extra = {}) {
 async function request(baseUrl, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     method: options.method ?? 'GET',
-    headers: options.body ? { 'content-type': 'application/json', ...options.headers } : options.headers,
+    headers: options.body
+      ? { 'content-type': 'application/json', ...options.headers }
+      : options.headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
   })
   const text = await response.text()
@@ -51,7 +50,12 @@ test('a2a-intake 空配置自动签发本地 token 并保护 /a2a', async () => 
         message: {
           role: 'user',
           messageId: 'zero-config-1',
-          parts: [{ kind: 'text', text: JSON.stringify({ title: '零配置任务' }) }],
+          parts: [
+            {
+              kind: 'text',
+              text: JSON.stringify({ title: '零配置任务', workType: 'backend' }),
+            },
+          ],
         },
       },
     }

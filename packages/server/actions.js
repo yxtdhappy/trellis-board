@@ -5,9 +5,11 @@ import { pythonCommandCandidates } from './python.js'
 import { getRepositories } from './repositories.js'
 import { slugifyTaskTitle, TASK_SLUG_PATTERN } from '@trellis-board/shared/slug.js'
 import { isWorkType, WORK_TYPE_IDS } from '@trellis-board/shared/work-types.js'
+import { isTaskType, TASK_TYPE_IDS } from '@trellis-board/shared/task-types.js'
 
 const ALLOWED_PRIORITIES = new Set(['P0', 'P1', 'P2', 'P3'])
 const WORK_TYPE_FLAG = '--work-type'
+const TASK_TYPE_FLAG = '--task-type'
 
 function cleanText(value, label, maxLength) {
   if (typeof value !== 'string') throw new Error(`${label}必须是字符串`)
@@ -97,6 +99,13 @@ export async function createTask(input, { listRepositories = getRepositories } =
   if (workType && !isWorkType(workType)) {
     throw new Error(`任务类型只能是 ${WORK_TYPE_IDS.join('、')}`)
   }
+  const taskType =
+    input.taskType == null || input.taskType === ''
+      ? ''
+      : cleanText(input.taskType, '任务复杂度', 20)
+  if (taskType && !isTaskType(taskType)) {
+    throw new Error(`任务复杂度只能是 ${TASK_TYPE_IDS.join('、')}`)
+  }
   const requestedSlug =
     input.slug == null || input.slug === '' ? '' : cleanText(input.slug, '任务标识', 100)
   const slug = requestedSlug || slugifyTaskTitle(title)
@@ -135,6 +144,9 @@ export async function createTask(input, { listRepositories = getRepositories } =
     // 目标仓库的 task.py 不支持该扩展参数时静默跳过：任务仍会建出来，
     // 只是 task.json 里没有 work_type，看板回退到 meta 里的类型来源。
     args.push(WORK_TYPE_FLAG, workType)
+  }
+  if (taskType && taskScriptSupports(repo.path, TASK_TYPE_FLAG)) {
+    args.push(TASK_TYPE_FLAG, taskType)
   }
   if (input.parentDir) args.push('--parent', cleanText(input.parentDir, '父任务目录', 1000))
   if (input.baseBranch) args.push('--base-branch', cleanText(input.baseBranch, '目标分支', 200))

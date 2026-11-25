@@ -293,6 +293,14 @@ export default createPlugin({
       if (!title) return rpcError(id, -32602, '缺少任务标题')
       const assignee = String(payload.assignee ?? defaultAssignee ?? '').trim()
       if (!assignee) return rpcError(id, -32602, '缺少负责人 assignee')
+      const workType = String(payload.workType ?? params?.metadata?.workType ?? '').trim()
+      if (!workType) {
+        return rpcError(
+          id,
+          -32602,
+          '缺少任务类型 workType（backend/frontend/fullstack/research/docs）',
+        )
+      }
       const agent = String(
         payload.agent ?? params?.metadata?.agent ?? config.defaultAgent ?? '',
       ).trim()
@@ -312,8 +320,7 @@ export default createPlugin({
           slug: String(payload.slug || taskId),
           taskType:
             String(payload.taskType ?? params?.metadata?.taskType ?? '').trim() || undefined,
-          workType:
-            String(payload.workType ?? params?.metadata?.workType ?? '').trim() || undefined,
+          workType,
           meta: agent ? { agent } : {},
         })
         const record = {
