@@ -1,4 +1,6 @@
 use super::*;
+use serde_json::json;
+use std::path::{Path, PathBuf};
 
 #[test]
 fn builds_fixed_arguments_in_order() {
@@ -377,6 +379,44 @@ async fn maps_diff_cached_exit_codes_and_commits_only_fixed_paths() {
 
     std::fs::remove_dir_all(&repo).expect("cleanup");
     std::fs::remove_dir_all(&not_a_repo).expect("cleanup");
+}
+
+#[test]
+fn builds_branch_list_arguments() {
+    let repo = std::env::temp_dir().join("trellis-git-branch-list-repo");
+    let hooks = std::env::temp_dir().join("trellis-git-branch-list-hooks");
+    let args =
+        git_args(GitOperation::BranchList, &repo, &hooks, &GitParams::default()).expect("args");
+    assert_eq!(GitOperation::BranchList.as_str(), "branch-list");
+    assert!(args.ends_with(&[
+        "for-each-ref".to_string(),
+        "--format=%(refname:short)".to_string(),
+        "refs/heads".to_string(),
+    ]));
+}
+
+#[tokio::test]
+async fn lists_local_branches_and_reports_detached_head() {
+    let repo = git_test_repo("branch-list");
+    let hooks = repo.join("hooks");
+    std::fs::create_dir_all(&hooks).expect("create hooks");
+    run_git_in(&repo, &["branch", "feature"]);
+
+    let value = crate::agent::branch_inspect::inspect_branches(&repo, &hooks)
+        .await
+        .expect("inspect branches");
+    assert_eq!(value["currentBranch"], "main");
+    assert_eq!(value["branches"], json!(["feature", "main"]));
+
+    let head = run_git_in(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+    run_git_in(&repo, &["checkout", head.as_str()]);
+    let value = crate::agent::branch_inspect::inspect_branches(&repo, &hooks)
+        .await
+        .expect("inspect detached head");
+    assert!(value["currentBranch"].is_null());
+    assert_eq!(value["branches"], json!(["feature", "main"]));
+
+    std::fs::remove_dir_all(&repo).expect("cleanup");
 }
 
 #[tokio::test]

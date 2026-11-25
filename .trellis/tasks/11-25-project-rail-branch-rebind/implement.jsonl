@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "新增 Board-only IPC 命令、权限/capability 与 Rust 模块拆分守门"}
+{"file": ".trellis/spec/frontend/component-reuse.md", "reason": "分支弹窗与图标按钮必须复用 ui 组件"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端类型检查、lint、纯逻辑测试约定"}
+{"file": ".trellis/spec/guides/module-size-guide.md", "reason": "web 源文件 700 行上限，选择弹窗挂载位置"}
+{"file": ".trellis/tasks/11-25-project-rail-branch-rebind/research/git-split.md", "reason": "git.rs 拆分规范摘录与等价性自查（spec 原文超注入上限）"}

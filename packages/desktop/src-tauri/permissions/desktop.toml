@@ -106,6 +106,11 @@ description = "当前 Board origin 可按已批准的任务空间关联只读检
 commands.allow = ["inspect_associated_project_agents"]
 
 [[permission]]
+identifier = "allow-inspect-associated-project-branches"
+description = "当前 Board origin 可按已批准的任务空间关联只读检查本地分支。"
+commands.allow = ["inspect_associated_project_branches"]
+
+[[permission]]
 identifier = "allow-initialize-associated-project-agents"
 description = "当前 Board origin 可为已批准的任务空间关联追加本机编码 Agent。"
 commands.allow = ["initialize_associated_project_agents"]

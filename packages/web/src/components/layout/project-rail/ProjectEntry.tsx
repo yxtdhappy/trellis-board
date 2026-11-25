@@ -1,4 +1,5 @@
-import { Bot, FolderGit2, LockKeyhole, Unlink2, Upload, Users } from 'lucide-react'
+import { useState } from 'react'
+import { FolderGit2, Unlink2, Upload, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusPill, toneSurface } from '@/components/ui/status-pill'
 import { Separator } from '@/components/ui/separator'
@@ -12,7 +13,9 @@ import {
   selectProjectAssociation,
 } from '@/lib/project-rail-association.js'
 import { cn } from '@/lib/utils'
+import { BranchRebindDialog } from '@/features/board/dialogs/BranchRebindDialog.tsx'
 import { projectAssociationView, visibleTaskSpaces } from './association.ts'
+import { ProjectEntryBranchActions } from './ProjectEntryBranchActions.tsx'
 import { StatusDot } from './StatusDot.tsx'
 import type { LocalAssociation, Project, WorktreeStatus } from './types.ts'
 
@@ -28,6 +31,7 @@ export type ProjectEntryProps = {
   detachingTaskSpace: string | null
   syncingDeferredTaskSpace: string | null
   onStartOnboarding: () => void
+  onRebindBranch: (repoPath: string) => void
   onSelect: (id: string) => void
   onSelectTaskSpace: (id: string) => void
   onSelectOwnershipInbox: (projectId: string) => void
@@ -53,6 +57,7 @@ export function ProjectEntry(props: ProjectEntryProps) {
     detachingTaskSpace,
     syncingDeferredTaskSpace,
     onStartOnboarding,
+    onRebindBranch,
     onSelect,
     onSelectTaskSpace,
     onSelectOwnershipInbox,
@@ -71,6 +76,7 @@ export function ProjectEntry(props: ProjectEntryProps) {
   const setListenerTaskSpace = onListener
   const setOwnershipTaskSpaceId = onOwnership
   const setQuickAgentTaskSpaceId = onQuickAgent
+  const [rebindAssociation, setRebindAssociation] = useState<LocalAssociation | null>(null)
 
   const taskSpaces = visibleTaskSpaces(project, worktreeStatuses)
   const projectInboxCount = Math.max(0, project.ownershipInboxCount || 0)
@@ -144,34 +150,14 @@ export function ProjectEntry(props: ProjectEntryProps) {
         ) : null}
         {invoke && activeTaskSpace ? (
           activeAssociation?.status === 'approved' ? (
-            <>
-              <span
-                className="flex size-6 shrink-0 items-center justify-center text-muted-foreground"
-                title={activeView?.label || '本地已关联'}
-              >
-                {activeAssociation.readOnly ? (
-                  <LockKeyhole className="size-3.5" aria-hidden="true" />
-                ) : (
-                  <FolderGit2 className="size-3.5" aria-hidden="true" />
-                )}
-              </span>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="mr-1.5 shrink-0 text-muted-foreground"
-                      aria-label={`初始化 ${project.name} ${activeTaskSpace.branchName} 的编码 Agent`}
-                      onClick={() => setQuickAgentTaskSpaceId(activeTaskSpace.id)}
-                    />
-                  }
-                >
-                  <Bot className="size-3.5" aria-hidden="true" />
-                </TooltipTrigger>
-                <TooltipContent>初始化编码 Agent</TooltipContent>
-              </Tooltip>
-            </>
+            <ProjectEntryBranchActions
+              project={project}
+              taskSpace={activeTaskSpace}
+              association={activeAssociation}
+              viewLabel={activeView?.label || ''}
+              onRebind={setRebindAssociation}
+              onQuickAgent={setQuickAgentTaskSpaceId}
+            />
           ) : (
             <Tooltip>
               <TooltipTrigger
@@ -473,6 +459,15 @@ export function ProjectEntry(props: ProjectEntryProps) {
           </div>
         </div>
       ) : null}
+      <BranchRebindDialog
+        association={rebindAssociation}
+        projectName={project.name}
+        invoke={invoke}
+        onOpenChange={(next) => {
+          if (!next) setRebindAssociation(null)
+        }}
+        onConfirm={onRebindBranch}
+      />
     </div>
   )
 }

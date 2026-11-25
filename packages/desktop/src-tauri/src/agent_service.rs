@@ -195,7 +195,7 @@ pub fn sync_action(app: &AppHandle) {
     refresh_sync_menu(app);
 }
 
-fn service(app: &AppHandle) -> AgentResult<AgentService> {
+pub(crate) fn service(app: &AppHandle) -> AgentResult<AgentService> {
     app.try_state::<AgentService>()
         .map(|state| state.inner().clone())
         .ok_or_else(|| AgentError::new(code::CONFIG_MISSING, "Agent 服务尚未初始化"))
@@ -518,7 +518,7 @@ impl AgentService {
         Ok((config, Arc::new(api)))
     }
 
-    fn ephemeral_hooks(&self) -> AgentResult<PathBuf> {
+    pub(crate) fn ephemeral_hooks(&self) -> AgentResult<PathBuf> {
         let dir = self
             .store
             .paths

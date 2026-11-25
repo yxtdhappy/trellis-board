@@ -28,6 +28,7 @@
     "allow-inspect-local-project",
     "allow-initialize-associated-project-agents",
     "allow-inspect-associated-project-agents",
+    "allow-inspect-associated-project-branches",
     "allow-pick-local-project-folder",
     "allow-list-local-associations",
     "allow-list-worktree-status",

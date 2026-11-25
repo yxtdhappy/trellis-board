@@ -770,6 +770,21 @@ async fn inspect_associated_project_agents(
 }
 
 #[tauri::command]
+async fn inspect_associated_project_branches(
+    app: AppHandle,
+    window: WebviewWindow,
+    task_space_id: String,
+) -> Result<serde_json::Value, String> {
+    ensure_board_caller(&app, &window)?;
+    let task_space_id = validate_live_id(&task_space_id, "任务空间 ID")?;
+    let associations = agent_service::list_associations(&app).await?;
+    let repo_path = approved_association_for_task_space(&associations, &task_space_id)?
+        .repo_path
+        .clone();
+    agent::branch_inspect::inspect_associated_project_branches(&app, &repo_path).await
+}
+
+#[tauri::command]
 async fn initialize_associated_project_agents(
     app: AppHandle,
     window: WebviewWindow,
@@ -1102,6 +1117,7 @@ fn main() {
             retry_worktree_auto_attach,
             detach_local_association,
             inspect_associated_project_agents,
+            inspect_associated_project_branches,
             initialize_associated_project_agents,
             sync_deferred_tasks,
             list_task_ownership,

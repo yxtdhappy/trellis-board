@@ -315,3 +315,23 @@ test('desktop local plugin commands stay board-only and lazy', () => {
   assert.match(adapter, /desktopAvailable = transport\.pluginTransportAvailable\(\)/)
   assert.match(transport, /desktop_plugin_request/)
 })
+
+test('desktop board can inspect branches of an approved local association', () => {
+  const permissions = read('packages/desktop/src-tauri/permissions/desktop.toml')
+  const capability = JSON.parse(
+    read('packages/desktop/src-tauri/capabilities/board-local-association.json'),
+  )
+  const localCapability = JSON.parse(read('packages/desktop/src-tauri/capabilities/main.json'))
+  const main = read('packages/desktop/src-tauri/src/main.rs')
+
+  assert.match(permissions, /identifier = "allow-inspect-associated-project-branches"/)
+  assert.match(permissions, /commands\.allow = \["inspect_associated_project_branches"\]/)
+  assert.ok(capability.permissions.includes('allow-inspect-associated-project-branches'))
+  assert.ok(!localCapability.permissions.includes('allow-inspect-associated-project-branches'))
+  assert.match(main, /async fn inspect_associated_project_branches\(/)
+  assert.match(
+    main,
+    /async fn inspect_associated_project_branches\([\s\S]*?ensure_board_caller\(&app, &window\)\?;[\s\S]*?approved_association_for_task_space/,
+  )
+  assert.match(main, /inspect_associated_project_agents,\s+inspect_associated_project_branches,?/)
+})

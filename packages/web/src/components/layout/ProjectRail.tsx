@@ -243,6 +243,13 @@ export function ProjectRail({
     }
   }
 
+  function startRebindOnboarding(repoPath: string) {
+    if (!invoke || inspectingProject || !repoPath) return
+    setAssociationError('')
+    setOnboardingPath(repoPath)
+    setOnboardingOpen(true)
+  }
+
   async function syncDeferredTasks(association: LocalAssociation) {
     if (!invoke || syncingDeferredTaskSpace || association.deferredCount < 1) return
     const deferredTasks = association.deferredTasks?.length
@@ -532,6 +539,7 @@ export function ProjectRail({
               detachingTaskSpace={detachingTaskSpace}
               syncingDeferredTaskSpace={syncingDeferredTaskSpace}
               onStartOnboarding={() => void startProjectOnboarding()}
+              onRebindBranch={startRebindOnboarding}
               onSelect={onSelect}
               onSelectTaskSpace={onSelectTaskSpace}
               onSelectOwnershipInbox={onSelectOwnershipInbox}

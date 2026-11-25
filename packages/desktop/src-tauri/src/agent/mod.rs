@@ -1,4 +1,5 @@
 pub mod association;
+pub mod branch_inspect;
 pub mod control;
 pub mod credential;
 pub mod detach;
