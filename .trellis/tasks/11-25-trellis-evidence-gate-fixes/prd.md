@@ -1,14 +1,15 @@
-# 修复 trellis-kit 与任务状态证据门 3 处 P1 缺陷
+# 修复 trellis-kit 与任务状态证据门 3 处 P1 缺陷及项目接入 AGENTS.md 规则同步
 
 ## 1. 背景与目标
 
-在 `origin/main`（`fcba232 / 0.5.1`）合入任务状态证据闭环与 `trellis-kit` 分发能力后，代码审查发现了 3 处影响客户端新接入项目及任务生命周期闭环的 P1 缺陷：
+在 `origin/main`（`fcba232 / 0.5.1`）合入任务状态证据闭环与 `trellis-kit` 分发能力后，代码审查发现了 3 处影响客户端新接入项目及任务生命周期闭环的 P1 缺陷，同时需要补齐项目接入时 `AGENTS.md` 的工作流优先规则同步：
 
 1. **`trellis-task-state/SKILL.md` 分发源仍为旧版**：新版内容仅存在于未被 `manifest.json` / `apply.py` 引用的 `trellis-kit/overlay/.claude/skills/trellis-task-state/SKILL.md`，而实际分发给所有 7 个平台的源路径 `.agents/skills/trellis-task-state/SKILL.md` 及 `trellis-kit/overlay/.agents/skills/trellis-task-state/SKILL.md` 仍为旧版。
 2. **`state_persist_degraded` 写入后永久锁死 `verify --strict` 与 `archive`**：`_verify_task` 用 `any(...)` 扫描整个 append-only 的 `.state-events.jsonl`，且重新执行 `start --commit-state` 不会写入解除事件，导致触发过降级启动的复杂任务无法正常归档。
 3. **未分类任务（`task_type_pending: true`）绕过 `archive` 证据门**：新流程下创建任务默认不传 `--task-type`（写入 `meta.task_type_pending = true`），若 agent 漏调 `set-task-type`，`_verify_task` 和 `cmd_archive` 会将其视为 `legacy` 历史任务直接放行。
+4. **项目接入时未同步 `Trellis Workflow 优先规则` 到项目 `AGENTS.md`**：目前该段规则仅存在于用户全局 `GEMINI.md`，新项目通过 `trellis init` + `trellis-kit` 接入时，项目根目录 `AGENTS.md` 仅有上游 `trellis init` 生成的英文说明，缺少 Phase 1.4 PRD 评审关卡、任务目录提交范围及 Journal 记录范围等强约束。
 
-**核心目标**：在 `trellis-kit/overlay/`（客户端接入项目时 `apply.py --force` 实际覆盖到目标项目的分发源）以及本仓库对应的 `.trellis/`、`.agents/skills/` 同步完成上述 3 处修复，保证两处一致并补齐可重复执行的自动化验证。
+**核心目标**：在 `trellis-kit/`（客户端接入项目时 `apply.py --force` 实际执行与覆盖目标项目的分发源）以及本仓库对应的 `.trellis/`、`.agents/skills/`、`AGENTS.md` 同步完成上述 4 项改进，保证两处一致并补齐可重复执行的自动化验证。
 
 ---
 
@@ -35,13 +36,21 @@
   - 在 `cmd_archive` 中，将证据门条件扩展为 `data.get("task_type") in {"simple", "complex"} or _is_task_type_pending(data)`。
   - 保持向后兼容：真正的历史无标签任务（`task_type`、`work_type`、`meta.task_type_pending` 均为空）仍维持原有放行行为；`--planning-only` 归档分支保持优先。
 
+### 需求 4：项目接入时向项目 `AGENTS.md` 同步 `Trellis Workflow 优先规则`
+- 经核查 `@mindfoldhq/trellis` 源码（`init.js` 与 `claude.js` 等）：`trellis init --claude` 仅生成 `.claude/` 目录与根目录 `AGENTS.md`，不会创建或修改 `CLAUDE.md`；除不需处理的 `.dsh/DSH.md` 外，其余支持平台也均只通过根目录 `AGENTS.md` 初始化。
+- 将全局 `GEMINI.md` 中的 `## Trellis Workflow 优先规则` 全文（包含“严格遵循 Trellis Workflow”、“Phase 1.4 PRD 制品显式评审关卡”、“任务目录提交范围”、“Journal 记录范围” 4 条）提取为 `trellis-kit` 托管片段（`trellis-kit/snippets/agents-workflow-rules.md`），外包独立标记块 `<!-- TRELLIS-BOARD:START -->` ... `<!-- TRELLIS-BOARD:END -->`。
+- 扩展 `trellis-kit/apply.py`（客户端 `initialize_project` 必经 `apply_kit_overlay`，且可单独命令行运行）：
+  - 在目标项目根目录更新或创建 `AGENTS.md`（`--agent-only` 模式下仅当 `AGENTS.md` 已存在时更新）：将托管标记块放置在 `<!-- TRELLIS:START -->...<!-- TRELLIS:END -->` 之外，保留目标仓库已有 `AGENTS.md` 内容与后续 `trellis update` 兼容性。
+  - 幂等语义：不存在标记块（且无手动同名章节 `## Trellis Workflow 优先规则`）时追加；标记块内容一致时跳过（unchanged）；标记块内容不同且传入 `--force` 时原地替换标记块，未传 `--force` 时按冲突报错退出；支持 `--dry-run`。
+- 同步将同一 `<!-- TRELLIS-BOARD:START -->...<!-- TRELLIS-BOARD:END -->` 规则块更新至本仓库根目录 `AGENTS.md`。
+
 ---
 
 ## 3. 非目标（Out of Scope）
 
-- 不修改客户端 Rust 侧 `onboarding.rs` / `trellis_cli.rs` 流程。
+- 不修改客户端 Rust 侧 `onboarding.rs` / `trellis_cli.rs` 流程（`onboarding.rs` 已在 `initialize_project` 中调用 `apply_kit_overlay` 并在 `INITIAL_COMMIT_PATHS` 中包含 `AGENTS.md`）。
 - 不修改服务端 JS 业务代码与前端 UI。
-- 不改动 `trellis-kit/build_overlay.py` 对 `.claude/`、`.codex/` 源目录的组织方式（本任务聚焦上述 3 处 P1 修复）。
+- 不改动 `trellis-kit/build_overlay.py` 对 `.claude/`、`.codex/` 源目录的组织方式（本任务聚焦上述 4 项改进）。
 - 实施前基于最新 `origin/main`（`fcba232`）工作，不触碰工作区中其他未跟踪任务目录（如 `11-25-configurable-app-name/`）。
 
 ---
@@ -59,3 +68,6 @@
    - 历史无标签任务（通过 `--allow-unlabeled` 创建，无 `task_type` 与 `work_type`）执行 `task.py archive <task>` 仍保持兼容放行。
 4. **Overlay 同步性**：
    - `.trellis/scripts/task.py` 与 `trellis-kit/overlay/.trellis/scripts/task.py`、`.trellis/scripts/common/task_store.py` 与 `trellis-kit/overlay/.trellis/scripts/common/task_store.py` 逐字节一致。
+5. **项目接入 `AGENTS.md` 规则同步**：
+   - 目标目录已有 `trellis init` 生成的 `AGENTS.md`（及自定义内容）时，运行 `python trellis-kit/apply.py --target <tmp> --force` 后保留原有内容并在块外追加 `<!-- TRELLIS-BOARD:START -->...<!-- TRELLIS-BOARD:END -->`（包含完整 `## Trellis Workflow 优先规则` 4 条）；重复运行 `apply.py --force` 不产生重复章节；目标目录无 `AGENTS.md` 时（非 `--agent-only`）可创建仅含该托管块的 `AGENTS.md`；标记块内容过期时 `--force` 原地更新、无 `--force` 报冲突。
+   - 本仓库根目录 `AGENTS.md` 包含与托管片段一致的 `<!-- TRELLIS-BOARD:START -->...<!-- TRELLIS-BOARD:END -->` 规则块。

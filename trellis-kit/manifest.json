@@ -86,24 +86,6 @@
     {
       "kind": "platform",
       "platform": "claude-code",
-      "source": ".agents/skills/trellis-task-state/SKILL.md",
-      "target": ".claude/skills/trellis-task-state/SKILL.md"
-    },
-    {
-      "kind": "platform",
-      "platform": "claude-code",
-      "source": ".agents/skills/trellis-brainstorm/SKILL.md",
-      "target": ".claude/skills/trellis-brainstorm/SKILL.md"
-    },
-    {
-      "kind": "platform",
-      "platform": "claude-code",
-      "source": ".agents/skills/trellis-check/SKILL.md",
-      "target": ".claude/skills/trellis-check/SKILL.md"
-    },
-    {
-      "kind": "platform",
-      "platform": "claude-code",
       "source": ".claude/commands/trellis/continue.md",
       "target": ".claude/commands/trellis/continue.md"
     },
@@ -140,10 +122,6 @@
   ],
   "agentOnly": {
     "skipKinds": [],
-    "forbiddenPaths": [
-      ".trellis/tasks",
-      ".trellis/workspace",
-      ".trellis/.runtime"
-    ]
+    "forbiddenPaths": [".trellis/tasks", ".trellis/workspace", ".trellis/.runtime"]
   }
 }

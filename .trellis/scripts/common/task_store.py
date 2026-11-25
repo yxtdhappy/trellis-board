@@ -1418,7 +1418,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
                 meta["no_code"] = True
                 meta["planning_only"] = True
                 data["meta"] = meta
-            elif data.get("task_type") in {"simple", "complex"}:
+            elif data.get("task_type") in {"simple", "complex"} or _is_task_type_pending(data):
                 # Evidence gate for labelled tasks. Archive is a terminal
                 # transition, so it uses the same strictness as finish-work:
                 # warnings are not allowed to disappear silently.
@@ -2512,6 +2512,29 @@ def _verify_check_report_provenance(
         )
 
 
+def has_unresolved_degradation(events: list[dict]) -> bool:
+    """Return True when the latest state_persist_degraded lacks a newer state_committed."""
+    last_degraded = -1
+    last_committed = -1
+    for index, event in enumerate(events):
+        name = event.get("event")
+        if name == "state_persist_degraded":
+            last_degraded = index
+        elif name == "state_committed":
+            last_committed = index
+    return last_degraded > last_committed
+
+
+def _is_task_type_pending(data: dict) -> bool:
+    """Return True for new-flow tasks whose task_type has not been classified yet."""
+    if data.get("task_type"):
+        return False
+    meta = data.get("meta")
+    if isinstance(meta, dict) and bool(meta.get("task_type_pending")):
+        return True
+    return bool(strip_blank(data.get("work_type")))
+
+
 def _verify_task(task_dir: Path, data: dict) -> list[dict]:
     """Return findings without mutating the task."""
     findings: list[dict] = []
@@ -2530,13 +2553,20 @@ def _verify_task(task_dir: Path, data: dict) -> list[dict]:
     events = read_state_events(task_dir)
     if events and events[-1].get("event") == "state_commit_failed":
         add("error", "state_not_persisted", "the last state transition failed its bookkeeping commit")
-    if any(event.get("event") == "state_persist_degraded" for event in events):
+    if has_unresolved_degradation(events):
         degraded_level = "error" if task_type == "complex" and not data.get("commit") else "warning"
         add(
             degraded_level,
             "state_persist_degraded",
-            "start state was explicitly degraded; run task.py start --commit-state "
-            "or doctor --fix to persist it",
+            "start state was explicitly degraded; run `task.py start <task> --commit-state` "
+            "to persist it",
+        )
+
+    if _is_task_type_pending(data):
+        add(
+            "error",
+            "task_type_pending",
+            "task_type is not set; classify it with `task.py set-task-type <task> simple|complex|research`",
         )
 
     if not data.get("commit"):

@@ -11,11 +11,11 @@ description: "Maintains task.json through task.py at lifecycle boundaries: creat
 
 ```bash
 python ./.trellis/scripts/task.py create "<title>" --description "<what>" \
-  --task-type simple|complex|research \
   --work-type backend|frontend|fullstack|research|docs
 ```
 
-- Propose both labels with a one-line reason; ask the user to confirm once. Never silently guess.
+- `work_type` is the only label required at create; do not ask the user to choose complexity up front.
+- After planning exposes the scope, decide `task_type` and persist it with `task.py set-task-type <task> <type>`; if genuinely ambiguous, ask one question with your recommendation. Never silently guess.
 - `task_type` is a process commitment: `complex` requires `design.md` + `implement.md`.
 - `work_type` is the surface: `frontend`, `backend`, `fullstack`, `research`, `docs`.
 - Shared UI/design-system work is still `frontend`; force a check-report with `set-work-type ... --check-report-required`.
@@ -27,7 +27,8 @@ python ./.trellis/scripts/task.py start <task-dir>
 ```
 
 - Complex tasks create a task-only bookkeeping commit by default; simple/research record the event log only.
-- `--commit-state` forces the commit, `--no-commit-state` explicitly degrades, `--push` pushes it.
+- `--commit-state` forces the commit; `--push` pushes it.
+- Complex tasks cannot use bare `--no-commit-state`. If git makes a commit impossible, use `--no-commit-state --force-degraded --reason "<why>"`; that writes `state_persist_degraded`, and `verify --strict` / archive refuse it.
 - Exit 3 means the status was written but the bookkeeping commit failed: stop, fix git, then `doctor --fix` or re-run start.
 
 ## Evidence
@@ -42,6 +43,13 @@ python ./.trellis/scripts/task.py set-check-override <task-dir> --by <who> --rea
 - `set-commit` writes the top-level `commit` read by the board and appends to `meta.commits`.
 - Do this after the final work commit, before finish-work.
 - `set-meta` refuses reserved top-level keys; use the dedicated commands.
+
+## Evidence source
+
+- Complex tasks need both `implementation-report.md` and `check-report.md` (or `meta.check_override` for check evidence).
+- `check-report.md` must start with front matter: `mode: independent|inline-self-check`, `agent`, `session`, `commit`.
+- `mode: independent` cannot name `main-session` as the agent.
+- `mode: inline-self-check` is accepted only with `meta.check_override` (owner confirmation), because the main session is checking its own work.
 
 ## Verify and repair
 

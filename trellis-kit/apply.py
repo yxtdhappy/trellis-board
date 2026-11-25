@@ -19,6 +19,71 @@ from pathlib import Path
 
 KIT_ROOT = Path(__file__).resolve().parent
 DEFAULT_SOURCE = KIT_ROOT / "overlay"
+SNIPPET_PATH = KIT_ROOT / "snippets" / "agents-workflow-rules.md"
+BOARD_BLOCK_START = "<!-- TRELLIS-BOARD:START -->"
+BOARD_BLOCK_END = "<!-- TRELLIS-BOARD:END -->"
+WORKFLOW_RULES_HEADING = "## Trellis Workflow 优先规则"
+
+
+def sync_agents_workflow_rules(
+    target: Path,
+    snippet_path: Path,
+    *,
+    agent_only: bool,
+    dry_run: bool,
+    force: bool,
+) -> tuple[int, int, int]:
+    """Ensure target/AGENTS.md carries the managed TRELLIS-BOARD workflow rules block."""
+    agents_path = target / "AGENTS.md"
+    if agent_only and not agents_path.exists():
+        return 0, 0, 0
+    if not snippet_path.is_file():
+        print(f"missing snippet: {snippet_path}", file=sys.stderr)
+        return 0, 0, 1
+
+    block = snippet_path.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+    if not (block.startswith(BOARD_BLOCK_START) and block.endswith(BOARD_BLOCK_END)):
+        print(f"invalid snippet markers: {snippet_path}", file=sys.stderr)
+        return 0, 0, 1
+
+    if not agents_path.exists():
+        print(f"{'would write' if dry_run else 'write'}: {agents_path}")
+        if not dry_run:
+            with agents_path.open("w", encoding="utf-8", newline="\n") as handle:
+                handle.write(block + "\n")
+        return 1, 0, 0
+
+    raw = agents_path.read_text(encoding="utf-8")
+    newline = "\r\n" if "\r\n" in raw else "\n"
+    existing = raw.replace("\r\n", "\n")
+
+    start_idx = existing.find(BOARD_BLOCK_START)
+    end_idx = existing.find(BOARD_BLOCK_END, start_idx) if start_idx != -1 else -1
+    if start_idx != -1 and end_idx != -1:
+        current_block = existing[start_idx : end_idx + len(BOARD_BLOCK_END)]
+        if current_block == block:
+            return 0, 1, 0
+        if not force:
+            print(f"conflict: {agents_path} differs; re-run with --force", file=sys.stderr)
+            return 0, 0, 1
+        updated = existing[:start_idx] + block + existing[end_idx + len(BOARD_BLOCK_END) :]
+        if not updated.endswith("\n"):
+            updated += "\n"
+    elif BOARD_BLOCK_START in existing or BOARD_BLOCK_END in existing:
+        print(f"malformed TRELLIS-BOARD markers in {agents_path}", file=sys.stderr)
+        return 0, 0, 1
+    else:
+        if any(line.strip() == WORKFLOW_RULES_HEADING for line in existing.splitlines()):
+            return 0, 1, 0
+        trimmed = existing.rstrip()
+        updated = f"{trimmed}\n\n{block}\n" if trimmed else f"{block}\n"
+
+    print(f"{'would update' if dry_run else 'update'}: {agents_path}")
+    if not dry_run:
+        rendered = updated.replace("\n", newline)
+        with agents_path.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(rendered)
+    return 1, 0, 0
 
 
 def load_json(path: Path) -> dict:
@@ -132,22 +197,34 @@ def main() -> int:
                 if rc:
                     return rc
 
+    delta_copied, delta_skipped, rc = sync_agents_workflow_rules(
+        target,
+        SNIPPET_PATH,
+        agent_only=args.agent_only,
+        dry_run=args.dry_run,
+        force=args.force,
+    )
+    if rc:
+        return rc
+    copied += delta_copied
+    skipped += delta_skipped
+
     if not args.dry_run:
         marker = target / ".trellis" / ".kit-version"
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(
-            json.dumps(
-                {
-                    "version": manifest.get("version"),
-                    "platforms": platforms,
-                    "agentOnly": args.agent_only,
-                },
-                ensure_ascii=False,
-                indent=2,
+        with marker.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "version": manifest.get("version"),
+                        "platforms": platforms,
+                        "agentOnly": args.agent_only,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n"
             )
-            + "\n",
-            encoding="utf-8",
-        )
 
     print(f"done: {copied} copied, {skipped} unchanged")
     return 0

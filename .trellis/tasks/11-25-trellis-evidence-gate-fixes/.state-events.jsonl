@@ -1,1 +1,2 @@
 {"actor": "flyfly6", "at": "2026-11-25T03:41:26+00:00", "event": "task_type_set", "from": "planning", "from_value": null, "reason": "3 处边界清晰的脚本与 overlay 定向修复，无跨层设计或迁移", "schemaVersion": 1, "task_type": "simple", "to": "planning"}
+{"actor": "flyfly6", "at": "2026-11-25T04:24:59+00:00", "event": "status_transition", "from": "planning", "reason": "task.py start", "schemaVersion": 1, "to": "in_progress"}

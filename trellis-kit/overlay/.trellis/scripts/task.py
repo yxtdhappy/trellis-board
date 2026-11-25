@@ -66,12 +66,13 @@ from common.io import (
 from common.safe_commit import safe_git_add
 from common.task_utils import resolve_task_dir, run_task_hooks
 from common.tasks import iter_active_tasks, children_progress
-from common.state_events import append_state_event
+from common.state_events import append_state_event, read_state_events
 
 # Import command handlers from split modules (also re-exports for plan.py compatibility)
 from common.task_store import (
     TASK_TYPE_IDS,
     WORK_TYPE_IDS,
+    has_unresolved_degradation,
     cmd_create,
     cmd_rename,
     cmd_archive,
@@ -210,6 +211,52 @@ def _record_start_degraded(task_json_path: Path, reason: str) -> None:
         to_status="in_progress",
         reason=reason,
     )
+
+
+def _record_start_committed(task_json_path: Path) -> None:
+    """Record that start state is being persisted in a bookkeeping commit."""
+    append_state_event(
+        task_json_path.parent,
+        "state_committed",
+        from_status="in_progress",
+        to_status="in_progress",
+        reason="task.py start --commit-state",
+    )
+
+
+def _persist_start_state(
+    task_json_path: Path,
+    repo_root: Path,
+    *,
+    label: str = "",
+    force_degraded: bool,
+    degraded_reason: str,
+    commit_state: bool,
+    push: bool,
+) -> int:
+    """Update task.json/state log on start and optionally make the bookkeeping commit."""
+    if not task_json_path.is_file():
+        return 0
+    _record_start_state(task_json_path, repo_root, label)
+    if force_degraded:
+        _record_start_degraded(task_json_path, degraded_reason)
+    if commit_state:
+        events = read_state_events(task_json_path.parent)
+        has_committed = any(event.get("event") == "state_committed" for event in events)
+        last_failed = bool(events and events[-1].get("event") == "state_commit_failed")
+        if not has_committed or has_unresolved_degradation(events) or last_failed:
+            _record_start_committed(task_json_path)
+        ok, reason = _commit_start_state(task_json_path, repo_root, push)
+        if not ok:
+            print(colored(f"Error: {reason}", Colors.RED), file=sys.stderr)
+            print(
+                "task.json keeps in_progress; fix git and re-run "
+                "`task.py start <task> --commit-state`.",
+                file=sys.stderr,
+            )
+            return 3
+    run_task_hooks("after_start", task_json_path, repo_root)
+    return 0
 
 
 def _git_path(repo_root: Path, name: str) -> Path | None:
@@ -487,51 +534,34 @@ def cmd_start(args: argparse.Namespace) -> int:
         ))
 
         # Still flip task.json status: planning → in_progress so downstream phases proceed.
-        if task_json_path.is_file():
-            _record_start_state(task_json_path, repo_root, " (degraded)")
-            if force_degraded:
-                _record_start_degraded(task_json_path, degraded_reason)
-            if commit_state:
-                ok, reason = _commit_start_state(
-                    task_json_path, repo_root, getattr(args, "push", False)
-                )
-                if not ok:
-                    print(colored(f"Error: {reason}", Colors.RED), file=sys.stderr)
-                    print(
-                        "task.json keeps in_progress; run doctor --fix after "
-                        "fixing git, or re-run start.",
-                        file=sys.stderr,
-                    )
-                    return 3
-            run_task_hooks("after_start", task_json_path, repo_root)
-        return 0
+        return _persist_start_state(
+            task_json_path,
+            repo_root,
+            label=" (degraded)",
+            force_degraded=force_degraded,
+            degraded_reason=degraded_reason,
+            commit_state=commit_state,
+            push=getattr(args, "push", False),
+        )
 
     active = set_active_task(task_dir, repo_root)
     if active:
         print(colored(f"✓ Current task set to: {task_dir}", Colors.GREEN))
         print(f"Source: {active.source}")
 
-        if task_json_path.is_file():
-            _record_start_state(task_json_path, repo_root)
-            if force_degraded:
-                _record_start_degraded(task_json_path, degraded_reason)
-            if commit_state:
-                ok, reason = _commit_start_state(
-                    task_json_path, repo_root, getattr(args, "push", False)
-                )
-                if not ok:
-                    print(colored(f"Error: {reason}", Colors.RED), file=sys.stderr)
-                    print(
-                        "task.json keeps in_progress; run doctor --fix after "
-                        "fixing git, or re-run start.",
-                        file=sys.stderr,
-                    )
-                    return 3
+        rc = _persist_start_state(
+            task_json_path,
+            repo_root,
+            force_degraded=force_degraded,
+            degraded_reason=degraded_reason,
+            commit_state=commit_state,
+            push=getattr(args, "push", False),
+        )
+        if rc != 0:
+            return rc
 
         print()
         print(colored("The hook will now inject context from this task's jsonl files.", Colors.BLUE))
-
-        run_task_hooks("after_start", task_json_path, repo_root)
         return 0
     else:
         print(colored("Error: Failed to set current task", Colors.RED))
