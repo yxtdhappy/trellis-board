@@ -1,0 +1,23 @@
+{"file":".trellis/tasks/11-24-harden-wit-e2e-testing-evidence/prd.md","reason":"逐条核对 M1 R1-R7、M2 R8-R9 和 Acceptance Criteria"}
+{"file":".trellis/tasks/11-24-harden-wit-e2e-testing-evidence/design.md","reason":"核对 M1 实现是否符合契约、failure 原因、自测和影响文件"}
+{"file":".trellis/tasks/11-24-harden-wit-e2e-testing-evidence/design-m2.md","reason":"核对 M2 目录、阶段边界、迁移归档和结构检查是否符合设计"}
+{"file":".trellis/tasks/11-24-harden-wit-e2e-testing-evidence/implement.md","reason":"按执行记录核对 M1/M2 自测、结构检查、归档、diff 和 validate 结果"}
+{"file":".trellis/tasks/11-24-harden-wit-e2e-testing-evidence/research/skill-split-map.md","reason":"核对旧技能内容无丢失、无错配、两技能无完整流程重复"}
+{"file":".trellis/tasks/11-24-harden-wit-e2e-testing-evidence/research/check_skill_layout.py","reason":"实际运行结构检查并核对输出 PASS"}
+{"file":".trellis/tasks/11-24-harden-wit-e2e-testing-evidence/research/ui-smoke/report.md","reason":"核对 UI smoke 的基线/操作后/缺失选择器证据和未验证项"}
+{"file":"C:/Users/yuhaojie/.claude/skills/wit-api-e2e/SKILL.md","reason":"检查接口技能阶段边界、token/脱敏/failure delta 和 UI 交接"}
+{"file":"C:/Users/yuhaojie/.claude/skills/wit-api-e2e/references/api-e2e-playbook.md","reason":"检查 env 表、token 流程、failure 原因和自测命令已同步"}
+{"file":"C:/Users/yuhaojie/.claude/skills/wit-api-e2e/references/local-forwarding-proxy.md","reason":"检查代理日志承诺已改为只记录 pathname 和 query 键名"}
+{"file":"C:/Users/yuhaojie/.claude/skills/wit-api-e2e/references/report-template.md","reason":"检查接口报告不含页面/截图字段，证据列完整"}
+{"file":"C:/Users/yuhaojie/.claude/skills/wit-api-e2e/scripts/self-test/run.sh","reason":"运行 Bash 自测并核对 14/14 PASS、R3 反向验证可失败"}
+{"file":"C:/Users/yuhaojie/.claude/skills/wit-api-e2e/scripts/self-test/run.ps1","reason":"运行 PowerShell 自测并核对 12/12 PASS"}
+{"file":"C:/Users/yuhaojie/.claude/skills/wit-ui-e2e/SKILL.md","reason":"检查页面技能无接口脚本/代理/日志读取器，阶段边界与 API 技能镜像"}
+{"file":"C:/Users/yuhaojie/.claude/skills/wit-ui-e2e/references/ui-e2e-playbook.md","reason":"检查 Chrome DevTools MCP 操作、证据格式和失败分类可执行"}
+{"file":"C:/Users/yuhaojie/.claude/skills/wit-ui-e2e/references/report-template.md","reason":"检查页面报告含基线/操作后/Network/Console/截图和未验证项"}
+{"file":"C:/Users/yuhaojie/.agents/skills/wit-api-e2e/SKILL.md","reason":"R8.7：检查 .agents 镜像与 .claude 版本一致、无旧名和错误路径"}
+{"file":"C:/Users/yuhaojie/.agents/skills/wit-api-e2e/references/local-forwarding-proxy.md","reason":"R8.7：检查 .agents 镜像内绝对路径均指向 .agents"}
+{"file":"C:/Users/yuhaojie/.agents/skills/wit-api-e2e/scripts/self-test/run.sh","reason":"R8.7：在 .agents 路径运行 Bash 自测并核对 14/14 PASS"}
+{"file":"C:/Users/yuhaojie/.agents/skills/wit-ui-e2e/SKILL.md","reason":"R8.7：检查 .agents 镜像的 UI 技能无接口脚本/代理/日志读取器"}
+{"file":"C:/Users/yuhaojie/.claude/skills/wit-trellis-task-delivery/SKILL.md","reason":"R8.8：检查旧技能名已清除，E2E 章节按新技能名分阶段"}
+{"file":"C:/Users/yuhaojie/.agents/skills/wit-trellis-task-delivery/SKILL.md","reason":"R8.8：检查 .agents 侧下游技能同步且保留平台差异"}
+{"file":"C:/Users/yuhaojie/Desktop/技能修改总结-2026-11-23.md","reason":"检查 2026-11-24 追加章节覆盖 M1/M2、双目录同步、下游技能和回滚材料"}
