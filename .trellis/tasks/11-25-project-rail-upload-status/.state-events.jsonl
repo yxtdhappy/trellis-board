@@ -1,0 +1,2 @@
+{"actor": "yhj", "at": "2026-11-25T15:33:08+00:00", "event": "status_transition", "from": "planning", "reason": "task.py start", "schemaVersion": 1, "to": "in_progress"}
+{"actor": null, "at": "2026-11-25T15:33:08+00:00", "event": "state_committed", "from": "in_progress", "reason": "task.py start --commit-state", "schemaVersion": 1, "to": "in_progress"}

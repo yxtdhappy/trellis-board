@@ -1,0 +1,30 @@
+{
+  "id": "project-rail-upload-status",
+  "name": "project-rail-upload-status",
+  "title": "项目栏上传状态与失效任务目录同步收敛",
+  "description": "修复项目栏把正常上传误显示为“等待重试上传”；清理已删除任务目录残留的游标基线，止住每 5-10 秒的无效上传告警",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-25",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit"
+  }
+}
