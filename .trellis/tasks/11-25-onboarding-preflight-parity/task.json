@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "18fb77d8eb3c9b2c74b294261216817a3c4a7308",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -25,6 +25,16 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "label_source": "user-explicit"
+    "label_source": "user-explicit",
+    "check_override": {
+      "by": "flyfly6",
+      "reason": "用户确认 inline 自检与全量自动化门禁结果",
+      "commit": "18fb77d8eb3c9b2c74b294261216817a3c4a7308",
+      "at": "2026-11-25T12:44:50"
+    },
+    "commits": [
+      "18fb77d8eb3c9b2c74b294261216817a3c4a7308"
+    ],
+    "commit_set_at": "2026-11-25T12:44:50"
   }
 }
