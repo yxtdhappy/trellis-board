@@ -7,6 +7,7 @@ import { slugifyTaskTitle, TASK_SLUG_PATTERN } from '@trellis-board/shared/slug.
 import { isWorkType, WORK_TYPE_IDS } from '@trellis-board/shared/work-types.js'
 
 const ALLOWED_PRIORITIES = new Set(['P0', 'P1', 'P2', 'P3'])
+const WORK_TYPE_FLAG = '--work-type'
 
 function cleanText(value, label, maxLength) {
   if (typeof value !== 'string') throw new Error(`${label}必须是字符串`)
@@ -24,6 +25,22 @@ function isPathInside(target, parent) {
     !relative.startsWith(`..${path.sep}`) &&
     !path.isAbsolute(relative)
   )
+}
+
+/**
+ * 目标仓库的 task.py 是否支持某个扩展参数。
+ *
+ * `--work-type` 是 trellis-board 在 `.trellis/scripts/task.py` 里加的本地扩展，
+ * 上游 Trellis 0.6.17 的 task.py 没有它；传过去会被 argparse 以
+ * `unrecognized arguments` 拒掉整条命令，任务建不出来。
+ */
+export function taskScriptSupports(repoPath, flag) {
+  try {
+    const script = path.join(repoPath, '.trellis', 'scripts', 'task.py')
+    return fs.readFileSync(script, 'utf8').includes(flag)
+  } catch {
+    return false
+  }
 }
 
 function runTaskPython(repoPath, args) {
@@ -114,7 +131,11 @@ export async function createTask(input, { listRepositories = getRepositories } =
     slug,
     '--no-start',
   ]
-  if (workType) args.push('--work-type', workType)
+  if (workType && taskScriptSupports(repo.path, WORK_TYPE_FLAG)) {
+    // 目标仓库的 task.py 不支持该扩展参数时静默跳过：任务仍会建出来，
+    // 只是 task.json 里没有 work_type，看板回退到 meta 里的类型来源。
+    args.push(WORK_TYPE_FLAG, workType)
+  }
   if (input.parentDir) args.push('--parent', cleanText(input.parentDir, '父任务目录', 1000))
   if (input.baseBranch) args.push('--base-branch', cleanText(input.baseBranch, '目标分支', 200))
   if (input.packageName) args.push('--package', cleanText(input.packageName, '包名', 100))

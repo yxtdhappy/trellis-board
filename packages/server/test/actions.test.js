@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 
 test('创建任务会拒绝空标题', async () => {
   const { createTask } = await import('../actions.js')
@@ -136,4 +137,84 @@ test('个人版拒绝任意归档后代派发且非归档任务仍可更新', as
     { listRepositories: repositories },
   )
   assert.equal(JSON.parse(fs.readFileSync(activeTaskJsonPath, 'utf8')).assignee, 'bob')
+})
+
+function hasPython3() {
+  try {
+    execFileSync('python3', ['--version'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 造一个只记录 argv 的 task.py 桩；`--work-type` 是否“支持”由脚本内容决定。 */
+function makeStubRepo({ supportsWorkType = false } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-actions-stub-'))
+  fs.mkdirSync(path.join(root, '.trellis', 'tasks'), { recursive: true })
+  fs.mkdirSync(path.join(root, '.trellis', 'workspace', 'alice'), { recursive: true })
+  const scripts = path.join(root, '.trellis', 'scripts')
+  fs.mkdirSync(scripts, { recursive: true })
+  fs.writeFileSync(
+    path.join(scripts, 'task.py'),
+    [
+      'import json, pathlib, sys',
+      supportsWorkType ? '# p_create.add_argument("--work-type")' : '# upstream task.py',
+      "pathlib.Path(__file__).with_name('argv.json').write_text(json.dumps(sys.argv[1:]), encoding='utf-8')",
+      '',
+    ].join('\n'),
+  )
+  return root
+}
+
+function readStubArgv(root) {
+  return JSON.parse(fs.readFileSync(path.join(root, '.trellis', 'scripts', 'argv.json'), 'utf8'))
+}
+
+test('taskScriptSupports 依据脚本内容判断扩展参数', async () => {
+  const { taskScriptSupports } = await import('../actions.js')
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-actions-probe-'))
+  assert.equal(taskScriptSupports(root, '--work-type'), false)
+  fs.mkdirSync(path.join(root, '.trellis', 'scripts'), { recursive: true })
+  fs.writeFileSync(path.join(root, '.trellis', 'scripts', 'task.py'), 'x = "--work-type"\n')
+  assert.equal(taskScriptSupports(root, '--work-type'), true)
+})
+
+test('task.py 不支持 --work-type 时创建任务不传该参数', { skip: !hasPython3() }, async () => {
+  const { createTask } = await import('../actions.js')
+  const root = makeStubRepo({ supportsWorkType: false })
+  await createTask(
+    {
+      repositoryId: 'repo',
+      title: 'probe task',
+      description: 'probe',
+      assignee: 'alice',
+      priority: 'P2',
+      slug: 'probe-task',
+      workType: 'frontend',
+    },
+    { listRepositories: () => [{ id: 'repo', name: 'repo', path: root }] },
+  )
+  const argv = readStubArgv(root)
+  assert.equal(argv[0], 'create')
+  assert.ok(!argv.includes('--work-type'), `argv 不应包含 --work-type: ${argv.join(' ')}`)
+})
+
+test('task.py 支持 --work-type 时创建任务照旧传该参数', { skip: !hasPython3() }, async () => {
+  const { createTask } = await import('../actions.js')
+  const root = makeStubRepo({ supportsWorkType: true })
+  await createTask(
+    {
+      repositoryId: 'repo',
+      title: 'probe task',
+      description: 'probe',
+      assignee: 'alice',
+      priority: 'P2',
+      slug: 'probe-task',
+      workType: 'backend',
+    },
+    { listRepositories: () => [{ id: 'repo', name: 'repo', path: root }] },
+  )
+  const argv = readStubArgv(root)
+  assert.deepEqual(argv.slice(-2), ['--work-type', 'backend'])
 })
