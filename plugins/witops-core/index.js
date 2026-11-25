@@ -816,6 +816,7 @@ export default createPlugin({
           assignee: params?.assignee,
           rememberBinding: params?.rememberBinding,
           includeChildren: params?.includeChildren,
+          taskType: params?.taskType,
           workType: params?.workType,
         }),
       'developers.list': (params) =>
@@ -1450,6 +1451,8 @@ export default createPlugin({
         const result = await dispatch.syncRecent({
           size: asPositiveInt(body.size, config.maxPerSync),
           repositoryId: body.repositoryId,
+          taskType: body.taskType,
+          workType: body.workType,
         })
         return respond(200, result)
       } catch (error) {

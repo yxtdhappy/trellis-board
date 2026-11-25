@@ -27,6 +27,7 @@ pub mod code {
     pub const REPO_PATH_INVALID: &str = "REPO_PATH_INVALID";
     pub const NOT_GIT_REPOSITORY: &str = "NOT_GIT_REPOSITORY";
     pub const MISSING_TRELLIS: &str = "MISSING_TRELLIS";
+    pub const KIT_APPLY_FAILED: &str = "TRELLIS_KIT_APPLY_FAILED";
     pub const SPARSE_CHECKOUT: &str = "SPARSE_CHECKOUT";
     pub const REMOTE_MISSING: &str = "REMOTE_MISSING";
     pub const REMOTE_INVALID: &str = "REMOTE_INVALID";

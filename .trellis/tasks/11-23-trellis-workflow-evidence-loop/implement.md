@@ -62,25 +62,26 @@
 
 ### 阶段 1b：看板/插件创建入口（已完成，待统一验证）
 
-目标：用户在看板或插件创建任务时显式选择 `work_type`；插件能读取并默认带回当前任务类型。
+目标：用户在看板或插件创建任务时显式选择 `task_type` 与 `work_type`；插件能读取并默认带回当前任务类型（`work_type`）。
 
 1. 共享枚举（已落地）
+   - `packages/shared/task-types.js` / `.d.ts`：`simple|complex|research` 枚举、标签、`isTaskType`/`taskTypeLabel`（新增）。
    - `packages/shared/work-types.js` / `.d.ts`：五个枚举、中文标签、`isWorkType`/`workTypeLabel`。
 2. 看板表单
-   - `CreateTaskDialog.tsx`：新增必填“任务类型”下拉；`workType` 为空阻止提交；payload 增加 `workType`；`defaultWorkType` 合法时默认选中，非法值按空并提示（已落地）。
+   - `CreateTaskDialog.tsx`：新增必填“任务类型（work_type）”下拉；`workType` 为空阻止提交；payload 增加 `workType`；`defaultWorkType` 合法时默认选中，非法值按空并提示；不出现任务复杂度（已落地）。
 3. 看板默认值
-   - `BoardPage.tsx`：从插件上下文或 URL 参数 `workType` 读取合法值，传给 `CreateTaskDialog`；无值不猜。
+   - `BoardPage.tsx`：从插件上下文或 URL 参数 `taskType`/`workType` 读取合法值，传给 `CreateTaskDialog`；无值不猜。
    - `useBoard.ts`：确认 `createTask` payload 原样透传 `workType`，不丢字段。
 4. 服务端
-   - `actions.js`：校验 `workType`，追加 `--work-type`（已落地）。
+   - `actions.js`：校验 `taskType`/`workType`，追加 `--task-type`/`--work-type`（已落地）。
    - `task-command-service.js`：`create_task` 校验并写 payload（已落地）。
    - `routes/tasks.js`：`POST /api/tasks` 已把 body 交给 `enqueue`，确认 `workType` 不被白名单过滤。
 5. Rust agent
-   - `task_command.rs`：读取 `workType`、校验五个枚举、追加 `--work-type`（已落地）；补 `create_task` 测试：合法、非法、缺省。
+   - `task_command.rs`：读取 `taskType`/`workType`、校验枚举、追加 `--task-type`/`--work-type`（已落地）；补 `create_task` 测试：合法、非法、缺省。
 6. 插件任务服务
-   - `task-service.js`：`create` 透传 `workType` 到 `actions.createTask`；`toTaskDto` 返回 `workType: task.work_type ?? null`。
-   - `plugins/witops-core/index.js`：`task.create` 参数增加 `workType`。
-   - `plugins/witops-core/dispatch.js`：`createTaskRecord` 把 `draft.workType` 或分类映射传给 `ctx.tasks.create`。
+   - `task-service.js`：`create` 透传 `taskType`/`workType` 到 `actions.createTask`；`toTaskDto` 返回 `taskType: task.task_type ?? null`、`workType: task.work_type ?? null`。
+   - `plugins/witops-core/index.js`：`task.create` 参数增加 `taskType`/`workType`。
+   - `plugins/witops-core/dispatch.js`：`createTaskRecord` 把 `draft.taskType`/`draft.workType` 或分类映射传给 `ctx.tasks.create`。
    - `plugins/witops-core/mapper.js`：新增 `workTypeForCategory()`；只映射前端开发→frontend、后端开发→backend，其他返回空。
 7. WitOps 对话框
    - `panel/index.html`：新增“任务类型”下拉（按平台/请选择/前端/后端/全栈/研究/文档）。
@@ -91,8 +92,8 @@
    - 不改看板阶段/泳道/API。
 
 验证：
-- 看板：未选类型不能提交；选 frontend 后 task.json 顶层 `work_type=frontend`；`defaultWorkType=backend` 默认选中；非法值不回落。
-- 插件：WitOps 前端/后端分类默认值正确；其他分类为空；批量混合为空；DTO 能读回 `workType`。
+- 看板：未选任务类型（work_type）不能提交；表单不出现任务复杂度；选 frontend 后 task.json 顶层 `work_type=frontend`、`task_type` 为空且 `meta.task_type_pending=true`；`defaultWorkType` 合法时默认选中；非法值不回落。
+- 插件：WitOps 前端/后端分类默认值正确；其他分类为空；批量混合为空；DTO 能读回 `taskType`/`workType`；`taskType` 不在面板选择，由 agent 后续分类。
 - CLI/HTTP/agent 三条路径写出的字段一致。
 
 ### 阶段 2：start 持久化与失败语义（已完成，待统一验证）
@@ -139,15 +140,15 @@
 
 验证：文档测试/命令存在性检查；用临时任务走一遍 create→start→implement→check→commit→finish→archive，不手改 JSON。
 
-### 阶段 5：trellis-kit 发行层与平台适配（最小 overlay 已落地，完整 adapter 待后续）
+### 阶段 5：trellis-kit 发行层与看板初始化（自动 apply 已接入）
 
-1. `trellis-kit/`：manifest、`platforms/registry.json`、overlay、adapters、apply.py、tests。
-2. 首批 7 平台：claude-code/codex/opencode/pi/omp/antigravity/dsh；能力声明 `capabilities + paths + formats`；共享 `.agents/skills` 只写一份；不创建平台不支持的目录。
-3. `trellis-kit init` / `init --agent-only`：共用适配层；agent-only 不创建 tasks/workspace/journal；不支持的项写 manifest `skipped`。
-4. 看板初始化集成：现有项目初始化/Agent-only 对话框只显示 7 平台（已在前序改动中完成共享常量、UI、Rust 白名单）；本阶段补 manifest/apply 与测试。
+1. `trellis-kit/`：manifest、`platforms/registry.json`、自包含 `overlay/`、`build_overlay.py`、`apply.py`；平台特定文件按 manifest `platform` 过滤。
+2. 首批 7 平台：claude-code/codex/opencode/pi/omp/antigravity/dsh；能力声明 `capabilities + paths + formats`；共享 `.agents/skills` 只写一份；不创建平台不支持的目录；无平台选择时不落 `.agents`/`.claude`/`.codex`。
+3. 看板初始化：`trellis-kit` 作为 Tauri resource 随客户端打包；`onboarding.initialize_project` 在 full init 与 agent-only 之后调用 `apply.py --target <repo> --platform ... --force`；缺 kit 时初始化失败（`TRELLIS_KIT_APPLY_FAILED`）。
+4. `apply.py` 默认从 `overlay/` 读取，bundle 不依赖 board 源码树；`--dry-run`/`--force`/`--agent-only` 保留；成功写 `.trellis/.kit-version`。
 5. 存量任务不迁移；先 trellis-board 试点，再 mdp-backend-service 等。
 
-验证：apply 幂等/冲突/`--dry-run`/版本不匹配；7 平台矩阵测试；不创建不支持目录；`--agent-only` 不写任务目录。
+验证：apply 幂等/冲突/`--dry-run`；7 平台只落各自目录；`--agent-only` 不写任务目录；onboarding 缺 kit 失败可读；Rust 代码需在有 cargo 的环境编译。
 
 ### 阶段 6：测试、回归与试点（核心验证已通过）
 
@@ -243,8 +244,8 @@ cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml
   - simple frontend：start→set-commit→verify --strict，通过（不要求报告）。
   - complex frontend：visual evidence（confirmed_by）→verify --strict，通过；set-check-override 后仍通过；archive --no-commit 成功。
   - 冒烟发现并修复：complex frontend 的视觉证据原先无法满足 `check_evidence_missing`，现 `_has_frontend_check_evidence()` 允许 e2e，或带 `confirmed_by` 的 visual/manual。
-- `node --test` 定向：46/46 通过（plugin-real-task、WitOps、shared work-types、agent-tools）。
-- `yarn test --scope=all`：865 个测试，862 通过、0 失败、3 跳过。
+- `node --test` 定向：plugin-real-task 2/2、WitOps 37/37、A2A 13/13、team task 36/36、shared task-types 2/2、work-types 2/2、agent-tools 5/5 通过。
+- `yarn test --scope=all`：879 个测试，874 通过、3 跳过；2 个 `plugins/jenkins-ops/test/accounts-integration.test.js` 用例只在全量并行时失败，单独运行 6/6 通过，与本次改动无关（疑似并行时序 flaky）。
 - `oxlint packages/web`：0 errors（仅既有 warning）；`tsc -b --noEmit`：通过。
 - 本次改动文件 `oxfmt --check`：通过；全仓库 `yarn test --scope=lint` 仍被 22 个既有未格式化文件阻断（非本次改动）。
 - `cargo check/test`：本机未安装 `cargo`，未能执行；Rust 改动已人工复核，建议在装有 Rust 工具链的环境补跑。

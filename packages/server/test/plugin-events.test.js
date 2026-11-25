@@ -44,6 +44,8 @@ test('task.create / assign / setStage 成功后的事件 payload 完整，失败
       assignee: 'nobody',
       priority: 'P2',
       slug: 'failed-create',
+      taskType: 'simple',
+      workType: 'backend',
     })
     assert.ok(failed.status >= 400, `失败创建应返回错误，实际 ${failed.status}`)
     assert.equal(await harness.store.getState('task-writer', 'last:task.created'), null)
@@ -55,6 +57,8 @@ test('task.create / assign / setStage 成功后的事件 payload 完整，失败
       assignee: 'bob',
       priority: 'P2',
       slug: 'event-contract',
+      taskType: 'simple',
+      workType: 'backend',
     })
     assert.equal(created.status, 200, JSON.stringify(created.body))
     const relativeDir = created.body.relativeDir

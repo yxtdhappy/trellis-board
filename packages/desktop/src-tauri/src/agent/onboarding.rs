@@ -4,7 +4,7 @@
 //! readRepositoryState / compareRemoteBranch。
 //! 只复用 git / trellis_cli / process / protocol 的既有能力，不新增 Git 调用方式。
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -16,8 +16,10 @@ use url::Url;
 
 use crate::agent::git::{self, GitStatusEntry};
 use crate::agent::http::ApiClient;
+use crate::agent::process::{run_process, ProcessOptions};
 use crate::agent::protocol::{code, err, now_iso8601, safe_error_message, AgentError, AgentResult};
 use crate::agent::store::{AgentBinding, AgentConfig, ConfigStore};
+use crate::agent::task_command::recorded_python;
 use crate::agent::trellis_cli::{self, TrellisRuntime};
 
 /// 与 JS 的 TASK_SNAPSHOT_REQUEST_TIMEOUT_MS 不同：attach 走默认 30s 请求超时。
@@ -166,6 +168,8 @@ pub struct InitializeOptions<'a> {
     pub agent_tools: &'a [String],
     pub runtime: &'a TrellisRuntime,
     pub allow_file_remote: bool,
+    /// Bundled/development `trellis-kit` directory; initialization fails if absent.
+    pub kit_root: Option<&'a Path>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -406,6 +410,82 @@ fn normalize_gitignore_rule(line: &str) -> String {
         .to_string()
 }
 
+/// Apply the bundled Trellis Board workflow after `trellis init`/agent-only init.
+/// Missing kit is a hard error: a project initialized by the board must not
+/// silently fall back to the upstream workflow.
+async fn apply_kit_overlay(
+    repo_path: &Path,
+    kit_root: Option<&Path>,
+    agent_tools: &[String],
+) -> AgentResult<()> {
+    let kit_root = kit_root.ok_or_else(|| {
+        AgentError::new(
+            code::KIT_APPLY_FAILED,
+            "找不到 trellis-kit，项目未按 Trellis Board 流程初始化。请重新安装/升级客户端，或设置 TRELLIS_KIT_ROOT。",
+        )
+    })?;
+    let script = kit_root.join("apply.py");
+    if !script.is_file() {
+        return Err(AgentError::new(
+            code::KIT_APPLY_FAILED,
+            format!(
+                "trellis-kit 缺少 apply.py（{}），项目未按 Trellis Board 流程初始化",
+                script.display()
+            ),
+        ));
+    }
+
+    let python = recorded_python()
+        .or_else(|| std::env::var("TRELLIS_PYTHON").ok().filter(|value| !value.trim().is_empty()))
+        .unwrap_or_else(|| "python".to_string());
+    let repo = repo_path.to_string_lossy().to_string();
+    let mut args = vec![
+        script.to_string_lossy().to_string(),
+        "--target".to_string(),
+        repo.clone(),
+        "--force".to_string(),
+    ];
+    for tool in agent_tools {
+        args.push("--platform".to_string());
+        args.push(tool.clone());
+    }
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+
+    let mut env = BTreeMap::new();
+    env.insert("PYTHONUTF8".to_string(), "1".to_string());
+    let output = run_process(
+        Path::new(&python),
+        &arg_refs,
+        &ProcessOptions {
+            cwd: Some(repo_path.to_path_buf()),
+            env: Some(env),
+            timeout: Some(Duration::from_secs(120)),
+            max_output_bytes: 256 * 1024,
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(|error| {
+        AgentError::new(
+            code::KIT_APPLY_FAILED,
+            format!("trellis-kit 执行失败：{}", error.message),
+        )
+    })?;
+
+    if output.exit_code != 0 {
+        let detail = output.stderr_tail(400);
+        return Err(AgentError::new(
+            code::KIT_APPLY_FAILED,
+            format!(
+                "trellis-kit apply 失败（exit {}）：{}",
+                output.exit_code,
+                detail.trim()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// 缺 trellis/tasks 时完整初始化；已有任务树且缺 Agent 时只补平台配置。
 pub async fn initialize_project(options: &InitializeOptions<'_>) -> AgentResult<ProjectInspection> {
     let inspected = inspect_project(
@@ -439,6 +519,14 @@ pub async fn initialize_project(options: &InitializeOptions<'_>) -> AgentResult<
         }
         InitializationMode::None => {}
     }
+    // 初始化与 Board workflow 是同一条流程：即使本次无需 trellis init，
+    // 也要在 attach 前把 kit 应用到项目，避免新项目只拿到上游默认流程。
+    apply_kit_overlay(
+        Path::new(&inspected.root),
+        options.kit_root,
+        &selected_tools,
+    )
+    .await?;
     // 即使本次无需初始化也要执行：失败或旧的半成品可以靠重试补齐忽略规则。
     if let Err(error) = ensure_agent_gitignore(Path::new(&inspected.root), &selected_tools).await {
         return Err(AgentError::new(

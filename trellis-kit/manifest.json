@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "trellis-kit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Overlay that installs the task-state evidence loop into a Trellis project.",
   "platformsFile": "platforms/registry.json",
   "components": [
@@ -82,10 +82,68 @@
       "kind": "agent",
       "source": ".trellis/agents/check.md",
       "target": ".trellis/agents/check.md"
+    },
+    {
+      "kind": "platform",
+      "platform": "claude-code",
+      "source": ".agents/skills/trellis-task-state/SKILL.md",
+      "target": ".claude/skills/trellis-task-state/SKILL.md"
+    },
+    {
+      "kind": "platform",
+      "platform": "claude-code",
+      "source": ".agents/skills/trellis-brainstorm/SKILL.md",
+      "target": ".claude/skills/trellis-brainstorm/SKILL.md"
+    },
+    {
+      "kind": "platform",
+      "platform": "claude-code",
+      "source": ".agents/skills/trellis-check/SKILL.md",
+      "target": ".claude/skills/trellis-check/SKILL.md"
+    },
+    {
+      "kind": "platform",
+      "platform": "claude-code",
+      "source": ".claude/commands/trellis/continue.md",
+      "target": ".claude/commands/trellis/continue.md"
+    },
+    {
+      "kind": "platform",
+      "platform": "claude-code",
+      "source": ".claude/commands/trellis/finish-work.md",
+      "target": ".claude/commands/trellis/finish-work.md"
+    },
+    {
+      "kind": "platform",
+      "platform": "claude-code",
+      "source": ".claude/agents/trellis-implement.md",
+      "target": ".claude/agents/trellis-implement.md"
+    },
+    {
+      "kind": "platform",
+      "platform": "codex",
+      "source": ".codex/agents/trellis-implement.toml",
+      "target": ".codex/agents/trellis-implement.toml"
+    },
+    {
+      "kind": "platform",
+      "platform": "claude-code",
+      "source": ".claude/agents/trellis-check.md",
+      "target": ".claude/agents/trellis-check.md"
+    },
+    {
+      "kind": "platform",
+      "platform": "codex",
+      "source": ".codex/agents/trellis-check.toml",
+      "target": ".codex/agents/trellis-check.toml"
     }
   ],
   "agentOnly": {
     "skipKinds": [],
-    "forbiddenPaths": [".trellis/tasks", ".trellis/workspace", ".trellis/.runtime"]
+    "forbiddenPaths": [
+      ".trellis/tasks",
+      ".trellis/workspace",
+      ".trellis/.runtime"
+    ]
   }
 }

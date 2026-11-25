@@ -389,6 +389,18 @@ def cmd_create(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    if not work_type and not getattr(args, "allow_unlabeled", False):
+        print(
+            colored("Error: --work-type required for new tasks.", Colors.RED),
+            file=sys.stderr,
+        )
+        print(
+            "Pick the task's work surface explicitly (backend/frontend/fullstack/"
+            "research/docs). Task complexity is classified by the agent later, "
+            "not at creation. Legacy migration only: --allow-unlabeled.",
+            file=sys.stderr,
+        )
+        return 1
 
     # Validate --meta (CLI source: fail-fast, before any directory is created)
     meta = _parse_meta_pairs(getattr(args, "meta", None))
@@ -590,8 +602,10 @@ def cmd_create(args: argparse.Namespace) -> int:
         "notes": "",
         "meta": meta,
     }
-    if (task_type or work_type) and isinstance(meta, dict) and "label_source" not in meta:
+    if work_type and isinstance(meta, dict) and "label_source" not in meta:
         meta["label_source"] = "user-explicit"
+    if work_type and not task_type and isinstance(meta, dict):
+        meta.setdefault("task_type_pending", True)
 
     # A directory without task.json is not a task: `list` hides it and every
     # lifecycle command refuses it. Fail here rather than printing "Created
@@ -1376,6 +1390,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
         else:
+            old_status = data.get("status")
             # Before any mutation: branch metadata is unrecoverable once the
             # task leaves the active tree. Stale branches only warn.
             if not _validate_branch_metadata(
@@ -1404,12 +1419,20 @@ def cmd_archive(args: argparse.Namespace) -> int:
                 meta["planning_only"] = True
                 data["meta"] = meta
             elif data.get("task_type") in {"simple", "complex"}:
-                # Evidence gate for labelled tasks. Legacy tasks without a
-                # task_type keep the historical permissive archive behaviour.
-                blocking = [
-                    finding for finding in _verify_task(task_dir, data)
-                    if finding.get("level") == "error"
-                ]
+                # Evidence gate for labelled tasks. Archive is a terminal
+                # transition, so it uses the same strictness as finish-work:
+                # warnings are not allowed to disappear silently.
+                findings = _verify_task(task_dir, data)
+                blocking = []
+                for finding in findings:
+                    if finding.get("level") == "warning":
+                        finding = {
+                            **finding,
+                            "level": "error",
+                            "code": f"{finding.get('code')}_warning",
+                        }
+                    if finding.get("level") == "error":
+                        blocking.append(finding)
                 if blocking:
                     print(colored(
                         f"Error: refusing to archive '{task_name}': evidence gate failed.",
@@ -1418,9 +1441,9 @@ def cmd_archive(args: argparse.Namespace) -> int:
                     for finding in blocking:
                         print(f"  - [{finding.get('code')}] {finding.get('message')}", file=sys.stderr)
                     print(
-                        "Repair with set-commit/set-evidence, or re-run with "
-                        "--planning-only for a no-code task. Task remains at "
-                        f"{_repo_relative_path(task_dir, repo_root)}.",
+                        "Repair with set-commit/set-evidence/set-check-override, "
+                        "or re-run with --planning-only for a no-code task. "
+                        f"Task remains at {_repo_relative_path(task_dir, repo_root)}.",
                         file=sys.stderr,
                     )
                     return 1
@@ -1436,6 +1459,16 @@ def cmd_archive(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
+
+            if old_status != "completed":
+                append_state_event(
+                    task_dir,
+                    "status_transition",
+                    from_status=old_status,
+                    to_status="completed",
+                    actor=data.get("assignee"),
+                    reason="task.py archive",
+                )
 
             # Handle subtask relationships on archive.
             # Keep this task in its parent's children list so progress
@@ -2072,6 +2105,8 @@ def _set_label(args: argparse.Namespace, key: str, value: str, event: str) -> in
     if not isinstance(meta, dict):
         meta = {}
     meta["label_source"] = "user-explicit"
+    if key == "task_type":
+        meta.pop("task_type_pending", None)
     meta[f"{key}_updated_at"] = datetime.now().isoformat(timespec="seconds")
     if reason:
         meta[f"{key}_updated_reason"] = reason
@@ -2402,6 +2437,81 @@ def _has_frontend_check_evidence(meta: dict) -> bool:
     return False
 
 
+def _read_report_front_matter(path: Path) -> dict[str, str]:
+    """Read a small YAML-ish front-matter block without a YAML dependency."""
+    try:
+        text = path.read_text(encoding="utf-8")[:4096]
+    except OSError:
+        return {}
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    result: dict[str, str] = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        if key:
+            result[key] = value.strip().strip('"').strip("'")
+    return result
+
+
+def _verify_check_report_provenance(
+    task_dir: Path,
+    data: dict,
+    findings: list[dict],
+    add,
+) -> None:
+    """Require complex check reports to say who checked and in which mode."""
+    report = task_dir / "check-report.md"
+    if not report.is_file():
+        return
+    meta = _read_report_front_matter(report)
+    if not meta:
+        add(
+            "error",
+            "check_report_provenance_missing",
+            "check-report.md needs front matter: mode, agent, session, commit",
+        )
+        return
+
+    mode = (meta.get("mode") or "").strip().lower()
+    agent = (meta.get("agent") or "").strip()
+    if mode not in ("independent", "inline-self-check"):
+        add(
+            "error",
+            "check_report_mode_invalid",
+            "check-report.md mode must be 'independent' or 'inline-self-check'",
+        )
+    if not agent:
+        add("error", "check_report_agent_missing", "check-report.md agent is required")
+    elif mode == "independent" and agent.lower() in {"main-session", "main", "self"}:
+        add(
+            "error",
+            "check_report_agent_invalid",
+            "an independent check-report cannot be authored by the main session",
+        )
+    if mode == "inline-self-check" and not (
+        isinstance(data.get("meta"), dict) and data["meta"].get("check_override")
+    ):
+        add(
+            "error",
+            "inline_check_unconfirmed",
+            "inline-self-check needs meta.check_override (owner confirmation)",
+        )
+
+    bound = (meta.get("commit") or "").strip()
+    if bound and data.get("commit") and bound != data.get("commit"):
+        add(
+            "error",
+            "check_report_commit_stale",
+            "check-report.md is bound to a different commit",
+        )
+
+
 def _verify_task(task_dir: Path, data: dict) -> list[dict]:
     """Return findings without mutating the task."""
     findings: list[dict] = []
@@ -2420,6 +2530,14 @@ def _verify_task(task_dir: Path, data: dict) -> list[dict]:
     events = read_state_events(task_dir)
     if events and events[-1].get("event") == "state_commit_failed":
         add("error", "state_not_persisted", "the last state transition failed its bookkeeping commit")
+    if any(event.get("event") == "state_persist_degraded" for event in events):
+        degraded_level = "error" if task_type == "complex" and not data.get("commit") else "warning"
+        add(
+            degraded_level,
+            "state_persist_degraded",
+            "start state was explicitly degraded; run task.py start --commit-state "
+            "or doctor --fix to persist it",
+        )
 
     if not data.get("commit"):
         if status in ("in_progress", "completed") and meta.get("commit"):
@@ -2446,6 +2564,12 @@ def _verify_task(task_dir: Path, data: dict) -> list[dict]:
 
     frontend_check_ok = _has_frontend_check_evidence(meta)
     if task_type == "complex":
+        if not reports["implementation"]:
+            add(
+                "error",
+                "implementation_report_missing",
+                "complex task needs implementation-report.md",
+            )
         if not (reports["check"] or _acceptance_checked(task_dir) or override or frontend_check_ok):
             add(
                 "error",
@@ -2453,6 +2577,8 @@ def _verify_task(task_dir: Path, data: dict) -> list[dict]:
                 "complex task needs check-report, a checked acceptance item, "
                 "confirmed frontend evidence, or meta.check_override",
             )
+        if reports["check"] and not override:
+            _verify_check_report_provenance(task_dir, data, findings, add)
     elif task_type == "simple":
         if not (
             data.get("commit")

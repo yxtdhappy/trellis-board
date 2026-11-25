@@ -1054,6 +1054,23 @@ fn trellis_runtime() -> AgentResult<TrellisRuntime> {
     })
 }
 
+fn trellis_kit_root(app: &AppHandle) -> Option<PathBuf> {
+    if let Ok(value) = std::env::var("TRELLIS_KIT_ROOT") {
+        let path = PathBuf::from(value);
+        if path.is_dir() {
+            return Some(path);
+        }
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let path = resource_dir.join("trellis-kit");
+        if path.is_dir() {
+            return Some(path);
+        }
+    }
+    let dev = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../trellis-kit");
+    dev.is_dir().then_some(dev)
+}
+
 pub async fn initialize_project(
     app: &AppHandle,
     repo_path: &str,
@@ -1064,6 +1081,7 @@ pub async fn initialize_project(
     let runtime = trellis_runtime().map_err(|error| message(&error))?;
     let allow_file_remote = service.allow_file_remote();
     let hooks = service.ephemeral_hooks().map_err(|error| message(&error))?;
+    let kit_root = trellis_kit_root(app);
     let result = onboarding::initialize_project(&onboarding::InitializeOptions {
         repo_path: Path::new(repo_path),
         hooks_dir: &hooks,
@@ -1071,6 +1089,7 @@ pub async fn initialize_project(
         agent_tools,
         runtime: &runtime,
         allow_file_remote,
+        kit_root: kit_root.as_deref(),
     })
     .await;
     let _ = std::fs::remove_dir_all(&hooks);

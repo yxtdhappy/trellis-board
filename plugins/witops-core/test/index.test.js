@@ -74,7 +74,8 @@ async function call(http, pathname, options = {}) {
 }
 
 function dispatch(context, body) {
-  return call(context.http, `/api/plugins/${PLUGIN_ID}/dispatch`, { method: 'POST', body })
+  const payload = body ? { taskType: body.taskType || 'simple', ...body } : body
+  return call(context.http, `/api/plugins/${PLUGIN_ID}/dispatch`, { method: 'POST', body: payload })
 }
 
 function findTaskDirectory(repoRoot) {
@@ -454,7 +455,7 @@ test('POST /sync 在 plugin_run 留下可查询的成功记录', async () => {
   try {
     const result = await call(context.http, `/api/plugins/${PLUGIN_ID}/sync`, {
       method: 'POST',
-      body: { size: 2 },
+      body: { size: 2, taskType: 'simple', workType: 'backend' },
     })
     assert.equal(result.status, 200)
     assert.ok(Array.isArray(result.json.results))
@@ -541,7 +542,7 @@ test('sync 按 pages 翻页直到 maxPerSync', async () => {
   try {
     const response = await call(context.http, `/api/plugins/${PLUGIN_ID}/sync`, {
       method: 'POST',
-      body: { size: 3 },
+      body: { size: 3, taskType: 'simple', workType: 'backend' },
     })
     assert.equal(response.status, 200)
     assert.equal(response.json.summary.imported, 3)
@@ -837,6 +838,7 @@ test('需求下发创建父子任务，写入 base_branch 与 parentBusinessId',
       type: 3,
       baseBranch: 'feature/witops',
       includeChildren: true,
+      workType: 'backend',
     })
     assert.equal(result.status, 200)
     assert.equal(result.json.summary.imported, 1)
@@ -876,6 +878,7 @@ test('重复下发需求时只补建缺失的子任务', async () => {
       businessId: '3001',
       type: 3,
       includeChildren: false,
+      workType: 'backend',
     })
     assert.equal(first.json.summary.imported, 1)
     assert.equal(findTaskDirectories(context.repo.repositoryPath).length, 1)
@@ -884,6 +887,7 @@ test('重复下发需求时只补建缺失的子任务', async () => {
       businessId: '3001',
       type: 3,
       includeChildren: true,
+      workType: 'backend',
     })
     assert.equal(second.json.summary.duplicated, 1)
     assert.equal(second.json.results[0].childSummary.imported, 2)
@@ -996,6 +1000,7 @@ test('缺少负责人返回结构化诊断，并支持弹窗手动选择与记�
       businessId: '72411',
       assignee: 'bob',
       rememberBinding: true,
+      workType: 'backend',
     })
     assert.equal(explicit.status, 200)
     assert.equal(explicit.json.summary.imported, 1)

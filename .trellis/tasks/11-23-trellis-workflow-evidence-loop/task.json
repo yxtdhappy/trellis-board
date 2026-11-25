@@ -2,7 +2,7 @@
   "id": "trellis-workflow-evidence-loop",
   "name": "trellis-workflow-evidence-loop",
   "title": "优化 Trellis 工作流与技能：让 agent 全程自动维护任务元数据",
-  "description": "以 workflow、skills、agent prompts 和 Trellis 脚本为主，建立 agent 全程维护任务文件的机制：Phase 3.4 提交后自动回写 commit；各阶段自动登记实施/检查证据；finish-work/archive 预检缺失证据；任务状态变更在阶段边界持久化并可由 doctor 恢复；同步到所有接入仓库的模板。同时把前端/后端/全栈/研究/文档任务类型接入看板与插件创建入口，三个入口写入同一顶层 work_type。看板保持只读投影，不通过看板交互或人工补数据修复任务状态。",
+  "description": "以 workflow、skills、agent prompts 和 Trellis 脚本为主，建立 agent 全程维护任务文件的机制：Phase 3.4 提交后自动回写 commit；各阶段自动登记实施/检查证据；finish-work/archive 预检缺失证据；任务状态变更在阶段边界持久化并可由 doctor 恢复；同步到所有接入仓库的模板。同时把前端/后端/全栈/研究/文档任务类型接入看板与插件创建入口（创建只选 work_type），任务复杂度由 agent 在规划后判断并经 set-task-type 写入，不要求用户创建时选择。看板保持只读投影，不通过看板交互或人工补数据修复任务状态。",
   "status": "in_progress",
   "task_type": "complex",
   "work_type": "fullstack",
@@ -14,10 +14,10 @@
   "assignee": "yhj",
   "createdAt": "2026-11-23",
   "completedAt": null,
-  "branch": "main",
+  "branch": "feat/trellis-workflow-evidence-loop",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": "14fa6a3e865b29a02bed71fbe15595e4a60adc73",
+  "commit": "66f83726ae2ecfcc42698e6ce2f95f2c5990a926",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -38,7 +38,11 @@
     ".trellis/scripts/common/state_events.py",
     ".trellis/scripts/common/safe_commit.py",
     "packages/shared/work-types.js",
+    "packages/shared/work-types.d.ts",
     "packages/shared/test/work-types.test.js",
+    "packages/shared/task-types.js",
+    "packages/shared/task-types.d.ts",
+    "packages/shared/test/task-types.test.js",
     "packages/web/src/features/board/dialogs/CreateTaskDialog.tsx",
     "packages/web/src/pages/board/BoardPage.tsx",
     "packages/server/actions.js",
@@ -49,13 +53,28 @@
     "plugins/witops-core/dispatch.js",
     "plugins/witops-core/index.js",
     "plugins/witops-core/panel/index.html",
-    "plugins/witops-core/panel/app.js"
+    "plugins/witops-core/panel/app.js",
+    "plugins/a2a-intake/index.js",
+    "trellis-kit/manifest.json",
+    "trellis-kit/apply.py",
+    "trellis-kit/build_overlay.py",
+    "trellis-kit/platforms/registry.json",
+    "trellis-kit/README.md",
+    "packages/desktop/src-tauri/src/agent/onboarding.rs",
+    "packages/desktop/src-tauri/src/agent/protocol.rs",
+    "packages/desktop/src-tauri/src/agent_service.rs",
+    "packages/desktop/src-tauri/tauri.conf.json",
+    "packages/shared/trellis-agent-tools.js",
+    "packages/web/src/features/board/dialogs/AgentToolSelector.tsx",
+    "packages/web/src/pages/board/components/AgentQuickInitDialog.tsx",
+    "packages/web/src/features/board/dialogs/ProjectOnboardingDialog.tsx"
   ],
   "notes": "方向已按 2026-11-23 复盘修正：以 agent 维护 Trellis 文件的 workflow/skills 为主线，看板保持只读，不做交互式补救。",
   "meta": {
     "commits": [
-      "14fa6a3e865b29a02bed71fbe15595e4a60adc73"
+      "14fa6a3e865b29a02bed71fbe15595e4a60adc73",
+      "66f83726ae2ecfcc42698e6ce2f95f2c5990a926"
     ],
-    "commit_set_at": "2026-11-24T20:33:46"
+    "commit_set_at": "2026-11-25T10:32:20"
   }
 }

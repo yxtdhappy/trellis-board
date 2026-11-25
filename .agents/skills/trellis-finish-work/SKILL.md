@@ -55,13 +55,15 @@ Before archiving, run:
 python ./.trellis/scripts/task.py verify <task-name> --strict
 ```
 
-If it reports a missing commit, missing check evidence, or a status regression, stop and repair it first:
+If it reports a missing commit, missing implementation/check evidence, missing report provenance, or a status regression, stop and repair it first:
 
 - `task.py set-commit <task-name> <final-work-commit>`
 - `task.py set-evidence <task-name> --type e2e|visual|manual --artifact <path-or-url>`
 - `task.py doctor <task-name> --fix` for safe repairs
+- complex tasks need both `implementation-report.md` and `check-report.md`; the check report starts with `mode`/`agent`/`session`/`commit` front matter
+- `mode: inline-self-check` needs `meta.check_override` (owner confirmation)
 
-Do not archive past a failing gate. For a research/no-code task, run `archive <task-name> --planning-only` instead.
+Do not archive past a failing gate. For a research/no-code task, run `archive <task-name> --planning-only` instead. `task.py archive` itself now treats warnings as blocking, so a successful archive is also a strict evidence check.
 
 ## Step 4: Archive task(s)
 

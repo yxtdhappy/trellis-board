@@ -407,7 +407,7 @@ load task; verify --strict
 
 ### 7.3 面板/插件创建入口（摘要）
 
-- 看板表单必选 `workType`；payload 经 `actions.js` → team command → Rust → `task.py --work-type` → 顶层 `work_type`。
+- 看板表单必选 `workType`，**不出现任务复杂度**；`taskType` 由 agent 在 planning 后判断并 `set-task-type`。payload 经 `actions.js` → team command → Rust → `task.py --work-type`（可选 `--task-type`）→ 顶层 `work_type`（`task_type` 可空，记 `meta.task_type_pending`）。
 - 插件 `ctx.tasks.create` 接受 `workType`，DTO 返回；WitOps 前端开发→frontend、后端开发→backend，其他留空；批量混合不猜。
 - 看板支持 `defaultWorkType`（插件上下文/URL）；非法值保持空，不默认 backend。
 - 完整入口表、五层校验、WitOps 字段与文件清单见 `design-details.md`。
@@ -473,8 +473,8 @@ run `task.py validate`; report
 - `--dry-run`、`--check`、`--force`；幂等：相同 sha 不重写。
 - 首次 apply 没有 `.kit-state.json` 时，`--check` 先列差异；实际写入必须显式 `--force`（或 `--adopt` 记录 baseline 后再决定），避免静默覆盖已有定制。
 - 不改 `task.json`、不迁移存量任务、不改看板阶段推导。
-- 看板初始化：发行层提供 `trellis-kit init`（包装 `trellis init` + `trellis-kit apply`）；现有 onboarding/desktop init 管线只调用这个 CLI，不改阶段推导、泳道或看板 API。若 onboarding 接入排到后续阶段，则先文档化手动命令，接入本身作为最小集成项单独验收。
-- 上游 `trellis update` 可能覆盖 overlay；apply 的 `.kit-state.json` 用于检测漂移，冲突时不静默覆盖。
+- 看板初始化：`trellis-kit` 随客户端打包（Tauri resources），onboarding 在 full init 与 agent-only 之后自动执行 `apply.py --target <repo> --platform ... --force`；`apply.py` 默认从自包含 `overlay/` 读取，不依赖 board 源码树；找不到 kit 时初始化失败并提示，不假装成功。不改阶段推导、泳道或看板 API。
+- 上游 `trellis update` 可能覆盖 overlay；apply 的 `.kit-version` 记录已安装版本，`--force` 用于升级覆盖；当前不做逐文件漂移检测，后续可加 `.kit-state.json`。
 - Fork 仅作后续评估；`@mindfoldhq/trellis` 是 AGPL-3.0-only，overlay 也可能包含 AGPL 代码，对外分发前做法务评估。
 
 ### 8.4 平台适配契约（摘要）

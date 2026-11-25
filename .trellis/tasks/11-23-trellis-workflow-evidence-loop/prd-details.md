@@ -46,17 +46,17 @@ R35860/R35862/R35868 事故暴露的是 Trellis 流程本身没有把“维护�
 | D3 | commit 语义 | 顶层 `commit` = 最终主提交；`meta.commits` 记录历史；`set-pr` 记录 PR；squash/rebase 后 finish 前更新；跨仓库各仓库只记录自己的 commit，不聚合；`set-commit` 默认校验对象存在，浅克隆/跨仓库用 `--allow-missing-object`；`verify` 默认 warning、strict 阻断 |
 | D4 | 多人/assignee | 第二个 `start` 默认拒绝，仅 `--force` 允许；assignee 为空用 git user；同一任务只允许 assignee |
 | D5 | 冲突裁决 | 远端 completed/archived 优先停止；远端 planning + 本地 start 保留 in_progress；双方 start 由 owner 决定；不做自动 merge driver |
-| D6 | 任务类型标签 | 新任务在 create 时显式标记 `task_type=simple/complex/research`，标签是唯一判定依据；complex 缺 design/implement 在 start/verify 阻断；simple 可选生成 design/implement，仍按 simple、不降级、不报错；存量任务无标签按 legacy 推断并 warning，不迁移 |
+| D6 | 任务类型标签 | 新任务 create 时必须写 `work_type`，`task_type` 可空；agent 在 brainstorm/start 前根据实际范围判断 `task_type=simple/complex/research`，不确定时问用户，确认后用 `set-task-type` 写入；`task_type` 是唯一判定依据；complex 缺 design/implement 在 start/verify 阻断；simple 可选生成 design/implement，仍按 simple、不降级、不报错；存量任务无标签按 legacy 推断并 warning，不迁移 |
 | D7 | check 证据（backend） | complex backend：check-report 或任一验收勾选；两者都无时中断并明确询问用户；授权后写 `meta.check_override`（授权人限 assignee/owner、原因、时间、绑定 commit）才通过；同一 commit 只问一次，commit 变化后失效重问；子代理不能授权；非交互 exit 4；frontend 证据规则见 D14 |
 | D8 | 失败策略 | fail-closed：bookkeeping commit 失败不进入实现、不回滚 planning、不自动降级；只有显式 `--no-commit-state` 降级 |
 | D9 | 批量修复 | `task.py verify --all --fix` / `doctor --all --fix` 自动修安全项；不安全项只报告并阻断 |
-| D10 | 分发 | trellis-board 维护版本化 Trellis 发行层（模板/脚本/skills/prompts/manifest）；看板初始化后应用；优先 overlay，fork 仅作后续评估；各平台兼容；存量任务不迁移 |
+| D10 | 分发 | trellis-board 维护版本化 Trellis 发行层（模板/脚本/skills/prompts/manifest）；`trellis-kit` 随客户端打包，看板初始化（full init 与 agent-only）在 `trellis init` 后自动 apply 自包含 `overlay/`，缺 kit 则初始化失败并提示；优先 overlay，fork 仅作后续评估；各平台兼容；存量任务不迁移 |
 | D11 | 事件日志 | `.trellis/tasks/<task>/.state-events.jsonl`，schemaVersion 1，append-only；记录 start/reset/state_commit_failed/check_override/archive；随任务目录归档；默认提交，敏感字段脱敏 |
 | D12 | schema/兼容 | `task_type`/`work_type` 新任务必填、存量可缺失；`meta.commits`/`state_persisted`/`meta.check_override`/`meta.frontend_evidence`/`meta.frontend_check_report_required` 可选；存量任务不迁移；看板忽略未知字段；`set-commit` 默认校验对象存在，`verify` 对对象缺失/不可达默认 warning、strict 阻断 |
 | D13 | 平台适配 | `trellis-kit` 以平台 `capabilities + paths + formats` 声明为唯一事实源，不按平台名硬编码；首批覆盖 claude/codex/opencode/pi/omp/antigravity/dsh，其他平台走通用 fallback；首次 init 与 `--agent-only` 共用同一适配层；只写平台支持的目录/格式，不创建不支持的空目录；多平台可同时安装 |
 | D14 | 工作类型与前端证据 | 新增顶层 `work_type=backend/frontend/fullstack/research/docs`，create 时必填，与只表复杂度的 `task_type` 正交；前端证据以浏览器 E2E、截图/预览、owner 确认为一等证据；`check-report` 不是前端硬门槛，普通 simple 前端不要求；complex 前端只勾一个验收项不足以通过，必须 E2E/视觉证据 + owner 确认，或 check-report；共享组件/设计系统/路由/状态/可访问性/性能敏感改动要求结构化 check-report |
-| D15 | 标签判定责任 | `task_type`/`work_type` 由 agent 在 create 前提议并说明理由，用户确认一次；用户明确说“按建议”可记为 `user-delegated`；面板/插件中用户主动选择视为 `user-explicit`；复制/子任务继承父任务标签只作为提议；`meta.label_source` 记录 `user-explicit`/`agent-proposed-user-confirmed`/`user-delegated`/`copied-from-parent`/`legacy`；不允许静默猜成 simple/backend |
-| D16 | 面板与插件创建入口 | 看板“创建任务并派发”表单新增必填“任务类型”下拉（backend/frontend/fullstack/research/docs），随 create 全链路写顶层 `work_type`；插件 `ctx.tasks.create` 接受 `workType`，插件任务 DTO 返回 `workType`；WitOps 只把“前端开发/后端开发”明确映射为 frontend/backend，其他分类留空由用户选；插件创建对话框默认选中当前工作项映射值；看板表单接受 `defaultWorkType`（插件上下文/URL），没有值时保持空，不静默默认 backend；批量混合类型不猜 |
+| D15 | 标签判定责任 | `work_type` 在 create 时确定；`task_type` 由 agent 在 brainstorm/start 前根据实际范围判断并说明理由，不确定时问用户一次；用户明确说“按建议”可记为 `user-delegated`；面板/插件中用户主动选择 `work_type` 视为 `user-explicit`；复制/子任务继承父任务 `task_type` 只作为提议；`meta.label_source` 记录 `user-explicit`/`agent-proposed-user-confirmed`/`agent-inferred`/`user-delegated`/`copied-from-parent`/`legacy`；不允许静默猜成 simple/backend |
+| D16 | 面板与插件创建入口 | 看板“创建任务并派发”表单与 WitOps 创建对话框只要求“任务类型”（work_type: backend/frontend/fullstack/research/docs），**不出现任务复杂度**；创建出的 `task.json` 顶层 `task_type` 为空并记 `meta.task_type_pending=true`，由 agent 后续 `set-task-type`；插件 `ctx.tasks.create` 接受可选 `taskType`/`workType`，DTO 返回二者；WitOps 只把“前端开发/后端开发”明确映射为 work_type，其他分类留空由用户选；插件对话框默认选中当前工作项映射的 work_type；看板表单接受 `defaultWorkType`（URL/插件上下文），没有值时保持空，不静默默认 backend；批量混合类型不猜 |
 
 
 ### R5：补齐 Trellis 脚本与模板能力

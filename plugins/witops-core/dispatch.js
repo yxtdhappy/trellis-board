@@ -714,6 +714,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     parentDir,
     parentBusinessId,
   }) {
+    const taskType = draft.taskType || undefined
     const meta = parentBusinessId
       ? {
           ...draft.meta,
@@ -732,6 +733,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
       assignee: draft.assignee,
       priority: chosenPriority(priority, draft.priority),
       slug: draft.slug,
+      taskType,
       workType: draft.workType || undefined,
       meta,
       extraFiles: draft.extraFiles,
@@ -766,6 +768,8 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     dueDate,
     fallbackAssignee = '',
     rememberBinding = false,
+    taskType = '',
+    workType = '',
   }) {
     if (!parentDir) return []
     const children = await childrenOf(requirementId)
@@ -791,6 +795,8 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
         continue
       }
       const { draft, resolution } = prepared
+      if (text(taskType)) draft.taskType = text(taskType)
+      if (text(workType)) draft.workType = text(workType)
       if (!draft.assignee) {
         results.push({
           ...entry,
@@ -856,6 +862,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     includeChildren,
     assignee,
     rememberBinding,
+    taskType,
     workType,
   }) {
     const typeCode = asTypeCode(type, config.type)
@@ -882,6 +889,8 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
             dueDate,
             fallbackAssignee: assignee,
             rememberBinding: rememberBinding === true,
+            taskType: text(taskType),
+            workType: text(workType),
           })
           result.childSummary = summarizeResults(result.children)
         } catch (error) {
@@ -904,6 +913,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
       })
       if (prepared.status !== 'ready') return prepared
       const { draft, resolution } = prepared
+      if (text(taskType)) draft.taskType = text(taskType)
       if (text(workType)) draft.workType = text(workType)
       slug = draft.slug
 
@@ -975,6 +985,8 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
             dueDate,
             fallbackAssignee: draft.assignee,
             rememberBinding: rememberBinding === true,
+            taskType: text(draft.taskType),
+            workType: text(draft.workType),
           })
           result.childSummary = summarizeResults(result.children)
         } catch (error) {
@@ -1010,6 +1022,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
       assignee: text(item.assignee) || assignee,
       rememberBinding: item.rememberBinding ?? rememberBinding,
       includeChildren: item.includeChildren ?? includeChildren,
+      taskType: text(item.taskType) || text(body.taskType),
       workType: text(item.workType) || text(body.workType),
     })
     if (Array.isArray(body.items)) {
@@ -1059,7 +1072,12 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
     return { results, summary: summarizeResults(results) }
   }
 
-  async function syncRecent({ size = config.maxPerSync, repositoryId } = {}) {
+  async function syncRecent({
+    size = config.maxPerSync,
+    repositoryId,
+    taskType = '',
+    workType = '',
+  } = {}) {
     const limit = asPositiveInt(size, config.maxPerSync)
     const run = await ctx.runs.start({
       taskKey: 'sync',
@@ -1083,6 +1101,8 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
             businessId,
             type: asTypeCode(record.type, config.type),
             repositoryId,
+            taskType: text(taskType),
+            workType: text(workType),
           })
         }
       }

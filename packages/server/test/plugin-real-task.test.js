@@ -52,6 +52,8 @@ test('真实 task.py：baseBranch、父任务与 extraFiles 落盘', { skip: !ha
       assignee: 'alice',
       priority: 'P1',
       slug: 'parent-link-check',
+      taskType: 'complex',
+      workType: 'backend',
       baseBranch: 'feature/base',
       extraFiles: { 'task.md': '# 平台原文\n\n父任务内容\n' },
     })
@@ -62,6 +64,8 @@ test('真实 task.py：baseBranch、父任务与 extraFiles 落盘', { skip: !ha
       assignee: 'alice',
       priority: 'P2',
       slug: 'child-link-check',
+      taskType: 'simple',
+      workType: 'backend',
       baseBranch: 'feature/base',
       parentDir: parent.relativeDir,
     })
@@ -107,6 +111,7 @@ test('真实 task.py：创建、写 prd、合并 meta、改派与阶段更新', 
       assignee: 'alice',
       priority: 'P1',
       slug: 'real-task-check',
+      taskType: 'simple',
       workType: 'frontend',
       prd,
       meta: { agent: 'opencode', source: { type: 4, businessId: 10001 } },
@@ -114,6 +119,7 @@ test('真实 task.py：创建、写 prd、合并 meta、改派与阶段更新', 
 
     assert.match(task.relativeDir, /^\d{2}-\d{2}-real-task-check$/)
     assert.equal(task.taskKey, `repo::${task.relativeDir}`)
+    assert.equal(task.taskType, 'simple')
     assert.equal(task.workType, 'frontend')
     const full = path.join(repoRoot, '.trellis', 'tasks', task.relativeDir)
     const taskJson = JSON.parse(fs.readFileSync(path.join(full, 'task.json'), 'utf8'))
@@ -122,6 +128,7 @@ test('真实 task.py：创建、写 prd、合并 meta、改派与阶段更新', 
     assert.equal(taskJson.priority, 'P1')
     assert.equal(taskJson.assignee, 'alice')
     assert.equal(taskJson.creator, 'alice')
+    assert.equal(taskJson.task_type, 'simple')
     assert.equal(taskJson.work_type, 'frontend')
     assert.equal(taskJson.meta.label_source, 'user-explicit')
     assert.equal(taskJson.meta.agent, 'opencode')
@@ -136,6 +143,8 @@ test('真实 task.py：创建、写 prd、合并 meta、改派与阶段更新', 
       assignee: 'alice',
       priority: 'P2',
       slug: 'T900001',
+      taskType: 'simple',
+      workType: 'backend',
     })
     assert.match(coded.relativeDir, /^\d{2}-\d{2}-T900001$/)
     const codedJson = JSON.parse(
@@ -167,6 +176,8 @@ test('真实 task.py：创建、写 prd、合并 meta、改派与阶段更新', 
         description: '重复创建',
         assignee: 'alice',
         slug: 'real-task-check',
+        taskType: 'simple',
+        workType: 'frontend',
       }),
       /已存在|exists|refus/i,
     )

@@ -157,6 +157,7 @@ function createInput(taskSpaceId, overrides = {}) {
     assigneeUserId: 'user-b',
     title: '客户端创建任务',
     description: '由在线 Agent 创建',
+    taskType: 'simple',
     priority: 'P2',
     slug: 'client-created',
     idempotencyKey: 'create-1',

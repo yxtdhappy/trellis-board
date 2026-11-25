@@ -65,13 +65,16 @@ async function setup(config = {}, extraPlugins = []) {
 }
 
 function sendParams(messageId, payload) {
+  const body =
+    typeof payload === 'string'
+      ? payload
+      : JSON.stringify({ taskType: 'simple', workType: 'backend', ...payload })
   return {
+    metadata: { taskType: 'simple', workType: 'backend' },
     message: {
       role: 'user',
       messageId,
-      parts: [
-        { kind: 'text', text: typeof payload === 'string' ? payload : JSON.stringify(payload) },
-      ],
+      parts: [{ kind: 'text', text: body }],
     },
   }
 }
@@ -240,6 +243,7 @@ test('v1.0 方法名 SendMessage/GetTask/CancelTask 可用', async () => {
   const context = await setup()
   try {
     const sent = await context.rpc('SendMessage', {
+      metadata: { taskType: 'simple', workType: 'backend' },
       message: {
         messageId: 'v1-1',
         parts: [{ type: 'text', text: '{"title":"v1 任务"}' }],
