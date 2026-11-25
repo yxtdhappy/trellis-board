@@ -31,8 +31,8 @@
 
 - `preview` 返回 `draft`（含 `taskMarkdown`、`prd`、`meta`）与 `children`（需求已拆分的子任务），面板据此预览后再确认创建。
 - 已存在任务也返回 `draft`：优先读现有 `task.md`；旧任务没有 `task.md` 时回退 `prd.md` / `task.json.description`，并在面板标注实际来源。
-- `task.create` 支持 `baseBranch`（写入 `task.json` 的 `base_branch`，作为 PR 目标分支）、`workType`（`backend` / `frontend` / `fullstack` / `research` / `docs`）与 `includeChildren`（需求默认连同子任务一起创建）。
-- `workType` 在面板创建对话框中可改；默认按平台分类映射：`前端开发` → `frontend`、`后端开发` → `backend`，其他分类留空，不静默默认后端。
+- `task.create` 支持 `baseBranch`（写入 `task.json` 的 `base_branch`，作为 PR 目标分支）、`workType`（`backend` / `frontend` / `fullstack` / `research` / `docs`）、可选 `taskType`（`simple` / `complex` / `research`，不传则由 agent 后续分类）与 `includeChildren`（需求默认连同子任务一起创建）。
+- 面板创建对话框只要求任务类型（`workType`）；`workType` 默认按平台分类映射：`前端开发` → `frontend`、`后端开发` → `backend`，其他分类留空，不静默默认后端；`taskType` 不在面板选择、不从分类推断。
 - 需求创建时先建父任务，再用 `--parent` 建子任务；已存在父任务时只补建缺失的子任务，单次上限 30 个。
 - 本地分支列表来自宿主的 `trellis.projects.branches`（只读 `refs/heads`，15s 缓存）。
 

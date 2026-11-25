@@ -4,11 +4,11 @@
 Task Management Script.
 
 Usage:
-    python task.py create "<title>" --description "<desc>" [--slug <name>] [--task-type simple|complex|research] [--work-type backend|frontend|fullstack|research|docs] [--assignee <dev>] [--priority P0|P1|P2|P3] [--parent <dir>] [--package <pkg>] [--no-start] [--force]
+    python task.py create "<title>" --description "<desc>" --work-type backend|frontend|fullstack|research|docs [--task-type simple|complex|research] [--slug <name>] [--assignee <dev>] [--priority P0|P1|P2|P3] [--parent <dir>] [--package <pkg>] [--no-start] [--force]
     python task.py add-context <dir> <file> <path> [reason] # Add jsonl entry
     python task.py validate <dir>              # Validate jsonl files
     python task.py list-context <dir>          # List jsonl entries
-    python task.py start <dir> [--commit-state|--no-commit-state] [--push] [--force]
+    python task.py start <dir> [--commit-state|--no-commit-state [--force-degraded --reason <why>]] [--push] [--force]
                                                 # Set active task, record current branch/status
     python task.py current [--source] [--json] # Show active task
     python task.py finish                      # Clear active task
@@ -201,6 +201,17 @@ def _record_start_state(
         )
 
 
+def _record_start_degraded(task_json_path: Path, reason: str) -> None:
+    """Record an explicit, auditable start-state degradation."""
+    append_state_event(
+        task_json_path.parent,
+        "state_persist_degraded",
+        from_status="in_progress",
+        to_status="in_progress",
+        reason=reason,
+    )
+
+
 def _git_path(repo_root: Path, name: str) -> Path | None:
     """Resolve a git metadata path (worktree-safe)."""
     rc, out, _ = run_git(["rev-parse", "--git-path", name], cwd=repo_root)
@@ -350,6 +361,52 @@ def cmd_start(args: argparse.Namespace) -> int:
                 )
                 print("Add the missing planning artifact(s) before task.py start.")
                 return 1
+        if not start_data.get("task_type"):
+            print(
+                colored(
+                    "Warning: task complexity is not set; classify it with "
+                    "`task.py set-task-type <task> simple|complex|research`.",
+                    Colors.YELLOW,
+                )
+            )
+
+    no_commit_state = getattr(args, "no_commit_state", False)
+    force_degraded = getattr(args, "force_degraded", False)
+    degraded_reason = (getattr(args, "reason", None) or "").strip()
+    if force_degraded and not no_commit_state:
+        print(
+            colored(
+                "Error: --force-degraded only applies to --no-commit-state.",
+                Colors.RED,
+            )
+        )
+        return 1
+    if force_degraded and not degraded_reason:
+        print(
+            colored(
+                "Error: --force-degraded requires --reason \"<why>\".",
+                Colors.RED,
+            )
+        )
+        return 1
+    if (
+        no_commit_state
+        and start_data.get("task_type") == "complex"
+        and not force_degraded
+    ):
+        print(
+            colored(
+                "Error: complex task start must persist its in_progress state.",
+                Colors.RED,
+            )
+        )
+        print(
+            "Git is unavailable or unsafe? Re-run with --no-commit-state "
+            "--force-degraded --reason \"<why>\"; verify/archive will refuse "
+            "the task until the degradation is resolved.",
+            file=sys.stderr,
+        )
+        return 1
 
     commit_state = _start_commit_mode(args, start_data)
     if getattr(args, "push", False) and not commit_state:
@@ -432,6 +489,8 @@ def cmd_start(args: argparse.Namespace) -> int:
         # Still flip task.json status: planning → in_progress so downstream phases proceed.
         if task_json_path.is_file():
             _record_start_state(task_json_path, repo_root, " (degraded)")
+            if force_degraded:
+                _record_start_degraded(task_json_path, degraded_reason)
             if commit_state:
                 ok, reason = _commit_start_state(
                     task_json_path, repo_root, getattr(args, "push", False)
@@ -454,6 +513,8 @@ def cmd_start(args: argparse.Namespace) -> int:
 
         if task_json_path.is_file():
             _record_start_state(task_json_path, repo_root)
+            if force_degraded:
+                _record_start_degraded(task_json_path, degraded_reason)
             if commit_state:
                 ok, reason = _commit_start_state(
                     task_json_path, repo_root, getattr(args, "push", False)
@@ -862,6 +923,14 @@ def main() -> int:
         help="Task work surface: backend, frontend, fullstack, research, or docs",
     )
     p_create.add_argument(
+        "--allow-unlabeled",
+        action="store_true",
+        help=(
+            "Legacy escape hatch: create without --task-type/--work-type. "
+            "The task will be treated as legacy and verify/archive stay permissive."
+        ),
+    )
+    p_create.add_argument(
         "--base-branch",
         help="PR target branch (overrides origin/HEAD detection and the checked-out-branch fallback)",
     )
@@ -919,6 +988,18 @@ def main() -> int:
         "--push",
         action="store_true",
         help="Push the bookkeeping commit after creating it",
+    )
+    p_start.add_argument(
+        "--force-degraded",
+        action="store_true",
+        help=(
+            "Allow --no-commit-state for a complex task. The degradation is "
+            "recorded and verify/archive will refuse the task."
+        ),
+    )
+    p_start.add_argument(
+        "--reason",
+        help="Why the complex start state is not being committed (requires --force-degraded)",
     )
     p_start.add_argument(
         "--force",

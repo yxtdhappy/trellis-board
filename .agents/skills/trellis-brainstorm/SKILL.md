@@ -35,13 +35,19 @@ If no task exists yet, create one:
 
 ```bash
 TASK_DIR=$(python ./.trellis/scripts/task.py create "<short task title>" --description "<one-line summary>" --slug <slug> \
-  --task-type simple|complex|research \
   --work-type backend|frontend|fullstack|research|docs)
 ```
 
 Use a concise title from the user's request. Both the title and `--description` must be non-empty — `create` rejects blanks, and a record with either one empty is refused at archive. Use a slug without a date prefix. `task.py create` adds the `MM-DD-` directory prefix automatically.
 
-Both labels are required. Propose `--task-type` and `--work-type` with a one-line reason and get the user's confirmation once before creating the task. `task_type` is the process commitment (`complex` requires `design.md` + `implement.md`); `work_type` is the surface. Do not silently guess either label.
+`work_type` is the only label required at create: it describes the surface and is usually known from the request. Do **not** ask the user to choose a task complexity at creation.
+
+After the planning conversation has exposed the actual scope, decide `task_type` yourself:
+- `research` — the deliverable is a proposal/comparison, no code change.
+- `simple` — one clear change, no cross-layer design or migration.
+- `complex` — multiple phases/modules/repos, interface/DB/design decisions, or a process commitment requiring `design.md` + `implement.md`.
+
+If the evidence is clear, persist it with `task.py set-task-type <task> <type>` and state the reason. If it is genuinely ambiguous, ask one question with your recommendation; do not silently guess. `task.py start` blocks a `complex` task until `design.md` and `implement.md` exist, so set/resolve the type before start.
 
 `task.py create` creates the default `prd.md`. Update that file with the current understanding before asking follow-up questions.
 

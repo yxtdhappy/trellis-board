@@ -255,6 +255,7 @@ test('目标用户离线时命令和待交付任务仍持久化，上线后按�
       assigneeUserId: 'user-b',
       title: '离线任务',
       description: '目标客户端稍后领取',
+      taskType: 'simple',
       priority: 'P1',
       slug: 'offline-task',
       idempotencyKey: 'offline-create-1',

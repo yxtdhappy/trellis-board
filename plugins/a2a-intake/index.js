@@ -310,6 +310,10 @@ export default createPlugin({
           assignee,
           priority: String(payload.priority ?? config.defaultPriority ?? 'P2'),
           slug: String(payload.slug || taskId),
+          taskType:
+            String(payload.taskType ?? params?.metadata?.taskType ?? '').trim() || undefined,
+          workType:
+            String(payload.workType ?? params?.metadata?.workType ?? '').trim() || undefined,
           meta: agent ? { agent } : {},
         })
         const record = {

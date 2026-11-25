@@ -16,7 +16,7 @@
 
 ## 决策记录（摘要）
 
-D1–D16 的完整理由、备选与影响见 `prd-details.md`；本文的 R1–R9 已按这些决策收敛。核心结论：显式 `task_type`/`work_type`；只在 start/archive 持久化；complex start bookkeeping commit；事件日志；set-commit/verify/doctor；前端证据分层；面板/插件三入口写同一 `work_type`；看板只读。
+D1–D16 的完整理由、备选与影响见 `prd-details.md`；本文的 R1–R9 已按这些决策收敛。核心结论：创建时只显式选择 `work_type`，`task_type` 由 agent 在实现前判断/询问用户确认后写入；只在 start/archive 持久化；complex start bookkeeping commit；事件日志；set-commit/verify/doctor；前端证据分层；面板/插件三入口写同一 `work_type`；看板只读。
 
 ## Requirements
 
@@ -26,7 +26,7 @@ D1–D16 的完整理由、备选与影响见 `prd-details.md`；本文的 R1–
 
 | 阶段 | 执行者 | 写入内容 | 命令/产物 | 通过条件 |
 |---|---|---|---|---|
-| create / planning | 主会话 agent | `task.json`、`task_type`、`work_type`、`prd.md`、按需 `design.md`/`implement.md`、manifests | `task.py create --task-type <simple/complex/research> --work-type <backend/frontend/fullstack/research/docs>`、`task.py set-task-type`、`task.py set-work-type`、`task.py validate` | `task_type`/`work_type` 已标记；planning review 通过 |
+| create / planning | 主会话 agent | `task.json`、`work_type`、`task_type`（可后置）、`prd.md`、按需 `design.md`/`implement.md`、manifests | `task.py create --work-type <backend/frontend/fullstack/research/docs>`、`task.py set-task-type <simple/complex/research>`、`task.py set-work-type`、`task.py validate` | `work_type` 已标记；`task_type` 在 start 前由 agent 判断/用户确认；planning review 通过 |
 | start | 主会话 agent | `status=in_progress` | `task.py start` + 持久化 | `task.py verify` 通过，状态已持久化 |
 | implement | implement 子代理 | 代码 + 复杂任务写 `implementation-report.md`；轻量任务返回结构化报告（不强制落盘） | 子代理报告；主会话按任务层级落盘 | 复杂任务报告覆盖改动；轻量任务有 commit/验收等证据 |
 | check | check 子代理 | 修复 + 复杂后端写 `check-report.md`；复杂前端写 E2E/视觉证据或 check-report；轻量任务记录验证结果（不强制文件） | 子代理报告；主会话按任务层级落盘；前端证据 `set-evidence` | 复杂后端报告含验证命令/结果，或验收勾选；复杂前端 E2E/视觉 + owner 确认或 check-report；轻量任务至少一项证据 |
@@ -36,7 +36,8 @@ D1–D16 的完整理由、备选与影响见 `prd-details.md`；本文的 R1–
 
 - 契约要明确“谁写、谁不写”，避免主会话与子代理同时改 `task.json`。
 - 契约要覆盖纯规划/研究任务（不产生代码提交）的豁免方式，不能把“无 commit”一律判失败。
-- **任务类型标签（`task_type`，创建时必填，标签是唯一判定依据）**：
+- **任务类型标签（`task_type`，创建时留空，由 agent 在实现前判断/询问用户后写入，标签是唯一判定依据）**：
+  - 创建表单不要求用户选择复杂度；用户此时通常无法判断。agent 在 brainstorm/start 前根据需求范围提议 simple/complex/research，不确定时询问用户确认，再执行 `task.py set-task-type`。`start` 发现未设置时提示 agent 先分类；存量任务按 legacy 处理。
   - **simple**：不要求 `design.md`/`implement.md`；证据至少一项：顶层 commit、PRD 验收勾选、`implementation-report.md`、`check-report.md`、`status=completed`；报告一律可选。简单任务可以自愿生成 `design.md`/`implement.md`，仍按 simple 处理，**不降级、不升级、不报错**。
   - **complex**：**start 前必须同时存在 `design.md` 与 `implement.md`，缺一即阻断**；证据 = 顶层 commit **且**按 `work_type` 细分：backend 为（`check-report.md` 或至少一项 PRD 验收勾选，或 D7 的用户授权）；frontend 为（E2E/视觉证据 + owner 确认，或 `check-report.md`，或 D7 授权）；fullstack 两端都要。
   - **research**：纯方案/研究，不产生代码提交；只有 `prd.md`（可含 research）；`archive --planning-only` 豁免 commit/报告。
@@ -59,7 +60,7 @@ D1–D16 的完整理由、备选与影响见 `prd-details.md`；本文的 R1–
 更新 `.trellis/workflow.md`，让 agent 按流程执行时“不得不”维护任务文件：
 
 - Phase 1 创建/规划：`task.py create` 必须显式带 `--task-type simple|complex|research`；complex 在进入 start 前补齐 `design.md` 与 `implement.md`；simple 可选生成，research 按纯规划处理。
-- Phase 1.4：`task.py start` 前校验 `task_type`、`work_type` 与 complex 产物；start 后增加状态持久化步骤；复杂任务默认启动 bookkeeping commit，简单任务默认写事件日志（也可 `--commit-state` 强制提交），随后运行 `task.py verify`；不允许只改工作区文件就进入实现。
+- Phase 1.4：`task.py start` 前确认 `work_type` 已设置、`task_type` 已由 agent 判断/用户确认（未设置时提示先 `set-task-type`，存量任务按 legacy），再做 complex 产物校验；start 后增加状态持久化步骤；复杂任务默认启动 bookkeeping commit，简单任务默认写事件日志（也可 `--commit-state` 强制提交），随后运行 `task.py verify`；不允许只改工作区文件就进入实现。
 - Phase 2.1：dispatch implement 子代理时，复杂任务要求产出 `implementation-report.md`；轻量任务只要求返回结构化报告（改动、验证命令/结果），不强制落盘；主会话按层级确认证据。
 - Phase 2.2：dispatch check 子代理时按 `task_type + work_type` 要求证据：复杂后端要求 `check-report.md` 或勾选验收项；复杂前端要求 E2E/视觉证据 + owner 确认，或 `check-report.md`，只勾一个验收项不算；轻量任务只要求执行验证并在提交信息/PRD 中记录结果，不强制报告。
 - Phase 3.3：spec 更新与任务证据一起纳入本次任务，不留下“以后补”的孤立文档。
@@ -70,7 +71,7 @@ D1–D16 的完整理由、备选与影响见 `prd-details.md`；本文的 R1–
 
 ### R3：加强 skills，让 agent 有可执行步骤
 
-- 新增 `trellis-task-state` skill：把 R1 的契约、每阶段命令、校验命令、常见失败处理写成 agent 可直接执行的 checklist；在 create/start/implement/check/commit/finish 边界调用；create 时先确定并写入 `task_type` 与 `work_type`，不允许“先建了再说”。
+- 新增 `trellis-task-state` skill：把 R1 的契约、每阶段命令、校验命令、常见失败处理写成 agent 可直接执行的 checklist；在 create/start/implement/check/commit/finish 边界调用；create 时只确定 `work_type`，`task_type` 在 brainstorm/start 前由 agent 判断、不确定时问用户，再 `set-task-type`；不允许把复杂度判断推给创建表单。
 - 更新 `trellis-brainstorm`/`trellis-start` skill：在需求澄清阶段就询问或判定 simple/complex/research 与 backend/frontend/fullstack/research/docs，并解释类型与工作类型的证据差异；complex 未补齐 design/implement 不得进入 start。
 - 更新 `trellis-check` skill：复杂后端任务在检查完成后写 `check-report.md`；复杂前端要求 E2E/视觉证据 + owner 确认或 check-report，不能只勾一个验收项；轻量任务记录验证结果（写在提交信息或 PRD 验收项即可），不强制报告；明确 check 子代理不写 `task.json` 的 status/commit，由主会话统一写。
 - 更新 `trellis-finish-work` skill：归档前运行 `task.py verify --strict`；按 `task_type + work_type` 检查证据，轻量任务不因缺报告失败，复杂任务缺 commit/验收/check-report/前端证据时停止并给出修复命令；只有纯规划/研究任务允许显式 `--planning-only` 豁免。
@@ -91,7 +92,7 @@ D1–D16 的完整理由、备选与影响见 `prd-details.md`；本文的 R1–
   - 复杂后端任务检查完成后写 `check-report.md`；复杂前端任务记录浏览器 E2E、截图/预览、响应式/可访问性检查与 owner 确认，或写 check-report；轻量任务记录验证结果（提交信息或 PRD 验收项），不强制文件；
   - 复杂任务的报告必须包含检查范围、发现的问题、修复项、lint/typecheck/test 结果；前端报告还要包含浏览器/E2E、截图或预览、响应式/可访问性检查结果；
   - 不修改 `task.json` 的 `status`/`commit`/`pr_url`；不执行 git commit/push/merge。
-- 主会话 prompt/workflow：create 时负责写入并校验 `task_type`；代码提交后负责 `set-commit`/`set-pr`，finish 前负责 `verify`；任何阶段发现任务文件缺失，先修复再继续。
+- 主会话 prompt/workflow：create 时负责写入并校验 `work_type`；在 brainstorm/start 前判断 `task_type`，不确定时询问用户并 `set-task-type`；代码提交后负责 `set-commit`/`set-pr`，finish 前负责 `verify`；任何阶段发现任务文件缺失，先修复再继续。
 - 在 agent prompt 中写清“单一写入者”矩阵，避免子代理和主会话互相覆盖。
 
 ### R5：补齐 Trellis 脚本与模板能力（摘要）
@@ -103,8 +104,8 @@ D1–D16 的完整理由、备选与影响见 `prd-details.md`；本文的 R1–
 
 ### R6：把改进做成可分发、可升级的 Trellis 发行层
 
-- 以 trellis-board 为规范源，维护一个版本化的 Trellis 发行层（暂名 `trellis-kit`）：`.trellis/scripts`、`.trellis/agents`、`.agents/skills`、`.claude/commands/trellis`、`.claude/agents`、`.codex` 等模板 + `manifest.json`（版本、校验和、目标平台、迁移标记）。
-- 看板项目初始化：在现有 `trellis init` 之后应用发行层；已初始化项目用 `trellis-kit upgrade`；不依赖上游 `trellis update` 是否继续发布。初始化只安装模板/脚本，不改阶段推导、泳道或看板 API。
+- 以 trellis-board 为规范源，维护版本化发行层 `trellis-kit`：脚本、agents、skills、commands、平台文件 + `manifest.json`（版本、校验和、目标平台）。自带 `overlay/`，不依赖 board 源码树。
+- 看板项目初始化：kit 随客户端打包；full init 与 agent-only 都在 `trellis init` 后自动 apply，缺 kit 视为初始化失败。初始化只装模板/脚本，不改阶段推导、泳道或看板 API。
 - 维护路径：**已选 Overlay**——保留上游 `@mindfoldhq/trellis@0.6.17` 做 init，发行层覆盖我们的 scripts/skills/prompts/模板；风险是上游 `trellis update` 覆盖，需要 manifest/校验和/冲突检测。
   - **Fork** 仅作为后续评估：若 overlay 无法覆盖 init/update 的内部行为，再 fork 上游（AGPL-3.0-only），需法务确认分发义务并建立发布/合并流程。本期不 fork、不把上游代码并入桌面安装包。
 - 平台适配（硬要求）：一份源模板按平台能力生成入口，不能只覆盖 Claude/Codex。
@@ -157,7 +158,7 @@ D1–D16 的完整理由、备选与影响见 `prd-details.md`；本文的 R1–
 - 看板 `CreateTaskDialog` 接受可选 `defaultWorkType`：插件上下文或 URL 参数提供合法值时默认选中；没有值或值非法时为空，不猜测。插件打开看板创建入口时应把当前任务/工作项的类型带过来。
 - 插件任务服务 `ctx.tasks.create` 接受 `workType`；`toTaskDto` 返回顶层 `work_type`，插件页能读取当前任务类型。
 - WitOps 创建入口：新增“任务类型”下拉，默认取当前工作项分类的映射；只映射“前端开发→frontend”“后端开发→backend”，其他分类留空；用户可在提交前改选；批量创建时若多个工作项映射不一致，不默认选任何一个。
-- 面板、插件、CLI 三个入口写出的 `task.json` 顶层 `work_type` 必须一致；`meta.label_source` 至少能区分面板/插件用户选择与 agent 提议。
+- 面板、插件、CLI 三个入口写出的 `task.json` 顶层 `work_type` 必须一致；`task_type` 不在创建表单中出现，由 agent 在 brainstorm/start 前判断、不确定时询问用户，再 `set-task-type`。`meta.label_source` 至少能区分面板/插件用户选择与 agent 提议；创建时未分类的任务记 `meta.task_type_pending=true`。
 - 不改看板阶段推导、泳道或任务状态机；任务类型只作为创建参数和证据判定输入。
 
 ## Acceptance Criteria
@@ -171,16 +172,16 @@ D1–D16 的完整理由、备选与影响见 `prd-details.md`；本文的 R1–
 - [ ] 本地 start commit 未 push 时，远端新增其他文件后 `pull --rebase` 不丢 in_progress；远端改同一 task.json 时冲突可见，`doctor --reconcile` 按规则保留/停止，不静默覆盖。
 - [ ] 文档明确“未 push 状态团队不可见”和“同一任务并发无分布式锁”，并有对应的回归/演练记录。
 - [ ] `set-meta` 不能静默写保留键；`set-commit`/`set-pr`/`verify`/`doctor` 有单测，跨平台可用。
-- [ ] 新任务 create 必须带 `task_type` 与 `work_type`，漏传被拒绝；complex 在 start 前缺 `design.md` 或 `implement.md` 时被阻断；simple 额外生成 design/implement 时仍按 simple 处理且不报“多生成”错误。
+- [ ] 新任务 create 必须带 `work_type`；`task_type` 可空，由 agent 在 start 前判断/询问并 `set-task-type`；complex 缺 design/implement 在 start 前阻断；simple 多生成 design/implement 不降级、不报错。
 - [ ] frontend simple 只改 UI 时，有 commit + 截图/预览/验收/owner 确认之一即可通过，不强制 check-report；frontend complex 只有 commit + 一个验收勾选时被阻断，补 E2E/视觉证据 + owner 确认或 check-report 后通过；fullstack 缺任一端证据被阻断；research/docs 不被前端证据规则误伤。
 - [ ] 共享组件/设计系统/路由/状态/可访问性/性能敏感前端任务标记 `meta.frontend_check_report_required=true` 后，只有视觉证据/E2E 不通过，必须补 check-report 前端验证段；未标记任务不因缺 check-report 被误伤。
 - [ ] complex 后端任务既无 check-report 也无验收勾选时，`verify` 中断并明确询问；complex 前端既无 `meta.frontend_evidence` 也无 check-report 时同样中断；用户授权后写 `meta.check_override` 才通过（绑定当前 commit；commit 变化后重新询问），非交互返回 exit 4。
 - [ ] `verify --all --fix` 能自动修安全项（状态回退、`meta.commit` 迁移、可重建 bookkeeping commit），不安全项只报告并阻断。
-- [ ] 发行层有 manifest/版本/校验和；看板初始化后能应用模板/脚本/skills/prompts；claude/codex/opencode/pi/omp/antigravity/dsh 七个平台按各自能力生成入口，不创建不支持目录；存量任务不迁移。
+- [ ] 发行层有 manifest/版本/校验和与自包含 overlay；看板 full init 和 agent-only 自动 apply，缺 kit 则失败；claude/codex/opencode/pi/omp/antigravity/dsh 七个平台按各自能力落文件，不创建不支持目录；存量任务不迁移。
 - [ ] 首次 init 与 `--agent-only` 共用适配层；agent-only 不创建/改写 tasks/workspace/journal；不支持的能力在 manifest 标记 `skipped`，并有平台矩阵测试。
 - [ ] 看板“初始化项目”和“Agent-only”对话框只显示 claude-code/codex/opencode/pi/omp/antigravity/dsh 七个平台；其他平台不可见、不可选；后端拒绝非七项 ID；共享全量列表仍能检测旧平台。
-- [ ] 看板创建任务表单必须选择前端/后端/全栈/研究/文档之一；未选择不能提交；创建出的 `task.json` 顶层 `work_type` 与选择一致。
-- [ ] 面板/插件/CLI 三个入口对非法 `work_type` 都拒绝；插件任务 DTO 能返回 `workType`；WitOps 前端/后端分类能默认选中，其他分类留空，批量混合类型不猜。
+- [ ] 看板表单只要求 work_type；未选不能提交；不出现任务复杂度；work_type 落库一致。
+- [ ] 面板/插件/CLI 三个入口对非法 `task_type`/`work_type` 都拒绝；插件任务 DTO 能返回 `taskType`/`workType`；WitOps 前端/后端分类能默认选中 `workType`，其他分类留空，批量混合类型不猜；`task_type` 一律由用户选择。
 - [ ] `defaultWorkType` 有合法值时表单默认选中，无值/非法值保持空；不出现静默 backend 默认。
 - [ ] workflow、skills、agent prompts 在 trellis-board 更新完成，并至少在一个其他接入仓库试点通过。
 - [ ] 所有接入仓库有升级 checklist；`trellis update` 覆盖风险有说明。

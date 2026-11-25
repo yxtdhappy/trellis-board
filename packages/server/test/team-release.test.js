@@ -134,6 +134,7 @@ test('Team 发布边界不再依赖服务端 Git，命令成功前不生成正�
     taskSpaceId: attached.taskSpace.id,
     assigneeUserId: user.id,
     title: '发布后创建',
+    taskType: 'simple',
     priority: 'P2',
     slug: 'release-created',
     idempotencyKey: 'release-command-1',

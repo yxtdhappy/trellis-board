@@ -46,19 +46,20 @@ $ task.py verify <task> --authorize-no-evidence --by yuhaojie --reason "口头�
 
 ### 7.3 面板/插件创建入口
 
-创建入口只负责采集“用户显式选择的 `work_type`”，不推断、不补默认；所有入口最终都调用 `task.py create --work-type`，由 `task_store.py` 写顶层字段。
+创建入口只负责采集用户能判断的“任务类型（`work_type`）”，不询问 `task_type`；`task_type` 由 agent 在后续 planning 中根据实际范围判断并 `set-task-type`。所有入口最终调用 `task.py create --work-type`，由 `task_store.py` 写顶层 `work_type`；缺 `task_type` 时记 `meta.task_type_pending=true`。插件只从前端/后端分类映射 `work_type`，不映射 `task_type`。
 
 | 入口 | 默认值 | 提交路径 |
 |---|---|---|
-| 看板 `CreateTaskDialog` | `defaultWorkType`（插件上下文/URL）；无合法值则为空，必选 | `onCreate({workType})` → `useBoard` → `POST /api/tasks` → `taskCommands.enqueue` → Rust `create_task` → `task.py create --work-type` |
-| 插件 `ctx.tasks.create` | 调用方传入 `workType`；无值则空 | `task-service.create` → `actions.createTask` → `task.py create --work-type` |
+| 看板 `CreateTaskDialog` | `defaultWorkType`（URL/插件上下文）；无合法值则为空并必选 | `onCreate({workType})` → `useBoard` → `POST /api/tasks` → `taskCommands.enqueue` → Rust `create_task` → `task.py create --work-type` |
+| 插件 `ctx.tasks.create` | 调用方传入可选 `workType`；无值则空 | `task-service.create` → `actions.createTask` → `task.py create --work-type` |
 | WitOps 创建对话框 | 当前工作项分类映射：前端开发→frontend、后端开发→backend；其他分类空 | `witops.dispatch.task.create`/`dispatchItems` → `dispatch.createOne` → `ctx.tasks.create({workType})` |
 
 规则：
 
-- 看板表单的 `workType` 为空时禁止提交；非法值在客户端、`actions.createTask`、`task-command-service.enqueue`、Rust `create_task`、`task.py` 五层都拒绝，错误信息包含合法枚举。
-- `defaultWorkType` 只接受 `WORK_TYPE_IDS` 中的值；非法值按空处理并提示，不回落 backend。
-- 插件 DTO `toTaskDto` 返回 `workType: task.work_type ?? null`；插件页读取当前任务类型时不再从 `meta` 猜。
+- 看板/插件表单的 `workType` 为空时禁止提交；非法值在客户端、`actions.createTask`、`task-command-service.enqueue`、Rust `create_task`、`task.py` 五层都拒绝，错误信息包含合法枚举。
+- `defaultWorkType` 只接受 `WORK_TYPE_IDS`；非法值按空处理并提示，不回落 backend。
+- `taskType` 在创建链路中可选：actions/team/Rust 仅在提供时校验并追加 `--task-type`；不提供时 `task_store` 写 `task_type: null` + `meta.task_type_pending=true`，由 agent 后续 `task.py set-task-type` 清除 pending。
+- 插件 DTO `toTaskDto` 返回 `workType: task.work_type ?? null` 与 `taskType: task.task_type ?? null`；插件页读取当前任务类型时不再从 `meta` 猜。
 - WitOps 批量创建：所有待创建工作项映射到同一 `work_type` 才默认选中；混合或无法映射时为空，用户在对话框中必须选择。
 - 面板创建的任务 `meta.label_source=user-explicit`；插件映射默认值也视为用户可见选择，若用户未改选仍记 `user-explicit`，并在 `meta.label_default_from=witops-category` 记录来源。
 - 本任务只新增字段和入口，不改看板阶段推导、泳道、状态机或任务 DTO 的既有字段语义。
@@ -67,19 +68,20 @@ $ task.py verify <task> --authorize-no-evidence --by yuhaojie --reason "口头�
 
 | 文件 | 改动 |
 |---|---|
-| `packages/shared/work-types.js` / `.d.ts`（新） | 枚举、标签、`isWorkType`/`workTypeLabel`；web/server 共用 |
-| `packages/web/src/features/board/dialogs/CreateTaskDialog.tsx` | 必填下拉、`defaultWorkType`、payload `workType`、空值校验 |
+| `packages/shared/task-types.js` / `.d.ts`（新） | `simple|complex|research` 枚举、标签、`isTaskType`/`taskTypeLabel`；web/server 共用，创建入口不展示 |
+| `packages/shared/work-types.js` / `.d.ts`（新） | `backend|frontend|fullstack|research|docs` 枚举、标签、`isWorkType`/`workTypeLabel`；web/server 共用 |
+| `packages/web/src/features/board/dialogs/CreateTaskDialog.tsx` | 任务类型（work_type）必填下拉、`defaultWorkType`、payload、空值校验；不出现任务复杂度 |
 | `packages/web/src/pages/board/BoardPage.tsx` | 从插件上下文/URL 读取合法 `defaultWorkType` 并传给对话框 |
-| `packages/web/src/hooks/useBoard.ts` | 透传 `workType` |
-| `packages/server/actions.js` | 校验 `workType`，追加 `--work-type` |
-| `packages/server/team/task-command-service.js` | `create_task` 校验并写入 payload |
-| `packages/server/team/http/routes/tasks.js` | 透传 `workType`（无需单独校验，enqueue 统一校验） |
-| `packages/desktop/src-tauri/src/agent/task_command.rs` | 读取 `workType`、校验枚举、追加 `--work-type` |
-| `.trellis/scripts/task.py` / `common/task_store.py` | `--work-type` 参数、枚举校验、顶层 `work_type` |
-| `packages/server/plugins/task-service.js` | `create` 透传 `workType`，`toTaskDto` 返回 `workType` |
-| `plugins/witops-core/dispatch.js` / `index.js` | 分类映射、`task.create` 参数、`ctx.tasks.create({workType})` |
-| `plugins/witops-core/panel/index.html` / `app.js` | 创建对话框新增任务类型下拉、默认值、提交参数 |
-| `plugins/witops-core/mapper.js` | `workTypeForCategory()` 纯函数 |
+| `packages/web/src/hooks/useBoard.ts` | 透传 `workType`（`taskType` 可选） |
+| `packages/server/actions.js` | 必填校验 `workType`；`taskType` 可选校验，条件追加 `--work-type`/`--task-type` |
+| `packages/server/team/task-command-service.js` | `create_task` 校验并写入 payload；`taskType` 可选 |
+| `packages/server/team/http/routes/tasks.js` | 透传 `taskType`/`workType`（无需单独校验，enqueue 统一校验） |
+| `packages/desktop/src-tauri/src/agent/task_command.rs` | 读取/校验 `workType`、条件追加 `--work-type`；`taskType` 可选 |
+| `.trellis/scripts/task.py` / `common/task_store.py` | `--work-type` 必填、`--task-type` 可选、枚举校验、顶层字段与 `task_type_pending` |
+| `packages/server/plugins/task-service.js` | `create` 透传 `taskType`/`workType`，`toTaskDto` 返回二者 |
+| `plugins/witops-core/dispatch.js` / `index.js` | 分类映射、`task.create` 参数、`ctx.tasks.create({workType,taskType?})` |
+| `plugins/witops-core/panel/index.html` / `app.js` | 创建对话框新增任务类型（work_type）下拉、默认值、提交参数；不出现任务复杂度 |
+| `plugins/witops-core/mapper.js` | `workTypeFromCategory()` 纯函数 |
 
 
 ### 8.4 平台适配契约（首次 init 与 agent-only 共用）
@@ -145,8 +147,8 @@ $ task.py verify <task> --authorize-no-evidence --by yuhaojie --reason "口头�
 2.3. fullstack：只满足后端或只满足前端证据 → 阻断；两端都满足才通过。
 2.4. 新任务 create 漏 `--work-type` 被拒；存量任务无 `work_type` 只 warning，按旧矩阵通过。
 2.5. `set-work-type --check-report-required` 后，complex frontend 只有 visual/e2e 证据没有 check-report → 阻断；simple frontend 只 warning。
-2.6. 看板创建：未选任务类型 → 表单阻止；选 frontend → task.json 顶层 `work_type=frontend`；`defaultWorkType=backend` 时默认选中；传入非法值 → 空且提示；不出现静默 backend。
-2.7. 插件创建：`ctx.tasks.create({workType:'frontend'})` → task.json 与 DTO 都是 frontend；WitOps 前端开发默认 frontend、后端开发默认 backend、其他分类为空；批量混合分类 → 对话框不默认选；非法 `workType` 被 actions/enqueue/Rust/task.py 任一层拒绝。
+2.6. 看板创建：未选任务类型（work_type）→ 表单阻止；表单不出现任务复杂度；选 frontend → task.json 顶层 `work_type=frontend`，`task_type` 为空且 `meta.task_type_pending=true`；`defaultWorkType` 合法时默认选中；传入非法值 → 空且提示；不出现静默 backend。
+2.7. 插件创建：`ctx.tasks.create({workType:'frontend'})` → task.json 与 DTO 的 `work_type=frontend`、`task_type` 为空/待分类；WitOps 前端开发默认 frontend、后端开发默认 backend、其他分类为空；批量混合分类 → 对话框不默认选 `workType`；非法值被 actions/enqueue/Rust/task.py 任一层拒绝。
 3. research：无 commit，`archive --planning-only` 通过；非 research 传 `--planning-only` 被拒。
 4. create 漏 `--task-type` 被拒；legacy 任务只 warning。
 5. 故障注入：stash drop / rebase 回退、index.lock、hook 拒绝、rebase 中、任务目录被 ignore、identity/签名失败、nothing-to-commit 幂等；断言 exit code、状态不丢、doctor 可修。

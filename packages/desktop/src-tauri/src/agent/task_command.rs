@@ -928,7 +928,7 @@ async fn script_supports_work_type(repo_path: &Path) -> bool {
 }
 
 /// 环境门记录在 `client.json` 的解释器；文件已被删除时跳过该候选。
-fn recorded_python() -> Option<String> {
+pub(crate) fn recorded_python() -> Option<String> {
     use crate::agent::env::ClientConfigLike;
 
     let data_dir = crate::config::data_dir();

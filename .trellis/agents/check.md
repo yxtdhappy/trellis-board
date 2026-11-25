@@ -51,8 +51,18 @@ The supervising main session owns commits and task state. Report the post-fix st
 
 ## Report Format
 
+Every report starts with provenance. The main session will not accept a
+complex task's report without it.
+
 ```
-## Self-Check Complete
+---
+mode: independent
+agent: trellis-check
+session: <session-id>
+commit: <checked-commit-or-empty>
+---
+
+## Check Complete
 
 ### Files Checked
 - <path>
@@ -70,3 +80,8 @@ The supervising main session owns commits and task state. Report the post-fix st
 ### Summary
 Checked <N> files, found <X> issues, fixed <Y>, <X-Y> open.
 ```
+
+If the platform has no check sub-agent and the main session checks its own
+work, write `mode: inline-self-check` and `agent: main-session`. That report is
+accepted only with `meta.check_override` (owner confirmation); never label a
+main-session review as `independent`.

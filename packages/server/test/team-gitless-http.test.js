@@ -266,6 +266,8 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
       title: '零监听任务',
       priority: 'P2',
       slug: 'without-listener',
+      taskType: 'simple',
+      workType: 'backend',
       idempotencyKey: 'without-listener',
     },
   })
@@ -945,6 +947,8 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
       description: '由在线 Agent 创建',
       priority: 'P2',
       slug: 'client-created',
+      taskType: 'simple',
+      workType: 'backend',
       idempotencyKey: 'create-1',
     },
   })

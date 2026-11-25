@@ -43,7 +43,8 @@ Every task has its own directory under `.trellis/tasks/{MM-DD-name}/` holding `t
 
 ```bash
 # Task lifecycle
-python ./.trellis/scripts/task.py create "<title>" [--slug <name>] [--parent <dir>]
+python ./.trellis/scripts/task.py create "<title>" --work-type backend|frontend|fullstack|research|docs [--slug <name>] [--parent <dir>]
+# task_type is decided by the agent after planning (set-task-type), not selected by the user at creation
 python ./.trellis/scripts/task.py start <name>          # set active task (session-scoped when available)
 python ./.trellis/scripts/task.py current --source      # show active task and source
 python ./.trellis/scripts/task.py finish                # clear active task (triggers after_finish hooks)
@@ -172,7 +173,7 @@ Use a parent task when one user request contains several independently verifiabl
 
 Use child tasks for deliverables that can be planned, implemented, checked, and archived independently. Parent/child structure is not a dependency system: if one child must wait for another, write that ordering in the child `prd.md` / `implement.md` and keep each child's acceptance criteria testable.
 
-Create new children with `task.py create "<title>" --slug <name> --parent <parent-dir>`. Link existing tasks with `task.py add-subtask <parent> <child>`, and unlink mistakes with `task.py remove-subtask <parent> <child>`.
+Create new children with `task.py create "<title>" --slug <name> --parent <parent-dir> --work-type <surface>`. A child may inherit the parent's `task_type` as a suggestion, but confirm it against the child's own scope with `set-task-type` before start. Link existing tasks with `task.py add-subtask <parent> <child>`, and unlink mistakes with `task.py remove-subtask <parent> <child>`.
 
 <!-- Per-turn breadcrumb: shown when there is no active task (before Phase 1) -->
 
@@ -326,13 +327,12 @@ Create the task directory only after task-creation consent. The command sets sta
 
 ```bash
 python ./.trellis/scripts/task.py create "<task title>" --slug <name> \
-  --task-type simple|complex|research \
   --work-type backend|frontend|fullstack|research|docs
 ```
 
 `--slug` is the human-readable name only. Do **not** include the `MM-DD-` date prefix; `task.py create` adds that prefix automatically.
 
-Both labels are required. Propose them with a one-line reason and get the user's confirmation once — never silently guess. `task_type` is the process commitment (`complex` requires `design.md` + `implement.md`); `work_type` is the surface. Shared UI/design-system work is still `frontend`, with `set-work-type --check-report-required` when visual proof is mandatory.
+`work_type` is the only label required at creation. Do not ask the user to choose a task complexity up front; after planning exposes the scope, the agent decides `task_type`, persists it with `set-task-type`, and asks only when the evidence is genuinely ambiguous. `task_type` is the process commitment (`complex` requires `design.md` + `implement.md`); `work_type` is the surface. Shared UI/design-system work is still `frontend`, with `set-work-type --check-report-required` when visual proof is mandatory.
 
 For task trees, create the parent task first and then create each child with `--parent <parent-dir>`. Do not start the parent just because children exist; start the child that owns the next independently verifiable deliverable.
 
@@ -458,7 +458,7 @@ python ./.trellis/scripts/task.py start <task-dir>
 
 For lightweight tasks, `prd.md` can be enough. For complex tasks, `prd.md`, `design.md`, and `implement.md` must exist and be reviewed before start. On sub-agent-dispatch platforms, `implement.jsonl` and `check.jsonl` must both have real curated entries before start. Runtime consumers tolerate missing or seed-only manifests for compatibility, but that tolerance is not a planning-ready state.
 
-`task.py start` persists the status transition at the safe point: a complex task creates a task-only bookkeeping commit by default (`task.json` + `.state-events.jsonl`); simple/research tasks record the event log only. Pass `--commit-state` to force the commit for a simple task, or `--no-commit-state` to explicitly degrade. `--push` pushes the bookkeeping commit; it requires a commit. If git cannot make the commit (rebase/merge in progress, ignored task path, missing identity), start exits non-zero and the workflow must stop at this gate.
+`task.py start` persists the status transition at the safe point: a complex task creates a task-only bookkeeping commit by default (`task.json` + `.state-events.jsonl`); simple/research tasks record the event log only. Pass `--commit-state` to force the commit for a simple task. A complex task cannot use bare `--no-commit-state`; only `--no-commit-state --force-degraded --reason "<why>"` is allowed, and that writes `state_persist_degraded`, which `verify --strict` and archive refuse. `--push` pushes the bookkeeping commit; it requires a commit. If git cannot make the commit (rebase/merge in progress, ignored task path, missing identity), start exits non-zero and the workflow must stop at this gate.
 
 After this command succeeds, the breadcrumb auto-switches to `[workflow-state:in_progress]`, and the rest of Phase 2 / 3 follows.
 
@@ -559,6 +559,7 @@ The check agent's job:
 - Auto-fix issues it finds
 - Run lint and typecheck to verify
 - Write `{TASK_DIR}/check-report.md`; the main session's `task.py verify` gate reads it
+- The report starts with front matter: `mode: independent`, `agent: trellis-check`, `session`, `commit` (empty if not committed yet)
 
 [/Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Snow, Reasonix, Trae, Grok, Kimi Code]
 
@@ -570,6 +571,7 @@ Load the `trellis-check` skill and verify the code per its guidance:
 - Cross-layer consistency (when changes span layers)
 
 If issues are found → fix → re-check, until green.
+Write `{TASK_DIR}/check-report.md` with `mode: inline-self-check`, `agent: main-session`, `session`, `commit` (empty if not committed yet). The main session is checking its own work, so complex tasks also need `meta.check_override` (owner confirmation) before archive.
 
 [/codex-inline, Kilo, Antigravity, Devin, DeepSeek Harness]
 
