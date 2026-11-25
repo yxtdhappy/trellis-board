@@ -1,1 +1,2 @@
 {"actor": "flyfly6", "at": "2026-11-25T03:56:06+00:00", "event": "task_type_set", "from": "planning", "from_value": null, "schemaVersion": 1, "task_type": "complex", "to": "planning"}
+{"actor": "flyfly6", "at": "2026-11-25T04:04:52+00:00", "event": "status_transition", "from": "planning", "reason": "task.py start", "schemaVersion": 1, "to": "in_progress"}
