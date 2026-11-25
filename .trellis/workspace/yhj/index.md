@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 78
+- **Total Sessions**: 79
 - **Last Active**: 2026-11-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1911 | Active |
+| `journal-1.md` | ~1940 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 79 | 2026-11-25 | Trellis 工作流证据闭环与 check-binding | `66f8372`, `c88ac06`, `3e40ce4`, `7cc05ce`, `3a436f7`, `2483457`, `882d2a3` | `main` |
 | 78 | 2026-11-25 | 加固 wit-e2e-testing 并拆分 API/UI E2E 技能 | `e7ccd2a`, `97ea957`, `6c3a9b2`, `e6222cc`, `8f95e7b` | `main` |
 | 77 | 2026-11-25 | 内置 trellis-api-e2e 技能并发布 v0.5.3 | `e2f8ceb`, `0be4146`, `dec8897` | `main` |
 | 76 | 2026-11-24 | 修复服务端重启后心跳永久停止 | `221392b`, `8cf25b8`, `07c779d`, `502b3a8` | `main` |

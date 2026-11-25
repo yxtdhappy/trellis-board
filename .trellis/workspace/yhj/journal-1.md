@@ -1909,3 +1909,32 @@ set_task_ownership 改为只扫描 decisions 涉及的 taskDir；快照/ownershi
 ### Next Steps
 
 - 后续任务按 Trellis 流程使用 wit-api-e2e / wit-ui-e2e
+
+
+## Session 79: Trellis 工作流证据闭环与 check-binding
+<!-- trellis-session: v=2 fp=2f69918522929ad0 -->
+
+**Date**: 2026-11-25
+**Task**: Trellis 工作流证据闭环与 check-binding
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成 Trellis 任务状态/证据门禁、stamp-check 与提交树绑定、面板/插件 work_type、trellis-kit 平台分发与内嵌、OpenCode V2 迁移；独立 check 发现并修复 check-binding 旁路、前端证据过期、override 未绑定与 exit 4，最终 verify --strict 通过并归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `66f8372` | feat(trellis): 建立任务状态证据闭环与初始化流程分发 |
+| `c88ac06` | fix(desktop): 内嵌 trellis-kit 修复初始化找不到 kit |
+| `3e40ce4` | fix(trellis-kit): migrate OpenCode plugins to V2 setup hooks |
+| `7cc05ce` | fix(trellis-kit): hide Windows child consoles in OpenCode hooks |
+| `3a436f7` | feat(trellis): bind check reports to the committed tree |
+| `2483457` | chore(release): 0.5.9 |
+| `882d2a3` | fix(trellis): close check-binding bypasses |
+
+### Status
+
+[OK] **Completed**
