@@ -14,10 +14,10 @@
   "assignee": "yhj",
   "createdAt": "2026-11-25",
   "completedAt": null,
-  "branch": "main",
+  "branch": "feat/trellis-api-e2e-skill",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "e2f8ceb5c795741fdf307f23a614bfdca8803cbd",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -36,6 +36,10 @@
   ],
   "notes": "",
   "meta": {
-    "label_source": "user-explicit"
+    "label_source": "user-explicit",
+    "commits": [
+      "e2f8ceb5c795741fdf307f23a614bfdca8803cbd"
+    ],
+    "commit_set_at": "2026-11-25T14:38:47"
   }
 }
