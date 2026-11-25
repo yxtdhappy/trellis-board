@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "trellis-kit",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Overlay that installs the task-state evidence loop into a Trellis project.",
   "platformsFile": "platforms/registry.json",
   "components": [
@@ -16,6 +16,18 @@
       "kind": "core",
       "source": ".trellis/scripts/common/state_events.py",
       "target": ".trellis/scripts/common/state_events.py"
+    },
+    {
+      "id": "common-git",
+      "kind": "core",
+      "source": ".trellis/scripts/common/git.py",
+      "target": ".trellis/scripts/common/git.py"
+    },
+    {
+      "id": "common-session-context",
+      "kind": "core",
+      "source": ".trellis/scripts/common/session_context.py",
+      "target": ".trellis/scripts/common/session_context.py"
     },
     {
       "id": "task-cli",
@@ -132,6 +144,20 @@
       "platform": "opencode",
       "source": ".opencode/lib/context-visibility.js",
       "target": ".opencode/lib/context-visibility.js"
+    },
+    {
+      "id": "opencode-lib-session-utils",
+      "kind": "platform",
+      "platform": "opencode",
+      "source": ".opencode/lib/session-utils.js",
+      "target": ".opencode/lib/session-utils.js"
+    },
+    {
+      "id": "opencode-lib-trellis-context",
+      "kind": "platform",
+      "platform": "opencode",
+      "source": ".opencode/lib/trellis-context.js",
+      "target": ".opencode/lib/trellis-context.js"
     },
     {
       "id": "opencode-plugin-session-start",
