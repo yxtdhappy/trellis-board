@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "2fd7b57666d3e45acb0199ecf8cffd14d7021998",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -27,6 +27,30 @@
   "meta": {
     "label_source": "user-explicit",
     "task_type_updated_at": "2026-11-25T22:37:54",
-    "task_type_updated_reason": "新增桌面 IPC 命令与权限、跨 Rust/Web 的绑定入口改造，需要 design.md 与 implement.md"
+    "task_type_updated_reason": "新增桌面 IPC 命令与权限、跨 Rust/Web 的绑定入口改造，需要 design.md 与 implement.md",
+    "check_binding": {
+      "commit": "2fd7b57666d3e45acb0199ecf8cffd14d7021998",
+      "base": "2fd7b57666d3e45acb0199ecf8cffd14d7021998",
+      "scope": [
+        "packages/desktop/src-tauri/src/agent/git.rs",
+        "packages/desktop/src-tauri/src/agent/git/args.rs",
+        "packages/desktop/src-tauri/src/agent/git/query.rs",
+        "packages/desktop/src-tauri/src/agent/git/diagnose.rs",
+        "packages/desktop/src-tauri/src/agent/git/tests.rs",
+        "packages/desktop/src-tauri/src/agent/branch_inspect.rs",
+        "packages/desktop/test/desktop-ui-build.test.js",
+        "packages/web/src/lib/branch-rebind.js",
+        "packages/web/src/lib/branch-rebind.d.ts",
+        "packages/web/test/branch-rebind.test.js",
+        "packages/web/src/features/board/dialogs/BranchRebindDialog.tsx",
+        "packages/web/src/components/layout/project-rail/ProjectEntryBranchActions.tsx"
+      ],
+      "diff": "sha256:33a3ac3239a7e8f573024949dc210d8a6394ff6fd68227db435c5eea6e78d469",
+      "report_sha256": "850e998e5175cf865d7a8d358c9182b61de8fa6f86b656fcc1c7a540c898e617"
+    },
+    "commits": [
+      "2fd7b57666d3e45acb0199ecf8cffd14d7021998"
+    ],
+    "commit_set_at": "2026-11-25T23:48:01"
   }
 }

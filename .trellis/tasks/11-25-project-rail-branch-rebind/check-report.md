@@ -2,9 +2,9 @@
 mode: inline-self-check
 agent: main-session
 session: claude_5978a49f-f6ea-4a3b-8404-1c2973f46b7d
-base: 842a8e7184d0d4bc763b43c7ca4091374b2306fd
-scope: packages/desktop/src-tauri/src/agent/git.rs,packages/desktop/src-tauri/src/agent/git/args.rs,packages/desktop/src-tauri/src/agent/git/query.rs,packages/desktop/src-tauri/src/agent/git/diagnose.rs,packages/desktop/src-tauri/src/agent/git/tests.rs,packages/desktop/src-tauri/src/agent/branch_inspect.rs,packages/desktop/test/desktop-ui-build.test.js,packages/web/src/lib/branch-rebind.js,packages/web/src/lib/branch-rebind.d.ts,packages/web/test/branch-rebind.test.js,packages/web/src/features/board/dialogs/BranchRebindDialog.tsx,packages/web/src/components/layout/project-rail/ProjectEntryBranchActions.tsx,.trellis/tasks/11-25-project-rail-branch-rebind
-diff: sha256:b6e086a332d4afeaea711daea958b98ac1b2b78685452476cfdcf31967819416
+base: 2fd7b57666d3e45acb0199ecf8cffd14d7021998
+scope: packages/desktop/src-tauri/src/agent/git.rs,packages/desktop/src-tauri/src/agent/git/args.rs,packages/desktop/src-tauri/src/agent/git/query.rs,packages/desktop/src-tauri/src/agent/git/diagnose.rs,packages/desktop/src-tauri/src/agent/git/tests.rs,packages/desktop/src-tauri/src/agent/branch_inspect.rs,packages/desktop/test/desktop-ui-build.test.js,packages/web/src/lib/branch-rebind.js,packages/web/src/lib/branch-rebind.d.ts,packages/web/test/branch-rebind.test.js,packages/web/src/features/board/dialogs/BranchRebindDialog.tsx,packages/web/src/components/layout/project-rail/ProjectEntryBranchActions.tsx
+diff: sha256:33a3ac3239a7e8f573024949dc210d8a6394ff6fd68227db435c5eea6e78d469
 ---
 # Check 报告：项目栏已关联分支图标支持重新绑定分支
 
@@ -29,7 +29,7 @@ diff: sha256:b6e086a332d4afeaea711daea958b98ac1b2b78685452476cfdcf31967819416
 
 ## 检查覆盖范围
 
-- 可机器绑定指纹的本任务独占文件：`packages/desktop/src-tauri/src/agent/git.rs`、`agent/git/args.rs`、`agent/git/query.rs`、`agent/git/diagnose.rs`、`agent/git/tests.rs`、`agent/branch_inspect.rs`、`packages/desktop/test/desktop-ui-build.test.js`、`packages/web/src/lib/branch-rebind.js`、`branch-rebind.d.ts`、`packages/web/test/branch-rebind.test.js`、`packages/web/src/features/board/dialogs/BranchRebindDialog.tsx`、`packages/web/src/components/layout/project-rail/ProjectEntryBranchActions.tsx`、本任务目录。
+- 可机器绑定指纹的本任务独占文件：`packages/desktop/src-tauri/src/agent/git.rs`、`agent/git/args.rs`、`agent/git/query.rs`、`agent/git/diagnose.rs`、`agent/git/tests.rs`、`agent/branch_inspect.rs`、`packages/desktop/test/desktop-ui-build.test.js`、`packages/web/src/lib/branch-rebind.js`、`branch-rebind.d.ts`、`packages/web/test/branch-rebind.test.js`、`packages/web/src/features/board/dialogs/BranchRebindDialog.tsx`、`packages/web/src/components/layout/project-rail/ProjectEntryBranchActions.tsx`。任务目录不参与指纹（stamp 自身会改写报告与事件日志）。
 - 共享文件（`main.rs`、`agent_service.rs`、`agent/mod.rs`、权限/capability、`ProjectEntry.tsx`、`ProjectRail.tsx`）仍含其他任务未提交改动，无法生成稳定的检查指纹；上述人工检查覆盖了这些文件的本次 hunk，但机器绑定仅覆盖独占文件。
 
 ## 风险
