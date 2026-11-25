@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "跨层契约、行尾约定与验证基线"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "client_identity、app_status 与自动更新契约"}

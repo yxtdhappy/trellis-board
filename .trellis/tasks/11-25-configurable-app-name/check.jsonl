@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "验证基线与行尾检查"}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "桌面命令权限与品牌回退契约"}

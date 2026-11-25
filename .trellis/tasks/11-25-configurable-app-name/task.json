@@ -1,0 +1,31 @@
+{
+  "id": "configurable-app-name",
+  "name": "configurable-app-name",
+  "title": "应用与页面名称支持环境变量配置",
+  "description": "支持通过环境变量配置应用名称和页面显示名称，并将默认名称由 Trellis Board 改为 weint-spec-board",
+  "status": "planning",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "flyfly6",
+  "assignee": "flyfly6",
+  "createdAt": "2026-11-25",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "task_type_updated_at": "2026-11-25T11:56:06"
+  }
+}
