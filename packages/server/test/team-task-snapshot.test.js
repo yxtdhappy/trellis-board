@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { openDatabase } from '../database.js'
 import { createTaskSnapshotBackupService } from '../team/task-snapshot-backup.js'
+import { createTaskControlService } from '../team/task-control-service.js'
 import { createTaskSnapshotService, purgeArchivedTaskFiles } from '../team/task-snapshot-service.js'
 import { createTaskSpaceService } from '../team/task-space-service.js'
 import {
@@ -1244,6 +1245,131 @@ test('归档任务拒绝活跃上传但允许删除', () => {
     })
     assert.equal(removed.revision, 2)
     assert.equal(snapshots.directorySnapshot(agentA, taskSpaceId, taskDir).files.length, 0)
+  } finally {
+    db.close()
+  }
+})
+
+test('接入 taskControl 时 listConflicts 返回 taskTitle 且 overwrite-server 透传 taskVersion 与 leaseToken', () => {
+  const { db, taskSpaces, agentA, taskSpaceId } = setup()
+  try {
+    const taskControl = createTaskControlService({ db })
+    const snapshots = createTaskSnapshotService({ db, taskSpaces, taskControl })
+    const taskDir = '.trellis/tasks/11-10-demo'
+
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-tc-1',
+      clientSequence: 1,
+      files: [
+        {
+          path: `${taskDir}/task.json`,
+          content: JSON.stringify({
+            id: 'demo',
+            title: '初始标题',
+            branch: 'main',
+            assignee: 'alice',
+          }),
+          baseSha256: null,
+        },
+        { path: `${taskDir}/prd.md`, content: '# 初始\n', baseSha256: null },
+      ],
+    })
+
+    const executionTaskKey = `${taskSpaceId}::demo`
+    const initial = snapshots.directorySnapshot(agentA, taskSpaceId, taskDir)
+    const initialTaskJson = initial.files.find((file) => file.path.endsWith('/task.json'))
+    const initialPrd = initial.files.find((file) => file.path.endsWith('/prd.md'))
+
+    const claim1 = taskControl.claim(agentA, taskSpaceId, executionTaskKey)
+    snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-tc-2',
+      clientSequence: 2,
+      taskVersion: claim1.task.taskVersion,
+      leaseToken: claim1.lease.token,
+      files: [
+        {
+          path: initialTaskJson.path,
+          content: JSON.stringify({
+            id: 'demo',
+            title: '服务端新标题',
+            branch: 'main',
+            assignee: 'alice',
+          }),
+          baseSha256: initialTaskJson.sha256,
+        },
+        { path: initialPrd.path, content: '# 服务端\n', baseSha256: initialPrd.sha256 },
+      ],
+    })
+
+    const claim2 = taskControl.claim(agentA, taskSpaceId, executionTaskKey)
+    const conflict = snapshots.applyChanges(agentA, taskSpaceId, {
+      batchId: 'batch-tc-3',
+      clientSequence: 3,
+      taskVersion: claim2.task.taskVersion,
+      leaseToken: claim2.lease.token,
+      files: [
+        {
+          path: initialTaskJson.path,
+          content: JSON.stringify({
+            id: 'demo',
+            title: '客户端覆盖标题',
+            branch: 'main',
+            assignee: 'alice',
+          }),
+          baseSha256: initialTaskJson.sha256,
+        },
+        { path: initialPrd.path, content: '# 客户端\n', baseSha256: initialPrd.sha256 },
+      ],
+    })
+    assert.equal(conflict.code, 'TASK_FILE_CONFLICT')
+
+    const listed = snapshots.listConflicts(agentA, taskSpaceId)
+    assert.equal(listed.length, 1)
+    assert.equal(listed[0].taskTitle, '服务端新标题')
+
+    const current = snapshots.directorySnapshot(agentA, taskSpaceId, taskDir)
+    const curTaskJson = current.files.find((file) => file.path.endsWith('/task.json'))
+    const curPrd = current.files.find((file) => file.path.endsWith('/prd.md'))
+    const overwriteFiles = [
+      {
+        path: curTaskJson.path,
+        content: JSON.stringify({
+          id: 'demo',
+          title: '客户端覆盖标题',
+          branch: 'main',
+          assignee: 'alice',
+        }),
+        baseSha256: curTaskJson.sha256,
+      },
+      { path: curPrd.path, content: '# 客户端\n', baseSha256: curPrd.sha256 },
+    ]
+
+    assert.throws(
+      () =>
+        snapshots.resolveConflict(agentA, taskSpaceId, conflict.conflictId, {
+          action: 'overwrite-server',
+          batchId: 'batch-tc-missing-fence',
+          clientSequence: 4,
+          files: overwriteFiles,
+        }),
+      (error) => error.status === 409 && error.code === 'TASK_VERSION_REQUIRED',
+    )
+
+    const resolved = snapshots.resolveConflict(agentA, taskSpaceId, conflict.conflictId, {
+      action: 'overwrite-server',
+      batchId: 'batch-tc-ok',
+      clientSequence: 4,
+      taskVersion: claim2.task.taskVersion,
+      leaseToken: claim2.lease.token,
+      files: overwriteFiles,
+    })
+    assert.equal(resolved.action, 'overwrite-server')
+    assert.equal(resolved.revision, 3)
+    assert.equal(resolved.control?.task?.taskVersion, 3)
+    assert.equal(
+      db.prepare('SELECT status FROM sync_conflict WHERE id = ?').get(conflict.conflictId).status,
+      'resolved',
+    )
   } finally {
     db.close()
   }

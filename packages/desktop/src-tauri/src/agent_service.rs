@@ -321,6 +321,15 @@ impl AgentService {
         task_sync.with_state_sink(self.state_sink())
     }
 
+    fn running_task_sync(&self) -> Option<Arc<TaskSync>> {
+        self.runtime.lock().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .filter(|runtime| !runtime.is_stopped())
+                .map(|runtime| runtime.task_sync_arc())
+        })
+    }
+
     fn notify_live_control(&self) {
         let _ = self.app.emit("live-control-changed", ());
     }
@@ -724,6 +733,17 @@ pub async fn decide_live_change(
     action: &str,
 ) -> Result<(), String> {
     let service = service(app).map_err(|error| message(&error))?;
+    if let Some(running) = service.running_task_sync() {
+        if running.has_binding(task_space_id).await {
+            let serial = running.task_space_sync_lock(task_space_id).await;
+            let _serial = serial.lock().await;
+            return running
+                .decide_conflict(task_space_id, conflict_id, action, None)
+                .await
+                .map(|_| ())
+                .map_err(|error| message(&error));
+        }
+    }
     let (config, api) = service
         .agent_context()
         .await
@@ -994,6 +1014,7 @@ pub async fn preflight_project(
     app: &AppHandle,
     repo_path: &str,
     team_id: &str,
+    developer_id: &str,
     require_pushed: bool,
 ) -> Result<Value, String> {
     let service = service(app).map_err(|error| message(&error))?;
@@ -1006,6 +1027,7 @@ pub async fn preflight_project(
         &api,
         repo_path,
         team_id,
+        developer_id,
         require_pushed,
     )
     .await

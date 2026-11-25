@@ -447,19 +447,26 @@ impl TaskSync {
         ))
     }
 }
+pub(super) enum UploadFenceOutcome {
+    Ready {
+        fence: Option<UploadFence>,
+        execution_task_key: Option<String>,
+    },
+    Skipped(Value),
+}
+
 impl TaskSync {
-    pub(super) async fn upload_batch(
+    pub(super) async fn acquire_upload_fence(
         &self,
         binding: &AgentBinding,
-        batch: PendingBatch,
-        mode: UploadMode,
-    ) -> AgentResult<Value> {
-        let task_space_id = binding.task_space_id.clone();
-        let mut execution_task_keys =
-            execution_task_keys_from_upload(&task_space_id, &batch.files)?;
+        files: &[Value],
+        clear_pending_on_block: bool,
+    ) -> AgentResult<UploadFenceOutcome> {
+        let task_space_id = &binding.task_space_id;
+        let mut execution_task_keys = execution_task_keys_from_upload(task_space_id, files)?;
         if execution_task_keys.is_empty() {
             if let Some(execution_task_key) = self
-                .persisted_control_key_for_upload(binding, &batch.files)
+                .persisted_control_key_for_upload(binding, files)
                 .await?
             {
                 execution_task_keys.insert(execution_task_key);
@@ -479,19 +486,22 @@ impl TaskSync {
                 .await?
             {
                 if !control.is_writable_local() {
-                    self.write_cursor(
-                        &task_space_id,
-                        CursorPatch {
-                            pending: Some(None),
-                            ..Default::default()
-                        },
-                    )
-                    .await?;
-                    return Ok(json!({
+                    if clear_pending_on_block {
+                        self.write_cursor(
+                            task_space_id,
+                            CursorPatch {
+                                pending: Some(None),
+                                ..Default::default()
+                            },
+                        )
+                        .await?;
+                    }
+                    return Ok(UploadFenceOutcome::Skipped(json!({
                         "skipped": true,
                         "reason": "TASK_CONTROL_INACTIVE",
                         "controlState": control.state,
-                    }));
+                        "message": "任务当前控制状态不允许本地写入",
+                    })));
                 }
                 let fenced =
                     if let Some(stored_lease) = self.stored_task_lease(execution_task_key).await {
@@ -528,19 +538,21 @@ impl TaskSync {
                                 | Some("FORBIDDEN")
                         ) =>
                     {
-                        self.write_cursor(
-                            &task_space_id,
-                            CursorPatch {
-                                pending: Some(None),
-                                ..Default::default()
-                            },
-                        )
-                        .await?;
-                        return Ok(json!({
+                        if clear_pending_on_block {
+                            self.write_cursor(
+                                task_space_id,
+                                CursorPatch {
+                                    pending: Some(None),
+                                    ..Default::default()
+                                },
+                            )
+                            .await?;
+                        }
+                        return Ok(UploadFenceOutcome::Skipped(json!({
                             "skipped": true,
                             "reason": error.server_code,
                             "message": error.message,
-                        }));
+                        })));
                     }
                     Err(error)
                         if matches!(
@@ -548,30 +560,105 @@ impl TaskSync {
                             Some("TASK_LEASE_HELD") | Some("TASK_LEASE_INVALID")
                         ) =>
                     {
-                        return Ok(json!({
+                        return Ok(UploadFenceOutcome::Skipped(json!({
                             "skipped": true,
                             "reason": error.server_code,
                             "message": error.message,
-                        }));
+                        })));
                     }
                     Err(error) => return Err(error),
                 }
             } else if self.has_persisted_task_control(execution_task_key).await {
-                self.write_cursor(
-                    &task_space_id,
-                    CursorPatch {
-                        pending: Some(None),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-                return Ok(json!({
+                if clear_pending_on_block {
+                    self.write_cursor(
+                        task_space_id,
+                        CursorPatch {
+                            pending: Some(None),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                }
+                return Ok(UploadFenceOutcome::Skipped(json!({
                     "skipped": true,
                     "reason": "TASK_CONTROL_MISSING",
                     "message": "服务端已没有该任务控制记录，本地任务保留并停止自动上传",
-                }));
+                })));
             }
         }
+        Ok(UploadFenceOutcome::Ready {
+            fence,
+            execution_task_key: upload_execution_task_key,
+        })
+    }
+
+    pub(super) async fn persist_upload_control_response(
+        &self,
+        binding: &AgentBinding,
+        upload_execution_task_key: Option<&str>,
+        result: &Value,
+    ) -> AgentResult<()> {
+        let mut persisted_execution_task_key = upload_execution_task_key.map(str::to_string);
+        if let Some(task) = result
+            .get("control")
+            .and_then(|control| control.get("task"))
+            .filter(|task| !task.is_null())
+        {
+            let control = TaskControl::from_task_value(task)?;
+            persisted_execution_task_key = Some(response_control_execution_task_key(
+                upload_execution_task_key,
+                &control,
+            )?);
+            self.upsert_task_control(binding, &control).await?;
+        }
+        if let Some(execution_task_key) = persisted_execution_task_key.as_deref() {
+            if let Some(lease) = result.get("lease").filter(|lease| !lease.is_null()) {
+                self.save_task_lease(execution_task_key, lease.clone())
+                    .await?;
+            }
+            if let Some(task_version) = result.get("taskVersion").and_then(Value::as_u64) {
+                self.update_control_task_version(execution_task_key, task_version)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) async fn mark_files_suppressed(
+        &self,
+        binding: &AgentBinding,
+        files: &[SnapshotFile],
+    ) {
+        let mut suppressed = self.suppressed.lock().await;
+        for file in files {
+            suppressed.insert(
+                absolute_task_path(binding, &file.path),
+                if file.deleted {
+                    None
+                } else {
+                    Some(file.sha256.clone())
+                },
+            );
+        }
+    }
+
+    pub(super) async fn upload_batch(
+        &self,
+        binding: &AgentBinding,
+        batch: PendingBatch,
+        mode: UploadMode,
+    ) -> AgentResult<Value> {
+        let task_space_id = binding.task_space_id.clone();
+        let (fence, upload_execution_task_key) = match self
+            .acquire_upload_fence(binding, &batch.files, true)
+            .await?
+        {
+            UploadFenceOutcome::Ready {
+                fence,
+                execution_task_key,
+            } => (fence, execution_task_key),
+            UploadFenceOutcome::Skipped(skipped) => return Ok(skipped),
+        };
         let task_dirs = pending_task_dirs(&batch.files);
         let cursor = self.read_cursor(&task_space_id).await;
         let blocked: Vec<Value> = task_dirs
@@ -737,29 +824,12 @@ impl TaskSync {
             }
         };
 
-        let mut persisted_execution_task_key = upload_execution_task_key.clone();
-        if let Some(task) = result
-            .get("control")
-            .and_then(|control| control.get("task"))
-            .filter(|task| !task.is_null())
-        {
-            let control = TaskControl::from_task_value(task)?;
-            persisted_execution_task_key = Some(response_control_execution_task_key(
-                upload_execution_task_key.as_deref(),
-                &control,
-            )?);
-            self.upsert_task_control(binding, &control).await?;
-        }
-        if let Some(execution_task_key) = persisted_execution_task_key.as_deref() {
-            if let Some(lease) = result.get("lease").filter(|lease| !lease.is_null()) {
-                self.save_task_lease(execution_task_key, lease.clone())
-                    .await?;
-            }
-            if let Some(task_version) = result.get("taskVersion").and_then(Value::as_u64) {
-                self.update_control_task_version(execution_task_key, task_version)
-                    .await?;
-            }
-        }
+        self.persist_upload_control_response(
+            binding,
+            upload_execution_task_key.as_deref(),
+            &result,
+        )
+        .await?;
         let cursor = self.read_cursor(&task_space_id).await;
         if let Some(reason) = result
             .get("reason")
@@ -798,19 +868,7 @@ impl TaskSync {
         }
 
         let files = parse_snapshot_files_from_values(&batch.files)?;
-        {
-            let mut suppressed = self.suppressed.lock().await;
-            for file in &files {
-                suppressed.insert(
-                    absolute_task_path(binding, &file.path),
-                    if file.deleted {
-                        None
-                    } else {
-                        Some(file.sha256.clone())
-                    },
-                );
-            }
-        }
+        self.mark_files_suppressed(binding, &files).await;
         let baselines = merge_baselines(&cursor.baselines, &files);
         let mut ownership_pending = cursor.ownership_pending.clone();
         let mut pending_rejected = cursor.pending_rejected.clone();

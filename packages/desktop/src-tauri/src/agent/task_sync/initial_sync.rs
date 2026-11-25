@@ -1043,8 +1043,8 @@ pub(super) fn retain_server_groups_for_revision_guard(
 }
 /// 首次同步的差异分类：`task.json` 记录的 `branch` 是任务当时的开发分支；
 /// 归档任务已退出客户端同步，只有本地存在的同目录活动任务才保留跨分支组。
-pub(super) fn retain_server_groups_for_initial_sync(
-    binding: &AgentBinding,
+pub(crate) fn retain_server_groups_for_branch_initial_sync(
+    branch_name: &str,
     local_groups: &[SnapshotGroup],
     groups: &mut Vec<SnapshotGroup>,
 ) {
@@ -1054,12 +1054,19 @@ pub(super) fn retain_server_groups_for_initial_sync(
             && (group
                 .task_branch
                 .as_deref()
-                .map(|branch| branch == binding.branch_name)
+                .map(|branch| branch == branch_name)
                 .unwrap_or(true)
                 || local_groups
                     .iter()
                     .any(|local| local.task_dir == group.task_dir))
     });
+}
+pub(super) fn retain_server_groups_for_initial_sync(
+    binding: &AgentBinding,
+    local_groups: &[SnapshotGroup],
+    groups: &mut Vec<SnapshotGroup>,
+) {
+    retain_server_groups_for_branch_initial_sync(&binding.branch_name, local_groups, groups);
 }
 pub(super) fn hide_control_tombstone_local_only(
     differences: Vec<Difference>,

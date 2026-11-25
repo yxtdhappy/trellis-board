@@ -13,6 +13,9 @@ export type SnapshotDifference = {
   type: string
   taskId: string | null
   taskDir: string | null
+  title: string | null
+  localTaskDir: string | null
+  serverTaskDir: string | null
 }
 
 export type PreflightCounts = {
@@ -47,6 +50,7 @@ export type Association = {
   lastError: string | null
   liveSyncStatus: LiveSyncStatus
   liveSyncError: string | null
+  initialReviewPending: boolean
 }
 
 export type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>

@@ -77,6 +77,7 @@ export function createConflicts({ statements, now, bindingContext, applyChangesI
       id: row.id,
       taskSpaceId: row.task_space_id,
       taskId: row.task_id,
+      taskTitle: row.task_title || null,
       taskDir: row.task_dir,
       files: parseJson(row.files_json, []),
       serverRevision: Number(row.server_revision),
@@ -122,6 +123,8 @@ export function createConflicts({ statements, now, bindingContext, applyChangesI
         {
           observedBranchName: input.observedBranchName,
           mergeEvidence: input.mergeEvidence,
+          taskVersion: input.taskVersion,
+          leaseToken: input.leaseToken,
           batchId: requestId(input.batchId, '批次 ID'),
           clientSequence: input.clientSequence,
           files: normalizedFiles.map((file) => ({

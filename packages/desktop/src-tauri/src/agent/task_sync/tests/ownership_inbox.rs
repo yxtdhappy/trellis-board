@@ -196,12 +196,9 @@ async fn assign_ownership_reports_target_invalid_utf8_path() {
         inbox_fixture("ownership-assign-target", vec![200]).await;
     let repo = Path::new(&binding.repo_path);
     write_task_json(repo, ".trellis/tasks/target", "target", "").await;
-    tokio::fs::write(
-        repo.join(".trellis/tasks/target/prd.md"),
-        [0xff_u8, 0xfe],
-    )
-    .await
-    .expect("invalid target prd");
+    tokio::fs::write(repo.join(".trellis/tasks/target/prd.md"), [0xff_u8, 0xfe])
+        .await
+        .expect("invalid target prd");
 
     let error = sync
         .set_task_ownership(
@@ -544,5 +541,112 @@ async fn cleanup_deleted_ownership_keeps_all_ledgers_after_partial_batch_failure
     );
 
     server.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn reopen_conflicts_restores_title_with_fallbacks() {
+    let (root, store, _sync, binding) = test_task_sync_fixture("reopen-conflict-title").await;
+    let task_dir = ".trellis/tasks/11-25-title";
+    let task_json = "{\"id\":\"task-title\",\"title\":\"本地还原标题\",\"branch\":\"main\"}\n";
+
+    // 1. 服务端有 taskTitle 时优先使用服务端标题
+    let (url_1, _, _, server_1) = mock_api_server(json!({
+        "revision": 1,
+        "conflicts": [{
+            "id": "c-1",
+            "taskId": "task-title",
+            "taskTitle": "服务端冲突标题",
+            "taskDir": task_dir,
+            "files": []
+        }],
+        "files": [{
+            "path": format!("{task_dir}/task.json"),
+            "content": task_json,
+            "sha256": snapshot_sha256(task_json),
+        }]
+    }))
+    .await;
+    let events_1 = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink_1_events = events_1.clone();
+    let sync_1 = TaskSync::new(
+        store.clone(),
+        Arc::new(ApiClient::new(&url_1, None, None).expect("api")),
+        Arc::new(move |value| sink_1_events.lock().expect("events").push(value)),
+    );
+    sync_1.set_bindings(vec![binding.clone()]).await;
+    let event_1 = sync_1
+        .reopen_conflicts("space-1")
+        .await
+        .expect("reopen 1")
+        .expect("event 1");
+    assert_eq!(event_1["conflict"]["taskTitle"], json!("服务端冲突标题"));
+    server_1.abort();
+
+    // 2. 旧服务端未返回 taskTitle 时，从目录文件的 task.json 提取 title
+    let (url_2, _, _, server_2) = mock_api_server(json!({
+        "revision": 1,
+        "conflicts": [{
+            "id": "c-2",
+            "taskId": "task-title",
+            "taskDir": task_dir,
+            "files": []
+        }],
+        "files": [{
+            "path": format!("{task_dir}/task.json"),
+            "content": task_json,
+            "sha256": snapshot_sha256(task_json),
+        }]
+    }))
+    .await;
+    let events_2 = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink_2_events = events_2.clone();
+    let sync_2 = TaskSync::new(
+        store.clone(),
+        Arc::new(ApiClient::new(&url_2, None, None).expect("api")),
+        Arc::new(move |value| sink_2_events.lock().expect("events").push(value)),
+    );
+    sync_2.set_bindings(vec![binding.clone()]).await;
+    let event_2 = sync_2
+        .reopen_conflicts("space-1")
+        .await
+        .expect("reopen 2")
+        .expect("event 2");
+    assert_eq!(event_2["conflict"]["taskTitle"], json!("本地还原标题"));
+    server_2.abort();
+
+    // 3. task.json 无 title 时依次回退 taskId 与 taskDir
+    let no_title_json = "{\"id\":\"task-title\",\"branch\":\"main\"}\n";
+    let (url_3, _, _, server_3) = mock_api_server(json!({
+        "revision": 1,
+        "conflicts": [{
+            "id": "c-3",
+            "taskId": "task-fallback-id",
+            "taskDir": task_dir,
+            "files": []
+        }],
+        "files": [{
+            "path": format!("{task_dir}/task.json"),
+            "content": no_title_json,
+            "sha256": snapshot_sha256(no_title_json),
+        }]
+    }))
+    .await;
+    let events_3 = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink_3_events = events_3.clone();
+    let sync_3 = TaskSync::new(
+        store,
+        Arc::new(ApiClient::new(&url_3, None, None).expect("api")),
+        Arc::new(move |value| sink_3_events.lock().expect("events").push(value)),
+    );
+    sync_3.set_bindings(vec![binding]).await;
+    let event_3 = sync_3
+        .reopen_conflicts("space-1")
+        .await
+        .expect("reopen 3")
+        .expect("event 3");
+    assert_eq!(event_3["conflict"]["taskTitle"], json!("task-fallback-id"));
+    let _ = (events_1, events_2, events_3);
+    server_3.abort();
     let _ = tokio::fs::remove_dir_all(root).await;
 }

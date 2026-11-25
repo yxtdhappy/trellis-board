@@ -26,6 +26,8 @@ import { OnboardingSkeleton } from './OnboardingSkeleton.tsx'
 import {
   normalizeAssociation,
   normalizePreflight,
+  preflightDifferenceLabel,
+  preflightDifferenceTone,
   stateLabel,
 } from './project-onboarding-normalize.ts'
 import type {
@@ -34,14 +36,46 @@ import type {
   PreflightResult,
   ProjectOnboardingDialogProps,
   PushState,
+  SnapshotDifference,
 } from './project-onboarding-types.ts'
 import { SelectField } from '../SelectField.tsx'
 import { Empty, EmptyDescription } from '@/components/ui/empty'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { toneSurface } from '@/components/ui/status-pill'
+import { StatusPill, toneSurface } from '@/components/ui/status-pill'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 
 type OnboardingFeedback = { tone: 'status' | 'error'; text: string } | null
+
+function PreflightDifferenceList({ items }: { items: SnapshotDifference[] }) {
+  if (!items.length) return null
+  return (
+    <ul className="flex max-h-44 flex-col gap-1.5 overflow-y-auto pr-1">
+      {items.map((item, index) => {
+        const title = item.title || item.taskId || item.taskDir || '未知任务'
+        const dirLabel =
+          item.localTaskDir && item.serverTaskDir && item.localTaskDir !== item.serverTaskDir
+            ? `本地：${item.localTaskDir} · 服务端：${item.serverTaskDir}`
+            : item.taskDir || item.localTaskDir || item.serverTaskDir || ''
+        return (
+          <li
+            key={`${item.type}:${item.taskId || ''}:${dirLabel || index}`}
+            className="flex flex-col gap-1 rounded-md border border-border/70 bg-background/80 px-2.5 py-2 text-xs"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <span className="font-medium break-words">{title}</span>
+              <StatusPill tone={preflightDifferenceTone(item.type)} size="xs" className="shrink-0">
+                {preflightDifferenceLabel(item.type)}
+              </StatusPill>
+            </div>
+            {dirLabel ? (
+              <code className="text-[11px] text-muted-foreground break-all">{dirLabel}</code>
+            ) : null}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
 
 export function ProjectOnboardingDialog({
   open,
@@ -627,6 +661,11 @@ export function ProjectOnboardingDialog({
                           ? `，另有 ${preflight.counts.invalid} 个任务结构异常需要检查`
                           : '。'}
                       </p>
+                      {preflight.counts.invalid > 0 ? (
+                        <PreflightDifferenceList
+                          items={actionableDifferences.filter((item) => item.type === 'invalid')}
+                        />
+                      ) : null}
                     </>
                   ) : hasDifferences ? (
                     <>
@@ -639,6 +678,7 @@ export function ProjectOnboardingDialog({
                           : ''}
                         。暂不接入不会建立绑定，也不会写入本地游标或服务端。
                       </p>
+                      <PreflightDifferenceList items={actionableDifferences} />
                     </>
                   ) : (
                     <>

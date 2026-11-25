@@ -169,8 +169,12 @@ async fn startup_bindings_activate_before_background_pull() {
     assert_eq!(sync.active_bindings().await.len(), 1);
     assert!(requests.lock().await.is_empty());
     let (events, receiver) = mpsc::unbounded_channel();
-    let watcher_sync = sync.clone();
-    let watch_task = tokio::spawn(async move { watcher_sync.watch_loop(receiver).await });
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let watcher_sync = Arc::downgrade(&sync);
+    let watch_task =
+        tokio::spawn(
+            async move { TaskSync::watch_loop(watcher_sync, receiver, shutdown_rx).await },
+        );
     events
         .send(WatchEvent::TaskPath {
             task_space_id: "space-1".to_string(),

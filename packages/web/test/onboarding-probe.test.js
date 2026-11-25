@@ -6,6 +6,12 @@ import {
   onboardingErrorMessage,
   preflightBlockReason,
 } from '../src/lib/onboarding-probe.js'
+import {
+  normalizeAssociation,
+  normalizePreflight,
+  preflightDifferenceLabel,
+  preflightDifferenceTone,
+} from '../src/features/board/dialogs/project-onboarding-normalize.ts'
 
 test('分支探测只在分支和远端 URL 都非空时触发', () => {
   assert.equal(canProbeBranch('dev', 'https://github.com/example/repo.git'), true)
@@ -80,4 +86,71 @@ test('接入错误提取真实消息，不可读时使用兜底', () => {
   )
   assert.equal(onboardingErrorMessage(new Error('   '), '任务预检失败'), '任务预检失败')
   assert.equal(onboardingErrorMessage({ token: '不得显示' }, '任务预检失败'), '任务预检失败')
+})
+
+test('normalizePreflight 提取差异标题和双端目录并兼容缺省字段', () => {
+  const normalized = normalizePreflight({
+    status: 'existing',
+    revision: 5,
+    differences: [
+      {
+        type: 'content-conflict',
+        taskId: 'task-1',
+        taskDir: '.trellis/tasks/11-25-a',
+        title: '  冲突任务标题  ',
+        local: { taskDir: '.trellis/tasks/11-25-a' },
+        server: { taskDir: '.trellis/tasks/11-25-a-server' },
+      },
+      {
+        type: 'server-only',
+        taskId: 'task-2',
+        taskDir: '.trellis/tasks/11-25-b',
+      },
+    ],
+    counts: { same: 1, localOnly: 0, serverOnly: 1, conflicts: 1, invalid: 0 },
+  })
+  assert.ok(normalized)
+  assert.equal(normalized.differences.length, 2)
+  assert.deepEqual(normalized.differences[0], {
+    type: 'content-conflict',
+    taskId: 'task-1',
+    taskDir: '.trellis/tasks/11-25-a',
+    title: '冲突任务标题',
+    localTaskDir: '.trellis/tasks/11-25-a',
+    serverTaskDir: '.trellis/tasks/11-25-a-server',
+  })
+  assert.deepEqual(normalized.differences[1], {
+    type: 'server-only',
+    taskId: 'task-2',
+    taskDir: '.trellis/tasks/11-25-b',
+    title: null,
+    localTaskDir: null,
+    serverTaskDir: null,
+  })
+})
+
+test('normalizeAssociation 保留 initialReviewPending 且映射差异标签与语义 tone', () => {
+  const base = {
+    projectId: 'p1',
+    taskSpaceId: 's1',
+    repoPath: 'C:/repo',
+    displayName: 'Repo',
+    branchName: 'main',
+    status: 'approved',
+  }
+  assert.equal(
+    normalizeAssociation({ ...base, initialReviewPending: true })?.initialReviewPending,
+    true,
+  )
+  assert.equal(normalizeAssociation(base)?.initialReviewPending, false)
+  assert.equal(preflightDifferenceLabel('server-only'), '仅服务端存在')
+  assert.equal(preflightDifferenceLabel('local-only'), '仅本地存在')
+  assert.equal(preflightDifferenceLabel('content-conflict'), '内容冲突')
+  assert.equal(preflightDifferenceLabel('move-delete-conflict'), '移动或删除冲突')
+  assert.equal(preflightDifferenceLabel('invalid'), '任务结构或身份异常')
+  assert.equal(preflightDifferenceTone('server-only'), 'info')
+  assert.equal(preflightDifferenceTone('local-only'), 'primary')
+  assert.equal(preflightDifferenceTone('content-conflict'), 'warning')
+  assert.equal(preflightDifferenceTone('move-delete-conflict'), 'danger')
+  assert.equal(preflightDifferenceTone('invalid'), 'danger')
 })

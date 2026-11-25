@@ -602,3 +602,127 @@ async fn stale_binding_copy_still_allows_notice_after_recovery() {
 
     let _ = tokio::fs::remove_dir_all(root).await;
 }
+
+#[tokio::test]
+async fn task_sync_stop_exits_watch_loop_and_releases_arc() {
+    let (root, store, _sync, mut binding) = test_task_sync_fixture("trellis-watch-stop-arc").await;
+    let repo = Path::new(&binding.repo_path);
+    init_git_repo(repo);
+    tokio::fs::write(repo.join("README.md"), "init\n")
+        .await
+        .expect("readme");
+    run_git(repo, &["add", "README.md"]);
+    run_git(repo, &["commit", "--no-verify", "-m", "init"]);
+    binding.initial_sync_completed = true;
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
+    let sync = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
+    let weak = Arc::downgrade(&sync);
+    sync.ensure_ownership_validation_worker();
+    sync.rebuild_watchers(vec![binding]).await;
+
+    assert_eq!(Arc::strong_count(&sync), 1);
+    {
+        let state = sync.watch.lock().expect("watch lock");
+        assert!(!state.watchers.is_empty());
+        assert!(state.tx.is_some());
+    }
+
+    sync.stop();
+    {
+        let state = sync.watch.lock().expect("watch lock");
+        assert!(state.watchers.is_empty());
+        assert!(state.tx.is_none());
+    }
+    drop(sync);
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if weak.upgrade().is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("TaskSync Arc must drop after stop");
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn stopped_task_sync_does_not_double_upload_after_restart() {
+    let (root, store, _sync, mut binding) =
+        test_task_sync_fixture("trellis-watch-no-double-upload").await;
+    let repo_path = PathBuf::from(&binding.repo_path);
+    let repo = repo_path.as_path();
+    init_git_repo(repo);
+    let task_dir = ".trellis/tasks/11-25-demo";
+    let task_json = "{\"id\":\"demo\",\"branch\":\"main\",\"assignee\":\"dev\"}\n";
+    let prd = "# demo\n";
+    tokio::fs::create_dir_all(repo.join(task_dir))
+        .await
+        .expect("task dir");
+    tokio::fs::write(repo.join(task_dir).join("task.json"), task_json)
+        .await
+        .expect("task json");
+    tokio::fs::write(repo.join(task_dir).join("prd.md"), prd)
+        .await
+        .expect("prd");
+    run_git(repo, &["add", "."]);
+    run_git(repo, &["commit", "--no-verify", "-m", "init"]);
+    binding.initial_sync_completed = true;
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+
+    let (server_url, changes, _requests, server_task) = mock_api_server(json!({
+        "revision": 1,
+        "files": [],
+        "writeRevision": 2,
+    }))
+    .await;
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api"));
+
+    let first = Arc::new(TaskSync::new(store.clone(), api.clone(), Arc::new(|_| {})));
+    first.set_bindings(vec![binding.clone()]).await;
+    first.rebuild_watchers(vec![binding.clone()]).await;
+    first.stop();
+    drop(first);
+
+    let second = Arc::new(TaskSync::new(store, api, Arc::new(|_| {})));
+    second.set_bindings(vec![binding.clone()]).await;
+    second.rebuild_watchers(vec![binding]).await;
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::fs::write(repo.join(task_dir).join("prd.md"), "# updated\n")
+        .await
+        .expect("update prd");
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if !changes.lock().await.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("new TaskSync should upload once");
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        changes.lock().await.len(),
+        1,
+        "stopped TaskSync must never upload alongside restarted instance"
+    );
+
+    second.stop();
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}

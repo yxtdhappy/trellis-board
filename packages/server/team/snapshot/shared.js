@@ -442,11 +442,16 @@ export function createStatements(db) {
     pendingConflicts: db.prepare(`
       WITH ranked AS (
         SELECT c.*, c.rowid AS conflict_rowid,
+               st.title AS task_title,
                ROW_NUMBER() OVER (
                  PARTITION BY c.created_by_agent_id, COALESCE(c.task_id, c.task_dir)
                  ORDER BY c.created_at DESC, c.rowid DESC
                ) AS conflict_rank
         FROM sync_conflict c
+        LEFT JOIN sync_task st
+          ON st.task_space_id = c.task_space_id
+         AND st.task_id = c.task_id
+         AND c.task_id IS NOT NULL
         WHERE c.task_space_id = ? AND c.status = 'pending'
           AND NOT EXISTS (
             SELECT 1 FROM sync_task t

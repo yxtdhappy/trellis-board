@@ -274,13 +274,7 @@ pub(super) fn task_owner(content: &str) -> Option<String> {
             .map(str::to_string)
     })
 }
-pub(super) fn task_title(group: &SnapshotGroup) -> Option<String> {
-    let content = group
-        .files
-        .iter()
-        .find(|file| file.file_path == "task.json" && !file.deleted)?
-        .content
-        .as_str();
+pub(super) fn parse_task_title(content: &str) -> Option<String> {
     let parsed: Value = serde_json::from_str(content).ok()?;
     parsed
         .get("title")
@@ -288,6 +282,15 @@ pub(super) fn task_title(group: &SnapshotGroup) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+pub(crate) fn task_title(group: &SnapshotGroup) -> Option<String> {
+    let content = group
+        .files
+        .iter()
+        .find(|file| file.file_path == "task.json" && !file.deleted)?
+        .content
+        .as_str();
+    parse_task_title(content)
 }
 pub(super) fn task_fingerprint(group: &SnapshotGroup) -> String {
     let mut hasher = Sha256::new();

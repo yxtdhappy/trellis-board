@@ -182,31 +182,51 @@ impl TaskSync {
             .iter()
             .find_map(|group| ownership.merge_evidence.get(&group.task_dir))
             .cloned();
+        let (fence, upload_execution_task_key) =
+            match self.acquire_upload_fence(&binding, &values, false).await? {
+                UploadFenceOutcome::Ready {
+                    fence,
+                    execution_task_key,
+                } => (fence, execution_task_key),
+                UploadFenceOutcome::Skipped(mut skipped) => {
+                    skipped["conflictId"] = json!(conflict_id);
+                    skipped["action"] = json!(action);
+                    skipped["resolved"] = json!(false);
+                    return Ok(skipped);
+                }
+            };
         let cursor = self.read_cursor(task_space_id).await;
         let backup = match &directories.local {
             Some(local_dir) => self.backup_directory(&binding, local_dir).await?,
             None => None,
         };
         let next_sequence = next_client_sequence(cursor.sequence);
+        let mut resolve_payload = json!({
+            "action": action,
+            "batchId": uuid::Uuid::new_v4().to_string(),
+            "clientSequence": next_sequence,
+            "files": values,
+            "observedBranchName": observed,
+            "mergeEvidence": merge_evidence,
+        });
+        if let Some(fence) = fence.as_ref() {
+            fence.apply(&mut resolve_payload);
+        }
         let result = self
-            .resolve_conflict(
-                task_space_id,
-                conflict_id,
-                &json!({
-                    "action": action,
-                    "batchId": uuid::Uuid::new_v4().to_string(),
-                    "clientSequence": next_sequence,
-                    "files": values,
-                    "observedBranchName": observed,
-                    "mergeEvidence": merge_evidence,
-                }),
-            )
+            .resolve_conflict(task_space_id, conflict_id, &resolve_payload)
             .await?;
+        self.persist_upload_control_response(
+            &binding,
+            upload_execution_task_key.as_deref(),
+            &result,
+        )
+        .await?;
         if result.get("code").and_then(Value::as_str) == Some("TASK_FILE_CONFLICT") {
             self.mark_conflict_blocked(task_space_id, &result, &values)
                 .await?;
         } else {
             let uploaded_files = parse_snapshot_files_from_values(&values)?;
+            self.mark_files_suppressed(&binding, &uploaded_files).await;
             self.write_cursor(
                 task_space_id,
                 CursorPatch {
@@ -461,10 +481,22 @@ pub(super) fn conflict_is_archive_only(conflict: &Value) -> bool {
 }
 pub(super) fn conflict_summary(result: &Value) -> Value {
     let details = result.get("details").cloned().unwrap_or(Value::Null);
+    let task_id = details
+        .get("taskId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let task_title = details
+        .get("taskTitle")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or(task_id)
+        .unwrap_or("任务");
     json!({
         "conflictId": result.get("conflictId"),
         "taskId": details.get("taskId"),
-        "taskTitle": details.get("taskTitle").cloned().unwrap_or(Value::String("任务".into())),
+        "taskTitle": task_title,
         "files": details.get("files").cloned().unwrap_or(Value::Array(Vec::new())),
         "message": result.get("message").and_then(Value::as_str).unwrap_or("任务文件已被其他成员修改"),
         "suggestion": details.get("suggestion").cloned().unwrap_or(Value::String("先查看差异，再选择保留哪一份".into())),

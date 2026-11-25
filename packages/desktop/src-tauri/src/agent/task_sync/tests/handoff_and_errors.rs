@@ -1072,3 +1072,227 @@ async fn marking_readonly_dir_drops_stale_deferred_entry() {
 
     let _ = tokio::fs::remove_dir_all(root).await;
 }
+
+#[tokio::test]
+async fn overwrite_server_conflict_acquires_fence_updates_control_and_suppresses_watcher() {
+    let (root, store, _sync, mut binding) = test_task_sync_fixture("trellis-overwrite-fence").await;
+    let repo = Path::new(&binding.repo_path);
+    init_git_repo(repo);
+    let task_dir = ".trellis/tasks/11-25-demo";
+    let task_json =
+        "{\"id\":\"demo\",\"title\":\"本地版本\",\"branch\":\"main\",\"assignee\":\"dev\"}\n";
+    let prd = "# 本地 PRD\n";
+    tokio::fs::create_dir_all(repo.join(task_dir))
+        .await
+        .expect("task dir");
+    tokio::fs::write(repo.join(task_dir).join("task.json"), task_json)
+        .await
+        .expect("task json");
+    tokio::fs::write(repo.join(task_dir).join("prd.md"), prd)
+        .await
+        .expect("prd");
+    run_git(repo, &["add", "."]);
+    run_git(repo, &["commit", "--no-verify", "-m", "init"]);
+    binding.initial_sync_completed = true;
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+
+    let control_key = "space-1::demo";
+    let (server_url, changes, requests, server_task) = mock_api_server(json!({
+        "revision": 2,
+        "conflicts": [{
+            "id": "conflict-1",
+            "taskId": "demo",
+            "taskTitle": "服务端标题",
+            "taskDir": task_dir,
+            "files": []
+        }],
+        "files": [{
+            "path": format!("{task_dir}/task.json"),
+            "content": "{\"id\":\"demo\",\"title\":\"服务端标题\",\"branch\":\"main\",\"assignee\":\"dev\"}\n",
+            "sha256": snapshot_sha256("{\"id\":\"demo\",\"title\":\"服务端标题\",\"branch\":\"main\",\"assignee\":\"dev\"}\n"),
+        }],
+        "controls": [{
+            "executionTaskKey": control_key,
+            "taskId": "demo",
+            "relativeDir": task_dir,
+            "title": "服务端标题",
+            "state": "materialized",
+            "taskVersion": 4,
+            "assigneeUserId": "user-1",
+            "handoffState": "none",
+            "updatedAt": "2026-11-25T00:00:00.000Z"
+        }],
+        "resolveResponse": {
+            "status": 200,
+            "payload": {
+                "conflictId": "conflict-1",
+                "action": "overwrite-server",
+                "resolved": true,
+                "revision": 3,
+                "taskVersion": 5,
+                "control": {
+                    "task": {
+                        "executionTaskKey": control_key,
+                        "taskId": "demo",
+                        "relativeDir": task_dir,
+                        "title": "本地版本",
+                        "state": "materialized",
+                        "taskVersion": 5,
+                        "assigneeUserId": "user-1",
+                        "handoffState": "none",
+                        "updatedAt": "2026-11-25T00:01:00.000Z"
+                    }
+                }
+            }
+        }
+    }))
+    .await;
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api"));
+    let sync = TaskSync::new(store.clone(), api, Arc::new(|_| {}));
+    sync.set_bindings(vec![binding.clone()]).await;
+    sync.write_cursor(
+        "space-1",
+        CursorPatch {
+            conflict_blocked: Some(BTreeMap::from([(
+                task_dir.to_string(),
+                "conflict-1".to_string(),
+            )])),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("blocked cursor");
+
+    let resolved = sync
+        .decide_conflict("space-1", "conflict-1", "overwrite-server", None)
+        .await
+        .expect("overwrite-server");
+    assert_eq!(resolved["revision"], 3);
+
+    let sent_resolve = changes.lock().await.clone();
+    assert_eq!(sent_resolve.len(), 1);
+    assert_eq!(sent_resolve[0]["action"], "overwrite-server");
+    assert_eq!(sent_resolve[0]["taskVersion"], 4);
+    assert_eq!(sent_resolve[0]["leaseToken"], "lease-token");
+    assert!(requests
+        .lock()
+        .await
+        .iter()
+        .any(|req| req.contains("/claim")));
+
+    let cursor = sync.read_cursor("space-1").await;
+    assert!(!cursor.conflict_blocked.contains_key(task_dir));
+    assert!(cursor.sequence > 0);
+    assert_eq!(sent_resolve[0]["clientSequence"], cursor.sequence);
+
+    let suppressed = sync.suppressed.lock().await;
+    assert_eq!(
+        suppressed
+            .get(&absolute_task_path(&binding, &format!("{task_dir}/prd.md")))
+            .cloned()
+            .flatten(),
+        Some(snapshot_sha256(prd))
+    );
+    drop(suppressed);
+
+    let state = sync.task_control_state.lock().await;
+    assert_eq!(
+        state.controls.get(control_key).map(|c| c.task_version),
+        Some(5)
+    );
+    drop(state);
+
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn overwrite_server_conflict_skips_when_remote_control_is_not_writable() {
+    let (root, store, _sync, mut binding) =
+        test_task_sync_fixture("trellis-overwrite-blocked").await;
+    let repo = Path::new(&binding.repo_path);
+    init_git_repo(repo);
+    let task_dir = ".trellis/tasks/11-25-demo";
+    let task_json =
+        "{\"id\":\"demo\",\"title\":\"本地版本\",\"branch\":\"main\",\"assignee\":\"dev\"}\n";
+    tokio::fs::create_dir_all(repo.join(task_dir))
+        .await
+        .expect("task dir");
+    tokio::fs::write(repo.join(task_dir).join("task.json"), task_json)
+        .await
+        .expect("task json");
+    run_git(repo, &["add", "."]);
+    run_git(repo, &["commit", "--no-verify", "-m", "init"]);
+    binding.initial_sync_completed = true;
+    store
+        .save_config(test_config(binding.clone()))
+        .await
+        .expect("config");
+
+    let (server_url, changes, _requests, server_task) = mock_api_server(json!({
+        "revision": 2,
+        "conflicts": [{
+            "id": "conflict-1",
+            "taskId": "demo",
+            "taskTitle": "服务端标题",
+            "taskDir": task_dir,
+            "files": []
+        }],
+        "files": [{
+            "path": format!("{task_dir}/task.json"),
+            "content": task_json,
+            "sha256": snapshot_sha256(task_json),
+        }],
+        "controls": [{
+            "executionTaskKey": "space-1::demo",
+            "taskId": "demo",
+            "relativeDir": task_dir,
+            "title": "已归档",
+            "state": "archived",
+            "taskVersion": 4,
+            "assigneeUserId": "user-1",
+            "handoffState": "none",
+            "updatedAt": "2026-11-25T00:00:00.000Z"
+        }]
+    }))
+    .await;
+    let api = Arc::new(ApiClient::new(&server_url, None, None).expect("api"));
+    let sync = TaskSync::new(store, api, Arc::new(|_| {}));
+    sync.set_bindings(vec![binding]).await;
+
+    let outcome = sync
+        .decide_conflict("space-1", "conflict-1", "overwrite-server", None)
+        .await
+        .expect("blocked outcome");
+    assert_eq!(outcome["skipped"], true);
+    assert_eq!(outcome["reason"], "TASK_CONTROL_INACTIVE");
+    assert_eq!(outcome["resolved"], false);
+    assert!(changes.lock().await.is_empty());
+
+    server_task.abort();
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[test]
+fn conflict_summary_uses_title_then_task_id_then_fallback() {
+    let with_title = conflict_summary(&json!({
+        "conflictId": "c1",
+        "details": { "taskId": "task-1", "taskTitle": "明确标题", "files": [] }
+    }));
+    assert_eq!(with_title["taskTitle"], json!("明确标题"));
+
+    let with_id_only = conflict_summary(&json!({
+        "conflictId": "c2",
+        "details": { "taskId": "task-2", "taskTitle": "   ", "files": [] }
+    }));
+    assert_eq!(with_id_only["taskTitle"], json!("task-2"));
+
+    let fallback = conflict_summary(&json!({
+        "conflictId": "c3",
+        "details": { "files": [] }
+    }));
+    assert_eq!(fallback["taskTitle"], json!("任务"));
+}

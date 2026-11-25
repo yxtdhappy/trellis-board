@@ -46,12 +46,10 @@ impl TaskSync {
         let Some(content) = task_json_content(binding, group).await else {
             return true;
         };
-        let Some(owner) = task_owner(&content) else {
-            return true;
-        };
-        if owner.eq_ignore_ascii_case(owner_id) {
+        if owner_matches_developer(&content, owner_id) {
             return true;
         }
+        let owner = task_owner(&content).unwrap_or_default();
         crate::logging::warn(&format!(
             "跳过他人任务目录 taskSpaceId={} taskDir={} owner={} localOwner={}",
             binding.task_space_id, group.task_dir, owner, owner_id
@@ -71,6 +69,29 @@ impl TaskSync {
             .get(execution_task_key)
             .is_some_and(|control| TaskControlState::parse(&control.state).is_writable_local())
     }
+}
+
+fn owner_matches_developer(content: &str, owner_id: &str) -> bool {
+    let Some(owner) = task_owner(content) else {
+        return true;
+    };
+    owner.eq_ignore_ascii_case(owner_id)
+}
+
+/// 纯归属谓词：本地快照分组无 `task.json` 或无 owner 时 fail open 保留；
+/// 有 owner 时按 `assignee` 优先回退 `creator`（大小写不敏感）匹配。
+pub(crate) fn group_owned_by_developer(group: &SnapshotGroup, owner_id: &str) -> bool {
+    let Some(file) = group
+        .files
+        .iter()
+        .find(|file| file.file_path == "task.json" && !file.deleted)
+    else {
+        return true;
+    };
+    if file.content.is_empty() {
+        return true;
+    }
+    owner_matches_developer(&file.content, owner_id)
 }
 
 async fn task_json_content(binding: &AgentBinding, group: &SnapshotGroup) -> Option<String> {

@@ -131,6 +131,10 @@ impl AgentRuntime {
         &self.task_sync
     }
 
+    pub(crate) fn task_sync_arc(&self) -> Arc<TaskSync> {
+        self.task_sync.clone()
+    }
+
     pub(crate) fn worktree(&self) -> &WorktreeService {
         &self.worktree
     }
@@ -155,6 +159,7 @@ impl AgentRuntime {
         }
         crate::logging::info(&format!("Agent 运行时停止：{reason}"));
         self.worktree.stop();
+        self.task_sync.stop();
         let _ = self.shutdown.send(true);
         self.write_state_blocking("stopped", None, None);
     }
@@ -682,7 +687,8 @@ impl AgentRuntime {
                 safe_error_message(&error.to_string())
             ));
         } else {
-            self.state_running.store(status == "running", Ordering::SeqCst);
+            self.state_running
+                .store(status == "running", Ordering::SeqCst);
         }
     }
 

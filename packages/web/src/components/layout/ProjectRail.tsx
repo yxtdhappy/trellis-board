@@ -644,7 +644,11 @@ export function ProjectRail({
                   next.set(normalized.taskSpaceId, normalized)
                   return next
                 })
-                toast.success('本地项目已接入团队任务空间，正在同步任务。')
+                toast.success(
+                  normalized.initialReviewPending
+                    ? '本地项目已接入，正在准备差异确认…'
+                    : '本地项目已接入团队任务空间，正在同步任务。',
+                )
                 void onRefresh()
               }}
             />

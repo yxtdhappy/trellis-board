@@ -1,7 +1,52 @@
 import type { Association, PreflightResult, PushState } from './project-onboarding-types.ts'
 
+export type PreflightDiffTone = 'info' | 'primary' | 'warning' | 'danger' | 'neutral'
+
 export function text(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function nonEmptyText(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+}
+
+export function preflightDifferenceLabel(type: string): string {
+  switch (type) {
+    case 'server-only':
+      return '仅服务端存在'
+    case 'local-only':
+      return '仅本地存在'
+    case 'content-conflict':
+      return '内容冲突'
+    case 'move-delete-conflict':
+      return '移动或删除冲突'
+    case 'invalid':
+      return '任务结构或身份异常'
+    default:
+      return type
+  }
+}
+
+export function preflightDifferenceTone(type: string): PreflightDiffTone {
+  switch (type) {
+    case 'server-only':
+      return 'info'
+    case 'local-only':
+      return 'primary'
+    case 'content-conflict':
+      return 'warning'
+    case 'move-delete-conflict':
+    case 'invalid':
+      return 'danger'
+    default:
+      return 'neutral'
+  }
 }
 
 export function normalizeAssociation(value: unknown): Association | null {
@@ -35,6 +80,7 @@ export function normalizeAssociation(value: unknown): Association | null {
         ? row.liveSyncStatus
         : 'pending',
     liveSyncError: typeof row.liveSyncError === 'string' ? row.liveSyncError : null,
+    initialReviewPending: row.initialReviewPending === true,
   }
 }
 
@@ -48,11 +94,22 @@ export function normalizePreflight(value: unknown): PreflightResult | null {
         .filter((item): item is Record<string, unknown> =>
           Boolean(item && typeof item === 'object'),
         )
-        .map((item) => ({
-          type: text(item.type),
-          taskId: typeof item.taskId === 'string' ? item.taskId : null,
-          taskDir: typeof item.taskDir === 'string' ? item.taskDir : null,
-        }))
+        .map((item) => {
+          const local = record(item.local)
+          const server = record(item.server)
+          return {
+            type: text(item.type),
+            taskId: typeof item.taskId === 'string' ? item.taskId : null,
+            taskDir: typeof item.taskDir === 'string' ? item.taskDir : null,
+            title:
+              nonEmptyText(item.title) ??
+              nonEmptyText(local?.title) ??
+              nonEmptyText(server?.title) ??
+              null,
+            localTaskDir: nonEmptyText(local?.taskDir),
+            serverTaskDir: nonEmptyText(server?.taskDir),
+          }
+        })
         .filter((item) => item.type)
     : []
   const rawCounts =

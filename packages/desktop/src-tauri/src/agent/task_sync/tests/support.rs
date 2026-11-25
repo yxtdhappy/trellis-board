@@ -200,6 +200,41 @@ pub(super) async fn mock_api_server(
                     }
                 } else if method == "PUT" && path.ends_with("/cursor") {
                     ("200 OK", json!({}))
+                } else if method == "GET" && path.ends_with("/conflicts") {
+                    (
+                        "200 OK",
+                        json!({
+                            "conflicts": snapshot_payload
+                                .get("conflicts")
+                                .cloned()
+                                .unwrap_or_else(|| Value::Array(Vec::new()))
+                        }),
+                    )
+                } else if method == "POST" && path.ends_with("/resolve") {
+                    changes.lock().await.push(body);
+                    match snapshot_payload.get("resolveResponse").cloned() {
+                        Some(response) => {
+                            let status = response
+                                .get("status")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(200);
+                            let status_line = match status {
+                                400 => "400 Bad Request",
+                                403 => "403 Forbidden",
+                                404 => "404 Not Found",
+                                409 => "409 Conflict",
+                                _ => "200 OK",
+                            };
+                            (
+                                status_line,
+                                response.get("payload").cloned().unwrap_or(Value::Null),
+                            )
+                        }
+                        None => (
+                            "200 OK",
+                            json!({ "conflictId": "conflict-1", "action": "overwrite-server", "resolved": true, "revision": 2 }),
+                        ),
+                    }
                 } else if method == "PUT" && path.ends_with("/ownership-inbox") {
                     ("200 OK", json!({ "ok": true }))
                 } else if method == "POST" && path.ends_with("/changes") {

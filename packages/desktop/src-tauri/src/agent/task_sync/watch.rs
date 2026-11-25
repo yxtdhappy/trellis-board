@@ -17,19 +17,31 @@ pub(super) struct WatchState {
 impl TaskSync {
     /// 监听各绑定仓库的 `.trellis`，把本地改动按任务目录合并后上传。
     pub(super) async fn rebuild_watchers(self: &Arc<Self>, bindings: Vec<AgentBinding>) {
+        if *self.watch_shutdown.borrow() {
+            return;
+        }
         let mut prepared = Vec::with_capacity(bindings.len());
         for binding in bindings {
             let git_paths = git_watch_paths(Path::new(&binding.repo_path)).await;
             prepared.push((binding, git_paths));
         }
-        let mut state = self.watch.lock().await;
+        let Ok(mut state) = self.watch.lock() else {
+            return;
+        };
         state.watchers.clear();
+        if *self.watch_shutdown.borrow() {
+            state.tx = None;
+            return;
+        }
         let tx = match state.tx.clone() {
             Some(tx) => tx,
             None => {
                 let (tx, rx) = mpsc::unbounded_channel();
-                let this = self.clone();
-                crate::agent::rt::spawn(async move { this.watch_loop(rx).await });
+                let this = Arc::downgrade(self);
+                let shutdown = self.watch_shutdown.subscribe();
+                crate::agent::rt::spawn(
+                    async move { TaskSync::watch_loop(this, rx, shutdown).await },
+                );
                 state.tx = Some(tx.clone());
                 tx
             }
@@ -126,14 +138,27 @@ impl TaskSync {
 }
 impl TaskSync {
     pub(super) async fn watch_loop(
-        self: Arc<Self>,
+        this: std::sync::Weak<Self>,
         mut receiver: mpsc::UnboundedReceiver<WatchEvent>,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) {
         let mut pending: HashMap<String, HashSet<String>> = HashMap::new();
         let mut git_changed: HashSet<String> = HashSet::new();
         loop {
-            let Some(first) = receiver.recv().await else {
+            if *shutdown.borrow() {
                 break;
+            }
+            let first = tokio::select! {
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        break;
+                    }
+                    continue;
+                }
+                event = receiver.recv() => match event {
+                    Some(event) => event,
+                    None => break,
+                }
             };
             match first {
                 WatchEvent::TaskPath {
@@ -153,34 +178,47 @@ impl TaskSync {
                 }
             }
             loop {
-                match tokio::time::timeout(WATCH_DEBOUNCE, receiver.recv()).await {
-                    Ok(Some(event)) => match event {
-                        WatchEvent::TaskPath {
-                            task_space_id,
-                            relative_path,
-                        } => {
-                            if active_task_directory_from_relative(&relative_path).is_none() {
-                                continue;
+                tokio::select! {
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            return;
+                        }
+                    }
+                    timed = tokio::time::timeout(WATCH_DEBOUNCE, receiver.recv()) => match timed {
+                        Ok(Some(event)) => match event {
+                            WatchEvent::TaskPath {
+                                task_space_id,
+                                relative_path,
+                            } => {
+                                if active_task_directory_from_relative(&relative_path).is_none() {
+                                    continue;
+                                }
+                                pending
+                                    .entry(task_space_id)
+                                    .or_default()
+                                    .insert(relative_path);
                             }
-                            pending
-                                .entry(task_space_id)
-                                .or_default()
-                                .insert(relative_path);
-                        }
-                        WatchEvent::GitChanged { task_space_id } => {
-                            git_changed.insert(task_space_id);
-                        }
-                    },
-                    Ok(None) => return,
-                    Err(_) => break,
+                            WatchEvent::GitChanged { task_space_id } => {
+                                git_changed.insert(task_space_id);
+                            }
+                        },
+                        Ok(None) => return,
+                        Err(_) => break,
+                    }
                 }
             }
             for (task_space_id, paths) in std::mem::take(&mut pending) {
+                if *shutdown.borrow() {
+                    return;
+                }
+                let Some(sync) = this.upgrade() else {
+                    return;
+                };
                 let started = Instant::now();
                 let syncing = {
-                    let syncing = self.syncing_task_spaces.lock().await;
+                    let syncing = sync.syncing_task_spaces.lock().await;
                     if syncing.contains_key(&task_space_id) {
-                        self.deferred_uploads
+                        sync.deferred_uploads
                             .lock()
                             .await
                             .entry(task_space_id.clone())
@@ -192,6 +230,7 @@ impl TaskSync {
                     }
                 };
                 if syncing {
+                    drop(sync);
                     continue;
                 }
                 let mut paths: Vec<String> = paths.into_iter().collect();
@@ -203,7 +242,7 @@ impl TaskSync {
                 let target_count = target_dirs.len();
                 // 首次同步未完成时 watcher 仍在监听，但上传必须等 bootstrap 拉取落地，
                 // 否则会用本地旧内容抢在服务端快照之前写入（对照 JS `_uploadDirty` 的守卫）。
-                let binding = self
+                let binding = sync
                     .bindings
                     .lock()
                     .await
@@ -211,22 +250,22 @@ impl TaskSync {
                     .cloned()
                     .filter(|binding| !binding.read_only && binding.initial_sync_completed);
                 if let Some(binding) = binding {
-                    let serial = self.task_space_sync_lock(&task_space_id).await;
+                    let serial = sync.task_space_sync_lock(&task_space_id).await;
                     let _serial = serial.lock().await;
-                    if let Err(error) = self
+                    if let Err(error) = sync
                         .cleanup_missing_ownership_inbox(&binding, Some(&target_dirs))
                         .await
                     {
-                        self.report_error(&task_space_id, &error).await;
+                        sync.report_error(&task_space_id, &error).await;
                     }
-                    if let Err(error) = self.upload_dirty(&task_space_id, &paths).await {
-                        self.report_error(&task_space_id, &error).await;
+                    if let Err(error) = sync.upload_dirty(&task_space_id, &paths).await {
+                        sync.report_error(&task_space_id, &error).await;
                     }
                 }
-                self.invalidate_ownership_projection(&task_space_id).await;
-                self.ensure_ownership_validation_worker();
-                self.enqueue_ownership_validation(&task_space_id).await;
-                self.notify_state_changed();
+                sync.invalidate_ownership_projection(&task_space_id).await;
+                sync.ensure_ownership_validation_worker();
+                sync.enqueue_ownership_validation(&task_space_id).await;
+                sync.notify_state_changed();
                 sync_trace(
                     &task_space_id,
                     "watcher-total",
@@ -237,15 +276,23 @@ impl TaskSync {
                         "pathCount": paths.len(),
                     }),
                 );
+                drop(sync);
             }
             for task_space_id in std::mem::take(&mut git_changed) {
-                if !self.bindings.lock().await.contains_key(&task_space_id) {
+                if *shutdown.borrow() {
+                    return;
+                }
+                let Some(sync) = this.upgrade() else {
+                    return;
+                };
+                if !sync.bindings.lock().await.contains_key(&task_space_id) {
+                    drop(sync);
                     continue;
                 }
                 let syncing = {
-                    let syncing = self.syncing_task_spaces.lock().await;
+                    let syncing = sync.syncing_task_spaces.lock().await;
                     if syncing.contains_key(&task_space_id) {
-                        self.deferred_uploads
+                        sync.deferred_uploads
                             .lock()
                             .await
                             .entry(task_space_id.clone())
@@ -256,12 +303,14 @@ impl TaskSync {
                     }
                 };
                 if syncing {
+                    drop(sync);
                     continue;
                 }
-                self.invalidate_ownership_projection(&task_space_id).await;
-                self.ensure_ownership_validation_worker();
-                self.enqueue_ownership_validation(&task_space_id).await;
-                self.notify_state_changed();
+                sync.invalidate_ownership_projection(&task_space_id).await;
+                sync.ensure_ownership_validation_worker();
+                sync.enqueue_ownership_validation(&task_space_id).await;
+                sync.notify_state_changed();
+                drop(sync);
             }
         }
     }

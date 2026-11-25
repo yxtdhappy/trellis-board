@@ -421,12 +421,17 @@ impl TaskSync {
             }
             candidates.sort();
             candidates.dedup();
-            let mut alive: Option<String> = None;
+            let mut alive: Option<(String, Option<String>)> = None;
             for task_dir in &candidates {
                 match self.fetch_directory(task_space_id, task_dir).await {
                     Ok(directory) => {
-                        if !parse_directory_files(&directory, task_dir)?.is_empty() {
-                            alive = Some(task_dir.clone());
+                        let files = parse_directory_files(&directory, task_dir)?;
+                        if !files.is_empty() {
+                            let fallback_title = files
+                                .iter()
+                                .find(|file| file.file_path == "task.json" && !file.deleted)
+                                .and_then(|file| parse_task_title(&file.content));
+                            alive = Some((task_dir.clone(), fallback_title));
                             break;
                         }
                     }
@@ -434,16 +439,34 @@ impl TaskSync {
                     Err(error) => return Err(with_task_dir(error, task_dir)),
                 }
             }
-            if let Some(task_dir) = alive {
+            if let Some((task_dir, fallback_title)) = alive {
                 live_dirs.extend(candidates.iter().cloned());
                 if event.is_none() {
+                    let task_id_str = conflict
+                        .get("taskId")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty());
+                    let task_title = conflict
+                        .get("taskTitle")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                        .or(fallback_title)
+                        .or_else(|| task_id_str.map(str::to_string))
+                        .or_else(|| {
+                            let trimmed = task_dir.trim();
+                            (!trimmed.is_empty()).then(|| trimmed.to_string())
+                        })
+                        .unwrap_or_else(|| "任务".to_string());
                     event = Some(json!({
                         "type": "task_file_conflict",
                         "taskSpaceId": task_space_id,
                         "conflict": {
                             "conflictId": conflict_id,
                             "taskId": conflict.get("taskId").cloned().unwrap_or(Value::Null),
-                            "taskTitle": conflict.get("taskTitle").cloned().unwrap_or_else(|| json!("任务")),
+                            "taskTitle": task_title,
                             "taskDir": task_dir,
                             "files": conflict.get("files").cloned().unwrap_or_else(|| json!([])),
                             "message": "任务文件已被其他成员修改",

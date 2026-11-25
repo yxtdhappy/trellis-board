@@ -7,6 +7,23 @@ import {
 import { listTeamsForActor } from '../teams.js'
 import { ERROR_CODES, teamError } from '../errors.js'
 
+function parsePreflightTaskMeta(jsonText) {
+  if (!jsonText) return { title: null, taskBranch: null }
+  try {
+    const parsed = JSON.parse(jsonText)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { title: null, taskBranch: null }
+    }
+    const title =
+      typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.trim() : null
+    const taskBranch =
+      typeof parsed.branch === 'string' && parsed.branch.trim() ? parsed.branch.trim() : null
+    return { title, taskBranch }
+  } catch {
+    return { title: null, taskBranch: null }
+  }
+}
+
 export function createAccess({ db, statements, view, allowFileRemote }) {
   function actorContext(userId, requestedTeamId = null) {
     const user = statements.userAccountById.get(userId)
@@ -283,6 +300,8 @@ export function createAccess({ db, statements, view, allowFileRemote }) {
         ...resolved,
         revision: 0,
         tasks: [],
+        hiddenTaskDirs: [],
+        archivedTaskBasenames: [],
       }
     }
     if (
@@ -295,10 +314,12 @@ export function createAccess({ db, statements, view, allowFileRemote }) {
         status: 'unavailable',
         revision: Number(resolved.taskSpace.revision || 0),
         tasks: [],
+        hiddenTaskDirs: [],
+        archivedTaskBasenames: [],
       }
     }
 
-    const rows = statements.preflightFiles.all(resolved.taskSpace.id)
+    const rows = statements.preflightFiles.all(userId, resolved.taskSpace.id)
     const groups = new Map()
     for (const row of rows) {
       let group = groups.get(row.task_dir)
@@ -306,6 +327,8 @@ export function createAccess({ db, statements, view, allowFileRemote }) {
         group = {
           taskDir: row.task_dir,
           taskId: null,
+          title: null,
+          taskBranch: null,
           files: [],
         }
         groups.set(row.task_dir, group)
@@ -314,15 +337,36 @@ export function createAccess({ db, statements, view, allowFileRemote }) {
         path: row.relative_path,
         sha256: row.sha256,
       })
-      if (row.relative_path === `${row.task_dir}/task.json` && row.task_id) {
-        group.taskId = row.task_id
+      if (row.relative_path === `${row.task_dir}/task.json`) {
+        if (row.task_id) group.taskId = row.task_id
+        const meta = parsePreflightTaskMeta(row.task_json_text)
+        group.title = meta.title
+        group.taskBranch = meta.taskBranch
       }
+    }
+
+    const hiddenTaskDirSet = new Set()
+    const archivedBasenameSet = new Set()
+    for (const row of statements.preflightHiddenTasks.all(resolved.taskSpace.id, userId)) {
+      const dir = String(row.relative_dir || '').trim()
+      if (!dir) continue
+      hiddenTaskDirSet.add(dir)
+      if (Number(row.archived) === 1) {
+        const base = dir.split('/').filter(Boolean).pop()
+        if (base) archivedBasenameSet.add(base)
+      }
+    }
+    for (const row of statements.preflightLegacyTaskDirs.all(resolved.taskSpace.id)) {
+      const dir = String(row.task_dir || '').trim()
+      if (dir) hiddenTaskDirSet.add(dir)
     }
 
     return {
       ...resolved,
       revision: Number(resolved.taskSpace.revision || 0),
       tasks: [...groups.values()],
+      hiddenTaskDirs: [...hiddenTaskDirSet].sort(),
+      archivedTaskBasenames: [...archivedBasenameSet].sort(),
     }
   }
 

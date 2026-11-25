@@ -4,6 +4,7 @@
 //! `shared/task-snapshot.js` 的快照差异结构；这些能力由 `agent::onboarding` 与
 //! `agent::task_sync` 提供，本模块只做桌面侧编排与响应整形。
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -13,8 +14,9 @@ use crate::agent::credential::CredentialStore;
 use crate::agent::http::ApiClient;
 use crate::agent::onboarding::{self, AttachOptions};
 use crate::agent::protocol::{self, code, err, AgentError, AgentResult};
-use crate::agent::store::ConfigStore;
+use crate::agent::store::{AgentConfig, ConfigStore};
 use crate::agent::task_sync::{self, DiffKind, Difference, SnapshotFile, SnapshotGroup};
+use crate::agent::worktree;
 
 /// associateDesktopProject 的返回值；字段对照 JS，未赋值的项不序列化。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +148,7 @@ pub async fn preflight_desktop_project(
     api: &ApiClient,
     repo_path: &str,
     team_id: &str,
+    developer_id: &str,
     require_pushed: bool,
 ) -> AgentResult<Value> {
     let team_id = team_id.trim().to_string();
@@ -171,10 +174,11 @@ pub async fn preflight_desktop_project(
         })?;
     let result = run_preflight(
         api,
+        &config,
         Path::new(repo_path.trim()),
         &hooks_dir,
         &team_id,
-        config.allow_local_git_remotes,
+        developer_id,
         require_pushed,
     )
     .await;
@@ -184,17 +188,18 @@ pub async fn preflight_desktop_project(
 
 async fn run_preflight(
     api: &ApiClient,
+    config: &AgentConfig,
     repo_path: &Path,
     hooks_dir: &Path,
     team_id: &str,
-    allow_file_remote: bool,
+    developer_id: &str,
     require_pushed: bool,
 ) -> AgentResult<Value> {
     let local = onboarding::preflight_project_with(
         repo_path,
         hooks_dir,
         team_id,
-        allow_file_remote,
+        config.allow_local_git_remotes,
         require_pushed,
     )
     .await?;
@@ -209,32 +214,109 @@ async fn run_preflight(
         })?,
     );
 
-    // 没有任务空间访问权限时服务端不会给出任务快照，差异按空集合返回。
-    if payload.get("status").and_then(Value::as_str) == Some("access_required") {
+    // 没有任务空间访问权限或任务空间不可用时服务端不会给出任务快照，差异按空集合返回。
+    if matches!(
+        payload.get("status").and_then(Value::as_str),
+        Some("access_required") | Some("unavailable")
+    ) {
         payload.insert("differences".to_string(), json!([]));
         payload.insert("counts".to_string(), snapshot_counts(&[]));
         return Ok(Value::Object(payload));
     }
 
+    let trimmed_dev_id = developer_id.trim();
+    let effective_owner_id = if !trimmed_dev_id.is_empty() {
+        Some(trimmed_dev_id.to_string())
+    } else {
+        worktree::developer_id(repo_path, config, &local.inspected.remote_identity_key).await
+    };
+
     let local_files =
         task_sync::read_local_task_snapshot_files(Path::new(&local.inspected.root), None).await?;
     let local_groups = task_sync::group_task_snapshot_files(&local_files)?;
-    let server_groups = normalize_server_task_groups(payload.get("tasks"))?;
-    let differences = task_sync::classify_task_snapshots(&local_groups, &server_groups);
+    let (differences, server_titles) = build_preflight_differences(
+        &local.inspected.branch_name,
+        effective_owner_id.as_deref(),
+        local_groups,
+        &payload,
+    )?;
     payload.insert(
         "differences".to_string(),
-        Value::Array(differences.iter().map(difference_to_json).collect()),
+        Value::Array(
+            differences
+                .iter()
+                .map(|difference| difference_to_json(difference, &server_titles))
+                .collect(),
+        ),
     );
     payload.insert("counts".to_string(), snapshot_counts(&differences));
     Ok(Value::Object(payload))
 }
 
+fn build_preflight_differences(
+    branch_name: &str,
+    owner_id: Option<&str>,
+    mut local_groups: Vec<SnapshotGroup>,
+    payload: &serde_json::Map<String, Value>,
+) -> AgentResult<(Vec<Difference>, HashMap<String, String>)> {
+    if let Some(owner_id) = owner_id.map(str::trim).filter(|value| !value.is_empty()) {
+        local_groups.retain(|group| task_sync::group_owned_by_developer(group, owner_id));
+    }
+    let (mut server_groups, server_titles) =
+        normalize_server_task_groups_with_titles(payload.get("tasks"))?;
+    task_sync::retain_server_groups_for_branch_initial_sync(
+        branch_name,
+        &local_groups,
+        &mut server_groups,
+    );
+    let mut differences = task_sync::classify_task_snapshots(&local_groups, &server_groups);
+    let hidden_dirs = string_set_from_value(payload.get("hiddenTaskDirs"));
+    let archived_basenames = string_set_from_value(payload.get("archivedTaskBasenames"));
+    if !hidden_dirs.is_empty() || !archived_basenames.is_empty() {
+        differences.retain(|difference| {
+            if difference.kind != DiffKind::LocalOnly {
+                return true;
+            }
+            let Some(local) = difference.local.as_ref() else {
+                return true;
+            };
+            if hidden_dirs.contains(&local.task_dir) {
+                return false;
+            }
+            let basename = local.task_dir.rsplit('/').next().unwrap_or("");
+            !archived_basenames.contains(basename)
+        });
+    }
+    Ok((differences, server_titles))
+}
+
+fn string_set_from_value(value: Option<&Value>) -> HashSet<String> {
+    let Some(Value::Array(items)) = value else {
+        return HashSet::new();
+    };
+    items
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 /// 对照 JS normalizeServerTaskGroups。
+#[cfg(test)]
 fn normalize_server_task_groups(value: Option<&Value>) -> AgentResult<Vec<SnapshotGroup>> {
+    normalize_server_task_groups_with_titles(value).map(|(groups, _)| groups)
+}
+
+fn normalize_server_task_groups_with_titles(
+    value: Option<&Value>,
+) -> AgentResult<(Vec<SnapshotGroup>, HashMap<String, String>)> {
     let Some(Value::Array(groups)) = value else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), HashMap::new()));
     };
     let mut normalized = Vec::with_capacity(groups.len());
+    let mut titles = HashMap::new();
     for (index, group) in groups.iter().enumerate() {
         let Some(object) = group.as_object() else {
             return err(
@@ -260,6 +342,22 @@ fn normalize_server_task_groups(value: Option<&Value>) -> AgentResult<Vec<Snapsh
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
+        let task_branch = object
+            .get("taskBranch")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        if let Some(title) = object
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if !task_dir.is_empty() {
+                titles.insert(task_dir.clone(), title.to_string());
+            }
+        }
 
         let mut snapshot_files = Vec::with_capacity(files.len());
         let mut archived = false;
@@ -308,10 +406,10 @@ fn normalize_server_task_groups(value: Option<&Value>) -> AgentResult<Vec<Snapsh
             archive_month,
             files: snapshot_files,
             task_id,
-            task_branch: None,
+            task_branch,
         });
     }
-    Ok(normalized)
+    Ok((normalized, titles))
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -347,7 +445,17 @@ fn snapshot_counts(differences: &[Difference]) -> Value {
 }
 
 /// 对照 JS 的差异对象（task_sync 的 to_control 是私有的，这里按同一结构输出完整分组）。
-fn difference_to_json(difference: &Difference) -> Value {
+fn difference_to_json(difference: &Difference, server_titles: &HashMap<String, String>) -> Value {
+    let title = difference
+        .local
+        .as_ref()
+        .and_then(task_sync::task_title)
+        .or_else(|| {
+            difference
+                .server
+                .as_ref()
+                .and_then(|group| server_titles.get(&group.task_dir).cloned())
+        });
     json!({
         "type": match difference.kind {
             DiffKind::Same => "same",
@@ -359,6 +467,7 @@ fn difference_to_json(difference: &Difference) -> Value {
         },
         "taskId": difference.task_id,
         "taskDir": difference.task_dir,
+        "title": title,
         "local": difference.local.as_ref().map(group_to_json),
         "server": difference.server.as_ref().map(group_to_json),
     })

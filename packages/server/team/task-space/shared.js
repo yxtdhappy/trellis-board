@@ -113,10 +113,34 @@ const STATEMENTS = {
     WHERE s.project_id = ? AND s.branch_name = ?
   `,
   preflightFiles: `
-    SELECT relative_path, sha256, task_id, task_dir
-    FROM sync_task_space_file
-    WHERE task_space_id = ? AND deleted = 0
-    ORDER BY task_dir, relative_path
+    SELECT f.relative_path, f.sha256, f.task_id, f.task_dir,
+           CASE WHEN f.relative_path = f.task_dir || '/task.json' THEN f.content_text ELSE NULL END AS task_json_text
+    FROM sync_task_space_file f
+    JOIN sync_task t
+      ON t.task_space_id = f.task_space_id
+     AND t.task_id = f.task_id
+     AND t.assignee_user_id = ?
+     AND t.archived = 0
+    WHERE f.task_space_id = ? AND f.deleted = 0
+      AND f.task_dir NOT LIKE '.trellis/tasks/archive/%'
+      AND f.relative_path NOT LIKE '.trellis/tasks/archive/%'
+    ORDER BY f.task_dir, f.relative_path
+  `,
+  preflightHiddenTasks: `
+    SELECT relative_dir, archived
+    FROM sync_task
+    WHERE task_space_id = ?
+      AND (archived = 1 OR assignee_user_id IS NULL OR assignee_user_id <> ?)
+  `,
+  preflightLegacyTaskDirs: `
+    SELECT DISTINCT f.task_dir
+    FROM sync_task_space_file f
+    WHERE f.task_space_id = ? AND f.deleted = 0
+      AND f.task_dir NOT LIKE '.trellis/tasks/archive/%'
+      AND NOT EXISTS (
+        SELECT 1 FROM sync_task t
+        WHERE t.task_space_id = f.task_space_id AND t.task_id = f.task_id
+      )
   `,
   activeAgentDevice: "SELECT id, user_id FROM agent_device WHERE id = ? AND status = 'active'",
   insertProject: `

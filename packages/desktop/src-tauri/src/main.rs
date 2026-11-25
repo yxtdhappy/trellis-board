@@ -625,7 +625,7 @@ async fn preflight_pending_project(
 ) -> Result<serde_json::Value, String> {
     ensure_board_caller(&app, &window)?;
     let team_id = validate_project_id(team_id)?;
-    validate_developer_id(&developer_id)?;
+    let developer_id = validate_developer_id(&developer_id)?;
     let path = app
         .state::<DesktopAuthState>()
         .pending_project_path
@@ -633,7 +633,14 @@ async fn preflight_pending_project(
         .map_err(|_| "无法读取待接入项目路径".to_string())?
         .clone()
         .ok_or_else(|| "请先选择本地 Git 项目目录".to_string())?;
-    agent_service::preflight_project(&app, &path.to_string_lossy(), &team_id, require_pushed).await
+    agent_service::preflight_project(
+        &app,
+        &path.to_string_lossy(),
+        &team_id,
+        &developer_id,
+        require_pushed,
+    )
+    .await
 }
 
 #[tauri::command]

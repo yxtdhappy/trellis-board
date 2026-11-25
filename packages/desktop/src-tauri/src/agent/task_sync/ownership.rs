@@ -857,7 +857,13 @@ impl TaskSync {
                 let Some(sync) = this.upgrade() else {
                     return;
                 };
+                if *sync.watch_shutdown.borrow() {
+                    return;
+                }
                 loop {
+                    if *sync.watch_shutdown.borrow() {
+                        return;
+                    }
                     let pending = {
                         let mut pending = state.pending.lock().await;
                         if pending.is_empty() {

@@ -247,6 +247,24 @@ test('预检无需 binding 只返回任务元数据，无权团队拿不到任�
       localRepoKey: 'a'.repeat(64),
     })
     db.prepare(`
+      INSERT INTO sync_task(
+        execution_task_key, task_key, task_space_id, project_id, task_id, relative_dir,
+        title, description, priority, created_by_user_id, assignee_user_id, assignee_dev_id,
+        stage, archived, materialization_state, task_version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, '', 'P2', 'user-a', 'user-a', 'alice',
+        'planning', 0, 'materialized', 1, ?, ?)
+    `).run(
+      `${attached.taskSpace.id}::task-1`,
+      `${attached.taskSpace.id}::.trellis/tasks/01-demo`,
+      attached.taskSpace.id,
+      attached.project.id,
+      'task-1',
+      '.trellis/tasks/01-demo',
+      '示例任务一',
+      now,
+      now,
+    )
+    db.prepare(`
       INSERT INTO sync_task_space_file(
         task_space_id, relative_path, revision, sha256, content_text, deleted,
         task_id, task_dir, updated_at
@@ -255,7 +273,7 @@ test('预检无需 binding 只返回任务元数据，无权团队拿不到任�
       attached.taskSpace.id,
       '.trellis/tasks/01-demo/task.json',
       'b'.repeat(64),
-      '{"id":"task-1"}\n',
+      '{"id":"task-1","title":"示例任务一","branch":"main"}\n',
       'task-1',
       '.trellis/tasks/01-demo',
       now,
@@ -273,6 +291,8 @@ test('预检无需 binding 只返回任务元数据，无权团队拿不到任�
       {
         taskDir: '.trellis/tasks/01-demo',
         taskId: 'task-1',
+        title: '示例任务一',
+        taskBranch: 'main',
         files: [
           {
             path: '.trellis/tasks/01-demo/task.json',
@@ -281,6 +301,8 @@ test('预检无需 binding 只返回任务元数据，无权团队拿不到任�
         ],
       },
     ])
+    assert.deepEqual(existing.hiddenTaskDirs, [])
+    assert.deepEqual(existing.archivedTaskBasenames, [])
     assert.equal(JSON.stringify(existing).includes('"content"'), false)
     assert.deepEqual(counts(), before)
 
@@ -1124,6 +1146,160 @@ test('移除分支在备份失败时不删除 taskSpace，跨项目操作被拒�
         .get(first.taskSpace.id).count,
       0,
     )
+  } finally {
+    db.close()
+  }
+})
+
+test('预检仅返回当前用户未归档活跃任务并列出隐藏目录与归档基名', () => {
+  const { db, service, now } = setup()
+  try {
+    const memberB = addTeamAMember(db, 'c')
+    const attached = attachClient(service, 'user-a', 'agent-a', 'a', 'alice')
+    service.upsertMember(service.actorContext('user-a'), {
+      projectId: attached.project.id,
+      userId: memberB.userId,
+      role: 'member',
+      trellisDevId: 'charlie',
+    })
+    const insertTask = db.prepare(`
+      INSERT INTO sync_task(
+        execution_task_key, task_key, task_space_id, project_id, task_id, relative_dir,
+        title, description, priority, created_by_user_id, assignee_user_id, assignee_dev_id,
+        stage, archived, materialization_state, task_version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, '', 'P2', ?, ?, ?, 'planning', ?, 'materialized', 1, ?, ?)
+    `)
+    const insertFile = db.prepare(`
+      INSERT INTO sync_task_space_file(
+        task_space_id, relative_path, revision, sha256, content_text, deleted,
+        task_id, task_dir, updated_at
+      ) VALUES (?, ?, 1, ?, ?, 0, ?, ?, ?)
+    `)
+    const taskSpaceId = attached.taskSpace.id
+    const projectId = attached.project.id
+
+    // 1. 当前用户活跃任务
+    insertTask.run(
+      `${taskSpaceId}::mine`,
+      `${taskSpaceId}::.trellis/tasks/11-25-mine`,
+      taskSpaceId,
+      projectId,
+      'mine',
+      '.trellis/tasks/11-25-mine',
+      '我的任务',
+      'user-a',
+      'user-a',
+      'alice',
+      0,
+      now,
+      now,
+    )
+    insertFile.run(
+      taskSpaceId,
+      '.trellis/tasks/11-25-mine/task.json',
+      '1'.repeat(64),
+      JSON.stringify({ id: 'mine', title: '我的任务（最新）', branch: 'main' }),
+      'mine',
+      '.trellis/tasks/11-25-mine',
+      now,
+    )
+
+    // 2. 他人活跃任务
+    insertTask.run(
+      `${taskSpaceId}::theirs`,
+      `${taskSpaceId}::.trellis/tasks/11-23-theirs`,
+      taskSpaceId,
+      projectId,
+      'theirs',
+      '.trellis/tasks/11-23-theirs',
+      '他人任务',
+      memberB.userId,
+      memberB.userId,
+      'charlie',
+      0,
+      now,
+      now,
+    )
+    insertFile.run(
+      taskSpaceId,
+      '.trellis/tasks/11-23-theirs/task.json',
+      '2'.repeat(64),
+      JSON.stringify({ id: 'theirs', title: '他人任务', branch: 'main' }),
+      'theirs',
+      '.trellis/tasks/11-23-theirs',
+      now,
+    )
+
+    // 3. 已归档任务
+    insertTask.run(
+      `${taskSpaceId}::archived-one`,
+      `${taskSpaceId}::.trellis/tasks/11-20-archived`,
+      taskSpaceId,
+      projectId,
+      'archived-one',
+      '.trellis/tasks/11-20-archived',
+      '已归档任务',
+      'user-a',
+      'user-a',
+      'alice',
+      1,
+      now,
+      now,
+    )
+    insertFile.run(
+      taskSpaceId,
+      '.trellis/tasks/11-20-archived/task.json',
+      '3'.repeat(64),
+      JSON.stringify({ id: 'archived-one', title: '已归档任务', branch: 'main' }),
+      'archived-one',
+      '.trellis/tasks/11-20-archived',
+      now,
+    )
+
+    // 4. 误入 archive 路径的活动文件
+    insertFile.run(
+      taskSpaceId,
+      '.trellis/tasks/archive/2026-11/11-19-old/task.json',
+      '4'.repeat(64),
+      JSON.stringify({ id: 'mine', title: '归档路径', branch: 'main' }),
+      'mine',
+      '.trellis/tasks/archive/2026-11/11-19-old',
+      now,
+    )
+
+    // 5. 无 sync_task 行的 legacy 文件
+    insertFile.run(
+      taskSpaceId,
+      '.trellis/tasks/11-18-legacy/task.json',
+      '5'.repeat(64),
+      JSON.stringify({ id: 'legacy', title: '遗留任务', branch: 'main' }),
+      'legacy',
+      '.trellis/tasks/11-18-legacy',
+      now,
+    )
+
+    const result = service.preflight('user-a', {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'main',
+      teamId: 'team-a',
+    })
+    assert.equal(result.status, 'existing')
+    assert.deepEqual(result.tasks, [
+      {
+        taskDir: '.trellis/tasks/11-25-mine',
+        taskId: 'mine',
+        title: '我的任务（最新）',
+        taskBranch: 'main',
+        files: [{ path: '.trellis/tasks/11-25-mine/task.json', sha256: '1'.repeat(64) }],
+      },
+    ])
+    assert.deepEqual(result.hiddenTaskDirs, [
+      '.trellis/tasks/11-18-legacy',
+      '.trellis/tasks/11-20-archived',
+      '.trellis/tasks/11-23-theirs',
+    ])
+    assert.deepEqual(result.archivedTaskBasenames, ['11-20-archived'])
+    assert.equal(JSON.stringify(result).includes('"content"'), false)
   } finally {
     db.close()
   }

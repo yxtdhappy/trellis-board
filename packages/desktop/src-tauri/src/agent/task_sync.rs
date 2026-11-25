@@ -123,11 +123,13 @@ pub struct TaskSync {
     #[cfg(test)]
     task_entries_examined: std::sync::atomic::AtomicUsize,
     baseline_owned: Mutex<HashSet<String>>,
-    watch: Mutex<WatchState>,
+    watch: std::sync::Mutex<WatchState>,
+    watch_shutdown: tokio::sync::watch::Sender<bool>,
 }
 
 impl TaskSync {
     pub fn new(store: Arc<ConfigStore>, api: Arc<ApiClient>, emit: ControlSink) -> Self {
+        let (watch_shutdown, _) = tokio::sync::watch::channel(false);
         Self {
             store,
             api,
@@ -171,8 +173,17 @@ impl TaskSync {
             #[cfg(test)]
             task_entries_examined: std::sync::atomic::AtomicUsize::new(0),
             baseline_owned: Mutex::new(HashSet::new()),
-            watch: Mutex::new(WatchState::default()),
+            watch: std::sync::Mutex::new(WatchState::default()),
+            watch_shutdown,
         }
+    }
+    pub fn stop(&self) {
+        let _ = self.watch_shutdown.send(true);
+        if let Ok(mut state) = self.watch.lock() {
+            state.watchers.clear();
+            state.tx = None;
+        }
+        self.ownership_validation_state.notify.notify_one();
     }
     pub fn with_ownership_index_writer(self) -> Self {
         self.ownership_index_writer
@@ -191,7 +202,7 @@ impl TaskSync {
 
 impl Drop for TaskSync {
     fn drop(&mut self) {
-        self.ownership_validation_state.notify.notify_one();
+        self.stop();
     }
 }
 
@@ -235,6 +246,8 @@ use handoff::{
     safe_handoff_relative_path, HandoffSource, HandoffSourceState,
 };
 #[allow(unused_imports)]
+pub(crate) use initial_sync::retain_server_groups_for_branch_initial_sync;
+#[allow(unused_imports)]
 use initial_sync::{
     allows_cross_source_server_group, binding_is_baseline, hide_control_tombstone_local_only,
     inactive_control_dirs, initial_sync_mode, retain_server_groups_for_binding,
@@ -250,6 +263,8 @@ use local_files::{
     archived_task_copies, copy_directory, resolve_task_directory, task_directory_digest,
     task_directory_file_paths, write_task_directory,
 };
+#[allow(unused_imports)]
+pub(crate) use ownership_filter::group_owned_by_developer;
 #[allow(unused_imports)]
 use ownership_inbox::{
     ownership_ledger_task_dirs, OwnershipDecision, OwnershipResolution, OwnershipReview,
@@ -277,13 +292,12 @@ pub use paths::{
     normalize_snapshot_path, task_directory_from_path, task_directory_from_relative, TaskPathParts,
 };
 #[allow(unused_imports)]
-pub(crate) use snapshot::parse_directory_files;
-#[allow(unused_imports)]
 use snapshot::{
     build_directory_files, file_map, groups_from_structs, is_handoff_backup_id, is_sha256,
     move_pairs, parse_snapshot_controls, parse_snapshot_files, parse_snapshot_files_from_values,
-    parse_task_id, parse_task_metadata, same_files, sha256_bytes, task_fingerprint, task_owner,
-    task_title, uploads_to_snapshot_files, validate_upload_batch, DirectoryEntry, UploadMode,
+    parse_task_id, parse_task_metadata, parse_task_title, same_files, sha256_bytes,
+    task_fingerprint, task_owner, uploads_to_snapshot_files, validate_upload_batch, DirectoryEntry,
+    UploadMode,
 };
 #[allow(unused_imports)]
 pub use snapshot::{
@@ -292,9 +306,11 @@ pub use snapshot::{
     UploadFile,
 };
 #[allow(unused_imports)]
+pub(crate) use snapshot::{parse_directory_files, task_title};
+#[allow(unused_imports)]
 use upload::{
     build_upload_request, execution_task_keys_from_upload, pending_task_dirs,
-    response_control_execution_task_key,
+    response_control_execution_task_key, UploadFenceOutcome,
 };
 #[allow(unused_imports)]
 use watch::{

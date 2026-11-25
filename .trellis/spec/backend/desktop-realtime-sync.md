@@ -485,14 +485,17 @@ taskSpace、binding 或 cursor，也不返回任务正文。返回结果按稳�
     {
       "taskId": "task-id",
       "taskDir": ".trellis/tasks/task-id",
+      "title": "任务标题",
+      "taskBranch": "main",
       "files": [{ "path": ".trellis/tasks/task-id/task.json", "sha256": "..." }]
     }
-  ]
+  ],
+  "hiddenTaskDirs": [".trellis/tasks/other-user-task"],
+  "archivedTaskBasenames": ["11-20-archived"]
 }
 ```
 
-`new`、`branch_new`、`access_required` 和 `unavailable` 不返回任何任务元数据。只有 `existing`
-且项目、taskSpace 均可用时才返回任务分组；客户端使用这些元数据与本地文件摘要分类：
+`new`、`branch_new`、`access_required` 和 `unavailable` 不返回任何任务元数据（`tasks`/`hiddenTaskDirs`/`archivedTaskBasenames` 均为空）。只有 `existing` 且项目、taskSpace 均可用时才返回当前用户可见的未归档活跃任务分组及可选 `title`/`taskBranch`；`hiddenTaskDirs` 列出同任务空间内非本人活跃任务、已归档任务与无 `sync_task` 行的 legacy 活跃目录，`archivedTaskBasenames` 列出已归档目录名。桌面端透传 `developerId`（缺失回退 `worktree::developer_id`），在全状态下按 `group_owned_by_developer` 过滤本地他人任务，按 `retain_server_groups_for_branch_initial_sync` 过滤跨分支任务，并剔除命中 `hiddenTaskDirs`/`archivedTaskBasenames` 的 `LocalOnly` 差异；`difference_to_json` 带出 `title` 供接入弹窗展示明细。客户端使用这些元数据与本地文件摘要分类：
 
 - `same`
 - `local-only`
@@ -542,8 +545,8 @@ CAS 失败返回 `409 TASK_FILE_CONFLICT`，包含 `conflictId`、任务名、�
 
 - 查看差异：本地读取本地目录和服务端目录，逐文件返回内容差异。
 - `use-server`：先备份本地完整目录，再用服务端目录原子替换。
-- `overwrite-server`：重新核对冲突后摘要，保存服务端旧内容与新内容到 `sync_conflict_backup`，
-  写新 revision 和审计，并标记冲突已解决。
+- `overwrite-server`：客户端先经共享 `acquire_upload_fence` 获取/续约 `taskVersion` 与 `leaseToken`（遇到归档/只读/他人租约等控制面阻断直接返回 `skipped`），服务端 `resolveConflict` 将两字段透传给 `applyChangesInternal`；核对冲突摘要后保存服务端旧内容与新内容到 `sync_conflict_backup`，写新 revision 和审计并标记冲突已解决；客户端随后持久化控制态并将已覆盖文件写入 `suppressed`，避免 watcher 重复判定 dirty。
+- `listConflicts` 关联 `sync_task` 返回可选 `taskTitle`；客户端 `reopen_conflicts` 与 `conflict_summary` 按 `taskTitle -> 本地 task.json title -> taskId -> taskDir -> "任务"` 逐级回退。
 - `save-local-copy`：复制本地完整目录到客户端备份，不改变服务端任务快照。
 
 第一版不自动合并 Markdown、JSON 或 JSONL。

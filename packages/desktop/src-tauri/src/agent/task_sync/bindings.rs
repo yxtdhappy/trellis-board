@@ -52,7 +52,11 @@ pub(super) fn association_map_unchanged(
         })
 }
 impl TaskSync {
-    pub(super) async fn task_space_sync_lock(&self, task_space_id: &str) -> Arc<Mutex<()>> {
+    pub(crate) async fn has_binding(&self, task_space_id: &str) -> bool {
+        self.bindings.lock().await.contains_key(task_space_id)
+    }
+
+    pub(crate) async fn task_space_sync_lock(&self, task_space_id: &str) -> Arc<Mutex<()>> {
         self.binding_sync_locks
             .lock()
             .await
