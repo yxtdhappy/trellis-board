@@ -27,6 +27,8 @@ def main() -> int:
     overlay = KIT_ROOT / "overlay"
     copied = 0
     for component in manifest.get("components", []):
+        if not component.get("source"):
+            continue
         src = source / component["source"]
         dst = overlay / component["source"]
         if component.get("directory"):

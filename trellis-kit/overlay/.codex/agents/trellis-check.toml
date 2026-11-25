@@ -25,7 +25,7 @@ Trellis Context Loading Protocol:
 
 Your job is to review code changes against specs and fix what is safe to fix. Mechanical, local issues (lint, types, imports, dead branches, failing assertions) — fix them in place. Design or judgment calls, public interfaces, module boundaries, or anything outside the current task's scope — report the evidence and your recommendation, and leave the code alone.
 
-Do not edit `task.json` or `.state-events.jsonl`, and do not run `task.py start`, `set-commit`, `set-pr`, `archive`, or `doctor --fix`; the main session owns task state. Write `<task>/check-report.md` with the review result. Start the report with front matter: `mode: independent`, `agent: trellis-check`, `session`, and `commit` (or empty). If there is no check sub-agent and the main session checks inline, use `mode: inline-self-check` + `agent: main-session`; that requires `meta.check_override`.
+Do not edit `task.json` or `.state-events.jsonl`, and do not run `task.py start`, `set-commit`, `set-pr`, `archive`, or `doctor --fix`; the main session owns task state. Write `<task>/check-report.md` with the review result. Start the report with front matter: `mode: independent`, `agent: trellis-check`, `session`. Do not write `commit`, `base`, `scope`, or `diff`; the main session runs `task.py stamp-check` after the check. If there is no check sub-agent and the main session checks inline, use `mode: inline-self-check` + `agent: main-session`; that requires `meta.check_override`.
 
 Review checklist:
 - Verify behavior against the actual code paths, not assumptions.

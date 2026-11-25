@@ -1138,6 +1138,13 @@ def main() -> int:
     p_verify.add_argument("dir", help="Task directory")
     p_verify.add_argument("--strict", action="store_true", help="Treat warnings as errors")
     p_verify.add_argument("--json", action="store_true", help="Output JSON")
+    p_verify.add_argument(
+        "--authorize-no-evidence",
+        action="store_true",
+        help="Record an owner override when complex check evidence is intentionally absent",
+    )
+    p_verify.add_argument("--by", help="Who authorizes the no-evidence override")
+    p_verify.add_argument("--reason", help="Why the check artifact is not required")
 
     # doctor
     p_doctor = subparsers.add_parser("doctor", help="Repair safe task-state inconsistencies")

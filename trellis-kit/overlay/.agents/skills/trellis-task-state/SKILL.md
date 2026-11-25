@@ -57,10 +57,13 @@ python ./.trellis/scripts/task.py set-check-override <task-dir> --by <who> --rea
 
 ```bash
 python ./.trellis/scripts/task.py verify <task-dir> [--strict]
+python ./.trellis/scripts/task.py verify <task-dir> --strict \
+  --authorize-no-evidence --by <owner> --reason "why the missing check artifact is acceptable"
 python ./.trellis/scripts/task.py doctor <task-dir> --fix
 ```
 
-- `verify` is read-only. Exit 1 = errors, 2 = warnings.
+- `verify` is read-only by default. Exit 1 = errors, 2 = warnings, 4 = complex task needs an owner decision because check evidence is missing.
+- `--authorize-no-evidence` records `meta.check_override` (bound to the current commit) and then re-runs the check. It does not bypass missing implementation reports, unbound check reports, or state regressions.
 - `doctor --fix` only repairs unambiguous cases: event log says in_progress while task.json says planning; `meta.commit` migrated to top-level.
 - Do not archive past a failing `verify --strict`.
 

@@ -2284,7 +2284,6 @@ def cmd_set_commit(args: argparse.Namespace) -> int:
         elif (
             (data.get("task_type") or "legacy") == "complex"
             and (report_meta.get("mode") or "").strip().lower() == "independent"
-            and not strip_blank(report_meta.get("commit"))
         ):
             print(
                 colored(
@@ -2299,6 +2298,24 @@ def cmd_set_commit(args: argparse.Namespace) -> int:
     meta = data.get("meta")
     if not isinstance(meta, dict):
         meta = {}
+    override_bound = False
+    override = meta.get("check_override")
+    if isinstance(override, dict):
+        bound_override = strip_blank(override.get("commit"))
+        if not bound_override:
+            override["commit"] = resolved
+            meta["check_override"] = override
+            override_bound = True
+        elif bound_override != resolved:
+            print(
+                colored(
+                    "Error: existing check override is bound to a different commit; "
+                    "re-authorize it for this commit.",
+                    Colors.RED,
+                ),
+                file=sys.stderr,
+            )
+            return 1
     meta.pop("check_binding", None)
     if check_binding is not None:
         meta["check_binding"] = check_binding
@@ -2326,7 +2343,11 @@ def cmd_set_commit(args: argparse.Namespace) -> int:
         from_status=data.get("status"),
         to_status=data.get("status"),
         actor=data.get("assignee") or get_developer(repo_root),
-        extra={"commit": resolved, "check_bound": check_binding is not None},
+        extra={
+            "commit": resolved,
+            "check_bound": check_binding is not None,
+            "check_override_bound": override_bound,
+        },
     )
 
     if getattr(args, "persist", False):
@@ -2413,6 +2434,7 @@ def cmd_set_evidence(args: argparse.Namespace) -> int:
     if loaded is None:
         return 1
     target_dir, task_json, data = loaded
+    repo_root = get_repo_root()
     meta = data.get("meta")
     if not isinstance(meta, dict):
         meta = {}
@@ -2425,6 +2447,15 @@ def cmd_set_evidence(args: argparse.Namespace) -> int:
         "at": datetime.now().isoformat(timespec="seconds"),
     }
     commit = strip_blank(getattr(args, "commit", None))
+    if commit:
+        rc, out, err = run_git(["rev-parse", "--verify", f"{commit}^{{commit}}"], cwd=repo_root)
+        if rc != 0 or not out.strip():
+            print(
+                colored(f"Error: evidence commit not found: {commit}", Colors.RED),
+                file=sys.stderr,
+            )
+            return 1
+        commit = out.strip().splitlines()[0]
     confirmed_by = strip_blank(getattr(args, "confirmed_by", None))
     if commit:
         entry["commit"] = commit
@@ -2460,8 +2491,18 @@ def cmd_set_check_override(args: argparse.Namespace) -> int:
     if loaded is None:
         return 1
     target_dir, task_json, data = loaded
+    repo_root = get_repo_root()
     meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
     commit = strip_blank(getattr(args, "commit", None)) or strip_blank(data.get("commit"))
+    if commit:
+        rc, out, err = run_git(["rev-parse", "--verify", f"{commit}^{{commit}}"], cwd=repo_root)
+        if rc != 0 or not out.strip():
+            print(
+                colored(f"Error: override commit not found: {commit}", Colors.RED),
+                file=sys.stderr,
+            )
+            return 1
+        commit = out.strip().splitlines()[0]
     override = {
         "by": by,
         "reason": reason,
@@ -2498,17 +2539,21 @@ def _acceptance_checked(task_dir: Path) -> bool:
         return False
 
 
-def _has_frontend_check_evidence(meta: dict) -> bool:
+def _has_frontend_check_evidence(meta: dict, task_commit: str | None = None) -> bool:
     """Return True for a frontend evidence entry that can close the check gate.
 
     E2E evidence is objective enough to stand alone; visual/manual evidence
     needs an explicit owner confirmation so a screenshot alone cannot pass.
+    Evidence must also point at the task commit; stale screenshots from an
+    earlier revision cannot close the gate.
     """
     entries = meta.get("frontend_evidence")
-    if not isinstance(entries, list):
+    if not isinstance(entries, list) or not task_commit:
         return False
     for item in entries:
         if not isinstance(item, dict):
+            continue
+        if item.get("commit") != task_commit:
             continue
         evidence_type = item.get("type")
         if evidence_type == "e2e":
@@ -2706,6 +2751,7 @@ def _verify_check_report_provenance(
 
     mode = (meta.get("mode") or "").strip().lower()
     agent = (meta.get("agent") or "").strip()
+    session = (meta.get("session") or "").strip()
     if mode not in ("independent", "inline-self-check"):
         add(
             "error",
@@ -2714,6 +2760,8 @@ def _verify_check_report_provenance(
         )
     if not agent:
         add("error", "check_report_agent_missing", "check-report.md agent is required")
+    if not session:
+        add("error", "check_report_session_missing", "check-report.md session is required")
     elif mode == "independent" and agent.lower() in {"main-session", "main", "self"}:
         add(
             "error",
@@ -2759,7 +2807,6 @@ def _verify_check_report_provenance(
         mode == "independent"
         and (data.get("task_type") or "legacy") == "complex"
         and data.get("status") != "completed"
-        and not bound
     ):
         add(
             "error",
@@ -2849,7 +2896,7 @@ def _verify_task(task_dir: Path, data: dict) -> list[dict]:
         if not override.get("by") or not override.get("reason"):
             add("error", "check_override_incomplete", "meta.check_override needs by and reason")
 
-    frontend_check_ok = _has_frontend_check_evidence(meta)
+    frontend_check_ok = _has_frontend_check_evidence(meta, data.get("commit"))
     if task_type == "complex":
         if not reports["implementation"]:
             add(
@@ -2864,7 +2911,7 @@ def _verify_task(task_dir: Path, data: dict) -> list[dict]:
                 "complex task needs check-report, a checked acceptance item, "
                 "confirmed frontend evidence, or meta.check_override",
             )
-        if reports["check"] and not override:
+        if reports["check"]:
             _verify_check_report_provenance(task_dir, data, findings, add)
     elif task_type == "simple":
         if not (
@@ -2900,7 +2947,40 @@ def cmd_verify(args: argparse.Namespace) -> int:
     loaded = _load_task_for_write(args)
     if loaded is None:
         return 1
-    target_dir, _task_json, data = loaded
+    target_dir, task_json, data = loaded
+
+    if getattr(args, "authorize_no_evidence", False):
+        by = strip_blank(getattr(args, "by", None))
+        reason = strip_blank(getattr(args, "reason", None))
+        if not by or not reason:
+            print(
+                colored("Error: --authorize-no-evidence needs --by and --reason.", Colors.RED),
+                file=sys.stderr,
+            )
+            return 1
+        meta = data.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        override = {
+            "by": by,
+            "reason": reason,
+            "commit": strip_blank(data.get("commit")) or None,
+            "at": datetime.now().isoformat(timespec="seconds"),
+        }
+        meta["check_override"] = override
+        data["meta"] = meta
+        if not write_json(task_json, data):
+            _report_write_failure(task_json)
+            return 1
+        append_state_event(
+            target_dir,
+            "check_override",
+            from_status=data.get("status"),
+            to_status=data.get("status"),
+            reason=reason,
+            extra={"override": override},
+        )
+
     findings = _verify_task(target_dir, data)
     strict = getattr(args, "strict", False)
     if strict:
@@ -2910,15 +2990,44 @@ def cmd_verify(args: argparse.Namespace) -> int:
     errors = [item for item in findings if item["level"] == "error"]
     warnings = [item for item in findings if item["level"] == "warning"]
 
+    decision_codes = {"check_evidence_missing", "frontend_evidence_missing"}
+    needs_user_decision = bool(
+        errors
+        and (data.get("task_type") or "legacy") == "complex"
+        and all(item["code"] in decision_codes for item in errors)
+    )
+
     if getattr(args, "json", False):
-        print(json.dumps({"ok": not errors, "errors": errors, "warnings": warnings}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {
+                    "ok": not errors,
+                    "needs_user_decision": needs_user_decision,
+                    "errors": errors,
+                    "warnings": warnings,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     else:
         for item in findings:
             color = Colors.RED if item["level"] == "error" else Colors.YELLOW
             print(colored(f"[{item['level']}] {item['code']}: {item['message']}", color))
+        if needs_user_decision:
+            print(
+                colored(
+                    "Need user decision: rerun with "
+                    "`--authorize-no-evidence --by <name> --reason <why>` "
+                    "if the missing check artifact is acceptable.",
+                    Colors.YELLOW,
+                )
+            )
         if not findings:
             print(colored("✓ No findings", Colors.GREEN))
 
+    if needs_user_decision:
+        return 4
     if errors:
         return 1
     if warnings:

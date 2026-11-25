@@ -49,6 +49,20 @@ function git(cwd, args) {
   })
 }
 
+function listFiles(root) {
+  const files = []
+  const walk = (dir, prefix = '') => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) walk(full, rel)
+      else if (entry.isFile()) files.push(rel)
+    }
+  }
+  walk(root)
+  return files.sort()
+}
+
 function initTempGitRepo(dir) {
   git(dir, ['init', '-b', 'main'])
   git(dir, ['config', 'user.name', 'Trellis Test'])
@@ -199,13 +213,14 @@ test('state_persist_degraded can be resolved by start --commit-state', () => {
     git(repo, ['commit', '-m', 'feat: work'])
     runPython([taskPy, 'set-commit', created, 'HEAD'], repo)
 
-    const head = git(repo, ['rev-parse', 'HEAD']).trim()
     fs.writeFileSync(path.join(taskPath, 'implementation-report.md'), '# Impl\n', 'utf8')
     fs.writeFileSync(
       path.join(taskPath, 'check-report.md'),
-      `---\nmode: independent\nagent: trellis-check\nsession: test\ncommit: ${head}\n---\n# Check\n`,
+      '---\nmode: independent\nagent: trellis-check\nsession: test\n---\n# Check\n',
       'utf8',
     )
+    runPython([taskPy, 'stamp-check', created, '--scope', 'work.txt', '--base', 'HEAD'], repo)
+    runPython([taskPy, 'set-commit', created, 'HEAD'], repo)
 
     const cleanVerify = runPythonResult([taskPy, 'verify', created, '--strict'], repo)
     assert.equal(cleanVerify.status, 0, cleanVerify.stdout + cleanVerify.stderr)
@@ -316,6 +331,96 @@ test('apply.py syncs TRELLIS-BOARD workflow rules into AGENTS.md idempotently', 
     runPython([APPLY_PY, '--target', tmp])
     assert.equal(fs.readFileSync(path.join(tmp, 'AGENTS.md'), 'utf8').trim(), snippet)
   })
+})
+
+test('apply.py records optional features without copying their descriptors', () => {
+  withTempDir('trellis-kit-feature-', (target) => {
+    const markerPath = path.join(target, '.trellis', '.kit-version')
+
+    runPython([APPLY_PY, '--target', target, '--force'], ROOT_DIR)
+    let marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'))
+    assert.deepEqual(marker.features, [])
+    assert.equal(
+      fs.existsSync(path.join(target, 'features/company-spec/feature.json')),
+      false,
+    )
+
+    runPython(
+      [APPLY_PY, '--target', target, '--force', '--feature', 'company-spec'],
+      ROOT_DIR,
+    )
+    marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'))
+    assert.deepEqual(marker.features, ['company-spec'])
+    assert.equal(
+      fs.existsSync(path.join(target, 'features/company-spec/feature.json')),
+      false,
+    )
+
+    runPython([APPLY_PY, '--target', target, '--force'], ROOT_DIR)
+    marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'))
+    assert.deepEqual(marker.features, ['company-spec'])
+
+    const unknown = runPythonResult(
+      [APPLY_PY, '--target', target, '--force', '--feature', 'unknown'],
+      ROOT_DIR,
+    )
+    assert.notEqual(unknown.status, 0)
+    assert.match(unknown.stderr, /unknown feature/)
+
+    const agentOnly = runPythonResult(
+      [
+        APPLY_PY,
+        '--target',
+        target,
+        '--force',
+        '--agent-only',
+        '--feature',
+        'company-spec',
+      ],
+      ROOT_DIR,
+    )
+    assert.notEqual(agentOnly.status, 0)
+    assert.match(agentOnly.stderr, /--agent-only/)
+  })
+})
+
+test('every manifest component matches the self-contained overlay', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(KIT_DIR, 'manifest.json'), 'utf8'))
+  for (const component of manifest.components) {
+    if (!component.source) continue
+    const source = path.join(ROOT_DIR, component.source)
+    const overlay = path.join(KIT_DIR, 'overlay', component.source)
+    if (component.directory) {
+      assert.equal(
+        fs.existsSync(overlay),
+        true,
+        `missing overlay directory for ${component.id}: ${component.source}`,
+      )
+      const sourceFiles = listFiles(source)
+      const overlayFiles = listFiles(overlay)
+      assert.deepEqual(overlayFiles, sourceFiles, `${component.id} overlay file list differs`)
+      for (const rel of sourceFiles) {
+        assert.equal(
+          fs
+            .readFileSync(path.join(source, rel))
+            .equals(fs.readFileSync(path.join(overlay, rel))),
+          true,
+          `${component.id} overlay differs: ${rel}`,
+        )
+      }
+    } else {
+      assert.equal(
+        fs.existsSync(overlay),
+        true,
+        `missing overlay file for ${component.id}: ${component.source}`,
+      )
+      assert.equal(
+        fs.readFileSync(source).equals(fs.readFileSync(overlay)),
+        true,
+        `${component.id} overlay differs: ${component.source}`,
+      )
+    }
+  }
 })
 
 test('portable package stays single-file and build.rs embeds trellis-kit', (t) => {
