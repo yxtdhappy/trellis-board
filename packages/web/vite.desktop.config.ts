@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
+import { injectAppNameHtml } from './vite-app-name.ts'
 
 const webDir = path.dirname(fileURLToPath(import.meta.url))
 const desktopDir = path.resolve(webDir, 'desktop')
@@ -21,7 +22,7 @@ export default defineConfig({
   root: desktopDir,
   base: './',
   publicDir: path.resolve(webDir, 'public'),
-  plugins: [react(), tailwindcss(), stripDevCsp()],
+  plugins: [react(), tailwindcss(), stripDevCsp(), injectAppNameHtml()],
   resolve: {
     alias: {
       '@': path.resolve(webDir, 'src'),

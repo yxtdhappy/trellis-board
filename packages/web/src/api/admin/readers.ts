@@ -210,6 +210,7 @@ export function readRuntime(payload: unknown): Runtime {
   return {
     mode: mode === 'team' ? 'team' : 'standalone',
     team: flag(row.team ?? row.teamMode ?? row.team_mode) || mode === 'team',
+    appName: optionalText(row.appName ?? row.app_name),
     authenticated: row.authenticated !== false,
     user,
     systemAdmin: flag(row.systemAdmin ?? row.system_admin) || Boolean(user?.systemAdmin),

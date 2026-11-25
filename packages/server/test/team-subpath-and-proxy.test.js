@@ -6,14 +6,17 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import {
+  DEFAULT_APP_NAME,
   DEFAULT_INITIAL_ADMIN_PASSWORD,
   DEFAULT_INITIAL_ADMIN_USERNAME,
+  normalizeAppName,
   normalizeBasePath,
   parseTeamConfig,
 } from '../config.js'
 import { loadProjectEnv } from '../env-file.js'
 import { AGENT_PROTOCOL_VERSION } from '../team/sync-agent-service.js'
 import { createTeamRuntime } from '../team/http.js'
+import { rewriteHtmlForAppName } from '../team/http/common.js'
 
 const HOST = 'spec-board.weintdata.cn'
 const PUBLIC_ORIGIN = `http://${HOST}`
@@ -136,6 +139,131 @@ test('parseTeamConfig 默认 trustProxy=true，支持覆盖，且仓库 .env 默
   const fromRepoEnv = parseTeamConfig(repoEnv)
   assert.equal(fromRepoEnv.basePath, '/weint-spec-board')
   assert.equal(fromRepoEnv.trustProxy, true)
+  assert.equal(fromRepoEnv.appName, 'Weint Spec Board')
+})
+
+test('normalizeAppName 回退默认值、校验控制字符与长度上限，并支持 HTML 安全转义重写', () => {
+  assert.equal(DEFAULT_APP_NAME, 'Board')
+  assert.equal(normalizeAppName(undefined), 'Board')
+  assert.equal(normalizeAppName(''), 'Board')
+  assert.equal(normalizeAppName('   '), 'Board')
+  assert.equal(normalizeAppName('  Acme Board  '), 'Acme Board')
+  assert.equal(normalizeAppName('A'.repeat(80)), 'A'.repeat(80))
+
+  for (const invalid of ['bad\nname', 'bad\0name', 'bad\x1fname', 'bad\x7fname', 'A'.repeat(81)]) {
+    assert.throws(() => normalizeAppName(invalid), /TRELLIS_BOARD_APP_NAME 配置无效/)
+  }
+
+  const bakedHtml = [
+    '<!doctype html><html><head>',
+    '<meta name="description" content="Old Build 看板" />',
+    '<meta name="trellis-app-name" content="Old Build" />',
+    '<title>团队管理 · Old Build</title>',
+    '</head><body></body></html>',
+  ].join('')
+  const rewritten = rewriteHtmlForAppName(bakedHtml, '<script>alert(1)</script> & "Team"')
+  assert.match(
+    rewritten,
+    /<meta name="trellis-app-name" content="&lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; &quot;Team&quot;" \/>/,
+  )
+  assert.match(
+    rewritten,
+    /<title>团队管理 · &lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; &quot;Team&quot;<\/title>/,
+  )
+  assert.match(
+    rewritten,
+    /<meta name="description" content="&lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; &quot;Team&quot; 看板" \/>/,
+  )
+  assert.equal((rewritten.match(/trellis-app-name/g) || []).length, 1)
+})
+
+test('TRELLIS_BOARD_APP_NAME 运行时通过 /api/runtime、/api/auth/me 与静态 HTML 动态下发且防 XSS', async () => {
+  const root = makeTempDir('trellis-app-name-http-')
+  const dataDir = path.join(root, 'data')
+  const publicDir = path.join(root, 'public')
+  let runtime = null
+  try {
+    fs.mkdirSync(publicDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(publicDir, 'index.html'),
+      '<!doctype html><html><head><meta name="description" content="{{APP_NAME}} 任务流水线看板。" /><title>{{APP_NAME}}</title></head><body></body></html>',
+    )
+    fs.writeFileSync(
+      path.join(publicDir, 'login.html'),
+      '<!doctype html><html><head><meta name="description" content="登录 {{APP_NAME}} 团队协作控制台。" /><title>登录 · {{APP_NAME}}</title></head><body></body></html>',
+    )
+    fs.writeFileSync(
+      path.join(publicDir, 'admin.html'),
+      '<!doctype html><html><head><meta name="description" content="{{APP_NAME}} 团队管理台。" /><title>团队管理 · {{APP_NAME}}</title></head><body></body></html>',
+    )
+    fs.writeFileSync(
+      path.join(publicDir, 'share.html'),
+      '<!doctype html><html><head><title>打开 {{APP_NAME}} 客户端</title></head><body><h1 id="opening">正在打开 {{APP_NAME}} 客户端</h1><p class="hint" id="hint">没有反应？请确认本机已安装 {{APP_NAME}} 客户端。</p></body></html>',
+    )
+
+    const customName = 'Custom <Board> & "Team"'
+    const config = {
+      ...parseTeamConfig({
+        TRELLIS_BOARD_MODE: 'team',
+        TRELLIS_BOARD_APP_NAME: customName,
+      }),
+      bindHost: '127.0.0.1',
+      port: 0,
+    }
+    runtime = await createTeamRuntime({
+      config,
+      databaseFile: path.join(dataDir, 'board.sqlite'),
+      dataDir,
+      publicDir,
+      logger: SILENT_LOGGER,
+      requireAdmin: true,
+      enablePolling: false,
+    })
+    await runtime.start()
+
+    const anonRuntime = await request(runtime, '/api/runtime')
+    assert.equal(anonRuntime.status, 200)
+    assert.equal(anonRuntime.body.appName, customName)
+
+    const loginRes = await request(runtime, '/api/auth/login', {
+      method: 'POST',
+      body: { username: DEFAULT_INITIAL_ADMIN_USERNAME, password: DEFAULT_INITIAL_ADMIN_PASSWORD },
+    })
+    assert.equal(loginRes.status, 200)
+    const cookie = String((loginRes.headers['set-cookie'] || [])[0]).split(';')[0]
+
+    const authedRuntime = await request(runtime, '/api/runtime', { cookie })
+    assert.equal(authedRuntime.status, 200)
+    assert.equal(authedRuntime.body.appName, customName)
+
+    const meRes = await request(runtime, '/api/auth/me', { cookie })
+    assert.equal(meRes.status, 200)
+    assert.equal(meRes.body.appName, customName)
+
+    const escaped = 'Custom &lt;Board&gt; &amp; &quot;Team&quot;'
+    for (const htmlPath of ['/', '/login.html', '/admin.html', '/share.html']) {
+      const page = await request(runtime, htmlPath)
+      assert.equal(page.status, 200, htmlPath)
+      assert.ok(
+        page.text.includes(`<meta name="trellis-app-name" content="${escaped}" />`),
+        htmlPath,
+      )
+      assert.equal(page.text.includes('<Board>'), false, htmlPath)
+      assert.equal(page.headers['content-length'], String(page.raw.length), htmlPath)
+    }
+
+    const indexPage = await request(runtime, '/')
+    assert.ok(indexPage.text.includes(`<title>${escaped}</title>`))
+    assert.ok(indexPage.text.includes(`content="${escaped} 任务流水线看板。"`))
+
+    const sharePage = await request(runtime, '/share.html')
+    assert.ok(sharePage.text.includes(`<title>打开 ${escaped} 客户端</title>`))
+    assert.ok(sharePage.text.includes(`<h1 id="opening">正在打开 ${escaped} 客户端</h1>`))
+    assert.ok(sharePage.text.includes(`已安装 ${escaped} 客户端`))
+  } finally {
+    if (runtime) await runtime.stop()
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
+  }
 })
 
 test('trustProxy=true 时登录限流按 X-Forwarded-For 隔离，false 时共用连接 IP', async () => {

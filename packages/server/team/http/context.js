@@ -1,3 +1,4 @@
+import { DEFAULT_APP_NAME } from '../../config.js'
 import { parseCookieHeader, readSession, SESSION_COOKIE } from '../auth.js'
 import { ERROR_CODES, teamError } from '../errors.js'
 import { TEAM_ROLES, listTeamsForActor } from '../teams.js'
@@ -22,11 +23,13 @@ export function createRequestContext(ctx) {
   }
 
   function runtimePayload(actor) {
+    const appName = config.appName || DEFAULT_APP_NAME
     const features = { pluginsEnabled: teamPluginsEnabled(config) }
     if (!actor) {
       return {
         mode: 'team',
         team: true,
+        appName,
         authenticated: false,
         user: null,
         projects: [],
@@ -40,6 +43,7 @@ export function createRequestContext(ctx) {
     return {
       mode: 'team',
       team: true,
+      appName,
       authenticated: true,
       user: actor.user,
       sessionExpiresAt: actor.expiresAt,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
 import { ApiError, requestJson } from '@/api/request'
+import { readAppNameFromMeta, resolveAppName } from '@/lib/app-name.js'
 import { withBasePath } from '@/lib/base-path.js'
 import { normalizeRuntime, normalizeUser, safeReturnTo } from '@/lib/team-client.js'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -23,11 +24,22 @@ export function LoginPage() {
     homeHref,
   )
   const [state, setState] = useState<LoginState>('checking')
+  const [runtimeAppName, setRuntimeAppName] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
+
+  const metaAppName = useMemo(() => readAppNameFromMeta(), [])
+  const brandName = useMemo(
+    () => resolveAppName({ runtimeAppName, metaAppName }),
+    [runtimeAppName, metaAppName],
+  )
+
+  useEffect(() => {
+    document.title = brandName ? `登录 · ${brandName}` : '登录'
+  }, [brandName])
 
   useEffect(() => {
     let cancelled = false
@@ -35,6 +47,7 @@ export function LoginPage() {
       try {
         const result = await requestJson('/api/runtime')
         const runtime = normalizeRuntime(result.data as Parameters<typeof normalizeRuntime>[0])
+        if (!cancelled) setRuntimeAppName(runtime.appName ?? null)
         if (!runtime.team) {
           window.location.replace(homeHref)
           return
@@ -87,10 +100,14 @@ export function LoginPage() {
   return (
     <main className="grid min-h-dvh bg-background lg:grid-cols-[minmax(0,46%)_minmax(0,54%)]">
       <section className="hidden flex-col justify-between gap-12 bg-primary p-14 text-primary-foreground lg:flex">
-        <a className="flex items-center gap-3" href={homeHref} aria-label="Trellis Board 首页">
+        <a
+          className="flex items-center gap-3"
+          href={homeHref}
+          aria-label={brandName ? `${brandName} 首页` : '首页'}
+        >
           <TrellisLogo size={36} variant="inverted" />
           <span className="flex flex-col leading-tight">
-            <span className="text-base font-semibold">Trellis Board</span>
+            {brandName ? <span className="text-base font-semibold">{brandName}</span> : null}
             <span className="text-xs tracking-[0.18em] text-primary-foreground/70">
               TEAM / BOARD
             </span>
@@ -146,11 +163,13 @@ export function LoginPage() {
             <a
               className="mb-1 flex items-center gap-2.5 lg:hidden"
               href={homeHref}
-              aria-label="Trellis Board 首页"
+              aria-label={brandName ? `${brandName} 首页` : '首页'}
             >
               <TrellisLogo size={28} />
               <span className="flex flex-col leading-tight">
-                <span className="text-sm font-semibold text-foreground">Trellis Board</span>
+                {brandName ? (
+                  <span className="text-sm font-semibold text-foreground">{brandName}</span>
+                ) : null}
                 <span className="text-2xs tracking-[0.16em] text-muted-foreground">
                   TEAM / BOARD
                 </span>

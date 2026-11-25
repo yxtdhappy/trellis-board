@@ -4,6 +4,7 @@ import path from 'node:path'
 import {
   databaseFile as defaultDatabaseFile,
   dataDir as defaultDataDir,
+  normalizeAppName,
   normalizeBasePath,
   resolveClientUpdatesDir,
 } from '../config.js'
@@ -80,6 +81,7 @@ function createRequestHandler({
   isClosing,
 }) {
   const basePath = normalizeBasePath(providedBasePath ?? config?.basePath)
+  const appName = normalizeAppName(config?.appName)
   const ctx = {
     config,
     db,
@@ -170,7 +172,7 @@ function createRequestHandler({
       return
     }
     if (!url.pathname.startsWith('/api/')) {
-      serveStatic(request, response, url, publicDir, { basePath })
+      serveStatic(request, response, url, publicDir, { basePath, appName })
       return
     }
     if (url.pathname === '/api/auth/register') {

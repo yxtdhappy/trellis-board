@@ -69,8 +69,23 @@ fn agent_tool_validation_caps_catalog_size() {
 }
 
 #[test]
-fn client_brand_name_uses_configured_name_or_default() {
-    assert_eq!(client_brand_name(Some("Acme Board")), "Acme Board");
-    assert_eq!(client_brand_name(Some("  ")), "Trellis Board");
-    assert_eq!(client_brand_name(None), "Trellis Board");
+fn resolve_app_name_follows_runtime_build_product_default_priority() {
+    assert_eq!(
+        resolve_app_name(
+            Some("Runtime Board"),
+            Some("Build Board"),
+            Some("Product Board")
+        ),
+        "Runtime Board"
+    );
+    assert_eq!(
+        resolve_app_name(Some("  "), Some("  Build Board  "), Some("Product Board")),
+        "Build Board"
+    );
+    assert_eq!(
+        resolve_app_name(None, Some(""), Some("Acme Board")),
+        "Acme Board"
+    );
+    assert_eq!(resolve_app_name(None, None, Some("  ")), "Board");
+    assert_eq!(resolve_app_name(None, None, None), "Board");
 }

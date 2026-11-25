@@ -29,6 +29,7 @@ export type Credential = {
 export type AdminConsole = AdminProjects & {
   phase: AdminPhase
   bootError: string
+  appName: string | null
   view: AdminView
   setView: (view: AdminView) => void
   isAdmin: boolean
@@ -75,6 +76,7 @@ export function useAdminConsole(): AdminConsole {
   const confirm = useConfirm()
   const [phase, setPhase] = useState<AdminPhase>('loading')
   const [bootError, setBootError] = useState('')
+  const [appName, setAppName] = useState<string | null>(null)
   const [user, setUser] = useState<SessionUser | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [systemAdmin, setSystemAdmin] = useState(false)
@@ -112,6 +114,7 @@ export function useAdminConsole(): AdminConsole {
       try {
         const runtime = await admin.fetchRuntime()
         if (cancelled) return
+        setAppName(runtime.appName)
         setUser(runtime.user)
         setSystemAdmin(runtime.systemAdmin)
         setPluginsEnabled(runtime.features?.pluginsEnabled !== false)
@@ -373,6 +376,7 @@ export function useAdminConsole(): AdminConsole {
     ...projects,
     phase,
     bootError,
+    appName,
     view,
     setView,
     isAdmin,

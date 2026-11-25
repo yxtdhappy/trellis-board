@@ -225,3 +225,17 @@ test('resolveCliEnv supports --base-path and --trust-proxy / --no-trust-proxy', 
   assert.equal(devIsolation.sources.TRELLIS_BOARD_BASE_PATH, '.env')
   assert.equal(devIsolation.env.TRELLIS_BOARD_BASE_PATH, '/weint-spec-board')
 })
+
+test('resolveCliEnv supports --app-name across dev, start, and build scopes', () => {
+  for (const command of ['dev', 'start', 'build']) {
+    const res = resolveCliEnv({
+      command,
+      argv: ['--app-name=Custom Board'],
+      env: {},
+    })
+    assert.equal(res.env.TRELLIS_BOARD_APP_NAME, 'Custom Board')
+    assert.equal(res.sources.TRELLIS_BOARD_APP_NAME, 'cli')
+    const summary = formatEnvSummary(`[${command}]`, res, ['TRELLIS_BOARD_APP_NAME'])
+    assert.match(summary, /TRELLIS_BOARD_APP_NAME=Custom Board \[cli\]/)
+  }
+})

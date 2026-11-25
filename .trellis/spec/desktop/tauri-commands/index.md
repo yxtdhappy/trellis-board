@@ -129,16 +129,18 @@ builder
 
 - Tauri command：`client_identity() -> Result<ClientIdentity, String>`
 - 响应：`{ "name": String, "version": String }`
+- 本地登录页状态：`app_status() -> Result<AppStatus, String>`（仅 `main` capability）同步返回 `appName: String`
 - 权限：`allow-client-identity`，命令白名单为 `commands.allow = ["client_identity"]`
 - capability：只加入 `board-local-association`，不得加入本地登录页的 `main` capability。
 
 ### 3. Contracts
 
 - 命令必须先执行 `ensure_board_caller(&app, &window)?`，只服务当前登录 Board origin。
-- `name` 读取 `app.config().product_name`；缺失、空串或仅空白时返回 `Trellis Board`。
+- 客户端品牌名统一由 `app_display_name(app.config().product_name.as_deref())` 解析，优先级为：运行期环境变量 `TRELLIS_BOARD_APP_NAME` > 构建期 `option_env!("TRELLIS_BOARD_APP_NAME")`（未显式传入时由 `build.rs` 自动读取根 `.env`）> `app.config().product_name` > 中性兜底 `Board`（空白值自动跳过）；主窗口标题、托盘 tooltip、`app_status.appName` 与更新/同步通知复用同一解析函数，不在源码或 HTML 中硬编码品牌文案。
+- 远程 Board 展示优先级（`resolveAppName`）：服务端 `/api/runtime` 的 `appName` > 服务端 HTML 注入的 `<meta name="trellis-app-name">` > 桌面 `client_identity().name`（仅连接未下发 `appName` 的旧版服务端时回退）> 空串（由各页面按需回退中性文案）。
 - `version` 读取客户端包版本 `env!("CARGO_PKG_VERSION")`，前端只负责加 `v` 前缀。
 - 普通浏览器没有 Tauri 上下文，不调用该命令，也不显示客户端版本。
-- 旧客户端没有 `client_identity` 时，Board 保留默认品牌并隐藏版本；不能回退调用 `app_status`。
+- 旧客户端没有 `client_identity` 时，Board 使用服务端名称或默认品牌并隐藏版本；不能回退调用 `app_status`。
 
 ### 4. Validation & Error Matrix
 
@@ -146,21 +148,23 @@ builder
 | --- | --- |
 | 调用窗口不是当前 Board origin | 命令返回错误，不返回身份信息 |
 | 本地登录 capability 尝试调用 | capability 未授权，命令不可用 |
-| `product_name` 缺失或为空白 | `name` 返回 `Trellis Board` |
-| 旧客户端没有该命令 | Board 使用默认品牌，不显示版本 |
-| 普通浏览器打开 Board | 使用默认品牌，不显示客户端版本 |
+| 环境变量与 `product_name` 均缺失或为空白 | `name` 返回 `Board` |
+| 服务端配置了 `TRELLIS_BOARD_APP_NAME` | Board 顶栏与 `document.title` 优先跟随服务端名称 |
+| 连接未下发 `appName` 的旧服务端 | Board 回退使用 `client_identity().name` |
+| 旧客户端没有该命令 | Board 使用服务端或默认品牌，不显示版本 |
+| 普通浏览器打开 Board | 使用服务端或默认品牌，不显示客户端版本 |
 
 ### 5. Good/Base/Bad Cases
 
-- Good：`productName = "Acme Board"`，Board 显示 `Acme Board` 和 `v0.4.27`。
-- Base：默认 `productName = "Trellis Board"`，Board 显示默认品牌和客户端版本。
+- Good：`TRELLIS_BOARD_APP_NAME = "Acme Board"`（或 `productName = "Acme Board"`），客户端显示 `Acme Board` 和 `v0.5.1`；连接配置了不同名称的 Team 服务端时 Board 跟随服务端名称。
+- Base：根 `.env` 配置 `TRELLIS_BOARD_APP_NAME=Weint Spec Board`，构建与运行期均从环境变量注入并全端显示配置名称；未配置时只使用中性兜底 `Board`。
 - Bad：远程 Board 调用 `app_status` 获取版本，意外拿到保存的登录名和密码。
 
 ### 6. Tests Required
 
 - 静态契约测试断言权限只存在于 Board capability，命令已注册且调用 `ensure_board_caller`。
-- 静态契约测试断言 UI 调用 `client_identity`，且包含默认品牌和版本展示。
-- Rust 单元测试断言自定义名称、空白名称和缺失名称的回退。
+- 静态契约测试与前端单测断言 `resolveAppName` 优先级（服务端 > meta > 客户端回退 > 默认 `Weint Spec Board`）与版本展示。
+- Rust 单元测试断言 `resolve_app_name` 四级优先级与空白值跳过。
 
 ### 7. Wrong vs Correct
 
@@ -178,7 +182,7 @@ commands.allow = ["app_status"]
 fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdentity, String> {
     ensure_board_caller(&app, &window)?;
     Ok(ClientIdentity {
-        name: client_brand_name(app.config().product_name.as_deref()),
+        name: app_display_name(app.config().product_name.as_deref()),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }

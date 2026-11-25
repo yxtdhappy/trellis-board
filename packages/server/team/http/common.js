@@ -9,6 +9,7 @@ import {
   sendJson as sendJsonCommon,
   serveStatic as serveStaticCommon,
 } from '../../http-common.js'
+import { DEFAULT_APP_NAME, normalizeAppName } from '../../config.js'
 import { ERROR_CODES, teamError } from '../errors.js'
 import { CAPABILITIES, roleCanWrite } from '../permissions.js'
 import { TEAM_ROLES, listUserTeams, resolveTeamScope } from '../teams.js'
@@ -352,6 +353,45 @@ export function servePluginUi(request, response, url) {
   })
 }
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(
+    /[&<>"']/g,
+    (char) =>
+      ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      })[char],
+  )
+}
+
+function unescapeBasicHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&')
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function injectOrReplaceHeadMeta(html, name, escapedContent) {
+  const existingPattern = new RegExp(`<meta\\b[^>]*name=(["'])${escapeRegExp(name)}\\1[^>]*>`, 'i')
+  const metaTag = `<meta name="${name}" content="${escapedContent}" />`
+  if (existingPattern.test(html)) {
+    return html.replace(existingPattern, () => metaTag)
+  }
+  if (/<\/head>/i.test(html)) {
+    return html.replace(/<\/head>/i, () => `  ${metaTag}\n  </head>`)
+  }
+  return `${metaTag}\n${html}`
+}
+
 export function rewriteHtmlForBasePath(html, basePath) {
   if (!basePath) return html
   let rewritten = String(html).replace(
@@ -369,7 +409,58 @@ export function rewriteHtmlForBasePath(html, basePath) {
   return rewritten
 }
 
-export function serveStatic(request, response, url, publicDir, { basePath = '' } = {}) {
+export function rewriteHtmlForAppName(html, appName = DEFAULT_APP_NAME) {
+  const resolvedName = normalizeAppName(appName)
+  const escapedName = escapeHtml(resolvedName)
+  let rewritten = String(html)
+
+  const existingMetaMatch = /<meta\b[^>]*name=(["'])trellis-app-name\1[^>]*>/i.exec(rewritten)
+  const previousContentMatch = existingMetaMatch
+    ? /\bcontent=(["'])([\s\S]*?)\1/i.exec(existingMetaMatch[0])
+    : null
+  const previousName = previousContentMatch ? unescapeBasicHtml(previousContentMatch[2]).trim() : ''
+
+  const candidates = Array.from(
+    new Set(
+      [previousName, previousName ? escapeHtml(previousName) : '', '{{APP_NAME}}'].filter(Boolean),
+    ),
+  ).sort((left, right) => right.length - left.length)
+  const brandPattern = new RegExp(candidates.map(escapeRegExp).join('|'), 'g')
+  const replaceBrand = (segment) => segment.replace(brandPattern, () => escapedName)
+
+  rewritten = rewritten.replace(
+    /(<title\b[^>]*>)([\s\S]*?)(<\/title>)/i,
+    (_, open, content, close) => `${open}${replaceBrand(content)}${close}`,
+  )
+  rewritten = rewritten.replace(/<meta\b[^>]*name=(["'])description\1[^>]*>/i, (tag) =>
+    tag.replace(
+      /(\bcontent=(["']))([\s\S]*?)(\2)/i,
+      (_, prefix, quote, content, suffix) => `${prefix}${replaceBrand(content)}${suffix}`,
+    ),
+  )
+  rewritten = rewritten.replace(
+    /(<h1\b[^>]*\bid=(["'])opening\2[^>]*>)([\s\S]*?)(<\/h1>)/i,
+    (_, open, _quote, content, close) => `${open}${replaceBrand(content)}${close}`,
+  )
+  rewritten = rewritten.replace(
+    /(<p\b[^>]*\bid=(["'])hint\2[^>]*>)([\s\S]*?)(<\/p>)/i,
+    (_, open, _quote, content, close) => `${open}${replaceBrand(content)}${close}`,
+  )
+  return injectOrReplaceHeadMeta(rewritten, 'trellis-app-name', escapedName)
+}
+
+export function rewriteHtmlForRuntime(html, { basePath = '', appName = DEFAULT_APP_NAME } = {}) {
+  const withBase = rewriteHtmlForBasePath(html, basePath)
+  return rewriteHtmlForAppName(withBase, appName)
+}
+
+export function serveStatic(
+  request,
+  response,
+  url,
+  publicDir,
+  { basePath = '', appName = DEFAULT_APP_NAME } = {},
+) {
   serveStaticCommon({
     request,
     response,
@@ -377,7 +468,7 @@ export function serveStatic(request, response, url, publicDir, { basePath = '' }
     publicDir,
     security: true,
     cacheControl: () => 'no-store',
-    transformHtml: basePath ? (html) => rewriteHtmlForBasePath(html, basePath) : null,
+    transformHtml: (html) => rewriteHtmlForRuntime(html, { basePath, appName }),
     invalidPath: () =>
       sendJson(response, 400, {
         error: '静态资源路径无效',

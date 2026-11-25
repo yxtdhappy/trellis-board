@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { injectAppNameHtml } from './vite-app-name.ts'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
 const devPort = Number(process.env.VITE_DEV_PORT || 5173)
@@ -13,7 +14,7 @@ const localPluginTarget =
 
 export default defineConfig({
   base: './',
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), injectAppNameHtml()],
   // 多个 dev server 共用 node_modules/.vite 会互相失效依赖优化（504 Outdated Optimize Dep）
   cacheDir: process.env.VITE_CACHE_DIR || 'node_modules/.vite',
   resolve: {

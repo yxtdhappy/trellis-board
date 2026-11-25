@@ -49,7 +49,9 @@ pub(crate) fn build(app: &AppHandle) -> tauri::Result<()> {
         return Ok(());
     };
     TrayIconBuilder::with_id("main")
-        .tooltip("Trellis Board")
+        .tooltip(crate::app_display_name(
+            app.config().product_name.as_deref(),
+        ))
         .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(true)

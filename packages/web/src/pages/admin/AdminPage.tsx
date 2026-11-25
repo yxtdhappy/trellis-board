@@ -1,3 +1,4 @@
+import { useEffect, useMemo } from 'react'
 import { LogOut, Moon, Sun } from 'lucide-react'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -10,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
+import { readAppNameFromMeta, resolveAppName } from '@/lib/app-name.js'
 import { withBasePath } from '@/lib/base-path.js'
 import { useAppearance } from '@/app/theme'
 import type { AdminView } from '@/api/admin'
@@ -85,6 +87,7 @@ export function AdminPage() {
   const {
     phase,
     bootError,
+    appName,
     view,
     setView,
     isAdmin,
@@ -97,6 +100,14 @@ export function AdminPage() {
     displayName,
     avatarText,
   } = consoleApi
+  const metaAppName = useMemo(() => readAppNameFromMeta(), [])
+  const brandName = useMemo(
+    () => resolveAppName({ runtimeAppName: appName, metaAppName }),
+    [appName, metaAppName],
+  )
+  useEffect(() => {
+    document.title = brandName ? `团队管理 · ${brandName}` : '团队管理'
+  }, [brandName])
   const activeView = VIEWS.find((item) => item.id === view) ?? VIEWS[0]
   const visibleViews = VIEWS.filter((item) => {
     if (item.id === 'plugins' && !pluginsEnabled) return false
@@ -114,11 +125,11 @@ export function AdminPage() {
           <a
             className="flex shrink-0 items-center gap-2 whitespace-nowrap"
             href={withBasePath('/')}
-            aria-label="返回 Trellis Board"
+            aria-label={brandName ? `返回 ${brandName}` : '返回看板'}
           >
             <TrellisLogo size={24} />
             <span className="whitespace-nowrap text-sm font-semibold font-heading">
-              Trellis Board
+              {brandName || '看板'}
             </span>
           </a>
           <Button

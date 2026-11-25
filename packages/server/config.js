@@ -5,6 +5,8 @@ import { normalizeUsername, validatePassword } from './team/credentials.js'
 
 export const DEFAULT_INITIAL_ADMIN_USERNAME = 'admin'
 export const DEFAULT_INITIAL_ADMIN_PASSWORD = '123456!@#$%^'
+export const DEFAULT_APP_NAME = 'Board'
+const MAX_APP_NAME_LENGTH = 80
 const RESERVED_BASE_SEGMENTS = new Set(['api', 'client-updates', 'plugin-ui', 'assets'])
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url))
@@ -169,6 +171,19 @@ function initialAdminSetting(env) {
   return { username, password }
 }
 
+export function normalizeAppName(raw) {
+  if (raw == null) return DEFAULT_APP_NAME
+  const trimmed = String(raw).trim()
+  if (!trimmed) return DEFAULT_APP_NAME
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
+    throw new Error('TRELLIS_BOARD_APP_NAME 配置无效：不能包含控制字符')
+  }
+  if (Array.from(trimmed).length > MAX_APP_NAME_LENGTH) {
+    throw new Error(`TRELLIS_BOARD_APP_NAME 配置无效：长度不能超过 ${MAX_APP_NAME_LENGTH} 个字符`)
+  }
+  return trimmed
+}
+
 export function normalizeBasePath(raw) {
   if (raw == null) return ''
   const trimmed = String(raw).trim()
@@ -199,6 +214,7 @@ export function parseTeamConfig(env = process.env) {
     throw new Error('TRELLIS_BOARD_MODE 只能是 team')
   }
   const port = integerSetting(env, 'PORT', 4317, 1, 65535)
+  const appName = normalizeAppName(env.TRELLIS_BOARD_APP_NAME)
   const basePath = normalizeBasePath(env.TRELLIS_BOARD_BASE_PATH)
   const trustProxy = booleanSetting(env, 'TRELLIS_BOARD_TRUST_PROXY', true)
   const allowLocalGitRemotes = booleanSetting(env, 'TRELLIS_BOARD_ALLOW_LOCAL_GIT_REMOTES', false)
@@ -208,6 +224,7 @@ export function parseTeamConfig(env = process.env) {
     mode,
     bindHost: '0.0.0.0',
     port,
+    appName,
     basePath,
     sessionTtlMs: 12 * 60 * 60 * 1000,
     agentStaleMs: 60_000,

@@ -56,9 +56,12 @@ export function normalizeRuntime(payload = {}) {
     source.mode ?? source.boardMode ?? source.board_mode ?? 'standalone',
   ).toLowerCase()
   const user = normalizeUser(source.user ?? source.currentUser ?? source.current_user)
+  const rawAppName = source.appName ?? source.app_name
+  const appName = typeof rawAppName === 'string' && rawAppName.trim() ? rawAppName.trim() : null
   return {
     mode: mode === 'team' ? 'team' : 'standalone',
     team: boolean(source.team ?? source.teamMode ?? source.team_mode) || mode === 'team',
+    appName,
     authenticated: source.authenticated !== false,
     user,
     systemAdmin: boolean(source.systemAdmin ?? source.system_admin) || Boolean(user?.systemAdmin),

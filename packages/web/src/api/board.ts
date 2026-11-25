@@ -100,6 +100,7 @@ export type BoardStatus = {
 export type TeamRuntime = {
   team?: boolean
   mode?: string
+  appName?: string | null
   authenticated: boolean
   user: {
     id?: string

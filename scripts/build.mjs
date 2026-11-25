@@ -74,6 +74,7 @@ const webDir = path.join(ROOT_DIR, 'packages', 'web')
 const desktopDir = path.join(ROOT_DIR, 'packages', 'desktop')
 
 const summary = formatEnvSummary(`[build:${target}]`, resolved, [
+  'TRELLIS_BOARD_APP_NAME',
   'VITE_TRELLIS_ROLE',
   'TRELLIS_UPDATE_SERVER',
 ])

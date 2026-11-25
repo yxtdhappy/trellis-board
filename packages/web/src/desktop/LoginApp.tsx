@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { TrellisLogo } from '@/components/layout/TrellisLogo'
 import { Progress } from '@/components/ui/progress'
+import { readAppNameFromMeta, resolveAppName } from '@/lib/app-name.js'
 import { errorMessage, invoke, listen } from './tauri.ts'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
@@ -70,6 +71,7 @@ type RuntimeStatus = {
 }
 
 type AppStatus = {
+  appName?: string
   version?: string
   serverUrl?: string
   username?: string
@@ -111,6 +113,9 @@ export function LoginApp() {
   const [loginStatus, setLoginStatus] = useState('正在读取上次登录设置…')
   const [loginError, setLoginError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [appName, setAppName] = useState(() =>
+    resolveAppName({ metaAppName: readAppNameFromMeta() }),
+  )
   const [version, setVersion] = useState('')
   const [configPath, setConfigPath] = useState('')
   const [credentials, setCredentials] = useState<Credentials>({
@@ -207,7 +212,9 @@ export function LoginApp() {
   async function refreshRuntime() {
     if (!invoke) {
       setPhase('env')
-      setEnvStatus('请在 Trellis Board 桌面客户端中打开此页面。')
+      setEnvStatus(
+        appName ? `请在 ${appName} 桌面客户端中打开此页面。` : '请在桌面客户端中打开此页面。',
+      )
       setEnvError('未能连接桌面客户端进程。')
       return
     }
@@ -268,6 +275,7 @@ export function LoginApp() {
     if (!invoke) return
     try {
       const app = await invoke<AppStatus>('app_status')
+      if (app.appName?.trim()) setAppName(app.appName.trim())
       setVersion(app.version ? `v${app.version}` : '')
       setConfigPath(app.configPath ? `配置：${app.configPath}` : '')
       setCredentials({
@@ -323,6 +331,10 @@ export function LoginApp() {
   }
 
   useEffect(() => {
+    document.title = appName ? `${appName} 登录` : '桌面端登录'
+  }, [appName])
+
+  useEffect(() => {
     void refreshRuntime()
     if (listen) {
       listen('runtime-progress', (event) => {
@@ -351,7 +363,7 @@ export function LoginApp() {
               <TrellisLogo size={36} />
               <div>
                 <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
-                  TRELLIS DESKTOP
+                  {appName ? `${appName} · DESKTOP` : 'DESKTOP'}
                 </p>
                 <h1 className="font-heading text-xl font-medium">正在启动</h1>
               </div>
@@ -377,7 +389,7 @@ export function LoginApp() {
               <TrellisLogo size={36} />
               <div>
                 <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
-                  TRELLIS DESKTOP
+                  {appName ? `${appName} · DESKTOP` : 'DESKTOP'}
                 </p>
                 <h1 className="font-heading text-xl font-medium">首次启动环境检查</h1>
               </div>
@@ -480,7 +492,7 @@ export function LoginApp() {
               <TrellisLogo size={36} />
               <div>
                 <p className="text-2xs font-semibold tracking-[0.2em] text-muted-foreground">
-                  TRELLIS DESKTOP
+                  {appName ? `${appName} · DESKTOP` : 'DESKTOP'}
                 </p>
                 <h1 className="font-heading text-xl font-medium">登录团队看板</h1>
               </div>

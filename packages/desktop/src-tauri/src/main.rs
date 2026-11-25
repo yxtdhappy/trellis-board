@@ -30,6 +30,8 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 
 const SESSION_COOKIE: &str = "trellis_team_session";
+const DEFAULT_APP_NAME: &str = "Board";
+const BUILD_APP_NAME: Option<&str> = option_env!("TRELLIS_BOARD_APP_NAME");
 // 与 packages/shared/trellis-agent-tools.js 当前目录数量保持一致。
 const MAX_AGENT_TOOLS: usize = 22;
 
@@ -46,6 +48,7 @@ pub(crate) struct DesktopAuthState {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppStatus {
+    app_name: String,
     version: String,
     server_url: Option<String>,
     username: Option<String>,
@@ -198,12 +201,23 @@ fn default_device_name() -> String {
         .unwrap_or_else(|| "Windows 桌面".to_string())
 }
 
-fn client_brand_name(value: Option<&str>) -> String {
-    value
+pub(crate) fn resolve_app_name(
+    runtime_env: Option<&str>,
+    build_env: Option<&str>,
+    product_name: Option<&str>,
+) -> String {
+    [runtime_env, build_env, product_name]
+        .into_iter()
+        .flatten()
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Trellis Board")
+        .find(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_APP_NAME)
         .to_string()
+}
+
+pub(crate) fn app_display_name(product_name: Option<&str>) -> String {
+    let runtime_env = std::env::var("TRELLIS_BOARD_APP_NAME").ok();
+    resolve_app_name(runtime_env.as_deref(), BUILD_APP_NAME, product_name)
 }
 
 fn initial_server_url() -> Option<String> {
@@ -334,6 +348,7 @@ async fn app_status(app: AppHandle, window: WebviewWindow) -> Result<AppStatus, 
     ensure_local_caller(&window)?;
     let config = config::load()?;
     Ok(AppStatus {
+        app_name: app_display_name(app.config().product_name.as_deref()),
         version: env!("CARGO_PKG_VERSION").to_string(),
         server_url: config
             .as_ref()
@@ -352,7 +367,7 @@ async fn app_status(app: AppHandle, window: WebviewWindow) -> Result<AppStatus, 
 fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdentity, String> {
     ensure_board_caller(&app, &window)?;
     Ok(ClientIdentity {
-        name: client_brand_name(app.config().product_name.as_deref()),
+        name: app_display_name(app.config().product_name.as_deref()),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
@@ -1006,7 +1021,7 @@ fn build_main_window(
     let load_app = app.clone();
     let builder =
         WebviewWindowBuilder::new(app, "main", WebviewUrl::App(PathBuf::from("index.html")))
-            .title("Trellis Board")
+            .title(app_display_name(app.config().product_name.as_deref()))
             // 本窗口始终是客户端：插件由本机宿主提供，与服务端是否 Team 模式无关。
             .initialization_script("window.__TRELLIS_ROLE__ = 'client';")
             .inner_size(1280.0, 800.0)

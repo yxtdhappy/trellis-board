@@ -386,11 +386,16 @@ pub async fn check(app: &AppHandle) -> UpdateStatus {
     }
 }
 
+fn update_notification_title(app_name: &str) -> String {
+    format!("{app_name} 有新版本")
+}
+
 fn notify(app: &AppHandle, current: &str, release: &Release) {
+    let app_name = crate::app_display_name(app.config().product_name.as_deref());
     let result = app
         .notification()
         .builder()
-        .title("Trellis Board 有新版本")
+        .title(update_notification_title(&app_name))
         .body(format!(
             "v{current} → v{}，点击查看更新内容",
             release.version

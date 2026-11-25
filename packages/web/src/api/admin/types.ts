@@ -221,6 +221,7 @@ export type ArchiveSyncLog = {
 export type Runtime = {
   mode: 'team' | 'standalone'
   team: boolean
+  appName: string | null
   authenticated: boolean
   user: SessionUser | null
   systemAdmin: boolean

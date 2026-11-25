@@ -93,7 +93,8 @@ fn spawn_watchdog(app: AppHandle) {
             let Ok(service) = service(&app) else {
                 continue;
             };
-            if service.paused.load(Ordering::SeqCst) || service.user_stopped.load(Ordering::SeqCst) {
+            if service.paused.load(Ordering::SeqCst) || service.user_stopped.load(Ordering::SeqCst)
+            {
                 continue;
             }
             let (running, auth_failed) = match service.runtime.lock() {
@@ -358,7 +359,8 @@ impl AgentService {
             "unfocused" if self.window_focused() => return,
             _ => {}
         }
-        let (title, body) = control_notification(control);
+        let app_name = crate::app_display_name(self.app.config().product_name.as_deref());
+        let (title, body) = control_notification(control, &app_name);
         if let Err(error) = self
             .app
             .notification()
@@ -613,7 +615,7 @@ fn show_windows_toast(app_id: &str, title: &str, body: &str) {
     }
 }
 
-fn control_notification(control: &Value) -> (String, String) {
+fn control_notification(control: &Value, app_name: &str) -> (String, String) {
     let text = |pointer: &str| {
         control
             .pointer(pointer)
@@ -667,7 +669,7 @@ fn control_notification(control: &Value) -> (String, String) {
             ("任务同步失败".to_string(), format!("{scope}{detail}"))
         }
         _ => (
-            "Trellis Board 有新的同步事件".to_string(),
+            format!("{app_name} 有新的同步事件"),
             format!("{scope}打开客户端查看任务同步情况。"),
         ),
     }

@@ -89,6 +89,7 @@ const serverEntry = path.join('packages', 'server', 'index.js')
 
 const summary = formatEnvSummary(`[dev:${mode}]`, resolved, [
   'PORT',
+  'TRELLIS_BOARD_APP_NAME',
   'TRELLIS_BOARD_BASE_PATH',
   'TRELLIS_BOARD_TRUST_PROXY',
   'VITE_DEV_PORT',

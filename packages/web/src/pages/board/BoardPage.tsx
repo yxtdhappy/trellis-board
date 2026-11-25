@@ -44,6 +44,7 @@ import { FILTER_STAGES } from '@/lib/execution-filter.js'
 import { fetchPanels, type PluginPanel as PluginPanelInfo } from '@/api/panels'
 import { fetchDesktopPanels } from '@/api/desktop-plugins'
 import { resolveRuntimeRole } from '@/lib/role'
+import { readAppNameFromMeta, resolveAppName } from '@/lib/app-name.js'
 import { withBasePath } from '@/lib/base-path.js'
 import { DesktopPluginsView } from '@/features/plugins/DesktopPluginsView'
 import { canManageProject, createIdempotencyKey, taskVersion } from '@/lib/team-client.js'
@@ -89,7 +90,7 @@ export function BoardPage() {
   const [viewsOpen, setViewsOpen] = useState(false)
   const [taskAssignees, setTaskAssignees] = useState<TaskSpaceAssignee[]>([])
   const [localAssociations, setLocalAssociations] = useState<LocalAssociation[]>([])
-  const [brandName, setBrandName] = useState('Trellis Board')
+  const [clientBrandName, setClientBrandName] = useState('')
   const [clientVersion, setClientVersion] = useState('')
   const [updateOpen, setUpdateOpen] = useState(false)
   const [railOpen, setRailOpen] = useState(false)
@@ -108,6 +109,17 @@ export function BoardPage() {
     loading,
     error,
   } = controller
+
+  const metaAppName = useMemo(() => readAppNameFromMeta(), [])
+  const brandName = useMemo(
+    () =>
+      resolveAppName({
+        runtimeAppName: runtime?.appName,
+        metaAppName,
+        clientAppName: clientBrandName,
+      }),
+    [runtime?.appName, metaAppName, clientBrandName],
+  )
 
   const desktopInvoke = (window as Window & { __TAURI__?: { core?: { invoke?: DesktopInvoke } } })
     .__TAURI__?.core?.invoke
@@ -297,6 +309,10 @@ export function BoardPage() {
   }, [runtime?.user?.mustChangePassword])
 
   useEffect(() => {
+    document.title = brandName || '看板'
+  }, [brandName])
+
+  useEffect(() => {
     if (!desktopInvoke) return
     let active = true
     desktopInvoke('client_identity')
@@ -304,7 +320,7 @@ export function BoardPage() {
         if (!active || !value || typeof value !== 'object') return
         const identity = value as DesktopClientIdentity
         if (typeof identity.name === 'string' && identity.name.trim()) {
-          setBrandName(identity.name.trim())
+          setClientBrandName(identity.name.trim())
         }
         if (typeof identity.version === 'string' && identity.version.trim()) {
           setClientVersion(identity.version.trim())

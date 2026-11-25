@@ -35,6 +35,7 @@ applyEnv(process.env, resolved.env, resolved.deletedKeys)
 
 const summary = formatEnvSummary('[start]', resolved, [
   'PORT',
+  'TRELLIS_BOARD_APP_NAME',
   'TRELLIS_BOARD_BASE_PATH',
   'TRELLIS_BOARD_TRUST_PROXY',
   'TRELLIS_BOARD_DATA_DIR',

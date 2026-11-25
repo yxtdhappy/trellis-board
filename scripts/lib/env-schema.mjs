@@ -12,6 +12,13 @@ export const ENV_SCHEMA = [
     description: 'HTTP 服务监听端口（1-65535，默认 4317）',
   },
   {
+    env: 'TRELLIS_BOARD_APP_NAME',
+    flag: 'app-name',
+    type: 'string',
+    scopes: ['dev', 'start', 'build'],
+    description: '应用与页面显示名称（默认 Weint Spec Board）',
+  },
+  {
     env: 'TRELLIS_BOARD_BASE_PATH',
     flag: 'base-path',
     type: 'string',

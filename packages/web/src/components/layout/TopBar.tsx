@@ -161,7 +161,7 @@ export function TopBar({
           <a
             className="flex h-14 items-center"
             href={withBasePath('/')}
-            aria-label={`${brandName} 首页`}
+            aria-label={brandName ? `${brandName} 首页` : '首页'}
           >
             <TrellisLogo size={24} />
           </a>

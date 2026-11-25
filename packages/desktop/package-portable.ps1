@@ -74,8 +74,30 @@ $version = (Get-Content -LiteralPath $tauriConfigPath -Raw | ConvertFrom-Json).v
 if (-not $version -or $version -notmatch '^[0-9A-Za-z._-]+$') {
   Fail 2 "版本号格式无效: $version"
 }
+$appName = if ($env:TRELLIS_BOARD_APP_NAME -and $env:TRELLIS_BOARD_APP_NAME.Trim()) {
+  $env:TRELLIS_BOARD_APP_NAME.Trim()
+} else {
+  $repoEnvPath = Join-Path $desktopRoot '..\..\.env'
+  $fromEnvFile = ''
+  if (Test-Path -LiteralPath $repoEnvPath -PathType Leaf) {
+    foreach ($line in Get-Content -LiteralPath $repoEnvPath) {
+      if ($line -match '^\s*(?:export\s+)?TRELLIS_BOARD_APP_NAME\s*=\s*(.+?)\s*$') {
+        $rawValue = $Matches[1].Trim()
+        if (($rawValue.StartsWith('"') -and $rawValue.EndsWith('"') -and $rawValue.Length -ge 2) -or
+            ($rawValue.StartsWith("'") -and $rawValue.EndsWith("'") -and $rawValue.Length -ge 2)) {
+          $rawValue = $rawValue.Substring(1, $rawValue.Length - 2).Trim()
+        }
+        if ($rawValue) {
+          $fromEnvFile = $rawValue
+          break
+        }
+      }
+    }
+  }
+  if ($fromEnvFile) { $fromEnvFile } else { 'Board' }
+}
 if (-not $Notes) {
-  $Notes = "Trellis Board $version"
+  $Notes = "$appName $version"
 }
 
 $controlledOutput = Get-FullPath (Join-Path $ReleaseDirectory 'bundle\portable')
@@ -101,7 +123,7 @@ try {
     Set-Content -LiteralPath (Join-Path $stagedPackage 'VERSION.txt') -Encoding Ascii
 
   $instructions = @(
-    "Trellis Board $version Windows x64 绿色版"
+    "$appName $version Windows x64 绿色版"
     ''
     '运行条件'
     '- Windows 10/11 x64。'

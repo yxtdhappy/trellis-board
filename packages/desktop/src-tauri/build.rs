@@ -32,6 +32,7 @@ const SKIP_DIRS: &[&str] = &[
 
 fn main() {
     println!("cargo:rerun-if-env-changed=TRELLIS_UPDATE_SERVER");
+    println!("cargo:rerun-if-env-changed=TRELLIS_BOARD_APP_NAME");
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let repo_root = manifest_dir
         .join("..")
@@ -39,6 +40,13 @@ fn main() {
         .join("..")
         .canonicalize()
         .expect("无法定位仓库根目录");
+    if std::env::var_os("TRELLIS_BOARD_APP_NAME").is_none() {
+        let env_path = repo_root.join(".env");
+        println!("cargo:rerun-if-changed={}", env_path.display());
+        if let Some(app_name) = read_dot_env_value(&env_path, "TRELLIS_BOARD_APP_NAME") {
+            println!("cargo:rustc-env=TRELLIS_BOARD_APP_NAME={app_name}");
+        }
+    }
 
     let mut assets: Vec<(String, PathBuf)> = Vec::new();
     collect_tree(
@@ -173,6 +181,36 @@ fn destination_for(relative: &Path) -> Option<String> {
     for plugin in BUILTIN_PLUGINS {
         if let Some(rest) = text.strip_prefix(&format!("plugins/{plugin}/")) {
             return Some(format!("plugins/{plugin}/{rest}"));
+        }
+    }
+    None
+}
+
+fn read_dot_env_value(path: &Path, target_key: &str) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    for raw_line in content.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let line = trimmed.strip_prefix("export ").unwrap_or(trimmed).trim();
+        let Some((key, raw_value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != target_key {
+            continue;
+        }
+        let value = raw_value.trim();
+        let unquoted = if (value.starts_with('"') && value.ends_with('"') && value.len() >= 2)
+            || (value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2)
+        {
+            &value[1..value.len() - 1]
+        } else {
+            value.split(" #").next().unwrap_or(value).trim()
+        };
+        let cleaned = unquoted.trim();
+        if !cleaned.is_empty() {
+            return Some(cleaned.to_string());
         }
     }
     None

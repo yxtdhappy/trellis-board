@@ -11,6 +11,7 @@ export type RuntimeUser = {
 
 export type Runtime = {
   team: boolean
+  appName?: string | null
   authenticated: boolean
   user: RuntimeUser | null
   teams?: Array<{ id: string; name: string; role?: string | null; status?: string }>

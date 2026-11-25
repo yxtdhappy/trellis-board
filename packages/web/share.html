@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <title>打开 Trellis Board 客户端</title>
+    <title>打开 {{APP_NAME}} 客户端</title>
     <script src="./theme-init.js"></script>
     <style>
       :root {
@@ -101,14 +101,14 @@
   </head>
   <body>
     <main>
-      <h1 id="opening">正在打开 Trellis Board 客户端</h1>
+      <h1 id="opening">正在打开 {{APP_NAME}} 客户端</h1>
       <p id="status">如果已安装客户端，系统会提示你确认打开。</p>
       <div class="actions" id="actions" hidden>
         <button class="primary" id="open" type="button">打开客户端</button>
         <button id="copy" type="button">复制客户端链接</button>
       </div>
       <p class="hint" id="hint">
-        没有反应？请确认本机已安装 Trellis Board
+        没有反应？请确认本机已安装 {{APP_NAME}}
         客户端并允许系统打开该链接；若在飞书等应用内置浏览器中无反应，请在系统浏览器中打开本页，或复制客户端链接。
       </p>
       <p class="error" id="copy-error" role="status" hidden></p>
