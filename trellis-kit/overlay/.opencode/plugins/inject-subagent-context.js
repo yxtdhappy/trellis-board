@@ -423,14 +423,19 @@ function injectTrellisContextIntoBash(ctx, input, output, hostPlatform, env) {
   return true
 }
 
-// OpenCode 2.x expects a default object with `id` + `server`.
-async function server({ directory, platform: hostPlatform = process.platform, env = process.env }) {
+// OpenCode 2.x: register on the tool domain. V1 return-object hooks are not
+// executed by the V2 plugin runtime.
+async function server(api) {
+  const directory = api.location.directory
+  const hostPlatform = process.platform
+  const env = process.env
   const ctx = new TrellisContext(directory)
   debugLog("inject", "Plugin loaded, directory:", directory)
 
-  return {
-      "tool.execute.before": async (input, output) => {
-        try {
+  await api.tool.hook("execute.before", (event) => {
+    const input = { tool: event?.tool, sessionID: event?.sessionID }
+    const output = { args: event?.input }
+    try {
           if (process.env.TRELLIS_HOOKS === "0" || process.env.TRELLIS_DISABLE_HOOKS === "1") {
             return
           }
@@ -557,11 +562,10 @@ async function server({ directory, platform: hostPlatform = process.platform, en
 
           debugLog("inject", "Injected context for", subagentType, "prompt length:", newPrompt.length)
 
-        } catch (error) {
-          debugLog("inject", "Error in tool.execute.before:", error.message, error.stack)
-        }
-      }
+    } catch (error) {
+      debugLog("inject", "Error in tool.execute.before:", error.message, error.stack)
     }
+  })
 }
 
 export default { id: "trellis-subagent-context", setup: server }

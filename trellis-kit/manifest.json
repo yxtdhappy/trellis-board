@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "trellis-kit",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Overlay that installs the task-state evidence loop into a Trellis project.",
   "platformsFile": "platforms/registry.json",
   "components": [
@@ -125,6 +125,13 @@
       "source": ".agents/skills/trellis-api-e2e",
       "target": ".agents/skills/trellis-api-e2e",
       "directory": true
+    },
+    {
+      "id": "opencode-lib-context-visibility",
+      "kind": "platform",
+      "platform": "opencode",
+      "source": ".opencode/lib/context-visibility.js",
+      "target": ".opencode/lib/context-visibility.js"
     },
     {
       "id": "opencode-plugin-session-start",

@@ -91,7 +91,9 @@ test('skill source and overlay scripts stay byte-identical and dead claude skill
   for (const plugin of openCodePlugins) {
     const source = fs.readFileSync(path.join(KIT_DIR, 'overlay', plugin.source), 'utf8')
     assert.match(source, /export default \{ id: "[^"]+", setup: server \}/)
+    assert.match(source, /api\.(session|tool)\.hook\(/)
     assert.doesNotMatch(source, /effect: server/)
+    assert.doesNotMatch(source, /MESSAGES_TRANSFORM_HOOK\]:/)
   }
 
   for (const rel of ['.trellis/scripts/task.py', '.trellis/scripts/common/task_store.py']) {

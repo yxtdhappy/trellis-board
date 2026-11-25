@@ -5,9 +5,9 @@
  * Per-turn UserPromptSubmit equivalent for OpenCode.
  *
  * On every model request, inject a short <workflow-state> breadcrumb
- * into the in-memory copy of the latest user message via
- * `experimental.chat.messages.transform`. Stored history and the TUI
- * are not modified (issue #553). Breadcrumb text is pulled exclusively
+ * into the model-visible system prompt via OpenCode V2's
+ * `session.context` hook. Stored history and the TUI are not modified.
+ * Breadcrumb text is pulled exclusively
  * from the project's workflow.md [workflow-state:STATUS] tag blocks —
  * workflow.md is the single source of truth. There are no fallback
  * tables in this plugin: when workflow.md is missing or a tag is
@@ -23,12 +23,7 @@
 
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
-import {
-  MESSAGES_TRANSFORM_HOOK,
-  latestUserPromptText,
-  platformInputFromMessages,
-  prependEphemeralText,
-} from "../lib/context-visibility.js"
+import { latestUserPromptText, prependEphemeralText } from "../lib/context-visibility.js"
 import { TrellisContext, debugLog, isTrellisSubagent } from "../lib/trellis-context.js"
 
 // Supports STATUS values with letters, digits, underscores, hyphens
@@ -178,65 +173,72 @@ function buildBreadcrumb(id, status, templates) {
   return `<workflow-state>\n${header}\n${body}\n</workflow-state>`
 }
 
-// OpenCode 2.x expects a default object with `id` + `server`.
-async function server({ directory }) {
+// OpenCode 2.x: register on the session context domain. V1 return-object
+// hooks are not executed by the V2 plugin runtime.
+async function server(api) {
+  const directory = api.location.directory
   const ctx = new TrellisContext(directory)
   debugLog("workflow-state", "Plugin loaded, directory:", directory)
 
-  return {
-      [MESSAGES_TRANSFORM_HOOK]: async (_input, output) => {
-        try {
-          const messages = output?.messages
-          const platformInput = platformInputFromMessages(messages)
-          // Skip Trellis sub-agent turns — the per-turn breadcrumb is for the
-          // main session only; sub-agent context comes from the parent's
-          // tool.execute.before injection.
-          if (isTrellisSubagent(platformInput)) {
-            debugLog("workflow-state", "Skipping trellis subagent turn:", platformInput?.agent)
-            return
-          }
-          if (process.env.TRELLIS_HOOKS === "0" || process.env.TRELLIS_DISABLE_HOOKS === "1") {
-            return
-          }
-          if (process.env.OPENCODE_NON_INTERACTIVE === "1") {
-            return
-          }
-          if (!ctx.isTrellisProject()) {
-            return
-          }
+  await api.session.hook("context", (event) => {
+    try {
+      const messages = event?.messages
+      const platformInput = {
+        sessionID: event?.sessionID,
+        agent: event?.agent,
+      }
+      // Skip Trellis sub-agent turns — the per-turn breadcrumb is for the
+      // main session only; sub-agent context comes from the parent's
+      // tool.execute.before injection.
+      if (isTrellisSubagent(platformInput)) {
+        debugLog("workflow-state", "Skipping trellis subagent turn:", platformInput.agent)
+        return
+      }
+      if (process.env.TRELLIS_HOOKS === "0" || process.env.TRELLIS_DISABLE_HOOKS === "1") {
+        return
+      }
+      if (process.env.OPENCODE_NON_INTERACTIVE === "1") {
+        return
+      }
+      if (!ctx.isTrellisProject()) {
+        return
+      }
 
-          const originalText = latestUserPromptText(messages)
+      const originalText = latestUserPromptText(messages)
 
-          // Escape hatch (issue #427): user prompt contains the skip keyword
-          // as a standalone word — emit nothing for this turn only.
-          if (promptHasSkipKeyword(originalText, readSkipKeyword(directory))) {
-            debugLog("workflow-state", "Skipping turn: skip keyword present in prompt")
-            return
-          }
+      // Escape hatch (issue #427): user prompt contains the skip keyword
+      // as a standalone word — emit nothing for this turn only.
+      if (promptHasSkipKeyword(originalText, readSkipKeyword(directory))) {
+        debugLog("workflow-state", "Skipping turn: skip keyword present in prompt")
+        return
+      }
 
-          const templates = loadBreadcrumbs(directory)
-          const task = getActiveTask(ctx, platformInput)
-          const breadcrumb = task
-            ? buildBreadcrumb(task.id, task.status, templates, task.source)
-            : buildBreadcrumb(null, "no_task", templates)
+      const templates = loadBreadcrumbs(directory)
+      const task = getActiveTask(ctx, platformInput)
+      const breadcrumb = task
+        ? buildBreadcrumb(task.id, task.status, templates, task.source)
+        : buildBreadcrumb(null, "no_task", templates)
 
-          prependEphemeralText(messages, breadcrumb)
-          debugLog(
-            "workflow-state",
-            "Injected breadcrumb for task",
-            task ? task.id : "none",
-            "status",
-            task ? task.status : "no_task",
-          )
-        } catch (error) {
-          debugLog(
-            "workflow-state",
-            "Error in messages.transform:",
-            error instanceof Error ? error.message : String(error),
-          )
-        }
-      },
-  }
+      if (Array.isArray(event.system)) {
+        event.system.push({ type: "text", text: breadcrumb })
+      } else {
+        prependEphemeralText(messages, breadcrumb)
+      }
+      debugLog(
+        "workflow-state",
+        "Injected breadcrumb for task",
+        task ? task.id : "none",
+        "status",
+        task ? task.status : "no_task",
+      )
+    } catch (error) {
+      debugLog(
+        "workflow-state",
+        "Error in session.context:",
+        error instanceof Error ? error.message : String(error),
+      )
+    }
+  })
 }
 
 export default { id: "trellis-workflow-state", setup: server }
