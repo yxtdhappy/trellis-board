@@ -305,6 +305,24 @@ pub fn shutdown(app: &AppHandle) {
     stop_with_reason(app, "应用退出");
 }
 
+async fn select_task_sync<F, Fut>(
+    running: Option<Arc<TaskSync>>,
+    task_space_id: &str,
+    fallback: F,
+) -> AgentResult<(Arc<TaskSync>, Option<tokio::sync::OwnedMutexGuard<()>>)>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = AgentResult<Arc<TaskSync>>>,
+{
+    if let Some(running) = running {
+        if running.has_binding(task_space_id).await {
+            let serial = running.task_space_sync_lock(task_space_id).await;
+            return Ok((running, Some(serial.lock_owned().await)));
+        }
+    }
+    Ok((fallback().await?, None))
+}
+
 impl AgentService {
     fn sink(&self) -> ControlSink {
         let service = self.clone();
@@ -334,15 +352,11 @@ impl AgentService {
         &self,
         task_space_id: &str,
     ) -> AgentResult<(Arc<TaskSync>, Option<tokio::sync::OwnedMutexGuard<()>>)> {
-        if let Some(running) = self.running_task_sync() {
-            if running.has_binding(task_space_id).await {
-                let serial = running.task_space_sync_lock(task_space_id).await;
-                return Ok((running, Some(serial.lock_owned().await)));
-            }
-        }
-        let (config, api) = self.agent_context().await?;
-        let task_sync = Arc::new(self.task_sync(api, config.bindings).await);
-        Ok((task_sync, None))
+        select_task_sync(self.running_task_sync(), task_space_id, || async {
+            let (config, api) = self.agent_context().await?;
+            Ok(Arc::new(self.task_sync(api, config.bindings).await))
+        })
+        .await
     }
 
     fn notify_live_control(&self) {

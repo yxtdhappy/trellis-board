@@ -974,8 +974,8 @@ async fn download_task_marks_readonly_and_suppressed_and_rolls_back_on_write_err
             "taskDir": task_dir
         }],
         "files": [
-            snapshot_file_value(&format!("{task_dir}/task.json"), task_json),
-            snapshot_file_value(&format!("{task_dir}/prd.md"), prd_md)
+            snapshot_file_value(format!("{task_dir}/task.json"), task_json),
+            snapshot_file_value(format!("{task_dir}/prd.md"), prd_md)
         ]
     }))
     .await;
@@ -1024,7 +1024,7 @@ async fn download_task_marks_readonly_and_suppressed_and_rolls_back_on_write_err
             "taskDir": bad_dir
         }],
         "files": [
-            snapshot_file_value(&format!("{bad_dir}/task.json"), "{\"id\":\"bad-1\"}\n")
+            snapshot_file_value(format!("{bad_dir}/task.json"), "{\"id\":\"bad-1\"}\n")
         ]
     }))
     .await;

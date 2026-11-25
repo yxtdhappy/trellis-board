@@ -133,6 +133,7 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
     dataDir,
     logger: LOGGER,
     requireAdmin: false,
+    enablePolling: false,
   })
   await runtime.start()
   t.after(async () => {
@@ -1151,6 +1152,7 @@ test('归档同步管理 API 仅允许系统管理员且不回显凭据', async 
     dataDir,
     logger: LOGGER,
     requireAdmin: false,
+    enablePolling: false,
   })
   await runtime.start()
   t.after(async () => {
@@ -1594,4 +1596,184 @@ test('归档附件详情与下载只读取本地快照并执行 Session 权限�
   })
   assert.equal(missing.status, 503)
   assert.equal(missing.body.code, 'ARCHIVE_LOCAL_FILE_UNAVAILABLE')
+})
+
+test('POST /api/agent/task-spaces/preflight HTTP 路由透传当前 agentId 排除他机活跃租约', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-preflight-lease-http-'))
+  const dataDir = path.join(root, 'data')
+  const runtime = await createTeamRuntime({
+    config: {
+      mode: 'team',
+      bindHost: '127.0.0.1',
+      port: 0,
+      publicUrl: new URL(PUBLIC_ORIGIN),
+      publicOrigin: PUBLIC_ORIGIN,
+      sessionTtlMs: 12 * 60 * 60 * 1000,
+      agentStaleMs: 60_000,
+      cookieSecure: false,
+      trustProxy: false,
+      allowLocalGitRemotes: false,
+    },
+    databaseFile: path.join(dataDir, 'board.sqlite'),
+    dataDir,
+    logger: LOGGER,
+    requireAdmin: false,
+    enablePolling: false,
+  })
+  await runtime.start()
+  t.after(async () => {
+    await runtime.stop()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  const now = new Date().toISOString()
+  runtime.db
+    .prepare(`
+      INSERT INTO team(id, name, slug, status, created_at, updated_at)
+      VALUES ('team-1', '团队一', 'team-1', 'active', ?, ?)
+    `)
+    .run(now, now)
+  await createUser(runtime.db, {
+    username: 'owner',
+    displayName: '项目负责人',
+    password: 'Owner-Password-123',
+    systemAdmin: true,
+    mustChangePassword: false,
+  })
+  runtime.db
+    .prepare(`
+      INSERT INTO team_member(team_id, user_id, role, created_at, updated_at)
+      SELECT 'team-1', id, 'member', ?, ? FROM user_account WHERE username = 'owner'
+    `)
+    .run(now, now)
+  const login = await request(runtime, '/api/auth/login', {
+    method: 'POST',
+    body: { username: 'owner', password: 'Owner-Password-123' },
+  })
+  assert.equal(login.status, 200)
+  const session = cookie(login)
+
+  const pairing1 = await request(runtime, '/api/team/pairing-codes', {
+    method: 'POST',
+    cookie: session,
+    body: { teamId: 'team-1' },
+  })
+  assert.equal(pairing1.status, 201)
+  const device1 = await request(runtime, '/api/agent/enroll', {
+    method: 'POST',
+    origin: null,
+    body: {
+      protocolVersion: 3,
+      agentVersion: '0.1.0',
+      platform: 'win32',
+      deviceName: '设备一',
+      pairingCode: pairing1.body.pairingCode,
+    },
+  })
+  assert.equal(device1.status, 201)
+
+  const attach = await request(runtime, '/api/agent/task-spaces/attach', {
+    method: 'POST',
+    agentCredential: device1.body.credential,
+    body: {
+      remoteUrl: 'https://example.com/team/lease-repo.git',
+      branchName: 'main',
+      displayName: 'Lease Repo',
+      teamId: 'team-1',
+      developerId: 'owner',
+      localRepoKey: 'c'.repeat(64),
+    },
+  })
+  assert.equal(attach.status, 201)
+  const taskSpaceId = attach.body.taskSpace.id
+  const upload = await request(
+    runtime,
+    `/api/agent/task-spaces/${encodeURIComponent(taskSpaceId)}/changes`,
+    {
+      method: 'POST',
+      agentCredential: device1.body.credential,
+      body: {
+        batchId: 'batch-lease-http',
+        clientSequence: 1,
+        observedBranchName: 'main',
+        files: [
+          {
+            path: '.trellis/tasks/11-25-leased/task.json',
+            content: `${JSON.stringify({
+              id: 'leased-task',
+              title: '租约任务',
+              status: 'planning',
+              assignee: 'owner',
+              priority: 'P2',
+              branch: 'main',
+            })}\n`,
+            baseSha256: null,
+          },
+        ],
+      },
+    },
+  )
+  assert.equal(upload.status, 200)
+
+  const executionTaskKey = `${taskSpaceId}::leased-task`
+  const claimed = await request(
+    runtime,
+    `/api/agent/tasks/${encodeURIComponent(executionTaskKey)}/claim`,
+    {
+      method: 'POST',
+      agentCredential: device1.body.credential,
+      body: {},
+    },
+  )
+  assert.equal(claimed.status, 200)
+
+  const selfPreflight = await request(runtime, '/api/agent/task-spaces/preflight', {
+    method: 'POST',
+    agentCredential: device1.body.credential,
+    body: {
+      remoteUrl: 'https://example.com/team/lease-repo.git',
+      branchName: 'main',
+      teamId: 'team-1',
+    },
+  })
+  assert.equal(selfPreflight.status, 200)
+  assert.equal(selfPreflight.body.status, 'existing')
+  assert.deepEqual(
+    selfPreflight.body.tasks.map((task) => task.taskId),
+    ['leased-task'],
+  )
+
+  const pairing2 = await request(runtime, '/api/team/pairing-codes', {
+    method: 'POST',
+    cookie: session,
+    body: { teamId: 'team-1' },
+  })
+  assert.equal(pairing2.status, 201)
+  const device2 = await request(runtime, '/api/agent/enroll', {
+    method: 'POST',
+    origin: null,
+    body: {
+      protocolVersion: 3,
+      agentVersion: '0.1.0',
+      platform: 'win32',
+      deviceName: '设备二',
+      pairingCode: pairing2.body.pairingCode,
+    },
+  })
+  assert.equal(device2.status, 201)
+
+  const otherPreflight = await request(runtime, '/api/agent/task-spaces/preflight', {
+    method: 'POST',
+    agentCredential: device2.body.credential,
+    body: {
+      remoteUrl: 'https://example.com/team/lease-repo.git',
+      branchName: 'main',
+      teamId: 'team-1',
+    },
+  })
+  assert.equal(otherPreflight.status, 200)
+  assert.equal(otherPreflight.body.status, 'existing')
+  assert.deepEqual(otherPreflight.body.tasks, [])
+  assert.equal(JSON.stringify(otherPreflight.body).includes('"content"'), false)
+  await runtime.services.taskSpaceIndex.ensureMaterialized(taskSpaceId)
 })

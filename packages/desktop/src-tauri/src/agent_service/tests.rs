@@ -130,3 +130,88 @@ fn missing_project_omits_the_scope_prefix() {
     assert!(!body.contains('：'));
     assert!(!body.starts_with('（'));
 }
+
+#[tokio::test]
+async fn select_task_sync_reuses_running_instance_with_serial_lock_and_falls_back() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let root =
+        std::env::temp_dir().join(format!("trellis-select-task-sync-{}", uuid::Uuid::new_v4()));
+    let store = Arc::new(ConfigStore::new_unsecured_for_test(root.clone()));
+    store.ensure_directories().await.expect("directories");
+    let api = Arc::new(ApiClient::new("http://127.0.0.1:1", None, None).expect("api"));
+    let running = Arc::new(TaskSync::new(store.clone(), api.clone(), Arc::new(|_| {})));
+    running
+        .set_bindings(vec![AgentBinding {
+            local_id: "local-1".to_string(),
+            server_binding_id: Some("binding-1".to_string()),
+            task_space_id: "space-1".to_string(),
+            project_id: "project-1".to_string(),
+            repo_path: root.join("repo").to_string_lossy().to_string(),
+            branch_name: "main".to_string(),
+            baseline_branch: None,
+            team_id: None,
+            remote_identity_key: "a".repeat(64),
+            local_repo_key: "b".repeat(64),
+            display_name: "Repo".to_string(),
+            created_at: "2026-11-25T00:00:00.000Z".to_string(),
+            allow_file_remote: false,
+            read_only: false,
+            sync_status: "approved".to_string(),
+            detach_pending: false,
+            initial_sync_mode: "bootstrap".to_string(),
+            initial_sync_completed: true,
+            initial_review_pending: false,
+            tracked_task_dirs: Vec::new(),
+            live_sync_status: "ready".to_string(),
+            live_sync_error: None,
+            last_synced_at: None,
+            last_head: None,
+            last_error: None,
+            last_error_code: None,
+        }])
+        .await;
+
+    let fallback_called = Arc::new(AtomicBool::new(false));
+    let called_clone = fallback_called.clone();
+    let (selected, guard) = select_task_sync(Some(running.clone()), "space-1", || async move {
+        called_clone.store(true, Ordering::SeqCst);
+        unreachable!("fallback must not run when running TaskSync holds the binding")
+    })
+    .await
+    .expect("reuse running task sync");
+    assert!(Arc::ptr_eq(&selected, &running));
+    assert!(!fallback_called.load(Ordering::SeqCst));
+    let guard = guard.expect("serial lock must be held for running TaskSync");
+    let lock = running.task_space_sync_lock("space-1").await;
+    assert!(
+        lock.try_lock().is_err(),
+        "per-space sync lock must serialize concurrent operations"
+    );
+    drop(guard);
+    assert!(
+        lock.try_lock().is_ok(),
+        "dropping guard must release per-space sync lock"
+    );
+
+    let fallback_instance = Arc::new(TaskSync::new(store.clone(), api.clone(), Arc::new(|_| {})));
+    let fallback_ref = fallback_instance.clone();
+    let (unmatched, unmatched_guard) =
+        select_task_sync(Some(running.clone()), "space-other", || async move {
+            Ok(fallback_ref)
+        })
+        .await
+        .expect("fallback when binding missing");
+    assert!(Arc::ptr_eq(&unmatched, &fallback_instance));
+    assert!(unmatched_guard.is_none());
+
+    let fallback_ref2 = fallback_instance.clone();
+    let (stopped, stopped_guard) =
+        select_task_sync(None, "space-1", || async move { Ok(fallback_ref2) })
+            .await
+            .expect("fallback when runtime stopped");
+    assert!(Arc::ptr_eq(&stopped, &fallback_instance));
+    assert!(stopped_guard.is_none());
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
