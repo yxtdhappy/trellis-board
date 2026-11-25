@@ -1,0 +1,41 @@
+{
+  "id": "integrate-api-e2e-workflow",
+  "name": "integrate-api-e2e-workflow",
+  "title": "将 trellis-api-e2e 内置为 Trellis 自带技能并接入后端任务流程",
+  "description": "把用户级 wit-api-e2e 固化并重命名为 Trellis 内置技能 trellis-api-e2e，由 trellis-kit 随项目初始化分发；后端代码任务在编码和代码级验证后跑一轮 trellis-api-e2e，并在任务目录生成 api-e2e-report.md。保持宽松：不新增项目类型字段，不改 task.py verify 硬门禁。",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "backend",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-25",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "11-23-trellis-workflow-evidence-loop",
+  "relatedFiles": [
+    ".agents/skills/trellis-api-e2e/",
+    "trellis-kit/manifest.json",
+    "trellis-kit/apply.py",
+    "trellis-kit/build_overlay.py",
+    "trellis-kit/overlay/.agents/skills/trellis-api-e2e/",
+    "trellis-kit/overlay/.trellis/workflow.md",
+    ".trellis/workflow.md",
+    ".agents/skills/trellis-check/SKILL.md",
+    ".agents/skills/trellis-finish-work/SKILL.md",
+    ".claude/commands/trellis/finish-work.md"
+  ],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit"
+  }
+}
