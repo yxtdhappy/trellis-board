@@ -28,9 +28,6 @@
   },
   "bundle": {
     "active": false,
-    "resources": {
-      "../../../trellis-kit": "trellis-kit"
-    },
     "icon": [
       "icons/icon.png",
       "icons/icon.ico"

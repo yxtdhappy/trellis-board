@@ -12,9 +12,10 @@ python trellis-kit/apply.py --target /path/to/project --agent-only --platform cl
 ```
 
 `overlay/` is the self-contained copy of every managed file. The desktop
-client bundles `trellis-kit/` and applies it automatically after `trellis init`
-and after agent-only initialization; new projects therefore get the Board
-workflow without a manual post-step. `apply.py` defaults to `overlay/` as its
+client embeds `trellis-kit/` in its executable, extracts it under
+`%LOCALAPPDATA%\TrellisBoard\data\runtime\kit`, and applies it automatically after
+`trellis init` and after agent-only initialization; new projects therefore get
+the Board workflow without a manual post-step. `apply.py` defaults to `overlay/` as its
 source, so it also works when only the kit directory is present.
 
 After changing a managed workflow/skill/agent/script file in the repository,

@@ -7,6 +7,7 @@ mod agent;
 mod agent_service;
 mod appearance;
 mod config;
+mod kit_assets;
 mod logging;
 mod navigation;
 mod plugin_host;
