@@ -3,7 +3,7 @@
   "name": "trellis-workflow-evidence-loop",
   "title": "优化 Trellis 工作流与技能：让 agent 全程自动维护任务元数据",
   "description": "以 workflow、skills、agent prompts 和 Trellis 脚本为主，建立 agent 全程维护任务文件的机制：Phase 3.4 提交后自动回写 commit；各阶段自动登记实施/检查证据；finish-work/archive 预检缺失证据；任务状态变更在阶段边界持久化并可由 doctor 恢复；同步到所有接入仓库的模板。同时把前端/后端/全栈/研究/文档任务类型接入看板与插件创建入口（创建只选 work_type），任务复杂度由 agent 在规划后判断并经 set-task-type 写入，不要求用户创建时选择。看板保持只读投影，不通过看板交互或人工补数据修复任务状态。",
-  "status": "in_progress",
+  "status": "completed",
   "task_type": "complex",
   "work_type": "fullstack",
   "dev_type": null,
@@ -13,11 +13,11 @@
   "creator": "yhj",
   "assignee": "yhj",
   "createdAt": "2026-11-23",
-  "completedAt": null,
+  "completedAt": "2026-11-25",
   "branch": "feat/trellis-workflow-evidence-loop",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": "c88ac06ed4c1e4564153b75b6f46bb0908ed2931",
+  "commit": "882d2a364b2d028d33efd9b22a624db9ccaa000d",
   "pr_url": null,
   "subtasks": [],
   "children": [
@@ -80,8 +80,27 @@
     "commits": [
       "14fa6a3e865b29a02bed71fbe15595e4a60adc73",
       "66f83726ae2ecfcc42698e6ce2f95f2c5990a926",
-      "c88ac06ed4c1e4564153b75b6f46bb0908ed2931"
+      "c88ac06ed4c1e4564153b75b6f46bb0908ed2931",
+      "882d2a364b2d028d33efd9b22a624db9ccaa000d"
     ],
-    "commit_set_at": "2026-11-25T15:09:03"
+    "commit_set_at": "2026-11-25T23:22:20",
+    "check_binding": {
+      "commit": "882d2a364b2d028d33efd9b22a624db9ccaa000d",
+      "base": "ada2be3ae12f5aaab8d6b0802277a4dee00da775",
+      "scope": [
+        ".agents/skills/trellis-task-state/SKILL.md",
+        ".trellis/scripts/common/task_store.py",
+        ".trellis/scripts/task.py",
+        "trellis-kit/overlay/.agents/skills/trellis-task-state/SKILL.md",
+        "trellis-kit/overlay/.codex/agents/trellis-check.toml",
+        "trellis-kit/overlay/.trellis/scripts/common/task_store.py",
+        "trellis-kit/overlay/.trellis/scripts/task.py",
+        "trellis-kit/build_overlay.py",
+        "scripts/test/task-check-binding.test.js",
+        "scripts/test/trellis-kit.test.js"
+      ],
+      "diff": "sha256:515c1dc37c5258280ceab826dd6b94908ece8ad0006baeb29d01fcbd3e60badd",
+      "report_sha256": "58b2182aaf468e08e47c6b8023a8d278cbeb2746030010e11ee90225c0e72061"
+    }
   }
 }
