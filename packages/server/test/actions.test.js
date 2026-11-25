@@ -218,3 +218,88 @@ test('task.py 支持 --work-type 时创建任务照旧传该参数', { skip: !ha
   const argv = readStubArgv(root)
   assert.deepEqual(argv.slice(-2), ['--work-type', 'backend'])
 })
+
+function hasGit() {
+  try {
+    execFileSync('git', ['--version'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 桩：记录 argv，并在 create 时真的落一个 branch 为空的任务目录。 */
+function makeCreatingStubRepo() {
+  const root = makeStubRepo({ supportsWorkType: false })
+  fs.writeFileSync(
+    path.join(root, '.trellis', 'scripts', 'task.py'),
+    [
+      'import datetime, json, pathlib, sys',
+      'args = sys.argv[1:]',
+      'here = pathlib.Path(__file__)',
+      "here.with_name('argv.json').write_text(json.dumps(args), encoding='utf-8')",
+      "if args and args[0] == 'create':",
+      "    slug = args[args.index('--slug') + 1]",
+      "    day = datetime.date.today().strftime('%m-%d')",
+      "    task_dir = here.parents[2] / '.trellis' / 'tasks' / f'{day}-{slug}'",
+      '    task_dir.mkdir(parents=True, exist_ok=True)',
+      "    (task_dir / 'task.json').write_text(json.dumps({'slug': slug, 'branch': None}), encoding='utf-8')",
+      "    print(f'.trellis/tasks/{task_dir.name}')",
+      '',
+    ].join('\n'),
+  )
+  return root
+}
+
+test('findCreatedTaskDir 优先取命令输出里的任务目录', async () => {
+  const { findCreatedTaskDir } = await import('../actions.js')
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-actions-dir-'))
+  const created = path.join(root, '.trellis', 'tasks', '11-25-board-task')
+  fs.mkdirSync(created, { recursive: true })
+  fs.writeFileSync(path.join(created, 'task.json'), '{}\n')
+  assert.equal(
+    findCreatedTaskDir(root, 'other-slug', '创建成功 .trellis/tasks/11-25-board-task'),
+    '11-25-board-task',
+  )
+  assert.equal(findCreatedTaskDir(root, 'other-slug', 'no dir here'), '')
+})
+
+test('stampCreatedTaskBranch 不覆盖已有分支', async () => {
+  const { stampCreatedTaskBranch } = await import('../actions.js')
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-actions-branch-'))
+  const taskDir = path.join(root, '.trellis', 'tasks', '11-25-board-task')
+  fs.mkdirSync(taskDir, { recursive: true })
+  const taskJsonPath = path.join(taskDir, 'task.json')
+  fs.writeFileSync(
+    taskJsonPath,
+    `${JSON.stringify({ slug: 'board-task', branch: 'feature/x' }, null, 2)}\n`,
+  )
+  assert.equal(stampCreatedTaskBranch(root, '11-25-board-task', 'dev'), false)
+  assert.equal(JSON.parse(fs.readFileSync(taskJsonPath, 'utf8')).branch, 'feature/x')
+})
+
+test('创建任务后按当前检出分支补齐分支归属', { skip: !hasPython3() || !hasGit() }, async () => {
+  const { createTask, readCheckedOutBranch } = await import('../actions.js')
+  const root = makeCreatingStubRepo()
+  execFileSync('git', ['init', '-q', '-b', 'release/1.4', '.'], { cwd: root, stdio: 'ignore' })
+  assert.equal(readCheckedOutBranch(root), 'release/1.4')
+  await createTask(
+    {
+      repositoryId: 'repo',
+      title: 'probe task',
+      description: 'probe',
+      assignee: 'alice',
+      priority: 'P2',
+      slug: 'probe-task',
+    },
+    { listRepositories: () => [{ id: 'repo', name: 'repo', path: root }] },
+  )
+  const created = fs
+    .readdirSync(path.join(root, '.trellis', 'tasks'))
+    .find((name) => name.endsWith('-probe-task'))
+  assert.ok(created, '应当落出任务目录')
+  const task = JSON.parse(
+    fs.readFileSync(path.join(root, '.trellis', 'tasks', created, 'task.json'), 'utf8'),
+  )
+  assert.equal(task.branch, 'release/1.4')
+})
