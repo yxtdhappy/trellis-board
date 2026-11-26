@@ -595,6 +595,8 @@ fs.renameSync(tempFile, targetFile);
 
 静态资源由 [packages/server/http-common.js](../../../packages/server/http-common.js) 的 `serveStatic()` 统一实现：只接受 `GET` / `HEAD`，将 `/` 映射为 `index.html`，用 `path.sep` 边界加 `realpathSync` 防目录越界，只服务 `STATIC_TYPES` 白名单内的扩展名，并发送 `content-length`（当 Team 配置了非空 `basePath` 时，`.html` 通过 `transformHtml` 注入 `<meta name="trellis-base-path" ... />` 并改写资源前缀，按改写后字节重算 `content-length`）。修改静态边界时必须按对应入口补测试；Team 回归至少覆盖默认目录、显式覆盖、四个页面入口（`index.html`、`login.html`、`admin.html`、`share.html`）、子路径 HTML 改写和 404 JSON。
 
+安全头由同一模块的 `securityHeaders()` 统一生成，CSP 默认 `default-src 'self'`，只按明确需求放行具体源。当前有两类必要放行：插件面板的 loopback（`frame-src` / `connect-src` 的 `127.0.0.1` / `localhost`）与 WitOps 图片源（`img-src 'self' http://witops.weintdata.cn`，用于渲染同步到 `task.md` 的平台截图）。修改 CSP 时必须同步 `packages/server/test/team-static.test.js` 的断言。
+
 ## 反模式
 
 - 接受任意绝对路径后直接 `readFile` 或 `writeFile`。
