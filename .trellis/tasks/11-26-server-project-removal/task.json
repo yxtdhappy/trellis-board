@@ -6,7 +6,7 @@
   "status": "in_progress",
   "dev_type": null,
   "task_type": "complex",
-  "work_type": "backend",
+  "work_type": "fullstack",
   "scope": null,
   "package": "server",
   "priority": "P2",
@@ -40,6 +40,9 @@
     "commits": [
       "339678492ea6438261a7ea9ed547f3b795db08a1"
     ],
-    "commit_set_at": "2026-11-26T18:52:04"
+    "commit_set_at": "2026-11-26T18:52:04",
+    "work_type_updated_at": "2026-11-26T19:18:03",
+    "work_type_updated_reason": "用户要求把已发布的项目永久移除能力补齐到 Web 管理页面",
+    "frontend_check_report_required": true
   }
 }

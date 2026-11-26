@@ -1,11 +1,32 @@
 import { requestJson } from '../request.ts'
 
-import { collection, optionalText, readTeamProject, record, teamQuery } from './readers.ts'
-import type { ProjectTeamAccess, TeamProject } from './types.ts'
+import {
+  collection,
+  optionalText,
+  readPurgeProjectResult,
+  readTeamProject,
+  record,
+  teamQuery,
+} from './readers.ts'
+import type { ProjectTeamAccess, PurgeProjectResult, TeamProject } from './types.ts'
 
 export async function fetchAdminProjects(teamId?: string | null): Promise<TeamProject[]> {
   const { data } = await requestJson<unknown>(`/api/admin/projects${teamQuery(teamId)}`)
   return collection(data, 'projects', readTeamProject)
+}
+
+export async function purgeProject(
+  projectId: string,
+  confirmation: string,
+): Promise<PurgeProjectResult> {
+  const { data } = await requestJson<unknown>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}`,
+    {
+      method: 'DELETE',
+      body: { confirmation },
+    },
+  )
+  return readPurgeProjectResult(data)
 }
 
 export async function fetchProjectTeams(projectId: string): Promise<ProjectTeamAccess[]> {

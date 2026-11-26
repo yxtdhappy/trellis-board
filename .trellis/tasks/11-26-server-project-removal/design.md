@@ -2,8 +2,9 @@
 
 ## 边界
 
-- 范围只包含 Team 服务端：HTTP 路由、任务空间服务、SQLite 查询与测试。
-- 不新增 Web 页面、软删除状态、回收站、恢复接口或远程 Git 仓库删除。
+- 范围包含 Team 服务端和系统管理员专用的 Web 管理入口：HTTP 路由、任务空间服务、
+  SQLite 查询、前端 API、管理页按钮、确认弹窗与测试。
+- 不新增软删除状态、回收站、恢复接口或远程 Git 仓库删除。
 - 现有项目停用和分支永久移除行为保持不变。
 
 ## HTTP 契约
@@ -83,6 +84,37 @@ Content-Type: application/json
 - 继续使用现有 `prune()`：新备份成功创建后，按时间文件名排序删除最早的多余备份，最终最多保留 5 份。
 - 自动每日备份、分支永久移除和项目永久移除共用该上限。
 - 不增加配置项；当前生产初始化没有覆盖 retention，修改默认值即可生效。
+
+## Web 管理入口
+
+### API 客户端
+
+- 在 `packages/web/src/api/admin/project-teams.ts` 增加
+  `purgeProject(projectId, confirmation)`，调用 `DELETE /api/admin/projects/:projectId`。
+- 将服务端响应归一化为 `PurgeProjectResult`：
+  `{ purged, projectId, projectName, backupName, summary }`。
+- 在 `packages/web/src/api/admin.ts` 统一导出，组件不直接 `fetch`。
+
+### 状态与动作
+
+- `useAdminProjects()` 增加 `purgeProject(projectId, confirmation)`。
+- 成功时清除 `accessProjectId`、成员、绑定、taskSpace、团队访问和审计，重新加载
+  `fetchAdminProjects(teamId)`，并把已删项目 ID 从 `runtimeProjects` 合并结果中过滤，避免
+  局部 runtime 快照继续显示已删除项目。
+- 成功后 toast 显示项目名称和备份 basename；失败由现有 `report()` 显示 `formatError()`，
+  返回 `{ ok: false, error }` 给弹窗保留输入。
+
+### 页面
+
+- `ProjectsTab` 从 `AdminConsole` 读取 `systemAdmin` 和 `purgeProject`。
+- 只有 `systemAdmin === true` 且已选择项目时，在“选择项目”面板顶部 action 显示危险样式
+  “移除项目”按钮；`isAdmin` 不单独构成显示条件。
+- 新增 `ProjectRemovalDialog` 业务组件，使用统一 `Dialog`：
+  1. 第一阶段展示影响范围：服务端成员、团队访问、任务空间、任务、索引、命令、绑定、游标、
+     冲突和备份会受删除影响。
+  2. 第二阶段要求输入完整项目名称，并明确真实 Git 仓库和客户端本地任务不会被删除。
+- 弹窗要求两阶段确认；输入与项目名不完全一致时禁止提交。
+- 提交中禁用关闭和按钮；成功后关闭。失败时保留弹窗、输入和错误文本。
 
 ## 并发与一致性
 

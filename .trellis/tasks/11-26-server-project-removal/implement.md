@@ -47,6 +47,23 @@
    - 每个写操作记录请求、对应后端日志和响应，区分契约级、持久化级和副作用级证据。
    - 将结论写入 `{TASK_DIR}/api-e2e-report.md`，未验证项必须明确保留。
 
+8. [x] 增加 Web API 客户端
+   - 在 `packages/web/src/api/admin/project-teams.ts` 增加 `purgeProject()`。
+   - 在 `packages/web/src/api/admin/types.ts` 增加 `PurgeProjectResult`。
+   - 在 `packages/web/src/api/admin.ts` 导出，组件不直接 fetch。
+
+9. [x] 增加管理页动作与弹窗
+   - `useAdminProjects()` 暴露 `purgeProject()`，成功后清空当前选择、过滤已删除项目并重新拉取列表。
+   - 新增 `ProjectRemovalDialog`，复用统一 Dialog/Alert/Field 组件，两阶段确认并精确校验项目名称。
+   - `ProjectsTab` 只在 `systemAdmin && accessProjectId` 时显示危险按钮，团队管理员不可见。
+
+10. [x] 前端验证
+   - 对改动文件执行 `node_modules/.bin/oxfmt`。
+   - 所有开发完成后执行一次 `yarn build`。
+   - 使用隔离本机数据启动真实服务，在浏览器验证：系统管理员可见按钮；两阶段弹窗；名称不匹配禁用；
+     成功删除后关闭、清空选择、刷新列表；团队管理员不可见；浅色/深色与窄屏不溢出。
+   - 构建产物和 E2E 证据报告写回任务目录；不得删除真实仓库目录。
+
 ## 验证命令
 
 ```powershell
@@ -54,6 +71,7 @@ node --test packages/server/test/team-task-snapshot.test.js
 node --test packages/server/test/team-task-spaces.test.js
 node --test packages/server/test/team-gitless-http.test.js
 yarn test
+yarn build
 ```
 
 - 最后一条 `yarn test` 在所有代码改动完成后执行一次。

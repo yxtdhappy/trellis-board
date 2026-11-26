@@ -1,3 +1,6 @@
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 HTTP 契约、事务、缓存失效、副作用和跨层回归"}
 {"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查没有绕过现有权限、备份、审计和事务边界"}
 {"file": ".trellis/tasks/11-26-server-project-removal/research/current-project-removal.md", "reason": "按现有实现证据核对删除语义、级联和备份保留数量"}
+{"file": ".trellis/spec/frontend/component-reuse.md", "reason": "检查按钮、Dialog、Alert、Field 和无障碍复用"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "检查管理台刷新、弹层关闭、错误保留和状态一致性"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查类型、构建、格式、主题与浏览器验收"}

@@ -16,6 +16,7 @@ import {
 } from '@/api/team-plugins'
 import { formatTime, statusTone } from '@/lib/admin-shared'
 import { BranchManagementPanel } from './BranchManagementPanel'
+import { ProjectRemovalDialog } from './ProjectRemovalDialog'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
 import { AuditItem, Row } from './shared.tsx'
@@ -33,6 +34,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
     refreshAccess,
     members,
     isAdmin,
+    systemAdmin,
     adminTeamId,
     reloadUsers,
     bindings,
@@ -49,6 +51,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
     retireTaskSpace,
     restoreTaskSpace,
     purgeTaskSpace,
+    purgeProject,
     createPairingCode,
   } = consoleApi
 
@@ -57,11 +60,13 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
   const [developerId, setDeveloperId] = useState('')
   const [inviteTeamId, setInviteTeamId] = useState('')
   const [accessRole, setAccessRole] = useState('member')
+  const [removalTarget, setRemovalTarget] = useState<{ id: string; name: string } | null>(null)
   const [directoryUsers, setDirectoryUsers] = useState<AdminUser[]>([])
   const [directoryTeamId, setDirectoryTeamId] = useState<string | null>(null)
   const accountsLoading = isAdmin && directoryTeamId !== adminTeamId
   const readOnly = role === 'read_only'
   const selectedTeamId = projectOptions.find((project) => project.id === accessProjectId)?.teamId
+  const selectedProject = projectOptions.find((project) => project.id === accessProjectId)
   const selectedMember = members.find((member) => member.userId === userId)
   const activeAccountOptions = directoryUsers
     .filter((account) => account.status === 'active')
@@ -182,6 +187,20 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           kicker="PROJECT / PEOPLE & AGENTS"
           title="选择项目"
           description="选择有管理权限的项目，维护成员 developer ID、确认 Agent 绑定并查看项目审计。"
+          action={
+            systemAdmin && selectedProject ? (
+              <Button
+                variant="destructive"
+                size="sm"
+                type="button"
+                onClick={() =>
+                  setRemovalTarget({ id: selectedProject.id, name: selectedProject.name })
+                }
+              >
+                移除项目
+              </Button>
+            ) : null
+          }
         >
           <div className="flex items-center gap-2">
             <SelectField
@@ -613,6 +632,11 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           )}
         </Panel>
       </div>
+      <ProjectRemovalDialog
+        project={removalTarget}
+        onClose={() => setRemovalTarget(null)}
+        onRemove={purgeProject}
+      />
     </div>
   )
 }

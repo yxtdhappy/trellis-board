@@ -2,15 +2,17 @@
 
 ## 结论
 
-服务端当前没有删除项目的入口，只有停用项目。项目删除应新增仅系统管理员可调用的 API，并复用现有“确认名称 + 强制备份 + 审计 + 事务删除 + 删除后清理”的删除模型。
+服务端原有停用项目但没有永久删除入口。当前任务已新增仅系统管理员可调用的 API，并扩展
+系统管理员专用的 Web 管理页入口；删除复用“确认名称 + 强制备份 + 审计 + 事务删除 + 删除后清理”的模型。
 
 ## 现有行为
 
 - `sync_project.status` 只允许 `active`、`disabled`，没有软删除字段。
 - `POST /api/admin/projects/:projectId/disable` 将项目状态改为 `disabled`，停止绑定并取消项目命令，但不删除数据。
 - `DELETE /api/projects/:projectId/task-spaces/:taskSpaceId` 已实现分支永久删除，要求确认分支名、强制数据库备份、写入审计、事务删除，再调用清理钩子。
-- 服务端没有 `DELETE /api/admin/projects/:projectId`，`createTaskSpaceService()` 也没有项目删除方法。
-- Web 管理端当前没有调用项目停用或项目删除的入口；本次产品范围仅包含服务端能力。
+- 服务端当前提供 `DELETE /api/admin/projects/:projectId`，并通过
+  `createTaskSpaceService().purgeProject()` 执行。
+- Web 管理端当前已增加系统管理员专用的项目移除按钮、两阶段确认弹窗与列表刷新。
 
 ## 数据关系
 
@@ -23,7 +25,7 @@
 ## 备份现状
 
 - `createTaskSnapshotBackupService()` 已实现备份创建和轮转。
-- 当前默认保留 7 份，生产初始化没有显式覆盖。
+- 当前默认保留 5 份，生产初始化没有显式覆盖。
 - `prune()` 在每次成功创建新备份后删除超出保留数量的最早文件。
 - 分支永久删除复用同一服务和同一保留策略。
 
