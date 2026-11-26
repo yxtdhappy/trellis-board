@@ -47,3 +47,26 @@
 ### Next Steps
 
 - 将 registry 从临时组 prod-mdp 迁移到中性组后同步 feature.json 与已初始化项目配置。
+
+
+## Session 82: check 报告绑定改用 LF 规范化哈希
+<!-- trellis-session: v=2 fp=93bf5c5122656810 -->
+
+**Date**: 2026-11-26
+**Task**: check 报告绑定改用 LF 规范化哈希
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+check-report 绑定哈希改为 LF 规范化字节，兼容旧原始哈希；stamp-check 写 LF；同步 trellis-kit overlay；新增 CRLF/BOM/旧绑定测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8d183b8` | fix(trellis): check 报告绑定改用 LF 规范化哈希 |
+
+### Status
+
+[OK] **Completed**

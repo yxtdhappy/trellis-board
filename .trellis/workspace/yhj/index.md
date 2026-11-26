@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 81
+- **Total Sessions**: 82
 - **Last Active**: 2026-11-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~49 | Active |
+| `journal-2.md` | ~72 | Active |
 | `journal-1.md` | ~1963 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 82 | 2026-11-26 | check 报告绑定改用 LF 规范化哈希 | `8d183b8` | `main` |
 | 81 | 2026-11-26 | 公司开发规范初始化与生命周期 | `51c55a0`, `f7d0d73`, `44dd7ca` | `main` |
 | 80 | 2026-11-26 | 项目栏上传状态与失效任务目录同步收敛 | `737f1f8` | `main` |
 | 79 | 2026-11-25 | Trellis 工作流证据闭环与 check-binding | `66f8372`, `c88ac06`, `3e40ce4`, `7cc05ce`, `3a436f7`, `2483457`, `882d2a3` | `main` |
