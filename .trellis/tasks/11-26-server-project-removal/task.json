@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "339678492ea6438261a7ea9ed547f3b795db08a1",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -26,6 +26,20 @@
   "notes": "",
   "meta": {
     "label_source": "user-explicit",
-    "task_type_updated_at": "2026-11-26T17:22:19"
+    "task_type_updated_at": "2026-11-26T17:22:19",
+    "check_binding": {
+      "commit": "339678492ea6438261a7ea9ed547f3b795db08a1",
+      "base": "3ca8c7b11e4d9e8fc8dddf62b91b1e79e925c743",
+      "scope": [
+        ".trellis/spec/backend/http-and-filesystem.md",
+        "packages/server"
+      ],
+      "diff": "sha256:6373e3e00b6da92ce0ccc45d40ac0d5b004bd003f54b9ba34bbb96593f58bcbe",
+      "report_sha256": "d8abd2c789575c2b35972452d9ebd0c4e86ab6ae88df9e07be8473c03715c124"
+    },
+    "commits": [
+      "339678492ea6438261a7ea9ed547f3b795db08a1"
+    ],
+    "commit_set_at": "2026-11-26T18:52:04"
   }
 }
