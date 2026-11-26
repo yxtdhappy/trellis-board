@@ -3,7 +3,7 @@
   "name": "server-switch-data-reset",
   "title": "切换服务器地址时备份并清理客户端数据",
   "description": "桌面客户端退出后重新登录时，若用户修改了服务器地址，先提示切换会清除旧服务器的登录数据与项目绑定数据；确认后备份客户端身份/绑定数据并删除，再按新地址登录。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "task_type": "complex",
   "work_type": "fullstack",
@@ -13,7 +13,7 @@
   "creator": "yhj",
   "assignee": "yhj",
   "createdAt": "2026-11-26",
-  "completedAt": null,
+  "completedAt": "2026-11-26",
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
@@ -31,6 +31,23 @@
     "commits": [
       "7fb97b546cc3adb9b2a3527766d27148cca8976a"
     ],
-    "commit_set_at": "2026-11-26T13:33:13"
+    "commit_set_at": "2026-11-26T15:11:14",
+    "check_binding": {
+      "commit": "7fb97b546cc3adb9b2a3527766d27148cca8976a",
+      "base": "6f97e38b104ab23c32d08f9d5532926b2a41b46c",
+      "scope": [
+        "packages/desktop/src-tauri/src/client_reset.rs",
+        "packages/desktop/src-tauri/src/client_reset/tests.rs",
+        "packages/desktop/src-tauri/src/main.rs",
+        "packages/desktop/src-tauri/capabilities/main.json",
+        "packages/desktop/src-tauri/permissions/desktop.toml",
+        "packages/web/src/desktop/LoginApp.tsx",
+        "packages/web/src/desktop/main-index.tsx",
+        "packages/desktop/test/client-reset-contract.test.js",
+        ".trellis/spec/desktop/tauri-commands/index.md"
+      ],
+      "diff": "sha256:b42b229b34f0d75731a94ddddbbdd8f53419608fc7b9510ad466e5fdf808377e",
+      "report_sha256": "8c00d534beb4e2dd6c07113fd87f6dae7b3b4a0bcd614939dcee437a665e75f2"
+    }
   }
 }

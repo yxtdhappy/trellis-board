@@ -271,6 +271,9 @@
   `.gitignore` 追加 `/.trellis/.template-hashes.json`（独立小节，等价规则去重、幂等）；首次确认推送在
   `commit_and_push_initial` 里先补规则，再对已跟踪的该文件执行 `git rm --cached`（保留工作区、只影响索引），
   脱管失败即中止提交。索引里已有其它暂存改动时退回 pathspec 提交并跳过脱管，避免把用户改动卷进初始化提交。
+  项目根 `.gitignore` 若已忽略共享初始化路径，必须先追加受控反忽略小节（`.trellis`、`.agents` 的目录与子树，
+  `.gitignore`、`AGENTS.md`、`.gitattributes` 文件），再把本机模板基线规则重新追加到末尾；只移动带固定标题的
+  受控小节，保留用户其它规则和手写等价规则，不得改用 `git add -f`。
   不得改写 `.trellis/.gitignore`——它会被 `trellis update` 整份重写。
 
 ## 7. 本地前端（环境门、登录页）与看板内同步确认弹窗

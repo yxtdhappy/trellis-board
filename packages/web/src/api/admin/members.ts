@@ -27,14 +27,11 @@ export async function fetchMembers(projectId: string): Promise<ProjectMember[]> 
 }
 
 export async function saveMember(projectId: string, input: MemberInput): Promise<ProjectMember[]> {
-  const { data } = await requestJson<unknown>(
-    `/api/projects/${encodeURIComponent(projectId)}/members`,
-    {
-      method: 'PUT',
-      body: input,
-    },
-  )
-  return readProjectMembers(record(data))
+  await requestJson<unknown>(`/api/projects/${encodeURIComponent(projectId)}/members`, {
+    method: 'PUT',
+    body: input,
+  })
+  return fetchMembers(projectId)
 }
 
 export async function removeMember(projectId: string, userId: string): Promise<ProjectMember[]> {

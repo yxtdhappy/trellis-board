@@ -12,6 +12,7 @@ import type {
   ArchiveTaskSpaceSync,
   AuditEvent,
   ProjectMember,
+  PurgeProjectResult,
   Runtime,
   RuntimeProject,
   SessionUser,
@@ -201,6 +202,27 @@ export function readTeamProject(input: unknown): TeamProject {
   }
 }
 
+function readPurgeProjectResult(input: unknown): PurgeProjectResult {
+  const row = record(input)
+  const summary = record(row.summary)
+  return {
+    purged: flag(row.purged),
+    projectId: text(row.projectId ?? row.project_id),
+    projectName: text(row.projectName ?? row.project_name),
+    backupName: text(row.backupName ?? row.backup_name),
+    summary: {
+      remoteUrl: text(summary.remoteUrl ?? summary.remote_url),
+      taskSpaceCount: Number(summary.taskSpaceCount ?? summary.task_space_count ?? 0) || 0,
+      taskCount: Number(summary.taskCount ?? summary.task_count ?? 0) || 0,
+      memberCount: Number(summary.memberCount ?? summary.member_count ?? 0) || 0,
+      teamAccessCount: Number(summary.teamAccessCount ?? summary.team_access_count ?? 0) || 0,
+      backupName: text(
+        summary.backupName ?? summary.backup_name ?? row.backupName ?? row.backup_name,
+      ),
+    },
+  }
+}
+
 export function readRuntime(payload: unknown): Runtime {
   const row = record(record(payload).runtime ?? payload)
   const mode = text(row.mode ?? row.boardMode ?? row.board_mode, 'standalone').toLowerCase()
@@ -386,6 +408,7 @@ export {
   readArchiveSyncConfig,
   readArchiveSyncLog,
   readAuditEvent,
+  readPurgeProjectResult,
   readTeam,
   readTeamMember,
   record,

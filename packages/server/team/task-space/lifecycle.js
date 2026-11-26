@@ -169,6 +169,75 @@ export function createLifecycle({
     return taskSpaceAdminView(updated, actor, accessContext)
   }
 
+  function purgeProject(actor, projectId, input = {}) {
+    if (!actor?.systemAdmin) {
+      throw teamError(403, ERROR_CODES.FORBIDDEN, '仅系统管理员可永久移除项目')
+    }
+    const project = access.loadProjectRow(projectId)
+    if (!project) throw teamError(404, ERROR_CODES.NOT_FOUND, '项目不存在')
+    const confirmation = typeof input?.confirmation === 'string' ? input.confirmation : ''
+    if (!confirmation || confirmation !== project.name) {
+      throw teamError(400, ERROR_CODES.INVALID_INPUT, '项目确认名称不匹配')
+    }
+    if (!backupService?.backupNowOrThrow) {
+      throw teamError(503, 'DATABASE_BACKUP_UNAVAILABLE', '数据库备份服务不可用，已取消移除项目')
+    }
+    let backupFile
+    try {
+      backupFile = backupService.backupNowOrThrow({ force: true })
+    } catch {
+      throw teamError(503, 'DATABASE_BACKUP_FAILED', '数据库备份失败，已取消移除项目')
+    }
+    if (!backupFile) {
+      throw teamError(503, 'DATABASE_BACKUP_FAILED', '数据库备份失败，已取消移除项目')
+    }
+    const backupName = backupLabel(backupFile)
+    let detail
+    withTransaction(db, () => {
+      const current = statements.projectPurgeIdentity.get(project.id)
+      if (!current) throw teamError(409, ERROR_CODES.CONFLICT, '项目状态已变化，请刷新后重试')
+      if (current.name !== confirmation) {
+        throw teamError(409, ERROR_CODES.CONFLICT, '项目名称已变化，请刷新后重试')
+      }
+      const summary = statements.projectPurgeSummary.get(project.id)
+      if (!summary) throw teamError(409, ERROR_CODES.CONFLICT, '项目状态已变化，请刷新后重试')
+      detail = {
+        remoteUrl: summary.remote_url,
+        taskSpaceCount: Number(summary.task_space_count || 0),
+        taskCount: Number(summary.task_count || 0),
+        memberCount: Number(summary.member_count || 0),
+        teamAccessCount: Number(summary.team_access_count || 0),
+        backupName,
+      }
+      appendAuditEvent(db, {
+        actorUserId: actor.userId,
+        teamId: current.owner_team_id,
+        projectId: project.id,
+        action: 'project_purged',
+        targetType: 'project',
+        targetId: project.id,
+        detail: { projectName: current.name, ...detail },
+        occurredAt: now().toISOString(),
+      })
+      const result = statements.deleteProject.run(project.id)
+      if (Number(result.changes) !== 1) {
+        throw teamError(409, ERROR_CODES.CONFLICT, '项目状态已变化，请刷新后重试')
+      }
+    })
+    try {
+      onTaskSpacePurged?.()
+    } catch {
+      // 文件清理失败由后续启动清理重试，不能把已提交的数据库删除报成失败。
+    }
+    return {
+      purged: true,
+      projectId: project.id,
+      projectName: project.name,
+      backupName,
+      summary: detail,
+    }
+  }
+
   function purgeTaskSpace(actor, projectId, taskSpaceId, input = {}) {
     const {
       project,
@@ -252,6 +321,7 @@ export function createLifecycle({
     listAdminTaskSpaces,
     retireTaskSpace,
     restoreTaskSpace,
+    purgeProject,
     purgeTaskSpace,
   }
 }

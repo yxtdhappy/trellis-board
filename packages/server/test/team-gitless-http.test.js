@@ -1116,6 +1116,111 @@ test('Team HTTP 使用任务空间快照和在线 Agent 命令，不暴露旧 Gi
   assert.equal(removedHeartbeat.status, 200, JSON.stringify(removedHeartbeat.body))
   assert.equal(removedHeartbeat.body.bindings[0].errorCode, 'BINDING_UNKNOWN')
 
+  const purgeProject = runtime.services.taskSpaces.attach(
+    login.body.user.id,
+    enrolled.body.agentId,
+    {
+      remoteUrl: 'https://example.com/team/disposable.git',
+      branchName: 'main',
+      displayName: '待移除项目',
+      teamId: 'team-1',
+      developerId: 'owner',
+      localRepoKey: 'f'.repeat(64),
+    },
+  )
+  const unauthenticatedPurge = await request(
+    runtime,
+    `/api/admin/projects/${encodeURIComponent(purgeProject.project.id)}`,
+    {
+      method: 'DELETE',
+      body: { confirmation: purgeProject.project.name },
+    },
+  )
+  assert.equal(unauthenticatedPurge.status, 401)
+
+  const forbiddenPurge = await request(
+    runtime,
+    `/api/admin/projects/${encodeURIComponent(purgeProject.project.id)}`,
+    {
+      method: 'DELETE',
+      cookie: cookie(viewerLogin),
+      body: { confirmation: purgeProject.project.name },
+    },
+  )
+  assert.equal(forbiddenPurge.status, 403)
+
+  const snapshotsBeforeInvalidPurge = runtime.services.taskSnapshotBackups.snapshots()
+  const invalidProjectPurge = await request(
+    runtime,
+    `/api/admin/projects/${encodeURIComponent(purgeProject.project.id)}`,
+    {
+      method: 'DELETE',
+      cookie: session,
+      body: { confirmation: ` ${purgeProject.project.name} ` },
+    },
+  )
+  assert.equal(invalidProjectPurge.status, 400)
+  assert.match(invalidProjectPurge.body.error, /项目确认名称/)
+  assert.deepEqual(runtime.services.taskSnapshotBackups.snapshots(), snapshotsBeforeInvalidPurge)
+
+  const revisionBeforeProjectPurge = runtime.services.taskSpaceIndex.queryRevision()
+  const purgedProject = await request(
+    runtime,
+    `/api/admin/projects/${encodeURIComponent(purgeProject.project.id)}`,
+    {
+      method: 'DELETE',
+      cookie: session,
+      body: { confirmation: purgeProject.project.name },
+    },
+  )
+  assert.equal(purgedProject.status, 200, JSON.stringify(purgedProject.body))
+  assert.equal(purgedProject.body.purged, true)
+  assert.equal(purgedProject.body.projectId, purgeProject.project.id)
+  assert.equal(purgedProject.body.projectName, purgeProject.project.name)
+  assert.ok(purgedProject.body.backupName.startsWith('board.sqlite.snapshot.'))
+  assert.equal(JSON.stringify(purgedProject.body).includes(root), false)
+  assert.ok(runtime.services.taskSpaceIndex.queryRevision() > revisionBeforeProjectPurge)
+  assert.equal(
+    runtime.db
+      .prepare('SELECT COUNT(*) AS count FROM sync_project WHERE id = ?')
+      .get(purgeProject.project.id).count,
+    0,
+  )
+  assert.equal(
+    runtime.db.prepare('SELECT COUNT(*) AS count FROM sync_project WHERE id = ?').get(projectId)
+      .count,
+    1,
+  )
+  assert.equal(
+    runtime.db
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM audit_event
+        WHERE action = 'project_purged' AND project_id = ?
+      `)
+      .get(purgeProject.project.id).count,
+    1,
+  )
+  const auditResponse = await request(runtime, '/api/admin/audit?teamId=team-1&limit=200', {
+    cookie: session,
+  })
+  assert.equal(auditResponse.status, 200)
+  const purgeAudit = auditResponse.body.events.find(
+    (event) => event.action === 'project_purged' && event.projectId === purgeProject.project.id,
+  )
+  assert.equal(purgeAudit.detail.projectName, purgeProject.project.name)
+  assert.equal(purgeAudit.detail.backupName, purgedProject.body.backupName)
+  const projectsAfterPurge = await request(runtime, '/api/admin/projects', { cookie: session })
+  assert.equal(projectsAfterPurge.status, 200)
+  assert.equal(
+    projectsAfterPurge.body.projects.some((project) => project.id === purgeProject.project.id),
+    false,
+  )
+  assert.equal(
+    projectsAfterPurge.body.projects.some((project) => project.id === projectId),
+    true,
+  )
+
   for (const [legacyPath, method] of [
     ['/api/admin/git-credentials', 'GET'],
     ['/api/admin/projects/probe', 'POST'],

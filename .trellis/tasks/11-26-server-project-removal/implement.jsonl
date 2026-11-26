@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "约定删除 API、SQLite 事务、查询缓存、Board SSE 与级联数据必须保持一致"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "要求复用现有 requireAdmin、备份、审计、事务与清理实现，避免重复逻辑"}
+{"file": ".trellis/tasks/11-26-server-project-removal/research/current-project-removal.md", "reason": "提供现有项目停用、分支移除、级联关系与备份轮转的源码证据"}
+{"file": ".trellis/spec/frontend/component-reuse.md", "reason": "Web 删除按钮和弹窗必须复用现有 UI 原语与业务组件边界"}
+{"file": ".trellis/spec/frontend/rendering-and-state.md", "reason": "管理台状态、弹层、错误保留与成功后刷新必须遵循前端状态契约"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端改动需要格式化、构建和真实浏览器验收"}

@@ -32,4 +32,4 @@
 
 - Full `yarn test` twice had unrelated Windows concurrency failures in one test each time (`plugin-real-task` EPERM, then `team-release`); each failed file passed when rerun alone. This task's archive tests passed in both full runs.
 - Repository-wide `yarn format:check` reports 32 pre-existing files outside this task; changed files pass targeted formatting.
-- Production container recreation must be verified after deployment using the existing `wit-ci` credential. The exposed screenshot key still requires rotation.
+- Production container recreation was verified after deployment with the existing `wit-ci` credential. The exposed screenshot key still requires rotation.

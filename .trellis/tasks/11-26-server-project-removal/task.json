@@ -1,0 +1,49 @@
+{
+  "id": "server-project-removal",
+  "name": "server-project-removal",
+  "title": "服务端支持移除项目",
+  "description": "为管理员提供永久移除项目及清理服务端关联数据的接口",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-26",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": "74a5a4eb1b9d2b26a9ebbd50221fe044c66d864c",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "task_type_updated_at": "2026-11-26T17:22:19",
+    "commits": [
+      "339678492ea6438261a7ea9ed547f3b795db08a1",
+      "74a5a4eb1b9d2b26a9ebbd50221fe044c66d864c"
+    ],
+    "commit_set_at": "2026-11-26T20:35:54",
+    "work_type_updated_at": "2026-11-26T19:18:03",
+    "work_type_updated_reason": "用户要求把已发布的项目永久移除能力补齐到 Web 管理页面",
+    "frontend_check_report_required": true,
+    "check_binding": {
+      "commit": "74a5a4eb1b9d2b26a9ebbd50221fe044c66d864c",
+      "base": "5101d3a9eea7961f4806a5e334ce8cec2ad9db41",
+      "scope": [
+        "packages/web/src",
+        ".trellis/spec/frontend/rendering-and-state.md"
+      ],
+      "diff": "sha256:06c5f46b304bef7ddac25d73b0e0b410f9f98bb90c6b567287faf2a580684fd9",
+      "report_sha256": "1098c61a2a066a66d5ce345c8da40c708f5630e2d78ae59ac306f88b4f2baa56"
+    }
+  }
+}

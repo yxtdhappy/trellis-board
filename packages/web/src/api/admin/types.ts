@@ -265,6 +265,21 @@ export type PurgeTaskSpaceResult = {
   summary: Record<string, unknown>
 }
 
+export type PurgeProjectResult = {
+  purged: boolean
+  projectId: string
+  projectName: string
+  backupName: string
+  summary: {
+    remoteUrl: string
+    taskSpaceCount: number
+    taskCount: number
+    memberCount: number
+    teamAccessCount: number
+    backupName: string
+  }
+}
+
 export type BindingAction = 'approve' | 'reject' | 'revoke'
 
 export type ArchiveCredentialInput = {

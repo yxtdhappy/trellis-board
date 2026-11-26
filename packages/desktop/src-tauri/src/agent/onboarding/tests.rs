@@ -34,12 +34,16 @@ fn git_available() -> bool {
         .unwrap_or(false)
 }
 
-fn git(cwd: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+fn git_output(cwd: &Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
         .args(args)
         .current_dir(cwd)
         .output()
-        .expect("run git");
+        .expect("run git")
+}
+
+fn git(cwd: &Path, args: &[&str]) -> String {
+    let output = git_output(cwd, args);
     assert!(
         output.status.success(),
         "git {args:?} failed: {}",
@@ -390,7 +394,7 @@ async fn creates_gitignore_with_selected_agent_rules() {
     .expect("ensure gitignore");
     assert_eq!(
         std::fs::read_to_string(repo.root.join(".gitignore")).expect("read gitignore"),
-        "# Trellis local agent configs (local only)\n/.claude/\n/.codex/\n# Trellis local state (local only)\n/.trellis/.template-hashes.json\n"
+        "# Trellis local agent configs (local only)\n/.claude/\n/.codex/\n# Trellis shared initialization files (tracked by Board)\n!/.trellis/\n!/.trellis/**\n!/.gitignore\n!/AGENTS.md\n!/.gitattributes\n!/.agents/\n!/.agents/**\n# Trellis local state (local only)\n/.trellis/.template-hashes.json\n"
     );
 }
 
@@ -406,7 +410,7 @@ async fn appends_gitignore_rules_and_preserves_content_and_newlines() {
         .expect("ensure gitignore");
     assert_eq!(
         std::fs::read_to_string(&path).expect("read gitignore"),
-        "/node_modules\n# Trellis local agent configs (local only)\n/.codex/\n# Trellis local state (local only)\n/.trellis/.template-hashes.json\n"
+        "/node_modules\n# Trellis local agent configs (local only)\n/.codex/\n# Trellis shared initialization files (tracked by Board)\n!/.trellis/\n!/.trellis/**\n!/.gitignore\n!/AGENTS.md\n!/.gitattributes\n!/.agents/\n!/.agents/**\n# Trellis local state (local only)\n/.trellis/.template-hashes.json\n"
     );
 
     std::fs::write(
@@ -419,7 +423,7 @@ async fn appends_gitignore_rules_and_preserves_content_and_newlines() {
         .expect("ensure gitignore crlf");
     assert_eq!(
         std::fs::read_to_string(&path).expect("read gitignore"),
-        "dist/\r\n# Trellis local agent configs (local only)\r\n/.claude/\r\n# Trellis local state (local only)\r\n/.trellis/.template-hashes.json\r\n"
+        "dist/\r\n# Trellis local agent configs (local only)\r\n/.claude/\r\n# Trellis shared initialization files (tracked by Board)\r\n!/.trellis/\r\n!/.trellis/**\r\n!/.gitignore\r\n!/AGENTS.md\r\n!/.gitattributes\r\n!/.agents/\r\n!/.agents/**\r\n# Trellis local state (local only)\r\n/.trellis/.template-hashes.json\r\n"
     );
 }
 
@@ -436,7 +440,7 @@ async fn dedupes_equivalent_gitignore_rules_and_is_idempotent() {
     let first = std::fs::read_to_string(&path).expect("read gitignore");
     assert_eq!(
         first,
-        "codex\n/.codex/\n# Trellis local state (local only)\n/.trellis/.template-hashes.json\n"
+        "codex\n/.codex/\n# Trellis shared initialization files (tracked by Board)\n!/.trellis/\n!/.trellis/**\n!/.gitignore\n!/AGENTS.md\n!/.gitattributes\n!/.agents/\n!/.agents/**\n# Trellis local state (local only)\n/.trellis/.template-hashes.json\n"
     );
 
     ensure_agent_gitignore(&repo.root, &["codex".to_string()])
@@ -457,7 +461,7 @@ async fn writes_manifest_rule_even_without_selected_agent_tools() {
         .expect("ensure gitignore");
     assert_eq!(
         std::fs::read_to_string(repo.root.join(".gitignore")).expect("read gitignore"),
-        "# Trellis local state (local only)\n/.trellis/.template-hashes.json\n"
+        "# Trellis shared initialization files (tracked by Board)\n!/.trellis/\n!/.trellis/**\n!/.gitignore\n!/AGENTS.md\n!/.gitattributes\n!/.agents/\n!/.agents/**\n# Trellis local state (local only)\n/.trellis/.template-hashes.json\n"
     );
 }
 
@@ -473,7 +477,94 @@ async fn dedupes_manifest_rule_without_leading_slash() {
         .expect("ensure gitignore");
     assert_eq!(
         std::fs::read_to_string(&path).expect("read gitignore"),
-        ".trellis/.template-hashes.json\n"
+        "# Trellis shared initialization files (tracked by Board)\n!/.trellis/\n!/.trellis/**\n!/.gitignore\n!/AGENTS.md\n!/.gitattributes\n!/.agents/\n!/.agents/**\n# Trellis local state (local only)\n/.trellis/.template-hashes.json\n"
+    );
+}
+
+#[tokio::test]
+async fn unignores_shared_paths_while_keeping_local_state_ignored() {
+    if !git_available() {
+        return;
+    }
+    let repo = init_repo("gitignore-strict", None);
+    std::fs::create_dir_all(repo.root.join(".trellis")).expect("create trellis");
+    std::fs::create_dir_all(repo.root.join(".agents").join("skills")).expect("create agents");
+    std::fs::write(repo.root.join(".trellis").join("workflow.md"), "# workflow\n")
+        .expect("write workflow");
+    std::fs::write(repo.root.join(TEMPLATE_HASHES_PATH), "{}\n").expect("write hashes");
+    std::fs::write(
+        repo.root
+            .join(".agents")
+            .join("skills")
+            .join("trellis.md"),
+        "# skill\n",
+    )
+    .expect("write skill");
+    std::fs::write(repo.root.join("AGENTS.md"), "# agents\n").expect("write agents file");
+    std::fs::write(repo.root.join(".gitattributes"), "* text=auto\n").expect("write attributes");
+    let path = repo.root.join(".gitignore");
+    std::fs::write(
+        &path,
+        "!.trellis\n# Trellis shared initialization files (tracked by Board)\n!/.trellis/\n!/.trellis/**\n!/.gitignore\n!/AGENTS.md\n!/.gitattributes\n!/.agents/\n!/.agents/**\n.trellis\n.agents\n.gitattributes\nAGENTS.md\n*.md\n.gitignore\n# User rule added after the generated section\nkeep.log\n# Trellis local state (local only)\n/.trellis/.template-hashes.json\n",
+    )
+    .expect("write strict gitignore");
+
+    ensure_agent_gitignore(&repo.root, &[])
+        .await
+        .expect("ensure shared rules");
+
+    let shared = git_output(
+        &repo.root,
+        &[
+            "check-ignore",
+            "--no-index",
+            "--",
+            ".trellis",
+            ".gitignore",
+            "AGENTS.md",
+            ".gitattributes",
+            ".agents",
+            ".trellis/workflow.md",
+            ".agents/skills/trellis.md",
+        ],
+    );
+    assert_eq!(
+        shared.status.code(),
+        Some(1),
+        "shared paths still ignored: {}",
+        String::from_utf8_lossy(&shared.stdout)
+    );
+    let local_state = git_output(
+        &repo.root,
+        &["check-ignore", "--no-index", "--", TEMPLATE_HASHES_PATH],
+    );
+    assert!(
+        local_state.status.success(),
+        "template hashes should remain ignored"
+    );
+
+    let gitignore = std::fs::read_to_string(&path).expect("read gitignore");
+    assert_eq!(gitignore.matches(SHARED_GITIGNORE_TITLE).count(), 1);
+    assert_eq!(gitignore.matches(LOCAL_STATE_TITLE).count(), 1);
+    assert_eq!(gitignore.matches(TEMPLATE_HASHES_RULE).count(), 1);
+    assert!(
+        gitignore.lines().any(|line| line == "!.trellis"),
+        "user-authored equivalent rule must remain"
+    );
+    assert!(
+        gitignore.find(SHARED_GITIGNORE_TITLE).expect("shared title")
+            > gitignore.find("keep.log").expect("late user rule")
+    );
+    assert!(
+        gitignore.rfind(TEMPLATE_HASHES_RULE).expect("template rule")
+            > gitignore.rfind("!/.trellis/**").expect("shared rule")
+    );
+    ensure_agent_gitignore(&repo.root, &[])
+        .await
+        .expect("ensure shared rules again");
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read gitignore again"),
+        gitignore
     );
 }
 
@@ -510,6 +601,7 @@ async fn untracks_manifest_before_initial_commit() {
     assert!(tracked
         .lines()
         .any(|line| line.trim() == ".trellis/workflow.md"));
+    assert!(tracked.lines().any(|line| line.trim() == ".gitignore"));
     assert!(!tracked
         .lines()
         .any(|line| line.trim() == TEMPLATE_HASHES_PATH));
@@ -597,7 +689,12 @@ async fn commits_and_pushes_only_initialization_paths() {
         "task",
     )
     .expect("write task");
-    std::fs::write(repo.root.join(".gitignore"), "/.codex/\n").expect("write gitignore");
+    std::fs::write(repo.root.join(TEMPLATE_HASHES_PATH), "{}\n").expect("write hashes");
+    std::fs::write(
+        repo.root.join(".gitignore"),
+        ".trellis\n.agents\n.gitattributes\nAGENTS.md\n*.md\n.gitignore\n# Trellis local state (local only)\n/.trellis/.template-hashes.json\n",
+    )
+    .expect("write gitignore");
     std::fs::write(repo.root.join("AGENTS.md"), "# Trellis\n").expect("write agents");
     std::fs::write(repo.root.join(".gitattributes"), "* text=auto\n").expect("write gitattributes");
     std::fs::create_dir_all(repo.root.join(".agents").join("skills").join("trellis"))
@@ -635,7 +732,15 @@ async fn commits_and_pushes_only_initialization_paths() {
     assert!(committed.contains(&".gitattributes"));
     assert!(committed.contains(&".agents/skills/trellis/SKILL.md"));
     assert!(committed.iter().any(|path| path.starts_with(".trellis/")));
+    assert!(!committed.contains(&TEMPLATE_HASHES_PATH));
     assert!(!committed.contains(&"other.txt"));
+    assert!(
+        repo.root.join(TEMPLATE_HASHES_PATH).exists(),
+        "manifest 工作区文件应保留"
+    );
+    let committed_gitignore = git(&repo.root, &["show", "HEAD:.gitignore"]);
+    assert!(committed_gitignore.contains(SHARED_GITIGNORE_TITLE));
+    assert!(committed_gitignore.contains("!/.trellis/**"));
     let staged = git(&repo.root, &["diff", "--cached", "--name-only"]);
     assert!(staged.lines().any(|line| line.trim() == "other.txt"));
 

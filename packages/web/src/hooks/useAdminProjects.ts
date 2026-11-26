@@ -9,6 +9,7 @@ import type {
   MemberInput,
   ProjectMember,
   ProjectTeamAccess,
+  PurgeProjectResult,
   RuntimeProject,
   TeamProject,
 } from '@/api/admin'
@@ -38,12 +39,19 @@ export type AdminProjects = {
     taskSpace: AdminTaskSpace,
     confirmation: string,
   ) => Promise<TaskSpaceActionOutcome>
+  purgeProject: (projectId: string, confirmation: string) => Promise<ProjectActionOutcome>
 }
 
 export type TaskSpaceActionOutcome = {
   ok: boolean
   error?: string
   purge?: admin.PurgeTaskSpaceResult
+}
+
+export type ProjectActionOutcome = {
+  ok: boolean
+  error?: string
+  purge?: PurgeProjectResult
 }
 
 type AdminProjectsOptions = {
@@ -68,6 +76,7 @@ export function useAdminProjects({
   const [projectTeams, setProjectTeams] = useState<ProjectTeamAccess[]>([])
   const [projectAudit, setProjectAudit] = useState<AuditEvent[]>([])
   const [projectAuditHasMore, setProjectAuditHasMore] = useState(false)
+  const [removedProjectIds, setRemovedProjectIds] = useState<Set<string>>(() => new Set())
 
   const accessProjectRef = useRef('')
   const projectAuditBeforeRef = useRef<number | null>(null)
@@ -95,12 +104,12 @@ export function useAdminProjects({
     const seen = new Set<string>()
     return list
       .filter((project) => {
-        if (!project.id || seen.has(project.id)) return false
+        if (!project.id || seen.has(project.id) || removedProjectIds.has(project.id)) return false
         seen.add(project.id)
         return true
       })
       .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
-  }, [isAdmin, projects, runtimeProjects])
+  }, [isAdmin, projects, removedProjectIds, runtimeProjects])
 
   const selectProject = useCallback(
     async (projectId: string) => {
@@ -355,6 +364,23 @@ export function useAdminProjects({
     [report, selectProject],
   )
 
+  const purgeProject = useCallback(
+    async (projectId: string, confirmation: string) => {
+      try {
+        const result = await admin.purgeProject(projectId, confirmation)
+        await selectProject('')
+        setRemovedProjectIds((current) => new Set(current).add(projectId))
+        await reloadProjects(true)
+        toast.success(`项目 ${result.projectName} 已移除，备份 ${result.backupName} 已创建。`)
+        return { ok: true, purge: result }
+      } catch (error) {
+        report(error)
+        return { ok: false, error: admin.formatError(error) }
+      }
+    },
+    [reloadProjects, report, selectProject],
+  )
+
   return {
     projects,
     reloadProjects,
@@ -377,5 +403,6 @@ export function useAdminProjects({
     retireTaskSpace,
     restoreTaskSpace,
     purgeTaskSpace,
+    purgeProject,
   }
 }

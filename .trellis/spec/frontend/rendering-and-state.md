@@ -14,6 +14,10 @@
 - 组件不直接 `fetch`；写操作通过 hook 暴露的 actions 调用，成功后重新拉取对应快照。
 - 服务端快照（`board`、`teamPage`、`users`…）只由 API 成功响应更新；筛选、搜索、当前视图保存在 hook 内的 UI 状态。
 - 能由 `board.tasks` 推导的显示值（进度、阶段、关注信号）在渲染期计算，不复制成长期状态。
+- 项目成员写接口与列表接口响应形状不同：`PUT /api/projects/:projectId/members` 返回
+  `{ member }`，`GET /api/projects/:projectId/members` 返回 `{ members }`。`api/admin/members.ts`
+  的 `saveMember()` 必须在 PUT 成功后复用 `fetchMembers()`，hook 只把 GET 返回的权威集合写入
+  `members`；禁止把 PUT 响应当作成员数组解析，否则保存成功但页面会清空成员列表。
 
 ## 事件、刷新与操作进度
 
@@ -144,6 +148,9 @@
 ## 管理台分支生命周期
 
 - 分支管理只在服务端 `/admin.html` 的项目页提供；桌面客户端不显示弃用、恢复或移除入口。
+- 项目成员保存的浏览器验收必须同时断言 PUT 请求体、PUT 成功后的 GET 刷新、成员计数和新增/编辑行；
+  仅看到成功 toast 不能证明页面状态正确。管理员可用账号选择器选择 active 账号，项目负责人仍走
+  手工内部 UUID 输入，不扩大 `/api/admin/users` 的账号目录权限。
 - `useAdminProjects` 在切换项目时并行请求 taskspaces、成员、绑定、团队访问和审计；状态只来自
   `GET /api/projects/:projectId/task-spaces`，操作成功后重新调用 `selectProject()`，不能本地伪造删除。
 - 分支按 `lifecycleStatus=active|disabled|retired` 分组。每行展示任务数、文件数、在线/已关联监听数、
@@ -154,6 +161,71 @@
   第二步要求输入完整分支名，值不完全匹配时禁止提交。服务端仍会再次校验，前端不能只依赖按钮状态。
 - 移除成功后关闭弹层并刷新管理数据；备份失败、权限变化或 taskSpace 状态变化时保留弹层和输入，
   显示服务端原因。删除不表示真实 Git 分支或客户端本地 `.trellis/tasks` 被清理。
+
+## 管理台项目永久移除
+
+### 1. Scope / Trigger
+
+- Trigger：修改 `ProjectsTab` 的项目移除按钮、`ProjectRemovalDialog`、`useAdminProjects.purgeProject`
+  或 `/api/admin/projects/:projectId` 的前端调用时。
+- 目标：只有系统管理员能在管理页永久删除项目，并经过不可逆影响说明和完整项目名确认。
+
+### 2. Signatures
+
+- API：`purgeProject(projectId, confirmation): Promise<PurgeProjectResult>`。
+- Hook：`purgeProject(projectId, confirmation): Promise<ProjectActionOutcome>`。
+- UI：`ProjectRemovalDialog({ project, onClose, onRemove })`。
+
+### 3. Contracts
+
+- `systemAdmin=true` 且已选择项目时，在“选择项目”面板 action 显示危险样式“移除项目”；
+  团队管理员和项目负责人即使 `isAdmin=true` 也不显示。
+- 弹窗分两阶段：先展示服务端删除范围，再要求输入完整项目名称；提交按钮只在名称完全一致时启用。
+- 文案必须明确真实 Git 仓库、客户端本地 `.trellis/tasks` 和账号不会被删除。
+- 成功后清空项目选择与旧访问数据，重新请求管理项目列表，并从 stale runtimeProjects 合并结果中
+  过滤已删除项目；toast 包含项目名称和备份 basename。
+- 失败时保留弹窗、项目名称输入和错误文本，不得本地删除项目或伪造成功。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 非系统管理员 | 不渲染“移除项目”按钮 |
+| 未选择项目 | 不渲染“移除项目”按钮 |
+| 第一阶段 | 只允许取消或进入第二阶段 |
+| 项目名不一致 | 提交按钮禁用；直接提交也在前端拒绝 |
+| 服务端 400/403/404/409/503 | 保留弹窗与输入并显示服务端可读错误 |
+| 删除成功 | 关闭弹窗、清空选择、过滤已删项目并刷新列表 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：系统管理员输入完整项目名，删除成功后下拉列表移除该项目，页面提示备份 basename。
+- Base：取消弹窗不调用 API，不改当前项目和列表。
+- Bad：用 `isAdmin` 显示按钮；用普通 confirm；成功后只 toast 不刷新；失败后关闭弹窗掩盖原因。
+
+### 6. Tests Required
+
+- `yarn build` 通过 TypeScript 和 Vite 构建。
+- 真实浏览器：系统管理员可见按钮、两阶段弹窗、名称不匹配禁用、成功清理/刷新、团队管理员不可见。
+- 深浅色和窄屏检查按钮/弹窗无溢出；Esc 与取消在非提交状态关闭。
+
+### 7. Wrong vs Correct
+
+Wrong：
+
+```tsx
+{isAdmin ? <Button onClick={() => confirm('删除？')}>移除项目</Button> : null}
+```
+
+Correct：
+
+```tsx
+{systemAdmin && selectedProject ? (
+  <Button variant="destructive" onClick={() => setRemovalTarget(selectedProject)}>
+    移除项目
+  </Button>
+) : null}
+```
 
 ## 归档同步凭据关联
 

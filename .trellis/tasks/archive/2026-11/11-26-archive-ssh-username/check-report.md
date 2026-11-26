@@ -17,11 +17,11 @@ diff: sha256:b766cb5ab223e728a48ef48a0d8d29e865a551e6f3cd7a97c582cf600e674c58
 - API E2E 已验证请求、响应、审计和 SQLite 落库；浏览器已验证表单默认值、编辑回填且无 Console 错误。
 - 定向测试 3/3、最终构建、git diff whitespace check 和本次改动文件的 oxfmt 检查通过。
 
-## 失败与未验证
+## 失败与已补验
 
 - 两次全量 `yarn test` 各有一个不同的 Windows 并发临时文件失败，分别是 `plugin-real-task.test.js` 的 `EPERM` 和 `team-release.test.js`；两者单独复跑均通过，归档凭据测试在两次全量中均通过。
 - 仓库级 `yarn format:check` 报告 32 个不在本次改动范围内的既有格式问题；未修改这些文件。
-- 生产容器重建后的真实 SSH 测试未执行，需发布后使用现有凭据验收且不得创建 `/root/.ssh/config`。
+- Jenkins `#9-6008968a` 已成功发布；正式管理页显示 SSH 用户名默认 `git`，现有 `wit-ci` 凭据测试返回 `200`，`mdp-backend-service`、`mdp-backend-web` 和 `mdp-report-service` 均同步成功。
 
 ## 跨层检查
 

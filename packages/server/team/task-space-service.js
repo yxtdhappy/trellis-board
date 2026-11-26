@@ -50,6 +50,7 @@ export function createTaskSpaceService({
     listAdminTaskSpaces: lifecycle.listAdminTaskSpaces,
     retireTaskSpace: lifecycle.retireTaskSpace,
     restoreTaskSpace: lifecycle.restoreTaskSpace,
+    purgeProject: lifecycle.purgeProject,
     purgeTaskSpace: lifecycle.purgeTaskSpace,
     resolve: access.resolve,
     preflight: access.preflight,

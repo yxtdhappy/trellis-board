@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { AdminConsole } from '@/hooks/useAdminConsole'
-import type { ProjectMember } from '@/api/admin'
+import type { AdminUser, ProjectMember } from '@/api/admin'
 import {
   addBinding,
   listBindings,
@@ -16,12 +16,13 @@ import {
 } from '@/api/team-plugins'
 import { formatTime, statusTone } from '@/lib/admin-shared'
 import { BranchManagementPanel } from './BranchManagementPanel'
+import { ProjectRemovalDialog } from './ProjectRemovalDialog'
 import { StatusPill } from '@/components/ui/status-pill'
 import { EmptyRow } from '@/components/ui/empty-row'
 import { AuditItem, Row } from './shared.tsx'
 import { SelectField } from '@/features/board/SelectField'
 import { Panel } from '@/components/ui/panel'
-import { Field, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { PluginBindingForm } from './PluginBindingForm.tsx'
 import type { BindingDraft } from './PluginBindingForm.tsx'
 
@@ -32,6 +33,10 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
     selectProject,
     refreshAccess,
     members,
+    isAdmin,
+    systemAdmin,
+    adminTeamId,
+    reloadUsers,
     bindings,
     taskSpaces,
     projectTeams,
@@ -46,6 +51,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
     retireTaskSpace,
     restoreTaskSpace,
     purgeTaskSpace,
+    purgeProject,
     createPairingCode,
   } = consoleApi
 
@@ -54,8 +60,49 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
   const [developerId, setDeveloperId] = useState('')
   const [inviteTeamId, setInviteTeamId] = useState('')
   const [accessRole, setAccessRole] = useState('member')
+  const [removalTarget, setRemovalTarget] = useState<{ id: string; name: string } | null>(null)
+  const [directoryUsers, setDirectoryUsers] = useState<AdminUser[]>([])
+  const [directoryTeamId, setDirectoryTeamId] = useState<string | null>(null)
+  const accountsLoading = isAdmin && directoryTeamId !== adminTeamId
   const readOnly = role === 'read_only'
   const selectedTeamId = projectOptions.find((project) => project.id === accessProjectId)?.teamId
+  const selectedProject = projectOptions.find((project) => project.id === accessProjectId)
+  const selectedMember = members.find((member) => member.userId === userId)
+  const activeAccountOptions = directoryUsers
+    .filter((account) => account.status === 'active')
+    .map((account) => ({
+      value: account.id,
+      label: `${account.displayName || '未命名'} · ${account.username}`,
+    }))
+  const accountOptions = [...activeAccountOptions]
+  if (
+    selectedMember?.userId &&
+    !accountOptions.some((option) => option.value === selectedMember.userId)
+  ) {
+    accountOptions.push({
+      value: selectedMember.userId,
+      label: `${selectedMember.displayName || selectedMember.username || '未知账号'} · ${
+        selectedMember.username
+      }${selectedMember.status === 'active' ? '' : `（账号状态：${selectedMember.status || '未知'}）`}`,
+    })
+  }
+  const unmatchedUserId =
+    Boolean(userId) && !accountOptions.some((option) => option.value === userId)
+  const showAccountPicker =
+    isAdmin && !unmatchedUserId && (accountsLoading || activeAccountOptions.length > 0)
+
+  useEffect(() => {
+    if (!isAdmin) return
+    let cancelled = false
+    void reloadUsers().then((accounts) => {
+      if (cancelled) return
+      setDirectoryUsers(accounts)
+      setDirectoryTeamId(adminTeamId)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [adminTeamId, isAdmin, reloadUsers])
 
   /**
    * 插件项目绑定（design.md §7.4）：项目设置页的快捷入口，只处理当前项目，
@@ -140,6 +187,20 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           kicker="PROJECT / PEOPLE & AGENTS"
           title="选择项目"
           description="选择有管理权限的项目，维护成员 developer ID、确认 Agent 绑定并查看项目审计。"
+          action={
+            systemAdmin && selectedProject ? (
+              <Button
+                variant="destructive"
+                size="sm"
+                type="button"
+                onClick={() =>
+                  setRemovalTarget({ id: selectedProject.id, name: selectedProject.name })
+                }
+              >
+                移除项目
+              </Button>
+            ) : null
+          }
         >
           <div className="flex items-center gap-2">
             <SelectField
@@ -177,16 +238,37 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                 htmlFor="member-user-id"
                 className="text-xs font-medium text-muted-foreground"
               >
-                用户 ID
+                {showAccountPicker ? '用户账号' : '用户 ID'}
               </FieldLabel>
-              <Input
-                id="member-user-id"
-                maxLength={100}
-                required
-                placeholder="管理员可复制用户 ID"
-                value={userId}
-                onChange={(event) => setUserId(event.target.value)}
-              />
+              {showAccountPicker ? (
+                <SelectField
+                  id="member-user-id"
+                  ariaLabel="项目成员账号"
+                  value={userId}
+                  placeholder={accountsLoading ? '正在加载账号…' : '选择项目成员账号'}
+                  disabled={accountsLoading}
+                  options={accountOptions}
+                  onChange={setUserId}
+                />
+              ) : (
+                <Input
+                  id="member-user-id"
+                  maxLength={100}
+                  required
+                  placeholder="填写账号内部 UUID"
+                  value={userId}
+                  onChange={(event) => setUserId(event.target.value)}
+                />
+              )}
+              <FieldDescription>
+                {!isAdmin
+                  ? '请填写账号内部 UUID，不是登录名；项目负责人无法加载账号目录。'
+                  : accountsLoading
+                    ? '正在加载当前管理范围内的账号目录。'
+                    : showAccountPicker
+                      ? '新成员只列出 active 账号；当前编辑的停用或目录外成员会保留在选项中。'
+                      : '未加载到可用账号；目录请求失败时会单独提示错误，也可填写账号内部 UUID 继续操作。'}
+              </FieldDescription>
             </Field>
             <div className="grid grid-cols-2 gap-2">
               <Field className="gap-1">
@@ -225,7 +307,7 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
                 />
               </Field>
             </div>
-            <Button type="submit" className="self-start">
+            <Button type="submit" className="self-start" disabled={!userId.trim()}>
               保存成员
             </Button>
           </form>
@@ -550,6 +632,11 @@ export function ProjectsTab({ console: consoleApi }: { console: AdminConsole }) 
           )}
         </Panel>
       </div>
+      <ProjectRemovalDialog
+        project={removalTarget}
+        onClose={() => setRemovalTarget(null)}
+        onRemove={purgeProject}
+      />
     </div>
   )
 }

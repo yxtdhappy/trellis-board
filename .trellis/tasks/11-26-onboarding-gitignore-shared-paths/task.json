@@ -1,0 +1,46 @@
+{
+  "id": "onboarding-gitignore-shared-paths",
+  "name": "onboarding-gitignore-shared-paths",
+  "title": "初始化时修正Git忽略规则以支持一键推送",
+  "description": "初始化后确保共享Trellis文件不被项目.gitignore忽略且保留本机状态规则并验证一键提交推送",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "simple",
+  "work_type": "backend",
+  "scope": null,
+  "package": "server",
+  "priority": "P1",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-26",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": "23360f22f4f133251bd12a50636ca40c7184da3d",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "check_binding": {
+      "commit": "23360f22f4f133251bd12a50636ca40c7184da3d",
+      "base": "1f3943043e0e7ef00e0a9594c50f0c6e5c3227d4",
+      "scope": [
+        "packages/desktop/src-tauri/src/agent/onboarding.rs",
+        "packages/desktop/src-tauri/src/agent/onboarding/tests.rs",
+        ".trellis/spec/backend/desktop-agent-runtime.md",
+        ".trellis/spec/desktop/tauri-commands/index.md"
+      ],
+      "diff": "sha256:95d117a331bec1930e08a78f6eeb0e5b9acd8f32a9e5390f8e66fce0343945bb",
+      "report_sha256": "9a4769abe7768097240e8ed273a8b9dc6b5559d42ef64f6e763e84bcb0b64d1f"
+    },
+    "commits": [
+      "23360f22f4f133251bd12a50636ca40c7184da3d"
+    ],
+    "commit_set_at": "2026-11-26T19:54:37"
+  }
+}

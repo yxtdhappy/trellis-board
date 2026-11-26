@@ -86,6 +86,16 @@ const STATEMENTS = {
     ORDER BY trellis_dev_id COLLATE NOCASE
   `,
   projectById: 'SELECT * FROM sync_project WHERE id = ?',
+  projectPurgeIdentity: 'SELECT id, name, owner_team_id FROM sync_project WHERE id = ?',
+  projectPurgeSummary: `
+    SELECT p.remote_url,
+           (SELECT COUNT(*) FROM sync_task_space s WHERE s.project_id = p.id) AS task_space_count,
+           (SELECT COUNT(*) FROM sync_task t WHERE t.project_id = p.id) AS task_count,
+           (SELECT COUNT(*) FROM sync_project_member m WHERE m.project_id = p.id) AS member_count,
+           (SELECT COUNT(*) FROM sync_project_team_access a WHERE a.project_id = p.id) AS team_access_count
+    FROM sync_project p
+    WHERE p.id = ?
+  `,
   taskSpaceDetailById: `
     SELECT s.*, p.name AS project_name, p.remote_url, p.remote_identity_hash,
            p.baseline_branch, p.owner_team_id, p.status AS project_status,
@@ -378,6 +388,7 @@ const STATEMENTS = {
     SET status = 'cancelled', updated_at = ?
     WHERE project_id = ? AND status IN ('pending', 'delivered', 'running')
   `,
+  deleteProject: 'DELETE FROM sync_project WHERE id = ?',
 }
 
 export function createStatements(db) {

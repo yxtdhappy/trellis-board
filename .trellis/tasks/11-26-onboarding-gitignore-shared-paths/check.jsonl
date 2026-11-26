@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/11-26-onboarding-gitignore-shared-paths/research/gitignore-onboarding-contract.md", "reason": "Focused acceptance evidence for strict ignore rules and local-only state preservation."}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "Acceptance contract for onboarding one-click commit/push and gitignore handling."}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "Verification contract for initialization and local-only template hash handling."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Checks that existing helpers are reused and behavior is verified rather than only call shape."}

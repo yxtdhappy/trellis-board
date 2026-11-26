@@ -20,6 +20,7 @@ export {
   fetchAdminProjects,
   fetchProjectTeams,
   inviteProjectTeam,
+  purgeProject,
   removeProjectTeam,
 } from './admin/project-teams.ts'
 export {

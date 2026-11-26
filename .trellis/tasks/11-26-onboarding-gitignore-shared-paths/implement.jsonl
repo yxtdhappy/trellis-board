@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/11-26-onboarding-gitignore-shared-paths/research/gitignore-onboarding-contract.md", "reason": "Focused reproduction evidence, ignore precedence constraints, and the required implementation sequence."}
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "Defines the onboarding one-click commit/push and project gitignore contracts."}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "Defines initialization behavior and the local-only template hash ignore requirement."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Requires extending the existing gitignore append path instead of adding a parallel abstraction."}

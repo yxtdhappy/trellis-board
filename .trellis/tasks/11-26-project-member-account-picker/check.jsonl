@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查是否复用现有选择器和账号加载能力，没有引入无必要抽象。"}
+{"file": ".trellis/tasks/11-26-project-member-account-picker/research/code-context.md", "reason": "按复现调用链核对请求提交的是账号 UUID，且管理员/项目负责人分支符合 PRD。"}
