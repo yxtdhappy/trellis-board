@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "7fb97b546cc3adb9b2a3527766d27148cca8976a",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -27,6 +27,10 @@
   "meta": {
     "label_source": "user-explicit",
     "task_type_updated_at": "2026-11-26T12:11:22",
-    "task_type_updated_reason": "跨 Rust 后端与登录页前端，含文件备份/删除与失败恢复"
+    "task_type_updated_reason": "跨 Rust 后端与登录页前端，含文件备份/删除与失败恢复",
+    "commits": [
+      "7fb97b546cc3adb9b2a3527766d27148cca8976a"
+    ],
+    "commit_set_at": "2026-11-26T13:33:13"
   }
 }
