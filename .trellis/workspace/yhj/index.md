@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 88
+- **Total Sessions**: 89
 - **Last Active**: 2026-11-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~247 | Active |
+| `journal-2.md` | ~271 | Active |
 | `journal-1.md` | ~1963 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 89 | 2026-11-26 | 服务端项目移除功能收尾 | `339678492ea6438261a7ea9ed547f3b795db08a1`, `74a5a4eb1b9d2b26a9ebbd50221fe044c66d864c` | `main` |
 | 88 | 2026-11-26 | 优化项目成员账号选择体验 | `45966b16e43e09570d0c3bc3ce71a94175281edf` | `main` |
 | 87 | 2026-11-26 | 放行 WitOps 图片源以修复 Board 工件预览 | `6ba7575` | `main` |
 | 86 | 2026-11-26 | 切换服务器地址时备份并清理客户端数据 | `7fb97b5`, `ef0a184` | `main` |

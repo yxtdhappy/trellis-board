@@ -245,3 +245,27 @@ Board 工件预览的 CSP 增加 img-src 'self' http://witops.weintdata.cn，历
 ### Status
 
 [OK] **Completed**
+
+
+## Session 89: 服务端项目移除功能收尾
+<!-- trellis-session: v=2 fp=e9fcc8b6c90dff61 -->
+
+**Date**: 2026-11-26
+**Task**: 服务端项目移除功能收尾
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成系统管理员永久移除项目：服务端级联清理与最多 5 份备份保留、Web 两步确认入口；本机 API/UI E2E、生产发布及实际删除核查通过。生产日志确认旧项目删除成功并生成备份，另发现 /files 路径未鉴权暴露数据库与日志的风险。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `339678492ea6438261a7ea9ed547f3b795db08a1` | feat(server): 支持永久移除项目 |
+| `74a5a4eb1b9d2b26a9ebbd50221fe044c66d864c` | feat(web): 增加系统管理员项目移除入口 |
+
+### Status
+
+[OK] **Completed**
