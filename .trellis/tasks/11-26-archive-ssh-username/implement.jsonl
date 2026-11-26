@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"归档 Git 只读 transport、凭据隔离和临时子进程边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Node 测试、真实服务与浏览器验收要求"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"凭据 UI 到数据库到 SSH 子进程的跨层一致性"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"React 表单、可访问性、格式化与真实页面验收"}
+{"file":".trellis/spec/frontend/component-reuse.md","reason":"归档凭据表单复用现有 Field/Input 与分层约束"}

@@ -101,7 +101,7 @@ export function ArchiveSyncTab() {
       scheme: credential.scheme,
       host: credential.host,
       port: String(credential.port),
-      username: credential.username || 'x-access-token',
+      username: credential.username || (credential.scheme === 'ssh' ? 'git' : 'x-access-token'),
       token: '',
       privateKey: '',
     })
@@ -127,7 +127,7 @@ export function ArchiveSyncTab() {
       scheme: draft.scheme,
       host: draft.host.trim(),
       port: Number(draft.port),
-      username: draft.scheme === 'https' ? draft.username.trim() : undefined,
+      username: draft.username.trim(),
       token: draft.scheme === 'https' ? draft.token : undefined,
       privateKey: draft.scheme === 'ssh' ? draft.privateKey : undefined,
     }
@@ -286,6 +286,7 @@ export function ArchiveSyncTab() {
                         ...current,
                         scheme: scheme as 'ssh' | 'https',
                         port: scheme === 'ssh' ? '22' : '443',
+                        username: scheme === 'ssh' ? 'git' : 'x-access-token',
                       }))
                     }
                   />
@@ -331,6 +332,23 @@ export function ArchiveSyncTab() {
               </Field>
               <Field className="gap-1">
                 <FieldLabel
+                  htmlFor="credential-username"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  {draft.scheme === 'ssh' ? 'SSH 用户名' : 'HTTPS 用户名'}
+                </FieldLabel>
+                <Input
+                  id="credential-username"
+                  maxLength={200}
+                  required
+                  value={draft.username}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, username: event.target.value }))
+                  }
+                />
+              </Field>
+              <Field className="gap-1">
+                <FieldLabel
                   htmlFor="credential-name"
                   className="text-xs font-medium text-muted-foreground"
                 >
@@ -348,22 +366,6 @@ export function ArchiveSyncTab() {
               </Field>
               {draft.scheme === 'https' ? (
                 <>
-                  <Field className="gap-1">
-                    <FieldLabel
-                      htmlFor="credential-username"
-                      className="text-xs font-medium text-muted-foreground"
-                    >
-                      HTTPS 用户名
-                    </FieldLabel>
-                    <Input
-                      id="credential-username"
-                      maxLength={200}
-                      value={draft.username}
-                      onChange={(event) =>
-                        setDraft((current) => ({ ...current, username: event.target.value }))
-                      }
-                    />
-                  </Field>
                   <Field className="gap-1">
                     <FieldLabel
                       htmlFor="credential-token"

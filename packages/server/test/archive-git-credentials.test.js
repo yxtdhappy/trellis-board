@@ -53,8 +53,18 @@ test('归档凭据按精确来源加密保存且 API 不回显秘密', async () 
       username: 'git-user',
       token: 'ghp_archiveTokenForTests1234567890',
     })
+    const customSsh = ctx.service.create(ctx.actor, {
+      name: '自定义 SSH',
+      scheme: 'ssh',
+      host: 'ssh.example.com',
+      port: 22,
+      username: 'deploy',
+      privateKey: PRIVATE_KEY,
+    })
     assert.equal(ssh.origin, 'ssh://git.weintdata.cn:1022')
+    assert.equal(ssh.username, 'git')
     assert.equal(https.origin, 'https://github.com:443')
+    assert.equal(customSsh.username, 'deploy')
     for (const dto of ctx.service.list()) {
       assert.equal(Object.hasOwn(dto, 'secretCiphertext'), false)
       assert.equal(Object.hasOwn(dto, 'secretTag'), false)
@@ -83,10 +93,7 @@ test('归档凭据按精确来源加密保存且 API 不回显秘密', async () 
     )
     assert.equal(resolvedSsh.credential.id, ssh.id)
     assert.equal(resolvedSsh.origin, ssh.origin)
-    assert.equal(
-      resolvedSsh.remote.url,
-      'ssh://git.weintdata.cn:1022/prod-mdp/repo',
-    )
+    assert.equal(resolvedSsh.remote.url, 'ssh://git.weintdata.cn:1022/prod-mdp/repo')
     assert.throws(
       () => ctx.service.resolveForRemote('ssh://github.com:22/acme/repo.git'),
       (error) => error.status === 409 && error.code === 'ARCHIVE_CREDENTIAL_MISSING',
@@ -99,6 +106,14 @@ test('归档凭据按精确来源加密保存且 API 不回显秘密', async () 
       ctx.service.resolveForRemote('https://example.com/public/repo.git').credential,
       null,
     )
+    assert.equal(
+      ctx.service.resolveForRemote('ssh://ssh.example.com/acme/repo.git').credential.username,
+      'deploy',
+    )
+    const updatedCustomSsh = ctx.service.update(ctx.actor, customSsh.id, {
+      username: 'release+ci@example.com',
+    })
+    assert.equal(updatedCustomSsh.username, 'release+ci@example.com')
     assert.equal(
       ctx.service.resolveForRemote('https://github.com:8443/other/repo.git').credential,
       null,
@@ -121,6 +136,28 @@ test('归档凭据按精确来源加密保存且 API 不回显秘密', async () 
       },
     )
     assert.equal(fs.existsSync(authDirectory), false)
+    await ctx.service.withAuth(
+      ctx.service.resolveForRemote('ssh://ssh.example.com/acme/repo.git').credential,
+      async (auth) => {
+        const scriptPath = auth.env.GIT_SSH_COMMAND.slice(1, -1)
+        const script = fs.readFileSync(scriptPath, 'utf8')
+        assert.match(
+          script,
+          /-o User=(?:"release\+ci@example\.com"|'release\+ci@example\.com'|release\+ci@example\.com)/,
+        )
+      },
+    )
+    assert.throws(
+      () =>
+        ctx.service.create(ctx.actor, {
+          scheme: 'ssh',
+          host: 'invalid-user.example.com',
+          port: 22,
+          username: '-invalid',
+          privateKey: PRIVATE_KEY,
+        }),
+      /SSH 用户名格式无效/,
+    )
   } finally {
     ctx.db.close()
     fs.rmSync(ctx.dataDir, { recursive: true, force: true })
@@ -143,14 +180,28 @@ test('SSH 凭据只使用私钥且不校验主机密钥', async () => {
         authDirectory = auth.dir
         const scriptPath = auth.env.GIT_SSH_COMMAND.slice(1, -1)
         const script = fs.readFileSync(scriptPath, 'utf8')
+        assert.match(script, /-o User=(?:"git"|'git'|git)/)
         assert.match(script, /StrictHostKeyChecking=no/)
         assert.doesNotMatch(script, /StrictHostKeyChecking=yes/)
       },
     )
     assert.equal(fs.existsSync(authDirectory), false)
 
+    ctx.db
+      .prepare('UPDATE sync_archive_git_credential SET username = NULL WHERE id = ?')
+      .run(ssh.id)
+    await ctx.service.withAuth(
+      ctx.service.resolveForRemote('ssh://git.weintdata.cn:1022/prod-mdp/repo.git').credential,
+      async (auth) => {
+        const scriptPath = auth.env.GIT_SSH_COMMAND.slice(1, -1)
+        const script = fs.readFileSync(scriptPath, 'utf8')
+        assert.match(script, /-o User=(?:"git"|'git'|git)/)
+      },
+    )
+
     const rotated = ctx.service.update(ctx.actor, ssh.id, { privateKey: PRIVATE_KEY })
     assert.equal(rotated.secretVersion, 2)
+    assert.equal(rotated.username, 'git')
   } finally {
     ctx.db.close()
     fs.rmSync(ctx.dataDir, { recursive: true, force: true })

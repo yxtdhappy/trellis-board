@@ -81,7 +81,8 @@ node packages/server/index.js
 
 服务账号必须能读写 `TRELLIS_BOARD_DATA_DIR`、SQLite 文件和 `archive-snapshots/`。Team 运行归档
 Git 同步时需要可执行的 Git CLI；HTTPS 公开仓库可以匿名读取，私有仓库和 SSH 来源在管理页配置
-按来源隔离的只读凭据。
+按来源隔离的只读凭据。SSH 用户名随凭据保存在 SQLite 中，默认 `git`；不要依赖运行容器内的
+`/root/.ssh/config`，它会随容器重建丢失。
 
 ## 3. 首次部署
 

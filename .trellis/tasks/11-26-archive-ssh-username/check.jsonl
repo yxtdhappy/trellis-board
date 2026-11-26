@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查定向测试、全量测试和真实页面验收证据"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"复核凭据用户名从 UI 到数据库再到 SSH wrapper 的完整链路"}
+{"file":".trellis/spec/backend/architecture-and-runtime.md","reason":"复核归档同步仍保持只读、来源隔离和临时认证边界"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"复核 SSH 用户名表单的默认值、编辑回填和可访问性"}

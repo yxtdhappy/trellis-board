@@ -399,7 +399,8 @@ SQLite、Board 查询与 SSE。Team 活动任务链路不再 clone/fetch 项目�
   `scope=mine` 按该映射在查询时判定，不重建索引。
 - `POST/DELETE /api/projects/:id/team-access`：owner team 邀请或移除其他团队。
 - `GET/PATCH /api/admin/archive-sync*`：仅系统管理员读取状态、保存周期、维护按
-  `scheme + host + port` 隔离的只读凭据、立即同步和查看失败日志。
+  `scheme + host + port` 隔离的只读凭据、立即同步和查看失败日志。SSH 凭据的 `username`
+  为公开配置，默认 `git`；接口不回显私钥或 Token。
 - SQLite：`sync_project(remote_identity_hash UNIQUE)`、
   `sync_task_space UNIQUE(project_id, branch_name)`、`sync_project_member`、
   `sync_agent_binding`、`sync_archive_snapshot`、`sync_archive_file`、

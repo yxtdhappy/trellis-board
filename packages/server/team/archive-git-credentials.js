@@ -5,14 +5,13 @@ import { fileURLToPath } from 'node:url'
 import { withTransaction } from '../database.js'
 import { appendAuditEvent } from './audit.js'
 import { ERROR_CODES, teamError } from './errors.js'
-import {
-  formatGitRemote,
-  normalizeGitRemote,
-} from '@trellis-board/shared/remote-identity.js'
+import { formatGitRemote, normalizeGitRemote } from '@trellis-board/shared/remote-identity.js'
 
 const KEY_FILE = 'archive-git-credentials.key'
 const MAX_SSH_KEY_BYTES = 32 * 1024
 const MAX_TOKEN_BYTES = 8 * 1024
+const DEFAULT_SSH_USERNAME = 'git'
+const DEFAULT_HTTPS_USERNAME = 'x-access-token'
 const ASKPASS_HELPER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'git-askpass.js')
 
 function cleanText(value, label, maxLength, { required = true } = {}) {
@@ -85,6 +84,19 @@ function normalizedOrigin(input) {
 
 function authTypeForScheme(scheme) {
   return scheme === 'ssh' ? 'ssh_key' : 'https_token'
+}
+
+function normalizedCredentialUsername(input, authType, existing = null) {
+  const fallback = authType === 'ssh_key' ? DEFAULT_SSH_USERNAME : DEFAULT_HTTPS_USERNAME
+  const label = authType === 'ssh_key' ? 'SSH 用户名' : 'HTTPS 用户名'
+  const username = cleanText(input || existing || fallback, label, 200)
+  if (
+    authType === 'ssh_key' &&
+    (!/^[A-Za-z0-9._@+-]+$/.test(username) || username.startsWith('-'))
+  ) {
+    throw teamError(400, ERROR_CODES.INVALID_INPUT, 'SSH 用户名格式无效')
+  }
+  return username
 }
 
 function publicCredential(row) {
@@ -257,10 +269,7 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
       input.name == null || input.name === ''
         ? origin.origin
         : cleanText(input.name, '凭据名称', 100)
-    const username =
-      authType === 'https_token'
-        ? cleanText(input.username || 'x-access-token', 'HTTPS 用户名', 200)
-        : null
+    const username = normalizedCredentialUsername(input.username, authType)
     const payload = credentialPayload(input, authType)
     const id = crypto.randomUUID()
     const encrypted = encrypt(id, origin, authType, 1, payload)
@@ -342,10 +351,7 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
       }
     }
     const name = input.name == null ? row.name : cleanText(input.name, '凭据名称', 100)
-    const username =
-      row.auth_type === 'https_token'
-        ? cleanText(input.username ?? row.username ?? 'x-access-token', 'HTTPS 用户名', 200)
-        : null
+    const username = normalizedCredentialUsername(input.username, row.auth_type, row.username)
     const secretProvided =
       row.auth_type === 'ssh_key' ? input.privateKey != null : input.token != null
     if (!secretProvided && name === row.name && username === row.username) {
@@ -465,7 +471,9 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
         port: Number(row.port),
         origin,
         authType: row.auth_type,
-        username: row.username || null,
+        username:
+          row.username ||
+          (row.auth_type === 'ssh_key' ? DEFAULT_SSH_USERNAME : DEFAULT_HTTPS_USERNAME),
         payload: decrypt(row),
       },
     }
@@ -521,7 +529,9 @@ export function createArchiveGitCredentialService({ db, dataDir }) {
       const scriptPath =
         process.platform === 'win32' ? path.join(dir, 'ssh.cmd') : path.join(dir, 'ssh.sh')
       const quote = (value) => (process.platform === 'win32' ? `"${value}"` : shellQuote(value))
+      const username = credential.username || DEFAULT_SSH_USERNAME
       const options = [
+        `-o User=${quote(username)}`,
         '-o BatchMode=yes',
         '-o ConnectTimeout=15',
         // shortcut: 不校验 SSH 主机密钥，若后续恢复指纹校验需增加 known_hosts 管理。

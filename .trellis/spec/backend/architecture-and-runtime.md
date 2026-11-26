@@ -82,7 +82,9 @@ Team runtime 的事实链拆成两条：
   `.trellis/tasks/archive/**` 执行后台只读 fetch/object 读取，不 checkout、不 commit、不 push，
   不创建 `data/projects/**` 工作副本。
 - 项目身份是 Agent 自报并校验格式的规范化 Git 远端；活动任务同步不让服务端访问远端。归档同步
-  只使用管理页按 `scheme + host + port` 配置的只读凭据，不能使用客户端凭据。
+  只使用管理页按 `scheme + host + port` 配置的只读凭据，不能使用客户端凭据。SSH 登录用户名随凭据
+  持久化，默认 `git`，旧凭据空值按 `git` 兼容；临时 SSH wrapper 必须显式传 `User`，不能依赖容器
+  内 `/root/.ssh/config`。
 - 任务空间键是“规范化远端 + 分支”。同一远端不同分支 revision、cursor、命令和索引完全隔离。
 - 项目保存固定 `baseline_branch`。已合入任务的合入事实由绑定基线 taskSpace 的已批准 Agent 读取本地
   Git `HEAD` 后上报 `tracked-in-head` 证据；服务端只校验声明结构、身份和任务目录，不执行 Git，

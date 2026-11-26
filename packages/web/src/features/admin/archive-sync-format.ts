@@ -82,7 +82,7 @@ export const EMPTY_CREDENTIAL: CredentialDraft = {
   scheme: 'ssh',
   host: '',
   port: '22',
-  username: 'x-access-token',
+  username: 'git',
   token: '',
   privateKey: '',
 }
