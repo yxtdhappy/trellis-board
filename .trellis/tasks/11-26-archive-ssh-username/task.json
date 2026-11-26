@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "de6b5364c042ac3c2852629a7043fbae8942178e",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -27,6 +27,26 @@
   "meta": {
     "label_source": "user-explicit",
     "work_type_updated_at": "2026-11-26T14:04:41",
-    "task_type_updated_at": "2026-11-26T14:04:49"
+    "task_type_updated_at": "2026-11-26T14:04:49",
+    "check_binding": {
+      "commit": "de6b5364c042ac3c2852629a7043fbae8942178e",
+      "base": "09aceaf06681d450eb1c5428c77d6ea1dc6d574e",
+      "scope": [
+        "packages/server/team/archive-git-credentials.js",
+        "packages/server/test/archive-git-credentials.test.js",
+        "packages/web/src/features/admin/ArchiveSyncTab.tsx",
+        "packages/web/src/features/admin/archive-sync-format.ts",
+        "docs/team-operations.md",
+        ".trellis/spec/backend/architecture-and-runtime.md",
+        ".trellis/spec/backend/http-and-filesystem.md",
+        ".trellis/spec/frontend/rendering-and-state.md"
+      ],
+      "diff": "sha256:b766cb5ab223e728a48ef48a0d8d29e865a551e6f3cd7a97c582cf600e674c58",
+      "report_sha256": "4663e870a54475db4481f3e467a46e80b5c4e832fb23f78b312d7fbea74b0204"
+    },
+    "commits": [
+      "de6b5364c042ac3c2852629a7043fbae8942178e"
+    ],
+    "commit_set_at": "2026-11-26T14:42:34"
   }
 }
