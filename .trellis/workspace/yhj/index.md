@@ -7,8 +7,8 @@
 ## Current Status
 
 <!-- @@@auto:current-status -->
-- **Active File**: `journal-1.md`
-- **Total Sessions**: 80
+- **Active File**: `journal-2.md`
+- **Total Sessions**: 81
 - **Last Active**: 2026-11-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1963 | Active |
+| `journal-2.md` | ~49 | Active |
+| `journal-1.md` | ~1963 | Archived |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 81 | 2026-11-26 | 公司开发规范初始化与生命周期 | `51c55a0`, `f7d0d73`, `44dd7ca` | `main` |
 | 80 | 2026-11-26 | 项目栏上传状态与失效任务目录同步收敛 | `737f1f8` | `main` |
 | 79 | 2026-11-25 | Trellis 工作流证据闭环与 check-binding | `66f8372`, `c88ac06`, `3e40ce4`, `7cc05ce`, `3a436f7`, `2483457`, `882d2a3` | `main` |
 | 78 | 2026-11-25 | 加固 wit-e2e-testing 并拆分 API/UI E2E 技能 | `e7ccd2a`, `97ea957`, `6c3a9b2`, `e6222cc`, `8f95e7b` | `main` |
