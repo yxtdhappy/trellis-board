@@ -4,8 +4,8 @@ agent: trellis-check
 session: 01a21734-5e5d-79b3-9ec9-cc2100eee8d0
 commit:
 base: 1f3943043e0e7ef00e0a9594c50f0c6e5c3227d4
-scope: packages/desktop/src-tauri/src/agent/onboarding.rs,packages/desktop/src-tauri/src/agent/onboarding/tests.rs,.trellis/spec/backend/desktop-agent-runtime.md,.trellis/spec/desktop/tauri-commands/index.md,.trellis/tasks/11-26-onboarding-gitignore-shared-paths
-diff: sha256:26955e4d796eef899c8a74b0b66a39b60c92d48a56723786a95e755a9388fdf1
+scope: packages/desktop/src-tauri/src/agent/onboarding.rs,packages/desktop/src-tauri/src/agent/onboarding/tests.rs,.trellis/spec/backend/desktop-agent-runtime.md,.trellis/spec/desktop/tauri-commands/index.md
+diff: sha256:95d117a331bec1930e08a78f6eeb0e5b9acd8f32a9e5390f8e66fce0343945bb
 ---
 # Quality Check Report
 
