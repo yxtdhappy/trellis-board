@@ -1938,3 +1938,26 @@ set_task_ownership 改为只扫描 decisions 涉及的 taskDir；快照/ownershi
 ### Status
 
 [OK] **Completed**
+
+
+## Session 80: 项目栏上传状态与失效任务目录同步收敛
+<!-- trellis-session: v=2 fp=aa8ab37d4a805158 -->
+
+**Date**: 2026-11-26
+**Task**: 项目栏上传状态与失效任务目录同步收敛
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+修复项目栏把正常在途上传误标为等待重试，并在本地目录缺失且服务端无存活文件时清理失效 cursor 基线，停止每轮无效上传警告。独立 check 通过，Web/桌面 Node 测试全绿；Rust 依赖 CI 验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `737f1f8` | fix(desktop): 区分上传中与等待重试并收敛失效任务目录 |
+
+### Status
+
+[OK] **Completed**
