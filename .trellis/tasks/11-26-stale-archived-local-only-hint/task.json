@@ -1,0 +1,31 @@
+{
+  "id": "stale-archived-local-only-hint",
+  "name": "stale-archived-local-only-hint",
+  "title": "修复已归档任务接入误报仅本地及分支更新后提示不消除",
+  "description": "修复本地分支滞后时已归档任务接入误报仅本地，以及分支更新后左侧项目区域未同步提示不消除的问题",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "flyfly6",
+  "assignee": "flyfly6",
+  "createdAt": "2026-11-26",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "task_type_updated_at": "2026-11-26T17:39:51"
+  }
+}
