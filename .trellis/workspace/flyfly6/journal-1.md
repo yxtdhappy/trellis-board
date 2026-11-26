@@ -1965,3 +1965,26 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 63: 修复已归档任务接入误报仅本地及分支更新后提示不消除
+<!-- trellis-session: v=2 fp=37f27af3a61c1d12 -->
+
+**Date**: 2026-11-26
+**Task**: 修复已归档任务接入误报仅本地及分支更新后提示不消除
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+补齐服务端 sync_archive_file 活跃快照归档识别（preflight/assertReadable/assertUploadAllowed），并在桌面端本地目录消失且两端无基线时自动清理 cursor.deferred，完成 L1 单测与 L3 实机 CDP E2E 验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5a80783` | fix(sync): 识别活跃归档快照并在本地目录消失后清理 deferred 提示 |
+
+### Status
+
+[OK] **Completed**

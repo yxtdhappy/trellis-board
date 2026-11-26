@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 62
-- **Last Active**: 2026-11-25
+- **Total Sessions**: 63
+- **Last Active**: 2026-11-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1967 | Active |
+| `journal-1.md` | ~1990 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 63 | 2026-11-26 | 修复已归档任务接入误报仅本地及分支更新后提示不消除 | `5a80783` | `main` |
 | 62 | 2026-11-25 | 同步一致性与接入弹窗验收收尾 | `53a4d25`, `ff922ea` | `main` |
 | 60 | 2026-11-25 | 应用与页面名称支持环境变量配置与去硬编码 | `dbf8aff` | `trellis-continue-configurable-app-name` |
 | 59 | 2026-11-25 | 对齐本地项目接入预检与首次同步口径并在弹窗展示差异明细 | `1db54ff` | `continue-onboarding-preflight-parity` |
