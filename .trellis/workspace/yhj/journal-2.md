@@ -181,3 +181,44 @@ Session summary was not supplied.
 
 - 确认 v0.5.14 CI 构建与 Release 结果
 - 如需真机 E2E，按 trellis-board-e2e 验证取消/确认/备份目录
+
+
+## Session 87: 放行 WitOps 图片源以修复 Board 工件预览
+<!-- trellis-session: v=2 fp=39ff445519095bdc -->
+
+**Date**: 2026-11-26
+**Task**: 放行 WitOps 图片源以修复 Board 工件预览
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+Board 工件预览的 CSP 增加 img-src 'self' http://witops.weintdata.cn，历史与新增 task.md 中的平台截图无需重新同步即可显示；补回归断言并更新后端 HTTP 规范。
+
+### Main Changes
+
+- securityHeaders() 增加 img-src 'self' http://witops.weintdata.cn，其余 CSP 指令保持不变
+- team-static 测试补 CSP 断言，img-src 缺失时回归失败
+- 更新 .trellis/spec/backend/http-and-filesystem.md 记录该放行边界
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6ba7575` | fix(server): 放行 WitOps 图片源以支持任务原文预览 |
+
+### Testing
+
+- [OK] yarn test --scope=server：541 项，540 通过，1 跳过，0 失败
+- [OK] node --test packages/server/test/team-static.test.js：3 项全部通过
+- [OK] oxfmt --check 改动文件：通过
+- [OK] API E2E 不适用：未改 API 路由/契约，页面级由 CSP 断言覆盖
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 部署后打开任务 11-26-B72369 的“工件查看 · WitOps 原文”，确认截图正常显示
+- 如后续需支持其他 WitOps 域名，另立需求，不改为动态 CSP
