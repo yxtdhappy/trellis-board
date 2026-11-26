@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有 SelectField、AdminConsole.users 和 reloadUsers，避免新增选择器或账号查询抽象。"}
+{"file": ".trellis/tasks/11-26-project-member-account-picker/research/code-context.md", "reason": "实现前需按已核实的调用链、权限边界和可复用组件落地。"}

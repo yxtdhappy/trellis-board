@@ -14,6 +14,10 @@
 - 组件不直接 `fetch`；写操作通过 hook 暴露的 actions 调用，成功后重新拉取对应快照。
 - 服务端快照（`board`、`teamPage`、`users`…）只由 API 成功响应更新；筛选、搜索、当前视图保存在 hook 内的 UI 状态。
 - 能由 `board.tasks` 推导的显示值（进度、阶段、关注信号）在渲染期计算，不复制成长期状态。
+- 项目成员写接口与列表接口响应形状不同：`PUT /api/projects/:projectId/members` 返回
+  `{ member }`，`GET /api/projects/:projectId/members` 返回 `{ members }`。`api/admin/members.ts`
+  的 `saveMember()` 必须在 PUT 成功后复用 `fetchMembers()`，hook 只把 GET 返回的权威集合写入
+  `members`；禁止把 PUT 响应当作成员数组解析，否则保存成功但页面会清空成员列表。
 
 ## 事件、刷新与操作进度
 
@@ -144,6 +148,9 @@
 ## 管理台分支生命周期
 
 - 分支管理只在服务端 `/admin.html` 的项目页提供；桌面客户端不显示弃用、恢复或移除入口。
+- 项目成员保存的浏览器验收必须同时断言 PUT 请求体、PUT 成功后的 GET 刷新、成员计数和新增/编辑行；
+  仅看到成功 toast 不能证明页面状态正确。管理员可用账号选择器选择 active 账号，项目负责人仍走
+  手工内部 UUID 输入，不扩大 `/api/admin/users` 的账号目录权限。
 - `useAdminProjects` 在切换项目时并行请求 taskspaces、成员、绑定、团队访问和审计；状态只来自
   `GET /api/projects/:projectId/task-spaces`，操作成功后重新调用 `selectProject()`，不能本地伪造删除。
 - 分支按 `lifecycleStatus=active|disabled|retired` 分组。每行展示任务数、文件数、在线/已关联监听数、

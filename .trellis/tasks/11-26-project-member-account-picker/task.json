@@ -1,0 +1,41 @@
+{
+  "id": "project-member-account-picker",
+  "name": "project-member-account-picker",
+  "title": "优化项目成员添加体验",
+  "description": "项目成员添加支持按账号搜索选择，提交内部用户 ID，避免误填登录名导致的用户不存在错误。",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "simple",
+  "work_type": "frontend",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-26",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "task_type_updated_at": "2026-11-26T17:11:19",
+    "work_type_updated_at": "2026-11-26T17:14:46",
+    "frontend_check_report_required": true,
+    "frontend_evidence": [
+      {
+        "type": "e2e",
+        "artifact": ".trellis/tasks/11-26-project-member-account-picker/e2e-report.md",
+        "at": "2026-11-26T18:16:36"
+      }
+    ],
+    "frontend_evidence_at": "2026-11-26T18:16:36"
+  }
+}
