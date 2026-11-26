@@ -305,16 +305,6 @@ export function createArchiveGitSyncService({
         }
         failureCounts.delete(taskSpaceId)
         backoffUntil.delete(taskSpaceId)
-        logger.info?.('归档 Git 无变化', {
-          taskSpaceId,
-          projectId: taskSpace.project_id,
-          branch: taskSpace.branch_name,
-          head: snapshot.head,
-          needsIndex,
-          purgedFiles: purged.purged,
-          manual,
-          ...snapshot.metrics,
-        })
         return {
           taskSpaceId,
           changed: false,
