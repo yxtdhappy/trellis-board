@@ -16,7 +16,7 @@ import {
   TASK_SNAPSHOT_MAX_FILES,
 } from '@trellis-board/shared/task-snapshot.js'
 
-test('任务快照数据库每日备份保留最近七份', () => {
+test('任务快照数据库每日备份保留最近五份', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-task-backup-'))
   const databaseFile = path.join(root, 'board.sqlite')
   const db = openDatabase({
@@ -32,13 +32,19 @@ test('任务快照数据库每日备份保留最近七份', () => {
       databaseFile,
       logger: { warn() {} },
       now: () => new Date(Date.UTC(2026, 10, 11, hour++)),
-      retention: 7,
+      retention: 99,
     })
-    for (let index = 0; index < 9; index += 1) {
+    for (let index = 0; index < 7; index += 1) {
       assert.ok(backups.backupNow({ force: true }))
     }
     const files = backups.snapshots()
-    assert.equal(files.length, 7)
+    assert.deepEqual(files, [
+      'board.sqlite.snapshot.20261111T020000000Z',
+      'board.sqlite.snapshot.20261111T030000000Z',
+      'board.sqlite.snapshot.20261111T040000000Z',
+      'board.sqlite.snapshot.20261111T050000000Z',
+      'board.sqlite.snapshot.20261111T060000000Z',
+    ])
     assert.ok(files.every((name) => fs.existsSync(path.join(root, 'backups', name))))
   } finally {
     db.close()

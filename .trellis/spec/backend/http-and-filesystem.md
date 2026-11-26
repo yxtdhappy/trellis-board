@@ -68,6 +68,7 @@ Team 模式装配以下任务快照和命令边界：
 | `POST /api/projects/:projectId/task-spaces/:id/retire` | 弃用分支并保留数据 | 200 |
 | `POST /api/projects/:projectId/task-spaces/:id/restore` | 恢复 retired 分支，不自动恢复监听 | 200 |
 | `DELETE /api/projects/:projectId/task-spaces/:id` | 命名确认后创建备份并物理清除 taskSpace | 200 |
+| `DELETE /api/admin/projects/:projectId` | 系统管理员命名确认后创建备份并永久移除整个项目 | 200 |
 
 - `POST /api/agent/commands` 旧长轮询固定返回 `410 AGENT_LONG_POLL_REMOVED`。
 - 旧 `/api/agent/live-changes*`、`/api/agent/live-files`、`/api/agent/live-cursor`、
@@ -78,10 +79,13 @@ Team 模式装配以下任务快照和命令边界：
   JSON 的硬运输上限：超过时返回 413，即使解码后的正文不超过 64 MiB。
 - 新接入预检只返回路径、摘要和稳定 task ID，不返回任务正文；调用前后
   `sync_project`、`sync_task_space`、`sync_agent_binding` 和 `sync_agent_cursor` 行数必须不变。
-- 生命周期路由只允许项目负责人、项目所属团队管理员和系统管理员。普通成员读取管理列表和写操作
+- taskSpace 生命周期路由允许项目负责人、项目所属团队管理员和系统管理员。普通成员读取管理列表和写操作
   均返回 403；taskSpace 必须属于 URL 中的 projectId，否则统一返回 404。
 - `DELETE` 请求体为 `{ "confirmation": "<branchName>" }`。名称不匹配返回 400；数据库严格备份失败
   返回 503，taskSpace、关联数据和删除审计均保持不变。成功后的查询 revision 和 Board SSE 必须刷新。
+- 整个项目的永久删除只允许系统管理员。请求体为 `{ "confirmation": "<projectName>" }`，团队管理员、
+  项目 `lead` 和普通成员均返回 403；成功前必须创建 `board.sqlite.snapshot.*` 备份并在事务内保留
+  `project_purged` 审计。
 - Agent 认证和团队 Session 是两条独立鉴权链。Agent 路由要求设备 Bearer，Web 路由要求 Session Cookie
   并对写请求执行同源 Origin 校验。
 - Cookie 头解析与 `Set-Cookie` 拼装只在 `packages/server/team/auth.js` 用 `cookie` 包实现
@@ -566,6 +570,93 @@ response.writeHead(200, {
   "x-content-type-options": "nosniff",
 })
 response.end(file.buffer)
+```
+
+### Scenario: 系统管理员永久移除 Team 项目
+
+#### 1. Scope / Trigger
+
+- Trigger：新增或修改 `DELETE /api/admin/projects/:projectId`，或调整项目删除的权限、确认、备份、
+  审计、cascade、查询缓存和 SSE 行为。
+- 目标：一次受控操作永久移除错误接入或废弃项目，同时保留可查询审计和最多 5 份数据库快照备份。
+
+#### 2. Signatures
+
+- HTTP：`DELETE /api/admin/projects/:projectId`。
+- 服务：`taskSpaces.purgeProject(actor, projectId, { confirmation })`。
+- SQL：
+  `sync_project` 为删除根；`sync_task` 是任务数权威来源；删除类型为 `project`、审计 action 为
+  `project_purged`。
+- 备份：`backupNowOrThrow({ force: true })`；`board.sqlite.snapshot.*` 最多保留 5 份。
+
+#### 3. Contracts
+
+- 请求体：`{ "confirmation": "<projectName>" }`。名称必须与数据库项目名称逐字相等，不执行 trim。
+- 权限：只有 `actor.systemAdmin === true`。团队管理员、项目 `lead`、普通成员和无团队关系账号均返回 403。
+- 成功响应：
+  `{ purged: true, projectId, projectName, backupName, summary: { remoteUrl, taskSpaceCount, taskCount, memberCount, teamAccessCount, backupName } }`。
+- `backupName` 只能是 basename；不得返回服务端备份绝对路径。
+- 删除前必须在事务外成功创建数据库备份；事务内重新读取项目身份和摘要，写 `project_purged` 审计后
+  删除 `sync_project` 行。
+- 依赖 `PRAGMA foreign_keys = ON` 和 schema 中的 `ON DELETE CASCADE` 清理项目成员、团队访问、
+  任务空间、任务、租约、索引、命令、绑定、游标、文件和冲突；不要在路由中复制手工 cascade SQL。
+- `audit_event.project_id` 无外键，项目业务数据删除后审计仍保留。
+- 成功后调用既有 `onTaskSpacePurged` 清理钩子，递增任务查询 revision 并触发 Board `tasks.changed`；
+  清理失败不回滚已提交数据库删除。
+
+#### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 未登录 | 401 `AUTH_REQUIRED` |
+| 非系统管理员 | 403 `FORBIDDEN`，不备份、不写审计、不删除 |
+| 项目不存在 | 404 `NOT_FOUND` |
+| 确认缺失、含首尾空格或与项目名不一致 | 400 `INVALID_INPUT`，不备份、不写审计 |
+| 备份服务缺失 | 503 `DATABASE_BACKUP_UNAVAILABLE` |
+| 备份创建或轮转失败 | 503 `DATABASE_BACKUP_FAILED`，项目不变 |
+| 事务复核时项目消失或改名，或删除影响行数不为 1 | 409 `CONFLICT`，事务回滚 |
+| 删除成功后显式查询旧项目任务 | 403 或空结果；不得重新暴露旧项目数据 |
+
+#### 5. Good/Base/Bad Cases
+
+- Good：系统管理员提交精确项目名，强制备份成功，审计写入，项目 A 及关联数据删除；项目 B 和最多
+  5 份快照保持不变。
+- Base：项目没有任务、成员扩展或冲突时，只删除主项目和已存在关联行，成功摘要计数为 0。
+- Bad：允许团队管理员删除整个项目；把 `confirmation.trim()` 当兼容；备份失败仍删除；只删
+  `sync_project` 却遗漏外键配置；成功后不递增查询版本。
+
+#### 6. Tests Required
+
+- `team-task-spaces.test.js`：401/403/404、精确确认、备份不可用/抛错、事务后改名、项目隔离、
+  12 类 cascade、审计保留和清理回调异常隔离。
+- `team-gitless-http.test.js`：系统管理员 200、团队管理员 403、响应字段和 basename、查询版本递增、
+  项目/任务空间/任务查询读回、审计 API 回读。
+- `team-task-snapshot.test.js`：即使 retention 配置更大，最终仍只保留最新 5 份并精确淘汰最早文件。
+- API E2E：本机真实 HTTP 完成失败不删和成功删除闭环，报告保存于任务 `api-e2e-report.md`。
+
+#### 7. Wrong vs Correct
+
+Wrong：
+
+```js
+if (!actor.systemAdmin && member?.role !== 'lead') throw forbidden()
+backupNow()
+db.prepare('DELETE FROM sync_project WHERE id = ?').run(projectId)
+sendJson(response, 200, { backupFile })
+```
+
+Correct：
+
+```js
+requireAdmin(actor)
+if (!actor.systemAdmin) throw teamError(403, ERROR_CODES.FORBIDDEN, '仅系统管理员可永久移除项目')
+const backupFile = backupService.backupNowOrThrow({ force: true })
+withTransaction(db, () => {
+  appendAuditEvent(db, { action: 'project_purged', projectId, detail })
+  statements.deleteProject.run(projectId)
+})
+publishTaskControlChanged()
+sendJson(response, 200, { backupName: path.basename(backupFile), summary })
 ```
 
 ## 路径安全

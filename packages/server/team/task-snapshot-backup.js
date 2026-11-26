@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const DAY_MS = 24 * 60 * 60 * 1000
-const DEFAULT_RETENTION = 7
+const DEFAULT_RETENTION = 5
 export const TASK_SNAPSHOT_BACKUP_PATTERN = /^board\.sqlite\.snapshot\.\d{8}T\d{9}Z$/
 
 export function listTaskSnapshotBackupFiles(databaseFile) {
@@ -39,7 +39,8 @@ export function createTaskSnapshotBackupService({
 
   function prune() {
     const files = snapshots()
-    for (const name of files.slice(0, Math.max(0, files.length - retention))) {
+    const keep = Math.min(DEFAULT_RETENTION, Math.max(0, Number(retention) || 0))
+    for (const name of files.slice(0, Math.max(0, files.length - keep))) {
       fs.rmSync(path.join(backupDir, name), { force: true })
     }
   }
@@ -75,7 +76,7 @@ export function createTaskSnapshotBackupService({
   }
 
   function start() {
-    if (timer || !databaseFile || retention < 1) return
+    if (timer || !databaseFile || Math.min(DEFAULT_RETENTION, retention) < 1) return
     safeBackup()
     timer = setInterval(safeBackup, intervalMs)
     timer.unref?.()

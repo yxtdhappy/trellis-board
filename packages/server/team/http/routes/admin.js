@@ -24,7 +24,15 @@ import {
 } from '../common.js'
 
 export function createAdminRoutes(ctx) {
-  const { config, db, taskSpaces, archiveGitSync, agentService, requireActor } = ctx
+  const {
+    config,
+    db,
+    taskSpaces,
+    archiveGitSync,
+    agentService,
+    publishTaskControlChanged,
+    requireActor,
+  } = ctx
 
   async function handleAdmin(request, response, url) {
     const { pathname } = url
@@ -259,6 +267,14 @@ export function createAdminRoutes(ctx) {
     if (projectAction && request.method === 'POST') {
       const [projectId] = projectAction
       sendJson(response, 200, taskSpaces.disableProject(actor, projectId))
+      return true
+    }
+    const projectMatch = routeMatch(pathname, /^\/api\/admin\/projects\/([^/]+)$/)
+    if (projectMatch && request.method === 'DELETE') {
+      requireAdmin(actor)
+      const result = taskSpaces.purgeProject(actor, projectMatch[0], await readJsonBody(request))
+      publishTaskControlChanged()
+      sendJson(response, 200, result)
       return true
     }
     if (pathname === '/api/admin/agents' && request.method === 'GET') {

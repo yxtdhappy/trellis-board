@@ -3,7 +3,7 @@ import test from 'node:test'
 import { openDatabase } from '../database.js'
 import { createTaskSpaceService } from '../team/task-space-service.js'
 
-function setup({ backupService = null } = {}) {
+function setup({ backupService = null, onTaskSpacePurged = null } = {}) {
   const db = openDatabase({
     databaseFile: ':memory:',
     fallbackRepositories: [],
@@ -51,7 +51,7 @@ function setup({ backupService = null } = {}) {
       VALUES (?, ?, ?)
     `).run(userId, id, now)
   }
-  const service = createTaskSpaceService({ db, backupService })
+  const service = createTaskSpaceService({ db, backupService, onTaskSpacePurged })
   return { db, service, now }
 }
 
@@ -999,6 +999,225 @@ test('普通项目成员不能弃用分支，团队管理员和系统管理员�
       attached.taskSpace.id,
     )
     assert.equal(systemAdminRetired.lifecycleStatus, 'retired')
+  } finally {
+    db.close()
+  }
+})
+
+test('仅系统管理员可永久移除项目，删除前备份、写审计并级联清理', () => {
+  let runtimeDb
+  let backupCalls = 0
+  let backupMode = 'ok'
+  let cleanupCalls = 0
+  let cleanupFails = false
+  const backupService = {
+    backupNowOrThrow(options) {
+      backupCalls += 1
+      assert.equal(options.force, true)
+      if (backupMode === 'fail') throw new Error('backup failed')
+      if (backupMode === 'rename') {
+        runtimeDb
+          .prepare('UPDATE sync_project SET name = ? WHERE id = ?')
+          .run('Renamed', target.project.id)
+      }
+      return 'D:\\data\\backups\\board.sqlite.snapshot.project.test'
+    },
+  }
+  const { db, service } = setup({
+    backupService,
+    onTaskSpacePurged() {
+      cleanupCalls += 1
+      if (cleanupFails) throw new Error('cleanup failed')
+    },
+  })
+  runtimeDb = db
+  let target
+  try {
+    target = attachClient(service, 'user-a', 'agent-a', 'a', 'alice')
+    const survivor = service.attach('user-a', 'agent-a', {
+      remoteUrl: 'https://example.com/acme/keep.git',
+      branchName: 'main',
+      displayName: '保留项目',
+      teamId: 'team-a',
+      developerId: 'alice',
+      localRepoKey: 'b'.repeat(64),
+    })
+    addTaskSnapshot(db, target.taskSpace, { title: '待删任务' })
+    addTaskSnapshot(db, survivor.taskSpace, { title: '保留任务' })
+    const executionTaskKey = `${target.taskSpace.id}::task-example`
+    const taskNow = new Date().toISOString()
+    db.prepare(`
+      INSERT INTO sync_task(
+        execution_task_key, task_key, task_space_id, project_id, task_id, relative_dir,
+        title, description, priority, stage, archived, materialization_state,
+        task_version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'task-example', '.trellis/tasks/01-example',
+        '待删任务', '', 'P2', 'planning', 0, 'materialized', 1, ?, ?)
+    `).run(
+      executionTaskKey,
+      `${target.taskSpace.id}::.trellis/tasks/01-example`,
+      target.taskSpace.id,
+      target.project.id,
+      taskNow,
+      taskNow,
+    )
+    db.prepare(`
+      INSERT INTO sync_task_lease(
+        id, execution_task_key, agent_id, user_id, lease_token, status,
+        expires_at, last_heartbeat_at, created_at, updated_at
+      ) VALUES ('lease-project-purge', ?, ?, 'user-a', 'token', 'active', ?, ?, ?, ?)
+    `).run(executionTaskKey, target.binding.agentId, taskNow, taskNow, taskNow, taskNow)
+    addLifecycleArtifacts(db, target.taskSpace, target.binding.agentId, target.binding.id)
+
+    const ordinary = addTeamAMember(db, 'ordinary')
+    service.upsertMember(service.actorContext('user-a'), {
+      projectId: target.project.id,
+      userId: ordinary.userId,
+      role: 'member',
+      trellisDevId: 'ordinary',
+    })
+    for (const actor of [service.actorContext('user-a'), service.actorContext(ordinary.userId)]) {
+      assert.throws(
+        () =>
+          service.purgeProject(actor, target.project.id, {
+            confirmation: target.project.name,
+          }),
+        (error) => error.status === 403,
+      )
+    }
+    db.prepare(`
+      UPDATE team_member SET role = 'admin'
+      WHERE team_id = 'team-a' AND user_id = 'user-a'
+    `).run()
+    assert.throws(
+      () =>
+        service.purgeProject(service.actorContext('user-a'), target.project.id, {
+          confirmation: target.project.name,
+        }),
+      (error) => error.status === 403,
+    )
+    assert.equal(backupCalls, 0)
+
+    db.prepare("UPDATE user_account SET system_admin = 1 WHERE id = 'user-a'").run()
+    const admin = service.actorContext('user-a')
+    for (const input of [{}, { confirmation: ' Acme ' }, { confirmation: 'Other' }]) {
+      assert.throws(() => service.purgeProject(admin, target.project.id, input), /项目确认名称/)
+    }
+    assert.throws(
+      () =>
+        service.purgeProject(admin, 'missing-project', {
+          confirmation: 'missing-project',
+        }),
+      (error) => error.status === 404,
+    )
+    assert.equal(backupCalls, 0)
+
+    assert.throws(
+      () =>
+        createTaskSpaceService({ db }).purgeProject(admin, target.project.id, {
+          confirmation: target.project.name,
+        }),
+      (error) => error.code === 'DATABASE_BACKUP_UNAVAILABLE',
+    )
+
+    backupMode = 'fail'
+    assert.throws(
+      () =>
+        service.purgeProject(admin, target.project.id, {
+          confirmation: target.project.name,
+        }),
+      (error) => error.code === 'DATABASE_BACKUP_FAILED',
+    )
+    assert.equal(backupCalls, 1)
+    assert.equal(
+      db.prepare('SELECT COUNT(*) AS count FROM sync_project WHERE id = ?').get(target.project.id)
+        .count,
+      1,
+    )
+
+    backupMode = 'rename'
+    assert.throws(
+      () =>
+        service.purgeProject(admin, target.project.id, {
+          confirmation: target.project.name,
+        }),
+      (error) => error.status === 409,
+    )
+    assert.equal(backupCalls, 2)
+    db.prepare('UPDATE sync_project SET name = ? WHERE id = ?').run(
+      target.project.name,
+      target.project.id,
+    )
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS count FROM audit_event WHERE action = 'project_purged'").get()
+        .count,
+      0,
+    )
+
+    backupMode = 'ok'
+    cleanupFails = true
+    const result = service.purgeProject(admin, target.project.id, {
+      confirmation: target.project.name,
+    })
+    assert.equal(result.purged, true)
+    assert.equal(result.projectId, target.project.id)
+    assert.equal(result.projectName, target.project.name)
+    assert.equal(result.backupName, 'board.sqlite.snapshot.project.test')
+    assert.deepEqual(result.summary, {
+      remoteUrl: target.project.remoteUrl,
+      taskSpaceCount: 1,
+      taskCount: 1,
+      memberCount: 2,
+      teamAccessCount: 1,
+      backupName: 'board.sqlite.snapshot.project.test',
+    })
+    assert.equal(backupCalls, 3)
+    assert.equal(cleanupCalls, 1)
+    assert.equal(
+      db.prepare('SELECT COUNT(*) AS count FROM sync_project WHERE id = ?').get(target.project.id)
+        .count,
+      0,
+    )
+    for (const [table, column, id] of [
+      ['sync_project_member', 'project_id', target.project.id],
+      ['sync_project_team_access', 'project_id', target.project.id],
+      ['sync_task_space', 'project_id', target.project.id],
+      ['sync_task', 'project_id', target.project.id],
+      ['sync_task_lease', 'execution_task_key', executionTaskKey],
+      ['sync_task_index', 'project_id', target.project.id],
+      ['sync_task_command', 'project_id', target.project.id],
+      ['sync_agent_binding', 'task_space_id', target.taskSpace.id],
+      ['sync_agent_cursor', 'task_space_id', target.taskSpace.id],
+      ['sync_task_space_file', 'task_space_id', target.taskSpace.id],
+      ['sync_conflict', 'task_space_id', target.taskSpace.id],
+    ]) {
+      assert.equal(
+        db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`).get(id).count,
+        0,
+        table,
+      )
+    }
+    const audit = db
+      .prepare("SELECT project_id, detail_json FROM audit_event WHERE action = 'project_purged'")
+      .get()
+    assert.equal(audit.project_id, target.project.id)
+    assert.deepEqual(JSON.parse(audit.detail_json), {
+      projectName: target.project.name,
+      ...result.summary,
+    })
+    assert.equal(
+      db.prepare('SELECT COUNT(*) AS count FROM sync_project WHERE id = ?').get(survivor.project.id)
+        .count,
+      1,
+    )
+    assert.equal(
+      service.listReadable(admin).some((project) => project.id === target.project.id),
+      false,
+    )
+    assert.equal(
+      service.listReadable(admin).some((project) => project.id === survivor.project.id),
+      true,
+    )
   } finally {
     db.close()
   }
