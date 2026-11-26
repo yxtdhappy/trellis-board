@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "44dd7cac1d70abfe83dbc849381936bc9dd96dad",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -26,6 +26,54 @@
   "notes": "",
   "meta": {
     "label_source": "user-explicit",
-    "task_type_updated_at": "2026-11-25T21:04:57"
+    "task_type_updated_at": "2026-11-25T21:04:57",
+    "check_binding": {
+      "commit": "44dd7cac1d70abfe83dbc849381936bc9dd96dad",
+      "base": "737f1f8bb8d6dfb77aa90851c7266bddabbb8661",
+      "scope": [
+        "docs/company-spec-bootstrap.md",
+        "packages/desktop/src-tauri/capabilities/board-local-association.json",
+        "packages/desktop/src-tauri/permissions/desktop.toml",
+        "packages/desktop/src-tauri/src/agent/branch_inspect.rs",
+        "packages/desktop/src-tauri/src/agent/company_spec.rs",
+        "packages/desktop/src-tauri/src/agent/company_spec/lifecycle.rs",
+        "packages/desktop/src-tauri/src/agent/company_spec/tests.rs",
+        "packages/desktop/src-tauri/src/agent/mod.rs",
+        "packages/desktop/src-tauri/src/agent/onboarding.rs",
+        "packages/desktop/src-tauri/src/agent/task_sync/tests/upload_cleanup.rs",
+        "packages/desktop/src-tauri/src/agent/trellis_cli.rs",
+        "packages/desktop/src-tauri/src/agent/trellis_cli/tests.rs",
+        "packages/desktop/src-tauri/src/agent_service.rs",
+        "packages/desktop/src-tauri/src/kit_assets.rs",
+        "packages/desktop/src-tauri/src/main.rs",
+        "packages/web/src/components/layout/ProjectRail.tsx",
+        "packages/web/src/components/layout/project-rail/ProjectEntry.tsx",
+        "packages/web/src/features/board/dialogs/CompanySpecDialog.tsx",
+        "packages/web/src/features/board/dialogs/ProjectOnboardingDialog.tsx",
+        "packages/web/src/lib/company-spec.d.ts",
+        "packages/web/src/lib/company-spec.js",
+        "packages/web/src/lib/project-inspection.d.ts",
+        "packages/web/src/lib/project-inspection.js",
+        "scripts/test/company-spec.test.js",
+        "scripts/test/trellis-kit.test.js",
+        "trellis-kit/README.md",
+        "trellis-kit/apply.py",
+        "trellis-kit/features/company-spec/apply.mjs",
+        "trellis-kit/features/company-spec/feature.json",
+        "trellis-kit/manifest.json"
+      ],
+      "diff": "sha256:4bb2658074696834b4a07c3bac2f6d1b003d1dfe268b7205c148ce072392d57d",
+      "report_sha256": "1ea7437fa86592616538a6d404610b6d331e0ad1ee29fd79b11a09fcd73fb5a0"
+    },
+    "commits": [
+      "44dd7cac1d70abfe83dbc849381936bc9dd96dad"
+    ],
+    "commit_set_at": "2026-11-26T10:16:36",
+    "check_override": {
+      "by": "yhj",
+      "reason": "用户要求按 finish-work 归档；本次采用 inline-self-check，Rust 由 CI 验证，已附 check-report.md",
+      "commit": "44dd7cac1d70abfe83dbc849381936bc9dd96dad",
+      "at": "2026-11-26T10:17:16"
+    }
   }
 }
